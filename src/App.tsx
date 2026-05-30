@@ -121,7 +121,6 @@ const ProductionOrders = lazy(() => import("./pages/ProductionOrders"));
 const AdminReposicaoRevisao = lazy(() => import("./pages/AdminReposicaoRevisao"));
 const AdminReposicaoHistorico = lazy(() => import("./pages/AdminReposicaoHistorico"));
 const AdminReposicaoAlertas = lazy(() => import("./pages/AdminReposicaoAlertas"));
-const AdminReposicaoAplicacao = lazy(() => import("./pages/AdminReposicaoAplicacao"));
 const AdminReposicaoGruposProducao = lazy(() => import("./pages/AdminReposicaoGruposProducao"));
 const AdminReposicaoSlaFornecedor = lazy(() => import("./pages/AdminReposicaoSlaFornecedor"));
 const AdminReposicaoCadeiaLogistica = lazy(() => import("./pages/AdminReposicaoCadeiaLogistica"));
@@ -167,6 +166,7 @@ const AdminStandardProcessNew = lazy(() => import("./pages/AdminStandardProcessN
 const AdminStandardProcessDetail = lazy(() => import("./pages/AdminStandardProcessDetail"));
 const AdminCalculadora = lazy(() => import("./pages/AdminCalculadora"));
 const Telefonia = lazy(() => import("./pages/Telefonia"));
+const WhatsappInbox = lazy(() => import("./pages/WhatsappInbox"));
 
 const PageLoader = () => <PageSkeleton variant="auto" />;
 
@@ -359,6 +359,7 @@ const App = () => (
               <Route path="admin/standard-processes/:id" element={<AdminStandardProcessDetail />} />
               <Route path="admin/calculadora" element={<AdminCalculadora />} />
               <Route path="telefonia" element={<Telefonia />} />
+              <Route path="whatsapp" element={<WhatsappInbox />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

@@ -5,13 +5,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useFarmerScoring, type ClientScore, type AgendaItem, type AlgorithmConfig } from '@/hooks/useFarmerScoring';
+import { useFarmerScoring, type ClientScore, type AlgorithmConfig } from '@/hooks/useFarmerScoring';
 import { useFarmerMetrics } from '@/hooks/useFarmerMetrics';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  Phone, TrendingUp, Users, Target, BarChart3, Brain,
-  RefreshCw, Zap, Activity, AlertTriangle, CheckCircle,
-  ChevronRight, Shield, Clock, Heart, Loader2,
+  Phone, Users, Target, BarChart3, Brain,
+  Zap, Activity,
+  Shield, Heart, Loader2,
   Eye, ShoppingCart,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -42,8 +42,8 @@ const fmtDur = (s: number) => {
 const FarmerDashboard = () => {
   const navigate = useNavigate();
   const { isStaff, loading: authLoading } = useAuth();
-  const { clientScores, agenda, summary, loading, calculating, recalculate, config } = useFarmerScoring();
-  const { metrics, loading: metricsLoading } = useFarmerMetrics();
+  const { clientScores, agenda, summary, loading, config } = useFarmerScoring();
+  const { metrics } = useFarmerMetrics();
   const [selectedClient, setSelectedClient] = useState<ClientScore | null>(null);
 
   if (authLoading || loading) {
@@ -361,7 +361,7 @@ const WeightBar = ({ label, value, color = 'bg-primary' }: { label: string; valu
   </div>
 );
 
-const ClientDetail = ({ client, onBack, config }: { client: ClientScore; onBack: () => void; config: AlgorithmConfig }) => {
+const ClientDetail = ({ client, onBack }: { client: ClientScore; onBack: () => void; config: AlgorithmConfig }) => {
   const hc = healthColors[client.healthClass] || healthColors.critico;
   return (
     <div className="space-y-3">

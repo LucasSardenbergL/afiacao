@@ -10,6 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerScoring } from '@/hooks/useFarmerScoring';
 import { toast } from 'sonner';
+import { navLink } from '@/lib/maps/nav-link';
 import type {
   StopType,
   PlanningMode,
@@ -22,6 +23,9 @@ import type {
 import { enrichWithPriority } from '@/components/reposicao/routePlanner/priority';
 import { STOP_DURATION_MIN } from '@/components/reposicao/routePlanner/constants';
 import type { Tables } from '@/integrations/supabase/types';
+import { visitasAgendadasTable } from '@/integrations/supabase/visitasAgendadas';
+import type { VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas';
+import { agendaToRouteStop } from '@/lib/visitas/agenda-to-stop';
 
 // Linha de route_visits enriquecida com o nome do cliente (resolvido via profiles).
 export type TodayVisitRow = Tables<'route_visits'> & { customerName: string };
@@ -49,6 +53,7 @@ export function useRoutePlanner() {
 
   const [logisticStops, setLogisticStops] = useState<RouteStop[]>([]);
   const [commercialStops, setCommercialStops] = useState<RouteStop[]>([]);
+  const [scheduledVisitStops, setScheduledVisitStops] = useState<RouteStop[]>([]);
   const [loading, setLoading] = useState(true);
   const [geocoding, setGeocoding] = useState(false);
   const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>('all');
@@ -95,6 +100,11 @@ export function useRoutePlanner() {
       loadCommercialStops();
     }
   }, [scoringLoading, agenda]);
+
+  // Load scheduled visits for today (comercial + hibrido modes)
+  useEffect(() => {
+    if (user && isStaff) loadScheduledVisits();
+  }, [user, isStaff]);
 
   // Always load today's visits (all modes)
   useEffect(() => {
@@ -474,6 +484,97 @@ export function useRoutePlanner() {
     return `${m}:${String(s).padStart(2, '0')}`;
   };
 
+  const loadScheduledVisits = async () => {
+    if (!user) {
+      setScheduledVisitStops([]);
+      return;
+    }
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const { data, error } = await visitasAgendadasTable()
+        .select('*')
+        .eq('scheduled_by', user.id)
+        .eq('status', 'pendente')
+        .eq('scheduled_date', today);
+
+      if (error) {
+        console.error('Error loading scheduled visits:', error);
+        setScheduledVisitStops([]);
+        return;
+      }
+
+      const rows = (data as unknown as VisitaAgendadaRow[]) || [];
+      if (rows.length === 0) {
+        setScheduledVisitStops([]);
+        return;
+      }
+
+      const customerIds = [...new Set(rows.map(r => r.customer_user_id))];
+
+      const [{ data: profiles }, { data: addresses }] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('user_id, name, phone, business_hours_open, business_hours_close')
+          .in('user_id', customerIds),
+        supabase
+          .from('addresses')
+          .select('*')
+          .in('user_id', customerIds)
+          .order('is_default', { ascending: false }),
+      ]);
+
+      const profileMap = new Map((profiles || []).map(p => [p.user_id, p]));
+      // Pick first address per customer (default if available, then any)
+      const addressMap = (addresses || []).reduce((map, addr) => {
+        if (!map.has(addr.user_id)) map.set(addr.user_id, addr);
+        return map;
+      }, new Map<string, Tables<'addresses'>>());
+
+      const stops: RouteStop[] = rows.map(row => {
+        const profile = profileMap.get(row.customer_user_id);
+        const addr = addressMap.get(row.customer_user_id);
+
+        const input = agendaToRouteStop(
+          row,
+          profile
+            ? {
+                name: profile.name,
+                phone: profile.phone,
+                business_hours_open: profile.business_hours_open,
+                business_hours_close: profile.business_hours_close,
+              }
+            : undefined,
+          addr
+            ? {
+                street: addr.street,
+                number: addr.number,
+                neighborhood: addr.neighborhood,
+                city: addr.city,
+                state: addr.state,
+                zip_code: addr.zip_code,
+                complement: addr.complement,
+              }
+            : undefined,
+        );
+
+        // Visita agendada manualmente: prioridade explícita 'alta' (compromisso explícito).
+        // NÃO usa enrichWithPriority porque scheduled_visit não tem scoring mapeado
+        // e resultaria em score 0 / label 'baixa' — incorreto para um compromisso agendado.
+        return {
+          ...input,
+          priorityScore: 70,
+          priorityLabel: 'alta' as RouteStop['priorityLabel'],
+          priorityFactors: ['Agendada manualmente'],
+        };
+      });
+
+      setScheduledVisitStops(stops);
+    } catch (err) {
+      console.error('Error loading scheduled visits:', err);
+      setScheduledVisitStops([]);
+    }
+  };
+
   const loadCommercialStops = async () => {
     try {
       // Gather customer IDs from logistic stops for hybrid detection
@@ -613,10 +714,19 @@ export function useRoutePlanner() {
     const mergedLogisticCustomerIds = new Set(upgraded.filter(s => s.stopType === 'hybrid_visit').map(s => s.customerUserId));
     const uniqueCommercial = commercialStops.filter(s => !mergedLogisticCustomerIds.has(s.customerUserId));
 
+    // Dedup scheduled visits against customers already present in logistic or commercial
+    const existingCustomerIds = new Set([
+      ...upgraded.map(s => s.customerUserId),
+      ...uniqueCommercial.map(s => s.customerUserId),
+    ]);
+    const uniqueScheduled = scheduledVisitStops.filter(
+      s => !existingCustomerIds.has(s.customerUserId),
+    );
+
     switch (planningMode) {
       case 'logistica': return upgraded.filter(s => s.stopType === 'pickup_tools' || s.stopType === 'deliver_tools');
-      case 'comercial': return [...uniqueCommercial, ...upgraded.filter(s => s.stopType === 'hybrid_visit')];
-      case 'hibrido': return [...upgraded, ...uniqueCommercial];
+      case 'comercial': return [...uniqueCommercial, ...upgraded.filter(s => s.stopType === 'hybrid_visit'), ...uniqueScheduled];
+      case 'hibrido': return [...upgraded, ...uniqueCommercial, ...uniqueScheduled];
       case 'manual': {
         // Build manual stops from selected customers
         const manualStops: RouteStop[] = Array.from(selectedCustomerIds).map(userId => {
@@ -641,7 +751,7 @@ export function useRoutePlanner() {
         return manualStops;
       }
     }
-  }, [logisticStops, commercialStops, planningMode, selectedCustomerIds, manualCustomers]);
+  }, [logisticStops, commercialStops, scheduledVisitStops, planningMode, selectedCustomerIds, manualCustomers]);
 
   // Geocode stops progressively (max 15, 1.1s delay between calls)
   const geocodedCoords = useRef<Map<string, { lat: number; lng: number }>>(new Map());
@@ -782,12 +892,9 @@ export function useRoutePlanner() {
   }, [filteredStops, filterPeriod]);
 
   const openInWaze = (stop: RouteStop) => {
-    if (stop.lat && stop.lng) {
-      window.open(`https://waze.com/ul?ll=${stop.lat},${stop.lng}&navigate=yes`, '_blank');
-    } else {
-      const q = `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}`;
-      window.open(`https://waze.com/ul?q=${encodeURIComponent(q)}&navigate=yes`, '_blank');
-    }
+    const q = `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}`;
+    const href = navLink(q, stop.lat ?? null, stop.lng ?? null);
+    if (href) window.open(href, '_blank');
   };
 
   const openInGoogleMaps = (stop: RouteStop) => {
@@ -850,7 +957,7 @@ export function useRoutePlanner() {
 
   // Stats
   const stopCounts = useMemo(() => {
-    const counts = { pickup_tools: 0, deliver_tools: 0, sales_visit: 0, hybrid_visit: 0 };
+    const counts: Record<string, number> = { pickup_tools: 0, deliver_tools: 0, sales_visit: 0, hybrid_visit: 0, scheduled_visit: 0 };
     optimizedRoute.forEach(s => counts[s.stopType]++);
     return counts;
   }, [optimizedRoute]);

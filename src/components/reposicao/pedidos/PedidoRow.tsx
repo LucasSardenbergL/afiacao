@@ -24,6 +24,10 @@ export function PedidoRow({
   const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
   const podeCancelar = ['pendente_aprovacao', 'bloqueado_guardrail', 'aprovado_aguardando_disparo'].includes(p.status);
   const podeDisparar = p.status === 'aprovado_aguardando_disparo';
+  // Guard de concorrência: enquanto o envio ao portal está em voo (após "aprovar e
+  // disparar" ou um disparo manual), trava o botão pra não abrir uma 2ª sessão no
+  // Browserless e gerar PO duplicado no fornecedor.
+  const enviandoPortal = p.status_envio_portal === 'enviando_portal';
 
   const showAprovacao = p.status === 'aprovado_aguardando_disparo' || p.status === 'disparado';
 
@@ -71,9 +75,9 @@ export function PedidoRow({
             <Button size="sm" variant="default" onClick={onVerDetalhes}>Aprovar</Button>
           )}
           {podeDisparar && (
-            <Button size="sm" variant="default" onClick={onDisparar} disabled={disparando}>
-              {disparando ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
-              Disparar
+            <Button size="sm" variant="default" onClick={onDisparar} disabled={disparando || enviandoPortal}>
+              {(disparando || enviandoPortal) ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
+              {enviandoPortal ? 'Enviando…' : 'Disparar'}
             </Button>
           )}
           {podeCancelar && (

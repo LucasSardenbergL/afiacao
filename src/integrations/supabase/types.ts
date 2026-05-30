@@ -2848,6 +2848,7 @@ export type Database = {
           dismissed_at: string | null
           dismissed_by: string | null
           dismissed_until: string | null
+          email_enfileirado_em: string | null
           id: string
           mensagem: string
           severidade: string
@@ -2862,6 +2863,7 @@ export type Database = {
           dismissed_at?: string | null
           dismissed_by?: string | null
           dismissed_until?: string | null
+          email_enfileirado_em?: string | null
           id?: string
           mensagem: string
           severidade: string
@@ -2876,6 +2878,7 @@ export type Database = {
           dismissed_at?: string | null
           dismissed_by?: string | null
           dismissed_until?: string | null
+          email_enfileirado_em?: string | null
           id?: string
           mensagem?: string
           severidade?: string
@@ -11465,6 +11468,53 @@ export type Database = {
         }
         Relationships: []
       }
+      visitas_agendadas: {
+        Row: {
+          created_at: string
+          customer_user_id: string
+          id: string
+          notes: string | null
+          route_visit_id: string | null
+          scheduled_by: string
+          scheduled_date: string
+          status: string
+          updated_at: string
+          visit_type: string
+        }
+        Insert: {
+          created_at?: string
+          customer_user_id: string
+          id?: string
+          notes?: string | null
+          route_visit_id?: string | null
+          scheduled_by: string
+          scheduled_date: string
+          status?: string
+          updated_at?: string
+          visit_type?: string
+        }
+        Update: {
+          created_at?: string
+          customer_user_id?: string
+          id?: string
+          notes?: string | null
+          route_visit_id?: string | null
+          scheduled_by?: string
+          scheduled_date?: string
+          status?: string
+          updated_at?: string
+          visit_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "visitas_agendadas_route_visit_id_fkey"
+            columns: ["route_visit_id"]
+            isOneToOne: false
+            referencedRelation: "route_visits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       warehouses: {
         Row: {
           cnpj: string | null
@@ -11549,6 +11599,125 @@ export type Database = {
           last_used_at?: string | null
           public_key?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      whatsapp_conversations: {
+        Row: {
+          assigned_operator_id: string | null
+          contact_name: string | null
+          created_at: string
+          customer_user_id: string | null
+          id: string
+          last_inbound_at: string | null
+          last_message_at: string | null
+          opt_in_status: string
+          phone_e164: string | null
+          phone_key: string
+          status: string
+        }
+        Insert: {
+          assigned_operator_id?: string | null
+          contact_name?: string | null
+          created_at?: string
+          customer_user_id?: string | null
+          id?: string
+          last_inbound_at?: string | null
+          last_message_at?: string | null
+          opt_in_status?: string
+          phone_e164?: string | null
+          phone_key: string
+          status?: string
+        }
+        Update: {
+          assigned_operator_id?: string | null
+          contact_name?: string | null
+          created_at?: string
+          customer_user_id?: string | null
+          id?: string
+          last_inbound_at?: string | null
+          last_message_at?: string | null
+          opt_in_status?: string
+          phone_e164?: string | null
+          phone_key?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      whatsapp_messages: {
+        Row: {
+          body: string | null
+          conversation_id: string
+          created_at: string
+          direction: string
+          id: string
+          media_id: string | null
+          media_url: string | null
+          sender_user_id: string | null
+          status: string | null
+          transcript: string | null
+          type: string
+          wa_message_id: string | null
+          wa_timestamp: string | null
+        }
+        Insert: {
+          body?: string | null
+          conversation_id: string
+          created_at?: string
+          direction: string
+          id?: string
+          media_id?: string | null
+          media_url?: string | null
+          sender_user_id?: string | null
+          status?: string | null
+          transcript?: string | null
+          type?: string
+          wa_message_id?: string | null
+          wa_timestamp?: string | null
+        }
+        Update: {
+          body?: string | null
+          conversation_id?: string
+          created_at?: string
+          direction?: string
+          id?: string
+          media_id?: string | null
+          media_url?: string | null
+          sender_user_id?: string | null
+          status?: string | null
+          transcript?: string | null
+          type?: string
+          wa_message_id?: string | null
+          wa_timestamp?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      whatsapp_webhook_events: {
+        Row: {
+          id: string
+          payload: Json
+          processed_at: string | null
+          received_at: string
+        }
+        Insert: {
+          id?: string
+          payload: Json
+          processed_at?: string | null
+          received_at?: string
+        }
+        Update: {
+          id?: string
+          payload?: Json
+          processed_at?: string | null
+          received_at?: string
         }
         Relationships: []
       }
@@ -12805,6 +12974,7 @@ export type Database = {
           skus_incluidos: number
         }[]
       }
+      classificar_sayerlack_grupo_default: { Args: never; Returns: number }
       converter_sugestao_em_campanha_flat: {
         Args: {
           p_canal?: string
@@ -13155,6 +13325,10 @@ export type Database = {
         }[]
       }
       pode_ver_carteira_completa: { Args: { _uid: string }; Returns: boolean }
+      preencher_parametros_faltantes_skus: {
+        Args: { p_empresa: string }
+        Returns: number
+      }
       processar_alertas_pendentes_notificacao: {
         Args: { p_empresa?: string }
         Returns: {

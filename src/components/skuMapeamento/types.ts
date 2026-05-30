@@ -1,5 +1,6 @@
 // Tipos do Mapeamento SKU.
 // Extraídos verbatim de src/pages/AdminSkuMapeamento.tsx (god-component split).
+import type { GabaritoResult, SugestoesResult } from '@/lib/reposicao/sayerlack-sku';
 
 export interface Mapeamento {
   id: number;
@@ -26,4 +27,7 @@ export interface ValidacaoResult {
   total: number;
   automaticos: number;
   manuais: number;
+  // Auto-mapeamento via código embutido na descrição (parser sayerlack-sku):
+  gabarito?: GabaritoResult; // parser × mapeamentos manuais (prova de segurança)
+  sugestoes?: SugestoesResult; // códigos extraídos dos faltantes (seguros prontos pra gravar)
 }

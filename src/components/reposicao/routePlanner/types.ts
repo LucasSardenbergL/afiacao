@@ -6,7 +6,8 @@ export type StopType =
   | 'deliver_tools'
   | 'sales_visit'
   | 'hybrid_visit'
-  | 'manual_visit';
+  | 'manual_visit'
+  | 'scheduled_visit';
 export type PlanningMode = 'logistica' | 'comercial' | 'hibrido' | 'manual';
 export type FilterPeriod = 'all' | 'manha' | 'tarde';
 export type ManualFilter = 'todos' | 'nunca_visitados' | 'sem_compra_30d';

@@ -48,6 +48,10 @@ export async function mixPrerollWithMic(
     play: () => {
       if (played) return;
       played = true;
+      // iOS/Safari: o AudioContext pode ter suspendido entre o makeCall (gesto do
+      // usuário) e o 'established' (segundos depois). resume() reativa antes de tocar
+      // — no-op se já estiver running. Sem isso, no iPhone o aviso pode não sair.
+      void ctx.resume();
       prerollSource.start();
     },
     close: () => {

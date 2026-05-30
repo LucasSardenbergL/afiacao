@@ -5,7 +5,7 @@ import {
   calibrarCurvas, CURVA_DEFAULT,
   dataRecebimentoEsperada, aplicarCenarioCurva,
   inadimplenciaPonderada, prazoMedioPonderado,
-  statusLiquidado, valorPagoEfetivo,
+  statusLiquidado, valorPagoEfetivo, prazoComGate, diasCoberturaProjetado,
 } from '../aging-helpers';
 
 describe('faixaAging', () => {
@@ -74,6 +74,44 @@ describe('valorPagoEfetivo (robusto a valor_recebido NULL/0)', () => {
   });
   it('fallback face quando recebido 0 e saldo cheio (sem info de valor)', () => {
     expect(valorPagoEfetivo({ valor_recebido: 0, valor_documento: 100, saldo: 100 })).toBe(100);
+  });
+});
+
+describe('prazoComGate (PMR/PMP por cobertura)', () => {
+  it('cobertura >= min e valor presente → valor', () => {
+    expect(prazoComGate(30, 1.0)).toBe(30);
+    expect(prazoComGate(30, 0.4)).toBe(30);
+  });
+  it('cobertura < min → null (amostra não-representativa)', () => {
+    expect(prazoComGate(30, 0.1)).toBe(null);
+  });
+  it('valor null/undefined → null', () => {
+    expect(prazoComGate(null, 1.0)).toBe(null);
+    expect(prazoComGate(undefined, 1.0)).toBe(null);
+  });
+  it('cobertura null/undefined → null', () => {
+    expect(prazoComGate(30, null)).toBe(null);
+    expect(prazoComGate(30, undefined)).toBe(null);
+  });
+});
+
+describe('diasCoberturaProjetado (caixa operacional projetado)', () => {
+  it('saldo / saída diária média do horizonte', () => {
+    // 91000 de saída em 13 sem (91 dias) → 1000/dia; saldo 30000 → 30 dias
+    expect(diasCoberturaProjetado(30000, 91000, 13)).toBeCloseTo(30, 5);
+  });
+  it('saldo <= 0 → 0 (crítico)', () => {
+    expect(diasCoberturaProjetado(0, 91000, 13)).toBe(0);
+    expect(diasCoberturaProjetado(-500, 91000, 13)).toBe(0);
+  });
+  it('sem base de saída → null (não 999/infinito)', () => {
+    expect(diasCoberturaProjetado(30000, 0, 13)).toBe(null);
+  });
+  it('horizon 0 não divide por zero (clamp do divisor em 1)', () => {
+    // saidaDiaria = 7000 / max(1, 0) = 7000; dias = 7000/7000 = 1 (finito, sem NaN/Infinity)
+    const r = diasCoberturaProjetado(7000, 7000, 0);
+    expect(r).toBe(1);
+    expect(Number.isFinite(r as number)).toBe(true);
   });
 });
 

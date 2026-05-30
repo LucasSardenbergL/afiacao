@@ -3,17 +3,21 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { AlertTriangle, CheckCircle2, Loader2, Wand2 } from 'lucide-react';
 import type { ValidacaoResult } from './types';
+import type { SugestaoSegura } from '@/lib/reposicao/sayerlack-sku';
 
 interface ValidacaoDialogProps {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   validando: boolean;
   validacao: ValidacaoResult | null;
+  gravarSeguros: (seguros: SugestaoSegura[]) => void;
+  gravandoSeguros: boolean;
 }
 
-export function ValidacaoDialog({ open, onOpenChange, validando, validacao }: ValidacaoDialogProps) {
+export function ValidacaoDialog({ open, onOpenChange, validando, validacao, gravarSeguros, gravandoSeguros }: ValidacaoDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
@@ -43,6 +47,49 @@ export function ValidacaoDialog({ open, onOpenChange, validando, validacao }: Va
                 <div className="text-2xl font-bold">{validacao.manuais}</div>
               </CardContent></Card>
             </div>
+
+            {validacao.sugestoes && validacao.gabarito && (
+              <div className="rounded-md border border-status-info/40 bg-status-info-bg p-3 space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Wand2 className="h-4 w-4 text-status-info" />
+                  Auto-preenchimento (código embutido na descrição)
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Gate: o parser reproduz <b>{validacao.gabarito.batem}</b> de{' '}
+                  {validacao.gabarito.batem + validacao.gabarito.divergem.length + validacao.gabarito.naoValidavel} mapeamentos manuais
+                  {validacao.gabarito.divergem.length > 0 && (
+                    <> · <span className="text-status-warning">{validacao.gabarito.divergem.length} divergência(s) pra revisar</span></>
+                  )}
+                </div>
+                {validacao.gabarito.divergem.length > 0 && (
+                  <div className="max-h-24 overflow-y-auto text-xs font-mono space-y-0.5 text-status-warning">
+                    {validacao.gabarito.divergem.map((d) => (
+                      <div key={d.sku_omie}>{d.sku_omie}: salvo <b>{d.salvo}</b> ≠ extraído <b>{d.extraido}</b></div>
+                    ))}
+                  </div>
+                )}
+                {validacao.sugestoes.seguros.length > 0 ? (
+                  <>
+                    <div className="max-h-40 overflow-y-auto text-xs font-mono space-y-0.5 border-t pt-2">
+                      {validacao.sugestoes.seguros.map((s) => (
+                        <div key={s.sku_omie}>{s.sku_omie} → <b>{s.sku_portal}</b> <span className="text-muted-foreground">({s.sufixo})</span></div>
+                      ))}
+                    </div>
+                    <Button size="sm" onClick={() => gravarSeguros(validacao.sugestoes!.seguros)} disabled={gravandoSeguros}>
+                      {gravandoSeguros ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Wand2 className="h-4 w-4 mr-1" />}
+                      Gravar {validacao.sugestoes.seguros.length} automaticamente (fator 1 · revise)
+                    </Button>
+                  </>
+                ) : (
+                  <div className="text-xs text-muted-foreground border-t pt-2">Nenhum código novo extraível dos faltantes.</div>
+                )}
+                {(validacao.sugestoes.semCodigo.length > 0 || validacao.sugestoes.multiplos.length > 0) && (
+                  <div className="text-xs text-muted-foreground">
+                    Revisão manual: {validacao.sugestoes.semCodigo.length} sem código · {validacao.sugestoes.multiplos.length} com múltiplos códigos
+                  </div>
+                )}
+              </div>
+            )}
 
             {validacao.faltantes.length > 0 ? (
               <Alert variant="destructive">

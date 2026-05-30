@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **110** custom migrations totais
-- **494** objetos esperados (criados por estas migrations)
+- **126** custom migrations totais
+- **542** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 139
-  - `index`: 96
-  - `cron_job`: 84
-  - `function`: 83
-  - `table`: 57
-  - `trigger`: 31
+  - `rls_policy`: 146
+  - `index`: 104
+  - `function`: 103
+  - `cron_job`: 89
+  - `table`: 62
+  - `trigger`: 34
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1029,6 +1029,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `cron_job` | `cron.sayerlack-portal-lote-retry` | — |
 
+### `20260528040000_sayerlack_retry_motor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sayerlack_retry_motor_log` | — |
+| `function` | `public.sayerlack_retry_orfaos` | — |
+| `cron_job` | `cron.sayerlack-retry-orfaos` | — |
+
 ### `20260528120000_reposicao_custo_cmc_em_transito.sql`
 
 | Tipo | Objeto | Parent |
@@ -1054,6 +1062,125 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public._data_health_compute` | — |
+
+### `20260528140000_whatsapp_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.whatsapp_webhook_events` | — |
+| `table` | `public.whatsapp_conversations` | — |
+| `table` | `public.whatsapp_messages` | — |
+| `index` | `public.idx_wa_conv_customer` | `whatsapp_conversations` |
+| `index` | `public.idx_wa_conv_operator` | `whatsapp_conversations` |
+| `index` | `public.idx_wa_conv_last_msg` | `whatsapp_conversations` |
+| `index` | `public.idx_wa_msg_conv` | `whatsapp_messages` |
+| `rls_policy` | `public.wa_events_staff_select` | `whatsapp_webhook_events` |
+| `rls_policy` | `public.wa_conv_staff_all` | `whatsapp_conversations` |
+| `rls_policy` | `public.wa_msg_staff_all` | `whatsapp_messages` |
+
+### `20260528150000_fin_estoque_omie_feed.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_estimar_estoque_omie` | — |
+| `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
+| `cron_job` | `cron.sync-inventory-servicos-1h` | — |
+
+### `20260528194751_data_health_consolida_last_error_e_reposicao_checks.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260530120000_visitas_agendadas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.visitas_agendadas` | — |
+| `index` | `public.uq_vag_pendente_cliente_vendedor_data` | `visitas_agendadas` |
+| `index` | `public.uq_vag_route_visit_id` | `visitas_agendadas` |
+| `index` | `public.idx_vag_scheduled_by_date` | `visitas_agendadas` |
+| `index` | `public.idx_vag_pending_by_seller` | `visitas_agendadas` |
+| `function` | `public.set_updated_at_visitas_agendadas` | — |
+| `function` | `public.reconcile_visita_agendada` | — |
+| `trigger` | `public.trg_vag_updated_at` | `visitas_agendadas` |
+| `trigger` | `public.trg_reconcile_visita_agendada` | `route_visits` |
+| `rls_policy` | `public.vag_select_own` | `visitas_agendadas` |
+| `rls_policy` | `public.vag_insert_own_carteira` | `visitas_agendadas` |
+| `rls_policy` | `public.vag_update_own_pending` | `visitas_agendadas` |
+| `rls_policy` | `public.vag_delete_gestor` | `visitas_agendadas` |
+
+### `20260530140000_fin_watchdog_sync_stale_grace_email.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_check` | — |
+
+### `20260530143818_reposicao_excluir_405ml.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260530160000_data_health_diagnostico_gate_status.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20260530170000_unschedule_sayerlack_lote_retry.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260530180000_fix_sku_fornecedor_externo_atualizado_em_trigger.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.set_atualizado_em_column` | — |
+| `trigger` | `public.sku_fornecedor_externo_set_atualizado_em` | `sku_fornecedor_externo` |
+
+### `20260530190000_data_health_portal_push.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260530190000_reposicao_preencher_parametros_faltantes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.preencher_parametros_faltantes_skus` | — |
+| `cron_job` | `cron.reposicao-preencher-parametros-faltantes` | — |
+
+### `20260530200000_data_health_checks_acionaveis.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20260530200000_reposicao_classificar_sayerlack_grupo_default.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.classificar_sayerlack_grupo_default` | — |
+| `cron_job` | `cron.reposicao-classificar-sayerlack-grupo` | — |
+
+### `20260530210000_data_health_restaura_portal_split.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260530210001_cancelar_pedido_limpa_portal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cancelar_pedido_sugerido` | — |
 
 ### `20260530230000_fix_portal_lock_retry_blindspot.sql`
 
