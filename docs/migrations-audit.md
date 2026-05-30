@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **125** custom migrations totais
-- **541** objetos esperados (criados por estas migrations)
+- **126** custom migrations totais
+- **555** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 146
-  - `index`: 104
+  - `rls_policy`: 153
+  - `index`: 107
   - `function`: 102
   - `cron_job`: 89
-  - `table`: 62
+  - `table`: 66
   - `trigger`: 34
   - `enum_value`: 4
 
@@ -1085,6 +1085,25 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.fin_estimar_estoque_omie` | — |
 | `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
 | `cron_job` | `cron.sync-inventory-servicos-1h` | — |
+
+### `20260528160000_route_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.route_schedule` | — |
+| `table` | `public.route_calendar_override` | — |
+| `table` | `public.route_disparo_config` | — |
+| `table` | `public.route_contact_log` | — |
+| `index` | `public.idx_route_schedule_weekday` | `route_schedule` |
+| `index` | `public.idx_route_contact_log_customer` | `route_contact_log` |
+| `index` | `public.idx_route_contact_log_data` | `route_contact_log` |
+| `rls_policy` | `public.route_sched_staff_read` | `route_schedule` |
+| `rls_policy` | `public.route_sched_master_write` | `route_schedule` |
+| `rls_policy` | `public.route_override_staff_read` | `route_calendar_override` |
+| `rls_policy` | `public.route_override_master_write` | `route_calendar_override` |
+| `rls_policy` | `public.route_config_staff_read` | `route_disparo_config` |
+| `rls_policy` | `public.route_config_master_write` | `route_disparo_config` |
+| `rls_policy` | `public.route_log_staff_read` | `route_contact_log` |
 
 ### `20260528194751_data_health_consolida_last_error_e_reposicao_checks.sql`
 

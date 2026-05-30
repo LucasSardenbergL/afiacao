@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 125
+-- Total de custom migrations: 126
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -132,6 +132,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260528140000', 'data_health_compute_msg_tz', '20260528140000_data_health_compute_msg_tz.sql'),
   ('20260528140000', 'whatsapp_fundacao', '20260528140000_whatsapp_fundacao.sql'),
   ('20260528150000', 'fin_estoque_omie_feed', '20260528150000_fin_estoque_omie_feed.sql'),
+  ('20260528160000', 'route_fundacao', '20260528160000_route_fundacao.sql'),
   ('20260528194751', 'data_health_consolida_last_error_e_reposicao_checks', '20260528194751_data_health_consolida_last_error_e_reposicao_checks.sql'),
   ('20260530120000', 'visitas_agendadas', '20260530120000_visitas_agendadas.sql'),
   ('20260530140000', 'fin_watchdog_sync_stale_grace_email', '20260530140000_fin_watchdog_sync_stale_grace_email.sql'),
@@ -672,6 +673,20 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_estoque_omie_feed', 'function', 'public', 'fin_estimar_estoque_omie', ''),
   ('fin_estoque_omie_feed', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
   ('fin_estoque_omie_feed', 'cron_job', 'cron', 'sync-inventory-servicos-1h', ''),
+  ('route_fundacao', 'table', 'public', 'route_schedule', ''),
+  ('route_fundacao', 'table', 'public', 'route_calendar_override', ''),
+  ('route_fundacao', 'table', 'public', 'route_disparo_config', ''),
+  ('route_fundacao', 'table', 'public', 'route_contact_log', ''),
+  ('route_fundacao', 'index', 'public', 'idx_route_schedule_weekday', 'route_schedule'),
+  ('route_fundacao', 'index', 'public', 'idx_route_contact_log_customer', 'route_contact_log'),
+  ('route_fundacao', 'index', 'public', 'idx_route_contact_log_data', 'route_contact_log'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_sched_staff_read', 'route_schedule'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_sched_master_write', 'route_schedule'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_override_staff_read', 'route_calendar_override'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_override_master_write', 'route_calendar_override'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_config_staff_read', 'route_disparo_config'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_config_master_write', 'route_disparo_config'),
+  ('route_fundacao', 'rls_policy', 'public', 'route_log_staff_read', 'route_contact_log'),
   ('data_health_consolida_last_error_e_reposicao_checks', 'function', 'public', '_data_health_compute', ''),
   ('data_health_consolida_last_error_e_reposicao_checks', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('visitas_agendadas', 'table', 'public', 'visitas_agendadas', ''),
