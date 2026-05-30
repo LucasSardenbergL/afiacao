@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { margemContribuicao, arMedioTTM, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit } from '../valor-cockpit-helpers';
+import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit } from '../valor-cockpit-helpers';
+
+// helper de fixture: TituloAR completo com defaults (reduz ruído nos casos)
+function tit(p: Partial<Parameters<typeof arMedioTTM>[0]['titulos'][number]>) {
+  return {
+    valor_documento: 1000, saldo: 0, valor_recebido: 0,
+    data_emissao: '2025-06-01', data_vencimento: null, data_baixa_derivada: null, status: 'ABERTO',
+    ...p,
+  };
+}
 
 describe('margemContribuicao', () => {
   it('receita − custo×qtd', () => {
@@ -13,29 +22,62 @@ describe('margemContribuicao', () => {
   });
 });
 
-describe('arMedioTTM', () => {
+describe('statusLiquidadoAR', () => {
+  it('RECEBIDO/LIQUIDADO/PAGO → true; aberto/null → false', () => {
+    expect(statusLiquidadoAR('RECEBIDO')).toBe(true);
+    expect(statusLiquidadoAR('PAGO')).toBe(true);
+    expect(statusLiquidadoAR('A VENCER')).toBe(false);
+    expect(statusLiquidadoAR('ATRASADO')).toBe(false);
+    expect(statusLiquidadoAR(null)).toBe(false);
+  });
+});
+
+describe('arMedioTTM (status + baixa derivada)', () => {
   const win = { ttm_inicio: '2025-06-01', ttm_fim: '2026-06-01' }; // 365 dias
   it('título aberto a janela inteira: média ≈ saldo', () => {
-    const a = arMedioTTM({
-      titulos: [{ valor_documento: 1000, saldo: 1000, data_emissao: '2025-06-01', data_recebimento: null, status: 'ABERTO' }],
-      ...win,
-    });
-    expect(a).toBeCloseTo(1000, 0);
+    const a = arMedioTTM({ titulos: [tit({ saldo: 1000, status: 'A VENCER' })], ...win });
+    expect(a.ar_medio).toBeCloseTo(1000, 0);
   });
-  it('título recebido na metade: contribui metade do tempo', () => {
-    const a = arMedioTTM({
-      titulos: [{ valor_documento: 1000, saldo: 0, data_emissao: '2025-06-01', data_recebimento: '2025-12-01', status: 'RECEBIDO' }],
-      ...win,
-    });
-    // ~183 dias aberto / 365 × 1000 ≈ 501
-    expect(a).toBeGreaterThan(450);
-    expect(a).toBeLessThan(550);
+  it('liquidado fechado na metade (baixa derivada): contribui metade + v_real', () => {
+    const a = arMedioTTM({ titulos: [tit({ saldo: 1000, status: 'RECEBIDO', data_baixa_derivada: '2025-12-01' })], ...win });
+    // ~183 dias aberto / 365 × valor_documento(1000) ≈ 501; usa valor_documento, NÃO o saldo cheio
+    expect(a.ar_medio).toBeGreaterThan(450);
+    expect(a.ar_medio).toBeLessThan(550);
+    expect(a.v_real).toBe(1000);
+    expect(a.v_proxy).toBe(0);
+  });
+  it('liquidado SEM baixa derivada usa VENCIMENTO como proxy (não exclui) → v_proxy', () => {
+    const a = arMedioTTM({ titulos: [tit({ saldo: 1000, status: 'RECEBIDO', data_vencimento: '2025-12-01' })], ...win });
+    expect(a.ar_medio).toBeGreaterThan(450); // fecha no vencimento, mesma contribuição ~501
+    expect(a.ar_medio).toBeLessThan(550);
+    expect(a.v_proxy).toBe(1000);
+    expect(a.v_real).toBe(0);
+  });
+  it('liquidado SEM baixa nem vencimento → excluído (v_sem_fecho), não infla a AR', () => {
+    // saldo cheio (1000) — se contasse como aberto a janela toda, ar_medio ≈ 1000
+    const a = arMedioTTM({ titulos: [tit({ saldo: 1000, status: 'RECEBIDO' })], ...win });
+    expect(a.ar_medio).toBe(0);
+    expect(a.v_sem_fecho).toBe(1000);
+  });
+  it('liquidado usa valor_documento, NÃO o saldo cheio (#396)', () => {
+    // saldo cheio 5000, valor_documento 1000, fecha na metade → ~501 (não ~2500)
+    const a = arMedioTTM({ titulos: [tit({ valor_documento: 1000, saldo: 5000, status: 'LIQUIDADO', data_baixa_derivada: '2025-12-01' })], ...win });
+    expect(a.ar_medio).toBeLessThan(550);
+  });
+  it('liquidado fechado ANTES da janela → contribui 0 e não conta cobertura', () => {
+    const a = arMedioTTM({ titulos: [tit({ data_emissao: '2025-01-01', status: 'RECEBIDO', data_baixa_derivada: '2025-03-01' })], ...win });
+    expect(a.ar_medio).toBe(0);
+    expect(a.v_real).toBe(0); // não contribuiu na janela → fora da cobertura
+  });
+  it('aberto com saldo estranho (0) → fallback valor_documento − valor_recebido', () => {
+    const a = arMedioTTM({ titulos: [tit({ valor_documento: 1000, saldo: 0, valor_recebido: 300, status: 'A VENCER' })], ...win });
+    expect(a.ar_medio).toBeCloseTo(700, 0); // 1000 − 300, janela inteira
   });
   it('sem data_emissao → ignora o título', () => {
-    expect(arMedioTTM({ titulos: [{ valor_documento: 9999, saldo: 9999, data_emissao: null, data_recebimento: null, status: 'ABERTO' }], ...win })).toBe(0);
+    expect(arMedioTTM({ titulos: [tit({ data_emissao: null })], ...win }).ar_medio).toBe(0);
   });
   it('sem títulos → 0', () => {
-    expect(arMedioTTM({ titulos: [], ...win })).toBe(0);
+    expect(arMedioTTM({ titulos: [], ...win }).ar_medio).toBe(0);
   });
 });
 

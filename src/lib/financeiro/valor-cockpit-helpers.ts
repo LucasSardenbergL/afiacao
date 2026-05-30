@@ -12,28 +12,64 @@ function diasEntre(a: string, b: string): number {
 function maxData(a: string, b: string): string { return a >= b ? a : b; }
 function minData(a: string, b: string): string { return a <= b ? a : b; }
 
+// Liquidação por STATUS (o vocabulário real do banco: 'A VENCER'/'ATRASADO'/'VENCE HOJE'
+// = aberto; 'RECEBIDO'/'PAGO'/'LIQUIDADO' = liquidado). A coluna data_recebimento é
+// sempre NULL no LIST do Omie → não dá pra usar como sinal de liquidação.
+const STATUS_LIQUIDADO_AR = ['RECEBIDO', 'LIQUIDADO', 'PAGO'];
+export function statusLiquidadoAR(status: string | null | undefined): boolean {
+  return !!status && STATUS_LIQUIDADO_AR.includes(status);
+}
+
 export type TituloAR = {
-  valor_documento: number; saldo: number;
-  data_emissao: string | null; data_recebimento: string | null; status: string;
+  valor_documento: number; saldo: number; valor_recebido: number;
+  data_emissao: string | null;
+  data_vencimento: string | null;
+  // baixa REAL derivada de v_titulo_baixas (NÃO a coluna base data_recebimento, sempre NULL)
+  data_baixa_derivada: string | null;
+  status: string;
+};
+
+export type ARMedioResult = {
+  ar_medio: number;    // saldo médio em aberto (time-weighted) na janela
+  v_real: number;      // Σ valor_documento liquidado fechado por baixa derivada REAL (que contribuiu)
+  v_proxy: number;     // Σ valor_documento liquidado fechado por vencimento (proxy, sem baixa)
+  v_sem_fecho: number; // Σ valor_documento liquidado SEM baixa nem vencimento (excluído da AR)
 };
 
 // Saldo médio em aberto (time-weighted) na janela [ttm_inicio, ttm_fim).
-// Aproximação documentada: título recebido contribui `valor_documento` de emissão→recebimento;
-// título em aberto contribui `saldo` de emissão→fim. Ignora cronologia de pagamentos parciais.
-export function arMedioTTM(input: { titulos: TituloAR[]; ttm_inicio: string; ttm_fim: string }): number {
+// Liquidação por STATUS (a coluna data_recebimento é sempre NULL); o FECHAMENTO do título
+// liquidado vem da baixa derivada (v_titulo_baixas) ou, na falta, do VENCIMENTO (proxy
+// marcado em v_proxy — NÃO excluir, que reduziria a AR e inflaria o EVP = otimista).
+// Liquidado contribui `valor_documento` (face que esteve em aberto); `saldo` é cheio/enganoso
+// p/ liquidado (#396). Aberto contribui `saldo` (fallback doc−recebido se saldo estranho).
+// v_real/v_proxy só contam títulos que de fato contribuem na janela (dias>0) → cobertura limpa.
+export function arMedioTTM(input: { titulos: TituloAR[]; ttm_inicio: string; ttm_fim: string }): ARMedioResult {
   const janelaDias = diasEntre(input.ttm_inicio, input.ttm_fim);
-  if (janelaDias <= 0) return 0;
-  let soma = 0;
+  if (janelaDias <= 0) return { ar_medio: 0, v_real: 0, v_proxy: 0, v_sem_fecho: 0 };
+  let soma = 0, v_real = 0, v_proxy = 0, v_sem_fecho = 0;
   for (const t of input.titulos) {
     if (!t.data_emissao) continue;
+    const liquidado = statusLiquidadoAR(t.status);
     const inicioOpen = maxData(t.data_emissao, input.ttm_inicio);
-    const fimOpen = t.data_recebimento ? minData(t.data_recebimento, input.ttm_fim) : input.ttm_fim;
-    const dias = diasEntre(inicioOpen, fimOpen);
+    let fimOpen: string;
+    let valor: number;
+    let real = false;
+    if (liquidado) {
+      const fecho = t.data_baixa_derivada ?? t.data_vencimento ?? null;
+      if (fecho == null) { v_sem_fecho += t.valor_documento; continue; } // sabe QUE quitou, não QUANDO
+      fimOpen = minData(fecho, input.ttm_fim);
+      valor = t.valor_documento;
+      real = !!t.data_baixa_derivada;
+    } else {
+      fimOpen = input.ttm_fim;
+      valor = (Number.isFinite(t.saldo) && t.saldo > 0) ? t.saldo : Math.max(0, t.valor_documento - (t.valor_recebido || 0));
+    }
+    const dias = Math.max(0, diasEntre(inicioOpen, fimOpen));
     if (dias <= 0) continue;
-    const valor = t.data_recebimento ? t.valor_documento : t.saldo;
     soma += valor * dias;
+    if (liquidado) { if (real) v_real += t.valor_documento; else v_proxy += t.valor_documento; }
   }
-  return soma / janelaDias;
+  return { ar_medio: soma / janelaDias, v_real, v_proxy, v_sem_fecho };
 }
 
 export type ComboInput = { cliente: string; sku: string; receita_liquida: number; quantidade: number; custo_unitario: number | null };
