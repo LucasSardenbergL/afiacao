@@ -285,6 +285,16 @@ function prazoComGate(
 ): number | null {
   return (cobertura ?? 0) >= min && valor != null ? Number(valor) : null;
 }
+// Espelho de aging-helpers.ts (Fase 3 B2): dias_cobertura do caixa operacional projetado.
+function diasCoberturaProjetado(
+  saldoCc: number,
+  saidasHorizonte: number,
+  horizonWeeks: number,
+): number | null {
+  if (saldoCc <= 0) return 0;
+  const saidaDiaria = saidasHorizonte / Math.max(1, horizonWeeks * 7);
+  return saidaDiaria > 0.01 ? saldoCc / saidaDiaria : null;
+}
 
 const FAIXAS: Faixa[] = ['a_vencer', '1-30', '31-60', '61-90', '+90'];
 
@@ -1004,7 +1014,8 @@ function calcularNCG(dados: DadosBase): NCG {
 }
 
 type Indicadores = {
-  dias_cobertura: number;
+  // null quando não há base de saída projetada (Fase 3 B2) → alerta de cobertura pula.
+  dias_cobertura: number | null;
   liquidez_operacional_liquida: number;
   saldo_tesouraria: number;
   inadimplencia_pct: number;
@@ -1020,14 +1031,19 @@ type Indicadores = {
 function calcularIndicadores(
   dados: DadosBase,
   ncg: NCG,
+  saidasHorizonte: number,
+  horizonWeeks: number,
+  company?: string,
 ): Indicadores {
   const hoje = new Date().toISOString().slice(0, 10);
-  const cutoff90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const saidasUltimos90 = dados.cps
-    .filter(c => c.data_pagamento && c.data_pagamento >= cutoff90)
-    .reduce((s, c) => s + c.valor_pago, 0);
-  const saidaDiariaMedia = saidasUltimos90 / 90;
-  const dias_cobertura = saidaDiariaMedia > 0 ? dados.saldo_cc / saidaDiariaMedia : 999;
+  // Fase 3 (B2): dias_cobertura do CAIXA OPERACIONAL PROJETADO, não da coluna base
+  // data_pagamento (sempre NULL → dava 999 "infinito" e desligava o alerta). Saída
+  // diária = Σ total_saidas do horizonte / (horizon*7) = CP por vencimento + folha/
+  // impostos (eventos) — operacional por construção, SEM transferência entre contas
+  // próprias (que não entram em CP/eventos). saldo<=0 → 0 (crítico); saída ~0 → null
+  // ("sem base de saída", não cobertura infinita); o alerta pula quando null. (codex)
+  const dias_cobertura = diasCoberturaProjetado(dados.saldo_cc, saidasHorizonte, horizonWeeks);
+  console.log(`[Cashflow][${company ?? '?'}] dias_cobertura=${dias_cobertura ?? 'null'} saidas_horizonte=${saidasHorizonte.toFixed(2)}`);
 
   const liquidez_operacional_liquida = dados.saldo_cc + ncg.aco.cr_aberto + ncg.aco.estoque - ncg.pco.total;
   const saldo_tesouraria = dados.saldo_cc - ncg.pco.folha_30d;
@@ -1126,7 +1142,8 @@ function avaliarAlertas(
     });
   }
 
-  if (indicadores.dias_cobertura < t.dias_cobertura_min) {
+  // dias_cobertura null = sem base de saída projetada → não dá pra avaliar (pula, não floda).
+  if (indicadores.dias_cobertura !== null && indicadores.dias_cobertura < t.dias_cobertura_min) {
     alertas.push({
       tipo: 'cobertura_baixa',
       severidade: 'aviso',
@@ -1194,7 +1211,9 @@ async function calcular(
   const premissas = aplicarCenario(taxas, cenario, dados.config, dados.curvas_aging);
   const { semanas, apos_horizonte, ar_impaired } = gerarSemanas(dados, premissas, horizon);
   const ncg = calcularNCG(dados);
-  const indicadores = calcularIndicadores(dados, ncg);
+  // Fase 3 (B2): saída operacional projetada do horizonte → dias_cobertura.
+  const saidasHorizonte = semanas.reduce((s, w) => s + w.total_saidas, 0);
+  const indicadores = calcularIndicadores(dados, ncg, saidasHorizonte, horizon, company);
   const alertas = avaliarAlertas(semanas, ncg, indicadores, dados.config);
 
   // Auditoria: premissas aplicadas (curvas c/ cenário) + curvas calibradas puras + ponte.

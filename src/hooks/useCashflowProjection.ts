@@ -33,7 +33,8 @@ export type CashflowResult = {
   semanas: Semana[];
   ncg: NCGData;
   indicadores: {
-    dias_cobertura: number;
+    // null quando não há base de saída projetada (Fase 3 B2) → consumidor trata "—".
+    dias_cobertura: number | null;
     liquidez_operacional_liquida: number;
     saldo_tesouraria: number;
     inadimplencia_pct: number;
