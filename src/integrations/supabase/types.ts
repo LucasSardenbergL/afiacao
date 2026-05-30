@@ -2848,6 +2848,7 @@ export type Database = {
           dismissed_at: string | null
           dismissed_by: string | null
           dismissed_until: string | null
+          email_enfileirado_em: string | null
           id: string
           mensagem: string
           severidade: string
@@ -2862,6 +2863,7 @@ export type Database = {
           dismissed_at?: string | null
           dismissed_by?: string | null
           dismissed_until?: string | null
+          email_enfileirado_em?: string | null
           id?: string
           mensagem: string
           severidade: string
@@ -2876,6 +2878,7 @@ export type Database = {
           dismissed_at?: string | null
           dismissed_by?: string | null
           dismissed_until?: string | null
+          email_enfileirado_em?: string | null
           id?: string
           mensagem?: string
           severidade?: string
