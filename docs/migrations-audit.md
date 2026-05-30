@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **116** custom migrations totais
-- **513** objetos esperados (criados por estas migrations)
+- **118** custom migrations totais
+- **518** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 142
   - `index`: 100
-  - `function`: 88
+  - `function`: 92
   - `cron_job`: 87
   - `table`: 61
-  - `trigger`: 31
+  - `trigger`: 32
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1108,6 +1108,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260530170000_unschedule_sayerlack_lote_retry.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260530180000_fix_sku_fornecedor_externo_atualizado_em_trigger.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.set_atualizado_em_column` | — |
+| `trigger` | `public.sku_fornecedor_externo_set_atualizado_em` | `sku_fornecedor_externo` |
+
+### `20260530190000_data_health_portal_push.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
 
 ## Próximos passos quando algo der `❌`
 
