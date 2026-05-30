@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **125** custom migrations totais
-- **541** objetos esperados (criados por estas migrations)
+- **126** custom migrations totais
+- **542** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 146
   - `index`: 104
-  - `function`: 102
+  - `function`: 103
   - `cron_job`: 89
   - `table`: 62
   - `trigger`: 34
@@ -1181,6 +1181,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.cancelar_pedido_sugerido` | — |
+
+### `20260530230000_fix_portal_lock_retry_blindspot.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.envio_portal_lock_candidatos` | — |
 
 ## Próximos passos quando algo der `❌`
 
