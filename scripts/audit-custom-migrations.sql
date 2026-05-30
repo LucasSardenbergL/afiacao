@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 115
+-- Total de custom migrations: 116
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -133,6 +133,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260528140000', 'whatsapp_fundacao', '20260528140000_whatsapp_fundacao.sql'),
   ('20260528150000', 'fin_estoque_omie_feed', '20260528150000_fin_estoque_omie_feed.sql'),
   ('20260528194751', 'data_health_consolida_last_error_e_reposicao_checks', '20260528194751_data_health_consolida_last_error_e_reposicao_checks.sql'),
+  ('20260530140000', 'fin_watchdog_sync_stale_grace_email', '20260530140000_fin_watchdog_sync_stale_grace_email.sql'),
   ('20260530143818', 'reposicao_excluir_405ml', '20260530143818_reposicao_excluir_405ml.sql'),
   ('20260530170000', 'unschedule_sayerlack_lote_retry', '20260530170000_unschedule_sayerlack_lote_retry.sql')
 )
@@ -664,6 +665,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_estoque_omie_feed', 'cron_job', 'cron', 'sync-inventory-servicos-1h', ''),
   ('data_health_consolida_last_error_e_reposicao_checks', 'function', 'public', '_data_health_compute', ''),
   ('data_health_consolida_last_error_e_reposicao_checks', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('fin_watchdog_sync_stale_grace_email', 'function', 'public', 'fin_sync_watchdog_check', ''),
   ('reposicao_excluir_405ml', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 )
 SELECT
