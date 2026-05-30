@@ -32,6 +32,7 @@ export default function AdminSkuMapeamento() {
     openValidar, setOpenValidar,
     validando, validacao,
     handleValidar,
+    gravarSeguros, gravandoSeguros,
   } = useSkuMapeamento();
 
   return (
@@ -94,6 +95,8 @@ export default function AdminSkuMapeamento() {
         onOpenChange={setOpenValidar}
         validando={validando}
         validacao={validacao}
+        gravarSeguros={gravarSeguros}
+        gravandoSeguros={gravandoSeguros}
       />
     </div>
   );
