@@ -95,10 +95,11 @@ SET search_path = public
 AS $$
 BEGIN
   -- Fecha a agenda pendente DEVIDA (scheduled_date <= data do check-in) MAIS ANTIGA
-  -- deste cliente+vendedor. O `<=` cobre visitas ATRASADAS (scheduled_date < hoje),
-  -- não só as do dia exato. Futuras (scheduled_date > visit_date) NÃO são fechadas.
-  -- Idempotente: o NOT EXISTS impede um mesmo route_visit fechar uma 2ª agenda num
-  -- eventual re-disparo (a unique em route_visit_id também barraria).
+  -- deste cliente+vendedor. O `<=` cobre visitas ATRASADAS (scheduled_date < hoje).
+  -- Futuras (scheduled_date > visit_date) NÃO são fechadas.
+  -- Os filtros externos `va.status='pendente' AND va.route_visit_id IS NULL` tornam
+  -- um 2º check-in concorrente um no-op (não sobrescreve o route_visit_id do 1º).
+  -- O NOT EXISTS impede um mesmo route_visit fechar uma 2ª agenda num re-disparo.
   UPDATE public.visitas_agendadas va
   SET status = 'realizada',
       route_visit_id = NEW.id,
@@ -113,6 +114,8 @@ BEGIN
     ORDER BY v.scheduled_date ASC
     LIMIT 1
   )
+  AND va.status = 'pendente'
+  AND va.route_visit_id IS NULL
   AND NOT EXISTS (
     SELECT 1 FROM public.visitas_agendadas v2 WHERE v2.route_visit_id = NEW.id
   );

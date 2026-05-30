@@ -121,7 +121,7 @@ CREATE POLICY "vag_delete_gestor" ON public.visitas_agendadas
 
 ## 6. Reconciliação — check-in fecha a agenda
 
-A função usa `scheduled_date <= NEW.visit_date` (cobre visitas **atrasadas**, não só o dia exato), fecha a pendente **mais antiga devida** (subquery ordenada por `scheduled_date ASC LIMIT 1`), exclui futuras (`scheduled_date > visit_date`), e é idempotente via `NOT EXISTS` (além da unique parcial em `route_visit_id`).
+A função usa `scheduled_date <= NEW.visit_date` (cobre visitas **atrasadas**, não só o dia exato), fecha a pendente **mais antiga devida** (subquery ordenada por `scheduled_date ASC LIMIT 1`), exclui futuras (`scheduled_date > visit_date`), e é idempotente via `NOT EXISTS` (além da unique parcial em `route_visit_id`). Os guards externos `va.status='pendente' AND va.route_visit_id IS NULL` no UPDATE tornam check-ins concorrentes seguros: o 2º não sobrescreve o `route_visit_id` já gravado pelo 1º.
 
 ```sql
 CREATE OR REPLACE FUNCTION public.reconcile_visita_agendada()
@@ -132,10 +132,11 @@ SET search_path = public
 AS $$
 BEGIN
   -- Fecha a agenda pendente DEVIDA (scheduled_date <= data do check-in) MAIS ANTIGA
-  -- deste cliente+vendedor. O `<=` cobre visitas ATRASADAS (scheduled_date < hoje),
-  -- não só as do dia exato. Futuras (scheduled_date > visit_date) NÃO são fechadas.
-  -- Idempotente: o NOT EXISTS impede um mesmo route_visit fechar uma 2ª agenda num
-  -- eventual re-disparo (a unique em route_visit_id também barraria).
+  -- deste cliente+vendedor. O `<=` cobre visitas ATRASADAS (scheduled_date < hoje).
+  -- Futuras (scheduled_date > visit_date) NÃO são fechadas.
+  -- Os filtros externos `va.status='pendente' AND va.route_visit_id IS NULL` tornam
+  -- um 2º check-in concorrente um no-op (não sobrescreve o route_visit_id do 1º).
+  -- O NOT EXISTS impede um mesmo route_visit fechar uma 2ª agenda num re-disparo.
   UPDATE public.visitas_agendadas va
   SET status = 'realizada',
       route_visit_id = NEW.id,
@@ -150,6 +151,8 @@ BEGIN
     ORDER BY v.scheduled_date ASC
     LIMIT 1
   )
+  AND va.status = 'pendente'
+  AND va.route_visit_id IS NULL
   AND NOT EXISTS (
     SELECT 1 FROM public.visitas_agendadas v2 WHERE v2.route_visit_id = NEW.id
   );
@@ -166,6 +169,7 @@ CREATE TRIGGER trg_reconcile_visita_agendada
 
 - **`scheduled_date <= NEW.visit_date`**: cobre visitas atrasadas (agendadas pro passado, check-in feito hoje) — o bug original usava `=` e nunca reconciliava visitas em atraso porque `route_visits.visit_date` defaulta pra `CURRENT_DATE`. Futuras (`scheduled_date > visit_date`) **não** são fechadas.
 - **Subquery + `ORDER BY scheduled_date ASC LIMIT 1`**: fecha a mais antiga devida quando há mais de uma pendente — comportamento determinístico e conservador (fecha só uma por check-in).
+- **`va.status='pendente' AND va.route_visit_id IS NULL` (outer WHERE)**: guard de concorrência — um 2º check-in concorrente do mesmo cliente+vendedor encontra a linha já com `status='realizada'` e `route_visit_id` preenchido pelo 1º, e vira no-op. Sem esses dois filtros, o 2º UPDATE sobrescreveria o `route_visit_id` já gravado (link loss).
 - **`NOT EXISTS`**: guard de idempotência extra — se o trigger re-disparar (UPDATE de `check_in_at`), não fecha uma 2ª agenda com o mesmo `route_visit_id` (a unique parcial `uq_vag_route_visit_id` também barraria no banco).
 - `SECURITY DEFINER` + `SET search_path=public`: roda como owner (ignora GRANT por coluna e RLS), por isso consegue setar `realizada`+`route_visit_id`.
 - Convive com o trigger existente `enqueue_visit_score_recalc_from_visit` (triggers independentes).
