@@ -694,3 +694,39 @@ ON public.venda_items_history (empresa, sku_codigo_omie, data_emissao) WHERE qua
 - **Trade-off LT longo:** com ponto capado pela cobertura, item de LT > cap_dias pode romper antes do
   reabastecimento na 1ª compra. Aceitável (conservador no capital; após a 1ª compra o item ganha histórico
   e os params normais recalculam). Registrado.
+
+## 🏛️ ARQUITETURA FINAL — Opção B (view derivada) + 3º consult codex (2026-05-30)
+
+**Mudança de arquitetura (precede tudo acima onde conflitar):** em vez de `CREATE OR REPLACE` da view-mãe
+`v_sku_parametros_sugeridos` (lida por 8+ consumidores → raio de explosão alto), criei uma **VIEW DERIVADA
+nova** `v_sku_candidatos_primeira_compra` (migration `20260530210000_*`) que lê da mãe (intocada) + a
+CTE `recorrencia_180d` + `sku_parametros`. **A view-mãe NÃO é modificada** → zero risco pros consumidores
+existentes; aplicação trivial (`CREATE VIEW`, não 300-linha `CREATE OR REPLACE`); dispensa o A0 (pg_get_viewdef).
+A lógica de filtro é a do BLOCO 0 (report-first), já validada em prod (22 candidatos). O EOQ é recalculado na
+derivada (a mãe expõe `*_sugerido=NULL` fora do status OK, mas expõe `custo_pedido_aplicado`/`custo_capital_efetivo_perc`/`preco_item_eoq`).
+
+**3º consult codex (adversarial na Opção B) — incorporado na migration:**
+- **P1 (candidato sem linha em `sku_parametros` → promoção UPDATE retorna 0 silencioso):** `INNER JOIN
+  sku_parametros` (não LEFT) → só lista o promovível; alinha view↔RPC.
+- **P4 (predicados view vs RPC divergiam):** view usa os MESMOS 3 predicados da RPC (`ponto IS NULL AND
+  estoque_maximo IS NULL AND habilitado=false`).
+- **P5 (EOQ):** `AND v.demanda_media_diaria > 0` explícito no WHERE.
+- **P6 (perf):** `ORDER BY` removido da view (a UI ordena via `.order`). count:exact mantido (volume ~22,
+  uso esporádico); materializar é v2 se crescer.
+- **EOQ verbatim confirmado** pelo codex (custo_capital_efetivo_perc/100 == cm_anual da mãe).
+
+**Trade-offs registrados (codex P2/P3/P7, aceitos pra v1):**
+- **Semântica "primeira compra":** o gate é de VENDA (num_ordens<2), não prova "nunca comprado". A trilha
+  captura "vende recorrente + fora da reposição automática" (pode incluir item comprado manualmente antes).
+  **Mitigado:** copy honesto ("fora da reposição automática", não "nunca comprado") + o motor **auto-protege
+  contra encalhe** (só compra se `estoque_efetivo ≤ ponto_pedido` — item já estocado não dispara). Não
+  filtrei `n_compras` (não excluir candidatos válidos; risco absoluto baixo — venda rara → d baixo → qtde baixa).
+- **Cap não-global:** `estoque_maximo = ponto + lote` (ambos capados a cap_cobertura) → em estoque 0 compra
+  até ~2×cap_cobertura no pior caso (LT ≥ cap_dias). Aceitável: é o comportamento normal de reposição (cobrir
+  LT + giro); qtde absoluta é baixa (d baixo); a UI exibe o estoque-alvo p/ revisão. Cap global = v2 se preciso.
+- **RLS:** view `security_invoker` → validar leitura com JWT de staff (não service_role) no smoke. A tela de
+  revisão já lê a mãe + `sku_parametros`; `venda_items_history` é lida pelas sub-views da mãe → staff passa.
+
+**Frontend (Opção B):** o hook lê `.from("v_sku_candidatos_primeira_compra" as never)` (view nova não está
+nos types gerados até regen; cast `as never`, sem `any` → passa o lint). A view expõe `status_sugestao =
+'CANDIDATO_PRIMEIRA_COMPRA'` constante p/ o mapeamento/SkuRow funcionarem igual.
