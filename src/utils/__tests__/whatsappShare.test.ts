@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { shareOrderViaWhatsApp } from '../whatsappShare';
 
-let openSpy: ReturnType<typeof vi.spyOn>;
+let openSpy: MockInstance<typeof window.open>;
 
 beforeEach(() => {
   openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
