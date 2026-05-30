@@ -1,6 +1,8 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Company } from "@/contexts/CompanyContext";
 import { agregarRealizadoPorDia } from "@/lib/financeiro/fluxo-realizado-helpers";
+import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/dso-dpo-helpers";
+import { OPEN_TITLE_STATUSES } from "@/lib/financeiro/titulo-status";
 import type {
   FinAgingPagarView,
   FinAgingReceberView,
@@ -804,6 +806,74 @@ export async function getLastSyncTime(): Promise<string | null> {
   }
 
   return latest;
+}
+
+// ═══════════════ Lente contábil agregada — DSO/DPO (colacor) ═══════════════
+
+/** Soma paginada do `saldo` dos títulos ABERTOS (robusto vs cap 1000 do PostgREST). */
+async function somarSaldoAberto(
+  tabela: 'fin_contas_receber' | 'fin_contas_pagar',
+  company: Company,
+): Promise<number> {
+  const PAGE = 1000;
+  const statuses = [...OPEN_TITLE_STATUSES];
+  let from = 0;
+  let total = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from(tabela)
+      .select('saldo')
+      .eq('company', company)
+      .in('status_titulo', statuses)
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as Array<{ saldo: number | null }>;
+    for (const r of rows) total += r.saldo ?? 0;
+    if (rows.length < PAGE) break;
+    from += PAGE;
+  }
+  return total;
+}
+
+/**
+ * DSO/DPO contábil agregado (point-in-time) do colacor — alternativa honesta ao
+ * PMR/PMP title-based (que fica em "—" pro colacor: liquida em lote, cobertura de
+ * baixa ~10%). NÃO usa data de baixa: saldo aberto de hoje ÷ fluxo do DRE TTM.
+ * Metodologia/degradação no helper. Client-side (sem edge/migration). Colacor-only (v1).
+ */
+export async function getDsoDpoColacor(hoje: Date = new Date()): Promise<DsoDpoResult> {
+  const company: Company = 'colacor';
+  const { pares, diasPeriodo, periodoLabel } = janelaTTM(hoje);
+
+  // DRE competência TTM: getDRE recebe 1 ano por chamada → agrupa os pares por ano.
+  const anos = Array.from(new Set(pares.map((p) => p.ano)));
+  let receitaBrutaTTM = 0;
+  let cmvTTM = 0;
+  let mesesFechados = 0;
+  for (const ano of anos) {
+    const meses = pares.filter((p) => p.ano === ano).map((p) => p.mes);
+    const dre = await getDRE(company, ano, meses, 'competencia');
+    for (const row of dre) {
+      receitaBrutaTTM += row.receita_bruta ?? 0;
+      cmvTTM += row.cmv ?? 0;
+      mesesFechados += 1;
+    }
+  }
+
+  const [arAberto, apAberto] = await Promise.all([
+    somarSaldoAberto('fin_contas_receber', company),
+    somarSaldoAberto('fin_contas_pagar', company),
+  ]);
+
+  return calcularDsoDpo({
+    arAberto,
+    apAberto,
+    receitaBrutaTTM,
+    cmvTTM,
+    mesesFechados,
+    diasPeriodo,
+    periodoLabel,
+  });
 }
 
 // ═══════════════ A2 — Retorno & Valor (contrato com fin-valor-engine) ═══════════════
