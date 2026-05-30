@@ -141,6 +141,8 @@ Ordem de aninhamento dos guards: `ProtectedRoute` → `AppShellLayout` → (cust
 
 **Validação de navegação:** mapeei todos os destinos clicáveis que um customer alcança (CustomerDashboard + 5 subcomponentes + `config.ts` `QUICK_ACTIONS` + páginas customer + `OnboardingWizard`). Os destinos reais são `/`, `/new-order`, `/orders`, `/profile`, `/tools`, `/gamification`, `/support`, `/training`, `/loyalty`, `/addresses` — **todos dentro da allowlist**. Nenhuma navegação legítima do cliente cai numa rota que será trancada.
 
+**Nota sobre "as 15 para o farmer do cliente" (decisão founder + codex, 2026-05-30):** as 15 telas são **self-scoped** — mostram dados do `user.id` LOGADO (`useCustomerPendingOrders(user.id)`, `useUserToolsSummary(user.id)`, `Index` roteia `isStaff ? Staff : Customer`). Por isso elas ficam **abertas** (fora do `RequireStaff`): o vendedor/farmer (staff) **não fica bloqueado** delas. Mas, sendo self-scoped, abrir essas telas logado como farmer mostraria os *próprios* dados do farmer (vazios) — **não** os do cliente. A necessidade real do farmer ("ver a vida do cliente": pedidos/ferramentas/fidelidade) **já é atendida pela Visão 360** (`/admin/customers/:customerId/360` → `Customer360View`, parametrizada por `customerId`, gated por RLS, já com `useUserToolsSummaryById`), que é **staff-only e fica DENTRO do `RequireStaff`**. **Decisão:** este trabalho **não** parametriza as 15 por cliente nem cria impersonação farmer→cliente — isso seria feature grande (15 telas + cada query → by-id), arriscada, e ~80-90% já coberta pelo 360. "Farmer ver as 15 no contexto do cliente" fica como **possível incremento FUTURO no Customer 360** (spec próprio; o passo anterior seria perguntar ao founder *o que falta no 360* — provavelmente nada ou 1-2 abas, ex.: fidelidade/gamificação do cliente). **Não** quebrar o self-scoping das 15 (trocar `user.id` por param em massa vazaria dados entre clientes e duplicaria o 360).
+
 ### 5.2 Financeiro (já protegido — `RequireFinanceiroAccess`, fica como está)
 
 `/financeiro` e todos os `/financeiro/*` (dashboard, sync, mapping, capital-giro, fechamento, analytics, cockpit, conciliacao, orcamento, intercompany, intercompany/fila, tributario, valor, valor-cockpit, proxima-acao, regime-tributario, funding, gestao, analise).
@@ -162,9 +164,9 @@ Todo o restante do bloco. Agrupado para referência do plano:
 
 > **Redirects legados** (`/unified-order`, `/admin/reposicao/cockpit|mercado|parametros|aplicacao`) ficam no staff. Um customer que acerte um deles vê "Área restrita" em vez do redirect — aceitável (são caminhos de staff; o customer usa `/new-order`).
 
-## 6. Item oportunista (bug pré-existente)
+## 6. Fix incluído (bug pré-existente)
 
-`src/pages/Gamification.tsx` (linhas 27 e 49) aponta o pilar "Organização" para `/orders/new` — **rota que não existe** (a correta é `/new-order`). Hoje já cai em `NotFound`. Como este trabalho mexe na navegação do cliente, vale corrigir `/orders/new` → `/new-order` nas duas linhas. **Independente do gate** (não bloqueante; pode virar item separado se o founder preferir manter o PR cirúrgico).
+`src/pages/Gamification.tsx` (linhas 27 e 49) aponta o pilar "Organização" para `/orders/new` — **rota que não existe** (a correta é `/new-order`). Hoje já cai em `NotFound`. **Entra neste PR** (decisão do founder, 2026-05-30): corrigir `/orders/new` → `/new-order` nas duas linhas (`PILLAR_CONFIG` linha 27 e `PILLAR_ACTIONS` linha 49). É a única rota de cliente que estava quebrada; coerente corrigir junto, já que o trabalho toca a navegação do cliente.
 
 ## 7. Não-objetivos
 
@@ -200,4 +202,4 @@ Gates do CI (`bun run typecheck:strict`, `tsc -p tsconfig.app.json`, `bun run te
 1. `src/components/RequireStaff.tsx` (novo).
 2. `src/App.tsx` reorganizado em 3 grupos (customer / financeiro / staff).
 3. `src/components/__tests__/RequireStaff.test.tsx` (novo, 3 casos).
-4. (Opcional/oportunista) fix `/orders/new` → `/new-order` em `Gamification.tsx`.
+4. Fix `/orders/new` → `/new-order` em `Gamification.tsx` (linhas 27 e 49) — incluído neste PR.
