@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 127
+-- Total de custom migrations: 132
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -145,8 +145,13 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260530200000', 'data_health_checks_acionaveis', '20260530200000_data_health_checks_acionaveis.sql'),
   ('20260530200000', 'reposicao_classificar_sayerlack_grupo_default', '20260530200000_reposicao_classificar_sayerlack_grupo_default.sql'),
   ('20260530210000', 'data_health_restaura_portal_split', '20260530210000_data_health_restaura_portal_split.sql'),
+  ('20260530210000', 'reposicao_candidatos_primeira_compra', '20260530210000_reposicao_candidatos_primeira_compra.sql'),
   ('20260530210001', 'cancelar_pedido_limpa_portal', '20260530210001_cancelar_pedido_limpa_portal.sql'),
-  ('20260530230000', 'fix_portal_lock_retry_blindspot', '20260530230000_fix_portal_lock_retry_blindspot.sql')
+  ('20260530230000', 'fix_portal_lock_retry_blindspot', '20260530230000_fix_portal_lock_retry_blindspot.sql'),
+  ('20260531120000', 'reposicao_candidatos_inclui_habilitados', '20260531120000_reposicao_candidatos_inclui_habilitados.sql'),
+  ('20260531130000', 'data_health_check_sayerlack_fabricado', '20260531130000_data_health_check_sayerlack_fabricado.sql'),
+  ('20260531140000', 'reposicao_atualizar_params_nao_zera', '20260531140000_reposicao_atualizar_params_nao_zera.sql'),
+  ('20260531150000', 'reposicao_param_limbo_watchdog', '20260531150000_reposicao_param_limbo_watchdog.sql')
 )
 SELECT
   e.version,
@@ -719,8 +724,19 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_restaura_portal_split', 'function', 'public', '_data_health_compute', ''),
   ('data_health_restaura_portal_split', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_restaura_portal_split', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('reposicao_candidatos_primeira_compra', 'index', 'public', 'idx_vih_recorrencia_180d', 'venda_items_history'),
+  ('reposicao_candidatos_primeira_compra', 'function', 'public', 'promover_candidato_primeira_compra', ''),
   ('cancelar_pedido_limpa_portal', 'function', 'public', 'cancelar_pedido_sugerido', ''),
-  ('fix_portal_lock_retry_blindspot', 'function', 'public', 'envio_portal_lock_candidatos', '')
+  ('fix_portal_lock_retry_blindspot', 'function', 'public', 'envio_portal_lock_candidatos', ''),
+  ('reposicao_candidatos_inclui_habilitados', 'function', 'public', 'promover_candidato_primeira_compra', ''),
+  ('data_health_check_sayerlack_fabricado', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_check_sayerlack_fabricado', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_check_sayerlack_fabricado', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('reposicao_atualizar_params_nao_zera', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
+  ('reposicao_param_limbo_watchdog', 'table', 'public', 'reposicao_param_limbo_log', ''),
+  ('reposicao_param_limbo_watchdog', 'index', 'public', 'uq_reposicao_param_limbo_log_dia', 'reposicao_param_limbo_log'),
+  ('reposicao_param_limbo_watchdog', 'function', 'public', 'reposicao_param_limbo_watchdog', ''),
+  ('reposicao_param_limbo_watchdog', 'cron_job', 'cron', 'reposicao-param-limbo-watchdog', '')
 )
 SELECT
   e.migration,
