@@ -8483,6 +8483,135 @@ export type Database = {
         }
         Relationships: []
       }
+      route_calendar_override: {
+        Row: {
+          cancela_rota: boolean
+          created_at: string
+          data: string
+          id: string
+          motivo: string | null
+        }
+        Insert: {
+          cancela_rota?: boolean
+          created_at?: string
+          data: string
+          id?: string
+          motivo?: string | null
+        }
+        Update: {
+          cancela_rota?: boolean
+          created_at?: string
+          data?: string
+          id?: string
+          motivo?: string | null
+        }
+        Relationships: []
+      }
+      route_contact_log: {
+        Row: {
+          bucket: string | null
+          canal: string
+          created_at: string
+          customer_user_id: string | null
+          data_rota: string
+          farmer_id: string | null
+          id: string
+          pedido_id: string | null
+          status: string | null
+          valor_da_ligacao: number | null
+        }
+        Insert: {
+          bucket?: string | null
+          canal: string
+          created_at?: string
+          customer_user_id?: string | null
+          data_rota: string
+          farmer_id?: string | null
+          id?: string
+          pedido_id?: string | null
+          status?: string | null
+          valor_da_ligacao?: number | null
+        }
+        Update: {
+          bucket?: string | null
+          canal?: string
+          created_at?: string
+          customer_user_id?: string | null
+          data_rota?: string
+          farmer_id?: string | null
+          id?: string
+          pedido_id?: string | null
+          status?: string | null
+          valor_da_ligacao?: number | null
+        }
+        Relationships: []
+      }
+      route_disparo_config: {
+        Row: {
+          cadencia_min_dias: number
+          capacidade_ligacoes_dia: number
+          cold_start_piso_dia: number
+          disparo_corte: string
+          disparo_inicio: string
+          id: boolean
+          meta_tier_cap: number
+          updated_at: string
+          win_back_reserva_pct: number
+        }
+        Insert: {
+          cadencia_min_dias?: number
+          capacidade_ligacoes_dia?: number
+          cold_start_piso_dia?: number
+          disparo_corte?: string
+          disparo_inicio?: string
+          id?: boolean
+          meta_tier_cap?: number
+          updated_at?: string
+          win_back_reserva_pct?: number
+        }
+        Update: {
+          cadencia_min_dias?: number
+          capacidade_ligacoes_dia?: number
+          cold_start_piso_dia?: number
+          disparo_corte?: string
+          disparo_inicio?: string
+          id?: boolean
+          meta_tier_cap?: number
+          updated_at?: string
+          win_back_reserva_pct?: number
+        }
+        Relationships: []
+      }
+      route_schedule: {
+        Row: {
+          ativo: boolean
+          city: string
+          created_at: string
+          id: string
+          is_daily: boolean
+          uf: string
+          weekday: number
+        }
+        Insert: {
+          ativo?: boolean
+          city: string
+          created_at?: string
+          id?: string
+          is_daily?: boolean
+          uf?: string
+          weekday: number
+        }
+        Update: {
+          ativo?: boolean
+          city?: string
+          created_at?: string
+          id?: string
+          is_daily?: boolean
+          uf?: string
+          weekday?: number
+        }
+        Relationships: []
+      }
       route_visits: {
         Row: {
           check_in_at: string | null
@@ -12496,6 +12625,45 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_candidatos_primeira_compra: {
+        Row: {
+          calculado_em: string | null
+          classe_abc_proposta: string | null
+          classe_consolidada: string | null
+          classe_xyz_proposta: string | null
+          coef_variacao_ordem: number | null
+          demanda_media_diaria: number | null
+          demanda_sigma_diario: number | null
+          dias_com_movimento: number | null
+          dias_desde_ultima_venda: number | null
+          empresa: string | null
+          fonte_leadtime: string | null
+          fonte_preco: string | null
+          fornecedor_habilitado: boolean | null
+          fornecedor_nome: string | null
+          lead_time_desvio: number | null
+          lead_time_medio: number | null
+          lt_p95_dias: number | null
+          lt_total_teorico_dias_uteis: number | null
+          preco_compra_real: number | null
+          preco_item_eoq: number | null
+          preco_venda_medio: number | null
+          primeira_compra_cap_dias: number | null
+          primeira_compra_estoque_maximo: number | null
+          primeira_compra_ponto_pedido: number | null
+          primeira_compra_qtde: number | null
+          recorrencia_clientes_180d: number | null
+          recorrencia_meses_180d: number | null
+          recorrencia_nfs_180d: number | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          status_sugestao: string | null
+          valor_total_180d: number | null
+          valor_total_90d: number | null
+          z_aplicado: number | null
+        }
+        Relationships: []
+      }
       v_sku_classificacao_abc_xyz: {
         Row: {
           classe_abc_proposta: string | null
@@ -13349,6 +13517,10 @@ export type Database = {
           tipo: string
           titulo: string
         }[]
+      }
+      promover_candidato_primeira_compra: {
+        Args: { p_empresa: string; p_sku: number }
+        Returns: number
       }
       proxima_janela_operacional: {
         Args: { p_a_partir?: string; p_empresa: string; p_fornecedor: string }
