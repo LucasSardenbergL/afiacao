@@ -57,6 +57,22 @@ function timingSafeEq(a: string, b: string): boolean {
   return diff === 0;
 }
 
+// Espelho de src/lib/whatsapp/stop-keyword.ts + opt-in.ts (Deno não importa do src/).
+const STOP_KEYWORDS = new Set(["PARAR", "SAIR", "STOP", "CANCELAR", "DESCADASTRAR"]);
+function isStopKeyword(body: string | null | undefined): boolean {
+  if (!body) return false;
+  const t = body.normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toUpperCase().replace(/[^A-Z\s]/g, "").trim();
+  return STOP_KEYWORDS.has(t);
+}
+// "PARAR"→opt_out (LGPD, precede); opt_out é sticky; 1ª resposta (unknown)→opt_in.
+function nextOptInStatus(current: string, body: string | null): "unknown" | "opt_in" | "opt_out" {
+  if (isStopKeyword(body)) return "opt_out";
+  if (current === "opt_out") return "opt_out";
+  if (current === "opt_in") return "opt_in";
+  return "opt_in";
+}
+
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
@@ -76,10 +92,13 @@ async function processMessage(supabase: ReturnType<typeof createClient>, msg: Pa
 
   // 1) find-or-create da conversa SEM resetar estado (estado só muda se uma msg NOVA entrar).
   let conversationId: string | null = null;
+  let currentOptIn = "unknown";
   const { data: existing } = await supabase.from("whatsapp_conversations")
-    .select("id").eq("phone_key", phoneKey).maybeSingle();
+    .select("id, opt_in_status").eq("phone_key", phoneKey).maybeSingle();
   if (existing) {
-    conversationId = (existing as { id: string }).id;
+    const ex = existing as { id: string; opt_in_status?: string | null };
+    conversationId = ex.id;
+    currentOptIn = ex.opt_in_status ?? "unknown";
   } else {
     const customerUserId = await matchCustomer(supabase, msg.fromPhone);
     let operatorId: string | null = null;
@@ -106,7 +125,10 @@ async function processMessage(supabase: ReturnType<typeof createClient>, msg: Pa
   if (isNew) {
     const nowIso = new Date().toISOString();
     await supabase.from("whatsapp_conversations")
-      .update({ status: "aberta", last_inbound_at: nowIso, last_message_at: nowIso }).eq("id", conversationId);
+      .update({
+        status: "aberta", last_inbound_at: nowIso, last_message_at: nowIso,
+        opt_in_status: nextOptInStatus(currentOptIn, msg.body),
+      }).eq("id", conversationId);
   }
 }
 
