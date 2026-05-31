@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { CallButton } from '@/components/call/CallButton';
+import { RouteDisparoConfigPanel } from '@/components/rota/RouteDisparoConfigPanel';
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -30,6 +31,7 @@ export default function RotaListaLigacao() {
     return (
       <div className="p-4 space-y-3">
         <h1 className="font-display text-2xl">Lista de ligação por rota</h1>
+        <RouteDisparoConfigPanel />
         <EmptyState
           icon={Phone}
           tone="operational"
@@ -61,6 +63,8 @@ export default function RotaListaLigacao() {
           {data.callQueue.length} ligações priorizadas
         </p>
       </header>
+
+      <RouteDisparoConfigPanel />
 
       {[...byFarmer.entries()].map(([farmer, list]) => (
         <Card key={farmer} className="p-3">
