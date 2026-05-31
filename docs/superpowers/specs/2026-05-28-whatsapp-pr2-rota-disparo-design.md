@@ -157,13 +157,21 @@ Ordena `callQueue` e `whatsappQueue` por `valor_da_ligacao` desc.
 - **Novos clientes (cold-start):** entram **sempre** (pedido explícito do founder — ver §9), por uma trilha própria (sem histórico → sem `prontidao_recompra`; usa boas-vindas/intro + cota mínima garantida na fila).
 - **Armadilha consciente:** otimizar só `valor_da_ligacao` ignora win-back e aquisição. Por isso as duas cotas acima são **piso garantido**, aplicadas **antes** do corte por capacidade.
 
-### 6.5 Perguntas abertas pro codex (passe adversário)
-1. A fórmula `P×ticket×margem×prontidão` dupla-conta `prontidao` com `P(converte)` (ambos crescem com `atraso_relativo`)? Separar ou aceitar?
-2. `margem%` média da empresa na v1 é viés aceitável, ou distorce a ordenação a ponto de inverter prioridades? Vale gate só de "margem não-negativa" e ordenar por receita esperada até ter margem por-cliente?
-3. Reserva de 20% win-back: número arbitrário. Como calibrar (valor esperado da recuperação × prob. de sucesso vs. custo de oportunidade do top)?
-4. Cota de cold-start: piso fixo (ex.: 3/dia/vendedora) ou proporcional? Risco de afogar a fila com novos que não pagam.
-5. O corte por capacidade (quantos cabem no dia) deve ser por **tempo estimado de ligação** (não por contagem) — o codex já apontou isso na capacidade. Como estimar o tempo por candidato (histórico de `farmer_calls.duracao`)?
-6. WhatsApp first vs. ligação first por cliente: existe risco de canibalizar (IA fecha barato o que a vendedora fecharia com ticket maior)? Regra de roteamento por ticket_esperado?
+### 6.5 Passe adversário do codex — FEITO (2026-05-31)
+
+Veredito do codex: **sem P1 matemático**; vários **P2 operacionais** que distorceriam o piloto. Decisão (Lucas + Claude + codex) — corrigir os baratos/seguros agora (helpers puros, frontend-only, sem deploy), adiar os que pedem dado real do piloto.
+
+**✅ Corrigidos agora (`src/lib/whatsapp/contact-list.ts`, +3 testes; PR de hardening):**
+- **#3 win-back por VALOR + piso** — era bug: o win-back era ordenado por profundidade de churn (`dias/intervalo`), então sumido **barato** passava na frente de quase-due **lucrativo**. Agora ordena por `valorDaLigacao` e só reserva win-back com `valor >= 70% do corte do top` (`WINBACK_VALUE_FLOOR_PCT`).
+- **#7/#6 dedup de canal** — a `whatsappQueue` não excluía quem estava na `callQueue` (a IA falaria com quem a vendedora ligaria). Agora exclui: humano pega o topo, IA pega o resto elegível.
+- **#4 guardrail cold-start %** — piso fixo de 3/dia virou `min(piso, ceil(cap × 10%))` (`COLD_START_MAX_PCT`) → não afoga a fila quando o cap é pequeno.
+- **#2 nomenclatura** — doc no `valorDaLigacao`: é **valor esperado** (proxy), não lucro real (margem é constante na v1 → não afeta ranking, só escala).
+
+**⏸️ Adiados (precisam de dado do piloto / são maiores — registrar como métrica):**
+- **#1 dupla-contagem prontidão × pConverte** (P2) — ambos co-variam com recência. Direção é desejada (priorizar quem está due); extremos já contidos pelo gate `jit_prematuro` + reserva. De-viés preciso (tirar recência do `pConverte` OU abrandar `prontidao`) exige medir no piloto se a fila super-indexa em sumidos — **e mexer data-free quebraria o gate `jit_prematuro` (que usa `prontidao <= 0.3`)**. Monitorar.
+- **#5 capacidade por TEMPO (min) em vez de contagem** (P2, quase-P1 pelo corte 16:30) — precisa de duração real por bucket (`farmer_calls.duracao`). Vira métrica do piloto + troca de `capacidadeLigacoes` (contagem) por orçamento de minutos no PR2c.
+- **#6 roteamento fino por ticket** (alto-ticket → ligação; baixo/médio previsível → WhatsApp) — o dedup do #7 é a peça v1; routing fino depois.
+- **#8 cadência por janela-de-rota** (em vez de `contatadoHaDias < 3`) — hoje **inerte** (`route_contact_log` vazio até o disparo). Wire no PR2c quando houver dado.
 
 ---
 
@@ -275,7 +283,7 @@ Decisão ao fim: se a IA satura o tier e o lucro/minuto da vendedora está no te
 
 ## 13. Dependências abertas
 
-1. **Passe adversário do codex nos critérios §6** — pendente (OOM da máquina; rodar com RAM livre). Alvos = §6.5.
+1. ✅ **Passe adversário do codex nos critérios §6** — FEITO (2026-05-31). Sem P1; P2 corrigidos (#3/#4/#7/#2) + adiados (#1/#5/#6/#8) — ver §6.5.
 2. **Validar grafia/formato das cidades da rota no banco** — query por-cidade já enviada ao founder; semear `route_schedule` com as chaves confirmadas. Confirmar exclusão de `DIVINÓPOLIS (TO)`.
 3. **Conta 360dialog + número + secrets** (`D360_API_KEY`/`D360_BASE_URL`) — bloqueia PR2b (founder pega o celular no fim de semana).
 4. **Templates Meta aprovados** (accept-a-proposal / boas-vindas) — submeter na 360dialog.
