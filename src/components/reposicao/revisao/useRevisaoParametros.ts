@@ -160,6 +160,7 @@ export function useRevisaoParametros() {
           recorrencia_nfs_180d: v.recorrencia_nfs_180d ?? null,
           recorrencia_clientes_180d: v.recorrencia_clientes_180d ?? null,
           dias_desde_ultima_venda: v.dias_desde_ultima_venda ?? null,
+          ja_habilitado: v.ja_habilitado ?? null,
         }));
 
         return { rows: priced, total: count ?? 0 };

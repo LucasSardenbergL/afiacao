@@ -17,6 +17,7 @@ type PrimeiraCompraCols = {
   primeira_compra_ponto_pedido?: number | null;
   primeira_compra_estoque_maximo?: number | null;
   primeira_compra_cap_dias?: number | null;
+  ja_habilitado?: boolean | null;
 };
 export type SkuSugeridoView = Database["public"]["Views"]["v_sku_parametros_sugeridos"]["Row"] &
   PrimeiraCompraCols;

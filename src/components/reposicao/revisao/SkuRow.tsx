@@ -56,6 +56,11 @@ export function SkuRow({ row: r, checked, onToggleSelect, onOpenDetail, onPromov
                 ⚠ 1 cliente só
               </Badge>
             )}
+            {r.ja_habilitado === true && (
+              <Badge variant="secondary" className="text-[10px] font-medium" title="Já está habilitado pra reposição automática, mas sem parâmetros — por isso não comprava. Promover preenche os números.">
+                já habilitado, sem nº
+              </Badge>
+            )}
           </div>
         ) : (
           r.read_only && r.fornecedor_nome && (

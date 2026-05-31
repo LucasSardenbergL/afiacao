@@ -74,6 +74,7 @@ export type RowWithPrice = SkuParam & {
   recorrencia_nfs_180d?: number | null;
   recorrencia_clientes_180d?: number | null;
   dias_desde_ultima_venda?: number | null;
+  ja_habilitado?: boolean | null;
 };
 
 export type StatusFilterValue = 'pendente' | 'aprovado' | 'aguardando_fornecedor' | 'primeira_compra' | 'todos';

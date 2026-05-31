@@ -730,3 +730,17 @@ derivada (a mãe expõe `*_sugerido=NULL` fora do status OK, mas expõe `custo_p
 **Frontend (Opção B):** o hook lê `.from("v_sku_candidatos_primeira_compra" as never)` (view nova não está
 nos types gerados até regen; cast `as never`, sem `any` → passa o lint). A view expõe `status_sugestao =
 'CANDIDATO_PRIMEIRA_COMPRA'` constante p/ o mapeamento/SkuRow funcionarem igual.
+
+## 🔧 FIX PÓS-PROD (2026-05-31) — inclui SKUs habilitados-sem-parâmetro (3 → 22 candidatos)
+
+Migration `20260531120000_*` (separada, pós-#504). **Achado** (diagnóstico em prod): dos 22 recorrentes-fortes,
+**19 estavam `habilitado_reposicao_automatica=TRUE` mas com `ponto_pedido` E `estoque_maximo` AMBOS NULL**
+(0 parciais, 0 sem-linha). O motor exige os dois NOT NULL → não compravam; e a 1ª versão da view/RPC os
+excluía pelo predicado `habilitado=false` (que eu pus a pedido do codex como "virgem"). **Limbo: habilitados
+mas invisíveis** (~R$15k venda/180d). **Fix** (challenge codex): o sinal de "não configurado" é **params NULL**,
+não o flag `habilitado` (ortogonal). Removido `AND COALESCE(habilitado_reposicao_automatica,false)=false` da
+view **e** da RPC; trava de re-promoção fica em `ponto IS NULL AND estoque_maximo IS NULL` (pós-promoção
+`ponto NOT NULL` → sai da view). View ganha coluna `ja_habilitado` → UI mostra badge "já habilitado, sem nº".
+Validado em PG17 local (habilitado=true agora aparece; cap idêntico). **Follow-up registrado (não-bloqueante):**
+investigar a CAUSA de SKUs ficarem `habilitado=true` sem params (importação/edição em massa/default?) — pode
+afetar SKUs fora desta view.
