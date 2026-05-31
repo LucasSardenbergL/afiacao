@@ -12641,6 +12641,7 @@ export type Database = {
           fonte_preco: string | null
           fornecedor_habilitado: boolean | null
           fornecedor_nome: string | null
+          ja_habilitado: boolean | null
           lead_time_desvio: number | null
           lead_time_medio: number | null
           lt_p95_dias: number | null
