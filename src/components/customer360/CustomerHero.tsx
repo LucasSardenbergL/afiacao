@@ -163,7 +163,7 @@ export function CustomerHero({
               </Button>
             )}
             <Button asChild size="sm">
-              <Link to={`/admin/orders/new?customer=${customer.user_id}`}>
+              <Link to={`/sales/new?customer=${customer.user_id}`}>
                 <ShoppingBag className="w-3.5 h-3.5 mr-1.5" />
                 Novo pedido
               </Link>
