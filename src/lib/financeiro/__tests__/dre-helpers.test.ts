@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, faixaPorRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 

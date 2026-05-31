@@ -143,6 +143,7 @@ const AdminReposicaoSessaoHistorico = lazy(() => import("./pages/AdminReposicaoS
 const ReposicaoSessionLayout = lazy(() => import("./components/reposicao/ReposicaoSessionLayout"));
 const LegacyCockpitRedirect = lazy(() => import("./components/reposicao/LegacyCockpitRedirect"));
 const AdminReposicaoCadastros = lazy(() => import("./pages/AdminReposicaoCadastros"));
+const AdminReposicaoControleManual = lazy(() => import("./pages/AdminReposicaoControleManual"));
 const AdminEstoqueRecebimento = lazy(() => import("./pages/AdminEstoqueRecebimento"));
 const AdminEstoquePicking = lazy(() => import("./pages/AdminEstoquePicking"));
 const TouchPickingView = lazy(() => import("./pages/picking/TouchPickingView"));
@@ -329,6 +330,8 @@ const App = () => (
                 <Route path="admin/reposicao/aumentos/:id" element={<AdminReposicaoAumentoDetail />} />
                 <Route path="admin/reposicao/oportunidades" element={<AdminReposicaoOportunidades />} />
                 <Route path="admin/reposicao/negociacao-paralela" element={<AdminReposicaoNegociacaoParalela />} />
+                <Route path="admin/reposicao/controle-manual" element={<AdminReposicaoControleManual />} />
+                <Route path="admin/reposicao/parametros-globais" element={<AdminReposicaoParametros />} />
                 {/* Canonical /sessao routes (inside ReposicaoSessionLayout) */}
                 <Route element={<ReposicaoSessionLayout />}>
                   <Route path="admin/reposicao/sessao" element={<AdminReposicaoCockpit />} />
