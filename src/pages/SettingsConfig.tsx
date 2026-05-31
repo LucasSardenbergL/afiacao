@@ -87,7 +87,6 @@ const SettingsConfig = () => {
   const [activeTab, setActiveTab] = useState('recommendations');
   const [hasChanges, setHasChanges] = useState(false);
   const [newVisualEnabled, toggleNewVisual] = useFeatureFlag('newVisual', true);
-  const [useWebRTCEnabled, toggleWebRTC] = useFeatureFlag('useWebRTCCall', false);
 
   const updateWeight = (key: string, value: number) => {
     setWeights(prev => prev.map(w => w.key === key ? { ...w, value } : w));
@@ -132,32 +131,6 @@ const SettingsConfig = () => {
               </div>
             </div>
             <Switch checked={newVisualEnabled} onCheckedChange={toggleNewVisual} />
-          </CardContent>
-        </Card>
-
-        {/* WebRTC dialer feature flag — opt-in beta */}
-        <Card>
-          <CardContent className="p-4 flex items-center justify-between gap-3">
-            <div className="flex items-start gap-3 min-w-0">
-              <div className={cn(
-                'p-2 rounded-md shrink-0',
-                useWebRTCEnabled ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
-              )}>
-                <Phone className="w-4 h-4" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-medium">
-                  Chamadas WebRTC {useWebRTCEnabled ? 'ativadas' : 'desativadas'}
-                  <Badge variant="outline" className="ml-2 text-2xs">beta</Badge>
-                </p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {useWebRTCEnabled
-                    ? 'Ligar direto pelo navegador via SIP, sem aceitar no painel Nvoip. Requer permissão de microfone.'
-                    : 'Usa o click-to-call atual (vendedor atende ramal no painel Nvoip). Ative para ligar direto.'}
-                </p>
-              </div>
-            </div>
-            <Switch checked={useWebRTCEnabled} onCheckedChange={toggleWebRTC} />
           </CardContent>
         </Card>
 
