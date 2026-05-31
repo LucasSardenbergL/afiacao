@@ -34,7 +34,9 @@ describe('RequireStaff', () => {
   it('bloqueia customer (loading=false, isStaff=false)', () => {
     mockUseAuth.mockReturnValue({ isStaff: false, loading: false } as unknown as ReturnType<typeof useAuth>);
     renderGuard();
-    expect(screen.getByText('Área restrita à equipe')).toBeTruthy();
+    // A tela de bloqueio é anunciada por leitores de tela (role="alert"),
+    // já que aparece numa transição de rota, não numa ação do usuário.
+    expect(screen.getByRole('alert').textContent).toBe('Área restrita à equipe');
     expect(screen.queryByText('CONTEUDO STAFF')).toBeNull();
   });
 
@@ -42,5 +44,6 @@ describe('RequireStaff', () => {
     mockUseAuth.mockReturnValue({ isStaff: true, loading: false } as unknown as ReturnType<typeof useAuth>);
     renderGuard();
     expect(screen.getByText('CONTEUDO STAFF')).toBeTruthy();
+    expect(screen.queryByText('Área restrita à equipe')).toBeNull();
   });
 });

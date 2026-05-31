@@ -32,7 +32,7 @@ export const RequireStaff = () => {
             <div className="mx-auto w-16 h-16 rounded-full bg-status-warning-bg flex items-center justify-center">
               <Lock className="w-8 h-8 text-status-warning" />
             </div>
-            <h2 className="text-xl font-bold">Área restrita à equipe</h2>
+            <h2 role="alert" className="text-xl font-bold">Área restrita à equipe</h2>
             <p className="text-muted-foreground">
               Esta área é exclusiva para a equipe Colacor. Se você precisa de
               acesso, fale com um administrador.
