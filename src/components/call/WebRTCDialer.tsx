@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import { toast } from 'sonner';
 import { useWebRTCCallContextOptional } from '@/contexts/WebRTCCallContext';
 import { CallDialerView, type CallDialerViewProps } from './CallDialerView';
 
@@ -19,6 +20,8 @@ export function WebRTCDialer(props: Props) {
   const ctx = useWebRTCCallContextOptional();
   // `owned` = este dialer é o dono da chamada atual (e o contexto existe).
   const owned = ctx && ctx.callOwnerId === id ? ctx : null;
+  // Sessão WebRTC é única: há uma chamada em curso (de qualquer linha)?
+  const busy = !!ctx && (ctx.isActive || ctx.isConnecting || ctx.isRinging || ctx.isEstablished);
 
   return (
     <CallDialerView
@@ -34,6 +37,12 @@ export function WebRTCDialer(props: Props) {
       isFinished={!!owned && owned.isFinished}
       onMakeCall={() => {
         if (!ctx) return;
+        // Não rouba uma chamada ativa de OUTRA linha (a sessão é única). Sem isso,
+        // clicar outra linha transferia o card e tentava uma 2ª chamada concorrente.
+        if (busy && !owned) {
+          toast.info('Já existe uma chamada em andamento');
+          return;
+        }
         ctx.claimCall(id);
         void ctx.makeCall(props.phoneNumber);
       }}
