@@ -67,7 +67,6 @@ const UnifiedOrder = () => {
 
   useOrderDeepLink({
     selectedCustomer: h.selectedCustomer,
-    selectCustomer: h.selectCustomer,
     addProductToCart: h.addProductToCart,
     obenProducts: h.obenProducts,
     colacorProducts: h.colacorProducts,
