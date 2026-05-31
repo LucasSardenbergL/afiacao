@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { consolidarCockpit, type SnapshotEmpresa } from '../cockpit-consolida-helpers';
+import { consolidarCockpit, compararCaixaInicial, type SnapshotEmpresa } from '../cockpit-consolida-helpers';
 
-const sem = (inicio: string, ent: number, sai: number, saldo: number) =>
-  ({ inicio, total_entradas: ent, total_saidas: sai, saldo_final: saldo });
+const sem = (inicio: string, ent: number, sai: number, saldo: number, saldo_inicial: number | null = null) =>
+  ({ inicio, total_entradas: ent, total_saidas: sai, saldo_final: saldo, saldo_inicial });
 const snap = (company: string, at: string, ncg: number | null, semanas: ReturnType<typeof sem>[], saldo_tes: number | null = 0): SnapshotEmpresa =>
   ({ company, snapshot_at: at, ncg, saldo_tesouraria: saldo_tes, semanas });
 const ESP = ['oben', 'colacor', 'colacor_sc'];
@@ -167,5 +167,59 @@ describe('consolidarCockpit', () => {
     expect(r.projecao13).toHaveLength(13);
     expect(r.projecao13[0].inicio).toBe('2026-01-01');
     expect(r.projecao13[12].inicio).toBe('2026-01-13');
+  });
+});
+
+describe('consolidarCockpit — caixa_inicial (transparência)', () => {
+  it('soma saldo_inicial da semana de MENOR inicio de cada empresa presente', () => {
+    const r = consolidarCockpit({ esperadas: ['oben', 'colacor'], snapshots: [
+      snap('oben', '2026-05-31T10:00:00Z', 0, [sem('2026-06-01', 0, 0, 0, 1000), sem('2026-05-25', 0, 0, 0, 500)]),
+      snap('colacor', '2026-05-31T10:00:00Z', 0, [sem('2026-05-25', 0, 0, 0, 300)]),
+    ] });
+    expect(r.caixa_inicial_projecao).toBe(800); // 500 (menor inicio oben) + 300
+    expect(r.caixa_inicial_parcial).toBe(false);
+  });
+
+  it('semana 0 (menor inicio) com saldo_inicial null + semana 1 válida → pega a semana 1 (menor inicio VÁLIDO)', () => {
+    const r = consolidarCockpit({ esperadas: ['oben'], snapshots: [
+      snap('oben', '2026-05-31T10:00:00Z', 0, [sem('2026-05-25', 0, 0, 0, null), sem('2026-06-01', 0, 0, 0, 700)]),
+    ] });
+    expect(r.caixa_inicial_projecao).toBe(700);
+    expect(r.caixa_inicial_parcial).toBe(false);
+  });
+
+  it('empresa presente sem nenhum saldo_inicial válido → caixa null + parcial', () => {
+    const r = consolidarCockpit({ esperadas: ['oben', 'colacor'], snapshots: [
+      snap('oben', '2026-05-31T10:00:00Z', 0, [sem('2026-05-25', 0, 0, 0, 500)]),
+      snap('colacor', '2026-05-31T10:00:00Z', 0, [sem('2026-05-25', 0, 0, 0, null)]),
+    ] });
+    expect(r.caixa_inicial_projecao).toBeNull();
+    expect(r.caixa_inicial_parcial).toBe(true);
+  });
+
+  it('coorte PARCIAL (1 stale) mas presentes têm saldo → expõe soma parcial, mas comparar bloqueia (cohorteCompleta=false)', () => {
+    const r = consolidarCockpit({ esperadas: ['oben', 'colacor'], snapshots: [
+      snap('oben', '2026-05-31T10:00:00Z', 0, [sem('2026-05-25', 0, 0, 0, 500)]),
+      snap('colacor', '2026-05-20T10:00:00Z', 0, [sem('2026-05-25', 0, 0, 0, 300)]), // stale (data < dataRef)
+    ] });
+    expect(r.parcial).toBe(true);
+    expect(r.caixa_inicial_projecao).toBe(500); // só oben (coorte)
+    expect(r.caixa_inicial_parcial).toBe(true); // parcial pela coorte
+    expect(compararCaixaInicial({ caixaInicialProjecao: r.caixa_inicial_projecao, saldoAtualBanco: 900, cohorteCompleta: !r.parcial }).disponivel).toBe(false);
+  });
+});
+
+describe('compararCaixaInicial', () => {
+  it('coorte completa + caixa presente → delta = saldoAtual − caixaInicial', () => {
+    expect(compararCaixaInicial({ caixaInicialProjecao: 800, saldoAtualBanco: 950, cohorteCompleta: true }))
+      .toEqual({ disponivel: true, delta: 150 });
+  });
+  it('coorte incompleta → indisponível (maçã×laranja)', () => {
+    expect(compararCaixaInicial({ caixaInicialProjecao: 800, saldoAtualBanco: 950, cohorteCompleta: false }))
+      .toEqual({ disponivel: false, delta: null });
+  });
+  it('caixa inicial null → indisponível', () => {
+    expect(compararCaixaInicial({ caixaInicialProjecao: null, saldoAtualBanco: 950, cohorteCompleta: true }))
+      .toEqual({ disponivel: false, delta: null });
   });
 });

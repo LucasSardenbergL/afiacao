@@ -16,7 +16,7 @@ function makeWeek(o: Partial<SemanaConsolidada> = {}): SemanaConsolidada {
   };
 }
 
-const baseProps = { dataReferencia: "2026-05-27", parcial: false, empresasPresentes: ["oben", "colacor", "colacor_sc"], empresasAusentes: [], empresasStale: [] };
+const baseProps = { dataReferencia: "2026-05-27", parcial: false, empresasPresentes: ["oben", "colacor", "colacor_sc"], empresasAusentes: [], empresasStale: [], caixaInicialProjecao: 1000, saldoAtualBanco: 1200, cohorteCompleta: true };
 
 describe("Projecao13Card", () => {
   it("renderiza semanas", () => {
@@ -38,14 +38,19 @@ describe("Projecao13Card", () => {
   it("mostra banner de parcialidade quando parcial", () => {
     render(
       <Projecao13Card
+        {...baseProps}
         projecao13={[makeWeek({ completa: false })]}
-        dataReferencia="2026-05-27"
         parcial
         empresasPresentes={["oben", "colacor"]}
         empresasAusentes={["colacor_sc"]}
-        empresasStale={[]}
+        cohorteCompleta={false}
       />,
     );
     expect(screen.getByText(/Parcial/)).toBeTruthy();
+  });
+
+  it("mostra caixa inicial da projeção vs saldo atual quando coorte completa", () => {
+    render(<Projecao13Card projecao13={[makeWeek()]} {...baseProps} caixaInicialProjecao={1000} saldoAtualBanco={1200} cohorteCompleta />);
+    expect(screen.getByText(/Caixa inicial da projeção/)).toBeTruthy();
   });
 });

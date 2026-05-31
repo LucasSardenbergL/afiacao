@@ -679,6 +679,8 @@ export async function getProjecaoSnapshotsCockpit(
               total_entradas: Number(w?.total_entradas),
               total_saidas: Number(w?.total_saidas),
               saldo_final: Number(w?.saldo_final),
+              // transparência: NÃO entra no filtro rígido (semana não pode ser dropada por campo só-display)
+              saldo_inicial: Number.isFinite(Number(w?.saldo_inicial)) ? Number(w?.saldo_inicial) : null,
             }))
             .filter(
               (w): w is SnapshotSemana =>

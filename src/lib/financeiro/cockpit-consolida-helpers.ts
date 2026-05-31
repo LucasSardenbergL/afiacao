@@ -1,4 +1,4 @@
-export type SnapshotSemana = { inicio: string; total_entradas: number; total_saidas: number; saldo_final: number };
+export type SnapshotSemana = { inicio: string; total_entradas: number; total_saidas: number; saldo_final: number; saldo_inicial: number | null };
 
 export type SnapshotEmpresa = {
   company: string;
@@ -31,6 +31,11 @@ export type CockpitConsolidado = {
   parcial: boolean;
   data_referencia: string | null;
   snapshot_at_mais_antigo: string | null;
+  // Transparência: caixa inicial que a projeção consolidada usou (Σ saldo_inicial da semana de menor
+  // inicio das empresas presentes). null se algum presente faltar. Comparar com saldo bancário atual.
+  caixa_inicial_projecao: number | null;
+  caixa_inicial_por_empresa: { company: string; saldo_inicial: number | null; presente: boolean }[];
+  caixa_inicial_parcial: boolean;
 };
 
 const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -137,6 +142,29 @@ export function consolidarCockpit(input: { esperadas: string[]; snapshots: Snaps
     }
   }
 
+  // 8. Caixa inicial da projeção (transparência): saldo_inicial da semana de MENOR inicio COM
+  // saldo_inicial válido de cada empresa presente (NÃO semanas[0] literal — robustez se a semana 0
+  // foi filtrada). Σ; null se algum presente não tiver semana com saldo_inicial válido.
+  const caixa_inicial_por_empresa = esperadas.map((c) => {
+    const s = coorte.get(c);
+    if (!s) return { company: c, saldo_inicial: null as number | null, presente: false };
+    let melhor: { inicio: string; saldo_inicial: number } | null = null;
+    for (const w of s.semanas) {
+      if (w.saldo_inicial == null || !Number.isFinite(w.saldo_inicial)) continue;
+      if (melhor == null || w.inicio < melhor.inicio) melhor = { inicio: w.inicio, saldo_inicial: w.saldo_inicial };
+    }
+    return { company: c, saldo_inicial: melhor ? melhor.saldo_inicial : null, presente: true };
+  });
+  let caixaIniRaw = 0;
+  let algumCaixaIniNull = false;
+  for (const e of caixa_inicial_por_empresa) {
+    if (!e.presente) continue;
+    if (e.saldo_inicial != null) caixaIniRaw += e.saldo_inicial;
+    else algumCaixaIniNull = true;
+  }
+  const caixa_inicial_parcial = parcial || algumCaixaIniNull;
+  const caixa_inicial_projecao = algumCaixaIniNull ? null : round2(caixaIniRaw);
+
   return {
     projecao13,
     ncg_total,
@@ -150,5 +178,19 @@ export function consolidarCockpit(input: { esperadas: string[]; snapshots: Snaps
     parcial,
     data_referencia: dataRef,
     snapshot_at_mais_antigo,
+    caixa_inicial_projecao,
+    caixa_inicial_por_empresa,
+    caixa_inicial_parcial,
   };
+}
+
+// Compara o caixa inicial que a projeção consolidada usou vs o saldo bancário atual (totalCC).
+// Só quando a coorte é completa (caixa_inicial da coorte parcial × totalCC das 3 = maçã×laranja).
+export function compararCaixaInicial(input: {
+  caixaInicialProjecao: number | null;
+  saldoAtualBanco: number;
+  cohorteCompleta: boolean;
+}): { disponivel: boolean; delta: number | null } {
+  const disponivel = input.cohorteCompleta && input.caixaInicialProjecao != null;
+  return { disponivel, delta: disponivel ? round2(input.saldoAtualBanco - (input.caixaInicialProjecao as number)) : null };
 }
