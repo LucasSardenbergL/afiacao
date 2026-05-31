@@ -19,6 +19,41 @@
 - ⏸️ **RESTA só a Parte 2 (cold-start / approach A)** pros ~55-74 SKUs com `num_ordens<2` (vendem
   mas <2 compras → gate `AGUARDANDO_SEGUNDA_ORDEM`). Esse é o trabalho de uma passada dedicada.
 
+## ⚠️ REVISÃO CRÍTICA (2026-05-30, 2º consult codex) — premissa corrigida, approach mudou
+
+**ERRO DE PREMISSA da spec original:** assumia `num_ordens` = nº de COMPRAS. **ERRADO.**
+Rastreado no snapshot: `num_ordens = count(DISTINCT nfe_chave_acesso)` de `venda_items_history`
+nos **últimos 90 dias** = nº de **notas fiscais de VENDA** distintas em 90d. A view inteira
+parte de `venda_items_history` (só entra SKU com ≥1 venda/90d) → `num_ordens ≥ 1` sempre →
+**`num_ordens<2` ≡ `num_ordens=1` ≡ "vendeu em UMA única NF nos últimos 90 dias"**.
+
+**Consequência:** o "vende regular mas nunca comprado" (num_ordens≥2 sem histórico de compra)
+**NÃO está preso aqui** — passa o gate 1 e, com lt teórico (SLA via grupo, #494), vira `OK`
+direto (foram os "+28"). O que SOBRA em `AGUARDANDO_SEGUNDA_ORDEM` são itens de **venda rara
+(1 NF/90d)** → alto risco de **one-off/encalhe**; demanda (1 ponto/90d), sigma (fallback 0.5·d)
+e XYZ ('Z') são frágeis. Renomear mentalmente o status: `BAIXA_RECORRENCIA_VENDA_90D`.
+
+**Approach REVISADO (codex):** **NÃO** relaxar o gate pra fila automática. Em vez disso:
+- **Trilha `CANDIDATO_PRIMEIRA_COMPRA`** (terceira via: nem auto, nem cemitério) → os
+  `*_sugerido` SEGUEM `NULL` (o cron #487 **não** aplica → fila automática 100% intacta), e a
+  view expõe os candidatos + qtde-teste capada em **colunas NOVAS dedicadas** → **lista de
+  revisão** na UI (badge/contador/ordenação por valor; comprador decide).
+- **Guard de recorrência (180d):** `meses_distintos_com_venda ≥ 2` **E** `nfs_distintas ≥ 2`
+  **E** `dias_desde_ultima_venda ≤ 60` (+ `clientes_distintos ≥ 2` se a coluna existir).
+- **Cap (compra-teste):** `qtde = LEAST(qc_eoq, demanda_media_diaria × cap_dias_classe)`,
+  `cap_dias` A=30 / B=21 / C=14 (conservador); sem inflar z; SS pequeno/zero.
+- **Escopo v1:** Sayerlack / fornecedor habilitado; **shadow** (a própria view é o shadow — mostra
+  o que seria sugerido sem disparar R$). Global + `AUTO_EXPERIMENTAL` com trava financeira = v2.
+- **Raio de explosão:** a trilha nova intercepta SÓ casos hoje em `num_ordens<2` (caminho `OK`
+  intacto); colunas só-adição (não renomeia/reordena → consumidores intactos).
+
+**Modos de falha a tratar (codex):** ruptura (baixa venda = falta de estoque, não de demanda) →
+sinalizar; NF gigante distorce demanda+ABC; MOQ/múltiplo; validade/obsolescência; canibalização;
+devoluções/cancelamentos contaminando histórico; ABC promovendo one-off caro pra 'A'.
+
+**Estado:** report-first (BLOCO 0 read-only) entregue ao founder pra medir magnitude real
+(quantos passam o guard, valor, por fornecedor) → calibra o design final → constrói.
+
 ## Problema
 
 Dos **272** SKUs do fornecedor `RENNER SAYERLACK S/A` (empresa OBEN), **124 (46%)** estão

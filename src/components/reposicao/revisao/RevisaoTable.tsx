@@ -30,6 +30,8 @@ interface RevisaoTableProps {
   onAprovarSelecionados: () => void;
   onPrevPage: () => void;
   onNextPage: () => void;
+  onPromover?: (sku: number) => void;
+  promovendo?: boolean;
 }
 
 export function RevisaoTable({
@@ -47,6 +49,8 @@ export function RevisaoTable({
   onAprovarSelecionados,
   onPrevPage,
   onNextPage,
+  onPromover,
+  promovendo,
 }: RevisaoTableProps) {
   return (
     <Card>
@@ -101,6 +105,8 @@ export function RevisaoTable({
                   checked={!!selected[r.id]}
                   onToggleSelect={onToggleSelect}
                   onOpenDetail={onOpenDetail}
+                  onPromover={onPromover}
+                  promovendo={promovendo}
                 />
               ))}
               {rows.length === 0 && (
