@@ -1,12 +1,11 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 import type { OmieCustomer, Product } from '@/hooks/useUnifiedOrder';
 
 /* ─── Deep-link query param keys ─── */
 const PARAM_KEYS = {
-  customer: 'customer',
+  // O param `customer` é lido pelo selectCustomerByUserId (useUnifiedOrder), não aqui.
   product: 'product',
   // Future extensions:
   // tool: 'tool',
@@ -14,7 +13,6 @@ const PARAM_KEYS = {
 } as const;
 
 export interface DeepLinkParams {
-  customerId: string | null;
   productId: string | null;
   // Future:
   // toolId: string | null;
@@ -22,12 +20,13 @@ export interface DeepLinkParams {
 }
 
 /**
- * Reads deep-link query params once and drives automatic
- * customer selection + product addition in the unified order flow.
+ * Reads deep-link query params once and drives automatic product addition
+ * in the unified order flow. A seleção de cliente a partir de `?customer=<user_id>`
+ * é responsabilidade do `selectCustomerByUserId` (useUnifiedOrder) — ver UnifiedOrder.tsx.
+ * O ramo de produto só dispara após o cliente estar selecionado.
  */
 export function useOrderDeepLink({
   selectedCustomer,
-  selectCustomer,
   addProductToCart,
   obenProducts,
   colacorProducts,
@@ -36,7 +35,6 @@ export function useOrderDeepLink({
   loadingCustomer,
 }: {
   selectedCustomer: OmieCustomer | null;
-  selectCustomer: (c: OmieCustomer) => void;
   addProductToCart: (p: Product) => void;
   obenProducts: Product[];
   colacorProducts: Product[];
@@ -47,48 +45,10 @@ export function useOrderDeepLink({
   const [searchParams] = useSearchParams();
 
   const params = useMemo<DeepLinkParams>(() => ({
-    customerId: searchParams.get(PARAM_KEYS.customer) || null,
     productId: searchParams.get(PARAM_KEYS.product) || null,
   }), [searchParams]);
 
-  const customerHandled = useRef(false);
   const productHandled = useRef(false);
-
-  /* ── Auto-select customer ── */
-  useEffect(() => {
-    if (!params.customerId || customerHandled.current || selectedCustomer) return;
-    customerHandled.current = true;
-
-    (async () => {
-      try {
-        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'listar_clientes', search: params.customerId },
-        });
-        if (error || !data?.clientes?.length) {
-          logger.warn('DeepLink: customer not found', {
-            stage: 'resolve_order',
-            customerIdParam: params.customerId,
-            error,
-          });
-          return;
-        }
-
-        // Try exact codigo_cliente match first, then take first result
-        const clientes = data.clientes as OmieCustomer[];
-        const exact = clientes.find(
-          c => String(c.codigo_cliente) === params.customerId
-            || c.cnpj_cpf?.replace(/\D/g, '') === params.customerId?.replace(/\D/g, ''),
-        );
-        selectCustomer(exact || clientes[0]);
-      } catch (err) {
-        logger.warn('DeepLink: error fetching customer', {
-          stage: 'resolve_order',
-          customerIdParam: params.customerId,
-          error: err,
-        });
-      }
-    })();
-  }, [params.customerId, selectedCustomer, selectCustomer]);
 
   /* ── Auto-add product after customer is selected & products loaded ── */
   useEffect(() => {
