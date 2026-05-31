@@ -26,6 +26,13 @@ export function prontidaoRecompra(diasDesdeUltima: number | null, intervaloMedio
   return ratio; // mapeia [0.2,1] → [0.2,1] linear
 }
 
+/**
+ * VALOR ESPERADO (proxy de ordenação), NÃO lucro real. v1: margemPerc é CONSTANTE
+ * (média da empresa) → não afeta o ranking, só a escala. Vira lucro de verdade só com
+ * margem por-cliente/SKU (vem do cockpit de valor — calibração do piloto). Codex §6.5 #2.
+ * ⚠️ prontidao e pConverte podem co-variar com recência (dupla-contagem leve, codex #1):
+ * direção desejada (priorizar quem está due); extremos contidos pelo gate jit_prematuro + reserva.
+ */
 export function valorDaLigacao(c: ContactCandidate): number {
   const pront = prontidaoRecompra(c.diasDesdeUltima, c.intervaloMedioDias);
   return c.pConverte * c.ticketEsperado * c.margemPerc * pront;
@@ -52,7 +59,9 @@ export interface ContactListResult {
 
 const LIMIAR_PRONTIDAO_BAIXA = 0.3;
 const LIMIAR_P_BAIXA = 0.3;
-const LIMIAR_WINBACK = 1.5; // dias/intervalo >= 1.5 → cliente sumindo/churn
+const LIMIAR_WINBACK = 1.5;            // dias/intervalo >= 1.5 → cliente sumindo/churn
+const WINBACK_VALUE_FLOOR_PCT = 0.7;   // win-back só reserva slot se valor >= 70% do corte do top (codex #3)
+const COLD_START_MAX_PCT = 0.10;       // cold-start limitado a ~10% do cap, além do piso (codex #4)
 
 function score(c: ContactCandidate): ScoredCandidate {
   return {
@@ -92,6 +101,9 @@ export function buildContactList(candidates: ContactCandidate[], cfg: ContactCon
   // --- callQueue com reservas (piso) aplicadas ANTES do corte por capacidade ---
   const cap = Math.max(0, Math.floor(cfg.capacidadeLigacoes));
   const winbackSlots = Math.round(cap * cfg.winBackReservaPct);
+  // corte do top: valor do último candidato que entraria no cap → piso p/ reservar win-back (codex #3).
+  const topCutValue = cap > 0 && vivos.length > 0 ? vivos[Math.min(cap, vivos.length) - 1].valorDaLigacao : 0;
+  const winbackFloor = topCutValue * WINBACK_VALUE_FLOOR_PCT;
   const usados = new Set<string>();
   const pick = (pool: ScoredCandidate[], n: number, bucket: Bucket): ScoredCandidate[] => {
     const out: ScoredCandidate[] = [];
@@ -105,16 +117,21 @@ export function buildContactList(candidates: ContactCandidate[], cfg: ContactCon
   };
 
   const coldPool = vivos.filter(s => s.isColdStart);
-  const cold = pick(coldPool, Math.min(cfg.coldStartPisoDia, cap), 'coldstart');
-  const winbackPool = vivos.filter(isWinback).sort((a, b) =>
-    (b.diasDesdeUltima! / b.intervaloMedioDias!) - (a.diasDesdeUltima! / a.intervaloMedioDias!));
+  const coldCap = Math.min(cfg.coldStartPisoDia, Math.ceil(cap * COLD_START_MAX_PCT)); // guardrail %, não piso cego
+  const cold = pick(coldPool, coldCap, 'coldstart');
+  // win-back: ordenado por VALOR (não profundidade de churn) e só acima do piso — não deixa sumido barato roubar reserva.
+  const winbackPool = vivos.filter(s => isWinback(s) && s.valorDaLigacao >= winbackFloor)
+    .sort((a, b) => b.valorDaLigacao - a.valorDaLigacao);
   const winback = pick(winbackPool, Math.min(winbackSlots, cap - cold.length), 'winback');
   const top = pick(vivos, cap - cold.length - winback.length, 'top'); // vivos já ordenado por valor
 
   const callQueue = [...top, ...winback, ...cold]; // top primeiro; reservas garantidas
 
-  // --- whatsappQueue (accept-a-proposal): recompra previsível; fora cold-start/sem-hist/janela aberta ---
-  const whatsappQueue = vivos.filter(s => !s.isColdStart && s.intervaloMedioDias != null && !s.janela24hAberta);
+  // --- whatsappQueue (accept-a-proposal): dedup contra a callQueue (não duplica canal — codex #6/#7);
+  // o humano pega o topo, a IA pega o resto elegível (fora cold-start/sem-hist/janela aberta). Já vem ordenada por valor (vivos).
+  const callIds = new Set(callQueue.map(c => c.customerUserId));
+  const whatsappQueue = vivos.filter(s =>
+    !callIds.has(s.customerUserId) && !s.isColdStart && s.intervaloMedioDias != null && !s.janela24hAberta);
 
   return { callQueue, whatsappQueue, excluidos };
 }

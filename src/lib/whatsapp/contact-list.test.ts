@@ -79,26 +79,35 @@ describe('buildContactList — ordenação, reservas e buckets', () => {
     const vals = r.callQueue.map(c => c.valorDaLigacao);
     expect([...vals].sort((a, b) => b - a)).toEqual(vals); // já ordenado desc
   });
-  it('reserva piso de win-back (clientes sumindo) e cold-start mesmo com top forte', () => {
-    const tops = Array.from({ length: 20 }, (_, i) =>
-      cand({ customerUserId: `top${i}`, ticketEsperado: 5000 }));            // alto valor, no ciclo
-    const winbacks = [cand({ customerUserId: 'wb1', diasDesdeUltima: 90, intervaloMedioDias: 30, ticketEsperado: 800 })];
-    const colds = [cand({ customerUserId: 'cs1', isColdStart: true, diasDesdeUltima: null, intervaloMedioDias: null })];
-    const r = buildContactList([...tops, ...winbacks, ...colds],
-      { winBackReservaPct: 0.2, coldStartPisoDia: 1, capacidadeLigacoes: 10, cadenciaMinDias: 3 });
-    expect(r.callQueue.find(c => c.customerUserId === 'wb1')?.bucket).toBe('winback');
-    expect(r.callQueue.find(c => c.customerUserId === 'cs1')?.bucket).toBe('coldstart');
-    expect(r.callQueue.length).toBe(10);
+  it('win-back reservado é ordenado por VALOR e exige piso (não o sumido mais barato) [codex #3]', () => {
+    const tops = Array.from({ length: 3 }, (_, i) => cand({ customerUserId: `top${i}`, ticketEsperado: 5000 })); // valor 500
+    const wbHi = cand({ customerUserId: 'wbHi', diasDesdeUltima: 45, intervaloMedioDias: 30, ticketEsperado: 4500 }); // winback, valor 450 (>= piso)
+    const wbLo = cand({ customerUserId: 'wbLo', diasDesdeUltima: 90, intervaloMedioDias: 30, ticketEsperado: 400 });  // winback, valor 40 (< piso)
+    const r = buildContactList([...tops, wbHi, wbLo],
+      { winBackReservaPct: 0.34, coldStartPisoDia: 0, capacidadeLigacoes: 3, cadenciaMinDias: 3 });
+    expect(r.callQueue.find(c => c.customerUserId === 'wbHi')?.bucket).toBe('winback'); // valioso entra na reserva
+    expect(r.callQueue.find(c => c.customerUserId === 'wbLo')).toBeUndefined();          // sumido barato NÃO ocupa reserva
+    expect(r.callQueue.length).toBe(3);
   });
-  it('whatsappQueue exclui cold-start, sem-histórico e janela-aberta (vão p/ humano)', () => {
+  it('cold-start é limitado a % do cap (não o piso cego) quando o cap é pequeno [codex #4]', () => {
+    const tops = Array.from({ length: 5 }, (_, i) => cand({ customerUserId: `top${i}`, ticketEsperado: 5000 }));
+    const colds = Array.from({ length: 3 }, (_, i) => cand({ customerUserId: `cs${i}`, isColdStart: true }));
+    const r = buildContactList([...tops, ...colds],
+      { winBackReservaPct: 0, coldStartPisoDia: 3, capacidadeLigacoes: 5, cadenciaMinDias: 3 });
+    // ceil(5*0.10)=1, min(3,1)=1 → só 1 cold-start, não 3
+    expect(r.callQueue.filter(c => c.bucket === 'coldstart').length).toBe(1);
+  });
+  it('whatsappQueue dedup contra callQueue + filtra cold-start/sem-hist/janela [codex #6/#7]', () => {
     const r = buildContactList([
-      cand({ customerUserId: 'wa-ok' }),
+      cand({ customerUserId: 'hi', ticketEsperado: 5000 }),     // topo → vai pra callQueue
+      cand({ customerUserId: 'wa-ok' }),                         // overflow elegível → whatsappQueue
       cand({ customerUserId: 'wa-cold', isColdStart: true }),
       cand({ customerUserId: 'wa-nohist', intervaloMedioDias: null }),
       cand({ customerUserId: 'wa-janela', janela24hAberta: true }),
-    ], CFG);
+    ], { winBackReservaPct: 0, coldStartPisoDia: 0, capacidadeLigacoes: 1, cadenciaMinDias: 3 });
     const ids = r.whatsappQueue.map((x: ScoredCandidate) => x.customerUserId);
     expect(ids).toContain('wa-ok');
+    expect(ids).not.toContain('hi');        // já está na callQueue → não duplica canal
     expect(ids).not.toContain('wa-cold');
     expect(ids).not.toContain('wa-nohist');
     expect(ids).not.toContain('wa-janela');
