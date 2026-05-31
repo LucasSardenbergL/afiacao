@@ -18,6 +18,7 @@ import type { AIOrderResult, AICustomerMatch } from '@/components/UnifiedAIAssis
 import type { IdentifiedItem } from '@/components/VoiceServiceInput';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
+import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
 
 // Re-export shared types for backwards compatibility
 export { VOLUME_UNITS };
@@ -455,6 +456,28 @@ export function useUnifiedOrder() {
     await selectCustomer(omieCustomer);
   }, [selectCustomer]);
 
+  // Pré-seleção por user_id (deep-link "Novo pedido" do Customer 360).
+  // Busca identidade (profiles) + mapeamento Omie (omie_clientes) por user_id,
+  // monta o OmieCustomer e reusa o selectCustomer existente. Falha → silencioso
+  // (não pré-seleciona; o vendedor escolhe no passo Cliente). NÃO altera o money-path.
+  const selectCustomerByUserId = useCallback(async (userId: string) => {
+    if (!userId) return;
+    try {
+      const [{ data: profile }, { data: omie }] = await Promise.all([
+        supabase.from('profiles')
+          .select('razao_social, name, document')
+          .eq('user_id', userId).maybeSingle(),
+        supabase.from('omie_clientes')
+          .select('omie_codigo_cliente, omie_codigo_vendedor')
+          .eq('user_id', userId).maybeSingle(),
+      ]);
+      const omieCustomer = buildOmieCustomer(userId, profile, omie);
+      if (omieCustomer) await selectCustomer(omieCustomer);
+    } catch {
+      // fallback silencioso: mantém o fluxo manual intacto
+    }
+  }, [selectCustomer]);
+
   // Unified AI handler
   const handleUnifiedAIResult = useCallback((result: AIOrderResult) => {
     const newCartItems: CartItem[] = [];
@@ -674,7 +697,7 @@ export function useUnifiedOrder() {
     authLoading, user, isStaff, isCustomerMode,
     // Customer
     customerSearch, setCustomerSearch, customers, selectedCustomer, searchingCustomers,
-    loadingCustomer, customerUserId, selectCustomer, clearCustomer,
+    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer,
     // Products
     obenProducts, colacorProducts, productSearch, setProductSearch,
     loadingObenProducts, loadingColacorProducts,
