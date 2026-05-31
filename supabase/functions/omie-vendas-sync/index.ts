@@ -23,6 +23,12 @@ interface OmieProdutoCadastro {
   peso_liq?: number;
   cfop?: string;
   recomendacoes_fiscais?: { tipo_produto?: string };
+  // Tipo do item no Omie (00..99; '04' = Produto Acabado = fabricado internamente, nunca comprar).
+  // A doc do Omie usa `tipoItem`; o retorno do ListarProdutos pode vir snake_case (`tipo_item`)
+  // ou no genérico `tipo`. O batch NÃO traz `recomendacoes_fiscais.tipo_produto` (sempre null),
+  // por isso lemos as variações abaixo.
+  tipoItem?: string | number;
+  tipo_item?: string | number;
 }
 
 interface OmiePosEstoque {
@@ -342,7 +348,10 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
           peso_liq: prod.peso_liq,
           descricao_familia: prod.descricao_familia,
           cfop: prod.cfop,
-          tipo_produto: prod.recomendacoes_fiscais?.tipo_produto ?? null,
+          // money-path: '04' aqui = Produto Acabado (fabricado, nunca comprar) — usado pelo motor
+          // de reposição e pela auto-criação de OP em submitOrder. Lê o campo REAL do Omie
+          // (tipoItem/tipo_item/tipo), com fallback ao recomendacoes_fiscais legado.
+          tipo_produto: prod.tipoItem ?? prod.tipo_item ?? prod.tipo ?? prod.recomendacoes_fiscais?.tipo_produto ?? null,
         },
         account,
         updated_at: new Date().toISOString(),
