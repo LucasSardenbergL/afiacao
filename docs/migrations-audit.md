@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **127** custom migrations totais
-- **556** objetos esperados (criados por estas migrations)
+- **132** custom migrations totais
+- **567** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 153
-  - `index`: 107
-  - `function`: 103
-  - `cron_job`: 89
-  - `table`: 66
+  - `function`: 110
+  - `index`: 109
+  - `cron_job`: 90
+  - `table`: 67
   - `trigger`: 34
   - `enum_value`: 4
 
@@ -1195,6 +1195,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
 
+### `20260530210000_reposicao_candidatos_primeira_compra.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_vih_recorrencia_180d` | `venda_items_history` |
+| `function` | `public.promover_candidato_primeira_compra` | — |
+
 ### `20260530210001_cancelar_pedido_limpa_portal.sql`
 
 | Tipo | Objeto | Parent |
@@ -1206,6 +1213,35 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.envio_portal_lock_candidatos` | — |
+
+### `20260531120000_reposicao_candidatos_inclui_habilitados.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.promover_candidato_primeira_compra` | — |
+
+### `20260531130000_data_health_check_sayerlack_fabricado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260531140000_reposicao_atualizar_params_nao_zera.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atualizar_parametros_numericos_skus` | — |
+
+### `20260531150000_reposicao_param_limbo_watchdog.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_param_limbo_log` | — |
+| `index` | `public.uq_reposicao_param_limbo_log_dia` | `reposicao_param_limbo_log` |
+| `function` | `public.reposicao_param_limbo_watchdog` | — |
+| `cron_job` | `cron.reposicao-param-limbo-watchdog` | — |
 
 ## Próximos passos quando algo der `❌`
 
