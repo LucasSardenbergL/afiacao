@@ -173,3 +173,66 @@ describe('ehProdutoFracionado (não-comprado pelo portal)', () => {
     expect(ehProdutoFracionado('')).toBe(false);
   });
 });
+
+// ─── Variante separador-ESPAÇO (tingidores "TEH 3505.211FG") ───────────────────
+// Descoberta (gap de mapeamento Sayerlack OBEN, 2026-05-30): ~26 tingidores trazem o
+// código na descrição com ESPAÇO no lugar do 1º ponto ("TEH 3505.211FG") em vez do
+// formato pontuado ("TEH.3505.211FG"). O gabarito provou que o sku_portal CORRETO é
+// PONTUADO (4/4 já mapeados usam ponto, manuais e auto), então normalizamos espaço→ponto.
+// A variante é ESTREITA de propósito: EXIGE a 2ª parte pontuada (.\d{2,4}). É isso que
+// rejeita o falso-positivo "PU 6611A" (apontado pelo codex) e o degenerado "TEH 3505.TG5BB".
+describe('sayerlack-sku parser — variante separador-espaço (tingidores)', () => {
+  it.each([
+    ['TINGIDOR CARAMELO TEH 3505.211FG', 'TEH.3505.211FG'],
+    ['TINGIDOR NOGAL MEDIO TEH 3505.110FG', 'TEH.3505.110FG'],
+    ['TINGIDOR LUCIANO 02 TEH 3505.00BB', 'TEH.3505.00BB'],
+    ['TINGIDOR MEL TEH 3505.1210FG', 'TEH.3505.1210FG'],
+    ['TINGIDOR NOGUEIRA CLARO TEH 3505.308BB', 'TEH.3505.308BB'],
+  ])('normaliza espaço→ponto (formato do portal): %s → %s', (desc, esperado) => {
+    const r = resolverSayerlack(desc);
+    expect(r.status).toBe('ok');
+    if (r.status === 'ok') expect(r.codigo).toBe(esperado);
+  });
+
+  it('NÃO cria falso-positivo "PU 6611A" (sem 2ª parte pontuada) — codex', () => {
+    expect(resolverSayerlack('VERNIZ05 PU 6611A BH').status).toBe('sem_codigo');
+  });
+
+  it('NÃO casa o degenerado TG5 (2ª parte não-numérica)', () => {
+    expect(resolverSayerlack('TINGIDOR DETTAGLI TEH 3505.TG5BB').status).toBe('sem_codigo');
+    expect(resolverSayerlack('TINGIDOR DETTAGLI TEH 3505.TG5FG').status).toBe('sem_codigo');
+  });
+
+  // codex challenge: a 2ª parte pontuada NÃO basta — "PU 6611.22BH" / "RAL 9010.20BR" têm a
+  // forma "PALAVRA NNNN.NN+sufixo" mas o prefixo NÃO é de tingidor → seria de-para inventado
+  // (PO errado). A variante-espaço só vale pros prefixos de tingidor observados (TEH/TE/TM/TY).
+  it('NÃO casa "PALAVRA NNNN.NN+sufixo" com prefixo fora da família tingidor', () => {
+    expect(resolverSayerlack('VERNIZ05 PU 6611.22BH').status).toBe('sem_codigo');
+    expect(resolverSayerlack('COR RAL 9010.20BR').status).toBe('sem_codigo');
+    expect(resolverSayerlack('CAIXA AB 1234.56CD').status).toBe('sem_codigo');
+  });
+
+  it('a variante-espaço cobre os prefixos de tingidor (TEH/TE/TM/TY)', () => {
+    expect(resolverSayerlack('TINGIDOR CARAMELO TEH 3505.211FG')).toMatchObject({ status: 'ok', codigo: 'TEH.3505.211FG' });
+    expect(resolverSayerlack('TINGIDOR CONCENTRADO MOGNO TE 3550.62FG')).toMatchObject({ status: 'ok', codigo: 'TE.3550.62FG' });
+    expect(resolverSayerlack('TINTA MORDENTE TM 3610.503FG')).toMatchObject({ status: 'ok', codigo: 'TM.3610.503FG' });
+    expect(resolverSayerlack('ACQUACOLOR TY 1480.7191BG')).toMatchObject({ status: 'ok', codigo: 'TY.1480.7191BG' });
+  });
+
+  it('NÃO casa quando o sufixo está destacado por espaço ("...325 500ML")', () => {
+    expect(resolverSayerlack('TINGIDOR NOGAL ANTIGO TEH 3505.325 500ML').status).toBe('sem_codigo');
+  });
+
+  it('o formato pontuado pré-existente segue intacto (sem dupla-contagem)', () => {
+    expect(extrairCodigosSayerlack('TINGIDOR AMARELO TEH.3550.07FG')).toEqual(['TEH.3550.07FG']);
+  });
+
+  it('sugerirMapeamentos classifica o tingidor-espaço como seguro com sku_portal pontuado', () => {
+    const r = sugerirMapeamentos([
+      { sku_codigo_omie: '8689783786', sku_descricao: 'TINGIDOR CARAMELO TEH 3505.211FG' },
+    ]);
+    expect(r.seguros).toEqual([
+      { sku_omie: '8689783786', descricao: 'TINGIDOR CARAMELO TEH 3505.211FG', sku_portal: 'TEH.3505.211FG', sufixo: 'FG' },
+    ]);
+  });
+});
