@@ -941,8 +941,8 @@ export interface CockpitRollupCliente {
   cliente: string;
   receita: number;
   cm: number | null;
-  encargo: number;
-  encargo_total: number;
+  encargo: number | null;
+  encargo_total: number | null;
   evp: number | null;
 }
 export interface CockpitRollupSKU {
@@ -950,19 +950,20 @@ export interface CockpitRollupSKU {
   receita: number;
   quantidade: number;
   cm: number | null;
-  encargo: number;
-  encargo_total: number;
+  encargo: number | null;
+  encargo_total: number | null;
   evp: number | null;
 }
 export interface ValorCockpitResult {
   company: string;
-  k: number;
+  k: number | null;                 // hurdle (Ke); null quando ausente/inválido (não fabricado)
+  hurdle_indisponivel?: boolean;    // sem Ke → EVP/encargo indisponíveis
   ttm: { inicio: string; fim: string };
   vazio?: boolean;
   motivo?: string;
   porCliente: CockpitRollupCliente[];
   porSKU: CockpitRollupSKU[];
-  empresa: { receita: number; cm: number | null; encargo: number; encargo_total: number; evp: number | null };
+  empresa: { receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null };
   recomendacoesCliente: Array<{ cliente: string; recomendacoes: CockpitRecomendacao[] }>;
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
   cobertura_receita: number;
