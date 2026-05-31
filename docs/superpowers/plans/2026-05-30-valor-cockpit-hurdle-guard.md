@@ -49,11 +49,17 @@ describe('montarCelulasComboEVP — k nullable', () => {
   const combos = [{ cliente: 'A', sku: '1', receita_liquida: 1000, quantidade: 10, custo_unitario: 50 }];
   const capCli = [{ cliente: 'A', ar_medio: 2000 }];
   const capSku = [{ sku: '1', estoque_valor: 500 }];
-  it('k número → encargo/evp calculados (happy-path)', () => {
+  it('k número → encargo/evp calculados (happy-path), asserts EXATOS em rollup/empresa (Codex P2.3)', () => {
     const r = montarCelulasComboEVP({ combos, capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
-    expect(r.celulas[0].encargo).toBeCloseTo(0.2 * (2000 + 500), 6);
-    expect(r.celulas[0].evp).toBeCloseTo(500 - 0.2 * 2500, 6);
-    expect(r.empresa.encargo).not.toBeNull();
+    expect(r.celulas[0].encargo).toBeCloseTo(0.2 * (2000 + 500), 6); // 500
+    expect(r.celulas[0].evp).toBeCloseTo(500 - 0.2 * 2500, 6);       // 0
+    expect(r.porCliente[0].encargo).toBeCloseTo(500, 6);
+    expect(r.porCliente[0].encargo_total).toBeCloseTo(500, 6);
+    expect(r.porCliente[0].evp).toBeCloseTo(0, 6);
+    expect(r.porSKU[0].encargo).toBeCloseTo(500, 6);
+    expect(r.empresa.encargo).toBeCloseTo(500, 6);
+    expect(r.empresa.encargo_total).toBeCloseTo(500, 6);
+    expect(r.empresa.evp).toBeCloseTo(0, 6);
   });
   it('k null → encargo/evp null em célula/rollup/empresa; cm segue; acumulador NÃO coage', () => {
     const r = montarCelulasComboEVP({ combos, capitalClientes: capCli, capitalSKUs: capSku, k: null });
@@ -67,6 +73,21 @@ describe('montarCelulasComboEVP — k nullable', () => {
     expect(r.empresa.encargo_total).toBeNull();
     expect(r.empresa.evp).toBeNull();
     expect(r.empresa.cm).toBe(500);
+  });
+  it('MISTO k=null + célula cm=null no mesmo cliente (Codex P1.2): custo-ausente ≠ hurdle-ausente', () => {
+    const combos2 = [
+      { cliente: 'A', sku: '1', receita_liquida: 1000, quantidade: 10, custo_unitario: 50 }, // cm=500
+      { cliente: 'A', sku: '2', receita_liquida: 800, quantidade: 5, custo_unitario: null },  // cm=null
+    ];
+    const r = montarCelulasComboEVP({ combos: combos2, capitalClientes: [{ cliente: 'A', ar_medio: 2000 }], capitalSKUs: [{ sku: '1', estoque_valor: 500 }, { sku: '2', estoque_valor: 300 }], k: null });
+    const celSemCusto = r.celulas.find((c) => c.sku === '2')!;
+    expect(celSemCusto.cm).toBeNull();      // custo ausente
+    expect(celSemCusto.evp).toBeNull();
+    expect(celSemCusto.encargo).toBeNull(); // hurdle ausente
+    expect(r.porCliente[0].cm).toBe(500);   // só a célula com custo
+    expect(r.porCliente[0].encargo).toBeNull();
+    expect(r.porCliente[0].encargo_total).toBeNull();
+    expect(r.porCliente[0].evp).toBeNull();
   });
 });
 
@@ -88,6 +109,13 @@ describe('recomendarAcaoComercial — hurdle_indisponivel', () => {
     const r = recomendarAcaoComercial({ evp: 50, receita_liquida: 1000, cm: 300, desconto_total: 0, prazo_medio_dias: 0, dias_estoque: 0, config });
     expect(r.some((x) => x.acao === 'Crescer / proteger')).toBe(true);
     expect(r.some((x) => x.acao === 'Configurar hurdle')).toBe(false);
+  });
+  it('REGRESSÃO (Codex P1.1): hurdle PRESENTE + evp null por CUSTO ausente + desconto>max → "Cortar desconto" AINDA aparece (sem nota de hurdle)', () => {
+    const r = recomendarAcaoComercial({ evp: null, cm: null, receita_liquida: 800, desconto_total: 200, prazo_medio_dias: 0, dias_estoque: 0, config });
+    expect(r.some((x) => x.acao === 'Cortar desconto')).toBe(true); // comportamento conservador atual preservado
+    expect(r.some((x) => x.acao === 'Configurar hurdle')).toBe(false); // hurdle presente
+    const corte = r.find((x) => x.acao === 'Cortar desconto')!;
+    expect(corte.motivo.toLowerCase()).toContain('não gera valor'); // motivo ORIGINAL (não o hurdle-aware)
   });
 });
 
@@ -156,7 +184,7 @@ Empresa idem (flags `encNull`/`encTotalNull`). `scoreConfiancaCockpit` + input `
 
 ### Task 3: UI `FinanceiroValorCockpit.tsx`
 
-- [ ] **Step 1:** L85 — guard `data.k`: quando `data.k != null`, "… @ {(data.k*100).toFixed(1)}%"; quando null, banner `text-status-warning` "Lucro econômico (EVP) indisponível — configure o Ke/hurdle em /financeiro/valor." (sem `data.k*100`). `brl(encargo/evp)` já renderiza "—".
+- [ ] **Step 1:** L85 — guard `data.k`: quando `data.k != null`, "… @ {(data.k*100).toFixed(1)}%"; quando null, banner `text-status-warning` "Lucro econômico (EVP) indisponível — configure o Ke/hurdle em /financeiro/valor." (sem `data.k*100`). `brl(encargo/evp)` já renderiza "—". **(Codex P3.6)** L140-141: a cor do EVP cai em `success` (verde) quando `evp==null` (fallback) — trocar p/ neutro: `row.evp == null ? 'text-muted-foreground' : row.evp < 0 ? 'text-status-error' : 'text-status-success'` (não pintar "bom" o que é indisponível).
 - [ ] **Step 2 — tsc:** `bunx tsc --noEmit -p tsconfig.app.json`.
 - [ ] **Step 3 — Commit:** `feat(valor-cockpit): UI sem "@ 20%" fabricado — banner de hurdle ausente`
 
