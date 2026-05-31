@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Loader2, CheckCircle, Building2, Scissors, Wifi } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
@@ -47,6 +48,22 @@ const UnifiedOrder = () => {
   const { isCustomerMode } = h;
   const { user } = useAuth();
   const [restoreOpen, setRestoreOpen] = useState(false);
+
+  const [searchParams] = useSearchParams();
+  const preselectCustomerId = searchParams.get('customer');
+  const preselectedRef = useRef(false);
+
+  useEffect(() => {
+    if (
+      preselectCustomerId &&
+      h.isStaff &&
+      !h.selectedCustomer &&
+      !preselectedRef.current
+    ) {
+      preselectedRef.current = true;
+      void h.selectCustomerByUserId(preselectCustomerId);
+    }
+  }, [preselectCustomerId, h.isStaff, h.selectedCustomer, h.selectCustomerByUserId]);
 
   useOrderDeepLink({
     selectedCustomer: h.selectedCustomer,
