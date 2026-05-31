@@ -6,6 +6,29 @@ export function margemContribuicao(input: { receita_liquida: number; custo_unita
   return input.receita_liquida - input.custo_unitario * input.quantidade;
 }
 
+function numOrNull(x: unknown): number | null {
+  if (x == null || typeof x === 'boolean' || Array.isArray(x)) return null;
+  if (typeof x !== 'number' && typeof x !== 'string') return null;
+  if (typeof x === 'string' && x.trim() === '') return null;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Hurdle (Ke) do cockpit, de fin_valor_inputs.ke.base (âncora + prêmios). Ausente/inválido → null
+// (NÃO fabrica 0.20 — "ausente ≠ número", igual ao guard de NCG do A2). Âncora obrigatória; prêmio
+// ausente = 0 (prêmio "nenhum" é legítimo); soma não-finita ou ≤ 0 → null (0% = capital grátis).
+export function resolverHurdleCockpit(vi: Record<string, unknown> | null | undefined): number | null {
+  const ke = ((vi?.ke as Record<string, unknown> | undefined)?.base) as Record<string, unknown> | undefined;
+  if (!ke) return null;
+  const ancora = numOrNull(ke.ancora);
+  if (ancora == null) return null;
+  const soma = ancora
+    + (numOrNull(ke.premio_risco_equity) ?? 0)
+    + (numOrNull(ke.premio_tamanho_private) ?? 0)
+    + (numOrNull(ke.premio_iliquidez_controle) ?? 0);
+  return Number.isFinite(soma) && soma > 0 ? soma : null;
+}
+
 function diasEntre(a: string, b: string): number {
   return Math.round((new Date(b + 'T00:00:00Z').getTime() - new Date(a + 'T00:00:00Z').getTime()) / 86400000);
 }
@@ -77,25 +100,26 @@ export type CapitalCliente = { cliente: string; ar_medio: number | null };
 export type CapitalSKU = { sku: string; estoque_valor: number | null };
 export type CelulaEVP = {
   cliente: string; sku: string; receita_liquida: number; quantidade: number;
-  cm: number | null; a_cs: number; i_cs: number; encargo: number; evp: number | null;
+  cm: number | null; a_cs: number; i_cs: number; encargo: number | null; evp: number | null;
   ar_indisponivel: boolean; estoque_indisponivel: boolean;
 };
 // `encargo` = encargo de capital SÓ das células com cm conhecido (mantém a identidade evp = cm − encargo).
 // `encargo_total` = encargo de TODAS as células (inclui as de margem desconhecida) — transparência.
-export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number; encargo_total: number; evp: number | null };
-export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number; encargo_total: number; evp: number | null };
+// encargo/encargo_total = null quando o hurdle (k) está indisponível (ausente ≠ R$0).
+export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null };
+export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null };
 export type ComboEVPResult = {
   celulas: CelulaEVP[];
   porCliente: RollupCliente[];
   porSKU: RollupSKU[];
-  empresa: { receita: number; cm: number | null; encargo: number; encargo_total: number; evp: number | null };
+  empresa: { receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null };
 };
 
 export function montarCelulasComboEVP(input: {
   combos: ComboInput[];
   capitalClientes: CapitalCliente[];
   capitalSKUs: CapitalSKU[];
-  k: number;
+  k: number | null;   // hurdle; null → encargo/EVP indisponíveis (não fabricados)
 }): ComboEVPResult {
   const arPorCliente = new Map(input.capitalClientes.map((c) => [c.cliente, c.ar_medio]));
   const estoquePorSKU = new Map(input.capitalSKUs.map((s) => [s.sku, s.estoque_valor]));
@@ -118,22 +142,23 @@ export function montarCelulasComboEVP(input: {
     const estoque_indisponivel = estS == null || qs <= 0;
     const a_cs = arC != null && rc > 0 ? arC * (c.receita_liquida / rc) : 0;
     const i_cs = estS != null && qs > 0 ? estS * (c.quantidade / qs) : 0;
-    const encargo = input.k * (a_cs + i_cs);
-    const evp = cm == null ? null : cm - encargo;
+    // Hurdle ausente (k null) → encargo indisponível (ausente ≠ R$0); EVP só existe com cm E encargo.
+    const encargo = input.k == null ? null : input.k * (a_cs + i_cs);
+    const evp = cm == null || encargo == null ? null : cm - encargo;
     return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp, ar_indisponivel, estoque_indisponivel };
   });
 
   const rollup = (keyFn: (c: CelulaEVP) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoTotal: number; evp: number; evpNull: boolean }>();
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean }>();
     for (const cel of celulas) {
       const key = keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoTotal: 0, evp: 0, evpNull: true };
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true };
       acc.receita += cel.receita_liquida;
       acc.quantidade += cel.quantidade;
-      acc.encargoTotal += cel.encargo; // todas as células
+      if (cel.encargo != null) { acc.encargoTotal += cel.encargo; acc.encargoTotalNull = false; } // todas as células (null-aware)
       if (cel.cm != null) {
         acc.cm += cel.cm; acc.cmNull = false;
-        acc.encargo += cel.encargo;     // encargo relevante ao EVP (só células com cm)
+        if (cel.encargo != null) { acc.encargo += cel.encargo; acc.encargoNull = false; } // encargo relevante ao EVP (só células com cm)
       }
       if (cel.evp != null) { acc.evp += cel.evp; acc.evpNull = false; }
       m.set(key, acc);
@@ -143,17 +168,17 @@ export function montarCelulasComboEVP(input: {
 
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente: RollupCliente[] = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargo, encargo_total: a.encargoTotal, evp: a.evpNull ? null : a.evp }));
-  const porSKU: RollupSKU[] = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargo, encargo_total: a.encargoTotal, evp: a.evpNull ? null : a.evp }));
+  const porCliente: RollupCliente[] = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp }));
+  const porSKU: RollupSKU[] = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp }));
 
-  let cmEmp = 0, cmNull = true, encEmp = 0, encTotalEmp = 0, evpEmp = 0, evpNull = true, recEmp = 0;
+  let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, evpEmp = 0, evpNull = true, recEmp = 0;
   for (const cel of celulas) {
     recEmp += cel.receita_liquida;
-    encTotalEmp += cel.encargo;
-    if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; encEmp += cel.encargo; }
+    if (cel.encargo != null) { encTotalEmp += cel.encargo; encTotalNull = false; }
+    if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; if (cel.encargo != null) { encEmp += cel.encargo; encNull = false; } }
     if (cel.evp != null) { evpEmp += cel.evp; evpNull = false; }
   }
-  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encEmp, encargo_total: encTotalEmp, evp: evpNull ? null : evpEmp } };
+  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp: evpNull ? null : evpEmp } };
 }
 
 export type CockpitConfig = {
@@ -173,34 +198,45 @@ export function recomendarAcaoComercial(input: {
   prazo_medio_dias: number;
   dias_estoque: number;
   config: CockpitConfig;
+  hurdle_indisponivel?: boolean;   // sem Ke → EVP não calculável globalmente; gateia as regras de valor
 }): Recomendacao[] {
   const r: Recomendacao[] = [];
   const c = input.config;
   const receitaBruta = input.receita_liquida + input.desconto_total;
   const descontoPct = receitaBruta > 0 ? input.desconto_total / receitaBruta : 0;
   const cmPct = input.cm != null && input.receita_liquida > 0 ? input.cm / input.receita_liquida : null;
+  // Com hurdle ausente, evp=null significa "não calculável" (NÃO "destrói valor"): não tratar null
+  // como sinal de valor. Regras de margem (subir preço) seguem; o desconto excessivo vira nota neutra.
+  const evpConhecivel = !input.hurdle_indisponivel;
 
-  // cortar desconto: desconto acima do máx e valor não justifica (EVP baixo/negativo)
-  if (descontoPct > c.desconto_max_pct && (input.evp == null || input.evp <= 0)) {
+  // cortar desconto: desconto acima do máx e (sem hurdle OU valor não justifica)
+  if (descontoPct > c.desconto_max_pct && (!evpConhecivel || input.evp == null || input.evp <= 0)) {
     const recupera = input.desconto_total - receitaBruta * c.desconto_max_pct;
-    r.push({ acao: 'Cortar desconto', motivo: `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}% e o combo não gera valor.`, impacto_rs: Math.max(0, recupera) });
+    const motivo = evpConhecivel
+      ? `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}% e o combo não gera valor.`
+      : `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}% — lucro econômico indisponível (configure o hurdle p/ confirmar).`;
+    r.push({ acao: 'Cortar desconto', motivo, impacto_rs: Math.max(0, recupera) });
   }
-  // encurtar prazo: prazo acima do alvo e EVP negativo
-  if (input.prazo_medio_dias > c.prazo_alvo_dias && (input.evp == null || input.evp < 0)) {
+  // encurtar prazo: prazo acima do alvo e EVP negativo (gated por evpConhecivel — null-de-hurdle não é sinal)
+  if (evpConhecivel && input.prazo_medio_dias > c.prazo_alvo_dias && (input.evp == null || input.evp < 0)) {
     r.push({ acao: 'Encurtar prazo / exigir antecipado', motivo: `Prazo médio ${input.prazo_medio_dias.toFixed(0)}d > alvo ${c.prazo_alvo_dias}d puxa o custo de capital de giro.`, impacto_rs: null });
   }
-  // subir preço: margem% abaixo da mínima
+  // subir preço: margem% abaixo da mínima (independe do hurdle)
   if (cmPct != null && cmPct < c.margem_minima_pct) {
     const alvoCM = c.margem_minima_pct * input.receita_liquida;
     r.push({ acao: 'Subir preço', motivo: `Margem ${(cmPct * 100).toFixed(0)}% < mínima ${(c.margem_minima_pct * 100).toFixed(0)}%.`, impacto_rs: Math.max(0, alvoCM - (input.cm as number)) });
   }
-  // despriorizar/liquidar SKU: estoque alto + EVP negativo
-  if (input.dias_estoque > c.dias_estoque_max && (input.evp == null || input.evp < 0)) {
+  // despriorizar/liquidar SKU: estoque alto + EVP negativo (gated por evpConhecivel)
+  if (evpConhecivel && input.dias_estoque > c.dias_estoque_max && (input.evp == null || input.evp < 0)) {
     r.push({ acao: 'Despriorizar / liquidar estoque', motivo: `${input.dias_estoque.toFixed(0)} dias de estoque > limite ${c.dias_estoque_max}d e o item não gera valor.`, impacto_rs: null });
   }
-  // crescer: EVP positivo e nada disparou
+  // crescer: EVP positivo e nada disparou (evp null-de-hurdle não dispara, naturalmente)
   if (r.length === 0 && input.evp != null && input.evp > 0) {
     r.push({ acao: 'Crescer / proteger', motivo: 'Gera valor econômico positivo e sem alertas.', impacto_rs: null });
+  }
+  // nota de hurdle ausente: explica por que faltam as recomendações de valor
+  if (input.hurdle_indisponivel) {
+    r.push({ acao: 'Configurar hurdle', motivo: 'Sem Ke configurado — EVP e recomendações de valor indisponíveis. Configure em /financeiro/valor.', impacto_rs: null });
   }
   return r;
 }
@@ -213,11 +249,13 @@ export function scoreConfiancaCockpit(input: {
   ar_indisponivel_pct: number;   // [0,1] células sem AR joinável
   estoque_ausente_pct: number;   // [0,1] SKUs sem estoque/cmc
   imposto_estimado: boolean;
+  hurdle_indisponivel?: boolean; // sem Ke → EVP não calculável → confiança baixa
 }): ConfiancaCockpit {
   const motivos: string[] = [];
   let nivel = 3; // 3 alta, 2 media, 1 baixa
   const rebaixar = (para: number, m: string) => { if (para < nivel) nivel = para; motivos.push(m); };
 
+  if (input.hurdle_indisponivel) rebaixar(1, 'Sem Ke/hurdle configurado — lucro econômico (EVP) indisponível; configure em /financeiro/valor.');
   if (input.cobertura_receita < 0.6) rebaixar(1, `Cobertura de receita ${(input.cobertura_receita * 100).toFixed(0)}% — muita venda fora do app; cockpit parcial.`);
   else if (input.cobertura_receita < 0.85) rebaixar(2, `Cobertura de receita ${(input.cobertura_receita * 100).toFixed(0)}% (ideal ≥85%).`);
 
