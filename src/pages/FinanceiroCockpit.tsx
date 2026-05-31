@@ -118,6 +118,9 @@ const FinanceiroCockpit = () => {
           empresasPresentes={cockpit.empresas_presentes}
           empresasAusentes={cockpit.empresas_ausentes}
           empresasStale={cockpit.empresas_stale}
+          caixaInicialProjecao={cockpit.caixa_inicial_projecao}
+          saldoAtualBanco={totalCC}
+          cohorteCompleta={!cockpit.parcial}
         />
       )}
 

@@ -20,6 +20,7 @@ const COCKPIT_VAZIO: CockpitConsolidado = {
   saldo_tesouraria_total: 0, saldo_tesouraria_parcial: true,
   empresas_presentes: [], empresas_ausentes: [...EMPRESAS_COCKPIT], empresas_stale: [],
   parcial: true, data_referencia: null, snapshot_at_mais_antigo: null,
+  caixa_inicial_projecao: null, caixa_inicial_por_empresa: [], caixa_inicial_parcial: true,
 };
 
 export function useFinanceiroCockpit() {

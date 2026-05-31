@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Target, AlertTriangle } from 'lucide-react';
 import { fmtCompact } from './format';
-import type { SemanaConsolidada } from '@/lib/financeiro/cockpit-consolida-helpers';
+import { compararCaixaInicial, type SemanaConsolidada } from '@/lib/financeiro/cockpit-consolida-helpers';
 
 interface Projecao13CardProps {
   projecao13: SemanaConsolidada[];
@@ -13,6 +13,9 @@ interface Projecao13CardProps {
   empresasPresentes: string[];
   empresasAusentes: string[];
   empresasStale: string[];
+  caixaInicialProjecao: number | null;  // caixa que a projeção consolidada usou (Σ saldo_inicial coorte)
+  saldoAtualBanco: number;              // totalCC atual
+  cohorteCompleta: boolean;             // !parcial — só compara com coorte completa
 }
 
 const labelData = (iso: string | null) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '—');
@@ -25,10 +28,11 @@ const diasAtras = (iso: string | null): number | null => {
   return Number.isFinite(diff) ? Math.round(diff) : null;
 };
 
-export function Projecao13Card({ projecao13, dataReferencia, parcial, empresasPresentes, empresasAusentes, empresasStale }: Projecao13CardProps) {
+export function Projecao13Card({ projecao13, dataReferencia, parcial, empresasPresentes, empresasAusentes, empresasStale, caixaInicialProjecao, saldoAtualBanco, cohorteCompleta }: Projecao13CardProps) {
   const defasagem = diasAtras(dataReferencia);
   const negativas = projecao13.filter((w) => w.saldo_projetado < 0);
   const foraDaCoorte = [...empresasAusentes, ...empresasStale];
+  const cmpCaixa = compararCaixaInicial({ caixaInicialProjecao, saldoAtualBanco, cohorteCompleta });
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -48,6 +52,17 @@ export function Projecao13Card({ projecao13, dataReferencia, parcial, empresasPr
           <p className="text-[11px] text-status-warning">
             Parcial: {empresasPresentes.length} de 3 empresas na coorte. Fora: {foraDaCoorte.join(', ') || '—'}
             {empresasStale.length > 0 && ' (stale = snapshot mais antigo)'}. Números são mínimo conhecido.
+          </p>
+        )}
+        {/* Transparência: caixa que a projeção partiu vs saldo bancário atual (não muda nenhum número). */}
+        {cmpCaixa.disponivel ? (
+          <p className="text-[11px] text-muted-foreground">
+            Caixa inicial da projeção: {fmtCompact(caixaInicialProjecao as number)} · saldo bancário atual {fmtCompact(saldoAtualBanco)} · Δ {fmtCompact(cmpCaixa.delta as number)}{' '}
+            <span className="opacity-70">(a diferença pode refletir movimentações após o snapshot)</span>
+          </p>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            Caixa inicial da projeção indisponível neste snapshot{cohorteCompleta ? '' : ' (projeção parcial)'}.
           </p>
         )}
       </CardHeader>

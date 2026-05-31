@@ -3,7 +3,7 @@ import type { Company } from "@/contexts/CompanyContext";
 import type { Json } from "@/integrations/supabase/types";
 import type { DimRowRaw } from "@/lib/financeiro/orcamento-drill-helpers";
 import { coletarTitulosEntidade, parseMesDataEmissao, type EntidadeRowRaw } from "@/lib/financeiro/orcamento-entidade-helpers";
-import type { SnapshotEmpresa, SnapshotSemana } from "@/lib/financeiro/cockpit-consolida-helpers";
+import { parseSnapshotSemanas, type SnapshotEmpresa } from "@/lib/financeiro/cockpit-consolida-helpers";
 import type {
   FinFechamentoRow,
   FinFechamentoInsert,
@@ -670,24 +670,9 @@ export async function getProjecaoSnapshotsCockpit(
         .maybeSingle();
       if (error) throw error;
       if (!data) return null;
-      const dadosRaw = (data as { dados: unknown }).dados;
-      // ausente ≠ zero (Codex P1): campo numérico inválido descarta a semana (não vira 0 mentiroso).
-      const semanas: SnapshotSemana[] = Array.isArray(dadosRaw)
-        ? (dadosRaw as Array<Record<string, unknown>>)
-            .map((w) => ({
-              inicio: w && typeof w.inicio === 'string' ? w.inicio : '',
-              total_entradas: Number(w?.total_entradas),
-              total_saidas: Number(w?.total_saidas),
-              saldo_final: Number(w?.saldo_final),
-            }))
-            .filter(
-              (w): w is SnapshotSemana =>
-                w.inicio !== '' &&
-                Number.isFinite(w.total_entradas) &&
-                Number.isFinite(w.total_saidas) &&
-                Number.isFinite(w.saldo_final),
-            )
-        : [];
+      // ausente ≠ zero: campo core inválido descarta a semana; saldo_inicial null/ausente → null
+      // (NÃO 0 — Number(null)===0 seria fabricação). Lógica no helper puro testável.
+      const semanas = parseSnapshotSemanas((data as { dados: unknown }).dados);
       return {
         company: (data.company as string) ?? company,
         snapshot_at: data.snapshot_at as string,
