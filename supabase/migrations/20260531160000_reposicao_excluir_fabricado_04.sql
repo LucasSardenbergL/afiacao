@@ -217,7 +217,9 @@ elegiveis AS (
     AND COALESCE(op.metadata->>'tipo_produto', '') <> '04'
 ),
 calc AS (SELECT *, ceil(d * cap_dias) AS cap_cobertura, ceil(d * lt) AS dem_lt FROM elegiveis)
-SELECT empresa, sku_codigo_omie, sku_descricao, fornecedor_nome, fornecedor_habilitado, ja_habilitado,
+-- ⚠️ ordem de coluna IDÊNTICA à prod (pg_get_viewdef): ja_habilitado fica no FIM (não na pos 6).
+-- O arquivo do #514 (20260531120000) tem ja_habilitado na pos 6 → drift; aqui casa com prod.
+SELECT empresa, sku_codigo_omie, sku_descricao, fornecedor_nome, fornecedor_habilitado,
   classe_abc_proposta, classe_xyz_proposta, classe_consolidada, d AS demanda_media_diaria,
   lt AS lead_time_medio, lt_total_teorico_dias_uteis, demanda_sigma_diario, coef_variacao_ordem,
   dias_com_movimento, lead_time_desvio, lt_p95_dias, fonte_leadtime, z_aplicado, preco_item_eoq,
@@ -228,7 +230,8 @@ SELECT empresa, sku_codigo_omie, sku_descricao, fornecedor_nome, fornecedor_habi
   cap_dias AS primeira_compra_cap_dias,
   GREATEST((1)::numeric, LEAST(GREATEST(qc_eoq,(1)::numeric), cap_cobertura)) AS primeira_compra_qtde,
   GREATEST((1)::numeric, LEAST(dem_lt, cap_cobertura)) AS primeira_compra_ponto_pedido,
-  GREATEST((1)::numeric, LEAST(dem_lt, cap_cobertura)) + GREATEST((1)::numeric, LEAST(GREATEST(qc_eoq,(1)::numeric), cap_cobertura)) AS primeira_compra_estoque_maximo
+  GREATEST((1)::numeric, LEAST(dem_lt, cap_cobertura)) + GREATEST((1)::numeric, LEAST(GREATEST(qc_eoq,(1)::numeric), cap_cobertura)) AS primeira_compra_estoque_maximo,
+  ja_habilitado
 FROM calc;
 
 -- ─── PARTE D — regenera o ciclo de hoje já sem os '04' (efeito imediato) ───
