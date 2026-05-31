@@ -126,12 +126,13 @@ describe('montarCelulasComboEVP', () => {
     expect(r.empresa.cm).not.toBeNull();
     expect(r.empresa.evp).not.toBeNull();
     // identidade fecha usando o encargo relevante-ao-EVP (não o total):
-    expect(r.empresa.evp!).toBeCloseTo(r.empresa.cm! - r.empresa.encargo, 6);
+    // (k é número neste teste → encargo non-null; `!` consistente com evp!/cm! das mesmas linhas)
+    expect(r.empresa.evp!).toBeCloseTo(r.empresa.cm! - r.empresa.encargo!, 6);
     // e por rollup:
-    for (const c of r.porCliente) if (c.cm != null && c.evp != null) expect(c.evp).toBeCloseTo(c.cm - c.encargo, 6);
-    for (const s of r.porSKU) if (s.cm != null && s.evp != null) expect(s.evp).toBeCloseTo(s.cm - s.encargo, 6);
+    for (const c of r.porCliente) if (c.cm != null && c.evp != null) expect(c.evp).toBeCloseTo(c.cm - c.encargo!, 6);
+    for (const s of r.porSKU) if (s.cm != null && s.evp != null) expect(s.evp).toBeCloseTo(s.cm - s.encargo!, 6);
     // encargo_total inclui a célula sem custo → ≥ encargo relevante-ao-EVP:
-    expect(r.empresa.encargo_total).toBeGreaterThanOrEqual(r.empresa.encargo - 1e-9);
+    expect(r.empresa.encargo_total!).toBeGreaterThanOrEqual(r.empresa.encargo! - 1e-9);
   });
 
   it('custo ausente → cm null, célula fora do EVP, flag', () => {
