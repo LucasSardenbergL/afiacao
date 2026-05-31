@@ -49,7 +49,7 @@ elegiveis AS (
     AND sp.ponto_pedido IS NULL AND sp.estoque_maximo IS NULL  -- "virgem" = sem params (habilitado é ortogonal)
 ),
 calc AS (SELECT *, ceil(d * cap_dias) AS cap_cobertura, ceil(d * lt) AS dem_lt FROM elegiveis)
-SELECT empresa, sku_codigo_omie, sku_descricao, fornecedor_nome, fornecedor_habilitado, ja_habilitado,
+SELECT empresa, sku_codigo_omie, sku_descricao, fornecedor_nome, fornecedor_habilitado,
   classe_abc_proposta, classe_xyz_proposta, classe_consolidada, d AS demanda_media_diaria,
   lt AS lead_time_medio, lt_total_teorico_dias_uteis, demanda_sigma_diario, coef_variacao_ordem,
   dias_com_movimento, lead_time_desvio, lt_p95_dias, fonte_leadtime, z_aplicado, preco_item_eoq,
@@ -60,7 +60,8 @@ SELECT empresa, sku_codigo_omie, sku_descricao, fornecedor_nome, fornecedor_habi
   cap_dias AS primeira_compra_cap_dias,
   GREATEST((1)::numeric, LEAST(GREATEST(qc_eoq,(1)::numeric), cap_cobertura)) AS primeira_compra_qtde,
   GREATEST((1)::numeric, LEAST(dem_lt, cap_cobertura)) AS primeira_compra_ponto_pedido,
-  GREATEST((1)::numeric, LEAST(dem_lt, cap_cobertura)) + GREATEST((1)::numeric, LEAST(GREATEST(qc_eoq,(1)::numeric), cap_cobertura)) AS primeira_compra_estoque_maximo
+  GREATEST((1)::numeric, LEAST(dem_lt, cap_cobertura)) + GREATEST((1)::numeric, LEAST(GREATEST(qc_eoq,(1)::numeric), cap_cobertura)) AS primeira_compra_estoque_maximo,
+  ja_habilitado  -- adicionada NO FINAL: CREATE OR REPLACE não permite inserir coluna no meio (só append)
 FROM calc;
 
 -- BLOCO B — RPC de promoção (sem o predicado habilitado=false; trava de re-promoção = params NULL)
