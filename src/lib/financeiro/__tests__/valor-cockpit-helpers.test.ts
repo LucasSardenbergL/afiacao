@@ -285,11 +285,11 @@ describe('montarCelulasComboEVP — k nullable', () => {
 
 describe('recomendarAcaoComercial — hurdle_indisponivel', () => {
   const config = { margem_minima_pct: 0.15, desconto_max_pct: 0.10, prazo_alvo_dias: 30, dias_estoque_max: 120, sample_min_receita: 5000 };
-  it('hurdle ausente: evp null NÃO dispara "crescer"; "Subir preço" dispara por margem; nota de hurdle presente', () => {
+  it('hurdle ausente: evp null NÃO dispara "crescer"; "Subir preço" dispara por margem; SEM nota por-cliente (vive na confiança/UI, não vaza pro A4)', () => {
     const r = recomendarAcaoComercial({ evp: null, receita_liquida: 1000, cm: 100, desconto_total: 0, prazo_medio_dias: 0, dias_estoque: 0, config, hurdle_indisponivel: true });
     expect(r.some((x) => x.acao === 'Subir preço')).toBe(true); // cm 10% < 15%
     expect(r.some((x) => x.acao === 'Crescer / proteger')).toBe(false);
-    expect(r.some((x) => x.acao === 'Configurar hurdle')).toBe(true);
+    expect(r.some((x) => x.acao === 'Configurar hurdle')).toBe(false); // NÃO existe — evita vazamento pro A4
   });
   it('hurdle ausente + desconto excessivo → "Cortar desconto" com motivo hurdle-aware (sem prometer EVP)', () => {
     const r = recomendarAcaoComercial({ evp: null, receita_liquida: 800, cm: 500, desconto_total: 200, prazo_medio_dias: 0, dias_estoque: 0, config, hurdle_indisponivel: true });

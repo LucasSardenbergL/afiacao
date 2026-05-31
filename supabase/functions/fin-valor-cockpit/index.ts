@@ -164,7 +164,7 @@ function recomendarAcaoComercial(input: { evp: number | null; receita_liquida: n
   if (cmPct != null && cmPct < c.margem_minima_pct) r.push({ acao: "Subir preço", motivo: `Margem ${(cmPct * 100).toFixed(0)}% < mínima ${(c.margem_minima_pct * 100).toFixed(0)}%.`, impacto_rs: Math.max(0, c.margem_minima_pct * input.receita_liquida - (input.cm as number)) });
   if (evpConhecivel && input.dias_estoque > c.dias_estoque_max && (input.evp == null || input.evp < 0)) r.push({ acao: "Despriorizar / liquidar estoque", motivo: `${input.dias_estoque.toFixed(0)} dias de estoque > limite ${c.dias_estoque_max}d e o item não gera valor.`, impacto_rs: null });
   if (r.length === 0 && input.evp != null && input.evp > 0) r.push({ acao: "Crescer / proteger", motivo: "Gera valor econômico positivo e sem alertas.", impacto_rs: null });
-  if (input.hurdle_indisponivel) r.push({ acao: "Configurar hurdle", motivo: "Sem Ke configurado — EVP e recomendações de valor indisponíveis. Configure em /financeiro/valor.", impacto_rs: null });
+  // aviso de hurdle ausente vive na confiança + banner da UI (NÃO por cliente — vazaria pro A4).
   return r;
 }
 function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean; hurdle_indisponivel?: boolean }) {

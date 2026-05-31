@@ -234,10 +234,9 @@ export function recomendarAcaoComercial(input: {
   if (r.length === 0 && input.evp != null && input.evp > 0) {
     r.push({ acao: 'Crescer / proteger', motivo: 'Gera valor econômico positivo e sem alertas.', impacto_rs: null });
   }
-  // nota de hurdle ausente: explica por que faltam as recomendações de valor
-  if (input.hurdle_indisponivel) {
-    r.push({ acao: 'Configurar hurdle', motivo: 'Sem Ke configurado — EVP e recomendações de valor indisponíveis. Configure em /financeiro/valor.', impacto_rs: null });
-  }
+  // NOTA: o aviso "configure o Ke/hurdle" NÃO entra aqui de propósito — é estado do cockpit, não ação
+  // por cliente. Vive na confiança (scoreConfiancaCockpit) + banner da UI. Pôr aqui vazaria pro A4
+  // (fin-next-best-action mapeia recomendacoesCliente → candidatos) como N itens "Configurar hurdle".
   return r;
 }
 

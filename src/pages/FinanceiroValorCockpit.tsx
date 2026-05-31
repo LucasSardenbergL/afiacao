@@ -81,9 +81,15 @@ export default function FinanceiroValorCockpit() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-display text-3xl">Cockpit de Valor — Oben</h1>
-          <p className="text-sm text-muted-foreground">
-            Lucro econômico (margem − custo do capital de giro @ {(data.k * 100).toFixed(1)}%) por cliente e SKU.
-          </p>
+          {data.k != null ? (
+            <p className="text-sm text-muted-foreground">
+              Lucro econômico (margem − custo do capital de giro @ {(data.k * 100).toFixed(1)}%) por cliente e SKU.
+            </p>
+          ) : (
+            <p className="text-sm text-status-warning">
+              Lucro econômico (EVP) indisponível — sem Ke/hurdle configurado. Configure em /financeiro/valor (só a margem é mostrada).
+            </p>
+          )}
         </div>
         <span className={`text-xs px-2 py-0.5 rounded font-medium ${nivelClasses(data.confianca.nivel)}`}>
           confiança {data.confianca.nivel}
@@ -138,7 +144,9 @@ export default function FinanceiroValorCockpit() {
                     <td className="text-right text-muted-foreground">{brl(row.encargo)}</td>
                     <td
                       className={`text-right kpi-value ${
-                        row.evp != null && row.evp < 0
+                        row.evp == null
+                          ? 'text-muted-foreground'
+                          : row.evp < 0
                           ? 'text-status-error'
                           : 'text-status-success'
                       }`}
