@@ -41,6 +41,27 @@ export type CockpitConsolidado = {
 const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
 const dataDe = (snapshotAt: string): string => snapshotAt.slice(0, 10);
 
+// Parse das semanas do snapshot (campo `dados` jsonb). Os 3 campos core gateiam a validade da
+// semana (inválido → semana dropada); `saldo_inicial` é só-display → fora do filtro (NÃO dropa a
+// semana), mas ausente/não-número vira `null` (NUNCA 0 — `Number(null)===0` seria fabricação).
+export function parseSnapshotSemanas(dadosRaw: unknown): SnapshotSemana[] {
+  if (!Array.isArray(dadosRaw)) return [];
+  return (dadosRaw as Array<Record<string, unknown>>)
+    .map((w) => ({
+      inicio: w && typeof w.inicio === 'string' ? w.inicio : '',
+      total_entradas: Number(w?.total_entradas),
+      total_saidas: Number(w?.total_saidas),
+      saldo_final: Number(w?.saldo_final),
+      // jsonb retorna número; null/ausente/não-número → null (ausente ≠ 0).
+      saldo_inicial: typeof w?.saldo_inicial === 'number' && Number.isFinite(w.saldo_inicial) ? w.saldo_inicial : null,
+    }))
+    .filter((w): w is SnapshotSemana =>
+      w.inicio !== '' &&
+      Number.isFinite(w.total_entradas) &&
+      Number.isFinite(w.total_saidas) &&
+      Number.isFinite(w.saldo_final));
+}
+
 export function consolidarCockpit(input: { esperadas: string[]; snapshots: SnapshotEmpresa[] }): CockpitConsolidado {
   const { esperadas, snapshots } = input;
 
@@ -163,7 +184,8 @@ export function consolidarCockpit(input: { esperadas: string[]; snapshots: Snaps
     else algumCaixaIniNull = true;
   }
   const caixa_inicial_parcial = parcial || algumCaixaIniNull;
-  const caixa_inicial_projecao = algumCaixaIniNull ? null : round2(caixaIniRaw);
+  // Coorte vazia (nenhum presente) → null, NÃO 0 (Codex P2: 0 seria caixa fabricado).
+  const caixa_inicial_projecao = empresas_presentes.length === 0 || algumCaixaIniNull ? null : round2(caixaIniRaw);
 
   return {
     projecao13,

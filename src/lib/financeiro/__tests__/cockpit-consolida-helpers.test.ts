@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { consolidarCockpit, compararCaixaInicial, type SnapshotEmpresa } from '../cockpit-consolida-helpers';
+import { consolidarCockpit, compararCaixaInicial, parseSnapshotSemanas, type SnapshotEmpresa } from '../cockpit-consolida-helpers';
 
 const sem = (inicio: string, ent: number, sai: number, saldo: number, saldo_inicial: number | null = null) =>
   ({ inicio, total_entradas: ent, total_saidas: sai, saldo_final: saldo, saldo_inicial });
@@ -221,5 +221,41 @@ describe('compararCaixaInicial', () => {
   it('caixa inicial null → indisponível', () => {
     expect(compararCaixaInicial({ caixaInicialProjecao: null, saldoAtualBanco: 950, cohorteCompleta: true }))
       .toEqual({ disponivel: false, delta: null });
+  });
+});
+
+describe('parseSnapshotSemanas (Number(null) não fabrica 0)', () => {
+  it('saldo_inicial null/ausente/não-número → null (NÃO 0); semana NÃO é dropada', () => {
+    const r = parseSnapshotSemanas([
+      { inicio: '2026-05-25', total_entradas: 10, total_saidas: 5, saldo_final: 5, saldo_inicial: null },
+      { inicio: '2026-06-01', total_entradas: 0, total_saidas: 0, saldo_final: 0 }, // ausente
+      { inicio: '2026-06-08', total_entradas: 0, total_saidas: 0, saldo_final: 0, saldo_inicial: 'x' }, // não-número
+    ]);
+    expect(r).toHaveLength(3); // nenhuma dropada (campos core válidos)
+    expect(r[0].saldo_inicial).toBeNull();
+    expect(r[1].saldo_inicial).toBeNull();
+    expect(r[2].saldo_inicial).toBeNull();
+  });
+  it('saldo_inicial número real (incl. 0 real) → preservado', () => {
+    const r = parseSnapshotSemanas([
+      { inicio: '2026-05-25', total_entradas: 0, total_saidas: 0, saldo_final: 0, saldo_inicial: 1234.5 },
+      { inicio: '2026-06-01', total_entradas: 0, total_saidas: 0, saldo_final: 0, saldo_inicial: 0 },
+    ]);
+    expect(r[0].saldo_inicial).toBe(1234.5);
+    expect(r[1].saldo_inicial).toBe(0); // 0 REAL é preservado
+  });
+  it('campo core inválido → semana dropada; dados não-array → []', () => {
+    expect(parseSnapshotSemanas([{ inicio: '', total_entradas: 1, total_saidas: 1, saldo_final: 1, saldo_inicial: 9 }])).toEqual([]);
+    expect(parseSnapshotSemanas([{ inicio: '2026-05-25', total_entradas: 'x', total_saidas: 1, saldo_final: 1, saldo_inicial: 9 }])).toEqual([]);
+    expect(parseSnapshotSemanas(null)).toEqual([]);
+    expect(parseSnapshotSemanas({})).toEqual([]);
+  });
+});
+
+describe('consolidarCockpit — coorte vazia não fabrica caixa', () => {
+  it('nenhum snapshot → caixa_inicial_projecao null (não 0) + parcial', () => {
+    const r = consolidarCockpit({ esperadas: ESP, snapshots: [] });
+    expect(r.caixa_inicial_projecao).toBeNull();
+    expect(r.caixa_inicial_parcial).toBe(true);
   });
 });
