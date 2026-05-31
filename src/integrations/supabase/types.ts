@@ -8342,6 +8342,30 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_param_limbo_log: {
+        Row: {
+          criado_em: string
+          empresa: string
+          id: number
+          limbo_count: number
+          medido_em: string
+        }
+        Insert: {
+          criado_em?: string
+          empresa: string
+          id?: never
+          limbo_count: number
+          medido_em?: string
+        }
+        Update: {
+          criado_em?: string
+          empresa?: string
+          id?: never
+          limbo_count?: number
+          medido_em?: string
+        }
+        Relationships: []
+      }
       reposition_parameters: {
         Row: {
           aplicado_em: string | null
@@ -13580,6 +13604,7 @@ export type Database = {
         }
         Returns: Json
       }
+      reposicao_param_limbo_watchdog: { Args: never; Returns: undefined }
       reprocessar_sku_items_via_raw_data: {
         Args: { p_empresa: string }
         Returns: {
