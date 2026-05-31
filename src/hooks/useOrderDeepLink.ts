@@ -5,7 +5,7 @@ import type { OmieCustomer, Product } from '@/hooks/useUnifiedOrder';
 
 /* ─── Deep-link query param keys ─── */
 const PARAM_KEYS = {
-  customer: 'customer',
+  // O param `customer` é lido pelo selectCustomerByUserId (useUnifiedOrder), não aqui.
   product: 'product',
   // Future extensions:
   // tool: 'tool',
@@ -13,7 +13,6 @@ const PARAM_KEYS = {
 } as const;
 
 export interface DeepLinkParams {
-  customerId: string | null;
   productId: string | null;
   // Future:
   // toolId: string | null;
@@ -46,7 +45,6 @@ export function useOrderDeepLink({
   const [searchParams] = useSearchParams();
 
   const params = useMemo<DeepLinkParams>(() => ({
-    customerId: searchParams.get(PARAM_KEYS.customer) || null,
     productId: searchParams.get(PARAM_KEYS.product) || null,
   }), [searchParams]);
 
