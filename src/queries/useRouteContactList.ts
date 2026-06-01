@@ -70,6 +70,8 @@ interface RouteBuilder {
   eq: (col: string, val: unknown) => RouteBuilder;
   in: (col: string, vals: unknown[]) => RouteBuilder;
   gte: (col: string, val: unknown) => RouteBuilder;
+  order: (col: string, opts?: { ascending?: boolean }) => RouteBuilder;
+  range: (from: number, to: number) => RouteBuilder;
   maybeSingle: () => PromiseLike<PgRes>;
   then: PromiseLike<PgRes>['then'];
 }
@@ -78,26 +80,36 @@ function routeFrom(table: string): RouteBuilder {
 }
 
 interface ContactLogRow { customer_user_id: string; status: string; created_at: string; data_rota: string; }
+const LOG_SEL = 'customer_user_id, status, created_at, data_rota';
+
+/** Pagina uma query de route_contact_log (re-monta o builder por página até receber < PAGE). */
+async function paginarLog(build: (from: number) => PromiseLike<PgRes>, sink: ContactLogRow[]): Promise<void> {
+  for (let from = 0; ; from += PAGE) {
+    const res = await build(from);
+    if (res.error) throw new Error(res.error.message);
+    const got = (res.data ?? []) as ContactLogRow[];
+    sink.push(...got);
+    if (got.length < PAGE) break;
+  }
+}
 
 /**
- * Lê route_contact_log dos clientes da fila em 2 queries (evita `.or()` com template — regra
- * anti-injeção do lint): (A) opt_out FULL-history (sticky, sem janela) + (B) cadência na janela 90d.
- * Agrega por cliente; converte created_at → data de negócio SP. NÃO é "todos os logs" — só os ~cap
- * clientes da fila. Lança em erro de DB (o chamador trata com fail-open).
+ * Lê route_contact_log dos clientes da fila (canal 'ligacao') em 2 queries PAGINADAS — evita `.or()`
+ * com template (regra anti-injeção do lint) E o cap de 1000 do PostgREST: (A) opt_out FULL-history
+ * (sticky) + (B) cadência na janela 90d. Filtra canal='ligacao' (exclui WhatsApp/status legado do
+ * PR2b). NÃO é "todos os logs" — só os clientes da fila. Lança em erro de DB (chamador faz fail-open).
  */
 async function fetchContactLog(ids: string[]): Promise<Map<string, ContatoLog[]>> {
   const cutoff90 = new Date(Date.now() - 90 * 86_400_000).toISOString();
   const rows: ContactLogRow[] = [];
   for (let i = 0; i < ids.length; i += IN_CHUNK) {
     const chunk = ids.slice(i, i + IN_CHUNK);
-    const sel = 'customer_user_id, status, created_at, data_rota';
-    const [optRes, janRes] = await Promise.all([
-      routeFrom('route_contact_log').select(sel).in('customer_user_id', chunk).eq('status', 'opt_out') as PromiseLike<PgRes>,
-      routeFrom('route_contact_log').select(sel).in('customer_user_id', chunk).gte('created_at', cutoff90) as PromiseLike<PgRes>,
-    ]);
-    if (optRes.error) throw new Error(optRes.error.message);
-    if (janRes.error) throw new Error(janRes.error.message);
-    rows.push(...((optRes.data ?? []) as ContactLogRow[]), ...((janRes.data ?? []) as ContactLogRow[]));
+    await paginarLog(from => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
+      .in('customer_user_id', chunk).eq('status', 'opt_out')
+      .order('created_at', { ascending: true }).range(from, from + PAGE - 1) as PromiseLike<PgRes>, rows);
+    await paginarLog(from => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
+      .in('customer_user_id', chunk).gte('created_at', cutoff90)
+      .order('created_at', { ascending: true }).range(from, from + PAGE - 1) as PromiseLike<PgRes>, rows);
   }
   // dedup por (cliente|created_at|status) — opt_out recente aparece nas 2 queries
   const seen = new Set<string>();
@@ -202,7 +214,9 @@ export function useRouteContactList(workdayIso: string) {
       // cadência ao vivo: lê route_contact_log e deriva os sinais por cliente. Fail-open:
       // erro de leitura → defaults (fila funciona como antes), NÃO esconde cliente.
       const hoje = spBusinessDate(new Date());
-      const dataRotaFila = prep.routeDate ?? '';
+      // mesmo fallback da UI (RotaListaLigacao grava data_rota = routeDate ?? workday) — senão em dia
+      // de diária (routeDate null) o convertido gravado com workday nunca casaria → some de "Resolvidos".
+      const dataRotaFila = prep.routeDate ?? workdayIso;
       let logByCustomer = new Map<string, ContatoLog[]>();
       let cadenciaIndisponivel = false;
       try {
@@ -261,8 +275,9 @@ export function useRouteContactList(workdayIso: string) {
         };
       };
 
-      // convertidos na rota saíram da callQueue pelo gate 'fechou_hoje' → seção "Resolvidos hoje"
-      const resolvidosQueue = result.excluidos.filter(s => s.motivoGate === 'fechou_hoje').map(enrich);
+      // convertidos na rota → seção "Resolvidos hoje". Filtra pelo SINAL fechouHoje (não pelo motivoGate:
+      // convertido+opt_out cai em 'opt_out' na ordem do gate, mas ainda fechou na rota — Codex).
+      const resolvidosQueue = result.excluidos.filter(s => s.fechouHoje).map(enrich);
 
       // métrica do dia (turno do vendedor): clientes da fila contatados HOJE (dataNegocio === hoje)
       let ligados = 0, atenderam = 0, fecharam = 0;
