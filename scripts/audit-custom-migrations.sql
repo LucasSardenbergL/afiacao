@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 132
+-- Total de custom migrations: 140
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -129,6 +129,12 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260528120001', 'v_titulo_baixas', '20260528120001_v_titulo_baixas.sql'),
   ('20260528120002', 'v_capital_giro_prazos', '20260528120002_v_capital_giro_prazos.sql'),
   ('20260528130000', 'fin_sync_heartbeat_tz_fix', '20260528130000_fin_sync_heartbeat_tz_fix.sql'),
+  ('20260528130000', 'tarefas_bloco_a', '20260528130000_tarefas_bloco_a.sql'),
+  ('20260528131000', 'tarefas_bloco_b', '20260528131000_tarefas_bloco_b.sql'),
+  ('20260528132000', 'tarefas_bloco_c', '20260528132000_tarefas_bloco_c.sql'),
+  ('20260528133000', 'tarefas_bloco_d', '20260528133000_tarefas_bloco_d.sql'),
+  ('20260528134000', 'tarefas_bloco_e', '20260528134000_tarefas_bloco_e.sql'),
+  ('20260528135000', 'tarefas_matcher_created_at_floor', '20260528135000_tarefas_matcher_created_at_floor.sql'),
   ('20260528140000', 'data_health_compute_msg_tz', '20260528140000_data_health_compute_msg_tz.sql'),
   ('20260528140000', 'whatsapp_fundacao', '20260528140000_whatsapp_fundacao.sql'),
   ('20260528150000', 'fin_estoque_omie_feed', '20260528150000_fin_estoque_omie_feed.sql'),
@@ -151,7 +157,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260531120000', 'reposicao_candidatos_inclui_habilitados', '20260531120000_reposicao_candidatos_inclui_habilitados.sql'),
   ('20260531130000', 'data_health_check_sayerlack_fabricado', '20260531130000_data_health_check_sayerlack_fabricado.sql'),
   ('20260531140000', 'reposicao_atualizar_params_nao_zera', '20260531140000_reposicao_atualizar_params_nao_zera.sql'),
-  ('20260531150000', 'reposicao_param_limbo_watchdog', '20260531150000_reposicao_param_limbo_watchdog.sql')
+  ('20260531150000', 'reposicao_param_limbo_watchdog', '20260531150000_reposicao_param_limbo_watchdog.sql'),
+  ('20260531160000', 'reposicao_excluir_fabricado_04', '20260531160000_reposicao_excluir_fabricado_04.sql'),
+  ('20260531170000', 'data_health_check_sayerlack_mapeamento_gap', '20260531170000_data_health_check_sayerlack_mapeamento_gap.sql')
 )
 SELECT
   e.version,
@@ -665,6 +673,27 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sayerlack_retry_motor', 'cron_job', 'cron', 'sayerlack-retry-orfaos', ''),
   ('reposicao_custo_cmc_em_transito', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('fin_sync_heartbeat_tz_fix', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('tarefas_bloco_a', 'table', 'public', 'tarefas', ''),
+  ('tarefas_bloco_a', 'index', 'public', 'idx_tarefas_assigned_aberta', 'tarefas'),
+  ('tarefas_bloco_a', 'index', 'public', 'idx_tarefas_created_by', 'tarefas'),
+  ('tarefas_bloco_a', 'index', 'public', 'idx_tarefas_customer_aberta', 'tarefas'),
+  ('tarefas_bloco_a', 'index', 'public', 'idx_tarefas_aberta_auto', 'tarefas'),
+  ('tarefas_bloco_b', 'table', 'public', 'tarefa_satisfacao_candidatos', ''),
+  ('tarefas_bloco_b', 'table', 'public', 'tarefa_eventos', ''),
+  ('tarefas_bloco_b', 'index', 'public', 'idx_candidato_tarefa_pending', 'tarefa_satisfacao_candidatos'),
+  ('tarefas_bloco_b', 'index', 'public', 'idx_evento_tarefa', 'tarefa_eventos'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tarefas_select', 'tarefas'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tarefas_insert', 'tarefas'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tarefas_update', 'tarefas'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tcand_select', 'tarefa_satisfacao_candidatos'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tcand_update', 'tarefa_satisfacao_candidatos'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tevt_select', 'tarefa_eventos'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tevt_insert', 'tarefa_eventos'),
+  ('tarefas_bloco_d', 'function', 'public', 'tarefas_matcher_tick', ''),
+  ('tarefas_bloco_d', 'function', 'public', 'tarefas_escalonamento_tick', ''),
+  ('tarefas_bloco_d', 'cron_job', 'cron', 'tarefas-matcher-15min', ''),
+  ('tarefas_bloco_d', 'cron_job', 'cron', 'tarefas-escalonamento-diario', ''),
+  ('tarefas_matcher_created_at_floor', 'function', 'public', 'tarefas_matcher_tick', ''),
   ('data_health_compute_msg_tz', 'function', 'public', '_data_health_compute', ''),
   ('whatsapp_fundacao', 'table', 'public', 'whatsapp_webhook_events', ''),
   ('whatsapp_fundacao', 'table', 'public', 'whatsapp_conversations', ''),
@@ -736,7 +765,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_param_limbo_watchdog', 'table', 'public', 'reposicao_param_limbo_log', ''),
   ('reposicao_param_limbo_watchdog', 'index', 'public', 'uq_reposicao_param_limbo_log_dia', 'reposicao_param_limbo_log'),
   ('reposicao_param_limbo_watchdog', 'function', 'public', 'reposicao_param_limbo_watchdog', ''),
-  ('reposicao_param_limbo_watchdog', 'cron_job', 'cron', 'reposicao-param-limbo-watchdog', '')
+  ('reposicao_param_limbo_watchdog', 'cron_job', 'cron', 'reposicao-param-limbo-watchdog', ''),
+  ('reposicao_excluir_fabricado_04', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', 'fin_sync_heartbeat', '')
 )
 SELECT
   e.migration,

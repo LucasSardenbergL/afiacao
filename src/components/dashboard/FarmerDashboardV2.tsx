@@ -2,6 +2,7 @@ import { Card } from '@/components/ui/card';
 import { Calendar } from 'lucide-react';
 import { KpisToday } from './KpisToday';
 import { AgendaTodayList } from './AgendaTodayList';
+import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 import { VisitasHojeCard } from './VisitasHojeCard';
 
 /**
@@ -24,6 +25,7 @@ export function FarmerDashboardV2() {
 
       <KpisToday />
 
+      <MinhasTarefasCard />
       <VisitasHojeCard />
 
       <Card className="p-3 space-y-1">

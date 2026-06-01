@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **132** custom migrations totais
-- **567** objetos esperados (criados por estas migrations)
+- **140** custom migrations totais
+- **592** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 153
-  - `function`: 110
-  - `index`: 109
-  - `cron_job`: 90
-  - `table`: 67
+  - `rls_policy`: 160
+  - `function`: 117
+  - `index`: 115
+  - `cron_job`: 92
+  - `table`: 70
   - `trigger`: 34
   - `enum_value`: 4
 
@@ -1057,6 +1057,56 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.fin_sync_heartbeat` | — |
 
+### `20260528130000_tarefas_bloco_a.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.tarefas` | — |
+| `index` | `public.idx_tarefas_assigned_aberta` | `tarefas` |
+| `index` | `public.idx_tarefas_created_by` | `tarefas` |
+| `index` | `public.idx_tarefas_customer_aberta` | `tarefas` |
+| `index` | `public.idx_tarefas_aberta_auto` | `tarefas` |
+
+### `20260528131000_tarefas_bloco_b.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.tarefa_satisfacao_candidatos` | — |
+| `table` | `public.tarefa_eventos` | — |
+| `index` | `public.idx_candidato_tarefa_pending` | `tarefa_satisfacao_candidatos` |
+| `index` | `public.idx_evento_tarefa` | `tarefa_eventos` |
+
+### `20260528132000_tarefas_bloco_c.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.tarefas_select` | `tarefas` |
+| `rls_policy` | `public.tarefas_insert` | `tarefas` |
+| `rls_policy` | `public.tarefas_update` | `tarefas` |
+| `rls_policy` | `public.tcand_select` | `tarefa_satisfacao_candidatos` |
+| `rls_policy` | `public.tcand_update` | `tarefa_satisfacao_candidatos` |
+| `rls_policy` | `public.tevt_select` | `tarefa_eventos` |
+| `rls_policy` | `public.tevt_insert` | `tarefa_eventos` |
+
+### `20260528133000_tarefas_bloco_d.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_matcher_tick` | — |
+| `function` | `public.tarefas_escalonamento_tick` | — |
+| `cron_job` | `cron.tarefas-matcher-15min` | — |
+| `cron_job` | `cron.tarefas-escalonamento-diario` | — |
+
+### `20260528134000_tarefas_bloco_e.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260528135000_tarefas_matcher_created_at_floor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_matcher_tick` | — |
+
 ### `20260528140000_data_health_compute_msg_tz.sql`
 
 | Tipo | Objeto | Parent |
@@ -1242,6 +1292,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.uq_reposicao_param_limbo_log_dia` | `reposicao_param_limbo_log` |
 | `function` | `public.reposicao_param_limbo_watchdog` | — |
 | `cron_job` | `cron.reposicao-param-limbo-watchdog` | — |
+
+### `20260531160000_reposicao_excluir_fabricado_04.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260531170000_data_health_check_sayerlack_mapeamento_gap.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
 
 ## Próximos passos quando algo der `❌`
 

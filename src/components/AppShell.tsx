@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ImpersonationBanner } from '@/components/impersonation/ImpersonationBanner';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Link2, Globe2, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck, MessageCircle, MessageSquareText } from 'lucide-react';
+import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Link2, Globe2, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
@@ -44,6 +44,7 @@ import { useRouteTracker } from '@/lib/dashboard/route-tracker';
 import { useOfflineFlush } from '@/hooks/useOfflineFlush';
 import { registerAllOfflineHandlers } from '@/lib/offline-handlers';
 import { useMissedCount } from '@/hooks/useCallLog';
+import { useMinhasTarefas } from '@/hooks/useTarefas';
 import { Star } from 'lucide-react';
 
 /* ─── Navigation config ─── */
@@ -80,6 +81,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     items: [
       { icon: ShoppingCart, label: 'Pedidos', path: '/sales' },
       { icon: PlusCircle, label: 'Novo Pedido', path: '/sales/new' },
+      { icon: ClipboardList, label: 'Tarefas', path: '/tarefas', gestorComercialOuMaster: true },
       { icon: Wrench, label: 'Ferramentas de Venda', path: '/vendas/ferramentas' },
       { icon: Link2, label: 'Chamadas pendentes', path: '/farmer/calls/pending-link' },
       { icon: Phone, label: 'Telefonia', path: '/telefonia' },
@@ -468,6 +470,12 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   // Badge de perdidas não-lidas na Central de Telefonia (refetch a cada 30s)
   const { data: missedCallsCount } = useMissedCount(user?.id);
 
+  // Badge de tarefas abertas da vendedora (reusa useMinhasTarefas → mesmo
+  // cache do card de "Meu dia": 1 request, 2 consumidores; refetch 60s +
+  // invalidação nas mutations do módulo mantêm badge e card sempre iguais).
+  const { data: minhasTarefas } = useMinhasTarefas();
+  const tarefasCount = minhasTarefas?.length ?? 0;
+
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
@@ -502,10 +510,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/telefonia' && missedCallsCount && missedCallsCount > 0) {
           return { ...it, badge: missedCallsCount, badgeVariant: 'destructive' as const };
         }
+        if (it.path === '/meu-dia' && tarefasCount > 0) {
+          return { ...it, badge: tarefasCount };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount],
   );
 
   const isActive = (path: string) => {
