@@ -120,6 +120,30 @@ export function resolverDataCaixa(input: {
   return { data_efetiva: null, usou_fallback: false };
 }
 
+// Valor de caixa efetivo, robusto a valor_recebido/valor_pago = 0 OU null (#396: liquidado
+// tem valor_recebido=0). `0 ?? doc` mantinha 0 → liquidado com baixa real alocaria ZERO no
+// DRE-caixa. Usa o valor real se > 0, senão o valor de documento (face). Espelhado no engine.
+export function valorCaixaEfetivo(valorReal: number | null | undefined, valorDocumento: number | null | undefined): number {
+  const real = Number(valorReal ?? 0);
+  if (real > 0) return real;
+  return Number(valorDocumento ?? 0);
+}
+
+// Merge do load do DRE-caixa: títulos por (vencimento-no-mês) ∪ (baixa-no-mês). Dedupe por
+// omie_codigo_lancamento (um título pode aparecer nas duas queries) → evita DOUBLE-COUNT.
+// Linha SEM código (null) nunca vem da query-por-código → preservada (só cai no fallback
+// por vencimento). Mantém a 1ª ocorrência de cada código. Espelhado no engine.
+export function dedupePorCodigo<T extends { omie_codigo_lancamento?: number | null }>(rows: T[]): T[] {
+  const byCode = new Map<number, T>();
+  const semCodigo: T[] = [];
+  for (const r of rows) {
+    const c = r.omie_codigo_lancamento;
+    if (c == null) semCodigo.push(r);
+    else if (!byCode.has(Number(c))) byCode.set(Number(c), r);
+  }
+  return [...byCode.values(), ...semCodigo];
+}
+
 export type TituloCaixa = { valor: number; data_real: string | null; data_vencimento: string | null };
 
 // Bucketiza por data EFETIVA dentro de [inicio, fim) (fim exclusivo, ISO yyyy-mm-dd).

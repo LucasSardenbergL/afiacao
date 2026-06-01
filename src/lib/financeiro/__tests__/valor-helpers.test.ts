@@ -12,6 +12,10 @@ import {
   roicIncremental,
   normalizarComingling,
   scoreConfiancaValor,
+  resolverCapitalGiro,
+  frescorGiro,
+  acharCapitalGiroAnterior,
+  resolverCapitalParaValor,
 } from '../valor-helpers';
 
 describe('calcularNOPAT', () => {
@@ -297,5 +301,182 @@ describe('scoreConfiancaValor', () => {
     });
     expect(r.nivel).toBe('media');
     expect(r.motivos.some((m) => m.toLowerCase().includes('ttm incompleto'))).toBe(true);
+  });
+
+  it('giro indisponível → baixa + motivo de NCG (mais severo que roic_null por capital≤0)', () => {
+    const r = scoreConfiancaValor({
+      roic_null: true, wacc_null: false, eva_null: true, capital_parcial: true,
+      normalizacao_aplicada: true, imposto_teorico_parcial: false, dre_confianca: 'alta',
+      giro_indisponivel: true,
+    });
+    expect(r.nivel).toBe('baixa');
+    expect(r.motivos.some((m) => m.toLowerCase().includes('snapshot de ncg'))).toBe(true);
+  });
+
+  it('giro stale (sem indisponível) → media + motivo de NCG desatualizado', () => {
+    const r = scoreConfiancaValor({
+      roic_null: false, wacc_null: false, eva_null: false, capital_parcial: false,
+      normalizacao_aplicada: true, imposto_teorico_parcial: false, dre_confianca: 'alta',
+      giro_stale: true,
+    });
+    expect(r.nivel).toBe('media');
+    expect(r.motivos.some((m) => m.toLowerCase().includes('desatualiz'))).toBe(true);
+  });
+
+  it('roic_null por capital≤0 CONHECIDO (giro disponível) → media, NÃO baixa', () => {
+    const r = scoreConfiancaValor({
+      roic_null: true, wacc_null: false, eva_null: false, capital_parcial: false,
+      normalizacao_aplicada: true, imposto_teorico_parcial: false, dre_confianca: 'alta',
+      giro_indisponivel: false,
+    });
+    expect(r.nivel).toBe('media');
+  });
+});
+
+describe('resolverCapitalGiro', () => {
+  it('pega o snapshot mais recente com ncg não-nulo (negativo é valor real)', () => {
+    const r = resolverCapitalGiro([
+      { ncg: null, snapshot_at: '2026-05-28T10:00:00Z' },
+      { ncg: -5000, snapshot_at: '2026-05-27T10:00:00Z' },
+      { ncg: 9999, snapshot_at: '2026-05-20T10:00:00Z' },
+    ]);
+    expect(r.capital_giro).toBe(-5000);
+    expect(r.disponivel).toBe(true);
+    expect(r.snapshot_at).toBe('2026-05-27T10:00:00Z');
+  });
+  it('ncg zero é valor REAL (não ausência) — truthiness não', () => {
+    const r = resolverCapitalGiro([{ ncg: 0, snapshot_at: '2026-05-28T10:00:00Z' }]);
+    expect(r.capital_giro).toBe(0);
+    expect(r.disponivel).toBe(true);
+  });
+  it('todos null → indisponível', () => {
+    const r = resolverCapitalGiro([{ ncg: null, snapshot_at: '2026-05-28T10:00:00Z' }]);
+    expect(r.capital_giro).toBeNull();
+    expect(r.disponivel).toBe(false);
+    expect(r.snapshot_at).toBeNull();
+  });
+  it('sem snapshots → indisponível', () => {
+    const r = resolverCapitalGiro([]);
+    expect(r.disponivel).toBe(false);
+    expect(r.snapshot_at).toBeNull();
+  });
+  it('ordem fora de ordem → pega o mais recente por data (não confia no array)', () => {
+    const r = resolverCapitalGiro([
+      { ncg: 100, snapshot_at: '2026-05-01T00:00:00Z' },
+      { ncg: 200, snapshot_at: '2026-05-27T00:00:00Z' },
+      { ncg: 150, snapshot_at: '2026-05-10T00:00:00Z' },
+    ]);
+    expect(r.capital_giro).toBe(200);
+  });
+  it('ncg string vazia/whitespace (cast runtime) → ausência, NÃO 0 (Number("")===0 seria fabricação)', () => {
+    expect(resolverCapitalGiro([{ ncg: '' as unknown as number, snapshot_at: '2026-05-28T00:00:00Z' }]).disponivel).toBe(false);
+    expect(resolverCapitalGiro([{ ncg: '   ' as unknown as number, snapshot_at: '2026-05-28T00:00:00Z' }]).disponivel).toBe(false);
+  });
+  it('ncg string numérica (PostgREST numeric) → valor real', () => {
+    const r = resolverCapitalGiro([{ ncg: '300000' as unknown as number, snapshot_at: '2026-05-28T00:00:00Z' }]);
+    expect(r.capital_giro).toBe(300000);
+    expect(r.disponivel).toBe(true);
+  });
+});
+
+describe('frescorGiro', () => {
+  const hoje = Date.parse('2026-05-28T00:00:00Z');
+  it('fresco (8 dias) → não stale, dias=8', () => {
+    expect(frescorGiro('2026-05-20T00:00:00Z', hoje, 45)).toEqual({ dias: 8, stale: false });
+  });
+  it('velho (>120 dias) → stale, dias grande', () => {
+    const r = frescorGiro('2026-01-01T00:00:00Z', hoje, 45);
+    expect(r.stale).toBe(true);
+    expect(r.dias).toBeGreaterThan(120);
+  });
+  it('snapshot_at null → dias null, não stale', () => {
+    expect(frescorGiro(null, hoje, 45)).toEqual({ dias: null, stale: false });
+  });
+  it('snapshot_at inválido → dias null, não stale', () => {
+    expect(frescorGiro('lixo', hoje, 45)).toEqual({ dias: null, stale: false });
+  });
+});
+
+describe('acharCapitalGiroAnterior', () => {
+  it('acha o snapshot ~365d antes do ref dentro da tolerância', () => {
+    const snaps = [
+      { ncg: 1000, snapshot_at: '2026-05-27T00:00:00Z' },
+      { ncg: 800, snapshot_at: '2025-05-26T00:00:00Z' },
+    ];
+    expect(acharCapitalGiroAnterior(snaps, '2026-05-27T00:00:00Z')).toBe(800);
+  });
+  it('sem snapshot próximo de −365d (fora da tolerância) → null', () => {
+    const snaps = [{ ncg: 1000, snapshot_at: '2026-05-27T00:00:00Z' }];
+    expect(acharCapitalGiroAnterior(snaps, '2026-05-27T00:00:00Z')).toBeNull();
+  });
+});
+
+describe('resolverCapitalParaValor (orquestração — defeita o "inline 0")', () => {
+  const hoje = Date.parse('2026-05-28T00:00:00Z');
+  const af = null; // sem ativo fixo
+
+  it('NCG ausente (todos null) → capital_investido/capital_giro null, giro_indisponivel, sem anterior', () => {
+    const r = resolverCapitalParaValor({ snaps: [{ ncg: null, snapshot_at: '2026-05-28T00:00:00Z' }], ativo_fixo: af, hojeMs: hoje });
+    expect(r.capital.capital_investido).toBeNull();
+    expect(r.capital.capital_giro).toBeNull();
+    expect(r.capital.giro_indisponivel).toBe(true);
+    expect(r.capital.parcial).toBe(true);
+    expect(r.capital_anterior).toBeNull();
+    expect(r.giro_snapshot_at).toBeNull();
+  });
+
+  it('NCG ausente + ativo fixo informado → AINDA capital null (não vira ativo_fixo isolado)', () => {
+    const ativo = { valor: 500000, data_ref: null, fonte: 'reposicao' as const, base: 'reposicao' as const, operacional: true };
+    const r = resolverCapitalParaValor({ snaps: [], ativo_fixo: ativo, hojeMs: hoje });
+    expect(r.capital.capital_investido).toBeNull(); // NÃO 500000 — sem giro, ROIC não nasce
+    expect(r.capital.giro_indisponivel).toBe(true);
+  });
+
+  it('NCG negativo grande sem ativo fixo → giro DISPONÍVEL, capital≤0, roic null POR CAPITAL (não por ausência)', () => {
+    const r = resolverCapitalParaValor({ snaps: [{ ncg: -50000, snapshot_at: '2026-05-27T00:00:00Z' }], ativo_fixo: af, hojeMs: hoje });
+    expect(r.capital.giro_indisponivel).toBe(false);
+    expect(r.capital.capital_investido).toBe(-50000);
+    expect(roic({ nopat: 1000, capital_investido: r.capital.capital_investido })).toBeNull();
+  });
+
+  it('NCG válido recente → capital_giro = ncg (happy-path idêntico), não stale', () => {
+    const r = resolverCapitalParaValor({ snaps: [{ ncg: 300000, snapshot_at: '2026-05-25T00:00:00Z' }], ativo_fixo: af, hojeMs: hoje });
+    expect(r.capital.capital_giro).toBe(300000);
+    expect(r.capital.capital_investido).toBe(300000);
+    expect(r.giro_stale).toBe(false);
+    expect(r.giro_dias).toBe(3);
+  });
+
+  it('NCG válido porém VELHO → disponível mas stale (capital real, confiança rebaixada depois)', () => {
+    const r = resolverCapitalParaValor({ snaps: [{ ncg: 300000, snapshot_at: '2026-01-01T00:00:00Z' }], ativo_fixo: af, hojeMs: hoje });
+    expect(r.capital.capital_giro).toBe(300000);
+    expect(r.giro_stale).toBe(true);
+  });
+});
+
+describe('normalizarComingling — capital null não coage', () => {
+  it('capital_reportado null + intercompany_giro -500 → capital_normalizado null (NÃO -500); ebit normalizado segue', () => {
+    const r = normalizarComingling({
+      ebit_reportado: 10000, capital_reportado: null,
+      prolabore_real_ttm: 1000, prolabore_mercado_ttm: 3000, aluguel_mercado_ttm: null, intercompany_giro: -500,
+    });
+    expect(r.capital_normalizado).toBeNull();
+    expect(r.capital_reportado).toBeNull();
+    expect(r.ebit_normalizado).toBe(10000 + (1000 - 3000)); // EBIT independe do capital
+  });
+});
+
+describe('capitalInvestido — giro nullable', () => {
+  it('giro null → capital null + giro_indisponivel + parcial', () => {
+    const r = capitalInvestido({ capital_giro: null, ativo_fixo: null });
+    expect(r.capital_investido).toBeNull();
+    expect(r.capital_giro).toBeNull();
+    expect(r.giro_indisponivel).toBe(true);
+    expect(r.parcial).toBe(true);
+  });
+  it('giro 0 REAL + ativo fixo → capital = ativo fixo, giro_indisponivel false', () => {
+    const r = capitalInvestido({ capital_giro: 0, ativo_fixo: { valor: 500000, data_ref: null, fonte: 'reposicao', base: 'reposicao', operacional: true } });
+    expect(r.capital_investido).toBe(500000);
+    expect(r.giro_indisponivel).toBe(false);
   });
 });

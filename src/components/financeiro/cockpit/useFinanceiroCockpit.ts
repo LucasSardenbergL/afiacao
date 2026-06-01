@@ -2,14 +2,26 @@
 // Extraído verbatim de src/pages/FinanceiroCockpit.tsx (god-component split):
 // state, loadAll (resumo/aging/DRE/inadimplentes/projeção 13s/confiabilidade) e
 // todos os derivados consolidados.
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { type Company } from '@/contexts/CompanyContext';
 import { supabase } from '@/integrations/supabase/client';
 import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinResumo, type AgingData, type FinDRE } from '@/services/financeiroService';
+import { getProjecaoSnapshotsCockpit } from '@/services/financeiroV2Service';
+import { consolidarCockpit, type CockpitConsolidado } from '@/lib/financeiro/cockpit-consolida-helpers';
 import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
 import { logger } from '@/lib/logger';
 import type { DrillDownType } from '@/components/financeiro/CockpitDrillDown';
-import type { FinConfiabilidadeRow, FinProjecaoSemana, InadimplenteRow } from './types';
+import type { FinConfiabilidadeRow, InadimplenteRow } from './types';
+
+const EMPRESAS_COCKPIT: Company[] = ['oben', 'colacor', 'colacor_sc'];
+// Default = indisponível/parcial (Codex P1): em falha de carga, NCG não pode aparecer como R$0 "saudável".
+const COCKPIT_VAZIO: CockpitConsolidado = {
+  projecao13: [], ncg_total: 0, ncg_por_empresa: [], ncg_parcial: true,
+  saldo_tesouraria_total: 0, saldo_tesouraria_parcial: true,
+  empresas_presentes: [], empresas_ausentes: [...EMPRESAS_COCKPIT], empresas_stale: [],
+  parcial: true, data_referencia: null, snapshot_at_mais_antigo: null,
+  caixa_inicial_projecao: null, caixa_inicial_por_empresa: [], caixa_inicial_parcial: true,
+};
 
 export function useFinanceiroCockpit() {
   const [loading, setLoading] = useState(true);
@@ -17,40 +29,40 @@ export function useFinanceiroCockpit() {
   const [aging, setAging] = useState<AgingData | null>(null);
   const [dre, setDre] = useState<FinDRE[]>([]);
   const [inadimplentes, setInadimplentes] = useState<InadimplenteRow[]>([]);
-  const [projecao13, setProjecao13] = useState<FinProjecaoSemana[]>([]);
+  const [cockpit, setCockpit] = useState<CockpitConsolidado>(COCKPIT_VAZIO);
   const [confiabilidade, setConfiabilidade] = useState<FinConfiabilidadeRow[]>([]);
   const [drillDown, setDrillDown] = useState<DrillDownType>(null);
 
   const { regime } = useFinanceiroRegime();
   const ano = new Date().getFullYear();
   const mes = new Date().getMonth() + 1;
+  // Guard de race (Codex P2): toggle rápido de regime pode resolver fora de ordem;
+  // só o último loadAll aplica os setters.
+  const loadIdRef = useRef(0);
 
   useEffect(() => { loadAll(); }, [regime]);
 
   const loadAll = async () => {
+    const loadId = ++loadIdRef.current;
     setLoading(true);
     try {
-      const [res, ag, dr, inad] = await Promise.all([
+      const [res, ag, dr, inad, snaps] = await Promise.all([
         getResumoFinanceiro(['oben', 'colacor', 'colacor_sc']),
         getAgingReceber('all'),
         Promise.all(['oben', 'colacor', 'colacor_sc'].map(co => getDRE(co as Company, ano, undefined, regime))).then(r => r.flat()),
         getTopInadimplentes('all', 5),
+        // Projeção 13s + NCG consolidados via snapshot real da engine A1 (não a RPC ingênua)
+        getProjecaoSnapshotsCockpit(EMPRESAS_COCKPIT).catch((e) => {
+          logger.warn('Snapshots de projeção indisponíveis', { error: e instanceof Error ? e.message : String(e) });
+          return [];
+        }),
       ]);
+      if (loadId !== loadIdRef.current) return; // resposta obsoleta — descarta
       setResumo(res);
       setAging(ag);
       setDre(dr);
       setInadimplentes(inad);
-
-      // 13-week projection via RPC
-      try {
-        const { data: proj } = await supabase.rpc('fin_projecao_13_semanas', {});
-        setProjecao13(proj ?? []);
-      } catch (e) {
-        // RPC pode não existir ainda — registra para visibilidade em vez de falhar silencioso
-        logger.warn('RPC fin_projecao_13_semanas indisponível', {
-          error: e instanceof Error ? e.message : String(e),
-        });
-      }
+      setCockpit(consolidarCockpit({ esperadas: EMPRESAS_COCKPIT, snapshots: snaps }));
 
       // Confiabilidade for current month per company
       const confResults: FinConfiabilidadeRow[] = [];
@@ -84,7 +96,8 @@ export function useFinanceiroCockpit() {
   const totalCR = Object.values(resumo).reduce((s, r) => s + r.total_a_receber, 0);
   const totalCP = Object.values(resumo).reduce((s, r) => s + r.total_a_pagar, 0);
   const totalVencidoCR = Object.values(resumo).reduce((s, r) => s + r.total_vencido_receber, 0);
-  const ncg = totalCR - totalCP; // Necessidade de capital de giro
+  // NCG real (ACO−PCO) consolidado da engine A1, não o CR−CP ingênuo
+  const ncg = cockpit.ncg_total;
   const pctInadimplencia = totalCR > 0 ? (totalVencidoCR / totalCR) * 100 : 0;
 
   // DRE do mês mais recente
@@ -120,9 +133,10 @@ export function useFinanceiroCockpit() {
 
   return {
     loading,
+    regime,
     confiabilidade,
     dreConsolidado,
-    projecao13,
+    cockpit,
     inadimplentes,
     drillDown,
     setDrillDown,

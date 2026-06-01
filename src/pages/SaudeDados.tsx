@@ -3,7 +3,7 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { ShieldAlert } from 'lucide-react';
 import { useDataHealth } from '@/hooks/useDataHealth';
-import { rollupDomain, formatAge, badgeLevel } from '@/lib/dataHealth/health-helpers';
+import { rollupDomain, formatAge, badgeLevel, shouldShowDiagnostics } from '@/lib/dataHealth/health-helpers';
 
 const DOMAIN_LABEL: Record<string, string> = {
   financeiro: 'Financeiro', omie_sync: 'Syncs Omie', carteira: 'Carteira / Scoring', estoque: 'Estoque / Reposição', vendas: 'Vendas / Pedidos', alertas: 'Canal de alerta',
@@ -52,9 +52,13 @@ export default function SaudeDados() {
                     {c.status} · {formatAge(c.age_seconds)}
                   </span>
                 </div>
-                {c.probable_cause && <p className="text-xs text-muted-foreground mt-0.5">Causa provável: {c.probable_cause}</p>}
-                {c.how_to_fix && <p className="text-xs text-status-info mt-0.5">Como resolver: {c.how_to_fix}</p>}
-                {c.last_error && <p className="text-xs text-status-error mt-0.5 font-mono">{c.last_error}</p>}
+                {shouldShowDiagnostics(c) && (
+                  <>
+                    {c.probable_cause && <p className="text-xs text-muted-foreground mt-0.5">Causa provável: {c.probable_cause}</p>}
+                    {c.how_to_fix && <p className="text-xs text-status-info mt-0.5">Como resolver: {c.how_to_fix}</p>}
+                    {c.last_error && <p className="text-xs text-status-error mt-0.5 font-mono">{c.last_error}</p>}
+                  </>
+                )}
               </div>
             ))}
           </CardContent>

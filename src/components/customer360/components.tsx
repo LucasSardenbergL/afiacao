@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { CARGO_LABEL, type CustomerContact } from '@/lib/customer-contact/types';
 import { formatPhone } from './format';
 import { CallButton } from '@/components/call/CallButton';
+import { whatsappLink } from '@/lib/phone';
 
 export function KpiCard({
   label,
@@ -95,7 +96,7 @@ export function ContactRow({
 }) {
   const displayName = contact.nome ?? formatPhone(contact.phone);
   const cargoLabel = contact.cargo ? CARGO_LABEL[contact.cargo] : null;
-  const cleanPhone = contact.phone.replace(/\D/g, '');
+  const waHref = whatsappLink(contact.phone);
   // Aniversário esse mês? Destaque sutil pra lembrar de mandar mensagem.
   const isBirthdayMonth = (() => {
     if (!contact.birthday) return false;
@@ -146,14 +147,18 @@ export function ContactRow({
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
             {contact.whatsapp_only ? (
-              <a
-                href={`https://wa.me/${cleanPhone}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:underline hover:text-foreground transition-colors"
-              >
-                {formatPhone(contact.phone)} · só WhatsApp
-              </a>
+              waHref ? (
+                <a
+                  href={waHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:underline hover:text-foreground transition-colors"
+                >
+                  {formatPhone(contact.phone)} · só WhatsApp
+                </a>
+              ) : (
+                <span>{formatPhone(contact.phone)} · só WhatsApp</span>
+              )
             ) : (
               <span className="inline-flex items-center gap-1">
                 {formatPhone(contact.phone)}
@@ -170,9 +175,9 @@ export function ContactRow({
             </a>
           )}
         </div>
-        {!contact.whatsapp_only && (
+        {!contact.whatsapp_only && waHref && (
           <a
-            href={`https://wa.me/${cleanPhone}`}
+            href={waHref}
             target="_blank"
             rel="noopener noreferrer"
             className="text-muted-foreground hover:text-status-success-bold transition-colors shrink-0 mt-0.5"

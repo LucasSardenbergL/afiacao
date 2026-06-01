@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Verifica o REPLAY do snapshot de schema num Postgres local descartável.
-# Prova ordem/dependência/sintaxe do schema-snapshot.sql; NÃO prova comportamento
-# runtime do Supabase (RLS/auth reais) — pra isso, projeto Supabase vazio ou docker.
+# Prova ordem/dependência/sintaxe do schema-snapshot.sql + CRIAÇÃO das 474 policies, e
+# (Silver+, 2026-05-30) ENFORCEMENT de RLS AMOSTRADO em runtime: own-scope / staff-gate /
+# anon-deny, via override de auth.uid() por GUC de sessão (ver seção no fim do script).
+# NÃO é o "Gold" completo (runtime Supabase real com TODAS as 474 policies + auth/storage):
+# pra isso, projeto Supabase cloud vazio ou docker (`supabase start` exige docker, ausente
+# nesta máquina). O Silver+ pega a classe de bug "policy não filtra" sem docker.
 #
 # Executado com sucesso em 2026-05-24 (PostgreSQL 17, macOS/brew): replay limpo,
 # contagens batem 1:1 com produção (212 tabelas / 37 views / 4 matviews /
@@ -63,3 +67,43 @@ UNION ALL SELECT 'triggers='||count(*) FROM pg_trigger t JOIN pg_class c ON c.oi
 UNION ALL SELECT 'enums='   ||count(*) FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname='public' AND t.typtype='e'
 UNION ALL SELECT 'policies='||count(*) FROM pg_policies WHERE schemaname='public';
 SQL
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Silver+ : ENFORCEMENT de RLS amostrado. O replay acima prova schema + CRIAÇÃO das
+# 474 policies; aqui provamos que elas FILTRAM em runtime (o gap pro "Gold"). Override
+# de auth.uid()/auth.role() via GUC de sessão (impersona) + seed mínimo + assert em
+# recurring_schedules: own-scope (auth.uid()=user_id), staff-gate (has_role master),
+# e anon-deny (sem uid → 0). NÃO é Gold (runtime Supabase completo precisa docker/cloud);
+# é o teto sem docker — pega a classe de bug "policy não filtra".
+echo ""
+echo "ENFORCEMENT RLS (amostra Silver+):"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- auth.uid()/auth.role() passam a ler GUCs de sessão (impersonação de teste)
+CREATE OR REPLACE FUNCTION auth.uid()  RETURNS uuid LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.uid',  true), '')::uuid $f$;
+CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.role', true), '') $f$;
+-- seed: 2 clientes + 1 master
+INSERT INTO auth.users(id) VALUES
+  ('11111111-1111-1111-1111-111111111111'),
+  ('22222222-2222-2222-2222-222222222222'),
+  ('33333333-3333-3333-3333-333333333333') ON CONFLICT DO NOTHING;
+INSERT INTO public.user_roles(user_id, role) VALUES
+  ('33333333-3333-3333-3333-333333333333','master'::public.app_role) ON CONFLICT DO NOTHING;
+INSERT INTO public.recurring_schedules(user_id, next_order_date) VALUES
+  ('11111111-1111-1111-1111-111111111111','2026-01-01'),
+  ('22222222-2222-2222-2222-222222222222','2026-01-01');
+-- snapshot é --no-privileges → o Supabase concede em runtime; concedo no teste (RLS filtra por cima)
+GRANT SELECT ON public.recurring_schedules TO authenticated, anon;
+SQL
+
+# tail -1: psql ecoa "SET" como status de cada SET → a contagem é a ÚLTIMA linha.
+OWN=$(P -tA -c "SET test.uid='11111111-1111-1111-1111-111111111111'; SET ROLE authenticated; SELECT count(*) FROM public.recurring_schedules;" | tail -1)
+STAFF=$(P -tA -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SET ROLE authenticated; SELECT count(*) FROM public.recurring_schedules;" | tail -1)
+ANON=$(P -tA -c "SET ROLE anon; SELECT count(*) FROM public.recurring_schedules;" | tail -1)
+echo "  own-scope (cliente1, espera 1): ${OWN}"
+echo "  staff-all (master,   espera 2): ${STAFF}"
+echo "  anon      (sem uid,  espera 0): ${ANON}"
+if [ "$OWN" = "1" ] && [ "$STAFF" = "2" ] && [ "$ANON" = "0" ]; then
+  echo "ENFORCEMENT RLS OK (own-scope + staff-gate + anon-deny filtram em runtime)"
+else
+  echo "ENFORCEMENT RLS FALHOU"; exit 1
+fi

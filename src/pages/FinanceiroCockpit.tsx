@@ -18,9 +18,10 @@ import { DataBasisFooter } from '@/components/financeiro/cockpit/DataBasisFooter
 const FinanceiroCockpit = () => {
   const {
     loading,
+    regime,
     confiabilidade,
     dreConsolidado,
-    projecao13,
+    cockpit,
     inadimplentes,
     drillDown,
     setDrillDown,
@@ -67,22 +68,24 @@ const FinanceiroCockpit = () => {
           onClick={() => setDrillDown('caixa')}
         />
         <CockpitCard
-          title="Caixa Projetado 30d"
+          title="Posição líquida (abertos)"
           value={fmtCompact(totalCC + totalCR - totalCP)}
           positive={totalCC + totalCR - totalCP > 0}
           icon={Target}
-          detail={`+ ${fmtCompact(totalCR)} entradas / - ${fmtCompact(totalCP)} saídas`}
-          badge="CR+CC-CP abertos"
+          detail={`+ ${fmtCompact(totalCR)} a receber / - ${fmtCompact(totalCP)} a pagar (abertos)`}
+          badge="CR+CC−CP abertos · não é projeção"
           onClick={() => setDrillDown('cr_aberto')}
         />
         <CockpitCard
           title="Necessidade de CG"
           value={fmtCompact(ncg)}
-          positive={ncg >= 0}
-          icon={ncg >= 0 ? TrendingUp : TrendingDown}
-          detail={ncg >= 0 ? 'CR cobre CP — posição confortável' : 'CP excede CR — atenção ao caixa'}
-          detailColor={ncg >= 0 ? 'text-status-success' : 'text-status-error'}
-          badge="CR - CP"
+          positive={ncg <= 0}
+          icon={ncg <= 0 ? TrendingUp : TrendingDown}
+          detail={cockpit.ncg_parcial
+            ? `Parcial: ${cockpit.empresas_presentes.length}/3 empresas`
+            : ncg <= 0 ? 'PCO financia a operação (folga)' : 'Operação imobiliza capital de giro'}
+          detailColor={ncg <= 0 ? 'text-status-success' : 'text-status-warning'}
+          badge={cockpit.ncg_parcial ? `ACO−PCO (engine) · ${cockpit.empresas_presentes.length}/3` : 'ACO − PCO (engine A1)'}
           onClick={() => setDrillDown('cr_aberto')}
         />
       </div>
@@ -106,9 +109,19 @@ const FinanceiroCockpit = () => {
       {/* Row 3: Resultado por empresa */}
       <ResultadoPorEmpresa dreConsolidado={dreConsolidado} confiabilidade={confiabilidade} />
 
-      {/* Row 4: Projeção 13 semanas */}
-      {projecao13.length > 0 && (
-        <Projecao13Card projecao13={projecao13} />
+      {/* Row 4: Projeção 13 semanas (engine A1 via snapshot, consolidada) */}
+      {cockpit.projecao13.length > 0 && (
+        <Projecao13Card
+          projecao13={cockpit.projecao13}
+          dataReferencia={cockpit.data_referencia}
+          parcial={cockpit.parcial}
+          empresasPresentes={cockpit.empresas_presentes}
+          empresasAusentes={cockpit.empresas_ausentes}
+          empresasStale={cockpit.empresas_stale}
+          caixaInicialProjecao={cockpit.caixa_inicial_projecao}
+          saldoAtualBanco={totalCC}
+          cohorteCompleta={!cockpit.parcial}
+        />
       )}
 
       {/* Row 5: Top inadimplentes */}
@@ -120,7 +133,7 @@ const FinanceiroCockpit = () => {
       <PeriodOverrideHistory />
 
       {/* Data basis footer */}
-      <DataBasisFooter />
+      <DataBasisFooter regime={regime} />
 
       <CockpitDrillDown type={drillDown} onClose={() => setDrillDown(null)} />
     </div>

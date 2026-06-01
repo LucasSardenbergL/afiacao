@@ -1,6 +1,8 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Company } from "@/contexts/CompanyContext";
 import { agregarRealizadoPorDia } from "@/lib/financeiro/fluxo-realizado-helpers";
+import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/dso-dpo-helpers";
+import { OPEN_TITLE_STATUSES } from "@/lib/financeiro/titulo-status";
 import type {
   FinAgingPagarView,
   FinAgingReceberView,
@@ -806,6 +808,74 @@ export async function getLastSyncTime(): Promise<string | null> {
   return latest;
 }
 
+// ═══════════════ Lente contábil agregada — DSO/DPO (colacor) ═══════════════
+
+/** Soma paginada do `saldo` dos títulos ABERTOS (robusto vs cap 1000 do PostgREST). */
+async function somarSaldoAberto(
+  tabela: 'fin_contas_receber' | 'fin_contas_pagar',
+  company: Company,
+): Promise<number> {
+  const PAGE = 1000;
+  const statuses = [...OPEN_TITLE_STATUSES];
+  let from = 0;
+  let total = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from(tabela)
+      .select('saldo')
+      .eq('company', company)
+      .in('status_titulo', statuses)
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as Array<{ saldo: number | null }>;
+    for (const r of rows) total += r.saldo ?? 0;
+    if (rows.length < PAGE) break;
+    from += PAGE;
+  }
+  return total;
+}
+
+/**
+ * DSO/DPO contábil agregado (point-in-time) do colacor — alternativa honesta ao
+ * PMR/PMP title-based (que fica em "—" pro colacor: liquida em lote, cobertura de
+ * baixa ~10%). NÃO usa data de baixa: saldo aberto de hoje ÷ fluxo do DRE TTM.
+ * Metodologia/degradação no helper. Client-side (sem edge/migration). Colacor-only (v1).
+ */
+export async function getDsoDpoColacor(hoje: Date = new Date()): Promise<DsoDpoResult> {
+  const company: Company = 'colacor';
+  const { pares, diasPeriodo, periodoLabel } = janelaTTM(hoje);
+
+  // DRE competência TTM: getDRE recebe 1 ano por chamada → agrupa os pares por ano.
+  const anos = Array.from(new Set(pares.map((p) => p.ano)));
+  let receitaBrutaTTM = 0;
+  let cmvTTM = 0;
+  let mesesFechados = 0;
+  for (const ano of anos) {
+    const meses = pares.filter((p) => p.ano === ano).map((p) => p.mes);
+    const dre = await getDRE(company, ano, meses, 'competencia');
+    for (const row of dre) {
+      receitaBrutaTTM += row.receita_bruta ?? 0;
+      cmvTTM += row.cmv ?? 0;
+      mesesFechados += 1;
+    }
+  }
+
+  const [arAberto, apAberto] = await Promise.all([
+    somarSaldoAberto('fin_contas_receber', company),
+    somarSaldoAberto('fin_contas_pagar', company),
+  ]);
+
+  return calcularDsoDpo({
+    arAberto,
+    apAberto,
+    receitaBrutaTTM,
+    cmvTTM,
+    mesesFechados,
+    diasPeriodo,
+    periodoLabel,
+  });
+}
+
 // ═══════════════ A2 — Retorno & Valor (contrato com fin-valor-engine) ═══════════════
 
 export interface ValorKeDecomposto {
@@ -835,7 +905,8 @@ export interface ValorEmpresaResult {
   reportado: {
     ebit: number; nopat: number; imposto_operacional_nopat: number; carga_tributaria_regime_total: number;
     margem_operacional_pre_imposto: number; receita_liquida_ttm: number;
-    capital_investido: number; capital_giro: number; ativo_fixo: number; ajustes: number; capital_parcial: boolean;
+    capital_investido: number | null; capital_giro: number | null; ativo_fixo: number; ajustes: number; capital_parcial: boolean;
+    giro_indisponivel: boolean; giro_snapshot_at: string | null; giro_dias: number | null;
     roic: number | null; wacc: number | null; spread: number | null; eva: number | null;
     roic_incremental: number | null;
     incremental: { delta_nopat: number | null; delta_capital: number | null; aviso: string | null };
@@ -843,7 +914,7 @@ export interface ValorEmpresaResult {
     peso_divida: number | null; peso_equity: number | null;
   };
   normalizado: {
-    ebit: number; nopat: number; capital_investido: number;
+    ebit: number; nopat: number; capital_investido: number | null;
     roic: number | null; spread: number | null; eva: number | null;
     ajuste_prolabore: number; ajuste_aluguel: number; ajuste_intercompany_capital: number; aplicado: boolean;
     nopat_aproximado: boolean;
@@ -870,8 +941,8 @@ export interface CockpitRollupCliente {
   cliente: string;
   receita: number;
   cm: number | null;
-  encargo: number;
-  encargo_total: number;
+  encargo: number | null;
+  encargo_total: number | null;
   evp: number | null;
 }
 export interface CockpitRollupSKU {
@@ -879,19 +950,20 @@ export interface CockpitRollupSKU {
   receita: number;
   quantidade: number;
   cm: number | null;
-  encargo: number;
-  encargo_total: number;
+  encargo: number | null;
+  encargo_total: number | null;
   evp: number | null;
 }
 export interface ValorCockpitResult {
   company: string;
-  k: number;
+  k: number | null;                 // hurdle (Ke); null quando ausente/inválido (não fabricado)
+  hurdle_indisponivel?: boolean;    // sem Ke → EVP/encargo indisponíveis
   ttm: { inicio: string; fim: string };
   vazio?: boolean;
   motivo?: string;
   porCliente: CockpitRollupCliente[];
   porSKU: CockpitRollupSKU[];
-  empresa: { receita: number; cm: number | null; encargo: number; encargo_total: number; evp: number | null };
+  empresa: { receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null };
   recomendacoesCliente: Array<{ cliente: string; recomendacoes: CockpitRecomendacao[] }>;
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
   cobertura_receita: number;

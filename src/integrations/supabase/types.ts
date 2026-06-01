@@ -2848,6 +2848,7 @@ export type Database = {
           dismissed_at: string | null
           dismissed_by: string | null
           dismissed_until: string | null
+          email_enfileirado_em: string | null
           id: string
           mensagem: string
           severidade: string
@@ -2862,6 +2863,7 @@ export type Database = {
           dismissed_at?: string | null
           dismissed_by?: string | null
           dismissed_until?: string | null
+          email_enfileirado_em?: string | null
           id?: string
           mensagem: string
           severidade: string
@@ -2876,6 +2878,7 @@ export type Database = {
           dismissed_at?: string | null
           dismissed_by?: string | null
           dismissed_until?: string | null
+          email_enfileirado_em?: string | null
           id?: string
           mensagem?: string
           severidade?: string
@@ -8339,6 +8342,30 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_param_limbo_log: {
+        Row: {
+          criado_em: string
+          empresa: string
+          id: number
+          limbo_count: number
+          medido_em: string
+        }
+        Insert: {
+          criado_em?: string
+          empresa: string
+          id?: never
+          limbo_count: number
+          medido_em?: string
+        }
+        Update: {
+          criado_em?: string
+          empresa?: string
+          id?: never
+          limbo_count?: number
+          medido_em?: string
+        }
+        Relationships: []
+      }
       reposition_parameters: {
         Row: {
           aplicado_em: string | null
@@ -8477,6 +8504,135 @@ export type Database = {
           id?: string
           state?: Json
           updated_at?: string
+        }
+        Relationships: []
+      }
+      route_calendar_override: {
+        Row: {
+          cancela_rota: boolean
+          created_at: string
+          data: string
+          id: string
+          motivo: string | null
+        }
+        Insert: {
+          cancela_rota?: boolean
+          created_at?: string
+          data: string
+          id?: string
+          motivo?: string | null
+        }
+        Update: {
+          cancela_rota?: boolean
+          created_at?: string
+          data?: string
+          id?: string
+          motivo?: string | null
+        }
+        Relationships: []
+      }
+      route_contact_log: {
+        Row: {
+          bucket: string | null
+          canal: string
+          created_at: string
+          customer_user_id: string | null
+          data_rota: string
+          farmer_id: string | null
+          id: string
+          pedido_id: string | null
+          status: string | null
+          valor_da_ligacao: number | null
+        }
+        Insert: {
+          bucket?: string | null
+          canal: string
+          created_at?: string
+          customer_user_id?: string | null
+          data_rota: string
+          farmer_id?: string | null
+          id?: string
+          pedido_id?: string | null
+          status?: string | null
+          valor_da_ligacao?: number | null
+        }
+        Update: {
+          bucket?: string | null
+          canal?: string
+          created_at?: string
+          customer_user_id?: string | null
+          data_rota?: string
+          farmer_id?: string | null
+          id?: string
+          pedido_id?: string | null
+          status?: string | null
+          valor_da_ligacao?: number | null
+        }
+        Relationships: []
+      }
+      route_disparo_config: {
+        Row: {
+          cadencia_min_dias: number
+          capacidade_ligacoes_dia: number
+          cold_start_piso_dia: number
+          disparo_corte: string
+          disparo_inicio: string
+          id: boolean
+          meta_tier_cap: number
+          updated_at: string
+          win_back_reserva_pct: number
+        }
+        Insert: {
+          cadencia_min_dias?: number
+          capacidade_ligacoes_dia?: number
+          cold_start_piso_dia?: number
+          disparo_corte?: string
+          disparo_inicio?: string
+          id?: boolean
+          meta_tier_cap?: number
+          updated_at?: string
+          win_back_reserva_pct?: number
+        }
+        Update: {
+          cadencia_min_dias?: number
+          capacidade_ligacoes_dia?: number
+          cold_start_piso_dia?: number
+          disparo_corte?: string
+          disparo_inicio?: string
+          id?: boolean
+          meta_tier_cap?: number
+          updated_at?: string
+          win_back_reserva_pct?: number
+        }
+        Relationships: []
+      }
+      route_schedule: {
+        Row: {
+          ativo: boolean
+          city: string
+          created_at: string
+          id: string
+          is_daily: boolean
+          uf: string
+          weekday: number
+        }
+        Insert: {
+          ativo?: boolean
+          city: string
+          created_at?: string
+          id?: string
+          is_daily?: boolean
+          uf?: string
+          weekday: number
+        }
+        Update: {
+          ativo?: boolean
+          city?: string
+          created_at?: string
+          id?: string
+          is_daily?: boolean
+          uf?: string
+          weekday?: number
         }
         Relationships: []
       }
@@ -8647,6 +8803,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      sayerlack_retry_motor_log: {
+        Row: {
+          aprovado_em: string | null
+          criado_em: string
+          id: number
+          pedido_id: number
+          request_id: number | null
+          status_envio_portal_no_disparo: string | null
+          tentativa_no_disparo: number | null
+        }
+        Insert: {
+          aprovado_em?: string | null
+          criado_em?: string
+          id?: never
+          pedido_id: number
+          request_id?: number | null
+          status_envio_portal_no_disparo?: string | null
+          tentativa_no_disparo?: number | null
+        }
+        Update: {
+          aprovado_em?: string | null
+          criado_em?: string
+          id?: never
+          pedido_id?: number
+          request_id?: number | null
+          status_envio_portal_no_disparo?: string | null
+          tentativa_no_disparo?: number | null
+        }
+        Relationships: []
       }
       score_recalc_queue: {
         Row: {
@@ -11435,6 +11621,53 @@ export type Database = {
         }
         Relationships: []
       }
+      visitas_agendadas: {
+        Row: {
+          created_at: string
+          customer_user_id: string
+          id: string
+          notes: string | null
+          route_visit_id: string | null
+          scheduled_by: string
+          scheduled_date: string
+          status: string
+          updated_at: string
+          visit_type: string
+        }
+        Insert: {
+          created_at?: string
+          customer_user_id: string
+          id?: string
+          notes?: string | null
+          route_visit_id?: string | null
+          scheduled_by: string
+          scheduled_date: string
+          status?: string
+          updated_at?: string
+          visit_type?: string
+        }
+        Update: {
+          created_at?: string
+          customer_user_id?: string
+          id?: string
+          notes?: string | null
+          route_visit_id?: string | null
+          scheduled_by?: string
+          scheduled_date?: string
+          status?: string
+          updated_at?: string
+          visit_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "visitas_agendadas_route_visit_id_fkey"
+            columns: ["route_visit_id"]
+            isOneToOne: false
+            referencedRelation: "route_visits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       warehouses: {
         Row: {
           cnpj: string | null
@@ -11519,6 +11752,125 @@ export type Database = {
           last_used_at?: string | null
           public_key?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      whatsapp_conversations: {
+        Row: {
+          assigned_operator_id: string | null
+          contact_name: string | null
+          created_at: string
+          customer_user_id: string | null
+          id: string
+          last_inbound_at: string | null
+          last_message_at: string | null
+          opt_in_status: string
+          phone_e164: string | null
+          phone_key: string
+          status: string
+        }
+        Insert: {
+          assigned_operator_id?: string | null
+          contact_name?: string | null
+          created_at?: string
+          customer_user_id?: string | null
+          id?: string
+          last_inbound_at?: string | null
+          last_message_at?: string | null
+          opt_in_status?: string
+          phone_e164?: string | null
+          phone_key: string
+          status?: string
+        }
+        Update: {
+          assigned_operator_id?: string | null
+          contact_name?: string | null
+          created_at?: string
+          customer_user_id?: string | null
+          id?: string
+          last_inbound_at?: string | null
+          last_message_at?: string | null
+          opt_in_status?: string
+          phone_e164?: string | null
+          phone_key?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      whatsapp_messages: {
+        Row: {
+          body: string | null
+          conversation_id: string
+          created_at: string
+          direction: string
+          id: string
+          media_id: string | null
+          media_url: string | null
+          sender_user_id: string | null
+          status: string | null
+          transcript: string | null
+          type: string
+          wa_message_id: string | null
+          wa_timestamp: string | null
+        }
+        Insert: {
+          body?: string | null
+          conversation_id: string
+          created_at?: string
+          direction: string
+          id?: string
+          media_id?: string | null
+          media_url?: string | null
+          sender_user_id?: string | null
+          status?: string | null
+          transcript?: string | null
+          type?: string
+          wa_message_id?: string | null
+          wa_timestamp?: string | null
+        }
+        Update: {
+          body?: string | null
+          conversation_id?: string
+          created_at?: string
+          direction?: string
+          id?: string
+          media_id?: string | null
+          media_url?: string | null
+          sender_user_id?: string | null
+          status?: string | null
+          transcript?: string | null
+          type?: string
+          wa_message_id?: string | null
+          wa_timestamp?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      whatsapp_webhook_events: {
+        Row: {
+          id: string
+          payload: Json
+          processed_at: string | null
+          received_at: string
+        }
+        Insert: {
+          id?: string
+          payload: Json
+          processed_at?: string | null
+          received_at?: string
+        }
+        Update: {
+          id?: string
+          payload?: Json
+          processed_at?: string | null
+          received_at?: string
         }
         Relationships: []
       }
@@ -11708,6 +12060,16 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      v_capital_giro_prazos: {
+        Row: {
+          company: string | null
+          pmp: number | null
+          pmp_cobertura: number | null
+          pmr: number | null
+          pmr_cobertura: number | null
+        }
+        Relationships: []
       }
       v_clientes_nao_vinculados_atual: {
         Row: {
@@ -12287,6 +12649,46 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_candidatos_primeira_compra: {
+        Row: {
+          calculado_em: string | null
+          classe_abc_proposta: string | null
+          classe_consolidada: string | null
+          classe_xyz_proposta: string | null
+          coef_variacao_ordem: number | null
+          demanda_media_diaria: number | null
+          demanda_sigma_diario: number | null
+          dias_com_movimento: number | null
+          dias_desde_ultima_venda: number | null
+          empresa: string | null
+          fonte_leadtime: string | null
+          fonte_preco: string | null
+          fornecedor_habilitado: boolean | null
+          fornecedor_nome: string | null
+          ja_habilitado: boolean | null
+          lead_time_desvio: number | null
+          lead_time_medio: number | null
+          lt_p95_dias: number | null
+          lt_total_teorico_dias_uteis: number | null
+          preco_compra_real: number | null
+          preco_item_eoq: number | null
+          preco_venda_medio: number | null
+          primeira_compra_cap_dias: number | null
+          primeira_compra_estoque_maximo: number | null
+          primeira_compra_ponto_pedido: number | null
+          primeira_compra_qtde: number | null
+          recorrencia_clientes_180d: number | null
+          recorrencia_meses_180d: number | null
+          recorrencia_nfs_180d: number | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          status_sugestao: string | null
+          valor_total_180d: number | null
+          valor_total_90d: number | null
+          z_aplicado: number | null
+        }
+        Relationships: []
+      }
       v_sku_classificacao_abc_xyz: {
         Row: {
           classe_abc_proposta: string | null
@@ -12765,6 +13167,7 @@ export type Database = {
           skus_incluidos: number
         }[]
       }
+      classificar_sayerlack_grupo_default: { Args: never; Returns: number }
       converter_sugestao_em_campanha_flat: {
         Args: {
           p_canal?: string
@@ -13115,6 +13518,10 @@ export type Database = {
         }[]
       }
       pode_ver_carteira_completa: { Args: { _uid: string }; Returns: boolean }
+      preencher_parametros_faltantes_skus: {
+        Args: { p_empresa: string }
+        Returns: number
+      }
       processar_alertas_pendentes_notificacao: {
         Args: { p_empresa?: string }
         Returns: {
@@ -13135,6 +13542,10 @@ export type Database = {
           tipo: string
           titulo: string
         }[]
+      }
+      promover_candidato_primeira_compra: {
+        Args: { p_empresa: string; p_sku: number }
+        Returns: number
       }
       proxima_janela_operacional: {
         Args: { p_a_partir?: string; p_empresa: string; p_fornecedor: string }
@@ -13193,6 +13604,7 @@ export type Database = {
         }
         Returns: Json
       }
+      reposicao_param_limbo_watchdog: { Args: never; Returns: undefined }
       reprocessar_sku_items_via_raw_data: {
         Args: { p_empresa: string }
         Returns: {
@@ -13223,6 +13635,7 @@ export type Database = {
           valor_coberto_rs: number
         }[]
       }
+      sayerlack_retry_orfaos: { Args: never; Returns: Json }
       set_config: {
         Args: { is_local?: boolean; parameter: string; value: string }
         Returns: string

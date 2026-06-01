@@ -13,6 +13,7 @@ const NOME: Record<string, string> = { colacor: 'Colacor', oben: 'Oben', colacor
 
 const pct = (x: number | null | undefined) => (x == null ? '—' : `${(x * 100).toFixed(1)}%`);
 const brl = (x: number | null | undefined) => (x == null ? '—' : x.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }));
+const dataBR = (iso: string | null) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '—');
 
 function nivelClasses(n: 'alta' | 'media' | 'baixa') {
   if (n === 'alta') return 'text-status-success bg-status-success-bg';
@@ -41,11 +42,17 @@ function EmpresaCard({ company, modo }: { company: string; modo: 'reportado' | '
           <span className="text-muted-foreground">Spread</span><span className={`text-right ${spreadV != null && spreadV < 0 ? 'text-status-error' : 'text-status-success'}`}>{pct(spreadV)}</span>
           <span className="text-muted-foreground">EVA</span><span className="text-right">{brl(evaV)}</span>
           <span className="text-muted-foreground">NOPAT (TTM)</span><span className="text-right">{brl(v.nopat)}</span>
-          <span className="text-muted-foreground">Capital investido</span><span className="text-right">{brl(v.capital_investido)}{data.reportado.capital_parcial && modo === 'reportado' ? ' *' : ''}</span>
+          <span className="text-muted-foreground">Capital investido</span><span className="text-right">{brl(v.capital_investido)}{data.reportado.capital_parcial && !data.reportado.giro_indisponivel && modo === 'reportado' ? ' *' : ''}</span>
           {modo === 'reportado' && (<><span className="text-muted-foreground">Margem op. pré-imposto</span><span className="text-right">{pct(data.reportado.margem_operacional_pre_imposto)}</span></>)}
           <span className="text-muted-foreground">ROIC incremental</span><span className="kpi-value text-right">{pct(data.reportado.roic_incremental)}</span>
         </div>
-        {data.reportado.capital_parcial && modo === 'reportado' && <p className="text-xs text-status-warning">* capital parcial (sem ativo fixo)</p>}
+        {data.reportado.giro_indisponivel && modo === 'reportado' && <p className="text-xs text-status-warning">Sem snapshot de NCG — capital de giro indisponível (rode a projeção de caixa). ROIC/EVA não calculáveis.</p>}
+        {data.reportado.capital_parcial && !data.reportado.giro_indisponivel && modo === 'reportado' && <p className="text-xs text-status-warning">* capital parcial (sem ativo fixo)</p>}
+        {modo === 'reportado' && data.reportado.giro_snapshot_at && (
+          <p className={`text-xs ${data.reportado.giro_dias != null && data.reportado.giro_dias > 45 ? 'text-status-warning' : 'text-muted-foreground'}`}>
+            NCG de {dataBR(data.reportado.giro_snapshot_at)}{data.reportado.giro_dias != null && data.reportado.giro_dias > 1 ? ` (${data.reportado.giro_dias}d atrás)` : ''}
+          </p>
+        )}
         {data.reportado.incremental.aviso && <p className="text-xs text-muted-foreground">{data.reportado.incremental.aviso}</p>}
         {modo === 'normalizado' && !data.normalizado.aplicado && <p className="text-xs text-status-warning">Sem inputs de normalização — igual ao reportado.</p>}
         {modo === 'normalizado' && data.normalizado.nopat_aproximado && <p className="text-xs text-muted-foreground">NOPAT normalizado é aproximado: o imposto absoluto (IRPJ+CSLL) não é recalculado sobre o EBIT ajustado.</p>}

@@ -23,6 +23,12 @@ interface OmieProdutoCadastro {
   peso_liq?: number;
   cfop?: string;
   recomendacoes_fiscais?: { tipo_produto?: string };
+  // Tipo do item no Omie (00..99; '04' = Produto Acabado = fabricado internamente, nunca comprar).
+  // A doc do Omie usa `tipoItem`; o retorno do ListarProdutos pode vir snake_case (`tipo_item`)
+  // ou no genérico `tipo`. O batch NÃO traz `recomendacoes_fiscais.tipo_produto` (sempre null),
+  // por isso lemos as variações abaixo.
+  tipoItem?: string | number;
+  tipo_item?: string | number;
 }
 
 interface OmiePosEstoque {
@@ -290,7 +296,10 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
   let totalSynced = 0;
   let pagesProcessed = 0;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+  // `pagesProcessed === 0` força a 1ª iteração mesmo com startPage > 1: totalPaginas (init=1) só é
+  // aprendido DENTRO do loop, então `pagina <= totalPaginas` era falso de cara p/ startPage>1 →
+  // no-op silencioso (não paginava além da pág. 12; bug pego pelo founder 2026-05-31). startPage=1 inalterado.
+  while ((pagina <= totalPaginas || pagesProcessed === 0) && pagesProcessed < maxPages) {
     const result = await callOmieVendasApi(
       "geral/produtos/",
       "ListarProdutos",
@@ -342,7 +351,10 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
           peso_liq: prod.peso_liq,
           descricao_familia: prod.descricao_familia,
           cfop: prod.cfop,
-          tipo_produto: prod.recomendacoes_fiscais?.tipo_produto ?? null,
+          // money-path: '04' aqui = Produto Acabado (fabricado, nunca comprar) — usado pelo motor
+          // de reposição e pela auto-criação de OP em submitOrder. Lê o campo REAL do Omie
+          // (tipoItem/tipo_item/tipo), com fallback ao recomendacoes_fiscais legado.
+          tipo_produto: prod.tipoItem ?? prod.tipo_item ?? prod.tipo ?? prod.recomendacoes_fiscais?.tipo_produto ?? null,
         },
         account,
         updated_at: new Date().toISOString(),
@@ -373,7 +385,8 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
   let totalUpdated = 0;
   let pagesProcessed = 0;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+  // mesmo fix do syncProducts: força a 1ª iteração p/ startPage>1 funcionar (era no-op). startPage=1 inalterado.
+  while ((pagina <= totalPaginas || pagesProcessed === 0) && pagesProcessed < maxPages) {
     const result = await callOmieVendasApi(
       "estoque/consulta/",
       "ListarPosEstoque",
@@ -918,7 +931,9 @@ async function syncPedidos(
     return { address: '', phone: '' };
   }
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+  // mesmo fix (syncPedidos): força a 1ª iteração p/ startPage>1 funcionar (era no-op). startPage=1 inalterado —
+  // o fluxo do cron (start_page=1 + janela de data) NÃO muda; só destrava paginação manual além de maxPages.
+  while ((pagina <= totalPaginas || pagesProcessed === 0) && pagesProcessed < maxPages) {
     const listParams: Record<string, unknown> = { pagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" };
     if (dateFrom) listParams.filtrar_por_data_de = dateFrom;
     if (dateTo) listParams.filtrar_por_data_ate = dateTo;

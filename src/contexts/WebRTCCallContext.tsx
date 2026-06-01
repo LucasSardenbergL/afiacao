@@ -39,6 +39,12 @@ export interface WebRTCCallContextValue {
   audioLink: string | null;
   makeCall: (phoneNumber: string, opts?: { forceRecord?: boolean }) => Promise<void>;
   endCall: () => Promise<void>;
+  /** Ownership de UI: id do <WebRTCDialer> que iniciou a chamada atual (via claimCall).
+   *  Em telas com VÁRIOS dialers (listas), só o dono reflete o estado ativo — os
+   *  demais ficam idle. Sem isso, todos mostrariam o card e disparariam onCallEnd
+   *  (a sessão WebRTC é única/global), registrando a chamada na linha errada. */
+  callOwnerId: string | null;
+  claimCall: (ownerId: string) => void;
   isActive: boolean;
   isConnecting: boolean;
   isRinging: boolean;
@@ -128,6 +134,8 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const [prerollPlaying, setPrerollPlaying] = useState(false);
   const [prerollEndsAt, setPrerollEndsAt] = useState<number | null>(null);
   const [vendorMicStream, setVendorMicStream] = useState<MediaStream | null>(null);
+  // Ownership de UI: qual <WebRTCDialer> iniciou a chamada atual (ver type).
+  const [callOwnerId, setCallOwnerId] = useState<string | null>(null);
   // PR-INBOUND-CALLS
   const [incomingCall, setIncomingCall] = useState<IncomingCallInfo | null>(null);
 
@@ -139,7 +147,12 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const prerollPlayRef = useRef<(() => void) | null>(null);
   const prerollDurationRef = useRef<number | null>(null);
   const prerollFinishTimerRef = useRef<number | null>(null);
-  const prerollUrl = (import.meta.env.VITE_NVOIP_SIP_PREROLL_URL as string | undefined);
+  // Default pro MP3 servido em public/ — o aviso LGPD NÃO pode depender de uma env
+  // estar setada no build (não estava em produção → o pre-roll era pulado e a gravação
+  // saía sem aviso). A env fica como override opcional (CDN/arquivo custom).
+  const prerollUrl =
+    (import.meta.env.VITE_NVOIP_SIP_PREROLL_URL as string | undefined) ||
+    '/preroll/aviso-gravacao-lgpd.mp3';
 
   // PR4 — Refs pra persistência da sessão de chamada
   const analysisHistoryRef = useRef<SpinAnalysis[]>([]);
@@ -519,6 +532,14 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     turnsRef.current = transcription.turns;
   }, [transcription.turns]);
 
+  // Ownership: o <WebRTCDialer> que vai discar se declara dono ANTES do makeCall.
+  const claimCall = useCallback((ownerId: string) => setCallOwnerId(ownerId), []);
+
+  // Libera o dono quando a chamada volta a idle (a próxima chamada re-reivindica).
+  useEffect(() => {
+    if (callState === 'idle') setCallOwnerId(null);
+  }, [callState]);
+
   const value: WebRTCCallContextValue = {
     callState,
     callId: null,
@@ -526,6 +547,8 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     audioLink: null,
     makeCall,
     endCall,
+    callOwnerId,
+    claimCall,
     isActive, isConnecting, isRinging, isEstablished, isFinished,
     error,
     localStream,

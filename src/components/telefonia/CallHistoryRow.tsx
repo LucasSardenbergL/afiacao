@@ -2,7 +2,7 @@
 import { PhoneIncoming, PhoneOutgoing, PhoneMissed, Mic } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
-import { formatBrPhone } from '@/lib/phone';
+import { formatBrPhone, normalizeBrPhone } from '@/lib/phone';
 import { cn } from '@/lib/utils';
 import type { CallLogRow } from '@/types/call-log';
 
@@ -11,11 +11,12 @@ const STATUS_LABEL: Record<string, string> = {
   busy: 'ocupado', failed: 'falhou', canceled: 'cancelada', ended: 'encerrada',
 };
 
-export function CallHistoryRow({ row, onCallBack }: { row: CallLogRow; onCallBack: (phone: string) => void }) {
+export function CallHistoryRow({ row, onCallBack }: { row: CallLogRow; onCallBack: (phone: string, name?: string) => void }) {
   const navigate = useNavigate();
   const missed = row.direction === 'inbound' && row.status === 'missed';
   const Icon = missed ? PhoneMissed : row.direction === 'inbound' ? PhoneIncoming : PhoneOutgoing;
   const phone = row.phone_raw ?? row.phone_normalized ?? '';
+  const canCall = normalizeBrPhone(phone).length >= 10;
   const known = !!row.customer_user_id;
   const name = row.display_name ?? (known ? 'Cliente' : 'Desconhecido');
 
@@ -45,7 +46,9 @@ export function CallHistoryRow({ row, onCallBack }: { row: CallLogRow; onCallBac
             onClick={() => navigate(`/admin/customers/${row.customer_user_id}`)}>ver cliente</Button>
         )}
         <Button size="sm" variant="outline" className="h-7 text-xs"
-          onClick={() => onCallBack(phone)}>religar</Button>
+          disabled={!canCall}
+          title={canCall ? `Religar para ${formatBrPhone(phone)}` : 'Telefone inválido'}
+          onClick={() => onCallBack(phone, name)}>religar</Button>
       </div>
     </div>
   );

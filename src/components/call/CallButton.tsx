@@ -1,7 +1,3 @@
-import { Phone } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { useIsTouchDevice } from '@/hooks/useIsTouchDevice';
 import { Dialer } from './Dialer';
 
 interface CallButtonProps {
@@ -9,45 +5,18 @@ interface CallButtonProps {
   customerName: string;
   /** 'full' = botão "Ligar {telefone}"; 'icon' = ícone compacto. */
   variant?: 'full' | 'icon';
+  /** Mantido por compatibilidade de API; o dialer in-app renderiza o próprio botão. */
   className?: string;
 }
 
 /**
- * Botão de ligar que escolhe o backend certo por TIPO DE DISPOSITIVO (não por
- * largura de tela — notebook em janela estreita NÃO é "mobile"):
- * - DESKTOP/NOTEBOOK: dialer in-app <Dialer> (Nvoip click-to-call ou WebRTC,
- *   conforme a feature flag useWebRTCCall). Inicia a chamada DENTRO do app.
- * - CELULAR/TABLET (touch-primário): link tel: nativo (disca pela operadora) —
- *   o vendedor externo no celular continua usando o discador do aparelho.
+ * Botão de ligar — usa SEMPRE o dialer in-app (WebRTC) em qualquer dispositivo,
+ * iniciando a chamada DENTRO do app (grava + copiloto/transcrição ao vivo).
  *
- * Substitui os <a href="tel:..."> espalhados nas páginas de cliente, que no
- * desktop entregavam a chamada pro SO (macOS abria o app Telefone / erro WPC)
- * em vez de usar a telefonia in-app. Ver DEBUG report 2026-05-20.
+ * Antes, em dispositivo touch (celular/tablet), caía pro discador nativo via
+ * `<a href="tel:">` — o que abria o app Telefone do SO e perdia gravação + copiloto.
+ * Isso foi descontinuado: a ligação de venda agora roda sempre in-app via WebRTC.
  */
-export function CallButton({ phone, customerName, variant = 'full', className }: CallButtonProps) {
-  const isTouchDevice = useIsTouchDevice();
-
-  if (isTouchDevice) {
-    if (variant === 'icon') {
-      return (
-        <Button asChild variant="ghost" size="icon" className={cn('h-8 w-8 text-status-success', className)}>
-          <a href={`tel:${phone}`} title={`Ligar para ${phone}`}>
-            <Phone className="w-4 h-4" />
-          </a>
-        </Button>
-      );
-    }
-    return (
-      <Button asChild variant="outline" size="sm" className={className}>
-        <a href={`tel:${phone}`}>
-          <Phone className="w-3.5 h-3.5 mr-1.5" />
-          Ligar
-        </a>
-      </Button>
-    );
-  }
-
-  // Desktop: dialer in-app. Quando idle renderiza "Ligar {telefone}" (ou ícone se
-  // compact); quando a chamada inicia, vira card de status (inline).
+export function CallButton({ phone, customerName, variant = 'full' }: CallButtonProps) {
   return <Dialer phoneNumber={phone} customerName={customerName} compact={variant === 'icon'} />;
 }

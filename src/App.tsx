@@ -13,6 +13,7 @@ import { ImpersonationProvider } from "@/contexts/ImpersonationContext";
 import { ConditionalWebRTCProvider } from "@/contexts/ConditionalWebRTCProvider";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { RequireFinanceiroAccess } from "@/components/RequireFinanceiroAccess";
+import { RequireStaff } from '@/components/RequireStaff';
 import { NotificationPrompt } from "@/components/NotificationPrompt";
 import { AppShellLayout } from "@/components/AppShellLayout";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
@@ -122,7 +123,6 @@ const ProductionOrders = lazy(() => import("./pages/ProductionOrders"));
 const AdminReposicaoRevisao = lazy(() => import("./pages/AdminReposicaoRevisao"));
 const AdminReposicaoHistorico = lazy(() => import("./pages/AdminReposicaoHistorico"));
 const AdminReposicaoAlertas = lazy(() => import("./pages/AdminReposicaoAlertas"));
-const AdminReposicaoAplicacao = lazy(() => import("./pages/AdminReposicaoAplicacao"));
 const AdminReposicaoGruposProducao = lazy(() => import("./pages/AdminReposicaoGruposProducao"));
 const AdminReposicaoSlaFornecedor = lazy(() => import("./pages/AdminReposicaoSlaFornecedor"));
 const AdminReposicaoCadeiaLogistica = lazy(() => import("./pages/AdminReposicaoCadeiaLogistica"));
@@ -168,6 +168,9 @@ const AdminStandardProcessNew = lazy(() => import("./pages/AdminStandardProcessN
 const AdminStandardProcessDetail = lazy(() => import("./pages/AdminStandardProcessDetail"));
 const AdminCalculadora = lazy(() => import("./pages/AdminCalculadora"));
 const Telefonia = lazy(() => import("./pages/Telefonia"));
+const WhatsappInbox = lazy(() => import("./pages/WhatsappInbox"));
+const RotaListaLigacao = lazy(() => import("./pages/RotaListaLigacao"));
+const RotaPropostas = lazy(() => import("./pages/RotaPropostas"));
 
 const PageLoader = () => <PageSkeleton variant="auto" />;
 
@@ -205,6 +208,7 @@ const App = () => (
 
             {/* All authenticated routes inside AppShell */}
             <Route element={<ProtectedRoute><AppShellLayout /></ProtectedRoute>}>
+              {/* ─── Abertas (cliente + staff) — sem RequireStaff ─── */}
               <Route index element={<Index />} />
               <Route path="orders" element={<Orders />} />
               <Route path="orders/:id" element={<OrderDetail />} />
@@ -215,24 +219,6 @@ const App = () => (
               <Route path="tools/:toolId" element={<ToolHistory />} />
               <Route path="tools/:toolId/reports" element={<ToolReports />} />
               <Route path="support" element={<Support />} />
-              <Route path="admin" element={<Admin />} />
-              <Route path="admin/approvals" element={<AdminApprovals />} />
-              <Route path="admin/departments" element={<AdminDepartments />} />
-              <Route path="admin/customers" element={<AdminCustomers />} />
-              <Route path="admin/customers/:customerId" element={<AdminCustomers />} />
-              <Route path="admin/customers/:customerId/360" element={<Customer360 />} />
-              <Route path="admin/orders/:id" element={<AdminOrderDetail />} />
-              <Route path="admin/orders/:id/quality" element={<QualityChecklist />} />
-              <Route path="admin/demand-forecast" element={<AdminDemandForecast />} />
-              <Route path="admin/route-planner" element={<AdminRoutePlanner />} />
-              <Route path="admin/monthly-reports" element={<AdminMonthlyReports />} />
-              <Route path="admin/productivity" element={<AdminProductivity />} />
-              <Route path="admin/loyalty" element={<AdminLoyalty />} />
-              <Route path="admin/gamification" element={<AdminGamification />} />
-              <Route path="admin/training" element={<AdminTraining />} />
-              <Route path="admin/price-table" element={<AdminPriceTable />} />
-              <Route path="admin/analytics-sync" element={<AdminAnalyticsSync />} />
-              <Route path="admin/clientes-nao-vinculados" element={<ClientesNaoVinculados />} />
               <Route path="recurring-schedules" element={<RecurringSchedules />} />
               <Route path="savings" element={<SavingsDashboard />} />
               <Route path="loyalty" element={<Loyalty />} />
@@ -283,6 +269,9 @@ const App = () => (
               <Route path="tintometrico/reconciliacao" element={<TintReconciliation />} />
               <Route path="tintometrico/sync-runs" element={<TintSyncRuns />} />
               <Route path="tintometrico/api-contract" element={<TintApiContract />} />
+              <Route path="admin/calculadora" element={<AdminCalculadora />} />
+
+              {/* ─── Financeiro (gate próprio: permite não-staff com permissão) ─── */}
               <Route element={<RequireFinanceiroAccess />}>
                 <Route path="financeiro" element={<FinanceiroDashboard />} />
                 <Route path="financeiro/sync" element={<FinanceiroSync />} />
@@ -304,63 +293,129 @@ const App = () => (
                 <Route path="financeiro/gestao" element={<FinanceiroGestao />} />
                 <Route path="financeiro/analise" element={<FinanceiroAnalise />} />
               </Route>
-              <Route path="recebimento" element={<Recebimento />} />
-              <Route path="recebimento/:id" element={<RecebimentoConferencia />} />
-              <Route path="producao" element={<ProductionOrders />} />
-              <Route path="admin/reposicao/revisao" element={<AdminReposicaoRevisao />} />
-              <Route path="admin/reposicao/historico" element={<AdminReposicaoHistorico />} />
-              <Route path="admin/reposicao/alertas" element={<AdminReposicaoAlertas />} />
-              <Route path="admin/reposicao/aplicacao" element={<Navigate to="/admin/reposicao/sessao/aplicacao" replace />} />
-              <Route path="admin/reposicao/grupos-producao" element={<AdminReposicaoGruposProducao />} />
-              <Route path="admin/reposicao/cadeia-logistica" element={<AdminReposicaoCadeiaLogistica />} />
-              <Route path="admin/reposicao/pedidos" element={<AdminReposicaoPedidos />} />
-              <Route path="admin/sku-mapeamento" element={<AdminSkuMapeamento />} />
-              <Route path="admin/reposicao/sla-fornecedor" element={<AdminReposicaoSlaFornecedor />} />
-              <Route path="admin/reposicao/promocoes" element={<AdminReposicaoPromocoes />} />
-              <Route path="admin/reposicao/promocoes/novo" element={<AdminReposicaoPromocaoDetail />} />
-              <Route path="admin/reposicao/promocoes/:id" element={<AdminReposicaoPromocaoDetail />} />
-              <Route path="admin/reposicao/aumentos" element={<AdminReposicaoAumentos />} />
-              <Route path="admin/reposicao/aumentos/novo" element={<AdminReposicaoAumentoDetail />} />
-              <Route path="admin/reposicao/aumentos/:id" element={<AdminReposicaoAumentoDetail />} />
-              <Route path="admin/reposicao/oportunidades" element={<AdminReposicaoOportunidades />} />
-              <Route path="admin/reposicao/negociacao-paralela" element={<AdminReposicaoNegociacaoParalela />} />
-              {/* Canonical /sessao routes (inside ReposicaoSessionLayout) */}
-              <Route element={<ReposicaoSessionLayout />}>
-                <Route path="admin/reposicao/sessao" element={<AdminReposicaoCockpit />} />
-                <Route path="admin/reposicao/sessao/mercado" element={<AdminReposicaoMercado />} />
-                <Route path="admin/reposicao/sessao/parametros" element={<AdminReposicaoParametros />} />
-                <Route path="admin/reposicao/sessao/pedidos" element={<AdminReposicaoSessaoPedidos />} />
-                <Route path="admin/reposicao/sessao/aplicacao" element={<AdminReposicaoSessaoAplicacao />} />
-                <Route path="admin/reposicao/sessao/confirmacao" element={<AdminReposicaoSessaoConfirmacao />} />
-                <Route path="admin/reposicao/sessao/historico" element={<AdminReposicaoSessaoHistorico />} />
+
+              {/* ─── Staff-only (fail-closed: todo o resto) ─── */}
+              <Route element={<RequireStaff />}>
+                <Route path="admin" element={<Admin />} />
+                <Route path="admin/approvals" element={<AdminApprovals />} />
+                <Route path="admin/departments" element={<AdminDepartments />} />
+                <Route path="admin/customers" element={<AdminCustomers />} />
+                <Route path="admin/customers/:customerId" element={<AdminCustomers />} />
+                <Route path="admin/customers/:customerId/360" element={<Customer360 />} />
+                <Route path="admin/orders/:id" element={<AdminOrderDetail />} />
+                <Route path="admin/orders/:id/quality" element={<QualityChecklist />} />
+                <Route path="admin/demand-forecast" element={<AdminDemandForecast />} />
+                <Route path="admin/route-planner" element={<AdminRoutePlanner />} />
+                <Route path="admin/monthly-reports" element={<AdminMonthlyReports />} />
+                <Route path="admin/productivity" element={<AdminProductivity />} />
+                <Route path="admin/loyalty" element={<AdminLoyalty />} />
+                <Route path="admin/gamification" element={<AdminGamification />} />
+                <Route path="admin/training" element={<AdminTraining />} />
+                <Route path="admin/price-table" element={<AdminPriceTable />} />
+                <Route path="admin/analytics-sync" element={<AdminAnalyticsSync />} />
+                <Route path="admin/clientes-nao-vinculados" element={<ClientesNaoVinculados />} />
+                <Route path="sales" element={<SalesOrders />} />
+                <Route path="sales/products" element={<SalesProducts />} />
+                <Route path="sales/new" element={<UnifiedOrder />} />
+                <Route path="sales/print" element={<SalesPrintDashboard />} />
+                <Route path="sales/quotes" element={<SalesQuotes />} />
+                <Route path="sales/edit/:id" element={<SalesOrderEdit />} />
+                <Route path="unified-order" element={<Navigate to="/sales/new" replace />} />
+                <Route path="farmer" element={<FarmerDashboard />} />
+                <Route path="meu-dia" element={<MeuDia />} />
+                <Route path="farmer/calls" element={<FarmerCalls />} />
+                <Route path="farmer/calls/pending-link" element={<FarmerCallsPendingLink />} />
+                <Route path="farmer/governance" element={<FarmerGovernance />} />
+                <Route path="farmer/recommendations" element={<FarmerRecommendations />} />
+                <Route path="farmer/locc" element={<FarmerLOCC />} />
+                <Route path="farmer/bundles" element={<FarmerBundles />} />
+                <Route path="farmer/copilot" element={<FarmerCopilot />} />
+                <Route path="farmer/tactical-plan" element={<FarmerTacticalPlan />} />
+                <Route path="farmer/ipf" element={<FarmerIPFDashboard />} />
+                <Route path="executive/dashboard" element={<ExecutiveDashboard />} />
+                <Route path="design-system" element={<DesignSystem />} />
+                <Route path="design-preview" element={<DesignPreview />} />
+                <Route path="ux-rules" element={<UXRules />} />
+                <Route path="coaching" element={<CoachingSPIN />} />
+                <Route path="settings" element={<SettingsConfig />} />
+                <Route path="docs" element={<TechnicalDocs />} />
+                <Route path="intelligence" element={<IntelligenceDashboard />} />
+                <Route path="governance/users" element={<GovernanceUsers />} />
+                <Route path="governance/permissions" element={<GovernancePermissions />} />
+                <Route path="governance/math" element={<GovernanceMathParams />} />
+                <Route path="governance/audit" element={<GovernanceAudit />} />
+                <Route path="governance/settings" element={<GovernanceSettings />} />
+                <Route path="governance/companies" element={<GovernanceCompanies />} />
+                <Route path="ai-ops" element={<AIops />} />
+                <Route path="nfe-receipt" element={<NfeReceipt />} />
+                <Route path="tintometrico" element={<TintDashboard />} />
+                <Route path="tintometrico/importar" element={<TintImport />} />
+                <Route path="tintometrico/mapeamento" element={<TintMapping />} />
+                <Route path="tintometrico/precos" element={<TintPricing />} />
+                <Route path="tintometrico/formulas" element={<TintFormulas />} />
+                <Route path="tintometrico/corantes" element={<TintCorantes />} />
+                <Route path="tintometrico/integracoes" element={<TintIntegrations />} />
+                <Route path="tintometrico/reconciliacao" element={<TintReconciliation />} />
+                <Route path="tintometrico/sync-runs" element={<TintSyncRuns />} />
+                <Route path="tintometrico/api-contract" element={<TintApiContract />} />
+                <Route path="recebimento" element={<Recebimento />} />
+                <Route path="recebimento/:id" element={<RecebimentoConferencia />} />
+                <Route path="producao" element={<ProductionOrders />} />
+                <Route path="admin/reposicao/revisao" element={<AdminReposicaoRevisao />} />
+                <Route path="admin/reposicao/historico" element={<AdminReposicaoHistorico />} />
+                <Route path="admin/reposicao/alertas" element={<AdminReposicaoAlertas />} />
+                <Route path="admin/reposicao/aplicacao" element={<Navigate to="/admin/reposicao/sessao/aplicacao" replace />} />
+                <Route path="admin/reposicao/grupos-producao" element={<AdminReposicaoGruposProducao />} />
+                <Route path="admin/reposicao/cadeia-logistica" element={<AdminReposicaoCadeiaLogistica />} />
+                <Route path="admin/reposicao/pedidos" element={<AdminReposicaoPedidos />} />
+                <Route path="admin/sku-mapeamento" element={<AdminSkuMapeamento />} />
+                <Route path="admin/reposicao/sla-fornecedor" element={<AdminReposicaoSlaFornecedor />} />
+                <Route path="admin/reposicao/promocoes" element={<AdminReposicaoPromocoes />} />
+                <Route path="admin/reposicao/promocoes/novo" element={<AdminReposicaoPromocaoDetail />} />
+                <Route path="admin/reposicao/promocoes/:id" element={<AdminReposicaoPromocaoDetail />} />
+                <Route path="admin/reposicao/aumentos" element={<AdminReposicaoAumentos />} />
+                <Route path="admin/reposicao/aumentos/novo" element={<AdminReposicaoAumentoDetail />} />
+                <Route path="admin/reposicao/aumentos/:id" element={<AdminReposicaoAumentoDetail />} />
+                <Route path="admin/reposicao/oportunidades" element={<AdminReposicaoOportunidades />} />
+                <Route path="admin/reposicao/negociacao-paralela" element={<AdminReposicaoNegociacaoParalela />} />
+                <Route element={<ReposicaoSessionLayout />}>
+                  <Route path="admin/reposicao/sessao" element={<AdminReposicaoCockpit />} />
+                  <Route path="admin/reposicao/sessao/mercado" element={<AdminReposicaoMercado />} />
+                  <Route path="admin/reposicao/sessao/parametros" element={<AdminReposicaoParametros />} />
+                  <Route path="admin/reposicao/sessao/pedidos" element={<AdminReposicaoSessaoPedidos />} />
+                  <Route path="admin/reposicao/sessao/aplicacao" element={<AdminReposicaoSessaoAplicacao />} />
+                  <Route path="admin/reposicao/sessao/confirmacao" element={<AdminReposicaoSessaoConfirmacao />} />
+                  <Route path="admin/reposicao/sessao/historico" element={<AdminReposicaoSessaoHistorico />} />
+                </Route>
+                <Route path="admin/reposicao/cockpit" element={<LegacyCockpitRedirect />} />
+                <Route path="admin/reposicao/mercado" element={<Navigate to="/admin/reposicao/sessao/mercado" replace />} />
+                <Route path="admin/reposicao/parametros" element={<Navigate to="/admin/reposicao/sessao/parametros" replace />} />
+                <Route path="admin/reposicao/cadastros" element={<AdminReposicaoCadastros />} />
+                <Route path="admin/estoque/recebimento" element={<AdminEstoqueRecebimento />} />
+                <Route path="admin/estoque/picking" element={<AdminEstoquePicking />} />
+                <Route path="admin/estoque/picking/mobile" element={<TouchPickingView />} />
+                <Route path="tintometrico/catalogo" element={<TintCatalogo />} />
+                <Route path="tintometrico/integracao" element={<TintIntegracao />} />
+                <Route path="performance" element={<PerformanceHub />} />
+                <Route path="vendas/ferramentas" element={<VendasFerramentas />} />
+                <Route path="gestao/admin" element={<GestaoAdmin />} />
+                <Route path="gestao/governanca" element={<GestaoGovernanca />} />
+                <Route path="gestao/saude-dados" element={<SaudeDados />} />
+                <Route path="admin/ajuda" element={<AdminAjuda />} />
+                <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
+                <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
+                <Route path="admin/portal-sayerlack" element={<AdminPortalSayerlack />} />
+                <Route path="admin/sip-credentials" element={<AdminVendorSipCredentials />} />
+                <Route path="admin/knowledge-base" element={<AdminKnowledgeBase />} />
+                <Route path="admin/knowledge-base/:id" element={<AdminKnowledgeBaseDetail />} />
+                <Route path="admin/standard-processes" element={<AdminStandardProcesses />} />
+                <Route path="admin/standard-processes/new" element={<AdminStandardProcessNew />} />
+                <Route path="admin/standard-processes/:id" element={<AdminStandardProcessDetail />} />
+                <Route path="telefonia" element={<Telefonia />} />
+                <Route path="whatsapp" element={<WhatsappInbox />} />
+                <Route path="rota/ligacoes" element={<RotaListaLigacao />} />
+                <Route path="rota/propostas" element={<RotaPropostas />} />
               </Route>
-              {/* Legacy redirects */}
-              <Route path="admin/reposicao/cockpit" element={<LegacyCockpitRedirect />} />
-              <Route path="admin/reposicao/mercado" element={<Navigate to="/admin/reposicao/sessao/mercado" replace />} />
-              <Route path="admin/reposicao/parametros" element={<Navigate to="/admin/reposicao/sessao/parametros" replace />} />
-              <Route path="admin/reposicao/cadastros" element={<AdminReposicaoCadastros />} />
-              <Route path="admin/estoque/recebimento" element={<AdminEstoqueRecebimento />} />
-              <Route path="admin/estoque/picking" element={<AdminEstoquePicking />} />
-              <Route path="admin/estoque/picking/mobile" element={<TouchPickingView />} />
-              <Route path="tintometrico/catalogo" element={<TintCatalogo />} />
-              <Route path="tintometrico/integracao" element={<TintIntegracao />} />
-              <Route path="performance" element={<PerformanceHub />} />
-              <Route path="vendas/ferramentas" element={<VendasFerramentas />} />
-              <Route path="gestao/admin" element={<GestaoAdmin />} />
-              <Route path="gestao/governanca" element={<GestaoGovernanca />} />
-              <Route path="gestao/saude-dados" element={<SaudeDados />} />
-              <Route path="admin/ajuda" element={<AdminAjuda />} />
-              <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
-              <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
-              <Route path="admin/portal-sayerlack" element={<AdminPortalSayerlack />} />
-              <Route path="admin/sip-credentials" element={<AdminVendorSipCredentials />} />
-              <Route path="admin/knowledge-base" element={<AdminKnowledgeBase />} />
-              <Route path="admin/knowledge-base/:id" element={<AdminKnowledgeBaseDetail />} />
-              <Route path="admin/standard-processes" element={<AdminStandardProcesses />} />
-              <Route path="admin/standard-processes/new" element={<AdminStandardProcessNew />} />
-              <Route path="admin/standard-processes/:id" element={<AdminStandardProcessDetail />} />
-              <Route path="admin/calculadora" element={<AdminCalculadora />} />
-              <Route path="telefonia" element={<Telefonia />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

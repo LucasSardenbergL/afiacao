@@ -72,7 +72,7 @@ const AdminApprovals = () => {
     }
   };
 
-  const tryLinkOmie = async (profileUserId: string, document: string | null, name: string): Promise<'linked' | 'no_data' | 'already_linked' | 'not_found' | 'error'> => {
+  const tryLinkOmie = async (profileUserId: string, document: string | null, _name: string): Promise<'linked' | 'no_data' | 'already_linked' | 'not_found' | 'error'> => {
     if (!document) return 'no_data';
 
     const normalizedDoc = document.replace(/\D/g, '');

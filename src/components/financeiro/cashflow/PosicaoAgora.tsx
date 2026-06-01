@@ -9,6 +9,7 @@ import { Building2 } from 'lucide-react';
 import { usePosicaoAgora } from './posicaoAgora/usePosicaoAgora';
 import { KpiCards } from './posicaoAgora/KpiCards';
 import { CicloFinanceiroCard } from './posicaoAgora/CicloFinanceiroCard';
+import { DsoDpoCard } from './posicaoAgora/DsoDpoCard';
 import { Projecao30dCard } from './posicaoAgora/Projecao30dCard';
 import { ComparativoEmpresasCard } from './posicaoAgora/ComparativoEmpresasCard';
 import { ConcentracaoRiscoCard } from './posicaoAgora/ConcentracaoRiscoCard';
@@ -63,6 +64,9 @@ export function PosicaoAgora() {
 
           {/* Ciclo Financeiro Visual */}
           <CicloFinanceiroCard active={active} />
+
+          {/* Lente contábil agregada (DSO/DPO) — só colacor (liquida em lote → PMR/PMP em "—") */}
+          {active.company === 'colacor' && <DsoDpoCard />}
 
           {/* Projeção 30 dias */}
           <Projecao30dCard active={active} />

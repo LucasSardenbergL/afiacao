@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { PedidoSugerido } from '@/components/reposicao/pedidos/types';
-import { EMPRESA } from '@/components/reposicao/pedidos/shared';
+import { EMPRESA, interpretarRespostaDisparo, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
 import { CycleIndicator } from '@/components/reposicao/pedidos/CycleIndicator';
 import { PedidoRow } from '@/components/reposicao/pedidos/PedidoRow';
 import { DetalhesModal } from '@/components/reposicao/pedidos/DetalhesModal';
@@ -110,13 +110,10 @@ export default function AdminReposicaoPedidos() {
       return data;
     },
     onSuccess: (data, pedidoId) => {
-      const ok = data?.disparados ?? 0;
-      const fail = data?.falhas ?? 0;
-      const aguardandoPortal = data?.aguardando_portal_sayerlack ?? 0;
-      if (ok > 0) toast.success(`Pedido #${pedidoId} disparado e registrado no Omie`);
-      else if (aguardandoPortal > 0) toast.success(`Pedido #${pedidoId}: envio ao portal Sayerlack iniciado em segundo plano`);
-      else if (fail > 0) toast.error(`Pedido #${pedidoId}: falha ao disparar`);
-      else toast.info(`Pedido #${pedidoId}: nada a disparar (${JSON.stringify(data)})`);
+      const { tone, message } = interpretarRespostaDisparo(data as RespostaDisparo, pedidoId);
+      if (tone === 'error') toast.error(message);
+      else if (tone === 'info') toast.info(message);
+      else toast.success(message);
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
     },
     onError: (e: Error) => {

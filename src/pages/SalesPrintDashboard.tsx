@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, Printer, ArrowLeft } from 'lucide-react';
 import { format, startOfDay, endOfDay } from 'date-fns';
@@ -20,7 +19,6 @@ import { OrderGroup } from '@/components/sales/print/OrderGroup';
 
 const SalesPrintDashboard = () => {
   const navigate = useNavigate();
-  const { isStaff } = useAuth();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [selectedCompanies, setSelectedCompanies] = useState<CompanyFilter[]>(['oben', 'colacor', 'afiacao']);
   const [selectedPeriod, setSelectedPeriod] = useState<'all' | 'manha' | 'tarde'>('all');

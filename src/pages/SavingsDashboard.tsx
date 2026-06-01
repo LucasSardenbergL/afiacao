@@ -4,7 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2, TrendingUp, DollarSign, Wrench, Leaf, PiggyBank } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, LineChart, Line } from 'recharts';
-import { format, subMonths, startOfMonth, endOfMonth } from 'date-fns';
+import { format, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 // Estimated average cost of buying a new tool (no real data available)
@@ -22,7 +22,7 @@ const SavingsDashboard = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
-  const [totalOrders, setTotalOrders] = useState(0);
+  const [, setTotalOrders] = useState(0);
   const [totalTools, setTotalTools] = useState(0);
   const [totalSpent, setTotalSpent] = useState(0);
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, faixaPorRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -87,6 +87,41 @@ describe('resolverDataCaixa', () => {
   it('sem nenhuma data → null', () => {
     expect(resolverDataCaixa({ data_real: null, data_vencimento: null }))
       .toEqual({ data_efetiva: null, usou_fallback: false });
+  });
+});
+
+describe('valorCaixaEfetivo (robusto a valor_recebido=0/null)', () => {
+  it('usa o valor real quando > 0', () => {
+    expect(valorCaixaEfetivo(800, 1000)).toBe(800);
+  });
+  it('valor_recebido = 0 (liquidado, #396) → valor_documento (NÃO zero)', () => {
+    expect(valorCaixaEfetivo(0, 1000)).toBe(1000);
+  });
+  it('valor_recebido null → valor_documento', () => {
+    expect(valorCaixaEfetivo(null, 1000)).toBe(1000);
+  });
+  it('ambos ausentes → 0', () => {
+    expect(valorCaixaEfetivo(0, null)).toBe(0);
+  });
+});
+
+describe('dedupePorCodigo (anti double-count do load DRE-caixa)', () => {
+  it('dedupe por omie_codigo_lancamento, mantém a 1ª ocorrência', () => {
+    const r = dedupePorCodigo([
+      { omie_codigo_lancamento: 1, v: 'a' },
+      { omie_codigo_lancamento: 1, v: 'b' }, // duplicata (venc-no-mês ∩ baixa-no-mês)
+      { omie_codigo_lancamento: 2, v: 'c' },
+    ]);
+    expect(r).toHaveLength(2);
+    expect(r.find((x) => x.omie_codigo_lancamento === 1)?.v).toBe('a');
+  });
+  it('linhas SEM código (null) são todas preservadas', () => {
+    const r = dedupePorCodigo([
+      { omie_codigo_lancamento: null, v: 'x' },
+      { omie_codigo_lancamento: null, v: 'y' },
+      { omie_codigo_lancamento: 5, v: 'z' },
+    ]);
+    expect(r).toHaveLength(3);
   });
 });
 

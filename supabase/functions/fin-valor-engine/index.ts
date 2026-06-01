@@ -65,14 +65,55 @@ function margemOperacionalPreImposto(input: { ebit: number; receita_liquida: num
   return input.ebit / input.receita_liquida;
 }
 type AtivoFixoInput = { valor: number; data_ref: string | null; fonte: "book" | "avaliacao" | "reposicao" | "seguro" | null; base: "reposicao" | "book" | null; operacional: boolean } | null;
-function capitalInvestido(input: { capital_giro: number; ativo_fixo: AtivoFixoInput; ajustes?: number }) {
+type CapitalInvestidoResult = { capital_investido: number | null; capital_giro: number | null; ativo_fixo: number; ajustes: number; parcial: boolean; giro_indisponivel: boolean; motivos: string[] };
+function capitalInvestido(input: { capital_giro: number | null; ativo_fixo: AtivoFixoInput; ajustes?: number }): CapitalInvestidoResult {
   const ajustes = input.ajustes ?? 0;
   const motivos: string[] = [];
   let ativo_fixo = 0; let parcial = false;
+  const giro_indisponivel = input.capital_giro == null;
   if (input.ativo_fixo && input.ativo_fixo.operacional && Number.isFinite(input.ativo_fixo.valor)) ativo_fixo = input.ativo_fixo.valor;
   else { parcial = true; motivos.push("Ativo fixo operacional não informado — capital investido parcial (só giro − ajustes)."); }
-  const capital_investido = input.capital_giro + ativo_fixo - ajustes;
-  return { capital_investido, capital_giro: input.capital_giro, ativo_fixo, ajustes, parcial, motivos };
+  if (giro_indisponivel) {
+    motivos.push("Sem snapshot de NCG — capital de giro indisponível; ROIC/EVA não calculáveis.");
+    return { capital_investido: null, capital_giro: null, ativo_fixo, ajustes, parcial: true, giro_indisponivel: true, motivos };
+  }
+  const capital_investido = (input.capital_giro as number) + ativo_fixo - ajustes;
+  return { capital_investido, capital_giro: input.capital_giro, ativo_fixo, ajustes, parcial, giro_indisponivel: false, motivos };
+}
+type SnapNcg = { ncg: number | null; snapshot_at: string };
+function ncgFinito(ncg: unknown): number | null {
+  if (ncg == null) return null;
+  if (typeof ncg === "string" && ncg.trim() === "") return null;
+  const n = Number(ncg);
+  return Number.isFinite(n) ? n : null;
+}
+function resolverCapitalGiro(snaps: SnapNcg[]): { capital_giro: number | null; snapshot_at: string | null; disponivel: boolean } {
+  let melhor: { ncg: number; snapshot_at: string } | null = null;
+  for (const s of snaps) { const n = ncgFinito(s.ncg); if (n == null) continue; if (melhor == null || Date.parse(s.snapshot_at) > Date.parse(melhor.snapshot_at)) melhor = { ncg: n, snapshot_at: s.snapshot_at }; }
+  if (melhor == null) return { capital_giro: null, snapshot_at: null, disponivel: false };
+  return { capital_giro: melhor.ncg, snapshot_at: melhor.snapshot_at, disponivel: true };
+}
+function frescorGiro(snapshot_at: string | null, hojeMs: number, limiarStaleDias = 45): { dias: number | null; stale: boolean } {
+  if (!snapshot_at) return { dias: null, stale: false };
+  const t = Date.parse(snapshot_at);
+  if (!Number.isFinite(t)) return { dias: null, stale: false };
+  const dias = Math.round((hojeMs - t) / 86400000);
+  return { dias, stale: dias > limiarStaleDias };
+}
+function acharCapitalGiroAnterior(snaps: SnapNcg[], refSnapshotAt: string, opts?: { janelaDias?: number; toleranciaDias?: number }): number | null {
+  const janela = opts?.janelaDias ?? 365; const tol = opts?.toleranciaDias ?? 60;
+  const alvo = Date.parse(refSnapshotAt) - janela * 86400000;
+  let melhor: { ncg: number; dist: number } | null = null;
+  for (const s of snaps) { const n = ncgFinito(s.ncg); if (n == null) continue; const dist = Math.abs(Date.parse(s.snapshot_at) - alvo); if (melhor == null || dist < melhor.dist) melhor = { ncg: n, dist }; }
+  return melhor && melhor.dist <= tol * 86400000 ? melhor.ncg : null;
+}
+function resolverCapitalParaValor(input: { snaps: SnapNcg[]; ativo_fixo: AtivoFixoInput; ajustes?: number; hojeMs: number; limiarStaleDias?: number }): { capital: CapitalInvestidoResult; capital_anterior: number | null; giro_snapshot_at: string | null; giro_dias: number | null; giro_stale: boolean } {
+  const giro = resolverCapitalGiro(input.snaps);
+  const frescor = frescorGiro(giro.snapshot_at, input.hojeMs, input.limiarStaleDias);
+  const capital = capitalInvestido({ capital_giro: giro.capital_giro, ativo_fixo: input.ativo_fixo, ajustes: input.ajustes });
+  const capital_giro_anterior = giro.disponivel && giro.snapshot_at ? acharCapitalGiroAnterior(input.snaps, giro.snapshot_at) : null;
+  const capital_anterior = capital_giro_anterior != null ? capitalInvestido({ capital_giro: capital_giro_anterior, ativo_fixo: input.ativo_fixo, ajustes: input.ajustes }).capital_investido : null;
+  return { capital, capital_anterior, giro_snapshot_at: giro.snapshot_at, giro_dias: frescor.dias, giro_stale: frescor.stale };
 }
 type KeDecomposto = { ancora: number; premio_risco_equity: number; premio_tamanho_private: number; premio_iliquidez_controle: number };
 function somarKe(d: KeDecomposto): number { return d.ancora + d.premio_risco_equity + d.premio_tamanho_private + d.premio_iliquidez_controle; }
@@ -111,7 +152,7 @@ function roicIncremental(input: { nopat_atual: number; nopat_anterior: number | 
   if (delta_capital < limiar) return { roic_incremental: null, delta_nopat, delta_capital, aviso: "Variação de capital pequena ou negativa — ROIC incremental seria ruído." };
   return { roic_incremental: delta_nopat / delta_capital, delta_nopat, delta_capital, aviso: null };
 }
-function normalizarComingling(input: { ebit_reportado: number; capital_reportado: number; prolabore_real_ttm: number | null; prolabore_mercado_ttm: number | null; aluguel_mercado_ttm: number | null; intercompany_giro: number | null }) {
+function normalizarComingling(input: { ebit_reportado: number; capital_reportado: number | null; prolabore_real_ttm: number | null; prolabore_mercado_ttm: number | null; aluguel_mercado_ttm: number | null; intercompany_giro: number | null }) {
   const motivos: string[] = []; let aplicado = false;
   let ajuste_prolabore = 0;
   if (input.prolabore_real_ttm != null && input.prolabore_mercado_ttm != null) { ajuste_prolabore = input.prolabore_real_ttm - input.prolabore_mercado_ttm; aplicado = true; }
@@ -122,21 +163,26 @@ function normalizarComingling(input: { ebit_reportado: number; capital_reportado
   let ajuste_intercompany_capital = 0;
   if (input.intercompany_giro != null) { ajuste_intercompany_capital = -input.intercompany_giro; aplicado = true; }
   const ebit_normalizado = input.ebit_reportado + ajuste_prolabore + ajuste_aluguel;
-  const capital_normalizado = input.capital_reportado + ajuste_intercompany_capital;
+  const capital_normalizado = input.capital_reportado == null ? null : input.capital_reportado + ajuste_intercompany_capital;
   if (!aplicado) motivos.push("Sem inputs de normalização — só visão reportada; possível comingling do dono não ajustado.");
   return { ebit_reportado: input.ebit_reportado, ebit_normalizado, capital_reportado: input.capital_reportado, capital_normalizado, ajuste_prolabore, ajuste_aluguel, ajuste_intercompany_capital, aplicado, motivos };
 }
-function scoreConfiancaValor(input: { roic_null: boolean; wacc_null: boolean; eva_null: boolean; capital_parcial: boolean; normalizacao_aplicada: boolean; imposto_teorico_parcial: boolean; dre_confianca: "alta" | "media" | "baixa"; ttm_parcial?: boolean }) {
+function scoreConfiancaValor(input: { roic_null: boolean; wacc_null: boolean; eva_null: boolean; capital_parcial: boolean; normalizacao_aplicada: boolean; imposto_teorico_parcial: boolean; dre_confianca: "alta" | "media" | "baixa"; ttm_parcial?: boolean; giro_indisponivel?: boolean; giro_stale?: boolean }) {
   const motivos: string[] = []; let nivel = 3;
   const rebaixar = (para: number, motivo: string) => { if (para < nivel) nivel = para; motivos.push(motivo); };
   if (input.ttm_parcial) rebaixar(2, "TTM incompleto (menos de 12 meses de DRE) — anualização parcial.");
-  if (input.capital_parcial) rebaixar(2, "Capital investido parcial (sem ativo fixo) — ROIC/EVA parciais.");
+  if (input.giro_indisponivel) {
+    rebaixar(1, "Sem snapshot de NCG — capital de giro indisponível; ROIC/EVA não calculáveis.");
+  } else {
+    if (input.giro_stale) rebaixar(2, "NCG desatualizado (snapshot antigo) — capital de giro pode estar defasado.");
+    if (input.capital_parcial) rebaixar(2, "Capital investido parcial (sem ativo fixo) — ROIC/EVA parciais.");
+  }
   if (input.wacc_null) rebaixar(2, "WACC/EVA/spread indisponíveis (faltam dívida, PL ou Ke).");
   if (!input.normalizacao_aplicada) rebaixar(2, "Sem normalização de comingling — só visão reportada.");
   if (input.imposto_teorico_parcial) rebaixar(2, "Config tributária incompleta — imposto operacional parcial (propaga da Onda 3).");
   if (input.dre_confianca === "baixa") rebaixar(1, "DRE subjacente com confiança baixa.");
   else if (input.dre_confianca === "media") rebaixar(2, "DRE subjacente com confiança média.");
-  if (input.roic_null) rebaixar(2, "ROIC indisponível (capital investido ≤ 0).");
+  if (input.roic_null && !input.giro_indisponivel) rebaixar(2, "ROIC indisponível (capital investido ≤ 0).");
   return {
     nivel: (nivel === 3 ? "alta" : nivel === 2 ? "media" : "baixa") as "alta" | "media" | "baixa",
     motivos, roic_disponivel: !input.roic_null, wacc_disponivel: !input.wacc_null, eva_disponivel: !input.eva_null, normalizado_disponivel: input.normalizacao_aplicada,
@@ -241,26 +287,11 @@ serve(async (req: Request) => {
   const ano_mes_fim = `${Math.floor((idxFim - 1) / 12)}-${String(((idxFim - 1) % 12) + 1).padStart(2, "0")}`;
   const dre_confianca: "alta" | "media" | "baixa" = ttm.confianca_pior === 1 ? "baixa" : ttm.confianca_pior === 2 ? "media" : "alta";
 
-  // 3) Capital de giro: último ncg snapshot + ncg ~365d antes
+  // 3) Capital de giro: snapshots crus da engine A1. Resolução (ausente ≠ R$0 + frescor + −12m) na
+  // composta pura `resolverCapitalParaValor`, chamada na seção 6 (depende de ativo_fixo/ajustes).
   const { data: snaps } = await db.from("fin_projecao_snapshots")
     .select("ncg, snapshot_at").eq("company", company).order("snapshot_at", { ascending: false }).limit(400);
-  const snapRows = (snaps ?? []) as Array<{ ncg: number | null; snapshot_at: string }>;
-  // Último snapshot com ncg NÃO-nulo — um snapshot ruim (ncg null) não deve forçar giro=0 falso.
-  const latestNcg = snapRows.find((s) => s.ncg != null) ?? null;
-  const capital_giro = latestNcg ? Number(latestNcg.ncg) : 0;
-  const giro_indisponivel = latestNcg == null;
-  let capital_giro_anterior: number | null = null;
-  if (latestNcg) {
-    const alvo = new Date(latestNcg.snapshot_at).getTime() - 365 * 86400000;
-    let melhor: { ncg: number | null; dist: number } | null = null;
-    for (const s of snapRows) {
-      if (s.ncg == null) continue;
-      const dist = Math.abs(new Date(s.snapshot_at).getTime() - alvo);
-      if (melhor == null || dist < melhor.dist) melhor = { ncg: s.ncg, dist };
-    }
-    // só aceita se o snapshot encontrado está a ≤ 60 dias do alvo (senão não há histórico real de 12m)
-    if (melhor && melhor.dist <= 60 * 86400000) capital_giro_anterior = Number(melhor.ncg);
-  }
+  const snapRows = (snaps ?? []) as SnapNcg[];
 
   // 4) Inputs manuais (mensais → TTM via ×12)
   const numOrNull = (x: unknown): number | null => {
@@ -293,9 +324,10 @@ serve(async (req: Request) => {
   const nopatAtual = calcularNOPAT(nopatIn(ttm));
   const nopatAnterior = ttmAnterior.count >= 12 ? calcularNOPAT(nopatIn(ttmAnterior)) : null;
 
-  // 6) Capital investido (reportado) — AF cancela no incremental (mesmo AF nos dois pontos)
-  const capRep = capitalInvestido({ capital_giro, ativo_fixo, ajustes });
-  const capAnterior = capital_giro_anterior != null ? capitalInvestido({ capital_giro: capital_giro_anterior, ativo_fixo, ajustes }).capital_investido : null;
+  // 6) Capital investido (reportado) — bloco inteiro na composta pura (ausente ≠ R$0). AF cancela no incremental.
+  const cap = resolverCapitalParaValor({ snaps: snapRows, ativo_fixo, ajustes, hojeMs: Date.now() });
+  const capRep = cap.capital;
+  const capAnterior = cap.capital_anterior;
 
   // 7) WACC (base + cenários)
   const keSoma = (ke: KeDecomposto | null | undefined): number | null => {
@@ -332,12 +364,12 @@ serve(async (req: Request) => {
   const confianca = scoreConfiancaValor({
     roic_null: roicRep == null, wacc_null: waccBase.wacc == null, eva_null: evaRep == null,
     capital_parcial: capRep.parcial, normalizacao_aplicada: cg.aplicado, imposto_teorico_parcial, dre_confianca,
-    ttm_parcial: ttm.count < 12,
+    ttm_parcial: ttm.count < 12, giro_indisponivel: capRep.giro_indisponivel, giro_stale: cap.giro_stale,
   });
   // Normalização muda o EBIT mas o imposto absoluto (irpj+csll) não é recomputado → NOPAT normalizado é aproximado.
   const nopat_normalizado_aproximado = cg.aplicado && (cg.ajuste_prolabore !== 0 || cg.ajuste_aluguel !== 0);
+  // Motivo de NCG ausente/defasado vem estruturado de capRep.motivos / scoreConfiancaValor (não mais inline).
   const motivos = [...capRep.motivos, ...waccBase.motivos, ...cg.motivos];
-  if (giro_indisponivel) motivos.push("Sem snapshot de NCG disponível — capital de giro assumido 0 (ROIC pode estar superestimado).");
 
   const result = {
     company, regime,
@@ -349,6 +381,7 @@ serve(async (req: Request) => {
       margem_operacional_pre_imposto: margemOperacionalPreImposto({ ebit: nopatAtual.ebit, receita_liquida: ttm.receita_liquida }),
       receita_liquida_ttm: ttm.receita_liquida,
       capital_investido: capRep.capital_investido, capital_giro: capRep.capital_giro, ativo_fixo: capRep.ativo_fixo, ajustes: capRep.ajustes, capital_parcial: capRep.parcial,
+      giro_indisponivel: capRep.giro_indisponivel, giro_snapshot_at: cap.giro_snapshot_at, giro_dias: cap.giro_dias,
       roic: roicRep, wacc: waccBase.wacc, spread: spreadRep, eva: evaRep,
       roic_incremental: incremental.roic_incremental,
       incremental: { delta_nopat: incremental.delta_nopat, delta_capital: incremental.delta_capital, aviso: incremental.aviso },

@@ -104,22 +104,23 @@ export function useAiOps() {
   const prioridades = filtered.filter((d) => d.status === 'pending');
 
   // Oportunidades: customers with good metrics but could buy more (expansion)
+  // null/undefined em métrica → 0 (reproduz a coerção numérica implícita do JS:
+  // `null > 0` é false, `null < 1.5` é true; o guard de faturamento>0 vem primeiro).
   const oportunidades = filtered.filter(
     (d) =>
       d.status === 'pending' &&
-      d.customer_metrics?.faturamento_90d > 0 &&
-      (d.customer_metrics?.atraso_relativo === null ||
-        d.customer_metrics?.atraso_relativo < 1.5)
+      (d.customer_metrics?.faturamento_90d ?? 0) > 0 &&
+      (d.customer_metrics?.atraso_relativo ?? 0) < 1.5
   );
 
   // Riscos: high churn risk (atraso >= 2x or big revenue drop)
   const riscos = filtered.filter(
     (d) =>
       d.status === 'pending' &&
-      (d.customer_metrics?.atraso_relativo >= 2.0 ||
-        (d.customer_metrics?.faturamento_prev_90d > 0 &&
-          d.customer_metrics?.faturamento_90d <
-            d.customer_metrics?.faturamento_prev_90d * 0.5))
+      ((d.customer_metrics?.atraso_relativo ?? 0) >= 2.0 ||
+        ((d.customer_metrics?.faturamento_prev_90d ?? 0) > 0 &&
+          (d.customer_metrics?.faturamento_90d ?? 0) <
+            (d.customer_metrics?.faturamento_prev_90d ?? 0) * 0.5))
   );
 
   return {

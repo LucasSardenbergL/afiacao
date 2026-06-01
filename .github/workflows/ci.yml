@@ -12,7 +12,12 @@
 #   e em modo não-build o tsc ignora as references e checa só o `files` (vazio)
 #   → no-op que não type-checava o src de jeito nenhum. Isso deixou passar 2
 #   TS2741 reais (#325 KpiCards.test.tsx, #345 FinanceiroFunding.tsx), só pegos
-#   pelo Lovable. `-p tsconfig.app.json` checa src+testes de verdade (~27s).
+#   pelo Lovable. `-p tsconfig.app.json` checa src+testes de verdade.
+#   ✅ CONVERGÊNCIA STRICT (2026-05-30): o `tsconfig.app.json` agora é `strict: true`
+#   (+ noImplicitAny/strictNullChecks/noUnusedLocals/noUnusedParameters/
+#   noFallthroughCasesInSwitch). O `tsconfig.strict.json` paralelo foi DELETADO e o
+#   2º passo de typecheck removido — este passo único agora é o gate strict de TODO
+#   o src + testes. A migração incremental (539→855 files) está concluída.
 # - test (vitest run): blocking — regressão de comportamento documentado
 # - build (vite build): blocking — pega Tailwind quebrado + import errors + PWA setup
 # - lint (eslint): blocking em ERRORS — a dívida de `no-explicit-any` foi zerada
@@ -39,7 +44,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -50,11 +55,8 @@ jobs:
         run: bun install --frozen-lockfile
 
       # ─── Blocking checks ────────────────────────────────────────────
-      - name: Type check
+      - name: Type check (strict — todo o src + testes)
         run: bunx tsc --noEmit -p tsconfig.app.json
-
-      - name: Type check (strict mode — files migrados, ver tsconfig.strict.json)
-        run: bun run typecheck:strict
 
       - name: Tests
         run: bun run test

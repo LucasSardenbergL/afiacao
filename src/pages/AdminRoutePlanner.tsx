@@ -14,6 +14,7 @@ import { PlanningModeSelector } from '@/components/reposicao/routePlanner/Planni
 import { PeriodFilter } from '@/components/reposicao/routePlanner/PeriodFilter';
 import { RouteActionButtons } from '@/components/reposicao/routePlanner/RouteActionButtons';
 import { ManualModeCard } from '@/components/reposicao/routePlanner/ManualModeCard';
+import { ScheduledVisitsPanel } from '@/components/reposicao/routePlanner/ScheduledVisitsPanel';
 import { useRoutePlanner } from '@/hooks/useRoutePlanner';
 
 // Fix default marker icons for Leaflet + bundlers
@@ -180,6 +181,9 @@ const AdminRoutePlanner = () => {
 
         {/* Stats */}
         <StatsStrip planningMode={planningMode} stopCounts={stopCounts} />
+
+        {/* Próximas visitas agendadas */}
+        <ScheduledVisitsPanel />
 
         {/* Map */}
         <Card className="overflow-hidden">

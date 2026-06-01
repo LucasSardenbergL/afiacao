@@ -116,3 +116,12 @@ verify_jwt = false
 
 [functions.enviar-pedido-portal-sayerlack]
 verify_jwt = false
+
+[functions.whatsapp-inbound]
+verify_jwt = false
+
+[functions.whatsapp-send]
+verify_jwt = false
+
+[functions.fin-cashflow-engine]
+verify_jwt = false

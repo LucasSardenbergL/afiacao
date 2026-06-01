@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 import { PedidoSugerido, PedidoItem, CondicaoPagamento } from './types';
-import { formatTime } from './shared';
+import { interpretarRespostaDisparo, type RespostaDisparo } from './shared';
 
 export type Linha = PedidoItem & { _qtd: number; _valor: number };
 
@@ -182,16 +182,39 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
       if (condicaoMudou) {
         await salvarCondicaoMutation.mutateAsync();
       }
-      const { data, error } = await supabase.rpc('aprovar_pedido_sugerido', {
+      const { error } = await supabase.rpc('aprovar_pedido_sugerido', {
         p_pedido_id: pedido.id,
         p_usuario: user?.email ?? 'sistema',
       });
-      if (error) throw error;
-      return data;
+      if (error) throw error; // falha de aprovação → onError (correto)
+
+      // APROVAR = DISPARAR NA HORA. Em vez de esperar o cron de corte, dispara já.
+      // Best-effort: a falha do disparo NÃO reverte a aprovação — o cron de corte
+      // (rede de segurança) pega depois, e o motor de retry */15 cobre falha
+      // transitória do portal. Aprovar e disparar são estados distintos (codex).
+      const pedidoId = pedido.id;
+      try {
+        const { data: dd, error: de } = await supabase.functions.invoke('disparar-pedidos-aprovados', {
+          body: { empresa: pedido.empresa, pedido_id: pedidoId },
+        });
+        if (de) throw de;
+        return { disparoOk: true as const, feedback: interpretarRespostaDisparo(dd as RespostaDisparo, pedidoId) };
+      } catch (e) {
+        logger.error('Pedido aprovado, mas o disparo imediato falhou (cron de corte assume)', { error: e, pedidoId });
+        return { disparoOk: false as const, feedback: null };
+      }
     },
-    onSuccess: () => {
-      const horario = pedido?.horario_corte_planejado ? formatTime(pedido.horario_corte_planejado) : 'horário planejado';
-      toast.success(`Pedido aprovado. Será disparado às ${horario}.`);
+    onSuccess: (result) => {
+      if (result) {
+        if (result.disparoOk && result.feedback) {
+          const { tone, message } = result.feedback;
+          if (tone === 'error') toast.error(message);
+          else if (tone === 'info') toast.info(message);
+          else toast.success(message);
+        } else {
+          toast.warning('Pedido aprovado. O envio automático não saiu agora — será reprocessado pela rede de segurança (ou use "Disparar").');
+        }
+      }
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
       onApproved();
       onOpenChange(false);
@@ -228,6 +251,10 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
       updates.cancelado_por = user?.email ?? 'sistema';
       updates.cancelado_em = new Date().toISOString();
       updates.justificativa_cancelamento = 'Todos os itens foram removidos manualmente';
+      // Higiene de estado: cancelar limpa o sub-fluxo do portal (espelha cancelar_pedido_sugerido)
+      // — senão um cancelado fica com status_envio_portal sujo e o check reposicao_portal_pipeline o conta.
+      updates.status_envio_portal = 'nao_aplicavel';
+      updates.portal_proximo_retry_em = null;
     }
     const { error: errPed } = await supabase
       .from('pedido_compra_sugerido')

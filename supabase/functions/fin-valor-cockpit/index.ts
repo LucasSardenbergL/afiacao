@@ -42,28 +42,71 @@ function margemContribuicao(input: { receita_liquida: number; custo_unitario: nu
   if (input.custo_unitario == null || !Number.isFinite(input.custo_unitario)) return null;
   return input.receita_liquida - input.custo_unitario * input.quantidade;
 }
+function numOrNull(x: unknown): number | null {
+  if (x == null || typeof x === "boolean" || Array.isArray(x)) return null;
+  if (typeof x !== "number" && typeof x !== "string") return null;
+  if (typeof x === "string" && x.trim() === "") return null;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+// Hurdle (Ke) do cockpit, de fin_valor_inputs.ke.base. Ausente/inválido → null (NÃO fabrica 0.20).
+function resolverHurdleCockpit(vi: Record<string, unknown> | null | undefined): number | null {
+  const ke = ((vi?.ke as Record<string, unknown> | undefined)?.base) as Record<string, unknown> | undefined;
+  if (!ke) return null;
+  const ancora = numOrNull(ke.ancora);
+  if (ancora == null) return null;
+  const soma = ancora
+    + (numOrNull(ke.premio_risco_equity) ?? 0)
+    + (numOrNull(ke.premio_tamanho_private) ?? 0)
+    + (numOrNull(ke.premio_iliquidez_controle) ?? 0);
+  return Number.isFinite(soma) && soma > 0 ? soma : null;
+}
 function diasEntre(a: string, b: string): number { return Math.round((new Date(b + "T00:00:00Z").getTime() - new Date(a + "T00:00:00Z").getTime()) / 86400000); }
 function maxData(a: string, b: string): string { return a >= b ? a : b; }
 function minData(a: string, b: string): string { return a <= b ? a : b; }
-type TituloAR = { valor_documento: number; saldo: number; data_emissao: string | null; data_recebimento: string | null; status: string };
-function arMedioTTM(input: { titulos: TituloAR[]; ttm_inicio: string; ttm_fim: string }): number {
+// Espelho VERBATIM de valor-cockpit-helpers.ts (Fase 3 baixa derivada).
+const STATUS_LIQUIDADO_AR = ['RECEBIDO', 'LIQUIDADO', 'PAGO'];
+function statusLiquidadoAR(status: string | null | undefined): boolean {
+  return !!status && STATUS_LIQUIDADO_AR.includes(status);
+}
+type TituloAR = {
+  valor_documento: number; saldo: number; valor_recebido: number;
+  data_emissao: string | null; data_vencimento: string | null;
+  data_baixa_derivada: string | null; status: string;
+};
+type ARMedioResult = { ar_medio: number; v_real: number; v_proxy: number; v_sem_fecho: number };
+function arMedioTTM(input: { titulos: TituloAR[]; ttm_inicio: string; ttm_fim: string }): ARMedioResult {
   const janelaDias = diasEntre(input.ttm_inicio, input.ttm_fim);
-  if (janelaDias <= 0) return 0;
-  let soma = 0;
+  if (janelaDias <= 0) return { ar_medio: 0, v_real: 0, v_proxy: 0, v_sem_fecho: 0 };
+  let soma = 0, v_real = 0, v_proxy = 0, v_sem_fecho = 0;
   for (const t of input.titulos) {
     if (!t.data_emissao) continue;
+    const liquidado = statusLiquidadoAR(t.status);
     const inicioOpen = maxData(t.data_emissao, input.ttm_inicio);
-    const fimOpen = t.data_recebimento ? minData(t.data_recebimento, input.ttm_fim) : input.ttm_fim;
-    const dias = diasEntre(inicioOpen, fimOpen);
+    let fimOpen: string;
+    let valor: number;
+    let real = false;
+    if (liquidado) {
+      const fecho = t.data_baixa_derivada ?? t.data_vencimento ?? null;
+      if (fecho == null) { v_sem_fecho += t.valor_documento; continue; }
+      fimOpen = minData(fecho, input.ttm_fim);
+      valor = t.valor_documento;
+      real = !!t.data_baixa_derivada;
+    } else {
+      fimOpen = input.ttm_fim;
+      valor = (Number.isFinite(t.saldo) && t.saldo > 0) ? t.saldo : Math.max(0, t.valor_documento - (t.valor_recebido || 0));
+    }
+    const dias = Math.max(0, diasEntre(inicioOpen, fimOpen));
     if (dias <= 0) continue;
-    soma += (t.data_recebimento ? t.valor_documento : t.saldo) * dias;
+    soma += valor * dias;
+    if (liquidado) { if (real) v_real += t.valor_documento; else v_proxy += t.valor_documento; }
   }
-  return soma / janelaDias;
+  return { ar_medio: soma / janelaDias, v_real, v_proxy, v_sem_fecho };
 }
 type ComboInput = { cliente: string; sku: string; receita_liquida: number; quantidade: number; custo_unitario: number | null };
 type CapitalCliente = { cliente: string; ar_medio: number | null };
 type CapitalSKU = { sku: string; estoque_valor: number | null };
-function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: CapitalCliente[]; capitalSKUs: CapitalSKU[]; k: number }) {
+function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: CapitalCliente[]; capitalSKUs: CapitalSKU[]; k: number | null }) {
   const arPorCliente = new Map(input.capitalClientes.map((c) => [c.cliente, c.ar_medio]));
   const estoquePorSKU = new Map(input.capitalSKUs.map((s) => [s.sku, s.estoque_valor]));
   const receitaPorCliente = new Map<string, number>();
@@ -82,19 +125,19 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
     const estoque_indisponivel = estS == null || qs <= 0;
     const a_cs = arC != null && rc > 0 ? arC * (c.receita_liquida / rc) : 0;
     const i_cs = estS != null && qs > 0 ? estS * (c.quantidade / qs) : 0;
-    const encargo = input.k * (a_cs + i_cs);
-    const evp = cm == null ? null : cm - encargo;
+    const encargo: number | null = input.k == null ? null : input.k * (a_cs + i_cs);
+    const evp = cm == null || encargo == null ? null : cm - encargo;
     return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp, ar_indisponivel, estoque_indisponivel };
   });
   type Cel = typeof celulas[number];
   const rollup = (keyFn: (c: Cel) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoTotal: number; evp: number; evpNull: boolean }>();
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean }>();
     for (const cel of celulas) {
       const key = keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoTotal: 0, evp: 0, evpNull: true };
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true };
       acc.receita += cel.receita_liquida; acc.quantidade += cel.quantidade;
-      acc.encargoTotal += cel.encargo;
-      if (cel.cm != null) { acc.cm += cel.cm; acc.cmNull = false; acc.encargo += cel.encargo; }
+      if (cel.encargo != null) { acc.encargoTotal += cel.encargo; acc.encargoTotalNull = false; }
+      if (cel.cm != null) { acc.cm += cel.cm; acc.cmNull = false; if (cel.encargo != null) { acc.encargo += cel.encargo; acc.encargoNull = false; } }
       if (cel.evp != null) { acc.evp += cel.evp; acc.evpNull = false; }
       m.set(key, acc);
     }
@@ -102,29 +145,32 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
   };
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargo, encargo_total: a.encargoTotal, evp: a.evpNull ? null : a.evp }));
-  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargo, encargo_total: a.encargoTotal, evp: a.evpNull ? null : a.evp }));
-  let cmEmp = 0, cmNull = true, encEmp = 0, encTotalEmp = 0, evpEmp = 0, evpNull = true, recEmp = 0;
-  for (const cel of celulas) { recEmp += cel.receita_liquida; encTotalEmp += cel.encargo; if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; encEmp += cel.encargo; } if (cel.evp != null) { evpEmp += cel.evp; evpNull = false; } }
-  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encEmp, encargo_total: encTotalEmp, evp: evpNull ? null : evpEmp } };
+  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp }));
+  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp }));
+  let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, evpEmp = 0, evpNull = true, recEmp = 0;
+  for (const cel of celulas) { recEmp += cel.receita_liquida; if (cel.encargo != null) { encTotalEmp += cel.encargo; encTotalNull = false; } if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; if (cel.encargo != null) { encEmp += cel.encargo; encNull = false; } } if (cel.evp != null) { evpEmp += cel.evp; evpNull = false; } }
+  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp: evpNull ? null : evpEmp } };
 }
 type CockpitConfig = { margem_minima_pct: number; desconto_max_pct: number; prazo_alvo_dias: number; dias_estoque_max: number; sample_min_receita: number };
 type Recomendacao = { acao: string; motivo: string; impacto_rs: number | null };
-function recomendarAcaoComercial(input: { evp: number | null; receita_liquida: number; cm: number | null; desconto_total: number; prazo_medio_dias: number; dias_estoque: number; config: CockpitConfig }): Recomendacao[] {
+function recomendarAcaoComercial(input: { evp: number | null; receita_liquida: number; cm: number | null; desconto_total: number; prazo_medio_dias: number; dias_estoque: number; config: CockpitConfig; hurdle_indisponivel?: boolean }): Recomendacao[] {
   const r: Recomendacao[] = []; const c = input.config;
   const receitaBruta = input.receita_liquida + input.desconto_total;
   const descontoPct = receitaBruta > 0 ? input.desconto_total / receitaBruta : 0;
   const cmPct = input.cm != null && input.receita_liquida > 0 ? input.cm / input.receita_liquida : null;
-  if (descontoPct > c.desconto_max_pct && (input.evp == null || input.evp <= 0)) r.push({ acao: "Cortar desconto", motivo: `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}% e o combo não gera valor.`, impacto_rs: Math.max(0, input.desconto_total - receitaBruta * c.desconto_max_pct) });
-  if (input.prazo_medio_dias > c.prazo_alvo_dias && (input.evp == null || input.evp < 0)) r.push({ acao: "Encurtar prazo / exigir antecipado", motivo: `Prazo médio ${input.prazo_medio_dias.toFixed(0)}d > alvo ${c.prazo_alvo_dias}d puxa o custo de capital de giro.`, impacto_rs: null });
+  const evpConhecivel = !input.hurdle_indisponivel;
+  if (descontoPct > c.desconto_max_pct && (!evpConhecivel || input.evp == null || input.evp <= 0)) r.push({ acao: "Cortar desconto", motivo: evpConhecivel ? `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}% e o combo não gera valor.` : `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}% — lucro econômico indisponível (configure o hurdle p/ confirmar).`, impacto_rs: Math.max(0, input.desconto_total - receitaBruta * c.desconto_max_pct) });
+  if (evpConhecivel && input.prazo_medio_dias > c.prazo_alvo_dias && (input.evp == null || input.evp < 0)) r.push({ acao: "Encurtar prazo / exigir antecipado", motivo: `Prazo médio ${input.prazo_medio_dias.toFixed(0)}d > alvo ${c.prazo_alvo_dias}d puxa o custo de capital de giro.`, impacto_rs: null });
   if (cmPct != null && cmPct < c.margem_minima_pct) r.push({ acao: "Subir preço", motivo: `Margem ${(cmPct * 100).toFixed(0)}% < mínima ${(c.margem_minima_pct * 100).toFixed(0)}%.`, impacto_rs: Math.max(0, c.margem_minima_pct * input.receita_liquida - (input.cm as number)) });
-  if (input.dias_estoque > c.dias_estoque_max && (input.evp == null || input.evp < 0)) r.push({ acao: "Despriorizar / liquidar estoque", motivo: `${input.dias_estoque.toFixed(0)} dias de estoque > limite ${c.dias_estoque_max}d e o item não gera valor.`, impacto_rs: null });
+  if (evpConhecivel && input.dias_estoque > c.dias_estoque_max && (input.evp == null || input.evp < 0)) r.push({ acao: "Despriorizar / liquidar estoque", motivo: `${input.dias_estoque.toFixed(0)} dias de estoque > limite ${c.dias_estoque_max}d e o item não gera valor.`, impacto_rs: null });
   if (r.length === 0 && input.evp != null && input.evp > 0) r.push({ acao: "Crescer / proteger", motivo: "Gera valor econômico positivo e sem alertas.", impacto_rs: null });
+  // aviso de hurdle ausente vive na confiança + banner da UI (NÃO por cliente — vazaria pro A4).
   return r;
 }
-function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean }) {
+function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean; hurdle_indisponivel?: boolean }) {
   const motivos: string[] = []; let nivel = 3;
   const rebaixar = (para: number, m: string) => { if (para < nivel) nivel = para; motivos.push(m); };
+  if (input.hurdle_indisponivel) rebaixar(1, "Sem Ke/hurdle configurado — lucro econômico (EVP) indisponível; configure em /financeiro/valor.");
   if (input.cobertura_receita < 0.6) rebaixar(1, `Cobertura de receita ${(input.cobertura_receita * 100).toFixed(0)}% — muita venda fora do app; cockpit parcial.`);
   else if (input.cobertura_receita < 0.85) rebaixar(2, `Cobertura de receita ${(input.cobertura_receita * 100).toFixed(0)}% (ideal ≥85%).`);
   if (input.custo_ausente_pct > 0.4) rebaixar(1, `${(input.custo_ausente_pct * 100).toFixed(0)}% das células sem custo — margem indisponível em boa parte.`);
@@ -165,13 +211,20 @@ serve(async (req: Request) => {
   const now = new Date();
   const ttm_fim = now.toISOString().slice(0, 10);
   const ttm_inicio = new Date(now.getTime() - 365 * 86400000).toISOString().slice(0, 10);
+  // Guard de formato p/ as datas que entram em .or()/.gte() (defesa anti-injeção: só ISO
+  // YYYY-MM-DD; aqui vêm de toISOString, mas o guard documenta e blinda contra regressão).
+  const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+  if (!ISO_DATE.test(ttm_inicio) || !ISO_DATE.test(ttm_fim)) {
+    return jsonResponse({ error: "janela TTM inválida" }, 500);
+  }
 
   try {
     // WACC (A2) — reusa fin_valor_inputs.ke.base; fallback default se ausente.
     const { data: viRow } = await db.from("fin_valor_inputs").select("valor_inputs").eq("company", COMPANY).maybeSingle();
     const vi = ((viRow as { valor_inputs?: Record<string, unknown> } | null)?.valor_inputs ?? {}) as Record<string, unknown>;
-    const keBase = (vi.ke as Record<string, unknown> | undefined)?.base as Record<string, unknown> | undefined;
-    const k = keBase ? (Number(keBase.ancora || 0) + Number(keBase.premio_risco_equity || 0) + Number(keBase.premio_tamanho_private || 0) + Number(keBase.premio_iliquidez_controle || 0)) : 0.20;
+    // Hurdle (Ke) resolvido com guard de ausência (NÃO fabrica 0.20). Null → EVP indisponível.
+    const k = resolverHurdleCockpit(vi);
+    const hurdle_indisponivel = k == null;
 
     // Config (limiares)
     const { data: cfgRow } = await db.from("fin_config_cashflow").select("cockpit_config").eq("company", COMPANY).maybeSingle();
@@ -220,19 +273,47 @@ serve(async (req: Request) => {
     const combos: ComboInput[] = [...comboMap.values()].map((c) => ({ cliente: c.cliente, sku: c.sku, receita_liquida: c.receita, quantidade: c.qtd, custo_unitario: c.product_id ? (custoPorProduto.get(c.product_id) ?? null) : null }));
 
     // AR da Oben relevante à janela (emitido na janela OU ainda em aberto) — serve p/ AR por cliente e cobertura.
-    type CR = { omie_codigo_cliente: number | null; valor_documento: number; saldo: number; data_emissao: string | null; data_recebimento: string | null; status_titulo: string };
-    const crsAll = await fetchAll<CR>((f, t) => db.from("fin_contas_receber").select("omie_codigo_cliente, valor_documento, saldo, data_emissao, data_recebimento, status_titulo").eq("company", COMPANY).or(`data_recebimento.is.null,data_recebimento.gte.${ttm_inicio},data_emissao.gte.${ttm_inicio}`).range(f, t), "fin_contas_receber");
+    type CR = { omie_codigo_cliente: number | null; omie_codigo_lancamento: number | null; valor_documento: number; saldo: number; valor_recebido: number; data_emissao: string | null; data_vencimento: string | null; status_titulo: string };
+    const crsAll = await fetchAll<CR>((f, t) => db.from("fin_contas_receber").select("omie_codigo_cliente, omie_codigo_lancamento, valor_documento, saldo, valor_recebido, data_emissao, data_vencimento, status_titulo").eq("company", COMPANY).or(`data_recebimento.is.null,data_recebimento.gte.${ttm_inicio},data_emissao.gte.${ttm_inicio}`).range(f, t), "fin_contas_receber");
+    // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) por omie_codigo_lancamento.
+    type Baixa = { omie_codigo_lancamento: number | null; data_baixa_final: string | null };
+    const baixasAll = await fetchAll<Baixa>((f, t) => db.from("v_titulo_baixas").select("omie_codigo_lancamento, data_baixa_final").eq("company", COMPANY).eq("tipo", "CR").range(f, t), "v_titulo_baixas");
+    const baixaPorCod = new Map<number, string>();
+    for (const b of baixasAll) { if (b.omie_codigo_lancamento != null && b.data_baixa_final) baixaPorCod.set(Number(b.omie_codigo_lancamento), b.data_baixa_final); }
     const titulosPorCliente = new Map<string, TituloAR[]>();
     for (const cr of crsAll) {
       if (cr.omie_codigo_cliente == null) continue;
       const key = String(cr.omie_codigo_cliente);
       const arr = titulosPorCliente.get(key) ?? [];
-      arr.push({ valor_documento: cr.valor_documento, saldo: cr.saldo, data_emissao: cr.data_emissao, data_recebimento: cr.data_recebimento, status: cr.status_titulo });
+      arr.push({
+        valor_documento: cr.valor_documento, saldo: cr.saldo, valor_recebido: cr.valor_recebido,
+        data_emissao: cr.data_emissao, data_vencimento: cr.data_vencimento,
+        data_baixa_derivada: cr.omie_codigo_lancamento != null ? (baixaPorCod.get(Number(cr.omie_codigo_lancamento)) ?? null) : null,
+        status: cr.status_titulo,
+      });
       titulosPorCliente.set(key, arr);
     }
+    // AR por cliente + cobertura GLOBAL da baixa derivada real (gate defensivo, codex).
+    let gReal = 0, gProxy = 0, gSem = 0;
+    const arPorClienteRaw = new Map<string, number>();
+    for (const cliente of new Set(combos.map((c) => c.cliente))) {
+      const tts = titulosPorCliente.get(cliente);
+      if (!tts) continue;
+      const r = arMedioTTM({ titulos: tts, ttm_inicio, ttm_fim });
+      arPorClienteRaw.set(cliente, r.ar_medio);
+      gReal += r.v_real; gProxy += r.v_proxy; gSem += r.v_sem_fecho;
+    }
+    const baseCob = gReal + gProxy + gSem;
+    const coberturaBaixaAR = baseCob > 0 ? gReal / baseCob : 1; // sem liquidado na janela → não penaliza
+    // Gate global: cobertura de baixa derivada real < 80% → AR não-confiável → null (vira
+    // ar_indisponivel → scoreConfiancaCockpit rebaixa). Oben ~100% → não dispara; protege
+    // expansão futura de escopo (codex: global sozinho pode esconder cliente, mas aqui o
+    // escopo é fixo oben; per-cliente fica como v2 — o proxy de vencimento já é exposto).
+    const arConfiavel = coberturaBaixaAR >= 0.8;
+    if (!arConfiavel) console.warn(`[ValorCockpit][${COMPANY}] cobertura baixa derivada ${(coberturaBaixaAR * 100).toFixed(0)}% < 80% → AR rebaixado a indisponível`);
     const capitalClientes: CapitalCliente[] = [...new Set(combos.map((c) => c.cliente))].map((cliente) => ({
       cliente,
-      ar_medio: titulosPorCliente.has(cliente) ? arMedioTTM({ titulos: titulosPorCliente.get(cliente)!, ttm_inicio, ttm_fim }) : null,
+      ar_medio: arConfiavel && arPorClienteRaw.has(cliente) ? arPorClienteRaw.get(cliente)! : null,
     }));
     const capitalSKUs: CapitalSKU[] = [...new Set(combos.map((c) => c.sku))].map((sku) => {
       const e = estoquePorSKU.get(sku);
@@ -247,7 +328,7 @@ serve(async (req: Request) => {
     for (const c of [...comboMap.values()]) descontoPorCliente.set(c.cliente, (descontoPorCliente.get(c.cliente) ?? 0) + c.desconto);
     const recomendacoesCliente = res.porCliente.map((rc) => ({
       cliente: rc.cliente,
-      recomendacoes: recomendarAcaoComercial({ evp: rc.evp, receita_liquida: rc.receita, cm: rc.cm, desconto_total: descontoPorCliente.get(rc.cliente) ?? 0, prazo_medio_dias: 0, dias_estoque: 0, config }),
+      recomendacoes: recomendarAcaoComercial({ evp: rc.evp, receita_liquida: rc.receita, cm: rc.cm, desconto_total: descontoPorCliente.get(rc.cliente) ?? 0, prazo_medio_dias: 0, dias_estoque: 0, config, hurdle_indisponivel }),
     }));
 
     const total = res.celulas.length || 1;
@@ -257,12 +338,14 @@ serve(async (req: Request) => {
     // cobertura: receita Oben do cockpit ÷ AR Oben emitido no TTM (mesmo conjunto crsAll).
     const arTotal = crsAll.filter((cr) => cr.data_emissao != null && cr.data_emissao >= ttm_inicio).reduce((s, cr) => s + (cr.valor_documento || 0), 0);
     const cobertura_receita = arTotal > 0 ? Math.min(1, res.empresa.receita / arTotal) : 1;
-    const confianca = scoreConfiancaCockpit({ cobertura_receita, custo_ausente_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true });
+    const confianca = scoreConfiancaCockpit({ cobertura_receita, custo_ausente_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel });
 
     return jsonResponse({
-      company: COMPANY, k, ttm: { inicio: ttm_inicio, fim: ttm_fim },
+      company: COMPANY, k, hurdle_indisponivel, ttm: { inicio: ttm_inicio, fim: ttm_fim },
       porCliente: res.porCliente, porSKU: res.porSKU, empresa: res.empresa,
-      recomendacoesCliente, confianca, cobertura_receita, config,
+      recomendacoesCliente, confianca, cobertura_receita,
+      cobertura_baixa_ar: coberturaBaixaAR, // Fase 3: fração da AR liquidada com baixa derivada REAL (vs vencimento-proxy)
+      config,
     }, 200);
   } catch (e) {
     return jsonResponse({ error: e instanceof Error ? e.message : String(e) }, 500);

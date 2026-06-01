@@ -39,3 +39,19 @@ export function formatBrPhone(input: string | null | undefined): string {
   if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
   return input ?? '';
 }
+
+/**
+ * Monta um link wa.me confiável a partir de um telefone brasileiro.
+ * Normaliza (aplica o DDD padrão se faltar) e prefixa o código do país 55.
+ * Retorna null quando o número não tem DDD + número válido (≥ 10 dígitos):
+ * o call-site deve ESCONDER o botão em vez de renderizar um link quebrado.
+ */
+export function whatsappLink(
+  phone: string | null | undefined,
+  mensagem?: string,
+): string | null {
+  const numero = normalizeBrPhone(phone);
+  if (numero.length < 10) return null;
+  const base = `https://wa.me/55${numero}`;
+  return mensagem ? `${base}?text=${encodeURIComponent(mensagem)}` : base;
+}

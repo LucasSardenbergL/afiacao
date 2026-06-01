@@ -68,9 +68,16 @@ export type RowWithPrice = SkuParam & {
   status_sugestao?: string | null;
   fornecedor_habilitado?: boolean | null;
   read_only?: boolean;
+  // Extras da trilha CANDIDATO_PRIMEIRA_COMPRA (cold-start) — só preenchidos no filtro 'primeira_compra'
+  primeira_compra_qtde?: number | null;
+  recorrencia_meses_180d?: number | null;
+  recorrencia_nfs_180d?: number | null;
+  recorrencia_clientes_180d?: number | null;
+  dias_desde_ultima_venda?: number | null;
+  ja_habilitado?: boolean | null;
 };
 
-export type StatusFilterValue = 'pendente' | 'aprovado' | 'aguardando_fornecedor' | 'todos';
+export type StatusFilterValue = 'pendente' | 'aprovado' | 'aguardando_fornecedor' | 'primeira_compra' | 'todos';
 
 export const fonteBadgeVariant = (
   fonte: string | null | undefined,

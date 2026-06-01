@@ -92,6 +92,80 @@ export function useRevisaoParametros() {
         return { rows: priced, total: count ?? 0 };
       }
 
+      // Cold-start: candidatos a PRIMEIRA COMPRA (venda recorrente, nunca comprados). Lê de uma VIEW
+      // DERIVADA dedicada (v_sku_candidatos_primeira_compra) — não toca a view-mãe money-path. A view
+      // só contém candidatos, então não precisa filtrar por status. Não está nos types gerados até a
+      // migration A1 + regen → cast `as never` no .from (resultado tipado por SkuSugeridoView).
+      if (statusFilter === "primeira_compra") {
+        let q = supabase
+          .from("v_sku_candidatos_primeira_compra" as never)
+          .select("*", { count: "exact" })
+          .eq("empresa", empresa);
+
+        if (classes.length > 0) q = q.in("classe_consolidada", classes);
+        if (search.trim()) {
+          const s = search.trim();
+          if (/^\d+$/.test(s)) {
+            q = q.eq("sku_codigo_omie", Number(s));
+          } else {
+            q = q.ilike("sku_descricao", `%${s}%`);
+          }
+        }
+
+        q = q.order("valor_total_180d", { ascending: false, nullsFirst: false });
+        q = q.range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+        const { data: vdata, error, count } = await q;
+        if (error) throw error;
+
+        const priced: RowWithPrice[] = ((vdata ?? []) as SkuSugeridoView[]).map((v) => ({
+          id: `pc-${v.sku_codigo_omie}`,
+          empresa: v.empresa ?? empresa,
+          sku_codigo_omie: Number(v.sku_codigo_omie),
+          sku_descricao: v.sku_descricao,
+          fornecedor_nome: v.fornecedor_nome,
+          classe_consolidada: v.classe_consolidada,
+          classe_abc: v.classe_abc_proposta,
+          classe_xyz: v.classe_xyz_proposta,
+          demanda_media_diaria: v.demanda_media_diaria,
+          demanda_desvio_padrao: v.demanda_sigma_diario,
+          demanda_coef_variacao: v.coef_variacao_ordem,
+          demanda_dias_com_movimento: v.dias_com_movimento,
+          demanda_total_90d: null,
+          valor_vendido_90d: v.valor_total_90d,
+          lt_medio_dias_uteis: v.lead_time_medio,
+          lt_desvio_padrao_dias: v.lead_time_desvio,
+          lt_p95_dias: v.lt_p95_dias,
+          lt_n_observacoes: null,
+          fonte_leadtime: v.fonte_leadtime,
+          estoque_minimo: null,
+          ponto_pedido: v.primeira_compra_ponto_pedido ?? null,
+          estoque_maximo: v.primeira_compra_estoque_maximo ?? null,
+          estoque_seguranca: null,
+          z_score: v.z_aplicado,
+          cobertura_alvo_dias: v.primeira_compra_cap_dias ?? null,
+          aplicar_no_omie: false,
+          aprovado_em: null,
+          aprovado_por: null,
+          justificativa_aprovacao: null,
+          ultima_atualizacao_calculo: v.calculado_em,
+          preco_compra_real: v.preco_compra_real,
+          preco_venda_medio: v.preco_venda_medio,
+          fonte_preco: v.fonte_preco,
+          status_sugestao: v.status_sugestao,
+          fornecedor_habilitado: v.fornecedor_habilitado,
+          read_only: true,
+          primeira_compra_qtde: v.primeira_compra_qtde ?? null,
+          recorrencia_meses_180d: v.recorrencia_meses_180d ?? null,
+          recorrencia_nfs_180d: v.recorrencia_nfs_180d ?? null,
+          recorrencia_clientes_180d: v.recorrencia_clientes_180d ?? null,
+          dias_desde_ultima_venda: v.dias_desde_ultima_venda ?? null,
+          ja_habilitado: v.ja_habilitado ?? null,
+        }));
+
+        return { rows: priced, total: count ?? 0 };
+      }
+
       let q = supabase
         .from("sku_parametros")
         .select("*", { count: "exact" })
@@ -210,6 +284,26 @@ export function useRevisaoParametros() {
     onError: (e: Error) => toast.error("Falha ao atualizar: " + e.message),
   });
 
+  // Promove um candidato a primeira compra: preenche os parâmetros capados em sku_parametros e habilita
+  // a reposição → o item entra no fluxo NORMAL (motor sugere → aprovação do pedido → disparo).
+  // RPC `as never`: ainda não está nos types gerados do Supabase (vem só após a migration A2 + regen).
+  const promoverMutation = useMutation({
+    mutationFn: async (sku: number) => {
+      const { data, error } = await supabase.rpc(
+        "promover_candidato_primeira_compra" as never,
+        { p_empresa: empresa, p_sku: sku } as never,
+      );
+      if (error) throw error;
+      return (data as number) ?? 0;
+    },
+    onSuccess: (n) => {
+      if (n && n > 0) toast.success("SKU promovido — entra na próxima sugestão de compra");
+      else toast.info("Nada a promover (já promovido ou não é mais candidato)");
+      queryClient.invalidateQueries({ queryKey: ["sku_parametros_revisao"] });
+    },
+    onError: (e: Error) => toast.error("Falha ao promover: " + e.message),
+  });
+
   const toggleClasse = (c: string) => {
     setPage(0);
     setClasses((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
@@ -276,5 +370,6 @@ export function useRevisaoParametros() {
     nextPage,
     approveMutation,
     updateMutation,
+    promoverMutation,
   };
 }

@@ -3,15 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  Loader2, Wrench, DollarSign, Calendar, TrendingUp,
+  Loader2, Wrench, DollarSign, TrendingUp,
   BarChart3, Clock, AlertTriangle, ShieldCheck, HelpCircle,
   ArrowRight, CheckCircle
 } from 'lucide-react';
-import { format, differenceInDays, formatDistanceToNow } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,

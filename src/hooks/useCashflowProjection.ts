@@ -33,15 +33,18 @@ export type CashflowResult = {
   semanas: Semana[];
   ncg: NCGData;
   indicadores: {
-    dias_cobertura: number;
+    // null quando não há base de saída projetada (Fase 3 B2) → consumidor trata "—".
+    dias_cobertura: number | null;
     liquidez_operacional_liquida: number;
     saldo_tesouraria: number;
     inadimplencia_pct: number;
     concentracao_top5_clientes: Array<{ cliente: string; pct: number; valor: number }>;
-    prazo_medio_recebimento: number;
-    prazo_medio_pagamento: number;
+    // null quando a cobertura de baixa derivada é baixa (PMR/PMP/CCC do engine, Fase 3 B).
+    // number | null | undefined: snapshots antigos persistidos têm number; os novos, null.
+    prazo_medio_recebimento: number | null;
+    prazo_medio_pagamento: number | null;
     prazo_medio_estoque: number;
-    cash_conversion_cycle: number;
+    cash_conversion_cycle: number | null;
   };
   alertas: Array<{ tipo: string; severidade: string; mensagem: string; valor: number | null; threshold: number | null; contexto: Record<string, unknown> }>;
   premissas_aplicadas: Record<string, unknown>;

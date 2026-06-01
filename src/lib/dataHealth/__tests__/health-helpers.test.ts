@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { badgeLevel, rollupDomain, formatAge, isHealthy } from '../health-helpers';
+import { badgeLevel, rollupDomain, formatAge, isHealthy, shouldShowDiagnostics } from '../health-helpers';
 import type { DataHealthCheck } from '../types';
 
 const mk = (over: Partial<DataHealthCheck>): DataHealthCheck => ({
@@ -50,4 +50,19 @@ describe('formatAge', () => {
 describe('isHealthy', () => {
   it('só ok', () => { expect(isHealthy([mk({ status: 'ok' })])).toBe(true); });
   it('stale não é healthy', () => { expect(isHealthy([mk({ status: 'stale' })])).toBe(false); });
+});
+
+describe('shouldShowDiagnostics', () => {
+  it('check ok NÃO exibe diagnóstico (esconde erro transitório já recuperado)', () => {
+    expect(shouldShowDiagnostics(mk({ status: 'ok', last_error: 'orphaned_running_timeout' }))).toBe(false);
+  });
+  it('stale exibe diagnóstico', () => {
+    expect(shouldShowDiagnostics(mk({ status: 'stale' }))).toBe(true);
+  });
+  it('broken exibe diagnóstico', () => {
+    expect(shouldShowDiagnostics(mk({ status: 'broken' }))).toBe(true);
+  });
+  it('unknown exibe diagnóstico', () => {
+    expect(shouldShowDiagnostics(mk({ status: 'unknown' }))).toBe(true);
+  });
 });

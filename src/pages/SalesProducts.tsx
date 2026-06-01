@@ -78,12 +78,13 @@ const SalesProducts = () => {
       let nextPage: number | null = 1;
       let totalSynced = 0;
       while (nextPage) {
-        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+        const res = await supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'sync_products', start_page: nextPage, account },
         });
-        if (error) throw error;
-        totalSynced += data.totalSynced || 0;
-        nextPage = data.nextPage || null;
+        if (res.error) throw res.error;
+        const payload = (res.data ?? {}) as { totalSynced?: number; nextPage?: number | null };
+        totalSynced += payload.totalSynced || 0;
+        nextPage = payload.nextPage || null;
       }
 
       toast.success('Sincronização concluída!', {
@@ -107,12 +108,13 @@ const SalesProducts = () => {
       let nextPage: number | null = 1;
       let totalUpdated = 0;
       while (nextPage) {
-        const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+        const res = await supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'sync_estoque', start_page: nextPage, account },
         });
-        if (error) throw error;
-        totalUpdated += data.totalUpdated || 0;
-        nextPage = data.nextPage || null;
+        if (res.error) throw res.error;
+        const payload = (res.data ?? {}) as { totalUpdated?: number; nextPage?: number | null };
+        totalUpdated += payload.totalUpdated || 0;
+        nextPage = payload.nextPage || null;
       }
       toast.success('Estoque atualizado!', {
         description: `${totalUpdated} produtos com estoque atualizado (${account === 'oben' ? 'Oben' : 'Colacor'}).`,
@@ -247,7 +249,7 @@ const SalesProducts = () => {
                     <p className="text-xs text-muted-foreground mt-0.5">
                       Cód: {product.codigo} · {product.unidade}
                     </p>
-                    {product.metadata?.marca && (
+                    {!!product.metadata?.marca && (
                       <p className="text-xs text-muted-foreground">
                         Marca: {String(product.metadata.marca)}
                       </p>

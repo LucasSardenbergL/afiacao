@@ -431,6 +431,11 @@ async function iniciarEnvioPortalSayerlack(
     .update({
       status_envio_portal: "pendente_envio_portal",
       portal_erro: null,
+      // Relógio de stale ESTÁVEL p/ o lote-retry (envio_portal_lock_candidatos): NÃO usar atualizado_em
+      // (trigger de timestamp reiniciaria o relógio e recriaria o blind-spot). Se o envio async inicial
+      // não começar em 15min (não setar enviando_portal), o lote re-tenta a partir daqui. Sucesso zera
+      // (NULL) e erro_retentavel reescreve (+15min) downstream — relógio único pros dois estados.
+      portal_proximo_retry_em: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     })
     .eq("id", pedidoId);
 

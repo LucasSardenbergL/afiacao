@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import type { Persona } from '@/lib/dashboard/persona-config';
 import type { PersonaSource } from '@/lib/dashboard/persona-detect';
+import { usePersona } from '@/hooks/usePersona';
 
 const STORAGE_KEY = 'dashboardPersonaOverride';
 
@@ -20,19 +21,18 @@ export function useDashboardPersonaContext(): DashboardPersonaCtx {
   return v;
 }
 
-export function DashboardPersonaProvider({
-  resolved,
-  children,
-}: {
-  /** Persona resolvida pelo hook usePersona considerando o override atual. */
-  resolved: { persona: Persona; source: PersonaSource };
-  children: ReactNode;
-}) {
+export function DashboardPersonaProvider({ children }: { children: ReactNode }) {
   const [override, setOverrideState] = useState<Persona | null>(() => {
     if (typeof window === 'undefined') return null;
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw && typeof raw === 'string' ? (raw as Persona) : null;
   });
+
+  // usePersona é chamado AQUI (abaixo do estado de override) pra que trocar de
+  // persona re-renderize e recompute a resolução. Antes ele vivia no
+  // DashboardShell (pai), então o setOverride do filho nunca re-rodava a
+  // resolução → a troca só aparecia após reload.
+  const resolved = usePersona(override);
 
   const setOverride = (p: Persona) => {
     setOverrideState(p);

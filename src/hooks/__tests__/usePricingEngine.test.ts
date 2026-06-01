@@ -72,7 +72,7 @@ describe("usePricingEngine – calculatePrice logic", () => {
 
   const CATEGORY_FACA = "cat-faca";
 
-  const mockPrices = [
+  const mockPrices: Array<{ id: string; tool_category_id: string; spec_filter: Record<string, string>; price: number; description: string | null }> = [
     {
       id: "1",
       tool_category_id: CATEGORY_TESOURA,
