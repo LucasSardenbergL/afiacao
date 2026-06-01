@@ -67,8 +67,6 @@ export function useTarefaSugestoes(tarefaIds: string[]) {
   });
 }
 
-const TZ = 'America/Sao_Paulo';
-
 export function useTarefaMutations() {
   const qc = useQueryClient();
   const { user } = useAuth();

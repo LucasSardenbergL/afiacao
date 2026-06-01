@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ImpersonationBanner } from '@/components/impersonation/ImpersonationBanner';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Link2, Globe2, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck, MessageCircle, MessageSquareText } from 'lucide-react';
+import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Link2, Globe2, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
