@@ -68,30 +68,36 @@ Fila D-1  →  vendedor liga (CallButton)  →  marca outcome (1 toque)
 **Reversão de opt-out (v1):** operacional via SQL Editor (master deleta a linha `opt_out` — `DELETE FROM route_contact_log WHERE customer_user_id=… AND status='opt_out'`). Documentado no PR. UI de reversão = v2 se virar recorrente. (Sem isso, opt-out vira dado morto — Codex.)
 
 ### 4.3 Helper puro `src/lib/route/route-outcome.ts` (TDD)
-`derivarSinaisContato(registros: ContatoLog[], hoje: string, dataRotaFila: string): SinaisContato`
-- entrada: registros de **um** cliente `{status, dataNegocio: 'YYYY-MM-DD'}` (a `dataNegocio` = `created_at` convertido pra **America/Sao_Paulo** no hook — fuso de negócio, não `Date.now()` solto), `hoje` (data de negócio), `dataRotaFila` (a `data_rota` da fila atual).
-- saída: `{ optOut, jaConvertidoNaRota, contatadoHaDias, semRespostaRecenteN }`.
-- regras:
-  - `optOut` = existe registro `opt_out` (sticky; sem reversão = permanece).
-  - `jaConvertidoNaRota` = existe `convertido` com `dataNegocio === dataRotaFila` (ancorado na rota, **não** `current_date` — a fila é D-1; alimenta o `fechouHoje` do gate).
-  - **`contatadoHaDias` efetivo** (cadência diferenciada):
-    - contato **real** (`respondido`/`convertido`): `dias = hoje − maxData(real)`.
-    - `sem_resposta`: só "conta" (bloqueia) se foi **ontem/hoje** (dias ≤ 1) **ou** acumulou **≥ N** (default 3) registros `sem_resposta` recentes (janela 7d) — senão **não** bloqueia (cadência curta, deixa re-tentar).
-    - resultado = **menor** `contatadoHaDias` entre os que "contam" (ou `null` se nenhum conta → motor não exclui por cadência).
-  - `semRespostaRecenteN` = contagem de `sem_resposta` na janela (badge).
-- **NÃO mexe no `gate()`** — só produz os 3 campos que ele já lê. Toda a sutileza de status vive aqui, testada isolada.
+`derivarSinaisContato(registros, hoje, dataRotaFila, cfg?): SinaisContato`
+- **entrada:** registros de **um cliente** — agrega TODOS os farmers que o contataram (os sinais de fila são por **CLIENTE**, não por quem ligou; o `farmer_id` no log é só auditoria — Codex #8). Cada registro `{ status, dataNegocio: 'YYYY-MM-DD', dataRota: 'YYYY-MM-DD' }`: `dataNegocio` = `created_at` convertido pra **America/Sao_Paulo** no hook (fuso de negócio, não `Date.now()` solto); `dataRota` = a coluna `data_rota` gravada. `hoje` = data de negócio (SP); `dataRotaFila` = `data_rota` da fila atual. `cfg` = `{ limiarSemResposta=3, janelaCadenciaDias=7 }`.
+- **saída** (separa o que ALIMENTA O GATE do que é só BADGE — Codex #2):
+  - `optOut: boolean`, `jaConvertidoNaRota: boolean`, **`contatadoHaDiasParaGate: number|null`** (o ÚNICO que vira `ContactCandidate.contatadoHaDias`).
+  - badge/UI: `ultimoContatoRealHaDias: number|null`, `semRespostaRecenteN: number`, `ultimaSemRespostaHaDias: number|null`, `cadenciaBloqueadaPor: 'real'|'sem_resposta_esgotada'|null`.
+- **regras (Codex):**
+  - `optOut` = existe QUALQUER `opt_out` — **sticky, SEM janela** (full history; senão um opt-out de 100d cairia fora da janela e voltaria a ser ligável — Codex #4).
+  - `jaConvertidoNaRota` = existe `convertido` com **`registro.dataRota === dataRotaFila`** (a coluna `data_rota` gravada, **NÃO** `dataNegocio`/`created_at` — a fila é D-1: liga hoje, rota amanhã → comparar `created_at` nunca casaria; Codex #3). Alimenta o `fechouHoje` do gate.
+  - **cadência — separa "tentativa registrada" de "evento que bloqueia o gate" (Codex #1):**
+    - `ultimoContatoRealHaDias` = `hoje − max(dataNegocio de {respondido,convertido})` (ou null).
+    - `semRespostaRecenteN` = nº de **DIAS DISTINTOS** com `sem_resposta` na `janelaCadenciaDias` — conta DIAS, **não linhas** (3 "não atendeu" no mesmo turno = 1 dia; Codex #5).
+    - `ultimaSemRespostaHaDias` = `hoje − max(dataNegocio de sem_resposta na janela)` (ou null).
+    - **bloqueio:** contato real bloqueia (cadência normal) → `diasReal = ultimoContatoRealHaDias`. `sem_resposta` **só bloqueia** quando `semRespostaRecenteN >= limiarSemResposta` → `diasSemResp = ultimaSemRespostaHaDias`; **abaixo do limiar NÃO bloqueia** (cadência curta, deixa re-tentar — só vira badge).
+    - `contatadoHaDiasParaGate` = **menor** entre `diasReal` e `diasSemResp` (só dos que bloqueiam); `null` se nenhum bloqueia → o gate não exclui por cadência.
+    - `cadenciaBloqueadaPor` = qual dos dois deu o menor ('real'/'sem_resposta_esgotada'); null se nenhum.
+- **exemplo (Codex):** `respondido` há 10d **+** `sem_resposta` ontem com N=1 (<3) → `contatadoHaDiasParaGate=10` (não bloqueia o retry curto da não-atendida), badge "sem resposta 1×". Se virar N=3 → passa a bloquear pela `ultimaSemRespostaHaDias`.
+- **NÃO mexe no `gate()`/`buildContactList`** (inalterados) — só produz `contatadoHaDiasParaGate`→`contatadoHaDias`, `jaConvertidoNaRota`→`fechouHoje`, `optOut`→`optOut`. Toda a sutileza vive aqui, testada isolada.
 
 ### 4.4 Hook `useRouteContactList`
-- 1 query nova: `route_contact_log` dos `customer_user_id` da fila (chunked `.in()`, janela **90d**, ordenado) — **não** todos os logs (limite defensivo do Codex).
-- por cliente → `derivarSinaisContato` → injeta `optOut`/`fechouHoje`/`contatadoHaDias` reais nos candidatos (substitui os hardcoded). Mantém o resto idêntico.
-- expõe `jaConvertidoNaRota`/`semRespostaRecenteN` p/ a UI (badges/seção resolvidos).
-- **mutation** `useRegistrarContato` (chama a RPC) + `useDesfazerContato` (undo) — invalidam `['route-contact-list']`.
+- 1 query nova: `route_contact_log` (cols `customer_user_id, status, created_at, data_rota`) dos `customer_user_id` da fila (chunked `.in()`), filtro **`status='opt_out' OR created_at >= hoje−90d`** — opt_out full-history + cadência na janela 90d (Codex #4); **não** todos os logs (limite defensivo).
+- converte `created_at` → `dataNegocio` (America/Sao_Paulo) por registro.
+- por cliente → `derivarSinaisContato` → injeta `optOut`/`fechouHoje(=jaConvertidoNaRota)`/`contatadoHaDias(=contatadoHaDiasParaGate)` reais nos candidatos (substitui os hardcoded). Mantém o resto idêntico.
+- expõe os campos de badge (`ultimoContatoRealHaDias`/`semRespostaRecenteN`/`cadenciaBloqueadaPor`/`jaConvertidoNaRota`) p/ a UI.
+- **mutations**: `useRegistrarContato` (RPC `registrar_contato_rota`) + `useDesfazerContato` (RPC `desfazer_contato_rota`) — invalidam `['route-contact-list']`.
 
 ### 4.5 UI `RotaListaLigacao`
 - cada item ganha um **menu de outcome** (4 botões, touch-friendly). `opt_out` → `AlertDialog` de confirmação ("Não ligar novamente para {cliente}?").
 - após registrar: **toast com "Desfazer"** (~5s) → `useDesfazerContato`.
-- badges: "contatado há Xd" (real), "sem resposta Nx". `convertido` → seção **"Resolvidos hoje"** (não some no ar — feedback de progresso). `sem_resposta` permanece na fila com badge.
-- **métrica do dia** (topo, simples, client-side a partir do log de hoje): `N ligados · N atenderam · N fecharam`. (o "medir conversão" do objetivo, sem tela analítica.)
+- badges: "contatado há Xd" (de `ultimoContatoRealHaDias`), "sem resposta N×" (de `semRespostaRecenteN`). `convertido` → seção **"Resolvidos hoje"** (feedback de progresso, não some no ar). `sem_resposta` (<limiar) **permanece** na fila com badge — o gate não o bloqueia.
+- **métrica do dia** (topo, simples, client-side): `N ligados · N atenderam · N fecharam`, ancorada em **`dataNegocio (created_at em SP) === hoje`** (turno do vendedor), **não** `data_rota` (Codex #7 — "ligados hoje" ≠ "resolvidos nesta rota"). O "medir conversão" do objetivo, sem tela analítica.
 - evento PostHog `rota.contato_registrado` (`{status}`), `rota.contato_desfeito`.
 
 ## 5. Degradação honesta & riscos
@@ -99,9 +105,11 @@ Fila D-1  →  vendedor liga (CallButton)  →  marca outcome (1 toque)
 - dedupe na RPC evita duplo-registro; undo cobre erro de clique; opt-out exige confirmação.
 - fuso: tudo via data de negócio SP (helper recebe `hoje`/`dataNegocio` já normalizados; teste de fronteira meia-noite).
 - RLS: SELECT já é staff; a RPC é o único caminho de escrita (server-side ownership). Sem novo INSERT genérico.
+- **opt-out é RISCO REAL, não detalhe (Codex #6):** um clique errado tira um cliente bom da operação até alguém rodar SQL → a confirmação + o **Undo curto bem testado** são obrigatórios na v1. Reversão histórica = SQL manual do master (documentada no PR); RPC de reverter = v2 se virar recorrente.
+- **concorrência (Codex #8):** o dedupe da RPC é por `farmer+customer+data_rota+status` (idempotência do toque do vendedor), mas os SINAIS de fila são derivados por **CLIENTE** (agregam todos os farmers) → gestor e dono registrando no mesmo cliente não divergem a fila. `farmer_id` no log = auditoria de quem contatou.
 
 ## 6. Plano de teste (helper TDD)
-`route-outcome.test.ts` cobre: opt-out sticky; convertido-na-rota (com/sem match de data); contato real → `contatadoHaDias`; `sem_resposta` ontem (conta) vs 5 dias atrás isolado (não conta) vs ≥3 recentes (conta); menor-dos-que-contam; fronteira de meia-noite (fuso); lista vazia → defaults seguros.
+`route-outcome.test.ts` cobre: opt-out **sticky sem janela** (opt_out 100d atrás ainda bloqueia); `jaConvertidoNaRota` por **`data_rota`** (convertido registrado hoje p/ rota de amanhã esconde na fila de amanhã; convertido de outra rota não esconde); contato real → `ultimoContatoRealHaDias`/`contatadoHaDiasParaGate`; **`sem_resposta` ISOLADO (N<3) NÃO bloqueia** (só badge), incl. ontem; **≥3 DIAS distintos** de `sem_resposta` bloqueia, mas **3 linhas no MESMO dia = N=1** (conta dias, não linhas); respondido-há-10d + sem_resposta-ontem → `contatadoHaDiasParaGate=10`; `cadenciaBloqueadaPor` correto; fronteira de meia-noite (fuso SP); lista vazia → defaults seguros.
 
 ## 7. Entregáveis & ordem
 1. helper `route-outcome.ts` + testes (TDD).
