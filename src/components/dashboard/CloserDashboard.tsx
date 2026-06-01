@@ -1,6 +1,7 @@
 import { Card } from '@/components/ui/card';
 import { Construction, MapPin, Target, TrendingUp } from 'lucide-react';
 import { VisitSuggestionsCard } from './VisitSuggestionsCard';
+import { VisitasHojeCard } from './VisitasHojeCard';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 
 /**
@@ -18,6 +19,8 @@ export function CloserDashboard() {
       </div>
 
       <MinhasTarefasCard />
+
+      <VisitasHojeCard />
 
       {/* Sugestões de visita — PR-VISIT-INTELLIGENCE Sub-PR A */}
       <VisitSuggestionsCard />

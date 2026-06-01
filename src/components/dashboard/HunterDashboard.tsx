@@ -1,6 +1,7 @@
 import { Card } from '@/components/ui/card';
 import { Phone, PhoneIncoming, UserPlus, Construction } from 'lucide-react';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
+import { VisitasHojeCard } from './VisitasHojeCard';
 
 /**
  * Dashboard Hunter — placeholder rico até PR-MULTIVENDOR-V2 implementar
@@ -17,6 +18,8 @@ export function HunterDashboard() {
       </div>
 
       <MinhasTarefasCard />
+
+      <VisitasHojeCard />
 
       <Card className="p-4 border-dashed border-2 border-status-warning/30 bg-status-warning-bg/20">
         <div className="flex items-center gap-2 mb-2">
