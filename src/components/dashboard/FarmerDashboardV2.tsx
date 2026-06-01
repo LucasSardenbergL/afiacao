@@ -3,6 +3,7 @@ import { Calendar } from 'lucide-react';
 import { KpisToday } from './KpisToday';
 import { AgendaTodayList } from './AgendaTodayList';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
+import { VisitasHojeCard } from './VisitasHojeCard';
 
 /**
  * Dashboard Farmer V2 — foco em expansão de carteira existente.
@@ -25,6 +26,7 @@ export function FarmerDashboardV2() {
       <KpisToday />
 
       <MinhasTarefasCard />
+      <VisitasHojeCard />
 
       <Card className="p-3 space-y-1">
         <div className="flex items-center gap-2">
