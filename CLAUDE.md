@@ -386,6 +386,12 @@ Objetivo do founder: a IA lê o WhatsApp da empresa e, na **véspera de cada rot
 
 **Sempre que adicionar migration nova**: avisar no PR description "**ATENÇÃO: migration manual necessária**" e colar o SQL no body do PR + entregar inline na conversa.
 
+### Deploy do FRONTEND (app) — Publish MANUAL no Lovable (lição 2026-05-31)
+
+> 🔴 **O Lovable NÃO auto-deploya o frontend a partir de push no GitHub.** Mergear PR na `main` deixa o código na main, mas o app em `steu.lovable.app` **continua servindo o build anterior** até alguém clicar **Publish** no editor do Lovable (e o editor pode precisar **sincronizar com o GitHub** antes — senão publica um estado velho dele). Isso pegou de surpresa: após mergear 6 PRs eu disse "está pronto pra QA" — mas o ar ainda era um build velho (provado nos bytes). **Sempre lembrar o founder de dar Publish** quando quiser uma feature live. As TRÊS coisas são deploy manual e independente: **frontend** (Publish no editor), **edge functions** (chat do Lovable — ver abaixo), **migrations** (SQL Editor — ver acima). NENHUMA acontece sozinha no merge.
+
+> 🟢 **Como VERIFICAR um deploy do frontend sem acesso ao Lovable (pelos bytes do bundle):** o `steu.lovable.app/` vem com `cache-control: no-cache` e referencia `/assets/index-<hash>.js`. (1) `curl` o index → o `<hash>` **muda** quando sobe build novo (mesmo hash = não publicou / não propagou). (2) Pra confirmar que um COMMIT específico entrou, escolha uma **string-literal única** dele (ex.: um `.select('razao_social, name, document')` novo, um texto de UI, uma rota nova como `/sales/new`), baixe os chunks `/assets/*.js` referenciados e `grep`. ⚠️ **O Vite agrupa por content-hash e pode jogar um hook/módulo num chunk de nome INESPERADO** (visto: um hook do unified-order caiu no `TintColorSelectDialog-*.js`) → grepar só os chunks de nome "óbvio" dá **falso-negativo**; **varra TODOS os chunks** referenciados pra ter certeza.
+
 ### Edge functions — caminho oficial Lovable (confirmado via docs.lovable.dev 2026-05-19)
 
 > 🔴 **REGRA**: Edge functions no Lovable Cloud são **criadas e editadas pelo chat do Lovable**, NÃO pela UI de "Edge functions" do Cloud. A UI Cloud → Edge functions é **só pra visualizar logs, status e invocations**. Não há botão de "Create function" / "New function" ali.
