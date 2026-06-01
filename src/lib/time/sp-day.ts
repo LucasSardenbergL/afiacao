@@ -31,6 +31,14 @@ export function spDayRangeUtc(now: Date = new Date()): { startUtc: string; endUt
   return { startUtc: new Date(startMs).toISOString(), endUtc: new Date(endMs).toISOString() };
 }
 
+const SP_DATE_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+/** Data de NEGÓCIO (yyyy-mm-dd) de um instante, no fuso America/Sao_Paulo. */
+export function spBusinessDate(instant: Date | string): string {
+  return SP_DATE_FMT.format(typeof instant === 'string' ? new Date(instant) : instant);
+}
+
 /** Offset de America/Sao_Paulo em `date`, em ms (SP − UTC; negativo p/ UTC-3). */
 function spOffsetMs(date: Date): number {
   const dtf = new Intl.DateTimeFormat('en-US', {

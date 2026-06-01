@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 140
+-- Total de custom migrations: 141
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -159,7 +159,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260531140000', 'reposicao_atualizar_params_nao_zera', '20260531140000_reposicao_atualizar_params_nao_zera.sql'),
   ('20260531150000', 'reposicao_param_limbo_watchdog', '20260531150000_reposicao_param_limbo_watchdog.sql'),
   ('20260531160000', 'reposicao_excluir_fabricado_04', '20260531160000_reposicao_excluir_fabricado_04.sql'),
-  ('20260531170000', 'data_health_check_sayerlack_mapeamento_gap', '20260531170000_data_health_check_sayerlack_mapeamento_gap.sql')
+  ('20260531170000', 'data_health_check_sayerlack_mapeamento_gap', '20260531170000_data_health_check_sayerlack_mapeamento_gap.sql'),
+  ('20260531170000', 'route_contact_log_escrita', '20260531170000_route_contact_log_escrita.sql')
 )
 SELECT
   e.version,
@@ -769,7 +770,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_excluir_fabricado_04', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', '_data_health_compute', ''),
   ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', 'data_health_watchdog', ''),
-  ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', 'fin_sync_heartbeat', '')
+  ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('route_contact_log_escrita', 'function', 'public', 'registrar_contato_rota', ''),
+  ('route_contact_log_escrita', 'function', 'public', 'desfazer_contato_rota', '')
 )
 SELECT
   e.migration,
