@@ -5,6 +5,9 @@ import { resolvePrepForWorkday } from '@/lib/whatsapp/route-schedule';
 import type { RouteScheduleRow, RouteOverrideRow } from '@/lib/whatsapp/route-schedule';
 import { buildContactList } from '@/lib/whatsapp/contact-list';
 import type { ContactCandidate, ContactConfig, ScoredCandidate } from '@/lib/whatsapp/contact-list';
+import { spBusinessDate } from '@/lib/time/sp-day';
+import { derivarSinaisContato, type ContatoLog, type OutcomeStatus, type SinaisContato } from '@/lib/route/route-outcome';
+import { logger } from '@/lib/logger';
 
 interface VisitScoreRow {
   customer_user_id: string;
@@ -36,14 +39,23 @@ export interface RouteContactItem extends ScoredCandidate {
   name: string;
   phone: string | null;
   farmerName: string | null;
+  // sinais de contato p/ badges (derivados de route_contact_log)
+  ultimoContatoRealHaDias: number | null;
+  semRespostaRecenteN: number;
+  cadenciaBloqueadaPor: 'real' | 'sem_resposta_esgotada' | null;
+  jaConvertidoNaRota: boolean;
 }
+export interface DailyStats { ligados: number; atenderam: number; fecharam: number; }
 export interface RouteContactListData {
   callQueue: RouteContactItem[];
   whatsappQueue: RouteContactItem[];
+  resolvidosQueue: RouteContactItem[];   // convertidos na rota (saíram da callQueue por fechou_hoje)
   excluidos: ScoredCandidate[];
   routeDate: string | null;
   dailyOnly: boolean;
   cidades: string[];
+  dailyStats: DailyStats;
+  cadenciaIndisponivel: boolean;          // true se a leitura do log falhou (fail-open)
 }
 
 // margem média da empresa (v1 — spec §6.5 q2; calibrar no piloto/codex)
@@ -56,11 +68,49 @@ type PgRes = { data: unknown; error: { message: string } | null };
 interface RouteBuilder {
   select: (cols: string) => RouteBuilder;
   eq: (col: string, val: unknown) => RouteBuilder;
+  in: (col: string, vals: unknown[]) => RouteBuilder;
+  gte: (col: string, val: unknown) => RouteBuilder;
   maybeSingle: () => PromiseLike<PgRes>;
   then: PromiseLike<PgRes>['then'];
 }
 function routeFrom(table: string): RouteBuilder {
   return (supabase as unknown as { from: (t: string) => RouteBuilder }).from(table);
+}
+
+interface ContactLogRow { customer_user_id: string; status: string; created_at: string; data_rota: string; }
+
+/**
+ * Lê route_contact_log dos clientes da fila em 2 queries (evita `.or()` com template — regra
+ * anti-injeção do lint): (A) opt_out FULL-history (sticky, sem janela) + (B) cadência na janela 90d.
+ * Agrega por cliente; converte created_at → data de negócio SP. NÃO é "todos os logs" — só os ~cap
+ * clientes da fila. Lança em erro de DB (o chamador trata com fail-open).
+ */
+async function fetchContactLog(ids: string[]): Promise<Map<string, ContatoLog[]>> {
+  const cutoff90 = new Date(Date.now() - 90 * 86_400_000).toISOString();
+  const rows: ContactLogRow[] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) {
+    const chunk = ids.slice(i, i + IN_CHUNK);
+    const sel = 'customer_user_id, status, created_at, data_rota';
+    const [optRes, janRes] = await Promise.all([
+      routeFrom('route_contact_log').select(sel).in('customer_user_id', chunk).eq('status', 'opt_out') as PromiseLike<PgRes>,
+      routeFrom('route_contact_log').select(sel).in('customer_user_id', chunk).gte('created_at', cutoff90) as PromiseLike<PgRes>,
+    ]);
+    if (optRes.error) throw new Error(optRes.error.message);
+    if (janRes.error) throw new Error(janRes.error.message);
+    rows.push(...((optRes.data ?? []) as ContactLogRow[]), ...((janRes.data ?? []) as ContactLogRow[]));
+  }
+  // dedup por (cliente|created_at|status) — opt_out recente aparece nas 2 queries
+  const seen = new Set<string>();
+  const byCustomer = new Map<string, ContatoLog[]>();
+  for (const r of rows) {
+    const k = `${r.customer_user_id}|${r.created_at}|${r.status}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const log: ContatoLog = { status: r.status as OutcomeStatus, dataNegocio: spBusinessDate(r.created_at), dataRota: r.data_rota };
+    const arr = byCustomer.get(r.customer_user_id);
+    if (arr) arr.push(log); else byCustomer.set(r.customer_user_id, [log]);
+  }
+  return byCustomer;
 }
 
 /** Lê TODOS os customer_visit_scores com cidade (pagina o cap de 1000 do PostgREST). */
@@ -126,8 +176,9 @@ export function useRouteContactList(workdayIso: string) {
 
       const prep = resolvePrepForWorkday(workdayIso, sched, ovr);
       const empty: RouteContactListData = {
-        callQueue: [], whatsappQueue: [], excluidos: [],
+        callQueue: [], whatsappQueue: [], resolvidosQueue: [], excluidos: [],
         routeDate: prep.routeDate, dailyOnly: prep.dailyOnly, cidades: prep.cities.map(c => c.city),
+        dailyStats: { ligados: 0, atenderam: 0, fecharam: 0 }, cadenciaIndisponivel: false,
       };
       if (prep.cities.length === 0) return empty;
 
@@ -147,6 +198,23 @@ export function useRouteContactList(workdayIso: string) {
       const [metrics, profiles] = await Promise.all([fetchMetrics(userIds), fetchProfiles(profileIds)]);
       const mByUser = new Map(metrics.map(m => [m.customer_user_id, m]));
       const pByUser = new Map(profiles.map(p => [p.user_id, p]));
+
+      // cadência ao vivo: lê route_contact_log e deriva os sinais por cliente. Fail-open:
+      // erro de leitura → defaults (fila funciona como antes), NÃO esconde cliente.
+      const hoje = spBusinessDate(new Date());
+      const dataRotaFila = prep.routeDate ?? '';
+      let logByCustomer = new Map<string, ContatoLog[]>();
+      let cadenciaIndisponivel = false;
+      try {
+        logByCustomer = await fetchContactLog(userIds);
+      } catch (e) {
+        cadenciaIndisponivel = true;
+        logger.warn('Leitura de route_contact_log falhou — cadência ao vivo indisponível', { error: e instanceof Error ? e.message : String(e) });
+      }
+      const sinaisByCustomer = new Map<string, SinaisContato>();
+      for (const id of userIds) {
+        sinaisByCustomer.set(id, derivarSinaisContato(logByCustomer.get(id) ?? [], hoje, dataRotaFila));
+      }
 
       const cfg: ContactConfig = {
         winBackReservaPct: cfgRow?.win_back_reserva_pct ?? 0.2,
@@ -168,10 +236,10 @@ export function useRouteContactList(workdayIso: string) {
           diasDesdeUltima: m?.dias_desde_ultima_compra ?? null,
           intervaloMedioDias: m?.intervalo_medio_dias ?? null,
           isColdStart: m?.is_cold_start ?? false,
-          optOut: false,            // opt-in real entra no PR2b (whatsapp_conversations.opt_in_status)
-          contatadoHaDias: null,    // cadência ao vivo via route_contact_log entra no PR2c
-          fechouHoje: false,
-          janela24hAberta: false,
+          optOut: sinaisByCustomer.get(r.customer_user_id)?.optOut ?? false,
+          contatadoHaDias: sinaisByCustomer.get(r.customer_user_id)?.contatadoHaDiasParaGate ?? null,
+          fechouHoje: sinaisByCustomer.get(r.customer_user_id)?.jaConvertidoNaRota ?? false,
+          janela24hAberta: false,   // WhatsApp 24h — fora do escopo do closed-loop de ligação
           margemNegativaConhecida: false,
         };
       });
@@ -180,21 +248,42 @@ export function useRouteContactList(workdayIso: string) {
       const enrich = (s: ScoredCandidate): RouteContactItem => {
         const p = pByUser.get(s.customerUserId);
         const farmer = s.farmerId ? pByUser.get(s.farmerId) : undefined;
+        const sinais = sinaisByCustomer.get(s.customerUserId);
         return {
           ...s,
           name: p?.razao_social || p?.name || s.customerUserId,
           phone: p?.phone ?? null,
           farmerName: farmer?.name ?? farmer?.razao_social ?? null,
+          ultimoContatoRealHaDias: sinais?.ultimoContatoRealHaDias ?? null,
+          semRespostaRecenteN: sinais?.semRespostaRecenteN ?? 0,
+          cadenciaBloqueadaPor: sinais?.cadenciaBloqueadaPor ?? null,
+          jaConvertidoNaRota: sinais?.jaConvertidoNaRota ?? false,
         };
       };
+
+      // convertidos na rota saíram da callQueue pelo gate 'fechou_hoje' → seção "Resolvidos hoje"
+      const resolvidosQueue = result.excluidos.filter(s => s.motivoGate === 'fechou_hoje').map(enrich);
+
+      // métrica do dia (turno do vendedor): clientes da fila contatados HOJE (dataNegocio === hoje)
+      let ligados = 0, atenderam = 0, fecharam = 0;
+      for (const logs of logByCustomer.values()) {
+        const hojeRegs = logs.filter(l => l.dataNegocio === hoje);
+        if (hojeRegs.length === 0) continue;
+        ligados++;
+        if (hojeRegs.some(l => l.status === 'respondido' || l.status === 'convertido')) atenderam++;
+        if (hojeRegs.some(l => l.status === 'convertido')) fecharam++;
+      }
 
       return {
         callQueue: result.callQueue.map(enrich),
         whatsappQueue: result.whatsappQueue.map(enrich),
+        resolvidosQueue,
         excluidos: result.excluidos,
         routeDate: prep.routeDate,
         dailyOnly: prep.dailyOnly,
         cidades: prep.cities.map(c => c.city),
+        dailyStats: { ligados, atenderam, fecharam },
+        cadenciaIndisponivel,
       };
     },
   });
