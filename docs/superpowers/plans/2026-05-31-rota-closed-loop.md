@@ -219,9 +219,19 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.user_roles ur WHERE ur.user_id = v_uid AND ur.role IN ('employee','master')) THEN
     RAISE EXCEPTION 'forbidden: staff only';
   END IF;
+  IF p_customer_user_id IS NULL THEN RAISE EXCEPTION 'customer_user_id required'; END IF;
+  IF p_data_rota IS NULL THEN RAISE EXCEPTION 'data_rota required'; END IF;
   IF p_status NOT IN ('convertido','respondido','sem_resposta','opt_out') THEN
     RAISE EXCEPTION 'invalid status: %', p_status;
   END IF;
+  -- Codex P0: staff responde "é staff?" mas não "pode afetar ESTE cliente?". Exige visibilidade de carteira.
+  IF NOT (COALESCE(public.pode_ver_carteira_completa(v_uid), false)
+          OR public.carteira_visivel_para(p_customer_user_id, v_uid)) THEN
+    RAISE EXCEPTION 'forbidden: customer not visible';
+  END IF;
+  -- Codex P1: serializa o dedupe por chave lógica (evita race do SELECT→INSERT em double-click concorrente).
+  PERFORM pg_advisory_xact_lock(hashtextextended(
+    v_uid::text||':'||p_customer_user_id::text||':'||p_data_rota::text||':'||p_status||':ligacao', 0));
   -- dedupe idempotente: mesmo vendedor+cliente+rota+status nos últimos 2 min → devolve o existente
   SELECT id INTO v_existing FROM public.route_contact_log
    WHERE farmer_id = v_uid AND customer_user_id = p_customer_user_id
@@ -238,11 +248,15 @@ BEGIN
 END $$;
 
 -- Undo curto: deleta SÓ o próprio registro recente (own + < 5 min) — suporta o "Desfazer" do UI.
+-- Codex: retorna {deleted} (não no-op silencioso) p/ a UI não mostrar "desfeito" quando expirou.
 CREATE OR REPLACE FUNCTION public.desfazer_contato_rota(p_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_deleted int;
 BEGIN
   DELETE FROM public.route_contact_log
    WHERE id = p_id AND farmer_id = auth.uid() AND created_at > now() - interval '5 minutes';
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+  RETURN jsonb_build_object('deleted', v_deleted > 0);
 END $$;
 
 REVOKE ALL ON FUNCTION public.registrar_contato_rota(uuid,text,date,text,numeric) FROM PUBLIC, anon;
@@ -355,3 +369,9 @@ const registrar = async (status: string) => {
 - **Cobertura do spec:** §4.1 (vocabulário) → Task 5; §4.2 (RPC) → Task 3; §4.3 (helper) → Task 2 + Task 1 (fuso); §4.4 (hook) → Task 4; §4.5 (UI/métrica) → Task 5; §5 (degradação/risco) → Task 4 step 1 (try/catch) + Task 5 (confirmação/undo); §6 (testes) → Task 2 step 1. ✅
 - **Tipos consistentes:** `SinaisContato.contatadoHaDiasParaGate` → injetado como `ContactCandidate.contatadoHaDias`; `jaConvertidoNaRota` → `fechouHoje`. Motor inalterado. ✅
 - **Sem placeholder:** helper e RPC têm código completo; Tasks 4-5 têm os trechos-chave + arquivos exatos. ✅
+
+## Correções do Codex no plano (incorporar na execução)
+- **Task 2 (+5 testes):** (a) real-antigo-10d + sem_resposta-esgotada-3dias → `gate=1`, motivo `'sem_resposta_esgotada'` (pega `Math.max` no desempate); (b) 2-dentro-janela + 1-fora → `N=2`, **não** bloqueia; (c) off-by-one: `sem_resposta` a 7d conta, 8d não; (d) datas FUTURAS ignoradas (negativo não bloqueia tudo) — `filter(d => d >= 0)`; (e) **corrigir** o teste "convertido de outra rota": `jaConvertidoNaRota=false` MAS ainda é contato real (`ultimoContatoRealHaDias`/`contatadoHaDiasParaGate` refletem) — `reg('convertido', HOJE, '2026-05-31')` → gate=0, `'real'`.
+- **Task 3 (RPC):** ✅ já atualizada acima — check de carteira (`pode_ver_carteira_completa OR carteira_visivel_para`), advisory lock, NOT NULL guards, `desfazer` retorna `{deleted}`.
+- **Task 4 (hook):** ler o log em **2 queries** (evita `.or()` com template literal — regra anti-injeção do lint): `(A)` `.in(chunk).eq('status','opt_out')` full-history (sticky) + `(B)` `.in(chunk).gte('created_at', cutoff90d)` cadência; mesclar por `id`. Retornar **`dailyStats`** `{ligados, atenderam, fecharam}` (dos registros lidos com `dataNegocio===hoje`) e **`resolvidosQueue`** (enriquecer os `result.excluidos` com `motivoGate==='fechou_hoje'` — têm nome/telefone p/ a seção "Resolvidos hoje"). Fail-open: `try/catch` → defaults + `logger.warn` + flag `cadenciaIndisponivel` p/ a UI avisar discreto.
+- **Fix pré-existente (Codex):** `RotaListaLigacao.tsx` usa `new Date().toISOString().slice(0,10)` p/ `workday` → às 22-23h SP vira o dia UTC seguinte → rota errada. Trocar `todayIso()` por `spBusinessDate(new Date())`.
