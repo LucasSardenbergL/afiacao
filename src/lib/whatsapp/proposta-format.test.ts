@@ -70,4 +70,19 @@ describe('formatarPropostaRecompra', () => {
     expect(r.texto).toContain('Posso fechar o pedido?');
     expect(r.texto).not.toContain('entrega de amanhã'); // CTA default substituído
   });
+  it('renderiza a camada de cross-sell ("experimente também") quando passada, antes do CTA', () => {
+    const r = formatarPropostaRecompra(cesta([item(100, 3)]), {
+      nomesPorSku: NOMES,
+      crossSell: [{ nome: 'Lixadeira Orbital' }, { nome: 'Máscara PFF2' }],
+    });
+    expect(r.texto).toContain('Que tal experimentar também:');
+    expect(r.texto).toContain('• Lixadeira Orbital');
+    expect(r.texto).toContain('• Máscara PFF2');
+    // cross-sell vem antes do CTA
+    expect(r.texto.indexOf('Lixadeira Orbital')).toBeLessThan(r.texto.indexOf('entrega de amanhã'));
+  });
+  it('sem cross-sell → não imprime a seção', () => {
+    const r = formatarPropostaRecompra(cesta([item(100, 3)]), { nomesPorSku: NOMES });
+    expect(r.texto).not.toContain('experimentar também');
+  });
 });

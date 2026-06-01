@@ -59,6 +59,7 @@ const SalesOrderEdit = lazy(() => import("./pages/SalesOrderEdit"));
 const SalesQuotes = lazy(() => import("./pages/SalesQuotes"));
 const FarmerDashboard = lazy(() => import("./pages/FarmerDashboard"));
 const MeuDia = lazy(() => import("./pages/MeuDia"));
+const Tarefas = lazy(() => import("./pages/Tarefas"));
 const FarmerCalls = lazy(() => import("./pages/FarmerCalls"));
 const FarmerCallsPendingLink = lazy(() => import("./pages/FarmerCallsPendingLink"));
 const FarmerGovernance = lazy(() => import("./pages/FarmerGovernance"));
@@ -223,6 +224,51 @@ const App = () => (
               <Route path="loyalty" element={<Loyalty />} />
               <Route path="gamification" element={<Gamification />} />
               <Route path="training" element={<Training />} />
+              <Route path="sales" element={<SalesOrders />} />
+              <Route path="sales/products" element={<SalesProducts />} />
+              <Route path="sales/new" element={<UnifiedOrder />} />
+              <Route path="sales/print" element={<SalesPrintDashboard />} />
+              <Route path="sales/quotes" element={<SalesQuotes />} />
+              <Route path="sales/edit/:id" element={<SalesOrderEdit />} />
+              <Route path="unified-order" element={<Navigate to="/sales/new" replace />} />
+              <Route path="farmer" element={<FarmerDashboard />} />
+              <Route path="meu-dia" element={<MeuDia />} />
+              <Route path="tarefas" element={<Tarefas />} />
+              <Route path="farmer/calls" element={<FarmerCalls />} />
+              <Route path="farmer/calls/pending-link" element={<FarmerCallsPendingLink />} />
+              <Route path="farmer/governance" element={<FarmerGovernance />} />
+              <Route path="farmer/recommendations" element={<FarmerRecommendations />} />
+              <Route path="farmer/locc" element={<FarmerLOCC />} />
+              <Route path="farmer/bundles" element={<FarmerBundles />} />
+              <Route path="farmer/copilot" element={<FarmerCopilot />} />
+              <Route path="farmer/tactical-plan" element={<FarmerTacticalPlan />} />
+              <Route path="farmer/ipf" element={<FarmerIPFDashboard />} />
+              <Route path="executive/dashboard" element={<ExecutiveDashboard />} />
+              <Route path="design-system" element={<DesignSystem />} />
+              <Route path="design-preview" element={<DesignPreview />} />
+              <Route path="ux-rules" element={<UXRules />} />
+              <Route path="coaching" element={<CoachingSPIN />} />
+              <Route path="settings" element={<SettingsConfig />} />
+              <Route path="docs" element={<TechnicalDocs />} />
+              <Route path="intelligence" element={<IntelligenceDashboard />} />
+              <Route path="governance/users" element={<GovernanceUsers />} />
+              <Route path="governance/permissions" element={<GovernancePermissions />} />
+              <Route path="governance/math" element={<GovernanceMathParams />} />
+              <Route path="governance/audit" element={<GovernanceAudit />} />
+              <Route path="governance/settings" element={<GovernanceSettings />} />
+              <Route path="governance/companies" element={<GovernanceCompanies />} />
+              <Route path="ai-ops" element={<AIops />} />
+              <Route path="nfe-receipt" element={<NfeReceipt />} />
+              <Route path="tintometrico" element={<TintDashboard />} />
+              <Route path="tintometrico/importar" element={<TintImport />} />
+              <Route path="tintometrico/mapeamento" element={<TintMapping />} />
+              <Route path="tintometrico/precos" element={<TintPricing />} />
+              <Route path="tintometrico/formulas" element={<TintFormulas />} />
+              <Route path="tintometrico/corantes" element={<TintCorantes />} />
+              <Route path="tintometrico/integracoes" element={<TintIntegrations />} />
+              <Route path="tintometrico/reconciliacao" element={<TintReconciliation />} />
+              <Route path="tintometrico/sync-runs" element={<TintSyncRuns />} />
+              <Route path="tintometrico/api-contract" element={<TintApiContract />} />
               <Route path="admin/calculadora" element={<AdminCalculadora />} />
 
               {/* ─── Financeiro (gate próprio: permite não-staff com permissão) ─── */}

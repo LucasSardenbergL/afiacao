@@ -13,6 +13,8 @@ export interface PropostaOpts {
   introSecundario?: string;
   cta?: string;
   maxSecundarios?: number; // default 3 — não inflar a mensagem (codex: cesta enxuta)
+  crossSell?: { nome: string }[];  // camada "experimente também" (complementar; codex: pós-piloto)
+  introCrossSell?: string;
 }
 export interface PropostaFormatada {
   texto: string;
@@ -46,6 +48,13 @@ export function formatarPropostaRecompra(cesta: CestaResult, opts: PropostaOpts)
   if (sec.length > 0) {
     linhas.push('', introS, ...sec.map(i => formatarLinhaItem(i, opts.nomesPorSku)));
   }
+
+  const cross = opts.crossSell ?? [];
+  if (cross.length > 0) {
+    const introX = opts.introCrossSell ?? 'Que tal experimentar também:';
+    linhas.push('', introX, ...cross.map(x => `• ${x.nome}`));
+  }
+
   linhas.push('', cta);
 
   return { texto: linhas.join('\n'), itensPrincipais: cesta.principal.length, vazia: false };

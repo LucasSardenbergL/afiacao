@@ -36,6 +36,19 @@ cron D-1 de manhã (após disparo_inicio) →
 
 **Idempotência:** `route_contact_log` (data_rota, customer_user_id, canal) evita disparo duplo no mesmo dia/rota.
 
+## 2b. ⛔ GATE DE ENVIO — revalidação no último segundo (codex, launch-readiness, P1)
+
+> O preview gera a proposta de **dados sincronizados** (que podem estar velhos no momento do disparo). **Antes de CADA envio**, o edge `route-disparo` DEVE revalidar — **se qualquer item falhar, NÃO envia** (melhor perder um envio do que mandar proposta errada / queimar confiança):
+
+1. **opt-in vigente** — `whatsapp_conversations.opt_in_status != 'opt_out'` (re-leitura; opt-out pode ter chegado depois da geração).
+2. **cliente ainda elegível** na rota — `customer_user_id` ainda na `whatsappQueue` da rota de **amanhã** (re-resolver D-1 na hora; rota/feriado/cidade podem ter mudado).
+3. **não comprou desde a geração** — sem pedido novo do cliente entre a geração e o disparo (senão a cesta está obsoleta / vira spam).
+4. **SKU ainda ativo** — re-check `omie_products.ativo` (item pode ter sido descontinuado).
+5. **preço firme disponível** — preço atual do Omie existe pra TODO item da cesta; sem preço → tira o item (ou não envia se esvaziar). **Preço vem do Omie no envio — nunca do preview.**
+6. **status/janela** — janela 24h / `disparo_inicio`–`disparo_corte` ainda válidos; teto do tier Meta não estourado (`selectDisparoBatch` no momento do envio, não na geração).
+
+**Regra de ouro:** a proposta do preview é **rascunho**; a verdade é revalidada no envio. Tudo o que falhar → pula o cliente e loga o motivo em `route_contact_log` (status='pulado_revalidacao', motivo).
+
 ## 3. O que falta CODAR no phone-day (rápido, sobre o que já existe)
 
 - **Edge `route-disparo`** (ou estende `whatsapp-send`): o orquestrador §2. Espelha `selectDisparoBatch` (já testado) inline (Deno).

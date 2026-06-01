@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 135
+-- Total de custom migrations: 141
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -129,6 +129,12 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260528120001', 'v_titulo_baixas', '20260528120001_v_titulo_baixas.sql'),
   ('20260528120002', 'v_capital_giro_prazos', '20260528120002_v_capital_giro_prazos.sql'),
   ('20260528130000', 'fin_sync_heartbeat_tz_fix', '20260528130000_fin_sync_heartbeat_tz_fix.sql'),
+  ('20260528130000', 'tarefas_bloco_a', '20260528130000_tarefas_bloco_a.sql'),
+  ('20260528131000', 'tarefas_bloco_b', '20260528131000_tarefas_bloco_b.sql'),
+  ('20260528132000', 'tarefas_bloco_c', '20260528132000_tarefas_bloco_c.sql'),
+  ('20260528133000', 'tarefas_bloco_d', '20260528133000_tarefas_bloco_d.sql'),
+  ('20260528134000', 'tarefas_bloco_e', '20260528134000_tarefas_bloco_e.sql'),
+  ('20260528135000', 'tarefas_matcher_created_at_floor', '20260528135000_tarefas_matcher_created_at_floor.sql'),
   ('20260528140000', 'data_health_compute_msg_tz', '20260528140000_data_health_compute_msg_tz.sql'),
   ('20260528140000', 'whatsapp_fundacao', '20260528140000_whatsapp_fundacao.sql'),
   ('20260528150000', 'fin_estoque_omie_feed', '20260528150000_fin_estoque_omie_feed.sql'),
@@ -668,6 +674,27 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sayerlack_retry_motor', 'cron_job', 'cron', 'sayerlack-retry-orfaos', ''),
   ('reposicao_custo_cmc_em_transito', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('fin_sync_heartbeat_tz_fix', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('tarefas_bloco_a', 'table', 'public', 'tarefas', ''),
+  ('tarefas_bloco_a', 'index', 'public', 'idx_tarefas_assigned_aberta', 'tarefas'),
+  ('tarefas_bloco_a', 'index', 'public', 'idx_tarefas_created_by', 'tarefas'),
+  ('tarefas_bloco_a', 'index', 'public', 'idx_tarefas_customer_aberta', 'tarefas'),
+  ('tarefas_bloco_a', 'index', 'public', 'idx_tarefas_aberta_auto', 'tarefas'),
+  ('tarefas_bloco_b', 'table', 'public', 'tarefa_satisfacao_candidatos', ''),
+  ('tarefas_bloco_b', 'table', 'public', 'tarefa_eventos', ''),
+  ('tarefas_bloco_b', 'index', 'public', 'idx_candidato_tarefa_pending', 'tarefa_satisfacao_candidatos'),
+  ('tarefas_bloco_b', 'index', 'public', 'idx_evento_tarefa', 'tarefa_eventos'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tarefas_select', 'tarefas'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tarefas_insert', 'tarefas'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tarefas_update', 'tarefas'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tcand_select', 'tarefa_satisfacao_candidatos'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tcand_update', 'tarefa_satisfacao_candidatos'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tevt_select', 'tarefa_eventos'),
+  ('tarefas_bloco_c', 'rls_policy', 'public', 'tevt_insert', 'tarefa_eventos'),
+  ('tarefas_bloco_d', 'function', 'public', 'tarefas_matcher_tick', ''),
+  ('tarefas_bloco_d', 'function', 'public', 'tarefas_escalonamento_tick', ''),
+  ('tarefas_bloco_d', 'cron_job', 'cron', 'tarefas-matcher-15min', ''),
+  ('tarefas_bloco_d', 'cron_job', 'cron', 'tarefas-escalonamento-diario', ''),
+  ('tarefas_matcher_created_at_floor', 'function', 'public', 'tarefas_matcher_tick', ''),
   ('data_health_compute_msg_tz', 'function', 'public', '_data_health_compute', ''),
   ('whatsapp_fundacao', 'table', 'public', 'whatsapp_webhook_events', ''),
   ('whatsapp_fundacao', 'table', 'public', 'whatsapp_conversations', ''),
