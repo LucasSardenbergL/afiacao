@@ -38,6 +38,7 @@ function PropostaRow({ cliente }: { cliente: RouteContactItem }) {
                 <pre className="whitespace-pre-wrap text-sm bg-muted/40 rounded-md p-3 font-sans">{data.proposta.texto}</pre>
                 <div className="flex flex-wrap gap-2 mt-2 text-[11px] text-muted-foreground">
                   <Badge variant="secondary">{data.proposta.itensPrincipais} itens principais</Badge>
+                  {data.crossSellCount > 0 && <Badge variant="outline">+{data.crossSellCount} cross-sell</Badge>}
                   {data.removidosInativos > 0 && <Badge variant="outline">{data.removidosInativos} SKU inativo oculto</Badge>}
                   <span>conta: {data.account}</span>
                   <span>· {data.totalPedidos} pedidos</span>
