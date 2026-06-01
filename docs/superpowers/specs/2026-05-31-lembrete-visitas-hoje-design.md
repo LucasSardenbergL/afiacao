@@ -65,11 +65,12 @@ export function montarVisitasHoje(
 ### 4.3 Card `VisitasHojeCard`
 `src/components/dashboard/VisitasHojeCard.tsx`.
 - Chama `useVisitasHoje()`. **Self-hide:** se `isLoading` → null (ou skeleton mínimo); se `total === 0` → **return null** (não polui o dashboard).
-- Renderiza: título "Visitas de hoje" + badge com `total`; lista os `preview` (nomes); se `total > preview.length`, "+N" ; CTA `<Link to="/admin/route-planner">Ver rota</Link>` (Button). Usa tokens do design system (Card shadcn, sem cores hardcoded).
+- Renderiza: título **"Visitas de hoje"** + subtítulo de desambiguação **"agendadas por você"** + badge com `total`; lista os `preview` (nomes); se `total > preview.length`, "+N restantes" ; CTA `<Link to="/admin/route-planner">Ver rota</Link>` (Button). Usa tokens do design system (Card shadcn, ícone `CalendarCheck` lucide, sem cores hardcoded).
+- **Desambiguação obrigatória:** este card mostra VISITAS AGENDADAS (compromissos firmes de `visitas_agendadas`), distinto do `AgendaTodayList` ("Agenda de hoje (top 10)", logo abaixo no mesmo dashboard) que mostra SUGESTÕES de ligação priorizadas de `farmer_client_scores`. O subtítulo "agendadas por você" deixa isso claro.
 - Evento de analytics opcional `track('visitas_hoje.ver_rota')` no CTA (convenção `<area>.<action>`). **Cortável** se rende pouco — manter simples.
 
 ### 4.4 Inserção
-`src/components/dashboard/FarmerDashboardV2.tsx`: inserir `<VisitasHojeCard />` como **primeiro card** dentro do `<div className="container mx-auto p-4 space-y-4 max-w-5xl">`. (Hunter/Closer = fast-follow, mesma 1 linha.)
+`src/components/dashboard/FarmerDashboardV2.tsx`: inserir `<VisitasHojeCard />` **após `<KpisToday />` e ANTES do card "Agenda de hoje (top 10)"** (o `AgendaTodayList`). Ordem resultante: título "Meu dia" → KpisToday → **Visitas de hoje (compromissos firmes)** → Agenda de hoje (sugestões de ligação). Compromisso firme vem antes da sugestão. Self-hide quando vazio → não desloca o layout quando não há visita. (Hunter/Closer = fast-follow, mesma 1 linha.)
 
 ## 5. Testes
 - **Unit (vitest, TDD)** de `montarVisitasHoje`: total reflete todas as linhas; preview limitado a `limit` (3); nome resolvido pelo Map; fallback 'Cliente' quando ausente; lista vazia → `{total:0, preview:[]}`.
