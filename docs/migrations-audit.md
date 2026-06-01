@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **132** custom migrations totais
-- **567** objetos esperados (criados por estas migrations)
+- **135** custom migrations totais
+- **573** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 153
-  - `function`: 110
+  - `function`: 116
   - `index`: 109
   - `cron_job`: 90
   - `table`: 67
@@ -1242,6 +1242,27 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.uq_reposicao_param_limbo_log_dia` | `reposicao_param_limbo_log` |
 | `function` | `public.reposicao_param_limbo_watchdog` | — |
 | `cron_job` | `cron.reposicao-param-limbo-watchdog` | — |
+
+### `20260531160000_reposicao_excluir_fabricado_04.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260531170000_data_health_check_sayerlack_mapeamento_gap.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260531170000_route_contact_log_escrita.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.registrar_contato_rota` | — |
+| `function` | `public.desfazer_contato_rota` | — |
 
 ## Próximos passos quando algo der `❌`
 
