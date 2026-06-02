@@ -34,3 +34,4 @@ deno.lock
 # Serena MCP local project cache
 .serena/
 .superpowers/
+.context/codex-session-id
