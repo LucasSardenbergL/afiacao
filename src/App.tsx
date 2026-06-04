@@ -169,6 +169,7 @@ const AdminStandardProcessDetail = lazy(() => import("./pages/AdminStandardProce
 const AdminCalculadora = lazy(() => import("./pages/AdminCalculadora"));
 const Telefonia = lazy(() => import("./pages/Telefonia"));
 const WhatsappInbox = lazy(() => import("./pages/WhatsappInbox"));
+const WhatsappSlaSupervisao = lazy(() => import("./pages/WhatsappSlaSupervisao"));
 const RotaListaLigacao = lazy(() => import("./pages/RotaListaLigacao"));
 const RotaPainelLigacoes = lazy(() => import("./pages/RotaPainelLigacoes"));
 const RotaPropostas = lazy(() => import("./pages/RotaPropostas"));
@@ -379,6 +380,7 @@ const App = () => (
                 <Route path="admin/standard-processes/:id" element={<AdminStandardProcessDetail />} />
                 <Route path="telefonia" element={<Telefonia />} />
                 <Route path="whatsapp" element={<WhatsappInbox />} />
+                <Route path="whatsapp/sla" element={<WhatsappSlaSupervisao />} />
                 <Route path="rota/ligacoes" element={<RotaListaLigacao />} />
                 <Route path="rota/ligacoes/painel" element={<RotaPainelLigacoes />} />
                 <Route path="rota/propostas" element={<RotaPropostas />} />

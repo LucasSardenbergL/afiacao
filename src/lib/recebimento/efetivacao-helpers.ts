@@ -137,3 +137,264 @@ export function resumirErros(falhas: { operacao: string; erro: string }[], max =
   if (txt.length <= max) return txt;
   return txt.slice(0, Math.max(0, max - 1)) + '…';
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// PR2 (A1 — coreografia de escrita): consultar-antes → reconciliar | escrever
+// Espelhado VERBATIM no edge. Money-path: o Omie é a fonte da verdade, o ledger é
+// auditoria. Furos do Codex (v2): identidade por chave, bifurcação tríplice
+// (cEtapa=80 sem cRecebido=S é INCONSISTENTE), reconsulta valida quantidade+produto,
+// cruzamento item-a-item app×Omie, gate de conversão pelo fator do Omie.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Item parseado do `ConsultarRecebimento` (`itensRecebimento[]`). */
+export interface ItemOmie {
+  nSequencia: number;
+  nIdProduto: number | null;
+  cCodigoProduto: string | null;
+  nQtdeNFe: number;
+  nQtdeRecebida: number | null;
+  cUnidadeNfe: string | null;
+  cIgnorarItem: boolean;
+  /** Fator de conversão consolidado de todas as fontes (cabec/ajustes/subobjetos, ambas grafias); ≠1 = conversão. */
+  nFatorConversao: number | null;
+}
+
+/** Item conferido no app (`nfe_recebimento_itens`). */
+export interface ItemApp {
+  sequencia: number;
+  produto_omie_id: number | null;
+  quantidade_conferida: number;
+  quantidade_convertida: number | null;
+  status_item: string;
+  unidade_nfe: string | null;
+  unidade_estoque: string | null;
+}
+
+/** Payload de edição do `AlterarRecebimento` (sem produto — o Omie casa por sequência). */
+export interface ItemEditar {
+  itensIde: { nSequencia: number; cAcao: 'EDITAR' };
+  itensAjustes: { nQtdeRecebida: number };
+}
+
+/** O que pretendemos gravar, com o produto — pra a reconsulta confirmar (o `ItemEditar` não carrega produto). */
+export interface ItemPretendido {
+  nSequencia: number;
+  nIdProduto: number | null;
+  nQtdeRecebida: number;
+}
+
+export interface EstadoConsulta {
+  cRecebido: string | null;
+  cEtapa: string | null;
+  nIdReceb: number | null;
+  cChaveNfe: string | null;
+  itensOmie: ItemOmie[];
+}
+
+function asNum(v: unknown): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function asStr(v: unknown): string | null {
+  if (v == null) return null;
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  return null;
+}
+
+/** Primeiro fator ≠1 entre os candidatos; senão 1 se algum=1; senão null (sem informação). */
+function fatorEfetivo(candidatos: unknown[]): number | null {
+  const nums = candidatos.map(asNum).filter((n): n is number => n != null && n > 0);
+  if (nums.length === 0) return null;
+  const naoUm = nums.find((n) => Math.abs(n - 1) > 1e-9);
+  return naoUm != null ? naoUm : 1;
+}
+
+function parseItemOmie(raw: unknown): ItemOmie {
+  const it = asRecord(raw);
+  const itc = asRecord(it.itensCabec);
+  const aj = asRecord(it.itensAjustes);
+  const conv = asRecord(it.itensConversao);
+  const nfe = asRecord(it.itensNfe);
+  return {
+    nSequencia: asNum(itc.nSequencia) ?? 0,
+    nIdProduto: asNum(itc.nIdProduto),
+    cCodigoProduto: asStr(itc.cCodigoProduto),
+    nQtdeNFe: asNum(itc.nQtdeNFe) ?? 0,
+    nQtdeRecebida: asNum(aj.nQtdeRecebida),
+    cUnidadeNfe: asStr(itc.cUnidadeNfe) ?? asStr(aj.cUnidade),
+    cIgnorarItem: asStr(itc.cIgnorarItem) === 'S',
+    nFatorConversao: fatorEfetivo([
+      itc.nFatorConversao, itc.nFatorConv, aj.nFatorConversao, aj.nFatorConv, conv.nFatorConversao, nfe.nFatorConversao,
+    ]),
+  };
+}
+
+/** Parse robusto do `ConsultarRecebimento`. Body não-objeto → defaults vazios (sem fabricar campos). */
+export function extrairEstadoConsulta(body: unknown): EstadoConsulta {
+  const obj = asRecord(body);
+  const cabec = asRecord(obj.cabec);
+  const infoCadastro = asRecord(obj.infoCadastro);
+  const itensRaw = Array.isArray(obj.itensRecebimento) ? obj.itensRecebimento : [];
+  return {
+    cRecebido: asStr(infoCadastro.cRecebido),
+    cEtapa: asStr(cabec.cEtapa),
+    nIdReceb: asNum(cabec.nIdReceb),
+    cChaveNfe: asStr(cabec.cChaveNfe),
+    itensOmie: itensRaw.map(parseItemOmie),
+  };
+}
+
+/**
+ * Identidade da NF (Codex P1.1): a consulta É feita com `{nIdReceb, cChaveNfe}` (a chave do banco
+ * como filtro do Omie). Exige `cabec.nIdReceb` presente e batendo; se o Omie ecoar `cChaveNfe`,
+ * exige bater também (defesa em profundidade — chave ausente já foi filtro na consulta).
+ */
+export function validarIdentidade(
+  estado: EstadoConsulta,
+  esperado: { nIdReceb: number; chaveAcesso: string },
+): { ok: boolean; erro: string | null } {
+  if (estado.nIdReceb == null) return { ok: false, erro: 'consulta do Omie sem nIdReceb' };
+  if (estado.nIdReceb !== esperado.nIdReceb) {
+    return { ok: false, erro: `nIdReceb diverge (Omie ${estado.nIdReceb} ≠ app ${esperado.nIdReceb})` };
+  }
+  if (estado.cChaveNfe != null && estado.cChaveNfe !== esperado.chaveAcesso) {
+    return { ok: false, erro: 'chave de acesso diverge entre Omie e app' };
+  }
+  return { ok: true, erro: null };
+}
+
+/**
+ * Bifurcação tríplice (Codex P1.2): `cRecebido=S` é o ÚNICO sinal pra reconciliar (não escrever);
+ * `cEtapa=80` sem `cRecebido=S` é estado INCONSISTENTE (recebido-parcial/lag) — não escreve, não
+ * reconcilia; senão escreve.
+ */
+export function decidirAcaoRecebimento(estado: EstadoConsulta): 'reconciliar' | 'escrever' | 'inconsistente' {
+  const rec = (estado.cRecebido ?? '').trim().toUpperCase();
+  const etapa = (estado.cEtapa ?? '').trim();
+  if (rec === 'S') return 'reconciliar';
+  if (etapa === '80') return 'inconsistente';
+  return 'escrever';
+}
+
+function normUnidade(u: string | null): string {
+  return (u ?? '').trim().toUpperCase();
+}
+
+/**
+ * Gate de conversão FORTE (Codex P1.5): bloqueia se QUALQUER sinal — fator≠1 no Omie (qualquer fonte),
+ * `quantidade_convertida` preenchida no app, ou unidade da NF ≠ unidade de estoque. Falso-positivo
+ * bloqueia (fail-safe), nunca escreve quantidade/unidade errada.
+ */
+export function detectarConversao(itensOmie: ItemOmie[], itensApp: ItemApp[]): { temConversao: boolean; motivo: string | null } {
+  if (itensOmie.some((i) => i.nFatorConversao != null && Math.abs(i.nFatorConversao - 1) > 1e-9)) {
+    return { temConversao: true, motivo: 'fator de conversão ≠ 1 no Omie' };
+  }
+  if (itensApp.some((i) => i.quantidade_convertida != null)) {
+    return { temConversao: true, motivo: 'quantidade convertida preenchida no app' };
+  }
+  if (itensApp.some((i) => i.unidade_estoque != null && i.unidade_nfe != null && normUnidade(i.unidade_nfe) !== normUnidade(i.unidade_estoque))) {
+    return { temConversao: true, motivo: 'unidade da NF ≠ unidade de estoque' };
+  }
+  return { temConversao: false, motivo: null };
+}
+
+/**
+ * Cruza os itens do app (conferidos) com o mapa do `ConsultarRecebimento` (Codex P1.4): casa por
+ * `nSequencia` E `produto_omie_id === nIdProduto`; omite itens Omie `cIgnorarItem`; exige todos os
+ * itens app conferidos, qtd finita ≥0, produto associado; contagem app == Omie (não-ignorados).
+ */
+export function cruzarItensParaEscrita(
+  itensOmie: ItemOmie[],
+  itensApp: ItemApp[],
+): { ok: boolean; erro: string | null; itensEditar: ItemEditar[]; pretendidos: ItemPretendido[] } {
+  const vazio = { itensEditar: [] as ItemEditar[], pretendidos: [] as ItemPretendido[] };
+  const omieAtivos = itensOmie.filter((i) => !i.cIgnorarItem);
+  const omieBySeq = new Map<number, ItemOmie>(omieAtivos.map((i) => [i.nSequencia, i]));
+  if (itensApp.length !== omieAtivos.length) {
+    return { ok: false, erro: `contagem de itens diverge (app ${itensApp.length} ≠ Omie ${omieAtivos.length})`, ...vazio };
+  }
+  const editar: ItemEditar[] = [];
+  const pretendidos: ItemPretendido[] = [];
+  for (const app of itensApp) {
+    if (app.status_item !== 'conferido') {
+      return { ok: false, erro: `item seq ${app.sequencia} não conferido (status ${app.status_item})`, ...vazio };
+    }
+    if (!Number.isFinite(app.quantidade_conferida) || app.quantidade_conferida < 0) {
+      return { ok: false, erro: `item seq ${app.sequencia} com quantidade conferida inválida`, ...vazio };
+    }
+    if (app.produto_omie_id == null) {
+      return { ok: false, erro: `item seq ${app.sequencia} sem produto associado no app`, ...vazio };
+    }
+    const omie = omieBySeq.get(app.sequencia);
+    if (!omie) return { ok: false, erro: `item seq ${app.sequencia} sem par no Omie`, ...vazio };
+    if (omie.nIdProduto == null || omie.nIdProduto !== app.produto_omie_id) {
+      return { ok: false, erro: `produto diverge na seq ${app.sequencia} (app ${app.produto_omie_id} ≠ Omie ${omie.nIdProduto})`, ...vazio };
+    }
+    editar.push({ itensIde: { nSequencia: app.sequencia, cAcao: 'EDITAR' }, itensAjustes: { nQtdeRecebida: app.quantidade_conferida } });
+    pretendidos.push({ nSequencia: app.sequencia, nIdProduto: app.produto_omie_id, nQtdeRecebida: app.quantidade_conferida });
+  }
+  editar.sort((a, b) => a.itensIde.nSequencia - b.itensIde.nSequencia);
+  pretendidos.sort((a, b) => a.nSequencia - b.nSequencia);
+  return { ok: true, erro: null, itensEditar: editar, pretendidos };
+}
+
+/** Gate puro de pré-condições de escrita (status conferido, sem lote escaneado, sem conversão). */
+export function validarGatesEscrita(input: {
+  statusApp: string;
+  temLoteEscaneado: boolean;
+  temConversao: boolean;
+  motivoConversao: string | null;
+}): { ok: boolean; erro: string | null } {
+  if (input.statusApp !== 'conferido') {
+    return { ok: false, erro: `status "${input.statusApp}" — confira a NF no app antes de efetivar` };
+  }
+  if (input.temLoteEscaneado) {
+    return { ok: false, erro: 'NF com lote/validade escaneado — fluxo de lote não automatizado (follow-up)' };
+  }
+  if (input.temConversao) {
+    return { ok: false, erro: input.motivoConversao ?? 'NF com conversão de unidade — não automatizado (follow-up)' };
+  }
+  return { ok: true, erro: null };
+}
+
+/**
+ * Reconsulta como juiz final do `efetivado` (Codex P1.3): valida `cRecebido=S` + chave + por item
+ * `nSequencia` presente + `nIdProduto` + `nQtdeRecebida === pretendido`. Qualquer divergência →
+ * não confirmado (vira `efetivacao_parcial`).
+ */
+export function confirmarEfetivacao(
+  estadoReconsulta: EstadoConsulta,
+  esperado: { chaveAcesso: string; pretendidos: ItemPretendido[] },
+): { confirmado: boolean; divergencias: string[] } {
+  const div: string[] = [];
+  const rec = (estadoReconsulta.cRecebido ?? '').trim().toUpperCase();
+  if (rec !== 'S') div.push('cRecebido ≠ S no Omie após a conclusão');
+  if (estadoReconsulta.cChaveNfe != null && estadoReconsulta.cChaveNfe !== esperado.chaveAcesso) {
+    div.push('chave de acesso diverge na reconsulta');
+  }
+  const omieBySeq = new Map<number, ItemOmie>(estadoReconsulta.itensOmie.map((i) => [i.nSequencia, i]));
+  for (const p of esperado.pretendidos) {
+    const o = omieBySeq.get(p.nSequencia);
+    if (!o) {
+      div.push(`seq ${p.nSequencia}: ausente na reconsulta`);
+      continue;
+    }
+    if (o.nIdProduto !== p.nIdProduto) {
+      div.push(`seq ${p.nSequencia}: produto ${o.nIdProduto} ≠ ${p.nIdProduto}`);
+    }
+    if (asNum(o.nQtdeRecebida) !== asNum(p.nQtdeRecebida)) {
+      div.push(`seq ${p.nSequencia}: qtd recebida ${o.nQtdeRecebida} ≠ ${p.nQtdeRecebida}`);
+    }
+  }
+  return { confirmado: div.length === 0, divergencias: div };
+}
+
+/** Status base por passo, rebaixado pra parcial se a reconsulta NÃO confirmou o recebimento. */
+export function decidirStatusComConfirmacao(flags: PassoFlags, recebidoConfirmado: boolean): EfetivacaoStatus {
+  const s = decidirStatusEfetivacao(flags);
+  if (s === 'efetivado' && !recebidoConfirmado) return 'efetivacao_parcial';
+  return s;
+}
