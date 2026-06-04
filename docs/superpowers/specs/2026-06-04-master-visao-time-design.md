@@ -33,9 +33,23 @@ Preenche os 3 tiles com números reais, read-only, **escopados na empresa ativa*
 - **`src/components/dashboard/TeamKpiTiles.tsx`**: 3 tiles + microcopy; loading/erro honestos.
 - Substitui o grid placeholder no `MasterDashboard.tsx`.
 
-## Não-objetivos (v2)
+## Não-objetivos (v1)
 
-Ranking de vendedores (top por pedidos lançados `created_by`; visitas `visited_by`; conversão fechado÷com-resultado; sem zerados; bucket "não atribuído" p/ `created_by` NULL — codex). Freshness via `fin_sync_log` (hoje só label "Omie" + erro honesto). Activity company-scoped pra calls/visits. Cross-empresa consolidado.
+Freshness via `fin_sync_log` (hoje só label "Omie" + erro honesto). Activity company-scoped pra calls/visits. Cross-empresa consolidado.
+
+---
+
+# v2 — Ranking de vendedores do mês (ENTREGUE)
+
+Card read-only no Master, abaixo dos tiles de time. **Ordena por receita R$ MTD** (sinal CEO mais claro; sem score composto). Colunas: `nome · pedidos · receita MTD`. Escopo da empresa do switcher.
+
+- **Atribuição = `created_by`** (quem LANÇOU) filtrado a vendedores reais (`commercial_role ∈ farmer/hunter/closer`, mesma def de `useSalespeople`). Label "por quem lançou o pedido". NÃO usa dono-de-carteira (mudaria a pergunta; precisaria `carteira_assignments`).
+- **Bucket "não atribuído"** (created_by NULL ou não-vendedor) no rodapé — conta no total, fora do ranking (auditoria sync/admin). **"N sem pedido no mês"** (vendedores cadastrados sem pedido).
+- **Conversão de visita FORA** (codex P1): `route_visits` sem `account` → cross-empresa enquanto receita é por-empresa; misturar parece preciso mas não é. v3.
+- **Janela MTD** (alinha com o tile receita-mês; evita 3 janelas mentais).
+- **Paginação** (`fetchPedidosMTD`, `.range`+`order('id')`): receita do mês não trunca no cap 1000 do PostgREST. **Corrigiu a mesma latência no `useTeamKpis`** (tiles de receita do v1 truncavam >1000 pedidos/mês).
+
+Helper `montarRanking` (TDD) em `team-kpis.ts`; `fetchPedidosMTD`; hook `useTeamRanking`; `RankingVendedoresCard`. **v3:** conversão por vendedor (rotulada), dono-de-carteira, freshness.
 
 ## Codex
 

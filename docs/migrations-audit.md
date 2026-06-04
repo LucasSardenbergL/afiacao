@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **144** custom migrations totais
-- **603** objetos esperados (criados por estas migrations)
+- **145** custom migrations totais
+- **606** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 160
-  - `function`: 125
-  - `index`: 117
+  - `function`: 126
+  - `index`: 118
   - `cron_job`: 93
   - `table`: 70
-  - `trigger`: 34
+  - `trigger`: 35
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1337,6 +1337,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.recalcular_picking_task` | — |
 | `function` | `public.confirmar_item_picking` | — |
 | `function` | `public.listar_pedidos_a_separar` | — |
+
+### `20260604130000_omie_products_tipo_produto_coluna.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_omie_products_account_tipo_produto` | `omie_products` |
+| `function` | `public.preserve_tipo_produto` | — |
+| `trigger` | `public.trg_preserve_tipo_produto` | `omie_products` |
 
 ## Próximos passos quando algo der `❌`
 
