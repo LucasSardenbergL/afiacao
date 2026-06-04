@@ -1,3 +1,4 @@
+import { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -6,6 +7,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { track } from '@/lib/analytics';
 import { useFilaAcoes } from '@/hooks/useFilaAcoes';
 import type { AcaoSugerida, CategoriaAcao } from '@/lib/fila/types';
+import { spBusinessDate } from '@/lib/time/sp-day';
+import { marcarSeNovoNoDia, chaveDiaExibida, resumoFontes } from '@/lib/fila/telemetria';
+import { AcaoOutcomeMenu } from './AcaoOutcomeMenu';
 
 const CATEGORIA_UI: Record<CategoriaAcao, { label: string; cls: string }> = {
   prazo: { label: 'Prazo', cls: 'text-status-warning' },
@@ -43,6 +47,19 @@ function AcaoCta({ a }: { a: AcaoSugerida }) {
 export function FilaDoDia() {
   const { acoes, isLoading } = useFilaAcoes();
 
+  const [escondidos, setEscondidos] = useState<Set<string>>(() => new Set());
+  const ocultar = (k: string) => setEscondidos((s) => { const n = new Set(s); n.add(k); return n; });
+  const visiveis = useMemo(() => acoes.filter((a) => !escondidos.has(a.dedupeKey)), [acoes, escondidos]);
+
+  // fila.exibida: 1×/dia/sessão (NÃO por render) — mede exposição, não re-render.
+  useEffect(() => {
+    if (isLoading || visiveis.length === 0) return;
+    const dia = spBusinessDate(new Date());
+    if (marcarSeNovoNoDia(chaveDiaExibida(dia), sessionStorage)) {
+      track('fila.exibida', { qtd: visiveis.length, fontes: resumoFontes(visiveis) });
+    }
+  }, [isLoading, visiveis]);
+
   if (isLoading) {
     return (
       <Card className="p-3 space-y-2">
@@ -52,7 +69,7 @@ export function FilaDoDia() {
     );
   }
 
-  if (acoes.length === 0) {
+  if (visiveis.length === 0) {
     return (
       <Card className="p-6 text-2xs text-muted-foreground">
         Nada na fila agora — sua carteira está em dia. 🎯
@@ -65,11 +82,11 @@ export function FilaDoDia() {
       <CardHeader className="pb-2">
         <h2 className="text-base font-medium">O que fazer agora</h2>
         <p className="text-2xs text-muted-foreground">
-          {acoes.length} ações priorizadas — tarefas, rota e oportunidades, do mais urgente ao menos.
+          {visiveis.length} ações priorizadas — tarefas, rota e oportunidades, do mais urgente ao menos.
         </p>
       </CardHeader>
       <div className="divide-y divide-border">
-        {acoes.slice(0, 30).map((a, i) => {
+        {visiveis.slice(0, 30).map((a, i) => {
           const cat = CATEGORIA_UI[a.categoria];
           const href = clienteHref(a);
           return (
@@ -88,7 +105,10 @@ export function FilaDoDia() {
                   )}
                 </div>
               </div>
-              <div className="shrink-0"><AcaoCta a={a} /></div>
+              <div className="shrink-0 flex items-center gap-1">
+                <AcaoCta a={a} />
+                <AcaoOutcomeMenu acao={a} onNaoUtilAgora={ocultar} />
+              </div>
             </div>
           );
         })}

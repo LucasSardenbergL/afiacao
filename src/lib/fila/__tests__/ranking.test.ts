@@ -6,7 +6,9 @@ function acao(p: Partial<AcaoSugerida>): AcaoSugerida {
   return {
     fonte: 'mixgap', entidadeId: 'x', clienteUserId: 'c1', clienteNome: 'C1', telefone: null,
     acao: 'Oferecer', titulo: 't', motivo: 'm', categoria: 'esperado', score: 0.5,
-    valorEsperado: null, tipoValor: 'estimado', cta: 'pedido', dedupeKey: 'c1:pedido', ...p,
+    valorEsperado: null, tipoValor: 'estimado', cta: 'pedido', dedupeKey: 'c1:pedido',
+    payload: { kind: 'mixgap', customerUserId: 'c1', familia: 'stub' },
+    ...p,
   };
 }
 

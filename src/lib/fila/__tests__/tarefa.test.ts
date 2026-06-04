@@ -23,6 +23,7 @@ describe('tarefasParaAcoes', () => {
     expect(a.tipoValor).toBe('sem_valor');
     expect(a.clienteUserId).toBe('c1');
     expect(a.dedupeKey).toBe('c1:tarefa:t1');
+    expect(a.payload).toEqual({ kind: 'tarefa', tarefaId: 't1' });
   });
 
   it('atrasada tem score maior e motivo de atraso', () => {
