@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 146
+-- Total de custom migrations: 151
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -164,8 +164,13 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260601000000', 'tarefas_escalonamento_titulo_mensagem', '20260601000000_tarefas_escalonamento_titulo_mensagem.sql'),
   ('20260602101856', 'reposicao_refresh_descricao_sku_parametros', '20260602101856_reposicao_refresh_descricao_sku_parametros.sql'),
   ('20260604120000', 'picking_bridge', '20260604120000_picking_bridge.sql'),
+  ('20260604120000', 'route_queue_snapshot', '20260604120000_route_queue_snapshot.sql'),
+  ('20260604130000', 'omie_products_tipo_produto_coluna', '20260604130000_omie_products_tipo_produto_coluna.sql'),
   ('20260604130000', 'whatsapp_sla', '20260604130000_whatsapp_sla.sql'),
-  ('20260604140000', 'whatsapp_sla_digest', '20260604140000_whatsapp_sla_digest.sql')
+  ('20260604140000', 'recebimento_efetivacao_ledger', '20260604140000_recebimento_efetivacao_ledger.sql'),
+  ('20260604140000', 'tipo_produto_consumidores', '20260604140000_tipo_produto_consumidores.sql'),
+  ('20260604140000', 'whatsapp_sla_digest', '20260604140000_whatsapp_sla_digest.sql'),
+  ('20260604150000', 'tipo_produto_vigia_cobertura', '20260604150000_tipo_produto_vigia_cobertura.sql')
 )
 SELECT
   e.version,
@@ -787,11 +792,27 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('picking_bridge', 'function', 'public', 'recalcular_picking_task', ''),
   ('picking_bridge', 'function', 'public', 'confirmar_item_picking', ''),
   ('picking_bridge', 'function', 'public', 'listar_pedidos_a_separar', ''),
+  ('route_queue_snapshot', 'table', 'public', 'route_queue_snapshot', ''),
+  ('route_queue_snapshot', 'index', 'public', 'idx_rqs_data', 'route_queue_snapshot'),
+  ('route_queue_snapshot', 'index', 'public', 'idx_rqs_farmer_data', 'route_queue_snapshot'),
+  ('route_queue_snapshot', 'rls_policy', 'public', 'rqs_staff_read', 'route_queue_snapshot'),
+  ('route_queue_snapshot', 'rls_policy', 'public', 'rqs_self_write', 'route_queue_snapshot'),
+  ('omie_products_tipo_produto_coluna', 'index', 'public', 'idx_omie_products_account_tipo_produto', 'omie_products'),
+  ('omie_products_tipo_produto_coluna', 'function', 'public', 'preserve_tipo_produto', ''),
+  ('omie_products_tipo_produto_coluna', 'trigger', 'public', 'trg_preserve_tipo_produto', 'omie_products'),
   ('whatsapp_sla', 'function', 'public', 'wa_is_stop_keyword', ''),
   ('whatsapp_sla', 'function', 'public', 'whatsapp_minutos_uteis', ''),
+  ('whatsapp_sla', 'function', 'public', 'wa_owner_efetivo', ''),
+  ('recebimento_efetivacao_ledger', 'table', 'public', 'nfe_efetivacao_tentativas', ''),
+  ('recebimento_efetivacao_ledger', 'index', 'public', 'idx_nfe_efetivacao_tentativas_receb', 'nfe_efetivacao_tentativas'),
+  ('recebimento_efetivacao_ledger', 'rls_policy', 'public', 'staff_select_nfe_efetivacao_tentativas', 'nfe_efetivacao_tentativas'),
+  ('tipo_produto_consumidores', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('whatsapp_sla_digest', 'table', 'public', 'whatsapp_sla_digest_log', ''),
   ('whatsapp_sla_digest', 'function', 'public', 'whatsapp_sla_digest_tick', ''),
-  ('whatsapp_sla_digest', 'cron_job', 'cron', 'whatsapp-sla-digest-diario', '')
+  ('whatsapp_sla_digest', 'cron_job', 'cron', 'whatsapp-sla-digest-diario', ''),
+  ('tipo_produto_vigia_cobertura', 'function', 'public', '_data_health_compute', ''),
+  ('tipo_produto_vigia_cobertura', 'function', 'public', 'data_health_watchdog', ''),
+  ('tipo_produto_vigia_cobertura', 'function', 'public', 'fin_sync_heartbeat', '')
 )
 SELECT
   e.migration,

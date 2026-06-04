@@ -5,7 +5,7 @@ import { buildExclusionQuery } from './types';
 import type { Product, ProductAccount } from './types';
 
 const PRODUCT_COLUMNS =
-  'id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type, metadata';
+  'id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type, metadata, tipo_produto';
 
 interface UseProductCatalogOptions {
   /** Só carrega o catálogo quando true (typically `isStaff`). */

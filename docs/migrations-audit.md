@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **146** custom migrations totais
-- **608** objetos esperados (criados por estas migrations)
+- **151** custom migrations totais
+- **624** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 160
-  - `function`: 128
-  - `index`: 117
+  - `rls_policy`: 163
+  - `function`: 134
+  - `index`: 121
   - `cron_job`: 94
-  - `table`: 71
-  - `trigger`: 34
+  - `table`: 73
+  - `trigger`: 35
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1338,12 +1338,45 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.confirmar_item_picking` | — |
 | `function` | `public.listar_pedidos_a_separar` | — |
 
+### `20260604120000_route_queue_snapshot.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.route_queue_snapshot` | — |
+| `index` | `public.idx_rqs_data` | `route_queue_snapshot` |
+| `index` | `public.idx_rqs_farmer_data` | `route_queue_snapshot` |
+| `rls_policy` | `public.rqs_staff_read` | `route_queue_snapshot` |
+| `rls_policy` | `public.rqs_self_write` | `route_queue_snapshot` |
+
+### `20260604130000_omie_products_tipo_produto_coluna.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_omie_products_account_tipo_produto` | `omie_products` |
+| `function` | `public.preserve_tipo_produto` | — |
+| `trigger` | `public.trg_preserve_tipo_produto` | `omie_products` |
+
 ### `20260604130000_whatsapp_sla.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.wa_is_stop_keyword` | — |
 | `function` | `public.whatsapp_minutos_uteis` | — |
+| `function` | `public.wa_owner_efetivo` | — |
+
+### `20260604140000_recebimento_efetivacao_ledger.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.nfe_efetivacao_tentativas` | — |
+| `index` | `public.idx_nfe_efetivacao_tentativas_receb` | `nfe_efetivacao_tentativas` |
+| `rls_policy` | `public.staff_select_nfe_efetivacao_tentativas` | `nfe_efetivacao_tentativas` |
+
+### `20260604140000_tipo_produto_consumidores.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
 
 ### `20260604140000_whatsapp_sla_digest.sql`
 
@@ -1352,6 +1385,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.whatsapp_sla_digest_log` | — |
 | `function` | `public.whatsapp_sla_digest_tick` | — |
 | `cron_job` | `cron.whatsapp-sla-digest-diario` | — |
+
+### `20260604150000_tipo_produto_vigia_cobertura.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
 
 ## Próximos passos quando algo der `❌`
 
