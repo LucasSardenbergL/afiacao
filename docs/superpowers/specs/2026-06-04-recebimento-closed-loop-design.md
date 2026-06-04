@@ -1,141 +1,119 @@
 # Recebimento closed-loop honesto (Oben) — Design
 
-> Data: 2026-06-04 · Frente do programa autônomo (pós Picking #567). Metodologia validada em 2 rodadas de Codex (gpt-5.5, xhigh). Mesmo padrão de "ciclo que mente sobre conclusão" do picking.
+> Data: 2026-06-04 · Frente do programa autônomo (pós Picking #567). Metodologia validada em 3 rodadas de Codex (gpt-5.5, xhigh): honestidade pura → veredito → **Fase A (completar a coreografia)**. O founder ampliou o escopo: não basta "parar de mentir" — a efetivação precisa **levar a NF até "Concluído" no Omie e movimentar o estoque**.
 
 ## 1. Problema
 
-O módulo de Recebimento de NF-e dá entrada de mercadoria comprada (importa NF-e do Omie → confere no celular → **efetiva**, que escreve no Omie pra dar entrada de estoque). A efetivação (edge `omie-nfe-recebimento`) **mente sobre conclusão**:
+A efetivação da conferência mobile (edge `omie-nfe-recebimento`) **mente sobre conclusão E está funcionalmente incompleta**:
 
-- **`nfe_recebimentos.status='efetivado'` é INCONDICIONAL** (`index.ts:390-394`) — marca efetivado mesmo se:
-  - `AlterarRecebimento` (Passo A, a entrada no Omie) **falhou** → `index.ts:309` só `console.error` + *"Continue anyway"*.
-  - `IncluirAjusteEstoque` (Passo B, ajuste de estoque do item convertido tipo Sayerlack) **falhou** → `index.ts:345` só `console.error`.
-  → **entrada de estoque fantasma** (status diz efetivado, Omie não recebeu).
-- O edge sempre devolve **HTTP 200 + `{success:true}`** → o front (`Recebimento.tsx:163`, `RecebimentoConferencia.tsx:389`) **sempre mostra toast de sucesso**.
-- **`AlterarRecebimento` sozinho pode nem efetivar** — o edge irmão `process-nfe` (aba "Manual", fail-closed correto) mostra o fluxo completo do Omie: `AlterarRecebimento → AlterarEtapaRecebimento → ConcluirRecebimento`. O edge ativo **só faz `AlterarRecebimento`**.
-- **KPI "Efetivadas Hoje"** (`AdminEstoqueRecebimento.tsx:92`) filtra por `data_emissao=today` (data de emissão da nota pelo fornecedor), não `efetivado_at`.
-- **Furo #1 (Codex):** o edge classifica sucesso por `res.ok` (HTTP). Mas o Omie retorna **HTTP 200 com `faultstring`** em erro de negócio (padrão confirmado no repo: `omie-sync:127` faz `if (result.faultstring) throw`). **Sucesso HTTP ≠ sucesso Omie.**
+- `nfe_recebimentos.status='efetivado'` é **incondicional** (`index.ts:390-394`) mesmo se `AlterarRecebimento` falha (linha 309 só loga *"Continue anyway"*) ou o ajuste Sayerlack falha (345 só loga). O edge devolve **HTTP 200 + `success:true`** → front sempre dá toast de sucesso.
+- **Não envia a quantidade recebida** ao Omie — o payload é `det:[{nItem,nCodProd,lote_validade}]`, **sem `nQtdeRecebida`**. Não confronta/atualiza a quantidade no Omie.
+- **Não conclui** — não chama `AlterarEtapaRecebimento` nem `ConcluirRecebimento` → a NF **não vai pra "Recebido"/"Concluído"** sozinha.
+- **Furo central (Codex):** classifica sucesso por `res.ok` (HTTP). Mas o Omie retorna **HTTP 200 com `faultstring`** em erro de negócio (padrão do repo: `omie-sync:127`, `process-nfe:115` fazem `if (data.faultstring) throw`). **Sucesso HTTP ≠ sucesso Omie.**
 
-## 2. Escopo — v1 = honestidade operacional, SEM mudar a coreografia Omie
+**Mapa comprovado — `process-nfe`** (aba "Manual", vivo via `/nfe-receipt` + aba do admin, fail-closed correto): faz a coreografia que funciona — `ListarRecebimentos → ConsultarRecebimento → AlterarRecebimento`(com `nQtdeRecebida`+departamento) `→ AlterarEtapaRecebimento`(`cEtapa:"40"`) `→ ConcluirRecebimento`. Não envia lote/validade nem trata CT-e/data de registro. **Nenhum dos 2 edges é completo.**
 
-A v1 **mantém exatamente as chamadas Omie que o edge já faz** (não adiciona `ConcluirRecebimento`). Só passa a **respeitar o resultado real** delas. Decisão eu+Codex: tornar honesto é baixo risco; completar o fluxo (Hipótese B) é money-path do Omie sem poder testar → v2, só com evidência de produção.
+## 2. Escopo — Fase A (completar a coreografia COM honestidade)
 
-**Entregas v1:**
-1. **Critério de sucesso real por operação** — parsear o corpo do Omie (`faultstring`/`codigo_status`), não só HTTP.
-2. **Fail-closed:** se `AlterarRecebimento` falha → **não** roda ajustes/CT-e, marca `falha_efetivacao`, retorna erro honesto.
-3. **Ledger de efeitos externos** (resolve o bloqueio metodológico) → retry sem duplicar estoque.
-4. **2 status de falha:** `falha_efetivacao` (Passo A falhou, nada confirmado) · `efetivacao_parcial` (A ok, algum ajuste B falhou).
-5. **Retry seguro** (botão "Reprocessar"): re-chama só o que **não** teve sucesso registrado (pula `AlterarRecebimento` se já ok, pula ajuste de item já ok).
-6. **Toasts honestos** (sucesso só em sucesso real).
-7. **KPIs honestos:** "Efetivadas Hoje" por `efetivado_at::date`; card de falhas; "Recebidos hoje" do cockpit renomeado pra não confundir conferência com entrada efetiva.
+A efetivação da conferência mobile passa a fazer o **fluxo completo** do Omie:
+1. **Data de registro** = dia do recebimento no app.
+2. **Atualizar a quantidade recebida** de cada item no Omie.
+3. **Lote/validade** (já capturado via OCR).
+4. Mover kanban **"Recebido" → "Concluído"**.
+5. **CT-e** atrelado: concluir e mover pra "Concluído".
+6. **Honestidade:** critério de sucesso real (`faultstring`), fail-closed, ledger por passo, status de falha, toasts honestos, KPIs por `efetivado_at`.
 
-**NÃO-objetivos (v2, cortados pelo Codex):**
-- Adicionar `AlterarEtapaRecebimento` + `ConcluirRecebimento` (completar a coreografia) — só após evidência de produção (Hipótese B).
-- Reconciliação automática via `ConsultarRecebimento(nIdReceb)`.
-- Retomada granular item-a-item com UX detalhada.
-- Unificar/aposentar o `process-nfe` (caminho paralelo — fica intacto; registrado como divergência técnica).
+**Fase B (cortada, sub-frente futura):** itens NOVOS — criar produto no Omie + associar de-para ao item da nota (senão o estoque não movimenta). Mais complexo (criação de cadastro), validado à parte.
 
-## 3. A tensão A/B (decisão registrada)
+## 3. RESTRIÇÃO CRÍTICA → entrega em 2 sub-fases
 
-Como o edge ativo só faz `AlterarRecebimento`, há 2 hipóteses sobre a produção hoje (founder confirma via logs/Omie):
-- **Hipótese A:** `AlterarRecebimento` conclui/efetiva (ou o estoque entra OK) → o bug é só "não respeita falha" → a v1 resolve.
-- **Hipótese B:** `AlterarRecebimento` NÃO conclui → o app marca efetivado mas o Omie nunca dá entrada (mesmo no caminho feliz) → a v1 deixa o app **honesto sobre o fluxo atual**, mas a completude vira v2.
+**Eu não tenho acesso ao Omie** (nem teste nem prod). Não posso validar payloads, nem o nome do campo "data de registro", nem o shape de lote no `AlterarRecebimento`, nem o que é "2353". A única validação é o founder no Omie real. **Codex: nunca pôr campo "provável" em payload de estoque real.** Daí o de-risk **diagnóstico-first** e a entrega faseada:
 
-A v1 é **segura por construção em ambas**: ela só marca `falha_efetivacao` quando há **erro inequívoco** (HTTP≥400 ou `faultstring`/`codigo_status≠0`). Se hoje o caminho feliz retorna 200 sem `faultstring`, a v1 **não muda** o caminho feliz — só captura as falhas reais. Não inventa falha.
+### Sub-fase A0 — Fundação + Diagnóstico (PR1, 100% aditivo, ZERO risco de estoque)
+- **Migration do ledger** (idempotente): flags por passo + tabela append-only de tentativas + status novos.
+- **Helper puro TDD** (`classificarRespostaOmie`, `decidirStatusEfetivacao`, `selecionarPassosPendentes`) — espelhado no edge.
+- **Modo diagnóstico read-only** no edge: `{diagnostico:true, nfe_recebimento_id}` → chama só `ConsultarRecebimento(nIdReceb)` (+ `ListarRecebimentos` se faltar `nIdReceb`) e retorna o **JSON cru** (etapa atual, itens, datas, lote, CT-e). **Não escreve nada.**
+- **Frontend:** botão "Diagnosticar" (staff) que mostra/baixa o JSON; status/KPIs honestos preparados.
+- **O fluxo de efetivação atual fica INTACTO** (não regride). PR1 destrava o founder pra me colar o JSON real.
 
-**Perguntas factuais ao founder (gatilho de v2):**
-1. Ao "efetivar" uma NF normal (sem Sayerlack) hoje, o estoque sobe no Omie? Recebimento fica "concluído" ou em etapa intermediária?
-2. Nos logs do edge, o `operations[0]` (`AlterarRecebimento`) costuma vir `error:true` ou `false`?
-3. Há NF marcada "efetivado" no app mas ainda aberta/sem estoque no Omie?
+### Sub-fase A1 — Coreografia completa (PR2, validado pelo founder)
+- O edge ativo absorve a coreografia comprovada do `process-nfe` + lote/validade + data/CT-e **com os campos confirmados pelo diagnóstico**.
+- Fail-closed por passo + ledger + **lock atômico** + retry que retoma só o passo pendente.
+- Founder testa **1 NF de baixo valor** → ajusto.
+- **Guard:** se um campo obrigatório da Fase A não estiver com mapeamento confirmado, o edge retorna erro operacional (`falha_efetivacao` + motivo "campo X não mapeado") — **não efetiva às cegas** (default desligado, fail-closed; Codex Q4).
 
-## 4. Modelo de estado e ledger
+## 4. Modelo de estado e ledger (por passo)
 
-`nfe_recebimentos.status` é `character varying(20)` → os 2 nomes cabem (`falha_efetivacao`=16, `efetivacao_parcial`=18).
+`nfe_recebimentos.status` é `varchar(20)` → cabem `falha_efetivacao`(16), `efetivacao_parcial`(18). Reuso o `status` (já tem `efetivado`).
 
-**Reuso o `status` existente** pro estado de efetivação (`efetivado` já é um status hoje; adiciono `falha_efetivacao`/`efetivacao_parcial`). Ledger em colunas + tabela append-only:
-
-**`nfe_recebimentos`** (estado de tela + idempotência do Passo A):
-- `efetivacao_erro text` — resumo do último erro (pra tela).
-- `efetivacao_tentativas integer DEFAULT 0` — contador.
-- `alterar_recebimento_ok boolean DEFAULT false` — idempotência do `AlterarRecebimento` (não re-chamar se já passou).
-- `omie_alterar_at timestamptz` — quando o Passo A teve sucesso.
+**`nfe_recebimentos`** — flags de idempotência por passo + estado de tela:
+- `alterar_recebimento_ok boolean DEFAULT false`, `alterar_etapa_ok boolean DEFAULT false`, `concluir_recebimento_ok boolean DEFAULT false`, `cte_ok boolean DEFAULT false`
+- `efetivacao_erro text`, `efetivacao_tentativas integer DEFAULT 0`, `efetivacao_lock_at timestamptz` (claim atômico)
 - (`efetivado_at` já existe — só seta quando vira `efetivado`.)
 
-**`nfe_recebimento_itens`** (idempotência do `IncluirAjusteEstoque`, que é NÃO-idempotente):
-- `ajuste_estoque_ok boolean DEFAULT false` — item já ajustado (retry pula).
-- `ajuste_estoque_omie_id text` — id do lançamento de ajuste no Omie.
-- `ajuste_estoque_at timestamptz`.
+**`nfe_recebimento_itens`** — idempotência do `IncluirAjusteEstoque` (NÃO-idempotente):
+- `ajuste_estoque_ok boolean DEFAULT false`, `ajuste_estoque_omie_id text`, `ajuste_estoque_at timestamptz`
 
-**`nfe_efetivacao_tentativas`** (append-only, auditoria por operação — o "ledger de efeitos externos"):
-- `id uuid pk`, `nfe_recebimento_id uuid` (FK), `tentativa int`, `operacao text` (`alterar_recebimento`/`ajuste_estoque`/`importar_cte`), `item_id uuid null`, `sucesso boolean`, `erro text`, `omie_status text`, `created_at timestamptz`.
-- RLS: SELECT staff (employee/master); escrita só `service_role` (o edge usa service_role → bypassa RLS). Index por `nfe_recebimento_id`.
+**`nfe_efetivacao_tentativas`** (append-only, auditoria por operação):
+- `id uuid pk`, `nfe_recebimento_id uuid` (FK), `tentativa int`, `operacao text` (`diagnostico`/`alterar_recebimento`/`alterar_etapa`/`concluir_recebimento`/`ajuste_estoque`/`importar_cte`), `item_id uuid null`, `sucesso boolean`, `erro text`, `omie_status text`, `created_at timestamptz`. RLS: SELECT staff; escrita só `service_role`. Index por `nfe_recebimento_id`.
+
+**Lock atômico (Codex Q5):** claim via `UPDATE nfe_recebimentos SET efetivacao_lock_at=now() WHERE id=$1 AND (efetivacao_lock_at IS NULL OR efetivacao_lock_at < now()-interval '2 min') RETURNING id`. Se 0 linhas → outro request está processando → 409. Libera no fim (lock_at=null). Padrão do claim do Sayerlack.
 
 ## 5. Helper puro (oráculo TDD) — `src/lib/recebimento/efetivacao-helpers.ts`
 
-Espelhado **verbatim** no edge Deno (Edge não importa de `src/`). Funções puras, testadas com vitest:
+Espelhado **verbatim** no edge Deno. Funções puras (vitest):
 
-1. **`classificarRespostaOmie(r: { httpOk: boolean; status?: number; body: unknown }): { sucesso: boolean; erro: string | null; omieStatus: string | null }`**
-   - `!httpOk` → falha (`erro = "HTTP {status}"` + faultstring se houver).
-   - `body.faultstring` (string não-vazia) → falha (`erro = faultstring`).
-   - `body.codigo_status`/`cCodStatus` presente e ≠ `"0"`/`0` → falha (`erro = descricao_status`/`cDescStatus`).
-   - senão → sucesso. Robusto a `body` null/array/string/number.
+1. **`classificarRespostaOmie(r: { httpOk: boolean; status?: number; body: unknown }): { sucesso: boolean; erro: string | null; omieStatus: string | null }`** — `!httpOk` → falha; `body.faultstring` (string ≠ vazio) → falha; `codigo_status`/`cCodStatus` ≠ `"0"`/`0` → falha; senão sucesso. Robusto a body null/array/string/number.
+2. **`erroBenigno(faultstring, operacao): boolean`** — reconhece mensagens explícitas ("já concluíd", "já está na etapa", "já efetivad") por operação → trata como sucesso benigno (Codex Q2/Q3). **Allowlist conservadora** (só strings conhecidas; desconhecido = falha real).
+3. **`decidirStatusEfetivacao(flags: { alterarOk; etapaOk; concluirOk; cteOk; ajustesTentados; ajustesOk }): 'efetivado' | 'falha_efetivacao' | 'efetivacao_parcial'`** — `efetivado` só com todos os passos OBRIGATÓRIOS ok (alterar+etapa+concluir + ajustes todos ok; CT-e e Sayerlack conforme aplicável); nenhum efeito crítico → `falha_efetivacao`; algum efeito ok + outro pendente → `efetivacao_parcial`.
+4. **`selecionarPassosPendentes(flags): string[]`** — lista de passos a executar no retry (pula os `ok`). Ajustes: itens com `quantidade_convertida>0 && !ajuste_estoque_ok`.
+5. **`podeReprocessar(status): boolean`** — `falha_efetivacao`/`efetivacao_parcial`.
+6. **`resumirErros(falhas): string`** — concatena, trunca ~500 chars.
 
-2. **`decidirStatusEfetivacao(p: { alterarOk: boolean; ajustesTentados: number; ajustesOk: number }): { status: 'efetivado' | 'falha_efetivacao' | 'efetivacao_parcial'; }`**
-   - `!alterarOk` → `falha_efetivacao`.
-   - `alterarOk && ajustesTentados === ajustesOk` (inclui 0 ajustes) → `efetivado`.
-   - `alterarOk && ajustesOk < ajustesTentados` → `efetivacao_parcial`.
-   - CT-e falho **não** degrada o status (frete é fiscal, não estoque; tem `cte_associados.status` próprio); só registra no ledger.
+## 6. Edge `omie-nfe-recebimento` (A0: diagnóstico · A1: coreografia)
 
-3. **`selecionarAjustesPendentes(itens: { id: string; quantidade_convertida: number | null; produto_omie_id: number | null; ajuste_estoque_ok: boolean }[]): string[]`** — ids dos itens com `quantidade_convertida>0 && produto_omie_id && !ajuste_estoque_ok` (idempotência: pula já-feitos).
-
-4. **`podeReprocessar(status: string): boolean`** — `true` só pra `falha_efetivacao`/`efetivacao_parcial`.
-
-5. **`resumirErros(falhas: { operacao: string; erro: string }[]): string`** — concatena, trunca pra caber em `efetivacao_erro` (limite ~500 chars).
-
-## 6. Edge `omie-nfe-recebimento` reescrito (fail-closed)
-
-Após fetch (nfe/itens/lotes/conversões), incrementa `efetivacao_tentativas`. Espelha o helper verbatim.
-
-1. **Passo A — `AlterarRecebimento`** (só se `!alterar_recebimento_ok`): chama, `classificarRespostaOmie`. Registra tentativa.
-   - **Falha** → persiste `status='falha_efetivacao'` + `efetivacao_erro` + tentativas; retorna `{success:false, status, erro}` (HTTP 200). **Aborta B e C** (nada mais roda — sem entrada parcial).
-   - **Sucesso** → `alterar_recebimento_ok=true`, `omie_alterar_at=now`.
-2. **Passo B — ajustes** (`selecionarAjustesPendentes`): pra cada item, `IncluirAjusteEstoque`, classifica, registra tentativa. Sucesso → marca item `ajuste_estoque_ok=true` + `omie_id` + `at`. Falha → acumula erro (não aborta os outros — tenta todos).
-3. **Passo C — CT-e**: como hoje (por-item, marca `cte_associados.status='efetivado'` só em sucesso). Registra tentativa. Falha não degrada o status da NF.
-4. **Status final** — `decidirStatusEfetivacao`. `efetivado` → `status='efetivado'` + `efetivado_at=now` + `efetivacao_erro=null`. `efetivacao_parcial` → `status` + `efetivacao_erro`. Persiste.
-5. Retorna `{success: status==='efetivado', status, erro, ctes_processed, operations}`.
-
-**Idempotência do retry:** tentativa 2 pula `AlterarRecebimento` (já ok) e os ajustes de itens já-ok → re-faz só o que faltou → vira `efetivado` sem duplicar estoque.
-
-**Postura conservadora (Codex Q3):** `IncluirAjusteEstoque` e `AlterarRecebimento` tratados como NÃO-idempotentes (só re-chamam se nenhum sucesso registrado). Se o founder confirmar que `AlterarRecebimento` é overwrite-seguro, relaxa depois.
+- **A0 — `{diagnostico:true, nfe_recebimento_id}`:** valida staff + lê `nfe`+`omie_id_receb`; chama `ConsultarRecebimento({nIdReceb})` (read-only); registra tentativa `operacao='diagnostico'`; retorna `{ok:true, diagnostico: <JSON cru>}`. Sem escrita.
+- **A1 — efetivação:** claim atômico (lock). Incrementa tentativas. Ordem fail-closed, cada passo só se `!flag_ok`, `classificarRespostaOmie` + `erroBenigno`, registra tentativa, persiste flag ao suceder **antes do próximo passo** (Codex furo #3):
+  1. `AlterarRecebimento` (qtd + lote/data confirmados) → `alterar_recebimento_ok`.
+  2. ajustes Sayerlack pendentes → `ajuste_estoque_ok` por item.
+  3. `AlterarEtapaRecebimento` (cEtapa 40) → `alterar_etapa_ok` (tolera benigno "já na etapa").
+  4. `ConcluirRecebimento` → `concluir_recebimento_ok` (tolera benigno "já concluído").
+  5. CT-e → `cte_ok`.
+  - Qualquer passo obrigatório falha → para, `decidirStatusEfetivacao`, persiste status+erro, libera lock, retorna `{success:false,status,erro}`.
+  - Todos ok → `status='efetivado'` + `efetivado_at`, libera lock, `{success:true}`.
+  - **Guard de campo não-mapeado:** se `data_registro`/lote/`2353` exigidos e não confirmados → não chama escrita, retorna `falha_efetivacao` + motivo.
 
 ## 7. Frontend honesto
 
-- **`Recebimento.tsx`:** tipo `NfeStatus` + `STATUS_CONFIG` ganham `falha_efetivacao` (status-error) e `efetivacao_parcial` (status-warning). `handleEfetivar` inspeciona `res.data.status`: toast de sucesso **só** se `efetivado`; senão `toast.error`/`toast.warning` com `res.data.erro`. Botão "Reprocessar" nos cards `falha_efetivacao`/`efetivacao_parcial` (re-invoca o edge). Filtros das abas incluem os novos status no histórico/pendências.
-- **`RecebimentoConferencia.tsx`:** `handleFinalize` inspeciona o resultado real (igual). Em falha: toast honesto + **não** declara efetivado (a NF aparece como falha na lista pra reprocessar).
-- **KPIs `AdminEstoqueRecebimento.tsx`:** "Efetivadas Hoje" → `efetivado_at >= início do dia` (gte/lt, não `data_emissao`). Novo card/contagem **"Falhas de efetivação"** (`status in (falha_efetivacao, efetivacao_parcial)`).
-- **`useEstoqueZone.ts` (cockpit):** "Recebidos hoje" (conta `conferido`) → renomear label **"Conferidas hoje"** (a métrica é trabalho do conferente, não entrada efetiva). Adicionar `priority`/topItem quando houver NF em `falha_efetivacao` (alerta o gestor: entrada de estoque travada).
+- **`Recebimento.tsx`:** `NfeStatus` + `STATUS_CONFIG` ganham `falha_efetivacao` (error) / `efetivacao_parcial` (warning). `handleEfetivar` inspeciona `res.data.status` (toast de sucesso só se `efetivado`; senão error/warning com `res.data.erro`). Botão **"Reprocessar"** (falha/parcial) + **"Diagnosticar"** (staff, qualquer status). Abas incluem os novos status.
+- **`RecebimentoConferencia.tsx`:** `handleFinalize` inspeciona o resultado real (sem declarar efetivado em falha).
+- **KPIs `AdminEstoqueRecebimento.tsx`:** "Efetivadas Hoje" → `efetivado_at >= início do dia`; novo contador **"Falhas de efetivação"** (`status in (falha_efetivacao, efetivacao_parcial)`).
+- **`useEstoqueZone.ts`:** "Recebidos hoje" (conta `conferido`) → label **"Conferidas hoje"**; `priority`/topItem quando há NF em `falha_efetivacao`.
 
-## 8. process-nfe (divergência técnica registrada)
+## 8. Testes (helper puro, vitest)
 
-`process-nfe` está **vivo** (rota `/nfe-receipt` + aba "Manual" do admin via `NfeReceipt`) e é fail-closed correto (cada passo dá `return` no erro; faz o fluxo completo). **Intacto na v1** — não é o caminho do bug. Risco de longo prazo: 2 fluxos de efetivação com contratos diferentes. Consolidar/aposentar = decisão pós-v1 (não misturar com a correção de honestidade).
+- `classificarRespostaOmie`: 200 sem fault → sucesso; `faultstring` → falha; HTTP 500 → falha; `codigo_status:"0"` → sucesso; `"101"` → falha; null/array/string robusto.
+- `erroBenigno`: "já concluído"/"já está na etapa" conhecidos → benigno; string desconhecida → falha real.
+- `decidirStatusEfetivacao`: matriz de flags (todos ok → efetivado; alterar ok + concluir falha → parcial; nada → falha).
+- `selecionarPassosPendentes`: pula `ok`; ajustes só itens com conversão pendente.
+- `podeReprocessar`, `resumirErros`.
 
-## 9. Testes (helper puro, vitest)
+## 9. Validação + loop com o founder
 
-- `classificarRespostaOmie`: 200 sem fault → sucesso; `faultstring` → falha; HTTP 500 → falha; `codigo_status:"0"` → sucesso; `codigo_status:"101"` → falha; body null/array/string → robusto (sucesso só com sinal claro de ok; sem fabricar).
-- `decidirStatusEfetivacao`: alterar falha → `falha_efetivacao`; alterar ok + 0 ajustes → `efetivado`; alterar ok + 2/2 ajustes → `efetivado`; alterar ok + 1/2 ajustes → `efetivacao_parcial`.
-- `selecionarAjustesPendentes`: pula `ajuste_estoque_ok`; inclui `quantidade_convertida>0 && produto_omie_id`; ignora sem conversão.
-- `podeReprocessar`: true pra falha/parcial; false pra efetivado/pendente/conferido.
-- `resumirErros`: trunca/concatena.
+- Helper puro: vitest. Edge: `deno check` (erro-set inalterado). CI `validate`.
+- **Sem teste local contra o Omie.** PR1 (diagnóstico/infra) entregue com confiança. Entre PR1 e PR2: founder **roda o diagnóstico numa NF real** + responde as factuais → eu confirmo os campos. PR2: founder testa **1 NF de baixo valor** → ajusto. Ledger + lock garantem que re-testar **não duplica** estoque/conclusão.
 
-## 10. Validação
+## 10. Perguntas factuais ao founder (entre PR1 e PR2)
+1. A aba "Manual" (`process-nfe`) leva a NF até "Concluído" e movimenta estoque hoje? (valida o mapa)
+2. "2353" — que campo/valor é e onde vai?
+3. Data de registro — automática na conclusão (= hoje) ou manual? + o JSON do diagnóstico (campos reais).
 
-- Helper puro: vitest (todos verdes).
-- Edge: `deno check` (erro-set inalterado vs main, padrão do repo).
-- CI `validate`: typecheck (strict) + test + lint + build.
-- ⚠️ **Sem teste contra o Omie** (sem acesso). O fail-closed se baseia no sinal honesto que o Omie devolve. Founder monitora o 1º dia pós-deploy (se muitas NFs viram `falha_efetivacao` → Hipótese B se revelando → dispara a v2).
+## 11. Entregáveis / Lovable
+- **PR1:** migration `20260604140000_recebimento_efetivacao_ledger.sql` (SQL Editor) + deploy do edge (diagnóstico) via Lovable + Publish.
+- **PR2:** deploy do edge (coreografia) via Lovable + Publish + teste do founder.
+- Registrar no CLAUDE.md + nota de migration manual no PR.
 
-## 11. Entregáveis / operações Lovable
-
-- **Migration** `20260604140000_recebimento_efetivacao_ledger.sql` (idempotente: `ADD COLUMN IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`, RLS) → **colar no SQL Editor** (manual).
-- **Deploy do edge** `omie-nfe-recebimento` **verbatim da main** via chat do Lovable (após merge).
-- **Publish** do frontend.
-- Registrar no CLAUDE.md (§6 ou §10) + nota de migration manual no PR.
+## 12. Riscos (Codex)
+1. **Double-count de estoque por retry/paralelismo** → lock atômico + flags por passo (obrigatório).
+2. **Payload errado em campo de estoque real** → data/lote/2353 nunca inferidos; diagnóstico-first + guard.
+3. **Beco de parcial sem retomada** → flag persistida antes do próximo passo + `podeReprocessar` + (v2) consulta de estado antes do retry.
