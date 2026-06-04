@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 141
+-- Total de custom migrations: 143
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -160,7 +160,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260531150000', 'reposicao_param_limbo_watchdog', '20260531150000_reposicao_param_limbo_watchdog.sql'),
   ('20260531160000', 'reposicao_excluir_fabricado_04', '20260531160000_reposicao_excluir_fabricado_04.sql'),
   ('20260531170000', 'data_health_check_sayerlack_mapeamento_gap', '20260531170000_data_health_check_sayerlack_mapeamento_gap.sql'),
-  ('20260531170000', 'route_contact_log_escrita', '20260531170000_route_contact_log_escrita.sql')
+  ('20260531170000', 'route_contact_log_escrita', '20260531170000_route_contact_log_escrita.sql'),
+  ('20260601000000', 'tarefas_escalonamento_titulo_mensagem', '20260601000000_tarefas_escalonamento_titulo_mensagem.sql'),
+  ('20260604120000', 'picking_bridge', '20260604120000_picking_bridge.sql')
 )
 SELECT
   e.version,
@@ -772,7 +774,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('route_contact_log_escrita', 'function', 'public', 'registrar_contato_rota', ''),
-  ('route_contact_log_escrita', 'function', 'public', 'desfazer_contato_rota', '')
+  ('route_contact_log_escrita', 'function', 'public', 'desfazer_contato_rota', ''),
+  ('tarefas_escalonamento_titulo_mensagem', 'function', 'public', 'tarefas_escalonamento_tick', ''),
+  ('picking_bridge', 'index', 'public', 'uq_picking_tasks_sales_order', 'picking_tasks'),
+  ('picking_bridge', 'index', 'public', 'idx_sales_orders_account_kpi', 'sales_orders'),
+  ('picking_bridge', 'function', 'public', 'ensure_picking_task_for_sales_order', ''),
+  ('picking_bridge', 'function', 'public', 'recalcular_picking_task', ''),
+  ('picking_bridge', 'function', 'public', 'confirmar_item_picking', ''),
+  ('picking_bridge', 'function', 'public', 'listar_pedidos_a_separar', '')
 )
 SELECT
   e.migration,
