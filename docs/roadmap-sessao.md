@@ -22,9 +22,16 @@
 - ✅ **#3 — lista default só nas cidades da rota (D-1).** A `/rota/ligacoes` **já é D-1 por construção** (`useRouteContactList` usa as cidades da rota de amanhã); o farmer agora é apontado pra ela. **Subsumido por #562 + o programa de rota existente.**
 - ⏸️ **Deferred — `useRouteContactList` impersonation-aware** (pra "Ver como farmer" mostrar as ligações daquele farmer). Follow-up de baixo valor sem demanda concreta.
 
+## 4. Tarefas — criar por voz (áudio → IA estrutura → revisa → cria)
+> Pedido nesta sessão: founder grava um áudio ("manda a Regina ligar pra Padaria do Zé amanhã e oferecer a linha nova, e whatsapp pra Maria sexta") → transcreve → IA estrutura em N tarefas → founder revisa/corrige cliente+vendedora → cria. Multi-tarefa por áudio; "calendário" = o prazo (data) que joga no Meu Dia.
+- ✅ **Decisões fechadas:** (A) fala tudo + IA infere + revisa/corrige antes de salvar (zero auto-criação); multi-tarefa por áudio. Transcrição já existe (`elevenlabs-transcribe`).
+- ✅ **Spec escrito + endurecido com passe adversário do codex.** Princípio central (codex): IA faz extração+split; **datas e entidades saem da IA** pra parser determinístico pt-BR + match local com limiar + confirmação humana. Spec: `docs/superpowers/specs/2026-06-04-tarefa-criar-por-voz-design.md`.
+- ⏳ **Revisão do spec pelo founder** → libera o plano de implementação.
+- ⏳ **Plano + build** (depois da revisão). Inclui edge `tarefa-extrair-voz` (Anthropic tool-use) + helpers TDD (parser de data, match cliente/vendedora) + `VozTarefaDialog`.
+
 ---
 
 ### Encerramento da sessão (housekeeping recorrente)
-- Manter este roadmap atualizado a cada mudança (este sync reflete **#559 + #562 mergeados**).
-- PRs de doc/fix abertos com auto-merge quando o CI passar. **Nada meu em voo** — todos os PRs da sessão (#545/#549/#551/#553/#557/#559/#562) mergeados.
-- **O que depende de você:** verificação visual da Fase 1 (libera o build da Fase 2) · Publish no Lovable pro preview · SQL no SQL Editor quando houver migration (a Fase 2 terá).
+- Manter este roadmap atualizado a cada mudança (reflete **#559 + #562 mergeados** + a feature de voz acrescentada).
+- PRs de doc/fix abertos com auto-merge quando o CI passar.
+- **O que depende de você:** (1) verificação visual da Fase 1 (libera o build da Fase 2) · (2) **revisão do spec da criação por voz** (libera o plano) · Publish no Lovable pro preview · SQL no SQL Editor quando houver migration (Fase 2 e a feature de voz terão).
