@@ -2143,12 +2143,13 @@ Deno.serve(async (req) => {
     // portal (2ª sessão no Browserless → PO duplicado no fornecedor). O `is.null`
     // cobre o pedido fresco (status_envio_portal NULL), que o `neq` sozinho perderia.
     const ids = candidatos.map((c) => c.id);
+    // CLAIM via RPC SQL-puro (envio_portal_claim_ids): o .update().or().select() via PostgREST
+    // quebrava com 42703 "column pedido_compra_sugerido.status_envio_portal does not exist"
+    // (a tradução do .or() em UPDATE) → travava TODO disparo ao portal. A RPC roda o mesmo
+    // UPDATE ... WHERE ... RETURNING em SQL puro, atômico (row-lock + re-avaliação do predicado),
+    // preservando a proteção anti-duplo-envio.
     const { data: claimedRows, error: claimErr } = await supabase
-      .from("pedido_compra_sugerido")
-      .update({ status_envio_portal: "enviando_portal", portal_erro: null })
-      .in("id", ids)
-      .or("status_envio_portal.is.null,status_envio_portal.neq.enviando_portal")
-      .select("id");
+      .rpc("envio_portal_claim_ids", { p_ids: ids });
     if (claimErr) {
       console.error("[envio-portal][async] Erro no claim atomico:", claimErr.message);
       return new Response(
@@ -2213,12 +2214,9 @@ Deno.serve(async (req) => {
   // no-op), mas fecha a rota: sem isso o processarPedido marcaria enviando_portal de
   // forma incondicional → duplo-envio se 2 síncronos concorressem no mesmo pedido.
   const idsSync = candidatos.map((c) => c.id);
+  // CLAIM via RPC SQL-puro (ver MODO ASYNC acima — o .update().or().select() quebrava no PostgREST).
   const { data: claimedSync, error: claimErrSync } = await supabase
-    .from("pedido_compra_sugerido")
-    .update({ status_envio_portal: "enviando_portal", portal_erro: null })
-    .in("id", idsSync)
-    .or("status_envio_portal.is.null,status_envio_portal.neq.enviando_portal")
-    .select("id");
+    .rpc("envio_portal_claim_ids", { p_ids: idsSync });
   if (claimErrSync) {
     return new Response(
       JSON.stringify({ error: `Falha ao reservar pedidos: ${claimErrSync.message}` }),
