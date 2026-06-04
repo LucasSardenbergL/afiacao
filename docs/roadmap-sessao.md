@@ -58,7 +58,8 @@
 - 🔄 **Item 2 — pivô para multi-embalagem econômica (QT/GL).** Founder priorizou um caso adjacente de maior retorno: comprar a embalagem mais barata por unidade-equivalente (concentrados Sayerlack WP; 1 GL = 4 QT).
   - ✅ Brainstorming + consult Codex (gpt-5.5) + spec + self-review → `docs/superpowers/specs/2026-06-04-embalagem-economica-design.md` (**aprovado pelo founder**).
   - ✅ **Plano de implementação escrito** → `docs/superpowers/plans/2026-06-04-embalagem-economica.md` (6 tasks TDD).
-  - ⏳ **v1 (build) ← AQUI:** 1 migration (`sku_embalagem_equivalencia` + `sku_preco_fornecedor_capturado` + kill-switch no `company_config`) · helper puro `embalagem-helpers.ts` (TDD) · bloco "Embalagem" no cockpit de pedidos. Preço **manual** (sem scraping).
+  - ✅ **v1 (build) CONSTRUÍDA** (subagent-driven): migration (2 tabelas + kill-switch) · helper `embalagem-helpers.ts` (12 testes) · hook `useEmbalagemPedido` · painel "Embalagem" no `DetalhesModal` + dialog de preço manual. **typecheck/lint(0 err)/build/2254 testes verdes.** Auto-review pegou 2 fixes (economia coerente + guard grupo-de-1). ⚠️ **Codex review externo pendente** (limite de uso do Plus; reseta ~19:55).
+  - 🧭 **Pendências do founder p/ ir ao ar:** (1) aplicar a migration no **SQL Editor do Lovable** (`20260604182408_embalagem_economica.sql`); (2) merge do PR; (3) cadastrar os ~12 pares QT/GL em `sku_embalagem_equivalencia`; (4) **Publish** no Lovable.
   - ⏸️ Fase 1.5 spike (viabilidade do scraping) · Fase 2 captura automática · Fase 3 refino (lote mínimo, badge, histórico).
 - ⏸️ **Sucessão de giro (item 2 original)** — adiado; reusa a fundação de equivalência (vínculo **temporal**, fator ~1, demanda transposta de fato).
 
