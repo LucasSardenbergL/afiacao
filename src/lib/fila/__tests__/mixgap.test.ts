@@ -21,6 +21,7 @@ describe('mixGapParaAcoes', () => {
     expect(a.cta).toBe('pedido');
     expect(a.titulo).toContain('Lixas');
     expect(a.dedupeKey).toBe('c1:oferecer:Lixas');
+    expect(a.payload).toEqual({ kind: 'mixgap', customerUserId: 'c1', familia: 'Lixas' });
   });
 
   it('ignora gaps já ofertados', () => {

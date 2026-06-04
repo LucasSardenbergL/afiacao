@@ -3,7 +3,7 @@ import { decodeHtmlEntities } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { FileCheck, Truck, Plus, Loader2, PackageCheck, RefreshCw } from 'lucide-react';
+import { FileCheck, Truck, Plus, Loader2, PackageCheck, RefreshCw, Stethoscope } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/dialog';
 import type { Tables } from '@/integrations/supabase/types';
 
-type NfeStatus = 'pendente' | 'em_conferencia' | 'divergencia' | 'conferido' | 'efetivado';
+type NfeStatus = 'pendente' | 'em_conferencia' | 'divergencia' | 'conferido' | 'efetivado' | 'falha_efetivacao' | 'efetivacao_parcial';
 
 type Warehouse = Tables<'warehouses'>;
 type NfeRecebimento = Tables<'nfe_recebimentos'>;
@@ -49,6 +49,8 @@ const STATUS_CONFIG: Record<NfeStatus, { label: string; className: string }> = {
   divergencia: { label: 'Divergência', className: 'bg-status-error-bg text-status-error-foreground' },
   conferido: { label: 'Conferido', className: 'bg-status-success-bg text-status-success-foreground' },
   efetivado: { label: 'Efetivado', className: 'bg-muted text-muted-foreground' },
+  falha_efetivacao: { label: 'Falha na efetivação', className: 'bg-status-error-bg text-status-error-foreground' },
+  efetivacao_parcial: { label: 'Efetivação parcial', className: 'bg-status-warning-bg text-status-warning-foreground' },
 };
 
 function formatCurrency(value: number | null) {
@@ -70,6 +72,11 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
   const [importing, setImporting] = useState(false);
   const [efetivando, setEfetivando] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  // A0 — diagnóstico read-only do estado real no Omie (destrava o mapeamento de campos da Fase A1)
+  const [diagnosticando, setDiagnosticando] = useState<string | null>(null);
+  const [diagOpen, setDiagOpen] = useState(false);
+  const [diagResult, setDiagResult] = useState('');
+  const [diagTitle, setDiagTitle] = useState('');
 
   // Fetch warehouses
   const { data: warehouses } = useQuery({
@@ -168,6 +175,28 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
       toast.error('Erro ao efetivar: ' + (message || 'Tente novamente'));
     } finally {
       setEfetivando(null);
+    }
+  };
+
+  // Diagnóstico read-only: lê o estado real do recebimento no Omie (ConsultarRecebimento)
+  // sem escrever nada. Pro founder me colar o JSON e eu mapear os campos da Fase A1.
+  const handleDiagnosticar = async (nfeId: string, numero: string) => {
+    setDiagnosticando(nfeId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await supabase.functions.invoke('omie-nfe-recebimento', {
+        body: { nfe_recebimento_id: nfeId, diagnostico: true },
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      if (res.error) throw res.error;
+      setDiagTitle(`Diagnóstico — NF-e ${numero}`);
+      setDiagResult(JSON.stringify(res.data, null, 2));
+      setDiagOpen(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('Erro no diagnóstico: ' + (message || 'Tente novamente'));
+    } finally {
+      setDiagnosticando(null);
     }
   };
 
@@ -355,21 +384,39 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
                       </div>
                     </div>
 
-                    {/* Efetivar button */}
-                    {isConferido && (
-                      <Button
-                        size="sm"
-                        onClick={(e) => { e.stopPropagation(); handleEfetivar(nfe.id); }}
-                        disabled={efetivando === nfe.id}
-                        className="shrink-0"
-                      >
-                        {efetivando === nfe.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          'Efetivar'
-                        )}
-                      </Button>
-                    )}
+                    {/* Ações */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {/* Diagnosticar (read-only) — disponível assim que houver vínculo Omie */}
+                      {nfe.omie_id_receb != null && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={(e) => { e.stopPropagation(); handleDiagnosticar(nfe.id, nfe.numero_nfe); }}
+                          disabled={diagnosticando === nfe.id}
+                          title="Diagnosticar no Omie (read-only)"
+                          aria-label="Diagnosticar no Omie"
+                        >
+                          {diagnosticando === nfe.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Stethoscope className="h-4 w-4" />
+                          )}
+                        </Button>
+                      )}
+                      {isConferido && (
+                        <Button
+                          size="sm"
+                          onClick={(e) => { e.stopPropagation(); handleEfetivar(nfe.id); }}
+                          disabled={efetivando === nfe.id}
+                        >
+                          {efetivando === nfe.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            'Efetivar'
+                          )}
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -413,6 +460,32 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
               {importing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               Importar
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diagnóstico read-only do Omie (Fase A0) */}
+      <Dialog open={diagOpen} onOpenChange={setDiagOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{diagTitle}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-1">
+            <p className="text-xs text-muted-foreground">
+              Estado real do recebimento no Omie (read-only — não alterou Omie, estoque, NF-e nem itens; só registrou auditoria). Copie e cole pra mapear os campos da efetivação completa.
+            </p>
+            <pre className="text-xs bg-muted rounded p-3 max-h-[50vh] overflow-auto font-mono whitespace-pre-wrap break-words">
+              {diagResult}
+            </pre>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => { navigator.clipboard?.writeText(diagResult); toast.success('JSON copiado'); }}
+            >
+              Copiar JSON
+            </Button>
+            <Button onClick={() => setDiagOpen(false)}>Fechar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

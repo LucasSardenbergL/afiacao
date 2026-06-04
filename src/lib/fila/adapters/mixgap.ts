@@ -1,5 +1,5 @@
 import type { MixGap } from '@/hooks/useMyMixGap';
-import type { AcaoSugerida } from '../types';
+import type { AcaoSugerida, AcaoPayload } from '../types';
 
 export function mixGapParaAcoes(mixgap: MixGap | null): AcaoSugerida[] {
   if (!mixgap) return [];
@@ -27,6 +27,7 @@ export function mixGapParaAcoes(mixgap: MixGap | null): AcaoSugerida[] {
         tipoValor: 'estimado' as const,
         cta: 'pedido' as const,
         dedupeKey: `${g.customer_user_id}:oferecer:${g.familia_faltante}`,
+        payload: { kind: 'mixgap', customerUserId: g.customer_user_id, familia: g.familia_faltante } satisfies AcaoPayload,
       };
     });
 }

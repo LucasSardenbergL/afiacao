@@ -13,6 +13,7 @@ describe('whatsappPendenteParaAcoes', () => {
     expect(a.cta).toBe('whatsapp');
     expect(a.valorEsperado).toBeNull();
     expect(a.dedupeKey).toBe('c1:whatsapp');
+    expect(a.payload).toEqual({ kind: 'whatsapp', conversationId: 'conv1' });
   });
 
   it('score cresce ao se aproximar das 24h', () => {

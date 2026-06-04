@@ -1,12 +1,16 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useCompany } from '@/contexts/CompanyContext';
-import { hojeSP, addDias, inicioMes, spMeiaNoiteUTC } from '@/lib/dashboard/sp-date';
-import { somarReceita, contarAtivos, type OrderRow, type AtividadeRow } from '@/lib/dashboard/team-kpis';
+import { hojeSP, addDias, inicioMes, spMeiaNoiteUTC, periodoMesAnterior } from '@/lib/dashboard/sp-date';
+import { somarReceita, contarAtivos, variacaoPct, type AtividadeRow } from '@/lib/dashboard/team-kpis';
+import { fetchPedidosMTD } from '@/lib/dashboard/fetch-pedidos-mtd';
 
 export interface TeamKpis {
   receitaHoje: number;
   receitaMes: number;
+  receitaMesAnterior: number;
+  /** Variação (fração) da receita do mês vs. mesmo período do mês anterior; null sem base. */
+  variacaoMes: number | null;
   ativosHoje: number;
   ativos7d: number;
 }
@@ -28,17 +32,9 @@ export function useTeamKpis() {
       const hoje = hojeSP();
       const amanha = addDias(hoje, 1);
       const mesInicio = inicioMes(hoje);
+      const prior = periodoMesAnterior(hoje); // mesmo período do mês passado, p/ trend MoM
       const inicioHojeUTC = spMeiaNoiteUTC(hoje);
       const inicio7dUTC = spMeiaNoiteUTC(addDias(hoje, -6)); // hoje + 6 dias atrás
-
-      // q1 — receita do mês por order_date_kpi (deriva hoje + mês). Money → throw em erro.
-      let qRev = supabase
-        .from('sales_orders')
-        .select('total, status, order_date_kpi')
-        .is('deleted_at', null)
-        .gte('order_date_kpi', mesInicio)
-        .lt('order_date_kpi', amanha);
-      if (selection !== 'all') qRev = qRev.eq('account', selection);
 
       // q2 — vendedores que lançaram pedido nos últimos 7d (escopo de empresa).
       let qSales = supabase
@@ -48,22 +44,20 @@ export function useTeamKpis() {
         .gte('created_at', inicio7dUTC);
       if (selection !== 'all') qSales = qSales.eq('account', selection);
 
-      const [revRes, salesRes, callsRes, visitsRes] = await Promise.all([
-        qRev,
+      const [orders, ordersAnterior, salesRes, callsRes, visitsRes] = await Promise.all([
+        // Receita do mês paginada (deriva hoje + mês); lança em erro (money honesto, não R$0).
+        fetchPedidosMTD(selection, mesInicio, amanha),
+        // Mesmo período do mês passado (trend MoM); também paginado + lança em erro.
+        fetchPedidosMTD(selection, prior.de, prior.ate),
         qSales,
         supabase.from('farmer_calls').select('farmer_id, started_at').gte('started_at', inicio7dUTC),
         supabase.from('route_visits').select('visited_by, check_in_at').gte('check_in_at', inicio7dUTC),
       ]);
 
-      if (revRes.error) throw new Error(revRes.error.message); // dinheiro: erro honesto, não R$0
-
-      const orders: OrderRow[] = (revRes.data ?? []).map((o) => ({
-        total: o.total,
-        status: o.status,
-        order_date_kpi: o.order_date_kpi,
-      }));
       const receitaHoje = somarReceita(orders, hoje, amanha);
       const receitaMes = somarReceita(orders, mesInicio, amanha);
+      const receitaMesAnterior = somarReceita(ordersAnterior, prior.de, prior.ate);
+      const variacaoMes = variacaoPct(receitaMes, receitaMesAnterior);
 
       // Atividade best-effort (erro → []): sales(empresa) ∪ calls ∪ visits.
       const atividade: AtividadeRow[] = [
@@ -74,7 +68,7 @@ export function useTeamKpis() {
       const ativosHoje = contarAtivos(atividade, inicioHojeUTC);
       const ativos7d = contarAtivos(atividade, inicio7dUTC);
 
-      return { receitaHoje, receitaMes, ativosHoje, ativos7d };
+      return { receitaHoje, receitaMes, receitaMesAnterior, variacaoMes, ativosHoje, ativos7d };
     },
   });
 }

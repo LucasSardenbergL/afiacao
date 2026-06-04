@@ -1,7 +1,7 @@
 import type { RouteContactItem } from '@/queries/useRouteContactList';
-import type { AcaoSugerida } from '../types';
+import type { AcaoSugerida, AcaoPayload } from '../types';
 
-export function rotaParaAcoes(callQueue: RouteContactItem[]): AcaoSugerida[] {
+export function rotaParaAcoes(callQueue: RouteContactItem[], dataRota: string): AcaoSugerida[] {
   return callQueue.map(c => ({
     fonte: 'rota' as const,
     entidadeId: c.customerUserId,
@@ -17,5 +17,12 @@ export function rotaParaAcoes(callQueue: RouteContactItem[]): AcaoSugerida[] {
     tipoValor: 'estimado' as const,
     cta: 'ligar' as const,
     dedupeKey: `${c.customerUserId}:ligar`,
+    payload: {
+      kind: 'rota',
+      customerUserId: c.customerUserId,
+      dataRota,
+      bucket: c.bucket,
+      valor: Number.isFinite(c.valorDaLigacao) ? c.valorDaLigacao : null,
+    } satisfies AcaoPayload,
   }));
 }

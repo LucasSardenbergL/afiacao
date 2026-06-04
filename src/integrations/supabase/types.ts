@@ -6040,6 +6040,57 @@ export type Database = {
         }
         Relationships: []
       }
+      nfe_efetivacao_tentativas: {
+        Row: {
+          created_at: string
+          erro: string | null
+          id: string
+          item_id: string | null
+          nfe_recebimento_id: string
+          omie_status: string | null
+          operacao: string
+          sucesso: boolean
+          tentativa: number
+        }
+        Insert: {
+          created_at?: string
+          erro?: string | null
+          id?: string
+          item_id?: string | null
+          nfe_recebimento_id: string
+          omie_status?: string | null
+          operacao: string
+          sucesso: boolean
+          tentativa?: number
+        }
+        Update: {
+          created_at?: string
+          erro?: string | null
+          id?: string
+          item_id?: string | null
+          nfe_recebimento_id?: string
+          omie_status?: string | null
+          operacao?: string
+          sucesso?: boolean
+          tentativa?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nfe_efetivacao_tentativas_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "nfe_recebimento_itens"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "nfe_efetivacao_tentativas_nfe_recebimento_id_fkey"
+            columns: ["nfe_recebimento_id"]
+            isOneToOne: false
+            referencedRelation: "nfe_recebimentos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       nfe_lotes_escaneados: {
         Row: {
           data_fabricacao: string | null
@@ -6083,6 +6134,9 @@ export type Database = {
       }
       nfe_recebimento_itens: {
         Row: {
+          ajuste_estoque_at: string | null
+          ajuste_estoque_ok: boolean
+          ajuste_estoque_omie_id: string | null
           codigo_produto: string | null
           created_at: string
           descricao: string
@@ -6104,6 +6158,9 @@ export type Database = {
           valor_unitario: number | null
         }
         Insert: {
+          ajuste_estoque_at?: string | null
+          ajuste_estoque_ok?: boolean
+          ajuste_estoque_omie_id?: string | null
           codigo_produto?: string | null
           created_at?: string
           descricao: string
@@ -6125,6 +6182,9 @@ export type Database = {
           valor_unitario?: number | null
         }
         Update: {
+          ajuste_estoque_at?: string | null
+          ajuste_estoque_ok?: boolean
+          ajuste_estoque_omie_id?: string | null
           codigo_produto?: string | null
           created_at?: string
           descricao?: string
@@ -6157,12 +6217,19 @@ export type Database = {
       }
       nfe_recebimentos: {
         Row: {
+          alterar_etapa_ok: boolean
+          alterar_recebimento_ok: boolean
           chave_acesso: string
           cnpj_emitente: string
+          concluir_recebimento_ok: boolean
           conferente_id: string | null
           conferido_at: string | null
           created_at: string
+          cte_ok: boolean
           data_emissao: string | null
+          efetivacao_erro: string | null
+          efetivacao_lock_at: string | null
+          efetivacao_tentativas: number
           efetivado_at: string | null
           id: string
           numero_nfe: string
@@ -6178,12 +6245,19 @@ export type Database = {
           xml_completo: string | null
         }
         Insert: {
+          alterar_etapa_ok?: boolean
+          alterar_recebimento_ok?: boolean
           chave_acesso: string
           cnpj_emitente: string
+          concluir_recebimento_ok?: boolean
           conferente_id?: string | null
           conferido_at?: string | null
           created_at?: string
+          cte_ok?: boolean
           data_emissao?: string | null
+          efetivacao_erro?: string | null
+          efetivacao_lock_at?: string | null
+          efetivacao_tentativas?: number
           efetivado_at?: string | null
           id?: string
           numero_nfe: string
@@ -6199,12 +6273,19 @@ export type Database = {
           xml_completo?: string | null
         }
         Update: {
+          alterar_etapa_ok?: boolean
+          alterar_recebimento_ok?: boolean
           chave_acesso?: string
           cnpj_emitente?: string
+          concluir_recebimento_ok?: boolean
           conferente_id?: string | null
           conferido_at?: string | null
           created_at?: string
+          cte_ok?: boolean
           data_emissao?: string | null
+          efetivacao_erro?: string | null
+          efetivacao_lock_at?: string | null
+          efetivacao_tentativas?: number
           efetivado_at?: string | null
           id?: string
           numero_nfe?: string
@@ -6471,6 +6552,7 @@ export type Database = {
           omie_codigo_produto_integracao: string | null
           subfamilia: string | null
           tint_type: string | null
+          tipo_produto: string | null
           unidade: string
           updated_at: string
           valor_unitario: number
@@ -6492,6 +6574,7 @@ export type Database = {
           omie_codigo_produto_integracao?: string | null
           subfamilia?: string | null
           tint_type?: string | null
+          tipo_produto?: string | null
           unidade?: string
           updated_at?: string
           valor_unitario?: number
@@ -6513,6 +6596,7 @@ export type Database = {
           omie_codigo_produto_integracao?: string | null
           subfamilia?: string | null
           tint_type?: string | null
+          tipo_produto?: string | null
           unidade?: string
           updated_at?: string
           valor_unitario?: number
@@ -8603,6 +8687,42 @@ export type Database = {
           meta_tier_cap?: number
           updated_at?: string
           win_back_reserva_pct?: number
+        }
+        Relationships: []
+      }
+      route_queue_snapshot: {
+        Row: {
+          bucket: string | null
+          cidade: string | null
+          customer_user_id: string
+          data_rota: string
+          farmer_id: string
+          id: string
+          rank: number | null
+          snapshot_at: string
+          valor_da_ligacao: number | null
+        }
+        Insert: {
+          bucket?: string | null
+          cidade?: string | null
+          customer_user_id: string
+          data_rota: string
+          farmer_id: string
+          id?: string
+          rank?: number | null
+          snapshot_at?: string
+          valor_da_ligacao?: number | null
+        }
+        Update: {
+          bucket?: string | null
+          cidade?: string | null
+          customer_user_id?: string
+          data_rota?: string
+          farmer_id?: string
+          id?: string
+          rank?: number | null
+          snapshot_at?: string
+          valor_da_ligacao?: number | null
         }
         Relationships: []
       }
@@ -13282,6 +13402,27 @@ export type Database = {
         }
         Relationships: []
       }
+      v_whatsapp_sla: {
+        Row: {
+          aguardando_desde: string | null
+          contact_name: string | null
+          conversation_id: string | null
+          customer_user_id: string | null
+          minutos_uteis_aguardando: number | null
+          nivel: string | null
+          owner_user_id: string | null
+          phone_e164: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       visit_score_recalc_pending: {
         Row: {
           customer_user_id: string | null
@@ -13956,6 +14097,17 @@ export type Database = {
       validar_sku_para_aplicacao: {
         Args: { p_empresa: string; p_sku: string }
         Returns: Json
+      }
+      wa_is_stop_keyword: { Args: { p_body: string }; Returns: boolean }
+      whatsapp_minutos_uteis: {
+        Args: {
+          p_ate: string
+          p_desde: string
+          p_dias?: number[]
+          p_h_fim?: string
+          p_h_inicio?: string
+        }
+        Returns: number
       }
     }
     Enums: {

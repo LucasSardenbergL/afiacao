@@ -7,6 +7,7 @@ const acao = (clienteUserId: string | null, nome: string | null = 'X'): AcaoSuge
   fonte: 'tarefa', entidadeId: 'e', clienteUserId, clienteNome: nome, telefone: null,
   acao: 'Ligar', titulo: 't', motivo: 'm', categoria: 'risco', score: 0.5,
   valorEsperado: null, tipoValor: 'sem_valor', cta: 'ligar', dedupeKey: `k:${clienteUserId}`,
+  payload: { kind: 'tarefa', tarefaId: 'e' },
 });
 
 const metric = (id: string): MetricRowFull => ({

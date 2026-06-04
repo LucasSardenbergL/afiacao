@@ -7,6 +7,12 @@ export type FonteAcao = 'tarefa' | 'rota' | 'whatsapp_pendente' | 'mixgap';
 export type TipoValor = 'certo' | 'estimado' | 'sem_valor';
 export type TipoCta = 'ligar' | 'whatsapp' | 'pedido' | 'tarefa' | 'abrir_cliente';
 
+export type AcaoPayload =
+  | { kind: 'tarefa'; tarefaId: string }
+  | { kind: 'rota'; customerUserId: string; dataRota: string; bucket: string | null; valor: number | null }
+  | { kind: 'mixgap'; customerUserId: string; familia: string }
+  | { kind: 'whatsapp'; conversationId: string };
+
 export interface AcaoSugerida {
   fonte: FonteAcao;
   /** id da entidade no motor de origem (tarefa.id, customer_user_id, conversation.id, etc.) */
@@ -29,4 +35,6 @@ export interface AcaoSugerida {
   cta: TipoCta;
   /** colapsa duplicatas do mesmo cliente+intenção entre fontes */
   dedupeKey: string;
+  /** dados estruturais p/ o CTA de outcome chamar o motor de origem (Codex P1) */
+  payload: AcaoPayload;
 }

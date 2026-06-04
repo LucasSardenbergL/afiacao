@@ -212,7 +212,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
         // Auto-create production orders for "produto acabado"
         const produtoAcabadoItems = colacorProductItems.filter(c => {
-          const tp = c.product.metadata?.tipo_produto;
+          // Coluna dedicada tipo_produto (Migration 2026-06-04) com fallback ao metadata legado.
+          const tp = c.product.tipo_produto ?? c.product.metadata?.tipo_produto;
           return tp === '04' || tp === 4 || tp === '4';
         });
         if (produtoAcabadoItems.length > 0) {

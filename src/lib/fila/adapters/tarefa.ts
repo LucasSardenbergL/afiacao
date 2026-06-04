@@ -1,5 +1,5 @@
 import type { TarefaEstado, TarefaCategoria } from '@/lib/tarefas/types';
-import type { AcaoSugerida, TipoCta } from '../types';
+import type { AcaoSugerida, AcaoPayload, TipoCta } from '../types';
 
 const CTA_POR_CATEGORIA: Record<TarefaCategoria, TipoCta> = {
   ligar: 'ligar', whatsapp: 'whatsapp', oferecer: 'pedido', preco: 'pedido', outro: 'tarefa',
@@ -26,5 +26,6 @@ export function tarefasParaAcoes(tarefas: TarefaEstado[]): AcaoSugerida[] {
       tipoValor: 'sem_valor' as const,
       cta: CTA_POR_CATEGORIA[t.categoria],
       dedupeKey: `${t.customer_user_id}:tarefa:${t.id}`,
+      payload: { kind: 'tarefa', tarefaId: t.id } satisfies AcaoPayload,
     }));
 }
