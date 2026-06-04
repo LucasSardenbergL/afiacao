@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { idadeHoras, frescorCarteira, frescorTexto, detectarDadosQuebrados, detectarClientesRisco } from '../montar';
+import { idadeHoras, frescorCarteira, frescorTexto, detectarDadosQuebrados, detectarClientesRisco, detectarConfirmacoesPendentes } from '../montar';
 import { EXCECOES_CFG_DEFAULT } from '../types';
-import type { SaudeCheckInput, DecisaoRiscoInput } from '../types';
+import type { SaudeCheckInput, DecisaoRiscoInput, TarefaGapInput } from '../types';
+
+const gap = (over: Partial<TarefaGapInput>): TarefaGapInput => ({
+  tarefaId: 't1', descricao: 'Ligar p/ oferecer linha nova', clienteUserId: 'c1',
+  donoNome: 'Regina', effectiveDue: '2026-06-02', candidatoId: 'cand1', ...over,
+});
 
 const saude = (over: Partial<SaudeCheckInput>): SaudeCheckInput => ({
   source: 'vendas_pedidos', domain: 'vendas', status: 'broken', severity: 'critical',
@@ -73,6 +78,27 @@ describe('detectarClientesRisco', () => {
 
   it('sem decisões → vazio (não fabrica)', () => {
     expect(detectarClientesRisco([], '2026-06-04T11:00:00.000Z', '2026-06-04T12:00:00.000Z', EXCECOES_CFG_DEFAULT)).toHaveLength(0);
+  });
+});
+
+describe('detectarConfirmacoesPendentes', () => {
+  it('só vencidas em dia anterior a hoje (>=1 dia); mais antiga primeiro; cap 3', () => {
+    const hoje = '2026-06-04';
+    const r = detectarConfirmacoesPendentes([
+      gap({ tarefaId: 't1', effectiveDue: '2026-06-01' }),
+      gap({ tarefaId: 't2', effectiveDue: '2026-06-03' }),
+      gap({ tarefaId: 't3', effectiveDue: '2026-06-04' }), // vence HOJE → excluída (não é >=1 dia)
+      gap({ tarefaId: 't4', effectiveDue: '2026-05-30' }),
+      gap({ tarefaId: 't5', effectiveDue: '2026-05-31' }),
+    ], hoje, EXCECOES_CFG_DEFAULT);
+    expect(r.map(l => l.id)).toEqual(['conf:t4', 'conf:t5', 'conf:t1']); // 3 mais antigas, ordenadas
+    expect(r[0].grupo).toBe('confirmacoes_pendentes');
+    expect(r[0].acao).toEqual({ tipo: 'tarefa', tarefaId: 't4', clienteUserId: 'c1', candidatoId: 'cand1' });
+    expect(r[0].titulo.toLowerCase()).not.toContain('engan'); // copy NUNCA acusatória
+  });
+
+  it('vazio quando nada vencido há >=1 dia', () => {
+    expect(detectarConfirmacoesPendentes([gap({ effectiveDue: '2026-06-04' })], '2026-06-04', EXCECOES_CFG_DEFAULT)).toHaveLength(0);
   });
 });
 

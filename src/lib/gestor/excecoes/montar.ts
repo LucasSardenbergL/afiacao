@@ -32,6 +32,29 @@ export function frescorTexto(horas: number | null): string | null {
   return `há ${Math.floor(horas / 24)}d`;
 }
 
+// ── grupo 3: confirmações pendentes (proof-gap; NUNCA "enganando") ────
+export function detectarConfirmacoesPendentes(
+  tarefas: TarefaGapInput[], hojeSp: string, cfg: ExcecoesCfg,
+): LinhaExcecao[] {
+  // vencida em dia ANTERIOR a hoje (>=1 dia de atraso); mais antiga primeiro.
+  const vencidas = tarefas
+    .filter(t => t.effectiveDue < hojeSp)
+    .sort((a, b) => a.effectiveDue.localeCompare(b.effectiveDue))
+    .slice(0, cfg.capTarefas);
+  return vencidas.map((t): LinhaExcecao => ({
+    id: `conf:${t.tarefaId}`,
+    grupo: 'confirmacoes_pendentes',
+    titulo: `Tarefa atrasada com indício não resolvido: "${t.descricao}"`,
+    detalhe: 'Vale confirmar ou rejeitar.',
+    donoNome: t.donoNome,
+    severidade: 'aviso',
+    reciboFonte: 'v_tarefas_estado',
+    reciboFrescor: null,
+    acao: { tipo: 'tarefa', tarefaId: t.tarefaId, clienteUserId: t.clienteUserId, candidatoId: t.candidatoId },
+    badges: [],
+  }));
+}
+
 // ── grupo 2: clientes em risco (ai_decisions, freshness-first) ────────
 // Predicado de risco reusa o useAiOps (atraso>=2 OU queda de faturamento >50%),
 // apertado com confidence != 'baixa'.
