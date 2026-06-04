@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { isPedidoValido, somarReceita, contarAtivos, type OrderRow, type AtividadeRow } from '../team-kpis';
+import {
+  isPedidoValido,
+  somarReceita,
+  contarAtivos,
+  montarRanking,
+  type OrderRow,
+  type AtividadeRow,
+  type OrderRankRow,
+} from '../team-kpis';
 
 describe('team-kpis', () => {
   it('isPedidoValido: cancelado/rascunho/null inválidos, resto válido', () => {
@@ -34,5 +42,31 @@ describe('team-kpis', () => {
     ];
     expect(contarAtivos(linhas, '2026-06-04T03:00:00.000Z')).toBe(2); // A, B
     expect(contarAtivos(linhas, '2026-05-28T03:00:00.000Z')).toBe(3); // A, B, C
+  });
+
+  it('montarRanking: atribui por created_by, ordena por receita, bucket não-atribuído, semAtividade', () => {
+    const orders: OrderRankRow[] = [
+      { total: 1000, status: 'faturado', created_by: 'A' },
+      { total: 500, status: 'enviado', created_by: 'A' },
+      { total: 9999, status: 'cancelado', created_by: 'A' }, // inválido → ignorado
+      { total: 300, status: 'faturado', created_by: 'B' },
+      { total: 200, status: 'faturado', created_by: 'X' }, // X não é vendedor → não atribuído
+      { total: 150, status: 'faturado', created_by: null }, // sem autor → não atribuído
+    ];
+    const vendedores = new Map([['A', 'Ana'], ['B', 'Bia'], ['C', 'Cris']]); // C é vendedor sem pedido
+    const r = montarRanking(orders, vendedores);
+    expect(r.ranking).toEqual([
+      { id: 'A', nome: 'Ana', receita: 1500, pedidos: 2 },
+      { id: 'B', nome: 'Bia', receita: 300, pedidos: 1 },
+    ]);
+    expect(r.naoAtribuido).toEqual({ receita: 350, pedidos: 2 });
+    expect(r.semAtividade).toBe(1); // C
+  });
+
+  it('montarRanking: vazio → ranking vazio, sem atribuído zerado, semAtividade = todos', () => {
+    const r = montarRanking([], new Map([['A', 'Ana'], ['B', 'Bia']]));
+    expect(r.ranking).toEqual([]);
+    expect(r.naoAtribuido).toEqual({ receita: 0, pedidos: 0 });
+    expect(r.semAtividade).toBe(2);
   });
 });

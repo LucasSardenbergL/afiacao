@@ -2,7 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useCompany } from '@/contexts/CompanyContext';
 import { hojeSP, addDias, inicioMes, spMeiaNoiteUTC } from '@/lib/dashboard/sp-date';
-import { somarReceita, contarAtivos, type OrderRow, type AtividadeRow } from '@/lib/dashboard/team-kpis';
+import { somarReceita, contarAtivos, type AtividadeRow } from '@/lib/dashboard/team-kpis';
+import { fetchPedidosMTD } from '@/lib/dashboard/fetch-pedidos-mtd';
 
 export interface TeamKpis {
   receitaHoje: number;
@@ -31,15 +32,6 @@ export function useTeamKpis() {
       const inicioHojeUTC = spMeiaNoiteUTC(hoje);
       const inicio7dUTC = spMeiaNoiteUTC(addDias(hoje, -6)); // hoje + 6 dias atrás
 
-      // q1 — receita do mês por order_date_kpi (deriva hoje + mês). Money → throw em erro.
-      let qRev = supabase
-        .from('sales_orders')
-        .select('total, status, order_date_kpi')
-        .is('deleted_at', null)
-        .gte('order_date_kpi', mesInicio)
-        .lt('order_date_kpi', amanha);
-      if (selection !== 'all') qRev = qRev.eq('account', selection);
-
       // q2 — vendedores que lançaram pedido nos últimos 7d (escopo de empresa).
       let qSales = supabase
         .from('sales_orders')
@@ -48,20 +40,14 @@ export function useTeamKpis() {
         .gte('created_at', inicio7dUTC);
       if (selection !== 'all') qSales = qSales.eq('account', selection);
 
-      const [revRes, salesRes, callsRes, visitsRes] = await Promise.all([
-        qRev,
+      const [orders, salesRes, callsRes, visitsRes] = await Promise.all([
+        // Receita do mês paginada (deriva hoje + mês); lança em erro (money honesto, não R$0).
+        fetchPedidosMTD(selection, mesInicio, amanha),
         qSales,
         supabase.from('farmer_calls').select('farmer_id, started_at').gte('started_at', inicio7dUTC),
         supabase.from('route_visits').select('visited_by, check_in_at').gte('check_in_at', inicio7dUTC),
       ]);
 
-      if (revRes.error) throw new Error(revRes.error.message); // dinheiro: erro honesto, não R$0
-
-      const orders: OrderRow[] = (revRes.data ?? []).map((o) => ({
-        total: o.total,
-        status: o.status,
-        order_date_kpi: o.order_date_kpi,
-      }));
       const receitaHoje = somarReceita(orders, hoje, amanha);
       const receitaMes = somarReceita(orders, mesInicio, amanha);
 
