@@ -8,7 +8,7 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import type { GrupoEficacia, TaxaGated } from '@/lib/route/painel/types';
+import type { GrupoEficacia, TaxaGated, GapCliente } from '@/lib/route/painel/types';
 
 const fmtBRL = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 const fmtTaxa = (t: TaxaGated) => t.exibivel && t.valor != null
@@ -74,6 +74,15 @@ export default function RotaPainelLigacoes() {
             </Card>
           </div>
 
+          {/* Gap acionável: clientes de alto valor sem contato */}
+          {p.gap_clientes.length > 0 && (
+            <GapClientesCard
+              clientes={p.gap_clientes}
+              total={p.gap_clientes_total}
+              nomeVend={nomeVend}
+            />
+          )}
+
           {/* Eficácia global */}
           <Card className="p-4">
             <div className="text-sm font-semibold mb-2">Eficácia das ligações (reportada pela vendedora)</div>
@@ -92,6 +101,39 @@ export default function RotaPainelLigacoes() {
         </>
       )}
     </div>
+  );
+}
+
+function GapClientesCard({ clientes, total, nomeVend }: {
+  clientes: GapCliente[];
+  total: number;
+  nomeVend: (id: string) => string;
+}) {
+  return (
+    <Card className="p-4 border-status-warning/40">
+      <div className="text-sm font-semibold mb-1">
+        Clientes valiosos sem contato
+        {' '}
+        <span className="font-normal text-muted-foreground">
+          (top {clientes.length}{total > clientes.length ? ` de ${total}` : ''})
+        </span>
+      </div>
+      <div className="text-2xs text-muted-foreground mb-2">
+        Elegíveis não contatados na janela — ordenados por valor esperado.
+      </div>
+      <div className="divide-y divide-border">
+        {clientes.map((g) => (
+          <div key={`${g.data_rota}|${g.farmer_id}|${g.customer_user_id}`}
+            className="py-2 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-sm font-medium truncate">{g.cliente_nome ?? '(sem nome)'}</div>
+              <div className="text-2xs text-muted-foreground">{g.cidade ?? '—'} · {nomeVend(g.farmer_id)} · {g.data_rota}</div>
+            </div>
+            <div className="text-sm font-tabular text-status-warning shrink-0">{fmtBRL(g.valor)}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 
