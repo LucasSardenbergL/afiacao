@@ -125,3 +125,6 @@ verify_jwt = false
 
 [functions.fin-cashflow-engine]
 verify_jwt = false
+
+[functions.posthog-error-webhook]
+verify_jwt = false
