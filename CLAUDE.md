@@ -6,6 +6,8 @@
 
 > **🪟 Gestão de contexto (preferência do Lucas, 2026-05-30):** em sessões longas, **sugira `/compact` proativamente** quando perceber sinais de contexto cheio (é lembrete, não automação — não tenho leitura contínua da % da janela). ⚠️ **Auto-compactar em 60% NÃO é viável e não deve ser re-tentado:** não existe setting de threshold (o auto-compact nativo só dispara perto do *limite*), nenhum hook dispara por % de contexto, e hook não invoca slash command (`/compact` não é programaticamente acionável — nem por hook, nem por mim). Quem quer "compactar cedo" usa: `/compact <foco>` manual + `/context` pra medir + subagentes (janela própria, não incham a sessão principal).
 
+> **🧭 Roadmap da sessão (preferência do Lucas, 2026-06-01):** manter um **roadmap vivo** de todas as atividades acordadas na sessão em **`docs/roadmap-sessao.md`** — **re-fazer/atualizar** sempre que uma atividade for acrescentada ou concluída, e **renderizar o roadmap no chat** quando mudar, pra o founder acompanhar. **Prática padrão de TODA sessão** (nova ou spawnada): no começo, montar/retomar o roadmap; ao longo, manter em dia; no fim, refletir o estado real. Legenda: ✅ feito · 🔄 em andamento · ⏳ pendente · 🚧 bloqueado · ⏸️ adiado · 🧭 aguardando decisão.
+
 ---
 
 ## 1. Produto
