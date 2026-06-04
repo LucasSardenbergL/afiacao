@@ -11,6 +11,7 @@ import { PortalStatusPanel } from './PortalStatusPanel';
 import { HistoricoAcoesPanel } from './HistoricoAcoesPanel';
 import { CondicaoPagamentoPanel } from './CondicaoPagamentoPanel';
 import { ItensTable } from './ItensTable';
+import { EmbalagemPanel } from './EmbalagemPanel';
 import { RemoverItemDialog, DescontinuarItemDialog } from './ConfirmacaoDialogs';
 
 /* ─── Detalhes Modal ─── */
@@ -123,6 +124,8 @@ export function DetalhesModal({
             descontinuarPending={descontinuarMutation.isPending}
           />
         )}
+
+        {!isLoading && <EmbalagemPanel empresa={pedido.empresa} itens={linhas} />}
 
         {/* Status de envio ao portal + Histórico de ações */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
