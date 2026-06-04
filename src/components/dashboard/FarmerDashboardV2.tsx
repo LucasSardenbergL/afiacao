@@ -1,5 +1,7 @@
 import { Card } from '@/components/ui/card';
-import { Calendar } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Calendar, Phone } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { KpisToday } from './KpisToday';
 import { AgendaTodayList } from './AgendaTodayList';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
@@ -26,6 +28,25 @@ export function FarmerDashboardV2() {
       <KpisToday />
 
       <MinhasTarefasCard />
+
+      {/* Ligações da rota — o que as vendedoras (farmer só-ligação) de fato fazem; lista priorizada D-1 em /rota/ligacoes */}
+      <Card className="p-4 border-status-info/40">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Phone className="w-4 h-4 text-status-info" />
+              <h2 className="text-sm font-semibold">Ligações da rota</h2>
+            </div>
+            <p className="text-2xs text-muted-foreground mt-1">
+              Sua lista priorizada de quem ligar — clientes nas cidades da rota de amanhã.
+            </p>
+          </div>
+          <Button asChild size="sm">
+            <Link to="/rota/ligacoes">Abrir lista</Link>
+          </Button>
+        </div>
+      </Card>
+
       <VisitasHojeCard />
 
       <Card className="p-3 space-y-1">
