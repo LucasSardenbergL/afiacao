@@ -38,7 +38,12 @@ const TabFallback = () => (
 
 function KpiCards({ empresa }: { empresa: string }) {
   const warehouseId = WAREHOUSE_BY_EMPRESA[empresa];
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  // Início do dia LOCAL (fuso do operador) — base honesta pro KPI de efetivação.
+  const startOfDay = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, []);
 
   const { data: pendentes } = useQuery({
     queryKey: ["estoque-receb-pendentes", warehouseId],
@@ -83,14 +88,15 @@ function KpiCards({ empresa }: { empresa: string }) {
   });
 
   const { data: efetivadasHoje } = useQuery({
-    queryKey: ["estoque-receb-efetivadas-hoje", warehouseId, today],
+    queryKey: ["estoque-receb-efetivadas-hoje", warehouseId, startOfDay],
     queryFn: async () => {
+      // Por efetivado_at (momento da efetivação), não data_emissao (data da nota no fornecedor).
       const { count } = await supabase
         .from("nfe_recebimentos")
         .select("*", { count: "exact", head: true })
         .eq("warehouse_id", warehouseId)
         .eq("status", "efetivado")
-        .eq("data_emissao", today);
+        .gte("efetivado_at", startOfDay);
       return count ?? 0;
     },
     refetchInterval: 60000,

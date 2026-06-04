@@ -120,7 +120,9 @@ export function useEstoqueZone() {
     return [
       { label: 'NF pendentes', value: formatCount(data.nfPendentes) },
       { label: 'Picking abertos', value: formatCount(data.pickingAbertos) },
-      { label: 'Recebidos hoje', value: formatCount(data.recebimentosHoje) },
+      // "Conferidas hoje" (status='conferido') é trabalho do conferente, NÃO entrada de
+      // estoque efetiva — rótulo honesto pra não confundir com efetivação no Omie.
+      { label: 'Conferidas hoje', value: formatCount(data.recebimentosHoje) },
     ];
   }, [data]);
 

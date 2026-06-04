@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -68,6 +68,47 @@ function jsonRes(body: Record<string, unknown>, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// LEDGER / honestidade — ESPELHO VERBATIM de src/lib/recebimento/efetivacao-helpers.ts
+// (Edge Functions não importam de src/; manter sincronizado.) Apenas o que o A0
+// (diagnóstico) usa; o restante do helper entra no A1 (coreografia de escrita).
+// ════════════════════════════════════════════════════════════════════════════
+interface OmieClassificacao { sucesso: boolean; erro: string | null; omieStatus: string | null; }
+
+function asRecord(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+}
+
+/** Sucesso HTTP ≠ sucesso Omie: 200 com `faultstring`/`codigo_status≠0` é falha. */
+function classificarRespostaOmie(r: { httpOk: boolean; status?: number; body: unknown }): OmieClassificacao {
+  const obj = asRecord(r.body);
+  const faultstring = typeof obj.faultstring === "string" ? obj.faultstring.trim() : "";
+  const codRaw = obj.codigo_status ?? obj.cCodStatus;
+  const omieStatus = codRaw == null ? null : String(codRaw).trim();
+  const desc =
+    (typeof obj.descricao_status === "string" && obj.descricao_status.trim()) ||
+    (typeof obj.cDescStatus === "string" && obj.cDescStatus.trim()) ||
+    "";
+  if (!r.httpOk) return { sucesso: false, erro: faultstring || `HTTP ${r.status ?? "???"}`, omieStatus };
+  if (faultstring) return { sucesso: false, erro: faultstring, omieStatus };
+  if (omieStatus != null && omieStatus !== "" && omieStatus !== "0") {
+    return { sucesso: false, erro: desc || `status ${omieStatus}`, omieStatus };
+  }
+  return { sucesso: true, erro: null, omieStatus };
+}
+
+/** Registra uma tentativa no ledger append-only (best-effort: nunca derruba o fluxo). */
+async function registrarTentativa(
+  supabase: SupabaseClient,
+  row: { nfe_recebimento_id: string; tentativa: number; operacao: string; item_id?: string | null; sucesso: boolean; erro?: string | null; omie_status?: string | null },
+): Promise<void> {
+  try {
+    await supabase.from("nfe_efetivacao_tentativas").insert(row);
+  } catch (e) {
+    console.error("[omie-nfe-recebimento] falha ao registrar tentativa no ledger:", e);
+  }
 }
 
 // ── Retry with exponential backoff ──
@@ -187,6 +228,63 @@ Deno.serve(async (req) => {
     const nfeRecebimentoId: string = body.nfe_recebimento_id;
     if (!nfeRecebimentoId) {
       return jsonRes({ error: "nfe_recebimento_id obrigatório" }, 400);
+    }
+
+    // ── A0: modo DIAGNÓSTICO read-only ──
+    // Lê o estado real do recebimento no Omie (ConsultarRecebimento) SEM escrever nada.
+    // Pro founder ver os campos reais (etapa/kanban, itens, datas, lote, CT-e) antes de
+    // qualquer efetivação (Fase A1). É o de-risk "diagnóstico-first" (Codex).
+    if (body.diagnostico === true) {
+      const { data: nfeDiag, error: nfeDiagErr } = await supabase
+        .from("nfe_recebimentos")
+        .select("omie_id_receb, numero_nfe, status, efetivacao_tentativas, warehouses(code)")
+        .eq("id", nfeRecebimentoId)
+        .single();
+      if (nfeDiagErr || !nfeDiag) {
+        return jsonRes({ error: "NF-e não encontrada" }, 404);
+      }
+      if (!nfeDiag.omie_id_receb) {
+        return jsonRes({ error: "omie_id_receb ausente — NF-e não importada pelo Omie" }, 400);
+      }
+      const whCode = (nfeDiag.warehouses as WarehouseJoin | null)?.code ?? "OB";
+      const credD = getOmieCredentials(whCode);
+      if (!credD.appKey || !credD.appSecret) {
+        return jsonRes({ error: `Credenciais Omie não configuradas para warehouse ${whCode}` }, 500);
+      }
+      console.log(`[omie-nfe-recebimento] DIAGNÓSTICO read-only nIdReceb=${nfeDiag.omie_id_receb}`);
+      const consultaRes = await omieCall(
+        "https://app.omie.com.br/api/v1/produtos/recebimentonfe/",
+        {
+          call: "ConsultarRecebimento",
+          app_key: credD.appKey,
+          app_secret: credD.appSecret,
+          param: [{ nIdReceb: nfeDiag.omie_id_receb }],
+        },
+      );
+      const cls = classificarRespostaOmie({
+        httpOk: !consultaRes.error,
+        status: consultaRes.error ? consultaRes.status : 200,
+        body: consultaRes.data,
+      });
+      await registrarTentativa(supabase, {
+        nfe_recebimento_id: nfeRecebimentoId,
+        tentativa: (nfeDiag.efetivacao_tentativas as number) ?? 0,
+        operacao: "diagnostico",
+        sucesso: cls.sucesso,
+        erro: cls.erro,
+        omie_status: cls.omieStatus,
+      });
+      return jsonRes({
+        ok: cls.sucesso,
+        modo: "diagnostico",
+        nfe_recebimento_id: nfeRecebimentoId,
+        numero_nfe: nfeDiag.numero_nfe,
+        status_app: nfeDiag.status,
+        warehouse: whCode,
+        omie_id_receb: nfeDiag.omie_id_receb,
+        classificacao: cls,
+        consultar_recebimento: consultaRes.data, // JSON CRU do Omie (campos reais)
+      });
     }
 
     console.log(`[omie-nfe-recebimento] Iniciando efetivação: ${nfeRecebimentoId}`);
