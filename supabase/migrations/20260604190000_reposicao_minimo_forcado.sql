@@ -4,17 +4,23 @@
 -- do que o motor sugere naturalmente. Esta migration adiciona o piso:
 --   PARTE A: coluna sku_parametros.minimo_forcado_manual (numeric NULL) + CHECK.
 --   PARTE B: RPC gerar_pedidos_sugeridos_ciclo — qtde_final = piso(natural, mínimo).
---            CORPO VERBATIM de 20260604140000_tipo_produto_consumidores.sql (= produção),
---            com 3 mudanças cirúrgicas (marcadas [MIN-FORCADO]). Preserva a guarda
---            fail-closed do tipo_produto '04' e o statement_timeout.
 --   PARTE C: view v_otimizador_compras_insumos expõe minimo_forcado_manual ao otimizador.
---            CORPO VERBATIM de 20260530143818 (PARTE 2) + 1 coluna.
+--
+-- ⚠️ TIMESTAMP REALOCADO 20260604170000 → 20260604190000 e RPC REBASEADA:
+--   três migrations nasceram com 20260604170000 em sessões paralelas; DUAS tocam ESTA RPC
+--   money-path (esta + 20260604170000_reposicao_blindar_sku_sem_fornecedor). Para a minha
+--   aplicar DEPOIS (timestamp maior) e NÃO apagar a blindagem da irmã, o corpo da RPC aqui
+--   é VERBATIM de 20260604170000_reposicao_blindar_sku_sem_fornecedor (= 20260604140000 +
+--   guarda "fornecedor_nome IS NOT NULL / btrim<>''"), acrescido das 4 marcas [MIN-FORCADO].
+--   Assim esta RPC contém AMBAS as mudanças (blindagem de fornecedor + mínimo forçado).
+--   Aplicar esta migration por ÚLTIMO entre as 20260604* que tocam a RPC.
+--
 -- Princípios (degradação honesta, money-path):
 --   • PISO, NUNCA GATILHO — o mínimo só eleva item que JÁ passou no gate de necessidade
 --     (estoque_efetivo <= ponto_pedido) E cujo qtde_natural > 0 (filtro inalterado). Nunca
 --     força comprar item sobre-estocado.
 --   • qtde_sugerida = natural (referência/audit); qtde_final = forçada (o que dispara ao Omie).
---   • NULL → sem piso = comportamento atual idêntico. CHECK rejeita ≤0/NaN/Infinity.
+--   • NULL → sem piso = comportamento atual idêntico. CHECK rejeita <=0/NaN/Infinity.
 -- NÃO regenera o ciclo aqui (Checkpoint consciente do founder). Idempotente. Aplicar manual
 -- via SQL Editor do Lovable. Spec: docs/superpowers/specs/2026-06-04-reposicao-minimo-forcado-design.md
 -- ============================================================================
@@ -36,7 +42,7 @@ END $$;
 COMMENT ON COLUMN public.sku_parametros.minimo_forcado_manual IS
   'Mínimo de compra forçado por SKU (a "R"). Quando >0, a RPC gerar_pedidos_sugeridos_ciclo eleva qtde_final ao máximo entre a sugestão natural e este valor — só para item que JÁ precisa repor (qtde_natural>0). NULL = sem piso (padrão). CHECK rejeita <=0/NaN/Infinity.';
 
--- ─── PARTE B — RPC de sugestão de pedidos: aplica o piso do mínimo forçado ───
+-- ─── PARTE B — RPC: blindagem de fornecedor (irmã) + piso do mínimo forçado ───
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(
   p_empresa text DEFAULT 'OBEN'::text,
   p_data_ciclo date DEFAULT CURRENT_DATE
@@ -129,6 +135,11 @@ BEGIN
     WHERE sp.empresa = p_empresa
       AND sp.habilitado_reposicao_automatica = TRUE
       AND COALESCE(sp.tipo_reposicao, 'automatica') = 'automatica'
+      -- [sem-fornecedor 2026-06-04] SKU sem fornecedor NÃO gera pedido (ver cabeçalho:
+      -- o GROUP BY criava o cabeçalho mas o JOIN NULL=NULL dos itens não casava → fantasma).
+      -- Os excluídos aqui aparecem na view v_reposicao_sku_sem_fornecedor (não somem mudos).
+      AND sp.fornecedor_nome IS NOT NULL
+      AND btrim(sp.fornecedor_nome) <> ''
       AND fnc.id IS NULL
       AND COALESCE(op.ativo, true) = true
       AND COALESCE(sso.ativo_no_omie, true) = true

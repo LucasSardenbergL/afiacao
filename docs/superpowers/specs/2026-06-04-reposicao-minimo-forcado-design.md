@@ -54,12 +54,14 @@ Sem valor (NULL) → `qtde_final = qtde_natural` = **comportamento atual idênti
 
 ## 6. Componentes (arquivos)
 
-### SQL (migration nova `2026XXXX_reposicao_minimo_forcado.sql`, manual via SQL Editor)
+### SQL (migration `20260604190000_reposicao_minimo_forcado.sql`, manual via SQL Editor)
 - `ALTER TABLE public.sku_parametros ADD COLUMN IF NOT EXISTS minimo_forcado_manual numeric;`
 - CHECK idempotente: `minimo_forcado_manual IS NULL OR (minimo_forcado_manual > 0 AND minimo_forcado_manual < 'Infinity'::numeric)`.
-- `CREATE OR REPLACE FUNCTION gerar_pedidos_sugeridos_ciclo` — **verbatim da `20260604140000`** + o `GREATEST` + `qtde_natural`/`qtde_final` separadas + valor com a forçada.
+- `CREATE OR REPLACE FUNCTION gerar_pedidos_sugeridos_ciclo` + o `GREATEST` + `qtde_natural`/`qtde_final` separadas + valor com a forçada.
 - `CREATE OR REPLACE VIEW v_otimizador_compras_insumos` — **verbatim da `20260530143818`** + `sp.minimo_forcado_manual` no SELECT.
 - Validação inline (`SELECT 'OK', count(rpc), count(view), column_exists`).
+
+> ⚠️ **Colisão multi-sessão resolvida (RPC quente):** três migrations nasceram com timestamp `20260604170000` em sessões paralelas; DUAS tocam esta RPC money-path (esta + `20260604170000_reposicao_blindar_sku_sem_fornecedor`, que adiciona a guarda `fornecedor_nome IS NOT NULL / btrim<>''`). Para a minha aplicar DEPOIS e NÃO apagar a blindagem da irmã, **(1) realoquei o timestamp para `20260604190000`** e **(2) reescrevi o corpo da RPC partindo da `blindar` (verbatim) + as 4 marcas `[MIN-FORCADO]`** → a RPC final contém AMBAS as mudanças (blindagem de fornecedor + mínimo forçado). O harness PG17 ganhou um cenário (SKU-F sem fornecedor) que prova que a blindagem foi preservada.
 
 ### Helper puro TS (oráculo TDD, espelha a lógica da RPC)
 - `src/lib/reposicao/compras-otimizador-helpers.ts`: nova função pura `aplicarMinimoForcado(qtdeNatural, minimoForcado)` = `Math.max(qtdeNatural, minimoForcado ?? 0)` (espelho exato do `GREATEST(natural, COALESCE(min,0))` da RPC), com testes. `qtdBase`/`qtdMinimaEfetiva` já cobrem o otimizador.

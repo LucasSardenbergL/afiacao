@@ -43,8 +43,8 @@ rm -f "$RR"
 echo "→ foundation (omie_products.tipo_produto — stale no snapshot, a RPC só lê)…"
 P -v ON_ERROR_STOP=1 -q -c "ALTER TABLE public.omie_products ADD COLUMN IF NOT EXISTS tipo_produto text;"
 
-echo "→ migration 20260604170000_reposicao_minimo_forcado.sql…"
-P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260604170000_reposicao_minimo_forcado.sql" >/dev/null
+echo "→ migration 20260604190000_reposicao_minimo_forcado.sql (RPC = blindar + mínimo forçado)…"
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260604190000_reposicao_minimo_forcado.sql" >/dev/null
 
 echo "→ seed dos cenários + RPC + asserts…"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
@@ -56,7 +56,8 @@ VALUES
   (1002,'1002','SKU-B natural acima',     'oben', true, '00'),
   (1003,'1003','SKU-C sem minimo',        'oben', true, '00'),
   (1004,'1004','SKU-D nao precisa',       'oben', true, '00'),
-  (1005,'1005','SKU-E natural<=0 borda',  'oben', true, '00');
+  (1005,'1005','SKU-E natural<=0 borda',  'oben', true, '00'),
+  (1006,'1006','SKU-F sem fornecedor',    'oben', true, '00');
 
 -- sku_parametros: empresa OBEN, habilitado, automatica. minimo_forcado_manual por cenário.
 -- 1001 e 1005 compartilham fornecedor FORN-X (e grupo NULL) → testam a 4ª mudança (filtro do insert).
@@ -68,7 +69,8 @@ VALUES
   ('OBEN',1002,'SKU-B','FORN-Y',600,600, true,'automatica', 200, true),
   ('OBEN',1003,'SKU-C','FORN-Z',50, 60, true,'automatica', NULL,true),
   ('OBEN',1004,'SKU-D','FORN-W',50, 200,true,'automatica', 200, true),
-  ('OBEN',1005,'SKU-E','FORN-X',60, 40, true,'automatica', 200, true);
+  ('OBEN',1005,'SKU-E','FORN-X',60, 40, true,'automatica', 200, true),
+  ('OBEN',1006,'SKU-F',NULL,    50, 60, true,'automatica', 200, true);
 
 -- estoque atual por SKU (estoque_efetivo = fisico + pendente; pendente=0).
 INSERT INTO public.sku_estoque_atual (empresa, sku_codigo_omie, estoque_fisico, estoque_pendente_entrada)
@@ -77,11 +79,12 @@ VALUES
   ('OBEN','1002',100, 0),  -- efetivo 100<= pp 600 → precisa; natural 600-100= 500
   ('OBEN','1003', 10, 0),  -- efetivo 10 <= pp 50  → precisa; natural 60-10 = 50
   ('OBEN','1004',100, 0),  -- efetivo 100 > pp 50  → NÃO precisa (gate falha)
-  ('OBEN','1005', 50, 0);  -- efetivo 50 <= pp 60  → passa gate; natural 40-50 = -10 (<=0)
+  ('OBEN','1005', 50, 0),  -- efetivo 50 <= pp 60  → passa gate; natural 40-50 = -10 (<=0)
+  ('OBEN','1006', 10, 0);  -- efetivo 10 <= pp 50  → precisaria; MAS fornecedor_nome NULL (blindagem)
 
 -- preço via inventory_position.cmc (account 'oben'); fallback da RPC quando não há histórico.
 INSERT INTO public.inventory_position (omie_codigo_produto, account, cmc)
-VALUES (1001,'oben',10),(1002,'oben',10),(1003,'oben',10),(1004,'oben',10),(1005,'oben',10);
+VALUES (1001,'oben',10),(1002,'oben',10),(1003,'oben',10),(1004,'oben',10),(1005,'oben',10),(1006,'oben',10);
 
 -- Roda o motor.
 SELECT * FROM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE);
@@ -126,6 +129,13 @@ BEGIN
     RAISE EXCEPTION 'E1 FALHOU: SKU-E (natural<=0) entrou via header compartilhado — o mínimo viraria gatilho';
   END IF;
   RAISE NOTICE 'OK E — natural<=0 + fornecedor compartilhado: filtro qtde_natural>0 excluiu';
+
+  -- SKU-F (1006): precisa repor MAS fornecedor_nome IS NULL → a blindagem da migration irmã
+  -- (fornecedor_nome IS NOT NULL / btrim<>'') deve excluir. Garante que o merge preservou a blindagem.
+  IF EXISTS (SELECT 1 FROM pedido_compra_item WHERE sku_codigo_omie='1006') THEN
+    RAISE EXCEPTION 'F1 FALHOU: SKU-F (sem fornecedor) entrou — a blindagem de fornecedor foi PERDIDA no merge';
+  END IF;
+  RAISE NOTICE 'OK F — sem fornecedor: blindagem da irmã preservada (não entrou)';
 
   RAISE NOTICE '──────── TODOS OS ASSERTS DE QUANTIDADE OK ────────';
 END $$;
