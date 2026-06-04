@@ -167,7 +167,21 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
         headers: { Authorization: `Bearer ${session?.access_token}` },
       });
       if (res.error) throw res.error;
-      toast.success('NF-e efetivada com sucesso no Omie!');
+      // Falha honesta vem HTTP 200 com success:false — inspecionar o `modo`, não só res.error.
+      const data = (res.data ?? {}) as { success?: boolean; modo?: string; erro?: string };
+      switch (data.modo) {
+        case 'efetivado':
+          toast.success('NF-e efetivada no Omie!');
+          break;
+        case 'reconciliado':
+          toast.success('NF-e reconciliada — já estava recebida no Omie.');
+          break;
+        case 'efetivacao_parcial':
+          toast.warning('Efetivação parcial: ' + (data.erro || 'verifique no Omie'));
+          break;
+        default:
+          toast.error('Não efetivada: ' + (data.erro || 'falha na efetivação'));
+      }
       queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
       queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
     } catch (err) {
@@ -332,6 +346,10 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
 
             const isClickable = status === 'pendente' || status === 'em_conferencia';
             const isConferido = status === 'conferido';
+            // Reconciliar: o Omie já recebeu (humano) e o app ficou pendente → marca efetivado (read-only no Omie).
+            const canReconciliar = (status === 'pendente' || status === 'divergencia') && nfe.omie_id_receb != null;
+            const canReprocessar = status === 'falha_efetivacao' || status === 'efetivacao_parcial';
+            const acionando = efetivando === nfe.id;
 
             return (
               <Card
@@ -407,13 +425,30 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
                         <Button
                           size="sm"
                           onClick={(e) => { e.stopPropagation(); handleEfetivar(nfe.id); }}
-                          disabled={efetivando === nfe.id}
+                          disabled={acionando}
                         >
-                          {efetivando === nfe.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            'Efetivar'
-                          )}
+                          {acionando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Efetivar'}
+                        </Button>
+                      )}
+                      {canReconciliar && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => { e.stopPropagation(); handleEfetivar(nfe.id); }}
+                          disabled={acionando}
+                          title="Reconciliar com o Omie (marca efetivada se já recebida lá)"
+                        >
+                          {acionando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Reconciliar'}
+                        </Button>
+                      )}
+                      {canReprocessar && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => { e.stopPropagation(); handleEfetivar(nfe.id); }}
+                          disabled={acionando}
+                        >
+                          {acionando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Reprocessar'}
                         </Button>
                       )}
                     </div>
