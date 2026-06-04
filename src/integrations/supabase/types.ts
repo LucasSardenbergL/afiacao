@@ -8694,6 +8694,7 @@ export type Database = {
         Row: {
           bucket: string | null
           cidade: string | null
+          cliente_nome: string | null
           customer_user_id: string
           data_rota: string
           farmer_id: string
@@ -8705,6 +8706,7 @@ export type Database = {
         Insert: {
           bucket?: string | null
           cidade?: string | null
+          cliente_nome?: string | null
           customer_user_id: string
           data_rota: string
           farmer_id: string
@@ -8716,6 +8718,7 @@ export type Database = {
         Update: {
           bucket?: string | null
           cidade?: string | null
+          cliente_nome?: string | null
           customer_user_id?: string
           data_rota?: string
           farmer_id?: string
@@ -12174,6 +12177,21 @@ export type Database = {
           },
         ]
       }
+      whatsapp_sla_digest_log: {
+        Row: {
+          created_at: string
+          data_local: string
+        }
+        Insert: {
+          created_at?: string
+          data_local: string
+        }
+        Update: {
+          created_at?: string
+          data_local?: string
+        }
+        Relationships: []
+      }
       whatsapp_webhook_events: {
         Row: {
           id: string
@@ -14099,6 +14117,7 @@ export type Database = {
         Returns: Json
       }
       wa_is_stop_keyword: { Args: { p_body: string }; Returns: boolean }
+      wa_owner_efetivo: { Args: { p_customer: string }; Returns: string }
       whatsapp_minutos_uteis: {
         Args: {
           p_ate: string
@@ -14109,6 +14128,7 @@ export type Database = {
         }
         Returns: number
       }
+      whatsapp_sla_digest_tick: { Args: never; Returns: undefined }
     }
     Enums: {
       app_role: "master" | "employee" | "customer"
