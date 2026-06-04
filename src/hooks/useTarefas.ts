@@ -87,7 +87,7 @@ export function useTarefaMutations() {
     qc.invalidateQueries({ queryKey: ['tarefas-badge-count'] });
   };
 
-  /** Cria N tarefas pro mesmo cliente. Opcional: grava auditoria da origem por voz. */
+  /** Cria N tarefas (cada linha carrega seu próprio cliente). Opcional: auditoria da origem por voz. */
   const criarTarefas = async (
     linhas: Array<Record<string, unknown>>,
     auditVoz?: { transcricao: string; evidencias: string[] },
@@ -98,12 +98,15 @@ export function useTarefaMutations() {
     const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
     track('tarefas.created', { qtd: rows.length, origem: auditVoz ? 'voz' : 'form' });
     if (auditVoz && ids.length > 0) {
-      // best-effort: ordem do insert preservada pela representação do PostgREST.
-      const eventos_rows = ids.map((id, i) => ({
-        tarefa_id: id, tipo_evento: 'criada_por_voz', ator: user!.id,
-        payload: { transcricao: auditVoz.transcricao, evidence_text: auditVoz.evidencias[i] ?? null },
-      }));
-      await eventos().insert(eventos_rows as never);
+      // best-effort: a auditoria NUNCA derruba a criação (as tarefas já foram inseridas acima).
+      // ordem do insert preservada pela representação do PostgREST → ids[i] ↔ evidencias[i].
+      try {
+        const eventos_rows = ids.map((id, i) => ({
+          tarefa_id: id, tipo_evento: 'criada_por_voz', ator: user!.id,
+          payload: { transcricao: auditVoz.transcricao, evidence_text: auditVoz.evidencias[i] ?? null },
+        }));
+        await eventos().insert(eventos_rows as never);
+      } catch { /* best-effort — auditoria é nice-to-have, não bloqueia o fluxo */ }
     }
     toast.success(rows.length > 1 ? `${rows.length} tarefas criadas` : 'Tarefa criada');
     invalidate();

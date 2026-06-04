@@ -86,18 +86,17 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa }: {
     if (comErro.length > 0) { toast.error(`Corrija ${comErro.length} tarefa(s) antes de salvar.`); return; }
     setSalvando(true);
     try {
-      // agrupa por cliente (criarTarefas é por cliente). Aqui criamos uma chamada por card
-      // (simples e correto; cada card tem seu cliente).
-      for (const r of rascunhos) {
-        await criarTarefas([{
-          descricao: r.descricao, categoria: r.categoria, customer_user_id: r.cliente!.customer_user_id,
-          assigned_to: r.vendedora.user_id, empresa, modo: r.data.modo,
-          due_date: r.data.modo === 'data' ? r.data.due_date : null,
-          interacao_tipo: r.data.modo === 'interacao' ? (r.data.interacao_tipo ?? 'ligacao') : null,
-          auto_satisfy_mode: autoSatisfyDaCategoria(r.categoria),
-          target_texto: (r.categoria === 'oferecer' || r.categoria === 'preco') ? r.target_texto : null,
-        }], { transcricao, evidencias: [r.evidence_text] });
-      }
+      // 1 insert ATÔMICO: criarTarefas aceita N linhas (cada uma com seu cliente) → sem criação
+      // parcial se algo falhar no meio, e um reenvio não duplica. evidencias na mesma ordem das linhas.
+      const linhas = rascunhos.map((r) => ({
+        descricao: r.descricao, categoria: r.categoria, customer_user_id: r.cliente!.customer_user_id,
+        assigned_to: r.vendedora.user_id, empresa, modo: r.data.modo,
+        due_date: r.data.modo === 'data' ? r.data.due_date : null,
+        interacao_tipo: r.data.modo === 'interacao' ? (r.data.interacao_tipo ?? 'ligacao') : null,
+        auto_satisfy_mode: autoSatisfyDaCategoria(r.categoria),
+        target_texto: (r.categoria === 'oferecer' || r.categoria === 'preco') ? r.target_texto : null,
+      }));
+      await criarTarefas(linhas, { transcricao, evidencias: rascunhos.map((r) => r.evidence_text) });
       onOpenChange(false);
     } finally { setSalvando(false); }
   };
