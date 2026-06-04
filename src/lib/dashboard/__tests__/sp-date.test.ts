@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hojeSP, addDias, inicioMes, spMeiaNoiteUTC } from '../sp-date';
+import { hojeSP, addDias, inicioMes, spMeiaNoiteUTC, periodoMesAnterior } from '../sp-date';
 
 describe('sp-date', () => {
   it('addDias atravessa fronteira de mês/ano', () => {
@@ -20,5 +20,11 @@ describe('sp-date', () => {
 
   it('hojeSP → string YYYY-MM-DD', () => {
     expect(hojeSP()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('periodoMesAnterior: mesmo período do mês passado (capado no tamanho do mês)', () => {
+    expect(periodoMesAnterior('2026-06-04')).toEqual({ de: '2026-05-01', ate: '2026-05-05' });
+    expect(periodoMesAnterior('2026-01-15')).toEqual({ de: '2025-12-01', ate: '2025-12-16' }); // vira ano
+    expect(periodoMesAnterior('2026-03-31')).toEqual({ de: '2026-02-01', ate: '2026-03-01' }); // fev tem 28
   });
 });

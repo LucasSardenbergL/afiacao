@@ -4,6 +4,7 @@ import {
   somarReceita,
   contarAtivos,
   montarRanking,
+  variacaoPct,
   type OrderRow,
   type AtividadeRow,
   type OrderRankRow,
@@ -68,5 +69,13 @@ describe('team-kpis', () => {
     expect(r.ranking).toEqual([]);
     expect(r.naoAtribuido).toEqual({ receita: 0, pedidos: 0 });
     expect(r.semAtividade).toBe(2);
+  });
+
+  it('variacaoPct: fração vs base; null sem base (não fabrica % de zero)', () => {
+    expect(variacaoPct(112, 100)).toBeCloseTo(0.12);
+    expect(variacaoPct(80, 100)).toBeCloseTo(-0.2);
+    expect(variacaoPct(0, 100)).toBe(-1);
+    expect(variacaoPct(50, 0)).toBeNull();
+    expect(variacaoPct(50, -10)).toBeNull();
   });
 });
