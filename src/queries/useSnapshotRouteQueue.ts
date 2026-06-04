@@ -17,6 +17,7 @@ export function useSnapshotRouteQueue(routeDate: string | null, callQueue: Route
       data_rota: routeDate,
       farmer_id: user.id,
       customer_user_id: it.customerUserId,
+      cliente_nome: it.name,
       cidade: it.cityKey?.city ?? null,
       bucket: it.bucket,
       valor_da_ligacao: it.valorDaLigacao,

@@ -16,17 +16,25 @@ const extracao: ExtracaoVozIA = {
 };
 
 describe('montarRascunhos', () => {
-  it('resolve data + vendedora; cliente fica null carregando o nome falado', () => {
-    const r = montarRascunhos(extracao, { hojeSP: HOJE, vendedoras: vends });
+  it('resolve data + vendedora; cliente fica null carregando o nome falado; empresa = empresaPadrao', () => {
+    const r = montarRascunhos(extracao, { hojeSP: HOJE, vendedoras: vends, empresaPadrao: 'oben' });
     expect(r).toHaveLength(2);
     expect(r[0].vendedora).toMatchObject({ user_id: 'r', status: 'unico' });
     expect(r[0].data.due_date).toBe('2026-06-05');
     expect(r[0].categoria).toBe('ligar');
     expect(r[0].cliente).toBeNull();
     expect(r[0].cliente_nome_falado).toBe('Padaria do Zé');
+    expect(r[0].empresa).toBe('oben');
     // categoria nula → 'outro'; vendedora não falada → sem_match
     expect(r[1].categoria).toBe('outro');
     expect(r[1].vendedora.status).toBe('sem_match');
     expect(r[1].data.due_date).toBe('2026-06-05');
+    expect(r[1].empresa).toBe('oben');
+  });
+
+  it('propaga empresaPadrao alternativo (colacor_sc)', () => {
+    const r = montarRascunhos(extracao, { hojeSP: HOJE, vendedoras: vends, empresaPadrao: 'colacor_sc' });
+    expect(r[0].empresa).toBe('colacor_sc');
+    expect(r[1].empresa).toBe('colacor_sc');
   });
 });

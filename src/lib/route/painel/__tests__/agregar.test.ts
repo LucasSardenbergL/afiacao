@@ -5,7 +5,8 @@ import type { SnapshotRow, ContatoRow } from '../types';
 
 const snap = (over: Partial<SnapshotRow>): SnapshotRow => ({
   data_rota: '2026-06-03', farmer_id: 'r', customer_user_id: 'c1',
-  cidade: 'DIVINOPOLIS (MG)', bucket: 'top', valor_da_ligacao: 100, rank: 1, ...over,
+  cidade: 'DIVINOPOLIS (MG)', bucket: 'top', valor_da_ligacao: 100, rank: 1,
+  cliente_nome: null, ...over,
 });
 const ct = (over: Partial<ContatoRow>): ContatoRow => ({
   data_rota: '2026-06-03', farmer_id: 'r', customer_user_id: 'c1',
@@ -24,6 +25,28 @@ describe('agregarPainel', () => {
     expect(r.elegiveis_valor).toBe(160);
     expect(r.contatados_valor).toBe(100);
     expect(r.gap_valor).toBe(60);   // c2 não contatado
+    // gap acionável: apenas c2 não-contatado
+    expect(r.gap_clientes_total).toBe(1);
+    expect(r.gap_clientes).toHaveLength(1);
+    expect(r.gap_clientes[0].customer_user_id).toBe('c2');
+    expect(r.gap_clientes[0].valor).toBe(60);
+  });
+
+  it('gap_clientes: ordena por valor desc, exclui contatados, top 15', () => {
+    // c1 (contatado, valor 100), c2 (não contatado, valor 60), c3 (não contatado, valor 200)
+    const snaps = [
+      snap({ customer_user_id: 'c1', valor_da_ligacao: 100, cliente_nome: 'Alfa' }),
+      snap({ customer_user_id: 'c2', valor_da_ligacao: 60,  cliente_nome: 'Beta' }),
+      snap({ customer_user_id: 'c3', valor_da_ligacao: 200, cliente_nome: 'Gama' }),
+    ];
+    const contatos = [ct({ customer_user_id: 'c1' })];
+    const r = agregarPainel(snaps, contatos);
+    expect(r.gap_clientes_total).toBe(2);
+    expect(r.gap_clientes[0].customer_user_id).toBe('c3');  // 200, maior valor primeiro
+    expect(r.gap_clientes[0].cliente_nome).toBe('Gama');
+    expect(r.gap_clientes[1].customer_user_id).toBe('c2');  // 60
+    // c1 (contatado) NÃO aparece
+    expect(r.gap_clientes.find((g) => g.customer_user_id === 'c1')).toBeUndefined();
   });
 
   it('eficácia global: conversão/resposta/optout sobre contatos de ligação', () => {
@@ -74,5 +97,7 @@ describe('agregarPainel', () => {
     expect(r.gap_valor).toBe(0);
     expect(r.contatos_por_dia).toBe(0);
     expect(r.global.conversao.valor).toBeNull();
+    expect(r.gap_clientes).toHaveLength(0);
+    expect(r.gap_clientes_total).toBe(0);
   });
 });

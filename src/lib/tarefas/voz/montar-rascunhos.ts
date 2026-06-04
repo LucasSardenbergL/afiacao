@@ -1,11 +1,11 @@
 // src/lib/tarefas/voz/montar-rascunhos.ts
-import type { ExtracaoVozIA, RascunhoVoz, VendedoraOpcao } from './types';
+import type { ExtracaoVozIA, RascunhoVoz, CtxMontarRascunhos } from './types';
 import { resolverDataPtBr } from './date-parser';
 import { casarVendedora } from './match';
 
 export function montarRascunhos(
   extracao: ExtracaoVozIA,
-  ctx: { hojeSP: string; vendedoras: VendedoraOpcao[] },
+  ctx: CtxMontarRascunhos,
 ): RascunhoVoz[] {
   return extracao.tarefas.map((t) => ({
     evidence_text: t.evidence_text,
@@ -16,5 +16,6 @@ export function montarRascunhos(
     vendedora: casarVendedora(t.vendedora_nome_falado, ctx.vendedoras),
     data: resolverDataPtBr(t.raw_date_text, ctx.hojeSP),
     target_texto: t.target_texto,
+    empresa: ctx.empresaPadrao,
   }));
 }
