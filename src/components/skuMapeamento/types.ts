@@ -16,11 +16,6 @@ export interface Mapeamento {
   atualizado_em: string;
 }
 
-export interface DescricaoLookup {
-  sku_codigo_omie: string;
-  sku_descricao: string;
-}
-
 export interface ValidacaoResult {
   faltantes: { empresa: string; fornecedor_nome: string; sku_codigo_omie: string; sku_descricao: string }[]; // do histórico de pedidos
   faltantesMotor: { empresa: string; fornecedor_nome: string; sku_codigo_omie: string; sku_descricao: string }[]; // risco real: o motor pode pedir e o portal recusa
