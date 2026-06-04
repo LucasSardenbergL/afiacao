@@ -119,6 +119,12 @@ BEGIN
   INSERT INTO picking_events (id, picking_task_id, picking_task_item_id, event_type, lote_esperado, lote_informado, justificativa, user_id)
   VALUES (p_event_id, p_task_id, p_item_id, v_etype, v_item.lote_fefo, p_lote_informado, p_justificativa, v_uid)
   ON CONFLICT (id) DO NOTHING;
+  IF NOT FOUND THEN
+    -- Replay de um eventId JÁ aplicado: na 1ª execução o item e o pai já foram atualizados
+    -- (mesma transação). NÃO re-aplicar — um confirm/correção mais novo (E2) pode ter rodado
+    -- depois, e re-rodar o UPDATE absoluto deste evento velho regrediria quantidade/lote/status.
+    RETURN jsonb_build_object('ok', true, 'replayed', true);
+  END IF;
   v_item_status := CASE WHEN p_quantidade_separada >= v_item.quantidade THEN 'concluido' ELSE 'em_andamento' END;
   UPDATE picking_task_items SET
     quantidade_separada = p_quantidade_separada, status = v_item_status,

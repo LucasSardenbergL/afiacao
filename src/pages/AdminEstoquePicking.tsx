@@ -199,7 +199,8 @@ function KpiCards({ account }: { account: string }) {
 
 /* ─── Pedidos a separar tab ─── */
 function PedidosASepararTab({ account }: { account: string }) {
-  const { data, isLoading } = usePedidosASeparar(account);
+  const isOben = account.toLowerCase() === "oben";
+  const { data, isLoading } = usePedidosASeparar(account, isOben);
   const enviar = useEnviarParaSeparacao();
   const [sendingId, setSendingId] = useState<string | null>(null);
 
@@ -212,6 +213,17 @@ function PedidosASepararTab({ account }: { account: string }) {
       onSettled: () => setSendingId(null),
     });
   };
+
+  // v1 é Oben-only (a RPC ensure rejeita não-Oben) → não mostrar lista acionável p/ outra empresa.
+  if (!isOben)
+    return (
+      <EmptyState
+        icon={PackagePlus}
+        tone="operational"
+        title="Separação manual disponível só para Oben"
+        description="Selecione OBEN no seletor de empresa para enviar pedidos à separação."
+      />
+    );
 
   if (isLoading)
     return (
@@ -270,7 +282,7 @@ function PedidosASepararTab({ account }: { account: string }) {
                       <Button
                         size="sm"
                         className="gap-1.5"
-                        disabled={enviar.isPending && sendingId === p.id}
+                        disabled={enviar.isPending}
                         onClick={() => handleEnviar(p.id)}
                       >
                         <Send className="h-3.5 w-3.5" />

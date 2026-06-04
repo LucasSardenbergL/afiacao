@@ -30,10 +30,11 @@ interface Row {
  * Anti-join + COALESCE de data são server-side (RPC `listar_pedidos_a_separar`); o helper puro
  * deriva contagem de itens + flag de fracionário a partir do `items` jsonb.
  */
-export function usePedidosASeparar(account: string) {
+export function usePedidosASeparar(account: string, enabled = true) {
   const acc = account.toLowerCase();
   return useQuery({
     queryKey: ['pk-pedidos-a-separar', acc],
+    enabled,
     queryFn: async (): Promise<PedidoASeparar[]> => {
       const { data, error } = await (supabase as unknown as RpcClient).rpc('listar_pedidos_a_separar', { p_account: acc });
       if (error) throw new Error(error.message);
