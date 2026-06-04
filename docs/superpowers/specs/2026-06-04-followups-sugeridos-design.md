@@ -71,3 +71,26 @@ Helper retorna **todos** os itens ordenados (count honesto); o componente render
 ## Codex
 
 Consult adversarial (2026-06-04, `model_reasoning_effort=medium`): validou baixo-risco vs KPI; P1 = nome honesto + de-dup contato + janelas por-resultado; P2 = ordem reagendar>interesse>ausente + última-visita-como-estado; P3 = snippet de notes + limite 5 + Closer-only. Todos incorporados acima.
+
+---
+
+# Apêndice: KPIs de visita do dashboard Closer (mesma sessão, feature irmã)
+
+Os 4 tiles do dashboard Closer eram placeholders "—". Esta feature os preenche com números reais, read-only, own-scoped — **cada tile EXIBE sua definição** (não mascara a métrica; o founder delegou as definições "decida você e o codex"). Sem migration/edge/deploy.
+
+## Definições (validadas com codex — 2 refinamentos)
+
+- **Visitas pendentes** = count de `visitas_agendadas` pendentes (do `useVisitasAgendadas`). Sub "agendadas".
+- **Próxima visita** = a pendente de menor `scheduled_date` (Hoje / Amanhã / DD/MM; "atrasada Nd" se vencida). Sub conforme.
+- **Conversão · 30d** = `fechados ÷ visitas com resultado` (30d). Mesma base do Mapa de Conversão (consistência). Sub literal "fechados ÷ c/ resultado · **N sem resultado**" — codex P1: expor `semResultado` senão quem não registra visita ruim parece melhor (gameável).
+- **Ticket médio · 30d** = `receita ÷ fechados COM valor>0` (não dilui com fechados sem receita) — codex C. Sub "**N c/ valor · M sem valor**" — expõe o buraco de dado em vez de subestimar o ticket.
+
+**Janela:** 30d nos tiles (pulso) × 90d no Mapa de Conversão (distribuição) — ambos rotulados; o Mapa não mostra um % único, então não há colisão de número (codex B: aceitável).
+
+## Implementação
+
+- Helper puro **`src/lib/visitas/kpis.ts`** `montarKpisVisita(rows)` (TDD, 3 testes) → `{ totalVisitas, comResultado, semResultado, fechados, taxaConversao, fechadosComValor, fechadosSemValor, receitaTotal, ticketMedio }`.
+- Hook **`useKpisVisita(30)`** (route_visits 30d own-scoped).
+- **`VisitasKpiTiles`** substitui o grid placeholder no `CloserDashboard`.
+
+**Codex** (2026-06-04): A ok (+ indicador sem-resultado), B ok (30d/90d rotulados), C mudar p/ dividir só por fechados com valor>0 + expor sem-valor. Tudo incorporado.
