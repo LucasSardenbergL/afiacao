@@ -13764,6 +13764,12 @@ export type Database = {
         Args: { p_sales_order_id: string }
         Returns: Json
       }
+      envio_portal_claim_ids: {
+        Args: { p_ids: number[] }
+        Returns: {
+          id: number
+        }[]
+      }
       envio_portal_lock_candidatos: {
         Args: { p_max?: number }
         Returns: {
