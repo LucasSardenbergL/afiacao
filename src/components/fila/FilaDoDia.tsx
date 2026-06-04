@@ -87,8 +87,15 @@ export function FilaDoDia() {
 
   if (visiveis.length === 0) {
     return (
-      <Card className="p-6 text-2xs text-muted-foreground">
-        Nada na fila agora — sua carteira está em dia. 🎯
+      <Card className="p-6">
+        <p className="text-sm font-medium">Nada prioritário na fila agora.</p>
+        <p className="text-2xs text-muted-foreground mt-1">
+          Sua carteira está em dia. Se quiser adiantar, veja a lista completa de ligações da rota ou seus clientes.
+        </p>
+        <div className="flex gap-2 mt-3">
+          <Button asChild size="sm" variant="outline"><Link to="/rota/ligacoes">Ver rota completa</Link></Button>
+          <Button asChild size="sm" variant="ghost"><Link to="/admin/customers">Ver clientes</Link></Button>
+        </div>
       </Card>
     );
   }
