@@ -104,3 +104,25 @@ BEGIN
   ASSERT v_min >= 0, 'C1 tem minutos >= 0';
   RAISE NOTICE 'OK: v_whatsapp_sla (esperando/bola/fechada/stop/sem-dono/template) min=% nivel=%', v_min, v_nivel;
 END $$;
+
+-- ===== F2: digest idempotente (rodar 2x não duplica) =====
+DO $$
+DECLARE v_vend2 uuid := gen_random_uuid(); v_cli2 uuid := gen_random_uuid(); c_red uuid; v_antes int; v_depois int;
+BEGIN
+  -- conversa SEMPRE vermelha (inbound de 7 dias atrás) → garante vermelho independente do horário do teste
+  insert into auth.users(id) values (v_vend2),(v_cli2) on conflict do nothing;
+  insert into public.carteira_assignments(customer_user_id, owner_user_id, source) values (v_cli2, v_vend2, 'omie');
+  insert into public.whatsapp_conversations(phone_key, phone_e164, customer_user_id, status)
+    values ('kred','5599000009999', v_cli2, 'aberta') returning id into c_red;
+  insert into public.whatsapp_messages(conversation_id, direction, type, body, wa_timestamp)
+    values (c_red,'in','text','urgente, cadê?', now() - interval '7 days');
+
+  PERFORM public.whatsapp_sla_digest_tick();
+  SELECT count(*) INTO v_antes FROM public.fornecedor_alerta WHERE tipo='whatsapp_sla';
+  PERFORM public.whatsapp_sla_digest_tick();  -- 2ª vez no mesmo dia local
+  SELECT count(*) INTO v_depois FROM public.fornecedor_alerta WHERE tipo='whatsapp_sla';
+  ASSERT v_antes = 1, 'digest inseriu 1 alerta quando há vermelho';
+  ASSERT v_depois = 1, 'digest NÃO duplica no mesmo dia (idempotente)';
+  ASSERT (SELECT count(*) FROM public.whatsapp_sla_digest_log) = 1, 'log tem 1 linha do dia';
+  RAISE NOTICE 'OK: digest idempotente (antes=% depois=%)', v_antes, v_depois;
+END $$;
