@@ -53,6 +53,10 @@ export interface TarefaTemplate {
 // do Milestone 1. Campos da Fase 1 já estão em TarefaEstado.
 // ---------------------------------------------------------------------------
 export interface TarefaInstancia extends TarefaEstado {
+  /** UUID do template de origem (null para tarefas manuais). */
+  template_id: string | null;
+  /** Copiado do template na materialização; false para tarefas manuais. */
+  requer_comprovacao: boolean;
   /** Derivado da view: `auditoria_status = 'pendente'` */
   requer_auditoria: boolean;
   auditoria_status: TarefaAuditoriaStatus;
