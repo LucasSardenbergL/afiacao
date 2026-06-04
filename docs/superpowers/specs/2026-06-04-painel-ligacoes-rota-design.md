@@ -1,7 +1,7 @@
 # Painel das Ligações da Rota — capacidade × eficácia (design)
 
 > Data: 2026-06-04 · Módulo: Rota/Ligações (sobre o closed-loop PR2c) · eu + codex
-> Status: design (decisões travadas eu+codex). Aguarda revisão do founder antes do plano.
+> Status: plano + implementado neste branch (migration + helpers TDD + snapshot on-open + página); aguarda **migration `route_queue_snapshot`** (colar no SQL Editor) + Publish + QA.
 
 ## 1. Problema / objetivo
 
