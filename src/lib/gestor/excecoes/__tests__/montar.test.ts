@@ -48,6 +48,25 @@ const dec = (over: Partial<DecisaoRiscoInput>): DecisaoRiscoInput => ({
   faturamento90d: 1000, faturamentoPrev90d: 1000, ...over,
 });
 
+describe('fronteiras exatas (anti-regressão >= vs <)', () => {
+  it('frescorCarteira: 24h exatas → stale; 48h exatas → desatualizada', () => {
+    expect(frescorCarteira('2026-06-03T12:00:00.000Z', AGORA, cfg)).toBe('stale');         // exatamente 24h
+    expect(frescorCarteira('2026-06-02T12:00:00.000Z', AGORA, cfg)).toBe('desatualizada'); // exatamente 48h
+  });
+  it('predicado de risco: atraso == 2.0 dispara; queda == 50% (fat==prev*0.5) NÃO dispara', () => {
+    const noLimite = detectarClientesRisco(
+      [dec({ clienteUserId: 'c1', atrasoRelativo: 2.0, faturamento90d: 1000, faturamentoPrev90d: 1000 })],
+      AGORA, AGORA, cfg,
+    );
+    expect(noLimite.map(l => l.id)).toEqual(['risco:c1']); // atraso >= 2.0 → dispara
+    const quedaExata = detectarClientesRisco(
+      [dec({ clienteUserId: 'c2', atrasoRelativo: 1.0, faturamento90d: 500, faturamentoPrev90d: 1000 })],
+      AGORA, AGORA, cfg,
+    );
+    expect(quedaExata).toHaveLength(0); // 500 < 500 é false → NÃO dispara (< estrito)
+  });
+});
+
 describe('detectarClientesRisco', () => {
   it('FRESH: filtra pelo predicado de risco + confidence!=baixa, cap 5', () => {
     const decs = [
