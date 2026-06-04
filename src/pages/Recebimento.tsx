@@ -472,7 +472,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
           </DialogHeader>
           <div className="space-y-2 py-1">
             <p className="text-xs text-muted-foreground">
-              Estado real do recebimento no Omie (read-only — nada foi escrito). Copie e cole pra mapear os campos da efetivação completa.
+              Estado real do recebimento no Omie (read-only — não alterou Omie, estoque, NF-e nem itens; só registrou auditoria). Copie e cole pra mapear os campos da efetivação completa.
             </p>
             <pre className="text-xs bg-muted rounded p-3 max-h-[50vh] overflow-auto font-mono whitespace-pre-wrap break-words">
               {diagResult}

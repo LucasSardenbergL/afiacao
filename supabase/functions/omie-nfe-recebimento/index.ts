@@ -105,9 +105,10 @@ async function registrarTentativa(
   row: { nfe_recebimento_id: string; tentativa: number; operacao: string; item_id?: string | null; sucesso: boolean; erro?: string | null; omie_status?: string | null },
 ): Promise<void> {
   try {
-    await supabase.from("nfe_efetivacao_tentativas").insert(row);
+    const { error } = await supabase.from("nfe_efetivacao_tentativas").insert(row);
+    if (error) console.error("[omie-nfe-recebimento] erro PostgREST ao registrar tentativa no ledger:", error);
   } catch (e) {
-    console.error("[omie-nfe-recebimento] falha ao registrar tentativa no ledger:", e);
+    console.error("[omie-nfe-recebimento] exceção ao registrar tentativa no ledger:", e);
   }
 }
 

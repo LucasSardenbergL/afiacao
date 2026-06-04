@@ -1,7 +1,8 @@
-import { lazy, Suspense, useState, useMemo } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { spDayRangeUtc } from "@/lib/time/sp-day";
 import {
   PackageCheck,
   Loader2,
@@ -38,12 +39,6 @@ const TabFallback = () => (
 
 function KpiCards({ empresa }: { empresa: string }) {
   const warehouseId = WAREHOUSE_BY_EMPRESA[empresa];
-  // Início do dia LOCAL (fuso do operador) — base honesta pro KPI de efetivação.
-  const startOfDay = useMemo(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d.toISOString();
-  }, []);
 
   const { data: pendentes } = useQuery({
     queryKey: ["estoque-receb-pendentes", warehouseId],
@@ -88,15 +83,18 @@ function KpiCards({ empresa }: { empresa: string }) {
   });
 
   const { data: efetivadasHoje } = useQuery({
-    queryKey: ["estoque-receb-efetivadas-hoje", warehouseId, startOfDay],
+    queryKey: ["estoque-receb-efetivadas-hoje", warehouseId],
     queryFn: async () => {
       // Por efetivado_at (momento da efetivação), não data_emissao (data da nota no fornecedor).
+      // Janela [início, fim) do dia em America/Sao_Paulo (recalculada a cada refetch → robusta à virada de dia).
+      const { startUtc, endUtc } = spDayRangeUtc();
       const { count } = await supabase
         .from("nfe_recebimentos")
         .select("*", { count: "exact", head: true })
         .eq("warehouse_id", warehouseId)
         .eq("status", "efetivado")
-        .gte("efetivado_at", startOfDay);
+        .gte("efetivado_at", startUtc)
+        .lt("efetivado_at", endUtc);
       return count ?? 0;
     },
     refetchInterval: 60000,
@@ -202,7 +200,8 @@ export default function AdminEstoqueRecebimento() {
 
         <TabsContent value="nfes" className="m-0">
           <Suspense fallback={<TabFallback />}>
-            <Recebimento statusFilter={['pendente', 'divergencia']} />
+            {/* falha_efetivacao/efetivacao_parcial entram aqui (NFs que precisam de ação) — A1 as produz */}
+            <Recebimento statusFilter={['pendente', 'divergencia', 'falha_efetivacao', 'efetivacao_parcial']} />
           </Suspense>
         </TabsContent>
 
