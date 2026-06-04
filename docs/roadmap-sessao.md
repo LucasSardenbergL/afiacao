@@ -9,12 +9,16 @@
 ## 1. Tarefas — Fase 1 (cobrança das vendedoras)
 - ✅ **Desenho → spec → plano → build → ship.** PRs **#545** (módulo), **#549** (registro CLAUDE.md), **#551** (fix do e-mail de cobrança). Backend vivo em produção (6 migrations + crons + fix do matcher).
 - ✅ **Fix #1 — card "Minhas tarefas" visível no "Ver como"** (impersonation-aware no `useMinhasTarefas` + render no `MasterDashboard`, somente-leitura quando impersonando). **PR #559, mergeado.** (Pegou um CI do guard `no-write-leak` — `effectiveUserId` é uso read-only; resolvido com allowlist + justificativa.)
-- ⏳ **Verificação visual da Fase 1** (founder) — **GATE** que libera o build da Fase 2. Depende de **Publish no Lovable** + clicar no preview. **Bola com você.**
+- ✅ **E-mail de cobrança confirmado vivo em prod** — escalação preenche `titulo` (sem o crash do `NOT NULL`) + corpo redigido separando "nenhum sinal detectado" de "possível cumprimento NÃO confirmado" (#551, `versao_boa=true` reconfirmado neste turno via bloco idempotente). Cron `tarefas-escalonamento-diario` (18h BRT) ativo.
+- ⏳ **Verificação visual da Fase 1** (founder) — depende de **Publish no Lovable** + clicar no preview. **Bola com você.** (Não é mais *gate*: a Fase 2 foi construída por decisão sua de seguir.)
 - ⏸️ **Fast-follow — editar tarefa** (cancelar já existe; YAGNI até o uso mostrar necessidade).
 
-## 2. Tarefas — Fase 2 (enforcement: recorrência + trava de comprovação)
+## 2. Tarefas — Fase 2 (enforcement: recorrência + trava de comprovação) — ✅ COMPLETA
 - ✅ **Desenho → spec (endurecido com passe adversário do codex) → plano.** PR **#553** (doc-only), mergeado.
-- 🚧 **Build** — **BLOQUEADO** até a Fase 1 ser verificada (decisão eu+codex: não empilhar código sobre base não-clicada). Plano pronto: 5 blocos SQL (A: `tarefa_templates`; B: colunas de comprovação + `customer_user_id` nullable + CHECK + UNIQUE; C: view window-aware + RLS; D: trigger anti-bypass + RPCs + cron de materialização; E: bucket de Storage).
+- ✅ **Backend em prod (#590)** — 5 blocos SQL aplicados pelo founder no SQL Editor: **A** `tarefa_templates`; **B** colunas de comprovação + `customer_user_id` nullable + CHECK `comprovacao` + UNIQUE por template/assignee/dia; **C** view window-aware (`janela_fim`/`requer_auditoria`, DROP+CREATE em transação) + RLS `tt_*`; **D** trigger anti-bypass + RPCs `concluir_com_comprovacao`/`auditar_tarefa` (SECURITY DEFINER, owner=postgres) + materializador + cron `0 9 * * *`; **E** bucket `tarefa-comprovacoes` + 2 policies de Storage. Validações bateram. ⚠️ **2 bugs do plano pegos antes de aplicar:** BLOCO C `CREATE OR REPLACE VIEW` quebraria (BLOCO B deslocou `t.*`) → DROP+CREATE em transação; BLOCO D `tarefa_eventos.tarefa_id` NOT NULL barraria o evento `materializacao_pulada` → `drop not null`.
+- ✅ **Frontend (#602) MERGEADO** — helpers TDD (`comprovacao`: `validarLeitura`/`montarPathComprovacao`) + `useTarefasFase2` (templates · recorrentes-hoje · concluir-com-prova · provas-a-auditar · auditar) + `ComprovacaoDialog` + `RecorrentesHojeCard` (na TintDashboard) + `ProvasParaAuditar` (foto via signed-url) + `TarefasTemplates` + rota `/tarefas/templates` + nav "Tarefas recorrentes" gated. (Pegou o CI `no-write-leak` — `useTarefasFase2` usa `effectiveUserId` só em leitura; resolvido com allowlist + justificativa.)
+- ⏳ **QA no device** (founder): operador conclui recorrente **com foto** → gestor **audita** → tentativa de burlar (UPDATE direto da conclusão) é **barrada pelo trigger**. Depende do **Publish**.
+- ⏸️ **Fast-follow** — split do `TarefasTemplates.tsx` (853 LoC → extrair o form). Baixo valor; arquivo recém-shippado e funcional.
 
 ## 3. Visitas sugeridas / Rota (feature EXISTENTE — feedback desta sessão)
 > Contexto confirmado: **Regina e Tatyana são farmers só de ligação + WhatsApp** (não fazem visita presencial). Decisão eu+codex: o dashboard delas deve liderar com a lista de ligações da rota, não com visitas.
@@ -50,7 +54,7 @@
 - ✅ **Plano escrito.** Plano: `docs/superpowers/plans/2026-06-04-painel-ligacoes-rota.md`.
 - ✅ **Build (#577) MERGEADO.** Migration `route_queue_snapshot` + helpers TDD (`gating`, `agregar`) + snapshot on-open (`useSnapshotRouteQueue`) + `useRoutePanel` + página `RotaPainelLigacoes` + rota `/rota/ligacoes/painel` + link na `/rota/ligacoes`.
 - ✅ **Gap acionável (#586) MERGEADO:** o gap de valor virou LISTA dos clientes valiosos sem contato (top 15: nome/cidade/vendedora/valor). `agregarPainel.gap_clientes` + `GapClientesCard`.
-- ✅ **Migration `route_queue_snapshot` APLICADA** (founder, SQL Editor). ⏳ **`ALTER ADD cliente_nome`** (do #586) + **Publish + QA** pendentes (abrir `/rota/ligacoes` grava snapshot → `/rota/ligacoes/painel`).
+- ✅ **Migrations APLICADAS** (founder, SQL Editor): `route_queue_snapshot` + `ALTER ADD cliente_nome` (do #586). ⏳ **Publish + QA** pendentes (abrir `/rota/ligacoes` grava snapshot → `/rota/ligacoes/painel`).
 
 ## 7. SLA de resposta do WhatsApp — "cliente sem resposta" (NOVO, SHIPPADO)
 > Pedido: indicador + alerta de quanto tempo um cliente está sem resposta no WhatsApp quando a conversa está sob comando humano, por vendedora dona; alerta pra mostrar pro pessoal.
@@ -84,6 +88,8 @@
 ---
 
 ### Encerramento da sessão (housekeeping recorrente)
-- Manter este roadmap atualizado a cada mudança (reflete a sessão: #559/#562/#572/#577/#583/#586 mergeados + a frente 5 dos tingidores '04').
+- Manter este roadmap atualizado a cada mudança (reflete a sessão: #559/#562/#572/#577/#583/#585/#586/**#590/#602** mergeados + a frente 5 dos tingidores '04').
 - PRs de doc/fix abertos com auto-merge quando o CI passar.
-- **O que depende de você (consolidado):** **1 Publish** no Lovable (leva voz #572, voz-polish #583, painel #577, gap #586, **a Crítica da Fila #585 [§8]** e a Fase 1) · SQL Editor: **`ALTER ... ADD COLUMN cliente_nome`** (do #586) — a `route_queue_snapshot` já foi aplicada · **verificação visual da Fase 1** das Tarefas (libera o build da **Fase 2**) · **QA** (criar por voz no microfone; painel em `/rota/ligacoes/painel`; **Crítica da Fila no Meu Dia da vendedora**) · **iniciar o piloto de 2 semanas da Crítica da Fila** (calibrar limiares com dado real) · [frente 5 '04', sessão paralela] Checkpoint B (M2a/M2b).
+- **Backend 100% no ar** (founder já aplicou tudo): Fase 1 + **Fase 2 (5 blocos #590)** + cobrança (#551, reconfirmada neste turno) + snapshots da rota (incl. `cliente_nome`).
+- **O que depende de você (consolidado) — converge pra 1 ação + QA:** **1 Publish** no Lovable leva TUDO ao ar (voz #572, voz-polish #583, painel #577, gap #586, **Crítica da Fila #585 [§8]**, **Fase 2 frontend #602 [§2]** e a Fase 1). Depois, **QA no device**: criar por voz (microfone) · painel em `/rota/ligacoes/painel` · **Crítica da Fila no Meu Dia da vendedora** · **enforcement da Fase 2** (concluir com foto → auditar → burla barrada pelo trigger) · verificação visual da Fase 1 · **iniciar o piloto de 2 semanas da Crítica da Fila** (calibrar limiares com dado real) · [frente 5 '04', sessão paralela] Checkpoint B (M2a/M2b).
+- **Fila limpa de build solo: esgotada.** O próximo valor é seu (Publish + QA) ou depende de uma dor nova nomeada — as faixas adjacentes (Meu Dia/fila única, dashboards do Master, reposição, recebimento, WhatsApp) estão ocupadas por sessões paralelas.
