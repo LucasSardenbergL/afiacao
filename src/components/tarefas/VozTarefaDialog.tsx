@@ -17,12 +17,22 @@ import { autoSatisfyDaCategoria } from '@/lib/tarefas/categoria-map';
 import { montarRascunhos } from '@/lib/tarefas/voz/montar-rascunhos';
 import { casarCliente } from '@/lib/tarefas/voz/match';
 import { validarRascunho } from '@/lib/tarefas/voz/validacao';
+import { empresaDeOmie } from '@/lib/tarefas/voz/empresa';
 import type { ExtracaoVozIA, RascunhoVoz, VendedoraOpcao } from '@/lib/tarefas/voz/types';
 import type { TarefaCategoria, TarefaModo, TarefaInteracaoTipo } from '@/lib/tarefas/types';
 
-export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa }: {
+/** Cliente pré-conhecido passado pelo chamador (ex: Customer 360). */
+export interface ClienteFixo {
+  customer_user_id: string;
+  nome: string;
+  empresa_omie?: string | null;
+}
+
+export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa, clienteFixo }: {
   open: boolean; onOpenChange: (o: boolean) => void;
   vendedoras: VendedoraOpcao[]; empresa: string;
+  /** Quando presente, todos os cards usam este cliente (sem busca/resolução automática). */
+  clienteFixo?: ClienteFixo;
 }) {
   const { isRecording, isTranscribing, transcricao, setTranscricao, toggle, reset } = useGravacaoTranscricao();
   const { buscar } = useBuscaClienteOmie();
@@ -33,15 +43,42 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa }: {
   const [salvando, setSalvando] = useState(false);
   const hojeSP = spBusinessDate(new Date());
 
+  // Empresa derivada do clienteFixo (fallback = prop empresa)
+  const empresaFixo = clienteFixo
+    ? (empresaDeOmie(clienteFixo.empresa_omie) ?? empresa)
+    : null;
+
   // reset ao fechar
   useEffect(() => { if (!open) { reset(); setRascunhos(null); setNaoCoberto(null); } }, [open, reset]);
 
   const resolverClienteDoCard = useCallback(async (r: RascunhoVoz): Promise<RascunhoVoz> => {
+    // Se há clienteFixo, não resolve por voz — usa o cliente pré-definido
+    if (clienteFixo) {
+      return {
+        ...r,
+        empresa: empresaFixo ?? empresa,
+        cliente: {
+          customer_user_id: clienteFixo.customer_user_id,
+          nome: clienteFixo.nome,
+          status: 'unico',
+          candidatos: [],
+        },
+      };
+    }
     if (!r.cliente_nome_falado) return { ...r, cliente: { customer_user_id: null, nome: null, status: 'sem_match', candidatos: [] } };
     const achados = await buscar(r.cliente_nome_falado);
-    const cands = achados.map((a) => ({ customer_user_id: a.user_id, nome: a.nome }));
-    return { ...r, cliente: casarCliente(r.cliente_nome_falado, cands) };
-  }, [buscar]);
+    const cands = achados.map((a) => ({
+      customer_user_id: a.user_id,
+      nome: a.nome,
+      empresa_omie: a.empresa_omie,
+    }));
+    const match = casarCliente(r.cliente_nome_falado, cands);
+    // Deriva empresa do cliente resolvido (se único)
+    const empresaDerivada = match.status === 'unico' && match.candidatos.length > 0
+      ? (empresaDeOmie(match.candidatos[0].empresa_omie) ?? r.empresa)
+      : r.empresa;
+    return { ...r, cliente: match, empresa: empresaDerivada };
+  }, [buscar, clienteFixo, empresa, empresaFixo]);
 
   const extrair = async () => {
     if (!transcricao.trim()) { toast.error('Grave ou digite o comando primeiro.'); return; }
@@ -51,19 +88,24 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa }: {
         transcricao: transcricao.trim(), hoje: hojeSP, tz: 'America/Sao_Paulo',
         vendedoras: vendedoras.map((v) => ({ nome: v.nome })),
       });
-      const base = montarRascunhos(out, { hojeSP, vendedoras });
+      const base = montarRascunhos(out, { hojeSP, vendedoras, empresaPadrao: empresaFixo ?? empresa });
       const comCliente = await Promise.all(base.map(resolverClienteDoCard));
       setRascunhos(comCliente);
       setNaoCoberto(out.texto_nao_coberto);
       if (comCliente.length === 0) toast.warning('Não detectei nenhuma tarefa. Revise o texto.');
     } catch (e) {
       // degradação: não perde a fala — vira 1 rascunho cru pra ele preencher
+      const empresaDegradacao = empresaFixo ?? empresa;
+      const clienteDegradacao = clienteFixo
+        ? { customer_user_id: clienteFixo.customer_user_id, nome: clienteFixo.nome, status: 'unico' as const, candidatos: [] }
+        : { customer_user_id: null, nome: null, status: 'sem_match' as const, candidatos: [] };
       setRascunhos([{
         evidence_text: transcricao, descricao: transcricao, categoria: 'outro',
-        cliente_nome_falado: null, cliente: { customer_user_id: null, nome: null, status: 'sem_match', candidatos: [] },
+        cliente_nome_falado: null, cliente: clienteDegradacao,
         vendedora: { user_id: null, nome: null, status: 'sem_match' },
         data: { modo: 'interacao', due_date: null, interacao_tipo: 'ligacao', status: 'sem_data' },
         target_texto: null,
+        empresa: empresaDegradacao,
       }]);
       toast.error('Não consegui estruturar — revise/preencha manualmente.', { description: e instanceof Error ? e.message : undefined });
     } finally { setExtraindo(false); }
@@ -75,8 +117,17 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa }: {
   const buscarTrocaCliente = async (i: number, query: string) => {
     const r = rascunhos?.[i]; if (!r) return;
     const achados = await buscar(query);
-    const cands = achados.map((a) => ({ customer_user_id: a.user_id, nome: a.nome }));
-    patch(i, { cliente: casarCliente(query || r.cliente_nome_falado || '', cands) });
+    const cands = achados.map((a) => ({
+      customer_user_id: a.user_id,
+      nome: a.nome,
+      empresa_omie: a.empresa_omie,
+    }));
+    const match = casarCliente(query || r.cliente_nome_falado || '', cands);
+    // Deriva empresa do novo cliente escolhido (se único)
+    const empresaDerivada = match.status === 'unico' && match.candidatos.length > 0
+      ? (empresaDeOmie(match.candidatos[0].empresa_omie) ?? r.empresa)
+      : r.empresa;
+    patch(i, { cliente: match, empresa: empresaDerivada });
   };
 
   const salvar = async () => {
@@ -86,11 +137,10 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa }: {
     if (comErro.length > 0) { toast.error(`Corrija ${comErro.length} tarefa(s) antes de salvar.`); return; }
     setSalvando(true);
     try {
-      // 1 insert ATÔMICO: criarTarefas aceita N linhas (cada uma com seu cliente) → sem criação
-      // parcial se algo falhar no meio, e um reenvio não duplica. evidencias na mesma ordem das linhas.
+      // 1 insert ATÔMICO: criarTarefas aceita N linhas (cada uma com seu cliente e empresa derivada)
       const linhas = rascunhos.map((r) => ({
         descricao: r.descricao, categoria: r.categoria, customer_user_id: r.cliente!.customer_user_id,
-        assigned_to: r.vendedora.user_id, empresa, modo: r.data.modo,
+        assigned_to: r.vendedora.user_id, empresa: r.empresa, modo: r.data.modo,
         due_date: r.data.modo === 'data' ? r.data.due_date : null,
         interacao_tipo: r.data.modo === 'interacao' ? (r.data.interacao_tipo ?? 'ligacao') : null,
         auto_satisfy_mode: autoSatisfyDaCategoria(r.categoria),
@@ -108,7 +158,11 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa }: {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Criar tarefa por voz</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>
+            {clienteFixo ? `Criar tarefa por voz — ${clienteFixo.nome}` : 'Criar tarefa por voz'}
+          </DialogTitle>
+        </DialogHeader>
 
         {/* Gravação / texto */}
         <div className="space-y-2">
@@ -156,11 +210,18 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa }: {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-medium truncate">{r.cliente?.customer_user_id ? r.cliente.nome : 'Cliente não definido'}</span>
-                      {r.cliente_nome_falado && <span className="text-2xs text-muted-foreground">(falado: "{r.cliente_nome_falado}")</span>}
+                      {r.cliente_nome_falado && !clienteFixo && <span className="text-2xs text-muted-foreground">(falado: "{r.cliente_nome_falado}")</span>}
                       {r.cliente && statusBadge(r.cliente.status)}
                     </div>
-                    {(!r.cliente || r.cliente.status !== 'unico') && (
-                      <ClienteSwap candidatos={r.cliente?.candidatos ?? []} onPick={(cid, nome) => patch(i, { cliente: { customer_user_id: cid, nome, status: 'unico', candidatos: r.cliente?.candidatos ?? [] } })} onBuscar={(q) => buscarTrocaCliente(i, q)} />
+                    {/* Troca de cliente: oculta quando clienteFixo (cliente é fixo) */}
+                    {!clienteFixo && (!r.cliente || r.cliente.status !== 'unico') && (
+                      <ClienteSwap candidatos={r.cliente?.candidatos ?? []} onPick={(cid, nome, empresa_omie) => {
+                        const empresaDerivada = empresaDeOmie(empresa_omie) ?? r.empresa;
+                        patch(i, {
+                          empresa: empresaDerivada,
+                          cliente: { customer_user_id: cid, nome, status: 'unico', candidatos: r.cliente?.candidatos ?? [] },
+                        });
+                      }} onBuscar={(q) => buscarTrocaCliente(i, q)} />
                     )}
                   </div>
 
@@ -217,8 +278,8 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa }: {
 
 /** Mini-busca de cliente pra trocar o match (reusa o picker Omie). */
 function ClienteSwap({ candidatos, onPick, onBuscar }: {
-  candidatos: { customer_user_id: string; nome: string }[];
-  onPick: (cid: string, nome: string) => void;
+  candidatos: { customer_user_id: string; nome: string; empresa_omie?: string | null }[];
+  onPick: (cid: string, nome: string, empresa_omie: string | null | undefined) => void;
   onBuscar: (q: string) => void;
 }) {
   const [q, setQ] = useState('');
@@ -233,7 +294,7 @@ function ClienteSwap({ candidatos, onPick, onBuscar }: {
       {lista.length > 0 && (
         <div className="border rounded max-h-32 overflow-y-auto">
           {lista.map((c) => (
-            <button key={c.customer_user_id} onClick={() => onPick(c.customer_user_id, c.nome)}
+            <button key={c.customer_user_id} onClick={() => onPick(c.customer_user_id, c.nome, c.empresa_omie)}
               className="w-full text-left px-2 py-1 text-xs hover:bg-muted/50 border-b last:border-b-0">{c.nome}</button>
           ))}
         </div>
