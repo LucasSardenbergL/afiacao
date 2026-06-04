@@ -21,6 +21,9 @@ const ALLOWED = new Set([
   // useTarefas: effectiveUserId SÓ em useMinhasTarefas (filtra a LEITURA pro alvo no "Ver como");
   // as mutations (criar/concluir/resolverSugestao/adiar/cancelar) usam user.id (o master real), nunca effectiveUserId.
   'src/hooks/useTarefas.ts',
+  // useTarefasFase2: effectiveUserId SÓ em useMinhasRecorrentesHoje (filtro + queryKey de LEITURA, espelha useMinhasTarefas);
+  // writes (criar/editar/toggle template) usam created_by=user.id e as RPCs (concluir_com_comprovacao/auditar_tarefa) usam auth.uid() server-side.
+  'src/hooks/useTarefasFase2.ts',
 ]);
 
 describe('anti write-leak: effectiveUserId só em leitura', () => {

@@ -50,13 +50,17 @@ const ToolPublicHistory = () => {
 
   const loadData = async () => {
     try {
-      const [toolRes, eventsRes] = await Promise.all([
-        supabase.from('user_tools').select('*, tool_categories(name)').eq('id', toolId!).single(),
-        supabase.from('tool_events').select('id, event_type, description, created_at')
-          .eq('user_tool_id', toolId!).order('created_at', { ascending: false }),
-      ]);
-      if (toolRes.data) setTool(toolRes.data as unknown as ToolData);
-      if (eventsRes.data) setEvents(eventsRes.data as ToolEvent[]);
+      // RPC pública SECURITY DEFINER: funciona pra visitante NÃO-LOGADO (QR) e devolve só campos
+      // seguros (sem user_id do dono). As tabelas user_tools/tool_events não têm policy anon.
+      const { data, error } = await supabase.rpc('get_public_tool_history' as never, {
+        p_tool_id: toolId,
+      } as never);
+      if (error) throw error;
+      const payload = data as unknown as { tool: ToolData; events: ToolEvent[] } | null;
+      if (payload?.tool) {
+        setTool(payload.tool);
+        setEvents(payload.events ?? []);
+      }
     } catch (e) {
       console.error(e);
     } finally {
