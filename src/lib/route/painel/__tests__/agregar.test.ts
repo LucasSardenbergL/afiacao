@@ -55,14 +55,16 @@ describe('agregarPainel', () => {
     expect(r.dias_sem_denominador).toBe(1);    // 2026-06-04
   });
 
-  it('por_canal separa ligação e whatsapp; por_vendedora agrupa por farmer', () => {
+  it('por_canal separa ligação e whatsapp; por_vendedora (só ligação) agrupa por farmer', () => {
     const snaps = [snap({ customer_user_id: 'c1' })];
     const contatos = [
       ct({ canal: 'ligacao', farmer_id: 'r', status: 'convertido' }),
-      ct({ canal: 'whatsapp', farmer_id: 't', customer_user_id: 'c9', status: 'respondido' }),
+      ct({ canal: 'ligacao', farmer_id: 't', customer_user_id: 'c9', status: 'respondido' }),
+      ct({ canal: 'whatsapp', farmer_id: 't', customer_user_id: 'c8', status: 'respondido' }),
     ];
     const r = agregarPainel(snaps, contatos);
     expect(r.por_canal.map(g => g.chave).sort()).toEqual(['ligacao', 'whatsapp']);
+    // por_vendedora é só ligação (coerente com global/por_bucket) → r e t têm ligação
     expect(r.por_vendedora.map(g => g.chave).sort()).toEqual(['r', 't']);
   });
 

@@ -72,8 +72,8 @@ export function agregarPainel(snapshots: SnapshotRow[], contatos: ContatoRow[]):
     contatos_por_dia,
     dias_sem_denominador,
     global: grupo('global', ligacoes),
-    por_vendedora: agrupar(contatos, (c) => c.farmer_id ?? '—'),  // TODOS os canais (test: r+t)
+    por_vendedora: agrupar(ligacoes, (c) => c.farmer_id ?? '—'),  // só ligação (coerente com global/por_bucket)
     por_bucket: agrupar(ligacoes, (c) => c.bucket ?? '—'),
-    por_canal: agrupar(contatos, (c) => c.canal),  // TODOS os canais
+    por_canal: agrupar(contatos, (c) => c.canal),  // TODOS os canais (visão explícita do split)
   };
 }
