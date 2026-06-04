@@ -9796,6 +9796,207 @@ export type Database = {
         }
         Relationships: []
       }
+      tarefa_eventos: {
+        Row: {
+          ator: string | null
+          created_at: string
+          id: string
+          payload: Json | null
+          tarefa_id: string
+          tipo_evento: string
+        }
+        Insert: {
+          ator?: string | null
+          created_at?: string
+          id?: string
+          payload?: Json | null
+          tarefa_id: string
+          tipo_evento: string
+        }
+        Update: {
+          ator?: string | null
+          created_at?: string
+          id?: string
+          payload?: Json | null
+          tarefa_id?: string
+          tipo_evento?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tarefa_eventos_tarefa_id_fkey"
+            columns: ["tarefa_id"]
+            isOneToOne: false
+            referencedRelation: "tarefas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tarefa_eventos_tarefa_id_fkey"
+            columns: ["tarefa_id"]
+            isOneToOne: false
+            referencedRelation: "v_tarefas_estado"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tarefa_satisfacao_candidatos: {
+        Row: {
+          confidence: number | null
+          created_at: string
+          id: string
+          matched_payload: Json | null
+          mode: string
+          motivo: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          source_id: string | null
+          source_type: string
+          status: string
+          tarefa_id: string
+        }
+        Insert: {
+          confidence?: number | null
+          created_at?: string
+          id?: string
+          matched_payload?: Json | null
+          mode: string
+          motivo?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          source_id?: string | null
+          source_type: string
+          status?: string
+          tarefa_id: string
+        }
+        Update: {
+          confidence?: number | null
+          created_at?: string
+          id?: string
+          matched_payload?: Json | null
+          mode?: string
+          motivo?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          source_id?: string | null
+          source_type?: string
+          status?: string
+          tarefa_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tarefa_satisfacao_candidatos_tarefa_id_fkey"
+            columns: ["tarefa_id"]
+            isOneToOne: false
+            referencedRelation: "tarefas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tarefa_satisfacao_candidatos_tarefa_id_fkey"
+            columns: ["tarefa_id"]
+            isOneToOne: false
+            referencedRelation: "v_tarefas_estado"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tarefas: {
+        Row: {
+          adiada_para: string | null
+          assigned_to: string
+          auto_satisfy_mode: string
+          backstop_days: number
+          categoria: string
+          comprovacao_url: string | null
+          concluida_em: string | null
+          concluida_por: string | null
+          conclusao_origem: string | null
+          created_at: string
+          created_by: string
+          customer_user_id: string
+          descricao: string
+          due_date: string | null
+          empresa: string
+          escalado_em: string | null
+          id: string
+          interacao_tipo: string | null
+          modo: string
+          motivo_adiamento: string | null
+          nota_conclusao: string | null
+          requer_comprovacao: boolean
+          status: string
+          target_preco_centavos: number | null
+          target_produto_id: string | null
+          target_tags: Json | null
+          target_texto: string | null
+          template_id: string | null
+          tolerancia_dias: number
+          updated_at: string
+        }
+        Insert: {
+          adiada_para?: string | null
+          assigned_to: string
+          auto_satisfy_mode?: string
+          backstop_days?: number
+          categoria: string
+          comprovacao_url?: string | null
+          concluida_em?: string | null
+          concluida_por?: string | null
+          conclusao_origem?: string | null
+          created_at?: string
+          created_by: string
+          customer_user_id: string
+          descricao: string
+          due_date?: string | null
+          empresa: string
+          escalado_em?: string | null
+          id?: string
+          interacao_tipo?: string | null
+          modo: string
+          motivo_adiamento?: string | null
+          nota_conclusao?: string | null
+          requer_comprovacao?: boolean
+          status?: string
+          target_preco_centavos?: number | null
+          target_produto_id?: string | null
+          target_tags?: Json | null
+          target_texto?: string | null
+          template_id?: string | null
+          tolerancia_dias?: number
+          updated_at?: string
+        }
+        Update: {
+          adiada_para?: string | null
+          assigned_to?: string
+          auto_satisfy_mode?: string
+          backstop_days?: number
+          categoria?: string
+          comprovacao_url?: string | null
+          concluida_em?: string | null
+          concluida_por?: string | null
+          conclusao_origem?: string | null
+          created_at?: string
+          created_by?: string
+          customer_user_id?: string
+          descricao?: string
+          due_date?: string | null
+          empresa?: string
+          escalado_em?: string | null
+          id?: string
+          interacao_tipo?: string | null
+          modo?: string
+          motivo_adiamento?: string | null
+          nota_conclusao?: string | null
+          requer_comprovacao?: boolean
+          status?: string
+          target_preco_centavos?: number | null
+          target_produto_id?: string | null
+          target_tags?: Json | null
+          target_texto?: string | null
+          template_id?: string | null
+          tolerancia_dias?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       tint_bases: {
         Row: {
           account: string
@@ -13029,6 +13230,46 @@ export type Database = {
           },
         ]
       }
+      v_tarefas_estado: {
+        Row: {
+          adiada_para: string | null
+          assigned_to: string | null
+          atrasada: boolean | null
+          auto_satisfy_mode: string | null
+          backstop_days: number | null
+          categoria: string | null
+          comprovacao_url: string | null
+          concluida_em: string | null
+          concluida_por: string | null
+          conclusao_origem: string | null
+          created_at: string | null
+          created_by: string | null
+          customer_user_id: string | null
+          descricao: string | null
+          due_date: string | null
+          effective_due: string | null
+          empresa: string | null
+          escalado_em: string | null
+          escalavel: boolean | null
+          id: string | null
+          interacao_tipo: string | null
+          modo: string | null
+          motivo_adiamento: string | null
+          nota_conclusao: string | null
+          requer_comprovacao: boolean | null
+          responsavel_efetivo: string | null
+          status: string | null
+          target_preco_centavos: number | null
+          target_produto_id: string | null
+          target_tags: Json | null
+          target_texto: string | null
+          tem_sugestao_pendente: boolean | null
+          template_id: string | null
+          tolerancia_dias: number | null
+          updated_at: string | null
+        }
+        Relationships: []
+      }
       v_titulo_baixas: {
         Row: {
           company: string | null
@@ -13129,6 +13370,10 @@ export type Database = {
           sku_codigo_omie: number
         }[]
       }
+      atualizar_descricao_sku_parametros: {
+        Args: { p_empresa: string }
+        Returns: number
+      }
       atualizar_estados_eventos_comerciais: {
         Args: never
         Returns: {
@@ -13168,6 +13413,18 @@ export type Database = {
         }[]
       }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
+      confirmar_item_picking: {
+        Args: {
+          p_confirmed_at: string
+          p_event_id: string
+          p_item_id: string
+          p_justificativa: string
+          p_lote_informado: string
+          p_quantidade_separada: number
+          p_task_id: string
+        }
+        Returns: Json
+      }
       converter_sugestao_em_campanha_flat: {
         Args: {
           p_canal?: string
@@ -13215,6 +13472,10 @@ export type Database = {
         Returns: number
       }
       end_impersonation: { Args: { p_audit_id: string }; Returns: undefined }
+      ensure_picking_task_for_sales_order: {
+        Args: { p_sales_order_id: string }
+        Returns: Json
+      }
       envio_portal_lock_candidatos: {
         Args: { p_max?: number }
         Returns: {
@@ -13476,6 +13737,17 @@ export type Database = {
           user_id: string
         }[]
       }
+      listar_pedidos_a_separar: {
+        Args: { p_account: string }
+        Returns: {
+          customer_user_id: string
+          data: string
+          id: string
+          items: Json
+          status: string
+          total: number
+        }[]
+      }
       listar_skus_por_codigo_fornecedor: {
         Args: { p_codigo_fornecedor: string; p_empresa: string }
         Returns: {
@@ -13551,6 +13823,7 @@ export type Database = {
         Args: { p_a_partir?: string; p_empresa: string; p_fornecedor: string }
         Returns: string
       }
+      recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
         Args: never
@@ -13674,6 +13947,8 @@ export type Database = {
           out_volume_financeiro_12m: number
         }[]
       }
+      tarefas_escalonamento_tick: { Args: never; Returns: undefined }
+      tarefas_matcher_tick: { Args: never; Returns: undefined }
       tint_run_reconciliation: {
         Args: { p_sync_run_id: string }
         Returns: Json
