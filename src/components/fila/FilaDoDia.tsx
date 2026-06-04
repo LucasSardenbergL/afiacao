@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { track } from '@/lib/analytics';
 import { useFilaAcoes } from '@/hooks/useFilaAcoes';
+import { useCriticaFila } from '@/hooks/useCriticaFila';
+import { PorQueAgora } from '@/components/fila/PorQueAgora';
 import type { AcaoSugerida, CategoriaAcao } from '@/lib/fila/types';
 import { spBusinessDate } from '@/lib/time/sp-day';
 import { marcarSeNovoNoDia, chaveDiaExibida, resumoFontes } from '@/lib/fila/telemetria';
@@ -23,8 +25,11 @@ function clienteHref(a: AcaoSugerida): string | null {
 }
 
 /** CTA "Fazer": tel/wa abrem o app nativo; pedido/abrir navegam interno. Sem persistir nada (render mínimo). */
-function AcaoCta({ a }: { a: AcaoSugerida }) {
-  const onClick = () => track('fila.acao_fazer', { fonte: a.fonte, cta: a.cta, categoria: a.categoria });
+function AcaoCta({ a, temCritica }: { a: AcaoSugerida; temCritica: boolean }) {
+  const onClick = () => {
+    track('fila.acao_fazer', { fonte: a.fonte, cta: a.cta, categoria: a.categoria });
+    if (temCritica) track('fila.critica_acted', { cliente: a.clienteUserId, cta: a.cta });
+  };
   const tel = a.telefone?.replace(/\D/g, '');
   if (a.cta === 'ligar' && tel) {
     return <Button asChild size="sm" variant="outline"><a href={`tel:${tel}`} onClick={onClick}>Ligar</a></Button>;
@@ -46,6 +51,17 @@ function AcaoCta({ a }: { a: AcaoSugerida }) {
  */
 export function FilaDoDia() {
   const { acoes, isLoading } = useFilaAcoes();
+  const packs = useCriticaFila(acoes);
+  const shownRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    for (const [cli, pack] of packs) {
+      if (pack.contradicoes.length > 0 && !shownRef.current.has(cli)) {
+        shownRef.current.add(cli);
+        track('fila.critica_shown', { cliente: cli, chaves: pack.contradicoes.map(c => c.chave) });
+      }
+    }
+  }, [packs]);
 
   const [escondidos, setEscondidos] = useState<Set<string>>(() => new Set());
   const ocultar = (k: string) => setEscondidos((s) => { const n = new Set(s); n.add(k); return n; });
@@ -96,8 +112,9 @@ export function FilaDoDia() {
         {visiveis.slice(0, 30).map((a, i) => {
           const cat = CATEGORIA_UI[a.categoria];
           const href = clienteHref(a);
+          const pack = a.clienteUserId ? packs.get(a.clienteUserId) : undefined;
           return (
-            <div key={`${a.dedupeKey}:${i}`} className="p-3 flex items-center justify-between gap-3 hover:bg-muted/30">
+            <div key={`${a.dedupeKey}:${i}`} className="p-3 flex items-start justify-between gap-3 hover:bg-muted/30">
               <div className="min-w-0">
                 {href ? (
                   <Link to={href} className="block text-sm font-medium truncate hover:underline">{a.titulo}</Link>
@@ -111,9 +128,10 @@ export function FilaDoDia() {
                     <span className="font-tabular">~R$ {Math.round(a.valorEsperado).toLocaleString('pt-BR')} estimado</span>
                   )}
                 </div>
+                {pack && <PorQueAgora pack={pack} />}
               </div>
               <div className="shrink-0 flex items-center gap-1">
-                <AcaoCta a={a} />
+                <AcaoCta a={a} temCritica={!!pack && pack.contradicoes.length > 0} />
                 <AcaoOutcomeMenu acao={a} onNaoUtilAgora={ocultar} />
               </div>
             </div>
