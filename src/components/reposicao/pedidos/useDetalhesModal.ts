@@ -8,8 +8,9 @@ import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 import { PedidoSugerido, PedidoItem, CondicaoPagamento } from './types';
 import { interpretarRespostaDisparo, type RespostaDisparo } from './shared';
+import { montarUpdateItem, podeEditarPrecoPedido, precoEditValido } from './preco-edit';
 
-export type Linha = PedidoItem & { _qtd: number; _valor: number };
+export type Linha = PedidoItem & { _qtd: number; _preco: number; _valor: number };
 
 interface UseDetalhesModalArgs {
   pedido: PedidoSugerido | null;
@@ -22,6 +23,7 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [edits, setEdits] = useState<Record<number, number>>({});
+  const [precoEdits, setPrecoEdits] = useState<Record<number, number>>({});
   const [obs, setObs] = useState('');
   const [condicaoCodigo, setCondicaoCodigo] = useState<string>('');
   const [removerItem, setRemoverItem] = useState<PedidoItem | null>(null);
@@ -80,6 +82,7 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
   useEffect(() => {
     if (!open) {
       setEdits({});
+      setPrecoEdits({});
       setObs('');
       setCondicaoCodigo('');
     } else if (pedido) {
@@ -90,10 +93,10 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
   const linhas = useMemo<Linha[]>(() => {
     return (itens ?? []).map((it) => {
       const qtd = edits[it.id] ?? Number(it.qtde_final ?? it.qtde_sugerida);
-      const preco = Number(it.preco_unitario ?? 0);
-      return { ...it, _qtd: qtd, _valor: qtd * preco };
+      const preco = precoEdits[it.id] ?? Number(it.preco_unitario ?? 0);
+      return { ...it, _qtd: qtd, _preco: preco, _valor: qtd * preco };
     });
-  }, [itens, edits]);
+  }, [itens, edits, precoEdits]);
 
   const totalAtual = useMemo(
     () => linhas.reduce((acc, l) => acc + l._valor, 0),
@@ -103,18 +106,24 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
   const salvarMutation = useMutation({
     mutationFn: async () => {
       if (!pedido) return;
-      const updates = Object.entries(edits);
-      for (const [itemId, qtd] of updates) {
-        const item = (itens ?? []).find((i) => i.id === Number(itemId));
-        const preco = Number(item?.preco_unitario ?? 0);
+      // Money-path: nunca gravar preço <= 0 (o disparo rejeita nValUnit=0 no Omie).
+      const precoInvalido = Object.values(precoEdits).find((v) => !precoEditValido(v));
+      if (precoInvalido !== undefined) {
+        throw new Error('Custo inválido: informe um valor maior que zero.');
+      }
+      // União dos itens com ajuste de quantidade OU de preço.
+      const idsEditados = new Set<number>([
+        ...Object.keys(edits).map(Number),
+        ...Object.keys(precoEdits).map(Number),
+      ]);
+      for (const itemId of idsEditados) {
+        const item = (itens ?? []).find((i) => i.id === itemId);
+        if (!item) continue; // item saiu do cache — não grava (evita zerar preço). Codex [P1].
+        const update = montarUpdateItem(item, edits[itemId], precoEdits[itemId]);
         const { error } = await supabase
           .from('pedido_compra_item')
-          .update({
-            qtde_final: qtd,
-            valor_linha: qtd * preco,
-            ajustado_humano: true,
-          })
-          .eq('id', Number(itemId));
+          .update(update)
+          .eq('id', itemId);
         if (error) throw error;
       }
       const novoTotal = linhas.reduce((acc, l) => acc + l._valor, 0);
@@ -129,6 +138,7 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
       queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
       setEdits({});
+      setPrecoEdits({});
     },
     onError: (e: Error) => {
       logger.error('Erro ao salvar ajustes', { error: e });
@@ -320,9 +330,25 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     setEdits((prev) => ({ ...prev, [id]: isNaN(v) ? 0 : v }));
   };
 
+  const onEditPreco = (id: number, raw: string) => {
+    setPrecoEdits((prev) => {
+      if (raw.trim() === '') {
+        // Campo vazio: remove o edit (volta ao placeholder), não vira 0. Codex [P2].
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      }
+      const v = Number(raw);
+      return { ...prev, [id]: Number.isNaN(v) ? 0 : v };
+    });
+  };
+
   const podeEditar =
     pedido?.status === 'pendente_aprovacao' || pedido?.status === 'bloqueado_guardrail';
   const podeEditarCondicao = podeEditar || pedido?.status === 'aprovado_aguardando_disparo';
+  // Custo de primeira compra (preço 0): definível na tela tb em falha_envio
+  // (recupera o pedido sem flip de status no SQL). Ver preco-edit.ts.
+  const podeEditarPreco = podeEditarPrecoPedido(pedido?.status);
 
   return {
     condicoes,
@@ -330,6 +356,8 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     isLoading,
     edits,
     onEditQty,
+    precoEdits,
+    onEditPreco,
     obs,
     setObs,
     condicaoCodigo,
@@ -349,5 +377,6 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     descontinuarMutation,
     podeEditar,
     podeEditarCondicao,
+    podeEditarPreco,
   };
 }

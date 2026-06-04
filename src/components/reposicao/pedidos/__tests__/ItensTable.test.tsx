@@ -20,6 +20,7 @@ function linha(partial: Partial<Linha>): Linha {
     primeira_compra: null,
     ajustado_humano: null,
     _qtd: 10,
+    _preco: 3,
     _valor: 30,
     ...partial,
   } as Linha;
@@ -31,6 +32,8 @@ function setup(overrides: Partial<React.ComponentProps<typeof ItensTable>> = {})
     podeEditar: true,
     totalAtual: 30,
     onEditQty: vi.fn(),
+    podeEditarPreco: false,
+    onEditPreco: vi.fn(),
     onRemover: vi.fn(),
     onDescontinuar: vi.fn(),
     removerPending: false,
@@ -72,5 +75,23 @@ describe('ItensTable', () => {
     setup({ podeEditar: false, linhas: [linha({ _qtd: 4, qtde_sugerida: 10 })] });
     // 4 (qtd final divergente) é renderizado como span destacado
     expect(screen.getByText('4')).toBeTruthy();
+  });
+
+  it('item sem custo + podeEditarPreco: mostra input de preço e dispara onEditPreco', () => {
+    const onEditPreco = vi.fn();
+    setup({
+      podeEditar: false,
+      podeEditarPreco: true,
+      onEditPreco,
+      linhas: [linha({ preco_unitario: 0, _preco: 0 })],
+    });
+    const precoInput = screen.getByPlaceholderText('custo');
+    fireEvent.change(precoInput, { target: { value: '25.35' } });
+    expect(onEditPreco).toHaveBeenCalledWith(1, '25.35');
+  });
+
+  it('item COM custo válido: preço fica read-only mesmo com podeEditarPreco', () => {
+    setup({ podeEditar: false, podeEditarPreco: true, linhas: [linha({ preco_unitario: 9, _preco: 9 })] });
+    expect(screen.queryByPlaceholderText('custo')).toBeNull();
   });
 });

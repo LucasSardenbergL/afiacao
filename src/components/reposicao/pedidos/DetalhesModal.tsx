@@ -30,6 +30,8 @@ export function DetalhesModal({
     isLoading,
     edits,
     onEditQty,
+    precoEdits,
+    onEditPreco,
     obs,
     setObs,
     condicaoCodigo,
@@ -49,6 +51,7 @@ export function DetalhesModal({
     descontinuarMutation,
     podeEditar,
     podeEditarCondicao,
+    podeEditarPreco,
   } = useDetalhesModal({ pedido, open, onOpenChange, onApproved });
 
   if (!pedido) return null;
@@ -112,6 +115,8 @@ export function DetalhesModal({
             podeEditar={podeEditar}
             totalAtual={totalAtual}
             onEditQty={onEditQty}
+            podeEditarPreco={podeEditarPreco}
+            onEditPreco={onEditPreco}
             onRemover={(l) => setRemoverItem(l)}
             onDescontinuar={(l) => setDescontinuarItem(l)}
             removerPending={removerItemMutation.isPending}
@@ -135,25 +140,25 @@ export function DetalhesModal({
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Fechar</Button>
+          {(podeEditar || podeEditarPreco) && (
+            <Button
+              variant="secondary"
+              disabled={(Object.keys(edits).length === 0 && Object.keys(precoEdits).length === 0) || salvarMutation.isPending}
+              onClick={() => salvarMutation.mutate()}
+            >
+              {salvarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+              Salvar ajustes
+            </Button>
+          )}
           {podeEditar && (
-            <>
-              <Button
-                variant="secondary"
-                disabled={Object.keys(edits).length === 0 || salvarMutation.isPending}
-                onClick={() => salvarMutation.mutate()}
-              >
-                {salvarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-                Salvar ajustes
-              </Button>
-              <Button
-                disabled={aprovarMutation.isPending || !condicaoSelecionada}
-                onClick={() => aprovarMutation.mutate()}
-                title={!condicaoSelecionada ? 'Selecione a condição de pagamento antes de aprovar' : ''}
-              >
-                {aprovarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-                ✓ Aprovar e disparar agora
-              </Button>
-            </>
+            <Button
+              disabled={aprovarMutation.isPending || !condicaoSelecionada}
+              onClick={() => aprovarMutation.mutate()}
+              title={!condicaoSelecionada ? 'Selecione a condição de pagamento antes de aprovar' : ''}
+            >
+              {aprovarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+              ✓ Aprovar e disparar agora
+            </Button>
           )}
         </DialogFooter>
       </DialogContent>
