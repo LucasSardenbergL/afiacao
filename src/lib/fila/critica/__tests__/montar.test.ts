@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectRecorrenteSumiu, detectSemResposta, detectTarefaSemProva, detectAltoValorForaRota } from '../montar';
+import { detectRecorrenteSumiu, detectSemResposta, detectTarefaSemProva, detectAltoValorForaRota, montarEvidencePack } from '../montar';
 import { CRITICA_CFG_DEFAULT, type CriticaInput } from '../types';
 
 const base = (over: Partial<CriticaInput>): CriticaInput => ({
@@ -100,5 +100,51 @@ describe('detectAltoValorForaRota', () => {
 
   it('NÃO dispara abaixo do limiar de faturamento', () => {
     expect(detectAltoValorForaRota(base({ metrica: { ...mAlto, faturamento90d: 100 }, rota: { naCallQueue: false, semRespostaRecenteN: 0, ultimoContatoRealHaDias: null } }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
+  });
+});
+
+describe('montarEvidencePack (composer)', () => {
+  it('agrega sinais e contradições de múltiplos detectores', () => {
+    const pack = montarEvidencePack(base({
+      metrica: { intervaloMedioDias: 15, diasDesdeUltimaCompra: 40, atrasoRelativo: 2.5, faturamento90d: 1000, faturamentoPrev90d: 1000, isColdStart: false },
+      rota: { naCallQueue: true, semRespostaRecenteN: 4, ultimoContatoRealHaDias: 1 },
+      tarefa: null,
+    }));
+    const chaves = pack.contradicoes.map(c => c.chave).sort();
+    expect(chaves).toEqual(['recorrente_sumiu', 'sem_resposta_repetido']);
+    expect(pack.sinais.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('suprime alto_valor_fora_rota quando recorrente_sumiu também dispara', () => {
+    const pack = montarEvidencePack(base({
+      metrica: { intervaloMedioDias: 30, diasDesdeUltimaCompra: 90, atrasoRelativo: 3.0, faturamento90d: 9000, faturamentoPrev90d: 9000, isColdStart: false },
+      rota: { naCallQueue: false, semRespostaRecenteN: 0, ultimoContatoRealHaDias: null },
+    }));
+    const chaves = pack.contradicoes.map(c => c.chave);
+    expect(chaves).toContain('recorrente_sumiu');
+    expect(chaves).not.toContain('alto_valor_fora_rota');
+  });
+
+  it('degrada honesto: métrica ausente e rota indisponível viram faltaDado, sem fabricar', () => {
+    const pack = montarEvidencePack(base({ metrica: null, rota: null, tarefa: null }));
+    expect(pack.contradicoes).toHaveLength(0);
+    expect(pack.faltaDado.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('cold-start não fabrica delta', () => {
+    const pack = montarEvidencePack(base({
+      metrica: { intervaloMedioDias: 10, diasDesdeUltimaCompra: 99, atrasoRelativo: 9, faturamento90d: 0, faturamentoPrev90d: 0, isColdStart: true },
+      rota: { naCallQueue: true, semRespostaRecenteN: 0, ultimoContatoRealHaDias: 1 },
+    }));
+    expect(pack.contradicoes).toHaveLength(0);
+    expect(pack.faltaDado.some(f => f.toLowerCase().includes('novo'))).toBe(true);
+  });
+
+  it('toda contradição retornada tem ≥1 evidência', () => {
+    const pack = montarEvidencePack(base({
+      metrica: { intervaloMedioDias: 15, diasDesdeUltimaCompra: 30, atrasoRelativo: 2.0, faturamento90d: 1000, faturamentoPrev90d: 1000, isColdStart: false },
+      rota: { naCallQueue: true, semRespostaRecenteN: 0, ultimoContatoRealHaDias: 1 },
+    }));
+    for (const c of pack.contradicoes) expect(c.evidencias.length).toBeGreaterThan(0);
   });
 });
