@@ -106,7 +106,6 @@ export function escolherEmbalagemEconomica(input: {
     .sort((a, b) => a.custo_total_ajustado - b.custo_total_ajustado);
 
   const melhor = avals[0];
-  const economia_vs_alternativa = avals[1].custo_total_ajustado - melhor.custo_total_ajustado;
 
   let status: StatusDecisao = 'ok';
   let recomendada = melhor.sku_codigo_omie;
@@ -125,6 +124,13 @@ export function escolherEmbalagemEconomica(input: {
   }
 
   const recAval = avals.find((a) => a.sku_codigo_omie === recomendada) as AvaliacaoOpcao;
+  // Economia da RECOMENDADA vs a melhor alternativa (clamp 0). No caso marginal a
+  // recomendada é a conservadora (mais cara) → economia 0, não a do overbuy descartado.
+  const outras = avals.filter((a) => a.sku_codigo_omie !== recomendada);
+  const economia_vs_alternativa = outras.length
+    ? Math.max(0, Math.min(...outras.map((a) => a.custo_total_ajustado)) - recAval.custo_total_ajustado)
+    : 0;
+
   return {
     status, recomendada, opcoes: avals,
     excedente_base: recAval.excedente_base,

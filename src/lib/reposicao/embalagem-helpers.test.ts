@@ -136,4 +136,28 @@ describe('escolherEmbalagemEconomica', () => {
     expect(r.capital_estimado).toBeNull();
     expect(r.flags).toContain('escoamento_nao_estimado');
   });
+
+  it('economia_vs_alternativa reflete a recomendada (0 quando marginal, >0 quando normal)', () => {
+    const marginal = escolherEmbalagemEconomica({
+      necessidade_base: 1,
+      opcoes: [
+        { sku_codigo_omie: 'QT', fator_para_base: 1, preco: 10, preco_status: 'ok' },
+        { sku_codigo_omie: 'GL', fator_para_base: 4, preco: 9.9, preco_status: 'ok' },
+      ],
+      params: params({ demanda_base_diaria: 1000, limiar_minimo_economia_rs: 1 }),
+    });
+    expect(marginal.recomendada).toBe('QT');
+    expect(marginal.economia_vs_alternativa).toBe(0);
+
+    const normal = escolherEmbalagemEconomica({
+      necessidade_base: 4,
+      opcoes: [
+        { sku_codigo_omie: 'QT', fator_para_base: 1, preco: 10, preco_status: 'ok' },
+        { sku_codigo_omie: 'GL', fator_para_base: 4, preco: 30, preco_status: 'ok' },
+      ],
+      params: params(),
+    });
+    expect(normal.recomendada).toBe('GL');
+    expect(normal.economia_vs_alternativa).toBeGreaterThan(0);
+  });
 });

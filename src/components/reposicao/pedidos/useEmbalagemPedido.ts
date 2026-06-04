@@ -127,7 +127,7 @@ export function useEmbalagemPedido(
         const membro = membros.find((m) => m.sku_codigo_omie === sku);
         if (!membro) continue;
         const opcoes = opcoesPorGrupo.get(membro.grupo_id);
-        if (!opcoes) continue;
+        if (!opcoes || opcoes.length < 2) continue; // grupo de 1 membro → sem decisão de embalagem
         const fator = Number(membro.fator_para_base);
         const qtdItem = Number(item.qtde_final ?? item.qtde_sugerida ?? 0);
         const necessidade_base = qtdItem * fator; // converte a qtd do SKU p/ unidade-base
