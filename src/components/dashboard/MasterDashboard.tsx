@@ -2,6 +2,7 @@ import { Card } from '@/components/ui/card';
 import { Construction } from 'lucide-react';
 import { KpisToday } from './KpisToday';
 import { TeamKpiTiles } from './TeamKpiTiles';
+import { RankingVendedoresCard } from './RankingVendedoresCard';
 import { VisitSuggestionsCard } from './VisitSuggestionsCard';
 import { ViewAsPicker } from '@/components/impersonation/ViewAsPicker';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
@@ -53,6 +54,7 @@ export function MasterDashboard() {
       <div className="space-y-2">
         <div className="text-xs uppercase tracking-wide text-muted-foreground">Time</div>
         <TeamKpiTiles />
+        <RankingVendedoresCard />
       </div>
     </div>
   );
