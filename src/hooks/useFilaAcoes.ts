@@ -23,7 +23,7 @@ export function useFilaAcoes(): { acoes: AcaoSugerida[]; isLoading: boolean } {
   const acoes = useMemo(() => {
     const todas: AcaoSugerida[] = [
       ...tarefasParaAcoes(tarefas.data ?? []),
-      ...rotaParaAcoes(rota.data?.callQueue ?? []),
+      ...rotaParaAcoes(rota.data?.callQueue ?? [], rota.data?.routeDate ?? workdayIso),
       ...mixGapParaAcoes(mixgap.data ?? null),
     ];
     return rankearFila(dedupe(todas));

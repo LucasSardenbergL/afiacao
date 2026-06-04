@@ -15,7 +15,7 @@ function item(p: Partial<RouteContactItem>): RouteContactItem {
 
 describe('rotaParaAcoes', () => {
   it('mapeia para categoria esperado com valorEsperado = valorDaLigacao', () => {
-    const [a] = rotaParaAcoes([item({ valorDaLigacao: 220 })]);
+    const [a] = rotaParaAcoes([item({ valorDaLigacao: 220 })], '2026-06-04');
     expect(a.fonte).toBe('rota');
     expect(a.categoria).toBe('esperado');
     expect(a.valorEsperado).toBe(220);
@@ -23,10 +23,11 @@ describe('rotaParaAcoes', () => {
     expect(a.cta).toBe('ligar');
     expect(a.telefone).toBe('5599...');
     expect(a.dedupeKey).toBe('c1:ligar');
+    expect(a.payload).toEqual({ kind: 'rota', customerUserId: 'c1', dataRota: '2026-06-04', bucket: 'top', valor: 220 });
   });
 
   it('usa prontidao como score e o nome no título', () => {
-    const [a] = rotaParaAcoes([item({ prontidao: 0.8, name: 'Marcenaria X' })]);
+    const [a] = rotaParaAcoes([item({ prontidao: 0.8, name: 'Marcenaria X' })], '2026-06-04');
     expect(a.score).toBe(0.8);
     expect(a.titulo).toContain('Marcenaria X');
   });
