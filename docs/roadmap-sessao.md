@@ -27,8 +27,9 @@
 - ✅ **Decisões fechadas:** (A) fala tudo + IA infere + revisa/corrige antes de salvar (zero auto-criação); multi-tarefa por áudio. Transcrição já existe (`elevenlabs-transcribe`).
 - ✅ **Spec escrito + endurecido com passe adversário do codex.** Princípio central (codex): IA faz extração+split; **datas e entidades saem da IA** pra parser determinístico pt-BR + match local com limiar + confirmação humana. Spec: `docs/superpowers/specs/2026-06-04-tarefa-criar-por-voz-design.md`.
 - ✅ **Plano escrito.** Plano: `docs/superpowers/plans/2026-06-04-tarefa-criar-por-voz.md`.
-- ✅ **Build concluído (código mergeável).** Edge `tarefa-extrair-voz` + helpers TDD (parser data, match cliente/vendedora, validação, montar-rascunhos) + `VozTarefaDialog` + wiring em `Tarefas.tsx`. CI passou (typecheck strict ✅ / 2145/2145 testes ✅ / lint 0 errors ✅ / build ✅).
-- ⏳ **Deploy da edge + Publish + QA** (após merge). Edge `tarefa-extrair-voz` precisa ser criada via chat do Lovable. Publish do frontend no editor. QA manual no device com microfone.
+- ✅ **Build (#572) MERGEADO.** Edge `tarefa-extrair-voz` + helpers TDD (parser data, match cliente/vendedora, validação, montar-rascunhos) + `VozTarefaDialog` + wiring em `Tarefas.tsx`.
+- ✅ **Polish (#583) MERGEADO:** empresa derivada do cliente (`empresaDeOmie`, fallback honesto, nas 2 entradas) + 2º ponto de entrada "🎙️ criar por voz" no **Customer 360** (`clienteFixo`).
+- ✅ **Edge `tarefa-extrair-voz` deployada** (founder, chat do Lovable). ⏳ **Publish + QA** (microfone) pendentes.
 
 ## 5. Reposição — tingidores fabricados ('04') na fila + REGRESSÃO do sinal `tipo_produto`
 > Founder notou 5 tingidores Sayerlack OBEN (fabricados na hora) pedindo aprovação em **Parâmetros → Revisão**. Investigação revelou DOIS problemas: (a) a fila não filtrava `produto_acabado` (ruído); (b) **o sinal `tipo_produto` foi ZERADO em 100% dos ~3651 produtos OBEN** (medido em prod: 0 com `04`, 3651 NULL, sync fresco).
@@ -47,12 +48,13 @@
 > Pergunta do founder: "automatizar mais (WhatsApp) vs contratar mais vendedora?" — respondida com dado do closed-loop existente.
 - ✅ **Spec escrito + endurecido com passe adversário do codex.** Decisões centrais: snapshot on-open da fila (denominador); valor = `status='convertido'` + `valor_da_ligacao` (rotulado "valor esperado, não R$ realizado"); cortes por vendedora/bucket/canal; gating n≥30 + banner "direcional". Spec: `docs/superpowers/specs/2026-06-04-painel-ligacoes-rota-design.md`.
 - ✅ **Plano escrito.** Plano: `docs/superpowers/plans/2026-06-04-painel-ligacoes-rota.md`.
-- ✅ **Build concluído (PR #577).** Migration `route_queue_snapshot` + helpers TDD (`gating`, `agregar`) + snapshot on-open (`useSnapshotRouteQueue`) + `useRoutePanel` + página `RotaPainelLigacoes` + rota `/rota/ligacoes/painel` + link na `/rota/ligacoes`. CI passou (typecheck strict ✅ / 2186/2186 testes ✅ / lint 0 errors ✅ / build ✅).
-- ⏳ **Migration `route_queue_snapshot` no SQL Editor + Publish + QA** (após merge). Colar o SQL (`20260604120000_route_queue_snapshot.sql`) no SQL Editor do Lovable → confirmar a tabela criada → Publish → QA: abrir `/rota/ligacoes` (grava snapshot) → registrar ligações → abrir `/rota/ligacoes/painel`.
+- ✅ **Build (#577) MERGEADO.** Migration `route_queue_snapshot` + helpers TDD (`gating`, `agregar`) + snapshot on-open (`useSnapshotRouteQueue`) + `useRoutePanel` + página `RotaPainelLigacoes` + rota `/rota/ligacoes/painel` + link na `/rota/ligacoes`.
+- ✅ **Gap acionável (#586) MERGEADO:** o gap de valor virou LISTA dos clientes valiosos sem contato (top 15: nome/cidade/vendedora/valor). `agregarPainel.gap_clientes` + `GapClientesCard`.
+- ✅ **Migration `route_queue_snapshot` APLICADA** (founder, SQL Editor). ⏳ **`ALTER ADD cliente_nome`** (do #586) + **Publish + QA** pendentes (abrir `/rota/ligacoes` grava snapshot → `/rota/ligacoes/painel`).
 
 ---
 
 ### Encerramento da sessão (housekeeping recorrente)
-- Manter este roadmap atualizado a cada mudança (reflete **#559 + #562 mergeados** + a feature de voz acrescentada + a frente 5 dos tingidores '04').
+- Manter este roadmap atualizado a cada mudança (reflete a sessão: #559/#562/#572/#577/#583/#586 mergeados + a frente 5 dos tingidores '04').
 - PRs de doc/fix abertos com auto-merge quando o CI passar.
-- **O que depende de você:** (1) verificação visual da Fase 1 (libera o build da Fase 2) · (2) **revisão do spec da criação por voz** (libera o plano) · (3) **rodar a query de diagnóstico do sinal '04'** (frente 5) · Publish no Lovable pro preview · SQL no SQL Editor quando houver migration (Fase 2 e a feature de voz terão).
+- **O que depende de você (consolidado):** **1 Publish** no Lovable (leva voz #572, voz-polish #583, painel #577, gap #586 e a Fase 1) · SQL Editor: **`ALTER ... ADD COLUMN cliente_nome`** (do #586) — a `route_queue_snapshot` já foi aplicada · **verificação visual da Fase 1** das Tarefas (libera o build da **Fase 2**) · **QA** (criar por voz no microfone; painel em `/rota/ligacoes/painel`) · [frente 5 '04', sessão paralela] Checkpoint B (M2a/M2b).
