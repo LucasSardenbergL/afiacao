@@ -166,6 +166,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Shield, label: 'Admin & Relatórios', path: '/gestao/admin', managerOnly: true },
       { icon: Lock, label: 'Governança', path: '/gestao/governanca', managerOnly: true },
       { icon: ShieldCheck, label: 'Saúde de Dados', path: '/gestao/saude-dados', managerOnly: true },
+      { icon: MessageCircle, label: 'SLA WhatsApp', path: '/whatsapp/sla', gestorComercialOuMaster: true },
     ],
   },
 ];
