@@ -1,9 +1,10 @@
 import { Card } from '@/components/ui/card';
-import { Construction, MapPin, Target, TrendingUp } from 'lucide-react';
+import { Construction } from 'lucide-react';
 import { VisitSuggestionsCard } from './VisitSuggestionsCard';
 import { VisitasHojeCard } from './VisitasHojeCard';
 import { MinhasVisitasResultadoCard } from './MinhasVisitasResultadoCard';
 import { FollowupsSugeridosCard } from './FollowupsSugeridosCard';
+import { VisitasKpiTiles } from './VisitasKpiTiles';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 
 /**
@@ -48,27 +49,8 @@ export function CloserDashboard() {
         </ul>
       </Card>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className="p-3 text-center text-xs text-muted-foreground">
-          <Target className="w-5 h-5 mx-auto mb-1 opacity-40" />
-          Visitas pendentes
-          <div className="text-base font-medium text-foreground mt-1">—</div>
-        </Card>
-        <Card className="p-3 text-center text-xs text-muted-foreground">
-          <MapPin className="w-5 h-5 mx-auto mb-1 opacity-40" />
-          Próxima visita
-          <div className="text-base font-medium text-foreground mt-1">—</div>
-        </Card>
-        <Card className="p-3 text-center text-xs text-muted-foreground">
-          <TrendingUp className="w-5 h-5 mx-auto mb-1 opacity-40" />
-          Win rate
-          <div className="text-base font-medium text-foreground mt-1">—</div>
-        </Card>
-        <Card className="p-3 text-center text-xs text-muted-foreground">
-          Avg deal size
-          <div className="text-base font-medium text-foreground mt-1">—</div>
-        </Card>
-      </div>
+      {/* KPIs reais (read-only, own-scoped); cada tile exibe sua definição */}
+      <VisitasKpiTiles />
     </div>
   );
 }
