@@ -32,6 +32,53 @@ export function frescorTexto(horas: number | null): string | null {
   return `há ${Math.floor(horas / 24)}d`;
 }
 
+// ── grupo 2: clientes em risco (ai_decisions, freshness-first) ────────
+// Predicado de risco reusa o useAiOps (atraso>=2 OU queda de faturamento >50%),
+// apertado com confidence != 'baixa'.
+function ehRisco(d: DecisaoRiscoInput): boolean {
+  if (d.confidence === 'baixa') return false;
+  const atraso = num(d.atrasoRelativo) ?? 0;
+  const fat = num(d.faturamento90d) ?? 0;
+  const prev = num(d.faturamentoPrev90d) ?? 0;
+  return atraso >= 2.0 || (prev > 0 && fat < prev * 0.5);
+}
+
+export function detectarClientesRisco(
+  decisoes: DecisaoRiscoInput[], maxCreatedAtIso: string | null, agoraIso: string, cfg: ExcecoesCfg,
+): LinhaExcecao[] {
+  if (decisoes.length === 0) return [];
+  const frescor = frescorCarteira(maxCreatedAtIso, agoraIso, cfg);
+
+  if (frescor === 'desatualizada') {
+    return [{
+      id: 'risco:meta_desatualizada',
+      grupo: 'clientes_risco',
+      titulo: 'Análise de carteira desatualizada',
+      detalhe: 'Rode a análise para ver os clientes em risco do time.',
+      donoNome: null,
+      severidade: 'aviso',
+      reciboFonte: 'ai_decisions',
+      reciboFrescor: frescorTexto(idadeHoras(maxCreatedAtIso, agoraIso)),
+      acao: { tipo: 'rodar_agente' },
+      badges: [],
+    }];
+  }
+
+  const selo = frescor === 'stale' ? frescorTexto(idadeHoras(maxCreatedAtIso, agoraIso)) : null;
+  return decisoes.filter(ehRisco).slice(0, cfg.capClientes).map((d): LinhaExcecao => ({
+    id: `risco:${d.clienteUserId}`,
+    grupo: 'clientes_risco',
+    titulo: d.clienteNome ?? 'Cliente sem nome',
+    detalhe: d.primaryReason,
+    donoNome: d.donoNome,
+    severidade: 'critico',
+    reciboFonte: 'ai_decisions',
+    reciboFrescor: selo,
+    acao: { tipo: 'abrir_cliente', clienteUserId: d.clienteUserId },
+    badges: [],
+  }));
+}
+
 // ── grupo 1: dados quebrados (Sentinela) ─────────────────────────────
 export function detectarDadosQuebrados(saude: SaudeCheckInput[], cfg: ExcecoesCfg): LinhaExcecao[] {
   const naoOk = saude.filter(s => s.status !== 'ok');

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { idadeHoras, frescorCarteira, frescorTexto, detectarDadosQuebrados } from '../montar';
+import { idadeHoras, frescorCarteira, frescorTexto, detectarDadosQuebrados, detectarClientesRisco } from '../montar';
 import { EXCECOES_CFG_DEFAULT } from '../types';
-import type { SaudeCheckInput } from '../types';
+import type { SaudeCheckInput, DecisaoRiscoInput } from '../types';
 
 const saude = (over: Partial<SaudeCheckInput>): SaudeCheckInput => ({
   source: 'vendas_pedidos', domain: 'vendas', status: 'broken', severity: 'critical',
@@ -34,6 +34,45 @@ describe('frescorTexto', () => {
     expect(frescorTexto(30)).toBe('há 30h');
     expect(frescorTexto(72)).toBe('há 3d');
     expect(frescorTexto(null)).toBeNull();
+  });
+});
+
+const dec = (over: Partial<DecisaoRiscoInput>): DecisaoRiscoInput => ({
+  id: 'd1', clienteUserId: 'c1', clienteNome: 'Cliente 1', donoNome: 'Regina',
+  primaryReason: 'Esfriou', confidence: 'alta', atrasoRelativo: 2.5,
+  faturamento90d: 1000, faturamentoPrev90d: 1000, ...over,
+});
+
+describe('detectarClientesRisco', () => {
+  it('FRESH: filtra pelo predicado de risco + confidence!=baixa, cap 5', () => {
+    const decs = [
+      dec({ id: 'd1', clienteUserId: 'c1', atrasoRelativo: 2.5 }),        // dispara (atraso)
+      dec({ id: 'd2', clienteUserId: 'c2', atrasoRelativo: 1.0, faturamento90d: 100, faturamentoPrev90d: 1000 }), // dispara (queda >50%)
+      dec({ id: 'd3', clienteUserId: 'c3', atrasoRelativo: 1.0, faturamento90d: 900, faturamentoPrev90d: 1000 }), // NÃO (sem risco)
+      dec({ id: 'd4', clienteUserId: 'c4', atrasoRelativo: 5, confidence: 'baixa' }),  // NÃO (confidence baixa)
+    ];
+    const r = detectarClientesRisco(decs, '2026-06-04T11:00:00.000Z', '2026-06-04T12:00:00.000Z', EXCECOES_CFG_DEFAULT);
+    expect(r.map(l => l.id).sort()).toEqual(['risco:c1', 'risco:c2']);
+    expect(r[0].donoNome).toBe('Regina');
+    expect(r[0].grupo).toBe('clientes_risco');
+  });
+
+  it('STALE (24-48h): mesmas linhas, com selo de frescor', () => {
+    const r = detectarClientesRisco([dec({})], '2026-06-03T06:00:00.000Z', '2026-06-04T12:00:00.000Z', EXCECOES_CFG_DEFAULT);
+    expect(r).toHaveLength(1);
+    expect(r[0].reciboFrescor).toBe('há 30h');
+  });
+
+  it('DESATUALIZADA (>48h): UMA meta-exceção, sem linhas de cliente', () => {
+    const r = detectarClientesRisco([dec({})], '2026-06-01T00:00:00.000Z', '2026-06-04T12:00:00.000Z', EXCECOES_CFG_DEFAULT);
+    expect(r).toHaveLength(1);
+    expect(r[0].id).toBe('risco:meta_desatualizada');
+    expect(r[0].acao).toEqual({ tipo: 'rodar_agente' });
+    expect(r[0].titulo.toLowerCase()).toContain('desatualizada');
+  });
+
+  it('sem decisões → vazio (não fabrica)', () => {
+    expect(detectarClientesRisco([], '2026-06-04T11:00:00.000Z', '2026-06-04T12:00:00.000Z', EXCECOES_CFG_DEFAULT)).toHaveLength(0);
   });
 });
 
