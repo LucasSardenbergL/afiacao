@@ -13,6 +13,7 @@ const base: RascunhoVoz = {
   vendedora: { user_id: 'r', nome: 'Regina', status: 'unico' },
   data: { modo: 'data', due_date: '2026-06-05', interacao_tipo: null, status: 'resolvida' },
   target_texto: null,
+  empresa: 'oben',
 };
 
 describe('validarRascunho', () => {

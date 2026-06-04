@@ -31,6 +31,8 @@ export type StatusMatch = 'unico' | 'ambiguo' | 'sem_match';
 export interface ClienteCandidato {
   customer_user_id: string;   // '' se ainda não resolvido (cliente Omie sem perfil local)
   nome: string;
+  /** Conta Omie do cliente — usado para derivar a empresa da tarefa. Opcional: candidatos locais podem não ter. */
+  empresa_omie?: string | null;
 }
 export interface MatchCliente {
   customer_user_id: string | null;
@@ -56,4 +58,14 @@ export interface RascunhoVoz {
   vendedora: MatchVendedora;
   data: ResultadoData;
   target_texto: string | null;
+  /** Empresa associada ao card — derivada do cliente quando possível, fallback da prop global. */
+  empresa: string;
+}
+
+/** Contexto para montar rascunhos a partir da extração da IA. */
+export interface CtxMontarRascunhos {
+  hojeSP: string;
+  vendedoras: VendedoraOpcao[];
+  /** Empresa padrão (fallback quando o cliente não tem empresa_omie). */
+  empresaPadrao: string;
 }

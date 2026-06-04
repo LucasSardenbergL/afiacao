@@ -10,6 +10,8 @@ export type ClienteBusca = {
   telefone: string | null;
   email: string | null;
   omie_codigo_cliente?: number;
+  /** Conta Omie associada (ex: 'vendas', 'oben', 'colacor_vendas'). null = perfil local sem vínculo Omie. */
+  empresa_omie: string | null;
 };
 
 export function useBuscaClienteOmie() {
@@ -24,23 +26,27 @@ export function useBuscaClienteOmie() {
         email?: string | null; telefone?: string | null; cnpj_cpf?: string | null;
       }>;
       let mappingByCode: Record<number, string> = {};
+      let empresaByCode: Record<number, string> = {};
       if (omieClientes.length > 0) {
         const codigos = omieClientes.map((c) => c.codigo_cliente);
         const { data: mappings } = await supabase.from('omie_clientes')
-          .select('user_id, omie_codigo_cliente').in('omie_codigo_cliente', codigos);
+          .select('user_id, omie_codigo_cliente, empresa_omie').in('omie_codigo_cliente', codigos);
         mappingByCode = Object.fromEntries((mappings || []).map((m) => [m.omie_codigo_cliente, m.user_id]));
+        empresaByCode = Object.fromEntries((mappings || []).map((m) => [m.omie_codigo_cliente, m.empresa_omie]));
       }
       const omieMapped: ClienteBusca[] = omieClientes.map((c) => ({
         user_id: mappingByCode[c.codigo_cliente] || '',
         nome: c.nome_fantasia || c.razao_social || 'Cliente',
         documento: c.cnpj_cpf || null, telefone: c.telefone || null, email: c.email || null,
         omie_codigo_cliente: c.codigo_cliente,
+        empresa_omie: empresaByCode[c.codigo_cliente] ?? null,
       }));
       const { data: localProfiles } = await supabase.from('profiles')
         .select('user_id, name, email, phone').ilike('name', `%${query}%`).limit(10);
       const local: ClienteBusca[] = (localProfiles || []).map((p) => ({
         user_id: p.user_id, nome: p.name ?? 'Cliente', documento: null,
         telefone: p.phone ?? null, email: p.email ?? null,
+        empresa_omie: null,
       }));
       const seen = new Set(omieMapped.filter((c) => c.user_id).map((c) => c.user_id));
       return [...omieMapped, ...local.filter((p) => !seen.has(p.user_id))];
