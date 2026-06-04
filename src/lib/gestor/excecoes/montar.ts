@@ -121,3 +121,52 @@ export function detectarDadosQuebrados(saude: SaudeCheckInput[], cfg: ExcecoesCf
     badges: [],
   }));
 }
+
+// ── composer ─────────────────────────────────────────────────────────
+const TITULO_GRUPO: Record<GrupoExcecao['key'], string> = {
+  dados_quebrados: 'Dados quebrados',
+  clientes_risco: 'Clientes em risco',
+  confirmacoes_pendentes: 'Confirmações pendentes',
+};
+
+export function montarExcecoes(input: ExcecoesInput, cfg: ExcecoesCfg = EXCECOES_CFG_DEFAULT): ConsoleExcecoes {
+  const dados = detectarDadosQuebrados(input.saude, cfg);
+  const risco = detectarClientesRisco(input.decisoes, input.decisoesMaxCreatedAtIso, input.agoraIso, cfg);
+  let conf = detectarConfirmacoesPendentes(input.tarefas, input.hojeSp, cfg);
+
+  // merge visual: cliente em risco E em tarefa → badge na linha de risco, remove da seção de tarefas.
+  const clientesEmRisco = new Set(
+    risco.filter(l => l.acao.tipo === 'abrir_cliente').map(l => (l.acao as { clienteUserId: string }).clienteUserId),
+  );
+  if (clientesEmRisco.size > 0) {
+    for (const l of risco) {
+      if (l.acao.tipo === 'abrir_cliente') {
+        const cid = (l.acao as { clienteUserId: string }).clienteUserId;
+        const temTarefa = conf.some(t => t.acao.tipo === 'tarefa' && (t.acao as { clienteUserId: string | null }).clienteUserId === cid);
+        if (temTarefa && !l.badges.includes('também há tarefa pendente')) l.badges.push('também há tarefa pendente');
+      }
+    }
+    conf = conf.filter(t => !(t.acao.tipo === 'tarefa' && (t.acao as { clienteUserId: string | null }).clienteUserId != null
+      && clientesEmRisco.has((t.acao as { clienteUserId: string }).clienteUserId)));
+  }
+
+  // teto total: críticos de dados SEMPRE entram; depois risco; depois confirmações.
+  const criticosDados = dados.filter(l => l.severidade === 'critico');
+  const avisosDados = dados.filter(l => l.severidade !== 'critico');
+  const orcamento = Math.max(cfg.totalMax - criticosDados.length, 0);
+
+  const restoPriorizado: LinhaExcecao[] = [...avisosDados, ...risco, ...conf];
+  const restoIncluido = restoPriorizado.slice(0, orcamento);
+  const excedente = restoPriorizado.length - restoIncluido.length;
+
+  const incluidas = [...criticosDados, ...restoIncluido];
+
+  // reagrupar preservando a ordem de dependência
+  const ordem: GrupoExcecao['key'][] = ['dados_quebrados', 'clientes_risco', 'confirmacoes_pendentes'];
+  const grupos: GrupoExcecao[] = ordem
+    .map(key => ({ key, titulo: TITULO_GRUPO[key], linhas: incluidas.filter(l => l.grupo === key) }))
+    .filter(g => g.linhas.length > 0);
+
+  const totalLinhas = incluidas.length;
+  return { grupos, totalLinhas, excedente, vazio: totalLinhas === 0 };
+}

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { idadeHoras, frescorCarteira, frescorTexto, detectarDadosQuebrados, detectarClientesRisco, detectarConfirmacoesPendentes } from '../montar';
+import { idadeHoras, frescorCarteira, frescorTexto, detectarDadosQuebrados, detectarClientesRisco, detectarConfirmacoesPendentes, montarExcecoes } from '../montar';
 import { EXCECOES_CFG_DEFAULT } from '../types';
-import type { SaudeCheckInput, DecisaoRiscoInput, TarefaGapInput } from '../types';
+import type { SaudeCheckInput, DecisaoRiscoInput, TarefaGapInput, ExcecoesInput } from '../types';
 
 const gap = (over: Partial<TarefaGapInput>): TarefaGapInput => ({
   tarefaId: 't1', descricao: 'Ligar p/ oferecer linha nova', clienteUserId: 'c1',
@@ -123,5 +123,51 @@ describe('detectarDadosQuebrados', () => {
 
   it('lista vazia quando tudo ok', () => {
     expect(detectarDadosQuebrados([saude({ status: 'ok', severity: 'info' })], EXCECOES_CFG_DEFAULT)).toHaveLength(0);
+  });
+});
+
+const baseInput = (over: Partial<ExcecoesInput>): ExcecoesInput => ({
+  decisoes: [], decisoesMaxCreatedAtIso: '2026-06-04T11:00:00.000Z',
+  saude: [], tarefas: [], hojeSp: '2026-06-04', agoraIso: '2026-06-04T12:00:00.000Z', ...over,
+});
+
+describe('montarExcecoes (composer)', () => {
+  it('grupos só não-vazios, em ordem de dependência', () => {
+    const c = montarExcecoes(baseInput({
+      decisoes: [dec({ clienteUserId: 'c1' })],
+      saude: [saude({ source: 'a', severity: 'critical', status: 'broken' })],
+      tarefas: [gap({ tarefaId: 't1', clienteUserId: 'c9', effectiveDue: '2026-06-01' })],
+    }));
+    expect(c.grupos.map(g => g.key)).toEqual(['dados_quebrados', 'clientes_risco', 'confirmacoes_pendentes']);
+    expect(c.vazio).toBe(false);
+  });
+
+  it('merge visual: cliente em risco E em tarefa → badge, sem duplicar na seção de tarefas', () => {
+    const c = montarExcecoes(baseInput({
+      decisoes: [dec({ clienteUserId: 'c1', donoNome: 'Regina' })],
+      tarefas: [gap({ tarefaId: 't1', clienteUserId: 'c1', effectiveDue: '2026-06-01' })],
+    }));
+    const risco = c.grupos.find(g => g.key === 'clientes_risco')!.linhas;
+    const conf = c.grupos.find(g => g.key === 'confirmacoes_pendentes');
+    expect(risco[0].badges).toContain('também há tarefa pendente');
+    expect(conf).toBeUndefined(); // a única tarefa era do mesmo cliente → seção some
+  });
+
+  it('teto total: críticos de dados sempre entram; excedente vira contagem', () => {
+    const c = montarExcecoes(baseInput({
+      saude: Array.from({ length: 6 }, (_, i) => saude({ source: `crit${i}`, severity: 'critical', status: 'broken' })),
+      decisoes: Array.from({ length: 5 }, (_, i) => dec({ id: `d${i}`, clienteUserId: `c${i}` })),
+      tarefas: Array.from({ length: 3 }, (_, i) => gap({ tarefaId: `t${i}`, clienteUserId: `z${i}`, effectiveDue: '2026-06-01' })),
+    }), { ...EXCECOES_CFG_DEFAULT, totalMax: 10 });
+    const total = c.grupos.reduce((n, g) => n + g.linhas.length, 0);
+    expect(total).toBeLessThanOrEqual(10);
+    expect(c.grupos.find(g => g.key === 'dados_quebrados')!.linhas).toHaveLength(6); // críticos nunca cortados
+    expect(c.excedente).toBeGreaterThan(0);
+  });
+
+  it('tudo limpo → vazio=true, sem grupos', () => {
+    const c = montarExcecoes(baseInput({}));
+    expect(c.vazio).toBe(true);
+    expect(c.grupos).toHaveLength(0);
   });
 });
