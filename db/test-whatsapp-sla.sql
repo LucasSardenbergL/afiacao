@@ -38,3 +38,69 @@ BEGIN
   ASSERT public.wa_is_stop_keyword(NULL) = false, 'null';
   RAISE NOTICE 'OK: wa_is_stop_keyword (6 asserts)';
 END $$;
+
+-- ===== View v_whatsapp_sla: cenários de "esperando" =====
+-- semeia com instantes RELATIVOS a now() (asserts validam presença/ausência + dono, não o
+-- número exato — o número exato já é coberto pelos 10 asserts determinísticos da função).
+DO $$
+DECLARE
+  v_vend uuid := gen_random_uuid();   -- vendedora dona
+  v_cli  uuid := gen_random_uuid();   -- cliente
+  v_owner uuid;
+  c_espera uuid; c_bola uuid; c_fechada uuid; c_stop uuid; c_semdono uuid;
+  v_min int; v_nivel text; v_n int;
+BEGIN
+  -- FK: carteira_assignments referencia auth.users(id)
+  insert into auth.users(id) values (v_vend), (v_cli) on conflict do nothing;
+  insert into public.carteira_assignments(customer_user_id, owner_user_id, source)
+    values (v_cli, v_vend, 'omie');
+
+  -- C1: cliente mandou msg há ~40 min e ninguém respondeu → esperando
+  insert into public.whatsapp_conversations(phone_key, phone_e164, customer_user_id, status)
+    values ('k1','5599000000001', v_cli, 'aberta') returning id into c_espera;
+  insert into public.whatsapp_messages(conversation_id, direction, type, body, wa_timestamp)
+    values (c_espera,'in','text','qual o preço do verniz?', now() - interval '40 minutes');
+
+  -- C2: cliente mandou, vendedora HUMANA respondeu depois → bola com o cliente (fora)
+  insert into public.whatsapp_conversations(phone_key, phone_e164, customer_user_id, status)
+    values ('k2','5599000000002', v_cli, 'aguardando_cliente') returning id into c_bola;
+  insert into public.whatsapp_messages(conversation_id, direction, type, body, wa_timestamp)
+    values (c_bola,'in','text','oi', now() - interval '60 minutes');
+  insert into public.whatsapp_messages(conversation_id, direction, type, body, sender_user_id, wa_timestamp)
+    values (c_bola,'out','text','respondido', v_vend, now() - interval '30 minutes');
+
+  -- C3: igual C1 mas FECHADA → fora
+  insert into public.whatsapp_conversations(phone_key, phone_e164, customer_user_id, status)
+    values ('k3','5599000000003', v_cli, 'fechada') returning id into c_fechada;
+  insert into public.whatsapp_messages(conversation_id, direction, type, body, wa_timestamp)
+    values (c_fechada,'in','text','pergunta', now() - interval '40 minutes');
+
+  -- C4: único inbound é stop-keyword → fora
+  insert into public.whatsapp_conversations(phone_key, phone_e164, customer_user_id, status)
+    values ('k4','5599000000004', v_cli, 'aberta') returning id into c_stop;
+  insert into public.whatsapp_messages(conversation_id, direction, type, body, wa_timestamp)
+    values (c_stop,'in','text','PARAR', now() - interval '40 minutes');
+
+  -- C5: cliente sem cadastro (customer_user_id null) → esperando, mas SEM DONO
+  insert into public.whatsapp_conversations(phone_key, phone_e164, customer_user_id, status)
+    values ('k5','5599000000005', null, 'aberta') returning id into c_semdono;
+  insert into public.whatsapp_messages(conversation_id, direction, type, body, wa_timestamp)
+    values (c_semdono,'in','text','tem em estoque?', now() - interval '40 minutes');
+
+  -- C6 (anti-template): blast de template SEM sender depois do inbound → ainda esperando
+  insert into public.whatsapp_messages(conversation_id, direction, type, body, sender_user_id, wa_timestamp)
+    values (c_espera,'out','template','[promo]', null, now() - interval '20 minutes');
+
+  -- ASSERTS
+  SELECT count(*) INTO v_n FROM public.v_whatsapp_sla WHERE conversation_id = c_espera;
+  ASSERT v_n = 1, 'C1 deve estar esperando (template sem sender NÃO respondeu)';
+  SELECT owner_user_id INTO v_owner FROM public.v_whatsapp_sla WHERE conversation_id = c_espera;
+  ASSERT v_owner = v_vend, 'C1 tem dono derivado da carteira (= vendedora)';
+  ASSERT NOT EXISTS (SELECT 1 FROM public.v_whatsapp_sla WHERE conversation_id IN (c_bola,c_fechada,c_stop)),
+    'C2 (bola), C3 (fechada), C4 (stop) NÃO esperam';
+  SELECT owner_user_id INTO v_owner FROM public.v_whatsapp_sla WHERE conversation_id = c_semdono;
+  ASSERT v_owner IS NULL, 'C5 é sem dono';
+  SELECT minutos_uteis_aguardando, nivel INTO v_min, v_nivel FROM public.v_whatsapp_sla WHERE conversation_id = c_espera;
+  ASSERT v_min >= 0, 'C1 tem minutos >= 0';
+  RAISE NOTICE 'OK: v_whatsapp_sla (esperando/bola/fechada/stop/sem-dono/template) min=% nivel=%', v_min, v_nivel;
+END $$;
