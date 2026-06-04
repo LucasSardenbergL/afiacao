@@ -57,8 +57,8 @@
 - ✅ **Item 1 — durabilidade do "Transferir" (investigação).** É **band-aid**: `omie-cron-diario` chama `atualizar_parametros_numericos_skus` **diário**, recalculando min/PP/máx a partir de `venda_items_history` (90d, por `sku_codigo_omie`); o Transferir some quando o sucessor começa a vender. Causa-raiz: o motor não tem noção de equivalência entre SKUs.
 - 🔄 **Item 2 — pivô para multi-embalagem econômica (QT/GL).** Founder priorizou um caso adjacente de maior retorno: comprar a embalagem mais barata por unidade-equivalente (concentrados Sayerlack WP; 1 GL = 4 QT).
   - ✅ Brainstorming + consult Codex (gpt-5.5) + spec + self-review → `docs/superpowers/specs/2026-06-04-embalagem-economica-design.md` (**aprovado pelo founder**).
-  - 🔄 **Plano de implementação (writing-plans) ← AQUI.**
-  - ⏳ **v1:** 1 migration (`sku_embalagem_equivalencia` + `sku_preco_fornecedor_capturado` + kill-switch no `company_config`) · helper puro `embalagem-helpers.ts` (TDD) · bloco "Embalagem" no cockpit de pedidos. Preço **manual** (sem scraping).
+  - ✅ **Plano de implementação escrito** → `docs/superpowers/plans/2026-06-04-embalagem-economica.md` (6 tasks TDD).
+  - ⏳ **v1 (build) ← AQUI:** 1 migration (`sku_embalagem_equivalencia` + `sku_preco_fornecedor_capturado` + kill-switch no `company_config`) · helper puro `embalagem-helpers.ts` (TDD) · bloco "Embalagem" no cockpit de pedidos. Preço **manual** (sem scraping).
   - ⏸️ Fase 1.5 spike (viabilidade do scraping) · Fase 2 captura automática · Fase 3 refino (lote mínimo, badge, histórico).
 - ⏸️ **Sucessão de giro (item 2 original)** — adiado; reusa a fundação de equivalência (vínculo **temporal**, fator ~1, demanda transposta de fato).
 
