@@ -171,7 +171,14 @@ export function useRevisaoParametros() {
         .select("*", { count: "exact" })
         .eq("empresa", empresa)
         .eq("ativo", true)
-        .not("estoque_minimo", "is", null);
+        .not("estoque_minimo", "is", null)
+        // Esconde Produto Acabado ('04' = fabricado internamente). O motor de compra
+        // já os ignora (gerar_pedidos_sugeridos_ciclo exige tipo_reposicao='automatica');
+        // na fila de aprovação de parâmetros eles eram só ruído (não há o que comprar).
+        // A cláusula is.null preserva quem ainda não tem tipo classificado (NULL/automatica/
+        // sob_encomenda ficam — só produto_acabado sai). String estática → não dispara a
+        // regra no-restricted-syntax do .or(). Ver #527/#529 (guarda do '04' no motor).
+        .or("tipo_reposicao.is.null,tipo_reposicao.neq.produto_acabado");
 
       if (classes.length > 0) q = q.in("classe_consolidada", classes);
       if (statusFilter === "pendente") q = q.is("aprovado_em", null);

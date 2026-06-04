@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 143
+-- Total de custom migrations: 144
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -162,7 +162,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260531170000', 'data_health_check_sayerlack_mapeamento_gap', '20260531170000_data_health_check_sayerlack_mapeamento_gap.sql'),
   ('20260531170000', 'route_contact_log_escrita', '20260531170000_route_contact_log_escrita.sql'),
   ('20260601000000', 'tarefas_escalonamento_titulo_mensagem', '20260601000000_tarefas_escalonamento_titulo_mensagem.sql'),
-  ('20260602101856', 'reposicao_refresh_descricao_sku_parametros', '20260602101856_reposicao_refresh_descricao_sku_parametros.sql')
+  ('20260602101856', 'reposicao_refresh_descricao_sku_parametros', '20260602101856_reposicao_refresh_descricao_sku_parametros.sql'),
+  ('20260604120000', 'omie_products_tipo_produto_coluna', '20260604120000_omie_products_tipo_produto_coluna.sql')
 )
 SELECT
   e.version,
@@ -777,7 +778,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('route_contact_log_escrita', 'function', 'public', 'desfazer_contato_rota', ''),
   ('tarefas_escalonamento_titulo_mensagem', 'function', 'public', 'tarefas_escalonamento_tick', ''),
   ('reposicao_refresh_descricao_sku_parametros', 'function', 'public', 'atualizar_descricao_sku_parametros', ''),
-  ('reposicao_refresh_descricao_sku_parametros', 'cron_job', 'cron', 'reposicao-refresh-descricao-diario', '')
+  ('reposicao_refresh_descricao_sku_parametros', 'cron_job', 'cron', 'reposicao-refresh-descricao-diario', ''),
+  ('omie_products_tipo_produto_coluna', 'index', 'public', 'idx_omie_products_account_tipo_produto', 'omie_products'),
+  ('omie_products_tipo_produto_coluna', 'function', 'public', 'preserve_tipo_produto', ''),
+  ('omie_products_tipo_produto_coluna', 'trigger', 'public', 'trg_preserve_tipo_produto', 'omie_products')
 )
 SELECT
   e.migration,
