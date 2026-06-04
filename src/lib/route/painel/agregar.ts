@@ -1,5 +1,5 @@
 // src/lib/route/painel/agregar.ts
-import type { SnapshotRow, ContatoRow, PainelAgregado, GrupoEficacia } from './types';
+import type { SnapshotRow, ContatoRow, PainelAgregado, GrupoEficacia, GapCliente } from './types';
 import { taxaComGating } from './gating';
 
 const key = (d: string, f: string | null, c: string | null) => `${d}|${f ?? ''}|${c ?? ''}`;
@@ -50,6 +50,23 @@ export function agregarPainel(snapshots: SnapshotRow[], contatos: ContatoRow[]):
     .reduce((s, e) => s + num(e.valor_da_ligacao), 0);
   const gap_valor = elegiveis_valor - contatados_valor;
 
+  // gap acionável: não-contatados ordenados por valor desc, top 15
+  const naoContatados = snapshots.filter(
+    (s) => !contatadasKeys.has(key(s.data_rota, s.farmer_id, s.customer_user_id)),
+  );
+  const gap_clientes_total = naoContatados.length;
+  const gap_clientes: GapCliente[] = naoContatados
+    .map((s) => ({
+      customer_user_id: s.customer_user_id,
+      cliente_nome: s.cliente_nome ?? null,
+      cidade: s.cidade,
+      farmer_id: s.farmer_id,
+      valor: num(s.valor_da_ligacao),
+      data_rota: s.data_rota,
+    }))
+    .sort((a, b) => b.valor - a.valor)
+    .slice(0, 15);
+
   // dias com snapshot (denominador disponível) vs dias com contato-de-ligação sem snapshot
   const diasComSnapshot = new Set(snapshots.map((s) => s.data_rota));
   const diasContatoLigacao = new Set(ligacoes.map((c) => c.data_rota));
@@ -67,6 +84,8 @@ export function agregarPainel(snapshots: SnapshotRow[], contatos: ContatoRow[]):
     elegiveis_valor,
     contatados_valor,
     gap_valor,
+    gap_clientes,
+    gap_clientes_total,
     contatos_total,
     dias_com_dado,
     contatos_por_dia,

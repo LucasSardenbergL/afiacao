@@ -33,7 +33,7 @@ export function useRoutePanel(dias = 30) {
       d.setUTCDate(d.getUTCDate() - (dias - 1));
       const desde = spBusinessDate(d);
       const [snaps, contatos] = await Promise.all([
-        lerTudo<SnapshotRow>('route_queue_snapshot', 'data_rota, farmer_id, customer_user_id, cidade, bucket, valor_da_ligacao, rank', desde),
+        lerTudo<SnapshotRow>('route_queue_snapshot', 'data_rota, farmer_id, customer_user_id, cliente_nome, cidade, bucket, valor_da_ligacao, rank', desde),
         lerTudo<ContatoRow>('route_contact_log', 'data_rota, farmer_id, customer_user_id, canal, status, valor_da_ligacao, bucket', desde),
       ]);
       return agregarPainel(snaps, contatos);
