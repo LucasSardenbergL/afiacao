@@ -351,10 +351,10 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
           peso_liq: prod.peso_liq,
           descricao_familia: prod.descricao_familia,
           cfop: prod.cfop,
-          // money-path: '04' aqui = Produto Acabado (fabricado, nunca comprar) — usado pelo motor
-          // de reposição e pela auto-criação de OP em submitOrder. Lê o campo REAL do Omie
-          // (tipoItem/tipo_item/tipo), com fallback ao recomendacoes_fiscais legado.
-          tipo_produto: prod.tipoItem ?? prod.tipo_item ?? prod.tipo ?? prod.recomendacoes_fiscais?.tipo_produto ?? null,
+          // tipo_produto saiu daqui (2026-06-04): virou COLUNA dedicada de omie_products,
+          // escrita SÓ pelo writer autoritativo omie-sync-metadados. Mantê-lo aqui criava
+          // dado vestigial divergente da coluna — e este sync nem cobre o catálogo inteiro
+          // (maxPages=12). Ver docs/superpowers/specs/2026-06-04-tipo-produto-coluna-dedicada-design.md
         },
         account,
         updated_at: new Date().toISOString(),
