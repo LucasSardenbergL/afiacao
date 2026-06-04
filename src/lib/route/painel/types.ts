@@ -9,6 +9,7 @@ export interface SnapshotRow {
   bucket: string | null;
   valor_da_ligacao: number | null;
   rank: number | null;
+  cliente_nome?: string | null;
 }
 
 /** Linha de route_contact_log relevante ao painel. */
@@ -39,6 +40,16 @@ export interface GrupoEficacia {
   valor_capturado: number;       // Σ valor das convertidas (score esperado, NÃO R$)
 }
 
+/** Cliente de alto valor que ficou sem contato na janela analisada. */
+export interface GapCliente {
+  customer_user_id: string;
+  cliente_nome: string | null;
+  cidade: string | null;
+  farmer_id: string;
+  valor: number;
+  data_rota: string;
+}
+
 export interface PainelAgregado {
   // cobertura (ligação): elegíveis = snapshot; contatados = elegíveis com contato
   elegiveis_n: number;
@@ -47,6 +58,9 @@ export interface PainelAgregado {
   elegiveis_valor: number;
   contatados_valor: number;
   gap_valor: number;             // Σ valor dos elegíveis NÃO contatados (headline)
+  // gap acionável: quem não foi contatado (top por valor)
+  gap_clientes: GapCliente[];
+  gap_clientes_total: number;    // total de elegíveis sem contato (antes do top 15)
   // capacidade
   contatos_total: number;
   dias_com_dado: number;
