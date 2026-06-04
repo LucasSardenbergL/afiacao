@@ -92,6 +92,16 @@ export function DetalhesModal({
           </Alert>
         )}
 
+        {pedido.status === 'falha_envio' && pedido.resposta_canal?.erro && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Falha no disparo</AlertTitle>
+            <AlertDescription className="whitespace-pre-wrap break-words">
+              {pedido.resposta_canal.erro}
+            </AlertDescription>
+          </Alert>
+        )}
+
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
