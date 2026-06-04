@@ -3,6 +3,7 @@ import { Construction, MapPin, Target, TrendingUp } from 'lucide-react';
 import { VisitSuggestionsCard } from './VisitSuggestionsCard';
 import { VisitasHojeCard } from './VisitasHojeCard';
 import { MinhasVisitasResultadoCard } from './MinhasVisitasResultadoCard';
+import { FollowupsSugeridosCard } from './FollowupsSugeridosCard';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 
 /**
@@ -25,6 +26,9 @@ export function CloserDashboard() {
 
       {/* Sugestões de visita — PR-VISIT-INTELLIGENCE Sub-PR A */}
       <VisitSuggestionsCard />
+
+      {/* Follow-ups pós-visita: visitas mornas que pedem retorno (read-only, deep-link) */}
+      <FollowupsSugeridosCard />
 
       <MinhasVisitasResultadoCard />
 
