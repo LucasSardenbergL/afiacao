@@ -52,6 +52,16 @@
 - ✅ **Gap acionável (#586) MERGEADO:** o gap de valor virou LISTA dos clientes valiosos sem contato (top 15: nome/cidade/vendedora/valor). `agregarPainel.gap_clientes` + `GapClientesCard`.
 - ✅ **Migration `route_queue_snapshot` APLICADA** (founder, SQL Editor). ⏳ **`ALTER ADD cliente_nome`** (do #586) + **Publish + QA** pendentes (abrir `/rota/ligacoes` grava snapshot → `/rota/ligacoes/painel`).
 
+## 7. Inativação de SKU — durabilidade do giro + embalagem econômica (QT/GL)
+> Pergunta do founder: ao inativar um item, transpor o histórico de giro pro sucessor — **onde** se faz isso? Achado: existe a tela de Substituição (Reposição → Aplicação Omie → "Item inativo"), mas "Transferir" só copia **parâmetros**, não o giro.
+- ✅ **Item 1 — durabilidade do "Transferir" (investigação).** É **band-aid**: `omie-cron-diario` chama `atualizar_parametros_numericos_skus` **diário**, recalculando min/PP/máx a partir de `venda_items_history` (90d, por `sku_codigo_omie`); o Transferir some quando o sucessor começa a vender. Causa-raiz: o motor não tem noção de equivalência entre SKUs.
+- 🔄 **Item 2 — pivô para multi-embalagem econômica (QT/GL).** Founder priorizou um caso adjacente de maior retorno: comprar a embalagem mais barata por unidade-equivalente (concentrados Sayerlack WP; 1 GL = 4 QT).
+  - ✅ Brainstorming + consult Codex (gpt-5.5) + spec + self-review → `docs/superpowers/specs/2026-06-04-embalagem-economica-design.md` (**aprovado pelo founder**).
+  - 🔄 **Plano de implementação (writing-plans) ← AQUI.**
+  - ⏳ **v1:** 1 migration (`sku_embalagem_equivalencia` + `sku_preco_fornecedor_capturado` + kill-switch no `company_config`) · helper puro `embalagem-helpers.ts` (TDD) · bloco "Embalagem" no cockpit de pedidos. Preço **manual** (sem scraping).
+  - ⏸️ Fase 1.5 spike (viabilidade do scraping) · Fase 2 captura automática · Fase 3 refino (lote mínimo, badge, histórico).
+- ⏸️ **Sucessão de giro (item 2 original)** — adiado; reusa a fundação de equivalência (vínculo **temporal**, fator ~1, demanda transposta de fato).
+
 ---
 
 ### Encerramento da sessão (housekeeping recorrente)
