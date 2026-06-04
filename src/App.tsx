@@ -60,6 +60,7 @@ const SalesQuotes = lazy(() => import("./pages/SalesQuotes"));
 const FarmerDashboard = lazy(() => import("./pages/FarmerDashboard"));
 const MeuDia = lazy(() => import("./pages/MeuDia"));
 const Tarefas = lazy(() => import("./pages/Tarefas"));
+const TarefasTemplates = lazy(() => import("./pages/TarefasTemplates"));
 const FarmerCalls = lazy(() => import("./pages/FarmerCalls"));
 const FarmerCallsPendingLink = lazy(() => import("./pages/FarmerCallsPendingLink"));
 const FarmerGovernance = lazy(() => import("./pages/FarmerGovernance"));
@@ -169,6 +170,7 @@ const AdminStandardProcessDetail = lazy(() => import("./pages/AdminStandardProce
 const AdminCalculadora = lazy(() => import("./pages/AdminCalculadora"));
 const Telefonia = lazy(() => import("./pages/Telefonia"));
 const WhatsappInbox = lazy(() => import("./pages/WhatsappInbox"));
+const WhatsappSlaSupervisao = lazy(() => import("./pages/WhatsappSlaSupervisao"));
 const RotaListaLigacao = lazy(() => import("./pages/RotaListaLigacao"));
 const RotaPainelLigacoes = lazy(() => import("./pages/RotaPainelLigacoes"));
 const RotaPropostas = lazy(() => import("./pages/RotaPropostas"));
@@ -234,6 +236,7 @@ const App = () => (
                   Cada rota de staff agora existe SÓ dentro do <RequireStaff> (fail-closed).
                   O teste src/__tests__/app-route-dedupe.test.ts impede a duplicação voltar. */}
               <Route path="tarefas" element={<Tarefas />} />
+              <Route path="tarefas/templates" element={<TarefasTemplates />} />
               <Route path="admin/calculadora" element={<AdminCalculadora />} />
 
               {/* ─── Financeiro (gate próprio: permite não-staff com permissão) ─── */}
@@ -379,6 +382,7 @@ const App = () => (
                 <Route path="admin/standard-processes/:id" element={<AdminStandardProcessDetail />} />
                 <Route path="telefonia" element={<Telefonia />} />
                 <Route path="whatsapp" element={<WhatsappInbox />} />
+                <Route path="whatsapp/sla" element={<WhatsappSlaSupervisao />} />
                 <Route path="rota/ligacoes" element={<RotaListaLigacao />} />
                 <Route path="rota/ligacoes/painel" element={<RotaPainelLigacoes />} />
                 <Route path="rota/propostas" element={<RotaPropostas />} />

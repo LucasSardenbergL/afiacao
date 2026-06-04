@@ -6,8 +6,45 @@ import {
   selecionarPassosPendentes,
   podeReprocessar,
   resumirErros,
+  extrairEstadoConsulta,
+  validarIdentidade,
+  decidirAcaoRecebimento,
+  detectarConversao,
+  cruzarItensParaEscrita,
+  validarGatesEscrita,
+  confirmarEfetivacao,
+  decidirStatusComConfirmacao,
   type PassoFlags,
+  type ItemApp,
 } from './efetivacao-helpers';
+
+// Fixture: body REAL do ConsultarRecebimento (diagnóstico CALL 2 — NF 000234012 ACRE CAXIAS, modelo 55).
+// chave de 44 dígitos sintética (o diagnóstico não a transcreveu, mas o cabec a retorna).
+const CHAVE_CALL2 = '35260400000000000000550010002340121000000001';
+const CONSULTA_CALL2 = {
+  cabec: { cEtapa: '80', cModeloNFe: '55', nIdReceb: 12077966878, cChaveNfe: CHAVE_CALL2, nValorNFe: 3274.7 },
+  cteCfopEntrada: null,
+  departamentos: [{ cCodDepartamento: '8805360468', pDepartamento: 100, vDepartamento: 3274.7 }],
+  infoAdicionais: { cCategCompra: '2.01.01', dRegistro: '04/05/2026' },
+  infoCadastro: { cRecebido: 'S', cFaturado: 'S', cUsuarioInc: 'WEBSERVICE', cUsuarioRec: 'P000209032', dRec: '04/05/2026' },
+  itensRecebimento: [
+    {
+      itensCabec: { nSequencia: 1, cCodigoProduto: 'PRD03040', cDescricaoProduto: 'SUPORTE HOOKIT', nIdProduto: 8694686103, nQtdeNFe: 229, cAssociarExistente: 'S', cAdicionarNovo: 'N', cIgnorarItem: 'N', cUnidadeNfe: 'UN', nPrecoUnit: 14.3, vTotalItem: 3274.7 },
+      itensAjustes: { nQtdeRecebida: 229, cCFOPEntrada: '2.102', cUnidade: 'UN', cNaoGerarMovEstoque: 'N', codigo_local_estoque: 8686372976 },
+    },
+  ],
+};
+
+const itemAppOk = (over: Partial<ItemApp> = {}): ItemApp => ({
+  sequencia: 1,
+  produto_omie_id: 8694686103,
+  quantidade_conferida: 229,
+  quantidade_convertida: null,
+  status_item: 'conferido',
+  unidade_nfe: 'UN',
+  unidade_estoque: 'UN',
+  ...over,
+});
 
 describe('classificarRespostaOmie', () => {
   it('HTTP 200 sem faultstring → sucesso', () => {
@@ -181,5 +218,229 @@ describe('resumirErros', () => {
     const out = resumirErros([{ operacao: 'op', erro: 'a'.repeat(1000) }], 50);
     expect(out.length).toBe(50);
     expect(out.endsWith('…')).toBe(true);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// PR2 (A1 — coreografia de escrita): consultar-antes, reconciliar/escrever
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('extrairEstadoConsulta', () => {
+  it('CALL 2 real → estado + 1 item parseado', () => {
+    const e = extrairEstadoConsulta(CONSULTA_CALL2);
+    expect(e.cRecebido).toBe('S');
+    expect(e.cEtapa).toBe('80');
+    expect(e.nIdReceb).toBe(12077966878);
+    expect(e.cChaveNfe).toBe(CHAVE_CALL2);
+    expect(e.itensOmie).toHaveLength(1);
+    expect(e.itensOmie[0]).toMatchObject({ nSequencia: 1, nIdProduto: 8694686103, nQtdeNFe: 229, nQtdeRecebida: 229, cUnidadeNfe: 'UN', cIgnorarItem: false });
+    expect(e.itensOmie[0].nFatorConversao).toBeNull();
+  });
+  it('body null/array/string → defaults vazios', () => {
+    for (const b of [null, undefined, [], 'x', 42]) {
+      const e = extrairEstadoConsulta(b);
+      expect(e).toEqual({ cRecebido: null, cEtapa: null, nIdReceb: null, cChaveNfe: null, itensOmie: [] });
+    }
+  });
+  it('cIgnorarItem "S" → true', () => {
+    const e = extrairEstadoConsulta({ itensRecebimento: [{ itensCabec: { nSequencia: 2, cIgnorarItem: 'S', nQtdeNFe: 5 } }] });
+    expect(e.itensOmie[0].cIgnorarItem).toBe(true);
+  });
+  it('fator de conversão em nFatorConv (cabec) → consolidado', () => {
+    const e = extrairEstadoConsulta({ itensRecebimento: [{ itensCabec: { nSequencia: 1, nFatorConv: 2, nQtdeNFe: 10 } }] });
+    expect(e.itensOmie[0].nFatorConversao).toBe(2);
+  });
+  it('fator de conversão em subobjeto itensConversao → consolidado', () => {
+    const e = extrairEstadoConsulta({ itensRecebimento: [{ itensCabec: { nSequencia: 1, nQtdeNFe: 10 }, itensConversao: { nFatorConversao: 3 } }] });
+    expect(e.itensOmie[0].nFatorConversao).toBe(3);
+  });
+  it('itensRecebimento ausente/null → []', () => {
+    expect(extrairEstadoConsulta({ cabec: { nIdReceb: 1 }, itensRecebimento: null }).itensOmie).toEqual([]);
+  });
+});
+
+describe('validarIdentidade', () => {
+  const esperado = { nIdReceb: 12077966878, chaveAcesso: CHAVE_CALL2 };
+  it('nIdReceb + chave batem → ok', () => {
+    expect(validarIdentidade(extrairEstadoConsulta(CONSULTA_CALL2), esperado).ok).toBe(true);
+  });
+  it('nIdReceb divergente → falha', () => {
+    const e = { ...extrairEstadoConsulta(CONSULTA_CALL2), nIdReceb: 999 };
+    expect(validarIdentidade(e, esperado).ok).toBe(false);
+  });
+  it('chave divergente → falha', () => {
+    const e = { ...extrairEstadoConsulta(CONSULTA_CALL2), cChaveNfe: 'OUTRA' };
+    expect(validarIdentidade(e, esperado).ok).toBe(false);
+  });
+  it('nIdReceb ausente na consulta → falha', () => {
+    const e = { ...extrairEstadoConsulta(CONSULTA_CALL2), nIdReceb: null };
+    expect(validarIdentidade(e, esperado).ok).toBe(false);
+  });
+  it('chave ausente mas nIdReceb ok (consultado com a chave como filtro) → ok', () => {
+    const e = { ...extrairEstadoConsulta(CONSULTA_CALL2), cChaveNfe: null };
+    expect(validarIdentidade(e, esperado).ok).toBe(true);
+  });
+});
+
+describe('decidirAcaoRecebimento', () => {
+  const base = { nIdReceb: 1, cChaveNfe: 'x', itensOmie: [] };
+  it('cRecebido S → reconciliar', () => {
+    expect(decidirAcaoRecebimento({ ...base, cRecebido: 'S', cEtapa: '80' })).toBe('reconciliar');
+  });
+  it('cRecebido minúsculo "s" → reconciliar', () => {
+    expect(decidirAcaoRecebimento({ ...base, cRecebido: 's', cEtapa: '80' })).toBe('reconciliar');
+  });
+  it('cEtapa 80 mas cRecebido N → inconsistente (nunca reconcilia por etapa só)', () => {
+    expect(decidirAcaoRecebimento({ ...base, cRecebido: 'N', cEtapa: '80' })).toBe('inconsistente');
+  });
+  it('cEtapa " 80 " + cRecebido " n " (com espaços) → inconsistente', () => {
+    expect(decidirAcaoRecebimento({ ...base, cRecebido: ' n ', cEtapa: ' 80 ' })).toBe('inconsistente');
+  });
+  it('cEtapa 80 + cRecebido null → inconsistente', () => {
+    expect(decidirAcaoRecebimento({ ...base, cRecebido: null, cEtapa: '80' })).toBe('inconsistente');
+  });
+  it('cEtapa 40 → escrever', () => {
+    expect(decidirAcaoRecebimento({ ...base, cRecebido: 'N', cEtapa: '40' })).toBe('escrever');
+  });
+  it('ambos null → escrever', () => {
+    expect(decidirAcaoRecebimento({ ...base, cRecebido: null, cEtapa: null })).toBe('escrever');
+  });
+});
+
+describe('detectarConversao', () => {
+  it('fator ≠ 1 no Omie → conversão', () => {
+    const r = detectarConversao([extrairEstadoConsulta({ itensRecebimento: [{ itensCabec: { nSequencia: 1, nFatorConv: 2, nQtdeNFe: 10 } }] }).itensOmie[0]], [itemAppOk()]);
+    expect(r.temConversao).toBe(true);
+    expect(r.motivo).toBeTruthy();
+  });
+  it('quantidade_convertida preenchida no app → conversão', () => {
+    expect(detectarConversao([], [itemAppOk({ quantidade_convertida: 10 })]).temConversao).toBe(true);
+  });
+  it('unidade NF ≠ unidade estoque → conversão', () => {
+    expect(detectarConversao([], [itemAppOk({ unidade_nfe: 'CX', unidade_estoque: 'UN' })]).temConversao).toBe(true);
+  });
+  it('tudo limpo (fator 1/null, sem convertida, unidades iguais) → sem conversão', () => {
+    const e = extrairEstadoConsulta(CONSULTA_CALL2);
+    expect(detectarConversao(e.itensOmie, [itemAppOk()]).temConversao).toBe(false);
+  });
+});
+
+describe('cruzarItensParaEscrita', () => {
+  const omie = extrairEstadoConsulta(CONSULTA_CALL2).itensOmie;
+  it('app conferido × Omie casado → itensEditar + pretendidos', () => {
+    const r = cruzarItensParaEscrita(omie, [itemAppOk()]);
+    expect(r.ok).toBe(true);
+    expect(r.itensEditar).toEqual([{ itensIde: { nSequencia: 1, cAcao: 'EDITAR' }, itensAjustes: { nQtdeRecebida: 229 } }]);
+    expect(r.pretendidos).toEqual([{ nSequencia: 1, nIdProduto: 8694686103, nQtdeRecebida: 229 }]);
+  });
+  it('produto do app ≠ nIdProduto do Omie (mesma seq) → falha (casar só por sequência é furo)', () => {
+    expect(cruzarItensParaEscrita(omie, [itemAppOk({ produto_omie_id: 111 })]).ok).toBe(false);
+  });
+  it('item app não-conferido → falha', () => {
+    expect(cruzarItensParaEscrita(omie, [itemAppOk({ status_item: 'pendente' })]).ok).toBe(false);
+  });
+  it('quantidade negativa → falha', () => {
+    expect(cruzarItensParaEscrita(omie, [itemAppOk({ quantidade_conferida: -1 })]).ok).toBe(false);
+  });
+  it('quantidade NaN → falha', () => {
+    expect(cruzarItensParaEscrita(omie, [itemAppOk({ quantidade_conferida: NaN })]).ok).toBe(false);
+  });
+  it('produto_omie_id null no app → falha', () => {
+    expect(cruzarItensParaEscrita(omie, [itemAppOk({ produto_omie_id: null })]).ok).toBe(false);
+  });
+  it('item Omie cIgnorarItem → omitido (contagem casa com app sem ele)', () => {
+    const comIgnorado = extrairEstadoConsulta({
+      itensRecebimento: [
+        ...CONSULTA_CALL2.itensRecebimento,
+        { itensCabec: { nSequencia: 2, nIdProduto: 999, cIgnorarItem: 'S', nQtdeNFe: 3 }, itensAjustes: { nQtdeRecebida: 3 } },
+      ],
+    }).itensOmie;
+    const r = cruzarItensParaEscrita(comIgnorado, [itemAppOk()]);
+    expect(r.ok).toBe(true);
+    expect(r.itensEditar).toHaveLength(1);
+  });
+  it('contagem app ≠ Omie (não-ignorados) → falha', () => {
+    expect(cruzarItensParaEscrita(omie, [itemAppOk(), itemAppOk({ sequencia: 2 })]).ok).toBe(false);
+  });
+  it('sequência app sem par no Omie → falha', () => {
+    expect(cruzarItensParaEscrita(omie, [itemAppOk({ sequencia: 5 })]).ok).toBe(false);
+  });
+  it('input fora de ordem → itensEditar e pretendidos ordenados por sequência', () => {
+    const omie2 = extrairEstadoConsulta({
+      itensRecebimento: [
+        { itensCabec: { nSequencia: 1, nIdProduto: 11, nQtdeNFe: 5, cIgnorarItem: 'N' }, itensAjustes: { nQtdeRecebida: 5 } },
+        { itensCabec: { nSequencia: 2, nIdProduto: 22, nQtdeNFe: 7, cIgnorarItem: 'N' }, itensAjustes: { nQtdeRecebida: 7 } },
+      ],
+    }).itensOmie;
+    const r = cruzarItensParaEscrita(omie2, [
+      itemAppOk({ sequencia: 2, produto_omie_id: 22, quantidade_conferida: 7 }),
+      itemAppOk({ sequencia: 1, produto_omie_id: 11, quantidade_conferida: 5 }),
+    ]);
+    expect(r.ok).toBe(true);
+    expect(r.itensEditar.map((i) => i.itensIde.nSequencia)).toEqual([1, 2]);
+    expect(r.pretendidos.map((p) => p.nSequencia)).toEqual([1, 2]);
+  });
+});
+
+describe('validarGatesEscrita', () => {
+  const base = { statusApp: 'conferido', temLoteEscaneado: false, temConversao: false, motivoConversao: null };
+  it('tudo limpo → ok', () => {
+    expect(validarGatesEscrita(base).ok).toBe(true);
+  });
+  it('status ≠ conferido → falha', () => {
+    expect(validarGatesEscrita({ ...base, statusApp: 'pendente' }).ok).toBe(false);
+  });
+  it('lote escaneado → falha', () => {
+    const r = validarGatesEscrita({ ...base, temLoteEscaneado: true });
+    expect(r.ok).toBe(false);
+    expect(r.erro).toMatch(/lote/i);
+  });
+  it('conversão → falha com o motivo', () => {
+    const r = validarGatesEscrita({ ...base, temConversao: true, motivoConversao: 'fator ≠ 1' });
+    expect(r.ok).toBe(false);
+    expect(r.erro).toBe('fator ≠ 1');
+  });
+});
+
+describe('confirmarEfetivacao', () => {
+  const pretendidos = [{ nSequencia: 1, nIdProduto: 8694686103, nQtdeRecebida: 229 }];
+  const esperado = { chaveAcesso: CHAVE_CALL2, pretendidos };
+  it('cRecebido S + chave + produto + qtd batem → confirmado', () => {
+    const r = confirmarEfetivacao(extrairEstadoConsulta(CONSULTA_CALL2), esperado);
+    expect(r.confirmado).toBe(true);
+    expect(r.divergencias).toEqual([]);
+  });
+  it('qtd recebida no Omie ≠ pretendida → não confirmado', () => {
+    const body = { ...CONSULTA_CALL2, itensRecebimento: [{ itensCabec: { nSequencia: 1, nIdProduto: 8694686103, nQtdeNFe: 229, cIgnorarItem: 'N' }, itensAjustes: { nQtdeRecebida: 200 } }] };
+    const r = confirmarEfetivacao(extrairEstadoConsulta(body), esperado);
+    expect(r.confirmado).toBe(false);
+    expect(r.divergencias.join(' ')).toMatch(/qtd|quantidade/i);
+  });
+  it('produto no Omie ≠ pretendido (qtd igual) → não confirmado', () => {
+    const body = { ...CONSULTA_CALL2, itensRecebimento: [{ itensCabec: { nSequencia: 1, nIdProduto: 777, nQtdeNFe: 229, cIgnorarItem: 'N' }, itensAjustes: { nQtdeRecebida: 229 } }] };
+    expect(confirmarEfetivacao(extrairEstadoConsulta(body), esperado).confirmado).toBe(false);
+  });
+  it('sequência esperada ausente na reconsulta → não confirmado', () => {
+    const body = { ...CONSULTA_CALL2, itensRecebimento: [] };
+    const r = confirmarEfetivacao(extrairEstadoConsulta(body), esperado);
+    expect(r.confirmado).toBe(false);
+    expect(r.divergencias.join(' ')).toMatch(/ausente/i);
+  });
+  it('cRecebido N → não confirmado', () => {
+    const body = { ...CONSULTA_CALL2, infoCadastro: { cRecebido: 'N' } };
+    expect(confirmarEfetivacao(extrairEstadoConsulta(body), esperado).confirmado).toBe(false);
+  });
+});
+
+describe('decidirStatusComConfirmacao', () => {
+  const todosOk: PassoFlags = { alterarOk: true, etapaOk: true, concluirOk: true, cteAplicavel: false, cteOk: false, ajustesTentados: 0, ajustesOk: 0 };
+  it('todos os passos ok + confirmado → efetivado', () => {
+    expect(decidirStatusComConfirmacao(todosOk, true)).toBe('efetivado');
+  });
+  it('todos os passos ok mas NÃO confirmado → parcial (reconsulta é o juiz)', () => {
+    expect(decidirStatusComConfirmacao(todosOk, false)).toBe('efetivacao_parcial');
+  });
+  it('concluir falhou + confirmado → parcial (status base já não é efetivado)', () => {
+    expect(decidirStatusComConfirmacao({ ...todosOk, concluirOk: false }, true)).toBe('efetivacao_parcial');
   });
 });

@@ -23,7 +23,18 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { TOOL_CATEGORIES, SERVICE_TYPES, DELIVERY_OPTIONS } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -98,6 +109,29 @@ const OrderDetail = () => {
       };
     },
     enabled: !!id,
+  });
+
+  const queryClient = useQueryClient();
+  const [confirmAprovar, setConfirmAprovar] = useState(false);
+  // Aprovar o orçamento = mover o pedido de afiação pra 'aprovado' (RLS "Users can update their
+  // own orders" permite). É a ação do cliente que destrava a afiação. A criação do pedido no Omie
+  // (Colacor SC / serviços) é integração futura, que dispararia a partir deste status.
+  const aprovarOrcamento = useMutation({
+    mutationFn: async () => {
+      if (!id) throw new Error('pedido inválido');
+      const { error } = await supabase.from('orders').update({ status: 'aprovado' }).eq('id', id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      setConfirmAprovar(false);
+      toast.success('Orçamento aprovado!', { description: 'A afiação das suas ferramentas vai começar.' });
+      void queryClient.invalidateQueries({ queryKey: ['order-detail', id] });
+      void queryClient.invalidateQueries({ queryKey: ['orders'] });
+    },
+    onError: (e) =>
+      toast.error('Não foi possível aprovar', {
+        description: e instanceof Error ? e.message : 'Tente novamente.',
+      }),
   });
 
   useEffect(() => {
@@ -202,8 +236,13 @@ const OrderDetail = () => {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Button className="flex-1" size="sm">
-                    Aprovar Orçamento
+                  <Button
+                    className="flex-1"
+                    size="sm"
+                    onClick={() => setConfirmAprovar(true)}
+                    disabled={aprovarOrcamento.isPending}
+                  >
+                    {aprovarOrcamento.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Aprovar Orçamento'}
                   </Button>
                   <Button
                     variant="outline"
@@ -215,6 +254,31 @@ const OrderDetail = () => {
                     Falar com suporte
                   </Button>
                 </div>
+
+                <AlertDialog open={confirmAprovar} onOpenChange={setConfirmAprovar}>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Aprovar orçamento de R$ {order.total.toFixed(2).replace('.', ',')}?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Ao aprovar, a afiação das suas ferramentas será iniciada. Você confirma os itens e o valor.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel disabled={aprovarOrcamento.isPending}>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={(e) => {
+                          e.preventDefault();
+                          aprovarOrcamento.mutate();
+                        }}
+                        disabled={aprovarOrcamento.isPending}
+                      >
+                        {aprovarOrcamento.isPending ? 'Aprovando…' : 'Aprovar'}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
             </CardContent>
           </Card>
