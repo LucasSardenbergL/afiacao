@@ -544,23 +544,25 @@ Deno.serve(async (req) => {
       }));
 
       // lote escaneado (fail-closed) — nfe_lotes_escaneados é por nfe_recebimento_item_id (Codex)
+      // count/data nulo SEM error também é fail-closed (não vira "sem lote" silencioso → entrada sem rastreabilidade).
       const itemIds = itensRows.map((r) => r.id);
       const { count: loteCount, error: loteErr } = await supabase
         .from("nfe_lotes_escaneados")
         .select("nfe_recebimento_item_id", { count: "exact", head: true })
         .in("nfe_recebimento_item_id", itemIds);
       if (loteErr) return await falhaOp("ler_lotes", loteErr.message);
-      const temLoteEscaneado = (loteCount ?? 0) > 0;
+      if (loteCount == null) return await falhaOp("ler_lotes", "contagem de lotes indisponível (fail-closed)");
+      const temLoteEscaneado = loteCount > 0;
 
-      // conversão por CNPJ (fail-closed) — reforço do gate por fator
+      // conversão por CNPJ (fail-closed) — reforço do gate por fator. CNPJ ausente NÃO permite
+      // confirmar ausência de conversão → falha (NF-e sempre tem emitente; vazio = dado incompleto).
       const cnpjClean = (nfe.cnpj_emitente as string | null ?? "").replace(/\D/g, "");
-      let temConversaoCnpj = false;
-      if (cnpjClean) {
-        const { data: convData, error: convErr } = await supabase
-          .from("conversao_unidades").select("id").eq("cnpj_fornecedor", cnpjClean).eq("is_active", true).limit(1);
-        if (convErr) return await falhaOp("ler_conversoes", convErr.message);
-        temConversaoCnpj = (convData ?? []).length > 0;
-      }
+      if (!cnpjClean) return await falhaOp("conversao", "NF sem CNPJ do emitente — não é possível verificar conversão de unidade");
+      const { data: convData, error: convErr } = await supabase
+        .from("conversao_unidades").select("id").eq("cnpj_fornecedor", cnpjClean).eq("is_active", true).limit(1);
+      if (convErr) return await falhaOp("ler_conversoes", convErr.message);
+      if (!Array.isArray(convData)) return await falhaOp("ler_conversoes", "consulta de conversões indisponível (fail-closed)");
+      const temConversaoCnpj = convData.length > 0;
       const conv = detectarConversao(estado.itensOmie, itensApp);
       const temConversao = conv.temConversao || temConversaoCnpj;
       const motivoConversao = conv.motivo ?? (temConversaoCnpj ? "fornecedor com conversão de unidade cadastrada" : null);
@@ -611,9 +613,10 @@ Deno.serve(async (req) => {
         if (!flags.concluirOk) return await pararParcial();
       }
 
-      // ── 4. Reconsulta — juiz final (cRecebido=S + quantidades), com retry curto p/ lag ──
+      // ── 4. Reconsulta — juiz final (cRecebido=S + quantidades), com retry/backoff p/ lag do Omie ──
+      const RECONSULTA_TENTATIVAS = 4;
       let conf = { confirmado: false, divergencias: ["reconsulta não realizada"] as string[] };
-      for (let r = 1; r <= 3; r++) {
+      for (let r = 1; r <= RECONSULTA_TENTATIVAS; r++) {
         const consulta2 = await callReceb("ConsultarRecebimento", { nIdReceb, cChaveNfe: chaveAcesso });
         const cls2 = classificarRespostaOmie({ httpOk: !consulta2.error, status: consulta2.error ? consulta2.status : 200, body: consulta2.data });
         if (cls2.sucesso) {
@@ -622,7 +625,7 @@ Deno.serve(async (req) => {
         } else {
           conf = { confirmado: false, divergencias: [`reconsulta: ${cls2.erro}`] };
         }
-        if (r < 3) await new Promise((res) => setTimeout(res, 800 * r));
+        if (r < RECONSULTA_TENTATIVAS) await new Promise((res) => setTimeout(res, 1000 * r));
       }
       await registrarTentativa(supabase, { nfe_recebimento_id: nfeRecebimentoId, tentativa, operacao: "reconsultar", sucesso: conf.confirmado, erro: conf.confirmado ? null : conf.divergencias.join(" | "), omie_status: null });
 
