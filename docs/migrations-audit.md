@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **144** custom migrations totais
-- **603** objetos esperados (criados por estas migrations)
+- **146** custom migrations totais
+- **608** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 160
-  - `function`: 125
+  - `function`: 128
   - `index`: 117
-  - `cron_job`: 93
-  - `table`: 70
+  - `cron_job`: 94
+  - `table`: 71
   - `trigger`: 34
   - `enum_value`: 4
 
@@ -1337,6 +1337,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.recalcular_picking_task` | — |
 | `function` | `public.confirmar_item_picking` | — |
 | `function` | `public.listar_pedidos_a_separar` | — |
+
+### `20260604130000_whatsapp_sla.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.wa_is_stop_keyword` | — |
+| `function` | `public.whatsapp_minutos_uteis` | — |
+
+### `20260604140000_whatsapp_sla_digest.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.whatsapp_sla_digest_log` | — |
+| `function` | `public.whatsapp_sla_digest_tick` | — |
+| `cron_job` | `cron.whatsapp-sla-digest-diario` | — |
 
 ## Próximos passos quando algo der `❌`
 

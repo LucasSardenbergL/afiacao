@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 144
+-- Total de custom migrations: 146
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -163,7 +163,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260531170000', 'route_contact_log_escrita', '20260531170000_route_contact_log_escrita.sql'),
   ('20260601000000', 'tarefas_escalonamento_titulo_mensagem', '20260601000000_tarefas_escalonamento_titulo_mensagem.sql'),
   ('20260602101856', 'reposicao_refresh_descricao_sku_parametros', '20260602101856_reposicao_refresh_descricao_sku_parametros.sql'),
-  ('20260604120000', 'picking_bridge', '20260604120000_picking_bridge.sql')
+  ('20260604120000', 'picking_bridge', '20260604120000_picking_bridge.sql'),
+  ('20260604130000', 'whatsapp_sla', '20260604130000_whatsapp_sla.sql'),
+  ('20260604140000', 'whatsapp_sla_digest', '20260604140000_whatsapp_sla_digest.sql')
 )
 SELECT
   e.version,
@@ -784,7 +786,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('picking_bridge', 'function', 'public', 'ensure_picking_task_for_sales_order', ''),
   ('picking_bridge', 'function', 'public', 'recalcular_picking_task', ''),
   ('picking_bridge', 'function', 'public', 'confirmar_item_picking', ''),
-  ('picking_bridge', 'function', 'public', 'listar_pedidos_a_separar', '')
+  ('picking_bridge', 'function', 'public', 'listar_pedidos_a_separar', ''),
+  ('whatsapp_sla', 'function', 'public', 'wa_is_stop_keyword', ''),
+  ('whatsapp_sla', 'function', 'public', 'whatsapp_minutos_uteis', ''),
+  ('whatsapp_sla_digest', 'table', 'public', 'whatsapp_sla_digest_log', ''),
+  ('whatsapp_sla_digest', 'function', 'public', 'whatsapp_sla_digest_tick', ''),
+  ('whatsapp_sla_digest', 'cron_job', 'cron', 'whatsapp-sla-digest-diario', '')
 )
 SELECT
   e.migration,
