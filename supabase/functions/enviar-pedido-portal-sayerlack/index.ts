@@ -1250,6 +1250,83 @@ export default async ({ page, context }) => {
 };
 `;
 
+// ============================================================================
+// Captura de custo do portal (Deno scope — NÃO roda dentro do Browserless).
+// ESPELHO VERBATIM de src/lib/reposicao/sayerlack-scraping-pedido.ts — manter
+// em sincronia. (parseDiasPrzEnt é dependência de casarLinhasComItens; o gate
+// de grupo roda no browser, então validarGrupoLeadtime fica fora daqui.)
+// ============================================================================
+function parseBRL(s: string): number | null {
+  if (typeof s !== 'string') return null;
+  const limpo = s.replace(/[^\d,.-]/g, '').trim();
+  if (!limpo) return null;
+  const normal = limpo.replace(/\./g, '').replace(',', '.'); // pt-BR: ponto=milhar, vírgula=decimal
+  const n = Number(normal);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseDiasPrzEnt(s: string): number | null {
+  if (typeof s !== 'string') return null;
+  const m = s.match(/-?\d+/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isInteger(n) ? n : null;
+}
+
+interface LinhaPortal { sku_portal: string; prz_ent_raw: string; total_raw: string; }
+interface ItemPedido {
+  item_id: number; sku_codigo_omie: string; sku_descricao: string | null;
+  sku_portal: string | null; qtde_final: number; preco_atual: number;
+}
+interface Casado { item: ItemPedido; prz_ent: number | null; total_linha: number | null; }
+interface ResultadoMatch { casados: Casado[]; naoCasados: ItemPedido[]; ambiguos: ItemPedido[]; }
+
+function normPortal(s: string | null): string { return (s ?? '').trim().toUpperCase(); }
+
+function casarLinhasComItens(linhas: LinhaPortal[], itens: ItemPedido[]): ResultadoMatch {
+  const casados: Casado[] = [];
+  const naoCasados: ItemPedido[] = [];
+  const ambiguos: ItemPedido[] = [];
+
+  const itensPorSku = new Map<string, ItemPedido[]>();
+  for (const it of itens) {
+    const k = normPortal(it.sku_portal);
+    if (!k) { naoCasados.push(it); continue; }
+    const arr = itensPorSku.get(k) ?? [];
+    arr.push(it); itensPorSku.set(k, arr);
+  }
+  const linhasPorSku = new Map<string, LinhaPortal[]>();
+  for (const ln of linhas) {
+    const k = normPortal(ln.sku_portal);
+    if (!k) continue;
+    const arr = linhasPorSku.get(k) ?? [];
+    arr.push(ln); linhasPorSku.set(k, arr);
+  }
+  for (const [k, its] of itensPorSku) {
+    const lns = linhasPorSku.get(k) ?? [];
+    if (its.length > 1 || lns.length > 1) { ambiguos.push(...its); continue; }
+    if (lns.length === 0) { naoCasados.push(its[0]); continue; }
+    casados.push({ item: its[0], prz_ent: parseDiasPrzEnt(lns[0].prz_ent_raw), total_linha: parseBRL(lns[0].total_raw) });
+  }
+  return { casados, naoCasados, ambiguos };
+}
+
+interface CustoUpdate { item_id: number; preco_unitario: number; valor_linha: number; }
+function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+function derivarCustos(res: ResultadoMatch): { updates: CustoUpdate[]; pulados: { sku_codigo_omie: string; motivo: string }[] } {
+  const updates: CustoUpdate[] = [];
+  const pulados: { sku_codigo_omie: string; motivo: string }[] = [];
+  for (const c of res.casados) {
+    const total = c.total_linha; const qtde = c.item.qtde_final;
+    if (total == null || !(total > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'total_invalido' }); continue; }
+    if (!(qtde > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'qtde_invalida' }); continue; }
+    if (round2(total) === round2(qtde * c.item.preco_atual)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'sem_mudanca' }); continue; }
+    updates.push({ item_id: c.item.item_id, preco_unitario: total / qtde, valor_linha: total }); // precisão cheia
+  }
+  return { updates, pulados };
+}
+
 interface PedidoCandidato {
   id: number;
   empresa: string;
@@ -1268,6 +1345,8 @@ interface ItemMapeado {
   unidade_portal: string | null;
   fator_conversao: number;
   mapeamento_ativo: boolean | null;
+  // preço unitário atual do item (base da tolerância na captura de custo do portal)
+  preco_atual?: number;
 }
 
 interface ProcessResult {
@@ -1598,6 +1677,41 @@ async function processarPedido(
     return result;
   }
 
+  // preco_unitario atual (base da tolerância de custo na captura). Independe da RPC trazer ou não.
+  {
+    const ids = itensList.map((i) => i.item_id);
+    if (ids.length > 0) {
+      const { data: precos } = await supabase.from("pedido_compra_item").select("id, preco_unitario").in("id", ids);
+      const pm = new Map<number, number>((precos ?? []).map((p) => [Number((p as { id: number }).id), Number((p as { preco_unitario: number | null }).preco_unitario ?? 0)]));
+      for (const it of itensList) (it as { preco_atual?: number }).preco_atual = pm.get(it.item_id) ?? 0;
+    }
+  }
+
+  // lead time esperado do grupo (validação de Prz Ent). Null = sem config → gate fica indisponível (fail-open).
+  // grupo_codigo não vem no PedidoCandidato (select enxuto) — buscamos a config direto por empresa+fornecedor+grupo.
+  let ltEsperado: number | null = null;
+  {
+    const { data: pedRow } = await supabase
+      .from("pedido_compra_sugerido")
+      .select("grupo_codigo")
+      .eq("id", pedido.id)
+      .maybeSingle();
+    const grupoCodigo = (pedRow as { grupo_codigo?: string | null } | null)?.grupo_codigo ?? null;
+    if (grupoCodigo) {
+      const { data: grp } = await supabase
+        .from("fornecedor_grupo_producao")
+        .select("lt_producao_dias, lt_producao_unidade")
+        .eq("empresa", pedido.empresa)
+        .eq("fornecedor_nome", pedido.fornecedor_nome)
+        .eq("grupo_codigo", grupoCodigo)
+        .maybeSingle();
+      if (grp && ((grp as { lt_producao_unidade?: string }).lt_producao_unidade ?? 'uteis') === 'uteis'
+          && Number.isInteger((grp as { lt_producao_dias?: number }).lt_producao_dias)) {
+        ltEsperado = (grp as { lt_producao_dias: number }).lt_producao_dias;
+      }
+    }
+  }
+
   // 3. Calcular qtde portal
   // Portal Sayerlack só aceita unidades inteiras: arredondar SEMPRE para cima.
   const itemsPortal = itensList.map((i) => ({
@@ -1638,6 +1752,7 @@ async function processarPedido(
             portalUrl: SAYERLACK_PORTAL_URL,
             clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO,
             items: itemsPortal,
+            ltEsperado,
           },
         }),
       },
