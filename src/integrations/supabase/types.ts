@@ -8690,6 +8690,42 @@ export type Database = {
         }
         Relationships: []
       }
+      route_queue_snapshot: {
+        Row: {
+          bucket: string | null
+          cidade: string | null
+          customer_user_id: string
+          data_rota: string
+          farmer_id: string
+          id: string
+          rank: number | null
+          snapshot_at: string
+          valor_da_ligacao: number | null
+        }
+        Insert: {
+          bucket?: string | null
+          cidade?: string | null
+          customer_user_id: string
+          data_rota: string
+          farmer_id: string
+          id?: string
+          rank?: number | null
+          snapshot_at?: string
+          valor_da_ligacao?: number | null
+        }
+        Update: {
+          bucket?: string | null
+          cidade?: string | null
+          customer_user_id?: string
+          data_rota?: string
+          farmer_id?: string
+          id?: string
+          rank?: number | null
+          snapshot_at?: string
+          valor_da_ligacao?: number | null
+        }
+        Relationships: []
+      }
       route_schedule: {
         Row: {
           ativo: boolean
@@ -13366,6 +13402,27 @@ export type Database = {
         }
         Relationships: []
       }
+      v_whatsapp_sla: {
+        Row: {
+          aguardando_desde: string | null
+          contact_name: string | null
+          conversation_id: string | null
+          customer_user_id: string | null
+          minutos_uteis_aguardando: number | null
+          nivel: string | null
+          owner_user_id: string | null
+          phone_e164: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       visit_score_recalc_pending: {
         Row: {
           customer_user_id: string | null
@@ -14040,6 +14097,17 @@ export type Database = {
       validar_sku_para_aplicacao: {
         Args: { p_empresa: string; p_sku: string }
         Returns: Json
+      }
+      wa_is_stop_keyword: { Args: { p_body: string }; Returns: boolean }
+      whatsapp_minutos_uteis: {
+        Args: {
+          p_ate: string
+          p_desde: string
+          p_dias?: number[]
+          p_h_fim?: string
+          p_h_inicio?: string
+        }
+        Returns: number
       }
     }
     Enums: {
