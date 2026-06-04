@@ -3,8 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTarefasQueCriei, useTarefaMutations } from '@/hooks/useTarefas';
 import { useSalespeople } from '@/hooks/useCoverage';
-import { supabase } from '@/integrations/supabase/client';
-import { eqText, orFilter } from '@/lib/postgrest';
+import { useBuscaClienteOmie, type ClienteBusca } from '@/hooks/useBuscaClienteOmie';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,16 +13,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Search, Loader2 } from 'lucide-react';
 import { CriarTarefaDialog } from '@/components/tarefas/CriarTarefaDialog';
-
-/** Resultado da busca de cliente (Omie ERP + perfis locais), antes de resolver user_id. */
-type ClienteBusca = {
-  user_id: string; // resolvido na hora do clique (pode vir vazio do Omie)
-  nome: string;
-  documento: string | null;
-  telefone: string | null;
-  email: string | null;
-  omie_codigo_cliente?: number;
-};
 
 /**
  * Página do founder: "Tarefas que criei".
@@ -40,6 +29,7 @@ export default function Tarefas() {
   const { data: tarefas = [], isLoading } = useTarefasQueCriei('todas');
   const { cancelar } = useTarefaMutations();
   const { data: salespeople = [] } = useSalespeople();
+  const { buscar, resolver } = useBuscaClienteOmie();
 
   // Estado do fluxo de criação
   const [abrirPicker, setAbrirPicker] = useState(false);
@@ -57,61 +47,9 @@ export default function Tarefas() {
   const buscarClientes = useCallback(async (query: string) => {
     if (query.length < 2) { setResultados([]); return; }
     setBuscando(true);
-    try {
-      const { data: omieData } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: { action: 'listar_clientes', search: query },
-      });
-      const omieClientes = (omieData?.clientes || []) as Array<{
-        codigo_cliente: number;
-        razao_social?: string;
-        nome_fantasia?: string;
-        email?: string | null;
-        telefone?: string | null;
-        cnpj_cpf?: string | null;
-      }>;
-
-      // Resolve user_id local em lote (clientes já vinculados)
-      let mappingByCode: Record<number, string> = {};
-      if (omieClientes.length > 0) {
-        const codigos = omieClientes.map(c => c.codigo_cliente);
-        const { data: mappings } = await supabase
-          .from('omie_clientes')
-          .select('user_id, omie_codigo_cliente')
-          .in('omie_codigo_cliente', codigos);
-        mappingByCode = Object.fromEntries((mappings || []).map(m => [m.omie_codigo_cliente, m.user_id]));
-      }
-
-      const omieMapped: ClienteBusca[] = omieClientes.map(c => ({
-        user_id: mappingByCode[c.codigo_cliente] || '',
-        nome: c.nome_fantasia || c.razao_social || 'Cliente',
-        documento: c.cnpj_cpf || null,
-        telefone: c.telefone || null,
-        email: c.email || null,
-        omie_codigo_cliente: c.codigo_cliente,
-      }));
-
-      // Perfis locais (clientes ainda sem vínculo Omie)
-      const { data: localProfiles } = await supabase
-        .from('profiles')
-        .select('user_id, name, email, phone')
-        .ilike('name', `%${query}%`)
-        .limit(10);
-      const local: ClienteBusca[] = (localProfiles || []).map(p => ({
-        user_id: p.user_id,
-        nome: p.name ?? 'Cliente',
-        documento: null,
-        telefone: p.phone ?? null,
-        email: p.email ?? null,
-      }));
-
-      const seen = new Set(omieMapped.filter(c => c.user_id).map(c => c.user_id));
-      setResultados([...omieMapped, ...local.filter(p => !seen.has(p.user_id))]);
-    } catch {
-      // silencioso: a busca é best-effort (mesma postura do FarmerCalls)
-    } finally {
-      setBuscando(false);
-    }
-  }, []);
+    try { setResultados(await buscar(query)); }
+    finally { setBuscando(false); }
+  }, [buscar]);
 
   useEffect(() => {
     const t = setTimeout(() => buscarClientes(busca), 300);
@@ -122,25 +60,7 @@ export default function Tarefas() {
   const selecionarCliente = async (c: ClienteBusca) => {
     setResolvendo(true);
     try {
-      let customerUserId = c.user_id;
-      if (!customerUserId && c.documento) {
-        const docClean = c.documento.replace(/\D/g, '');
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('user_id')
-          .or(orFilter(eqText('document', docClean), eqText('document', c.documento)))
-          .limit(1)
-          .maybeSingle();
-        if (profile?.user_id) customerUserId = profile.user_id;
-      }
-      if (!customerUserId && c.omie_codigo_cliente) {
-        const { data: mapping } = await supabase
-          .from('omie_clientes')
-          .select('user_id')
-          .eq('omie_codigo_cliente', c.omie_codigo_cliente)
-          .maybeSingle();
-        if (mapping?.user_id) customerUserId = mapping.user_id;
-      }
+      const customerUserId = await resolver(c);
       if (!customerUserId) {
         toast.error('Cliente sem cadastro local', {
           description: 'Esse cliente Omie ainda não tem perfil no app. Crie um pedido primeiro para vinculá-lo.',
