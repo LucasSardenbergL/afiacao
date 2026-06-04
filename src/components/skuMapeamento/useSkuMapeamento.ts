@@ -7,7 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { EMPTY_FORM } from './config';
 import { dividirSegurosParaGravar } from './grava-seguros';
-import type { Mapeamento, DescricaoLookup, ValidacaoResult } from './types';
+import type { Mapeamento, ValidacaoResult } from './types';
 import { validarGabarito, sugerirMapeamentos, ehProdutoFracionado, PARSER_VERSION, type SugestaoSegura } from '@/lib/reposicao/sayerlack-sku';
 
 export function useSkuMapeamento() {
@@ -37,23 +37,28 @@ export function useSkuMapeamento() {
     },
   });
 
-  // Lookup de descrições do Omie a partir de pedido_compra_item (último valor visto)
+  // Lookup de descrições a partir do catálogo VIVO do Omie (omie_products.descricao), keyed pelo
+  // código numérico. Antes lia pedido_compra_item (foto da última compra) → divergia do Omie quando o
+  // produto era renomeado no ERP. omie_products.descricao atualiza no sync → a tela reflete o nome ATUAL.
   const skusOmie = useMemo(() => (mapeamentos ?? []).map((m) => m.sku_omie), [mapeamentos]);
 
   const { data: descricoes } = useQuery({
-    queryKey: ['sku-descricoes', skusOmie],
+    queryKey: ['sku-descricoes-omie', skusOmie],
     enabled: skusOmie.length > 0,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('pedido_compra_item')
-        .select('sku_codigo_omie, sku_descricao')
-        .in('sku_codigo_omie', skusOmie);
-      if (error) throw error;
       const map = new Map<string, string>();
-      (data as DescricaoLookup[]).forEach((d) => {
-        if (!map.has(d.sku_codigo_omie) && d.sku_descricao) {
-          map.set(d.sku_codigo_omie, d.sku_descricao);
-        }
+      const codigos = skusOmie.map((s) => Number(s)).filter((n) => Number.isFinite(n));
+      if (codigos.length === 0) return map;
+      const { data, error } = await supabase
+        .from('omie_products')
+        .select('omie_codigo_produto, descricao, ativo')
+        .in('omie_codigo_produto', codigos);
+      if (error) throw error;
+      (data as Array<{ omie_codigo_produto: number; descricao: string | null; ativo: boolean }>).forEach((d) => {
+        if (!d.descricao) return;
+        const k = String(d.omie_codigo_produto);
+        // prefere a linha ATIVA do account (ignora duplicata inativa de outra empresa)
+        if (!map.has(k) || d.ativo) map.set(k, d.descricao);
       });
       return map;
     },

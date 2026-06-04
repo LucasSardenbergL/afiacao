@@ -403,6 +403,7 @@ const App = () => (
                 <Route path="gestao/saude-dados" element={<SaudeDados />} />
                 <Route path="admin/ajuda" element={<AdminAjuda />} />
                 <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
+                <Route path="admin/des/configuracao" element={<AdminDesTrimestreAtual />} />
                 <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
                 <Route path="admin/portal-sayerlack" element={<AdminPortalSayerlack />} />
                 <Route path="admin/sip-credentials" element={<AdminVendorSipCredentials />} />

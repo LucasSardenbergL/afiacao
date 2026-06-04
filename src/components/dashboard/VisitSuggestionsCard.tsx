@@ -56,7 +56,7 @@ export function VisitSuggestionsCard() {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-3 pb-3">
         <div>
-          <h2 className="text-base font-medium">Visitas sugeridas hoje</h2>
+          <h2 className="text-base font-medium">Visitas sugeridas — equipes de campo</h2>
           <p className="text-2xs text-muted-foreground">
             Top {suggestions.length} clientes em {selectedCity} — mix balanceado entre 4 missões
           </p>

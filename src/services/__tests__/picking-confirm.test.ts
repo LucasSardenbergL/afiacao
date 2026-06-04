@@ -1,28 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: vi.fn() },
+  supabase: { rpc: vi.fn() },
 }));
 
 import { supabase } from '@/integrations/supabase/client';
 import { confirmPickItem, type ConfirmPickItemVars } from '../picking-confirm';
 
-const mockedFrom = vi.mocked(supabase.from);
-
-/** Monta um mock de `supabase.from` que discrimina por tabela. */
-function mockSupabase(opts: {
-  insertResult?: { error: unknown };
-  updateResult?: { error: unknown };
-}) {
-  const insertFn = vi.fn().mockResolvedValue(opts.insertResult ?? { error: null });
-  const eqFn = vi.fn().mockResolvedValue(opts.updateResult ?? { error: null });
-  const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
-  mockedFrom.mockImplementation((table: string) => {
-    if (table === 'picking_events') return { insert: insertFn } as never;
-    return { update: updateFn } as never;
-  });
-  return { insertFn, updateFn, eqFn };
-}
+const mockedRpc = vi.mocked((supabase as unknown as { rpc: ReturnType<typeof vi.fn> }).rpc);
 
 const baseVars: ConfirmPickItemVars = {
   eventId: 'evt-1',
@@ -37,43 +22,32 @@ const baseVars: ConfirmPickItemVars = {
   confirmedAt: '2026-05-24T12:00:00.000Z',
 };
 
-beforeEach(() => mockedFrom.mockReset());
+beforeEach(() => mockedRpc.mockReset());
 
-describe('confirmPickItem', () => {
-  it('confirma cheio com lote correto: evento item_confirmado + update absoluto status concluido', async () => {
-    const { insertFn, updateFn, eqFn } = mockSupabase({});
+describe('confirmPickItem (RPC atômica)', () => {
+  it('chama confirmar_item_picking com o mapeamento correto de params e retorna {ok:true}', async () => {
+    mockedRpc.mockResolvedValue({ error: null });
     const r = await confirmPickItem(baseVars);
     expect(r).toEqual({ ok: true });
-    expect(insertFn).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'evt-1', event_type: 'item_confirmado', picking_task_item_id: 'item-1', user_id: 'user-1',
-    }));
-    expect(updateFn).toHaveBeenCalledWith(expect.objectContaining({
-      quantidade_separada: 10, status: 'concluido', lote_separado: 'LOTE-A', separado_at: '2026-05-24T12:00:00.000Z',
-    }));
-    expect(eqFn).toHaveBeenCalledWith('id', 'item-1');
+    expect(mockedRpc).toHaveBeenCalledWith('confirmar_item_picking', {
+      p_event_id: 'evt-1',
+      p_task_id: 'task-1',
+      p_item_id: 'item-1',
+      p_quantidade_separada: 10,
+      p_lote_informado: 'LOTE-A',
+      p_justificativa: null,
+      p_confirmed_at: '2026-05-24T12:00:00.000Z',
+    });
   });
 
-  it('replay (PK 23505 no insert) NÃO lança e ainda roda o update', async () => {
-    const { updateFn } = mockSupabase({ insertResult: { error: { code: '23505', message: 'dup' } } });
-    const r = await confirmPickItem(baseVars);
-    expect(r).toEqual({ ok: true });
-    expect(updateFn).toHaveBeenCalled();
-  });
-
-  it('lote divergente exige tipo lote_divergente', async () => {
-    const { insertFn } = mockSupabase({});
-    await confirmPickItem({ ...baseVars, loteInformado: 'LOTE-B', justificativa: 'lote A esgotado' });
-    expect(insertFn).toHaveBeenCalledWith(expect.objectContaining({ event_type: 'lote_divergente' }));
-  });
-
-  it('separação parcial deriva status em_andamento', async () => {
-    const { updateFn } = mockSupabase({});
+  it('separação parcial repassa a quantidade absoluta (derivação de status é server-side)', async () => {
+    mockedRpc.mockResolvedValue({ error: null });
     await confirmPickItem({ ...baseVars, quantidadeSeparada: 4 });
-    expect(updateFn).toHaveBeenCalledWith(expect.objectContaining({ quantidade_separada: 4, status: 'em_andamento' }));
+    expect(mockedRpc).toHaveBeenCalledWith('confirmar_item_picking', expect.objectContaining({ p_quantidade_separada: 4 }));
   });
 
-  it('erro não-23505 no insert propaga', async () => {
-    mockSupabase({ insertResult: { error: { code: '42501', message: 'rls' } } });
+  it('erro da RPC propaga (caller decide rollback/enfileirar)', async () => {
+    mockedRpc.mockResolvedValue({ error: { code: '42501', message: 'rls' } });
     await expect(confirmPickItem(baseVars)).rejects.toMatchObject({ code: '42501' });
   });
 });

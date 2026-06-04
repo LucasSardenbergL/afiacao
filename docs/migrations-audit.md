@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **141** custom migrations totais
-- **594** objetos esperados (criados por estas migrations)
+- **144** custom migrations totais
+- **603** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 160
-  - `function`: 119
-  - `index`: 115
-  - `cron_job`: 92
+  - `function`: 125
+  - `index`: 117
+  - `cron_job`: 93
   - `table`: 70
   - `trigger`: 34
   - `enum_value`: 4
@@ -1313,6 +1313,30 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.registrar_contato_rota` | — |
 | `function` | `public.desfazer_contato_rota` | — |
+
+### `20260601000000_tarefas_escalonamento_titulo_mensagem.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_escalonamento_tick` | — |
+
+### `20260602101856_reposicao_refresh_descricao_sku_parametros.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atualizar_descricao_sku_parametros` | — |
+| `cron_job` | `cron.reposicao-refresh-descricao-diario` | — |
+
+### `20260604120000_picking_bridge.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.uq_picking_tasks_sales_order` | `picking_tasks` |
+| `index` | `public.idx_sales_orders_account_kpi` | `sales_orders` |
+| `function` | `public.ensure_picking_task_for_sales_order` | — |
+| `function` | `public.recalcular_picking_task` | — |
+| `function` | `public.confirmar_item_picking` | — |
+| `function` | `public.listar_pedidos_a_separar` | — |
 
 ## Próximos passos quando algo der `❌`
 

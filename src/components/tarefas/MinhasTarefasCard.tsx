@@ -7,9 +7,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Check, MessageSquare, Clock, AlertTriangle } from 'lucide-react';
 import { useMinhasTarefas, useTarefaSugestoes, useTarefaMutations } from '@/hooks/useTarefas';
 import { buildWhatsappTaskMessage, buildWaMeUrl } from '@/lib/tarefas/whatsapp';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { TarefaEstado } from '@/lib/tarefas/types';
 
 export function MinhasTarefasCard() {
+  const { isImpersonating } = useImpersonation();  // "Ver como" = somente leitura
   const { data: tarefas = [], isLoading } = useMinhasTarefas();
   const ids = useMemo(() => tarefas.map(t => t.id), [tarefas]);
   const { data: sugestoes = [] } = useTarefaSugestoes(ids);
@@ -34,6 +36,7 @@ export function MinhasTarefasCard() {
         <Clock className="w-4 h-4" />
         <h2 className="font-display text-lg">Minhas tarefas</h2>
         <span className="text-2xs text-muted-foreground">{tarefas.length}</span>
+        {isImpersonating && <span className="ml-auto text-2xs text-muted-foreground">Somente leitura (Ver como)</span>}
       </div>
       <ul className="space-y-2">
         {tarefas.map(t => {
@@ -50,17 +53,17 @@ export function MinhasTarefasCard() {
                 </div>
                 <div className="flex gap-1 shrink-0">
                   {t.categoria === 'whatsapp'
-                    ? <Button size="sm" variant="outline" onClick={() => onWhats(t)}><MessageSquare className="w-3 h-3 mr-1" />Mandar</Button>
-                    : <Button size="sm" variant="outline" onClick={() => concluir(t.id, 'manual')}><Check className="w-3 h-3 mr-1" />Feito</Button>}
-                  <Button size="sm" variant="ghost" onClick={() => { setAdiarAlvo(t); setAdiarData(''); setAdiarMotivo(''); }}>Adiar</Button>
+                    ? <Button size="sm" variant="outline" disabled={isImpersonating} onClick={() => onWhats(t)}><MessageSquare className="w-3 h-3 mr-1" />Mandar</Button>
+                    : <Button size="sm" variant="outline" disabled={isImpersonating} onClick={() => concluir(t.id, 'manual')}><Check className="w-3 h-3 mr-1" />Feito</Button>}
+                  <Button size="sm" variant="ghost" disabled={isImpersonating} onClick={() => { setAdiarAlvo(t); setAdiarData(''); setAdiarMotivo(''); }}>Adiar</Button>
                 </div>
               </div>
               {sug && (
                 <div className="mt-2 rounded-md bg-status-info-bg border border-status-info/40 p-2">
                   <p className="text-2xs">{sug.motivo ?? 'Possível cumprimento detectado'} — confirma?</p>
                   <div className="flex gap-1 mt-1">
-                    <Button size="sm" onClick={() => resolverSugestao(sug.id, t.id, true)}>Sim, fiz</Button>
-                    <Button size="sm" variant="ghost" onClick={() => resolverSugestao(sug.id, t.id, false)}>Não</Button>
+                    <Button size="sm" disabled={isImpersonating} onClick={() => resolverSugestao(sug.id, t.id, true)}>Sim, fiz</Button>
+                    <Button size="sm" variant="ghost" disabled={isImpersonating} onClick={() => resolverSugestao(sug.id, t.id, false)}>Não</Button>
                   </div>
                 </div>
               )}

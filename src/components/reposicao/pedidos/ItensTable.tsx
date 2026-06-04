@@ -8,12 +8,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils';
 import { getEstoqueZoneClass, formatBRL } from './shared';
 import { type Linha } from './useDetalhesModal';
+import { precoEditavelDaLinha } from './preco-edit';
 
 interface ItensTableProps {
   linhas: Linha[];
   podeEditar: boolean;
   totalAtual: number;
   onEditQty: (id: number, raw: string) => void;
+  podeEditarPreco: boolean;
+  onEditPreco: (id: number, raw: string) => void;
   onRemover: (l: Linha) => void;
   onDescontinuar: (l: Linha) => void;
   removerPending: boolean;
@@ -25,6 +28,8 @@ export function ItensTable({
   podeEditar,
   totalAtual,
   onEditQty,
+  podeEditarPreco,
+  onEditPreco,
   onRemover,
   onDescontinuar,
   removerPending,
@@ -91,7 +96,21 @@ export function ItensTable({
                 )}>{l._qtd.toFixed(0)}</span>
               )}
             </TableCell>
-            <TableCell className="text-right tabular-nums">{formatBRL(l.preco_unitario)}</TableCell>
+            <TableCell className="text-right">
+              {precoEditavelDaLinha(podeEditarPreco, l) ? (
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="custo"
+                  className="h-8 w-24 ml-auto text-right tabular-nums border-status-warning/60"
+                  value={l._preco || ''}
+                  onChange={(e) => onEditPreco(l.id, e.target.value)}
+                />
+              ) : (
+                <span className="tabular-nums">{formatBRL(l._preco)}</span>
+              )}
+            </TableCell>
             <TableCell className="text-right tabular-nums font-medium">{formatBRL(l._valor)}</TableCell>
             {podeEditar && (
               <TableCell className="text-right">

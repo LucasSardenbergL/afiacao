@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
 import type { TarefaEstado } from '@/lib/tarefas/types';
@@ -14,9 +15,12 @@ const sel = () => (supabase.from('v_tarefas_estado' as never) as any);
 /** Tarefas da vendedora logada (do responsável efetivo: assigned_to OU cobertura). A RLS já filtra. */
 export function useMinhasTarefas() {
   const { user } = useAuth();
+  const { isImpersonating, effectiveUserId } = useImpersonation();
+  // Impersonation-aware: no "Ver como", o master lê (RLS permite) e filtramos pro alvo.
+  const targetId = isImpersonating && effectiveUserId ? effectiveUserId : (user?.id ?? null);
   return useQuery({
-    queryKey: ['minhas-tarefas', user?.id],
-    enabled: !!user,
+    queryKey: ['minhas-tarefas', isImpersonating ? `as:${effectiveUserId}` : user?.id],
+    enabled: !!targetId,
     staleTime: 30_000,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
@@ -27,7 +31,7 @@ export function useMinhasTarefas() {
         .order('atrasada', { ascending: false })
         .order('effective_due', { ascending: true });
       if (error) throw error;
-      return ((data ?? []) as TarefaEstado[]).filter(t => t.responsavel_efetivo === user!.id);
+      return ((data ?? []) as TarefaEstado[]).filter(t => t.responsavel_efetivo === targetId);
     },
   });
 }
@@ -83,14 +87,30 @@ export function useTarefaMutations() {
     qc.invalidateQueries({ queryKey: ['tarefas-badge-count'] });
   };
 
-  /** Cria N tarefas pro mesmo cliente (criação em lote, founder). */
-  const criarTarefas = async (linhas: Array<Record<string, unknown>>) => {
-    const rows = linhas.map(l => ({ ...l, created_by: user!.id }));
-    const { error } = await tarefas().insert(rows as never);
+  /** Cria N tarefas (cada linha carrega seu próprio cliente). Opcional: auditoria da origem por voz. */
+  const criarTarefas = async (
+    linhas: Array<Record<string, unknown>>,
+    auditVoz?: { transcricao: string; evidencias: string[] },
+  ): Promise<{ ids: string[] }> => {
+    const rows = linhas.map((l) => ({ ...l, created_by: user!.id }));
+    const { data, error } = await tarefas().insert(rows as never).select('id');
     if (error) { toast.error('Erro ao criar tarefa', { description: error.message }); throw error; }
-    track('tarefas.created', { qtd: rows.length });
+    const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+    track('tarefas.created', { qtd: rows.length, origem: auditVoz ? 'voz' : 'form' });
+    if (auditVoz && ids.length > 0) {
+      // best-effort: a auditoria NUNCA derruba a criação (as tarefas já foram inseridas acima).
+      // ordem do insert preservada pela representação do PostgREST → ids[i] ↔ evidencias[i].
+      try {
+        const eventos_rows = ids.map((id, i) => ({
+          tarefa_id: id, tipo_evento: 'criada_por_voz', ator: user!.id,
+          payload: { transcricao: auditVoz.transcricao, evidence_text: auditVoz.evidencias[i] ?? null },
+        }));
+        await eventos().insert(eventos_rows as never);
+      } catch { /* best-effort — auditoria é nice-to-have, não bloqueia o fluxo */ }
+    }
     toast.success(rows.length > 1 ? `${rows.length} tarefas criadas` : 'Tarefa criada');
     invalidate();
+    return { ids };
   };
 
   /** Conclusão manual (inclui o botão WhatsApp, que passa origem='whatsapp'). */

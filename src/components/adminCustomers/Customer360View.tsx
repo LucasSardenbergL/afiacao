@@ -13,7 +13,7 @@ import {
   ChevronLeft, Mail, ShoppingCart, TrendingUp,
   AlertTriangle, MoreHorizontal,
   MessageSquare, Calendar, DollarSign, Package, Activity, Sparkles,
-  Factory, Contact,
+  Factory, Contact, MapPin,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -23,7 +23,9 @@ import { formatBrPhone, whatsappLink } from '@/lib/phone';
 import { CallButton } from '@/components/call/CallButton';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { CustomerProfile360Summary } from '@/components/customer/CustomerProfile360Summary';
+import { CustomerBrief } from '@/components/customer/CustomerBrief';
 import { CustomerCallsTab } from '@/components/customer/CustomerCallsTab';
+import { CustomerVisitsTab } from '@/components/customer/CustomerVisitsTab';
 import { CustomerProcessTab } from '@/components/customer/CustomerProcessTab';
 import { CustomerContactsTab } from '@/components/customer/CustomerContactsTab';
 import { fmt, HEALTH_CLASSES, formatDocument } from './config';
@@ -137,6 +139,8 @@ export function Customer360View({
         </div>
       )}
 
+      <CustomerBrief customerId={customer.user_id} />
+
       {/* Contact Info + Details */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Contact */}
@@ -216,6 +220,9 @@ export function Customer360View({
           </TabsTrigger>
           <TabsTrigger value="calls" className="gap-1.5">
             <Phone className="w-3.5 h-3.5" /> Chamadas
+          </TabsTrigger>
+          <TabsTrigger value="visits" className="gap-1.5">
+            <MapPin className="w-3.5 h-3.5" /> Visitas
           </TabsTrigger>
           <TabsTrigger value="process" className="gap-1.5">
             <Factory className="w-3.5 h-3.5" /> Processo
@@ -330,6 +337,10 @@ export function Customer360View({
 
         <TabsContent value="calls" className="mt-3">
           <CustomerCallsTab customerId={customer.user_id} />
+        </TabsContent>
+
+        <TabsContent value="visits" className="mt-3">
+          <CustomerVisitsTab customerId={customer.user_id} />
         </TabsContent>
 
         <TabsContent value="process" className="mt-3">
