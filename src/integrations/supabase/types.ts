@@ -9925,7 +9925,7 @@ export type Database = {
           created_at: string
           id: string
           payload: Json | null
-          tarefa_id: string
+          tarefa_id: string | null
           tipo_evento: string
         }
         Insert: {
@@ -9933,7 +9933,7 @@ export type Database = {
           created_at?: string
           id?: string
           payload?: Json | null
-          tarefa_id: string
+          tarefa_id?: string | null
           tipo_evento: string
         }
         Update: {
@@ -9941,7 +9941,7 @@ export type Database = {
           created_at?: string
           id?: string
           payload?: Json | null
-          tarefa_id?: string
+          tarefa_id?: string | null
           tipo_evento?: string
         }
         Relationships: [
@@ -10021,100 +10021,211 @@ export type Database = {
           },
         ]
       }
+      tarefa_templates: {
+        Row: {
+          alto_risco: boolean
+          amostra_auditoria_pct: number
+          area: string
+          assigned_to: string
+          ativo: boolean
+          cadencia: string
+          categoria: string
+          created_at: string
+          created_by: string
+          customer_user_id: string | null
+          descricao: string
+          dias_semana: number[] | null
+          empresa: string
+          id: string
+          janela_fim: string | null
+          janela_inicio: string | null
+          leitura_max: number | null
+          leitura_min: number | null
+          leitura_unidade: string | null
+          reincidente_limite: number
+          requer_comprovacao: boolean
+          supervisor_user_id: string | null
+          tipo_comprovacao: string
+          tolerancia_dias: number
+          updated_at: string
+        }
+        Insert: {
+          alto_risco?: boolean
+          amostra_auditoria_pct?: number
+          area: string
+          assigned_to: string
+          ativo?: boolean
+          cadencia: string
+          categoria: string
+          created_at?: string
+          created_by: string
+          customer_user_id?: string | null
+          descricao: string
+          dias_semana?: number[] | null
+          empresa: string
+          id?: string
+          janela_fim?: string | null
+          janela_inicio?: string | null
+          leitura_max?: number | null
+          leitura_min?: number | null
+          leitura_unidade?: string | null
+          reincidente_limite?: number
+          requer_comprovacao?: boolean
+          supervisor_user_id?: string | null
+          tipo_comprovacao?: string
+          tolerancia_dias?: number
+          updated_at?: string
+        }
+        Update: {
+          alto_risco?: boolean
+          amostra_auditoria_pct?: number
+          area?: string
+          assigned_to?: string
+          ativo?: boolean
+          cadencia?: string
+          categoria?: string
+          created_at?: string
+          created_by?: string
+          customer_user_id?: string | null
+          descricao?: string
+          dias_semana?: number[] | null
+          empresa?: string
+          id?: string
+          janela_fim?: string | null
+          janela_inicio?: string | null
+          leitura_max?: number | null
+          leitura_min?: number | null
+          leitura_unidade?: string | null
+          reincidente_limite?: number
+          requer_comprovacao?: boolean
+          supervisor_user_id?: string | null
+          tipo_comprovacao?: string
+          tolerancia_dias?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       tarefas: {
         Row: {
           adiada_para: string | null
           assigned_to: string
+          auditada_em: string | null
+          auditada_por: string | null
+          auditoria_motivo: string | null
+          auditoria_status: string
           auto_satisfy_mode: string
           backstop_days: number
           categoria: string
+          comprovacao_em: string | null
+          comprovacao_leitura: number | null
           comprovacao_url: string | null
           concluida_em: string | null
           concluida_por: string | null
           conclusao_origem: string | null
           created_at: string
           created_by: string
-          customer_user_id: string
+          customer_user_id: string | null
           descricao: string
           due_date: string | null
           empresa: string
           escalado_em: string | null
           id: string
           interacao_tipo: string | null
+          janela_fim: string | null
           modo: string
           motivo_adiamento: string | null
           nota_conclusao: string | null
           requer_comprovacao: boolean
           status: string
+          supervisor_user_id: string | null
           target_preco_centavos: number | null
           target_produto_id: string | null
           target_tags: Json | null
           target_texto: string | null
           template_id: string | null
+          tipo_comprovacao: string | null
           tolerancia_dias: number
           updated_at: string
         }
         Insert: {
           adiada_para?: string | null
           assigned_to: string
+          auditada_em?: string | null
+          auditada_por?: string | null
+          auditoria_motivo?: string | null
+          auditoria_status?: string
           auto_satisfy_mode?: string
           backstop_days?: number
           categoria: string
+          comprovacao_em?: string | null
+          comprovacao_leitura?: number | null
           comprovacao_url?: string | null
           concluida_em?: string | null
           concluida_por?: string | null
           conclusao_origem?: string | null
           created_at?: string
           created_by: string
-          customer_user_id: string
+          customer_user_id?: string | null
           descricao: string
           due_date?: string | null
           empresa: string
           escalado_em?: string | null
           id?: string
           interacao_tipo?: string | null
+          janela_fim?: string | null
           modo: string
           motivo_adiamento?: string | null
           nota_conclusao?: string | null
           requer_comprovacao?: boolean
           status?: string
+          supervisor_user_id?: string | null
           target_preco_centavos?: number | null
           target_produto_id?: string | null
           target_tags?: Json | null
           target_texto?: string | null
           template_id?: string | null
+          tipo_comprovacao?: string | null
           tolerancia_dias?: number
           updated_at?: string
         }
         Update: {
           adiada_para?: string | null
           assigned_to?: string
+          auditada_em?: string | null
+          auditada_por?: string | null
+          auditoria_motivo?: string | null
+          auditoria_status?: string
           auto_satisfy_mode?: string
           backstop_days?: number
           categoria?: string
+          comprovacao_em?: string | null
+          comprovacao_leitura?: number | null
           comprovacao_url?: string | null
           concluida_em?: string | null
           concluida_por?: string | null
           conclusao_origem?: string | null
           created_at?: string
           created_by?: string
-          customer_user_id?: string
+          customer_user_id?: string | null
           descricao?: string
           due_date?: string | null
           empresa?: string
           escalado_em?: string | null
           id?: string
           interacao_tipo?: string | null
+          janela_fim?: string | null
           modo?: string
           motivo_adiamento?: string | null
           nota_conclusao?: string | null
           requer_comprovacao?: boolean
           status?: string
+          supervisor_user_id?: string | null
           target_preco_centavos?: number | null
           target_produto_id?: string | null
           target_tags?: Json | null
           target_texto?: string | null
           template_id?: string | null
+          tipo_comprovacao?: string | null
           tolerancia_dias?: number
           updated_at?: string
         }
@@ -13373,9 +13484,15 @@ export type Database = {
           adiada_para: string | null
           assigned_to: string | null
           atrasada: boolean | null
+          auditada_em: string | null
+          auditada_por: string | null
+          auditoria_motivo: string | null
+          auditoria_status: string | null
           auto_satisfy_mode: string | null
           backstop_days: number | null
           categoria: string | null
+          comprovacao_em: string | null
+          comprovacao_leitura: number | null
           comprovacao_url: string | null
           concluida_em: string | null
           concluida_por: string | null
@@ -13391,18 +13508,22 @@ export type Database = {
           escalavel: boolean | null
           id: string | null
           interacao_tipo: string | null
+          janela_fim: string | null
           modo: string | null
           motivo_adiamento: string | null
           nota_conclusao: string | null
+          requer_auditoria: boolean | null
           requer_comprovacao: boolean | null
           responsavel_efetivo: string | null
           status: string | null
+          supervisor_user_id: string | null
           target_preco_centavos: number | null
           target_produto_id: string | null
           target_tags: Json | null
           target_texto: string | null
           tem_sugestao_pendente: boolean | null
           template_id: string | null
+          tipo_comprovacao: string | null
           tolerancia_dias: number | null
           updated_at: string | null
         }
@@ -13545,6 +13666,10 @@ export type Database = {
         Args: { p_empresa: string }
         Returns: number
       }
+      auditar_tarefa: {
+        Args: { p_aprovar: boolean; p_motivo?: string; p_tarefa_id: string }
+        Returns: undefined
+      }
       calcular_gatilhos_reposicao: {
         Args: { p_empresa?: string; p_only_sku?: number }
         Returns: Record<string, unknown>
@@ -13572,6 +13697,10 @@ export type Database = {
         }[]
       }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
+      concluir_com_comprovacao: {
+        Args: { p_leitura?: number; p_tarefa_id: string; p_url?: string }
+        Returns: undefined
+      }
       confirmar_item_picking: {
         Args: {
           p_confirmed_at: string
@@ -14044,6 +14173,7 @@ export type Database = {
           valor: number
         }[]
       }
+      resgatar_recompensa: { Args: { p_reward_key: string }; Returns: string }
       resolver_outlier: {
         Args: {
           p_decisao: string
@@ -14108,6 +14238,7 @@ export type Database = {
       }
       tarefas_escalonamento_tick: { Args: never; Returns: undefined }
       tarefas_matcher_tick: { Args: never; Returns: undefined }
+      tarefas_materializar_recorrentes: { Args: never; Returns: undefined }
       tint_run_reconciliation: {
         Args: { p_sync_run_id: string }
         Returns: Json
