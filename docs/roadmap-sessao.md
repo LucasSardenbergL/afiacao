@@ -26,8 +26,9 @@
 > Pedido nesta sessão: founder grava um áudio ("manda a Regina ligar pra Padaria do Zé amanhã e oferecer a linha nova, e whatsapp pra Maria sexta") → transcreve → IA estrutura em N tarefas → founder revisa/corrige cliente+vendedora → cria. Multi-tarefa por áudio; "calendário" = o prazo (data) que joga no Meu Dia.
 - ✅ **Decisões fechadas:** (A) fala tudo + IA infere + revisa/corrige antes de salvar (zero auto-criação); multi-tarefa por áudio. Transcrição já existe (`elevenlabs-transcribe`).
 - ✅ **Spec escrito + endurecido com passe adversário do codex.** Princípio central (codex): IA faz extração+split; **datas e entidades saem da IA** pra parser determinístico pt-BR + match local com limiar + confirmação humana. Spec: `docs/superpowers/specs/2026-06-04-tarefa-criar-por-voz-design.md`.
-- ⏳ **Revisão do spec pelo founder** → libera o plano de implementação.
-- ⏳ **Plano + build** (depois da revisão). Inclui edge `tarefa-extrair-voz` (Anthropic tool-use) + helpers TDD (parser de data, match cliente/vendedora) + `VozTarefaDialog`.
+- ✅ **Plano escrito.** Plano: `docs/superpowers/plans/2026-06-04-tarefa-criar-por-voz.md`.
+- ✅ **Build concluído (código mergeável).** Edge `tarefa-extrair-voz` + helpers TDD (parser data, match cliente/vendedora, validação, montar-rascunhos) + `VozTarefaDialog` + wiring em `Tarefas.tsx`. CI passou (typecheck strict ✅ / 2145/2145 testes ✅ / lint 0 errors ✅ / build ✅).
+- ⏳ **Deploy da edge + Publish + QA** (após merge). Edge `tarefa-extrair-voz` precisa ser criada via chat do Lovable. Publish do frontend no editor. QA manual no device com microfone.
 
 ## 5. Reposição — tingidores fabricados ('04') na fila + REGRESSÃO do sinal `tipo_produto`
 > Founder notou 5 tingidores Sayerlack OBEN (fabricados na hora) pedindo aprovação em **Parâmetros → Revisão**. Investigação revelou DOIS problemas: (a) a fila não filtrava `produto_acabado` (ruído); (b) **o sinal `tipo_produto` foi ZERADO em 100% dos ~3651 produtos OBEN** (medido em prod: 0 com `04`, 3651 NULL, sync fresco).

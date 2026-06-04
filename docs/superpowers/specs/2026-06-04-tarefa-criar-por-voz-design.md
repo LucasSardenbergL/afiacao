@@ -1,7 +1,7 @@
 # Criar tarefas por voz — áudio → IA estrutura → revisa → cria (design)
 
 > Data: 2026-06-04 · Módulo: Tarefas (Fase 1, já em produção) · Brainstorm: Lucas + Claude
-> Status: design aprovado nas decisões-chave (ver §2) + **endurecido com passe adversário do codex** (§15). Aguarda revisão do founder antes do plano.
+> Status: plano escrito (`docs/superpowers/plans/2026-06-04-tarefa-criar-por-voz.md`) + implementado neste branch (`claude/build-tarefa-voz`); aguarda deploy da edge via Lovable + QA com microfone real.
 
 ## 1. Problema / objetivo
 

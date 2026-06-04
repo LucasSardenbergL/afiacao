@@ -1,6 +1,7 @@
 import { Card } from '@/components/ui/card';
-import { Construction, BarChart3, Users, Briefcase } from 'lucide-react';
+import { Construction } from 'lucide-react';
 import { KpisToday } from './KpisToday';
+import { TeamKpiTiles } from './TeamKpiTiles';
 import { VisitSuggestionsCard } from './VisitSuggestionsCard';
 import { ViewAsPicker } from '@/components/impersonation/ViewAsPicker';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
@@ -48,22 +49,10 @@ export function MasterDashboard() {
         <KpisToday />
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <Card className="p-3 text-center text-xs text-muted-foreground">
-          <Users className="w-5 h-5 mx-auto mb-1 opacity-40" />
-          Vendedores ativos
-          <div className="text-base font-medium text-foreground mt-1">—</div>
-        </Card>
-        <Card className="p-3 text-center text-xs text-muted-foreground">
-          <Briefcase className="w-5 h-5 mx-auto mb-1 opacity-40" />
-          Receita time hoje
-          <div className="text-base font-medium text-foreground mt-1">—</div>
-        </Card>
-        <Card className="p-3 text-center text-xs text-muted-foreground">
-          <BarChart3 className="w-5 h-5 mx-auto mb-1 opacity-40" />
-          Pipeline total
-          <div className="text-base font-medium text-foreground mt-1">—</div>
-        </Card>
+      {/* KPIs de time (read-only, escopo da empresa ativa do CompanySwitcher) */}
+      <div className="space-y-2">
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">Time</div>
+        <TeamKpiTiles />
       </div>
     </div>
   );

@@ -6,11 +6,17 @@ import { enqueue } from '@/lib/offline-queue';
  * Detecta erro de rede vs erro de aplicação. Erros de rede vão pra fila;
  * erros de validação (400/422 etc) propagam normalmente.
  */
-function isNetworkError(err: unknown): boolean {
+export function isNetworkError(err: unknown): boolean {
   if (typeof navigator !== 'undefined' && !navigator.onLine) return true;
   if (err instanceof TypeError && /network|fetch|failed/i.test(err.message)) return true;
   // PostgREST sem rede pode estourar genérico — checkar mensagem
   if (err instanceof Error && /networkerror|failed to fetch|load failed/i.test(err.message)) return true;
+  // .rpc()/.from() do supabase devolvem `{ error: { message } }` (objeto plain, não Error) em falha de fetch.
+  if (
+    err && typeof err === 'object' && 'message' in err &&
+    typeof (err as { message: unknown }).message === 'string' &&
+    /networkerror|failed to fetch|load failed|network request failed/i.test((err as { message: string }).message)
+  ) return true;
   return false;
 }
 
