@@ -133,7 +133,7 @@ export function FilaDoDia() {
           })}
         </div>
       </Card>
-      {painelOn && <FilaContextPanel acao={itemAtivo} onClose={() => setItemAtivo(null)} />}
+      {painelOn && <FilaContextPanel acao={itemAtivo} onClose={() => setItemAtivo(null)} onNaoUtilAgora={ocultar} />}
     </>
   );
 }
