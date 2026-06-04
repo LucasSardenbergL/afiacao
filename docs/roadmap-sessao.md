@@ -85,6 +85,13 @@
   - ⏳ **Cadastrar fornecedor dos 3** (Parte A, guiado pelo alerta) · Fase 3 esconder "Por" (opcional) · Fase 4 unificar telas (adiado).
   - 📌 **Follow-ups Codex (não-bloqueantes):** check Sentinela `reposicao_sugestoes` mede `max(data_ciclo)` (fantasma mascarava dias sem pedido → dia sem pedido real >3d vira falso-stale); view diverge da CTE (alerta levemente impreciso); `btrim` não pega NBSP; edge fornecedor-preenchido-não-habilitado → `horario_corte_planejado` NULL; alerta proativo por e-mail.
 
+## 10. Frente B — "Caça": look-alike dos melhores → Hunter (NOVO, design aprovado)
+> Programa G1 "Waze comercial interno", **Frente B** (extrair valor de quem AINDA não compra; Frente A = fila da farmer, em piloto segunda). O `HunterDashboard` é placeholder vazio → a **Caça** o preenche com uma **fila de caça proativa** ("Waze do hunter"). **O founder é o hunter no piloto.**
+- ✅ **Decisões travadas (brainstorming, AskUserQuestion):** universo = base INTERNA que não compra (externa + "radar do ME" = evolução pós-piloto); **unificada cross-CNPJ** (3 empresas = 1 comercialmente, oposto dos engines financeiros); dono = **hunter** (founder pilota → entra como master → Caça via rota `/caca` + card no `MasterDashboard`, **sem tocar o piloto da farmer**); alvo = **TODA a base** classificada por sabor (dormente / cross-empresa / frio) + degradação honesta; **"melhor cliente"** = índice ponderado **decomponível** (lucro·0,4 + volume·0,3 + fidelidade·0,3, percentil, ajustável); recorte = **sem compra há 6m** (+ boost por `atraso_relativo`).
+- ✅ **Mecânica (passe adversário por mim — Codex estourou o limite de uso):** Abordagem 1 — perfil-dos-melhores por **LIFT** (mata a circularidade do CEP) + score interpretável + **ramo derivado do MIX** (CNAE manual é fraco ~30-50%). Rejeitada a vetorial (features esparsas envenenam); co-compra = evolução. EVP é **Oben-only** (CLAUDE.md §A3) → métrica de "melhores" é cross-CNPJ.
+- ✅ **Spec escrito** — `docs/superpowers/specs/2026-06-04-frente-b-caca-design.md`. Founder **aprovou a direção** ("Sim"); spec em revisão.
+- 🔄 **Re-validar a mecânica com o Codex** (limite reseta ~19:55 BRT) **antes do plano**. → plano (writing-plans) → build (helper TDD lift/score + view/snapshot de candidatos+features + componente `FilaDeCaca` no `HunterDashboard`/`/caca`). Branch: `feat/frente-b-caca`.
+
 ---
 
 ### Encerramento da sessão (housekeeping recorrente)
