@@ -23,6 +23,7 @@ import { formatBrPhone, whatsappLink } from '@/lib/phone';
 import { CallButton } from '@/components/call/CallButton';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { CustomerProfile360Summary } from '@/components/customer/CustomerProfile360Summary';
+import { CustomerBrief } from '@/components/customer/CustomerBrief';
 import { CustomerCallsTab } from '@/components/customer/CustomerCallsTab';
 import { CustomerVisitsTab } from '@/components/customer/CustomerVisitsTab';
 import { CustomerProcessTab } from '@/components/customer/CustomerProcessTab';
@@ -137,6 +138,8 @@ export function Customer360View({
           <MetricCard icon={Package} label="Categorias" value={String(score.category_count)} />
         </div>
       )}
+
+      <CustomerBrief customerId={customer.user_id} />
 
       {/* Contact Info + Details */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
