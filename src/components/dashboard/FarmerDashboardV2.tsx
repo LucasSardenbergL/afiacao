@@ -6,6 +6,7 @@ import { KpisToday } from './KpisToday';
 import { AgendaTodayList } from './AgendaTodayList';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 import { VisitasHojeCard } from './VisitasHojeCard';
+import { SlaCardMeuDia } from '@/components/whatsapp/SlaCardMeuDia';
 
 /**
  * Dashboard Farmer V2 — foco em expansão de carteira existente.
@@ -26,6 +27,8 @@ export function FarmerDashboardV2() {
       </div>
 
       <KpisToday />
+
+      <SlaCardMeuDia />
 
       <MinhasTarefasCard />
 
