@@ -200,7 +200,9 @@ export function useRevisaoParametros() {
       const { data, error, count } = await q;
       if (error) throw error;
 
-      const baseRows = (data ?? []) as SkuParam[];
+      // `as unknown as`: minimo_forcado_manual (Frente B) só entra nos types gerados do Supabase
+      // após a migration + regen; até lá o Row do select('*') não sobrepõe SkuParam (TS2352).
+      const baseRows = (data ?? []) as unknown as SkuParam[];
 
       // Buscar preços/fonte da view para todos os SKUs da página em uma chamada
       let priced: RowWithPrice[] = baseRows.map((r) => ({
