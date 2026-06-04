@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectRecorrenteSumiu } from '../montar';
+import { detectRecorrenteSumiu, detectSemResposta } from '../montar';
 import { CRITICA_CFG_DEFAULT, type CriticaInput } from '../types';
 
 const base = (over: Partial<CriticaInput>): CriticaInput => ({
@@ -42,5 +42,22 @@ describe('detectRecorrenteSumiu', () => {
     expect(
       detectRecorrenteSumiu(base({ metrica: { intervaloMedioDias: 15, diasDesdeUltimaCompra: 99, atrasoRelativo: 5, faturamento90d: 0, faturamentoPrev90d: 0, isColdStart: true } }), CRITICA_CFG_DEFAULT).contradicao,
     ).toBeNull();
+  });
+});
+
+describe('detectSemResposta', () => {
+  it('dispara quando semRespostaRecenteN >= 3', () => {
+    const r = detectSemResposta(
+      base({ rota: { naCallQueue: true, semRespostaRecenteN: 3, ultimoContatoRealHaDias: null } }),
+      CRITICA_CFG_DEFAULT,
+    );
+    expect(r.contradicao?.chave).toBe('sem_resposta_repetido');
+    expect(r.contradicao?.confianca).toBe('alta');
+    expect(r.sinais[0].fonte.tabela).toBe('route_contact_log');
+  });
+
+  it('NÃO dispara abaixo do limiar nem com rota ausente', () => {
+    expect(detectSemResposta(base({ rota: { naCallQueue: true, semRespostaRecenteN: 2, ultimoContatoRealHaDias: null } }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
+    expect(detectSemResposta(base({ rota: null }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
   });
 });
