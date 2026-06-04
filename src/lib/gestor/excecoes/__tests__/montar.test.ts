@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { idadeHoras, frescorCarteira, frescorTexto } from '../montar';
+import { idadeHoras, frescorCarteira, frescorTexto, detectarDadosQuebrados } from '../montar';
 import { EXCECOES_CFG_DEFAULT } from '../types';
+import type { SaudeCheckInput } from '../types';
+
+const saude = (over: Partial<SaudeCheckInput>): SaudeCheckInput => ({
+  source: 'vendas_pedidos', domain: 'vendas', status: 'broken', severity: 'critical',
+  message: 'Sync de vendas parado', ageSeconds: 3600, ...over,
+});
 
 const cfg = EXCECOES_CFG_DEFAULT;
 const AGORA = '2026-06-04T12:00:00.000Z';
@@ -28,5 +34,29 @@ describe('frescorTexto', () => {
     expect(frescorTexto(30)).toBe('há 30h');
     expect(frescorTexto(72)).toBe('há 3d');
     expect(frescorTexto(null)).toBeNull();
+  });
+});
+
+describe('detectarDadosQuebrados', () => {
+  it('inclui todos os critical e capWarnSaude warnings; ignora ok', () => {
+    const linhas = detectarDadosQuebrados([
+      saude({ source: 'a', severity: 'critical', status: 'broken' }),
+      saude({ source: 'b', severity: 'critical', status: 'broken' }),
+      saude({ source: 'w1', severity: 'warning', status: 'stale' }),
+      saude({ source: 'w2', severity: 'warning', status: 'stale' }),
+      saude({ source: 'w3', severity: 'warning', status: 'stale' }),
+      saude({ source: 'w4', severity: 'warning', status: 'stale' }),
+      saude({ source: 'ok1', severity: 'info', status: 'ok' }),
+    ], EXCECOES_CFG_DEFAULT);
+    const crit = linhas.filter(l => l.severidade === 'critico');
+    const warn = linhas.filter(l => l.severidade === 'aviso');
+    expect(crit).toHaveLength(2);     // todos os critical
+    expect(warn).toHaveLength(3);     // cap de 3 warnings
+    expect(linhas.every(l => l.grupo === 'dados_quebrados')).toBe(true);
+    expect(linhas[0].reciboFonte).toBe('data_health');
+  });
+
+  it('lista vazia quando tudo ok', () => {
+    expect(detectarDadosQuebrados([saude({ status: 'ok', severity: 'info' })], EXCECOES_CFG_DEFAULT)).toHaveLength(0);
   });
 });

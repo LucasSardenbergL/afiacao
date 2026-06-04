@@ -31,3 +31,23 @@ export function frescorTexto(horas: number | null): string | null {
   if (horas < 48) return `há ${horas}h`;
   return `há ${Math.floor(horas / 24)}d`;
 }
+
+// ── grupo 1: dados quebrados (Sentinela) ─────────────────────────────
+export function detectarDadosQuebrados(saude: SaudeCheckInput[], cfg: ExcecoesCfg): LinhaExcecao[] {
+  const naoOk = saude.filter(s => s.status !== 'ok');
+  const criticos = naoOk.filter(s => s.severity === 'critical');
+  const avisos = naoOk.filter(s => s.severity === 'warning').slice(0, cfg.capWarnSaude);
+  const escolhidos = [...criticos, ...avisos];
+  return escolhidos.map((s): LinhaExcecao => ({
+    id: `saude:${s.source}`,
+    grupo: 'dados_quebrados',
+    titulo: s.message,
+    detalhe: s.domain,
+    donoNome: null,
+    severidade: s.severity === 'critical' ? 'critico' : 'aviso',
+    reciboFonte: 'data_health',
+    reciboFrescor: frescorTexto(s.ageSeconds != null ? Math.floor(s.ageSeconds / 3600) : null),
+    acao: { tipo: 'nenhum' },
+    badges: [],
+  }));
+}
