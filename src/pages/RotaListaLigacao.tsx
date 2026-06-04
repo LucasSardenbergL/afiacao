@@ -1,7 +1,10 @@
 import { useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { Phone, CheckCircle2 } from 'lucide-react';
 import { useRouteContactList } from '@/queries/useRouteContactList';
 import type { RouteContactItem } from '@/queries/useRouteContactList';
+import { useSnapshotRouteQueue } from '@/queries/useSnapshotRouteQueue';
+import { useAuth } from '@/contexts/AuthContext';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { Badge } from '@/components/ui/badge';
@@ -40,6 +43,11 @@ export default function RotaListaLigacao() {
   // data de NEGÓCIO em SP (não UTC — senão das ~21h às 24h locais a data vira o dia seguinte → rota errada).
   const workday = useMemo(() => spBusinessDate(new Date()), []);
   const { data, isLoading } = useRouteContactList(workday);
+  const { isMaster, isGestorComercial } = useAuth();
+
+  // Grava (idempotente, best-effort) a fila de ligação aberta — denominador do painel.
+  // Chamada INCONDICIONAL (hooks não podem ficar atrás de return).
+  useSnapshotRouteQueue(data?.routeDate ?? null, data?.callQueue);
 
   if (isLoading) return <PageSkeleton variant="list" />;
 
@@ -49,7 +57,12 @@ export default function RotaListaLigacao() {
   if (!data || data.callQueue.length === 0) {
     return (
       <div className="p-4 space-y-3">
-        <h1 className="font-display text-2xl">Lista de ligação por rota</h1>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="font-display text-2xl">Lista de ligação por rota</h1>
+          {(isMaster || isGestorComercial) && (
+            <Link to="/rota/ligacoes/painel" className="text-2xs text-status-info underline">Ver painel</Link>
+          )}
+        </div>
         {data && data.resolvidosQueue.length > 0 && <ResolvidosSection itens={data.resolvidosQueue} />}
         <RouteDisparoConfigPanel />
         <EmptyState
@@ -76,7 +89,12 @@ export default function RotaListaLigacao() {
   return (
     <div className="p-4 space-y-4">
       <header>
-        <h1 className="font-display text-2xl">Lista de ligação por rota</h1>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="font-display text-2xl">Lista de ligação por rota</h1>
+          {(isMaster || isGestorComercial) && (
+            <Link to="/rota/ligacoes/painel" className="text-2xs text-status-info underline">Ver painel</Link>
+          )}
+        </div>
         <p className="text-sm text-muted-foreground">
           {data.dailyOnly
             ? 'Motor diário (Divinópolis + Carmo do Cajuru)'
