@@ -54,7 +54,9 @@ Sob a ótica do dia da **vendedora** (não do CFO):
 | 3 | WhatsApp pendente | `useWhatsappConversations` | SLA forte (janela 24h) | "Cliente respondeu, ninguém retornou" |
 | 4 | Oportunidade comercial | `useMyMixGap` | esperado | "Compra A e B, oferece C" |
 
-Visita sugerida (`useMyVisitSuggestions`) e win-back já moram dentro de (1)/(2); ficam fora do v1 como fonte separada. **A confirmar:** as 4 fontes refletem o dia real da vendedora-piloto.
+Visita sugerida (`useMyVisitSuggestions`) e win-back já moram dentro de (1)/(2); ficam fora do v1 como fonte separada.
+
+> **Atualização pós-Codex (2026-06-04, Fase 1 implementada):** a fonte **#3 WhatsApp pendente foi ADIADA p/ a Fase 3** — a derivação no front tem falso-negativo (cap de 200 do inbox + proxy `last_message_at`, Codex P1: cliente esperando some da fila). **O v1 vai com 3 fontes** (tarefas, rota, mix-gap). O adapter (`whatsappPendente.ts`) e o hook (`useWhatsappPendentes.ts`) ficam prontos no código, **desligados** do `useFilaAcoes`; na Fase 3 (split) reescrever sobre uma query/RPC de pendentes (sem cap) com `last_outbound_at` real.
 
 ## 5. Arquitetura
 
