@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectRecorrenteSumiu, detectSemResposta, detectTarefaSemProva } from '../montar';
+import { detectRecorrenteSumiu, detectSemResposta, detectTarefaSemProva, detectAltoValorForaRota } from '../montar';
 import { CRITICA_CFG_DEFAULT, type CriticaInput } from '../types';
 
 const base = (over: Partial<CriticaInput>): CriticaInput => ({
@@ -77,5 +77,28 @@ describe('detectTarefaSemProva', () => {
   it('NÃO dispara sem indício pendente nem sem tarefa', () => {
     expect(detectTarefaSemProva(base({ tarefa: { atrasada: true, temSugestaoPendente: false, descricao: 'x' } }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
     expect(detectTarefaSemProva(base({ tarefa: null }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
+  });
+});
+
+describe('detectAltoValorForaRota', () => {
+  const mAlto = { intervaloMedioDias: null, diasDesdeUltimaCompra: 60, atrasoRelativo: null, faturamento90d: 8000, faturamentoPrev90d: null, isColdStart: false };
+
+  it('dispara: alto valor + quieto >=45d + fora da callQueue', () => {
+    const r = detectAltoValorForaRota(
+      base({ metrica: mAlto, rota: { naCallQueue: false, semRespostaRecenteN: 0, ultimoContatoRealHaDias: null } }),
+      CRITICA_CFG_DEFAULT,
+    );
+    expect(r.contradicao?.chave).toBe('alto_valor_fora_rota');
+    expect(r.contradicao?.confianca).toBe('media');
+  });
+
+  it('NÃO dispara se está na callQueue, se quieto<45d, ou rota ausente', () => {
+    expect(detectAltoValorForaRota(base({ metrica: mAlto, rota: { naCallQueue: true, semRespostaRecenteN: 0, ultimoContatoRealHaDias: null } }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
+    expect(detectAltoValorForaRota(base({ metrica: { ...mAlto, diasDesdeUltimaCompra: 10 }, rota: { naCallQueue: false, semRespostaRecenteN: 0, ultimoContatoRealHaDias: null } }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
+    expect(detectAltoValorForaRota(base({ metrica: mAlto, rota: null }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
+  });
+
+  it('NÃO dispara abaixo do limiar de faturamento', () => {
+    expect(detectAltoValorForaRota(base({ metrica: { ...mAlto, faturamento90d: 100 }, rota: { naCallQueue: false, semRespostaRecenteN: 0, ultimoContatoRealHaDias: null } }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
   });
 });
