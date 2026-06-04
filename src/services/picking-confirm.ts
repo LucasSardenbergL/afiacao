@@ -17,44 +17,29 @@ export interface ConfirmPickItemVars {
   confirmedAt: string;
 }
 
+// route_*/picking RPCs não estão no types gerado → cast do client (mesmo padrão de useRegistrarContato).
+type RpcClient = { rpc(fn: string, p?: Record<string, unknown>): Promise<{ error: { message: string } | null }> };
+
 /**
- * Confirma a separação de um item de picking. Idempotente o suficiente pra
- * replay offline-then-online:
- *  - evento de auditoria usa `id = eventId` (PK) como chave anti-replay; 23505 = já aplicado.
- *  - UPDATE do item usa valores ABSOLUTOS (rodar 2x com mesmo payload não superconta).
+ * Confirma a separação de um item de picking via RPC atômica `confirmar_item_picking`
+ * (evento de auditoria + UPDATE absoluto do item + recálculo da task-pai, numa transação).
+ * Idempotente pra replay offline-then-online:
+ *  - o evento usa `id = eventId` (PK) com `ON CONFLICT DO NOTHING` server-side;
+ *  - o UPDATE do item é ABSOLUTO (rodar 2x com mesmo payload não superconta);
+ *  - o recálculo do pai é função pura do estado atual dos itens.
+ * `userId` é derivado server-side (`auth.uid()`); `quantidade`/`loteEsperado` da interface seguem
+ * no payload (usados pelo optimistic-merge) mas a RPC lê o item server-side (anti-spoof).
  */
 export async function confirmPickItem(vars: ConfirmPickItemVars): Promise<{ ok: true }> {
-  const divergente =
-    vars.loteInformado != null &&
-    vars.loteEsperado != null &&
-    vars.loteInformado !== vars.loteEsperado;
-  const eventType = divergente ? 'lote_divergente' : 'item_confirmado';
-
-  const { error: e1 } = await supabase.from('picking_events').insert({
-    id: vars.eventId,
-    picking_task_id: vars.pickingTaskId,
-    picking_task_item_id: vars.pickingTaskItemId,
-    event_type: eventType,
-    lote_esperado: vars.loteEsperado,
-    lote_informado: vars.loteInformado,
-    justificativa: vars.justificativa,
-    user_id: vars.userId,
+  const { error } = await (supabase as unknown as RpcClient).rpc('confirmar_item_picking', {
+    p_event_id: vars.eventId,
+    p_task_id: vars.pickingTaskId,
+    p_item_id: vars.pickingTaskItemId,
+    p_quantidade_separada: vars.quantidadeSeparada,
+    p_lote_informado: vars.loteInformado,
+    p_justificativa: vars.justificativa,
+    p_confirmed_at: vars.confirmedAt,
   });
-  // 23505 = unique_violation (replay do mesmo eventId) → idempotente, segue.
-  if (e1 && (e1 as { code?: string }).code !== '23505') throw e1;
-
-  const status = vars.quantidadeSeparada >= vars.quantidade ? 'concluido' : 'em_andamento';
-  const { error: e2 } = await supabase
-    .from('picking_task_items')
-    .update({
-      quantidade_separada: vars.quantidadeSeparada,
-      status,
-      lote_separado: vars.loteInformado,
-      justificativa_substituicao: vars.justificativa,
-      separado_at: vars.confirmedAt,
-    })
-    .eq('id', vars.pickingTaskItemId);
-  if (e2) throw e2;
-
+  if (error) throw error;
   return { ok: true };
 }

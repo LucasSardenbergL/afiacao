@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 143
+-- Total de custom migrations: 144
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -162,7 +162,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260531170000', 'data_health_check_sayerlack_mapeamento_gap', '20260531170000_data_health_check_sayerlack_mapeamento_gap.sql'),
   ('20260531170000', 'route_contact_log_escrita', '20260531170000_route_contact_log_escrita.sql'),
   ('20260601000000', 'tarefas_escalonamento_titulo_mensagem', '20260601000000_tarefas_escalonamento_titulo_mensagem.sql'),
-  ('20260602101856', 'reposicao_refresh_descricao_sku_parametros', '20260602101856_reposicao_refresh_descricao_sku_parametros.sql')
+  ('20260602101856', 'reposicao_refresh_descricao_sku_parametros', '20260602101856_reposicao_refresh_descricao_sku_parametros.sql'),
+  ('20260604120000', 'picking_bridge', '20260604120000_picking_bridge.sql')
 )
 SELECT
   e.version,
@@ -777,7 +778,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('route_contact_log_escrita', 'function', 'public', 'desfazer_contato_rota', ''),
   ('tarefas_escalonamento_titulo_mensagem', 'function', 'public', 'tarefas_escalonamento_tick', ''),
   ('reposicao_refresh_descricao_sku_parametros', 'function', 'public', 'atualizar_descricao_sku_parametros', ''),
-  ('reposicao_refresh_descricao_sku_parametros', 'cron_job', 'cron', 'reposicao-refresh-descricao-diario', '')
+  ('reposicao_refresh_descricao_sku_parametros', 'cron_job', 'cron', 'reposicao-refresh-descricao-diario', ''),
+  ('picking_bridge', 'index', 'public', 'uq_picking_tasks_sales_order', 'picking_tasks'),
+  ('picking_bridge', 'index', 'public', 'idx_sales_orders_account_kpi', 'sales_orders'),
+  ('picking_bridge', 'function', 'public', 'ensure_picking_task_for_sales_order', ''),
+  ('picking_bridge', 'function', 'public', 'recalcular_picking_task', ''),
+  ('picking_bridge', 'function', 'public', 'confirmar_item_picking', ''),
+  ('picking_bridge', 'function', 'public', 'listar_pedidos_a_separar', '')
 )
 SELECT
   e.migration,
