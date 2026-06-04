@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
 import { parseISO, subMonths } from 'date-fns';
 import { AlertCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -42,6 +44,18 @@ export default function Customer360() {
   // mostro só leitura compacta pra contexto operacional.
   const contacts = useCustomerContacts(customerId ?? null);
   const { data: salespeople = [] } = useSalespeople();
+  // empresa_omie do cliente → deriva a empresa correta da tarefa (não fica fixa em 'oben').
+  // Só master/gestor (quem cria tarefa por voz); 1 query leve, maybeSingle.
+  const omieEmpresa = useQuery({
+    queryKey: ['customer-empresa-omie', customerId],
+    enabled: !!customerId && (isMaster || isGestorComercial),
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data } = await supabase.from('omie_clientes')
+        .select('empresa_omie').eq('user_id', customerId!).maybeSingle();
+      return data?.empresa_omie ?? null;
+    },
+  });
 
   // Lifetime + 12m derivados dos pedidos
   const revenueDerived = useMemo(() => {
@@ -136,7 +150,7 @@ export default function Customer360() {
           clienteFixo={{
             customer_user_id: customerId,
             nome: customer.name ?? 'Cliente',
-            empresa_omie: undefined,
+            empresa_omie: omieEmpresa.data ?? undefined,
           }}
         />
       )}
