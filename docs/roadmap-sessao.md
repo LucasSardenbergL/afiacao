@@ -59,6 +59,13 @@
 - ⏳ **Publish no Lovable** + conferir as 4 superfícies no device (única pendência).
 - 🧭 **PostHog → erro de produção por e-mail (track 2)** — em desenho (o 2º pedido original do founder).
 
+## 7. Incidente — alerta `reposicao_portal_pipeline: broken` (portal Sayerlack parado desde ~02/06)
+> Alerta do Watchdog (04/06). Investigação read-only via `/investigate` (sem acesso a banco — queries coladas no SQL Editor pelo founder).
+- ✅ **Causa-raiz (provada por ELIMINAÇÃO — 4 hipóteses refutadas com dado: preço/qtd inválido, fornecedor fora do filtro, trigger/policy, schema-cache):** o claim atômico da edge `enviar-pedido-portal-sayerlack` (`.update({status_envio_portal}).in('id',ids).or('…neq.enviando_portal').select('id')`, do #470) **quebra na camada PostgREST** com `42703 "column pedido_compra_sugerido.status_envio_portal does not exist"` — o banco está íntegro (o UPDATE idêntico escrito à mão = "UPDATE 1"), só o REST falha. Efeito: **nenhum** pedido Sayerlack ia ao portal desde ~02/06 (quando o claim do #470 foi deployado); o motor `sayerlack_retry_orfaos` re-disparava em loop (pedido nunca progredia → reaparecia no check → `broken`). 324/325 eram os visíveis.
+- ✅ **Fix — claim em SQL puro ([PR #592](https://github.com/LucasSardenbergL/afiacao/pull/592)):** RPC `envio_portal_claim_ids(p_ids)` (migration `20260604150000`, SECURITY DEFINER, gate espelhando `envio_portal_lock_candidatos`, atomicidade anti-duplo-envio preservada sob READ COMMITTED) + a edge troca os 2 claims (async + sync legado) por `.rpc()`. Validação: teste SQL local PG17 com 6 asserts (`db/test-envio-portal-claim-ids.sh`) + **codex challenge "sólido, sem P1/P2"** + CI local verde (lint 0 errors / typecheck / 2186 testes / build).
+- ⏳ **Apply (founder, após merge):** colar a migration `20260604150000` no SQL Editor + redeploy de `enviar-pedido-portal-sayerlack` via chat do Lovable → o motor re-dispara 324/325 → vão ao portal → alerta some. Confirmar **por comportamento** (a resposta da edge sai de "Falha ao reservar pedidos" / `falhas:1`).
+- 🧭 **Follow-up:** os 324/325 estão aprovados há 2 dias — confirmar que ainda são compras desejadas (senão cancelar pela tela). E investigar se outros caminhos do app usam `.or()` em UPDATE via PostgREST (mesma classe de bug).
+
 ---
 
 ### Encerramento da sessão (housekeeping recorrente)
