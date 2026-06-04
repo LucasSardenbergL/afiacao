@@ -18,6 +18,9 @@ const ALLOWED = new Set([
   // useMarkMixGapFeedback usa effectiveUserId SÓ na queryKey de leitura/cache;
   // o write (mark_mixgap_feedback) é seller=auth.uid() server-side, sem effectiveUserId.
   'src/hooks/useMarkMixGapFeedback.ts',
+  // useTarefas: effectiveUserId SÓ em useMinhasTarefas (filtra a LEITURA pro alvo no "Ver como");
+  // as mutations (criar/concluir/resolverSugestao/adiar/cancelar) usam user.id (o master real), nunca effectiveUserId.
+  'src/hooks/useTarefas.ts',
 ]);
 
 describe('anti write-leak: effectiveUserId só em leitura', () => {
