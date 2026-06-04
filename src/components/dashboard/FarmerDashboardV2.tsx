@@ -6,6 +6,7 @@ import { KpisToday } from './KpisToday';
 import { AgendaTodayList } from './AgendaTodayList';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 import { VisitasHojeCard } from './VisitasHojeCard';
+import { FilaDoDia } from '@/components/fila/FilaDoDia';
 
 /**
  * Dashboard Farmer V2 — foco em expansão de carteira existente.
@@ -24,6 +25,9 @@ export function FarmerDashboardV2() {
           Agenda priorizada da sua carteira. Foque em risco e expansão primeiro.
         </p>
       </div>
+
+      {/* G1: fila única lidera o dia. Cards individuais abaixo seguem por ora (validação: comparar fila × cards atuais). */}
+      <FilaDoDia />
 
       <KpisToday />
 
