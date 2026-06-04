@@ -333,7 +333,8 @@ export default async ({ page, context }) => {
       ok = false;
       const tipo = data.erroTipo || 'UNKNOWN';
       const erroLogicoPreSubmit =
-        tipo === 'LOGIN_FAILED' || tipo === 'CLIENTE_NOT_FOUND' || tipo === 'SKU_NOT_FOUND';
+        tipo === 'LOGIN_FAILED' || tipo === 'CLIENTE_NOT_FOUND' || tipo === 'SKU_NOT_FOUND'
+        || tipo === 'GRUPO_LEADTIME_MISMATCH';
       if (requestSent) {
         // Houve POST: independente do tipo de erro, só conciliação resolve.
         status = 'indeterminado_requer_conciliacao';
@@ -363,6 +364,9 @@ export default async ({ page, context }) => {
         status,
         protocolo,
         portal_data_entrega: data.portal_data_entrega || null,
+        // Totais capturados do #datatable_itens (custo). Propaga o que o runFlow
+        // anexou em raw.data.itens_capturados pro Deno casar com os itens.
+        itens_capturados: Array.isArray(data.itens_capturados) ? data.itens_capturados : [],
         safeToRetry,
         needsReconciliation,
         evidence: {
@@ -1932,6 +1936,31 @@ async function processarPedido(
       protocolo: envelope.protocolo ?? null,
       enviadoPortalEm: true,
     });
+    // Captura de custo do portal: itens_capturados [{sku_portal, total_raw}]. Idempotente (só antes do Omie existir). Best-effort.
+    // (envelope === bResp.data já é o envelope achatado do buildEnvelope; itens_capturados é top-level, não envelope.data.)
+    try {
+      const capturados = ((envelope?.itens_capturados ?? []) as Array<{ sku_portal: string; total_raw: string; prz_ent_raw?: string }>);
+      const jaTemOmie = !!(pedido as { omie_pedido_compra_numero?: string | null }).omie_pedido_compra_numero;
+      if (capturados.length > 0 && !jaTemOmie) {
+        const itensParaCusto: ItemPedido[] = itensList.map((i) => ({
+          item_id: i.item_id, sku_codigo_omie: i.sku_codigo_omie, sku_descricao: i.sku_descricao,
+          sku_portal: i.sku_portal, qtde_final: Number(i.qtde_final), preco_atual: Number((i as { preco_atual?: number }).preco_atual ?? 0),
+        }));
+        const linhas: LinhaPortal[] = capturados.map((c) => ({ sku_portal: c.sku_portal, prz_ent_raw: c.prz_ent_raw ?? '', total_raw: c.total_raw }));
+        const match = casarLinhasComItens(linhas, itensParaCusto);
+        const { updates, pulados } = derivarCustos(match);
+        for (const u of updates) {
+          await supabase.from("pedido_compra_item").update({ preco_unitario: u.preco_unitario, valor_linha: u.valor_linha }).eq("id", u.item_id);
+        }
+        if (updates.length > 0) {
+          const novoTotal = match.casados.reduce((s, c) => s + (c.total_linha ?? (c.item.qtde_final * c.item.preco_atual)), 0);
+          await supabase.from("pedido_compra_sugerido").update({ valor_total: novoTotal }).eq("id", pedido.id);
+        }
+        console.log(`[envio-portal] Pedido #${pedido.id}: custo capturado — ${updates.length} atualizados, ${pulados.length} pulados`);
+      }
+    } catch (e) {
+      console.error(`[envio-portal] Pedido #${pedido.id}: falha best-effort na captura de custo:`, e instanceof Error ? e.message : String(e));
+    }
     await registrarPedidoOmieAposPortal(pedido);
     return r;
   }
