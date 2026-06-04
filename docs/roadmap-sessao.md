@@ -29,9 +29,22 @@
 - ⏳ **Revisão do spec pelo founder** → libera o plano de implementação.
 - ⏳ **Plano + build** (depois da revisão). Inclui edge `tarefa-extrair-voz` (Anthropic tool-use) + helpers TDD (parser de data, match cliente/vendedora) + `VozTarefaDialog`.
 
+## 5. SLA de resposta do WhatsApp — "cliente sem resposta" (NOVO nesta sessão)
+> Pedido: indicador + alerta de quanto tempo um cliente está sem resposta no WhatsApp quando a conversa está sob comando humano, escopado por vendedora dona do cliente; alerta pra mostrar pro pessoal "seus clientes tão sem resposta".
+- ✅ **Decisões fechadas:** os dois consumidores (card da vendedora na Meu Dia + badge + painel founder/gestor + digest diário por e-mail, espelha Tarefas); métrica = **primeira mensagem não respondida**; relógio **só expediente seg–sex 07:30–17:30** (config no `company_config`); limiares **15 min (amarelo) / 30 min (vermelho)**; digest diário ~18h reusando `fornecedor_alerta`→`dispatch-notifications`; vendedora vê **Minhas/Todas** (display-only, sem mexer na RLS do inbox).
+- ✅ **Spec escrito + endurecido com passe adversário do codex** (gpt-5.5 xhigh; 6 P1 + 8 P2 folded). Achados-chave incorporados: `assigned_operator_id` é **congelado** na criação → derivar o dono **ao vivo** da carteira (+cobertura/férias); "respondido" = `sender_user_id IS NOT NULL` (exclui blast/IA de graça); âncora no `wa_timestamp`; stop-keyword e `fechada` fora do SLA; digest **idempotente**; `fornecedor_alerta` exige `titulo`+CHECK; e-mail vai pro `NOTIFICATION_EMAIL_TO`. Spec: `docs/superpowers/specs/2026-06-04-whatsapp-sla-resposta-design.md`.
+- ⏳ **Revisão do spec pelo founder** → libera o plano de implementação.
+- ⏳ **Plano + build** (2 fases: **F1** função+view+selos no inbox+card/badge+painel, sem edge; **F2** digest cron+e-mail, edita `dispatch-notifications`). Migration via SQL Editor.
+- ⏸️ **Não-objetivos v1:** hardening de RLS do inbox, e-mail em tempo real, feriados, flag IA↔humano (o predicado de `sender_user_id` já protege).
+
+## 6. PostHog → log de erro de produção por e-mail (NOVO, track 2, não iniciado)
+> Pedido: capturar os erros que aparecem na tela em produção durante o uso e me mandar por e-mail pra eu tratar no Claude Code.
+- ✅ **Viabilidade confirmada:** PostHog tem Error Tracking nativo (`captureException`) + alerta/inscrição por e-mail. Hoje o `ErrorBoundary` só faz `console.error`; o gancho de Sentry no `logger` está comentado; sem Sentry.
+- 🧭 **A desenhar depois do WhatsApp SLA** (track menor): ligar `captureException` no `ErrorBoundary` + `window.onerror`/`unhandledrejection` → PostHog Error Tracking + alerta por e-mail. Alternativa Sentry = vendor novo, decisão de produto.
+
 ---
 
 ### Encerramento da sessão (housekeeping recorrente)
-- Manter este roadmap atualizado a cada mudança (reflete **#559 + #562 mergeados** + a feature de voz acrescentada).
+- Manter este roadmap atualizado a cada mudança (reflete **#559 + #562 mergeados** + voz + **WhatsApp SLA** + **PostHog erros** acrescentados).
 - PRs de doc/fix abertos com auto-merge quando o CI passar.
-- **O que depende de você:** (1) verificação visual da Fase 1 (libera o build da Fase 2) · (2) **revisão do spec da criação por voz** (libera o plano) · Publish no Lovable pro preview · SQL no SQL Editor quando houver migration (Fase 2 e a feature de voz terão).
+- **O que depende de você:** (1) verificação visual da Fase 1 das Tarefas (libera o build da Fase 2) · (2) **revisão do spec da criação por voz** · (3) **revisão do spec do WhatsApp SLA** (libera o plano) · Publish no Lovable pro preview · SQL no SQL Editor quando houver migration.
