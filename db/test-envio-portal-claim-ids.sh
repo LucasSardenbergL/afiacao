@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Testa a RPC public.envio_portal_claim_ids (migration 20260604150000) num Postgres 17 local
-# descartável. Ela substitui o claim atômico .update().or().select() da edge
-# enviar-pedido-portal-sayerlack, que o PostgREST quebrava com 42703 "column
-# pedido_compra_sugerido.status_envio_portal does not exist" (travando TODO disparo ao portal).
+# Testa a RPC public.envio_portal_claim_ids num Postgres 17 local descartável.
+# Ela faz o claim atômico do envio ao portal Sayerlack (transição p/ enviando_portal,
+# anti-duplo-envio) — substitui o .update().or().select() que o PostgREST quebrava.
 #
-# Schema MÍNIMO (não o snapshot inteiro): só o que a RPC toca — public.pedido_compra_sugerido
-# (id/status_envio_portal/portal_erro), public.app_role, public.has_role, public.user_roles,
-# auth.uid() lendo GUC de sessão (impersonação de teste). Prova a LÓGICA do claim: trava só os
-# não-em-voo, idempotência, zera portal_erro, ids vazio, e o gate staff/service_role.
+# Aplica as DUAS migrations em sequência (replay realista):
+#   20260604150000 — #592: move o claim p/ a RPC (predicado largo: IS NULL OR <> enviando_portal)
+#   20260604180000 — aperta p/ LISTA POSITIVA (só pendente_envio_portal/erro_retentavel) + guard
+#                    empresa/fornecedor → anti-PO-duplicado (não reivindica estados terminais).
+#
+# Schema MÍNIMO (não o snapshot inteiro): só o que a RPC toca. Prova a LÓGICA final:
+# claim, zera portal_erro, anti-duplo-envio, idempotência, ids vazio, gate, e — o P1 do
+# 20260604180000 — NÃO reivindicar terminais/NULL/fora-de-escopo.
 #
 # Pré-requisitos: brew install postgresql@17   (mesmo boilerplate de db/verify-snapshot-replay.sh)
 set -euo pipefail
@@ -45,83 +48,107 @@ CREATE FUNCTION public.has_role(_uid uuid, _role public.app_role) RETURNS boolea
   $f$ SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _uid AND role = _role) $f$;
 CREATE TABLE public.pedido_compra_sugerido (
   id bigint PRIMARY KEY,
+  empresa text,
+  fornecedor_nome text,
   status_envio_portal text,
   portal_erro text
 );
--- service_role precisa existir p/ o GRANT da migration
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role')
   THEN CREATE ROLE service_role; END IF; END $$;
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated')
   THEN CREATE ROLE authenticated; END IF; END $$;
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon')
   THEN CREATE ROLE anon; END IF; END $$;
--- seed: 1 master, 1 vendedor não-staff (customer)
 INSERT INTO public.user_roles VALUES
   ('33333333-3333-3333-3333-333333333333','master'),
   ('44444444-4444-4444-4444-444444444444','customer');
 SQL
 
-# 2) Aplica a migration da RPC (verbatim do repo)
+# 2) Aplica as 2 migrations EM SEQUÊNCIA (a 180000 faz CREATE OR REPLACE da 150000)
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260604150000_envio_portal_claim_ids.sql"
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260604180000_envio_portal_claim_ids_lista_positiva.sql"
 
-# 3) Seed de pedidos em todos os estados relevantes + asserts
+# 3) Seed + asserts
 echo "ASSERTS:"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
-INSERT INTO public.pedido_compra_sugerido (id, status_envio_portal, portal_erro) VALUES
-  (901, 'pendente_envio_portal', 'erro antigo a ser limpo'),
-  (902, 'erro_retentavel',       NULL),
-  (903, NULL,                     NULL),               -- fresco
-  (904, 'enviando_portal',        NULL),               -- já em voo
-  (905, 'pendente_envio_portal',  NULL);               -- p/ idempotência
+INSERT INTO public.pedido_compra_sugerido (id, empresa, fornecedor_nome, status_envio_portal, portal_erro) VALUES
+  -- reivindicáveis (Sayerlack/OBEN, estado de fila)
+  (901, 'OBEN', 'RENNER SAYERLACK S/A', 'pendente_envio_portal', 'erro antigo a ser limpo'),
+  (902, 'OBEN', 'RENNER SAYERLACK S/A', 'erro_retentavel',       NULL),
+  (905, 'OBEN', 'RENNER SAYERLACK S/A', 'pendente_envio_portal', NULL),   -- idempotência
+  -- NÃO reivindicáveis
+  (903, 'OBEN', 'RENNER SAYERLACK S/A', NULL,                    NULL),   -- NULL (nova semântica)
+  (904, 'OBEN', 'RENNER SAYERLACK S/A', 'enviando_portal',       NULL),   -- já em voo
+  -- TERMINAIS/ambíguos (P1 — JAMAIS reivindicar: re-envio = PO duplicado)
+  (910, 'OBEN', 'RENNER SAYERLACK S/A', 'sucesso_portal',                NULL),
+  (911, 'OBEN', 'RENNER SAYERLACK S/A', 'indeterminado_requer_conciliacao', NULL),
+  (912, 'OBEN', 'RENNER SAYERLACK S/A', 'aceito_portal_sem_protocolo',   NULL),
+  (913, 'OBEN', 'RENNER SAYERLACK S/A', 'erro_nao_retentavel',           NULL),
+  -- fora de escopo (guard empresa/fornecedor)
+  (930, 'COLACOR', 'RENNER SAYERLACK S/A', 'pendente_envio_portal', NULL),  -- empresa != OBEN
+  (931, 'OBEN',    'OUTRO FORNECEDOR LTDA','pendente_envio_portal', NULL);  -- fornecedor != Sayerlack
 
 DO $$
 DECLARE n int; st text; err text;
 BEGIN
-  -- contexto = service_role (auth.uid() NULL): gate passa
-  PERFORM set_config('test.uid', '', false);
+  PERFORM set_config('test.uid', '', false);  -- service_role: gate passa
 
-  -- A1: claim de pendente + erro_retentavel + NULL → trava os 3, retorna os 3
-  SELECT count(*) INTO n FROM public.envio_portal_claim_ids(ARRAY[901,902,903]::bigint[]);
-  ASSERT n = 3, format('A1 esperava 3 reivindicados, veio %s', n);
+  -- A1: reivindica pendente + erro_retentavel
+  SELECT count(*) INTO n FROM public.envio_portal_claim_ids(ARRAY[901,902]::bigint[]);
+  ASSERT n = 2, format('A1 esperava 2 reivindicados, veio %s', n);
   SELECT count(*) INTO n FROM public.pedido_compra_sugerido
-    WHERE id IN (901,902,903) AND status_envio_portal = 'enviando_portal';
-  ASSERT n = 3, format('A1 esperava 3 em enviando_portal, veio %s', n);
+    WHERE id IN (901,902) AND status_envio_portal = 'enviando_portal';
+  ASSERT n = 2, format('A1 esperava 2 em enviando_portal, veio %s', n);
 
-  -- A2: portal_erro foi ZERADO ao reivindicar (901 tinha "erro antigo")
+  -- A2: portal_erro zerado ao reivindicar
   SELECT portal_erro INTO err FROM public.pedido_compra_sugerido WHERE id = 901;
   ASSERT err IS NULL, format('A2 esperava portal_erro NULL, veio %L', err);
 
-  -- A3: claim de 904 (já em voo) → 0 reivindicados, status inalterado (anti-duplo-envio)
+  -- A3: já em voo (enviando_portal) → 0, status inalterado
   SELECT count(*) INTO n FROM public.envio_portal_claim_ids(ARRAY[904]::bigint[]);
   ASSERT n = 0, format('A3 esperava 0 (já em voo), veio %s', n);
-  SELECT status_envio_portal INTO st FROM public.pedido_compra_sugerido WHERE id = 904;
-  ASSERT st = 'enviando_portal', format('A3 status do 904 mudou p/ %L', st);
 
-  -- A4: idempotência — reivindicar 905 duas vezes; 2ª vez retorna 0 (já travado pela 1ª)
+  -- A4: idempotência
   SELECT count(*) INTO n FROM public.envio_portal_claim_ids(ARRAY[905]::bigint[]);
-  ASSERT n = 1, format('A4 1ª chamada esperava 1, veio %s', n);
+  ASSERT n = 1, format('A4 1ª esperava 1, veio %s', n);
   SELECT count(*) INTO n FROM public.envio_portal_claim_ids(ARRAY[905]::bigint[]);
-  ASSERT n = 0, format('A4 2ª chamada (idempotente) esperava 0, veio %s', n);
+  ASSERT n = 0, format('A4 2ª (idempotente) esperava 0, veio %s', n);
 
-  -- A5: ids vazio → 0, sem erro
+  -- A5: ids vazio
   SELECT count(*) INTO n FROM public.envio_portal_claim_ids(ARRAY[]::bigint[]);
-  ASSERT n = 0, format('A5 ids vazio esperava 0, veio %s', n);
+  ASSERT n = 0, format('A5 vazio esperava 0, veio %s', n);
 
-  RAISE NOTICE 'A1..A5 OK (service_role): claim, zera erro, anti-duplo-envio, idempotência, vazio';
+  RAISE NOTICE 'A1..A5 OK: claim, zera erro, anti-duplo-envio, idempotência, vazio';
+
+  -- A7 (P1): TERMINAIS/ambíguos JAMAIS reivindicados (anti-PO-duplicado)
+  SELECT count(*) INTO n FROM public.envio_portal_claim_ids(ARRAY[910,911,912,913]::bigint[]);
+  ASSERT n = 0, format('A7 esperava 0 (terminais protegidos), veio %s — RISCO DE PO DUPLICADO', n);
+  SELECT count(*) INTO n FROM public.pedido_compra_sugerido
+    WHERE id IN (910,911,912,913) AND status_envio_portal = 'enviando_portal';
+  ASSERT n = 0, format('A7 terminais NÃO podem virar enviando_portal, %s viraram', n);
+
+  -- A8: NULL não reivindicado (nova semântica, sem OR IS NULL)
+  SELECT count(*) INTO n FROM public.envio_portal_claim_ids(ARRAY[903]::bigint[]);
+  ASSERT n = 0, format('A8 NULL esperava 0, veio %s', n);
+
+  -- A9: guard empresa/fornecedor
+  SELECT count(*) INTO n FROM public.envio_portal_claim_ids(ARRAY[930,931]::bigint[]);
+  ASSERT n = 0, format('A9 fora-de-escopo esperava 0, veio %s', n);
+
+  RAISE NOTICE 'A7..A9 OK: terminais/NULL/fora-de-escopo NÃO reivindicados (P1 anti-PO-duplicado)';
 END $$;
 
--- A6: gate — usuário NÃO-staff levanta exceção; master passa
+-- A6: gate — não-staff levanta exceção; master passa
 DO $$
 DECLARE ok boolean;
 BEGIN
   PERFORM set_config('test.uid', '44444444-4444-4444-4444-444444444444', false); -- customer
   BEGIN
     PERFORM * FROM public.envio_portal_claim_ids(ARRAY[902]::bigint[]);
-    ASSERT false, 'A6 esperava exceção p/ não-staff, não levantou';
+    ASSERT false, 'A6 esperava exceção p/ não-staff';
   EXCEPTION WHEN insufficient_privilege THEN
     RAISE NOTICE 'A6 OK: não-staff barrado (42501)';
   END;
-
   PERFORM set_config('test.uid', '33333333-3333-3333-3333-333333333333', false); -- master
   SELECT count(*) >= 0 INTO ok FROM public.envio_portal_claim_ids(ARRAY[902]::bigint[]);
   ASSERT ok, 'A6 master deveria passar o gate';
