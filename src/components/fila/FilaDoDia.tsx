@@ -10,6 +10,8 @@ import type { AcaoSugerida, CategoriaAcao } from '@/lib/fila/types';
 import { spBusinessDate } from '@/lib/time/sp-day';
 import { marcarSeNovoNoDia, chaveDiaExibida, resumoFontes } from '@/lib/fila/telemetria';
 import { AcaoOutcomeMenu } from './AcaoOutcomeMenu';
+import { useFeatureFlag } from '@/hooks/useFeatureFlag';
+import { FilaContextPanel } from './FilaContextPanel';
 
 const CATEGORIA_UI: Record<CategoriaAcao, { label: string; cls: string }> = {
   prazo: { label: 'Prazo', cls: 'text-status-warning' },
@@ -51,6 +53,13 @@ export function FilaDoDia() {
   const ocultar = (k: string) => setEscondidos((s) => { const n = new Set(s); n.add(k); return n; });
   const visiveis = useMemo(() => acoes.filter((a) => !escondidos.has(a.dedupeKey)), [acoes, escondidos]);
 
+  const [painelOn] = useFeatureFlag('filaContextPanel', false);
+  const [itemAtivo, setItemAtivo] = useState<AcaoSugerida | null>(null);
+  const abrirPainel = (a: AcaoSugerida) => {
+    setItemAtivo(a);
+    track('fila.painel_aberto', { fonte: a.fonte, dedupeKey: a.dedupeKey });
+  };
+
   // fila.exibida: 1×/dia/sessão (NÃO por render) — mede exposição, não re-render.
   useEffect(() => {
     if (isLoading || visiveis.length === 0) return;
@@ -85,41 +94,46 @@ export function FilaDoDia() {
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <h2 className="text-base font-medium">O que fazer agora</h2>
-        <p className="text-2xs text-muted-foreground">
-          {visiveis.length} ações priorizadas — tarefas, rota e oportunidades, do mais urgente ao menos.
-        </p>
-      </CardHeader>
-      <div className="divide-y divide-border">
-        {visiveis.slice(0, 30).map((a, i) => {
-          const cat = CATEGORIA_UI[a.categoria];
-          const href = clienteHref(a);
-          return (
-            <div key={`${a.dedupeKey}:${i}`} className="p-3 flex items-center justify-between gap-3 hover:bg-muted/30">
-              <div className="min-w-0">
-                {href ? (
-                  <Link to={href} className="block text-sm font-medium truncate hover:underline">{a.titulo}</Link>
-                ) : (
-                  <div className="text-sm font-medium truncate">{a.titulo}</div>
-                )}
-                <div className="text-2xs text-muted-foreground flex gap-2 flex-wrap items-center mt-0.5">
-                  <Badge variant="outline" className={`text-2xs ${cat.cls}`}>{cat.label}</Badge>
-                  <span className="truncate">{a.motivo}</span>
-                  {a.valorEsperado != null && (
-                    <span className="font-tabular">~R$ {Math.round(a.valorEsperado).toLocaleString('pt-BR')} estimado</span>
+    <>
+      <Card>
+        <CardHeader className="pb-2">
+          <h2 className="text-base font-medium">O que fazer agora</h2>
+          <p className="text-2xs text-muted-foreground">
+            {visiveis.length} ações priorizadas — tarefas, rota e oportunidades, do mais urgente ao menos.
+          </p>
+        </CardHeader>
+        <div className="divide-y divide-border">
+          {visiveis.slice(0, 30).map((a, i) => {
+            const cat = CATEGORIA_UI[a.categoria];
+            const href = clienteHref(a);
+            return (
+              <div key={`${a.dedupeKey}:${i}`} className="p-3 flex items-center justify-between gap-3 hover:bg-muted/30">
+                <div className="min-w-0">
+                  {painelOn ? (
+                    <button type="button" onClick={() => abrirPainel(a)} className="block w-full text-left text-sm font-medium truncate hover:underline">{a.titulo}</button>
+                  ) : href ? (
+                    <Link to={href} className="block text-sm font-medium truncate hover:underline">{a.titulo}</Link>
+                  ) : (
+                    <div className="text-sm font-medium truncate">{a.titulo}</div>
                   )}
+                  <div className="text-2xs text-muted-foreground flex gap-2 flex-wrap items-center mt-0.5">
+                    <Badge variant="outline" className={`text-2xs ${cat.cls}`}>{cat.label}</Badge>
+                    <span className="truncate">{a.motivo}</span>
+                    {a.valorEsperado != null && (
+                      <span className="font-tabular">~R$ {Math.round(a.valorEsperado).toLocaleString('pt-BR')} estimado</span>
+                    )}
+                  </div>
+                </div>
+                <div className="shrink-0 flex items-center gap-1">
+                  <AcaoCta a={a} />
+                  <AcaoOutcomeMenu acao={a} onNaoUtilAgora={ocultar} />
                 </div>
               </div>
-              <div className="shrink-0 flex items-center gap-1">
-                <AcaoCta a={a} />
-                <AcaoOutcomeMenu acao={a} onNaoUtilAgora={ocultar} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </Card>
+            );
+          })}
+        </div>
+      </Card>
+      {painelOn && <FilaContextPanel acao={itemAtivo} onClose={() => setItemAtivo(null)} />}
+    </>
   );
 }
