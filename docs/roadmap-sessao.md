@@ -17,9 +17,11 @@
 - 🚧 **Build** — **BLOQUEADO** até a Fase 1 ser verificada (decisão eu+codex: não empilhar código sobre base não-clicada).
 
 ## 3. Visitas sugeridas / Rota (feature EXISTENTE — feedback desta sessão)
-> Contexto confirmado: **Regina e Tatyana são farmers só de ligação + WhatsApp** (não fazem visita presencial).
-- 🧭 **#2 — realinhar "Visitas sugeridas"** pras vendedoras que só ligam (relabel "Visitas"→"Ligações"? trocar o dashboard pra usar a lista de ligações da rota? ajustar persona/cópia?). **Decisão eu+codex em andamento.**
-- 🧭 **#3 — city picker default só nas cidades da rota do dia (D-1)**, com "ver outras cidades" como opção secundária. **Decisão eu+codex.**
+> Contexto confirmado: **Regina e Tatyana são farmers só de ligação + WhatsApp** (não fazem visita presencial). **Decisão eu+codex: Opção B** (alinhamento de apresentação/fluxo, NÃO reconstruir scoring/rota).
+- ⏳ **#2 — FarmerDashboardV2 lidera com a LISTA DE LIGAÇÕES da rota** (`useRouteContactList`, D-1) em vez do card "Visitas sugeridas" (visit-score). É o que elas de fato fazem. [a implementar]
+- ⏳ **#3 — default D-1 nas cidades** — em grande parte **subsumido pelo #2** (a lista da rota já é D-1 por construção); + garantir que `/rota/ligacoes` abra nas cidades da próxima rota, "ver outras cidades" secundário. [a implementar]
+- ⏳ **MasterDashboard** — mantém "Visitas sugeridas" (relabel "...para equipes de campo"); no **"Ver como farmer"** espelha a experiência de ligações do farmer. [a implementar]
+- ⏸️ Sistema de visit-score intacto pra contextos não-farmer/admin (não mexer).
 
 ---
 
