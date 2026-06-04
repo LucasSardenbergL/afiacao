@@ -476,6 +476,20 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const { data: minhasTarefas } = useMinhasTarefas();
   const tarefasCount = minhasTarefas?.length ?? 0;
 
+  // Badge vermelho de WhatsApp: clientes MEUS com SLA vencido (vermelho).
+  const { data: waSlaMeusVermelhos } = useQuery({
+    queryKey: ['whatsapp-sla-badge', user?.id],
+    queryFn: async () => {
+      const client = supabase as unknown as { from: (t: string) => { select: (c: string) => PromiseLike<{ data: unknown; error: unknown }> } };
+      const res = await (client.from('v_whatsapp_sla').select('owner_user_id,nivel') as PromiseLike<{ data: unknown; error: unknown }>);
+      const rows = (res.data ?? []) as Array<{ owner_user_id: string | null; nivel: string }>;
+      return rows.filter((r) => r.owner_user_id === user?.id && r.nivel === 'vermelho').length;
+    },
+    enabled: isStaff && !!user?.id,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
@@ -513,10 +527,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/meu-dia' && tarefasCount > 0) {
           return { ...it, badge: tarefasCount };
         }
+        if (it.path === '/whatsapp' && waSlaMeusVermelhos && waSlaMeusVermelhos > 0) {
+          return { ...it, badge: waSlaMeusVermelhos, badgeVariant: 'destructive' as const };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos],
   );
 
   const isActive = (path: string) => {
