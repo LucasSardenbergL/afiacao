@@ -2140,14 +2140,20 @@ Deno.serve(async (req) => {
     // WHERE após o commit concorrente): se 2 requests competem pelo MESMO pedido
     // (ex.: "aprovar e disparar" + cron de corte no mesmo instante), só um claима;
     // o outro vê enviando_portal e é EXCLUÍDO do RETURNING. Fecha o duplo-envio ao
-    // portal (2ª sessão no Browserless → PO duplicado no fornecedor). O `is.null`
-    // cobre o pedido fresco (status_envio_portal NULL), que o `neq` sozinho perderia.
+    // portal (2ª sessão no Browserless → PO duplicado no fornecedor).
+    // Filtro via .neq() (não .or(is.null,neq)): o .or() em UPDATE+RETURNING no
+    // supabase-js 2.45.0 desta edge gera "column status_envio_portal does not exist"
+    // (bug de serialização do .or() sobre mutation no postgrest-js antigo — a coluna
+    // EXISTE; o .select() logo acima a lê no mesmo request). status_envio_portal tem
+    // DEFAULT 'nao_aplicavel' e nunca é NULL, então o is.null era só teórico (mesmo
+    // comportamento). Follow-up: mover o claim p/ RPC com IS DISTINCT FROM + whitelist
+    // de estados elegíveis (hoje só barra 'enviando_portal').
     const ids = candidatos.map((c) => c.id);
     const { data: claimedRows, error: claimErr } = await supabase
       .from("pedido_compra_sugerido")
       .update({ status_envio_portal: "enviando_portal", portal_erro: null })
       .in("id", ids)
-      .or("status_envio_portal.is.null,status_envio_portal.neq.enviando_portal")
+      .neq("status_envio_portal", "enviando_portal")
       .select("id");
     if (claimErr) {
       console.error("[envio-portal][async] Erro no claim atomico:", claimErr.message);
@@ -2217,7 +2223,9 @@ Deno.serve(async (req) => {
     .from("pedido_compra_sugerido")
     .update({ status_envio_portal: "enviando_portal", portal_erro: null })
     .in("id", idsSync)
-    .or("status_envio_portal.is.null,status_envio_portal.neq.enviando_portal")
+    // .neq() em vez de .or(is.null,neq) — ver claim async acima (bug do .or() em
+    // UPDATE no supabase-js 2.45.0; status_envio_portal nunca é NULL, mesmo comportamento).
+    .neq("status_envio_portal", "enviando_portal")
     .select("id");
   if (claimErrSync) {
     return new Response(
