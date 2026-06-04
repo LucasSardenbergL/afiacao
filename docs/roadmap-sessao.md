@@ -41,6 +41,13 @@
 - ⏳ **Checkpoint A (founder, após mergear PR1):** aplicar Migration 1 (SQL Editor) → deploy `omie-sync-metadados`+`omie-vendas-sync` (chat Lovable) → full sync OBEN+Colacor → medir baseline (`tipo04>0`) → me passar `pg_get_functiondef` da RPC + `_data_health_compute` + viewdef do cold-start. Contenção: query "vazou fabricado?" entregue.
 - ⏳ **PR2 + Checkpoint B** — aplicar M2 → regenerar ciclo OBEN → validar verde-verdade.
 
+## 6. Painel das ligações da rota (capacidade × eficácia)
+> Pergunta do founder: "automatizar mais (WhatsApp) vs contratar mais vendedora?" — respondida com dado do closed-loop existente.
+- ✅ **Spec escrito + endurecido com passe adversário do codex.** Decisões centrais: snapshot on-open da fila (denominador); valor = `status='convertido'` + `valor_da_ligacao` (rotulado "valor esperado, não R$ realizado"); cortes por vendedora/bucket/canal; gating n≥30 + banner "direcional". Spec: `docs/superpowers/specs/2026-06-04-painel-ligacoes-rota-design.md`.
+- ✅ **Plano escrito.** Plano: `docs/superpowers/plans/2026-06-04-painel-ligacoes-rota.md`.
+- ✅ **Build concluído (PR #577).** Migration `route_queue_snapshot` + helpers TDD (`gating`, `agregar`) + snapshot on-open (`useSnapshotRouteQueue`) + `useRoutePanel` + página `RotaPainelLigacoes` + rota `/rota/ligacoes/painel` + link na `/rota/ligacoes`. CI passou (typecheck strict ✅ / 2186/2186 testes ✅ / lint 0 errors ✅ / build ✅).
+- ⏳ **Migration `route_queue_snapshot` no SQL Editor + Publish + QA** (após merge). Colar o SQL (`20260604120000_route_queue_snapshot.sql`) no SQL Editor do Lovable → confirmar a tabela criada → Publish → QA: abrir `/rota/ligacoes` (grava snapshot) → registrar ligações → abrir `/rota/ligacoes/painel`.
+
 ---
 
 ### Encerramento da sessão (housekeeping recorrente)
