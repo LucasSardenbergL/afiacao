@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 145
+-- Total de custom migrations: 147
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -164,7 +164,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260601000000', 'tarefas_escalonamento_titulo_mensagem', '20260601000000_tarefas_escalonamento_titulo_mensagem.sql'),
   ('20260602101856', 'reposicao_refresh_descricao_sku_parametros', '20260602101856_reposicao_refresh_descricao_sku_parametros.sql'),
   ('20260604120000', 'picking_bridge', '20260604120000_picking_bridge.sql'),
-  ('20260604130000', 'omie_products_tipo_produto_coluna', '20260604130000_omie_products_tipo_produto_coluna.sql')
+  ('20260604130000', 'omie_products_tipo_produto_coluna', '20260604130000_omie_products_tipo_produto_coluna.sql'),
+  ('20260604140000', 'tipo_produto_consumidores', '20260604140000_tipo_produto_consumidores.sql'),
+  ('20260604150000', 'tipo_produto_vigia_cobertura', '20260604150000_tipo_produto_vigia_cobertura.sql')
 )
 SELECT
   e.version,
@@ -788,7 +790,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('picking_bridge', 'function', 'public', 'listar_pedidos_a_separar', ''),
   ('omie_products_tipo_produto_coluna', 'index', 'public', 'idx_omie_products_account_tipo_produto', 'omie_products'),
   ('omie_products_tipo_produto_coluna', 'function', 'public', 'preserve_tipo_produto', ''),
-  ('omie_products_tipo_produto_coluna', 'trigger', 'public', 'trg_preserve_tipo_produto', 'omie_products')
+  ('omie_products_tipo_produto_coluna', 'trigger', 'public', 'trg_preserve_tipo_produto', 'omie_products'),
+  ('tipo_produto_consumidores', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('tipo_produto_vigia_cobertura', 'function', 'public', '_data_health_compute', ''),
+  ('tipo_produto_vigia_cobertura', 'function', 'public', 'data_health_watchdog', ''),
+  ('tipo_produto_vigia_cobertura', 'function', 'public', 'fin_sync_heartbeat', '')
 )
 SELECT
   e.migration,

@@ -66,6 +66,13 @@ function colacorAcabado(): ProductCartItem {
     product: { id: 'p2', omie_codigo_produto: 'COL1', codigo: 'C2', descricao: 'Disco acabado', unidade: 'UN', metadata: { tipo_produto: '04' } },
   } as unknown as ProductCartItem;
 }
+// Produto acabado sinalizado pela COLUNA dedicada (não metadata) — caminho novo pós-Migration 2026-06-04.
+function colacorAcabadoColuna(): ProductCartItem {
+  return {
+    type: 'product', account: 'colacor', quantity: 1, unit_price: 50,
+    product: { id: 'p3', omie_codigo_produto: 'COL2', codigo: 'C3', descricao: 'Disco acabado coluna', unidade: 'UN', tipo_produto: '04' },
+  } as unknown as ProductCartItem;
+}
 
 function makeParams(over: Partial<SubmitOrderParams> & { supabase: SubmitClient }): SubmitOrderParams {
   return {
@@ -146,6 +153,25 @@ describe('submitOrder', () => {
     const r = await submitOrder(makeParams({
       supabase: client,
       cart: { obenProductItems: [], colacorProductItems: [colacorAcabado()], serviceItems: [] },
+      subtotals: { oben: 0, colacor: 50, service: 0 },
+      defaultProductionAssigneeId: 'assignee-1',
+    }));
+    expect(r.success).toBe(true);
+    expect(invoke).toHaveBeenCalledWith('omie-vendas-sync', expect.objectContaining({
+      body: expect.objectContaining({ action: 'criar_ordem_producao', account: 'colacor' }),
+    }));
+  });
+
+  it('Colacor produto acabado pela COLUNA tipo_produto → cria ordem de produção (caminho novo)', async () => {
+    const { client, invoke } = makeSupabase({
+      insertId: 'so-col2',
+      invokeImpl: (body) => body.action === 'criar_pedido'
+        ? { data: { omie_numero_pedido: '779' }, error: null }
+        : { data: { ok: true }, error: null },
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [], colacorProductItems: [colacorAcabadoColuna()], serviceItems: [] },
       subtotals: { oben: 0, colacor: 50, service: 0 },
       defaultProductionAssigneeId: 'assignee-1',
     }));

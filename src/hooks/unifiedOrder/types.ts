@@ -45,6 +45,9 @@ export interface Product {
   is_tintometric?: boolean;
   tint_type?: string;
   metadata?: Record<string, unknown> | null;
+  /** Tipo fiscal do Omie: '04'=Produto Acabado (fabricado → vira OP em vez de compra). Coluna
+   * dedicada (Migration 2026-06-04); `metadata.tipo_produto` é fallback legado da transição. */
+  tipo_produto?: string | null;
 }
 
 export interface ProductCartItem {
