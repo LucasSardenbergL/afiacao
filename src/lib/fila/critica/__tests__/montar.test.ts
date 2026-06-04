@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectRecorrenteSumiu, detectSemResposta } from '../montar';
+import { detectRecorrenteSumiu, detectSemResposta, detectTarefaSemProva } from '../montar';
 import { CRITICA_CFG_DEFAULT, type CriticaInput } from '../types';
 
 const base = (over: Partial<CriticaInput>): CriticaInput => ({
@@ -59,5 +59,23 @@ describe('detectSemResposta', () => {
   it('NÃO dispara abaixo do limiar nem com rota ausente', () => {
     expect(detectSemResposta(base({ rota: { naCallQueue: true, semRespostaRecenteN: 2, ultimoContatoRealHaDias: null } }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
     expect(detectSemResposta(base({ rota: null }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
+  });
+});
+
+describe('detectTarefaSemProva', () => {
+  it('dispara quando há indício pendente; severidade sobe se atrasada', () => {
+    const r = detectTarefaSemProva(
+      base({ tarefa: { atrasada: true, temSugestaoPendente: true, descricao: 'Ligar p/ oferecer linha nova' } }),
+      CRITICA_CFG_DEFAULT,
+    );
+    expect(r.contradicao?.chave).toBe('tarefa_feita_sem_prova');
+    expect(r.contradicao?.confianca).toBe('media');
+    expect(r.sinais[0].severidade).toBe('critico'); // atrasada
+    expect(r.sinais[0].texto).toContain('Ligar p/ oferecer linha nova');
+  });
+
+  it('NÃO dispara sem indício pendente nem sem tarefa', () => {
+    expect(detectTarefaSemProva(base({ tarefa: { atrasada: true, temSugestaoPendente: false, descricao: 'x' } }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
+    expect(detectTarefaSemProva(base({ tarefa: null }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
   });
 });
