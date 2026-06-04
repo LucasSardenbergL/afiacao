@@ -65,7 +65,7 @@ export function useEstoqueZone() {
         const { count } = await supabase
           .from('picking_tasks')
           .select('id', { count: 'exact', head: true })
-          .eq('status', 'pendente');
+          .in('status', ['pendente', 'em_andamento']);
         pickingAbertos = count ?? 0;
       } catch { /* */ }
 
