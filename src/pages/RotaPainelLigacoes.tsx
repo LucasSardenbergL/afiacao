@@ -64,7 +64,7 @@ export default function RotaPainelLigacoes() {
             <Card className="p-4 border-status-warning/40">
               <div className="text-2xs uppercase tracking-wide text-muted-foreground">Valor esperado sem contato</div>
               <div className="kpi-value text-2xl text-status-warning">{fmtBRL(p.gap_valor)}</div>
-              <div className="text-2xs text-muted-foreground">o que a equipe não alcançou (score esperado, não R$)</div>
+              <div className="text-2xs text-muted-foreground">valor esperado da fila não contatada (projeção · não é receita realizada)</div>
             </Card>
             <Card className="p-4">
               <div className="text-2xs uppercase tracking-wide text-muted-foreground">Capacidade</div>
