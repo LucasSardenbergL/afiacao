@@ -23,7 +23,11 @@ export function PedidoRow({
 }) {
   const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
   const podeCancelar = ['pendente_aprovacao', 'bloqueado_guardrail', 'aprovado_aguardando_disparo'].includes(p.status);
-  const podeDisparar = p.status === 'aprovado_aguardando_disparo';
+  // Re-disparo: a edge disparar-pedidos-aprovados aceita pedido em falha_envio via
+  // pedido_id (index.ts:1005). Sem isso, falha_envio só tinha "Detalhes" — não havia
+  // como re-disparar pela UI (precisava flip de status no banco).
+  const podeReDisparar = p.status === 'falha_envio';
+  const podeDisparar = p.status === 'aprovado_aguardando_disparo' || podeReDisparar;
   // Guard de concorrência: enquanto o envio ao portal está em voo (após "aprovar e
   // disparar" ou um disparo manual), trava o botão pra não abrir uma 2ª sessão no
   // Browserless e gerar PO duplicado no fornecedor.
@@ -75,9 +79,9 @@ export function PedidoRow({
             <Button size="sm" variant="default" onClick={onVerDetalhes}>Aprovar</Button>
           )}
           {podeDisparar && (
-            <Button size="sm" variant="default" onClick={onDisparar} disabled={disparando || enviandoPortal}>
+            <Button size="sm" variant={podeReDisparar ? 'outline' : 'default'} onClick={onDisparar} disabled={disparando || enviandoPortal}>
               {(disparando || enviandoPortal) ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
-              {enviandoPortal ? 'Enviando…' : 'Disparar'}
+              {enviandoPortal ? 'Enviando…' : (podeReDisparar ? 'Re-disparar' : 'Disparar')}
             </Button>
           )}
           {podeCancelar && (

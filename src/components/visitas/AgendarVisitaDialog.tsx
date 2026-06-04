@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useVisitasAgendadas } from '@/hooks/useVisitasAgendadas';
 import { hojeISO } from '@/lib/visitas/today';
+import { CustomerBrief } from '@/components/customer/CustomerBrief';
 
 export function AgendarVisitaDialog({
   customerUserId,
@@ -38,6 +39,7 @@ export function AgendarVisitaDialog({
           <DialogTitle>Agendar visita — {customerName}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
+          <CustomerBrief customerId={customerUserId} />
           <div className="space-y-1">
             <Label htmlFor="vag-date">Data</Label>
             <Input id="vag-date" type="date" min={hojeISO()} value={date}

@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **143** custom migrations totais
-- **601** objetos esperados (criados por estas migrations)
+- **144** custom migrations totais
+- **603** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 160
-  - `function`: 124
+  - `function`: 125
   - `index`: 117
-  - `cron_job`: 92
+  - `cron_job`: 93
   - `table`: 70
   - `trigger`: 34
   - `enum_value`: 4
@@ -1319,6 +1319,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.tarefas_escalonamento_tick` | — |
+
+### `20260602101856_reposicao_refresh_descricao_sku_parametros.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atualizar_descricao_sku_parametros` | — |
+| `cron_job` | `cron.reposicao-refresh-descricao-diario` | — |
 
 ### `20260604120000_picking_bridge.sql`
 

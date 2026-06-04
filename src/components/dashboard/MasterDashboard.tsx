@@ -3,6 +3,7 @@ import { Construction, BarChart3, Users, Briefcase } from 'lucide-react';
 import { KpisToday } from './KpisToday';
 import { VisitSuggestionsCard } from './VisitSuggestionsCard';
 import { ViewAsPicker } from '@/components/impersonation/ViewAsPicker';
+import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 
 /**
  * Dashboard Master (CEO) — visão consolidada do time + KPIs próprios (você
@@ -24,6 +25,9 @@ export function MasterDashboard() {
 
       {/* Ver como — master entra na visão de um vendedor (somente leitura) */}
       <ViewAsPicker />
+
+      {/* Tarefas do vendedor sendo visto via "Ver como" (somente leitura; some sem impersonação) */}
+      <MinhasTarefasCard />
 
       <Card className="p-4 border-dashed border-2 border-status-warning/30 bg-status-warning-bg/20">
         <div className="flex items-center gap-2 mb-2">

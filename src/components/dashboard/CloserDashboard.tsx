@@ -2,6 +2,7 @@ import { Card } from '@/components/ui/card';
 import { Construction, MapPin, Target, TrendingUp } from 'lucide-react';
 import { VisitSuggestionsCard } from './VisitSuggestionsCard';
 import { VisitasHojeCard } from './VisitasHojeCard';
+import { MinhasVisitasResultadoCard } from './MinhasVisitasResultadoCard';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 
 /**
@@ -24,6 +25,8 @@ export function CloserDashboard() {
 
       {/* Sugestões de visita — PR-VISIT-INTELLIGENCE Sub-PR A */}
       <VisitSuggestionsCard />
+
+      <MinhasVisitasResultadoCard />
 
       <Card className="p-4 border-dashed border-2 border-status-warning/30 bg-status-warning-bg/20">
         <div className="flex items-center gap-2 mb-2">

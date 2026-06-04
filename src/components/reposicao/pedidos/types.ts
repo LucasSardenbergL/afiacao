@@ -52,6 +52,10 @@ export interface PedidoSugerido {
   portal_tentativas: number | null;
   portal_proximo_retry_em: string | null;
   portal_erro: string | null;
+  // Resposta do disparo (edge disparar-pedidos-aprovados). Em status='falha_envio',
+  // resposta_canal.erro carrega o MOTIVO real da falha (ex.: "SKU(s) sem custo (preço
+  // unitário 0)..."). Antes só era visível no banco — não aparecia na UI.
+  resposta_canal: { erro?: string; [key: string]: unknown } | null;
   criado_em?: string | null;
   cancelado_em?: string | null;
   cancelado_por?: string | null;
