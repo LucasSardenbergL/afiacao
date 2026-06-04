@@ -36,4 +36,12 @@ describe('mixGapParaAcoes', () => {
     expect(so.score).toBeGreaterThan(0);
     expect(so.score).toBeLessThanOrEqual(1);
   });
+
+  it('confidence/lift NaN não gera NaN no score nem no motivo', () => {
+    const out = mixGapParaAcoes({ totalComGap: 1, lista: [
+      { customer_user_id: 'c9', nome: 'C9', familia_faltante: 'X', confidence: NaN, lift: NaN, evidence_count: 1 },
+    ]});
+    expect(Number.isFinite(out[0].score)).toBe(true);
+    expect(out[0].motivo).not.toMatch(/NaN/);
+  });
 });

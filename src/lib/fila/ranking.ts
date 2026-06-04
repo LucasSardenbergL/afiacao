@@ -5,15 +5,24 @@ const ORDEM_CATEGORIA: Record<CategoriaAcao, number> = {
   prazo: 0, certo: 1, esperado: 2, risco: 3,
 };
 
+/** valorEsperado só conta se finito; NaN/Infinity/null → null (vai por último). */
+function valorSane(v: number | null): number | null {
+  return v != null && Number.isFinite(v) ? v : null;
+}
+/** score sempre finito em [0,1]; não-finito → 0. */
+function scoreSane(s: number): number {
+  return Number.isFinite(s) ? Math.max(0, Math.min(1, s)) : 0;
+}
+
 /** Compara prioridade: categoria, depois valorEsperado desc (null por último), depois score desc. */
 function comparar(a: AcaoSugerida, b: AcaoSugerida): number {
   const dc = ORDEM_CATEGORIA[a.categoria] - ORDEM_CATEGORIA[b.categoria];
   if (dc !== 0) return dc;
-  const va = a.valorEsperado, vb = b.valorEsperado;
+  const va = valorSane(a.valorEsperado), vb = valorSane(b.valorEsperado);
   if (va != null && vb != null && va !== vb) return vb - va;
   if (va == null && vb != null) return 1;
   if (va != null && vb == null) return -1;
-  return b.score - a.score;
+  return scoreSane(b.score) - scoreSane(a.score);
 }
 
 export function rankearFila(acoes: AcaoSugerida[]): AcaoSugerida[] {

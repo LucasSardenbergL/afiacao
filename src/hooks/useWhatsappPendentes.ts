@@ -1,3 +1,6 @@
+// ⚠️ NÃO LIGADO no v1 (Fase 1). A fonte "WhatsApp pendente" foi adiada p/ a Fase 3 (split):
+// esta versão tem falso-negativo (cap 200 do inbox + proxy last_message_at, Codex P1).
+// Na Fase 3, reescrever sobre query/RPC de pendentes (sem cap) com last_outbound_at real. Ver spec §4.
 import { useMemo } from 'react';
 import { useWhatsappConversations } from '@/queries/useWhatsappInbox';
 import type { WaPendente } from '@/lib/fila/adapters/whatsappPendente';

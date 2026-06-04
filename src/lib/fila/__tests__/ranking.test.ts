@@ -42,6 +42,22 @@ describe('rankearFila', () => {
     rankearFila(entrada);
     expect(entrada).toEqual(copia);
   });
+
+  it('score NaN não quebra a ordenação (tratado como 0)', () => {
+    const fila = rankearFila([
+      acao({ categoria: 'prazo', valorEsperado: null, score: NaN, dedupeKey: 'a' }),
+      acao({ categoria: 'prazo', valorEsperado: null, score: 0.5, dedupeKey: 'b' }),
+    ]);
+    expect(fila[0].dedupeKey).toBe('b');
+  });
+
+  it('valorEsperado Infinity é tratado como sem valor (perde p/ finito)', () => {
+    const fila = rankearFila([
+      acao({ categoria: 'esperado', valorEsperado: Infinity, dedupeKey: 'a' }),
+      acao({ categoria: 'esperado', valorEsperado: 100, dedupeKey: 'b' }),
+    ]);
+    expect(fila[0].dedupeKey).toBe('b');
+  });
 });
 
 describe('dedupe', () => {

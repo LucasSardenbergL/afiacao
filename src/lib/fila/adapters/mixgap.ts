@@ -6,8 +6,11 @@ export function mixGapParaAcoes(mixgap: MixGap | null): AcaoSugerida[] {
   return mixgap.lista
     .filter(g => g.feedback_status !== 'ofertado')
     .map(g => {
-      const liftCap = Math.min(Math.max(g.lift, 1), 3);
-      const score = Math.min(1, g.confidence * (liftCap / 3));
+      // confidence/lift vêm de RPC jsonb (tipo só em compile-time) — sanear em runtime.
+      const conf = Number.isFinite(g.confidence) ? Math.max(0, Math.min(1, g.confidence)) : 0;
+      const liftRaw = Number.isFinite(g.lift) ? g.lift : 1;
+      const liftCap = Math.min(Math.max(liftRaw, 1), 3);
+      const score = Math.min(1, conf * (liftCap / 3));
       const nome = g.nome ?? 'cliente';
       return {
         fonte: 'mixgap' as const,
@@ -17,7 +20,7 @@ export function mixGapParaAcoes(mixgap: MixGap | null): AcaoSugerida[] {
         telefone: null,
         acao: 'Oferecer',
         titulo: `Oferecer ${g.familia_faltante} para ${nome}`,
-        motivo: `Clientes parecidos compram ${g.familia_faltante} (confiança ${(g.confidence * 100).toFixed(0)}%)`,
+        motivo: `Clientes parecidos compram ${g.familia_faltante} (confiança ${(conf * 100).toFixed(0)}%)`,
         categoria: 'esperado' as const,
         score,
         valorEsperado: null,
