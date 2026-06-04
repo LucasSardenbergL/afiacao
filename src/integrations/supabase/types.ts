@@ -6471,6 +6471,7 @@ export type Database = {
           omie_codigo_produto_integracao: string | null
           subfamilia: string | null
           tint_type: string | null
+          tipo_produto: string | null
           unidade: string
           updated_at: string
           valor_unitario: number
@@ -6492,6 +6493,7 @@ export type Database = {
           omie_codigo_produto_integracao?: string | null
           subfamilia?: string | null
           tint_type?: string | null
+          tipo_produto?: string | null
           unidade?: string
           updated_at?: string
           valor_unitario?: number
@@ -6513,6 +6515,7 @@ export type Database = {
           omie_codigo_produto_integracao?: string | null
           subfamilia?: string | null
           tint_type?: string | null
+          tipo_produto?: string | null
           unidade?: string
           updated_at?: string
           valor_unitario?: number
