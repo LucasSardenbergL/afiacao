@@ -9,6 +9,7 @@ import { KpisToday } from './KpisToday';
 import { AgendaTodayList } from './AgendaTodayList';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 import { VisitasHojeCard } from './VisitasHojeCard';
+import { SlaCardMeuDia } from '@/components/whatsapp/SlaCardMeuDia';
 import { FilaDoDia } from '@/components/fila/FilaDoDia';
 
 /**
@@ -38,6 +39,9 @@ export function FarmerDashboardV2() {
       <FilaDoDia />
 
       <KpisToday />
+
+      {/* nudge saliente: clientes sem resposta no WhatsApp — fica FORA do "modo antigo" recolhido */}
+      <SlaCardMeuDia />
 
       <VisitasHojeCard />
 
