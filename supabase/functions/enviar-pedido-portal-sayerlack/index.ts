@@ -2139,15 +2139,21 @@ Deno.serve(async (req) => {
     // já em voo. Um UPDATE ... RETURNING é atômico (lock de linha + re-avaliação do
     // WHERE após o commit concorrente): se 2 requests competem pelo MESMO pedido
     // (ex.: "aprovar e disparar" + cron de corte no mesmo instante), só um claима;
-    // o outro vê enviando_portal e é EXCLUÍDO do RETURNING. Fecha o duplo-envio ao
-    // portal (2ª sessão no Browserless → PO duplicado no fornecedor). O `is.null`
-    // cobre o pedido fresco (status_envio_portal NULL), que o `neq` sozinho perderia.
+    // o outro vê o estado já mudado e é EXCLUÍDO do RETURNING. Fecha o duplo-envio ao
+    // portal (2ª sessão no Browserless → PO duplicado no fornecedor).
+    // ⚠️ Lista POSITIVA (pendente_envio_portal/erro_retentavel), NÃO `.or(is.null,
+    // neq.enviando_portal)`: (a) o PostgREST rejeita `.or()` aplicado a um UPDATE/PATCH
+    // → falhava com "column ... status_envio_portal does not exist" em prod, travando
+    // TODO disparo Sayerlack; (b) o predicado largo re-reivindicava estados terminais/
+    // ambíguos (sucesso_portal, indeterminado_requer_conciliacao) e os sobrescrevia p/
+    // enviando_portal → risco de re-dirigir o portal num PO duplicado. Espelha o filtro
+    // do modo-lote (candidatos) e do retry motor. (Codex review.)
     const ids = candidatos.map((c) => c.id);
     const { data: claimedRows, error: claimErr } = await supabase
       .from("pedido_compra_sugerido")
       .update({ status_envio_portal: "enviando_portal", portal_erro: null })
       .in("id", ids)
-      .or("status_envio_portal.is.null,status_envio_portal.neq.enviando_portal")
+      .in("status_envio_portal", ["pendente_envio_portal", "erro_retentavel"])
       .select("id");
     if (claimErr) {
       console.error("[envio-portal][async] Erro no claim atomico:", claimErr.message);
@@ -2217,7 +2223,7 @@ Deno.serve(async (req) => {
     .from("pedido_compra_sugerido")
     .update({ status_envio_portal: "enviando_portal", portal_erro: null })
     .in("id", idsSync)
-    .or("status_envio_portal.is.null,status_envio_portal.neq.enviando_portal")
+    .in("status_envio_portal", ["pendente_envio_portal", "erro_retentavel"])
     .select("id");
   if (claimErrSync) {
     return new Response(
