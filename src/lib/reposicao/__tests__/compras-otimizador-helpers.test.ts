@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { qtdMinimaEfetiva, qtdBase, descontoAplicavel, gerarCandidatos } from '../compras-otimizador-helpers';
+import { qtdMinimaEfetiva, qtdBase, aplicarMinimoForcado, descontoAplicavel, gerarCandidatos } from '../compras-otimizador-helpers';
 import { capitalExtra, aumentoEvitadoRs, impactoPrazoRs, freteIncrementalRs, descontoIncrementalRs } from '../compras-otimizador-helpers';
 import { avaliarComprarMais } from '../compras-otimizador-helpers';
 import type { InsumoSku } from '../compras-otimizador-helpers';
@@ -17,6 +17,30 @@ describe('qtdBase', () => {
     expect(qtdBase({ qtde_base: 100, lote_minimo_fornecedor: 50, minimo_forcado_manual: null })).toBe(100);
     expect(qtdBase({ qtde_base: 100, lote_minimo_fornecedor: 50, minimo_forcado_manual: 200 })).toBe(200);
     expect(qtdBase({ qtde_base: 30, lote_minimo_fornecedor: 50, minimo_forcado_manual: null })).toBe(50);
+  });
+});
+
+describe('aplicarMinimoForcado — espelho do GREATEST(natural, COALESCE(min,0)) da RPC', () => {
+  it('sem mínimo (null) → não força, retorna o natural', () => {
+    expect(aplicarMinimoForcado(10, null)).toBe(10);
+    expect(aplicarMinimoForcado(500, null)).toBe(500);
+  });
+  it('mínimo > natural → eleva ao mínimo', () => {
+    expect(aplicarMinimoForcado(10, 200)).toBe(200);
+    expect(aplicarMinimoForcado(0, 200)).toBe(200); // helper é só o GREATEST; a ativação é gated pelo filtro qtde_natural>0 na RPC
+  });
+  it('natural ≥ mínimo → mantém o natural', () => {
+    expect(aplicarMinimoForcado(500, 200)).toBe(500);
+    expect(aplicarMinimoForcado(200, 200)).toBe(200);
+  });
+  it('valor inválido (≤0 / NaN / Infinity) → não força (degradação honesta)', () => {
+    expect(aplicarMinimoForcado(10, 0)).toBe(10);
+    expect(aplicarMinimoForcado(10, -5)).toBe(10);
+    expect(aplicarMinimoForcado(10, NaN)).toBe(10);
+    expect(aplicarMinimoForcado(10, Infinity)).toBe(10);
+  });
+  it('natural negativo/inválido não vira número fabricado', () => {
+    expect(aplicarMinimoForcado(-5, null)).toBe(-5); // GREATEST puro; a RPC filtra qtde_natural>0 antes
   });
 });
 

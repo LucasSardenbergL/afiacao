@@ -74,6 +74,7 @@ export function useRevisaoParametros() {
           ponto_pedido: v.ponto_pedido_sugerido,
           estoque_maximo: v.estoque_maximo_sugerido,
           estoque_seguranca: null,
+          minimo_forcado_manual: null, // view (candidato/sugestão) não tem param de compra ainda
           z_score: v.z_aplicado,
           cobertura_alvo_dias: v.cobertura_alvo_dias,
           aplicar_no_omie: false,
@@ -142,6 +143,7 @@ export function useRevisaoParametros() {
           ponto_pedido: v.primeira_compra_ponto_pedido ?? null,
           estoque_maximo: v.primeira_compra_estoque_maximo ?? null,
           estoque_seguranca: null,
+          minimo_forcado_manual: null, // view (candidato/sugestão) não tem param de compra ainda
           z_score: v.z_aplicado,
           cobertura_alvo_dias: v.primeira_compra_cap_dias ?? null,
           aplicar_no_omie: false,

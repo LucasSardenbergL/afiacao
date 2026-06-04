@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -72,10 +73,11 @@ function SkuDetailSheetImpl({
 }: Props) {
   const [justificativa, setJustificativa] = useState('');
   const [editing, setEditing] = useState(false);
-  const [edit, setEdit] = useState<{ em: string; pp: string; emax: string }>({
+  const [edit, setEdit] = useState<{ em: string; pp: string; emax: string; min: string }>({
     em: '',
     pp: '',
     emax: '',
+    min: '',
   });
 
   const open = !!sku;
@@ -165,14 +167,28 @@ function SkuDetailSheetImpl({
       em: String(sku.estoque_minimo ?? ''),
       pp: String(sku.ponto_pedido ?? ''),
       emax: String(sku.estoque_maximo ?? ''),
+      min: sku.minimo_forcado_manual != null ? String(sku.minimo_forcado_manual) : '',
     });
     setEditing(true);
   };
   const saveEdit = () => {
+    // Mínimo de compra forçado: vazio → null (sem piso). Valor inválido (≤0 / não-finito) → não
+    // salva e avisa (degradação honesta — espelha o CHECK do banco que rejeita ≤0/NaN/Infinity).
+    const minRaw = edit.min.trim();
+    let minForcado: number | null = null;
+    if (minRaw !== '') {
+      const n = Number(minRaw);
+      if (!Number.isFinite(n) || n <= 0) {
+        toast.error('Mínimo de compra forçado inválido — informe um número maior que zero (ou deixe vazio para remover).');
+        return;
+      }
+      minForcado = n;
+    }
     onSaveValues({
       estoque_minimo: Number(edit.em),
       ponto_pedido: Number(edit.pp),
       estoque_maximo: Number(edit.emax),
+      minimo_forcado_manual: minForcado,
     });
     setEditing(false);
   };
@@ -312,6 +328,17 @@ function SkuDetailSheetImpl({
                 <div className="col-span-3 text-xs text-muted-foreground">
                   Cobertura alvo: {sku.cobertura_alvo_dias ?? stats?.cobertura_alvo_dias ?? '—'} dias
                 </div>
+                <div className="col-span-3 flex items-baseline gap-2 border-t pt-2 mt-1">
+                  <span className="text-xs text-muted-foreground">Mínimo de compra forçado:</span>
+                  <span className="text-sm font-semibold tabular-nums">
+                    {sku.minimo_forcado_manual != null ? fmt(sku.minimo_forcado_manual, 0) : '—'}
+                  </span>
+                  {sku.minimo_forcado_manual != null && (
+                    <span className="text-[11px] text-status-warning">
+                      a compra sugerida nunca fica abaixo deste valor
+                    </span>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-3">
@@ -338,6 +365,21 @@ function SkuDetailSheetImpl({
                     value={edit.emax}
                     onChange={(e) => setEdit((s) => ({ ...s, emax: e.target.value }))}
                   />
+                </div>
+                <div className="col-span-3 border-t pt-2 mt-1">
+                  <Label className="text-xs">Mínimo de compra forçado (opcional)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="1"
+                    placeholder="vazio = sem mínimo"
+                    value={edit.min}
+                    onChange={(e) => setEdit((s) => ({ ...s, min: e.target.value }))}
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    O motor nunca sugere comprar menos que este valor — só eleva itens que já precisam
+                    de reposição (não força comprar item sobre-estocado). Deixe vazio para remover.
+                  </p>
                 </div>
               </div>
             )}

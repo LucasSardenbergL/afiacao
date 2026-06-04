@@ -38,6 +38,7 @@ export type Oportunidade = {
   custo_capital_efetivo_perc: number | null;
   // Colunas novas da view v_otimizador_compras_insumos (Task 5)
   lote_minimo_fornecedor: number | null;
+  minimo_forcado_manual: number | null; // Frente B — mínimo de compra forçado por SKU
   prazo_padrao_perc: number | null;
   frete_perc_valor: number | null;
   frete_fixo: number | null;
