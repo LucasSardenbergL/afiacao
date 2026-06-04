@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Search, Loader2 } from 'lucide-react';
 import { CriarTarefaDialog } from '@/components/tarefas/CriarTarefaDialog';
+import { VozTarefaDialog } from '@/components/tarefas/VozTarefaDialog';
 
 /**
  * Página do founder: "Tarefas que criei".
@@ -32,6 +33,7 @@ export default function Tarefas() {
   const { buscar, resolver } = useBuscaClienteOmie();
 
   // Estado do fluxo de criação
+  const [abrirVoz, setAbrirVoz] = useState(false);
   const [abrirPicker, setAbrirPicker] = useState(false);
   const [abrirCriar, setAbrirCriar] = useState(false);
   const [cliente, setCliente] = useState<{ customer_user_id: string; nome: string } | null>(null);
@@ -88,7 +90,10 @@ export default function Tarefas() {
     <div className="container py-6 space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="font-display text-2xl">Tarefas que criei</h1>
-        <Button onClick={abrirNovaTarefa}>Nova tarefa</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setAbrirVoz(true)} disabled={salespeople.length === 0}>🎙️ Criar por voz</Button>
+          <Button onClick={abrirNovaTarefa}>Nova tarefa</Button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -194,6 +199,13 @@ export default function Tarefas() {
         onOpenChange={(o) => { setAbrirCriar(o); if (!o) setCliente(null); }}
         cliente={cliente}
         assignedTo={assignedTo}
+        empresa={empresa}
+      />
+
+      <VozTarefaDialog
+        open={abrirVoz}
+        onOpenChange={setAbrirVoz}
+        vendedoras={salespeople.map((s) => ({ user_id: s.user_id, nome: s.name }))}
         empresa={empresa}
       />
 
