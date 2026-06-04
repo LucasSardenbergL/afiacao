@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
-import { Sparkles, Undo2 } from 'lucide-react';
+import { Sparkles, Undo2, PanelRight } from 'lucide-react';
 import { CoveragePanel } from '@/components/carteira/CoveragePanel';
 
 /* ─── Types ─── */
@@ -87,6 +87,7 @@ const SettingsConfig = () => {
   const [activeTab, setActiveTab] = useState('recommendations');
   const [hasChanges, setHasChanges] = useState(false);
   const [newVisualEnabled, toggleNewVisual] = useFeatureFlag('newVisual', true);
+  const [filaPanelEnabled, toggleFilaPanel] = useFeatureFlag('filaContextPanel', false);
 
   const updateWeight = (key: string, value: number) => {
     setWeights(prev => prev.map(w => w.key === key ? { ...w, value } : w));
@@ -131,6 +132,30 @@ const SettingsConfig = () => {
               </div>
             </div>
             <Switch checked={newVisualEnabled} onCheckedChange={toggleNewVisual} />
+          </CardContent>
+        </Card>
+
+        {/* G1 Fase 3 — painel de contexto na fila (experimental; manter OFF durante o piloto) */}
+        <Card>
+          <CardContent className="p-4 flex items-center justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className={cn(
+                'p-2 rounded-md shrink-0',
+                filaPanelEnabled ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
+              )}>
+                <PanelRight className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">
+                  Painel de contexto na fila
+                  <Badge variant="outline" className="ml-2 text-2xs">{filaPanelEnabled ? 'on' : 'off'}</Badge>
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  No Meu Dia, clicar num item da fila abre um painel lateral com o contexto e o "Continuar pedido" (G1 Fase 3, experimental). Mantenha desligado durante o piloto da fila.
+                </p>
+              </div>
+            </div>
+            <Switch checked={filaPanelEnabled} onCheckedChange={toggleFilaPanel} />
           </CardContent>
         </Card>
 
