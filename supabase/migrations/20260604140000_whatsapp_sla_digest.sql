@@ -63,5 +63,10 @@ begin
 end;
 $$;
 
+-- só o cron (owner) / service_role roda; senão qualquer logado podia marcar o dia no log e
+-- SUPRIMIR o digest das 18h (no Supabase, REVOKE FROM PUBLIC não basta — anon/authenticated têm grant explícito).
+revoke execute on function public.whatsapp_sla_digest_tick() from public, anon, authenticated;
+grant  execute on function public.whatsapp_sla_digest_tick() to service_role;
+
 -- cron: 21:00 UTC = 18:00 BRT, seg-sex (chamada SQL LOCAL, sem net.http_post)
 select cron.schedule('whatsapp-sla-digest-diario', '0 21 * * 1-5', $$select public.whatsapp_sla_digest_tick()$$);

@@ -35,8 +35,9 @@ BEGIN
   ASSERT public.wa_is_stop_keyword('CANCELAR!') = true, 'CANCELAR com pontuação';
   ASSERT public.wa_is_stop_keyword('quero parar de receber promoção') = false, 'parar numa frase';
   ASSERT public.wa_is_stop_keyword('qual o preço?') = false, 'pergunta real';
+  ASSERT public.wa_is_stop_keyword('párâr') = true, 'parar com acento (translate → paridade c/ TS)';
   ASSERT public.wa_is_stop_keyword(NULL) = false, 'null';
-  RAISE NOTICE 'OK: wa_is_stop_keyword (6 asserts)';
+  RAISE NOTICE 'OK: wa_is_stop_keyword (7 asserts)';
 END $$;
 
 -- ===== View v_whatsapp_sla: cenários de "esperando" =====
@@ -125,4 +126,20 @@ BEGIN
   ASSERT v_depois = 1, 'digest NÃO duplica no mesmo dia (idempotente)';
   ASSERT (SELECT count(*) FROM public.whatsapp_sla_digest_log) = 1, 'log tem 1 linha do dia';
   RAISE NOTICE 'OK: digest idempotente (antes=% depois=%)', v_antes, v_depois;
+END $$;
+
+-- ===== guarda de wa_timestamp FUTURO: inbound futuro NÃO some da view =====
+DO $$
+DECLARE v_v uuid := gen_random_uuid(); v_c uuid := gen_random_uuid(); c_fut uuid; v_n int;
+BEGIN
+  insert into auth.users(id) values (v_v),(v_c) on conflict do nothing;
+  insert into public.carteira_assignments(customer_user_id, owner_user_id, source) values (v_c, v_v, 'omie');
+  insert into public.whatsapp_conversations(phone_key, phone_e164, customer_user_id, status)
+    values ('kfut','5599000001111', v_c, 'aberta') returning id into c_fut;
+  -- wa_timestamp 1h no FUTURO (clock-skew) → âncora cai pro created_at (~agora) → continua na view
+  insert into public.whatsapp_messages(conversation_id, direction, type, body, wa_timestamp)
+    values (c_fut,'in','text','pergunta', now() + interval '1 hour');
+  SELECT count(*) INTO v_n FROM public.v_whatsapp_sla WHERE conversation_id = c_fut;
+  ASSERT v_n = 1, 'inbound com wa_timestamp futuro NÃO some da view (âncora cai pro created_at)';
+  RAISE NOTICE 'OK: guarda de timestamp futuro';
 END $$;

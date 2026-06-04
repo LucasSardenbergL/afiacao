@@ -14,9 +14,14 @@ returns boolean
 language sql
 immutable
 as $$
+  -- translate() remove acentos comuns (paridade c/ o NFD do TS) antes do strip/upper.
   select case
     when p_body is null then false
-    else trim(upper(regexp_replace(p_body, '[^A-Za-z ]', '', 'g')))
+    else trim(upper(regexp_replace(
+           translate(p_body,
+             'àáâãäåèéêëìíîïòóôõöùúûüçñÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÇÑ',
+             'aaaaaaeeeeiiiiooooouuuucnAAAAAAEEEEIIIIOOOOOUUUUCN'),
+           '[^A-Za-z ]', '', 'g')))
          in ('PARAR','SAIR','STOP','CANCELAR','DESCADASTRAR')
   end;
 $$;
@@ -66,6 +71,29 @@ begin
 end;
 $$;
 
+-- responsável efetivo de um cliente (dono da carteira + cobertura/férias), bypassando RLS
+-- (security definer) p/ a view dar o MESMO dono pra QUALQUER leitor staff — senão o
+-- security_invoker resolveria só a carteira visível ao leitor → falso "sem dono" pro gestor.
+create or replace function public.wa_owner_efetivo(p_customer uuid)
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    (select cc.covering_user_id from public.carteira_coverage cc
+      where cc.covered_user_id = ca.owner_user_id and cc.active
+        and now() >= cc.valid_from and (cc.valid_until is null or now() <= cc.valid_until)
+      order by cc.valid_from desc limit 1),
+    ca.owner_user_id)
+  from public.carteira_assignments ca
+  where ca.customer_user_id = p_customer and ca.eligible
+  order by ca.valid_from desc limit 1;
+$$;
+revoke execute on function public.wa_owner_efetivo(uuid) from public, anon;
+grant execute on function public.wa_owner_efetivo(uuid) to authenticated, service_role;
+
 -- ===== PARTE 2 — config + view ==============================================
 
 -- Config global (company_config é key-value text). Idempotente.
@@ -89,45 +117,38 @@ with cfg as (
     coalesce((select value::int from public.company_config where key='whatsapp_sla_atencao_min'), 15) as atencao_min,
     coalesce((select value::int from public.company_config where key='whatsapp_sla_atrasado_min'), 30) as atrasado_min
 ),
+-- âncora = hora real do WhatsApp, com guarda contra wa_timestamp FUTURO (clock-skew/webhook ruim
+-- → cai pro created_at confiável, senão esconderia a espera real).
+msgs as (
+  select conversation_id, direction, body, sender_user_id, id, created_at,
+    case when wa_timestamp is not null and wa_timestamp <= now() then wa_timestamp else created_at end as anchor
+  from public.whatsapp_messages
+),
 -- última resposta HUMANA por conversa (out com sender_user_id; exclui blast/IA e template automático)
 last_out as (
   select distinct on (conversation_id)
-    conversation_id,
-    coalesce(wa_timestamp, created_at) as ts,
-    id
-  from public.whatsapp_messages
+    conversation_id, anchor, created_at, id
+  from msgs
   where direction = 'out' and sender_user_id is not null
-  order by conversation_id, coalesce(wa_timestamp, created_at) desc, id desc
+  order by conversation_id, anchor desc, created_at desc, id desc
 ),
--- primeira mensagem do cliente ainda não respondida (exclui stop-keyword)
+-- primeira mensagem do cliente ainda não respondida (exclui stop-keyword); tie-break determinístico
 aguardando as (
   select distinct on (i.conversation_id)
     i.conversation_id,
-    coalesce(i.wa_timestamp, i.created_at) as aguardando_desde
-  from public.whatsapp_messages i
+    i.anchor as aguardando_desde
+  from msgs i
   left join last_out lo on lo.conversation_id = i.conversation_id
   where i.direction = 'in'
     and not public.wa_is_stop_keyword(i.body)
     and (lo.conversation_id is null
-         or (coalesce(i.wa_timestamp, i.created_at), i.id) > (lo.ts, lo.id))
-  order by i.conversation_id, coalesce(i.wa_timestamp, i.created_at) asc, i.id asc
+         or (i.anchor, i.created_at, i.id) > (lo.anchor, lo.created_at, lo.id))
+  order by i.conversation_id, i.anchor asc, i.created_at asc, i.id asc
 ),
--- responsável efetivo (dono da carteira + cobertura/férias) — espelha v_tarefas_estado
+-- responsável efetivo via função SECURITY DEFINER (mesmo dono pra qualquer leitor staff)
 owner as (
-  select c.id as conversation_id,
-    coalesce(
-      (select cc.covering_user_id from public.carteira_coverage cc
-        where cc.covered_user_id = ca.owner_user_id and cc.active
-          and now() >= cc.valid_from and (cc.valid_until is null or now() <= cc.valid_until)
-        order by cc.valid_from desc limit 1),
-      ca.owner_user_id
-    ) as owner_user_id
+  select c.id as conversation_id, public.wa_owner_efetivo(c.customer_user_id) as owner_user_id
   from public.whatsapp_conversations c
-  left join lateral (
-    select owner_user_id from public.carteira_assignments
-    where customer_user_id = c.customer_user_id and eligible
-    order by valid_from desc limit 1
-  ) ca on true
 ),
 calc as (
   select a.conversation_id, a.aguardando_desde,
