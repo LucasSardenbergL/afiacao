@@ -73,7 +73,6 @@ export interface CriticaCfg {
   semRespostaMin: number; // 3   (CADENCIA_DEFAULT.limiarSemResposta)
   altoValorFat90dMin: number; // calibrar no piloto
   altoValorDiasQuietoMin: number; // calibrar no piloto
-  cadenciaMinDias: number; // 3
 }
 
 export const CRITICA_CFG_DEFAULT: CriticaCfg = {
@@ -82,5 +81,4 @@ export const CRITICA_CFG_DEFAULT: CriticaCfg = {
   semRespostaMin: 3,
   altoValorFat90dMin: 5000,
   altoValorDiasQuietoMin: 45,
-  cadenciaMinDias: 3,
 };

@@ -86,11 +86,11 @@ export function detectAltoValorForaRota(input: CriticaInput, cfg: CriticaCfg): D
   }
   const ev: SinalVoz = {
     tipo: 'order_delta',
-    texto: `Alto valor (R$ ${brl(fat)}/90d), ${dias}d sem comprar e fora da rota de amanhã`,
+    texto: `Alto valor (R$ ${brl(fat)}/90d), ${dias}d sem comprar e fora da sua lista de ligação`,
     fonte: fonteMetrica(input.clienteUserId),
     severidade: 'atencao',
   };
-  return { sinais: [ev], contradicao: { chave: 'alto_valor_fora_rota', texto: 'Alto valor quieto, fora da rota', evidencias: [ev], confianca: 'media' } };
+  return { sinais: [ev], contradicao: { chave: 'alto_valor_fora_rota', texto: 'Alto valor quieto, fora da lista de ligação', evidencias: [ev], confianca: 'media' } };
 }
 
 // ── composer ─────────────────────────────────────────────────────────
