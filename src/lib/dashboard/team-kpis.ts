@@ -102,3 +102,12 @@ export function montarRanking(orders: OrderRankRow[], vendedores: Map<string, st
     semAtividade: vendedores.size - ranking.length,
   };
 }
+
+/**
+ * Variação percentual (fração) de `atual` vs `anterior`. `null` quando não há base
+ * (`anterior <= 0`) — crescimento % a partir de zero é indefinido (não fabrica "∞%"/"+100%").
+ */
+export function variacaoPct(atual: number, anterior: number): number | null {
+  if (anterior <= 0) return null;
+  return (atual - anterior) / anterior;
+}

@@ -51,6 +51,12 @@ Card read-only no Master, abaixo dos tiles de time. **Ordena por receita R$ MTD*
 
 Helper `montarRanking` (TDD) em `team-kpis.ts`; `fetchPedidosMTD`; hook `useTeamRanking`; `RankingVendedoresCard`. **v3:** conversão por vendedor (rotulada), dono-de-carteira, freshness.
 
+---
+
+# v2.1 — Tendência MoM na receita do mês (ENTREGUE)
+
+O tile "Receita time · mês" ganha **▲/▼ X% vs mês passado** — o trend é o que torna o número de receita acionável pra um CEO. **Comparação justa = mesmo período** (`periodoMesAnterior`: do dia 1 do mês passado até o mesmo dia-do-mês de hoje, capado no tamanho do mês anterior — ex. hoje 04/06 compara mai 1–4 vs jun 1–4, NÃO maio inteiro). `variacaoPct` retorna `null` sem base (`anterior ≤ 0`) → não fabrica "+100%"/"∞%" (degradação honesta). Mesmo período do mês passado também é paginado + lança em erro (money). Helpers TDD `periodoMesAnterior` (sp-date) + `variacaoPct` (team-kpis). **v3:** YoY (vs mesmo mês ano passado) p/ negócio sazonal; trend no tile "hoje".
+
 ## Codex
 
 Consult adversarial (2026-06-04): matar Pipeline→MTD; receita order-based no time × call-based nos KPIs próprios (menor mal, ambos rotulados); ativos hoje + microcopy 7d; ranking = P2; **4 traps P1** (account scope, data SP, status válido centralizado, erro honesto) incorporados; não bloquear receita (read-only+labels+degradável suficiente).
