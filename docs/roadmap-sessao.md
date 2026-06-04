@@ -52,6 +52,13 @@
 - ✅ **Gap acionável (#586) MERGEADO:** o gap de valor virou LISTA dos clientes valiosos sem contato (top 15: nome/cidade/vendedora/valor). `agregarPainel.gap_clientes` + `GapClientesCard`.
 - ✅ **Migration `route_queue_snapshot` APLICADA** (founder, SQL Editor). ⏳ **`ALTER ADD cliente_nome`** (do #586) + **Publish + QA** pendentes (abrir `/rota/ligacoes` grava snapshot → `/rota/ligacoes/painel`).
 
+## 7. SLA de resposta do WhatsApp — "cliente sem resposta" (NOVO, SHIPPADO)
+> Pedido: indicador + alerta de quanto tempo um cliente está sem resposta no WhatsApp quando a conversa está sob comando humano, por vendedora dona; alerta pra mostrar pro pessoal.
+- ✅ **Desenho → spec → plano → build (subagent-driven) → codex no design (6 P1) + adversarial no código (2 P1 + 4 P2) → SQL validado em PG17 → [PR #587](https://github.com/LucasSardenbergL/afiacao/pull/587) MERGED** (CI verde).
+- ✅ **Backend em prod** (founder aplicou F1 endurecida + F2): função `whatsapp_minutos_uteis` + view `v_whatsapp_sla` (1ª msg não respondida · "respondido"=humano `sender_user_id` · dono AO VIVO da carteira via `wa_owner_efetivo` SECURITY DEFINER · expediente 07:30-17:30 config · limiares 15/30) + digest diário 18h idempotente → `fornecedor_alerta` → `dispatch-notifications` (SEM edge nova). Front: selo no inbox + card Meu Dia (Minhas/Todas) + badge na sidebar + painel `/whatsapp/sla`.
+- ⏳ **Publish no Lovable** + conferir as 4 superfícies no device (única pendência).
+- 🧭 **PostHog → erro de produção por e-mail (track 2)** — em desenho (o 2º pedido original do founder).
+
 ---
 
 ### Encerramento da sessão (housekeeping recorrente)
