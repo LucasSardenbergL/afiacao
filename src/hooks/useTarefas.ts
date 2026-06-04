@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
 import type { TarefaEstado } from '@/lib/tarefas/types';
@@ -14,9 +15,12 @@ const sel = () => (supabase.from('v_tarefas_estado' as never) as any);
 /** Tarefas da vendedora logada (do responsável efetivo: assigned_to OU cobertura). A RLS já filtra. */
 export function useMinhasTarefas() {
   const { user } = useAuth();
+  const { isImpersonating, effectiveUserId } = useImpersonation();
+  // Impersonation-aware: no "Ver como", o master lê (RLS permite) e filtramos pro alvo.
+  const targetId = isImpersonating && effectiveUserId ? effectiveUserId : (user?.id ?? null);
   return useQuery({
-    queryKey: ['minhas-tarefas', user?.id],
-    enabled: !!user,
+    queryKey: ['minhas-tarefas', isImpersonating ? `as:${effectiveUserId}` : user?.id],
+    enabled: !!targetId,
     staleTime: 30_000,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
@@ -27,7 +31,7 @@ export function useMinhasTarefas() {
         .order('atrasada', { ascending: false })
         .order('effective_due', { ascending: true });
       if (error) throw error;
-      return ((data ?? []) as TarefaEstado[]).filter(t => t.responsavel_efetivo === user!.id);
+      return ((data ?? []) as TarefaEstado[]).filter(t => t.responsavel_efetivo === targetId);
     },
   });
 }
