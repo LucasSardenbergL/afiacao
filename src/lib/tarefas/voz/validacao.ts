@@ -1,5 +1,6 @@
 // src/lib/tarefas/voz/validacao.ts
-import type { RascunhoVoz, TarefaCategoria } from './types';
+import type { RascunhoVoz } from './types';
+import type { TarefaCategoria } from '../types';
 
 const CATEGORIAS: TarefaCategoria[] = ['ligar', 'oferecer', 'preco', 'whatsapp', 'outro'];
 
