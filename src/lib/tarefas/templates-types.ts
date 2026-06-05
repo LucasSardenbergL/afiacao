@@ -62,6 +62,10 @@ export interface TarefaInstancia extends TarefaEstado {
   auditoria_status: TarefaAuditoriaStatus;
   auditoria_motivo: string | null;
   tipo_comprovacao: TarefaTipoComprovacao | null;
+  /** Faixa de leitura denormalizada do template na instância (UI-3) — sem gap de RLS de cobertura. */
+  leitura_min: number | null;
+  leitura_max: number | null;
+  leitura_unidade: string | null;
   /** Leitura numérica anexada na conclusão */
   comprovacao_leitura: number | null;
   /** Timestamptz de quando a prova foi enviada */

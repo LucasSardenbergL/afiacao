@@ -10,10 +10,9 @@
  *   - SEM comprovação → concluir('manual') — update direto, mesma rota da Fase 1;
  *     o trigger anti-bypass não bloqueia pois requer_comprovacao=false.
  *
- * Os limites de leitura (leituraMin/Max/Unidade) que o ComprovacaoDialog exige
- * não estão na TarefaInstancia (a view não expõe os campos do template pai).
- * Solução: buscar o template pelo template_id apenas quando o dialog é aberto
- * (lazy — evita N+1 na listagem). Se não encontrar, passa null (o dialog aceita).
+ * Os limites de leitura (leituraMin/Max/Unidade) vêm da PRÓPRIA instância
+ * (denormalizados do template na materialização — UI-3). Isso evita o gap de
+ * RLS em cobertura/férias, onde a tarefa aparece mas o template não é visível.
  */
 
 import { useState } from 'react';
@@ -21,16 +20,14 @@ import { AlertTriangle, CheckCircle2, Clock, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useMinhasRecorrentesHoje } from '@/hooks/useTarefasFase2';
-import { useTemplates } from '@/hooks/useTarefasFase2';
 import { useTarefaMutations } from '@/hooks/useTarefas';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { ComprovacaoDialog } from './ComprovacaoDialog';
-import type { TarefaInstancia, TarefaTemplate } from '@/lib/tarefas/templates-types';
+import type { TarefaInstancia } from '@/lib/tarefas/templates-types';
 
 export function RecorrentesHojeCard() {
   const { isImpersonating } = useImpersonation();
   const { data: tarefas = [], isLoading } = useMinhasRecorrentesHoje();
-  const { data: templates = [] } = useTemplates();
   const { concluir } = useTarefaMutations();
 
   // Dialog de comprovação
@@ -41,18 +38,6 @@ export function RecorrentesHojeCard() {
 
   // Retorna null quando não há tarefas (não polui o dashboard)
   if (isLoading || tarefas.length === 0) return null;
-
-  // ---------------------------------------------------------------------------
-  // Resolução dos limites de leitura do template (lazy, só quando dialog abre)
-  // ---------------------------------------------------------------------------
-
-  const templatePorId = new Map<string, TarefaTemplate>(
-    templates.map((t) => [t.id, t]),
-  );
-
-  const templateDoAlvo = dialogAlvo?.template_id
-    ? templatePorId.get(dialogAlvo.template_id) ?? null
-    : null;
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -155,9 +140,9 @@ export function RecorrentesHojeCard() {
           open={!!dialogAlvo}
           onOpenChange={(o) => { if (!o) setDialogAlvo(null); }}
           tarefa={dialogAlvo}
-          leituraMin={templateDoAlvo?.leitura_min ?? null}
-          leituraMax={templateDoAlvo?.leitura_max ?? null}
-          leituraUnidade={templateDoAlvo?.leitura_unidade ?? null}
+          leituraMin={dialogAlvo.leitura_min ?? null}
+          leituraMax={dialogAlvo.leitura_max ?? null}
+          leituraUnidade={dialogAlvo.leitura_unidade ?? null}
         />
       )}
     </>

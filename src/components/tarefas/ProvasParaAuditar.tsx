@@ -299,8 +299,14 @@ export function ProvasParaAuditar() {
                       <div className="mt-1.5 flex items-center gap-1.5">
                         <Badge variant="outline" className="text-xs font-mono">
                           {prova.comprovacao_leitura?.toLocaleString('pt-BR')}
+                          {prova.leitura_unidade ? ` ${prova.leitura_unidade}` : ''}
                         </Badge>
-                        <span className="text-xs text-muted-foreground">leitura</span>
+                        <span className="text-xs text-muted-foreground">
+                          leitura
+                          {prova.leitura_min != null && prova.leitura_max != null
+                            ? ` · faixa ${prova.leitura_min.toLocaleString('pt-BR')}–${prova.leitura_max.toLocaleString('pt-BR')}`
+                            : ''}
+                        </span>
                       </div>
                     )}
 
