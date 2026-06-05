@@ -9162,6 +9162,51 @@ export type Database = {
         }
         Relationships: []
       }
+      sku_embalagem_equivalencia: {
+        Row: {
+          ativo: boolean
+          criado_em: string
+          criado_por: string | null
+          empresa: string
+          fator_para_base: number
+          fornecedor_nome: string | null
+          grupo_id: string
+          id: number
+          sku_codigo_omie: string
+          unidade_base: string
+          vigente_ate: string | null
+          vigente_desde: string
+        }
+        Insert: {
+          ativo?: boolean
+          criado_em?: string
+          criado_por?: string | null
+          empresa: string
+          fator_para_base: number
+          fornecedor_nome?: string | null
+          grupo_id?: string
+          id?: never
+          sku_codigo_omie: string
+          unidade_base: string
+          vigente_ate?: string | null
+          vigente_desde?: string
+        }
+        Update: {
+          ativo?: boolean
+          criado_em?: string
+          criado_por?: string | null
+          empresa?: string
+          fator_para_base?: number
+          fornecedor_nome?: string | null
+          grupo_id?: string
+          id?: never
+          sku_codigo_omie?: string
+          unidade_base?: string
+          vigente_ate?: string | null
+          vigente_desde?: string
+        }
+        Relationships: []
+      }
       sku_estoque_atual: {
         Row: {
           empresa: string
@@ -9562,6 +9607,60 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      sku_preco_fornecedor_capturado: {
+        Row: {
+          capturado_em: string
+          criado_em: string
+          criado_por: string | null
+          empresa: string
+          fonte: string
+          fornecedor_nome: string | null
+          id: number
+          moeda: string
+          observacao: string | null
+          preco: number
+          preco_tipo: string
+          run_id: string | null
+          sku_codigo_omie: string
+          status: string
+          validade_operacional_ate: string | null
+        }
+        Insert: {
+          capturado_em?: string
+          criado_em?: string
+          criado_por?: string | null
+          empresa: string
+          fonte: string
+          fornecedor_nome?: string | null
+          id?: never
+          moeda?: string
+          observacao?: string | null
+          preco: number
+          preco_tipo?: string
+          run_id?: string | null
+          sku_codigo_omie: string
+          status?: string
+          validade_operacional_ate?: string | null
+        }
+        Update: {
+          capturado_em?: string
+          criado_em?: string
+          criado_por?: string | null
+          empresa?: string
+          fonte?: string
+          fornecedor_nome?: string | null
+          id?: never
+          moeda?: string
+          observacao?: string | null
+          preco?: number
+          preco_tipo?: string
+          run_id?: string | null
+          sku_codigo_omie?: string
+          status?: string
+          validade_operacional_ate?: string | null
+        }
+        Relationships: []
       }
       sku_status_omie: {
         Row: {
