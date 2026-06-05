@@ -62,6 +62,8 @@ Não é money-path (inteligência comercial, staff-readable) → padrão do proj
 
 ## 5. "Melhor cliente" — índice ponderado decomponível
 
+> **Calculado por CNPJ/documento, NÃO por `customer_user_id`** (revisão Codex §15). EVP é Oben-only → entra só como feature Oben, nunca como base. `gross_margin_pct = 0` **não** é margem real (é ausência) → reduz peso / marca confiança, não conta como margem zero.
+
 - **Índice** = `lucro·0,4 + volume·0,3 + fidelidade·0,3` (pesos iniciais, **ajustáveis**), cada componente **normalizado por percentil** dentro da base de clientes ativos (somar peras com peras).
 - **Componentes (fontes candidatas — confirmar populadas/cross-CNPJ no plano):**
   - **Lucro:** `gross_margin_pct` × volume (ou **EVP** do `fin-valor-cockpit` onde existir — **Oben-only**, entra como refino, não como base única).
@@ -78,14 +80,15 @@ O furo central: perfil por **frequência bruta** degenera o look-alike em "ache 
 - Só traços com lift **> 1** (desproporcionais entre os melhores) entram com peso; geografia não domina só porque a base toda é local.
 - Guard de amostra: traço com poucos melhores → lift instável → piso de suporte mínimo antes de pesar (definir no plano).
 
-## 7. Candidatos, sabores & recorte
+## 7. Candidatos, sabores & recorte — grão `(documento × empresa-alvo)` (revisão Codex, §15)
 
-- **Universo** = clientes na base (omie_clientes, todos os accounts), **dedup por documento** (mesmo CNPJ em 2 accounts = 1 candidato), **sem pedido consolidado há 6 meses**.
-- **Sabores:**
-  - **Dormente** — já comprou, mas não nos últimos 6m (em nenhuma empresa). Tem histórico → score rico.
-  - **Cross-empresa** — compra (mesmo recente) de uma empresa do grupo e **zero** na outra. Alto valor: já confia no grupo. Entra **mesmo sendo comprador recente** numa empresa (exceção ao corte de 6m).
-  - **Frio** — nunca comprou em nenhuma. Só cadastro → score pobre, confiança baixa, fim da fila.
-- **Boost por ciclo:** `atraso_relativo` (`customer_metrics_mv`) — quem está atrasado vs o **próprio** intervalo de recompra sobe na fila (mitiga "falso dormente" do corte fixo de 6m). É boost, **não** filtro.
+- **Grão/entidade = `(documento_normalizado, empresa_alvo)`** — NÃO `customer_user_id` nem linha de `omie_clientes` (que tem `UNIQUE(user_id)` e não representa o mesmo CNPJ em várias empresas). Um CNPJ pode gerar **N candidaturas** (uma por empresa onde ele não compra). Dedup da entidade comercial por **documento normalizado** (cuidado CPF×CNPJ — §13).
+- **Sabores são definidos POR empresa-alvo, com precedência `cross-empresa > dormente > frio`:**
+  - **Cross-empresa** — compra de outra empresa do grupo e **zero na empresa-alvo**. Entra **mesmo se comprou ontem** no grupo (já confia no grupo → alvo de ouro).
+  - **Dormente** — já comprou no grupo, mas **sem compra válida consolidada há 6m**, e zero na empresa-alvo.
+  - **Frio** — nunca comprou em **nenhuma** empresa. Só cadastro → score pobre, confiança baixa, fim da fila.
+- **Fonte de "comprou/não comprou" + compra-por-empresa:** preferir **`venda_items_history`** (`empresa` + `cliente_cnpj_cpf` + SKU + data fiscal — grão por CNPJ × empresa, o mais defensável) **se cobrir Oben/Colacor/SC**; senão `sales_orders.account` + `items.product_id` **com validação de cobertura** (§13). ⚠️ Join por `omie_codigo_produto`/`omie_codigo_cliente` **sem `account`/`empresa` é P1** (contaminação multiempresa).
+- **Boost por ciclo:** `atraso_relativo` (`customer_metrics_mv`) — atrasado vs o **próprio** intervalo de recompra sobe na fila (mitiga "falso dormente"). Boost, **não** filtro.
 
 ## 8. Score & degradação honesta
 
@@ -135,17 +138,38 @@ O furo central: perfil por **frequência bruta** degenera o look-alike em "ache 
 6. **Base de comparação do lift**: todos os clientes? só ativos? Definir.
 7. **Faixa de ticket/porte do frio**: ausente (nunca comprou) → dimensão não contribui (ok pela degradação).
 8. **K (teto da fila)** e **horizonte de conversão** do piloto.
-9. **Cross-empresa**: exceção ao corte de 6m bem definida (comprador recente numa empresa, zero na outra) sem reintroduzir dupla-contagem.
+9. **Cross-empresa**: exceção ao corte de 6m bem definida (comprador recente numa empresa, zero na empresa-alvo) sem reintroduzir dupla-contagem.
+10. **Cobertura de `venda_items_history`** nas 3 empresas (o cron baseline visto é Oben; confirmar Colacor/SC). Se só Oben, o sabor cross-empresa por essa fonte fica parcial → fallback `sales_orders.account` com medição de cobertura.
+11. **CPF × CNPJ no documento**: look-alike por-tipo (PJ separado de PF) ou consolidado? Normalizar o documento (só dígitos) antes do dedup.
+12. **`omie_clientes` tem `UNIQUE(user_id)`** → não representa o mesmo CNPJ em várias empresas; a entidade `(documento × empresa-alvo)` precisa ser **montada na view** (não dá pra ler direto de `omie_clientes`).
 
 ## 14. Não-objetivos (v1)
 
 Prospecção externa / radar do ME; vetorial/kNN; co-compra como motor; automação/pin/cadência; encaminhar-pro-closer (inbound do PR-MULTIVENDOR-V2); calibração por ML. Tudo guiado pelo sinal do piloto.
 
+## 15. Revisão Codex (incorporada — 2026-06-04)
+
+Codex (gpt-5.5, xhigh, leu o repo) re-validou. **Veredito: Abordagem 1 é a certa; vetorial/co-compra não são melhores. O risco não é o algoritmo — é alimentar o ranking com a ENTIDADE COMERCIAL ERRADA.** 5 P1 incorporados:
+
+1. **Grão `(documento × empresa-alvo)`** — não `customer_user_id`/`omie_clientes` (que tem `UNIQUE(user_id)`). Senão cross-empresa vira falso +/−. → §7 reescrita.
+2. **"Não compra" é por empresa-ALVO** + precedência `cross > dormente > frio` (cross entra mesmo comprando ontem no grupo, se zero na empresa-alvo). → §7.
+3. **"Melhores" por CNPJ** (percentis de volume 12m + freq/recência + margem-com-confiança); EVP só feature Oben; `gross_margin_pct=0` ≠ margem real. → §5.
+4. **Fonte cross-empresa = `venda_items_history`** (empresa + cliente_cnpj_cpf + SKU + data fiscal) se cobrir as 3; senão `sales_orders.account` com validação. **Join sem `account`/`empresa` = P1** (contaminação multiempresa). → §7 + §13.
+5. **Frio sem mix → "sem ramo conhecido"** (nunca "mesmo ramo"); score alto com confiança baixa **não lidera**. → §6/§8.
+
+**P2 incorporados:** lift com **teto por dimensão** (geografia explica, não domina); top 20-50 com motivo/confiança/sabor (não "lista"); co-compra só dimensão pra dormente/cross; **LGPD: opt-out global por documento/canal** (o opt-out de rota não basta se a Caça virar canal próprio); HunterDashboard é inbound, Caça é outbound (separar framing).
+
+**Ranking final:** `score × confiança × boost_sabor` (cross naturalmente alto; frio penalizado por confiança).
+
+**Métrica dura (Codex):** se o top-K não bater um **baseline simples por sabor** (dormente por recência pura + cross por maior faturamento), o motor não agrega → voltar pra identidade/features, **não calibrar peso no escuro**.
+
+**Achado de dados (Explore + Codex):** `customer_metrics_mv` é cross-CNPJ por `customer_user_id` (sem `account`); `farmer_client_scores` cobre só carteira mapeada (~6908) — **frios/não-vinculados NÃO têm scores** (degradação honesta obrigatória); `gross_margin_pct` é derivada em memória no hook (não em DB); **não existe view de mix-família por cliente** (construir); `venda_items_history` é a fonte fiscal por CNPJ×empresa (confirmar cobertura Colacor/SC — baseline visto é Oben).
+
 ---
 
 ## Anexo — passe adversário (2026-06-04)
 
-⚠️ O **Codex estourou o limite de uso** durante o challenge (reset ~19:55 BRT) — **re-validar a mecânica antes do plano**. Passe adversário feito por mim (no lugar do Codex):
+✅ **Codex re-validou em 2026-06-04** (gpt-5.5, xhigh, leu o repo) — síntese e incorporação na **§15** acima. Passe adversário inicial (por mim, antes do Codex):
 
 - **Maior furo (corrigido no design): circularidade.** Perfil por frequência bruta espelha a concentração da base → look-alike vira "mesmo CEP". **Lift** resolve.
 - **EVP é Oben-only** (confirmado, CLAUDE.md §A3) → "melhores do grupo" exige métrica cross-CNPJ; EVP refina, não ancora.
