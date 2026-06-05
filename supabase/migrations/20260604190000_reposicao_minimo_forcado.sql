@@ -211,7 +211,11 @@ END;
 $function$;
 
 -- ─── PARTE C — Otimizador "comprar mais?" enxerga o mínimo forçado ───
--- CORPO VERBATIM de 20260530143818 (PARTE 2) + a coluna sp.minimo_forcado_manual.
+-- CORPO VERBATIM de 20260530143818 (PARTE 2) + a coluna sp.minimo_forcado_manual
+-- ANEXADA NO FIM do SELECT. ⚠️ CREATE OR REPLACE VIEW só permite ACRESCENTAR coluna
+-- no fim (Postgres não reordena/insere no meio) — inserir entre lote_minimo_fornecedor
+-- e fornecedor_codigo_omie falharia em prod com "cannot change name of view column".
+-- A view é lida por NOME no front (AdminReposicaoOportunidades) → posição é indiferente.
 -- security_invoker=on e os filtros 405ML/450ML preservados.
 CREATE OR REPLACE VIEW v_otimizador_compras_insumos
 WITH (security_invoker = on) AS
@@ -238,12 +242,12 @@ prazo AS (
 SELECT
   o.*,
   sp.lote_minimo_fornecedor,
-  sp.minimo_forcado_manual,
   sp.fornecedor_codigo_omie,
   p.prazo_padrao_perc,
   f.frete_perc_valor,
   f.frete_fixo,
-  f.frete_taxa_pedido
+  f.frete_taxa_pedido,
+  sp.minimo_forcado_manual
 FROM v_oportunidade_economica_hoje o
 LEFT JOIN sku_parametros sp
   ON sp.empresa = o.empresa AND sp.sku_codigo_omie = o.sku_codigo_omie
