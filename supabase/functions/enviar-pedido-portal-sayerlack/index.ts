@@ -31,7 +31,7 @@ const MAX_TENTATIVAS = 3;
 // Ref: https://docs.browserless.io/rest-apis/function
 const BROWSERLESS_FUNCTION = `
 export default async ({ page, context }) => {
-  const { user, pass, portalUrl, clienteCodigo, items } = context;
+  const { user, pass, portalUrl, clienteCodigo, items, ltEsperado } = context;
   const trace = [];
   const t0 = Date.now();
   // Não usamos timeout interno menor que o Browserless: em 14/05, o pedido #116
@@ -945,6 +945,53 @@ export default async ({ page, context }) => {
     }, { timeout: budgetFor('validacao-pre-efetivar', 15_000), polling: 250 });
     trace.push({ step: 'validacao_data_entrega_ok_pre_efetivar', t: Date.now() - t0, remaining: remainingMs() });
 
+    // === Scrape #datatable_itens (custo + Prz Ent) — header/value matching, robusto a layout ===
+    const skusConhecidos = items.map(function(it){ return (it.sku_portal || '').trim().toUpperCase(); }).filter(Boolean);
+    const scrape = await page.evaluate(function(skus) {
+      function norm(s){ return (s || '').trim().toUpperCase(); }
+      var table = document.querySelector('#datatable_itens');
+      if (!table) return { ok: false, motivo: 'sem_tabela', headers: [], przIdx: -1, rows: [] };
+      var ths = Array.from(table.querySelectorAll('thead th')).map(function(th){ return (th.innerText || '').trim(); });
+      var przIdx = ths.findIndex(function(h){ return /prz|prazo/i.test(h); });
+      var rows = Array.from(table.querySelectorAll('tbody tr')).map(function(tr){
+        var tds = Array.from(tr.querySelectorAll('td'));
+        var texts = tds.map(function(td){ return (td.innerText || '').trim(); });
+        var skuCell = texts.find(function(t){ return skus.indexOf(norm(t)) !== -1; }) || '';
+        return {
+          sku_portal: norm(skuCell),
+          prz_ent_raw: (przIdx >= 0 && texts[przIdx] != null) ? texts[przIdx] : '',
+          total_raw: texts.length ? texts[texts.length - 1] : '',
+        };
+      });
+      return { ok: true, przIdx: przIdx, headers: ths, rows: rows };
+    }, skusConhecidos);
+    console.log('[DEBUG_SCRAPE_ITENS]', JSON.stringify({ ok: scrape.ok, przIdx: scrape.przIdx, headers: scrape.headers, n: (scrape.rows || []).length, amostra: (scrape.rows || []).slice(0, 3) }));
+    trace.push({ step: 'scrape_datatable', n: (scrape.rows || []).length, przIdx: scrape.przIdx, t: Date.now() - t0 });
+    var linhasPortal = scrape.rows || [];
+
+    // === Gate de grupo: Prz Ent (inteiro) === ltEsperado, EXATO. Fail-OPEN na incerteza (bug de seletor/sem config NÃO trava). ===
+    if (typeof ltEsperado === 'number' && Number.isInteger(ltEsperado) && scrape.ok && scrape.przIdx >= 0 && linhasPortal.length > 0) {
+      var mismatches = [];
+      var validados = 0;
+      for (var li = 0; li < linhasPortal.length; li++) {
+        var mm = (linhasPortal[li].prz_ent_raw || '').match(/-?\\d+/);
+        if (!mm) continue;
+        validados++;
+        var prz = Number(mm[0]);
+        if (prz !== ltEsperado) {
+          mismatches.push({ sku_portal: linhasPortal[li].sku_portal || ('linha ' + (li + 1)), prz_ent: prz, lt_esperado: ltEsperado });
+        }
+      }
+      if (mismatches.length > 0) {
+        var listaMm = mismatches.map(function(x){ return x.sku_portal + ' (Prz ' + x.prz_ent + ' != ' + x.lt_esperado + ')'; }).join('; ');
+        return {
+          data: { success: false, erro: 'Grupo errado (Prz Ent != lead time do grupo): ' + listaMm + '. Confira o de-para/grupo.', erroTipo: 'GRUPO_LEADTIME_MISMATCH', mismatches: mismatches, trace: trace },
+          type: 'application/json',
+        };
+      }
+      trace.push({ step: 'gate_grupo_ok', validados: validados, t: Date.now() - t0 });
+    }
+
     // PR13: scroll do botão "Efetivar Pedido" pra dentro da viewport ANTES do
     // click. O navbar sticky do portal Sayerlack cobre o topo da página; quando
     // há vários itens no formulário, a rolagem deixa o botão atrás do navbar
@@ -1178,6 +1225,7 @@ export default async ({ page, context }) => {
           protocolo,
           protocoloSource,
           portal_data_entrega: portalDataEntrega,
+          itens_capturados: linhasPortal.map(function(l){ return { sku_portal: l.sku_portal, total_raw: l.total_raw, prz_ent_raw: l.prz_ent_raw }; }),
           firstSignal: { kind: firstSignal.kind },
           responseInfo,
           successText: protocolo ? ('Pedido ' + protocolo + ' criado com sucesso') : null,
