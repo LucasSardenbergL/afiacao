@@ -154,7 +154,11 @@ Deno.serve(async (req) => {
   // Reclassificação ABC/XYZ + parâmetros numéricos
   if (Date.now() - t0 < TOTAL_TIMEOUT_MS) {
     const r1 = await callRpc("atualizar_classificacao_skus", { p_empresa: empresa });
-    const r2 = await callRpc("atualizar_parametros_numericos_skus", { p_empresa: empresa });
+    // OBEN: wrapper instrumentado (cria run + grava log antes→depois p/ resumo do dia + reverter).
+    // Demais empresas: core direta (aplica com fusível/trava/validação, sem log — v1 é OBEN-only).
+    const r2 = empresa === "oben"
+      ? await callRpc("aplicar_parametros_automatico_diario", { p_empresa: empresa })
+      : await callRpc("atualizar_parametros_numericos_skus", { p_empresa: empresa });
     resultados["reclassificacao"] = {
       ok: r1.ok && r2.ok,
       duracao_ms: r1.duracao_ms + r2.duracao_ms,
