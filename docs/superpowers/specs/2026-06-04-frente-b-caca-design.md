@@ -176,3 +176,27 @@ Codex (gpt-5.5, xhigh, leu o repo) re-validou. **Veredito: Abordagem 1 é a cert
 - **Mecânica:** Abordagem 1 (regras interpretáveis + lift + ramo-do-mix) **vence** a vetorial (features esparsas/fracas envenenam a distância) e a co-compra pura (não cobre frio). Interpretável + barata + alinhada à degradação honesta.
 - **Degradação honesta por sabor** é o que mantém o frio honesto sem fabricar similaridade.
 - **A re-validar com o Codex:** definição do índice de "melhores" cross-CNPJ; recorte de candidato sem inflar/dupla-contar; tratamento do frio; viés residual; dimensionamento do v1; métrica de sucesso.
+
+---
+
+## 16. Fase 0 (diagnóstico) + desenho da view — RESOLVIDO (2026-06-05)
+
+**Fase 0 (5 queries read-only rodadas pelo founder no SQL Editor):**
+- `venda_items_history` cobre **só OBEN** (229 clientes, desde out/25) → **descartada** como fonte cross-empresa.
+- `sales_orders.account`: oben 312 clientes (195 ativos 6m) · colacor 383 (236) · **SC ausente**. → **fonte de compra = `sales_orders.account`** (oben+colacor).
+- `profiles.document`: **1:1 sem duplicados** (4660 CNPJ + 613 CPF). → dedup por documento trivial; CPF incluído (MEI/marceneiro).
+- Universo: **5092 com-conta-sem-compra-6m + 10488 não-vinculados**. `farmer_client_scores` 6908 (frios sem score).
+
+**Decisão de escopo v1 (AskUserQuestion):** **só clientes COM conta** (~5092 + cross/dormentes). Não-vinculados ficam fora (Codex: sem `user_id` → não casam com `sales_orders` → não dá pra provar "não compram"; já têm a tela `/admin/clientes-nao-vinculados`). v2 = não-vinculados por cidade/UF, se o piloto pedir.
+
+**Decisão de arquitetura:** a view entrega **só os FATOS brutos**; o índice ponderado de "melhores" (lucro·0,4 + volume·0,3 + fidelidade·0,3, percentil) e o lift rodam no **CLIENT** (helper TS testável `selecionarMelhores` + `perfilPorLift`). Isso tira window-functions do SQL e alinha com "snapshot compacto dos fatos" (Codex).
+
+**Views (`supabase/migrations/20260605152437_caca_views.sql`, `security_invoker=on`, staff-readable):**
+- `v_caca_compradores` (grão documento×empresa): cidade_uf, ramo (cnae), ticket, familias[], volume, n_pedidos, recencia_dias, lucro_proxy (+lucro_cobertura). Base + insumo de "melhores".
+- `v_caca_candidatos` (grão documento×empresa-alvo, NÃO-ativo na alvo): features do GRUPO, compra_em_outra_empresa, ultima_compra_grupo_dias, nome/telefone/cliente_user_id. Opt-out (WhatsApp por documento OU telefone) excluído na fonte (LGPD).
+
+**Codex adversarial no SQL (4 P1 corrigidos):** `cli_valid` (todos os user_ids do documento) alimenta as compras (não perde compra se 2 profiles dividem documento); opt-out por documento+telefone (customer_user_id é nullable); dedup de `order_items` (sem unique → inflava lucro); cast de data. P2: lucro = margem bruta **sem desconto** (semântica de `order_items.discount` incerta). P3: documento por validade; cidade exige city+state. ⚠️ **Achado no apply:** `order_date_kpi` é tipo **`date`** (não text — o `types.ts` mapeia date como `string`, daí a confusão do Explore/Codex) → `COALESCE(order_date_kpi, created_at::date)` direto, sem regex.
+
+**Mapper (hook Fase 3b) preenche o que a view não tem:** `compraNaEmpresaAlvo=false` (candidato por construção), `atrasoRelativo=null` (v1), `empresaAlvo` nunca `colacor_sc`.
+
+**Follow-ups (v2):** item sem `product_id` (descartado do mix/lucro); confirmar semântica do `discount`; status lista-positiva + check de saúde; materializar/índice parcial se a tela ficar lenta ou multiusuário; `atraso_relativo` real (boost); fallback de família por `omie_codigo_produto`.

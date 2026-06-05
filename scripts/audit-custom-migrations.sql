@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 151
+-- Total de custom migrations: 164
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -162,7 +162,13 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260531170000', 'data_health_check_sayerlack_mapeamento_gap', '20260531170000_data_health_check_sayerlack_mapeamento_gap.sql'),
   ('20260531170000', 'route_contact_log_escrita', '20260531170000_route_contact_log_escrita.sql'),
   ('20260601000000', 'tarefas_escalonamento_titulo_mensagem', '20260601000000_tarefas_escalonamento_titulo_mensagem.sql'),
+  ('20260601100000', 'tarefas_fase2_bloco_a', '20260601100000_tarefas_fase2_bloco_a.sql'),
+  ('20260601101000', 'tarefas_fase2_bloco_b', '20260601101000_tarefas_fase2_bloco_b.sql'),
+  ('20260601102000', 'tarefas_fase2_bloco_c', '20260601102000_tarefas_fase2_bloco_c.sql'),
+  ('20260601103000', 'tarefas_fase2_bloco_d', '20260601103000_tarefas_fase2_bloco_d.sql'),
+  ('20260601104000', 'tarefas_fase2_bloco_e', '20260601104000_tarefas_fase2_bloco_e.sql'),
   ('20260602101856', 'reposicao_refresh_descricao_sku_parametros', '20260602101856_reposicao_refresh_descricao_sku_parametros.sql'),
+  ('20260604120000', 'loyalty_rls_hardening', '20260604120000_loyalty_rls_hardening.sql'),
   ('20260604120000', 'picking_bridge', '20260604120000_picking_bridge.sql'),
   ('20260604120000', 'route_queue_snapshot', '20260604120000_route_queue_snapshot.sql'),
   ('20260604130000', 'omie_products_tipo_produto_coluna', '20260604130000_omie_products_tipo_produto_coluna.sql'),
@@ -170,7 +176,14 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260604140000', 'recebimento_efetivacao_ledger', '20260604140000_recebimento_efetivacao_ledger.sql'),
   ('20260604140000', 'tipo_produto_consumidores', '20260604140000_tipo_produto_consumidores.sql'),
   ('20260604140000', 'whatsapp_sla_digest', '20260604140000_whatsapp_sla_digest.sql'),
-  ('20260604150000', 'tipo_produto_vigia_cobertura', '20260604150000_tipo_produto_vigia_cobertura.sql')
+  ('20260604150000', 'envio_portal_claim_ids', '20260604150000_envio_portal_claim_ids.sql'),
+  ('20260604150000', 'tipo_produto_vigia_cobertura', '20260604150000_tipo_produto_vigia_cobertura.sql'),
+  ('20260604160000', 'route_queue_snapshot_nome', '20260604160000_route_queue_snapshot_nome.sql'),
+  ('20260604170000', 'reposicao_blindar_sku_sem_fornecedor', '20260604170000_reposicao_blindar_sku_sem_fornecedor.sql'),
+  ('20260604170000', 'tint_catalog_rls_hardening', '20260604170000_tint_catalog_rls_hardening.sql'),
+  ('20260604180000', 'envio_portal_claim_ids_lista_positiva', '20260604180000_envio_portal_claim_ids_lista_positiva.sql'),
+  ('20260604180000', 'public_tool_history_rpc', '20260604180000_public_tool_history_rpc.sql'),
+  ('20260605152437', 'caca_views', '20260605152437_caca_views.sql')
 )
 SELECT
   e.version,
@@ -784,8 +797,24 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('route_contact_log_escrita', 'function', 'public', 'registrar_contato_rota', ''),
   ('route_contact_log_escrita', 'function', 'public', 'desfazer_contato_rota', ''),
   ('tarefas_escalonamento_titulo_mensagem', 'function', 'public', 'tarefas_escalonamento_tick', ''),
+  ('tarefas_fase2_bloco_a', 'table', 'public', 'tarefa_templates', ''),
+  ('tarefas_fase2_bloco_a', 'index', 'public', 'idx_tt_ativo_assigned', 'tarefa_templates'),
+  ('tarefas_fase2_bloco_b', 'index', 'public', 'uq_tarefa_template_assignee_dia', 'tarefas'),
+  ('tarefas_fase2_bloco_c', 'rls_policy', 'public', 'tt_select', 'tarefa_templates'),
+  ('tarefas_fase2_bloco_c', 'rls_policy', 'public', 'tt_insert', 'tarefa_templates'),
+  ('tarefas_fase2_bloco_c', 'rls_policy', 'public', 'tt_update', 'tarefa_templates'),
+  ('tarefas_fase2_bloco_c', 'rls_policy', 'public', 'tt_delete', 'tarefa_templates'),
+  ('tarefas_fase2_bloco_d', 'function', 'public', 'tarefas_guard_comprovacao', ''),
+  ('tarefas_fase2_bloco_d', 'function', 'public', 'concluir_com_comprovacao', ''),
+  ('tarefas_fase2_bloco_d', 'function', 'public', 'auditar_tarefa', ''),
+  ('tarefas_fase2_bloco_d', 'function', 'public', 'tarefas_materializar_recorrentes', ''),
+  ('tarefas_fase2_bloco_d', 'trigger', 'public', 'trg_tarefas_guard_comprovacao', 'tarefas'),
+  ('tarefas_fase2_bloco_d', 'cron_job', 'cron', 'tarefas-materializar-recorrentes', ''),
+  ('tarefas_fase2_bloco_e', 'rls_policy', 'storage', 'tarefa_comprov_insert_own', 'objects'),
+  ('tarefas_fase2_bloco_e', 'rls_policy', 'storage', 'tarefa_comprov_select_own_ou_gestor', 'objects'),
   ('reposicao_refresh_descricao_sku_parametros', 'function', 'public', 'atualizar_descricao_sku_parametros', ''),
   ('reposicao_refresh_descricao_sku_parametros', 'cron_job', 'cron', 'reposicao-refresh-descricao-diario', ''),
+  ('loyalty_rls_hardening', 'function', 'public', 'resgatar_recompensa', ''),
   ('picking_bridge', 'index', 'public', 'uq_picking_tasks_sales_order', 'picking_tasks'),
   ('picking_bridge', 'index', 'public', 'idx_sales_orders_account_kpi', 'sales_orders'),
   ('picking_bridge', 'function', 'public', 'ensure_picking_task_for_sales_order', ''),
@@ -810,9 +839,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('whatsapp_sla_digest', 'table', 'public', 'whatsapp_sla_digest_log', ''),
   ('whatsapp_sla_digest', 'function', 'public', 'whatsapp_sla_digest_tick', ''),
   ('whatsapp_sla_digest', 'cron_job', 'cron', 'whatsapp-sla-digest-diario', ''),
+  ('envio_portal_claim_ids', 'function', 'public', 'envio_portal_claim_ids', ''),
   ('tipo_produto_vigia_cobertura', 'function', 'public', '_data_health_compute', ''),
   ('tipo_produto_vigia_cobertura', 'function', 'public', 'data_health_watchdog', ''),
-  ('tipo_produto_vigia_cobertura', 'function', 'public', 'fin_sync_heartbeat', '')
+  ('tipo_produto_vigia_cobertura', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('reposicao_blindar_sku_sem_fornecedor', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('envio_portal_claim_ids_lista_positiva', 'function', 'public', 'envio_portal_claim_ids', ''),
+  ('public_tool_history_rpc', 'function', 'public', 'get_public_tool_history', '')
 )
 SELECT
   e.migration,

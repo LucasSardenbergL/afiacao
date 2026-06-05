@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **151** custom migrations totais
-- **624** objetos esperados (criados por estas migrations)
+- **164** custom migrations totais
+- **644** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 163
-  - `function`: 134
-  - `index`: 121
-  - `cron_job`: 94
-  - `table`: 73
-  - `trigger`: 35
+  - `rls_policy`: 169
+  - `function`: 143
+  - `index`: 123
+  - `cron_job`: 95
+  - `table`: 74
+  - `trigger`: 36
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1320,12 +1320,58 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.tarefas_escalonamento_tick` | — |
 
+### `20260601100000_tarefas_fase2_bloco_a.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.tarefa_templates` | — |
+| `index` | `public.idx_tt_ativo_assigned` | `tarefa_templates` |
+
+### `20260601101000_tarefas_fase2_bloco_b.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.uq_tarefa_template_assignee_dia` | `tarefas` |
+
+### `20260601102000_tarefas_fase2_bloco_c.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.tt_select` | `tarefa_templates` |
+| `rls_policy` | `public.tt_insert` | `tarefa_templates` |
+| `rls_policy` | `public.tt_update` | `tarefa_templates` |
+| `rls_policy` | `public.tt_delete` | `tarefa_templates` |
+
+### `20260601103000_tarefas_fase2_bloco_d.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_guard_comprovacao` | — |
+| `function` | `public.concluir_com_comprovacao` | — |
+| `function` | `public.auditar_tarefa` | — |
+| `function` | `public.tarefas_materializar_recorrentes` | — |
+| `trigger` | `public.trg_tarefas_guard_comprovacao` | `tarefas` |
+| `cron_job` | `cron.tarefas-materializar-recorrentes` | — |
+
+### `20260601104000_tarefas_fase2_bloco_e.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `storage.tarefa_comprov_insert_own` | `objects` |
+| `rls_policy` | `storage.tarefa_comprov_select_own_ou_gestor` | `objects` |
+
 ### `20260602101856_reposicao_refresh_descricao_sku_parametros.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.atualizar_descricao_sku_parametros` | — |
 | `cron_job` | `cron.reposicao-refresh-descricao-diario` | — |
+
+### `20260604120000_loyalty_rls_hardening.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.resgatar_recompensa` | — |
 
 ### `20260604120000_picking_bridge.sql`
 
@@ -1386,6 +1432,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.whatsapp_sla_digest_tick` | — |
 | `cron_job` | `cron.whatsapp-sla-digest-diario` | — |
 
+### `20260604150000_envio_portal_claim_ids.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.envio_portal_claim_ids` | — |
+
 ### `20260604150000_tipo_produto_vigia_cobertura.sql`
 
 | Tipo | Objeto | Parent |
@@ -1393,6 +1445,36 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public._data_health_compute` | — |
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260604160000_route_queue_snapshot_nome.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260604170000_reposicao_blindar_sku_sem_fornecedor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260604170000_tint_catalog_rls_hardening.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260604180000_envio_portal_claim_ids_lista_positiva.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.envio_portal_claim_ids` | — |
+
+### `20260604180000_public_tool_history_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_public_tool_history` | — |
+
+### `20260605152437_caca_views.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos quando algo der `❌`
 
