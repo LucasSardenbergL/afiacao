@@ -447,19 +447,32 @@ async function iniciarEnvioPortalSayerlack(
     return { state: "needs_reconciliation", status: statusPortalAtual };
   }
 
-  // Inicia em pendente para o portal aceitar
-  await db
-    .from("pedido_compra_sugerido")
-    .update({
-      status_envio_portal: "pendente_envio_portal",
-      portal_erro: null,
-      // Relógio de stale ESTÁVEL p/ o lote-retry (envio_portal_lock_candidatos): NÃO usar atualizado_em
-      // (trigger de timestamp reiniciaria o relógio e recriaria o blind-spot). Se o envio async inicial
-      // não começar em 15min (não setar enviando_portal), o lote re-tenta a partir daqui. Sucesso zera
-      // (NULL) e erro_retentavel reescreve (+15min) downstream — relógio único pros dois estados.
-      portal_proximo_retry_em: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    })
-    .eq("id", pedidoId);
+  // Já em voo no portal? NÃO re-enfileirar — evita 2ª sessão Browserless e o
+  // rebaixamento enviando_portal → pendente. O claim atômico do envio (envio_portal_claim_ids)
+  // cobre o Browserless; aqui evitamos tocar a coluna de um envio concorrente.
+  if (statusPortalAtual === "enviando_portal") {
+    console.warn(`[disparar-pedidos] Pedido ${pedidoId}: já enviando_portal — não re-enfileirado`);
+    return { state: "queued", accepted: true };
+  }
+
+  // Pré-claim do portal via RPC SQL pura — NÃO via PostgREST .update().select():
+  // o #592/§7 mostrou que filtrar status_envio_portal num UPDATE pela API REST quebra
+  // (42703 "column does not exist"; incidente de 324 pedidos presos). Todos os claims
+  // dessa coluna são RPC SQL. A RPC seta 'pendente_envio_portal' SÓ se o pedido não
+  // estiver 'enviando_portal' (CONDICIONAL: não rebaixa um envio concorrente em voo),
+  // cobre NULL via COALESCE, e grava o relógio de stale ESTÁVEL (+15min) p/ o lote-retry.
+  // Retorna false se o claim foi perdido (concorrência) → não re-enfileira.
+  const { data: claimed, error: claimErr } = await db.rpc(
+    "iniciar_envio_portal_pre_claim",
+    { p_pedido_id: pedidoId },
+  );
+  if (claimErr) {
+    throw new Error(`Pré-claim do portal falhou: ${claimErr.message}`);
+  }
+  if (!claimed) {
+    console.warn(`[disparar-pedidos] Pedido ${pedidoId}: pré-claim do portal perdido (concorrência/estado) — não re-enfileirado`);
+    return { state: "queued", accepted: true };
+  }
 
   const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
   const SVC_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
