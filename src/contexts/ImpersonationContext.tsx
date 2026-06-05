@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo, t
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { resolveEffectiveUserId, loadPersistedTarget, persistTarget } from '@/lib/impersonation/effective-user';
+import { setLensActive } from '@/lib/impersonation/lens-write-guard';
 import { track } from '@/lib/analytics';
 import type { ImpersonationTarget } from '@/lib/impersonation/types';
 
@@ -35,6 +36,13 @@ export function ImpersonationProvider({ children }: { children: ReactNode }) {
       if (persisted) setTarget(persisted);
     }
   }, [isMaster, target]);
+
+  // Sincroniza o write-guard global com o estado da lente: bloqueia mutações
+  // PostgREST e de storage enquanto uma impersonação estiver ativa.
+  useEffect(() => {
+    setLensActive(!!target);
+    return () => setLensActive(false);
+  }, [target]);
 
   const startImpersonation = useCallback(async (t: ImpersonationTarget, reason?: string) => {
     if (!isMaster) return;
