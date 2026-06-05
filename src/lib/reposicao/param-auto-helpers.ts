@@ -6,7 +6,7 @@ export interface SugestaoParam {
   estoque_seguranca: number | null;
   cobertura_alvo_dias: number | null;
 }
-export interface LimiaresFusivel { mult: number; coberturaDias: number; }
+export interface LimiaresFusivel { mult: number; }
 export type StatusAuto = 'bloqueado_validacao' | 'segurado' | 'pinado' | 'aplicado' | 'sem_mudanca';
 
 const arred = (n: number) => Math.round(n);
@@ -21,16 +21,17 @@ export function passaValidacao(s: SugestaoParam): { ok: boolean; motivo: string 
   return { ok: true, motivo: null };
 }
 
+// Fusível recalibrado (pós-prod: 33/33 falso-segurado). SÓ o multiplicador, material + upward-only:
+// segura quando o MÁXIMO sugerido (arredondado) salta > mult× o máximo anterior (arredondado, >0).
+// QUEDA do máximo NUNCA é segurada (assimétrico). Cobertura-absoluto removido — penalizava giro lento
+// (em demanda baixa o máximo é dominado pelo estoque de segurança → max/demanda é estruturalmente alto,
+// não corrupção). Sem base anterior → não há salto a medir (o guard de base NULL no decideStatus bloqueia).
 export function disparaFusivel(
-  maxAntes: number | null, s: SugestaoParam, demandaMediaDiaria: number | null, lim: LimiaresFusivel,
+  maxAntes: number | null, s: SugestaoParam, lim: LimiaresFusivel,
 ): { segurado: boolean; motivo: string | null } {
   if (typeof s.estoque_maximo !== 'number' || !Number.isFinite(s.estoque_maximo)) return { segurado: false, motivo: null };
-  if (typeof maxAntes === 'number' && maxAntes > 0 && s.estoque_maximo > lim.mult * maxAntes) {
-    return { segurado: true, motivo: `máximo ${s.estoque_maximo} > ${lim.mult}× anterior ${maxAntes}` };
-  }
-  if (typeof demandaMediaDiaria === 'number' && demandaMediaDiaria > 0) {
-    const coberturaDias = s.estoque_maximo / demandaMediaDiaria;
-    if (coberturaDias > lim.coberturaDias) return { segurado: true, motivo: `cobertura ${Math.round(coberturaDias)}d > ${lim.coberturaDias}d` };
+  if (typeof maxAntes === 'number' && maxAntes > 0 && arred(s.estoque_maximo) > lim.mult * arred(maxAntes)) {
+    return { segurado: true, motivo: `máximo ${arred(s.estoque_maximo)} > ${lim.mult}× anterior ${arred(maxAntes)}` };
   }
   return { segurado: false, motivo: null };
 }
@@ -56,20 +57,37 @@ export function impactoSimulado(args: {
   return { impactoRs, qtdeAntes, qtdeDepois };
 }
 
+// Precedência (7 passos, calibração pós-prod) — a SQL espelha 1:1 (money-path):
+//   1. qualquer campo sugerido NULL → sem_mudanca (COALESCE preserva o anterior; status != OK)
+//   2. sugestão incoerente (NaN/neg/max<pp/pp<min/cob<=0) → bloqueado_validacao
+//   3. SEM base válida (max_antes NULL ou <=0) → bloqueado_validacao (cold-start é manual: não
+//      auto-aplica primeiro parâmetro sem baseline pra sanity-check)
+//   4. pin bate (pp+máx arredondados == rejeitado) → pinado
+//   5. SEM mudança material (pp+máx arredondados == anterior) → sem_mudanca  ← ANTES do fusível
+//      (mata o falso 'segurado' em no-op)
+//   6. fusível (máx_antes>0 e round(máx_sug) > mult×round(máx_antes)) → segurado
+//   7. else → aplicado
 export function decideStatus(args: {
-  antes: SugestaoParam; sugestao: SugestaoParam; demandaMediaDiaria: number | null;
+  antes: SugestaoParam; sugestao: SugestaoParam;
   pin: { pp: number; max: number } | null; limiares: LimiaresFusivel;
 }): StatusAuto {
-  const { antes, sugestao, demandaMediaDiaria, pin, limiares } = args;
-  // (0) status != OK (qualquer campo NULL) → COALESCE preserva o anterior = 'sem_mudanca'.
-  //     Espelha o ramo (0) do SQL (money-path): NULL não é incoerente, é "manter o atual".
+  const { antes, sugestao, pin, limiares } = args;
+  // (1) status != OK (qualquer campo NULL) → COALESCE preserva o anterior = 'sem_mudanca'.
   const semSugestao = [sugestao.ponto_pedido, sugestao.estoque_minimo, sugestao.estoque_maximo, sugestao.estoque_seguranca, sugestao.cobertura_alvo_dias].some((v) => v == null);
   if (semSugestao) return 'sem_mudanca';
+  // (2) validação dura (incoerência).
   if (!passaValidacao(sugestao).ok) return 'bloqueado_validacao';
-  if (disparaFusivel(antes.estoque_maximo, sugestao, demandaMediaDiaria, limiares).segurado) return 'segurado';
+  // (3) sem base válida → não auto-aplica o primeiro parâmetro (sem baseline pra checar).
+  if (!(typeof antes.estoque_maximo === 'number' && Number.isFinite(antes.estoque_maximo) && antes.estoque_maximo > 0)) return 'bloqueado_validacao';
+  // (4) trava de reversão.
   if (pin && pinBloqueia(pin.pp, pin.max, sugestao)) return 'pinado';
-  const difere =
-    arred(sugestao.ponto_pedido!) !== arred(antes.ponto_pedido ?? Number.NEGATIVE_INFINITY) ||
-    arred(sugestao.estoque_maximo!) !== arred(antes.estoque_maximo ?? Number.NEGATIVE_INFINITY);
-  return difere ? 'aplicado' : 'sem_mudanca';
+  // (5) sem mudança material (pp+máx arredondados iguais ao anterior) → ANTES do fusível.
+  const semMudanca =
+    arred(sugestao.ponto_pedido!) === arred(antes.ponto_pedido ?? Number.NEGATIVE_INFINITY) &&
+    arred(sugestao.estoque_maximo!) === arred(antes.estoque_maximo!);
+  if (semMudanca) return 'sem_mudanca';
+  // (6) fusível.
+  if (disparaFusivel(antes.estoque_maximo, sugestao, limiares).segurado) return 'segurado';
+  // (7) aplica.
+  return 'aplicado';
 }
