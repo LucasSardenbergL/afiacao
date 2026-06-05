@@ -1,53 +1,20 @@
 // Painel "Embalagem econômica" no modal de pedido: mostra, por SKU multi-embalagem,
 // a recomendação (menor custo por unidade-base) e permite informar o preço manualmente.
+// O dialog de preço é compartilhado com a tela avulsa (PrecoEmbalagemDialog).
 // Spec: docs/superpowers/specs/2026-06-04-embalagem-economica-design.md
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
-import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Package, Loader2 } from 'lucide-react';
-import { useAuth } from '@/contexts/AuthContext';
+import { Package } from 'lucide-react';
 import { formatBRL } from './shared';
 import type { PedidoItem } from './types';
 import { useEmbalagemPedido } from './useEmbalagemPedido';
+import { PrecoEmbalagemDialog } from '@/components/reposicao/embalagem/PrecoEmbalagemDialog';
 
 export function EmbalagemPanel({ empresa, itens }: { empresa: string; itens: PedidoItem[] }) {
   const { porSku, isLoading } = useEmbalagemPedido(empresa, itens);
-  const { user } = useAuth();
-  const qc = useQueryClient();
   const [precoDialog, setPrecoDialog] = useState<null | { skus: string[] }>(null);
-  const [precos, setPrecos] = useState<Record<string, string>>({});
-
-  const salvarPrecos = useMutation({
-    mutationFn: async (entries: { sku: string; preco: number }[]) => {
-      const rows = entries.map((e) => ({
-        empresa,
-        sku_codigo_omie: e.sku,
-        fornecedor_nome: 'Sayerlack',
-        preco: e.preco,
-        moeda: 'BRL',
-        preco_tipo: 'liquido',
-        fonte: 'manual_usuario',
-        status: 'ok',
-        criado_por: user?.email ?? 'sistema',
-      }));
-      const { error } = await supabase.from('sku_preco_fornecedor_capturado' as never).insert(rows as never);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      toast.success('Preços atualizados');
-      qc.invalidateQueries({ queryKey: ['embalagem-pedido'] });
-      setPrecoDialog(null);
-      setPrecos({});
-    },
-    onError: (e: Error) => toast.error(`Erro ao salvar preços: ${e.message}`),
-  });
 
   const itensComGrupo = (itens ?? []).filter((i) => porSku[String(i.sku_codigo_omie)]);
   if (isLoading || itensComGrupo.length === 0) return null; // só aparece quando há item multi-embalagem
@@ -106,46 +73,12 @@ export function EmbalagemPanel({ empresa, itens }: { empresa: string; itens: Ped
         </CardContent>
       </Card>
 
-      <Dialog open={!!precoDialog} onOpenChange={(o) => !o && setPrecoDialog(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Atualizar preços (do portal)</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            {precoDialog?.skus.map((sku) => (
-              <div key={sku}>
-                <Label>{sku}</Label>
-                <Input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="Preço atual"
-                  value={precos[sku] ?? ''}
-                  onChange={(e) => setPrecos((p) => ({ ...p, [sku]: e.target.value }))}
-                />
-              </div>
-            ))}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPrecoDialog(null)}>Cancelar</Button>
-            <Button
-              disabled={salvarPrecos.isPending}
-              onClick={() => {
-                const entries = (precoDialog?.skus ?? [])
-                  .map((sku) => ({ sku, preco: Number(String(precos[sku] ?? '').replace(',', '.')) }))
-                  .filter((e) => e.preco > 0);
-                if (entries.length === 0) {
-                  toast.error('Informe ao menos um preço > 0');
-                  return;
-                }
-                salvarPrecos.mutate(entries);
-              }}
-            >
-              {salvarPrecos.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-              Salvar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <PrecoEmbalagemDialog
+        empresa={empresa}
+        skus={precoDialog?.skus ?? []}
+        open={!!precoDialog}
+        onOpenChange={(o) => !o && setPrecoDialog(null)}
+      />
     </>
   );
 }
