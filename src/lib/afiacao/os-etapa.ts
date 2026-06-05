@@ -2,7 +2,7 @@
  * Mapa status do pedido de afiação → etapa (cEtapa) da Ordem de Serviço no Omie (Colacor SC).
  *
  * FONTE DA VERDADE deste mapa. Espelhado VERBATIM em:
- *   - supabase/migrations/20260605120000_afiacao_os_status_sync.sql  (função mapear_status_etapa)
+ *   - supabase/migrations/20260605140000_afiacao_os_status_sync.sql  (função mapear_status_etapa)
  *   - supabase/functions/omie-sync/index.ts                          (função mapearStatusEtapa)
  * Qualquer mudança aqui tem que ser replicada nos dois.
  *
