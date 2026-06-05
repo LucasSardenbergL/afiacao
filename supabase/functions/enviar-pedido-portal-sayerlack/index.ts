@@ -956,9 +956,11 @@ export default async ({ page, context }) => {
       var rows = Array.from(table.querySelectorAll('tbody tr')).map(function(tr){
         var tds = Array.from(tr.querySelectorAll('td'));
         var texts = tds.map(function(td){ return (td.innerText || '').trim(); });
-        var skuCell = texts.find(function(t){ return skus.indexOf(norm(t)) !== -1; }) || '';
+        // código: SÓ identifica se EXATAMENTE 1 célula bate (igualdade) um sku conhecido — evita
+        // atribuir o sku errado a uma linha por colisão de célula; 0 ou >1 → sku vazio = naoCasado (seguro).
+        var cellsSku = texts.filter(function(t){ return skus.indexOf(norm(t)) !== -1; });
         return {
-          sku_portal: norm(skuCell),
+          sku_portal: cellsSku.length === 1 ? norm(cellsSku[0]) : '',
           prz_ent_raw: (przIdx >= 0 && texts[przIdx] != null) ? texts[przIdx] : '',
           total_raw: texts.length ? texts[texts.length - 1] : '',
         };
@@ -989,7 +991,8 @@ export default async ({ page, context }) => {
           type: 'application/json',
         };
       }
-      trace.push({ step: 'gate_grupo_ok', validados: validados, t: Date.now() - t0 });
+      // validados < total = tabela parcialmente validada (linhas com Prz Ent ilegível foram puladas, fail-open).
+      trace.push({ step: 'gate_grupo_ok', validados: validados, total: linhasPortal.length, t: Date.now() - t0 });
     }
 
     // PR13: scroll do botão "Efetivar Pedido" pra dentro da viewport ANTES do
@@ -2001,7 +2004,11 @@ async function processarPedido(
           await supabase.from("pedido_compra_item").update({ preco_unitario: u.preco_unitario, valor_linha: u.valor_linha }).eq("id", u.item_id);
         }
         if (updates.length > 0) {
-          const novoTotal = match.casados.reduce((s, c) => s + (c.total_linha ?? (c.item.qtde_final * c.item.preco_atual)), 0);
+          // valor_total = Σ TODOS os itens (casados pelo total capturado; não-casados/ambíguos pelo valor atual)
+          // — não subconta itens que o scrape não casou (Codex P1).
+          const totalCasados = match.casados.reduce((s, c) => s + (c.total_linha ?? (c.item.qtde_final * c.item.preco_atual)), 0);
+          const totalOutros = [...match.naoCasados, ...match.ambiguos].reduce((s, it) => s + (it.qtde_final * it.preco_atual), 0);
+          const novoTotal = totalCasados + totalOutros;
           await supabase.from("pedido_compra_sugerido").update({ valor_total: novoTotal }).eq("id", pedido.id);
         }
         console.log(`[envio-portal] Pedido #${pedido.id}: custo capturado — ${updates.length} atualizados, ${pulados.length} pulados`);
