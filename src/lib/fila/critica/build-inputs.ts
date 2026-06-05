@@ -1,6 +1,6 @@
 // src/lib/fila/critica/build-inputs.ts
 import type { AcaoSugerida } from '@/lib/fila/types';
-import type { CriticaInput, MetricaCliente, RotaCliente, TarefaCliente } from './types';
+import type { CriticaInput, MetricaCliente, RotaCliente, TarefaCliente, WaSlaCliente } from './types';
 
 export interface MetricRowFull {
   customer_user_id: string;
@@ -23,6 +23,11 @@ export interface TarefaSinalCliente {
   temSugestaoPendente: boolean;
   descricao: string;
 }
+export interface WaSlaSinalCliente {
+  customerUserId: string;
+  minutosUteis: number;
+  nivel: 'verde' | 'amarelo' | 'vermelho';
+}
 
 /**
  * Junta ações + linhas de sinal em CriticaInput[] (1 por cliente, dedupe na ordem das ações).
@@ -34,6 +39,7 @@ export function buildCriticaInputs(
   metricas: MetricRowFull[],
   rotaSinais: RotaSinalCliente[] | null,
   tarefaSinais: TarefaSinalCliente[],
+  waSlaSinais: WaSlaSinalCliente[] = [],
 ): CriticaInput[] {
   const mByCli = new Map(metricas.map(m => [m.customer_user_id, m]));
   const rByCli = rotaSinais ? new Map(rotaSinais.map(s => [s.customerUserId, s])) : null;
@@ -44,6 +50,8 @@ export function buildCriticaInputs(
     const atual = tByCli.get(s.customerUserId);
     if (!atual || (s.atrasada && s.temSugestaoPendente)) tByCli.set(s.customerUserId, s);
   }
+
+  const wByCli = new Map(waSlaSinais.map(s => [s.customerUserId, s]));
 
   const out: CriticaInput[] = [];
   const vistos = new Set<string>();
@@ -78,7 +86,10 @@ export function buildCriticaInputs(
       ? { atrasada: tRow.atrasada, temSugestaoPendente: tRow.temSugestaoPendente, descricao: tRow.descricao }
       : null;
 
-    out.push({ clienteUserId: cli, clienteNome: a.clienteNome, metrica, rota, tarefa });
+    const wRow = wByCli.get(cli);
+    const waSla: WaSlaCliente | null = wRow ? { minutosUteis: wRow.minutosUteis, nivel: wRow.nivel } : null;
+
+    out.push({ clienteUserId: cli, clienteNome: a.clienteNome, metrica, rota, tarefa, waSla });
   }
   return out;
 }
