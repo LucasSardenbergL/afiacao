@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 import { PedidoSugerido, PedidoItem, CondicaoPagamento } from './types';
-import { interpretarRespostaDisparo, type RespostaDisparo } from './shared';
+import { aprovarEDisparar } from './aprovar-disparar';
 import { montarUpdateItem, podeEditarPrecoPedido, precoEditValido } from './preco-edit';
 
 export type Linha = PedidoItem & { _qtd: number; _preco: number; _valor: number };
@@ -192,38 +192,20 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
       if (condicaoMudou) {
         await salvarCondicaoMutation.mutateAsync();
       }
-      const { error } = await supabase.rpc('aprovar_pedido_sugerido', {
-        p_pedido_id: pedido.id,
-        p_usuario: user?.email ?? 'sistema',
+      // Trilha canônica: APROVAR = DISPARAR NA HORA (RPC + edge + feedback).
+      return aprovarEDisparar({
+        pedidoId: pedido.id,
+        empresa: pedido.empresa,
+        usuario: user?.email ?? 'sistema',
       });
-      if (error) throw error; // falha de aprovação → onError (correto)
-
-      // APROVAR = DISPARAR NA HORA. Em vez de esperar o cron de corte, dispara já.
-      // Best-effort: a falha do disparo NÃO reverte a aprovação — o cron de corte
-      // (rede de segurança) pega depois, e o motor de retry */15 cobre falha
-      // transitória do portal. Aprovar e disparar são estados distintos (codex).
-      const pedidoId = pedido.id;
-      try {
-        const { data: dd, error: de } = await supabase.functions.invoke('disparar-pedidos-aprovados', {
-          body: { empresa: pedido.empresa, pedido_id: pedidoId },
-        });
-        if (de) throw de;
-        return { disparoOk: true as const, feedback: interpretarRespostaDisparo(dd as RespostaDisparo, pedidoId) };
-      } catch (e) {
-        logger.error('Pedido aprovado, mas o disparo imediato falhou (cron de corte assume)', { error: e, pedidoId });
-        return { disparoOk: false as const, feedback: null };
-      }
     },
     onSuccess: (result) => {
       if (result) {
-        if (result.disparoOk && result.feedback) {
-          const { tone, message } = result.feedback;
-          if (tone === 'error') toast.error(message);
-          else if (tone === 'info') toast.info(message);
-          else toast.success(message);
-        } else {
-          toast.warning('Pedido aprovado. O envio automático não saiu agora — será reprocessado pela rede de segurança (ou use "Disparar").');
-        }
+        const { ok, tipo, mensagem } = result;
+        if (!ok || tipo === 'error') toast.error(mensagem);
+        else if (tipo === 'warning') toast.warning(mensagem);
+        else if (tipo === 'info') toast.info(mensagem);
+        else toast.success(mensagem);
       }
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
       onApproved();
