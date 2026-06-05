@@ -101,29 +101,39 @@ export function useCicloHoje({ user, reviewMode, filteredItems, setFilters }: Us
       // inclusive os auto-aprovados que devem esperar o cron (runAutoApprove). Aqui
       // disparamos exatamente o lote que o operador marcou. Sequencial: não martelar
       // a edge/Browserless em paralelo. Best-effort por item: um erro não aborta os demais.
-      let aprovados = 0;
+      // Apura por `tipo`, NÃO por `r.ok`: aprovar=disparar significa que um pedido pode
+      // aprovar e o disparo falhar (best-effort) — `{ok:true, tipo:'warning'}` (edge não saiu;
+      // rede de segurança assume) ou `{ok:true, tipo:'error'}` (edge retornou 200 com falha
+      // síncrona do Omie → o pedido fica `falha_envio` na lista). Contar isso como
+      // "disparado" no resumo enganaria o operador no money-path.
+      let disparados = 0;
+      let comAviso = 0;
       let comErro = 0;
       for (const id of ids) {
         try {
           const r = await aprovarEDisparar({ pedidoId: id, empresa: EMPRESA, usuario: who });
-          if (r.ok) aprovados += 1;
-          else comErro += 1;
+          if (!r.ok || r.tipo === "error") comErro += 1;
+          else if (r.tipo === "warning") comAviso += 1; // aprovado; disparo ficou p/ a rede de segurança
+          else disparados += 1; // success / info (disparado ou nada a disparar)
         } catch {
           comErro += 1;
         }
       }
+      const tudoOk = comErro === 0 && comAviso === 0;
       await logAudit({
         userId: user?.id ?? null,
         action: "Aprovação em lote",
-        result: comErro === 0 ? "Sucesso" : `Parcial: ${aprovados} ok, ${comErro} com erro`,
-        metadata: { ids, count: ids.length, aprovados, comErro },
+        result: tudoOk
+          ? "Sucesso"
+          : `Parcial: ${disparados} disparado(s), ${comAviso} aguardando, ${comErro} com falha`,
+        metadata: { ids, count: ids.length, disparados, comAviso, comErro },
       });
-      if (comErro === 0) {
-        toast.success(`${aprovados} pedido(s) aprovado(s) e disparado(s)`);
-      } else if (aprovados > 0) {
-        toast.warning(`${aprovados} aprovado(s); ${comErro} com erro. Reveja os que falharam.`);
+      if (tudoOk) {
+        toast.success(`${disparados} pedido(s) aprovado(s) e disparado(s)`);
       } else {
-        toast.error("Falha na operação em lote");
+        const resumo = `${disparados} disparado(s), ${comAviso} aguardando, ${comErro} com falha — reveja`;
+        if (comErro > 0) toast.error(resumo);
+        else toast.warning(resumo);
       }
       setSelected(new Set());
       invalidate();

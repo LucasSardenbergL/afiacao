@@ -74,6 +74,11 @@ export async function aprovarEDisparar(
     });
     if (de) throw de;
     const feedback = interpretarRespostaDisparo(dd as RespostaDisparo, pedidoId);
+    // feedback.tone === 'info' ("nada a disparar") é DE PROPÓSITO um desfecho ok:true:
+    // a aprovação valeu e re-disparar algo já enviado é idempotente (no-op seguro).
+    // Só feedback.tone === 'error' (disparados:0 + falhas>0, ex.: rejeição do Omie) é
+    // falha síncrona do disparo — propagada como { ok:true, tipo:'error' } (aprovado, mas o
+    // envio falhou; o lote conta isso como erro, não como sucesso).
     return { ok: true, tipo: feedback.tone, mensagem: feedback.message };
   } catch (e) {
     logger.error('Pedido aprovado, mas o disparo imediato falhou (cron de corte assume)', { error: e, pedidoId });

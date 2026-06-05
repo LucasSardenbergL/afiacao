@@ -93,6 +93,21 @@ describe('aprovarEDisparar', () => {
     expect(r.mensagem.length).toBeGreaterThan(0);
   });
 
+  it('falha SÍNCRONA do disparo (edge 200 com { disparados:0, falhas:1 }): aprovado, mas { ok:true, tipo:"error" }', async () => {
+    // A edge respondeu 200 (sem error de transporte), mas o Omie rejeitou o disparo
+    // (ex.: guard nValUnit<=0/nQtde<=0). O pedido aprovou; o disparo falhou de verdade.
+    // O lote apura por `tipo` justamente p/ não contar isto como sucesso.
+    mockedRpc.mockResolvedValue({ data: null, error: null } as never);
+    mockedInvoke.mockResolvedValue({ data: { disparados: 0, falhas: 1 }, error: null } as never);
+
+    const r = await aprovarEDisparar(params);
+
+    expect(r.ok).toBe(true);
+    expect(r.tipo).toBe('error');
+    expect(r.mensagem).toContain('#130');
+    expect(r.mensagem).toContain('falha');
+  });
+
   it('disparo retorna portal Sayerlack em background → success "iniciado"', async () => {
     mockedRpc.mockResolvedValue({ data: null, error: null } as never);
     mockedInvoke.mockResolvedValue({ data: { aguardando_portal_sayerlack: 1 }, error: null } as never);
