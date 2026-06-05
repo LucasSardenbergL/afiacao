@@ -128,6 +128,7 @@
 - ✅ **Brainstorm → codex consult (xhigh, 11 P1) → spec → plano → BUILD subagent-driven (Tasks 1-8) → codex challenge no diff (4 P1: casing `OBEN`/`oben` que subiria a feature MORTA + guard de revert nos 5 campos + hardening) → todos resolvidos + re-provados.** Helper TDD (24 testes) oráculo da SQL · 3 migrations **provadas em PG17** (`db/test-param-auto.sh`) · edge swap · hook + tela `/admin/reposicao/mudancas-automaticas`. Gate verde (typecheck/2413 testes/build/lint).
 - ✅ **Migrations APLICADAS em prod** (founder, SQL Editor): BLOCO A (`tabelas=3·seeds=2`) · B (`pronargs=2`) · C (`funcs=5·crons=1`).
 - ⏳ **Rollout restante (após merge do #632):** redeploy `omie-cron-diario` (chat Lovable, verbatim da main — liga o log diário) → **Publish** (a tela). 1ª foto rica = amanhã de manhã. ⚠️ Branch forkou de `07f7a21f`; merge é aditivo.
+- 🔧 **Calibração pós-prod do fusível (BLOCO D, eu+codex):** prod segurou **33/33** de giro lento → o gatilho de **cobertura-absoluto** (`máx/demanda>120d`) era viés sistemático (em demanda baixa o máximo é dominado pelo SS) → **removido**; fusível agora só `máx>3×` material + **upward-only** (queda nunca segura); **no-op avaliado ANTES do fusível** (mata falso segurado); **guard de base NULL** (cold-start é manual → bloqueado_validacao). Helper+SQL 1:1, re-provado em PG17 (`db/test-param-auto.sh`). Migration `20260605150000` (manual, SQL Editor) + drop do seed morto `param_auto_fusivel_cobertura_dias`.
 
 ---
 

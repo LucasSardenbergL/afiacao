@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Prova PG17 da auto-aplicação de parâmetros da Reposição (money-path).
 # Aplica o schema-snapshot + foundation (pode_ver_carteira_completa + stub cron.schedule, ambos
-# ausentes/parciais no snapshot) + as 3 migrations A/B/C, substitui v_sku_parametros_sugeridos por
-# uma view controlada (db/seed-param-auto.sql), roda o wrapper e assere:
-#   A aplica · B segura (>3x) · C segura (cobertura) · D bloqueia (máx<pp) · E pina · F aplica+limpa pin
-#   · G sem_mudanca (não loga) · impacto best-effort · idempotência (2º run/dia = no-op) · revert
+# ausentes/parciais no snapshot) + as 4 migrations A/B/C/D, substitui v_sku_parametros_sugeridos por
+# uma view controlada (db/seed-param-auto.sql), roda o wrapper e assere o FUSÍVEL RECALIBRADO (BLOCO D):
+#   A/F/L aplicam · B segura (salto 3×) · C giro-lento no-op = sem_mudanca (PROVA cobertura removida)
+#   · D bloqueia (máx<pp) · E/H pinam (pin vence o fusível) · G sem_mudanca · I/J aplicam config sem logar
+#   · K bloqueia cold-start (base NULL) · L queda do máximo = aplicado (assimétrico)
+#   · impacto best-effort (L sem custo = desconhecido) · idempotência (2º run/dia = no-op) · revert
 #   restaura+pina · conflito (estado divergente) · despinar.
 # Base: db/verify-snapshot-replay.sh + db/test-minimo-forcado.sh. Pré-req: brew install postgresql@17 pgvector.
 set -euo pipefail
@@ -86,6 +88,8 @@ echo "→ migration B (core instrumentada)…"
 P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260605130000_param_auto_core.sql"
 echo "→ migration C (wrapper + revert/pin + cron)…"
 P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260605140000_param_auto_wrapper_revert_cron.sql"
+echo "→ migration D (recalibra fusível: dropa cobertura, no-op antes do fusível, guard de base)…"
+P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260605150000_param_auto_fusivel_calibracao.sql"
 
 echo "→ seed dos cenários (view controlada + sku_parametros + pins + estoque/custo)…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/seed-param-auto.sql"
@@ -118,11 +122,13 @@ BEGIN
   SELECT estoque_maximo INTO r FROM public.sku_parametros WHERE sku_codigo_omie=1002;
   ASSERT r.estoque_maximo=100, format('B preservou FALHOU: max=% (esperado 100, não 400)', r.estoque_maximo);
 
-  -- C: segurado (cobertura); config preservada
-  SELECT status INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1003';
-  ASSERT r.status='segurado', format('C FALHOU: status=% (esperado segurado)', r.status);
+  -- C: GIRO LENTO inalterado → sem_mudanca (NÃO loga). Prova que o gatilho de cobertura morreu:
+  --    demanda 1/dia + máx 200 daria 200d de cobertura (>120) → a versão antiga seguraria; agora
+  --    máx==antes e ≤3× → no-op. config preservada (200).
+  SELECT count(*) INTO n FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1003';
+  ASSERT n=0, 'C FALHOU: giro lento no-op NÃO deve logar (cobertura removida → sem_mudanca, não segurado)';
   SELECT estoque_maximo INTO r FROM public.sku_parametros WHERE sku_codigo_omie=1003;
-  ASSERT r.estoque_maximo=100, format('C preservou FALHOU: max=%', r.estoque_maximo);
+  ASSERT r.estoque_maximo=200, format('C preservou FALHOU: max=% (esperado 200)', r.estoque_maximo);
 
   -- D: bloqueado_validacao (máx<pp); config preservada (120, não 40)
   SELECT status INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1004';
@@ -153,11 +159,12 @@ BEGIN
   SELECT count(*) INTO n FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1007';
   ASSERT n=0, 'G FALHOU: sem_mudanca NÃO deve gerar linha de log';
 
-  -- H: fusível VENCE o pin (jump>3x E pin bate) → segurado (não pinado); pin permanece
+  -- H: pin bate (50/400) E salto>3x. Precedência nova: PIN (passo 4) vem ANTES do fusível (passo 6)
+  --    → pinado (não segurado). Pin permanece (pinado não limpa pin).
   SELECT status INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1008';
-  ASSERT r.status='segurado', format('H FALHOU: status=% (esperado segurado: fusível vence o pin)', r.status);
+  ASSERT r.status='pinado', format('H FALHOU: status=% (esperado pinado: pin vence o fusível na nova precedência)', r.status);
   SELECT count(*) INTO n FROM public.reposicao_param_pin WHERE sku_codigo_omie='1008';
-  ASSERT n=1, 'H pin FALHOU: pin de H deveria permanecer (segurado não limpa pin)';
+  ASSERT n=1, 'H pin FALHOU: pin de H deveria permanecer (pinado não limpa pin)';
 
   -- I: habilitado=false → config aplicada (sug != antes) MAS NÃO logado (escopo do log = motor)
   SELECT count(*) INTO n FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1009';
@@ -171,31 +178,45 @@ BEGIN
   SELECT estoque_maximo INTO r FROM public.sku_parametros WHERE sku_codigo_omie=1010;
   ASSERT r.estoque_maximo=145, format('J config FALHOU: max=% (esperado 145)', r.estoque_maximo);
 
+  -- K: BASE NULL (primeira parametrização) + sugestão coerente → bloqueado_validacao (cold-start manual).
+  --    config preservada (NULL — não auto-aplica primeiro parâmetro sem baseline pra checar).
+  SELECT status INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1011';
+  ASSERT r.status='bloqueado_validacao', format('K FALHOU: status=% (esperado bloqueado_validacao: base NULL = cold-start)', r.status);
+  SELECT estoque_maximo INTO r FROM public.sku_parametros WHERE sku_codigo_omie=1011;
+  ASSERT r.estoque_maximo IS NULL, format('K preservou FALHOU: max=% (esperado NULL — não aplica cold-start)', r.estoque_maximo);
+
+  -- L: QUEDA do máximo 120→4 (pp 50→2) → APLICADO (fusível é upward-only; queda nunca segura).
+  SELECT status INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1012';
+  ASSERT r.status='aplicado', format('L FALHOU: status=% (esperado aplicado: queda do máximo não é segurada)', r.status);
+  SELECT ponto_pedido, estoque_maximo INTO r FROM public.sku_parametros WHERE sku_codigo_omie=1012;
+  ASSERT r.ponto_pedido=2 AND r.estoque_maximo=4, format('L config FALHOU: pp=% max=% (esperado 2/4)', r.ponto_pedido, r.estoque_maximo);
+
   -- IMPACTO best-effort:
   -- A: Δqtde 20 × cmc 10 = 200, custo_fonte=cmc
   SELECT impacto_rs, custo_fonte, qtde_compra_antes, qtde_compra_depois INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1001';
   ASSERT r.impacto_rs=200, format('A impacto FALHOU: impacto=% (esperado 200)', r.impacto_rs);
   ASSERT r.custo_fonte='cmc', format('A custo_fonte FALHOU: % (esperado cmc)', r.custo_fonte);
   ASSERT r.qtde_compra_antes=90 AND r.qtde_compra_depois=110, format('A qtde FALHOU: antes=% depois=%', r.qtde_compra_antes, r.qtde_compra_depois);
-  -- C: cmc=0 → custo via preco_medio (fallback)
-  SELECT custo_fonte INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1003';
-  ASSERT r.custo_fonte='preco_medio', format('C custo_fonte FALHOU: % (esperado preco_medio fallback)', r.custo_fonte);
   -- B: segurado → Δqtde 0 → impacto 0 (com custo presente)
   SELECT impacto_rs INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1002';
   ASSERT r.impacto_rs=0, format('B impacto FALHOU: % (esperado 0; segurado não muda a compra)', r.impacto_rs);
+  -- L: aplicado sem inventory_position/estoque → custo ausente → impacto_rs NULL (desconhecido, não 0)
+  SELECT impacto_rs INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1012';
+  ASSERT r.impacto_rs IS NULL, format('L impacto FALHOU: % (esperado NULL — custo ausente = desconhecido)', r.impacto_rs);
 
   -- Totais do run: log escopado ao motor (I/J aplicam config mas NÃO contam aqui).
   SELECT total_aplicados, total_segurados, total_pinados, impacto_total_rs, impacto_desconhecido_n
     INTO r FROM public.reposicao_param_auto_run WHERE id=v_run;
-  ASSERT r.total_aplicados=2, format('total_aplicados FALHOU: % (esperado 2: A,F — I/J aplicam mas não logam)', r.total_aplicados);
-  ASSERT r.total_segurados=3, format('total_segurados FALHOU: % (esperado 3: B,C,H)', r.total_segurados);
-  ASSERT r.total_pinados=1, format('total_pinados FALHOU: % (esperado 1: E)', r.total_pinados);
+  ASSERT r.total_aplicados=3, format('total_aplicados FALHOU: % (esperado 3: A,F,L — I/J aplicam mas não logam)', r.total_aplicados);
+  ASSERT r.total_segurados=1, format('total_segurados FALHOU: % (esperado 1: B — cobertura removida, C virou no-op)', r.total_segurados);
+  ASSERT r.total_pinados=2, format('total_pinados FALHOU: % (esperado 2: E,H — pin vence o fusível)', r.total_pinados);
   -- impacto_total_rs = soma dos impactos conhecidos: A=200, F=? (pos 30<=70→qtde_depois 150-30=120;
-  --   antes pp 40, máx 100 → 30<=40→qtde_antes 100-30=70; Δ50×cmc10=500) → 200+500=700; B=0(segurado).
+  --   antes pp 40, máx 100 → 30<=40→qtde_antes 100-30=70; Δ50×cmc10=500) → 200+500=700; B=0(segurado);
+  --   L=NULL (não soma).
   ASSERT r.impacto_total_rs=700, format('impacto_total_rs FALHOU: % (esperado 700: A 200 + F 500)', r.impacto_total_rs);
-  ASSERT COALESCE(r.impacto_desconhecido_n,0)=0, format('impacto_desconhecido_n FALHOU: % (esperado 0: A,F têm custo)', r.impacto_desconhecido_n);
+  ASSERT COALESCE(r.impacto_desconhecido_n,0)=1, format('impacto_desconhecido_n FALHOU: % (esperado 1: L aplica sem custo)', r.impacto_desconhecido_n);
 
-  RAISE NOTICE 'OK status/impacto/totais (A aplica · B/C/H seguram · D bloqueia · E pina · F aplica+limpa pin · G sem_mudanca · I/J aplicam sem logar)';
+  RAISE NOTICE 'OK status/impacto/totais (A/F/L aplicam · B segura (3×) · C giro-lento no-op · D bloqueia · E/H pinam · G sem_mudanca · I/J aplicam sem logar · K bloqueia cold-start · L queda aplica)';
 END $$;
 SQL
 
