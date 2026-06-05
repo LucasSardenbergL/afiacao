@@ -4,10 +4,10 @@
  * lift(v, dim) = freq(v | melhores) / freq(v | base)
  *
  * Tratamento de divisão por zero:
- *   Se freq(v | base) == 0, o valor não existe na base → o lift não é calculável
- *   de forma significativa. Optamos por EXCLUIR esses valores do perfil em vez de
- *   atribuir lift infinito, para evitar que raridades da base dominem o score.
- *   (O valor aparece só nos melhores e não na base → lift excluído, não inflado.)
+ *   Se freq(v | base) == 0 (valor presente só nos melhores, ausente na base), o lift
+ *   tenderia a infinito. Em vez disso, retornamos o `tetoLift` — sinaliza alta
+ *   relevância (raro na base, prevalente nos melhores) sem explodir o score. O
+ *   `suporteMin` (>= N ocorrências nos melhores) já filtra ruído antes de chegar aqui.
  *
  * Helper PURO — sem IO, sem imports externos.
  */
