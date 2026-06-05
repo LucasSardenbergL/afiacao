@@ -6,9 +6,12 @@ import { useMinhasTarefas } from '@/hooks/useTarefas';
 import { useRouteContactList } from '@/queries/useRouteContactList';
 import { spBusinessDate } from '@/lib/time/sp-day';
 import { montarEvidencePack } from '@/lib/fila/critica/montar';
-import { buildCriticaInputs, type MetricRowFull, type RotaSinalCliente, type TarefaSinalCliente } from '@/lib/fila/critica/build-inputs';
+import { buildCriticaInputs, type MetricRowFull, type RotaSinalCliente, type TarefaSinalCliente, type WaSlaSinalCliente } from '@/lib/fila/critica/build-inputs';
 import type { AcaoSugerida } from '@/lib/fila/types';
 import type { EvidencePack } from '@/lib/fila/critica/types';
+import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { useWhatsappSla } from '@/queries/useWhatsappSla';
 
 const IN_CHUNK = 200;
 
@@ -38,6 +41,11 @@ export function useCriticaFila(acoes: AcaoSugerida[], topN = 5): Map<string, Evi
     }
     return ids;
   }, [acoes, topN]);
+
+  const { user } = useAuth();
+  const { isImpersonating, effectiveUserId } = useImpersonation();
+  const donoEfetivo = isImpersonating && effectiveUserId ? effectiveUserId : (user?.id ?? null);
+  const slaQ = useWhatsappSla();
 
   const rota = useRouteContactList(workdayIso);
   const tarefas = useMinhasTarefas();
@@ -70,9 +78,13 @@ export function useCriticaFila(acoes: AcaoSugerida[], topN = 5): Map<string, Evi
       descricao: t.descricao,
     }));
 
+    const waSlaSinais: WaSlaSinalCliente[] = (slaQ.data ?? [])
+      .filter(r => r.customer_user_id != null && donoEfetivo != null && r.owner_user_id === donoEfetivo)
+      .map(r => ({ customerUserId: r.customer_user_id as string, minutosUteis: r.minutos_uteis_aguardando, nivel: r.nivel }));
+
     const topAcoes = acoes.filter(a => a.clienteUserId != null && topIds.includes(a.clienteUserId));
-    const inputs = buildCriticaInputs(topAcoes, metricsQ.data ?? [], rotaSinais, tarefaSinais);
+    const inputs = buildCriticaInputs(topAcoes, metricsQ.data ?? [], rotaSinais, tarefaSinais, waSlaSinais);
     for (const input of inputs) result.set(input.clienteUserId, montarEvidencePack(input));
     return result;
-  }, [topIds, acoes, rota.data, tarefas.data, metricsQ.data]);
+  }, [topIds, acoes, rota.data, tarefas.data, metricsQ.data, slaQ.data, donoEfetivo]);
 }

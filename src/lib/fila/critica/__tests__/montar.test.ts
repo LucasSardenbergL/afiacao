@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectRecorrenteSumiu, detectSemResposta, detectTarefaSemProva, detectAltoValorForaRota, montarEvidencePack } from '../montar';
+import { detectRecorrenteSumiu, detectSemResposta, detectTarefaSemProva, detectAltoValorForaRota, detectWaSemResposta, montarEvidencePack } from '../montar';
 import { CRITICA_CFG_DEFAULT, type CriticaInput } from '../types';
 
 const base = (over: Partial<CriticaInput>): CriticaInput => ({
@@ -8,6 +8,7 @@ const base = (over: Partial<CriticaInput>): CriticaInput => ({
   metrica: null,
   rota: null,
   tarefa: null,
+  waSla: null,
   ...over,
 });
 
@@ -146,5 +147,24 @@ describe('montarEvidencePack (composer)', () => {
       rota: { naCallQueue: true, semRespostaRecenteN: 0, ultimoContatoRealHaDias: 1 },
     }));
     for (const c of pack.contradicoes) expect(c.evidencias.length).toBeGreaterThan(0);
+  });
+});
+
+describe('detectWaSemResposta', () => {
+  it('dispara só em nivel vermelho (>30min úteis); amarelo/verde/null não', () => {
+    const r = detectWaSemResposta(base({ waSla: { minutosUteis: 45, nivel: 'vermelho' } }), CRITICA_CFG_DEFAULT);
+    expect(r.contradicao?.chave).toBe('wa_sem_resposta');
+    expect(r.contradicao?.confianca).toBe('alta');
+    expect(r.sinais[0].tipo).toBe('whatsapp_sla');
+    expect(r.sinais[0].texto).toContain('45');
+    expect(detectWaSemResposta(base({ waSla: { minutosUteis: 20, nivel: 'amarelo' } }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
+    expect(detectWaSemResposta(base({ waSla: null }), CRITICA_CFG_DEFAULT).contradicao).toBeNull();
+  });
+});
+
+describe('montarEvidencePack inclui wa_sem_resposta', () => {
+  it('compõe a contradição de WhatsApp', () => {
+    const pack = montarEvidencePack(base({ waSla: { minutosUteis: 60, nivel: 'vermelho' } }));
+    expect(pack.contradicoes.map(c => c.chave)).toContain('wa_sem_resposta');
   });
 });

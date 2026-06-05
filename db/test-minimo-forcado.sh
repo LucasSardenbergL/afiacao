@@ -161,6 +161,11 @@ BEGIN
   RAISE NOTICE 'OK CHECK aceita >0 finito e NULL';
 END $$;
 
+-- NOTA: a interação mínimo×promoção forward_buying (Codex P1) NÃO é coberta aqui — a função
+-- aplicar_promocoes_no_ciclo do snapshot usa um padrão SQL inválido (JOIN ON tabela-alvo) que não
+-- roda em PG17 e diverge da migration-fonte → tratada como follow-up (requer pg_get_functiondef de
+-- prod via Lovable antes de qualquer CREATE OR REPLACE). Ver spec §Follow-ups.
+
 SELECT 'TODOS OS TESTES PG17 PASSARAM ✓' AS resultado;
 SQL
 echo ""
