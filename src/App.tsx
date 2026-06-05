@@ -140,6 +140,7 @@ const ReposicaoSessionLayout = lazy(() => import("./components/reposicao/Reposic
 const LegacyCockpitRedirect = lazy(() => import("./components/reposicao/LegacyCockpitRedirect"));
 const AdminReposicaoCadastros = lazy(() => import("./pages/AdminReposicaoCadastros"));
 const AdminReposicaoEmbalagem = lazy(() => import("./pages/AdminReposicaoEmbalagem"));
+const ParamAutoMudancas = lazy(() => import("./pages/ParamAutoMudancas"));
 const AdminEstoqueRecebimento = lazy(() => import("./pages/AdminEstoqueRecebimento"));
 const AdminEstoquePicking = lazy(() => import("./pages/AdminEstoquePicking"));
 const TouchPickingView = lazy(() => import("./pages/picking/TouchPickingView"));
@@ -358,6 +359,7 @@ const App = () => (
                 <Route path="admin/reposicao/parametros" element={<Navigate to="/admin/reposicao/sessao/parametros" replace />} />
                 <Route path="admin/reposicao/cadastros" element={<AdminReposicaoCadastros />} />
                 <Route path="admin/reposicao/embalagem" element={<AdminReposicaoEmbalagem />} />
+                <Route path="admin/reposicao/mudancas-automaticas" element={<ParamAutoMudancas />} />
                 <Route path="admin/estoque/recebimento" element={<AdminEstoqueRecebimento />} />
                 <Route path="admin/estoque/picking" element={<AdminEstoquePicking />} />
                 <Route path="admin/estoque/picking/mobile" element={<TouchPickingView />} />
