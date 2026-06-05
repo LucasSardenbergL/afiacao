@@ -30,7 +30,7 @@ ALTER TABLE public.sku_parametros ADD COLUMN IF NOT EXISTS minimo_forcado_manual
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sku_parametros_minimo_forcado_valido') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sku_parametros_minimo_forcado_valido' AND conrelid = 'public.sku_parametros'::regclass) THEN
     ALTER TABLE public.sku_parametros
       ADD CONSTRAINT sku_parametros_minimo_forcado_valido
       -- > 0 E < 'Infinity'::numeric. Em Postgres NaN ordena ACIMA de Infinity, então
