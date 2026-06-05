@@ -299,7 +299,6 @@ export function ProvasParaAuditar() {
                       <div className="mt-1.5 flex items-center gap-1.5">
                         <Badge variant="outline" className="text-xs font-mono">
                           {prova.comprovacao_leitura?.toLocaleString('pt-BR')}
-                          {prova.tipo_comprovacao?.includes('leitura') && ''}
                         </Badge>
                         <span className="text-xs text-muted-foreground">leitura</span>
                       </div>
