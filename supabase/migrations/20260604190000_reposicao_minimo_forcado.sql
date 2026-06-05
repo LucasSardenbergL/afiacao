@@ -30,7 +30,7 @@ ALTER TABLE public.sku_parametros ADD COLUMN IF NOT EXISTS minimo_forcado_manual
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sku_parametros_minimo_forcado_valido') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sku_parametros_minimo_forcado_valido' AND conrelid = 'public.sku_parametros'::regclass) THEN
     ALTER TABLE public.sku_parametros
       ADD CONSTRAINT sku_parametros_minimo_forcado_valido
       -- > 0 E < 'Infinity'::numeric. Em Postgres NaN ordena ACIMA de Infinity, então
@@ -238,12 +238,14 @@ prazo AS (
 SELECT
   o.*,
   sp.lote_minimo_fornecedor,
-  sp.minimo_forcado_manual,
   sp.fornecedor_codigo_omie,
   p.prazo_padrao_perc,
   f.frete_perc_valor,
   f.frete_fixo,
-  f.frete_taxa_pedido
+  f.frete_taxa_pedido,
+  -- [Codex P1] minimo_forcado_manual ao FIM do SELECT: CREATE OR REPLACE VIEW só permite ADICIONAR
+  -- coluna no fim (não reordenar) — inseri-la no meio faria a migration falhar em prod.
+  sp.minimo_forcado_manual
 FROM v_oportunidade_economica_hoje o
 LEFT JOIN sku_parametros sp
   ON sp.empresa = o.empresa AND sp.sku_codigo_omie = o.sku_codigo_omie
