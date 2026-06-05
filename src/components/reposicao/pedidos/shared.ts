@@ -14,6 +14,8 @@ export const statusMeta: Record<string, { label: string; variant: 'default' | 's
   aprovado_aguardando_disparo: { label: 'Aprovado', variant: 'secondary', className: 'bg-status-info/15 text-status-info border-status-info/30' },
   bloqueado_guardrail: { label: 'Bloqueado', variant: 'destructive' },
   disparado: { label: 'Disparado', variant: 'secondary', className: 'bg-status-success/15 text-status-success border-status-success/30' },
+  disparado_simulado: { label: 'Disparo simulado', variant: 'secondary', className: 'bg-muted text-muted-foreground border-border' },
+  falha_envio: { label: 'Falha no envio', variant: 'destructive' },
   cancelado: { label: 'Cancelado', variant: 'outline' },
   cancelado_humano: { label: 'Cancelado (vazio)', variant: 'outline' },
   expirado_sem_aprovacao: { label: 'Expirado sem aprovação', variant: 'secondary', className: 'bg-muted text-muted-foreground border-border' },
