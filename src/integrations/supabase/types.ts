@@ -8498,6 +8498,155 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_param_auto_log: {
+        Row: {
+          classe_consolidada: string | null
+          cobertura_antes: number | null
+          cobertura_depois: number | null
+          criado_em: string
+          custo_fonte: string | null
+          custo_unitario: number | null
+          demanda_media_diaria: number | null
+          empresa: string
+          estoque_maximo_antes: number | null
+          estoque_maximo_depois: number | null
+          estoque_minimo_antes: number | null
+          estoque_minimo_depois: number | null
+          estoque_seguranca_antes: number | null
+          estoque_seguranca_depois: number | null
+          id: string
+          impacto_rs: number | null
+          lt_medio_dias_uteis: number | null
+          ponto_pedido_antes: number | null
+          ponto_pedido_depois: number | null
+          qtde_compra_antes: number | null
+          qtde_compra_depois: number | null
+          revertido_em: string | null
+          revertido_por: string | null
+          run_id: string
+          sku_codigo_omie: string
+          sku_descricao: string | null
+          status: string
+          z_score: number | null
+        }
+        Insert: {
+          classe_consolidada?: string | null
+          cobertura_antes?: number | null
+          cobertura_depois?: number | null
+          criado_em?: string
+          custo_fonte?: string | null
+          custo_unitario?: number | null
+          demanda_media_diaria?: number | null
+          empresa: string
+          estoque_maximo_antes?: number | null
+          estoque_maximo_depois?: number | null
+          estoque_minimo_antes?: number | null
+          estoque_minimo_depois?: number | null
+          estoque_seguranca_antes?: number | null
+          estoque_seguranca_depois?: number | null
+          id?: string
+          impacto_rs?: number | null
+          lt_medio_dias_uteis?: number | null
+          ponto_pedido_antes?: number | null
+          ponto_pedido_depois?: number | null
+          qtde_compra_antes?: number | null
+          qtde_compra_depois?: number | null
+          revertido_em?: string | null
+          revertido_por?: string | null
+          run_id: string
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+          status: string
+          z_score?: number | null
+        }
+        Update: {
+          classe_consolidada?: string | null
+          cobertura_antes?: number | null
+          cobertura_depois?: number | null
+          criado_em?: string
+          custo_fonte?: string | null
+          custo_unitario?: number | null
+          demanda_media_diaria?: number | null
+          empresa?: string
+          estoque_maximo_antes?: number | null
+          estoque_maximo_depois?: number | null
+          estoque_minimo_antes?: number | null
+          estoque_minimo_depois?: number | null
+          estoque_seguranca_antes?: number | null
+          estoque_seguranca_depois?: number | null
+          id?: string
+          impacto_rs?: number | null
+          lt_medio_dias_uteis?: number | null
+          ponto_pedido_antes?: number | null
+          ponto_pedido_depois?: number | null
+          qtde_compra_antes?: number | null
+          qtde_compra_depois?: number | null
+          revertido_em?: string | null
+          revertido_por?: string | null
+          run_id?: string
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+          status?: string
+          z_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reposicao_param_auto_log_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "reposicao_param_auto_run"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reposicao_param_auto_run: {
+        Row: {
+          concluido_em: string | null
+          criado_em: string
+          data_negocio_brt: string
+          empresa: string
+          id: string
+          impacto_desconhecido_n: number | null
+          impacto_total_rs: number | null
+          resumo_enviado_em: string | null
+          status: string
+          total_aplicados: number | null
+          total_avaliados: number | null
+          total_pinados: number | null
+          total_segurados: number | null
+        }
+        Insert: {
+          concluido_em?: string | null
+          criado_em?: string
+          data_negocio_brt: string
+          empresa: string
+          id?: string
+          impacto_desconhecido_n?: number | null
+          impacto_total_rs?: number | null
+          resumo_enviado_em?: string | null
+          status?: string
+          total_aplicados?: number | null
+          total_avaliados?: number | null
+          total_pinados?: number | null
+          total_segurados?: number | null
+        }
+        Update: {
+          concluido_em?: string | null
+          criado_em?: string
+          data_negocio_brt?: string
+          empresa?: string
+          id?: string
+          impacto_desconhecido_n?: number | null
+          impacto_total_rs?: number | null
+          resumo_enviado_em?: string | null
+          status?: string
+          total_aplicados?: number | null
+          total_avaliados?: number | null
+          total_pinados?: number | null
+          total_segurados?: number | null
+        }
+        Relationships: []
+      }
       reposicao_param_limbo_log: {
         Row: {
           criado_em: string
@@ -8519,6 +8668,33 @@ export type Database = {
           id?: never
           limbo_count?: number
           medido_em?: string
+        }
+        Relationships: []
+      }
+      reposicao_param_pin: {
+        Row: {
+          empresa: string
+          estoque_maximo_rejeitado: number
+          pinado_em: string
+          pinado_por: string | null
+          ponto_pedido_rejeitado: number
+          sku_codigo_omie: string
+        }
+        Insert: {
+          empresa: string
+          estoque_maximo_rejeitado: number
+          pinado_em?: string
+          pinado_por?: string | null
+          ponto_pedido_rejeitado: number
+          sku_codigo_omie: string
+        }
+        Update: {
+          empresa?: string
+          estoque_maximo_rejeitado?: number
+          pinado_em?: string
+          pinado_por?: string | null
+          ponto_pedido_rejeitado?: number
+          sku_codigo_omie?: string
         }
         Relationships: []
       }
@@ -13852,6 +14028,10 @@ export type Database = {
         }[]
       }
       afiacao_os_sync_kick: { Args: never; Returns: Json }
+      aplicar_parametros_automatico_diario: {
+        Args: { p_empresa: string }
+        Returns: string
+      }
       aplicar_promocoes_no_ciclo: {
         Args: { p_data_ciclo?: string; p_empresa?: string }
         Returns: {
@@ -13897,7 +14077,7 @@ export type Database = {
         }[]
       }
       atualizar_parametros_numericos_skus: {
-        Args: { p_empresa: string }
+        Args: { p_empresa: string; p_run_id?: string }
         Returns: number
       }
       auditar_tarefa: {
@@ -13979,6 +14159,10 @@ export type Database = {
           volume_max: number
           volume_min: number
         }[]
+      }
+      despinar_parametro: {
+        Args: { p_empresa: string; p_sku: string }
+        Returns: boolean
       }
       detectar_outliers_empresa: {
         Args: { p_empresa?: string }
@@ -14425,6 +14609,7 @@ export type Database = {
         }
         Returns: Json
       }
+      reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
       reposicao_param_limbo_watchdog: { Args: never; Returns: undefined }
       reprocessar_sku_items_via_raw_data: {
         Args: { p_empresa: string }
@@ -14446,6 +14631,14 @@ export type Database = {
       resolver_sku_por_codigo_fornecedor: {
         Args: { p_codigo_fornecedor: string; p_empresa: string }
         Returns: Json
+      }
+      reverter_parametro_auto: { Args: { p_log_id: string }; Returns: string }
+      reverter_run_auto: {
+        Args: { p_run_id: string }
+        Returns: {
+          conflitos: number
+          revertidos: number
+        }[]
       }
       rodar_bateria_simulacao: {
         Args: { p_empresa: string; p_top_n?: number }
