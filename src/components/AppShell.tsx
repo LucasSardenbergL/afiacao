@@ -105,6 +105,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: TrendingUp, label: 'Mercado', path: '/admin/reposicao/sessao/mercado', managerOnly: true },
       { icon: Settings, label: 'Parâmetros', path: '/admin/reposicao/sessao/parametros', managerOnly: true },
       { icon: Database, label: 'Cadastros', path: '/admin/reposicao/cadastros', managerOnly: true },
+      { icon: Package, label: 'Embalagem econômica', path: '/admin/reposicao/embalagem', managerOnly: true },
     ],
   },
   {
