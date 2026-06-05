@@ -115,7 +115,7 @@ export function isOmiePedidoJaCadastrado(msg: string | null | undefined): boolea
   const m = msg.toLowerCase();
   // "pedido ... já/ja (foi) cadastrad..." | "...integra... cadastrad..." | "already registered/exists"
   if (/j[áa]\s+(foi\s+)?cadastrad/.test(m)) return true;
-  if (/integra\w*/.test(m) && /cadastrad/.test(m)) return true;
+  if (/c[óo]digo\s+de\s+integra\w*/.test(m) && /cadastrad/.test(m)) return true;
   if (/already\s+(registered|exists)/.test(m)) return true;
   return false;
 }
@@ -173,7 +173,7 @@ function isOmiePedidoJaCadastrado(msg: string | null | undefined): boolean {
   if (!msg) return false;
   const m = msg.toLowerCase();
   if (/j[áa]\s+(foi\s+)?cadastrad/.test(m)) return true;
-  if (/integra\w*/.test(m) && /cadastrad/.test(m)) return true;
+  if (/c[óo]digo\s+de\s+integra\w*/.test(m) && /cadastrad/.test(m)) return true;
   if (/already\s+(registered|exists)/.test(m)) return true;
   return false;
 }
@@ -213,30 +213,38 @@ Substituir o bloco `catch (e) { ... }` de `processarPedido` (atual `:711-725`) p
       } catch (e2) {
         consultaErro = e2 instanceof Error ? e2.message : String(e2);
       }
-      await db
-        .from("pedido_compra_sugerido")
-        .update({
-          omie_pedido_compra_id: existente?.id ?? null,
-          omie_pedido_compra_numero: existente?.numero ?? null,
-          omie_registrado_em: new Date().toISOString(),
-          status: "disparado",
-          resposta_canal: {
-            reconciliado: true,
-            motivo: "ja_cadastrado_omie",
-            erro_original: msg,
-            consulta_falhou: consultaErro,
-            ts: new Date().toISOString(),
-          },
-          atualizado_em: new Date().toISOString(),
-        })
-        .eq("id", pedido.id);
+      // SALVAGUARDA (code review): só reconcilia como 'disparado' se ConsultarPedCompra
+      // CONFIRMAR que o PV existe. Consulta vazia (false-positive do matcher) ou erro →
+      // NÃO marcar disparado; cair em falha_envio re-tentável. Nunca marca um disparo
+      // falho como sucesso.
+      if (existente) {
+        await db
+          .from("pedido_compra_sugerido")
+          .update({
+            omie_pedido_compra_id: existente.id,
+            omie_pedido_compra_numero: existente.numero,
+            omie_registrado_em: new Date().toISOString(),
+            status: "disparado",
+            resposta_canal: {
+              reconciliado: true,
+              motivo: "ja_cadastrado_omie",
+              erro_original: msg,
+              ts: new Date().toISOString(),
+            },
+            atualizado_em: new Date().toISOString(),
+          })
+          .eq("id", pedido.id);
+        console.warn(
+          `[disparar-pedidos] Pedido ${pedido.id}: confirmado no Omie (cCodIntPed) → reconciliado como disparado (id=${existente.id})`,
+        );
+        result.status_final = "disparado";
+        result.omie_id = existente.id;
+        result.omie_numero = existente.numero;
+        return result;
+      }
       console.warn(
-        `[disparar-pedidos] Pedido ${pedido.id}: já existia no Omie (cCodIntPed) → reconciliado como disparado (id=${existente?.id ?? "?"})`,
+        `[disparar-pedidos] Pedido ${pedido.id}: "já cadastrado" NÃO confirmado (consulta ${consultaErro ? "falhou: " + consultaErro : "vazia"}) → falha_envio re-tentável`,
       );
-      result.status_final = "disparado";
-      result.omie_id = existente?.id ?? "";
-      result.omie_numero = existente?.numero ?? "";
-      return result;
     }
     console.error(`[disparar-pedidos] Falha pedido ${pedido.id}:`, msg);
     await db
@@ -288,26 +296,24 @@ Logo após o bloco `if (statusPortalAtual === "aceito_portal_sem_protocolo" || .
   }
 ```
 
-- [ ] **Step 2: Tornar o UPDATE de pré-claim condicional**
+- [ ] **Step 2: Pré-claim condicional via RPC SQL pura** (migration nova)
 
-Substituir o `await db.from("pedido_compra_sugerido").update({ status_envio_portal: "pendente_envio_portal", ... }).eq("id", pedidoId);` (atual `:429-440`) por uma versão condicional que NÃO rebaixa um envio concorrente:
+> ⚠️ **REVISADO na execução (code-quality-review):** a 1ª versão usava `.update(...).neq("status_envio_portal",...).select()` via PostgREST. O review pegou um NULL-safety gap; ao corrigir, o §7/#592 lembrou que **filtrar `status_envio_portal` num `.update().select()` pela API REST QUEBRA (42703** "column does not exist"; incidente de 324 pedidos presos). Lição do projeto: claims dessa coluna = **RPC SQL pura**. O pré-claim virou a RPC `iniciar_envio_portal_pre_claim` (migration `20260605130000`), validada em PG17 local (5 casos: claim/não-rebaixa/NULL-coalesce/erro_retentavel/inexistente).
+
+Criar `supabase/migrations/20260605130000_iniciar_envio_portal_pre_claim.sql` (RPC `SECURITY DEFINER`: `UPDATE ... SET status_envio_portal='pendente_envio_portal', portal_erro=NULL, portal_proximo_retry_em=now()+'15 min' WHERE id=$1 AND COALESCE(status_envio_portal,'nao_aplicavel')<>'enviando_portal' RETURNING true` → `RETURN COALESCE(v_claimed,false)`; REVOKE de PUBLIC/anon/authenticated, GRANT a service_role). Substituir o UPDATE incondicional em `iniciarEnvioPortalSayerlack` por:
 
 ```ts
-  // Inicia em pendente para o portal aceitar — condicional: se uma execução
-  // concorrente já marcou enviando_portal entre o pré-check e aqui, NÃO rebaixar.
-  const { data: claimRow } = await db
-    .from("pedido_compra_sugerido")
-    .update({
-      status_envio_portal: "pendente_envio_portal",
-      portal_erro: null,
-      portal_proximo_retry_em: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    })
-    .eq("id", pedidoId)
-    .neq("status_envio_portal", "enviando_portal")
-    .select("id")
-    .maybeSingle();
-  if (!claimRow) {
-    console.warn(`[disparar-pedidos] Pedido ${pedidoId}: pré-claim do portal perdido (concorrência) — não re-enfileirado`);
+  // Pré-claim do portal via RPC SQL pura — NÃO via PostgREST .update().select()
+  // (o #592/§7 mostrou que filtrar status_envio_portal num UPDATE pela REST quebra: 42703).
+  const { data: claimed, error: claimErr } = await db.rpc(
+    "iniciar_envio_portal_pre_claim",
+    { p_pedido_id: pedidoId },
+  );
+  if (claimErr) {
+    throw new Error(`Pré-claim do portal falhou: ${claimErr.message}`);
+  }
+  if (!claimed) {
+    console.warn(`[disparar-pedidos] Pedido ${pedidoId}: pré-claim do portal perdido (concorrência/estado) — não re-enfileirado`);
     return { state: "queued", accepted: true };
   }
 ```
@@ -343,10 +349,10 @@ gh pr create --title "feat(reposição): idempotência do disparo — reconcilia
 Fase 1 · sub-PR 1 do programa de unificação da tela de pedidos de compra.
 Spec: docs/superpowers/specs/2026-06-05-unificacao-pedidos-compra-design.md §4.3
 
-- (A) Omie: erro "já cadastrado" → reconciliação (cCodIntPed=AFI-<id> é a chave; o Omie rejeita duplicado) — para de virar falha_envio.
-- (B) Portal: pré-check enviando_portal + UPDATE de pré-claim condicional (não rebaixa envio em voo).
+- (A) Omie: erro "já cadastrado" → reconciliação (cCodIntPed=AFI-<id> é a chave; o Omie rejeita duplicado) — para de virar falha_envio. Salvaguarda: só marca disparado se ConsultarPedCompra CONFIRMA; flag reconciliado suprime double-email ao fornecedor.
+- (B) Portal: pré-check enviando_portal + pré-claim via RPC SQL pura (não rebaixa envio em voo; evita o 42703 do PostgREST; cobre NULL via COALESCE).
 
-Edge-only, **sem migration**. ⚠️ **Requer deploy manual do `disparar-pedidos-aprovados` via chat do Lovable APÓS o merge** (verbatim da main).
+⚠️ **Requer (APÓS o merge): (1) migration manual `20260605130000_iniciar_envio_portal_pre_claim.sql` no SQL Editor; (2) deploy do `disparar-pedidos-aprovados` via chat do Lovable (verbatim da main).**
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
