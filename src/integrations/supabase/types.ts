@@ -7476,6 +7476,36 @@ export type Database = {
           },
         ]
       }
+      posthog_error_webhook_log: {
+        Row: {
+          action: string | null
+          alerta_id: number | null
+          criado_em: string
+          dedupe_key: string
+          id: number
+          issue_id: string | null
+          payload_raw: string | null
+        }
+        Insert: {
+          action?: string | null
+          alerta_id?: number | null
+          criado_em?: string
+          dedupe_key: string
+          id?: never
+          issue_id?: string | null
+          payload_raw?: string | null
+        }
+        Update: {
+          action?: string | null
+          alerta_id?: number | null
+          criado_em?: string
+          dedupe_key?: string
+          id?: never
+          issue_id?: string | null
+          payload_raw?: string | null
+        }
+        Relationships: []
+      }
       priority_score_log: {
         Row: {
           calculated_at: string
@@ -9132,6 +9162,51 @@ export type Database = {
         }
         Relationships: []
       }
+      sku_embalagem_equivalencia: {
+        Row: {
+          ativo: boolean
+          criado_em: string
+          criado_por: string | null
+          empresa: string
+          fator_para_base: number
+          fornecedor_nome: string | null
+          grupo_id: string
+          id: number
+          sku_codigo_omie: string
+          unidade_base: string
+          vigente_ate: string | null
+          vigente_desde: string
+        }
+        Insert: {
+          ativo?: boolean
+          criado_em?: string
+          criado_por?: string | null
+          empresa: string
+          fator_para_base: number
+          fornecedor_nome?: string | null
+          grupo_id?: string
+          id?: never
+          sku_codigo_omie: string
+          unidade_base: string
+          vigente_ate?: string | null
+          vigente_desde?: string
+        }
+        Update: {
+          ativo?: boolean
+          criado_em?: string
+          criado_por?: string | null
+          empresa?: string
+          fator_para_base?: number
+          fornecedor_nome?: string | null
+          grupo_id?: string
+          id?: never
+          sku_codigo_omie?: string
+          unidade_base?: string
+          vigente_ate?: string | null
+          vigente_desde?: string
+        }
+        Relationships: []
+      }
       sku_estoque_atual: {
         Row: {
           empresa: string
@@ -9532,6 +9607,60 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      sku_preco_fornecedor_capturado: {
+        Row: {
+          capturado_em: string
+          criado_em: string
+          criado_por: string | null
+          empresa: string
+          fonte: string
+          fornecedor_nome: string | null
+          id: number
+          moeda: string
+          observacao: string | null
+          preco: number
+          preco_tipo: string
+          run_id: string | null
+          sku_codigo_omie: string
+          status: string
+          validade_operacional_ate: string | null
+        }
+        Insert: {
+          capturado_em?: string
+          criado_em?: string
+          criado_por?: string | null
+          empresa: string
+          fonte: string
+          fornecedor_nome?: string | null
+          id?: never
+          moeda?: string
+          observacao?: string | null
+          preco: number
+          preco_tipo?: string
+          run_id?: string | null
+          sku_codigo_omie: string
+          status?: string
+          validade_operacional_ate?: string | null
+        }
+        Update: {
+          capturado_em?: string
+          criado_em?: string
+          criado_por?: string | null
+          empresa?: string
+          fonte?: string
+          fornecedor_nome?: string | null
+          id?: never
+          moeda?: string
+          observacao?: string | null
+          preco?: number
+          preco_tipo?: string
+          run_id?: string | null
+          sku_codigo_omie?: string
+          status?: string
+          validade_operacional_ate?: string | null
+        }
+        Relationships: []
       }
       sku_status_omie: {
         Row: {
@@ -13774,6 +13903,21 @@ export type Database = {
         Returns: number
       }
       end_impersonation: { Args: { p_audit_id: string }; Returns: undefined }
+      enfileirar_erro_app: {
+        Args: {
+          p_action: string
+          p_cap?: number
+          p_dedupe_key: string
+          p_issue_id: string
+          p_lista_url: string
+          p_mensagem: string
+          p_metadata: Json
+          p_payload_raw: string
+          p_rollup_key: string
+          p_titulo: string
+        }
+        Returns: Json
+      }
       ensure_picking_task_for_sales_order: {
         Args: { p_sales_order_id: string }
         Returns: Json

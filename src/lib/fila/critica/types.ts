@@ -2,13 +2,14 @@
 // Motor "Crítica da Fila" (v1 determinístico). Tipos puros, sem dependência de rede.
 
 export type SeveridadeSinal = 'info' | 'atencao' | 'critico';
-export type TipoSinal = 'order_delta' | 'rota_outcome' | 'tarefa_estado';
+export type TipoSinal = 'order_delta' | 'rota_outcome' | 'tarefa_estado' | 'whatsapp_sla';
 export type Confianca = 'alta' | 'media' | 'baixa';
 export type ChaveContradicao =
   | 'recorrente_sumiu'
   | 'sem_resposta_repetido'
   | 'tarefa_feita_sem_prova'
-  | 'alto_valor_fora_rota';
+  | 'alto_valor_fora_rota'
+  | 'wa_sem_resposta';
 
 /** Um fato determinístico do exhaust, atado à sua fonte (anti-alucinação). */
 export interface SinalVoz {
@@ -52,12 +53,17 @@ export interface TarefaCliente {
   temSugestaoPendente: boolean;
   descricao: string;
 }
+export interface WaSlaCliente {
+  minutosUteis: number;
+  nivel: 'verde' | 'amarelo' | 'vermelho'; // espelha SlaNivel; só 'vermelho' dispara
+}
 export interface CriticaInput {
   clienteUserId: string;
   clienteNome: string | null;
   metrica: MetricaCliente | null; // null = sem linha em customer_metrics_mv
   rota: RotaCliente | null; // null = cadência indisponível (leitura de log falhou)
   tarefa: TarefaCliente | null; // null = sem tarefa atrelada a este cliente
+  waSla: WaSlaCliente | null; // null = sem breach de WhatsApp aberto p/ este cliente (ou SLA não lido)
 }
 
 /** Resultado de um detector individual. */

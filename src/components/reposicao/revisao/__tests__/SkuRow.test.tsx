@@ -16,7 +16,7 @@ function row(p: Partial<RowWithPrice>): RowWithPrice {
     demanda_dias_com_movimento: 40, demanda_total_90d: 270, valor_vendido_90d: 9000,
     lt_medio_dias_uteis: 7, lt_desvio_padrao_dias: 2, lt_p95_dias: 12, lt_n_observacoes: 8,
     fonte_leadtime: "historico", estoque_minimo: 10, ponto_pedido: 20, estoque_maximo: 40,
-    estoque_seguranca: 5, z_score: 1.65, cobertura_alvo_dias: 30, aplicar_no_omie: false,
+    estoque_seguranca: 5, minimo_forcado_manual: null, z_score: 1.65, cobertura_alvo_dias: 30, aplicar_no_omie: false,
     aprovado_em: null, aprovado_por: null, justificativa_aprovacao: null, ultima_atualizacao_calculo: null,
     preco_compra_real: 18.5, preco_venda_medio: 30, fonte_preco: "omie", read_only: false,
     ...p,

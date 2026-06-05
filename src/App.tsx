@@ -92,15 +92,9 @@ const GovernanceCompanies = lazy(() => import("./pages/GovernanceCompanies"));
 const AIops = lazy(() => import("./pages/AIops"));
 const NfeReceipt = lazy(() => import("./pages/NfeReceipt"));
 const TintDashboard = lazy(() => import("./pages/TintDashboard"));
-const TintImport = lazy(() => import("./pages/TintImport"));
-const TintMapping = lazy(() => import("./pages/TintMapping"));
-const TintPricing = lazy(() => import("./pages/TintPricing"));
-const TintFormulas = lazy(() => import("./pages/TintFormulas"));
-const TintCorantes = lazy(() => import("./pages/TintCorantes"));
-const TintIntegrations = lazy(() => import("./pages/TintIntegrations"));
-const TintReconciliation = lazy(() => import("./pages/TintReconciliation"));
-const TintSyncRuns = lazy(() => import("./pages/TintSyncRuns"));
-const TintApiContract = lazy(() => import("./pages/TintApiContract"));
+// Tint standalone (TintImport/Mapping/Pricing/Formulas/Corantes/Integrations/Reconciliation/
+// SyncRuns/ApiContract): import só dentro dos wrappers TintCatalogo/TintIntegracao (abas).
+// As rotas /tintometrico/<tela> antigas viraram redirect pros wrappers (#8).
 const FinanceiroDashboard = lazy(() => import("./pages/FinanceiroDashboard"));
 const FinanceiroSync = lazy(() => import("./pages/FinanceiroSync"));
 const FinanceiroMapping = lazy(() => import("./pages/FinanceiroMapping"));
@@ -145,6 +139,7 @@ const AdminReposicaoSessaoHistorico = lazy(() => import("./pages/AdminReposicaoS
 const ReposicaoSessionLayout = lazy(() => import("./components/reposicao/ReposicaoSessionLayout"));
 const LegacyCockpitRedirect = lazy(() => import("./components/reposicao/LegacyCockpitRedirect"));
 const AdminReposicaoCadastros = lazy(() => import("./pages/AdminReposicaoCadastros"));
+const AdminReposicaoEmbalagem = lazy(() => import("./pages/AdminReposicaoEmbalagem"));
 const AdminEstoqueRecebimento = lazy(() => import("./pages/AdminEstoqueRecebimento"));
 const AdminEstoquePicking = lazy(() => import("./pages/AdminEstoquePicking"));
 const TouchPickingView = lazy(() => import("./pages/picking/TouchPickingView"));
@@ -317,15 +312,18 @@ const App = () => (
                 <Route path="ai-ops" element={<AIops />} />
                 <Route path="nfe-receipt" element={<NfeReceipt />} />
                 <Route path="tintometrico" element={<TintDashboard />} />
-                <Route path="tintometrico/importar" element={<TintImport />} />
-                <Route path="tintometrico/mapeamento" element={<TintMapping />} />
-                <Route path="tintometrico/precos" element={<TintPricing />} />
-                <Route path="tintometrico/formulas" element={<TintFormulas />} />
-                <Route path="tintometrico/corantes" element={<TintCorantes />} />
-                <Route path="tintometrico/integracoes" element={<TintIntegrations />} />
-                <Route path="tintometrico/reconciliacao" element={<TintReconciliation />} />
-                <Route path="tintometrico/sync-runs" element={<TintSyncRuns />} />
-                <Route path="tintometrico/api-contract" element={<TintApiContract />} />
+                {/* #8: rotas tint standalone consolidadas → abas dos wrappers (Catálogo/Integração).
+                    As telas seguem existindo como abas dos wrappers; aqui só redirecionamos a URL
+                    antiga (preserva bookmark, mata a duplicação de telas). */}
+                <Route path="tintometrico/formulas" element={<Navigate to="/tintometrico/catalogo?tab=formulas" replace />} />
+                <Route path="tintometrico/corantes" element={<Navigate to="/tintometrico/catalogo?tab=corantes" replace />} />
+                <Route path="tintometrico/mapeamento" element={<Navigate to="/tintometrico/catalogo?tab=mapeamento" replace />} />
+                <Route path="tintometrico/precos" element={<Navigate to="/tintometrico/catalogo?tab=precificacao" replace />} />
+                <Route path="tintometrico/importar" element={<Navigate to="/tintometrico/integracao?tab=importar" replace />} />
+                <Route path="tintometrico/integracoes" element={<Navigate to="/tintometrico/integracao?tab=integracoes" replace />} />
+                <Route path="tintometrico/reconciliacao" element={<Navigate to="/tintometrico/integracao?tab=reconciliacao" replace />} />
+                <Route path="tintometrico/sync-runs" element={<Navigate to="/tintometrico/integracao?tab=sync-runs" replace />} />
+                <Route path="tintometrico/api-contract" element={<Navigate to="/tintometrico/integracao?tab=api-contract" replace />} />
                 <Route path="recebimento" element={<Recebimento />} />
                 <Route path="recebimento/:id" element={<RecebimentoConferencia />} />
                 <Route path="producao" element={<ProductionOrders />} />
@@ -359,6 +357,7 @@ const App = () => (
                 <Route path="admin/reposicao/mercado" element={<Navigate to="/admin/reposicao/sessao/mercado" replace />} />
                 <Route path="admin/reposicao/parametros" element={<Navigate to="/admin/reposicao/sessao/parametros" replace />} />
                 <Route path="admin/reposicao/cadastros" element={<AdminReposicaoCadastros />} />
+                <Route path="admin/reposicao/embalagem" element={<AdminReposicaoEmbalagem />} />
                 <Route path="admin/estoque/recebimento" element={<AdminEstoqueRecebimento />} />
                 <Route path="admin/estoque/picking" element={<AdminEstoquePicking />} />
                 <Route path="admin/estoque/picking/mobile" element={<TouchPickingView />} />

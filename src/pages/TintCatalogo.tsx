@@ -1,24 +1,9 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Palette,
-  Loader2,
-  FlaskConical,
-  Package,
-  Droplet,
-  Clock,
-  Building2,
-} from "lucide-react";
+import { Palette, Loader2, FlaskConical, Package, Droplet } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 
 const TintFormulas = lazy(() => import("./TintFormulas"));
@@ -33,11 +18,9 @@ const TabFallback = () => (
   </div>
 );
 
-function KpiCards({ empresa }: { empresa: string }) {
-  void empresa;
-
+function KpiCards() {
   const { data } = useQuery({
-    queryKey: ["tint-catalogo-kpis", empresa],
+    queryKey: ["tint-catalogo-kpis"],
     queryFn: async () => {
       const [formulas, skusTotal, skusMapeados, corantes] = await Promise.all([
         supabase.from("tint_formulas").select("id", { count: "exact", head: true }).eq("account", "oben"),
@@ -49,45 +32,27 @@ function KpiCards({ empresa }: { empresa: string }) {
           .not("omie_product_id", "is", null),
         supabase.from("tint_corantes").select("id", { count: "exact", head: true }).eq("account", "oben"),
       ]);
-      // TODO: tabela tint_import_runs nao existe ainda; usando "—"
       return {
         formulas: formulas.count ?? 0,
         skusTotal: skusTotal.count ?? 0,
         skusMapeados: skusMapeados.count ?? 0,
         corantes: corantes.count ?? 0,
-        ultimaImport: "—",
       };
     },
   });
 
   const cards = [
-    {
-      label: "Fórmulas Importadas",
-      value: data?.formulas ?? 0,
-      icon: FlaskConical,
-    },
+    { label: "Fórmulas Importadas", value: data?.formulas ?? 0, icon: FlaskConical },
     {
       label: "SKUs Mapeados",
-      value:
-        data === undefined
-          ? 0
-          : `${data.skusMapeados}/${data.skusTotal}`,
+      value: data === undefined ? "…" : `${data.skusMapeados}/${data.skusTotal}`,
       icon: Package,
     },
-    {
-      label: "Corantes",
-      value: data?.corantes ?? 0,
-      icon: Droplet,
-    },
-    {
-      label: "Última Importação",
-      value: data?.ultimaImport ?? "—",
-      icon: Clock,
-    },
+    { label: "Corantes", value: data?.corantes ?? 0, icon: Droplet },
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
       {cards.map((c) => (
         <Card key={c.label} className="border-border">
           <CardContent className="pt-4 flex items-center justify-between">
@@ -106,7 +71,6 @@ function KpiCards({ empresa }: { empresa: string }) {
 export default function TintCatalogo() {
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") ?? "formulas";
-  const [empresa, setEmpresa] = useState("OBEN");
 
   const handleTab = (v: string) => {
     const next = new URLSearchParams(params);
@@ -126,21 +90,9 @@ export default function TintCatalogo() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Building2 className="h-4 w-4 text-muted-foreground" />
-          <Select value={empresa} onValueChange={setEmpresa}>
-            <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="Empresa" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="OBEN">OBEN</SelectItem>
-              <SelectItem value="COLACOR">COLACOR</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
       </header>
 
-      <KpiCards empresa={empresa} />
+      <KpiCards />
 
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
         <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">

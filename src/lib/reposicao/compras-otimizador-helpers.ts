@@ -15,6 +15,20 @@ export function qtdBase(input: { qtde_base: number | null; lote_minimo_fornecedo
   return Math.max(input.qtde_base ?? 0, qtdMinimaEfetiva(input.lote_minimo_fornecedor, input.minimo_forcado_manual));
 }
 
+// Piso de quantidade por "mínimo de compra forçado" por SKU (a "R" pedida pelo founder).
+// Espelha EXATAMENTE o cálculo de qtde_final da RPC gerar_pedidos_sugeridos_ciclo:
+//   CASE WHEN minimo_forcado_manual > 0 THEN GREATEST(qtde_natural, minimo) ELSE qtde_natural END
+// Sem mínimo válido → retorna o natural INTOCADO (sem piso-0 fantasma). Mínimo inválido
+// (≤0 / NaN / Infinity) NÃO força (degradação honesta — coerente com o CHECK do banco). A guarda de
+// "só eleva item que JÁ precisa repor" NÃO vive aqui — é o filtro `qtde_natural > 0` da RPC;
+// este helper é só o cálculo do piso da quantidade.
+export function aplicarMinimoForcado(qtdeNatural: number, minimoForcado: number | null): number {
+  if (minimoForcado != null && Number.isFinite(minimoForcado) && minimoForcado > 0) {
+    return Math.max(qtdeNatural, minimoForcado);
+  }
+  return qtdeNatural;
+}
+
 // Melhor desconto cujo volume_minimo ≤ q (curva progressiva → pega o maior aplicável).
 export function descontoAplicavel(curva: FaixaDesconto[], q: number): number {
   let best = 0;

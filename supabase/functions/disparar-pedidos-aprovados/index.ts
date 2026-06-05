@@ -105,6 +105,18 @@ function getOmieCreds(empresa: string): { app_key: string; app_secret: string } 
   return { app_key, app_secret };
 }
 
+// Email do aprovador p/ o cEmailAprovador do IncluirPedCompra (auto-aprovação no Omie).
+// Por empresa (OMIE_<EMPRESA>_EMAIL_APROVADOR) com fallback global (OMIE_EMAIL_APROVADOR).
+// Sem env var setada → null (degradação honesta: o campo não é enviado e o pedido entra pendente,
+// como hoje). Espelha o padrão por-empresa de getOmieCreds.
+function getEmailAprovador(empresa: string): string | null {
+  const up = empresa.toUpperCase();
+  const email = Deno.env.get(`OMIE_${up}_EMAIL_APROVADOR`) ??
+    Deno.env.get("OMIE_EMAIL_APROVADOR");
+  const trimmed = email?.trim();
+  return trimmed ? trimmed : null;
+}
+
 function diasUteisFromHoje(diasUteis: number): string {
   // soma dias úteis (seg-sex) ao dia de hoje, retorna DD/MM/YYYY
   const d = new Date();
@@ -700,6 +712,15 @@ async function processarPedido(
         }`,
       cObsInt: modo === "dry_run" ? "DRY-RUN Afiação" : "Disparo Afiação",
     };
+
+    // Auto-aprovação no Omie: cEmailAprovador faz o PC entrar JÁ na etapa "aprovado" do kanban
+    // do Omie (em nome do aprovador), sem o clique manual de "Aprovar Pedido" lá dentro. Doc Omie:
+    // preenchido → "o pedido de compra será atribuído a etapa de aprovação com o status de aprovado".
+    // Vale p/ qualquer fornecedor. Sem env var → campo omitido, pedido entra pendente (como hoje).
+    const emailAprovador = getEmailAprovador(pedido.empresa);
+    if (emailAprovador) {
+      cabecalho_incluir.cEmailAprovador = emailAprovador;
+    }
 
     const param = { cabecalho_incluir, produtos_incluir };
 

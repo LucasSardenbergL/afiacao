@@ -300,7 +300,7 @@ Logo após o bloco `if (statusPortalAtual === "aceito_portal_sem_protocolo" || .
 
 > ⚠️ **REVISADO na execução (code-quality-review):** a 1ª versão usava `.update(...).neq("status_envio_portal",...).select()` via PostgREST. O review pegou um NULL-safety gap; ao corrigir, o §7/#592 lembrou que **filtrar `status_envio_portal` num `.update().select()` pela API REST QUEBRA (42703** "column does not exist"; incidente de 324 pedidos presos). Lição do projeto: claims dessa coluna = **RPC SQL pura**. O pré-claim virou a RPC `iniciar_envio_portal_pre_claim` (migration `20260605130000`), validada em PG17 local (5 casos: claim/não-rebaixa/NULL-coalesce/erro_retentavel/inexistente).
 
-Criar `supabase/migrations/20260605130000_iniciar_envio_portal_pre_claim.sql` (RPC `SECURITY DEFINER`: `UPDATE ... SET status_envio_portal='pendente_envio_portal', portal_erro=NULL, portal_proximo_retry_em=now()+'15 min' WHERE id=$1 AND COALESCE(status_envio_portal,'nao_aplicavel')<>'enviando_portal' RETURNING true` → `RETURN COALESCE(v_claimed,false)`; REVOKE de PUBLIC/anon/authenticated, GRANT a service_role). Substituir o UPDATE incondicional em `iniciarEnvioPortalSayerlack` por:
+Criar `supabase/migrations/20260605140000_iniciar_envio_portal_pre_claim.sql` (RPC `SECURITY DEFINER`: `UPDATE ... SET status_envio_portal='pendente_envio_portal', portal_erro=NULL, portal_proximo_retry_em=now()+'15 min' WHERE id=$1 AND COALESCE(status_envio_portal,'nao_aplicavel')<>'enviando_portal' RETURNING true` → `RETURN COALESCE(v_claimed,false)`; REVOKE de PUBLIC/anon/authenticated, GRANT a service_role). Substituir o UPDATE incondicional em `iniciarEnvioPortalSayerlack` por:
 
 ```ts
   // Pré-claim do portal via RPC SQL pura — NÃO via PostgREST .update().select()
@@ -352,7 +352,7 @@ Spec: docs/superpowers/specs/2026-06-05-unificacao-pedidos-compra-design.md §4.
 - (A) Omie: erro "já cadastrado" → reconciliação (cCodIntPed=AFI-<id> é a chave; o Omie rejeita duplicado) — para de virar falha_envio. Salvaguarda: só marca disparado se ConsultarPedCompra CONFIRMA; flag reconciliado suprime double-email ao fornecedor.
 - (B) Portal: pré-check enviando_portal + pré-claim via RPC SQL pura (não rebaixa envio em voo; evita o 42703 do PostgREST; cobre NULL via COALESCE).
 
-⚠️ **Requer (APÓS o merge): (1) migration manual `20260605130000_iniciar_envio_portal_pre_claim.sql` no SQL Editor; (2) deploy do `disparar-pedidos-aprovados` via chat do Lovable (verbatim da main).**
+⚠️ **Requer (APÓS o merge): (1) migration manual `20260605140000_iniciar_envio_portal_pre_claim.sql` no SQL Editor; (2) deploy do `disparar-pedidos-aprovados` via chat do Lovable (verbatim da main).**
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
