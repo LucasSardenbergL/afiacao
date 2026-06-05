@@ -172,11 +172,15 @@ Falhou → **não aplica** (preserva o valor anterior), `status='bloqueado_valid
 > Observação: o COALESCE atual já preserva quando o sugerido é NULL (status ≠ OK). A validação dura amplia isso para "OK porém incoerente".
 
 ### 6.2 Fusível (decisão 7) — contenção de input corrompido, por-SKU
-Calcula o salto vs o valor **anterior** (não-nulo). Segura o SKU **inteiro** (não aplica nenhum dos 5; mantém os anteriores) se **qualquer** gatilho disparar:
-- `estoque_maximo_sugerido > FUSIVEL_MULT × estoque_maximo_anterior` (anterior não-nulo e > 0), **default `FUSIVEL_MULT = 3`**; ou
-- cobertura implícita do máximo > `FUSIVEL_COBERTURA_DIAS`, i.e. `estoque_maximo_sugerido / NULLIF(demanda_media_diaria,0) > FUSIVEL_COBERTURA_DIAS`, **default `120` dias**.
+> ⚠️ **Recalibrado pós-prod (BLOCO D, `20260605150000`).** A v1 segurava por `máx > 3×` **OU** cobertura `máx/demanda > 120d`. Em produção o gatilho de **cobertura segurou 33/33** itens de giro lento — **não era corrupção**: pra demanda baixa o máximo é dominado pelo estoque de segurança, então `máx/demanda` é estruturalmente enorme (viés sistemático contra giro lento). O gatilho de cobertura **foi removido**. Além disso o fusível passou a ser avaliado **depois** do "mudou?" (mata o falso `segurado` em no-op).
 
-Segurado → `status='segurado'`, valor anterior preservado, entra no resumo na seção "segurei, confira". Limiares em `company_config` (ajustáveis pelo founder sem deploy). SKU **sem valor anterior** (primeira parametrização) **não** é segurado por multiplicador (não há base) — mas é coberto pelo gatilho de cobertura.
+Segura o SKU **inteiro** (não aplica nenhum dos 5; mantém os anteriores) **apenas** quando o salto do máximo é **material e para cima**:
+- `round(estoque_maximo_sugerido) > FUSIVEL_MULT × round(estoque_maximo_anterior)`, com `estoque_maximo_anterior` não-nulo e **> 0**, **default `FUSIVEL_MULT = 3`**.
+
+**Assimétrico:** uma **queda** do máximo nunca é segurada (só o salto pra cima é suspeito). **Material:** comparação arredondada (elimina ruído decimal da view que recomputa ao vivo). Segurado → `status='segurado'`, valor anterior preservado, entra no resumo na seção "segurei, confira". Limiar em `company_config` (`param_auto_fusivel_mult`, ajustável sem deploy). SKU **sem base válida** (`estoque_maximo_anterior` NULL ou ≤ 0 — primeira parametrização) **não** chega ao fusível: é bloqueado antes (cold-start é manual — ver §6.1b).
+
+### 6.1b Guard de base NULL — cold-start é manual
+Se `estoque_maximo_anterior` é NULL ou ≤ 0, **não há baseline pra sanity-check** → `status='bloqueado_validacao'` (não auto-aplica o primeiro parâmetro). O primeiro valor de um SKU novo é decisão humana; a automação só ajusta o que já tem histórico aplicado.
 
 ### 6.3 Trava de reversão (decisão 6, codex P1 #3) — fingerprint material
 Se existe pin ativo para o SKU:
@@ -187,7 +191,9 @@ Se existe pin ativo para o SKU:
 Arredondamento para inteiro (quantidades) elimina o ruído decimal que tornaria "mudou" sempre verdadeiro na view que recomputa ao vivo.
 
 ### 6.4 Aplicação + log
-Passou por 6.1–6.3 e o valor difere do atual (arredondado) → aplica os 5 campos (como hoje) e `status='aplicado'`. Igual ao atual (arredondado) → **não gera linha de log** (contado apenas em `total_avaliados` do run); evita inflar o log com milhares de SKUs inalterados. Métricas derivadas (demanda/lt/z) seguem sempre frescas (não são config — comportamento atual preservado).
+> ⚠️ **Ordem (BLOCO D):** o "sem mudança material" (igual ao atual, arredondado) é avaliado **ANTES** do fusível (passo 5 < passo 6 em §13). Sem isso, um no-op cujo máximo já era alto virava falso `segurado`. Igual ao atual → `sem_mudanca` (**não chega ao fusível**).
+
+Passou por 6.1b/6.3 e o valor difere do atual (arredondado): se o salto não dispara o fusível (§6.2) → aplica os 5 campos (como hoje) e `status='aplicado'`. Igual ao atual (arredondado) → `sem_mudanca` e **não gera linha de log** (contado apenas em `total_avaliados` do run); evita inflar o log com milhares de SKUs inalterados. Métricas derivadas (demanda/lt/z) seguem sempre frescas (não são config — comportamento atual preservado).
 
 ### 6.5 Impacto da compra simulada (codex P1 #7)
 Para cada SKU aplicado/segurado, calcula o impacto = **Δ da compra que o ciclo geraria agora**:
@@ -272,8 +278,9 @@ Reverter é **por run_id** (não data) — codex P1 #4/#5. Reverter "dias depois
 
 ## 13. Limiares do fusível (defaults, ajustáveis em `company_config`)
 
-- `param_auto_fusivel_mult = 3` (estoque_máximo novo > 3× o anterior).
-- `param_auto_fusivel_cobertura_dias = 120` (máximo implica > 120 dias de cobertura).
+- `param_auto_fusivel_mult = 3` (estoque_máximo novo arredondado > 3× o anterior arredondado, **upward-only**).
+- ~~`param_auto_fusivel_cobertura_dias`~~ **REMOVIDO** (BLOCO D, `20260605150000`): o gatilho de cobertura-absoluto segurava 33/33 itens de giro lento em prod (viés sistemático — em demanda baixa o máximo é dominado pelo SS → `máx/demanda` é estruturalmente alto, não corrupção). O seed morto foi apagado (`DELETE FROM company_config WHERE key='param_auto_fusivel_cobertura_dias'`).
+- **Precedência da decisão (7 passos, SQL ↔ helper 1:1):** (1) sugerido NULL → `sem_mudanca`; (2) incoerente → `bloqueado_validacao`; (3) base NULL/≤0 → `bloqueado_validacao` (cold-start manual); (4) pin bate → `pinado`; (5) sem mudança material → `sem_mudanca` (**antes** do fusível); (6) fusível (`máx_antes>0 e round(máx_sug) > mult×round(máx_antes)`) → `segurado`; (7) else → `aplicado`.
 - Horário do resumo: fixo no cron `reposicao-param-auto-resumo` (18h BRT). Pra mudar, re-agende o cron — não há config key.
 
 ## 14. Rollout
