@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **151** custom migrations totais
-- **624** objetos esperados (criados por estas migrations)
+- **169** custom migrations totais
+- **670** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 163
-  - `function`: 134
-  - `index`: 121
-  - `cron_job`: 94
-  - `table`: 73
-  - `trigger`: 35
+  - `rls_policy`: 178
+  - `function`: 150
+  - `index`: 127
+  - `cron_job`: 96
+  - `table`: 78
+  - `trigger`: 37
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1320,12 +1320,58 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.tarefas_escalonamento_tick` | — |
 
+### `20260601100000_tarefas_fase2_bloco_a.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.tarefa_templates` | — |
+| `index` | `public.idx_tt_ativo_assigned` | `tarefa_templates` |
+
+### `20260601101000_tarefas_fase2_bloco_b.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.uq_tarefa_template_assignee_dia` | `tarefas` |
+
+### `20260601102000_tarefas_fase2_bloco_c.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.tt_select` | `tarefa_templates` |
+| `rls_policy` | `public.tt_insert` | `tarefa_templates` |
+| `rls_policy` | `public.tt_update` | `tarefa_templates` |
+| `rls_policy` | `public.tt_delete` | `tarefa_templates` |
+
+### `20260601103000_tarefas_fase2_bloco_d.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_guard_comprovacao` | — |
+| `function` | `public.concluir_com_comprovacao` | — |
+| `function` | `public.auditar_tarefa` | — |
+| `function` | `public.tarefas_materializar_recorrentes` | — |
+| `trigger` | `public.trg_tarefas_guard_comprovacao` | `tarefas` |
+| `cron_job` | `cron.tarefas-materializar-recorrentes` | — |
+
+### `20260601104000_tarefas_fase2_bloco_e.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `storage.tarefa_comprov_insert_own` | `objects` |
+| `rls_policy` | `storage.tarefa_comprov_select_own_ou_gestor` | `objects` |
+
 ### `20260602101856_reposicao_refresh_descricao_sku_parametros.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.atualizar_descricao_sku_parametros` | — |
 | `cron_job` | `cron.reposicao-refresh-descricao-diario` | — |
+
+### `20260604120000_loyalty_rls_hardening.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.resgatar_recompensa` | — |
 
 ### `20260604120000_picking_bridge.sql`
 
@@ -1386,6 +1432,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.whatsapp_sla_digest_tick` | — |
 | `cron_job` | `cron.whatsapp-sla-digest-diario` | — |
 
+### `20260604150000_envio_portal_claim_ids.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.envio_portal_claim_ids` | — |
+
 ### `20260604150000_tipo_produto_vigia_cobertura.sql`
 
 | Tipo | Objeto | Parent |
@@ -1393,6 +1445,88 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public._data_health_compute` | — |
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260604160000_route_queue_snapshot_nome.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260604170000_posthog_error_webhook.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.posthog_error_webhook_log` | — |
+| `function` | `public.enfileirar_erro_app` | — |
+
+### `20260604170000_reposicao_blindar_sku_sem_fornecedor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260604170000_tint_catalog_rls_hardening.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260604180000_envio_portal_claim_ids_lista_positiva.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.envio_portal_claim_ids` | — |
+
+### `20260604180000_public_tool_history_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_public_tool_history` | — |
+
+### `20260604182408_embalagem_economica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sku_embalagem_equivalencia` | — |
+| `table` | `public.sku_preco_fornecedor_capturado` | — |
+| `index` | `public.uniq_sku_emb_equiv_ativo` | `sku_embalagem_equivalencia` |
+| `index` | `public.idx_sku_emb_equiv_grupo` | `sku_embalagem_equivalencia` |
+| `index` | `public.idx_sku_preco_cap_lookup` | `sku_preco_fornecedor_capturado` |
+| `rls_policy` | `public.staff_sku_emb_equiv_select` | `sku_embalagem_equivalencia` |
+| `rls_policy` | `public.staff_sku_emb_equiv_insert` | `sku_embalagem_equivalencia` |
+| `rls_policy` | `public.staff_sku_emb_equiv_update` | `sku_embalagem_equivalencia` |
+| `rls_policy` | `public.staff_sku_emb_equiv_delete` | `sku_embalagem_equivalencia` |
+| `rls_policy` | `public.staff_sku_preco_cap_select` | `sku_preco_fornecedor_capturado` |
+| `rls_policy` | `public.staff_sku_preco_cap_insert` | `sku_preco_fornecedor_capturado` |
+| `rls_policy` | `public.staff_sku_preco_cap_update` | `sku_preco_fornecedor_capturado` |
+| `rls_policy` | `public.staff_sku_preco_cap_delete` | `sku_preco_fornecedor_capturado` |
+
+### `20260604190000_reposicao_minimo_forcado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260605120000_tarefas_guard_old_requer.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_guard_comprovacao` | — |
+
+### `20260605130000_tarefas_leitura_na_instancia.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_materializar_recorrentes` | — |
+
+### `20260605140000_afiacao_os_status_sync.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.afiacao_os_sync_fila` | — |
+| `index` | `public.idx_afiacao_os_sync_fila_retry` | `afiacao_os_sync_fila` |
+| `function` | `public.mapear_status_etapa` | — |
+| `function` | `public.afiacao_os_enqueue` | — |
+| `function` | `public.afiacao_os_sync_kick` | — |
+| `trigger` | `public.trg_afiacao_os_enqueue` | `orders` |
+| `cron_job` | `cron.afiacao-os-sync` | — |
+| `rls_policy` | `public.staff_le_afiacao_os_sync_fila` | `afiacao_os_sync_fila` |
 
 ## Próximos passos quando algo der `❌`
 
