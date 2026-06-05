@@ -7476,6 +7476,36 @@ export type Database = {
           },
         ]
       }
+      posthog_error_webhook_log: {
+        Row: {
+          action: string | null
+          alerta_id: number | null
+          criado_em: string
+          dedupe_key: string
+          id: number
+          issue_id: string | null
+          payload_raw: string | null
+        }
+        Insert: {
+          action?: string | null
+          alerta_id?: number | null
+          criado_em?: string
+          dedupe_key: string
+          id?: never
+          issue_id?: string | null
+          payload_raw?: string | null
+        }
+        Update: {
+          action?: string | null
+          alerta_id?: number | null
+          criado_em?: string
+          dedupe_key?: string
+          id?: never
+          issue_id?: string | null
+          payload_raw?: string | null
+        }
+        Relationships: []
+      }
       priority_score_log: {
         Row: {
           calculated_at: string
@@ -13774,6 +13804,21 @@ export type Database = {
         Returns: number
       }
       end_impersonation: { Args: { p_audit_id: string }; Returns: undefined }
+      enfileirar_erro_app: {
+        Args: {
+          p_action: string
+          p_cap?: number
+          p_dedupe_key: string
+          p_issue_id: string
+          p_lista_url: string
+          p_mensagem: string
+          p_metadata: Json
+          p_payload_raw: string
+          p_rollup_key: string
+          p_titulo: string
+        }
+        Returns: Json
+      }
       ensure_picking_task_for_sales_order: {
         Args: { p_sales_order_id: string }
         Returns: Json
