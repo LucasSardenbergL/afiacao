@@ -85,6 +85,21 @@ export function track(event: string, properties?: Record<string, unknown>): void
 }
 
 /**
+ * Captura uma exceção no PostHog Error Tracking. No-op se telemetria desligada
+ * (DEV opt-out / sem token). Use no ErrorBoundary e em catch-blocks relevantes.
+ */
+export function captureException(error: unknown, context?: Record<string, unknown>): void {
+  if (!initialized) return;
+  try {
+    posthog.captureException(error, context);
+  } catch (e) {
+    logger.warn('Falha ao capturar exceção no analytics', {
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+/**
  * Identify após login. Properties ficam no perfil persistente (`$set` semantics).
  */
 export function identify(
