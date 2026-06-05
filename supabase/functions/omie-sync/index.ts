@@ -649,9 +649,14 @@ async function processarItemFilaOsSync(
     supabaseAdmin.from("afiacao_os_sync_fila").delete().eq("order_id", orderId);
 
   // 1) status atual do pedido
-  const { data: ord } = await supabaseAdmin
+  const { data: ord, error: ordErr } = await supabaseAdmin
     .from("orders").select("status").eq("id", orderId).maybeSingle();
+  if (ordErr) {
+    // erro transitório de DB/PostgREST → recuperável: backoff, NÃO apaga da fila
+    return await bumpRetryOsSync(supabaseAdmin, orderId, tentativas, `orders_read: ${ordErr.message}`);
+  }
   if (!ord) {
+    // pedido realmente não existe (sem erro) → sai da fila
     await removerDaFila();
     return { order_id: orderId, skip: "pedido_inexistente" };
   }
@@ -663,15 +668,21 @@ async function processarItemFilaOsSync(
     return { order_id: orderId, noop: "sem_etapa" };
   }
 
-  // 3) acha a OS no Omie
-  const { data: os } = await supabaseAdmin
+  // 3) acha a OS no Omie. order_id pode ter +1 linha (schema sem unique; sync_order faz insert cru) →
+  //    pega a mais recente; .limit(1) evita o 406 do .maybeSingle() com duplicata (poison-pill).
+  const { data: os, error: osErr } = await supabaseAdmin
     .from("omie_ordens_servico")
     .select("omie_codigo_os, last_etapa_sincronizada")
-    .eq("order_id", orderId).maybeSingle();
+    .eq("order_id", orderId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  if (!os?.omie_codigo_os) {
-    // OS pode estar sendo criada → erro recuperável (backoff), mantém na fila
-    return await bumpRetryOsSync(supabaseAdmin, orderId, tentativas, "sem_os");
+  if (osErr || !os?.omie_codigo_os) {
+    // erro transitório OU OS ainda sendo criada → recuperável (backoff), mantém na fila
+    return await bumpRetryOsSync(
+      supabaseAdmin, orderId, tentativas, osErr ? `os_read: ${osErr.message}` : "sem_os"
+    );
   }
 
   // 4) idempotência
