@@ -62,10 +62,7 @@ export function PedidoRow({
       </TableCell>
       <TableCell className="text-xs">
         {showAprovacao && p.aprovado_em ? (
-          <div>
-            <div className="font-medium tabular-nums">{format(new Date(p.aprovado_em), 'dd/MM HH:mm')}</div>
-            <div className="text-muted-foreground line-clamp-1">{p.aprovado_por ?? '—'}</div>
-          </div>
+          <div className="font-medium tabular-nums">{format(new Date(p.aprovado_em), 'dd/MM HH:mm')}</div>
         ) : (
           <span className="text-muted-foreground">—</span>
         )}

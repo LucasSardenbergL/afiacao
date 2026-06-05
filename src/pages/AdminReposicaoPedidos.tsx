@@ -20,6 +20,13 @@ import { CancelarModal } from '@/components/reposicao/pedidos/CancelarModal';
 import { PortalDrawer } from '@/components/reposicao/pedidos/PortalDrawer';
 import { CiclosAnteriores } from '@/components/reposicao/pedidos/CiclosAnteriores';
 
+type SkuSemFornecedor = {
+  sku_codigo_omie: string;
+  sku_descricao: string | null;
+  estoque_efetivo: number | null;
+  ponto_pedido: number | null;
+};
+
 /* ─── Página principal ─── */
 export default function AdminReposicaoPedidos() {
   const queryClient = useQueryClient();
@@ -123,6 +130,24 @@ export default function AdminReposicaoPedidos() {
 
   const bloqueados = (pedidos ?? []).filter((p) => p.status === 'bloqueado_guardrail');
 
+  // SKUs abaixo do ponto que NÃO geram pedido por falta de fornecedor cadastrado.
+  // A RPC (20260604170000) passou a exigir fornecedor — esses ficavam como
+  // cabeçalho-fantasma na fila; agora aparecem aqui, pra não sumirem em silêncio.
+  const { data: semFornecedor } = useQuery({
+    queryKey: ['reposicao-sku-sem-fornecedor', EMPRESA],
+    queryFn: async (): Promise<SkuSemFornecedor[]> => {
+      const { data, error } = await supabase
+        .from('v_reposicao_sku_sem_fornecedor' as never)
+        .select('sku_codigo_omie, sku_descricao, estoque_efetivo, ponto_pedido')
+        .eq('empresa', EMPRESA)
+        .order('sku_descricao', { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as unknown as SkuSemFornecedor[];
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
   return (
     <div className="container mx-auto py-6 space-y-6 max-w-7xl">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -149,6 +174,32 @@ export default function AdminReposicaoPedidos() {
           <AlertTitle>Atenção</AlertTitle>
           <AlertDescription>
             {bloqueados.length} pedido(s) bloqueado(s) por guardrail. Revise antes do disparo.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {semFornecedor && semFornecedor.length > 0 && (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>
+            {semFornecedor.length} SKU{semFornecedor.length > 1 ? 's' : ''} abaixo do ponto sem fornecedor — não entra{semFornecedor.length > 1 ? 'm' : ''} em compra
+          </AlertTitle>
+          <AlertDescription>
+            <p className="mb-2">
+              Estão habilitados na reposição e abaixo do ponto de pedido, mas sem fornecedor cadastrado —
+              então não geram pedido. Cadastre o fornecedor (Cadastros → Cadeia Logística) para incluí-los:
+            </p>
+            <ul className="list-disc pl-5 space-y-0.5 text-sm">
+              {semFornecedor.slice(0, 10).map((s) => (
+                <li key={s.sku_codigo_omie}>
+                  {s.sku_descricao ?? s.sku_codigo_omie}
+                  <span className="text-muted-foreground font-mono text-xs"> · {s.sku_codigo_omie}</span>
+                </li>
+              ))}
+            </ul>
+            {semFornecedor.length > 10 && (
+              <p className="mt-1 text-xs text-muted-foreground">+{semFornecedor.length - 10} outro(s)</p>
+            )}
           </AlertDescription>
         </Alert>
       )}
@@ -184,7 +235,7 @@ export default function AdminReposicaoPedidos() {
                       <TableHead className="text-right">Δ vs anterior</TableHead>
                       <TableHead className="text-right">Corte</TableHead>
                       <TableHead>Portal</TableHead>
-                      <TableHead>Aprovado em / Por</TableHead>
+                      <TableHead>Aprovado em</TableHead>
                       <TableHead className="text-right">Ações</TableHead>
                     </TableRow>
                   </TableHeader>

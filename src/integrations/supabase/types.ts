@@ -13031,6 +13031,20 @@ export type Database = {
           },
         ]
       }
+      v_reposicao_sku_sem_fornecedor: {
+        Row: {
+          empresa: string | null
+          estoque_efetivo: number | null
+          estoque_fisico: number | null
+          estoque_maximo: number | null
+          estoque_pendente: number | null
+          omie_descricao: string | null
+          ponto_pedido: number | null
+          sku_codigo_omie: string | null
+          sku_descricao: string | null
+        }
+        Relationships: []
+      }
       v_simulacao_comparativa: {
         Row: {
           candidato: string | null

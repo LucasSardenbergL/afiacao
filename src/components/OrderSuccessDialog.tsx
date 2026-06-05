@@ -1,6 +1,6 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { CheckCircle, Share2, Eye, Printer } from 'lucide-react';
+import { CheckCircle, Share2, Eye, Printer, ArrowLeft } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { openPrintOrder, type PrintOrderData } from '@/components/OrderPrintLayout';
@@ -15,6 +15,8 @@ interface OrderSuccessDialogProps {
   onViewOrder: () => void;
   onShare: () => void;
   printDataList?: PrintOrderData[];
+  returnTo?: string | null;
+  onVoltarFila?: () => void;
 }
 
 export function OrderSuccessDialog({
@@ -27,6 +29,8 @@ export function OrderSuccessDialog({
   onViewOrder,
   onShare,
   printDataList,
+  returnTo,
+  onVoltarFila,
 }: OrderSuccessDialogProps) {
   const handlePrint = () => {
     if (!printDataList || printDataList.length === 0) return;
@@ -93,6 +97,12 @@ export function OrderSuccessDialog({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2 flex-wrap">
+          {returnTo && onVoltarFila && (
+            <Button onClick={onVoltarFila} className="flex-1 gap-2">
+              <ArrowLeft className="w-4 h-4" />
+              Voltar pra fila
+            </Button>
+          )}
           <Button variant="outline" onClick={() => onOpenChange(false)} className="flex-1">
             Fechar
           </Button>

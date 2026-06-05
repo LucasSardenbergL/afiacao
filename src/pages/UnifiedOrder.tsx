@@ -53,6 +53,10 @@ const UnifiedOrder = () => {
   const preselectCustomerId = searchParams.get('customer');
   const preselectedRef = useRef(false);
 
+  // returnTo da fila (G1 Fase 3): só path interno (guard anti-open-redirect, vem da URL).
+  const returnToRaw = searchParams.get('returnTo');
+  const returnTo = returnToRaw && returnToRaw.startsWith('/') && !returnToRaw.startsWith('//') ? returnToRaw : null;
+
   useEffect(() => {
     if (
       preselectCustomerId &&
@@ -349,6 +353,8 @@ const UnifiedOrder = () => {
               orderNumbers: h.lastOrderData!.orderNumbers,
             });
           }}
+          returnTo={returnTo}
+          onVoltarFila={() => { h.setOrderSuccessOpen(false); if (returnTo) h.navigate(returnTo); }}
         />
       )}
 

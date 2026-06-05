@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Beaker, Package, Droplets, FileUp, AlertTriangle } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { RecorrentesHojeCard } from '@/components/tarefas/RecorrentesHojeCard';
 
 const ACCOUNT = 'oben';
 
@@ -63,6 +64,9 @@ export default function TintDashboard() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Tintométrico — Dashboard</h1>
+
+      {/* Tarefas recorrentes do operador — exibe só se houver instâncias abertas hoje */}
+      <RecorrentesHojeCard />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
