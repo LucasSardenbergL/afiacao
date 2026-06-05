@@ -164,6 +164,25 @@ async function omieCall(
   return json;
 }
 
+// ⚠️ ESPELHADO VERBATIM de src/lib/reposicao/omie-disparo-helpers.ts — mudou lá? Copie aqui.
+function isOmiePedidoJaCadastrado(msg: string | null | undefined): boolean {
+  if (!msg) return false;
+  const m = msg.toLowerCase();
+  if (/j[áa]\s+(foi\s+)?cadastrad/.test(m)) return true;
+  if (/c[óo]digo\s+de\s+integra\w*/.test(m) && /cadastrad/.test(m)) return true;
+  if (/already\s+(registered|exists)/.test(m)) return true;
+  return false;
+}
+function extrairPedidoOmie(resp: unknown): { id: string; numero: string } | null {
+  if (!resp || typeof resp !== "object") return null;
+  const r = resp as Record<string, unknown>;
+  const cab = (r.pedido_compra_cabecalho ?? r.cabecalho ?? r.cabecalho_consulta ?? r) as Record<string, unknown>;
+  const idRaw = cab?.nCodPed ?? r.nCodPed;
+  if (idRaw == null) return null;
+  const numeroRaw = cab?.cNumero ?? r.cNumero;
+  return { id: String(idRaw), numero: numeroRaw != null ? String(numeroRaw) : "" };
+}
+
 async function resolveCodigoFornecedor(
   db: SupabaseClient,
   empresa: string,
@@ -243,6 +262,9 @@ interface ProcessResult {
   valor: number;
   canal: string;
   erro?: string;
+  // Reconciliado = o PV já existia no Omie ("já cadastrado"); marcamos disparado
+  // sem re-criar. O caller NÃO deve re-notificar o fornecedor (evita e-mail duplicado).
+  reconciliado?: boolean;
 }
 
 type PortalDispatchResult =
@@ -437,19 +459,32 @@ async function iniciarEnvioPortalSayerlack(
     return { state: "needs_reconciliation", status: statusPortalAtual };
   }
 
-  // Inicia em pendente para o portal aceitar
-  await db
-    .from("pedido_compra_sugerido")
-    .update({
-      status_envio_portal: "pendente_envio_portal",
-      portal_erro: null,
-      // Relógio de stale ESTÁVEL p/ o lote-retry (envio_portal_lock_candidatos): NÃO usar atualizado_em
-      // (trigger de timestamp reiniciaria o relógio e recriaria o blind-spot). Se o envio async inicial
-      // não começar em 15min (não setar enviando_portal), o lote re-tenta a partir daqui. Sucesso zera
-      // (NULL) e erro_retentavel reescreve (+15min) downstream — relógio único pros dois estados.
-      portal_proximo_retry_em: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    })
-    .eq("id", pedidoId);
+  // Já em voo no portal? NÃO re-enfileirar — evita 2ª sessão Browserless e o
+  // rebaixamento enviando_portal → pendente. O claim atômico do envio (envio_portal_claim_ids)
+  // cobre o Browserless; aqui evitamos tocar a coluna de um envio concorrente.
+  if (statusPortalAtual === "enviando_portal") {
+    console.warn(`[disparar-pedidos] Pedido ${pedidoId}: já enviando_portal — não re-enfileirado`);
+    return { state: "queued", accepted: true };
+  }
+
+  // Pré-claim do portal via RPC SQL pura — NÃO via PostgREST .update().select():
+  // o #592/§7 mostrou que filtrar status_envio_portal num UPDATE pela API REST quebra
+  // (42703 "column does not exist"; incidente de 324 pedidos presos). Todos os claims
+  // dessa coluna são RPC SQL. A RPC seta 'pendente_envio_portal' SÓ se o pedido não
+  // estiver 'enviando_portal' (CONDICIONAL: não rebaixa um envio concorrente em voo),
+  // cobre NULL via COALESCE, e grava o relógio de stale ESTÁVEL (+15min) p/ o lote-retry.
+  // Retorna false se o claim foi perdido (concorrência) → não re-enfileira.
+  const { data: claimed, error: claimErr } = await db.rpc(
+    "iniciar_envio_portal_pre_claim",
+    { p_pedido_id: pedidoId },
+  );
+  if (claimErr) {
+    throw new Error(`Pré-claim do portal falhou: ${claimErr.message}`);
+  }
+  if (!claimed) {
+    console.warn(`[disparar-pedidos] Pedido ${pedidoId}: pré-claim do portal perdido (concorrência/estado) — não re-enfileirado`);
+    return { state: "queued", accepted: true };
+  }
 
   const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
   const SVC_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -731,6 +766,58 @@ async function processarPedido(
     return result;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    // Idempotência Omie: cCodIntPed=AFI-<id> é estável; o Omie REJEITA duplicado
+    // ("já cadastrado"). Isso significa que o PV pode JÁ existir (corrida disparo×cron
+    // ou retry pós-crash) → reconciliar, NÃO falhar. Só em produção (dry_run não cria
+    // PV persistente que queiramos reconciliar como disparado real).
+    if (modo === "producao" && isOmiePedidoJaCadastrado(msg)) {
+      let existente: { id: string; numero: string } | null = null;
+      let consultaErro: string | null = null;
+      try {
+        const consulta = await omieCall(
+          OMIE_PEDIDO_COMPRA_URL,
+          "ConsultarPedCompra",
+          { cCodIntPed: `AFI-${pedido.id}` },
+          creds,
+        );
+        existente = extrairPedidoOmie(consulta);
+      } catch (e2) {
+        consultaErro = e2 instanceof Error ? e2.message : String(e2);
+      }
+      // SALVAGUARDA: só reconcilia como 'disparado' se ConsultarPedCompra CONFIRMAR
+      // que o PV existe. Consulta vazia (false-positive do matcher) ou erro → NÃO
+      // marcar disparado; cair em falha_envio re-tentável. Nunca marca um disparo
+      // falho como sucesso.
+      if (existente) {
+        await db
+          .from("pedido_compra_sugerido")
+          .update({
+            omie_pedido_compra_id: existente.id,
+            omie_pedido_compra_numero: existente.numero,
+            omie_registrado_em: new Date().toISOString(),
+            status: "disparado",
+            resposta_canal: {
+              reconciliado: true,
+              motivo: "ja_cadastrado_omie",
+              erro_original: msg,
+              ts: new Date().toISOString(),
+            },
+            atualizado_em: new Date().toISOString(),
+          })
+          .eq("id", pedido.id);
+        console.warn(
+          `[disparar-pedidos] Pedido ${pedido.id}: confirmado no Omie (cCodIntPed) → reconciliado como disparado (id=${existente.id})`,
+        );
+        result.status_final = "disparado";
+        result.omie_id = existente.id;
+        result.omie_numero = existente.numero;
+        result.reconciliado = true;
+        return result;
+      }
+      console.warn(
+        `[disparar-pedidos] Pedido ${pedido.id}: "já cadastrado" NÃO confirmado (consulta ${consultaErro ? "falhou: " + consultaErro : "vazia"}) → falha_envio re-tentável`,
+      );
+    }
     console.error(`[disparar-pedidos] Falha pedido ${pedido.id}:`, msg);
     await db
       .from("pedido_compra_sugerido")
@@ -1100,6 +1187,7 @@ Deno.serve(async (req: Request) => {
       if (
         modo === "producao" &&
         r.status_final === "disparado" &&
+        !r.reconciliado &&
         resendKey &&
         staffEmail
       ) {
