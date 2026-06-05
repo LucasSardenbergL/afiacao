@@ -35,10 +35,8 @@ BEGIN
     impacto_desconhecido_n = (SELECT count(*) FROM public.reposicao_param_auto_log WHERE run_id=v_run AND status='aplicado' AND impacto_rs IS NULL)
   WHERE id=v_run;
   RETURN v_run;
-EXCEPTION WHEN OTHERS THEN
-  -- erro na core: marca o run 'erro' (o cron das 18h só lê run 'completo' → sem resumo nesse dia)
-  UPDATE public.reposicao_param_auto_run SET status='erro', concluido_em=now() WHERE id=v_run;
-  RAISE;
+  -- Em erro, a exceção propaga pro edge (callRpc registra a falha) e a transação faz rollback
+  -- do run parcial (sem órfão 'rodando'). O resumo das 18h só lê runs 'completo'.
 END;
 $$;
 
@@ -55,12 +53,17 @@ BEGIN
   SELECT * INTO r FROM public.reposicao_param_auto_log
     WHERE id=p_log_id AND status='aplicado' AND revertido_em IS NULL;
   IF NOT FOUND THEN RETURN 'nao_encontrado'; END IF;
-  -- guarda de conflito: o valor atual ainda é o que a automação pôs (PP+máx arredondados)?
+  -- guarda de conflito: os 5 campos de config atuais ainda são o que a automação pôs (arredondados)?
+  -- Compara TODOS os 5 (não só PP+máx) — senão uma edição humana em min/seguranca/cobertura, com
+  -- PP+máx intactos, seria silenciosamente atropelada pelo revert (restaura os 5 ao "antes").
   IF NOT EXISTS (
     SELECT 1 FROM public.sku_parametros sp
     WHERE sp.empresa=r.empresa AND sp.sku_codigo_omie::text=r.sku_codigo_omie
-      AND round(COALESCE(sp.ponto_pedido,-1))=round(COALESCE(r.ponto_pedido_depois,-1))
-      AND round(COALESCE(sp.estoque_maximo,-1))=round(COALESCE(r.estoque_maximo_depois,-1))
+      AND round(COALESCE(sp.ponto_pedido,-1))      = round(COALESCE(r.ponto_pedido_depois,-1))
+      AND round(COALESCE(sp.estoque_maximo,-1))    = round(COALESCE(r.estoque_maximo_depois,-1))
+      AND round(COALESCE(sp.estoque_minimo,-1))    = round(COALESCE(r.estoque_minimo_depois,-1))
+      AND round(COALESCE(sp.estoque_seguranca,-1)) = round(COALESCE(r.estoque_seguranca_depois,-1))
+      AND round(COALESCE(sp.cobertura_alvo_dias,-1))= round(COALESCE(r.cobertura_depois,-1))
   ) THEN RETURN 'conflito'; END IF;
   UPDATE public.sku_parametros sp SET
     ponto_pedido=r.ponto_pedido_antes, estoque_minimo=r.estoque_minimo_antes,
@@ -127,6 +130,7 @@ CREATE OR REPLACE FUNCTION public.reposicao_param_auto_resumo_tick()
   AS $$
 DECLARE r record; v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date; v_corpo text; v_top text;
 BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('param_auto_resumo'));  -- serializa ticks concorrentes (anti-duplo-email)
   -- v1 OBEN-only: processa 1 run por tick e o corpo do e-mail rotula "(OBEN)". Se um dia houver multi-empresa, trocar por um loop por empresa (senão a 2ª empresa do dia não recebe digest).
   SELECT * INTO r FROM public.reposicao_param_auto_run
     WHERE data_negocio_brt=v_hoje AND status='completo' AND resumo_enviado_em IS NULL

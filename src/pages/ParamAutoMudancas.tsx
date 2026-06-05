@@ -87,7 +87,7 @@ function LogRow({
 }
 
 export default function ParamAutoMudancas() {
-  const empresa = 'oben';
+  const empresa = 'OBEN';
   const { run, logs, isLoading, reverter, reverterTudo, despinar } = useParamAutoMudancas(empresa);
 
   if (isLoading) return <PageSkeleton variant="list" />;

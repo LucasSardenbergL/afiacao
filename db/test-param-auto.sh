@@ -259,12 +259,14 @@ SET test.uid = '11111111-1111-1111-1111-111111111111';
 DO $$
 DECLARE log_f uuid; res text;
 BEGIN
-  -- F está 'aplicado' (70/150). Editamos o SKU pra divergir do 'depois' → revert deve dar 'conflito'.
+  -- F está 'aplicado' (pp 70/máx 150, min 18). Editamos SÓ o estoque_minimo (PP+máx INTACTOS) →
+  -- a guarda dos 5 campos (FIX 3) deve detectar conflito. (A guarda antiga, só PP+máx, daria 'revertido'
+  -- e atropelaria a edição humana de min — exatamente o furo que esta versão fecha.)
   SELECT id INTO log_f FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1006';
-  UPDATE public.sku_parametros SET estoque_maximo = estoque_maximo + 999 WHERE sku_codigo_omie=1006;
+  UPDATE public.sku_parametros SET estoque_minimo = estoque_minimo + 99 WHERE sku_codigo_omie=1006;
   res := public.reverter_parametro_auto(log_f);
-  ASSERT res='conflito', format('CONFLITO FALHOU: % (esperado conflito; estado atual != depois logado)', res);
-  RAISE NOTICE 'OK conflito: revert NÃO atropela edição posterior (retornou conflito)';
+  ASSERT res='conflito', format('CONFLITO FALHOU: % (esperado conflito; edição humana de estoque_minimo, PP+máx intactos)', res);
+  RAISE NOTICE 'OK conflito: edição de estoque_minimo (PP+máx intactos) detectada pela guarda dos 5 campos';
 END $$;
 SQL
 

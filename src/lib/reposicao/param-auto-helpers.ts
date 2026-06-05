@@ -61,6 +61,10 @@ export function decideStatus(args: {
   pin: { pp: number; max: number } | null; limiares: LimiaresFusivel;
 }): StatusAuto {
   const { antes, sugestao, demandaMediaDiaria, pin, limiares } = args;
+  // (0) status != OK (qualquer campo NULL) → COALESCE preserva o anterior = 'sem_mudanca'.
+  //     Espelha o ramo (0) do SQL (money-path): NULL não é incoerente, é "manter o atual".
+  const semSugestao = [sugestao.ponto_pedido, sugestao.estoque_minimo, sugestao.estoque_maximo, sugestao.estoque_seguranca, sugestao.cobertura_alvo_dias].some((v) => v == null);
+  if (semSugestao) return 'sem_mudanca';
   if (!passaValidacao(sugestao).ok) return 'bloqueado_validacao';
   if (disparaFusivel(antes.estoque_maximo, sugestao, demandaMediaDiaria, limiares).segurado) return 'segurado';
   if (pin && pinBloqueia(pin.pp, pin.max, sugestao)) return 'pinado';

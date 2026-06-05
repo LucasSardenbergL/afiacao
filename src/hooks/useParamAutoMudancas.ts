@@ -44,7 +44,7 @@ export interface ParamAutoLog {
   revertido_por: string | null;
 }
 
-export function useParamAutoMudancas(empresa = 'oben') {
+export function useParamAutoMudancas(empresa = 'OBEN') {
   const qc = useQueryClient();
 
   // Último run completo da empresa

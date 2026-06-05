@@ -156,8 +156,8 @@ Deno.serve(async (req) => {
     const r1 = await callRpc("atualizar_classificacao_skus", { p_empresa: empresa });
     // OBEN: wrapper instrumentado (cria run + grava log antes→depois p/ resumo do dia + reverter).
     // Demais empresas: core direta (aplica com fusível/trava/validação, sem log — v1 é OBEN-only).
-    const r2 = empresa === "oben"
-      ? await callRpc("aplicar_parametros_automatico_diario", { p_empresa: empresa })
+    const r2 = empresa.toUpperCase() === "OBEN"
+      ? await callRpc("aplicar_parametros_automatico_diario", { p_empresa: "OBEN" })
       : await callRpc("atualizar_parametros_numericos_skus", { p_empresa: empresa });
     resultados["reclassificacao"] = {
       ok: r1.ok && r2.ok,

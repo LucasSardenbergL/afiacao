@@ -80,4 +80,7 @@ describe('decideStatus (precedência validação → fusível → pin → aplica
   it('sem_mudanca quando igual ao atual (arredondado)', () => {
     expect(decideStatus({ antes: ok, sugestao: { ...ok }, demandaMediaDiaria: 4, pin: null, limiares: LIM })).toBe('sem_mudanca');
   });
+  it('sem_mudanca quando a sugestão tem campo NULL (status != OK → mantém anterior)', () => {
+    expect(decideStatus({ antes: ok, sugestao: { ...ok, estoque_maximo: null }, demandaMediaDiaria: 4, pin: null, limiares: LIM })).toBe('sem_mudanca');
+  });
 });
