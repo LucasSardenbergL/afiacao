@@ -78,3 +78,16 @@ export interface CacaResultado {
   /** Posição final (1 = melhor). */
   rankFinal: number;
 }
+
+/**
+ * Versão enriquecida do resultado para exibição na UI.
+ * Adiciona os dados de apresentação que vêm da camada de dados (hook/query).
+ */
+export interface CacaCandidatoDisplay extends CacaResultado {
+  /** Razão social ou nome fantasia; null = sem nome disponível. */
+  nome: string | null;
+  /** Telefone em qualquer formato (dígitos ou E.164); null = sem telefone. */
+  telefone: string | null;
+  /** User ID no app (vinculado); null = cliente não possui conta no app. */
+  clienteUserId: string | null;
+}
