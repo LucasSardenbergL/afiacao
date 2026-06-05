@@ -160,4 +160,17 @@ describe('escolherEmbalagemEconomica', () => {
     expect(normal.recomendada).toBe('GL');
     expect(normal.economia_vs_alternativa).toBeGreaterThan(0);
   });
+
+  it('necessidade_base 0 ou negativa → indisponivel', () => {
+    const mk = (n: number) => escolherEmbalagemEconomica({
+      necessidade_base: n,
+      opcoes: [
+        { sku_codigo_omie: 'QT', fator_para_base: 1, preco: 10, preco_status: 'ok' },
+        { sku_codigo_omie: 'GL', fator_para_base: 4, preco: 30, preco_status: 'ok' },
+      ],
+      params: params(),
+    });
+    expect(mk(0).status).toBe('indisponivel');
+    expect(mk(-5).status).toBe('indisponivel');
+  });
 });

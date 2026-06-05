@@ -87,6 +87,15 @@ export function escolherEmbalagemEconomica(input: {
   const { necessidade_base, opcoes, params } = input;
   const flags: string[] = [];
 
+  // necessidade_base inválida (0/negativa/não-finita) → sem decisão. [codex P2]
+  if (!(necessidade_base > 0) || !Number.isFinite(necessidade_base)) {
+    return {
+      status: 'indisponivel', recomendada: null, opcoes: [],
+      excedente_base: 0, capital_estimado: null, economia_vs_alternativa: 0,
+      flags: ['necessidade_invalida'],
+    };
+  }
+
   // Só preço informado + fator válido contam. < 2 → indisponível.
   const validas = opcoes.filter((o) => o.preco != null && o.fator_para_base > 0 && o.preco_status !== 'falhou');
   if (validas.length < 2) {
