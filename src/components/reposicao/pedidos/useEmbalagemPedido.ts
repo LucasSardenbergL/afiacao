@@ -46,6 +46,7 @@ export function useEmbalagemPedido(
         .eq('empresa', empresa)
         .eq('ativo', true)
         .in('sku_codigo_omie', skus);
+      if (equivResp.error) throw equivResp.error; // money-path: não degradar silencioso [codex P2]
       const equivDoPedido = (equivResp.data ?? []) as unknown as EquivRow[];
       const gruposEnvolvidos = [...new Set(equivDoPedido.map((e) => e.grupo_id))];
       if (gruposEnvolvidos.length === 0) return {};
@@ -57,6 +58,7 @@ export function useEmbalagemPedido(
         .eq('empresa', empresa)
         .eq('ativo', true)
         .in('grupo_id', gruposEnvolvidos);
+      if (membrosResp.error) throw membrosResp.error;
       const membros = (membrosResp.data ?? []) as unknown as EquivRow[];
       const skusGrupo = [...new Set(membros.map((m) => m.sku_codigo_omie))];
 
@@ -67,6 +69,7 @@ export function useEmbalagemPedido(
         .eq('empresa', empresa)
         .in('sku_codigo_omie', skusGrupo)
         .order('capturado_em', { ascending: false });
+      if (precoResp.error) throw precoResp.error; // senão "sem preço" mascara falha de query [codex P2]
       const precoRows = (precoResp.data ?? []) as unknown as PrecoRow[];
       const precoMap = new Map<string, PrecoRow>();
       for (const p of precoRows) {
@@ -131,14 +134,29 @@ export function useEmbalagemPedido(
         const fator = Number(membro.fator_para_base);
         const qtdItem = Number(item.qtde_final ?? item.qtde_sugerida ?? 0);
         const necessidade_base = qtdItem * fator; // converte a qtd do SKU p/ unidade-base
-        const demanda = demandaMap.get(sku) ?? null;
-        const demanda_base = demanda != null ? demanda * fator : null;
-        const cmPerc = cmMap.get(sku);
-        const custo_capital_anual = cmPerc != null ? Number(cmPerc) / 100 : 0;
+        // Demanda do CONTEÚDO = soma da demanda de cada membro do grupo convertida p/
+        // unidade-base. QT e GL têm giro partido; usar só o SKU do item enviesa o capital
+        // de carrego (rejeitaria GL que na verdade gira como GL). [codex P1]
+        let demanda_base: number | null = null;
+        for (const o of opcoes) {
+          const dm = demandaMap.get(o.sku_codigo_omie);
+          if (dm != null) demanda_base = (demanda_base ?? 0) + dm * o.fator_para_base;
+        }
+        // Custo de capital: qualquer membro do grupo com cm válido serve (≈ da empresa).
+        const cmPercRaw = opcoes
+          .map((o) => cmMap.get(o.sku_codigo_omie))
+          .find((v) => v != null && Number(v) > 0);
+        const cmDisponivel = cmPercRaw != null;
+        // Capital de carrego só é estimável com demanda E custo de capital. Faltando
+        // qualquer um, NÃO zerar o freio: passa demanda null → capital null + flag. [codex P1]
         const decisao = escolherEmbalagemEconomica({
           necessidade_base,
           opcoes,
-          params: { custo_capital_anual, limiar_minimo_economia_rs: limiar, demanda_base_diaria: demanda_base },
+          params: {
+            custo_capital_anual: cmDisponivel ? Number(cmPercRaw) / 100 : 0,
+            limiar_minimo_economia_rs: limiar,
+            demanda_base_diaria: cmDisponivel ? demanda_base : null,
+          },
         });
         result[sku] = { decisao, skusGrupo: opcoes.map((o) => o.sku_codigo_omie) };
       }

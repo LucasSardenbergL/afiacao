@@ -116,7 +116,7 @@ export function EmbalagemPanel({ empresa, itens }: { empresa: string; itens: Ped
               <div key={sku}>
                 <Label>{sku}</Label>
                 <Input
-                  type="number"
+                  type="text"
                   inputMode="decimal"
                   placeholder="Preço atual"
                   value={precos[sku] ?? ''}
@@ -131,7 +131,7 @@ export function EmbalagemPanel({ empresa, itens }: { empresa: string; itens: Ped
               disabled={salvarPrecos.isPending}
               onClick={() => {
                 const entries = (precoDialog?.skus ?? [])
-                  .map((sku) => ({ sku, preco: Number(precos[sku]) }))
+                  .map((sku) => ({ sku, preco: Number(String(precos[sku] ?? '').replace(',', '.')) }))
                   .filter((e) => e.preco > 0);
                 if (entries.length === 0) {
                   toast.error('Informe ao menos um preço > 0');
