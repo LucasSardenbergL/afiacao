@@ -134,6 +134,36 @@ export type Database = {
         }
         Relationships: []
       }
+      afiacao_os_sync_fila: {
+        Row: {
+          atualizado_em: string
+          criado_em: string
+          etapa_alvo: string
+          next_retry_em: string
+          order_id: string
+          status_app: string
+          tentativas: number
+        }
+        Insert: {
+          atualizado_em?: string
+          criado_em?: string
+          etapa_alvo: string
+          next_retry_em?: string
+          order_id: string
+          status_app: string
+          tentativas?: number
+        }
+        Update: {
+          atualizado_em?: string
+          criado_em?: string
+          etapa_alvo?: string
+          next_retry_em?: string
+          order_id?: string
+          status_app?: string
+          tentativas?: number
+        }
+        Relationships: []
+      }
       ai_decision_audit_log: {
         Row: {
           action: string
@@ -6502,6 +6532,10 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          last_etapa_sincronizada: string | null
+          last_status_sincronizado: string | null
+          last_sync_at: string | null
+          last_sync_error: string | null
           omie_codigo_os: number | null
           omie_numero_os: string
           order_id: string
@@ -6513,6 +6547,10 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          last_etapa_sincronizada?: string | null
+          last_status_sincronizado?: string | null
+          last_sync_at?: string | null
+          last_sync_error?: string | null
           omie_codigo_os?: number | null
           omie_numero_os: string
           order_id: string
@@ -6524,6 +6562,10 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          last_etapa_sincronizada?: string | null
+          last_status_sincronizado?: string | null
+          last_sync_at?: string | null
+          last_sync_error?: string | null
           omie_codigo_os?: number | null
           omie_numero_os?: string
           order_id?: string
@@ -9439,6 +9481,7 @@ export type Database = {
           lt_n_observacoes: number | null
           lt_p95_dias: number | null
           meses_consecutivos_nova_classe: number | null
+          minimo_forcado_manual: number | null
           motivo_classe_forcada: string | null
           motivo_override: string | null
           omie_ultima_sincronizacao: string | null
@@ -9491,6 +9534,7 @@ export type Database = {
           lt_n_observacoes?: number | null
           lt_p95_dias?: number | null
           meses_consecutivos_nova_classe?: number | null
+          minimo_forcado_manual?: number | null
           motivo_classe_forcada?: string | null
           motivo_override?: string | null
           omie_ultima_sincronizacao?: string | null
@@ -9543,6 +9587,7 @@ export type Database = {
           lt_n_observacoes?: number | null
           lt_p95_dias?: number | null
           meses_consecutivos_nova_classe?: number | null
+          minimo_forcado_manual?: number | null
           motivo_classe_forcada?: string | null
           motivo_override?: string | null
           omie_ultima_sincronizacao?: string | null
@@ -10261,6 +10306,9 @@ export type Database = {
           id: string
           interacao_tipo: string | null
           janela_fim: string | null
+          leitura_max: number | null
+          leitura_min: number | null
+          leitura_unidade: string | null
           modo: string
           motivo_adiamento: string | null
           nota_conclusao: string | null
@@ -10302,6 +10350,9 @@ export type Database = {
           id?: string
           interacao_tipo?: string | null
           janela_fim?: string | null
+          leitura_max?: number | null
+          leitura_min?: number | null
+          leitura_unidade?: string | null
           modo: string
           motivo_adiamento?: string | null
           nota_conclusao?: string | null
@@ -10343,6 +10394,9 @@ export type Database = {
           id?: string
           interacao_tipo?: string | null
           janela_fim?: string | null
+          leitura_max?: number | null
+          leitura_min?: number | null
+          leitura_unidade?: string | null
           modo?: string
           motivo_adiamento?: string | null
           nota_conclusao?: string | null
@@ -12640,6 +12694,38 @@ export type Database = {
           },
         ]
       }
+      v_caca_candidatos: {
+        Row: {
+          cidade_uf: string | null
+          cliente_user_id: string | null
+          compra_em_outra_empresa: boolean | null
+          documento: string | null
+          empresa_alvo: string | null
+          familias: string[] | null
+          nome: string | null
+          ramo: string | null
+          telefone: string | null
+          ticket_faixa: number | null
+          ultima_compra_grupo_dias: number | null
+        }
+        Relationships: []
+      }
+      v_caca_compradores: {
+        Row: {
+          cidade_uf: string | null
+          documento: string | null
+          empresa: string | null
+          familias: string[] | null
+          lucro_cobertura: number | null
+          lucro_proxy: number | null
+          n_pedidos: number | null
+          ramo: string | null
+          recencia_dias: number | null
+          ticket_faixa: number | null
+          volume: number | null
+        }
+        Relationships: []
+      }
       v_capital_giro_prazos: {
         Row: {
           company: string | null
@@ -12980,6 +13066,7 @@ export type Database = {
           frete_perc_valor: number | null
           frete_taxa_pedido: number | null
           lote_minimo_fornecedor: number | null
+          minimo_forcado_manual: number | null
           modo_promo: string | null
           prazo_padrao_perc: number | null
           preco_item_eoq: number | null
@@ -13652,6 +13739,9 @@ export type Database = {
           id: string | null
           interacao_tipo: string | null
           janela_fim: string | null
+          leitura_max: number | null
+          leitura_min: number | null
+          leitura_unidade: string | null
           modo: string | null
           motivo_adiamento: string | null
           nota_conclusao: string | null
@@ -13761,6 +13851,7 @@ export type Database = {
           status: string
         }[]
       }
+      afiacao_os_sync_kick: { Args: never; Returns: Json }
       aplicar_promocoes_no_ciclo: {
         Args: { p_data_ciclo?: string; p_empresa?: string }
         Returns: {
@@ -14173,6 +14264,10 @@ export type Database = {
         Args: { p_account: string; p_personalizada: boolean; p_rows: Json }
         Returns: Json
       }
+      iniciar_envio_portal_pre_claim: {
+        Args: { p_pedido_id: number }
+        Returns: boolean
+      }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       limpar_sugestoes_antigas: {
         Args: never
@@ -14213,6 +14308,7 @@ export type Database = {
         Args: { p_reason?: string; p_target: string }
         Returns: string
       }
+      mapear_status_etapa: { Args: { p_status: string }; Returns: string }
       marcar_alerta_notificado: {
         Args: {
           p_alerta_id: number
