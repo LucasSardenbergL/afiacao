@@ -274,7 +274,7 @@ Reverter é **por run_id** (não data) — codex P1 #4/#5. Reverter "dias depois
 
 - `param_auto_fusivel_mult = 3` (estoque_máximo novo > 3× o anterior).
 - `param_auto_fusivel_cobertura_dias = 120` (máximo implica > 120 dias de cobertura).
-- `param_auto_resumo_hora_brt = 18`.
+- Horário do resumo: fixo no cron `reposicao-param-auto-resumo` (18h BRT). Pra mudar, re-agende o cron — não há config key.
 
 ## 14. Rollout
 

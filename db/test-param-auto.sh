@@ -145,6 +145,9 @@ BEGIN
   ASSERT r.ponto_pedido=70 AND r.estoque_maximo=150, format('F config FALHOU: pp=% max=% (esperado 70/150)', r.ponto_pedido, r.estoque_maximo);
   SELECT count(*) INTO n FROM public.reposicao_param_pin WHERE sku_codigo_omie='1006';
   ASSERT n=0, 'F pin FALHOU: pin de F deveria ser apagado (sugestão mudou e aplicou)';
+  -- F impacto: pos 30 <= pp_depois 70 → qtde_depois=150-30=120; 30<=pp_antes 40 → qtde_antes=100-30=70; Δ50×cmc10=500
+  SELECT impacto_rs INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1006';
+  ASSERT r.impacto_rs=500, format('F impacto FALHOU: impacto=% (esperado 500: Δ50×cmc10)', r.impacto_rs);
 
   -- G: sem_mudanca → NÃO loga
   SELECT count(*) INTO n FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1007';

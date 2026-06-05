@@ -289,8 +289,7 @@ CREATE POLICY param_auto_pin_sel ON public.reposicao_param_pin FOR SELECT TO aut
 -- Seeds dos limiares (ajustáveis sem deploy)
 INSERT INTO public.company_config (key, value) VALUES
   ('param_auto_fusivel_mult', '3'),
-  ('param_auto_fusivel_cobertura_dias', '120'),
-  ('param_auto_resumo_hora_brt', '18')
+  ('param_auto_fusivel_cobertura_dias', '120')
 ON CONFLICT (key) DO NOTHING;
 
 -- Estender o CHECK de tipo de fornecedor_alerta com 'param_auto_resumo' (preservar os existentes)
@@ -312,7 +311,7 @@ SELECT 'BLOCO A OK' AS status,
 - [ ] **Step 2: Validar sintaxe/ordem em PG17** (parcial — será coberto pelo harness do Task 5)
 
 Run: `psql "$PG17_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260605120000_param_auto_tabelas.sql`
-Expected: `BLOCO A OK | tabelas=3 | seeds=3` (após carregar o snapshot base no harness).
+Expected: `BLOCO A OK | tabelas=3 | seeds=2` (após carregar o snapshot base no harness).
 
 - [ ] **Step 3: Commit**
 
@@ -914,7 +913,7 @@ git commit -m "feat(reposicao): tela 'Mudanças automáticas' + rota + nav"
 
 - [ ] **Step 1:** Codex challenge no diff (money-path) antes do merge: `/codex challenge`. Resolver P1.
 - [ ] **Step 2:** Abrir PR com "**ATENÇÃO: migrations manuais**" e os 3 blocos SQL (A/B/C) inline + a query de validação de cada um.
-- [ ] **Step 3:** Founder cola **BLOCO A** (`20260605120000`) no SQL Editor → confirma `tabelas=3 · seeds=3`. ⚠️ Antes do A, o founder cola a leitura do CHECK vivo de `fornecedor_alerta` e o worker fecha a lista do CHECK verbatim+1.
+- [ ] **Step 3:** Founder cola **BLOCO A** (`20260605120000`) no SQL Editor → confirma `tabelas=3 · seeds=2`. ⚠️ Antes do A, o founder cola a leitura do CHECK vivo de `fornecedor_alerta` e o worker fecha a lista do CHECK verbatim+1.
 - [ ] **Step 4:** Founder cola **BLOCO B** (`20260605130000`) → confirma `pronargs=2`.
 - [ ] **Step 5:** Founder cola **BLOCO C** (`20260605140000`) → confirma `funcs=5 · crons=1`.
 - [ ] **Step 6:** Redeploy do edge `omie-cron-diario` via chat do Lovable (verbatim da main).

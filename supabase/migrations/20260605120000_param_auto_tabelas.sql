@@ -91,8 +91,7 @@ CREATE POLICY param_auto_pin_sel ON public.reposicao_param_pin FOR SELECT TO aut
 -- ── Seeds dos limiares do fusível (ajustáveis pelo founder sem deploy) ──────
 INSERT INTO public.company_config (key, value) VALUES
   ('param_auto_fusivel_mult', '3'),
-  ('param_auto_fusivel_cobertura_dias', '120'),
-  ('param_auto_resumo_hora_brt', '18')
+  ('param_auto_fusivel_cobertura_dias', '120')
 ON CONFLICT (key) DO NOTHING;
 
 -- ── Estender o CHECK de tipo de fornecedor_alerta com 'param_auto_resumo' ───
@@ -107,6 +106,7 @@ ALTER TABLE public.fornecedor_alerta ADD CONSTRAINT fornecedor_alerta_tipo_check
 
 COMMIT;
 
+-- seeds=2: param_auto_fusivel_mult + param_auto_fusivel_cobertura_dias (resumo_hora_brt foi removido — horário fixo no cron)
 SELECT 'BLOCO A OK' AS status,
   (SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN
     ('reposicao_param_auto_run','reposicao_param_auto_log','reposicao_param_pin')) AS tabelas,

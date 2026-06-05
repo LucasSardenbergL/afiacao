@@ -25,6 +25,7 @@ CREATE OR REPLACE FUNCTION public.atualizar_parametros_numericos_skus(p_empresa 
   AS $$
 DECLARE
   atualizados int := 0;
+  -- Defaults DEVEM coincidir com os seeds de 20260605120000 (company_config é a fonte canônica).
   v_mult numeric := COALESCE((SELECT value::numeric FROM public.company_config WHERE key='param_auto_fusivel_mult'), 3);
   v_cob  numeric := COALESCE((SELECT value::numeric FROM public.company_config WHERE key='param_auto_fusivel_cobertura_dias'), 120);
 BEGIN

@@ -6,6 +6,7 @@
 BEGIN;
 
 -- ── Wrapper diário: cria run, chama a core com run_id, marca completo. Idempotente (1 run/dia). ──
+-- Chamado 1×/dia pelo edge omie-cron-diario (swap feito na Task 6 do plano; até lá o log automático não roda em prod).
 CREATE OR REPLACE FUNCTION public.aplicar_parametros_automatico_diario(p_empresa text)
   RETURNS uuid
   LANGUAGE plpgsql
@@ -126,6 +127,7 @@ CREATE OR REPLACE FUNCTION public.reposicao_param_auto_resumo_tick()
   AS $$
 DECLARE r record; v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date; v_corpo text; v_top text;
 BEGIN
+  -- v1 OBEN-only: processa 1 run por tick e o corpo do e-mail rotula "(OBEN)". Se um dia houver multi-empresa, trocar por um loop por empresa (senão a 2ª empresa do dia não recebe digest).
   SELECT * INTO r FROM public.reposicao_param_auto_run
     WHERE data_negocio_brt=v_hoje AND status='completo' AND resumo_enviado_em IS NULL
     ORDER BY concluido_em DESC LIMIT 1;
@@ -153,6 +155,7 @@ $$;
 REVOKE ALL ON FUNCTION public.reposicao_param_auto_resumo_tick() FROM anon, authenticated, public;
 
 -- ── Cron 18h BRT (21h UTC), SQL-local (sem net.http_post → sem armadilha do timeout 5s). ──
+-- 18h BRT (21h UTC) fixo. Pra mudar a hora, re-agende este cron (não há config key).
 SELECT cron.schedule('reposicao-param-auto-resumo', '0 21 * * *',
   $cron$ SELECT public.reposicao_param_auto_resumo_tick(); $cron$);
 
