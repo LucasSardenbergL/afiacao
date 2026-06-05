@@ -132,6 +132,7 @@ export function useParamAutoMudancas(empresa = 'oben') {
       if (partes.length === 0) partes.push('nenhuma mudança pendente');
       toast.success(`Reversão concluída — ${partes.join(' · ')}`);
       void qc.invalidateQueries({ queryKey: ['param-auto-log'] });
+      void qc.invalidateQueries({ queryKey: ['param-auto-run'] }); // totais do header mudam após reverter tudo
     },
     onError: (e: Error) => toast.error(`Falha ao reverter tudo: ${e.message}`),
   });
