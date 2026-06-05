@@ -93,6 +93,19 @@ export function detectAltoValorForaRota(input: CriticaInput, cfg: CriticaCfg): D
   return { sinais: [ev], contradicao: { chave: 'alto_valor_fora_rota', texto: 'Alto valor quieto, fora da lista de ligação', evidencias: [ev], confianca: 'media' } };
 }
 
+// ── 5. wa_sem_resposta (WhatsApp esperando resposta humana — fonte v_whatsapp_sla) ──
+export function detectWaSemResposta(input: CriticaInput, _cfg: CriticaCfg): DetectResult {
+  const w = input.waSla;
+  if (w == null || w.nivel !== 'vermelho') return { sinais: [], contradicao: null };
+  const ev: SinalVoz = {
+    tipo: 'whatsapp_sla',
+    texto: `Esperando resposta no WhatsApp há ${w.minutosUteis} min (úteis)`,
+    fonte: { tabela: 'v_whatsapp_sla', id: input.clienteUserId, observadoEm: null },
+    severidade: 'critico',
+  };
+  return { sinais: [ev], contradicao: { chave: 'wa_sem_resposta', texto: 'Cliente sem resposta no WhatsApp', evidencias: [ev], confianca: 'alta' } };
+}
+
 // ── composer ─────────────────────────────────────────────────────────
 export function montarEvidencePack(input: CriticaInput, cfg: CriticaCfg = CRITICA_CFG_DEFAULT): EvidencePack {
   const faltaDado: string[] = [];
@@ -105,6 +118,7 @@ export function montarEvidencePack(input: CriticaInput, cfg: CriticaCfg = CRITIC
     detectSemResposta(input, cfg),
     detectTarefaSemProva(input, cfg),
     detectAltoValorForaRota(input, cfg),
+    detectWaSemResposta(input, cfg),
   ];
 
   const sinais: SinalVoz[] = [];

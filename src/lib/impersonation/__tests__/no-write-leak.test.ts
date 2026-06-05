@@ -24,6 +24,9 @@ const ALLOWED = new Set([
   // useTarefasFase2: effectiveUserId SÓ em useMinhasRecorrentesHoje (filtro + queryKey de LEITURA, espelha useMinhasTarefas);
   // writes (criar/editar/toggle template) usam created_by=user.id e as RPCs (concluir_com_comprovacao/auditar_tarefa) usam auth.uid() server-side.
   'src/hooks/useTarefasFase2.ts',
+  // useCriticaFila: effectiveUserId SÓ como filtro de LEITURA (owner_user_id === donoEfetivo no slaQ.data);
+  // sem mutation alguma neste hook — é read-only (crítica da fila).
+  'src/hooks/useCriticaFila.ts',
 ]);
 
 describe('anti write-leak: effectiveUserId só em leitura', () => {
