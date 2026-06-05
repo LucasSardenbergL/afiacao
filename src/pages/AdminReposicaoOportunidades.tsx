@@ -38,7 +38,8 @@ function montarInsumo(o: Oportunidade): InsumoSku {
     qtde_base: o.qtde_base != null ? Number(o.qtde_base) : null,
     lote_minimo_fornecedor:
       o.lote_minimo_fornecedor != null ? Number(o.lote_minimo_fornecedor) : null,
-    minimo_forcado_manual: null, // extension point — origem decidida depois pelo founder
+    minimo_forcado_manual:
+      o.minimo_forcado_manual != null ? Number(o.minimo_forcado_manual) : null, // Frente B — fonte: sku_parametros via view
     cm_anual: Number(o.custo_capital_efetivo_perc ?? 0) / 100, // view expõe em %/ano → fração
     prazo_padrao_perc: o.prazo_padrao_perc != null ? Number(o.prazo_padrao_perc) : null,
     frete_perc_valor: o.frete_perc_valor != null ? Number(o.frete_perc_valor) : null,

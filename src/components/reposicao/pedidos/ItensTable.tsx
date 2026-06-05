@@ -72,6 +72,13 @@ export function ItensTable({
                 {l.ajustado_humano && (
                   <Badge variant="outline" className="text-[10px] h-4">ajustado</Badge>
                 )}
+                {/* Frente B — a geração elevou a qtde ao mínimo forçado (final > sugerida natural,
+                    sem ajuste humano). Distingue o piso automático do ajuste manual. */}
+                {!l.ajustado_humano && Number(l.qtde_final ?? 0) > Number(l.qtde_sugerida ?? 0) && (
+                  <Badge variant="outline" className="text-[10px] h-4 border-status-warning/60 text-status-warning">
+                    mínimo forçado
+                  </Badge>
+                )}
               </div>
             </TableCell>
             <TableCell className={`text-right tabular-nums ${zoneClass}`}>{estoque.toFixed(0)}</TableCell>
