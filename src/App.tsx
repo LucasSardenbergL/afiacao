@@ -156,7 +156,6 @@ const SaudeDados = lazy(() => import("./pages/SaudeDados"));
 const AdminAjuda = lazy(() => import("./pages/AdminAjuda"));
 const AdminDesTrimestreAtual = lazy(() => import("./pages/AdminDesTrimestreAtual"));
 const AdminNotificacoes = lazy(() => import("./pages/AdminNotificacoes"));
-const AdminPortalSayerlack = lazy(() => import("./pages/AdminPortalSayerlack"));
 const AdminVendorSipCredentials = lazy(() => import("./pages/AdminVendorSipCredentials"));
 const AdminKnowledgeBase = lazy(() => import("./pages/AdminKnowledgeBase"));
 const AdminKnowledgeBaseDetail = lazy(() => import("./pages/AdminKnowledgeBaseDetail"));
@@ -374,7 +373,8 @@ const App = () => (
                 <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
                 <Route path="admin/des/configuracao" element={<AdminDesTrimestreAtual />} />
                 <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
-                <Route path="admin/portal-sayerlack" element={<AdminPortalSayerlack />} />
+                {/* Fase 3 · 3c: tela aposentada. A conciliação inline vive em /admin/reposicao/pedidos (PortalDrawer). */}
+                <Route path="admin/portal-sayerlack" element={<Navigate to="/admin/reposicao/pedidos" replace />} />
                 <Route path="admin/sip-credentials" element={<AdminVendorSipCredentials />} />
                 <Route path="admin/knowledge-base" element={<AdminKnowledgeBase />} />
                 <Route path="admin/knowledge-base/:id" element={<AdminKnowledgeBaseDetail />} />
