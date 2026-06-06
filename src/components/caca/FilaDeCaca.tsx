@@ -65,6 +65,24 @@ function labelEmpresa(id: string): string {
   }
 }
 
+/**
+ * Payload comum de TODOS os eventos `caca.*` — identifica o candidato (documento
+ * + empresa-alvo + cliente) pra a métrica de conversão por sabor/empresa do piloto
+ * (Codex P1: sem isso, outcome era anônimo e não dava pra cruzar com a 1ª compra).
+ * Em card multiempresa, usa a empresa-alvo do representante (melhor do grupo);
+ * seletor de empresa por card é follow-up v2.
+ */
+function eventoBase(display: CacaCandidatoDisplay) {
+  return {
+    documento: display.features.documento,
+    empresa_alvo: display.features.empresaAlvo,
+    cliente_user_id: display.clienteUserId,
+    sabor: display.sabor,
+    confianca: display.confianca,
+    rank: display.rankFinal,
+  };
+}
+
 // ─── Menu de outcome ───────────────────────────────────────────────────────────
 
 interface OutcomeMenuProps {
@@ -75,7 +93,7 @@ interface OutcomeMenuProps {
 
 function CacaOutcomeMenu({ documento, display, onOcultar }: OutcomeMenuProps) {
   const registrar = (resultado: OutcomeCaca) => {
-    track('caca.outcome', { resultado, sabor: display.sabor });
+    track('caca.outcome', { ...eventoBase(display), resultado });
     if (resultado === 'nao_agora') {
       onOcultar?.(documento);
     }
@@ -89,7 +107,7 @@ function CacaOutcomeMenu({ documento, display, onOcultar }: OutcomeMenuProps) {
           size="icon"
           className="h-8 w-8"
           title="Opções"
-          onClick={() => track('caca.item_aberto', { sabor: display.sabor, confianca: display.confianca })}
+          onClick={() => track('caca.item_aberto', eventoBase(display))}
         >
           <MoreHorizontal className="w-4 h-4" />
         </Button>
@@ -146,7 +164,7 @@ function CandidatoCard({ documento, empresasAlvo, display, onOcultar }: Candidat
           <Link
             to={fichaHref}
             className="block text-sm font-medium truncate hover:underline"
-            onClick={() => track('caca.acao', { cta: 'ficha', sabor: display.sabor })}
+            onClick={() => track('caca.acao', { ...eventoBase(display), cta: 'ficha' })}
           >
             {nomeExibido}
           </Link>
@@ -193,7 +211,7 @@ function CandidatoCard({ documento, empresasAlvo, display, onOcultar }: Candidat
             asChild
             size="sm"
             variant="outline"
-            onClick={() => track('caca.acao', { cta: 'ligar', sabor: display.sabor })}
+            onClick={() => track('caca.acao', { ...eventoBase(display), cta: 'ligar' })}
           >
             <a href={tel} aria-label="Ligar para o cliente">
               <Phone className="w-3.5 h-3.5 mr-1" />
@@ -206,7 +224,7 @@ function CandidatoCard({ documento, empresasAlvo, display, onOcultar }: Candidat
             asChild
             size="sm"
             variant="ghost"
-            onClick={() => track('caca.acao', { cta: 'ficha', sabor: display.sabor })}
+            onClick={() => track('caca.acao', { ...eventoBase(display), cta: 'ficha' })}
           >
             <Link to={fichaHref}>
               <UserRound className="w-3.5 h-3.5 mr-1" />

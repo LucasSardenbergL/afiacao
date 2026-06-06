@@ -75,14 +75,14 @@ describe('selecionarMelhores — seleção básica', () => {
 
 // ─── selecionarMelhores: ausência de lucro ≠ zero ────────────────────────────
 
-describe('selecionarMelhores — ausência de lucro ≠ zero (renormalização)', () => {
+describe('selecionarMelhores — ausência de lucro = neutro (imputação 0.5)', () => {
   it('comprador sem lucro NÃO afunda abaixo de um terceiro nitidamente menor', () => {
     // A e B: idênticos em volume/fidelidade (medianos). A tem lucro alto; B tem lucro null.
     // C: volume/fidelidade nitidamente MENORES (com lucro baixo, mas presente).
     //
-    // Sem renormalização (lucro null tratado como 0), B cairia para
+    // Sem imputação (lucro null tratado como 0), B cairia para
     // 0.4*0 + 0.3*pctVol_B + 0.3*pctFid_B — afundando abaixo de C.
-    // Com renormalização, B = (0.3*pctVol_B + 0.3*pctFid_B)/0.6 — fica acima de C.
+    // Com imputação neutra (0.5), B = 0.4*0.5 + 0.3*pctVol_B + 0.3*pctFid_B — acima de C.
     const compradores: CompradorRow[] = [
       comprador({ documento: 'A', volume: 100, n_pedidos: 10, recencia_dias: 30, lucro_proxy: 5000, lucro_cobertura: 1 }),
       comprador({ documento: 'B', volume: 100, n_pedidos: 10, recencia_dias: 30, lucro_proxy: null }),
@@ -115,6 +115,20 @@ describe('selecionarMelhores — ausência de lucro ≠ zero (renormalização)'
     const vencedor = selecionarMelhores(compradores, { fracaoTop: 0.1 }).melhores;
     expect(vencedor).toHaveLength(1);
     expect(vencedor[0].documento).toBe('Y'); // X NÃO venceu apesar do lucro gigante (cobertura baixa)
+  });
+
+  it('com volume/fidelidade idênticos: lucro-bom > sem-lucro > lucro-ruim (ausência no MEIO — Codex P1)', () => {
+    // Os 3 têm volume/n_pedidos/recencia IDÊNTICOS → o lucro é o ÚNICO diferenciador
+    // (pctVolume e pctFidelidade empatam = constante para os 3). Com imputação 0.5
+    // a ausência fica ENTRE bom e ruim. A renormalização antiga empatava sem-lucro
+    // com lucro-ruim (ambos pVF/0.6) — premiava a ausência. Este teste falharia lá.
+    const compradores: CompradorRow[] = [
+      comprador({ documento: 'BOM', volume: 100, n_pedidos: 10, recencia_dias: 30, lucro_proxy: 9999, lucro_cobertura: 1 }),
+      comprador({ documento: 'SEM', volume: 100, n_pedidos: 10, recencia_dias: 30, lucro_proxy: null }),
+      comprador({ documento: 'RUIM', volume: 100, n_pedidos: 10, recencia_dias: 30, lucro_proxy: 1, lucro_cobertura: 1 }),
+    ];
+    const docs = selecionarMelhores(compradores, { fracaoTop: 1 }).melhores.map((m) => m.documento);
+    expect(docs).toEqual(['BOM', 'SEM', 'RUIM']);
   });
 });
 

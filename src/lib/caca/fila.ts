@@ -106,6 +106,11 @@ export function montarFilaCaca(
     const { melhores, base } = selecionarMelhores(compradoresEmp);
     const perfil = perfilPorLift(melhores, base);
 
+    // Sem melhores conhecidos nesta empresa → sem look-alike honesto. Não rankeia:
+    // senão o candidato receberia lift neutro (1) em cada dimensão + confiança cheia
+    // = confiança FABRICADA, podendo liderar a fila global sem base real (Codex P1).
+    if (perfil.nMelhores === 0) continue;
+
     const candFeatures = candidatos
       .filter((c) => c.empresa_alvo === emp)
       .map(toCandidatoFeatures);
@@ -123,8 +128,18 @@ export function montarFilaCaca(
     return a.features.documento.localeCompare(b.features.documento);
   });
 
-  // 4. Corte topK.
-  const cortados = resultados.slice(0, topK);
+  // 4. Corte por topK DOCUMENTOS únicos (não candidaturas). Um cliente pode ter 2
+  //    candidaturas (oben+colacor); cortar candidaturas entregaria menos de topK
+  //    clientes e poderia esconder a 2ª empresa-alvo de um cliente já no topo
+  //    (Codex P1). Pegamos os topK primeiros documentos distintos na ordem global
+  //    e incluímos TODAS as candidaturas deles (a UI agrupa por documento).
+  const docsTop = new Set<string>();
+  for (const r of resultados) {
+    if (!docsTop.has(r.features.documento) && docsTop.size < topK) {
+      docsTop.add(r.features.documento);
+    }
+  }
+  const cortados = resultados.filter((r) => docsTop.has(r.features.documento));
 
   // 5. Enriquecimento + reatribuição do rankFinal GLOBAL (1 = melhor da fila inteira).
   return cortados.map((r, i) => {

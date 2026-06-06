@@ -14,6 +14,7 @@ import { ConditionalWebRTCProvider } from "@/contexts/ConditionalWebRTCProvider"
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { RequireFinanceiroAccess } from "@/components/RequireFinanceiroAccess";
 import { RequireStaff } from '@/components/RequireStaff';
+import { RequireCaca } from '@/components/RequireCaca';
 import { NotificationPrompt } from "@/components/NotificationPrompt";
 import { AppShellLayout } from "@/components/AppShellLayout";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
@@ -387,7 +388,10 @@ const App = () => (
                 <Route path="rota/ligacoes" element={<RotaListaLigacao />} />
                 <Route path="rota/ligacoes/painel" element={<RotaPainelLigacoes />} />
                 <Route path="rota/propostas" element={<RotaPropostas />} />
-                <Route path="caca" element={<Caca />} />
+                {/* Caça (Frente B): gate fino hunter/master dentro do RequireStaff */}
+                <Route element={<RequireCaca />}>
+                  <Route path="caca" element={<Caca />} />
+                </Route>
               </Route>
             </Route>
 

@@ -255,6 +255,24 @@ describe('montarFilaCaca — corte topK', () => {
     const fila = montarFilaCaca(compradores, candidatos);
     expect(fila).toHaveLength(10);
   });
+
+  it('topK conta DOCUMENTOS, não candidaturas: cliente com 2 empresas-alvo não consome 2 vagas (Codex P1)', () => {
+    // M é cross em oben E colacor (2 candidaturas, sabor forte → topo). A e B são frios.
+    // topK=2 DOCUMENTOS → {M, A}: as 2 candidaturas de M entram (3 itens, 2 documentos).
+    // Corte por candidatura (slice antigo) pegaria só [M-oben, M-colacor] = 1 documento.
+    const compradores = [...compradoresPadrao('oben', 'OB'), ...compradoresPadrao('colacor', 'CO')];
+    const candidatos: CandidatoRow[] = [
+      candidato({ documento: 'M', empresa_alvo: 'oben', compra_em_outra_empresa: true, cliente_user_id: 'um' }),
+      candidato({ documento: 'M', empresa_alvo: 'colacor', compra_em_outra_empresa: true, cliente_user_id: 'um' }),
+      candidato({ documento: 'A', empresa_alvo: 'oben', ultima_compra_grupo_dias: null, cliente_user_id: 'ua' }),
+      candidato({ documento: 'B', empresa_alvo: 'oben', ultima_compra_grupo_dias: null, cliente_user_id: 'ub' }),
+    ];
+    const fila = montarFilaCaca(compradores, candidatos, { topK: 2 });
+    const docsUnicos = new Set(fila.map((x) => x.features.documento));
+    expect(docsUnicos.size).toBe(2); // 2 DOCUMENTOS (não 2 candidaturas)
+    expect(docsUnicos.has('M')).toBe(true); // M (cross) está no topo
+    expect(fila.filter((x) => x.features.documento === 'M')).toHaveLength(2); // ambas candidaturas de M
+  });
 });
 
 // ─── rankFinal global reatribuído ─────────────────────────────────────────────
@@ -316,26 +334,24 @@ describe('montarFilaCaca — casos de borda', () => {
     expect(montarFilaCaca(compradoresPadrao('oben', 'OB'), [])).toEqual([]);
   });
 
-  it('empresa sem compradores ainda rankeia candidatos (perfil de lifts vazio, dimensões neutras)', () => {
-    // Nenhum comprador → selecionarMelhores([]) → perfil vazio. rankearCaca ainda
-    // produz resultado (cross_empresa entra; score por dimensões neutras=1).
+  it('empresa SEM compradores NÃO rankeia candidatos (sem look-alike honesto — Codex P1)', () => {
+    // Nenhum comprador → selecionarMelhores([]) → perfil.nMelhores=0 → empresa PULADA.
+    // Sem melhores conhecidos não há look-alike; rankear daria confiança fabricada
+    // (lift neutro 1 + confiança cheia). Honesto: não entra na fila.
     const candidatos: CandidatoRow[] = [
       candidato({ documento: 'A', empresa_alvo: 'oben', compra_em_outra_empresa: true, cliente_user_id: 'ua' }),
     ];
-    const fila = montarFilaCaca([], candidatos);
-    expect(fila).toHaveLength(1);
-    expect(fila[0].features.documento).toBe('A');
-    expect(fila[0].sabor).toBe('cross_empresa');
-    expect(fila[0].rankFinal).toBe(1);
+    expect(montarFilaCaca([], candidatos)).toEqual([]);
   });
 
   it('candidato de colacor_sc (fora das empresas-alvo) é ignorado', () => {
     // EMPRESAS_ALVO = [oben, colacor]; uma linha de colacor_sc não deve entrar.
+    // (oben tem compradores → B rankeia; colacor_sc nunca é varrido.)
     const candidatos: CandidatoRow[] = [
       candidato({ documento: 'A', empresa_alvo: 'colacor_sc', compra_em_outra_empresa: true, cliente_user_id: 'ua' }),
       candidato({ documento: 'B', empresa_alvo: 'oben', compra_em_outra_empresa: true, cliente_user_id: 'ub' }),
     ];
-    const fila = montarFilaCaca([], candidatos);
+    const fila = montarFilaCaca(compradoresPadrao('oben', 'OB'), candidatos);
     expect(fila).toHaveLength(1);
     expect(fila[0].features.documento).toBe('B');
   });

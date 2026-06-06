@@ -7,11 +7,11 @@
  *   2. índice ponderado por PERCENTIS (volume × fidelidade × lucro).
  *   3. melhores = top fração por índice, tiebreak determinístico por documento.
  *
- * Princípio de degradação honesta: dado AUSENTE ≠ ZERO.
+ * Princípio de degradação honesta: dado AUSENTE = NEUTRO (não zero, não topo).
  *   - Lucro só entra no percentil entre quem tem `lucro_proxy != null` E
- *     cobertura suficiente. Para os demais, o índice é RENORMALIZADO sobre os
- *     pesos de volume+fidelidade — um comprador forte sem lucro confiável NÃO
- *     afunda como se o lucro fosse zero.
+ *     cobertura suficiente. Para os demais, o lucro é IMPUTADO no percentil
+ *     neutro 0.5 — a ausência fica no MEIO (lucro-bom > sem-lucro > lucro-ruim),
+ *     sem afundar como zero nem premiar a ausência (Codex P1).
  *
  * Helper PURO — sem IO, sem imports externos além dos tipos.
  */
@@ -98,24 +98,24 @@ export function selecionarMelhores(
     .filter(lucroConfiavel)
     .map((c) => c.lucro_proxy as number);
 
-  // Soma dos pesos quando o lucro está ausente (para renormalizar).
-  const somaSemLucro = pesoVolume + pesoFidelidade;
-
   const comIndice = compradores.map((c) => {
     const pctVolume = percentil(volumes, c.volume);
     const pctFidelidade =
       (percentil(nPedidos, c.n_pedidos) + percentil(recenciaNeg, -c.recencia_dias)) / 2;
 
-    // pctLucro só existe para quem tem lucro confiável; senão null (≠ 0).
+    // pctLucro só existe para quem tem lucro confiável; senão null.
     const pctLucro = lucroConfiavel(c)
       ? percentil(lucrosValidos, c.lucro_proxy as number)
       : null;
 
+    // Lucro ausente → imputação NEUTRA (percentil 0.5): nem premia nem pune.
+    // Renormalizar (÷ pesos restantes) faria um sem-lucro forte valer MAIS que um
+    // lucro-ruim conhecido (sem-lucro=1.0 vs lucro-ruim=0.6) — premiava a ausência
+    // e distorcia o top 20% / a base do lift (Codex P1). Imputar 0.5 deixa a
+    // ausência no MEIO: lucro-bom > sem-lucro > lucro-ruim.
+    const pctLucroEfetivo = pctLucro ?? 0.5;
     const indice =
-      pctLucro !== null
-        ? pesoLucro * pctLucro + pesoVolume * pctVolume + pesoFidelidade * pctFidelidade
-        : // Lucro ausente: renormaliza sobre os pesos restantes — ausência ≠ zero.
-          (pesoVolume * pctVolume + pesoFidelidade * pctFidelidade) / (somaSemLucro || 1);
+      pesoLucro * pctLucroEfetivo + pesoVolume * pctVolume + pesoFidelidade * pctFidelidade;
 
     return { c, indice };
   });
