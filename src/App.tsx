@@ -174,6 +174,7 @@ const WhatsappSlaSupervisao = lazy(() => import("./pages/WhatsappSlaSupervisao")
 const RotaListaLigacao = lazy(() => import("./pages/RotaListaLigacao"));
 const RotaPainelLigacoes = lazy(() => import("./pages/RotaPainelLigacoes"));
 const RotaPropostas = lazy(() => import("./pages/RotaPropostas"));
+const Caca = lazy(() => import("./pages/Caca"));
 
 const PageLoader = () => <PageSkeleton variant="auto" />;
 
@@ -386,6 +387,7 @@ const App = () => (
                 <Route path="rota/ligacoes" element={<RotaListaLigacao />} />
                 <Route path="rota/ligacoes/painel" element={<RotaPainelLigacoes />} />
                 <Route path="rota/propostas" element={<RotaPropostas />} />
+                <Route path="caca" element={<Caca />} />
               </Route>
             </Route>
 

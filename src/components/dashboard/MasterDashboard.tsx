@@ -1,5 +1,6 @@
+import { Link } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
-import { Construction } from 'lucide-react';
+import { Construction, Target, ChevronRight } from 'lucide-react';
 import { KpisToday } from './KpisToday';
 import { TeamKpiTiles } from './TeamKpiTiles';
 import { RankingVendedoresCard } from './RankingVendedoresCard';
@@ -30,6 +31,20 @@ export function MasterDashboard() {
 
       {/* Tarefas do vendedor sendo visto via "Ver como" (somente leitura; some sem impersonação) */}
       <MinhasTarefasCard />
+
+      {/* Atalho discreto pra fila de caça (Frente B) — master acessa sem trocar de papel */}
+      <Link to="/caca" className="block">
+        <Card className="p-3 flex items-center gap-3 hover:bg-muted/30 transition-colors">
+          <Target className="w-4 h-4 text-status-info shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium">Caça</div>
+            <div className="text-2xs text-muted-foreground">
+              Clientes parecidos com seus melhores que ainda não compram
+            </div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+        </Card>
+      </Link>
 
       <Card className="p-4 border-dashed border-2 border-status-warning/30 bg-status-warning-bg/20">
         <div className="flex items-center gap-2 mb-2">
