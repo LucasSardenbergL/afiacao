@@ -36,15 +36,12 @@ export function buildEtapaChecklist(step: number, s: ReposicaoStatus): Checklist
       };
     case 2:
       return {
-        title: "Para concluir a Etapa 2: Parâmetros",
+        title: "Etapa 2: Parâmetros (automático)",
         items: [
           {
-            label: `Aprovar ${s.parametrosPendentesCount} parâmetro(s) pendente(s)`,
-            done: s.parametrosPendentesCount === 0,
-            cta:
-              s.parametrosPendentesCount > 0
-                ? { label: "Abrir revisão", to: "/admin/reposicao/revisao" }
-                : undefined,
+            // Aprovação manual aposentada — os parâmetros são ajustados todo dia.
+            label: "Parâmetros ajustados automaticamente todo dia",
+            done: true,
           },
         ],
       };

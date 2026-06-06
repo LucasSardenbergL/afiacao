@@ -91,4 +91,5 @@ export interface PedidoItem {
   valor_linha: number | null;
   primeira_compra: boolean | null;
   ajustado_humano: boolean | null;
+  modo_promocao: string | null; // 'flat' | 'forward_buying' | null — distingue o ajuste promocional do mínimo forçado
 }

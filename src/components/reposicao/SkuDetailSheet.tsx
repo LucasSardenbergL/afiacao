@@ -6,8 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import { Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -56,26 +56,22 @@ type DemandaRow = { data_emissao: string; quantidade: number };
 interface Props {
   sku: RowWithPrice | null;
   onClose: () => void;
-  onApprove: (justificativa?: string) => void;
   onSaveValues: (values: Partial<SkuParam>) => void;
-  isApproving: boolean;
   isSaving: boolean;
 }
 
 function SkuDetailSheetImpl({
   sku,
   onClose,
-  onApprove,
   onSaveValues,
-  isApproving,
   isSaving,
 }: Props) {
-  const [justificativa, setJustificativa] = useState('');
   const [editing, setEditing] = useState(false);
-  const [edit, setEdit] = useState<{ em: string; pp: string; emax: string }>({
+  const [edit, setEdit] = useState<{ em: string; pp: string; emax: string; min: string }>({
     em: '',
     pp: '',
     emax: '',
+    min: '',
   });
 
   const open = !!sku;
@@ -165,14 +161,28 @@ function SkuDetailSheetImpl({
       em: String(sku.estoque_minimo ?? ''),
       pp: String(sku.ponto_pedido ?? ''),
       emax: String(sku.estoque_maximo ?? ''),
+      min: sku.minimo_forcado_manual != null ? String(sku.minimo_forcado_manual) : '',
     });
     setEditing(true);
   };
   const saveEdit = () => {
+    // Mínimo de compra forçado: vazio → null (sem piso). Valor inválido (≤0 / não-finito) → não
+    // salva e avisa (degradação honesta — espelha o CHECK do banco que rejeita ≤0/NaN/Infinity).
+    const minRaw = edit.min.trim();
+    let minForcado: number | null = null;
+    if (minRaw !== '') {
+      const n = Number(minRaw);
+      if (!Number.isFinite(n) || n <= 0) {
+        toast.error('Mínimo de compra forçado inválido — informe um número maior que zero (ou deixe vazio para remover).');
+        return;
+      }
+      minForcado = n;
+    }
     onSaveValues({
       estoque_minimo: Number(edit.em),
       ponto_pedido: Number(edit.pp),
       estoque_maximo: Number(edit.emax),
+      minimo_forcado_manual: minForcado,
     });
     setEditing(false);
   };
@@ -312,6 +322,17 @@ function SkuDetailSheetImpl({
                 <div className="col-span-3 text-xs text-muted-foreground">
                   Cobertura alvo: {sku.cobertura_alvo_dias ?? stats?.cobertura_alvo_dias ?? '—'} dias
                 </div>
+                <div className="col-span-3 flex items-baseline gap-2 border-t pt-2 mt-1">
+                  <span className="text-xs text-muted-foreground">Mínimo de compra forçado:</span>
+                  <span className="text-sm font-semibold tabular-nums">
+                    {sku.minimo_forcado_manual != null ? fmt(sku.minimo_forcado_manual, 0) : '—'}
+                  </span>
+                  {sku.minimo_forcado_manual != null && (
+                    <span className="text-[11px] text-status-warning">
+                      a compra sugerida nunca fica abaixo deste valor
+                    </span>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-3">
@@ -338,6 +359,21 @@ function SkuDetailSheetImpl({
                     value={edit.emax}
                     onChange={(e) => setEdit((s) => ({ ...s, emax: e.target.value }))}
                   />
+                </div>
+                <div className="col-span-3 border-t pt-2 mt-1">
+                  <Label className="text-xs">Mínimo de compra forçado (opcional)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="1"
+                    placeholder="vazio = sem mínimo"
+                    value={edit.min}
+                    onChange={(e) => setEdit((s) => ({ ...s, min: e.target.value }))}
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    O motor nunca sugere comprar menos que este valor — só eleva itens que já precisam
+                    de reposição (não força comprar item sobre-estocado). Deixe vazio para remover.
+                  </p>
                 </div>
               </div>
             )}
@@ -400,9 +436,9 @@ function SkuDetailSheetImpl({
             </div>
           </section>
 
-          {/* Aprovação */}
+          {/* Rodapé */}
           <section className="space-y-2 border-t pt-4">
-            {sku.read_only ? (
+            {sku.read_only && (
               <div className="rounded-md border border-dashed bg-muted/50 p-3 text-sm text-muted-foreground space-y-1">
                 <div className="font-medium text-foreground flex items-center gap-2">
                   <Badge variant="secondary" className="bg-muted">
@@ -410,41 +446,16 @@ function SkuDetailSheetImpl({
                   </Badge>
                 </div>
                 <p>
-                  Este SKU não pode ser aprovado enquanto o fornecedor{' '}
-                  <strong>{sku.fornecedor_nome ?? '—'}</strong> não estiver habilitado para
-                  reposição automática. Habilite o fornecedor antes de aprovar os parâmetros.
+                  Este SKU está fora da reposição automática enquanto o fornecedor{' '}
+                  <strong>{sku.fornecedor_nome ?? '—'}</strong> não estiver habilitado.
                 </p>
-                <div className="flex justify-end pt-2">
-                  <Button variant="outline" onClick={onClose}>
-                    Fechar
-                  </Button>
-                </div>
               </div>
-            ) : (
-              <>
-                <Label>Justificativa da aprovação (opcional)</Label>
-                <Textarea
-                  value={justificativa}
-                  onChange={(e) => setJustificativa(e.target.value)}
-                  placeholder="Ex: Parâmetros condizem com a sazonalidade observada."
-                />
-                {sku.aprovado_em && (
-                  <p className="text-xs text-muted-foreground">
-                    Já aprovado em {new Date(sku.aprovado_em).toLocaleString('pt-BR')} por{' '}
-                    {sku.aprovado_por}.
-                  </p>
-                )}
-                <div className="flex justify-end gap-2 pt-2">
-                  <Button variant="outline" onClick={onClose}>
-                    Fechar
-                  </Button>
-                  <Button onClick={() => onApprove(justificativa)} disabled={isApproving}>
-                    {isApproving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    {sku.aprovado_em ? 'Reaprovar' : 'Aprovar este SKU'}
-                  </Button>
-                </div>
-              </>
             )}
+            <div className="flex justify-end pt-2">
+              <Button variant="outline" onClick={onClose}>
+                Fechar
+              </Button>
+            </div>
           </section>
         </div>
       </SheetContent>

@@ -72,6 +72,14 @@ export function ItensTable({
                 {l.ajustado_humano && (
                   <Badge variant="outline" className="text-[10px] h-4">ajustado</Badge>
                 )}
+                {/* Frente B — a geração elevou a qtde ao mínimo forçado (final > sugerida natural,
+                    sem ajuste humano E sem promoção: com promoção a causa do aumento é o forward_buying,
+                    não o mínimo — esconder evita atribuir a causa errada). */}
+                {!l.ajustado_humano && !l.modo_promocao && Number(l.qtde_final ?? 0) > Number(l.qtde_sugerida ?? 0) && (
+                  <Badge variant="outline" className="text-[10px] h-4 border-status-warning/60 text-status-warning">
+                    mínimo forçado
+                  </Badge>
+                )}
               </div>
             </TableCell>
             <TableCell className={`text-right tabular-nums ${zoneClass}`}>{estoque.toFixed(0)}</TableCell>

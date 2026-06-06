@@ -20,22 +20,8 @@ type SmartAlert = {
 function useSmartAlerts(): SmartAlert[] {
   const navigate = useNavigate();
 
-  const { data: paramsPendentes = 0 } = useQuery({
-    queryKey: ["cockpit-alert-params-pendentes", REPOSICAO_EMPRESA],
-    queryFn: async () => {
-      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { count, error } = await supabase
-        .from("sku_parametros")
-        .select("*", { count: "exact", head: true })
-        .eq("empresa", REPOSICAO_EMPRESA)
-        .eq("ativo", true)
-        .is("aprovado_em", null)
-        .lt("ultima_atualizacao_calculo", cutoff);
-      if (error) throw error;
-      return count ?? 0;
-    },
-    staleTime: 60_000,
-  });
+  // Alerta de "parâmetros aguardando aprovação" foi aposentado junto com a aprovação
+  // manual (o motor/auto-apply ignoram aprovado_em; o alerta nunca resolveria).
 
   const { data: skusSemParam = 0 } = useQuery({
     queryKey: ["cockpit-alert-sem-parametro", REPOSICAO_EMPRESA],
@@ -54,15 +40,6 @@ function useSmartAlerts(): SmartAlert[] {
 
   return useMemo(() => {
     const list: SmartAlert[] = [];
-    if (paramsPendentes > 0) {
-      list.push({
-        id: "params-24h",
-        level: "yellow",
-        message: `${paramsPendentes} parâmetro(s) aguardam aprovação há mais de 24h`,
-        actionLabel: "Ver parâmetros",
-        onAction: () => navigate("/admin/reposicao/sessao/parametros"),
-      });
-    }
     const now = new Date();
     const cutoff = new Date(now);
     cutoff.setHours(CUTOFF_HOUR, CUTOFF_MIN, 0, 0);
@@ -86,7 +63,7 @@ function useSmartAlerts(): SmartAlert[] {
       });
     }
     return list;
-  }, [paramsPendentes, skusSemParam, navigate]);
+  }, [skusSemParam, navigate]);
 }
 
 export function SmartAlertsSection() {

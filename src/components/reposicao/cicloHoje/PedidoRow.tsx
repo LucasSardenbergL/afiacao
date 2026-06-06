@@ -13,6 +13,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { formatBRL, logAudit } from "@/lib/reposicao";
 import { calcApprovalSuggestion } from "@/lib/reposicao/approvalSuggestion";
 import type { ColKey, PedidoItem } from "@/types/reposicao";
+import { aprovarEDisparar } from "../pedidos/aprovar-disparar";
+import { EMPRESA } from "../pedidos/shared";
 import { PrecoCell, ConfiancaBadge } from "./PedidoRowCells";
 
 export function PedidoRow({
@@ -57,32 +59,54 @@ export function PedidoRow({
     const nowIso = new Date().toISOString();
     const who = user?.email ?? user?.id ?? "cockpit";
     try {
-      const patch =
-        kind === "approve"
-          ? {
-              aprovado_em: nowIso,
-              aprovado_por: who,
-              status: "aprovado_aguardando_disparo" as const,
-              num_skus: qty,
-            }
-          : {
-              cancelado_em: nowIso,
-              cancelado_por: who,
-              status: "cancelado" as const,
-              justificativa_cancelamento: "Rejeitado inline no Cockpit",
-            };
+      if (kind === "approve") {
+        // O edit on-the-spot da quantidade (num_skus) vai ANTES — a trilha canônica
+        // (RPC aprovar_pedido_sugerido) não toca num_skus, então gravamos aqui primeiro.
+        if (qty !== Number(row.num_skus ?? 0)) {
+          const { error: qtyErr } = await supabase
+            .from("pedido_compra_sugerido")
+            .update({ num_skus: qty })
+            .eq("id", row.id);
+          if (qtyErr) throw qtyErr;
+        }
+        // Trilha canônica: APROVAR = DISPARAR NA HORA (não mais só UPDATE + esperar o cron).
+        const r = await aprovarEDisparar({
+          pedidoId: row.id,
+          empresa: EMPRESA, // cockpit da Reposição é OBEN-scoped
+          usuario: who,
+        });
+        await logAudit({
+          userId: user?.id ?? null,
+          action: "Aprovação inline",
+          result: r.ok ? "Sucesso" : `Erro: ${r.mensagem}`,
+          metadata: { id: row.id, qty },
+        });
+        if (!r.ok || r.tipo === "error") toast.error(r.mensagem);
+        else if (r.tipo === "warning") toast.warning(r.mensagem);
+        else if (r.tipo === "info") toast.info(r.mensagem);
+        else toast.success(r.mensagem);
+        onChanged();
+        return;
+      }
+
+      // Rejeição: UPDATE direto (não passa pela trilha de disparo).
       const { error } = await supabase
         .from("pedido_compra_sugerido")
-        .update(patch)
+        .update({
+          cancelado_em: nowIso,
+          cancelado_por: who,
+          status: "cancelado" as const,
+          justificativa_cancelamento: "Rejeitado inline no Cockpit",
+        })
         .eq("id", row.id);
       if (error) throw error;
       await logAudit({
         userId: user?.id ?? null,
-        action: kind === "approve" ? "Aprovação inline" : "Rejeição inline",
+        action: "Rejeição inline",
         result: "Sucesso",
         metadata: { id: row.id, qty },
       });
-      toast.success(kind === "approve" ? "Pedido aprovado" : "Pedido rejeitado");
+      toast.success("Pedido rejeitado");
       onChanged();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

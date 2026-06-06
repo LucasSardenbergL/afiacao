@@ -1,12 +1,13 @@
 import { Link } from 'react-router-dom';
+import { Target, ChevronRight } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-import { Construction, Target, ChevronRight } from 'lucide-react';
 import { KpisToday } from './KpisToday';
 import { TeamKpiTiles } from './TeamKpiTiles';
 import { RankingVendedoresCard } from './RankingVendedoresCard';
 import { VisitSuggestionsCard } from './VisitSuggestionsCard';
 import { ViewAsPicker } from '@/components/impersonation/ViewAsPicker';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
+import { GestorExcecoes } from './GestorExcecoes';
 
 /**
  * Dashboard Master (CEO) — visão consolidada do time + KPIs próprios (você
@@ -46,18 +47,8 @@ export function MasterDashboard() {
         </Card>
       </Link>
 
-      <Card className="p-4 border-dashed border-2 border-status-warning/30 bg-status-warning-bg/20">
-        <div className="flex items-center gap-2 mb-2">
-          <Construction className="w-4 h-4 text-status-warning" />
-          <span className="text-sm font-medium">Em construção — PR-MULTIVENDOR-V2</span>
-        </div>
-        <p className="text-2xs text-muted-foreground">Próximas features:</p>
-        <ul className="text-2xs text-muted-foreground space-y-1 mt-2 ml-4 list-disc">
-          <li>Ranking de vendedores (chamadas/dia, R$ gerado, ticket médio, NRR)</li>
-          <li>Carteira agregada por vendedor (health médio, churn risk médio)</li>
-          <li>Alertas estratégicos (cliente VIP esfriou, vendedor caiu produção)</li>
-        </ul>
-      </Card>
+      {/* GestorBuddy — console de exceções (Buddy v2) */}
+      <GestorExcecoes />
 
       {/* KPIs do próprio Master (também é Closer) */}
       <div className="space-y-2">

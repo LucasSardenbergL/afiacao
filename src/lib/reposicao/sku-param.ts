@@ -31,6 +31,9 @@ export type SkuParam = {
   ponto_pedido: number | null;
   estoque_maximo: number | null;
   estoque_seguranca: number | null;
+  // Mínimo de compra forçado por SKU (a "R"). Quando >0, a RPC eleva qtde_final ao máximo
+  // entre a sugestão natural e este valor — só para item que já precisa repor. NULL = sem piso.
+  minimo_forcado_manual: number | null;
   z_score: number | null;
   cobertura_alvo_dias: number | null;
   aplicar_no_omie: boolean | null;

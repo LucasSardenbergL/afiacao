@@ -1,6 +1,6 @@
 // src/lib/fila/critica/__tests__/build-inputs.test.ts
 import { describe, it, expect } from 'vitest';
-import { buildCriticaInputs, type MetricRowFull, type RotaSinalCliente, type TarefaSinalCliente } from '../build-inputs';
+import { buildCriticaInputs, type MetricRowFull, type RotaSinalCliente, type TarefaSinalCliente, type WaSlaSinalCliente } from '../build-inputs';
 import type { AcaoSugerida } from '@/lib/fila/types';
 
 const acao = (clienteUserId: string | null, nome: string | null = 'X'): AcaoSugerida => ({
@@ -36,5 +36,13 @@ describe('buildCriticaInputs', () => {
   it('rotaSinais=null (cadência indisponível) → rota null em todos', () => {
     const out = buildCriticaInputs([acao('c1')], [metric('c1')], null, []);
     expect(out[0].rota).toBeNull();
+  });
+
+  it('mapeia waSla por cliente (vermelho); ausência → null', () => {
+    const acoes = [acao('c1'), acao('c2')];
+    const wa: WaSlaSinalCliente[] = [{ customerUserId: 'c1', minutosUteis: 45, nivel: 'vermelho' }];
+    const out = buildCriticaInputs(acoes, [], null, [], wa);
+    expect(out.find(i => i.clienteUserId === 'c1')!.waSla).toEqual({ minutosUteis: 45, nivel: 'vermelho' });
+    expect(out.find(i => i.clienteUserId === 'c2')!.waSla).toBeNull();
   });
 });

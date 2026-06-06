@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **164** custom migrations totais
-- **644** objetos esperados (criados por estas migrations)
+- **176** custom migrations totais
+- **689** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 169
-  - `function`: 143
-  - `index`: 123
-  - `cron_job`: 95
-  - `table`: 74
-  - `trigger`: 36
+  - `rls_policy`: 181
+  - `function`: 159
+  - `index`: 130
+  - `cron_job`: 97
+  - `table`: 81
+  - `trigger`: 37
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1450,6 +1450,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260604170000_posthog_error_webhook.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.posthog_error_webhook_log` | — |
+| `function` | `public.enfileirar_erro_app` | — |
+
 ### `20260604170000_reposicao_blindar_sku_sem_fornecedor.sql`
 
 | Tipo | Objeto | Parent |
@@ -1472,9 +1479,107 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.get_public_tool_history` | — |
 
+### `20260604182408_embalagem_economica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sku_embalagem_equivalencia` | — |
+| `table` | `public.sku_preco_fornecedor_capturado` | — |
+| `index` | `public.uniq_sku_emb_equiv_ativo` | `sku_embalagem_equivalencia` |
+| `index` | `public.idx_sku_emb_equiv_grupo` | `sku_embalagem_equivalencia` |
+| `index` | `public.idx_sku_preco_cap_lookup` | `sku_preco_fornecedor_capturado` |
+| `rls_policy` | `public.staff_sku_emb_equiv_select` | `sku_embalagem_equivalencia` |
+| `rls_policy` | `public.staff_sku_emb_equiv_insert` | `sku_embalagem_equivalencia` |
+| `rls_policy` | `public.staff_sku_emb_equiv_update` | `sku_embalagem_equivalencia` |
+| `rls_policy` | `public.staff_sku_emb_equiv_delete` | `sku_embalagem_equivalencia` |
+| `rls_policy` | `public.staff_sku_preco_cap_select` | `sku_preco_fornecedor_capturado` |
+| `rls_policy` | `public.staff_sku_preco_cap_insert` | `sku_preco_fornecedor_capturado` |
+| `rls_policy` | `public.staff_sku_preco_cap_update` | `sku_preco_fornecedor_capturado` |
+| `rls_policy` | `public.staff_sku_preco_cap_delete` | `sku_preco_fornecedor_capturado` |
+
+### `20260604190000_reposicao_minimo_forcado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260605120000_param_auto_tabelas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_param_auto_run` | — |
+| `table` | `public.reposicao_param_auto_log` | — |
+| `table` | `public.reposicao_param_pin` | — |
+| `index` | `public.uq_param_auto_run_dia` | `reposicao_param_auto_run` |
+| `index` | `public.idx_param_auto_log_run` | `reposicao_param_auto_log` |
+| `index` | `public.idx_param_auto_log_sku` | `reposicao_param_auto_log` |
+| `rls_policy` | `public.param_auto_run_sel` | `reposicao_param_auto_run` |
+| `rls_policy` | `public.param_auto_log_sel` | `reposicao_param_auto_log` |
+| `rls_policy` | `public.param_auto_pin_sel` | `reposicao_param_pin` |
+
+### `20260605120000_tarefas_guard_old_requer.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_guard_comprovacao` | — |
+
+### `20260605130000_param_auto_core.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atualizar_parametros_numericos_skus` | — |
+
+### `20260605130000_tarefas_leitura_na_instancia.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_materializar_recorrentes` | — |
+
+### `20260605140000_afiacao_os_status_sync.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.afiacao_os_sync_fila` | — |
+| `index` | `public.idx_afiacao_os_sync_fila_retry` | `afiacao_os_sync_fila` |
+| `function` | `public.mapear_status_etapa` | — |
+| `function` | `public.afiacao_os_enqueue` | — |
+| `function` | `public.afiacao_os_sync_kick` | — |
+| `trigger` | `public.trg_afiacao_os_enqueue` | `orders` |
+| `cron_job` | `cron.afiacao-os-sync` | — |
+| `rls_policy` | `public.staff_le_afiacao_os_sync_fila` | `afiacao_os_sync_fila` |
+
+### `20260605140000_iniciar_envio_portal_pre_claim.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.iniciar_envio_portal_pre_claim` | — |
+
+### `20260605140000_param_auto_wrapper_revert_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_parametros_automatico_diario` | — |
+| `function` | `public.reverter_parametro_auto` | — |
+| `function` | `public.reverter_run_auto` | — |
+| `function` | `public.despinar_parametro` | — |
+| `function` | `public.reposicao_param_auto_resumo_tick` | — |
+| `cron_job` | `cron.reposicao-param-auto-resumo` | — |
+
+### `20260605150000_param_auto_fusivel_calibracao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atualizar_parametros_numericos_skus` | — |
+
 ### `20260605152437_caca_views.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260606120000_reposicao_rpc_account_aware.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
 
 ## Próximos passos quando algo der `❌`
 

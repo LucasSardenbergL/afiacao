@@ -167,6 +167,11 @@ function formParaPayload(
   f: FormValues,
   userId: string,
 ): Omit<TarefaTemplate, 'id' | 'created_at' | 'updated_at'> {
+  // Tipo efetivo: 'nenhuma' quando não exige comprovação.
+  const tipoEfetivo = f.requer_comprovacao ? f.tipo_comprovacao : 'nenhuma';
+  // Só grava faixa de leitura quando o tipo efetivamente inclui leitura — senão
+  // um template que trocou de 'leitura'→'foto' carregaria faixa órfã (UI-5).
+  const incluiLeitura = tipoEfetivo === 'leitura' || tipoEfetivo === 'foto_e_leitura';
   return {
     descricao: f.descricao.trim(),
     categoria: f.categoria,
@@ -180,10 +185,10 @@ function formParaPayload(
     janela_fim: f.janela_fim || null,
     tolerancia_dias: Math.max(0, parseInt(f.tolerancia_dias, 10) || 0),
     requer_comprovacao: f.requer_comprovacao,
-    tipo_comprovacao: f.requer_comprovacao ? f.tipo_comprovacao : 'nenhuma',
-    leitura_min: f.leitura_min.trim() !== '' ? parseFloat(f.leitura_min) : null,
-    leitura_max: f.leitura_max.trim() !== '' ? parseFloat(f.leitura_max) : null,
-    leitura_unidade: f.leitura_unidade.trim() || null,
+    tipo_comprovacao: tipoEfetivo,
+    leitura_min: incluiLeitura && f.leitura_min.trim() !== '' ? parseFloat(f.leitura_min) : null,
+    leitura_max: incluiLeitura && f.leitura_max.trim() !== '' ? parseFloat(f.leitura_max) : null,
+    leitura_unidade: incluiLeitura ? (f.leitura_unidade.trim() || null) : null,
     alto_risco: f.alto_risco,
     amostra_auditoria_pct: Math.min(100, Math.max(0, parseInt(f.amostra_auditoria_pct, 10) || 10)),
     reincidente_limite: Math.max(1, parseInt(f.reincidente_limite, 10) || 3),

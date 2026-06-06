@@ -55,7 +55,6 @@ export function useItensDoDia() {
 export type ReposicaoStatus = {
   current: number;
   oportunidadesCount: number;
-  parametrosPendentesCount: number;
   pedidosTotal: number;
   pedidosPendentes: number;
   pedidosBloqueados: number;
@@ -66,7 +65,6 @@ export type ReposicaoStatus = {
 const DEFAULT: ReposicaoStatus = {
   current: 3,
   oportunidadesCount: 0,
-  parametrosPendentesCount: 0,
   pedidosTotal: 0,
   pedidosPendentes: 0,
   pedidosBloqueados: 0,
@@ -77,16 +75,18 @@ const DEFAULT: ReposicaoStatus = {
 /**
  * Pure derivation of the "current step" from cycle metrics. Extracted so it can
  * be unit-tested independently of the Supabase query.
+ *
+ * A Etapa 2 (Parâmetros) NÃO entra mais na derivação: os parâmetros são ajustados
+ * automaticamente todo dia (aprovação manual aposentada) — nunca é uma tarefa humana
+ * que trava o progresso da sessão. A etapa segue navegável (ajuste manual opcional).
  */
 export function deriveCurrentStep(m: {
   oportunidadesCount: number;
-  parametrosPendentesCount: number;
   pedidosPendentes: number;
   pedidosAprovados: number;
   pedidosDisparados: number;
 }): number {
   if (m.oportunidadesCount > 0) return 1;
-  if (m.parametrosPendentesCount > 0) return 2;
   if (m.pedidosPendentes > 0) return 3;
   if (m.pedidosAprovados > 0) return 4;
   if (m.pedidosDisparados > 0) return 5;
@@ -105,13 +105,7 @@ export function useReposicaoStatus() {
         .eq("empresa", REPOSICAO_EMPRESA);
       if (oport.error) throw oport.error;
 
-      const params = await supabase
-        .from("sku_parametros")
-        .select("*", { count: "exact", head: true })
-        .eq("empresa", REPOSICAO_EMPRESA)
-        .eq("ativo", true)
-        .is("aprovado_em", null);
-      if (params.error) throw params.error;
+      // Etapa 2 (Parâmetros) é automática — sem contagem de "pendentes de aprovação".
 
       const pedidos = await supabase
         .from("pedido_compra_sugerido")
@@ -131,11 +125,9 @@ export function useReposicaoStatus() {
       const pedidosDisparados = statuses.filter((s) => s === "disparado").length;
 
       const oportunidadesCount = oport.count ?? 0;
-      const parametrosPendentesCount = params.count ?? 0;
 
       const current = deriveCurrentStep({
         oportunidadesCount,
-        parametrosPendentesCount,
         pedidosPendentes,
         pedidosAprovados,
         pedidosDisparados,
@@ -144,7 +136,6 @@ export function useReposicaoStatus() {
       return {
         current,
         oportunidadesCount,
-        parametrosPendentesCount,
         pedidosTotal: statuses.length,
         pedidosPendentes,
         pedidosBloqueados,
