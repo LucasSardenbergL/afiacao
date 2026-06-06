@@ -10,6 +10,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useRegistrarContato, useDesfazerContato } from '@/queries/useRegistrarContato';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { OutcomeStatus } from '@/lib/route/route-outcome';
 
 const LABEL: Record<OutcomeStatus, string> = {
@@ -31,6 +32,7 @@ interface OutcomeMenuProps {
 export function OutcomeMenu({ customerUserId, customerName, dataRota, bucket, valor }: OutcomeMenuProps) {
   const reg = useRegistrarContato();
   const undo = useDesfazerContato();
+  const { isImpersonating } = useImpersonation();
   const [confirmOptOut, setConfirmOptOut] = useState(false);
 
   const registrar = async (status: OutcomeStatus) => {
@@ -56,7 +58,13 @@ export function OutcomeMenu({ customerUserId, customerName, dataRota, bucket, va
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-8 w-8" title="Registrar resultado" disabled={reg.isPending}>
+          <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          title={isImpersonating ? 'Indisponível em modo Ver como' : 'Registrar resultado'}
+          disabled={reg.isPending || isImpersonating}
+        >
             <ClipboardCheck className="w-4 h-4" />
           </Button>
         </DropdownMenuTrigger>

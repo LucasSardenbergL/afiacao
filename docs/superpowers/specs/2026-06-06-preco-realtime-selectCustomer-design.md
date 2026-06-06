@@ -1,6 +1,6 @@
 # Preço em tempo real lento na seleção de cliente (`/sales/new`) — diagnóstico + plano faseado
 
-**Data:** 2026-06-06 · **Status:** Etapa 1 entregue (frontend); Etapas 2-4 aguardando aval do founder.
+**Data:** 2026-06-06 · **Status:** Etapa 1 (PR #656) + Etapa 2a entregues (frontend, só Publish); Etapa 2b-4 (backend/edge) aguardando deploy + Codex.
 **Origem:** founder reportou "a atualização de preço em tempo real está demorando muito" ao selecionar cliente no Novo Pedido. **2 consults Codex** (gpt-5.5 xhigh) — direção confirmada e vários bugs money-path descobertos junto.
 
 ## Sintoma
@@ -39,14 +39,19 @@ Em `selectCustomer`:
 - **Preço/parcela publicados ANTES do `autoCreateInMissingAccounts`** → o badge aparece logo após os lookups; o WRITE de cadastro sai do caminho crítico (segue awaited por ora).
 - **Não** mexe no submit, **não** muda comportamento do auto-cadastro (ainda awaited), **não** bloqueia Add/Enviar. Risco money-path: nulo.
 
-### ⏳ Etapa 2 — Backend de integridade (precisa redeploy de edge via Lovable + aval)
-- Lookups tri-state (`found`/`absent`/`error`); corrigir transient-error→`null` na Colacor.
-- Action `ensure_cliente` **idempotente** (código de integração determinístico, não `Date.now()`).
-- Corrigir o **código Colacor** nas chamadas de preço/parcela (lookup primeiro, ou resolver por documento no edge).
+### ✅ Etapa 2a — Submit fail-closed (frontend; só Publish, sem deploy de edge)
+Antecipada da Etapa 3 por ser frontend-only e o maior ganho de integridade (acaba com pedido na conta errada). **Não depende do edge.**
+- **Preflight `missingAccountIdentities`** (helper puro TDD em `helpers.ts`): antes de QUALQUER insert, se uma conta COM itens não tem código de cliente próprio válido → bloqueia o envio **inteiro** com erro claro (`step:'validate_identity'`, surface em toast `'Erro ao criar pedido'`). Não envia pela metade num pedido multi-conta.
+- **Removido o fallback cross-account de CLIENTE** no POST Colacor e no staffContext Afiação (`|| customer.codigo_cliente`) — preflight garante presença, usa `!`.
+- **NÃO incluído (fica na 2b):** fallback de **vendedor** (`?? codigo_vendedor`) — exige checar se o `criarPedidoVenda` tolera vendedor nulo; risco de quebrar PV se removido às cegas.
 
-### ⏳ Etapa 3 — Background seguro + submit fail-closed (money-path; aval)
-- Auto-cadastro vira **promise retida** (não fire-and-forget); `ensure` só para contas no carrinho (itens Oben→oben, Colacor→colacor, serviços→afiação).
-- **Submit aguarda os ensures ANTES do primeiro insert** em `sales_orders` ([submitOrder.ts:70](../../../src/services/orderSubmission/submitOrder.ts:70)); **remover todos os fallbacks cross-account** (cliente e vendedor); bloquear envio com erro claro quando identidade por-conta indisponível.
+### ⏳ Etapa 2b — Backend de integridade (precisa redeploy de edge via Lovable + aval)
+- Lookups **tri-state** (`found`/`absent`/`error`) — fecha o buraco: `callOmieVendasApi` retorna `null` no transitório-esgotado ([omie-vendas-sync:249](../../../supabase/functions/omie-vendas-sync/index.ts:249)) e `buscar_cliente_por_documento` engole erro em `200/null` ([omie-sync:910](../../../supabase/functions/omie-sync/index.ts:910)) → erro vira "ausente" → duplica. Design opt-in `throwOnTransient` (default = comportamento atual → 26 callers intactos). Plano em [plans/2026-06-06-preco-realtime-etapa2-plan.md](../plans/2026-06-06-preco-realtime-etapa2-plan.md).
+- Action `ensure_cliente` **idempotente** (código de integração determinístico, não `Date.now()`); guard "só cria em `absent`".
+- Corrigir o **código Colacor** nas chamadas de preço/parcela + remover o fallback de **vendedor**.
+
+### ⏳ Etapa 3 — Background seguro (money-path; aval)
+- Auto-cadastro vira **promise retida** (não fire-and-forget); `ensure` só para contas no carrinho; submit **aguarda os ensures** (com o preflight da 2a já no lugar como rede).
 - Re-precificar itens **não-editados** do carrinho quando o mapa de preço chega (ou bloquear Add até resolver) — decisão de UX do balcão.
 
 ### ⏳ Etapa 4 — Otimização (aval)

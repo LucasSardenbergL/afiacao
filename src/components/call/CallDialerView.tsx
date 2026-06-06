@@ -9,6 +9,7 @@ import {
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { formatBrPhone, normalizeBrPhone } from '@/lib/phone';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 
 export type CallDialerCallState =
   | 'idle' | 'connecting' | 'calling_origin' | 'calling_destination'
@@ -112,6 +113,7 @@ export function CallDialerView(props: CallDialerViewProps) {
     }
   }, [props.remoteStream]);
 
+  const { isImpersonating } = useImpersonation();
   const displayPhone = formatBrPhone(phoneNumber);
   const hasValidPhone = normalizeBrPhone(phoneNumber).length >= 10;
 
@@ -132,8 +134,8 @@ export function CallDialerView(props: CallDialerViewProps) {
         variant="ghost"
         className="h-8 w-8 text-status-success hover:bg-status-success-bg"
         onClick={() => onMakeCall(phoneNumber)}
-        disabled={!hasValidPhone}
-        title={hasValidPhone ? `Ligar para ${displayPhone}` : 'Telefone inválido'}
+        disabled={!hasValidPhone || isImpersonating}
+        title={isImpersonating ? 'Ligação indisponível em modo Ver como' : (hasValidPhone ? `Ligar para ${displayPhone}` : 'Telefone inválido')}
       >
         <Phone className="w-4 h-4" />
       </Button>
@@ -148,7 +150,8 @@ export function CallDialerView(props: CallDialerViewProps) {
         variant="outline"
         className="gap-1.5 text-xs h-8"
         onClick={() => onMakeCall(phoneNumber)}
-        disabled={!hasValidPhone}
+        disabled={!hasValidPhone || isImpersonating}
+        title={isImpersonating ? 'Ligação indisponível em modo Ver como' : undefined}
       >
         <Phone className="w-3.5 h-3.5" /> Ligar {hasValidPhone ? displayPhone : ''}
       </Button>

@@ -16,6 +16,7 @@ import {
 import { track } from '@/lib/analytics';
 import { useTarefaMutations } from '@/hooks/useTarefas';
 import { useMarkMixGapFeedback } from '@/hooks/useMarkMixGapFeedback';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { OutcomeMenu } from '@/components/call/OutcomeMenu';
 import type { AcaoSugerida } from '@/lib/fila/types';
 
@@ -33,6 +34,7 @@ interface Props {
 export function AcaoOutcomeMenu({ acao, onNaoUtilAgora }: Props) {
   const tarefas = useTarefaMutations();
   const markGap = useMarkMixGapFeedback();
+  const { isImpersonating } = useImpersonation();
   const p = acao.payload;
 
   const naoUtil = () => {
@@ -44,7 +46,13 @@ export function AcaoOutcomeMenu({ acao, onNaoUtilAgora }: Props) {
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-8 w-8" title="Opções">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            disabled={isImpersonating}
+            title={isImpersonating ? 'Indisponível em modo Ver como' : 'Opções'}
+          >
             <MoreHorizontal className="w-4 h-4" />
           </Button>
         </DropdownMenuTrigger>
@@ -96,7 +104,13 @@ export function AcaoOutcomeMenu({ acao, onNaoUtilAgora }: Props) {
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-8 w-8" title="Opções">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            disabled={isImpersonating}
+            title={isImpersonating ? 'Indisponível em modo Ver como' : 'Opções'}
+          >
             <MoreHorizontal className="w-4 h-4" />
           </Button>
         </DropdownMenuTrigger>
