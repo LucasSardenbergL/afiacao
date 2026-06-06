@@ -41,10 +41,6 @@ interface ParcelaResponse {
   parcela_ranking?: ParcelaRankingItem[];
 }
 
-interface PrecosResponse {
-  precos?: Record<string, number>;
-}
-
 interface UseCustomerSelectionArgs {
   /** Called after a customer is selected and a local user id was resolved.
    *  The hook owner uses this to load tools, addresses, price history, etc. */
@@ -111,11 +107,13 @@ export function useCustomerSelection({
   }, [addresses, selectedAddress]);
 
   /* ─── Purchase history (react-query, 2min stale) ─────────────────────────
-     Faz merge de 3 fontes em paralelo (allSettled tolera falhas individuais):
+     Fase 1: SÓ fontes LOCAIS (rápidas, estáveis):
        a) sales_orders local (últimas 100 ordens) → códigos de produto
        b) sales_price_history local → product_id (formato `pid:<uuid>`)
-       c) Omie histórico de produtos (oben + colacor) → códigos Omie (`omie:<cod>`)
-     A key inclui os 3 códigos relevantes do cliente para reagir a auto-create. */
+     O histórico do Omie (`historico_produtos_cliente`, até 5 ListarPedidos/conta)
+     foi REMOVIDO daqui — era o maior gerador da colisão de rate-limit (~40s). A
+     completude do Omie volta na Fase 2 (chamada atômica account-aware).
+     A key inclui os códigos do cliente para reagir a auto-create. */
   const codigoOben = selectedCustomer?.codigo_cliente ?? null;
   const codigoColacor = selectedCustomer?.codigo_cliente_colacor ?? null;
   const { data: customerPurchaseHistory = {} } = useQuery<Record<string, string>>({
@@ -137,22 +135,10 @@ export function useCustomerSelection({
             .eq('customer_user_id', customerUserId)
             .order('created_at', { ascending: false })
         : Promise.resolve({ data: null });
-      const omiePromises: Promise<FunctionInvokeResult<{ history?: Record<string, string> }>>[] = [];
-      if (codigoOben) {
-        omiePromises.push(supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'historico_produtos_cliente', codigo_cliente: codigoOben, account: 'oben' },
-        }));
-      }
-      if (codigoColacor) {
-        omiePromises.push(supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'historico_produtos_cliente', codigo_cliente: codigoColacor, account: 'colacor' },
-        }));
-      }
 
-      const [ordersSettled, priceSettled, ...omieSettled] = await Promise.allSettled([
+      const [ordersSettled, priceSettled] = await Promise.allSettled([
         localOrdersPromise,
         localPricePromise,
-        ...omiePromises,
       ]);
 
       const history: Record<string, string> = {};
@@ -174,15 +160,6 @@ export function useCustomerSelection({
       if (priceSettled.status === 'fulfilled' && priceSettled.value?.data) {
         for (const row of priceSettled.value.data as unknown as SalesPriceHistoryRow[]) {
           if (!history[`pid:${row.product_id}`]) history[`pid:${row.product_id}`] = row.created_at;
-        }
-      }
-
-      for (const res of omieSettled) {
-        if (res.status === 'fulfilled' && res.value?.data?.history) {
-          const h = res.value.data.history as Record<string, string>;
-          for (const [omieCod, dateStr] of Object.entries(h)) {
-            if (!history[`omie:${omieCod}`]) history[`omie:${omieCod}`] = dateStr;
-          }
         }
       }
 
@@ -400,13 +377,17 @@ export function useCustomerSelection({
         onLocalUserResolved?.(localUserId);
       }
 
+      // ── Fase 1: preço-cliente = ÚLTIMO PREÇO PRATICADO (fonte LOCAL) ──
+      // O `buscar_precos_cliente` (Omie ListarPedidos) foi REMOVIDO do caminho de
+      // seleção. Causava ~40s + preço pulando: o app disparava várias ListarPedidos
+      // CONCORRENTES na mesma conta (preço + parcela + histórico×5páginas), o Omie
+      // barrava com "Já existe uma requisição desse método" e o callOmieVendasApi
+      // re-tentava 5-15s×3 → empilhava. Agora o preço vem do `sales_price_history`
+      // local (rápido, estável; alimentado pelo app E pelo sync Omie de 2h). A
+      // completude/recência do Omie volta na Fase 2 (chamada atômica account-aware
+      // por data real). A `buscar_ultima_parcela` fica (1 ListarPedidos/conta, já
+      // sem colisão) p/ preservar a sugestão de prazo.
       const settledResults = await Promise.allSettled([
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
-        }),
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente, account: 'colacor' },
-        }),
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente, account: 'oben' },
         }),
@@ -431,8 +412,6 @@ export function useCustomerSelection({
       if (isStale()) return;
 
       const labels = [
-        'preços Oben',
-        'preços Colacor',
         'última parcela Oben',
         'última parcela Colacor',
         'histórico de preço local',
@@ -468,23 +447,27 @@ export function useCustomerSelection({
         return { data: null };
       };
 
-      const priceOben = getResult<PrecosResponse>(0);
-      const priceColacor = getResult<PrecosResponse>(1);
-      const parcelaOben = getResult<ParcelaResponse>(2);
-      const parcelaColacor = getResult<ParcelaResponse>(3);
-      const localPriceResult = getResult<Array<{ product_id: string; unit_price: number; created_at: string }>>(4);
+      const parcelaOben = getResult<ParcelaResponse>(0);
+      const parcelaColacor = getResult<ParcelaResponse>(1);
+      const localPriceResult = getResult<Array<{ product_id: string; unit_price: number; created_at: string }>>(2);
       const colacorClientResult = getResult<{
         cliente?: { codigo_cliente?: number | null; codigo_vendedor?: number | null };
-      }>(5);
+      }>(3);
       const afiacaoClientResult = getResult<{
         codigo_cliente?: number | null;
         codigo_vendedor?: number | null;
-      }>(6);
+      }>(4);
 
-      if (failedParts.length > 0) {
-        // É um aviso (carga parcial), não um sucesso — não usar o ✓ verde de success.
-        toast.warning('Alguns dados do cliente não foram carregados', {
-          description: `Falharam: ${failedParts.join(', ')}. Você pode continuar, mas preços/parcelas podem não refletir o contrato.`,
+      // Aviso SÓ pra falha que afeta o preço na tela agora. As falhas dos lookups de
+      // CÓDIGO por-conta ('cliente Colacor'/'cliente Afiação') NÃO alarmam na seleção:
+      //  • o preço-cliente vem do histórico LOCAL (não dessas chamadas);
+      //  • o submit fail-closed (Etapa 2a) bloqueia com mensagem PRECISA se você fechar
+      //    pedido NAQUELA conta sem a identidade resolvida (é onde o aviso é acionável).
+      // 'última parcela ...' também não alarma — a sugestão de prazo cai no padrão, e o
+      // vendedor confirma o prazo no fluxo do pedido. (Todas as falhas seguem logadas.)
+      if (failedParts.includes('histórico de preço local')) {
+        toast.warning('Histórico de preço não carregou', {
+          description: 'Usando o preço de tabela. Re-selecione o cliente para tentar de novo.',
         });
       }
 
@@ -497,27 +480,16 @@ export function useCustomerSelection({
         cust.codigo_vendedor_afiacao = afiacaoClientResult.data.codigo_vendedor || null;
       }
 
-      // ── Publica preços/parcelas ANTES do auto-cadastro ──
-      // O badge "Preço cliente" depende só destes dados; não deve esperar o WRITE
-      // de criação de cliente no Omie (que antes bloqueava o preço no caminho crítico).
+      // ── Publica preço (LOCAL) + parcela ANTES do auto-cadastro ──
+      // Fase 1: o preço-cliente = último preço praticado do `sales_price_history`
+      // (rápido, estável, determinístico). Sem overlay do Omie (removido p/ matar a
+      // colisão de rate-limit). O mesmo mapa local vai p/ as 2 contas — limitação
+      // pré-existente (produtos são account-aware); corrigida na Fase 2 account-aware.
       const localPricesByOmie = await resolveLocalPricesByOmieCode(localPriceResult.data || null);
       if (isStale()) return;
 
-      const mergedOben: Record<number, number> = { ...localPricesByOmie };
-      if (priceOben.data?.precos) {
-        for (const [k, v] of Object.entries(priceOben.data.precos as Record<string, number>)) {
-          if (v && v > 0) mergedOben[Number(k)] = v;
-        }
-      }
-      setCustomerPricesOben(mergedOben);
-
-      const mergedColacor: Record<number, number> = { ...localPricesByOmie };
-      if (priceColacor.data?.precos) {
-        for (const [k, v] of Object.entries(priceColacor.data.precos as Record<string, number>)) {
-          if (v && v > 0) mergedColacor[Number(k)] = v;
-        }
-      }
-      setCustomerPricesColacor(mergedColacor);
+      setCustomerPricesOben({ ...localPricesByOmie });
+      setCustomerPricesColacor({ ...localPricesByOmie });
 
       if (parcelaOben.data?.ultima_parcela) setSelectedParcelaOben(parcelaOben.data.ultima_parcela);
       if (parcelaOben.data?.parcela_ranking) setCustomerParcelaRankingOben(parcelaOben.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));

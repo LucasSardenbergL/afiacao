@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 184
+-- Total de custom migrations: 187
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -201,8 +201,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260606150000', 'a2_cmc_base_custo_view', '20260606150000_a2_cmc_base_custo_view.sql'),
   ('20260606150000', 'reposicao_qtde_inteira', '20260606150000_reposicao_qtde_inteira.sql'),
   ('20260606170000', 'reposicao_fix_aplicar_promocoes', '20260606170000_reposicao_fix_aplicar_promocoes.sql'),
+  ('20260606180000', 'reposicao_aplicar_promocoes_hardening', '20260606180000_reposicao_aplicar_promocoes_hardening.sql'),
   ('20260606180000', 'reposicao_preco_pedido_cmc', '20260606180000_reposicao_preco_pedido_cmc.sql'),
   ('20260606190000', 'reposicao_preco_pedido_cmc_account', '20260606190000_reposicao_preco_pedido_cmc_account.sql'),
+  ('20260606190000', 'reposicao_qtde_inteira_persist', '20260606190000_reposicao_qtde_inteira_persist.sql'),
+  ('20260606200000', 'reposicao_promo_forward_buying_min', '20260606200000_reposicao_promo_forward_buying_min.sql'),
   ('20260606230000', 'negociacao_paralela_v2_cleanup', '20260606230000_negociacao_paralela_v2_cleanup.sql')
 )
 SELECT
@@ -915,8 +918,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('detectar_skus_sem_grupo_self_heal', 'function', 'public', 'detectar_skus_sem_grupo', ''),
   ('reposicao_qtde_inteira', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_fix_aplicar_promocoes', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
+  ('reposicao_aplicar_promocoes_hardening', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_preco_pedido_cmc', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
-  ('reposicao_preco_pedido_cmc_account', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_preco_pedido_cmc_account', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_qtde_inteira_persist', 'function', 'public', 'reposicao_persistir_qtde_inteira', ''),
+  ('reposicao_promo_forward_buying_min', 'function', 'public', 'aplicar_promocoes_no_ciclo', '')
 )
 SELECT
   e.migration,

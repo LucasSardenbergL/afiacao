@@ -2,7 +2,7 @@
 // Extraída verbatim de src/pages/SalesOrders.tsx (god-component split).
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -110,10 +110,18 @@ export function useSalesOrders() {
 
   /* ─── Profiles (nome + documento dos clientes) ─── */
   const customerIds = useMemo(() => [...new Set(orders.map((o) => o.customer_user_id))], [orders]);
+  // Chave estável SEM mutar customerIds (que é usado no .in()). O .sort() in-place
+  // direto na queryKey mutava o valor memoizado.
+  const customerIdsKey = useMemo(() => [...customerIds].sort().join(','), [customerIds]);
   const profilesQuery = useQuery({
-    queryKey: ['sales-orders-profiles', customerIds.sort().join(',')],
+    queryKey: ['sales-orders-profiles', customerIdsKey],
     enabled: isStaff && customerIds.length > 0,
     staleTime: 60_000,
+    // Ao paginar, os customerIds crescem → a queryKey muda → a query re-busca.
+    // keepPreviousData mantém os nomes já carregados durante a nova busca, em vez
+    // de esvaziar (os nomes "piscavam Cliente", a lista filtrada colapsava e o
+    // scroll resetava pro topo). Causa-raiz do reset com busca ativa.
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data } = await supabase
         .from('profiles')

@@ -193,6 +193,61 @@ export class SipClient {
     this.muted = false; // reset pra próxima chamada
   }
 
+  /**
+   * SPIKE (descartável — flag telefoniaTransferSpike): tenta transferência via
+   * feature-code DTMF do Nvoip (`*2` + ramal). O Nvoip documenta "*2 + ramal".
+   * Requer chamada established. NÃO confirma a transferência — só envia os tons;
+   * a validação é observar o ramal destino tocar (ver runbook do spike).
+   */
+  transferViaDtmf(extension: string): void {
+    if (!this.currentSession) {
+      console.warn('[transfer-spike] DTMF abortado: sem sessão ativa');
+      return;
+    }
+    const tones = `*2${extension}`;
+    console.info('[transfer-spike] enviando DTMF', { tones, sipCallId: this.currentSession.id });
+    try {
+      // JsSIP RTCSession.sendDTMF — RFC2833 por padrão (transport pode precisar de ajuste no spike)
+      this.currentSession.sendDTMF(tones, { duration: 160, interToneGap: 120 });
+      console.info('[transfer-spike] DTMF despachado (despacho OK ≠ transferência concluída — observe o ramal destino)');
+    } catch (e) {
+      console.error('[transfer-spike] falha ao despachar DTMF', e);
+    }
+  }
+
+  /**
+   * SPIKE (descartável): tenta transferência cega via SIP REFER p/ o ramal interno.
+   * Instrumentado: loga a resposta ao REFER (202 vs 4xx/5xx) e os NOTIFY de
+   * progresso (sipfrag 100/180/200/4xx). Requer chamada established.
+   */
+  transferViaRefer(extension: string): void {
+    if (!this.currentSession) {
+      console.warn('[transfer-spike] REFER abortado: sem sessão ativa');
+      return;
+    }
+    const target = `sip:${extension}@${this.config.sipDomain}`;
+    console.info('[transfer-spike] enviando REFER', { target, sipCallId: this.currentSession.id });
+    try {
+      this.currentSession.refer(target, {
+        eventHandlers: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          requestSucceeded: (e: any) => console.info('[transfer-spike] REFER aceito (2xx)', e?.response?.status_code),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          requestFailed: (e: any) => console.warn('[transfer-spike] REFER RECUSADO', { cause: e?.cause, status: e?.response?.status_code }),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          accepted: (e: any) => console.info('[transfer-spike] NOTIFY: transferência aceita', e?.request?.body),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          failed: (e: any) => console.warn('[transfer-spike] NOTIFY: transferência FALHOU', e?.request?.body),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          progress: (e: any) => console.info('[transfer-spike] NOTIFY: progresso', e?.request?.body),
+        },
+      });
+      console.info('[transfer-spike] REFER despachado (aguardando NOTIFYs do Nvoip)');
+    } catch (e) {
+      console.error('[transfer-spike] falha ao despachar REFER', e);
+    }
+  }
+
   getCallDurationSeconds(): number {
     if (!this.callStartedAt) return 0;
     return Math.floor((Date.now() - this.callStartedAt) / 1000);

@@ -8,6 +8,7 @@ import { Printer, Share2, Pencil } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { statusLabels, type SalesOrder } from './types';
+import { itemTotal } from './print';
 
 interface SalesOrderDetailSheetProps {
   order: SalesOrder | null;
@@ -76,11 +77,16 @@ export function SalesOrderDetailSheet({
                     <div key={i} className="flex items-start justify-between gap-3 text-sm border-b border-border/50 pb-2 last:border-0">
                       <div className="min-w-0 flex-1">
                         <p className="truncate">{item.descricao || 'Item'}</p>
+                        {item.tint_nome_cor && (
+                          <p className="text-xs text-muted-foreground truncate">
+                            🎨 {item.tint_cor_id} - {item.tint_nome_cor}
+                          </p>
+                        )}
                         <p className="text-xs text-muted-foreground">
                           {item.quantidade} × {fmt(item.valor_unitario)}
                         </p>
                       </div>
-                      <span className="font-medium tabular-nums shrink-0">{fmt(item.valor_total)}</span>
+                      <span className="font-medium tabular-nums shrink-0">{fmt(itemTotal(item))}</span>
                     </div>
                   ))}
                   {(order.items?.length || 0) === 0 && (
