@@ -1,7 +1,7 @@
 // src/pages/Telefonia.tsx
 import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
-import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { DialPad } from '@/components/telefonia/DialPad';
 import { CallHistoryTabs } from '@/components/telefonia/CallHistoryTabs';
 import { CallDialerView } from '@/components/call/CallDialerView';
@@ -11,7 +11,10 @@ import { normalizeBrPhone, formatBrPhone } from '@/lib/phone';
 import type { CallLogTab } from '@/hooks/useCallLog';
 
 export default function Telefonia() {
-  const { user } = useAuth();
+  // Lente "Ver como": o histórico de chamadas é escopado por usuário. effectiveUserId
+  // é o id do ALVO na lente e o do próprio usuário fora dela (resolveEffectiveUserId),
+  // então a lista reflete as ligações de quem o master inspeciona, não as dele.
+  const { effectiveUserId } = useImpersonation();
   const [tab, setTab] = useState<CallLogTab>('recentes');
   const [dialPrefill, setDialPrefill] = useState('');
   const [activePhone, setActivePhone] = useState('');
@@ -93,7 +96,7 @@ export default function Telefonia() {
         </div>
         <div className="flex-1 rounded-lg border border-border bg-card p-3">
           <CallHistoryTabs
-            userId={user?.id} tab={tab} onTabChange={setTab}
+            userId={effectiveUserId ?? undefined} tab={tab} onTabChange={setTab}
             isManager={isManager}
             onCallBack={(phone, name) => { setDialPrefill(phone); startCall(phone, undefined, name); }}
           />

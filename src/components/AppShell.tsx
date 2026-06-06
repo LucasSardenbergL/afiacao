@@ -359,7 +359,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const { isStaff, user } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
   const { displayIsStaff, displayIsMaster, displayIsGestorComercial, displayIsSalesOnly, displayLoading } = useDisplayAccess();
-  const { isImpersonating } = useImpersonation();
+  const { isImpersonating, effectiveUserId } = useImpersonation();
   const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
   // Os 6 contadores de badges abaixo são todos da seção Reposição. Não fazem
@@ -474,8 +474,10 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const { data: financeiroAtrasados } = useFinanceiroAlertas();
   const { data: tintErros } = useTintAlertas();
 
-  // Badge de perdidas não-lidas na Central de Telefonia (refetch a cada 30s)
-  const { data: missedCallsCount } = useMissedCount(user?.id);
+  // Badge de perdidas não-lidas na Central de Telefonia (refetch a cada 30s).
+  // Na lente "Ver como", conta as do ALVO (effectiveUserId) — coerente com o
+  // histórico da própria tela; fora da lente é o próprio usuário.
+  const { data: missedCallsCount } = useMissedCount(effectiveUserId ?? undefined);
 
   // Badge de tarefas abertas da vendedora (reusa useMinhasTarefas → mesmo
   // cache do card de "Meu dia": 1 request, 2 consumidores; refetch 60s +

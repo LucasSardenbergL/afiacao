@@ -3,6 +3,7 @@ import { useMemo, useEffect } from 'react';
 import { Phone } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useCallLog, useAcknowledgeMissed, type CallLogTab } from '@/hooks/useCallLog';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { CallHistoryRow } from './CallHistoryRow';
 import { EmptyState } from '@/components/EmptyState';
 
@@ -19,12 +20,15 @@ export function CallHistoryTabs({
   userId: string | undefined; tab: CallLogTab; onTabChange: (t: CallLogTab) => void;
   onCallBack: (phone: string, name?: string) => void; isManager: boolean;
 }) {
+  const { isImpersonating } = useImpersonation();
   const { data: rows = [], isLoading } = useCallLog(tab, userId);
   const ack = useAcknowledgeMissed(userId);
 
-  // Ao abrir a aba Perdidas, marca como lidas (zera badge)
+  // Ao abrir a aba Perdidas, marca como lidas (zera badge). Na lente "Ver como"
+  // (somente leitura) NÃO marca — seria mutar o estado do alvo, e o write-guard
+  // bloquearia gerando ruído. O master inspeciona as perdidas do alvo sem alterá-las.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (tab === 'perdidas') ack.mutate(); }, [tab]);
+  useEffect(() => { if (tab === 'perdidas' && !isImpersonating) ack.mutate(); }, [tab]);
 
   const allTabs = useMemo(() => isManager ? [...TABS, { id: 'time' as CallLogTab, label: 'Time' }] : TABS, [isManager]);
 
