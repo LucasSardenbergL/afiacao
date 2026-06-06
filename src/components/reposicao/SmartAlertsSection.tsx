@@ -38,12 +38,15 @@ function useSmartAlerts(): SmartAlert[] {
   return useMemo(() => {
     const list: SmartAlert[] = [];
     if (skusSemParam > 0) {
+      // Informativo (não é falha do auto-apply): são SKUs sem histórico suficiente para o motor
+      // calcular parâmetro (em geral baixo giro / 1ª compra). O auto-apply gere os que TÊM dado;
+      // estes ficam sem número até terem venda — aja só nos "Candidatos a 1ª compra".
       list.push({
         id: "skus-sem-param",
-        level: "red",
-        message: `${skusSemParam} SKU(s) ativos sem parâmetro configurado`,
-        actionLabel: "Configurar",
-        onAction: () => navigate("/admin/reposicao/sessao/parametros"),
+        level: "yellow",
+        message: `${skusSemParam} SKU(s) sem histórico para cálculo automático (baixo giro / 1ª compra)`,
+        actionLabel: "Ver candidatos",
+        onAction: () => navigate("/admin/reposicao/sessao/parametros?tab=ajuste"),
       });
     }
     return list;
