@@ -27,6 +27,13 @@ const ALLOWED = new Set([
   // useCriticaFila: effectiveUserId SÓ como filtro de LEITURA (owner_user_id === donoEfetivo no slaQ.data);
   // sem mutation alguma neste hook — é read-only (crítica da fila).
   'src/hooks/useCriticaFila.ts',
+  // Telefonia: effectiveUserId SÓ alimenta o filtro de LEITURA do histórico de chamadas
+  // (useCallLog via CallHistoryTabs) pro "Ver como" mostrar as ligações do ALVO. A ligação
+  // em si (call.makeCall) é bloqueada na FONTE (WebRTCCallContext) na lente; nenhum write usa effectiveUserId.
+  'src/pages/Telefonia.tsx',
+  // AppShell: effectiveUserId SÓ no badge de perdidas não-lidas (useMissedCount = count/LEITURA)
+  // pro "Ver como" refletir o alvo; nenhuma mutation no shell usa effectiveUserId.
+  'src/components/AppShell.tsx',
 ]);
 
 describe('anti write-leak: effectiveUserId só em leitura', () => {

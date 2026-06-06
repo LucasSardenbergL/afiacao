@@ -1,18 +1,14 @@
 // src/hooks/useIsTelefoniaManager.ts
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 
+/**
+ * A aba "Time" do histórico de chamadas é para gestores comerciais/master.
+ * Usa o acesso de EXIBIÇÃO (useDisplayAccess): fora da lente espelha o usuário
+ * real (master OU commercial_role em gerencial/estrategico/super_admin — o mesmo
+ * critério de antes); na lente "Ver como", reflete o cargo do ALVO, então um
+ * farmer impersonado não vê a aba Time (como ele de fato não vê no app dele).
+ */
 export function useIsTelefoniaManager(): boolean {
-  const { user, isMaster } = useAuth();
-  const { data } = useQuery({
-    queryKey: ['commercial_role', user?.id], enabled: !!user?.id,
-    queryFn: async () => {
-       
-      const { data } = await supabase.from('commercial_roles')
-        .select('commercial_role').eq('user_id', user!.id).maybeSingle();
-      return data?.commercial_role as string | undefined;
-    },
-  });
-  return isMaster || ['gerencial', 'estrategico', 'super_admin'].includes(data ?? '');
+  const { displayIsMaster, displayIsGestorComercial } = useDisplayAccess();
+  return displayIsMaster || displayIsGestorComercial;
 }
