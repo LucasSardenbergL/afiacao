@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 169
+-- Total de custom migrations: 175
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -186,9 +186,15 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260604180000', 'public_tool_history_rpc', '20260604180000_public_tool_history_rpc.sql'),
   ('20260604182408', 'embalagem_economica', '20260604182408_embalagem_economica.sql'),
   ('20260604190000', 'reposicao_minimo_forcado', '20260604190000_reposicao_minimo_forcado.sql'),
+  ('20260605120000', 'param_auto_tabelas', '20260605120000_param_auto_tabelas.sql'),
   ('20260605120000', 'tarefas_guard_old_requer', '20260605120000_tarefas_guard_old_requer.sql'),
+  ('20260605130000', 'param_auto_core', '20260605130000_param_auto_core.sql'),
   ('20260605130000', 'tarefas_leitura_na_instancia', '20260605130000_tarefas_leitura_na_instancia.sql'),
-  ('20260605140000', 'afiacao_os_status_sync', '20260605140000_afiacao_os_status_sync.sql')
+  ('20260605140000', 'afiacao_os_status_sync', '20260605140000_afiacao_os_status_sync.sql'),
+  ('20260605140000', 'iniciar_envio_portal_pre_claim', '20260605140000_iniciar_envio_portal_pre_claim.sql'),
+  ('20260605140000', 'param_auto_wrapper_revert_cron', '20260605140000_param_auto_wrapper_revert_cron.sql'),
+  ('20260605150000', 'param_auto_fusivel_calibracao', '20260605150000_param_auto_fusivel_calibracao.sql'),
+  ('20260606120000', 'reposicao_rpc_account_aware', '20260606120000_reposicao_rpc_account_aware.sql')
 )
 SELECT
   e.version,
@@ -867,7 +873,17 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('embalagem_economica', 'rls_policy', 'public', 'staff_sku_preco_cap_update', 'sku_preco_fornecedor_capturado'),
   ('embalagem_economica', 'rls_policy', 'public', 'staff_sku_preco_cap_delete', 'sku_preco_fornecedor_capturado'),
   ('reposicao_minimo_forcado', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('param_auto_tabelas', 'table', 'public', 'reposicao_param_auto_run', ''),
+  ('param_auto_tabelas', 'table', 'public', 'reposicao_param_auto_log', ''),
+  ('param_auto_tabelas', 'table', 'public', 'reposicao_param_pin', ''),
+  ('param_auto_tabelas', 'index', 'public', 'uq_param_auto_run_dia', 'reposicao_param_auto_run'),
+  ('param_auto_tabelas', 'index', 'public', 'idx_param_auto_log_run', 'reposicao_param_auto_log'),
+  ('param_auto_tabelas', 'index', 'public', 'idx_param_auto_log_sku', 'reposicao_param_auto_log'),
+  ('param_auto_tabelas', 'rls_policy', 'public', 'param_auto_run_sel', 'reposicao_param_auto_run'),
+  ('param_auto_tabelas', 'rls_policy', 'public', 'param_auto_log_sel', 'reposicao_param_auto_log'),
+  ('param_auto_tabelas', 'rls_policy', 'public', 'param_auto_pin_sel', 'reposicao_param_pin'),
   ('tarefas_guard_old_requer', 'function', 'public', 'tarefas_guard_comprovacao', ''),
+  ('param_auto_core', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
   ('tarefas_leitura_na_instancia', 'function', 'public', 'tarefas_materializar_recorrentes', ''),
   ('afiacao_os_status_sync', 'table', 'public', 'afiacao_os_sync_fila', ''),
   ('afiacao_os_status_sync', 'index', 'public', 'idx_afiacao_os_sync_fila_retry', 'afiacao_os_sync_fila'),
@@ -876,7 +892,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('afiacao_os_status_sync', 'function', 'public', 'afiacao_os_sync_kick', ''),
   ('afiacao_os_status_sync', 'trigger', 'public', 'trg_afiacao_os_enqueue', 'orders'),
   ('afiacao_os_status_sync', 'cron_job', 'cron', 'afiacao-os-sync', ''),
-  ('afiacao_os_status_sync', 'rls_policy', 'public', 'staff_le_afiacao_os_sync_fila', 'afiacao_os_sync_fila')
+  ('afiacao_os_status_sync', 'rls_policy', 'public', 'staff_le_afiacao_os_sync_fila', 'afiacao_os_sync_fila'),
+  ('iniciar_envio_portal_pre_claim', 'function', 'public', 'iniciar_envio_portal_pre_claim', ''),
+  ('param_auto_wrapper_revert_cron', 'function', 'public', 'aplicar_parametros_automatico_diario', ''),
+  ('param_auto_wrapper_revert_cron', 'function', 'public', 'reverter_parametro_auto', ''),
+  ('param_auto_wrapper_revert_cron', 'function', 'public', 'reverter_run_auto', ''),
+  ('param_auto_wrapper_revert_cron', 'function', 'public', 'despinar_parametro', ''),
+  ('param_auto_wrapper_revert_cron', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
+  ('param_auto_wrapper_revert_cron', 'cron_job', 'cron', 'reposicao-param-auto-resumo', ''),
+  ('param_auto_fusivel_calibracao', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
+  ('reposicao_rpc_account_aware', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 )
 SELECT
   e.migration,
