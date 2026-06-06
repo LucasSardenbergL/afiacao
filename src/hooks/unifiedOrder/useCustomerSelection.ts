@@ -458,10 +458,16 @@ export function useCustomerSelection({
         codigo_vendedor?: number | null;
       }>(4);
 
-      if (failedParts.length > 0) {
-        // É um aviso (carga parcial), não um sucesso — não usar o ✓ verde de success.
-        toast.warning('Alguns dados do cliente não foram carregados', {
-          description: `Falharam: ${failedParts.join(', ')}. Você pode continuar, mas preços/parcelas podem não refletir o contrato.`,
+      // Aviso SÓ pra falha que afeta o preço na tela agora. As falhas dos lookups de
+      // CÓDIGO por-conta ('cliente Colacor'/'cliente Afiação') NÃO alarmam na seleção:
+      //  • o preço-cliente vem do histórico LOCAL (não dessas chamadas);
+      //  • o submit fail-closed (Etapa 2a) bloqueia com mensagem PRECISA se você fechar
+      //    pedido NAQUELA conta sem a identidade resolvida (é onde o aviso é acionável).
+      // 'última parcela ...' também não alarma — a sugestão de prazo cai no padrão, e o
+      // vendedor confirma o prazo no fluxo do pedido. (Todas as falhas seguem logadas.)
+      if (failedParts.includes('histórico de preço local')) {
+        toast.warning('Histórico de preço não carregou', {
+          description: 'Usando o preço de tabela. Re-selecione o cliente para tentar de novo.',
         });
       }
 
