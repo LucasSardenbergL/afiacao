@@ -32,3 +32,27 @@ export function extrairPedidoOmie(
   const numeroRaw = cab?.cNumero ?? r.cNumero;
   return { id: String(idRaw), numero: numeroRaw != null ? String(numeroRaw) : '' };
 }
+
+/**
+ * Guard anti-PO-duplicado da conciliação manual (Fase 3 · 3b, §4.4).
+ *
+ * O pedido JÁ tem um pedido de compra criado no Omie quando `omie_pedido_compra_id`
+ * está preenchido (qualquer string não-vazia após trim). Nesse caso a conciliação
+ * NÃO deve recriar o PO no Omie — só registrar o protocolo. O dedup por cCodIntPed
+ * do próprio Omie é um backstop, mas este guard evita a chamada por completo.
+ *
+ * Retorna `true` quando o Omie AINDA NÃO tem o PO → seguro disparar a criação.
+ * Conservador: NULL/''/whitespace/0 numérico-como-string == "não tem" → cria
+ * (igual ao comportamento de hoje); só pula quando há um id real.
+ */
+export function deveCriarPedidoOmie(
+  omiePedidoCompraId: string | number | null | undefined,
+): boolean {
+  if (omiePedidoCompraId == null) return true;
+  const s = String(omiePedidoCompraId).trim();
+  if (s === '') return true;
+  // O disparo grava "" quando o Omie não devolveu id; trate strings que representam
+  // "vazio/zero" como ausência de PO (não bloqueia uma criação legítima).
+  if (s === '0') return true;
+  return false;
+}

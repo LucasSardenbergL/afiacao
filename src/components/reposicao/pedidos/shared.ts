@@ -66,6 +66,52 @@ export function interpretarRespostaDisparo(
   return { tone: 'info', message: `Pedido #${pedidoId}: nada a disparar` };
 }
 
+/* ─── Conciliação inline (Fase 3 · 3b) ─── */
+//
+// O pedido cai num estado de conciliação quando o disparo ao portal Sayerlack termina
+// AMBÍGUO. Dois estados, com risco DIFERENTE de PO duplicado no fornecedor:
+//
+//  - aceito_portal_sem_protocolo → o portal aceitou mas não devolveu o número.
+//    O pedido quase-certamente JÁ EXISTE no fornecedor; conciliar (só registrar o
+//    protocolo) é de baixo risco.
+//  - indeterminado_requer_conciliacao → AMBÍGUO; o pedido pode ou NÃO existir no
+//    portal. Conciliar às cegas pode duplicar → exige conferir no portal ANTES.
+//
+// Estados de erro genuíno (no fluxo portal-first o portal falhou ANTES de obter
+// protocolo, então NÃO há PO no fornecedor) → reenviar é seguro (retry de verdade).
+// Estados de sucesso / em-trânsito → reenviar duplicaria; não oferecer reset.
+
+export type AcaoPortal =
+  | { kind: 'conciliar'; warn: boolean } // warn=true → avisar risco de duplicar antes de conciliar
+  | { kind: 'reenviar' } // erro genuíno sem PO criado → retry seguro
+  | { kind: 'nenhuma' }; // sucesso / em-trânsito / nao_aplicavel → nenhuma ação destrutiva
+
+const STATUS_CONCILIAVEIS_FRONT: ReadonlySet<StatusEnvioPortal> = new Set<StatusEnvioPortal>([
+  'aceito_portal_sem_protocolo',
+  'indeterminado_requer_conciliacao',
+]);
+
+// Erros genuínos onde (no fluxo portal-first) NÃO há PO no fornecedor → reset seguro.
+const STATUS_REENVIO_SEGURO_FRONT: ReadonlySet<StatusEnvioPortal> = new Set<StatusEnvioPortal>([
+  'erro_retentavel',
+  'falha_envio_portal',
+  'erro_nao_retentavel',
+]);
+
+// Decide a ação disponível no PortalDrawer p/ um status de envio ao portal.
+// indeterminado_requer_conciliacao → conciliar com AVISO (risco de duplicar).
+// aceito_portal_sem_protocolo → conciliar sem aviso (PO quase-certamente já existe).
+export function decidirAcaoPortal(status: StatusEnvioPortal | null | undefined): AcaoPortal {
+  const s = (status ?? 'nao_aplicavel') as StatusEnvioPortal;
+  if (STATUS_CONCILIAVEIS_FRONT.has(s)) {
+    return { kind: 'conciliar', warn: s === 'indeterminado_requer_conciliacao' };
+  }
+  if (STATUS_REENVIO_SEGURO_FRONT.has(s)) {
+    return { kind: 'reenviar' };
+  }
+  return { kind: 'nenhuma' };
+}
+
 /* ─── Portal B2B status meta ─── */
 export const portalStatusMeta: Record<StatusEnvioPortal, { label: string; className: string }> = {
   nao_aplicavel: { label: '—', className: 'bg-muted text-muted-foreground border-border' },

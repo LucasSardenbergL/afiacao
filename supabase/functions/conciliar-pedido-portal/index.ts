@@ -29,6 +29,21 @@ interface PedidoCompraSugeridoRow {
   status: string | null;
   status_envio_portal: string | null;
   portal_protocolo: string | null;
+  omie_pedido_compra_id: string | number | null;
+}
+
+// ⚠️ ESPELHADO VERBATIM de src/lib/reposicao/omie-disparo-helpers.ts (Deno não importa de @/).
+// Guard anti-PO-duplicado da conciliação manual (Fase 3 · 3b, §4.4): só dispara a
+// criação do PO no Omie quando o pedido AINDA NÃO tem omie_pedido_compra_id. NULL/''/
+// whitespace/'0' contam como "não tem" → cria (comportamento de hoje). Mudou aqui? Copie lá.
+function deveCriarPedidoOmie(
+  omiePedidoCompraId: string | number | null | undefined,
+): boolean {
+  if (omiePedidoCompraId == null) return true;
+  const s = String(omiePedidoCompraId).trim();
+  if (s === "") return true;
+  if (s === "0") return true;
+  return false;
 }
 
 async function dispararOmie(empresa: string, pedidoId: number) {
@@ -85,7 +100,7 @@ Deno.serve(async (req: Request) => {
   // 1. Buscar pedido e validar estado.
   const { data: pedidoRaw, error: pErr } = await supabase
     .from("pedido_compra_sugerido")
-    .select("id, empresa, fornecedor_nome, status, status_envio_portal, portal_protocolo")
+    .select("id, empresa, fornecedor_nome, status, status_envio_portal, portal_protocolo, omie_pedido_compra_id")
     .eq("id", pedidoId)
     .maybeSingle();
 
@@ -170,8 +185,31 @@ Deno.serve(async (req: Request) => {
     erro: null,
   });
 
-  // 4. Disparar Omie. disparar-pedidos-aprovados vê sucesso_portal + protocolo
-  // como already_sent e cria o pedido de compra no Omie.
+  // 4. Disparar Omie — SÓ se o pedido ainda não tem PO no Omie (guard anti-PO-duplicado,
+  // §4.4). Se omie_pedido_compra_id já está preenchido, o PO já existe (corrida/retry
+  // anterior) → NÃO recriar; a conciliação acima (protocolo + sucesso_portal) basta.
+  // O dedup por cCodIntPed do próprio Omie é backstop; este guard evita a chamada.
+  if (!deveCriarPedidoOmie(pedido.omie_pedido_compra_id)) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        pedido_id: pedidoId,
+        protocolo,
+        status_anterior: statusAnterior,
+        status_envio_portal: "sucesso_portal",
+        omie: {
+          ok: true,
+          skipped: true,
+          motivo: "ja_existe",
+          omie_pedido_compra_id: String(pedido.omie_pedido_compra_id),
+        },
+      }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  // disparar-pedidos-aprovados vê sucesso_portal + protocolo como already_sent e
+  // cria o pedido de compra no Omie.
   const omie = await dispararOmie(pedido.empresa, pedidoId);
   const omieOk = omie.httpStatus >= 200 && omie.httpStatus < 300;
 
