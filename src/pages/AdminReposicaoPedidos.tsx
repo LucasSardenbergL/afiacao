@@ -12,10 +12,10 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { PedidoSugerido } from '@/components/reposicao/pedidos/types';
-import { EMPRESA, formatBRL, interpretarRespostaDisparo, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
+import { EMPRESA, formatBRL, interpretarRespostaDisparo, pedidosVisiveis, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
 import { CycleIndicator } from '@/components/reposicao/pedidos/CycleIndicator';
 import { PedidoRow } from '@/components/reposicao/pedidos/PedidoRow';
-import { StatusBadge, PortalBadge } from '@/components/reposicao/pedidos/badges';
+import { StatusComMotivo, PortalBadge } from '@/components/reposicao/pedidos/badges';
 import { DetalhesModal } from '@/components/reposicao/pedidos/DetalhesModal';
 import { CancelarModal } from '@/components/reposicao/pedidos/CancelarModal';
 import { PortalDrawer } from '@/components/reposicao/pedidos/PortalDrawer';
@@ -92,7 +92,17 @@ export default function AdminReposicaoPedidos() {
     staleTime: 15_000,
   });
 
-  const atencaoCount = atencao?.length ?? 0;
+  // Lista "ciclo de hoje" exibida: esconde os pais de split (status='split_em_filhos').
+  // O pai não tem ação útil e seu valor_total é a SOMA dos filhos → exibi-lo junto dos
+  // filhos dobraria o "valor do ciclo". Os filhos (status normal) seguem visíveis.
+  // Usar essa lista derivada tanto no render quanto no contador (consistente).
+  const pedidosCiclo = pedidosVisiveis(pedidos ?? []);
+
+  // A fila de atenção é cross-ciclo; o pai split (status='split_em_filhos') por
+  // construção nunca entra (pedidoPrecisaAtencao só dispara em falha_envio/portal),
+  // mas filtramos por defesa em profundidade — coerente com o render do ciclo.
+  const atencaoVisivel = pedidosVisiveis(atencao ?? []);
+  const atencaoCount = atencaoVisivel.length;
 
   // Deep link cross-ciclo: aceita ?id=N (ou ?pedido=N como alias usado por links do
   // portal). Se o pedido não está na lista de hoje, busca o pedido único por id.
@@ -322,13 +332,13 @@ export default function AdminReposicaoPedidos() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(atencao ?? []).map((p) => (
+                {atencaoVisivel.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell className="text-xs tabular-nums whitespace-nowrap">
                       {format(new Date(p.data_ciclo + 'T12:00:00'), 'dd/MM/yyyy')}
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={p.status} />
+                      <StatusComMotivo pedido={p} />
                     </TableCell>
                     <TableCell>
                       <div className="font-medium">{p.fornecedor_nome}</div>
@@ -382,14 +392,14 @@ export default function AdminReposicaoPedidos() {
         <TabsContent value="hoje">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Pedidos do dia ({pedidos?.length ?? 0})</CardTitle>
+              <CardTitle className="text-base">Pedidos do dia ({pedidosCiclo.length})</CardTitle>
             </CardHeader>
             <CardContent>
               {isLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                 </div>
-              ) : (pedidos ?? []).length === 0 ? (
+              ) : pedidosCiclo.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
                   Nenhum pedido gerado para o ciclo de hoje. Use "Rodar geração manual" para criar.
                 </div>
@@ -409,7 +419,7 @@ export default function AdminReposicaoPedidos() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pedidos!.map((p) => (
+                    {pedidosCiclo.map((p) => (
                       <PedidoRow
                         key={p.id}
                         p={p}

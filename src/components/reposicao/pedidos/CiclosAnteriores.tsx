@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
-import { EMPRESA, formatBRL } from './shared';
+import { EMPRESA, formatBRL, ehPaiSplit } from './shared';
 
 export function CiclosAnteriores({ data, onChange }: { data: string; onChange: (v: string) => void }) {
   const { data: historico, isLoading } = useQuery({
@@ -21,9 +21,12 @@ export function CiclosAnteriores({ data, onChange }: { data: string; onChange: (
         .gte('data_ciclo', format(desde, 'yyyy-MM-dd'))
         .order('data_ciclo', { ascending: false });
       if (error) throw error;
-      // agrupa por dia
+      // agrupa por dia — exclui os pais de split (status='split_em_filhos'): o
+      // valor_total do pai é a SOMA dos filhos, então contá-lo junto dos filhos
+      // dobraria o valor/contagem do dia. Os filhos (status normal) entram normal.
       const grupos = new Map<string, { fornecedores: Set<string>; pedidos: number; valor: number; disparados: number; cancelados: number }>();
       for (const r of rows ?? []) {
+        if (ehPaiSplit({ status: r.status as string })) continue;
         const k = r.data_ciclo as string;
         if (!grupos.has(k)) grupos.set(k, { fornecedores: new Set(), pedidos: 0, valor: 0, disparados: 0, cancelados: 0 });
         const g = grupos.get(k)!;

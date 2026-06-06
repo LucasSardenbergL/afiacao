@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Status, StatusEnvioPortal, PedidoSugerido } from './types';
 import { statusMeta, portalStatusMeta } from './shared';
@@ -10,6 +11,45 @@ export function StatusBadge({ status }: { status: Status }) {
     <Badge variant={meta.variant} className={meta.className}>
       {meta.label}
     </Badge>
+  );
+}
+
+// Ícone de info com tooltip ao lado do status — revela o MOTIVO (bloqueio do
+// guardrail / falha do disparo) sem precisar abrir os detalhes. Renderiza null
+// quando o motivo é vazio. Compartilhado entre PedidoRow e a fila de atenção.
+export function MotivoTooltip({ motivo, label }: { motivo: string | null | undefined; label: string }) {
+  if (!motivo) return null;
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={label}
+            className="inline-flex items-center text-status-error hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
+          >
+            <Info className="w-3.5 h-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs whitespace-pre-wrap break-words">{motivo}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+// Status do pedido + ícone de motivo (bloqueio/falha) quando houver. Centraliza a
+// regra para PedidoRow e a fila de atenção exibirem o mesmo "porquê" inline.
+export function StatusComMotivo({ pedido }: { pedido: PedidoSugerido }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <StatusBadge status={pedido.status} />
+      {pedido.status === 'bloqueado_guardrail' && (
+        <MotivoTooltip motivo={pedido.mensagem_bloqueio} label="Motivo do bloqueio" />
+      )}
+      {pedido.status === 'falha_envio' && (
+        <MotivoTooltip motivo={pedido.resposta_canal?.erro} label="Motivo da falha no disparo" />
+      )}
+    </div>
   );
 }
 
