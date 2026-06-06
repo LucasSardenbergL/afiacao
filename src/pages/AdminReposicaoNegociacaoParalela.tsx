@@ -97,10 +97,6 @@ export default function AdminReposicaoNegociacaoParalela() {
                 key={s.id}
                 s={s}
                 rankingExtra={undefined}
-                onMarcarVisualizada={() => {}}
-                onIrAoRanking={() => {}}
-                onMarcarEmAndamento={() => {}}
-                onIgnorar={() => {}}
                 onFecharSemAcordo={(sug) => setFecharSemAcordoTarget(sug)}
                 onConverter={openConvertDialog}
               />

@@ -22,7 +22,7 @@ export interface InsumoNegociacao {
   custo_capital_anual: number;  // k (fração/ano) = custo_capital_efetivo_perc / 100
 }
 
-export type MotivoInelegivel = 'sem_giro' | 'sem_preco_compra' | 'sem_cmc';
+export type MotivoInelegivel = 'sem_giro' | 'sem_preco_compra' | 'sem_cmc' | 'sem_custo_capital';
 
 export interface ValorNegociacao {
   elegivel: boolean;
@@ -77,6 +77,9 @@ export function avaliarNegociacao(ins: InsumoNegociacao, descontoPedido: number)
   const premio = premioAnual(delta, ins.preco_compra, A);
   if (!positivo(ins.cmc)) {
     return { elegivel: false, motivo_inelegivel: 'sem_cmc', ...vazio, premio_anual: premio };
+  }
+  if (!positivo(ins.custo_capital_anual)) {
+    return { elegivel: false, motivo_inelegivel: 'sem_custo_capital', ...vazio, premio_anual: premio };
   }
   const Qstar = loteOtimo(delta, ins.preco_compra, ins.cmc, A, ins.custo_capital_anual)!;
   const Qmax = 2 * Qstar;

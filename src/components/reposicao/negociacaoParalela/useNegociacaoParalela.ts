@@ -11,7 +11,6 @@ import { lastDayOfNextMonth } from "./helpers";
 import { avaliarNegociacao, clampDesconto, DESCONTO_PADRAO } from "@/lib/reposicao/negociacao-valor-helpers";
 
 const TOP_N = 3;
-const FORNECEDOR = "RENNER SAYERLACK S/A";
 
 export function useNegociacaoParalela() {
   const navigate = useNavigate();
@@ -110,7 +109,7 @@ export function useNegociacaoParalela() {
         empresa: EMPRESA,
         sku_codigo_omie: c.sku_codigo_omie,
         sku_descricao: c.sku_descricao,
-        motivo: "fila_net_rs",
+        motivo: "combinacao_heuristica",
         motivo_detalhes: { criado_via: "fila_v2", gasto_anual: c.gasto_anual },
         preco_medio_unitario: c.preco_compra,
         status: "acao_tomada",
@@ -176,9 +175,6 @@ export function useNegociacaoParalela() {
     setFecharSemAcordoTarget(null);
     setFecharObs("");
   };
-
-  // Suprimir variável não-usada do hook antigo para compatibilidade com TS strict
-  void FORNECEDOR;
 
   return {
     loadingFila, loadingAndamento, fila, emAndamento,

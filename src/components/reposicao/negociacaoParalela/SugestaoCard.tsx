@@ -27,10 +27,10 @@ import type { Sugestao, RankingRow } from "./types";
 interface SugestaoCardProps {
   s: Sugestao;
   rankingExtra?: RankingRow | undefined;
-  onMarcarVisualizada: (s: Sugestao) => void;
-  onIrAoRanking: (s: Sugestao) => void;
-  onMarcarEmAndamento: (s: Sugestao) => void;
-  onIgnorar: (s: Sugestao) => void;
+  onMarcarVisualizada?: (s: Sugestao) => void;
+  onIrAoRanking?: (s: Sugestao) => void;
+  onMarcarEmAndamento?: (s: Sugestao) => void;
+  onIgnorar?: (s: Sugestao) => void;
   onFecharSemAcordo: (s: Sugestao) => void;
   onConverter: (s: Sugestao) => void;
 }
@@ -119,15 +119,17 @@ export function SugestaoCard({
         </p>
 
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={s.status !== "nova"}
-            onClick={() => onMarcarVisualizada(s)}
-          >
-            <Eye className="h-3.5 w-3.5 mr-1.5" />
-            Marcar visualizada
-          </Button>
+          {onMarcarVisualizada && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={s.status !== "nova"}
+              onClick={() => onMarcarVisualizada(s)}
+            >
+              <Eye className="h-3.5 w-3.5 mr-1.5" />
+              Marcar visualizada
+            </Button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm">
@@ -136,12 +138,20 @@ export function SugestaoCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => onIrAoRanking(s)}>Ir ao ranking</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onMarcarEmAndamento(s)}>
-                Marcar como em andamento
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => onIgnorar(s)}>Ignorar</DropdownMenuItem>
+              {onIrAoRanking && (
+                <DropdownMenuItem onClick={() => onIrAoRanking(s)}>Ir ao ranking</DropdownMenuItem>
+              )}
+              {onMarcarEmAndamento && (
+                <DropdownMenuItem onClick={() => onMarcarEmAndamento(s)}>
+                  Marcar como em andamento
+                </DropdownMenuItem>
+              )}
+              {(onIrAoRanking || onMarcarEmAndamento) && (
+                <DropdownMenuSeparator />
+              )}
+              {onIgnorar && (
+                <DropdownMenuItem onClick={() => onIgnorar(s)}>Ignorar</DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => onFecharSemAcordo(s)}>
                 Fechar sem acordo
               </DropdownMenuItem>

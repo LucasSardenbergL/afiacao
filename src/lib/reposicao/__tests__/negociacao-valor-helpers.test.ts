@@ -108,4 +108,11 @@ describe('avaliarNegociacao — degradação honesta', () => {
     expect(r.net_negociacao).toBeNull();
     expect(r.lote_otimo).toBeNull();
   });
+  it('sem custo de capital (k=0) → inelegível sem_custo_capital', () => {
+    const r = avaliarNegociacao({ ...base, custo_capital_anual: 0 }, 0.08);
+    expect(r.elegivel).toBe(false);
+    expect(r.motivo_inelegivel).toBe('sem_custo_capital');
+    expect(r.net_negociacao).toBeNull();
+    expect(r.lote_otimo).toBeNull();
+  });
 });
