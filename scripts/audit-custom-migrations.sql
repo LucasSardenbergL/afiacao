@@ -203,7 +203,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260606170000', 'reposicao_fix_aplicar_promocoes', '20260606170000_reposicao_fix_aplicar_promocoes.sql'),
   ('20260606180000', 'reposicao_preco_pedido_cmc', '20260606180000_reposicao_preco_pedido_cmc.sql'),
   ('20260606190000', 'reposicao_preco_pedido_cmc_account', '20260606190000_reposicao_preco_pedido_cmc_account.sql'),
-  ('20260606200000', 'negociacao_paralela_v2_cleanup', '20260606200000_negociacao_paralela_v2_cleanup.sql')
+  ('20260606230000', 'negociacao_paralela_v2_cleanup', '20260606230000_negociacao_paralela_v2_cleanup.sql')
 )
 SELECT
   e.version,

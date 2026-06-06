@@ -1621,7 +1621,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
 
-### `20260606200000_negociacao_paralela_v2_cleanup.sql`
+### `20260606230000_negociacao_paralela_v2_cleanup.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
