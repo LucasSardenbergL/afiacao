@@ -30,6 +30,8 @@ function setup(o: SalesOrder, overrides: Partial<React.ComponentProps<typeof Sal
     onShare: vi.fn(),
     onDelete: vi.fn(),
     onNavigate: vi.fn(),
+    onOpenDetail: vi.fn(),
+    onPrint: vi.fn(),
     ...overrides,
   };
   render(<SalesOrderCard {...props} />);
@@ -60,6 +62,26 @@ describe('SalesOrderCard (sales)', () => {
     fireEvent.click(screen.getByTitle('Editar pedido'));
     expect(props.onShare).toHaveBeenCalledTimes(1);
     expect(props.onNavigate).toHaveBeenCalledWith('/sales/edit/o1');
+  });
+
+  it('clicar no card (venda) abre o detalhe — não navega', () => {
+    const props = setup(order());
+    fireEvent.click(screen.getByText('ACME Ltda'));
+    expect(props.onOpenDetail).toHaveBeenCalledTimes(1);
+    expect(props.onNavigate).not.toHaveBeenCalled();
+  });
+
+  it('botão imprimir dispara onPrint sem abrir o detalhe', () => {
+    const props = setup(order());
+    fireEvent.click(screen.getByTitle('Imprimir pedido'));
+    expect(props.onPrint).toHaveBeenCalledTimes(1);
+    expect(props.onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it('mostra imprimir mesmo em pedido faturado (vê e imprime, sem editar)', () => {
+    setup(order({ status: 'faturado' }));
+    expect(screen.getByTitle('Imprimir pedido')).toBeTruthy();
+    expect(screen.queryByTitle('Editar pedido')).toBeNull();
   });
 
   it('confirmar exclusão dispara onDelete', () => {

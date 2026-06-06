@@ -20,6 +20,7 @@ import {
   type SalesOrdersInfiniteCache,
 } from './types';
 import { softDeleteOrder } from './soft-delete';
+import { printSalesOrder } from './print';
 
 export function useSalesOrders() {
   const navigate = useNavigate();
@@ -107,7 +108,7 @@ export function useSalesOrders() {
     );
   }, [salesQuery.data, afiacaoQuery.data]);
 
-  /* ─── Profiles (nomes dos clientes) ─── */
+  /* ─── Profiles (nome + documento dos clientes) ─── */
   const customerIds = useMemo(() => [...new Set(orders.map((o) => o.customer_user_id))], [orders]);
   const profilesQuery = useQuery({
     queryKey: ['sales-orders-profiles', customerIds.sort().join(',')],
@@ -116,16 +117,43 @@ export function useSalesOrders() {
     queryFn: async () => {
       const { data } = await supabase
         .from('profiles')
-        .select('user_id, name')
+        .select('user_id, name, document')
         .in('user_id', customerIds);
-      const map: Record<string, string> = {};
-      ((data || []) as Pick<ProfileRow, 'user_id' | 'name'>[]).forEach((p) => {
-        map[p.user_id] = p.name ?? '';
+      const names: Record<string, string> = {};
+      const docs: Record<string, string> = {};
+      ((data || []) as Pick<ProfileRow, 'user_id' | 'name' | 'document'>[]).forEach((p) => {
+        names[p.user_id] = p.name ?? '';
+        if (p.document) docs[p.user_id] = p.document;
       });
-      return map;
+      return { names, docs };
     },
   });
-  const profiles = profilesQuery.data || {};
+  const profiles = profilesQuery.data?.names || {};
+  const customerDocs = profilesQuery.data?.docs || {};
+
+  /* ─── Logos das empresas (cupom de impressão) — cache 24h, igual ao dashboard ─── */
+  const logosQuery = useQuery({
+    queryKey: ['sales-orders-company-logos'],
+    enabled: isStaff,
+    staleTime: 1000 * 60 * 60 * 24,
+    queryFn: async () => {
+      try {
+        const { data } = await supabase.functions.invoke('omie-cliente', {
+          body: { action: 'buscar_logos_empresas' },
+        });
+        return (data?.logos || {}) as Record<string, string | null>;
+      } catch {
+        return {};
+      }
+    },
+  });
+  const companyLogos = logosQuery.data || {};
+
+  // Imprime o cupom de um pedido (mesmo layout de /sales/print).
+  const printOrder = (order: SalesOrder) => {
+    const name = decodeHtml(profiles[order.customer_user_id] || 'Cliente');
+    printSalesOrder(order, name, customerDocs[order.customer_user_id], companyLogos);
+  };
 
   /* ─── Infinite scroll: dispara fetchNextPage de quem ainda tem páginas ─── */
   const hasNext = !!salesQuery.hasNextPage || !!afiacaoQuery.hasNextPage;
@@ -333,5 +361,6 @@ export function useSalesOrders() {
     deleteOrder,
     deleteSelected,
     handleShareOrder,
+    printOrder,
   };
 }
