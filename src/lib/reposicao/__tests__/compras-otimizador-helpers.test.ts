@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { qtdMinimaEfetiva, qtdBase, aplicarMinimoForcado, descontoAplicavel, gerarCandidatos } from '../compras-otimizador-helpers';
+import { qtdMinimaEfetiva, qtdBase, aplicarMinimoForcado, quantidadeCompraInteira, descontoAplicavel, gerarCandidatos } from '../compras-otimizador-helpers';
 import { capitalExtra, aumentoEvitadoRs, impactoPrazoRs, freteIncrementalRs, descontoIncrementalRs } from '../compras-otimizador-helpers';
 import { avaliarComprarMais } from '../compras-otimizador-helpers';
 import type { InsumoSku } from '../compras-otimizador-helpers';
@@ -162,5 +162,30 @@ describe('avaliarComprarMais — oportunidade só de aumento', () => {
     expect(r.q_candidata).toBe(400);
     expect(r.aumento_evitado_rs).toBeGreaterThan(0);
     expect(r.recomendacao).toBe('comprar_mais');
+  });
+});
+
+describe('quantidadeCompraInteira', () => {
+  it('arredonda PRA CIMA a poeira decimal do estoque (o bug 3,99996 → 4)', () => {
+    expect(quantidadeCompraInteira(3.99996)).toBe(4);
+    expect(quantidadeCompraInteira(9.99996)).toBe(10);
+  });
+  it('inteiro permanece inteiro (idempotente)', () => {
+    expect(quantidadeCompraInteira(4)).toBe(4);
+    expect(quantidadeCompraInteira(18)).toBe(18);
+  });
+  it('fração genuína também sobe (nunca sub-pedir)', () => {
+    expect(quantidadeCompraInteira(3.01)).toBe(4);
+    expect(quantidadeCompraInteira(0.0001)).toBe(1);
+  });
+  it('zero/negativo/limpo → 0 (linha zerada, sem fração)', () => {
+    expect(quantidadeCompraInteira(0)).toBe(0);
+    expect(quantidadeCompraInteira(-0.5)).toBe(0);
+    expect(quantidadeCompraInteira(null)).toBe(0);
+    expect(quantidadeCompraInteira(undefined)).toBe(0);
+  });
+  it('NaN/Infinity → 0 (degradação honesta, nunca propaga lixo)', () => {
+    expect(quantidadeCompraInteira(NaN)).toBe(0);
+    expect(quantidadeCompraInteira(Infinity)).toBe(0);
   });
 });

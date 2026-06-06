@@ -3,6 +3,7 @@
 // substituindo o flip de status + UPDATE no SQL Editor. Money-path: nunca grava
 // preço <= 0 (o disparo rejeita nValUnit=0 no Omie).
 import type { PedidoItem, Status } from './types';
+import { quantidadeCompraInteira } from '@/lib/reposicao/compras-otimizador-helpers';
 
 // Estados em que o custo de um item de primeira compra (preço 0) pode ser definido
 // na tela:
@@ -53,7 +54,9 @@ export function montarUpdateItem(
   precoEdit: number | undefined,
 ): ItemUpdate {
   const temPrecoEdit = precoEdit !== undefined;
-  const qtd = qtdEdit ?? Number(item.qtde_final ?? item.qtde_sugerida ?? 0);
+  // [QTDE-INTEIRA] grava sempre quantidade inteira (ceil): nem a edição humana nem o fallback
+  // do qtde_final legado (poeira decimal do estoque do Omie) podem persistir fração no pedido.
+  const qtd = quantidadeCompraInteira(qtdEdit ?? Number(item.qtde_final ?? item.qtde_sugerida ?? 0));
   const preco = temPrecoEdit ? (precoEdit as number) : Number(item.preco_unitario ?? 0);
   const update: ItemUpdate = {
     qtde_final: qtd,
