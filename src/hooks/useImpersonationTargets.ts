@@ -4,9 +4,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { ImpersonationTarget } from '@/lib/impersonation/types';
 
 export function useImpersonationTargets() {
-  const { isMaster } = useAuth();
+  const { isMaster, user } = useAuth();
   return useQuery({
-    queryKey: ['impersonation-targets'],
+    queryKey: ['impersonation-targets', user?.id],
     enabled: isMaster,
     staleTime: 300_000,
     queryFn: async (): Promise<ImpersonationTarget[]> => {
@@ -17,7 +17,12 @@ export function useImpersonationTargets() {
       const rows = (data ?? []) as Array<{ user_id: string; nome: string; commercial_role: string | null }>;
       const grupo = (cr: string | null): ImpersonationTarget['grupo'] =>
         cr === 'hunter' ? 'hunter' : cr === 'closer' ? 'closer' : cr ? 'farmer' : null;
-      return rows.map((r) => ({ id: r.user_id, nome: r.nome, grupo: grupo(r.commercial_role) }));
+      // Exclui o PRÓPRIO master da lista — a RPC `list_impersonation_targets` devolve todos
+      // os donos de carteira, e o master frequentemente também tem carteira própria; "ver
+      // como você mesmo" não faz sentido (= só sair da lente). Saída é via "Sair" no banner.
+      return rows
+        .filter((r) => r.user_id !== user?.id)
+        .map((r) => ({ id: r.user_id, nome: r.nome, grupo: grupo(r.commercial_role) }));
     },
   });
 }
