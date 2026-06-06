@@ -1,276 +1,145 @@
-// Camada de dados/lógica da tela de negociação paralela.
-// Extraída verbatim de src/pages/AdminReposicaoNegociacaoParalela.tsx (god-component split).
-// Mantém estado, queries, memos derivados e handlers; a página vira composição de UI.
-import { useState, useMemo, useRef } from "react";
+// Camada de dados/lógica da Negociação Paralela v2 — fila por R$ líquido.
+// Fonte: v_sku_parametros_sugeridos (CMC, preço de compra, giro, custo de capital).
+// Mantém o ciclo de vida em sugestao_negociacao_paralela (status acao_tomada) e a conversão em campanha flat.
+import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import {
-  EMPRESA,
-  type StatusSugestao,
-  type Categoria,
-  type OrdenacaoKey,
-  type Sugestao,
-  type RankingRow,
-  type ConvertForm,
-} from "./types";
-import { lastDayOfNextMonth, toggleSet } from "./helpers";
+import { EMPRESA, type Sugestao, type ConvertForm, type LinhaViewSugeridos, type CandidatoNegociacao } from "./types";
+import { lastDayOfNextMonth } from "./helpers";
+import { avaliarNegociacao, clampDesconto, DESCONTO_PADRAO } from "@/lib/reposicao/negociacao-valor-helpers";
 
-const PAGE_SIZE = 20;
+const TOP_N = 3;
+const FORNECEDOR = "RENNER SAYERLACK S/A";
 
 export function useNegociacaoParalela() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const rankingRef = useRef<HTMLDivElement>(null);
 
-  // Bloco 1 filtros
-  const [statusFiltro, setStatusFiltro] = useState<Set<StatusSugestao>>(
-    new Set(["nova", "visualizada", "acao_tomada"]),
-  );
-  const [categoriaFiltro, setCategoriaFiltro] = useState<Set<Categoria>>(
-    new Set(["prioritario", "forte", "moderado"]),
-  );
-  const [ordenacao, setOrdenacao] = useState<OrdenacaoKey>("score");
-
-  // Bloco 2 filtros
-  const [rankingCategoriaFiltro, setRankingCategoriaFiltro] = useState<Set<Categoria>>(
-    new Set(["prioritario", "forte", "moderado", "fraco"]),
-  );
-  const [rankingComSugestao, setRankingComSugestao] = useState<"sim" | "nao" | "ambos">("ambos");
-  const [rankingBusca, setRankingBusca] = useState("");
-  const [rankingPagina, setRankingPagina] = useState(1);
-  const [highlightSku, setHighlightSku] = useState<string | null>(null);
-
-  // Action states
-  const [gerando, setGerando] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [ignoreTarget, setIgnoreTarget] = useState<Sugestao | null>(null);
-  const [fecharSemAcordoTarget, setFecharSemAcordoTarget] = useState<Sugestao | null>(null);
-  const [fecharObs, setFecharObs] = useState("");
+  // desconto pedido por SKU (controle do card); default 8%.
+  const [descontoPorSku, setDescontoPorSku] = useState<Record<string, number>>({});
   const [convertTarget, setConvertTarget] = useState<Sugestao | null>(null);
   const [convertForm, setConvertForm] = useState<ConvertForm>({
-    desconto_perc: 5,
-    volume_minimo: 1000,
-    volume_unidade: "reais",
-    data_fim: lastDayOfNextMonth(),
-    responsavel: "",
-    canal: "ligacao",
-    observacoes: "",
+    desconto_perc: 8, volume_minimo: 0, volume_unidade: "unidades",
+    data_fim: lastDayOfNextMonth(), responsavel: "", canal: "ligacao", observacoes: "",
   });
   const [convertSubmitting, setConvertSubmitting] = useState(false);
+  const [fecharSemAcordoTarget, setFecharSemAcordoTarget] = useState<Sugestao | null>(null);
+  const [fecharObs, setFecharObs] = useState("");
 
-  // Queries
-  const { data: sugestoes = [], isLoading: loadingSugestoes } = useQuery({
-    queryKey: ["negociacao-paralela-sugestoes", EMPRESA],
+  // Fonte da fila: candidatos Sayerlack com insumos de custo/giro.
+  const { data: linhas = [], isLoading: loadingFila } = useQuery({
+    queryKey: ["neg-paralela-fila", EMPRESA],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("v_sku_parametros_sugeridos" as never)
+        .select(
+          "sku_codigo_omie, sku_descricao, demanda_media_diaria, preco_compra_real, preco_item_eoq, fonte_preco, custo_capital_efetivo_perc, fornecedor_nome, empresa" as never,
+        )
+        .eq("empresa", EMPRESA)
+        .ilike("fornecedor_nome", "%SAYERLACK%");
+      if (error) throw error;
+      return (data ?? []) as unknown as LinhaViewSugeridos[];
+    },
+    staleTime: 60_000,
+  });
+
+  // Negociações que o usuário decidiu perseguir (status acao_tomada).
+  const { data: emAndamento = [], isLoading: loadingAndamento } = useQuery({
+    queryKey: ["neg-paralela-andamento", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("v_sugestao_negociacao_ativa" as never)
         .select("*")
-        .eq("empresa", EMPRESA);
+        .eq("empresa", EMPRESA)
+        .eq("status", "acao_tomada");
       if (error) throw error;
       return (data ?? []) as unknown as Sugestao[];
     },
     staleTime: 30_000,
   });
 
-  const { data: ranking = [], isLoading: loadingRanking } = useQuery({
-    queryKey: ["negociacao-paralela-ranking", EMPRESA],
-    queryFn: async () => {
-      // A matview foi movida p/ schema `private` (não exposto via REST direto);
-      // o ranking vem por RPC SECURITY DEFINER staff-guard, que já filtra a
-      // empresa e ordena por score_final desc no servidor.
-      const { data, error } = await supabase
-        .rpc("get_sku_ranking_negociacao_paralela" as never, { p_empresa: EMPRESA } as never);
-      if (error) throw error;
-      return (data ?? []) as unknown as RankingRow[];
-    },
-    staleTime: 30_000,
-  });
-
-  // SKUs com sugestão ativa (qualquer status considerado "ativo" pela view)
-  const skusComSugestao = useMemo(
-    () => new Set(sugestoes.map((s) => s.sku_codigo_omie)),
-    [sugestoes],
-  );
-
-  // Filtragem das sugestões
-  const sugestoesFiltradas = useMemo(() => {
-    let arr = sugestoes.filter((s) => statusFiltro.has(s.status as StatusSugestao));
-    if (categoriaFiltro.size > 0) {
-      arr = arr.filter((s) => !s.categoria || categoriaFiltro.has(s.categoria));
-    }
-    arr = [...arr].sort((a, b) => {
-      switch (ordenacao) {
-        case "volume":
-          return Number(b.volume_financeiro_12m ?? 0) - Number(a.volume_financeiro_12m ?? 0);
-        case "preco":
-          return Number(b.preco_medio_unitario ?? 0) - Number(a.preco_medio_unitario ?? 0);
-        case "expirando":
-          return (a.dias_ate_expirar ?? 999) - (b.dias_ate_expirar ?? 999);
-        case "score":
-        default:
-          return Number(b.score_final ?? 0) - Number(a.score_final ?? 0);
-      }
+  // Monta candidatos (identidade + insumos), com gasto anual = preco_compra × consumo.
+  const candidatos = useMemo<CandidatoNegociacao[]>(() => {
+    return linhas.map((l) => {
+      const sku = String(l.sku_codigo_omie);
+      const A = Number(l.demanda_media_diaria ?? 0) * 365;
+      const p = l.preco_compra_real != null ? Number(l.preco_compra_real) : null;
+      const cmc = l.fonte_preco === "cmc" && l.preco_item_eoq != null ? Number(l.preco_item_eoq) : null;
+      const k = Number(l.custo_capital_efetivo_perc ?? 0) / 100;
+      return {
+        sku_codigo_omie: sku,
+        sku_descricao: l.sku_descricao,
+        consumo_anual: A,
+        preco_compra: p,
+        cmc,
+        custo_capital_anual: k,
+        gasto_anual: p != null && A > 0 ? p * A : null,
+      };
     });
-    return arr;
-  }, [sugestoes, statusFiltro, categoriaFiltro, ordenacao]);
+  }, [linhas]);
 
-  // Distribuição categorias do ranking
-  const distribuicao = useMemo(() => {
-    const acc: Record<Categoria, number> = { prioritario: 0, forte: 0, moderado: 0, fraco: 0 };
-    for (const r of ranking) {
-      if (r.categoria) acc[r.categoria] = (acc[r.categoria] ?? 0) + 1;
-    }
-    return acc;
-  }, [ranking]);
+  const descontoDe = (sku: string) => clampDesconto(descontoPorSku[sku] ?? DESCONTO_PADRAO);
 
-  // Filtragem ranking
-  const rankingFiltrado = useMemo(() => {
-    let arr = ranking.filter((r) => !r.categoria || rankingCategoriaFiltro.has(r.categoria));
-    if (rankingComSugestao !== "ambos") {
-      arr = arr.filter((r) => {
-        const tem = skusComSugestao.has(r.sku_codigo_omie);
-        return rankingComSugestao === "sim" ? tem : !tem;
-      });
-    }
-    if (rankingBusca.trim()) {
-      const q = rankingBusca.trim().toLowerCase();
-      arr = arr.filter(
-        (r) =>
-          r.sku_codigo_omie.toLowerCase().includes(q) ||
-          (r.sku_descricao ?? "").toLowerCase().includes(q),
-      );
-    }
-    return arr;
-  }, [ranking, rankingCategoriaFiltro, rankingComSugestao, rankingBusca, skusComSugestao]);
+  // Fila Top 3: só elegíveis (têm preço de compra E cmc E giro), ordenados por prêmio anual.
+  const fila = useMemo(() => {
+    const avaliados = candidatos.map((c) => ({
+      candidato: c,
+      // ordenação usa o desconto-base (8%); a ordem por gasto independe do δ.
+      avaliacao: avaliarNegociacao(
+        { sku_codigo_omie: c.sku_codigo_omie, sku_descricao: c.sku_descricao, consumo_anual: c.consumo_anual, preco_compra: c.preco_compra, cmc: c.cmc, custo_capital_anual: c.custo_capital_anual },
+        DESCONTO_PADRAO,
+      ),
+    }));
+    return avaliados
+      .filter((a) => a.avaliacao.elegivel)
+      .sort((a, b) => (b.avaliacao.premio_anual ?? 0) - (a.avaliacao.premio_anual ?? 0))
+      .slice(0, TOP_N);
+  }, [candidatos]);
 
-  const totalPaginas = Math.max(1, Math.ceil(rankingFiltrado.length / PAGE_SIZE));
-  const paginaAtual = Math.min(rankingPagina, totalPaginas);
-  const rankingPagina_ = useMemo(
-    () => rankingFiltrado.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE),
-    [rankingFiltrado, paginaAtual],
-  );
+  const setDesconto = (sku: string, perc: number) =>
+    setDescontoPorSku((prev) => ({ ...prev, [sku]: perc }));
 
-  const ultimaAtualizacao = ranking[0]?.atualizado_em
-    ? new Date(ranking[0].atualizado_em).toLocaleString("pt-BR")
-    : null;
-
-  // Calcular "compras 12m" e "meses" lookup do ranking para enriquecer cards
-  const rankingMap = useMemo(() => {
-    const m = new Map<string, RankingRow>();
-    for (const r of ranking) m.set(r.sku_codigo_omie, r);
-    return m;
-  }, [ranking]);
-
-  // Actions
-  const handleGerarSugestoes = async () => {
-    setGerando(true);
+  // "Vou negociar este" → cria sugestão acao_tomada (puxa da fila pro acompanhamento).
+  const handleVouNegociar = async (c: CandidatoNegociacao) => {
     try {
-      const { data, error } = await supabase.rpc("sugerir_negociacao_paralela_hoje" as never, {
-        p_empresa: EMPRESA,
-        p_limite: 10,
+      const validoAte = new Date();
+      validoAte.setDate(validoAte.getDate() + 30);
+      const { error } = await supabase.from("sugestao_negociacao_paralela").insert({
+        empresa: EMPRESA,
+        sku_codigo_omie: c.sku_codigo_omie,
+        sku_descricao: c.sku_descricao,
+        motivo: "fila_net_rs",
+        motivo_detalhes: { criado_via: "fila_v2", gasto_anual: c.gasto_anual },
+        preco_medio_unitario: c.preco_compra,
+        status: "acao_tomada",
+        data_acao: new Date().toISOString(),
+        data_geracao: new Date().toISOString().slice(0, 10),
+        valido_ate: validoAte.toISOString().slice(0, 10),
       } as never);
       if (error) throw error;
-      const arr = data as unknown as unknown[] | null;
-      const count = Array.isArray(arr) ? arr.length : 0;
-      toast.success(`${count} sugest${count === 1 ? "ão criada" : "ões criadas"}.`);
-      queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes"] });
-      queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes-count"] });
+      toast.success(`Negociação iniciada para ${c.sku_descricao ?? c.sku_codigo_omie}.`);
+      queryClient.invalidateQueries({ queryKey: ["neg-paralela-andamento"] });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error("Erro ao gerar sugestões: " + message);
-    } finally {
-      setGerando(false);
+      toast.error("Erro ao iniciar negociação: " + (err instanceof Error ? err.message : String(err)));
     }
-  };
-
-  const handleRefreshRanking = async () => {
-    setRefreshing(true);
-    try {
-      const { error } = await supabase.rpc("refresh_sku_ranking_negociacao" as never);
-      if (error) throw error;
-      toast.success("Ranking atualizado.");
-      queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-ranking"] });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error("Erro ao atualizar ranking: " + message);
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
-  const updateStatus = async (id: number, novoStatus: StatusSugestao, extra: Record<string, unknown> = {}) => {
-    const { error } = await supabase
-      .from("sugestao_negociacao_paralela")
-      .update({ status: novoStatus, ...extra } as never)
-      .eq("id", id);
-    if (error) {
-      toast.error("Erro ao atualizar status: " + error.message);
-      return false;
-    }
-    queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes"] });
-    queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes-count"] });
-    return true;
-  };
-
-  const handleMarcarVisualizada = async (s: Sugestao) => {
-    const ok = await updateStatus(s.id, "visualizada");
-    if (ok) toast.success("Marcada como visualizada.");
-  };
-
-  const handleMarcarEmAndamento = async (s: Sugestao) => {
-    const ok = await updateStatus(s.id, "acao_tomada", { data_acao: new Date().toISOString() });
-    if (ok) toast.success("Marcada como em andamento.");
-  };
-
-  const handleIgnorarConfirm = async () => {
-    if (!ignoreTarget) return;
-    const ok = await updateStatus(ignoreTarget.id, "ignorada");
-    if (ok) toast.success("Sugestão ignorada.");
-    setIgnoreTarget(null);
-  };
-
-  const handleFecharSemAcordoConfirm = async () => {
-    if (!fecharSemAcordoTarget) return;
-    const ok = await updateStatus(fecharSemAcordoTarget.id, "fechada_sem_acordo", {
-      observacoes: fecharObs || null,
-      data_acao: new Date().toISOString(),
-    });
-    if (ok) toast.success("Negociação encerrada sem acordo.");
-    setFecharSemAcordoTarget(null);
-    setFecharObs("");
-  };
-
-  const handleIrAoRanking = (s: Sugestao) => {
-    setHighlightSku(s.sku_codigo_omie);
-    rankingRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    setTimeout(() => setHighlightSku(null), 3000);
   };
 
   const openConvertDialog = (s: Sugestao) => {
     setConvertTarget(s);
     setConvertForm({
-      desconto_perc: 5,
-      volume_minimo: Math.round(Number(s.volume_financeiro_12m ?? 0) / 12) || 1000,
-      volume_unidade: "reais",
-      data_fim: lastDayOfNextMonth(),
-      responsavel: "",
-      canal: "ligacao",
-      observacoes: "",
+      desconto_perc: 8, volume_minimo: 0, volume_unidade: "unidades",
+      data_fim: lastDayOfNextMonth(), responsavel: "", canal: "ligacao", observacoes: "",
     });
   };
 
   const handleConverterConfirm = async () => {
     if (!convertTarget) return;
     if (convertForm.desconto_perc < 1 || convertForm.desconto_perc > 50) {
-      toast.error("Desconto deve estar entre 1 e 50%.");
-      return;
+      toast.error("Desconto deve estar entre 1 e 50%."); return;
     }
-    if (convertForm.volume_minimo <= 0) {
-      toast.error("Volume mínimo deve ser maior que zero.");
-      return;
-    }
+    if (convertForm.volume_minimo <= 0) { toast.error("Volume mínimo deve ser maior que zero."); return; }
     setConvertSubmitting(true);
     try {
       const { data, error } = await supabase.rpc("converter_sugestao_em_campanha_flat" as never, {
@@ -284,116 +153,38 @@ export function useNegociacaoParalela() {
         p_observacoes: convertForm.observacoes || null,
       } as never);
       if (error) throw error;
-      toast.success("Sugestão convertida em campanha.");
-      queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes"] });
+      toast.success("Negociação convertida em campanha.");
+      queryClient.invalidateQueries({ queryKey: ["neg-paralela-andamento"] });
       const campanhaId = typeof data === "number" || typeof data === "string" ? data : null;
-      if (campanhaId) navigate(`/admin/reposicao/promocoes/${campanhaId}`);
-      else navigate(`/admin/reposicao/promocoes`);
+      navigate(campanhaId ? `/admin/reposicao/promocoes/${campanhaId}` : `/admin/reposicao/promocoes`);
       setConvertTarget(null);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error("Erro ao converter: " + message);
+      toast.error("Erro ao converter: " + (err instanceof Error ? err.message : String(err)));
     } finally {
       setConvertSubmitting(false);
     }
   };
 
-  const handleCriarSugestaoDoRanking = async (r: RankingRow) => {
-    try {
-      const dataGeracao = new Date().toISOString().slice(0, 10);
-      const validoAte = new Date();
-      validoAte.setDate(validoAte.getDate() + 14);
-      const { error } = await supabase.from("sugestao_negociacao_paralela").insert({
-        empresa: r.empresa,
-        sku_codigo_omie: r.sku_codigo_omie,
-        sku_descricao: r.sku_descricao,
-        motivo: "score_alto_ciclo_semanal",
-        motivo_detalhes: { criado_via: "ui_ranking", categoria_ranking: r.categoria },
-        score_final: r.score_final,
-        volume_financeiro_12m: r.volume_financeiro_12m,
-        preco_medio_unitario: r.preco_medio_unitario,
-        promocoes_12m: r.promocoes_12m,
-        perc_meses_com_promo: r.perc_meses_com_promo,
-        status: "nova",
-        data_geracao: dataGeracao,
-        valido_ate: validoAte.toISOString().slice(0, 10),
-      });
-      if (error) throw error;
-      toast.success(`Sugestão criada para ${r.sku_codigo_omie}.`);
-      queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes"] });
-      queryClient.invalidateQueries({ queryKey: ["negociacao-paralela-sugestoes-count"] });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error("Erro ao criar sugestão: " + message);
-    }
+  const handleFecharSemAcordoConfirm = async () => {
+    if (!fecharSemAcordoTarget) return;
+    const { error } = await supabase.from("sugestao_negociacao_paralela")
+      .update({ status: "fechada_sem_acordo", observacoes: fecharObs || null, data_acao: new Date().toISOString() } as never)
+      .eq("id", fecharSemAcordoTarget.id);
+    if (error) { toast.error("Erro: " + error.message); return; }
+    toast.success("Negociação encerrada sem acordo.");
+    queryClient.invalidateQueries({ queryKey: ["neg-paralela-andamento"] });
+    setFecharSemAcordoTarget(null);
+    setFecharObs("");
   };
 
-  // Callbacks de filtro (encapsulam os updaters imutáveis para a UI presentacional)
-  const toggleStatusFiltro = (v: StatusSugestao) => setStatusFiltro((prev) => toggleSet(prev, v));
-  const toggleCategoriaFiltro = (v: Categoria) => setCategoriaFiltro((prev) => toggleSet(prev, v));
-  const toggleRankingCategoria = (v: Categoria) =>
-    setRankingCategoriaFiltro((prev) => toggleSet(prev, v));
-  const onRankingBuscaChange = (v: string) => {
-    setRankingBusca(v);
-    setRankingPagina(1);
-  };
+  // Suprimir variável não-usada do hook antigo para compatibilidade com TS strict
+  void FORNECEDOR;
 
   return {
-    PAGE_SIZE,
-    rankingRef,
-    // Bloco 1 filtros
-    statusFiltro,
-    categoriaFiltro,
-    ordenacao,
-    setOrdenacao,
-    toggleStatusFiltro,
-    toggleCategoriaFiltro,
-    // Bloco 2 filtros
-    rankingCategoriaFiltro,
-    toggleRankingCategoria,
-    rankingComSugestao,
-    setRankingComSugestao,
-    rankingBusca,
-    onRankingBuscaChange,
-    rankingPagina,
-    setRankingPagina,
-    highlightSku,
-    // Action states
-    gerando,
-    refreshing,
-    ignoreTarget,
-    setIgnoreTarget,
-    fecharSemAcordoTarget,
-    setFecharSemAcordoTarget,
-    fecharObs,
-    setFecharObs,
-    convertTarget,
-    setConvertTarget,
-    convertForm,
-    setConvertForm,
-    convertSubmitting,
-    // Derived
-    loadingSugestoes,
-    loadingRanking,
-    skusComSugestao,
-    sugestoesFiltradas,
-    distribuicao,
-    rankingFiltrado,
-    totalPaginas,
-    paginaAtual,
-    rankingPagina_,
-    ultimaAtualizacao,
-    rankingMap,
-    // Handlers
-    handleGerarSugestoes,
-    handleRefreshRanking,
-    handleMarcarVisualizada,
-    handleMarcarEmAndamento,
-    handleIgnorarConfirm,
-    handleFecharSemAcordoConfirm,
-    handleIrAoRanking,
-    openConvertDialog,
-    handleConverterConfirm,
-    handleCriarSugestaoDoRanking,
+    loadingFila, loadingAndamento, fila, emAndamento,
+    descontoDe, setDesconto, avaliarNegociacao, handleVouNegociar,
+    convertTarget, setConvertTarget, convertForm, setConvertForm, convertSubmitting,
+    openConvertDialog, handleConverterConfirm,
+    fecharSemAcordoTarget, setFecharSemAcordoTarget, fecharObs, setFecharObs, handleFecharSemAcordoConfirm,
   };
 }
