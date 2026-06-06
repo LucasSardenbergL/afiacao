@@ -416,7 +416,7 @@ Run: `heavy bun run typecheck` (limpo) + `bun lint` (0 errors).
 
 - ✅ **Dialer / "Nova ligação" — agora é a Task 3** (investigado: WebRTC-only fura o write-guard; gate na fonte). Resolvido no escopo deste plano.
 - **`/meu-dia` na lente assume que o master pode ler o perfil do alvo** — verdade (o RPC `get_user_access_profile_for` é master-only e já é a fonte). Se falhar, `useImpersonatedAccessProfile` erra → o banner já sai da lente com toast (F2 da Fase 1).
-- **Outros `fetch` crus / canais que furam o write-guard:** a Fase 1 mapeou `DispararAgoraButton` (gateado) e `useSuggestedMapping` (leitura, ok). A Task 3 fecha o Dialer. Se surgir nova ação com efeito externo fora do PostgREST/storage/`functions.invoke`/rpc, aplicar o mesmo `isLensActive()`.
+- **Outros `fetch` crus / canais que furam o write-guard:** a Fase 1 mapeou `DispararAgoraButton` (gateado na F3 — porém **APOSENTADO na main pelo #643**, que retirou a tela portal-sayerlack; o disparo é server-side agora, sem botão = sem vetor) e `useSuggestedMapping` (leitura, ok). A Task 3 fecha o Dialer (WebRTC). Se surgir nova ação com efeito externo fora do PostgREST/storage/`functions.invoke`/rpc, aplicar o mesmo `isLensActive()`.
 - **Deploy:** Publish manual no Lovable (frontend não auto-deploya). Sem migration/edge.
 
 ---

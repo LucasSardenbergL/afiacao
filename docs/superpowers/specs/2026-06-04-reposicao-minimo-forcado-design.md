@@ -86,6 +86,22 @@ Sem valor (NULL) → `qtde_final = qtde_natural` = **comportamento atual idênti
 - **Publish do frontend** (UI do cadastro + audit).
 - CLAUDE.md §10 + roadmap.
 
+## 9b. Revisão Codex (adversarial no código) — achados e decisões
+
+O Codex revisou design + código. **Concordou** com o escopo (só `minimo_forcado`, sem cap silencioso, 4ª mudança necessária, blindagem de fornecedor preservada). Achados:
+
+- ✅ **P1 (view) — CORRIGIDO:** `CREATE OR REPLACE VIEW` só aceita coluna nova **no fim**; eu inserira `minimo_forcado_manual` no meio (falharia em prod). Movida para depois de `frete_taxa_pedido`. (lição reincidente #529/#514)
+- ✅ **P3 (CHECK) — CORRIGIDO:** `IF NOT EXISTS` do CHECK escopado por `conrelid = 'public.sku_parametros'::regclass`.
+- ✅ **P3 (badge) — CORRIGIDO:** o badge "mínimo forçado" (`qtde_final > qtde_sugerida && !ajustado_humano`) classificaria forward_buying como mínimo. Agora também exige `!modo_promocao` (esconde quando há promoção — a causa do aumento aí é a promoção).
+- ⏳ **P1 (promoção) — ADIADO COMO FOLLOW-UP (decisão validada pelo Codex):** o job diário roda `gerar_pedidos_sugeridos_ciclo` e depois `aplicar_promocoes_no_ciclo`; o modo forward_buying grava `qtde_final = av.qtde_com_desconto`, ignorando o mínimo. O fix seria `GREATEST(pci.qtde_final, av.qtde_com_desconto)`. **MAS** a descoberta no PG17 mudou o quadro: a função `aplicar_promocoes_no_ciclo` do `schema-snapshot.sql` usa `UPDATE pedido_compra_item pci ... FROM v_promocao_avaliacao_hoje av JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id` — **referenciar a tabela-alvo (`pci`) no JOIN do FROM é SQL INVÁLIDO em Postgres** (provado: `invalid reference to FROM-clause entry for table "pci"` em PG17 isolado). Logo a função, no estado do snapshot, **não roda** (plpgsql só falha em runtime → o replay do snapshot não pega), e a migration-fonte (`20260510223800`) **diverge** do snapshot. Sem `pg_get_functiondef` real de prod (acesso só via Lovable), um `CREATE OR REPLACE` às cegas arriscaria reverter uma correção de prod ou propagar a sintaxe inválida. **Decisão (eu + Codex):** NÃO tocar `aplicar_promocoes_no_ciclo` nesta migration. A Frente B (mínimo na RPC) é independente e está completa.
+
+### Follow-up P1 aberto — mínimo × promoção forward_buying
+Passos (sessão dedicada, com acesso a prod via Lovable):
+1. Obter o `pg_get_functiondef('aplicar_promocoes_no_ciclo'::regprocedure)` REAL de prod.
+2. Se o `JOIN ... ON pcs.id = pci.pedido_id` referenciar a tabela-alvo, corrigir (mover a condição pro WHERE com FROM vírgula) — isso já destrava a função (que pode estar quebrada em prod).
+3. Aplicar `qtde_final = GREATEST(pci.qtde_final, av.qtde_com_desconto)` e `valor_linha` correspondente no modo forward_buying.
+4. Testar flat e forward_buying no PG17 (a função passa a rodar após o passo 2).
+
 ## 9. Questões abertas (validar com Codex no reset 19:55)
 
 1. Escopo: só `minimo_forcado_manual` (defendido) vs alinhar `lote_minimo_fornecedor` na RPC. Risco de divergência RPC×otimizador?

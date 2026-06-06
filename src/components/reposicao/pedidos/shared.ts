@@ -14,6 +14,8 @@ export const statusMeta: Record<string, { label: string; variant: 'default' | 's
   aprovado_aguardando_disparo: { label: 'Aprovado', variant: 'secondary', className: 'bg-status-info/15 text-status-info border-status-info/30' },
   bloqueado_guardrail: { label: 'Bloqueado', variant: 'destructive' },
   disparado: { label: 'Disparado', variant: 'secondary', className: 'bg-status-success/15 text-status-success border-status-success/30' },
+  disparado_simulado: { label: 'Disparo simulado', variant: 'secondary', className: 'bg-muted text-muted-foreground border-border' },
+  falha_envio: { label: 'Falha no envio', variant: 'destructive' },
   cancelado: { label: 'Cancelado', variant: 'outline' },
   cancelado_humano: { label: 'Cancelado (vazio)', variant: 'outline' },
   expirado_sem_aprovacao: { label: 'Expirado sem aprovação', variant: 'secondary', className: 'bg-muted text-muted-foreground border-border' },
@@ -62,6 +64,101 @@ export function interpretarRespostaDisparo(
     return { tone: 'error', message: `Pedido #${pedidoId}: falha ao disparar` };
   }
   return { tone: 'info', message: `Pedido #${pedidoId}: nada a disparar` };
+}
+
+/* ─── Conciliação inline (Fase 3 · 3b) ─── */
+//
+// O pedido cai num estado de conciliação quando o disparo ao portal Sayerlack termina
+// AMBÍGUO. Dois estados, com risco DIFERENTE de PO duplicado no fornecedor:
+//
+//  - aceito_portal_sem_protocolo → o portal aceitou mas não devolveu o número.
+//    O pedido quase-certamente JÁ EXISTE no fornecedor; conciliar (só registrar o
+//    protocolo) é de baixo risco.
+//  - indeterminado_requer_conciliacao → AMBÍGUO; o pedido pode ou NÃO existir no
+//    portal. Conciliar às cegas pode duplicar → exige conferir no portal ANTES.
+//
+// Estados de erro genuíno (no fluxo portal-first o portal falhou ANTES de obter
+// protocolo, então NÃO há PO no fornecedor) → reenviar é seguro (retry de verdade).
+// Estados de sucesso / em-trânsito → reenviar duplicaria; não oferecer reset.
+
+export type AcaoPortal =
+  | { kind: 'conciliar'; warn: boolean } // warn=true → avisar risco de duplicar antes de conciliar
+  | { kind: 'reenviar' } // erro genuíno sem PO criado → retry seguro
+  | { kind: 'nenhuma' }; // sucesso / em-trânsito / nao_aplicavel → nenhuma ação destrutiva
+
+const STATUS_CONCILIAVEIS_FRONT: ReadonlySet<StatusEnvioPortal> = new Set<StatusEnvioPortal>([
+  'aceito_portal_sem_protocolo',
+  'indeterminado_requer_conciliacao',
+]);
+
+// Erros genuínos onde (no fluxo portal-first) NÃO há PO no fornecedor → reset seguro.
+const STATUS_REENVIO_SEGURO_FRONT: ReadonlySet<StatusEnvioPortal> = new Set<StatusEnvioPortal>([
+  'erro_retentavel',
+  'falha_envio_portal',
+  'erro_nao_retentavel',
+]);
+
+// Decide a ação disponível no PortalDrawer p/ um status de envio ao portal.
+// indeterminado_requer_conciliacao → conciliar com AVISO (risco de duplicar).
+// aceito_portal_sem_protocolo → conciliar sem aviso (PO quase-certamente já existe).
+export function decidirAcaoPortal(status: StatusEnvioPortal | null | undefined): AcaoPortal {
+  const s = (status ?? 'nao_aplicavel') as StatusEnvioPortal;
+  if (STATUS_CONCILIAVEIS_FRONT.has(s)) {
+    return { kind: 'conciliar', warn: s === 'indeterminado_requer_conciliacao' };
+  }
+  if (STATUS_REENVIO_SEGURO_FRONT.has(s)) {
+    return { kind: 'reenviar' };
+  }
+  return { kind: 'nenhuma' };
+}
+
+/* ─── "Precisa de atenção" — fila cross-ciclo (Fase 3 · 3c) ─── */
+//
+// Pedidos que EXIGEM ação humana, em QUALQUER ciclo (a lista "ciclo de hoje" não
+// pega pedido travado de ciclo passado). Dois grupos:
+//
+//  - status='falha_envio' → o disparo ao Omie falhou (motivo em resposta_canal.erro).
+//    Precisa re-disparar ou corrigir (ex.: SKU sem custo).
+//  - status_envio_portal em {aceito_portal_sem_protocolo, indeterminado_requer_conciliacao,
+//    falha_envio_portal, erro_nao_retentavel} → conciliação (PO pode existir no
+//    fornecedor) + falhas duras do portal (definitiva / sem retry automático).
+//
+// NÃO inclui pendente_envio_portal/enviando_portal (drenados pelo motor de retry +
+// já vigiados pelo Sentinela — incluí-los falsearia pedido em voo) nem erro_retentavel
+// (o motor sayerlack-retry-orfaos re-tenta sozinho).
+export const STATUS_PORTAL_PRECISA_ATENCAO: ReadonlySet<StatusEnvioPortal> = new Set<StatusEnvioPortal>([
+  'aceito_portal_sem_protocolo',
+  'indeterminado_requer_conciliacao',
+  'falha_envio_portal',
+  'erro_nao_retentavel',
+]);
+
+// Predicado puro: o pedido precisa de ação humana? (usado pela fila cross-ciclo da
+// tela de pedidos — o chip "⚠ N precisam de atenção").
+export function pedidoPrecisaAtencao(p: {
+  status: string;
+  status_envio_portal: StatusEnvioPortal | null | undefined;
+}): boolean {
+  if (p.status === 'falha_envio') return true;
+  return STATUS_PORTAL_PRECISA_ATENCAO.has((p.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal);
+}
+
+/* ─── Split (PR5) — esconder o pai da lista ─── */
+//
+// Quando um pedido grande é dividido em chunks, o PAI vira status='split_em_filhos':
+// não tem mais itens próprios nem ação útil, e seu valor_total é a SOMA dos filhos.
+// Exibir o pai E os N filhos dobra o "valor do ciclo" e polui a lista. Os FILHOS
+// (status normal, com os itens reais + split_lote/split_total) é que ficam visíveis.
+//
+// Predicados PUROS (a página filtra a lista renderizada E os totais com eles).
+export function ehPaiSplit(p: { status: string }): boolean {
+  return p.status === 'split_em_filhos';
+}
+
+// Remove os pais de split de uma lista (mantém os filhos). Usar tanto pro render
+// quanto pro cálculo de valor/contagem do ciclo — consistente em todo lugar.
+export function pedidosVisiveis<T extends { status: string }>(lista: readonly T[]): T[] {
+  return lista.filter((p) => !ehPaiSplit(p));
 }
 
 /* ─── Portal B2B status meta ─── */

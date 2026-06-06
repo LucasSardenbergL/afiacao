@@ -5,7 +5,7 @@ import { FiltrosCard } from "../FiltrosCard";
 function setup(overrides: Partial<React.ComponentProps<typeof FiltrosCard>> = {}) {
   const props: React.ComponentProps<typeof FiltrosCard> = {
     empresa: "OBEN",
-    statusFilter: "pendente",
+    statusFilter: "todos",
     onStatusChange: vi.fn(),
     search: "",
     onSearchChange: vi.fn(),

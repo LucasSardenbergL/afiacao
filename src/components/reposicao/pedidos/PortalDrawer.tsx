@@ -5,6 +5,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
 import {
   AlertDialog,
@@ -16,12 +18,22 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { format, formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { AlertTriangle, Loader2, RotateCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, RotateCw } from 'lucide-react';
 import { PedidoSugerido, StatusEnvioPortal } from './types';
-import { portalStatusMeta } from './shared';
+import { portalStatusMeta, decidirAcaoPortal } from './shared';
+
+const PROTOCOLO_RE = /^\d{3,12}$/;
 
 export function PortalDrawer({
   pedido,
@@ -35,6 +47,12 @@ export function PortalDrawer({
   const queryClient = useQueryClient();
   const { isAdmin } = useAuth();
   const [confirmReenvio, setConfirmReenvio] = useState(false);
+  const [conciliarOpen, setConciliarOpen] = useState(false);
+  const [conciliarProtocolo, setConciliarProtocolo] = useState('');
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+  };
 
   const reenviarMutation = useMutation({
     mutationFn: async () => {
@@ -52,15 +70,61 @@ export function PortalDrawer({
     },
     onSuccess: () => {
       toast.success('Pedido marcado para reenvio. O cron / disparo manual fará o envio.');
-      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+      invalidate();
       setConfirmReenvio(false);
       onOpenChange(false);
     },
     onError: (e: Error) => toast.error(`Erro ao marcar reenvio: ${e.message}`),
   });
 
+  // Conciliação inline: reusa a edge `conciliar-pedido-portal` (mesma lógica que vivia
+  // no PortalDetailDrawer da tela /admin/portal-sayerlack, aposentada no 3c).
+  // A edge marca sucesso_portal + protocolo e dispara o Omie — com guard anti-PO-duplo
+  // (não recria o PO se o pedido já tem omie_pedido_compra_id).
+  const conciliarMutation = useMutation({
+    mutationFn: async () => {
+      if (!pedido) return null;
+      const protocolo = conciliarProtocolo.trim();
+      if (!PROTOCOLO_RE.test(protocolo)) {
+        throw new Error('Protocolo deve ser numérico com 3 a 12 dígitos.');
+      }
+      const { data, error } = await supabase.functions.invoke('conciliar-pedido-portal', {
+        body: { pedido_id: pedido.id, protocolo },
+      });
+      if (error) throw error;
+      return { data, protocolo };
+    },
+    onSuccess: (res) => {
+      if (!res || !pedido) return;
+      const { data, protocolo } = res;
+      const omie = data?.omie as
+        | { ok?: boolean; skipped?: boolean; httpStatus?: number }
+        | undefined;
+      if (data?.already) {
+        toast.success(`Pedido #${pedido.id} já estava conciliado com protocolo ${protocolo}.`);
+      } else if (omie?.skipped) {
+        toast.success(
+          `Pedido #${pedido.id} conciliado com protocolo ${protocolo}. O pedido de compra já existia no Omie — não foi recriado.`,
+        );
+      } else if (omie?.ok === false) {
+        toast.warning(
+          `Pedido #${pedido.id} marcado como enviado, mas o disparo do Omie devolveu HTTP ${omie?.httpStatus}. Confira no Omie.`,
+        );
+      } else {
+        toast.success(`Pedido #${pedido.id} conciliado com protocolo ${protocolo}. Omie disparado.`);
+      }
+      setConciliarOpen(false);
+      setConciliarProtocolo('');
+      invalidate();
+      onOpenChange(false);
+    },
+    onError: (e: Error) => toast.error(`Falha ao conciliar: ${e.message}`),
+  });
+
   if (!pedido) return null;
   const status = (pedido.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal;
+  const acao = decidirAcaoPortal(status);
+  const protocoloValido = PROTOCOLO_RE.test(conciliarProtocolo.trim());
   const tentativas = pedido.portal_tentativas ?? 0;
   const tentativasColor =
     tentativas <= 1 ? 'text-status-success' : tentativas === 2 ? 'text-status-warning' : 'text-destructive';
@@ -109,6 +173,30 @@ export function PortalDrawer({
             </div>
           </div>
 
+          {/* Conciliação: instrução + aviso de risco quando ambíguo. */}
+          {acao.kind === 'conciliar' && (
+            <Alert variant={acao.warn ? 'destructive' : 'default'}>
+              {acao.warn ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+              <AlertTitle>
+                {acao.warn ? 'Confira no portal ANTES de conciliar' : 'Requer conciliação manual'}
+              </AlertTitle>
+              <AlertDescription>
+                {acao.warn ? (
+                  <>
+                    O resultado do envio ficou <strong>ambíguo</strong> — o pedido <strong>pode já existir</strong> no
+                    portal Sayerlack (risco de duplicar). Confira no portal ANTES de conciliar. Se ele já está lá,
+                    copie o número e concilie abaixo. Se NÃO está, NÃO concilie — use "Forçar reenvio".
+                  </>
+                ) : (
+                  <>
+                    O portal aceitou o pedido mas não devolveu o número automaticamente. Confira no portal Sayerlack,
+                    copie o número e concilie abaixo — isso registra o protocolo e o pedido no Omie.
+                  </>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+
           {pedido.portal_screenshot_url && (
             <div>
               <div className="text-muted-foreground text-xs mb-1">Screenshot do portal</div>
@@ -142,7 +230,22 @@ export function PortalDrawer({
 
         <SheetFooter className="gap-2 flex-col sm:flex-row">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Fechar</Button>
-          {isAdmin && status !== 'nao_aplicavel' && (
+
+          {/* Estado de conciliação → Conciliar (NUNCA reenvio cego: risco de PO duplo). */}
+          {acao.kind === 'conciliar' && (
+            <Button
+              variant="default"
+              className="bg-status-warning-bold hover:bg-status-warning-bold/90"
+              onClick={() => setConciliarOpen(true)}
+              disabled={conciliarMutation.isPending}
+            >
+              <CheckCircle2 className="w-4 h-4 mr-1" />
+              Conciliar manualmente
+            </Button>
+          )}
+
+          {/* Erro genuíno sem PO criado → reenvio é seguro (somente admin). */}
+          {acao.kind === 'reenviar' && isAdmin && (
             <Button
               variant="secondary"
               onClick={() => setConfirmReenvio(true)}
@@ -153,6 +256,64 @@ export function PortalDrawer({
             </Button>
           )}
         </SheetFooter>
+
+        {/* Dialog de conciliação inline */}
+        <Dialog
+          open={conciliarOpen}
+          onOpenChange={(o) => {
+            setConciliarOpen(o);
+            if (!o) setConciliarProtocolo('');
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Conciliar pedido #{pedido.id}</DialogTitle>
+              <DialogDescription>
+                Informe o número do pedido como aparece no portal Sayerlack ("Pedido <strong>NNNNN</strong> criado com
+                sucesso"). Após confirmar, o sistema marca como enviado e registra no Omie (sem recriar o pedido se ele
+                já existir lá).
+              </DialogDescription>
+            </DialogHeader>
+            {acao.kind === 'conciliar' && acao.warn && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>
+                  Confira no portal Sayerlack ANTES de conciliar — o pedido pode já existir lá (risco de duplicar).
+                </AlertDescription>
+              </Alert>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="conciliar-protocolo">Número do protocolo</Label>
+              <Input
+                id="conciliar-protocolo"
+                inputMode="numeric"
+                pattern="\d*"
+                placeholder="Ex.: 123456"
+                value={conciliarProtocolo}
+                onChange={(e) => setConciliarProtocolo(e.target.value.replace(/\D/g, ''))}
+                disabled={conciliarMutation.isPending}
+                autoFocus
+              />
+              <p className="text-xs text-muted-foreground">Apenas dígitos, entre 3 e 12 caracteres.</p>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setConciliarOpen(false)}
+                disabled={conciliarMutation.isPending}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={() => conciliarMutation.mutate()}
+                disabled={conciliarMutation.isPending || !protocoloValido}
+              >
+                {conciliarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+                Confirmar e registrar no Omie
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <AlertDialog open={confirmReenvio} onOpenChange={setConfirmReenvio}>
           <AlertDialogContent>

@@ -7,6 +7,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/reposicao";
 import { calcApprovalSuggestion } from "@/lib/reposicao/approvalSuggestion";
 import type { PedidoItem } from "@/types/reposicao";
+import { aprovarEDisparar } from "../pedidos/aprovar-disparar";
+import { EMPRESA } from "../pedidos/shared";
 import { ALL, type CicloFilters } from "./types";
 
 export interface AutoApprovalGroup {
@@ -91,42 +93,81 @@ export function useCicloHoje({ user, reviewMode, filteredItems, setFilters }: Us
     const ids = Array.from(selected);
     const nowIso = new Date().toISOString();
     const who = user?.email ?? user?.id ?? "cockpit";
+
+    if (kind === "approve") {
+      // APROVAR = DISPARAR NA HORA, por pedido SELECIONADO. Loop da trilha canônica
+      // (RPC + edge { empresa, pedido_id }) em vez de um invoke empresa-wide:
+      // o { empresa } sozinho varreria TODO aprovado_aguardando_disparo do ciclo —
+      // inclusive os auto-aprovados que devem esperar o cron (runAutoApprove). Aqui
+      // disparamos exatamente o lote que o operador marcou. Sequencial: não martelar
+      // a edge/Browserless em paralelo. Best-effort por item: um erro não aborta os demais.
+      // Apura por `tipo`, NÃO por `r.ok`: aprovar=disparar significa que um pedido pode
+      // aprovar e o disparo falhar (best-effort) — `{ok:true, tipo:'warning'}` (edge não saiu;
+      // rede de segurança assume) ou `{ok:true, tipo:'error'}` (edge retornou 200 com falha
+      // síncrona do Omie → o pedido fica `falha_envio` na lista). Contar isso como
+      // "disparado" no resumo enganaria o operador no money-path.
+      let disparados = 0;
+      let comAviso = 0;
+      let comErro = 0;
+      for (const id of ids) {
+        try {
+          const r = await aprovarEDisparar({ pedidoId: id, empresa: EMPRESA, usuario: who });
+          if (!r.ok || r.tipo === "error") comErro += 1;
+          else if (r.tipo === "warning") comAviso += 1; // aprovado; disparo ficou p/ a rede de segurança
+          else disparados += 1; // success / info (disparado ou nada a disparar)
+        } catch {
+          comErro += 1;
+        }
+      }
+      const tudoOk = comErro === 0 && comAviso === 0;
+      await logAudit({
+        userId: user?.id ?? null,
+        action: "Aprovação em lote",
+        result: tudoOk
+          ? "Sucesso"
+          : `Parcial: ${disparados} disparado(s), ${comAviso} aguardando, ${comErro} com falha`,
+        metadata: { ids, count: ids.length, disparados, comAviso, comErro },
+      });
+      if (tudoOk) {
+        toast.success(`${disparados} pedido(s) aprovado(s) e disparado(s)`);
+      } else {
+        const resumo = `${disparados} disparado(s), ${comAviso} aguardando, ${comErro} com falha — reveja`;
+        if (comErro > 0) toast.error(resumo);
+        else toast.warning(resumo);
+      }
+      setSelected(new Set());
+      invalidate();
+      setBusy(false);
+      return;
+    }
+
+    // Rejeição em lote: UPDATE direto (não passa pela trilha de disparo).
     try {
-      const patch =
-        kind === "approve"
-          ? {
-              aprovado_em: nowIso,
-              aprovado_por: who,
-              status: "aprovado_aguardando_disparo" as const,
-            }
-          : {
-              cancelado_em: nowIso,
-              cancelado_por: who,
-              status: "cancelado" as const,
-              justificativa_cancelamento: "Rejeitado em lote no Cockpit",
-            };
       const { error } = await supabase
         .from("pedido_compra_sugerido")
-        .update(patch)
+        .update({
+          cancelado_em: nowIso,
+          cancelado_por: who,
+          status: "cancelado" as const,
+          justificativa_cancelamento: "Rejeitado em lote no Cockpit",
+        })
         .in("id", ids);
       if (error) throw error;
 
       await logAudit({
         userId: user?.id ?? null,
-        action: kind === "approve" ? "Aprovação em lote" : "Rejeição em lote",
+        action: "Rejeição em lote",
         result: "Sucesso",
         metadata: { ids, count: ids.length },
       });
-      toast.success(
-        `${ids.length} pedido(s) ${kind === "approve" ? "aprovado(s)" : "rejeitado(s)"}`,
-      );
+      toast.success(`${ids.length} pedido(s) rejeitado(s)`);
       setSelected(new Set());
       invalidate();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await logAudit({
         userId: user?.id ?? null,
-        action: kind === "approve" ? "Aprovação em lote" : "Rejeição em lote",
+        action: "Rejeição em lote",
         result: `Erro: ${msg}`,
         metadata: { ids },
       });

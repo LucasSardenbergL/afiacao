@@ -65,15 +65,13 @@ export function FiltrosCard({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="pendente">Pendentes</SelectItem>
-                <SelectItem value="aprovado">Aprovados</SelectItem>
+                <SelectItem value="todos">Todos</SelectItem>
                 <SelectItem value="aguardando_fornecedor">
                   Aguardando habilitação de fornecedor
                 </SelectItem>
                 <SelectItem value="primeira_compra">
                   Candidatos a 1ª compra
                 </SelectItem>
-                <SelectItem value="todos">Todos</SelectItem>
               </SelectContent>
             </Select>
           </div>

@@ -14,6 +14,7 @@ import { ConditionalWebRTCProvider } from "@/contexts/ConditionalWebRTCProvider"
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { RequireFinanceiroAccess } from "@/components/RequireFinanceiroAccess";
 import { RequireStaff } from '@/components/RequireStaff';
+import { RequireCaca } from '@/components/RequireCaca';
 import { NotificationPrompt } from "@/components/NotificationPrompt";
 import { AppShellLayout } from "@/components/AppShellLayout";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
@@ -115,7 +116,6 @@ const FinanceiroFunding = lazy(() => import("./pages/FinanceiroFunding"));
 const Recebimento = lazy(() => import("./pages/Recebimento"));
 const RecebimentoConferencia = lazy(() => import("./pages/RecebimentoConferencia"));
 const ProductionOrders = lazy(() => import("./pages/ProductionOrders"));
-const AdminReposicaoRevisao = lazy(() => import("./pages/AdminReposicaoRevisao"));
 const AdminReposicaoHistorico = lazy(() => import("./pages/AdminReposicaoHistorico"));
 const AdminReposicaoAlertas = lazy(() => import("./pages/AdminReposicaoAlertas"));
 const AdminReposicaoGruposProducao = lazy(() => import("./pages/AdminReposicaoGruposProducao"));
@@ -140,6 +140,7 @@ const ReposicaoSessionLayout = lazy(() => import("./components/reposicao/Reposic
 const LegacyCockpitRedirect = lazy(() => import("./components/reposicao/LegacyCockpitRedirect"));
 const AdminReposicaoCadastros = lazy(() => import("./pages/AdminReposicaoCadastros"));
 const AdminReposicaoEmbalagem = lazy(() => import("./pages/AdminReposicaoEmbalagem"));
+const ParamAutoMudancas = lazy(() => import("./pages/ParamAutoMudancas"));
 const AdminEstoqueRecebimento = lazy(() => import("./pages/AdminEstoqueRecebimento"));
 const AdminEstoquePicking = lazy(() => import("./pages/AdminEstoquePicking"));
 const TouchPickingView = lazy(() => import("./pages/picking/TouchPickingView"));
@@ -155,7 +156,6 @@ const SaudeDados = lazy(() => import("./pages/SaudeDados"));
 const AdminAjuda = lazy(() => import("./pages/AdminAjuda"));
 const AdminDesTrimestreAtual = lazy(() => import("./pages/AdminDesTrimestreAtual"));
 const AdminNotificacoes = lazy(() => import("./pages/AdminNotificacoes"));
-const AdminPortalSayerlack = lazy(() => import("./pages/AdminPortalSayerlack"));
 const AdminVendorSipCredentials = lazy(() => import("./pages/AdminVendorSipCredentials"));
 const AdminKnowledgeBase = lazy(() => import("./pages/AdminKnowledgeBase"));
 const AdminKnowledgeBaseDetail = lazy(() => import("./pages/AdminKnowledgeBaseDetail"));
@@ -169,6 +169,7 @@ const WhatsappSlaSupervisao = lazy(() => import("./pages/WhatsappSlaSupervisao")
 const RotaListaLigacao = lazy(() => import("./pages/RotaListaLigacao"));
 const RotaPainelLigacoes = lazy(() => import("./pages/RotaPainelLigacoes"));
 const RotaPropostas = lazy(() => import("./pages/RotaPropostas"));
+const Caca = lazy(() => import("./pages/Caca"));
 
 const PageLoader = () => <PageSkeleton variant="auto" />;
 
@@ -327,7 +328,7 @@ const App = () => (
                 <Route path="recebimento" element={<Recebimento />} />
                 <Route path="recebimento/:id" element={<RecebimentoConferencia />} />
                 <Route path="producao" element={<ProductionOrders />} />
-                <Route path="admin/reposicao/revisao" element={<AdminReposicaoRevisao />} />
+                <Route path="admin/reposicao/revisao" element={<Navigate to="/admin/reposicao/sessao/parametros?tab=ajuste" replace />} />
                 <Route path="admin/reposicao/historico" element={<AdminReposicaoHistorico />} />
                 <Route path="admin/reposicao/alertas" element={<AdminReposicaoAlertas />} />
                 <Route path="admin/reposicao/aplicacao" element={<Navigate to="/admin/reposicao/sessao/aplicacao" replace />} />
@@ -358,6 +359,7 @@ const App = () => (
                 <Route path="admin/reposicao/parametros" element={<Navigate to="/admin/reposicao/sessao/parametros" replace />} />
                 <Route path="admin/reposicao/cadastros" element={<AdminReposicaoCadastros />} />
                 <Route path="admin/reposicao/embalagem" element={<AdminReposicaoEmbalagem />} />
+                <Route path="admin/reposicao/mudancas-automaticas" element={<ParamAutoMudancas />} />
                 <Route path="admin/estoque/recebimento" element={<AdminEstoqueRecebimento />} />
                 <Route path="admin/estoque/picking" element={<AdminEstoquePicking />} />
                 <Route path="admin/estoque/picking/mobile" element={<TouchPickingView />} />
@@ -372,7 +374,8 @@ const App = () => (
                 <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
                 <Route path="admin/des/configuracao" element={<AdminDesTrimestreAtual />} />
                 <Route path="admin/notificacoes" element={<AdminNotificacoes />} />
-                <Route path="admin/portal-sayerlack" element={<AdminPortalSayerlack />} />
+                {/* Fase 3 · 3c: tela aposentada. A conciliação inline vive em /admin/reposicao/pedidos (PortalDrawer). */}
+                <Route path="admin/portal-sayerlack" element={<Navigate to="/admin/reposicao/pedidos" replace />} />
                 <Route path="admin/sip-credentials" element={<AdminVendorSipCredentials />} />
                 <Route path="admin/knowledge-base" element={<AdminKnowledgeBase />} />
                 <Route path="admin/knowledge-base/:id" element={<AdminKnowledgeBaseDetail />} />
@@ -385,6 +388,10 @@ const App = () => (
                 <Route path="rota/ligacoes" element={<RotaListaLigacao />} />
                 <Route path="rota/ligacoes/painel" element={<RotaPainelLigacoes />} />
                 <Route path="rota/propostas" element={<RotaPropostas />} />
+                {/* Caça (Frente B): gate fino hunter/master dentro do RequireStaff */}
+                <Route element={<RequireCaca />}>
+                  <Route path="caca" element={<Caca />} />
+                </Route>
               </Route>
             </Route>
 
