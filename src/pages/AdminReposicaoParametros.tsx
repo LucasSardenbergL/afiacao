@@ -15,12 +15,16 @@ import {
 } from "@/components/ui/select";
 import { ReposicaoEmpresaProvider, useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 // Reaproveita as telas originais — mesmas queries Supabase, sem duplicar.
-// A antiga aba "Revisão" (aprovação manual de parâmetros) foi APOSENTADA: os parâmetros
-// são aplicados automaticamente todo dia e o que mudou vive em /admin/reposicao/mudancas-automaticas.
+// A aprovação manual de parâmetros foi APOSENTADA: os parâmetros são aplicados
+// automaticamente todo dia (resumo + reverter em /admin/reposicao/mudancas-automaticas).
+// A aba "Ajuste manual" mantém só o editor por SKU (mínimo de compra forçado, editar
+// valores na mão, promover candidato de 1ª compra) — sem teatro de aprovação.
 // Tabelas/views usadas:
+//  - sku_parametros + views                  → AdminReposicaoRevisao (ajuste manual)
 //  - sku_parametros_historico                → AdminReposicaoHistorico
 //  - eventos_outlier                         → AdminReposicaoAlertas
 //  - views de SLA                            → AdminReposicaoSlaFornecedor
+const AdminReposicaoRevisao = lazy(() => import("./AdminReposicaoRevisao"));
 const AdminReposicaoHistorico = lazy(() => import("./AdminReposicaoHistorico"));
 const AdminReposicaoAlertas = lazy(() => import("./AdminReposicaoAlertas"));
 const AdminReposicaoSlaFornecedor = lazy(() => import("./AdminReposicaoSlaFornecedor"));
@@ -102,13 +106,13 @@ function KpiCards() {
   );
 }
 
-const VALID_TABS = ["alertas", "sla", "historico"];
+const VALID_TABS = ["ajuste", "alertas", "sla", "historico"];
 
 export default function AdminReposicaoParametros() {
   const [params, setParams] = useSearchParams();
-  const rawTab = params.get("tab") ?? "alertas";
-  // "revisao" foi aposentada — qualquer tab inválida/legada cai em "alertas".
-  const tab = VALID_TABS.includes(rawTab) ? rawTab : "alertas";
+  // "revisao" (legado) cai em "ajuste"; qualquer tab inválida idem.
+  const rawTab = params.get("tab") === "revisao" ? "ajuste" : (params.get("tab") ?? "ajuste");
+  const tab = VALID_TABS.includes(rawTab) ? rawTab : "ajuste";
   const [empresa, setEmpresa] = useState("OBEN");
 
   const handleTab = (v: string) => {
@@ -170,11 +174,18 @@ export default function AdminReposicaoParametros() {
         <KpiCards />
 
         <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
-          <TabsList className="grid grid-cols-3 w-full">
+          <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
+            <TabsTrigger value="ajuste">Ajuste manual</TabsTrigger>
             <TabsTrigger value="alertas">Alertas</TabsTrigger>
             <TabsTrigger value="sla">SLA de Fornecedor</TabsTrigger>
             <TabsTrigger value="historico">Histórico</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="ajuste" className="m-0">
+            <Suspense fallback={<TabFallback />}>
+              <AdminReposicaoRevisao />
+            </Suspense>
+          </TabsContent>
 
           <TabsContent value="alertas" className="m-0">
             <Suspense fallback={<TabFallback />}>

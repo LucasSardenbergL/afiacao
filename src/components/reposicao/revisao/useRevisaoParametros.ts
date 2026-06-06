@@ -1,27 +1,23 @@
-// Lógica da revisão de parâmetros de reposição (query paginada, aprovação, edição).
-// Extraída verbatim de src/pages/AdminReposicaoRevisao.tsx (god-component split).
-import { useState, useMemo } from "react";
+// Lógica do ajuste manual de parâmetros de reposição (query paginada, edição, promoção).
+// Extraída de src/pages/AdminReposicaoRevisao.tsx (god-component split). A aprovação manual
+// (que não travava nada — o motor e o auto-apply ignoram aprovado_em) foi aposentada (#639+).
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/contexts/AuthContext";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { toast } from "sonner";
 import { type SkuParam, type RowWithPrice, type StatusFilterValue } from "@/lib/reposicao/sku-param";
 import { PAGE_SIZE, type SkuSugeridoView } from "./types";
 
 export function useRevisaoParametros() {
-  const { user } = useAuth();
   const queryClient = useQueryClient();
 
   const { empresa } = useReposicaoEmpresa();
   const [classes, setClasses] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("pendente");
+  const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("todos");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
-  const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [openSku, setOpenSku] = useState<RowWithPrice | null>(null);
-  const [confirmBatch, setConfirmBatch] = useState(false);
-  const [batchJustificativa, setBatchJustificativa] = useState("");
 
   const { data, isLoading } = useQuery({
     queryKey: ["sku_parametros_revisao", empresa, classes, statusFilter, search, page],
@@ -183,8 +179,6 @@ export function useRevisaoParametros() {
         .or("tipo_reposicao.is.null,tipo_reposicao.neq.produto_acabado");
 
       if (classes.length > 0) q = q.in("classe_consolidada", classes);
-      if (statusFilter === "pendente") q = q.is("aprovado_em", null);
-      if (statusFilter === "aprovado") q = q.not("aprovado_em", "is", null);
       if (search.trim()) {
         const s = search.trim();
         if (/^\d+$/.test(s)) {
@@ -248,38 +242,6 @@ export function useRevisaoParametros() {
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const selectedIds = useMemo(() => Object.keys(selected).filter((k) => selected[k]), [selected]);
-  const selectedRows = useMemo(() => rows.filter((r) => selected[r.id]), [rows, selected]);
-
-  const aggregateImpact = useMemo(() => {
-    const cap = selectedRows.reduce((acc, r) => acc + (r.estoque_maximo ?? 0) * 1, 0);
-    return { count: selectedRows.length, capUnits: cap };
-  }, [selectedRows]);
-
-  const approveMutation = useMutation({
-    mutationFn: async (payload: { ids: string[]; justificativa?: string }) => {
-      const { error } = await supabase
-        .from("sku_parametros")
-        .update({
-          aplicar_no_omie: true,
-          aprovado_em: new Date().toISOString(),
-          aprovado_por: user?.email ?? "desconhecido",
-          justificativa_aprovacao: payload.justificativa || null,
-        })
-        .in("id", payload.ids);
-      if (error) throw error;
-    },
-    onSuccess: (_d, vars) => {
-      toast.success(`${vars.ids.length} SKU(s) aprovado(s)`);
-      setSelected({});
-      setConfirmBatch(false);
-      setBatchJustificativa("");
-      setOpenSku(null);
-      queryClient.invalidateQueries({ queryKey: ["sku_parametros_revisao"] });
-    },
-    onError: (e: Error) => toast.error("Falha ao aprovar: " + e.message),
-  });
-
   const updateMutation = useMutation({
     mutationFn: async (payload: { id: string; values: Partial<SkuParam> }) => {
       const { error } = await supabase
@@ -320,33 +282,16 @@ export function useRevisaoParametros() {
     setClasses((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
   };
 
-  const selectableRows = useMemo(() => rows.filter((r) => !r.read_only), [rows]);
-  const allChecked = selectableRows.length > 0 && selectableRows.every((r) => selected[r.id]);
-  const toggleAll = () => {
-    if (allChecked) {
-      const next = { ...selected };
-      selectableRows.forEach((r) => delete next[r.id]);
-      setSelected(next);
-    } else {
-      const next = { ...selected };
-      selectableRows.forEach((r) => (next[r.id] = true));
-      setSelected(next);
-    }
-  };
-
-  // Handlers compostos (encapsulam os resets de página/seleção inline do JSX original)
+  // Handlers compostos (encapsulam os resets de página inline do JSX original)
   const onStatusChange = (v: StatusFilterValue) => {
     setPage(0);
     setStatusFilter(v);
-    setSelected({});
   };
   const onSearchChange = (v: string) => {
     setPage(0);
     setSearch(v);
   };
   const clearClasses = () => setClasses([]);
-  const onToggleSelect = (id: string, checked: boolean) =>
-    setSelected((s) => ({ ...s, [id]: checked }));
   const prevPage = () => setPage((p) => Math.max(0, p - 1));
   const nextPage = () => setPage((p) => p + 1);
 
@@ -355,31 +300,19 @@ export function useRevisaoParametros() {
     classes,
     statusFilter,
     search,
-    page,
-    selected,
     openSku,
     setOpenSku,
-    confirmBatch,
-    setConfirmBatch,
-    batchJustificativa,
-    setBatchJustificativa,
     isLoading,
     rows,
     total,
+    page,
     totalPages,
-    selectedIds,
-    selectedRows,
-    aggregateImpact,
-    allChecked,
-    toggleAll,
     toggleClasse,
     clearClasses,
     onStatusChange,
     onSearchChange,
-    onToggleSelect,
     prevPage,
     nextPage,
-    approveMutation,
     updateMutation,
     promoverMutation,
   };

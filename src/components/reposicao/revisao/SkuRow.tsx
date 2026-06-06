@@ -3,7 +3,6 @@
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { TableCell, TableRow } from "@/components/ui/table";
 import {
   type RowWithPrice,
@@ -17,28 +16,16 @@ import { type BadgeVariant } from "./types";
 
 interface SkuRowProps {
   row: RowWithPrice;
-  checked: boolean;
-  onToggleSelect: (id: string, checked: boolean) => void;
   onOpenDetail: (row: RowWithPrice) => void;
   onPromover?: (sku: number) => void;
   promovendo?: boolean;
 }
 
-export function SkuRow({ row: r, checked, onToggleSelect, onOpenDetail, onPromover, promovendo }: SkuRowProps) {
+export function SkuRow({ row: r, onOpenDetail, onPromover, promovendo }: SkuRowProps) {
   const isCandidato = r.status_sugestao === "CANDIDATO_PRIMEIRA_COMPRA";
   const umClienteSo = isCandidato && r.recorrencia_clientes_180d === 1;
   return (
     <TableRow className={r.read_only ? "bg-muted/30" : undefined}>
-      <TableCell>
-        {r.read_only ? (
-          <span className="inline-block h-4 w-4" aria-hidden />
-        ) : (
-          <Checkbox
-            checked={!!checked}
-            onCheckedChange={(v) => onToggleSelect(r.id, !!v)}
-          />
-        )}
-      </TableCell>
       <TableCell className="font-mono text-xs align-top">{r.sku_codigo_omie}</TableCell>
       <TableCell className="min-w-[280px] align-top">
         <div className="whitespace-normal break-words leading-snug">{r.sku_descricao}</div>
@@ -108,11 +95,7 @@ export function SkuRow({ row: r, checked, onToggleSelect, onOpenDetail, onPromov
           >
             Aguardando fornecedor
           </Badge>
-        ) : r.aprovado_em ? (
-          <Badge variant="default">Aprovado</Badge>
-        ) : (
-          <Badge variant="outline">Pendente</Badge>
-        )}
+        ) : null}
       </TableCell>
       <TableCell>
         <div className="flex items-center justify-end gap-1">

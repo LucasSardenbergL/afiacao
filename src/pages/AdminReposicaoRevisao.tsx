@@ -5,7 +5,6 @@ import { SkuDetailSheet } from "@/components/reposicao/SkuDetailSheet";
 import { useRevisaoParametros } from "@/components/reposicao/revisao/useRevisaoParametros";
 import { FiltrosCard } from "@/components/reposicao/revisao/FiltrosCard";
 import { RevisaoTable } from "@/components/reposicao/revisao/RevisaoTable";
-import { AprovarLoteDialog } from "@/components/reposicao/revisao/AprovarLoteDialog";
 
 export default function AdminReposicaoRevisao() {
   const {
@@ -14,30 +13,18 @@ export default function AdminReposicaoRevisao() {
     statusFilter,
     search,
     page,
-    selected,
     openSku,
     setOpenSku,
-    confirmBatch,
-    setConfirmBatch,
-    batchJustificativa,
-    setBatchJustificativa,
     isLoading,
     rows,
     total,
     totalPages,
-    selectedIds,
-    selectedRows,
-    aggregateImpact,
-    allChecked,
-    toggleAll,
     toggleClasse,
     clearClasses,
     onStatusChange,
     onSearchChange,
-    onToggleSelect,
     prevPage,
     nextPage,
-    approveMutation,
     updateMutation,
     promoverMutation,
   } = useRevisaoParametros();
@@ -46,9 +33,10 @@ export default function AdminReposicaoRevisao() {
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Revisão de Parâmetros de Reposição</h1>
+          <h1 className="text-2xl font-semibold">Ajuste manual de parâmetros</h1>
           <p className="text-sm text-muted-foreground">
-            Aprove os parâmetros sugeridos por SKU antes da aplicação no Omie.
+            O sistema ajusta os parâmetros automaticamente. Use esta tela só pra travar um mínimo de compra
+            por SKU, editar valores na mão ou promover um candidato de 1ª compra.
           </p>
           {statusFilter === "primeira_compra" && (
             <p className="text-sm text-status-info mt-1">
@@ -82,13 +70,7 @@ export default function AdminReposicaoRevisao() {
         totalPages={totalPages}
         isLoading={isLoading}
         rows={rows}
-        selected={selected}
-        allChecked={allChecked}
-        toggleAll={toggleAll}
-        onToggleSelect={onToggleSelect}
         onOpenDetail={setOpenSku}
-        selectedCount={selectedIds.length}
-        onAprovarSelecionados={() => setConfirmBatch(true)}
         onPrevPage={prevPage}
         onNextPage={nextPage}
         onPromover={(sku) => promoverMutation.mutate(sku)}
@@ -98,27 +80,10 @@ export default function AdminReposicaoRevisao() {
       <SkuDetailSheet
         sku={openSku}
         onClose={() => setOpenSku(null)}
-        onApprove={(justificativa) =>
-          openSku && approveMutation.mutate({ ids: [openSku.id], justificativa })
-        }
         onSaveValues={(values) =>
           openSku && updateMutation.mutate({ id: openSku.id, values })
         }
-        isApproving={approveMutation.isPending}
         isSaving={updateMutation.isPending}
-      />
-
-      <AprovarLoteDialog
-        open={confirmBatch}
-        onOpenChange={setConfirmBatch}
-        aggregateImpact={aggregateImpact}
-        selectedRows={selectedRows}
-        batchJustificativa={batchJustificativa}
-        setBatchJustificativa={setBatchJustificativa}
-        onConfirm={() =>
-          approveMutation.mutate({ ids: selectedIds, justificativa: batchJustificativa })
-        }
-        isApproving={approveMutation.isPending}
       />
     </div>
   );

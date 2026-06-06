@@ -25,37 +25,38 @@ function row(p: Partial<RowWithPrice>): RowWithPrice {
 
 function renderRow(r: RowWithPrice, overrides: Partial<React.ComponentProps<typeof SkuRow>> = {}) {
   const props: React.ComponentProps<typeof SkuRow> = {
-    row: r, checked: false, onToggleSelect: vi.fn(), onOpenDetail: vi.fn(), ...overrides,
+    row: r, onOpenDetail: vi.fn(), ...overrides,
   };
   render(<table><tbody><SkuRow {...props} /></tbody></table>);
   return props;
 }
 
 describe("SkuRow", () => {
-  it("renderiza código, descrição, classe e status Pendente", () => {
+  it("renderiza código, descrição e classe", () => {
     renderRow(row({}));
     expect(screen.getByText("12345")).toBeTruthy();
     expect(screen.getByText("TINTA BASE BRANCA")).toBeTruthy();
     expect(screen.getByText("AX")).toBeTruthy();
-    expect(screen.getByText("Pendente")).toBeTruthy();
   });
 
-  it("checkbox dispara onToggleSelect com o id", () => {
-    const props = renderRow(row({}));
-    fireEvent.click(screen.getByRole("checkbox"));
-    expect(props.onToggleSelect).toHaveBeenCalledWith("row-1", true);
-  });
-
-  it("status Aprovado quando aprovado_em presente", () => {
+  it("aposentada a aprovação: linha normal não mostra selo Pendente/Aprovado nem checkbox", () => {
     renderRow(row({ aprovado_em: "2026-05-20T00:00:00Z" }));
-    expect(screen.getByText("Aprovado")).toBeTruthy();
+    expect(screen.queryByText("Pendente")).toBeNull();
+    expect(screen.queryByText("Aprovado")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
-  it("read_only: sem checkbox, badge de fornecedor e status Aguardando", () => {
+  it("read_only: badge de fornecedor e status Aguardando", () => {
     renderRow(row({ read_only: true }));
-    expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.getByText(/Sayerlack/)).toBeTruthy();
     expect(screen.getByText("Aguardando fornecedor")).toBeTruthy();
+  });
+
+  it("candidato a 1ª compra: botão Promover dispara onPromover com o SKU", () => {
+    const onPromover = vi.fn();
+    renderRow(row({ status_sugestao: "CANDIDATO_PRIMEIRA_COMPRA", read_only: true }), { onPromover });
+    fireEvent.click(screen.getByRole("button", { name: "Promover" }));
+    expect(onPromover).toHaveBeenCalledWith(12345);
   });
 
   it("Detalhes dispara onOpenDetail com a linha", () => {
