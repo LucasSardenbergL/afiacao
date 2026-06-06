@@ -26,6 +26,8 @@ interface RevisaoTableProps {
   onNextPage: () => void;
   onPromover?: (sku: number) => void;
   promovendo?: boolean;
+  onReativar?: (sku: number) => void;
+  reativando?: boolean;
 }
 
 export function RevisaoTable({
@@ -39,6 +41,8 @@ export function RevisaoTable({
   onNextPage,
   onPromover,
   promovendo,
+  onReativar,
+  reativando,
 }: RevisaoTableProps) {
   return (
     <Card>
@@ -80,6 +84,8 @@ export function RevisaoTable({
                   onOpenDetail={onOpenDetail}
                   onPromover={onPromover}
                   promovendo={promovendo}
+                  onReativar={onReativar}
+                  reativando={reativando}
                 />
               ))}
               {rows.length === 0 && (

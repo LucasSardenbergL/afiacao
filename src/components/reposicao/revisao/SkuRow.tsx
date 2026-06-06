@@ -11,7 +11,19 @@ import {
   classBadge,
   fmt,
   fmtBRL,
+  isDescontinuado,
 } from "@/lib/reposicao/sku-param";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { type BadgeVariant } from "./types";
 
 interface SkuRowProps {
@@ -19,11 +31,14 @@ interface SkuRowProps {
   onOpenDetail: (row: RowWithPrice) => void;
   onPromover?: (sku: number) => void;
   promovendo?: boolean;
+  onReativar?: (sku: number) => void;
+  reativando?: boolean;
 }
 
-export function SkuRow({ row: r, onOpenDetail, onPromover, promovendo }: SkuRowProps) {
+export function SkuRow({ row: r, onOpenDetail, onPromover, promovendo, onReativar, reativando }: SkuRowProps) {
   const isCandidato = r.status_sugestao === "CANDIDATO_PRIMEIRA_COMPRA";
   const umClienteSo = isCandidato && r.recorrencia_clientes_180d === 1;
+  const descontinuado = isDescontinuado(r);
   return (
     <TableRow className={r.read_only ? "bg-muted/30" : undefined}>
       <TableCell className="font-mono text-xs align-top">{r.sku_codigo_omie}</TableCell>
@@ -79,7 +94,15 @@ export function SkuRow({ row: r, onOpenDetail, onPromover, promovendo }: SkuRowP
       <TableCell className="text-right">{fmt(r.ponto_pedido, 0)}</TableCell>
       <TableCell className="text-right">{fmt(r.estoque_maximo, 0)}</TableCell>
       <TableCell>
-        {isCandidato ? (
+        {descontinuado ? (
+          <Badge
+            variant="secondary"
+            className="bg-muted text-muted-foreground border-muted-foreground/20"
+            title="SKU descontinuado — fora da reposição automática. Reative quando voltar a comprar."
+          >
+            Descontinuado
+          </Badge>
+        ) : isCandidato ? (
           <Badge
             variant="secondary"
             className="bg-status-info-bg text-status-info border-status-info/20"
@@ -110,6 +133,32 @@ export function SkuRow({ row: r, onOpenDetail, onPromover, promovendo }: SkuRowP
             >
               {promovendo ? <Loader2 className="h-4 w-4 animate-spin" /> : "Promover"}
             </Button>
+          )}
+          {descontinuado && onReativar && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="sm" variant="outline" disabled={reativando}>
+                  {reativando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Reativar"}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Reativar SKU?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    <span className="font-mono">{r.sku_codigo_omie}</span> — {r.sku_descricao ?? "—"}.
+                    <br />
+                    Volta para a reposição automática e passa a ser sugerido no próximo ciclo
+                    (só se o estoque estiver no ponto de pedido). Os parâmetros antigos são preservados.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={reativando}>Voltar</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => onReativar(r.sku_codigo_omie)} disabled={reativando}>
+                    Reativar
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           )}
           <Button size="sm" variant="ghost" onClick={() => onOpenDetail(r)}>
             Detalhes
