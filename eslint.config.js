@@ -43,4 +43,26 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Lente "ver como pessoa" (CLAUDE.md §5): useDisplayAccess é hook de
+    // exibição/navegação (retorna o userId do alvo quando na lente). Código de
+    // escrita/serviço DEVE usar useAuth() — o client real, não o alvo da lente.
+    // Proibir o import na camada de serviço evita que mutações acidentalmente
+    // operem com o effectiveUserId do alvo em vez do master autenticado.
+    files: ["src/services/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@/hooks/useDisplayAccess",
+              message:
+                "useDisplayAccess é só para exibição/navegação. Camada de serviço/escrita usa useAuth() real.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

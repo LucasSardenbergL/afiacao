@@ -1,16 +1,16 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
 import type { Persona } from '@/lib/dashboard/persona-config';
 import type { PersonaSource } from '@/lib/dashboard/persona-detect';
 import { usePersona } from '@/hooks/usePersona';
 
-const STORAGE_KEY = 'dashboardPersonaOverride';
+// Chave legada do override manual de persona. A troca manual foi APOSENTADA em favor
+// da lente "Ver como" (impersonação read-only por pessoa real); limpamos a chave no
+// boot pra um valor preso de versões antigas não vencer a inferência (inferPersona passo 1).
+const LEGACY_OVERRIDE_KEY = 'dashboardPersonaOverride';
 
 interface DashboardPersonaCtx {
   persona: Persona;
   source: PersonaSource;
-  override: Persona | null;
-  setOverride: (p: Persona) => void;
-  clearOverride: () => void;
 }
 
 const Ctx = createContext<DashboardPersonaCtx | null>(null);
@@ -22,35 +22,20 @@ export function useDashboardPersonaContext(): DashboardPersonaCtx {
 }
 
 export function DashboardPersonaProvider({ children }: { children: ReactNode }) {
-  const [override, setOverrideState] = useState<Persona | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw && typeof raw === 'string' ? (raw as Persona) : null;
-  });
+  // A persona é resolvida só por display* (acesso real, ou do alvo na lente). Não há
+  // mais override manual — a "troca de visão" é a lente. Limpa o resíduo do localStorage.
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(LEGACY_OVERRIDE_KEY);
+    }
+  }, []);
 
-  // usePersona é chamado AQUI (abaixo do estado de override) pra que trocar de
-  // persona re-renderize e recompute a resolução. Antes ele vivia no
-  // DashboardShell (pai), então o setOverride do filho nunca re-rodava a
-  // resolução → a troca só aparecia após reload.
-  const resolved = usePersona(override);
-
-  const setOverride = (p: Persona) => {
-    setOverrideState(p);
-    localStorage.setItem(STORAGE_KEY, p);
-  };
-
-  const clearOverride = () => {
-    setOverrideState(null);
-    localStorage.removeItem(STORAGE_KEY);
-  };
+  const resolved = usePersona(null);
 
   const value = useMemo<DashboardPersonaCtx>(() => ({
     persona: resolved.persona,
     source: resolved.source,
-    override,
-    setOverride,
-    clearOverride,
-  }), [resolved.persona, resolved.source, override]);
+  }), [resolved.persona, resolved.source]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

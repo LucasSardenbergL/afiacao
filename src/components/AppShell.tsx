@@ -40,6 +40,8 @@ import { GlobalBreadcrumbs } from "@/components/shell/GlobalBreadcrumbs";
 import { useFeatureFlagBodyClass } from '@/hooks/useFeatureFlag';
 import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
 import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
+import { useDisplayAccess } from '@/hooks/useDisplayAccess';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useRouteTracker } from '@/lib/dashboard/route-tracker';
 import { useOfflineFlush } from '@/hooks/useOfflineFlush';
 import { registerAllOfflineHandlers } from '@/lib/offline-handlers';
@@ -354,8 +356,10 @@ function SidebarItem({
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff, isMaster, isGestorComercial, user } = useAuth();
+  const { isStaff, user } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
+  const { displayIsStaff, displayIsMaster, displayIsGestorComercial, displayIsSalesOnly, displayLoading } = useDisplayAccess();
+  const { isImpersonating } = useImpersonation();
   const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
   // Os 6 contadores de badges abaixo são todos da seção Reposição. Não fazem
@@ -497,6 +501,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
       items: s.items.map((it) => {
+        if (isImpersonating) return it; // na lente, sem badges (refletiriam dado do master)
         if (it.path === '/admin/reposicao/alertas' && outlierPendentes) {
           return { ...it, badge: outlierPendentes };
         }
@@ -536,7 +541,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, isImpersonating],
   );
 
   const isActive = (path: string) => {
@@ -590,8 +595,18 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 
       {/* Navigation — Favoritos no topo (se houver) + seções secundárias colapsadas por padrão */}
       <nav className="flex-1 min-h-0 overflow-y-auto py-2">
+        {/* Lente carregando o perfil do alvo: placeholder em vez de menu parcial
+            (sem isso, durante o load apareceriam itens sem gate por um instante). */}
+        {displayLoading ? (
+          <div className="px-3 py-2">
+            <span className="text-2xs font-medium uppercase tracking-wider text-sidebar-muted animate-pulse">
+              {collapsed ? '…' : 'Carregando visão…'}
+            </span>
+          </div>
+        ) : (
+          <>
         {/* Favoritos pinados — coletados de todas as seções pelo path */}
-        {!isSalesOnly && favorites.length > 0 && !collapsed && (
+        {!displayIsSalesOnly && favorites.length > 0 && !collapsed && (
           <SidebarSection
             title="Favoritos"
             collapsed={false}
@@ -602,7 +617,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
               sectionsWithBadges
                 .flatMap((s) => s.items)
                 .filter((item) => favorites.includes(item.path))
-                .filter((item) => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster) && (!item.gestorComercialOuMaster || isMaster || isGestorComercial))
+                .filter((item) => (!item.managerOnly || displayIsStaff) && (!item.masterOnly || displayIsMaster) && (!item.gestorComercialOuMaster || displayIsMaster || displayIsGestorComercial))
             }
             onToggleFavorite={toggleFavorite}
             isFavorite={isFavorite}
@@ -610,9 +625,9 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         )}
 
         {sectionsWithBadges.map((section) => {
-          if (isSalesOnly && section.title !== 'Vendas') return null;
+          if (displayIsSalesOnly && section.title !== 'Vendas') return null;
 
-          const visibleItems = section.items.filter(item => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster) && (!item.gestorComercialOuMaster || isMaster || isGestorComercial));
+          const visibleItems = section.items.filter(item => (!item.managerOnly || displayIsStaff) && (!item.masterOnly || displayIsMaster) && (!item.gestorComercialOuMaster || displayIsMaster || displayIsGestorComercial));
           if (visibleItems.length === 0) return null;
 
           const isSecondary = SECONDARY_SECTIONS.includes(section.title);
@@ -631,6 +646,8 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
             />
           );
         })}
+          </>
+        )}
       </nav>
 
       {/* Collapse trigger at bottom when collapsed */}
@@ -709,8 +726,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
 function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff, isMaster, isGestorComercial } = useAuth();
-  const isSalesOnly = useSalesOnlyRestriction();
+  const { displayIsStaff: isStaff, displayIsMaster: isMaster, displayIsGestorComercial: isGestorComercial, displayIsSalesOnly: isSalesOnly, displayLoading } = useDisplayAccess();
 
   if (!open) return null;
 
@@ -736,7 +752,14 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
           </button>
         </div>
         <nav className="flex-1 min-h-0 overflow-y-auto py-2">
-          {[...unifiedNavSections, docNavSection].map((section) => {
+          {displayLoading ? (
+            <div className="px-3 py-2">
+              <span className="text-2xs font-medium uppercase tracking-wider text-sidebar-muted animate-pulse">
+                Carregando visão…
+              </span>
+            </div>
+          ) : (
+          [...unifiedNavSections, docNavSection].map((section) => {
             if (isSalesOnly && section.title !== 'Vendas') return null;
             const visibleItems = section.items.filter(item => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster) && (!item.gestorComercialOuMaster || isMaster || isGestorComercial));
             if (visibleItems.length === 0) return null;
@@ -768,7 +791,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
                 })}
               </div>
             );
-          })}
+          }))}
         </nav>
       </div>
     </>
