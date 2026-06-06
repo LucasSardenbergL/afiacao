@@ -15,21 +15,21 @@ import {
 export function ImpersonationBanner() {
   const { isImpersonating, target, startImpersonation, stopImpersonation } = useImpersonation();
   const { user } = useAuth();
-  const { data: perfil, isError } = useImpersonatedAccessProfile();
+  const { data: perfil, isError, isSuccess } = useImpersonatedAccessProfile();
   const { data: targets = [] } = useImpersonationTargets();
 
-  // Auto-saída em falha PERSISTENTE da RPC get_user_access_profile_for: sem o perfil
-  // do alvo a lente não reflete o acesso dele (rebaixaria fail-closed e confundiria).
-  // Sai da lente e avisa, em vez de deixar um menu vazio. isError só dispara depois
-  // dos retries do React Query (blip transitório se auto-recupera, não chega aqui).
-  // Mount único (banner no AppShell) → um toast por falha; isImpersonating vira false
-  // no render seguinte, então o guard impede toast duplicado.
+  // Auto-saída quando NÃO HÁ perfil do alvo: (a) erro PERSISTENTE da RPC
+  // get_user_access_profile_for (isError só dispara após os retries do React Query —
+  // blip transitório se auto-recupera) OU (b) resposta BEM-SUCEDIDA vazia (isSuccess +
+  // data:null, ex.: alvo sem perfil). Sem isto, em (b) a lente ficaria num menu rebaixado
+  // indefinidamente, sem o "Sair" automático. Mount único (banner no AppShell) → um toast;
+  // isImpersonating vira false no render seguinte, então o guard impede toast duplicado.
   useEffect(() => {
-    if (isImpersonating && isError) {
+    if (isImpersonating && (isError || (isSuccess && !perfil))) {
       toast.error('Não foi possível carregar a visão dessa pessoa. Saindo da lente.');
       void stopImpersonation();
     }
-  }, [isImpersonating, isError, stopImpersonation]);
+  }, [isImpersonating, isError, isSuccess, perfil, stopImpersonation]);
 
   if (!isImpersonating || !target) return null;
   const contexto = [perfil?.commercialRole, perfil?.department].filter(Boolean).join(' · ');
