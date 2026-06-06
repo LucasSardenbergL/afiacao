@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -58,6 +58,11 @@ export function useCustomerSelection({
   reloadPriceHistory,
 }: UseCustomerSelectionArgs = {}) {
   const queryClient = useQueryClient();
+
+  /* Token de geração: descarta conclusões de uma seleção antiga quando o
+     usuário troca de cliente no meio (corrida A→B). Cada selectCustomer
+     incrementa o token; awaits que voltam com token vencido não setam estado. */
+  const selectionTokenRef = useRef(0);
 
   /* ─── State ─── */
   const [customerSearch, setCustomerSearch] = useState('');
@@ -362,16 +367,31 @@ export function useCustomerSelection({
   /* ─── Public actions ─── */
 
   const selectCustomer = useCallback(async (cust: OmieCustomer) => {
+    // Token desta seleção. Se o usuário trocar de cliente no meio, conclusões
+    // atrasadas desta chamada são descartadas (não sobrescrevem o cliente novo).
+    const myToken = ++selectionTokenRef.current;
+    const isStale = () => selectionTokenRef.current !== myToken;
+
     setLoadingCustomer(true);
     setCustomerSearch('');
     setCustomers([]);
     setVendedorDivergencias([]);
     setSelectedAddress('');
     setRequiresPo(false);
+    // Limpa estado do cliente ANTERIOR — não deve aparecer preço/parcela/vínculo
+    // do cliente antigo enquanto os dados do novo carregam.
+    setCustomerUserId(null);
+    setCustomerPricesOben({});
+    setCustomerPricesColacor({});
+    setSelectedParcelaOben('999');
+    setSelectedParcelaColacor('999');
+    setCustomerParcelaRankingOben([]);
+    setCustomerParcelaRankingColacor([]);
     try {
       setSelectedCustomer(cust);
 
       const localUserId = await resolveLocalUserId(cust);
+      if (isStale()) return;
 
       if (localUserId) {
         setCustomerUserId(localUserId);
@@ -408,6 +428,7 @@ export function useCustomerSelection({
             })
           : Promise.resolve({ data: null }),
       ]);
+      if (isStale()) return;
 
       const labels = [
         'preços Oben',
@@ -475,30 +496,11 @@ export function useCustomerSelection({
         cust.codigo_vendedor_afiacao = afiacaoClientResult.data.codigo_vendedor || null;
       }
 
-      await autoCreateInMissingAccounts(cust);
-
-      setSelectedCustomer({ ...cust });
-
-      // Save customer segment/tags to DB in background
-      if (cust.codigo_cliente && (cust.tags?.length || cust.atividade)) {
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: {
-            action: 'salvar_segmento_cliente',
-            codigo_cliente: cust.codigo_cliente,
-            account: 'oben',
-            tags: cust.tags || [],
-            atividade: cust.atividade || '',
-          },
-        }).catch(() => {});
-      }
-
-      // Purchase history (local + Omie) é carregado pelo useQuery acima.
-      // Ao atualizar selectedCustomer com codigo_cliente_colacor preenchido pelo
-      // autoCreateInMissingAccounts, a query refaz o fetch automaticamente.
-
-
-      // Merge local "last-practiced" prices into Omie pricing maps
+      // ── Publica preços/parcelas ANTES do auto-cadastro ──
+      // O badge "Preço cliente" depende só destes dados; não deve esperar o WRITE
+      // de criação de cliente no Omie (que antes bloqueava o preço no caminho crítico).
       const localPricesByOmie = await resolveLocalPricesByOmieCode(localPriceResult.data || null);
+      if (isStale()) return;
 
       const mergedOben: Record<number, number> = { ...localPricesByOmie };
       if (priceOben.data?.precos) {
@@ -520,19 +522,46 @@ export function useCustomerSelection({
       if (parcelaOben.data?.parcela_ranking) setCustomerParcelaRankingOben(parcelaOben.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));
       if (parcelaColacor.data?.ultima_parcela) setSelectedParcelaColacor(parcelaColacor.data.ultima_parcela);
       if (parcelaColacor.data?.parcela_ranking) setCustomerParcelaRankingColacor(parcelaColacor.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));
+
+      // Reflete os códigos por-conta já resolvidos pelos lookups (preço já visível).
+      setSelectedCustomer({ ...cust });
+
+      // Save customer segment/tags to DB in background (fire-and-forget)
+      if (cust.codigo_cliente && (cust.tags?.length || cust.atividade)) {
+        supabase.functions.invoke('omie-vendas-sync', {
+          body: {
+            action: 'salvar_segmento_cliente',
+            codigo_cliente: cust.codigo_cliente,
+            account: 'oben',
+            tags: cust.tags || [],
+            atividade: cust.atividade || '',
+          },
+        }).catch(() => {});
+      }
+
+      // Auto-cadastro nas contas faltantes roda DEPOIS do preço já visível.
+      // Mantido awaited por ora; a Etapa 2/3 (ver spec) troca por ensure idempotente
+      // + join no submit. Conclusão atrasada não sobrescreve um cliente novo (guard).
+      await autoCreateInMissingAccounts(cust);
+      if (isStale()) return;
+      // Reflete códigos recém-criados pelo auto-cadastro (purchase-history reage à key).
+      setSelectedCustomer({ ...cust });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro desconhecido';
-      toast.error('Erro', { description: message });
+      if (!isStale()) toast.error('Erro', { description: message });
     } finally {
-      setLoadingCustomer(false);
+      // Só apaga o "Buscando…" se esta ainda é a seleção corrente.
+      if (!isStale()) setLoadingCustomer(false);
     }
 
+    if (isStale()) return;
     if (cust.cnpj_cpf) {
       setValidatingVendedor(true);
       try {
         const { data: validacao, error } = await supabase.functions.invoke('omie-cliente', {
           body: { action: 'validar_vendedor', cnpj_cpf: cust.cnpj_cpf },
         });
+        if (isStale()) return;
         if (!error && validacao && !validacao.consistente) {
           setVendedorDivergencias(validacao.divergencias || []);
         }
@@ -544,7 +573,7 @@ export function useCustomerSelection({
           error: err,
         });
       } finally {
-        setValidatingVendedor(false);
+        if (!isStale()) setValidatingVendedor(false);
       }
     }
   }, [
@@ -553,7 +582,13 @@ export function useCustomerSelection({
   ]);
 
   const clearCustomer = useCallback(() => {
+    // Invalida qualquer selectCustomer em voo: suas conclusões viram stale e não
+    // ressuscitam o cliente que estamos limpando. Como o finally da seleção pula
+    // o setLoadingCustomer(false) quando stale, zeramos os flags de loading aqui.
+    selectionTokenRef.current++;
     setSelectedCustomer(null);
+    setLoadingCustomer(false);
+    setValidatingVendedor(false);
     setCustomerUserId(null);
     setCustomerPricesOben({});
     setCustomerPricesColacor({});
