@@ -37,8 +37,9 @@ export function ImpersonationProvider({ children }: { children: ReactNode }) {
     }
   }, [isMaster, target]);
 
-  // Sincroniza o write-guard global com o estado da lente: bloqueia mutações
-  // PostgREST e de storage enquanto uma impersonação estiver ativa.
+  // Sincronização defensiva do write-guard global: start/stopImpersonation já setam
+  // a flag diretamente; este efeito cobre os casos em que `target` muda por outro
+  // caminho (ex.: restauração do sessionStorage no F5).
   useEffect(() => {
     setLensActive(!!target);
     return () => setLensActive(false);
@@ -50,12 +51,14 @@ export function ImpersonationProvider({ children }: { children: ReactNode }) {
       rpc(fn: string, params?: Record<string, unknown>): Promise<{ data: unknown; error: unknown }>;
     }).rpc('log_impersonation_start', { p_target: t.id, p_reason: reason ?? null });
     setAuditId(typeof data === 'string' ? data : null);
+    setLensActive(true);
     setTarget(t);
     persistTarget(t);
     track('carteira.ver_como_iniciado', { grupo: t.grupo });
   }, [isMaster]);
 
   const stopImpersonation = useCallback(async () => {
+    setLensActive(false);
     if (auditId) {
       await (supabase as unknown as {
         rpc(fn: string, params?: Record<string, unknown>): Promise<{ data: unknown; error: unknown }>;
