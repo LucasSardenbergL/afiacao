@@ -28,6 +28,7 @@ export function PositivacaoHero({ kpis, isHunter }: { kpis: PositivacaoKpis; isH
   }, [kpis, isHunter]);
 
   const ticket = `R$ ${kpis.ticketMedio.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`;
+  const receita = `R$ ${kpis.receitaMtd.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`;
   return (
     <div className="space-y-3">
       {/* Hero (3 KPIs principais por papel) */}
@@ -41,20 +42,25 @@ export function PositivacaoHero({ kpis, isHunter }: { kpis: PositivacaoKpis; isH
         ) : (
           <>
             <KpiCard label="Positivação MTD" value={`${kpis.pctPositivacao}%`} sub={`${kpis.positivados}/${kpis.totalEligible} da carteira`} />
+            <KpiCard label="Receita MTD" value={receita} sub="faturamento da carteira no mês" />
             <KpiCard label="Clientes a positivar" value={String(kpis.aPositivar.length)} sub="sem pedido no mês" />
-            <KpiCard label="Cobertura de contato" value={`${kpis.pctCobertura}%`} sub="contatados no mês" />
           </>
         )}
       </div>
       {/* Linha secundária (KPIs de apoio) */}
-      <div className="grid grid-cols-2 gap-3">
-        <KpiCard label="Ticket médio MTD" value={ticket} sub="receita ÷ compradores no mês" />
-        {isHunter ? (
+      {isHunter ? (
+        <div className="grid grid-cols-2 gap-3">
+          <KpiCard label="Ticket médio MTD" value={ticket} sub="receita ÷ compradores no mês" />
           <KpiCard label="Cobertura de contato" value={`${kpis.pctCobertura}%`} sub="contatados no mês" />
-        ) : (
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <KpiCard label="Cobertura de contato" value={`${kpis.pctCobertura}%`} sub="contatados no mês" />
+          <KpiCard label="Recuperados (win-back)" value={String(kpis.novosPositivados)} sub="voltaram a comprar no mês" />
           <KpiCard label="Recência crítica" value={String(kpis.recenciaCritica)} sub="risco alto / atrasados" />
-        )}
-      </div>
+          <KpiCard label="Ticket médio MTD" value={ticket} sub="receita ÷ compradores no mês" />
+        </div>
+      )}
     </div>
   );
 }
