@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { toast } from "sonner";
-import { type SkuParam, type RowWithPrice, type StatusFilterValue } from "@/lib/reposicao/sku-param";
+import { type SkuParam, type RowWithPrice, type StatusFilterValue, reativarPayload } from "@/lib/reposicao/sku-param";
 import { PAGE_SIZE, type SkuSugeridoView } from "./types";
 
 export function useRevisaoParametros() {
@@ -164,19 +164,27 @@ export function useRevisaoParametros() {
         return { rows: priced, total: count ?? 0 };
       }
 
+      // Fall-through: branch "Todos" (default) E branch "Descontinuados" — mesma tabela
+      // (sku_parametros), mesmo enriquecimento de preço e mapeamento abaixo; só o predicado muda.
       let q = supabase
         .from("sku_parametros")
         .select("*", { count: "exact" })
-        .eq("empresa", empresa)
-        .eq("ativo", true)
-        .not("estoque_minimo", "is", null)
-        // Esconde Produto Acabado ('04' = fabricado internamente). O motor de compra
-        // já os ignora (gerar_pedidos_sugeridos_ciclo exige tipo_reposicao='automatica');
-        // na fila de aprovação de parâmetros eles eram só ruído (não há o que comprar).
-        // A cláusula is.null preserva quem ainda não tem tipo classificado (NULL/automatica/
-        // sob_encomenda ficam — só produto_acabado sai). String estática → não dispara a
-        // regra no-restricted-syntax do .or(). Ver #527/#529 (guarda do '04' no motor).
-        .or("tipo_reposicao.is.null,tipo_reposicao.neq.produto_acabado");
+        .eq("empresa", empresa);
+
+      if (statusFilter === "descontinuados") {
+        // SKUs desligados de propósito pelo humano (botão "descontinuar SKU" nos Pedidos).
+        // Sem filtro de ativo/estoque_minimo: mostra tudo que o humano descontinuou, com preço
+        // (o gatilho de reativar é "o preço voltou a ser competitivo").
+        q = q.eq("tipo_reposicao", "descontinuado");
+      } else {
+        // "Todos": esconde Produto Acabado ('04', fabricado) E descontinuados, preservando os NULL
+        // (ainda não classificados). Antes, descontinuado VAZAVA aqui (só tipo='produto_acabado' saía).
+        // String estática (sem interpolação) → não dispara a regra no-restricted-syntax do .or().
+        q = q
+          .eq("ativo", true)
+          .not("estoque_minimo", "is", null)
+          .or("tipo_reposicao.is.null,and(tipo_reposicao.neq.produto_acabado,tipo_reposicao.neq.descontinuado)");
+      }
 
       if (classes.length > 0) q = q.in("classe_consolidada", classes);
       if (search.trim()) {
@@ -277,6 +285,25 @@ export function useRevisaoParametros() {
     onError: (e: Error) => toast.error("Falha ao promover: " + e.message),
   });
 
+  // Reativa um SKU descontinuado: religa a reposição automática (espelho do "descontinuar SKU"
+  // dos Pedidos). Update direto — a mesma escrita PostgREST que a tela já usa pra editar
+  // parâmetros (updateMutation). Por empresa+sku, simétrico ao descontinuarMutation.
+  const reativarMutation = useMutation({
+    mutationFn: async (sku: number) => {
+      const { error } = await supabase
+        .from("sku_parametros")
+        .update(reativarPayload())
+        .eq("empresa", empresa)
+        .eq("sku_codigo_omie", sku);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("SKU reativado — volta a ser sugerido no próximo ciclo");
+      queryClient.invalidateQueries({ queryKey: ["sku_parametros_revisao"] });
+    },
+    onError: (e: Error) => toast.error("Falha ao reativar: " + e.message),
+  });
+
   const toggleClasse = (c: string) => {
     setPage(0);
     setClasses((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
@@ -315,5 +342,6 @@ export function useRevisaoParametros() {
     nextPage,
     updateMutation,
     promoverMutation,
+    reativarMutation,
   };
 }
