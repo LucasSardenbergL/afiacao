@@ -377,7 +377,9 @@ git add src/components/call/CallDialerView.tsx src/components/call/WebRTCDialer.
 git commit -m "feat(lente): bloqueia o Dialer (WebRTC fura o write-guard) na lente"
 ```
 
-> **Verificação:** sem teste unitário automático (montar o `WebRTCCallContext`/JsSIP em jsdom é caro; `CallDialerView` exige muitos props de estado de chamada). O `isLensActive()` da fonte já é coberto pelos testes de `lens-write-guard`. QA manual no Chrome: na lente de uma Farmer, abrir uma tela com o Dialer → botão "Ligar" **disabled**; se forçado, o `onMakeCall` barra com toast e NÃO inicia a chamada.
+> **Verificação:** sem teste unitário automático (montar o `WebRTCCallContext`/JsSIP em jsdom é caro; `CallDialerView` exige muitos props de estado de chamada). O `isLensActive()` da fonte já é coberto pelos testes de `lens-write-guard`. QA manual no Chrome: na lente de uma Farmer, abrir uma tela com o Dialer → botão "Ligar" **disabled**; se forçado, o guard barra com toast e NÃO inicia a chamada.
+
+> ⚠️ **CORREÇÃO P1 do review final (commit `9b1288f5`):** o gate só no `WebRTCDialer.onMakeCall` (Steps 1-2) **era INCOMPLETO**. O review (opus) achou que `useCallBackend()` retorna WebRTC **incondicional** (a nota do CLAUDE.md sobre Nvoip default está stale) e que há **≥3 callsites** que iniciam ligação WebRTC SEM passar pelo `WebRTCDialer`: `AgendaTodayList` (no FarmerDashboardV2 → exposto no `/meu-dia` da Farmer pela própria Task 1!), `Telefonia` (`/telefonia`, sem gate algum) e `NewCallDialog`→`FarmerCalls`. **Fix:** guard na **FONTE** — `isLensActive()` no topo de `WebRTCCallContext.makeCall` (`:320`, a função única por onde `useWebRTCCall`/`useWebRTCCallContext` e portanto TODOS os callsites passam — `useWebRTCCall` é só `return useWebRTCCallContext()`) **+** `acceptIncoming` (`:447`, ligação ENTRANTE = P2). Isso torna os `disabled` dos Steps 1-2 cosméticos (UX) e fecha os 3 callsites + futuros. Verificado: não há SIP invite/call fora dessas 2 funções.
 
 ---
 
@@ -404,7 +406,7 @@ Run: `heavy bun run typecheck` (limpo) + `bun lint` (0 errors).
 - ✅ `/meu-dia` reflete o alvo → Task 1 (cascateia via `useMyCommercialRole`).
 - ✅ `FarmerCalls` `isHunter` reflete o alvo → Task 1 (mesmo hook).
 - ✅ CTAs de escrita dos dashboards da lente viram read-only → Task 2 (`AcaoOutcomeMenu` + `OutcomeMenu`; os demais cards de visita são read-only — só `<Link>`/toggle local; `MinhasTarefasCard`/`MixGapCard`/`RecorrentesHojeCard` JÁ gateiam).
-- ✅ Dialer / "Nova ligação" (WebRTC fura o write-guard) bloqueado na lente → Task 3 (botão `disabled` + barra na fonte com `isLensActive()`).
+- ✅ Dialer / "Nova ligação" (WebRTC fura o write-guard) bloqueado na lente → Task 3 (botões `disabled` em CallDialerView/WebRTCDialer) **+ correção P1 do review:** guard na FONTE em `WebRTCCallContext.makeCall`+`acceptIncoming` (`isLensActive()`) — cobre TODOS os callsites WebRTC (AgendaTodayList/Telefonia/FarmerCalls), não só o WebRTCDialer.
 
 **Placeholder scan:** sem TBD/TODO; todo step tem código exato.
 
