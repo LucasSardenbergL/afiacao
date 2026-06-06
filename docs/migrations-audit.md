@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **183** custom migrations totais
-- **695** objetos esperados (criados por estas migrations)
+- **187** custom migrations totais
+- **698** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 181
-  - `function`: 165
+  - `function`: 168
   - `index`: 130
   - `cron_job`: 97
   - `table`: 81
@@ -1620,6 +1620,28 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260606190000_reposicao_preco_pedido_cmc_account.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260606190000_reposicao_qtde_inteira_persist.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_persistir_qtde_inteira` | — |
+
+### `20260606200000_reposicao_promo_forward_buying_min.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_promocoes_no_ciclo` | — |
+
+### `20260606230000_negociacao_paralela_v2_cleanup.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos quando algo der `❌`
 
