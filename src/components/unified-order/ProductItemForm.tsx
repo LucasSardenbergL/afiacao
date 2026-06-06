@@ -19,11 +19,16 @@ interface ProductItemFormProps {
   productItems: ProductCartItem[];
   onAddProduct: (p: Product, qty?: number) => void;
   customerPurchaseHistory?: Record<string, string>;
+  /** True enquanto os preços do contrato do cliente ainda estão carregando
+   *  (logo após selecionar o cliente). Mostra que os valores exibidos são de
+   *  tabela e ainda vão atualizar — evita a percepção de "travado". */
+  customerPricesLoading?: boolean;
 }
 
 export function ProductItemForm({
   title, products, prices, loading, productSearch, onSearchChange,
   productItems, onAddProduct, customerPurchaseHistory = {},
+  customerPricesLoading = false,
 }: ProductItemFormProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
 
@@ -51,6 +56,11 @@ export function ProductItemForm({
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input placeholder="Buscar produto..." value={productSearch} onChange={e => onSearchChange(e.target.value)} className="pl-9 h-9" />
         </div>
+        {customerPricesLoading && (
+          <div className="flex items-center gap-1.5 mb-2 text-[11px] text-muted-foreground" role="status">
+            <Loader2 className="w-3 h-3 animate-spin" /> Carregando preços do contrato…
+          </div>
+        )}
         {loading ? (
           <Loader2 className="w-5 h-5 animate-spin mx-auto" />
         ) : (

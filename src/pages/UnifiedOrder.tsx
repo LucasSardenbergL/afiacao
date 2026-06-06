@@ -234,13 +234,13 @@ const UnifiedOrder = () => {
                     <ProductItemForm title="Produtos Oben" products={h.filteredObenProducts} prices={h.customerPricesOben}
                       loading={h.loadingObenProducts} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
                       productItems={h.productItems} onAddProduct={h.addProductToCart}
-                      customerPurchaseHistory={h.customerPurchaseHistory} />
+                      customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer} />
                   </TabsContent>
                   <TabsContent value="colacor">
                     <ProductItemForm title="Produtos Colacor" products={h.filteredColacorProducts} prices={h.customerPricesColacor}
                       loading={h.loadingColacorProducts} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
                       productItems={h.productItems} onAddProduct={h.addProductToCart}
-                      customerPurchaseHistory={h.customerPurchaseHistory} />
+                      customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer} />
                   </TabsContent>
                   <TabsContent value="services">
                     <ServiceItemForm
