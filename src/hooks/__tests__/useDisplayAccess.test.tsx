@@ -77,4 +77,15 @@ describe('useDisplayAccess', () => {
       displayCommercialRole: null, displayLoading: true,
     });
   });
+
+  it('na lente, perfil settled SEM dado (RPC falhou/vazia): rebaixa + displayLoading=false (NÃO eterno)', () => {
+    // Trava a regressão do loading eterno: isLoading=false + data=null não pode manter displayLoading=true.
+    impMock.mockReturnValue({ isImpersonating: true, target: { id: 'v1', nome: 'Regina', grupo: 'farmer' } });
+    profileMock.mockReturnValue({ data: null, isLoading: false });
+    const { result } = renderHook(() => useDisplayAccess());
+    expect(result.current).toMatchObject({
+      displayRole: null, displayIsStaff: false, displayIsMaster: false,
+      displayCommercialRole: null, displayLoading: false,
+    });
+  });
 });

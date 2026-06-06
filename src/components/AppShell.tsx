@@ -358,7 +358,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const navigate = useNavigate();
   const { isStaff, user } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
-  const { displayIsStaff, displayIsMaster, displayIsGestorComercial, displayIsSalesOnly } = useDisplayAccess();
+  const { displayIsStaff, displayIsMaster, displayIsGestorComercial, displayIsSalesOnly, displayLoading } = useDisplayAccess();
   const { isImpersonating } = useImpersonation();
   const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
@@ -595,6 +595,16 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 
       {/* Navigation — Favoritos no topo (se houver) + seções secundárias colapsadas por padrão */}
       <nav className="flex-1 min-h-0 overflow-y-auto py-2">
+        {/* Lente carregando o perfil do alvo: placeholder em vez de menu parcial
+            (sem isso, durante o load apareceriam itens sem gate por um instante). */}
+        {displayLoading ? (
+          <div className="px-3 py-2">
+            <span className="text-2xs font-medium uppercase tracking-wider text-sidebar-muted animate-pulse">
+              {collapsed ? '…' : 'Carregando visão…'}
+            </span>
+          </div>
+        ) : (
+          <>
         {/* Favoritos pinados — coletados de todas as seções pelo path */}
         {!displayIsSalesOnly && favorites.length > 0 && !collapsed && (
           <SidebarSection
@@ -636,6 +646,8 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
             />
           );
         })}
+          </>
+        )}
       </nav>
 
       {/* Collapse trigger at bottom when collapsed */}
@@ -714,7 +726,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
 function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { displayIsStaff: isStaff, displayIsMaster: isMaster, displayIsGestorComercial: isGestorComercial, displayIsSalesOnly: isSalesOnly } = useDisplayAccess();
+  const { displayIsStaff: isStaff, displayIsMaster: isMaster, displayIsGestorComercial: isGestorComercial, displayIsSalesOnly: isSalesOnly, displayLoading } = useDisplayAccess();
 
   if (!open) return null;
 
@@ -740,7 +752,14 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
           </button>
         </div>
         <nav className="flex-1 min-h-0 overflow-y-auto py-2">
-          {[...unifiedNavSections, docNavSection].map((section) => {
+          {displayLoading ? (
+            <div className="px-3 py-2">
+              <span className="text-2xs font-medium uppercase tracking-wider text-sidebar-muted animate-pulse">
+                Carregando visão…
+              </span>
+            </div>
+          ) : (
+          [...unifiedNavSections, docNavSection].map((section) => {
             if (isSalesOnly && section.title !== 'Vendas') return null;
             const visibleItems = section.items.filter(item => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster) && (!item.gestorComercialOuMaster || isMaster || isGestorComercial));
             if (visibleItems.length === 0) return null;
@@ -772,7 +791,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
                 })}
               </div>
             );
-          })}
+          }))}
         </nav>
       </div>
     </>

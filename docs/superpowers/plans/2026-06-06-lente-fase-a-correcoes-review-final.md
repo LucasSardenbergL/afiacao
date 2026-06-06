@@ -77,6 +77,23 @@ if (prop === 'rpc') {
 6. Rodar suíte + typecheck + lint. Codex de re-verificação no diff das correções.
 7. `superpowers:finishing-a-development-branch` → PR.
 
+## Resolução (2026-06-06) — todos os itens fechados
+
+- **P1 (RPC mutante escapa do guard) — ✅ FEITO** (commit `6ae1fa48`). `createLensGuardedClient` intercepta `.rpc(name,...)`: na lente, bloqueia tudo que não começa com `get_`/`list_` (allowlist explícita vazia). 3 testes novos (`registrar_contato_rota`/`confirmar_item_picking` rejeitam; `get_minha_positivacao`/`list_impersonation_targets` passam; fora da lente passa).
+  - ⚠️ **Descoberta load-bearing:** o ordering do `ImpersonationContext` agora é REQUERIDO pelo guard de RPC — `log_impersonation_start` roda ANTES de `setLensActive(true)` e `end_impersonation` roda DEPOIS de `setLensActive(false)`. Ambas são RPCs **mutantes** (não `get_`/`list_`) → se rodassem com a lente ativa, o próprio P1 as bloquearia. Por isso o P2#3 abaixo **não pode** ser "endurecido" reordenando.
+
+- **P2#1 (override legado preso) — ✅ FEITO.** `DashboardPersonaContext` não inicializa mais do `localStorage` (começa `null`) e **limpa a chave órfã** `dashboardPersonaOverride` no boot. `setOverride`/`clearOverride`/`override` **removidos** do contexto (zero consumidor no app — a "troca de visão" é a lente, não override manual); `usePersona(null)`. `inferPersona` passo 1 (override) fica intacto (puro, agora sempre `null`). Teste reescrito (3 casos: resolve por `display*`; na lente→`vendedor` via `display*`; **ignora override legado e limpa a chave**).
+
+- **P2#2 (`displayLoading` ignorado + loading eterno) — ✅ FEITO.** `useDisplayAccess` separa `isLoading` (loading genuíno → `displayLoading:true`) de **settled-sem-perfil** (RPC falhou/vazia → rebaixa fail-closed com `displayLoading:false` — mata o loading eterno do `isLoading || !targetProfile`). AppShell (desktop `AppSidebar` + `MobileNav`) renderiza placeholder **"Carregando visão…"** quando `displayLoading`, em vez do menu parcial. `ImpersonationBanner` ganha **watcher de auto-saída**: `isError` persistente (após os retries do React Query) → `toast.error` + `stopImpersonation` (mount único do banner = 1 toast; `isImpersonating` vira false no render seguinte e o guard impede toast duplicado). +1 teste de regressão (settled-sem-perfil → `displayLoading:false`).
+
+- **P2#3 (timing stop/restore) — ✅ ACEITO + DOCUMENTADO.** O `setLensActive(false)` ANTES do `await end_impersonation` é **necessário** (senão o guard de RPC do P1 bloquearia o `end_impersonation`, que é mutante). A janela curta (guard off + UI ainda na lente durante o await da auditoria) **não tem risco real**: é o caminho "Sair", nenhuma escrita é iniciada pelo usuário ali, e a RPC de auditoria é rápida. No reload, o effect defensivo (`setLensActive(!!target)`) re-sincroniza o guard quando o `target` restaura; o flash de "master real" no 1º render é **leitura** (sem risco de escrita). Reordenar pioraria (quebraria a auditoria). Mantido.
+
+- **P2#4 (`/meu-dia` não vira o dashboard da Farmer) — ✅ ESCOPO FASE 2 (documentado).** `CommercialDashboard`/`useMyCommercialRole` decidem Master vs Commercial dashboard pelo cargo **REAL** do master → na lente segue mostrando o `MasterDashboard`. É gap de **fidelidade** (a lente não reproduz o `/meu-dia` da Farmer), **não dano**. Tela não-migrada → entra na Fase 2 (migração de telas internas pra `display*`). Anotado no §13 do spec.
+
+- **P2#5 (tipo de `displayCommercialRole`) — ✅ DOCUMENTADO (edge).** `CommercialRole` é o tipo legado de 4 valores (`operacional/gerencial/estrategico/super_admin`); o banco tem também `farmer/hunter/closer/master`. `inferPersona` só casa os 4 no switch (passo 4), MAS o passo 2 (**department**) vem antes e resolve as personas reais (Farmers têm `department='vendas'` → `vendedor`). Alvo com cargo novo-estilo **e sem** department cai em heurística/`geral` (degradação honesta, sem dano). Ampliar o tipo rippla pra `useCommercialRole` e outros consumidores → **fora de escopo** deste fix; anotado no §13 do spec.
+
+**Validação:** 385 arquivos / **2412 testes verdes**, `bun run typecheck` limpo, `bun lint` **0 errors** (82 warnings pré-existentes de `exhaustive-deps`). Codex de re-verificação no diff das correções pendente antes do PR.
+
 ## Lembretes de deploy (Fase A não vai ao ar sozinha)
 - **Frontend:** Publish manual no Lovable (a lente só aparece pro master no app publicado).
 - Sem migration, sem edge function nesta Fase A (tudo client-side; a RPC `get_user_access_profile_for` já existe em prod).

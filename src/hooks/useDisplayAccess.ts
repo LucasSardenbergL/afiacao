@@ -50,11 +50,24 @@ export function useDisplayAccess(): DisplayAccess {
     };
   }
 
-  if (isLoading || !targetProfile) {
+  // Perfil do alvo ainda carregando → loading genuíno (consumidores mostram placeholder).
+  if (isLoading) {
     return {
       displayRole: null, displayIsStaff: false, displayIsMaster: false,
       displayIsGestorComercial: false, displayIsSalesOnly: false,
       displayCommercialRole: null, displayDepartment: null, displayLoading: true,
+    };
+  }
+
+  // Settled SEM perfil (RPC get_user_access_profile_for falhou ou veio vazia): NÃO
+  // pode virar loading eterno (isLoading=false + !targetProfile travaria em true).
+  // Rebaixa fail-closed com displayLoading:false; o watcher do banner sai da lente
+  // com toast (auto-saída em falha persistente). displayLoading reflete só isLoading real.
+  if (!targetProfile) {
+    return {
+      displayRole: null, displayIsStaff: false, displayIsMaster: false,
+      displayIsGestorComercial: false, displayIsSalesOnly: false,
+      displayCommercialRole: null, displayDepartment: null, displayLoading: false,
     };
   }
 

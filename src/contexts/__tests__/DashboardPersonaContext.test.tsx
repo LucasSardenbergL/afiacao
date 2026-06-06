@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 
-// usePersona agora usa useDisplayAccess em vez de useAuth/useCommercialRole/etc.
+// usePersona usa useDisplayAccess; route-tracker é mockado pra inferência ficar determinística.
 vi.mock('@/hooks/useDisplayAccess', () => ({ useDisplayAccess: vi.fn() }));
 vi.mock('@/lib/dashboard/route-tracker', () => ({ getRouteCounts: vi.fn(() => ({})) }));
 
@@ -11,13 +11,11 @@ import { DashboardPersonaProvider, useDashboardPersonaContext } from '../Dashboa
 const mockedDisplayAccess = vi.mocked(useDisplayAccess);
 
 function Consumer() {
-  const { persona, source, setOverride, clearOverride } = useDashboardPersonaContext();
+  const { persona, source } = useDashboardPersonaContext();
   return (
     <div>
       <span data-testid="persona">{persona}</span>
       <span data-testid="source">{source}</span>
-      <button onClick={() => setOverride('vendedor')}>vendedor</button>
-      <button onClick={() => clearOverride()}>clear</button>
     </div>
   );
 }
@@ -26,8 +24,7 @@ describe('DashboardPersonaProvider', () => {
   beforeEach(() => {
     localStorage.clear();
     // Sem lente: master sem cargo comercial nem departamento → persona 'master'
-    // (passo 6 do inferPersona, source 'default'). displayCommercialRole=null para
-    // não entrar no passo 4 do switch.
+    // (passo 6 do inferPersona, source 'default').
     mockedDisplayAccess.mockReturnValue({
       displayRole: 'master',
       displayIsStaff: true,
@@ -40,28 +37,35 @@ describe('DashboardPersonaProvider', () => {
     });
   });
 
-  it('troca de persona reativamente quando setOverride é chamado (sem reload)', () => {
+  it('resolve a persona pelo display* do alvo/real (master → master/default)', () => {
     render(<DashboardPersonaProvider><Consumer /></DashboardPersonaProvider>);
     expect(screen.getByTestId('persona').textContent).toBe('master');
     expect(screen.getByTestId('source').textContent).toBe('default');
-    act(() => { screen.getByText('vendedor').click(); });
-    expect(screen.getByTestId('persona').textContent).toBe('vendedor');
-    expect(screen.getByTestId('source').textContent).toBe('manual');
   });
 
-  it('persiste o override no localStorage e limpa com clearOverride', () => {
+  it('na lente, persona segue o display* do alvo (vendedor → vendedor)', () => {
+    // A troca de persona acontece pela LENTE (display* do alvo), não por override manual.
+    mockedDisplayAccess.mockReturnValue({
+      displayRole: 'employee',
+      displayIsStaff: true,
+      displayIsMaster: false,
+      displayIsGestorComercial: false,
+      displayIsSalesOnly: true,
+      displayCommercialRole: 'operacional',
+      displayDepartment: 'vendas',
+      displayLoading: false,
+    });
     render(<DashboardPersonaProvider><Consumer /></DashboardPersonaProvider>);
-    act(() => { screen.getByText('vendedor').click(); });
-    expect(localStorage.getItem('dashboardPersonaOverride')).toBe('vendedor');
-    act(() => { screen.getByText('clear').click(); });
-    expect(localStorage.getItem('dashboardPersonaOverride')).toBeNull();
-    expect(screen.getByTestId('persona').textContent).toBe('master');
+    expect(screen.getByTestId('persona').textContent).toBe('vendedor');
   });
 
-  it('inicializa a partir do override persistido no localStorage', () => {
+  it('ignora override legado no localStorage e limpa a chave órfã no boot', () => {
+    // Override manual foi APOSENTADO em favor da lente "Ver como". Um valor preso de
+    // versões antigas NÃO pode vencer a inferência (inferPersona passo 1) nem sobreviver ao boot.
     localStorage.setItem('dashboardPersonaOverride', 'financeiro');
     render(<DashboardPersonaProvider><Consumer /></DashboardPersonaProvider>);
-    expect(screen.getByTestId('persona').textContent).toBe('financeiro');
-    expect(screen.getByTestId('source').textContent).toBe('manual');
+    expect(screen.getByTestId('persona').textContent).toBe('master'); // não 'financeiro'
+    expect(screen.getByTestId('source').textContent).toBe('default'); // não 'manual'
+    expect(localStorage.getItem('dashboardPersonaOverride')).toBeNull(); // chave limpa
   });
 });
