@@ -241,6 +241,10 @@ awk '/^CREATE OR REPLACE FUNCTION public\.gerar_pedidos_sugeridos_ciclo/,/^\$fun
   "$REPO_ROOT/supabase/migrations/20260604190000_reposicao_minimo_forcado.sql" > /tmp/aa-funcB.sql
 awk '/^CREATE OR REPLACE FUNCTION public\.gerar_pedidos_sugeridos_ciclo/,/^\$function\$;$/' \
   "$REPO_ROOT/supabase/migrations/20260606120000_reposicao_rpc_account_aware.sql" > /tmp/aa-funcC.sql
+# Endurecimento (Codex P2): a migration C deve ter EXATAMENTE 1 CREATE OR REPLACE da RPC. O awk
+# extrai só o 1º bloco $function$; um 2º override posterior escaparia ao cmp abaixo.
+NF=$(grep -c '^CREATE OR REPLACE FUNCTION public\.gerar_pedidos_sugeridos_ciclo' "$REPO_ROOT/supabase/migrations/20260606120000_reposicao_rpc_account_aware.sql")
+[ "$NF" = "1" ] || { echo "✗ migration C tem $NF CREATE OR REPLACE da RPC (esperado 1; um 2º override escaparia ao diff mecânico)"; exit 1; }
 N=$(grep -c '^      AND op.account = lower(p_empresa)$' /tmp/aa-funcC.sql)
 [ "$N" = "1" ] || { echo "✗ cláusula aparece $N vezes (esperado 1)"; exit 1; }
 # A cláusula deve vir imediatamente APÓS a linha do JOIN omie_products.
