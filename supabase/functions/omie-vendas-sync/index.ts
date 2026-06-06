@@ -754,6 +754,92 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
   }
 }
 
+// Fase 2: CONTEXTO COMERCIAL do cliente numa ÚNICA passada de ListarPedidos.
+// Substitui buscar_precos_cliente + buscar_ultima_parcela + buscar_cliente (colacor) +
+// historico_produtos_cliente, que disparavam VÁRIAS ListarPedidos concorrentes na mesma
+// conta → rate-limit do Omie ("Já existe uma requisição desse método") → retries 5-15s×3
+// → ~40s. Aqui: 1 ListarPedidos/conta (ordenar_por DATA_INCLUSAO) devolve preço + dInc
+// por produto + parcela + ranking. Para colacor (sem código conhecido), resolve o código
+// por documento ANTES (ListarClientes → ListarPedidos, SERIAL → métodos diferentes, sem
+// colisão). dInc (inclusão) é a data de precedência — NÃO data_previsao.
+async function buscarContextoComercialCliente(
+  opts: { codigoCliente?: number | null; document?: string | null },
+  account: Account = "oben",
+) {
+  let codigoCliente = opts.codigoCliente ?? null;
+  let codigoVendedor: number | null = null;
+
+  if (!codigoCliente && opts.document) {
+    const cli = await buscarClienteVendas(opts.document, account);
+    if (cli?.codigo_cliente) {
+      codigoCliente = cli.codigo_cliente;
+      codigoVendedor = cli.codigo_vendedor ?? null;
+    }
+  }
+
+  const empty = {
+    codigo_cliente: codigoCliente,
+    codigo_vendedor: codigoVendedor,
+    precos: {} as Record<number, number>,
+    datas: {} as Record<number, string>,
+    ultima_parcela: null as string | null,
+    parcela_ranking: [] as Array<{ codigo: string; count: number }>,
+  };
+  if (!codigoCliente) return empty;
+
+  const result = await callOmieVendasApi(
+    "produtos/pedido/",
+    "ListarPedidos",
+    {
+      pagina: 1,
+      registros_por_pagina: 50,
+      filtrar_por_cliente: codigoCliente,
+      filtrar_apenas_inclusao: "N",
+      ordenar_por: "DATA_INCLUSAO",
+    },
+    account,
+  );
+
+  const pedidos: OmiePedidoVendaProduto[] =
+    (result?.pedido_venda_produto as OmiePedidoVendaProduto[] | undefined) || [];
+
+  const precos: Record<number, number> = {};
+  const datas: Record<number, string> = {};
+  const parcelaCount: Record<string, number> = {};
+  let ultimaParcela: string | null = null;
+
+  // Pedidos vêm do mais recente ao mais antigo (DATA_INCLUSAO) → o 1º por produto é o último.
+  for (const pedido of pedidos) {
+    const dataInc = pedido.infoCadastro?.dInc || pedido.cabecalho?.data_previsao || "";
+    const parcela = pedido.cabecalho?.codigo_parcela;
+    if (parcela) {
+      if (!ultimaParcela) ultimaParcela = parcela;
+      parcelaCount[parcela] = (parcelaCount[parcela] || 0) + 1;
+    }
+    for (const item of pedido.det || []) {
+      const cod = item.produto?.codigo_produto;
+      const val = item.produto?.valor_unitario;
+      if (cod && val && val > 0 && precos[cod] === undefined) {
+        precos[cod] = val;
+        datas[cod] = dataInc;
+      }
+    }
+  }
+
+  const parcela_ranking = Object.entries(parcelaCount)
+    .sort((a, b) => b[1] - a[1])
+    .map(([codigo, count]) => ({ codigo, count }));
+
+  return {
+    codigo_cliente: codigoCliente,
+    codigo_vendedor: codigoVendedor,
+    precos,
+    datas,
+    ultima_parcela: ultimaParcela,
+    parcela_ranking,
+  };
+}
+
 // Sincronizar pedidos de venda do Omie para o banco local (OPTIMIZED)
 async function syncPedidos(
   supabase: SupabaseClient,
@@ -1590,6 +1676,19 @@ serve(async (req) => {
         if (!codCli) throw new Error("Código do cliente é obrigatório");
         const parcelaData = await buscarUltimaParcela(codCli, account);
         result = { success: true, ...parcelaData };
+        break;
+      }
+
+      // Fase 2: 1 chamada consolidada (preço+dInc por produto + parcela + ranking +
+      // código resolvido p/ colacor). Substitui as ListarPedidos concorrentes que
+      // colidiam no rate-limit (~40s). codigo_cliente p/ oben; document p/ colacor.
+      case "buscar_contexto_comercial_cliente": {
+        const { codigo_cliente: ctxCod, document: ctxDoc } = params;
+        const ctx = await buscarContextoComercialCliente(
+          { codigoCliente: ctxCod ?? null, document: ctxDoc ?? null },
+          account,
+        );
+        result = { success: true, ...ctx };
         break;
       }
 
