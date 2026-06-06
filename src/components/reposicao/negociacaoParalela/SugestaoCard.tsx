@@ -26,7 +26,7 @@ import type { Sugestao, RankingRow } from "./types";
 
 interface SugestaoCardProps {
   s: Sugestao;
-  rankingExtra: RankingRow | undefined;
+  rankingExtra?: RankingRow | undefined;
   onMarcarVisualizada: (s: Sugestao) => void;
   onIrAoRanking: (s: Sugestao) => void;
   onMarcarEmAndamento: (s: Sugestao) => void;
