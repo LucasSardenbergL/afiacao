@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { supabase } from '@/integrations/supabase/client';
 import { montarKpisVisita, type KpisVisita, type KpiVisitaRow } from '@/lib/visitas/kpis';
 
@@ -8,8 +8,8 @@ import { montarKpisVisita, type KpisVisita, type KpiVisitaRow } from '@/lib/visi
  * (visited_by=eu, RLS #340). Read-only. Definições em src/lib/visitas/kpis.ts.
  */
 export function useKpisVisita(janelaDias = 30) {
-  const { user } = useAuth();
-  const uid = user?.id;
+  // Lente "Ver como": id efetivo = ALVO na lente, próprio usuário fora dela.
+  const { effectiveUserId: uid } = useImpersonation();
   return useQuery({
     queryKey: ['kpis-visita', uid, janelaDias],
     enabled: !!uid,

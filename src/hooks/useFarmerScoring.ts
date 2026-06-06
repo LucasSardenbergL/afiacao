@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { Tables, TablesInsert } from '@/integrations/supabase/types';
 
 type AlgorithmConfigRow = Pick<Tables<'farmer_algorithm_config'>, 'key' | 'value'>;
@@ -95,8 +95,9 @@ function percentile(arr: number[], p: number): number {
 
 // ─── Main Hook ───────────────────────────────────────────────────────
 export const useFarmerScoring = (farmerId?: string) => {
-  const { user } = useAuth();
-  const targetFarmerId = farmerId || user?.id;
+  // Lente "Ver como": id efetivo = ALVO na lente (lê/exibe a agenda dele), próprio usuário fora.
+  const { isImpersonating, effectiveUserId } = useImpersonation();
+  const targetFarmerId = farmerId || effectiveUserId;
 
   const [config, setConfig] = useState<AlgorithmConfig>(DEFAULT_CONFIG);
   const [clientScores, setClientScores] = useState<ClientScore[]>([]);
@@ -414,8 +415,9 @@ export const useFarmerScoring = (farmerId?: string) => {
 
       setAgenda(agendaItems);
 
-      // 9. Persist scores to DB
-      for (const s of scores) {
+      // 9. Persist scores to DB — pulado na lente "Ver como" (somente leitura: o master
+      // inspeciona a agenda do alvo sem recalcular/persistir a carteira dele).
+      if (!isImpersonating) for (const s of scores) {
         const scoreUpsert: TablesInsert<'farmer_client_scores'> = {
           customer_user_id: s.customer_user_id,
           farmer_id: targetFarmerId,
@@ -449,7 +451,7 @@ export const useFarmerScoring = (farmerId?: string) => {
       setCalculating(false);
       setLoading(false);
     }
-  }, [targetFarmerId, config]);
+  }, [targetFarmerId, config, isImpersonating]);
 
   useEffect(() => {
     if (targetFarmerId) calculateScores();

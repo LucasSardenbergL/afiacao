@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { supabase } from '@/integrations/supabase/client';
 import { hojeISO } from '@/lib/visitas/today';
 import {
@@ -22,8 +22,8 @@ export interface FollowupsVisita {
  * Read-only.
  */
 export function useFollowupsVisita() {
-  const { user } = useAuth();
-  const uid = user?.id;
+  // Lente "Ver como": id efetivo = ALVO na lente, próprio usuário fora dela.
+  const { effectiveUserId: uid } = useImpersonation();
   return useQuery({
     queryKey: ['followups-visita', uid],
     enabled: !!uid,
