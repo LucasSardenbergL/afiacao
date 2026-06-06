@@ -67,7 +67,7 @@ export function SkuRow({ row: r, onOpenDetail, onPromover, promovendo }: SkuRowP
         </Badge>
       </TableCell>
       <TableCell className="text-right">{fmt(r.demanda_media_diaria)}</TableCell>
-      <TableCell className="text-right">{fmtBRL(r.preco_compra_real)}</TableCell>
+      <TableCell className="text-right">{fmtBRL(r.preco_item_eoq ?? r.preco_compra_real)}</TableCell>
       <TableCell className="text-right">{fmtBRL(r.preco_venda_medio)}</TableCell>
       <TableCell>
         <Badge variant={fonteBadgeVariant(r.fonte_preco) as BadgeVariant}>

@@ -247,7 +247,14 @@ function SkuDetailSheetImpl({
           <section>
             <h3 className="font-semibold mb-2">Preço e custo</h3>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
-              <dt className="text-muted-foreground">Preço de compra médio</dt>
+              <dt className="text-muted-foreground">Custo usado (conta)</dt>
+              <dd className="flex items-center gap-2 font-medium">
+                {fmtBRL(stats?.preco_item_eoq)}
+                <Badge variant={fonteBadgeVariant(stats?.fonte_preco) as BadgeVariant}>
+                  {fonteBadgeLabel(stats?.fonte_preco)}
+                </Badge>
+              </dd>
+              <dt className="text-muted-foreground">Preço de compra médio (histórico)</dt>
               <dd className="flex items-center gap-2">
                 {fmtBRL(stats?.preco_compra_real)}
                 <span className="text-xs text-muted-foreground">

@@ -210,13 +210,13 @@ export function useRevisaoParametros() {
         const codes = baseRows.map((r) => r.sku_codigo_omie);
         const { data: vrows } = await supabase
           .from("v_sku_parametros_sugeridos")
-          .select("sku_codigo_omie, preco_compra_real, preco_venda_medio, fonte_preco, fornecedor_habilitado, status_sugestao")
+          .select("sku_codigo_omie, preco_compra_real, preco_venda_medio, preco_item_eoq, fonte_preco, fornecedor_habilitado, status_sugestao")
           .eq("empresa", empresa)
           .in("sku_codigo_omie", codes);
 
         type SkuPriceRow = Pick<
           SkuSugeridoView,
-          "sku_codigo_omie" | "preco_compra_real" | "preco_venda_medio" | "fonte_preco" | "fornecedor_habilitado" | "status_sugestao"
+          "sku_codigo_omie" | "preco_compra_real" | "preco_venda_medio" | "preco_item_eoq" | "fonte_preco" | "fornecedor_habilitado" | "status_sugestao"
         >;
         const map = new Map<number, SkuPriceRow>();
         ((vrows ?? []) as SkuPriceRow[]).forEach((row) => map.set(Number(row.sku_codigo_omie), row));
@@ -226,6 +226,7 @@ export function useRevisaoParametros() {
             ...r,
             preco_compra_real: v?.preco_compra_real ?? null,
             preco_venda_medio: v?.preco_venda_medio ?? null,
+            preco_item_eoq: v?.preco_item_eoq ?? null,
             fonte_preco: v?.fonte_preco ?? null,
             status_sugestao: v?.status_sugestao ?? null,
             fornecedor_habilitado: v?.fornecedor_habilitado ?? null,

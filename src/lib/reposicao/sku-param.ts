@@ -67,6 +67,7 @@ export type ViewStats = {
 export type RowWithPrice = SkuParam & {
   preco_compra_real: number | null;
   preco_venda_medio: number | null;
+  preco_item_eoq?: number | null; // custo USADO na conta (cmc do Omie quando há; senão média/estimado)
   fonte_preco: string | null;
   status_sugestao?: string | null;
   fornecedor_habilitado?: boolean | null;
@@ -87,6 +88,7 @@ export const fonteBadgeVariant = (
 ): 'success' | 'warning' | 'danger' | 'outline' => {
   if (!fonte) return 'danger';
   const f = fonte.toLowerCase();
+  if (f === 'cmc') return 'success';
   if (f.includes('compra') && f.includes('real')) return 'success';
   if (f.includes('estim')) return 'warning';
   if (f.includes('sem')) return 'danger';
@@ -96,6 +98,7 @@ export const fonteBadgeVariant = (
 export const fonteBadgeLabel = (fonte: string | null | undefined): string => {
   if (!fonte) return 'Sem preço';
   const f = fonte.toLowerCase();
+  if (f === 'cmc') return 'Custo Omie';
   if (f.includes('compra') && f.includes('real')) return 'Compra real';
   if (f.includes('estim')) return 'Estimado';
   if (f.includes('sem')) return 'Sem preço';
