@@ -14,6 +14,7 @@ import { resolveCustomerByPhone } from '@/lib/call-session/resolve-customer';
 import { buildSessionPayload } from '@/lib/call-session/build-session-payload';
 import { resolveCallParty, shouldAutoRecord } from '@/lib/call-log/recording-policy';
 import { logCallStart, logAnswered, logClosed, enrichCallLog, markRecorded } from '@/lib/call-log/record';
+import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 
 export type WebRTCCallState =
   | 'idle' | 'connecting' | 'calling_origin' | 'calling_destination'
@@ -318,6 +319,10 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   }
 
   const makeCall = useCallback(async (phoneNumber: string, opts?: { forceRecord?: boolean }) => {
+    if (isLensActive()) {
+      toast.error('Ligação indisponível na lente (somente leitura). Saia da lente para ligar.');
+      return;
+    }
     setError(null);
     setCallDuration(0);
 
@@ -445,6 +450,10 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
 
   // PR-INBOUND-CALLS: atende chamada pendente. Mesmo setup de áudio do makeCall (mic + preroll).
   const acceptIncoming = useCallback(async () => {
+    if (isLensActive()) {
+      toast.error('Atender chamada indisponível na lente (somente leitura).');
+      return;
+    }
     if (!incomingCall || !clientRef.current) return;
 
     // Reset refs de sessão (mesma lógica do makeCall pro persist funcionar)
