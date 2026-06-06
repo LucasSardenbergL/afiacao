@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveCompanyForPrint, buildSalesOrderPrintRow } from '../print';
+import { resolveCompanyForPrint, buildSalesOrderPrintRow, itemTotal } from '../print';
 import { buildPrintData } from '@/components/sales/print/buildPrintHtml';
 import type { SalesOrder } from '../types';
 
@@ -37,6 +37,21 @@ describe('resolveCompanyForPrint', () => {
   });
 });
 
+describe('itemTotal', () => {
+  it('usa valor_total quando presente', () => {
+    expect(itemTotal({ valor_total: 100, quantidade: 2, valor_unitario: 50 })).toBe(100);
+  });
+  it('calcula qtd × unit quando valor_total vem 0 (rascunho sem total gravado)', () => {
+    expect(itemTotal({ valor_total: 0, quantidade: 2, valor_unitario: 50 })).toBe(100);
+  });
+  it('calcula qtd × unit quando valor_total ausente', () => {
+    expect(itemTotal({ quantidade: 3, valor_unitario: 10 })).toBe(30);
+  });
+  it('zero quando não há dados', () => {
+    expect(itemTotal({})).toBe(0);
+  });
+});
+
 describe('buildSalesOrderPrintRow', () => {
   it('injeta nome e documento do cliente', () => {
     const row = buildSalesOrderPrintRow(baseOrder(), 'ACME LTDA', '12.345.678/0001-99');
@@ -65,6 +80,14 @@ describe('buildSalesOrderPrintRow', () => {
     expect(row.account).toBe('oben');
     expect(row.omie_numero_pedido).toBe('0000011104');
     expect(row.notes).toBe('obs teste');
+  });
+
+  it('preenche valor_total do item a partir de qtd × unit quando vem zerado (rascunho)', () => {
+    const o = baseOrder({
+      items: [{ descricao: 'X', quantidade: 2, valor_unitario: 50, valor_total: 0 }] as unknown as SalesOrder['items'],
+    });
+    const row = buildSalesOrderPrintRow(o, 'ACME', '');
+    expect(row.items[0].valor_total).toBe(100);
   });
 
   it('degrada sem lançar quando items ausente e document omitido', () => {
