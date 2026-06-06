@@ -161,6 +161,33 @@ export function pedidosVisiveis<T extends { status: string }>(lista: readonly T[
   return lista.filter((p) => !ehPaiSplit(p));
 }
 
+/* ─── Partição do ciclo de hoje: ativos × terminais ─── */
+//
+// A geração só apaga 'pendente_aprovacao'; o que já virou terminal (cancelado pelo
+// humano, cancelado vazio, ou expirado por falta de aprovação) fica como fantasma no
+// ciclo de hoje. A lista principal mostra só os ATIVOS; os terminais vão pro
+// "Histórico de hoje" recolhido. Pura organização de UI — nada some do banco.
+export const STATUS_TERMINAIS_CICLO: ReadonlySet<string> = new Set([
+  'cancelado',
+  'cancelado_humano',
+  'expirado_sem_aprovacao',
+]);
+
+export function ehTerminalCiclo(p: { status: string }): boolean {
+  return STATUS_TERMINAIS_CICLO.has(p.status);
+}
+
+// Particiona a lista do ciclo (JÁ sem pais de split — chamar sobre pedidosVisiveis)
+// em ativos (lista principal) e historico (terminais, recolhido). Ordem preservada.
+export function particionarCicloHoje<T extends { status: string }>(
+  lista: readonly T[],
+): { ativos: T[]; historico: T[] } {
+  const ativos: T[] = [];
+  const historico: T[] = [];
+  for (const p of lista) (ehTerminalCiclo(p) ? historico : ativos).push(p);
+  return { ativos, historico };
+}
+
 /* ─── Portal B2B status meta ─── */
 export const portalStatusMeta: Record<StatusEnvioPortal, { label: string; className: string }> = {
   nao_aplicavel: { label: '—', className: 'bg-muted text-muted-foreground border-border' },
