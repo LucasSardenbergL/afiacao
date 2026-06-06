@@ -144,6 +144,14 @@
 - ⭐ **Aprovação de PARÂMETRO 100% aposentada** (Revisão · cockpit KPI · stepper · alertas); editor preservado; aprovação de **PEDIDO** intocada (fluxo real). Gates: typecheck 0 · lint 0 · 2475 testes · build 0. **Lição: rodar codex challenge ANTES de armar auto-merge** em mudança money-path-adjacent (no #639/#642 armei cedo, mergearam antes do challenge; no #644 inverti).
 - ⏳ **Publish no Lovable** (única pendência desta frente — junto com o resto).
 
+## 14. Frente B — "Caça": look-alike dos melhores → Hunter ([PR #650](https://github.com/LucasSardenbergL/afiacao/pull/650))
+> G1 "Waze comercial interno", Frente B: fila proativa pro **hunter** (founder pilota como master) — clientes parecidos com os melhores que ainda NÃO compram, por sabor (cross/dormente/frio). Look-alike por **LIFT** anti-circular.
+- ✅ **Entregue de ponta a ponta** (15 commits, `feat/frente-b-caca`): Fase 0 diagnóstico → view `(documento × empresa-alvo)` (`20260605152437_caca_views.sql`, **aplicada+validada em prod**: 658 compradores / 10.316 candidatos = 136 cross + 654 dormentes + 9.526 frios) → motor TS (lift/score/sabor/ranking/melhores/fila, ~190 testes) → fila `/caca` (gate `RequireCaca`) + HunterDashboard + card no Master → telemetria `caca.*`.
+- ✅ **3 rodadas de Codex** (design + SQL [4 P1] + código TS [5 P1]) — todos incorporados. **A view entrega FATOS; índice de melhores + lift rodam no client** (TS testável, sem window-functions). v1: só com-conta, oben+colacor (SC sem venda rastreável).
+- ✅ **PR #650 aberto** com nota de migration-já-aplicada; conflito de merge com a main (49 commits) resolvido (MasterDashboard: card Caça + GestorExcecoes coexistem).
+- ⏳ **Pós-merge (founder):** **Publish no Lovable** → QA: card "Caça" no Meu Dia / `/caca` (master) → 136 cross no topo.
+- **Follow-up v2 (piloto guia):** não-vinculados por cidade/UF; calibração lift×ticket; percentil com empates; tipos gerados da view; CTA "iniciar pedido".
+
 ---
 
 ### Encerramento da sessão (housekeeping recorrente)
