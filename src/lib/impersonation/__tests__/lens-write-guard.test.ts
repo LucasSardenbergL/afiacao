@@ -18,7 +18,7 @@ function makeFakeClient() {
   };
   const client = {
     from: (..._args: unknown[]) => queryBuilder,
-    rpc: () => { calls.push('rpc'); return Promise.resolve({ data: null, error: null }); },
+    rpc: (..._args: unknown[]) => { calls.push('rpc'); return Promise.resolve({ data: null, error: null }); },
     storage: { from: (..._args: unknown[]) => bucket },
     functions: { invoke: (..._args: unknown[]) => { calls.push('invoke'); return Promise.resolve({ data: null, error: null }); } },
     calls,
@@ -91,6 +91,28 @@ describe('lens-write-guard', () => {
     const c = createLensGuardedClient(makeFakeClient());
     await c.functions.invoke('x');
     expect(c.calls).toEqual(['invoke']);
+  });
+
+  it('na lente: rpc mutante (não get_/list_) é bloqueada', async () => {
+    const c = createLensGuardedClient(makeFakeClient());
+    setLensActive(true);
+    await expect(c.rpc('registrar_contato_rota')).rejects.toBeInstanceOf(LensReadOnlyError);
+    await expect(c.rpc('confirmar_item_picking')).rejects.toBeInstanceOf(LensReadOnlyError);
+    expect(c.calls).toEqual([]);
+  });
+
+  it('na lente: rpc de leitura (get_/list_) passa', async () => {
+    const c = createLensGuardedClient(makeFakeClient());
+    setLensActive(true);
+    await c.rpc('get_minha_positivacao');
+    await c.rpc('list_impersonation_targets');
+    expect(c.calls).toEqual(['rpc', 'rpc']);
+  });
+
+  it('fora da lente: rpc mutante passa', async () => {
+    const c = createLensGuardedClient(makeFakeClient());
+    await c.rpc('registrar_contato_rota');
+    expect(c.calls).toEqual(['rpc']);
   });
 
   it('isLensActive reflete o estado', () => {

@@ -13,6 +13,16 @@ const BLOCKED_QUERY = new Set(['insert', 'update', 'upsert', 'delete']);
 // Inclui `update` (PUT em StorageFileApi.update) além de upload/remove/move/copy.
 const BLOCKED_STORAGE = new Set(['upload', 'update', 'remove', 'move', 'copy', 'createSignedUploadUrl', 'uploadToSignedUrl']);
 
+// RPC na lente: bloqueia por PADRÃO (read-only de verdade). Há RPCs mutantes
+// acionáveis na lente — registrar_contato_rota (lista de ligação), confirmar_item_picking
+// (fila offline) — que gravariam como master se passassem cru. Libera só leitura, por
+// convenção de nome (get_/list_) + allowlist explícita p/ exceções. log_impersonation_start
+// e end_impersonation NÃO precisam estar aqui: rodam fora do guard (timing em start/stop).
+const RPC_READONLY_ALLOWLIST = new Set<string>([]);
+function isReadOnlyRpc(name: string): boolean {
+  return name.startsWith('get_') || name.startsWith('list_') || RPC_READONLY_ALLOWLIST.has(name);
+}
+
 /**
  * Resultado "bloqueado": encadeável (qualquer método retorna a si mesmo) E thenable
  * (rejeita com LensReadOnlyError). Não lançamos síncrono de propósito: várias telas
@@ -118,6 +128,17 @@ export function createLensGuardedClient<
       }
       if (prop === 'functions') {
         return guardFunctions(Reflect.get(targetObj, prop, receiver));
+      }
+      if (prop === 'rpc') {
+        const orig = Reflect.get(targetObj, prop, receiver);
+        if (typeof orig === 'function') {
+          return (...args: unknown[]) => {
+            const name = typeof args[0] === 'string' ? args[0] : '';
+            if (lensActive && !isReadOnlyRpc(name)) return blockedResult(`rpc:${name}`);
+            return (orig as (...a: unknown[]) => unknown).apply(targetObj, args);
+          };
+        }
+        return orig;
       }
       return Reflect.get(targetObj, prop, receiver);
     },
