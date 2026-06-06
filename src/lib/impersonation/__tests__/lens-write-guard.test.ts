@@ -109,6 +109,24 @@ describe('lens-write-guard', () => {
     expect(c.calls).toEqual(['rpc', 'rpc']);
   });
 
+  it('na lente: rpc de LEITURA com nome em português na allowlist (listar_) passa', async () => {
+    // `listar_pedidos_a_separar` é leitura pura mas NÃO casa o prefixo `list_` (PT).
+    const c = createLensGuardedClient(makeFakeClient());
+    setLensActive(true);
+    await c.rpc('listar_pedidos_a_separar');
+    expect(c.calls).toEqual(['rpc']);
+  });
+
+  it('na lente: rpc de ESCRITA com nome ambíguo FORA da allowlist (ciclo_/sugerir_) é bloqueada', async () => {
+    // Guarda contra allowlistar às cegas: ciclo_oportunidade_do_dia e
+    // sugerir_negociacao_paralela_hoje GERAM pedidos/sugestões (escrita).
+    const c = createLensGuardedClient(makeFakeClient());
+    setLensActive(true);
+    await expect(c.rpc('ciclo_oportunidade_do_dia')).rejects.toBeInstanceOf(LensReadOnlyError);
+    await expect(c.rpc('sugerir_negociacao_paralela_hoje')).rejects.toBeInstanceOf(LensReadOnlyError);
+    expect(c.calls).toEqual([]);
+  });
+
   it('fora da lente: rpc mutante passa', async () => {
     const c = createLensGuardedClient(makeFakeClient());
     await c.rpc('registrar_contato_rota');

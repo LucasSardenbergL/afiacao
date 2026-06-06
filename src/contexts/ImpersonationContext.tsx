@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
+import { supabaseUnguarded } from '@/integrations/supabase/client';
 import { resolveEffectiveUserId, loadPersistedTarget, persistTarget } from '@/lib/impersonation/effective-user';
 import { setLensActive } from '@/lib/impersonation/lens-write-guard';
 import { track } from '@/lib/analytics';
@@ -47,7 +47,10 @@ export function ImpersonationProvider({ children }: { children: ReactNode }) {
 
   const startImpersonation = useCallback(async (t: ImpersonationTarget, reason?: string) => {
     if (!isMaster) return;
-    const { data } = await (supabase as unknown as {
+    // Auditoria no client SEM guard: log_impersonation_start é write mutante. Se a lente
+    // já estiver ativa (troca direta de alvo A→B pelo chip/picker), o guard de RPC a
+    // bloquearia — por isso supabaseUnguarded. É bookkeeping do próprio master.
+    const { data } = await (supabaseUnguarded as unknown as {
       rpc(fn: string, params?: Record<string, unknown>): Promise<{ data: unknown; error: unknown }>;
     }).rpc('log_impersonation_start', { p_target: t.id, p_reason: reason ?? null });
     setAuditId(typeof data === 'string' ? data : null);
@@ -58,13 +61,18 @@ export function ImpersonationProvider({ children }: { children: ReactNode }) {
   }, [isMaster]);
 
   const stopImpersonation = useCallback(async () => {
-    setLensActive(false);
+    // Guard fica ATIVO durante o await da auditoria: end_impersonation roda no client
+    // SEM guard (não é bloqueado), mas QUALQUER outra escrita (ex.: flush offline que
+    // dispara nesse intervalo) continua bloqueada enquanto target segue setado (UI ainda
+    // na lente). Sem janela "guard off + lente visível". Só ao final desliga o guard e
+    // limpa o target juntos.
     if (auditId) {
-      await (supabase as unknown as {
+      await (supabaseUnguarded as unknown as {
         rpc(fn: string, params?: Record<string, unknown>): Promise<{ data: unknown; error: unknown }>;
       }).rpc('end_impersonation', { p_audit_id: auditId });
     }
     setAuditId(null);
+    setLensActive(false);
     setTarget(null);
     persistTarget(null);
   }, [auditId]);

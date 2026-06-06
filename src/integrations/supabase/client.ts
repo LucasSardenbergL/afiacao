@@ -10,9 +10,17 @@ const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 // import { supabase } from "@/integrations/supabase/client";
 
 // Write-guard da lente "ver como pessoa": bloqueia mutações enquanto a lente está
-// ativa. Preservar este wrap se este arquivo for regenerado pelo Lovable.
-export const supabase = createLensGuardedClient(
-  createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-    auth: { storage: localStorage, persistSession: true, autoRefreshToken: true },
-  })
-);
+// ativa. Preservar este wrap (e o supabaseUnguarded abaixo) se este arquivo for
+// regenerado pelo Lovable.
+const rawClient = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: { storage: localStorage, persistSession: true, autoRefreshToken: true },
+});
+
+export const supabase = createLensGuardedClient(rawClient);
+
+// Client SEM o write-guard da lente. ⚠️ USO RESTRITO: apenas o bookkeeping da PRÓPRIA
+// lente (log_impersonation_start / end_impersonation no ImpersonationContext) — RPCs
+// mutantes que SÃO do master e PRECISAM rodar mesmo com a lente ativa (senão o guard
+// de RPC as bloquearia na entrada / troca de alvo / saída). NÃO usar para nenhuma
+// outra escrita.
+export const supabaseUnguarded = rawClient;

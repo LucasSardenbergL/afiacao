@@ -13,12 +13,19 @@ const BLOCKED_QUERY = new Set(['insert', 'update', 'upsert', 'delete']);
 // Inclui `update` (PUT em StorageFileApi.update) além de upload/remove/move/copy.
 const BLOCKED_STORAGE = new Set(['upload', 'update', 'remove', 'move', 'copy', 'createSignedUploadUrl', 'uploadToSignedUrl']);
 
-// RPC na lente: bloqueia por PADRÃO (read-only de verdade). Há RPCs mutantes
-// acionáveis na lente — registrar_contato_rota (lista de ligação), confirmar_item_picking
-// (fila offline) — que gravariam como master se passassem cru. Libera só leitura, por
-// convenção de nome (get_/list_) + allowlist explícita p/ exceções. log_impersonation_start
-// e end_impersonation NÃO precisam estar aqui: rodam fora do guard (timing em start/stop).
-const RPC_READONLY_ALLOWLIST = new Set<string>([]);
+// RPC na lente: bloqueia por PADRÃO (read-only de verdade, fail-closed). Há RPCs
+// mutantes acionáveis na lente — registrar_contato_rota (lista de ligação),
+// confirmar_item_picking (fila offline), ciclo_oportunidade_do_dia/
+// sugerir_negociacao_paralela_hoje (geram pedidos/sugestões) — que gravariam como
+// master se passassem cru. Libera leitura por convenção de nome (get_/list_) +
+// allowlist explícita p/ os READs com nome em PORTUGUÊS (listar_/ciclo_/estimar_ não
+// casam o prefixo `list_`). ⚠️ Só entram aqui RPCs comprovadamente PURAS de leitura
+// (sem persistir nada) — ciclo_/sugerir_ são ESCRITAS e ficam de fora de propósito.
+// log_impersonation_start/end_impersonation rodam no client SEM guard (supabaseUnguarded
+// no ImpersonationContext) — são o bookkeeping da própria lente, não precisam estar aqui.
+const RPC_READONLY_ALLOWLIST = new Set<string>([
+  'listar_pedidos_a_separar', // queries/usePedidosASeparar.ts — anti-join SELECT, leitura pura
+]);
 function isReadOnlyRpc(name: string): boolean {
   return name.startsWith('get_') || name.startsWith('list_') || RPC_READONLY_ALLOWLIST.has(name);
 }

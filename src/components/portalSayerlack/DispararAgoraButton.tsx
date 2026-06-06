@@ -8,6 +8,7 @@ import {
 import { Zap, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 
 interface Props {
   onSuccess?: () => void;
@@ -33,6 +34,15 @@ export function DispararAgoraButton({
     : 'Isso vai disparar até 5 pedidos pendentes em paralelo, em segundo plano. A lista atualiza sozinha quando cada um terminar. Confirmar?';
 
   const handleClick = async () => {
+    // Esta tela dispara um POST CRU pra edge function (não passa pelo write-guard do
+    // client supabase, que só cobre PostgREST/storage/functions.invoke/rpc). Na lente
+    // "ver como pessoa" (read-only), isso efetivaria um pedido REAL no portal Sayerlack
+    // como o master → bloqueia explicitamente aqui.
+    if (isLensActive()) {
+      toast.error('Disparo indisponível na lente (somente leitura). Saia da lente para enviar.');
+      setOpen(false);
+      return;
+    }
     setLoading(true);
     setOpen(false);
     try {
