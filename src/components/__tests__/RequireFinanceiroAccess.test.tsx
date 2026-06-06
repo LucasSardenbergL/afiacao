@@ -44,7 +44,7 @@ describe('RequireFinanceiroAccess', () => {
       displayIsMaster: false,
       displayIsGestorComercial: false,
       displayIsSalesOnly: false,
-      displayDepartment: null,
+      displayCommercialRole: null, displayDepartment: null,
     });
   });
 
@@ -53,7 +53,7 @@ describe('RequireFinanceiroAccess', () => {
     mockUseDisplayAccess.mockReturnValue({
       displayIsStaff: true, displayLoading: false,
       displayRole: 'employee', displayIsMaster: false,
-      displayIsGestorComercial: false, displayIsSalesOnly: false, displayDepartment: null,
+      displayIsGestorComercial: false, displayIsSalesOnly: false, displayCommercialRole: null, displayDepartment: null,
     });
     renderGuard();
     expect(await screen.findByText('CONTEUDO FINANCEIRO')).toBeTruthy();

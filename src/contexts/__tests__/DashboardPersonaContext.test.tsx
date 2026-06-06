@@ -25,14 +25,16 @@ function Consumer() {
 describe('DashboardPersonaProvider', () => {
   beforeEach(() => {
     localStorage.clear();
-    // Sem lente: master sem cargo comercial específico → persona 'master' (passo 6 do inferPersona).
-    // displayIsGestorComercial=false pois o master sem commercialRole não entra no passo 4.
+    // Sem lente: master sem cargo comercial nem departamento → persona 'master'
+    // (passo 6 do inferPersona, source 'default'). displayCommercialRole=null para
+    // não entrar no passo 4 do switch.
     mockedDisplayAccess.mockReturnValue({
       displayRole: 'master',
       displayIsStaff: true,
       displayIsMaster: true,
       displayIsGestorComercial: false,
       displayIsSalesOnly: false,
+      displayCommercialRole: null,
       displayDepartment: null,
       displayLoading: false,
     });
