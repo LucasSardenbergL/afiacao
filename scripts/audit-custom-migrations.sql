@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 175
+-- Total de custom migrations: 176
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -194,6 +194,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260605140000', 'iniciar_envio_portal_pre_claim', '20260605140000_iniciar_envio_portal_pre_claim.sql'),
   ('20260605140000', 'param_auto_wrapper_revert_cron', '20260605140000_param_auto_wrapper_revert_cron.sql'),
   ('20260605150000', 'param_auto_fusivel_calibracao', '20260605150000_param_auto_fusivel_calibracao.sql'),
+  ('20260605152437', 'caca_views', '20260605152437_caca_views.sql'),
   ('20260606120000', 'reposicao_rpc_account_aware', '20260606120000_reposicao_rpc_account_aware.sql')
 )
 SELECT
