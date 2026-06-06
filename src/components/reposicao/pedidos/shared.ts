@@ -143,6 +143,24 @@ export function pedidoPrecisaAtencao(p: {
   return STATUS_PORTAL_PRECISA_ATENCAO.has((p.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal);
 }
 
+/* ─── Split (PR5) — esconder o pai da lista ─── */
+//
+// Quando um pedido grande é dividido em chunks, o PAI vira status='split_em_filhos':
+// não tem mais itens próprios nem ação útil, e seu valor_total é a SOMA dos filhos.
+// Exibir o pai E os N filhos dobra o "valor do ciclo" e polui a lista. Os FILHOS
+// (status normal, com os itens reais + split_lote/split_total) é que ficam visíveis.
+//
+// Predicados PUROS (a página filtra a lista renderizada E os totais com eles).
+export function ehPaiSplit(p: { status: string }): boolean {
+  return p.status === 'split_em_filhos';
+}
+
+// Remove os pais de split de uma lista (mantém os filhos). Usar tanto pro render
+// quanto pro cálculo de valor/contagem do ciclo — consistente em todo lugar.
+export function pedidosVisiveis<T extends { status: string }>(lista: readonly T[]): T[] {
+  return lista.filter((p) => !ehPaiSplit(p));
+}
+
 /* ─── Portal B2B status meta ─── */
 export const portalStatusMeta: Record<StatusEnvioPortal, { label: string; className: string }> = {
   nao_aplicavel: { label: '—', className: 'bg-muted text-muted-foreground border-border' },

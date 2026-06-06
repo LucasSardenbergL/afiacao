@@ -4,7 +4,7 @@ import { Eye, ExternalLink, Loader2, XCircle, Zap } from 'lucide-react';
 import { format } from 'date-fns';
 import { PedidoSugerido } from './types';
 import { formatBRL, formatTime } from './shared';
-import { StatusBadge, SplitInfo, PortalBadge } from './badges';
+import { StatusComMotivo, SplitInfo, PortalBadge } from './badges';
 
 export function PedidoRow({
   p,
@@ -39,7 +39,7 @@ export function PedidoRow({
     <TableRow className={p.status === 'bloqueado_guardrail' ? 'bg-destructive/5' : ''}>
       <TableCell>
         <div className="flex flex-wrap items-center gap-1">
-          <StatusBadge status={p.status} />
+          <StatusComMotivo pedido={p} />
           <SplitInfo pedido={p} />
         </div>
       </TableCell>
