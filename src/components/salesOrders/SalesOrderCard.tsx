@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { Trash2, Share2, Pencil } from 'lucide-react';
+import { Trash2, Share2, Pencil, Printer } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
@@ -20,6 +20,8 @@ interface SalesOrderCardProps {
   onShare: () => void;
   onDelete: () => void;
   onNavigate: (path: string) => void;
+  onOpenDetail: () => void;
+  onPrint: () => void;
 }
 
 export function SalesOrderCard({
@@ -30,6 +32,8 @@ export function SalesOrderCard({
   onShare,
   onDelete,
   onNavigate,
+  onOpenDetail,
+  onPrint,
 }: SalesOrderCardProps) {
   const isAfiacao = order._source === 'afiacao';
   const status = statusLabels[order.status] || statusLabels.rascunho;
@@ -46,7 +50,7 @@ export function SalesOrderCard({
   const isSelectable = !isAfiacao; // só sales_orders são bulk-deletáveis
 
   return (
-    <Card className={`cursor-pointer hover:bg-muted/30 transition-colors ${checked ? 'ring-2 ring-foreground/20' : ''}`} onClick={() => isAfiacao ? onNavigate(`/orders/${order.id}`) : undefined}>
+    <Card className={`cursor-pointer hover:bg-muted/30 transition-colors ${checked ? 'ring-2 ring-foreground/20' : ''}`} onClick={() => (isAfiacao ? onNavigate(`/orders/${order.id}`) : onOpenDetail())}>
       <CardContent className="p-3">
         <div className="flex items-start justify-between gap-2">
           {isSelectable && (
@@ -102,6 +106,20 @@ export function SalesOrderCard({
               >
                 <Share2 className="w-3.5 h-3.5" />
               </Button>
+              {!isAfiacao && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPrint();
+                  }}
+                  title="Imprimir pedido"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                </Button>
+              )}
               {!isAfiacao && !['cancelado', 'entregue', 'faturado'].includes(order.status) && (
                 <Button
                   variant="ghost"

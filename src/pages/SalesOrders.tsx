@@ -1,11 +1,13 @@
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Loader2, ShoppingCart, Trash2, ChevronLeft } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
-import { decodeHtml, PAGE_SIZE } from '@/components/salesOrders/types';
+import { decodeHtml, PAGE_SIZE, type SalesOrder } from '@/components/salesOrders/types';
 import { useSalesOrders } from '@/components/salesOrders/useSalesOrders';
 import { SalesOrdersToolbar } from '@/components/salesOrders/SalesOrdersToolbar';
 import { SalesOrderCard } from '@/components/salesOrders/SalesOrderCard';
+import { SalesOrderDetailSheet } from '@/components/salesOrders/SalesOrderDetailSheet';
 
 const SalesOrders = () => {
   const {
@@ -29,7 +31,13 @@ const SalesOrders = () => {
     deleteOrder,
     deleteSelected,
     handleShareOrder,
+    printOrder,
   } = useSalesOrders();
+
+  const [detailOrder, setDetailOrder] = useState<SalesOrder | null>(null);
+  const detailCustomerName = detailOrder
+    ? decodeHtml(profiles[detailOrder.customer_user_id] || 'Cliente')
+    : '';
 
   if (authLoading || loading) {
     return (
@@ -90,6 +98,8 @@ const SalesOrders = () => {
               onShare={() => handleShareOrder(order, decodeHtml(profiles[order.customer_user_id] || 'Cliente'))}
               onDelete={() => deleteOrder(order)}
               onNavigate={navigate}
+              onOpenDetail={() => setDetailOrder(order)}
+              onPrint={() => printOrder(order)}
             />
           ))}
 
@@ -136,6 +146,15 @@ const SalesOrders = () => {
             },
           },
         ]}
+      />
+
+      <SalesOrderDetailSheet
+        order={detailOrder}
+        customerName={detailCustomerName}
+        onClose={() => setDetailOrder(null)}
+        onPrint={() => detailOrder && printOrder(detailOrder)}
+        onShare={() => detailOrder && handleShareOrder(detailOrder, detailCustomerName)}
+        onEdit={() => detailOrder && navigate(`/sales/edit/${detailOrder.id}`)}
       />
     </div>
   );

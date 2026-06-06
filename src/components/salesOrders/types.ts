@@ -45,6 +45,13 @@ export interface SalesOrder {
   notes: string | null;
   account?: string;
   _source?: 'sales' | 'afiacao';
+  // Campos que o select('*') de sales_orders já traz em runtime — consumidos
+  // pela impressão do pedido (buildSalesOrderPrintRow). Opcionais: os pedidos
+  // de afiação (montados à mão no hook) não os têm.
+  customer_address?: string | null;
+  customer_phone?: string | null;
+  omie_payload?: unknown;
+  discount?: number;
 }
 
 // Cache do useInfiniteQuery de sales_orders — usado nos rollbacks optimistic.
