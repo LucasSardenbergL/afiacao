@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isOmiePedidoJaCadastrado, extrairPedidoOmie } from '../omie-disparo-helpers';
+import { isOmiePedidoJaCadastrado, extrairPedidoOmie, deveCriarPedidoOmie } from '../omie-disparo-helpers';
 
 describe('isOmiePedidoJaCadastrado', () => {
   it('detecta "já cadastrado" em pt-BR (com acento)', () => {
@@ -54,5 +54,25 @@ describe('extrairPedidoOmie', () => {
     expect(extrairPedidoOmie({ foo: 'bar' })).toBeNull();
     expect(extrairPedidoOmie(null)).toBeNull();
     expect(extrairPedidoOmie(undefined)).toBeNull();
+  });
+});
+
+describe('deveCriarPedidoOmie (guard anti-PO-duplicado · 3b)', () => {
+  it('PO já existe (id real) → NÃO recriar', () => {
+    expect(deveCriarPedidoOmie('12345')).toBe(false);
+    expect(deveCriarPedidoOmie(12345)).toBe(false);
+    expect(deveCriarPedidoOmie('AFI-130')).toBe(false);
+  });
+  it('sem PO (null/undefined) → criar (comportamento de hoje)', () => {
+    expect(deveCriarPedidoOmie(null)).toBe(true);
+    expect(deveCriarPedidoOmie(undefined)).toBe(true);
+  });
+  it('string vazia / whitespace (o disparo grava "" sem id) → criar', () => {
+    expect(deveCriarPedidoOmie('')).toBe(true);
+    expect(deveCriarPedidoOmie('   ')).toBe(true);
+  });
+  it('"0" / 0 representam vazio → criar (não bloqueia criação legítima)', () => {
+    expect(deveCriarPedidoOmie('0')).toBe(true);
+    expect(deveCriarPedidoOmie(0)).toBe(true);
   });
 });
