@@ -149,6 +149,16 @@ Eventos `track()`: `lente.iniciada` (grupo do alvo), `lente.encerrada`, `lente.e
 
 Entregável incremental: **Fase 0+1+1.5 já dão valor real** (ver menu/rotas do outro + base segura). Fase 2 entra depois, telas priorizadas pelas que as Farmers usam.
 
-## 13. Anexo — callsites a classificar na Fase 1.5
+## 13. Anexo — auditoria de callsites (Fase 1.5, resultado)
 
-(A preencher na Fase 1.5.) Já conhecidos como **`write-identity` (não migrar)**: `CoveragePanel.tsx`, `AdminStandardProcessDetail.tsx`. Já conhecido como **bypass de permissão**: `RequireFinanceiroAccess.tsx` (tratamento especial). Demais `isMaster/isStaff/isGestorComercial` em telas operacionais: classificar.
+**Resultado da varredura (2026-06-06).**
+
+**`write-identity` — NÃO migrar (decidem escrita/identidade, ficam em `useAuth()` real):**
+- `src/components/carteira/CoveragePanel.tsx:41` — `coveredId = isMaster ? covered : user.id` decide o destinatário de uma gravação. **Não migrar.**
+- `src/pages/AdminStandardProcessDetail.tsx:52` — `canEdit = isMaster || ...` autoriza editar/publicar/arquivar. Pode-se separar `displayCanEdit` (exibir) de `canEdit` (autorizar) na Fase 2, mas a autorização fica no real.
+
+**Já seguros por construção (não usam `display*`):** todos os payloads de escrita que carimbam `user.id` direto do `useAuth` (`RecurringSchedules`, `FarmerCalls`, `Training`, `QualityChecklist`, `Addresses`, `OrderChat`, `OrderReview`, `SendingQualityChecklist`, etc.) — a lente não os toca; a escrita continua sendo do master real. **Backstop adicional:** o write-guard bloqueia a mutação no cliente se algum desses for disparado na lente.
+
+**Bypass de permissão (tratado):** `RequireFinanceiroAccess.tsx` — na lente decide pelo alvo, sem consultar a permissão do master (feito no G5).
+
+**Escopo da Fase 2:** 45 arquivos (pages/components) usam `isMaster`/`isStaff`/`isGestorComercial` fora os já migrados. A maioria são telas gerenciais/financeiras que a **Fase 1 já barra por rota** (não renderizam na lente) — não precisam migrar. A Fase 2 classifica `display` vs `read-enabled` SÓ nas telas que o alvo (vendedor) realmente acessa e que têm gating interno, migrando-as uma a uma. O guardrail de CI (`display-access-no-write.test.ts`) e o write-guard protegem contra regressão durante essa migração.
