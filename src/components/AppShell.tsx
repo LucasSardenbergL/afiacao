@@ -552,7 +552,8 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   return (
     <aside
       className={cn(
-        'fixed left-0 top-0 bottom-0 z-40 flex flex-col overflow-hidden bg-sidebar border-r border-sidebar-border transition-all duration-200',
+        'fixed left-0 bottom-0 z-40 flex flex-col overflow-hidden bg-sidebar border-r border-sidebar-border transition-all duration-200',
+        isImpersonating ? 'top-7' : 'top-0',
         collapsed ? 'w-sidebar-collapsed' : 'w-sidebar'
       )}
     >
@@ -670,12 +671,14 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed: boolean; onMobileMenuToggle: () => void }) {
   const navigate = useNavigate();
   const { signOut } = useAuth();
+  const { isImpersonating } = useImpersonation();
 
   return (
     <header
       className={cn(
-        'fixed top-0 right-0 z-30 h-topbar border-b border-border bg-card/80 backdrop-blur-sm flex items-center justify-between px-4 transition-all duration-200',
+        'fixed right-0 z-30 h-topbar border-b border-border bg-card/80 backdrop-blur-sm flex items-center justify-between px-4 transition-all duration-200',
         'left-0 lg:left-sidebar',
+        isImpersonating ? 'top-7' : 'top-0',
         sidebarCollapsed && 'lg:left-sidebar-collapsed'
       )}
     >
@@ -806,6 +809,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useOfflineFlush();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { isImpersonating } = useImpersonation();
 
   // Aplica .legacy-visual no <html> quando feature flag newVisual = false
   useFeatureFlagBodyClass('newVisual', 'legacy-visual', /* invert */ true);
@@ -814,7 +818,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <AppShellProvider>
       <ShortcutsRegistryProvider>
         <CommandsRegistryProvider>
-          <div className="min-h-screen bg-background density-compact">
+          <div className={cn('min-h-screen bg-background density-compact', isImpersonating && 'pt-7')}>
             <ImpersonationBanner />
             {/* Desktop sidebar */}
             <div className="hidden lg:block">

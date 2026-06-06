@@ -26,7 +26,7 @@ export function ImpersonationBanner() {
   if (!isImpersonating || !target) return null;
   const contexto = [perfil?.commercialRole, perfil?.department].filter(Boolean).join(' · ');
   return (
-    <div className="w-full bg-status-warning-bold text-white text-xs flex items-center justify-center gap-3 py-1 px-3">
+    <div className="fixed top-0 inset-x-0 z-50 h-7 bg-status-warning-bold text-white text-xs flex items-center justify-center gap-3 px-3">
       <Eye className="w-3.5 h-3.5 shrink-0" />
       <span className="truncate">
         Lente de navegação/leitura como <strong>{target.nome}</strong>
