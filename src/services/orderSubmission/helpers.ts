@@ -11,6 +11,31 @@ import type { SubmitClient } from './types';
 export const getToolName = (t: UserTool): string =>
   t.generated_name || t.custom_name || t.tool_categories?.name || 'Ferramenta';
 
+/** Entrada do preflight de identidade por-conta do submit. */
+export interface AccountIdentityCheck {
+  hasOben: boolean;
+  hasColacor: boolean;
+  hasAfiacao: boolean;
+  codigoCliente?: number | null;
+  codigoClienteColacor?: number | null;
+  codigoClienteAfiacao?: number | null;
+}
+
+/**
+ * Preflight fail-closed: nomes das contas que TÊM itens mas NÃO têm um código de
+ * cliente válido próprio (cada conta Omie tem código de cliente distinto — nunca
+ * cair no código de outra conta). Vazio = todas as contas usadas têm identidade.
+ * Código <= 0 ou ausente é inválido (não é código Omie real).
+ */
+export function missingAccountIdentities(input: AccountIdentityCheck): string[] {
+  const valid = (c?: number | null): boolean => typeof c === 'number' && c > 0;
+  const missing: string[] = [];
+  if (input.hasOben && !valid(input.codigoCliente)) missing.push('Oben');
+  if (input.hasColacor && !valid(input.codigoClienteColacor)) missing.push('Colacor');
+  if (input.hasAfiacao && !valid(input.codigoClienteAfiacao)) missing.push('Afiação');
+  return missing;
+}
+
 export function findParcelaDesc(codigo: string, formas: FormaPagamento[]): string {
   const found = formas.find(f => f.codigo === codigo);
   return found?.descricao || codigo;

@@ -6,13 +6,19 @@ vi.mock('@/services/omieService', () => ({
   syncOrderToOmie: vi.fn().mockResolvedValue({ success: true, omie_os: { cNumOS: 'OS1' } }),
 }));
 vi.mock('../buildPrintData', () => ({ buildPrintData: vi.fn().mockReturnValue([]) }));
-vi.mock('../helpers', () => ({
-  formatCustomerAddress: vi.fn().mockReturnValue('Rua X, 1'),
-  resolveCustomerPhone: vi.fn().mockResolvedValue('11999999999'),
-  buildToolInfo: vi.fn().mockReturnValue(''),
-  getToolName: vi.fn().mockReturnValue('Tool'),
-  findParcelaDesc: vi.fn().mockReturnValue(''),
-}));
+// Mantém o `missingAccountIdentities` REAL (o preflight do submit roda com lógica
+// de verdade); só as funções de I/O/format são stubadas.
+vi.mock('../helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../helpers')>();
+  return {
+    ...actual,
+    formatCustomerAddress: vi.fn().mockReturnValue('Rua X, 1'),
+    resolveCustomerPhone: vi.fn().mockResolvedValue('11999999999'),
+    buildToolInfo: vi.fn().mockReturnValue(''),
+    getToolName: vi.fn().mockReturnValue('Tool'),
+    findParcelaDesc: vi.fn().mockReturnValue(''),
+  };
+});
 vi.mock('@/lib/logger', () => ({
   logger: { info: vi.fn(), error: vi.fn(), critical: vi.fn(), warn: vi.fn() },
 }));
@@ -99,6 +105,23 @@ describe('submitOrder', () => {
     expect(r.success).toBe(false);
     expect(r.errors[0]).toEqual({ step: 'validate', message: 'Carrinho vazio' });
     expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('Oben+Colacor com itens mas SEM código Colacor → fail-closed: bloqueia TUDO antes de qualquer insert', async () => {
+    const { client, insert, invoke } = makeSupabase();
+    const custSemColacor = { ...customer, codigo_cliente_colacor: null } as OmieCustomer;
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      customer: custSemColacor,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [colacorAcabado()], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 50, service: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_identity');
+    expect(r.errors[0].message).toContain('Colacor');
+    // Invariante: não insere NADA (nem o Oben válido) nem chama o Omie — não enviar pela metade.
+    expect(insert).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it('Oben: insert ok + Omie ok → success + PV no results', async () => {

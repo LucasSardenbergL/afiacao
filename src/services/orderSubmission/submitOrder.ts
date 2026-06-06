@@ -12,6 +12,7 @@ import {
   buildToolInfo,
   formatCustomerAddress,
   getToolName,
+  missingAccountIdentities,
   resolveCustomerPhone,
 } from './helpers';
 import { buildPrintData } from './buildPrintData';
@@ -41,6 +42,33 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       printDataList: [],
       lastOrderData: null,
       errors: [{ step: 'validate', message: 'Carrinho vazio' }],
+    };
+  }
+
+  // ── Preflight de identidade por-conta (fail-closed) ──
+  // Cada conta Omie tem código de cliente próprio; NUNCA enviar o código de uma
+  // conta para outra (fallback antigo `|| codigo_cliente` registrava o pedido no
+  // cliente errado). Se uma conta COM itens não tem identidade resolvida, bloqueia
+  // o envio INTEIRO antes de qualquer insert — não enviar pela metade num pedido
+  // multi-conta nem registrar na conta errada.
+  const missingIdentities = missingAccountIdentities({
+    hasOben: obenProductItems.length > 0,
+    hasColacor: colacorProductItems.length > 0,
+    hasAfiacao: serviceItems.length > 0,
+    codigoCliente: customer.codigo_cliente,
+    codigoClienteColacor: customer.codigo_cliente_colacor,
+    codigoClienteAfiacao: customer.codigo_cliente_afiacao,
+  });
+  if (missingIdentities.length > 0) {
+    return {
+      success: false,
+      results: [],
+      printDataList: [],
+      lastOrderData: null,
+      errors: [{
+        step: 'validate_identity',
+        message: `Cliente sem identidade na(s) conta(s): ${missingIdentities.join(', ')}. Selecione o cliente novamente (ou aguarde o cadastro concluir) e tente de novo — o pedido NÃO foi enviado, para não registrar na conta errada.`,
+      }],
     };
   }
 
@@ -195,7 +223,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
         body: {
           action: 'criar_pedido', account: 'colacor', sales_order_id: salesOrderId,
-          codigo_cliente: customer.codigo_cliente_colacor || customer.codigo_cliente,
+          // Identidade Colacor garantida pelo preflight (fail-closed); NUNCA cair no código Oben.
+          codigo_cliente: customer.codigo_cliente_colacor!,
           codigo_vendedor: customer.codigo_vendedor_colacor ?? customer.codigo_vendedor,
           items: colacorProductItems.map(c => ({
             omie_codigo_produto: c.product.omie_codigo_produto,
@@ -323,7 +352,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         document: customer.cnpj_cpf || undefined,
       };
       const staffContext = {
-        customerOmieCode: customer.codigo_cliente_afiacao || customer.codigo_cliente,
+        // Identidade Afiação garantida pelo preflight (fail-closed); NUNCA cair no código Oben.
+        customerOmieCode: customer.codigo_cliente_afiacao!,
         customerUserId: customerUserId || null,
         customerCodigoVendedor: customer.codigo_vendedor_afiacao ?? customer.codigo_vendedor ?? null,
       };
