@@ -12,6 +12,7 @@ export interface PositivacaoKpis {
   positivados: number;
   pctPositivacao: number;
   ticketMedio: number;
+  receitaMtd: number;
   pctCobertura: number;
   recenciaCritica: number;
   novosPositivados: number;
@@ -48,6 +49,7 @@ export function useMyPositivacao() {
         positivados: r.positivados,
         pctPositivacao: pctPositivacao(r.positivados, r.total_eligible),
         ticketMedio: ticketMedio(r.receita_mtd, r.compradores_mtd),
+        receitaMtd: r.receita_mtd,
         pctCobertura: pctCobertura(r.contatados_mtd, r.total_eligible),
         recenciaCritica: r.recencia_critica,
         novosPositivados: r.novos_clientes_positivados,
