@@ -1,4 +1,3 @@
-import { lazy, Suspense } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -19,8 +18,6 @@ import { BatchActionsBar } from "./cicloHoje/BatchActionsBar";
 
 // Re-exporta ALL para preservar o import existente (AdminReposicaoSessaoPedidos).
 export { ALL } from "./cicloHoje/types";
-
-const AdminReposicaoPedidos = lazy(() => import("@/pages/AdminReposicaoPedidos"));
 
 export function CicloHojePanel({
   user,
@@ -140,10 +137,6 @@ export function CicloHojePanel({
         busy={busy}
         onConfirm={runAutoApprove}
       />
-
-      <Suspense fallback={<TabFallback />}>
-        <AdminReposicaoPedidos />
-      </Suspense>
 
       {reviewMode && selected.size > 0 && (
         <BatchActionsBar

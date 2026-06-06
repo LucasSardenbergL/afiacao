@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
-import { ClipboardCheck } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ClipboardCheck, ExternalLink } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
 import { CicloHojePanel, ALL } from "@/components/reposicao/CicloHojePanel";
 import { useColumnConfig } from "@/components/reposicao/ColumnConfig";
 import { useItensDoDia } from "@/hooks/useReposicaoSessao";
@@ -48,6 +50,14 @@ export default function AdminReposicaoSessaoPedidos() {
         icon={ClipboardCheck}
         title="Pedidos"
         subtitle="Revisão e aprovação dos pedidos sugeridos para o ciclo de hoje"
+        actions={
+          <Button asChild variant="outline" size="sm">
+            <Link to="/admin/reposicao/pedidos">
+              Gerir pedidos (detalhes · conciliar · disparar)
+              <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
+            </Link>
+          </Button>
+        }
       />
       <EtapaChecklist step={3} />
       <CicloHojePanel
