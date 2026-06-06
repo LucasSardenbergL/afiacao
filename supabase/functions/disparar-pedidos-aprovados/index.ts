@@ -569,8 +569,13 @@ async function processarPedido(
       );
     }
     // nQtde <= 0 quebra o Omie com "O preenchimento da tag [nQtde] é obrigatório".
+    // [QTDE-INTEIRA P3] Number.isFinite rejeita Infinity/NaN também — senão Infinity passa
+    // o `> 0` e vira null no JSON.stringify do payload (Codex).
     const itensSemQtde = (items as ItemRow[]).filter(
-      (it) => !(Number(it.qtde_final) > 0),
+      (it) => {
+        const q = Number(it.qtde_final);
+        return !(Number.isFinite(q) && q > 0);
+      },
     );
     if (itensSemQtde.length > 0) {
       const lista = itensSemQtde
@@ -579,6 +584,18 @@ async function processarPedido(
       throw new Error(
         `SKU(s) com quantidade 0: ${lista}. Ajuste a quantidade ou remova o item antes de disparar.`,
       );
+    }
+
+    // a.2 [QTDE-INTEIRA] Persiste a quantidade INTEIRA (ceil) no banco ANTES do portal/Omie.
+    // É a fonte da verdade: o portal Sayerlack deriva o custo de qtde_final, e em_transito/
+    // valor_total/embalagem leem qtde_final. Persistir aqui cobre QUALQUER origem de fração
+    // (RPC, promoção, edição humana, legado) num único ponto, no momento do dinheiro.
+    // Idempotente (ceil de inteiro = no-op). Só em produção (dry_run não muta).
+    if (modo === "producao") {
+      const { error: ceilErr } = await db.rpc("reposicao_persistir_qtde_inteira", {
+        p_pedido_id: pedido.id,
+      });
+      if (ceilErr) throw new Error(`Persistir qtde inteira: ${ceilErr.message}`);
     }
 
     // b. Resolver código do fornecedor
