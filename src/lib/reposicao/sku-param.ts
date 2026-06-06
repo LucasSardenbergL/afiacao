@@ -41,6 +41,10 @@ export type SkuParam = {
   aprovado_por: string | null;
   justificativa_aprovacao: string | null;
   ultima_atualizacao_calculo: string | null;
+  // Estado de reposição: 'automatica'/null = no motor; 'produto_acabado' = fabricado ('04');
+  // 'descontinuado' = desligado de propósito pelo humano (botão "descontinuar SKU" nos Pedidos).
+  // Opcional no tipo (os literais de view não o fornecem); o select('*') o traz em runtime.
+  tipo_reposicao?: string | null;
 };
 
 export type ViewStats = {
@@ -80,7 +84,7 @@ export type RowWithPrice = SkuParam & {
   ja_habilitado?: boolean | null;
 };
 
-export type StatusFilterValue = 'pendente' | 'aprovado' | 'aguardando_fornecedor' | 'primeira_compra' | 'todos';
+export type StatusFilterValue = 'pendente' | 'aprovado' | 'aguardando_fornecedor' | 'primeira_compra' | 'todos' | 'descontinuados';
 
 export const fonteBadgeVariant = (
   fonte: string | null | undefined,
@@ -117,3 +121,18 @@ export const fmt = (v: number | null | undefined, dec = 2): string =>
 
 export const fmtBRL = (v: number | null | undefined): string =>
   v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+/** SKU desligado de propósito pelo humano (botão "descontinuar SKU" nos Pedidos). */
+export const isDescontinuado = (row: { tipo_reposicao?: string | null }): boolean =>
+  row.tipo_reposicao === 'descontinuado';
+
+/**
+ * Campos que religam um SKU descontinuado ao motor de reposição automática.
+ * tipo='automatica' é seguro mesmo num fabricado '04' — a guarda do motor barra '04'
+ * independentemente (#527/#529). Religar SÓ `habilitado` deixaria tipo='descontinuado'
+ * e o motor seguiria barrando; por isso o payload reseta os DOIS campos.
+ */
+export const reativarPayload = (): { habilitado_reposicao_automatica: true; tipo_reposicao: 'automatica' } => ({
+  habilitado_reposicao_automatica: true,
+  tipo_reposicao: 'automatica',
+});

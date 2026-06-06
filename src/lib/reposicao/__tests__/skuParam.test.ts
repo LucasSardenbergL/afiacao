@@ -5,6 +5,8 @@ import {
   classBadge,
   fmt,
   fmtBRL,
+  isDescontinuado,
+  reativarPayload,
 } from '../sku-param';
 
 describe('fonteBadgeVariant', () => {
@@ -124,5 +126,28 @@ describe('fmtBRL', () => {
     const out = fmtBRL(1234.5);
     expect(out).toContain('R$');
     expect(out).toContain('1.234,50');
+  });
+});
+
+describe('isDescontinuado', () => {
+  it('true só para tipo_reposicao === "descontinuado"', () => {
+    expect(isDescontinuado({ tipo_reposicao: 'descontinuado' })).toBe(true);
+  });
+  it('false para automatica / null / undefined / produto_acabado', () => {
+    expect(isDescontinuado({ tipo_reposicao: 'automatica' })).toBe(false);
+    expect(isDescontinuado({ tipo_reposicao: null })).toBe(false);
+    expect(isDescontinuado({})).toBe(false);
+    expect(isDescontinuado({ tipo_reposicao: 'produto_acabado' })).toBe(false);
+  });
+});
+
+describe('reativarPayload', () => {
+  it('religa AMBOS os campos (habilitado=true E tipo=automatica)', () => {
+    // Trava contra religar só metade: deixar tipo='descontinuado' faria o motor
+    // continuar barrando o SKU mesmo com habilitado=true.
+    expect(reativarPayload()).toEqual({
+      habilitado_reposicao_automatica: true,
+      tipo_reposicao: 'automatica',
+    });
   });
 });
