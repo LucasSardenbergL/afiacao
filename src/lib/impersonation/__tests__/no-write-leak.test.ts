@@ -34,6 +34,18 @@ const ALLOWED = new Set([
   // AppShell: effectiveUserId SÓ no badge de perdidas não-lidas (useMissedCount = count/LEITURA)
   // pro "Ver como" refletir o alvo; nenhuma mutation no shell usa effectiveUserId.
   'src/components/AppShell.tsx',
+  // Cards de "minha atividade" do dashboard (Meu Dia): leitura escopada pelo id efetivo
+  // da lente (KPIs do dia, KPIs/follow-ups/resultado de visitas). Read-only, sem mutation.
+  'src/hooks/useMyKpis.ts',
+  'src/hooks/useKpisVisita.ts',
+  'src/hooks/useFollowupsVisita.ts',
+  'src/hooks/useMinhasVisitasResultado.ts',
+  // FarmerCalls: effectiveUserId SÓ na leitura da lista de ligações (loadCallLogs); a escrita
+  // (handleSaveCall, farmer_id=user.id) é write-identity e o botão "Nova ligação" é disabled na lente.
+  'src/pages/FarmerCalls.tsx',
+  // useFarmerScoring: effectiveUserId na leitura/cálculo da agenda do alvo; o upsert de scores
+  // é PULADO na lente (skip por isImpersonating) — o master não recalcula a carteira do alvo.
+  'src/hooks/useFarmerScoring.ts',
 ]);
 
 describe('anti write-leak: effectiveUserId só em leitura', () => {

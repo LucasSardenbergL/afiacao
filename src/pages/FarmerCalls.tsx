@@ -32,7 +32,7 @@ const FarmerCalls = () => {
   const { data: positivacao } = useMyPositivacao();
   const { data: commercialRole } = useMyCommercialRole();
   const isHunter = commercialRole === 'hunter';
-  const { isImpersonating } = useImpersonation();
+  const { isImpersonating, effectiveUserId } = useImpersonation();
 
   // Real Nvoip call integration for the dialog timer
   const {
@@ -87,7 +87,8 @@ const FarmerCalls = () => {
 
   useEffect(() => {
     if (isStaff) loadCallLogs();
-  }, [isStaff]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStaff, effectiveUserId]);
 
   useEffect(() => {
     return () => {
@@ -122,12 +123,13 @@ const FarmerCalls = () => {
   }, [nvoipState]);
 
   const loadCallLogs = async () => {
-    if (!user?.id) return;
+    // Lente "Ver como": lista as ligações do ALVO (effectiveUserId), não as do master.
+    if (!effectiveUserId) return;
     try {
       const { data } = await supabase
         .from('farmer_calls')
         .select('*')
-        .eq('farmer_id', user.id)
+        .eq('farmer_id', effectiveUserId)
         .order('created_at', { ascending: false })
         .limit(100);
 

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { spDayRangeUtc } from '@/lib/time/sp-day';
 
 export interface FarmerKpis {
@@ -12,16 +12,17 @@ export interface FarmerKpis {
 }
 
 /**
- * KPIs do dia pro vendedor logado, agregados de farmer_calls.
+ * KPIs do dia pro vendedor, agregados de farmer_calls.
+ * Lente "Ver como": id efetivo = ALVO na lente, próprio usuário fora dela.
  */
 export function useMyKpis() {
-  const { user } = useAuth();
+  const { effectiveUserId } = useImpersonation();
   return useQuery({
-    queryKey: ['my-kpis', user?.id],
-    enabled: !!user,
+    queryKey: ['my-kpis', effectiveUserId],
+    enabled: !!effectiveUserId,
     staleTime: 30_000,
     queryFn: async (): Promise<FarmerKpis> => {
-      if (!user) {
+      if (!effectiveUserId) {
         return { calls_today: 0, revenue_today: 0, margin_today: 0, avg_ticket_today: 0, pending_link_count: 0 };
       }
       // Janela do dia no fuso de São Paulo, como instantes UTC. Sem isto, a data UTC
@@ -30,7 +31,7 @@ export function useMyKpis() {
 
       const { data: calls } = await supabase.from('farmer_calls')
         .select('revenue_generated, margin_generated')
-        .eq('farmer_id', user.id)
+        .eq('farmer_id', effectiveUserId)
         .gte('started_at', startUtc)
         .lt('started_at', endUtc);
 
@@ -39,10 +40,9 @@ export function useMyKpis() {
       const margin = callsArr.reduce((s, c) => s + Number(c.margin_generated ?? 0), 0);
       const withRevenue = callsArr.filter((c) => Number(c.revenue_generated ?? 0) > 0);
 
-       
       const { count: pending } = await supabase.from('farmer_calls')
         .select('id', { count: 'exact', head: true })
-        .eq('farmer_id', user.id)
+        .eq('farmer_id', effectiveUserId)
         .is('customer_user_id', null)
         .not('transcript', 'is', null);
 
