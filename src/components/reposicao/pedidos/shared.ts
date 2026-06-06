@@ -112,6 +112,37 @@ export function decidirAcaoPortal(status: StatusEnvioPortal | null | undefined):
   return { kind: 'nenhuma' };
 }
 
+/* ─── "Precisa de atenção" — fila cross-ciclo (Fase 3 · 3c) ─── */
+//
+// Pedidos que EXIGEM ação humana, em QUALQUER ciclo (a lista "ciclo de hoje" não
+// pega pedido travado de ciclo passado). Dois grupos:
+//
+//  - status='falha_envio' → o disparo ao Omie falhou (motivo em resposta_canal.erro).
+//    Precisa re-disparar ou corrigir (ex.: SKU sem custo).
+//  - status_envio_portal em {aceito_portal_sem_protocolo, indeterminado_requer_conciliacao,
+//    falha_envio_portal, erro_nao_retentavel} → conciliação (PO pode existir no
+//    fornecedor) + falhas duras do portal (definitiva / sem retry automático).
+//
+// NÃO inclui pendente_envio_portal/enviando_portal (drenados pelo motor de retry +
+// já vigiados pelo Sentinela — incluí-los falsearia pedido em voo) nem erro_retentavel
+// (o motor sayerlack-retry-orfaos re-tenta sozinho).
+export const STATUS_PORTAL_PRECISA_ATENCAO: ReadonlySet<StatusEnvioPortal> = new Set<StatusEnvioPortal>([
+  'aceito_portal_sem_protocolo',
+  'indeterminado_requer_conciliacao',
+  'falha_envio_portal',
+  'erro_nao_retentavel',
+]);
+
+// Predicado puro: o pedido precisa de ação humana? (usado pela fila cross-ciclo da
+// tela de pedidos — o chip "⚠ N precisam de atenção").
+export function pedidoPrecisaAtencao(p: {
+  status: string;
+  status_envio_portal: StatusEnvioPortal | null | undefined;
+}): boolean {
+  if (p.status === 'falha_envio') return true;
+  return STATUS_PORTAL_PRECISA_ATENCAO.has((p.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal);
+}
+
 /* ─── Portal B2B status meta ─── */
 export const portalStatusMeta: Record<StatusEnvioPortal, { label: string; className: string }> = {
   nao_aplicavel: { label: '—', className: 'bg-muted text-muted-foreground border-border' },

@@ -77,8 +77,8 @@ export function PortalDrawer({
     onError: (e: Error) => toast.error(`Erro ao marcar reenvio: ${e.message}`),
   });
 
-  // Conciliação inline: reusa a edge `conciliar-pedido-portal` (mesma lógica do
-  // PortalDetailDrawer da tela /admin/portal-sayerlack, que será aposentada no 3c).
+  // Conciliação inline: reusa a edge `conciliar-pedido-portal` (mesma lógica que vivia
+  // no PortalDetailDrawer da tela /admin/portal-sayerlack, aposentada no 3c).
   // A edge marca sucesso_portal + protocolo e dispara o Omie — com guard anti-PO-duplo
   // (não recria o PO se o pedido já tem omie_pedido_compra_id).
   const conciliarMutation = useMutation({
