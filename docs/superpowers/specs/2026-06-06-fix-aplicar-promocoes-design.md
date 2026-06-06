@@ -46,3 +46,17 @@ Aplica a **migration real** sobre stubs. 5 cenários:
 ## Entrega / rollout
 - Migration `20260606170000_reposicao_fix_aplicar_promocoes.sql` — **manual no SQL Editor** (CREATE OR REPLACE substitui a versão quebrada). **Sem deploy de edge** (o edge só *chama* a função). **Sem Publish** (é backend).
 - ⚠️ **Muda comportamento:** ao aplicar, o próximo ciclo (`gerar-pedidos-diario`) passa a aplicar descontos/forward_buying nos pedidos. Founder deve revisar a 1ª rodada.
+
+## Hardening (Codex adversarial — migration `20260606180000`)
+O Codex adversarial retroativo do PR1 (caminho B) achou furos de **lógica de domínio** pré-existentes, **expostos ao ligar a feature** — confirmados em prod: a recuperação retroativa (rodar a função com data passada) aplicou **campanha fora de vigência** em 4 itens (campanha começou 01/06, pedidos de 30–31/05) → **revertidos** (pendentes, zero dano). 7 travas conservadoras, todas na função (redesenho da view fica pra v2):
+- **H1** fornecedor exato (`pcs.fornecedor_nome = av.fornecedor_nome` — a view casa só empresa+SKU no `DISTINCT ON`, sem fornecedor → podia vazar entre fornecedores do mesmo SKU).
+- **H2** vigência na data do pedido: join `promocao_campanha pc ON pc.id = av.campanha_id` + `pcs.data_ciclo BETWEEN pc.data_inicio AND pc.data_fim`. **Escolhi isto no lugar do `p_data_ciclo=CURRENT_DATE`** que o Codex sugeriu — o edge passa `new Date().toISOString().slice(0,10)` (data **UTC**), então comparar com `CURRENT_DATE` é frágil a fuso; o join valida a vigência **real** e é robusto a fuso. **Previne exatamente o erro retroativo.**
+- **H3** cast `pci.sku_codigo_omie = av.sku_codigo_omie::text` (em vez de `::bigint`, que estoura em SKU não-numérico).
+- **H4** respeita `pci.ajustado_humano IS NOT TRUE` (nos dois modos).
+- **H5** só `pcs.tipo_ciclo = 'normal'` — nos 2 UPDATEs **e** nos blocos de agregação/recálculo de `valor_total`/guardrail (senão tocaria pedidos de oportunidade, que já têm `modo_promocao` próprio).
+- **H6** forward `qtde_final = GREATEST(av.qtde_com_desconto, pci.qtde_final)` — **nunca rebaixa** o mínimo forçado (a "R") nem o ajuste humano → **isto FECHA o follow-up do mínimo forçado no forward_buying**. `valor_linha`/`economia` recalculados pela compra real; `qtde_sem_promocao = pci.qtde_final`.
+- **H7/H7b** guards de quantidade: `av.qtde_com_desconto` e `pci.qtde_final` ambos `> 0 AND < 'Infinity'` (NaN/∞/zero) + `pci.qtde_final >= COALESCE(av.qtde_base, 0)` (não inflar além da base econômica modelada).
+
+**Validação:** PG17 `db/test-hardening-aplicar-promocoes.sh` (7 travas + happy + idempotência + fórmulas de H6 + oportunidade intocada). **Codex em metodologia + adversarial no código: nenhum P1; 3 P2 incorporados** (tipo_ciclo nos blocos posteriores, guard de `pci.qtde_final`, asserts de fórmula).
+
+**Lição:** aplicar mutação money-path retroativa (backfill manual) sem validar a vigência foi **precipitado** — o rito (Codex + auditoria) pegou e corrigiu; a trava H2 previne reincidência. Migration manual (substitui a `170000`).

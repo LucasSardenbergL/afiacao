@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 178
+-- Total de custom migrations: 183
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -197,7 +197,12 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260605152437', 'caca_views', '20260605152437_caca_views.sql'),
   ('20260606120000', 'reposicao_rpc_account_aware', '20260606120000_reposicao_rpc_account_aware.sql'),
   ('20260606130000', 'detectar_skus_sem_grupo_exclui_04', '20260606130000_detectar_skus_sem_grupo_exclui_04.sql'),
-  ('20260606170000', 'reposicao_fix_aplicar_promocoes', '20260606170000_reposicao_fix_aplicar_promocoes.sql')
+  ('20260606140000', 'detectar_skus_sem_grupo_self_heal', '20260606140000_detectar_skus_sem_grupo_self_heal.sql'),
+  ('20260606150000', 'a2_cmc_base_custo_view', '20260606150000_a2_cmc_base_custo_view.sql'),
+  ('20260606150000', 'reposicao_qtde_inteira', '20260606150000_reposicao_qtde_inteira.sql'),
+  ('20260606170000', 'reposicao_fix_aplicar_promocoes', '20260606170000_reposicao_fix_aplicar_promocoes.sql'),
+  ('20260606180000', 'reposicao_aplicar_promocoes_hardening', '20260606180000_reposicao_aplicar_promocoes_hardening.sql'),
+  ('20260606180000', 'reposicao_preco_pedido_cmc', '20260606180000_reposicao_preco_pedido_cmc.sql')
 )
 SELECT
   e.version,
@@ -906,7 +911,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('param_auto_fusivel_calibracao', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
   ('reposicao_rpc_account_aware', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('detectar_skus_sem_grupo_exclui_04', 'function', 'public', 'detectar_skus_sem_grupo', ''),
-  ('reposicao_fix_aplicar_promocoes', 'function', 'public', 'aplicar_promocoes_no_ciclo', '')
+  ('detectar_skus_sem_grupo_self_heal', 'function', 'public', 'detectar_skus_sem_grupo', ''),
+  ('reposicao_qtde_inteira', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_fix_aplicar_promocoes', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
+  ('reposicao_aplicar_promocoes_hardening', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
+  ('reposicao_preco_pedido_cmc', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 )
 SELECT
   e.migration,
