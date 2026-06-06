@@ -1,33 +1,31 @@
 import { useMemo } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import { useCommercialRole } from '@/hooks/useCommercialRole';
-import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
-import { useUserDepartment } from '@/hooks/useUserDepartment';
+import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { getRouteCounts } from '@/lib/dashboard/route-tracker';
 import { inferPersona, type InferPersonaResult } from '@/lib/dashboard/persona-detect';
 import type { Persona } from '@/lib/dashboard/persona-config';
+import type { CommercialRole } from '@/hooks/useCommercialRole';
+import type { Department } from '@/integrations/supabase/types-departments';
 
 /**
- * Resolve persona combinando todos os sinais. O override manual é a única fonte
- * de verdade do DashboardPersonaContext e entra como argumento — listá-lo nas
- * deps do useMemo garante que trocar de persona recomputa a resolução na hora.
- * Por isso o hook é chamado dentro do provider (abaixo do estado de override),
- * não acima dele.
+ * Resolve a persona do dashboard. Na lente, usa o acesso de EXIBIÇÃO do alvo
+ * (display*), então a ordem dos cards reflete o alvo. Fora da lente, os display*
+ * são os reais. O override manual continua sendo a fonte de verdade quando setado.
  */
 export function usePersona(override: Persona | null): InferPersonaResult {
-  const { role } = useAuth();
-  const { commercialRole } = useCommercialRole();
-  const isSalesOnly = useSalesOnlyRestriction();
-  const { department } = useUserDepartment();
+  const { displayRole, displayIsSalesOnly, displayIsGestorComercial, displayDepartment } = useDisplayAccess();
 
   return useMemo(() => {
+    // O display só informa "é gestor comercial?"; mapeamos gestor->'gerencial' e
+    // não-gestor->null (cai em department/heurística/default). Suficiente para a
+    // ordem de cards; o displayDepartment direciona a persona antes da heurística.
+    const commercialRole: CommercialRole | null = displayIsGestorComercial ? 'gerencial' : null;
     return inferPersona({
       override,
-      role,
+      role: displayRole,
       commercialRole,
-      isSalesOnly,
+      isSalesOnly: displayIsSalesOnly,
       routeCounts: getRouteCounts(),
-      userDepartment: department,
+      userDepartment: (displayDepartment as Department | null) ?? null,
     });
-  }, [override, role, commercialRole, isSalesOnly, department]);
+  }, [override, displayRole, displayIsSalesOnly, displayIsGestorComercial, displayDepartment]);
 }

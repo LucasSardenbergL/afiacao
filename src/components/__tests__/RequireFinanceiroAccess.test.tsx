@@ -8,9 +8,15 @@ import { getMinhaPermissao } from '@/services/financeiroV2Service';
 
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: vi.fn() }));
 vi.mock('@/services/financeiroV2Service', () => ({ getMinhaPermissao: vi.fn() }));
+// RequireFinanceiroAccess usa ImpersonationContext e useDisplayAccess;
+// nos testes fora da lente, isImpersonating=false e displayIsStaff espelha isStaff real.
+vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: vi.fn(() => ({ isImpersonating: false })) }));
+vi.mock('@/hooks/useDisplayAccess', () => ({ useDisplayAccess: vi.fn() }));
 
 const mockUseAuth = vi.mocked(useAuth);
 const mockGetPerm = vi.mocked(getMinhaPermissao);
+import { useDisplayAccess } from '@/hooks/useDisplayAccess';
+const mockUseDisplayAccess = vi.mocked(useDisplayAccess);
 
 function renderGuard() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -28,10 +34,27 @@ function renderGuard() {
 }
 
 describe('RequireFinanceiroAccess', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Por padrão: fora da lente, display* espelha o real
+    mockUseDisplayAccess.mockReturnValue({
+      displayIsStaff: false,
+      displayLoading: false,
+      displayRole: null,
+      displayIsMaster: false,
+      displayIsGestorComercial: false,
+      displayIsSalesOnly: false,
+      displayDepartment: null,
+    });
+  });
 
   it('libera staff sem buscar fin_permissoes', async () => {
     mockUseAuth.mockReturnValue({ isStaff: true, loading: false } as unknown as ReturnType<typeof useAuth>);
+    mockUseDisplayAccess.mockReturnValue({
+      displayIsStaff: true, displayLoading: false,
+      displayRole: 'employee', displayIsMaster: false,
+      displayIsGestorComercial: false, displayIsSalesOnly: false, displayDepartment: null,
+    });
     renderGuard();
     expect(await screen.findByText('CONTEUDO FINANCEIRO')).toBeTruthy();
     expect(mockGetPerm).not.toHaveBeenCalled();
