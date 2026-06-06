@@ -482,7 +482,8 @@ export function useCustomerSelection({
       }>(6);
 
       if (failedParts.length > 0) {
-        toast.success('Alguns dados do cliente não foram carregados', {
+        // É um aviso (carga parcial), não um sucesso — não usar o ✓ verde de success.
+        toast.warning('Alguns dados do cliente não foram carregados', {
           description: `Falharam: ${failedParts.join(', ')}. Você pode continuar, mas preços/parcelas podem não refletir o contrato.`,
         });
       }
