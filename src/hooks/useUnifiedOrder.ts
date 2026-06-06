@@ -654,6 +654,7 @@ export function useUnifiedOrder() {
         defaultProductionAssigneeId,
         getServicePrice,
         supabase,
+        isCustomerMode,
       });
       if (result.success && result.lastOrderData) {
         setLastOrderData(result.lastOrderData);
@@ -685,7 +686,7 @@ export function useUnifiedOrder() {
     deliveryOption, addresses, selectedAddress,
     notes, readyByDate, ordemCompra,
     companyProfiles, defaultProductionAssigneeId,
-    getServicePrice, clearCart,
+    getServicePrice, clearCart, isCustomerMode,
   ]);
 
   // clearCustomer defined earlier (wraps useCustomerSelection.clearCustomer + clears cart/ordemCompra/userTools)
