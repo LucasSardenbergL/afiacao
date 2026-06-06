@@ -411,8 +411,6 @@ export default function AdminReposicaoPedidos() {
                       <TableHead>Fornecedor / Grupo</TableHead>
                       <TableHead className="text-right">Nº SKUs</TableHead>
                       <TableHead className="text-right">Valor</TableHead>
-                      <TableHead className="text-right">Δ vs anterior</TableHead>
-                      <TableHead className="text-right">Corte</TableHead>
                       <TableHead>Portal</TableHead>
                       <TableHead>Aprovado em</TableHead>
                       <TableHead className="text-right">Ações</TableHead>

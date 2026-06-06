@@ -3,7 +3,7 @@ import { TableCell, TableRow } from '@/components/ui/table';
 import { Eye, ExternalLink, Loader2, XCircle, Zap } from 'lucide-react';
 import { format } from 'date-fns';
 import { PedidoSugerido } from './types';
-import { formatBRL, formatTime } from './shared';
+import { formatBRL } from './shared';
 import { StatusComMotivo, SplitInfo, PortalBadge } from './badges';
 
 export function PedidoRow({
@@ -49,14 +49,6 @@ export function PedidoRow({
       </TableCell>
       <TableCell className="text-right tabular-nums">{p.num_skus}</TableCell>
       <TableCell className="text-right tabular-nums font-medium">{formatBRL(p.valor_total)}</TableCell>
-      <TableCell className="text-right tabular-nums">
-        {p.delta_vs_anterior_perc !== null ? (
-          <span className={Number(p.delta_vs_anterior_perc) >= 0 ? 'text-status-success' : 'text-destructive'}>
-            {Number(p.delta_vs_anterior_perc) >= 0 ? '+' : ''}{Number(p.delta_vs_anterior_perc).toFixed(1)}%
-          </span>
-        ) : <span className="text-muted-foreground">—</span>}
-      </TableCell>
-      <TableCell className="text-right">{formatTime(p.horario_corte_planejado)}</TableCell>
       <TableCell>
         <PortalBadge pedido={p} onClick={onVerPortal} />
       </TableCell>
