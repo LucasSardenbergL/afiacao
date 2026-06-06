@@ -6,9 +6,6 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { REPOSICAO_EMPRESA } from "@/hooks/useReposicaoSessao";
 
-const CUTOFF_HOUR = 9;
-const CUTOFF_MIN = 30;
-
 type SmartAlert = {
   id: string;
   level: "yellow" | "orange" | "red";
@@ -40,19 +37,6 @@ function useSmartAlerts(): SmartAlert[] {
 
   return useMemo(() => {
     const list: SmartAlert[] = [];
-    const now = new Date();
-    const cutoff = new Date(now);
-    cutoff.setHours(CUTOFF_HOUR, CUTOFF_MIN, 0, 0);
-    const minutes = (cutoff.getTime() - now.getTime()) / 60_000;
-    if (minutes > 0 && minutes < 60) {
-      list.push({
-        id: "janela-1h",
-        level: "orange",
-        message: `Janela de compra fecha em ${Math.ceil(minutes)} minutos`,
-        actionLabel: "Ver cockpit",
-        onAction: () => navigate("/admin/reposicao/sessao/pedidos"),
-      });
-    }
     if (skusSemParam > 0) {
       list.push({
         id: "skus-sem-param",
