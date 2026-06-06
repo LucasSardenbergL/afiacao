@@ -1,4 +1,6 @@
 # Invariantes money-path de src/lib/financeiro/regime-tributario-helpers.ts (otimizador tributário Simples×Presumido×Real).
+# @src: src/lib/financeiro/regime-tributario-helpers.ts
+# @test: src/lib/financeiro/__tests__/regime-tributario-helpers.test.ts
 # Rode: scripts/mutcheck.sh src/lib/financeiro/regime-tributario-helpers.ts src/lib/financeiro/__tests__/regime-tributario-helpers.test.ts scripts/mutcheck.d/regime-tributario-helpers.mut
 PEGA      | sort: recomendaria o regime MAIS caro   | s/a\.total_federal_cpp - b\.total_federal_cpp/b.total_federal_cpp - a.total_federal_cpp/
 PEGA      | recomendar: melhor=elegiveis[1]         | s/const melhor = elegiveis\[0\]/const melhor = elegiveis[1]/

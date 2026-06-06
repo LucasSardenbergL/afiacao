@@ -71,3 +71,32 @@ jobs:
       # Bloqueia em errors (0 hoje); warnings não falham (eslint default).
       - name: Lint
         run: bun lint
+
+  # ─── Job NÃO-bloqueante (informativo, sinal próprio) ────────────────
+  # Gate de regressão de COBERTURA money-path (≠ os checks do `validate`, que
+  # cobrem tipos/comportamento/build/lint). Roda os contratos scripts/mutcheck.d/*.mut
+  # via scripts/mutcheck.sh — mutation-check: um teste só vale se FALHA quando a
+  # invariante é violada (plantamos o bug, medimos se a suíte o mata).
+  # ⚠️ NÃO é required na branch protection POR ORA: os .mut casam TEXTO EXATO do
+  # helper, então um refactor legítimo pode dessincronizá-los (INVÁLIDO) e travaria
+  # PRs alheias num repo multi-sessão. Promova a required (igual ao lint) quando os
+  # .mut amadurecerem. `--selftest` valida a própria ferramenta. Ver CLAUDE.md §13.
+  mutation-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: mutcheck — selftest (mecânica da ferramenta, sem vitest)
+        run: bun run mutcheck:selftest
+
+      - name: mutcheck — contratos de cobertura money-path (.mut)
+        run: bun run mutcheck

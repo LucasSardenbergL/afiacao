@@ -1,4 +1,6 @@
 # Invariantes money-path de src/lib/financeiro/aging-helpers.ts (curvas de aging, projeção 13s de caixa).
+# @src: src/lib/financeiro/aging-helpers.ts
+# @test: src/lib/financeiro/__tests__/aging-helpers.test.ts
 # Rode: scripts/mutcheck.sh src/lib/financeiro/aging-helpers.ts src/lib/financeiro/__tests__/aging-helpers.test.ts scripts/mutcheck.d/aging-helpers.mut
 PEGA      | valorPagoEfetivo recebido >0 -> >=0   | s/t\.valor_recebido > 0/t.valor_recebido >= 0/
 PEGA      | prazoComGate cobertura >= -> >        | s/\(cobertura \?\? 0\) >= min/(cobertura ?? 0) > min/

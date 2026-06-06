@@ -1,4 +1,6 @@
 # Invariantes money-path de src/lib/route/route-outcome.ts (closed-loop da lista de ligação).
+# @src: src/lib/route/route-outcome.ts
+# @test: src/lib/route/route-outcome.test.ts
 # Rode: scripts/mutcheck.sh src/lib/route/route-outcome.ts src/lib/route/route-outcome.test.ts scripts/mutcheck.d/route-outcome.mut
 # PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
 PEGA      | opt_out sticky->com janela          | s/r\.status === .opt_out./r.status === "opt_out" && diasEntreIso(hoje, r.dataNegocio) <= 7/
