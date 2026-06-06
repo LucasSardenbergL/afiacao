@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import { toast } from 'sonner';
+import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 import { useWebRTCCallContextOptional } from '@/contexts/WebRTCCallContext';
 import { CallDialerView, type CallDialerViewProps } from './CallDialerView';
 
@@ -37,6 +38,10 @@ export function WebRTCDialer(props: Props) {
       isFinished={!!owned && owned.isFinished}
       onMakeCall={() => {
         if (!ctx) return;
+        if (isLensActive()) {
+          toast.error('Ligação indisponível na lente (somente leitura). Saia da lente para ligar.');
+          return;
+        }
         // Não rouba uma chamada ativa de OUTRA linha (a sessão é única). Sem isso,
         // clicar outra linha transferia o card e tentava uma 2ª chamada concorrente.
         if (busy && !owned) {
