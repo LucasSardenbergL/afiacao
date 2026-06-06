@@ -48,6 +48,13 @@ describe('elegibilidadeSimples — usa RBA (ano-calendário), não RBT12', () =>
     expect(r.status_elegibilidade).toBe('inelegivel');
     expect(r.motivo_inelegivel).toContain('4,8');
   });
+  // Mutation-check (auto-ensino 2026-06-06): a LC 123 diz "receita SUPERIOR a" (>, não >=).
+  // RBA no teto/sublimite EXATO ainda é elegível/sublimite; os testes usavam 3M/4M/5M, nunca as
+  // bordas exatas → as mutações '>'->'>=' (teto e sublimite) sobreviviam.
+  it('RBA EXATO no teto/sublimite ainda é elegível ("superior a", não ">=")', () => {
+    expect(elegibilidadeSimples(4_800_000).status_elegibilidade).toBe('sublimite_excedido'); // 4,8M exato NÃO inelegível
+    expect(elegibilidadeSimples(3_600_000).status_elegibilidade).toBe('elegivel');           // 3,6M exato NÃO sublimite
+  });
 });
 
 describe('impostoAnualPresumido — anualizado, adicional por trimestre, receitas financeiras integrais', () => {
@@ -92,6 +99,14 @@ describe('anexoEfetivoFatorR', () => {
   it('massa/receita ≥ 28% → III', () => { expect(anexoEfetivoFatorR(300000, 1e6).anexo).toBe('III'); });
   it('< 28% → V', () => { expect(anexoEfetivoFatorR(100000, 1e6).anexo).toBe('V'); });
   it('massa null → banda (ambos)', () => { expect(anexoEfetivoFatorR(null, 1e6).banda).toBe(true); });
+  // Mutation-check (auto-ensino 2026-06-06): testes cobriam 0.30 e 0.10, não a BORDA 0.28.
+  // O limiar do fator-r é INCLUSIVO (LC 123: fator-r >= 28% → anexo III). fr==0.28 exato é
+  // alcançável (280k/1M) e decide anexo III vs V (impostos bem diferentes). A mutação >=->>  sobrevivia.
+  it('fator-r EXATAMENTE 28% → anexo III (limiar inclusivo, >=, não >)', () => {
+    const r = anexoEfetivoFatorR(280000, 1_000_000); // 280000/1e6 === 0.28 (exato em double)
+    expect(r.fator_r).toBe(0.28);
+    expect(r.anexo).toBe('III');
+  });
 });
 
 describe('breakEvenMargemReal', () => {
