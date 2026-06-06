@@ -96,13 +96,34 @@ export default function AdminReposicaoGruposProducao() {
         });
       }
 
-      const rows: SkuRow[] = rawRows.map((r) => ({
-        empresa: r.empresa,
-        sku_codigo_omie: Number(r.sku_codigo_omie),
-        sku_descricao: r.sku_descricao,
-        fornecedor_nome: r.fornecedor_nome,
-        grupo_codigo: assocMap[String(r.sku_codigo_omie)] || null,
-      }));
+      // Esconde Produto Acabado ('04' = fabricado, não comprado → não precisa de grupo de produção).
+      // Sinal CANÔNICO = omie_products.tipo_produto (account 'oben') — o MESMO do motor e do
+      // gerador de alerta no backend (evita divergência tipo_reposicao×tipo_produto).
+      const set04 = new Set<string>();
+      if (skuCodes.length > 0) {
+        const codigos = skuCodes.map(Number).filter(Number.isFinite);
+        if (codigos.length > 0) {
+          const { data: prod } = await supabase
+            .from("omie_products")
+            .select("omie_codigo_produto, tipo_produto")
+            .eq("account", "oben")
+            .in("omie_codigo_produto", codigos)
+            .in("tipo_produto", ["04", "4"]);
+          ((prod || []) as Array<{ omie_codigo_produto: number }>).forEach((p) =>
+            set04.add(String(p.omie_codigo_produto)),
+          );
+        }
+      }
+
+      const rows: SkuRow[] = rawRows
+        .filter((r) => !set04.has(String(r.sku_codigo_omie)))
+        .map((r) => ({
+          empresa: r.empresa,
+          sku_codigo_omie: Number(r.sku_codigo_omie),
+          sku_descricao: r.sku_descricao,
+          fornecedor_nome: r.fornecedor_nome,
+          grupo_codigo: assocMap[String(r.sku_codigo_omie)] || null,
+        }));
 
       // Filtro por grupo (client-side, aplicado depois do fetch da página)
       const filtered = filtroGrupo === ALL
