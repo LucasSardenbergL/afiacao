@@ -40,6 +40,42 @@ export interface CandidatoFeatures {
   atrasoRelativo: number | null;
 }
 
+/**
+ * Linha crua da view SQL `v_caca_compradores` (fatos de quem JÁ compra).
+ * Grão = (documento × empresa). O caller filtra por empresa antes de selecionar.
+ */
+export interface CompradorRow {
+  documento: string;
+  empresa: EmpresaAlvo; // 'oben' | 'colacor'
+  cidade_uf: string | null;
+  ramo: string | null;
+  ticket_faixa: number | null;
+  familias: string[];
+  volume: number;
+  n_pedidos: number;
+  recencia_dias: number;
+  lucro_proxy: number | null;
+  lucro_cobertura: number;
+}
+
+/**
+ * Linha crua da view SQL `v_caca_candidatos` (alvos a serem "caçados").
+ * Grão = (documento × empresa-alvo).
+ */
+export interface CandidatoRow {
+  documento: string;
+  empresa_alvo: EmpresaAlvo;
+  cidade_uf: string | null;
+  ramo: string | null;
+  ticket_faixa: number | null;
+  familias: string[];
+  compra_em_outra_empresa: boolean;
+  ultima_compra_grupo_dias: number | null;
+  nome: string | null;
+  telefone: string | null;
+  cliente_user_id: string;
+}
+
 /** Snapshot de um "melhor cliente" para construção do perfil. */
 export interface MelhorCliente {
   documento: string;
