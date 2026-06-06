@@ -27,6 +27,7 @@ export default function AdminReposicaoRevisao() {
     nextPage,
     updateMutation,
     promoverMutation,
+    reativarMutation,
   } = useRevisaoParametros();
 
   return (
@@ -40,6 +41,13 @@ export default function AdminReposicaoRevisao() {
           Itens que vendem com recorrência mas estão fora da reposição automática. Revise a recorrência
           e clique em <strong>Promover</strong> — entram no fluxo normal de compra com uma quantidade-teste
           capada (o motor só compra se o estoque estiver baixo).
+        </p>
+      )}
+      {statusFilter === "descontinuados" && (
+        <p className="text-sm text-muted-foreground">
+          SKUs que você descontinuou de propósito (fora da reposição automática). Clique em
+          <strong> Reativar</strong> quando o preço voltar a ser competitivo — o item volta ao fluxo
+          normal de compra a partir do próximo ciclo (o motor só compra se o estoque estiver baixo).
         </p>
       )}
 
@@ -65,6 +73,8 @@ export default function AdminReposicaoRevisao() {
         onNextPage={nextPage}
         onPromover={(sku) => promoverMutation.mutate(sku)}
         promovendo={promoverMutation.isPending}
+        onReativar={(sku) => reativarMutation.mutate(sku)}
+        reativando={reativarMutation.isPending}
       />
 
       <SkuDetailSheet

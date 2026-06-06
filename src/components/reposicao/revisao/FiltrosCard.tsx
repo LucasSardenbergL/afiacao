@@ -72,6 +72,9 @@ export function FiltrosCard({
                 <SelectItem value="primeira_compra">
                   Candidatos a 1ª compra
                 </SelectItem>
+                <SelectItem value="descontinuados">
+                  Descontinuados
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
