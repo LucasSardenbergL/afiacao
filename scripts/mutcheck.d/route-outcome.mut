@@ -1,0 +1,13 @@
+# Invariantes money-path de src/lib/route/route-outcome.ts (closed-loop da lista de ligação).
+# Rode: scripts/mutcheck.sh src/lib/route/route-outcome.ts src/lib/route/route-outcome.test.ts scripts/mutcheck.d/route-outcome.mut
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+PEGA      | opt_out sticky->com janela          | s/r\.status === .opt_out./r.status === "opt_out" && diasEntreIso(hoje, r.dataNegocio) <= 7/
+PEGA      | jaConvertido dataRota->dataNegocio  | s/r\.dataRota === dataRotaFila/r.dataNegocio === dataRotaFila/
+PEGA      | cadencia dias->linhas               | s/new Set\(semRespNaJanela\.map\(r => r\.dataNegocio\)\)\.size/semRespNaJanela.length/
+PEGA      | limiar >= -> >                      | s/semRespostaRecenteN >= cfg\.limiarSemResposta/semRespostaRecenteN > cfg.limiarSemResposta/
+PEGA      | gate min->max                       | s/Math\.min\(\.\.\.candidatos\)/Math.max(...candidatos)/
+PEGA      | reais min->max (buraco fechado)     | s/Math\.min\(\.\.\.reaisDias\)/Math.max(...reaisDias)/
+PEGA      | ultimaSemResp min->max              | s/Math\.min\(\.\.\.semRespDias\)/Math.max(...semRespDias)/
+PEGA      | futuros reais (d>=0 removido)       | s/\.filter\(d => d >= 0\);/.filter(d => d >= -9999);/
+PEGA      | janela <= -> <                      | s/d >= 0 && d <= cfg\.janelaCadenciaDias/d >= 0 && d < cfg.janelaCadenciaDias/
+SOBREVIVE | diasEntreIso round->trunc (UTC)     | s/Math\.round\(/Math.trunc(/
