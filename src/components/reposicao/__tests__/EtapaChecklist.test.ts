@@ -5,7 +5,6 @@ import type { ReposicaoStatus } from "@/hooks/useReposicaoSessao";
 const baseStatus: ReposicaoStatus = {
   current: 3,
   oportunidadesCount: 0,
-  parametrosPendentesCount: 0,
   pedidosTotal: 0,
   pedidosPendentes: 0,
   pedidosBloqueados: 0,
@@ -28,11 +27,11 @@ describe("buildEtapaChecklist", () => {
     expect(def.items[0].cta?.to).toBe("/admin/reposicao/oportunidades");
   });
 
-  it("Etapa 2: pending when params await approval", () => {
-    const def = buildEtapaChecklist(2, { ...baseStatus, parametrosPendentesCount: 7 });
-    expect(def.items[0].done).toBe(false);
-    expect(def.items[0].label).toMatch(/7 par[aâ]metro/);
-    expect(def.items[0].cta?.to).toBe("/admin/reposicao/revisao");
+  it("Etapa 2: auto-managed — done, sem ação de aprovação", () => {
+    const def = buildEtapaChecklist(2, baseStatus);
+    expect(def.title).toMatch(/autom/i);
+    expect(def.items[0].done).toBe(true);
+    expect(def.items[0].cta).toBeUndefined();
   });
 
   it("Etapa 3: not done while no pedidos generated", () => {

@@ -95,7 +95,9 @@ export function SkuRow({ row: r, onOpenDetail, onPromover, promovendo }: SkuRowP
           >
             Aguardando fornecedor
           </Badge>
-        ) : null}
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
       </TableCell>
       <TableCell>
         <div className="flex items-center justify-end gap-1">
