@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { IncomingCallModal } from './call/IncomingCallModal';
+import { TransferSpikePanel } from './call/TransferSpikePanel';
 
 /**
  * Limpa scroll-locks e pointer-events deixados por overlays Radix
@@ -58,6 +59,8 @@ export function AppShellLayout() {
       <Outlet />
       {/* PR-INBOUND-CALLS: modal global pra chamadas inbound em qualquer tela autenticada */}
       <IncomingCallModal />
+      {/* SPIKE (flag telefoniaTransferSpike): painel de teste de transferência *2/REFER */}
+      <TransferSpikePanel />
     </AppShell>
   );
 }

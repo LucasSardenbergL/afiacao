@@ -57,6 +57,8 @@ export interface WebRTCCallContextValue {
   // NEW in PR1.6:
   isMuted: boolean;
   toggleMute: () => void;
+  /** SPIKE (flag telefoniaTransferSpike): dispara transferência da chamada ativa p/ um ramal. */
+  spikeTransfer?: (extension: string, method: 'dtmf' | 'refer') => void;
   /** true durante reprodução do pre-roll LGPD; false antes/depois */
   prerollPlaying: boolean;
   /** timestamp (Date.now()) em que o preroll termina; null se sem preroll */
@@ -448,6 +450,18 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     }
   }, []);
 
+  // SPIKE (flag telefoniaTransferSpike): dispara transferência da chamada ativa.
+  // Guard de lente igual ao makeCall (mutação SIP fura o write-guard do client → gateia na fonte).
+  const spikeTransfer = useCallback((extension: string, method: 'dtmf' | 'refer') => {
+    if (isLensActive()) {
+      toast.error('Transferência indisponível na lente (somente leitura).');
+      return;
+    }
+    if (!clientRef.current) return;
+    if (method === 'dtmf') clientRef.current.transferViaDtmf(extension);
+    else clientRef.current.transferViaRefer(extension);
+  }, []);
+
   // PR-INBOUND-CALLS: atende chamada pendente. Mesmo setup de áudio do makeCall (mic + preroll).
   const acceptIncoming = useCallback(async () => {
     if (isLensActive()) {
@@ -564,6 +578,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     remoteStream,
     isMuted,
     toggleMute,
+    spikeTransfer,
     prerollPlaying,
     prerollEndsAt,
     vendorMicStream,
