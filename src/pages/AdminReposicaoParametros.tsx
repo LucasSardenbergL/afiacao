@@ -1,9 +1,10 @@
 import { lazy, Suspense, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Settings, Loader2, AlertTriangle, Package, Truck, Building2 } from "lucide-react";
+import { Settings, Loader2, AlertTriangle, Truck, Building2, Sparkles, ArrowRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -13,13 +14,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ReposicaoEmpresaProvider, useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
-// Reaproveita as 4 telas originais — mesmas queries Supabase, sem duplicar.
+// Reaproveita as telas originais — mesmas queries Supabase, sem duplicar.
+// A antiga aba "Revisão" (aprovação manual de parâmetros) foi APOSENTADA: os parâmetros
+// são aplicados automaticamente todo dia e o que mudou vive em /admin/reposicao/mudancas-automaticas.
 // Tabelas/views usadas:
-//  - sku_parametros + vw_revisao_parametros  → AdminReposicaoRevisao
 //  - sku_parametros_historico                → AdminReposicaoHistorico
 //  - eventos_outlier                         → AdminReposicaoAlertas
 //  - views de SLA                            → AdminReposicaoSlaFornecedor
-const AdminReposicaoRevisao = lazy(() => import("./AdminReposicaoRevisao"));
 const AdminReposicaoHistorico = lazy(() => import("./AdminReposicaoHistorico"));
 const AdminReposicaoAlertas = lazy(() => import("./AdminReposicaoAlertas"));
 const AdminReposicaoSlaFornecedor = lazy(() => import("./AdminReposicaoSlaFornecedor"));
@@ -34,23 +35,6 @@ const TabFallback = () => (
 /* ─── KPI Cards ─── */
 function KpiCards() {
   const { empresa } = useReposicaoEmpresa();
-
-  // (a) SKUs pendentes de aprovação — mesma query de AdminReposicaoRevisao (statusFilter === "pendente")
-  const { data: skuPendentes } = useQuery({
-    queryKey: ["parametros-sku-pendentes", empresa],
-    queryFn: async () => {
-      const { count, error } = await supabase
-        .from("sku_parametros")
-        .select("*", { count: "exact", head: true })
-        .eq("empresa", empresa)
-        .eq("ativo", true)
-        .is("aprovado_em", null);
-      if (error) throw error;
-      return count ?? 0;
-    },
-    refetchInterval: 60000,
-    staleTime: 30000,
-  });
 
   // (b) Alertas críticos pendentes — mesma query de AdminReposicaoAlertas (stats.criticos)
   const { data: alertasCriticos } = useQuery({
@@ -86,13 +70,6 @@ function KpiCards() {
 
   const cards = [
     {
-      label: "SKUs pendentes de aprovação",
-      value: skuPendentes ?? 0,
-      icon: Package,
-      tone: skuPendentes && skuPendentes > 0 ? "text-warning" : "text-muted-foreground",
-      border: skuPendentes && skuPendentes > 0 ? "border-warning/40" : "border-border",
-    },
-    {
       label: "Alertas críticos pendentes",
       value: alertasCriticos ?? 0,
       icon: AlertTriangle,
@@ -109,7 +86,7 @@ function KpiCards() {
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
       {cards.map((c) => (
         <Card key={c.label} className={c.border}>
           <CardContent className="pt-4 flex items-center justify-between">
@@ -125,9 +102,13 @@ function KpiCards() {
   );
 }
 
+const VALID_TABS = ["alertas", "sla", "historico"];
+
 export default function AdminReposicaoParametros() {
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") ?? "revisao";
+  const rawTab = params.get("tab") ?? "alertas";
+  // "revisao" foi aposentada — qualquer tab inválida/legada cai em "alertas".
+  const tab = VALID_TABS.includes(rawTab) ? rawTab : "alertas";
   const [empresa, setEmpresa] = useState("OBEN");
 
   const handleTab = (v: string) => {
@@ -146,7 +127,7 @@ export default function AdminReposicaoParametros() {
               <div className="text-[10px] font-semibold tracking-wider text-primary uppercase">Etapa 2</div>
               <h1 className="text-2xl font-bold">Parâmetros</h1>
               <p className="text-sm text-muted-foreground">
-                Revisão de parâmetros, triagem de outliers, histórico de alterações e compliance de SLA — em um só lugar.
+                Triagem de outliers, histórico de alterações e compliance de SLA. Os parâmetros são ajustados automaticamente.
               </p>
             </div>
           </div>
@@ -164,21 +145,36 @@ export default function AdminReposicaoParametros() {
           </div>
         </header>
 
+        {/* Parâmetros geridos automaticamente — substitui a antiga aba "Revisão" (aprovação manual). */}
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="pt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <Sparkles className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+              <div>
+                <div className="text-sm font-semibold">Parâmetros geridos automaticamente</div>
+                <p className="text-sm text-muted-foreground">
+                  O sistema ajusta ponto de pedido, mínimo e máximo todo dia. Você não precisa aprovar nada —
+                  confira o que mudou e reverta se quiser.
+                </p>
+              </div>
+            </div>
+            <Button asChild className="shrink-0">
+              <Link to="/admin/reposicao/mudancas-automaticas">
+                Ver mudanças automáticas
+                <ArrowRight className="h-4 w-4 ml-1.5" />
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+
         <KpiCards />
 
         <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
-          <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
-            <TabsTrigger value="revisao">Revisão</TabsTrigger>
+          <TabsList className="grid grid-cols-3 w-full">
             <TabsTrigger value="alertas">Alertas</TabsTrigger>
             <TabsTrigger value="sla">SLA de Fornecedor</TabsTrigger>
             <TabsTrigger value="historico">Histórico</TabsTrigger>
           </TabsList>
-
-          <TabsContent value="revisao" className="m-0">
-            <Suspense fallback={<TabFallback />}>
-              <AdminReposicaoRevisao />
-            </Suspense>
-          </TabsContent>
 
           <TabsContent value="alertas" className="m-0">
             <Suspense fallback={<TabFallback />}>
