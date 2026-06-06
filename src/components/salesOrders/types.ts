@@ -32,10 +32,23 @@ export const decodeHtml = (s: string): string =>
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
 
+// Item do pedido como vive no jsonb sales_orders.items. Os campos extras
+// (codigo/unidade/tint) só aparecem em alguns itens (ex.: bases tintométricas).
+export interface SalesOrderItem {
+  descricao: string;
+  quantidade: number;
+  valor_unitario: number;
+  valor_total: number;
+  codigo?: string;
+  unidade?: string;
+  tint_cor_id?: string;
+  tint_nome_cor?: string;
+}
+
 export interface SalesOrder {
   id: string;
   customer_user_id: string;
-  items: Array<{ descricao: string; quantidade: number; valor_unitario: number; valor_total: number }>;
+  items: SalesOrderItem[];
   subtotal: number;
   total: number;
   status: string;

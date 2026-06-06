@@ -5,6 +5,17 @@ import { openPrintOrder } from '@/components/OrderPrintLayout';
 import type { CompanyFilter, OmiePayload, OrderItem, SalesOrderRow } from '@/components/sales/print/types';
 import type { SalesOrder } from './types';
 
+// Total da linha do item. Alguns pedidos (ex.: rascunho) gravam valor_total = 0
+// no item embora o valor_unitario esteja preenchido — nesse caso calculamos
+// quantidade × valor_unitário para não exibir/imprimir R$ 0,00.
+export function itemTotal(item: {
+  valor_total?: number | null;
+  quantidade?: number | null;
+  valor_unitario?: number | null;
+}): number {
+  return item.valor_total || (item.quantidade || 0) * (item.valor_unitario || 0);
+}
+
 // sales_orders.account → empresa do cupom. colacor_sc é a entidade Colacor S.C.
 // (mesma chave 'afiacao' do companyMap em buildPrintData).
 export function resolveCompanyForPrint(account?: string): CompanyFilter {
@@ -24,7 +35,8 @@ export function buildSalesOrderPrintRow(
   return {
     id: order.id,
     customer_user_id: order.customer_user_id,
-    items: (order.items ?? []) as unknown as OrderItem[],
+    // valor_total por item recalculado quando vem zerado (rascunhos).
+    items: (order.items ?? []).map((it) => ({ ...it, valor_total: itemTotal(it) })) as unknown as OrderItem[],
     subtotal: order.subtotal ?? 0,
     total: order.total ?? 0,
     desconto: order.discount ?? 0,
