@@ -19,6 +19,8 @@
 - `src/components/fila/AcaoOutcomeMenu.tsx` (modify) — desabilita os triggers de outcome (tarefa/mixgap) na lente.
 - `src/components/call/OutcomeMenu.tsx` (modify) — desabilita o trigger de outcome de rota na lente (cobre o branch 'rota' do AcaoOutcomeMenu **e** a página `/rota/ligacoes`).
 - `src/components/fila/__tests__/AcaoOutcomeMenu.test.tsx` (create) — trigger disabled na lente.
+- `src/components/call/CallDialerView.tsx` (modify) — desabilita os botões "Ligar" na lente.
+- `src/components/call/WebRTCDialer.tsx` (modify) — barra `onMakeCall` na FONTE com `isLensActive()` (WebRTC fura o write-guard).
 
 `CommercialDashboard.tsx` e `FarmerCalls.tsx` **NÃO mudam** — herdam o comportamento via `useMyCommercialRole`.
 
@@ -301,7 +303,85 @@ git commit -m "feat(lente): CTAs de outcome (fila/rota/mixgap) viram read-only n
 
 ---
 
-## Task 3: Validação final + suíte
+## Task 3: Bloquear o Dialer / "Nova ligação" na lente (fura o write-guard)
+
+> O Dialer hoje é **WebRTC-only** (`Dialer.tsx` → `WebRTCDialer`; JsSIP/WebSocket — NÃO passa pelo Supabase), então o write-guard do client **NÃO o cobre**. Na lente, "Ligar" colocaria uma ligação REAL pro cliente como o master. Gate duplo: desabilita o botão (UX) **+** barra na FONTE com `isLensActive()` (backstop, mesmo padrão do `DispararAgoraButton` / F3 da Fase 1). O `onMakeCall` único do WebRTCDialer é o ponto onde a chamada de fato inicia.
+
+**Files:**
+- Modify: `src/components/call/CallDialerView.tsx`
+- Modify: `src/components/call/WebRTCDialer.tsx`
+
+- [ ] **Step 1: Gate visual no `CallDialerView.tsx`**
+
+Add o import (junto dos outros no topo):
+
+```ts
+import { useImpersonation } from '@/contexts/ImpersonationContext';
+```
+
+No início do componente (junto do `const [dismissed, ...]` e demais hooks):
+
+```ts
+  const { isImpersonating } = useImpersonation();
+```
+
+No botão **compacto** (hoje `disabled={!hasValidPhone}` + `title={hasValidPhone ? ... : 'Telefone inválido'}`), trocar essas 2 linhas por:
+
+```tsx
+        disabled={!hasValidPhone || isImpersonating}
+        title={isImpersonating ? 'Ligação indisponível em modo Ver como' : (hasValidPhone ? `Ligar para ${displayPhone}` : 'Telefone inválido')}
+```
+
+No botão **full** (hoje só `disabled={!hasValidPhone}`), trocar por:
+
+```tsx
+        disabled={!hasValidPhone || isImpersonating}
+        title={isImpersonating ? 'Ligação indisponível em modo Ver como' : undefined}
+```
+
+- [ ] **Step 2: Gate na FONTE no `WebRTCDialer.tsx`**
+
+Add o import (junto dos outros; `toast` já está importado):
+
+```ts
+import { isLensActive } from '@/lib/impersonation/lens-write-guard';
+```
+
+No handler `onMakeCall` (hoje começa `if (!ctx) return;`), inserir a checagem ANTES do `if (busy && !owned)`:
+
+```tsx
+      onMakeCall={() => {
+        if (!ctx) return;
+        if (isLensActive()) {
+          toast.error('Ligação indisponível na lente (somente leitura). Saia da lente para ligar.');
+          return;
+        }
+        if (busy && !owned) {
+          toast.info('Já existe uma chamada em andamento');
+          return;
+        }
+        ctx.claimCall(id);
+        void ctx.makeCall(props.phoneNumber);
+      }}
+```
+
+- [ ] **Step 3: typecheck + lint**
+
+Run: `heavy bun run typecheck && bun lint`
+Expected: limpo.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/components/call/CallDialerView.tsx src/components/call/WebRTCDialer.tsx
+git commit -m "feat(lente): bloqueia o Dialer (WebRTC fura o write-guard) na lente"
+```
+
+> **Verificação:** sem teste unitário automático (montar o `WebRTCCallContext`/JsSIP em jsdom é caro; `CallDialerView` exige muitos props de estado de chamada). O `isLensActive()` da fonte já é coberto pelos testes de `lens-write-guard`. QA manual no Chrome: na lente de uma Farmer, abrir uma tela com o Dialer → botão "Ligar" **disabled**; se forçado, o `onMakeCall` barra com toast e NÃO inicia a chamada.
+
+---
+
+## Task 4: Validação final + suíte
 
 - [ ] **Step 1: Suíte completa**
 
@@ -320,10 +400,11 @@ Run: `heavy bun run typecheck` (limpo) + `bun lint` (0 errors).
 
 ## Self-Review (checklist do autor)
 
-**Spec coverage** (escopo escolhido = núcleo + polish de CTAs):
+**Spec coverage** (escopo escolhido = núcleo + polish de CTAs + Dialer):
 - ✅ `/meu-dia` reflete o alvo → Task 1 (cascateia via `useMyCommercialRole`).
 - ✅ `FarmerCalls` `isHunter` reflete o alvo → Task 1 (mesmo hook).
 - ✅ CTAs de escrita dos dashboards da lente viram read-only → Task 2 (`AcaoOutcomeMenu` + `OutcomeMenu`; os demais cards de visita são read-only — só `<Link>`/toggle local; `MinhasTarefasCard`/`MixGapCard`/`RecorrentesHojeCard` JÁ gateiam).
+- ✅ Dialer / "Nova ligação" (WebRTC fura o write-guard) bloqueado na lente → Task 3 (botão `disabled` + barra na fonte com `isLensActive()`).
 
 **Placeholder scan:** sem TBD/TODO; todo step tem código exato.
 
@@ -331,10 +412,11 @@ Run: `heavy bun run typecheck` (limpo) + `bun lint` (0 errors).
 
 ---
 
-## Riscos e follow-ups (fora do escopo escolhido — decisão do founder)
+## Riscos e follow-ups
 
-- 🚩 **Dialer / "Nova ligação" (`src/components/farmer/calls/AgendaQueueCard.tsx:68`, página `/farmer/calls`).** NÃO é um card de dashboard (fora do escopo "polish de CTAs dos dashboards"), mas é um CTA de ESCRITA reachable na lente (employee). **Risco:** se a ligação for WebRTC (JsSIP, sem Supabase) ou `fetch` cru pra edge, **contorna o write-guard** — como o `DispararAgoraButton` contornava (F3 da Fase 1). Na lente, ligaria pro cliente como o master. **Follow-up:** investigar `src/components/call/Dialer.tsx` + `useNvoipCall`/`useWebRTCCall`; se bypass, gatear o entry-point com `isLensActive()` (padrão `DispararAgoraButton`). Recomendo incluir antes de publicar a Fase 2.
+- ✅ **Dialer / "Nova ligação" — agora é a Task 3** (investigado: WebRTC-only fura o write-guard; gate na fonte). Resolvido no escopo deste plano.
 - **`/meu-dia` na lente assume que o master pode ler o perfil do alvo** — verdade (o RPC `get_user_access_profile_for` é master-only e já é a fonte). Se falhar, `useImpersonatedAccessProfile` erra → o banner já sai da lente com toast (F2 da Fase 1).
+- **Outros `fetch` crus / canais que furam o write-guard:** a Fase 1 mapeou `DispararAgoraButton` (gateado) e `useSuggestedMapping` (leitura, ok). A Task 3 fecha o Dialer. Se surgir nova ação com efeito externo fora do PostgREST/storage/`functions.invoke`/rpc, aplicar o mesmo `isLensActive()`.
 - **Deploy:** Publish manual no Lovable (frontend não auto-deploya). Sem migration/edge.
 
 ---
