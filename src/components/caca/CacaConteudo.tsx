@@ -24,11 +24,15 @@
  * as interações (abrir item, ação, outcome). Métrica de piloto é Fase 4.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Target } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
+import { track } from '@/lib/analytics';
+import { spBusinessDate } from '@/lib/time/sp-day';
+import { marcarSeNovoNoDia } from '@/lib/fila/telemetria';
+import { chaveDiaExibidaCaca, resumoSabores } from '@/lib/caca/telemetria';
 import { useCaca } from '@/hooks/useCaca';
 import { FilaDeCaca } from './FilaDeCaca';
 
@@ -49,6 +53,15 @@ export function CacaConteudo() {
     () => (data ?? []).filter((c) => !ocultos.has(c.features.documento)),
     [data, ocultos],
   );
+
+  // caca.exibida: 1×/dia/sessão (NÃO por render) — mede exposição, não re-render.
+  useEffect(() => {
+    if (isLoading || visiveis.length === 0) return;
+    const dia = spBusinessDate(new Date());
+    if (marcarSeNovoNoDia(chaveDiaExibidaCaca(dia), sessionStorage)) {
+      track('caca.exibida', { qtd: visiveis.length, sabores: resumoSabores(visiveis) });
+    }
+  }, [isLoading, visiveis]);
 
   // ─── Erro ───────────────────────────────────────────────────────────────────
   // FilaDeCaca não tem estado de erro → tratamos aqui (honesto, com retry).
