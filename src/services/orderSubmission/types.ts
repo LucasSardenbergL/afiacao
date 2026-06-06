@@ -63,6 +63,11 @@ export interface SubmitOrderParams {
   defaultProductionAssigneeId: string | null;
   getServicePrice: (item: ServiceCartItem) => number | null;
   supabase: SubmitClient;
+  /** True em autoatendimento (cliente não-staff): cliente sintético
+   *  (codigo_cliente=0, sem código por-conta), só itens de afiação; o edge
+   *  resolve a identidade por user/documento. Desliga o preflight de identidade
+   *  por-conta (que é regra de pedido STAFF multi-conta). Default: false. */
+  isCustomerMode?: boolean;
 }
 
 export interface SubmitErrorEntry {

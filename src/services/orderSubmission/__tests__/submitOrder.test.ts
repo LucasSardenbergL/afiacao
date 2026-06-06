@@ -24,8 +24,9 @@ vi.mock('@/lib/logger', () => ({
 }));
 
 import { submitOrder } from '../submitOrder';
+import { syncOrderToOmie } from '@/services/omieService';
 import type { SubmitOrderParams, SubmitClient } from '../types';
-import type { OmieCustomer, ProductCartItem } from '@/hooks/unifiedOrder/types';
+import type { OmieCustomer, ProductCartItem, ServiceCartItem } from '@/hooks/unifiedOrder/types';
 
 // ─── Mock supabase (injetado via params) ───
 interface MakeSupabaseOpts {
@@ -79,6 +80,21 @@ function colacorAcabadoColuna(): ProductCartItem {
     product: { id: 'p3', omie_codigo_produto: 'COL2', codigo: 'C3', descricao: 'Disco acabado coluna', unidade: 'UN', tipo_produto: '04' },
   } as unknown as ProductCartItem;
 }
+function serviceItem(): ServiceCartItem {
+  return {
+    type: 'service', quantity: 1, notes: '', photos: [],
+    servico: { descricao: 'Afiação padrão', omie_codigo_servico: 'SVC1' },
+    userTool: { id: 't1', tool_category_id: 'tc1', specifications: {} },
+  } as unknown as ServiceCartItem;
+}
+// Cliente sintético do autoatendimento (isCustomerMode): codigo_cliente=0, SEM código por-conta.
+const customerSintetico = {
+  codigo_cliente: 0,
+  codigo_vendedor: null,
+  razao_social: 'Cliente Final',
+  nome_fantasia: '',
+  cnpj_cpf: '11122233344',
+} as OmieCustomer;
 
 function makeParams(over: Partial<SubmitOrderParams> & { supabase: SubmitClient }): SubmitOrderParams {
   return {
@@ -220,5 +236,54 @@ describe('submitOrder', () => {
     // nunca chamou criar_ordem_producao (sem responsável)
     const opCalls = invoke.mock.calls.filter((c) => (c[1] as { body: { action?: string } }).body.action === 'criar_ordem_producao');
     expect(opCalls).toHaveLength(0);
+  });
+
+  it('Modo cliente (autoatendimento): OS de afiação NÃO é bloqueada pelo preflight (cliente sintético code 0)', async () => {
+    const { client } = makeSupabase();
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      customer: customerSintetico,           // codigo_cliente=0, sem código afiação
+      isCustomerMode: true,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      subtotals: { oben: 0, colacor: 0, service: 30 },
+    }));
+    // Não pode ser bloqueado por identidade — o edge resolve por user/documento.
+    expect(r.errors.some((e) => e.step === 'validate_identity')).toBe(false);
+    // Mantém o comportamento antigo: customerOmieCode cai no codigo_cliente (0), não vira undefined.
+    expect(syncOrderToOmie).toHaveBeenCalled();
+    const staffCtx = vi.mocked(syncOrderToOmie).mock.calls[0][4];
+    expect(staffCtx).toMatchObject({ customerOmieCode: 0 });
+  });
+
+  it('Staff: OS de afiação SEM código afiação → fail-closed (não chama o Omie)', async () => {
+    const { client } = makeSupabase();
+    // `customer` (staff) tem oben+colacor mas NÃO tem codigo_cliente_afiacao.
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      subtotals: { oben: 0, colacor: 0, service: 30 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_identity');
+    expect(r.errors[0].message).toContain('Afiação');
+    expect(syncOrderToOmie).not.toHaveBeenCalled();
+  });
+
+  it('Colacor: PV usa o cliente E o vendedor POR-CONTA (200/6), nunca o Oben (100/5)', async () => {
+    const { client, invoke } = makeSupabase({ insertId: 'so-col' });
+    await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [], colacorProductItems: [colacorAcabado()], serviceItems: [] },
+      subtotals: { oben: 0, colacor: 50, service: 0 },
+      defaultProductionAssigneeId: 'assignee-1',
+    }));
+    const colacorPedido = invoke.mock.calls.find((c) => {
+      const b = (c[1] as { body: { action?: string; account?: string } }).body;
+      return b.action === 'criar_pedido' && b.account === 'colacor';
+    });
+    expect(colacorPedido).toBeDefined();
+    const body = (colacorPedido![1] as { body: { codigo_cliente?: number; codigo_vendedor?: number } }).body;
+    expect(body.codigo_cliente).toBe(200);   // colacor, não 100 (oben)
+    expect(body.codigo_vendedor).toBe(6);    // colacor, não 5 (oben)
   });
 });
