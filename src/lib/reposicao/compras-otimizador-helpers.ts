@@ -29,6 +29,18 @@ export function aplicarMinimoForcado(qtdeNatural: number, minimoForcado: number 
   return qtdeNatural;
 }
 
+// Integeriza uma quantidade de COMPRA: arredonda PRA CIMA (nunca sub-pedir) e nunca negativa.
+// Motivo: o estoque do Omie vem com poeira decimal (tinta medida em litros) → a RPC faz
+// estoque_maximo(inteiro) − estoque(6,00004) = 3,99996; sem ceil isso vira quantidade fracionária
+// no pedido e chega ao fornecedor (Omie IncluirPedCompra). Nenhum item de pedido pode ser fracionário.
+// Espelho EXATO desta regra: `ceil(...)` na RPC gerar_pedidos_sugeridos_ciclo e `Math.ceil(...)` no
+// disparo (disparar-pedidos-aprovados). Entrada não-finita/≤0 → 0 (campo limpo / linha zerada).
+export function quantidadeCompraInteira(n: number | null | undefined): number {
+  const v = Number(n ?? 0);
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.ceil(v));
+}
+
 // Melhor desconto cujo volume_minimo ≤ q (curva progressiva → pega o maior aplicável).
 export function descontoAplicavel(curva: FaixaDesconto[], q: number): number {
   let best = 0;

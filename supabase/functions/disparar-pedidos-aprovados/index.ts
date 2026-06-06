@@ -658,7 +658,11 @@ async function processarPedido(
     const produtos_incluir = (items as ItemRow[]).map((it, idx) => ({
       cCodIntItem: `ITEM${String(idx + 1).padStart(3, "0")}`,
       nCodProd: Number(it.sku_codigo_omie),
-      nQtde: Number(it.qtde_final),
+      // [QTDE-INTEIRA] backstop universal: nenhum item de pedido pode ser fracionário. O estoque
+      // do Omie vem com poeira decimal (tinta em litros) → qtde_final pode ser 3,99996. ceil aqui
+      // pega qualquer fonte (linha legada, edição humana, promo, cold-start), mesmo que a RPC já
+      // ceile na origem. Math.ceil (não round) = nunca sub-pedir. O guard nQtde>0 acima já barrou ≤0.
+      nQtde: Math.ceil(Number(it.qtde_final)),
       nValUnit: Number(it.preco_unitario),
     }));
 
@@ -844,7 +848,7 @@ async function notificarFornecedor(
   const linhas = items
     .map(
       (it) =>
-        `${it.sku_codigo_omie} — ${it.sku_descricao ?? ""} — Qtde: ${it.qtde_final} — ${
+        `${it.sku_codigo_omie} — ${it.sku_descricao ?? ""} — Qtde: ${Math.ceil(Number(it.qtde_final))} — ${
           fmtBRL(it.preco_unitario)
         }/un`,
     )

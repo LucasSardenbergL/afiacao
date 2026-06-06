@@ -9,6 +9,7 @@ import { logger } from '@/lib/logger';
 import { PedidoSugerido, PedidoItem, CondicaoPagamento } from './types';
 import { aprovarEDisparar } from './aprovar-disparar';
 import { montarUpdateItem, podeEditarPrecoPedido, precoEditValido } from './preco-edit';
+import { quantidadeCompraInteira } from '@/lib/reposicao/compras-otimizador-helpers';
 
 export type Linha = PedidoItem & { _qtd: number; _preco: number; _valor: number };
 
@@ -92,7 +93,9 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
 
   const linhas = useMemo<Linha[]>(() => {
     return (itens ?? []).map((it) => {
-      const qtd = edits[it.id] ?? Number(it.qtde_final ?? it.qtde_sugerida);
+      // [QTDE-INTEIRA] default exibido sempre inteiro: ceila a poeira decimal do estoque do Omie
+      // em linhas legadas (ex.: qtde_final 3,99996 → 4). edits[] já vem inteiro do onEditQty.
+      const qtd = edits[it.id] ?? quantidadeCompraInteira(it.qtde_final ?? it.qtde_sugerida);
       const preco = precoEdits[it.id] ?? Number(it.preco_unitario ?? 0);
       return { ...it, _qtd: qtd, _preco: preco, _valor: qtd * preco };
     });
@@ -308,8 +311,8 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
   });
 
   const onEditQty = (id: number, raw: string) => {
-    const v = Number(raw);
-    setEdits((prev) => ({ ...prev, [id]: isNaN(v) ? 0 : v }));
+    // [QTDE-INTEIRA] quantidade de pedido é sempre inteira (ceil; nunca fração). Campo vazio/NaN → 0.
+    setEdits((prev) => ({ ...prev, [id]: quantidadeCompraInteira(Number(raw)) }));
   };
 
   const onEditPreco = (id: number, raw: string) => {
