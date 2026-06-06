@@ -1,8 +1,18 @@
 # Plano — Etapa 2: identidade de cliente por-conta confiável + tri-state
 
-**Pré-req:** [spec](../specs/2026-06-06-preco-realtime-selectCustomer-design.md) · Etapa 1 (PR #656) no ar.
-**Status:** rascunho — **aguarda challenge do Codex** (cota reseta ~12:56) antes de implementar (money-path).
-**Objetivo:** tornar a identidade do cliente por-conta (oben/colacor/afiação) **confiável e tri-state**, base para a Etapa 3 (submit fail-closed) sem risco de pedido na conta errada nem cliente duplicado.
+**Pré-req:** [spec](../specs/2026-06-06-preco-realtime-selectCustomer-design.md) · Etapa 1 (#656) + 2a (#660 + hotfix #673) no ar.
+**Status:** consult de design do Codex FEITO (2026-06-06) · **helper puro `src/lib/omie/cliente-lookup.ts` entregue (15 testes)** · backend dos edges = próxima passada focada (money-path, não-testável local, deploy seu).
+**Objetivo:** tornar a identidade do cliente por-conta (oben/colacor/afiação) **confiável e tri-state**, fechando o risco de **cliente duplicado** (e completando a base do fail-closed da 2a).
+
+## Refinamentos OBRIGATÓRIOS do Codex (consult 2b)
+1. **Helper tri-state (FEITO):** SÓ array vazio = `absent`. `null`/`undefined`/linha-sem-código = `error(malformed)`; **>1 resultado = `error(ambiguous)`** (documento duplicado → não escolher o 1º). `threw` sempre vence.
+2. **Detecção de ambíguo no edge:** consultar `registros_por_pagina:2` (ou ler `total_de_registros`); >1 → `error/ambiguous` (hoje os lookups usam `:1` e nunca veem duplicata).
+3. **`throwOnTransient` via options object** `{throwOnTransient:true}` (não boolean posicional); **vale também pro `IncluirCliente`** (hoje pode voltar `created:true` com código `null`). Cada lookup/ensure **captura** a exceção → `status:'error'` (não derruba o selectCustomer).
+4. **Reusar `src/lib/omie/omie-fault.ts`** (conservador, já testado) pra decidir transitório — NÃO inventar "todo SOAP-ERROR é transitório".
+5. **Ensure idempotente + reconciliação:** código `B2B_CLI_<doc>` (namespace, **doc válido 11/14 díg.**). Após **"integração duplicada"** do Omie → **reconsultar por código de integração, confirmar que o documento bate, retornar o código** (obrigatório). Após **timeout/erro transitório do `IncluirCliente`** → mesma reconciliação (a criação pode ter sido efetivada com resposta perdida).
+6. **Dois PRs por fronteira de deploy** (NÃO um por edge): **(A) backend** = os 2 edges (tri-state + ensure seguro + determinismo + reconciliação), deploy primeiro; **(B) frontend** = consumir o tri-state + skip em `error`, depois. Compatibilidade: preservar campos legados + adicionar `status`; **frontend novo + edge velho: `status` ausente = `error`, nunca `absent`**.
+7. **Não** adotar `UpsertClienteCpfCnpj` (semântica de overwrite pouco documentada).
+8. **Parser específico no frontend** (NÃO sobrecarregar o `getResult` genérico dos 7 requests).
 
 ## Problema que resolve
 Hoje o lookup de cliente colapsa **erro** e **ausência** no mesmo `null` (`getResult` no frontend; `callOmieVendasApi`→null; `omie-sync` retorna 200 com `codigo_cliente:null`). Consequências:
