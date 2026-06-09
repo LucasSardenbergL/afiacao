@@ -48,6 +48,19 @@ export function descontoAplicavel(curva: FaixaDesconto[], q: number): number {
   return best;
 }
 
+// Prazo da faixa de MAIOR volume aplicável (≤ q) com prazo_perc definido — espelha descontoAplicavel
+// (a faixa que você ATINGE é a de maior volume). NÃO o antigo `.find`, que pegava a 1ª faixa com prazo
+// (a de menor volume) e subestimava o encargo de prazo em curvas progressivas (achado do Codex).
+// null = nenhuma faixa com prazo aplicável (cai no prazo_padrao no caller).
+export function prazoAplicavel(curva: FaixaDesconto[], q: number): number | null {
+  let best: number | null = null;
+  let bestVol = -1;
+  for (const f of curva) {
+    if (q >= f.volume_minimo && f.prazo_perc != null && f.volume_minimo > bestVol) { best = f.prazo_perc; bestVol = f.volume_minimo; }
+  }
+  return best;
+}
+
 function arredondaLote(q: number, lote: number | null): number {
   if (!lote || lote <= 0) return Math.ceil(q);
   return Math.ceil(q / lote) * lote;
@@ -100,9 +113,12 @@ export function impactoPrazoRs(input: { prazo_cand_perc: number | null; prazo_pa
   return (cand - padrao) / 100 * input.valor_candidato; // + = encargo (custo); − = desconto (benefício)
 }
 
-export function freteIncrementalRs(input: { valor_extra: number; frete_perc_valor: number | null; frete_fixo: number | null; frete_taxa_pedido: number | null }): number {
-  const perc = (input.frete_perc_valor ?? 0) / 100 * input.valor_extra;
-  return perc + (input.frete_fixo ?? 0) + (input.frete_taxa_pedido ?? 0);
+// Frete INCREMENTAL de comprar mais. Como "comprar mais" = aumentar o MESMO pedido (não um pedido
+// separado — semântica confirmada pelo founder 2026-06), só o frete % do valor escala com a qtd extra.
+// Frete FIXO e TAXA DE PEDIDO são por-pedido → o pedido base já os paga → SUNK, não incrementais
+// (achado do Codex; o spec §2/§8 "modela os 3" era impreciso). Eles viram flag informativa, não custo.
+export function freteIncrementalRs(input: { valor_extra: number; frete_perc_valor: number | null }): number {
+  return (input.frete_perc_valor ?? 0) / 100 * input.valor_extra;
 }
 
 export function descontoIncrementalRs(input: { curva: FaixaDesconto[]; q_cand: number; q_base: number; preco_unit: number }): number {
@@ -172,6 +188,10 @@ export function avaliarComprarMais(ins: InsumoSku): DecisaoCompra {
 
   if (ins.ruptura_valor_estimado != null) motivos.push('Benefício de ruptura não estimado (conservador = 0).');
   flags.push('Benefício de ruptura não estimado (conservador, fase 1).');
+  // Degradação honesta: custo de capital ausente/zerado NÃO é "capital grátis" — é config faltando.
+  if (ins.cm_anual <= 0) { flags.push('Custo de capital ≤ 0 — capital extra não penalizado (config ausente?).'); motivos.push('Custo de capital não configurado.'); }
+  // Frete fixo/taxa por-pedido são SUNK (mesmo pedido) → fora do net marginal; sinaliza pro comprador.
+  if ((ins.frete_fixo ?? 0) > 0 || (ins.frete_taxa_pedido ?? 0) > 0) flags.push('Frete fixo/taxa de pedido no fornecedor — SUNK no mesmo pedido, fora da decisão marginal.');
 
   const candidatos = gerarCandidatos({ q_base, lote: ins.lote_minimo_fornecedor, demanda_diaria: ins.demanda_diaria,
     curva: ins.curva_desconto, dias_ate_aumento: ins.dias_ate_aumento, ruptura_dias: ins.ruptura_dias,
@@ -187,10 +207,9 @@ export function avaliarComprarMais(ins: InsumoSku): DecisaoCompra {
     const aumento_evitado_rs = aumentoEvitadoRs({ q_cand, q_base, demanda_diaria: ins.demanda_diaria, dias_ate_aumento: ins.dias_ate_aumento, aumento_perc: ins.aumento_evitado_perc, preco_unit: ins.preco_unit });
     const ruptura_evitada_rs = 0;
     const capital_extra_rs = capitalExtra({ valor_extra, cm_anual: ins.cm_anual, demanda_diaria: ins.demanda_diaria, q_base, q_extra });
-    const faixaCand = ins.curva_desconto.find((f) => q_cand >= f.volume_minimo && f.prazo_perc != null);
-    const prazo_cand_perc = faixaCand?.prazo_perc ?? ins.prazo_padrao_perc;
+    const prazo_cand_perc = prazoAplicavel(ins.curva_desconto, q_cand) ?? ins.prazo_padrao_perc;
     const impacto_prazo_rs = impactoPrazoRs({ prazo_cand_perc, prazo_padrao_perc: ins.prazo_padrao_perc, valor_candidato });
-    const frete_incremental_rs = freteIncrementalRs({ valor_extra, frete_perc_valor: ins.frete_perc_valor, frete_fixo: ins.frete_fixo, frete_taxa_pedido: ins.frete_taxa_pedido });
+    const frete_incremental_rs = freteIncrementalRs({ valor_extra, frete_perc_valor: ins.frete_perc_valor });
     const beneficio_liquido_rs = desconto_rs + aumento_evitado_rs + ruptura_evitada_rs - capital_extra_rs - impacto_prazo_rs - frete_incremental_rs;
     const cand: DecisaoCompra = {
       empresa: ins.empresa, sku: ins.sku, fornecedor: ins.fornecedor, q_base, q_candidata: q_cand, q_extra,
