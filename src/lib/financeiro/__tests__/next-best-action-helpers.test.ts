@@ -120,3 +120,81 @@ describe('montarFilaAcoes', () => {
     expect(r.fila.find((a) => a.empresa === 'oben' && a.tipo === 'crescer')!.status).toBe('financiar_condicional');
   });
 });
+
+// ── Correções da revisão adversarial (Codex) — invariante "ausente ≠ R$0" no A4 ──
+describe('A4 — invariantes (revisão adversarial Codex)', () => {
+  // #6 — crescer SEMPRE consome caixa (NCG); custo 0/negativo é dado implausível, não "grátis".
+  it('#6 crescer com custo de caixa 0 → falta_dado (não financia como se fosse grátis)', () => {
+    expect(classificarStatus({ tipo: 'crescer', impacto_eva: 8000, spread_positivo: true, caixa_consumido: 0, caixa_disponivel: 999999, hurdle: 0.2, tem_dado: true })).toBe('falta_dado');
+  });
+  it('#6 crescer com custo de caixa negativo → falta_dado', () => {
+    expect(classificarStatus({ tipo: 'crescer', impacto_eva: 8000, spread_positivo: true, caixa_consumido: -5000, caixa_disponivel: 999999, hurdle: 0.2, tem_dado: true })).toBe('falta_dado');
+  });
+
+  // #7 — hurdle ≤0 é implausível (custo de capital); pula pro próximo fallback (coerência com guards A2/A3).
+  it('#7 WACC 0 → pula pro próximo fallback (não aceita hurdle não-positivo)', () => {
+    const r = hurdleEfetivo({ wacc: 0, custo_divida_pos_imposto: 0.14, retorno_minimo_dono: 0.25, mediana_hurdles: 0.18 });
+    expect(r.hurdle).toBe(0.25); expect(r.fonte).toBe('retorno_dono');
+  });
+  it('#7 WACC negativo → pula pro próximo fallback', () => {
+    const r = hurdleEfetivo({ wacc: -0.05, custo_divida_pos_imposto: null, retorno_minimo_dono: null, mediana_hurdles: 0.18 });
+    expect(r.hurdle).toBe(0.18); expect(r.fonte).toBe('mediana');
+  });
+  it('#7 todos os candidatos a hurdle ≤0 → null/indisponivel (nunca fabrica hurdle não-positivo)', () => {
+    const r = hurdleEfetivo({ wacc: 0, custo_divida_pos_imposto: -0.01, retorno_minimo_dono: 0, mediana_hurdles: 0 });
+    expect(r.hurdle).toBeNull(); expect(r.fonte).toBe('indisponivel');
+  });
+
+  // #7b — a edge NÃO usa hurdleEfetivo (passa o WACC cru). A defesa contra hurdle ≤0 tem de estar na entrada da fila.
+  it('#7b hurdle ≤0 vindo do engine é tratado como ausente → crescer cai em falta_dado', () => {
+    const r = montarFilaAcoes({
+      candidatos: [cand({ empresa: 'oben', tipo: 'crescer', spread_positivo: true, caixa_consumido: 10000 })],
+      caixaPorEmpresa: { oben: { disponivel: 100000, confianca: 'alta' } },
+      hurdlePorEmpresa: { oben: 0 },
+    });
+    const a = r.fila.find((x) => x.empresa === 'oben' && x.tipo === 'crescer')!;
+    expect(a.hurdle).toBeNull();
+    expect(a.status).toBe('falta_dado');
+  });
+
+  // #2 — custo DESCONHECIDO (null) não pode ser ordenado como "grátis/retorno infinito" (ausente ≠ 0).
+  it('#2 crescer com custo null fica APÓS os dimensionados (não vira grátis/Infinity na fila)', () => {
+    const r = montarFilaAcoes({
+      candidatos: [
+        cand({ tipo: 'crescer', descricao: 'custo desconhecido', impacto_eva: null, caixa_consumido: null, spread_positivo: true }),
+        cand({ tipo: 'crescer', descricao: 'dimensionado', impacto_eva: 5000, caixa_consumido: 10000, spread_positivo: true }),
+      ],
+      caixaPorEmpresa: { oben: { disponivel: 200000, confianca: 'alta' } },
+      hurdlePorEmpresa: { oben: 0.2 },
+    });
+    const crescer = r.fila.filter((a) => a.tipo === 'crescer');
+    expect(crescer[0].descricao).toBe('dimensionado');
+    expect(crescer[crescer.length - 1].descricao).toBe('custo desconhecido');
+  });
+
+  // #3 — EVA ausente (null) não pode virar ratio 0 (ficaria à frente de EVA negativo conhecido).
+  it('#3 EVA null não é tratado como 0 no ratio: o de EVA conhecido ordena por ratio, o desconhecido vai ao fim', () => {
+    const r = montarFilaAcoes({
+      candidatos: [
+        cand({ tipo: 'crescer', descricao: 'eva desconhecido', impacto_eva: null, caixa_consumido: 10000, spread_positivo: false }),
+        cand({ tipo: 'crescer', descricao: 'eva negativo', impacto_eva: -1000, caixa_consumido: 10000, spread_positivo: false }),
+      ],
+      caixaPorEmpresa: { oben: { disponivel: 200000, confianca: 'alta' } },
+      hurdlePorEmpresa: { oben: 0.2 },
+    });
+    const crescer = r.fila.filter((a) => a.tipo === 'crescer');
+    // atual (buggy): eva null→0 fica ANTES de -1000. Correto: ratio conhecido (mesmo negativo) ordena; o desconhecido vai ao fim.
+    expect(crescer[0].descricao).toBe('eva negativo');
+    expect(crescer[1].descricao).toBe('eva desconhecido');
+  });
+
+  // #9 — o rollup de confiança diz "pior sinal entre caixa/candidatos" mas ignorava candidato.confianca.
+  it('#9 candidato de confiança baixa rebaixa o rollup da fila (não fica "alta")', () => {
+    const r = montarFilaAcoes({
+      candidatos: [cand({ empresa: 'oben', tipo: 'consertar_valor', descricao: 'sleeve incerto', impacto_eva: 1000, caixa_consumido: 0, confianca: 'baixa' })],
+      caixaPorEmpresa: { oben: { disponivel: 100000, confianca: 'alta' } },
+      hurdlePorEmpresa: { oben: 0.2 },
+    });
+    expect(r.confianca.nivel).not.toBe('alta');
+  });
+});
