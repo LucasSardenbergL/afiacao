@@ -56,3 +56,37 @@ export function deveCriarPedidoOmie(
   if (s === '0') return true;
   return false;
 }
+
+/**
+ * O pedido de portal é enviado por AUTOMAÇÃO (Browserless cola sozinho no portal
+ * B2B) e não exige cole manual do staff. Hoje a única automação de portal é o
+ * Sayerlack/OBEN.
+ * ⚠️ Espelha isSayerlackOben() do edge — se outra automação de portal surgir,
+ * estenda os dois lados juntos.
+ */
+export function portalEnviadoPorAutomacao(p: {
+  empresa?: string | null;
+  fornecedor_nome?: string | null;
+}): boolean {
+  return (
+    (p.empresa ?? '').toUpperCase() === 'OBEN' &&
+    /sayerlack/i.test(p.fornecedor_nome ?? '')
+  );
+}
+
+/**
+ * O e-mail "[Portal B2B] pronto para colar no portal" só é útil para portais SEM
+ * automação — onde o staff realmente cola o pedido na mão. Para o Sayerlack/OBEN
+ * (Browserless cola sozinho → "✓ Enviado") esse aviso "insere manualmente" é ruído
+ * enganoso: o pedido já foi enviado, e o e-mail-resumo do ciclo ("Pedidos
+ * disparados: …") já confirma o sucesso.
+ *
+ * Retorna true quando o e-mail manual do portal AINDA deve ser enviado.
+ * Conservador: na dúvida (sem sinal claro de automação) → envia.
+ */
+export function deveEnviarEmailPortalManual(p: {
+  empresa?: string | null;
+  fornecedor_nome?: string | null;
+}): boolean {
+  return !portalEnviadoPorAutomacao(p);
+}
