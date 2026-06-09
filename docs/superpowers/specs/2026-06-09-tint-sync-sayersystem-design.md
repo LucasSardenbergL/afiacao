@@ -3,6 +3,8 @@
 **Data:** 2026-06-09 · **Status:** aprovado pelo founder (design verbal); spec p/ plano
 **Frente:** roadmap-sessao.md §17 · **Decisor técnico:** delegado (eu + codex)
 
+> ⚠️ **Caminho B em vigor (codex em usage-limit até 11/06 9h24):** revisão adversária feita por mim (7 vetores, achados em §12) + **PG17 como oráculo** da promoção; **codex adversarial RETROATIVO obrigatório quando a cota voltar** (precedente: frente `aplicar_promocoes`, §10 do CLAUDE.md).
+
 ## 1. Problema
 
 O founder exporta CSVs do **SAYERSYSTEM** (software de tintometria da Sayerlack, desenvolvido pela **Dnaxis**) e faz upload manual em `/tintometrico/importar`. Fórmulas novas/alteradas e **preços que ele edita no SayerSystem** ficam desatualizados no app até o próximo upload. Objetivo: **eliminar a tarefa manual** — o app reflete o SayerSystem sozinho.
@@ -81,13 +83,15 @@ PC do balcão (Windows)                         Supabase (Lovable Cloud)
 - **Comandos:** `install` (pede URL/store_code/token, grava config, registra serviço), `uninstall`, `run` (loop do serviço), `once` (1 ciclo, debug), `discovery` (despeja schema em `sayersystem-schema.txt`).
 - **Config** `config.json` ao lado do exe: app URL, store_code, intervalo (default 10 min), conn PG local. **Token protegido com DPAPI** (CryptProtectData, escopo máquina+usuário do serviço); fallback claro se DPAPI indisponível.
 - **Ciclo (a cada 10 min):**
-  1. Conecta PG local (timeout 10s, conexão curta, `ReadCommitted`).
+  1. Conecta PG local (timeout 10s, conexão curta, `ReadCommitted`, **`client_encoding=UTF8`** — origem pode ser latin1/win1252; o PG converte na saída).
   2. **Valida schema** contra o mapeamento embutido (`information_schema`): diverge → **fail-closed**: não sinca, grava `sayersystem-schema.txt`, heartbeat com `schema_mismatch` (founder me manda o txt; eu ajusto e solto update). Bate → segue.
-  3. Por entidade (ordem: produto, base, embalagens, produto_base_embalagem, corantes, preco_corante, preco_baseemb, padracor+colecao+subcolecao, formula, personcor+formulaperson): `SELECT` delta `WHERE data_atualizacao > (checkpoint − 5 min)` → mapeia pro contrato → POST em lotes ≤1000 com `x-idempotency-key` (uuid v4 por lote) → retry/backoff (3×, exponencial) → **checkpoint local (`state.json`) só avança após 2xx**.
+  3. Por entidade (ordem: produto, base, embalagens, produto_base_embalagem, corantes, preco_corante, preco_baseemb, padracor+colecao+subcolecao, formula, personcor+formulaperson): `SELECT` delta `WHERE data_atualizacao > (checkpoint − 5 min) OR data_atualizacao IS NULL` → mapeia pro contrato → POST em lotes ≤1000 com `x-idempotency-key` (uuid v4 por lote) → retry/backoff (3×, exponencial) → **checkpoint local (`state.json`) só avança após 2xx**. **Checkpoint = high-water mark `MAX(data_atualizacao)` observado no resultado** (relógio do PG ORIGEM, nunca `now()` do conector — §11 P1-D: clock skew do PC do balcão não perde registro).
   4. Heartbeat com `agent_version, hostname, uptime, db_connected, schema_fingerprint, last_cycle_counts`.
-- **1×/dia:** snapshot de **chaves** por entidade → POST `/keys-snapshot` (chunked se >5MB) → servidor desativa o que sumiu.
+- **1×/dia:** snapshot de **chaves** por entidade (`snapshot_id` uuid + `generated_at` + `total_chunks`) → POST `/keys-snapshot` (chunked se >5MB) → servidor desativa o que sumiu (guardas em §6.2.5).
+- **1×/semana (domingo de madrugada):** **full re-scan** (ignora checkpoint, re-envia tudo) — rede de segurança contra UPDATE na origem que não toque `data_atualizacao` (trigger ausente/bug do fabricante); upsert idempotente absorve sem efeito colateral.
 - **Primeira execução:** checkpoint zero = full sync (mesma mecânica, sem caso especial).
-- **Auto-update:** 1×/dia baixa manifest (Supabase Storage público: versão + sha256 + URL); hash confere → troca binário + restart; crash-loop (3 falhas em 10 min) → rollback pro binário anterior (mantido como `.prev`).
+- **Auto-update:** 1×/dia baixa manifest (Supabase Storage: **bucket público só-leitura, escrita só `service_role`**; versão + sha256 + URL); hash confere **e versão > atual** (anti-downgrade com manifest velho) → troca binário + restart; crash-loop (3 falhas em 10 min) → rollback pro binário anterior (mantido como `.prev`). Assinatura Authenticode = v2 (modelo de ameaça v1: comprometer o Storage já = comprometer o backend inteiro).
+- **Serviço roda como `LocalService`** (least privilege; só precisa de localhost + HTTPS de saída); DPAPI em escopo de máquina.
 - **Estrutura da FORMULA desconhecida em detalhe** (itens achatados `corante1..6` como o CSV, ou tabela filha): o discovery decide; o conector embute **os dois mapeadores** e escolhe pelo schema encontrado.
 - **Logs:** arquivo local rotacionado (tamanho), nível info.
 
@@ -102,15 +106,20 @@ PC do balcão (Windows)                         Supabase (Lovable Cloud)
 ### 6.2 Promoção `tint_promote_sync_run(p_sync_run_id)` (SQL, SECURITY DEFINER, a peça central)
 Disparada pela edge ao fim de `/catalogs`/`/formulas`/`/keys-snapshot` **quando `integration_mode = 'automatic_primary'`** (em `shadow_mode` para no staging+reconcile — comportamento atual preservado).
 
+**Princípio (endurecido §11 P1-C): a promoção aplica o "ÚLTIMO staging por chave natural"**, restrito às chaves tocadas pelo run — nunca "os itens deste run" cegamente. Imune a duplicata entre runs, re-envio pós-crash e lotes fora de ordem; re-rodar = mesmo estado (idempotente por construção).
+
 1. Cria `tint_importacoes` `(tipo='sync_agent', arquivo_nome='sync:<run_id>', arquivo_hash=run_id)` → `importacao_id` (reusa a tela de histórico de graça).
-2. **Catálogo:** upsert `tint_produtos/bases/embalagens/corantes/skus` a partir do staging do run, espelhando os `onConflict` do `tint-import` (`account,cod_produto` etc.). `tint_skus` nasce de `produto_base_embalagem` (= `/catalogs.skus`).
-3. **Fórmulas:** para cada `tint_staging_formulas` do run:
-   - resolve FKs (produto/base/embalagem de formulação/subcoleção);
-   - **expande por embalagem vendável**: para cada embalagem do par (produto, base) em `tint_skus`: `fator = vol_emb_destino / vol_emb_formulação`; `qtd_ml_item × fator`; `volume_final_ml = vol_emb_destino`;
-   - **preço reproduzido (pág 9):** `preco_final = custo_base(emb)×(1+imposto)×(1+margem) + Σ(qtd_expandida × custo_corante/volume_corante)` com insumos de `tint_staging_precos_base`/corantes; **insumo faltando → `preco_final = NULL`** (degradação honesta; nunca 0);
+2. **Catálogo:** upsert `tint_produtos/bases/embalagens/corantes/skus` a partir do latest-staging das chaves do run, espelhando os `onConflict` do `tint-import` (`account,cod_produto` etc.). `tint_skus` nasce de `produto_base_embalagem` (= `/catalogs.skus`). **Skus NOVOS criados → re-expandir as fórmulas dos pares (produto,base) afetados** a partir do latest-staging de fórmula (§11 P1-C: embalagem que chega depois da fórmula ganharia fórmula nunca, pois `data_atualizacao` da FORMULA não muda).
+3. **Fórmulas:** para cada chave de fórmula tocada (latest staging):
+   - resolve FKs (produto/base/embalagem de formulação/subcoleção); corante referenciado e ausente → **stub** (descricao=código, comportamento herdado do CSV-import);
+   - **guarda:** `vol_emb_formulação <= 0 OR NULL` → não promove + `tint_sync_errors` (nunca divide por zero/NaN);
+   - **expande SÓ por embalagens vendáveis** do par (produto, base) em `tint_skus` (a linha da embalagem de formulação NÃO vira fórmula oficial se não for vendável — o CSV nunca criava; pôr emb não-vendável na busca do balcão é bug). Zero embalagens vendáveis → não promove + erro (resolve quando `/catalogs` completar);
+   - `fator = vol_emb_destino / vol_emb_formulação`; `qtd_ml_item × fator`; `volume_final_ml = vol_emb_destino`;
+   - **preço reproduzido (pág 9):** `preco_final = custo_base(emb)×(1+imposto)×(1+margem) + Σ(qtd_expandida × custo_corante/volume_corante)` com insumos de `tint_staging_precos_base`/corantes; **insumo faltando → `preco_final = NULL`** (degradação honesta; nunca 0); arredondamento default `round2` no total — **calibrar contra o gabarito** antes do flip;
    - upsert por `uq_tint_formulas_chave`; itens **delete+insert** na mesma transação; `desativada_em = NULL` (reativa se voltou).
-4. **Deleção (`/keys-snapshot`):** fórmula oficial cuja chave natural não está no snapshot → `desativada_em = now()` (**soft**; reversível; nunca delete físico). Catálogo: corantes/produtos sumidos → `ativo=false` se a coluna existir; senão só fórmulas na v1.
-5. Contadores → `tint_sync_runs` (inserts/updates) + `tint_importacoes`.
+4. **💰 Recálculo de preço por mudança de INSUMO (§11 P1-A — o caso de uso PRINCIPAL):** mudança de preço no SayerSystem toca `PRECO_BASEEMB`/`PRECO_CORANTE`, **não** a FORMULA → sem este passo o app continuaria com preço velho exatamente no fluxo que motivou a feature. A promoção de `precos_base` recalcula `preco_final` das fórmulas do par (produto,base,emb); a de corantes (custo/volume), das fórmulas que usam o corante (via `tint_formula_itens`). Recálculo **só do preço** (não re-expande itens).
+5. **Deleção (`/keys-snapshot`, guardas §11 P1-B):** aplica **somente** com snapshot COMPLETO (`total_chunks` todos recebidos, montado por `snapshot_id`); ignora snapshot com `generated_at` ≤ último aplicado (fora de ordem); **trava de blast radius**: se for desativar >20% das fórmulas ativas OU o snapshot tiver menos chaves que 50% do oficial ativo → **ABORTA** + `tint_sync_errors` (snapshot legítimo nunca faz isso; chunk perdido não apaga a loja). Passando: fórmula oficial fora do snapshot → `desativada_em = now()` (**soft**; reversível; nunca delete físico). Catálogo: corantes/produtos sumidos → `ativo=false` se a coluna existir; senão só fórmulas na v1.
+6. Contadores → `tint_sync_runs` (inserts/updates) + `tint_importacoes`; staging com mais de 30 dias → purge (na própria promoção); runs presos em `running` >30min → `error` (varredura, padrão `fin_sync_log`).
 
 **Oráculo TDD:** helper puro `src/lib/tint/sync-promote.ts` (`expandirFormula`, `precoFinalSayer`, `aplicarKeysSnapshot` — regra de 3, arredondamento, preço) com testes vitest, **espelhado verbatim** no SQL; validação **PG17** (`db/test-tint-promote.sh`, padrão da casa: semeia staging → roda promoção → asserts de expansão/preço/deleção/reativação/idempotência — rodar 2× = mesmo estado).
 
@@ -150,7 +159,20 @@ O app já tem `preco_final_sayersystem` por fórmula×embalagem e a cadeia de pr
 | Promoção parcial (crash no meio) | Promoção transacional por entidade; idempotente (re-rodar = mesmo estado); PG17 prova |
 | Replay falso pós-crash | Fix §6.1(2): 409 em run `running` |
 
-## 11. Sequência de build (pra o plano)
+## 11. Revisão adversária (Caminho B — codex em usage-limit; retroativo pendente)
+
+Auto-revisão disciplinada nos 7 vetores preparados pro codex. Achados INCORPORADOS acima:
+
+- **P1-A — Recálculo de preço por mudança de insumo (§6.2.4).** Mudar preço no SayerSystem toca `PRECO_BASEEMB`/`PRECO_CORANTE`, não a FORMULA → sem recálculo dedicado, o caso de uso PRINCIPAL do founder falharia (preço velho no app com sync "funcionando"). O critério de pronto (§8.6) só passa com este passo.
+- **P1-B — Snapshot de chaves com guardas (§6.2.5).** Chunk perdido = desativação em massa indevida (loja some da busca). Fix: aplicar só completo + ordem por `generated_at` + trava de blast radius (>20% ou snapshot <50% do oficial → aborta).
+- **P1-C — Promoção "latest staging por chave" + re-expansão (§6.2 princípio + §6.2.2).** Staging duplica entre runs (re-envio pós-crash com key nova) e embalagem nova chega depois da fórmula (cuja `data_atualizacao` não muda). Fix: promoção aplica sempre o estado mais recente por chave; skus novos re-expandem fórmulas do par.
+- **P1-D — Checkpoint pelo relógio da ORIGEM (§5.3).** High-water mark de `MAX(data_atualizacao)` do PG do SayerSystem; nunca `now()` do conector (clock skew do PC do balcão).
+- **P2:** full re-scan semanal (UPDATE sem tocar `data_atualizacao` na origem); guarda `vol_formulação ≤ 0`; expansão só por embalagens VENDÁVEIS (emb de formulação não-vendável não polui o balcão); corante ausente → stub (comportamento do CSV); `client_encoding=UTF8`; purge staging 30d + varredura de runs órfãos; bulk inserts no staging (full sync ~29k); `LocalService`.
+- **P3:** anti-downgrade no auto-update (versão monotônica); assinatura Authenticode = v2.
+
+**Pendência registrada:** rodar o **codex adversarial retroativo** (spec + código) quando a cota voltar (11/06 9h24) — mesmo rito da frente `aplicar_promocoes`.
+
+## 12. Sequência de build (pra o plano)
 1. **PR1 — servidor:** migration (staging precos_base + `desativada_em` + promoção + keys-snapshot apply) + helper TS espelho + testes vitest + PG17 + edits da edge (endpoint novo, fixes, gate automatic_primary) + filtros de desativada no front. ⚠️ migration manual (SQL Editor) + deploy edge (chat Lovable) + Publish.
 2. **PR2 — conector:** `connector/sayersync/` (Go) + cross-compile + manifest de update + instruções de instalação (1 página pt-BR pro founder) + binário no Storage.
 3. **Amanhã (máquina):** instalar → discovery/heartbeat → shadow → gabarito → comparar → flip.
