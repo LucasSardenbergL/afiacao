@@ -12,7 +12,10 @@ export function qtdMinimaEfetiva(lote: number | null, forcado: number | null): n
 }
 
 export function qtdBase(input: { qtde_base: number | null; lote_minimo_fornecedor: number | null; minimo_forcado_manual: number | null }): number {
-  return Math.max(input.qtde_base ?? 0, qtdMinimaEfetiva(input.lote_minimo_fornecedor, input.minimo_forcado_manual));
+  // Spec §2/§8: q_base arredondado ao múltiplo do lote. A RPC entrega a qtde do ciclo via EOQ+ceil
+  // SEM arredondar ao lote do fornecedor (re-Codex verificou a RPC) → arredondamos aqui. Sem lote → só ceil.
+  const bruto = Math.max(input.qtde_base ?? 0, qtdMinimaEfetiva(input.lote_minimo_fornecedor, input.minimo_forcado_manual));
+  return arredondaLote(bruto, input.lote_minimo_fornecedor);
 }
 
 // Piso de quantidade por "mínimo de compra forçado" por SKU (a "R" pedida pelo founder).
@@ -53,12 +56,17 @@ export function descontoAplicavel(curva: FaixaDesconto[], q: number): number {
 // (a de menor volume) e subestimava o encargo de prazo em curvas progressivas (achado do Codex).
 // null = nenhuma faixa com prazo aplicável (cai no prazo_padrao no caller).
 export function prazoAplicavel(curva: FaixaDesconto[], q: number): number | null {
-  let best: number | null = null;
-  let bestVol = -1;
+  // Prazo da faixa de MAIOR volume aplicável (≤ q) — o prazo é o DELA (ou null se ela não tem prazo).
+  // NÃO herda o prazo de uma faixa de volume MENOR (re-Codex: faixa-aplicável-sem-prazo → cai no padrão,
+  // não no prazo de uma faixa abaixo). Empate de volume → maior prazo_perc (conservador, determinístico).
+  let melhorVol = -1;
+  for (const f of curva) { if (q >= f.volume_minimo && f.volume_minimo > melhorVol) melhorVol = f.volume_minimo; }
+  if (melhorVol < 0) return null;
+  let prazo: number | null = null;
   for (const f of curva) {
-    if (q >= f.volume_minimo && f.prazo_perc != null && f.volume_minimo > bestVol) { best = f.prazo_perc; bestVol = f.volume_minimo; }
+    if (f.volume_minimo === melhorVol && f.prazo_perc != null && (prazo == null || f.prazo_perc > prazo)) prazo = f.prazo_perc;
   }
-  return best;
+  return prazo;
 }
 
 function arredondaLote(q: number, lote: number | null): number {
@@ -175,21 +183,22 @@ export function avaliarComprarMais(ins: InsumoSku): DecisaoCompra {
   const motivos: string[] = [];
   const q_base = qtdBase(ins);
 
-  if ((ins.demanda_diaria ?? 0) <= 0 || (ins.qtde_base ?? 0) <= 0) {
+  // Custo de capital ausente/≤0 NÃO é "capital grátis" — é config faltando. Sem ele não dá pra netar o
+  // carregamento → falta_dado (re-Codex; alinha com o A4 "nunca assume custo 0"), não recomenda às cegas.
+  const semCapital = !Number.isFinite(ins.cm_anual) || ins.cm_anual <= 0;
+  if ((ins.demanda_diaria ?? 0) <= 0 || (ins.qtde_base ?? 0) <= 0 || semCapital) {
     return {
       empresa: ins.empresa, sku: ins.sku, fornecedor: ins.fornecedor, q_base, q_candidata: q_base, q_extra: 0,
       dias_cobertura_extra: 0, desconto_rs: 0, aumento_evitado_rs: 0, ruptura_evitada_rs: 0, capital_extra_rs: 0,
       impacto_prazo_rs: 0, frete_incremental_rs: 0, beneficio_liquido_rs: 0, recomendacao: 'falta_dado',
       escopo: ins.escopo, eoq_recalculo_ignorado: true,
-      flags: [...flags, 'Sem demanda/qtde de ciclo — não dá pra dimensionar.'],
-      confianca: { nivel: 'baixa', motivos: ['Faltam demanda/qtde base.'] },
+      flags: [...flags, semCapital ? 'Custo de capital ausente/≤0 — sem custo de carregamento não dá pra netar.' : 'Sem demanda/qtde de ciclo — não dá pra dimensionar.'],
+      confianca: { nivel: 'baixa', motivos: [semCapital ? 'Custo de capital não configurado.' : 'Faltam demanda/qtde base.'] },
     };
   }
 
   if (ins.ruptura_valor_estimado != null) motivos.push('Benefício de ruptura não estimado (conservador = 0).');
   flags.push('Benefício de ruptura não estimado (conservador, fase 1).');
-  // Degradação honesta: custo de capital ausente/zerado NÃO é "capital grátis" — é config faltando.
-  if (ins.cm_anual <= 0) { flags.push('Custo de capital ≤ 0 — capital extra não penalizado (config ausente?).'); motivos.push('Custo de capital não configurado.'); }
   // Frete fixo/taxa por-pedido são SUNK (mesmo pedido) → fora do net marginal; sinaliza pro comprador.
   if ((ins.frete_fixo ?? 0) > 0 || (ins.frete_taxa_pedido ?? 0) > 0) flags.push('Frete fixo/taxa de pedido no fornecedor — SUNK no mesmo pedido, fora da decisão marginal.');
 

@@ -13,10 +13,15 @@ describe('qtdMinimaEfetiva', () => {
 });
 
 describe('qtdBase', () => {
-  it('= max(qtde_base operacional, mínimo efetivo)', () => {
+  it('= max(qtde_base operacional, mínimo efetivo), arredondado ao lote', () => {
     expect(qtdBase({ qtde_base: 100, lote_minimo_fornecedor: 50, minimo_forcado_manual: null })).toBe(100);
     expect(qtdBase({ qtde_base: 100, lote_minimo_fornecedor: 50, minimo_forcado_manual: 200 })).toBe(200);
     expect(qtdBase({ qtde_base: 30, lote_minimo_fornecedor: 50, minimo_forcado_manual: null })).toBe(50);
+  });
+  it('arredonda ao múltiplo do lote (spec §2/§8; a RPC entrega qtde não-arredondada — re-Codex)', () => {
+    expect(qtdBase({ qtde_base: 101, lote_minimo_fornecedor: 50, minimo_forcado_manual: null })).toBe(150); // ceil(101/50)×50
+    expect(qtdBase({ qtde_base: 110, lote_minimo_fornecedor: 50, minimo_forcado_manual: null })).toBe(150);
+    expect(qtdBase({ qtde_base: 101, lote_minimo_fornecedor: null, minimo_forcado_manual: null })).toBe(101); // sem lote → ceil só
   });
 });
 
@@ -57,6 +62,16 @@ describe('prazoAplicavel — prazo da faixa de MAIOR volume aplicável (não a p
   it('q só na faixa baixa → prazo da baixa (0)', () => { expect(prazoAplicavel(curva, 150)).toBe(0); });
   it('q abaixo de tudo → null (cai no padrão no caller)', () => { expect(prazoAplicavel(curva, 50)).toBeNull(); });
   it('nenhuma faixa com prazo_perc → null', () => { expect(prazoAplicavel([{ volume_minimo: 100, desconto_promo_perc: 5 }], 200)).toBeNull(); });
+  it('faixa aplicável (maior volume) SEM prazo → null, NÃO herda o prazo de uma faixa menor (re-Codex)', () => {
+    const c = [{ volume_minimo: 100, desconto_promo_perc: 0, prazo_perc: 12 }, { volume_minimo: 300, desconto_promo_perc: 10 }];
+    expect(prazoAplicavel(c, 300)).toBeNull(); // faixa 300 (aplicável) não tem prazo → padrão, não o 12 da faixa 100
+  });
+  it('empate de volume → maior prazo (conservador, determinístico, independe da ordem)', () => {
+    const c1 = [{ volume_minimo: 300, desconto_promo_perc: 5, prazo_perc: 2 }, { volume_minimo: 300, desconto_promo_perc: 5, prazo_perc: 7 }];
+    const c2 = [{ volume_minimo: 300, desconto_promo_perc: 5, prazo_perc: 7 }, { volume_minimo: 300, desconto_promo_perc: 5, prazo_perc: 2 }];
+    expect(prazoAplicavel(c1, 300)).toBe(7);
+    expect(prazoAplicavel(c2, 300)).toBe(7);
+  });
 });
 
 describe('gerarCandidatos — q_base + thresholds + limites de aumento/ruptura, arredondados ao lote', () => {
@@ -192,10 +207,10 @@ describe('avaliarComprarMais — correções do review adversarial (Codex)', () 
     expect(r.q_candidata).toBe(300);
     expect(r.impacto_prazo_rs).toBeCloseTo(1800, 0); // (12−0)% × 15000 (faixa 300), NÃO 0 (faixa 100)
   });
-  it('flag defensiva: cm_anual ≤ 0 → flag + confiança não-alta (não assume custo de capital 0 calado)', () => {
+  it('cm_anual ≤ 0 → falta_dado (sem custo de capital não neta o carregamento; não assume custo 0)', () => {
     const r = avaliarComprarMais({ ...base, cm_anual: 0 });
+    expect(r.recomendacao).toBe('falta_dado');
     expect(r.flags.join(' ')).toMatch(/capital/i);
-    expect(r.confianca.nivel).not.toBe('alta');
   });
 });
 
