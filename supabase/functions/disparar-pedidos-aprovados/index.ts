@@ -928,6 +928,15 @@ async function notificarFornecedor(
   }
 
   if (canal === "portal_b2b") {
+    // Sayerlack/OBEN é colado no portal pela automação (Browserless) → o e-mail
+    // "[Portal B2B] pronto para colar no portal" é ruído enganoso: o pedido JÁ foi
+    // enviado (aparece como "✓ Enviado") e o e-mail-resumo do ciclo já confirma o
+    // sucesso. Mantemos o aviso só p/ um eventual fornecedor portal_b2b SEM automação.
+    // ⚠️ Espelha deveEnviarEmailPortalManual()/isSayerlackOben (a regra é idêntica) —
+    // ver src/lib/reposicao/omie-disparo-helpers.ts.
+    if (isSayerlackOben(pedido)) {
+      return { enviado: false, detalhe: "portal Sayerlack automatizado — e-mail manual suprimido" };
+    }
     const r = await fetch(RESEND_URL, {
       method: "POST",
       headers: {
