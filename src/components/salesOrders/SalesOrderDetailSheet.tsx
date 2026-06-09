@@ -79,7 +79,7 @@ export function SalesOrderDetailSheet({
                         <p className="truncate">{item.descricao || 'Item'}</p>
                         {item.tint_nome_cor && (
                           <p className="text-xs text-muted-foreground truncate">
-                            🎨 {item.tint_cor_id} - {item.tint_nome_cor}
+                            🎨 {item.tint_cor_id ? `${item.tint_cor_id} - ` : ''}{item.tint_nome_cor}
                           </p>
                         )}
                         <p className="text-xs text-muted-foreground">

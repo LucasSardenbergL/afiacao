@@ -44,6 +44,11 @@ describe('SalesOrderDetailSheet', () => {
     expect(screen.getByText(/🎨\s*1247\s*-\s*AZUL RAL 5010/)).toBeTruthy();
   });
 
+  it('cor sem cor_id (vinda do sync do Omie) mostra só o nome, sem hífen órfão', () => {
+    setup(order({ items: [{ descricao: 'BASE BRILH BRANC PU', quantidade: 1, valor_unitario: 86, valor_total: 86, tint_nome_cor: 'AZUL RAL 5010' }] }));
+    expect(screen.getByText('🎨 AZUL RAL 5010')).toBeTruthy();
+  });
+
   it('item sem tinta não mostra linha de cor', () => {
     setup(order({ items: [{ descricao: 'CATALISADOR', quantidade: 1, valor_unitario: 40, valor_total: 40 }] }));
     expect(screen.queryByText(/🎨/)).toBeNull();

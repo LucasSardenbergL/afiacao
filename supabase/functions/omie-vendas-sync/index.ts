@@ -77,6 +77,25 @@ interface OmieDetalheItem {
     cfop?: string;
   };
   imposto?: { cfop?: string };
+  // Observação/dados adicionais do item — o submit grava a cor da tinta aqui
+  // ("Cor: ..."). O sync de entrada extrai de volta (ver parseCorObs).
+  observacao?: { obs_item?: string };
+  inf_adic?: { dados_adicionais_item?: string };
+}
+
+/**
+ * Extrai a cor da tinta da observação do item do Omie. Espelho VERBATIM de
+ * `src/lib/tint/parse-cor-obs.ts` (Deno não importa de src/). Formato gravado
+ * pelo submit: "Cor: <label> - <embalagem>". Conservador: só prefixo "Cor:",
+ * remove embalagem conhecida no fim, não quebra nome com hífen, null sem cor.
+ */
+function parseCorObs(obs: string | null | undefined): { tint_nome_cor: string } | null {
+  if (!obs) return null;
+  const m = /^\s*cor:\s*(.+)$/i.exec(obs);
+  if (!m) return null;
+  const label = m[1].replace(/\s*-\s*(?:QT|GL|LT|\d+(?:[.,]\d+)?\s*ML)\s*$/i, '').trim();
+  if (!label) return null;
+  return { tint_nome_cor: label };
 }
 
 interface OmiePedidoCabecalho {
@@ -112,6 +131,8 @@ interface OrderItemPayload {
   quantidade: number;
   valor_unitario: number;
   desconto?: number;
+  tint_cor_id?: string;
+  tint_nome_cor?: string;
 }
 
 interface OrderBatchRow {
@@ -1092,12 +1113,17 @@ async function syncPedidos(
         const price = prod.valor_unitario || 0;
         const desc = prod.desconto || 0;
         subtotal += qty * price * (1 - desc / 100);
+        // Cor da tinta: preferimos obs_item (onde a cor sempre vai); o
+        // dados_adicionais_item pode conter ordem de compra (parseCorObs filtra
+        // por "Cor:", então não confunde). Sem cor → item comum.
+        const cor = parseCorObs(det.observacao?.obs_item ?? det.inf_adic?.dados_adicionais_item);
         itemsJson.push({
           omie_codigo_produto: prod.codigo_produto,
           descricao: prod.descricao || '',
           quantidade: qty,
           valor_unitario: price,
           desconto: desc,
+          ...(cor ? { tint_nome_cor: cor.tint_nome_cor } : {}),
         });
       }
 
