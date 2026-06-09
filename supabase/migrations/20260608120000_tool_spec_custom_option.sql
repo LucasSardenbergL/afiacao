@@ -48,8 +48,18 @@ BEGIN
     RAISE EXCEPTION 'valor obrigatório' USING errcode = '22004';
   END IF;
 
-  -- normaliza: NFC + remove control chars + colapsa espaços + trim
+  -- normaliza: NFC + remove control chars + colapsa espaços (incl. Unicode) + trim
   v_norm := regexp_replace(normalize(p_valor, NFC), '[[:cntrl:]]', '', 'g');
+  -- converte espaços Unicode (NBSP, narrow NBSP, ideographic, BOM, line/para sep, etc.)
+  -- p/ espaço comum ANTES de colapsar: o \s do Postgres não os cobre confiavelmente em
+  -- todo locale, mas o \s do JS (helper de validação) cobre. Sem isto, '290<NBSP>mm' e
+  -- '290 mm' virariam 2 opções visivelmente iguais no catálogo. chr() decimal = ASCII puro.
+  v_norm := regexp_replace(
+    v_norm,
+    '[' || chr(160) || chr(5760) || chr(8192) || '-' || chr(8202)
+        || chr(8232) || chr(8233) || chr(8239) || chr(8287) || chr(12288) || chr(65279) || ']',
+    ' ', 'g'
+  );
   v_norm := btrim(regexp_replace(v_norm, '\s+', ' ', 'g'));
 
   IF v_norm = '' THEN

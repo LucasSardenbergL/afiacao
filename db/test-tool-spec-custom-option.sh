@@ -53,7 +53,8 @@ INSERT INTO public.tool_specifications (id, spec_key, spec_label, spec_type, opt
   ('11111111-1111-1111-1111-111111111111','diametro','Diâmetro','select','["300mm","250mm"]'::jsonb),
   ('22222222-2222-2222-2222-222222222222','comprimento','Comprimento','select','["de 120mm a 300mm","até 120mm"]'::jsonb),
   ('33333333-3333-3333-3333-333333333333','espessura','Espessura (mm)','number',NULL),
-  ('44444444-4444-4444-4444-444444444444','marca','Marca','select',NULL);
+  ('44444444-4444-4444-4444-444444444444','marca','Marca','select',NULL),
+  ('55555555-5555-5555-5555-555555555555','dentes','Dentes','select','[]'::jsonb);
 SQL
 
 echo "→ migration real…"
@@ -91,6 +92,19 @@ BEGIN
   r := public.adicionar_opcao_tool_spec('11111111-1111-1111-1111-111111111111','  301   mm  ');
   IF r->>'valor_canonico' <> '301 mm' THEN RAISE EXCEPTION 'D FALHOU: [%]', r->>'valor_canonico'; END IF;
   RAISE NOTICE 'OK D — normaliza trim/espaços';
+END $$;
+
+-- R) Unicode whitespace: NBSP/narrow-NBSP/BOM viram espaço comum (paridade c/ o \s do JS;
+--    independe do locale do banco — este teste roda em locale C). '290<NBSP>mm' dedupa com '290 mm'.
+DO $$ DECLARE r jsonb; opts jsonb; BEGIN
+  r := public.adicionar_opcao_tool_spec('55555555-5555-5555-5555-555555555555', '290' || chr(160) || 'mm');
+  IF r->>'valor_canonico' <> '290 mm' THEN RAISE EXCEPTION 'R FALHOU NBSP: canonico=[%]', r->>'valor_canonico'; END IF;
+  PERFORM public.adicionar_opcao_tool_spec('55555555-5555-5555-5555-555555555555', '290 mm');
+  SELECT options INTO opts FROM public.tool_specifications WHERE id='55555555-5555-5555-5555-555555555555';
+  IF jsonb_array_length(opts) <> 1 THEN RAISE EXCEPTION 'R FALHOU: NBSP nao dedupou com espaco comum, len=%', jsonb_array_length(opts); END IF;
+  r := public.adicionar_opcao_tool_spec('55555555-5555-5555-5555-555555555555', '300' || chr(8239) || 'mm' || chr(65279));
+  IF r->>'valor_canonico' <> '300 mm' THEN RAISE EXCEPTION 'R FALHOU narrow/BOM: [%]', r->>'valor_canonico'; END IF;
+  RAISE NOTICE 'OK R — Unicode whitespace colapsado (NBSP/narrow/BOM)';
 END $$;
 
 -- E) NULL → RAISE 22004 + options intacto

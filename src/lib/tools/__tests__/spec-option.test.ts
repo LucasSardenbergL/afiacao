@@ -10,6 +10,11 @@ describe('normalizarOpcaoSpec', () => {
     expect(normalizarOpcaoSpec('  301   mm  ')).toBe('301 mm');
   });
 
+  it('colapsa espaços Unicode (NBSP) — paridade com a RPC SQL', () => {
+    // String.fromCharCode(160) = U+00A0 NBSP; o \s do JS o trata como espaço.
+    expect(normalizarOpcaoSpec('290' + String.fromCharCode(160) + 'mm')).toBe('290 mm');
+  });
+
   it('normaliza Unicode para NFC', () => {
     // 'e' + combining acute (U+0301) → 'é' (U+00E9)
     expect(normalizarOpcaoSpec('30́')).toBe('30́'.normalize('NFC'));

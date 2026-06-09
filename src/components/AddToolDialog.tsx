@@ -52,6 +52,11 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
   const [novoValor, setNovoValor] = useState('');
   const [savingOption, setSavingOption] = useState(false);
   const reqIdRef = useRef(0);
+  // ref espelha a categoria atual: o guard de resposta obsoleta NÃO pode comparar
+  // contra `selectedCategory` do closure de handleSaveOption (ficaria preso no valor
+  // de quando a função foi criada → o guard nunca observaria a troca de categoria).
+  const selectedCategoryRef = useRef(selectedCategory);
+  selectedCategoryRef.current = selectedCategory;
 
   // Reset state when dialog closes
   useEffect(() => {
@@ -183,7 +188,7 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
         .rpc('adicionar_opcao_tool_spec' as never, { p_spec_id: spec.id, p_valor: novoValor } as never);
       if (error) throw error;
       // descarta resposta obsoleta (trocou de categoria/spec no meio)
-      if (myReq !== reqIdRef.current || reqCategoria !== selectedCategory) return;
+      if (myReq !== reqIdRef.current || reqCategoria !== selectedCategoryRef.current) return;
       const resp = data as { options: string[]; valor_canonico: string } | null;
       if (!resp) throw new Error('Resposta vazia do servidor');
       setSpecifications(prev => prev.map(s => (s.id === spec.id ? { ...s, options: resp.options } : s)));
