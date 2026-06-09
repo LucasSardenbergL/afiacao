@@ -12054,6 +12054,7 @@ export type Database = {
       }
       tool_specifications: {
         Row: {
+          allow_custom_option: boolean
           created_at: string
           display_order: number | null
           id: string
@@ -12065,6 +12066,7 @@ export type Database = {
           tool_category_id: string | null
         }
         Insert: {
+          allow_custom_option?: boolean
           created_at?: string
           display_order?: number | null
           id?: string
@@ -12076,6 +12078,7 @@ export type Database = {
           tool_category_id?: string | null
         }
         Update: {
+          allow_custom_option?: boolean
           created_at?: string
           display_order?: number | null
           id?: string
@@ -14027,6 +14030,10 @@ export type Database = {
           status: string
         }[]
       }
+      adicionar_opcao_tool_spec: {
+        Args: { p_spec_id: string; p_valor: string }
+        Returns: Json
+      }
       afiacao_os_sync_kick: { Args: never; Returns: Json }
       aplicar_parametros_automatico_diario: {
         Args: { p_empresa: string }
@@ -14611,6 +14618,10 @@ export type Database = {
       }
       reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
       reposicao_param_limbo_watchdog: { Args: never; Returns: undefined }
+      reposicao_persistir_qtde_inteira: {
+        Args: { p_pedido_id: number }
+        Returns: number
+      }
       reprocessar_sku_items_via_raw_data: {
         Args: { p_empresa: string }
         Returns: {
