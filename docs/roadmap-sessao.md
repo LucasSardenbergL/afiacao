@@ -1,8 +1,29 @@
-# Roadmap da Sessão — atualizado 2026-06-06
+# Roadmap da Sessão — atualizado 2026-06-09
 
 > **Documento vivo.** Re-feito sempre que acrescentamos OU concluímos uma atividade, e renderizado no chat quando muda, pra o founder acompanhar. Prática padrão de toda sessão (registrada no CLAUDE.md, topo).
 >
 > **Legenda:** ✅ feito · 🔄 em andamento · ⏳ pendente · 🚧 bloqueado · ⏸️ adiado (decisão consciente) · 🧭 aguardando decisão (eu+codex)
+
+---
+
+## 0. SESSÃO 2026-06-09 — Reposição intra-day + alerta R$3k Sayerlack + dente de serra
+
+> Pedido do founder: (1) e-mail toda vez que um pedido sugerido der R$3.000+ (mínimo de faturamento
+> da Sayerlack — pode acontecer várias vezes ao dia, pedidos diferentes); (2) motor de sugestões
+> rodando com maior frequência ao longo do dia (reduzir lead time); (3) formas de reduzir o período
+> de estoque ("dente de serra") em compras.
+
+- ✅ **Exploração do terreno** — crons/cadências (estoque do motor `sku_estoque_atual` = 3×/dia via `omie-sync-estoque`; motor 1×/dia 9h15 UTC; `inventory_position` já 30min), RPC vigente (`20260606190000`), infra de alerta (`fornecedor_alerta` + dispatch */30 + padrão transição).
+- ✅ **Decisões do founder (AskUserQuestion)** — gatilho = **por pedido sugerido Sayerlack ≥ R$3k** (mínimo de faturamento; vários e-mails/dia ok, pedidos diferentes); cadência = **a cada 2h em horário comercial**.
+- ✅ **Passe adversarial** — Codex em usage-limit até 11/06 → caminho B (eu + PG17). Furos achados: bloqueado_guardrail do dia precisa entrar na limpeza (senão re-gen duplica SKUs); NOT EXISTS contra oportunidade pendente; zumbis de data_ciclo anterior; grupo NULL na identidade do alerta; deep-link com id morre no re-gen.
+- 🔄 **Design apresentado ao founder** — aguardando GO.
+- ⏳ Spec em `docs/superpowers/specs/2026-06-09-reposicao-intraday-alerta-3k-design.md`
+- ⏳ **PR1 — alerta R$3k Sayerlack** (migration SQL pura: tabela de estado + tipo no CHECK + tick + cron */30 + hook na edge de geração)
+- ⏳ **PR2 — ciclo intra-day** (RPC: limpeza tipo-aware + bloqueados do dia + expiração de zumbis + advisory lock + NOT EXISTS oportunidade; crons 2/2h; edge flag digest)
+- ⏳ **Validação PG17 local** (scripts `db/test-*.sh` aplicando as migrations reais)
+- ⏳ **Análise dente de serra** — fase 1 = intra-day (adianta disparo ~0,5–1d) + alerta R$3k (lote ótimo ≈ mínimo de faturamento); fase 2 (recalibrar ponto_pedido/cobertura/SS com R=2h via esteira `param_auto`) gated em 2–4 semanas de medição.
+- ⏳ **Founder (pós-merge):** colar blocos SQL no SQL Editor + deploy da `gerar-pedidos-diario` via chat do Lovable.
+- ⏸️ **Codex adversarial retroativo** (quando a cota voltar, 11/06+) — revisar PR1+PR2.
 
 ---
 
