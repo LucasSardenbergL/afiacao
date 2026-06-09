@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 189
+-- Total de custom migrations: 191
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -208,7 +208,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260606200000', 'reposicao_promo_forward_buying_min', '20260606200000_reposicao_promo_forward_buying_min.sql'),
   ('20260606230000', 'negociacao_paralela_v2_cleanup', '20260606230000_negociacao_paralela_v2_cleanup.sql'),
   ('20260608120000', 'tool_spec_custom_option', '20260608120000_tool_spec_custom_option.sql'),
-  ('20260609085244', 'data_health_check_familia_ausente', '20260609085244_data_health_check_familia_ausente.sql')
+  ('20260609085244', 'data_health_check_familia_ausente', '20260609085244_data_health_check_familia_ausente.sql'),
+  ('20260609150000', 'reposicao_alerta_pedido_minimo', '20260609150000_reposicao_alerta_pedido_minimo.sql'),
+  ('20260609160000', 'reposicao_ciclo_intraday', '20260609160000_reposicao_ciclo_intraday.sql')
 )
 SELECT
   e.version,
@@ -928,7 +930,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tool_spec_custom_option', 'function', 'public', 'adicionar_opcao_tool_spec', ''),
   ('data_health_check_familia_ausente', 'function', 'public', '_data_health_compute', ''),
   ('data_health_check_familia_ausente', 'function', 'public', 'data_health_watchdog', ''),
-  ('data_health_check_familia_ausente', 'function', 'public', 'fin_sync_heartbeat', '')
+  ('data_health_check_familia_ausente', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('reposicao_alerta_pedido_minimo', 'table', 'public', 'reposicao_alerta_pedido_minimo', ''),
+  ('reposicao_alerta_pedido_minimo', 'index', 'public', 'reposicao_alerta_pedido_minimo_ativo', 'reposicao_alerta_pedido_minimo'),
+  ('reposicao_alerta_pedido_minimo', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
+  ('reposicao_alerta_pedido_minimo', 'cron_job', 'cron', 'reposicao-alerta-pedido-minimo', ''),
+  ('reposicao_ciclo_intraday', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'gerar-pedidos-intraday-oben', ''),
+  ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'omie-sync-estoque-intraday-oben', ''),
+  ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'omie-sync-estoque-diario', '')
 )
 SELECT
   e.migration,
