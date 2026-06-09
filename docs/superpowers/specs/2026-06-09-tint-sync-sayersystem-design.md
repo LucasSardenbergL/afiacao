@@ -3,7 +3,7 @@
 **Data:** 2026-06-09 · **Status:** aprovado pelo founder (design verbal); spec p/ plano
 **Frente:** roadmap-sessao.md §17 · **Decisor técnico:** delegado (eu + codex)
 
-> ⚠️ **Caminho B em vigor (codex em usage-limit até 11/06 9h24):** revisão adversária feita por mim (7 vetores, achados em §12) + **PG17 como oráculo** da promoção; **codex adversarial RETROATIVO obrigatório quando a cota voltar** (precedente: frente `aplicar_promocoes`, §10 do CLAUDE.md).
+> ⚠️ **Caminho B em vigor (codex em usage-limit até 11/06 9h24):** revisão adversária feita por mim (7 vetores, achados em §11) + **PG17 como oráculo** da promoção; **codex adversarial RETROATIVO obrigatório quando a cota voltar** (precedente: frente `aplicar_promocoes`, §10 do CLAUDE.md).
 
 ## 1. Problema
 
