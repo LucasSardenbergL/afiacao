@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **188** custom migrations totais
-- **699** objetos esperados (criados por estas migrations)
+- **189** custom migrations totais
+- **702** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 181
-  - `function`: 169
+  - `function`: 172
   - `index`: 130
   - `cron_job`: 97
   - `table`: 81
@@ -1648,6 +1648,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.adicionar_opcao_tool_spec` | — |
+
+### `20260609085244_data_health_check_familia_ausente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
 
 ## Próximos passos quando algo der `❌`
 
