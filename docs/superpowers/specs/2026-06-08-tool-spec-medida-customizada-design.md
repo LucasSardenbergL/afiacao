@@ -115,7 +115,10 @@ staff clica "Adicionar…" → input → confirma → Salvar
 
 - **Helper puro TS testado (vitest)** — oráculo da normalização.
 - **Teste SQL local PG17 OBRIGATÓRIO** (não opcional — exigência do Codex; base `db/verify-snapshot-replay.sh` + stubs de `auth.uid()`/`has_role` por GUC de sessão). Cobre: append, dedupe case-insensitive, **NULL** (não corrompe), catálogo malformado/`options` NULL, gate (staff passa / cliente/anon `RAISE`), guard `spec_type`/`allow_custom_option`/limite, sentinela reservada, e serialização sob `FOR UPDATE` (duas chamadas concorrentes não duplicam).
-- **Codex já consultado no design** (achados P1/P2 incorporados acima). Adversarial no código vem na fase de revisão.
+- **Codex consultado no design** (8 P1/P2 incorporados acima) **e no código final** (challenge adversarial): 2 achados reais corrigidos —
+  - **P1 (front):** o guard de resposta obsoleta comparava `reqCategoria !== selectedCategory`, mas `selectedCategory` vinha do closure de `handleSaveOption` (preso no valor de quando a função foi criada) → o guard nunca observava a troca de categoria (risco de aplicar a medida num campo de mesma `spec_key` de outra categoria). Corrigido espelhando a categoria atual numa ref (`selectedCategoryRef`).
+  - **P2 (SQL):** o `\s` do Postgres não colapsa NBSP/narrow-NBSP/BOM confiavelmente em todo locale, mas o `\s` do JS (helper) colapsa → `290<NBSP>mm` e `290 mm` virariam 2 opções visivelmente iguais no catálogo. Corrigido convertendo espaços Unicode explicitamente (via `chr()`, ASCII no source) antes de colapsar, + caso de teste PG17 (locale-independente) e paridade no helper.
+  - **P3 avaliados e deixados (cosméticos):** `[[:cntrl:]]` inclui C1 (U+0080–U+009F) que o JS não — mas o SQL é autoritativo (remove), sem duplicata/vuln; `lower()` não é case-fold Unicode completo (sigma/ß/turco) — desprezível para mm/polegadas/marcas, e o reservado é ASCII (sem bypass).
 
 ## Limitações conscientes da v1 (YAGNI)
 
