@@ -77,6 +77,25 @@ interface OmieDetalheItem {
     cfop?: string;
   };
   imposto?: { cfop?: string };
+  // Observação/dados adicionais do item — o submit grava a cor da tinta aqui
+  // ("Cor: ..."). O sync de entrada extrai de volta (ver parseCorObs).
+  observacao?: { obs_item?: string };
+  inf_adic?: { dados_adicionais_item?: string };
+}
+
+/**
+ * Extrai a cor da tinta da observação do item do Omie. Espelho VERBATIM de
+ * `src/lib/tint/parse-cor-obs.ts` (Deno não importa de src/). Formato gravado
+ * pelo submit: "Cor: <label> - <embalagem>". Conservador: só prefixo "Cor:",
+ * remove embalagem conhecida no fim, não quebra nome com hífen, null sem cor.
+ */
+function parseCorObs(obs: string | null | undefined): { tint_nome_cor: string } | null {
+  if (!obs) return null;
+  const m = /^\s*cor:\s*(.+)$/i.exec(obs);
+  if (!m) return null;
+  const label = m[1].replace(/\s*-\s*(?:QT|GL|LT|\d+(?:[.,]\d+)?\s*ML)\s*$/i, '').trim();
+  if (!label) return null;
+  return { tint_nome_cor: label };
 }
 
 interface OmiePedidoCabecalho {
@@ -112,6 +131,8 @@ interface OrderItemPayload {
   quantidade: number;
   valor_unitario: number;
   desconto?: number;
+  tint_cor_id?: string;
+  tint_nome_cor?: string;
 }
 
 interface OrderBatchRow {
@@ -1092,12 +1113,17 @@ async function syncPedidos(
         const price = prod.valor_unitario || 0;
         const desc = prod.desconto || 0;
         subtotal += qty * price * (1 - desc / 100);
+        // Cor da tinta: preferimos obs_item (onde a cor sempre vai); o
+        // dados_adicionais_item pode conter ordem de compra (parseCorObs filtra
+        // por "Cor:", então não confunde). Sem cor → item comum.
+        const cor = parseCorObs(det.observacao?.obs_item ?? det.inf_adic?.dados_adicionais_item);
         itemsJson.push({
           omie_codigo_produto: prod.codigo_produto,
           descricao: prod.descricao || '',
           quantidade: qty,
           valor_unitario: price,
           desconto: desc,
+          ...(cor ? { tint_nome_cor: cor.tint_nome_cor } : {}),
         });
       }
 
@@ -1578,6 +1604,95 @@ serve(async (req) => {
         const maxPagesEstoque = Number(params.max_pages) || 2;
         const estoqueResult = await syncEstoque(supabaseAdmin, startPageEstoque, maxPagesEstoque, account);
         result = { success: true, ...estoqueResult };
+        break;
+      }
+
+      case "backfill_tint_cor": {
+        // Fase 2 — backfill da cor da tinta nos pedidos JÁ sincronizados: re-lê a
+        // observação do item no Omie (que o sync de entrada descartava) e popula
+        // tint_nome_cor no jsonb `sales_orders.items`.
+        //   dry_run=true  → PROBE: amostra o que o Omie devolve (obs crua + cor
+        //                   parseada), NÃO altera nada. Use p/ confirmar a fonte.
+        //   dry_run=false → atualiza SÓ registros sem cor (idempotente, não toca
+        //                   o registro do wizard que já tem cor; não-destrutivo).
+        // Cursor por `start_page`; retorna `next_page` p/ retomar. Rate-limit via callOmie.
+        const bfDryRun = params.dry_run === true;
+        const bfNumeroPedido = params.numero_pedido ? Number(params.numero_pedido) : undefined;
+        let bfPagina = Number(params.start_page) || 1;
+        const bfMaxPages = Number(params.max_pages) || 5;
+        let bfTotalPaginas = 1;
+        let bfPages = 0;
+        let bfPedidosComCor = 0;
+        let bfPedidosAtualizados = 0;
+        const bfAmostra: Array<Record<string, unknown>> = [];
+
+        while ((bfPagina <= bfTotalPaginas || bfPages === 0) && bfPages < bfMaxPages) {
+          const bfParams: Record<string, unknown> = { pagina: bfPagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" };
+          if (bfNumeroPedido) { bfParams.numero_pedido_de = bfNumeroPedido; bfParams.numero_pedido_ate = bfNumeroPedido; }
+          const bfRes = (await callOmieVendasApi("produtos/pedido/", "ListarPedidos", bfParams, account)) as OmieListarPedidosResponse | null;
+          if (!bfRes) break; // rate limit → retoma na próxima invocação
+          bfTotalPaginas = bfRes.total_de_paginas || 1;
+          const bfPedidos = bfRes.pedido_venda_produto || [];
+
+          for (const bfPedido of bfPedidos) {
+            const bfCab = bfPedido.cabecalho || {};
+            const bfCodigoPedido = bfCab.codigo_pedido;
+            if (!bfCodigoPedido) continue;
+            const bfDet: OmieDetalheItem[] = bfPedido.det || [];
+            let bfTemCor = false;
+            const bfItems: OrderItemPayload[] = bfDet.map((d) => {
+              const prod = d.produto || {};
+              const obsItem = d.observacao?.obs_item ?? d.inf_adic?.dados_adicionais_item;
+              const cor = parseCorObs(obsItem);
+              if (cor) bfTemCor = true;
+              // amostra do probe: só itens com observação preenchida (mostra a fonte crua).
+              if (bfDryRun && bfAmostra.length < 25 && obsItem) {
+                bfAmostra.push({
+                  numero_pedido: bfCab.numero_pedido,
+                  descricao: prod.descricao ?? null,
+                  obs_item: d.observacao?.obs_item ?? null,
+                  dados_adicionais_item: d.inf_adic?.dados_adicionais_item ?? null,
+                  cor_parseada: cor?.tint_nome_cor ?? null,
+                });
+              }
+              return {
+                omie_codigo_produto: prod.codigo_produto,
+                descricao: prod.descricao || '',
+                quantidade: prod.quantidade || 1,
+                valor_unitario: prod.valor_unitario || 0,
+                desconto: prod.desconto || 0,
+                ...(cor ? { tint_nome_cor: cor.tint_nome_cor } : {}),
+              };
+            });
+            if (bfTemCor) bfPedidosComCor++;
+            if (!bfDryRun && bfTemCor) {
+              // UPDATE só registros SEM cor (idempotente; não toca o do wizard que já tem).
+              const { data: bfRows } = await supabaseAdmin
+                .from('sales_orders')
+                .select('id, items')
+                .eq('account', account)
+                .eq('omie_pedido_id', bfCodigoPedido);
+              for (const bfRow of bfRows || []) {
+                const jaTemCor = JSON.stringify(bfRow.items ?? []).includes('tint_nome_cor');
+                if (!jaTemCor) {
+                  const { error: bfUpErr } = await supabaseAdmin.from('sales_orders').update({ items: bfItems }).eq('id', bfRow.id);
+                  if (!bfUpErr) bfPedidosAtualizados++;
+                }
+              }
+            }
+          }
+          bfPages++;
+          bfPagina++;
+        }
+        result = {
+          success: true,
+          dry_run: bfDryRun,
+          account,
+          pedidos_com_cor: bfPedidosComCor,
+          pedidos_atualizados: bfPedidosAtualizados,
+          next_page: bfPagina <= bfTotalPaginas ? bfPagina : null,
+          ...(bfDryRun ? { amostra: bfAmostra } : {}),
+        };
         break;
       }
 

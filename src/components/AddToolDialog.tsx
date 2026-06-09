@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Loader2, Plus, ChevronRight, ChevronLeft, Search } from 'lucide-react';
 import { ToolImageIdentifier } from '@/components/ToolImageIdentifier';
+import { normalizarOpcaoSpec } from '@/lib/tools/spec-option';
 
 interface ToolCategory {
   id: string;
@@ -25,6 +26,7 @@ interface ToolSpecification {
   options: string[] | null;
   is_required: boolean | null;
   display_order: number | null;
+  allow_custom_option: boolean | null;
 }
 
 interface AddToolDialogProps {
@@ -36,7 +38,7 @@ interface AddToolDialogProps {
 }
 
 export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, targetUserId }: AddToolDialogProps) {
-  const { user } = useAuth();
+  const { user, isStaff } = useAuth();
 
   const [step, setStep] = useState<'category' | 'specs'>('category');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
@@ -46,6 +48,15 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingSpecs, setIsLoadingSpecs] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [addingForId, setAddingForId] = useState<string | null>(null);
+  const [novoValor, setNovoValor] = useState('');
+  const [savingOption, setSavingOption] = useState(false);
+  const reqIdRef = useRef(0);
+  // ref espelha a categoria atual: o guard de resposta obsoleta NÃO pode comparar
+  // contra `selectedCategory` do closure de handleSaveOption (ficaria preso no valor
+  // de quando a função foi criada → o guard nunca observaria a troca de categoria).
+  const selectedCategoryRef = useRef(selectedCategory);
+  selectedCategoryRef.current = selectedCategory;
 
   // Reset state when dialog closes
   useEffect(() => {
@@ -56,6 +67,9 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
       setSpecValues({});
       setQuantity(1);
       setSearchQuery('');
+      setAddingForId(null);
+      setNovoValor('');
+      setSavingOption(false);
     }
   }, [open]);
 
@@ -77,6 +91,8 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
 
   const loadSpecifications = async (categoryId: string) => {
     setIsLoadingSpecs(true);
+    setAddingForId(null);
+    setNovoValor('');
     try {
       const { data, error } = await supabase
         .from('tool_specifications')
@@ -90,6 +106,7 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
       const specs = (data || []).map(spec => ({
         ...spec,
         options: spec.options ? (Array.isArray(spec.options) ? spec.options : JSON.parse(spec.options as string)) : null,
+        allow_custom_option: (spec as { allow_custom_option?: boolean | null }).allow_custom_option ?? true,
       }));
 
       setSpecifications(specs);
@@ -155,6 +172,36 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
       }
     }
     return true;
+  };
+
+  const handleSaveOption = async (spec: ToolSpecification) => {
+    const norm = normalizarOpcaoSpec(novoValor);
+    if (!norm) {
+      toast.error('Medida inválida', { description: 'Digite um valor válido (até 60 caracteres).' });
+      return;
+    }
+    const myReq = ++reqIdRef.current;
+    const reqCategoria = selectedCategory;
+    setSavingOption(true);
+    try {
+      const { data, error } = await supabase
+        .rpc('adicionar_opcao_tool_spec' as never, { p_spec_id: spec.id, p_valor: novoValor } as never);
+      if (error) throw error;
+      // descarta resposta obsoleta (trocou de categoria/spec no meio)
+      if (myReq !== reqIdRef.current || reqCategoria !== selectedCategoryRef.current) return;
+      const resp = data as { options: string[]; valor_canonico: string } | null;
+      if (!resp) throw new Error('Resposta vazia do servidor');
+      setSpecifications(prev => prev.map(s => (s.id === spec.id ? { ...s, options: resp.options } : s)));
+      setSpecValues(prev => ({ ...prev, [spec.spec_key]: resp.valor_canonico }));
+      setAddingForId(null);
+      setNovoValor('');
+      toast.success('Medida adicionada', { description: resp.valor_canonico });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Não foi possível adicionar a medida';
+      toast.error('Erro ao adicionar medida', { description: msg });
+    } finally {
+      if (myReq === reqIdRef.current) setSavingOption(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -279,21 +326,65 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
                       {spec.is_required && <span className="text-destructive ml-1">*</span>}
                     </Label>
                     {spec.spec_type === 'select' && spec.options ? (
-                      <Select 
-                        value={specValues[spec.spec_key] || ''} 
-                        onValueChange={(v) => handleSpecChange(spec.spec_key, v)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecione..." />
-                        </SelectTrigger>
-                        <SelectContent className="bg-popover max-h-60">
-                          {spec.options.map((option) => (
-                            <SelectItem key={option} value={option}>
-                              {option}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      addingForId === spec.id ? (
+                        <div className="space-y-2">
+                          <Input
+                            autoFocus
+                            value={novoValor}
+                            onChange={(e) => setNovoValor(e.target.value)}
+                            placeholder={`Nova medida para ${spec.spec_label}`}
+                            maxLength={60}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { e.preventDefault(); handleSaveOption(spec); }
+                              if (e.key === 'Escape') { setAddingForId(null); setNovoValor(''); }
+                            }}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Isto adiciona ao catálogo permanente desta ferramenta.
+                          </p>
+                          <div className="flex gap-2">
+                            <Button size="sm" onClick={() => handleSaveOption(spec)} disabled={savingOption}>
+                              {savingOption && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+                              Salvar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => { setAddingForId(null); setNovoValor(''); }}
+                              disabled={savingOption}
+                            >
+                              Cancelar
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <Select
+                            value={specValues[spec.spec_key] || ''}
+                            onValueChange={(v) => handleSpecChange(spec.spec_key, v)}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Selecione..." />
+                            </SelectTrigger>
+                            <SelectContent className="bg-popover max-h-60">
+                              {spec.options.map((option) => (
+                                <SelectItem key={option} value={option}>
+                                  {option}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {isStaff && spec.allow_custom_option && (
+                            <button
+                              type="button"
+                              onClick={() => { setAddingForId(spec.id); setNovoValor(''); }}
+                              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              + Não está na lista? Adicionar…
+                            </button>
+                          )}
+                        </>
+                      )
                     ) : (
                       <Input
                         value={specValues[spec.spec_key] || ''}
@@ -323,7 +414,7 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
                 <Button
                   className="w-full"
                   onClick={handleSubmit}
-                  disabled={isLoading}
+                  disabled={isLoading || savingOption}
                 >
                   {isLoading ? (
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />

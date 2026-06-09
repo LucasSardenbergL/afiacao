@@ -1,0 +1,23 @@
+# @src: src/lib/financeiro/funding-helpers.ts
+# @test: src/lib/financeiro/__tests__/funding-helpers.test.ts
+# Invariantes money-path do Custo Marginal de Funding (antecipação por título, planejador de
+# cobertura de gap, merit-order em R$). Princípio: tudo em R$ no horizonte; pré-imposto.
+# "ausente -> falta_dado/null" (NUNCA fabrica custo 0). Espelhado VERBATIM na edge fin-funding.
+PEGA | iofCredito parcela DIÁRIA 0,0082%/dia (* vira /)     | s/0\.000082 \* diasCap/0.000082 \/ diasCap/
+PEGA | iofCredito parcela FIXA 0,38% (+ vira -)             | s/diasCap \+ 0\.0038/diasCap - 0.0038/
+PEGA | custoEmReais juro composto (-1 vira +1, infla custo) | s/dias \/ 365\) - 1\)/dias \/ 365) + 1)/
+PEGA | custoAntecipacao v_liq = V−deságio−iof−tarifa (- +)  | s/valor - desagio - iof - tarifa/valor + desagio - iof - tarifa/
+PEGA | custo_rs antecipação = V − v_liq (- vira +)          | s/custo_rs = valor - v_liq/custo_rs = valor + v_liq/
+PEGA | IOF só p/ 'desconto', factoring=0 (=== vira !==)     | s/input\.tipo === 'desconto' \? iofCredito/input.tipo !== 'desconto' ? iofCredito/
+PEGA | custoOportunidadeCaixa pega o MAIOR (max vira min)   | s/Math\.max\(input\.cm_anual, input\.retorno_marginal_a4\)/Math.min(input.cm_anual, input.retorno_marginal_a4)/
+PEGA | classificarContexto gap se saldo<reserva (< vira >)  | s/input\.menor_saldo_ate_n < input\.reserva_rs/input.menor_saldo_ate_n > input.reserva_rs/
+PEGA | checaValeEmT vale se alt<reserva (< vira >)          | s/alt < reserva_rs && base/alt > reserva_rs && base/
+PEGA | decidirTitulo GAP net = custo_alt − custo_antec (- +)| s/const net = melhor\.custo - ant\.custo_rs;/const net = melhor.custo + ant.custo_rs;/
+PEGA | decidirTitulo GAP escolhe a alternativa + BARATA (< >)| s/b\.custo < a\.custo \? b : a/b.custo > a.custo ? b : a/
+PEGA | decidirTitulo SOBRA net = ganho − custo_antec (- +)  | s/const net = ganho - ant\.custo_rs;/const net = ganho + ant.custo_rs;/
+PEGA | identificarGap gap_rs = reserva − piorSaldo (- vira +)| s/input\.reserva_rs - piorSaldo/input.reserva_rs + piorSaldo/
+PEGA | identificarGap horizonte até RECUPERAÇÃO (ultimoAbaixo->piorIdx) | s/\(ultimoAbaixo \+ 1\) \* 7/(piorIdx + 1) * 7/
+PEGA | identificarGap acha o vale + profundo (< vira >)      | s/s\.saldo_final < piorSaldo/s.saldo_final > piorSaldo/
+PEGA | montarPlano usa = min(restante, capacidade) (min max) | s/Math\.min\(restante, f\.capacidade_rs\)/Math.max(restante, f.capacidade_rs)/
+PEGA | montarPlano merit-order por R$ crescente (ca-cb -> cb-ca) | s/return ca - cb;/return cb - ca;/
+PEGA | montarPlano custo_inércia ausente -> null (não fabrica 0) | s/input\.cheque_rate_aa != null \? custoEmReais\(gap_rs, horizonte_dias, input\.cheque_rate_aa\) : null/input.cheque_rate_aa != null ? custoEmReais(gap_rs, horizonte_dias, input.cheque_rate_aa) : 0/
