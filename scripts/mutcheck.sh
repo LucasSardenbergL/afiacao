@@ -62,6 +62,7 @@ SOBREVIVE | comentario (inerte)       | s/anchor/ANCHOR/
 ?         | inexistente (nao casa)    | s/NAO_EXISTE_XYZ/z/
 ?         | multi-linha (regex largo) | s/let /const /
 ?         | quebra sintaxe            | s/Math\.min\(/Math.min((/
+PEGAA     | typo no EXPECT            | s/let a/let aa/
 EOF
   out=$(MUTCHECK_TEST_CMD="$test" "$0" "$src" "$test" "$mut" 2>&1) || true
   fail=0
@@ -75,6 +76,7 @@ EOF
   if grep -qE "quebra sintaxe.*✓ PEGA" <<<"$out"; then echo "selftest: FALHOU — mutante que não compila virou FALSO-PEGA"; fail=1; fi
   # revert: o fixture tem que voltar ao original (Math.min E os `let` que a mutação multi-linha tocou)
   grep -q 'Math.min(...xs)' "$src" || { echo "selftest: FALHOU — backup/revert não restaurou Math.min"; fail=1; }
+  grep -qiE "typo no EXPECT.*(INVÁLID|INVALID).*EXPECT desconhecido" <<<"$out" || { echo "selftest: FALHOU — EXPECT inválido (typo) devia ser recusado, não tratado como exploratório"; fail=1; }
   grep -q 'let a = 1' "$src" || { echo "selftest: FALHOU — revert não restaurou a mutação multi-linha"; fail=1; }
   if [[ $fail -eq 0 ]]; then echo "selftest: ✓ mecânica ok (PEGA/SOBREVIVE/INVÁLIDO[não-casou·multi-linha·não-compila]/revert)"; exit 0; fi
   echo "--- saída do mutcheck sob teste ---"; echo "$out"; exit 1
@@ -92,9 +94,12 @@ done
 
 read -ra TEST_CMD <<< "${MUTCHECK_TEST_CMD:-bunx vitest run}"
 # Compila-check: distingue "morto por TESTE" (PEGA real) de "morto pelo COMPILADOR"
-# (mutante com sintaxe inválida — sem isso vira falso-PEGA, inflando o poder aparente
-# da suíte). Default bun build (esbuild: pega SINTAXE, não tipos — coerente com o vitest,
-# que roda via esbuild). MUTCHECK_COMPILE_CMD="" desliga o check (degrada honesto).
+# (mutante com sintaxe inválida — sem isso vira falso-PEGA, inflando o poder aparente).
+# Default bun build = aproximação RÁPIDA de validade de sintaxe; NÃO é o mesmo transform
+# do vitest (bun usa bundler próprio, vitest usa Vite/esbuild) — concordam em sintaxe TS
+# comum, podem divergir em casos exóticos. Pega SINTAXE, não tipos (coerente com o vitest,
+# que ignora tipos). Limitação: NÃO pega mutante que compila mas LANÇA no import (runtime
+# top-level) — esse ainda vira falso-PEGA. MUTCHECK_COMPILE_CMD="" desliga (degrada honesto).
 read -ra COMPILE_CMD <<< "${MUTCHECK_COMPILE_CMD-bun build --target node --outfile /dev/null}"
 
 # ───────────────────────── backup + revert garantido ─────────────────────────
@@ -112,8 +117,17 @@ trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]
 echo "mutcheck: $SRC × $TEST"
 
 # ───────────────────────── baseline ─────────────────────────
+# baseline do COMPILADOR (gêmeo do baseline-de-testes): o SRC original PRECISA compilar —
+# senão `bun`/o compilador está ausente/quebrado no PATH e TODOS os mutantes virariam
+# falso-INVÁLIDO ("não compila"), mascarando a causa como se fosse cobertura. É controle do
+# AMBIENTE, não da cobertura. (Achado do Codex: sem isso o gate de CI fica vermelho mudo se
+# o bun sumir.)
+if ! compila; then
+  echo "  baseline: ✗ o SRC ORIGINAL não compila com '${COMPILE_CMD[*]:-}' — harness/ambiente quebrado (bun no PATH?). Abortando." >&2
+  exit 1
+fi
 if run_tests; then
-  echo "  baseline: ✓ verde"
+  echo "  baseline: ✓ verde (compila + suíte passa)"
 else
   echo "  baseline: ✗ VERMELHO — a suíte já falha sem mutação. Resultados seriam lixo. Abortando." >&2
   exit 1
@@ -128,6 +142,12 @@ while IFS='|' read -r c_expect c_label c_expr || [[ -n "${c_expect:-}" ]]; do
   c_label=$(trim "${c_label:-}")
   c_expr=$(trim "${c_expr:-}")
   n=$((n+1))
+  # enum de EXPECT: um typo (ex.: "PEGAA") cairia no ramo exploratório e DESLIGARIA o gate
+  # pra essa linha em silêncio — recusa explícita (achado do Codex).
+  if [[ "$c_expect" != "PEGA" && "$c_expect" != "SOBREVIVE" && "$c_expect" != "?" ]]; then
+    printf "  %-9s %-40s %s\n" "$c_expect" "$c_label" "⚠ INVÁLIDO (EXPECT desconhecido — use PEGA|SOBREVIVE|?)"
+    invalid=$((invalid+1)); problems=$((problems+1)); continue
+  fi
 
   perl -i -pe "$c_expr" "$SRC"
   # guard 1: a mutação aplicou? (não-casou = perl errado / .mut stale após refactor)
