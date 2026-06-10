@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Phone, AlertTriangle, TrendingUp, Clock, Loader2 } from 'lucide-react';
 import { useMyAgendaToday, type AgendaItem } from '@/hooks/useMyAgendaToday';
-import { useWebRTCCallContext } from '@/contexts/WebRTCCallContext';
+import { useWebRTCCallContext } from '@/contexts/webrtc-call-context';
 import { toast } from 'sonner';
 import { SignalModifierBadge } from './SignalModifierBadge';
 
