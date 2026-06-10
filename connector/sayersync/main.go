@@ -343,47 +343,11 @@ func svcConfig(_ *Config) *service.Config {
 }
 
 // ──────────────────────────────────────────────
-// runOneCycle — placeholder; implementado em sync.go (Task 9)
+// runOneCycle — delega ao RunCycle de sync.go
 // ──────────────────────────────────────────────
 
 func runOneCycle(ctx context.Context, cfg *Config) {
-	// Conecta ao PG local para validar schema e extrair delta.
-	db, err := Connect(ctx, cfg.PGConn)
-	if err != nil {
-		logger.Errorf("runOneCycle: falha ao conectar: %v", err)
-		return
-	}
-	defer db.Close()
-
-	// Valida o schema contra o mapeamento embutido.
-	rm, diff, err := Validate(ctx, db)
-	if err != nil {
-		logger.Errorf("runOneCycle: erro ao validar schema: %v", err)
-		sendSchemaMismatchHeartbeat(ctx, cfg, diff)
-		return
-	}
-	if diff != nil && !diff.OK {
-		logger.Warnf("runOneCycle: schema diverge do esperado — não sincroniza. diff=%+v", diff)
-		// Grava o schema para que o developer possa ajustar o mapeamento.
-		outPath := filepath.Join(exeDir(), "sayersystem-schema.txt")
-		if _, discErr := RunDiscovery(ctx, db, outPath); discErr != nil {
-			logger.Errorf("runOneCycle: falha ao gravar schema no discovery: %v", discErr)
-		}
-		sendSchemaMismatchHeartbeat(ctx, cfg, diff)
-		return
-	}
-
-	// Ciclo completo de sync delegado ao pacote sync (Task 9).
-	// Por ora, loga o estado do mapeamento resolvido.
-	logger.Infof("runOneCycle: schema OK — fingerprint=%s; formShape=%s",
-		Fingerprint(rm), rm.FormulaShape)
-	_ = rm // será consumido pelo sync.go da Task 9
-}
-
-func sendSchemaMismatchHeartbeat(_ context.Context, _ *Config, diff *SchemaDiff) {
-	// Envia heartbeat com schema_mismatch para a edge.
-	// Implementado em api.go / sync.go (Task 9).
-	logger.Warnf("sendSchemaMismatchHeartbeat: diff=%+v (heartbeat será enviado pelo sync.go)", diff)
+	RunCycle(ctx, cfg)
 }
 
 // ──────────────────────────────────────────────

@@ -37,6 +37,11 @@ type Config struct {
 
 	// BuiltVersion registra a versão do binário que escreveu esta config.
 	BuiltVersion string `json:"built_version,omitempty"`
+
+	// UpdateManifestURL é a URL pública do manifesto de atualização automática.
+	// Exemplo: https://<project>.supabase.co/storage/v1/object/public/releases/sayersync/manifest.json
+	// Vazio = auto-update desativado.
+	UpdateManifestURL string `json:"update_manifest_url,omitempty"`
 }
 
 // configDefaults retorna uma Config com os valores padrão.
