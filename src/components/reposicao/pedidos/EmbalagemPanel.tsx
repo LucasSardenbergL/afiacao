@@ -48,7 +48,14 @@ export function EmbalagemPanel({ empresa, itens }: { empresa: string; itens: Ped
                     <div className="text-muted-foreground">
                       Recomendado: <span className="font-medium text-foreground">{d.recomendada}</span>
                       {d.economia_vs_alternativa > 0 && <> · economia {formatBRL(d.economia_vs_alternativa)}</>}
-                      {d.excedente_base > 0 && <> · excedente {d.excedente_base} un-base</>}
+                      {d.excedente_base > 0 && (
+                        <>
+                          {' '}· sobra {d.excedente_base} un-base
+                          {d.flags.includes('sobra_antecipa_compra') && d.dias_escoamento_sobra != null
+                            ? ` — vira estoque, escoa em ~${Math.ceil(d.dias_escoamento_sobra)}d`
+                            : ''}
+                        </>
+                      )}
                       {d.status === 'marginal' && <> · <span className="text-status-warning">ganho marginal — confira</span></>}
                     </div>
                     {d.flags.includes('preco_desatualizado') && (

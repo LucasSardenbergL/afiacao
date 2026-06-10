@@ -71,24 +71,27 @@ describe('escolherEmbalagemEconomica', () => {
     expect(r.recomendada).toBe('GL');
   });
 
-  it('GL barato/unidade mas necessidade pequena: o capital come a economia → QT', () => {
+  it('escoamento lento: o carrego come o crédito da sobra → QT', () => {
+    // GL absoluto mais barato (9 < 10), MAS demanda quase nula → a sobra leva ~3000
+    // dias a escoar → carrego (R$27,7) engole o crédito (R$6,75) → conservador.
     const r = escolherEmbalagemEconomica({
       necessidade_base: 1,
       opcoes: [
         { sku_codigo_omie: 'QT', fator_para_base: 1, preco: 10, preco_status: 'ok' },
         { sku_codigo_omie: 'GL', fator_para_base: 4, preco: 9, preco_status: 'ok' },
       ],
-      params: params({ custo_capital_anual: 0.5, demanda_base_diaria: 0.02 }),
+      params: params({ custo_capital_anual: 0.5, demanda_base_diaria: 0.001 }),
     });
     expect(r.recomendada).toBe('QT');
   });
 
   it('economia abaixo do limiar não empurra overbuy (marginal → recomenda a sem excedente)', () => {
+    // GL R$39,60 = R$9,90/un-base vs QT R$10: ganho efetivo no ciclo = R$0,10 < limiar 1.
     const r = escolherEmbalagemEconomica({
       necessidade_base: 1,
       opcoes: [
         { sku_codigo_omie: 'QT', fator_para_base: 1, preco: 10, preco_status: 'ok' },
-        { sku_codigo_omie: 'GL', fator_para_base: 4, preco: 9.9, preco_status: 'ok' },
+        { sku_codigo_omie: 'GL', fator_para_base: 4, preco: 39.6, preco_status: 'ok' },
       ],
       params: params({ demanda_base_diaria: 1000, limiar_minimo_economia_rs: 1 }),
     });
@@ -142,7 +145,7 @@ describe('escolherEmbalagemEconomica', () => {
       necessidade_base: 1,
       opcoes: [
         { sku_codigo_omie: 'QT', fator_para_base: 1, preco: 10, preco_status: 'ok' },
-        { sku_codigo_omie: 'GL', fator_para_base: 4, preco: 9.9, preco_status: 'ok' },
+        { sku_codigo_omie: 'GL', fator_para_base: 4, preco: 39.6, preco_status: 'ok' },
       ],
       params: params({ demanda_base_diaria: 1000, limiar_minimo_economia_rs: 1 }),
     });
@@ -172,5 +175,130 @@ describe('escolherEmbalagemEconomica', () => {
     });
     expect(mk(0).status).toBe('indisponivel');
     expect(mk(-5).status).toBe('indisponivel');
+  });
+});
+
+// ─── v1.1 — crédito de reposição da sobra (spec §14) ───────────────────────────
+// Caso real do founder (WP01): GL 6,2% mais barato por QT-equivalente, mas a v1
+// indicava QT pra toda necessidade não-múltipla de 4 (sobra = custo morto integral).
+const QT_WP01: OpcaoEmbalagem = { sku_codigo_omie: 'QT_WP01', fator_para_base: 1, preco: 81.7068, preco_status: 'ok' };
+const GL_WP01: OpcaoEmbalagem = { sku_codigo_omie: 'GL_WP01', fator_para_base: 4, preco: 306.4977, preco_status: 'ok' };
+const BASE_GL = 306.4977 / 4; // 76.624425 = melhor custo/base do grupo
+const paramsWP01 = (over: Partial<ParamsEmbalagem> = {}): ParamsEmbalagem =>
+  ({ custo_capital_anual: 0.3, limiar_minimo_economia_rs: 5, demanda_base_diaria: 0.2244, ...over });
+const carrego = (exc: number, custoBase: number, cm: number, demanda: number) =>
+  exc * custoBase * cm * ((exc / demanda) / 365);
+
+describe('v1.1 — crédito de reposição da sobra', () => {
+  it('WP01 real, necessidade 2: GL vence (sobra de 2 QT antecipa a próxima compra)', () => {
+    const r = escolherEmbalagemEconomica({
+      necessidade_base: 2,
+      opcoes: [QT_WP01, GL_WP01],
+      params: paramsWP01(),
+    });
+    expect(r.recomendada).toBe('GL_WP01');
+    expect(r.status).toBe('ok');
+    expect(r.flags).toContain('sobra_antecipa_compra');
+    const totalGL = 306.4977 + carrego(2, BASE_GL, 0.3, 0.2244) - 2 * BASE_GL;
+    expect(r.economia_vs_alternativa).toBeCloseTo(2 * 81.7068 - totalGL, 4); // ≈ R$9,04
+  });
+
+  it('WP01 real, necessidade 1: ganho de ~R$2,56 fica abaixo do limiar → marginal → QT', () => {
+    const r = escolherEmbalagemEconomica({
+      necessidade_base: 1,
+      opcoes: [QT_WP01, GL_WP01],
+      params: paramsWP01(),
+    });
+    expect(r.status).toBe('marginal');
+    expect(r.recomendada).toBe('QT_WP01');
+    expect(r.flags).toContain('overbuy_marginal');
+  });
+
+  it('WP01 real, necessidade 4: GL sem sobra, economia direta de ~R$20,33', () => {
+    const r = escolherEmbalagemEconomica({
+      necessidade_base: 4,
+      opcoes: [QT_WP01, GL_WP01],
+      params: paramsWP01(),
+    });
+    expect(r.recomendada).toBe('GL_WP01');
+    expect(r.excedente_base).toBe(0);
+    expect(r.economia_vs_alternativa).toBeCloseTo(4 * 81.7068 - 306.4977, 4);
+    expect(r.flags).not.toContain('sobra_antecipa_compra');
+    expect(r.dias_escoamento_sobra).toBeNull();
+  });
+
+  it('crédito é gated pela demanda: sem demanda, comportamento v1 (custo direto) preservado', () => {
+    const r = escolherEmbalagemEconomica({
+      necessidade_base: 1,
+      opcoes: [QT_WP01, GL_WP01],
+      params: paramsWP01({ demanda_base_diaria: null }),
+    });
+    expect(r.recomendada).toBe('QT_WP01'); // 81,71 < 306,50 — sem crédito sem evidência de escoamento
+    expect(r.flags).toContain('escoamento_nao_estimado');
+  });
+
+  it('necessidade fracionária: ambas as opções têm sobra com crédito (sem guard marginal aplicável)', () => {
+    const r = escolherEmbalagemEconomica({
+      necessidade_base: 2.5,
+      opcoes: [QT_WP01, GL_WP01],
+      params: paramsWP01(),
+    });
+    expect(r.recomendada).toBe('GL_WP01');
+    expect(r.status).toBe('ok');
+  });
+
+  it('dias_escoamento_sobra exposto quando a recomendada tem sobra; null no marginal', () => {
+    const comSobra = escolherEmbalagemEconomica({
+      necessidade_base: 2,
+      opcoes: [QT_WP01, GL_WP01],
+      params: paramsWP01(),
+    });
+    expect(comSobra.dias_escoamento_sobra).toBeCloseTo(2 / 0.2244, 4);
+
+    const marginal = escolherEmbalagemEconomica({
+      necessidade_base: 1,
+      opcoes: [QT_WP01, GL_WP01],
+      params: paramsWP01(),
+    });
+    expect(marginal.dias_escoamento_sobra).toBeNull(); // recomendada (QT) não tem sobra
+  });
+
+  it('invariante: custo_total ≥ necessidade × custo/base da opção (crédito nunca negativa o custo)', () => {
+    // GL absoluto mais barato que QT (promoção): compra dominante, crédito grande.
+    const r = escolherEmbalagemEconomica({
+      necessidade_base: 1,
+      opcoes: [
+        { sku_codigo_omie: 'QT', fator_para_base: 1, preco: 10, preco_status: 'ok' },
+        { sku_codigo_omie: 'GL', fator_para_base: 4, preco: 9, preco_status: 'ok' },
+      ],
+      params: params({ demanda_base_diaria: 1000 }),
+    });
+    expect(r.recomendada).toBe('GL');
+    for (const o of r.opcoes) {
+      expect(o.custo_total_ajustado).toBeGreaterThanOrEqual(1 * o.custo_por_base - 1e-9);
+      expect(o.custo_total_ajustado).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('avaliarOpcao: crédito = excedente × preço de reposição, capado no custo/base da própria opção', () => {
+    const gl: OpcaoEmbalagem = { sku_codigo_omie: 'GL1', fator_para_base: 4, preco: 30, preco_status: 'ok' };
+    const p: ParamsEmbalagem = { custo_capital_anual: 0.5, limiar_minimo_economia_rs: 5, demanda_base_diaria: 0.02 };
+    const a = avaliarOpcao(1, gl, p, 7.5);
+    expect(a!.credito_reposicao).toBeCloseTo(3 * 7.5, 6);
+    expect(a!.custo_total_ajustado).toBeCloseTo(30 + carrego(3, 7.5, 0.5, 0.02) - 3 * 7.5, 4);
+
+    // caller passando preço de reposição acima do custo/base da opção → capado (defesa do invariante)
+    const capado = avaliarOpcao(1, gl, { ...p, demanda_base_diaria: 2 }, 99);
+    expect(capado!.credito_reposicao).toBeCloseTo(3 * 7.5, 6);
+  });
+
+  it('avaliarOpcao: sem o preço de reposição (compat) ou sem demanda → crédito 0', () => {
+    const gl: OpcaoEmbalagem = { sku_codigo_omie: 'GL1', fator_para_base: 4, preco: 30, preco_status: 'ok' };
+    const semArg = avaliarOpcao(1, gl, params());
+    expect(semArg!.credito_reposicao).toBe(0);
+
+    const semDem = avaliarOpcao(1, gl, params({ demanda_base_diaria: null }), 7.5);
+    expect(semDem!.credito_reposicao).toBe(0);
+    expect(semDem!.custo_total_ajustado).toBe(30);
   });
 });
