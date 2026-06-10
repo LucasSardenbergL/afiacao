@@ -754,6 +754,16 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
   }
 }
 
+// dInc do Omie é DD/MM/YYYY → ms UTC (0 se ausente/ilegível, p/ NÃO vencer o merge
+// por data no frontend). Usado p/ escolher, por produto/parcela, o pedido de maior data.
+function parseDIncMs(s: string): number {
+  const m = (s || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return 0;
+  const d = Number(m[1]), mo = Number(m[2]), y = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
+  return Date.UTC(y, mo - 1, d);
+}
+
 // Fase 2: CONTEXTO COMERCIAL do cliente numa ÚNICA passada de ListarPedidos.
 // Substitui buscar_precos_cliente + buscar_ultima_parcela + buscar_cliente (colacor) +
 // historico_produtos_cliente, que disparavam VÁRIAS ListarPedidos concorrentes na mesma
@@ -808,20 +818,30 @@ async function buscarContextoComercialCliente(
   const parcelaCount: Record<string, number> = {};
   let ultimaParcela: string | null = null;
 
-  // Pedidos vêm do mais recente ao mais antigo (DATA_INCLUSAO) → o 1º por produto é o último.
+  // Order-independent: por produto/parcela mantém o de MAIOR dInc (a ordem da lista do
+  // Omie NÃO é garantida). dInc = precedência; NÃO data_previsao (data futura de entrega
+  // venceria o merge indevidamente). Sem dInc → '' → o frontend trata como sem-data e o
+  // local datado vence (seguro).
+  const dIncMs: Record<number, number> = {};
+  let ultimaParcelaMs = -1;
   for (const pedido of pedidos) {
-    const dataInc = pedido.infoCadastro?.dInc || pedido.cabecalho?.data_previsao || "";
+    const dataInc = pedido.infoCadastro?.dInc || "";
+    const incMs = parseDIncMs(dataInc);
     const parcela = pedido.cabecalho?.codigo_parcela;
     if (parcela) {
-      if (!ultimaParcela) ultimaParcela = parcela;
       parcelaCount[parcela] = (parcelaCount[parcela] || 0) + 1;
+      if (ultimaParcela === null || incMs > ultimaParcelaMs) {
+        ultimaParcela = parcela;
+        ultimaParcelaMs = incMs;
+      }
     }
     for (const item of pedido.det || []) {
       const cod = item.produto?.codigo_produto;
       const val = item.produto?.valor_unitario;
-      if (cod && val && val > 0 && precos[cod] === undefined) {
+      if (cod && val && val > 0 && (precos[cod] === undefined || incMs > (dIncMs[cod] ?? -1))) {
         precos[cod] = val;
         datas[cod] = dataInc;
+        dIncMs[cod] = incMs;
       }
     }
   }
