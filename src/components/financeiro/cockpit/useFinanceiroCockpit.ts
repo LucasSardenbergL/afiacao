@@ -55,7 +55,12 @@ export function useFinanceiroCockpit() {
         }),
         getAgingReceber('all'),
         Promise.all(['oben', 'colacor', 'colacor_sc'].map(co => getDRE(co as Company, ano, undefined, regime))).then(r => r.flat()),
-        getTopInadimplentes('all', 5),
+        // getTopInadimplentes agora LANÇA em erro (era [] silencioso = falso
+        // "ninguém inadimplente"); catch por fonte pra não derrubar o resto.
+        getTopInadimplentes('all', 5).catch((e): InadimplenteRow[] => {
+          logger.warn('Top inadimplentes indisponível', { error: e instanceof Error ? e.message : String(e) });
+          return [];
+        }),
         // Projeção 13s + NCG consolidados via snapshot real da engine A1 (não a RPC ingênua)
         getProjecaoSnapshotsCockpit(EMPRESAS_COCKPIT).catch((e) => {
           logger.warn('Snapshots de projeção indisponíveis', { error: e instanceof Error ? e.message : String(e) });
