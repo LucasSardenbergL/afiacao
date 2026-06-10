@@ -8498,6 +8498,42 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_alerta_pedido_minimo: {
+        Row: {
+          alertado_em: string
+          empresa: string
+          fornecedor_nome: string
+          grupo_codigo: string
+          id: number
+          pedido_id: number | null
+          resolvido_em: string | null
+          valor_alertado: number
+          valor_ultimo: number
+        }
+        Insert: {
+          alertado_em?: string
+          empresa: string
+          fornecedor_nome: string
+          grupo_codigo?: string
+          id?: never
+          pedido_id?: number | null
+          resolvido_em?: string | null
+          valor_alertado: number
+          valor_ultimo: number
+        }
+        Update: {
+          alertado_em?: string
+          empresa?: string
+          fornecedor_nome?: string
+          grupo_codigo?: string
+          id?: never
+          pedido_id?: number | null
+          resolvido_em?: string | null
+          valor_alertado?: number
+          valor_ultimo?: number
+        }
+        Relationships: []
+      }
       reposicao_param_auto_log: {
         Row: {
           classe_consolidada: string | null
@@ -14616,6 +14652,7 @@ export type Database = {
         }
         Returns: Json
       }
+      reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
       reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
       reposicao_param_limbo_watchdog: { Args: never; Returns: undefined }
       reposicao_persistir_qtde_inteira: {
