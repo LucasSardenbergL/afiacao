@@ -13,8 +13,12 @@
 > aberto+vencido client-side SEM `.range()` → PostgREST capa em 1000 linhas → com
 > ~11k títulos de CR aberto na oben, `total_a_receber`/`total_vencido_*` saem errados.
 
-- 🔄 **Fix TDD**: variante paginada `somarSaldoPorStatus(tabela, company, statuses)`; `somarSaldoAberto` delega nela; `getResumoFinanceiro` passa a usar as somas paginadas (padroniza em `saldo`, coluna gerada = documento − recebido/pago). Testes de contrato com mock do supabase que reproduz o cap 1000.
-- ⏳ `heavy bun run typecheck` + `heavy bun run test` + `bun lint` → PR pequeno e isolado (sem migration/edge; vai ao ar no próximo Publish).
+- ✅ **Fix TDD**: variante paginada `somarSaldoPorStatus(tabela, company, statuses)`; `somarSaldoAberto` delega nela; `getResumoFinanceiro` usa as somas paginadas (padroniza em `saldo`, coluna gerada). RED provado por truncamento exato (2200→2000) antes do fix.
+- ✅ **/review (gstack)**: 2 specialists + adversarial Claude (codex em usage-limit até 11/06 9:24 — retroativo pendente). Achados incorporados: `.order('id')` na paginação (offset sem ORDER BY não é estável; sync grava */10), `throw new Error(...)` em vez de objeto cru (banner mostraria "[object Object]"), CC deixou de engolir erro, `useFinanceiroCockpit` isola o resumo com catch por fonte (sem isso o throw novo derrubava aging/DRE/inadimplentes junto), mock capa `.range()` em 1000 como o PostgREST real + testes de erro do orquestrador.
+- ✅ Gate verde: typecheck 0 · **2959 testes** (16 de contrato novos) · lint 0 errors. PR aberto (squash + auto-merge). Sem migration/edge; **vai ao ar no próximo Publish**.
+- ⏳ **Follow-up (chip spawnado)**: `getCapitalDeGiro` + `getTopInadimplentes` têm o MESMO cap 1000 (achado do specialist — capital_giro/top-5/projeção-30d truncados na oben); precisa paginar a busca de LINHAS (não só somas).
+- ⏸️ **Codex adversarial retroativo** do PR quando a cota voltar (11/06+).
+- 📝 Limitação conhecida (nota no PR): o cockpit loga falha do resumo via `logger.warn` mas não tem banner de erro (pré-existente — `getDRE` já lançava no mesmo Promise.all); banner visível = decisão de UX futura.
 
 ---
 
