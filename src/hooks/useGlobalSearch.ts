@@ -92,6 +92,7 @@ export function useGlobalSearch(query: string, enabled = true) {
       const { data } = await supabase
         .from('tint_formulas')
         .select('id, cor_id, nome_cor')
+        .is('desativada_em', null)
         .or(ilikeOr(['cor_id', 'nome_cor'], trimmed))
         .limit(5);
       return (data ?? []).map((f): SearchResult => ({

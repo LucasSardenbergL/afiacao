@@ -96,6 +96,7 @@ function useFormulaSearch(corId: string) {
           )
         `)
         .eq('account', ACCOUNT)
+        .is('desativada_em', null)
         .ilike('cor_id', `%${corId}%`)
         .limit(20);
       return data ?? [];
