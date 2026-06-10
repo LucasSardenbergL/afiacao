@@ -81,8 +81,9 @@ export function filterRanked(sorted: Product[], term: string, limit = 50): Produ
 }
 
 /**
- * Filtra + ordena o catálogo para exibição/busca (composição rank → filter,
- * mantida pela compatibilidade com os testes/consumidores existentes).
+ * Filtra + ordena o catálogo para exibição/busca (composição rank → filter).
+ * Mantida pelos testes existentes — o useProductCatalog migrou para chamar
+ * rankProducts (memoizado) + filterRanked (por tecla) separadamente.
  */
 export function filterAndRankProducts(
   products: Product[],

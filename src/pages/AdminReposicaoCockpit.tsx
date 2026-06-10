@@ -21,6 +21,7 @@ import {
   useItensDoDia,
 } from "@/hooks/useReposicaoSessao";
 import { downloadCsv, formatBRL, formatDate, logAudit } from "@/lib/reposicao";
+import { createLeadingTrailingThrottle } from "@/lib/leading-trailing-throttle";
 import { ContinuarBanner } from "@/components/reposicao/ContinuarBanner";
 import { EtapasGrid } from "@/components/reposicao/EtapasGrid";
 import { SmartAlertsSection } from "@/components/reposicao/SmartAlertsSection";
@@ -52,56 +53,54 @@ export default function AdminReposicaoCockpit() {
     if (dest) navigate(dest, { replace: true });
   }, [tabParam, navigate]);
 
-  // Realtime invalidation — com throttle leading+trailing. A geração do ciclo
-  // (cron 9h15) e o auto-apply mexem nessas tabelas EM LOTE: cada linha era um
-  // evento postgres_changes que disparava 6 invalidations + 1 toast → com o
-  // cockpit aberto na hora do cron virava tempestade de refetch e spam de
-  // toast. Agora o 1º evento invalida na hora e a rajada colapsa em 1
-  // revalidação por janela de 2,5s.
+  // Realtime invalidation — com throttle leading+trailing (helper testado em
+  // src/lib/leading-trailing-throttle.ts). A geração do ciclo (cron 9h15) e o
+  // auto-apply mexem nessas tabelas EM LOTE: cada linha era um evento
+  // postgres_changes que disparava 6 invalidations + 1 toast → com o cockpit
+  // aberto na hora do cron virava tempestade de refetch e spam de toast.
+  // As keys são acumuladas POR ORIGEM (evento de sku_parametros não refaz
+  // gráfico/histórico de pedidos) e o flush colapsa a rajada em 1 revalidação
+  // por janela de 2,5s.
   useEffect(() => {
-    let timer: number | undefined;
-    let last = 0;
-    const THROTTLE_MS = 2500;
-    const invalidateCockpit = () => {
-      last = Date.now();
-      queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
-      queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
-      queryClient.invalidateQueries({ queryKey: ["cockpit-historico-chart"] });
-      queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
-      queryClient.invalidateQueries({ queryKey: ["reposicao-aplicacao"] });
-      queryClient.invalidateQueries({ queryKey: ["reposicao-historico"] });
-      toast("Dados atualizados automaticamente", { duration: 1800 });
-    };
-    const onEvent = () => {
-      const elapsed = Date.now() - last;
-      if (elapsed >= THROTTLE_MS) {
-        invalidateCockpit();
-        return;
-      }
-      if (timer !== undefined) return; // trailing já agendado — colapsa a rajada
-      timer = window.setTimeout(() => {
-        timer = undefined;
-        invalidateCockpit();
-      }, THROTTLE_MS - elapsed);
+    const KEYS_PEDIDOS = [
+      "cockpit-current-step",
+      "cockpit-itens-dia",
+      "cockpit-historico-chart",
+      "reposicao-pedidos",
+      "reposicao-aplicacao",
+      "reposicao-historico",
+    ];
+    const KEYS_SKU_PARAMETROS = ["cockpit-current-step", "reposicao-aplicacao"];
+    const pending = new Set<string>();
+    const throttle = createLeadingTrailingThrottle(() => {
+      pending.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] }));
+      pending.clear();
+      // id estável: o sonner atualiza o toast in-place em vez de empilhar
+      // durante um lote longo.
+      toast("Dados atualizados automaticamente", { id: "cockpit-realtime", duration: 1800 });
+    }, 2500);
+    const onEvent = (keys: string[]) => () => {
+      keys.forEach((k) => pending.add(k));
+      throttle.fire();
     };
     const channel = supabase
       .channel("cockpit-reposicao-realtime")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "pedido_compra_sugerido" },
-        onEvent,
+        onEvent(KEYS_PEDIDOS),
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "sku_parametros" },
-        onEvent,
+        onEvent(KEYS_SKU_PARAMETROS),
       )
       .subscribe();
 
     return () => {
       // cancel (não flush): tela desmontada não precisa invalidar — o próximo
       // mount refaz as queries de qualquer forma.
-      if (timer !== undefined) window.clearTimeout(timer);
+      throttle.cancel();
       supabase.removeChannel(channel);
     };
   }, [queryClient]);

@@ -156,7 +156,14 @@ const FarmerCalls = () => {
   // pode sobrescrever a lista da busca atual nem apagar o loading dela.
   const searchSeqRef = useRef(0);
   const searchCustomers = useCallback(async (query: string) => {
-    if (query.length < 2) { setCustomers([]); return; }
+    if (query.length < 2) {
+      // Invalida QUALQUER busca em voo (senão a resposta atrasada do Omie
+      // passaria no guard e repovoaria a lista que o usuário acabou de limpar).
+      searchSeqRef.current++;
+      setCustomers([]);
+      setSearchLoading(false);
+      return;
+    }
     const seq = ++searchSeqRef.current;
     setSearchLoading(true);
     try {

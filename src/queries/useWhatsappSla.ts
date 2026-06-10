@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { createLeadingTrailingThrottle } from '@/lib/leading-trailing-throttle';
 import type { SlaNivel } from '@/lib/whatsapp/sla-format';
 
 export interface WaSlaRow {
@@ -43,40 +44,31 @@ export function useWhatsappSla() {
     staleTime: 15000,
   });
   // Realtime: mensagem/conversa nova revalida o SLA — com throttle
-  // leading+trailing: o 1º evento invalida na hora; a rajada (blast de
-  // template, sync em lote) colapsa numa única revalidação por janela de 3s.
-  // Sem o throttle, cada mensagem de QUALQUER conversa re-executava a view
-  // scan-heavy inteira, por cliente montado.
-  const lastInvalidateRef = useRef(0);
-  const timerRef = useRef<number | undefined>(undefined);
+  // leading+trailing (helper testado): o 1º evento invalida na hora; a rajada
+  // (blast de template, sync em lote) colapsa numa revalidação por janela de
+  // 3s. Sem o throttle, cada mensagem de QUALQUER conversa re-executava a
+  // view scan-heavy inteira, por cliente montado.
+  //
+  // ⚠️ Limitação PRÉ-EXISTENTE (achada na revisão deste PR, não introduzida
+  // por ele): o supabase-js REUSA a instância de canal pelo topic 'wa-sla' —
+  // quando DUAS instâncias deste hook montam juntas (ex.: Meu Dia monta
+  // SlaCardMeuDia + useCriticaFila), o segundo subscribe() é no-op e o match
+  // de bindings por índice pode derrubar o canal inteiro (CHANNEL_ERROR
+  // silencioso). O realtime do SLA nessas telas fica por conta do poll de
+  // 30s. Fix de verdade (canal singleton com refcount) está no mapa da
+  // auditoria de 2026-06-09 — Onda 3, junto do trabalho de WhatsApp.
   useEffect(() => {
-    const invalidate = () => {
-      lastInvalidateRef.current = Date.now();
+    const throttle = createLeadingTrailingThrottle(() => {
       qc.invalidateQueries({ queryKey: SLA_QUERY_KEY });
-    };
-    const onEvent = () => {
-      const elapsed = Date.now() - lastInvalidateRef.current;
-      if (elapsed >= REALTIME_THROTTLE_MS) {
-        invalidate();
-        return;
-      }
-      if (timerRef.current !== undefined) return; // trailing já agendado — colapsa
-      timerRef.current = window.setTimeout(() => {
-        timerRef.current = undefined;
-        invalidate();
-      }, REALTIME_THROTTLE_MS - elapsed);
-    };
+    }, REALTIME_THROTTLE_MS);
     const ch = supabase.channel('wa-sla')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_messages' }, onEvent)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_conversations' }, onEvent)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_messages' }, throttle.fire)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_conversations' }, throttle.fire)
       .subscribe();
     return () => {
       // cancel, não flush: componente desmontado não precisa invalidar — o
       // próximo mount refaz a query (staleTime 15s) de qualquer forma.
-      if (timerRef.current !== undefined) {
-        window.clearTimeout(timerRef.current);
-        timerRef.current = undefined;
-      }
+      throttle.cancel();
       supabase.removeChannel(ch);
     };
   }, [qc]);
@@ -84,16 +76,18 @@ export function useWhatsappSla() {
 }
 
 /**
- * Badge da sidebar: MESMA queryKey do useWhatsappSla → cache compartilhado.
- * Quando uma tela rica (Meu Dia, inbox, supervisão) está montada, o badge não
- * gera NENHUM fetch próprio; sozinho, pola a 60s (React Query usa o menor
- * intervalo entre observers ativos). O `select` deriva só o count do usuário.
- * Sem canal realtime próprio: quando uma tela rica invalida, o cache
- * compartilhado atualiza o badge de graça.
+ * Badge da sidebar: MESMA queryKey do useWhatsappSla → cache e invalidações
+ * compartilhados (o realtime das telas ricas atualiza o badge de graça e o
+ * badge é sempre consistente com card/inbox). O `select` deriva só o count
+ * do usuário, por observer.
  *
- * Substitui a query antiga ['whatsapp-sla-badge'] que baixava a view
- * scan-heavy INTEIRA em paralelo (key própria, sem compartilhar cache) e
- * filtrava no client.
+ * Nota honesta sobre intervalos (React Query v5): cada observer mantém o SEU
+ * timer de refetchInterval — NÃO existe "menor intervalo vence". Sozinho
+ * (maioria das telas), o badge pola a 60s; com uma tela rica aberta (30s) os
+ * dois timers coexistem defasados. O ganho real vs a versão anterior (key
+ * própria ['whatsapp-sla-badge'] baixando a view inteira em paralelo, sem
+ * cache compartilhado) é consistência + realtime de graça + 1 só queryFn —
+ * não a redução do número absoluto de fetches quando ambos estão montados.
  */
 export function useWhatsappSlaBadge(userId: string | undefined, enabled: boolean) {
   return useQuery({

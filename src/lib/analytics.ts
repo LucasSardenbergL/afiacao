@@ -15,6 +15,10 @@ import { logger } from '@/lib/logger';
  * carregar entram numa fila curta e são drenados no load — o primeiro
  * pageview não se perde.
  *
+ * Trade-off consciente do lazy: um crash no BOOT antes do SDK carregar só
+ * enfileira o captureException — se o usuário recarregar antes do load
+ * completar, esse evento se perde (o logger ainda registra no console).
+ *
  * Convenção de nomes de eventos (importante pra dashboards consistentes):
  *   <area>.<action>          ex: pedido.criado, cmdk.opened, picking.scanned
  *   <area>.<action>_<noun>   ex: shortcut.triggered, theme.changed
@@ -27,6 +31,7 @@ const HOST = (import.meta.env.VITE_POSTHOG_HOST as string | undefined) ?? 'https
 
 let ph: PostHog | null = null;
 let initStarted = false;
+let queueOverflowWarned = false;
 
 /** Fila de eventos pré-init (cap pra não acumular sem limite se o load falhar). */
 const preInitQueue: Array<(p: PostHog) => void> = [];
@@ -44,7 +49,14 @@ function withPosthog(fn: (p: PostHog) => void, label: string): void {
     return;
   }
   if (!KEY || typeof window === 'undefined') return;
-  if (preInitQueue.length < PRE_INIT_QUEUE_MAX) preInitQueue.push(fn);
+  if (preInitQueue.length < PRE_INIT_QUEUE_MAX) {
+    preInitQueue.push(fn);
+  } else if (!queueOverflowWarned) {
+    queueOverflowWarned = true;
+    logger.warn('Fila pré-init do analytics cheia — eventos novos descartados até o SDK carregar', {
+      label,
+    });
+  }
 }
 
 export function initAnalytics(): void {
@@ -100,10 +112,15 @@ export function initAnalytics(): void {
       }
     })
     .catch((e) => {
-      initStarted = false; // permite re-tentar num próximo init (ex.: rede voltou)
+      initStarted = false;
       logger.error('Falha ao carregar/inicializar PostHog', {
         error: e instanceof Error ? e.message : String(e),
       });
+      // Wi-Fi instável é o cotidiano do vendedor externo: re-tenta quando a
+      // rede voltar — sem isso a telemetria morreria pra sessão inteira (o
+      // único caller é o useEffect de mount do App) e a fila pré-init ficaria
+      // retida sem nunca drenar.
+      window.addEventListener('online', () => initAnalytics(), { once: true });
     });
 }
 

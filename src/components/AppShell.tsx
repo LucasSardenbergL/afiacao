@@ -488,9 +488,11 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const tarefasCount = minhasTarefas?.length ?? 0;
 
   // Badge vermelho de WhatsApp: clientes MEUS com SLA vencido (vermelho).
-  // Compartilha a queryKey/cache do useWhatsappSla: zero fetch extra quando
-  // uma tela rica (Meu Dia/inbox) está aberta; sozinho, pola a 60s.
-  const { data: waSlaMeusVermelhos } = useWhatsappSlaBadge(user?.id, isStaff);
+  // Compartilha a queryKey/cache do useWhatsappSla (dado consistente com o
+  // card/inbox; realtime das telas ricas atualiza o badge). Gate
+  // enableStaffPolls: o item de nav é managerOnly — sales-only não o vê e
+  // não deve pagar o poll da view scan-heavy.
+  const { data: waSlaMeusVermelhos } = useWhatsappSlaBadge(user?.id, enableStaffPolls);
 
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({

@@ -20,12 +20,19 @@ interface HelpDrawerProps {
 }
 
 const ContentSkeleton = () => (
-  <div className="px-6 py-6 space-y-3">
-    <Skeleton className="h-4 w-2/3" />
-    <Skeleton className="h-4 w-full" />
-    <Skeleton className="h-4 w-full" />
-    <Skeleton className="h-4 w-5/6" />
-  </div>
+  <>
+    {/* espelha a barra "Ver documentação completa" — sem ela o conteúdo
+        empurraria pra baixo quando o chunk carrega (layout shift) */}
+    <div className="px-6 py-3 border-b border-border bg-muted/30">
+      <Skeleton className="h-4 w-44" />
+    </div>
+    <div className="px-6 py-6 space-y-3">
+      <Skeleton className="h-4 w-2/3" />
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-5/6" />
+    </div>
+  </>
 );
 
 /**
@@ -34,6 +41,15 @@ const ContentSkeleton = () => (
 export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
   const location = useLocation();
   const [open, setOpen] = useState(false);
+  // Latch: monta o conteúdo no 1º open e MANTÉM montado — desmontar em
+  // open=false faria o corpo sumir na hora enquanto o Sheet ainda anima o
+  // slide-out (~300ms de drawer vazio). O chunk lazy continua carregando só
+  // no primeiro uso.
+  const [hasOpened, setHasOpened] = useState(false);
+  const handleOpenChange = (v: boolean) => {
+    setOpen(v);
+    if (v) setHasOpened(true);
+  };
 
   const routeMapping = getHelpMappingForRoute(location.pathname);
   const resolvedModuleSlug = module ?? routeMapping.module;
@@ -50,7 +66,7 @@ export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
   }, [open]);
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetTrigger asChild>
         {trigger ?? (
           <Button
@@ -77,7 +93,7 @@ export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
           </Button>
         </SheetHeader>
 
-        {open && (
+        {hasOpened && (
           <Suspense fallback={<ContentSkeleton />}>
             <HelpDrawerContent moduleSlug={resolvedModuleSlug} anchor={resolvedAnchor} />
           </Suspense>

@@ -26,8 +26,10 @@
 - ✅ **#11** Debounce nas 3 buscas por tecla (Revisão → `useDebouncedValue` na queryKey; wizard → rank memoizado + `useDeferredValue`; clientes → input local + URL debounced)
 - ✅ **#12** FarmerCalls: busca local em paralelo com o Omie + guard de corrida por sequência
 - ✅ **#13** Loader2 full-page → PageSkeleton (FarmerCalls, FarmerDashboard, RecebimentoConferencia)
-- ✅ **Infra nova**: `useDebouncedValue` (TDD, 6 testes) + `rankProducts`/`filterRanked` puros no catalog-helpers
-- ✅ **Validação (Caminho B)**: typecheck strict ✅ · vitest 2850/2850 ✅ · lint 0 errors (warnings 82→80) ✅ · build-diff nos bytes ✅ — **boot ~705 → ~333KB gzip (−53%)**
+- ✅ **Infra nova**: `useDebouncedValue` (TDD, 6 testes) + `createLeadingTrailingThrottle` (helper testado, 6 testes — DRY dos 2 throttles) + `rankProducts`/`filterRanked` puros no catalog-helpers
+- ✅ **`/review` (gstack) com exército de 5 revisores** (testing, maintainability, performance, design + adversarial) — pegou e eu corrigi: sync input↔URL revertia ação externa (deps mínimas nos efeitos), furo no guard de corrida do FarmerCalls (early-return sem bump do seq), `invalidateFila` não cobria a key do card de substituição, replace_all incompleto na Revisão (2 blocos com indentação diferente ficaram com `search` cru na queryFn), comentário FALSO sobre RQ v5 ("menor intervalo vence" não existe — cada observer tem timer próprio), retry de analytics prometido e não implementado (agora re-tenta no `online`), toast do cockpit com id estável, HelpDrawer com latch (não some na animação de saída), badge WhatsApp ganhou o gate sales-only, dedup do useDebouncedValue privado do useGlobalSearch, `keepPreviousData` na Revisão, FilaCounterRow órfão removido
+- ✅ **Achado pré-existente do review (registrado, NÃO mexido):** canal realtime `wa-sla` é reusado por topic — 2 instâncias do hook juntas (Meu Dia) podem derrubar o canal (CHANNEL_ERROR silencioso; o poll de 30s cobre). Fix = canal singleton/refcount → **Onda 3**, junto do trabalho de WhatsApp
+- ✅ **Validação (Caminho B)**: typecheck strict ✅ · vitest 2856/2856 ✅ · lint 0 errors ✅ · build-diff nos bytes ✅ — **boot ~705 → ~333KB gzip (−53%)**
 - 🔄 **PR aberto → CI `validate` → merge** (sem `--admin`)
 - ⚠️ **Publish no Lovable** após o merge (deploy do frontend é manual — founder)
 

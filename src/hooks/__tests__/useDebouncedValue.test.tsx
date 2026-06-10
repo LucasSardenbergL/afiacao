@@ -84,13 +84,15 @@ describe('useDebouncedValue', () => {
   });
 
   it('cancela o timer pendente no unmount (não vaza setState pós-unmount)', () => {
-    const spy = vi.spyOn(window, 'clearTimeout');
+    // Asserta o ESTADO dos timers, não um spy de clearTimeout: o rerender já
+    // dispara o cleanup do effect (deps mudam), então o spy passaria mesmo se
+    // o cleanup de unmount regredisse.
     const { rerender, unmount } = renderHook(({ v }) => useDebouncedValue(v, 300), {
       initialProps: { v: 'a' },
     });
     rerender({ v: 'ab' });
+    expect(vi.getTimerCount()).toBe(1);
     unmount();
-    expect(spy).toHaveBeenCalled();
-    spy.mockRestore();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

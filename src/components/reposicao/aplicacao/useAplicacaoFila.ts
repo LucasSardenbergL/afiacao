@@ -213,6 +213,10 @@ export function useAplicacaoFila() {
   const invalidateFila = () => {
     qc.invalidateQueries({ queryKey: ["fila-aplicacao"] });
     qc.invalidateQueries({ queryKey: ["fila-aplicacao-contadores"] });
+    // O card de substituição tem query própria (["sku-substituicao", empresa,
+    // sku]) que era coberta pelo antigo invalidateQueries() sem key — sem esta
+    // linha o card ficaria stale após Aplicar/Cancelar (sem refetchOnFocus).
+    qc.invalidateQueries({ queryKey: ["sku-substituicao"] });
   };
 
   return {
