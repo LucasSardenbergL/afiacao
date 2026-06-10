@@ -22,6 +22,7 @@ import {
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from '@/components/ui/sheet';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import LoteScannerOCR from '@/components/recebimento/LoteScannerOCR';
 import { useOfflineMutation } from '@/hooks/useOfflineMutation';
 import { confirmUnit, type ConfirmUnitVars } from '@/services/recebimento-confirm';
@@ -410,11 +411,9 @@ export default function RecebimentoConferencia() {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex justify-center py-20">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    // PageSkeleton (não Loader2 full-page): o Suspense da rota já mostrou um
+    // skeleton — regredir pra spinner vazio fazia o layout sumir e voltar.
+    return <PageSkeleton variant="detail" />;
   }
 
   if (!nfe) {

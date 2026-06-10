@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { HelpCircle, X, ExternalLink } from 'lucide-react';
+import { HelpCircle, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { MarkdownContent } from './MarkdownContent';
-import { getHelpModule, defaultHelpModule } from '@/content/help';
-import { extractSection, getHelpMappingForRoute, slugify } from '@/lib/help-utils';
+import { Skeleton } from '@/components/ui/skeleton';
+import { getHelpMappingForRoute } from '@/lib/help-utils';
+
+// O corpo (react-markdown + manuais .md em string) é pesado e raramente
+// usado — carrega num chunk próprio só no primeiro open (ver HelpDrawerContent).
+const HelpDrawerContent = lazy(() => import('./HelpDrawerContent'));
 
 interface HelpDrawerProps {
   /** Override the route-based anchor */
@@ -16,6 +18,15 @@ interface HelpDrawerProps {
   /** Custom trigger; defaults to a "?" icon button */
   trigger?: React.ReactNode;
 }
+
+const ContentSkeleton = () => (
+  <div className="px-6 py-6 space-y-3">
+    <Skeleton className="h-4 w-2/3" />
+    <Skeleton className="h-4 w-full" />
+    <Skeleton className="h-4 w-full" />
+    <Skeleton className="h-4 w-5/6" />
+  </div>
+);
 
 /**
  * Side drawer that shows the contextual help section for the current route.
@@ -27,8 +38,6 @@ export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
   const routeMapping = getHelpMappingForRoute(location.pathname);
   const resolvedModuleSlug = module ?? routeMapping.module;
   const resolvedAnchor = anchor ?? routeMapping.anchor;
-  const activeModule = getHelpModule(resolvedModuleSlug) ?? defaultHelpModule;
-  const sectionContent = extractSection(activeModule.content, resolvedAnchor);
 
   // ESC closes (Sheet handles it natively, kept here for completeness)
   useEffect(() => {
@@ -39,10 +48,6 @@ export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
-
-  const fullDocsUrl = `/admin/ajuda?modulo=${activeModule.slug}#${slugify(
-    sectionContent.match(/^#{1,6}\s+(.+)$/m)?.[1] ?? resolvedAnchor,
-  )}`;
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -72,29 +77,11 @@ export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
           </Button>
         </SheetHeader>
 
-        <div className="px-6 py-3 border-b border-border bg-muted/30">
-          <a
-            href={fullDocsUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-primary hover:underline inline-flex items-center gap-1.5"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            Ver documentação completa
-          </a>
-        </div>
-
-        <ScrollArea className="flex-1">
-          <div className="px-6 py-6">
-            {sectionContent ? (
-              <MarkdownContent content={sectionContent} className="prose-sm" />
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Nenhuma seção de ajuda encontrada para esta tela.
-              </p>
-            )}
-          </div>
-        </ScrollArea>
+        {open && (
+          <Suspense fallback={<ContentSkeleton />}>
+            <HelpDrawerContent moduleSlug={resolvedModuleSlug} anchor={resolvedAnchor} />
+          </Suspense>
+        )}
       </SheetContent>
     </Sheet>
   );

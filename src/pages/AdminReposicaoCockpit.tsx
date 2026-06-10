@@ -52,35 +52,56 @@ export default function AdminReposicaoCockpit() {
     if (dest) navigate(dest, { replace: true });
   }, [tabParam, navigate]);
 
-  // Realtime invalidation
+  // Realtime invalidation — com throttle leading+trailing. A geração do ciclo
+  // (cron 9h15) e o auto-apply mexem nessas tabelas EM LOTE: cada linha era um
+  // evento postgres_changes que disparava 6 invalidations + 1 toast → com o
+  // cockpit aberto na hora do cron virava tempestade de refetch e spam de
+  // toast. Agora o 1º evento invalida na hora e a rajada colapsa em 1
+  // revalidação por janela de 2,5s.
   useEffect(() => {
+    let timer: number | undefined;
+    let last = 0;
+    const THROTTLE_MS = 2500;
+    const invalidateCockpit = () => {
+      last = Date.now();
+      queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
+      queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
+      queryClient.invalidateQueries({ queryKey: ["cockpit-historico-chart"] });
+      queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
+      queryClient.invalidateQueries({ queryKey: ["reposicao-aplicacao"] });
+      queryClient.invalidateQueries({ queryKey: ["reposicao-historico"] });
+      toast("Dados atualizados automaticamente", { duration: 1800 });
+    };
+    const onEvent = () => {
+      const elapsed = Date.now() - last;
+      if (elapsed >= THROTTLE_MS) {
+        invalidateCockpit();
+        return;
+      }
+      if (timer !== undefined) return; // trailing já agendado — colapsa a rajada
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        invalidateCockpit();
+      }, THROTTLE_MS - elapsed);
+    };
     const channel = supabase
       .channel("cockpit-reposicao-realtime")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "pedido_compra_sugerido" },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
-          queryClient.invalidateQueries({ queryKey: ["cockpit-itens-dia"] });
-          queryClient.invalidateQueries({ queryKey: ["cockpit-historico-chart"] });
-          queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
-          queryClient.invalidateQueries({ queryKey: ["reposicao-aplicacao"] });
-          queryClient.invalidateQueries({ queryKey: ["reposicao-historico"] });
-          toast("Dados atualizados automaticamente", { duration: 1800 });
-        },
+        onEvent,
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "sku_parametros" },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
-          queryClient.invalidateQueries({ queryKey: ["reposicao-aplicacao"] });
-          toast("Dados atualizados automaticamente", { duration: 1800 });
-        },
+        onEvent,
       )
       .subscribe();
 
     return () => {
+      // cancel (não flush): tela desmontada não precisa invalidar — o próximo
+      // mount refaz as queries de qualquer forma.
+      if (timer !== undefined) window.clearTimeout(timer);
       supabase.removeChannel(channel);
     };
   }, [queryClient]);

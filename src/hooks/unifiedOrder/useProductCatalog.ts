@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 import { buildExclusionQuery } from './types';
-import { paginateAll, filterAndRankProducts } from './catalog-helpers';
+import { paginateAll, rankProducts, filterRanked } from './catalog-helpers';
 import type { Product, ProductAccount } from './types';
 
 const PRODUCT_COLUMNS =
@@ -172,47 +172,43 @@ export function useProductCatalog({
     [customerPurchaseHistory],
   );
 
-  /**
-   * Constrói lista filtrada/ordenada para uma conta:
-   * 1. Previamente comprados primeiro (se houver dados de cliente)
-   * 2. Ativos antes de inativos
-   * 3. Alfabético
-   * 4. Limita a 50 resultados
-   */
-  const buildFilteredList = useCallback(
-    (products: Product[], account: ProductAccount): Product[] => {
-      const prices = account === 'oben' ? customerPricesOben : customerPricesColacor;
-      const hasCustomerPrices = Object.keys(prices).length > 0;
-      const hasPurchaseHistory = Object.keys(customerPurchaseHistory).length > 0;
-      const shouldPrioritize = hasCustomerPrices || hasPurchaseHistory;
+  // Termo DEFERRED: o input responde na hora (controlado por productSearch) e
+  // o recálculo da lista roda em prioridade baixa quando o usuário digita rápido.
+  const deferredSearch = useDeferredValue(productSearch);
 
-      return filterAndRankProducts(
-        products,
-        productSearch,
-        {
-          isPreviouslyPurchased: (p) => isProductPreviouslyPurchased(p, account),
-          shouldPrioritize,
-        },
-        50,
-      );
-    },
-    [
-      productSearch,
-      customerPricesOben,
-      customerPricesColacor,
-      customerPurchaseHistory,
-      isProductPreviouslyPurchased,
-    ],
-  );
+  // Ordenação memoizada POR CATÁLOGO/CLIENTE — o sort não depende do termo de
+  // busca. Antes, cada tecla re-ordenava o catálogo COMPLETO (~3,5k OBEN +
+  // ~4,2k Colacor, com localeCompare + lookups de "comprado antes" por
+  // comparação) dentro dos dois memos de filtro: era o custo dominante da
+  // busca do wizard, sentido como tranco no celular do vendedor externo.
+  const rankedObenProducts = useMemo(() => {
+    const shouldPrioritize =
+      Object.keys(customerPricesOben).length > 0 || Object.keys(customerPurchaseHistory).length > 0;
+    return rankProducts(obenProducts, {
+      isPreviouslyPurchased: (p) => isProductPreviouslyPurchased(p, 'oben'),
+      shouldPrioritize,
+    });
+  }, [obenProducts, customerPricesOben, customerPurchaseHistory, isProductPreviouslyPurchased]);
 
+  const rankedColacorProducts = useMemo(() => {
+    const shouldPrioritize =
+      Object.keys(customerPricesColacor).length > 0 ||
+      Object.keys(customerPurchaseHistory).length > 0;
+    return rankProducts(colacorProducts, {
+      isPreviouslyPurchased: (p) => isProductPreviouslyPurchased(p, 'colacor'),
+      shouldPrioritize,
+    });
+  }, [colacorProducts, customerPricesColacor, customerPurchaseHistory, isProductPreviouslyPurchased]);
+
+  // Filtro por tecla sobre a lista JÁ ordenada (barato: 1 passada + slice).
   const filteredObenProducts = useMemo(
-    () => buildFilteredList(obenProducts, 'oben'),
-    [buildFilteredList, obenProducts],
+    () => filterRanked(rankedObenProducts, deferredSearch, 50),
+    [rankedObenProducts, deferredSearch],
   );
 
   const filteredColacorProducts = useMemo(
-    () => buildFilteredList(colacorProducts, 'colacor'),
-    [buildFilteredList, colacorProducts],
+    () => filterRanked(rankedColacorProducts, deferredSearch, 50),
+    [rankedColacorProducts, deferredSearch],
   );
 
   return {

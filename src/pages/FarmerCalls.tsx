@@ -11,7 +11,8 @@ import { TranscriptionPanel } from '@/components/call/TranscriptionPanel';
 import type { NvoipCallState } from '@/hooks/useNvoipCall';
 import { useCallBackend } from '@/hooks/useCallBackend';
 import { useWebRTCCall } from '@/hooks/useWebRTCCall';
-import { Plus, Loader2 } from 'lucide-react';
+import { Plus } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { type Customer, type CallLog } from '@/components/farmer/calls/types';
 import { TodayStatsCards } from '@/components/farmer/calls/TodayStatsCards';
 import { AgendaQueueCard } from '@/components/farmer/calls/AgendaQueueCard';
@@ -151,15 +152,37 @@ const FarmerCalls = () => {
     }
   };
 
+  // Guard de corrida: a resposta de uma busca ANTIGA (o Omie leva 1-3s) não
+  // pode sobrescrever a lista da busca atual nem apagar o loading dela.
+  const searchSeqRef = useRef(0);
   const searchCustomers = useCallback(async (query: string) => {
     if (query.length < 2) { setCustomers([]); return; }
+    const seq = ++searchSeqRef.current;
     setSearchLoading(true);
     try {
-      // 1) Same source as Sales: Omie ERP via edge function
-      const { data: omieData } = await supabase.functions.invoke('omie-vendas-sync', {
+      // Local e Omie em PARALELO. Antes a cadeia era serial (Omie → mapping →
+      // profiles): os perfis locais, instantâneos, ficavam presos atrás da
+      // roundtrip ao ERP — agora aparecem assim que chegam e o merge com o
+      // Omie completa depois.
+      const localPromise = supabase
+        .from('profiles')
+        .select('user_id, name, email, phone')
+        .ilike('name', `%${query}%`)
+        .limit(10);
+      const omiePromise = supabase.functions.invoke('omie-vendas-sync', {
         body: { action: 'listar_clientes', search: query },
       });
 
+      const { data: localProfiles } = await localPromise;
+      const local: Customer[] = (localProfiles || []).map(p => ({
+        user_id: p.user_id,
+        name: p.name,
+        email: p.email,
+        phone: p.phone,
+      }));
+      if (seq === searchSeqRef.current && local.length > 0) setCustomers(local);
+
+      const { data: omieData } = await omiePromise;
       const omieClientes = (omieData?.clientes || []) as Array<{
         codigo_cliente: number;
         razao_social?: string;
@@ -189,20 +212,6 @@ const FarmerCalls = () => {
         document: c.cnpj_cpf || null,
       }));
 
-      // 2) Local profiles (for clients without Omie mapping yet)
-      const { data: localProfiles } = await supabase
-        .from('profiles')
-        .select('user_id, name, email, phone')
-        .ilike('name', `%${query}%`)
-        .limit(10);
-
-      const local: Customer[] = (localProfiles || []).map(p => ({
-        user_id: p.user_id,
-        name: p.name,
-        email: p.email,
-        phone: p.phone,
-      }));
-
       // Merge dedupe: prefer Omie entries (richer), avoid duplicate user_ids
       const seenUserIds = new Set(omieMapped.filter(c => c.user_id).map(c => c.user_id));
       const merged = [
@@ -210,10 +219,12 @@ const FarmerCalls = () => {
         ...local.filter(p => !seenUserIds.has(p.user_id)),
       ];
 
-      setCustomers(merged);
+      if (seq === searchSeqRef.current) setCustomers(merged);
     } catch (error) {
       console.error('Customer search failed', error);
-    } finally { setSearchLoading(false); }
+    } finally {
+      if (seq === searchSeqRef.current) setSearchLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -374,7 +385,9 @@ const FarmerCalls = () => {
   const filteredLogs = filterType === 'all' ? callLogs : callLogs.filter(c => c.call_type === filterType);
 
   if (authLoading) {
-    return <div className="flex items-center justify-center py-32"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+    // PageSkeleton (não Loader2 full-page): o Suspense da rota já mostrou um
+    // skeleton — regredir pra spinner vazio fazia o layout sumir e voltar.
+    return <PageSkeleton variant="cockpit" />;
   }
 
   return (
