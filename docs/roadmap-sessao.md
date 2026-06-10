@@ -6,6 +6,21 @@
 
 ---
 
+## 🧑‍🌾 SESSÃO 2026-06-10 (3) — UX da Farmer: home errada, menu e gaps de ferramenta
+
+> Pedido do founder (via lente "Ver como tatyanamartins2002"): (1) por que a tela inicial
+> das farmers é o cockpit de 6 módulos? (2) otimizar o menu lateral delas; (3) opinião
+> sobre ferramentas que ainda faltam pra farmer.
+
+- ✅ **Diagnóstico da home** — `/` → `Index.tsx` decide só por `isStaff` binário → toda staff cai no `CockpitGrid` de 6 zonas; a persona `vendedor` só REORDENA os cards, não esconde nenhum. O dashboard sob medida (`/meu-dia` → `FarmerDashboardV2`) existe mas não é a home.
+- ✅ **Diagnóstico do menu** — sales-only esconde todas as seções exceto "Vendas" (`AppShell.tsx:628`) → "Meu dia" e "Clientes" (seção Principal) ficam INALCANÇÁVEIS pela farmer; `managerOnly` na verdade significa "qualquer staff" (nome mentiroso).
+- ✅ **Founder aprovou as 3 frentes** na ordem sugerida: (1) home+menu → (2) push pra vendedora → (3) ficha pré-contato.
+- ✅ **Frente 1 — home por persona + menu (PR aberto)**: helper puro TDD `src/lib/nav/home-por-persona.ts` (19 testes) — `resolverHomeStaff` (farmer/hunter/closer/operacional ou sales-only → `/meu-dia`; gestão/master/staff genérico → cockpit) + `itemVisivelParaSalesOnly` (allowlist: seção Vendas + Meu dia + Clientes). `Index.tsx` redireciona com gate anti-flash (espera o cargo) e gate `displayIsStaff` anti-loop na lente. AppShell: seção Vendas reordenada pelo fluxo do dia (Lista de ligação → WhatsApp → Novo Pedido → Pedidos → Telefonia → housekeeping no fim), filtro sales-only por ITEM nos 2 navs (desktop+mobile), badge SLA WhatsApp religado pra sales-only (`isStaff`, era `enableStaffPolls` que a excluía do próprio SLA), rename `managerOnly`→`staffOnly` (nome honesto). **Revisão adversarial (subagente, Caminho B — Codex sem cota): 0 P1; P2.1 loop-na-lente e P2.3 badge-SLA corrigidos; P2.2 flash sales-only-sem-cargo aceito documentado.** CI local: typecheck 0 · 3024 testes · lint 0 · build vite 0. ⚠️ Publish no Lovable pendente após merge.
+- ⏳ **Frente 2 — push/notificação pra vendedora** (tarefa nova, SLA estourando, cliente respondeu).
+- ⏳ **Frente 3 — ficha de 30s pré-contato** (últimas compras, preço praticado, títulos abertos, cores, última conversa).
+
+---
+
 ## ⚡ SESSÃO 2026-06-09/10 — Auditoria de velocidade & usabilidade: 24 itens mapeados, 4 ondas COMPLETAS
 
 > Pedido do founder: "revisite o código todo e procure brechas para deixar ele mais rápido
