@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 193
+-- Total de custom migrations: 194
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -212,7 +212,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260609085244', 'data_health_check_familia_ausente', '20260609085244_data_health_check_familia_ausente.sql'),
   ('20260609150000', 'reposicao_alerta_pedido_minimo', '20260609150000_reposicao_alerta_pedido_minimo.sql'),
   ('20260609150000', 'tint_sync_promote', '20260609150000_tint_sync_promote.sql'),
-  ('20260609160000', 'reposicao_ciclo_intraday', '20260609160000_reposicao_ciclo_intraday.sql')
+  ('20260609160000', 'reposicao_ciclo_intraday', '20260609160000_reposicao_ciclo_intraday.sql'),
+  ('20260610150000', 'reposicao_auto_aprovacao_piloto', '20260610150000_reposicao_auto_aprovacao_piloto.sql')
 )
 SELECT
   e.version,
@@ -949,7 +950,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_ciclo_intraday', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'gerar-pedidos-intraday-oben', ''),
   ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'omie-sync-estoque-intraday-oben', ''),
-  ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'omie-sync-estoque-diario', '')
+  ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'omie-sync-estoque-diario', ''),
+  ('reposicao_auto_aprovacao_piloto', 'table', 'public', 'reposicao_auto_aprovacao_log', ''),
+  ('reposicao_auto_aprovacao_piloto', 'index', 'public', 'reposicao_auto_aprovacao_log_criado_em', 'reposicao_auto_aprovacao_log'),
+  ('reposicao_auto_aprovacao_piloto', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
+  ('reposicao_auto_aprovacao_piloto', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', '')
 )
 SELECT
   e.migration,
