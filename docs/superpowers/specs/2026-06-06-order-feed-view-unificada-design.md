@@ -5,6 +5,13 @@
 **Antecede:** PR1 (#697, pronto-socorro: keepPreviousData + observador robusto).
 **Revisado por:** 2 rodadas de 2ª opinião (ChatGPT). Veredito: "arquitetura correta,
 aprovado com alterações". As alterações estão incorporadas abaixo.
+**⚠️ Adversarial da IMPLEMENTAÇÃO (caminho B):** o Codex bateu o usage limit do Plus
+(reset 2026-06-11 09:24) ao revisar o diff → self-review adversarial próprio +
+validação PG17 no lugar; **Codex faz o adversarial retroativo quando voltar**
+(precedente: fix do aplicar_promocoes). Achado do self-review registrado: o
+`window.open` do cupom agora roda após `await` (fetch do detalhe) — popup-blocker
+pode barrar a 1ª impressão em browsers rígidos (Safari); fluxo comum (detalhe em
+cache) não afeta. Follow-up se reportado: pré-abrir a janela no gesto síncrono.
 
 ## Problema (recap)
 A listagem hoje: 2 `useInfiniteQuery` (sales_orders + orders/afiação) mescladas e

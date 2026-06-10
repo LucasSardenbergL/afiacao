@@ -57,9 +57,9 @@ values
   (gen_random_uuid(), '22222222-2222-2222-2222-222222222222', 'BOB ME',     '22.222.222/0001-22', true);
 
 -- sales: normal, com 2 itens (qtd 2 + 1 = 3)
-insert into public.sales_orders (id, customer_user_id, created_by, account, omie_numero_pedido, items, status, subtotal, total, created_at, deleted_at)
+insert into public.sales_orders (id, customer_user_id, created_by, account, omie_numero_pedido, omie_pedido_id, items, status, subtotal, total, created_at, deleted_at)
 values ('a0000001-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','11111111-1111-1111-1111-111111111111',
-  'oben','0000123',
+  'oben','0000123',777,
   '[{"descricao":"Verniz","quantidade":2},{"descricao":"Catalisador","quantidade":1}]'::jsonb,
   'enviado', 100, 100, now() - interval '1 hour', null);
 
@@ -107,6 +107,7 @@ begin
   if r.item_names <> array['Verniz','Catalisador']::text[] then raise exception 'FALHOU: item_names ordem (got %)', r.item_names; end if;
   if r.order_number <> '0000123' then raise exception 'FALHOU: order_number (got %)', r.order_number; end if;
   if r.account <> 'oben' then raise exception 'FALHOU: account (got %)', r.account; end if;
+  if r.omie_pedido_id <> 777 then raise exception 'FALHOU: omie_pedido_id (got %)', r.omie_pedido_id; end if;
 
   -- 3. itens malformados: view não quebrou, qty=0, names preservados
   select * into r from public.order_feed where id='a0000003-0000-0000-0000-000000000003';
@@ -128,6 +129,7 @@ begin
   if r.origin <> 'afiacao' then raise exception 'FALHOU: origin afiacao (got %)', r.origin; end if;
   if r.account <> 'colacor_sc' then raise exception 'FALHOU: afiacao account colacor_sc (got %)', r.account; end if;
   if r.order_number is not null then raise exception 'FALHOU: afiacao order_number null (got %)', r.order_number; end if;
+  if r.omie_pedido_id is not null then raise exception 'FALHOU: afiacao omie_pedido_id null (got %)', r.omie_pedido_id; end if;
   if r.customer_name <> 'ALICE LTDA' then raise exception 'FALHOU: afiacao nome via join (got %)', r.customer_name; end if;
   if r.item_quantity <> 3 then raise exception 'FALHOU: afiacao qty (got %)', r.item_quantity; end if;
   if r.item_names <> array['Afiacao Serra']::text[] then raise exception 'FALHOU: afiacao names (got %)', r.item_names; end if;

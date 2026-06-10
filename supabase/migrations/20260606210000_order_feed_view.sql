@@ -27,6 +27,7 @@ with feed as (
     so.created_at::timestamptz  as created_at,
     so.account::text            as account,
     so.omie_numero_pedido::text as order_number,
+    so.omie_pedido_id::bigint   as omie_pedido_id,
     so.customer_user_id::uuid   as customer_user_id,
     case when jsonb_typeof(so.items) = 'array' then coalesce((
       select array_agg(nullif(elem->>'descricao','') order by ord)
@@ -52,6 +53,7 @@ with feed as (
     o.created_at::timestamptz   as created_at,
     'colacor_sc'::text          as account,
     null::text                  as order_number,
+    null::bigint                as omie_pedido_id,
     o.user_id::uuid             as customer_user_id,
     case when jsonb_typeof(o.items) = 'array' then coalesce((
       select array_agg(coalesce(nullif(elem->>'category',''), nullif(elem->>'name',''), 'Afiação') order by ord)
@@ -73,6 +75,7 @@ select
   f.created_at,
   f.account,
   f.order_number,
+  f.omie_pedido_id,
   f.customer_user_id,
   p.name::text as customer_name,
   f.item_names,

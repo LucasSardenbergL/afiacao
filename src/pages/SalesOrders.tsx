@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Loader2, ShoppingCart, Trash2, ChevronLeft } from 'lucide-react';
+import { Loader2, ShoppingCart, Trash2, ChevronLeft, TriangleAlert } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
-import { decodeHtml, PAGE_SIZE, type SalesOrder } from '@/components/salesOrders/types';
+import { decodeHtml, type OrderFeedRow } from '@/components/salesOrders/types';
 import { useSalesOrders } from '@/components/salesOrders/useSalesOrders';
+import { useSalesOrderDetail } from '@/components/salesOrders/useSalesOrderDetail';
 import { SalesOrdersToolbar } from '@/components/salesOrders/SalesOrdersToolbar';
 import { SalesOrderCard } from '@/components/salesOrders/SalesOrderCard';
 import { SalesOrderDetailSheet } from '@/components/salesOrders/SalesOrderDetailSheet';
@@ -14,6 +15,8 @@ const SalesOrders = () => {
     navigate,
     authLoading,
     loading,
+    loadError,
+    refetch,
     accountFilter,
     setAccountFilter,
     search,
@@ -21,28 +24,34 @@ const SalesOrders = () => {
     selectedIds,
     toggleSelect,
     clearSelection,
-    orders,
-    profiles,
     filteredOrders,
-    hasNext,
-    isFetching,
-    sentinelRef,
-    loadMore,
+    totalCount,
+    truncated,
     deleteOrder,
     deleteSelected,
     handleShareOrder,
     printOrder,
   } = useSalesOrders();
 
-  const [detailOrder, setDetailOrder] = useState<SalesOrder | null>(null);
-  const detailCustomerName = detailOrder
-    ? decodeHtml(profiles[detailOrder.customer_user_id] || 'Cliente')
-    : '';
+  // Pedido selecionado na listagem → o painel busca o detalhe completo por id.
+  const [detailRow, setDetailRow] = useState<OrderFeedRow | null>(null);
+  const detailQuery = useSalesOrderDetail(detailRow);
 
   if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center pt-32">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="max-w-4xl mx-auto pt-16 text-center space-y-3">
+        <p className="text-sm text-muted-foreground">Não foi possível carregar os pedidos.</p>
+        <Button variant="outline" size="sm" onClick={() => refetch()}>
+          Tentar novamente
+        </Button>
       </div>
     );
   }
@@ -67,6 +76,16 @@ const SalesOrders = () => {
         setSearch={setSearch}
       />
 
+      {/* Aviso honesto: o feed bateu o teto de 1000 linhas — a busca não cobre tudo */}
+      {truncated && (
+        <div className="flex items-center gap-2 text-xs text-status-warning bg-status-warning-bg border border-status-warning/30 rounded-md px-3 py-2">
+          <TriangleAlert className="w-3.5 h-3.5 shrink-0" />
+          <span>
+            Mostrando os primeiros 1.000 de {totalCount.toLocaleString('pt-BR')} pedidos — a busca cobre só esses. Refine por empresa ou período.
+          </span>
+        </div>
+      )}
+
       {filteredOrders.length === 0 ? (
         <EmptyState
           icon={ShoppingCart}
@@ -90,40 +109,23 @@ const SalesOrders = () => {
         <div className="space-y-2">
           {filteredOrders.map((order) => (
             <SalesOrderCard
-              key={`${order._source}-${order.id}`}
+              key={`${order.origin}-${order.id}`}
               order={order}
-              customerName={decodeHtml(profiles[order.customer_user_id] || 'Cliente')}
+              customerName={decodeHtml(order.customer_name || 'Cliente')}
               checked={selectedIds.has(order.id)}
               onSelectChange={(v) => toggleSelect(order.id, v)}
-              onShare={() => handleShareOrder(order, decodeHtml(profiles[order.customer_user_id] || 'Cliente'))}
+              onShare={() => handleShareOrder(order)}
               onDelete={() => deleteOrder(order)}
               onNavigate={navigate}
-              onOpenDetail={() => setDetailOrder(order)}
+              onOpenDetail={() => setDetailRow(order)}
               onPrint={() => printOrder(order)}
             />
           ))}
-
-          {/* Infinite scroll sentinel + carregar mais fallback */}
-          {hasNext && (
-            <div ref={sentinelRef} className="py-4 flex justify-center">
-              {isFetching ? (
-                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={loadMore}
-                >
-                  Carregar mais
-                </Button>
-              )}
-            </div>
-          )}
-          {!hasNext && orders.length >= PAGE_SIZE && (
-            <p className="text-center text-xs text-muted-foreground py-4">
-              Todos os pedidos carregados ({orders.length})
-            </p>
-          )}
+          <p className="text-center text-xs text-muted-foreground py-4">
+            {filteredOrders.length === totalCount
+              ? `${totalCount} pedido(s)`
+              : `${filteredOrders.length} de ${totalCount} pedido(s)`}
+          </p>
         </div>
       )}
 
@@ -149,12 +151,14 @@ const SalesOrders = () => {
       />
 
       <SalesOrderDetailSheet
-        order={detailOrder}
-        customerName={detailCustomerName}
-        onClose={() => setDetailOrder(null)}
-        onPrint={() => detailOrder && printOrder(detailOrder)}
-        onShare={() => detailOrder && handleShareOrder(detailOrder, detailCustomerName)}
-        onEdit={() => detailOrder && navigate(`/sales/edit/${detailOrder.id}`)}
+        open={!!detailRow}
+        loading={detailQuery.isPending}
+        order={detailQuery.data?.order ?? null}
+        customerName={detailQuery.data?.customerName ?? decodeHtml(detailRow?.customer_name || 'Cliente')}
+        onClose={() => setDetailRow(null)}
+        onPrint={() => detailRow && printOrder(detailRow)}
+        onShare={() => detailRow && handleShareOrder(detailRow)}
+        onEdit={() => detailRow && navigate(`/sales/edit/${detailRow.id}`)}
       />
     </div>
   );

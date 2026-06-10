@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 191
+-- Total de custom migrations: 192
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -206,6 +206,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260606190000', 'reposicao_preco_pedido_cmc_account', '20260606190000_reposicao_preco_pedido_cmc_account.sql'),
   ('20260606190000', 'reposicao_qtde_inteira_persist', '20260606190000_reposicao_qtde_inteira_persist.sql'),
   ('20260606200000', 'reposicao_promo_forward_buying_min', '20260606200000_reposicao_promo_forward_buying_min.sql'),
+  ('20260606210000', 'order_feed_view', '20260606210000_order_feed_view.sql'),
   ('20260606230000', 'negociacao_paralela_v2_cleanup', '20260606230000_negociacao_paralela_v2_cleanup.sql'),
   ('20260608120000', 'tool_spec_custom_option', '20260608120000_tool_spec_custom_option.sql'),
   ('20260609085244', 'data_health_check_familia_ausente', '20260609085244_data_health_check_familia_ausente.sql'),
