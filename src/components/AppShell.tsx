@@ -47,6 +47,7 @@ import { useOfflineFlush } from '@/hooks/useOfflineFlush';
 import { registerAllOfflineHandlers } from '@/lib/offline-handlers';
 import { useMissedCount } from '@/hooks/useCallLog';
 import { useMinhasTarefas } from '@/hooks/useTarefas';
+import { useWhatsappSlaBadge } from '@/queries/useWhatsappSla';
 import { Star } from 'lucide-react';
 
 /* ─── Navigation config ─── */
@@ -362,13 +363,14 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const { isImpersonating, effectiveUserId } = useImpersonation();
   const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
-  // Os 6 contadores de badges abaixo são todos da seção Reposição. Não fazem
-  // sentido pra vendedor sales-only (que não acessa /admin/reposicao). Gate por
-  // `!isSalesOnly` evita ~6 req/min por usuário sales-only em idle.
+  // Gate único de TODOS os polls de badge do shell (Reposição, outliers,
+  // financeiro, tint): cliente final e vendedor sales-only não acessam essas
+  // telas — sem o gate eles polavam tabelas que a RLS nega a cada 30-60s
+  // (com retry 2 = até 9 req/min desperdiçados por usuário em idle).
   // `refetchIntervalInBackground: false` (default do React Query) já pausa
   // polls quando o tab está hidden — explicitado abaixo pra deixar a intenção
   // clara e evitar mudança silenciosa se algum dia alguém ligar pra true.
-  const enableReposicaoPolls = isStaff && !isSalesOnly;
+  const enableStaffPolls = isStaff && !isSalesOnly;
 
   // Contador de alertas de outlier pendentes (críticos + atenção)
   const { data: outlierPendentes } = useQuery({
@@ -381,7 +383,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .in('severidade', ['critico', 'atencao']);
       return count ?? 0;
     },
-    enabled: enableReposicaoPolls,
+    enabled: enableStaffPolls,
     refetchInterval: 60000,
     refetchIntervalInBackground: false,
     staleTime: 30000,
@@ -399,7 +401,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .in('status', ['pendente_aprovacao', 'bloqueado_guardrail']);
       return count ?? 0;
     },
-    enabled: enableReposicaoPolls,
+    enabled: enableStaffPolls,
     refetchInterval: 30000,
     refetchIntervalInBackground: false,
     staleTime: 15000,
@@ -416,7 +418,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .eq('estado', 'ativo');
       return count ?? 0;
     },
-    enabled: enableReposicaoPolls,
+    enabled: enableStaffPolls,
     refetchInterval: 60000,
     refetchIntervalInBackground: false,
   });
@@ -431,7 +433,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .eq('empresa', 'OBEN');
       return count ?? 0;
     },
-    enabled: enableReposicaoPolls,
+    enabled: enableStaffPolls,
     refetchInterval: 60000,
     refetchIntervalInBackground: false,
     staleTime: 30000,
@@ -448,7 +450,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .eq('status', 'nova');
       return count ?? 0;
     },
-    enabled: enableReposicaoPolls,
+    enabled: enableStaffPolls,
     refetchInterval: 60000,
     refetchIntervalInBackground: false,
     staleTime: 30000,
@@ -464,15 +466,15 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .eq('status', 'pendente_notificacao');
       return count ?? 0;
     },
-    enabled: enableReposicaoPolls,
+    enabled: enableStaffPolls,
     refetchInterval: 60000,
     refetchIntervalInBackground: false,
     staleTime: 30000,
   });
 
-  const { data: alertasCriticos } = useAlertasCriticos();
-  const { data: financeiroAtrasados } = useFinanceiroAlertas();
-  const { data: tintErros } = useTintAlertas();
+  const { data: alertasCriticos } = useAlertasCriticos(enableStaffPolls);
+  const { data: financeiroAtrasados } = useFinanceiroAlertas(enableStaffPolls);
+  const { data: tintErros } = useTintAlertas(enableStaffPolls);
 
   // Badge de perdidas não-lidas na Central de Telefonia (refetch a cada 30s).
   // Na lente "Ver como", conta as do ALVO (effectiveUserId) — coerente com o
@@ -486,18 +488,11 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const tarefasCount = minhasTarefas?.length ?? 0;
 
   // Badge vermelho de WhatsApp: clientes MEUS com SLA vencido (vermelho).
-  const { data: waSlaMeusVermelhos } = useQuery({
-    queryKey: ['whatsapp-sla-badge', user?.id],
-    queryFn: async () => {
-      const client = supabase as unknown as { from: (t: string) => { select: (c: string) => PromiseLike<{ data: unknown; error: unknown }> } };
-      const res = await (client.from('v_whatsapp_sla').select('owner_user_id,nivel') as PromiseLike<{ data: unknown; error: unknown }>);
-      const rows = (res.data ?? []) as Array<{ owner_user_id: string | null; nivel: string }>;
-      return rows.filter((r) => r.owner_user_id === user?.id && r.nivel === 'vermelho').length;
-    },
-    enabled: isStaff && !!user?.id,
-    refetchInterval: 60000,
-    staleTime: 30000,
-  });
+  // Compartilha a queryKey/cache do useWhatsappSla (dado consistente com o
+  // card/inbox; realtime das telas ricas atualiza o badge). Gate
+  // enableStaffPolls: o item de nav é managerOnly — sales-only não o vê e
+  // não deve pagar o poll da view scan-heavy.
+  const { data: waSlaMeusVermelhos } = useWhatsappSlaBadge(user?.id, enableStaffPolls);
 
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({

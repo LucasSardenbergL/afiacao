@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import {
   EMPRESA,
   type FilaItem,
-  type FilaCounterRow,
   type GerarFilaResult,
 } from "./types";
 
@@ -37,25 +36,31 @@ export function useAplicacaoFila() {
     refetchInterval: 60000,
   });
 
-  // Contadores de cada aba
+  // Contadores de cada aba — head-counts server-side. A versão anterior
+  // baixava TODAS as linhas da fila (o histórico de aplicado_em acumula sem
+  // corte de data) a cada 30s só pra somar 4 números no client.
   const { data: contadores } = useQuery({
     queryKey: ["fila-aplicacao-contadores", EMPRESA],
     queryFn: async () => {
-      const result = await supabase
-        .from("fila_aplicacao_omie" as never)
-        .select("status_validacao, aplicado_em")
-        .eq("empresa", EMPRESA);
-      const rows = (result.data ?? []) as unknown as FilaCounterRow[];
-      const c = { pronto: 0, inativo: 0, substituicao: 0, aplicado: 0 };
-      rows.forEach((r) => {
-        if (r.aplicado_em) c.aplicado++;
-        else if (r.status_validacao === "pronto") c.pronto++;
-        else if (r.status_validacao === "bloqueado_inativo") c.inativo++;
-        else if (r.status_validacao === "bloqueado_substituicao") c.substituicao++;
-      });
-      return c;
+      const base = () =>
+        supabase
+          .from("fila_aplicacao_omie" as never)
+          .select("id", { count: "exact", head: true })
+          .eq("empresa", EMPRESA);
+      const [pronto, inativo, substituicao, aplicado] = (await Promise.all([
+        base().eq("status_validacao", "pronto").is("aplicado_em", null),
+        base().eq("status_validacao", "bloqueado_inativo").is("aplicado_em", null),
+        base().eq("status_validacao", "bloqueado_substituicao").is("aplicado_em", null),
+        base().not("aplicado_em", "is", null),
+      ])) as unknown as Array<{ count: number | null }>;
+      return {
+        pronto: pronto.count ?? 0,
+        inativo: inativo.count ?? 0,
+        substituicao: substituicao.count ?? 0,
+        aplicado: aplicado.count ?? 0,
+      };
     },
-    refetchInterval: 30000,
+    refetchInterval: 60000,
   });
 
   // Listagens por aba
@@ -81,7 +86,10 @@ export function useAplicacaoFila() {
       if (error) throw error;
       return (data ?? []) as unknown as FilaItem[];
     },
-    refetchInterval: tab === "aplicado" ? 60000 : 15000,
+    // 60s em todas as abas: o feedback imediato pós-ação vem do invalidateFila
+    // das mutations — o poll é só rede de segurança (antes 15s = 4 requests
+    // `select *` por minuto enquanto o comprador trabalhava na aba).
+    refetchInterval: 60000,
   });
 
   // Filtros adicionais (delta + busca) somente na aba "pronto"
@@ -205,9 +213,11 @@ export function useAplicacaoFila() {
   const invalidateFila = () => {
     qc.invalidateQueries({ queryKey: ["fila-aplicacao"] });
     qc.invalidateQueries({ queryKey: ["fila-aplicacao-contadores"] });
+    // O card de substituição tem query própria (["sku-substituicao", empresa,
+    // sku]) que era coberta pelo antigo invalidateQueries() sem key — sem esta
+    // linha o card ficaria stale após Aplicar/Cancelar (sem refetchOnFocus).
+    qc.invalidateQueries({ queryKey: ["sku-substituicao"] });
   };
-
-  const invalidateAll = () => qc.invalidateQueries();
 
   return {
     tab,
@@ -237,6 +247,5 @@ export function useAplicacaoFila() {
     handleAplicarLote,
     toggleAll,
     invalidateFila,
-    invalidateAll,
   };
 }

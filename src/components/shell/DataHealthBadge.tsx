@@ -8,7 +8,9 @@ import { cn } from '@/lib/utils';
 export function DataHealthBadge() {
   const navigate = useNavigate();
   const { isStaff } = useAuth();
-  const { data, isError } = useDataHealth();
+  // Gate na QUERY, não só na UI: sem o `isStaff` aqui, cliente final executava
+  // a RPC get_data_health (14 checks) a cada 2min mesmo sem ver o badge.
+  const { data, isError } = useDataHealth(isStaff);
 
   if (!isStaff) return null;
 

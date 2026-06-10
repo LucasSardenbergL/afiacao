@@ -175,7 +175,17 @@ export default defineConfig(({ mode }) => ({
         // é circular-safe e era o comportamento que funcionava.
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            if (/[\\/](react|react-dom|react-router-dom|scheduler)[\\/]/.test(id)) return 'vendor-react';
+            // Utilitários de classe usados pelo cn() do shell. SEM esta regra o
+            // Rollup alocava o clsx DENTRO do vendor-charts (recharts depende
+            // dele) e o entry passava a importar recharts+d3 inteiros (~114KB
+            // gzip) só pra obter o clsx — medido no build de 2026-06-09.
+            if (/node_modules[\\/](clsx|tailwind-merge|class-variance-authority)[\\/]/.test(id)) return 'vendor-utils';
+            // Ancorado em node_modules: a regex antiga sem âncora casava
+            // QUALQUER segmento "react" no caminho — capturava @elevenlabs/react
+            // (SDK de voz, ~100KB gzip, usado só pelo FarmerCopilot lazy) pra
+            // dentro do vendor-react. react-router core + @remix-run/router
+            // entram explícitos (a família toda num chunk coeso e estável).
+            if (/node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler|@remix-run)[\\/]/.test(id)) return 'vendor-react';
             if (id.includes('@tanstack/react-query')) return 'vendor-query';
             if (id.includes('@supabase/supabase-js')) return 'vendor-supabase';
             if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts';

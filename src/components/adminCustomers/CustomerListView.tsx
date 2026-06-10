@@ -1,6 +1,7 @@
 // Lista de clientes (segmentos, busca, filtros, tabela densa, scroll infinito).
 // Extraído verbatim de src/pages/AdminCustomers.tsx (god-component split).
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -10,6 +11,7 @@ import {
   Loader2, Search, User, ChevronRight, Filter, Users, Save, Bookmark, X as XIcon,
 } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -42,8 +44,31 @@ export function CustomerListView({
   const [urlState, setUrlState] = useUrlState({ search: '', health: 'all' });
   const searchQuery = urlState.search;
   const filterHealth = urlState.health;
-  const setSearchQuery = (v: string) => setUrlState({ search: v });
   const setFilterHealth = (v: string) => setUrlState({ health: v });
+
+  // O input de busca tem estado LOCAL e empurra pra URL com debounce: escrever
+  // na URL a cada tecla (history.replace) re-renderizava todos os subscribers
+  // do router — sidebar inteira (~60 itens), breadcrumbs, mobile nav — por
+  // caractere digitado. A URL continua sendo a fonte da verdade do filtro.
+  //
+  // Os DOIS efeitos abaixo têm deps mínimas DE PROPÓSITO (cada um reage só ao
+  // seu gatilho). Incluir urlState.search nas deps do 1º faria ele rodar
+  // também quando a URL muda por FORA (segmento/limpar/back) e re-empurrar o
+  // termo antigo do debounce, revertendo a ação externa por ~300ms.
+  const [searchInput, setSearchInput] = useState(searchQuery);
+  const debouncedInput = useDebouncedValue(searchInput, 300);
+  useEffect(() => {
+    // Digitação → URL: dispara SÓ quando o termo debounced muda.
+    if (debouncedInput !== urlState.search) setUrlState({ search: debouncedInput });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedInput]);
+  useEffect(() => {
+    // URL → input (segmento aplicado, "limpar filtros", back/forward). O guard
+    // contra debouncedInput evita sobrescrever digitação em andamento na
+    // janela entre o debounce expirar e a URL atualizar.
+    if (urlState.search !== debouncedInput) setSearchInput(urlState.search);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlState.search]);
 
   const { segments, save: saveSegment, remove: removeSegment } = useCustomerSegments();
   const [savingSegment, setSavingSegment] = useState(false);
@@ -69,11 +94,9 @@ export function CustomerListView({
   }, [customers, searchQuery, filterHealth, scores]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
-    );
+    // PageSkeleton (não Loader2 full-page) — convenção §9; mesma troca feita
+    // nas outras telas deste PR.
+    return <PageSkeleton variant="list" />;
   }
 
   return (
@@ -181,8 +204,8 @@ export function CustomerListView({
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Buscar por nome, CPF/CNPJ ou e-mail..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             className="pl-9 h-9"
           />
         </div>

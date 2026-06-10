@@ -34,35 +34,40 @@ export interface RankContext {
 }
 
 /**
- * Filtra + ordena o catálogo para exibição/busca. Função pura (extraída do
- * `buildFilteredList` do `useProductCatalog`) para ser testável e garantir que a
- * busca varre a lista COMPLETA — não uma fatia capada.
+ * Ordena o catálogo: comprado-antes (se priorizar) → ativo → alfabético por
+ * descrição → desempate determinístico por `id` (evita ordem instável entre
+ * descrições iguais). Pura; não muta a entrada.
  *
- * Ordenação: comprado-antes (se priorizar) → ativo → alfabético por descrição →
- * desempate determinístico por `id` (evita ordem instável entre descrições iguais).
- * Busca (quando há termo): substring case-insensitive em `descricao`, `codigo` e
- * no `omie_codigo_produto` (cobre quem digita o código interno do Omie).
+ * Separada do filtro de propósito: a ordenação só depende do catálogo e do
+ * cliente — memoizar o resultado e re-rodar SÓ o filtro por tecla evita
+ * re-ordenar ~8k produtos a cada caractere digitado no wizard.
+ * Decorate-sort-undecorate: `isPreviouslyPurchased` era chamado 2× POR
+ * COMPARAÇÃO (O(n·log n) lookups); aqui é 1× por produto.
  */
-export function filterAndRankProducts(
-  products: Product[],
-  term: string,
-  ctx: RankContext,
-  limit = 50,
-): Product[] {
-  const sorted = [...products].sort((a, b) => {
-    if (ctx.shouldPrioritize) {
-      const aPrev = ctx.isPreviouslyPurchased(a);
-      const bPrev = ctx.isPreviouslyPurchased(b);
-      if (aPrev && !bPrev) return -1;
-      if (!aPrev && bPrev) return 1;
-    }
-    if (a.ativo && !b.ativo) return -1;
-    if (!a.ativo && b.ativo) return 1;
-    const byDesc = a.descricao.localeCompare(b.descricao);
+export function rankProducts(products: Product[], ctx: RankContext): Product[] {
+  const decorated = products.map((p) => ({
+    p,
+    prev: ctx.shouldPrioritize && ctx.isPreviouslyPurchased(p),
+  }));
+  decorated.sort((a, b) => {
+    if (a.prev && !b.prev) return -1;
+    if (!a.prev && b.prev) return 1;
+    if (a.p.ativo && !b.p.ativo) return -1;
+    if (!a.p.ativo && b.p.ativo) return 1;
+    const byDesc = a.p.descricao.localeCompare(b.p.descricao);
     if (byDesc !== 0) return byDesc;
-    return a.id.localeCompare(b.id);
+    return a.p.id.localeCompare(b.p.id);
   });
+  return decorated.map((d) => d.p);
+}
 
+/**
+ * Filtra uma lista JÁ ordenada (saída de `rankProducts`) pelo termo de busca.
+ * Busca: substring case-insensitive em `descricao`, `codigo` e no
+ * `omie_codigo_produto` (cobre quem digita o código interno do Omie).
+ * Varre a lista COMPLETA — não uma fatia capada.
+ */
+export function filterRanked(sorted: Product[], term: string, limit = 50): Product[] {
   if (!term) return sorted.slice(0, limit);
   const q = term.toLowerCase();
   return sorted
@@ -73,4 +78,18 @@ export function filterAndRankProducts(
         String(p.omie_codigo_produto).includes(q),
     )
     .slice(0, limit);
+}
+
+/**
+ * Filtra + ordena o catálogo para exibição/busca (composição rank → filter).
+ * Mantida pelos testes existentes — o useProductCatalog migrou para chamar
+ * rankProducts (memoizado) + filterRanked (por tecla) separadamente.
+ */
+export function filterAndRankProducts(
+  products: Product[],
+  term: string,
+  ctx: RankContext,
+  limit = 50,
+): Product[] {
+  return filterRanked(rankProducts(products, ctx), term, limit);
 }
