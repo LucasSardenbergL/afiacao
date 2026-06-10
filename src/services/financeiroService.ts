@@ -186,12 +186,13 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
   const resumo: Record<string, FinResumo> = {};
 
   for (const company of companies) {
-    // Saldos CC
-    const { data: contas } = await supabase
+    // Saldos CC — erro LANÇA: caixa R$0 falso engana tanto quanto total truncado
+    const { data: contas, error: ccError } = await supabase
       .from("fin_contas_correntes")
       .select("descricao, saldo_atual, banco")
       .eq("company", company)
       .eq("ativo", true);
+    if (ccError) throw new Error(`Falha ao carregar contas correntes (${company}): ${ccError.message}`);
 
     // Abertos + vencidos: soma paginada do `saldo` — o reduce client-side sem
     // .range() somava só a 1ª página de 1000 do PostgREST (oben tem ~11k títulos
@@ -796,7 +797,10 @@ export async function getLastSyncTime(): Promise<string | null> {
  * (robusto vs cap 1000 do PostgREST). `saldo` é coluna GERADA
  * (valor_documento − COALESCE(valor_recebido/pago, 0)) — equivalente à
  * subtração client-side, sem depender de baixar as duas colunas.
- * Erro de qualquer página LANÇA — nunca devolve soma parcial silenciosa.
+ * Pagina ORDENADO por id: offset sem ORDER BY não é estável entre páginas
+ * (o sync de CR/CP grava a cada 10min → linha pulada/duplicada silenciosa).
+ * Erro de qualquer página LANÇA Error real — nunca soma parcial silenciosa,
+ * e os consumidores exibem `e.message` (objeto cru viraria "[object Object]").
  * Contrato travado em src/services/__tests__/somarSaldoAberto.test.ts.
  */
 export async function somarSaldoPorStatus(
@@ -813,8 +817,9 @@ export async function somarSaldoPorStatus(
       .select('saldo')
       .eq('company', company)
       .in('status_titulo', [...statuses])
+      .order('id')
       .range(from, from + PAGE - 1);
-    if (error) throw error;
+    if (error) throw new Error(`Falha ao somar saldo (${tabela}/${company}): ${error.message}`);
     const rows = (data ?? []) as Array<{ saldo: number | null }>;
     for (const r of rows) total += r.saldo ?? 0;
     if (rows.length < PAGE) break;

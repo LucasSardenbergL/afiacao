@@ -17,7 +17,7 @@ type Row = { saldo: number | null };
 
 const state: {
   pages: Array<{ data: Row[] | null; error: { message: string } | null }>;
-  calls: Array<{ tabela: string; company: string; statuses: string[]; from: number; to: number }>;
+  calls: Array<{ tabela: string; company: string; statuses: string[]; order: string; from: number; to: number }>;
 } = { pages: [], calls: [] };
 
 vi.mock('@/integrations/supabase/client', () => ({
@@ -26,13 +26,15 @@ vi.mock('@/integrations/supabase/client', () => ({
       select: (_cols: string) => ({
         eq: (_col: string, company: string) => ({
           in: (_col2: string, statuses: string[]) => ({
-            range: (from: number, to: number) => {
-              const idx = Math.floor(from / 1000);
-              state.calls.push({ tabela, company, statuses, from, to });
-              return Promise.resolve(
-                state.pages[idx] ?? { data: [], error: null },
-              );
-            },
+            order: (orderCol: string) => ({
+              range: (from: number, to: number) => {
+                const idx = Math.floor(from / 1000);
+                state.calls.push({ tabela, company, statuses, order: orderCol, from, to });
+                return Promise.resolve(
+                  state.pages[idx] ?? { data: [], error: null },
+                );
+              },
+            }),
           }),
         }),
       }),
@@ -63,6 +65,19 @@ describe('somarSaldoAberto (contrato do B1)', () => {
     expect(state.calls[0].statuses).toEqual(['A VENCER', 'ATRASADO', 'VENCE HOJE']);
   });
 
+  it('pagina ORDENADO por id — offset sem ORDER BY não é estável entre páginas (sync grava a cada 10min)', async () => {
+    state.pages = [page(3)];
+    await somarSaldoAberto('fin_contas_receber', 'oben');
+    expect(state.calls[0].order).toBe('id');
+  });
+
+  it('última página exatamente cheia (múltiplo de 1000): faz a request extra vazia e encerra', async () => {
+    state.pages = [page(1000, 2)];
+    const total = await somarSaldoAberto('fin_contas_receber', 'oben');
+    expect(total).toBe(2000);
+    expect(state.calls).toHaveLength(2);
+  });
+
   it('pagina além do cap de 1000 e soma TODAS as páginas (o KPI antigo truncava)', async () => {
     state.pages = [page(1000, 2), page(234, 1)];
     const total = await somarSaldoAberto('fin_contas_receber', 'oben');
@@ -85,9 +100,11 @@ describe('somarSaldoAberto (contrato do B1)', () => {
     expect(total).toBe(7);
   });
 
-  it('erro de página LANÇA (nunca devolve soma parcial silenciosa)', async () => {
+  it('erro de página LANÇA um Error real (consumidores fazem `e instanceof Error ? e.message : ...`)', async () => {
     state.pages = [page(1000, 2), { data: null, error: { message: 'RLS negou' } }];
-    await expect(somarSaldoAberto('fin_contas_receber', 'oben')).rejects.toBeTruthy();
+    await expect(somarSaldoAberto('fin_contas_receber', 'oben')).rejects.toBeInstanceOf(Error);
+    state.pages = [page(1000, 2), { data: null, error: { message: 'RLS negou' } }];
+    await expect(somarSaldoAberto('fin_contas_receber', 'oben')).rejects.toThrow(/RLS negou/);
   });
 });
 

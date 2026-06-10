@@ -16,7 +16,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 type Row = Record<string, unknown>;
 
-const state: { db: Record<string, Row[]> } = { db: {} };
+const state: {
+  db: Record<string, Row[]>;
+  errors: Record<string, { message: string } | undefined>;
+} = { db: {}, errors: {} };
 
 function makeBuilder(tabela: string) {
   const filters: Array<(r: Row) => boolean> = [];
@@ -31,17 +34,24 @@ function makeBuilder(tabela: string) {
       filters.push((r) => vals.includes(r[col]));
       return builder;
     },
+    order: (_col: string) => builder,
     range: (from: number, to: number) => {
       janela = { from, to };
       return builder;
     },
     then: (
-      resolve: (v: { data: Row[]; error: null }) => unknown,
+      resolve: (v: { data: Row[] | null; error: { message: string } | null }) => unknown,
       reject?: (e: unknown) => unknown,
     ) => {
+      const error = state.errors[tabela];
+      if (error) return Promise.resolve({ data: null, error }).then(resolve, reject);
       const matched = (state.db[tabela] ?? []).filter((r) => filters.every((f) => f(r)));
-      // PostgREST real: cap default de 1000 sem range; janela com range.
-      const rows = janela ? matched.slice(janela.from, janela.to + 1) : matched.slice(0, 1000);
+      // PostgREST real: max-rows de 1000 vale SEMPRE — sem range capa em 1000, e
+      // com range a janela devolvida nunca passa de 1000 linhas (um `.range(0,
+      // 99999)` NÃO fura o cap; só paginação de verdade soma tudo).
+      const rows = janela
+        ? matched.slice(janela.from, Math.min(janela.to + 1, janela.from + 1000))
+        : matched.slice(0, 1000);
       return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
     },
   };
@@ -69,6 +79,7 @@ const muitos = (n: number, company: string, status: string, saldo: number): Row[
 describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
   beforeEach(() => {
     state.db = { fin_contas_correntes: [], fin_contas_receber: [], fin_contas_pagar: [] };
+    state.errors = {};
   });
 
   it('soma TODOS os títulos abertos mesmo acima do cap de 1000 do PostgREST (CR e CP)', async () => {
@@ -133,5 +144,16 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
       { descricao: 'Itaú', saldo_atual: 100, banco: '341' },
       { descricao: '', saldo_atual: 0, banco: '' },
     ]);
+  });
+
+  it('erro nos títulos LANÇA um Error real (nunca resumo parcial silencioso, nem "[object Object]" no banner)', async () => {
+    state.db.fin_contas_receber = muitos(10, 'oben', 'A VENCER', 1);
+    state.errors.fin_contas_pagar = { message: 'RLS negou' };
+    await expect(getResumoFinanceiro(['oben'])).rejects.toBeInstanceOf(Error);
+  });
+
+  it('erro nas contas correntes também LANÇA — caixa R$0 falso é tão ruim quanto total truncado', async () => {
+    state.errors.fin_contas_correntes = { message: 'tabela indisponível' };
+    await expect(getResumoFinanceiro(['oben'])).rejects.toBeInstanceOf(Error);
   });
 });
