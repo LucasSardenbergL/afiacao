@@ -28,6 +28,10 @@ type fakeExtractor struct {
 	maxDA map[string]time.Time
 	// formulas para o keys-snapshot.
 	formulas []formulaKey
+	// corNames para lookup de nome_cor em mapFormula.
+	corNames map[string]string
+	// embVolumes para lookup de volume_final_ml em mapFormula.
+	embVolumes map[string]float64
 	// originNow é o valor retornado por OriginNow().
 	originNow time.Time
 	// err: se definido, todas as chamadas retornam esse erro.
@@ -48,6 +52,26 @@ func (f *fakeExtractor) ExtractAllFormulasForSnapshot(_ context.Context) ([]form
 		return nil, f.err
 	}
 	return f.formulas, nil
+}
+
+func (f *fakeExtractor) ExtractAllCorNames(_ context.Context) (map[string]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.corNames != nil {
+		return f.corNames, nil
+	}
+	return make(map[string]string), nil
+}
+
+func (f *fakeExtractor) ExtractAllEmbVolumes(_ context.Context) (map[string]float64, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.embVolumes != nil {
+		return f.embVolumes, nil
+	}
+	return make(map[string]float64), nil
 }
 
 func (f *fakeExtractor) OriginNow(_ context.Context) (time.Time, error) {
@@ -181,7 +205,7 @@ func TestShouldKeysSnapshot_invalidDate(t *testing.T) {
 // TestShouldFullRescan
 // ─────────────────────────────────────────────────────────────
 
-func TestShouldFullRescan_notMonday(t *testing.T) {
+func TestShouldFullRescan_notSunday(t *testing.T) {
 	// Terça-feira
 	tuesday := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
 	st := &State{HWM: make(map[string]string)}
@@ -190,46 +214,46 @@ func TestShouldFullRescan_notMonday(t *testing.T) {
 	}
 }
 
-func TestShouldFullRescan_mondayFirstTime(t *testing.T) {
-	// Segunda-feira, nunca rescaneado.
-	monday := time.Date(2026, 6, 8, 9, 0, 0, 0, time.UTC) // 8/jun/2026 é segunda
-	if monday.Weekday() != time.Monday {
-		t.Skip("ajustar data de teste para segunda-feira")
+func TestShouldFullRescan_sundayFirstTime(t *testing.T) {
+	// Domingo, nunca rescaneado.
+	sunday := time.Date(2026, 6, 7, 9, 0, 0, 0, time.UTC) // 7/jun/2026 é domingo
+	if sunday.Weekday() != time.Sunday {
+		t.Skip("ajustar data de teste para domingo")
 	}
 	st := &State{HWM: make(map[string]string)}
-	if !shouldFullRescan(st, monday) {
-		t.Error("primeira segunda deve disparar full rescan")
+	if !shouldFullRescan(st, sunday) {
+		t.Error("primeiro domingo deve disparar full rescan")
 	}
 }
 
-func TestShouldFullRescan_mondaySameWeek(t *testing.T) {
-	monday := time.Date(2026, 6, 8, 9, 0, 0, 0, time.UTC)
-	if monday.Weekday() != time.Monday {
-		t.Skip("ajustar data de teste para segunda-feira")
+func TestShouldFullRescan_sundaySameWeek(t *testing.T) {
+	sunday := time.Date(2026, 6, 7, 9, 0, 0, 0, time.UTC)
+	if sunday.Weekday() != time.Sunday {
+		t.Skip("ajustar data de teste para domingo")
 	}
 	st := &State{
 		HWM:            make(map[string]string),
-		LastFullRescan: monday.Add(-1 * time.Hour).Format(time.RFC3339), // mesma semana
+		LastFullRescan: sunday.Add(-1 * time.Hour).Format(time.RFC3339), // mesma semana
 	}
-	if shouldFullRescan(st, monday) {
-		t.Error("segunda da mesma semana ISO não deve re-escanear")
+	if shouldFullRescan(st, sunday) {
+		t.Error("domingo da mesma semana ISO não deve re-escanear")
 	}
 }
 
-func TestShouldFullRescan_mondayNewWeek(t *testing.T) {
-	lastMonday := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
-	thisMonday := time.Date(2026, 6, 8, 9, 0, 0, 0, time.UTC)
-	for _, m := range []time.Time{lastMonday, thisMonday} {
-		if m.Weekday() != time.Monday {
-			t.Skipf("data %s não é segunda — ajustar teste", m)
+func TestShouldFullRescan_sundayNewWeek(t *testing.T) {
+	lastSunday := time.Date(2026, 5, 31, 9, 0, 0, 0, time.UTC)
+	thisSunday := time.Date(2026, 6, 7, 9, 0, 0, 0, time.UTC)
+	for _, m := range []time.Time{lastSunday, thisSunday} {
+		if m.Weekday() != time.Sunday {
+			t.Skipf("data %s não é domingo — ajustar teste", m)
 		}
 	}
 	st := &State{
 		HWM:            make(map[string]string),
-		LastFullRescan: lastMonday.Format(time.RFC3339),
+		LastFullRescan: lastSunday.Format(time.RFC3339),
 	}
-	if !shouldFullRescan(st, thisMonday) {
-		t.Error("segunda de semana nova deve disparar full rescan")
+	if !shouldFullRescan(st, thisSunday) {
+		t.Error("domingo de semana nova deve disparar full rescan")
 	}
 }
 
@@ -570,8 +594,8 @@ func TestSyncCorantes_precoOnlyDelta(t *testing.T) {
 		t.Errorf("esperava 1 corante parcial, got %d", len(list))
 	}
 	item := list[0].(map[string]any)
-	if item["id_corante"] != "C002" {
-		t.Errorf("id_corante esperado 'C002', got %v", item["id_corante"])
+	if item["id_corante_sayersystem"] != "C002" {
+		t.Errorf("id_corante_sayersystem esperado 'C002', got %v", item["id_corante_sayersystem"])
 	}
 }
 
@@ -651,6 +675,18 @@ func TestSyncFormulas_flat_personalizada_false(t *testing.T) {
 	item := list[0].(map[string]any)
 	if item["personalizada"] != false {
 		t.Errorf("personalizada esperado false, got %v", item["personalizada"])
+	}
+	if item["cor_id"] != "COR001" {
+		t.Errorf("cor_id esperado 'COR001', got %v", item["cor_id"])
+	}
+	if item["cod_produto"] != "P001" {
+		t.Errorf("cod_produto esperado 'P001', got %v", item["cod_produto"])
+	}
+	if item["id_base"] != "B01" {
+		t.Errorf("id_base esperado 'B01', got %v", item["id_base"])
+	}
+	if item["id_embalagem"] != "E01" {
+		t.Errorf("id_embalagem esperado 'E01', got %v", item["id_embalagem"])
 	}
 }
 
@@ -855,8 +891,11 @@ func TestMapProduto_validRow(t *testing.T) {
 	if m == nil {
 		t.Fatal("mapProduto não deve retornar nil para linha válida")
 	}
-	if m["id_produto"] != "P001" {
-		t.Errorf("id_produto esperado 'P001', got %v", m["id_produto"])
+	if m["cod_produto"] != "P001" {
+		t.Errorf("cod_produto esperado 'P001', got %v", m["cod_produto"])
+	}
+	if m["ativo"] != true {
+		t.Errorf("ativo esperado true, got %v", m["ativo"])
 	}
 }
 
@@ -870,8 +909,8 @@ func TestMapProduto_emptyID(t *testing.T) {
 func TestMapBase_validRow(t *testing.T) {
 	row := map[string]any{"id_base": "B01", "descricao": "Base Transparente"}
 	m := mapBase(row)
-	if m == nil || m["id_base"] != "B01" {
-		t.Error("mapBase falhou")
+	if m == nil || m["id_base_sayersystem"] != "B01" {
+		t.Errorf("mapBase falhou: id_base_sayersystem esperado 'B01', got %v", m)
 	}
 }
 
@@ -880,6 +919,9 @@ func TestMapEmbalagem_includesVolume(t *testing.T) {
 	m := mapEmbalagem(row)
 	if m == nil {
 		t.Fatal("mapEmbalagem nil")
+	}
+	if m["id_embalagem_sayersystem"] != "E01" {
+		t.Errorf("id_embalagem_sayersystem esperado 'E01', got %v", m["id_embalagem_sayersystem"])
 	}
 	if m["volume_ml"] == nil {
 		t.Error("volume_ml ausente")
@@ -906,13 +948,30 @@ func TestMapFormula_personalizadaField(t *testing.T) {
 		"id_base":      "B01",
 		"id_emb":       "E01",
 	}
+	emptyNames := map[string]string{}
+	emptyVols := map[string]float64{}
 	// personalizada=false
-	m := mapFormula(row, false)
+	m := mapFormula(row, false, emptyNames, emptyVols)
+	if m == nil {
+		t.Fatal("mapFormula retornou nil para linha válida")
+	}
 	if m["personalizada"] != false {
 		t.Errorf("personalizada esperado false, got %v", m["personalizada"])
 	}
+	if m["cor_id"] != "COR001" {
+		t.Errorf("cor_id esperado 'COR001', got %v", m["cor_id"])
+	}
+	if m["cod_produto"] != "P001" {
+		t.Errorf("cod_produto esperado 'P001', got %v", m["cod_produto"])
+	}
+	if m["id_base"] != "B01" {
+		t.Errorf("id_base esperado 'B01', got %v", m["id_base"])
+	}
+	if m["id_embalagem"] != "E01" {
+		t.Errorf("id_embalagem esperado 'E01', got %v", m["id_embalagem"])
+	}
 	// personalizada=true
-	m = mapFormula(row, true)
+	m = mapFormula(row, true, emptyNames, emptyVols)
 	if m["personalizada"] != true {
 		t.Errorf("personalizada esperado true, got %v", m["personalizada"])
 	}
@@ -920,8 +979,100 @@ func TestMapFormula_personalizadaField(t *testing.T) {
 
 func TestMapFormula_emptyCorID(t *testing.T) {
 	row := map[string]any{"id_padraocor": "", "id_produto": "P001"}
-	if mapFormula(row, false) != nil {
+	if mapFormula(row, false, nil, nil) != nil {
 		t.Error("mapFormula deve retornar nil para id_padraocor vazio")
+	}
+}
+
+func TestSyncFormulas_formulaContainsNomCorAndVolume(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	st := &State{HWM: make(map[string]string)}
+	counts := make(map[string]int)
+	rm := newFakeMapping([]string{"formula"}, FormulaShapeFlat)
+
+	maxDA := time.Now()
+	ex := &fakeExtractor{
+		rows: map[string][]map[string]any{
+			"formula": {
+				{
+					"id_padraocor": "COR001",
+					"id_produto":   "P001",
+					"id_base":      "B01",
+					"id_emb":       "E01",
+				},
+			},
+		},
+		maxDA:      map[string]time.Time{"formula": maxDA},
+		corNames:   map[string]string{"COR001": "Branco Neve"},
+		embVolumes: map[string]float64{"E01": 900.0},
+	}
+
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, nil, false)
+	if err != nil {
+		t.Fatalf("syncFormulas falhou: %v", err)
+	}
+
+	req := srv.requests[0]
+	list := req.Body["formulas"].([]any)
+	item := list[0].(map[string]any)
+
+	if item["nome_cor"] != "Branco Neve" {
+		t.Errorf("nome_cor esperado 'Branco Neve', got %v", item["nome_cor"])
+	}
+	if item["volume_final_ml"] != 900.0 {
+		t.Errorf("volume_final_ml esperado 900.0, got %v", item["volume_final_ml"])
+	}
+}
+
+func TestSyncFormulas_missingIdBaseDropped(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	st := &State{HWM: make(map[string]string)}
+	counts := make(map[string]int)
+	rm := newFakeMapping([]string{"formula"}, FormulaShapeFlat)
+
+	maxDA := time.Now()
+	ex := &fakeExtractor{
+		rows: map[string][]map[string]any{
+			"formula": {
+				// Linha completa — deve ser enviada.
+				{
+					"id_padraocor": "COR001",
+					"id_produto":   "P001",
+					"id_base":      "B01",
+					"id_emb":       "E01",
+				},
+				// Linha sem id_base — deve ser descartada.
+				{
+					"id_padraocor": "COR002",
+					"id_produto":   "P001",
+					"id_base":      "",
+					"id_emb":       "E01",
+				},
+			},
+		},
+		maxDA: map[string]time.Time{"formula": maxDA},
+	}
+
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, nil, false)
+	if err != nil {
+		t.Fatalf("syncFormulas falhou: %v", err)
+	}
+
+	if srv.countPathPrefix("/formulas") != 1 {
+		t.Errorf("esperava 1 POST /formulas, got %d", srv.countPathPrefix("/formulas"))
+	}
+	req := srv.requests[0]
+	list := req.Body["formulas"].([]any)
+	if len(list) != 1 {
+		t.Errorf("esperava 1 fórmula (linha sem id_base descartada), got %d", len(list))
 	}
 }
 

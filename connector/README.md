@@ -23,7 +23,7 @@ tint_* tables (Supabase PostgreSQL)
 2. Envia em lotes ≤ 1000 com idempotency key (UUID v4)
 3. Avança o HWM apenas após todos os lotes do agente responderem 2xx
 4. Uma vez por dia: envia keys-snapshot completo (reconciliação de chaves)
-5. Segunda-feira: re-scan completo de todas as entidades (HWM zerado)
+5. Domingo: re-scan completo de todas as entidades (HWM zerado)
 6. Heartbeat ao final com versão, uptime e contagens do ciclo
 
 ---

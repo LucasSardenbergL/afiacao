@@ -5,7 +5,7 @@
 //  2. Valida o schema (fail-closed se divergir)
 //  3. Para cada entidade, extrai o delta desde o HWM - 5min e envia em lotes ≤1000
 //  4. Diariamente: envia um keys-snapshot de todas as fórmulas
-//  5. Toda segunda-feira de madrugada: full re-scan (ignora HWM)
+//  5. Todo domingo de madrugada: full re-scan (ignora HWM)
 //  6. Envia heartbeat ao final
 //
 // RunLoop chama RunCycle em loop com intervalo configurável (para o serviço).
@@ -49,6 +49,14 @@ type Extractor interface {
 	// de TODAS as fórmulas (formula + formulaperson), sem filtro de HWM.
 	ExtractAllFormulasForSnapshot(ctx context.Context) (formulas []formulaKey, err error)
 
+	// ExtractAllCorNames retorna um map de id_padraocor → descricao para todas as
+	// cores (padracor + personcor), carregado uma vez por ciclo para enriquecer fórmulas.
+	ExtractAllCorNames(ctx context.Context) (map[string]string, error)
+
+	// ExtractAllEmbVolumes retorna um map de id_emb → volume_ml para todas as
+	// embalagens, carregado uma vez por ciclo para enriquecer fórmulas.
+	ExtractAllEmbVolumes(ctx context.Context) (map[string]float64, error)
+
 	// OriginNow retorna o now() do PostgreSQL de origem (para comparações de data).
 	OriginNow(ctx context.Context) (time.Time, error)
 }
@@ -78,6 +86,52 @@ func (p *pgExtractor) Extract(ctx context.Context, entity string, hwm time.Time)
 
 func (p *pgExtractor) ExtractAllFormulasForSnapshot(ctx context.Context) ([]formulaKey, error) {
 	return extractAllFormulasForSnapshot(ctx, p.db)
+}
+
+func (p *pgExtractor) ExtractAllCorNames(ctx context.Context) (map[string]string, error) {
+	// Carrega nomes de todas as cores (padracor + personcor) em um único pass.
+	out := make(map[string]string)
+	for _, tbl := range []string{"padracor", "personcor"} {
+		rows, err := p.db.QueryContext(ctx,
+			`SELECT id_padraocor::text, descricao::text FROM `+tbl)
+		if err != nil {
+			// Tabela ausente no schema desta instalação → ignora silenciosamente.
+			continue
+		}
+		for rows.Next() {
+			var id, desc string
+			if err := rows.Scan(&id, &desc); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("ExtractAllCorNames %s: %w", tbl, err)
+			}
+			out[id] = desc
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("ExtractAllCorNames %s: %w", tbl, err)
+		}
+	}
+	return out, nil
+}
+
+func (p *pgExtractor) ExtractAllEmbVolumes(ctx context.Context) (map[string]float64, error) {
+	// Carrega volume_ml de todas as embalagens.
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT id_emb::text, COALESCE(volume_ml, 0)::float8 FROM embalagens`)
+	if err != nil {
+		return nil, fmt.Errorf("ExtractAllEmbVolumes: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]float64)
+	for rows.Next() {
+		var id string
+		var vol float64
+		if err := rows.Scan(&id, &vol); err != nil {
+			return nil, fmt.Errorf("ExtractAllEmbVolumes scan: %w", err)
+		}
+		out[id] = vol
+	}
+	return out, rows.Err()
 }
 
 func (p *pgExtractor) OriginNow(ctx context.Context) (time.Time, error) {
@@ -199,10 +253,10 @@ func RunCycle(ctx context.Context, cfg *Config) {
 		originNow = time.Now()
 	}
 
-	// Determina se é necessário full re-scan (toda segunda-feira, uma vez por semana).
+	// Determina se é necessário full re-scan (todo domingo, uma vez por semana).
 	needFullRescan := shouldFullRescan(st, originNow)
 	if needFullRescan {
-		logger.Infof("RunCycle: iniciando full re-scan semanal (segunda-feira)")
+		logger.Infof("RunCycle: iniciando full re-scan semanal (domingo)")
 		clearAllHWM(st)
 	}
 
@@ -316,18 +370,19 @@ func runEntityCycles(
 	}
 
 	// ──────────────────────────────────────────────────────────────
-	// Fórmulas: formula (personalizada=false) + personcor (lookup)
+	// Fórmulas: formula (personalizada=false), personcor (lookup),
 	//           formulaperson (personalizada=true)
+	// Ordem do spec §5.3: ..., subcolecao, formula, personcor, formulaperson
 	// ──────────────────────────────────────────────────────────────
-
-	// personcor: lookup de nomes para fórmulas personalizadas
-	if err := syncSimpleEntity(ctx, ex, cli, st, counts, rm, "personcor", "personcores", mapPersoncor); err != nil {
-		logger.Warnf("sync personcor: %v", err)
-	}
 
 	// formula (padrão)
 	if err := syncFormulas(ctx, ex, cli, st, counts, rm, db, false); err != nil {
 		logger.Warnf("sync formula: %v", err)
+	}
+
+	// personcor: lookup de nomes para fórmulas personalizadas (após formula, antes formulaperson)
+	if err := syncSimpleEntity(ctx, ex, cli, st, counts, rm, "personcor", "personcores", mapPersoncor); err != nil {
+		logger.Warnf("sync personcor: %v", err)
 	}
 
 	// formulaperson (personalizada)
@@ -515,9 +570,9 @@ func syncCorantes(
 		// Envia somente o id + preços (servidor faz upsert parcial).
 		p := precoMap[id]
 		merged = append(merged, map[string]any{
-			"id_corante": id,
-			"custo":      p.custo,
-			"volume_ml":  p.volumeML,
+			"id_corante_sayersystem": id,
+			"custo":                  p.custo,
+			"volume_ml":              p.volumeML,
 		})
 	}
 
@@ -604,6 +659,18 @@ func syncFormulas(
 		return nil
 	}
 
+	// Carrega lookups uma vez por ciclo para enriquecer as fórmulas.
+	corNames, err := ex.ExtractAllCorNames(ctx)
+	if err != nil {
+		logger.Warnf("syncFormulas %s: falha ao carregar nomes de cores (degradação honesta): %v", entity, err)
+		corNames = make(map[string]string)
+	}
+	embVolumes, err := ex.ExtractAllEmbVolumes(ctx)
+	if err != nil {
+		logger.Warnf("syncFormulas %s: falha ao carregar volumes de embalagens (degradação honesta): %v", entity, err)
+		embVolumes = make(map[string]float64)
+	}
+
 	// Para shape=child: enriquece com itens da tabela filha.
 	var childItems map[string][]map[string]any
 	if rm.FormulaShape == FormulaShapeChild {
@@ -614,10 +681,12 @@ func syncFormulas(
 	}
 
 	// Mapeia linhas para o contrato do servidor.
+	dropped := 0
 	mapped := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		m := mapFormula(row, personalizada)
+		m := mapFormula(row, personalizada, corNames, embVolumes)
 		if m == nil {
+			dropped++
 			continue
 		}
 		// Para shape=child: injeta os itens.
@@ -636,6 +705,9 @@ func syncFormulas(
 			}
 		}
 		mapped = append(mapped, m)
+	}
+	if dropped > 0 {
+		logger.Warnf("syncFormulas %s: %d linha(s) descartada(s) por campos obrigatórios ausentes (cor_id/cod_produto/id_base/id_embalagem)", entity, dropped)
 	}
 	if len(mapped) == 0 {
 		advanceHWM(st, entity, maxDA)
@@ -673,10 +745,10 @@ func shouldKeysSnapshot(st *State, originNow time.Time) bool {
 }
 
 // shouldFullRescan retorna true se o full re-scan semanal deve ocorrer.
-// Critério: dia é segunda-feira (weekday==Monday) E a semana ISO do último re-scan
+// Critério: dia é domingo (weekday==Sunday) E a semana ISO do último re-scan
 // é diferente da semana atual.
 func shouldFullRescan(st *State, originNow time.Time) bool {
-	if originNow.Weekday() != time.Monday {
+	if originNow.Weekday() != time.Sunday {
 		return false
 	}
 	if st.LastFullRescan == "" {
@@ -783,8 +855,9 @@ func mapProduto(row map[string]any) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id_produto": id,
-		"descricao":  toString(row["descricao"]),
+		"cod_produto": id,
+		"descricao":   toString(row["descricao"]),
+		"ativo":       true,
 	}
 }
 
@@ -794,8 +867,8 @@ func mapBase(row map[string]any) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id_base":   id,
-		"descricao": toString(row["descricao"]),
+		"id_base_sayersystem": id,
+		"descricao":           toString(row["descricao"]),
 	}
 }
 
@@ -805,9 +878,9 @@ func mapEmbalagem(row map[string]any) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id_emb":    id,
-		"descricao": toString(row["descricao"]),
-		"volume_ml": toFloat64(row["volume_ml"]),
+		"id_embalagem_sayersystem": id,
+		"descricao":                toString(row["descricao"]),
+		"volume_ml":                toFloat64(row["volume_ml"]),
 	}
 }
 
@@ -819,9 +892,9 @@ func mapSku(row map[string]any) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id_produto": prod,
-		"id_base":    base,
-		"id_emb":     emb,
+		"cod_produto":  prod,
+		"id_base":      base,
+		"id_embalagem": emb,
 	}
 }
 
@@ -831,8 +904,8 @@ func mapCorante(row map[string]any) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id_corante": id,
-		"descricao":  toString(row["descricao"]),
+		"id_corante_sayersystem": id,
+		"descricao":              toString(row["descricao"]),
 	}
 }
 
@@ -844,12 +917,12 @@ func mapPrecoBaseEmb(row map[string]any) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id_produto": prod,
-		"id_base":    base,
-		"id_emb":     emb,
-		"custo":      toFloat64(row["custo"]),
-		"imposto":    toFloat64(row["imposto"]),
-		"margem":     toFloat64(row["margem"]),
+		"cod_produto":  prod,
+		"id_base":      base,
+		"id_embalagem": emb,
+		"custo":        toFloat64(row["custo"]),
+		"imposto_pct":  toFloat64(row["imposto"]),
+		"margem_pct":   toFloat64(row["margem"]),
 	}
 }
 
@@ -898,24 +971,45 @@ func mapPersoncor(row map[string]any) map[string]any {
 	}
 }
 
-func mapFormula(row map[string]any, personalizada bool) map[string]any {
+// mapFormula converte uma linha de fórmula para o contrato do servidor.
+// corNames e embVolumes são maps carregados uma vez por ciclo para enriquecer
+// os campos nome_cor e volume_final_ml.
+// Retorna nil (e conta como dropped) se algum campo obrigatório estiver ausente:
+// cor_id, cod_produto, id_base, id_embalagem.
+func mapFormula(row map[string]any, personalizada bool, corNames map[string]string, embVolumes map[string]float64) map[string]any {
 	cor := toString(row["id_padraocor"])
-	if cor == "" {
+	prod := toString(row["id_produto"])
+	base := toString(row["id_base"])
+	emb := toString(row["id_emb"])
+
+	// Campos obrigatórios — drop+log se ausentes (edge function os rejeita).
+	if cor == "" || prod == "" || base == "" || emb == "" {
 		return nil
 	}
+
 	m := map[string]any{
-		"id_padraocor":  cor,
-		"id_produto":    toString(row["id_produto"]),
-		"id_base":       toString(row["id_base"]),
-		"id_emb":        toString(row["id_emb"]),
+		"cor_id":        cor,
+		"cod_produto":   prod,
+		"id_base":       base,
+		"id_embalagem":  emb,
 		"personalizada": personalizada,
 	}
+
+	// nome_cor: resolve via lookup; vazio se não encontrado (degradação honesta).
+	if nome, ok := corNames[cor]; ok && nome != "" {
+		m["nome_cor"] = nome
+	}
+
+	// volume_final_ml: resolve via lookup de embalagens.
+	if vol, ok := embVolumes[emb]; ok {
+		m["volume_final_ml"] = vol
+	}
+
+	// subcolecao: opcional.
 	if sub := toString(row["id_subcolecao"]); sub != "" {
-		m["id_subcolecao"] = sub
+		m["subcolecao"] = sub
 	}
-	if emb := toString(row["id_embalagem"]); emb != "" {
-		m["id_embalagem"] = emb
-	}
+
 	return m
 }
 
