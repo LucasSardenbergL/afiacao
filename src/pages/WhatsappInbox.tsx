@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { MessageCircle } from 'lucide-react';
-import { useWhatsappConversations, useWhatsappThread } from '@/queries/useWhatsappInbox';
+import { useWhatsappConversations, useWhatsappThread, useLoadOlderWhatsappMessages } from '@/queries/useWhatsappInbox';
 import { useWhatsappSla } from '@/queries/useWhatsappSla';
 import { SlaBadge } from '@/components/whatsapp/SlaBadge';
 import { useSendWhatsapp } from '@/hooks/useSendWhatsapp';
-import { isOptimisticMessage } from '@/lib/whatsapp/thread-cache';
+import { isOptimisticMessage, THREAD_LIMIT } from '@/lib/whatsapp/thread-cache';
 import { formatBrPhone } from '@/lib/phone';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,6 +35,26 @@ function ReplyForm({ conversationId }: { conversationId: string }) {
       <Input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Responder…" autoFocus />
       <Button type="submit">Enviar</Button>
     </form>
+  );
+}
+
+/**
+ * Botão "carregar mensagens anteriores" no topo da thread. Só aparece quando
+ * a janela está cheia (count >= THREAD_LIMIT = pode haver histórico); some ao
+ * esgotar. Estado local — montar com key={conversationId} pra zerar na troca.
+ * Scroll: navegadores com overflow-anchor (Chrome/Edge/Firefox) mantêm o
+ * ponto de leitura no prepend; no Safari o scroll pode pular (aceito na v1 —
+ * ação manual, o usuário acabou de clicar no topo).
+ */
+function LoadOlderButton({ conversationId, count }: { conversationId: string; count: number }) {
+  const { loadOlder, isLoadingOlder, exhausted } = useLoadOlderWhatsappMessages(conversationId);
+  if (exhausted || count < THREAD_LIMIT) return null;
+  return (
+    <div className="flex justify-center pb-1">
+      <Button variant="ghost" size="sm" disabled={isLoadingOlder} onClick={() => void loadOlder()}>
+        {isLoadingOlder ? 'Carregando…' : 'Carregar mensagens anteriores'}
+      </Button>
+    </div>
   );
 }
 
@@ -99,14 +119,17 @@ export default function WhatsappInbox() {
                 <EmptyState tone="operational" icon={MessageCircle} title="Não consegui carregar a conversa"
                   description="" actionLabel="Tentar de novo" onAction={() => threadQuery.refetch()} />
               ) : (
-                messages.map((m) => (
-                  <div
-                    key={m.id}
-                    className={`max-w-[70%] rounded p-2 text-sm ${m.direction === 'out' ? 'ml-auto bg-primary text-primary-foreground' : 'bg-muted'} ${isOptimisticMessage(m) ? 'opacity-60' : ''}`}
-                  >
-                    {m.type === 'text' ? m.body : `[${m.type}]`}
-                  </div>
-                ))
+                <>
+                  <LoadOlderButton key={activeId} conversationId={activeId} count={messages.length} />
+                  {messages.map((m) => (
+                    <div
+                      key={m.id}
+                      className={`max-w-[70%] rounded p-2 text-sm ${m.direction === 'out' ? 'ml-auto bg-primary text-primary-foreground' : 'bg-muted'} ${isOptimisticMessage(m) ? 'opacity-60' : ''}`}
+                    >
+                      {m.type === 'text' ? m.body : `[${m.type}]`}
+                    </div>
+                  ))}
+                </>
               )}
             </div>
             {/* key por conversa: troca de conversa zera o draft */}

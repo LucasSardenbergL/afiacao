@@ -1,7 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { appendRealtimeMessage } from '@/lib/whatsapp/thread-cache';
+import { toast } from 'sonner';
+import {
+  appendRealtimeMessage,
+  mergeThreadWindow,
+  prependOlderMessages,
+  THREAD_LIMIT,
+} from '@/lib/whatsapp/thread-cache';
 
 export interface WaConversation {
   id: string; phone_e164: string | null; contact_name: string | null;
@@ -22,6 +28,7 @@ interface PgConvBuilder {
   order: (col: string, opts: OrderOpts) => PgConvBuilder;
   limit: (n: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
   eq: (col: string, val: string) => PgConvBuilder;
+  lte: (col: string, val: string) => PgConvBuilder;
   then: PromiseLike<{ data: unknown; error: { message: string } | null }>['then'];
 }
 
@@ -53,9 +60,6 @@ export function useWhatsappConversations() {
   return q;
 }
 
-/** Últimas N mensagens da thread (render asc). */
-const THREAD_LIMIT = 100;
-
 export function useWhatsappThread(conversationId: string | undefined) {
   const qc = useQueryClient();
   const q = useQuery({
@@ -70,7 +74,15 @@ export function useWhatsappThread(conversationId: string | undefined) {
         .order('created_at', { ascending: false })
         .limit(THREAD_LIMIT) as PromiseLike<{ data: unknown; error: { message: string } | null }>);
       if (res.error) throw new Error(res.error.message);
-      return ((res.data ?? []) as WaMessage[]).reverse();
+      const janela = ((res.data ?? []) as WaMessage[]).reverse();
+      // Merge com o cache anterior (helper testado): o refetch baixa só a
+      // janela recente, mas o cache pode ter HISTÓRICO carregado via
+      // "mensagens anteriores" — sem o merge, o invalidate de reconciliação
+      // do envio descartaria o histórico e a tela pularia pras últimas 100.
+      return mergeThreadWindow(
+        qc.getQueryData<WaMessage[]>(['whatsapp', 'thread', conversationId]),
+        janela,
+      );
     },
     enabled: !!conversationId,
   });
@@ -91,4 +103,56 @@ export function useWhatsappThread(conversationId: string | undefined) {
     return () => { supabase.removeChannel(channel); };
   }, [conversationId, qc]);
   return q;
+}
+
+/**
+ * "Carregar mensagens anteriores": busca a página seguinte do histórico
+ * (mensagens mais antigas que a primeira do cache) e faz PREPEND no cache da
+ * thread — fecha a regressão de produto da janela de 100 (conversas longas
+ * tinham o histórico antigo inacessível na UI).
+ *
+ * Cursor por `.lte(created_at da mais antiga)`: o `lte` (não `lt`) garante que
+ * irmãs com o MESMO timestamp do cursor não se percam; as duplicatas
+ * re-baixadas morrem no dedupe do prependOlderMessages. Fim do histórico =
+ * página crua menor que o limit OU zero mensagens novas após dedupe (guard
+ * anti-loop). Estado é local do hook — monte com key por conversa.
+ */
+export function useLoadOlderWhatsappMessages(conversationId: string | undefined) {
+  const qc = useQueryClient();
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [exhausted, setExhausted] = useState(false);
+
+  const loadOlder = useCallback(async () => {
+    if (!conversationId || isLoadingOlder || exhausted) return;
+    const threadKey = ['whatsapp', 'thread', conversationId];
+    // Lê o cache no CLIQUE (não closure): a mais antiga pode ter mudado após
+    // um prepend anterior. old[0] nunca é otimista (otimista é append no fim).
+    const atual = qc.getQueryData<WaMessage[]>(threadKey);
+    const maisAntiga = atual?.[0];
+    if (!maisAntiga) return;
+    setIsLoadingOlder(true);
+    try {
+      const res = await (waFrom('whatsapp_messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .lte('created_at', maisAntiga.created_at)
+        .order('created_at', { ascending: false })
+        .limit(THREAD_LIMIT) as PromiseLike<{ data: unknown; error: { message: string } | null }>);
+      if (res.error) throw new Error(res.error.message);
+      const pagina = ((res.data ?? []) as WaMessage[]).reverse();
+      let added = 0;
+      qc.setQueryData<WaMessage[]>(threadKey, (old) => {
+        const r = prependOlderMessages(old, pagina);
+        added = r.added;
+        return r.next;
+      });
+      if (pagina.length < THREAD_LIMIT || added === 0) setExhausted(true);
+    } catch {
+      toast.error('Falha ao carregar mensagens anteriores.');
+    } finally {
+      setIsLoadingOlder(false);
+    }
+  }, [conversationId, isLoadingOlder, exhausted, qc]);
+
+  return { loadOlder, isLoadingOlder, exhausted };
 }
