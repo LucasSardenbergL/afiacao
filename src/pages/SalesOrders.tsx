@@ -159,6 +159,10 @@ const SalesOrders = () => {
         onPrint={() => detailRow && printOrder(detailRow)}
         onShare={() => detailRow && handleShareOrder(detailRow)}
         onEdit={() => detailRow && navigate(`/sales/edit/${detailRow.id}`)}
+        onRepeat={() => {
+          const o = detailQuery.data?.order;
+          if (o) navigate(`/sales/new?customer=${o.customer_user_id}&repeat=${o.id}`);
+        }}
       />
     </div>
   );
