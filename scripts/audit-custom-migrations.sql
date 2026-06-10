@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 192
+-- Total de custom migrations: 193
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -211,6 +211,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260608120000', 'tool_spec_custom_option', '20260608120000_tool_spec_custom_option.sql'),
   ('20260609085244', 'data_health_check_familia_ausente', '20260609085244_data_health_check_familia_ausente.sql'),
   ('20260609150000', 'reposicao_alerta_pedido_minimo', '20260609150000_reposicao_alerta_pedido_minimo.sql'),
+  ('20260609150000', 'tint_sync_promote', '20260609150000_tint_sync_promote.sql'),
   ('20260609160000', 'reposicao_ciclo_intraday', '20260609160000_reposicao_ciclo_intraday.sql')
 )
 SELECT
@@ -936,6 +937,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_alerta_pedido_minimo', 'index', 'public', 'reposicao_alerta_pedido_minimo_ativo', 'reposicao_alerta_pedido_minimo'),
   ('reposicao_alerta_pedido_minimo', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
   ('reposicao_alerta_pedido_minimo', 'cron_job', 'cron', 'reposicao-alerta-pedido-minimo', ''),
+  ('tint_sync_promote', 'table', 'public', 'tint_staging_precos_base', ''),
+  ('tint_sync_promote', 'table', 'public', 'tint_keys_snapshots', ''),
+  ('tint_sync_promote', 'index', 'public', 'idx_tsp_precos_chave', 'tint_staging_precos_base'),
+  ('tint_sync_promote', 'index', 'public', 'idx_tint_formulas_ativas', 'tint_formulas'),
+  ('tint_sync_promote', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('tint_sync_promote', 'function', 'public', 'tint_ensure_corante_stub', ''),
+  ('tint_sync_promote', 'function', 'public', 'tint_calc_preco_final', ''),
+  ('tint_sync_promote', 'function', 'public', 'tint_recalc_preco_oficial', ''),
+  ('tint_sync_promote', 'function', 'public', 'tint_apply_keys_snapshot', ''),
   ('reposicao_ciclo_intraday', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'gerar-pedidos-intraday-oben', ''),
   ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'omie-sync-estoque-intraday-oben', ''),

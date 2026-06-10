@@ -1,0 +1,9 @@
+# binários compilados (macOS e Windows)
+sayersync
+sayersync.exe
+# arquivos de estado e configuração locais
+config.json
+config.json.tmp
+state.json
+state.json.tmp
+sayersystem-schema.txt

@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **192** custom migrations totais
-- **710** objetos esperados (criados por estas migrations)
+- **193** custom migrations totais
+- **719** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 181
-  - `function`: 174
-  - `index`: 131
+  - `function`: 179
+  - `index`: 133
   - `cron_job`: 101
-  - `table`: 82
+  - `table`: 84
   - `trigger`: 37
   - `enum_value`: 4
 
@@ -1669,6 +1669,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.reposicao_alerta_pedido_minimo_ativo` | `reposicao_alerta_pedido_minimo` |
 | `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
 | `cron_job` | `cron.reposicao-alerta-pedido-minimo` | — |
+
+### `20260609150000_tint_sync_promote.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.tint_staging_precos_base` | — |
+| `table` | `public.tint_keys_snapshots` | — |
+| `index` | `public.idx_tsp_precos_chave` | `tint_staging_precos_base` |
+| `index` | `public.idx_tint_formulas_ativas` | `tint_formulas` |
+| `function` | `public.tint_promote_sync_run` | — |
+| `function` | `public.tint_ensure_corante_stub` | — |
+| `function` | `public.tint_calc_preco_final` | — |
+| `function` | `public.tint_recalc_preco_oficial` | — |
+| `function` | `public.tint_apply_keys_snapshot` | — |
 
 ### `20260609160000_reposicao_ciclo_intraday.sql`
 
