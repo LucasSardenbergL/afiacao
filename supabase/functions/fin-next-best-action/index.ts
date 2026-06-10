@@ -51,7 +51,7 @@ function classificarStatus(input: { tipo: TipoAcao; impacto_eva: number | null; 
   if (input.tipo === "consertar_valor" || input.tipo === "liberar_caixa") return "consertar_antes";
   if (input.tipo === "crescer") {
     if (input.spread_positivo !== true) return "nao_financiar";
-    if (input.caixa_consumido == null) return "falta_dado"; // sem custo estimado → precisa dimensionar o ticket
+    if (input.caixa_consumido == null || input.caixa_consumido <= 0) return "falta_dado"; // crescer SEMPRE consome caixa (NCG): custo ≤0 é dado implausível, não "grátis"
     return input.caixa_consumido <= input.caixa_disponivel ? "financiar_ja" : "financiar_condicional";
   }
   return "falta_dado";
@@ -63,7 +63,8 @@ function montarFilaAcoes(input: { candidatos: AcaoCandidata[]; caixaPorEmpresa: 
   const candidatos = [...input.candidatos];
   candidatos.push({ empresa: "—", descricao: "Não fazer nada / pagar dívida / distribuir ao dono (benchmark do hurdle)", tipo: "benchmark", impacto_eva: null, caixa_consumido: 0, payback_meses: null, spread_positivo: null, confianca: "alta" });
   const fila: AcaoFila[] = candidatos.map((c) => {
-    const hurdle = c.empresa in input.hurdlePorEmpresa ? input.hurdlePorEmpresa[c.empresa] : null;
+    const hurdleRaw = c.empresa in input.hurdlePorEmpresa ? input.hurdlePorEmpresa[c.empresa] : null;
+    const hurdle = hurdleRaw != null && Number.isFinite(hurdleRaw) && hurdleRaw > 0 ? hurdleRaw : null; // hurdle ≤0 implausível → tratado como ausente (crescer cai em falta_dado)
     const caixaDisp = input.caixaPorEmpresa[c.empresa]?.disponivel ?? 0;
     const tem_dado = c.tipo === "crescer" ? (hurdle != null && c.spread_positivo != null) : true;
     const status = classificarStatus({ tipo: c.tipo, impacto_eva: c.impacto_eva, spread_positivo: c.spread_positivo, caixa_consumido: c.caixa_consumido, caixa_disponivel: caixaDisp, hurdle, tem_dado });
@@ -71,16 +72,21 @@ function montarFilaAcoes(input: { candidatos: AcaoCandidata[]; caixaPorEmpresa: 
   });
   fila.sort((a, b) => {
     if (PRIORIDADE_TIPO[a.tipo] !== PRIORIDADE_TIPO[b.tipo]) return PRIORIDADE_TIPO[a.tipo] - PRIORIDADE_TIPO[b.tipo];
-    const scA = (a.caixa_consumido ?? 0) === 0 ? 0 : 1; const scB = (b.caixa_consumido ?? 0) === 0 ? 0 : 1;
-    if (scA !== scB) return scA - scB;
-    const rA = a.caixa_consumido && a.caixa_consumido > 0 ? (a.impacto_eva ?? 0) / a.caixa_consumido : Infinity;
-    const rB = b.caixa_consumido && b.caixa_consumido > 0 ? (b.impacto_eva ?? 0) / b.caixa_consumido : Infinity;
-    if (rA !== rB) return rB - rA;
+    // "ausente ≠ R$0": custo null não é grátis (bucket 2, por último) e EVA null não vira ratio 0.
+    const custoBucket = (x: AcaoFila) => x.caixa_consumido === 0 ? 0 : (x.caixa_consumido != null && x.caixa_consumido > 0 ? 1 : 2);
+    const cbA = custoBucket(a), cbB = custoBucket(b);
+    if (cbA !== cbB) return cbA - cbB;
+    const ratio = (x: AcaoFila) => x.caixa_consumido != null && x.caixa_consumido > 0 && x.impacto_eva != null ? x.impacto_eva / x.caixa_consumido : null;
+    const rA = ratio(a), rB = ratio(b);
+    if (rA != null && rB != null) { if (rA !== rB) return rB - rA; }
+    else if (rA != null) return -1;
+    else if (rB != null) return 1;
     return (a.payback_meses ?? Infinity) - (b.payback_meses ?? Infinity);
   });
   const motivos: string[] = []; let nivel: "alta" | "media" | "baixa" = "alta";
   const rebaixa = (n: "media" | "baixa", m: string) => { if (n === "baixa" || nivel === "alta") nivel = n; motivos.push(m); };
   if (fila.some((a) => a.status === "falta_dado")) rebaixa("media", "Algumas ações sem hurdle/cockpit (Falta dado).");
+  if (fila.some((a) => a.confianca === "baixa")) rebaixa("media", "Inclui ação de confiança baixa (ex.: sleeve company-level sem cockpit granular).");
   if (Object.values(input.caixaPorEmpresa).some((c) => c.confianca === "baixa")) rebaixa("baixa", "Projeção de caixa de alguma empresa com confiança baixa.");
   return { fila, caixa_por_empresa: input.caixaPorEmpresa, confianca: { nivel: nivel as "alta" | "media" | "baixa", motivos }, gerado_em: new Date().toISOString() };
 }

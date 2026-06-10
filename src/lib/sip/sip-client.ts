@@ -26,15 +26,41 @@ export class SipClient {
       register: true,
       // RFC 4028 session timers off — Nvoip server doesn't require them and they add re-INVITE churn
       session_timers: false,
+      // Keepalive: durante chamada estabelecida ZERO tráfego SIP flui no WSS; com o
+      // default do JsSIP (600s) o 1º re-REGISTER só viria aos ~5-9min e middleboxes
+      // com idle-timeout (~100-120s) matavam o socket aos ~2min de conversa
+      // (incidente 2026-06-09). O servidor pode sobrescrever via expires da resposta.
+      register_expires: 90,
     });
 
-    this.ua.on('registered', () => this.setState('registered'));
-    this.ua.on('unregistered', () => this.setState('idle'));
+    // ⚠️ Eventos de REGISTRO nunca tocam o estado quando há CHAMADA ativa: a sessão
+    // SIP estabelecida sobrevive à perda de registro/transporte (JsSIP não a termina),
+    // e estampar 'idle'/'register_failed' aqui desmontava o <audio> da UI no meio da
+    // conversa — a vendedora parava de ouvir com o mic ainda aberto (LGPD).
+    this.ua.on('registered', () => {
+      if (this.hasActiveCall()) return;
+      this.setState('registered');
+    });
+    this.ua.on('unregistered', () => {
+      if (this.hasActiveCall()) return;
+      this.setState('idle');
+    });
     // JsSIP event payload typed loosely — only `cause` is consumed here
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.ua.on('registrationFailed', (e: any) => {
+      if (this.hasActiveCall()) {
+        console.warn('[sip] registro falhou durante chamada ativa — estado da chamada preservado:', e?.cause);
+        return;
+      }
       this.setState('register_failed');
       this.emit('error', new Error(`SIP registration failed: ${e.cause}`));
+    });
+    // Queda do WebSocket de sinalização: o JsSIP reconecta sozinho e a mídia
+    // (RTCPeerConnection) costuma continuar — só avisa quando há chamada em curso.
+    this.ua.on('disconnected', () => {
+      if (this.hasActiveCall()) {
+        this.emit('error', new Error('Conexão SIP caiu durante a chamada — reconectando. O áudio pode continuar; se ficar mudo, encerre e religue.'));
+      }
     });
 
     // PR-INBOUND-CALLS: handler de chamada inbound
@@ -96,6 +122,10 @@ export class SipClient {
     }
 
     const target = `sip:${phoneE164}@${this.config.sipDomain}`;
+    // Zera a âncora de duração da chamada ANTERIOR: sem isso, uma rediscagem que
+    // falha antes do accept reportava duração fantasma (medida do accept antigo)
+    // e era logada como 'ended' atendida no call_log (incidente 2026-06-09).
+    this.callStartedAt = null;
     this.setState('calling');
     this.emit('localStream', micStream);
     this.currentLocalStream = micStream;
@@ -118,10 +148,14 @@ export class SipClient {
     // JsSIP event payload typed loosely — only `cause` is consumed here
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.currentSession.on('failed', (e: any) => {
+      this.releaseCallResources();
       this.setState('failed');
       this.emit('error', new Error(`Call failed: ${e.cause}`));
     });
     this.currentSession.on('ended', () => {
+      // Fim REMOTO (cliente desligou): libera o stream da chamada na hora — sem
+      // isso as tracks seguiam transmitindo até a próxima ação do vendedor.
+      this.releaseCallResources();
       this.setState('ended');
     });
   }
@@ -152,13 +186,17 @@ export class SipClient {
     session.on('confirmed', () => this.extractRemoteStream());
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     session.on('failed', (e: any) => {
+      const durationSeconds = this.getCallDurationSeconds();
+      this.releaseCallResources();
       this.setState('failed');
-      this.emit('incomingClosed', { sipCallId, answered: true, durationSeconds: this.getCallDurationSeconds() });
+      this.emit('incomingClosed', { sipCallId, answered: true, durationSeconds });
       this.emit('error', new Error(`Inbound call failed: ${e?.cause ?? 'unknown'}`));
     });
     session.on('ended', () => {
+      const durationSeconds = this.getCallDurationSeconds();
+      this.releaseCallResources();
       this.setState('ended');
-      this.emit('incomingClosed', { sipCallId, answered: true, durationSeconds: this.getCallDurationSeconds() });
+      this.emit('incomingClosed', { sipCallId, answered: true, durationSeconds });
     });
   }
 
@@ -179,18 +217,29 @@ export class SipClient {
       } catch {
         // session já encerrada — ok
       }
-      this.currentSession = null;
     }
+    this.releaseCallResources();
+    if (this.state === 'calling' || this.state === 'ringing' || this.state === 'established') {
+      this.setState('ended');
+    }
+  }
+
+  /** Libera os recursos da chamada corrente (stream local + slot da sessão).
+   *  Chamado no hangUp local E nos fins remotos ('ended'/'failed'). NÃO zera
+   *  callStartedAt — a duração ainda é lida pelos consumidores no estado terminal. */
+  private releaseCallResources(): void {
     if (this.currentLocalStream) {
       for (const track of this.currentLocalStream.getTracks()) {
         track.stop();
       }
       this.currentLocalStream = null;
     }
-    if (this.state === 'calling' || this.state === 'ringing' || this.state === 'established') {
-      this.setState('ended');
-    }
+    this.currentSession = null;
     this.muted = false; // reset pra próxima chamada
+  }
+
+  private hasActiveCall(): boolean {
+    return !!(this.currentSession || this.pendingIncoming);
   }
 
   /**

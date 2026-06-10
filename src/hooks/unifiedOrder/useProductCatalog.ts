@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 import { buildExclusionQuery } from './types';
+import { paginateAll, filterAndRankProducts } from './catalog-helpers';
 import type { Product, ProductAccount } from './types';
 
 const PRODUCT_COLUMNS =
@@ -19,12 +20,21 @@ interface UseProductCatalogOptions {
  * Helper: busca produtos de uma conta com os filtros de família já aplicados.
  */
 async function fetchProductsForAccount(account: ProductAccount): Promise<Product[]> {
-  const baseQuery = supabase
-    .from('omie_products')
-    .select(PRODUCT_COLUMNS)
-    .eq('account', account);
-  const { data } = await buildExclusionQuery(baseQuery).order('descricao');
-  return (data || []) as Product[];
+  // Pagina o catálogo inteiro: sem isto o PostgREST devolve só as 1000 primeiras
+  // descrições (cap default) e ~65% do catálogo OBEN fica invisível pra venda.
+  // `error` é propagado (não engolido) para nunca publicar catálogo parcial.
+  return paginateAll(async (from, to) => {
+    const baseQuery = supabase
+      .from('omie_products')
+      .select(PRODUCT_COLUMNS)
+      .eq('account', account);
+    const { data, error } = await buildExclusionQuery(baseQuery)
+      .order('descricao')
+      .order('id')
+      .range(from, to);
+    if (error) throw error;
+    return (data || []) as Product[];
+  });
 }
 
 /**
@@ -176,23 +186,15 @@ export function useProductCatalog({
       const hasPurchaseHistory = Object.keys(customerPurchaseHistory).length > 0;
       const shouldPrioritize = hasCustomerPrices || hasPurchaseHistory;
 
-      const sorted = [...products].sort((a, b) => {
-        if (shouldPrioritize) {
-          const aPrev = isProductPreviouslyPurchased(a, account);
-          const bPrev = isProductPreviouslyPurchased(b, account);
-          if (aPrev && !bPrev) return -1;
-          if (!aPrev && bPrev) return 1;
-        }
-        if (a.ativo && !b.ativo) return -1;
-        if (!a.ativo && b.ativo) return 1;
-        return a.descricao.localeCompare(b.descricao);
-      });
-
-      if (!productSearch) return sorted.slice(0, 50);
-      const q = productSearch.toLowerCase();
-      return sorted
-        .filter((p) => p.descricao.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q))
-        .slice(0, 50);
+      return filterAndRankProducts(
+        products,
+        productSearch,
+        {
+          isPreviouslyPurchased: (p) => isProductPreviouslyPurchased(p, account),
+          shouldPrioritize,
+        },
+        50,
+      );
     },
     [
       productSearch,

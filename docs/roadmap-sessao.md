@@ -1,8 +1,28 @@
-# Roadmap da Sessão — atualizado 2026-06-06
+# Roadmap da Sessão — atualizado 2026-06-09
 
 > **Documento vivo.** Re-feito sempre que acrescentamos OU concluímos uma atividade, e renderizado no chat quando muda, pra o founder acompanhar. Prática padrão de toda sessão (registrada no CLAUDE.md, topo).
 >
 > **Legenda:** ✅ feito · 🔄 em andamento · ⏳ pendente · 🚧 bloqueado · ⏸️ adiado (decisão consciente) · 🧭 aguardando decisão (eu+codex)
+
+---
+
+## 0. SESSÃO 2026-06-09 — Reposição intra-day + alerta R$3k Sayerlack + dente de serra
+
+> Pedido do founder: (1) e-mail toda vez que um pedido sugerido der R$3.000+ (mínimo de faturamento
+> da Sayerlack — pode acontecer várias vezes ao dia, pedidos diferentes); (2) motor de sugestões
+> rodando com maior frequência ao longo do dia (reduzir lead time); (3) formas de reduzir o período
+> de estoque ("dente de serra") em compras.
+
+- ✅ **Exploração do terreno** — crons/cadências (estoque do motor `sku_estoque_atual` = 3×/dia via `omie-sync-estoque`; motor 1×/dia 9h15 UTC; `inventory_position` já 30min), RPC vigente (`20260606190000`), infra de alerta (`fornecedor_alerta` + dispatch */30 + padrão transição).
+- ✅ **Decisões do founder (AskUserQuestion)** — gatilho = **por pedido sugerido Sayerlack ≥ R$3k** (mínimo de faturamento; vários e-mails/dia ok, pedidos diferentes); cadência = **a cada 2h em horário comercial**.
+- ✅ **Passe adversarial** — Codex em usage-limit até 11/06 → caminho B (eu + PG17). Furos achados: bloqueado_guardrail do dia precisa entrar na limpeza (senão re-gen duplica SKUs); NOT EXISTS contra oportunidade pendente; zumbis de data_ciclo anterior; grupo NULL na identidade do alerta; deep-link com id morre no re-gen.
+- ✅ **Design aprovado pelo founder** — GO nos dois + **gate de disparo <R$3k** (3ª entrega, pedida no GO).
+- ✅ Spec em `docs/superpowers/specs/2026-06-09-reposicao-intraday-alerta-3k-design.md`
+- ✅ **Entregue num PR único ([#711](https://github.com/LucasSardenbergL/afiacao/pull/711), 2 commits, mergeado, CI verde):** alerta R$3k (migration `20260609150000`: tabela de estado + tipo no CHECK + tick + cron */30) + intra-day (migration `20260609160000`: RPC com 4 marcas [INTRADAY] + crons 2/2h + sync de estoque encadeado) + gate <R$3k pré-split no `disparar-pedidos-aprovados` (helper TDD 17 testes) + flag `intraday` na `gerar-pedidos-diario` (suprime digest) + hook do tick.
+- ✅ **Validação PG17 local** — `db/test-alerta-pedido-minimo.sh` (11 asserts) + `db/test-rpc-intraday.sh` (8 asserts, migrations reais sobre o snapshot). CI: typecheck + 2861 testes + lint + build verdes.
+- ✅ **Análise dente de serra entregue** — fase 1 = intra-day (adianta disparo ~0,5–1d) + alerta R$3k (lote ótimo ≈ mínimo de faturamento); fase 2 (recalibrar ponto_pedido/cobertura/SS com R=2h via esteira `param_auto`) **gated em 2–4 semanas de medição**.
+- ✅ **Rollout em prod concluído (2026-06-09):** BLOCOS A+B aplicados e validados no SQL Editor + edges `gerar-pedidos-diario` e `disparar-pedidos-aprovados` deployadas verbatim (Active, diff vazio vs main). **Pacote 100% no ar** — 1ª rodada intra-day 7h15 BRT do dia seguinte.
+- ⏸️ **Codex adversarial retroativo** (quando a cota voltar, 11/06+) — revisar o #711.
 
 ---
 
@@ -174,7 +194,16 @@
 - ✅ **Aviso "164 sem parâmetro" reescrito ([PR #658](https://github.com/LucasSardenbergL/afiacao/pull/658), MERGED).** Não é falha do auto-apply: são SKUs **sem histórico** p/ o motor calcular (baixo giro / 1ª compra). Mensagem clara + nível **red→yellow** + botão "Ver candidatos"→aba Ajuste manual. ⏳ **Publish**.
 - 🧭 **De-para Sayerlack (busca por descrição / em massa)** — o founder quer mapear todos os Sayerlack sem de-para de uma vez, buscando por descrição. O fluxo **"Validar"** (Cadastros → Mapeamento SKU) já faz faltantes+auto-map em lote. ⏳ **Founder testa o "Validar"** e diz se já resolve; se não, eu adiciono busca por descrição pros manuais restantes.
 
-## 17. Tintométrico — conector automático Sayersystem → app (eliminar upload manual de CSV) (NOVO, 2026-06-08)
+## 17. Medida customizada ("Outros") nos dropdowns de spec de ferramenta (2026-06-08)
+> Pedido do founder no wizard de afiação (`/sales/new` → AddToolDialog): em TODA definição de ferramenta, quando a opção desejada não existe num dropdown de especificação (ex.: "Número de dentes (Z)" da Serra Circular de Widea), ter um campo **"Outros"** pra digitar uma medida nova e **salvá-la** — pra reaparecer em cadastros futuros daquela ferramenta.
+- ✅ **Decisões (com o founder):** (1) a medida nova entra no **catálogo oficial** daquele campo (`tool_specifications.options`), reaparece pra todos; (2) **só a equipe** adiciona (cliente final segue lista-fixa).
+- ✅ **Brainstorm → spec → revisão Codex (8 P1/P2 incorporados) → plano.** Achados-chave do Codex: rejeitar NULL (não corromper `options`), `search_path=''` anti-hijack, **botão "Outro" SEPARADO** (não SelectItem-sentinela), coluna `allow_custom_option` (fecha campos de FAIXA tipo "de 120mm a 300mm"), RPC retorna `valor_canonico` (fonte única do dedupe), races no front por `spec.id` + guard de resposta obsoleta, teste PG17 obrigatório. Premissa corrigida: a policy de escrita usa `'master'` (não "morta") → **drop da policy** (zero callsites usam) → RPC vira único escritor via API. Spec/plano: `docs/superpowers/{specs,plans}/2026-06-08-tool-spec-medida-customizada*`.
+- ✅ **Build (subagent-driven, 2-stage):** **Task 1** helper puro `normalizarOpcaoSpec` (7 testes; controller pegou+corrigiu encoding de control chars + fortaleceu teste). **Task 2** migration `20260608120000_tool_spec_custom_option.sql` (coluna + UPDATE faixas + DROP policy + RPC `adicionar_opcao_tool_spec` SECURITY DEFINER) + **teste PG17** `db/test-tool-spec-custom-option.sh` (**19 asserts A–Q + concorrência** — re-rodado pelo controller, verde). **Task 3** front `AddToolDialog.tsx` (botão "Outro" gated `isStaff && allow_custom_option`, input inline, RPC, sync com `valor_canonico`, submit bloqueado). **Estado integrado verde:** suíte 2783 testes · typecheck strict 0 · build 0 · lint limpo.
+- ✅ **Codex challenge no código final concluído** — **2 achados reais corrigidos:** P1 no front (guard de resposta obsoleta lia `selectedCategory` do closure → preso no valor antigo; espelhado numa ref) + P2 no SQL (o `\s` do Postgres não colapsa NBSP/narrow-NBSP/BOM em todo locale, ao contrário do `\s` do JS → conversão explícita de espaços Unicode antes do dedupe). P3 (C1 controls, case-fold) avaliados e deixados como cosméticos (servidor autoritativo; reservado é ASCII). Re-validado: PG17 com **assert R (Unicode, locale-independente)** + suíte 2784 · typecheck · build verdes.
+- ✅ **Migration aplicada em prod (2026-06-09)** — validação OK: `tem_coluna=1 · tem_rpc=1 · policy_escrita=0 · authenticated_exec=1 · faixas_fechadas=4`. Coluna + RPC + drop da policy + 4 campos de faixa fechados, tudo no ar.
+- ⏳ **Falta só o Publish** do frontend no Lovable (até lá o botão "Outro" não aparece na UI). Sem edge function. PR [#703](https://github.com/LucasSardenbergL/afiacao/pull/703).
+
+## 18. Tintométrico — conector automático Sayersystem → app (eliminar upload manual de CSV) (NOVO, 2026-06-08)
 > Pedido do founder: tirar dele a tarefa de exportar CSV do **Sayersystem** (software de tintometria da Sayerlack) e subir no app. Dores: fórmulas **novas** + **atualizadas** + **preços** alterados no Sayersystem ficam desatualizados no app até o próximo upload manual.
 - 🔄 **Brainstorming em andamento** (segue o rito: descoberta → perguntas → codex → design → spec → plano).
 - ✅ **Descoberta-chave (2 subagentes Explore):** o **backend dessa integração já está 100% pronto** (construído em mar/2026, nunca ativado) — edge `tint-sync-agent` (HTTPS, auth por token `x-sync-token`+`x-store-code`, idempotência, **staging** `tint_staging_*`, **reconciliação** SQL, modos `csv_only`→`shadow_mode`→`automatic_primary`) + telas de gestão (`/tintometrico/integracao`, sync-runs, reconciliação) + **contrato de API documentado** (`src/pages/TintApiContract.tsx`). **Falta só o conector do lado do Sayersystem** (o programa que lê de lá e POSTa). Ninguém deixou registrado **que banco o Sayersystem usa**.

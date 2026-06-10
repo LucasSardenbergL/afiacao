@@ -12,9 +12,11 @@ interface UseTintColorSelectArgs {
   product: Product;
   open: boolean;
   customerUserId?: string | null;
+  /** Pré-preenche a busca ao abrir (re-pedido via "Cores do cliente"). */
+  initialSearch?: string | null;
 }
 
-export function useTintColorSelect({ product, open, customerUserId }: UseTintColorSelectArgs) {
+export function useTintColorSelect({ product, open, customerUserId, initialSearch }: UseTintColorSelectArgs) {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedFormula, setSelectedFormula] = useState<FormulaResult | null>(null);
@@ -29,6 +31,15 @@ export function useTintColorSelect({ product, open, customerUserId }: UseTintCol
       setPriceSourceOverride(null);
     }
   }, [open]);
+
+  // Re-pedido: abre já filtrado pela cor do histórico (debounced direto,
+  // sem esperar os 300ms — a vendedora vê a lista filtrada na hora).
+  useEffect(() => {
+    if (open && initialSearch) {
+      setSearch(initialSearch);
+      setDebouncedSearch(initialSearch);
+    }
+  }, [open, initialSearch]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);

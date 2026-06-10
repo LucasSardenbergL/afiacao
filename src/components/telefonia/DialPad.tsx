@@ -20,7 +20,9 @@ export interface DialPadProps {
 
 export function DialPad({ initialPhone = '', onCall, backend, busy = false }: DialPadProps) {
   const [value, setValue] = useState(initialPhone);
-  const [forceRecord, setForceRecord] = useState(false);
+  // Política (founder, 2026-06-09): gravação OBRIGATÓRIA na Central de Telefonia —
+  // o switch é a exceção ("cliente pediu pra não gravar") e re-arma a cada chamada.
+  const [forceRecord, setForceRecord] = useState(true);
   const normalized = normalizeBrPhone(value);
   const valid = normalized.length >= 10;
 
@@ -40,8 +42,8 @@ export function DialPad({ initialPhone = '', onCall, backend, busy = false }: Di
         ))}
       </div>
       <div className="flex items-center justify-between mt-2 text-xs">
-        <span className="text-muted-foreground">Gravar esta chamada</span>
-        <Switch checked={forceRecord} onCheckedChange={setForceRecord} />
+        <span className="text-muted-foreground">Gravação da chamada</span>
+        <Switch checked={forceRecord} onCheckedChange={setForceRecord} aria-label="Gravação da chamada" />
       </div>
       {/* Número fica numa linha NÃO-interativa — fora do label do botão pra não
           virar <a href="tel:"> auto-detectado pelo iOS (abriria o app Telefone do SO). */}
@@ -53,11 +55,15 @@ export function DialPad({ initialPhone = '', onCall, backend, busy = false }: Di
       <Button className="w-full mt-2 h-12 bg-status-success hover:bg-status-success/90"
         disabled={!valid || busy}
         aria-label={valid ? `Ligar para ${formatBrPhone(value)}` : 'Ligar'}
-        onClick={() => onCall(normalized, { forceRecord })}>
+        onClick={() => {
+          onCall(normalized, { forceRecord });
+          // Re-arma: o opt-out vale só pra ESTA chamada — não vaza pra próxima.
+          setForceRecord(true);
+        }}>
         <Phone className="h-4 w-4 mr-1.5" /> {busy ? 'Em chamada…' : 'Ligar'}
       </Button>
       <p className="text-[10px] text-center text-muted-foreground mt-1.5">
-        backend: {backend.toUpperCase()} · cliente/fornecedor grava automático
+        backend: {backend.toUpperCase()} · gravação obrigatória — desligue só a pedido do cliente
       </p>
     </div>
   );

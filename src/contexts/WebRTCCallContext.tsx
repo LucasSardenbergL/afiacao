@@ -262,7 +262,12 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   // idempotente (.neq('status','ended')). Inbound não passa por aqui (dialedSipCallIdRef fica null).
   useEffect(() => {
     const TERMINAL: WebRTCCallState[] = ['finished', 'noanswer', 'busy', 'failed', 'error'];
-    if (TERMINAL.includes(callState) && dialedSipCallIdRef.current) {
+    if (!TERMINAL.includes(callState)) return;
+    // LGPD: libera mic/preroll também quando o fim veio do lado REMOTO (BYE do
+    // cliente, falha) — sem isso o rawMic ficava capturado (red dot aceso) até a
+    // próxima ação do vendedor. Idempotente com o cleanup do endCall.
+    cleanupAudioResources();
+    if (dialedSipCallIdRef.current) {
       const sid = dialedSipCallIdRef.current;
       dialedSipCallIdRef.current = null;
       const durationSeconds = clientRef.current?.getCallDurationSeconds() ?? 0;

@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **187** custom migrations totais
-- **698** objetos esperados (criados por estas migrations)
+- **192** custom migrations totais
+- **710** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `rls_policy`: 181
-  - `function`: 168
-  - `index`: 130
-  - `cron_job`: 97
-  - `table`: 81
+  - `function`: 174
+  - `index`: 131
+  - `cron_job`: 101
+  - `table`: 82
   - `trigger`: 37
   - `enum_value`: 4
 
@@ -1639,9 +1639,45 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.aplicar_promocoes_no_ciclo` | — |
 
+### `20260606210000_order_feed_view.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260606230000_negociacao_paralela_v2_cleanup.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260608120000_tool_spec_custom_option.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.adicionar_opcao_tool_spec` | — |
+
+### `20260609085244_data_health_check_familia_ausente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260609150000_reposicao_alerta_pedido_minimo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_alerta_pedido_minimo` | — |
+| `index` | `public.reposicao_alerta_pedido_minimo_ativo` | `reposicao_alerta_pedido_minimo` |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+| `cron_job` | `cron.reposicao-alerta-pedido-minimo` | — |
+
+### `20260609160000_reposicao_ciclo_intraday.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `cron_job` | `cron.gerar-pedidos-intraday-oben` | — |
+| `cron_job` | `cron.omie-sync-estoque-intraday-oben` | — |
+| `cron_job` | `cron.omie-sync-estoque-diario` | — |
 
 ## Próximos passos quando algo der `❌`
 

@@ -44,6 +44,10 @@ interface PedidoRow {
   split_parent_id?: number | null;
   split_lote?: number | null;
   split_total?: number | null;
+  // [GATE-MIN-FATURAMENTO] usados pra isentar pedido que já tocou o fornecedor via portal
+  // (barrar depois do portal criaria órfão pior — PO no fornecedor sem Omie).
+  portal_protocolo?: string | null;
+  status_envio_portal?: string | null;
 }
 
 // PR5: tamanho máximo de cada chunk no split. Calibração:
@@ -265,6 +269,75 @@ interface ProcessResult {
   // Reconciliado = o PV já existia no Omie ("já cadastrado"); marcamos disparado
   // sem re-criar. O caller NÃO deve re-notificar o fornecedor (evita e-mail duplicado).
   reconciliado?: boolean;
+}
+
+// ── [GATE-MIN-FATURAMENTO] espelho VERBATIM de src/lib/reposicao/disparo-gate-helpers.ts ──
+// (Deno não importa de src/ — mudou lá, mudou aqui.) R$3.000 é o mínimo de faturamento da
+// Sayerlack: pedido abaixo não fatura (fica parado no fornecedor). Régua = company_config
+// (reposicao_alerta_pedido_valor_minimo + reposicao_alerta_pedido_fornecedor_ilike) — a MESMA
+// do alerta R$3k. O gate roda ANTES do split (um pai ≥ régua vira filhos menores; e pedido
+// <régua com >4 itens não pode escapar via filhos isentos).
+
+interface PedidoParaGate {
+  fornecedor_nome: string | null;
+  valor_total: number | string | null;
+  split_parent_id?: number | null;
+  portal_protocolo?: string | null;
+  status_envio_portal?: string | null;
+}
+
+interface GateConfig {
+  valorMinimo: number | null;
+  fornecedorPattern: string | null;
+}
+
+const PORTAL_JA_TOCADO = new Set([
+  "sucesso_portal",
+  "enviado_portal",
+  "aceito_portal_sem_protocolo",
+  "indeterminado_requer_conciliacao",
+]);
+
+function fornecedorCasaPattern(nome: string, pattern: string): boolean {
+  const alvo = pattern.replace(/%/g, "").trim().toUpperCase();
+  if (!alvo) return false;
+  return nome.toUpperCase().includes(alvo);
+}
+
+function deveBloquearPorMinimoFaturamento(
+  pedido: PedidoParaGate,
+  cfg: GateConfig,
+): { bloquear: boolean; motivo?: string } {
+  const minimo = Number(cfg.valorMinimo);
+  if (!Number.isFinite(minimo) || minimo <= 0) return { bloquear: false };
+  if (!cfg.fornecedorPattern || !cfg.fornecedorPattern.replace(/%/g, "").trim()) {
+    return { bloquear: false };
+  }
+  if (pedido.split_parent_id != null) return { bloquear: false };
+  if (
+    !pedido.fornecedor_nome ||
+    !fornecedorCasaPattern(pedido.fornecedor_nome, cfg.fornecedorPattern)
+  ) {
+    return { bloquear: false };
+  }
+  if (pedido.portal_protocolo != null && pedido.portal_protocolo !== "") {
+    return { bloquear: false };
+  }
+  if (
+    pedido.status_envio_portal &&
+    PORTAL_JA_TOCADO.has(pedido.status_envio_portal)
+  ) {
+    return { bloquear: false };
+  }
+  const valor = Number(pedido.valor_total);
+  if (Number.isFinite(valor) && valor >= minimo) return { bloquear: false };
+  return {
+    bloquear: true,
+    motivo:
+      `Pedido R$ ${Math.round(Number.isFinite(valor) ? valor : 0)} abaixo do mínimo de ` +
+      `faturamento (R$ ${Math.round(minimo)}) — aguarde o ciclo acumular mais itens ou ` +
+      `cancele o pedido.`,
+  };
 }
 
 type PortalDispatchResult =
@@ -928,6 +1001,15 @@ async function notificarFornecedor(
   }
 
   if (canal === "portal_b2b") {
+    // Sayerlack/OBEN é colado no portal pela automação (Browserless) → o e-mail
+    // "[Portal B2B] pronto para colar no portal" é ruído enganoso: o pedido JÁ foi
+    // enviado (aparece como "✓ Enviado") e o e-mail-resumo do ciclo já confirma o
+    // sucesso. Mantemos o aviso só p/ um eventual fornecedor portal_b2b SEM automação.
+    // ⚠️ Espelha deveEnviarEmailPortalManual()/isSayerlackOben (a regra é idêntica) —
+    // ver src/lib/reposicao/omie-disparo-helpers.ts.
+    if (isSayerlackOben(pedido)) {
+      return { enviado: false, detalhe: "portal Sayerlack automatizado — e-mail manual suprimido" };
+    }
     const r = await fetch(RESEND_URL, {
       method: "POST",
       headers: {
@@ -1127,7 +1209,7 @@ Deno.serve(async (req: Request) => {
     // 2. Pedidos aprovados (com dados do fornecedor)
     let aprovadosQuery = db
       .from("pedido_compra_sugerido")
-      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total")
+      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total, portal_protocolo, status_envio_portal")
       .eq("empresa", empresa);
 
     aprovadosQuery = pedidoId
@@ -1148,6 +1230,57 @@ Deno.serve(async (req: Request) => {
         .eq("fornecedor_nome", p.fornecedor_nome)
         .maybeSingle();
       if (fh) Object.assign(p, fh);
+    }
+
+    // [GATE-MIN-FATURAMENTO] barra pedido Sayerlack abaixo do mínimo de faturamento (R$3k)
+    // ANTES do split e de qualquer envio. Pré-split de propósito: (a) pai ≥ régua vira filhos
+    // menores que NÃO podem ser barrados (split_parent_id isenta no re-disparo individual);
+    // (b) pedido < régua com >4 itens não escapa via filhos. Cobre todos os caminhos de
+    // disparo (corte em lote, aprovar-e-disparar, re-disparo individual, motor de retry).
+    const barradosGate: ProcessResult[] = [];
+    {
+      const { data: gateCfgRows } = await db
+        .from("company_config")
+        .select("key, value")
+        .in("key", [
+          "reposicao_alerta_pedido_valor_minimo",
+          "reposicao_alerta_pedido_fornecedor_ilike",
+        ]);
+      const cfgMap = new Map((gateCfgRows ?? []).map((r) => [r.key, r.value]));
+      const gateCfg: GateConfig = {
+        valorMinimo: Number(cfgMap.get("reposicao_alerta_pedido_valor_minimo") ?? NaN),
+        fornecedorPattern: cfgMap.get("reposicao_alerta_pedido_fornecedor_ilike") ?? null,
+      };
+
+      const liberados: PedidoRow[] = [];
+      for (const p of aprovados) {
+        const gate = deveBloquearPorMinimoFaturamento(p, gateCfg);
+        if (!gate.bloquear) {
+          liberados.push(p);
+          continue;
+        }
+        console.warn(`[disparar-pedidos] GATE mínimo de faturamento barrou #${p.id} (${p.fornecedor_nome}, R$ ${p.valor_total}): ${gate.motivo}`);
+        if (modo === "producao") {
+          const { error: gateErr } = await db
+            .from("pedido_compra_sugerido")
+            .update({
+              status: "falha_envio",
+              resposta_canal: { erro: gate.motivo, modo, ts: new Date().toISOString(), gate: "minimo_faturamento" },
+              atualizado_em: new Date().toISOString(),
+            })
+            .eq("id", p.id);
+          if (gateErr) console.error(`[disparar-pedidos] gate update erro #${p.id}: ${gateErr.message}`);
+        }
+        barradosGate.push({
+          pedido_id: p.id,
+          fornecedor: p.fornecedor_nome,
+          status_final: "falha_envio",
+          valor: p.valor_total,
+          canal: modo === "dry_run" ? "DRY_RUN_OMIE_APENAS" : (p.canal_pedido ?? "—"),
+          erro: gate.motivo,
+        });
+      }
+      aprovados = liberados;
     }
 
     // PR5: divide pedidos Sayerlack/OBEN com >4 itens em filhos menores que
@@ -1175,7 +1308,7 @@ Deno.serve(async (req: Request) => {
 
     // 4. Processar cada aprovado
     const creds = getOmieCreds(empresa);
-    const resultados: ProcessResult[] = [];
+    const resultados: ProcessResult[] = [...barradosGate];
     for (const p of aprovados) {
       const r = await processarPedido(db, p, modo, creds);
 

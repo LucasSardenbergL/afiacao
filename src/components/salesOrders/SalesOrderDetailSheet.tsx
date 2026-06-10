@@ -4,13 +4,17 @@
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Printer, Share2, Pencil } from 'lucide-react';
+import { Printer, Share2, Pencil, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { statusLabels, type SalesOrder } from './types';
 import { itemTotal } from './print';
 
 interface SalesOrderDetailSheetProps {
+  // O painel abre antes do detalhe chegar (busca por id sob demanda) — `open`
+  // controla o Sheet e `loading` mostra o estado enquanto `order` é null.
+  open: boolean;
+  loading?: boolean;
   order: SalesOrder | null;
   customerName: string;
   onClose: () => void;
@@ -25,6 +29,8 @@ const fmt = (v: number) => (v || 0).toLocaleString('pt-BR', { style: 'currency',
 const canEditStatus = (status: string) => !['cancelado', 'entregue', 'faturado'].includes(status);
 
 export function SalesOrderDetailSheet({
+  open,
+  loading,
   order,
   customerName,
   onClose,
@@ -32,7 +38,6 @@ export function SalesOrderDetailSheet({
   onShare,
   onEdit,
 }: SalesOrderDetailSheetProps) {
-  const open = !!order;
   const status = order ? statusLabels[order.status] || statusLabels.rascunho : null;
   const accountLabel =
     order?.account === 'colacor_sc' ? 'Colacor SC' : order?.account === 'colacor' ? 'Colacor' : 'Oben';
@@ -41,6 +46,16 @@ export function SalesOrderDetailSheet({
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="w-full sm:max-w-md overflow-y-auto flex flex-col">
+        {!order && loading && (
+          <div className="flex-1 flex items-center justify-center">
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        {!order && !loading && open && (
+          <p className="text-sm text-muted-foreground pt-8 text-center">
+            Não foi possível carregar o pedido.
+          </p>
+        )}
         {order && (
           <>
             <SheetHeader>
@@ -79,7 +94,7 @@ export function SalesOrderDetailSheet({
                         <p className="truncate">{item.descricao || 'Item'}</p>
                         {item.tint_nome_cor && (
                           <p className="text-xs text-muted-foreground truncate">
-                            🎨 {item.tint_cor_id} - {item.tint_nome_cor}
+                            🎨 {item.tint_cor_id ? `${item.tint_cor_id} - ` : ''}{item.tint_nome_cor}
                           </p>
                         )}
                         <p className="text-xs text-muted-foreground">

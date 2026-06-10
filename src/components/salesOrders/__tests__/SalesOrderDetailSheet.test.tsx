@@ -25,9 +25,11 @@ function order(p: Partial<SalesOrder> = {}): SalesOrder {
   } as SalesOrder;
 }
 
-function setup(o: SalesOrder | null) {
+function setup(o: SalesOrder | null, extra: { open?: boolean; loading?: boolean } = {}) {
   render(
     <SalesOrderDetailSheet
+      open={extra.open ?? !!o}
+      loading={extra.loading}
       order={o}
       customerName="DELTA INTERIORES"
       onClose={vi.fn()}
@@ -44,6 +46,11 @@ describe('SalesOrderDetailSheet', () => {
     expect(screen.getByText(/🎨\s*1247\s*-\s*AZUL RAL 5010/)).toBeTruthy();
   });
 
+  it('cor sem cor_id (vinda do sync do Omie) mostra só o nome, sem hífen órfão', () => {
+    setup(order({ items: [{ descricao: 'BASE BRILH BRANC PU', quantidade: 1, valor_unitario: 86, valor_total: 86, tint_nome_cor: 'AZUL RAL 5010' }] }));
+    expect(screen.getByText('🎨 AZUL RAL 5010')).toBeTruthy();
+  });
+
   it('item sem tinta não mostra linha de cor', () => {
     setup(order({ items: [{ descricao: 'CATALISADOR', quantidade: 1, valor_unitario: 40, valor_total: 40 }] }));
     expect(screen.queryByText(/🎨/)).toBeNull();
@@ -58,5 +65,16 @@ describe('SalesOrderDetailSheet', () => {
   it('order null não renderiza conteúdo (painel fechado)', () => {
     setup(null);
     expect(screen.queryByText('DELTA INTERIORES')).toBeNull();
+  });
+
+  it('aberto + carregando (detalhe em voo) mostra spinner, sem conteúdo', () => {
+    setup(null, { open: true, loading: true });
+    expect(screen.queryByText('DELTA INTERIORES')).toBeNull();
+    expect(document.querySelector('.animate-spin')).toBeTruthy();
+  });
+
+  it('aberto + falha do detalhe mostra mensagem honesta', () => {
+    setup(null, { open: true, loading: false });
+    expect(screen.getByText('Não foi possível carregar o pedido.')).toBeTruthy();
   });
 });

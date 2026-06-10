@@ -1,6 +1,5 @@
 // Tipos + constantes + helpers da listagem de pedidos de venda.
 // Extraídos verbatim de src/pages/SalesOrders.tsx (god-component split).
-import type { InfiniteData } from '@tanstack/react-query';
 import type { Tables } from '@/integrations/supabase/types';
 
 export type SalesOrderRow = Tables<'sales_orders'>;
@@ -21,8 +20,6 @@ export interface AfiacaoItemRaw {
 // `sales_orders WHERE account='colacor_sc'`. Cada card mantém badge "Afiação"
 // quando _source='afiacao' pra preservar a distinção visual.
 export type Account = 'oben' | 'colacor' | 'colacor_sc' | 'all';
-
-export const PAGE_SIZE = 50;
 
 export const decodeHtml = (s: string): string =>
   s
@@ -67,8 +64,38 @@ export interface SalesOrder {
   discount?: number;
 }
 
-// Cache do useInfiniteQuery de sales_orders — usado nos rollbacks optimistic.
-export type SalesOrdersInfiniteCache = InfiniteData<SalesOrder[]>;
+// Linha da view order_feed (read model da listagem — migration 20260606210000).
+// A view ainda não está nos tipos gerados do Supabase (o Lovable regenera no
+// deploy); tipo manual espelhando o contrato do SQL.
+export interface OrderFeedRow {
+  origin: 'sales' | 'afiacao';
+  id: string;
+  created_at: string;
+  account: string;
+  order_number: string | null;
+  omie_pedido_id: number | null;
+  customer_user_id: string;
+  customer_name: string | null;
+  item_names: string[];
+  item_quantity: number;
+  status: string;
+  subtotal: number;
+  total: number;
+}
+
+// Cache da query única da listagem (['order-feed', userId]) — rollbacks optimistic.
+export interface OrderFeedCache {
+  rows: OrderFeedRow[];
+  count: number;
+}
+
+// Detalhe completo de um pedido, buscado por (origin, id) ao abrir o painel /
+// imprimir / compartilhar. A listagem (view) é enxuta de propósito.
+export interface OrderDetail {
+  order: SalesOrder;
+  customerName: string;
+  customerDocument?: string;
+}
 
 export const statusLabels: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
   rascunho: { label: 'Rascunho', variant: 'outline' },

@@ -1,0 +1,13 @@
+# @src: src/lib/reposicao/compras-otimizador-helpers.ts
+# @test: src/lib/reposicao/__tests__/compras-otimizador-helpers.test.ts
+# Invariantes money-path do otimizador de compras ("comprar mais?" net-R$ marginal por SKU).
+# Inclui as invariantes dos 2 bugs corrigidos (Codex 2026-06): prazo da faixa aplicável e frete-só-%.
+PEGA | descontoAplicavel pega o MAIOR (> -> <)        | s/f\.desconto_promo_perc > best/f.desconto_promo_perc < best/
+PEGA | prazoAplicavel faixa de MAIOR volume (bug 3)    | s/f.volume_minimo > melhorVol/f.volume_minimo < melhorVol/
+PEGA | aplicarMinimoForcado piso (max -> min)          | s/Math\.max\(qtdeNatural, minimoForcado\)/Math.min(qtdeNatural, minimoForcado)/
+PEGA | quantidadeCompraInteira ceil -> floor           | s/Math\.ceil\(v\)/Math.floor(v)/
+PEGA | aumentoEvitado janela dias <=0 -> <0            | s/input\.dias_ate_aumento <= 0/input.dias_ate_aumento < 0/
+PEGA | aumentoEvitado qElegivel max -> min             | s/Math\.max\(0, input\.q_cand - Math\.max/Math.min(0, input.q_cand - Math.max/
+PEGA | capitalExtra tempo do extra (0.5 -> 1.0)        | s/0\.5 \* \(input\.q_extra/1.0 * (input.q_extra/
+PEGA | frete só-% (remove /100 incremental)            | s/\(input\.frete_perc_valor \?\? 0\) \/ 100/(input.frete_perc_valor ?? 0) * 1/
+PEGA | recomendacao escopo sku (=== -> !==)            | s/ins\.escopo === 'sku' \? 'comprar_mais'/ins.escopo !== 'sku' ? 'comprar_mais'/
