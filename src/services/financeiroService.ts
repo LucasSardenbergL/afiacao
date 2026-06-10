@@ -179,6 +179,9 @@ export async function triggerFinanceiroSync(
 
 // ═══════════════ QUERIES LOCAIS ═══════════════
 
+// Vencidos = só 'ATRASADO' (vocabulário nativo do Omie; subconjunto de OPEN_TITLE_STATUSES).
+const VENCIDO_TITLE_STATUSES = ['ATRASADO'] as const;
+
 export async function getResumoFinanceiro(companies: Company[]): Promise<Record<string, FinResumo>> {
   const resumo: Record<string, FinResumo> = {};
 
@@ -190,37 +193,15 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
       .eq("company", company)
       .eq("ativo", true);
 
-    // Totais a receber aberto (Omie uses: A VENCER, ATRASADO, VENCE HOJE)
-    const { data: crAberto } = await supabase
-      .from("fin_contas_receber")
-      .select("valor_documento, valor_recebido")
-      .eq("company", company)
-      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]);
-
-    // Totais a pagar aberto
-    const { data: cpAberto } = await supabase
-      .from("fin_contas_pagar")
-      .select("valor_documento, valor_pago")
-      .eq("company", company)
-      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]);
-
-    // Vencidos (ATRASADO in Omie)
-    const { data: crVencido } = await supabase
-      .from("fin_contas_receber")
-      .select("valor_documento, valor_recebido")
-      .eq("company", company)
-      .eq("status_titulo", "ATRASADO");
-
-    const { data: cpVencido } = await supabase
-      .from("fin_contas_pagar")
-      .select("valor_documento, valor_pago")
-      .eq("company", company)
-      .eq("status_titulo", "ATRASADO");
-
-    const sumCR = (arr: { valor_documento: number | null; valor_recebido: number | null }[] | null) =>
-      (arr || []).reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
-    const sumCP = (arr: { valor_documento: number | null; valor_pago: number | null }[] | null) =>
-      (arr || []).reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0);
+    // Abertos + vencidos: soma paginada do `saldo` — o reduce client-side sem
+    // .range() somava só a 1ª página de 1000 do PostgREST (oben tem ~11k títulos
+    // de CR aberto → totais truncados; mesmo bug do KPI de /financeiro/gestao, #719).
+    const [totalAReceber, totalAPagar, vencidoReceber, vencidoPagar] = await Promise.all([
+      somarSaldoAberto("fin_contas_receber", company),
+      somarSaldoAberto("fin_contas_pagar", company),
+      somarSaldoPorStatus("fin_contas_receber", company, VENCIDO_TITLE_STATUSES),
+      somarSaldoPorStatus("fin_contas_pagar", company, VENCIDO_TITLE_STATUSES),
+    ]);
 
     const contasNorm = (contas || []).map((c) => ({
       descricao: c.descricao ?? "",
@@ -231,11 +212,11 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
     resumo[company] = {
       contas_correntes: contasNorm,
       saldo_total_cc: contasNorm.reduce((s, c) => s + c.saldo_atual, 0),
-      total_a_receber: sumCR(crAberto),
-      total_a_pagar: sumCP(cpAberto),
-      total_vencido_receber: sumCR(crVencido),
-      total_vencido_pagar: sumCP(cpVencido),
-      posicao_liquida: sumCR(crAberto) - sumCP(cpAberto),
+      total_a_receber: totalAReceber,
+      total_a_pagar: totalAPagar,
+      total_vencido_receber: vencidoReceber,
+      total_vencido_pagar: vencidoPagar,
+      posicao_liquida: totalAReceber - totalAPagar,
     };
   }
 
@@ -811,18 +792,19 @@ export async function getLastSyncTime(): Promise<string | null> {
 // ═══════════════ Lente contábil agregada — DSO/DPO (colacor) ═══════════════
 
 /**
- * Soma paginada do `saldo` dos títulos EM ABERTO (OPEN_TITLE_STATUSES, robusto
- * vs cap 1000 do PostgREST). Fonte canônica de "total a receber/pagar aberto":
- * consumida pelo DSO (getDsoDpoColacor) e pelos KPIs de /financeiro/gestao.
+ * Soma paginada do `saldo` dos títulos da empresa nos `statuses` pedidos
+ * (robusto vs cap 1000 do PostgREST). `saldo` é coluna GERADA
+ * (valor_documento − COALESCE(valor_recebido/pago, 0)) — equivalente à
+ * subtração client-side, sem depender de baixar as duas colunas.
  * Erro de qualquer página LANÇA — nunca devolve soma parcial silenciosa.
  * Contrato travado em src/services/__tests__/somarSaldoAberto.test.ts.
  */
-export async function somarSaldoAberto(
+export async function somarSaldoPorStatus(
   tabela: 'fin_contas_receber' | 'fin_contas_pagar',
   company: Company,
+  statuses: readonly string[],
 ): Promise<number> {
   const PAGE = 1000;
-  const statuses = [...OPEN_TITLE_STATUSES];
   let from = 0;
   let total = 0;
   for (;;) {
@@ -830,7 +812,7 @@ export async function somarSaldoAberto(
       .from(tabela)
       .select('saldo')
       .eq('company', company)
-      .in('status_titulo', statuses)
+      .in('status_titulo', [...statuses])
       .range(from, from + PAGE - 1);
     if (error) throw error;
     const rows = (data ?? []) as Array<{ saldo: number | null }>;
@@ -839,6 +821,18 @@ export async function somarSaldoAberto(
     from += PAGE;
   }
   return total;
+}
+
+/**
+ * Soma paginada do `saldo` dos títulos EM ABERTO (OPEN_TITLE_STATUSES). Fonte
+ * canônica de "total a receber/pagar aberto": consumida pelo DSO
+ * (getDsoDpoColacor), pelos KPIs de /financeiro/gestao e pelo getResumoFinanceiro.
+ */
+export async function somarSaldoAberto(
+  tabela: 'fin_contas_receber' | 'fin_contas_pagar',
+  company: Company,
+): Promise<number> {
+  return somarSaldoPorStatus(tabela, company, OPEN_TITLE_STATUSES);
 }
 
 /**

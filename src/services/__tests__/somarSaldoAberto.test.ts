@@ -40,7 +40,7 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
-import { somarSaldoAberto } from '@/services/financeiroService';
+import { somarSaldoAberto, somarSaldoPorStatus } from '@/services/financeiroService';
 
 const page = (n: number, saldo = 10): { data: Row[]; error: null } => ({
   data: Array.from({ length: n }, () => ({ saldo })),
@@ -88,5 +88,45 @@ describe('somarSaldoAberto (contrato do B1)', () => {
   it('erro de página LANÇA (nunca devolve soma parcial silenciosa)', async () => {
     state.pages = [page(1000, 2), { data: null, error: { message: 'RLS negou' } }];
     await expect(somarSaldoAberto('fin_contas_receber', 'oben')).rejects.toBeTruthy();
+  });
+});
+
+/**
+ * Variante genérica por status (getResumoFinanceiro usa com ['ATRASADO'] pros
+ * vencidos). Mesmos contratos de paginação/erro da somarSaldoAberto — que
+ * delega nela (os testes acima provam que a delegação preserva o contrato).
+ */
+describe('somarSaldoPorStatus (contrato dos vencidos do resumo)', () => {
+  beforeEach(() => {
+    state.pages = [];
+    state.calls = [];
+  });
+
+  it('filtra EXATAMENTE pelos status pedidos (vencido = só ATRASADO), na tabela e empresa pedidas', async () => {
+    state.pages = [page(2)];
+    await somarSaldoPorStatus('fin_contas_pagar', 'colacor', ['ATRASADO']);
+    expect(state.calls).toHaveLength(1);
+    expect(state.calls[0].tabela).toBe('fin_contas_pagar');
+    expect(state.calls[0].company).toBe('colacor');
+    expect(state.calls[0].statuses).toEqual(['ATRASADO']);
+  });
+
+  it('pagina além do cap de 1000 e soma TODAS as páginas', async () => {
+    state.pages = [page(1000, 3), page(1000, 2), page(10, 1)];
+    const total = await somarSaldoPorStatus('fin_contas_receber', 'oben', ['ATRASADO']);
+    expect(total).toBe(1000 * 3 + 1000 * 2 + 10 * 1);
+    expect(state.calls).toHaveLength(3);
+    expect(state.calls[2]).toMatchObject({ from: 2000, to: 2999 });
+  });
+
+  it('saldo null contribui 0 e erro de página LANÇA', async () => {
+    state.pages = [{ data: [{ saldo: null }, { saldo: 4 }], error: null }];
+    expect(await somarSaldoPorStatus('fin_contas_receber', 'oben', ['ATRASADO'])).toBe(4);
+
+    state.pages = [page(1000), { data: null, error: { message: 'boom' } }];
+    state.calls = [];
+    await expect(
+      somarSaldoPorStatus('fin_contas_receber', 'oben', ['ATRASADO']),
+    ).rejects.toBeTruthy();
   });
 });

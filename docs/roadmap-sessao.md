@@ -1,4 +1,4 @@
-# Roadmap da Sessão — atualizado 2026-06-09
+# Roadmap da Sessão — atualizado 2026-06-10
 
 > **Documento vivo.** Re-feito sempre que acrescentamos OU concluímos uma atividade, e renderizado no chat quando muda, pra o founder acompanhar. Prática padrão de toda sessão (registrada no CLAUDE.md, topo).
 >
@@ -6,7 +6,19 @@
 
 ---
 
-## 0. SESSÃO 2026-06-09 — Reposição intra-day + alerta R$3k Sayerlack + dente de serra
+## 0. SESSÃO 2026-06-10 — getResumoFinanceiro somava truncado no cap 1000 (irmão do #719)
+
+> Mesmo bug do PR #719 (KPIs de /financeiro/gestao), agora no `getResumoFinanceiro`
+> (financeiroService ~182-240, consumido pelo FinanceiroDashboard): somas de CR/CP
+> aberto+vencido client-side SEM `.range()` → PostgREST capa em 1000 linhas → com
+> ~11k títulos de CR aberto na oben, `total_a_receber`/`total_vencido_*` saem errados.
+
+- 🔄 **Fix TDD**: variante paginada `somarSaldoPorStatus(tabela, company, statuses)`; `somarSaldoAberto` delega nela; `getResumoFinanceiro` passa a usar as somas paginadas (padroniza em `saldo`, coluna gerada = documento − recebido/pago). Testes de contrato com mock do supabase que reproduz o cap 1000.
+- ⏳ `heavy bun run typecheck` + `heavy bun run test` + `bun lint` → PR pequeno e isolado (sem migration/edge; vai ao ar no próximo Publish).
+
+---
+
+## 0b. SESSÃO 2026-06-09 — Reposição intra-day + alerta R$3k Sayerlack + dente de serra
 
 > Pedido do founder: (1) e-mail toda vez que um pedido sugerido der R$3.000+ (mínimo de faturamento
 > da Sayerlack — pode acontecer várias vezes ao dia, pedidos diferentes); (2) motor de sugestões
