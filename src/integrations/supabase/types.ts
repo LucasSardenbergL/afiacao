@@ -10800,6 +10800,7 @@ export type Database = {
           cor_id: string
           created_at: string | null
           data_geracao: string | null
+          desativada_em: string | null
           embalagem_id: string
           id: string
           id_seq: number | null
@@ -10819,6 +10820,7 @@ export type Database = {
           cor_id: string
           created_at?: string | null
           data_geracao?: string | null
+          desativada_em?: string | null
           embalagem_id: string
           id?: string
           id_seq?: number | null
@@ -10838,6 +10840,7 @@ export type Database = {
           cor_id?: string
           created_at?: string | null
           data_geracao?: string | null
+          desativada_em?: string | null
           embalagem_id?: string
           id?: string
           id_seq?: number | null
@@ -10953,6 +10956,9 @@ export type Database = {
           id: string
           integration_mode: Database["public"]["Enums"]["tint_integration_mode"]
           last_heartbeat_at: string | null
+          last_keys_snapshot_at: string | null
+          schema_fingerprint: string | null
+          schema_mismatch: Json | null
           store_code: string
           store_name: string | null
           sync_enabled: boolean
@@ -10967,6 +10973,9 @@ export type Database = {
           id?: string
           integration_mode?: Database["public"]["Enums"]["tint_integration_mode"]
           last_heartbeat_at?: string | null
+          last_keys_snapshot_at?: string | null
+          schema_fingerprint?: string | null
+          schema_mismatch?: Json | null
           store_code: string
           store_name?: string | null
           sync_enabled?: boolean
@@ -10981,11 +10990,56 @@ export type Database = {
           id?: string
           integration_mode?: Database["public"]["Enums"]["tint_integration_mode"]
           last_heartbeat_at?: string | null
+          last_keys_snapshot_at?: string | null
+          schema_fingerprint?: string | null
+          schema_mismatch?: Json | null
           store_code?: string
           store_name?: string | null
           sync_enabled?: boolean
           sync_token?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      tint_keys_snapshots: {
+        Row: {
+          account: string
+          chunk_index: number
+          created_at: string | null
+          entity: string
+          generated_at: string
+          id: string
+          keys: Json
+          setting_id: string
+          snapshot_id: string
+          store_code: string
+          total_chunks: number
+        }
+        Insert: {
+          account: string
+          chunk_index: number
+          created_at?: string | null
+          entity: string
+          generated_at: string
+          id?: string
+          keys: Json
+          setting_id: string
+          snapshot_id: string
+          store_code: string
+          total_chunks: number
+        }
+        Update: {
+          account?: string
+          chunk_index?: number
+          created_at?: string | null
+          entity?: string
+          generated_at?: string
+          id?: string
+          keys?: Json
+          setting_id?: string
+          snapshot_id?: string
+          store_code?: string
+          total_chunks?: number
         }
         Relationships: []
       }
@@ -11250,6 +11304,7 @@ export type Database = {
         Row: {
           account: string
           created_at: string
+          custo: number | null
           descricao: string | null
           id: string
           id_corante_sayersystem: string
@@ -11259,10 +11314,12 @@ export type Database = {
           staging_status: string
           store_code: string
           sync_run_id: string
+          volume_ml: number | null
         }
         Insert: {
           account: string
           created_at?: string
+          custo?: number | null
           descricao?: string | null
           id?: string
           id_corante_sayersystem: string
@@ -11272,10 +11329,12 @@ export type Database = {
           staging_status?: string
           store_code: string
           sync_run_id: string
+          volume_ml?: number | null
         }
         Update: {
           account?: string
           created_at?: string
+          custo?: number | null
           descricao?: string | null
           id?: string
           id_corante_sayersystem?: string
@@ -11285,6 +11344,7 @@ export type Database = {
           staging_status?: string
           store_code?: string
           sync_run_id?: string
+          volume_ml?: number | null
         }
         Relationships: [
           {
@@ -11549,6 +11609,62 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "tint_staging_formulas_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_staging_precos_base: {
+        Row: {
+          account: string
+          cod_produto: string
+          created_at: string | null
+          custo: number | null
+          id: string
+          id_base: string
+          id_embalagem: string
+          imposto_pct: number | null
+          margem_pct: number | null
+          raw_data: Json | null
+          staging_status: string | null
+          store_code: string
+          sync_run_id: string | null
+        }
+        Insert: {
+          account: string
+          cod_produto: string
+          created_at?: string | null
+          custo?: number | null
+          id?: string
+          id_base: string
+          id_embalagem: string
+          imposto_pct?: number | null
+          margem_pct?: number | null
+          raw_data?: Json | null
+          staging_status?: string | null
+          store_code: string
+          sync_run_id?: string | null
+        }
+        Update: {
+          account?: string
+          cod_produto?: string
+          created_at?: string | null
+          custo?: number | null
+          id?: string
+          id_base?: string
+          id_embalagem?: string
+          imposto_pct?: number | null
+          margem_pct?: number | null
+          raw_data?: Json | null
+          staging_status?: string | null
+          store_code?: string
+          sync_run_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_precos_base_sync_run_id_fkey"
             columns: ["sync_run_id"]
             isOneToOne: false
             referencedRelation: "tint_sync_runs"
@@ -12835,6 +12951,24 @@ export type Database = {
           entradas_realizadas: number | null
           saidas_previstas: number | null
           saidas_realizadas: number | null
+        }
+        Relationships: []
+      }
+      order_feed: {
+        Row: {
+          account: string | null
+          created_at: string | null
+          customer_name: string | null
+          customer_user_id: string | null
+          id: string | null
+          item_names: string[] | null
+          item_quantity: number | null
+          omie_pedido_id: number | null
+          order_number: string | null
+          origin: string | null
+          status: string | null
+          subtotal: number | null
+          total: number | null
         }
         Relationships: []
       }
@@ -14740,6 +14874,36 @@ export type Database = {
       tarefas_escalonamento_tick: { Args: never; Returns: undefined }
       tarefas_matcher_tick: { Args: never; Returns: undefined }
       tarefas_materializar_recorrentes: { Args: never; Returns: undefined }
+      tint_apply_keys_snapshot: {
+        Args: { p_snapshot_id: string }
+        Returns: Json
+      }
+      tint_calc_preco_final: {
+        Args: {
+          p_account: string
+          p_cod_produto: string
+          p_fator: number
+          p_id_base: string
+          p_id_embalagem: string
+          p_staging_formula_id: string
+        }
+        Returns: number
+      }
+      tint_ensure_corante_stub: {
+        Args: { p_account: string; p_id_corante: string }
+        Returns: string
+      }
+      tint_promote_sync_run: { Args: { p_sync_run_id: string }; Returns: Json }
+      tint_recalc_preco_oficial: {
+        Args: {
+          p_account: string
+          p_cod_produto: string
+          p_formula_id: string
+          p_id_base: string
+          p_id_embalagem: string
+        }
+        Returns: number
+      }
       tint_run_reconciliation: {
         Args: { p_sync_run_id: string }
         Returns: Json
