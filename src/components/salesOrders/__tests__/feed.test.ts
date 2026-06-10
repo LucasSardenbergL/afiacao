@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterFeedRows, mapSalesDetail, mapAfiacaoDetail } from '../feed';
+import { filterFeedRows, mapSalesDetail, mapAfiacaoDetail, dedupeFeedRows } from '../feed';
 import type { OrderFeedRow } from '../types';
 
 const row = (p: Partial<OrderFeedRow> = {}): OrderFeedRow => ({
@@ -101,5 +101,18 @@ describe('mapAfiacaoDetail', () => {
   it('items não-array não quebra', () => {
     const o = mapAfiacaoDetail({ id: 'o2', user_id: 'u1', status: 'x', subtotal: 0, total: 0, created_at: 'd', notes: null, items: {} } as never);
     expect(o.items).toEqual([]);
+  });
+});
+
+describe('dedupeFeedRows', () => {
+  it('remove duplicata por (origin,id) preservando a 1ª ocorrência e a ordem', () => {
+    const a = row({ id: 'x', origin: 'sales', total: 1 });
+    const dup = row({ id: 'x', origin: 'sales', total: 2 });
+    const b = row({ id: 'x', origin: 'afiacao' }); // mesmo id, origem diferente = NÃO é dup
+    expect(dedupeFeedRows([a, dup, b])).toEqual([a, b]);
+  });
+  it('lista sem duplicatas passa intacta', () => {
+    const rows = [row({ id: '1' }), row({ id: '2' })];
+    expect(dedupeFeedRows(rows)).toEqual(rows);
   });
 });

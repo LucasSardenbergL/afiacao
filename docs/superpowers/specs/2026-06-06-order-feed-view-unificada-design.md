@@ -18,7 +18,14 @@ A listagem hoje: 2 `useInfiniteQuery` (sales_orders + orders/afiação) mesclada
 reordenadas no cliente → paginação cronológica global incorreta; busca/filtro
 client-side só sobre o carregado → não acha o resto; 3ª query de profiles cuja key
 muda ao paginar → nomes piscam. Decisão: **read model único (view) + uma query**.
-Volume ≈ 550 (< teto de 1000 do PostgREST).
+
+**⚠️ Volume REAL (medido na view em prod, 2026-06-09): 2.660 pedidos** — a estimativa
+de ~550 (contagem via DOM drenado) estava errada ~5×. Consequência: a query do feed
+**drena em páginas de 1000** (`.range` em loop dentro da queryFn — padrão fetchAll
+canônico do repo, ~3 requests) com **dedupe por (origin,id)** (defesa contra shift
+de offset com escrita concorrente) e **teto de sanidade de 5.000** (FEED_MAX_PAGES=5);
+acima disso `truncated` avisa na UI. **Gatilho da fase server-side: ~5.000 pedidos**
+(no ritmo atual ~12/dia, ~6+ meses).
 
 ## Fatos do schema (verificados, não presumidos)
 - **`profiles.user_id` é UNIQUE** (`profiles_user_id_key`) → 1 profile por usuário →

@@ -36,6 +36,21 @@ export function filterFeedRows(
   return result;
 }
 
+// Dedupe por (origin, id) preservando a 1ª ocorrência. Defesa contra o caso raro
+// de escrita concorrente durante o fetch paginado por offset (uma inserção entre
+// as páginas pode deslocar e repetir uma linha — duplicata quebraria as keys do React).
+export function dedupeFeedRows(rows: OrderFeedRow[]): OrderFeedRow[] {
+  const seen = new Set<string>();
+  const out: OrderFeedRow[] = [];
+  for (const r of rows) {
+    const key = `${r.origin}:${r.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out;
+}
+
 // sales_orders.* → SalesOrder. A linha já tem o shape (items jsonb compatível);
 // só marca a origem. Cast consciente: items é Json no tipo gerado.
 export function mapSalesDetail(row: SalesOrderRow): SalesOrder {

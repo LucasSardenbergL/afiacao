@@ -4,7 +4,7 @@ import { Loader2, ShoppingCart, Trash2, ChevronLeft, TriangleAlert } from 'lucid
 import { EmptyState } from '@/components/EmptyState';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
 import { decodeHtml, type OrderFeedRow } from '@/components/salesOrders/types';
-import { useSalesOrders } from '@/components/salesOrders/useSalesOrders';
+import { useSalesOrders, FEED_MAX_TOTAL } from '@/components/salesOrders/useSalesOrders';
 import { useSalesOrderDetail } from '@/components/salesOrders/useSalesOrderDetail';
 import { SalesOrdersToolbar } from '@/components/salesOrders/SalesOrdersToolbar';
 import { SalesOrderCard } from '@/components/salesOrders/SalesOrderCard';
@@ -76,12 +76,12 @@ const SalesOrders = () => {
         setSearch={setSearch}
       />
 
-      {/* Aviso honesto: o feed bateu o teto de 1000 linhas — a busca não cobre tudo */}
+      {/* Aviso honesto: o feed bateu o teto de segurança — a busca não cobre tudo */}
       {truncated && (
         <div className="flex items-center gap-2 text-xs text-status-warning bg-status-warning-bg border border-status-warning/30 rounded-md px-3 py-2">
           <TriangleAlert className="w-3.5 h-3.5 shrink-0" />
           <span>
-            Mostrando os primeiros 1.000 de {totalCount.toLocaleString('pt-BR')} pedidos — a busca cobre só esses. Refine por empresa ou período.
+            Mostrando os primeiros {FEED_MAX_TOTAL.toLocaleString('pt-BR')} de {totalCount.toLocaleString('pt-BR')} pedidos — a busca cobre só esses.
           </span>
         </div>
       )}

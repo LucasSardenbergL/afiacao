@@ -19,15 +19,19 @@ import {
   type OrderFeedCache,
   type OrderFeedRow,
 } from './types';
-import { filterFeedRows } from './feed';
+import { dedupeFeedRows, filterFeedRows } from './feed';
 import { fetchOrderDetail, orderDetailQueryKey } from './useSalesOrderDetail';
 import { softDeleteOrder } from './soft-delete';
 import { printSalesOrder } from './print';
 
-// Teto de resposta do PostgREST. Se o total passar disso, a listagem trunca —
-// a UI avisa (truncated) em vez de silenciar; é o sinal pra migrar a busca pro
-// servidor (fase 2 do spec).
-const FEED_MAX_ROWS = 1000;
+// O PostgREST capa cada resposta em 1000 linhas → a query drena em páginas até o
+// count (medido em prod: ~2.660 pedidos ≈ 3 requests). Teto de sanidade de
+// FEED_MAX_PAGES (5.000 linhas): acima disso a listagem trunca e a UI avisa
+// (truncated) em vez de silenciar — é o gatilho pra migrar a busca pro servidor
+// (fase 2 do spec).
+const FEED_PAGE_SIZE = 1000;
+const FEED_MAX_PAGES = 5;
+export const FEED_MAX_TOTAL = FEED_PAGE_SIZE * FEED_MAX_PAGES;
 
 export function useSalesOrders() {
   const navigate = useNavigate();
@@ -49,16 +53,25 @@ export function useSalesOrders() {
     enabled: isStaff && !!user,
     staleTime: 60_000,
     queryFn: async () => {
-      const { data, error, count } = await supabase
-        .from('order_feed' as never)
-        .select('*', { count: 'exact' })
-        .order('created_at', { ascending: false, nullsFirst: false })
-        .order('origin', { ascending: true })
-        .order('id', { ascending: true })
-        .range(0, FEED_MAX_ROWS - 1);
-      if (error) throw error;
-      const rows = (data ?? []) as unknown as OrderFeedRow[];
-      return { rows, count: count ?? rows.length };
+      const all: OrderFeedRow[] = [];
+      let total = 0;
+      for (let page = 0; page < FEED_MAX_PAGES; page++) {
+        const from = page * FEED_PAGE_SIZE;
+        const { data, error, count } = await supabase
+          .from('order_feed' as never)
+          .select('*', { count: 'exact' })
+          .order('created_at', { ascending: false, nullsFirst: false })
+          .order('origin', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, from + FEED_PAGE_SIZE - 1);
+        if (error) throw error;
+        const rows = (data ?? []) as unknown as OrderFeedRow[];
+        all.push(...rows);
+        total = count ?? all.length;
+        // Fim real: alcançou o count ou a página veio parcial/vazia.
+        if (all.length >= total || rows.length < FEED_PAGE_SIZE) break;
+      }
+      return { rows: dedupeFeedRows(all), count: total };
     },
   });
 
