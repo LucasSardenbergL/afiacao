@@ -6,7 +6,22 @@
 
 ---
 
-## 0. SESSÃO 2026-06-10 (2) — getCapitalDeGiro + getTopInadimplentes truncados no cap 1000 (fecha o follow-up do #720)
+## 0. SESSÃO 2026-06-10 (3) — Estratégia: de "IA que apoia" para "IA que coordena" (relatório Prosus "AI Colleagues")
+
+> Founder trouxe o PDF da Prosus (60.000 agentes, Toqan) e perguntou: como fazer vendas,
+> operações e atendimento deixarem de ser APOIADAS por IA e passarem a ser COORDENADAS
+> por ela. Sessão de brainstorming estratégico (sem código por ora).
+
+- ✅ **Leitura integral do relatório** (48 págs: power law 2%, 20 use cases, 3 fases de adoção, conclusão "outcome-oriented", apêndice técnico).
+- ✅ **Análise entregue no chat**: validações da arquitetura atual (banco-como-orquestrador = recomendação literal da Prosus), framework "escada de autonomia" (N0–N4) + critérios objetivos de promoção de nível, mapa por função (hoje → próximo degrau), sequência 90 dias, o que NÃO copiar (escala 40k≠20).
+- ✅ **Decisão do founder: frente 1 = Reposição → N3** (auto-aprovação Sayerlack). Decisões fechadas via AskUserQuestion: baseline retroativa primeiro · piso R$3k (mesma régua do alerta/gate) · sem teto superior · janela de veto = corte 13h (fase 1) · só Sayerlack.
+- ✅ **Baseline retroativa rodada em prod (2 queries)** → 2 ACHADOS: (a) `pedido_anterior_valor` NUNCA populado pela RPC → o botão "Aprovar elegíveis" do Cockpit é teatro morto desde sempre (0 elegíveis p/ todos os fornecedores); (b) estrato reconstruído via LATERAL = 16 pedidos, concordância por linha 12,5% (11 expirados = procrastinação estrutural do corte diário, não discordância), intervenção ativa real ~31% → founder escolheu **caminho A: piloto supervisionado medindo taxa de VETO** (liga de verdade c/ janela do corte 13h; veto <10% por 3 sem → fase 2 encurta p/ ~2h; veto >25% ou 1 compra errada → fusível off).
+- ✅ **Spec escrita + self-review**: `docs/superpowers/specs/2026-06-10-reposicao-auto-aprovacao-sayerlack-design.md` (estende o tick do alerta R$3k existente — zero cron novo; delta ao vivo vs último disparo; fusível `reposicao_auto_aprovacao_ativa` nasce OFF; auto-suspensão por alerta ativo de reposição; log de auditoria; e-mail vira informativo c/ janela de veto).
+- 🧭 **Founder revisa a spec** → depois: plano de implementação (writing-plans) → PG17 → **Codex challenge ANTES do apply** (cota volta 11/06 ~9h24, money-path) → BLOCO A (migration) + BLOCO B (ligar fusível).
+
+---
+
+## 0a-bis. SESSÃO 2026-06-10 (2) — getCapitalDeGiro + getTopInadimplentes truncados no cap 1000 (fecha o follow-up do #720)
 
 > Sessão spawnada pelo chip de follow-up da seção abaixo: as duas funções restantes do
 > `financeiroService` com o MESMO bug dos #719/#720 — queries de linhas de CR/CP sem
