@@ -182,6 +182,34 @@ export async function triggerFinanceiroSync(
 // Vencidos = só 'ATRASADO' (vocabulário nativo do Omie; subconjunto de OPEN_TITLE_STATUSES).
 const VENCIDO_TITLE_STATUSES = ['ATRASADO'] as const;
 
+type PaginaResult<T> = { data: T[] | null; error: { message: string } | null };
+
+/**
+ * Busca TODAS as linhas de uma query paginando em janelas de 1000 — sem
+ * `.range()` o PostgREST capa em 1000 linhas e tudo que deriva delas sai
+ * truncado silenciosamente (bug #719/#720; a oben tem ~11k títulos de CR
+ * aberto). Para somas puras use somarSaldoPorStatus; este helper é pra quando
+ * as LINHAS individuais importam (vencimento pra projeção, nome pra ranking).
+ * O callback DEVE aplicar `.order()` estável (id) + `.range(from, to)`: offset
+ * sem ORDER BY pula/duplica linha entre páginas (o sync de CR/CP grava a cada
+ * 10min). Erro de qualquer página LANÇA Error real — nunca lista parcial.
+ */
+async function buscarTodasPaginas<T>(
+  contexto: string,
+  fetchPage: (from: number, to: number) => PromiseLike<PaginaResult<T>>,
+): Promise<T[]> {
+  const PAGE = 1000;
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await fetchPage(from, from + PAGE - 1);
+    if (error) throw new Error(`Falha ao carregar ${contexto}: ${error.message}`);
+    const rows = data ?? [];
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+  }
+  return out;
+}
+
 export async function getResumoFinanceiro(companies: Company[]): Promise<Record<string, FinResumo>> {
   const resumo: Record<string, FinResumo> = {};
 
@@ -432,25 +460,28 @@ export async function getTopInadimplentes(
   company: Company | 'all',
   limit = 10
 ): Promise<{ nome: string; cnpj: string; total_vencido: number; qtd_titulos: number }[]> {
-  let query = supabase
-    .from("fin_contas_receber")
-    .select("nome_cliente, cnpj_cpf, valor_documento, valor_recebido")
-    .eq("status_titulo", "ATRASADO");
-
-  if (company !== 'all') query = query.eq("company", company);
-
-  const { data, error } = await query;
-  if (error) return [];
+  // Linhas individuais (o ranking precisa de nome/cnpj por título), paginadas:
+  // truncado em 1000 pelo PostgREST, um devedor grande "depois" da 1ª página
+  // sumia do top. Erro LANÇA (era [] silencioso = falso "ninguém inadimplente").
+  const data = await buscarTodasPaginas(`inadimplentes (${company})`, (from, to) => {
+    let query = supabase
+      .from("fin_contas_receber")
+      .select("nome_cliente, cnpj_cpf, saldo")
+      .in("status_titulo", [...VENCIDO_TITLE_STATUSES]);
+    if (company !== 'all') query = query.eq("company", company);
+    return query.order("id").range(from, to);
+  });
 
   // Agrupar por cliente (nome_cliente como chave primária; cnpj_cpf como fallback)
   const map = new Map<string, { nome: string; cnpj: string; total: number; qtd: number }>();
-  for (const r of data || []) {
+  for (const r of data) {
     const nomeRaw = (r.nome_cliente ?? '').trim();
     const cnpjRaw = (r.cnpj_cpf ?? '').trim();
     const key = nomeRaw || cnpjRaw || '__unknown__';
     const displayNome = nomeRaw
       || (cnpjRaw ? `CNPJ: ${cnpjRaw}` : 'Cliente não identificado');
-    const saldo = (r.valor_documento || 0) - (r.valor_recebido || 0);
+    // `saldo` é coluna gerada (documento − recebido) — mesma fonte do resumo (#720).
+    const saldo = r.saldo ?? 0;
     const existing = map.get(key) || {
       nome: displayNome,
       cnpj: cnpjRaw,
@@ -510,48 +541,56 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
   const in30 = d30.toISOString().slice(0, 10);
 
   for (const co of companies) {
-    // CR aberto
-    const { data: crAberto } = await supabase
-      .from("fin_contas_receber")
-      .select("valor_documento, valor_recebido, data_emissao, data_vencimento, nome_cliente")
-      .eq("company", co)
-      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]);
+    // CR/CP abertos: linhas individuais (vencimento pra projeção 30d + nome pro
+    // top-5 — soma pura seria somarSaldoPorStatus) paginadas: sem .range() o
+    // PostgREST capa em 1000 e totais/concentração/projeção saíam truncados
+    // (irmão do #719/#720). `saldo` é coluna gerada (documento − recebido/pago)
+    // — mesma fonte do resumo, então total_cr/cp_aberto bate com o cockpit.
+    const [crAberto, cpAberto] = await Promise.all([
+      buscarTodasPaginas(`CR aberto (${co})`, (from, to) =>
+        supabase
+          .from("fin_contas_receber")
+          .select("saldo, data_vencimento, nome_cliente")
+          .eq("company", co)
+          .in("status_titulo", [...OPEN_TITLE_STATUSES])
+          .order("id")
+          .range(from, to),
+      ),
+      buscarTodasPaginas(`CP aberto (${co})`, (from, to) =>
+        supabase
+          .from("fin_contas_pagar")
+          .select("saldo, data_vencimento, nome_fornecedor")
+          .eq("company", co)
+          .in("status_titulo", [...OPEN_TITLE_STATUSES])
+          .order("id")
+          .range(from, to),
+      ),
+    ]);
 
-    // CP aberto
-    const { data: cpAberto } = await supabase
-      .from("fin_contas_pagar")
-      .select("valor_documento, valor_pago, data_emissao, data_vencimento, nome_fornecedor")
-      .eq("company", co)
-      .in("status_titulo", ["A VENCER", "ATRASADO", "VENCE HOJE"]);
-
-    // Saldo CC
-    const { data: ccs } = await supabase
+    // Saldo CC — erro LANÇA: caixa R$0 falso engana tanto quanto total truncado
+    const { data: ccs, error: ccError } = await supabase
       .from("fin_contas_correntes")
       .select("saldo_atual")
       .eq("company", co)
       .eq("ativo", true);
+    if (ccError) throw new Error(`Falha ao carregar contas correntes (${co}): ${ccError.message}`);
 
     // PMR/PMP: baixa derivada das movimentações (view v_capital_giro_prazos), porque
     // o Omie NÃO traz data de baixa no LIST de títulos (data_recebimento/pagamento
     // sempre NULL — ver v_titulo_baixas). A view agrega PMR/PMP ponderado por valor +
     // a cobertura (fração dos liquidados com baixa derivável) por empresa.
     const COBERTURA_MIN = 0.4;
-    // view nova ainda não nos tipos gerados → `as never` (padrão do repo p/ views)
+    // view nova ainda não nos tipos gerados → `as never` (padrão do repo p/ views).
+    // Erro aqui NÃO lança (≠ CR/CP/CC): prazo é acessório e null = "—" na UI,
+    // que é degradação honesta — não fabrica número.
     const { data: prazos } = await supabase
       .from("v_capital_giro_prazos" as never)
       .select("pmr, pmp, pmr_cobertura, pmp_cobertura")
       .eq("company", co)
       .maybeSingle();
 
-    type CrRow = { valor_documento: number | null; valor_recebido: number | null };
-    type CpRow = { valor_documento: number | null; valor_pago: number | null };
-    const calcSaldoCR = (arr: CrRow[] | null) =>
-      (arr || []).reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
-    const calcSaldoCP = (arr: CpRow[] | null) =>
-      (arr || []).reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_pago || 0)), 0);
-
-    const totalCR = calcSaldoCR(crAberto as CrRow[] | null);
-    const totalCP = calcSaldoCP(cpAberto as CpRow[] | null);
+    const totalCR = crAberto.reduce((s, r) => s + (r.saldo ?? 0), 0);
+    const totalCP = cpAberto.reduce((s, r) => s + (r.saldo ?? 0), 0);
     const totalCC = (ccs || []).reduce((s, c) => s + (c.saldo_atual || 0), 0);
 
     // Gate de confiança por empresa: prazo só quando a cobertura é suficiente.
@@ -565,28 +604,28 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
 
     // Concentração top 5
     const crByClient = new Map<string, number>();
-    for (const r of crAberto || []) {
+    for (const r of crAberto) {
       const key = r.nome_cliente || 'Outros';
-      crByClient.set(key, (crByClient.get(key) || 0) + ((r.valor_documento || 0) - (r.valor_recebido || 0)));
+      crByClient.set(key, (crByClient.get(key) || 0) + (r.saldo ?? 0));
     }
     const top5CR = Array.from(crByClient.values()).sort((a, b) => b - a).slice(0, 5);
     const top5CRSum = top5CR.reduce((s, v) => s + v, 0);
 
     const cpByFornecedor = new Map<string, number>();
-    for (const p of cpAberto || []) {
+    for (const p of cpAberto) {
       const key = p.nome_fornecedor || 'Outros';
-      cpByFornecedor.set(key, (cpByFornecedor.get(key) || 0) + ((p.valor_documento || 0) - (p.valor_pago || 0)));
+      cpByFornecedor.set(key, (cpByFornecedor.get(key) || 0) + (p.saldo ?? 0));
     }
     const top5CP = Array.from(cpByFornecedor.values()).sort((a, b) => b - a).slice(0, 5);
     const top5CPSum = top5CP.reduce((s, v) => s + v, 0);
 
     // Projeção 30 dias: CR vencendo nos próx 30d + CP vencendo nos próx 30d
-    const entradas30 = (crAberto || [])
+    const entradas30 = crAberto
       .filter((r) => r.data_vencimento && r.data_vencimento >= today && r.data_vencimento <= in30)
-      .reduce((s, r) => s + ((r.valor_documento || 0) - (r.valor_recebido || 0)), 0);
-    const saidas30 = (cpAberto || [])
+      .reduce((s, r) => s + (r.saldo ?? 0), 0);
+    const saidas30 = cpAberto
       .filter((p) => p.data_vencimento && p.data_vencimento >= today && p.data_vencimento <= in30)
-      .reduce((s, p) => s + ((p.valor_documento || 0) - (p.valor_pago || 0)), 0);
+      .reduce((s, p) => s + (p.saldo ?? 0), 0);
 
     results.push({
       company: co,

@@ -6,7 +6,23 @@
 
 ---
 
-## 0. SESSÃO 2026-06-10 — getResumoFinanceiro somava truncado no cap 1000 (irmão do #719)
+## 0. SESSÃO 2026-06-10 (2) — getCapitalDeGiro + getTopInadimplentes truncados no cap 1000 (fecha o follow-up do #720)
+
+> Sessão spawnada pelo chip de follow-up da seção abaixo: as duas funções restantes do
+> `financeiroService` com o MESMO bug dos #719/#720 — queries de linhas de CR/CP sem
+> `.range()` → PostgREST capa em 1000. Diferença: aqui as LINHAS individuais importam
+> (vencimento pra projeção 30d, nome_cliente/fornecedor pro top-5 e ranking) → não basta
+> delegar a `somarSaldoPorStatus`; precisa paginar a busca de linhas.
+
+- ✅ **Fix TDD (RED→GREEN provado)**: helper privado `buscarTodasPaginas` (loop `.range(from, from+999)` + `.order('id')` estável + erro LANÇA); `getCapitalDeGiro` pagina CR/CP (totais, capital de giro, top-5, projeção 30d íntegros; oben ~11k CR), `getTopInadimplentes` pagina o ranking de ATRASADO.
+- ✅ Aproveitados: literal `['A VENCER','ATRASADO','VENCE HOJE']` → `OPEN_TITLE_STATUSES`; `.eq('ATRASADO')` → `VENCIDO_TITLE_STATUSES`; soma por `saldo` (coluna gerada — bate com o resumo do #720); `data_emissao` removido do select (morto desde o #442).
+- ✅ Erro coerente (#720): CR/CP/CC lançam Error real (era R$0/[] silencioso); view de prazos segue degradando pra null ("—", acessório). `useFinanceiroCockpit` ganhou catch-por-fonte no inadimplentes; `usePosicaoAgora` já capturava → tela mostra "Sem dados" honesto.
+- ✅ Gate verde: typecheck 0 · 2975 testes (16 de contrato novos: mock-banco capa janelas em 1000 como o PostgREST real) · lint 0 errors. PR aberto (squash + auto-merge). Sem migration/edge; **vai ao ar no próximo Publish**.
+- ⏸️ **Codex adversarial retroativo** quando a cota voltar (11/06+) — caminho B aplicado (self-review adversarial + testes de contrato).
+
+---
+
+## 0a. SESSÃO 2026-06-10 — getResumoFinanceiro somava truncado no cap 1000 (irmão do #719)
 
 > Mesmo bug do PR #719 (KPIs de /financeiro/gestao), agora no `getResumoFinanceiro`
 > (financeiroService ~182-240, consumido pelo FinanceiroDashboard): somas de CR/CP
@@ -16,7 +32,7 @@
 - ✅ **Fix TDD**: variante paginada `somarSaldoPorStatus(tabela, company, statuses)`; `somarSaldoAberto` delega nela; `getResumoFinanceiro` usa as somas paginadas (padroniza em `saldo`, coluna gerada). RED provado por truncamento exato (2200→2000) antes do fix.
 - ✅ **/review (gstack)**: 2 specialists + adversarial Claude (codex em usage-limit até 11/06 9:24 — retroativo pendente). Achados incorporados: `.order('id')` na paginação (offset sem ORDER BY não é estável; sync grava */10), `throw new Error(...)` em vez de objeto cru (banner mostraria "[object Object]"), CC deixou de engolir erro, `useFinanceiroCockpit` isola o resumo com catch por fonte (sem isso o throw novo derrubava aging/DRE/inadimplentes junto), mock capa `.range()` em 1000 como o PostgREST real + testes de erro do orquestrador.
 - ✅ Gate verde: typecheck 0 · **2959 testes** (16 de contrato novos) · lint 0 errors. PR aberto (squash + auto-merge). Sem migration/edge; **vai ao ar no próximo Publish**.
-- ⏳ **Follow-up (chip spawnado)**: `getCapitalDeGiro` + `getTopInadimplentes` têm o MESMO cap 1000 (achado do specialist — capital_giro/top-5/projeção-30d truncados na oben); precisa paginar a busca de LINHAS (não só somas).
+- ✅ **Follow-up (chip spawnado)**: `getCapitalDeGiro` + `getTopInadimplentes` têm o MESMO cap 1000 (achado do specialist — capital_giro/top-5/projeção-30d truncados na oben); precisa paginar a busca de LINHAS (não só somas). → **ENTREGUE na seção 0 acima.**
 - ⏸️ **Codex adversarial retroativo** do PR quando a cota voltar (11/06+).
 - 📝 Limitação conhecida (nota no PR): o cockpit loga falha do resumo via `logger.warn` mas não tem banner de erro (pré-existente — `getDRE` já lançava no mesmo Promise.all); banner visível = decisão de UX futura.
 
