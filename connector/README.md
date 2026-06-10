@@ -119,7 +119,7 @@ O conector verifica o manifesto uma vez por dia e aplica a atualização automat
 
 ## Segurança
 
-- Token armazenado com DPAPI (escopo máquina+usuário, LocalService consegue descriptografar)
+- Token armazenado com DPAPI (escopo de MÁQUINA (CRYPTPROTECT_LOCAL_MACHINE) — o serviço descriptografa mesmo rodando como conta de serviço)
 - Serviço roda como `LocalService` (menor privilégio: só localhost + HTTPS outbound)
 - `UpdateManifestURL` aponta para bucket read-only público; escrita = `service_role` apenas
 - sha256 verificado antes de instalar o binário baixado
