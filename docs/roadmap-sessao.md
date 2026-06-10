@@ -16,14 +16,13 @@
 - ✅ **Exploração do terreno** — crons/cadências (estoque do motor `sku_estoque_atual` = 3×/dia via `omie-sync-estoque`; motor 1×/dia 9h15 UTC; `inventory_position` já 30min), RPC vigente (`20260606190000`), infra de alerta (`fornecedor_alerta` + dispatch */30 + padrão transição).
 - ✅ **Decisões do founder (AskUserQuestion)** — gatilho = **por pedido sugerido Sayerlack ≥ R$3k** (mínimo de faturamento; vários e-mails/dia ok, pedidos diferentes); cadência = **a cada 2h em horário comercial**.
 - ✅ **Passe adversarial** — Codex em usage-limit até 11/06 → caminho B (eu + PG17). Furos achados: bloqueado_guardrail do dia precisa entrar na limpeza (senão re-gen duplica SKUs); NOT EXISTS contra oportunidade pendente; zumbis de data_ciclo anterior; grupo NULL na identidade do alerta; deep-link com id morre no re-gen.
-- 🔄 **Design apresentado ao founder** — aguardando GO.
-- ⏳ Spec em `docs/superpowers/specs/2026-06-09-reposicao-intraday-alerta-3k-design.md`
-- ⏳ **PR1 — alerta R$3k Sayerlack** (migration SQL pura: tabela de estado + tipo no CHECK + tick + cron */30 + hook na edge de geração)
-- ⏳ **PR2 — ciclo intra-day** (RPC: limpeza tipo-aware + bloqueados do dia + expiração de zumbis + advisory lock + NOT EXISTS oportunidade; crons 2/2h; edge flag digest)
-- ⏳ **Validação PG17 local** (scripts `db/test-*.sh` aplicando as migrations reais)
-- ⏳ **Análise dente de serra** — fase 1 = intra-day (adianta disparo ~0,5–1d) + alerta R$3k (lote ótimo ≈ mínimo de faturamento); fase 2 (recalibrar ponto_pedido/cobertura/SS com R=2h via esteira `param_auto`) gated em 2–4 semanas de medição.
-- ⏳ **Founder (pós-merge):** colar blocos SQL no SQL Editor + deploy da `gerar-pedidos-diario` via chat do Lovable.
-- ⏸️ **Codex adversarial retroativo** (quando a cota voltar, 11/06+) — revisar PR1+PR2.
+- ✅ **Design aprovado pelo founder** — GO nos dois + **gate de disparo <R$3k** (3ª entrega, pedida no GO).
+- ✅ Spec em `docs/superpowers/specs/2026-06-09-reposicao-intraday-alerta-3k-design.md`
+- ✅ **Entregue num PR único ([#711](https://github.com/LucasSardenbergL/afiacao/pull/711), 2 commits, mergeado, CI verde):** alerta R$3k (migration `20260609150000`: tabela de estado + tipo no CHECK + tick + cron */30) + intra-day (migration `20260609160000`: RPC com 4 marcas [INTRADAY] + crons 2/2h + sync de estoque encadeado) + gate <R$3k pré-split no `disparar-pedidos-aprovados` (helper TDD 17 testes) + flag `intraday` na `gerar-pedidos-diario` (suprime digest) + hook do tick.
+- ✅ **Validação PG17 local** — `db/test-alerta-pedido-minimo.sh` (11 asserts) + `db/test-rpc-intraday.sh` (8 asserts, migrations reais sobre o snapshot). CI: typecheck + 2861 testes + lint + build verdes.
+- ✅ **Análise dente de serra entregue** — fase 1 = intra-day (adianta disparo ~0,5–1d) + alerta R$3k (lote ótimo ≈ mínimo de faturamento); fase 2 (recalibrar ponto_pedido/cobertura/SS com R=2h via esteira `param_auto`) **gated em 2–4 semanas de medição**.
+- ⏳ **Founder (pra ir ao ar):** colar BLOCO A (`20260609150000`) + BLOCO B (`20260609160000`, com pré-flight da RPC) no SQL Editor + deploy verbatim das edges `gerar-pedidos-diario` e `disparar-pedidos-aprovados` via chat do Lovable. **SEM Publish** (nada de UI).
+- ⏸️ **Codex adversarial retroativo** (quando a cota voltar, 11/06+) — revisar o #711.
 
 ---
 
