@@ -6,6 +6,27 @@
 
 ---
 
+## ⚡ SESSÃO 2026-06-09/10 — Auditoria de velocidade & usabilidade: 24 itens mapeados, 4 ondas COMPLETAS
+
+> Pedido do founder: "revisite o código todo e procure brechas para deixar ele mais rápido
+> e melhor na usabilidade". Mapa canônico de **24 itens** (4 bugs B1-B4 + 13 quick wins +
+> 7 médios), executado em 4 ondas + follow-up — **TUDO mergeado na main**. Rito por onda:
+> implementação → validação (typecheck strict + vitest + lint) → **revisão adversarial por
+> subagente** (achou e fechou 3 P2 na Onda 3, 1 P1 + 2 P2 na Onda 4, 2 P2 no follow-up) →
+> squash + auto-merge. ⚠️ **Codex fora (cota Plus, volta ~11/06)** → Caminho B acordado.
+
+- ✅ **Onda 1 — boot −53%** ([#718](https://github.com/LucasSardenbergL/afiacao/pull/718)): entry 705→333KB gzip (chunking vendor-utils + regex ancorada que tirou @elevenlabs/react do vendor-react), gates de poll (badges/aumentos só com tela visível), debounce nas buscas, throttle leading+trailing nos realtime handlers (helper testado `leading-trailing-throttle`), skeletons no lugar de spinner, `vite:preloadError` → reload 1× (anti tela-branca pós-deploy).
+- ✅ **B1 — KPI financeiro ERRADO** ([#719](https://github.com/LucasSardenbergL/afiacao/pull/719)): A Receber/Pagar de `/financeiro/gestao` somava `.neq('PAGO')` (incluía RECEBIDO/LIQUIDADO/CANCELADO) E truncado no cap 1000 → `somarSaldoAberto` paginada com `OPEN_TITLE_STATUSES`. Spawnou os irmãos #720 (getResumoFinanceiro) e #722 (getCapitalDeGiro/getTopInadimplentes) — seções abaixo.
+- ✅ **Onda 2 — wizard de venda instantâneo** ([#721](https://github.com/LucasSardenbergL/afiacao/pull/721)): catálogo em React Query (cache 10min — era re-baixado a CADA abertura), seleção de cliente sem esperar a escrita no Omie (ensure em background com token-stamp + join no submit + tri-state found/absent/error anti-duplicação de cliente).
+- ✅ **Onda 3 — dia a dia da vendedora** ([#724](https://github.com/LucasSardenbergL/afiacao/pull/724)): **B2** thread WhatsApp (era asc sem limit → >1000 msgs escondia as NOVAS; agora últimas 100 + realtime em append incremental via `thread-cache` testado); **#18** enviar WhatsApp + concluir/adiar tarefa otimistas (rollback CIRÚRGICO por id — snapshot-restore apagava INBOUND do cliente, achado adversarial); **B3** erro ≠ falso-verde (FilaDoDia "carteira em dia", RotaListaLigacao "sem rota" e inbox "sem conversas" agora distinguem erro com retry); **#16-lite** fila de rota ~11→~4 rodadas de rede; canal `wa-sla` singleton refcount + topic geracional.
+- ✅ **Onda 4 — bundle + PWA** ([#726](https://github.com/LucasSardenbergL/afiacao/pull/726)): **#17** jssip estava DENTRO do entry (IncomingCallModal no shell importava hooks do Provider pesado → Rollup anulava o lazy) → context object extraído pra `webrtc-call-context.ts` leve + guardrail de CI → **entry 472→209KB bruto (−56%)**; **#20** precache PWA 6.2→4.88MB (globIgnores só em telas inerentemente online; picking/recebimento/pedido/Meu Dia/rota VERIFICADOS dentro; CacheFirst progressivo de /assets/). Adversarial pegou: glob `UxRules` case-errado (vivia no mac, morria no Linux do builder), `module-*` genérico → `vendor-posthog` nomeado. **#19 prefetch deliberadamente não feito** (precache já é o prefetch); #17b/B4 já estavam na main.
+- ✅ **Paginação reversa da thread** ([#727](https://github.com/LucasSardenbergL/afiacao/pull/727)): "Carregar mensagens anteriores" fecha a regressão da janela de 100 (Onda 3). Cursor `.lte` anti-empate + `mergeThreadWindow` (refetch não descarta histórico carregado). Adversarial: guard ANTI-BURACO (realtime morto >100 msgs → não costura conversa não-contígua) + INBOUND do RTT do refetch não some mais (P2 pré-existente fechado de graça). 20 testes no thread-cache.
+- ⚠️ **PENDENTE (founder): Publish no Lovable** — NADA disso está no ar até publicar (1× cobre tudo; sem migration, sem edge em nenhum PR).
+- ⏳ **Quando o Codex voltar (~11/06):** (a) **adversarial retroativo** das Ondas 1-4 + #727 (Caminho B acordado — validação própria exaustiva + subagentes adversariais fizeram a 2ª opinião desta rodada); (b) **#16-full** — filtro de cidade server-side na fila de rota (`city_key` persistida + migration; modo de falha = cliente sumindo da fila em silêncio → rito completo com Codex no design, decisão conjunta de NÃO fazer sem ele).
+- 📌 Follow-ups menores registrados nos PRs: virtualização da thread se >1000 msgs virar rotina; "Início da conversa" como feedback de exhausted; `resolverSugestao` não checa erro do 2º UPDATE (pré-existente, paridade); scroll restoration no Safari (sem overflow-anchor).
+
+---
+
 ## 0. SESSÃO 2026-06-10 (2) — getCapitalDeGiro + getTopInadimplentes truncados no cap 1000 (fecha o follow-up do #720)
 
 > Sessão spawnada pelo chip de follow-up da seção abaixo: as duas funções restantes do
