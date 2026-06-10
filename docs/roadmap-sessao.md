@@ -6,6 +6,24 @@
 
 ---
 
+## 🆕 SESSÃO 2026-06-10 (3) — "Melhorias": canal interno de sugestões/problemas com triagem por IA
+
+> Pedido do founder: sessão no app onde todo funcionário sugere melhoria/reporta problema;
+> IA avalia NA HORA (triagem + resposta rápida quando for pergunta de dados, ex.: "quais
+> clientes compram o produto X e o que sugerir de substituto"); fila noturna pro founder
+> validar via Claude Code. Decisões do brainstorm: só staff · triagem + dados guiados
+> (2 ferramentas determinísticas, SEM text-to-SQL) · tela master + prompt pronto pro
+> Claude Code (SEM digest e-mail) · funcionário vê status (loop fechado).
+
+- ✅ **Brainstorm** (abordagem A aprovada: thread por item + triagem instantânea + ferramentas de dados guiadas)
+- 🔄 **Spec** escrita em `docs/superpowers/specs/2026-06-10-melhorias-canal-feedback-design.md` — aguardando revisão do founder
+- ⏳ **Plano de implementação** (writing-plans)
+- ⏳ **Implementação**: migration (2 tabelas + RLS + 2 RPCs) · edge `melhoria-triagem` (Anthropic direto) · frontend (dialog topbar + `/melhorias` + `/gestao/melhorias` + badge)
+- ⏳ **Validação**: vitest helpers + PG17 nas RPCs/RLS + smoke prod
+- ⏳ **Deploy (founder)**: migration no SQL Editor + edge via chat Lovable + Publish
+
+---
+
 ## ⚡ SESSÃO 2026-06-09/10 — Auditoria de velocidade & usabilidade: 24 itens mapeados, 4 ondas COMPLETAS
 
 > Pedido do founder: "revisite o código todo e procure brechas para deixar ele mais rápido
