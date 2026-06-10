@@ -6,6 +6,24 @@
 
 ---
 
+## 📡 SESSÃO 2026-06-10 (radar) — Radar de Clientes: prospecção de empresas novas (estilo Omie)
+
+> Pedido do founder: "funcionalidade similar ao radar de clientes do Omie". Brainstorming
+> concluído com decisões 1-a-1 (prospecção hunter; Brasil + CNAEs curados; dump mensal
+> gratuito da RFB; GitHub Action mensal; founder-only; lista + mapa na v1; ações =
+> registrar contato + cadastrar no Omie + atribuir Tarefa). Lag mensal aceito.
+> Spec: `docs/superpowers/specs/2026-06-10-radar-clientes-design.md`.
+
+- ✅ **Brainstorming + decisões de produto** (objetivo, cobertura, fonte, cadência, quem usa, ações, visual)
+- ✅ **Spec escrita e commitada** — aguardando revisão do founder
+- ⏳ **Plano de implementação** (writing-plans) após aprovação da spec
+- ⏳ **Fatia 1 — fundação de dados**: migrations (radar_empresas/contatos/municipios/state + RLS + RPCs) + edge `radar-ingest` + script DuckDB + 1ª carga real manual (valida URL pós-mudança jan/2026 da RFB + volume)
+- ⏳ **Fatia 2 — tela `/radar`**: lista + filtros server-side + detalhe + registrar contato + KPIs
+- ⏳ **Fatia 3 — ações + mapa**: cadastrar no Omie (`IncluirCliente`) + atribuir Tarefa (customer_user_id NULL) + mapa Leaflet agregado por cidade
+- ⏳ **Fatia 4 — automação**: GitHub Action mensal (CRON_SECRET como secret do GH, founder configura 1×) + check `radar_ingest` no Sentinela
+
+---
+
 ## ⚡ SESSÃO 2026-06-09/10 — Auditoria de velocidade & usabilidade: 24 itens mapeados, 4 ondas COMPLETAS
 
 > Pedido do founder: "revisite o código todo e procure brechas para deixar ele mais rápido
