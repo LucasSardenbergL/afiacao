@@ -5,9 +5,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Printer, Share2, Pencil, Loader2, RotateCcw } from 'lucide-react';
-import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-import { statusLabels, type SalesOrder } from './types';
+import { formatarDataPedido } from '@/lib/pedido/data-pedido';
+import { statusDoPedido, type SalesOrder } from './types';
 import { itemTotal } from './print';
 
 interface SalesOrderDetailSheetProps {
@@ -41,7 +40,7 @@ export function SalesOrderDetailSheet({
   onEdit,
   onRepeat,
 }: SalesOrderDetailSheetProps) {
-  const status = order ? statusLabels[order.status] || statusLabels.rascunho : null;
+  const status = order ? statusDoPedido(order.status) : null;
   const accountLabel =
     order?.account === 'colacor_sc' ? 'Colacor SC' : order?.account === 'colacor' ? 'Colacor' : 'Oben';
   const pv = order?.omie_numero_pedido ? order.omie_numero_pedido.replace(/^0+/, '') || '0' : null;
@@ -80,7 +79,7 @@ export function SalesOrderDetailSheet({
                     {' · '}
                   </>
                 )}
-                {format(new Date(order.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                {formatarDataPedido(order.created_at)}
               </SheetDescription>
             </SheetHeader>
 
