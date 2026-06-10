@@ -211,10 +211,15 @@ BEGIN
   SELECT v_account, id_base_sayersystem, COALESCE(descricao, id_base_sayersystem) FROM _tp_base
   ON CONFLICT (account, id_base_sayersystem) DO UPDATE SET descricao = EXCLUDED.descricao;
 
+  -- volume_ml NULL/0 do staging NUNCA rebaixa o volume oficial existente (espelha o
+  -- COALESCE/NULLIF do corante): senão a expansão (guard volume_ml>0) dropa as fórmulas
+  -- da embalagem silenciosamente. INSERT de embalagem nova com volume NULL → stub 0 (não
+  -- vendável, não satisfaz o guard de expansão). descricao idem (NULL não apaga a oficial).
   INSERT INTO tint_embalagens (account, id_embalagem_sayersystem, descricao, volume_ml)
-  SELECT v_account, id_embalagem_sayersystem, descricao, COALESCE(volume_ml, 0) FROM _tp_emb
+  SELECT v_account, id_embalagem_sayersystem, COALESCE(descricao, id_embalagem_sayersystem), COALESCE(volume_ml, 0) FROM _tp_emb
   ON CONFLICT (account, id_embalagem_sayersystem) DO UPDATE
-    SET descricao = EXCLUDED.descricao, volume_ml = EXCLUDED.volume_ml;
+    SET descricao = COALESCE(EXCLUDED.descricao, tint_embalagens.descricao),
+        volume_ml = COALESCE(NULLIF(EXCLUDED.volume_ml, 0), tint_embalagens.volume_ml);
 
   -- Corantes: volume_total_ml é NOT NULL no oficial → preferir staging volume_ml, senão preservar
   -- o existente, senão 1000 (default do CSV-import p/ stub). preco_litro derivado de custo/volume
@@ -442,7 +447,8 @@ BEGIN
   END LOOP;
 
   -- ──────────────────────────────────────────────────────────────────────────
-  -- E5) Contadores + purge staging >30d + runs órfãos >30min → error.
+  -- E5) Contadores + purge staging SUPERSEDED >30d (preserva latest-per-key) +
+  --     runs órfãos >30min → error.
   -- ──────────────────────────────────────────────────────────────────────────
   UPDATE tint_importacoes
     SET status = 'concluido', registros_importados = v_promovidas, registros_erro = v_erros
@@ -452,14 +458,76 @@ BEGIN
     SET inserts = v_promovidas, errors = v_erros, metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('recalculadas', v_recalc)
   WHERE id = p_sync_run_id;
 
-  DELETE FROM tint_staging_produtos        WHERE created_at < now() - interval '30 days';
-  DELETE FROM tint_staging_bases           WHERE created_at < now() - interval '30 days';
-  DELETE FROM tint_staging_embalagens      WHERE created_at < now() - interval '30 days';
-  DELETE FROM tint_staging_corantes        WHERE created_at < now() - interval '30 days';
-  DELETE FROM tint_staging_skus            WHERE created_at < now() - interval '30 days';
-  DELETE FROM tint_staging_formula_itens   WHERE created_at < now() - interval '30 days';
-  DELETE FROM tint_staging_formulas        WHERE created_at < now() - interval '30 days';
-  DELETE FROM tint_staging_precos_base     WHERE created_at < now() - interval '30 days';
+  -- PURGE: NUNCA apaga a linha MAIS RECENTE por chave natural (account+store) — a promoção
+  -- lê latest-staging-por-chave PRA SEMPRE (recalc por insumo + re-expansão por sku novo
+  -- dependem dela mesmo que o insumo não mude por >30d → nunca é re-enviado). Só remove
+  -- linhas SUPERSEDED (>30d E com uma linha mais nova da MESMA chave). §11 P2-1.
+  -- Ordem de chave: (created_at, id) — idêntica ao DISTINCT ON da promoção.
+  DELETE FROM tint_staging_produtos s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_produtos n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.cod_produto = s.cod_produto
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  DELETE FROM tint_staging_bases s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_bases n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.id_base_sayersystem = s.id_base_sayersystem
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  DELETE FROM tint_staging_embalagens s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_embalagens n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.id_embalagem_sayersystem = s.id_embalagem_sayersystem
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  DELETE FROM tint_staging_corantes s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_corantes n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.id_corante_sayersystem = s.id_corante_sayersystem
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  DELETE FROM tint_staging_skus s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_skus n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.cod_produto = s.cod_produto AND n.id_base = s.id_base AND n.id_embalagem = s.id_embalagem
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  -- Fórmulas: chave = (cod_produto,id_base,cor_id,COALESCE(subcolecao,''),personalizada),
+  -- idêntica ao DISTINCT ON de _formulas_latest. Itens cascateiam pela formula-pai apagada.
+  DELETE FROM tint_staging_formula_itens si
+  WHERE si.staging_formula_id IN (
+    SELECT s.id FROM tint_staging_formulas s
+    WHERE s.created_at < now() - interval '30 days'
+      AND EXISTS (SELECT 1 FROM tint_staging_formulas n
+        WHERE n.account = s.account AND n.store_code = s.store_code
+          AND n.cor_id = s.cor_id AND n.cod_produto = s.cod_produto AND n.id_base = s.id_base
+          AND COALESCE(n.subcolecao, '') = COALESCE(s.subcolecao, '')
+          AND n.personalizada = s.personalizada
+          AND (n.created_at, n.id) > (s.created_at, s.id)));
+
+  DELETE FROM tint_staging_formulas s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_formulas n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.cor_id = s.cor_id AND n.cod_produto = s.cod_produto AND n.id_base = s.id_base
+        AND COALESCE(n.subcolecao, '') = COALESCE(s.subcolecao, '')
+        AND n.personalizada = s.personalizada
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  DELETE FROM tint_staging_precos_base s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_precos_base n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.cod_produto = s.cod_produto AND n.id_base = s.id_base AND n.id_embalagem = s.id_embalagem
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  -- keys-snapshot: point-in-time (não latest-per-key) → purge por tempo é correto.
   DELETE FROM tint_keys_snapshots          WHERE created_at < now() - interval '30 days';
 
   UPDATE tint_sync_runs

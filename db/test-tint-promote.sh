@@ -490,7 +490,137 @@ BEGIN
   RAISE NOTICE 'OK C8 — idempotência: re-rodar todos os runs = estado idêntico (formulas=% itens=% Σpreço=% Σqtd=%)',
     b.n_formulas, b.n_itens, round(b.soma_precos,2), round(b.soma_qtd,4);
 END $$;
+SQL
 
+echo ""
+echo "════════ CENÁRIO 9 — Purge preserva latest-per-key (P2-1) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Produto P9/base B9/emb E900i (vendável). Um INSUMO (precos_base) com DUAS linhas pra MESMA
+-- chave: a VELHA (>30d, custo 100) e a NOVA (recente, custo 500). O insumo "não muda há >30d"
+-- na vida real seria a linha mais nova já com >30d — aqui forçamos a NOVA a também ser >30d
+-- pra provar que o purge a PRESERVA (é a latest da chave) e só apaga a VELHA superseded.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('99999999-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','catalogs','complete');
+INSERT INTO tint_staging_produtos (sync_run_id, account, store_code, cod_produto, descricao)
+VALUES ('99999999-0000-0000-0000-000000000001','oben','L1','P9','Produto 9');
+INSERT INTO tint_staging_bases (sync_run_id, account, store_code, id_base_sayersystem, descricao)
+VALUES ('99999999-0000-0000-0000-000000000001','oben','L1','B9','Base 9');
+INSERT INTO tint_staging_embalagens (sync_run_id, account, store_code, id_embalagem_sayersystem, descricao, volume_ml)
+VALUES ('99999999-0000-0000-0000-000000000001','oben','L1','E900I','Galão 900i',900);
+INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem)
+VALUES ('99999999-0000-0000-0000-000000000001','oben','L1','P9','B9','E900I');
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('99999999-0000-0000-0000-000000000002','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('ff999999-0000-0000-0000-000000000001','99999999-0000-0000-0000-000000000002','oben','L1','COR9','Insumo','P9','B9','E900I',900,false);
+-- (sem itens; preço = só base → fácil de assertar)
+
+-- VELHA superseded (>30d, custo 100) — DEVE ser apagada pelo purge.
+INSERT INTO tint_staging_precos_base (id, sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct, created_at)
+VALUES ('cb999999-0000-0000-0000-0000000000a0','99999999-0000-0000-0000-000000000001','oben','L1','P9','B9','E900I',100,0,0, now() - interval '40 days');
+-- NOVA latest (>30d também, custo 500) — DEVE SOBREVIVER (é a mais recente da chave).
+INSERT INTO tint_staging_precos_base (id, sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct, created_at)
+VALUES ('cb999999-0000-0000-0000-0000000000b0','99999999-0000-0000-0000-000000000001','oben','L1','P9','B9','E900I',500,0,0, now() - interval '31 days');
+
+-- Promove catálogo + fórmula. A promoção (que roda o purge no fim) apaga a VELHA, mantém a NOVA.
+SELECT tint_promote_sync_run('99999999-0000-0000-0000-000000000001');
+SELECT tint_promote_sync_run('99999999-0000-0000-0000-000000000002');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE velha_existe boolean; nova_existe boolean; p numeric;
+BEGIN
+  -- A VELHA superseded foi apagada; a NOVA latest sobreviveu.
+  SELECT EXISTS(SELECT 1 FROM tint_staging_precos_base WHERE id='cb999999-0000-0000-0000-0000000000a0') INTO velha_existe;
+  SELECT EXISTS(SELECT 1 FROM tint_staging_precos_base WHERE id='cb999999-0000-0000-0000-0000000000b0') INTO nova_existe;
+  IF velha_existe THEN RAISE EXCEPTION 'C9.1 FALHOU: linha VELHA superseded (>30d) NÃO foi apagada pelo purge'; END IF;
+  IF NOT nova_existe THEN RAISE EXCEPTION 'C9.2 FALHOU: linha NOVA latest (>30d) foi APAGADA — purge quebrou latest-per-key'; END IF;
+
+  -- E o recalc por insumo DEPENDE dela: novo run de precos_base "vazio" não há; mas um recalc
+  -- via um run que toca o corante/preço precisa achar a base. Provamos que a base latest persiste
+  -- disparando um recálculo: novo run de precos_base reusa a chave? Mais simples: a fórmula promovida
+  -- já saiu com 500 (a latest), provando que a promoção leu a NOVA, não a VELHA.
+  SELECT preco_final_sayersystem INTO p FROM tint_formulas WHERE account='oben' AND cor_id='COR9';
+  IF p IS NULL OR p <> 500 THEN RAISE EXCEPTION 'C9.3 FALHOU: COR9 preço = % (esperado 500 = custo da linha NOVA latest)', p; END IF;
+  RAISE NOTICE 'OK C9 — purge: apaga VELHA superseded (>30d), PRESERVA NOVA latest (>30d); COR9 preço=500 (leu a latest)';
+END $$;
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- C9b: prova que um RECALC posterior (run que toca SÓ o corante) ainda acha a base latest
+-- preservada — se o purge tivesse apagado a base, o recalc viraria NULL (insumo ausente).
+-- COR9 não tem corantes → adicionamos um run de corante "fantasma" não muda nada; em vez disso
+-- forçamos o recalc por um novo run de precos_base que NÃO re-envia a base (cenário do mundo real:
+-- insumo estável). Disparamos via um run de corante que toca uma fórmula que usa a base:
+-- como COR9 não tem item, provamos pela via direta: a função tint_recalc_preco_oficial acha 500.
+DO $$
+DECLARE p numeric; fid uuid;
+BEGIN
+  SELECT id INTO fid FROM tint_formulas WHERE account='oben' AND cor_id='COR9';
+  p := tint_recalc_preco_oficial('oben', fid, 'P9', 'B9', 'E900I');
+  IF p IS NULL OR p <> 500 THEN RAISE EXCEPTION 'C9b FALHOU: recalc pós-purge = % (esperado 500 = base latest preservada, NÃO NULL por insumo apagado)', p; END IF;
+  RAISE NOTICE 'OK C9b — recalc pós-purge acha a base latest preservada (preço 500), não NULL';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 10 — Embalagem volume NULL não rebaixa o oficial (P2-2) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Produto P10/base B10/emb E10 com volume OFICIAL 900 (já promovido). Depois chega um staging
+-- da MESMA embalagem com volume_ml NULL → o upsert NÃO pode rebaixar p/ 0/NULL, senão a
+-- expansão (guard volume_ml>0) dropa a fórmula da E10. Esperado: volume oficial CONTINUA 900
+-- e a fórmula COR10 da E10 segue expandida.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('a0000000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','catalogs','complete');
+INSERT INTO tint_staging_produtos (sync_run_id, account, store_code, cod_produto, descricao)
+VALUES ('a0000000-0000-0000-0000-000000000001','oben','L1','P10','Produto 10');
+INSERT INTO tint_staging_bases (sync_run_id, account, store_code, id_base_sayersystem, descricao)
+VALUES ('a0000000-0000-0000-0000-000000000001','oben','L1','B10','Base 10');
+INSERT INTO tint_staging_embalagens (sync_run_id, account, store_code, id_embalagem_sayersystem, descricao, volume_ml)
+VALUES ('a0000000-0000-0000-0000-000000000001','oben','L1','E10','Galão 10',900);
+INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem)
+VALUES ('a0000000-0000-0000-0000-000000000001','oben','L1','P10','B10','E10');
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('a0000000-0000-0000-0000-000000000002','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('ffa00000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','oben','L1','COR10','Volume','P10','B10','E10',900,false);
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('a0000000-0000-0000-0000-000000000002','ffa00000-0000-0000-0000-000000000001','AX',1,10);
+SELECT tint_promote_sync_run('a0000000-0000-0000-0000-000000000001');
+SELECT tint_promote_sync_run('a0000000-0000-0000-0000-000000000002');
+
+-- Agora chega um run de catálogo com a MESMA embalagem E10 mas volume_ml NULL (regressão do bug).
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('a0000000-0000-0000-0000-000000000003','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','catalogs','complete');
+INSERT INTO tint_staging_embalagens (sync_run_id, account, store_code, id_embalagem_sayersystem, descricao, volume_ml)
+VALUES ('a0000000-0000-0000-0000-000000000003','oben','L1','E10','Galão 10',NULL);
+INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem)
+VALUES ('a0000000-0000-0000-0000-000000000003','oben','L1','P10','B10','E10');
+SELECT tint_promote_sync_run('a0000000-0000-0000-0000-000000000003');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE vol numeric; n int; vff numeric;
+BEGIN
+  -- volume oficial da E10 continua 900 (NÃO rebaixado p/ 0 pelo staging NULL).
+  SELECT volume_ml INTO vol FROM tint_embalagens WHERE account='oben' AND id_embalagem_sayersystem='E10';
+  IF vol IS NULL OR vol <> 900 THEN RAISE EXCEPTION 'C10.1 FALHOU: volume oficial E10 = % (esperado 900; staging NULL rebaixou)', vol; END IF;
+
+  -- a fórmula COR10 da E10 segue existindo (a expansão não foi dropada).
+  SELECT count(*) INTO n FROM tint_formulas f
+    JOIN tint_embalagens e ON e.id=f.embalagem_id
+    WHERE f.account='oben' AND f.cor_id='COR10' AND e.id_embalagem_sayersystem='E10';
+  IF n <> 1 THEN RAISE EXCEPTION 'C10.2 FALHOU: fórmula COR10@E10 sumiu/duplicou (n=%, esperado 1)', n; END IF;
+
+  -- volume_final_ml da fórmula continua 900 (re-expandiu com o volume oficial preservado).
+  SELECT f.volume_final_ml INTO vff FROM tint_formulas f
+    JOIN tint_embalagens e ON e.id=f.embalagem_id
+    WHERE f.account='oben' AND f.cor_id='COR10' AND e.id_embalagem_sayersystem='E10';
+  IF vff <> 900 THEN RAISE EXCEPTION 'C10.3 FALHOU: volume_final_ml COR10@E10 = % (esperado 900)', vff; END IF;
+  RAISE NOTICE 'OK C10 — embalagem volume NULL não rebaixa o oficial: E10 segue 900, COR10@E10 expandida';
+END $$;
+SQL
+
+P -v ON_ERROR_STOP=1 -q <<'SQL'
 SELECT 'TODOS OS TESTES PG17 DA PROMOÇÃO PASSARAM ✓' AS resultado;
 SQL
 echo ""
