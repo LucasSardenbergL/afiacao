@@ -810,8 +810,14 @@ export async function getLastSyncTime(): Promise<string | null> {
 
 // ═══════════════ Lente contábil agregada — DSO/DPO (colacor) ═══════════════
 
-/** Soma paginada do `saldo` dos títulos ABERTOS (robusto vs cap 1000 do PostgREST). */
-async function somarSaldoAberto(
+/**
+ * Soma paginada do `saldo` dos títulos EM ABERTO (OPEN_TITLE_STATUSES, robusto
+ * vs cap 1000 do PostgREST). Fonte canônica de "total a receber/pagar aberto":
+ * consumida pelo DSO (getDsoDpoColacor) e pelos KPIs de /financeiro/gestao.
+ * Erro de qualquer página LANÇA — nunca devolve soma parcial silenciosa.
+ * Contrato travado em src/services/__tests__/somarSaldoAberto.test.ts.
+ */
+export async function somarSaldoAberto(
   tabela: 'fin_contas_receber' | 'fin_contas_pagar',
   company: Company,
 ): Promise<number> {
