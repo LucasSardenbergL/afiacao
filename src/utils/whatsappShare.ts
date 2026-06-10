@@ -11,7 +11,9 @@ interface ShareOrderParams {
   items: OrderItem[];
   total: number;
   orderNumbers?: string[];
-  date?: Date;
+  /** Date = formata data+hora no fuso local; string = já formatada pelo caller
+   *  (ex.: formatarDataPedido, que omite a hora fabricada de pedido do sync). */
+  date?: Date | string;
 }
 
 export function shareOrderViaWhatsApp({
@@ -35,13 +37,15 @@ export function shareOrderViaWhatsApp({
 
   const orderInfo = orderNumbers.length > 0 ? `\nPedido(s): ${orderNumbers.join(' + ')}` : '';
 
-  const dateStr = date.toLocaleDateString('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const dateStr = typeof date === 'string'
+    ? date
+    : date.toLocaleDateString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
 
   const msg = `*Pedido Colacor*\n\nCliente: ${customerName}${orderInfo}\n\nItens:\n${itemsList}\n\n*Total: ${total.toLocaleString(
     'pt-BR',
