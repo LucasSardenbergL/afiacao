@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { toast } from 'sonner';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
-import { useWebRTCCallContextOptional } from '@/contexts/WebRTCCallContext';
+import { useWebRTCCallContextOptional } from '@/contexts/webrtc-call-context';
 import { CallDialerView, type CallDialerViewProps } from './CallDialerView';
 
 type Props = Pick<CallDialerViewProps, 'phoneNumber' | 'customerName' | 'onCallEnd' | 'compact' | 'floating'>;

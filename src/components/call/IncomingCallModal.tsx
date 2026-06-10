@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useWebRTCCallContextOptional } from '@/contexts/WebRTCCallContext';
+import { useWebRTCCallContextOptional } from '@/contexts/webrtc-call-context';
 import {
   Dialog,
   DialogContent,

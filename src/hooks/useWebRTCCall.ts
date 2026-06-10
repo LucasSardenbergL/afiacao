@@ -1,4 +1,4 @@
-import { useWebRTCCallContext, type WebRTCCallContextValue, type WebRTCCallState } from '@/contexts/WebRTCCallContext';
+import { useWebRTCCallContext, type WebRTCCallContextValue, type WebRTCCallState } from '@/contexts/webrtc-call-context';
 
 export type { WebRTCCallState };
 
