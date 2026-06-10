@@ -104,12 +104,18 @@ async function fetchContactLog(ids: string[]): Promise<Map<string, ContatoLog[]>
   const rows: ContactLogRow[] = [];
   for (let i = 0; i < ids.length; i += IN_CHUNK) {
     const chunk = ids.slice(i, i + IN_CHUNK);
-    await paginarLog(from => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
-      .in('customer_user_id', chunk).eq('status', 'opt_out')
-      .order('created_at', { ascending: true }).range(from, from + PAGE - 1) as PromiseLike<PgRes>, rows);
-    await paginarLog(from => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
-      .in('customer_user_id', chunk).gte('created_at', cutoff90)
-      .order('created_at', { ascending: true }).range(from, from + PAGE - 1) as PromiseLike<PgRes>, rows);
+    // Os 2 ramos (opt_out full-history + cadência 90d) são independentes →
+    // PARALELOS por chunk (eram seriais). O sink compartilhado é seguro
+    // (single-thread) e o derivarSinaisContato não depende da ordem global
+    // (já era intercalada por ramo na versão serial); o dedupe abaixo cobre.
+    await Promise.all([
+      paginarLog(from => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
+        .in('customer_user_id', chunk).eq('status', 'opt_out')
+        .order('created_at', { ascending: true }).range(from, from + PAGE - 1) as PromiseLike<PgRes>, rows),
+      paginarLog(from => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
+        .in('customer_user_id', chunk).gte('created_at', cutoff90)
+        .order('created_at', { ascending: true }).range(from, from + PAGE - 1) as PromiseLike<PgRes>, rows),
+    ]);
   }
   // dedup por (cliente|created_at|status) — opt_out recente aparece nas 2 queries
   const seen = new Set<string>();
@@ -125,20 +131,33 @@ async function fetchContactLog(ids: string[]): Promise<Map<string, ContatoLog[]>
   return byCustomer;
 }
 
-/** Lê TODOS os customer_visit_scores com cidade (pagina o cap de 1000 do PostgREST). */
+/**
+ * Lê TODOS os customer_visit_scores com cidade (~7 páginas de 1000). A 1ª
+ * página traz o count exato e as DEMAIS saem em PARALELO — a versão serial
+ * (7 round-trips encadeados) era o estágio mais lento da fila de ligação,
+ * pago a cada visita à tela (staleTime 60s).
+ */
 async function fetchAllVisitScores(): Promise<VisitScoreRow[]> {
-  const out: VisitScoreRow[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
+  const baseSelect = (withCount: boolean) =>
+    supabase
       .from('customer_visit_scores')
-      .select('customer_user_id, farmer_id, city, visit_score')
+      .select('customer_user_id, farmer_id, city, visit_score', withCount ? { count: 'exact' } : undefined)
       .not('city', 'is', null)
-      .order('customer_user_id', { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (error) throw error;
-    const rows = (data ?? []) as VisitScoreRow[];
-    out.push(...rows);
-    if (rows.length < PAGE) break;
+      .order('customer_user_id', { ascending: true });
+
+  const first = await baseSelect(true).range(0, PAGE - 1);
+  if (first.error) throw first.error;
+  const out: VisitScoreRow[] = [...((first.data ?? []) as VisitScoreRow[])];
+  const total = first.count ?? out.length;
+
+  if (total > PAGE) {
+    const ranges: Array<[number, number]> = [];
+    for (let from = PAGE; from < total; from += PAGE) ranges.push([from, from + PAGE - 1]);
+    const pages = await Promise.all(ranges.map(([f, t]) => baseSelect(false).range(f, t)));
+    for (const p of pages) {
+      if (p.error) throw p.error;
+      out.push(...((p.data ?? []) as VisitScoreRow[]));
+    }
   }
   return out;
 }
@@ -196,10 +215,18 @@ export function useRouteContactList(workdayIso: string) {
 
       // 2) candidatos das cidades-alvo (customer_visit_scores é city-aware + RLS por carteira)
       const allScores = await fetchAllVisitScores();
-      const cands0 = allScores.filter(r => {
+      const candsFiltrados = allScores.filter(r => {
         const ck = normalizeCityKey(r.city);
         return ck !== null && prep.cities.some(pc => cityKeyEquals(pc, ck));
       });
+      // Dedupe por cliente: as páginas PARALELAS do fetch podem (raro) trazer
+      // uma linha duplicada em shift de offset — cliente 2× na fila ocuparia
+      // 2 slots de capacidade e geraria 2 ligações.
+      const candByUser = new Map<string, VisitScoreRow>();
+      for (const r of candsFiltrados) {
+        if (!candByUser.has(r.customer_user_id)) candByUser.set(r.customer_user_id, r);
+      }
+      const cands0 = [...candByUser.values()];
       if (cands0.length === 0) return empty;
 
       // 3) métricas econômicas + perfis (nome/telefone) em lote
@@ -207,24 +234,26 @@ export function useRouteContactList(workdayIso: string) {
       const farmerIds = [...new Set(cands0.map(c => c.farmer_id).filter((x): x is string => !!x))];
       const profileIds = [...new Set([...userIds, ...farmerIds])];
 
-      const [metrics, profiles] = await Promise.all([fetchMetrics(userIds), fetchProfiles(profileIds)]);
-      const mByUser = new Map(metrics.map(m => [m.customer_user_id, m]));
-      const pByUser = new Map(profiles.map(p => [p.user_id, p]));
-
-      // cadência ao vivo: lê route_contact_log e deriva os sinais por cliente. Fail-open:
-      // erro de leitura → defaults (fila funciona como antes), NÃO esconde cliente.
+      // Métricas + perfis + log de contato dependem SÓ de userIds → 1 rodada
+      // PARALELA (o log era um await separado DEPOIS de metrics/profiles).
+      // O fail-open do log (erro → defaults, NÃO esconde cliente) é preservado
+      // pelo catch inline — falha do log não derruba os outros dois.
       const hoje = spBusinessDate(new Date());
       // mesmo fallback da UI (RotaListaLigacao grava data_rota = routeDate ?? workday) — senão em dia
       // de diária (routeDate null) o convertido gravado com workday nunca casaria → some de "Resolvidos".
       const dataRotaFila = prep.routeDate ?? workdayIso;
-      let logByCustomer = new Map<string, ContatoLog[]>();
       let cadenciaIndisponivel = false;
-      try {
-        logByCustomer = await fetchContactLog(userIds);
-      } catch (e) {
-        cadenciaIndisponivel = true;
-        logger.warn('Leitura de route_contact_log falhou — cadência ao vivo indisponível', { error: e instanceof Error ? e.message : String(e) });
-      }
+      const [metrics, profiles, logByCustomer] = await Promise.all([
+        fetchMetrics(userIds),
+        fetchProfiles(profileIds),
+        fetchContactLog(userIds).catch((e) => {
+          cadenciaIndisponivel = true;
+          logger.warn('Leitura de route_contact_log falhou — cadência ao vivo indisponível', { error: e instanceof Error ? e.message : String(e) });
+          return new Map<string, ContatoLog[]>();
+        }),
+      ]);
+      const mByUser = new Map(metrics.map(m => [m.customer_user_id, m]));
+      const pByUser = new Map(profiles.map(p => [p.user_id, p]));
       const sinaisByCustomer = new Map<string, SinaisContato>();
       for (const id of userIds) {
         sinaisByCustomer.set(id, derivarSinaisContato(logByCustomer.get(id) ?? [], hoje, dataRotaFila));

@@ -13,7 +13,12 @@ import type { AcaoSugerida } from '@/lib/fila/types';
 // falso-negativo (cap 200 do inbox + proxy last_message_at — Codex P1). Lá será
 // reescrita sobre query/RPC de pendentes com last_outbound_at real. O adapter
 // (whatsappPendente.ts) e o hook (useWhatsappPendentes.ts) já existem, prontos.
-export function useFilaAcoes(): { acoes: AcaoSugerida[]; isLoading: boolean } {
+export function useFilaAcoes(): {
+  acoes: AcaoSugerida[];
+  isLoading: boolean;
+  isError: boolean;
+  retry: () => void;
+} {
   const workdayIso = useMemo(() => spBusinessDate(new Date()), []);
 
   const tarefas = useMinhasTarefas();
@@ -29,5 +34,20 @@ export function useFilaAcoes(): { acoes: AcaoSugerida[]; isLoading: boolean } {
     return rankearFila(dedupe(todas));
   }, [tarefas.data, rota.data, mixgap.data]);
 
-  return { acoes, isLoading: tarefas.isLoading || rota.isLoading || mixgap.isLoading };
+  // isError PROPAGADO (antes era descartado): falha de RLS/rede em qualquer
+  // fonte virava lista vazia → a FilaDoDia afirmava "carteira em dia" —
+  // falso-verde num motor de receita. A UI distingue erro de dia limpo.
+  const isError = tarefas.isError || rota.isError || mixgap.isError;
+  const retry = () => {
+    if (tarefas.isError) void tarefas.refetch();
+    if (rota.isError) void rota.refetch();
+    if (mixgap.isError) void mixgap.refetch();
+  };
+
+  return {
+    acoes,
+    isLoading: tarefas.isLoading || rota.isLoading || mixgap.isLoading,
+    isError,
+    retry,
+  };
 }
