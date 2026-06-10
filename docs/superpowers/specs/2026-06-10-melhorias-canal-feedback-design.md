@@ -65,6 +65,7 @@ Pergunta de dados que NÃO casa com nenhuma ferramenta → a IA classifica como 
 ## 5. Edge function `melhoria-triagem`
 
 - **Gate**: `authorizeCronOrStaff` — somente o caminho **staff** (o caminho cron não se aplica: triagem é sempre disparada por um usuário; requests via cron-secret são rejeitados). Input: `{ item_id }`. A edge lê item + thread do banco via service_role (anti-spoof: não confia em conteúdo do payload). Autorização: caller é o autor do item OU master.
+- ⚠️ **Anti-vazamento de carteira na re-triagem (P1 do passe adversarial)**: as ferramentas de dados só rodam quando **caller == autor do item** (JWT do caller = escopo do autor). Na re-triagem por master de item alheio, a edge **desabilita as tools de dados** (remove do array `tools`) e faz só classificação — senão a tabela de dados nasceria com a visão completa do master e ficaria visível pro autor de carteira restrita. Master que quiser a resposta de dados cria o próprio item.
 - **Loop agentic**: Claude (`claude-sonnet-4-6`) com 3 tools — `clientes_por_produto`, `produtos_relacionados` (executam as RPCs §4 com o JWT do caller; resultado volta como tool_result) e `triar` (terminal). Máx. 3 chamadas de dados; depois força `triar` via `tool_choice`.
 - **Tool `triar` (sempre a última)**:
   ```
@@ -159,4 +160,7 @@ melhoria_mensagens (
 | Vendedora vê cliente fora da carteira via pergunta de dados | RPC roda com `auth.uid()` do solicitante + gates #329; IA avisa escopo |
 | Edge fora do ar | Captação independe da IA; `triagem_status='pendente'`; botão re-triar |
 | Spoof de payload na edge | Edge lê conteúdo do banco por `item_id`; autorização autor-ou-master |
+| Re-triagem por master vaza dados de carteira completa pro autor restrito | Tools de dados desabilitadas quando caller ≠ autor (§5) |
+| Invokes concorrentes no mesmo item (réplicas rápidas) | UI desabilita envio enquanto aguarda resposta; volume staff é baixo — lock formal só se virar problema |
+| Cap de réplicas burlável via PostgREST direto | Aceito: staff identificado (`autor_user_id`), sem custo de LLM (a edge re-valida o cap antes de triar) |
 | Canal morre por falta de retorno | Status visível + resposta do founder no item; badge cobra o founder |
