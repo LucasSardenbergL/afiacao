@@ -19,6 +19,10 @@ import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useOfflineSubmit } from '@/hooks/useOfflineSubmit';
 import { RestoreDraftDialog } from '@/components/unified-order/RestoreDraftDialog';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
+import { CoresDoClienteCard } from '@/components/unified-order/CoresDoClienteCard';
+import { useCoresDoCliente } from '@/hooks/unifiedOrder/useCoresDoCliente';
+import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
+import { toast } from 'sonner';
 import { ProductItemForm } from '@/components/unified-order/ProductItemForm';
 import { ServiceItemForm } from '@/components/unified-order/ServiceItemForm';
 import { CartItemList } from '@/components/unified-order/CartItemList';
@@ -48,6 +52,30 @@ const UnifiedOrder = () => {
   const { isCustomerMode } = h;
   const { user } = useAuth();
   const [restoreOpen, setRestoreOpen] = useState(false);
+
+  // "Cores do cliente": histórico de cores + pré-preenchimento do dialog de tingir.
+  const coresDoCliente = useCoresDoCliente(h.customerUserId);
+  const [tintInitialSearch, setTintInitialSearch] = useState<string | null>(null);
+  const handleRepetirCor = (cor: CorDoCliente, oc: OcorrenciaCor) => {
+    const pool = oc.account === 'colacor' ? h.colacorProducts : h.obenProducts;
+    const product =
+      oc.omieCodigoProduto != null
+        ? pool.find((p) => p.omie_codigo_produto === oc.omieCodigoProduto)
+        : undefined;
+    if (product?.is_tintometric && product.tint_type === 'base') {
+      track('pedido.repetir_cor');
+      setTintInitialSearch(cor.nome);
+      h.setTintPendingProduct(product);
+      return;
+    }
+    // Degradação honesta: base fora do catálogo (inativa/outro painel) ou sem
+    // fluxo de cor → pré-preenche a busca de produtos pra ela seguir manualmente.
+    h.setProductSearch(oc.baseDescricao);
+    if (oc.account === 'oben' || oc.account === 'colacor') h.setActiveTab(oc.account);
+    toast.info('Base fora do fluxo automático de cor', {
+      description: 'Pré-preenchi a busca de produtos com a base daquele pedido — adicione manualmente.',
+    });
+  };
 
   const [searchParams] = useSearchParams();
   const preselectCustomerId = searchParams.get('customer');
@@ -207,6 +235,18 @@ const UnifiedOrder = () => {
               loadingCustomer={h.loadingCustomer} validatingVendedor={h.validatingVendedor}
               vendedorDivergencias={h.vendedorDivergencias}
               onSelectCustomer={h.selectCustomer} onClearCustomer={h.clearCustomer}
+            />
+          )}
+
+          {/* Cores já pedidas pelo cliente — busca + re-pedido (staff) */}
+          {showCustomerSearch && customerReady && (
+            <CoresDoClienteCard
+              cores={coresDoCliente.cores}
+              coresFiltradas={coresDoCliente.coresFiltradas}
+              busca={coresDoCliente.busca}
+              onBuscaChange={coresDoCliente.setBusca}
+              isLoading={coresDoCliente.isLoading}
+              onRepetirCor={handleRepetirCor}
             />
           )}
 
@@ -373,10 +413,12 @@ const UnifiedOrder = () => {
         <TintColorSelectDialog
           product={h.tintPendingProduct}
           open={!!h.tintPendingProduct}
-          onClose={() => h.setTintPendingProduct(null)}
+          onClose={() => { h.setTintPendingProduct(null); setTintInitialSearch(null); }}
           customerUserId={h.customerUserId}
+          initialSearch={tintInitialSearch}
           onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, alternativeProduct) => {
             h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes);
+            setTintInitialSearch(null);
           }}
         />
       )}

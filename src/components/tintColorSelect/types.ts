@@ -8,6 +8,8 @@ export interface TintColorSelectDialogProps {
   onClose: () => void;
   onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, alternativeProduct?: Product) => void;
   customerUserId?: string | null;
+  /** Pré-preenche a busca de cor ao abrir (re-pedido via "Cores do cliente"). */
+  initialSearch?: string | null;
 }
 
 export interface FormulaResult {
