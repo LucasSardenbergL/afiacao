@@ -21,7 +21,7 @@
 - ✅ **Entregue num PR único ([#711](https://github.com/LucasSardenbergL/afiacao/pull/711), 2 commits, mergeado, CI verde):** alerta R$3k (migration `20260609150000`: tabela de estado + tipo no CHECK + tick + cron */30) + intra-day (migration `20260609160000`: RPC com 4 marcas [INTRADAY] + crons 2/2h + sync de estoque encadeado) + gate <R$3k pré-split no `disparar-pedidos-aprovados` (helper TDD 17 testes) + flag `intraday` na `gerar-pedidos-diario` (suprime digest) + hook do tick.
 - ✅ **Validação PG17 local** — `db/test-alerta-pedido-minimo.sh` (11 asserts) + `db/test-rpc-intraday.sh` (8 asserts, migrations reais sobre o snapshot). CI: typecheck + 2861 testes + lint + build verdes.
 - ✅ **Análise dente de serra entregue** — fase 1 = intra-day (adianta disparo ~0,5–1d) + alerta R$3k (lote ótimo ≈ mínimo de faturamento); fase 2 (recalibrar ponto_pedido/cobertura/SS com R=2h via esteira `param_auto`) **gated em 2–4 semanas de medição**.
-- ⏳ **Founder (pra ir ao ar):** colar BLOCO A (`20260609150000`) + BLOCO B (`20260609160000`, com pré-flight da RPC) no SQL Editor + deploy verbatim das edges `gerar-pedidos-diario` e `disparar-pedidos-aprovados` via chat do Lovable. **SEM Publish** (nada de UI).
+- ✅ **Rollout em prod concluído (2026-06-09):** BLOCOS A+B aplicados e validados no SQL Editor + edges `gerar-pedidos-diario` e `disparar-pedidos-aprovados` deployadas verbatim (Active, diff vazio vs main). **Pacote 100% no ar** — 1ª rodada intra-day 7h15 BRT do dia seguinte.
 - ⏸️ **Codex adversarial retroativo** (quando a cota voltar, 11/06+) — revisar o #711.
 
 ---
