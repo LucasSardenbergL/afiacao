@@ -25,9 +25,11 @@ function order(p: Partial<SalesOrder> = {}): SalesOrder {
   } as SalesOrder;
 }
 
-function setup(o: SalesOrder | null) {
+function setup(o: SalesOrder | null, extra: { open?: boolean; loading?: boolean } = {}) {
   render(
     <SalesOrderDetailSheet
+      open={extra.open ?? !!o}
+      loading={extra.loading}
       order={o}
       customerName="DELTA INTERIORES"
       onClose={vi.fn()}
@@ -63,5 +65,16 @@ describe('SalesOrderDetailSheet', () => {
   it('order null não renderiza conteúdo (painel fechado)', () => {
     setup(null);
     expect(screen.queryByText('DELTA INTERIORES')).toBeNull();
+  });
+
+  it('aberto + carregando (detalhe em voo) mostra spinner, sem conteúdo', () => {
+    setup(null, { open: true, loading: true });
+    expect(screen.queryByText('DELTA INTERIORES')).toBeNull();
+    expect(document.querySelector('.animate-spin')).toBeTruthy();
+  });
+
+  it('aberto + falha do detalhe mostra mensagem honesta', () => {
+    setup(null, { open: true, loading: false });
+    expect(screen.getByText('Não foi possível carregar o pedido.')).toBeTruthy();
   });
 });
