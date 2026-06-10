@@ -10,10 +10,10 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
 import type { OrderStatus } from '@/types';
-import { statusLabels, type SalesOrder } from './types';
+import { statusLabels, type OrderFeedRow } from './types';
 
 interface SalesOrderCardProps {
-  order: SalesOrder;
+  order: OrderFeedRow;
   customerName: string;
   checked: boolean;
   onSelectChange: (checked: boolean) => void;
@@ -35,13 +35,13 @@ export function SalesOrderCard({
   onOpenDetail,
   onPrint,
 }: SalesOrderCardProps) {
-  const isAfiacao = order._source === 'afiacao';
+  const isAfiacao = order.origin === 'afiacao';
   const status = statusLabels[order.status] || statusLabels.rascunho;
-  const totalItems = order.items?.reduce((s, i) => s + (i.quantidade || 0), 0) || 0;
-  // Afiação opera sob Colacor SC. Card sempre mostra a empresa (Oben/Colacor/SC)
-  // e, quando for pedido de afiação, um badge secundário "Afiação" pra distinguir
-  // serviço de pedido comercial. Antes mostrava só "Afiação" e perdia a empresa.
-  const orderAccount = isAfiacao ? 'colacor_sc' : (order.account || 'oben');
+  // item_quantity da view = soma das quantidades (o mesmo que o reduce antigo fazia).
+  const totalItems = Number(order.item_quantity) || 0;
+  // Afiação opera sob Colacor SC (a view já manda account='colacor_sc'). O card
+  // mostra a empresa + badge secundário "Afiação" pra distinguir serviço de venda.
+  const orderAccount = order.account || 'oben';
   const accountLabel = orderAccount === 'colacor_sc'
     ? 'Colacor SC'
     : orderAccount === 'colacor'
@@ -79,9 +79,9 @@ export function SalesOrderCard({
             <p className="text-xs text-muted-foreground mt-0.5">
               {format(new Date(order.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
             </p>
-            {order.omie_numero_pedido && (
+            {order.order_number && (
               <p className="text-xs text-muted-foreground">
-                PV: <span className="font-tabular text-foreground">{order.omie_numero_pedido.replace(/^0+/, '') || '0'}</span>
+                PV: <span className="font-tabular text-foreground">{order.order_number.replace(/^0+/, '') || '0'}</span>
               </p>
             )}
           </div>
@@ -91,7 +91,7 @@ export function SalesOrderCard({
             ) : (
               <Badge variant={status.variant}>{status.label}</Badge>
             )}
-            <p className="text-sm font-bold">R$ {order.total.toFixed(2)}</p>
+            <p className="text-sm font-bold">R$ {Number(order.total).toFixed(2)}</p>
             <p className="text-xs text-muted-foreground">{totalItems} itens</p>
             <div className="flex gap-1 justify-end">
               <Button

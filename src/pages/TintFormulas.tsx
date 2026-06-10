@@ -106,6 +106,7 @@ export default function TintFormulas() {
           tint_embalagens!inner(descricao, volume_ml)
         `, { count: 'exact' })
         .eq('account', ACCOUNT)
+        .is('desativada_em', null)
         .order('cor_id')
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 

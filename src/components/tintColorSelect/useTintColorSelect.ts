@@ -12,9 +12,11 @@ interface UseTintColorSelectArgs {
   product: Product;
   open: boolean;
   customerUserId?: string | null;
+  /** Pré-preenche a busca ao abrir (re-pedido via "Cores do cliente"). */
+  initialSearch?: string | null;
 }
 
-export function useTintColorSelect({ product, open, customerUserId }: UseTintColorSelectArgs) {
+export function useTintColorSelect({ product, open, customerUserId, initialSearch }: UseTintColorSelectArgs) {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedFormula, setSelectedFormula] = useState<FormulaResult | null>(null);
@@ -29,6 +31,15 @@ export function useTintColorSelect({ product, open, customerUserId }: UseTintCol
       setPriceSourceOverride(null);
     }
   }, [open]);
+
+  // Re-pedido: abre já filtrado pela cor do histórico (debounced direto,
+  // sem esperar os 300ms — a vendedora vê a lista filtrada na hora).
+  useEffect(() => {
+    if (open && initialSearch) {
+      setSearch(initialSearch);
+      setDebouncedSearch(initialSearch);
+    }
+  }, [open, initialSearch]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
@@ -86,6 +97,7 @@ export function useTintColorSelect({ product, open, customerUserId }: UseTintCol
         .select('id, cor_id, nome_cor, preco_final_sayersystem')
         .eq('account', 'oben')
         .eq('sku_id', skuId!)
+        .is('desativada_em', null)
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
         .limit(20);
       return (data || []) as FormulaResult[];
@@ -105,6 +117,7 @@ export function useTintColorSelect({ product, open, customerUserId }: UseTintCol
         .from('tint_formulas')
         .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem')
         .eq('account', 'oben')
+        .is('desativada_em', null)
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
         .not('sku_id', 'is', null)
         .limit(50);
@@ -235,6 +248,7 @@ export function useTintColorSelect({ product, open, customerUserId }: UseTintCol
         .select('id, sku_id, preco_final_sayersystem')
         .eq('account', 'oben')
         .eq('cor_id', selectedFormula.cor_id)
+        .is('desativada_em', null)
         .neq('sku_id', skuId)
         .not('sku_id', 'is', null);
 
