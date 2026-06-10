@@ -57,9 +57,20 @@ Helper puro: dedup wizard×sync; agrupamento por cor com normalização; ordena�
 recência; filtro com acento ("afiacao"→"afiação"); pedido sem cor ignorado; jsonb
 malformado não quebra. Smoke do componente (estados oculto/lista/sem-resultado).
 
+## Fase 2 — "Repetir pedido" (APROVADA 2026-06-09, mesmo PR)
+Botão **Repetir** no `SalesOrderDetailSheet` (oculto p/ `_source='afiacao'` e pedido
+sem itens) → `/sales/new?customer=<user>&repeat=<orderId>`. No wizard, efeito one-shot
+(padrão deep-link, gated staff + catálogos carregados + pedido do MESMO cliente):
+- helper puro `montarPlanoReplicacao(items, catalogo)` (`src/lib/pedido/replicar-pedido.ts`)
+  decide por item: **direto** (qtd antiga + **PREÇO ATUAL do cliente** — decisão do
+  founder, nunca o preço velho) · **fila de tinta** (base tintométrica → dialog de cor
+  um a um, pré-buscado com a cor daquela compra; cancelar = pular) · **fora do
+  catálogo** (listado no toast — nada some em silêncio);
+- toast-resumo com as três contagens; telemetria `pedido.repetir_pedido`.
+Limitação v1: a quantidade dos itens de tinta segue o fluxo do dialog (ela ajusta no
+carrinho se precisar de mais).
+
 ## Fora do escopo v1 (registrado)
-- Fase 2: "repetir do pedido antigo" (botão no detalhe do pedido → wizard com carrinho
-  pré-carregado).
 - Busca global de cor no Cmd+K (hoje busca só catálogo `tint_formulas`).
 - Recuperar cores antigas da Colacor anotadas fora do padrão `Cor:` (parsing fuzzy).
 - Pré-seleção automática da fórmula no dialog (matching nome↔catálogo é heurístico;

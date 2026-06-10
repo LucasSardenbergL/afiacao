@@ -4,7 +4,7 @@
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Printer, Share2, Pencil, Loader2 } from 'lucide-react';
+import { Printer, Share2, Pencil, Loader2, RotateCcw } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { statusLabels, type SalesOrder } from './types';
@@ -21,6 +21,8 @@ interface SalesOrderDetailSheetProps {
   onPrint: () => void;
   onShare: () => void;
   onEdit: () => void;
+  /** "Repetir pedido": abre o wizard com cliente + itens deste pedido. */
+  onRepeat?: () => void;
 }
 
 const fmt = (v: number) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -37,6 +39,7 @@ export function SalesOrderDetailSheet({
   onPrint,
   onShare,
   onEdit,
+  onRepeat,
 }: SalesOrderDetailSheetProps) {
   const status = order ? statusLabels[order.status] || statusLabels.rascunho : null;
   const accountLabel =
@@ -139,6 +142,13 @@ export function SalesOrderDetailSheet({
                 <Printer className="w-4 h-4" />
                 Imprimir
               </Button>
+              {/* Repetir: só pedidos comerciais com itens (afiação tem outro formato de item) */}
+              {onRepeat && order._source !== 'afiacao' && (order.items?.length || 0) > 0 && (
+                <Button variant="outline" onClick={onRepeat} className="gap-2" title="Repetir este pedido num pedido novo">
+                  <RotateCcw className="w-4 h-4" />
+                  Repetir
+                </Button>
+              )}
               <Button variant="outline" onClick={onShare} className="gap-2">
                 <Share2 className="w-4 h-4" />
                 Compartilhar

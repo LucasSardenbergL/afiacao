@@ -22,6 +22,8 @@ import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { CoresDoClienteCard } from '@/components/unified-order/CoresDoClienteCard';
 import { useCoresDoCliente } from '@/hooks/unifiedOrder/useCoresDoCliente';
 import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
+import { montarPlanoReplicacao, type ItemTinta } from '@/lib/pedido/replicar-pedido';
+import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { ProductItemForm } from '@/components/unified-order/ProductItemForm';
 import { ServiceItemForm } from '@/components/unified-order/ServiceItemForm';
@@ -85,6 +87,15 @@ const UnifiedOrder = () => {
   const returnToRaw = searchParams.get('returnTo');
   const returnTo = returnToRaw && returnToRaw.startsWith('/') && !returnToRaw.startsWith('//') ? returnToRaw : null;
 
+  /* ─── "Repetir pedido" (?repeat=<sales_order_id>) ───
+   * One-shot após cliente + catálogo prontos (padrão do deep-link): busca o
+   * pedido antigo, monta o plano (helper puro) e aplica — itens comuns entram
+   * direto (qtd antiga, PREÇO ATUAL do cliente); bases tintométricas entram
+   * numa fila que abre o dialog de cor um a um (humano confirma cada tinta). */
+  const repeatId = searchParams.get('repeat');
+  const repeatHandled = useRef(false);
+  const [tintQueue, setTintQueue] = useState<ItemTinta[]>([]);
+
   useEffect(() => {
     if (
       preselectCustomerId &&
@@ -96,6 +107,60 @@ const UnifiedOrder = () => {
       void h.selectCustomerByUserId(preselectCustomerId);
     }
   }, [preselectCustomerId, h.isStaff, h.selectedCustomer, h.selectCustomerByUserId]);
+
+  // Aplica a replicação quando tudo está pronto (cliente + catálogo da conta do pedido).
+  useEffect(() => {
+    if (!repeatId || repeatHandled.current || !h.isStaff || !h.selectedCustomer || !h.customerUserId) return;
+    // Catálogo ainda carregando → espera (senão todo item cairia em "fora do catálogo").
+    if (h.loadingObenProducts || h.loadingColacorProducts) return;
+    repeatHandled.current = true;
+    void (async () => {
+      const { data: pedido, error } = await supabase
+        .from('sales_orders')
+        .select('id, account, items, omie_numero_pedido, customer_user_id')
+        .eq('id', repeatId)
+        .maybeSingle();
+      if (error || !pedido) {
+        toast.error('Não consegui carregar o pedido pra repetir.');
+        return;
+      }
+      if (pedido.customer_user_id !== h.customerUserId) {
+        toast.error('O pedido a repetir é de outro cliente.');
+        return;
+      }
+      const catalogo = pedido.account === 'colacor' ? h.colacorProducts : h.obenProducts;
+      const plano = montarPlanoReplicacao(pedido.items, catalogo);
+      for (const d of plano.diretos) h.addProductToCart(d.product, d.quantidade);
+      if (plano.tintas.length > 0) setTintQueue(plano.tintas);
+      track('pedido.repetir_pedido');
+      const pv = (pedido.omie_numero_pedido ?? '').replace(/^0+/, '');
+      const partes = [
+        plano.diretos.length > 0 ? `${plano.diretos.length} no carrinho` : null,
+        plano.tintas.length > 0 ? `${plano.tintas.length} de tinta pra confirmar a cor` : null,
+        plano.foraDoCatalogo.length > 0 ? `${plano.foraDoCatalogo.length} fora do catálogo` : null,
+      ].filter(Boolean);
+      if (partes.length === 0) {
+        toast.info(`Pedido${pv ? ` ${pv}` : ''} sem itens replicáveis.`);
+      } else {
+        toast.success(`Pedido${pv ? ` ${pv}` : ''} replicado: ${partes.join(' · ')}`, {
+          description: plano.foraDoCatalogo.length > 0 ? `Fora do catálogo: ${plano.foraDoCatalogo.join('; ')}` : undefined,
+        });
+      }
+    })();
+    // h é objeto novo a cada render; deps nos campos usados.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repeatId, h.isStaff, h.selectedCustomer, h.customerUserId, h.obenProducts, h.colacorProducts, h.loadingObenProducts, h.loadingColacorProducts]);
+
+  // Fila de tintas da replicação: abre o dialog de cor um a um (o próximo
+  // entra quando o atual fecha — confirmado OU cancelado, que é "pular").
+  useEffect(() => {
+    if (h.tintPendingProduct || tintQueue.length === 0) return;
+    const [proxima, ...resto] = tintQueue;
+    setTintQueue(resto);
+    setTintInitialSearch(proxima.nomeCor);
+    h.setTintPendingProduct(proxima.product);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [h.tintPendingProduct, tintQueue]);
 
   useOrderDeepLink({
     selectedCustomer: h.selectedCustomer,

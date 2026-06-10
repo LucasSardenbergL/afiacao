@@ -77,4 +77,32 @@ describe('SalesOrderDetailSheet', () => {
     setup(null, { open: true, loading: false });
     expect(screen.getByText('Não foi possível carregar o pedido.')).toBeTruthy();
   });
+
+  it('botão Repetir aparece pra pedido comercial e dispara onRepeat', () => {
+    const onRepeat = vi.fn();
+    render(
+      <SalesOrderDetailSheet
+        open
+        order={order()}
+        customerName="DELTA INTERIORES"
+        onClose={vi.fn()} onPrint={vi.fn()} onShare={vi.fn()} onEdit={vi.fn()}
+        onRepeat={onRepeat}
+      />,
+    );
+    screen.getByText('Repetir').click();
+    expect(onRepeat).toHaveBeenCalledTimes(1);
+  });
+
+  it('botão Repetir NÃO aparece pra pedido de afiação (formato de item diferente)', () => {
+    render(
+      <SalesOrderDetailSheet
+        open
+        order={order({ _source: 'afiacao' })}
+        customerName="DELTA INTERIORES"
+        onClose={vi.fn()} onPrint={vi.fn()} onShare={vi.fn()} onEdit={vi.fn()}
+        onRepeat={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText('Repetir')).toBeNull();
+  });
 });
