@@ -42,7 +42,7 @@ function ResolvidosSection({ itens }: { itens: RouteContactItem[] }) {
 export default function RotaListaLigacao() {
   // data de NEGÓCIO em SP (não UTC — senão das ~21h às 24h locais a data vira o dia seguinte → rota errada).
   const workday = useMemo(() => spBusinessDate(new Date()), []);
-  const { data, isLoading } = useRouteContactList(workday);
+  const { data, isLoading, isError, refetch } = useRouteContactList(workday);
   const { isMaster, isGestorComercial } = useAuth();
 
   // Grava (idempotente, best-effort) a fila de ligação aberta — denominador do painel.
@@ -50,6 +50,25 @@ export default function RotaListaLigacao() {
   useSnapshotRouteQueue(data?.routeDate ?? null, data?.callQueue);
 
   if (isLoading) return <PageSkeleton variant="list" />;
+
+  // Erro ≠ "sem rota": a query falha (após retries) caía no MESMO empty state
+  // de "Sem rota para amanhã" — a vendedora deixava de ligar pros clientes do
+  // dia achando que não havia fila (falso-verde em motor de receita).
+  if (isError) {
+    return (
+      <div className="p-4 space-y-3">
+        <h1 className="font-display text-2xl">Lista de ligação por rota</h1>
+        <EmptyState
+          icon={Phone}
+          tone="operational"
+          title="Não consegui carregar a fila"
+          description="Falha ao buscar a rota — isso NÃO significa que não há clientes pra ligar."
+          actionLabel="Tentar de novo"
+          onAction={() => refetch()}
+        />
+      </div>
+    );
+  }
 
   const cidadesLabel = data?.cidades?.length ? data.cidades.join(', ') : null;
   const routeDate = data?.routeDate ?? workday;

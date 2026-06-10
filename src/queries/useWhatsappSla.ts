@@ -34,6 +34,48 @@ export async function fetchWhatsappSla(): Promise<WaSlaRow[]> {
 const SLA_QUERY_KEY = ['whatsapp', 'sla'] as const;
 const REALTIME_THROTTLE_MS = 3000;
 
+/* Canal realtime compartilhado entre TODAS as instâncias do hook (module-level
+   de propósito). refcount: cria no 1º acquire, derruba no último release. O
+   QueryClient é único no app (App.tsx) — capturá-lo no 1º acquire é seguro. */
+let slaRealtimeRefs = 0;
+let slaRealtimeTeardown: (() => void) | null = null;
+// Topic GERACIONAL: o removeChannel é async e o client deduplica canal por
+// topic — recriar 'wa-sla' logo após o teardown (navegação Meu Dia → inbox:
+// refs 2→0→1 no mesmo commit) reusaria a instância em state='leaving', cujo
+// subscribe() é no-op e que sai da lista de roteamento quando o phx_leave
+// confirma → realtime morto silencioso. Com o sufixo de geração, cada
+// criação usa um topic virgem e nunca colide com o canal moribundo.
+let slaRealtimeGen = 0;
+
+function acquireSlaRealtime(qc: ReturnType<typeof useQueryClient>): () => void {
+  slaRealtimeRefs++;
+  if (slaRealtimeRefs === 1) {
+    const throttle = createLeadingTrailingThrottle(() => {
+      qc.invalidateQueries({ queryKey: SLA_QUERY_KEY });
+    }, REALTIME_THROTTLE_MS);
+    const ch = supabase.channel(`wa-sla-${++slaRealtimeGen}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_messages' }, throttle.fire)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_conversations' }, throttle.fire)
+      .subscribe();
+    slaRealtimeTeardown = () => {
+      // cancel, não flush: sem consumidor montado não há quem precise da
+      // invalidação — o próximo mount refaz a query (staleTime 15s).
+      throttle.cancel();
+      supabase.removeChannel(ch);
+    };
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    slaRealtimeRefs--;
+    if (slaRealtimeRefs === 0 && slaRealtimeTeardown) {
+      slaRealtimeTeardown();
+      slaRealtimeTeardown = null;
+    }
+  };
+}
+
 export function useWhatsappSla() {
   const qc = useQueryClient();
   const q = useQuery({
@@ -43,35 +85,14 @@ export function useWhatsappSla() {
     refetchIntervalInBackground: false,
     staleTime: 15000,
   });
-  // Realtime: mensagem/conversa nova revalida o SLA — com throttle
-  // leading+trailing (helper testado): o 1º evento invalida na hora; a rajada
-  // (blast de template, sync em lote) colapsa numa revalidação por janela de
-  // 3s. Sem o throttle, cada mensagem de QUALQUER conversa re-executava a
-  // view scan-heavy inteira, por cliente montado.
-  //
-  // ⚠️ Limitação PRÉ-EXISTENTE (achada na revisão deste PR, não introduzida
-  // por ele): o supabase-js REUSA a instância de canal pelo topic 'wa-sla' —
-  // quando DUAS instâncias deste hook montam juntas (ex.: Meu Dia monta
-  // SlaCardMeuDia + useCriticaFila), o segundo subscribe() é no-op e o match
-  // de bindings por índice pode derrubar o canal inteiro (CHANNEL_ERROR
-  // silencioso). O realtime do SLA nessas telas fica por conta do poll de
-  // 30s. Fix de verdade (canal singleton com refcount) está no mapa da
-  // auditoria de 2026-06-09 — Onda 3, junto do trabalho de WhatsApp.
-  useEffect(() => {
-    const throttle = createLeadingTrailingThrottle(() => {
-      qc.invalidateQueries({ queryKey: SLA_QUERY_KEY });
-    }, REALTIME_THROTTLE_MS);
-    const ch = supabase.channel('wa-sla')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_messages' }, throttle.fire)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'whatsapp_conversations' }, throttle.fire)
-      .subscribe();
-    return () => {
-      // cancel, não flush: componente desmontado não precisa invalidar — o
-      // próximo mount refaz a query (staleTime 15s) de qualquer forma.
-      throttle.cancel();
-      supabase.removeChannel(ch);
-    };
-  }, [qc]);
+  // Realtime SINGLETON com refcount (fix da Onda 3): o supabase-js REUSA a
+  // instância de canal pelo topic 'wa-sla' — duas instâncias deste hook
+  // montadas juntas (Meu Dia: SlaCardMeuDia + useCriticaFila) faziam o 2º
+  // subscribe() ser no-op e o match de bindings por índice podia derrubar o
+  // canal inteiro (CHANNEL_ERROR silencioso, realtime morto). O canal nasce
+  // no 1º consumidor e morre no último; o throttle continua colapsando a
+  // rajada (blast/sync em lote) numa revalidação por janela de 3s.
+  useEffect(() => acquireSlaRealtime(qc), [qc]);
   return q;
 }
 

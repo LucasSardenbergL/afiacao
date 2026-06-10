@@ -53,7 +53,7 @@ function AcaoCta({ a, temCritica }: { a: AcaoSugerida; temCritica: boolean }) {
  * Fase 3 (flag `filaContextPanel`): clicar no item abre o FilaContextPanel (painel de contexto).
  */
 export function FilaDoDia() {
-  const { acoes, isLoading } = useFilaAcoes();
+  const { acoes, isLoading, isError, retry } = useFilaAcoes();
   const packs = useCriticaFila(acoes);
   const shownRef = useRef<Set<string>>(new Set());
 
@@ -96,6 +96,19 @@ export function FilaDoDia() {
   }
 
   if (visiveis.length === 0) {
+    // Erro ≠ dia limpo: sem isto, RLS negada/rede ruim virava "carteira em
+    // dia" — falso-verde num motor de receita (a vendedora deixava de ligar).
+    if (isError) {
+      return (
+        <Card className="p-6">
+          <p className="text-sm font-medium">Não consegui carregar sua fila.</p>
+          <p className="text-2xs text-muted-foreground mt-1">
+            Falha ao buscar tarefas/rota — isso NÃO significa que a carteira está em dia.
+          </p>
+          <Button size="sm" variant="outline" className="mt-3" onClick={retry}>Tentar de novo</Button>
+        </Card>
+      );
+    }
     return (
       <Card className="p-6">
         <p className="text-sm font-medium">Nada prioritário na fila agora.</p>
@@ -118,6 +131,12 @@ export function FilaDoDia() {
           <p className="text-2xs text-muted-foreground">
             {visiveis.length} ações priorizadas — tarefas, rota e oportunidades, do mais urgente ao menos.
           </p>
+          {isError && (
+            <p className="text-2xs text-status-warning">
+              Uma das fontes falhou ao carregar — a lista pode estar incompleta.{' '}
+              <button type="button" className="underline" onClick={retry}>Tentar de novo</button>
+            </p>
+          )}
         </CardHeader>
         <div className="divide-y divide-border">
           {visiveis.slice(0, 30).map((a, i) => {

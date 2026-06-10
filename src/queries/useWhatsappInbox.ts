@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { appendRealtimeMessage } from '@/lib/whatsapp/thread-cache';
 
 export interface WaConversation {
   id: string; phone_e164: string | null; contact_name: string | null;
@@ -52,17 +53,24 @@ export function useWhatsappConversations() {
   return q;
 }
 
+/** Últimas N mensagens da thread (render asc). */
+const THREAD_LIMIT = 100;
+
 export function useWhatsappThread(conversationId: string | undefined) {
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ['whatsapp', 'thread', conversationId],
     queryFn: async () => {
+      // DESC + limit + reverse: as ÚLTIMAS 100 mensagens. A versão sem limit
+      // em ordem asc estourava o cap de 1000 do PostgREST ficando com as 1000
+      // mais ANTIGAS — em conversa longa, as mensagens novas SUMIAM da tela.
       const res = await (waFrom('whatsapp_messages')
         .select('*')
         .eq('conversation_id', conversationId!)
-        .order('created_at', { ascending: true }) as PromiseLike<{ data: unknown; error: { message: string } | null }>);
+        .order('created_at', { ascending: false })
+        .limit(THREAD_LIMIT) as PromiseLike<{ data: unknown; error: { message: string } | null }>);
       if (res.error) throw new Error(res.error.message);
-      return (res.data ?? []) as WaMessage[];
+      return ((res.data ?? []) as WaMessage[]).reverse();
     },
     enabled: !!conversationId,
   });
@@ -70,7 +78,15 @@ export function useWhatsappThread(conversationId: string | undefined) {
     if (!conversationId) return;
     const channel = supabase.channel(`wa-thread-${conversationId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'whatsapp_messages', filter: `conversation_id=eq.${conversationId}` },
-        () => qc.invalidateQueries({ queryKey: ['whatsapp', 'thread', conversationId] }))
+        (payload) => {
+          // Append INCREMENTAL (helper testado): era invalidate → re-baixava a
+          // conversa inteira a cada mensagem. Dedupe por id; OUT reconcilia a
+          // otimista do próprio envio (ver thread-cache.ts).
+          qc.setQueryData<WaMessage[]>(
+            ['whatsapp', 'thread', conversationId],
+            (old) => appendRealtimeMessage(old, payload.new as WaMessage),
+          );
+        })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [conversationId, qc]);
