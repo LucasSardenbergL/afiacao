@@ -4,8 +4,10 @@
  * Uso: bun scripts/radar/carga.ts --mes 2026-05 [--base-url <url>] [--dry-run] [--so-municipios]
  * Env: RADAR_INGEST_URL (https://<proj>.supabase.co/functions/v1/radar-ingest)
  *      RADAR_CRON_SECRET (valor do CRON_SECRET do Vault)
- * ⚠️ A RFB mudou layout/URLs em jan/2026 — o script tenta os candidatos conhecidos
- * e ABORTA com instrução clara se nenhum responder (descoberta faz parte da 1ª carga).
+ * ⚠️ A RFB mudou layout/URLs em jan/2026 — o caminho VIVO (descoberto na 1ª carga,
+ * 2026-06-11) é o share Nextcloud público via WebDAV (token público, linkado da
+ * página oficial de dados abertos): public.php/webdav/<YYYY-MM>/<arquivo>.
+ * O script tenta os candidatos e ABORTA com instrução clara se nenhum responder.
  */
 import { mkdirSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -23,11 +25,16 @@ for (let i = 2; i < process.argv.length; i++) {
 const MES = args.get("mes") ?? "";
 if (!/^\d{4}-\d{2}$/.test(MES)) { console.error("--mes YYYY-MM obrigatório"); process.exit(1); }
 const DRY = args.get("dry-run") === "true";
+// Share público oficial da RFB (Nextcloud). O token identifica o SHARE público,
+// não é credencial — é o mesmo link aberto da página de dados abertos do gov.br.
+const RFB_SHARE_TOKEN = "YggdBLfdninEJX9";
 const URL_BASES = args.get("base-url") ? [args.get("base-url")!] : [
+  `https://arquivos.receitafederal.gov.br/public.php/webdav/${MES}`,
   `https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/${MES}`,
   `https://dadosabertos.rfb.gov.br/CNPJ/dados_abertos_cnpj/${MES}`,
-  `https://dadosabertos.rfb.gov.br/CNPJ/${MES}`,
 ];
+// WebDAV de share Nextcloud exige basic auth "<token>:" — as outras bases, não.
+const authDe = (base: string) => base.includes("public.php/webdav") ? `-u "${RFB_SHARE_TOKEN}:"` : "";
 const INGEST_URL = process.env.RADAR_INGEST_URL ?? "";
 const SECRET = process.env.RADAR_CRON_SECRET ?? "";
 if (!DRY && (!INGEST_URL || !SECRET)) { console.error("RADAR_INGEST_URL e RADAR_CRON_SECRET obrigatórios (ou use --dry-run)"); process.exit(1); }
@@ -40,7 +47,7 @@ const sh = (cmd: string) => execSync(cmd, { stdio: ["ignore", "pipe", "inherit"]
 let BASE = "";
 for (const cand of URL_BASES) {
   try {
-    const code = sh(`curl -s -o /dev/null -w '%{http_code}' --max-time 30 -I "${cand}/Cnaes.zip"`).trim();
+    const code = sh(`curl -s -o /dev/null -w '%{http_code}' --max-time 30 -I ${authDe(cand)} "${cand}/Cnaes.zip"`).trim();
     if (code === "200") { BASE = cand; break; }
     console.log(`candidato ${cand} → HTTP ${code}`);
   } catch { /* tenta o próximo */ }
@@ -57,7 +64,7 @@ const baixar = (nome: string) => {
   const dest = `${WORK}/${nome}`;
   if (!existsSync(dest)) {
     console.log(`⬇️  ${nome}`);
-    sh(`curl -fSL --retry 3 -C - -o "${dest}" "${BASE}/${nome}"`);
+    sh(`curl -fSL --retry 3 -C - ${authDe(BASE)} -o "${dest}" "${BASE}/${nome}"`);
   }
   return dest;
 };
