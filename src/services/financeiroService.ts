@@ -3,6 +3,7 @@ import type { Company } from "@/contexts/CompanyContext";
 import { agregarRealizadoPorDia } from "@/lib/financeiro/fluxo-realizado-helpers";
 import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/dso-dpo-helpers";
 import { OPEN_TITLE_STATUSES } from "@/lib/financeiro/titulo-status";
+import { spBusinessDate } from "@/lib/time/sp-day";
 import type {
   FinAgingPagarView,
   FinAgingReceberView,
@@ -193,6 +194,12 @@ type PaginaResult<T> = { data: T[] | null; error: { message: string } | null };
  * O callback DEVE aplicar `.order()` estável (id) + `.range(from, to)`: offset
  * sem ORDER BY pula/duplica linha entre páginas (o sync de CR/CP grava a cada
  * 10min). Erro de qualquer página LANÇA Error real — nunca lista parcial.
+ * ⚠️ Limitação conhecida (codex, pós-#722): a leitura paginada NÃO é snapshot —
+ * se o sync gravar ENTRE as páginas de uma mesma leitura, uma linha pode ser
+ * pulada/duplicada (distorção transitória de 1 refresh; autocorrige no load
+ * seguinte). Aceito: a janela é de segundos a cada load vs sync a cada ~10min,
+ * e o erro residual é ínfimo perto do truncamento de 90% que este helper
+ * corrige. Consolidação atômica = RPC SQL agregada (evolução, se virar dor).
  */
 async function buscarTodasPaginas<T>(
   contexto: string,
@@ -535,10 +542,12 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     : [company];
 
   const results: CapitalDeGiro[] = [];
-  const today = new Date().toISOString().slice(0, 10);
-  const d30 = new Date();
-  d30.setDate(d30.getDate() + 30);
-  const in30 = d30.toISOString().slice(0, 10);
+  // Janela no dia de SÃO PAULO, não UTC (codex, pós-#722): com toISOString(),
+  // das ~21h às 24h locais o "hoje" já era amanhã → a projeção 30d excluía os
+  // vencimentos de HOJE e incluía um 31º dia. Mesmo bug de fuso do #550;
+  // data_vencimento é DATE de negócio → compara com a data-calendário de SP.
+  const today = spBusinessDate(new Date());
+  const in30 = spBusinessDate(new Date(Date.now() + 30 * 86400000));
 
   for (const co of companies) {
     // CR/CP abertos: linhas individuais (vencimento pra projeção 30d + nome pro
