@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **194** custom migrations totais
-- **730** objetos esperados (criados por estas migrations)
+- **195** custom migrations totais
+- **736** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
+  - `function`: 187
   - `rls_policy`: 183
-  - `function`: 183
-  - `index`: 134
+  - `index`: 135
   - `cron_job`: 102
-  - `table`: 85
+  - `table`: 86
   - `trigger`: 39
   - `enum_value`: 4
 
@@ -1693,12 +1693,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.omie-sync-estoque-intraday-oben` | — |
 | `cron_job` | `cron.omie-sync-estoque-diario` | — |
 
+### `20260610150000_reposicao_auto_aprovacao_piloto.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_auto_aprovacao_log` | — |
+| `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
+| `function` | `public.reposicao_pedido_auto_aprovavel` | — |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+
 ### `20260610200000_push_vendedora.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `table` | `public.push_subscriptions` | — |
 | `index` | `public.idx_push_subscriptions_user` | `push_subscriptions` |
+| `function` | `public.upsert_push_subscription` | — |
+| `function` | `public.delete_push_subscription` | — |
 | `function` | `public._push_enviar` | — |
 | `function` | `public.push_whatsapp_inbound` | — |
 | `function` | `public.push_tarefa_nova` | — |
