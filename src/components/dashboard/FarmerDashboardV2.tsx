@@ -12,6 +12,7 @@ import { SlaCardMeuDia } from '@/components/whatsapp/SlaCardMeuDia';
 import { FilaDoDia } from '@/components/fila/FilaDoDia';
 import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
 import { useMyPositivacao } from '@/hooks/useMyPositivacao';
+import { AtivarNotificacoesCard } from '@/components/push/AtivarNotificacoesCard';
 
 /**
  * Dashboard Farmer V2 — placar do mês (positivação) + a FILA é o dia (G1).
@@ -41,6 +42,9 @@ export function FarmerDashboardV2() {
           Seu placar do mês e a fila priorizada: olhe a positivação, depois trabalhe a fila de cima pra baixo.
         </p>
       </div>
+
+      {/* Opt-in de Web Push — some quando ativo/negado/sem suporte/dispensado */}
+      <AtivarNotificacoesCard />
 
       {/* Placar do mês (KPIs da carteira) — o norte da farmer */}
       {positivacao && <PositivacaoHero kpis={positivacao} isHunter={false} />}

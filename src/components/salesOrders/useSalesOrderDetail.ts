@@ -21,9 +21,12 @@ export const orderDetailQueryKey = (
   id: string,
 ) => ['order-detail', userId, origin, id] as const;
 
+// fallbackName: nome vindo da listagem (view) — usado se a consulta de profile
+// falhar transitoriamente, pra impressão/share não saírem como "Cliente" genérico.
 export async function fetchOrderDetail(
   origin: OrderFeedRow['origin'],
   id: string,
+  fallbackName?: string | null,
 ): Promise<OrderDetail> {
   let order;
   if (origin === 'sales') {
@@ -38,26 +41,33 @@ export async function fetchOrderDetail(
     order = mapAfiacaoDetail(data as AfiacaoOrderRow);
   }
 
-  const { data: prof } = await supabase
+  const { data: prof, error: profError } = await supabase
     .from('profiles')
     .select('name, document')
     .eq('user_id', order.customer_user_id)
     .maybeSingle();
+  // Falha transitória do profile não degrada pra "Cliente" se a listagem já
+  // sabe o nome (mesma fonte, via view). Documento fica de fora (honesto).
+  if (profError && !prof) {
+    return { order, customerName: decodeHtml(fallbackName || 'Cliente'), customerDocument: undefined };
+  }
 
   return {
     order,
-    customerName: decodeHtml(prof?.name || 'Cliente'),
+    customerName: decodeHtml(prof?.name || fallbackName || 'Cliente'),
     customerDocument: prof?.document ?? undefined,
   };
 }
 
 // Sem placeholderData entre ids: trocar de pedido NUNCA mostra dados do anterior.
-export function useSalesOrderDetail(row: Pick<OrderFeedRow, 'origin' | 'id'> | null) {
+export function useSalesOrderDetail(
+  row: (Pick<OrderFeedRow, 'origin' | 'id'> & { customer_name?: string | null }) | null,
+) {
   const { user } = useAuth();
   return useQuery({
     queryKey: orderDetailQueryKey(user?.id, row?.origin ?? 'sales', row?.id ?? ''),
     enabled: !!row && !!user,
     staleTime: 60_000,
-    queryFn: () => fetchOrderDetail(row!.origin, row!.id),
+    queryFn: () => fetchOrderDetail(row!.origin, row!.id, row!.customer_name),
   });
 }

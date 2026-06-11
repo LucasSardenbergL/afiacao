@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **194** custom migrations totais
-- **733** objetos esperados (criados por estas migrations)
+- **197** custom migrations totais
+- **752** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 186
-  - `function`: 182
-  - `index`: 136
-  - `cron_job`: 101
-  - `table`: 86
-  - `trigger`: 38
+  - `function`: 192
+  - `rls_policy`: 188
+  - `index`: 138
+  - `cron_job`: 102
+  - `table`: 88
+  - `trigger`: 40
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1711,6 +1711,40 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.melhoria_itens_update` | `melhoria_itens` |
 | `rls_policy` | `public.melhoria_mensagens_select` | `melhoria_mensagens` |
 | `rls_policy` | `public.melhoria_mensagens_insert` | `melhoria_mensagens` |
+
+### `20260610150000_reposicao_auto_aprovacao_piloto.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_auto_aprovacao_log` | — |
+| `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
+| `function` | `public.reposicao_pedido_auto_aprovavel` | — |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+
+### `20260610200000_push_vendedora.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.push_subscriptions` | — |
+| `index` | `public.idx_push_subscriptions_user` | `push_subscriptions` |
+| `function` | `public.upsert_push_subscription` | — |
+| `function` | `public.delete_push_subscription` | — |
+| `function` | `public._push_enviar` | — |
+| `function` | `public.push_whatsapp_inbound` | — |
+| `function` | `public.push_tarefa_nova` | — |
+| `function` | `public.push_sla_tick` | — |
+| `trigger` | `public.trg_push_whatsapp_inbound` | `whatsapp_messages` |
+| `trigger` | `public.trg_push_tarefa_nova` | `tarefas` |
+| `cron_job` | `cron.push-sla-tick` | — |
+| `rls_policy` | `public.push_subscriptions_own` | `push_subscriptions` |
+| `rls_policy` | `public.push_subscriptions_service` | `push_subscriptions` |
+
+### `20260611120000_reposicao_fixes_codex_711.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_oportunidade_ciclo` | — |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
 
 ## Próximos passos quando algo der `❌`
 

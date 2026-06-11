@@ -159,6 +159,26 @@ describe('getCapitalDeGiro (Posição Agora)', () => {
     expect(giro.saldo_projetado_30d).toBe(500 + 300 * 7 - 50 * 4);
   });
 
+  it('janela de 30d usa o dia de SÃO PAULO, não UTC (à noite o "hoje" UTC já é amanhã)', async () => {
+    // 23:30 em SP (UTC-3) = 02:30 UTC do dia seguinte. Em UTC, today viraria
+    // 2026-06-12: o vencimento de HOJE (11/06 SP) sairia da projeção e um 31º
+    // dia (12/07) entraria — mesmo bug de fuso do #550 (achado codex pós-#722).
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-06-12T02:30:00Z') });
+    try {
+      state.db.fin_contas_receber = [
+        cr('oben', 10, '2026-06-11'), // vence HOJE em SP → conta
+        cr('oben', 7, '2026-07-11'), // 30º dia em SP → conta
+        cr('oben', 99, '2026-07-12'), // 31º dia em SP (= in30 do cálculo UTC) → fora
+      ];
+
+      const [giro] = await getCapitalDeGiro('oben');
+
+      expect(giro.entradas_30d).toBe(10 + 7);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('abertos = OPEN_TITLE_STATUSES (VENCE HOJE conta; RECEBIDO/CANCELADO não; outra empresa fora)', async () => {
     state.db.fin_contas_receber = [
       cr('oben', 10, null),

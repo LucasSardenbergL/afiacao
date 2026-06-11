@@ -121,10 +121,16 @@ function GrupoCard({ grupo, limiar }: { grupo: GrupoEmbalagem; limiar: number })
             </div>
             <div className="text-muted-foreground">
               custo {formatBRL(recAval?.custo_direto)}
-              {decisao.economia_vs_alternativa > 0 && <> · economiza {formatBRL(decisao.economia_vs_alternativa)} vs a outra embalagem</>}
+              {decisao.economia_vs_alternativa > 0 && (
+                <> · economiza {formatBRL(decisao.economia_vs_alternativa)} vs a outra embalagem
+                  {decisao.flags.includes('sobra_antecipa_compra') ? ' (ao preço de hoje, contando a sobra como estoque)' : ''}</>
+              )}
               {decisao.excedente_base > 0 && (
                 <>
                   {' '}· sobra {decisao.excedente_base} {grupo.unidade_base}
+                  {decisao.flags.includes('sobra_antecipa_compra') && decisao.dias_escoamento_sobra != null
+                    ? ` — vira estoque, escoa em ~${Math.ceil(decisao.dias_escoamento_sobra)}d`
+                    : ''}
                 </>
               )}
             </div>
@@ -146,7 +152,7 @@ function GrupoCard({ grupo, limiar }: { grupo: GrupoEmbalagem; limiar: number })
             )}
             {decisao.flags.includes('escoamento_nao_estimado') && (
               <div className="text-muted-foreground text-xs">
-                Sem giro registrado: o custo de carregar a sobra não foi estimado — a recomendação considera só o preço de compra.
+                Sem giro registrado — recomendação pelo menor custo por unidade-base (não estima o carrego da sobra); confira se o item gira antes de levar a embalagem maior.
               </div>
             )}
           </div>

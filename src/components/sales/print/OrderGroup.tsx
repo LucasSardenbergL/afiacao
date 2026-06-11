@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Sun, Sunset, Printer } from 'lucide-react';
-import { format } from 'date-fns';
+import { horaExibicaoPedido } from '@/lib/pedido/dia-civil';
 import type { CompanyFilter, EnrichedOrder } from './types';
 
 export function OrderGroup({ company, period, orders, selectedOrders, onToggleOrder, onPrintSingle }: {
@@ -44,7 +44,7 @@ export function OrderGroup({ company, period, orders, selectedOrders, onToggleOr
                   {order.omie_numero_pedido ? `#${order.omie_numero_pedido.replace(/^0+/, '')}` : order.id.slice(0, 8).toUpperCase()}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  {format(new Date(order.created_at), 'HH:mm')}
+                  {horaExibicaoPedido(order.created_at)}
                 </span>
               </div>
               <div className="text-sm text-muted-foreground truncate">{order.customer_name}</div>

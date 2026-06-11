@@ -1,5 +1,6 @@
 // Tipos, constantes e helpers da Impressão de Pedidos (SalesPrintDashboard).
 // Extraídos de src/pages/SalesPrintDashboard.tsx (god-component split).
+import { ehDataPuraUtc } from '@/lib/pedido/data-pedido';
 
 export type CompanyFilter = 'oben' | 'colacor' | 'afiacao';
 
@@ -89,6 +90,10 @@ export interface FormaPagamento {
 export type EnrichedOrder = SalesOrderRow & { _company: CompanyFilter };
 
 export function getPeriod(dateStr: string): 'manha' | 'tarde' {
-  const h = new Date(dateStr).getHours();
+  const d = new Date(dateStr);
+  // Data-pura do sync Omie (meia-noite UTC, sem hora real): o relógio local fabricaria
+  // "21:00 → tarde" em BRT. Classifica pelo relógio UTC (00:00 → manhã), coerente com
+  // o dia civil UTC usado no filtro do dia (pedidoNoDiaCivil).
+  const h = ehDataPuraUtc(d) ? d.getUTCHours() : d.getHours();
   return h < 12 ? 'manha' : 'tarde';
 }

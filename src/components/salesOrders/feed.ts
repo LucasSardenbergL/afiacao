@@ -14,6 +14,9 @@ import {
   type SalesOrderRow,
 } from './types';
 
+// Normaliza pra busca: minúsculas + sem diacríticos ("afiacao" acha "Afiação").
+const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
 export function filterFeedRows(
   rows: OrderFeedRow[],
   search: string,
@@ -23,14 +26,16 @@ export function filterFeedRows(
   // então o filtro de aba é uniforme — sem caso especial.
   let result = accountFilter === 'all' ? rows : rows.filter((r) => r.account === accountFilter);
 
-  const q = search.trim().toLowerCase();
+  const q = normalizar(search.trim());
   if (q) {
+    // Busca numérica em formato BR: "250,50" também casa o total 250.50.
+    const qNum = q.replace(',', '.');
     result = result.filter((r) => {
-      const name = decodeHtml(r.customer_name || '').toLowerCase();
+      const name = normalizar(decodeHtml(r.customer_name || ''));
       const pv = (r.order_number || '').toLowerCase();
-      const items = (r.item_names || []).join(' ').toLowerCase();
+      const items = normalizar((r.item_names || []).join(' '));
       const total = Number(r.total ?? 0).toFixed(2);
-      return name.includes(q) || pv.includes(q) || items.includes(q) || total.includes(q);
+      return name.includes(q) || pv.includes(q) || items.includes(q) || total.includes(q) || total.includes(qNum);
     });
   }
   return result;
@@ -52,9 +57,11 @@ export function dedupeFeedRows(rows: OrderFeedRow[]): OrderFeedRow[] {
 }
 
 // sales_orders.* → SalesOrder. A linha já tem o shape (items jsonb compatível);
-// só marca a origem. Cast consciente: items é Json no tipo gerado.
+// marca a origem e NORMALIZA items: jsonb malformado (objeto em vez de array)
+// quebraria o painel/impressão — ({} || []).map não existe (achado do codex).
 export function mapSalesDetail(row: SalesOrderRow): SalesOrder {
-  return { ...(row as unknown as SalesOrder), _source: 'sales' };
+  const base = row as unknown as SalesOrder;
+  return { ...base, items: Array.isArray(base.items) ? base.items : [], _source: 'sales' };
 }
 
 // orders (afiação).* → SalesOrder. Mesma normalização que a listagem antiga fazia
@@ -66,9 +73,10 @@ export function mapAfiacaoDetail(row: AfiacaoOrderRow): SalesOrder {
     customer_user_id: row.user_id,
     items: rawItems.map((i) => ({
       descricao: i.category || i.name || 'Afiação',
-      quantidade: i.quantity || 1,
+      // ?? (não ||): quantity 0 real fica 0 — mesma regra da view (ausente → 1).
+      quantidade: i.quantity ?? 1,
       valor_unitario: i.unitPrice || 0,
-      valor_total: (i.quantity || 1) * (i.unitPrice || 0),
+      valor_total: (i.quantity ?? 1) * (i.unitPrice || 0),
     })),
     subtotal: row.subtotal || row.total || 0,
     total: row.total || 0,

@@ -14,6 +14,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
+import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import {
   type Account,
   type OrderFeedCache,
@@ -53,25 +54,37 @@ export function useSalesOrders() {
     enabled: isStaff && !!user,
     staleTime: 60_000,
     queryFn: async () => {
-      const all: OrderFeedRow[] = [];
-      let total = 0;
-      for (let page = 0; page < FEED_MAX_PAGES; page++) {
-        const from = page * FEED_PAGE_SIZE;
-        const { data, error, count } = await supabase
-          .from('order_feed' as never)
-          .select('*', { count: 'exact' })
-          .order('created_at', { ascending: false, nullsFirst: false })
-          .order('origin', { ascending: true })
-          .order('id', { ascending: true })
-          .range(from, from + FEED_PAGE_SIZE - 1);
-        if (error) throw error;
-        const rows = (data ?? []) as unknown as OrderFeedRow[];
-        all.push(...rows);
-        total = count ?? all.length;
-        // Fim real: alcançou o count ou a página veio parcial/vazia.
-        if (all.length >= total || rows.length < FEED_PAGE_SIZE) break;
+      const drain = async (): Promise<OrderFeedCache> => {
+        const all: OrderFeedRow[] = [];
+        let total = 0;
+        for (let page = 0; page < FEED_MAX_PAGES; page++) {
+          const from = page * FEED_PAGE_SIZE;
+          const { data, error, count } = await supabase
+            .from('order_feed' as never)
+            // count só na 1ª página (o total não muda entre as páginas do drain).
+            .select('*', { count: page === 0 ? 'exact' : undefined })
+            .order('created_at', { ascending: false, nullsFirst: false })
+            .order('origin', { ascending: true })
+            .order('id', { ascending: true })
+            .range(from, from + FEED_PAGE_SIZE - 1);
+          if (error) throw error;
+          const rows = (data ?? []) as unknown as OrderFeedRow[];
+          all.push(...rows);
+          if (page === 0) total = count ?? rows.length;
+          // Fim real: alcançou o count ou a página veio parcial/vazia.
+          if (all.length >= total || rows.length < FEED_PAGE_SIZE) break;
+        }
+        return { rows: dedupeFeedRows(all), count: total };
+      };
+      // Escrita concorrente durante o drain por offset pode pular/duplicar linha
+      // (codex P1): dedupe resolve a duplicata; linha PULADA deixa rows < count —
+      // nesse caso re-drena UMA vez (staleTime NÃO re-busca sozinho; o projeto
+      // desliga refetchOnWindowFocus, então o buraco não se auto-curaria).
+      let result = await drain();
+      if (result.rows.length < result.count && result.count <= FEED_MAX_TOTAL) {
+        result = await drain();
       }
-      return { rows: dedupeFeedRows(all), count: total };
+      return result;
     },
   });
 
@@ -104,12 +117,19 @@ export function useSalesOrders() {
   const companyLogos = logosQuery.data || {};
 
   /* ─── Detalhe sob demanda (cache compartilhado com o painel via queryKey) ─── */
-  const getDetail = (row: Pick<OrderFeedRow, 'origin' | 'id'>) =>
+  const getDetail = (row: Pick<OrderFeedRow, 'origin' | 'id'> & { customer_name?: string | null }) =>
     queryClient.fetchQuery({
       queryKey: orderDetailQueryKey(user?.id, row.origin, row.id),
-      queryFn: () => fetchOrderDetail(row.origin, row.id),
+      queryFn: () => fetchOrderDetail(row.origin, row.id, row.customer_name),
       staleTime: 60_000,
     });
+
+  // Aquece o cache do detalhe no hover (catch silencioso — é só otimização).
+  // Também mitiga o popup-blocker: com cache quente, o window.open da impressão
+  // roda imediato no clique (dentro da user activation).
+  const prefetchDetail = (row: OrderFeedRow) => {
+    void getDetail(row).catch(() => {});
+  };
 
   // Imprime o cupom (mesmo layout de /sales/print). Espera o detalhe completo
   // (itens com codigo/unidade/tint, payload de parcelas, endereço) ANTES de abrir.
@@ -139,7 +159,9 @@ export function useSalesOrders() {
         items,
         total: d.order.total,
         orderNumbers,
-        date: new Date(d.order.created_at),
+        // String já formatada: pedido do sync (data-pura UTC) sai sem hora
+        // fabricada e no dia certo na mensagem ao cliente.
+        date: formatarDataPedido(d.order.created_at),
       });
     } catch (e) {
       console.error(e);
@@ -148,8 +170,22 @@ export function useSalesOrders() {
   };
 
   /* ─── Soft-delete + Omie exclude (optimistic no cache do feed) ─── */
+  // Reinsere rows no cache ATUAL (rollback composicional — codex P1: restaurar um
+  // snapshot integral ressuscitaria deleções concorrentes que já tinham sucedido).
+  const reinserirRows = (rows: OrderFeedRow[]) => {
+    queryClient.setQueryData<OrderFeedCache>(feedKey, (old) => {
+      if (!old) return old;
+      const merged = [...old.rows, ...rows].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
+      return { rows: merged, count: old.count + rows.length };
+    });
+  };
+
   const deleteOrder = async (row: OrderFeedRow) => {
-    const snapshot = queryClient.getQueryData<OrderFeedCache>(feedKey);
+    // Cancela refetch em voo: uma resposta antiga chegando após o optimistic
+    // recolocaria o pedido excluído (codex P1).
+    await queryClient.cancelQueries({ queryKey: feedKey });
     queryClient.setQueryData<OrderFeedCache>(feedKey, (old) =>
       old
         ? {
@@ -167,9 +203,11 @@ export function useSalesOrders() {
     const result = await softDeleteOrder({ id: row.id, omie_pedido_id: row.omie_pedido_id });
     if (result.ok) {
       toast.success('Pedido excluído');
+      // Reconcilia com o servidor (estado final pós-delete).
+      queryClient.invalidateQueries({ queryKey: feedKey });
       return;
     }
-    queryClient.setQueryData(feedKey, snapshot);
+    reinserirRows([row]);
     toast.error('Erro ao excluir pedido', { description: (result as { message: string }).message });
   };
 
@@ -177,8 +215,9 @@ export function useSalesOrders() {
   const deleteSelected = async () => {
     if (selectedIds.size === 0) return;
     const toDelete = orders.filter((r) => selectedIds.has(r.id) && r.origin === 'sales');
-    const snapshot = queryClient.getQueryData<OrderFeedCache>(feedKey);
     const deleteIds = new Set(toDelete.map((o) => o.id));
+    // Cancela refetch em voo (resposta antiga reporia os excluídos — codex P1).
+    await queryClient.cancelQueries({ queryKey: feedKey });
     queryClient.setQueryData<OrderFeedCache>(feedKey, (old) =>
       old
         ? {
@@ -198,7 +237,7 @@ export function useSalesOrders() {
 
     if (softErr) {
       console.error(softErr);
-      queryClient.setQueryData(feedKey, snapshot);
+      reinserirRows(toDelete); // rollback composicional (não restaura snapshot integral)
       toast.error(`Erro ao excluir pedidos`, { description: softErr.message });
       return;
     }
@@ -232,21 +271,16 @@ export function useSalesOrders() {
     if (failed === 0) {
       toast.success(`${success} pedido(s) excluído(s)`);
     } else if (success === 0) {
-      queryClient.setQueryData(feedKey, snapshot); // rollback completo
+      reinserirRows(toDelete); // rollback composicional (deleted_at já revertido no DB)
       toast.error(`Falhou: ${failed} pedido(s) não puderam ser excluídos`);
     } else {
       // Parcial — restaura no cache as rows que falharam (já têm deleted_at=null no DB)
       const failedSet = new Set(failedIds);
-      queryClient.setQueryData<OrderFeedCache>(feedKey, (old) => {
-        if (!old || !snapshot) return old;
-        const failedRows = snapshot.rows.filter((r) => r.origin === 'sales' && failedSet.has(r.id));
-        const rows = [...old.rows, ...failedRows].sort(
-          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-        );
-        return { rows, count: old.count + failedRows.length };
-      });
+      reinserirRows(toDelete.filter((r) => failedSet.has(r.id)));
       toast.warning(`${success} excluído(s), ${failed} falharam`);
     }
+    // Reconcilia com o servidor em qualquer desfecho do bulk.
+    queryClient.invalidateQueries({ queryKey: feedKey });
   };
 
   const toggleSelect = (id: string, checked: boolean) => {
@@ -281,5 +315,6 @@ export function useSalesOrders() {
     deleteSelected,
     handleShareOrder,
     printOrder,
+    prefetchDetail,
   };
 }

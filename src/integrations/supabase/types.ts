@@ -8348,6 +8348,33 @@ export type Database = {
         }
         Relationships: []
       }
+      push_subscriptions: {
+        Row: {
+          created_at: string
+          endpoint: string
+          id: string
+          subscription: Json
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          endpoint: string
+          id?: string
+          subscription: Json
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          endpoint?: string
+          id?: string
+          subscription?: Json
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       rag_chunks: {
         Row: {
           chunk_index: number
@@ -8623,6 +8650,45 @@ export type Database = {
           resolvido_em?: string | null
           valor_alertado?: number
           valor_ultimo?: number
+        }
+        Relationships: []
+      }
+      reposicao_auto_aprovacao_log: {
+        Row: {
+          criado_em: string
+          delta_pct: number | null
+          empresa: string
+          fornecedor_nome: string
+          grupo_codigo: string
+          id: number
+          pedido_id: number
+          regua: number
+          valor_anterior: number | null
+          valor_total: number
+        }
+        Insert: {
+          criado_em?: string
+          delta_pct?: number | null
+          empresa: string
+          fornecedor_nome: string
+          grupo_codigo?: string
+          id?: never
+          pedido_id: number
+          regua: number
+          valor_anterior?: number | null
+          valor_total: number
+        }
+        Update: {
+          criado_em?: string
+          delta_pct?: number | null
+          empresa?: string
+          fornecedor_nome?: string
+          grupo_codigo?: string
+          id?: never
+          pedido_id?: number
+          regua?: number
+          valor_anterior?: number | null
+          valor_total?: number
         }
         Relationships: []
       }
@@ -14292,6 +14358,16 @@ export type Database = {
           status: string
         }[]
       }
+      _push_enviar: {
+        Args: {
+          p_corpo: string
+          p_tag: string
+          p_titulo: string
+          p_url: string
+          p_user_ids: string[]
+        }
+        Returns: undefined
+      }
       adicionar_opcao_tool_spec: {
         Args: { p_spec_id: string; p_valor: string }
         Returns: Json
@@ -14410,6 +14486,10 @@ export type Database = {
         Returns: number
       }
       data_health_watchdog: { Args: never; Returns: undefined }
+      delete_push_subscription: {
+        Args: { p_endpoint: string }
+        Returns: undefined
+      }
       des_data_faturamento_prevista: {
         Args: {
           p_data_emissao: string
@@ -14824,6 +14904,7 @@ export type Database = {
         Args: { p_a_partir?: string; p_empresa: string; p_fornecedor: string }
         Returns: string
       }
+      push_sla_tick: { Args: never; Returns: undefined }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
@@ -14881,6 +14962,15 @@ export type Database = {
       reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
       reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
       reposicao_param_limbo_watchdog: { Args: never; Returns: undefined }
+      reposicao_pedido_auto_aprovavel: {
+        Args: {
+          p_cooldown_horas: number
+          p_delta_max: number
+          p_pedido_id: number
+          p_threshold: number
+        }
+        Returns: Json
+      }
       reposicao_persistir_qtde_inteira: {
         Args: { p_pedido_id: number }
         Returns: number
@@ -14999,6 +15089,14 @@ export type Database = {
       tint_run_reconciliation: {
         Args: { p_sync_run_id: string }
         Returns: Json
+      }
+      upsert_push_subscription: {
+        Args: {
+          p_endpoint: string
+          p_subscription: Json
+          p_user_agent?: string
+        }
+        Returns: undefined
       }
       validar_sku_para_aplicacao: {
         Args: { p_empresa: string; p_sku: string }
