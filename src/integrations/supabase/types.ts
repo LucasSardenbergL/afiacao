@@ -14368,6 +14368,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      _vendas_familia_ausente_lista_email: {
+        Args: { p_limit?: number }
+        Returns: string
+      }
       adicionar_opcao_tool_spec: {
         Args: { p_spec_id: string; p_valor: string }
         Returns: Json
