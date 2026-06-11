@@ -3,7 +3,7 @@ export type RadarEmpresaRow = {
   cnpj: string;                 // 14 dígitos
   razao_social: string | null;
   nome_fantasia: string | null;
-  cnae_principal: string;       // 7 dígitos
+  cnae_principal: string;       // 7 dígitos — validade garantida upstream pelo filtro DuckDB contra cnaes-alvo.txt
   cnae_descricao: string | null;
   cnaes_secundarios: string[];
   data_abertura: string | null; // YYYY-MM-DD

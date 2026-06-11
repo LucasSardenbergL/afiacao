@@ -18,6 +18,14 @@ describe('normalizarData', () => {
     expect(normalizarData('0')).toBeNull();
     expect(normalizarData('20241341')).toBeNull(); // mês 13 inexistente
   });
+  // Fix M2: branch '00000000' documentada com teste
+  it('00000000 → null', () => expect(normalizarData('00000000')).toBeNull());
+  // Fix C1: dia-no-mês real (derruba chunk no Postgres sem essa validação)
+  it('dia inválido no mês → null', () => {
+    expect(normalizarData('20240231')).toBeNull(); // fev não tem 31
+    expect(normalizarData('20230229')).toBeNull(); // 2023 não é bissexto
+  });
+  it('bissexto válido passa', () => expect(normalizarData('20240229')).toBe('2024-02-29'));
 });
 
 describe('normalizarTelefone', () => {
@@ -53,11 +61,23 @@ describe('normalizarTexto', () => {
     expect(normalizarTexto('  MOVEIS  ZE  ')).toBe('MOVEIS ZE');
     expect(normalizarTexto('   ')).toBeNull();
   });
+  // Fix I1: caracteres de controle (NUL, tabs, newlines) derrubam chunk no Postgres
+  it('strip de caracteres de controle', () =>
+    expect(normalizarTexto('EMPRESA\x00X')).toBe('EMPRESA X'));
 });
 
 describe('normalizarChaveMunicipio', () => {
+  // Teste antigo — atualiza o esperado: chave agora SEM espaços (Fix I2+I3)
   it('casa nome RFB com nome IBGE (acentos, caixa, apóstrofo)', () => {
     expect(normalizarChaveMunicipio("SANTA BÁRBARA D'OESTE", 'SP'))
       .toBe(normalizarChaveMunicipio("Santa Barbara d Oeste", 'sp'));
   });
+  // Fix I2: literal esperado com chave sem espaços
+  it('literal: SANTA BÁRBARA D\'OESTE → SANTABARBARADOESTE|SP', () =>
+    expect(normalizarChaveMunicipio("SANTA BÁRBARA D'OESTE", 'SP'))
+      .toBe('SANTABARBARADOESTE|SP'));
+  // Fix I3: D'ÁGUA colado (RFB) == DAGUA separado (IBGE)
+  it("OLHO-D'ÁGUA DO BORGES == OLHO DAGUA DO BORGES", () =>
+    expect(normalizarChaveMunicipio("OLHO-D'ÁGUA DO BORGES", 'RN'))
+      .toBe(normalizarChaveMunicipio('OLHO DAGUA DO BORGES', 'rn')));
 });
