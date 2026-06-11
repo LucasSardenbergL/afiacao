@@ -66,7 +66,8 @@ vi.mock('@/lib/call-log/record', () => ({
   markRecorded: vi.fn(async () => {}),
 }));
 
-import { WebRTCCallProvider, useWebRTCCallContext } from '../WebRTCCallContext';
+import { WebRTCCallProvider } from '../WebRTCCallContext';
+import { useWebRTCCallContext } from '../webrtc-call-context';
 import { SipClient } from '@/lib/sip/sip-client';
 
 const wrapper = ({ children }: { children: ReactNode }) => (

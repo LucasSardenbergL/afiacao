@@ -204,3 +204,33 @@ Consult Codex (gpt-5.5) gerou os P1 que moldaram este desenho:
 ## 13. Relação com o item 2 original (sucessão de giro)
 
 A primitiva `sku_embalagem_equivalencia` (vínculo de SKUs + fator) é a mesma fundação que a **sucessão de giro** precisa (transpor o histórico de um SKU descontinuado para o sucessor — investigação do "item 1" provou que o "Transferir" atual só copia parâmetros, e o recálculo diário os sobrescreve). A sucessão é um projeto seguinte que reusa esta base, com a diferença de que lá o vínculo é **temporal** (antigo→sucessor, fator ~1) e a demanda **é** transposta. Não faz parte deste spec.
+
+---
+
+## 14. v1.1 — Crédito de reposição da sobra (fix de metodologia, 2026-06-10)
+
+**Caso real que expôs o problema (founder, WP01/WP87/WP04):** preços preenchidos manualmente; WP01 QT R$81,7068 × GL R$306,4977 → custo/QT-equiv **GL R$76,62 < QT R$81,71** (6,2% mais barato). Mesmo assim o pedido indicou QT. Com o spread de ~6%, o frame v1 só recomendava GL quando a necessidade caía num **múltiplo exato de 4** — a sobra do galão entrava como custo morto integral no `custo_direto`, e o "freio do capital parado" (§3.3) nunca era o decisor de fato (sobra escoa em ~9–13 dias → carrego de centavos vs R$143–225 de diferença de custo direto).
+
+**Bug de metodologia, não de código:** a implementação divergia da intenção da spec — §2 ("tolera arredondar pra cima quando o custo por unidade-base compensa"), §3.3 ("o único freio do overbuy é o capital parado") e §6 bullet 4 ("sem demanda confiável: recomenda pela comparação de preço/unidade-base") descrevem um modelo onde a sobra é **antecipação de estoque**, não desperdício. O `custo_total_ajustado = custo_direto + carrego` penalizava a sobra pelo valor integral hoje e nunca creditava que ela **evita a próxima compra**.
+
+**Modelo v1.1 (crédito de reposição):**
+
+```
+preco_reposicao_por_base = min(custo_por_base) entre as opções válidas do grupo
+credito_reposicao        = sobra_escoavel ? excedente_base × preco_reposicao_por_base : 0
+custo_total_ajustado     = custo_direto + (carrego ?? 0) − credito_reposicao
+```
+
+- `sobra_escoavel` = demanda do grupo disponível e > 0 (mesmo gate do carrego; o hook já só passa demanda quando o cm existe — codex P1 do #613 preservado). **Sem demanda/cm → crédito 0 = comportamento v1 (conservador) + flag `escoamento_nao_estimado`.**
+- O crédito valoriza a sobra ao **menor custo/base do grupo** (a próxima compra ótima seria feita a esse custo — é exatamente a compra que a sobra evita).
+- **Invariante (testado):** `custo_total ≥ necessidade × custo_por_base_da_opção ≥ 0` — o crédito nunca deixa custo negativo, pois `preco_reposicao ≤ custo_por_base` da própria opção.
+- **Freios preservados:** o carrego segue somando (escoamento lento → carrego come o crédito → conservadora volta a ganhar — autorregulável, sem teto arbitrário de dias); guard de **ganho marginal** (limiar R$5) intacto — WP01 com necessidade 1 QT: GL ganha por R$2,56 < R$5 → recomenda QT com aviso.
+- Campos novos: `AvaliacaoOpcao.credito_reposicao`; `DecisaoEmbalagem.dias_escoamento_sobra` (p/ UI explicar "sobra escoa em ~Xd"); flag `sobra_antecipa_compra`.
+
+**Efeito no WP01 (números reais, demanda do grupo 0,2244 QT-eq/dia, cm 30%):** nec 1 → QT (marginal R$2,56); nec 2 → **GL** (economia R$9,04); nec 3 → **GL** (R$14,96); nec 4 → **GL** (R$20,33). Antes: QT, QT, QT, GL.
+
+**Dois testes da v1 reescritos** (eram artefatos do frame míope): "capital come a economia" usava GL R$9 < QT R$10 absoluto — compra dominante (4 unidades por menos dinheiro) que o frame antigo rejeitava; refeito com escoamento genuinamente lento. "Marginal" usava o mesmo padrão; refeito com spread pequeno por base (GL 39,60 vs QT 10).
+
+**Limitação registrada:** grupo sem demanda registrada nenhuma (ex.: consumo 100% interno da tintometria, invisível em `venda_items_history` — §3.1) continua caindo no conservador. A solução real é dar fonte de demanda interna ao motor (fora deste escopo); a tela avulsa mostra o custo/base nos badges pro founder decidir no olho.
+
+**Escopo:** 100% frontend (helper puro + textos de UI nas 2 superfícies). Sem migration, sem edge. O painel é recomendação visual — **não** altera `qtde_final` nem o pedido automático. ⚠️ Codex fora (cota Plus até ~11/06) → Caminho B: auto-challenge + TDD com números reais; **adversarial retroativo do Codex pendente**.

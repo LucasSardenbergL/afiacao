@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import { SipClient } from '@/lib/sip/sip-client';
 import type { SipCallState, IncomingCallInfo } from '@/lib/sip/types';
 import { invokeFunction } from '@/lib/invoke-function';
@@ -7,18 +7,23 @@ import { toast } from 'sonner';
 import { normalizeBrPhone, formatBrPhone } from '@/lib/phone';
 import { mixPrerollWithMic } from '@/lib/sip/audio-preroll';
 import { useTranscription } from '@/hooks/useTranscription';
-import type { TranscriptTurn, TranscriptionStatus } from '@/lib/transcription/types';
+import type { TranscriptTurn } from '@/lib/transcription/types';
 import { useSpinAnalysis } from '@/hooks/useSpinAnalysis';
-import type { SpinAnalysis, SpinAnalysisStatus } from '@/lib/spin/types';
+import type { SpinAnalysis } from '@/lib/spin/types';
 import { resolveCustomerByPhone } from '@/lib/call-session/resolve-customer';
 import { buildSessionPayload } from '@/lib/call-session/build-session-payload';
 import { resolveCallParty, shouldAutoRecord } from '@/lib/call-log/recording-policy';
 import { logCallStart, logAnswered, logClosed, enrichCallLog, markRecorded } from '@/lib/call-log/record';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
-
-export type WebRTCCallState =
-  | 'idle' | 'connecting' | 'calling_origin' | 'calling_destination'
-  | 'established' | 'finished' | 'noanswer' | 'busy' | 'failed' | 'error';
+// O context OBJECT + hooks + types vivem no módulo LEVE webrtc-call-context.ts
+// (sem jssip). Este .tsx é o Provider PESADO — só o ConditionalWebRTCProvider
+// pode importá-lo (via dynamic import); consumidores usam o módulo leve.
+// Guardrail: src/contexts/__tests__/webrtc-context-split.test.ts.
+import {
+  WebRTCCallContext,
+  type WebRTCCallContextValue,
+  type WebRTCCallState,
+} from './webrtc-call-context';
 
 const SIP_TO_PUBLIC: Record<SipCallState, WebRTCCallState> = {
   idle: 'idle',
@@ -32,57 +37,6 @@ const SIP_TO_PUBLIC: Record<SipCallState, WebRTCCallState> = {
   ended: 'finished',
   failed: 'failed',
 };
-
-export interface WebRTCCallContextValue {
-  callState: WebRTCCallState;
-  callId: string | null;
-  callDuration: number;
-  audioLink: string | null;
-  makeCall: (phoneNumber: string, opts?: { forceRecord?: boolean }) => Promise<void>;
-  endCall: () => Promise<void>;
-  /** Ownership de UI: id do <WebRTCDialer> que iniciou a chamada atual (via claimCall).
-   *  Em telas com VÁRIOS dialers (listas), só o dono reflete o estado ativo — os
-   *  demais ficam idle. Sem isso, todos mostrariam o card e disparariam onCallEnd
-   *  (a sessão WebRTC é única/global), registrando a chamada na linha errada. */
-  callOwnerId: string | null;
-  claimCall: (ownerId: string) => void;
-  isActive: boolean;
-  isConnecting: boolean;
-  isRinging: boolean;
-  isEstablished: boolean;
-  isFinished: boolean;
-  error: string | null;
-  localStream: MediaStream | null;
-  remoteStream: MediaStream | null;
-  // NEW in PR1.6:
-  isMuted: boolean;
-  toggleMute: () => void;
-  /** SPIKE (flag telefoniaTransferSpike): dispara transferência da chamada ativa p/ um ramal. */
-  spikeTransfer?: (extension: string, method: 'dtmf' | 'refer') => void;
-  /** true durante reprodução do pre-roll LGPD; false antes/depois */
-  prerollPlaying: boolean;
-  /** timestamp (Date.now()) em que o preroll termina; null se sem preroll */
-  prerollEndsAt: number | null;
-  /** Stream raw do mic do vendedor (sem preroll mixado).
-   *  Exposto pra TranscriptionEngine usar como canal "vendedor". */
-  vendorMicStream: MediaStream | null;
-  /** Status da transcrição ao vivo (idle/connecting/active/error) */
-  transcriptionStatus: TranscriptionStatus;
-  /** Turnos de transcrição em ordem cronológica */
-  transcriptionTurns: TranscriptTurn[];
-  /** Mensagem de erro da transcrição, se houver */
-  transcriptionError: string | null;
-  /** Análise SPIN ao vivo da conversa atual. null se ainda não rodou. */
-  spinAnalysis: SpinAnalysis | null;
-  spinAnalysisStatus: SpinAnalysisStatus;
-  spinAnalysisError: string | null;
-  /** PR-INBOUND-CALLS: chamada inbound pendente esperando accept/reject */
-  incomingCall: IncomingCallInfo | null;
-  acceptIncoming: () => Promise<void>;
-  rejectIncoming: () => void;
-}
-
-const WebRTCCallContext = createContext<WebRTCCallContextValue | null>(null);
 
 /**
  * Persiste a sessão de chamada em `farmer_calls` ao final.
@@ -599,23 +553,4 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   };
 
   return <WebRTCCallContext.Provider value={value}>{children}</WebRTCCallContext.Provider>;
-}
-
-// Provider + hook colocados no mesmo arquivo por design (acoplamento forte:
-// hook só faz sentido com o Provider que define a shape). Splitting iria
-// adicionar indireção sem valor. Fast refresh ainda funciona pro Provider.
-// eslint-disable-next-line react-refresh/only-export-components
-export function useWebRTCCallContext(): WebRTCCallContextValue {
-  const ctx = useContext(WebRTCCallContext);
-  if (!ctx) {
-    throw new Error('useWebRTCCallContext must be used within a WebRTCCallProvider');
-  }
-  return ctx;
-}
-
-// Safe variant — retorna null se não houver Provider (ex: customer, ou enquanto
-// o ConditionalWebRTCProvider ainda está carregando via Suspense).
-// eslint-disable-next-line react-refresh/only-export-components
-export function useWebRTCCallContextOptional(): WebRTCCallContextValue | null {
-  return useContext(WebRTCCallContext);
 }

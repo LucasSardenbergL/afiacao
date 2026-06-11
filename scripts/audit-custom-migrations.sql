@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 194
+-- Total de custom migrations: 195
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -213,7 +213,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260609150000', 'reposicao_alerta_pedido_minimo', '20260609150000_reposicao_alerta_pedido_minimo.sql'),
   ('20260609150000', 'tint_sync_promote', '20260609150000_tint_sync_promote.sql'),
   ('20260609160000', 'reposicao_ciclo_intraday', '20260609160000_reposicao_ciclo_intraday.sql'),
-  ('20260610150000', 'reposicao_auto_aprovacao_piloto', '20260610150000_reposicao_auto_aprovacao_piloto.sql')
+  ('20260610150000', 'reposicao_auto_aprovacao_piloto', '20260610150000_reposicao_auto_aprovacao_piloto.sql'),
+  ('20260610200000', 'push_vendedora', '20260610200000_push_vendedora.sql')
 )
 SELECT
   e.version,
@@ -954,7 +955,20 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_auto_aprovacao_piloto', 'table', 'public', 'reposicao_auto_aprovacao_log', ''),
   ('reposicao_auto_aprovacao_piloto', 'index', 'public', 'reposicao_auto_aprovacao_log_criado_em', 'reposicao_auto_aprovacao_log'),
   ('reposicao_auto_aprovacao_piloto', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
-  ('reposicao_auto_aprovacao_piloto', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', '')
+  ('reposicao_auto_aprovacao_piloto', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
+  ('push_vendedora', 'table', 'public', 'push_subscriptions', ''),
+  ('push_vendedora', 'index', 'public', 'idx_push_subscriptions_user', 'push_subscriptions'),
+  ('push_vendedora', 'function', 'public', 'upsert_push_subscription', ''),
+  ('push_vendedora', 'function', 'public', 'delete_push_subscription', ''),
+  ('push_vendedora', 'function', 'public', '_push_enviar', ''),
+  ('push_vendedora', 'function', 'public', 'push_whatsapp_inbound', ''),
+  ('push_vendedora', 'function', 'public', 'push_tarefa_nova', ''),
+  ('push_vendedora', 'function', 'public', 'push_sla_tick', ''),
+  ('push_vendedora', 'trigger', 'public', 'trg_push_whatsapp_inbound', 'whatsapp_messages'),
+  ('push_vendedora', 'trigger', 'public', 'trg_push_tarefa_nova', 'tarefas'),
+  ('push_vendedora', 'cron_job', 'cron', 'push-sla-tick', ''),
+  ('push_vendedora', 'rls_policy', 'public', 'push_subscriptions_own', 'push_subscriptions'),
+  ('push_vendedora', 'rls_policy', 'public', 'push_subscriptions_service', 'push_subscriptions')
 )
 SELECT
   e.migration,
