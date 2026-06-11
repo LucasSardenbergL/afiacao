@@ -8,6 +8,7 @@ import { VisitSuggestionsCard } from './VisitSuggestionsCard';
 import { ViewAsPicker } from '@/components/impersonation/ViewAsPicker';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 import { GestorExcecoes } from './GestorExcecoes';
+import { AtivarNotificacoesCard } from '@/components/push/AtivarNotificacoesCard';
 
 /**
  * Dashboard Master (CEO) — visão consolidada do time + KPIs próprios (você
@@ -23,6 +24,10 @@ export function MasterDashboard() {
           Visão consolidada do time. KPIs agregados, ranking de vendedores, alertas estratégicos.
         </p>
       </div>
+
+      {/* Opt-in de Web Push — master também recebe (e é o device do smoke);
+          some quando ativo/negado/sem suporte/dispensado */}
+      <AtivarNotificacoesCard />
 
       {/* Sugestões de visita — PR-VISIT-INTELLIGENCE Sub-PR A */}
       <VisitSuggestionsCard />
