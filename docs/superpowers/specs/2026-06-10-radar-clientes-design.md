@@ -69,7 +69,7 @@ Postgres: upsert em radar_empresas + finalize (diff de novos, re-cruza
 ### 3.4 Edge function `radar-ingest`
 
 Actions (gate `x-cron-secret` OU staff master, padrão `authorizeCronOrStaff`):
-- `begin_lote {mes}` — abre o state (guard "already running").
+- `begin_lote {mes}` — abre o state. **Decisão de review (substituiu o guard "already running" desta spec):** re-chamada do mesmo mês NÃO é bloqueada — é re-run de recuperação (caminho realista quando a carga morre no meio); o state preserva `iniciado_em` original (a métrica `novos` mede desde o primeiro begin do mês) e só re-arma `status/erro/finalizado_em`.
 - `chunk {linhas[]}` — upsert por `cnpj`; em conflito atualiza SÓ campos cadastrais (preserva `primeira_vista_em`, `prospeccao_status` e histórico); seta `ultimo_lote = mes`.
 - `chunk_municipios {linhas[]}` — upsert em `radar_municipios`.
 - `finalize {mes}` — re-cruza `ja_cliente` (set-based, ver 3.5), computa contagem de novos do lote, fecha o state como `complete`. Idempotente.
