@@ -1,6 +1,8 @@
 // Escopo de clientes da tela /admin/customers.
 // PUROS + HOFs testáveis aqui; a glue Supabase é anexada na 2ª metade (Task 2).
 // Spec: docs/superpowers/specs/2026-06-11-clientes-escopo-carteira-design.md
+import { supabase } from '@/integrations/supabase/client';
+import type { Customer, ClientScore } from '@/components/adminCustomers/types';
 
 export interface DisplayFlags {
   displayIsMaster: boolean;
@@ -65,4 +67,84 @@ export async function coletarEmLotes<I, O>(
     out.push(...(await fetchLote(lote)));
   }
   return out;
+}
+
+const LOTE_IN = 150; // 1000 UUIDs estouram o limite de URL do proxy (≠ cap de linhas do PostgREST)
+
+/**
+ * Clientes da carteira. Fonte = carteira_assignments (eligible=true), paginado
+ * (select puro capa em 1000). Fora da lente a RLS já escopa pra carteira+cobertura;
+ * na lente (sessão é o master → RLS vê tudo) filtra pelo owner do alvo.
+ */
+export async function fetchCarteiraClientes(opts: {
+  isImpersonating: boolean;
+  effectiveUserId: string | null;
+  baseId: string | null;
+}): Promise<{ customers: Customer[]; ids: string[] }> {
+  const assignments = await paginarTudo<{ customer_user_id: string; owner_user_id: string }>(
+    async (from, to) => {
+      let q = supabase
+        .from('carteira_assignments')
+        .select('customer_user_id, owner_user_id')
+        .eq('eligible', true);
+      if (opts.isImpersonating && opts.effectiveUserId) {
+        q = q.eq('owner_user_id', opts.effectiveUserId);
+      }
+      const { data, error } = await q.order('customer_user_id').range(from, to);
+      if (error) throw error;
+      return data ?? [];
+    },
+  );
+
+  const ownerById = new Map(
+    assignments.map((a) => [a.customer_user_id, a.owner_user_id] as [string, string]),
+  );
+  const ids = [...ownerById.keys()];
+  if (ids.length === 0) return { customers: [], ids };
+
+  const profiles = await coletarEmLotes(ids, LOTE_IN, async (lote) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('user_id, name, email, phone, document, customer_type, created_at, requires_po')
+      .in('user_id', lote)
+      .eq('is_employee', false);
+    if (error) throw error;
+    return (data ?? []) as Customer[];
+  });
+
+  const customers = ordenarPorNome(marcarCobertura(profiles, ownerById, opts.baseId));
+  return { customers, ids };
+}
+
+/**
+ * Scores por customer_user_id (não por farmer_id): UNIQUE(customer_user_id) garante
+ * 1 linha/cliente, conserta scores stale pós-reatribuição e vazios pro gestor/master.
+ * A RLS de farmer_client_scores reforça (pode_ver_carteira_completa OR carteira_visivel_para).
+ */
+export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string, ClientScore>> {
+  const map = new Map<string, ClientScore>();
+  if (ids.length === 0) return map;
+  const rows = await coletarEmLotes(ids, LOTE_IN, async (lote) => {
+    const { data, error } = await supabase
+      .from('farmer_client_scores')
+      .select('customer_user_id, health_score, health_class, churn_risk, expansion_score, priority_score, avg_monthly_spend_180d, days_since_last_purchase, category_count, gross_margin_pct, avg_repurchase_interval')
+      .in('customer_user_id', lote);
+    if (error) throw error;
+    return data ?? [];
+  });
+  for (const s of rows) {
+    map.set(s.customer_user_id, {
+      customer_user_id: s.customer_user_id,
+      health_score: s.health_score ?? 0,
+      health_class: s.health_class ?? 'critico',
+      churn_risk: s.churn_risk ?? 0,
+      expansion_score: s.expansion_score ?? 0,
+      priority_score: s.priority_score ?? 0,
+      avg_monthly_spend_180d: s.avg_monthly_spend_180d ?? 0,
+      days_since_last_purchase: s.days_since_last_purchase ?? 0,
+      category_count: s.category_count ?? 0,
+      gross_margin_pct: s.gross_margin_pct ?? 0,
+    });
+  }
+  return map;
 }
