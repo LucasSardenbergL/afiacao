@@ -227,13 +227,32 @@ describe('v1.1 — crédito de reposição da sobra', () => {
     expect(r.dias_escoamento_sobra).toBeNull();
   });
 
-  it('crédito é gated pela demanda: sem demanda, comportamento v1 (custo direto) preservado', () => {
+  // Decisão do founder (2026-06-11, spec §14.2): sem demanda registrada, recomenda
+  // pela embalagem mais barata por unidade-base (o item gira — consumo interno oculto),
+  // com aviso. NÃO banca crédito (sem escoamento estimável) → economia_vs_alternativa 0.
+  it('sem demanda: recomenda pelo menor custo/base (GL) com aviso, sem inventar economia', () => {
     const r = escolherEmbalagemEconomica({
       necessidade_base: 1,
       opcoes: [QT_WP01, GL_WP01],
       params: paramsWP01({ demanda_base_diaria: null }),
     });
-    expect(r.recomendada).toBe('QT_WP01'); // 81,71 < 306,50 — sem crédito sem evidência de escoamento
+    expect(r.recomendada).toBe('GL_WP01'); // 76,62/base < 81,71/base
+    expect(r.flags).toContain('escoamento_nao_estimado');
+    expect(r.flags).not.toContain('sobra_antecipa_compra'); // não banca sem demanda
+    expect(r.economia_vs_alternativa).toBe(0); // sem escoamento, não afirma R$ economizado
+    expect(r.capital_estimado).toBeNull();
+  });
+
+  it('sem demanda: empate de custo/base mantém determinístico (não quebra)', () => {
+    const r = escolherEmbalagemEconomica({
+      necessidade_base: 2,
+      opcoes: [
+        { sku_codigo_omie: 'QT', fator_para_base: 1, preco: 10, preco_status: 'ok' },
+        { sku_codigo_omie: 'GL', fator_para_base: 4, preco: 40, preco_status: 'ok' }, // 10/base = QT
+      ],
+      params: params({ demanda_base_diaria: null }),
+    });
+    expect(['QT', 'GL']).toContain(r.recomendada); // empate: qualquer um é válido, sem crash
     expect(r.flags).toContain('escoamento_nao_estimado');
   });
 
@@ -245,6 +264,38 @@ describe('v1.1 — crédito de reposição da sobra', () => {
     });
     expect(r.recomendada).toBe('GL_WP01');
     expect(r.status).toBe('ok');
+  });
+
+  // [codex P1] o guard marginal usava `excedente === 0`. Com necessidade fracionária
+  // NENHUMA opção casa exato → guard não disparava e o GL ganhava por centavos.
+  // A conservadora correta é a de MENOR excedente, não a de excedente zero.
+  it('necessidade fracionária + ganho ínfimo: guard marginal usa a opção de MENOR sobra → QT', () => {
+    const r = escolherEmbalagemEconomica({
+      necessidade_base: 2.5,
+      opcoes: [
+        { sku_codigo_omie: 'QT', fator_para_base: 1, preco: 10, preco_status: 'ok' },     // ceil 3, sobra 0,5
+        { sku_codigo_omie: 'GL', fator_para_base: 4, preco: 39.99, preco_status: 'ok' },   // ceil 1, sobra 1,5
+      ],
+      params: params({ demanda_base_diaria: 1000, limiar_minimo_economia_rs: 5 }), // GL ganha por ~R$0,0075
+    });
+    expect(r.status).toBe('marginal');
+    expect(r.recomendada).toBe('QT');
+    expect(r.flags).toContain('overbuy_marginal');
+  });
+
+  it('necessidade fracionária + ganho real acima do limiar: overbuy compensa → GL', () => {
+    // mesma estrutura, mas GL genuinamente barato → ganho >> R$5 → mantém GL.
+    const r = escolherEmbalagemEconomica({
+      necessidade_base: 2.5,
+      opcoes: [
+        { sku_codigo_omie: 'QT', fator_para_base: 1, preco: 10, preco_status: 'ok' },
+        { sku_codigo_omie: 'GL', fator_para_base: 4, preco: 24, preco_status: 'ok' }, // R$6/base
+      ],
+      params: params({ demanda_base_diaria: 1000, limiar_minimo_economia_rs: 5 }),
+    });
+    expect(r.status).toBe('ok');
+    expect(r.recomendada).toBe('GL');
+    expect(r.flags).toContain('overbuy_compensa');
   });
 
   it('dias_escoamento_sobra exposto quando a recomendada tem sobra; null no marginal', () => {

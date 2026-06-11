@@ -119,28 +119,44 @@ export function escolherEmbalagemEconomica(input: {
   }
 
   if (validas.some((o) => o.preco_status === 'stale')) flags.push('preco_desatualizado');
-  if (params.demanda_base_diaria == null || params.demanda_base_diaria <= 0) flags.push('escoamento_nao_estimado');
+  const temEscoamento = params.demanda_base_diaria != null && params.demanda_base_diaria > 0;
+  if (!temEscoamento) flags.push('escoamento_nao_estimado');
 
   // v1.1: preço de reposição = melhor custo/base do grupo (a compra que a sobra evita).
   const precoReposicaoPorBase = Math.min(...validas.map((o) => (o.preco as number) / o.fator_para_base));
 
+  // Sem demanda registrada (decisão do founder, spec §14.2): o item gira (consumo
+  // interno oculto), mas não dá pra estimar escoamento → NÃO banca crédito; ordena
+  // pelo menor custo POR BASE (recomenda o galão, mais barato/litro) com aviso. Com
+  // demanda, ordena pelo custo total ajustado da v1.1 (custo_direto + carrego − crédito).
+  const chave = (a: AvaliacaoOpcao) => (temEscoamento ? a.custo_total_ajustado : a.custo_por_base);
   const avals = validas
     .map((o) => avaliarOpcao(necessidade_base, o, params, precoReposicaoPorBase))
     .filter((a): a is AvaliacaoOpcao => a !== null)
-    .sort((a, b) => a.custo_total_ajustado - b.custo_total_ajustado);
+    .sort((a, b) => chave(a) - chave(b));
 
   const melhor = avals[0];
 
   let status: StatusDecisao = 'ok';
   let recomendada = melhor.sku_codigo_omie;
 
-  // Guard de overbuy marginal: se a mais barata gera excedente e a economia
-  // vs a melhor opção SEM excedente é < limiar, não vale o overbuy.
-  if (melhor.excedente_base > 0) {
-    const semExc = avals.find((a) => a.excedente_base === 0);
-    if (semExc && (semExc.custo_total_ajustado - melhor.custo_total_ajustado) < params.limiar_minimo_economia_rs) {
+  // Guard de overbuy marginal (só com demanda — sem ela o critério é custo/base, e
+  // comparar custo direto desfaria a escolha pelo galão que o founder pediu): se a
+  // mais barata gera excedente e a economia vs a opção de MENOR excedente é < limiar,
+  // não vale o overbuy. [codex P1] Antes usava `excedente === 0` — com necessidade
+  // fracionária NENHUMA opção casa exato, o guard sumia e o galão ganhava por centavos.
+  // A conservadora correta é a de menor sobra (necessidade inteira → casa exato → idêntico).
+  if (temEscoamento && melhor.excedente_base > 0) {
+    const conservadora = avals
+      .filter((a) => a.sku_codigo_omie !== melhor.sku_codigo_omie)
+      .reduce<AvaliacaoOpcao | null>((best, a) => (best == null || a.excedente_base < best.excedente_base ? a : best), null);
+    if (
+      conservadora &&
+      conservadora.excedente_base < melhor.excedente_base &&
+      conservadora.custo_total_ajustado - melhor.custo_total_ajustado < params.limiar_minimo_economia_rs
+    ) {
       status = 'marginal';
-      recomendada = semExc.sku_codigo_omie;
+      recomendada = conservadora.sku_codigo_omie;
       flags.push('overbuy_marginal');
     } else {
       flags.push('overbuy_compensa');

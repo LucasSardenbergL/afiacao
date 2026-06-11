@@ -47,7 +47,10 @@ export function EmbalagemPanel({ empresa, itens }: { empresa: string; itens: Ped
                     </div>
                     <div className="text-muted-foreground">
                       Recomendado: <span className="font-medium text-foreground">{d.recomendada}</span>
-                      {d.economia_vs_alternativa > 0 && <> · economia {formatBRL(d.economia_vs_alternativa)}</>}
+                      {d.economia_vs_alternativa > 0 && (
+                        <> · economia {formatBRL(d.economia_vs_alternativa)}
+                          {d.flags.includes('sobra_antecipa_compra') ? ' (ao preço de hoje, contando a sobra como estoque)' : ''}</>
+                      )}
                       {d.excedente_base > 0 && (
                         <>
                           {' '}· sobra {d.excedente_base} un-base
@@ -62,7 +65,7 @@ export function EmbalagemPanel({ empresa, itens }: { empresa: string; itens: Ped
                       <div className="text-status-warning text-xs">Preço pode estar desatualizado — confira/atualize.</div>
                     )}
                     {d.flags.includes('escoamento_nao_estimado') && (
-                      <div className="text-muted-foreground text-xs">Escoamento do excedente não estimado (sem demanda).</div>
+                      <div className="text-muted-foreground text-xs">Sem giro registrado — recomendado pelo menor custo por unidade-base; confira se o item gira.</div>
                     )}
                   </>
                 )}
