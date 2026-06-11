@@ -6,6 +6,27 @@
 
 ---
 
+## 🆕 SESSÃO 2026-06-10/11 — "Melhorias": canal interno de sugestões/problemas com triagem por IA
+
+> Pedido do founder: sessão no app onde todo funcionário sugere melhoria/reporta problema;
+> IA avalia NA HORA (triagem + resposta rápida quando for pergunta de dados, ex.: "quais
+> clientes compram o produto X e o que sugerir de substituto"); fila noturna pro founder
+> validar via Claude Code. Decisões do brainstorm: só staff · triagem + dados guiados
+> (2 ferramentas determinísticas, SEM text-to-SQL) · tela master + prompt pronto pro
+> Claude Code (SEM digest e-mail) · funcionário vê status (loop fechado).
+
+- ✅ **Brainstorm** (abordagem A aprovada: thread por item + triagem instantânea + ferramentas de dados guiadas)
+- ✅ **Spec** (`docs/superpowers/specs/2026-06-10-melhorias-canal-feedback-design.md`) + passe adversarial próprio (P1 anti-vazamento de carteira na re-triagem incorporado; Codex esgotado → adversarial retroativo pendente)
+- ✅ **Plano** (`docs/superpowers/plans/2026-06-10-melhorias-canal-feedback-plano.md`, 11 tasks TDD)
+- ✅ **Implementação (subagent-driven, 2-stage review por task)**: helpers puros TDD (21 testes) · migration `20260610130000_melhorias_canal.sql` (2 tabelas + RLS + 2 RPCs; fixes do review: `dados` jsonb exclusivo da IA, INSERT não pré-popula triagem) · **PG17 com falsificação** (15+ asserts; teste apertado após provar que gate sabotado passava — assert A6c2 + WHEN OTHERS re-lança) · edge `melhoria-triagem` (loop agentic + tools JWT-scoped + anti-vazamento; fixes: mapa tool→RPC, disable_parallel_tool_use, gate de status, uuid 400, cap de prompt, prompt copiável delimita relato) · hook `useMelhorias` + types.ts · componentes + páginas + AppShell (botão topbar staff, badge master)
+- ✅ **Validação local**: typecheck 0 · vitest 3026/3026 · lint 0 errors · build vite ok · PG17 verde
+- ✅ **Review final do diff inteiro** (modelo capaz): PRONTO PRO PR após 2 Important — TODOS aplicados (`797c1eb9`): "meus" filtra autor explícito (master via itens alheios como dele) · toasts de erro em réplica/status · + 3 Minor (fuso `YYYY-MM-DD` sem `new Date`, fence escapado no prompt copiável, guard `tools?.`). 22 testes no módulo.
+- 🔄 **PR** (merge com a main feita — `managerOnly`→`staffOnly` do rename paralelo aplicado no item novo)
+- ⏳ **Deploy (founder)**: migration no SQL Editor + edge `melhoria-triagem` via chat Lovable + Publish + smoke (criar item real "quais clientes compram lixa?")
+- ⏳ **Codex adversarial retroativo** (3º strike de cota — tentado 11/06 ~16h, volta 18h05; rodar sobre spec + migration + edge)
+
+---
+
 ## 0. SESSÃO 2026-06-10 (3) — Estratégia: de "IA que apoia" para "IA que coordena" (relatório Prosus "AI Colleagues")
 
 > Founder trouxe o PDF da Prosus (60.000 agentes, Toqan) e perguntou: como fazer vendas,
