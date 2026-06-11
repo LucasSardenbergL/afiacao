@@ -27,10 +27,15 @@ describe('isOpenTitleStatus', () => {
     expect(isOpenTitleStatus('STATUS_NOVO_DO_OMIE')).toBe(false);
   });
 
-  it('🔒 NÃO casa os valores LEGADO errados (ABERTO/PARCIAL/VENCIDO) — o bug que originou tudo', () => {
-    expect(isOpenTitleStatus('ABERTO')).toBe(false);
-    expect(isOpenTitleStatus('PARCIAL')).toBe(false);
-    expect(isOpenTitleStatus('VENCIDO')).toBe(false);
+  it('🔒 casa também os FALLBACKS do ingest (ABERTO/VENCIDO/PARCIAL) — defesa em profundidade', () => {
+    // Decisão revisada no retroativo Codex 2026-06-11: o ingest grava
+    // `status_titulo || 'ABERTO'` (e 'VENCIDO' quando já venceu) — sem
+    // incluí-los, título sem status some do KPI/DSO/capital de giro em
+    // silêncio. O bug HISTÓRICO era filtrar SÓ por eles (0 match) — o guard
+    // que permanece é a disjunção com liquidados (teste abaixo).
+    expect(isOpenTitleStatus('ABERTO')).toBe(true);
+    expect(isOpenTitleStatus('PARCIAL')).toBe(true);
+    expect(isOpenTitleStatus('VENCIDO')).toBe(true);
   });
 });
 
@@ -61,15 +66,15 @@ describe('classifyTituloStatus (telemetria de qualidade de dado)', () => {
 
   it('status novo do Omie / nulo → unknown (vira sinal de data-quality, não conta como aberto)', () => {
     expect(classifyTituloStatus('EM ANALISE')).toBe('unknown');
-    expect(classifyTituloStatus('ABERTO')).toBe('unknown'); // valor legado: não existe nos dados
+    expect(classifyTituloStatus('ABERTO')).toBe('open'); // fallback do ingest: conta como aberto
     expect(classifyTituloStatus(null)).toBe('unknown');
     expect(classifyTituloStatus('')).toBe('unknown');
   });
 });
 
 describe('invariantes do conjunto', () => {
-  it('OPEN_TITLE_STATUSES é exatamente os 3 nativos de aberto', () => {
-    expect([...OPEN_TITLE_STATUSES]).toEqual(['A VENCER', 'ATRASADO', 'VENCE HOJE']);
+  it('OPEN_TITLE_STATUSES = 3 nativos + 3 fallbacks do ingest', () => {
+    expect([...OPEN_TITLE_STATUSES]).toEqual(['A VENCER', 'ATRASADO', 'VENCE HOJE', 'ABERTO', 'VENCIDO', 'PARCIAL']);
   });
 
   it('nenhum status liquidado é também aberto (disjunção)', () => {
