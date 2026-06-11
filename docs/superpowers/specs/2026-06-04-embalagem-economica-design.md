@@ -233,4 +233,36 @@ custo_total_ajustado     = custo_direto + (carrego ?? 0) − credito_reposicao
 
 **Limitação registrada:** grupo sem demanda registrada nenhuma (ex.: consumo 100% interno da tintometria, invisível em `venda_items_history` — §3.1) continua caindo no conservador. A solução real é dar fonte de demanda interna ao motor (fora deste escopo); a tela avulsa mostra o custo/base nos badges pro founder decidir no olho.
 
-**Escopo:** 100% frontend (helper puro + textos de UI nas 2 superfícies). Sem migration, sem edge. O painel é recomendação visual — **não** altera `qtde_final` nem o pedido automático. ⚠️ Codex fora (cota Plus até ~11/06) → Caminho B: auto-challenge + TDD com números reais; **adversarial retroativo do Codex pendente**.
+**Escopo:** 100% frontend (helper puro + textos de UI nas 2 superfícies). Sem migration, sem edge. O painel é recomendação visual — **não** altera `qtde_final` nem o pedido automático.
+
+---
+
+## 14.1 — Revisão adversarial do Codex (gpt-5.5, xhigh, 2026-06-11)
+
+O adversarial retroativo (Caminho B na entrega original) rodou. Achados, triados contra o escopo da spec:
+
+**Corrigidos neste follow-up (PR de fixes):**
+- **P1 — guard marginal sumia com necessidade fracionária.** O guard usava `excedente_base === 0` pra achar a opção conservadora; com necessidade não-inteira **nenhuma** embalagem casa exato → o guard nunca disparava e o galão ganhava por centavos (contraexemplo do Codex: nec 2,5; QT R$10; GL R$39,99 → GL por R$0,0075, sem aviso). **Fix:** a conservadora passa a ser a opção de **menor** excedente (não a de excedente zero); pra necessidade inteira é a que casa exato → comportamento idêntico ao anterior (backward-compat verificado nos testes inteiros). Teste novo com o caso fracionário ínfimo.
+- **Honestidade do rótulo (P1.1/P1.6 do Codex).** Quando a recomendação **banca sobra**, a "economia" depende de consumir esse estoque ao preço de hoje (não é caixa garantido). A UI nas 2 superfícies passa a qualificar: "economia X **(ao preço de hoje, contando a sobra como estoque)**" quando `sobra_antecipa_compra`. O caso sem sobra (nec múltiplo do fator) segue "economia" pura (caixa real).
+
+**Limitações reconhecidas (documentadas, não corrigidas — fora do escopo v1 ou imateriais):**
+- **MOQ / `lote_minimo` ignorado (Codex P1.4).** Já era **não-objetivo explícito** (§2, §11; o campo `lote_minimo?` é marcado "v1: não usado, Fase 3"). **Sem risco vivo:** os hooks (`useEmbalagemPedido`/`useEmbalagemConsulta`) **não populam** `lote_minimo` → sempre `undefined`. Entra na Fase 3 com fonte de dados de MOQ por embalagem.
+- **Risco de preço futuro na sobra bancada (Codex P1.1/P1.6).** Se o preço por base **cair** abaixo de ~R$72,10 (5,9% sob o GL de hoje) **antes** de a sobra escoar, o galão bancado vale menos e há regressão vs a v1. É **risco de preço sobre estoque mantido** — a spec §3.3 deliberadamente modela só o custo de capital, não risco de preço (itens sem validade, giro contínuo). O founder decide a TODO preço de hoje; o rótulo "ao preço de hoje" agora deixa isso explícito. Refino (break-even/sensibilidade) = v2.
+- **Carrego linear cobra 33–100% a mais (Codex P1.2).** O carrego usa `excedente × custo_base × cm × dias/365` com `dias = excedente/demanda` (tempo até a ÚLTIMA unidade sair), mas a sobra escoa progressivamente → o tempo médio é ~metade. É **fórmula pré-existente da v1** (espelha `compras-otimizador`), **imaterial na margem da decisão** (WP01: carrego R$1,12 vs decisão de R$9). Refino do carrego = v2 (toca semântica compartilhada com o otimizador).
+- **`min()` do grupo viola independência com 3+ embalagens (Codex P1.5).** O crédito é valorado ao melhor custo/base **do grupo**; uma 3ª embalagem mais barata/base muda o crédito das demais. **Sem grupo de 3+ em produção** (todos os WP são QT/GL, 2 membros) → 2-membros é correto. Documentar a premissa quando surgir grupo de 3.
+
+⚠️ **Codex CLI não roda os testes neste ambiente** (sandbox read-only bloqueia o tmp do Vite) — o adversarial é de leitura/raciocínio; os números foram reconferidos por TDD local.
+
+---
+
+## 14.2 — Gate "sem demanda registrada" (decisão do founder, 2026-06-11)
+
+O Codex (#4) apontou que o gate "sem demanda → crédito 0 → recomenda conservador (QT)" contradizia a spec **original** (§6 bullet 4). Para um item que o founder **sabe** que gira mas tem demanda registrada zero (consumo interno da tintometria, invisível em vendas — §3.1), recomendar QT é o nudge errado.
+
+**Decisão (founder, AskUserQuestion):** sem demanda registrada, recomendar pela embalagem de **menor custo por unidade-base** (o galão, mais barato/litro) **com aviso** "sem giro registrado — confira se o item gira". Implementação:
+- A ordenação usa `custo_por_base` (não `custo_total_ajustado`) quando `demanda == null|≤0`.
+- O **guard de overbuy marginal é pulado** sem demanda (ele compara custo direto e desfaria a escolha pelo galão — exatamente o nudge que o founder quer).
+- **Não banca crédito** (sem escoamento estimável) → `economia_vs_alternativa = 0` (não inventa R$ economizado; o ganho real é por litro, visível nos badges).
+- Vale para os itens cuja demanda registrada é zero; itens **com** giro (WP01/87/04, 0,22/dia) seguem pelo custo total ajustado da v1.1.
+
+**Trade-off aceito:** sem demanda não há freio de capital, então isto pode sugerir levar o galão de um item que de fato não gira. Mitigado por: (a) é recomendação **visual**, não compra automática; (b) o aviso é explícito; (c) o founder tolera arredondar pra cima quando o custo/litro compensa (§2). Risco residual coberto pelo aviso.

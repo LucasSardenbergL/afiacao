@@ -309,11 +309,6 @@ interface MovimentoRow {
   updated_at: string;
 }
 
-interface ContaSaldoRow {
-  saldo?: number | null;
-  saldo_atual?: number | null;
-}
-
 interface CategoriaDreMappingRow {
   omie_codigo: string;
   dre_linha: string;
@@ -1721,69 +1716,6 @@ async function calcularDRE(
   return snapshot;
 }
 
-// ═══════════════ RESUMO RÁPIDO (sem sync, direto do DB) ═══════════════
-async function getResumoFinanceiro(
-  db: SupabaseClient,
-  companies: Company[]
-) {
-  const resumo: Record<string, unknown> = {};
-
-  for (const company of companies) {
-    // Saldo total de contas correntes
-    const { data: contas } = await db
-      .from("fin_contas_correntes")
-      .select("descricao, saldo_atual, banco")
-      .eq("company", company)
-      .eq("ativo", true);
-
-    // Totais a receber em aberto
-    const { data: crAberto } = await db
-      .from("fin_contas_receber")
-      .select("saldo")
-      .eq("company", company)
-      .in("status_titulo", ["ABERTO", "VENCIDO", "PARCIAL"]);
-
-    // Totais a pagar em aberto
-    const { data: cpAberto } = await db
-      .from("fin_contas_pagar")
-      .select("saldo")
-      .eq("company", company)
-      .in("status_titulo", ["ABERTO", "VENCIDO", "PARCIAL"]);
-
-    // Vencidos a receber
-    const { data: crVencido } = await db
-      .from("fin_contas_receber")
-      .select("saldo")
-      .eq("company", company)
-      .eq("status_titulo", "VENCIDO");
-
-    // Vencidos a pagar
-    const { data: cpVencido } = await db
-      .from("fin_contas_pagar")
-      .select("saldo")
-      .eq("company", company)
-      .eq("status_titulo", "VENCIDO");
-
-    const sum = (arr: ContaSaldoRow[] | null) =>
-      (arr || []).reduce((s: number, r) => s + (r.saldo || 0), 0);
-
-    resumo[company] = {
-      contas_correntes: contas || [],
-      saldo_total_cc: ((contas as Array<{ saldo_atual?: number | null }> | null) || []).reduce(
-        (s: number, c) => s + (c.saldo_atual || 0),
-        0
-      ),
-      total_a_receber: sum(crAberto),
-      total_a_pagar: sum(cpAberto),
-      total_vencido_receber: sum(crVencido),
-      total_vencido_pagar: sum(cpVencido),
-      posicao_liquida: sum(crAberto) - sum(cpAberto),
-    };
-  }
-
-  return resumo;
-}
-
 // ═══════════════ HELPERS ═══════════════
 function parseOmieDate(dateStr: string | null | undefined): string | null {
   if (!dateStr) return null;
@@ -2169,11 +2101,6 @@ serve(async (req) => {
             }
           }
         }
-        break;
-      }
-
-      case "resumo": {
-        result = await getResumoFinanceiro(supabase, targetCompanies);
         break;
       }
 
