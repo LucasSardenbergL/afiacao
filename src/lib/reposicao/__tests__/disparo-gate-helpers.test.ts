@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deveBloquearPorMinimoFaturamento,
+  overridePermitidoNoModo,
   type GateConfig,
 } from "../disparo-gate-helpers";
 
@@ -143,5 +144,88 @@ describe("deveBloquearPorMinimoFaturamento", () => {
         fornecedorPattern: "%%",
       }).bloquear,
     ).toBe(false);
+  });
+});
+
+// Override por pedido (ignorar_minimo) — a "exceção consciente" do gestor/master no
+// re-disparo individual. O helper só DECIDE; quem garante "só modo individual + gestor"
+// é o caller (edge/UI). `overridden:true` = o gate IA barrar e a flag liberou (audit);
+// quando não havia bloqueio, a flag é no-op (overridden ausente/falsy).
+describe("deveBloquearPorMinimoFaturamento — override ignorarMinimo", () => {
+  it("ignorarMinimo libera pedido que SERIA barrado, marcando overridden", () => {
+    const r = deveBloquearPorMinimoFaturamento(base, cfg, { ignorarMinimo: true });
+    expect(r.bloquear).toBe(false);
+    expect(r.overridden).toBe(true);
+  });
+
+  it("sem a flag, o pedido abaixo da régua segue barrado (override é opt-in)", () => {
+    const semFlag = deveBloquearPorMinimoFaturamento(base, cfg);
+    expect(semFlag.bloquear).toBe(true);
+    expect(semFlag.overridden).toBeFalsy();
+    const flagFalsa = deveBloquearPorMinimoFaturamento(base, cfg, { ignorarMinimo: false });
+    expect(flagFalsa.bloquear).toBe(true);
+    expect(flagFalsa.overridden).toBeFalsy();
+  });
+
+  it("ignorarMinimo em pedido que NÃO seria barrado é no-op (overridden falsy)", () => {
+    // Acima da régua: nada a overridar.
+    const acima = deveBloquearPorMinimoFaturamento(
+      { ...base, valor_total: 5000 },
+      cfg,
+      { ignorarMinimo: true },
+    );
+    expect(acima.bloquear).toBe(false);
+    expect(acima.overridden).toBeFalsy();
+
+    // Fornecedor fora do pattern: o gate nem se aplica.
+    const outroForn = deveBloquearPorMinimoFaturamento(
+      { ...base, fornecedor_nome: "ACRE CAXIAS" },
+      cfg,
+      { ignorarMinimo: true },
+    );
+    expect(outroForn.bloquear).toBe(false);
+    expect(outroForn.overridden).toBeFalsy();
+
+    // Filho de split: já isento.
+    const filho = deveBloquearPorMinimoFaturamento(
+      { ...base, split_parent_id: 99 },
+      cfg,
+      { ignorarMinimo: true },
+    );
+    expect(filho.bloquear).toBe(false);
+    expect(filho.overridden).toBeFalsy();
+  });
+
+  it("ignorarMinimo com gate DESLIGADO (régua ausente) não inventa override", () => {
+    const r = deveBloquearPorMinimoFaturamento(
+      base,
+      { valorMinimo: null, fornecedorPattern: "%SAYERLACK%" },
+      { ignorarMinimo: true },
+    );
+    expect(r.bloquear).toBe(false);
+    expect(r.overridden).toBeFalsy();
+  });
+});
+
+// O override só pode valer no disparo INDIVIDUAL (pedido_id de um pedido REAL = positivo). O
+// ternário da query na edge (pedidoId ? individual : lote) trata pedido_id=0 como LOTE; sem
+// este predicado, {pedido_id:0, ignorar_minimo:true} de um gestor caía no LOTE COM override
+// = bypass do gate em todos os aprovados do dia (achado P1 do Codex). pedido_id ausente/0/
+// negativo/NaN → modo lote/cron → override NUNCA.
+describe("overridePermitidoNoModo", () => {
+  it("true só para pedido_id POSITIVO (disparo individual real)", () => {
+    expect(overridePermitidoNoModo(5)).toBe(true);
+    expect(overridePermitidoNoModo(409)).toBe(true);
+  });
+
+  it("false para pedido_id=0 (o bypass de lote do Codex)", () => {
+    expect(overridePermitidoNoModo(0)).toBe(false);
+  });
+
+  it("false para ausente/negativo/NaN (modo lote/cron ou inválido)", () => {
+    expect(overridePermitidoNoModo(null)).toBe(false);
+    expect(overridePermitidoNoModo(undefined)).toBe(false);
+    expect(overridePermitidoNoModo(-1)).toBe(false);
+    expect(overridePermitidoNoModo(Number.NaN)).toBe(false);
   });
 });
