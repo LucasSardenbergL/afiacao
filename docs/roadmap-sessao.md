@@ -6,6 +6,35 @@
 
 ---
 
+## 🧑‍🌾 SESSÃO 2026-06-10 (3) — UX da Farmer: home, menu, push e gaps de ferramenta
+
+> Pedido do founder (via lente "Ver como tatyanamartins2002"): (1) por que a tela inicial das
+> farmers é o cockpit de 6 módulos? (2) otimizar o menu lateral; (3) o que falta de ferramenta.
+> Diagnóstico: a home `/` decide só por `isStaff` (persona `vendedor` apenas REORDENA as 6 zonas)
+> e o sales-only escondia toda seção ≠ Vendas → o Meu Dia e Clientes eram INALCANÇÁVEIS pelo menu.
+> Founder aprovou as 3 frentes na ordem: home+menu → push → ficha pré-contato.
+
+- ✅ **Frente 1 — home por persona + menu (PR em criação, branch `claude/festive-babbage-8e8545`)**:
+  helper TDD `src/lib/nav/home-por-persona.ts` (19 testes) — vendedora (farmer/hunter/closer/
+  operacional ou sales-only) aterrissa no `/meu-dia`; menu sales-only vira allowlist por ITEM
+  (ganha Meu dia + Clientes); seção Vendas reordenada pelo fluxo do dia; badge SLA religado pra
+  sales-only; rename `managerOnly`→`staffOnly`. Adversarial: 0 P1; P2.1 (anti-loop lente) e
+  P2.3 (badge SLA) corrigidos. CI local verde (3024 testes).
+- ✅ **Frente 2 — Web Push da vendedora (PR em criação, branch `claude/push-vendedora-frente2`)**:
+  infra completa — tabela `push_subscriptions` + RPCs device-aware (anti-vazamento em device
+  compartilhado, P1 da adversarial), 3 produtores SQL (WhatsApp inbound c/ throttle 10min +
+  dona via `wa_owner_efetivo`; tarefa nova c/ throttle 2min; SLA tick c/ gate de expediente),
+  edge `enviar-push` (npm:web-push, VAPID), SW handlers via `workbox.importScripts`, card de
+  opt-in no Meu Dia (instrução iOS), limpeza no logout. PG17: 17 asserts verdes. Spec:
+  `docs/superpowers/specs/2026-06-10-push-vendedora-design.md`. ⚠️ Rollout: migration manual +
+  deploy da edge + secrets VAPID + Publish + smoke ao vivo (web-push em Deno não-verificável local).
+- ⏳ **Frente 3 — ficha de 30s pré-contato** (últimas compras, preço praticado, títulos abertos,
+  cores, última conversa — drawer no card da fila/lista de ligação).
+- 📌 Gaps registrados sem frente: meta vs realizado + comissão estimada; auditoria mobile do
+  Meu Dia/fila; cesta sugerida (bloqueada no 360dialog).
+
+---
+
 ## ⚡ SESSÃO 2026-06-09/10 — Auditoria de velocidade & usabilidade: 24 itens mapeados, 4 ondas COMPLETAS
 
 > Pedido do founder: "revisite o código todo e procure brechas para deixar ele mais rápido

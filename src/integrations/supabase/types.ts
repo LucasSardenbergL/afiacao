@@ -8256,6 +8256,33 @@ export type Database = {
         }
         Relationships: []
       }
+      push_subscriptions: {
+        Row: {
+          created_at: string
+          endpoint: string
+          id: string
+          subscription: Json
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          endpoint: string
+          id?: string
+          subscription: Json
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          endpoint?: string
+          id?: string
+          subscription?: Json
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       rag_chunks: {
         Row: {
           chunk_index: number
@@ -14318,6 +14345,10 @@ export type Database = {
         Returns: number
       }
       data_health_watchdog: { Args: never; Returns: undefined }
+      delete_push_subscription: {
+        Args: { p_endpoint: string }
+        Returns: undefined
+      }
       des_data_faturamento_prevista: {
         Args: {
           p_data_emissao: string
@@ -14907,6 +14938,10 @@ export type Database = {
       tint_run_reconciliation: {
         Args: { p_sync_run_id: string }
         Returns: Json
+      }
+      upsert_push_subscription: {
+        Args: { p_endpoint: string; p_subscription: Json; p_user_agent?: string }
+        Returns: undefined
       }
       validar_sku_para_aplicacao: {
         Args: { p_empresa: string; p_sku: string }
