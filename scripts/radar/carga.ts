@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Carga do Radar de Clientes — dump RFB → radar-ingest.
- * Uso: bun scripts/radar/carga.ts --mes 2026-05 [--base-url <url>] [--dry-run] [--so-municipios]
+ * Uso: bun scripts/radar/carga.ts --mes 2026-05 [--base-url <url>] [--dry-run]
  * Env: RADAR_INGEST_URL (https://<proj>.supabase.co/functions/v1/radar-ingest)
  *      RADAR_CRON_SECRET (valor do CRON_SECRET do Vault)
  * ⚠️ A RFB mudou layout/URLs em jan/2026 — o caminho VIVO (descoberto na 1ª carga,
@@ -64,7 +64,7 @@ const baixar = (nome: string) => {
   const dest = `${WORK}/${nome}`;
   if (!existsSync(dest)) {
     console.log(`⬇️  ${nome}`);
-    sh(`curl -fSL --retry 3 -C - ${authDe(BASE)} -o "${dest}" "${BASE}/${nome}"`);
+    sh(`curl -fSL --retry 3 -C - ${authDe(BASE)} -o "${dest}.part" "${BASE}/${nome}" && mv "${dest}.part" "${dest}"`); // atômico: zip parcial nunca vira "completo"
   }
   return dest;
 };
@@ -74,7 +74,7 @@ const cnaes = readFileSync("scripts/radar/cnaes-alvo.txt", "utf-8").split("\n")
   .map((l) => l.trim()).filter((l) => l && !l.startsWith("#")).map((l) => l.split("\t")[0].trim());
 if (cnaes.length === 0) { console.error("cnaes-alvo.txt vazio"); process.exit(1); }
 baixar("Cnaes.zip");
-sh(`cd ${WORK} && unzip -o -q Cnaes.zip -d cnaes/`);
+sh(`cd ${WORK} && rm -rf cnaes/ && unzip -o -q Cnaes.zip -d cnaes/`);
 // duckdb via execFileSync (args em array, SEM shell) — o SQL contém aspas duplas
 // (quote='"') e single quotes; string-shell quoting quebrava (1ª carga, 2026-06-11).
 const duck = (q: string) =>
@@ -93,6 +93,7 @@ const sanear = (dir: string) => {
   for (const f of readdirSync(`${WORK}/${dir}`)) {
     const p = `${WORK}/${dir}/${f}`;
     execFileSync("sh", ["-c", `iconv -c -f WINDOWS-1252 -t UTF-8 '${p}' > '${p}.utf8' && mv '${p}.utf8' '${p}'`]);
+    execFileSync("touch", [`${p}.ok`]); // awk cria o .ok lazy; entrada vazia não pode estourar o mv
     const impares = execFileSync("awk", [
       `{ n=gsub(/"/,"\\""); if (n%2==0) print > OUT; else c++ } END { print c+0 }`,
       `OUT=${p}.ok`, p,
@@ -104,7 +105,7 @@ const sanear = (dir: string) => {
 
 sanear("cnaes");
 const catalogoCnae: { c: string; d: string }[] = JSON.parse(duck(
-  `SELECT column0 AS c, column1 AS d FROM read_csv('${WORK}/cnaes/*', delim=';', header=false, quote='"', all_varchar=true, parallel=false)`));
+  `SELECT c, d FROM read_csv('${WORK}/cnaes/*', delim=';', header=false, quote='"', all_varchar=true, parallel=false, names=['c','d'])`));
 const mapaCnae = new Map(catalogoCnae.map((r) => [r.c, r.d]));
 const invalidos = cnaes.filter((c) => !mapaCnae.has(c));
 if (invalidos.length) { console.error(`❌ CNAEs fora do catálogo RFB (DV errado?): ${invalidos.join(", ")}`); process.exit(3); }
@@ -116,6 +117,7 @@ console.log(`✅ curadoria: ${cnaes.length} CNAEs válidos`);
 // hospital com serralheria interna). v2 planejada: reintroduzir secundários com
 // coluna match_via ('principal'|'secundario') e filtro default na UI.
 const inList = cnaes.map((c) => `'${c}'`).join(",");
+let usouCache = false;
 for (let i = 0; i <= 9; i++) {
   // Parquet existente = cache (resume de carga interrompida). ⚠️ Se a CURADORIA
   // mudou desde a última rodada, apagar ${WORK}/est_filtrado_*.parquet antes —
@@ -149,7 +151,7 @@ for (let i = 0; i <= 9; i++) baixar(`Socios${i}.zip`);
 sh(`cd ${WORK} && rm -rf emp/ soc/ && mkdir emp soc && for z in Empresas*.zip; do unzip -o -q $z -d emp/; done && for z in Socios*.zip; do unzip -o -q $z -d soc/; done`);
 sanear("emp"); sanear("soc");
 baixar("Municipios.zip");
-sh(`cd ${WORK} && unzip -o -q Municipios.zip -d mun/`);
+sh(`cd ${WORK} && rm -rf mun/ && unzip -o -q Municipios.zip -d mun/`);
 sanear("mun");
 
 duck(`
@@ -205,7 +207,11 @@ console.log(`\n📊 ${linhas.length} empresas após filtro/normalização`);
 for (const [c, n] of [...porCnae.entries()].sort((a, b) => b[1] - a[1]))
   console.log(`   ${c}  ${String(n).padStart(7)}  ${mapaCnae.get(c)?.slice(0, 60) ?? ""}`);
 const zerados = cnaes.filter((c) => !porCnae.has(c));
-if (zerados.length) console.warn(`⚠️ CNAEs com 0 matches (conferir): ${zerados.join(", ")}`);
+if (zerados.length && usouCache) {
+  console.error(`\u274c CNAEs sem nenhum match (${zerados.join(", ")}) COM parquet em cache: se a curadoria foi ampliada, o cache nao contem o CNAE novo. Apague ${WORK}/est_filtrado_*.parquet e re-rode.`);
+  process.exit(4);
+}
+if (zerados.length) console.warn(`\u26a0\ufe0f CNAEs com 0 matches (conferir): ${zerados.join(", ")}`);
 
 // ── 6. Municípios RFB + lat/lng IBGE (casamento por nome normalizado) ─────────
 const ibge = readFileSync("scripts/radar/municipios-ibge.csv", "utf-8").split("\n").slice(1).filter(Boolean);
@@ -234,15 +240,22 @@ if (DRY) { console.log("🏁 dry-run: nada enviado"); process.exit(0); }
 // ── 7. POST em chunks ─────────────────────────────────────────────────────────
 const post = async (body: unknown) => {
   for (let t = 1; t <= 4; t++) {
-    const res = await fetch(INGEST_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-cron-secret": SECRET },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) return res.json();
-    const txt = await res.text();
-    if (t === 4) throw new Error(`POST falhou (${res.status}): ${txt}`);
-    console.warn(`tentativa ${t} falhou (${res.status}), retry…`);
+    // try/catch cobre rejeição do fetch (rede: ECONNRESET/DNS) — review da 1ª carga:
+    // só status HTTP no retry deixava ~527 POSTs sequenciais morrerem no 1º transitório.
+    try {
+      const res = await fetch(INGEST_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-cron-secret": SECRET },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) return res.json();
+      const txt = await res.text();
+      if (t === 4) throw new Error(`POST falhou (${res.status}): ${txt}`);
+      console.warn(`tentativa ${t} falhou (${res.status}), retry…`);
+    } catch (e) {
+      if (t === 4) throw e;
+      console.warn(`tentativa ${t} falhou (rede: ${e instanceof Error ? e.message : e}), retry…`);
+    }
     await new Promise((r) => setTimeout(r, 800 * 2 ** t));
   }
 };
