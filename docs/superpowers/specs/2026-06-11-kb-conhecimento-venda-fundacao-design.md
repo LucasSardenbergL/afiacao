@@ -88,7 +88,7 @@ O índice parcial garante ≤1 linha por `(account, omie_codigo_produto)`. (Se a
 - Exclui SKUs já `confirmed` (em qualquer spec) e os `rejected` para este spec.
 - Retorna candidatos: `{account, omie_codigo_produto, codigo, descricao, trecho_destacado, ambiguous}`. `ambiguous=true` quando ≥2 códigos plausíveis aparecem na mesma descrição.
 
-**RPC `confirmar_vinculo_boletim(p_kb_product_spec_id, p_skus[])` e `rejeitar_sugestao(...)`** (SECURITY DEFINER, gate staff/master):
+**RPC `confirmar_vinculo_boletim(p_kb_product_spec_id, p_skus[])` e `rejeitar_sugestao(...)`** (SECURITY DEFINER, **gate master** — founder cura a base, ver V1-C):
 - Insere/atualiza `omie_product_spec_links` com `status='confirmed'`/`'rejected'`, `confirmed_by = auth.uid()` (server-side, anti-spoof).
 - Respeita o índice único parcial; confirmar um SKU já ligado a OUTRO spec → erro explícito (não rouba vínculo silenciosamente).
 
@@ -154,7 +154,7 @@ Estende `/admin/knowledge-base`:
 - **V1-A — Reusar `kb_product_specs` (não o modelo de 3 tabelas do Codex).** Menor disrupção (hooks/UI/edge já dependem dela); base vazia permite ajustar identidade barato. O ganho do modelo completo é versionamento temporal, que é V2.
 - **V2-A — Versionamento temporal + snapshot no pedido (ADIADO).** Codex §6: "uma revisão posterior não pode mudar retroativamente a orientação dada ao cliente". Real, mas YAGNI com base vazia e specs que quase não mudam. Quando houver revisões de boletim, criar `kb_product_spec_versions` + snapshot de `spec_version_id` no orçamento/pedido.
 - **V2-B — Monitoramento no Sentinela (ADIADO):** SKUs sem vínculo, vínculos ambíguos, specs aprovadas sem SKU, descrição Omie alterada após confirmação. Vira check de `data_health` quando a base tiver volume.
-- **V1-C — Quem aprova/confirma (money-path):** confirmar vínculo via RPC server-side gated a staff (employee/master); avaliar apertar aprovação de spec pra master no plano. Não relaxar o gate.
+- **V1-C — Quem cura a base (DECIDIDO com o founder, 2026-06-11):** **só master/founder** aprova boletim (seta `approved_at`) e confirma vínculo — é o que influencia a venda, então o gate é dele. Vendedores (employee) **leem** specs na venda/copilot mas **não aprovam**. Implicação: a aprovação de spec migra de escrita client-side por qualquer staff (hoje `useSaveProductSpecs`) para RPC `SECURITY DEFINER` master-gated (ou RLS de UPDATE de `approved_at` apertada a master); as RPCs de vínculo (§4b) são master. Leitura (`v_omie_product_current_spec`, hooks da venda) segue staff.
 - **Busca reversa > extração:** decisão central, reduz falso-casamento (não captura catalisador citado).
 
 ## 11. Sequência de PRs da Fundação
