@@ -52,6 +52,7 @@ export function splitCnaesSecundarios(v: string): string[] {
  *  Strip de caracteres de controle (U+0000–U+001F, ex.: NUL) antes do colapso —
  *  evita rejeição de chunk no Postgres ao inserir em colunas text. */
 export function normalizarTexto(v: string | null | undefined): string | null {
+  // eslint-disable-next-line no-control-regex -- strip intencional de controles C0 (NUL quebra insert no Postgres)
   const s = (v ?? '').replace(/[\x00-\x1F]/g, ' ').replace(/\s+/g, ' ').trim();
   return s || null;
 }
