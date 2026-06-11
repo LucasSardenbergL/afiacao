@@ -124,6 +124,7 @@ for (let i = 0; i <= 9; i++) {
   // parquet velho não contém CNAE recém-adicionado (o aviso de 0-matches denuncia).
   if (existsSync(`${WORK}/est_filtrado_${i}.parquet`)) {
     console.log(`↩️  Estabelecimentos${i}: parquet em cache, pulando`);
+    usouCache = true;
     continue;
   }
   const zip = baixar(`Estabelecimentos${i}.zip`);
