@@ -6070,6 +6070,98 @@ export type Database = {
         }
         Relationships: []
       }
+      melhoria_itens: {
+        Row: {
+          autor_user_id: string
+          avaliacao_founder: string | null
+          created_at: string
+          empresa: string
+          id: string
+          modulo: string | null
+          resposta_founder: string | null
+          resolvido_em: string | null
+          rota_origem: string | null
+          status: string
+          titulo: string | null
+          triagem_status: string
+          tipo: string | null
+          updated_at: string
+          urgencia: string | null
+        }
+        Insert: {
+          autor_user_id: string
+          avaliacao_founder?: string | null
+          created_at?: string
+          empresa: string
+          id?: string
+          modulo?: string | null
+          resposta_founder?: string | null
+          resolvido_em?: string | null
+          rota_origem?: string | null
+          status?: string
+          titulo?: string | null
+          triagem_status?: string
+          tipo?: string | null
+          updated_at?: string
+          urgencia?: string | null
+        }
+        Update: {
+          autor_user_id?: string
+          avaliacao_founder?: string | null
+          created_at?: string
+          empresa?: string
+          id?: string
+          modulo?: string | null
+          resposta_founder?: string | null
+          resolvido_em?: string | null
+          rota_origem?: string | null
+          status?: string
+          titulo?: string | null
+          triagem_status?: string
+          tipo?: string | null
+          updated_at?: string
+          urgencia?: string | null
+        }
+        Relationships: []
+      }
+      melhoria_mensagens: {
+        Row: {
+          autor_user_id: string | null
+          conteudo: string
+          created_at: string
+          dados: Json | null
+          id: string
+          item_id: string
+          papel: string
+        }
+        Insert: {
+          autor_user_id?: string | null
+          conteudo: string
+          created_at?: string
+          dados?: Json | null
+          id?: string
+          item_id: string
+          papel: string
+        }
+        Update: {
+          autor_user_id?: string | null
+          conteudo?: string
+          created_at?: string
+          dados?: Json | null
+          id?: string
+          item_id?: string
+          papel?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "melhoria_mensagens_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "melhoria_itens"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       nfe_efetivacao_tentativas: {
         Row: {
           created_at: string
