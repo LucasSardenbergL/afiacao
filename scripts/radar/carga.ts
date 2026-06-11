@@ -10,7 +10,7 @@
  * O script tenta os candidatos e ABORTA com instrução clara se nenhum responder.
  */
 import { mkdirSync, existsSync, readFileSync, rmSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import {
   montarCnpj, normalizarData, normalizarTelefone, normalizarCapital,
   splitCnaesSecundarios, normalizarTexto, normalizarChaveMunicipio,
@@ -75,9 +75,12 @@ const cnaes = readFileSync("scripts/radar/cnaes-alvo.txt", "utf-8").split("\n")
 if (cnaes.length === 0) { console.error("cnaes-alvo.txt vazio"); process.exit(1); }
 baixar("Cnaes.zip");
 sh(`cd ${WORK} && unzip -o -q Cnaes.zip -d cnaes/`);
-const duck = (q: string) => sh(`duckdb -json -c "${q.replace(/"/g, '\\"')}"`);
+// duckdb via execFileSync (args em array, SEM shell) — o SQL contém aspas duplas
+// (quote='"') e single quotes; string-shell quoting quebrava (1ª carga, 2026-06-11).
+const duck = (q: string) =>
+  execFileSync("duckdb", ["-json", "-c", q], { maxBuffer: 1024 * 1024 * 256 }).toString();
 const catalogoCnae: { c: string; d: string }[] = JSON.parse(duck(
-  `SELECT column0 AS c, column1 AS d FROM read_csv('${WORK}/cnaes/*', delim=';', header=false, quote='\\"', encoding='latin-1', all_varchar=true)`));
+  `SELECT column0 AS c, column1 AS d FROM read_csv('${WORK}/cnaes/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true)`));
 const mapaCnae = new Map(catalogoCnae.map((r) => [r.c, r.d]));
 const invalidos = cnaes.filter((c) => !mapaCnae.has(c));
 if (invalidos.length) { console.error(`❌ CNAEs fora do catálogo RFB (DV errado?): ${invalidos.join(", ")}`); process.exit(3); }
@@ -94,7 +97,7 @@ for (let i = 0; i <= 9; i++) {
              column11 cnae1, column12 cnae2, column13 tlog, column14 log, column15 num,
              column16 comp, column17 bai, column18 cep, column19 uf, column20 mun,
              column21 ddd1, column22 tel1, column23 ddd2, column24 tel2, column27 email
-      FROM read_csv('${WORK}/est/*', delim=';', header=false, quote='\\"',
+      FROM read_csv('${WORK}/est/*', delim=';', header=false, quote='"',
                     encoding='latin-1', all_varchar=true, strict_mode=false)
       WHERE column5 = '02' AND (column11 IN (${inList}) OR regexp_matches(coalesce(column12,''), '(${secRegex})'))
     ) TO '${WORK}/est_filtrado_${i}.parquet' (FORMAT parquet)`);
@@ -113,15 +116,15 @@ duck(`
   CREATE TEMP TABLE est AS SELECT * FROM read_parquet('${WORK}/est_filtrado_*.parquet');
   CREATE TEMP TABLE emp AS
     SELECT column0 b, column1 razao, column4 capital, column5 porte
-    FROM read_csv('${WORK}/emp/*', delim=';', header=false, quote='\\"', encoding='latin-1', all_varchar=true, strict_mode=false)
+    FROM read_csv('${WORK}/emp/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true, strict_mode=false)
     WHERE column0 IN (SELECT DISTINCT b FROM est);
   CREATE TEMP TABLE soc AS
     SELECT column0 b, string_agg(column2, '; ') socios
-    FROM read_csv('${WORK}/soc/*', delim=';', header=false, quote='\\"', encoding='latin-1', all_varchar=true, strict_mode=false)
+    FROM read_csv('${WORK}/soc/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true, strict_mode=false)
     WHERE column0 IN (SELECT DISTINCT b FROM est) GROUP BY column0;
   CREATE TEMP TABLE mun AS
     SELECT column0 cod, column1 nome
-    FROM read_csv('${WORK}/mun/*', delim=';', header=false, quote='\\"', encoding='latin-1', all_varchar=true);
+    FROM read_csv('${WORK}/mun/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true);
   COPY (SELECT est.*, emp.razao, emp.capital, emp.porte, soc.socios, mun.nome AS mun_nome
         FROM est LEFT JOIN emp ON emp.b = est.b
                  LEFT JOIN soc ON soc.b = est.b
@@ -172,7 +175,7 @@ for (const l of ibge) {
 const ufPorMunCodigo = new Map<string, string>();
 for (const r of linhas) if (r.municipio_codigo && r.uf) ufPorMunCodigo.set(r.municipio_codigo, r.uf);
 const municipiosRfb: { cod: string; nome: string }[] = JSON.parse(duck(
-  `SELECT column0 cod, column1 nome FROM read_csv('${WORK}/mun/*', delim=';', header=false, quote='\\"', encoding='latin-1', all_varchar=true)`));
+  `SELECT column0 cod, column1 nome FROM read_csv('${WORK}/mun/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true)`));
 let semLatLng = 0;
 const municipios: RadarMunicipioRow[] = municipiosRfb.map((m) => {
   const uf = ufPorMunCodigo.get(m.cod) ?? "";
