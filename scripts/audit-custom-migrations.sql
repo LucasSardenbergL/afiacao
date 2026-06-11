@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 194
+-- Total de custom migrations: 195
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -213,7 +213,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260609150000', 'reposicao_alerta_pedido_minimo', '20260609150000_reposicao_alerta_pedido_minimo.sql'),
   ('20260609150000', 'tint_sync_promote', '20260609150000_tint_sync_promote.sql'),
   ('20260609160000', 'reposicao_ciclo_intraday', '20260609160000_reposicao_ciclo_intraday.sql'),
-  ('20260610200000', 'push_vendedora', '20260610200000_push_vendedora.sql')
+  ('20260610200000', 'push_vendedora', '20260610200000_push_vendedora.sql'),
+  ('20260611120000', 'reposicao_fixes_codex_711', '20260611120000_reposicao_fixes_codex_711.sql')
 )
 SELECT
   e.version,
@@ -953,6 +954,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'omie-sync-estoque-diario', ''),
   ('push_vendedora', 'table', 'public', 'push_subscriptions', ''),
   ('push_vendedora', 'index', 'public', 'idx_push_subscriptions_user', 'push_subscriptions'),
+  ('push_vendedora', 'function', 'public', 'upsert_push_subscription', ''),
+  ('push_vendedora', 'function', 'public', 'delete_push_subscription', ''),
   ('push_vendedora', 'function', 'public', '_push_enviar', ''),
   ('push_vendedora', 'function', 'public', 'push_whatsapp_inbound', ''),
   ('push_vendedora', 'function', 'public', 'push_tarefa_nova', ''),
@@ -961,7 +964,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('push_vendedora', 'trigger', 'public', 'trg_push_tarefa_nova', 'tarefas'),
   ('push_vendedora', 'cron_job', 'cron', 'push-sla-tick', ''),
   ('push_vendedora', 'rls_policy', 'public', 'push_subscriptions_own', 'push_subscriptions'),
-  ('push_vendedora', 'rls_policy', 'public', 'push_subscriptions_service', 'push_subscriptions')
+  ('push_vendedora', 'rls_policy', 'public', 'push_subscriptions_service', 'push_subscriptions'),
+  ('reposicao_fixes_codex_711', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
+  ('reposicao_fixes_codex_711', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', '')
 )
 SELECT
   e.migration,

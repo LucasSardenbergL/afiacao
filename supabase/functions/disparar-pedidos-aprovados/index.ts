@@ -1123,7 +1123,7 @@ function buildResumoEmail(
     <a href="${APP_URL}/admin/reposicao/pedidos" style="display:inline-block;background:#111827;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Ver todos no app</a>
   </div>
 
-  ${expirados > 0 ? `<p style="margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;">${expirados} pedido(s) não aprovado(s) até as 10:00 foram marcados como expirado_sem_aprovacao.</p>` : ""}
+  ${expirados > 0 ? `<p style="margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;">${expirados} pedido(s) de OPORTUNIDADE não aprovado(s) até as 10:00 foram marcados como expirado_sem_aprovacao. Pedidos normais pendentes seguem vivos (o ciclo intra-day os atualiza ao longo do dia).</p>` : ""}
 </div>
 </body></html>`;
 
@@ -1239,13 +1239,20 @@ Deno.serve(async (req: Request) => {
     // disparo (corte em lote, aprovar-e-disparar, re-disparo individual, motor de retry).
     const barradosGate: ProcessResult[] = [];
     {
-      const { data: gateCfgRows } = await db
+      const { data: gateCfgRows, error: gateCfgErr } = await db
         .from("company_config")
         .select("key, value")
         .in("key", [
           "reposicao_alerta_pedido_valor_minimo",
           "reposicao_alerta_pedido_fornecedor_ilike",
         ]);
+      // Fail-CLOSED em erro de LEITURA (Codex P1.3): erro de rede/RLS aqui não pode virar
+      // "config ausente" (que desliga o gate e deixa pedido <R$3k disparar). Aborta o run
+      // inteiro ANTES de qualquer envio — o retry/cron seguinte tenta de novo. Config
+      // genuinamente ausente (query ok, 0 linhas) continua = gate desligado, por design.
+      if (gateCfgErr) {
+        throw new Error(`Config do gate de mínimo de faturamento: ${gateCfgErr.message}`);
+      }
       const cfgMap = new Map((gateCfgRows ?? []).map((r) => [r.key, r.value]));
       const gateCfg: GateConfig = {
         valorMinimo: Number(cfgMap.get("reposicao_alerta_pedido_valor_minimo") ?? NaN),
@@ -1288,7 +1295,15 @@ Deno.serve(async (req: Request) => {
     // independente no banco e segue o caminho normal (portal → Omie).
     aprovados = await dividirPedidosGrandesSayerlack(db, aprovados, modo);
 
-    // 3. Expirar não aprovados
+    // 3. Expirar OPORTUNIDADES não aprovadas (Codex P1.1 pós-intra-day).
+    // Antes expirava TODOS os pendentes do dia — no mundo intra-day isso virou contraproducente:
+    // a rodada das 12h15 UTC gerava pendentes que o corte expirava 45min depois e a rodada das
+    // 14h15 regenerava (churn + o alerta R$3k re-armava = e-mail duplicado no mesmo dia).
+    // Pendentes NORMAIS agora vivem o dia todo (a RPC os regenera a cada rodada e expira os de
+    // data_ciclo < hoje na 1ª rodada de amanhã). A oportunidade mantém a vida curta original
+    // (decisão na janela da manhã) — e NÃO pode virar zumbi: pendente eterno de oportunidade
+    // bloquearia o SKU pra sempre no NOT EXISTS da RPC normal. O .lte é backstop pra
+    // oportunidades de dias anteriores (ex.: corte que falhou).
     let expirados = 0;
     if (!pedidoId) {
       const { data: expRows, error: expErr } = await db
@@ -1298,8 +1313,9 @@ Deno.serve(async (req: Request) => {
           atualizado_em: new Date().toISOString(),
         })
         .eq("empresa", empresa)
-        .eq("data_ciclo", dataCiclo)
+        .lte("data_ciclo", dataCiclo)
         .eq("status", "pendente_aprovacao")
+        .like("tipo_ciclo", "oportunidade_%")
         .select("id");
       if (expErr) console.error("[disparar-pedidos] expirar erro:", expErr.message);
       expirados = expRows?.length ?? 0;

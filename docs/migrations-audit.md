@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **194** custom migrations totais
-- **730** objetos esperados (criados por estas migrations)
+- **195** custom migrations totais
+- **734** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
+  - `function`: 187
   - `rls_policy`: 183
-  - `function`: 183
   - `index`: 134
   - `cron_job`: 102
   - `table`: 85
@@ -1699,6 +1699,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `table` | `public.push_subscriptions` | — |
 | `index` | `public.idx_push_subscriptions_user` | `push_subscriptions` |
+| `function` | `public.upsert_push_subscription` | — |
+| `function` | `public.delete_push_subscription` | — |
 | `function` | `public._push_enviar` | — |
 | `function` | `public.push_whatsapp_inbound` | — |
 | `function` | `public.push_tarefa_nova` | — |
@@ -1708,6 +1710,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.push-sla-tick` | — |
 | `rls_policy` | `public.push_subscriptions_own` | `push_subscriptions` |
 | `rls_policy` | `public.push_subscriptions_service` | `push_subscriptions` |
+
+### `20260611120000_reposicao_fixes_codex_711.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_oportunidade_ciclo` | — |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
 
 ## Próximos passos quando algo der `❌`
 
