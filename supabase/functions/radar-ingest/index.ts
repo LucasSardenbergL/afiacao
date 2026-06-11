@@ -42,8 +42,9 @@ Deno.serve(async (req) => {
     if (action === "begin_lote") {
       if (!MES_RE.test(mes)) return json({ error: "mes inválido (YYYY-MM)" }, 400);
       // Verificar se já existe para preservar iniciado_em em re-run
-      const { data: existing } = await admin.from("radar_ingest_state")
+      const { data: existing, error: eSel } = await admin.from("radar_ingest_state")
         .select("mes_referencia").eq("mes_referencia", mes).maybeSingle();
+      if (eSel) throw eSel;
       let dbError;
       if (existing) {
         // Re-run: preserva iniciado_em, só recomeça o status
@@ -90,7 +91,7 @@ Deno.serve(async (req) => {
       }));
       // Dedup intra-chunk: CNPJ duplicado dentro do mesmo chunk derrubaria o
       // statement com erro 21000 permanente (retry nunca resolve). last-wins.
-      const porCnpj = new Map(payload.map((p) => [p.cnpj, p]));
+      const porCnpj = new Map(payload.map((p) => [String(p.cnpj), p]));
       const finalPayload = [...porCnpj.values()];
       const { error } = await admin.from("radar_empresas").upsert(finalPayload, { onConflict: "cnpj" });
       if (error) throw error;
