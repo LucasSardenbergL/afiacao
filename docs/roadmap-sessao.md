@@ -182,7 +182,7 @@
 - ✅ **Análise dente de serra entregue** — fase 1 = intra-day (adianta disparo ~0,5–1d) + alerta R$3k (lote ótimo ≈ mínimo de faturamento); fase 2 (recalibrar ponto_pedido/cobertura/SS com R=2h via esteira `param_auto`) **gated em 2–4 semanas de medição**.
 - ✅ **Rollout em prod concluído (2026-06-09):** BLOCOS A+B aplicados e validados no SQL Editor + edges `gerar-pedidos-diario` e `disparar-pedidos-aprovados` deployadas verbatim (Active, diff vazio vs main). **Pacote 100% no ar** — 1ª rodada intra-day 7h15 BRT do dia seguinte.
 - ✅ **Codex adversarial retroativo RODOU (2026-06-11, xhigh)** — caminho B fechado. Confirmou meu achado do corte (com refinamento: expirar SÓ oportunidades, senão zumbi de oportunidade bloquearia SKU pra sempre no NOT EXISTS) + 2 P1 novos (simetria na `gerar_pedidos_oportunidade_ciclo`; gate fail-closed em erro de leitura de config) + validou guardrail/tick/gate. Fixes na migration `20260611120000` + edge `disparar-pedidos-aprovados` (PG17 5 asserts).
-- ⏳ **Founder:** colar `20260611120000` no SQL Editor (com pré-flight) + redeploy da `disparar-pedidos-aprovados` via Lovable.
+- ✅ **Fixes do Codex 100% NO AR (2026-06-11):** pré-flight CONFIRMOU o bug da oportunidade em prod (`corpo_conhecido_quebrado=true` — pedidos de oportunidade nunca nasceram); `20260611120000` aplicada (`BLOCO C OK 1/1`) + `disparar-pedidos-aprovados` redeployada verbatim (teste POST 200). **A feature de pedidos de oportunidade foi LIGADA** → revisar o 1º pedido que nascer em dia de corte de campanha/véspera de aumento.
 - ⏸️ **P2 do Codex (follow-ups com gatilho):** gate no modo individual da edge do portal (rota dormente); corte×runAutoApprove transacional (coberto pelo Sentinela 48h).
 
 ---
