@@ -170,6 +170,8 @@ const RotaListaLigacao = lazy(() => import("./pages/RotaListaLigacao"));
 const RotaPainelLigacoes = lazy(() => import("./pages/RotaPainelLigacoes"));
 const RotaPropostas = lazy(() => import("./pages/RotaPropostas"));
 const Caca = lazy(() => import("./pages/Caca"));
+const Melhorias = lazy(() => import("./pages/Melhorias"));
+const GestaoMelhorias = lazy(() => import("./pages/GestaoMelhorias"));
 
 const PageLoader = () => <PageSkeleton variant="auto" />;
 
@@ -375,6 +377,8 @@ const App = () => {
                 <Route path="gestao/admin" element={<GestaoAdmin />} />
                 <Route path="gestao/governanca" element={<GestaoGovernanca />} />
                 <Route path="gestao/saude-dados" element={<SaudeDados />} />
+                <Route path="gestao/melhorias" element={<GestaoMelhorias />} />
+                <Route path="melhorias" element={<Melhorias />} />
                 <Route path="admin/ajuda" element={<AdminAjuda />} />
                 <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
                 <Route path="admin/des/configuracao" element={<AdminDesTrimestreAtual />} />
