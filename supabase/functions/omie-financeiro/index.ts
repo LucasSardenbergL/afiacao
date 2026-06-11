@@ -2152,7 +2152,7 @@ serve(async (req) => {
             acoes_disponiveis: [
               "sync_all", "sync_categorias", "sync_contas_correntes",
               "sync_contas_pagar", "sync_contas_receber", "sync_movimentacoes",
-              "calcular_dre", "calcular_dre_year", "resumo", "debug_raw",
+              "calcular_dre", "calcular_dre_year", "debug_raw",
             ],
           }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
