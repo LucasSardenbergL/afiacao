@@ -134,6 +134,12 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
+// Fix 1 (P2-1): mapa explícito tool→RPC — nome inesperado nunca executa RPC.
+const RPC_POR_TOOL: Record<string, string> = {
+  clientes_por_produto: "melhoria_clientes_por_produto",
+  produtos_relacionados: "melhoria_produtos_relacionados",
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -151,11 +157,21 @@ Deno.serve(async (req) => {
   } catch { /* body inválido cai no guard abaixo */ }
   if (!itemId) return jsonResponse({ error: "item_id obrigatório" }, 400);
 
+  // Fix 4 (P3-1): item_id não-UUID vira 400, não 500 (evita query desnecessária com input malformado).
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_RE.test(itemId)) return jsonResponse({ error: "item_id inválido" }, 400);
+
   // Anti-spoof: conteúdo vem do banco, nunca do payload.
   const { data: item, error: itemErr } = await admin
     .from("melhoria_itens").select("*").eq("id", itemId).maybeSingle();
   if (itemErr) return jsonResponse({ error: `Falha ao ler item: ${itemErr.message}` }, 500);
   if (!item) return jsonResponse({ error: "Item não encontrado" }, 404);
+
+  // Fix 3 (P3-3): item finalizado não re-tria (espelha a regra de réplica da RLS;
+  // evita poluir item fechado com triagem desnecessária).
+  if (item.status !== "aberto" && item.status !== "em_andamento") {
+    return jsonResponse({ error: "Item já finalizado — reabra ou crie um novo" }, 422);
+  }
 
   // Autorização: autor do item OU master.
   const callerIsAutor = auth.userId === item.autor_user_id;
@@ -193,8 +209,9 @@ Deno.serve(async (req) => {
 
   try {
     const client = new Anthropic({ apiKey });
+    // Fix 5 (P3-2): cap de 8000 chars por mensagem evita prompt inflado por relato longo.
     const thread = (mensagens as Array<{ papel: string; conteudo: string }>)
-      .map((m) => `[${m.papel}] ${m.conteudo}`)
+      .map((m) => `[${m.papel}] ${String(m.conteudo).slice(0, 8000)}`)
       .join("\n");
     const userMsg = `Contexto do item:
 - Empresa ativa no envio: ${item.empresa}
@@ -220,7 +237,11 @@ Avalie e finalize chamando a tool "triar".`;
         max_tokens: 2500,
         system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
         tools,
-        tool_choice: forcarTriar ? { type: "tool", name: "triar" } : { type: "auto" },
+        // Fix 2 (P2-2): disable_parallel_tool_use evita que o caso "quem compra X + sugerir"
+        // dispare 2 tool_use no mesmo turn (→ 400 da API → fallback intermitente).
+        tool_choice: forcarTriar
+          ? { type: "tool", name: "triar" }
+          : { type: "auto", disable_parallel_tool_use: true },
         messages,
       });
 
@@ -233,8 +254,12 @@ Avalie e finalize chamando a tool "triar".`;
       }
 
       // Tool de dados: executa a RPC com o JWT do caller (escopo de carteira correto).
+      // Mapa explícito + guard: nome inesperado OU tools desabilitadas NUNCA executam RPC
+      // (defesa em profundidade do anti-vazamento — spec §5).
+      const rpcName = toolsDadosHabilitadas ? RPC_POR_TOOL[toolUse.name] : undefined;
+      if (!rpcName) break; // triagem fica null → marcarErro (degradação honesta)
+
       const input = toolUse.input as { p_termo?: string };
-      const rpcName = toolUse.name === "clientes_por_produto" ? "melhoria_clientes_por_produto" : "melhoria_produtos_relacionados";
       const { data: rpcData, error: rpcErr } = await userClient.rpc(rpcName, { p_termo: String(input?.p_termo ?? "") });
       const resultado = rpcErr ? { erro: rpcErr.message } : rpcData;
       if (!rpcErr) dadosExecutados.push({ tool: toolUse.name, input: { p_termo: input?.p_termo }, resultado });
