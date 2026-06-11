@@ -101,10 +101,8 @@ BEGIN
   VALUES (pid, '1', 'SKU ' || grp, 1, 1, iv, iv, CASE WHEN promo THEN 'forward_buying' ELSE NULL END);
   RETURN pid;
 END $$;
-SQL
 
-echo "→ cenários + asserts…"
-P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- cenários no MESMO bloco psql (pg_temp.* é por-sessão; helpers e DO precisam da mesma conexão)
 DO $$
 DECLARE d int; v numeric; pid bigint; pai bigint; s text;
 BEGIN

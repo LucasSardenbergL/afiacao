@@ -124,6 +124,28 @@ Badge "auto" na lista de pedidos (`aprovado_por LIKE 'auto:%'`) — visibilidade
 5. Sem deploy de edge. Publish só pro badge (opcional, não bloqueia o piloto).
 6. Semanal durante o piloto: query de veto (entregue no rollout) → decisão de promoção/morte na 3ª semana.
 
+## 7b. Revisão adversária — Codex challenge xhigh (2026-06-11)
+
+Rodado em `gpt-5.5` reasoning `xhigh` (money-path). Veredito inicial: **VETO — 6 P1 + 5 P2**. Avaliados criticamente; 5 P1 + 4 P2 **incorporados** (marcas `[AUTO]`/comentários `Codex Pn` na migration), 1 recusado com fundamento. Re-validado no PG17 (24 cenários: os 15 originais + 9 dos folds).
+
+| # | Sev | Achado | Decisão | Fold |
+|---|-----|--------|---------|------|
+| 1 | P1 | Loop não filtra OBEN → Sayerlack de outra empresa auto-aprovaria | aceito | `IF p.empresa <> 'OBEN'` na elegibilidade |
+| 2 | P1 | TOCTOU: elegibilidade lê valores, claim só revalida status; promo concorrente infla entre os dois. + cabeçalho pode divergir dos itens que o disparo manda | aceito | função `VOLATILE` + `SELECT … FOR UPDATE`; valor = `SUM(qtde_final*preco_unitario)` dos ITENS, não o cabeçalho; régua e delta sobre ele |
+| 3 | P1 | `modo_promocao` passa (forward_buying mantém `tipo_ciclo='normal'`) | aceito | veta qualquer item com `modo_promocao IS NOT NULL` |
+| 4 | P1 | Split corrompe a referência do delta (todo ≥3k vira split → referência é um filho ~2k, não o agregado) | aceito | referência = `SUM(valor_total)` do grupo na `data_ciclo` de compra mais recente <90d (colapsa filhos) |
+| 5 | P1 | Config sem teto: `delta_max='30'`=3000%, `cooldown='0'` desliga o cooldown | aceito | clamp `(0, 0.30]` / `≥1` no parsing → fora da faixa = braço OFF |
+| 6 | P1 | Exposição cumulativa: N pedidos do grupo passam cada um contra a mesma referência | aceito | no máx. 1 auto-aprovado `aprovado_aguardando_disparo` por grupo |
+| 7 | P2 | Cooldown cego a falha de PORTAL (`status_envio_portal` terminal, status principal fica aprovado) | aceito | cooldown olha `falha_envio` OU `status_envio_portal IN (erro_nao_retentavel, falha_envio_portal, indeterminado_requer_conciliacao)` |
+| 8 | P2 | `'24:00'::time` aceito pelo PG → aprova depois do cron real → órfão | aceito | regex de range estrito `^([01][0-9]|2[0-3]):[0-5][0-9]$` |
+| 9 | P2 | Ticks concorrentes (cron */30 + hook) → perdedor manda CTA errado | aceito | `pg_advisory_xact_lock` no início do tick |
+| 10 | P2 | RLS do log é global por staff (não filtra empresa) | **recusado** | o próprio Codex nota que "replica o modelo global das tabelas de pedidos"; `user_roles` não tem empresa, não há isolamento por empresa em lugar nenhum, e o piloto é OBEN-only (fold #1). Inventar isolamento inexistente seria incoerente — documentado, não corrigido |
+| 11 | P2 | Guard de item não rejeita NaN/Infinity (`preco<=0` é FALSE p/ NaN) | aceito | forma positiva `> 0 AND < 'Infinity'` por campo |
+
+**Vetores que o Codex confirmou seguros:** dois ticks não duplicam compra/log (claim condicional reavalia sob lock); regeneração concorrente não aprova id apagado; `valor_anterior` 0/neg/NaN/Inf bloqueado antes da divisão; `'.30'`/`'30%'`/`'true'`/`'13:00:00'`/`'13.5'` desligam o braço; `'99:99'` aborta o tick (não aprova); anon/authenticated não executam as funções.
+
+**Limitação conhecida (não-fix):** o disparo em lote pega só `data_ciclo=hoje` ([edge:1215]). Um auto-aprovado que não disparar hoje fica órfão até a próxima geração — mitigado pela janela ≥45min antes do corte e pelo escopo do piloto; o pré-flight do corte (§7.5) garante o alinhamento corte_utc↔cron. Derivar `disparar_nao_antes` do cron real é follow-up.
+
 ## 8. Follow-ups registrados (fora desta entrega)
 
 - **Fase 2:** disparo na rodada seguinte (~2h) gated pelo critério de promoção (§4.7).
