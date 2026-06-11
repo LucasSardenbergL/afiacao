@@ -27,6 +27,22 @@
 
 ---
 
+## SESSÃO 2026-06-10 (3) — /sales/print: pedido do sync Omie caía no dia ERRADO (data-pura UTC × janela local)
+
+> Pedido do sync (`omie-vendas-sync sync_pedidos`) tem `created_at` = data PURA gravada
+> como meia-noite UTC → a janela local (BRT) de `/sales/print` começava 03:00Z e o pedido
+> de hoje (00:00Z) aparecia na lista de impressão de ONTEM como "tarde, 21:00" (hora
+> fabricada). Pedido do wizard (created_at real) era filtrado certo. Continuação do
+> diagnóstico da sessão "fix de exibição da data do pedido" (`formatarDataPedido`, PR paralelo).
+
+- ✅ **Fix TDD (RED→GREEN provado)**: helper puro `src/lib/pedido/dia-civil.ts` — `janelaQueryDiaCivil` (query = união do dia local + dia UTC), `pedidoNoDiaCivil` (re-filtro client-side: dia UTC p/ data-pura, dia local p/ timestamp real — cada pedido pertence a exatamente 1 dia civil = sem duplicação na borda) e `horaExibicaoPedido` ("—" p/ data-pura). 9 testes TZ-agnósticos (passam em BRT local e no UTC do CI).
+- ✅ `getPeriod` (print/types.ts) regime-aware: data-pura → relógio UTC (00:00 → manhã; antes fabricava "tarde" via 21:00 local). `OrderGroup` mostra "—" no lugar da hora fabricada.
+- ✅ **Coordenação com o PR paralelo** (`claude/ecstatic-pare-09147a`): `data-pedido.ts` + teste **vendorizados byte-idênticos** (merge limpo em qualquer ordem); o cupom impresso (`buildPrintHtml.ts:44`, mesma hora fabricada) é coberto POR ELES — deliberadamente não tocado aqui.
+- 📌 **Follow-up (chip)**: `useVendasZone` (KPI faturado hoje/ontem do dashboard) tem o MESMO bug de janela local sobre `sales_orders.created_at` — pedido do sync de hoje conta como ontem.
+- ⚠️ **PENDENTE (founder): Publish no Lovable** (100% frontend, sem migration/edge).
+
+---
+
 ## 0. SESSÃO 2026-06-10 (2) — getCapitalDeGiro + getTopInadimplentes truncados no cap 1000 (fecha o follow-up do #720)
 
 > Sessão spawnada pelo chip de follow-up da seção abaixo: as duas funções restantes do
