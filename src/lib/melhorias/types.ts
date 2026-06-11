@@ -2,8 +2,11 @@
 // Tipos do canal interno de Melhorias (sugestões/problemas com triagem por IA).
 // A edge function `melhoria-triagem` espelha os helpers que consomem estes tipos.
 
-export type MelhoriaTipo = 'problema' | 'sugestao' | 'pergunta';
-export type MelhoriaUrgencia = 'baixa' | 'media' | 'alta';
+export const MELHORIA_TIPOS = ['problema', 'sugestao', 'pergunta'] as const;
+export type MelhoriaTipo = (typeof MELHORIA_TIPOS)[number];
+
+export const MELHORIA_URGENCIAS = ['baixa', 'media', 'alta'] as const;
+export type MelhoriaUrgencia = (typeof MELHORIA_URGENCIAS)[number];
 export type MelhoriaStatus = 'aberto' | 'em_andamento' | 'resolvido' | 'descartado';
 export type MelhoriaTriagemStatus = 'pendente' | 'ok' | 'erro';
 export type MelhoriaPapel = 'funcionario' | 'ia' | 'founder';

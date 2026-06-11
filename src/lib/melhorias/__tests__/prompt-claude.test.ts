@@ -47,4 +47,16 @@ describe('montarPromptClaudeCode', () => {
     const p = montarPromptClaudeCode({ ...item, rota_origem: null }, mensagens, 'Regina');
     expect(p).toContain('não informada');
   });
+
+  it('data inválida cai pra string crua (não "Invalid Date")', () => {
+    const p = montarPromptClaudeCode({ ...item, created_at: 'data-podre' }, mensagens, 'Regina');
+    expect(p).toContain('data-podre');
+    expect(p).not.toContain('Invalid Date');
+  });
+
+  it('thread vazia não quebra o template', () => {
+    const p = montarPromptClaudeCode(item, [], 'Regina');
+    expect(p).toContain('### Relato (thread completa)');
+    expect(p).toContain('### Avaliação técnica da IA');
+  });
 });

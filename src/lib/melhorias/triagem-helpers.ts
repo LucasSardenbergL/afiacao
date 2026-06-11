@@ -3,16 +3,16 @@
 // (Deno não importa do src/; ao alterar aqui, alterar lá).
 import {
   MELHORIA_MODULOS,
+  MELHORIA_TIPOS,
+  MELHORIA_URGENCIAS,
   MAX_MENSAGENS_FUNCIONARIO,
+  type MelhoriaItem,
+  type MelhoriaMensagem,
   type MelhoriaModulo,
   type MelhoriaTipo,
   type MelhoriaUrgencia,
   type TriagemValidada,
 } from './types';
-import type { MelhoriaItem, MelhoriaMensagem } from './types';
-
-const TIPOS: ReadonlyArray<MelhoriaTipo> = ['problema', 'sugestao', 'pergunta'];
-const URGENCIAS: ReadonlyArray<MelhoriaUrgencia> = ['baixa', 'media', 'alta'];
 
 function normStr(v: unknown): string {
   return typeof v === 'string' ? v.trim() : '';
@@ -27,11 +27,13 @@ export function validarTriagem(payload: unknown): TriagemValidada | null {
   if (typeof payload !== 'object' || payload === null) return null;
   const p = payload as Record<string, unknown>;
 
-  const tipo = normStr(p.tipo).toLowerCase() as MelhoriaTipo;
-  if (!TIPOS.includes(tipo)) return null;
+  const tipoRaw = normStr(p.tipo).toLowerCase();
+  if (!(MELHORIA_TIPOS as ReadonlyArray<string>).includes(tipoRaw)) return null;
+  const tipo = tipoRaw as MelhoriaTipo;
 
-  const urgencia = normStr(p.urgencia).toLowerCase() as MelhoriaUrgencia;
-  if (!URGENCIAS.includes(urgencia)) return null;
+  const urgenciaRaw = normStr(p.urgencia).toLowerCase();
+  if (!(MELHORIA_URGENCIAS as ReadonlyArray<string>).includes(urgenciaRaw)) return null;
+  const urgencia = urgenciaRaw as MelhoriaUrgencia;
 
   const moduloRaw = normStr(p.modulo).toLowerCase();
   const modulo: MelhoriaModulo = (MELHORIA_MODULOS as ReadonlyArray<string>).includes(moduloRaw)
