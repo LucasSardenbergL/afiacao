@@ -16,11 +16,13 @@
 > Claude Code (SEM digest e-mail) · funcionário vê status (loop fechado).
 
 - ✅ **Brainstorm** (abordagem A aprovada: thread por item + triagem instantânea + ferramentas de dados guiadas)
-- 🔄 **Spec** escrita em `docs/superpowers/specs/2026-06-10-melhorias-canal-feedback-design.md` — aguardando revisão do founder
-- ⏳ **Plano de implementação** (writing-plans)
-- ⏳ **Implementação**: migration (2 tabelas + RLS + 2 RPCs) · edge `melhoria-triagem` (Anthropic direto) · frontend (dialog topbar + `/melhorias` + `/gestao/melhorias` + badge)
-- ⏳ **Validação**: vitest helpers + PG17 nas RPCs/RLS + smoke prod
-- ⏳ **Deploy (founder)**: migration no SQL Editor + edge via chat Lovable + Publish
+- ✅ **Spec** (`docs/superpowers/specs/2026-06-10-melhorias-canal-feedback-design.md`) + passe adversarial próprio (P1 anti-vazamento de carteira na re-triagem incorporado; Codex esgotado → adversarial retroativo pendente)
+- ✅ **Plano** (`docs/superpowers/plans/2026-06-10-melhorias-canal-feedback-plano.md`, 11 tasks TDD)
+- ✅ **Implementação (subagent-driven, 2-stage review por task)**: helpers puros TDD (21 testes) · migration `20260610130000_melhorias_canal.sql` (2 tabelas + RLS + 2 RPCs; fixes do review: `dados` jsonb exclusivo da IA, INSERT não pré-popula triagem) · **PG17 com falsificação** (15+ asserts; teste apertado após provar que gate sabotado passava — assert A6c2 + WHEN OTHERS re-lança) · edge `melhoria-triagem` (loop agentic + tools JWT-scoped + anti-vazamento; fixes: mapa tool→RPC, disable_parallel_tool_use, gate de status, uuid 400, cap de prompt, prompt copiável delimita relato) · hook `useMelhorias` + types.ts · componentes + páginas + AppShell (botão topbar staff, badge master)
+- ✅ **Validação local**: typecheck 0 · vitest 3026/3026 · lint 0 errors · build vite ok · PG17 verde
+- 🔄 **Review final do diff inteiro** (modelo capaz) → PR
+- ⏳ **Deploy (founder)**: migration no SQL Editor + edge `melhoria-triagem` via chat Lovable + Publish + smoke (criar item real "quais clientes compram lixa?")
+- ⏳ **Codex adversarial retroativo** (cota voltou 11/06 9h24 — spec + migration + edge)
 
 ---
 
