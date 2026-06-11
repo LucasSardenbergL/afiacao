@@ -14,8 +14,10 @@
 > pedido do sync de hoje caía em "ontem" (subconta o KPI de hoje, infla o de ontem e
 > distorce o delta %).
 
-- ✅ Fix: query única com `janelaQueryHojeOntem` (união dos dias civis de ontem+hoje, local∪UTC) + re-filtro client-side `agregarVendasPorDiaCivil` — cada pedido conta em **exatamente 1 dia** via `pedidoNoDiaCivil` (reusa os helpers do #733). Helper novo `src/lib/dashboard/vendas-dia-civil.ts` (TDD, 10 testes TZ-agnósticos — instantes locais via `new Date(y,m,d,h,m)`, UTC via ISO Z; passa em BRT e no UTC do CI). De quebra: 2 queries → 1.
-- ✅ CI local verde (typecheck strict · 3047/3047 testes · lint 0 errors nos arquivos tocados) — 100% frontend (sem migration, sem edge). PR aberto na sequência (auto-merge no `validate`).
+- ✅ Fix v1 (#735, na main): query única com `janelaQueryHojeOntem` (união dos dias civis de ontem+hoje, local∪UTC) + re-filtro client-side `agregarVendasPorDiaCivil` por regime — estancou o fuso usando `created_at`. Helper `vendas-dia-civil.ts` (TDD, 10 testes TZ-agnósticos).
+- ✅ **Follow-up — alinhar ao dashboard Master (decisão do founder):** o mapeamento do blast radius do bug-classe mostrou que o padrão canônico (`useTeamKpis`/`fetchPedidosMTD`) usa **`order_date_kpi`** (coluna `date` pura do #279, imune a fuso por construção) + **filtro de validade** (`status ∉ {cancelado,rascunho}` via `isPedidoValido` + `deleted_at IS NULL`). O #735 (created_at) estancou o fuso mas (a) divergia da fonte canônica e (b) contava cancelado/rascunho/soft-deletado como "Faturado". `useVendasZone` reescrito pra espelhar o Master → cockpit e Master passam a **bater**. Helper `vendas-dia-civil.ts` → `vendas-kpi-dia.ts` (`agregarVendasDiaKpi`, comparação por string `YYYY-MM-DD` → TZ-agnóstico sem Date local; reusa `isPedidoValido`+`addDias`). TDD (9 testes). Cobertura de `order_date_kpi` (wizard nasce rascunho sem a coluna; sync grava de `dInc`) é **idêntica ao Master** já em produção desde 04/06.
+- ✅ Mapa do bug-classe de fuso **FECHADO**: só `useVendasZone`+`SalesPrintDashboard` eram vulneráveis (ambos corrigidos); demais usam `order_date_kpi`+`hojeSP()` (Master), tabelas sem data-pura (`call_logs`/`cockpit_audit_log`/`nfe_recebimentos`) ou janelas amplas relativas.
+- ✅ CI local verde (typecheck strict · 3046/3046 testes · lint 0 errors) — 100% frontend (sem migration, sem edge).
 - ⚠️ Publish no Lovable pendente pra ir ao ar.
 
 ---
