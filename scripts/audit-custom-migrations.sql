@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 193
+-- Total de custom migrations: 194
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -212,7 +212,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260609085244', 'data_health_check_familia_ausente', '20260609085244_data_health_check_familia_ausente.sql'),
   ('20260609150000', 'reposicao_alerta_pedido_minimo', '20260609150000_reposicao_alerta_pedido_minimo.sql'),
   ('20260609150000', 'tint_sync_promote', '20260609150000_tint_sync_promote.sql'),
-  ('20260609160000', 'reposicao_ciclo_intraday', '20260609160000_reposicao_ciclo_intraday.sql')
+  ('20260609160000', 'reposicao_ciclo_intraday', '20260609160000_reposicao_ciclo_intraday.sql'),
+  ('20260610130000', 'melhorias_canal', '20260610130000_melhorias_canal.sql')
 )
 SELECT
   e.version,
@@ -949,7 +950,21 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_ciclo_intraday', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'gerar-pedidos-intraday-oben', ''),
   ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'omie-sync-estoque-intraday-oben', ''),
-  ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'omie-sync-estoque-diario', '')
+  ('reposicao_ciclo_intraday', 'cron_job', 'cron', 'omie-sync-estoque-diario', ''),
+  ('melhorias_canal', 'table', 'public', 'melhoria_itens', ''),
+  ('melhorias_canal', 'table', 'public', 'melhoria_mensagens', ''),
+  ('melhorias_canal', 'index', 'public', 'idx_melhoria_itens_status', 'melhoria_itens'),
+  ('melhorias_canal', 'index', 'public', 'idx_melhoria_itens_autor', 'melhoria_itens'),
+  ('melhorias_canal', 'index', 'public', 'idx_melhoria_mensagens_item', 'melhoria_mensagens'),
+  ('melhorias_canal', 'function', 'public', 'melhoria_itens_touch_updated_at', ''),
+  ('melhorias_canal', 'function', 'public', 'melhoria_clientes_por_produto', ''),
+  ('melhorias_canal', 'function', 'public', 'melhoria_produtos_relacionados', ''),
+  ('melhorias_canal', 'trigger', 'public', 'trg_melhoria_itens_touch', 'melhoria_itens'),
+  ('melhorias_canal', 'rls_policy', 'public', 'melhoria_itens_select', 'melhoria_itens'),
+  ('melhorias_canal', 'rls_policy', 'public', 'melhoria_itens_insert', 'melhoria_itens'),
+  ('melhorias_canal', 'rls_policy', 'public', 'melhoria_itens_update', 'melhoria_itens'),
+  ('melhorias_canal', 'rls_policy', 'public', 'melhoria_mensagens_select', 'melhoria_mensagens'),
+  ('melhorias_canal', 'rls_policy', 'public', 'melhoria_mensagens_insert', 'melhoria_mensagens')
 )
 SELECT
   e.migration,

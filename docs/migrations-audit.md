@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **193** custom migrations totais
-- **719** objetos esperados (criados por estas migrations)
+- **194** custom migrations totais
+- **733** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 181
-  - `function`: 179
-  - `index`: 133
+  - `rls_policy`: 186
+  - `function`: 182
+  - `index`: 136
   - `cron_job`: 101
-  - `table`: 84
-  - `trigger`: 37
+  - `table`: 86
+  - `trigger`: 38
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1692,6 +1692,25 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.gerar-pedidos-intraday-oben` | — |
 | `cron_job` | `cron.omie-sync-estoque-intraday-oben` | — |
 | `cron_job` | `cron.omie-sync-estoque-diario` | — |
+
+### `20260610130000_melhorias_canal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.melhoria_itens` | — |
+| `table` | `public.melhoria_mensagens` | — |
+| `index` | `public.idx_melhoria_itens_status` | `melhoria_itens` |
+| `index` | `public.idx_melhoria_itens_autor` | `melhoria_itens` |
+| `index` | `public.idx_melhoria_mensagens_item` | `melhoria_mensagens` |
+| `function` | `public.melhoria_itens_touch_updated_at` | — |
+| `function` | `public.melhoria_clientes_por_produto` | — |
+| `function` | `public.melhoria_produtos_relacionados` | — |
+| `trigger` | `public.trg_melhoria_itens_touch` | `melhoria_itens` |
+| `rls_policy` | `public.melhoria_itens_select` | `melhoria_itens` |
+| `rls_policy` | `public.melhoria_itens_insert` | `melhoria_itens` |
+| `rls_policy` | `public.melhoria_itens_update` | `melhoria_itens` |
+| `rls_policy` | `public.melhoria_mensagens_select` | `melhoria_mensagens` |
+| `rls_policy` | `public.melhoria_mensagens_insert` | `melhoria_mensagens` |
 
 ## Próximos passos quando algo der `❌`
 
