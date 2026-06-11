@@ -116,6 +116,7 @@ Check `radar_ingest` no `_data_health_compute`: staleness — sem lote `complete
 - **Qualidade de contato** (telefone/e-mail cadastral) — expectativa já acordada; UI não promete mais do que tem (campos vazios exibidos como "—").
 - **LGPD** — dados públicos da RFB para contato B2B ativo (mesma base do produto do Omie). Sem disparo de e-mail em massa na v1.
 - **`tarefas` sem cliente vinculado** — tarefa de prospecção é manual-only (sem auto-baixa); documentado na UI da tarefa (origem `radar`).
+- **CNPJ alfanumérico (RFB, vigência prevista jul/2026)** — limitação v1 registrada em review: o CHECK `^[0-9]{14}$`, a normalização e o recruza assumem CNPJ numérico; empresas com CNPJ alfanumérico serão EXCLUÍDAS silenciosamente do radar quando começarem a aparecer nos dumps (e o radar mira recém-abertas, onde surgirão primeiro). Gatilho de revisita: primeiro lote com CNPJs alfanuméricos no relatório da carga (o script reporta linhas descartadas).
 
 ## 6. Não-objetivos da v1 (cortes conscientes)
 
