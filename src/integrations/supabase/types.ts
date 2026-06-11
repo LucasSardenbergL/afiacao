@@ -8561,6 +8561,45 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_auto_aprovacao_log: {
+        Row: {
+          criado_em: string
+          delta_pct: number | null
+          empresa: string
+          fornecedor_nome: string
+          grupo_codigo: string
+          id: number
+          pedido_id: number
+          regua: number
+          valor_anterior: number | null
+          valor_total: number
+        }
+        Insert: {
+          criado_em?: string
+          delta_pct?: number | null
+          empresa: string
+          fornecedor_nome: string
+          grupo_codigo?: string
+          id?: never
+          pedido_id: number
+          regua: number
+          valor_anterior?: number | null
+          valor_total: number
+        }
+        Update: {
+          criado_em?: string
+          delta_pct?: number | null
+          empresa?: string
+          fornecedor_nome?: string
+          grupo_codigo?: string
+          id?: never
+          pedido_id?: number
+          regua?: number
+          valor_anterior?: number | null
+          valor_total?: number
+        }
+        Relationships: []
+      }
       reposicao_param_auto_log: {
         Row: {
           classe_consolidada: string | null
@@ -14831,6 +14870,15 @@ export type Database = {
       reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
       reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
       reposicao_param_limbo_watchdog: { Args: never; Returns: undefined }
+      reposicao_pedido_auto_aprovavel: {
+        Args: {
+          p_cooldown_horas: number
+          p_delta_max: number
+          p_pedido_id: number
+          p_threshold: number
+        }
+        Returns: Json
+      }
       reposicao_persistir_qtde_inteira: {
         Args: { p_pedido_id: number }
         Returns: number
