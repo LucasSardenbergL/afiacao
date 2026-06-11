@@ -50,6 +50,7 @@ Postgres: upsert em radar_empresas + finalize (diff de novos, re-cruza
 
 - **Curadoria de CNAEs vive em arquivo versionado no repo** (`scripts/radar/cnaes-alvo.txt`, código + comentário). Expandir segmento = editar arquivo + rodar a Action (workflow_dispatch). O banco não guarda a curadoria; guarda o resultado.
 - **Lista inicial** (proposta no plano, founder revisa): núcleo moveleiro (fabricação de móveis 31.0x, madeira/esquadrias 16.2x), serralheria/esquadrias metálicas (25.1x/25.4x), vidro (23.1x), e adjacências industriais do lado Colacor. Estimativa: 150–400k empresas ativas no Brasil. Construção civil ampla (41/43) fica FORA da lista inicial (universo gigante, baixa precisão de alvo).
+- **Filtro = só CNAE PRINCIPAL (decisão do founder na 1ª carga, 2026-06-11):** o dry-run mediu 526.176 empresas via principal vs 640.678 só via secundário (atividade acessória — ex.: hospital com serralheria interna declarada). O gate de >1M disparou e o founder escolheu carregar só atividade-fim agora; secundários viram v2 (follow-up §7) com coluna `match_via`.
 - **Primeira carga é manual** (Claude roda o mesmo script DuckDB localmente e envia os chunks): valida URL/formato do dump, volume real e o caminho inteiro antes de automatizar.
 - A Action NÃO acessa o banco diretamente — só fala com a edge via HTTP autenticado (mesmo padrão dos crons atuais).
 
@@ -131,6 +132,8 @@ Check `radar_ingest` no `_data_health_compute`: staleness — sem lote `complete
 - Captura diária real (juntas comerciais) — só se o lag mensal doer na prática.
 
 ## 7. Follow-ups registrados (pós-v1)
+
+- **Matches via CNAE secundário (v2, "o resto" — founder delegou o COMO, 2026-06-11):** reintroduzir as ~640k empresas com CNAE-alvo só nos secundários, adicionando coluna `match_via` (`principal`|`secundario`) em `radar_empresas` + filtro default `principal` na UI (toggle expõe acessórias). Implementação: re-rodar a carga com o filtro ampliado (parquets em cache aceleram); a edge não muda (campo extra no payload).
 
 - Mapa de calor/expansão de rota (leads por cidade × cidades da rota — insumo pra abrir cidade nova).
 - Notificação mensal "chegaram N empresas novas do seu segmento" (e-mail via `fornecedor_alerta`, padrão digest).

@@ -111,9 +111,19 @@ if (invalidos.length) { console.error(`❌ CNAEs fora do catálogo RFB (DV errad
 console.log(`✅ curadoria: ${cnaes.length} CNAEs válidos`);
 
 // ── 3. Estabelecimentos: 10 zips, um por vez → parquet filtrado ──────────────
+// Filtro v1 = só CNAE PRINCIPAL (decisão do founder, 2026-06-11): match por
+// secundário inflava o universo com atividade acessória (1,17M vs 526k; ex.:
+// hospital com serralheria interna). v2 planejada: reintroduzir secundários com
+// coluna match_via ('principal'|'secundario') e filtro default na UI.
 const inList = cnaes.map((c) => `'${c}'`).join(",");
-const secRegex = cnaes.join("|");
 for (let i = 0; i <= 9; i++) {
+  // Parquet existente = cache (resume de carga interrompida). ⚠️ Se a CURADORIA
+  // mudou desde a última rodada, apagar ${WORK}/est_filtrado_*.parquet antes —
+  // parquet velho não contém CNAE recém-adicionado (o aviso de 0-matches denuncia).
+  if (existsSync(`${WORK}/est_filtrado_${i}.parquet`)) {
+    console.log(`↩️  Estabelecimentos${i}: parquet em cache, pulando`);
+    continue;
+  }
   const zip = baixar(`Estabelecimentos${i}.zip`);
   sh(`cd ${WORK} && rm -rf est/ && unzip -o -q ${zip} -d est/`);
   sanear("est");
@@ -127,7 +137,7 @@ for (let i = 0; i <= 9; i++) {
                     names=['b','o','dv','matriz','fantasia','situacao','dt_sit','motivo','cid_ext','pais',
                            'dt','cnae1','cnae2','tlog','log','num','comp','bai','cep','uf',
                            'mun','ddd1','tel1','ddd2','tel2','ddd_fax','fax','email','sit_esp','dt_sit_esp'])
-      WHERE situacao = '02' AND (cnae1 IN (${inList}) OR regexp_matches(coalesce(cnae2,''), '(${secRegex})'))
+      WHERE situacao = '02' AND cnae1 IN (${inList})
     ) TO '${WORK}/est_filtrado_${i}.parquet' (FORMAT parquet)`);
   rmSync(`${WORK}/est/`, { recursive: true, force: true });
   console.log(`✅ Estabelecimentos${i} filtrado`);
@@ -143,7 +153,8 @@ sh(`cd ${WORK} && unzip -o -q Municipios.zip -d mun/`);
 sanear("mun");
 
 duck(`
-  CREATE TEMP TABLE est AS SELECT * FROM read_parquet('${WORK}/est_filtrado_*.parquet');
+  CREATE TEMP TABLE est AS SELECT * FROM read_parquet('${WORK}/est_filtrado_*.parquet')
+    WHERE cnae1 IN (${inList}); -- re-filtra: parquet em cache pode ter sido gerado por filtro mais largo
   CREATE TEMP TABLE emp AS
     SELECT b, razao, capital, porte
     FROM read_csv('${WORK}/emp/*', delim=';', header=false, quote='"', all_varchar=true, parallel=false,
