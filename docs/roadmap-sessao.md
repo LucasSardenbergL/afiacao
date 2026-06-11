@@ -21,9 +21,10 @@
 - ✅ **Implementação (subagent-driven, 2-stage review por task)**: helpers puros TDD (21 testes) · migration `20260610130000_melhorias_canal.sql` (2 tabelas + RLS + 2 RPCs; fixes do review: `dados` jsonb exclusivo da IA, INSERT não pré-popula triagem) · **PG17 com falsificação** (15+ asserts; teste apertado após provar que gate sabotado passava — assert A6c2 + WHEN OTHERS re-lança) · edge `melhoria-triagem` (loop agentic + tools JWT-scoped + anti-vazamento; fixes: mapa tool→RPC, disable_parallel_tool_use, gate de status, uuid 400, cap de prompt, prompt copiável delimita relato) · hook `useMelhorias` + types.ts · componentes + páginas + AppShell (botão topbar staff, badge master)
 - ✅ **Validação local**: typecheck 0 · vitest 3026/3026 · lint 0 errors · build vite ok · PG17 verde
 - ✅ **Review final do diff inteiro** (modelo capaz): PRONTO PRO PR após 2 Important — TODOS aplicados (`797c1eb9`): "meus" filtra autor explícito (master via itens alheios como dele) · toasts de erro em réplica/status · + 3 Minor (fuso `YYYY-MM-DD` sem `new Date`, fence escapado no prompt copiável, guard `tools?.`). 22 testes no módulo.
-- 🔄 **PR** (merge com a main feita — `managerOnly`→`staffOnly` do rename paralelo aplicado no item novo)
-- ⏳ **Deploy (founder)**: migration no SQL Editor + edge `melhoria-triagem` via chat Lovable + Publish + smoke (criar item real "quais clientes compram lixa?")
-- ⏳ **Codex adversarial retroativo** (3º strike de cota — tentado 11/06 ~16h, volta 18h05; rodar sobre spec + migration + edge)
+- ✅ **[PR #750](https://github.com/LucasSardenbergL/afiacao/pull/750) MERGEADO** (2026-06-11 19:47 UTC, CI `validate` verde; merge com a main no caminho — `managerOnly`→`staffOnly` do rename paralelo aplicado no item novo, conflitos só nos 3 ímãs de bookkeeping)
+- ✅ **Deploy 2/3 (2026-06-11):** migration `20260610130000` aplicada + validada no SQL Editor (`BLOCO A OK | 2 tabelas | 5 policies | 2 RPCs | 1 trigger`) · edge `melhoria-triagem` deployada **verbatim** (305 linhas, Active; teste pré-migration deu o 500 esperado de tabela ausente = boot ok)
+- ⏳ **Founder:** **Publish** do frontend (último passo pro ar) + **smoke** (💡 → "quais clientes compram lixa?" → tabela real → fila em `/gestao/melhorias` → copiar prompt)
+- ⏳ **Codex adversarial retroativo** (4 strikes de cota em 11/06 — janela rolante do Plus; "try again 18h05 BRT". Rodar em sessão futura sobre: spec `2026-06-10-melhorias-canal-feedback-design.md` + migration `20260610130000_melhorias_canal.sql` + edge `melhoria-triagem/index.ts`; contexto: já fechados internamente dados-jsonb-service_role, gate staff provado por falsificação PG17, mapa tool→RPC, disable_parallel_tool_use, anti-vazamento na re-triagem, "meus" com filtro de autor)
 
 ---
 
