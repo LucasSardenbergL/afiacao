@@ -63,6 +63,6 @@ export function normalizarTexto(v: string | null | undefined): string | null {
  *  Exemplo: "SANTA BÁRBARA D'OESTE" (SP) == "Santa Barbara d Oeste" (sp)
  *           → "SANTABARBARADOESTE|SP" */
 export function normalizarChaveMunicipio(nome: string, uf: string): string {
-  const semAcento = nome.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const semAcento = nome.normalize('NFD').replace(/[\u0300-\u036F]/g, '');
   return `${semAcento.toUpperCase().replace(/[^A-Z0-9]/g, '')}|${uf.trim().toUpperCase()}`;
 }
