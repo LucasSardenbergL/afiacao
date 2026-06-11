@@ -350,7 +350,7 @@ BEGIN
     WHEN check_violation OR insufficient_privilege THEN
       RAISE NOTICE 'OK A6b — insert com autor alheio bloqueado';
     WHEN OTHERS THEN
-      RAISE NOTICE 'OK A6b (via %) — insert com autor alheio bloqueado: %', SQLSTATE, SQLERRM;
+      RAISE EXCEPTION 'A6b FALHOU: erro inesperado (% %) — esperado RLS/check violation', SQLSTATE, SQLERRM;
   END;
 
   -- A6c: u_vend tenta inserir com triagem_status='ok' → deve falhar (WITH CHECK hardening)
@@ -362,7 +362,22 @@ BEGIN
     WHEN check_violation OR insufficient_privilege THEN
       RAISE NOTICE 'OK A6c — insert com triagem_status=ok bloqueado';
     WHEN OTHERS THEN
-      RAISE NOTICE 'OK A6c (via %) — triagem_status=ok bloqueado: %', SQLSTATE, SQLERRM;
+      RAISE EXCEPTION 'A6c FALHOU: erro inesperado (% %) — esperado RLS/check violation', SQLSTATE, SQLERRM;
+  END;
+
+  -- A6c2: u_cli (customer, NÃO staff) tenta inserir item PRÓPRIO → deve falhar (gate staff do INSERT).
+  -- Este assert é o que pega a remoção do has_role(employee|master) do WITH CHECK — provado por
+  -- falsificação: sem ele, sabotar o gate pra "and true" passava o teste inteiro.
+  SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000c';
+  BEGIN
+    INSERT INTO public.melhoria_itens (autor_user_id, empresa, tipo, titulo)
+    VALUES ('00000000-0000-0000-0000-00000000000c', 'oben', 'problema', 'Customer tentando');
+    RAISE EXCEPTION 'A6c2 FALHOU: customer conseguiu inserir item (gate staff ausente)';
+  EXCEPTION
+    WHEN check_violation OR insufficient_privilege THEN
+      RAISE NOTICE 'OK A6c2 — customer barrado no INSERT de item (gate staff)';
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'A6c2 FALHOU: erro inesperado (% %) — esperado RLS violation', SQLSTATE, SQLERRM;
   END;
 
   -- A6d: u_master insere item próprio → OK
@@ -425,7 +440,7 @@ BEGIN
     WHEN check_violation OR insufficient_privilege THEN
       RAISE NOTICE 'OK A7b — insert no item do master bloqueado';
     WHEN OTHERS THEN
-      RAISE NOTICE 'OK A7b (via %) — insert no item do master bloqueado: %', SQLSTATE, SQLERRM;
+      RAISE EXCEPTION 'A7b FALHOU: erro inesperado (% %) — esperado RLS violation', SQLSTATE, SQLERRM;
   END;
 
   -- A7c: u_vend tenta papel='founder' → deve falhar (só master pode papel founder)
@@ -437,7 +452,7 @@ BEGIN
     WHEN check_violation OR insufficient_privilege THEN
       RAISE NOTICE 'OK A7c — papel=founder por u_vend bloqueado';
     WHEN OTHERS THEN
-      RAISE NOTICE 'OK A7c (via %) — papel=founder por u_vend bloqueado: %', SQLSTATE, SQLERRM;
+      RAISE EXCEPTION 'A7c FALHOU: erro inesperado (% %) — esperado RLS violation', SQLSTATE, SQLERRM;
   END;
 
   -- A7d: u_vend tenta inserir dados != null → deve falhar (dados exclusivo da edge/service_role)
@@ -449,7 +464,7 @@ BEGIN
     WHEN check_violation OR insufficient_privilege THEN
       RAISE NOTICE 'OK A7d — dados != null bloqueado (apenas service_role pode gravar dados)';
     WHEN OTHERS THEN
-      RAISE NOTICE 'OK A7d (via %) — dados != null bloqueado: %', SQLSTATE, SQLERRM;
+      RAISE EXCEPTION 'A7d FALHOU: erro inesperado (% %) — esperado RLS violation', SQLSTATE, SQLERRM;
   END;
 
   -- A7e: u_master INSERT papel='founder' no item da vendedora → OK
