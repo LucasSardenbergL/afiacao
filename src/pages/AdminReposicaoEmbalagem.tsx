@@ -125,6 +125,9 @@ function GrupoCard({ grupo, limiar }: { grupo: GrupoEmbalagem; limiar: number })
               {decisao.excedente_base > 0 && (
                 <>
                   {' '}· sobra {decisao.excedente_base} {grupo.unidade_base}
+                  {decisao.flags.includes('sobra_antecipa_compra') && decisao.dias_escoamento_sobra != null
+                    ? ` — vira estoque, escoa em ~${Math.ceil(decisao.dias_escoamento_sobra)}d`
+                    : ''}
                 </>
               )}
             </div>

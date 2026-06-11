@@ -6,6 +6,24 @@
 
 ---
 
+## 🧮 SESSÃO 2026-06-10 (3) — Embalagem econômica indicava QT com GL mais barato/litro (WP01/WP87/WP04)
+
+> Queixa do founder: preencheu os preços manualmente, o GL ficou mais barato por
+> QT-equivalente (WP01: R$76,62 vs R$81,71), mas o pedido indicou comprar QT. Mesmo
+> padrão em WP87 e WP04. **Diagnóstico (confirmado com os números reais):** a v1
+> compara o custo de atender SÓ a necessidade do pedido — a sobra do galão é custo
+> morto (nunca credita que ela evita a próxima compra). Com spread de ~6%/litro, o GL
+> só vencia em necessidade múltiplo exato de 4. Carrego era centavos (sobra escoa em
+> ~9-13 dias); guard marginal não disparou — mecanismo dominante = custo direto.
+
+- ✅ Investigação root-cause (`/investigate`): helper `embalagem-helpers.ts` + hooks + spec §5.2 vs §2 (tensão real: spec verbalizou "tolera arredondar quando custo/un-base compensa", lógica implementou frame míope)
+- ✅ **Fix de metodologia v1.1 — crédito de reposição da sobra** (spec §14): `custo_total = custo_direto + carrego − sobra × melhor_custo_por_base` (sobra escoável vira antecipação da próxima compra; gates honestos: sem demanda/cm → crédito 0 = comportamento v1; carrego come o crédito quando o escoamento é lento — autorregulável; guard marginal R$5 preservado; invariante custo_total ≥ nec×custo_base testado). TDD com os números reais do WP01 (22 testes no helper; nec 1→QT marginal R$2,56 · nec 2→GL R$9,04 · nec 3→GL · nec 4→GL R$20,33). 2 testes da v1 reescritos (eram artefatos do frame míope).
+- ✅ UI: sobra explicada como estoque ("sobra N un-base — vira estoque, escoa em ~Xd") nas 2 superfícies (painel do pedido + tela avulsa)
+- ✅ CI local verde (typecheck strict · 3014/3014 testes · lint 0 errors) — 100% frontend (sem migration, sem edge; painel é recomendação visual, NÃO altera o pedido automático). ⚠️ Publish no Lovable pendente pra ir ao ar.
+- ⏳ **Codex adversarial retroativo** quando a cota voltar (~11/06 9h24): metodologia v1.1 (valoração da sobra ao min do grupo, double-count crédito×carrego, gate sem-demanda) — Caminho B nesta rodada foi auto-challenge + TDD exaustivo.
+
+---
+
 ## ⚡ SESSÃO 2026-06-09/10 — Auditoria de velocidade & usabilidade: 24 itens mapeados, 4 ondas COMPLETAS
 
 > Pedido do founder: "revisite o código todo e procure brechas para deixar ele mais rápido
