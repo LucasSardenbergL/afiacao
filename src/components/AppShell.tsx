@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ImpersonationBanner } from '@/components/impersonation/ImpersonationBanner';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Link2, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList, History } from 'lucide-react';
+import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Link2, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList, History, Lightbulb } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
@@ -21,6 +21,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { HelpDrawer } from '@/components/help/HelpDrawer';
+import { MelhoriaDialog } from '@/components/melhorias/MelhoriaDialog';
+import { useMelhoriasBadge } from '@/hooks/useMelhorias';
 import { useAlertasCriticos } from '@/hooks/useAlertasCriticos';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
 import { useTintAlertas } from '@/hooks/useTintAlertas';
@@ -70,6 +72,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
       { icon: Target, label: 'Meu dia', path: '/meu-dia' },
       { icon: Users, label: 'Clientes', path: '/admin/customers' },
+      { icon: Lightbulb, label: 'Melhorias', path: '/melhorias', managerOnly: true },
     ],
   },
   {
@@ -172,6 +175,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Lock, label: 'Governança', path: '/gestao/governanca', managerOnly: true },
       { icon: ShieldCheck, label: 'Saúde de Dados', path: '/gestao/saude-dados', managerOnly: true },
       { icon: MessageCircle, label: 'SLA WhatsApp', path: '/whatsapp/sla', gestorComercialOuMaster: true },
+      { icon: Lightbulb, label: 'Melhorias (fila)', path: '/gestao/melhorias', masterOnly: true },
     ],
   },
 ];
@@ -357,7 +361,7 @@ function SidebarItem({
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff, user } = useAuth();
+  const { isStaff, isMaster, user } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
   const { displayIsStaff, displayIsMaster, displayIsGestorComercial, displayIsSalesOnly, displayLoading } = useDisplayAccess();
   const { isImpersonating, effectiveUserId } = useImpersonation();
@@ -494,6 +498,11 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   // não deve pagar o poll da view scan-heavy.
   const { data: waSlaMeusVermelhos } = useWhatsappSlaBadge(user?.id, enableStaffPolls);
 
+  // Badge de melhorias abertas: a fila é master-only (item de nav masterOnly),
+  // então o poll só roda pro master REAL — um employee polando contaria só os
+  // PRÓPRIOS abertos (RLS) e mostraria badge errado.
+  const { data: melhoriasAbertas } = useMelhoriasBadge(enableStaffPolls && isMaster);
+
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
       ...s,
@@ -535,10 +544,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/whatsapp' && waSlaMeusVermelhos && waSlaMeusVermelhos > 0) {
           return { ...it, badge: waSlaMeusVermelhos, badgeVariant: 'destructive' as const };
         }
+        if (it.path === '/gestao/melhorias' && melhoriasAbertas && melhoriasAbertas > 0) {
+          return { ...it, badge: melhoriasAbertas };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, isImpersonating],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, isImpersonating],
   );
 
   const isActive = (path: string) => {
@@ -669,6 +681,8 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
   const navigate = useNavigate();
   const { signOut } = useAuth();
   const { isImpersonating } = useImpersonation();
+  const { displayIsStaff } = useDisplayAccess();
+  const [melhoriaOpen, setMelhoriaOpen] = useState(false);
 
   return (
     <header
@@ -699,6 +713,22 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
         <NetworkStatusIndicator />
         <DataHealthBadge />
         <ThemeToggle />
+        {displayIsStaff && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground"
+                onClick={() => setMelhoriaOpen(true)}
+                aria-label="Sugerir melhoria ou reportar problema"
+              >
+                <Lightbulb className="w-4 h-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Sugerir melhoria · reportar problema</TooltipContent>
+          </Tooltip>
+        )}
         <HelpDrawer />
 
         <DropdownMenu>
@@ -718,6 +748,8 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      <MelhoriaDialog open={melhoriaOpen} onOpenChange={setMelhoriaOpen} />
     </header>
   );
 }
