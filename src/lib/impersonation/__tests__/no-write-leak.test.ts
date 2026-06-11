@@ -46,6 +46,15 @@ const ALLOWED = new Set([
   // useFarmerScoring: effectiveUserId na leitura/cálculo da agenda do alvo; o upsert de scores
   // é PULADO na lente (skip por isImpersonating) — o master não recalcula a carteira do alvo.
   'src/hooks/useFarmerScoring.ts',
+  // Clientes (/admin/customers): useClientesScope escopa a LEITURA da lista pro alvo da lente
+  // (effectiveUserId só filtra carteira_assignments/scores — read-only, é o hook que importa
+  // useDisplayAccess e NÃO tem mutação). useAdminCustomers recebe effectiveUserId do scope
+  // SÓ pra resetar o detalhe ao trocar de lente; a escrita (handleDeleteTool) usa toolId +
+  // sessão real, nunca effectiveUserId. escopo-clientes usa effectiveUserId como filtro de
+  // leitura (.eq owner_user_id na lente), sem mutação.
+  'src/components/adminCustomers/useClientesScope.ts',
+  'src/components/adminCustomers/useAdminCustomers.ts',
+  'src/lib/carteira/escopo-clientes.ts',
 ]);
 
 describe('anti write-leak: effectiveUserId só em leitura', () => {
