@@ -41,7 +41,7 @@ create index if not exists idx_melhoria_mensagens_item on public.melhoria_mensag
 
 -- updated_at automático
 create or replace function public.melhoria_itens_touch_updated_at()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = public as $$
 begin
   new.updated_at := now();
   return new;
@@ -66,11 +66,19 @@ using (
 );
 
 -- INSERT: qualquer staff (employee/master), sempre como autor de si mesmo.
+-- Campos da IA/founder não são pré-populáveis pelo cliente: status/triagem_status
+-- iniciam nos defaults do schema; avaliacao_founder/resposta_founder/resolvido_em
+-- são exclusivos do master (UPDATE) ou da edge via service_role.
 drop policy if exists melhoria_itens_insert on public.melhoria_itens;
 create policy melhoria_itens_insert on public.melhoria_itens for insert to authenticated
 with check (
   autor_user_id = (select auth.uid())
   and (has_role((select auth.uid()), 'employee'::app_role) or has_role((select auth.uid()), 'master'::app_role))
+  and status = 'aberto'
+  and triagem_status = 'pendente'
+  and avaliacao_founder is null
+  and resposta_founder is null
+  and resolvido_em is null
 );
 
 -- UPDATE: só master (status/resposta). Campos da IA são gravados via service_role (bypassa RLS).
@@ -94,10 +102,12 @@ using (
 
 -- INSERT: autor do item manda réplica (papel funcionario) em item não-finalizado;
 -- master responde (papel founder). Mensagens papel='ia' SÓ via service_role (sem policy — bypassa).
+-- `dados` é exclusivo da edge via service_role: humano nunca grava a tabela de evidência.
 drop policy if exists melhoria_mensagens_insert on public.melhoria_mensagens;
 create policy melhoria_mensagens_insert on public.melhoria_mensagens for insert to authenticated
 with check (
   autor_user_id = (select auth.uid())
+  and dados is null
   and (
     (
       papel = 'funcionario'
