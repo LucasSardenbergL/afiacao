@@ -2,6 +2,12 @@
 
 **Data:** 2026-06-11 · **Escopo:** OBEN (money-path) · **Codex:** design consult ✅ + adversarial xhigh pendente
 
+## Estado da implementação (un componente por vez)
+
+- ✅ **Helper** `src/lib/reposicao/pendente-entrada-po.ts` (`computeOnOrder`, fail-closed, 23 testes).
+- ✅ **Passo 1 — RPC `aplicar_snapshot_pendente`** (`supabase/migrations/20260611150000_*`). Snapshot atômico: SUBSTITUI (nunca `+=`) todo `estoque_pendente_entrada` OBEN + marcador `complete` na MESMA transação; `run_id` monotônico (run velho → SKIP); advisory lock por empresa; **a RPC é dona única da coluna** (D1); UPSERT cria linha só-pendente (`fisico=0`/`ultima_sincronizacao=NULL`/`fonte_sync='snapshot_pendente_sem_fisico'`) p/ SKU sem física (D2); `account='oben'` no marcador (D3); grava `codints_aprovados` (jsonb array) p/ a barreira do passo 3 cruzar; **guards fail-closed** (auto-challenge): `meta.empty_page_reached='true'` obrigatório (payload vazio só zera com varredura completa) + saldo `<=0`/não-numérico recusado. Validado em **PG17** (`db/test-aplicar-snapshot-pendente.sh`, **A1..A13 verdes**). ⚠️ **Caminho B**: Codex esgotou (usage limit, volta 12/06 00:11) → design decidido solo + auto-challenge; **Codex adversarial xhigh é GATE antes do deploy** (roda retroativo quando voltar).
+- ⚠️ **Passo 2** (edge refeita p/ fonte única) · **Passo 3** (RPC do motor: remove `em_transito` + barreira fail-closed) · **Passo 4** (bump no disparo) · **Passo 5** (Sentinela usa o marcador) — PENDENTES.
+
 ## Problema
 
 O motor `gerar_pedidos_sugeridos_ciclo` decide comprar por `estoque_efetivo = estoque_fisico + estoque_pendente_entrada + em_transito ≤ ponto_pedido`.
