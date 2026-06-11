@@ -21,6 +21,8 @@ interface SalesOrderCardProps {
   onNavigate: (path: string) => void;
   onOpenDetail: () => void;
   onPrint: () => void;
+  /** Aquece o cache do detalhe (hover) — imprimir/abrir ficam instantâneos. */
+  onPrefetch?: () => void;
 }
 
 export function SalesOrderCard({
@@ -33,6 +35,7 @@ export function SalesOrderCard({
   onNavigate,
   onOpenDetail,
   onPrint,
+  onPrefetch,
 }: SalesOrderCardProps) {
   const isAfiacao = order.origin === 'afiacao';
   const status = statusDoPedido(order.status);
@@ -49,7 +52,7 @@ export function SalesOrderCard({
   const isSelectable = !isAfiacao; // só sales_orders são bulk-deletáveis
 
   return (
-    <Card className={`cursor-pointer hover:bg-muted/30 transition-colors ${checked ? 'ring-2 ring-foreground/20' : ''}`} onClick={() => (isAfiacao ? onNavigate(`/orders/${order.id}`) : onOpenDetail())}>
+    <Card className={`cursor-pointer hover:bg-muted/30 transition-colors ${checked ? 'ring-2 ring-foreground/20' : ''}`} onClick={() => (isAfiacao ? onNavigate(`/orders/${order.id}`) : onOpenDetail())} onMouseEnter={onPrefetch}>
       <CardContent className="p-3">
         <div className="flex items-start justify-between gap-2">
           {isSelectable && (
