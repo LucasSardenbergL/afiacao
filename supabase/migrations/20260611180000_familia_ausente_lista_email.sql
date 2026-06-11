@@ -16,18 +16,21 @@
 --   1. CRIA a função helper `_vendas_familia_ausente_lista_email(p_limit)` — texto formatado dos
 --      produtos ativos sem família (mesmo predicado do check: NULLIF(btrim(familia),'') IS NULL,
 --      ativo, contas oben/colacor), '• [empresa] descrição (cód. X)', ordem estável, cap + "… e mais N".
---   2. CREATE OR REPLACE de `data_health_watchdog()` — corpo VERBATIM da 20260609085244 (def viva em
---      prod, comprovada pelo e-mail real ID 53 de 11/06) + ÚNICO DELTA: a mensagem do fornecedor_alerta
---      anexa a lista QUANDO r.source='vendas_familia_ausente' (todos os outros sources: r.message igual).
+--   2. CREATE OR REPLACE de `data_health_watchdog()` — corpo da def VIVA em prod + ÚNICO DELTA de
+--      comportamento: a mensagem do fornecedor_alerta anexa a lista QUANDO r.source='vendas_familia_ausente'
+--      (todos os outros sources: r.message igual).
 --
--- ⚠️ NÃO toca _data_health_compute() NEM fin_sync_heartbeat() → o conjunto de checks e os 2 IN-lists de
---    push ficam IDÊNTICOS. Isso evita a armadilha de cascata do arquivo quente (§10, já reverteu 4x):
---    nenhum source é adicionado/removido, então não há desincronização compute×watchdog×heartbeat.
+-- ⚠️ NÃO toca _data_health_compute() NEM fin_sync_heartbeat() → o conjunto de checks fica intocado.
 --
--- ⚠️ ANTES DE APLICAR (pré-flight anti-cascata): confirme em prod que data_health_watchdog equivale à
---    20260609085244 — `SELECT pg_get_functiondef('public.data_health_watchdog()'::regprocedure);`. Se
---    divergir (outra sessão recriou), rebaseie o corpo abaixo sobre a def VIVA, preservando o IN-list
---    dela e aplicando só o delta da mensagem. Idempotente (CREATE OR REPLACE). Tudo em transação.
+-- 🔴 CORREÇÃO PÓS-APLY (2026-06-11): a 1ª versão deste watchdog partiu da 20260609085244 (12 sources no
+--    IN-list de push). Ao aplicar em prod, `total_checks=18` (≠17 do teste) revelou um 18º check,
+--    `estoque_reposicao`, adicionado DIRETO EM PROD (migration fora do repo, drift §5) e promovido ao
+--    push (watchdog+heartbeat). Como esta migration recria o watchdog, a 1ª versão REVERTEU
+--    estoque_reposicao do push (o heartbeat, não-tocado, ainda o tinha → assimetria detectada por
+--    `position()` no pg_get_functiondef). CORRIGIDO: o IN-list abaixo inclui estoque_reposicao (13
+--    sources). LIÇÃO: o pré-flight `pg_get_functiondef('public.data_health_watchdog()')` é OBRIGATÓRIO,
+--    não opcional — prod diverge do repo neste arquivo quente; sempre rebaseie o IN-list sobre a def viva.
+--    Idempotente (CREATE OR REPLACE). Tudo em transação.
 -- ============================================================================================
 
 BEGIN;
@@ -90,7 +93,10 @@ DECLARE
 BEGIN
   FOR r IN
     SELECT * FROM public._data_health_compute()
-    WHERE source IN ('vendas_pedidos','estoque_inventario','reposicao_sugestoes','carteira_scores',
+    -- ⚠️ estoque_reposicao: 18º check, adicionado DIRETO EM PROD (migration fora do repo, drift §5),
+    --    promovido ao push (watchdog+heartbeat) lá. Descoberto no apply (total_checks=18 vs 17 do teste;
+    --    o heartbeat, não-tocado, ainda o tinha). PRESERVADO aqui pra não revertê-lo do e-mail.
+    WHERE source IN ('vendas_pedidos','estoque_inventario','estoque_reposicao','reposicao_sugestoes','carteira_scores',
                      'custos_produtos','vendas_cadastros',
                      'reposicao_disparo','reposicao_portal_pipeline','reposicao_portal_humano',
                      'reposicao_sayerlack_fabricado','omie_tipo_produto_oben','vendas_familia_ausente')

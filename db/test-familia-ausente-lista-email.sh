@@ -115,6 +115,12 @@ chk "L7 e-mail mantém o resumo/breakdown (5 produto … oben 3)" \
   "$(P -tAc "SELECT (count(*) > 0)::text FROM public.fornecedor_alerta WHERE titulo='[Saúde de dados] vendas_familia_ausente' AND mensagem LIKE '%5 produto%' AND mensagem LIKE '%oben 3%';")" "true"
 chk "L7 e-mail tem o cabeçalho 'Produtos sem família (classifique no Omie):'" \
   "$(P -tAc "SELECT (count(*) > 0)::text FROM public.fornecedor_alerta WHERE titulo='[Saúde de dados] vendas_familia_ausente' AND mensagem LIKE '%Produtos sem família (classifique no Omie):%';")" "true"
+# Anti-regressão da cascata real (2026-06-11): o IN-list do watchdog DEVE preservar estoque_reposicao
+# (18º check, prod-only/drift §5). A 1ª versão o reverteu por partir da 20260609085244 (12 sources).
+chk "L7 watchdog preserva estoque_reposicao no push (anti-cascata)" \
+  "$(P -tAc "SELECT (pg_get_functiondef('public.data_health_watchdog()'::regprocedure) LIKE '%estoque_reposicao%')::text;")" "true"
+chk "L7 watchdog preserva os outros 12 sources de push (ex.: omie_tipo_produto_oben)" \
+  "$(P -tAc "SELECT (pg_get_functiondef('public.data_health_watchdog()'::regprocedure) LIKE '%omie_tipo_produto_oben%')::text;")" "true"
 
 echo "→ asserts (n=0 → função NULL, e-mail dismissado)…"
 P -v ON_ERROR_STOP=1 -q -c "UPDATE public.omie_products SET familia='CLASSIFICADO' WHERE account IN ('oben','colacor');"
