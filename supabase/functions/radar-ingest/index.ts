@@ -41,12 +41,26 @@ Deno.serve(async (req) => {
   try {
     if (action === "begin_lote") {
       if (!MES_RE.test(mes)) return json({ error: "mes inválido (YYYY-MM)" }, 400);
-      const { error } = await admin.from("radar_ingest_state").upsert({
-        mes_referencia: mes, status: "running", total_recebido: 0, novos: null,
-        iniciado_em: new Date().toISOString(), finalizado_em: null, erro: null,
-      }, { onConflict: "mes_referencia" });
-      if (error) throw error;
-      return json({ ok: true, mes });
+      // Verificar se já existe para preservar iniciado_em em re-run
+      const { data: existing } = await admin.from("radar_ingest_state")
+        .select("mes_referencia").eq("mes_referencia", mes).maybeSingle();
+      let dbError;
+      if (existing) {
+        // Re-run: preserva iniciado_em, só recomeça o status
+        const { error } = await admin.from("radar_ingest_state").update({
+          status: "running", erro: null, finalizado_em: null,
+        }).eq("mes_referencia", mes);
+        dbError = error;
+      } else {
+        // Primeira vez
+        const { error } = await admin.from("radar_ingest_state").insert({
+          mes_referencia: mes, status: "running", total_recebido: 0, novos: null,
+          iniciado_em: new Date().toISOString(), finalizado_em: null, erro: null,
+        });
+        dbError = error;
+      }
+      if (dbError) throw dbError;
+      return json({ ok: true, mes, retomado: !!existing });
     }
 
     if (action === "chunk") {
@@ -74,11 +88,15 @@ Deno.serve(async (req) => {
         socios_nomes: l.socios_nomes ?? null,
         ultimo_lote: mes, updated_at: new Date().toISOString(),
       }));
-      const { error } = await admin.from("radar_empresas").upsert(payload, { onConflict: "cnpj" });
+      // Dedup intra-chunk: CNPJ duplicado dentro do mesmo chunk derrubaria o
+      // statement com erro 21000 permanente (retry nunca resolve). last-wins.
+      const porCnpj = new Map(payload.map((p) => [p.cnpj, p]));
+      const finalPayload = [...porCnpj.values()];
+      const { error } = await admin.from("radar_empresas").upsert(finalPayload, { onConflict: "cnpj" });
       if (error) throw error;
       // Sem contador incremental no chunk: a contagem oficial (total/novos) é
       // recomputada no finalize com count real da tabela — chunk replay-safe.
-      return json({ ok: true, upserted: payload.length });
+      return json({ ok: true, upserted: finalPayload.length, descartadas: linhas.length - finalPayload.length });
     }
 
     if (action === "chunk_municipios") {
@@ -104,11 +122,12 @@ Deno.serve(async (req) => {
         .select("cnpj", { count: "exact", head: true }).eq("ultimo_lote", mes);
       if (eT) throw eT;
       const { count: novos, error: eN } = await admin.from("radar_empresas")
-        .select("cnpj", { count: "exact", head: true }).gte("primeira_vista_em", st.iniciado_em);
+        .select("cnpj", { count: "exact", head: true })
+        .gte("primeira_vista_em", st.iniciado_em).eq("ultimo_lote", mes);
       if (eN) throw eN;
       const { error: eUp } = await admin.from("radar_ingest_state").update({
         status: "complete", total_recebido: total ?? 0, novos: novos ?? 0,
-        finalizado_em: new Date().toISOString(),
+        finalizado_em: new Date().toISOString(), erro: null,
       }).eq("mes_referencia", mes);
       if (eUp) throw eUp;
       return json({ ok: true, mes, total, novos });
