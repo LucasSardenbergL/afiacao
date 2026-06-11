@@ -12,7 +12,7 @@
 1622699	Fabricação de outros artigos de carpintaria para construção
 1623400	Fabricação de artefatos de tanoaria e embalagens de madeira
 1629301	Fabricação de artefatos diversos de madeira (exceto móveis)
-9524801	Reparação e manutenção de móveis (restauradores)
+9529105	Reparação de artigos do mobiliário (restauradores/estofadores)
 
 # — Madeira bruta / serrarias (Colacor abrasivos + afiação Colacor SC) —
 1610203	Serrarias com desdobramento de madeira em bruto
