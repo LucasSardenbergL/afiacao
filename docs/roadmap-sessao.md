@@ -14,11 +14,12 @@
 > registrar contato + cadastrar no Omie + atribuir Tarefa). Lag mensal aceito.
 > Spec: `docs/superpowers/specs/2026-06-10-radar-clientes-design.md`.
 
-- ✅ **Brainstorming + decisões de produto** (objetivo, cobertura, fonte, cadência, quem usa, ações, visual)
-- ✅ **Spec escrita e commitada** — aguardando revisão do founder
-- ⏳ **Plano de implementação** (writing-plans) após aprovação da spec
-- ⏳ **Fatia 1 — fundação de dados**: migrations (radar_empresas/contatos/municipios/state + RLS + RPCs) + edge `radar-ingest` + script DuckDB + 1ª carga real manual (valida URL pós-mudança jan/2026 da RFB + volume)
-- ⏳ **Fatia 2 — tela `/radar`**: lista + filtros server-side + detalhe + registrar contato + KPIs
+- ✅ **Brainstorming + decisões de produto** (objetivo, cobertura, fonte, cadência, quem usa, ações, visual; +2 decisões pós-spec: dois modos de ataque novas/estabelecidas; **filtro v1 = só CNAE principal** — secundários inflavam 526k→1,17M com falso-positivo tipo hospital-com-oficina; `match_via` registrado pra v2)
+- ✅ **Spec + plano** (subagent-driven, two-stage review por task)
+- ✅ **Fatia 1 — fundação de dados (Tasks 1-6 FECHADAS, reviews duplas + fixes aplicados)**: migration `20260610200000_radar_fundacao` (validada PG17, A1-A7) · helpers TDD (19 testes) · curadoria 21 CNAEs (TODOS validados na Concla — pegou 1 código inexistente) · edge `radar-ingest` (verify_jwt=false, re-run preserva iniciado_em, dedup intra-chunk) · `carga.ts` **provado com dado real: 526.176 empresas** (134k móveis madeira, 100k serralheria, 81k usinagem…), 5.458 municípios com lat/lng (99,7%). **6 lições da 1ª carga commitadas**: share Nextcloud/WebDAV, execFileSync anti-quoting, names= explícitos, parallel=false, saneamento iconv -c + awk paridade de aspas + DuckDB ESTRITO (opções tolerantes ativavam assert do DuckDB 1.5.3), cache de parquets. Dump 2026-05 (10GB) cacheado em /tmp pra carga real.
+- 🔄 **Task 7 — PR da fatia 1** (gates verdes: typecheck/3024 testes/lint; audit regenerado)
+- ⏳ **Task 8 — rollout com founder**: colar migration no SQL Editor + deploy da edge via Lovable + CRON_SECRET → carga real (~30-40min, download já cacheado) → validar contagens no banco
+- ⏳ **Fatia 2 — tela `/radar`**: lista + filtros server-side + detalhe + registrar contato + KPIs (presets "Novas do lote" / "Estabelecidas")
 - ⏳ **Fatia 3 — ações + mapa**: cadastrar no Omie (`IncluirCliente`) + atribuir Tarefa (customer_user_id NULL) + mapa Leaflet agregado por cidade
 - ⏳ **Fatia 4 — automação**: GitHub Action mensal (CRON_SECRET como secret do GH, founder configura 1×) + check `radar_ingest` no Sentinela
 
