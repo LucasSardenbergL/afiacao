@@ -19,7 +19,10 @@ export function montarPromptClaudeCode(
     .map((m) => {
       const tools = m.dados?.tools?.map((t) => t.tool) ?? [];
       const tag = m.papel === 'ia' && tools.length > 0 ? `[ia — consultou ${tools.join(', ')}]` : `[${m.papel}]`;
-      return `${tag} ${m.conteudo}`;
+      // Crase tripla no relato fecharia o fence e escaparia da delimitação
+      // "dado não-confiável" — escapa com backslash (não abre fence em markdown).
+      const conteudoSeguro = m.conteudo.split('```').join('\\`\\`\\`');
+      return `${tag} ${conteudoSeguro}`;
     })
     .join('\n');
 

@@ -16,6 +16,7 @@ import {
   useEnviarReplica,
 } from '@/hooks/useMelhorias';
 import { podeReplicar } from '@/lib/melhorias/triagem-helpers';
+import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import type { MelhoriaItem, MelhoriaStatus } from '@/lib/melhorias/types';
 import { cn } from '@/lib/utils';
@@ -49,8 +50,13 @@ function MelhoriaCard({ item, userId }: { item: MelhoriaItem; userId: string }) 
 
   const handleReplica = async () => {
     if (!replicaTexto.trim()) return;
-    await enviarReplica.mutateAsync({ conteudo: replicaTexto, autorUserId: userId });
-    setReplicaTexto('');
+    try {
+      await enviarReplica.mutateAsync({ conteudo: replicaTexto, autorUserId: userId });
+      setReplicaTexto('');
+    } catch {
+      // RLS nega se o item foi finalizado enquanto digitava; rede também cai aqui.
+      toast.error('Não consegui enviar a réplica — o item pode ter sido finalizado.');
+    }
   };
 
   const fmtData = (iso: string) =>

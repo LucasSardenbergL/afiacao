@@ -3,10 +3,18 @@
 import type { MelhoriaDados, MelhoriaMensagem } from '@/lib/melhorias/types';
 import { cn } from '@/lib/utils';
 
+/** Data "YYYY-MM-DD" da RPC formatada SEM new Date() — parse UTC-midnight
+ *  exibiria o dia anterior em São Paulo (lição do Cockpit: slice de string). */
+function fmtDateOnly(v: unknown): string {
+  const s = String(v ?? '');
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : s || '—';
+}
+
 function DadosTabelas({ dados }: { dados: MelhoriaDados }) {
   return (
     <div className="mt-2 space-y-3">
-      {dados.tools.map((t, i) => {
+      {dados.tools?.map((t, i) => {
         const r = t.resultado as Record<string, unknown> | null;
         if (!r) return null;
         const clientes = Array.isArray(r.clientes)
@@ -37,9 +45,7 @@ function DadosTabelas({ dados }: { dados: MelhoriaDados }) {
                       <td className="pr-2 py-1">{String(c.cliente ?? '—')}</td>
                       <td className="pr-2 py-1">{String(c.n_pedidos ?? '—')}</td>
                       <td className="pr-2 py-1">
-                        {c.ultima_compra
-                          ? new Date(String(c.ultima_compra)).toLocaleDateString('pt-BR')
-                          : '—'}
+                        {c.ultima_compra ? fmtDateOnly(c.ultima_compra) : '—'}
                       </td>
                       <td className="py-1 text-right">
                         {typeof c.valor_12m === 'number'

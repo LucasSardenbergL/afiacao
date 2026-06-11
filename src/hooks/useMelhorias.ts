@@ -2,8 +2,10 @@
 // Queries/mutations do canal de Melhorias. Captação independe da IA:
 // criarMelhoria grava item+mensagem ANTES do invoke; invoke falho = item pendente na fila.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { track } from '@/lib/analytics';
+import { useAuth } from '@/contexts/AuthContext';
 import type { MelhoriaItem, MelhoriaMensagem, MelhoriaStatus } from '@/lib/melhorias/types';
 import type { Database } from '@/integrations/supabase/types';
 
@@ -19,13 +21,18 @@ async function invocarTriagem(itemId: string): Promise<{ ok: boolean; fallback?:
   return (data as { ok: boolean; fallback?: boolean }) ?? { ok: false, fallback: true };
 }
 
-/** Itens do próprio usuário (RLS já filtra; ordena mais novo primeiro). */
+/** Itens do PRÓPRIO usuário. Filtro explícito por autor — a RLS sozinha não basta:
+ *  o master vê tudo por RLS, e sem o .eq() a página "Minhas melhorias" mostraria
+ *  itens alheios como dele (Important #1 do review final). */
 export function useMeusMelhoriaItens() {
+  const { user } = useAuth();
   return useQuery({
-    queryKey: ITENS_KEY,
+    queryKey: [...ITENS_KEY, user?.id ?? 'anon'],
+    enabled: !!user?.id,
     queryFn: async (): Promise<MelhoriaItem[]> => {
       const { data, error } = await supabase
         .from('melhoria_itens').select('*')
+        .eq('autor_user_id', user!.id)
         .order('created_at', { ascending: false }).limit(100);
       if (error) throw error;
       return (data ?? []) as MelhoriaItem[];
@@ -126,6 +133,7 @@ export function useAlterarStatusMelhoria() {
       if (error) throw error;
       track('melhoria.status_alterado', { status });
     },
+    onError: () => toast.error('Falha ao atualizar o item — tente de novo.'),
     onSettled: () => qc.invalidateQueries({ queryKey: ['melhorias'] }),
   });
 }
