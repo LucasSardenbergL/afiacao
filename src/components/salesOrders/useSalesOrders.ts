@@ -14,6 +14,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
+import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import {
   type Account,
   type OrderFeedCache,
@@ -139,7 +140,9 @@ export function useSalesOrders() {
         items,
         total: d.order.total,
         orderNumbers,
-        date: new Date(d.order.created_at),
+        // String já formatada: pedido do sync (data-pura UTC) sai sem hora
+        // fabricada e no dia certo na mensagem ao cliente.
+        date: formatarDataPedido(d.order.created_at),
       });
     } catch (e) {
       console.error(e);

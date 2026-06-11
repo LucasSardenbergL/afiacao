@@ -6,18 +6,21 @@
 
 ---
 
-## 🧑‍🌾 SESSÃO 2026-06-10 (3) — UX da Farmer: home errada, menu e gaps de ferramenta
+## 🧮 SESSÃO 2026-06-10 (3) — Embalagem econômica indicava QT com GL mais barato/litro (WP01/WP87/WP04)
 
-> Pedido do founder (via lente "Ver como tatyanamartins2002"): (1) por que a tela inicial
-> das farmers é o cockpit de 6 módulos? (2) otimizar o menu lateral delas; (3) opinião
-> sobre ferramentas que ainda faltam pra farmer.
+> Queixa do founder: preencheu os preços manualmente, o GL ficou mais barato por
+> QT-equivalente (WP01: R$76,62 vs R$81,71), mas o pedido indicou comprar QT. Mesmo
+> padrão em WP87 e WP04. **Diagnóstico (confirmado com os números reais):** a v1
+> compara o custo de atender SÓ a necessidade do pedido — a sobra do galão é custo
+> morto (nunca credita que ela evita a próxima compra). Com spread de ~6%/litro, o GL
+> só vencia em necessidade múltiplo exato de 4. Carrego era centavos (sobra escoa em
+> ~9-13 dias); guard marginal não disparou — mecanismo dominante = custo direto.
 
-- ✅ **Diagnóstico da home** — `/` → `Index.tsx` decide só por `isStaff` binário → toda staff cai no `CockpitGrid` de 6 zonas; a persona `vendedor` só REORDENA os cards, não esconde nenhum. O dashboard sob medida (`/meu-dia` → `FarmerDashboardV2`) existe mas não é a home.
-- ✅ **Diagnóstico do menu** — sales-only esconde todas as seções exceto "Vendas" (`AppShell.tsx:628`) → "Meu dia" e "Clientes" (seção Principal) ficam INALCANÇÁVEIS pela farmer; `managerOnly` na verdade significa "qualquer staff" (nome mentiroso).
-- ✅ **Founder aprovou as 3 frentes** na ordem sugerida: (1) home+menu → (2) push pra vendedora → (3) ficha pré-contato.
-- ✅ **Frente 1 — home por persona + menu (PR aberto)**: helper puro TDD `src/lib/nav/home-por-persona.ts` (19 testes) — `resolverHomeStaff` (farmer/hunter/closer/operacional ou sales-only → `/meu-dia`; gestão/master/staff genérico → cockpit) + `itemVisivelParaSalesOnly` (allowlist: seção Vendas + Meu dia + Clientes). `Index.tsx` redireciona com gate anti-flash (espera o cargo) e gate `displayIsStaff` anti-loop na lente. AppShell: seção Vendas reordenada pelo fluxo do dia (Lista de ligação → WhatsApp → Novo Pedido → Pedidos → Telefonia → housekeeping no fim), filtro sales-only por ITEM nos 2 navs (desktop+mobile), badge SLA WhatsApp religado pra sales-only (`isStaff`, era `enableStaffPolls` que a excluía do próprio SLA), rename `managerOnly`→`staffOnly` (nome honesto). **Revisão adversarial (subagente, Caminho B — Codex sem cota): 0 P1; P2.1 loop-na-lente e P2.3 badge-SLA corrigidos; P2.2 flash sales-only-sem-cargo aceito documentado.** CI local: typecheck 0 · 3024 testes · lint 0 · build vite 0. ⚠️ Publish no Lovable pendente após merge.
-- ⏳ **Frente 2 — push/notificação pra vendedora** (tarefa nova, SLA estourando, cliente respondeu).
-- ⏳ **Frente 3 — ficha de 30s pré-contato** (últimas compras, preço praticado, títulos abertos, cores, última conversa).
+- ✅ Investigação root-cause (`/investigate`): helper `embalagem-helpers.ts` + hooks + spec §5.2 vs §2 (tensão real: spec verbalizou "tolera arredondar quando custo/un-base compensa", lógica implementou frame míope)
+- ✅ **Fix de metodologia v1.1 — crédito de reposição da sobra** (spec §14): `custo_total = custo_direto + carrego − sobra × melhor_custo_por_base` (sobra escoável vira antecipação da próxima compra; gates honestos: sem demanda/cm → crédito 0 = comportamento v1; carrego come o crédito quando o escoamento é lento — autorregulável; guard marginal R$5 preservado; invariante custo_total ≥ nec×custo_base testado). TDD com os números reais do WP01 (22 testes no helper; nec 1→QT marginal R$2,56 · nec 2→GL R$9,04 · nec 3→GL · nec 4→GL R$20,33). 2 testes da v1 reescritos (eram artefatos do frame míope).
+- ✅ UI: sobra explicada como estoque ("sobra N un-base — vira estoque, escoa em ~Xd") nas 2 superfícies (painel do pedido + tela avulsa)
+- ✅ CI local verde (typecheck strict · 3014/3014 testes · lint 0 errors) — 100% frontend (sem migration, sem edge; painel é recomendação visual, NÃO altera o pedido automático). ⚠️ Publish no Lovable pendente pra ir ao ar.
+- ⏳ **Codex adversarial retroativo** quando a cota voltar (~11/06 9h24): metodologia v1.1 (valoração da sobra ao min do grupo, double-count crédito×carrego, gate sem-demanda) — Caminho B nesta rodada foi auto-challenge + TDD exaustivo.
 
 ---
 
@@ -39,6 +42,22 @@
 - ⚠️ **PENDENTE (founder): Publish no Lovable** — NADA disso está no ar até publicar (1× cobre tudo; sem migration, sem edge em nenhum PR).
 - ⏳ **Quando o Codex voltar (~11/06):** (a) **adversarial retroativo** das Ondas 1-4 + #727 (Caminho B acordado — validação própria exaustiva + subagentes adversariais fizeram a 2ª opinião desta rodada); (b) **#16-full** — filtro de cidade server-side na fila de rota (`city_key` persistida + migration; modo de falha = cliente sumindo da fila em silêncio → rito completo com Codex no design, decisão conjunta de NÃO fazer sem ele).
 - 📌 Follow-ups menores registrados nos PRs: virtualização da thread se >1000 msgs virar rotina; "Início da conversa" como feedback de exhausted; `resolverSugestao` não checa erro do 2º UPDATE (pré-existente, paridade); scroll restoration no Safari (sem overflow-anchor).
+
+---
+
+## SESSÃO 2026-06-10 (3) — /sales/print: pedido do sync Omie caía no dia ERRADO (data-pura UTC × janela local)
+
+> Pedido do sync (`omie-vendas-sync sync_pedidos`) tem `created_at` = data PURA gravada
+> como meia-noite UTC → a janela local (BRT) de `/sales/print` começava 03:00Z e o pedido
+> de hoje (00:00Z) aparecia na lista de impressão de ONTEM como "tarde, 21:00" (hora
+> fabricada). Pedido do wizard (created_at real) era filtrado certo. Continuação do
+> diagnóstico da sessão "fix de exibição da data do pedido" (`formatarDataPedido`, PR paralelo).
+
+- ✅ **Fix TDD (RED→GREEN provado)**: helper puro `src/lib/pedido/dia-civil.ts` — `janelaQueryDiaCivil` (query = união do dia local + dia UTC), `pedidoNoDiaCivil` (re-filtro client-side: dia UTC p/ data-pura, dia local p/ timestamp real — cada pedido pertence a exatamente 1 dia civil = sem duplicação na borda) e `horaExibicaoPedido` ("—" p/ data-pura). 9 testes TZ-agnósticos (passam em BRT local e no UTC do CI).
+- ✅ `getPeriod` (print/types.ts) regime-aware: data-pura → relógio UTC (00:00 → manhã; antes fabricava "tarde" via 21:00 local). `OrderGroup` mostra "—" no lugar da hora fabricada.
+- ✅ **Coordenação com o PR paralelo** (`claude/ecstatic-pare-09147a`): `data-pedido.ts` + teste **vendorizados byte-idênticos** (merge limpo em qualquer ordem); o cupom impresso (`buildPrintHtml.ts:44`, mesma hora fabricada) é coberto POR ELES — deliberadamente não tocado aqui.
+- 📌 **Follow-up (chip)**: `useVendasZone` (KPI faturado hoje/ontem do dashboard) tem o MESMO bug de janela local sobre `sales_orders.created_at` — pedido do sync de hoje conta como ontem.
+- ⚠️ **PENDENTE (founder): Publish no Lovable** (100% frontend, sem migration/edge).
 
 ---
 
