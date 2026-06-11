@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS public.radar_empresas (
   socios_nomes              text,
   -- operacionais
   primeira_vista_em         timestamptz NOT NULL DEFAULT now(),  -- só no INSERT
-  ultimo_lote               text NOT NULL,   -- 'YYYY-MM'; ≠ lote vigente ⇒ saiu do dump
+  ultimo_lote               text NOT NULL CHECK (ultimo_lote ~ '^[0-9]{4}-[0-9]{2}$'),  -- 'YYYY-MM'; ≠ lote vigente ⇒ saiu do dump
   ja_cliente                boolean NOT NULL DEFAULT false,
   prospeccao_status         text NOT NULL DEFAULT 'a_contatar'
     CHECK (prospeccao_status IN
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS public.radar_municipios (
 
 -- 4) Estado da ingestão (padrão omie_nao_vinculados_state) ---------------------
 CREATE TABLE IF NOT EXISTS public.radar_ingest_state (
-  mes_referencia  text PRIMARY KEY,  -- 'YYYY-MM'
+  mes_referencia  text PRIMARY KEY CHECK (mes_referencia ~ '^[0-9]{4}-[0-9]{2}$'),  -- 'YYYY-MM'
   status          text NOT NULL DEFAULT 'running' CHECK (status IN ('running','complete','error')),
   total_recebido  integer NOT NULL DEFAULT 0,
   novos           integer,
@@ -118,6 +118,7 @@ AS $$
 DECLARE
   v_marcados integer;
 BEGIN
+  DROP TABLE IF EXISTS tmp_docs_clientes;
   CREATE TEMP TABLE tmp_docs_clientes ON COMMIT DROP AS
     SELECT DISTINCT regexp_replace(document, '[^0-9]', '', 'g') AS doc
     FROM public.profiles
