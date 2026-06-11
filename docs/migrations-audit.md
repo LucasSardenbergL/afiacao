@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **193** custom migrations totais
-- **719** objetos esperados (criados por estas migrations)
+- **194** custom migrations totais
+- **732** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 181
-  - `function`: 179
-  - `index`: 133
+  - `rls_policy`: 185
+  - `function`: 180
+  - `index`: 137
   - `cron_job`: 101
-  - `table`: 84
+  - `table`: 88
   - `trigger`: 37
   - `enum_value`: 4
 
@@ -1692,6 +1692,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.gerar-pedidos-intraday-oben` | — |
 | `cron_job` | `cron.omie-sync-estoque-intraday-oben` | — |
 | `cron_job` | `cron.omie-sync-estoque-diario` | — |
+
+### `20260610200000_radar_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.radar_empresas` | — |
+| `table` | `public.radar_contatos` | — |
+| `table` | `public.radar_municipios` | — |
+| `table` | `public.radar_ingest_state` | — |
+| `index` | `public.idx_radar_empresas_fila` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_local` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_cnae` | `radar_empresas` |
+| `index` | `public.idx_radar_contatos_cnpj` | `radar_contatos` |
+| `function` | `public.radar_recruzar_ja_cliente` | — |
+| `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
+| `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
+| `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
+| `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
 
 ## Próximos passos quando algo der `❌`
 
