@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 197
+-- Total de custom migrations: 199
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -216,7 +216,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260610130000', 'melhorias_canal', '20260610130000_melhorias_canal.sql'),
   ('20260610150000', 'reposicao_auto_aprovacao_piloto', '20260610150000_reposicao_auto_aprovacao_piloto.sql'),
   ('20260610200000', 'push_vendedora', '20260610200000_push_vendedora.sql'),
-  ('20260611120000', 'reposicao_fixes_codex_711', '20260611120000_reposicao_fixes_codex_711.sql')
+  ('20260611120000', 'reposicao_fixes_codex_711', '20260611120000_reposicao_fixes_codex_711.sql'),
+  ('20260611140000', 'data_health_check_estoque_frescor', '20260611140000_data_health_check_estoque_frescor.sql'),
+  ('20260611150000', 'route_city_norm', '20260611150000_route_city_norm.sql')
 )
 SELECT
   e.version,
@@ -986,7 +988,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('push_vendedora', 'rls_policy', 'public', 'push_subscriptions_own', 'push_subscriptions'),
   ('push_vendedora', 'rls_policy', 'public', 'push_subscriptions_service', 'push_subscriptions'),
   ('reposicao_fixes_codex_711', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
-  ('reposicao_fixes_codex_711', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', '')
+  ('reposicao_fixes_codex_711', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
+  ('data_health_check_estoque_frescor', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_check_estoque_frescor', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_check_estoque_frescor', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('route_city_norm', 'index', 'public', 'idx_cvs_city_norm', 'customer_visit_scores'),
+  ('route_city_norm', 'function', 'public', 'route_city_norm', '')
 )
 SELECT
   e.migration,

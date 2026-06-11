@@ -8,6 +8,7 @@ import type { ContactCandidate, ContactConfig, ScoredCandidate } from '@/lib/wha
 import { spBusinessDate } from '@/lib/time/sp-day';
 import { derivarSinaisContato, type ContatoLog, type OutcomeStatus, type SinaisContato } from '@/lib/route/route-outcome';
 import { logger } from '@/lib/logger';
+import { track } from '@/lib/analytics';
 
 interface VisitScoreRow {
   customer_user_id: string;
@@ -162,6 +163,40 @@ async function fetchAllVisitScores(): Promise<VisitScoreRow[]> {
   return out;
 }
 
+/**
+ * #16-full (fase 1, SHADOW): candidatos filtrados NO SERVIDOR pela coluna
+ * persistida city_norm (migration 20260611150000 — generated column que
+ * espelha a parte-cidade do normalizeCityKey; paridade provada pelo harness
+ * db/test-city-norm-paridade.sh). O filtro server é um SUPERSET seguro: só
+ * cidade, NUNCA UF — quem julga a UF segue sendo o cityKeyEquals no client
+ * (semântica assimétrica: cadastro sem UF casa por cidade). Durante o shadow
+ * (7 dias úteis), o resultado EXIBIDO continua vindo do full-fetch legado;
+ * esta query roda em paralelo só pra telemetria de divergência.
+ */
+async function fetchVisitScoresByCityNorm(cityNorms: string[]): Promise<VisitScoreRow[]> {
+  const baseSelect = (withCount: boolean) =>
+    supabase
+      .from('customer_visit_scores')
+      .select('customer_user_id, farmer_id, city, visit_score', withCount ? { count: 'exact' } : undefined)
+      .in('city_norm' as never, cityNorms)
+      .order('customer_user_id', { ascending: true });
+
+  const first = await baseSelect(true).range(0, PAGE - 1);
+  if (first.error) throw first.error;
+  const out: VisitScoreRow[] = [...((first.data ?? []) as VisitScoreRow[])];
+  const total = first.count ?? out.length;
+  if (total > PAGE) {
+    const ranges: Array<[number, number]> = [];
+    for (let from = PAGE; from < total; from += PAGE) ranges.push([from, from + PAGE - 1]);
+    const pages = await Promise.all(ranges.map(([f, t]) => baseSelect(false).range(f, t)));
+    for (const p of pages) {
+      if (p.error) throw p.error;
+      out.push(...((p.data ?? []) as VisitScoreRow[]));
+    }
+  }
+  return out;
+}
+
 async function fetchMetrics(ids: string[]): Promise<MetricRow[]> {
   const out: MetricRow[] = [];
   for (let i = 0; i < ids.length; i += IN_CHUNK) {
@@ -214,7 +249,16 @@ export function useRouteContactList(workdayIso: string) {
       if (prep.cities.length === 0) return empty;
 
       // 2) candidatos das cidades-alvo (customer_visit_scores é city-aware + RLS por carteira)
-      const allScores = await fetchAllVisitScores();
+      // SHADOW #16-full: a query server-side (city_norm) roda em PARALELO ao
+      // full-fetch legado, com fail-open TOTAL — erro (ex.: migration ainda
+      // não aplicada → coluna inexistente) vira telemetria, nunca afeta a fila.
+      const cityNorms = [...new Set(prep.cities.map(c => c.city))];
+      const [allScores, shadowRes] = await Promise.all([
+        fetchAllVisitScores(),
+        fetchVisitScoresByCityNorm(cityNorms)
+          .then(rows => ({ ok: true as const, rows }))
+          .catch((e: unknown) => ({ ok: false as const, err: e instanceof Error ? e.message : String(e) })),
+      ]);
       const candsFiltrados = allScores.filter(r => {
         const ck = normalizeCityKey(r.city);
         return ck !== null && prep.cities.some(pc => cityKeyEquals(pc, ck));
@@ -227,6 +271,37 @@ export function useRouteContactList(workdayIso: string) {
         if (!candByUser.has(r.customer_user_id)) candByUser.set(r.customer_user_id, r);
       }
       const cands0 = [...candByUser.values()];
+
+      // Telemetria do shadow: aplica o MESMO filtro client (cityKeyEquals) ao
+      // resultado do servidor e compara os conjuntos de clientes. Só
+      // contagens/direção — sem IDs (PII). Critério de corte (Codex): 7 dias
+      // úteis com faltando_no_novo=0 nas cidades exercitadas → aí o
+      // full-fetch sai e o .in(city_norm) vira a fonte (PR futuro).
+      if (shadowRes.ok) {
+        const novoIds = new Set(
+          shadowRes.rows
+            .filter(r => {
+              const ck = normalizeCityKey(r.city);
+              return ck !== null && prep.cities.some(pc => cityKeyEquals(pc, ck));
+            })
+            .map(r => r.customer_user_id),
+        );
+        const legacyIds = new Set(cands0.map(c => c.customer_user_id));
+        let faltandoNoNovo = 0;
+        for (const id of legacyIds) if (!novoIds.has(id)) faltandoNoNovo++;
+        let sobrandoNoNovo = 0;
+        for (const id of novoIds) if (!legacyIds.has(id)) sobrandoNoNovo++;
+        track('rota.city_shadow', {
+          legacy: legacyIds.size,
+          novo: novoIds.size,
+          faltando_no_novo: faltandoNoNovo,
+          sobrando_no_novo: sobrandoNoNovo,
+          cidades: prep.cities.length,
+        });
+      } else {
+        track('rota.city_shadow', { erro: true, mensagem: shadowRes.err.slice(0, 120) });
+      }
+
       if (cands0.length === 0) return empty;
 
       // 3) métricas econômicas + perfis (nome/telefone) em lote
