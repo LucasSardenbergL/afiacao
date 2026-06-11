@@ -6,6 +6,26 @@
 
 ---
 
+## 0. SESSÃO 2026-06-10 (3) — Estratégia: de "IA que apoia" para "IA que coordena" (relatório Prosus "AI Colleagues")
+
+> Founder trouxe o PDF da Prosus (60.000 agentes, Toqan) e perguntou: como fazer vendas,
+> operações e atendimento deixarem de ser APOIADAS por IA e passarem a ser COORDENADAS
+> por ela. Sessão de brainstorming estratégico (sem código por ora).
+
+- ✅ **Leitura integral do relatório** (48 págs: power law 2%, 20 use cases, 3 fases de adoção, conclusão "outcome-oriented", apêndice técnico).
+- ✅ **Análise entregue no chat**: validações da arquitetura atual (banco-como-orquestrador = recomendação literal da Prosus), framework "escada de autonomia" (N0–N4) + critérios objetivos de promoção de nível, mapa por função (hoje → próximo degrau), sequência 90 dias, o que NÃO copiar (escala 40k≠20).
+- ✅ **Decisão do founder: frente 1 = Reposição → N3** (auto-aprovação Sayerlack). Decisões fechadas via AskUserQuestion: baseline retroativa primeiro · piso R$3k (mesma régua do alerta/gate) · sem teto superior · janela de veto = corte 13h (fase 1) · só Sayerlack.
+- ✅ **Baseline retroativa rodada em prod (2 queries)** → 2 ACHADOS: (a) `pedido_anterior_valor` NUNCA populado pela RPC → o botão "Aprovar elegíveis" do Cockpit é teatro morto desde sempre (0 elegíveis p/ todos os fornecedores); (b) estrato reconstruído via LATERAL = 16 pedidos, concordância por linha 12,5% (11 expirados = procrastinação estrutural do corte diário, não discordância), intervenção ativa real ~31% → founder escolheu **caminho A: piloto supervisionado medindo taxa de VETO** (liga de verdade c/ janela do corte 13h; veto <10% por 3 sem → fase 2 encurta p/ ~2h; veto >25% ou 1 compra errada → fusível off).
+- ✅ **Spec escrita + self-review**: `docs/superpowers/specs/2026-06-10-reposicao-auto-aprovacao-sayerlack-design.md` (estende o tick do alerta R$3k existente — zero cron novo; delta ao vivo vs último disparo; fusível `reposicao_auto_aprovacao_ativa` nasce OFF; auto-suspensão por alerta ativo de reposição; log de auditoria; e-mail vira informativo c/ janela de veto).
+- ✅ **Spec revisada pelo founder com os 16 casos reais** → 3 ajustes (delta por GRUPO + referência <90d; disciplina do veto: motivo obrigatório + veto-por-dado-errado corrige a FONTE; expectativa honesta veto 0–40%).
+- ✅ **Plano escrito** (`docs/superpowers/plans/2026-06-10-reposicao-auto-aprovacao-piloto.md`) **+ EXECUTADO inline**: migration `20260610150000_reposicao_auto_aprovacao_piloto.sql` (4 configs + log + função de elegibilidade + tick estendido VERBATIM com 4 marcas [AUTO], subsequência verificada mecanicamente) · **PG17 15/15 asserts** (`db/test-auto-aprovacao-piloto.sh`; harness ganhou o fix do `fin_audit_trigger` — snapshot stale) · badge "auto" TDD (4 testes) · audit regenerado · **suíte 2994/2994 + typecheck 0 + lint 0**.
+- ✅ **[PR #730](https://github.com/LucasSardenbergL/afiacao/pull/730) aberto + auto-merge squash** (via curl `--resolve` — o DNS local resolvia api.github.com pra IP morto 4.228.31.149; IP real 140.82.121.6 responde; git push funcionava. ⚠️ Se o `gh` voltar a dar i/o timeout nesta máquina, é DNS — workaround: curl --resolve com `gh auth token`).
+- ✅ **Codex challenge adversarial RODADO (gpt-5.5 xhigh, 2026-06-11): VETO — 6 P1 + 5 P2.** 5 P1 + 4 P2 incorporados, 1 P2 recusado com fundamento. Folds: OBEN-only (P1.1) · `FOR UPDATE` + valor pela soma dos ITENS, não o cabeçalho (P1.2 TOCTOU+mismatch) · veta `modo_promocao` (P1.3) · referência agregada por grupo×data_ciclo colapsa o pré-split (P1.4) · clamp de config `(0,0.30]`/`≥1` (P1.5) · raio cumulativo 1 auto-aprovado/grupo (P1.6) · cooldown enxerga falha de PORTAL (P2.7) · regex de corte estrito rejeita `24:00` (P2.8) · advisory lock no tick (P2.9) · guard NaN/Inf nos itens (P2.11). **Recusado P2.10** (RLS do log "global por staff" — o próprio Codex admite que replica o modelo das tabelas de pedido; `user_roles` não tem empresa; piloto é OBEN-only → inventar isolamento inexistente seria incoerente). Tabela completa na spec §7b.
+- ✅ **Re-validado: PG17 24/24 asserts** (9 cenários novos C1–C9 provam cada fold — ex.: C3 split 5200 vs agregado 8000 = 35% bloqueia; C6 usa soma dos itens) · typecheck 0 · suíte 3085/3085 · shellcheck OK. ⚠️ **Merge da main 2× no caminho** (treadmill multi-sessão; conflitos só nos 3 ímãs de bookkeeping — resolvidos). **Achado de harness:** `pg_temp.*` é por-sessão → helpers e cenários precisam do MESMO bloco psql.
+- ⏳ **Founder (próximo):** pré-flight do corte (`SELECT jobname, schedule FROM cron.job WHERE jobname ILIKE '%disparar%'`; alinhar `reposicao_auto_aprovacao_corte_utc` ao cron real em UTC) → BLOCO A (migration, fusível OFF — seguro) → BLOCO B (liga o piloto) → query semanal de veto por 3 semanas.
+
+---
+
 ## 🧑‍🌾 SESSÃO 2026-06-10 (3) — UX da Farmer: home, menu, push e gaps de ferramenta
 
 > Pedido do founder (via lente "Ver como tatyanamartins2002"): (1) por que a tela inicial das
@@ -113,7 +133,7 @@
 
 ---
 
-## 0. SESSÃO 2026-06-10 (2) — getCapitalDeGiro + getTopInadimplentes truncados no cap 1000 (fecha o follow-up do #720)
+## 0a. SESSÃO 2026-06-10 (2) — getCapitalDeGiro + getTopInadimplentes truncados no cap 1000 (fecha o follow-up do #720)
 
 > Sessão spawnada pelo chip de follow-up da seção abaixo: as duas funções restantes do
 > `financeiroService` com o MESMO bug dos #719/#720 — queries de linhas de CR/CP sem

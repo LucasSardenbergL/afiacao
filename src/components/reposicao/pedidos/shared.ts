@@ -143,6 +143,24 @@ export function pedidoPrecisaAtencao(p: {
   return STATUS_PORTAL_PRECISA_ATENCAO.has((p.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal);
 }
 
+/* ─── Override do gate de mínimo de faturamento Sayerlack ─── */
+//
+// O gate [GATE-MIN-FATURAMENTO] da edge marca falha_envio + resposta_canal.gate=
+// 'minimo_faturamento' quando um pedido Sayerlack fica abaixo da régua (R$3k = mínimo de
+// faturamento do fornecedor; abaixo disso ele não fatura, o pedido fica parado lá). O botão
+// "Re-disparar" re-bate no gate → loop sem saída. A exceção é o override consciente por
+// pedido ("Disparar mesmo assim"), só pra gestor/master.
+//
+// Este predicado detecta SÓ esse estado: falha_envio cuja causa É o gate. Uma falha_envio
+// por OUTRO motivo (SKU sem custo, qtde 0, erro do Omie) NÃO casa — oferecer override ali
+// seria inútil (não há régua a pular) e mascararia o erro real.
+export function ehGateMinimoFaturamento(p: {
+  status: string;
+  resposta_canal: { gate?: unknown; [key: string]: unknown } | null | undefined;
+}): boolean {
+  return p.status === 'falha_envio' && p.resposta_canal?.gate === 'minimo_faturamento';
+}
+
 /* ─── Split (PR5) — esconder o pai da lista ─── */
 //
 // Quando um pedido grande é dividido em chunks, o PAI vira status='split_em_filhos':
