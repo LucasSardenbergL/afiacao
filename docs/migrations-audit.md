@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **195** custom migrations totais
-- **736** objetos esperados (criados por estas migrations)
+- **196** custom migrations totais
+- **738** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 187
+  - `function`: 189
   - `rls_policy`: 183
   - `index`: 135
   - `cron_job`: 102
@@ -1719,6 +1719,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.push-sla-tick` | — |
 | `rls_policy` | `public.push_subscriptions_own` | `push_subscriptions` |
 | `rls_policy` | `public.push_subscriptions_service` | `push_subscriptions` |
+
+### `20260611120000_reposicao_fixes_codex_711.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_oportunidade_ciclo` | — |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
 
 ## Próximos passos quando algo der `❌`
 

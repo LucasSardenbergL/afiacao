@@ -165,6 +165,47 @@ Estoque médio = lote/2 (ciclo) + estoque de segurança. O pacote ataca:
 - Mínimo de faturamento por fornecedor além da Sayerlack (config single-pattern v1; extensível).
 - Recalibração de parâmetros (fase 2, gated em medição).
 
+## Pós-review — adversarial retroativo do Codex (2026-06-11, xhigh, caminho B fechado)
+
+O Codex revisou o #711 mergeado + meu achado novo (corte das 13h UTC expirava pendentes no meio
+do dia intra-day → churn + e-mail duplicado do alerta). Veredito e destino:
+
+**P1 (corrigidos na migration `20260611120000` + edge `disparar-pedidos-aprovados`):**
+1. **Corte expira SÓ `oportunidade_%`** (`.lte` data como backstop): meu fix original (`.lt`
+   cego) criaria zumbi de oportunidade → SKU bloqueado pra sempre no NOT EXISTS da RPC normal —
+   o Codex pegou a interação. Pendentes normais agora vivem o dia todo; oportunidade mantém a
+   vida curta original.
+2. **[SIMETRIA-NORMAL]** em `gerar_pedidos_oportunidade_ciclo`: a proteção do #711 era
+   unilateral; a oportunidade agora desvia de SKU em pedido normal economicamente ativo
+   (pendente/bloqueado/aprovado/falha_envio/disparado/concluído ≤7d), nos DOIS WHEREs (CTE +
+   INSERT de itens — só no CTE divergiria header×itens). Semântica validada: SKU que precisa
+   repor E tem campanha já ganha o desconto via `aplicar_promocoes` no pedido normal.
+3. **Gate fail-closed em ERRO de leitura da config** (≠ config ausente, que segue = desligado).
+
+**P3 incorporado:** `[CAST-SEGURO]` no tick (config malformada vira no-op, não mata o cron).
+
+**Achado-BÔNUS do PG17 (ao EXECUTAR a função, não só criar):** `[FIX-AMBIGUIDADE]` — o corpo do
+snapshot de `gerar_pedidos_oportunidade_ciclo` tem `SUM(valor_total)` sem qualificar no agregado
+final, ambíguo com a coluna OUT homônima do `RETURNS TABLE` → **erro de RUNTIME** (CREATE passa,
+late-bound). O wrapper `ciclo_oportunidade_do_dia` só chama a inner em dia de corte de campanha/
+véspera de aumento e não tem exception handler → se prod == snapshot, a geração de oportunidades
+**falhava silenciosamente exatamente nos dias com evento** (rollback no cron; pedido de
+oportunidade nunca nascia). Mesmo modo-de-falha do incidente `aplicar_promocoes` (§10 do
+CLAUDE.md). Fix na mesma migration (qualificação `pcs0.*`); aplicar pode LIGAR a feature →
+founder revisa a 1ª rodada com evento; pré-flight pede o functiondef VIVO de prod.
+
+**Validados pelo Codex (sem mudança):** guardrail×promoções na mesma transação (sem janela de
+infla); resolve sem filtro de pattern (necessário); tick×tick e tick×RPC seguros; gate pré-split
+sem escape nas rotas do `disparar` (incl. <R$3k com >20 itens).
+
+**P2 registrados (follow-ups, com gatilho):**
+- Gate no modo individual `{pedido_id}` da edge `enviar-pedido-portal-sayerlack` (rota dormente,
+  sem chamador ativo no frontend; acessível a staff). Gatilho: se algum fluxo passar a chamá-la.
+- Corte × `runAutoApprove` transacional (corrida rara "aprovado e não disparado"; já coberta
+  pelo check `reposicao_disparo` do Sentinela em 48h).
+- P3 cosmético não-feito: linha representativa determinística no e-mail agregado (MAX/SUM
+  transitório, sem alerta falso).
+
 ## Riscos aceitos / registrados
 
 - Race aprovar-durante-regeneração: janela pequena; aprovação falha limpa (0 rows) — nada
