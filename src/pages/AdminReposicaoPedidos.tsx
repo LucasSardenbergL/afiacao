@@ -32,6 +32,9 @@ import { DetalhesModal } from '@/components/reposicao/pedidos/DetalhesModal';
 import { CancelarModal } from '@/components/reposicao/pedidos/CancelarModal';
 import { PortalDrawer } from '@/components/reposicao/pedidos/PortalDrawer';
 import { CiclosAnteriores } from '@/components/reposicao/pedidos/CiclosAnteriores';
+import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMinimoButton';
+import { ehGateMinimoFaturamento } from '@/components/reposicao/pedidos/shared';
+import { useAuth } from '@/contexts/AuthContext';
 
 type SkuSemFornecedor = {
   sku_codigo_omie: string;
@@ -43,6 +46,10 @@ type SkuSemFornecedor = {
 /* ─── Página principal ─── */
 export default function AdminReposicaoPedidos() {
   const queryClient = useQueryClient();
+  // Override do mínimo de faturamento é privilegiado: só gestor comercial/master. A tela é
+  // RequireStaff (employee|master), então gateamos o botão aqui (o edge reforça no servidor).
+  const { isMaster, isGestorComercial } = useAuth();
+  const podeOverride = isMaster || isGestorComercial;
   const [searchParams, setSearchParams] = useSearchParams();
   const [now, setNow] = useState(new Date());
   const [detalhesPedido, setDetalhesPedido] = useState<PedidoSugerido | null>(null);
@@ -233,6 +240,35 @@ export default function AdminReposicaoPedidos() {
     },
   });
 
+  // Override do gate de mínimo de faturamento (gestor/master). Mesma edge, com ignorar_minimo.
+  // Separada da dispararMutation pra não confundir o estado de loading por linha; o edge
+  // reforça gestor/master no servidor (403 se não autorizado → cai no onError).
+  const dispararOverrideMutation = useMutation({
+    mutationFn: async (pedidoId: number) => {
+      const { data, error } = await supabase.functions.invoke('disparar-pedidos-aprovados', {
+        body: { empresa: EMPRESA, pedido_id: pedidoId, ignorar_minimo: true },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data, pedidoId) => {
+      const { tone, message } = interpretarRespostaDisparo(data as RespostaDisparo, pedidoId);
+      if (tone === 'error') toast.error(message);
+      else if (tone === 'info') toast.info(message);
+      else toast.success(message);
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+    },
+    onError: (e: Error) => {
+      toast.error(`Erro ao disparar: ${e.message}`);
+    },
+  });
+
+  // Estado de disparo por linha cobre AMBAS as mutações (normal + override) — o botão da
+  // linha trava enquanto qualquer disparo daquele pedido está em voo.
+  const disparandoLinha = (pedidoId: number) =>
+    (dispararMutation.isPending && dispararMutation.variables === pedidoId) ||
+    (dispararOverrideMutation.isPending && dispararOverrideMutation.variables === pedidoId);
+
   const bloqueados = (pedidos ?? []).filter((p) => p.status === 'bloqueado_guardrail');
 
   // SKUs abaixo do ponto que NÃO geram pedido por falta de fornecedor cadastrado.
@@ -391,17 +427,26 @@ export default function AdminReposicaoPedidos() {
                         <Button size="sm" variant="ghost" onClick={() => setDetalhesPedido(p)}>
                           <Eye className="w-4 h-4 mr-1" />Detalhes
                         </Button>
-                        {(p.status === 'aprovado_aguardando_disparo' || p.status === 'falha_envio') && (
+                        {podeOverride && ehGateMinimoFaturamento(p) ? (
+                          // Preso pelo gate de mínimo de faturamento → "Disparar mesmo assim"
+                          // no lugar do "Re-disparar" (que só re-bateria no gate).
+                          <OverrideMinimoButton
+                            fornecedorNome={p.fornecedor_nome}
+                            valorTotal={p.valor_total}
+                            onConfirm={() => dispararOverrideMutation.mutate(p.id)}
+                            disabled={disparandoLinha(p.id) || p.status_envio_portal === 'enviando_portal'}
+                          />
+                        ) : (p.status === 'aprovado_aguardando_disparo' || p.status === 'falha_envio') ? (
                           <Button
                             size="sm"
                             variant={p.status === 'falha_envio' ? 'outline' : 'default'}
                             onClick={() => dispararMutation.mutate(p.id)}
                             disabled={
-                              (dispararMutation.isPending && dispararMutation.variables === p.id) ||
+                              disparandoLinha(p.id) ||
                               p.status_envio_portal === 'enviando_portal'
                             }
                           >
-                            {(dispararMutation.isPending && dispararMutation.variables === p.id) ||
+                            {disparandoLinha(p.id) ||
                             p.status_envio_portal === 'enviando_portal' ? (
                               <Loader2 className="w-4 h-4 mr-1 animate-spin" />
                             ) : (
@@ -409,7 +454,7 @@ export default function AdminReposicaoPedidos() {
                             )}
                             {p.status === 'falha_envio' ? 'Re-disparar' : 'Disparar'}
                           </Button>
-                        )}
+                        ) : null}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -464,7 +509,8 @@ export default function AdminReposicaoPedidos() {
                         onCancelar={() => setCancelarPedido(p)}
                         onVerPortal={() => setPortalPedido(p)}
                         onDisparar={() => dispararMutation.mutate(p.id)}
-                        disparando={dispararMutation.isPending && dispararMutation.variables === p.id}
+                        onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
+                        disparando={disparandoLinha(p.id)}
                       />
                     ))}
                   </TableBody>
@@ -507,7 +553,8 @@ export default function AdminReposicaoPedidos() {
                             onCancelar={() => setCancelarPedido(p)}
                             onVerPortal={() => setPortalPedido(p)}
                             onDisparar={() => dispararMutation.mutate(p.id)}
-                            disparando={dispararMutation.isPending && dispararMutation.variables === p.id}
+                            onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
+                            disparando={disparandoLinha(p.id)}
                           />
                         ))}
                       </TableBody>

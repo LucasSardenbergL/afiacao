@@ -3,8 +3,9 @@ import { TableCell, TableRow } from '@/components/ui/table';
 import { Eye, ExternalLink, Loader2, XCircle, Zap } from 'lucide-react';
 import { format } from 'date-fns';
 import { PedidoSugerido } from './types';
-import { formatBRL } from './shared';
+import { formatBRL, ehGateMinimoFaturamento } from './shared';
 import { StatusComMotivo, SplitInfo, PortalBadge } from './badges';
+import { OverrideMinimoButton } from './OverrideMinimoButton';
 
 export function PedidoRow({
   p,
@@ -12,6 +13,7 @@ export function PedidoRow({
   onCancelar,
   onVerPortal,
   onDisparar,
+  onDispararIgnorandoMinimo,
   disparando,
 }: {
   p: PedidoSugerido;
@@ -19,14 +21,22 @@ export function PedidoRow({
   onCancelar: () => void;
   onVerPortal: () => void;
   onDisparar: () => void;
+  // Override do gate de mínimo de faturamento. A página só passa este callback p/
+  // gestor/master (isMaster||isGestorComercial) — quando ausente, o botão "Disparar
+  // mesmo assim" nem aparece (não-gestor cai no "Re-disparar" normal, que re-bate no gate).
+  onDispararIgnorandoMinimo?: () => void;
   disparando: boolean;
 }) {
   const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
   const podeCancelar = ['pendente_aprovacao', 'bloqueado_guardrail', 'aprovado_aguardando_disparo'].includes(p.status);
+  // Pedido preso ESPECIFICAMENTE pelo gate de mínimo de faturamento + caller pode overridar
+  // → oferece "Disparar mesmo assim" NO LUGAR do "Re-disparar" (que só re-bateria no gate).
+  const mostrarOverride = ehGateMinimoFaturamento(p) && !!onDispararIgnorandoMinimo;
   // Re-disparo: a edge disparar-pedidos-aprovados aceita pedido em falha_envio via
   // pedido_id (index.ts:1005). Sem isso, falha_envio só tinha "Detalhes" — não havia
-  // como re-disparar pela UI (precisava flip de status no banco).
-  const podeReDisparar = p.status === 'falha_envio';
+  // como re-disparar pela UI (precisava flip de status no banco). Suprimido quando o
+  // override está disponível (senão 2 botões de disparo confusos na mesma linha).
+  const podeReDisparar = p.status === 'falha_envio' && !mostrarOverride;
   const podeDisparar = p.status === 'aprovado_aguardando_disparo' || podeReDisparar;
   // Guard de concorrência: enquanto o envio ao portal está em voo (após "aprovar e
   // disparar" ou um disparo manual), trava o botão pra não abrir uma 2ª sessão no
@@ -72,6 +82,14 @@ export function PedidoRow({
               {(disparando || enviandoPortal) ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
               {enviandoPortal ? 'Enviando…' : (podeReDisparar ? 'Re-disparar' : 'Disparar')}
             </Button>
+          )}
+          {mostrarOverride && (
+            <OverrideMinimoButton
+              fornecedorNome={p.fornecedor_nome}
+              valorTotal={p.valor_total}
+              onConfirm={() => onDispararIgnorandoMinimo?.()}
+              disabled={disparando || enviandoPortal}
+            />
           )}
           {podeCancelar && (
             <Button size="sm" variant="outline" onClick={onCancelar}>
