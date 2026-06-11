@@ -6,6 +6,11 @@ import { useDashboardCompany } from '@/hooks/useDashboardCompany';
 import { useCockpitChannel } from '@/hooks/dashboard/useCockpitChannel';
 import { variantFromScore, type PriorityCandidate } from '@/lib/dashboard/priority-rules';
 import { formatCount } from '@/lib/dashboard/format';
+import {
+  agregarVendasPorDiaCivil,
+  janelaQueryHojeOntem,
+  type PedidoVendasDia,
+} from '@/lib/dashboard/vendas-dia-civil';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
 import type { TopListItem } from '@/components/dashboard/cockpit/CockpitTopList';
 
@@ -28,10 +33,7 @@ export function useVendasZone() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey,
     queryFn: async () => {
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-      const yesterdayStart = new Date(startOfDay);
-      yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+      const agora = new Date();
 
       let faturadoHoje = 0;
       let faturadoOntem = 0;
@@ -39,26 +41,20 @@ export function useVendasZone() {
       let orcamentosAguardando = 0;
 
       try {
-        // sales_orders hoje
-        const { data: hoje } = await supabase
+        // Janela = união dos dias civis local+UTC de ontem e hoje: pedidos do sync
+        // Omie têm created_at data-pura à meia-noite UTC e caíam no dia errado com a
+        // janela local pura. O dia de cada pedido é re-decidido client-side.
+        const { inicioIso, fimIso } = janelaQueryHojeOntem(agora);
+        const { data: pedidos } = await supabase
           .from('sales_orders')
-          .select('total')
-          .gte('created_at', startOfDay.toISOString());
-        if (hoje) {
-          const rows = hoje as Array<{ total?: number | string | null }>;
-          pedidosHoje = rows.length;
-          faturadoHoje = rows.reduce((s, r) => s + Number(r.total ?? 0), 0);
-        }
-
-        // sales_orders ontem
-        const { data: ontem } = await supabase
-          .from('sales_orders')
-          .select('total')
-          .gte('created_at', yesterdayStart.toISOString())
-          .lt('created_at', startOfDay.toISOString());
-        if (ontem) {
-          const rows = ontem as Array<{ total?: number | string | null }>;
-          faturadoOntem = rows.reduce((s, r) => s + Number(r.total ?? 0), 0);
+          .select('total, created_at')
+          .gte('created_at', inicioIso)
+          .lte('created_at', fimIso);
+        if (pedidos) {
+          const agg = agregarVendasPorDiaCivil(pedidos as PedidoVendasDia[], agora);
+          faturadoHoje = agg.faturadoHoje;
+          pedidosHoje = agg.pedidosHoje;
+          faturadoOntem = agg.faturadoOntem;
         }
       } catch { /* tabela ausente — devolve 0 */ }
 

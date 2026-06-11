@@ -6,6 +6,20 @@
 
 ---
 
+## 📊 SESSÃO 2026-06-10 (4) — KPIs do cockpit de vendas: pedido do sync Omie (data-pura UTC) caía em "ontem"
+
+> Mesmo bug do `/sales/print` (#733), agora nos KPIs "Faturado hoje/ontem" e "Pedidos
+> hoje" do `useVendasZone`: janela de dia LOCAL (`.gte/.lt` em `created_at`) × pedido do
+> sync com `created_at` = meia-noite UTC → em BRT a janela de hoje começa às 03:00Z e o
+> pedido do sync de hoje caía em "ontem" (subconta o KPI de hoje, infla o de ontem e
+> distorce o delta %).
+
+- ✅ Fix: query única com `janelaQueryHojeOntem` (união dos dias civis de ontem+hoje, local∪UTC) + re-filtro client-side `agregarVendasPorDiaCivil` — cada pedido conta em **exatamente 1 dia** via `pedidoNoDiaCivil` (reusa os helpers do #733). Helper novo `src/lib/dashboard/vendas-dia-civil.ts` (TDD, 10 testes TZ-agnósticos — instantes locais via `new Date(y,m,d,h,m)`, UTC via ISO Z; passa em BRT e no UTC do CI). De quebra: 2 queries → 1.
+- ✅ CI local verde (typecheck strict · 3047/3047 testes · lint 0 errors nos arquivos tocados) — 100% frontend (sem migration, sem edge). PR aberto na sequência (auto-merge no `validate`).
+- ⚠️ Publish no Lovable pendente pra ir ao ar.
+
+---
+
 ## 🧮 SESSÃO 2026-06-10 (3) — Embalagem econômica indicava QT com GL mais barato/litro (WP01/WP87/WP04)
 
 > Queixa do founder: preencheu os preços manualmente, o GL ficou mais barato por
