@@ -53,3 +53,14 @@ O estado interno (`pedido_compra_sugerido`) deixa de ser estoque alternativo e v
 
 ## Não-objetivos v1
 - COLACOR mantém `ListarSaldoPendente`.
+
+## Anexo — Codex (achados que motivaram o rework; `/tmp` é efêmero, fixado aqui)
+
+### Adversarial do keep-both — BLOQUEOU (3 P1, 5 P2)
+- **P1** De-dup por PO descarta quantidade: a RPC conta `qtde_final` CHEIA no `em_transito`, a fonte Omie usa saldo → pedido 10/recebido 4 = físico 4 + em_transito 10 = **14** (real 10) → overcount → ruptura. `concluido_recebido` duplica o recebido por até 7d.
+- **P1** `fetchEmTransitoKeys` não replicava o **2º ramo** da CTE (`sucesso_portal/enviado_portal + protocolo + omie_numero NULL`) → double-count de borda.
+- **P1** Paginação por `nTotalPaginas` (Omie SUB-REPORTA — já mordeu em CR/CP, ver `omie-financeiro`) → página omitida = PO perdida = double-buy. Paginar **até página vazia** + fingerprint anti-loop + teto técnico fatal.
+- **P2** etapa aberta desconhecida descartada em silêncio (não é "lado seguro" — vira double-buy) → **fatal**; NaN/negativo no parsing conta a qtde inteira → **fatal**; Sentinela com `max(ultima_sincronizacao)` fica verde com sync parcial → usar **marcador `complete`**; `callOmiePedidos` só retenta 429 (rede/5xx falha de primeira) → retry/backoff; janela `PEDIDOS_JANELA_DIAS=180` perde PO aberta antiga → **sem corte**.
+
+### Design da fonte única ("Opção A endurecida") — invariantes
+Nunca `+=` (recalcula e SUBSTITUI todo `estoque_pendente_entrada`); apply + marcador `complete` na **mesma transação**; `run_id`/`observed_at` monotônico (run velho não sobrescreve novo); full-sync e bump usam a **MESMA** função de derivação/apply; `{only_pending}` NÃO atualiza frescor do físico; falha/etapa-desconhecida **mantém** o snapshot anterior (nunca zeros parciais); o bump espera ver os `AFI-<id>` antes de declarar completo; a barreira da RPC é **fail-closed** (aborta a geração, não chuta).
