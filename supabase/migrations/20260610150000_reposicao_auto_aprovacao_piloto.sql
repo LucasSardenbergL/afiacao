@@ -25,8 +25,11 @@
 
 BEGIN;
 
--- ── A) Configs do piloto (text key/value, cast com guard na leitura) ─────────
+-- ── A) Configs do piloto (text key/value, cast com guard+CLAMP na leitura) ───
 -- ativa nasce 'false': o founder liga com o BLOCO B do rollout, quando quiser.
+-- ⚠️ Codex P1.5: o parsing no tick CLAMPA cada config (delta_max ∈ (0, 0.30];
+-- cooldown >= 1; corte 00:00–23:59) — fora da faixa = braço OFF (fail-safe). Um typo
+-- '30' (=3000%) ou '0' (cooldown nulo) NÃO liga a automação com parâmetro perigoso.
 INSERT INTO public.company_config (key, value) VALUES
   ('reposicao_auto_aprovacao_ativa', 'false'),
   ('reposicao_auto_aprovacao_delta_max', '0.30'),
@@ -63,27 +66,45 @@ CREATE POLICY "Staff lê log de auto-aprovação" ON public.reposicao_auto_aprov
 -- Escrita: só o tick (SECURITY DEFINER) / service_role (bypassa RLS). Sem policy de INSERT.
 
 -- ── C) Elegibilidade (função separada = testável isoladamente no PG17) ───────
--- Retorna jsonb {elegivel, motivo?, valor_anterior?, delta_pct?}. O motivo não é
--- consumido pelo tick (pedido inelegível segue o fluxo humano normal) mas é ouro
--- pra teste/debug via SELECT direto.
+-- Retorna jsonb {elegivel, motivo?, valor_anterior?, delta_pct?, valor_itens?}.
+-- VOLATILE (não STABLE): trava o pedido FOR UPDATE p/ fechar o TOCTOU (Codex P1.2) —
+-- o lock persiste na transação do tick até o claim, então nada muda valor/itens entre
+-- a validação e a aprovação. O motivo não é consumido pelo tick (inelegível segue o
+-- fluxo humano), mas é ouro pra teste/debug via SELECT direto.
+--
+-- Codex folds: P1.1 OBEN-only · P1.2 FOR UPDATE + valor recalculado dos ITENS (não do
+-- cabeçalho — o disparo manda os itens [edge:748], cabeçalho pode divergir) · P1.3
+-- rejeita item em promoção · P1.4 referência AGREGADA por grupo×data_ciclo (colapsa o
+-- pré-split em filhos) · P1.6 no máx. 1 auto-aprovado não-disparado por grupo · P2.7
+-- cooldown enxerga falha de PORTAL · P2.11 guard de item rejeita NaN/Infinity.
 CREATE OR REPLACE FUNCTION public.reposicao_pedido_auto_aprovavel(
   p_pedido_id bigint,
+  p_threshold numeric,
   p_delta_max numeric,
   p_cooldown_horas numeric
 ) RETURNS jsonb
 LANGUAGE plpgsql
-STABLE
+VOLATILE
 SECURITY DEFINER
 SET search_path TO 'public', 'pg_temp'
 AS $$
 DECLARE
   p RECORD;
-  v_ant RECORD;
+  v_grupo text;
+  v_valor numeric;     -- valor REAL (soma dos itens) — fonte de verdade do disparo
+  v_ant numeric;       -- referência agregada do grupo (última compra)
   v_delta numeric;
 BEGIN
-  SELECT * INTO p FROM public.pedido_compra_sugerido WHERE id = p_pedido_id;
+  -- P1.2: trava a linha. Qualquer promo/regeneração/aprovação concorrente espera este
+  -- lock; o claim do tick (mesma transação) vê o estado que esta função validou.
+  SELECT * INTO p FROM public.pedido_compra_sugerido WHERE id = p_pedido_id FOR UPDATE;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('elegivel', false, 'motivo', 'pedido inexistente');
+  END IF;
+
+  -- P1.1: piloto é OBEN-only (spec §1). Sayerlack de outra empresa fica humano.
+  IF p.empresa <> 'OBEN' THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'fora do escopo do piloto (só OBEN)');
   END IF;
 
   IF p.status <> 'pendente_aprovacao' OR p.aprovado_em IS NOT NULL OR p.cancelado_em IS NOT NULL THEN
@@ -102,19 +123,37 @@ BEGIN
     RETURN jsonb_build_object('elegivel', false, 'motivo', 'sem SKUs');
   END IF;
 
-  -- numeric aceita NaN/Infinity; NaN ordena MAIOR que Infinity → o "< Infinity"
-  -- barra os dois (mesmo padrão do CHECK de minimo_forcado_manual).
-  IF p.valor_total IS NULL OR NOT (p.valor_total > 0 AND p.valor_total < 'Infinity'::numeric) THEN
-    RETURN jsonb_build_object('elegivel', false, 'motivo', 'valor_total inválido');
+  v_grupo := COALESCE(p.grupo_codigo, '');
+
+  -- P1.3: promoção (forward_buying mantém tipo_ciclo='normal' → não pega no filtro acima)
+  -- é decisão humana no piloto. Qualquer item com modo_promocao veta.
+  IF EXISTS (
+    SELECT 1 FROM public.pedido_compra_item i
+    WHERE i.pedido_id = p.id AND i.modo_promocao IS NOT NULL
+  ) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'item em promoção (decisão humana)');
   END IF;
 
-  -- Itens que o guard de disparo (#422/#433) barraria: não aprovar o que vai falhar.
+  -- P2.11: guard de item que o disparo (#422/#433) barraria. Forma POSITIVA (> 0 AND <
+  -- Infinity) p/ rejeitar também NaN/Infinity — "preco<=0" é FALSE p/ NaN e não pegaria.
   IF EXISTS (
     SELECT 1 FROM public.pedido_compra_item i
     WHERE i.pedido_id = p.id
-      AND (COALESCE(i.preco_unitario, 0) <= 0 OR COALESCE(i.qtde_final, 0) <= 0)
+      AND NOT (i.preco_unitario > 0 AND i.preco_unitario < 'Infinity'::numeric
+               AND i.qtde_final > 0 AND i.qtde_final < 'Infinity'::numeric)
   ) THEN
     RETURN jsonb_build_object('elegivel', false, 'motivo', 'item com preço/qtde inválido');
+  END IF;
+
+  -- P1.2: o VALOR que importa é o que será comprado = soma dos itens, NÃO o cabeçalho
+  -- (valor_total pode divergir; o disparo manda os itens). A régua vale sobre ele.
+  SELECT SUM(i.qtde_final * i.preco_unitario) INTO v_valor
+  FROM public.pedido_compra_item i WHERE i.pedido_id = p.id;
+  IF v_valor IS NULL OR NOT (v_valor > 0 AND v_valor < 'Infinity'::numeric) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'sem itens válidos para somar');
+  END IF;
+  IF v_valor < p_threshold THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'abaixo da régua (soma dos itens)');
   END IF;
 
   -- Humano já mexeu → a decisão é dele (trade-off "ajustou → aprova" do #711).
@@ -125,55 +164,82 @@ BEGIN
     RETURN jsonb_build_object('elegivel', false, 'motivo', 'itens ajustados por humano');
   END IF;
 
-  -- Cooldown: auto-aprovado do fornecedor falhou no disparo há pouco (ex.: SKU sem
-  -- de-para no portal) → exceção humana resolve antes da automação voltar.
+  -- P2.7: cooldown enxerga falha de DISPARO (status='falha_envio') E de PORTAL
+  -- (status_envio_portal terminal/ambíguo — SKU sem de-para vira 'erro_nao_retentavel'
+  -- sem mexer no status principal). Auto-aprovado do fornecedor que falhou há pouco →
+  -- exceção humana resolve antes de a automação voltar ao fornecedor.
   IF EXISTS (
     SELECT 1 FROM public.pedido_compra_sugerido f
     WHERE f.empresa = p.empresa
       AND f.fornecedor_nome = p.fornecedor_nome
       AND f.aprovado_por LIKE 'auto:%'
-      AND f.status = 'falha_envio'
+      AND (f.status = 'falha_envio'
+           OR f.status_envio_portal IN ('erro_nao_retentavel', 'falha_envio_portal', 'indeterminado_requer_conciliacao'))
       AND f.atualizado_em > now() - (p_cooldown_horas * interval '1 hour')
   ) THEN
-    RETURN jsonb_build_object('elegivel', false, 'motivo', 'cooldown: auto-aprovação recente do fornecedor falhou no disparo');
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'cooldown: auto-aprovação recente do fornecedor falhou (disparo/portal)');
   END IF;
 
-  -- Delta AO VIVO por (empresa, fornecedor, grupo): referência = último pedido com
-  -- evidência de compra real, < 90d. Sem referência do GRUPO → primeira compra é
-  -- humana (cada disparo manual semeia o grupo). Spec §4.2.7.
-  SELECT a.valor_total, a.criado_em INTO v_ant
-  FROM public.pedido_compra_sugerido a
-  WHERE a.empresa = p.empresa
-    AND a.fornecedor_nome = p.fornecedor_nome
-    AND COALESCE(a.grupo_codigo, '') = COALESCE(p.grupo_codigo, '')
-    AND a.id <> p.id
-    AND a.criado_em < p.criado_em
-    AND a.criado_em > now() - interval '90 days'
-    AND (a.omie_pedido_compra_numero IS NOT NULL OR a.status IN ('disparado', 'concluido_recebido'))
-  ORDER BY a.criado_em DESC
-  LIMIT 1;
+  -- P1.6: raio cumulativo — no MÁXIMO 1 auto-aprovado não-disparado por grupo. Sem isto,
+  -- N pedidos de SKUs novos do grupo passam cada um contra a mesma referência antiga e a
+  -- exposição antes do corte vira ilimitada. O 2º espera o 1º disparar (e virar referência).
+  IF EXISTS (
+    SELECT 1 FROM public.pedido_compra_sugerido q
+    WHERE q.empresa = p.empresa
+      AND q.fornecedor_nome = p.fornecedor_nome
+      AND COALESCE(q.grupo_codigo, '') = v_grupo
+      AND q.aprovado_por LIKE 'auto:%'
+      AND q.status = 'aprovado_aguardando_disparo'
+      AND q.id <> p.id
+  ) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'já há auto-aprovado do grupo aguardando disparo');
+  END IF;
 
-  IF NOT FOUND OR v_ant.valor_total IS NULL
-     OR NOT (v_ant.valor_total > 0 AND v_ant.valor_total < 'Infinity'::numeric) THEN
+  -- P1.4: referência de delta = AGREGADO do grupo na data_ciclo de compra MAIS RECENTE
+  -- (<90d). Soma por data_ciclo colapsa o pré-split (pai R$8k → 2 filhos R$4k disparados
+  -- na mesma data): senão o delta compararia contra UM filho de R$4k e passaria onde o
+  -- agregado R$8k deveria bloquear. A condição de compra-real exclui o pai split_em_filhos
+  -- (sem omie_numero) e soma só os filhos disparados.
+  SELECT SUM(r.valor_total) INTO v_ant
+  FROM public.pedido_compra_sugerido r
+  WHERE r.empresa = p.empresa
+    AND r.fornecedor_nome = p.fornecedor_nome
+    AND COALESCE(r.grupo_codigo, '') = v_grupo
+    AND r.id <> p.id
+    AND r.criado_em > now() - interval '90 days'
+    AND (r.omie_pedido_compra_numero IS NOT NULL OR r.status IN ('disparado', 'concluido_recebido'))
+    AND r.data_ciclo = (
+      SELECT MAX(r2.data_ciclo)
+      FROM public.pedido_compra_sugerido r2
+      WHERE r2.empresa = p.empresa
+        AND r2.fornecedor_nome = p.fornecedor_nome
+        AND COALESCE(r2.grupo_codigo, '') = v_grupo
+        AND r2.id <> p.id
+        AND r2.criado_em > now() - interval '90 days'
+        AND (r2.omie_pedido_compra_numero IS NOT NULL OR r2.status IN ('disparado', 'concluido_recebido'))
+    );
+
+  IF v_ant IS NULL OR NOT (v_ant > 0 AND v_ant < 'Infinity'::numeric) THEN
     RETURN jsonb_build_object('elegivel', false, 'motivo', 'sem disparo de referência do grupo em 90d');
   END IF;
 
-  v_delta := abs(p.valor_total - v_ant.valor_total) / v_ant.valor_total;
+  v_delta := abs(v_valor - v_ant) / v_ant;   -- candidato pela soma dos itens
   IF v_delta > p_delta_max THEN
     RETURN jsonb_build_object('elegivel', false,
       'motivo', 'delta ' || round(v_delta * 100, 1)::text || '% > máx ' || round(p_delta_max * 100)::text || '%',
-      'valor_anterior', v_ant.valor_total,
+      'valor_anterior', v_ant,
       'delta_pct', round(v_delta * 100, 1));
   END IF;
 
   RETURN jsonb_build_object('elegivel', true,
-    'valor_anterior', v_ant.valor_total,
-    'delta_pct', round(v_delta * 100, 1));
+    'valor_anterior', v_ant,
+    'delta_pct', round(v_delta * 100, 1),
+    'valor_itens', v_valor);
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.reposicao_pedido_auto_aprovavel(bigint, numeric, numeric) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.reposicao_pedido_auto_aprovavel(bigint, numeric, numeric) TO service_role;
+REVOKE ALL ON FUNCTION public.reposicao_pedido_auto_aprovavel(bigint, numeric, numeric, numeric) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reposicao_pedido_auto_aprovavel(bigint, numeric, numeric, numeric) TO service_role;
 
 -- ── D) Tick estendido (corpo VERBATIM da 20260609150000 + marcas [AUTO]) ─────
 CREATE OR REPLACE FUNCTION public.reposicao_alerta_pedido_minimo_tick()
@@ -198,7 +264,14 @@ DECLARE
   v_min_corte int;
   v_elig jsonb;
   v_auto_ok boolean;
+  v_valor_auto numeric;  -- [AUTO] valor REAL (soma dos itens) do pedido auto-aprovado
 BEGIN
+  -- [AUTO 1/4] Codex P2.9: serializa execuções do tick (cron */30 + hook pós-geração).
+  -- Sem isto, dois ticks concorrentes não duplicam compra/log (o claim condicional cobre),
+  -- mas o perdedor pode re-inserir estado ativo e mandar CTA "pronto pra aprovar" pra um
+  -- pedido que o vencedor já auto-aprovou. xact-lock libera no COMMIT. Benigno pro alerta.
+  PERFORM pg_advisory_xact_lock(hashtext('reposicao_alerta_pedido_minimo_tick'));
+
   SELECT value::numeric INTO v_threshold
   FROM public.company_config WHERE key = 'reposicao_alerta_pedido_valor_minimo';
   SELECT value INTO v_fornecedor
@@ -220,9 +293,16 @@ BEGIN
     IF v_txt ~ '^[0-9]+(\.[0-9]+)?$' THEN v_delta_max := v_txt::numeric; END IF;
     SELECT value INTO v_txt FROM public.company_config WHERE key = 'reposicao_auto_aprovacao_cooldown_falha_horas';
     IF v_txt ~ '^[0-9]+(\.[0-9]+)?$' THEN v_cooldown := v_txt::numeric; END IF;
+    -- Codex P1.5/P2.8: regex de range ESTRITO 00:00–23:59. '24:00'::time é ACEITO pelo
+    -- PostgreSQL (=24:00:00) e aprovaria depois do cron real → órfão; o regex frouxo
+    -- '[0-9]{1,2}:[0-9]{2}' deixava passar. '25:00'/'99:99' não casam → v_corte NULL → OFF.
     SELECT value INTO v_txt FROM public.company_config WHERE key = 'reposicao_auto_aprovacao_corte_utc';
-    IF v_txt ~ '^[0-9]{1,2}:[0-9]{2}$' THEN v_corte := v_txt::time; END IF;
-    IF v_delta_max IS NULL OR v_delta_max <= 0 OR v_cooldown IS NULL OR v_corte IS NULL THEN
+    IF v_txt ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$' THEN v_corte := v_txt::time; END IF;
+    -- Codex P1.5: CLAMP de faixa segura. delta_max fora de (0, 0.30], cooldown < 1, ou
+    -- corte inválido → braço OFF. Um typo '30' (=3000%) ou '0' não liga a automação.
+    IF v_delta_max IS NULL OR v_delta_max <= 0 OR v_delta_max > 0.30
+       OR v_cooldown IS NULL OR v_cooldown < 1
+       OR v_corte IS NULL THEN
       v_auto_on := false;
     END IF;
   END IF;
@@ -269,8 +349,10 @@ BEGIN
     -- condicional: corrida com aprovação humana → quem chegar primeiro vence; o
     -- perdedor não loga nem manda e-mail duplicado (FOUND = false).
     v_auto_ok := false;
+    v_valor_auto := NULL;
     IF v_auto_on AND NOT v_suspenso AND v_dentro_janela AND r.qtd_pendentes = 1 THEN
-      v_elig := public.reposicao_pedido_auto_aprovavel(r.pedido_id, v_delta_max, v_cooldown);
+      -- passa a régua (threshold) — a função valida a soma dos ITENS contra ela (P1.2).
+      v_elig := public.reposicao_pedido_auto_aprovavel(r.pedido_id, v_threshold, v_delta_max, v_cooldown);
       IF COALESCE((v_elig->>'elegivel')::boolean, false) THEN
         UPDATE public.pedido_compra_sugerido
         SET aprovado_em = now(),
@@ -282,11 +364,13 @@ BEGIN
           AND cancelado_em IS NULL;
         IF FOUND THEN
           v_auto_ok := true;
+          -- valor REAL = soma dos itens (P1.2), não o cabeçalho r.valor que pode divergir.
+          v_valor_auto := COALESCE((v_elig->>'valor_itens')::numeric, r.valor);
           INSERT INTO public.reposicao_auto_aprovacao_log
             (pedido_id, empresa, fornecedor_nome, grupo_codigo, valor_total,
              valor_anterior, delta_pct, regua)
           VALUES
-            (r.pedido_id, r.empresa, r.fornecedor_nome, r.grupo_codigo, r.valor,
+            (r.pedido_id, r.empresa, r.fornecedor_nome, r.grupo_codigo, v_valor_auto,
              (v_elig->>'valor_anterior')::numeric, (v_elig->>'delta_pct')::numeric, v_threshold);
         END IF;
       END IF;
@@ -306,10 +390,10 @@ BEGIN
           lower(r.empresa),
           'reposicao_pedido_minimo',
           'atencao',
-          '[Compras] Auto-aprovado: pedido ' || r.fornecedor_nome || ' de R$ ' || round(r.valor)::text,
+          '[Compras] Auto-aprovado: pedido ' || r.fornecedor_nome || ' de R$ ' || round(COALESCE(v_valor_auto, r.valor))::text,
           'O pedido sugerido de ' || r.fornecedor_nome
             || CASE WHEN r.grupo_codigo <> '' THEN ' (grupo ' || r.grupo_codigo || ')' ELSE '' END
-            || ' atingiu R$ ' || round(r.valor)::text
+            || ' atingiu R$ ' || round(COALESCE(v_valor_auto, r.valor))::text
             || ' (' || r.num_skus::text || ' SKUs) e foi APROVADO AUTOMATICAMENTE — piloto: delta '
             || COALESCE((v_elig->>'delta_pct')::text, '?') || '% vs último disparo do grupo (R$ '
             || COALESCE(round((v_elig->>'valor_anterior')::numeric)::text, '?')
@@ -346,10 +430,10 @@ BEGIN
           lower(r.empresa),
           'reposicao_pedido_minimo',
           'atencao',
-          '[Compras] Auto-aprovado: pedido ' || r.fornecedor_nome || ' de R$ ' || round(r.valor)::text,
+          '[Compras] Auto-aprovado: pedido ' || r.fornecedor_nome || ' de R$ ' || round(COALESCE(v_valor_auto, r.valor))::text,
           'O pedido sugerido de ' || r.fornecedor_nome
             || CASE WHEN r.grupo_codigo <> '' THEN ' (grupo ' || r.grupo_codigo || ')' ELSE '' END
-            || ' (R$ ' || round(r.valor)::text || ', ' || r.num_skus::text
+            || ' (R$ ' || round(COALESCE(v_valor_auto, r.valor))::text || ', ' || r.num_skus::text
             || ' SKUs) foi APROVADO AUTOMATICAMENTE — piloto: delta '
             || COALESCE((v_elig->>'delta_pct')::text, '?') || '% vs último disparo do grupo (R$ '
             || COALESCE(round((v_elig->>'valor_anterior')::numeric)::text, '?')
