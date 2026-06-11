@@ -27,6 +27,7 @@ export interface AvaliacaoOpcao {
   excedente_base: number;
   custo_direto: number;
   capital_carrego: number | null;     // null quando demanda ausente
+  credito_reposicao: number;          // v1.1: sobra escoável valorizada ao melhor custo/base do grupo (0 sem demanda)
   custo_total_ajustado: number;
   preco_status: StatusPreco;
 }
@@ -35,6 +36,7 @@ export function avaliarOpcao(
   necessidadeBase: number,
   opcao: OpcaoEmbalagem,
   params: ParamsEmbalagem,
+  precoReposicaoPorBase?: number | null, // v1.1: menor custo/base do grupo (a compra futura que a sobra evita)
 ): AvaliacaoOpcao | null {
   if (opcao.preco == null || opcao.fator_para_base <= 0) return null;
   const fator = opcao.fator_para_base;
@@ -45,14 +47,22 @@ export function avaliarOpcao(
   const custo_direto = qtd_embalagens * opcao.preco;
 
   const d = params.demanda_base_diaria ?? 0;
+  const temEscoamento = params.demanda_base_diaria != null && d > 0;
   let capital_carrego: number | null;
-  if (params.demanda_base_diaria != null && d > 0) {
+  if (temEscoamento) {
     const dias_escoa = excedente_base / d;
     capital_carrego = excedente_base * custo_por_base * params.custo_capital_anual * (dias_escoa / 365);
   } else {
     capital_carrego = null;
   }
-  const custo_total_ajustado = custo_direto + (capital_carrego ?? 0);
+  // v1.1 (spec §14): a sobra ESCOÁVEL antecipa a próxima compra — crédito ao melhor
+  // custo/base do grupo, capado no custo/base da própria opção (invariante:
+  // custo_total ≥ necessidade × custo_por_base, nunca negativo). Sem demanda/cm não
+  // há evidência de escoamento → crédito 0 = comportamento conservador da v1.
+  const credito_reposicao = temEscoamento && precoReposicaoPorBase != null && precoReposicaoPorBase > 0
+    ? excedente_base * Math.min(precoReposicaoPorBase, custo_por_base)
+    : 0;
+  const custo_total_ajustado = custo_direto + (capital_carrego ?? 0) - credito_reposicao;
 
   return {
     sku_codigo_omie: opcao.sku_codigo_omie,
@@ -62,6 +72,7 @@ export function avaliarOpcao(
     excedente_base,
     custo_direto,
     capital_carrego,
+    credito_reposicao,
     custo_total_ajustado,
     preco_status: opcao.preco_status ?? 'ok',
   };
@@ -75,6 +86,7 @@ export interface DecisaoEmbalagem {
   opcoes: AvaliacaoOpcao[];
   excedente_base: number;              // da opção recomendada
   capital_estimado: number | null;     // da opção recomendada
+  dias_escoamento_sobra: number | null; // v1.1: tempo p/ a sobra da recomendada virar consumo (null sem sobra/demanda)
   economia_vs_alternativa: number;     // R$ entre a mais barata e a 2ª (>= 0)
   flags: string[];
 }
@@ -91,8 +103,8 @@ export function escolherEmbalagemEconomica(input: {
   if (!(necessidade_base > 0) || !Number.isFinite(necessidade_base)) {
     return {
       status: 'indisponivel', recomendada: null, opcoes: [],
-      excedente_base: 0, capital_estimado: null, economia_vs_alternativa: 0,
-      flags: ['necessidade_invalida'],
+      excedente_base: 0, capital_estimado: null, dias_escoamento_sobra: null,
+      economia_vs_alternativa: 0, flags: ['necessidade_invalida'],
     };
   }
 
@@ -101,16 +113,19 @@ export function escolherEmbalagemEconomica(input: {
   if (validas.length < 2) {
     return {
       status: 'indisponivel', recomendada: null, opcoes: [],
-      excedente_base: 0, capital_estimado: null, economia_vs_alternativa: 0,
-      flags: ['preco_indisponivel'],
+      excedente_base: 0, capital_estimado: null, dias_escoamento_sobra: null,
+      economia_vs_alternativa: 0, flags: ['preco_indisponivel'],
     };
   }
 
   if (validas.some((o) => o.preco_status === 'stale')) flags.push('preco_desatualizado');
   if (params.demanda_base_diaria == null || params.demanda_base_diaria <= 0) flags.push('escoamento_nao_estimado');
 
+  // v1.1: preço de reposição = melhor custo/base do grupo (a compra que a sobra evita).
+  const precoReposicaoPorBase = Math.min(...validas.map((o) => (o.preco as number) / o.fator_para_base));
+
   const avals = validas
-    .map((o) => avaliarOpcao(necessidade_base, o, params))
+    .map((o) => avaliarOpcao(necessidade_base, o, params, precoReposicaoPorBase))
     .filter((a): a is AvaliacaoOpcao => a !== null)
     .sort((a, b) => a.custo_total_ajustado - b.custo_total_ajustado);
 
@@ -140,10 +155,18 @@ export function escolherEmbalagemEconomica(input: {
     ? Math.max(0, Math.min(...outras.map((a) => a.custo_total_ajustado)) - recAval.custo_total_ajustado)
     : 0;
 
+  // v1.1: sobra da recomendada tratada como antecipação de compra (p/ a UI explicar).
+  if (recAval.excedente_base > 0 && recAval.credito_reposicao > 0) flags.push('sobra_antecipa_compra');
+  const d = params.demanda_base_diaria ?? 0;
+  const dias_escoamento_sobra = recAval.excedente_base > 0 && params.demanda_base_diaria != null && d > 0
+    ? recAval.excedente_base / d
+    : null;
+
   return {
     status, recomendada, opcoes: avals,
     excedente_base: recAval.excedente_base,
     capital_estimado: recAval.capital_carrego,
+    dias_escoamento_sobra,
     economia_vs_alternativa,
     flags,
   };

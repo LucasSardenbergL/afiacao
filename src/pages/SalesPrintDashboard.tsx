@@ -6,7 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, Printer, ArrowLeft } from 'lucide-react';
-import { format, startOfDay, endOfDay } from 'date-fns';
+import { format } from 'date-fns';
+import { janelaQueryDiaCivil, pedidoNoDiaCivil } from '@/lib/pedido/dia-civil';
 import { openPrintOrder } from '@/components/OrderPrintLayout';
 import {
   COMPANY_LABELS, COMPANY_COLORS, getPeriod,
@@ -24,8 +25,10 @@ const SalesPrintDashboard = () => {
   const [selectedPeriod, setSelectedPeriod] = useState<'all' | 'manha' | 'tarde'>('all');
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
 
-  const dayStart = startOfDay(selectedDate).toISOString();
-  const dayEnd = endOfDay(selectedDate).toISOString();
+  // Janela de query = união do dia local (pedidos do wizard) com o dia UTC (pedidos do
+  // sync Omie, created_at data-pura à meia-noite UTC). Mais larga que o dia exibido —
+  // o pertencimento real é re-decidido em filteredOrders via pedidoNoDiaCivil.
+  const { inicioIso: dayStart, fimIso: dayEnd } = janelaQueryDiaCivil(selectedDate);
 
   // Fetch company logos from Omie
   const { data: companyLogos = {} } = useQuery({
@@ -265,6 +268,9 @@ const SalesPrintDashboard = () => {
   // Enriched and filtered orders
   const filteredOrders = useMemo(() => {
     return allOrdersRaw
+      // A janela de query é a união dos dois regimes (pega pedidos de dias vizinhos
+      // na borda) — aqui cada pedido é atribuído ao SEU dia civil, sem duplicação.
+      .filter(o => pedidoNoDiaCivil(o.created_at, selectedDate))
       .filter(o => selectedCompanies.includes(o._company))
       .filter(o => {
         if (selectedPeriod === 'all') return true;
@@ -292,7 +298,7 @@ const SalesPrintDashboard = () => {
           cond_pagamento: condPagamento,
         };
       });
-  }, [allOrdersRaw, selectedCompanies, selectedPeriod, profileMap, addressMap, formasMap]);
+  }, [allOrdersRaw, selectedDate, selectedCompanies, selectedPeriod, profileMap, addressMap, formasMap]);
 
   // Group by company then period
   const grouped = useMemo(() => {

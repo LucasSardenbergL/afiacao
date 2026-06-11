@@ -6,11 +6,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Trash2, Share2, Pencil, Printer } from 'lucide-react';
-import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
 import type { OrderStatus } from '@/types';
-import { statusLabels, type OrderFeedRow } from './types';
+import { statusDoPedido, type OrderFeedRow } from './types';
 
 interface SalesOrderCardProps {
   order: OrderFeedRow;
@@ -36,7 +35,7 @@ export function SalesOrderCard({
   onPrint,
 }: SalesOrderCardProps) {
   const isAfiacao = order.origin === 'afiacao';
-  const status = statusLabels[order.status] || statusLabels.rascunho;
+  const status = statusDoPedido(order.status);
   // item_quantity da view = soma das quantidades (o mesmo que o reduce antigo fazia).
   const totalItems = Number(order.item_quantity) || 0;
   // Afiação opera sob Colacor SC (a view já manda account='colacor_sc'). O card
@@ -77,7 +76,7 @@ export function SalesOrderCard({
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {format(new Date(order.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+              {formatarDataPedido(order.created_at)}
             </p>
             {order.order_number && (
               <p className="text-xs text-muted-foreground">
