@@ -80,7 +80,7 @@ sh(`cd ${WORK} && unzip -o -q Cnaes.zip -d cnaes/`);
 const duck = (q: string) =>
   execFileSync("duckdb", ["-json", "-c", q], { maxBuffer: 1024 * 1024 * 256 }).toString();
 const catalogoCnae: { c: string; d: string }[] = JSON.parse(duck(
-  `SELECT column0 AS c, column1 AS d FROM read_csv('${WORK}/cnaes/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true)`));
+  `SELECT column0 AS c, column1 AS d FROM read_csv('${WORK}/cnaes/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true, parallel=false)`));
 const mapaCnae = new Map(catalogoCnae.map((r) => [r.c, r.d]));
 const invalidos = cnaes.filter((c) => !mapaCnae.has(c));
 if (invalidos.length) { console.error(`❌ CNAEs fora do catálogo RFB (DV errado?): ${invalidos.join(", ")}`); process.exit(3); }
@@ -98,7 +98,7 @@ for (let i = 0; i <= 9; i++) {
       SELECT b, o, dv, fantasia, dt, cnae1, cnae2, tlog, log, num,
              comp, bai, cep, uf, mun, ddd1, tel1, ddd2, tel2, email
       FROM read_csv('${WORK}/est/*', delim=';', header=false, quote='"',
-                    encoding='latin-1', all_varchar=true, strict_mode=false,
+                    encoding='latin-1', all_varchar=true, parallel=false, strict_mode=false,
                     names=['b','o','dv','matriz','fantasia','situacao','dt_sit','motivo','cid_ext','pais',
                            'dt','cnae1','cnae2','tlog','log','num','comp','bai','cep','uf',
                            'mun','ddd1','tel1','ddd2','tel2','ddd_fax','fax','email','sit_esp','dt_sit_esp'])
@@ -119,17 +119,17 @@ duck(`
   CREATE TEMP TABLE est AS SELECT * FROM read_parquet('${WORK}/est_filtrado_*.parquet');
   CREATE TEMP TABLE emp AS
     SELECT b, razao, capital, porte
-    FROM read_csv('${WORK}/emp/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true, strict_mode=false,
+    FROM read_csv('${WORK}/emp/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true, parallel=false, strict_mode=false,
                   names=['b','razao','natureza','qualif','capital','porte','ente'])
     WHERE b IN (SELECT DISTINCT b FROM est);
   CREATE TEMP TABLE soc AS
     SELECT b, string_agg(nome, '; ') socios
-    FROM read_csv('${WORK}/soc/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true, strict_mode=false,
+    FROM read_csv('${WORK}/soc/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true, parallel=false, strict_mode=false,
                   names=['b','tipo','nome','doc','qualif','dt_entrada','pais','rep_cpf','rep_nome','rep_qualif','faixa'])
     WHERE b IN (SELECT DISTINCT b FROM est) GROUP BY b;
   CREATE TEMP TABLE mun AS
     SELECT cod, nome
-    FROM read_csv('${WORK}/mun/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true,
+    FROM read_csv('${WORK}/mun/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true, parallel=false,
                   names=['cod','nome']);
   COPY (SELECT est.*, emp.razao, emp.capital, emp.porte, soc.socios, mun.nome AS mun_nome
         FROM est LEFT JOIN emp ON emp.b = est.b
@@ -181,7 +181,7 @@ for (const l of ibge) {
 const ufPorMunCodigo = new Map<string, string>();
 for (const r of linhas) if (r.municipio_codigo && r.uf) ufPorMunCodigo.set(r.municipio_codigo, r.uf);
 const municipiosRfb: { cod: string; nome: string }[] = JSON.parse(duck(
-  `SELECT cod, nome FROM read_csv('${WORK}/mun/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true, names=['cod','nome'])`));
+  `SELECT cod, nome FROM read_csv('${WORK}/mun/*', delim=';', header=false, quote='"', encoding='latin-1', all_varchar=true, parallel=false, names=['cod','nome'])`));
 let semLatLng = 0;
 const municipios: RadarMunicipioRow[] = municipiosRfb.map((m) => {
   const uf = ufPorMunCodigo.get(m.cod) ?? "";
