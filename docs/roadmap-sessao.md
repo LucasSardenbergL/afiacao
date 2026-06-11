@@ -6,6 +6,37 @@
 
 ---
 
+## 🧑‍🌾 SESSÃO 2026-06-10 (3) — UX da Farmer: home, menu, push e gaps de ferramenta
+
+> Pedido do founder (via lente "Ver como tatyanamartins2002"): (1) por que a tela inicial das
+> farmers é o cockpit de 6 módulos? (2) otimizar o menu lateral; (3) o que falta de ferramenta.
+> Diagnóstico: a home `/` decide só por `isStaff` (persona `vendedor` apenas REORDENA as 6 zonas)
+> e o sales-only escondia toda seção ≠ Vendas → o Meu Dia e Clientes eram INALCANÇÁVEIS pelo menu.
+> Founder aprovou as 3 frentes na ordem: home+menu → push → ficha pré-contato.
+
+- ✅ **Frente 1 — home por persona + menu (PR aberto, branch `claude/festive-babbage-8e8545`)**:
+  helper TDD `src/lib/nav/home-por-persona.ts` (19 testes) — vendedora (farmer/hunter/closer/
+  operacional ou sales-only) aterrissa no `/meu-dia`; menu sales-only vira allowlist por ITEM
+  (ganha Meu dia + Clientes); seção Vendas reordenada pelo fluxo do dia; badge SLA religado pra
+  sales-only; rename `managerOnly`→`staffOnly`. Adversarial: 0 P1; P2.1 (anti-loop lente) e
+  P2.3 (badge SLA) corrigidos. CI local verde (3024 testes).
+- 🔄 **Frente 2 — Web Push da vendedora (PR aberto; BACKEND JÁ EM PROD)**: tabela
+  `push_subscriptions` + RPCs device-aware (anti-vazamento em device compartilhado, P1 da
+  adversarial), 3 produtores SQL (WhatsApp inbound c/ throttle 10min + dona via
+  `wa_owner_efetivo`; tarefa nova c/ throttle 2min; SLA tick c/ gate de expediente), edge
+  `enviar-push` (npm:web-push, VAPID), SW handlers via `workbox.importScripts`, card de opt-in
+  no Meu Dia (instrução iOS), limpeza no logout. PG17: 17 asserts. ✅ Migration aplicada via SQL
+  Editor (`PUSH VENDEDORA OK 1/2/1/1/6/1`) + ✅ edge deployada verbatim (Active) + secrets VAPID
+  + ✅ smoke do runtime (200 `sem subscriptions` = npm:web-push vivo no Deno; Lovable commitou a
+  edge na main byte-idêntica). ⚠️ Falta: merge do PR + **Publish** + smoke final no device. Spec:
+  `docs/superpowers/specs/2026-06-10-push-vendedora-design.md`.
+- ⏳ **Frente 3 — ficha de 30s pré-contato** (últimas compras, preço praticado, títulos abertos,
+  cores, última conversa — drawer no card da fila/lista de ligação).
+- 📌 Gaps registrados sem frente: meta vs realizado + comissão estimada; auditoria mobile do
+  Meu Dia/fila; cesta sugerida (bloqueada no 360dialog).
+
+---
+
 ## 📊 SESSÃO 2026-06-10 (4) — KPIs do cockpit de vendas: pedido do sync Omie (data-pura UTC) caía em "ontem"
 
 > Mesmo bug do `/sales/print` (#733), agora nos KPIs "Faturado hoje/ontem" e "Pedidos
