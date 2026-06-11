@@ -61,22 +61,31 @@
 > e o sales-only escondia toda seção ≠ Vendas → o Meu Dia e Clientes eram INALCANÇÁVEIS pelo menu.
 > Founder aprovou as 3 frentes na ordem: home+menu → push → ficha pré-contato.
 
-- ✅ **Frente 1 — home por persona + menu (PR aberto, branch `claude/festive-babbage-8e8545`)**:
+- ✅ **Frente 1 — home por persona + menu ([#734](https://github.com/LucasSardenbergL/afiacao/pull/734), MERGEADO + publicado, validado na lente)**:
   helper TDD `src/lib/nav/home-por-persona.ts` (19 testes) — vendedora (farmer/hunter/closer/
   operacional ou sales-only) aterrissa no `/meu-dia`; menu sales-only vira allowlist por ITEM
   (ganha Meu dia + Clientes); seção Vendas reordenada pelo fluxo do dia; badge SLA religado pra
   sales-only; rename `managerOnly`→`staffOnly`. Adversarial: 0 P1; P2.1 (anti-loop lente) e
-  P2.3 (badge SLA) corrigidos. CI local verde (3024 testes).
-- 🔄 **Frente 2 — Web Push da vendedora (PR aberto; BACKEND JÁ EM PROD)**: tabela
+  P2.3 (badge SLA) corrigidos.
+- ✅ **Frente 2 — Web Push da vendedora ([#736](https://github.com/LucasSardenbergL/afiacao/pull/736) + card master [#746](https://github.com/LucasSardenbergL/afiacao/pull/746), MERGEADOS; backend 100% EM PROD)**: tabela
   `push_subscriptions` + RPCs device-aware (anti-vazamento em device compartilhado, P1 da
   adversarial), 3 produtores SQL (WhatsApp inbound c/ throttle 10min + dona via
   `wa_owner_efetivo`; tarefa nova c/ throttle 2min; SLA tick c/ gate de expediente), edge
   `enviar-push` (npm:web-push, VAPID), SW handlers via `workbox.importScripts`, card de opt-in
-  no Meu Dia (instrução iOS), limpeza no logout. PG17: 17 asserts. ✅ Migration aplicada via SQL
-  Editor (`PUSH VENDEDORA OK 1/2/1/1/6/1`) + ✅ edge deployada verbatim (Active) + secrets VAPID
-  + ✅ smoke do runtime (200 `sem subscriptions` = npm:web-push vivo no Deno; Lovable commitou a
-  edge na main byte-idêntica). ⚠️ Falta: merge do PR + **Publish** + smoke final no device. Spec:
+  no Meu Dia + MasterDashboard, limpeza no logout. PG17: 17 asserts. ✅ Migration aplicada +
+  edge deployada + secrets VAPID + smoke do runtime (200). ⏳ **Smoke no DEVICE pendente** —
+  SÓ no `steu.lovable.app` (o card NUNCA aparece no preview do Lovable: PWA off lá). Spec:
   `docs/superpowers/specs/2026-06-10-push-vendedora-design.md`.
+- 🚧 **Cold-start dos dados da farmer — backfill de pedidos (TRAVADO em incidente de plataforma 11/06)**:
+  diagnóstico fechado — `sales_orders` tem 10/571 clientes da carteira da Tatyana (o score via
+  `order_items` sabe de 102 compradores <90d); vínculo `omie_clientes` 571/571 OK; causa = janela
+  rolante 5d do `sync_pedidos` sem backfill histórico. Plano provado: levas de `sync_pedidos` com
+  `date_from` 12m + `start_page`/`max_pages` 8-15, idempotente. **Supabase edge com 503 de boot +
+  timeouts em cascata em 11/06 à noite** → retomar com sonda `max_pages=1`; depois recompute scores.
+- ⏳ **Erro "uma das fontes falhou" na FilaDoDia (lente/preview)** — testar fora do preview; se
+  persistir, console (F12). Fontes: tarefas/rota/mixgap (`useFilaAcoes`).
+- ⏳ **Timeouts 60s recorrentes nos crons `*/15`** — provável mesmo incidente de plataforma;
+  re-checar quando estabilizar.
 - ⏳ **Frente 3 — ficha de 30s pré-contato** (últimas compras, preço praticado, títulos abertos,
   cores, última conversa — drawer no card da fila/lista de ligação).
 - 📌 Gaps registrados sem frente: meta vs realizado + comissão estimada; auditoria mobile do
