@@ -6070,6 +6070,98 @@ export type Database = {
         }
         Relationships: []
       }
+      melhoria_itens: {
+        Row: {
+          autor_user_id: string
+          avaliacao_founder: string | null
+          created_at: string
+          empresa: string
+          id: string
+          modulo: string | null
+          resolvido_em: string | null
+          resposta_founder: string | null
+          rota_origem: string | null
+          status: string
+          tipo: string | null
+          titulo: string | null
+          triagem_status: string
+          updated_at: string
+          urgencia: string | null
+        }
+        Insert: {
+          autor_user_id: string
+          avaliacao_founder?: string | null
+          created_at?: string
+          empresa: string
+          id?: string
+          modulo?: string | null
+          resolvido_em?: string | null
+          resposta_founder?: string | null
+          rota_origem?: string | null
+          status?: string
+          tipo?: string | null
+          titulo?: string | null
+          triagem_status?: string
+          updated_at?: string
+          urgencia?: string | null
+        }
+        Update: {
+          autor_user_id?: string
+          avaliacao_founder?: string | null
+          created_at?: string
+          empresa?: string
+          id?: string
+          modulo?: string | null
+          resolvido_em?: string | null
+          resposta_founder?: string | null
+          rota_origem?: string | null
+          status?: string
+          tipo?: string | null
+          titulo?: string | null
+          triagem_status?: string
+          updated_at?: string
+          urgencia?: string | null
+        }
+        Relationships: []
+      }
+      melhoria_mensagens: {
+        Row: {
+          autor_user_id: string | null
+          conteudo: string
+          created_at: string
+          dados: Json | null
+          id: string
+          item_id: string
+          papel: string
+        }
+        Insert: {
+          autor_user_id?: string | null
+          conteudo: string
+          created_at?: string
+          dados?: Json | null
+          id?: string
+          item_id: string
+          papel: string
+        }
+        Update: {
+          autor_user_id?: string | null
+          conteudo?: string
+          created_at?: string
+          dados?: Json | null
+          id?: string
+          item_id?: string
+          papel?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "melhoria_mensagens_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "melhoria_itens"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       nfe_efetivacao_tentativas: {
         Row: {
           created_at: string
@@ -14761,6 +14853,14 @@ export type Database = {
       mark_mixgap_feedback: {
         Args: { p_customer: string; p_familia: string; p_status: string }
         Returns: undefined
+      }
+      melhoria_clientes_por_produto: {
+        Args: { p_termo: string }
+        Returns: Json
+      }
+      melhoria_produtos_relacionados: {
+        Args: { p_termo: string }
+        Returns: Json
       }
       minha_carteira: {
         Args: never
