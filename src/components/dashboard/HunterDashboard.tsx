@@ -1,6 +1,7 @@
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 import { VisitasHojeCard } from './VisitasHojeCard';
 import { CacaConteudo } from '@/components/caca/CacaConteudo';
+import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNudge';
 
 /**
  * Dashboard Hunter (inbound) — Meu Dia do hunter.
@@ -20,6 +21,9 @@ export function HunterDashboard() {
       </div>
 
       <MinhasTarefasCard />
+
+      {/* nudge condicional: ligações registradas sem cliente vinculado (era item do menu Vendas) */}
+      <ChamadasPendentesNudge />
 
       <VisitasHojeCard />
 

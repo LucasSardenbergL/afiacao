@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ImpersonationBanner } from '@/components/impersonation/ImpersonationBanner';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Link2, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList, History, Lightbulb } from 'lucide-react';
+import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList, History, Lightbulb } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
@@ -87,18 +87,23 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: SECAO_VENDAS,
     // Ordem = fluxo do dia da vendedora: ligar (rota D-1) → responder (WhatsApp) →
-    // vender (pedido) → falar (telefonia). Housekeeping e hubs esporádicos no fim.
+    // vender (novo pedido) → acompanhar (pedidos). Secundários (telefone/hub) depois.
+    // Enxugado p/ a vendedora não se perder (decisão Lucas, 2026-06-11):
+    //  • "Lista de ligação" → "Quem ligar hoje" (nome auto-explicativo do trabalho do dia).
+    //  • "Chamadas pendentes" SAIU daqui → virou nudge condicional no Meu Dia
+    //    (FarmerDashboardV2) — é housekeeping, só aparece quando há o que vincular.
+    //  • "Preview propostas" é tela TÉCNICA de inspeção das propostas que a IA gera
+    //    no WhatsApp → restrita a gestor/master (a vendedora não a usa).
     items: [
-      { icon: ListChecks, label: 'Lista de ligação', path: '/rota/ligacoes', staffOnly: true },
+      { icon: ListChecks, label: 'Quem ligar hoje', path: '/rota/ligacoes', staffOnly: true },
       { icon: MessageCircle, label: 'WhatsApp', path: '/whatsapp', staffOnly: true },
-      { icon: PlusCircle, label: 'Novo Pedido', path: '/sales/new' },
+      { icon: PlusCircle, label: 'Novo pedido', path: '/sales/new' },
       { icon: ShoppingCart, label: 'Pedidos', path: '/sales' },
       { icon: Phone, label: 'Telefonia', path: '/telefonia' },
+      { icon: Wrench, label: 'Ferramentas de venda', path: '/vendas/ferramentas' },
       { icon: ClipboardList, label: 'Tarefas', path: '/tarefas', gestorComercialOuMaster: true },
       { icon: ListChecks, label: 'Tarefas recorrentes', path: '/tarefas/templates', gestorComercialOuMaster: true },
-      { icon: Link2, label: 'Chamadas pendentes', path: '/farmer/calls/pending-link' },
-      { icon: Wrench, label: 'Ferramentas de Venda', path: '/vendas/ferramentas' },
-      { icon: MessageSquareText, label: 'Preview propostas', path: '/rota/propostas', staffOnly: true },
+      { icon: MessageSquareText, label: 'Preview propostas', path: '/rota/propostas', gestorComercialOuMaster: true },
     ],
   },
   {
