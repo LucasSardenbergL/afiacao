@@ -187,7 +187,7 @@ Seções: Principal · Afiação · Vendas · Estoque · Reposição · Produç�
 
 ### Topbar (`AppShell.tsx`)
 
-Mobile menu (lg:hidden) · **Cmd-K pill central** (`CommandPaletteTrigger`) · **CompanySwitcher** (monograma colorido por empresa) · **NetworkStatusIndicator** (some quando online+fila vazia; shake/pulse quando offline/slow) · **ThemeToggle** · HelpDrawer · dropdown User. O `Bell` ornamental foi removido.
+Mobile menu (lg:hidden) · **Cmd-K pill central** (`CommandPaletteTrigger`) · `ActiveOverrideBadge` · **CompanySwitcher** (monograma colorido por empresa) · **NetworkStatusIndicator** (⚠️ **sempre visível** — sinal contínuo de rede; online = Wi-Fi verde sutil, offline/slow = shake/pulse. A doc antiga dizia "some quando online+fila vazia" — **falso**, renderiza sempre. Popover com **Tipo/RTT só p/ staff** [`displayIsStaff`, lente-aware desde 2026-06-11]; status + fila "Operações pendentes" p/ todos) · **DataHealthBadge** (escudo de saúde de dados; só aparece em vermelho/âmbar — verde não polui — e **só p/ gestor/master** via `useDisplayAccess`, lente-aware; **apertado de `isStaff`→gestor/master em 2026-06-11** junto com o item de menu "Saúde de Dados", senão vendedora sales-only via o atalho sem ver o item) · **ThemeToggle** · botão **Melhorias** (Lightbulb, `displayIsStaff`) · **HelpDrawer** (esconde o "?" em rotas **sem ajuda mapeada** desde 2026-06-11 — antes abria painel "nada encontrado"; X duplicado removido) · dropdown User. O `Bell` ornamental foi removido.
 
 ---
 
