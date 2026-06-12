@@ -16,9 +16,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	_ "github.com/jackc/pgx/v5/stdlib" // driver pgx para database/sql
 )
 
@@ -231,9 +234,10 @@ func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string
 				continue
 			}
 
-			// Converte qtd para float64; pula se <= 0.
-			qtd := toFloat64(qtdVal)
-			if qtd <= 0 {
+			// Converte qtd para float64; pula se ausente/não-parseável ou <= 0.
+			// (numeric do PG chega como string — toFloat64OK parseia; falha ≠ 0.)
+			qtd, ok := toFloat64OK(qtdVal)
+			if !ok || qtd <= 0 {
 				continue
 			}
 
@@ -249,29 +253,49 @@ func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string
 }
 
 // ExtractFormulaChildItems extrai os itens da tabela filha formula_item e os
-// agrega por id_formula (para shape child). Retorna map[id_formula → []item].
-// Usado pelo sync.go quando FormulaShape == FormulaShapeChild.
-func ExtractFormulaChildItems(ctx context.Context, db *sql.DB) (map[string][]map[string]any, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT id_formula::text, id_corante::text, ordem, qtd_ml
-		FROM formula_item
-		ORDER BY id_formula, ordem
-	`)
+// agrega por id_formula (= PK da fórmula no pai; ver F5 em sync.go). Retorna
+// map[id_formula → []item]. Usado pelo sync.go quando FormulaShape == Child.
+//
+// hasOrdem: se a tabela filha tem a coluna "ordem" (detectada em Validate). Quando
+// false, NÃO seleciona "ordem" (evita erro de coluna ausente) e deriva a ordem
+// pela sequência de leitura por fórmula.
+//
+// qtd_ml é numeric na origem → pode chegar como string via pgx; usa toFloat64OK
+// (item com qtd não-parseável/<=0 é pulado, nunca vira 0).
+func ExtractFormulaChildItems(ctx context.Context, db *sql.DB, hasOrdem bool) (map[string][]map[string]any, error) {
+	query := `SELECT id_formula::text, id_corante::text, qtd_ml FROM formula_item ORDER BY id_formula`
+	if hasOrdem {
+		query = `SELECT id_formula::text, id_corante::text, qtd_ml, ordem FROM formula_item ORDER BY id_formula, ordem`
+	}
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("ExtractFormulaChildItems: %w", err)
 	}
 	defer rows.Close()
 
 	out := make(map[string][]map[string]any)
+	seq := make(map[string]int) // ordem derivada quando a coluna não existe
 	for rows.Next() {
 		var idFormula, idCorante string
+		var qtdRaw any
 		var ordem int
-		var qtdML float64
-		if err := rows.Scan(&idFormula, &idCorante, &ordem, &qtdML); err != nil {
-			return nil, err
+		if hasOrdem {
+			if err := rows.Scan(&idFormula, &idCorante, &qtdRaw, &ordem); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := rows.Scan(&idFormula, &idCorante, &qtdRaw); err != nil {
+				return nil, err
+			}
 		}
-		if qtdML <= 0 {
-			continue // pula slots vazios
+		qtdML, ok := toFloat64OK(qtdRaw)
+		if !ok || qtdML <= 0 {
+			continue // pula slots vazios/ausentes (qtd não-parseável NUNCA vira 0)
+		}
+		if !hasOrdem {
+			seq[idFormula]++
+			ordem = seq[idFormula]
 		}
 		out[idFormula] = append(out[idFormula], map[string]any{
 			"id_corante": idCorante,
@@ -328,25 +352,64 @@ func toTime(v any) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// toFloat64 converte um valor retornado pelo driver pgx em float64.
-// Retorna 0 se não for conversível.
-func toFloat64(v any) float64 {
+// toFloat64OK converte um valor retornado pelo driver pgx em float64.
+//
+// ⚠️ Crítico: o pgx (database/sql, stdlib) entrega `numeric` do Postgres como
+// STRING (cai no default do switch de Rows.Next → scan em string), NÃO como
+// float64. Sem tratar string/[]byte, todo custo/imposto/margem/volume/qtd_ml
+// (colunas numeric) virava 0 SILENCIOSAMENTE (F1 do review adversário). float8
+// vem como float64; int* como int64/etc.
+//
+// Retorna (valor, true) quando conversível; (0, false) quando ausente (nil) ou
+// não-parseável. O caller decide o que "ausente" significa — NUNCA tratar uma
+// falha de parse como 0 válido no caminho de preço (omitir a chave / dropar).
+func toFloat64OK(v any) (float64, bool) {
 	if v == nil {
-		return 0
+		return 0, false
 	}
 	switch n := v.(type) {
 	case float64:
-		return n
+		return n, true
 	case float32:
-		return float64(n)
+		return float64(n), true
 	case int64:
-		return float64(n)
+		return float64(n), true
 	case int32:
-		return float64(n)
+		return float64(n), true
+	case int16:
+		return float64(n), true
 	case int:
-		return float64(n)
+		return float64(n), true
+	case string:
+		return parseFloatStr(n)
+	case []byte:
+		return parseFloatStr(string(n))
+	case pgtype.Numeric:
+		// Defensivo: caso o driver/typemap entregue pgtype.Numeric (não acontece
+		// no caminho stdlib atual, mas custa pouco blindar).
+		f8, err := n.Float64Value()
+		if err != nil || !f8.Valid {
+			return 0, false
+		}
+		return f8.Float64, true
 	}
-	return 0
+	return 0, false
+}
+
+// parseFloatStr converte uma string numérica (formato Postgres: ponto decimal,
+// sem separador de milhar) em float64. Espaços ao redor são tolerados; valores
+// vazios ou não-numéricos retornam (0, false). NaN/Inf são rejeitados (não são
+// preço/volume válidos).
+func parseFloatStr(s string) (float64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return f, true
 }
 
 // sanitizeConnStr remove a senha da string de conexão para logs.

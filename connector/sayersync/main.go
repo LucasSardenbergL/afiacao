@@ -3,12 +3,13 @@
 // data_atualizacao com high-water mark da origem → POST lotes para tint-sync-agent.
 //
 // Subcomandos:
-//   install    — configura interativamente e registra o serviço Windows SayerSync
-//   uninstall  — remove o serviço Windows
-//   run        — entry-point do serviço (chamado pelo SCM do Windows)
-//   once       — executa 1 ciclo de sync no console (dev/debug)
-//   discovery  — despeja schema do SayerSystem em sayersystem-schema.txt
-//   version    — imprime a versão do binário
+//
+//	install    — configura interativamente e registra o serviço Windows SayerSync
+//	uninstall  — remove o serviço Windows
+//	run        — entry-point do serviço (chamado pelo SCM do Windows)
+//	once       — executa 1 ciclo de sync no console (dev/debug)
+//	discovery  — despeja schema do SayerSystem em sayersystem-schema.txt
+//	version    — imprime a versão do binário
 //
 // Spec: docs/superpowers/specs/2026-06-09-tint-sync-sayersystem-design.md §5
 package main
@@ -24,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kardianos/service"
 	_ "github.com/jackc/pgx/v5/stdlib" // driver database/sql via pgx
+	"github.com/kardianos/service"
 )
 
 // Version é injetado via -ldflags no build de release.
@@ -288,8 +289,13 @@ func cmdOnce() {
 	defer cancel()
 
 	fmt.Printf("sayersync %s — ciclo único\n", Version)
-	runOneCycle(ctx, cfg)
-	fmt.Println("Ciclo concluído.")
+	ok := runOneCycle(ctx, cfg)
+	if !ok {
+		// F7: ciclo com qualquer falha → exit != 0 (CI/scripts/debug detectam).
+		fmt.Fprintln(os.Stderr, "Ciclo concluído COM FALHAS (ver logs acima).")
+		os.Exit(1)
+	}
+	fmt.Println("Ciclo concluído com sucesso.")
 }
 
 // ──────────────────────────────────────────────
@@ -343,11 +349,12 @@ func svcConfig(_ *Config) *service.Config {
 }
 
 // ──────────────────────────────────────────────
-// runOneCycle — delega ao RunCycle de sync.go
+// runOneCycle — delega ao RunCycle de sync.go.
+// Retorna true se o ciclo foi totalmente bem-sucedido (F7).
 // ──────────────────────────────────────────────
 
-func runOneCycle(ctx context.Context, cfg *Config) {
-	RunCycle(ctx, cfg)
+func runOneCycle(ctx context.Context, cfg *Config) bool {
+	return RunCycle(ctx, cfg)
 }
 
 // ──────────────────────────────────────────────
