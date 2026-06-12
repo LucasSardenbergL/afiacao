@@ -183,6 +183,116 @@ func TestAggregateFlatFormulaItems_MultipleRows(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────
+// buildDeltaSelectCols — P0: os slots flat TÊM que entrar no SELECT
+// ──────────────────────────────────────────────────────────────
+
+// rmFlatParaSelect monta um ResolvedMapping flat com colunas base + slots reais
+// no formato do schema REAL (qtd1ml lógico → qtd1 real) para as duas fórmulas.
+func rmFlatParaSelect() *ResolvedMapping {
+	flat := func() map[string]string {
+		m := make(map[string]string, 12)
+		for i := 1; i <= 6; i++ {
+			m[fmt.Sprintf("corante%d", i)] = fmt.Sprintf("corante%d", i)
+			m[fmt.Sprintf("qtd%dml", i)] = fmt.Sprintf("qtd%d", i)
+		}
+		return m
+	}
+	return &ResolvedMapping{
+		FormulaShape: FormulaShapeFlat,
+		Resolved: map[string]map[string]string{
+			"formula": {
+				"id_padraocor": "id_padraocor", "id_produto": "id_produto",
+				"id_base": "id_base", "id_emb": "id_embalagem",
+				"data_atualizacao": "data_alteracao",
+			},
+			"formulaperson": {
+				"id_padraocor": "id_personcor", "id_produto": "id_produto",
+				"id_base": "id_base", "id_emb": "id_embalagem",
+				"data_atualizacao": "data_atualizacao",
+			},
+			"produto": {
+				"id_produto": "id", "descricao": "descricao",
+				"data_atualizacao": "data_alteracao",
+			},
+		},
+		FlatColsByTable: map[string]map[string]string{
+			"formula":       flat(),
+			"formulaperson": flat(),
+		},
+	}
+}
+
+// indexSelectCols indexa os pares lógico→real para asserts.
+func indexSelectCols(cols []colPair) map[string]string {
+	out := make(map[string]string, len(cols))
+	for _, cp := range cols {
+		out[cp.logic] = cp.real
+	}
+	return out
+}
+
+func TestBuildDeltaSelectCols_flatFormulaIncluiOs12Slots(t *testing.T) {
+	rm := rmFlatParaSelect()
+	got := indexSelectCols(buildDeltaSelectCols(rm, "formula"))
+	for i := 1; i <= 6; i++ {
+		ck := fmt.Sprintf("corante%d", i)
+		if got[ck] != ck {
+			t.Errorf("formula: slot %s ausente/errado no SELECT: %q", ck, got[ck])
+		}
+		qk := fmt.Sprintf("qtd%dml", i)
+		want := fmt.Sprintf("qtd%d", i)
+		if got[qk] != want {
+			t.Errorf("formula: slot %s deveria selecionar %q, got %q", qk, want, got[qk])
+		}
+	}
+	// As colunas base também presentes (com nome REAL).
+	if got["id_emb"] != "id_embalagem" {
+		t.Errorf("formula: id_emb deveria selecionar 'id_embalagem', got %q", got["id_emb"])
+	}
+}
+
+func TestBuildDeltaSelectCols_flatFormulapersonIncluiOs12Slots(t *testing.T) {
+	rm := rmFlatParaSelect()
+	got := indexSelectCols(buildDeltaSelectCols(rm, "formulaperson"))
+	for i := 1; i <= 6; i++ {
+		if got[fmt.Sprintf("corante%d", i)] == "" {
+			t.Errorf("formulaperson: corante%d ausente do SELECT", i)
+		}
+		if got[fmt.Sprintf("qtd%dml", i)] != fmt.Sprintf("qtd%d", i) {
+			t.Errorf("formulaperson: qtd%dml deveria selecionar qtd%d, got %q", i, i, got[fmt.Sprintf("qtd%dml", i)])
+		}
+	}
+	if got["id_padraocor"] != "id_personcor" {
+		t.Errorf("formulaperson: id_padraocor deveria selecionar 'id_personcor', got %q", got["id_padraocor"])
+	}
+}
+
+func TestBuildDeltaSelectCols_childShapeNaoIncluiSlots(t *testing.T) {
+	rm := rmFlatParaSelect()
+	rm.FormulaShape = FormulaShapeChild
+	got := indexSelectCols(buildDeltaSelectCols(rm, "formula"))
+	for i := 1; i <= 6; i++ {
+		if _, tem := got[fmt.Sprintf("corante%d", i)]; tem {
+			t.Errorf("shape child NÃO deve selecionar corante%d (vem da tabela filha)", i)
+		}
+		if _, tem := got[fmt.Sprintf("qtd%dml", i)]; tem {
+			t.Errorf("shape child NÃO deve selecionar qtd%dml", i)
+		}
+	}
+}
+
+func TestBuildDeltaSelectCols_entidadeComumNaoIncluiSlots(t *testing.T) {
+	rm := rmFlatParaSelect()
+	got := indexSelectCols(buildDeltaSelectCols(rm, "produto"))
+	if len(got) != 3 {
+		t.Errorf("produto deveria ter só as 3 colunas resolvidas, got %d: %v", len(got), got)
+	}
+	if _, tem := got["corante1"]; tem {
+		t.Error("entidade comum NÃO deve carregar slots flat de fórmula")
+	}
+}
+
+// ──────────────────────────────────────────────────────────────
 // toFloat64OK — F1: numeric do PG chega como STRING via pgx stdlib
 // ──────────────────────────────────────────────────────────────
 

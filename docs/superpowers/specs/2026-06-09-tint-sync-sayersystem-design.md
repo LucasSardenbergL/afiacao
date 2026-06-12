@@ -176,3 +176,24 @@ Auto-revisão disciplinada nos 7 vetores preparados pro codex. Achados INCORPORA
 1. **PR1 — servidor:** migration (staging precos_base + `desativada_em` + promoção + keys-snapshot apply) + helper TS espelho + testes vitest + PG17 + edits da edge (endpoint novo, fixes, gate automatic_primary) + filtros de desativada no front. ⚠️ migration manual (SQL Editor) + deploy edge (chat Lovable) + Publish.
 2. **PR2 — conector:** `connector/sayersync/` (Go) + cross-compile + manifest de update + instruções de instalação (1 página pt-BR pro founder) + binário no Storage.
 3. **Amanhã (máquina):** instalar → discovery/heartbeat → shadow → gabarito → comparar → flip.
+
+## 13. SCHEMA REAL + MATRIZ DE IDENTIDADE (12/06, dia da máquina — NÃO re-perguntar; supersede os nomes da Kelly em §2)
+
+> O discovery em campo provou que os nomes informados pela Kelly/Dnaxis eram FANTASIA. O fail-closed segurou (zero sync errado). Fonte: `sayersystem-schema.txt` (fingerprint `508fef46…`) + query de identidade nas tabelas tint_* de PROD.
+
+**Schema real (13 tabelas, schema `public`, banco `client_industrial_sayerlack`):** tabelas no SINGULAR (`corante`, `embalagem`, `padraocor`); PK = `id` em todas; timestamp = `data_alteracao` (⚠️ exceto `formulaperson` = `data_atualizacao`; `personcor` NÃO TEM timestamp → full-scan por ciclo, tabela minúscula); `formula` E `formulaperson` são FLAT (`corante1..6`+`qtd1..6`; não existe `formula_item`); `formulaperson` liga por `id_personcor`; `formula.id_embalagem` = embalagem de FORMULAÇÃO; `padraocor.id_subcolecao` (a subcoleção vem da COR, não da fórmula); `embalagem.conteudo` em **LITROS** (0.810) → conector converte ×1000 (`litrosLimiar=100`); `liberado` (bool) em quase todas → fórmula `liberado=false` não sobe e sai do keys-snapshot. **⚠️ NÃO EXISTEM `preco_corante`/`preco_baseemb` neste banco** — preço mora em outro banco/schema do servidor (discovery v2 lista databases+schemas pra localizar; v0.1.4).
+
+**Matriz de identidade (CONFIRMADA contra prod 12/06 — mudar qualquer linha DUPLICA o catálogo do app):**
+| entidade | identidade enviada | exemplo de prod |
+|---|---|---|
+| produto | `produto.codigo` | `JO05.7796` |
+| base | `base.id` (numérico! o código W vive na descrição) | `90` |
+| embalagem | `embalagem.id` (numérico; descrição é display) | `1`, `38` |
+| corante | `corante.id` (numérico; código WP na descrição) | `3`, `12` |
+| cor padrão | `padraocor.codigo` ⚠️ prod tem sufixo `" - BS"` de fonte NÃO decifrada (`151N - BS`) — enviamos o codigo puro; reconciliação em shadow + founder decidem (candidatos: colecao.codigo? familia? composição do export) | `151N - BS` |
+| cor personalizada | `personcor.codigo_cor` | `AZUL PURO` |
+| subcolecao | `codigo` (fallback id; prod=`1`, compatível) | `1` |
+
+**Arquitetura v0.1.3:** `Lookups` carregados 1×/ciclo (id→identidade por entidade + `EmbVolumeML` litros→ml + `CorPadrao`/`CorPerson` SEPARADOS — ids de padraocor e personcor COLIDEM num mapa único) injetados nos mapeadores; falha de lookup = FATAL. P0 consertado: `ExtractDelta` não selecionava os slots flat (`FlatColsByTable` fora do `Resolved`) → toda fórmula subia com 0 itens; `buildDeltaSelectCols` os appenda pra formula+formulaperson. Resolução de NOME DE TABELA por candidatos (`TableFor`). Snapshot reescrito com nomes resolvidos + filtro liberado + MESMA identidade dos payloads. Discovery v2: outros schemas + databases do servidor + contagens + amostra de embalagem. **199 testes Go.**
+
+**Nota de volume:** os `volume_ml` oficiais de prod (815.3141/3261.2564/18118.0911) são PROPORCIONAIS aos nominais (×4 exato QT→GL) — vieram do `volume_final` dos CSVs (embalagem+corantes de UMA cor). Como a regra de 3 usa RAZÕES, mandar o nominal (`conteudo`×1000 = 810/3240/18000) preserva todas as razões (fator QT→QT=1). A reconciliação do gabarito valida.

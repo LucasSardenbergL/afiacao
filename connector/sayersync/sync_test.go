@@ -27,12 +27,12 @@ type fakeExtractor struct {
 	rows map[string][]map[string]any
 	// maxDA por entidade (zero = não avança HWM).
 	maxDA map[string]time.Time
-	// formulas para o keys-snapshot.
+	// formulas para o keys-snapshot (IDs CRUS — a tradução é do sendKeysSnapshot).
 	formulas []formulaKey
-	// corNames para lookup de nome_cor em mapFormula.
-	corNames map[string]string
-	// embVolumes para lookup de volume_final_ml em mapFormula.
-	embVolumes map[string]float64
+	// lookups retornado por LoadLookups (nil → newLookups() vazio).
+	lookups *Lookups
+	// lookupsErr: se definido, LoadLookups retorna esse erro (falha FATAL do ciclo).
+	lookupsErr error
 	// childItems para o shape child: map[id_formula (PK) → []item].
 	childItems map[string][]map[string]any
 	// childItemsHasOrdem registra o hasOrdem recebido em ExtractFormulaChildItems.
@@ -44,9 +44,13 @@ type fakeExtractor struct {
 	// errByEntity: se definido para uma entidade, Extract dela retorna esse erro
 	// (as demais funcionam) — para testar agregação de falhas parciais (F7).
 	errByEntity map[string]error
+	// extractCalls registra as entidades extraídas (para provar que tabela ausente
+	// do mapping NÃO é consultada).
+	extractCalls []string
 }
 
 func (f *fakeExtractor) Extract(_ context.Context, entity string, _ time.Time) ([]map[string]any, time.Time, error) {
+	f.extractCalls = append(f.extractCalls, entity)
 	if f.err != nil {
 		return nil, time.Time{}, f.err
 	}
@@ -65,24 +69,17 @@ func (f *fakeExtractor) ExtractAllFormulasForSnapshot(_ context.Context) ([]form
 	return f.formulas, nil
 }
 
-func (f *fakeExtractor) ExtractAllCorNames(_ context.Context) (map[string]string, error) {
+func (f *fakeExtractor) LoadLookups(_ context.Context) (*Lookups, error) {
+	if f.lookupsErr != nil {
+		return nil, f.lookupsErr
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
-	if f.corNames != nil {
-		return f.corNames, nil
+	if f.lookups != nil {
+		return f.lookups, nil
 	}
-	return make(map[string]string), nil
-}
-
-func (f *fakeExtractor) ExtractAllEmbVolumes(_ context.Context) (map[string]float64, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	if f.embVolumes != nil {
-		return f.embVolumes, nil
-	}
-	return make(map[string]float64), nil
+	return newLookups(), nil
 }
 
 func (f *fakeExtractor) ExtractFormulaChildItems(_ context.Context, hasOrdem bool) (map[string][]map[string]any, error) {
@@ -727,6 +724,59 @@ func TestSyncCorantes_bothEmpty_noPost(t *testing.T) {
 	}
 }
 
+// TestSyncCorantes_precoCoranteAusenteNaoFalha cobre o banco REAL (sem
+// preco_corante): o sync segue só com os corantes, SEM erro — e a tabela ausente
+// NEM é consultada (o errByEntity provaria a consulta indevida).
+func TestSyncCorantes_precoCoranteAusenteNaoFalha(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	st := &State{HWM: make(map[string]string)}
+	counts := make(map[string]int)
+	// Mapping SEM preco_corante (como no schema real).
+	rm := newFakeMapping([]string{"corantes"}, FormulaShapeFlat)
+
+	maxDA := time.Now()
+	ex := &fakeExtractor{
+		rows: map[string][]map[string]any{
+			// Corante real: codigo é a identidade; volume_ml próprio (JÁ em ml).
+			"corantes": {
+				{"id_corante": int64(7), "codigo": "892", "descricao": "Amarelo Óxido", "volume_ml": "550"},
+			},
+		},
+		maxDA: map[string]time.Time{"corantes": maxDA},
+		// Se syncCorantes consultar preco_corante mesmo ausente do mapping, falha aqui.
+		errByEntity: map[string]error{"preco_corante": errTest("não deveria consultar preco_corante")},
+	}
+
+	if err := syncCorantes(context.Background(), ex, cli, st, counts, rm); err != nil {
+		t.Fatalf("preco_corante ausente NÃO pode falhar syncCorantes: %v", err)
+	}
+	if len(srv.requests) != 1 {
+		t.Fatalf("esperava 1 POST de corantes, got %d", len(srv.requests))
+	}
+	item := srv.requests[0].Body["corantes"].([]any)[0].(map[string]any)
+	if item["id_corante_sayersystem"] != "7" {
+		t.Errorf("identidade do corante esperada '7' (id numérico, confirmado em prod), got %v", item["id_corante_sayersystem"])
+	}
+	if item["volume_ml"] != 550.0 {
+		t.Errorf("volume_ml próprio do corante esperado 550 (JÁ em ml, sem conversão), got %v", item["volume_ml"])
+	}
+	if _, has := item["custo"]; has {
+		t.Errorf("custo deveria estar ausente (sem preco_corante), got %v", item["custo"])
+	}
+	for _, chamada := range ex.extractCalls {
+		if chamada == "preco_corante" {
+			t.Error("preco_corante ausente do mapping NÃO deve ser consultado")
+		}
+	}
+	if st.HWM["corantes"] == "" {
+		t.Error("HWM de corantes deve avançar normalmente")
+	}
+}
+
 // ─────────────────────────────────────────────────────────────
 // TestSyncFormulas — fórmulas flat e child
 // ─────────────────────────────────────────────────────────────
@@ -759,7 +809,7 @@ func TestSyncFormulas_flat_personalizada_false(t *testing.T) {
 		maxDA: map[string]time.Time{"formula": maxDA},
 	}
 
-	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false)
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups())
 	if err != nil {
 		t.Fatalf("syncFormulas flat falhou: %v", err)
 	}
@@ -820,7 +870,7 @@ func TestSyncFormulas_flat_personalizada_true(t *testing.T) {
 		maxDA: map[string]time.Time{"formulaperson": maxDA},
 	}
 
-	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, true)
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, true, newLookups())
 	if err != nil {
 		t.Fatalf("syncFormulas personalizada falhou: %v", err)
 	}
@@ -847,7 +897,7 @@ func TestSyncFormulas_entityNotInMapping(t *testing.T) {
 	rm := newFakeMapping([]string{"produto"}, FormulaShapeFlat)
 
 	ex := newFakeExtractor()
-	_ = syncFormulas(context.Background(), ex, cli, st, counts, rm, false)
+	_ = syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups())
 	if postCount.Load() != 0 {
 		t.Error("entidade ausente não deve fazer POST")
 	}
@@ -911,7 +961,7 @@ func TestSyncFormulas_child_joinsItemsByFormulaPK(t *testing.T) {
 		},
 	}
 
-	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false); err != nil {
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups()); err != nil {
 		t.Fatalf("syncFormulas child falhou: %v", err)
 	}
 
@@ -980,7 +1030,7 @@ func TestSyncFormulas_child_emptyItemsWhenPKHasNoChildren(t *testing.T) {
 		childItems: map[string][]map[string]any{ /* nenhum item para F500 */ },
 	}
 
-	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false); err != nil {
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups()); err != nil {
 		t.Fatalf("syncFormulas child falhou: %v", err)
 	}
 	list := srv.requests[0].Body["formulas"].([]any)
@@ -1018,7 +1068,7 @@ func TestSendKeysSnapshot_correctFormat(t *testing.T) {
 		originNow: originNow,
 	}
 
-	err := sendKeysSnapshot(context.Background(), cfg, ex, originNow)
+	err := sendKeysSnapshot(context.Background(), cfg, ex, originNow, newLookups())
 	if err != nil {
 		t.Fatalf("sendKeysSnapshot falhou: %v", err)
 	}
@@ -1090,7 +1140,7 @@ func TestSendKeysSnapshot_dedupsSourceFormulaAcrossEmbalagens(t *testing.T) {
 		originNow: originNow,
 	}
 
-	if err := sendKeysSnapshot(context.Background(), cfg, ex, originNow); err != nil {
+	if err := sendKeysSnapshot(context.Background(), cfg, ex, originNow, newLookups()); err != nil {
 		t.Fatalf("sendKeysSnapshot falhou: %v", err)
 	}
 	keysList := srv.requests[0].Body["keys"].([]any)
@@ -1129,7 +1179,7 @@ func TestSendKeysSnapshot_snapshotIDStableAcrossChunks(t *testing.T) {
 	}
 	ex := &fakeExtractor{formulas: formulas, originNow: time.Now()}
 
-	if err := sendKeysSnapshot(context.Background(), cfg, ex, time.Now()); err != nil {
+	if err := sendKeysSnapshot(context.Background(), cfg, ex, time.Now(), newLookups()); err != nil {
 		t.Fatalf("sendKeysSnapshot falhou: %v", err)
 	}
 	if len(srv.requests) != 2 {
@@ -1183,7 +1233,7 @@ func TestSendKeysSnapshot_chunksLargePayload(t *testing.T) {
 	ex := &fakeExtractor{formulas: formulas}
 	originNow := time.Now()
 
-	err := sendKeysSnapshot(context.Background(), cfg, ex, originNow)
+	err := sendKeysSnapshot(context.Background(), cfg, ex, originNow, newLookups())
 	if err != nil {
 		t.Fatalf("sendKeysSnapshot com 60000 chaves falhou: %v", err)
 	}
@@ -1210,13 +1260,109 @@ func TestSendKeysSnapshot_emptyFormulas(t *testing.T) {
 	}
 
 	ex := &fakeExtractor{formulas: []formulaKey{}}
-	err := sendKeysSnapshot(context.Background(), cfg, ex, time.Now())
+	err := sendKeysSnapshot(context.Background(), cfg, ex, time.Now(), newLookups())
 	if err != nil {
 		t.Fatalf("snapshot vazio não deve dar erro: %v", err)
 	}
 	// Deve enviar 1 chunk vazio (total_chunks=1 pois ceil(0/50000)=0→ forçado 1).
 	if postCount.Load() != 1 {
 		t.Errorf("esperava 1 POST para snapshot vazio, got %d", postCount.Load())
+	}
+}
+
+// TestSendKeysSnapshot_traduzIdentidades prova que as chaves do snapshot usam a
+// MESMA identidade canônica dos payloads de fórmula (cor por fonte padrão/person,
+// produto/base por codigo) — sem isso a deleção por snapshot nunca casa.
+func TestSendKeysSnapshot_traduzIdentidades(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg := &Config{AppURL: ts.URL, StoreCode: "loja-test", TokenPlainDev: "tok-test"}
+	lk := newLookups()
+	lk.CorPadrao["5"] = corInfo{CorID: "PAD-5", Nome: "Azul"}
+	lk.CorPerson["5"] = corInfo{CorID: "PERS-5", Nome: "Verde"}
+	lk.ProdutoCod["1"] = "PRODA"
+	lk.BaseIdent["2"] = "BS"
+
+	originNow := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	ex := &fakeExtractor{
+		formulas: []formulaKey{
+			// IDs CRUS da origem; a MESMA cor "5" nas duas fontes → identidades distintas.
+			{CorID: "5", CodProduto: "1", IDBase: "2", IDEmb: "9", Personalizada: false},
+			{CorID: "5", CodProduto: "1", IDBase: "2", IDEmb: "9", Personalizada: true},
+			// Sem entrada no lookup → id cru (fallback).
+			{CorID: "77", CodProduto: "88", IDBase: "99", IDEmb: "9", Personalizada: false},
+		},
+		originNow: originNow,
+	}
+
+	if err := sendKeysSnapshot(context.Background(), cfg, ex, originNow, lk); err != nil {
+		t.Fatalf("sendKeysSnapshot falhou: %v", err)
+	}
+	keysList := srv.requests[0].Body["keys"].([]any)
+	got := map[string]bool{}
+	for _, k := range keysList {
+		got[k.(string)] = true
+	}
+	if !got["PAD-5|PRODA|BS|false"] {
+		t.Errorf("faltou a chave PADRÃO traduzida 'PAD-5|PRODA|BS|false'; got %v", got)
+	}
+	if !got["PERS-5|PRODA|BS|true"] {
+		t.Errorf("faltou a chave PERSONALIZADA traduzida 'PERS-5|PRODA|BS|true'; got %v", got)
+	}
+	if !got["77|88|99|false"] {
+		t.Errorf("sem lookup, a chave deve usar os ids crus '77|88|99|false'; got %v", got)
+	}
+}
+
+// TestBuildSnapshotQuery_filtraLiberadoQuandoResolvido prova que o snapshot da
+// formula (que TEM liberado no real) filtra COALESCE(liberado,true)=true — para a
+// chave casar com os payloads, que dropam bloqueadas — e que formulaperson (sem
+// liberado) NÃO ganha WHERE.
+func TestBuildSnapshotQuery_filtraLiberadoQuandoResolvido(t *testing.T) {
+	rm := &ResolvedMapping{
+		Tables: map[string]string{"formula": "formula", "formulaperson": "formulaperson"},
+		Resolved: map[string]map[string]string{
+			"formula": {
+				"id_padraocor": "id_padraocor", "id_produto": "id_produto",
+				"id_base": "id_base", "id_emb": "id_embalagem", "liberado": "liberado",
+			},
+			"formulaperson": {
+				"id_padraocor": "id_personcor", "id_produto": "id_produto",
+				"id_base": "id_base", "id_emb": "id_embalagem",
+			},
+		},
+	}
+
+	q1, err := buildSnapshotQuery(rm, "formula")
+	if err != nil {
+		t.Fatalf("buildSnapshotQuery formula: %v", err)
+	}
+	if !strings.Contains(q1, `COALESCE("liberado", true) = true`) {
+		t.Errorf("query da formula deveria filtrar liberado: %q", q1)
+	}
+	if !strings.Contains(q1, `"id_embalagem"`) {
+		t.Errorf("query da formula deveria usar o nome REAL id_embalagem: %q", q1)
+	}
+
+	q2, err := buildSnapshotQuery(rm, "formulaperson")
+	if err != nil {
+		t.Fatalf("buildSnapshotQuery formulaperson: %v", err)
+	}
+	if strings.Contains(q2, "WHERE") {
+		t.Errorf("formulaperson (sem liberado) NÃO deveria ter WHERE: %q", q2)
+	}
+	if !strings.Contains(q2, `"id_personcor"`) {
+		t.Errorf("query da formulaperson deveria usar o nome REAL id_personcor: %q", q2)
+	}
+
+	// Coluna obrigatória não resolvida → erro (não monta SQL quebrado).
+	rmRuim := &ResolvedMapping{Resolved: map[string]map[string]string{
+		"formula": {"id_padraocor": "id_padraocor"},
+	}}
+	if _, err := buildSnapshotQuery(rmRuim, "formula"); err == nil {
+		t.Error("colunas faltando deveriam dar erro, não SQL inválido")
 	}
 }
 
@@ -1253,17 +1399,97 @@ func TestMapBase_validRow(t *testing.T) {
 	}
 }
 
+// TestMappers_identidadeConfirmadaProd prova a MATRIZ DE IDENTIDADE confirmada
+// contra os dados de produção (query nas tabelas tint_* em 2026-06-12):
+// produto=codigo ("JO05.7796") · base/embalagem/corante=id NUMÉRICO ("90"/"38"/"3")
+// · padracor/colecao/subcolecao=codigo (fallback id) · personcor=codigo_cor.
+// Mudar qualquer uma dessas escolhas duplica o catálogo do app (o CSV-import
+// histórico gravou exatamente assim).
+func TestMappers_identidadeConfirmadaProd(t *testing.T) {
+	// produto: codigo-first (prod: cod_produto="JO05.7796").
+	m := mapProduto(map[string]any{"id_produto": int64(3), "codigo": "JO05.7796", "descricao": "Tinta"})
+	if m["cod_produto"] != "JO05.7796" {
+		t.Errorf("produto: identidade esperada 'JO05.7796' (codigo), got %v", m["cod_produto"])
+	}
+	m = mapProduto(map[string]any{"id_produto": int64(3), "descricao": "Tinta"})
+	if m["cod_produto"] != "3" {
+		t.Errorf("produto sem codigo: fallback no id, got %v", m["cod_produto"])
+	}
+	// base: id NUMÉRICO mesmo COM codigo presente na row (prod: "90"; o código W
+	// vive na descrição — usar codigo aqui duplicaria todas as bases do app).
+	mb := mapBase(map[string]any{"id_base": int64(90), "codigo": "WJOB.7796", "descricao": "WJOB.7796 - BASE ACRIL FOSCA BRANCA"})
+	if mb["id_base_sayersystem"] != "90" {
+		t.Errorf("base: identidade esperada '90' (id numérico), got %v", mb["id_base_sayersystem"])
+	}
+	// corante: id NUMÉRICO mesmo com codigo presente (prod: "3").
+	mc := mapCorante(map[string]any{"id_corante": int64(3), "codigo": "WP04.3900", "descricao": "WP04.3900 - CONCENTRADO AZUL"})
+	if mc["id_corante_sayersystem"] != "3" {
+		t.Errorf("corante: identidade esperada '3' (id numérico), got %v", mc["id_corante_sayersystem"])
+	}
+	// padracor: codigo-first (sufixo " - BS" de prod ainda sem fonte decifrada —
+	// enviamos o codigo puro; ver comentário do Lookups).
+	mp := mapPadracor(map[string]any{"id_padraocor": int64(10), "codigo": "151N", "descricao": "CINZA CLARO"})
+	if mp["id_padraocor"] != "151N" {
+		t.Errorf("padracor: identidade esperada '151N', got %v", mp["id_padraocor"])
+	}
+	// colecao / subcolecao: codigo-first (prod subcolecao="1", compatível).
+	mcol := mapColecao(map[string]any{"id_colecao": int64(1), "codigo": "CL-1", "descricao": "Coleção"})
+	if mcol["id_colecao"] != "CL-1" {
+		t.Errorf("colecao: identidade esperada 'CL-1', got %v", mcol["id_colecao"])
+	}
+	msub := mapSubcolecao(map[string]any{"id_subcolecao": int64(2), "id_colecao": int64(1), "codigo": "1", "descricao": "SAYERLACK"})
+	if msub["id_subcolecao"] != "1" {
+		t.Errorf("subcolecao: identidade esperada '1', got %v", msub["id_subcolecao"])
+	}
+	if msub["id_colecao"] != "1" {
+		t.Errorf("subcolecao: id_colecao segue cru, got %v", msub["id_colecao"])
+	}
+	// personcor: codigo_cor é a identidade (prod: "AZUL PURO"); descricao vazia
+	// cai na codigo_cor.
+	mper := mapPersoncor(map[string]any{"id_padraocor": int64(5), "codigo": "AZUL PURO", "descricao": ""})
+	if mper["id_padraocor"] != "AZUL PURO" {
+		t.Errorf("personcor: identidade esperada 'AZUL PURO', got %v", mper["id_padraocor"])
+	}
+	if mper["descricao"] != "AZUL PURO" {
+		t.Errorf("personcor: descricao vazia deve cair na codigo_cor, got %v", mper["descricao"])
+	}
+}
+
 func TestMapEmbalagem_includesVolume(t *testing.T) {
-	row := map[string]any{"id_emb": "E01", "descricao": "Lata 900ml", "volume_ml": 900.0}
+	row := map[string]any{"id_emb": "38", "descricao": "405 ML", "volume_ml": 900.0}
 	m := mapEmbalagem(row)
 	if m == nil {
 		t.Fatal("mapEmbalagem nil")
 	}
-	if m["id_embalagem_sayersystem"] != "E01" {
-		t.Errorf("id_embalagem_sayersystem esperado 'E01', got %v", m["id_embalagem_sayersystem"])
+	// Identidade da embalagem = id NUMÉRICO (prod: "38"); a descrição é só display.
+	if m["id_embalagem_sayersystem"] != "38" {
+		t.Errorf("id_embalagem_sayersystem esperado '38' (id), got %v", m["id_embalagem_sayersystem"])
 	}
-	if m["volume_ml"] == nil {
-		t.Error("volume_ml ausente")
+	// 900 > limiar de litros → assume ml, fica 900.
+	if m["volume_ml"] != 900.0 {
+		t.Errorf("volume_ml esperado 900, got %v", m["volume_ml"])
+	}
+}
+
+// TestMapEmbalagem_identidadeEhID prova que a identidade NÃO usa a descrição
+// mesmo quando presente (prod: id_embalagem_sayersystem="1" com descricao
+// "QT (0.810 L)" — usar a descrição duplicaria as embalagens do app).
+func TestMapEmbalagem_identidadeEhID(t *testing.T) {
+	m := mapEmbalagem(map[string]any{"id_emb": int64(1), "descricao": "QT (0.810 L)"})
+	if m["id_embalagem_sayersystem"] != "1" {
+		t.Errorf("identidade deve ser o id '1' (nunca a descrição): got %v", m["id_embalagem_sayersystem"])
+	}
+	if m["descricao"] != "QT (0.810 L)" {
+		t.Errorf("descricao segue no payload como display: got %v", m["descricao"])
+	}
+}
+
+// TestMapEmbalagem_conteudoEmLitrosViraML prova a conversão litros→ml na row
+// (origem real: conteudo=0.810 → 810ml).
+func TestMapEmbalagem_conteudoEmLitrosViraML(t *testing.T) {
+	m := mapEmbalagem(map[string]any{"id_emb": "E01", "descricao": "GALAO", "volume_ml": "0.810"})
+	if m["volume_ml"] != 810.0 {
+		t.Errorf("conteudo 0.810L deveria virar 810ml, got %v", m["volume_ml"])
 	}
 }
 
@@ -1325,15 +1551,55 @@ func TestMapPrecoBaseEmb_numericAsStringAndOmission(t *testing.T) {
 }
 
 func TestMapSku_requiresAllKeys(t *testing.T) {
+	mapSku := mapSkuWith(newLookups(), nil)
 	// Linha incompleta → nil.
 	row := map[string]any{"id_produto": "P001", "id_base": "B01"} // falta id_emb
 	if mapSku(row) != nil {
 		t.Error("mapSku deve retornar nil quando faltam campos")
 	}
-	// Linha completa.
+	// Linha completa (sem lookup → ids crus como fallback).
 	row["id_emb"] = "E01"
-	if mapSku(row) == nil {
-		t.Error("mapSku deve retornar não-nil para linha completa")
+	m := mapSku(row)
+	if m == nil {
+		t.Fatal("mapSku deve retornar não-nil para linha completa")
+	}
+	if m["cod_produto"] != "P001" || m["id_base"] != "B01" || m["id_embalagem"] != "E01" {
+		t.Errorf("sem lookup, mapSku deve usar os ids crus: %v", m)
+	}
+}
+
+// TestMapSku_traduzFKsViaLookup prova que os 3 FKs do SKU viram a identidade
+// canônica (codigo do produto/base, descricao da embalagem) quando o lookup tem
+// a entrada — e que FK sem entrada cai no id cru com miss contado (agregado).
+func TestMapSku_traduzFKsViaLookup(t *testing.T) {
+	lk := newLookups()
+	lk.ProdutoCod["1"] = "PROD-A"
+	lk.BaseIdent["2"] = "BS"
+	lk.EmbIdent["3"] = "GALAO 3.6L"
+	miss := &missCounter{}
+	mapSku := mapSkuWith(lk, miss)
+
+	m := mapSku(map[string]any{"id_produto": int64(1), "id_base": int64(2), "id_emb": int64(3)})
+	if m["cod_produto"] != "PROD-A" {
+		t.Errorf("cod_produto esperado 'PROD-A', got %v", m["cod_produto"])
+	}
+	if m["id_base"] != "BS" {
+		t.Errorf("id_base esperado 'BS', got %v", m["id_base"])
+	}
+	if m["id_embalagem"] != "GALAO 3.6L" {
+		t.Errorf("id_embalagem esperado 'GALAO 3.6L', got %v", m["id_embalagem"])
+	}
+	if miss.n != 0 {
+		t.Errorf("nenhum miss esperado, got %d", miss.n)
+	}
+
+	// FK sem entrada → id cru + miss contado.
+	m2 := mapSku(map[string]any{"id_produto": int64(99), "id_base": int64(2), "id_emb": int64(3)})
+	if m2["cod_produto"] != "99" {
+		t.Errorf("FK sem lookup deve cair no id cru, got %v", m2["cod_produto"])
+	}
+	if miss.n != 1 {
+		t.Errorf("esperava 1 miss agregado, got %d", miss.n)
 	}
 }
 
@@ -1344,10 +1610,9 @@ func TestMapFormula_personalizadaField(t *testing.T) {
 		"id_base":      "B01",
 		"id_emb":       "E01",
 	}
-	emptyNames := map[string]string{}
-	emptyVols := map[string]float64{}
-	// personalizada=false
-	m := mapFormula(row, false, emptyNames, emptyVols)
+	lk := newLookups()
+	// personalizada=false — lookups vazios → ids crus (fallback).
+	m := mapFormula(row, false, lk)
 	if m == nil {
 		t.Fatal("mapFormula retornou nil para linha válida")
 	}
@@ -1367,7 +1632,7 @@ func TestMapFormula_personalizadaField(t *testing.T) {
 		t.Errorf("id_embalagem esperado 'E01', got %v", m["id_embalagem"])
 	}
 	// personalizada=true
-	m = mapFormula(row, true, emptyNames, emptyVols)
+	m = mapFormula(row, true, lk)
 	if m["personalizada"] != true {
 		t.Errorf("personalizada esperado true, got %v", m["personalizada"])
 	}
@@ -1375,8 +1640,113 @@ func TestMapFormula_personalizadaField(t *testing.T) {
 
 func TestMapFormula_emptyCorID(t *testing.T) {
 	row := map[string]any{"id_padraocor": "", "id_produto": "P001"}
-	if mapFormula(row, false, nil, nil) != nil {
+	if mapFormula(row, false, newLookups()) != nil {
 		t.Error("mapFormula deve retornar nil para id_padraocor vazio")
+	}
+}
+
+// TestMapFormula_corPadraoEPersonNaoColidem mata o bug do mapa único de cores:
+// padraocor.id e personcor.id podem ter o MESMO valor numérico ("5") designando
+// cores DIFERENTES — a fórmula padrão resolve em CorPadrao e a personalizada em
+// CorPerson, nunca no mapa errado.
+func TestMapFormula_corPadraoEPersonNaoColidem(t *testing.T) {
+	lk := newLookups()
+	lk.CorPadrao["5"] = corInfo{CorID: "PAD-0005", Nome: "Azul Padrão"}
+	lk.CorPerson["5"] = corInfo{CorID: "PERS-0005", Nome: "Verde Personalizado"}
+
+	row := map[string]any{
+		"id_padraocor": "5",
+		"id_produto":   "P001",
+		"id_base":      "B01",
+		"id_emb":       "E01",
+	}
+
+	mPadrao := mapFormula(row, false, lk)
+	if mPadrao["cor_id"] != "PAD-0005" {
+		t.Errorf("fórmula padrão: cor_id esperado 'PAD-0005', got %v", mPadrao["cor_id"])
+	}
+	if mPadrao["nome_cor"] != "Azul Padrão" {
+		t.Errorf("fórmula padrão: nome_cor esperado 'Azul Padrão', got %v", mPadrao["nome_cor"])
+	}
+
+	mPerson := mapFormula(row, true, lk)
+	if mPerson["cor_id"] != "PERS-0005" {
+		t.Errorf("fórmula personalizada: cor_id esperado 'PERS-0005', got %v", mPerson["cor_id"])
+	}
+	if mPerson["nome_cor"] != "Verde Personalizado" {
+		t.Errorf("fórmula personalizada: nome_cor esperado 'Verde Personalizado', got %v", mPerson["nome_cor"])
+	}
+}
+
+// TestMapFormula_liberadoFalseDropa prova que fórmula bloqueada (liberado=false,
+// bool nativo OU string "f" do PG) não é enviada; liberado=true/ausente passa.
+func TestMapFormula_liberadoFalseDropa(t *testing.T) {
+	lk := newLookups()
+	base := func(extra map[string]any) map[string]any {
+		row := map[string]any{
+			"id_padraocor": "C1", "id_produto": "P1", "id_base": "B1", "id_emb": "E1",
+		}
+		for k, v := range extra {
+			row[k] = v
+		}
+		return row
+	}
+	if mapFormula(base(map[string]any{"liberado": false}), false, lk) != nil {
+		t.Error("liberado=false (bool) deve dropar a fórmula")
+	}
+	if mapFormula(base(map[string]any{"liberado": "f"}), false, lk) != nil {
+		t.Error("liberado='f' (string do PG) deve dropar a fórmula")
+	}
+	if mapFormula(base(map[string]any{"liberado": true}), false, lk) == nil {
+		t.Error("liberado=true NÃO deve dropar")
+	}
+	if mapFormula(base(nil), false, lk) == nil {
+		t.Error("liberado ausente NÃO deve dropar (não dropar por falta de dado)")
+	}
+	if mapFormula(base(map[string]any{"liberado": nil}), false, lk) == nil {
+		t.Error("liberado=nil NÃO deve dropar")
+	}
+}
+
+func TestToBoolOK(t *testing.T) {
+	cases := []struct {
+		in       any
+		want, ok bool
+	}{
+		{true, true, true},
+		{false, false, true},
+		{"t", true, true},
+		{"f", false, true},
+		{"true", true, true},
+		{"FALSE", false, true},
+		{[]byte("f"), false, true},
+		{nil, false, false},
+		{"banana", false, false},
+		{int64(1), false, false},
+	}
+	for _, tc := range cases {
+		got, ok := toBoolOK(tc.in)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Errorf("toBoolOK(%v): esperava (%v,%v), got (%v,%v)", tc.in, tc.want, tc.ok, got, ok)
+		}
+	}
+}
+
+// TestNormalizaVolumeML cobre a conversão litros→ml: a origem grava "conteudo"
+// em LITROS (0.810 → 810ml); valor acima do limiar assume ml já (flag de aviso).
+func TestNormalizaVolumeML(t *testing.T) {
+	if ml, assumiu := normalizaVolumeML(0.81); ml != 810 || assumiu {
+		t.Errorf("0.81L: esperava (810,false), got (%v,%v)", ml, assumiu)
+	}
+	if ml, assumiu := normalizaVolumeML(3.6); ml != 3600 || assumiu {
+		t.Errorf("3.6L: esperava (3600,false), got (%v,%v)", ml, assumiu)
+	}
+	if ml, assumiu := normalizaVolumeML(100); ml != 100000 || assumiu {
+		t.Errorf("100 (limiar, inclusivo): esperava (100000,false), got (%v,%v)", ml, assumiu)
+	}
+	// 900 > limiar → já está em ml; warning path sinalizado pelo assumiuML.
+	if ml, assumiu := normalizaVolumeML(900); ml != 900 || !assumiu {
+		t.Errorf("900: esperava (900,true), got (%v,%v)", ml, assumiu)
 	}
 }
 
@@ -1402,12 +1772,14 @@ func TestSyncFormulas_formulaContainsNomCorAndVolume(t *testing.T) {
 				},
 			},
 		},
-		maxDA:      map[string]time.Time{"formula": maxDA},
-		corNames:   map[string]string{"COR001": "Branco Neve"},
-		embVolumes: map[string]float64{"E01": 900.0},
+		maxDA: map[string]time.Time{"formula": maxDA},
 	}
 
-	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false)
+	lk := newLookups()
+	lk.CorPadrao["COR001"] = corInfo{CorID: "COR001", Nome: "Branco Neve"}
+	lk.EmbVolumeML["E01"] = 900.0
+
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, lk)
 	if err != nil {
 		t.Fatalf("syncFormulas falhou: %v", err)
 	}
@@ -1457,7 +1829,7 @@ func TestSyncFormulas_missingIdBaseDropped(t *testing.T) {
 		maxDA: map[string]time.Time{"formula": maxDA},
 	}
 
-	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false)
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups())
 	if err != nil {
 		t.Fatalf("syncFormulas falhou: %v", err)
 	}
@@ -1469,6 +1841,178 @@ func TestSyncFormulas_missingIdBaseDropped(t *testing.T) {
 	list := req.Body["formulas"].([]any)
 	if len(list) != 1 {
 		t.Errorf("esperava 1 fórmula (linha sem id_base descartada), got %d", len(list))
+	}
+}
+
+// TestSyncFormulas_traduzIdCoranteDosItens prova que o id_corante CRU dos itens
+// (id numérico da origem, ex: 7) vira a identidade canônica (corante.codigo, ex:
+// "892") no payload — e que item sem entrada no lookup mantém o cru.
+func TestSyncFormulas_traduzIdCoranteDosItens(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	st := &State{HWM: make(map[string]string)}
+	counts := make(map[string]int)
+	rm := newFakeMapping([]string{"formula"}, FormulaShapeFlat)
+
+	lk := newLookups()
+	lk.CoranteIdent["7"] = "892"
+
+	ex := &fakeExtractor{
+		rows: map[string][]map[string]any{
+			"formula": {
+				{
+					"id_padraocor": "C1", "id_produto": "P1", "id_base": "B1", "id_emb": "E1",
+					// Itens como o aggregateFlatFormulaItems entrega (ids CRUS).
+					"itens": []map[string]any{
+						{"id_corante": "7", "ordem": 1, "qtd_ml": 10.0},
+						{"id_corante": "99", "ordem": 2, "qtd_ml": 5.0}, // sem lookup → cru
+					},
+				},
+			},
+		},
+		maxDA: map[string]time.Time{"formula": time.Now()},
+	}
+
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, lk); err != nil {
+		t.Fatalf("syncFormulas falhou: %v", err)
+	}
+	item := srv.requests[0].Body["formulas"].([]any)[0].(map[string]any)
+	itens := item["itens"].([]any)
+	if len(itens) != 2 {
+		t.Fatalf("esperava 2 itens, got %d", len(itens))
+	}
+	it0 := itens[0].(map[string]any)
+	if it0["id_corante"] != "892" {
+		t.Errorf("item[0].id_corante esperado '892' (traduzido de 7), got %v", it0["id_corante"])
+	}
+	it1 := itens[1].(map[string]any)
+	if it1["id_corante"] != "99" {
+		t.Errorf("item[1].id_corante sem lookup deve manter o cru '99', got %v", it1["id_corante"])
+	}
+}
+
+// TestSyncFormulas_liberadoFalseNaoEnviaEContaBloqueada prova (no nível do sync)
+// que fórmula bloqueada (liberado=false) sai do payload SEM contar como dropped:
+// counts reflete só as enviadas e a liberada segue normalmente.
+func TestSyncFormulas_liberadoFalseNaoEnviaEContaBloqueada(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	st := &State{HWM: make(map[string]string)}
+	counts := make(map[string]int)
+	rm := newFakeMapping([]string{"formula"}, FormulaShapeFlat)
+
+	ex := &fakeExtractor{
+		rows: map[string][]map[string]any{
+			"formula": {
+				{"id_padraocor": "C1", "id_produto": "P1", "id_base": "B1", "id_emb": "E1", "liberado": true},
+				{"id_padraocor": "C2", "id_produto": "P1", "id_base": "B1", "id_emb": "E1", "liberado": false},
+			},
+		},
+		maxDA: map[string]time.Time{"formula": time.Now()},
+	}
+
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups()); err != nil {
+		t.Fatalf("syncFormulas falhou: %v", err)
+	}
+	list := srv.requests[0].Body["formulas"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("esperava 1 fórmula (a bloqueada fica de fora), got %d", len(list))
+	}
+	if list[0].(map[string]any)["cor_id"] != "C1" {
+		t.Errorf("a fórmula enviada deveria ser a liberada C1, got %v", list[0])
+	}
+	if counts["formula"] != 1 {
+		t.Errorf("counts[formula] esperado 1 (bloqueada não conta), got %d", counts["formula"])
+	}
+}
+
+// TestSyncFormulas_semLookupUsaCruENaoDropa prova que a falta de entrada nos
+// lookups NÃO derruba a fórmula: tudo cai no id cru (degradação honesta).
+func TestSyncFormulas_semLookupUsaCruENaoDropa(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	st := &State{HWM: make(map[string]string)}
+	counts := make(map[string]int)
+	rm := newFakeMapping([]string{"formula"}, FormulaShapeFlat)
+
+	ex := &fakeExtractor{
+		rows: map[string][]map[string]any{
+			"formula": {
+				{"id_padraocor": int64(12), "id_produto": int64(3), "id_base": int64(4), "id_emb": int64(5)},
+			},
+		},
+		maxDA: map[string]time.Time{"formula": time.Now()},
+	}
+
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups()); err != nil {
+		t.Fatalf("syncFormulas falhou: %v", err)
+	}
+	list := srv.requests[0].Body["formulas"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("fórmula sem lookup NÃO pode ser dropada; got %d", len(list))
+	}
+	item := list[0].(map[string]any)
+	if item["cor_id"] != "12" || item["cod_produto"] != "3" || item["id_base"] != "4" || item["id_embalagem"] != "5" {
+		t.Errorf("sem lookup, os ids crus devem ser enviados: %v", item)
+	}
+	// nome_cor/volume_final_ml omitidos (sem lookup — degradação honesta, não 0).
+	if _, has := item["nome_cor"]; has {
+		t.Errorf("nome_cor deveria estar ausente sem lookup, got %v", item["nome_cor"])
+	}
+	if _, has := item["volume_final_ml"]; has {
+		t.Errorf("volume_final_ml deveria estar ausente sem lookup, got %v", item["volume_final_ml"])
+	}
+}
+
+// TestSyncFormulas_subcolecaoViaLookupSoPadrao prova que a subcoleção vem da COR
+// (CorPadrao.SubIdent — no schema real a formula não tem id_subcolecao) e que a
+// personalizada NUNCA carrega subcolecao.
+func TestSyncFormulas_subcolecaoViaLookupSoPadrao(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	st := &State{HWM: make(map[string]string)}
+	counts := make(map[string]int)
+	rm := newFakeMapping([]string{"formula", "formulaperson"}, FormulaShapeFlat)
+
+	lk := newLookups()
+	lk.CorPadrao["10"] = corInfo{CorID: "AZ-10", Nome: "Azul", SubIdent: "SUB-07"}
+	lk.CorPerson["10"] = corInfo{CorID: "PERS-10", Nome: "Cliente X"}
+
+	rows := map[string][]map[string]any{
+		"formula":       {{"id_padraocor": "10", "id_produto": "P1", "id_base": "B1", "id_emb": "E1"}},
+		"formulaperson": {{"id_padraocor": "10", "id_produto": "P1", "id_base": "B1", "id_emb": "E1"}},
+	}
+	ex := &fakeExtractor{
+		rows:  rows,
+		maxDA: map[string]time.Time{"formula": time.Now(), "formulaperson": time.Now()},
+	}
+
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, lk); err != nil {
+		t.Fatalf("syncFormulas padrão falhou: %v", err)
+	}
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, true, lk); err != nil {
+		t.Fatalf("syncFormulas personalizada falhou: %v", err)
+	}
+
+	padrao := srv.requests[0].Body["formulas"].([]any)[0].(map[string]any)
+	if padrao["subcolecao"] != "SUB-07" {
+		t.Errorf("fórmula padrão: subcolecao esperada 'SUB-07' (via cor), got %v", padrao["subcolecao"])
+	}
+	person := srv.requests[1].Body["formulas"].([]any)[0].(map[string]any)
+	if _, has := person["subcolecao"]; has {
+		t.Errorf("fórmula personalizada NÃO deve carregar subcolecao, got %v", person["subcolecao"])
 	}
 }
 
@@ -1626,7 +2170,7 @@ func TestRunEntityCycles_happyPath(t *testing.T) {
 		},
 	}
 
-	counts, failed, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
+	counts, failed, _, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
 	if err != nil {
 		t.Fatalf("runEntityCycles falhou: %v", err)
 	}
@@ -1685,9 +2229,42 @@ func TestRunEntityCycles_noToken(t *testing.T) {
 	rm := newFakeMapping([]string{"produto"}, FormulaShapeFlat)
 	ex := newFakeExtractor()
 
-	_, _, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
+	_, _, _, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
 	if err == nil {
 		t.Error("sem token deve retornar erro")
+	}
+}
+
+// TestRunEntityCycles_lookupsFalham_eFatal prova que a falha ao carregar os
+// lookups de identidade é FATAL: nada é enviado (sem identidade não dá pra montar
+// payload coerente) e o lk retornado é nil (RunCycle pula o keys-snapshot).
+func TestRunEntityCycles_lookupsFalham_eFatal(t *testing.T) {
+	var postCount atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		postCount.Add(1)
+		_ = json.NewEncoder(w).Encode(AgentResponse{OK: true})
+	}))
+	defer ts.Close()
+
+	cfg := &Config{AppURL: ts.URL, StoreCode: "loja", TokenPlainDev: "tok"}
+	st := &State{HWM: make(map[string]string)}
+	rm := newFakeMapping([]string{"produto"}, FormulaShapeFlat)
+	ex := newFakeExtractor()
+	ex.rows["produto"] = []map[string]any{{"id_produto": "P1", "descricao": "Tinta"}}
+	ex.lookupsErr = errTest("pg caiu no meio")
+
+	_, _, lk, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
+	if err == nil {
+		t.Fatal("falha nos lookups deve ser erro FATAL do ciclo")
+	}
+	if lk != nil {
+		t.Error("lk deve ser nil quando os lookups falham")
+	}
+	if postCount.Load() != 0 {
+		t.Errorf("nada deve ser enviado sem lookups, foram %d POSTs", postCount.Load())
+	}
+	if st.HWM["produto"] != "" {
+		t.Error("HWM não pode avançar quando o ciclo falha antes de enviar")
 	}
 }
 
@@ -1721,7 +2298,7 @@ func TestRunEntityCycles_aggregatesPartialFailures(t *testing.T) {
 		},
 	}
 
-	counts, failed, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
+	counts, failed, _, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
 	if err != nil {
 		t.Fatalf("erro fatal inesperado: %v", err)
 	}
