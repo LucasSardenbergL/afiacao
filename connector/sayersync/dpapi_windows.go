@@ -64,13 +64,13 @@ func dpapiProtect(data []byte) ([]byte, error) {
 	var out dataBlob
 
 	ret, _, err := procCryptProtectData.Call(
-		uintptr(unsafe.Pointer(in)),     // pDataIn
-		0,                               // szDataDescr (NULL)
-		0,                               // pOptionalEntropy (NULL)
-		0,                               // pvReserved (NULL)
-		0,                               // pPromptStruct (NULL)
+		uintptr(unsafe.Pointer(in)),       // pDataIn
+		0,                                 // szDataDescr (NULL)
+		0,                                 // pOptionalEntropy (NULL)
+		0,                                 // pvReserved (NULL)
+		0,                                 // pPromptStruct (NULL)
 		uintptr(cryptprotectLocalMachine), // dwFlags
-		uintptr(unsafe.Pointer(&out)),   // pDataOut
+		uintptr(unsafe.Pointer(&out)),     // pDataOut
 	)
 	if ret == 0 {
 		return nil, fmt.Errorf("CryptProtectData falhou: %w", err)
@@ -84,13 +84,13 @@ func dpapiUnprotect(data []byte) ([]byte, error) {
 	var out dataBlob
 
 	ret, _, err := procCryptUnprotectData.Call(
-		uintptr(unsafe.Pointer(in)),   // pDataIn
-		0,                             // ppszDataDescr (NULL)
-		0,                             // pOptionalEntropy (NULL)
-		0,                             // pvReserved (NULL)
-		0,                             // pPromptStruct (NULL)
+		uintptr(unsafe.Pointer(in)),       // pDataIn
+		0,                                 // ppszDataDescr (NULL)
+		0,                                 // pOptionalEntropy (NULL)
+		0,                                 // pvReserved (NULL)
+		0,                                 // pPromptStruct (NULL)
 		uintptr(cryptprotectLocalMachine), // dwFlags
-		uintptr(unsafe.Pointer(&out)), // pDataOut
+		uintptr(unsafe.Pointer(&out)),     // pDataOut
 	)
 	if ret == 0 {
 		return nil, fmt.Errorf("CryptUnprotectData falhou: %w", err)

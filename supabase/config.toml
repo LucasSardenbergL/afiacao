@@ -134,3 +134,6 @@ verify_jwt = false
 
 [functions.enviar-push]
 verify_jwt = false
+
+[functions.radar-ingest]
+verify_jwt = false

@@ -1,10 +1,11 @@
 // api.go — cliente HTTP para a edge function tint-sync-agent.
 //
 // Endpoints usados:
-//   POST /heartbeat      — sinal de vida + status do conector
-//   POST /catalogs       — produtos, bases, embalagens, skus, corantes, precos_base
-//   POST /formulas       — fórmulas e itens
-//   POST /keys-snapshot  — chaves de todas as fórmulas (deleção soft pelo servidor)
+//
+//	POST /heartbeat      — sinal de vida + status do conector
+//	POST /catalogs       — produtos, bases, embalagens, skus, corantes, precos_base
+//	POST /formulas       — fórmulas e itens
+//	POST /keys-snapshot  — chaves de todas as fórmulas (deleção soft pelo servidor)
 //
 // Política de retry (3× exponencial 1s/4s/16s):
 //   - erro de rede (qualquer falha de transporte)
@@ -55,14 +56,18 @@ type AgentError struct {
 
 // HeartbeatPayload é o corpo enviado para POST /heartbeat.
 type HeartbeatPayload struct {
-	AgentVersion      string         `json:"agent_version"`
-	Hostname          string         `json:"hostname"`
-	UptimeSeconds     int64          `json:"uptime_seconds"`
-	DBConnected       bool           `json:"db_connected"`
-	SchemaFingerprint string         `json:"schema_fingerprint,omitempty"`
+	AgentVersion      string `json:"agent_version"`
+	Hostname          string `json:"hostname"`
+	UptimeSeconds     int64  `json:"uptime_seconds"`
+	DBConnected       bool   `json:"db_connected"`
+	SchemaFingerprint string `json:"schema_fingerprint,omitempty"`
 	// SchemaMismatch: string descrevendo o diff quando há divergência; omitido quando OK.
 	SchemaMismatch  string         `json:"schema_mismatch,omitempty"`
 	LastCycleCounts map[string]int `json:"last_cycle_counts,omitempty"`
+	// LastCycleErrors lista as entidades que falharam no último ciclo (F7). Vazio =
+	// ciclo limpo. A tela de integração mostra isso para o founder saber que o
+	// heartbeat está "verde mas com ressalva" em vez de falso-sucesso.
+	LastCycleErrors []string `json:"last_cycle_errors,omitempty"`
 }
 
 // ──────────────────────────────────────────────────────────────

@@ -385,7 +385,7 @@ func TestCheckAndApplyUpdate_sha256Mismatch_incrementsFailCount(t *testing.T) {
 	defer binSrv.Close()
 
 	manifest := UpdateManifest{
-		Version: "999.0.0", // versão mais nova
+		Version: "999.0.0",                                                          // versão mais nova
 		SHA256:  "0000000000000000000000000000000000000000000000000000000000000000", // errado
 		URL:     binSrv.URL,
 	}

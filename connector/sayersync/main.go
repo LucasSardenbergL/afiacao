@@ -3,12 +3,13 @@
 // data_atualizacao com high-water mark da origem → POST lotes para tint-sync-agent.
 //
 // Subcomandos:
-//   install    — configura interativamente e registra o serviço Windows SayerSync
-//   uninstall  — remove o serviço Windows
-//   run        — entry-point do serviço (chamado pelo SCM do Windows)
-//   once       — executa 1 ciclo de sync no console (dev/debug)
-//   discovery  — despeja schema do SayerSystem em sayersystem-schema.txt
-//   version    — imprime a versão do binário
+//
+//	install    — configura interativamente e registra o serviço Windows SayerSync
+//	uninstall  — remove o serviço Windows
+//	run        — entry-point do serviço (chamado pelo SCM do Windows)
+//	once       — executa 1 ciclo de sync no console (dev/debug)
+//	discovery  — despeja schema do SayerSystem em sayersystem-schema.txt
+//	version    — imprime a versão do binário
 //
 // Spec: docs/superpowers/specs/2026-06-09-tint-sync-sayersystem-design.md §5
 package main
@@ -24,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kardianos/service"
 	_ "github.com/jackc/pgx/v5/stdlib" // driver database/sql via pgx
+	"github.com/kardianos/service"
 )
 
 // Version é injetado via -ldflags no build de release.
@@ -205,12 +206,27 @@ func cmdInstall() {
 		fmt.Fprintf(os.Stderr, "ERRO ao criar objeto de serviço: %v\n", err)
 		os.Exit(1)
 	}
-	if err := s.Install(); err != nil {
-		fmt.Fprintf(os.Stderr, "ERRO ao instalar serviço: %v\n", err)
+	// Idempotente: remove registro anterior se existir (o INSTALACAO.md promete que
+	// repetir o install é seguro; também conserta registro velho sem o argumento "run").
+	_ = s.Stop()
+	if err := s.Uninstall(); err == nil {
+		// O SCM remove o serviço de forma assíncrona; dá tempo antes de recriar.
+		time.Sleep(2 * time.Second)
+	}
+	var instErr error
+	for i := 0; i < 3; i++ {
+		if instErr = s.Install(); instErr == nil {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if instErr != nil {
+		fmt.Fprintf(os.Stderr, "ERRO ao instalar serviço: %v\n", instErr)
 		os.Exit(1)
 	}
 	if err := s.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "AVISO: serviço instalado mas não iniciou: %v\n", err)
+		fmt.Fprintln(os.Stderr, "       Rode 'sayersync.exe once' para ver o erro no console.")
 	} else {
 		fmt.Println("Serviço SayerSync instalado e iniciado com sucesso.")
 	}
@@ -288,8 +304,13 @@ func cmdOnce() {
 	defer cancel()
 
 	fmt.Printf("sayersync %s — ciclo único\n", Version)
-	runOneCycle(ctx, cfg)
-	fmt.Println("Ciclo concluído.")
+	ok := runOneCycle(ctx, cfg)
+	if !ok {
+		// F7: ciclo com qualquer falha → exit != 0 (CI/scripts/debug detectam).
+		fmt.Fprintln(os.Stderr, "Ciclo concluído COM FALHAS (ver logs acima).")
+		os.Exit(1)
+	}
+	fmt.Println("Ciclo concluído com sucesso.")
 }
 
 // ──────────────────────────────────────────────
@@ -331,6 +352,10 @@ func svcConfig(_ *Config) *service.Config {
 		Name:        "SayerSync",
 		DisplayName: "SayerSync — Colacor Tintométrico",
 		Description: "Sincroniza formulas e precos do SayerSystem com o app Colacor.",
+		// O SCM do Windows executa o binário com ESTES argumentos. Sem o "run",
+		// o main() imprime a ajuda e sai(1) → o SCM dá timeout 1053
+		// ("não respondeu a requisição de início em tempo hábil"). Bug real em campo (12/06).
+		Arguments: []string{"run"},
 		// Roda como LocalService (least privilege; precisa só de localhost + HTTPS de saída).
 		// No Windows, 'UserName: "NT AUTHORITY\\LocalService"' seria a config ideal;
 		// por simplicidade v1 usamos o usuário do sistema (LocalSystem via kardianos default).
@@ -343,11 +368,12 @@ func svcConfig(_ *Config) *service.Config {
 }
 
 // ──────────────────────────────────────────────
-// runOneCycle — delega ao RunCycle de sync.go
+// runOneCycle — delega ao RunCycle de sync.go.
+// Retorna true se o ciclo foi totalmente bem-sucedido (F7).
 // ──────────────────────────────────────────────
 
-func runOneCycle(ctx context.Context, cfg *Config) {
-	RunCycle(ctx, cfg)
+func runOneCycle(ctx context.Context, cfg *Config) bool {
+	return RunCycle(ctx, cfg)
 }
 
 // ──────────────────────────────────────────────

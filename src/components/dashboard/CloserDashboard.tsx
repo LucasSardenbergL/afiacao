@@ -6,6 +6,7 @@ import { MinhasVisitasResultadoCard } from './MinhasVisitasResultadoCard';
 import { FollowupsSugeridosCard } from './FollowupsSugeridosCard';
 import { VisitasKpiTiles } from './VisitasKpiTiles';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
+import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNudge';
 
 /**
  * Dashboard Closer — placeholder rico até PR-VISIT-INTELLIGENCE implementar
@@ -22,6 +23,9 @@ export function CloserDashboard() {
       </div>
 
       <MinhasTarefasCard />
+
+      {/* nudge condicional: ligações registradas sem cliente vinculado (era item do menu Vendas) */}
+      <ChamadasPendentesNudge />
 
       <VisitasHojeCard />
 
