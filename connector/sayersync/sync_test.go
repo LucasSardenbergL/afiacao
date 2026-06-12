@@ -1379,8 +1379,10 @@ func TestMapProduto_validRow(t *testing.T) {
 	if m["cod_produto"] != "P001" {
 		t.Errorf("cod_produto esperado 'P001', got %v", m["cod_produto"])
 	}
-	if m["ativo"] != true {
-		t.Errorf("ativo esperado true, got %v", m["ativo"])
+	// Regressão de CAMPO (12/06): "ativo" NÃO existe em tint_staging_produtos e a
+	// edge espalha todos os campos no INSERT → campo extra derruba o lote inteiro.
+	if _, has := m["ativo"]; has {
+		t.Errorf("payload de produto NÃO pode ter 'ativo' (derruba o lote na staging), got %v", m["ativo"])
 	}
 }
 

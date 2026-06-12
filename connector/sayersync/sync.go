@@ -1319,10 +1319,13 @@ func mapProduto(row map[string]any) map[string]any {
 	if ident == "" {
 		ident = id
 	}
+	// ⚠️ NÃO mandar campo que a staging não tem: a edge espalha TODOS os campos
+	// do item no INSERT de tint_staging_produtos (cod_produto/descricao/raw_data...);
+	// um campo extra ("ativo") derruba o LOTE INTEIRO com erro de coluna — visto em
+	// CAMPO (12/06): "sendInBatches produto: 20 erro(s) de item no lote 0-20".
 	return map[string]any{
 		"cod_produto": ident,
 		"descricao":   toString(row["descricao"]),
-		"ativo":       true,
 	}
 }
 
