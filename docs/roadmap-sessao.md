@@ -15,7 +15,8 @@
 
 - ✅ Helper puro `pendente-entrada-po.ts` (`computeOnOrder`, fail-closed, 23 testes).
 - ✅ **Passo 1 — RPC `aplicar_snapshot_pendente`** (snapshot atômico: substitui, nunca `+=`; marcador `complete` na mesma txn; `run_id` monotônico + advisory lock + `codints_aprovados`; guards fail-closed). **PG17 A1..A13 verdes.**
-- ⏳ Passos 2 (edge fonte-única) · 3 (motor: −`em_transito` + barreira) · 4 (bump no disparo) · 5 (Sentinela via marcador).
+- ✅ **Passo 2 — edge `omie-sync-estoque` fonte-única** (paginar até página vazia + fingerprint anti-loop + teto fatal; sem corte 180d; retry robusto; modos only_pending/esperar_codints; grava via RPC; D1 dona da coluna; COLACOR intacto). Helper estendido (coleta pura + `varrerPedidos` com fetcher injetável). **44 testes vitest · deno check · typecheck · lint verdes.**
+- ⏳ Passos 3 (motor: −`em_transito` + barreira) · 4 (bump no disparo) · 5 (Sentinela via marcador).
 - 🚧 **Codex esgotou** (usage limit, volta 12/06 00:11) → **Caminho B** (auto-challenge + PG17). **Adversarial xhigh é GATE antes do deploy** — retroativo quando voltar. Nada de deploy até lá.
 
 ---

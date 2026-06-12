@@ -3,8 +3,16 @@ import {
   quantidadesValidas,
   saldoAReceber,
   computeOnOrder,
+  coletarDaPagina,
+  paginaVazia,
+  fingerprintPagina,
+  codintsFaltantes,
+  varrerPedidos,
   type PoItemOmie,
   type ComputeOnOrderOpts,
+  type ColetaPaginaOpts,
+  type OmiePedConsultaRaw,
+  type PaginaPedidos,
 } from "./pendente-entrada-po";
 
 const APROVADO = "15"; // OBEN: etapa 15 = Aprovado
@@ -124,5 +132,175 @@ describe("computeOnOrder — FAIL-CLOSED (problemas abortam o apply)", () => {
     );
     expect(r.problemas.length).toBe(1);
     expect(r.porSku.get("BOM")).toBe(2); // calculado, mas a edge descarta tudo se problemas != []
+  });
+});
+
+// ── Coleta / paginação (parsing puro espelhado na edge) ──
+
+function copts(over: Partial<ColetaPaginaOpts> = {}): ColetaPaginaOpts {
+  return { etapasAprovadas: new Set([APROVADO]), ...over };
+}
+function po(over: {
+  cNumero?: string; cCodIntPed?: string; cEtapa?: string;
+  itens?: Array<{ nCodProd?: number | string; nQtde?: number; nQtdeRec?: number }>;
+  usarCabecalhoLegado?: boolean;
+} = {}): OmiePedConsultaRaw {
+  const cab = { cNumero: over.cNumero ?? "1054", cCodIntPed: over.cCodIntPed ?? "", cEtapa: over.cEtapa ?? APROVADO };
+  const produtos = over.itens ?? [{ nCodProd: "8689734299", nQtde: 3, nQtdeRec: 0 }];
+  return over.usarCabecalhoLegado
+    ? { cabecalho: cab, produtos_consulta: produtos }
+    : { cabecalho_consulta: cab, produtos_consulta: produtos };
+}
+
+describe("coletarDaPagina", () => {
+  it("extrai item + poNumero + etapa (FUNDO PU)", () => {
+    const r = coletarDaPagina([po()], copts());
+    expect(r.items).toEqual([{ sku: "8689734299", poNumero: "1054", etapa: APROVADO, qtde: 3, recebido: 0 }]);
+    expect(r.pedidosVistos).toBe(1);
+  });
+
+  it("codint só de PO etapa-APROVADA (independe de saldo — PO recebida ainda conta p/ a barreira)", () => {
+    const r = coletarDaPagina(
+      [
+        po({ cCodIntPed: "AFI-aaa", itens: [{ nCodProd: "X", nQtde: 5, nQtdeRec: 5 }] }), // saldo 0, mas aprovada
+        po({ cCodIntPed: "AFI-bbb", cEtapa: EM_APROVACAO }), // etapa 10 → NÃO entra nos codints
+      ],
+      copts(),
+    );
+    expect(r.codintsAprovados).toEqual(["AFI-aaa"]);
+  });
+
+  it("codint vazio não entra; cabecalho legado funciona", () => {
+    const r = coletarDaPagina([po({ cCodIntPed: "", usarCabecalhoLegado: true })], copts());
+    expect(r.codintsAprovados).toEqual([]);
+    expect(r.items.length).toBe(1);
+  });
+
+  it("filtra itens por skusHabilitados quando dado", () => {
+    const r = coletarDaPagina(
+      [po({ itens: [{ nCodProd: "HAB", nQtde: 2 }, { nCodProd: "FORA", nQtde: 9 }] })],
+      copts({ skusHabilitados: new Set(["HAB"]) }),
+    );
+    expect(r.items.map((i) => i.sku)).toEqual(["HAB"]);
+  });
+
+  it("item sem nCodProd é ignorado; produtos ausentes não quebra", () => {
+    const r = coletarDaPagina(
+      [po({ itens: [{ nQtde: 2 }] }), { cabecalho_consulta: { cEtapa: APROVADO, cCodIntPed: "AFI-x" } }],
+      copts(),
+    );
+    expect(r.items).toEqual([]);
+    expect(r.codintsAprovados).toEqual(["AFI-x"]);
+  });
+
+  it("etapasVistas reúne as etapas distintas (diagnóstico)", () => {
+    const r = coletarDaPagina([po(), po({ cEtapa: "10" }), po({ cEtapa: "99" })], copts());
+    expect(r.etapasVistas.sort()).toEqual(["10", "15", "99"]);
+  });
+
+  it("string numérica em qtde/recebido é coagida; não-numérica vira NaN (computeOnOrder pega)", () => {
+    const r = coletarDaPagina([po({ itens: [{ nCodProd: "A", nQtde: "abc" as unknown as number }] })], copts());
+    expect(Number.isNaN(r.items[0].qtde)).toBe(true);
+  });
+});
+
+describe("paginaVazia / fingerprintPagina (paginar até página vazia, anti-loop)", () => {
+  it("vazia: [] e undefined → true; não-vazia → false", () => {
+    expect(paginaVazia([])).toBe(true);
+    expect(paginaVazia(undefined)).toBe(true);
+    expect(paginaVazia([po()])).toBe(false);
+  });
+  it("fingerprint vazio é '' (não dispara loop)", () => {
+    expect(fingerprintPagina([])).toBe("");
+    expect(fingerprintPagina(undefined)).toBe("");
+  });
+  it("páginas diferentes → fingerprints diferentes; mesma página → igual (= loop)", () => {
+    const pgA = [po({ cNumero: "1" }), po({ cNumero: "2" })];
+    const pgB = [po({ cNumero: "3" }), po({ cNumero: "4" })];
+    expect(fingerprintPagina(pgA)).not.toBe(fingerprintPagina(pgB));
+    expect(fingerprintPagina(pgA)).toBe(fingerprintPagina([po({ cNumero: "1" }), po({ cNumero: "2" })]));
+  });
+});
+
+describe("codintsFaltantes (esperar_codints do bump)", () => {
+  it("todos vistos → []", () => {
+    expect(codintsFaltantes(["AFI-1", "AFI-2"], ["AFI-2", "AFI-1", "AFI-9"])).toEqual([]);
+  });
+  it("retorna só os que faltam, dedup + trim", () => {
+    expect(codintsFaltantes(["AFI-1", " AFI-2 ", "AFI-1"], ["AFI-2"])).toEqual(["AFI-1"]);
+  });
+  it("esperados vazios → []", () => {
+    expect(codintsFaltantes([], ["AFI-1"])).toEqual([]);
+  });
+});
+
+describe("varrerPedidos — loop de paginação (paginar até página vazia, anti-loop, anti-truncamento)", () => {
+  // fetcher mock: serve as páginas dadas; além do array, devolve página vazia (fim natural).
+  function fetcher(paginas: PaginaPedidos[]): (p: number) => Promise<PaginaPedidos> {
+    return (p: number) => Promise.resolve(paginas[p - 1] ?? { pedidos: [] });
+  }
+  const vopts = { etapasAprovadas: new Set([APROVADO]), maxPaginas: 100 };
+
+  it("para na página vazia e acumula as anteriores (não confia em nTotalPaginas)", async () => {
+    const r = await varrerPedidos(
+      fetcher([
+        { pedidos: [po({ cNumero: "1", itens: [{ nCodProd: "A", nQtde: 2 }] })] },
+        { pedidos: [po({ cNumero: "2", itens: [{ nCodProd: "B", nQtde: 5, nQtdeRec: 1 }] })] },
+        { pedidos: [] }, // FIM
+      ]),
+      vopts,
+    );
+    expect(r.paginasLidas).toBe(2);
+    expect(r.items.map((i) => i.sku).sort()).toEqual(["A", "B"]);
+    expect(r.pedidosVistos).toBe(2);
+  });
+
+  it("para em fault 'sem registros' (fim legítimo), em variações", async () => {
+    for (const fim of ["Não foram encontrados registros", "Não existem registros para a página 3", "SEM REGISTROS", "not found"]) {
+      const r = await varrerPedidos(fetcher([{ pedidos: [po({ cNumero: "1" })] }, { faultstring: fim }]), vopts);
+      expect(r.paginasLidas).toBe(1);
+    }
+  });
+
+  it("FATAL: fault de ERRO que menciona 'não'/'registro' separados NÃO é fim → lança (anti-falso-positivo)", async () => {
+    for (const erro of ["Não foi possível conectar ao servidor", "Erro ao gravar registro no banco", "App Key inválida"]) {
+      await expect(varrerPedidos(fetcher([{ faultstring: erro }]), vopts)).rejects.toThrow(/fault/);
+    }
+  });
+
+  it("FATAL: página repetida (loop do Omie) → lança", async () => {
+    const pg = { pedidos: [po({ cNumero: "1" }), po({ cNumero: "2" })] };
+    await expect(varrerPedidos(fetcher([pg, pg, { pedidos: [] }]), vopts)).rejects.toThrow(/LOOP/);
+  });
+
+  it("FATAL: teto técnico sem ver fim → lança (anti-truncamento)", async () => {
+    // fetcher que SEMPRE devolve página não-vazia e distinta (nunca vazia) → estoura maxPaginas
+    const fetchInfinito = (p: number) => Promise.resolve({ pedidos: [po({ cNumero: String(p) })] });
+    await expect(varrerPedidos(fetchInfinito, { ...vopts, maxPaginas: 5 })).rejects.toThrow(/anti-truncamento/);
+  });
+
+  it("FATAL: fault que não é 'sem registros' → lança", async () => {
+    await expect(
+      varrerPedidos(fetcher([{ faultstring: "Erro interno do servidor Omie" }]), vopts),
+    ).rejects.toThrow(/fault/);
+  });
+
+  it("1ª página já vazia → fim imediato, paginasLidas=0", async () => {
+    const r = await varrerPedidos(fetcher([{ pedidos: [] }]), vopts);
+    expect(r.paginasLidas).toBe(0);
+    expect(r.items).toEqual([]);
+  });
+
+  it("acumula codints (etapa-aprovada) e filtra itens por habilitado entre páginas", async () => {
+    const r = await varrerPedidos(
+      fetcher([
+        { pedidos: [po({ cNumero: "1", cCodIntPed: "AFI-1", itens: [{ nCodProd: "HAB", nQtde: 2 }, { nCodProd: "X", nQtde: 9 }] })] },
+        { pedidos: [po({ cNumero: "2", cCodIntPed: "AFI-2" })] },
+        { pedidos: [] },
+      ]),
+      { ...vopts, skusHabilitados: new Set(["HAB", "8689734299"]) },
+    );
+    expect(r.codintsAprovados.sort()).toEqual(["AFI-1", "AFI-2"]);
+    expect(r.items.map((i) => i.sku).sort()).toEqual(["8689734299", "HAB"]); // "X" filtrado fora
   });
 });
