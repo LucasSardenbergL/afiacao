@@ -17,7 +17,8 @@
 - ✅ **Passo 1 — RPC `aplicar_snapshot_pendente`** (`20260611190000`): snapshot atômico (substitui, nunca `+=`; marcador `complete` na mesma txn; `run_id` monotônico + advisory lock + `codints_aprovados`; guards fail-closed). **PG17 A1..A13 verdes.**
 - ✅ **Passo 2 — edge `omie-sync-estoque` fonte-única**: paginar até página vazia + fingerprint anti-loop + teto fatal; sem corte 180d; retry robusto; modos only_pending/esperar_codints; grava via RPC; D1 dona da coluna; COLACOR intacto. **deno check · typecheck · lint verdes.**
 - ✅ **Reconciliação com a main** (35 commits; on-order=`--ours` supera a keep-both #752; passo 1 realocado p/ `190000`; motor normal confirmado intacto).
-- ⏳ Passos 3 (motor: −`em_transito` + barreira) · 4 (bump no disparo) · 5 (Sentinela via marcador).
+- ✅ **Passo 3 — motor `gerar_pedidos_sugeridos_ciclo` fonte única** (`20260611200000`): remove `em_transito` (efetivo = fisico+pendente) + barreira fail-closed OBEN-only (4 condições). Diff mecânico prova fidelidade (só barreira ADD + em_transito DEL). **PG17 B1..B11 verdes.**
+- ⏳ Passos 4 (bump no disparo) · 5 (Sentinela via marcador).
 - 🚧 **Codex esgotou** (usage limit, volta 12/06 00:11) → **Caminho B** (auto-challenge + PG17). **Adversarial xhigh é GATE antes do deploy** — retroativo quando voltar. Nada de deploy até lá.
 
 ---
