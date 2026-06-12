@@ -112,6 +112,12 @@ func RunDiscovery(ctx context.Context, db *sql.DB, outPath string) (string, erro
 	writeDatabases(ctx, db, &sb)
 	writeContagens(ctx, db, &sb, tableOrder)
 	writeAmostraEmbalagem(ctx, db, &sb, tableMap)
+	// Amostras de catálogo (sem dado de cliente) — decifram a composição da
+	// identidade da cor (sufixo " - BS" = colecao? familia?) e dão contexto pra
+	// caça ao banco de preços.
+	writeAmostra(ctx, db, &sb, tableMap, "colecao", []string{"id", "codigo", "descricao"}, 10)
+	writeAmostra(ctx, db, &sb, tableMap, "subcolecao", []string{"id", "id_colecao", "codigo", "descricao"}, 10)
+	writeAmostra(ctx, db, &sb, tableMap, "padraocor", []string{"id", "codigo", "descricao", "pagina", "familia", "id_subcolecao"}, 5)
 
 	if err := os.WriteFile(outPath, []byte(sb.String()), 0644); err != nil {
 		return "", fmt.Errorf("discovery: erro ao gravar %s: %w", outPath, err)
@@ -213,6 +219,59 @@ func writeAmostraEmbalagem(ctx context.Context, db *sql.DB, sb *strings.Builder,
 			break
 		}
 		sb.WriteString(fmt.Sprintf("  id=%v | descricao=%v | conteudo=%v\n", id, descricao, conteudo))
+	}
+	if err := rows.Err(); err != nil {
+		sb.WriteString(fmt.Sprintf("  erro: %v\n", err))
+	}
+	sb.WriteString("\n")
+}
+
+// writeAmostra grava até `limit` linhas de uma tabela (SÓ colunas de catálogo
+// informadas — nunca dado de cliente). Coluna inexistente na instalação → vira
+// NULL no SELECT (era candidata); tabela ausente → seção registra e segue.
+// Best-effort: erro vira linha no arquivo, nunca falha o discovery.
+func writeAmostra(ctx context.Context, db *sql.DB, sb *strings.Builder, tableMap map[string][]discoveryCol, table string, cols []string, limit int) {
+	sb.WriteString(fmt.Sprintf("=== AMOSTRA: %s ===\n", table))
+	tcols, ok := tableMap[table]
+	if !ok {
+		sb.WriteString("  (tabela não encontrada)\n\n")
+		return
+	}
+	existe := make(map[string]bool, len(tcols))
+	for _, c := range tcols {
+		existe[c.name] = true
+	}
+	exprs := make([]string, len(cols))
+	for i, c := range cols {
+		if existe[c] {
+			exprs[i] = quoteIdent(c)
+		} else {
+			exprs[i] = `NULL`
+		}
+	}
+	query := fmt.Sprintf(`SELECT %s FROM %s ORDER BY 1 LIMIT %d`,
+		strings.Join(exprs, ", "), quoteIdent(table), limit)
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		sb.WriteString(fmt.Sprintf("  erro: %v\n\n", err))
+		return
+	}
+	defer rows.Close()
+	dest := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range dest {
+		ptrs[i] = &dest[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(ptrs...); err != nil {
+			sb.WriteString(fmt.Sprintf("  erro: %v\n", err))
+			break
+		}
+		parts := make([]string, len(cols))
+		for i, c := range cols {
+			parts[i] = fmt.Sprintf("%s=%v", c, dest[i])
+		}
+		sb.WriteString("  " + strings.Join(parts, " | ") + "\n")
 	}
 	if err := rows.Err(); err != nil {
 		sb.WriteString(fmt.Sprintf("  erro: %v\n", err))
