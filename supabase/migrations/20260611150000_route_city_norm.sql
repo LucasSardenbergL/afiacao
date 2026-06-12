@@ -47,10 +47,10 @@ BEGIN
   END IF;
   -- Espacos unicode que o \s do JS reconhece (e o [[:space:]] POSIX nao) ->
   -- espaco ASCII, pra paridade com o split/replace(\s) do TS.
-  s := regexp_replace(raw, '[   -     　﻿]', ' ', 'g');
+  s := regexp_replace(raw, '[\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]', ' ', 'g');
   -- stripAccents (NFD + remove combining marks U+0300..U+036F) -> UPPER ->
   -- trim (ordem identica ao TS).
-  s := btrim(upper(regexp_replace(normalize(s, NFD), '[̀-ͯ]', '', 'g')));
+  s := btrim(upper(regexp_replace(normalize(s, NFD), '[\u0300-\u036F]', '', 'g')));
   IF s = '' THEN
     RETURN NULL;
   END IF;
