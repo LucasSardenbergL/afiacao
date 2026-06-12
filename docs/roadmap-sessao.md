@@ -19,7 +19,8 @@
 - ✅ **Reconciliação com a main** (35 commits; on-order=`--ours` supera a keep-both #752; passo 1 realocado p/ `190000`; motor normal confirmado intacto).
 - ✅ **Passo 3 — motor `gerar_pedidos_sugeridos_ciclo` fonte única** (`20260611200000`): remove `em_transito` (efetivo = fisico+pendente) + barreira fail-closed OBEN-only (4 condições). Diff mecânico prova fidelidade (só barreira ADD + em_transito DEL). **PG17 B1..B11 verdes.**
 - ✅ **Passo 4 — bump no disparo** (`disparar-pedidos-aprovados`): `bumpSnapshotPendente` (OBEN-only, best-effort, background via `EdgeRuntime.waitUntil`) chama `omie-sync-estoque {only_pending, esperar_codints}` com os AFI-<id> recém-disparados. **deno check · lint net-zero.**
-- ⏳ Passo 5 (Sentinela via marcador).
+- ✅ **Passo 5 — Sentinela via marcador** (`20260611210000`): check `estoque_reposicao` usa worst-of dos 2 markers `sync_state` complete (físico + a-caminho) em vez de `max(ultima_sincronizacao)`. Conjunto inalterado (18 checks), diff mecânico prova. **PG17 C1..C6 verdes.**
+- 🎯 **OS 5 PASSOS FEITOS (Caminho B).** Falta: **Codex adversarial xhigh** (gate, retroativo quando voltar) + deploy ordenado (migrations via SQL Editor + 2 edges via Lovable; ordem fail-closed no spec).
 - 🚧 **Codex esgotou** (usage limit, volta 12/06 00:11) → **Caminho B** (auto-challenge + PG17). **Adversarial xhigh é GATE antes do deploy** — retroativo quando voltar. Nada de deploy até lá.
 
 ---
