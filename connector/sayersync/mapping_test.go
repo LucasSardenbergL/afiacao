@@ -170,6 +170,100 @@ func TestValidate_AltCandidates(t *testing.T) {
 	}
 }
 
+// ── F4: embalagem de formulação — candidatos duais id_emb/id_embalagem ──────────
+
+func TestValidate_FormulationEmbalagem_ResolvesViaIdEmbalagem(t *testing.T) {
+	// Schema nominal já tem só id_emb na formula; adiciona id_embalagem (sem ambiguidade
+	// removendo id_emb seria inválido pois é required) → testa que id_emb é o 1º candidato.
+	cols := fixtureSchemaNominal()
+	rm, diff := resolveFromFixture(cols)
+	if !diff.OK {
+		t.Fatalf("Validate deve passar; missing=%v", diff.Missing)
+	}
+	// id_emb é o 1º candidato da embalagem de formulação → resolve para id_emb.
+	got := rm.Resolved["formula"]["id_embalagem_formulacao"]
+	if got != "id_emb" {
+		t.Errorf("id_embalagem_formulacao: esperava 'id_emb' (1º candidato), got %q", got)
+	}
+}
+
+func TestValidate_FormulationEmbalagem_CandidatesCoverBothNames(t *testing.T) {
+	// F4: o slot de embalagem de formulação DEVE listar tanto id_emb quanto id_embalagem
+	// (+ id_embalagem_formulacao) como candidatos. Resolução é "primeiro que existir".
+	cand := candidatesOpt("id_emb", "id_embalagem", "id_embalagem_formulacao")
+	resolve := func(present string) string {
+		tbl := map[string]bool{present: true}
+		for _, c := range cand.Candidates {
+			if tbl[strings.ToLower(c)] {
+				return strings.ToLower(c)
+			}
+		}
+		return ""
+	}
+	if got := resolve("id_emb"); got != "id_emb" {
+		t.Errorf("com id_emb presente: esperava 'id_emb', got %q", got)
+	}
+	if got := resolve("id_embalagem"); got != "id_embalagem" {
+		t.Errorf("com id_embalagem presente: esperava 'id_embalagem' (fallback), got %q", got)
+	}
+	if got := resolve("id_embalagem_formulacao"); got != "id_embalagem_formulacao" {
+		t.Errorf("com id_embalagem_formulacao presente: esperava esse, got %q", got)
+	}
+	// Confirma que o mapeamento declarado da formula realmente expõe esses 3 candidatos.
+	var found bool
+	for _, tm := range expectedMappings() {
+		if tm.Table != "formula" {
+			continue
+		}
+		cm, ok := tm.Columns["id_embalagem_formulacao"]
+		if !ok {
+			t.Fatal("formula deve ter o logical 'id_embalagem_formulacao'")
+		}
+		found = true
+		want := map[string]bool{"id_emb": true, "id_embalagem": true, "id_embalagem_formulacao": true}
+		if len(cm.Candidates) != 3 {
+			t.Errorf("esperava 3 candidatos, got %v", cm.Candidates)
+		}
+		for _, c := range cm.Candidates {
+			if !want[c] {
+				t.Errorf("candidato inesperado %q", c)
+			}
+		}
+		if cm.Required {
+			t.Error("embalagem de formulação deve ser opcional (não falha o ciclo se ausente)")
+		}
+	}
+	if !found {
+		t.Fatal("tabela 'formula' não encontrada no mapeamento")
+	}
+}
+
+func TestValidate_FormulationEmbalagem_AmbiguityWarning(t *testing.T) {
+	// Quando id_emb E id_embalagem coexistem na formula → aviso de ambiguidade.
+	cols := fixtureSchemaNominal()
+	cols["formula"]["id_embalagem"] = true       // agora id_emb (já existia) E id_embalagem coexistem
+	cols["formulaperson"]["id_embalagem"] = true // idem na personalizada
+	_, diff := resolveFromFixture(cols)
+	if !diff.OK {
+		t.Fatalf("ambiguidade NÃO deve falhar o ciclo (é só aviso); missing=%v", diff.Missing)
+	}
+	if _, ok := diff.ExtraInfo["formula_embalagem_ambigua"]; !ok {
+		t.Error("esperava aviso 'formula_embalagem_ambigua' quando id_emb e id_embalagem coexistem")
+	}
+	if _, ok := diff.ExtraInfo["formulaperson_embalagem_ambigua"]; !ok {
+		t.Error("esperava aviso 'formulaperson_embalagem_ambigua' quando id_emb e id_embalagem coexistem")
+	}
+}
+
+func TestValidate_FormulationEmbalagem_NoAmbiguityWhenOnlyIdEmb(t *testing.T) {
+	// Schema nominal tem só id_emb (não id_embalagem) → SEM aviso de ambiguidade.
+	cols := fixtureSchemaNominal()
+	_, diff := resolveFromFixture(cols)
+	if _, ok := diff.ExtraInfo["formula_embalagem_ambigua"]; ok {
+		t.Error("não deveria avisar ambiguidade quando só id_emb existe")
+	}
+}
+
 func TestValidate_MissingRequiredTable_FailsClosed(t *testing.T) {
 	cols := fixtureSchemaNominal()
 	delete(cols, "corantes") // Remove tabela obrigatória.
@@ -196,7 +290,7 @@ func TestValidate_MissingRequiredColumn_FailsClosed(t *testing.T) {
 func TestValidate_OptionalColumnMissing_StillOK(t *testing.T) {
 	cols := fixtureSchemaNominal()
 	// Remove colunas opcionais.
-	delete(cols["formula"], "id_subcolecao")   // Opcional.
+	delete(cols["formula"], "id_subcolecao")    // Opcional.
 	delete(cols["colecao"], "data_atualizacao") // Opcional.
 	_, diff := resolveFromFixture(cols)
 
@@ -384,5 +478,8 @@ func resolveFromFixture(cols map[string]map[string]bool) (*ResolvedMapping, *Sch
 
 	rm.FormulaShape = detectFormulaShape(cols, rm)
 	diff.ExtraInfo["formula_shape"] = string(rm.FormulaShape)
+	// Espelha Validate (F4): aviso de ambiguidade da embalagem de formulação.
+	noteFormulationAmbiguity(cols, "formula", diff)
+	noteFormulationAmbiguity(cols, "formulaperson", diff)
 	return rm, diff
 }

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,15 +33,25 @@ type fakeExtractor struct {
 	corNames map[string]string
 	// embVolumes para lookup de volume_final_ml em mapFormula.
 	embVolumes map[string]float64
+	// childItems para o shape child: map[id_formula (PK) → []item].
+	childItems map[string][]map[string]any
+	// childItemsHasOrdem registra o hasOrdem recebido em ExtractFormulaChildItems.
+	childItemsHasOrdem *bool
 	// originNow é o valor retornado por OriginNow().
 	originNow time.Time
 	// err: se definido, todas as chamadas retornam esse erro.
 	err error
+	// errByEntity: se definido para uma entidade, Extract dela retorna esse erro
+	// (as demais funcionam) — para testar agregação de falhas parciais (F7).
+	errByEntity map[string]error
 }
 
 func (f *fakeExtractor) Extract(_ context.Context, entity string, _ time.Time) ([]map[string]any, time.Time, error) {
 	if f.err != nil {
 		return nil, time.Time{}, f.err
+	}
+	if e, ok := f.errByEntity[entity]; ok && e != nil {
+		return nil, time.Time{}, e
 	}
 	rows := f.rows[entity]
 	maxDA := f.maxDA[entity]
@@ -72,6 +83,17 @@ func (f *fakeExtractor) ExtractAllEmbVolumes(_ context.Context) (map[string]floa
 		return f.embVolumes, nil
 	}
 	return make(map[string]float64), nil
+}
+
+func (f *fakeExtractor) ExtractFormulaChildItems(_ context.Context, hasOrdem bool) (map[string][]map[string]any, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.childItemsHasOrdem = &hasOrdem
+	if f.childItems != nil {
+		return f.childItems, nil
+	}
+	return make(map[string][]map[string]any), nil
 }
 
 func (f *fakeExtractor) OriginNow(_ context.Context) (time.Time, error) {
@@ -520,7 +542,7 @@ func TestSyncCorantes_mergesPrice(t *testing.T) {
 			},
 		},
 		maxDA: map[string]time.Time{
-			"corantes":     maxDA,
+			"corantes":      maxDA,
 			"preco_corante": maxDA,
 		},
 	}
@@ -566,7 +588,7 @@ func TestSyncCorantes_precoOnlyDelta(t *testing.T) {
 	maxDA := time.Now()
 	ex := &fakeExtractor{
 		rows: map[string][]map[string]any{
-			"corantes":     {},
+			"corantes": {},
 			"preco_corante": {
 				{"id_corante": "C002", "custo": 5.0, "volume_ml": 50.0},
 			},
@@ -596,6 +618,89 @@ func TestSyncCorantes_precoOnlyDelta(t *testing.T) {
 	item := list[0].(map[string]any)
 	if item["id_corante_sayersystem"] != "C002" {
 		t.Errorf("id_corante_sayersystem esperado 'C002', got %v", item["id_corante_sayersystem"])
+	}
+}
+
+// TestSyncCorantes_noPriceOmitsKeys prova (F6) que um corante cujo delta só mudou a
+// descrição (sem preço) NÃO carrega custo/volume_ml no payload — as chaves ficam
+// AUSENTES (não null/0), para o servidor não apagar o último preço bom.
+func TestSyncCorantes_noPriceOmitsKeys(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	st := &State{HWM: make(map[string]string)}
+	counts := make(map[string]int)
+	rm := newFakeMapping([]string{"corantes", "preco_corante"}, FormulaShapeFlat)
+
+	maxDA := time.Now()
+	ex := &fakeExtractor{
+		rows: map[string][]map[string]any{
+			// Só a descrição do corante mudou; preco_corante SEM delta para ele.
+			"corantes": {
+				{"id_corante": "C777", "descricao": "Novo nome"},
+			},
+			"preco_corante": {},
+		},
+		maxDA: map[string]time.Time{"corantes": maxDA},
+	}
+
+	if err := syncCorantes(context.Background(), ex, cli, st, counts, rm); err != nil {
+		t.Fatalf("syncCorantes falhou: %v", err)
+	}
+	if len(srv.requests) == 0 {
+		t.Fatal("nenhum POST recebido")
+	}
+	item := srv.requests[0].Body["corantes"].([]any)[0].(map[string]any)
+	if _, has := item["custo"]; has {
+		t.Errorf("custo deveria estar AUSENTE (sem preço no delta), got %v", item["custo"])
+	}
+	if _, has := item["volume_ml"]; has {
+		t.Errorf("volume_ml deveria estar AUSENTE (sem preço no delta), got %v", item["volume_ml"])
+	}
+	// A descrição (a mudança real) deve estar presente.
+	if item["descricao"] != "Novo nome" {
+		t.Errorf("descricao esperada 'Novo nome', got %v", item["descricao"])
+	}
+}
+
+// TestSyncCorantes_numericPriceAsString prova (F1) que custo/volume vindos como STRING
+// (caso real do pgx para numeric) são parseados e enviados — antes virava 0.
+func TestSyncCorantes_numericPriceAsString(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	st := &State{HWM: make(map[string]string)}
+	counts := make(map[string]int)
+	rm := newFakeMapping([]string{"corantes", "preco_corante"}, FormulaShapeFlat)
+
+	maxDA := time.Now()
+	ex := &fakeExtractor{
+		rows: map[string][]map[string]any{
+			"corantes": {
+				{"id_corante": "C001", "descricao": "Corante"},
+			},
+			"preco_corante": {
+				// custo/volume como STRING (numeric do PG via pgx stdlib).
+				{"id_corante": "C001", "custo": "12.50", "volume_ml": "100"},
+			},
+		},
+		maxDA: map[string]time.Time{"corantes": maxDA, "preco_corante": maxDA},
+	}
+
+	if err := syncCorantes(context.Background(), ex, cli, st, counts, rm); err != nil {
+		t.Fatalf("syncCorantes falhou: %v", err)
+	}
+	item := srv.requests[0].Body["corantes"].([]any)[0].(map[string]any)
+	// JSON numbers desserializam como float64.
+	if item["custo"] != 12.5 {
+		t.Errorf("custo esperado 12.5 (parseado da string), got %v (%T)", item["custo"], item["custo"])
+	}
+	if item["volume_ml"] != 100.0 {
+		t.Errorf("volume_ml esperado 100 (parseado da string), got %v", item["volume_ml"])
 	}
 }
 
@@ -654,7 +759,7 @@ func TestSyncFormulas_flat_personalizada_false(t *testing.T) {
 		maxDA: map[string]time.Time{"formula": maxDA},
 	}
 
-	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, nil, false)
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false)
 	if err != nil {
 		t.Fatalf("syncFormulas flat falhou: %v", err)
 	}
@@ -715,7 +820,7 @@ func TestSyncFormulas_flat_personalizada_true(t *testing.T) {
 		maxDA: map[string]time.Time{"formulaperson": maxDA},
 	}
 
-	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, nil, true)
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, true)
 	if err != nil {
 		t.Fatalf("syncFormulas personalizada falhou: %v", err)
 	}
@@ -742,9 +847,150 @@ func TestSyncFormulas_entityNotInMapping(t *testing.T) {
 	rm := newFakeMapping([]string{"produto"}, FormulaShapeFlat)
 
 	ex := newFakeExtractor()
-	_ = syncFormulas(context.Background(), ex, cli, st, counts, rm, nil, false)
+	_ = syncFormulas(context.Background(), ex, cli, st, counts, rm, false)
 	if postCount.Load() != 0 {
 		t.Error("entidade ausente não deve fazer POST")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// F5: shape child — itens juntados pela PK da fórmula (NÃO id_padraocor)
+// ─────────────────────────────────────────────────────────────
+
+// newChildFormulaMapping cria um ResolvedMapping shape=child com formula_pk resolvido.
+func newChildFormulaMapping(entity, pkCol string) *ResolvedMapping {
+	rm := newFakeMapping([]string{entity}, FormulaShapeChild)
+	rm.Resolved[entity]["formula_pk"] = pkCol
+	rm.ChildHasOrdem = true
+	return rm
+}
+
+func TestSyncFormulas_child_joinsItemsByFormulaPK(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	st := &State{HWM: make(map[string]string)}
+	counts := make(map[string]int)
+	rm := newChildFormulaMapping("formula", "id_formula")
+
+	maxDA := time.Now()
+	ex := &fakeExtractor{
+		rows: map[string][]map[string]any{
+			"formula": {
+				// id_padraocor (cor) != formula_pk (PK da fórmula). A junção DEVE usar a PK.
+				{
+					"id_padraocor": "COR_VERMELHO",
+					"formula_pk":   "F100",
+					"id_produto":   "P001",
+					"id_base":      "B01",
+					"id_emb":       "E01",
+				},
+				// Duas fórmulas com a MESMA cor mas PKs distintas — prova que juntar por
+				// id_padraocor traria os itens errados (todos para a mesma cor).
+				{
+					"id_padraocor": "COR_VERMELHO",
+					"formula_pk":   "F101",
+					"id_produto":   "P001",
+					"id_base":      "B02",
+					"id_emb":       "E01",
+				},
+			},
+		},
+		maxDA: map[string]time.Time{"formula": maxDA},
+		// Itens chaveados pela PK da fórmula (= formula_item.id_formula).
+		childItems: map[string][]map[string]any{
+			"F100": {
+				{"id_corante": "C1", "ordem": 1, "qtd_ml": 10.0},
+				{"id_corante": "C2", "ordem": 2, "qtd_ml": 5.0},
+			},
+			"F101": {
+				{"id_corante": "C9", "ordem": 1, "qtd_ml": 99.0},
+			},
+		},
+	}
+
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false); err != nil {
+		t.Fatalf("syncFormulas child falhou: %v", err)
+	}
+
+	// hasOrdem deve ter sido propagado.
+	if ex.childItemsHasOrdem == nil || !*ex.childItemsHasOrdem {
+		t.Errorf("ExtractFormulaChildItems deveria receber hasOrdem=true, got %v", ex.childItemsHasOrdem)
+	}
+
+	if len(srv.requests) == 0 {
+		t.Fatal("nenhum POST recebido")
+	}
+	list := srv.requests[0].Body["formulas"].([]any)
+	if len(list) != 2 {
+		t.Fatalf("esperava 2 fórmulas, got %d", len(list))
+	}
+
+	// Mapeia cada fórmula enviada pela combinação id_base (proxy da PK F100/F101).
+	byBase := map[string]map[string]any{}
+	for _, f := range list {
+		m := f.(map[string]any)
+		byBase[m["id_base"].(string)] = m
+	}
+
+	// F100 (id_base B01) deve ter 2 itens C1/C2 — provando junção pela PK, não pela cor.
+	f100 := byBase["B01"]
+	itens100, ok := f100["itens"].([]any)
+	if !ok {
+		t.Fatalf("F100: itens com tipo inesperado %T", f100["itens"])
+	}
+	if len(itens100) != 2 {
+		t.Errorf("F100: esperava 2 itens (C1,C2), got %d: %v", len(itens100), itens100)
+	}
+
+	// F101 (id_base B02) deve ter 1 item C9 — se a junção fosse por id_padraocor (mesma cor),
+	// ambas as fórmulas teriam os MESMOS itens (bug). Aqui cada uma tem os seus.
+	f101 := byBase["B02"]
+	itens101 := f101["itens"].([]any)
+	if len(itens101) != 1 {
+		t.Errorf("F101: esperava 1 item (C9), got %d: %v", len(itens101), itens101)
+	}
+	if len(itens101) == 1 {
+		it := itens101[0].(map[string]any)
+		if it["id_corante"] != "C9" {
+			t.Errorf("F101: item esperado C9, got %v", it["id_corante"])
+		}
+	}
+}
+
+func TestSyncFormulas_child_emptyItemsWhenPKHasNoChildren(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	st := &State{HWM: make(map[string]string)}
+	counts := make(map[string]int)
+	rm := newChildFormulaMapping("formula", "id_formula")
+
+	ex := &fakeExtractor{
+		rows: map[string][]map[string]any{
+			"formula": {
+				{"id_padraocor": "COR1", "formula_pk": "F500", "id_produto": "P1", "id_base": "B1", "id_emb": "E1"},
+			},
+		},
+		maxDA:      map[string]time.Time{"formula": time.Now()},
+		childItems: map[string][]map[string]any{ /* nenhum item para F500 */ },
+	}
+
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false); err != nil {
+		t.Fatalf("syncFormulas child falhou: %v", err)
+	}
+	list := srv.requests[0].Body["formulas"].([]any)
+	m := list[0].(map[string]any)
+	itens, ok := m["itens"].([]any)
+	if !ok && m["itens"] != nil {
+		t.Fatalf("itens com tipo inesperado %T", m["itens"])
+	}
+	if len(itens) != 0 {
+		t.Errorf("fórmula sem itens na filha deve ter itens=[], got %v", itens)
 	}
 }
 
@@ -758,8 +1004,8 @@ func TestSendKeysSnapshot_correctFormat(t *testing.T) {
 	defer ts.Close()
 
 	cfg := &Config{
-		AppURL:       ts.URL,
-		StoreCode:    "loja-test",
+		AppURL:        ts.URL,
+		StoreCode:     "loja-test",
 		TokenPlainDev: "tok-test",
 	}
 
@@ -785,6 +1031,24 @@ func TestSendKeysSnapshot_correctFormat(t *testing.T) {
 		t.Errorf("path esperado /keys-snapshot, got %s", req.Path)
 	}
 
+	// F2: a edge EXIGE todos estes campos do contrato — 400 sem eles.
+	if ent, _ := req.Body["entity"].(string); ent != "formulas" {
+		t.Errorf("entity esperado 'formulas', got %v", req.Body["entity"])
+	}
+	snapID, ok := req.Body["snapshot_id"].(string)
+	if !ok || snapID == "" {
+		t.Errorf("snapshot_id ausente/vazio no payload, got %v", req.Body["snapshot_id"])
+	}
+	if _, ok := req.Body["generated_at"]; !ok || req.Body["generated_at"] == nil {
+		t.Error("generated_at ausente no payload do keys-snapshot")
+	}
+	if _, ok := req.Body["total_chunks"]; !ok {
+		t.Error("total_chunks ausente no payload do keys-snapshot")
+	}
+	if _, ok := req.Body["chunk_index"]; !ok {
+		t.Error("chunk_index ausente no payload do keys-snapshot")
+	}
+
 	keysRaw, ok := req.Body["keys"]
 	if !ok {
 		t.Fatal("payload não contém 'keys'")
@@ -794,20 +1058,94 @@ func TestSendKeysSnapshot_correctFormat(t *testing.T) {
 		t.Errorf("esperava 2 chaves, got %d", len(keysList))
 	}
 
-	// Verifica o formato "cor_id|cod_produto|id_base|id_emb|personalizada".
+	// F3: formato de 4 partes "cor_id|cod_produto|id_base|personalizada" (SEM id_emb).
 	k1 := keysList[0].(string)
-	if k1 != "C1|P1|B1|E1|false" {
-		t.Errorf("chave[0] inesperada: %q", k1)
+	if k1 != "C1|P1|B1|false" {
+		t.Errorf("chave[0] esperada 'C1|P1|B1|false' (4 partes, sem embalagem), got %q", k1)
 	}
 	k2 := keysList[1].(string)
-	if k2 != "C2|P2|B2|E2|true" {
-		t.Errorf("chave[1] inesperada: %q", k2)
+	if k2 != "C2|P2|B2|true" {
+		t.Errorf("chave[1] esperada 'C2|P2|B2|true' (4 partes, sem embalagem), got %q", k2)
+	}
+}
+
+// TestSendKeysSnapshot_dedupsSourceFormulaAcrossEmbalagens prova que a mesma fórmula
+// fonte em múltiplas embalagens colapsa numa única chave de 4 partes (F3).
+func TestSendKeysSnapshot_dedupsSourceFormulaAcrossEmbalagens(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg := &Config{AppURL: ts.URL, StoreCode: "loja-test", TokenPlainDev: "tok-test"}
+	originNow := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	ex := &fakeExtractor{
+		formulas: []formulaKey{
+			// Mesma (cor,prod,base,personalizada=false), embalagens diferentes → 1 chave.
+			{CorID: "C1", CodProduto: "P1", IDBase: "B1", IDEmb: "E1", Personalizada: false},
+			{CorID: "C1", CodProduto: "P1", IDBase: "B1", IDEmb: "E2", Personalizada: false},
+			{CorID: "C1", CodProduto: "P1", IDBase: "B1", IDEmb: "E3", Personalizada: false},
+			// Personalizada=true da mesma cor/prod/base → chave distinta.
+			{CorID: "C1", CodProduto: "P1", IDBase: "B1", IDEmb: "E1", Personalizada: true},
+		},
+		originNow: originNow,
 	}
 
-	// Verifica generated_at.
-	genAt, ok := req.Body["generated_at"]
-	if !ok || genAt == nil {
-		t.Error("generated_at ausente no payload do keys-snapshot")
+	if err := sendKeysSnapshot(context.Background(), cfg, ex, originNow); err != nil {
+		t.Fatalf("sendKeysSnapshot falhou: %v", err)
+	}
+	keysList := srv.requests[0].Body["keys"].([]any)
+	if len(keysList) != 2 {
+		t.Fatalf("esperava 2 chaves após dedup (3 embalagens colapsam em 1 + a personalizada), got %d: %v", len(keysList), keysList)
+	}
+	got := map[string]bool{}
+	for _, k := range keysList {
+		got[k.(string)] = true
+	}
+	if !got["C1|P1|B1|false"] {
+		t.Error("faltou a chave da fórmula padrão deduplicada 'C1|P1|B1|false'")
+	}
+	if !got["C1|P1|B1|true"] {
+		t.Error("faltou a chave da fórmula personalizada 'C1|P1|B1|true'")
+	}
+}
+
+// TestSendKeysSnapshot_snapshotIDStableAcrossChunks prova que todos os chunks de um
+// mesmo snapshot diário compartilham o MESMO snapshot_id (F2 — a edge agrupa por ele).
+func TestSendKeysSnapshot_snapshotIDStableAcrossChunks(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg := &Config{AppURL: ts.URL, StoreCode: "loja-test", TokenPlainDev: "tok-test"}
+	// 60000 chaves DISTINTAS (CorID único) → 2 chunks após dedup.
+	formulas := make([]formulaKey, 60000)
+	for i := range formulas {
+		formulas[i] = formulaKey{
+			CorID:      "C" + strconv.Itoa(i),
+			CodProduto: "P",
+			IDBase:     "B",
+			IDEmb:      "E1",
+		}
+	}
+	ex := &fakeExtractor{formulas: formulas, originNow: time.Now()}
+
+	if err := sendKeysSnapshot(context.Background(), cfg, ex, time.Now()); err != nil {
+		t.Fatalf("sendKeysSnapshot falhou: %v", err)
+	}
+	if len(srv.requests) != 2 {
+		t.Fatalf("esperava 2 chunks, got %d", len(srv.requests))
+	}
+	id0, _ := srv.requests[0].Body["snapshot_id"].(string)
+	id1, _ := srv.requests[1].Body["snapshot_id"].(string)
+	if id0 == "" || id1 == "" {
+		t.Fatalf("snapshot_id vazio: chunk0=%q chunk1=%q", id0, id1)
+	}
+	if id0 != id1 {
+		t.Errorf("snapshot_id deve ser IGUAL entre chunks do mesmo snapshot: chunk0=%q chunk1=%q", id0, id1)
+	}
+	// total_chunks coerente.
+	if tc, _ := srv.requests[0].Body["total_chunks"].(float64); int(tc) != 2 {
+		t.Errorf("total_chunks esperado 2, got %v", srv.requests[0].Body["total_chunks"])
 	}
 }
 
@@ -826,16 +1164,17 @@ func TestSendKeysSnapshot_chunksLargePayload(t *testing.T) {
 	defer ts.Close()
 
 	cfg := &Config{
-		AppURL:       ts.URL,
-		StoreCode:    "loja-test",
+		AppURL:        ts.URL,
+		StoreCode:     "loja-test",
 		TokenPlainDev: "tok-test",
 	}
 
-	// Gera 60000 chaves → deve gerar 2 chunks (50000 + 10000).
+	// Gera 60000 chaves DISTINTAS → deve gerar 2 chunks (50000 + 10000).
+	// (CorID único: após o dedup do F3, chaves iguais colapsariam.)
 	formulas := make([]formulaKey, 60000)
 	for i := range formulas {
 		formulas[i] = formulaKey{
-			CorID:      "C",
+			CorID:      "C" + strconv.Itoa(i),
 			CodProduto: "P",
 			IDBase:     "B",
 			IDEmb:      "E",
@@ -865,8 +1204,8 @@ func TestSendKeysSnapshot_emptyFormulas(t *testing.T) {
 	defer ts.Close()
 
 	cfg := &Config{
-		AppURL:       ts.URL,
-		StoreCode:    "loja-test",
+		AppURL:        ts.URL,
+		StoreCode:     "loja-test",
 		TokenPlainDev: "tok-test",
 	}
 
@@ -925,6 +1264,63 @@ func TestMapEmbalagem_includesVolume(t *testing.T) {
 	}
 	if m["volume_ml"] == nil {
 		t.Error("volume_ml ausente")
+	}
+}
+
+// TestMapEmbalagem_volumeAsString prova (F1) que volume numeric vindo como string vira número.
+func TestMapEmbalagem_volumeAsString(t *testing.T) {
+	m := mapEmbalagem(map[string]any{"id_emb": "E01", "descricao": "Lata", "volume_ml": "900"})
+	if m["volume_ml"] != 900.0 {
+		t.Errorf("volume_ml esperado 900 (parseado da string), got %v (%T)", m["volume_ml"], m["volume_ml"])
+	}
+}
+
+// TestMapEmbalagem_volumeMissingOmitsKey prova que volume ausente/inválido OMITE a chave
+// (não envia 0 — 0 quebraria a regra de 3 no servidor).
+func TestMapEmbalagem_volumeMissingOmitsKey(t *testing.T) {
+	m := mapEmbalagem(map[string]any{"id_emb": "E01", "descricao": "Lata"}) // sem volume_ml
+	if _, has := m["volume_ml"]; has {
+		t.Errorf("volume_ml deveria estar ausente quando não há valor, got %v", m["volume_ml"])
+	}
+	mBad := mapEmbalagem(map[string]any{"id_emb": "E02", "descricao": "X", "volume_ml": "abc"})
+	if _, has := mBad["volume_ml"]; has {
+		t.Errorf("volume_ml deveria estar ausente quando não-parseável, got %v", mBad["volume_ml"])
+	}
+}
+
+// TestMapPrecoBaseEmb_numericAsStringAndOmission cobre (F1+F6) custo/imposto/margem como
+// string (parseados) e ausentes (chaves omitidas, degradação honesta de preço).
+func TestMapPrecoBaseEmb_numericAsStringAndOmission(t *testing.T) {
+	// Todos os campos como string numérica.
+	m := mapPrecoBaseEmb(map[string]any{
+		"id_produto": "P1", "id_base": "B1", "id_emb": "E1",
+		"custo": "10.5", "imposto": "0.18", "margem": "0.30",
+	})
+	if m == nil {
+		t.Fatal("mapPrecoBaseEmb nil para linha completa")
+	}
+	if m["custo"] != 10.5 {
+		t.Errorf("custo esperado 10.5, got %v", m["custo"])
+	}
+	if m["imposto_pct"] != 0.18 {
+		t.Errorf("imposto_pct esperado 0.18, got %v", m["imposto_pct"])
+	}
+	if m["margem_pct"] != 0.30 {
+		t.Errorf("margem_pct esperado 0.30, got %v", m["margem_pct"])
+	}
+
+	// Sem custo/imposto/margem → chaves omitidas (mas chave do SKU presente).
+	m2 := mapPrecoBaseEmb(map[string]any{"id_produto": "P1", "id_base": "B1", "id_emb": "E1"})
+	if m2 == nil {
+		t.Fatal("mapPrecoBaseEmb não deve ser nil só por faltar preço (chave do SKU existe)")
+	}
+	for _, k := range []string{"custo", "imposto_pct", "margem_pct"} {
+		if _, has := m2[k]; has {
+			t.Errorf("%s deveria estar ausente quando não há valor, got %v", k, m2[k])
+		}
+	}
+	if m2["cod_produto"] != "P1" {
+		t.Errorf("cod_produto esperado 'P1', got %v", m2["cod_produto"])
 	}
 }
 
@@ -1011,7 +1407,7 @@ func TestSyncFormulas_formulaContainsNomCorAndVolume(t *testing.T) {
 		embVolumes: map[string]float64{"E01": 900.0},
 	}
 
-	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, nil, false)
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false)
 	if err != nil {
 		t.Fatalf("syncFormulas falhou: %v", err)
 	}
@@ -1061,7 +1457,7 @@ func TestSyncFormulas_missingIdBaseDropped(t *testing.T) {
 		maxDA: map[string]time.Time{"formula": maxDA},
 	}
 
-	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, nil, false)
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false)
 	if err != nil {
 		t.Fatalf("syncFormulas falhou: %v", err)
 	}
@@ -1183,8 +1579,8 @@ func TestRunEntityCycles_happyPath(t *testing.T) {
 	defer ts.Close()
 
 	cfg := &Config{
-		AppURL:       ts.URL,
-		StoreCode:    "loja",
+		AppURL:        ts.URL,
+		StoreCode:     "loja",
 		TokenPlainDev: "tok",
 	}
 	st := &State{HWM: make(map[string]string)}
@@ -1230,9 +1626,12 @@ func TestRunEntityCycles_happyPath(t *testing.T) {
 		},
 	}
 
-	counts, err := runEntityCycles(context.Background(), cfg, ex, rm, st, nil)
+	counts, failed, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
 	if err != nil {
 		t.Fatalf("runEntityCycles falhou: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("happy path não deve ter entidades falhas, got %v", failed)
 	}
 
 	// Deve ter enviado POSTs.
@@ -1286,8 +1685,148 @@ func TestRunEntityCycles_noToken(t *testing.T) {
 	rm := newFakeMapping([]string{"produto"}, FormulaShapeFlat)
 	ex := newFakeExtractor()
 
-	_, err := runEntityCycles(context.Background(), cfg, ex, rm, st, nil)
+	_, _, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
 	if err == nil {
 		t.Error("sem token deve retornar erro")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// F7: falha parcial NÃO pode reportar verde
+// ─────────────────────────────────────────────────────────────
+
+// TestRunEntityCycles_aggregatesPartialFailures prova que uma entidade com erro
+// entra em `failed` (sem abortar as outras) em vez de ser engolida silenciosamente.
+func TestRunEntityCycles_aggregatesPartialFailures(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(AgentResponse{OK: true})
+	}))
+	defer ts.Close()
+
+	cfg := &Config{AppURL: ts.URL, StoreCode: "loja", TokenPlainDev: "tok"}
+	st := &State{HWM: make(map[string]string)}
+	rm := newFakeMapping([]string{"produto", "base", "corantes", "preco_corante", "formula"}, FormulaShapeFlat)
+	maxDA := time.Now()
+
+	ex := &fakeExtractor{
+		rows: map[string][]map[string]any{
+			"produto": {{"id_produto": "P1", "descricao": "Tinta"}},
+			"formula": {{"id_padraocor": "PC1", "id_produto": "P1", "id_base": "B1", "id_emb": "E1"}},
+		},
+		maxDA: map[string]time.Time{"produto": maxDA, "formula": maxDA},
+		// base e corantes falham na extração.
+		errByEntity: map[string]error{
+			"base":     errTest("boom base"),
+			"corantes": errTest("boom corantes"),
+		},
+	}
+
+	counts, failed, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
+	if err != nil {
+		t.Fatalf("erro fatal inesperado: %v", err)
+	}
+	// produto/formula devem ter ido apesar das falhas (não-aborto).
+	if counts["produto"] == 0 {
+		t.Error("produto deveria ter sido enviado mesmo com base/corantes falhando")
+	}
+	// base e corantes devem aparecer em failed.
+	failedSet := map[string]bool{}
+	for _, f := range failed {
+		failedSet[f] = true
+	}
+	if !failedSet["base"] {
+		t.Errorf("'base' deveria estar em failed, got %v", failed)
+	}
+	if !failedSet["corantes"] {
+		t.Errorf("'corantes' deveria estar em failed, got %v", failed)
+	}
+	if failedSet["produto"] {
+		t.Errorf("'produto' NÃO deveria estar em failed, got %v", failed)
+	}
+}
+
+// TestBuildHeartbeat_andSerialize_carriesLastCycleErrors prova que as entidades
+// falhas viajam no heartbeat (campo last_cycle_errors) — a tela mostra "verde com
+// ressalva" em vez de falso-sucesso (F7).
+func TestHeartbeat_carriesLastCycleErrors(t *testing.T) {
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(AgentResponse{OK: true})
+	}))
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	hb := buildHeartbeat(&State{HWM: map[string]string{}}, true, "fp123", "")
+	hb.LastCycleCounts = map[string]int{"produto": 5}
+	hb.LastCycleErrors = []string{"base", "corantes"}
+
+	if err := cli.Heartbeat(context.Background(), hb); err != nil {
+		t.Fatalf("heartbeat falhou: %v", err)
+	}
+	errsRaw, ok := gotBody["last_cycle_errors"]
+	if !ok {
+		t.Fatalf("last_cycle_errors ausente no payload do heartbeat: %v", gotBody)
+	}
+	errsList, ok := errsRaw.([]any)
+	if !ok || len(errsList) != 2 {
+		t.Fatalf("last_cycle_errors esperava 2 entradas, got %v", errsRaw)
+	}
+	if errsList[0] != "base" || errsList[1] != "corantes" {
+		t.Errorf("last_cycle_errors inesperado: %v", errsList)
+	}
+}
+
+// TestHeartbeat_omitsEmptyLastCycleErrors prova que um ciclo limpo NÃO emite o campo
+// (omitempty) — a tela só destaca quando há ressalva real.
+func TestHeartbeat_omitsEmptyLastCycleErrors(t *testing.T) {
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(AgentResponse{OK: true})
+	}))
+	defer ts.Close()
+
+	cli := newTestClient(ts.URL)
+	hb := buildHeartbeat(&State{HWM: map[string]string{}}, true, "fp123", "")
+	hb.LastCycleCounts = map[string]int{"produto": 5}
+	// LastCycleErrors deixado nil.
+
+	if err := cli.Heartbeat(context.Background(), hb); err != nil {
+		t.Fatalf("heartbeat falhou: %v", err)
+	}
+	if _, ok := gotBody["last_cycle_errors"]; ok {
+		t.Errorf("ciclo limpo não deveria emitir last_cycle_errors, got %v", gotBody["last_cycle_errors"])
+	}
+}
+
+// errTest é um error simples para os testes de agregação.
+type errTestType string
+
+func (e errTestType) Error() string { return string(e) }
+func errTest(s string) error        { return errTestType(s) }
+
+// TestRunCycle_returnsFalseOnConnectFailure prova que RunCycle propaga falha como
+// false (→ `once` sai com exit != 0). PG inexistente = falha de conexão.
+func TestRunCycle_returnsFalseOnConnectFailure(t *testing.T) {
+	// Servidor que responde 200 na hora ao heartbeat best-effort (evita os 21s de
+	// retry/backoff do cliente quando o endpoint está fora do ar).
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(AgentResponse{OK: true})
+	}))
+	defer ts.Close()
+
+	cfg := &Config{
+		AppURL:        ts.URL,
+		StoreCode:     "loja",
+		TokenPlainDev: "tok",
+		// Porta de PG impossível → Connect falha rápido.
+		PGConn: "postgres://nouser:nopass@127.0.0.1:1/nodb?connect_timeout=1",
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if RunCycle(ctx, cfg) {
+		t.Error("RunCycle deveria retornar false quando não conecta ao PG")
 	}
 }

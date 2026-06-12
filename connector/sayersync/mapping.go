@@ -66,6 +66,12 @@ type ResolvedMapping struct {
 
 	// FlatFormulaCols mapeia "corante1..6" e "qtd1ml..6ml" para os nomes reais (flat shape).
 	FlatFormulaCols map[string]string // ex: "corante1" → "corante1", "qtd1ml" → "qtd1"
+
+	// ChildHasOrdem indica se a tabela filha formula_item tem a coluna "ordem"
+	// (detection só exige id_formula/id_corante/qtd_ml). Quando false, a extração
+	// dos itens não a seleciona (evita "column ordem does not exist") e deriva a
+	// ordem pela sequência de leitura. Só relevante no shape child.
+	ChildHasOrdem bool
 }
 
 // SchemaDiff descreve divergências entre o schema esperado e o real.
@@ -200,9 +206,16 @@ func expectedMappings() []TableMapping {
 			"id_emb":           col("id_emb"),
 			"id_subcolecao":    colOpt("id_subcolecao"),
 			"data_atualizacao": col("data_atualizacao"),
-			// Embalagem de formulação: volume da embalagem em que o laboratório faz a fórmula.
-			// A regra de 3 usa este volume para expandir para as embalagens vendáveis.
-			"id_embalagem": colOpt("id_embalagem"),
+			// F5: PK da fórmula — só usada no shape CHILD para juntar com formula_item.id_formula.
+			// Opcional porque o shape FLAT não precisa dela. A junção FALHA (itens vazios) se,
+			// no shape child, nenhum candidato resolver (ver guarda em syncFormulas).
+			"formula_pk": candidatesOpt("id_formula", "id", "codigo"),
+			// Embalagem de FORMULAÇÃO: volume da embalagem em que o laboratório faz a fórmula.
+			// A regra de 3 (no servidor) usa esse volume para expandir às embalagens vendáveis.
+			// F4: o nome real não é confirmado — a Dnaxis disse "id_embalagem" numa resposta e a
+			// lista de chaves trouxe "id_emb" em outra. Cobre ambos (+ id_embalagem_formulacao).
+			// ⚠️ Se "id_emb" e "id_embalagem" coexistirem na origem, Validate avisa (ambíguo).
+			"id_embalagem_formulacao": candidatesOpt("id_emb", "id_embalagem", "id_embalagem_formulacao"),
 		}},
 
 		// ── personcor ─────────────────────────────────────────────
@@ -219,16 +232,19 @@ func expectedMappings() []TableMapping {
 			"id_base":          col("id_base"),
 			"id_emb":           col("id_emb"),
 			"data_atualizacao": col("data_atualizacao"),
-			"id_embalagem":     colOpt("id_embalagem"),
+			// F4: embalagem de formulação (ver nota em "formula"); cobre id_emb/id_embalagem.
+			"id_embalagem_formulacao": candidatesOpt("id_emb", "id_embalagem", "id_embalagem_formulacao"),
+			// F5: PK da fórmula personalizada (shape child). Opcional (flat não usa).
+			"formula_pk": candidatesOpt("id_formulaperson", "id_formula", "id", "codigo"),
 		}},
 
 		// ── vendas e vendas_item (v2: mapeados para discovery, sem extração) ─────
 		{Table: "vendas", Columns: map[string]ColMapping{
-			"id_venda":    colOpt("id_venda"),
-			"data_venda":  colOpt("data_venda"),
-			"id_produto":  colOpt("id_produto"),
-			"id_base":     colOpt("id_base"),
-			"id_emb":      colOpt("id_emb"),
+			"id_venda":     colOpt("id_venda"),
+			"data_venda":   colOpt("data_venda"),
+			"id_produto":   colOpt("id_produto"),
+			"id_base":      colOpt("id_base"),
+			"id_emb":       colOpt("id_emb"),
 			"id_padraocor": colOpt("id_padraocor"),
 		}},
 		{Table: "vendas_item", Columns: map[string]ColMapping{
@@ -359,7 +375,28 @@ func Validate(ctx context.Context, db *sql.DB) (*ResolvedMapping, *SchemaDiff, e
 	rm.FormulaShape = detectFormulaShape(cols, rm)
 	diff.ExtraInfo["formula_shape"] = string(rm.FormulaShape)
 
+	// ── F4: ambiguidade da embalagem de formulação ───────────────
+	// A coluna de embalagem de formulação tem nome não-confirmado (id_emb vs id_embalagem).
+	// Se ambas existirem fisicamente em formula/formulaperson, NÃO dá pra saber qual é a
+	// vendável e qual é a de formulação só pelo nome → registra aviso (não falha o ciclo).
+	noteFormulationAmbiguity(cols, "formula", diff)
+	noteFormulationAmbiguity(cols, "formulaperson", diff)
+
 	return rm, diff, nil
+}
+
+// noteFormulationAmbiguity grava um aviso em SchemaDiff.ExtraInfo quando a tabela
+// tem AS DUAS colunas candidatas à embalagem de formulação (id_emb E id_embalagem),
+// caso em que a semântica (vendável × formulação) é ambígua e precisa de discovery.
+func noteFormulationAmbiguity(cols map[string]map[string]bool, table string, diff *SchemaDiff) {
+	tc, ok := cols[table]
+	if !ok {
+		return
+	}
+	if tc["id_emb"] && tc["id_embalagem"] {
+		diff.ExtraInfo[table+"_embalagem_ambigua"] =
+			"id_emb e id_embalagem coexistem; confirmar qual é a embalagem de formulação (regra de 3)"
+	}
 }
 
 // detectFormulaShape examina o schema para determinar se a tabela FORMULA
@@ -368,6 +405,8 @@ func detectFormulaShape(cols map[string]map[string]bool, rm *ResolvedMapping) Fo
 	// Primeiro tenta a tabela filha formula_item.
 	if fi, ok := cols["formula_item"]; ok && fi["id_formula"] && fi["id_corante"] && fi["qtd_ml"] {
 		// Tabela filha encontrada com as colunas obrigatórias.
+		// "ordem" é opcional (a extração deriva pela sequência se ausente).
+		rm.ChildHasOrdem = fi["ordem"]
 		return FormulaShapeChild
 	}
 

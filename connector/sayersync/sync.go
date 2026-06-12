@@ -57,16 +57,24 @@ type Extractor interface {
 	// embalagens, carregado uma vez por ciclo para enriquecer fórmulas.
 	ExtractAllEmbVolumes(ctx context.Context) (map[string]float64, error)
 
+	// ExtractFormulaChildItems retorna os itens da tabela filha formula_item,
+	// agregados por id_formula (= PK da fórmula no pai). hasOrdem indica se a
+	// coluna "ordem" existe na origem. Só usado no shape child.
+	ExtractFormulaChildItems(ctx context.Context, hasOrdem bool) (map[string][]map[string]any, error)
+
 	// OriginNow retorna o now() do PostgreSQL de origem (para comparações de data).
 	OriginNow(ctx context.Context) (time.Time, error)
 }
 
 // formulaKey é a chave de uma fórmula para o keys-snapshot.
+// IDEmb é extraído da origem mas NÃO entra na chave do snapshot (F3): a identidade
+// da fórmula fonte é (cor_id, cod_produto, id_base, personalizada) sem embalagem —
+// o servidor expande para N embalagens vendáveis. Mantido só para diagnóstico.
 type formulaKey struct {
-	CorID        string
-	CodProduto   string
-	IDBase       string
-	IDEmb        string
+	CorID         string
+	CodProduto    string
+	IDBase        string
+	IDEmb         string
 	Personalizada bool
 }
 
@@ -134,6 +142,10 @@ func (p *pgExtractor) ExtractAllEmbVolumes(ctx context.Context) (map[string]floa
 	return out, rows.Err()
 }
 
+func (p *pgExtractor) ExtractFormulaChildItems(ctx context.Context, hasOrdem bool) (map[string][]map[string]any, error) {
+	return ExtractFormulaChildItems(ctx, p.db, hasOrdem)
+}
+
 func (p *pgExtractor) OriginNow(ctx context.Context) (time.Time, error) {
 	var t time.Time
 	row := p.db.QueryRowContext(ctx, `SELECT now()`)
@@ -196,7 +208,11 @@ func extractAllFormulasForSnapshot(ctx context.Context, db *sql.DB) ([]formulaKe
 
 // RunCycle executa um ciclo completo de sync.
 // Se o schema divergir, grava sayersystem-schema.txt e envia heartbeat com schema_mismatch.
-func RunCycle(ctx context.Context, cfg *Config) {
+//
+// Retorna true SOMENTE se o ciclo foi totalmente bem-sucedido (conectou, schema OK e
+// nenhuma entidade/keys-snapshot falhou). Falha de conexão, schema-mismatch ou qualquer
+// entidade com erro → false (F7: o `once` propaga isso como exit code != 0).
+func RunCycle(ctx context.Context, cfg *Config) bool {
 	// Carrega estado persistido.
 	st, err := LoadState()
 	if err != nil {
@@ -209,7 +225,7 @@ func RunCycle(ctx context.Context, cfg *Config) {
 	if err != nil {
 		logger.Errorf("RunCycle: falha ao conectar ao PG: %v", err)
 		sendHeartbeatBestEffort(ctx, cfg, st, false, "", "")
-		return
+		return false
 	}
 	defer db.Close()
 
@@ -218,7 +234,7 @@ func RunCycle(ctx context.Context, cfg *Config) {
 	if err != nil {
 		logger.Errorf("RunCycle: erro ao validar schema: %v", err)
 		sendHeartbeatBestEffort(ctx, cfg, st, true, "", "")
-		return
+		return false
 	}
 	if !diff.OK {
 		mismatchStr := formatSchemaDiff(diff)
@@ -239,7 +255,7 @@ func RunCycle(ctx context.Context, cfg *Config) {
 				logger.Warnf("RunCycle: falha ao enviar heartbeat de schema_mismatch: %v", hbErr)
 			}
 		}
-		return
+		return false // schema-mismatch = ciclo NÃO bem-sucedido
 	}
 
 	fp := Fingerprint(rm)
@@ -260,43 +276,61 @@ func RunCycle(ctx context.Context, cfg *Config) {
 		clearAllHWM(st)
 	}
 
-	// Executa ciclo de sync por entidade.
-	counts, syncErr := runEntityCycles(ctx, cfg, ex, rm, st, db)
-	if syncErr != nil {
-		logger.Errorf("RunCycle: erro durante sync de entidades: %v", syncErr)
+	// Executa ciclo de sync por entidade. `failed` lista as entidades que erraram (F7).
+	counts, failed, fatalErr := runEntityCycles(ctx, cfg, ex, rm, st)
+	if fatalErr != nil {
+		// Erro fatal (ex: sem token) — não dá pra sincronizar nada.
+		logger.Errorf("RunCycle: erro fatal no ciclo de entidades: %v", fatalErr)
+		failed = append(failed, "fatal")
 	}
 
-	// Marca full re-scan como concluído (mesmo com erros parciais — o HWM foi zerado).
-	if needFullRescan {
-		st.LastFullRescan = originNow.Format(time.RFC3339)
-	}
-
-	// Keys-snapshot diário.
+	// Keys-snapshot diário. Falha aqui também conta como falha de ciclo (F7).
 	if shouldKeysSnapshot(st, originNow) {
 		if snapErr := sendKeysSnapshot(ctx, cfg, ex, originNow); snapErr != nil {
 			logger.Errorf("RunCycle: falha no keys-snapshot: %v", snapErr)
+			failed = append(failed, "keys_snapshot")
 		} else {
 			st.LastKeysSnapshot = originNow.Format(time.RFC3339)
+		}
+	}
+
+	success := len(failed) == 0
+
+	// F7: marca o full re-scan como concluído SOMENTE se TODAS as entidades passaram.
+	// Antes marcava mesmo com erro parcial → a rede de segurança semanal se perdia
+	// silenciosamente quando uma entidade falhava no domingo.
+	if needFullRescan {
+		if success {
+			st.LastFullRescan = originNow.Format(time.RFC3339)
+		} else {
+			logger.Warnf("RunCycle: full re-scan NÃO marcado como concluído — falhas em: %v (re-tenta no próximo domingo)", failed)
 		}
 	}
 
 	// Persiste estado.
 	if saveErr := SaveState(st); saveErr != nil {
 		logger.Errorf("RunCycle: falha ao salvar state: %v", saveErr)
+		success = false
 	}
 
-	// Heartbeat final.
+	// Heartbeat final — carrega contadores E as entidades que falharam (F7).
 	token, _ := cfg.Token()
 	if token != "" {
 		cli := NewClient(cfg.AppURL, token, cfg.StoreCode)
 		hb := buildHeartbeat(st, true, fp, "")
 		hb.LastCycleCounts = counts
+		hb.LastCycleErrors = failed
 		if hbErr := cli.Heartbeat(ctx, hb); hbErr != nil {
 			logger.Warnf("RunCycle: falha ao enviar heartbeat: %v", hbErr)
 		}
 	}
 
-	logger.Infof("RunCycle: concluído — %v", counts)
+	if success {
+		logger.Infof("RunCycle: concluído com sucesso — %v", counts)
+	} else {
+		logger.Warnf("RunCycle: concluído COM FALHAS em %v — %v", failed, counts)
+	}
+	return success
 }
 
 // runEntityCycles itera sobre todas as entidades e envia os deltas ao servidor.
@@ -307,15 +341,26 @@ func runEntityCycles(
 	ex Extractor,
 	rm *ResolvedMapping,
 	st *State,
-	db *sql.DB,
-) (map[string]int, error) {
-	token, err := cfg.Token()
-	if err != nil || token == "" {
-		return nil, fmt.Errorf("runEntityCycles: falha ao obter token: %v", err)
+) (counts map[string]int, failed []string, err error) {
+	token, tErr := cfg.Token()
+	if tErr != nil || token == "" {
+		// Sem token é falha FATAL do ciclo (não dá pra enviar nada).
+		return nil, nil, fmt.Errorf("runEntityCycles: falha ao obter token: %v", tErr)
 	}
 	cli := NewClient(cfg.AppURL, token, cfg.StoreCode)
 
-	counts := make(map[string]int)
+	counts = make(map[string]int)
+
+	// record agrega a falha de uma entidade (F7): em vez de só logar e seguir,
+	// o nome da entidade entra em `failed` → vira o campo `errors` do heartbeat,
+	// bloqueia o LastFullRescan e faz o `once` sair com código != 0.
+	record := func(entity string, e error) {
+		if e == nil {
+			return
+		}
+		logger.Warnf("sync %s: %v", entity, e)
+		failed = append(failed, entity)
+	}
 
 	// ──────────────────────────────────────────────────────────────
 	// Catálogos: produto, base, embalagens, produto_base_embalagem,
@@ -323,51 +368,25 @@ func runEntityCycles(
 	// ──────────────────────────────────────────────────────────────
 
 	// produto → campo "produtos" no payload /catalogs
-	if err := syncSimpleEntity(ctx, ex, cli, st, counts, rm, "produto", "produtos", mapProduto); err != nil {
-		logger.Warnf("sync produto: %v", err)
-	}
-
+	record("produto", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "produto", "produtos", mapProduto))
 	// base → "bases"
-	if err := syncSimpleEntity(ctx, ex, cli, st, counts, rm, "base", "bases", mapBase); err != nil {
-		logger.Warnf("sync base: %v", err)
-	}
-
+	record("base", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "base", "bases", mapBase))
 	// embalagens → "embalagens"
-	if err := syncSimpleEntity(ctx, ex, cli, st, counts, rm, "embalagens", "embalagens", mapEmbalagem); err != nil {
-		logger.Warnf("sync embalagens: %v", err)
-	}
-
+	record("embalagens", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "embalagens", "embalagens", mapEmbalagem))
 	// produto_base_embalagem → "skus"
-	if err := syncSimpleEntity(ctx, ex, cli, st, counts, rm, "produto_base_embalagem", "skus", mapSku); err != nil {
-		logger.Warnf("sync produto_base_embalagem: %v", err)
-	}
-
-	// corantes merged com preco_corante → "corantes" + "precos_base" serão separados abaixo
-	if err := syncCorantes(ctx, ex, cli, st, counts, rm); err != nil {
-		logger.Warnf("sync corantes: %v", err)
-	}
-
+	record("produto_base_embalagem", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "produto_base_embalagem", "skus", mapSku))
+	// corantes merged com preco_corante
+	record("corantes", syncCorantes(ctx, ex, cli, st, counts, rm))
 	// preco_baseemb → "precos_base"
-	if err := syncSimpleEntity(ctx, ex, cli, st, counts, rm, "preco_baseemb", "precos_base", mapPrecoBaseEmb); err != nil {
-		logger.Warnf("sync preco_baseemb: %v", err)
-	}
+	record("preco_baseemb", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "preco_baseemb", "precos_base", mapPrecoBaseEmb))
 
 	// ──────────────────────────────────────────────────────────────
 	// Auxiliares de fórmulas: padracor, colecao, subcolecao
-	// (padracor / personcor são LOOKUP pelas fórmulas — enviados como catálogo de cores)
 	// ──────────────────────────────────────────────────────────────
 
-	if err := syncSimpleEntity(ctx, ex, cli, st, counts, rm, "padracor", "padracores", mapPadracor); err != nil {
-		logger.Warnf("sync padracor: %v", err)
-	}
-
-	if err := syncSimpleEntity(ctx, ex, cli, st, counts, rm, "colecao", "colecoes", mapColecao); err != nil {
-		logger.Warnf("sync colecao: %v", err)
-	}
-
-	if err := syncSimpleEntity(ctx, ex, cli, st, counts, rm, "subcolecao", "subcolecoes", mapSubcolecao); err != nil {
-		logger.Warnf("sync subcolecao: %v", err)
-	}
+	record("padracor", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "padracor", "padracores", mapPadracor))
+	record("colecao", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "colecao", "colecoes", mapColecao))
+	record("subcolecao", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "subcolecao", "subcolecoes", mapSubcolecao))
 
 	// ──────────────────────────────────────────────────────────────
 	// Fórmulas: formula (personalizada=false), personcor (lookup),
@@ -375,22 +394,11 @@ func runEntityCycles(
 	// Ordem do spec §5.3: ..., subcolecao, formula, personcor, formulaperson
 	// ──────────────────────────────────────────────────────────────
 
-	// formula (padrão)
-	if err := syncFormulas(ctx, ex, cli, st, counts, rm, db, false); err != nil {
-		logger.Warnf("sync formula: %v", err)
-	}
+	record("formula", syncFormulas(ctx, ex, cli, st, counts, rm, false))
+	record("personcor", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "personcor", "personcores", mapPersoncor))
+	record("formulaperson", syncFormulas(ctx, ex, cli, st, counts, rm, true))
 
-	// personcor: lookup de nomes para fórmulas personalizadas (após formula, antes formulaperson)
-	if err := syncSimpleEntity(ctx, ex, cli, st, counts, rm, "personcor", "personcores", mapPersoncor); err != nil {
-		logger.Warnf("sync personcor: %v", err)
-	}
-
-	// formulaperson (personalizada)
-	if err := syncFormulas(ctx, ex, cli, st, counts, rm, db, true); err != nil {
-		logger.Warnf("sync formulaperson: %v", err)
-	}
-
-	return counts, nil
+	return counts, failed, nil
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -516,10 +524,15 @@ func syncCorantes(
 		return fmt.Errorf("syncCorantes: extract preco_corante: %w", err)
 	}
 
-	// Constrói lookup de preços: id_corante → {custo, volume_ml}
+	// Constrói lookup de preços: id_corante → {custo, volume_ml} + flags de presença.
+	// F6: custo/volume só entram no payload quando o valor REALMENTE existe (parseável);
+	// numeric do PG chega como string → toFloat64OK. Ausente ≠ 0 (não apaga preço bom
+	// no servidor, que lê o último valor NÃO-NULL).
 	type precoInfo struct {
-		custo    float64
-		volumeML float64
+		custo       float64
+		hasCusto    bool
+		volumeML    float64
+		hasVolumeML bool
 	}
 	precoMap := make(map[string]precoInfo, len(rowsPreco))
 	for _, row := range rowsPreco {
@@ -527,9 +540,13 @@ func syncCorantes(
 		if id == "" {
 			continue
 		}
+		custo, hasCusto := toFloat64OK(row["custo"])
+		vol, hasVol := toFloat64OK(row["volume_ml"])
 		precoMap[id] = precoInfo{
-			custo:    toFloat64(row["custo"]),
-			volumeML: toFloat64(row["volume_ml"]),
+			custo:       custo,
+			hasCusto:    hasCusto,
+			volumeML:    vol,
+			hasVolumeML: hasVol,
 		}
 	}
 
@@ -549,9 +566,14 @@ func syncCorantes(
 		if m == nil {
 			continue
 		}
+		// F6: só adiciona a chave quando o valor existe (não envia null/zero por falta de dado).
 		if p, ok := precoMap[id]; ok {
-			m["custo"] = p.custo
-			m["volume_ml"] = p.volumeML
+			if p.hasCusto {
+				m["custo"] = p.custo
+			}
+			if p.hasVolumeML {
+				m["volume_ml"] = p.volumeML
+			}
 		}
 		merged = append(merged, m)
 	}
@@ -567,13 +589,20 @@ func syncCorantes(
 		if corInDelta[id] {
 			continue // já incluído acima
 		}
-		// Envia somente o id + preços (servidor faz upsert parcial).
+		if id == "" {
+			continue
+		}
+		// Envia somente o id + preços presentes (servidor faz upsert parcial).
+		// F6: omite custo/volume ausentes em vez de mandar null/zero.
 		p := precoMap[id]
-		merged = append(merged, map[string]any{
-			"id_corante_sayersystem": id,
-			"custo":                  p.custo,
-			"volume_ml":              p.volumeML,
-		})
+		row := map[string]any{"id_corante_sayersystem": id}
+		if p.hasCusto {
+			row["custo"] = p.custo
+		}
+		if p.hasVolumeML {
+			row["volume_ml"] = p.volumeML
+		}
+		merged = append(merged, row)
 	}
 
 	if len(merged) == 0 {
@@ -637,7 +666,6 @@ func syncFormulas(
 	st *State,
 	counts map[string]int,
 	rm *ResolvedMapping,
-	db *sql.DB,
 	personalizada bool,
 ) error {
 	entity := "formula"
@@ -673,8 +701,17 @@ func syncFormulas(
 
 	// Para shape=child: enriquece com itens da tabela filha.
 	var childItems map[string][]map[string]any
+	pkResolved := false
 	if rm.FormulaShape == FormulaShapeChild {
-		childItems, err = ExtractFormulaChildItems(ctx, db)
+		// F5: a junção é pela PK da fórmula (= formula_item.id_formula), NÃO pelo id_padraocor.
+		// id_padraocor é a COR (1 cor → N fórmulas), então juntar por ele traria itens errados
+		// ou nenhum. A PK foi resolvida no mapeamento (formula_pk via candidatos id_formula|id|codigo).
+		_, pkResolved = rm.Resolved[entity]["formula_pk"]
+		if !pkResolved {
+			logger.Warnf("syncFormulas %s: shape=child mas a PK da fórmula (formula_pk) não resolveu — "+
+				"itens NÃO serão anexados; rode 'discovery' e ajuste os candidatos de formula_pk", entity)
+		}
+		childItems, err = ex.ExtractFormulaChildItems(ctx, rm.ChildHasOrdem)
 		if err != nil {
 			return fmt.Errorf("syncFormulas %s: ExtractFormulaChildItems: %w", entity, err)
 		}
@@ -689,9 +726,9 @@ func syncFormulas(
 			dropped++
 			continue
 		}
-		// Para shape=child: injeta os itens.
+		// Para shape=child: injeta os itens, juntando pela PK da fórmula (F5).
 		if rm.FormulaShape == FormulaShapeChild {
-			idFormula := toString(row["id_padraocor"]) // chave de junção
+			idFormula := toString(row["formula_pk"]) // chave de junção = PK da fórmula
 			if items, ok := childItems[idFormula]; ok {
 				m["itens"] = items
 			} else {
@@ -771,7 +808,17 @@ func clearAllHWM(st *State) {
 }
 
 // sendKeysSnapshot envia um snapshot completo de todas as chaves de fórmulas.
-// Formato de cada linha: "cor_id|cod_produto|id_base|id_emb|personalizada".
+//
+// F3 (mudança de CONTRATO coordenada com o servidor): a chave é a IDENTIDADE DA
+// FÓRMULA FONTE, SEM embalagem — "cor_id|cod_produto|id_base|personalizada" (4 partes).
+// O servidor expande UMA fórmula fonte em N embalagens vendáveis (cada uma vira uma
+// linha oficial com id_embalagem diferente); uma chave por-embalagem JAMAIS casaria
+// com a fonte → a deleção por blast-radius abortaria (ou desativaria a loja inteira).
+// O servidor (corrigido em paralelo) deriva a mesma chave de 4 partes das linhas oficiais.
+//
+// F2: o payload inclui `entity:"formulas"` + `snapshot_id` (uuid v4, MESMO valor em
+// todos os chunks do mesmo snapshot diário) — campos que a edge EXIGE (400 sem eles).
+//
 // Enviado em chunks de ≤50000 linhas.
 func sendKeysSnapshot(
 	ctx context.Context,
@@ -791,16 +838,27 @@ func sendKeysSnapshot(
 		return fmt.Errorf("sendKeysSnapshot: extract: %w", err)
 	}
 
-	// Serializa as chaves como strings "cor_id|cod_produto|id_base|id_emb|personalizada".
+	// Serializa as chaves como strings "cor_id|cod_produto|id_base|personalizada"
+	// (4 partes — SEM embalagem; ver F3 acima). Deduplica: a mesma fórmula fonte
+	// pode aparecer em várias linhas de embalagem na origem, mas a chave colapsa.
+	seen := make(map[string]struct{}, len(keys))
 	lines := make([]string, 0, len(keys))
 	for _, k := range keys {
 		personStr := "false"
 		if k.Personalizada {
 			personStr = "true"
 		}
-		lines = append(lines, fmt.Sprintf("%s|%s|%s|%s|%s",
-			k.CorID, k.CodProduto, k.IDBase, k.IDEmb, personStr))
+		line := fmt.Sprintf("%s|%s|%s|%s", k.CorID, k.CodProduto, k.IDBase, personStr)
+		if _, dup := seen[line]; dup {
+			continue
+		}
+		seen[line] = struct{}{}
+		lines = append(lines, line)
 	}
+
+	// snapshot_id: 1 uuid por snapshot diário, IGUAL em todos os chunks (a edge agrupa
+	// os chunks por snapshot_id pra montar o conjunto completo antes de aplicar a deleção).
+	snapshotID := uuid.New().String()
 
 	// Obtém o generated_at do PG de origem (não do clock do conector).
 	generatedAt := originNow.Format(time.RFC3339)
@@ -817,13 +875,17 @@ func sendKeysSnapshot(
 		if end > len(lines) {
 			end = len(lines)
 		}
-		var chunk []string
+		// keys precisa ser um array JSON (nunca null) mesmo no snapshot vazio —
+		// a edge valida Array.isArray(keys).
+		chunk := []string{}
 		if start < len(lines) {
 			chunk = lines[start:end]
 		}
 
 		isLast := chunkIdx == totalChunks-1
 		payload := map[string]any{
+			"entity":        "formulas",
+			"snapshot_id":   snapshotID,
 			"generated_at":  generatedAt,
 			"chunk_index":   chunkIdx,
 			"total_chunks":  totalChunks,
@@ -839,7 +901,7 @@ func sendKeysSnapshot(
 		if ar != nil && !ar.OK && ar.ErrorCount > 0 {
 			logger.Warnf("sendKeysSnapshot chunk %d/%d: %d erro(s)", chunkIdx+1, totalChunks, ar.ErrorCount)
 		}
-		logger.Infof("sendKeysSnapshot: chunk %d/%d enviado (%d chaves)", chunkIdx+1, totalChunks, len(chunk))
+		logger.Infof("sendKeysSnapshot: chunk %d/%d enviado (%d chaves, snapshot_id=%s)", chunkIdx+1, totalChunks, len(chunk), snapshotID)
 	}
 
 	return nil
@@ -877,11 +939,16 @@ func mapEmbalagem(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
-	return map[string]any{
+	m := map[string]any{
 		"id_embalagem_sayersystem": id,
 		"descricao":                toString(row["descricao"]),
-		"volume_ml":                toFloat64(row["volume_ml"]),
 	}
+	// volume_ml (numeric→string): só envia se parseável. Ausente ≠ 0 — 0 quebraria
+	// a regra de 3 da expansão no servidor (divisão pelo volume da embalagem).
+	if vol, ok := toFloat64OK(row["volume_ml"]); ok {
+		m["volume_ml"] = vol
+	}
+	return m
 }
 
 func mapSku(row map[string]any) map[string]any {
@@ -916,14 +983,23 @@ func mapPrecoBaseEmb(row map[string]any) map[string]any {
 	if prod == "" || base == "" || emb == "" {
 		return nil
 	}
-	return map[string]any{
+	m := map[string]any{
 		"cod_produto":  prod,
 		"id_base":      base,
 		"id_embalagem": emb,
-		"custo":        toFloat64(row["custo"]),
-		"imposto_pct":  toFloat64(row["imposto"]),
-		"margem_pct":   toFloat64(row["margem"]),
 	}
+	// custo/imposto/margem (numeric→string): só envia o que é parseável.
+	// Ausente ≠ 0 — degradação honesta de preço (servidor → preco_final NULL).
+	if custo, ok := toFloat64OK(row["custo"]); ok {
+		m["custo"] = custo
+	}
+	if imp, ok := toFloat64OK(row["imposto"]); ok {
+		m["imposto_pct"] = imp
+	}
+	if mrg, ok := toFloat64OK(row["margem"]); ok {
+		m["margem_pct"] = mrg
+	}
+	return m
 }
 
 func mapPadracor(row map[string]any) map[string]any {
