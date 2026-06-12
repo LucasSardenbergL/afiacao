@@ -466,4 +466,47 @@ else
 fi
 
 echo ""
-echo "✅ test-kb-fundacao-casamento: todos os asserts passaram (A1..A8)"
+echo "→ ASSERT A9 — NFKC: ligadura ﬀ (U+FB00) é expandida pra 'ff' antes de upper:"
+P -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE
+  v_norm text;
+  v_id   uuid;
+BEGIN
+  -- U+FB00 (ﬀ) é uma ligadura "ff"; normalize(…, NFKC) expande pra 'ff'; upper → 'FF'.
+  -- Sem o NFKC, a ligadura sobreviveria ao upper e o normalized seria algo diferente de 'FF20.6827.00'.
+  INSERT INTO public.kb_product_specs (supplier, product_code, product_name)
+  VALUES ('sayerlack', E'ﬀ20.6827.00', 'nfkc')
+  RETURNING id, product_code_normalized INTO v_id, v_norm;
+
+  IF v_norm <> 'FF20.6827.00' THEN
+    RAISE EXCEPTION 'A9 FALHOU: normalized=% (esperado FF20.6827.00 — NFKC expandiu ﬀ→ff)', v_norm;
+  END IF;
+  RAISE NOTICE 'OK A9 — NFKC expandiu ligadura ﬀ→FF: normalized=%', v_norm;
+
+  DELETE FROM public.kb_product_specs WHERE id = v_id;
+END $$;
+SQL
+
+echo ""
+echo "→ ASSERT A10 — LIKE-escape: termo '%' literal NÃO casa nenhum produto (sem escape casaria tudo):"
+P -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE
+  n int;
+BEGIN
+  SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000b';  -- employee (staff)
+
+  -- Garantia: nenhum omie_products semeado contém '%' literal na descrição.
+  -- O buscar_skus_candidatos deve escapar '%' → '\%' (literal), casando 0 linhas.
+  -- Sem o escape, LIKE '%\%%' ainda casaria todas as linhas (qualquer string).
+  SELECT count(*) INTO n FROM public.buscar_skus_candidatos(ARRAY['%']);
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'A10 FALHOU: termo %% casou % linhas (esperado 0 — LIKE-escape ausente)', n;
+  END IF;
+  RAISE NOTICE 'OK A10 — termo %% escapado corretamente (0 linhas)';
+END $$;
+SQL
+
+echo ""
+echo "✅ test-kb-fundacao-casamento: todos os asserts passaram (A1..A10)"

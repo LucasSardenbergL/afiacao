@@ -11,8 +11,9 @@ ALTER TABLE public.kb_product_specs
 -- upper + remove espaços + trim. Mantém pontos/sufixo. Supplier canonicalizado p/ lower.
 CREATE OR REPLACE FUNCTION public.kb_specs_normalize() RETURNS trigger AS $$
 BEGIN
+  -- NFKC → upper → remove espaços → trim (espelha normalizeProductCode do helper TS)
   NEW.product_code_normalized :=
-    btrim(upper(regexp_replace(coalesce(NEW.product_code, ''), '\s+', '', 'g')));
+    btrim(regexp_replace(upper(normalize(coalesce(NEW.product_code, ''), NFKC)), '\s+', '', 'g'));
   NEW.supplier := lower(btrim(coalesce(NEW.supplier, 'sayerlack')));
   RETURN NEW;
 END;
@@ -25,10 +26,10 @@ CREATE TRIGGER trg_kb_specs_normalize
 
 -- Backfill (base vazia hoje → no-op; idempotente):
 UPDATE public.kb_product_specs
-  SET product_code_normalized = btrim(upper(regexp_replace(coalesce(product_code, ''), '\s+', '', 'g'))),
+  SET product_code_normalized = btrim(regexp_replace(upper(normalize(coalesce(product_code, ''), NFKC)), '\s+', '', 'g')),
       supplier = lower(btrim(coalesce(supplier, 'sayerlack')))
   WHERE product_code_normalized IS DISTINCT FROM
-        btrim(upper(regexp_replace(coalesce(product_code, ''), '\s+', '', 'g')));
+        btrim(regexp_replace(upper(normalize(coalesce(product_code, ''), NFKC)), '\s+', '', 'g'));
 
 -- Identidade composta ADICIONAL (a UNIQUE(product_code) global segue por ora):
 ALTER TABLE public.kb_product_specs
@@ -99,7 +100,9 @@ BEGIN
   WHERE op.ativo IS NOT FALSE
     AND EXISTS (
       SELECT 1 FROM unnest(p_termos) t
-      WHERE upper(op.descricao) LIKE '%' || upper(t) || '%'
+      -- escapa metacaracteres LIKE (ordem: '\' primeiro) — termo vem de input, evita '%' casar tudo
+      WHERE upper(op.descricao) LIKE
+        '%' || replace(replace(replace(upper(t), '\', '\\'), '%', '\%'), '_', '\_') || '%' ESCAPE '\'
     )
   ORDER BY op.account, op.descricao
   LIMIT 100;
