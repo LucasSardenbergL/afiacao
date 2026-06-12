@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 197
+-- Total de custom migrations: 199
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -216,7 +216,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260610130000', 'melhorias_canal', '20260610130000_melhorias_canal.sql'),
   ('20260610150000', 'reposicao_auto_aprovacao_piloto', '20260610150000_reposicao_auto_aprovacao_piloto.sql'),
   ('20260610200000', 'push_vendedora', '20260610200000_push_vendedora.sql'),
-  ('20260611120000', 'reposicao_fixes_codex_711', '20260611120000_reposicao_fixes_codex_711.sql')
+  ('20260611120000', 'reposicao_fixes_codex_711', '20260611120000_reposicao_fixes_codex_711.sql'),
+  ('20260611140000', 'data_health_check_estoque_frescor', '20260611140000_data_health_check_estoque_frescor.sql'),
+  ('20260611140000', 'kb_fundacao_casamento', '20260611140000_kb_fundacao_casamento.sql')
 )
 SELECT
   e.version,
@@ -986,7 +988,19 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('push_vendedora', 'rls_policy', 'public', 'push_subscriptions_own', 'push_subscriptions'),
   ('push_vendedora', 'rls_policy', 'public', 'push_subscriptions_service', 'push_subscriptions'),
   ('reposicao_fixes_codex_711', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
-  ('reposicao_fixes_codex_711', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', '')
+  ('reposicao_fixes_codex_711', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
+  ('data_health_check_estoque_frescor', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_check_estoque_frescor', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_check_estoque_frescor', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('kb_fundacao_casamento', 'table', 'public', 'omie_product_spec_links', ''),
+  ('kb_fundacao_casamento', 'index', 'public', 'omie_product_spec_links_one_confirmed', 'omie_product_spec_links'),
+  ('kb_fundacao_casamento', 'index', 'public', 'omie_product_spec_links_unique_triple', 'omie_product_spec_links'),
+  ('kb_fundacao_casamento', 'function', 'public', 'kb_specs_normalize', ''),
+  ('kb_fundacao_casamento', 'function', 'public', 'buscar_skus_candidatos', ''),
+  ('kb_fundacao_casamento', 'function', 'public', 'confirmar_vinculo_boletim', ''),
+  ('kb_fundacao_casamento', 'function', 'public', 'rejeitar_sugestao', ''),
+  ('kb_fundacao_casamento', 'trigger', 'public', 'trg_kb_specs_normalize', 'kb_product_specs'),
+  ('kb_fundacao_casamento', 'rls_policy', 'public', 'omie_product_spec_links_select_staff', 'omie_product_spec_links')
 )
 SELECT
   e.migration,

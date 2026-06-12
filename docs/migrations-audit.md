@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **197** custom migrations totais
-- **752** objetos esperados (criados por estas migrations)
+- **199** custom migrations totais
+- **764** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 192
-  - `rls_policy`: 188
-  - `index`: 138
+  - `function`: 199
+  - `rls_policy`: 189
+  - `index`: 140
   - `cron_job`: 102
-  - `table`: 88
-  - `trigger`: 40
+  - `table`: 89
+  - `trigger`: 41
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1745,6 +1745,28 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_oportunidade_ciclo` | — |
 | `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+
+### `20260611140000_data_health_check_estoque_frescor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260611140000_kb_fundacao_casamento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.omie_product_spec_links` | — |
+| `index` | `public.omie_product_spec_links_one_confirmed` | `omie_product_spec_links` |
+| `index` | `public.omie_product_spec_links_unique_triple` | `omie_product_spec_links` |
+| `function` | `public.kb_specs_normalize` | — |
+| `function` | `public.buscar_skus_candidatos` | — |
+| `function` | `public.confirmar_vinculo_boletim` | — |
+| `function` | `public.rejeitar_sugestao` | — |
+| `trigger` | `public.trg_kb_specs_normalize` | `kb_product_specs` |
+| `rls_policy` | `public.omie_product_spec_links_select_staff` | `omie_product_spec_links` |
 
 ## Próximos passos quando algo der `❌`
 
