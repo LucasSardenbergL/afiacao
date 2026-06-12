@@ -47,15 +47,12 @@ type Extractor interface {
 
 	// ExtractAllFormulasForSnapshot retorna os campos necessários para o keys-snapshot
 	// de TODAS as fórmulas (formula + formulaperson), sem filtro de HWM.
+	// Os valores são IDs CRUS da origem — sendKeysSnapshot traduz via Lookups.
 	ExtractAllFormulasForSnapshot(ctx context.Context) (formulas []formulaKey, err error)
 
-	// ExtractAllCorNames retorna um map de id_padraocor → descricao para todas as
-	// cores (padracor + personcor), carregado uma vez por ciclo para enriquecer fórmulas.
-	ExtractAllCorNames(ctx context.Context) (map[string]string, error)
-
-	// ExtractAllEmbVolumes retorna um map de id_emb → volume_ml para todas as
-	// embalagens, carregado uma vez por ciclo para enriquecer fórmulas.
-	ExtractAllEmbVolumes(ctx context.Context) (map[string]float64, error)
+	// LoadLookups carrega os lookups de identidade canônica (1× por ciclo).
+	// Ver doc do tipo Lookups.
+	LoadLookups(ctx context.Context) (*Lookups, error)
 
 	// ExtractFormulaChildItems retorna os itens da tabela filha formula_item,
 	// agregados por id_formula (= PK da fórmula no pai). hasOrdem indica se a
@@ -79,6 +76,75 @@ type formulaKey struct {
 }
 
 // ──────────────────────────────────────────────────────────────
+// Lookups — identidade canônica enviada ao app
+// ──────────────────────────────────────────────────────────────
+
+// corInfo carrega a identidade de uma cor para os payloads de fórmula.
+type corInfo struct{ CorID, Nome, SubIdent string }
+
+// Lookups é a identidade canônica enviada ao app — TEM que casar com o que o
+// CSV-import histórico gravou. CONFIRMADO contra os dados de PRODUÇÃO das
+// tabelas tint_* (query do founder, 2026-06-12):
+//
+//	produto    → codigo             (prod: "JO05.7796")
+//	base       → id NUMÉRICO        (prod: "90"; o código W vive só na descrição)
+//	embalagem  → id NUMÉRICO        (prod: "1"/"2"/"38")
+//	corante    → id NUMÉRICO        (prod: "3"/"4"/"12")
+//	cor padrão → padraocor.codigo   (⚠️ prod tem sufixo " - BS" de fonte ainda não
+//	                                 decifrada; enviamos o codigo puro — a
+//	                                 reconciliação em shadow + founder decidem)
+//	cor person → personcor.codigo_cor (prod: "AZUL PURO")
+//	subcolecao → codigo (fallback id; prod = "1", compatível com ambos)
+//
+// Carregado UMA vez por ciclo (tabelas pequenas, full scan ok).
+type Lookups struct {
+	ProdutoCod   map[string]string  // produto.id → codigo (fallback: o próprio id)
+	BaseIdent    map[string]string  // base.id → id (identidade É o id numérico; mapa id→id explícito)
+	EmbIdent     map[string]string  // embalagem.id → id (identidade É o id numérico)
+	EmbVolumeML  map[string]float64 // embalagem.id → volume em ML (já convertido de litros)
+	CoranteIdent map[string]string  // corante.id → id (identidade É o id numérico)
+	CorPadrao    map[string]corInfo // padraocor.id → {codigo||id, descricao, subcolecao.codigo||id via id_subcolecao}
+	CorPerson    map[string]corInfo // personcor.id → {codigo_cor||id, descricao||codigo_cor, ""}
+}
+
+// newLookups cria um Lookups com todos os maps inicializados.
+func newLookups() *Lookups {
+	return &Lookups{
+		ProdutoCod:   make(map[string]string),
+		BaseIdent:    make(map[string]string),
+		EmbIdent:     make(map[string]string),
+		EmbVolumeML:  make(map[string]float64),
+		CoranteIdent: make(map[string]string),
+		CorPadrao:    make(map[string]corInfo),
+		CorPerson:    make(map[string]corInfo),
+	}
+}
+
+// identOr traduz um id cru para a identidade canônica do lookup; sem entrada
+// (ou entrada vazia) → fallback no próprio id cru (nunca dropa por falta de lookup).
+func identOr(m map[string]string, raw string) string {
+	if v, ok := m[raw]; ok && v != "" {
+		return v
+	}
+	return raw
+}
+
+// litrosLimiar separa litros de ml no volume da embalagem: a origem grava o
+// "conteudo" em LITROS (founder confirmou "0.810 L"); nenhuma embalagem real de
+// tinta tem 100+ litros, então valor ≤100 é litro (×1000) e >100 assume ml já.
+const litrosLimiar = 100.0
+
+// normalizaVolumeML converte o volume da origem para ml.
+// Retorna assumiuML=true quando o valor veio acima do limiar (já estava em ml) —
+// o caller loga um aviso 1× por ciclo nesse caso.
+func normalizaVolumeML(v float64) (ml float64, assumiuML bool) {
+	if v > 0 && v <= litrosLimiar {
+		return math.Round(v * 1000), false
+	}
+	return v, true
+}
+
+// ──────────────────────────────────────────────────────────────
 // pgExtractor — implementação real via PG
 // ──────────────────────────────────────────────────────────────
 
@@ -93,53 +159,249 @@ func (p *pgExtractor) Extract(ctx context.Context, entity string, hwm time.Time)
 }
 
 func (p *pgExtractor) ExtractAllFormulasForSnapshot(ctx context.Context) ([]formulaKey, error) {
-	return extractAllFormulasForSnapshot(ctx, p.db)
+	return extractAllFormulasForSnapshot(ctx, p.db, p.rm)
 }
 
-func (p *pgExtractor) ExtractAllCorNames(ctx context.Context) (map[string]string, error) {
-	// Carrega nomes de todas as cores (padracor + personcor) em um único pass.
-	out := make(map[string]string)
-	for _, tbl := range []string{"padracor", "personcor"} {
-		rows, err := p.db.QueryContext(ctx,
-			`SELECT id_padraocor::text, descricao::text FROM `+tbl)
-		if err != nil {
-			// Tabela ausente no schema desta instalação → ignora silenciosamente.
-			continue
-		}
-		for rows.Next() {
-			var id, desc string
-			if err := rows.Scan(&id, &desc); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("ExtractAllCorNames %s: %w", tbl, err)
-			}
-			out[id] = desc
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("ExtractAllCorNames %s: %w", tbl, err)
-		}
+// LoadLookups carrega os lookups de identidade (1 SELECT por tabela; tabelas
+// pequenas, full scan ok). Os SELECTs usam os nomes FÍSICOS resolvidos (rm.Tables
+// + rm.Resolved) — nunca nomes hardcoded (lição dos nomes fantasia).
+func (p *pgExtractor) LoadLookups(ctx context.Context) (*Lookups, error) {
+	lk := newLookups()
+
+	// produto: id → codigo (fallback id) — prod confirma codigo ("JO05.7796").
+	if err := p.loadIdentLookup(ctx, "produto", "id_produto", lk.ProdutoCod); err != nil {
+		return nil, err
 	}
-	return out, nil
+	// base/corantes: identidade É o id numérico (prod: "90"/"3") → mapa id→id
+	// explícito (deixar o mapa vazio + fallback do identOr daria o MESMO valor,
+	// mas leria como bug; o mapa cheio documenta a decisão).
+	if err := p.loadIDAsIdent(ctx, "base", "id_base", lk.BaseIdent); err != nil {
+		return nil, err
+	}
+	if err := p.loadIDAsIdent(ctx, "corantes", "id_corante", lk.CoranteIdent); err != nil {
+		return nil, err
+	}
+
+	// embalagens: identidade = id numérico (prod: "1"/"38") + volume litros→ml.
+	if err := p.loadEmbalagens(ctx, lk); err != nil {
+		return nil, err
+	}
+
+	// subcolecao: id → codigo (interno; vira o SubIdent das cores padrão).
+	subIdent := make(map[string]string)
+	if err := p.loadIdentLookup(ctx, "subcolecao", "id_subcolecao", subIdent); err != nil {
+		return nil, err
+	}
+
+	// padracor e personcor: cor → identidade completa (CorID/Nome/SubIdent).
+	if err := p.loadCorPadrao(ctx, subIdent, lk); err != nil {
+		return nil, err
+	}
+	if err := p.loadCorPerson(ctx, lk); err != nil {
+		return nil, err
+	}
+
+	return lk, nil
 }
 
-func (p *pgExtractor) ExtractAllEmbVolumes(ctx context.Context) (map[string]float64, error) {
-	// Carrega volume_ml de todas as embalagens.
-	rows, err := p.db.QueryContext(ctx,
-		`SELECT id_emb::text, COALESCE(volume_ml, 0)::float8 FROM embalagens`)
+// selectExprText monta a expressão de SELECT de uma coluna lógica: o nome real
+// castado para text, ou NULL::text quando a coluna (opcional) não resolveu —
+// mantém o número de colunas do scan estável.
+func selectExprText(resolved map[string]string, logic string) string {
+	if real, ok := resolved[logic]; ok {
+		return quoteIdent(real) + `::text`
+	}
+	return `NULL::text`
+}
+
+// loadIdentLookup popula out com id → codigo (fallback: o próprio id) de uma
+// entidade. Entidade/colunas ausentes do schema → lookup fica vazio (os
+// mapeadores caem no fallback de id cru; nunca falha o ciclo por isso).
+func (p *pgExtractor) loadIdentLookup(ctx context.Context, entity, idLogic string, out map[string]string) error {
+	resolved, ok := p.rm.Resolved[entity]
+	if !ok {
+		return nil
+	}
+	idCol, ok := resolved[idLogic]
+	if !ok {
+		return nil
+	}
+	query := fmt.Sprintf(`SELECT %s::text, %s FROM %s`,
+		quoteIdent(idCol), selectExprText(resolved, "codigo"), quoteIdent(p.rm.TableFor(entity)))
+	rows, err := p.db.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("ExtractAllEmbVolumes: %w", err)
+		return fmt.Errorf("LoadLookups %s: %w", entity, err)
 	}
 	defer rows.Close()
-	out := make(map[string]float64)
 	for rows.Next() {
 		var id string
-		var vol float64
-		if err := rows.Scan(&id, &vol); err != nil {
-			return nil, fmt.Errorf("ExtractAllEmbVolumes scan: %w", err)
+		var codigo sql.NullString
+		if err := rows.Scan(&id, &codigo); err != nil {
+			return fmt.Errorf("LoadLookups %s scan: %w", entity, err)
 		}
-		out[id] = vol
+		ident := strings.TrimSpace(codigo.String)
+		if !codigo.Valid || ident == "" {
+			ident = id
+		}
+		out[id] = ident
 	}
-	return out, rows.Err()
+	return rows.Err()
+}
+
+// loadIDAsIdent popula out com id → id (identidade = o próprio id numérico,
+// confirmado contra prod p/ base/corante/embalagem). Entidade/coluna ausente do
+// schema → lookup vazio (fallback do identOr devolve o cru; nunca falha o ciclo).
+func (p *pgExtractor) loadIDAsIdent(ctx context.Context, entity, idLogic string, out map[string]string) error {
+	resolved, ok := p.rm.Resolved[entity]
+	if !ok {
+		return nil
+	}
+	idCol, ok := resolved[idLogic]
+	if !ok {
+		return nil
+	}
+	query := fmt.Sprintf(`SELECT %s::text FROM %s`,
+		quoteIdent(idCol), quoteIdent(p.rm.TableFor(entity)))
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("LoadLookups %s: %w", entity, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("LoadLookups %s scan: %w", entity, err)
+		}
+		out[id] = id
+	}
+	return rows.Err()
+}
+
+// loadEmbalagens popula EmbIdent (id → id; identidade da embalagem É o id
+// numérico, confirmado em prod) e EmbVolumeML (id → ml).
+// O volume da origem vem em LITROS (coluna "conteudo", ex: 0.810) → normalizaVolumeML.
+func (p *pgExtractor) loadEmbalagens(ctx context.Context, lk *Lookups) error {
+	resolved, ok := p.rm.Resolved["embalagens"]
+	if !ok {
+		return nil
+	}
+	idCol, ok := resolved["id_emb"]
+	if !ok {
+		return nil
+	}
+	query := fmt.Sprintf(`SELECT %s::text, %s FROM %s`,
+		quoteIdent(idCol),
+		selectExprText(resolved, "volume_ml"),
+		quoteIdent(p.rm.TableFor("embalagens")))
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("LoadLookups embalagens: %w", err)
+	}
+	defer rows.Close()
+	avisouML := false
+	for rows.Next() {
+		var id string
+		var vol sql.NullString
+		if err := rows.Scan(&id, &vol); err != nil {
+			return fmt.Errorf("LoadLookups embalagens scan: %w", err)
+		}
+		lk.EmbIdent[id] = id
+		// Volume: só entra no map quando parseável e > 0 (volume 0 quebraria a
+		// regra de 3 da expansão no servidor — melhor omitir).
+		if vol.Valid {
+			if v, ok := parseFloatStr(vol.String); ok && v > 0 {
+				ml, assumiuML := normalizaVolumeML(v)
+				if assumiuML && !avisouML {
+					logger.Warnf("LoadLookups embalagens: volume %v > %v — assumindo que a origem já está em ml (esperado: litros)", v, litrosLimiar)
+					avisouML = true
+				}
+				lk.EmbVolumeML[id] = ml
+			}
+		}
+	}
+	return rows.Err()
+}
+
+// loadCorPadrao popula CorPadrao: padraocor.id → {codigo||id, descricao,
+// subcolecao.codigo||id via id_subcolecao}.
+func (p *pgExtractor) loadCorPadrao(ctx context.Context, subIdent map[string]string, lk *Lookups) error {
+	resolved, ok := p.rm.Resolved["padracor"]
+	if !ok {
+		return nil
+	}
+	idCol, ok := resolved["id_padraocor"]
+	if !ok {
+		return nil
+	}
+	query := fmt.Sprintf(`SELECT %s::text, %s, %s, %s FROM %s`,
+		quoteIdent(idCol),
+		selectExprText(resolved, "codigo"),
+		selectExprText(resolved, "descricao"),
+		selectExprText(resolved, "id_subcolecao"),
+		quoteIdent(p.rm.TableFor("padracor")))
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("LoadLookups padracor: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var codigo, desc, sub sql.NullString
+		if err := rows.Scan(&id, &codigo, &desc, &sub); err != nil {
+			return fmt.Errorf("LoadLookups padracor scan: %w", err)
+		}
+		corID := strings.TrimSpace(codigo.String)
+		if corID == "" {
+			corID = id
+		}
+		info := corInfo{CorID: corID, Nome: strings.TrimSpace(desc.String)}
+		if subKey := strings.TrimSpace(sub.String); subKey != "" {
+			// codigo||id da subcolecao; FK órfã (sem linha) → mantém o id cru.
+			info.SubIdent = identOr(subIdent, subKey)
+		}
+		lk.CorPadrao[id] = info
+	}
+	return rows.Err()
+}
+
+// loadCorPerson popula CorPerson: personcor.id → {codigo_cor||id, descricao||codigo_cor, ""}.
+func (p *pgExtractor) loadCorPerson(ctx context.Context, lk *Lookups) error {
+	resolved, ok := p.rm.Resolved["personcor"]
+	if !ok {
+		return nil
+	}
+	idCol, ok := resolved["id_padraocor"]
+	if !ok {
+		return nil
+	}
+	query := fmt.Sprintf(`SELECT %s::text, %s, %s FROM %s`,
+		quoteIdent(idCol),
+		selectExprText(resolved, "codigo"),
+		selectExprText(resolved, "descricao"),
+		quoteIdent(p.rm.TableFor("personcor")))
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("LoadLookups personcor: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var codigo, desc sql.NullString
+		if err := rows.Scan(&id, &codigo, &desc); err != nil {
+			return fmt.Errorf("LoadLookups personcor scan: %w", err)
+		}
+		cod := strings.TrimSpace(codigo.String)
+		corID := cod
+		if corID == "" {
+			corID = id
+		}
+		nome := strings.TrimSpace(desc.String)
+		if nome == "" {
+			nome = cod
+		}
+		lk.CorPerson[id] = corInfo{CorID: corID, Nome: nome}
+	}
+	return rows.Err()
 }
 
 func (p *pgExtractor) ExtractFormulaChildItems(ctx context.Context, hasOrdem bool) (map[string][]map[string]any, error) {
@@ -155,51 +417,84 @@ func (p *pgExtractor) OriginNow(ctx context.Context) (time.Time, error) {
 	return t, nil
 }
 
-// extractAllFormulasForSnapshot extrai as chaves de TODAS as fórmulas (formula + formulaperson)
-// para o keys-snapshot. Sem filtro de HWM (snapshot completo).
-func extractAllFormulasForSnapshot(ctx context.Context, db *sql.DB) ([]formulaKey, error) {
-	// formula = padrão (personalizada = false)
-	rows1, err := db.QueryContext(ctx, `
-		SELECT id_padraocor::text, id_produto::text, id_base::text, id_emb::text
-		FROM formula
-		ORDER BY id_padraocor
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("extractAllFormulasForSnapshot formula: %w", err)
+// buildSnapshotQuery monta o SELECT do keys-snapshot de uma entidade de fórmula
+// usando os nomes REAIS resolvidos (rm.Tables/rm.Resolved). Quando a coluna
+// "liberado" resolveu (formula no schema real), filtra COALESCE(liberado,true)=true
+// — a chave do snapshot tem que casar com os payloads, que dropam bloqueadas.
+// Função pura (testável sem banco).
+func buildSnapshotQuery(rm *ResolvedMapping, entity string) (string, error) {
+	resolved, ok := rm.Resolved[entity]
+	if !ok {
+		return "", fmt.Errorf("buildSnapshotQuery: entidade %q não presente no mapeamento", entity)
 	}
-	defer rows1.Close()
+	var faltam []string
+	for _, logic := range []string{"id_padraocor", "id_produto", "id_base", "id_emb"} {
+		if _, ok := resolved[logic]; !ok {
+			faltam = append(faltam, logic)
+		}
+	}
+	if len(faltam) > 0 {
+		return "", fmt.Errorf("buildSnapshotQuery %s: colunas não resolvidas: %s", entity, strings.Join(faltam, ","))
+	}
+	q := fmt.Sprintf(`SELECT %s::text, %s::text, %s::text, %s::text FROM %s`,
+		quoteIdent(resolved["id_padraocor"]),
+		quoteIdent(resolved["id_produto"]),
+		quoteIdent(resolved["id_base"]),
+		quoteIdent(resolved["id_emb"]),
+		quoteIdent(rm.TableFor(entity)),
+	)
+	if libCol, ok := resolved["liberado"]; ok {
+		q += fmt.Sprintf(` WHERE COALESCE(%s, true) = true`, quoteIdent(libCol))
+	}
+	q += fmt.Sprintf(` ORDER BY %s`, quoteIdent(resolved["id_padraocor"]))
+	return q, nil
+}
 
+// extractAllFormulasForSnapshot extrai as chaves de TODAS as fórmulas (formula +
+// formulaperson) para o keys-snapshot. Sem filtro de HWM (snapshot completo).
+// Retorna IDs CRUS da origem — a tradução para identidade canônica acontece em
+// sendKeysSnapshot (via Lookups), igualzinho aos payloads de fórmula.
+func extractAllFormulasForSnapshot(ctx context.Context, db *sql.DB, rm *ResolvedMapping) ([]formulaKey, error) {
 	var out []formulaKey
-	for rows1.Next() {
-		var cor, prod, base, emb string
-		if err := rows1.Scan(&cor, &prod, &base, &emb); err != nil {
-			return nil, err
+	for _, src := range []struct {
+		entity        string
+		personalizada bool
+	}{
+		{"formula", false},
+		{"formulaperson", true},
+	} {
+		if _, ok := rm.Resolved[src.entity]; !ok {
+			continue // tabela ausente neste schema → pula (os required já falharam no Validate)
 		}
-		out = append(out, formulaKey{CorID: cor, CodProduto: prod, IDBase: base, IDEmb: emb, Personalizada: false})
-	}
-	if err := rows1.Err(); err != nil {
-		return nil, err
-	}
-
-	// formulaperson = personalizada (personalizada = true)
-	rows2, err := db.QueryContext(ctx, `
-		SELECT id_padraocor::text, id_produto::text, id_base::text, id_emb::text
-		FROM formulaperson
-		ORDER BY id_padraocor
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("extractAllFormulasForSnapshot formulaperson: %w", err)
-	}
-	defer rows2.Close()
-
-	for rows2.Next() {
-		var cor, prod, base, emb string
-		if err := rows2.Scan(&cor, &prod, &base, &emb); err != nil {
-			return nil, err
+		query, err := buildSnapshotQuery(rm, src.entity)
+		if err != nil {
+			return nil, fmt.Errorf("extractAllFormulasForSnapshot: %w", err)
 		}
-		out = append(out, formulaKey{CorID: cor, CodProduto: prod, IDBase: base, IDEmb: emb, Personalizada: true})
+		rows, err := db.QueryContext(ctx, query)
+		if err != nil {
+			return nil, fmt.Errorf("extractAllFormulasForSnapshot %s: %w", src.entity, err)
+		}
+		for rows.Next() {
+			var cor, prod, base, emb sql.NullString
+			if err := rows.Scan(&cor, &prod, &base, &emb); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("extractAllFormulasForSnapshot %s scan: %w", src.entity, err)
+			}
+			out = append(out, formulaKey{
+				CorID:         cor.String,
+				CodProduto:    prod.String,
+				IDBase:        base.String,
+				IDEmb:         emb.String,
+				Personalizada: src.personalizada,
+			})
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, fmt.Errorf("extractAllFormulasForSnapshot %s: %w", src.entity, err)
+		}
 	}
-	return out, rows2.Err()
+	return out, nil
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -277,16 +572,22 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 	}
 
 	// Executa ciclo de sync por entidade. `failed` lista as entidades que erraram (F7).
-	counts, failed, fatalErr := runEntityCycles(ctx, cfg, ex, rm, st)
+	// lk são os lookups de identidade carregados 1× pelo ciclo (nil em falha fatal).
+	counts, failed, lk, fatalErr := runEntityCycles(ctx, cfg, ex, rm, st)
 	if fatalErr != nil {
-		// Erro fatal (ex: sem token) — não dá pra sincronizar nada.
+		// Erro fatal (ex: sem token, lookups indisponíveis) — não dá pra sincronizar nada.
 		logger.Errorf("RunCycle: erro fatal no ciclo de entidades: %v", fatalErr)
 		failed = append(failed, "fatal")
 	}
 
 	// Keys-snapshot diário. Falha aqui também conta como falha de ciclo (F7).
 	if shouldKeysSnapshot(st, originNow) {
-		if snapErr := sendKeysSnapshot(ctx, cfg, ex, originNow); snapErr != nil {
+		if lk == nil {
+			// Sem lookups não dá pra montar a identidade das chaves — pular (re-tenta
+			// no próximo ciclo; LastKeysSnapshot não avança).
+			logger.Warnf("RunCycle: keys-snapshot pulado — lookups de identidade indisponíveis")
+			failed = append(failed, "keys_snapshot")
+		} else if snapErr := sendKeysSnapshot(ctx, cfg, ex, originNow, lk); snapErr != nil {
 			logger.Errorf("RunCycle: falha no keys-snapshot: %v", snapErr)
 			failed = append(failed, "keys_snapshot")
 		} else {
@@ -334,20 +635,28 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 }
 
 // runEntityCycles itera sobre todas as entidades e envia os deltas ao servidor.
-// Retorna os contadores de registros enviados por entidade.
+// Retorna os contadores de registros enviados por entidade + os Lookups carregados
+// (para o keys-snapshot reusar a MESMA identidade; nil quando a falha foi fatal).
 func runEntityCycles(
 	ctx context.Context,
 	cfg *Config,
 	ex Extractor,
 	rm *ResolvedMapping,
 	st *State,
-) (counts map[string]int, failed []string, err error) {
+) (counts map[string]int, failed []string, lk *Lookups, err error) {
 	token, tErr := cfg.Token()
 	if tErr != nil || token == "" {
 		// Sem token é falha FATAL do ciclo (não dá pra enviar nada).
-		return nil, nil, fmt.Errorf("runEntityCycles: falha ao obter token: %v", tErr)
+		return nil, nil, nil, fmt.Errorf("runEntityCycles: falha ao obter token: %v", tErr)
 	}
 	cli := NewClient(cfg.AppURL, token, cfg.StoreCode)
+
+	// Lookups de identidade canônica: carregados UMA vez por ciclo. Sem eles não
+	// dá pra enviar nada coerente com o CSV-import histórico → falha FATAL.
+	lk, lkErr := ex.LoadLookups(ctx)
+	if lkErr != nil {
+		return nil, nil, nil, fmt.Errorf("runEntityCycles: falha ao carregar lookups de identidade: %w", lkErr)
+	}
 
 	counts = make(map[string]int)
 
@@ -373,8 +682,10 @@ func runEntityCycles(
 	record("base", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "base", "bases", mapBase))
 	// embalagens → "embalagens"
 	record("embalagens", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "embalagens", "embalagens", mapEmbalagem))
-	// produto_base_embalagem → "skus"
-	record("produto_base_embalagem", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "produto_base_embalagem", "skus", mapSku))
+	// produto_base_embalagem → "skus" (FKs traduzidas para a identidade canônica)
+	skuMiss := &missCounter{}
+	record("produto_base_embalagem", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "produto_base_embalagem", "skus", mapSkuWith(lk, skuMiss)))
+	skuMiss.logIfAny("produto_base_embalagem")
 	// corantes merged com preco_corante
 	record("corantes", syncCorantes(ctx, ex, cli, st, counts, rm))
 	// preco_baseemb → "precos_base"
@@ -394,11 +705,23 @@ func runEntityCycles(
 	// Ordem do spec §5.3: ..., subcolecao, formula, personcor, formulaperson
 	// ──────────────────────────────────────────────────────────────
 
-	record("formula", syncFormulas(ctx, ex, cli, st, counts, rm, false))
+	record("formula", syncFormulas(ctx, ex, cli, st, counts, rm, false, lk))
 	record("personcor", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "personcor", "personcores", mapPersoncor))
-	record("formulaperson", syncFormulas(ctx, ex, cli, st, counts, rm, true))
+	record("formulaperson", syncFormulas(ctx, ex, cli, st, counts, rm, true, lk))
 
-	return counts, failed, nil
+	return counts, failed, lk, nil
+}
+
+// missCounter agrega FKs sem entrada no lookup para logar UM warning por entidade
+// (evita spam linha-a-linha; o fallback envia o id cru da origem).
+type missCounter struct{ n int }
+
+func (mc *missCounter) miss() { mc.n++ }
+
+func (mc *missCounter) logIfAny(entity string) {
+	if mc.n > 0 {
+		logger.Warnf("sync %s: %d FK(s) sem entrada no lookup de identidade — enviado o id cru como fallback", entity, mc.n)
+	}
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -502,6 +825,9 @@ func sendInBatches(
 // syncCorantes extrai corantes e preco_corante, constrói um map de preços por id_corante,
 // enriquece as linhas de corante com custo/volume_ml e envia via /catalogs.
 // Ambas as entidades precisam atualizar antes que o HWM avance.
+//
+// preco_corante NÃO existe no banco real (v0.1.4) — quando ausente do schema,
+// segue só com os corantes (que já carregam volume_ml próprio), SEM erro.
 func syncCorantes(
 	ctx context.Context,
 	ex Extractor,
@@ -517,11 +843,18 @@ func syncCorantes(
 		return fmt.Errorf("syncCorantes: extract corantes: %w", err)
 	}
 
-	// Extrai preco_corante (lookup de custo/volume por id_corante).
-	hwmPreco := hwmFromState(st, "preco_corante")
-	rowsPreco, maxDAPreco, err := ex.Extract(ctx, "preco_corante", hwmPreco)
-	if err != nil {
-		return fmt.Errorf("syncCorantes: extract preco_corante: %w", err)
+	// Extrai preco_corante (lookup de custo/volume por id_corante) — SÓ quando a
+	// tabela existe no schema (espelha o guard do syncSimpleEntity).
+	var rowsPreco []map[string]any
+	var maxDAPreco time.Time
+	if _, temPreco := rm.Resolved["preco_corante"]; temPreco {
+		hwmPreco := hwmFromState(st, "preco_corante")
+		rowsPreco, maxDAPreco, err = ex.Extract(ctx, "preco_corante", hwmPreco)
+		if err != nil {
+			return fmt.Errorf("syncCorantes: extract preco_corante: %w", err)
+		}
+	} else {
+		logger.Infof("syncCorantes: preco_corante não presente no schema, seguindo só com corantes")
 	}
 
 	// Constrói lookup de preços: id_corante → {custo, volume_ml} + flags de presença.
@@ -659,6 +992,7 @@ func sendInBatchesRaw(
 // syncFormulas extrai e envia fórmulas (padrão ou personalizada).
 // Para shape=child: busca os itens da tabela filha formula_item.
 // Para shape=flat: aggregateFlatFormulaItems já foi aplicado pelo ExtractDelta.
+// lk são os lookups de identidade carregados 1× pelo ciclo (runEntityCycles).
 func syncFormulas(
 	ctx context.Context,
 	ex Extractor,
@@ -667,6 +1001,7 @@ func syncFormulas(
 	counts map[string]int,
 	rm *ResolvedMapping,
 	personalizada bool,
+	lk *Lookups,
 ) error {
 	entity := "formula"
 	if personalizada {
@@ -685,18 +1020,6 @@ func syncFormulas(
 	}
 	if len(rows) == 0 {
 		return nil
-	}
-
-	// Carrega lookups uma vez por ciclo para enriquecer as fórmulas.
-	corNames, err := ex.ExtractAllCorNames(ctx)
-	if err != nil {
-		logger.Warnf("syncFormulas %s: falha ao carregar nomes de cores (degradação honesta): %v", entity, err)
-		corNames = make(map[string]string)
-	}
-	embVolumes, err := ex.ExtractAllEmbVolumes(ctx)
-	if err != nil {
-		logger.Warnf("syncFormulas %s: falha ao carregar volumes de embalagens (degradação honesta): %v", entity, err)
-		embVolumes = make(map[string]float64)
 	}
 
 	// Para shape=child: enriquece com itens da tabela filha.
@@ -718,10 +1041,17 @@ func syncFormulas(
 	}
 
 	// Mapeia linhas para o contrato do servidor.
+	// bloqueadas (liberado=false) são contadas À PARTE de dropped (campo faltante) —
+	// bloqueio é estado normal do catálogo, drop é dado quebrado.
 	dropped := 0
+	bloqueadas := 0
 	mapped := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		m := mapFormula(row, personalizada, corNames, embVolumes)
+		if formulaBloqueada(row) {
+			bloqueadas++
+			continue
+		}
+		m := mapFormula(row, personalizada, lk)
 		if m == nil {
 			dropped++
 			continue
@@ -741,7 +1071,14 @@ func syncFormulas(
 				m["itens"] = itens
 			}
 		}
+		// Traduz o id_corante cru de cada item para a identidade canônica (codigo).
+		if itens, ok := m["itens"].([]map[string]any); ok {
+			m["itens"] = traduzItensCorante(itens, lk)
+		}
 		mapped = append(mapped, m)
+	}
+	if bloqueadas > 0 {
+		logger.Infof("syncFormulas %s: %d fórmula(s) bloqueada(s) (liberado=false) não enviada(s)", entity, bloqueadas)
 	}
 	if dropped > 0 {
 		logger.Warnf("syncFormulas %s: %d linha(s) descartada(s) por campos obrigatórios ausentes (cor_id/cod_produto/id_base/id_embalagem)", entity, dropped)
@@ -757,6 +1094,22 @@ func syncFormulas(
 
 	counts[entity] += len(mapped)
 	return nil
+}
+
+// traduzItensCorante traduz o id_corante CRU (id numérico da origem) de cada item
+// para a identidade canônica (corante.codigo) via lookup; sem entrada → mantém cru.
+func traduzItensCorante(itens []map[string]any, lk *Lookups) []map[string]any {
+	if lk == nil {
+		return itens
+	}
+	for _, it := range itens {
+		raw := toString(it["id_corante"])
+		if raw == "" {
+			continue
+		}
+		it["id_corante"] = identOr(lk.CoranteIdent, raw)
+	}
+	return itens
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -819,12 +1172,19 @@ func clearAllHWM(st *State) {
 // F2: o payload inclui `entity:"formulas"` + `snapshot_id` (uuid v4, MESMO valor em
 // todos os chunks do mesmo snapshot diário) — campos que a edge EXIGE (400 sem eles).
 //
+// ⚠️ A chave do snapshot TEM que usar a MESMA identidade dos payloads de fórmula
+// (mapFormula): os ids CRUS da extração são traduzidos aqui via Lookups (cor →
+// CorPerson/CorPadrao conforme a fonte, produto → ProdutoCod, base → BaseIdent).
+// Sem isso a deleção por snapshot nunca casa — ou desativa a loja inteira (o
+// blast-radius do servidor segura, mas não dependa dele).
+//
 // Enviado em chunks de ≤50000 linhas.
 func sendKeysSnapshot(
 	ctx context.Context,
 	cfg *Config,
 	ex Extractor,
 	originNow time.Time,
+	lk *Lookups,
 ) error {
 	token, err := cfg.Token()
 	if err != nil || token == "" {
@@ -839,16 +1199,28 @@ func sendKeysSnapshot(
 	}
 
 	// Serializa as chaves como strings "cor_id|cod_produto|id_base|personalizada"
-	// (4 partes — SEM embalagem; ver F3 acima). Deduplica: a mesma fórmula fonte
-	// pode aparecer em várias linhas de embalagem na origem, mas a chave colapsa.
+	// (4 partes — SEM embalagem; ver F3 acima), traduzindo os ids crus para a
+	// identidade canônica. Deduplica: a mesma fórmula fonte pode aparecer em várias
+	// linhas de embalagem na origem, mas a chave colapsa.
 	seen := make(map[string]struct{}, len(keys))
 	lines := make([]string, 0, len(keys))
 	for _, k := range keys {
 		personStr := "false"
+		corID := k.CorID
 		if k.Personalizada {
 			personStr = "true"
+			if info, ok := lk.CorPerson[k.CorID]; ok && info.CorID != "" {
+				corID = info.CorID
+			}
+		} else if info, ok := lk.CorPadrao[k.CorID]; ok && info.CorID != "" {
+			corID = info.CorID
 		}
-		line := fmt.Sprintf("%s|%s|%s|%s", k.CorID, k.CodProduto, k.IDBase, personStr)
+		line := fmt.Sprintf("%s|%s|%s|%s",
+			corID,
+			identOr(lk.ProdutoCod, k.CodProduto),
+			identOr(lk.BaseIdent, k.IDBase),
+			personStr,
+		)
 		if _, dup := seen[line]; dup {
 			continue
 		}
@@ -911,13 +1283,23 @@ func sendKeysSnapshot(
 // Mapeadores de linha (PG row → contrato do servidor)
 // ──────────────────────────────────────────────────────────────
 
+// Identidade canônica nos mapeadores: codigo-first (codigo da própria row quando
+// resolvido; fallback no id numérico) — TEM que casar com o CSV-import histórico.
+// Os switches de identidade vivem aqui + nos Lookups (1 lugar pra virar 1-linha
+// se a checagem com dados de prod contradisser).
+
 func mapProduto(row map[string]any) map[string]any {
 	id := toString(row["id_produto"])
 	if id == "" {
 		return nil
 	}
+	// Identidade: codigo (varchar do SayerSystem) quando presente; senão o id.
+	ident := toString(row["codigo"])
+	if ident == "" {
+		ident = id
+	}
 	return map[string]any{
-		"cod_produto": id,
+		"cod_produto": ident,
 		"descricao":   toString(row["descricao"]),
 		"ativo":       true,
 	}
@@ -928,6 +1310,8 @@ func mapBase(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
+	// Identidade da base = id NUMÉRICO (prod: id_base_sayersystem="90"; o código
+	// W — ex. WJOB.7796 — vive só na descrição). NÃO usar codigo aqui.
 	return map[string]any{
 		"id_base_sayersystem": id,
 		"descricao":           toString(row["descricao"]),
@@ -939,30 +1323,50 @@ func mapEmbalagem(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
+	// Identidade da embalagem = id NUMÉRICO (prod: id_embalagem_sayersystem="1"/
+	// "38"; a descrição — "QT (0.810 L)" — é só display). NÃO usar descricao aqui.
 	m := map[string]any{
 		"id_embalagem_sayersystem": id,
 		"descricao":                toString(row["descricao"]),
 	}
-	// volume_ml (numeric→string): só envia se parseável. Ausente ≠ 0 — 0 quebraria
+	// volume (numeric→string): só envia se parseável e > 0. Ausente ≠ 0 — 0 quebraria
 	// a regra de 3 da expansão no servidor (divisão pelo volume da embalagem).
-	if vol, ok := toFloat64OK(row["volume_ml"]); ok {
-		m["volume_ml"] = vol
+	// A origem grava em LITROS (coluna conteudo) → normalizaVolumeML converte.
+	if vol, ok := toFloat64OK(row["volume_ml"]); ok && vol > 0 {
+		ml, _ := normalizaVolumeML(vol)
+		m["volume_ml"] = ml
 	}
 	return m
 }
 
-func mapSku(row map[string]any) map[string]any {
-	prod := toString(row["id_produto"])
-	base := toString(row["id_base"])
-	emb := toString(row["id_emb"])
-	if prod == "" || base == "" || emb == "" {
-		return nil
+// mapSkuWith retorna o mapeador de produto_base_embalagem com os 3 FKs traduzidos
+// para a identidade canônica via Lookups. FK sem entrada no lookup → id cru
+// (fallback) + 1 warning AGREGADO por entidade via missCounter (nil = sem contagem).
+func mapSkuWith(lk *Lookups, miss *missCounter) rowMapper {
+	return func(row map[string]any) map[string]any {
+		prod := toString(row["id_produto"])
+		base := toString(row["id_base"])
+		emb := toString(row["id_emb"])
+		if prod == "" || base == "" || emb == "" {
+			return nil
+		}
+		return map[string]any{
+			"cod_produto":  lookupOrMiss(lk.ProdutoCod, prod, miss),
+			"id_base":      lookupOrMiss(lk.BaseIdent, base, miss),
+			"id_embalagem": lookupOrMiss(lk.EmbIdent, emb, miss),
+		}
 	}
-	return map[string]any{
-		"cod_produto":  prod,
-		"id_base":      base,
-		"id_embalagem": emb,
+}
+
+// lookupOrMiss é o identOr que conta o miss (para o warning agregado).
+func lookupOrMiss(m map[string]string, raw string, miss *missCounter) string {
+	if v, ok := m[raw]; ok && v != "" {
+		return v
 	}
+	if miss != nil {
+		miss.miss()
+	}
+	return raw
 }
 
 func mapCorante(row map[string]any) map[string]any {
@@ -970,10 +1374,17 @@ func mapCorante(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
-	return map[string]any{
+	// Identidade do corante = id NUMÉRICO (prod: id_corante_sayersystem="3"/"12";
+	// o código WP — ex. WP04.3900 — vive na descrição). NÃO usar codigo aqui.
+	m := map[string]any{
 		"id_corante_sayersystem": id,
 		"descricao":              toString(row["descricao"]),
 	}
+	// corante.volume_ml da origem JÁ está em ML — NÃO converter (≠ embalagem).
+	if vol, ok := toFloat64OK(row["volume_ml"]); ok && vol > 0 {
+		m["volume_ml"] = vol
+	}
+	return m
 }
 
 func mapPrecoBaseEmb(row map[string]any) map[string]any {
@@ -1007,8 +1418,12 @@ func mapPadracor(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
+	ident := toString(row["codigo"])
+	if ident == "" {
+		ident = id
+	}
 	return map[string]any{
-		"id_padraocor": id,
+		"id_padraocor": ident,
 		"descricao":    toString(row["descricao"]),
 	}
 }
@@ -1018,8 +1433,12 @@ func mapColecao(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
+	ident := toString(row["codigo"])
+	if ident == "" {
+		ident = id
+	}
 	return map[string]any{
-		"id_colecao": id,
+		"id_colecao": ident,
 		"descricao":  toString(row["descricao"]),
 	}
 }
@@ -1029,10 +1448,16 @@ func mapSubcolecao(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
+	ident := toString(row["codigo"])
+	if ident == "" {
+		ident = id
+	}
 	return map[string]any{
-		"id_subcolecao": id,
-		"id_colecao":    toString(row["id_colecao"]),
-		"descricao":     toString(row["descricao"]),
+		"id_subcolecao": ident,
+		// id_colecao segue CRU (não há lookup de colecao nos Lookups; tradução
+		// codigo||id da coleção não é trivial aqui — v0.1.4 se precisar).
+		"id_colecao": toString(row["id_colecao"]),
+		"descricao":  toString(row["descricao"]),
 	}
 }
 
@@ -1041,49 +1466,122 @@ func mapPersoncor(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
+	// Identidade: codigo_cor (resolvido no logical "codigo") || id.
+	ident := toString(row["codigo"])
+	if ident == "" {
+		ident = id
+	}
+	desc := toString(row["descricao"])
+	if desc == "" {
+		desc = toString(row["codigo"])
+	}
 	return map[string]any{
-		"id_padraocor": id,
-		"descricao":    toString(row["descricao"]),
+		"id_padraocor": ident,
+		"descricao":    desc,
 	}
 }
 
-// mapFormula converte uma linha de fórmula para o contrato do servidor.
-// corNames e embVolumes são maps carregados uma vez por ciclo para enriquecer
-// os campos nome_cor e volume_final_ml.
-// Retorna nil (e conta como dropped) se algum campo obrigatório estiver ausente:
-// cor_id, cod_produto, id_base, id_embalagem.
-func mapFormula(row map[string]any, personalizada bool, corNames map[string]string, embVolumes map[string]float64) map[string]any {
-	cor := toString(row["id_padraocor"])
-	prod := toString(row["id_produto"])
-	base := toString(row["id_base"])
-	emb := toString(row["id_emb"])
+// toBoolOK converte um valor do PG em bool. O driver entrega bool nativo; cobre
+// também string/[]byte ("f"/"false"/"t"/"true") defensivamente.
+// Retorna (valor, true) quando conversível; (false, false) caso contrário.
+func toBoolOK(v any) (bool, bool) {
+	switch b := v.(type) {
+	case bool:
+		return b, true
+	case *bool:
+		if b != nil {
+			return *b, true
+		}
+	case string:
+		return parseBoolStr(b)
+	case []byte:
+		return parseBoolStr(string(b))
+	}
+	return false, false
+}
+
+// parseBoolStr interpreta as grafias booleanas do Postgres ("t"/"f"/"true"/"false").
+func parseBoolStr(s string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "t", "true":
+		return true, true
+	case "f", "false":
+		return false, true
+	}
+	return false, false
+}
+
+// formulaBloqueada reporta se a linha tem liberado=false EXPLÍCITO (fórmula
+// bloqueada no SayerSystem → não enviar). Coluna ausente/nil/não-parseável =
+// liberada (não dropar por falta de dado).
+func formulaBloqueada(row map[string]any) bool {
+	v, ok := row["liberado"]
+	if !ok || v == nil {
+		return false
+	}
+	if b, bok := toBoolOK(v); bok && !b {
+		return true
+	}
+	return false
+}
+
+// mapFormula converte uma linha de fórmula para o contrato do servidor, traduzindo
+// os ids crus da origem para a identidade canônica via Lookups (fallback: id cru —
+// nunca dropa por falta de lookup). A cor personalizada resolve em lk.CorPerson e a
+// padrão em lk.CorPadrao (maps SEPARADOS: padraocor.id e personcor.id podem colidir).
+// Retorna nil se: campo obrigatório ausente (dropped) OU liberado=false (bloqueada —
+// o caller distingue via formulaBloqueada ANTES de chamar, para contar à parte).
+func mapFormula(row map[string]any, personalizada bool, lk *Lookups) map[string]any {
+	corRaw := toString(row["id_padraocor"])
+	prodRaw := toString(row["id_produto"])
+	baseRaw := toString(row["id_base"])
+	embRaw := toString(row["id_emb"])
 
 	// Campos obrigatórios — drop+log se ausentes (edge function os rejeita).
-	if cor == "" || prod == "" || base == "" || emb == "" {
+	if corRaw == "" || prodRaw == "" || baseRaw == "" || embRaw == "" {
 		return nil
 	}
 
+	// liberado=false → não envia (guard interno; o caller conta como bloqueada).
+	if formulaBloqueada(row) {
+		return nil
+	}
+
+	// Cor: lookup SEPARADO por tipo (personalizada × padrão).
+	var info corInfo
+	var okInfo bool
+	if personalizada {
+		info, okInfo = lk.CorPerson[corRaw]
+	} else {
+		info, okInfo = lk.CorPadrao[corRaw]
+	}
+	corID := corRaw
+	if okInfo && info.CorID != "" {
+		corID = info.CorID
+	}
+
 	m := map[string]any{
-		"cor_id":        cor,
-		"cod_produto":   prod,
-		"id_base":       base,
-		"id_embalagem":  emb,
+		"cor_id":        corID,
+		"cod_produto":   identOr(lk.ProdutoCod, prodRaw),
+		"id_base":       identOr(lk.BaseIdent, baseRaw),
+		"id_embalagem":  identOr(lk.EmbIdent, embRaw),
 		"personalizada": personalizada,
 	}
 
-	// nome_cor: resolve via lookup; vazio se não encontrado (degradação honesta).
-	if nome, ok := corNames[cor]; ok && nome != "" {
-		m["nome_cor"] = nome
+	// nome_cor: resolve via lookup; ausente se não encontrado (degradação honesta).
+	if okInfo && info.Nome != "" {
+		m["nome_cor"] = info.Nome
 	}
 
-	// volume_final_ml: resolve via lookup de embalagens.
-	if vol, ok := embVolumes[emb]; ok {
+	// volume_final_ml: resolve via lookup de embalagens (já convertido para ml).
+	if vol, ok := lk.EmbVolumeML[embRaw]; ok {
 		m["volume_final_ml"] = vol
 	}
 
-	// subcolecao: opcional.
-	if sub := toString(row["id_subcolecao"]); sub != "" {
-		m["subcolecao"] = sub
+	// subcolecao: SÓ cor padrão (vem da COR via lookup — padraocor.id_subcolecao;
+	// a tabela formula real não tem a coluna).
+	if !personalizada && okInfo && info.SubIdent != "" {
+		m["subcolecao"] = info.SubIdent
 	}
 
 	return m

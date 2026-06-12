@@ -89,67 +89,92 @@ func ExtractDelta(
 		return nil, time.Time{}, fmt.Errorf("ExtractDelta: entidade %q não encontrada no mapeamento resolvido", entity)
 	}
 
-	// Monta a lista de colunas a selecionar (nome real no PG).
-	// Preserva o mapeamento lógico→real para nomear as colunas no resultado.
-	var selectCols []colPair
-	for logic, real := range resolvedCols {
-		selectCols = append(selectCols, colPair{logic, real})
-	}
-	// Ordena por nome lógico para SELECT determinístico.
-	sortColPairs(selectCols)
-
+	// Monta a lista de colunas a selecionar — inclui os slots flat das fórmulas
+	// (P0: sem isso corante1..6/qtd1..6 nunca entravam no SELECT e os itens saíam vazios).
+	selectCols := buildDeltaSelectCols(rm, entity)
 	colNames := make([]string, len(selectCols))
 	for i, cp := range selectCols {
 		colNames[i] = cp.real
 	}
 
+	// FROM usa o nome FÍSICO da tabela (ex: lógico "corantes" → físico "corante").
+	physical := rm.TableFor(entity)
+
 	daCol, hasDA := resolvedCols["data_atualizacao"]
 	if !hasDA {
-		// Tabela sem data_atualizacao: faz full scan (ex: colecao, subcolecao).
-		return extractFullScan(ctx, db, entity, selectCols, colNames)
+		// Tabela sem data_atualizacao: faz full scan (ex: personcor no schema real).
+		rows, maxDA, err = extractFullScan(ctx, db, entity, physical, selectCols, colNames)
+	} else {
+		// Monta a query de delta.
+		query := fmt.Sprintf(
+			`SELECT %s FROM %s WHERE %s > $1 OR %s IS NULL ORDER BY %s ASC`,
+			strings.Join(quoteIdents(colNames), ", "),
+			quoteIdent(physical),
+			quoteIdent(daCol),
+			quoteIdent(daCol),
+			quoteIdent(daCol),
+		)
+
+		sqlRows, qErr := db.QueryContext(ctx, query, hwm)
+		if qErr != nil {
+			return nil, time.Time{}, fmt.Errorf("ExtractDelta %s: erro na query: %w", entity, qErr)
+		}
+		defer sqlRows.Close()
+
+		rows, maxDA, err = scanRows(sqlRows, selectCols, daCol)
+		if err != nil {
+			err = fmt.Errorf("ExtractDelta %s: erro ao ler linhas: %w", entity, err)
+		}
 	}
-
-	// Monta a query de delta.
-	query := fmt.Sprintf(
-		`SELECT %s FROM %s WHERE %s > $1 OR %s IS NULL ORDER BY %s ASC`,
-		strings.Join(quoteIdents(colNames), ", "),
-		quoteIdent(entity),
-		quoteIdent(daCol),
-		quoteIdent(daCol),
-		quoteIdent(daCol),
-	)
-
-	sqlRows, err := db.QueryContext(ctx, query, hwm)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("ExtractDelta %s: erro na query: %w", entity, err)
-	}
-	defer sqlRows.Close()
-
-	rows, maxDA, err = scanRows(sqlRows, selectCols, daCol)
-	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("ExtractDelta %s: erro ao ler linhas: %w", entity, err)
+		return nil, time.Time{}, err
 	}
 
-	// Para a shape flat da FORMULA, agrega os itens de corante em []map[string]any.
-	if entity == "formula" && rm.FormulaShape == FormulaShapeFlat {
-		rows = aggregateFlatFormulaItems(rows, rm.FlatFormulaCols)
+	// Para a shape flat das FÓRMULAS (formula E formulaperson), agrega os itens de
+	// corante em []map[string]any usando os flat cols da TABELA correspondente.
+	if (entity == "formula" || entity == "formulaperson") && rm.FormulaShape == FormulaShapeFlat {
+		rows = aggregateFlatFormulaItems(rows, rm.FlatColsByTable[entity])
 	}
 
 	return rows, maxDA, nil
 }
 
+// buildDeltaSelectCols monta a lista de colunas (lógico→real) do SELECT de delta
+// de uma entidade. Para fórmulas no shape FLAT, APPENDA os slots corante1..6 +
+// qtd1ml..6ml resolvidos em rm.FlatColsByTable[entity] — eles não estão em
+// rm.Resolved (são detectados pelo shape, não pelo mapeamento declarativo) e sem
+// isso o aggregateFlatFormulaItems produzia itens VAZIOS para toda fórmula (P0).
+// Função pura (testável sem banco).
+func buildDeltaSelectCols(rm *ResolvedMapping, entity string) []colPair {
+	resolvedCols := rm.Resolved[entity]
+	selectCols := make([]colPair, 0, len(resolvedCols)+12)
+	for logic, real := range resolvedCols {
+		selectCols = append(selectCols, colPair{logic, real})
+	}
+	if (entity == "formula" || entity == "formulaperson") && rm.FormulaShape == FormulaShapeFlat {
+		for slotKey, realName := range rm.FlatColsByTable[entity] {
+			selectCols = append(selectCols, colPair{slotKey, realName})
+		}
+	}
+	// Ordena por nome lógico para SELECT determinístico.
+	sortColPairs(selectCols)
+	return selectCols
+}
+
 // extractFullScan faz um SELECT sem filtro de data (para tabelas sem data_atualizacao).
+// physical é o nome FÍSICO da tabela; entity (lógico) só aparece nas mensagens de erro.
 func extractFullScan(
 	ctx context.Context,
 	db *sql.DB,
 	entity string,
+	physical string,
 	selectCols []colPair,
 	colNames []string,
 ) ([]map[string]any, time.Time, error) {
 	query := fmt.Sprintf(
 		`SELECT %s FROM %s`,
 		strings.Join(quoteIdents(colNames), ", "),
-		quoteIdent(entity),
+		quoteIdent(physical),
 	)
 	sqlRows, err := db.QueryContext(ctx, query)
 	if err != nil {
