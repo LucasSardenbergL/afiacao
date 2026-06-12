@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { HelpCircle, X } from 'lucide-react';
+import { HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -52,8 +52,8 @@ export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
   };
 
   const routeMapping = getHelpMappingForRoute(location.pathname);
-  const resolvedModuleSlug = module ?? routeMapping.module;
-  const resolvedAnchor = anchor ?? routeMapping.anchor;
+  const resolvedModuleSlug = module ?? routeMapping?.module;
+  const resolvedAnchor = anchor ?? routeMapping?.anchor;
 
   // ESC closes (Sheet handles it natively, kept here for completeness)
   useEffect(() => {
@@ -64,6 +64,11 @@ export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
+
+  // Sem override de prop e sem ajuda mapeada p/ a rota atual → não há o que
+  // mostrar: esconde o botão "?" em vez de abrir um drawer "nenhuma seção
+  // encontrada". (Vem DEPOIS dos hooks acima p/ não violar as regras de hooks.)
+  if (!resolvedModuleSlug || !resolvedAnchor) return null;
 
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
@@ -80,17 +85,10 @@ export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
         )}
       </SheetTrigger>
       <SheetContent side="right" className="w-full sm:max-w-md md:max-w-lg p-0 flex flex-col">
-        <SheetHeader className="px-6 py-4 border-b border-border flex-row items-center justify-between space-y-0">
+        <SheetHeader className="px-6 py-4 border-b border-border space-y-0">
+          {/* O X de fechar vem do próprio SheetContent (shadcn), no canto
+              superior direito — não duplicar aqui (dava dois "X" sobrepostos). */}
           <SheetTitle className="text-base font-semibold">Ajuda contextual</SheetTitle>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => setOpen(false)}
-            aria-label="Fechar"
-          >
-            <X className="h-4 w-4" />
-          </Button>
         </SheetHeader>
 
         {hasOpened && (

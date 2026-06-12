@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Wifi, WifiOff, Cloud, CloudOff } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
+import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { cn } from '@/lib/utils';
 import { getOfflineQueueDepth, subscribeToOfflineQueue } from '@/lib/offline-queue';
 
@@ -19,6 +20,11 @@ import { getOfflineQueueDepth, subscribeToOfflineQueue } from '@/lib/offline-que
  */
 export function NetworkStatusIndicator() {
   const status = useNetworkStatus();
+  // Tipo de conexão (4g) e RTT em ms são jargão de engenharia — úteis p/ staff
+  // diagnosticar, ruído p/ vendedora/cliente. Lente-aware: na lente "como
+  // vendedora", o popover técnico some. O ícone e o status legível (Online /
+  // Offline / fila) ficam p/ todos — a persona offline é justamente a vendedora.
+  const { displayIsStaff } = useDisplayAccess();
   const [queueDepth, setQueueDepth] = useState(0);
 
   useEffect(() => {
@@ -77,20 +83,20 @@ export function NetworkStatusIndicator() {
           {tone.label}
         </div>
         <dl className="text-xs text-muted-foreground space-y-1">
-          {status.effectiveType && (
+          {displayIsStaff && status.effectiveType && (
             <div className="flex justify-between">
               <dt>Tipo</dt>
               <dd className="font-mono text-foreground">{status.effectiveType}</dd>
             </div>
           )}
-          {status.rttMs !== null && (
+          {displayIsStaff && status.rttMs !== null && (
             <div className="flex justify-between">
               <dt>RTT estimado</dt>
               <dd className="font-mono text-foreground">{status.rttMs}ms</dd>
             </div>
           )}
           <div className="flex justify-between">
-            <dt>Mutações na fila</dt>
+            <dt>Operações pendentes</dt>
             <dd className={cn('font-mono', queueDepth > 0 ? 'text-status-warning' : 'text-foreground')}>
               {queueDepth}
             </dd>
