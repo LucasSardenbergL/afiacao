@@ -1009,6 +1009,7 @@ export type Database = {
         Row: {
           calculated_at: string
           city: string | null
+          city_norm: string | null
           customer_user_id: string
           days_since_last_visit: number | null
           expansao_score: number | null
@@ -1028,6 +1029,7 @@ export type Database = {
         Insert: {
           calculated_at?: string
           city?: string | null
+          city_norm?: string | null
           customer_user_id: string
           days_since_last_visit?: number | null
           expansao_score?: number | null
@@ -1047,6 +1049,7 @@ export type Database = {
         Update: {
           calculated_at?: string
           city?: string | null
+          city_norm?: string | null
           customer_user_id?: string
           days_since_last_visit?: number | null
           expansao_score?: number | null
@@ -8375,6 +8378,191 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_contatos: {
+        Row: {
+          acao: string
+          cnpj: string
+          created_at: string
+          criado_por: string
+          id: string
+          nota: string | null
+        }
+        Insert: {
+          acao: string
+          cnpj: string
+          created_at?: string
+          criado_por: string
+          id?: string
+          nota?: string | null
+        }
+        Update: {
+          acao?: string
+          cnpj?: string
+          created_at?: string
+          criado_por?: string
+          id?: string
+          nota?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "radar_contatos_cnpj_fkey"
+            columns: ["cnpj"]
+            isOneToOne: false
+            referencedRelation: "radar_empresas"
+            referencedColumns: ["cnpj"]
+          },
+        ]
+      }
+      radar_empresas: {
+        Row: {
+          bairro: string | null
+          capital_social: number | null
+          cep: string | null
+          cnae_descricao: string | null
+          cnae_principal: string
+          cnaes_secundarios: string[]
+          cnpj: string
+          complemento: string | null
+          created_at: string
+          data_abertura: string | null
+          descarte_motivo: string | null
+          email: string | null
+          ja_cliente: boolean
+          logradouro: string | null
+          municipio_codigo: string | null
+          municipio_nome: string | null
+          nome_fantasia: string | null
+          numero: string | null
+          porte: string | null
+          primeira_vista_em: string
+          prospeccao_atualizado_em: string | null
+          prospeccao_status: string
+          razao_social: string | null
+          socios_nomes: string | null
+          telefone1: string | null
+          telefone2: string | null
+          uf: string | null
+          ultimo_lote: string
+          updated_at: string
+        }
+        Insert: {
+          bairro?: string | null
+          capital_social?: number | null
+          cep?: string | null
+          cnae_descricao?: string | null
+          cnae_principal: string
+          cnaes_secundarios?: string[]
+          cnpj: string
+          complemento?: string | null
+          created_at?: string
+          data_abertura?: string | null
+          descarte_motivo?: string | null
+          email?: string | null
+          ja_cliente?: boolean
+          logradouro?: string | null
+          municipio_codigo?: string | null
+          municipio_nome?: string | null
+          nome_fantasia?: string | null
+          numero?: string | null
+          porte?: string | null
+          primeira_vista_em?: string
+          prospeccao_atualizado_em?: string | null
+          prospeccao_status?: string
+          razao_social?: string | null
+          socios_nomes?: string | null
+          telefone1?: string | null
+          telefone2?: string | null
+          uf?: string | null
+          ultimo_lote: string
+          updated_at?: string
+        }
+        Update: {
+          bairro?: string | null
+          capital_social?: number | null
+          cep?: string | null
+          cnae_descricao?: string | null
+          cnae_principal?: string
+          cnaes_secundarios?: string[]
+          cnpj?: string
+          complemento?: string | null
+          created_at?: string
+          data_abertura?: string | null
+          descarte_motivo?: string | null
+          email?: string | null
+          ja_cliente?: boolean
+          logradouro?: string | null
+          municipio_codigo?: string | null
+          municipio_nome?: string | null
+          nome_fantasia?: string | null
+          numero?: string | null
+          porte?: string | null
+          primeira_vista_em?: string
+          prospeccao_atualizado_em?: string | null
+          prospeccao_status?: string
+          razao_social?: string | null
+          socios_nomes?: string | null
+          telefone1?: string | null
+          telefone2?: string | null
+          uf?: string | null
+          ultimo_lote?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      radar_ingest_state: {
+        Row: {
+          erro: string | null
+          finalizado_em: string | null
+          iniciado_em: string
+          mes_referencia: string
+          novos: number | null
+          status: string
+          total_recebido: number
+        }
+        Insert: {
+          erro?: string | null
+          finalizado_em?: string | null
+          iniciado_em?: string
+          mes_referencia: string
+          novos?: number | null
+          status?: string
+          total_recebido?: number
+        }
+        Update: {
+          erro?: string | null
+          finalizado_em?: string | null
+          iniciado_em?: string
+          mes_referencia?: string
+          novos?: number | null
+          status?: string
+          total_recebido?: number
+        }
+        Relationships: []
+      }
+      radar_municipios: {
+        Row: {
+          codigo: string
+          lat: number | null
+          lng: number | null
+          nome: string
+          uf: string
+        }
+        Insert: {
+          codigo: string
+          lat?: number | null
+          lng?: number | null
+          nome: string
+          uf: string
+        }
+        Update: {
+          codigo?: string
+          lat?: number | null
+          lng?: number | null
+          nome?: string
+          uf?: string
+        }
+        Relationships: []
+      }
       rag_chunks: {
         Row: {
           chunk_index: number
@@ -14368,6 +14556,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      _vendas_familia_ausente_lista_email: {
+        Args: { p_limit?: number }
+        Returns: string
+      }
       adicionar_opcao_tool_spec: {
         Args: { p_spec_id: string; p_valor: string }
         Returns: Json
@@ -14913,6 +15105,7 @@ export type Database = {
         Returns: string
       }
       push_sla_tick: { Args: never; Returns: undefined }
+      radar_recruzar_ja_cliente: { Args: never; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
@@ -15022,6 +15215,7 @@ export type Database = {
           valor_coberto_rs: number
         }[]
       }
+      route_city_norm: { Args: { raw: string }; Returns: string }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
       set_config: {
         Args: { is_local?: boolean; parameter: string; value: string }
@@ -15076,6 +15270,7 @@ export type Database = {
           p_id_base: string
           p_id_embalagem: string
           p_staging_formula_id: string
+          p_store_code: string
         }
         Returns: number
       }
@@ -15091,6 +15286,7 @@ export type Database = {
           p_formula_id: string
           p_id_base: string
           p_id_embalagem: string
+          p_store_code: string
         }
         Returns: number
       }

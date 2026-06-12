@@ -2,23 +2,29 @@ import { useEffect, useState } from 'react';
 import { Wifi, WifiOff, Cloud, CloudOff } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
+import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { cn } from '@/lib/utils';
 import { getOfflineQueueDepth, subscribeToOfflineQueue } from '@/lib/offline-queue';
 
 /**
- * Indicador de rede sempre visível — sinal contínuo de saúde do sistema.
+ * Indicador de rede — aparece SÓ quando há algo a comunicar.
  *
- * Em B2B operacional, ver o status da conexão a qualquer momento é mais
- * importante do que minimalismo visual. Por isso renderiza sempre:
- *  - Online + queue vazia: ícone Wifi sutil em verde, sem ruído
- *  - Online + queue pendente: ícone Wifi + badge com contador
+ * No estado normal (online + fila vazia) fica oculto, p/ não poluir o topbar
+ * (decisão do founder, 2026-06-11; a vendedora estranhou o ícone na lente).
+ * Renderiza apenas quando:
+ *  - Online + fila pendente: ícone Wifi + badge com contador
  *  - Slow: ícone Cloud em amarelo, ring expanding pulsante
  *  - Offline: ícone WifiOff em vermelho, shake animation curta, estilo bold
  *
- * Hover: popover com detalhes de RTT, tipo, fila.
+ * Hover: popover com status + fila (p/ todos) e RTT/tipo (só staff, lente-aware).
  */
 export function NetworkStatusIndicator() {
   const status = useNetworkStatus();
+  // Tipo de conexão (4g) e RTT em ms são jargão de engenharia — úteis p/ staff
+  // diagnosticar, ruído p/ vendedora/cliente. Lente-aware: na lente "como
+  // vendedora", o popover técnico some. Quando o indicador aparece, o status
+  // legível (Offline / lenta / fila) fica p/ todos; só Tipo/RTT são staff-only.
+  const { displayIsStaff } = useDisplayAccess();
   const [queueDepth, setQueueDepth] = useState(0);
 
   useEffect(() => {
@@ -32,6 +38,14 @@ export function NetworkStatusIndicator() {
       unsub();
     };
   }, []);
+
+  // Some no estado normal (online + fila vazia): o indicador só tem valor quando
+  // há algo a comunicar — offline, conexão lenta ou operação pendente na fila.
+  // (Vem DEPOIS dos hooks p/ não violar as regras de hooks.) Preserva o aviso de
+  // queda — crítico p/ a vendedora externa, a persona que mais fica offline.
+  if (status.quality !== 'offline' && status.quality !== 'slow' && queueDepth === 0) {
+    return null;
+  }
 
   const tone =
     status.quality === 'offline'
@@ -77,20 +91,20 @@ export function NetworkStatusIndicator() {
           {tone.label}
         </div>
         <dl className="text-xs text-muted-foreground space-y-1">
-          {status.effectiveType && (
+          {displayIsStaff && status.effectiveType && (
             <div className="flex justify-between">
               <dt>Tipo</dt>
               <dd className="font-mono text-foreground">{status.effectiveType}</dd>
             </div>
           )}
-          {status.rttMs !== null && (
+          {displayIsStaff && status.rttMs !== null && (
             <div className="flex justify-between">
               <dt>RTT estimado</dt>
               <dd className="font-mono text-foreground">{status.rttMs}ms</dd>
             </div>
           )}
           <div className="flex justify-between">
-            <dt>Mutações na fila</dt>
+            <dt>Operações pendentes</dt>
             <dd className={cn('font-mono', queueDepth > 0 ? 'text-status-warning' : 'text-foreground')}>
               {queueDepth}
             </dd>

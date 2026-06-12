@@ -26,6 +26,8 @@ export function CustomerListView({
   customers,
   scores,
   loading,
+  total,
+  isCarteira,
   onSelect,
   hasNextPage,
   isFetchingNextPage,
@@ -34,6 +36,8 @@ export function CustomerListView({
   customers: Customer[];
   scores: Map<string, ClientScore>;
   loading: boolean;
+  total: number;
+  isCarteira: boolean;
   onSelect: (c: Customer) => void;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
@@ -105,7 +109,9 @@ export function CustomerListView({
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-foreground">Clientes</h1>
-          <p className="text-sm text-muted-foreground">{customers.length} clientes na carteira</p>
+          <p className="text-sm text-muted-foreground">
+            {`${total} ${isCarteira ? 'clientes na carteira' : 'clientes na base'}`}
+          </p>
         </div>
       </div>
 
@@ -248,7 +254,7 @@ export function CustomerListView({
             <tbody>
               {filtered.map((customer) => {
                 const score = scores.get(customer.user_id);
-                const healthInfo = HEALTH_CLASSES[score?.health_class || 'critico'];
+                const healthInfo = score ? HEALTH_CLASSES[score.health_class] : undefined;
 
                 return (
                   <tr
@@ -262,7 +268,14 @@ export function CustomerListView({
                           <User className="w-4 h-4 text-primary" />
                         </div>
                         <div className="min-w-0">
-                          <p className="font-medium truncate text-foreground">{decodeHtmlEntities(customer.name)}</p>
+                          <p className="font-medium truncate text-foreground flex items-center gap-1.5">
+                            <span className="truncate">{decodeHtmlEntities(customer.name)}</span>
+                            {customer.coberto_de && (
+                              <Badge variant="outline" className="text-[10px] shrink-0 text-status-info border-status-info/40">
+                                cobertura
+                              </Badge>
+                            )}
+                          </p>
                           {customer.phone && (
                             <p className="text-xs text-muted-foreground">{customer.phone}</p>
                           )}
@@ -337,9 +350,9 @@ export function CustomerListView({
             )}
           </div>
         )}
-        {!hasNextPage && customers.length > 0 && (
+        {!hasNextPage && customers.length > 0 && !isCarteira && (
           <p className="text-center text-xs text-muted-foreground py-4 border-t">
-            Todos os clientes carregados ({customers.length})
+            Todos os clientes carregados ({total})
           </p>
         )}
       </Card>

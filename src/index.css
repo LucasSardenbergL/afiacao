@@ -383,16 +383,27 @@
      Bloqueia o gesto swipe-back do navegador (macOS trackpad / iOS) quando
      o usuário arrasta para a esquerda no início de um scroll horizontal.
      Sem isso, o navegador interpreta o gesto como "voltar página" e
-     recarrega a página anterior. Aplica em qualquer container de scroll
-     da app — tabelas (shadcn <Table>), wrappers .overflow-x-auto legados,
-     ScrollArea, etc. */
+     recarrega a página anterior. Aplica a qualquer elemento cuja CLASSE
+     contém overflow-* — tabelas (shadcn <Table>) e os wrappers
+     .overflow-x-auto legados. (O viewport do Radix ScrollArea NÃO tem
+     classe overflow-* → NÃO é coberto por este seletor; lacuna
+     preexistente, não objetivo deste fix.)
+
+     ⚠️ SÓ no eixo X (overscroll-behavior-X), NUNCA o shorthand
+     `overscroll-behavior: contain`. O shorthand contém também o eixo Y e
+     PRENDE o scroll vertical da página quando o cursor está sobre uma
+     tabela/scroll-container que não tem rolagem interna própria (a tabela
+     cresce até a altura toda → está sempre "no limite" em Y → a roda é
+     consumida e não propaga pra página → o usuário não consegue rolar a
+     página passando o mouse sobre a tabela). O swipe-back que esta regra
+     bloqueia é HORIZONTAL, então conter só X já protege os dois objetivos. */
   [class*="overflow-auto"],
   [class*="overflow-x-auto"],
   [class*="overflow-x-scroll"],
   [class*="overflow-y-auto"],
   [class*="overflow-y-scroll"],
   [class*="overflow-scroll"] {
-    overscroll-behavior: contain;
+    overscroll-behavior-x: contain;
   }
 
   /* ── Body scroll guarantee ──

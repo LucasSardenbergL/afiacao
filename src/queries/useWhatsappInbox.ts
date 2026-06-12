@@ -99,7 +99,16 @@ export function useWhatsappThread(conversationId: string | undefined) {
             (old) => appendRealtimeMessage(old, payload.new as WaMessage),
           );
         })
-      .subscribe();
+      .subscribe((status) => {
+        // Fecha a janela SELECT→SUBSCRIBED e cobre RECONEXÕES (retroativo
+        // Codex): INSERTs antes do canal assinar (ou durante uma queda) não
+        // são retroentregues pelo realtime — sem este refetch, a mensagem
+        // ficava ausente até a próxima invalidação. O mergeThreadWindow da
+        // queryFn preserva o histórico carregado (sem flicker).
+        if (status === 'SUBSCRIBED') {
+          qc.invalidateQueries({ queryKey: ['whatsapp', 'thread', conversationId] });
+        }
+      });
     return () => { supabase.removeChannel(channel); };
   }, [conversationId, qc]);
   return q;

@@ -177,7 +177,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Factory, label: 'Processos padrão', path: '/admin/standard-processes' },
       { icon: Shield, label: 'Admin & Relatórios', path: '/gestao/admin', staffOnly: true },
       { icon: Lock, label: 'Governança', path: '/gestao/governanca', staffOnly: true },
-      { icon: ShieldCheck, label: 'Saúde de Dados', path: '/gestao/saude-dados', staffOnly: true },
+      { icon: ShieldCheck, label: 'Saúde de Dados', path: '/gestao/saude-dados', gestorComercialOuMaster: true },
       { icon: MessageCircle, label: 'SLA WhatsApp', path: '/whatsapp/sla', gestorComercialOuMaster: true },
       { icon: Lightbulb, label: 'Melhorias (fila)', path: '/gestao/melhorias', masterOnly: true },
     ],
