@@ -206,12 +206,27 @@ func cmdInstall() {
 		fmt.Fprintf(os.Stderr, "ERRO ao criar objeto de serviço: %v\n", err)
 		os.Exit(1)
 	}
-	if err := s.Install(); err != nil {
-		fmt.Fprintf(os.Stderr, "ERRO ao instalar serviço: %v\n", err)
+	// Idempotente: remove registro anterior se existir (o INSTALACAO.md promete que
+	// repetir o install é seguro; também conserta registro velho sem o argumento "run").
+	_ = s.Stop()
+	if err := s.Uninstall(); err == nil {
+		// O SCM remove o serviço de forma assíncrona; dá tempo antes de recriar.
+		time.Sleep(2 * time.Second)
+	}
+	var instErr error
+	for i := 0; i < 3; i++ {
+		if instErr = s.Install(); instErr == nil {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if instErr != nil {
+		fmt.Fprintf(os.Stderr, "ERRO ao instalar serviço: %v\n", instErr)
 		os.Exit(1)
 	}
 	if err := s.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "AVISO: serviço instalado mas não iniciou: %v\n", err)
+		fmt.Fprintln(os.Stderr, "       Rode 'sayersync.exe once' para ver o erro no console.")
 	} else {
 		fmt.Println("Serviço SayerSync instalado e iniciado com sucesso.")
 	}
@@ -337,6 +352,10 @@ func svcConfig(_ *Config) *service.Config {
 		Name:        "SayerSync",
 		DisplayName: "SayerSync — Colacor Tintométrico",
 		Description: "Sincroniza formulas e precos do SayerSystem com o app Colacor.",
+		// O SCM do Windows executa o binário com ESTES argumentos. Sem o "run",
+		// o main() imprime a ajuda e sai(1) → o SCM dá timeout 1053
+		// ("não respondeu a requisição de início em tempo hábil"). Bug real em campo (12/06).
+		Arguments: []string{"run"},
 		// Roda como LocalService (least privilege; precisa só de localhost + HTTPS de saída).
 		// No Windows, 'UserName: "NT AUTHORITY\\LocalService"' seria a config ideal;
 		// por simplicidade v1 usamos o usuário do sistema (LocalSystem via kardianos default).
