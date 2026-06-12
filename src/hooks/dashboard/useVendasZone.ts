@@ -6,11 +6,8 @@ import { useDashboardCompany } from '@/hooks/useDashboardCompany';
 import { useCockpitChannel } from '@/hooks/dashboard/useCockpitChannel';
 import { variantFromScore, type PriorityCandidate } from '@/lib/dashboard/priority-rules';
 import { formatCount } from '@/lib/dashboard/format';
-import {
-  agregarVendasPorDiaCivil,
-  janelaQueryHojeOntem,
-  type PedidoVendasDia,
-} from '@/lib/dashboard/vendas-dia-civil';
+import { hojeSP, addDias } from '@/lib/dashboard/sp-date';
+import { agregarVendasDiaKpi, type PedidoVendasKpi } from '@/lib/dashboard/vendas-kpi-dia';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
 import type { TopListItem } from '@/components/dashboard/cockpit/CockpitTopList';
 
@@ -33,7 +30,9 @@ export function useVendasZone() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey,
     queryFn: async () => {
-      const agora = new Date();
+      const hoje = hojeSP();
+      const ontem = addDias(hoje, -1);
+      const amanha = addDias(hoje, 1);
 
       let faturadoHoje = 0;
       let faturadoOntem = 0;
@@ -41,17 +40,18 @@ export function useVendasZone() {
       let orcamentosAguardando = 0;
 
       try {
-        // Janela = união dos dias civis local+UTC de ontem e hoje: pedidos do sync
-        // Omie têm created_at data-pura à meia-noite UTC e caíam no dia errado com a
-        // janela local pura. O dia de cada pedido é re-decidido client-side.
-        const { inicioIso, fimIso } = janelaQueryHojeOntem(agora);
+        // Fonte do dia = order_date_kpi (date puro, 'YYYY-MM-DD') + filtro de validade,
+        // espelhando o dashboard Master (useTeamKpis): faturado conta só pedido válido
+        // (status ∉ {cancelado,rascunho}), exclui soft-deletados. order_date_kpi é
+        // imune a fuso por construção — pedidos do sync Omie deixam de cair no dia errado.
         const { data: pedidos } = await supabase
           .from('sales_orders')
-          .select('total, created_at')
-          .gte('created_at', inicioIso)
-          .lte('created_at', fimIso);
+          .select('total, status, order_date_kpi')
+          .is('deleted_at', null)
+          .gte('order_date_kpi', ontem)
+          .lt('order_date_kpi', amanha);
         if (pedidos) {
-          const agg = agregarVendasPorDiaCivil(pedidos as PedidoVendasDia[], agora);
+          const agg = agregarVendasDiaKpi(pedidos as PedidoVendasKpi[], hoje);
           faturadoHoje = agg.faturadoHoje;
           pedidosHoje = agg.pedidosHoje;
           faturadoOntem = agg.faturadoOntem;

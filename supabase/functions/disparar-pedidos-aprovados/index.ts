@@ -48,6 +48,11 @@ interface PedidoRow {
   // (barrar depois do portal criaria órfão pior — PO no fornecedor sem Omie).
   portal_protocolo?: string | null;
   status_envio_portal?: string | null;
+  // Marcado no gate quando o disparo individual passou por OVERRIDE consciente (gestor/master
+  // mandou ignorar_minimo). Flui pro resposta_canal + ProcessResult (auditoria), com o user.id
+  // do autorizador. Propagado aos filhos no split (senão o override do pai some na auditoria).
+  override_minimo?: boolean;
+  override_minimo_por?: string | null;
 }
 
 // PR5: tamanho máximo de cada chunk no split. Calibração:
@@ -269,6 +274,11 @@ interface ProcessResult {
   // Reconciliado = o PV já existia no Omie ("já cadastrado"); marcamos disparado
   // sem re-criar. O caller NÃO deve re-notificar o fornecedor (evita e-mail duplicado).
   reconciliado?: boolean;
+  // Disparo individual liberado por override do mínimo de faturamento (gestor/master).
+  // Persistido em sync_reprocess_log.metadata.resultados[] = trilha de auditoria durável,
+  // com o user.id do autorizador.
+  override_minimo?: boolean;
+  override_minimo_por?: string | null;
 }
 
 // ── [GATE-MIN-FATURAMENTO] espelho VERBATIM de src/lib/reposicao/disparo-gate-helpers.ts ──
@@ -304,7 +314,21 @@ function fornecedorCasaPattern(nome: string, pattern: string): boolean {
   return nome.toUpperCase().includes(alvo);
 }
 
-function deveBloquearPorMinimoFaturamento(
+// `ignorarMinimo` = override consciente por pedido (re-disparo individual por gestor/master).
+// O helper só DECIDE; quem garante "só modo individual + gestor/master" é o handler abaixo.
+interface GateOpts {
+  ignorarMinimo?: boolean;
+}
+
+interface GateResult {
+  bloquear: boolean;
+  motivo?: string;
+  // true só quando o gate IA barrar e `ignorarMinimo` liberou (sinaliza o caller a logar).
+  overridden?: boolean;
+}
+
+// Decisão-base do gate, SEM override — a regra pura de barrar (ou não) um pedido.
+function decisaoBaseMinimoFaturamento(
   pedido: PedidoParaGate,
   cfg: GateConfig,
 ): { bloquear: boolean; motivo?: string } {
@@ -338,6 +362,28 @@ function deveBloquearPorMinimoFaturamento(
       `faturamento (R$ ${Math.round(minimo)}) — aguarde o ciclo acumular mais itens ou ` +
       `cancele o pedido.`,
   };
+}
+
+function deveBloquearPorMinimoFaturamento(
+  pedido: PedidoParaGate,
+  cfg: GateConfig,
+  opts?: GateOpts,
+): GateResult {
+  const base = decisaoBaseMinimoFaturamento(pedido, cfg);
+  // Override só importa quando o gate IA barrar. Se já passava (split/portal/fora-do-pattern/
+  // ≥régua/gate-off), a flag é no-op — não marca `overridden` (não houve nada a liberar).
+  if (base.bloquear && opts?.ignorarMinimo === true) {
+    return { bloquear: false, overridden: true };
+  }
+  return base;
+}
+
+// O override do mínimo só pode valer no disparo INDIVIDUAL (pedido_id de um pedido REAL =
+// positivo). O ternário da query (`pedidoId ? individual : lote`) trata pedido_id=0 como LOTE —
+// então pedido_id ausente/0/negativo/NaN é modo lote/cron e o override NUNCA se aplica (senão
+// `{pedido_id:0, ignorar_minimo:true}` viraria override no LOTE inteiro do dia). Não autoriza.
+function overridePermitidoNoModo(pedidoId: number | null | undefined): boolean {
+  return pedidoId != null && Number.isFinite(pedidoId) && pedidoId > 0;
 }
 
 type PortalDispatchResult =
@@ -487,6 +533,13 @@ async function dividirPedidosGrandesSayerlack(
         .eq("fornecedor_nome", fr.fornecedor_nome)
         .maybeSingle();
       if (fh) Object.assign(fr, fh);
+      // Propaga a marca de override do PAI pros filhos (Codex P2): o pai virou split_em_filhos e
+      // sai da lista; sem isto, o disparo dos filhos (que SÓ aconteceu graças ao override) não
+      // ficaria registrado em lugar nenhum (resposta_canal nem sync_reprocess_log).
+      if (pedido.override_minimo) {
+        fr.override_minimo = true;
+        fr.override_minimo_por = pedido.override_minimo_por ?? null;
+      }
     }
 
     console.log(`[disparar-pedidos] Pedido ${pedido.id} → ${filhoIds.length} filhos: [${filhoIds.join(", ")}]`);
@@ -613,6 +666,20 @@ async function processarPedido(
       ? "DRY_RUN_OMIE_APENAS"
       : (pedido.canal_pedido ?? "—"),
   };
+  // Auditoria do override (disparo individual que ignorou o mínimo de faturamento, gestor/master):
+  // - DURÁVEL: `result.override_minimo` → sync_reprocess_log.metadata.resultados[] (append-only,
+  //   NUNCA sobrescrito) = a trilha de auditoria autoritativa.
+  // - BEST-EFFORT: `overrideTag` no resposta_canal dos writes terminais — visível na linha do
+  //   pedido, mas TRANSITÓRIO: o portal async / conciliação podem reescrever resposta_canal e
+  //   apagar a marca (por isso o sync_reprocess_log é a fonte de verdade). Ausente em pedido
+  //   normal (sem ruído de `false`).
+  if (pedido.override_minimo) {
+    result.override_minimo = true;
+    result.override_minimo_por = pedido.override_minimo_por ?? null;
+  }
+  const overrideTag = pedido.override_minimo
+    ? { override_minimo: true, override_minimo_por: pedido.override_minimo_por ?? null }
+    : {};
 
   try {
     // a. Items
@@ -708,6 +775,7 @@ async function processarPedido(
           .update({
             canal_usado: "portal_sayerlack",
             resposta_canal: {
+              ...overrideTag,
               modo,
               portal_async: true,
               fornecedor_notificado: false,
@@ -727,6 +795,7 @@ async function processarPedido(
           .update({
             canal_usado: "portal_sayerlack",
             resposta_canal: {
+              ...overrideTag,
               modo,
               portal_async: false,
               fornecedor_notificado: false,
@@ -842,6 +911,7 @@ async function processarPedido(
         horario_disparo_real: new Date().toISOString(),
         canal_usado: result.canal,
         resposta_canal: {
+          ...overrideTag,
           modo,
           omie_resposta: resp,
           fornecedor_notificado: modo === "producao",
@@ -891,6 +961,7 @@ async function processarPedido(
             omie_registrado_em: new Date().toISOString(),
             status: "disparado",
             resposta_canal: {
+              ...overrideTag,
               reconciliado: true,
               motivo: "ja_cadastrado_omie",
               erro_original: msg,
@@ -917,7 +988,7 @@ async function processarPedido(
       .from("pedido_compra_sugerido")
       .update({
         status: "falha_envio",
-        resposta_canal: { erro: msg, modo, ts: new Date().toISOString() },
+        resposta_canal: { ...overrideTag, erro: msg, modo, ts: new Date().toISOString() },
         atualizado_em: new Date().toISOString(),
       })
       .eq("id", pedido.id);
@@ -1123,7 +1194,7 @@ function buildResumoEmail(
     <a href="${APP_URL}/admin/reposicao/pedidos" style="display:inline-block;background:#111827;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Ver todos no app</a>
   </div>
 
-  ${expirados > 0 ? `<p style="margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;">${expirados} pedido(s) não aprovado(s) até as 10:00 foram marcados como expirado_sem_aprovacao.</p>` : ""}
+  ${expirados > 0 ? `<p style="margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;">${expirados} pedido(s) de OPORTUNIDADE não aprovado(s) até as 10:00 foram marcados como expirado_sem_aprovacao. Pedidos normais pendentes seguem vivos (o ciclo intra-day os atualiza ao longo do dia).</p>` : ""}
 </div>
 </body></html>`;
 
@@ -1158,6 +1229,52 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   } catch { return false; }
 }
 
+// Override do gate de mínimo de faturamento = decisão HUMANA privilegiada (money-path).
+// Exige token de USUÁRIO que seja master (user_roles) OU gestor comercial (commercial_roles
+// ∈ gerencial/estrategico/super_admin) — o gate é reforçado no SERVIDOR, não só na UI: a tela
+// de pedidos é RequireStaff (employee|master), então um employee a enxerga e poderia chamar o
+// edge direto. Cron/service_role NÃO overridam (o motor/cron nunca manda a flag; o service_role
+// é barrado por garantia — override é ato humano).
+const GESTOR_COMERCIAL_ROLES = new Set(["gerencial", "estrategico", "super_admin"]);
+// Retorna o user.id do autorizador (string) quando o caller PODE overridar (master OU gestor
+// comercial), ou null caso contrário. O id vai pra auditoria (override_minimo_por) — registrar
+// QUEM bypassou o mínimo de faturamento, não só QUE houve bypass.
+async function callerPodeIgnorarMinimo(req: Request): Promise<string | null> {
+  const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
+  const SVC_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const token = authHeader.slice(7);
+  if (token === SVC_KEY) return null; // service_role não é humano → sem override
+  try {
+    const userRes = await fetch(`${SUPA_URL}/auth/v1/user`, {
+      headers: { Authorization: authHeader, apikey: SVC_KEY },
+    });
+    if (!userRes.ok) return null;
+    const user = await userRes.json();
+    const userId = typeof user?.id === "string" ? user.id : null;
+    if (!userId) return null;
+    const svcHeaders = { apikey: SVC_KEY, Authorization: `Bearer ${SVC_KEY}` };
+    const roleRes = await fetch(
+      `${SUPA_URL}/rest/v1/user_roles?user_id=eq.${userId}&select=role`,
+      { headers: svcHeaders },
+    );
+    if (roleRes.ok) {
+      const roles = (await roleRes.json()) as Array<{ role: string }>;
+      if (roles.some((r) => r.role === "master")) return userId;
+    }
+    const crRes = await fetch(
+      `${SUPA_URL}/rest/v1/commercial_roles?user_id=eq.${userId}&select=commercial_role`,
+      { headers: svcHeaders },
+    );
+    if (crRes.ok) {
+      const crs = (await crRes.json()) as Array<{ commercial_role: string }>;
+      if (crs.some((c) => GESTOR_COMERCIAL_ROLES.has(c.commercial_role))) return userId;
+    }
+    return null;
+  } catch { return null; }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -1180,6 +1297,7 @@ Deno.serve(async (req: Request) => {
   let empresa = "OBEN";
   let dataCiclo = new Date().toISOString().slice(0, 10);
   let pedidoId: number | null = null;
+  let ignorarMinimo = false;
 
   try {
     if (req.method === "POST") {
@@ -1190,9 +1308,37 @@ Deno.serve(async (req: Request) => {
         const parsedPedidoId = Number(body.pedido_id);
         if (Number.isFinite(parsedPedidoId)) pedidoId = parsedPedidoId;
       }
+      if (body.ignorar_minimo === true) ignorarMinimo = true;
     }
 
-    console.log(`[disparar-pedidos] Início ${empresa} ${dataCiclo}${pedidoId ? ` pedido=${pedidoId}` : ""}`);
+    // Override do gate de mínimo de faturamento: SÓ vale no disparo individual (pedido_id POSITIVO
+    // de um pedido real) E por gestor/master. Nunca no corte em lote/cron nem pro motor de retry
+    // (sayerlack-retry-orfaos manda só {empresa, pedido_id}, sem a flag → ignorarMinimoEfetivo
+    // fica false). ⚠️ overridePermitidoNoModo exige pedido_id>0: pedido_id=0 cai no LOTE pelo
+    // ternário da query (`pedidoId ?`) — sem essa checagem, {pedido_id:0, ignorar_minimo:true}
+    // viraria override no lote inteiro (Codex P1). Pedido a mais: barrar service_role/cron
+    // (callerPodeIgnorarMinimo exige token de USER gestor/master).
+    let ignorarMinimoEfetivo = false;
+    let overrideMinimoPor: string | null = null; // user.id do autorizador (auditoria)
+    if (ignorarMinimo) {
+      if (!overridePermitidoNoModo(pedidoId)) {
+        console.warn("[disparar-pedidos] ignorar_minimo IGNORADO: só vale no disparo individual (sem pedido_id positivo = modo lote/cron)");
+      } else {
+        const autorizadorId = await callerPodeIgnorarMinimo(req);
+        if (!autorizadorId) {
+          console.warn(`[disparar-pedidos] ignorar_minimo NEGADO p/ pedido=${pedidoId}: caller não é gestor comercial/master`);
+          return new Response(
+            JSON.stringify({ error: "Override do mínimo de faturamento requer gestor comercial ou master." }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        ignorarMinimoEfetivo = true;
+        overrideMinimoPor = autorizadorId;
+        console.warn(`[disparar-pedidos] OVERRIDE de mínimo de faturamento AUTORIZADO p/ pedido=${pedidoId} por user=${autorizadorId}`);
+      }
+    }
+
+    console.log(`[disparar-pedidos] Início ${empresa} ${dataCiclo}${pedidoId ? ` pedido=${pedidoId}` : ""}${ignorarMinimoEfetivo ? " [OVERRIDE-MIN]" : ""}`);
 
     // 1. Config (modo + email)
     const { data: cfg, error: cfgErr } = await db
@@ -1239,13 +1385,20 @@ Deno.serve(async (req: Request) => {
     // disparo (corte em lote, aprovar-e-disparar, re-disparo individual, motor de retry).
     const barradosGate: ProcessResult[] = [];
     {
-      const { data: gateCfgRows } = await db
+      const { data: gateCfgRows, error: gateCfgErr } = await db
         .from("company_config")
         .select("key, value")
         .in("key", [
           "reposicao_alerta_pedido_valor_minimo",
           "reposicao_alerta_pedido_fornecedor_ilike",
         ]);
+      // Fail-CLOSED em erro de LEITURA (Codex P1.3): erro de rede/RLS aqui não pode virar
+      // "config ausente" (que desliga o gate e deixa pedido <R$3k disparar). Aborta o run
+      // inteiro ANTES de qualquer envio — o retry/cron seguinte tenta de novo. Config
+      // genuinamente ausente (query ok, 0 linhas) continua = gate desligado, por design.
+      if (gateCfgErr) {
+        throw new Error(`Config do gate de mínimo de faturamento: ${gateCfgErr.message}`);
+      }
       const cfgMap = new Map((gateCfgRows ?? []).map((r) => [r.key, r.value]));
       const gateCfg: GateConfig = {
         valorMinimo: Number(cfgMap.get("reposicao_alerta_pedido_valor_minimo") ?? NaN),
@@ -1254,8 +1407,15 @@ Deno.serve(async (req: Request) => {
 
       const liberados: PedidoRow[] = [];
       for (const p of aprovados) {
-        const gate = deveBloquearPorMinimoFaturamento(p, gateCfg);
+        const gate = deveBloquearPorMinimoFaturamento(p, gateCfg, { ignorarMinimo: ignorarMinimoEfetivo });
         if (!gate.bloquear) {
+          if (gate.overridden) {
+            // O gate IA barrar e o override liberou — marca p/ auditoria (resposta_canal +
+            // ProcessResult), incl. QUEM autorizou. NÃO escreve falha_envio; segue pro disparo.
+            p.override_minimo = true;
+            p.override_minimo_por = overrideMinimoPor;
+            console.warn(`[disparar-pedidos] OVERRIDE mínimo de faturamento APLICADO em #${p.id} (${p.fornecedor_nome}, R$ ${p.valor_total}) por user=${overrideMinimoPor}`);
+          }
           liberados.push(p);
           continue;
         }
@@ -1288,7 +1448,15 @@ Deno.serve(async (req: Request) => {
     // independente no banco e segue o caminho normal (portal → Omie).
     aprovados = await dividirPedidosGrandesSayerlack(db, aprovados, modo);
 
-    // 3. Expirar não aprovados
+    // 3. Expirar OPORTUNIDADES não aprovadas (Codex P1.1 pós-intra-day).
+    // Antes expirava TODOS os pendentes do dia — no mundo intra-day isso virou contraproducente:
+    // a rodada das 12h15 UTC gerava pendentes que o corte expirava 45min depois e a rodada das
+    // 14h15 regenerava (churn + o alerta R$3k re-armava = e-mail duplicado no mesmo dia).
+    // Pendentes NORMAIS agora vivem o dia todo (a RPC os regenera a cada rodada e expira os de
+    // data_ciclo < hoje na 1ª rodada de amanhã). A oportunidade mantém a vida curta original
+    // (decisão na janela da manhã) — e NÃO pode virar zumbi: pendente eterno de oportunidade
+    // bloquearia o SKU pra sempre no NOT EXISTS da RPC normal. O .lte é backstop pra
+    // oportunidades de dias anteriores (ex.: corte que falhou).
     let expirados = 0;
     if (!pedidoId) {
       const { data: expRows, error: expErr } = await db
@@ -1298,8 +1466,9 @@ Deno.serve(async (req: Request) => {
           atualizado_em: new Date().toISOString(),
         })
         .eq("empresa", empresa)
-        .eq("data_ciclo", dataCiclo)
+        .lte("data_ciclo", dataCiclo)
         .eq("status", "pendente_aprovacao")
+        .like("tipo_ciclo", "oportunidade_%")
         .select("id");
       if (expErr) console.error("[disparar-pedidos] expirar erro:", expErr.message);
       expirados = expRows?.length ?? 0;
@@ -1376,23 +1545,31 @@ Deno.serve(async (req: Request) => {
     let emailStatus: "sent" | "skipped" | "failed" = "skipped";
     let emailDetail: string | null = null;
     if (resendKey && staffEmail) {
-      const { subject, html } = buildResumoEmail(empresa, modo, resultados, expirados);
-      const r = await fetch(RESEND_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${resendKey}`,
-        },
-        body: JSON.stringify({
-          from: FROM_EMAIL,
-          to: [staffEmail],
-          subject,
-          html,
-        }),
-      });
-      const txt = await r.text();
-      emailStatus = r.ok ? "sent" : "failed";
-      emailDetail = `[${r.status}] ${txt.slice(0, 200)}`;
+      // try/catch: um throw do fetch (rede) NÃO pode propagar pro catch externo — senão a
+      // gravação do sync_reprocess_log abaixo (a auditoria durável, incl. override_minimo) seria
+      // pulada e o catch só logaria {data_ciclo}. O e-mail é secundário; a auditoria é o que importa.
+      try {
+        const { subject, html } = buildResumoEmail(empresa, modo, resultados, expirados);
+        const r = await fetch(RESEND_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${resendKey}`,
+          },
+          body: JSON.stringify({
+            from: FROM_EMAIL,
+            to: [staffEmail],
+            subject,
+            html,
+          }),
+        });
+        const txt = await r.text();
+        emailStatus = r.ok ? "sent" : "failed";
+        emailDetail = `[${r.status}] ${txt.slice(0, 200)}`;
+      } catch (e) {
+        emailStatus = "failed";
+        emailDetail = `fetch erro: ${e instanceof Error ? e.message : String(e)}`;
+      }
     } else {
       emailDetail = !staffEmail
         ? "Sem email_notificacoes"
@@ -1406,7 +1583,7 @@ Deno.serve(async (req: Request) => {
     ).length;
     const duration = Date.now() - startedAt;
 
-    await db.from("sync_reprocess_log").insert({
+    const { error: logErr } = await db.from("sync_reprocess_log").insert({
       entity_type: "pedidos_compra_disparo",
       account: empresa,
       reprocess_type: "disparo_diario",
@@ -1427,6 +1604,8 @@ Deno.serve(async (req: Request) => {
         resultados,
       },
     });
+    // Insert da auditoria não pode falhar em silêncio (sucesso HTTP sem trilha persistida).
+    if (logErr) console.error(`[disparar-pedidos] FALHA ao gravar sync_reprocess_log (auditoria): ${logErr.message}`);
 
     return new Response(
       JSON.stringify({

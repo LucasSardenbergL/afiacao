@@ -58,6 +58,13 @@ describe('filterFeedRows — busca', () => {
     expect(filterFeedRows(FIXTURE, 'delta', 'colacor_sc').map((x) => x.id)).toEqual(['d']);
     expect(filterFeedRows(FIXTURE, 'delta', 'oben')).toHaveLength(0);
   });
+  it('busca sem acento acha item com acento (afiacao → Afiação)', () => {
+    const r = filterFeedRows([row({ item_names: ['Afiação Serra'] })], 'afiacao', 'all');
+    expect(r).toHaveLength(1);
+  });
+  it('busca por total com vírgula (formato BR) acha 250.5', () => {
+    expect(filterFeedRows(FIXTURE, '250,50', 'all').map((x) => x.id)).toEqual(['b']);
+  });
   it('row com campos null não quebra a busca', () => {
     const r = filterFeedRows([row({ customer_name: null, order_number: null, item_names: [] })], 'acme', 'all');
     expect(r).toHaveLength(0);
@@ -65,6 +72,12 @@ describe('filterFeedRows — busca', () => {
 });
 
 describe('mapSalesDetail', () => {
+  it('items não-array (jsonb malformado) vira [] — painel/impressão não crasham', () => {
+    // (o.items || []).map quebraria: ({} || []) é {} e não tem .map — achado do codex.
+    const o = mapSalesDetail({ id: 's2', customer_user_id: 'u1', account: 'oben', items: {}, subtotal: 0, total: 0, status: 'rascunho', created_at: 'd', notes: null } as never);
+    expect(o.items).toEqual([]);
+  });
+
   it('preserva a linha e marca _source=sales', () => {
     const raw = {
       id: 's1', customer_user_id: 'u1', account: 'colacor',
@@ -101,6 +114,11 @@ describe('mapAfiacaoDetail', () => {
   it('items não-array não quebra', () => {
     const o = mapAfiacaoDetail({ id: 'o2', user_id: 'u1', status: 'x', subtotal: 0, total: 0, created_at: 'd', notes: null, items: {} } as never);
     expect(o.items).toEqual([]);
+  });
+  it('quantity 0 real é preservado (não vira 1) — alinha com a view', () => {
+    const o = mapAfiacaoDetail({ id: 'o3', user_id: 'u1', status: 'x', subtotal: 0, total: 0, created_at: 'd', notes: null, items: [{ category: 'X', quantity: 0, unitPrice: 10 }] } as never);
+    expect(o.items[0].quantidade).toBe(0);
+    expect(o.items[0].valor_total).toBe(0);
   });
 });
 

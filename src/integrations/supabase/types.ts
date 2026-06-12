@@ -6070,6 +6070,98 @@ export type Database = {
         }
         Relationships: []
       }
+      melhoria_itens: {
+        Row: {
+          autor_user_id: string
+          avaliacao_founder: string | null
+          created_at: string
+          empresa: string
+          id: string
+          modulo: string | null
+          resolvido_em: string | null
+          resposta_founder: string | null
+          rota_origem: string | null
+          status: string
+          tipo: string | null
+          titulo: string | null
+          triagem_status: string
+          updated_at: string
+          urgencia: string | null
+        }
+        Insert: {
+          autor_user_id: string
+          avaliacao_founder?: string | null
+          created_at?: string
+          empresa: string
+          id?: string
+          modulo?: string | null
+          resolvido_em?: string | null
+          resposta_founder?: string | null
+          rota_origem?: string | null
+          status?: string
+          tipo?: string | null
+          titulo?: string | null
+          triagem_status?: string
+          updated_at?: string
+          urgencia?: string | null
+        }
+        Update: {
+          autor_user_id?: string
+          avaliacao_founder?: string | null
+          created_at?: string
+          empresa?: string
+          id?: string
+          modulo?: string | null
+          resolvido_em?: string | null
+          resposta_founder?: string | null
+          rota_origem?: string | null
+          status?: string
+          tipo?: string | null
+          titulo?: string | null
+          triagem_status?: string
+          updated_at?: string
+          urgencia?: string | null
+        }
+        Relationships: []
+      }
+      melhoria_mensagens: {
+        Row: {
+          autor_user_id: string | null
+          conteudo: string
+          created_at: string
+          dados: Json | null
+          id: string
+          item_id: string
+          papel: string
+        }
+        Insert: {
+          autor_user_id?: string | null
+          conteudo: string
+          created_at?: string
+          dados?: Json | null
+          id?: string
+          item_id: string
+          papel: string
+        }
+        Update: {
+          autor_user_id?: string | null
+          conteudo?: string
+          created_at?: string
+          dados?: Json | null
+          id?: string
+          item_id?: string
+          papel?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "melhoria_mensagens_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "melhoria_itens"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       nfe_efetivacao_tentativas: {
         Row: {
           created_at: string
@@ -8558,6 +8650,45 @@ export type Database = {
           resolvido_em?: string | null
           valor_alertado?: number
           valor_ultimo?: number
+        }
+        Relationships: []
+      }
+      reposicao_auto_aprovacao_log: {
+        Row: {
+          criado_em: string
+          delta_pct: number | null
+          empresa: string
+          fornecedor_nome: string
+          grupo_codigo: string
+          id: number
+          pedido_id: number
+          regua: number
+          valor_anterior: number | null
+          valor_total: number
+        }
+        Insert: {
+          criado_em?: string
+          delta_pct?: number | null
+          empresa: string
+          fornecedor_nome: string
+          grupo_codigo?: string
+          id?: never
+          pedido_id: number
+          regua: number
+          valor_anterior?: number | null
+          valor_total: number
+        }
+        Update: {
+          criado_em?: string
+          delta_pct?: number | null
+          empresa?: string
+          fornecedor_nome?: string
+          grupo_codigo?: string
+          id?: never
+          pedido_id?: number
+          regua?: number
+          valor_anterior?: number | null
+          valor_total?: number
         }
         Relationships: []
       }
@@ -14237,6 +14368,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      _vendas_familia_ausente_lista_email: {
+        Args: { p_limit?: number }
+        Returns: string
+      }
       adicionar_opcao_tool_spec: {
         Args: { p_spec_id: string; p_valor: string }
         Returns: Json
@@ -14723,6 +14858,14 @@ export type Database = {
         Args: { p_customer: string; p_familia: string; p_status: string }
         Returns: undefined
       }
+      melhoria_clientes_por_produto: {
+        Args: { p_termo: string }
+        Returns: Json
+      }
+      melhoria_produtos_relacionados: {
+        Args: { p_termo: string }
+        Returns: Json
+      }
       minha_carteira: {
         Args: never
         Returns: {
@@ -14831,6 +14974,15 @@ export type Database = {
       reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
       reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
       reposicao_param_limbo_watchdog: { Args: never; Returns: undefined }
+      reposicao_pedido_auto_aprovavel: {
+        Args: {
+          p_cooldown_horas: number
+          p_delta_max: number
+          p_pedido_id: number
+          p_threshold: number
+        }
+        Returns: Json
+      }
       reposicao_persistir_qtde_inteira: {
         Args: { p_pedido_id: number }
         Returns: number

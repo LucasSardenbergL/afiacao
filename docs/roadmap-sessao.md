@@ -6,18 +6,90 @@
 
 ---
 
-## 🔁 SESSÃO 2026-06-11 — Reposição: "a caminho" (on-order) para FONTE ÚNICA (money-path, retomada)
+## 🆕 SESSÃO 2026-06-10/11 — "Melhorias": canal interno de sugestões/problemas com triagem por IA
 
-> Rework pós-bloqueio do Codex (keep-both → overcount → ruptura). Decisão "Opção A endurecida":
-> `estoque_pendente_entrada` = FONTE ÚNICA Omie (Σ saldo das POs abertas APROVADAS); remove o
-> `em_transito`; estado interno vira barreira fail-closed no motor. Spec:
-> `docs/superpowers/specs/2026-06-11-reposicao-fonte-unica-on-order.md`.
+> Pedido do founder: sessão no app onde todo funcionário sugere melhoria/reporta problema;
+> IA avalia NA HORA (triagem + resposta rápida quando for pergunta de dados, ex.: "quais
+> clientes compram o produto X e o que sugerir de substituto"); fila noturna pro founder
+> validar via Claude Code. Decisões do brainstorm: só staff · triagem + dados guiados
+> (2 ferramentas determinísticas, SEM text-to-SQL) · tela master + prompt pronto pro
+> Claude Code (SEM digest e-mail) · funcionário vê status (loop fechado).
 
-- ✅ Helper puro `pendente-entrada-po.ts` (`computeOnOrder`, fail-closed, 23 testes).
-- ✅ **Passo 1 — RPC `aplicar_snapshot_pendente`** (snapshot atômico: substitui, nunca `+=`; marcador `complete` na mesma txn; `run_id` monotônico + advisory lock + `codints_aprovados`; guards fail-closed). **PG17 A1..A13 verdes.**
-- ✅ **Passo 2 — edge `omie-sync-estoque` fonte-única** (paginar até página vazia + fingerprint anti-loop + teto fatal; sem corte 180d; retry robusto; modos only_pending/esperar_codints; grava via RPC; D1 dona da coluna; COLACOR intacto). Helper estendido (coleta pura + `varrerPedidos` com fetcher injetável). **44 testes vitest · deno check · typecheck · lint verdes.**
-- ⏳ Passos 3 (motor: −`em_transito` + barreira) · 4 (bump no disparo) · 5 (Sentinela via marcador).
-- 🚧 **Codex esgotou** (usage limit, volta 12/06 00:11) → **Caminho B** (auto-challenge + PG17). **Adversarial xhigh é GATE antes do deploy** — retroativo quando voltar. Nada de deploy até lá.
+- ✅ **Brainstorm** (abordagem A aprovada: thread por item + triagem instantânea + ferramentas de dados guiadas)
+- ✅ **Spec** (`docs/superpowers/specs/2026-06-10-melhorias-canal-feedback-design.md`) + passe adversarial próprio (P1 anti-vazamento de carteira na re-triagem incorporado; Codex esgotado → adversarial retroativo pendente)
+- ✅ **Plano** (`docs/superpowers/plans/2026-06-10-melhorias-canal-feedback-plano.md`, 11 tasks TDD)
+- ✅ **Implementação (subagent-driven, 2-stage review por task)**: helpers puros TDD (21 testes) · migration `20260610130000_melhorias_canal.sql` (2 tabelas + RLS + 2 RPCs; fixes do review: `dados` jsonb exclusivo da IA, INSERT não pré-popula triagem) · **PG17 com falsificação** (15+ asserts; teste apertado após provar que gate sabotado passava — assert A6c2 + WHEN OTHERS re-lança) · edge `melhoria-triagem` (loop agentic + tools JWT-scoped + anti-vazamento; fixes: mapa tool→RPC, disable_parallel_tool_use, gate de status, uuid 400, cap de prompt, prompt copiável delimita relato) · hook `useMelhorias` + types.ts · componentes + páginas + AppShell (botão topbar staff, badge master)
+- ✅ **Validação local**: typecheck 0 · vitest 3026/3026 · lint 0 errors · build vite ok · PG17 verde
+- ✅ **Review final do diff inteiro** (modelo capaz): PRONTO PRO PR após 2 Important — TODOS aplicados (`797c1eb9`): "meus" filtra autor explícito (master via itens alheios como dele) · toasts de erro em réplica/status · + 3 Minor (fuso `YYYY-MM-DD` sem `new Date`, fence escapado no prompt copiável, guard `tools?.`). 22 testes no módulo.
+- ✅ **[PR #750](https://github.com/LucasSardenbergL/afiacao/pull/750) MERGEADO** (2026-06-11 19:47 UTC, CI `validate` verde; merge com a main no caminho — `managerOnly`→`staffOnly` do rename paralelo aplicado no item novo, conflitos só nos 3 ímãs de bookkeeping)
+- ✅ **Deploy 2/3 (2026-06-11):** migration `20260610130000` aplicada + validada no SQL Editor (`BLOCO A OK | 2 tabelas | 5 policies | 2 RPCs | 1 trigger`) · edge `melhoria-triagem` deployada **verbatim** (305 linhas, Active; teste pré-migration deu o 500 esperado de tabela ausente = boot ok)
+- ⏳ **Founder:** **Publish** do frontend (último passo pro ar) + **smoke** (💡 → "quais clientes compram lixa?" → tabela real → fila em `/gestao/melhorias` → copiar prompt)
+- ⏳ **Codex adversarial retroativo** (4 strikes de cota em 11/06 — janela rolante do Plus; "try again 18h05 BRT". Rodar em sessão futura sobre: spec `2026-06-10-melhorias-canal-feedback-design.md` + migration `20260610130000_melhorias_canal.sql` + edge `melhoria-triagem/index.ts`; contexto: já fechados internamente dados-jsonb-service_role, gate staff provado por falsificação PG17, mapa tool→RPC, disable_parallel_tool_use, anti-vazamento na re-triagem, "meus" com filtro de autor)
+
+---
+
+## 0. SESSÃO 2026-06-10 (3) — Estratégia: de "IA que apoia" para "IA que coordena" (relatório Prosus "AI Colleagues")
+
+> Founder trouxe o PDF da Prosus (60.000 agentes, Toqan) e perguntou: como fazer vendas,
+> operações e atendimento deixarem de ser APOIADAS por IA e passarem a ser COORDENADAS
+> por ela. Sessão de brainstorming estratégico (sem código por ora).
+
+- ✅ **Leitura integral do relatório** (48 págs: power law 2%, 20 use cases, 3 fases de adoção, conclusão "outcome-oriented", apêndice técnico).
+- ✅ **Análise entregue no chat**: validações da arquitetura atual (banco-como-orquestrador = recomendação literal da Prosus), framework "escada de autonomia" (N0–N4) + critérios objetivos de promoção de nível, mapa por função (hoje → próximo degrau), sequência 90 dias, o que NÃO copiar (escala 40k≠20).
+- ✅ **Decisão do founder: frente 1 = Reposição → N3** (auto-aprovação Sayerlack). Decisões fechadas via AskUserQuestion: baseline retroativa primeiro · piso R$3k (mesma régua do alerta/gate) · sem teto superior · janela de veto = corte 13h (fase 1) · só Sayerlack.
+- ✅ **Baseline retroativa rodada em prod (2 queries)** → 2 ACHADOS: (a) `pedido_anterior_valor` NUNCA populado pela RPC → o botão "Aprovar elegíveis" do Cockpit é teatro morto desde sempre (0 elegíveis p/ todos os fornecedores); (b) estrato reconstruído via LATERAL = 16 pedidos, concordância por linha 12,5% (11 expirados = procrastinação estrutural do corte diário, não discordância), intervenção ativa real ~31% → founder escolheu **caminho A: piloto supervisionado medindo taxa de VETO** (liga de verdade c/ janela do corte 13h; veto <10% por 3 sem → fase 2 encurta p/ ~2h; veto >25% ou 1 compra errada → fusível off).
+- ✅ **Spec escrita + self-review**: `docs/superpowers/specs/2026-06-10-reposicao-auto-aprovacao-sayerlack-design.md` (estende o tick do alerta R$3k existente — zero cron novo; delta ao vivo vs último disparo; fusível `reposicao_auto_aprovacao_ativa` nasce OFF; auto-suspensão por alerta ativo de reposição; log de auditoria; e-mail vira informativo c/ janela de veto).
+- ✅ **Spec revisada pelo founder com os 16 casos reais** → 3 ajustes (delta por GRUPO + referência <90d; disciplina do veto: motivo obrigatório + veto-por-dado-errado corrige a FONTE; expectativa honesta veto 0–40%).
+- ✅ **Plano escrito** (`docs/superpowers/plans/2026-06-10-reposicao-auto-aprovacao-piloto.md`) **+ EXECUTADO inline**: migration `20260610150000_reposicao_auto_aprovacao_piloto.sql` (4 configs + log + função de elegibilidade + tick estendido VERBATIM com 4 marcas [AUTO], subsequência verificada mecanicamente) · **PG17 15/15 asserts** (`db/test-auto-aprovacao-piloto.sh`; harness ganhou o fix do `fin_audit_trigger` — snapshot stale) · badge "auto" TDD (4 testes) · audit regenerado · **suíte 2994/2994 + typecheck 0 + lint 0**.
+- ✅ **[PR #730](https://github.com/LucasSardenbergL/afiacao/pull/730) aberto + auto-merge squash** (via curl `--resolve` — o DNS local resolvia api.github.com pra IP morto 4.228.31.149; IP real 140.82.121.6 responde; git push funcionava. ⚠️ Se o `gh` voltar a dar i/o timeout nesta máquina, é DNS — workaround: curl --resolve com `gh auth token`).
+- ✅ **Codex challenge adversarial RODADO (gpt-5.5 xhigh, 2026-06-11): VETO — 6 P1 + 5 P2.** 5 P1 + 4 P2 incorporados, 1 P2 recusado com fundamento. Folds: OBEN-only (P1.1) · `FOR UPDATE` + valor pela soma dos ITENS, não o cabeçalho (P1.2 TOCTOU+mismatch) · veta `modo_promocao` (P1.3) · referência agregada por grupo×data_ciclo colapsa o pré-split (P1.4) · clamp de config `(0,0.30]`/`≥1` (P1.5) · raio cumulativo 1 auto-aprovado/grupo (P1.6) · cooldown enxerga falha de PORTAL (P2.7) · regex de corte estrito rejeita `24:00` (P2.8) · advisory lock no tick (P2.9) · guard NaN/Inf nos itens (P2.11). **Recusado P2.10** (RLS do log "global por staff" — o próprio Codex admite que replica o modelo das tabelas de pedido; `user_roles` não tem empresa; piloto é OBEN-only → inventar isolamento inexistente seria incoerente). Tabela completa na spec §7b.
+- ✅ **Re-validado: PG17 24/24 asserts** (9 cenários novos C1–C9 provam cada fold — ex.: C3 split 5200 vs agregado 8000 = 35% bloqueia; C6 usa soma dos itens) · typecheck 0 · suíte 3085/3085 · shellcheck OK. ⚠️ **Merge da main 2× no caminho** (treadmill multi-sessão; conflitos só nos 3 ímãs de bookkeeping — resolvidos). **Achado de harness:** `pg_temp.*` é por-sessão → helpers e cenários precisam do MESMO bloco psql.
+- ✅ **PR #730 mergeado na main** (2026-06-11 18:23 UTC, CI `validate`+`mutation-check` verde).
+- ✅ **Pré-flight rodado:** cron de disparo = `disparar-pedidos-aprovados-oben` `0 13 * * *` (13h UTC) → `corte_utc='13:00'` default JÁ bate (zero ajuste); régua `3000`/`%SAYERLACK%` ok; migration não-aplicada (configs=0).
+- ✅ **ROLLOUT CONCLUÍDO — PILOTO NO AR (2026-06-11):** BLOCO A (migration) aplicado no SQL Editor → **validação tudo `✅`** (4 configs · tabela log · função · cron · folds elegib [FOR UPDATE/OBEN/promo/itens] · folds tick [advisory/clamp/corte] — byte-fiel) + **BLOCO B ligado** (`reposicao_auto_aprovacao_ativa='true'`, confirmado `PILOTO LIGADO`). Entregue via skill `lovable-db-operator` (BLOCO A 491 linhas + validação por `pg_proc.prosrc` + BLOCO B + query de veto). **N2→N3 cruzado em produção.**
+- ✅ **CLAUDE.md §10 + roadmap atualizados** (PR de doc `claude/doc-auto-aprovacao-prod`) — feature money-path registrada pra memória das sessões futuras (aviso: o tick do alerta R$3k agora auto-aprova compra).
+- 🔄 **Piloto rodando (3 semanas):** 1º auto-aprovado esperado na próxima janela (21:00 BRT→09:15 BRT, se houver Sayerlack elegível); founder confere o 1º e-mail informativo (smoke em prod) + roda a query de veto toda segunda. Critério: veto <10%/3sem → fase 2 (~2h); >25% ou 1 compra errada → fusível OFF.
+- ⏳ **Founder (quando puder):** Publish do frontend (badge "auto" na lista de pedidos — não bloqueia o piloto, é server-side).
+
+---
+
+## 🧑‍🌾 SESSÃO 2026-06-10 (3) — UX da Farmer: home, menu, push e gaps de ferramenta
+
+> Pedido do founder (via lente "Ver como tatyanamartins2002"): (1) por que a tela inicial das
+> farmers é o cockpit de 6 módulos? (2) otimizar o menu lateral; (3) o que falta de ferramenta.
+> Diagnóstico: a home `/` decide só por `isStaff` (persona `vendedor` apenas REORDENA as 6 zonas)
+> e o sales-only escondia toda seção ≠ Vendas → o Meu Dia e Clientes eram INALCANÇÁVEIS pelo menu.
+> Founder aprovou as 3 frentes na ordem: home+menu → push → ficha pré-contato.
+
+- ✅ **Frente 1 — home por persona + menu ([#734](https://github.com/LucasSardenbergL/afiacao/pull/734), MERGEADO + publicado, validado na lente)**:
+  helper TDD `src/lib/nav/home-por-persona.ts` (19 testes) — vendedora (farmer/hunter/closer/
+  operacional ou sales-only) aterrissa no `/meu-dia`; menu sales-only vira allowlist por ITEM
+  (ganha Meu dia + Clientes); seção Vendas reordenada pelo fluxo do dia; badge SLA religado pra
+  sales-only; rename `managerOnly`→`staffOnly`. Adversarial: 0 P1; P2.1 (anti-loop lente) e
+  P2.3 (badge SLA) corrigidos.
+- ✅ **Frente 2 — Web Push da vendedora ([#736](https://github.com/LucasSardenbergL/afiacao/pull/736) + card master [#746](https://github.com/LucasSardenbergL/afiacao/pull/746), MERGEADOS; backend 100% EM PROD)**: tabela
+  `push_subscriptions` + RPCs device-aware (anti-vazamento em device compartilhado, P1 da
+  adversarial), 3 produtores SQL (WhatsApp inbound c/ throttle 10min + dona via
+  `wa_owner_efetivo`; tarefa nova c/ throttle 2min; SLA tick c/ gate de expediente), edge
+  `enviar-push` (npm:web-push, VAPID), SW handlers via `workbox.importScripts`, card de opt-in
+  no Meu Dia + MasterDashboard, limpeza no logout. PG17: 17 asserts. ✅ Migration aplicada +
+  edge deployada + secrets VAPID + smoke do runtime (200). ⏳ **Smoke no DEVICE pendente** —
+  SÓ no `steu.lovable.app` (o card NUNCA aparece no preview do Lovable: PWA off lá). Spec:
+  `docs/superpowers/specs/2026-06-10-push-vendedora-design.md`.
+- 🚧 **Cold-start dos dados da farmer — backfill de pedidos (TRAVADO em incidente de plataforma 11/06)**:
+  diagnóstico fechado — `sales_orders` tem 10/571 clientes da carteira da Tatyana (o score via
+  `order_items` sabe de 102 compradores <90d); vínculo `omie_clientes` 571/571 OK; causa = janela
+  rolante 5d do `sync_pedidos` sem backfill histórico. Plano provado: levas de `sync_pedidos` com
+  `date_from` 12m + `start_page`/`max_pages` 8-15, idempotente. **Supabase edge com 503 de boot +
+  timeouts em cascata em 11/06 à noite** → retomar com sonda `max_pages=1`; depois recompute scores.
+- ⏳ **Erro "uma das fontes falhou" na FilaDoDia (lente/preview)** — testar fora do preview; se
+  persistir, console (F12). Fontes: tarefas/rota/mixgap (`useFilaAcoes`).
+- ⏳ **Timeouts 60s recorrentes nos crons `*/15`** — provável mesmo incidente de plataforma;
+  re-checar quando estabilizar.
+- ⏳ **Frente 3 — ficha de 30s pré-contato** (últimas compras, preço praticado, títulos abertos,
+  cores, última conversa — drawer no card da fila/lista de ligação).
+- 📌 Gaps registrados sem frente: meta vs realizado + comissão estimada; auditoria mobile do
+  Meu Dia/fila; cesta sugerida (bloqueada no 360dialog).
 
 ---
 
@@ -29,8 +101,10 @@
 > pedido do sync de hoje caía em "ontem" (subconta o KPI de hoje, infla o de ontem e
 > distorce o delta %).
 
-- ✅ Fix: query única com `janelaQueryHojeOntem` (união dos dias civis de ontem+hoje, local∪UTC) + re-filtro client-side `agregarVendasPorDiaCivil` — cada pedido conta em **exatamente 1 dia** via `pedidoNoDiaCivil` (reusa os helpers do #733). Helper novo `src/lib/dashboard/vendas-dia-civil.ts` (TDD, 10 testes TZ-agnósticos — instantes locais via `new Date(y,m,d,h,m)`, UTC via ISO Z; passa em BRT e no UTC do CI). De quebra: 2 queries → 1.
-- ✅ CI local verde (typecheck strict · 3047/3047 testes · lint 0 errors nos arquivos tocados) — 100% frontend (sem migration, sem edge). PR aberto na sequência (auto-merge no `validate`).
+- ✅ Fix v1 (#735, na main): query única com `janelaQueryHojeOntem` (união dos dias civis de ontem+hoje, local∪UTC) + re-filtro client-side `agregarVendasPorDiaCivil` por regime — estancou o fuso usando `created_at`. Helper `vendas-dia-civil.ts` (TDD, 10 testes TZ-agnósticos).
+- ✅ **Follow-up — alinhar ao dashboard Master (decisão do founder):** o mapeamento do blast radius do bug-classe mostrou que o padrão canônico (`useTeamKpis`/`fetchPedidosMTD`) usa **`order_date_kpi`** (coluna `date` pura do #279, imune a fuso por construção) + **filtro de validade** (`status ∉ {cancelado,rascunho}` via `isPedidoValido` + `deleted_at IS NULL`). O #735 (created_at) estancou o fuso mas (a) divergia da fonte canônica e (b) contava cancelado/rascunho/soft-deletado como "Faturado". `useVendasZone` reescrito pra espelhar o Master → cockpit e Master passam a **bater**. Helper `vendas-dia-civil.ts` → `vendas-kpi-dia.ts` (`agregarVendasDiaKpi`, comparação por string `YYYY-MM-DD` → TZ-agnóstico sem Date local; reusa `isPedidoValido`+`addDias`). TDD (9 testes). Cobertura de `order_date_kpi` (wizard nasce rascunho sem a coluna; sync grava de `dInc`) é **idêntica ao Master** já em produção desde 04/06.
+- ✅ Mapa do bug-classe de fuso **FECHADO**: só `useVendasZone`+`SalesPrintDashboard` eram vulneráveis (ambos corrigidos); demais usam `order_date_kpi`+`hojeSP()` (Master), tabelas sem data-pura (`call_logs`/`cockpit_audit_log`/`nfe_recebimentos`) ou janelas amplas relativas.
+- ✅ CI local verde (typecheck strict · 3046/3046 testes · lint 0 errors) — 100% frontend (sem migration, sem edge).
 - ⚠️ Publish no Lovable pendente pra ir ao ar.
 
 ---
@@ -49,7 +123,12 @@
 - ✅ **Fix de metodologia v1.1 — crédito de reposição da sobra** (spec §14): `custo_total = custo_direto + carrego − sobra × melhor_custo_por_base` (sobra escoável vira antecipação da próxima compra; gates honestos: sem demanda/cm → crédito 0 = comportamento v1; carrego come o crédito quando o escoamento é lento — autorregulável; guard marginal R$5 preservado; invariante custo_total ≥ nec×custo_base testado). TDD com os números reais do WP01 (22 testes no helper; nec 1→QT marginal R$2,56 · nec 2→GL R$9,04 · nec 3→GL · nec 4→GL R$20,33). 2 testes da v1 reescritos (eram artefatos do frame míope).
 - ✅ UI: sobra explicada como estoque ("sobra N un-base — vira estoque, escoa em ~Xd") nas 2 superfícies (painel do pedido + tela avulsa)
 - ✅ CI local verde (typecheck strict · 3014/3014 testes · lint 0 errors) — 100% frontend (sem migration, sem edge; painel é recomendação visual, NÃO altera o pedido automático). ⚠️ Publish no Lovable pendente pra ir ao ar.
-- ⏳ **Codex adversarial retroativo** quando a cota voltar (~11/06 9h24): metodologia v1.1 (valoração da sobra ao min do grupo, double-count crédito×carrego, gate sem-demanda) — Caminho B nesta rodada foi auto-challenge + TDD exaustivo.
+- ✅ **Codex adversarial retroativo RODOU (11/06, gpt-5.5 xhigh)** — follow-up em PR novo (sobre a main, já com #732). Veredito + ações (spec §14.1/§14.2):
+  - **P1 corrigido — guard marginal sumia com necessidade FRACIONÁRIA:** usava `excedente === 0` p/ achar a conservadora; com qtd não-inteira nenhuma embalagem casa exato → guard não disparava, galão ganhava por centavos sem aviso (contraexemplo: nec 2,5 → GL por R$0,0075). Fix: conservadora = opção de **menor** excedente (qtd inteira → idêntico ao anterior, backward-compat). +2 testes.
+  - **Decisão do founder (AskUserQuestion) aplicada — gate "sem demanda":** item sem giro registrado (consumo interno oculto) agora recomenda pelo **menor custo/base** (galão) **com aviso**, em vez do QT conservador (casa a spec §6 original). Ordena por `custo_por_base` + pula o guard marginal quando demanda=null; não banca crédito (economia 0). +2 testes; mensagens das 2 telas atualizadas; 1 teste antigo reescrito.
+  - **Rótulo honesto (Codex P1.1/P1.6):** "economia X **(ao preço de hoje, contando a sobra como estoque)**" quando banca sobra — a economia é condicional ao preço de hoje, não caixa garantido.
+  - **4 limitações documentadas (não corrigidas, fora de escopo/imateriais):** MOQ/`lote_minimo` (não-objetivo v1, sem dado vivo nos hooks → Fase 3); risco de preço futuro na sobra bancada (spec §3.3 modela só capital, não preço); carrego linear cobra ~33-100% a mais (pré-existente, imaterial: R$1,12 vs decisão de R$9); `min()` do grupo viola IIA só com 3+ embalagens (não existem — todos WP são QT/GL).
+  - 25/25 no helper · typecheck strict · lint 0 errors. **1 flaky pré-existente** (`Dialer.test.tsx`, telefonia do #689 — passa 2/2 isolado; timeout do lazy-load sob carga; **zero relação com este diff**).
 
 ---
 
@@ -90,7 +169,7 @@
 
 ---
 
-## 0. SESSÃO 2026-06-10 (2) — getCapitalDeGiro + getTopInadimplentes truncados no cap 1000 (fecha o follow-up do #720)
+## 0a. SESSÃO 2026-06-10 (2) — getCapitalDeGiro + getTopInadimplentes truncados no cap 1000 (fecha o follow-up do #720)
 
 > Sessão spawnada pelo chip de follow-up da seção abaixo: as duas funções restantes do
 > `financeiroService` com o MESMO bug dos #719/#720 — queries de linhas de CR/CP sem
@@ -101,8 +180,9 @@
 - ✅ **Fix TDD (RED→GREEN provado)**: helper privado `buscarTodasPaginas` (loop `.range(from, from+999)` + `.order('id')` estável + erro LANÇA); `getCapitalDeGiro` pagina CR/CP (totais, capital de giro, top-5, projeção 30d íntegros; oben ~11k CR), `getTopInadimplentes` pagina o ranking de ATRASADO.
 - ✅ Aproveitados: literal `['A VENCER','ATRASADO','VENCE HOJE']` → `OPEN_TITLE_STATUSES`; `.eq('ATRASADO')` → `VENCIDO_TITLE_STATUSES`; soma por `saldo` (coluna gerada — bate com o resumo do #720); `data_emissao` removido do select (morto desde o #442).
 - ✅ Erro coerente (#720): CR/CP/CC lançam Error real (era R$0/[] silencioso); view de prazos segue degradando pra null ("—", acessório). `useFinanceiroCockpit` ganhou catch-por-fonte no inadimplentes; `usePosicaoAgora` já capturava → tela mostra "Sem dados" honesto.
-- ✅ Gate verde: typecheck 0 · 2975 testes (16 de contrato novos: mock-banco capa janelas em 1000 como o PostgREST real) · lint 0 errors. PR aberto (squash + auto-merge). Sem migration/edge; **vai ao ar no próximo Publish**.
-- ⏸️ **Codex adversarial retroativo** quando a cota voltar (11/06+) — caminho B aplicado (self-review adversarial + testes de contrato).
+- ✅ Gate verde: typecheck 0 · 2975 testes (16 de contrato novos: mock-banco capa janelas em 1000 como o PostgREST real) · lint 0 errors. **Mergeado ([PR #722](https://github.com/LucasSardenbergL/afiacao/pull/722))**. Sem migration/edge; **vai ao ar no próximo Publish**.
+- ✅ **Codex adversarial retroativo RODOU (2026-06-11, gpt-5.5 xhigh, 1,21M tokens, 23 comandos)** — caminho B fechado. 6 P1 + 3 P2; triagem: **2 acionáveis corrigidos em PR follow-up** (janela 30d da projeção em UTC → `spBusinessDate` [mesmo bug do #550; à noite excluía vencimentos de HOJE e incluía um 31º dia] + race no `usePosicaoAgora` [troca de empresa durante carga lenta de 'all' rotulava números da Oben como Colacor — `loadIdRef` + `data.find(company===view)` + erro limpa dados], ambos TDD RED→GREEN). **Registrados como aceitos/pré-existentes**: offset-pagination não é snapshot (distorção transitória de 1 refresh sob sync concorrente; documentado no docstring; RPC SQL agregada = evolução futura) · queries CR/CP/CC/view em épocas distintas (idem) · erro→[] nos satélites cockpit/zone (decisão consciente do #720/#722; a tela dedicada mostra banner) · identidade por nome no top-5/ranking (pré-existente; agrupar por CNPJ = follow-up de produto) · mocks não validam .order/projeção (limitação documentada do padrão de mock) · latência sequencial por empresa (aceito; RPC agregada se virar dor).
+- 📌 **Follow-ups registrados (não-bloqueantes)**: agrupamento por CNPJ normalizado no top inadimplentes/top-5 · estado `unavailable` explícito nos cards satélites · RPC SQL agregada pra Posição Agora se a tela virar caso quente.
 
 ---
 
@@ -138,7 +218,9 @@
 - ✅ **Validação PG17 local** — `db/test-alerta-pedido-minimo.sh` (11 asserts) + `db/test-rpc-intraday.sh` (8 asserts, migrations reais sobre o snapshot). CI: typecheck + 2861 testes + lint + build verdes.
 - ✅ **Análise dente de serra entregue** — fase 1 = intra-day (adianta disparo ~0,5–1d) + alerta R$3k (lote ótimo ≈ mínimo de faturamento); fase 2 (recalibrar ponto_pedido/cobertura/SS com R=2h via esteira `param_auto`) **gated em 2–4 semanas de medição**.
 - ✅ **Rollout em prod concluído (2026-06-09):** BLOCOS A+B aplicados e validados no SQL Editor + edges `gerar-pedidos-diario` e `disparar-pedidos-aprovados` deployadas verbatim (Active, diff vazio vs main). **Pacote 100% no ar** — 1ª rodada intra-day 7h15 BRT do dia seguinte.
-- ⏸️ **Codex adversarial retroativo** (quando a cota voltar, 11/06+) — revisar o #711.
+- ✅ **Codex adversarial retroativo RODOU (2026-06-11, xhigh)** — caminho B fechado. Confirmou meu achado do corte (com refinamento: expirar SÓ oportunidades, senão zumbi de oportunidade bloquearia SKU pra sempre no NOT EXISTS) + 2 P1 novos (simetria na `gerar_pedidos_oportunidade_ciclo`; gate fail-closed em erro de leitura de config) + validou guardrail/tick/gate. Fixes na migration `20260611120000` + edge `disparar-pedidos-aprovados` (PG17 5 asserts).
+- ✅ **Fixes do Codex 100% NO AR (2026-06-11):** pré-flight CONFIRMOU o bug da oportunidade em prod (`corpo_conhecido_quebrado=true` — pedidos de oportunidade nunca nasceram); `20260611120000` aplicada (`BLOCO C OK 1/1`) + `disparar-pedidos-aprovados` redeployada verbatim (teste POST 200). **A feature de pedidos de oportunidade foi LIGADA** → revisar o 1º pedido que nascer em dia de corte de campanha/véspera de aumento.
+- ⏸️ **P2 do Codex (follow-ups com gatilho):** gate no modo individual da edge do portal (rota dormente); corte×runAutoApprove transacional (coberto pelo Sentinela 48h).
 
 ---
 

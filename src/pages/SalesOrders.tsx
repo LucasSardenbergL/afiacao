@@ -31,6 +31,8 @@ const SalesOrders = () => {
     deleteSelected,
     handleShareOrder,
     printOrder,
+    prefetchDetail,
+    orders,
   } = useSalesOrders();
 
   // Pedido selecionado na listagem → o painel busca o detalhe completo por id.
@@ -45,7 +47,9 @@ const SalesOrders = () => {
     );
   }
 
-  if (loadError) {
+  // Erro só derruba a tela quando NÃO há dados — refetch de fundo que falha não
+  // descarta um cache válido com milhares de pedidos (codex P2).
+  if (loadError && orders.length === 0) {
     return (
       <div className="max-w-4xl mx-auto pt-16 text-center space-y-3">
         <p className="text-sm text-muted-foreground">Não foi possível carregar os pedidos.</p>
@@ -119,6 +123,7 @@ const SalesOrders = () => {
               onNavigate={navigate}
               onOpenDetail={() => setDetailRow(order)}
               onPrint={() => printOrder(order)}
+              onPrefetch={() => prefetchDetail(order)}
             />
           ))}
           <p className="text-center text-xs text-muted-foreground py-4">

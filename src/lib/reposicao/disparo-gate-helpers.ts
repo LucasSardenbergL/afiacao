@@ -41,7 +41,26 @@ function fornecedorCasaPattern(nome: string, pattern: string): boolean {
   return nome.toUpperCase().includes(alvo);
 }
 
-export function deveBloquearPorMinimoFaturamento(
+/** Opções do gate. `ignorarMinimo` = override consciente por pedido (re-disparo individual). */
+export interface GateOpts {
+  /**
+   * Pula o mínimo de faturamento neste pedido. O HELPER só decide; quem garante que isso
+   * só vale em modo individual + caller gestor/master é o CALLER (edge/UI). Quando o gate
+   * IA barrar e a flag libera, o resultado vem com `overridden:true` (rastro de auditoria);
+   * quando não havia bloqueio, a flag é no-op (`overridden` ausente).
+   */
+  ignorarMinimo?: boolean;
+}
+
+export interface GateResult {
+  bloquear: boolean;
+  motivo?: string;
+  /** true só quando o gate IA barrar e `ignorarMinimo` liberou (sinaliza o caller a logar). */
+  overridden?: boolean;
+}
+
+// Decisão-base do gate, SEM override — a regra pura de barrar (ou não) um pedido.
+function decisaoBaseMinimoFaturamento(
   pedido: PedidoParaGate,
   cfg: GateConfig,
 ): { bloquear: boolean; motivo?: string } {
@@ -86,4 +105,27 @@ export function deveBloquearPorMinimoFaturamento(
       `faturamento (R$ ${Math.round(minimo)}) — aguarde o ciclo acumular mais itens ou ` +
       `cancele o pedido.`,
   };
+}
+
+export function deveBloquearPorMinimoFaturamento(
+  pedido: PedidoParaGate,
+  cfg: GateConfig,
+  opts?: GateOpts,
+): GateResult {
+  const base = decisaoBaseMinimoFaturamento(pedido, cfg);
+  // Override só importa quando o gate IA barrar. Se já passava (split/portal/fora-do-pattern/
+  // ≥régua/gate-off), a flag é no-op — não marca `overridden` (não houve nada a liberar).
+  if (base.bloquear && opts?.ignorarMinimo === true) {
+    return { bloquear: false, overridden: true };
+  }
+  return base;
+}
+
+// O override do mínimo só pode valer no disparo INDIVIDUAL (pedido_id de um pedido REAL =
+// positivo). O ternário da query na edge (`pedidoId ? individual : lote`) trata pedido_id=0 como
+// LOTE — então pedido_id ausente/0/negativo/NaN é modo lote/cron e o override NUNCA se aplica
+// (senão `{pedido_id:0, ignorar_minimo:true}` de um gestor viraria override no LOTE inteiro do
+// dia — bypass do isolamento de lote). NÃO decide autorização (isso é do edge: gestor/master).
+export function overridePermitidoNoModo(pedidoId: number | null | undefined): boolean {
+  return pedidoId != null && Number.isFinite(pedidoId) && pedidoId > 0;
 }
