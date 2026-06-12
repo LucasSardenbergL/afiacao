@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **199** custom migrations totais
-- **757** objetos esperados (criados por estas migrations)
+- **201** custom migrations totais
+- **772** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 196
-  - `rls_policy`: 188
-  - `index`: 139
+  - `function`: 199
+  - `rls_policy`: 192
+  - `index`: 143
   - `cron_job`: 102
-  - `table`: 88
+  - `table`: 92
   - `trigger`: 40
   - `enum_value`: 4
 
@@ -1739,6 +1739,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.push_subscriptions_own` | `push_subscriptions` |
 | `rls_policy` | `public.push_subscriptions_service` | `push_subscriptions` |
 
+### `20260610200000_radar_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.radar_empresas` | — |
+| `table` | `public.radar_contatos` | — |
+| `table` | `public.radar_municipios` | — |
+| `table` | `public.radar_ingest_state` | — |
+| `index` | `public.idx_radar_empresas_fila` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_local` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_cnae` | `radar_empresas` |
+| `index` | `public.idx_radar_contatos_cnpj` | `radar_contatos` |
+| `function` | `public.radar_recruzar_ja_cliente` | — |
+| `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
+| `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
+| `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
+| `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
+
 ### `20260611120000_reposicao_fixes_codex_711.sql`
 
 | Tipo | Objeto | Parent |
@@ -1760,6 +1778,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `index` | `public.idx_cvs_city_norm` | `customer_visit_scores` |
 | `function` | `public.route_city_norm` | — |
+
+### `20260611180000_familia_ausente_lista_email.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._vendas_familia_ausente_lista_email` | — |
+| `function` | `public.data_health_watchdog` | — |
 
 ## Próximos passos quando algo der `❌`
 
