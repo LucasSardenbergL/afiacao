@@ -143,7 +143,9 @@ Deno.serve(async (req) => {
 
     return json({ error: `ação desconhecida: ${action}`, acoes: ["begin_lote", "chunk", "chunk_municipios", "finalize", "status"] }, 400);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    // Erros do PostgREST são objetos planos (não Error) — String(e) viraria
+    // "[object Object]" e mascararia o diagnóstico (mordeu na 1ª carga real).
+    const msg = e instanceof Error ? e.message : JSON.stringify(e);
     console.error(`radar-ingest ${action} falhou:`, msg);
     if (MES_RE.test(mes)) {
       await admin.from("radar_ingest_state").update({ status: "error", erro: msg })
