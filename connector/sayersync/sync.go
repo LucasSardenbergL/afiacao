@@ -134,6 +134,30 @@ func identOr(m map[string]string, raw string) string {
 // tinta tem 100+ litros, então valor ≤100 é litro (×1000) e >100 assume ml já.
 const litrosLimiar = 100.0
 
+// sufixoCorPadrao é o sufixo da identidade das cores PADRÃO em prod ("151N - BS").
+// "BS" = Base Solvente — rótulo fixo que a fábrica mantém (founder, 12/06) mesmo
+// a linha à base d'água não existindo mais; o export do SayerSystem compõe o
+// cor_id e o nome_cor assim. Cores PERSONALIZADAS não levam sufixo ("AZUL PURO").
+const sufixoCorPadrao = " - BS"
+
+// composeCorPadrao monta a identidade e o nome de uma cor PADRÃO no formato de
+// prod: codigo+" - BS" / descricao+" - BS". Sufixo SÓ quando o codigo resolveu
+// (caminho documentado do export); codigo ausente → id CRU sem sufixo (vira
+// divergência visível na reconciliação, nunca chute). nome é display (não-chave).
+func composeCorPadrao(codigo, descricao, id string) (corID, nome string) {
+	corID = strings.TrimSpace(codigo)
+	nome = strings.TrimSpace(descricao)
+	if corID != "" {
+		corID += sufixoCorPadrao
+	} else {
+		corID = id
+	}
+	if nome != "" {
+		nome += sufixoCorPadrao
+	}
+	return corID, nome
+}
+
 // normalizaVolumeML converte o volume da origem para ml.
 // Retorna assumiuML=true quando o valor veio acima do limiar (já estava em ml) —
 // o caller loga um aviso 1× por ciclo nesse caso.
@@ -350,11 +374,8 @@ func (p *pgExtractor) loadCorPadrao(ctx context.Context, subIdent map[string]str
 		if err := rows.Scan(&id, &codigo, &desc, &sub); err != nil {
 			return fmt.Errorf("LoadLookups padracor scan: %w", err)
 		}
-		corID := strings.TrimSpace(codigo.String)
-		if corID == "" {
-			corID = id
-		}
-		info := corInfo{CorID: corID, Nome: strings.TrimSpace(desc.String)}
+		corID, nome := composeCorPadrao(codigo.String, desc.String, id)
+		info := corInfo{CorID: corID, Nome: nome}
 		if subKey := strings.TrimSpace(sub.String); subKey != "" {
 			// codigo||id da subcolecao; FK órfã (sem linha) → mantém o id cru.
 			info.SubIdent = identOr(subIdent, subKey)
@@ -1418,14 +1439,18 @@ func mapPadracor(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
-	ident := toString(row["codigo"])
-	if ident == "" {
-		ident = id
-	}
-	return map[string]any{
+	// MESMA composição do cor_id das fórmulas (codigo+" - BS"; sem codigo → id
+	// cru) — identidade da cor tem que ser uma só em todos os payloads.
+	ident, nome := composeCorPadrao(toString(row["codigo"]), toString(row["descricao"]), id)
+	m := map[string]any{
 		"id_padraocor": ident,
-		"descricao":    toString(row["descricao"]),
 	}
+	if nome != "" {
+		m["descricao"] = nome
+	} else {
+		m["descricao"] = toString(row["descricao"])
+	}
+	return m
 }
 
 func mapColecao(row map[string]any) map[string]any {

@@ -1426,11 +1426,14 @@ func TestMappers_identidadeConfirmadaProd(t *testing.T) {
 	if mc["id_corante_sayersystem"] != "3" {
 		t.Errorf("corante: identidade esperada '3' (id numérico), got %v", mc["id_corante_sayersystem"])
 	}
-	// padracor: codigo-first (sufixo " - BS" de prod ainda sem fonte decifrada —
-	// enviamos o codigo puro; ver comentário do Lookups).
+	// padracor: codigo + " - BS" (Base Solvente — rótulo fixo da fábrica,
+	// founder 12/06; prod: cor_id="151N - BS", nome_cor="CINZA CLARO - BS").
 	mp := mapPadracor(map[string]any{"id_padraocor": int64(10), "codigo": "151N", "descricao": "CINZA CLARO"})
-	if mp["id_padraocor"] != "151N" {
-		t.Errorf("padracor: identidade esperada '151N', got %v", mp["id_padraocor"])
+	if mp["id_padraocor"] != "151N - BS" {
+		t.Errorf("padracor: identidade esperada '151N - BS', got %v", mp["id_padraocor"])
+	}
+	if mp["descricao"] != "CINZA CLARO - BS" {
+		t.Errorf("padracor: nome esperado 'CINZA CLARO - BS', got %v", mp["descricao"])
 	}
 	// colecao / subcolecao: codigo-first (prod subcolecao="1", compatível).
 	mcol := mapColecao(map[string]any{"id_colecao": int64(1), "codigo": "CL-1", "descricao": "Coleção"})
@@ -2405,5 +2408,60 @@ func TestRunCycle_returnsFalseOnConnectFailure(t *testing.T) {
 
 	if RunCycle(ctx, cfg) {
 		t.Error("RunCycle deveria retornar false quando não conecta ao PG")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// composeCorPadrao — sufixo " - BS" (Base Solvente) das cores padrão
+// ─────────────────────────────────────────────────────────────
+
+// TestComposeCorPadrao prova a composição da identidade da cor padrão no formato
+// de PROD ("151N - BS" / "CINZA CLARO - BS"). "BS" = Base Solvente, rótulo fixo
+// da fábrica (founder, 12/06). Cores personalizadas NÃO passam por aqui.
+func TestComposeCorPadrao(t *testing.T) {
+	corID, nome := composeCorPadrao("151N", "CINZA CLARO", "10")
+	if corID != "151N - BS" {
+		t.Errorf("corID esperado '151N - BS', got %q", corID)
+	}
+	if nome != "CINZA CLARO - BS" {
+		t.Errorf("nome esperado 'CINZA CLARO - BS', got %q", nome)
+	}
+
+	// codigo ausente → id CRU SEM sufixo (divergência visível na reconciliação,
+	// nunca identidade chutada); nome ainda compõe (display).
+	corID, nome = composeCorPadrao("", "LEEK GREEN - 15-0628", "42")
+	if corID != "42" {
+		t.Errorf("sem codigo: corID deve ser o id cru '42', got %q", corID)
+	}
+	if nome != "LEEK GREEN - 15-0628 - BS" {
+		t.Errorf("nome esperado 'LEEK GREEN - 15-0628 - BS', got %q", nome)
+	}
+
+	// espaços nas pontas são aparados ANTES do sufixo.
+	corID, _ = composeCorPadrao("  151T ", "x", "9")
+	if corID != "151T - BS" {
+		t.Errorf("trim antes do sufixo: esperado '151T - BS', got %q", corID)
+	}
+
+	// descricao vazia → nome vazio (mapFormula omite nome_cor — degradação honesta).
+	_, nome = composeCorPadrao("151N", "", "10")
+	if nome != "" {
+		t.Errorf("descricao vazia deve dar nome vazio, got %q", nome)
+	}
+}
+
+// TestCorPersonalizadaSemSufixoBS prova que a PERSONALIZADA segue sem sufixo
+// (prod: cor_id="AZUL PURO") — o " - BS" é exclusivo das cores padrão.
+func TestCorPersonalizadaSemSufixoBS(t *testing.T) {
+	lk := newLookups()
+	lk.CorPerson["5"] = corInfo{CorID: "AZUL PURO", Nome: "AZUL PURO CORAL"}
+	m := mapFormula(map[string]any{
+		"id_padraocor": "5", "id_produto": "1", "id_base": "2", "id_emb": "3",
+	}, true, lk)
+	if m == nil {
+		t.Fatal("mapFormula nil")
+	}
+	if m["cor_id"] != "AZUL PURO" {
+		t.Errorf("personalizada NÃO leva sufixo BS: esperado 'AZUL PURO', got %v", m["cor_id"])
 	}
 }

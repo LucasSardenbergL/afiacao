@@ -190,7 +190,7 @@ Auto-revisão disciplinada nos 7 vetores preparados pro codex. Achados INCORPORA
 | base | `base.id` (numérico! o código W vive na descrição) | `90` |
 | embalagem | `embalagem.id` (numérico; descrição é display) | `1`, `38` |
 | corante | `corante.id` (numérico; código WP na descrição) | `3`, `12` |
-| cor padrão | `padraocor.codigo` ⚠️ prod tem sufixo `" - BS"` de fonte NÃO decifrada (`151N - BS`) — enviamos o codigo puro; reconciliação em shadow + founder decidem (candidatos: colecao.codigo? familia? composição do export) | `151N - BS` |
+| cor padrão | `padraocor.codigo + " - BS"` — **"BS" = Base Solvente** (founder, 12/06): rótulo FIXO que a fábrica mantém mesmo a linha à base d'água não existindo mais; o export compõe assim. `nome_cor` idem (`descricao + " - BS"`). Sem codigo → id cru SEM sufixo (diverge visível, nunca chuta). v0.1.4 | `151N - BS` |
 | cor personalizada | `personcor.codigo_cor` | `AZUL PURO` |
 | subcolecao | `codigo` (fallback id; prod=`1`, compatível) | `1` |
 
