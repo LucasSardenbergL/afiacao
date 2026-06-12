@@ -6,11 +6,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Trash2, Share2, Pencil, Printer } from 'lucide-react';
-import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import { StatusBadgeSimple } from '@/components/StatusBadge';
 import type { OrderStatus } from '@/types';
-import { statusLabels, type OrderFeedRow } from './types';
+import { statusDoPedido, type OrderFeedRow } from './types';
 
 interface SalesOrderCardProps {
   order: OrderFeedRow;
@@ -22,6 +21,8 @@ interface SalesOrderCardProps {
   onNavigate: (path: string) => void;
   onOpenDetail: () => void;
   onPrint: () => void;
+  /** Aquece o cache do detalhe (hover) — imprimir/abrir ficam instantâneos. */
+  onPrefetch?: () => void;
 }
 
 export function SalesOrderCard({
@@ -34,9 +35,10 @@ export function SalesOrderCard({
   onNavigate,
   onOpenDetail,
   onPrint,
+  onPrefetch,
 }: SalesOrderCardProps) {
   const isAfiacao = order.origin === 'afiacao';
-  const status = statusLabels[order.status] || statusLabels.rascunho;
+  const status = statusDoPedido(order.status);
   // item_quantity da view = soma das quantidades (o mesmo que o reduce antigo fazia).
   const totalItems = Number(order.item_quantity) || 0;
   // Afiação opera sob Colacor SC (a view já manda account='colacor_sc'). O card
@@ -50,7 +52,7 @@ export function SalesOrderCard({
   const isSelectable = !isAfiacao; // só sales_orders são bulk-deletáveis
 
   return (
-    <Card className={`cursor-pointer hover:bg-muted/30 transition-colors ${checked ? 'ring-2 ring-foreground/20' : ''}`} onClick={() => (isAfiacao ? onNavigate(`/orders/${order.id}`) : onOpenDetail())}>
+    <Card className={`cursor-pointer hover:bg-muted/30 transition-colors ${checked ? 'ring-2 ring-foreground/20' : ''}`} onClick={() => (isAfiacao ? onNavigate(`/orders/${order.id}`) : onOpenDetail())} onMouseEnter={onPrefetch}>
       <CardContent className="p-3">
         <div className="flex items-start justify-between gap-2">
           {isSelectable && (
@@ -77,7 +79,7 @@ export function SalesOrderCard({
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {format(new Date(order.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+              {formatarDataPedido(order.created_at)}
             </p>
             {order.order_number && (
               <p className="text-xs text-muted-foreground">

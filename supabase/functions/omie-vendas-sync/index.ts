@@ -224,7 +224,13 @@ async function callOmieVendasApi(
   endpoint: string,
   call: string,
   params: Record<string, unknown>,
-  account: Account = "oben"
+  account: Account = "oben",
+  // throwOnTransient: erro transitório que ESGOTOU os retries vira THROW em
+  // vez de null. Sem isso, o null é AMBÍGUO ("não existe" × "Omie fora do
+  // ar") — e no caminho de criação de cliente a ambiguidade vira DUPLICATA
+  // no ERP (lookup falho lido como ausência → IncluirCliente). Usar nos
+  // lookups de identidade; syncs paginados continuam tratando null como fim.
+  opts?: { throwOnTransient?: boolean },
 ): Promise<OmieGenericResponse | null> {
   const { APP_KEY, APP_SECRET } = getCredentials(account);
 
@@ -266,6 +272,9 @@ async function callOmieVendasApi(
           console.log(`[Omie Vendas][${account}] ${isRateLimit ? 'Rate limit' : 'Transient error'}, waiting ${delay/1000}s (attempt ${attempt + 1}/${maxRetries})`);
           await new Promise(r => setTimeout(r, delay));
           continue;
+        }
+        if (opts?.throwOnTransient) {
+          throw new Error(`OMIE_TRANSIENT (${account}): ${isRateLimit ? 'rate limit' : 'erro transitório'} persistiu após ${maxRetries} tentativas — não dá pra afirmar ausência`);
         }
         console.log(`[Omie Vendas][${account}] ${isRateLimit ? 'Rate limit' : 'Transient error'} persists after ${maxRetries} retries, returning null`);
         return null;
@@ -613,8 +622,15 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
   return results;
 }
 
-// Buscar cliente na empresa de vendas pelo CPF/CNPJ
-async function buscarClienteVendas(document: string, account: Account = "oben") {
+// Buscar cliente na empresa de vendas pelo CPF/CNPJ.
+// opts.throwOnTransient: falha transitória do Omie LANÇA em vez de retornar
+// null (null = ausência CONFIRMADA) — obrigatório nos caminhos de decisão de
+// criação (anti-duplicata); enriquecimentos best-effort ficam sem.
+async function buscarClienteVendas(
+  document: string,
+  account: Account = "oben",
+  opts?: { throwOnTransient?: boolean },
+) {
   const documentClean = document.replace(/\D/g, "");
 
   const result = await callOmieVendasApi(
@@ -625,7 +641,8 @@ async function buscarClienteVendas(document: string, account: Account = "oben") 
       registros_por_pagina: 1,
       clientesFiltro: { cnpj_cpf: documentClean },
     },
-    account
+    account,
+    opts
   );
 
   const clientesArr = result?.clientes_cadastro as OmieClienteCadastro[] | undefined;
@@ -775,6 +792,16 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
   }
 }
 
+// dInc do Omie é DD/MM/YYYY → ms UTC (0 se ausente/ilegível, p/ NÃO vencer o merge
+// por data no frontend). Usado p/ escolher, por produto/parcela, o pedido de maior data.
+function parseDIncMs(s: string): number {
+  const m = (s || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return 0;
+  const d = Number(m[1]), mo = Number(m[2]), y = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
+  return Date.UTC(y, mo - 1, d);
+}
+
 // Fase 2: CONTEXTO COMERCIAL do cliente numa ÚNICA passada de ListarPedidos.
 // Substitui buscar_precos_cliente + buscar_ultima_parcela + buscar_cliente (colacor) +
 // historico_produtos_cliente, que disparavam VÁRIAS ListarPedidos concorrentes na mesma
@@ -829,20 +856,30 @@ async function buscarContextoComercialCliente(
   const parcelaCount: Record<string, number> = {};
   let ultimaParcela: string | null = null;
 
-  // Pedidos vêm do mais recente ao mais antigo (DATA_INCLUSAO) → o 1º por produto é o último.
+  // Order-independent: por produto/parcela mantém o de MAIOR dInc (a ordem da lista do
+  // Omie NÃO é garantida). dInc = precedência; NÃO data_previsao (data futura de entrega
+  // venceria o merge indevidamente). Sem dInc → '' → o frontend trata como sem-data e o
+  // local datado vence (seguro).
+  const dIncMs: Record<number, number> = {};
+  let ultimaParcelaMs = -1;
   for (const pedido of pedidos) {
-    const dataInc = pedido.infoCadastro?.dInc || pedido.cabecalho?.data_previsao || "";
+    const dataInc = pedido.infoCadastro?.dInc || "";
+    const incMs = parseDIncMs(dataInc);
     const parcela = pedido.cabecalho?.codigo_parcela;
     if (parcela) {
-      if (!ultimaParcela) ultimaParcela = parcela;
       parcelaCount[parcela] = (parcelaCount[parcela] || 0) + 1;
+      if (ultimaParcela === null || incMs > ultimaParcelaMs) {
+        ultimaParcela = parcela;
+        ultimaParcelaMs = incMs;
+      }
     }
     for (const item of pedido.det || []) {
       const cod = item.produto?.codigo_produto;
       const val = item.produto?.valor_unitario;
-      if (cod && val && val > 0 && precos[cod] === undefined) {
+      if (cod && val && val > 0 && (precos[cod] === undefined || incMs > (dIncMs[cod] ?? -1))) {
         precos[cod] = val;
         datas[cod] = dataInc;
+        dIncMs[cod] = incMs;
       }
     }
   }
@@ -1707,7 +1744,10 @@ serve(async (req) => {
       case "buscar_cliente": {
         const { document } = params;
         if (!document) throw new Error("Documento é obrigatório");
-        const cliente = await buscarClienteVendas(document, account);
+        // Estrito: transient esgotado vira ERRO da action (o invoke do client
+        // rejeita → o tri-state marca lookupFalhou e NÃO cria às cegas) em vez
+        // de 200 com null, que o client lia como "não existe".
+        const cliente = await buscarClienteVendas(document, account, { throwOnTransient: true });
         result = { success: true, cliente };
         break;
       }
@@ -1716,15 +1756,21 @@ serve(async (req) => {
         const { document: docCriar, razao_social, nome_fantasia, endereco, endereco_numero, bairro, cidade, estado, cep, telefone, contato } = params;
         if (!docCriar || !razao_social) throw new Error("Documento e razão social são obrigatórios");
         const docClean = String(docCriar).replace(/\D/g, "");
-        // First check if already exists
-        const existingCliente = await buscarClienteVendas(docCriar, account);
+        // Lookup anti-duplicação ESTRITO (retroativo Codex): com o null
+        // ambíguo, um flake do Omie pós-retries era lido como "não existe" e
+        // o IncluirCliente abaixo criava DUPLICATA no ERP. Transient → throw
+        // → a action falha honesta e o client não cria.
+        const existingCliente = await buscarClienteVendas(docCriar, account, { throwOnTransient: true });
         if (existingCliente) {
           result = { success: true, ...existingCliente, created: false };
           break;
         }
-        // Create the client
+        // Create the client. Chave de integração DETERMINÍSTICA por
+        // conta+documento (era Date.now()): se dois caminhos tentarem criar o
+        // mesmo cliente, o Omie rejeita a 2ª por integração duplicada
+        // ("já cadastrado") em vez de aceitar uma duplicata.
         const clienteParams: Record<string, unknown> = {
-          codigo_cliente_integracao: `APP_${docClean}_${Date.now()}`,
+          codigo_cliente_integracao: `APP_${account.toUpperCase()}_${docClean}`,
           razao_social,
           nome_fantasia: nome_fantasia || razao_social,
           cnpj_cpf: docClean,

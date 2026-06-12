@@ -76,6 +76,13 @@ export default defineConfig(({ mode }) => ({
           "**/UXRules-*.js",
         ],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5MB
+        // Web Push da vendedora: handlers `push`/`notificationclick` vivem em
+        // public/push-sw.js e são injetados no SW gerado (generateSW não aceita
+        // handler custom inline; importScripts é o caminho oficial do Workbox).
+        // ⚠️ Se EDITAR o push-sw.js, RENOMEIE pra push-sw-v2.js (+ aqui): o
+        // importScripts passa pelo HTTP cache (updateViaCache default 'imports')
+        // e um max-age na hospedagem serviria bytes velhos do handler.
+        importScripts: ["push-sw.js"],
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,

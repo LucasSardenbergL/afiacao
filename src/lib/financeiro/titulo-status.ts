@@ -22,11 +22,21 @@
  * Ao editar aqui, edite lá também.
  */
 
-/** Títulos EM ABERTO (compõem AR/AP: NCG, projeção). Valores nativos do Omie. */
-export const OPEN_TITLE_STATUSES = ['A VENCER', 'ATRASADO', 'VENCE HOJE'] as const;
+/**
+ * Títulos EM ABERTO (compõem AR/AP: NCG, projeção). Valores nativos do Omie
+ * + os FALLBACKS que o próprio ingest pode gravar (retroativo Codex 2026-06-11):
+ * o omie-financeiro faz `status_titulo || 'ABERTO'` quando o Omie não manda
+ * status e converte 'ABERTO' já vencido em 'VENCIDO'; 'PARCIAL' = baixa
+ * parcial. Investigação anterior não achou esses valores em prod (o Omie
+ * sempre manda 'A VENCER' etc.), mas o caminho de código EXISTE — sem eles
+ * aqui, um título sem status sumiria do KPI/DSO/capital de giro em silêncio.
+ * `saldo` é coluna gerada (doc − recebido) → correto pros 3 (PARCIAL conta o
+ * remanescente quando houver valor_recebido).
+ */
+export const OPEN_TITLE_STATUSES = ['A VENCER', 'ATRASADO', 'VENCE HOJE', 'ABERTO', 'VENCIDO', 'PARCIAL'] as const;
 
-/** Aberto mas NÃO vencido (exclui 'ATRASADO'). Usado só p/ adiantamentos. */
-export const OPEN_NOT_OVERDUE_TITLE_STATUSES = ['A VENCER', 'VENCE HOJE'] as const;
+/** Aberto mas NÃO vencido (exclui 'ATRASADO'/'VENCIDO'). Usado só p/ adiantamentos. */
+export const OPEN_NOT_OVERDUE_TITLE_STATUSES = ['A VENCER', 'VENCE HOJE', 'ABERTO'] as const;
 
 /** Liquidados (NÃO entram em aberto — saldo é bogus por causa do #396). */
 export const SETTLED_TITLE_STATUSES = ['RECEBIDO', 'PAGO', 'LIQUIDADO'] as const;

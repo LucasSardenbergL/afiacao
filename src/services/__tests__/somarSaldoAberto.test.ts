@@ -62,7 +62,8 @@ describe('somarSaldoAberto (contrato do B1)', () => {
     expect(state.calls[0].tabela).toBe('fin_contas_receber');
     expect(state.calls[0].company).toBe('oben');
     expect(state.calls[0].statuses).toEqual([...OPEN_TITLE_STATUSES]);
-    expect(state.calls[0].statuses).toEqual(['A VENCER', 'ATRASADO', 'VENCE HOJE']);
+    // 3 nativos + 3 fallbacks do ingest (retroativo Codex 2026-06-11)
+    expect(state.calls[0].statuses).toEqual(['A VENCER', 'ATRASADO', 'VENCE HOJE', 'ABERTO', 'VENCIDO', 'PARCIAL']);
   });
 
   it('pagina ORDENADO por id — offset sem ORDER BY não é estável entre páginas (sync grava a cada 10min)', async () => {

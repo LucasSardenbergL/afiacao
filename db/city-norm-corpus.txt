@@ -1,0 +1,57 @@
+# Corpus do harness diferencial TS×SQL de route_city_norm / normalizeCityKey.
+# 1 caso por linha (a linha INTEIRA é o input cru). Sem linhas vazias (o caso
+# "só espaços" cobre vazio). Linhas iniciadas em # são puladas nos DOIS lados.
+# ── 24 cidades da rota no formato de prod 'CIDADE (MG)' ──
+FORMIGA (MG)
+PIMENTA (MG)
+PIUMHI (MG)
+CAPITOLIO (MG)
+CLAUDIO (MG)
+ITAGUARA (MG)
+ITAUNA (MG)
+MATEUS LEME (MG)
+PARA DE MINAS (MG)
+BOM DESPACHO (MG)
+ABAETE (MG)
+MARTINHO CAMPOS (MG)
+PITANGUI (MG)
+LUZ (MG)
+NOVA SERRANA (MG)
+POMPEU (MG)
+SAO JOAO DEL REI (MG)
+SANTA CRUZ DE MINAS (MG)
+PRADOS (MG)
+OLIVEIRA (MG)
+TIRADENTES (MG)
+CARMO DA MATA (MG)
+DIVINOPOLIS (MG)
+CARMO DO CAJURU (MG)
+# ── como o cadastro real escreve (acentos + caixa mista) ──
+Divinópolis (MG)
+Itaúna (MG)
+Pará de Minas (MG)
+São João del Rei (MG)
+Cláudio (MG)
+Abaeté (MG)
+Capitólio (MG)
+Pompéu (MG)
+Conceição do Pará (MG)
+piumhi (mg)
+formiga (mg)
+# ── os 3 formatos de UF + variações ──
+Divinópolis/MG
+Divinópolis / MG
+Divinópolis MG
+divinópolis mg
+Divinópolis
+DIVINOPOLIS (TO)
+# ── espaços invisíveis (NBSP/trailing/múltiplos): GERADOS pelo harness ──
+# (db/test-city-norm-paridade.sh apensa esses casos programaticamente — chars
+#  invisíveis em arquivo estático são frágeis a editor/git.)
+# ── bordas do extrator de UF (última palavra de 2 letras) ──
+PASSO SUL
+MG
+X MG
+SETE LAGOAS - MG
+LUZ
+SAO GONCALO DO PARA (MG)

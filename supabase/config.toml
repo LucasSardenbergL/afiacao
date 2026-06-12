@@ -131,3 +131,6 @@ verify_jwt = false
 
 [functions.posthog-error-webhook]
 verify_jwt = false
+
+[functions.enviar-push]
+verify_jwt = false

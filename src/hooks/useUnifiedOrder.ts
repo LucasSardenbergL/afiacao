@@ -634,6 +634,13 @@ export function useUnifiedOrder() {
 
   const submitOrder = useCallback(async () => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
+    // Seleção em andamento: o ensure desta seleção ainda nem foi retido (a ref
+    // tem a promise placeholder) — o preflight fail-closed do service já
+    // bloquearia, mas barrar aqui dá feedback melhor que o erro do preflight.
+    if (loadingCustomer) {
+      toast.info('Aguarde — ainda carregando os dados do cliente.');
+      return;
+    }
     if (submittingRef.current) return; // re-entrância: ver comentário na declaração
     submittingRef.current = true;
     setSubmitting(true);
@@ -704,7 +711,7 @@ export function useUnifiedOrder() {
     notes, readyByDate, ordemCompra,
     companyProfiles, defaultProductionAssigneeId,
     getServicePrice, clearCart, isCustomerMode,
-    waitForAccountEnsure,
+    waitForAccountEnsure, loadingCustomer,
   ]);
 
   // clearCustomer defined earlier (wraps useCustomerSelection.clearCustomer + clears cart/ordemCompra/userTools)

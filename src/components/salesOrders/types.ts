@@ -100,6 +100,10 @@ export interface OrderDetail {
 export const statusLabels: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
   rascunho: { label: 'Rascunho', variant: 'outline' },
   enviado: { label: 'Enviado ao Omie', variant: 'default' },
+  // Status gravados pelo omie-vendas-sync (pedido criado direto no Omie ou
+  // registro paralelo do sync) — sem entrada aqui caíam no fallback "Rascunho".
+  importado: { label: 'Importado', variant: 'secondary' },
+  separacao: { label: 'Em separação', variant: 'default' },
   faturado: { label: 'Faturado', variant: 'secondary' },
   cancelado: { label: 'Cancelado', variant: 'destructive' },
   recebido: { label: 'Recebido', variant: 'default' },
@@ -108,3 +112,16 @@ export const statusLabels: Record<string, { label: string; variant: 'default' | 
   pronto: { label: 'Pronto', variant: 'secondary' },
   entregue: { label: 'Entregue', variant: 'secondary' },
 };
+
+// Lookup com fallback HONESTO: status desconhecido exibe o próprio status
+// (capitalizado, "_" → espaço), nunca finge ser "Rascunho" — um pedido já no
+// Omie rotulado de rascunho induz a vendedora a erro.
+export function statusDoPedido(status: string): { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' } {
+  const conhecido = statusLabels[status];
+  if (conhecido) return conhecido;
+  const cru = (status || '').replace(/_/g, ' ').trim();
+  return {
+    label: cru ? cru.charAt(0).toUpperCase() + cru.slice(1) : 'Sem status',
+    variant: 'outline',
+  };
+}
