@@ -1009,6 +1009,7 @@ export type Database = {
         Row: {
           calculated_at: string
           city: string | null
+          city_norm: string | null
           customer_user_id: string
           days_since_last_visit: number | null
           expansao_score: number | null
@@ -1028,6 +1029,7 @@ export type Database = {
         Insert: {
           calculated_at?: string
           city?: string | null
+          city_norm?: string | null
           customer_user_id: string
           days_since_last_visit?: number | null
           expansao_score?: number | null
@@ -1047,6 +1049,7 @@ export type Database = {
         Update: {
           calculated_at?: string
           city?: string | null
+          city_norm?: string | null
           customer_user_id?: string
           days_since_last_visit?: number | null
           expansao_score?: number | null
@@ -15212,6 +15215,7 @@ export type Database = {
           valor_coberto_rs: number
         }[]
       }
+      route_city_norm: { Args: { raw: string }; Returns: string }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
       set_config: {
         Args: { is_local?: boolean; parameter: string; value: string }
