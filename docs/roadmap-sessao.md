@@ -1,8 +1,38 @@
-# Roadmap da Sessão — atualizado 2026-06-10
+# Roadmap da Sessão — atualizado 2026-06-11
 
 > **Documento vivo.** Re-feito sempre que acrescentamos OU concluímos uma atividade, e renderizado no chat quando muda, pra o founder acompanhar. Prática padrão de toda sessão (registrada no CLAUDE.md, topo).
 >
 > **Legenda:** ✅ feito · 🔄 em andamento · ⏳ pendente · 🚧 bloqueado · ⏸️ adiado (decisão consciente) · 🧭 aguardando decisão (eu+codex)
+
+---
+
+## 🧹 SESSÃO 2026-06-11 — Fila do Meu Dia: instrumentar erro + enxugar menu de Vendas
+
+> Founder na lente "Ver como tatyanamartins2002": (1) o card "O que fazer agora" mostrava
+> "uma das fontes falhou ao carregar" sem dizer qual; (2) a seção Vendas do menu (8 itens) está
+> inchada e confusa pras vendedoras ("até pra mim está confuso o que serve cada coisa").
+
+- ✅ **Bug — instrumentação por fonte (decisão do founder: cravar a fonte ANTES de consertar a causa):**
+  `useFilaAcoes` agrega 3 fontes (tarefas/rota/mix-gap) num `isError` colapsado que NÃO dizia qual
+  falhou nem logava → impossível diagnosticar pela tela. Agora expõe `fontesComErro: FonteFila[]` +
+  `logger.warn` com a mensagem de cada fonte; `FilaDoDia` nomeia a fonte nos 2 avisos ("Falha ao
+  carregar: lista de ligação — …"). **Hipótese de causa-raiz (não confirmada sem o console):** a ROTA
+  (`useRouteContactList`) NÃO é lente-aware (≠ mix-gap/tarefas) → na lente do master lê ~12× mais
+  linhas (carteira inteira vs a da vendedora) → frágil no preview instável de 11/06. Bug de fidelidade
+  junto: na lente a rota mostra TODAS as carteiras, não só a do alvo. Fix lente-aware = follow-up
+  quando o log/UI cravar que é a rota.
+- ✅ **Menu Vendas enxugado (decisão founder):** "Lista de ligação"→"Quem ligar hoje"; "Novo Pedido"→
+  "Novo pedido"; **"Chamadas pendentes" SAIU do menu** → virou nudge condicional no Meu Dia
+  (`ChamadasPendentesNudge` nos 3 dashboards de vendedor — Farmer/Hunter/Closer; some quando vazio,
+  suprimido na lente pois o contador seria do master); **"Preview propostas"** (tela técnica de
+  inspeção das propostas que a IA gera) → restrita a `gestorComercialOuMaster`; Telefonia/Ferramentas
+  viram secundários após os 4 essenciais. Vendedora passa de **8 → 6 itens**, os 2 mais confusos fora.
+  Fonte única `unifiedNavSections` → propaga p/ desktop + mobile.
+- ✅ CI local verde: typecheck 0 · vitest 3175/3175 · lint 0 errors. 100% frontend (sem migration/edge).
+- ⏳ **Founder: Publish no Lovable** pra ir ao ar.
+- ⏳ **Follow-up:** quando o erro reaparecer com a fonte nomeada, confirmar se é a rota → aí avaliar
+  tornar `useRouteContactList` lente-aware (escopar à carteira do alvo: conserta fidelidade + reduz
+  o volume que provavelmente dispara o erro na lente).
 
 ---
 
@@ -82,8 +112,9 @@
   rolante 5d do `sync_pedidos` sem backfill histórico. Plano provado: levas de `sync_pedidos` com
   `date_from` 12m + `start_page`/`max_pages` 8-15, idempotente. **Supabase edge com 503 de boot +
   timeouts em cascata em 11/06 à noite** → retomar com sonda `max_pages=1`; depois recompute scores.
-- ⏳ **Erro "uma das fontes falhou" na FilaDoDia (lente/preview)** — testar fora do preview; se
-  persistir, console (F12). Fontes: tarefas/rota/mixgap (`useFilaAcoes`).
+- ✅ **Erro "uma das fontes falhou" na FilaDoDia — INSTRUMENTADO (sessão 2026-06-11, topo):** agora a
+  UI nomeia a fonte que falhou + log estruturado. Hipótese: rota não-lente-aware (volume de master).
+  Confirmar a fonte no próximo erro; fix lente-aware da rota é o follow-up.
 - ⏳ **Timeouts 60s recorrentes nos crons `*/15`** — provável mesmo incidente de plataforma;
   re-checar quando estabilizar.
 - ⏳ **Frente 3 — ficha de 30s pré-contato** (últimas compras, preço praticado, títulos abertos,

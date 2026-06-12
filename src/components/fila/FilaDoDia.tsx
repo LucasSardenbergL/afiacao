@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { track } from '@/lib/analytics';
-import { useFilaAcoes } from '@/hooks/useFilaAcoes';
+import { useFilaAcoes, type FonteFila } from '@/hooks/useFilaAcoes';
 import { useCriticaFila } from '@/hooks/useCriticaFila';
 import { PorQueAgora } from '@/components/fila/PorQueAgora';
 import type { AcaoSugerida, CategoriaAcao } from '@/lib/fila/types';
@@ -21,6 +21,14 @@ const CATEGORIA_UI: Record<CategoriaAcao, { label: string; cls: string }> = {
   esperado: { label: 'Oportunidade', cls: 'text-status-info' },
   risco: { label: 'Risco', cls: 'text-status-error' },
 };
+
+/** Rótulos das fontes na linguagem da vendedora (rota = a lista de ligação; mix-gap = oportunidades). */
+const ROTULO_FONTE: Record<FonteFila, string> = {
+  tarefas: 'tarefas',
+  rota: 'lista de ligação',
+  'mix-gap': 'oportunidades',
+};
+const rotularFontes = (fontes: FonteFila[]) => fontes.map((f) => ROTULO_FONTE[f]).join(', ');
 
 function clienteHref(a: AcaoSugerida): string | null {
   return a.clienteUserId ? `/admin/customers/${a.clienteUserId}/360` : null;
@@ -53,7 +61,7 @@ function AcaoCta({ a, temCritica }: { a: AcaoSugerida; temCritica: boolean }) {
  * Fase 3 (flag `filaContextPanel`): clicar no item abre o FilaContextPanel (painel de contexto).
  */
 export function FilaDoDia() {
-  const { acoes, isLoading, isError, retry } = useFilaAcoes();
+  const { acoes, isLoading, isError, fontesComErro, retry } = useFilaAcoes();
   const packs = useCriticaFila(acoes);
   const shownRef = useRef<Set<string>>(new Set());
 
@@ -103,7 +111,7 @@ export function FilaDoDia() {
         <Card className="p-6">
           <p className="text-sm font-medium">Não consegui carregar sua fila.</p>
           <p className="text-2xs text-muted-foreground mt-1">
-            Falha ao buscar tarefas/rota — isso NÃO significa que a carteira está em dia.
+            Falha em: {rotularFontes(fontesComErro)} — isso NÃO significa que a carteira está em dia.
           </p>
           <Button size="sm" variant="outline" className="mt-3" onClick={retry}>Tentar de novo</Button>
         </Card>
@@ -133,7 +141,7 @@ export function FilaDoDia() {
           </p>
           {isError && (
             <p className="text-2xs text-status-warning">
-              Uma das fontes falhou ao carregar — a lista pode estar incompleta.{' '}
+              Falha ao carregar: {rotularFontes(fontesComErro)} — a lista pode estar incompleta.{' '}
               <button type="button" className="underline" onClick={retry}>Tentar de novo</button>
             </p>
           )}
