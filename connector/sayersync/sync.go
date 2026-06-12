@@ -83,18 +83,19 @@ type formulaKey struct {
 type corInfo struct{ CorID, Nome, SubIdent string }
 
 // Lookups é a identidade canônica enviada ao app — TEM que casar com o que o
-// CSV-import histórico gravou. CONFIRMADO contra os dados de PRODUÇÃO das
-// tabelas tint_* (query do founder, 2026-06-12):
+// CSV-import histórico gravou. VALIDADO contra os dados de PRODUÇÃO (query do
+// founder) E contra o GABARITO oficial (export do SayerSystem, 42 CSVs/485k
+// linhas, 2026-06-12):
 //
-//	produto    → codigo             (prod: "JO05.7796")
-//	base       → id NUMÉRICO        (prod: "90"; o código W vive só na descrição)
-//	embalagem  → id NUMÉRICO        (prod: "1"/"2"/"38")
-//	corante    → id NUMÉRICO        (prod: "3"/"4"/"12")
-//	cor padrão → padraocor.codigo   (⚠️ prod tem sufixo " - BS" de fonte ainda não
-//	                                 decifrada; enviamos o codigo puro — a
-//	                                 reconciliação em shadow + founder decidem)
-//	cor person → personcor.codigo_cor (prod: "AZUL PURO")
-//	subcolecao → codigo (fallback id; prod = "1", compatível com ambos)
+//	produto    → codigo VERBATIM      ("JO05.7796")
+//	base       → id NUMÉRICO          (gabarito id_base=91 cru; código W só na descrição)
+//	embalagem  → id NUMÉRICO          (gabarito id_embalagem=1/2/3/38 cru)
+//	corante    → CODIGO verbatim      (CORANTES.CSV codigo=1..16; slots traduzem FK id→codigo)
+//	cor padrão → padraocor.codigo VERBATIM — o " - BS" (Base Solvente) JÁ VEM
+//	             DENTRO do codigo ("001B - BS", "01 - ACRIL BS"); NUNCA sufixar
+//	             (duplicaria, bug v0.1.4/5) e NUNCA trimar (chave é byte-a-byte)
+//	cor person → personcor.codigo_cor VERBATIM (espaço no fim preservado: "0105 IVE ")
+//	subcolecao → codigo (fallback id; gabarito = "1")
 //
 // Carregado UMA vez por ciclo (tabelas pequenas, full scan ok).
 type Lookups struct {
@@ -134,26 +135,22 @@ func identOr(m map[string]string, raw string) string {
 // tinta tem 100+ litros, então valor ≤100 é litro (×1000) e >100 assume ml já.
 const litrosLimiar = 100.0
 
-// sufixoCorPadrao é o sufixo da identidade das cores PADRÃO em prod ("151N - BS").
-// "BS" = Base Solvente — rótulo fixo que a fábrica mantém (founder, 12/06) mesmo
-// a linha à base d'água não existindo mais; o export do SayerSystem compõe o
-// cor_id e o nome_cor assim. Cores PERSONALIZADAS não levam sufixo ("AZUL PURO").
-const sufixoCorPadrao = " - BS"
-
-// composeCorPadrao monta a identidade e o nome de uma cor PADRÃO no formato de
-// prod: codigo+" - BS" / descricao+" - BS". Sufixo SÓ quando o codigo resolveu
-// (caminho documentado do export); codigo ausente → id CRU sem sufixo (vira
-// divergência visível na reconciliação, nunca chute). nome é display (não-chave).
+// composeCorPadrao monta a identidade e o nome de uma cor PADRÃO.
+// O GABARITO de 12/06 (export oficial do SayerSystem, 42 CSVs/485k linhas) provou:
+// o export emite padraocor.codigo e descricao VERBATIM — o " - BS" (Base Solvente,
+// founder) já vem DENTRO do codigo ("001B - BS", "01 - ACRIL BS"); compor/sufixar
+// aqui DUPLICARIA ("… - BS - BS", bug das v0.1.4/5). E NUNCA trimar identidade:
+// a era-CSV preservou espaços nas pontas (ex.: personcor "0105 IVE ") — a chave
+// oficial é byte-a-byte. codigo vazio/só-espaço → id cru (diverge visível na
+// reconciliação, nunca chuta identidade). nome é display (não entra na chave).
 func composeCorPadrao(codigo, descricao, id string) (corID, nome string) {
-	corID = strings.TrimSpace(codigo)
-	nome = strings.TrimSpace(descricao)
-	if corID != "" {
-		corID += sufixoCorPadrao
-	} else {
+	corID = codigo
+	if strings.TrimSpace(corID) == "" {
 		corID = id
 	}
-	if nome != "" {
-		nome += sufixoCorPadrao
+	nome = descricao
+	if strings.TrimSpace(nome) == "" {
+		nome = ""
 	}
 	return corID, nome
 }
@@ -196,13 +193,16 @@ func (p *pgExtractor) LoadLookups(ctx context.Context) (*Lookups, error) {
 	if err := p.loadIdentLookup(ctx, "produto", "id_produto", lk.ProdutoCod); err != nil {
 		return nil, err
 	}
-	// base/corantes: identidade É o id numérico (prod: "90"/"3") → mapa id→id
-	// explícito (deixar o mapa vazio + fallback do identOr daria o MESMO valor,
-	// mas leria como bug; o mapa cheio documenta a decisão).
+	// base: identidade É o id numérico (gabarito: coluna id_base=91 crua; o
+	// código W vive só na descrição) → mapa id→id explícito (mapa vazio +
+	// fallback do identOr daria o MESMO valor, mas leria como bug).
 	if err := p.loadIDAsIdent(ctx, "base", "id_base", lk.BaseIdent); err != nil {
 		return nil, err
 	}
-	if err := p.loadIDAsIdent(ctx, "corantes", "id_corante", lk.CoranteIdent); err != nil {
+	// corantes: identidade = CODIGO (gabarito: CORANTES.CSV codigo=1..16 é o
+	// espaço usado nos slots das fórmulas E no app; o id interno NÃO aparece
+	// no export). Os slots corante1..6 da origem são FK→id → traduz id→codigo.
+	if err := p.loadIdentLookup(ctx, "corantes", "id_corante", lk.CoranteIdent); err != nil {
 		return nil, err
 	}
 
@@ -263,8 +263,9 @@ func (p *pgExtractor) loadIdentLookup(ctx context.Context, entity, idLogic strin
 		if err := rows.Scan(&id, &codigo); err != nil {
 			return fmt.Errorf("LoadLookups %s scan: %w", entity, err)
 		}
-		ident := strings.TrimSpace(codigo.String)
-		if !codigo.Valid || ident == "" {
+		// VERBATIM (sem trim) — identidade é byte-a-byte com a era-CSV.
+		ident := codigo.String
+		if !codigo.Valid || strings.TrimSpace(ident) == "" {
 			ident = id
 		}
 		out[id] = ident
@@ -411,13 +412,15 @@ func (p *pgExtractor) loadCorPerson(ctx context.Context, lk *Lookups) error {
 		if err := rows.Scan(&id, &codigo, &desc); err != nil {
 			return fmt.Errorf("LoadLookups personcor scan: %w", err)
 		}
-		cod := strings.TrimSpace(codigo.String)
+		// VERBATIM (sem trim): o gabarito provou que codigo_cor preserva espaço
+		// no fim ("0105 IVE ") e a chave oficial da era-CSV é byte-a-byte.
+		cod := codigo.String
 		corID := cod
-		if corID == "" {
+		if strings.TrimSpace(corID) == "" {
 			corID = id
 		}
-		nome := strings.TrimSpace(desc.String)
-		if nome == "" {
+		nome := desc.String
+		if strings.TrimSpace(nome) == "" {
 			nome = cod
 		}
 		lk.CorPerson[id] = corInfo{CorID: corID, Nome: nome}
@@ -1314,9 +1317,10 @@ func mapProduto(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
-	// Identidade: codigo (varchar do SayerSystem) quando presente; senão o id.
+	// Identidade: codigo VERBATIM quando presente (sem trim — byte-a-byte com a
+	// era-CSV); só-espaço/vazio → id.
 	ident := toString(row["codigo"])
-	if ident == "" {
+	if strings.TrimSpace(ident) == "" {
 		ident = id
 	}
 	// ⚠️ NÃO mandar campo que a staging não tem: a edge espalha TODOS os campos
@@ -1398,10 +1402,15 @@ func mapCorante(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
-	// Identidade do corante = id NUMÉRICO (prod: id_corante_sayersystem="3"/"12";
-	// o código WP — ex. WP04.3900 — vive na descrição). NÃO usar codigo aqui.
+	// Identidade do corante = CODIGO verbatim (gabarito 12/06: CORANTES.CSV
+	// codigo=1..16 é o espaço do app e dos slots; ex. codigo "3" = WP04 AZUL).
+	// Fallback no id quando codigo vazio/só-espaço.
+	ident := toString(row["codigo"])
+	if strings.TrimSpace(ident) == "" {
+		ident = id
+	}
 	m := map[string]any{
-		"id_corante_sayersystem": id,
+		"id_corante_sayersystem": ident,
 		"descricao":              toString(row["descricao"]),
 	}
 	// corante.volume_ml da origem JÁ está em ML — NÃO converter (≠ embalagem).
@@ -1494,14 +1503,15 @@ func mapPersoncor(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
-	// Identidade: codigo_cor (resolvido no logical "codigo") || id.
+	// Identidade: codigo_cor VERBATIM (gabarito preserva espaço no fim:
+	// "0105 IVE " — NUNCA trimar; chave é byte-a-byte) || id quando só-espaço.
 	ident := toString(row["codigo"])
-	if ident == "" {
+	if strings.TrimSpace(ident) == "" {
 		ident = id
 	}
 	desc := toString(row["descricao"])
-	if desc == "" {
-		desc = toString(row["codigo"])
+	if strings.TrimSpace(desc) == "" {
+		desc = ident
 	}
 	return map[string]any{
 		"id_padraocor": ident,

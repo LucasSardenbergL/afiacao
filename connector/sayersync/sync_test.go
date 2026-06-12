@@ -758,8 +758,8 @@ func TestSyncCorantes_precoCoranteAusenteNaoFalha(t *testing.T) {
 		t.Fatalf("esperava 1 POST de corantes, got %d", len(srv.requests))
 	}
 	item := srv.requests[0].Body["corantes"].([]any)[0].(map[string]any)
-	if item["id_corante_sayersystem"] != "7" {
-		t.Errorf("identidade do corante esperada '7' (id numérico, confirmado em prod), got %v", item["id_corante_sayersystem"])
+	if item["id_corante_sayersystem"] != "892" {
+		t.Errorf("identidade do corante esperada '892' (codigo, validado no gabarito), got %v", item["id_corante_sayersystem"])
 	}
 	if item["volume_ml"] != 550.0 {
 		t.Errorf("volume_ml próprio do corante esperado 550 (JÁ em ml, sem conversão), got %v", item["volume_ml"])
@@ -1423,19 +1423,24 @@ func TestMappers_identidadeConfirmadaProd(t *testing.T) {
 	if mb["id_base_sayersystem"] != "90" {
 		t.Errorf("base: identidade esperada '90' (id numérico), got %v", mb["id_base_sayersystem"])
 	}
-	// corante: id NUMÉRICO mesmo com codigo presente (prod: "3").
-	mc := mapCorante(map[string]any{"id_corante": int64(3), "codigo": "WP04.3900", "descricao": "WP04.3900 - CONCENTRADO AZUL"})
+	// corante: CODIGO verbatim (gabarito: CORANTES.CSV codigo "3" = WP04 AZUL;
+	// o id interno da origem NÃO aparece no export).
+	mc := mapCorante(map[string]any{"id_corante": int64(7), "codigo": "3", "descricao": "WP04.3900 - CONCENTRADO AZUL"})
 	if mc["id_corante_sayersystem"] != "3" {
-		t.Errorf("corante: identidade esperada '3' (id numérico), got %v", mc["id_corante_sayersystem"])
+		t.Errorf("corante: identidade esperada '3' (codigo), got %v", mc["id_corante_sayersystem"])
 	}
-	// padracor: codigo + " - BS" (Base Solvente — rótulo fixo da fábrica,
-	// founder 12/06; prod: cor_id="151N - BS", nome_cor="CINZA CLARO - BS").
-	mp := mapPadracor(map[string]any{"id_padraocor": int64(10), "codigo": "151N", "descricao": "CINZA CLARO"})
+	mcFallback := mapCorante(map[string]any{"id_corante": int64(9), "descricao": "X"})
+	if mcFallback["id_corante_sayersystem"] != "9" {
+		t.Errorf("corante sem codigo: fallback no id, got %v", mcFallback["id_corante_sayersystem"])
+	}
+	// padracor: codigo VERBATIM — o " - BS" JÁ VEM no codigo (gabarito:
+	// "001B - BS"); sufixar duplicaria (bug v0.1.4/5).
+	mp := mapPadracor(map[string]any{"id_padraocor": int64(10), "codigo": "151N - BS", "descricao": "CINZA CLARO - BS"})
 	if mp["id_padraocor"] != "151N - BS" {
-		t.Errorf("padracor: identidade esperada '151N - BS', got %v", mp["id_padraocor"])
+		t.Errorf("padracor: identidade esperada '151N - BS' (verbatim), got %v", mp["id_padraocor"])
 	}
 	if mp["descricao"] != "CINZA CLARO - BS" {
-		t.Errorf("padracor: nome esperado 'CINZA CLARO - BS', got %v", mp["descricao"])
+		t.Errorf("padracor: nome esperado 'CINZA CLARO - BS' (verbatim), got %v", mp["descricao"])
 	}
 	// colecao / subcolecao: codigo-first (prod subcolecao="1", compatível).
 	mcol := mapColecao(map[string]any{"id_colecao": int64(1), "codigo": "CL-1", "descricao": "Coleção"})
@@ -1449,14 +1454,14 @@ func TestMappers_identidadeConfirmadaProd(t *testing.T) {
 	if msub["id_colecao"] != "1" {
 		t.Errorf("subcolecao: id_colecao segue cru, got %v", msub["id_colecao"])
 	}
-	// personcor: codigo_cor é a identidade (prod: "AZUL PURO"); descricao vazia
-	// cai na codigo_cor.
-	mper := mapPersoncor(map[string]any{"id_padraocor": int64(5), "codigo": "AZUL PURO", "descricao": ""})
-	if mper["id_padraocor"] != "AZUL PURO" {
-		t.Errorf("personcor: identidade esperada 'AZUL PURO', got %v", mper["id_padraocor"])
+	// personcor: codigo_cor VERBATIM com espaço no fim PRESERVADO (gabarito:
+	// "0105 IVE " — chave da era-CSV é byte-a-byte); descricao vazia cai na ident.
+	mper := mapPersoncor(map[string]any{"id_padraocor": int64(5), "codigo": "0105 IVE ", "descricao": ""})
+	if mper["id_padraocor"] != "0105 IVE " {
+		t.Errorf("personcor: identidade esperada '0105 IVE ' (com espaço!), got %q", mper["id_padraocor"])
 	}
-	if mper["descricao"] != "AZUL PURO" {
-		t.Errorf("personcor: descricao vazia deve cair na codigo_cor, got %v", mper["descricao"])
+	if mper["descricao"] != "0105 IVE " {
+		t.Errorf("personcor: descricao vazia deve cair na identidade, got %q", mper["descricao"])
 	}
 }
 
@@ -2417,43 +2422,52 @@ func TestRunCycle_returnsFalseOnConnectFailure(t *testing.T) {
 // composeCorPadrao — sufixo " - BS" (Base Solvente) das cores padrão
 // ─────────────────────────────────────────────────────────────
 
-// TestComposeCorPadrao prova a composição da identidade da cor padrão no formato
-// de PROD ("151N - BS" / "CINZA CLARO - BS"). "BS" = Base Solvente, rótulo fixo
-// da fábrica (founder, 12/06). Cores personalizadas NÃO passam por aqui.
+// TestComposeCorPadrao prova a identidade VERBATIM da cor padrão. O GABARITO de
+// 12/06 (export oficial do SayerSystem) provou que o " - BS" (Base Solvente) JÁ
+// VEM DENTRO do codigo ("001B - BS", "01 - ACRIL BS") — sufixar aqui DUPLICARIA
+// (bug das v0.1.4/5) — e que espaços nas pontas são PRESERVADOS (chave da era-CSV
+// é byte-a-byte). Cores personalizadas não passam por aqui.
 func TestComposeCorPadrao(t *testing.T) {
-	corID, nome := composeCorPadrao("151N", "CINZA CLARO", "10")
-	if corID != "151N - BS" {
-		t.Errorf("corID esperado '151N - BS', got %q", corID)
+	// Caso REAL do gabarito: codigo já carrega o sufixo → passa VERBATIM.
+	corID, nome := composeCorPadrao("001B - BS", "PRETO - BS", "10")
+	if corID != "001B - BS" {
+		t.Errorf("corID esperado '001B - BS' (verbatim, SEM duplicar sufixo), got %q", corID)
 	}
-	if nome != "CINZA CLARO - BS" {
-		t.Errorf("nome esperado 'CINZA CLARO - BS', got %q", nome)
+	if nome != "PRETO - BS" {
+		t.Errorf("nome esperado 'PRETO - BS' (verbatim), got %q", nome)
 	}
 
-	// codigo ausente → id CRU SEM sufixo (divergência visível na reconciliação,
-	// nunca identidade chutada); nome ainda compõe (display).
-	corID, nome = composeCorPadrao("", "LEEK GREEN - 15-0628", "42")
+	// REGRESSÃO anti-v0.1.4/5: nada de append — codigo sem sufixo fica sem sufixo.
+	corID, _ = composeCorPadrao("151N", "CINZA CLARO", "10")
+	if corID != "151N" {
+		t.Errorf("corID esperado '151N' verbatim (NUNCA sufixar), got %q", corID)
+	}
+
+	// Espaços nas pontas PRESERVADOS (gabarito: "0105 IVE " com espaço final).
+	corID, _ = composeCorPadrao("  151T ", "x", "9")
+	if corID != "  151T " {
+		t.Errorf("espacos preservados: esperado '  151T ' byte-a-byte, got %q", corID)
+	}
+
+	// codigo ausente/só-espaço → id CRU (diverge visível, nunca chuta).
+	corID, _ = composeCorPadrao("", "LEEK GREEN", "42")
 	if corID != "42" {
 		t.Errorf("sem codigo: corID deve ser o id cru '42', got %q", corID)
 	}
-	if nome != "LEEK GREEN - 15-0628 - BS" {
-		t.Errorf("nome esperado 'LEEK GREEN - 15-0628 - BS', got %q", nome)
+	corID, _ = composeCorPadrao("   ", "x", "43")
+	if corID != "43" {
+		t.Errorf("codigo só-espaço: corID deve ser o id cru '43', got %q", corID)
 	}
 
-	// espaços nas pontas são aparados ANTES do sufixo.
-	corID, _ = composeCorPadrao("  151T ", "x", "9")
-	if corID != "151T - BS" {
-		t.Errorf("trim antes do sufixo: esperado '151T - BS', got %q", corID)
-	}
-
-	// descricao vazia → nome vazio (mapFormula omite nome_cor — degradação honesta).
+	// descricao vazia/só-espaço → nome vazio (mapFormula omite nome_cor).
 	_, nome = composeCorPadrao("151N", "", "10")
 	if nome != "" {
 		t.Errorf("descricao vazia deve dar nome vazio, got %q", nome)
 	}
 }
 
-// TestCorPersonalizadaSemSufixoBS prova que a PERSONALIZADA segue sem sufixo
-// (prod: cor_id="AZUL PURO") — o " - BS" é exclusivo das cores padrão.
+// TestCorPersonalizadaSemSufixoBS prova que a PERSONALIZADA usa codigo_cor
+// verbatim (gabarito: "COFFEE ME 077", "0105 IVE ") — nada é composto/sufixado.
 func TestCorPersonalizadaSemSufixoBS(t *testing.T) {
 	lk := newLookups()
 	lk.CorPerson["5"] = corInfo{CorID: "AZUL PURO", Nome: "AZUL PURO CORAL"}
