@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 211
+-- Total de custom migrations: 212
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -230,7 +230,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260613130000', 'radar_rls_initplan_perf', '20260613130000_radar_rls_initplan_perf.sql'),
   ('20260613150000', 'kb_spec_versions_faseA', '20260613150000_kb_spec_versions_faseA.sql'),
   ('20260613160000', 'kb_extraction_drafts', '20260613160000_kb_extraction_drafts.sql'),
-  ('20260613190000', 'radar_fatia3', '20260613190000_radar_fatia3.sql')
+  ('20260613190000', 'radar_fatia3', '20260613190000_radar_fatia3.sql'),
+  ('20260613210000', 'radar_perf_indices', '20260613210000_radar_perf_indices.sql')
 )
 SELECT
   e.version,
@@ -1064,7 +1065,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('kb_extraction_drafts', 'rls_policy', 'public', 'kb_extraction_drafts_delete_master', 'kb_extraction_drafts'),
   ('radar_fatia3', 'function', 'public', 'radar_contagem_por_municipio', ''),
   ('radar_fatia3', 'function', 'public', 'radar_atribuir_tarefa', ''),
-  ('radar_fatia3', 'function', 'public', 'radar_registrar_cadastro_omie', '')
+  ('radar_fatia3', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
+  ('radar_perf_indices', 'index', 'public', 'idx_radar_lista_novas', 'radar_empresas'),
+  ('radar_perf_indices', 'index', 'public', 'idx_radar_lista_estab', 'radar_empresas'),
+  ('radar_perf_indices', 'index', 'public', 'idx_radar_muni', 'radar_empresas')
 )
 SELECT
   e.migration,
