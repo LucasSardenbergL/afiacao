@@ -6,6 +6,22 @@
 
 ---
 
+## 🔭 SESSÃO 2026-06-13 (bundles-lente) — Fluxo de Bundles da farmer lente-aware ("Ver como")
+
+> Pedido do founder: fechar o último vazamento da lente "Ver como" — o fluxo de BUNDLES
+> ainda exibe os DADOS DO MASTER quando o master impersona uma vendedora. As engines de IA
+> da carteira já viraram lente-aware (#796/#799); os engines de bundles ficaram de fora.
+> Segue o padrão validado em prod (CLAUDE.md §10). 100% frontend.
+
+- 🔄 **useBundleEngine** lente-aware (espelha `useCrossSellEngine`): leitura de exibição (`farmer_client_scores`/`farmer_recommendations`) → `effectiveUserId`; SEM fallback super-admin na lente; persistência (`farmer_association_rules` global + `farmer_bundle_recommendations`) PULADA com `if (!isImpersonating)`.
+- 🔄 **BundleCardFull** (leaf, lê `useImpersonation()` direto): "Perguntas SPIN"/"Argumentação"/"Salvar (sem oferta)"/"Salvar (ofertou)" `disabled={isImpersonating}` + title honesto.
+- 🔄 **useBundleArguments**: stateless (não lê carteira) → só os botões acima desabilitam; write-guard já bloqueia edge/insert na fonte → NÃO entra na allowlist.
+- 🔄 **Testes**: bloco `useBundleEngine` no `lens-engines-ia.test.tsx` (na lente lê do ALVO, fora do próprio) + `BundleCardFull.test.tsx` ganha mock de `useImpersonation` + caso "botões disabled na lente".
+- 🔄 **Guardrail** `no-write-leak.test.ts`: `useBundleEngine.ts` na allowlist (leitura justificada).
+- ⏳ Verificação `heavy bun run typecheck` + `bun lint` + `heavy bun run test`. **Publish no Lovable** ao final.
+
+---
+
 ## 📡 SESSÃO 2026-06-10 (radar) — Radar de Clientes: prospecção de empresas novas (estilo Omie)
 
 > Pedido do founder: "funcionalidade similar ao radar de clientes do Omie". Brainstorming
