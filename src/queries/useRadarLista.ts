@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { ilikeOr } from '@/lib/postgrest';
+import { ilike, ilikeOr } from '@/lib/postgrest';
 import { presetParaParams, digitosCnae, type PresetRadar } from '@/lib/radar/ui-helpers';
 import type { Database } from '@/integrations/supabase/types';
 
@@ -28,7 +28,10 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
 
       if (filtros.busca.trim()) q = q.or(ilikeOr(['razao_social', 'nome_fantasia'], filtros.busca.trim()));
       if (filtros.uf) q = q.eq('uf', filtros.uf);
-      if (filtros.municipio) q = q.eq('municipio_nome', filtros.municipio);
+      // Município: o banco guarda em MAIÚSCULAS (dump RFB, "BELO HORIZONTE"); o usuário
+      // digita como quiser → ilike (case-insensitive + parcial, sanitizado). Limitação
+      // conhecida: ilike não é acento-insensitive ("sao" não casa "SÃO") — v2 com unaccent.
+      if (filtros.municipio.trim()) q = q.or(ilike('municipio_nome', filtros.municipio.trim()));
       // CNAE: o banco guarda 7 dígitos puros; o usuário digita o formato oficial
       // (3101-2/00). Normaliza p/ dígitos. Completo (7) = match exato pelo índice;
       // parcial = prefix match (a família do CNAE). cnaeDigitos é só-dígitos (seguro).
