@@ -1419,10 +1419,10 @@ async function criarPedidoVenda(
     .eq("account", account)
     .select("id");
   if (wbError) {
-    // 23505 no índice (account, omie_pedido_id) = ESSE omie_pedido_id já está vinculado a OUTRA
-    // linha → conflito real, NÃO auto-reconciliável (não dizer "retry resolve"). Surfaça.
-    const conflict = (wbError as { code?: string }).code === "23505";
-    throw new Error(`Pedido no Omie (${omie_pedido_id}) mas write-back falhou${conflict ? " (CONFLITO de vínculo — investigar manualmente)" : ""}: ${wbError.message}.`);
+    // Qualquer erro de DB no write-back DEPOIS do pedido existir no Omie = linha potencialmente
+    // órfã → surfaça (NÃO engolir). (Não há UNIQUE(account, omie_pedido_id): push+pull gravam o
+    // mesmo omie_pedido_id em linhas distintas por design — ver a migração 20260613120000.)
+    throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back em sales_orders falhou: ${wbError.message}.`);
   }
   if (!wbRows || wbRows.length !== 1) {
     throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
