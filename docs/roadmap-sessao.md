@@ -174,6 +174,14 @@
 - ✅ **Aviso "164 sem parâmetro" reescrito ([PR #658](https://github.com/LucasSardenbergL/afiacao/pull/658), MERGED).** Não é falha do auto-apply: são SKUs **sem histórico** p/ o motor calcular (baixo giro / 1ª compra). Mensagem clara + nível **red→yellow** + botão "Ver candidatos"→aba Ajuste manual. ⏳ **Publish**.
 - 🧭 **De-para Sayerlack (busca por descrição / em massa)** — o founder quer mapear todos os Sayerlack sem de-para de uma vez, buscando por descrição. O fluxo **"Validar"** (Cadastros → Mapeamento SKU) já faz faltantes+auto-map em lote. ⏳ **Founder testa o "Validar"** e diz se já resolve; se não, eu adiciono busca por descrição pros manuais restantes.
 
+## 17. Reposição — Painel "Baixo giro & estoque parado" (2026-06-06)
+> Continuação da §16 (o aviso "164" do #658). Founder: além de avisar, quer um LUGAR pra gerir a cauda — ver o que está parado (capital imobilizado) e decidir comercialmente (manter mín 1/máx 2, promover, descontinuar). Brainstorm → spec → challenge codex → plano (esta sessão).
+- ✅ **Spec** (`docs/superpowers/specs/2026-06-06-reposicao-painel-baixo-giro-design.md`, commit `c9c0fe9e`). Painel na Reposição (Oben): KPI **capital parado** (saldo×cmc, cmc-null honesto) + dias sem vender + **Situação** (por que não repõe) + ações.
+- ✅ **Challenge do codex (gpt-5.5) mudou o design — 2 erros reais pegos:** (1) **trava REMOVIDA** — premissa "o cron zera o 1/2" estava STALE; a core `20260605130000` já **preserva** via COALESCE/`sem_mudanca` (item bloqueado) e o motor reassume quando vira OK (= o que o founder quer). Sem trava → **sem migration money-path**. (2) **"promover com desconto" REMOVIDO da v1** — `promocao_*` é desconto de COMPRA (pode aumentar compra via forward_buying), não liquidação de venda; vira Fase 2 no domínio certo. + 164 tratados por bloqueio (não força 1/2 cego; **preview de impacto** R$+un), cmc-null honesto no KPI, "sem parâmetro"≠"sem estoque".
+- ✅ **Plano** (`docs/superpowers/plans/2026-06-06-reposicao-painel-baixo-giro.md`, commit `4f6365d1`). 6 tarefas TDD, **100% frontend, sem migration**. Reusa `impactoSimulado` (já testado) pro preview. Helpers puros → hook `useBaixoGiro` → mutations → componentes → dialog → página/rota/menu.
+- ⏳ **Build** — aguardando escolha de execução (subagent-driven recomendado). Depois: **Publish** (frontend; sem migration/edge).
+- ⏸️ **Fase 2** — liquidação de venda pro cliente (domínio de preço/venda, não `promocao_*`).
+
 ---
 
 ### Encerramento da sessão (housekeeping recorrente)
