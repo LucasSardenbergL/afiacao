@@ -205,7 +205,21 @@ Para cada par no mapa, gerar (sem executar) os UPDATEs/DELETEs:
 - Fundir clientes sem gêmeo (não existem — `doc_em_outro_profile=1633`).
 - Resolver multi-empresa (mesmo CNPJ em Oben + Colacor) como caso especial até o mapa mostrar que existe.
 
-## Estado
-- ✅ Causa-raiz provada · ✅ direção (consolidar) decidida pelo founder · ✅ sobrevivente (gêmeo) definido.
-- 🔄 Fase 1 (mapa) — em construção.
-- ⏳ Fase 2 (Codex) · ⏳ dry-run · ⏳ canário · ⏳ lote. **Nenhuma escrita até o plano da Fase 2 ser aprovado.**
+## Estado — ✅ CONCLUÍDO EM PRODUÇÃO (2026-06-13)
+- ✅ Causa-raiz provada · ✅ cross-account (mesmos clientes, 2 CNPJs fiscais) · ✅ sobrevivente (gêmeo Oben).
+- ✅ Fase 1 (mapa, PR #781) · ✅ Fase 2 (rebuild canônico, PR #784, Codex 5 P1+3 P2 incorporados).
+- ✅ Deploy do `carteira-rebuild` · ✅ dry-run (0 aliases → `upserted:6909, conflicts:[], eligible_false=0`,
+  carteira inalterada) · ✅ canário 15 (Tatiana 1→16) · ✅ **LOTE COMPLETO: 1.633 aliases ativos,
+  eligible_false=1.633, Tatiana 1→571, Regina 7→674.**
+- ✅ **Manutenção automática:** cron `carteira-rebuild-nightly` (4h30 BRT) roda o edge novo → re-aplica a
+  B-lite após cada sync. Nada a configurar.
+- **Rollback** (se preciso): `update customer_canonical_alias set status='inactive'` + rodar o rebuild.
+
+### Follow-ups (NÃO bloqueiam — fase posterior, registrados pelo Codex)
+- Histórico de afiação (clone Colacor SC) **não** unificado na view do gêmeo — scoring/WhatsApp leem
+  assignments sem filtrar `eligible`, então atividade do clone alimenta o clone escondido. O gêmeo já tem
+  ~99% do faturamento (vendas); unificar serviços+vendas = trabalho futuro se necessário.
+- Limpeza física (apagar clones) **descartada** por design: são cadastros fiscais legítimos no Omie.
+- `omie_customer_links` (account-aware, vários códigos→1 cliente) = arquitetura "correta" de médio prazo.
+
+## Fases (revisadas pós-Codex)
