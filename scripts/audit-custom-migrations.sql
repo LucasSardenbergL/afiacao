@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 206
+-- Total de custom migrations: 207
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -225,7 +225,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260611190000', 'tint_sync_codex_fixes', '20260611190000_tint_sync_codex_fixes.sql'),
   ('20260612120000', 'auto_assign_role_omie_import_guard', '20260612120000_auto_assign_role_omie_import_guard.sql'),
   ('20260612130000', 'radar_rpcs_contato', '20260612130000_radar_rpcs_contato.sql'),
-  ('20260613120000', 'customer_canonical_alias', '20260613120000_customer_canonical_alias.sql')
+  ('20260613120000', 'customer_canonical_alias', '20260613120000_customer_canonical_alias.sql'),
+  ('20260613120000', 'kb_0c_aprovacao_master_only', '20260613120000_kb_0c_aprovacao_master_only.sql')
 )
 SELECT
   e.version,
@@ -1036,7 +1037,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('customer_canonical_alias', 'table', 'public', 'customer_canonical_alias', ''),
   ('customer_canonical_alias', 'index', 'public', 'idx_cca_canonical', 'customer_canonical_alias'),
   ('customer_canonical_alias', 'index', 'public', 'idx_cca_status_active', 'customer_canonical_alias'),
-  ('customer_canonical_alias', 'rls_policy', 'public', 'cca_select_gestor_master', 'customer_canonical_alias')
+  ('customer_canonical_alias', 'rls_policy', 'public', 'cca_select_gestor_master', 'customer_canonical_alias'),
+  ('kb_0c_aprovacao_master_only', 'function', 'public', 'confirmar_vinculo_boletim', ''),
+  ('kb_0c_aprovacao_master_only', 'function', 'public', 'desvincular_boletim', ''),
+  ('kb_0c_aprovacao_master_only', 'rls_policy', 'public', 'kb_product_specs_insert_master', 'kb_product_specs'),
+  ('kb_0c_aprovacao_master_only', 'rls_policy', 'public', 'kb_product_specs_update_master', 'kb_product_specs')
 )
 SELECT
   e.migration,
