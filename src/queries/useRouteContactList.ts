@@ -9,6 +9,7 @@ import { spBusinessDate } from '@/lib/time/sp-day';
 import { derivarSinaisContato, type ContatoLog, type OutcomeStatus, type SinaisContato } from '@/lib/route/route-outcome';
 import { logger } from '@/lib/logger';
 import { track } from '@/lib/analytics';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 
 interface VisitScoreRow {
   customer_user_id: string;
@@ -138,13 +139,20 @@ async function fetchContactLog(ids: string[]): Promise<Map<string, ContatoLog[]>
  * (7 round-trips encadeados) era o estágio mais lento da fila de ligação,
  * pago a cada visita à tela (staleTime 60s).
  */
-async function fetchAllVisitScores(): Promise<VisitScoreRow[]> {
-  const baseSelect = (withCount: boolean) =>
-    supabase
+async function fetchAllVisitScores(farmerId: string | null): Promise<VisitScoreRow[]> {
+  const baseSelect = (withCount: boolean) => {
+    let q = supabase
       .from('customer_visit_scores')
       .select('customer_user_id, farmer_id, city, visit_score', withCount ? { count: 'exact' } : undefined)
-      .not('city', 'is', null)
-      .order('customer_user_id', { ascending: true });
+      .not('city', 'is', null);
+    // Lente "Ver como": escopa à carteira do ALVO NO SERVIDOR. O master lê
+    // customer_visit_scores sem o filtro de RLS → sem isto a rota traria TODAS
+    // as carteiras (infiel ao alvo) e baixaria ~12× mais linhas em ~7 páginas
+    // (provável causa do erro "uma das fontes falhou" na lente). Fora da lente
+    // farmerId=null → query IDÊNTICA à anterior; a RLS escopa a vendedora real.
+    if (farmerId) q = q.eq('farmer_id', farmerId);
+    return q.order('customer_user_id', { ascending: true });
+  };
 
   const first = await baseSelect(true).range(0, PAGE - 1);
   if (first.error) throw first.error;
@@ -173,13 +181,16 @@ async function fetchAllVisitScores(): Promise<VisitScoreRow[]> {
  * (7 dias úteis), o resultado EXIBIDO continua vindo do full-fetch legado;
  * esta query roda em paralelo só pra telemetria de divergência.
  */
-async function fetchVisitScoresByCityNorm(cityNorms: string[]): Promise<VisitScoreRow[]> {
-  const baseSelect = (withCount: boolean) =>
-    supabase
+async function fetchVisitScoresByCityNorm(cityNorms: string[], farmerId: string | null): Promise<VisitScoreRow[]> {
+  const baseSelect = (withCount: boolean) => {
+    let q = supabase
       .from('customer_visit_scores')
       .select('customer_user_id, farmer_id, city, visit_score', withCount ? { count: 'exact' } : undefined)
-      .in('city_norm' as never, cityNorms)
-      .order('customer_user_id', { ascending: true });
+      .in('city_norm' as never, cityNorms);
+    // Lente: mesmo escopo do full-fetch acima (mantém a telemetria do shadow válida).
+    if (farmerId) q = q.eq('farmer_id', farmerId);
+    return q.order('customer_user_id', { ascending: true });
+  };
 
   const first = await baseSelect(true).range(0, PAGE - 1);
   if (first.error) throw first.error;
@@ -224,8 +235,12 @@ async function fetchProfiles(ids: string[]): Promise<ProfileRow[]> {
 }
 
 export function useRouteContactList(workdayIso: string) {
+  const { isImpersonating, effectiveUserId } = useImpersonation();
+  // Na lente "Ver como", escopa a fila à carteira do ALVO (ver fetchAllVisitScores).
+  // Fora da lente: null → a RLS escopa a vendedora real, comportamento INALTERADO.
+  const lensFarmerId = isImpersonating && effectiveUserId ? effectiveUserId : null;
   return useQuery<RouteContactListData>({
-    queryKey: ['route-contact-list', workdayIso],
+    queryKey: ['route-contact-list', workdayIso, lensFarmerId],
     staleTime: 60_000,
     queryFn: async () => {
       // 1) agenda + override + config → cidades D-1
@@ -254,8 +269,8 @@ export function useRouteContactList(workdayIso: string) {
       // não aplicada → coluna inexistente) vira telemetria, nunca afeta a fila.
       const cityNorms = [...new Set(prep.cities.map(c => c.city))];
       const [allScores, shadowRes] = await Promise.all([
-        fetchAllVisitScores(),
-        fetchVisitScoresByCityNorm(cityNorms)
+        fetchAllVisitScores(lensFarmerId),
+        fetchVisitScoresByCityNorm(cityNorms, lensFarmerId)
           .then(rows => ({ ok: true as const, rows }))
           .catch((e: unknown) => ({ ok: false as const, err: e instanceof Error ? e.message : String(e) })),
       ]);

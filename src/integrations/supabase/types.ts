@@ -808,6 +808,51 @@ export type Database = {
           },
         ]
       }
+      customer_canonical_alias: {
+        Row: {
+          alias_conta: string | null
+          alias_omie_codigo: number | null
+          alias_user_id: string
+          batch_id: string | null
+          canonical_conta: string | null
+          canonical_omie_codigo: number | null
+          canonical_user_id: string
+          created_at: string
+          documento: string | null
+          reason: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          alias_conta?: string | null
+          alias_omie_codigo?: number | null
+          alias_user_id: string
+          batch_id?: string | null
+          canonical_conta?: string | null
+          canonical_omie_codigo?: number | null
+          canonical_user_id: string
+          created_at?: string
+          documento?: string | null
+          reason?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          alias_conta?: string | null
+          alias_omie_codigo?: number | null
+          alias_user_id?: string
+          batch_id?: string | null
+          canonical_conta?: string | null
+          canonical_omie_codigo?: number | null
+          canonical_user_id?: string
+          created_at?: string
+          documento?: string | null
+          reason?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       customer_contacts: {
         Row: {
           birthday: string | null

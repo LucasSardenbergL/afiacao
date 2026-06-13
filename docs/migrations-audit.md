@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **204** custom migrations totais
-- **780** objetos esperados (criados por estas migrations)
+- **206** custom migrations totais
+- **793** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 207
-  - `rls_policy`: 192
-  - `index`: 143
+  - `function`: 211
+  - `rls_policy`: 194
+  - `index`: 147
   - `cron_job`: 102
-  - `table`: 92
-  - `trigger`: 40
+  - `table`: 94
+  - `trigger`: 41
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1772,6 +1772,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
 
+### `20260611140000_kb_fundacao_casamento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.omie_product_spec_links` | — |
+| `index` | `public.omie_product_spec_links_one_confirmed` | `omie_product_spec_links` |
+| `index` | `public.omie_product_spec_links_unique_triple` | `omie_product_spec_links` |
+| `function` | `public.kb_specs_normalize` | — |
+| `function` | `public.buscar_skus_candidatos` | — |
+| `function` | `public.confirmar_vinculo_boletim` | — |
+| `function` | `public.rejeitar_sugestao` | — |
+| `trigger` | `public.trg_kb_specs_normalize` | `kb_product_specs` |
+| `rls_policy` | `public.omie_product_spec_links_select_staff` | `omie_product_spec_links` |
+
 ### `20260611150000_route_city_norm.sql`
 
 | Tipo | Objeto | Parent |
@@ -1808,6 +1822,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.registrar_contato_radar` | — |
 | `function` | `public.desfazer_contato_radar` | — |
 | `function` | `public.radar_kpis` | — |
+
+### `20260613120000_customer_canonical_alias.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.customer_canonical_alias` | — |
+| `index` | `public.idx_cca_canonical` | `customer_canonical_alias` |
+| `index` | `public.idx_cca_status_active` | `customer_canonical_alias` |
+| `rls_policy` | `public.cca_select_gestor_master` | `customer_canonical_alias` |
 
 ## Próximos passos quando algo der `❌`
 
