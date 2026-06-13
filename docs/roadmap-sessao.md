@@ -12,13 +12,16 @@
 > ainda exibe os DADOS DO MASTER quando o master impersona uma vendedora. As engines de IA
 > da carteira já viraram lente-aware (#796/#799); os engines de bundles ficaram de fora.
 > Segue o padrão validado em prod (CLAUDE.md §10). 100% frontend.
+> **ENTREGUE** — [PR #804](https://github.com/LucasSardenbergL/afiacao/pull/804) (TDD red→green, sem --admin).
 
-- 🔄 **useBundleEngine** lente-aware (espelha `useCrossSellEngine`): leitura de exibição (`farmer_client_scores`/`farmer_recommendations`) → `effectiveUserId`; SEM fallback super-admin na lente; persistência (`farmer_association_rules` global + `farmer_bundle_recommendations`) PULADA com `if (!isImpersonating)`.
-- 🔄 **BundleCardFull** (leaf, lê `useImpersonation()` direto): "Perguntas SPIN"/"Argumentação"/"Salvar (sem oferta)"/"Salvar (ofertou)" `disabled={isImpersonating}` + title honesto.
-- 🔄 **useBundleArguments**: stateless (não lê carteira) → só os botões acima desabilitam; write-guard já bloqueia edge/insert na fonte → NÃO entra na allowlist.
-- 🔄 **Testes**: bloco `useBundleEngine` no `lens-engines-ia.test.tsx` (na lente lê do ALVO, fora do próprio) + `BundleCardFull.test.tsx` ganha mock de `useImpersonation` + caso "botões disabled na lente".
-- 🔄 **Guardrail** `no-write-leak.test.ts`: `useBundleEngine.ts` na allowlist (leitura justificada).
-- ⏳ Verificação `heavy bun run typecheck` + `bun lint` + `heavy bun run test`. **Publish no Lovable** ao final.
+- ✅ **useBundleEngine** lente-aware (espelha `useCrossSellEngine`): leitura de exibição (`farmer_client_scores`/`farmer_recommendations`) → `effectiveUserId`; SEM fallback super-admin na lente; persistência (`farmer_association_rules` global + `farmer_bundle_recommendations`) PULADA com `if (!isImpersonating)`. `setRules`/`setCustomerBundles` (display) seguem fora do gate — o master inspeciona, não regrava.
+- ✅ **BundleCardFull** (leaf, lê `useImpersonation()` direto): "Perguntas SPIN"/"Argumentação"/"Salvar (sem oferta)"/"Salvar (ofertou)" `disabled={isImpersonating}` + title honesto.
+- ✅ **useBundleArguments**: stateless (não lê carteira) → só os botões acima desabilitam; write-guard já bloqueia edge/insert na fonte → NÃO entrou na allowlist.
+- ✅ **Testes**: bloco `useBundleEngine` no `lens-engines-ia.test.tsx` (na lente lê do ALVO, fora do próprio) + `BundleCardFull.test.tsx` com mock de `useImpersonation` + caso "botões disabled na lente". RED confirmado (`[ 'master-id' ] to include 'alvo-id'`) antes do fix.
+- ✅ **Guardrail** `no-write-leak.test.ts`: `useBundleEngine.ts` na allowlist (leitura justificada).
+- ✅ Verificação: `typecheck` strict **0** · `lint` **0 errors** · `test` **3299/3299**.
+- ⏸️ **Decisão de escopo:** botão "Montar pedido com este bundle" NÃO desabilitado (fora dos 4 botões da tarefa; navegação p/ `/sales/new`, que já tem write-guard no submit).
+- ⏳ **Founder: Publish no Lovable** (100% frontend → só vai ao ar após Publish).
 
 ---
 
