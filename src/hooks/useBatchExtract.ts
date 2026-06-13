@@ -24,9 +24,31 @@ export interface BatchExtractState {
   erros: BatchExtractErro[];
 }
 
-/** Resposta esperada da edge function `kb-extract-specs`. */
+/**
+ * Resposta da edge function `kb-extract-specs`.
+ *
+ * Dois formatos possíveis (ambos HTTP 200, NÃO são erros):
+ *  - `{ specs, cached?, usage? }` → extração OK ou cache-hit
+ *  - `{ status: 'extracting' }` → claim perdido (outra aba já está extraindo);
+ *    neste caso `specs` é undefined. Não contar como resultado nem como erro —
+ *    simplesmente incrementar `feitos`.
+ */
 interface ExtractResponse {
-  specs: KbExtractedSpec;
+  specs?: KbExtractedSpec;
+  status?: 'extracting';
+  cached?: boolean;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheCreationTokens: number;
+    cacheReadTokens: number;
+  };
+}
+
+/** Opções para a chamada `run`. */
+interface RunOpts {
+  /** Se true, passa `force: true` para a edge, que ignora o cache/claim existente. */
+  force?: boolean;
 }
 
 /** Concorrência máxima de chamadas simultâneas à edge function. */
@@ -49,7 +71,7 @@ const ESTADO_INICIAL: BatchExtractState = {
  * - `reset()` zera o estado para permitir nova execução.
  */
 export function useBatchExtract(): BatchExtractState & {
-  run: (documentIds: string[]) => Promise<ResultadoExtracao[]>;
+  run: (documentIds: string[], opts?: RunOpts) => Promise<ResultadoExtracao[]>;
   reset: () => void;
   removerResultados: (documentIds: string[]) => void;
 } {
@@ -72,7 +94,7 @@ export function useBatchExtract(): BatchExtractState & {
     }));
   }, []);
 
-  const run = useCallback(async (documentIds: string[]): Promise<ResultadoExtracao[]> => {
+  const run = useCallback(async (documentIds: string[], opts?: RunOpts): Promise<ResultadoExtracao[]> => {
     if (documentIds.length === 0) return [];
 
     // Inicializa o estado antes de começar
@@ -106,8 +128,22 @@ export function useBatchExtract(): BatchExtractState & {
         const documentId = documentIds[meuIndice];
 
         try {
-          const response = await invokeFunction<ExtractResponse>('kb-extract-specs', { documentId });
-          const resultado: ResultadoExtracao = { documentId, spec: normalizeExtractedSpec(response.specs) };
+          const response = await invokeFunction<ExtractResponse>('kb-extract-specs', {
+            documentId,
+            ...(opts?.force ? { force: true } : {}),
+          });
+
+          // `status: 'extracting'` → claim perdido (outra aba extrai). Não é erro,
+          // não produz spec. Só incrementa `feitos`.
+          if (response.status === 'extracting' || !response.specs) {
+            setEstado(prev => ({ ...prev, feitos: prev.feitos + 1 }));
+            continue;
+          }
+
+          const resultado: ResultadoExtracao = {
+            documentId,
+            spec: normalizeExtractedSpec(response.specs),
+          };
           resultadosAcumulados.push(resultado);
 
           setEstado(prev => ({

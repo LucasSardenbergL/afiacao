@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **207** custom migrations totais
-- **797** objetos esperados (criados por estas migrations)
+- **209** custom migrations totais
+- **806** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 213
-  - `rls_policy`: 196
+  - `function`: 214
+  - `rls_policy`: 202
   - `index`: 147
   - `cron_job`: 102
-  - `table`: 94
-  - `trigger`: 41
+  - `table`: 95
+  - `trigger`: 42
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1840,6 +1840,25 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.desvincular_boletim` | — |
 | `rls_policy` | `public.kb_product_specs_insert_master` | `kb_product_specs` |
 | `rls_policy` | `public.kb_product_specs_update_master` | `kb_product_specs` |
+
+### `20260613130000_radar_rls_initplan_perf.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
+| `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
+| `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
+| `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
+
+### `20260613160000_kb_extraction_drafts.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.kb_extraction_drafts` | — |
+| `function` | `public.kb_extraction_draft_claim` | — |
+| `trigger` | `public.trg_kb_extraction_drafts_updated_at` | `kb_extraction_drafts` |
+| `rls_policy` | `public.kb_extraction_drafts_select_master` | `kb_extraction_drafts` |
+| `rls_policy` | `public.kb_extraction_drafts_delete_master` | `kb_extraction_drafts` |
 
 ## Próximos passos quando algo der `❌`
 

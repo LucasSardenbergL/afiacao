@@ -6,11 +6,23 @@ import {
   ChevronRight,
   FileText,
   Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import {
   Dialog,
   DialogContent,
@@ -20,7 +32,9 @@ import {
 import { useApprovalQueue } from '@/hooks/useApprovalQueue';
 import { useBatchExtract } from '@/hooks/useBatchExtract';
 import { useBulkApproveSpecs } from '@/hooks/useBulkApproveSpecs';
+import { useExtractionDrafts } from '@/hooks/useExtractionDrafts';
 import { particionarResultados } from '@/lib/knowledge-base/aprovacao-fila';
+import { mesclarResultados, docsParaExtrair } from '@/lib/knowledge-base/extraction-drafts';
 import { KbSpecsForm } from '@/components/knowledge-base/KbSpecsForm';
 import type { ResultadoExtracao } from '@/lib/knowledge-base/aprovacao-fila';
 
@@ -30,9 +44,13 @@ interface RevisaoItemProps {
   resultado: ResultadoExtracao;
   /** Chamado quando o usuário salvar com sucesso no form de revisão */
   onRevisado: (documentId: string) => void;
+  /** Chamado para re-extrair este documento (com custo explícito confirmado) */
+  onReExtrair?: (documentId: string) => void;
+  reExtraindoId?: string | null;
 }
 
-function RevisaoItem({ resultado, onRevisado }: RevisaoItemProps) {
+function RevisaoItem({ resultado, onRevisado, onReExtrair, reExtraindoId }: RevisaoItemProps) {
+  const isReExtraindo = reExtraindoId === resultado.documentId;
   const [dialogAberto, setDialogAberto] = useState(false);
   const { spec, documentId } = resultado;
 
@@ -85,6 +103,41 @@ function RevisaoItem({ resultado, onRevisado }: RevisaoItemProps) {
           </div>
         </div>
 
+        {/* Botão Re-extrair (com confirmação de custo) */}
+        {onReExtrair && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="shrink-0 gap-1 h-7 text-xs text-muted-foreground"
+                disabled={isReExtraindo}
+              >
+                {isReExtraindo ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3 h-3" />
+                )}
+                Re-extrair
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Re-extrair ficha técnica?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Re-extrair vai gastar saldo da Anthropic de novo. Continuar?
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={() => onReExtrair(documentId)}>
+                  Re-extrair
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+
         <Button
           size="sm"
           variant="outline"
@@ -124,28 +177,61 @@ function RevisaoItem({ resultado, onRevisado }: RevisaoItemProps) {
  *
  * Fluxo:
  *  1. Lista documentos `ready` sem ficha aprovada (useApprovalQueue).
- *  2. Botão "Extrair pendentes" dispara extração em lote (useBatchExtract).
- *  3. Resultados são particionados: alta confiança → aprovação em lote;
+ *  2. Hidrata rascunhos persistidos do banco (useExtractionDrafts) e mescla com sessão.
+ *  3. Botão "Extrair pendentes" extrai SOMENTE os que não têm rascunho — os demais já
+ *     estão no estado via hidratação.
+ *  4. Resultados são particionados: alta confiança → aprovação em lote;
  *     baixa confiança / sem código → revisão manual (KbSpecsForm).
+ *  5. "Re-extrair" por item: confirmação de custo → `run([id], { force: true })` →
+ *     refetch dos drafts.
  */
 export function ApprovalQueueSection() {
   const fila = useApprovalQueue();
   const extract = useBatchExtract();
   const bulk = useBulkApproveSpecs();
+  const drafts = useExtractionDrafts();
 
   // IDs dos itens de revisão já salvos (removidos localmente antes do next refetch)
   const [revisadosIds, setRevisadosIds] = useState<Set<string>>(new Set());
 
+  // ID do item em processo de re-extração individual
+  const [reExtraindoId, setReExtraindoId] = useState<string | null>(null);
+
+  // Mescla rascunhos do banco com os resultados da sessão atual (memória wins) e
+  // RESTRINGE à fila atual: um rascunho órfão (DELETE best-effort que falhou após
+  // aprovar) não deve reaparecer como item a aprovar.
+  const filaIdsSet = new Set((fila.data ?? []).map((d) => d.id));
+  const resultadosMesclados = mesclarResultados(drafts.drafts, extract.resultados).filter(
+    (r) => filaIdsSet.has(r.documentId),
+  );
+
   // Função chamada ao salvar um item de revisão manual
   function handleRevisado(documentId: string) {
     setRevisadosIds((prev) => new Set(prev).add(documentId));
+    // DELETE best-effort do rascunho (já aprovado, limpa lixo do banco)
+    bulk.deleteDraft(documentId).catch(() => {
+      // Silencioso: rascunho orphan é inofensivo
+    });
   }
 
-  // Dispara extração pra todos os docs da fila
+  // Dispara extração SOMENTE para docs sem rascunho ready no banco
   async function handleExtrair() {
     const ids = (fila.data ?? []).map((d) => d.id);
-    if (ids.length === 0) return;
-    await extract.run(ids);
+    const pendentes = docsParaExtrair(ids, drafts.readyIds);
+    if (pendentes.length === 0) return;
+    await extract.run(pendentes);
+    void drafts.refetch();
+  }
+
+  // Re-extrai um doc específico com force=true (ignora cache/claim existente)
+  async function handleReExtrair(documentId: string) {
+    setReExtraindoId(documentId);
+    try {
+      await extract.run([documentId], { force: true });
+      void drafts.refetch();
+    } finally {
+      setReExtraindoId(null);
+    }
   }
 
   // Aprova em lote os itens de alta confiança
@@ -169,7 +255,7 @@ export function ApprovalQueueSection() {
   }
 
   // ── Renderização: carregando ──
-  if (fila.isLoading) {
+  if (fila.isLoading || drafts.isLoading) {
     return (
       <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
         <Loader2 className="w-6 h-6 animate-spin" />
@@ -181,8 +267,15 @@ export function ApprovalQueueSection() {
   const docs = fila.data ?? [];
   const qtdFila = docs.length;
 
+  // Quantos ainda precisam de extração (excluindo os que já têm rascunho ready)
+  const pendentesExtrair = docsParaExtrair(
+    docs.map((d) => d.id),
+    drafts.readyIds,
+  );
+  const qtdPendentes = pendentesExtrair.length;
+
   // ── Renderização: fila vazia e sem resultados de extração ──
-  if (qtdFila === 0 && extract.resultados.length === 0) {
+  if (qtdFila === 0 && resultadosMesclados.length === 0) {
     return (
       <Card className="p-8 text-center text-xs text-muted-foreground">
         <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-status-success opacity-70" />
@@ -192,7 +285,7 @@ export function ApprovalQueueSection() {
   }
 
   // ── Particiona os resultados quando existem ──
-  const { auto, revisar: revisarLista } = particionarResultados(extract.resultados);
+  const { auto, revisar: revisarLista } = particionarResultados(resultadosMesclados);
 
   // Filtra os itens de revisão que já foram salvos localmente
   const revisarPendentes = revisarLista.filter(
@@ -219,7 +312,7 @@ export function ApprovalQueueSection() {
 
         <Button
           size="sm"
-          disabled={extract.rodando || qtdFila === 0}
+          disabled={extract.rodando || qtdPendentes === 0}
           onClick={handleExtrair}
           className="gap-1.5 shrink-0"
         >
@@ -229,7 +322,7 @@ export function ApprovalQueueSection() {
               Extraindo…
             </>
           ) : (
-            <>Extrair pendentes ({qtdFila})</>
+            <>Extrair pendentes ({qtdPendentes})</>
           )}
         </Button>
       </div>
@@ -324,6 +417,8 @@ export function ApprovalQueueSection() {
                 key={resultado.documentId}
                 resultado={resultado}
                 onRevisado={handleRevisado}
+                onReExtrair={handleReExtrair}
+                reExtraindoId={reExtraindoId}
               />
             ))}
           </div>

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 207
+-- Total de custom migrations: 209
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -226,7 +226,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260612120000', 'auto_assign_role_omie_import_guard', '20260612120000_auto_assign_role_omie_import_guard.sql'),
   ('20260612130000', 'radar_rpcs_contato', '20260612130000_radar_rpcs_contato.sql'),
   ('20260613120000', 'customer_canonical_alias', '20260613120000_customer_canonical_alias.sql'),
-  ('20260613120000', 'kb_0c_aprovacao_master_only', '20260613120000_kb_0c_aprovacao_master_only.sql')
+  ('20260613120000', 'kb_0c_aprovacao_master_only', '20260613120000_kb_0c_aprovacao_master_only.sql'),
+  ('20260613130000', 'radar_rls_initplan_perf', '20260613130000_radar_rls_initplan_perf.sql'),
+  ('20260613160000', 'kb_extraction_drafts', '20260613160000_kb_extraction_drafts.sql')
 )
 SELECT
   e.version,
@@ -1041,7 +1043,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('kb_0c_aprovacao_master_only', 'function', 'public', 'confirmar_vinculo_boletim', ''),
   ('kb_0c_aprovacao_master_only', 'function', 'public', 'desvincular_boletim', ''),
   ('kb_0c_aprovacao_master_only', 'rls_policy', 'public', 'kb_product_specs_insert_master', 'kb_product_specs'),
-  ('kb_0c_aprovacao_master_only', 'rls_policy', 'public', 'kb_product_specs_update_master', 'kb_product_specs')
+  ('kb_0c_aprovacao_master_only', 'rls_policy', 'public', 'kb_product_specs_update_master', 'kb_product_specs'),
+  ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_empresas_select_gestor', 'radar_empresas'),
+  ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_contatos_select_gestor', 'radar_contatos'),
+  ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_municipios_select_gestor', 'radar_municipios'),
+  ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_ingest_state_select_gestor', 'radar_ingest_state'),
+  ('kb_extraction_drafts', 'table', 'public', 'kb_extraction_drafts', ''),
+  ('kb_extraction_drafts', 'function', 'public', 'kb_extraction_draft_claim', ''),
+  ('kb_extraction_drafts', 'trigger', 'public', 'trg_kb_extraction_drafts_updated_at', 'kb_extraction_drafts'),
+  ('kb_extraction_drafts', 'rls_policy', 'public', 'kb_extraction_drafts_select_master', 'kb_extraction_drafts'),
+  ('kb_extraction_drafts', 'rls_policy', 'public', 'kb_extraction_drafts_delete_master', 'kb_extraction_drafts')
 )
 SELECT
   e.migration,
