@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Teste PG17 da promoção staging→oficial do sync SayerSystem (oráculo executável).
-# Aplica schema-snapshot + a migration 20260609150000_tint_sync_promote.sql, semeia
-# cenários controlados em tint_staging_* e roda tint_promote_sync_run / tint_apply_keys_snapshot,
+# Aplica schema-snapshot + as migrations 20260609150000_tint_sync_promote.sql E
+# 20260611190000_tint_sync_codex_fixes.sql NA ORDEM (idêntico a prod), semeia cenários
+# controlados em tint_staging_* e roda tint_promote_sync_run / tint_apply_keys_snapshot,
 # asserindo a equivalência com o oráculo src/lib/tint/sync-promote.ts:
 #   - regra de 3 (expandirFormula: fator=vol_destino/vol_formulacao)
 #   - preço pág 9 (precoFinalSayer: base×(1+imp)×(1+marg) + Σ corantes/ml; NULL honesto)
-#   - blast radius (validarSnapshotKeys: 50%/20%)
+#   - blast radius (validarSnapshotKeys: 50%/20%) com CHAVE-FONTE de 4 partes (S4)
 #   - recálculo por insumo (P1-A), latest-per-key (P1-C), re-expansão por sku novo (P1-C),
 #     guardas (vol<=0, zero vendáveis), desativação/reativação, idempotência.
+#   - C11: corante só-descrição (linha nova NULL custo/volume) não regride preço (S3).
+#   - C12: lookup de precos_base respeita store_code (S2: sem vazamento cross-store).
 # Base: db/verify-snapshot-replay.sh / db/test-minimo-forcado.sh. Pré-req: brew install postgresql@17 pgvector.
 set -euo pipefail
 
@@ -45,6 +48,9 @@ rm -f "$RR"
 
 echo "→ migration 20260609150000_tint_sync_promote.sql…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260609150000_tint_sync_promote.sql" >/dev/null
+
+echo "→ migration 20260611190000_tint_sync_codex_fixes.sql (na ordem de prod)…"
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260611190000_tint_sync_codex_fixes.sql" >/dev/null
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers de seed: monta um setting + runs, e semeia staging. UUIDs determinísticos.
@@ -381,15 +387,18 @@ END $$;
 SQL
 
 echo ""
-echo "════════ CENÁRIO 7 — Keys-snapshot (completo / incompleto / blast / reativação) ════════"
+echo "════════ CENÁRIO 7 — Keys-snapshot CHAVE-FONTE 4 partes (completo / incompleto / blast / reativação) ════════"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
--- Estado atual de fórmulas ativas (oben): COR1×3, COR2, COR2Z, COR2K, COR4 = 7.
+-- Estado atual: 7 LINHAS oficiais ativas (oben) — COR1×3 (E900/E3600/E5L), COR2, COR2Z, COR2K, COR4 —
+-- mas a chave-fonte (S4) é de 4 partes SEM embalagem → COR1 colapsa em 1 chave:
+--   5 CHAVES DISTINTAS: COR1|P1|B1|false, COR2|P2|B2|false, COR2Z|P2|B2|false, COR2K|P2|B2K|false, COR4|P4|B4|false.
+-- O blast radius (50%/20%) é sobre chaves DISTINTAS; a desativação marca TODAS as expansões da chave.
 -- 7a) INCOMPLETO: snapshot com total_chunks=2 mas só 1 chunk → ABORTA, nada desativa.
 INSERT INTO tint_keys_snapshots (setting_id, account, store_code, snapshot_id, entity, generated_at, total_chunks, chunk_index, keys)
 VALUES ('aaaaaaaa-0000-0000-0000-000000000001','oben','L1','77777777-0000-0000-0000-000000000001','formulas', now(), 2, 0, '["x"]'::jsonb);
--- 7b) BLAST: snapshot completo mas com chaves de menos (1 chave só, oficial tem 7 → desativaria >20% E <50%).
+-- 7b) BLAST: snapshot completo mas com 1 chave-fonte só (oficial tem 5 distintas → 1 < 50% → ABORTA).
 INSERT INTO tint_keys_snapshots (setting_id, account, store_code, snapshot_id, entity, generated_at, total_chunks, chunk_index, keys)
-VALUES ('aaaaaaaa-0000-0000-0000-000000000001','oben','L1','77777777-0000-0000-0000-000000000002','formulas', now(), 1, 0, '["COR1|P1|B1|E900|false"]'::jsonb);
+VALUES ('aaaaaaaa-0000-0000-0000-000000000001','oben','L1','77777777-0000-0000-0000-000000000002','formulas', now(), 1, 0, '["COR1|P1|B1|false"]'::jsonb);
 SQL
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 SELECT tint_apply_keys_snapshot('77777777-0000-0000-0000-000000000001') AS incompleto;
@@ -399,35 +408,39 @@ P -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $$
 DECLARE n_ativas int;
 BEGIN
+  -- 7 LINHAS oficiais intactas (nada desativado); blast é sobre as 5 chaves-fonte distintas.
   SELECT count(*) INTO n_ativas FROM tint_formulas WHERE account='oben' AND desativada_em IS NULL;
-  IF n_ativas <> 7 THEN RAISE EXCEPTION 'C7.1 FALHOU: snapshot incompleto/blast desativou (ativas=%, esperado 7 intactas)', n_ativas; END IF;
+  IF n_ativas <> 7 THEN RAISE EXCEPTION 'C7.1 FALHOU: snapshot incompleto/blast desativou (linhas ativas=%, esperado 7 intactas)', n_ativas; END IF;
   IF NOT EXISTS (SELECT 1 FROM tint_sync_errors WHERE entity_id='77777777-0000-0000-0000-000000000001' AND error_message LIKE '%incompleto%') THEN
     RAISE EXCEPTION 'C7.2 FALHOU: snapshot incompleto não logou erro'; END IF;
   IF NOT EXISTS (SELECT 1 FROM tint_sync_errors WHERE entity_id='77777777-0000-0000-0000-000000000002' AND error_message LIKE '%blast%') THEN
-    RAISE EXCEPTION 'C7.3 FALHOU: snapshot blast não logou erro'; END IF;
-  RAISE NOTICE 'OK C7a — incompleto + blast abortam (7 ativas intactas, 2 erros logados)';
+    RAISE EXCEPTION 'C7.3 FALHOU: snapshot blast (1 chave-fonte, abaixo da metade de 5) não logou erro'; END IF;
+  RAISE NOTICE 'OK C7a — incompleto + blast (chave-fonte 4 partes) abortam (7 linhas intactas, 2 erros logados)';
 END $$;
 SQL
 P -v ON_ERROR_STOP=1 -q <<'SQL'
--- 7c) COMPLETO e SAUDÁVEL: snapshot com 6 das 7 chaves (deixa COR2Z de fora → desativa só ela).
---     6/7 ≈ 86% das chaves (>50%), desativaria 1/7 ≈ 14% (<20%) → passa.
+-- 7c) COMPLETO e SAUDÁVEL: snapshot com 4 das 5 CHAVES-FONTE (deixa a chave de COR2Z de fora →
+--     desativa só a LINHA da COR2Z). A chave COR1|P1|B1|false cobre as 3 expansões de COR1 (nenhuma
+--     desativa). 4/5=80% das chaves (>50%); desativaria 1/5=20% (NÃO >20%) → passa.
 INSERT INTO tint_keys_snapshots (setting_id, account, store_code, snapshot_id, entity, generated_at, total_chunks, chunk_index, keys)
 VALUES ('aaaaaaaa-0000-0000-0000-000000000001','oben','L1','77777777-0000-0000-0000-000000000003','formulas', now(), 1, 0,
   jsonb_build_array(
-    'COR1|P1|B1|E900|false','COR1|P1|B1|E3600|false','COR1|P1|B1|E5L|false',
-    'COR2|P2|B2|E900B|false','COR2K|P2|B2K|E900K|false','COR4|P4|B4|E900D|false'
+    'COR1|P1|B1|false','COR2|P2|B2|false','COR2K|P2|B2K|false','COR4|P4|B4|false'
   ));
 SELECT tint_apply_keys_snapshot('77777777-0000-0000-0000-000000000003') AS saudavel;
 SQL
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $$
-DECLARE z_desativada boolean; n_ativas int;
+DECLARE z_desativada boolean; n_ativas int; n_cor1 int;
 BEGIN
   SELECT desativada_em IS NOT NULL INTO z_desativada FROM tint_formulas WHERE account='oben' AND cor_id='COR2Z';
-  IF NOT z_desativada THEN RAISE EXCEPTION 'C7.4 FALHOU: COR2Z deveria estar desativada (fora do snapshot)'; END IF;
+  IF NOT z_desativada THEN RAISE EXCEPTION 'C7.4 FALHOU: COR2Z deveria estar desativada (chave-fonte fora do snapshot)'; END IF;
+  -- as 3 expansões de COR1 (chave única no snapshot) seguem TODAS ativas — prova do collapse 4 partes.
+  SELECT count(*) INTO n_cor1 FROM tint_formulas WHERE account='oben' AND cor_id='COR1' AND desativada_em IS NULL;
+  IF n_cor1 <> 3 THEN RAISE EXCEPTION 'C7.4b FALHOU: COR1 (chave única) deveria manter 3 expansões ativas, achei %', n_cor1; END IF;
   SELECT count(*) INTO n_ativas FROM tint_formulas WHERE account='oben' AND desativada_em IS NULL;
-  IF n_ativas <> 6 THEN RAISE EXCEPTION 'C7.5 FALHOU: esperado 6 ativas após desativar COR2Z, achei %', n_ativas; END IF;
-  RAISE NOTICE 'OK C7b — snapshot saudável desativou só COR2Z (6 ativas)';
+  IF n_ativas <> 6 THEN RAISE EXCEPTION 'C7.5 FALHOU: esperado 6 linhas ativas após desativar COR2Z, achei %', n_ativas; END IF;
+  RAISE NOTICE 'OK C7b — snapshot saudável (chave-fonte 4 partes) desativou só COR2Z; COR1×3 intacto (6 ativas)';
 END $$;
 SQL
 P -v ON_ERROR_STOP=1 -q <<'SQL'
@@ -556,7 +569,8 @@ DO $$
 DECLARE p numeric; fid uuid;
 BEGIN
   SELECT id INTO fid FROM tint_formulas WHERE account='oben' AND cor_id='COR9';
-  p := tint_recalc_preco_oficial('oben', fid, 'P9', 'B9', 'E900I');
+  -- S2: assinatura nova com p_store_code (2º arg). store=L1.
+  p := tint_recalc_preco_oficial('oben', 'L1', fid, 'P9', 'B9', 'E900I');
   IF p IS NULL OR p <> 500 THEN RAISE EXCEPTION 'C9b FALHOU: recalc pós-purge = % (esperado 500 = base latest preservada, NÃO NULL por insumo apagado)', p; END IF;
   RAISE NOTICE 'OK C9b — recalc pós-purge acha a base latest preservada (preço 500), não NULL';
 END $$;
@@ -617,6 +631,131 @@ BEGIN
     WHERE f.account='oben' AND f.cor_id='COR10' AND e.id_embalagem_sayersystem='E10';
   IF vff <> 900 THEN RAISE EXCEPTION 'C10.3 FALHOU: volume_final_ml COR10@E10 = % (esperado 900)', vff; END IF;
   RAISE NOTICE 'OK C10 — embalagem volume NULL não rebaixa o oficial: E10 segue 900, COR10@E10 expandida';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 11 — Latest NÃO-NULO do insumo: corante só-descrição não regride preço (S3) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Produto P11/base B11/emb E11 (900ml vendável). Corante CX11 custo=300 vol=900.
+-- Fórmula COR11 usa CX11 6ml na formulação 900 (fator 1). precos_base P11/B11/E11 custo=100.
+-- Preço inicial = 100×1×1 + (300/900)*6 = 100 + 2.0 = 102.00.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status, created_at)
+VALUES ('b0000000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','catalogs','complete', now() - interval '3 hours');
+INSERT INTO tint_staging_produtos (sync_run_id, account, store_code, cod_produto, descricao)
+VALUES ('b0000000-0000-0000-0000-000000000001','oben','L1','P11','Produto 11');
+INSERT INTO tint_staging_bases (sync_run_id, account, store_code, id_base_sayersystem, descricao)
+VALUES ('b0000000-0000-0000-0000-000000000001','oben','L1','B11','Base 11');
+INSERT INTO tint_staging_embalagens (sync_run_id, account, store_code, id_embalagem_sayersystem, descricao, volume_ml)
+VALUES ('b0000000-0000-0000-0000-000000000001','oben','L1','E11','Galão 11',900);
+INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem)
+VALUES ('b0000000-0000-0000-0000-000000000001','oben','L1','P11','B11','E11');
+-- Corante VELHO COM preço (custo+volume) — created_at antigo.
+INSERT INTO tint_staging_corantes (sync_run_id, account, store_code, id_corante_sayersystem, descricao, custo, volume_ml, created_at)
+VALUES ('b0000000-0000-0000-0000-000000000001','oben','L1','CX11','Corante CX11', 300, 900, now() - interval '3 hours');
+INSERT INTO tint_staging_precos_base (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct, created_at)
+VALUES ('b0000000-0000-0000-0000-000000000001','oben','L1','P11','B11','E11',100,0,0, now() - interval '3 hours');
+
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status, created_at)
+VALUES ('b0000000-0000-0000-0000-000000000002','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete', now() - interval '3 hours');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, created_at)
+VALUES ('ffb00000-0000-0000-0000-000000000001','b0000000-0000-0000-0000-000000000002','oben','L1','COR11','Insumo NaoNulo','P11','B11','E11',900,false, now() - interval '3 hours');
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+VALUES ('b0000000-0000-0000-0000-000000000002','ffb00000-0000-0000-0000-000000000001','CX11',1,6);
+
+SELECT tint_promote_sync_run('b0000000-0000-0000-0000-000000000001');
+SELECT tint_promote_sync_run('b0000000-0000-0000-0000-000000000002');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Agora chega: (1) o MESMO corante CX11 SÓ-DESCRIÇÃO (custo/volume NULL), created_at MAIS RECENTE
+-- (= a linha "latest" cega) e (2) um run de precos_base que muda custo 100→200 (DISPARA o recálculo).
+-- Sem S3, o lookup do corante pegaria a linha NULL mais recente → preço regrediria p/ NULL.
+-- Com S3 (latest WHERE custo+volume NÃO-NULOS), o corante resolve p/ a linha velha (300/900):
+-- preço = 200×1×1 + (300/900)*6 = 200 + 2.0 = 202.00.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status, created_at)
+VALUES ('b0000000-0000-0000-0000-0000000000c0','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','catalogs','complete', now());
+-- corante só-descrição (custo/volume NULL), created_at recente.
+INSERT INTO tint_staging_corantes (sync_run_id, account, store_code, id_corante_sayersystem, descricao, created_at)
+VALUES ('b0000000-0000-0000-0000-0000000000c0','oben','L1','CX11','Corante CX11 renomeado', now());
+-- precos_base novo (custo 200) → dispara recálculo da COR11.
+INSERT INTO tint_staging_precos_base (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct, created_at)
+VALUES ('b0000000-0000-0000-0000-0000000000c0','oben','L1','P11','B11','E11',200,0,0, now());
+SELECT tint_promote_sync_run('b0000000-0000-0000-0000-0000000000c0');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE p numeric; cor_desc text; cor_vol numeric;
+BEGIN
+  SELECT preco_final_sayersystem INTO p FROM tint_formulas WHERE account='oben' AND cor_id='COR11';
+  IF p IS NULL THEN RAISE EXCEPTION 'C11.1 FALHOU: preço COR11 regrediu p/ NULL (corante só-descrição derrotou o preço) — S3 não pegou'; END IF;
+  IF p <> 202 THEN RAISE EXCEPTION 'C11.2 FALHOU: preço COR11 = % (esperado 202.00 = base 200 + corante da linha NÃO-NULA 300/900×6)', p; END IF;
+  -- a descrição oficial do corante FOI atualizada (o só-descrição vale p/ texto), mas o volume oficial
+  -- NÃO foi rebaixado p/ 0 pelo NULL (preserva o COALESCE do upsert de corante).
+  SELECT descricao, volume_total_ml INTO cor_desc, cor_vol FROM tint_corantes WHERE account='oben' AND id_corante_sayersystem='CX11';
+  IF cor_vol IS NULL OR cor_vol <> 900 THEN RAISE EXCEPTION 'C11.3 FALHOU: volume oficial CX11 = % (esperado 900, NULL não rebaixa)', cor_vol; END IF;
+  RAISE NOTICE 'OK C11 — corante só-descrição (NULL custo/vol) NÃO regride preço: COR11=202.00 (S3 pega a latest não-nula 300/900)';
+END $$;
+SQL
+
+echo ""
+echo "════════ CENÁRIO 12 — Lookup de precos_base respeita store_code (S2: sem vazamento cross-store) ════════"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Setting de uma SEGUNDA loja (L2) do MESMO account oben.
+INSERT INTO tint_integration_settings (id, account, store_code, integration_mode, sync_token, sync_enabled)
+VALUES ('aaaaaaaa-0000-0000-0000-000000000002','oben','L2','automatic_primary','tok_test_l2', true);
+
+-- Produto P12/base B12/emb E12 na loja L1. Fórmula COR12 SEM corantes (preço = só base).
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('c0000000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','catalogs','complete');
+INSERT INTO tint_staging_produtos (sync_run_id, account, store_code, cod_produto, descricao)
+VALUES ('c0000000-0000-0000-0000-000000000001','oben','L1','P12','Produto 12');
+INSERT INTO tint_staging_bases (sync_run_id, account, store_code, id_base_sayersystem, descricao)
+VALUES ('c0000000-0000-0000-0000-000000000001','oben','L1','B12','Base 12');
+INSERT INTO tint_staging_embalagens (sync_run_id, account, store_code, id_embalagem_sayersystem, descricao, volume_ml)
+VALUES ('c0000000-0000-0000-0000-000000000001','oben','L1','E12','Galão 12',900);
+INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem)
+VALUES ('c0000000-0000-0000-0000-000000000001','oben','L1','P12','B12','E12');
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('c0000000-0000-0000-0000-000000000002','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada)
+VALUES ('ffc00000-0000-0000-0000-000000000001','c0000000-0000-0000-0000-000000000002','oben','L1','COR12','CrossStore','P12','B12','E12',900,false);
+
+-- precos_base SÓ NA LOJA L2 (custo 999) p/ P12/B12/E12. A fórmula é da L1 → NÃO pode usar.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('c0000000-0000-0000-0000-0000000000a2','aaaaaaaa-0000-0000-0000-000000000002','oben','L2','catalogs','complete');
+INSERT INTO tint_staging_precos_base (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct)
+VALUES ('c0000000-0000-0000-0000-0000000000a2','oben','L2','P12','B12','E12',999,0,0);
+
+SELECT tint_promote_sync_run('c0000000-0000-0000-0000-000000000001');
+SELECT tint_promote_sync_run('c0000000-0000-0000-0000-000000000002');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE p_is_null boolean; p numeric;
+BEGIN
+  -- Com SÓ a linha L2 presente, o preço da fórmula L1 = NULL (a base L2 é filtrada por store_code).
+  SELECT preco_final_sayersystem, preco_final_sayersystem IS NULL INTO p, p_is_null
+    FROM tint_formulas WHERE account='oben' AND cor_id='COR12';
+  IF NOT p_is_null THEN RAISE EXCEPTION 'C12.1 FALHOU: COR12 (L1) usou a precos_base da L2 (vazamento cross-store) — preço=% (esperado NULL)', p; END IF;
+  RAISE NOTICE 'OK C12a — precos_base da L2 NÃO vaza p/ a fórmula da L1: preço NULL';
+END $$;
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Confirmação positiva: ao adicionar a precos_base da PRÓPRIA loja L1 (custo 50), o preço resolve.
+-- Prova que era o filtro de store_code (não outro insumo faltando) que zerava.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
+VALUES ('c0000000-0000-0000-0000-0000000000b1','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','catalogs','complete');
+INSERT INTO tint_staging_precos_base (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct)
+VALUES ('c0000000-0000-0000-0000-0000000000b1','oben','L1','P12','B12','E12',50,0,0);
+SELECT tint_promote_sync_run('c0000000-0000-0000-0000-0000000000b1');
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE p numeric;
+BEGIN
+  SELECT preco_final_sayersystem INTO p FROM tint_formulas WHERE account='oben' AND cor_id='COR12';
+  IF p IS NULL OR p <> 50 THEN RAISE EXCEPTION 'C12.2 FALHOU: COR12 com precos_base da L1 (custo 50) = % (esperado 50 = usa a base da PRÓPRIA loja)', p; END IF;
+  RAISE NOTICE 'OK C12b — com a precos_base da L1 presente (custo 50), COR12=50.00 (era o filtro de store_code que zerava)';
 END $$;
 SQL
 

@@ -13,6 +13,7 @@ import { FilaDoDia } from '@/components/fila/FilaDoDia';
 import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
 import { useMyPositivacao } from '@/hooks/useMyPositivacao';
 import { AtivarNotificacoesCard } from '@/components/push/AtivarNotificacoesCard';
+import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNudge';
 
 /**
  * Dashboard Farmer V2 — placar do mês (positivação) + a FILA é o dia (G1).
@@ -57,6 +58,9 @@ export function FarmerDashboardV2() {
 
       {/* nudge saliente: clientes sem resposta no WhatsApp — fica FORA do "modo antigo" recolhido */}
       <SlaCardMeuDia />
+
+      {/* nudge condicional: ligações registradas sem cliente vinculado (era item do menu Vendas) */}
+      <ChamadasPendentesNudge />
 
       <Collapsible open={modoAntigoAberto} onOpenChange={onToggleModoAntigo}>
         <CollapsibleTrigger asChild>

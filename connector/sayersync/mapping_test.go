@@ -102,6 +102,83 @@ func fixtureSchemaAltCandidates() map[string]map[string]bool {
 	return s
 }
 
+// realSchemaFixture transcreve o SCHEMA REAL do SayerSystem (discovery de
+// produção, 2026-06-12, 13 tabelas no schema public). É o fixture de verdade:
+// se o mapeamento declarativo regredir contra ele, o conector quebra em campo.
+func realSchemaFixture() map[string]map[string]bool {
+	s := map[string]map[string]bool{
+		"base": {
+			"id": true, "id_produto": true, "codigo": true, "descricao": true,
+			"limite_inferior_colorante": true, "limite_superior_colorante": true,
+			"liberado": true, "data_cadastro": true, "data_alteracao": true,
+		},
+		"colecao": {
+			"id": true, "codigo": true, "descricao": true, "liberado": true,
+			"data_cadastro": true, "data_alteracao": true,
+		},
+		"corante": {
+			"id": true, "codigo": true, "descricao": true, "descricao_pt": true,
+			"descricao_en": true, "descricao_es": true, "volume_ml": true,
+			"peso_especifico": true, "r": true, "g": true, "b": true,
+			"codigo_barras": true, "codigo_comercial": true, "liberado": true,
+			"data_cadastro": true, "data_alteracao": true, "ncm": true,
+		},
+		"embalagem": {
+			"id": true, "descricao": true, "conteudo": true, "amostra": true,
+			"liberado": true, "data_cadastro": true, "data_alteracao": true,
+		},
+		"formula": {
+			"id": true, "id_padraocor": true, "id_produto": true, "id_base": true,
+			"id_embalagem": true, "baixa_cobertura": true, "mensagem_usuario": true,
+			"liberado": true, "rendimento": true, "demaos_galao": true,
+			"data_cadastro": true, "data_alteracao": true, "tag": true,
+		},
+		"formulaperson": {
+			"id": true, "id_personcor": true, "id_produto": true, "id_base": true,
+			"id_embalagem": true, "baixacobertura": true, "data_cadastro": true,
+			// ⚠️ formulaperson usa data_atualizacao (≠ data_alteracao das demais).
+			"data_atualizacao": true, "observacao": true, "recuperada_sistema_antigo": true,
+		},
+		"padraocor": {
+			"id": true, "id_subcolecao": true, "codigo": true, "descricao": true,
+			"r": true, "g": true, "b": true, "pagina": true, "x": true, "y": true,
+			"z": true, "familia": true, "liberado": true,
+			"data_cadastro": true, "data_alteracao": true,
+		},
+		// ⚠️ personcor NÃO tem NENHUMA coluna de timestamp.
+		"personcor": {
+			"id": true, "codigo_cor": true, "descricao": true,
+		},
+		"produto": {
+			"id": true, "id_base_fundo": true, "codigo": true, "descricao": true,
+			"descricao_pt": true, "descricao_en": true, "descricao_es": true,
+			"ordem": true, "permite_person": true, "liberado": true,
+			"data_cadastro": true, "data_alteracao": true,
+		},
+		"produto_base_embalagem": {
+			"id": true, "id_produto": true, "id_base": true, "id_embalagem": true,
+			"href_caracteristicas": true, "href_boletim_tecnico": true, "href_fispq": true,
+			"codigo_barras": true, "codigo_comercial": true, "imagem": true,
+			"data_cadastro": true, "data_alteracao": true, "ncm": true,
+		},
+		"subcolecao": {
+			"id": true, "id_colecao": true, "codigo": true, "descricao": true,
+			"liberado": true, "data_cadastro": true, "data_alteracao": true,
+		},
+		// vendas/vendas_item: v2, NÃO sincronizar (colunas mínimas pro fixture).
+		"vendas":      {"id": true},
+		"vendas_item": {"id": true},
+	}
+	// Fórmulas flat REAIS: corante1..6 (int) + qtd1..6 (sem sufixo "ml") em AMBAS.
+	for i := 1; i <= 6; i++ {
+		s["formula"][fmt.Sprintf("corante%d", i)] = true
+		s["formula"][fmt.Sprintf("qtd%d", i)] = true
+		s["formulaperson"][fmt.Sprintf("corante%d", i)] = true
+		s["formulaperson"][fmt.Sprintf("qtd%d", i)] = true
+	}
+	return s
+}
+
 // ──────────────────────────────────────────────────────────────
 // Resolução de candidatos
 // ──────────────────────────────────────────────────────────────
@@ -114,10 +191,16 @@ func TestValidate_NominalSchema(t *testing.T) {
 		t.Fatalf("Validate com schema nominal deve retornar OK; missing=%v", diff.Missing)
 	}
 
-	// Verifica que "volume_ml" da tabela embalagens resolveu para "conteudo" (primeiro candidato).
+	// Verifica que "volume_ml" da tabela embalagens resolveu para "conteudo"
+	// (único candidato presente no fixture nominal).
 	got := rm.Resolved["embalagens"]["volume_ml"]
 	if got != "conteudo" {
 		t.Errorf("embalagens.volume_ml: esperava 'conteudo', got %q", got)
+	}
+
+	// Nomes fantasia: o nome físico resolve para o próprio lógico.
+	if rm.TableFor("embalagens") != "embalagens" {
+		t.Errorf("TableFor(embalagens): esperava 'embalagens', got %q", rm.TableFor("embalagens"))
 	}
 
 	// Verifica shape flat detectado.
@@ -125,9 +208,140 @@ func TestValidate_NominalSchema(t *testing.T) {
 		t.Errorf("FormulaShape: esperava FormulaShapeFlat, got %q", rm.FormulaShape)
 	}
 
-	// Verifica que pelo menos corante1 foi mapeado nos flat cols.
-	if rm.FlatFormulaCols["corante1"] == "" {
-		t.Error("FlatFormulaCols[corante1] não deve estar vazio")
+	// Verifica que pelo menos corante1 foi mapeado nos flat cols da formula.
+	if rm.FlatColsByTable["formula"]["corante1"] == "" {
+		t.Error("FlatColsByTable[formula][corante1] não deve estar vazio")
+	}
+}
+
+// ──────────────────────────────────────────────────────────────
+// SCHEMA REAL (discovery de produção 2026-06-12)
+// ──────────────────────────────────────────────────────────────
+
+func TestValidate_RealSchema_OK(t *testing.T) {
+	rm, diff := resolveFromFixture(realSchemaFixture())
+	if !diff.OK {
+		t.Fatalf("Validate com o SCHEMA REAL deve retornar OK; missing=%v", diff.Missing)
+	}
+	if rm.FormulaShape != FormulaShapeFlat {
+		t.Errorf("FormulaShape no schema real: esperava flat, got %q", rm.FormulaShape)
+	}
+}
+
+func TestValidate_RealSchema_ResolvesPhysicalTableNames(t *testing.T) {
+	rm, _ := resolveFromFixture(realSchemaFixture())
+	cases := map[string]string{
+		"corantes":               "corante",
+		"embalagens":             "embalagem",
+		"padracor":               "padraocor",
+		"produto":                "produto",
+		"formula":                "formula",
+		"formulaperson":          "formulaperson",
+		"produto_base_embalagem": "produto_base_embalagem",
+	}
+	for logical, physical := range cases {
+		if got := rm.Tables[logical]; got != physical {
+			t.Errorf("Tables[%s]: esperava %q, got %q", logical, physical, got)
+		}
+		if got := rm.TableFor(logical); got != physical {
+			t.Errorf("TableFor(%s): esperava %q, got %q", logical, physical, got)
+		}
+	}
+}
+
+func TestValidate_RealSchema_FlatColsPorTabela(t *testing.T) {
+	rm, _ := resolveFromFixture(realSchemaFixture())
+	// No real, as qtds NÃO têm sufixo "ml": qtd1ml (lógico) → qtd1 (real).
+	if got := rm.FlatColsByTable["formula"]["qtd1ml"]; got != "qtd1" {
+		t.Errorf("FlatColsByTable[formula][qtd1ml]: esperava 'qtd1', got %q", got)
+	}
+	if got := rm.FlatColsByTable["formulaperson"]["corante3"]; got != "corante3" {
+		t.Errorf("FlatColsByTable[formulaperson][corante3]: esperava 'corante3', got %q", got)
+	}
+	// Todos os 12 slots resolvidos em AMBAS as tabelas.
+	for _, entity := range []string{"formula", "formulaperson"} {
+		for i := 1; i <= 6; i++ {
+			if rm.FlatColsByTable[entity][fmt.Sprintf("corante%d", i)] == "" {
+				t.Errorf("%s: corante%d não resolvido", entity, i)
+			}
+			if got := rm.FlatColsByTable[entity][fmt.Sprintf("qtd%dml", i)]; got != fmt.Sprintf("qtd%d", i) {
+				t.Errorf("%s: qtd%dml esperava 'qtd%d', got %q", entity, i, i, got)
+			}
+		}
+	}
+}
+
+func TestValidate_RealSchema_ResolvesRealColumnNames(t *testing.T) {
+	rm, diff := resolveFromFixture(realSchemaFixture())
+	cases := []struct {
+		entity, logic, want string
+	}{
+		{"produto", "id_produto", "id"},
+		{"produto", "codigo", "codigo"},
+		{"produto", "data_atualizacao", "data_alteracao"},
+		{"produto", "liberado", "liberado"},
+		{"base", "id_base", "id"},
+		{"embalagens", "id_emb", "id"},
+		{"embalagens", "volume_ml", "conteudo"},
+		{"corantes", "id_corante", "id"},
+		{"corantes", "codigo", "codigo"},
+		{"corantes", "volume_ml", "volume_ml"},
+		{"produto_base_embalagem", "id_produto", "id_produto"}, // FK, NÃO a PK "id"
+		{"produto_base_embalagem", "id_emb", "id_embalagem"},
+		{"padracor", "id_padraocor", "id"},
+		{"padracor", "id_subcolecao", "id_subcolecao"},
+		{"colecao", "id_colecao", "id"},
+		{"subcolecao", "id_subcolecao", "id"},
+		{"formula", "id_emb", "id_embalagem"},
+		{"formula", "liberado", "liberado"},
+		{"formula", "data_atualizacao", "data_alteracao"},
+		// formulaperson: a "cor" é id_personcor; a tabela usa data_atualizacao MESMO.
+		{"formulaperson", "id_padraocor", "id_personcor"},
+		{"formulaperson", "data_atualizacao", "data_atualizacao"},
+		// personcor: identidade pela codigo_cor.
+		{"personcor", "id_padraocor", "id"},
+		{"personcor", "codigo", "codigo_cor"},
+	}
+	for _, tc := range cases {
+		if got := rm.Resolved[tc.entity][tc.logic]; got != tc.want {
+			t.Errorf("%s.%s: esperava %q, got %q (missing=%v)", tc.entity, tc.logic, tc.want, got, diff.Missing)
+		}
+	}
+}
+
+func TestValidate_RealSchema_PersoncorSemTimestampViraWarning(t *testing.T) {
+	rm, diff := resolveFromFixture(realSchemaFixture())
+	// personcor não tem NENHUMA coluna de timestamp → data_atualizacao NÃO resolve,
+	// vira warning (não missing) e o ExtractDelta cai no full-scan.
+	if _, ok := rm.Resolved["personcor"]["data_atualizacao"]; ok {
+		t.Error("personcor.data_atualizacao não deveria resolver (tabela sem timestamp)")
+	}
+	if len(diff.Missing["personcor"]) != 0 {
+		t.Errorf("personcor não deve ter missing (falharia o ciclo), got %v", diff.Missing["personcor"])
+	}
+	temWarning := false
+	for _, w := range diff.Warnings["personcor"] {
+		if w == "data_atualizacao" {
+			temWarning = true
+		}
+	}
+	if !temWarning {
+		t.Errorf("esperava warning de data_atualizacao em personcor, got %v", diff.Warnings["personcor"])
+	}
+}
+
+func TestValidate_RealSchema_PrecoTablesAusentes_SoWarnings(t *testing.T) {
+	_, diff := resolveFromFixture(realSchemaFixture())
+	if !diff.OK {
+		t.Fatalf("preco_corante/preco_baseemb ausentes NÃO podem falhar o schema; missing=%v", diff.Missing)
+	}
+	for _, tbl := range []string{"preco_corante", "preco_baseemb"} {
+		if len(diff.Missing[tbl]) != 0 {
+			t.Errorf("%s ausente deve ser warning, não missing: %v", tbl, diff.Missing[tbl])
+		}
+		if len(diff.Warnings[tbl]) == 0 {
+			t.Errorf("%s ausente deveria registrar warnings (visibilidade no diff)", tbl)
+		}
 	}
 }
 
@@ -170,6 +384,100 @@ func TestValidate_AltCandidates(t *testing.T) {
 	}
 }
 
+// ── F4: embalagem de formulação — candidatos duais id_emb/id_embalagem ──────────
+
+func TestValidate_FormulationEmbalagem_ResolvesViaIdEmbalagem(t *testing.T) {
+	// Schema nominal já tem só id_emb na formula; adiciona id_embalagem (sem ambiguidade
+	// removendo id_emb seria inválido pois é required) → testa que id_emb é o 1º candidato.
+	cols := fixtureSchemaNominal()
+	rm, diff := resolveFromFixture(cols)
+	if !diff.OK {
+		t.Fatalf("Validate deve passar; missing=%v", diff.Missing)
+	}
+	// id_emb é o 1º candidato da embalagem de formulação → resolve para id_emb.
+	got := rm.Resolved["formula"]["id_embalagem_formulacao"]
+	if got != "id_emb" {
+		t.Errorf("id_embalagem_formulacao: esperava 'id_emb' (1º candidato), got %q", got)
+	}
+}
+
+func TestValidate_FormulationEmbalagem_CandidatesCoverBothNames(t *testing.T) {
+	// F4: o slot de embalagem de formulação DEVE listar tanto id_emb quanto id_embalagem
+	// (+ id_embalagem_formulacao) como candidatos. Resolução é "primeiro que existir".
+	cand := candidatesOpt("id_emb", "id_embalagem", "id_embalagem_formulacao")
+	resolve := func(present string) string {
+		tbl := map[string]bool{present: true}
+		for _, c := range cand.Candidates {
+			if tbl[strings.ToLower(c)] {
+				return strings.ToLower(c)
+			}
+		}
+		return ""
+	}
+	if got := resolve("id_emb"); got != "id_emb" {
+		t.Errorf("com id_emb presente: esperava 'id_emb', got %q", got)
+	}
+	if got := resolve("id_embalagem"); got != "id_embalagem" {
+		t.Errorf("com id_embalagem presente: esperava 'id_embalagem' (fallback), got %q", got)
+	}
+	if got := resolve("id_embalagem_formulacao"); got != "id_embalagem_formulacao" {
+		t.Errorf("com id_embalagem_formulacao presente: esperava esse, got %q", got)
+	}
+	// Confirma que o mapeamento declarado da formula realmente expõe esses 3 candidatos.
+	var found bool
+	for _, tm := range expectedMappings() {
+		if tm.Table != "formula" {
+			continue
+		}
+		cm, ok := tm.Columns["id_embalagem_formulacao"]
+		if !ok {
+			t.Fatal("formula deve ter o logical 'id_embalagem_formulacao'")
+		}
+		found = true
+		want := map[string]bool{"id_emb": true, "id_embalagem": true, "id_embalagem_formulacao": true}
+		if len(cm.Candidates) != 3 {
+			t.Errorf("esperava 3 candidatos, got %v", cm.Candidates)
+		}
+		for _, c := range cm.Candidates {
+			if !want[c] {
+				t.Errorf("candidato inesperado %q", c)
+			}
+		}
+		if cm.Required {
+			t.Error("embalagem de formulação deve ser opcional (não falha o ciclo se ausente)")
+		}
+	}
+	if !found {
+		t.Fatal("tabela 'formula' não encontrada no mapeamento")
+	}
+}
+
+func TestValidate_FormulationEmbalagem_AmbiguityWarning(t *testing.T) {
+	// Quando id_emb E id_embalagem coexistem na formula → aviso de ambiguidade.
+	cols := fixtureSchemaNominal()
+	cols["formula"]["id_embalagem"] = true       // agora id_emb (já existia) E id_embalagem coexistem
+	cols["formulaperson"]["id_embalagem"] = true // idem na personalizada
+	_, diff := resolveFromFixture(cols)
+	if !diff.OK {
+		t.Fatalf("ambiguidade NÃO deve falhar o ciclo (é só aviso); missing=%v", diff.Missing)
+	}
+	if _, ok := diff.ExtraInfo["formula_embalagem_ambigua"]; !ok {
+		t.Error("esperava aviso 'formula_embalagem_ambigua' quando id_emb e id_embalagem coexistem")
+	}
+	if _, ok := diff.ExtraInfo["formulaperson_embalagem_ambigua"]; !ok {
+		t.Error("esperava aviso 'formulaperson_embalagem_ambigua' quando id_emb e id_embalagem coexistem")
+	}
+}
+
+func TestValidate_FormulationEmbalagem_NoAmbiguityWhenOnlyIdEmb(t *testing.T) {
+	// Schema nominal tem só id_emb (não id_embalagem) → SEM aviso de ambiguidade.
+	cols := fixtureSchemaNominal()
+	_, diff := resolveFromFixture(cols)
+	if _, ok := diff.ExtraInfo["formula_embalagem_ambigua"]; ok {
+		t.Error("não deveria avisar ambiguidade quando só id_emb existe")
+	}
+}
+
 func TestValidate_MissingRequiredTable_FailsClosed(t *testing.T) {
 	cols := fixtureSchemaNominal()
 	delete(cols, "corantes") // Remove tabela obrigatória.
@@ -196,7 +504,7 @@ func TestValidate_MissingRequiredColumn_FailsClosed(t *testing.T) {
 func TestValidate_OptionalColumnMissing_StillOK(t *testing.T) {
 	cols := fixtureSchemaNominal()
 	// Remove colunas opcionais.
-	delete(cols["formula"], "id_subcolecao")   // Opcional.
+	delete(cols["formula"], "id_subcolecao")    // Opcional.
 	delete(cols["colecao"], "data_atualizacao") // Opcional.
 	_, diff := resolveFromFixture(cols)
 
@@ -263,21 +571,21 @@ func TestDetectFormulaShape_Flat(t *testing.T) {
 	cols := fixtureSchemaNominal()
 	rm := &ResolvedMapping{
 		Resolved:        make(map[string]map[string]string),
-		FlatFormulaCols: make(map[string]string),
+		FlatColsByTable: make(map[string]map[string]string),
 	}
 	shape := detectFormulaShape(cols, rm)
 	if shape != FormulaShapeFlat {
 		t.Errorf("esperava FormulaShapeFlat, got %q", shape)
 	}
-	// Verifica que os 6 slots foram mapeados.
+	// Verifica que os 6 slots foram mapeados na formula.
 	for i := 1; i <= 6; i++ {
 		k := fmt.Sprintf("corante%d", i)
-		if rm.FlatFormulaCols[k] == "" {
-			t.Errorf("FlatFormulaCols[%s] não foi mapeado", k)
+		if rm.FlatColsByTable["formula"][k] == "" {
+			t.Errorf("FlatColsByTable[formula][%s] não foi mapeado", k)
 		}
 		qk := fmt.Sprintf("qtd%dml", i)
-		if rm.FlatFormulaCols[qk] == "" {
-			t.Errorf("FlatFormulaCols[%s] não foi mapeado", qk)
+		if rm.FlatColsByTable["formula"][qk] == "" {
+			t.Errorf("FlatColsByTable[formula][%s] não foi mapeado", qk)
 		}
 	}
 }
@@ -286,7 +594,7 @@ func TestDetectFormulaShape_Child(t *testing.T) {
 	cols := fixtureSchemaChild()
 	rm := &ResolvedMapping{
 		Resolved:        make(map[string]map[string]string),
-		FlatFormulaCols: make(map[string]string),
+		FlatColsByTable: make(map[string]map[string]string),
 	}
 	shape := detectFormulaShape(cols, rm)
 	if shape != FormulaShapeChild {
@@ -302,7 +610,7 @@ func TestDetectFormulaShape_ChildTakesPriorityOverFlat(t *testing.T) {
 	}
 	rm := &ResolvedMapping{
 		Resolved:        make(map[string]map[string]string),
-		FlatFormulaCols: make(map[string]string),
+		FlatColsByTable: make(map[string]map[string]string),
 	}
 	shape := detectFormulaShape(cols, rm)
 	if shape != FormulaShapeChild {
@@ -319,7 +627,7 @@ func TestDetectFormulaShape_Unknown(t *testing.T) {
 	}
 	rm := &ResolvedMapping{
 		Resolved:        make(map[string]map[string]string),
-		FlatFormulaCols: make(map[string]string),
+		FlatColsByTable: make(map[string]map[string]string),
 	}
 	shape := detectFormulaShape(cols, rm)
 	if shape != FormulaShapeUnknown {
@@ -332,57 +640,9 @@ func TestDetectFormulaShape_Unknown(t *testing.T) {
 // (sem banco de dados)
 // ──────────────────────────────────────────────────────────────
 
-// resolveFromFixture executa a lógica de Validate diretamente a partir de
-// um map de colunas (fixture), sem precisar de banco real.
-// Espelha a lógica de Validate sem a camada de I/O do banco.
+// resolveFromFixture executa a resolução de mapeamento a partir de um map de
+// colunas (fixture), sem banco real. Chama o núcleo REAL do Validate
+// (resolveMapping) — não é mais um espelho duplicado da lógica.
 func resolveFromFixture(cols map[string]map[string]bool) (*ResolvedMapping, *SchemaDiff) {
-	diff := &SchemaDiff{
-		OK:        true,
-		Missing:   make(map[string][]string),
-		Warnings:  make(map[string][]string),
-		ExtraInfo: make(map[string]string),
-	}
-	rm := &ResolvedMapping{
-		Resolved:        make(map[string]map[string]string),
-		FormulaShape:    FormulaShapeUnknown,
-		FlatFormulaCols: make(map[string]string),
-	}
-
-	for _, tm := range expectedMappings() {
-		tblCols, exists := cols[tm.Table]
-		if !exists {
-			for logicName, cm := range tm.Columns {
-				if cm.Required {
-					diff.Missing[tm.Table] = append(diff.Missing[tm.Table], logicName)
-					diff.OK = false
-				}
-			}
-			continue
-		}
-
-		rm.Resolved[tm.Table] = make(map[string]string)
-		for logicName, cm := range tm.Columns {
-			resolved := ""
-			for _, cand := range cm.Candidates {
-				if tblCols[strings.ToLower(cand)] {
-					resolved = strings.ToLower(cand)
-					break
-				}
-			}
-			if resolved == "" {
-				if cm.Required {
-					diff.Missing[tm.Table] = append(diff.Missing[tm.Table], logicName)
-					diff.OK = false
-				} else {
-					diff.Warnings[tm.Table] = append(diff.Warnings[tm.Table], logicName)
-				}
-			} else {
-				rm.Resolved[tm.Table][logicName] = resolved
-			}
-		}
-	}
-
-	rm.FormulaShape = detectFormulaShape(cols, rm)
-	diff.ExtraInfo["formula_shape"] = string(rm.FormulaShape)
-	return rm, diff
+	return resolveMapping(cols)
 }

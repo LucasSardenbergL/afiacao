@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 199
+-- Total de custom migrations: 209
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -216,9 +216,19 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260610130000', 'melhorias_canal', '20260610130000_melhorias_canal.sql'),
   ('20260610150000', 'reposicao_auto_aprovacao_piloto', '20260610150000_reposicao_auto_aprovacao_piloto.sql'),
   ('20260610200000', 'push_vendedora', '20260610200000_push_vendedora.sql'),
+  ('20260610200000', 'radar_fundacao', '20260610200000_radar_fundacao.sql'),
   ('20260611120000', 'reposicao_fixes_codex_711', '20260611120000_reposicao_fixes_codex_711.sql'),
   ('20260611140000', 'data_health_check_estoque_frescor', '20260611140000_data_health_check_estoque_frescor.sql'),
-  ('20260611150000', 'route_city_norm', '20260611150000_route_city_norm.sql')
+  ('20260611140000', 'kb_fundacao_casamento', '20260611140000_kb_fundacao_casamento.sql'),
+  ('20260611150000', 'route_city_norm', '20260611150000_route_city_norm.sql'),
+  ('20260611180000', 'familia_ausente_lista_email', '20260611180000_familia_ausente_lista_email.sql'),
+  ('20260611190000', 'tint_sync_codex_fixes', '20260611190000_tint_sync_codex_fixes.sql'),
+  ('20260612120000', 'auto_assign_role_omie_import_guard', '20260612120000_auto_assign_role_omie_import_guard.sql'),
+  ('20260612130000', 'radar_rpcs_contato', '20260612130000_radar_rpcs_contato.sql'),
+  ('20260613120000', 'customer_canonical_alias', '20260613120000_customer_canonical_alias.sql'),
+  ('20260613120000', 'kb_0c_aprovacao_master_only', '20260613120000_kb_0c_aprovacao_master_only.sql'),
+  ('20260613130000', 'radar_rls_initplan_perf', '20260613130000_radar_rls_initplan_perf.sql'),
+  ('20260613160000', 'kb_extraction_drafts', '20260613160000_kb_extraction_drafts.sql')
 )
 SELECT
   e.version,
@@ -987,13 +997,62 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('push_vendedora', 'cron_job', 'cron', 'push-sla-tick', ''),
   ('push_vendedora', 'rls_policy', 'public', 'push_subscriptions_own', 'push_subscriptions'),
   ('push_vendedora', 'rls_policy', 'public', 'push_subscriptions_service', 'push_subscriptions'),
+  ('radar_fundacao', 'table', 'public', 'radar_empresas', ''),
+  ('radar_fundacao', 'table', 'public', 'radar_contatos', ''),
+  ('radar_fundacao', 'table', 'public', 'radar_municipios', ''),
+  ('radar_fundacao', 'table', 'public', 'radar_ingest_state', ''),
+  ('radar_fundacao', 'index', 'public', 'idx_radar_empresas_fila', 'radar_empresas'),
+  ('radar_fundacao', 'index', 'public', 'idx_radar_empresas_local', 'radar_empresas'),
+  ('radar_fundacao', 'index', 'public', 'idx_radar_empresas_cnae', 'radar_empresas'),
+  ('radar_fundacao', 'index', 'public', 'idx_radar_contatos_cnpj', 'radar_contatos'),
+  ('radar_fundacao', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
+  ('radar_fundacao', 'rls_policy', 'public', 'radar_empresas_select_gestor', 'radar_empresas'),
+  ('radar_fundacao', 'rls_policy', 'public', 'radar_contatos_select_gestor', 'radar_contatos'),
+  ('radar_fundacao', 'rls_policy', 'public', 'radar_municipios_select_gestor', 'radar_municipios'),
+  ('radar_fundacao', 'rls_policy', 'public', 'radar_ingest_state_select_gestor', 'radar_ingest_state'),
   ('reposicao_fixes_codex_711', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
   ('reposicao_fixes_codex_711', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
   ('data_health_check_estoque_frescor', 'function', 'public', '_data_health_compute', ''),
   ('data_health_check_estoque_frescor', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_check_estoque_frescor', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('kb_fundacao_casamento', 'table', 'public', 'omie_product_spec_links', ''),
+  ('kb_fundacao_casamento', 'index', 'public', 'omie_product_spec_links_one_confirmed', 'omie_product_spec_links'),
+  ('kb_fundacao_casamento', 'index', 'public', 'omie_product_spec_links_unique_triple', 'omie_product_spec_links'),
+  ('kb_fundacao_casamento', 'function', 'public', 'kb_specs_normalize', ''),
+  ('kb_fundacao_casamento', 'function', 'public', 'buscar_skus_candidatos', ''),
+  ('kb_fundacao_casamento', 'function', 'public', 'confirmar_vinculo_boletim', ''),
+  ('kb_fundacao_casamento', 'function', 'public', 'rejeitar_sugestao', ''),
+  ('kb_fundacao_casamento', 'trigger', 'public', 'trg_kb_specs_normalize', 'kb_product_specs'),
+  ('kb_fundacao_casamento', 'rls_policy', 'public', 'omie_product_spec_links_select_staff', 'omie_product_spec_links'),
   ('route_city_norm', 'index', 'public', 'idx_cvs_city_norm', 'customer_visit_scores'),
-  ('route_city_norm', 'function', 'public', 'route_city_norm', '')
+  ('route_city_norm', 'function', 'public', 'route_city_norm', ''),
+  ('familia_ausente_lista_email', 'function', 'public', '_vendas_familia_ausente_lista_email', ''),
+  ('familia_ausente_lista_email', 'function', 'public', 'data_health_watchdog', ''),
+  ('tint_sync_codex_fixes', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('tint_sync_codex_fixes', 'function', 'public', 'tint_calc_preco_final', ''),
+  ('tint_sync_codex_fixes', 'function', 'public', 'tint_recalc_preco_oficial', ''),
+  ('tint_sync_codex_fixes', 'function', 'public', 'tint_apply_keys_snapshot', ''),
+  ('auto_assign_role_omie_import_guard', 'function', 'public', 'auto_assign_user_role', ''),
+  ('radar_rpcs_contato', 'function', 'public', 'registrar_contato_radar', ''),
+  ('radar_rpcs_contato', 'function', 'public', 'desfazer_contato_radar', ''),
+  ('radar_rpcs_contato', 'function', 'public', 'radar_kpis', ''),
+  ('customer_canonical_alias', 'table', 'public', 'customer_canonical_alias', ''),
+  ('customer_canonical_alias', 'index', 'public', 'idx_cca_canonical', 'customer_canonical_alias'),
+  ('customer_canonical_alias', 'index', 'public', 'idx_cca_status_active', 'customer_canonical_alias'),
+  ('customer_canonical_alias', 'rls_policy', 'public', 'cca_select_gestor_master', 'customer_canonical_alias'),
+  ('kb_0c_aprovacao_master_only', 'function', 'public', 'confirmar_vinculo_boletim', ''),
+  ('kb_0c_aprovacao_master_only', 'function', 'public', 'desvincular_boletim', ''),
+  ('kb_0c_aprovacao_master_only', 'rls_policy', 'public', 'kb_product_specs_insert_master', 'kb_product_specs'),
+  ('kb_0c_aprovacao_master_only', 'rls_policy', 'public', 'kb_product_specs_update_master', 'kb_product_specs'),
+  ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_empresas_select_gestor', 'radar_empresas'),
+  ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_contatos_select_gestor', 'radar_contatos'),
+  ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_municipios_select_gestor', 'radar_municipios'),
+  ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_ingest_state_select_gestor', 'radar_ingest_state'),
+  ('kb_extraction_drafts', 'table', 'public', 'kb_extraction_drafts', ''),
+  ('kb_extraction_drafts', 'function', 'public', 'kb_extraction_draft_claim', ''),
+  ('kb_extraction_drafts', 'trigger', 'public', 'trg_kb_extraction_drafts_updated_at', 'kb_extraction_drafts'),
+  ('kb_extraction_drafts', 'rls_policy', 'public', 'kb_extraction_drafts_select_master', 'kb_extraction_drafts'),
+  ('kb_extraction_drafts', 'rls_policy', 'public', 'kb_extraction_drafts_delete_master', 'kb_extraction_drafts')
 )
 SELECT
   e.migration,

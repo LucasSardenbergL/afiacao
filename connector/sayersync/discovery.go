@@ -103,11 +103,180 @@ func RunDiscovery(ctx context.Context, db *sql.DB, outPath string) (string, erro
 		sb.WriteString("\n")
 	}
 
+	// ── v2: achar onde mora o PREÇO ──────────────────────────────
+	// O banco descoberto NÃO tem preco_corante/preco_baseemb → os preços moram em
+	// outro schema ou database. As seções abaixo são DIAGNÓSTICO (best-effort:
+	// erro vira linha no arquivo, nunca falha o discovery) e ficam FORA do
+	// fingerprint (que continua só sobre o schema public — não quebrar comparações).
+	writeOutrosSchemas(ctx, db, &sb)
+	writeDatabases(ctx, db, &sb)
+	writeContagens(ctx, db, &sb, tableOrder)
+	writeAmostraEmbalagem(ctx, db, &sb, tableMap)
+	// Amostras de catálogo (sem dado de cliente) — decifram a composição da
+	// identidade da cor (sufixo " - BS" = colecao? familia?) e dão contexto pra
+	// caça ao banco de preços.
+	writeAmostra(ctx, db, &sb, tableMap, "colecao", []string{"id", "codigo", "descricao"}, 10)
+	writeAmostra(ctx, db, &sb, tableMap, "subcolecao", []string{"id", "id_colecao", "codigo", "descricao"}, 10)
+	writeAmostra(ctx, db, &sb, tableMap, "padraocor", []string{"id", "codigo", "descricao", "pagina", "familia", "id_subcolecao"}, 5)
+
 	if err := os.WriteFile(outPath, []byte(sb.String()), 0644); err != nil {
 		return "", fmt.Errorf("discovery: erro ao gravar %s: %w", outPath, err)
 	}
 
 	return fp, nil
+}
+
+// writeOutrosSchemas lista as tabelas fora de public/pg_catalog/information_schema.
+func writeOutrosSchemas(ctx context.Context, db *sql.DB, sb *strings.Builder) {
+	sb.WriteString("=== OUTROS SCHEMAS (tabelas) ===\n")
+	rows, err := db.QueryContext(ctx, `
+		SELECT table_schema, table_name
+		FROM information_schema.tables
+		WHERE table_schema NOT IN ('public', 'pg_catalog', 'information_schema')
+		ORDER BY table_schema, table_name
+	`)
+	if err != nil {
+		sb.WriteString(fmt.Sprintf("  erro: %v\n\n", err))
+		return
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var schema, tbl string
+		if err := rows.Scan(&schema, &tbl); err != nil {
+			sb.WriteString(fmt.Sprintf("  erro: %v\n", err))
+			break
+		}
+		sb.WriteString(fmt.Sprintf("  %s.%s\n", schema, tbl))
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		sb.WriteString(fmt.Sprintf("  erro: %v\n", err))
+	}
+	if n == 0 {
+		sb.WriteString("  (nenhuma)\n")
+	}
+	sb.WriteString("\n")
+}
+
+// writeDatabases lista os databases do servidor (o preço pode morar em outro DB).
+func writeDatabases(ctx context.Context, db *sql.DB, sb *strings.Builder) {
+	sb.WriteString("=== DATABASES NO SERVIDOR ===\n")
+	rows, err := db.QueryContext(ctx, `SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY 1`)
+	if err != nil {
+		sb.WriteString(fmt.Sprintf("  erro: %v\n\n", err))
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			sb.WriteString(fmt.Sprintf("  erro: %v\n", err))
+			break
+		}
+		sb.WriteString(fmt.Sprintf("  %s\n", name))
+	}
+	if err := rows.Err(); err != nil {
+		sb.WriteString(fmt.Sprintf("  erro: %v\n", err))
+	}
+	sb.WriteString("\n")
+}
+
+// writeContagens grava count(*) de cada tabela public (best-effort por tabela).
+func writeContagens(ctx context.Context, db *sql.DB, sb *strings.Builder, tableOrder []string) {
+	sb.WriteString("=== CONTAGENS (public) ===\n")
+	for _, tbl := range tableOrder {
+		var n int64
+		err := db.QueryRowContext(ctx, fmt.Sprintf(`SELECT count(*) FROM %s`, quoteIdent(tbl))).Scan(&n)
+		if err != nil {
+			sb.WriteString(fmt.Sprintf("  %-30s erro: %v\n", tbl, err))
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("  %-30s %d\n", tbl, n))
+	}
+	sb.WriteString("\n")
+}
+
+// writeAmostraEmbalagem grava 20 linhas da tabela embalagem (dado de catálogo, sem
+// cliente) — confirma a unidade do "conteudo" (litros: 0.810) com dado real.
+func writeAmostraEmbalagem(ctx context.Context, db *sql.DB, sb *strings.Builder, tableMap map[string][]discoveryCol) {
+	sb.WriteString("=== AMOSTRA: embalagem ===\n")
+	if _, ok := tableMap["embalagem"]; !ok {
+		sb.WriteString("  (tabela embalagem não encontrada)\n\n")
+		return
+	}
+	rows, err := db.QueryContext(ctx, `SELECT id, descricao, conteudo FROM embalagem ORDER BY id LIMIT 20`)
+	if err != nil {
+		sb.WriteString(fmt.Sprintf("  erro: %v\n\n", err))
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id any
+		var descricao, conteudo any
+		if err := rows.Scan(&id, &descricao, &conteudo); err != nil {
+			sb.WriteString(fmt.Sprintf("  erro: %v\n", err))
+			break
+		}
+		sb.WriteString(fmt.Sprintf("  id=%v | descricao=%v | conteudo=%v\n", id, descricao, conteudo))
+	}
+	if err := rows.Err(); err != nil {
+		sb.WriteString(fmt.Sprintf("  erro: %v\n", err))
+	}
+	sb.WriteString("\n")
+}
+
+// writeAmostra grava até `limit` linhas de uma tabela (SÓ colunas de catálogo
+// informadas — nunca dado de cliente). Coluna inexistente na instalação → vira
+// NULL no SELECT (era candidata); tabela ausente → seção registra e segue.
+// Best-effort: erro vira linha no arquivo, nunca falha o discovery.
+func writeAmostra(ctx context.Context, db *sql.DB, sb *strings.Builder, tableMap map[string][]discoveryCol, table string, cols []string, limit int) {
+	sb.WriteString(fmt.Sprintf("=== AMOSTRA: %s ===\n", table))
+	tcols, ok := tableMap[table]
+	if !ok {
+		sb.WriteString("  (tabela não encontrada)\n\n")
+		return
+	}
+	existe := make(map[string]bool, len(tcols))
+	for _, c := range tcols {
+		existe[c.name] = true
+	}
+	exprs := make([]string, len(cols))
+	for i, c := range cols {
+		if existe[c] {
+			exprs[i] = quoteIdent(c)
+		} else {
+			exprs[i] = `NULL`
+		}
+	}
+	query := fmt.Sprintf(`SELECT %s FROM %s ORDER BY 1 LIMIT %d`,
+		strings.Join(exprs, ", "), quoteIdent(table), limit)
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		sb.WriteString(fmt.Sprintf("  erro: %v\n\n", err))
+		return
+	}
+	defer rows.Close()
+	dest := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range dest {
+		ptrs[i] = &dest[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(ptrs...); err != nil {
+			sb.WriteString(fmt.Sprintf("  erro: %v\n", err))
+			break
+		}
+		parts := make([]string, len(cols))
+		for i, c := range cols {
+			parts[i] = fmt.Sprintf("%s=%v", c, dest[i])
+		}
+		sb.WriteString("  " + strings.Join(parts, " | ") + "\n")
+	}
+	if err := rows.Err(); err != nil {
+		sb.WriteString(fmt.Sprintf("  erro: %v\n", err))
+	}
+	sb.WriteString("\n")
 }
 
 // fingerprintDiscovery computa o SHA-256 do schema normalizado (table+col+type, ordenado).

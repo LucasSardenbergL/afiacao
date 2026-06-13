@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeBrPhone, formatBrPhone, whatsappLink } from '../phone';
+import { normalizeBrPhone, formatBrPhone, whatsappLink, isCellphone } from '../phone';
 
 describe('normalizeBrPhone', () => {
   it('falsy → string vazia', () => {
@@ -92,5 +92,26 @@ describe('whatsappLink', () => {
 
   it('sem mensagem não adiciona ?text=', () => {
     expect(whatsappLink('37999998888')).toBe('https://wa.me/5537999998888');
+  });
+});
+
+describe('isCellphone', () => {
+  it('celular com DDD (11 dígitos, 9 na frente) → true', () => {
+    expect(isCellphone('31999990001')).toBe(true);
+    expect(isCellphone('(31) 99999-0001')).toBe(true);
+    expect(isCellphone('5531999990001')).toBe(true); // com +55
+  });
+  it('fixo (10 dígitos) → false', () => {
+    expect(isCellphone('3133334444')).toBe(false);
+    expect(isCellphone('(31) 3333-4444')).toBe(false);
+  });
+  it('vazio/nulo/curto → false', () => {
+    expect(isCellphone(null)).toBe(false);
+    expect(isCellphone(undefined)).toBe(false);
+    expect(isCellphone('')).toBe(false);
+    expect(isCellphone('999')).toBe(false);
+  });
+  it('sem DDD com 9 dígitos (9XXXX-XXXX) → aplica DDD padrão e é celular', () => {
+    expect(isCellphone('999990001')).toBe(true);
   });
 });

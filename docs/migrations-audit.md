@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **199** custom migrations totais
-- **757** objetos esperados (criados por estas migrations)
+- **209** custom migrations totais
+- **806** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 196
-  - `rls_policy`: 188
-  - `index`: 139
+  - `function`: 214
+  - `rls_policy`: 202
+  - `index`: 147
   - `cron_job`: 102
-  - `table`: 88
-  - `trigger`: 40
+  - `table`: 95
+  - `trigger`: 42
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1739,6 +1739,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.push_subscriptions_own` | `push_subscriptions` |
 | `rls_policy` | `public.push_subscriptions_service` | `push_subscriptions` |
 
+### `20260610200000_radar_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.radar_empresas` | — |
+| `table` | `public.radar_contatos` | — |
+| `table` | `public.radar_municipios` | — |
+| `table` | `public.radar_ingest_state` | — |
+| `index` | `public.idx_radar_empresas_fila` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_local` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_cnae` | `radar_empresas` |
+| `index` | `public.idx_radar_contatos_cnpj` | `radar_contatos` |
+| `function` | `public.radar_recruzar_ja_cliente` | — |
+| `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
+| `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
+| `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
+| `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
+
 ### `20260611120000_reposicao_fixes_codex_711.sql`
 
 | Tipo | Objeto | Parent |
@@ -1754,12 +1772,93 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
 
+### `20260611140000_kb_fundacao_casamento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.omie_product_spec_links` | — |
+| `index` | `public.omie_product_spec_links_one_confirmed` | `omie_product_spec_links` |
+| `index` | `public.omie_product_spec_links_unique_triple` | `omie_product_spec_links` |
+| `function` | `public.kb_specs_normalize` | — |
+| `function` | `public.buscar_skus_candidatos` | — |
+| `function` | `public.confirmar_vinculo_boletim` | — |
+| `function` | `public.rejeitar_sugestao` | — |
+| `trigger` | `public.trg_kb_specs_normalize` | `kb_product_specs` |
+| `rls_policy` | `public.omie_product_spec_links_select_staff` | `omie_product_spec_links` |
+
 ### `20260611150000_route_city_norm.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `index` | `public.idx_cvs_city_norm` | `customer_visit_scores` |
 | `function` | `public.route_city_norm` | — |
+
+### `20260611180000_familia_ausente_lista_email.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._vendas_familia_ausente_lista_email` | — |
+| `function` | `public.data_health_watchdog` | — |
+
+### `20260611190000_tint_sync_codex_fixes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+| `function` | `public.tint_calc_preco_final` | — |
+| `function` | `public.tint_recalc_preco_oficial` | — |
+| `function` | `public.tint_apply_keys_snapshot` | — |
+
+### `20260612120000_auto_assign_role_omie_import_guard.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.auto_assign_user_role` | — |
+
+### `20260612130000_radar_rpcs_contato.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.registrar_contato_radar` | — |
+| `function` | `public.desfazer_contato_radar` | — |
+| `function` | `public.radar_kpis` | — |
+
+### `20260613120000_customer_canonical_alias.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.customer_canonical_alias` | — |
+| `index` | `public.idx_cca_canonical` | `customer_canonical_alias` |
+| `index` | `public.idx_cca_status_active` | `customer_canonical_alias` |
+| `rls_policy` | `public.cca_select_gestor_master` | `customer_canonical_alias` |
+
+### `20260613120000_kb_0c_aprovacao_master_only.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.confirmar_vinculo_boletim` | — |
+| `function` | `public.desvincular_boletim` | — |
+| `rls_policy` | `public.kb_product_specs_insert_master` | `kb_product_specs` |
+| `rls_policy` | `public.kb_product_specs_update_master` | `kb_product_specs` |
+
+### `20260613130000_radar_rls_initplan_perf.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
+| `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
+| `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
+| `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
+
+### `20260613160000_kb_extraction_drafts.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.kb_extraction_drafts` | — |
+| `function` | `public.kb_extraction_draft_claim` | — |
+| `trigger` | `public.trg_kb_extraction_drafts_updated_at` | `kb_extraction_drafts` |
+| `rls_policy` | `public.kb_extraction_drafts_select_master` | `kb_extraction_drafts` |
+| `rls_policy` | `public.kb_extraction_drafts_delete_master` | `kb_extraction_drafts` |
 
 ## Próximos passos quando algo der `❌`
 

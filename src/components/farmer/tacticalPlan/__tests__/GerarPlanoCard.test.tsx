@@ -3,6 +3,10 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { GerarPlanoCard } from "../GerarPlanoCard";
 import type { CustomerLite } from "../types";
 
+// GerarPlanoCard lê useImpersonation pra desabilitar a geração na lente "Ver como".
+// Fora da lente (isImpersonating=false) os botões seguem habilitados — comportamento testado aqui.
+vi.mock("@/contexts/ImpersonationContext", () => ({ useImpersonation: vi.fn(() => ({ isImpersonating: false })) }));
+
 const customers: CustomerLite[] = [
   { id: "c1", name: "Marcenaria Alfa", healthScore: 80, churnRisk: 10 },
   { id: "c2", name: "Móveis Beta", healthScore: 30, churnRisk: 60 },
