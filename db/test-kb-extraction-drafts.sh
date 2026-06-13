@@ -480,4 +480,32 @@ fi
 
 # ---------------------------------------------------------------------------
 echo ""
-echo "✅ test-kb-extraction-drafts: todos os asserts passaram (A1..A9)"
+echo "→ ASSERT A10 — RPC kb_extraction_draft_claim BARRADA p/ authenticated (REVOKE em runtime):"
+
+# Money-path: prova EM RUNTIME (não só na DDL) que um staff comum NÃO gera o claim/custo.
+# A RPC é INVOKER + REVOKE FROM authenticated → sem EXECUTE grant → 42501 ao chamar.
+P -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+BEGIN
+  SET ROLE authenticated;
+  BEGIN
+    PERFORM public.kb_extraction_draft_claim(
+      'd0000000-0000-0000-0000-000000000001'::uuid,
+      gen_random_uuid()
+    );
+    RESET ROLE;
+    RAISE EXCEPTION 'A10 FALHOU: authenticated executou a RPC de claim (REVOKE sem dente — custo de API aberto a qualquer staff)';
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      RESET ROLE;
+      RAISE NOTICE 'OK A10 — authenticated barrado na RPC de claim (42501): %', SQLERRM;
+    WHEN OTHERS THEN
+      RESET ROLE;
+      RAISE;  -- re-lança qualquer erro != 42501 esperado (anti-teatro: não engole o inesperado)
+  END;
+END $$;
+SQL
+
+# ---------------------------------------------------------------------------
+echo ""
+echo "✅ test-kb-extraction-drafts: todos os asserts passaram (A1..A10)"
