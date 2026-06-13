@@ -42,6 +42,9 @@ const ALLOWED = new Set([
   // da lente (KPIs do dia, KPIs/follow-ups/resultado de visitas). Read-only, sem mutation.
   'src/hooks/useMyKpis.ts',
   'src/hooks/useKpisVisita.ts',
+  // useKpisVisitaMtd: igual ao useKpisVisita, mas janela MTD (placar do closer). effectiveUserId
+  // SÓ filtra a LEITURA de route_visits pro alvo na lente (.eq visited_by); read-only, sem mutation.
+  'src/hooks/useKpisVisitaMtd.ts',
   'src/hooks/useFollowupsVisita.ts',
   'src/hooks/useMinhasVisitasResultado.ts',
   // FarmerCalls: effectiveUserId SÓ na leitura da lista de ligações (loadCallLogs); a escrita
