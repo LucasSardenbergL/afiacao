@@ -13,6 +13,7 @@ export interface RadarFiltros {
   cnae: string;          // '' = todos (1 código por enquanto)
   status: string;        // '' = qualquer; senão um prospeccao_status
   incluirJaClientes: boolean;
+  comTelefone: boolean;  // só empresas com telefone1 OU telefone2
   preset: PresetRadar;
 }
 
@@ -41,6 +42,8 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       if (filtros.status) q = q.eq('prospeccao_status', filtros.status);
       else q = q.neq('prospeccao_status', 'descartado'); // fila default esconde descartados
       if (!filtros.incluirJaClientes) q = q.eq('ja_cliente', false);
+      // "com telefone" = positivo (linha sem telefone não casa o OR; sem footgun NULL-blind)
+      if (filtros.comTelefone) q = q.or('telefone1.not.is.null,telefone2.not.is.null');
       if (p.dataAberturaMax) q = q.lte('data_abertura', p.dataAberturaMax);
       if (p.dataAberturaMin) q = q.gte('data_abertura', p.dataAberturaMin);
 
