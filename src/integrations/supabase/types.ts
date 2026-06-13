@@ -5878,6 +5878,7 @@ export type Database = {
           pot_life_horas: number | null
           product_category: string | null
           product_code: string
+          product_code_normalized: string | null
           product_line: string | null
           product_name: string
           publico_alvo: string | null
@@ -5927,6 +5928,7 @@ export type Database = {
           pot_life_horas?: number | null
           product_category?: string | null
           product_code: string
+          product_code_normalized?: string | null
           product_line?: string | null
           product_name: string
           publico_alvo?: string | null
@@ -5976,6 +5978,7 @@ export type Database = {
           pot_life_horas?: number | null
           product_category?: string | null
           product_code?: string
+          product_code_normalized?: string | null
           product_line?: string | null
           product_name?: string
           publico_alvo?: string | null
@@ -6715,6 +6718,50 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      omie_product_spec_links: {
+        Row: {
+          account: string
+          confirmed_at: string
+          confirmed_by: string | null
+          created_at: string
+          id: string
+          kb_product_spec_id: string
+          omie_codigo_produto: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          account: string
+          confirmed_at?: string
+          confirmed_by?: string | null
+          created_at?: string
+          id?: string
+          kb_product_spec_id: string
+          omie_codigo_produto: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          account?: string
+          confirmed_at?: string
+          confirmed_by?: string | null
+          created_at?: string
+          id?: string
+          kb_product_spec_id?: string
+          omie_codigo_produto?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "omie_product_spec_links_kb_product_spec_id_fkey"
+            columns: ["kb_product_spec_id"]
+            isOneToOne: false
+            referencedRelation: "kb_product_specs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       omie_products: {
         Row: {
@@ -13758,6 +13805,37 @@ export type Database = {
         }
         Relationships: []
       }
+      v_omie_product_current_spec: {
+        Row: {
+          account: string | null
+          catalisador_codigo: string | null
+          catalisador_proporcao_pct: number | null
+          demaos_recomendadas: number | null
+          diferenciais_chave: string[] | null
+          diluente_codigo: string | null
+          equipamentos_aplicacao: string[] | null
+          kb_product_spec_id: string | null
+          omie_codigo_produto: number | null
+          pot_life_horas: number | null
+          product_category: string | null
+          product_code: string | null
+          product_name: string | null
+          rendimento_m2_por_litro: number | null
+          substrato: string[] | null
+          supplier: string | null
+          uso_recomendado: string | null
+          validade_dias: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "omie_product_spec_links_kb_product_spec_id_fkey"
+            columns: ["kb_product_spec_id"]
+            isOneToOne: false
+            referencedRelation: "kb_product_specs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       v_oportunidade_economica_hoje: {
         Row: {
           aumento_evitado_perc: number | null
@@ -14669,6 +14747,15 @@ export type Database = {
         Args: { p_aprovar: boolean; p_motivo?: string; p_tarefa_id: string }
         Returns: undefined
       }
+      buscar_skus_candidatos: {
+        Args: { p_termos: string[] }
+        Returns: {
+          account: string
+          codigo: string
+          descricao: string
+          omie_codigo_produto: number
+        }[]
+      }
       calcular_gatilhos_reposicao: {
         Args: { p_empresa?: string; p_only_sku?: number }
         Returns: Record<string, unknown>
@@ -15225,6 +15312,14 @@ export type Database = {
           p_usuario: string
         }
         Returns: Json
+      }
+      rejeitar_sugestao: {
+        Args: {
+          p_account: string
+          p_kb_product_spec_id: string
+          p_omie_codigo_produto: number
+        }
+        Returns: undefined
       }
       reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
       reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
