@@ -38,6 +38,17 @@ describe('OrderGroup', () => {
     expect(screen.getByText(/100,00/)).toBeTruthy();
   });
 
+  it('hora: wizard (timestamp real) mostra HH:mm; sync (data-pura UTC) mostra "—" em vez de hora fabricada', () => {
+    const sync: EnrichedOrder = { ...order, id: 'ord-2', omie_numero_pedido: '000046', created_at: '2026-06-10T00:00:00.000Z' };
+    render(
+      <OrderGroup company="oben" period="manha" orders={[order, sync]} selectedOrders={new Set()} onToggleOrder={noop} onPrintSingle={noop} />
+    );
+    expect(screen.getByText('09:30')).toBeTruthy();
+    expect(screen.getByText('—')).toBeTruthy();
+    // a hora local fabricada (21:00 em BRT) não pode aparecer
+    expect(screen.queryByText('21:00')).toBeNull();
+  });
+
   it('clique na linha chama onToggleOrder; botão imprimir chama onPrintSingle', () => {
     const onToggleOrder = vi.fn();
     const onPrintSingle = vi.fn();

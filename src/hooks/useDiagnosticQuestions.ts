@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import type { CustomerProfile } from '@/hooks/useBundleArguments';
 
@@ -31,6 +32,10 @@ export { typeLabels };
 
 export const useDiagnosticQuestions = () => {
   const { user } = useAuth();
+  // Lente "Ver como": as estatísticas de efetividade exibidas seguem o id efetivo (o
+  // ALVO na lente, o próprio usuário fora). A geração (edge) e o save (insert
+  // farmer_id=user.id) são bloqueados na lente pelo write-guard + botões disabled.
+  const { effectiveUserId } = useImpersonation();
   const [questions, setQuestions] = useState<Record<string, QuestionWithResponse[]>>({});
   const [generating, setGenerating] = useState<Record<string, boolean>>({});
 
@@ -142,12 +147,12 @@ export const useDiagnosticQuestions = () => {
   }, [user?.id, questions]);
 
   const getEffectivenessStats = useCallback(async () => {
-    if (!user?.id) return null;
+    if (!effectiveUserId) return null;
 
     const { data } = await supabase
       .from('farmer_diagnostic_questions')
       .select('question_type, response_type, was_bundle_offered, bundle_result, margin_generated')
-      .eq('farmer_id', user.id);
+      .eq('farmer_id', effectiveUserId);
 
     const rows = (data ?? []) as unknown as Array<{
       question_type: string;
@@ -171,7 +176,7 @@ export const useDiagnosticQuestions = () => {
     }
 
     return stats;
-  }, [user?.id]);
+  }, [effectiveUserId]);
 
   return {
     questions,

@@ -100,49 +100,41 @@ export interface HelpRouteMapping {
   anchor: string;
 }
 
-export function getHelpMappingForRoute(pathname: string): HelpRouteMapping {
-  // Avaliação Trimestral DES module
-  if (pathname.startsWith('/admin/des/trimestre-atual')) {
-    return { module: 'avaliacao-trimestral-des', anchor: 'posicao-ao-vivo' };
-  }
-  if (pathname.startsWith('/admin/des/configuracao')) {
-    return { module: 'avaliacao-trimestral-des', anchor: 'visao-geral-do-programa-des' };
-  }
-  if (pathname.startsWith('/admin/des')) {
-    return { module: 'avaliacao-trimestral-des', anchor: 'visao-geral-do-programa-des' };
-  }
-
-  // Negociação Paralela module
-  if (pathname.startsWith('/admin/reposicao/negociacao-paralela')) {
-    return { module: 'negociacao-paralela', anchor: 'ranking-de-candidatos' };
-  }
-
-  // Eventos Comerciais module (Reposição)
-  if (pathname.startsWith('/admin/reposicao/promocoes')) {
-    return { module: 'eventos-comerciais', anchor: 'promoções' };
-  }
-  if (pathname.startsWith('/admin/reposicao/aumentos')) {
-    return { module: 'eventos-comerciais', anchor: 'aumentos-anunciados' };
-  }
-  if (pathname.startsWith('/admin/reposicao/oportunidades')) {
-    return { module: 'eventos-comerciais', anchor: 'oportunidades-unificadas' };
-  }
-  if (pathname.startsWith('/admin/reposicao/pedidos')) {
-    return { module: 'eventos-comerciais', anchor: 'ciclo-de-oportunidade' };
-  }
-  if (pathname.startsWith('/admin/reposicao')) {
-    return { module: 'eventos-comerciais', anchor: 'visão-geral' };
-  }
-
-  return { module: 'eventos-comerciais', anchor: 'visão-geral' };
+interface HelpRouteRule extends HelpRouteMapping {
+  prefix: string;
 }
 
 /**
- * Backwards-compatible helper that returns just the anchor for a route.
- * @deprecated use getHelpMappingForRoute to get both module and anchor.
+ * Regras de ajuda por prefixo de rota — ESPECÍFICAS antes das genéricas (a ordem
+ * É a prioridade, igual à cascata de `if` que isto substituiu). Rota sem match =
+ * sem ajuda contextual → `getHelpMappingForRoute` devolve `null` e o HelpDrawer
+ * esconde o botão "?" em vez de abrir um painel "nada encontrado".
+ *
+ * ⚠️ Antes havia um fallback genérico (`eventos-comerciais/visão-geral`) que
+ * casava QUALQUER rota → toda tela sem ajuda própria (ex.: /meu-dia) abria a
+ * ajuda de Reposição e mostrava "nenhuma seção encontrada". O fallback foi
+ * removido de propósito.
  */
-export function getHelpAnchorForRoute(pathname: string): string {
-  return getHelpMappingForRoute(pathname).anchor;
+const HELP_ROUTE_RULES: HelpRouteRule[] = [
+  { prefix: '/admin/des/trimestre-atual', module: 'avaliacao-trimestral-des', anchor: 'posicao-ao-vivo' },
+  { prefix: '/admin/des/configuracao', module: 'avaliacao-trimestral-des', anchor: 'visao-geral-do-programa-des' },
+  { prefix: '/admin/des', module: 'avaliacao-trimestral-des', anchor: 'visao-geral-do-programa-des' },
+  { prefix: '/admin/reposicao/negociacao-paralela', module: 'negociacao-paralela', anchor: 'ranking-de-candidatos' },
+  { prefix: '/admin/reposicao/promocoes', module: 'eventos-comerciais', anchor: 'promoções' },
+  { prefix: '/admin/reposicao/aumentos', module: 'eventos-comerciais', anchor: 'aumentos-anunciados' },
+  { prefix: '/admin/reposicao/oportunidades', module: 'eventos-comerciais', anchor: 'oportunidades-unificadas' },
+  { prefix: '/admin/reposicao/pedidos', module: 'eventos-comerciais', anchor: 'ciclo-de-oportunidade' },
+  { prefix: '/admin/reposicao', module: 'eventos-comerciais', anchor: 'visão-geral' },
+];
+
+export function getHelpMappingForRoute(pathname: string): HelpRouteMapping | null {
+  const rule = HELP_ROUTE_RULES.find((r) => pathname.startsWith(r.prefix));
+  return rule ? { module: rule.module, anchor: rule.anchor } : null;
+}
+
+/** True só quando a rota tem ajuda contextual REAL (não o antigo fallback genérico). */
+export function hasHelpForRoute(pathname: string): boolean {
+  return getHelpMappingForRoute(pathname) !== null;
 }
 
 /**

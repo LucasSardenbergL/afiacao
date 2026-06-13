@@ -1,27 +1,29 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { SalesOrderCard } from '../SalesOrderCard';
-import type { SalesOrder } from '../types';
+import type { OrderFeedRow } from '../types';
 
-function order(p: Partial<SalesOrder> = {}): SalesOrder {
+// O card consome a linha da view order_feed (listagem enxuta).
+function order(p: Partial<OrderFeedRow> = {}): OrderFeedRow {
   return {
+    origin: 'sales',
     id: 'o1',
+    created_at: '2026-05-20T10:00:00Z',
+    account: 'oben',
+    order_number: '000123',
+    omie_pedido_id: 9,
     customer_user_id: 'u1',
-    items: [{ descricao: 'Verniz', quantidade: 2, valor_unitario: 50, valor_total: 100 }],
+    customer_name: 'ACME Ltda',
+    item_names: ['Verniz'],
+    item_quantity: 2,
+    status: 'enviado',
     subtotal: 100,
     total: 100,
-    status: 'enviado',
-    omie_numero_pedido: '000123',
-    omie_pedido_id: 9,
-    created_at: '2026-05-20T10:00:00Z',
-    notes: null,
-    account: 'oben',
-    _source: 'sales',
     ...p,
   };
 }
 
-function setup(o: SalesOrder, overrides: Partial<React.ComponentProps<typeof SalesOrderCard>> = {}) {
+function setup(o: OrderFeedRow, overrides: Partial<React.ComponentProps<typeof SalesOrderCard>> = {}) {
   const props: React.ComponentProps<typeof SalesOrderCard> = {
     order: o,
     customerName: 'ACME Ltda',
@@ -101,7 +103,8 @@ describe('SalesOrderCard (sales)', () => {
 
 describe('SalesOrderCard (afiação)', () => {
   it('mostra badges Colacor SC + Afiação e navega ao clicar no card', () => {
-    const props = setup(order({ _source: 'afiacao', account: 'afiacao', status: 'em_afiacao' }));
+    // A view manda afiação com account='colacor_sc' e origin='afiacao'.
+    const props = setup(order({ origin: 'afiacao', account: 'colacor_sc', order_number: null, omie_pedido_id: null, status: 'em_afiacao' }));
     expect(screen.getByText('Colacor SC')).toBeTruthy();
     expect(screen.getByText('Afiação')).toBeTruthy();
     expect(screen.queryByRole('checkbox')).toBeNull(); // não selecionável

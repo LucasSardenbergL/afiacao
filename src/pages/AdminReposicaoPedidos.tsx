@@ -7,12 +7,24 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertTriangle, CheckCircle2, Eye, Loader2, RefreshCw, Zap } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Eye, Loader2, RefreshCw, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { PedidoSugerido } from '@/components/reposicao/pedidos/types';
-import { EMPRESA, formatBRL, interpretarRespostaDisparo, pedidosVisiveis, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
+import { EMPRESA, formatBRL, interpretarRespostaDisparo, particionarCicloHoje, pedidosVisiveis, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
 import { CycleIndicator } from '@/components/reposicao/pedidos/CycleIndicator';
 import { PedidoRow } from '@/components/reposicao/pedidos/PedidoRow';
 import { StatusComMotivo, PortalBadge } from '@/components/reposicao/pedidos/badges';
@@ -20,6 +32,9 @@ import { DetalhesModal } from '@/components/reposicao/pedidos/DetalhesModal';
 import { CancelarModal } from '@/components/reposicao/pedidos/CancelarModal';
 import { PortalDrawer } from '@/components/reposicao/pedidos/PortalDrawer';
 import { CiclosAnteriores } from '@/components/reposicao/pedidos/CiclosAnteriores';
+import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMinimoButton';
+import { ehGateMinimoFaturamento } from '@/components/reposicao/pedidos/shared';
+import { useAuth } from '@/contexts/AuthContext';
 
 type SkuSemFornecedor = {
   sku_codigo_omie: string;
@@ -31,6 +46,10 @@ type SkuSemFornecedor = {
 /* ─── Página principal ─── */
 export default function AdminReposicaoPedidos() {
   const queryClient = useQueryClient();
+  // Override do mínimo de faturamento é privilegiado: só gestor comercial/master. A tela é
+  // RequireStaff (employee|master), então gateamos o botão aqui (o edge reforça no servidor).
+  const { isMaster, isGestorComercial } = useAuth();
+  const podeOverride = isMaster || isGestorComercial;
   const [searchParams, setSearchParams] = useSearchParams();
   const [now, setNow] = useState(new Date());
   const [detalhesPedido, setDetalhesPedido] = useState<PedidoSugerido | null>(null);
@@ -38,6 +57,7 @@ export default function AdminReposicaoPedidos() {
   const [portalPedido, setPortalPedido] = useState<PedidoSugerido | null>(null);
   const [historicoData, setHistoricoData] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
   const [mostrarAtencao, setMostrarAtencao] = useState(false);
+  const [histAberto, setHistAberto] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60_000);
@@ -97,6 +117,12 @@ export default function AdminReposicaoPedidos() {
   // filhos dobraria o "valor do ciclo". Os filhos (status normal) seguem visíveis.
   // Usar essa lista derivada tanto no render quanto no contador (consistente).
   const pedidosCiclo = pedidosVisiveis(pedidos ?? []);
+
+  // Separa os pedidos do dia em ativos (lista principal) e terminais (Histórico de hoje,
+  // recolhido). Os terminais — cancelado/cancelado_humano/expirado_sem_aprovacao — são o
+  // "lixo do dia" que a geração não varre; tirá-los da lista principal limpa a poluição
+  // sem apagar nada do banco.
+  const { ativos, historico } = particionarCicloHoje(pedidosCiclo);
 
   // A fila de atenção é cross-ciclo; o pai split (status='split_em_filhos') por
   // construção nunca entra (pedidoPrecisaAtencao só dispara em falha_envio/portal),
@@ -214,6 +240,35 @@ export default function AdminReposicaoPedidos() {
     },
   });
 
+  // Override do gate de mínimo de faturamento (gestor/master). Mesma edge, com ignorar_minimo.
+  // Separada da dispararMutation pra não confundir o estado de loading por linha; o edge
+  // reforça gestor/master no servidor (403 se não autorizado → cai no onError).
+  const dispararOverrideMutation = useMutation({
+    mutationFn: async (pedidoId: number) => {
+      const { data, error } = await supabase.functions.invoke('disparar-pedidos-aprovados', {
+        body: { empresa: EMPRESA, pedido_id: pedidoId, ignorar_minimo: true },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data, pedidoId) => {
+      const { tone, message } = interpretarRespostaDisparo(data as RespostaDisparo, pedidoId);
+      if (tone === 'error') toast.error(message);
+      else if (tone === 'info') toast.info(message);
+      else toast.success(message);
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+    },
+    onError: (e: Error) => {
+      toast.error(`Erro ao disparar: ${e.message}`);
+    },
+  });
+
+  // Estado de disparo por linha cobre AMBAS as mutações (normal + override) — o botão da
+  // linha trava enquanto qualquer disparo daquele pedido está em voo.
+  const disparandoLinha = (pedidoId: number) =>
+    (dispararMutation.isPending && dispararMutation.variables === pedidoId) ||
+    (dispararOverrideMutation.isPending && dispararOverrideMutation.variables === pedidoId);
+
   const bloqueados = (pedidos ?? []).filter((p) => p.status === 'bloqueado_guardrail');
 
   // SKUs abaixo do ponto que NÃO geram pedido por falta de fornecedor cadastrado.
@@ -260,12 +315,30 @@ export default function AdminReposicaoPedidos() {
             </span>
           )}
           <Button variant="outline" onClick={() => refetch()} disabled={isLoading}>
-            <RefreshCw className={`w-4 h-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />Atualizar
+            <RefreshCw className={`w-4 h-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />Atualizar lista
           </Button>
-          <Button onClick={() => gerarMutation.mutate()} disabled={gerarMutation.isPending}>
-            {gerarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-            Rodar geração manual
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" disabled={gerarMutation.isPending}>
+                {gerarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+                Recalcular sugestões
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Recalcular sugestões de hoje?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Recalcula as sugestões de compra a partir do estoque atual. Não altera pedidos
+                  já aprovados, disparados ou cancelados. O sistema já faz isso sozinho 1×/dia —
+                  use só se você mudou um parâmetro (ponto de pedido, mínimo forçado etc.).
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Voltar</AlertDialogCancel>
+                <AlertDialogAction onClick={() => gerarMutation.mutate()}>Recalcular</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
 
@@ -354,17 +427,26 @@ export default function AdminReposicaoPedidos() {
                         <Button size="sm" variant="ghost" onClick={() => setDetalhesPedido(p)}>
                           <Eye className="w-4 h-4 mr-1" />Detalhes
                         </Button>
-                        {(p.status === 'aprovado_aguardando_disparo' || p.status === 'falha_envio') && (
+                        {podeOverride && ehGateMinimoFaturamento(p) ? (
+                          // Preso pelo gate de mínimo de faturamento → "Disparar mesmo assim"
+                          // no lugar do "Re-disparar" (que só re-bateria no gate).
+                          <OverrideMinimoButton
+                            fornecedorNome={p.fornecedor_nome}
+                            valorTotal={p.valor_total}
+                            onConfirm={() => dispararOverrideMutation.mutate(p.id)}
+                            disabled={disparandoLinha(p.id) || p.status_envio_portal === 'enviando_portal'}
+                          />
+                        ) : (p.status === 'aprovado_aguardando_disparo' || p.status === 'falha_envio') ? (
                           <Button
                             size="sm"
                             variant={p.status === 'falha_envio' ? 'outline' : 'default'}
                             onClick={() => dispararMutation.mutate(p.id)}
                             disabled={
-                              (dispararMutation.isPending && dispararMutation.variables === p.id) ||
+                              disparandoLinha(p.id) ||
                               p.status_envio_portal === 'enviando_portal'
                             }
                           >
-                            {(dispararMutation.isPending && dispararMutation.variables === p.id) ||
+                            {disparandoLinha(p.id) ||
                             p.status_envio_portal === 'enviando_portal' ? (
                               <Loader2 className="w-4 h-4 mr-1 animate-spin" />
                             ) : (
@@ -372,7 +454,7 @@ export default function AdminReposicaoPedidos() {
                             )}
                             {p.status === 'falha_envio' ? 'Re-disparar' : 'Disparar'}
                           </Button>
-                        )}
+                        ) : null}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -392,16 +474,18 @@ export default function AdminReposicaoPedidos() {
         <TabsContent value="hoje">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Pedidos do dia ({pedidosCiclo.length})</CardTitle>
+              <CardTitle className="text-base">Pedidos do dia ({ativos.length})</CardTitle>
             </CardHeader>
             <CardContent>
               {isLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                 </div>
-              ) : pedidosCiclo.length === 0 ? (
+              ) : ativos.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
-                  Nenhum pedido gerado para o ciclo de hoje. Use "Rodar geração manual" para criar.
+                  {historico.length > 0
+                    ? 'Nenhum pedido ativo hoje — veja o Histórico de hoje abaixo.'
+                    : 'Nenhum pedido gerado para o ciclo de hoje. Use "Recalcular sugestões" para criar.'}
                 </div>
               ) : (
                 <Table>
@@ -417,7 +501,7 @@ export default function AdminReposicaoPedidos() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pedidosCiclo.map((p) => (
+                    {ativos.map((p) => (
                       <PedidoRow
                         key={p.id}
                         p={p}
@@ -425,11 +509,58 @@ export default function AdminReposicaoPedidos() {
                         onCancelar={() => setCancelarPedido(p)}
                         onVerPortal={() => setPortalPedido(p)}
                         onDisparar={() => dispararMutation.mutate(p.id)}
-                        disparando={dispararMutation.isPending && dispararMutation.variables === p.id}
+                        onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
+                        disparando={disparandoLinha(p.id)}
                       />
                     ))}
                   </TableBody>
                 </Table>
+              )}
+
+              {!isLoading && historico.length > 0 && (
+                <Collapsible open={histAberto} onOpenChange={setHistAberto} className="mt-4 border-t pt-2">
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-between py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <span className="font-medium">Histórico de hoje ({historico.length})</span>
+                      {histAberto ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <p className="text-xs text-muted-foreground pb-2">
+                      Pedidos cancelados ou expirados de hoje. Ficam aqui só pra registro — não saem do banco.
+                    </p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Fornecedor / Grupo</TableHead>
+                          <TableHead className="text-right">Nº SKUs</TableHead>
+                          <TableHead className="text-right">Valor</TableHead>
+                          <TableHead>Portal</TableHead>
+                          <TableHead>Aprovado em</TableHead>
+                          <TableHead className="text-right">Ações</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {historico.map((p) => (
+                          <PedidoRow
+                            key={p.id}
+                            p={p}
+                            onVerDetalhes={() => setDetalhesPedido(p)}
+                            onCancelar={() => setCancelarPedido(p)}
+                            onVerPortal={() => setPortalPedido(p)}
+                            onDisparar={() => dispararMutation.mutate(p.id)}
+                            onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
+                            disparando={disparandoLinha(p.id)}
+                          />
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CollapsibleContent>
+                </Collapsible>
               )}
             </CardContent>
           </Card>

@@ -6,6 +6,8 @@ function pct(num: number, den: number): number {
 
 export const pctPositivacao = pct;
 export const pctCobertura = pct;
+/** % de clientes novos entre os compradores do mês (diagnóstico do hunter). */
+export const pctNovos = pct;
 
 /** Ticket médio = receita / compradores; 0 quando não há comprador. */
 export function ticketMedio(receita: number, compradores: number): number {

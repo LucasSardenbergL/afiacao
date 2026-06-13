@@ -172,6 +172,10 @@ export function useUnifiedOrder() {
   // Cart state lives in useCart hook (declared after pricing helpers below)
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Guard re-entrante do submit por REF (não state): double-tap entre o clique
+  // e o re-render do disabled veria a MESMA closure com submitting=false e
+  // dispararia 2 fluxos completos (= 2 PVs cobrados no Omie).
+  const submittingRef = useRef(false);
   // activeTab moved into useCart hook below
   const [readyByDate, setReadyByDate] = useState<string>('');
   const [defaultProductionAssigneeId, setDefaultProductionAssigneeId] = useState<string | null>(null);
@@ -217,6 +221,7 @@ export function useUnifiedOrder() {
     customerPurchaseHistory,
     vendedorDivergencias, validatingVendedor,
     selectCustomer, clearCustomer: clearCustomerInternal,
+    waitForAccountEnsure,
   } = customerSel;
 
   // User tools (afiação) — react-query, 2min stale; auto-loads quando customerUserId muda
@@ -645,6 +650,15 @@ export function useUnifiedOrder() {
 
   const submitOrder = useCallback(async () => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
+    // Seleção em andamento: o ensure desta seleção ainda nem foi retido (a ref
+    // tem a promise placeholder) — o preflight fail-closed do service já
+    // bloquearia, mas barrar aqui dá feedback melhor que o erro do preflight.
+    if (loadingCustomer) {
+      toast.info('Aguarde — ainda carregando os dados do cliente.');
+      return;
+    }
+    if (submittingRef.current) return; // re-entrância: ver comentário na declaração
+    submittingRef.current = true;
     setSubmitting(true);
     // Impressão digital do pedido de produto (oben+colacor) + cliente.
     const customerKey = String(selectedCustomer.local_user_id || selectedCustomer.codigo_cliente || '');
@@ -670,8 +684,17 @@ export function useUnifiedOrder() {
     persistCheckoutEnv(checkoutEnvRef.current);
     const checkoutId = checkoutEnvRef.current.checkoutId;
     try {
+      // Etapa 3 (spec preco-realtime): a seleção dispara o auto-cadastro em
+      // BACKGROUND; o join é AQUI — garante os códigos por-conta antes do
+      // envio, sem segurar o spinner da seleção. O retorno é o cliente
+      // PÓS-ensure DA SELEÇÃO CORRENTE (token-stamp; null se a retenção é de
+      // outra seleção) — a closure de selectedCustomer pode ser a cópia
+      // anterior aos códigos criados. O preflight fail-closed do
+      // submitOrderService segue como rede pra conta sem identidade.
+      const ensuredCustomer = await waitForAccountEnsure();
+      const effectiveCustomer = ensuredCustomer ?? selectedCustomer;
       const result = await submitOrderService({
-        customer: selectedCustomer,
+        customer: effectiveCustomer,
         customerUserId,
         user,
         cart: { obenProductItems, colacorProductItems, serviceItems },
@@ -727,6 +750,7 @@ export function useUnifiedOrder() {
     } catch (error) {
       toast.error('Erro ao criar pedido', { description: error instanceof Error ? error.message : String(error) });
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }, [
@@ -740,6 +764,7 @@ export function useUnifiedOrder() {
     notes, readyByDate, ordemCompra,
     companyProfiles, defaultProductionAssigneeId,
     getServicePrice, clearCart, isCustomerMode,
+    waitForAccountEnsure, loadingCustomer,
   ]);
 
   // clearCustomer defined earlier (wraps useCustomerSelection.clearCustomer + clears cart/ordemCompra/userTools)

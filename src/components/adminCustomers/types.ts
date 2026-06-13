@@ -10,6 +10,8 @@ export interface Customer {
   customer_type: string | null;
   created_at: string;
   requires_po?: boolean;
+  /** dono original quando o cliente vem de cobertura (owner ≠ baseId); null/ausente se for da própria carteira. */
+  coberto_de?: string | null;
 }
 
 export interface ToolCategory {

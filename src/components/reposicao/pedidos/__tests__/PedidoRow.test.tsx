@@ -7,8 +7,12 @@ function ped(partial: Partial<PedidoSugerido>): PedidoSugerido {
   return partial as unknown as PedidoSugerido;
 }
 
-function renderRow(p: PedidoSugerido) {
+function renderRow(
+  p: PedidoSugerido,
+  opts?: { onDispararIgnorandoMinimo?: () => void },
+) {
   const onDisparar = vi.fn();
+  const onOverride = opts?.onDispararIgnorandoMinimo;
   const utils = render(
     <table>
       <tbody>
@@ -18,6 +22,7 @@ function renderRow(p: PedidoSugerido) {
           onCancelar={() => {}}
           onVerPortal={() => {}}
           onDisparar={onDisparar}
+          onDispararIgnorandoMinimo={onOverride}
           disparando={false}
         />
       </tbody>
@@ -96,5 +101,56 @@ describe('PedidoRow — tooltip de motivo (bloqueio / falha)', () => {
   it('status normal → nenhum ícone de motivo', () => {
     renderRow(ped({ id: 14, status: 'aprovado_aguardando_disparo', fornecedor_nome: 'X', num_skus: 3, valor_total: 50 }));
     expect(screen.queryByRole('button', { name: /Motivo/i })).toBeNull();
+  });
+});
+
+describe('PedidoRow — override do mínimo de faturamento ("Disparar mesmo assim")', () => {
+  const gateMin = (over?: () => void) =>
+    renderRow(
+      ped({
+        id: 20,
+        status: 'falha_envio',
+        fornecedor_nome: 'RENNER SAYERLACK S/A',
+        num_skus: 4,
+        valor_total: 1800,
+        resposta_canal: { erro: 'abaixo do mínimo de faturamento', gate: 'minimo_faturamento' },
+      }),
+      over ? { onDispararIgnorandoMinimo: over } : undefined,
+    );
+
+  it('gate-min + gestor (callback): mostra "Disparar mesmo assim" no lugar de "Re-disparar"', () => {
+    gateMin(vi.fn());
+    expect(screen.getByRole('button', { name: /Disparar mesmo assim/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Re-disparar/i })).toBeNull();
+  });
+
+  it('gate-min SEM callback (não-gestor): cai no "Re-disparar" normal, sem override', () => {
+    gateMin(undefined);
+    expect(screen.getByRole('button', { name: /Re-disparar/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Disparar mesmo assim/i })).toBeNull();
+  });
+
+  it('falha_envio por OUTRO motivo + callback: NÃO oferece override (só "Re-disparar")', () => {
+    renderRow(
+      ped({
+        id: 21,
+        status: 'falha_envio',
+        fornecedor_nome: 'RENNER SAYERLACK S/A',
+        num_skus: 4,
+        valor_total: 1800,
+        resposta_canal: { erro: 'SKU(s) sem custo (preço unitário 0)' },
+      }),
+      { onDispararIgnorandoMinimo: vi.fn() },
+    );
+    expect(screen.getByRole('button', { name: /Re-disparar/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Disparar mesmo assim/i })).toBeNull();
+  });
+
+  it('confirmar no diálogo chama onDispararIgnorandoMinimo uma vez', () => {
+    const over = vi.fn();
+    gateMin(over);
+    fireEvent.click(screen.getByRole('button', { name: /Disparar mesmo assim/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Confirmar e disparar/i }));
+    expect(over).toHaveBeenCalledTimes(1);
   });
 });

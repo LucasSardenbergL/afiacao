@@ -97,7 +97,7 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
             <div className="flex items-center gap-2">
               <Database className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm font-medium">Specs estruturados</span>
-              {existingSpecs && (
+              {existingSpecs?.approved_at && (
                 <Badge variant="outline" className="text-2xs gap-1">
                   <Sparkles className="w-2.5 h-2.5" />
                   Aprovado
