@@ -187,7 +187,9 @@ function po(over: {
   itens?: Array<{ nCodProd?: number | string; nQtde?: number; nQtdeRec?: number | null }>;
   usarCabecalhoLegado?: boolean;
 } = {}): OmiePedConsultaRaw {
-  const cab = { nCodPed: over.nCodPed, cNumero: over.cNumero ?? "1054", cCodIntPed: over.cCodIntPed ?? "", cEtapa: over.cEtapa ?? APROVADO };
+  // [round10] toda PO precisa de nCodPed canônico. Default = cNumero (POs distintos já passam cNumeros distintos →
+  // ids distintos; mesma cNumero = mesma PO = de-dup correto). Pra testar fail-close, passar nCodPed:"" explícito.
+  const cab = { nCodPed: over.nCodPed ?? over.cNumero ?? "1054", cNumero: over.cNumero ?? "1054", cCodIntPed: over.cCodIntPed ?? "", cEtapa: over.cEtapa ?? APROVADO };
   const produtos = over.itens ?? [{ nCodProd: "8689734299", nQtde: 3, nQtdeRec: 0 }];
   return over.usarCabecalhoLegado
     ? { cabecalho: cab, produtos_consulta: produtos }
@@ -232,7 +234,7 @@ describe("coletarDaPagina", () => {
     // 1ª PO: 1 item sem nCodProd JÁ RECEBIDO (saldo 0 → não dispara o novo check de saldo-omitido) → só o
     // problema "sem item com SKU". 2ª PO: cabeçalho sem itens → idem. Total = 2 (isola o caso P1.1).
     const r = coletarDaPagina(
-      [po({ itens: [{ nQtde: 2, nQtdeRec: 2 }] }), { cabecalho_consulta: { cNumero: "200", cEtapa: APROVADO, cCodIntPed: "AFI-x" } }],
+      [po({ itens: [{ nQtde: 2, nQtdeRec: 2 }] }), { cabecalho_consulta: { nCodPed: "200", cNumero: "200", cEtapa: APROVADO, cCodIntPed: "AFI-x" } }],
       copts(),
     );
     expect(r.items).toEqual([]);
@@ -344,23 +346,30 @@ describe("coletarDaPagina", () => {
     expect(computeOnOrder(r.items, opts()).problemas).toEqual([]);
   });
 
-  it("[P1 round8/9] identidade da PO = AMBAS as aliases prefixadas (id:<nCodPed> E numero:<cNumero>)", () => {
+  it("[P1 round8/9/10] identidade = nCodPed CANÔNICO (obrigatório) + numero:<cNumero> secundário", () => {
     const r = coletarDaPagina(
-      [po({ nCodPed: "9001", cNumero: "100" }), po({ cNumero: "101" })], // 1ª tem as duas; 2ª só cNumero
+      [po({ nCodPed: "9001", cNumero: "100" }), po({ nCodPed: "9002", cNumero: "101" })],
       copts(),
     );
-    expect(r.numerosVistos).toEqual(["id:9001", "numero:100", "numero:101"]);
+    expect(r.numerosVistos).toEqual(["id:9001", "numero:100", "id:9002", "numero:101"]);
+    expect(r.problemas).toEqual([]);
   });
 
-  it("[P1 round8] PO SEM nCodPed E SEM cNumero → PROBLEMA (não escapa do de-dup)", () => {
-    const r = coletarDaPagina([po({ cNumero: "" })], copts()); // sem nCodPed, cNumero vazio
-    expect(r.numerosVistos).toEqual([]);
-    expect(r.problemas.some((p) => /sem identidade/.test(p))).toBe(true);
+  it("[P1 round10] PO SEM nCodPed → PROBLEMA fail-closed (mesmo COM cNumero — fecha o escape de omissão complementar)", () => {
+    // round10: a MESMA PO id-only numa pág e numero-only noutra escapava (chaves disjuntas → soma dupla). Fix:
+    // sem nCodPed → fail-closed e NÃO registra `numero:` (senão o numero-only contaria sozinho). COM cNumero:
+    const rComNumero = coletarDaPagina([po({ nCodPed: "", cNumero: "101" })], copts());
+    expect(rComNumero.numerosVistos).toEqual([]);
+    expect(rComNumero.problemas.some((p) => /sem nCodPed/.test(p))).toBe(true);
+    // SEM cNumero também:
+    const rSemNada = coletarDaPagina([po({ nCodPed: "", cNumero: "" })], copts());
+    expect(rSemNada.numerosVistos).toEqual([]);
+    expect(rSemNada.problemas.some((p) => /sem nCodPed/.test(p))).toBe(true);
   });
 
-  it("[P1 round8] PO com só nCodPed (cNumero vazio) → alias id:", () => {
+  it("[P1 round8/10] PO com só nCodPed (cNumero vazio) → alias id: (canônico basta)", () => {
     const r1 = coletarDaPagina([po({ nCodPed: "555", cNumero: "" })], copts());
-    expect(r1.numerosVistos).toEqual(["id:555"]); // entra via nCodPed
+    expect(r1.numerosVistos).toEqual(["id:555"]); // entra via nCodPed canônico; cNumero vazio = sem alias secundário
   });
 });
 
@@ -465,20 +474,22 @@ describe("varrerPedidos — loop de paginação (paginar até página vazia, ant
     await expect(varrerPedidos(fetcher([pag1, pag2, { pedidos: [] }]), vopts)).rejects.toThrow(/PO REPETIDA/);
   });
 
-  it("[P1 round9] FATAL: PO com identidade ASSIMÉTRICA entre páginas (nCodPed numa, só cNumero noutra) → lança", async () => {
-    // pág1: a PO "100" tem nCodPed E cNumero; pág2: a MESMA PO "100" vem só com cNumero (nCodPed ausente). A alias
-    // `numero:100` bate nas duas → o de-dup pega (com "só a 1ª identidade" as chaves divergiriam e o overcount
-    // passaria). 2ª PO distinta em cada página (501/502) só p/ os FINGERPRINTS diferirem (isola o de-dup do anti-loop).
-    const pag1 = { pedidos: [po({ nCodPed: "9001", cNumero: "100" }), po({ cNumero: "501" })] };
-    const pag2 = { pedidos: [po({ cNumero: "100" }), po({ cNumero: "502" })] }; // mesma PO "100", sem nCodPed
-    await expect(varrerPedidos(fetcher([pag1, pag2, { pedidos: [] }]), vopts)).rejects.toThrow(/PO REPETIDA/);
+  it("[P1 round10] PO sem nCodPed numa página → FAIL-CLOSED via problema (fecha o escape de omissão complementar)", async () => {
+    // O escape round10: a MESMA PO aparece id-only numa pág e numero-only noutra → chaves DISJUNTAS → sem colisão
+    // → soma dupla → overcount. Fix: EXIGIR nCodPed em toda PO. Aqui pág2 traz uma PO só com cNumero (nCodPed
+    // EXPLÍCITO vazio) → problema fail-closed (não conta → sem double-count). Fillers com cNumero distinto p/ não
+    // colidir o alias secundário `numero:` nem o fingerprint de página.
+    const pag1 = { pedidos: [po({ nCodPed: "9001", cNumero: "100" }), po({ nCodPed: "501", cNumero: "501" })] };
+    const pag2 = { pedidos: [po({ nCodPed: "", cNumero: "100" }), po({ nCodPed: "502", cNumero: "502" })] }; // PO sem nCodPed → fail-closed
+    const r = await varrerPedidos(fetcher([pag1, pag2, { pedidos: [] }]), vopts);
+    expect(r.problemas.some((p) => /sem nCodPed/.test(p))).toBe(true);
   });
 
   it("[P1.1/P1.2] propaga problemas (PO aprovada sem item) e codintsEmAprovacao (etapa-10) das páginas", async () => {
     const r = await varrerPedidos(
       fetcher([
         { pedidos: [po({ cNumero: "1", cCodIntPed: "AFI-10", cEtapa: EM_APROVACAO })] }, // etapa-10
-        { pedidos: [{ cabecalho_consulta: { cNumero: "300", cEtapa: APROVADO, cCodIntPed: "AFI-bad" } }] }, // aprovada sem item
+        { pedidos: [{ cabecalho_consulta: { nCodPed: "300", cNumero: "300", cEtapa: APROVADO, cCodIntPed: "AFI-bad" } }] }, // aprovada sem item
         { pedidos: [] },
       ]),
       vopts,

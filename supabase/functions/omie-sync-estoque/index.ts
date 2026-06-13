@@ -132,14 +132,17 @@ function coletarDaPagina(pedidos: readonly OmiePedConsultaRaw[] | undefined, opt
     const cNumero = norm(cab.cNumero);
     const cCodIntPed = norm(cab.cCodIntPed);
     if (etapa) etapasVistas.add(etapa);
-    // [P1 round8/9] aliases de identidade da PO p/ de-dup: `id:<nCodPed>` E `numero:<cNumero>` (AS DUAS — pega a PO
-    // mesmo se a identidade variar entre páginas; prefixo evita colisão nCodPed×cNumero). Nenhuma → fail-closed.
+    // [P1 round8/9/10] de-dup precisa de chave CANÔNICA presente em TODA aparição da PO. "id OU numero" (round9)
+    // deixava escapar omissões complementares ({id:A} numa pág vs {numero:N} noutra, mesma PO → chaves disjuntas
+    // → soma dupla → overcount → ruptura, Codex round10). EXIGIR nCodPed (PK interno do Omie) em TODA PO →
+    // `id:<nCodPed>` compartilhado; sem nCodPed → fail-closed (halt > overcount). cNumero = alias secundário.
     const nCodPed = norm(cab.nCodPed);
-    const aliasesPO: string[] = [];
-    if (nCodPed) aliasesPO.push(`id:${nCodPed}`);
-    if (cNumero) aliasesPO.push(`numero:${cNumero}`);
-    if (aliasesPO.length === 0) problemas.push(`PO sem identidade (sem nCodPed nem cNumero) — não dá p/ de-dup entre páginas (etapa=${etapa})`);
-    else for (const a of aliasesPO) numerosVistos.push(a);
+    if (!nCodPed) {
+      problemas.push(`PO sem nCodPed (ID interno) — sem chave canônica p/ de-dup entre páginas → fail-closed (etapa=${etapa}, cNumero=${cNumero || "—"})`);
+    } else {
+      numerosVistos.push(`id:${nCodPed}`);
+      if (cNumero) numerosVistos.push(`numero:${cNumero}`);
+    }
     // [novo furo Codex] etapa que CONTA o saldo (não em-aprovação) com item SEM nCodProd e saldo>0 → fail-closed.
     const etapaConta = !opts.etapasEmAprovacao?.has(etapa);
     let itensComSku = 0;

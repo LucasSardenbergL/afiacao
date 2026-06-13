@@ -180,19 +180,20 @@ export function coletarDaPagina(
     const cNumero = norm(cab.cNumero);
     const cCodIntPed = norm(cab.cCodIntPed);
     if (etapa) etapasVistas.add(etapa);
-    // [P1 round8/9] identidade da PO p/ de-dup entre páginas. Registra TODAS as aliases PREFIXADAS que existirem:
-    // `id:<nCodPed>` (ID interno do Omie) E `numero:<cNumero>`. [round9] usar AS DUAS (não a 1ª que existir): se a
-    // PO vier {nCodPed,cNumero} numa página e só {cNumero} noutra, a alias `numero:` bate nas duas → o de-dup pega
-    // (com só "a 1ª" as chaves divergiriam e o overcount passaria — Codex round9). Prefixo evita colisão entre um
-    // nCodPed e um cNumero de valor igual. NENHUMA alias → PO sem identidade → fail-closed (não escapa do de-dup).
+    // [P1 round8/9/10] identidade da PO p/ de-dup entre páginas. O de-dup precisa de uma chave CANÔNICA presente
+    // em TODA aparição da PO. Aceitar "id OU numero" (round9) ainda deixava escapar OMISSÕES COMPLEMENTARES: a
+    // MESMA PO vindo só com nCodPed numa página (alias id:A) e só com cNumero noutra (alias numero:N) → chaves
+    // DISJUNTAS → sem colisão → soma dupla → overcount → ruptura (Codex round10). nCodPed é o ID interno do Omie
+    // (PK da PO, não muda A→B). [round10] EXIGIR nCodPed em TODA PO → toda aparição compartilha `id:<nCodPed>` →
+    // o de-dup sempre pega. PO sem nCodPed → fail-closed (a edge não aplica; halt LOUD > overcount silencioso).
+    // `numero:<cNumero>` entra como alias SECUNDÁRIO (cobertura extra; colisão de cNumero entre POs distintas =
+    // abort = seguro). Prefixo evita colisão entre um nCodPed e um cNumero de mesmo valor.
     const nCodPed = norm(cab.nCodPed);
-    const aliasesPO: string[] = [];
-    if (nCodPed) aliasesPO.push(`id:${nCodPed}`);
-    if (cNumero) aliasesPO.push(`numero:${cNumero}`);
-    if (aliasesPO.length === 0) {
-      problemas.push(`PO sem identidade (sem nCodPed nem cNumero) — não dá p/ de-dup entre páginas (etapa=${etapa})`);
+    if (!nCodPed) {
+      problemas.push(`PO sem nCodPed (ID interno) — sem chave canônica p/ de-dup entre páginas → fail-closed (etapa=${etapa}, cNumero=${cNumero || "—"})`);
     } else {
-      for (const a of aliasesPO) numerosVistos.push(a);
+      numerosVistos.push(`id:${nCodPed}`);
+      if (cNumero) numerosVistos.push(`numero:${cNumero}`);
     }
 
     // [novo furo Codex] uma etapa CONTA o saldo se não é "em aprovação" (aprovada OU desconhecida). Um item
