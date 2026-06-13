@@ -64,8 +64,9 @@ BEGIN
 END $$;
 SQL
 
-echo "→ base 20260611140000 (ultima_sincronizacao) + 20260611210000 (markers)…"
+echo "→ base 140000 (#752 estoque-frescor) + 180000 (família-lista-email: cria o helper que o watchdog do 210000 chama) + 210000 (markers)…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260611140000_data_health_check_estoque_frescor.sql" >/dev/null
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260611180000_familia_ausente_lista_email.sql" >/dev/null
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260611210000_data_health_estoque_via_marcador.sql" >/dev/null
 
 echo "ASSERTS:"

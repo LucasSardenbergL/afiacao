@@ -65,7 +65,7 @@ ON CONFLICT DO NOTHING;
 SQL
 
 echo "→ aplica a migration da RPC…"
-P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260611190000_reposicao_aplicar_snapshot_pendente.sql" >/dev/null
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260611195000_reposicao_aplicar_snapshot_pendente.sql" >/dev/null
 
 echo "ASSERTS:"
 P -v ON_ERROR_STOP=1 <<'SQL'

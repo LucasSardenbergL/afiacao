@@ -6,13 +6,20 @@
 -- status=complete: reposicao_estoque_full (físico) + reposicao_pendente_po (a-caminho, da RPC
 -- aplicar_snapshot_pendente). Pega o sync PARCIAL (marker não-complete = broken) e o caso
 -- RPC-falha-com-físico-ok (a-caminho velho, físico fresco) que o max() deixava passar verde.
--- NÃO muda o CONJUNTO de checks (mesmos source names) → watchdog/heartbeat recriados JUNTO mas com
--- conteúdo inalterado (rito anti-cascata). CREATE OR REPLACE das 3 funções, corpo VERBATIM da
--- 20260611140000 + APENAS o bloco do estoque_reposicao reescrito (diff mecânico prova).
--- ⚠️ PROD está na 20260611140000 (18 checks, estoque_reposicao via ultima_sincronizacao); esta
--- migration a SUPERSEDE (mesmos 18 checks, só a lógica do estoque_reposicao muda). Aplicar SÓ após a
--- edge omie-sync-estoque (passo 2) gravar os markers reposicao_estoque_full/pendente_po — senão o
--- check nasce 'broken' (markers ausentes). PG17: db/test-data-health-estoque-marcador.sh.
+-- NÃO muda o CONJUNTO de checks (mesmos 18 source names) → só a LÓGICA do estoque_reposicao em
+-- _data_health_compute muda (frescor max(ultima_sincronizacao) → worst-of-2-markers). watchdog +
+-- heartbeat = VERBATIM da 20260611180000 (HEAD do data_health na main pós-reconciliação 2026-06-13:
+-- 085244 família + 140000 #752 estoque-frescor + 180000 família-lista-email). O e-mail da família
+-- (append _vendas_familia_ausente_lista_email, do 180000) fica PRESERVADO byte-a-byte no watchdog
+-- (diff mecânico prova: 210000.watchdog == 180000.watchdog).
+-- ⚠️ PROD (pós-reconciliação) tem 140000 + 180000 aplicadas (18 checks, estoque_reposicao via
+-- ultima_sincronizacao, e-mail-família ATIVO); esta migration as SUPERSEDE (mesmos 18 checks + mesmo
+-- e-mail, SÓ a fonte de frescor do estoque_reposicao vira marcador). Aplicar SÓ após a edge
+-- omie-sync-estoque (passo 2) gravar os markers reposicao_estoque_full/pendente_po — senão o check
+-- nasce 'broken' (markers ausentes). PG17: db/test-data-health-estoque-marcador.sh.
+-- ⚠️ PREFLIGHT (lição §10): antes do CREATE OR REPLACE, rodar na PROD
+--   pg_get_functiondef('public.data_health_watchdog()'::regprocedure) e confirmar que bate com o
+--   180000 (e-mail-família presente). Drift → rebasear sobre o corpo vivo antes de aplicar.
 --
 -- ── Histórico (contexto da 20260611140000 que CRIOU o check, via ultima_sincronizacao) ──
 -- Adiciona 1 check ao _data_health_compute (+ push no watchdog/heartbeat): frescor da tabela
@@ -26,16 +33,16 @@
 -- = broken. severity critical (money-path). Desenho: eu (Caminho B — Codex no adversarial retroativo,
 -- cota esgotada em 2026-06-11).
 --
--- ⚠️ RITO ANTI-CASCATA (_data_health_compute é arquivo QUENTE, já reverteu checks 4x):
---   • As 3 funções são CREATE OR REPLACE com corpo VERBATIM da 20260609085244 (a base mais nova em
---     origin/main) + APENAS: 1 UNION ALL (o check novo, antes do alert_channel) + o source
---     'estoque_reposicao' nos 2 IN-lists (watchdog push + heartbeat resumo). NÃO editar mais nada.
---   • PROD ESTÁ NA 20260604150000 (16 checks: ...omie_tipo_produto_oben, SEM família — a 20260609085244
---     nunca foi aplicada em prod; confirmado 2026-06-11 por `SELECT source FROM _data_health_compute()`
---     = 16 nomes-base). Este arquivo (= 20260609085244 + estoque_reposicao) é SUPERSET da prod → 18
---     checks (adiciona vendas_familia_ausente + estoque_reposicao), reverte ZERO (os 16 base idênticos).
---   • ⚠️ SUPERSEDE a 20260609085244 (família): NÃO aplicar aquela separada depois — ela NÃO tem
---     estoque_reposicao e reverteria. Esta é a ÚNICA a aplicar.
+-- ⚠️ RITO ANTI-CASCATA (_data_health_compute é arquivo QUENTE, já reverteu checks 5x — esta é a 5ª):
+--   • Base = 20260611180000 (HEAD do data_health na main). _data_health_compute = compute do 180000
+--     (== 140000, pois o 180000 só mexeu no watchdog) + o bloco estoque_reposicao reescrito p/ marcador.
+--     watchdog + heartbeat = 180000 VERBATIM. NÃO editar mais nada.
+--   • Reconciliação 2026-06-13: o corpo deste arquivo nasceu baseado na 140000 (cut #752); ao mergear a
+--     main descobriu-se a 180000 (família-lista-email, POSTERIOR) → o watchdog foi REBASEADO p/ 180000
+--     pra NÃO reverter o append do e-mail (a 5ª cascata, pega no preflight da reconciliação). diff
+--     mecânico: 210000.watchdog == 180000.watchdog (byte-a-byte).
+--   • SUPERSEDE 140000 + 180000: NÃO reaplicar nenhuma das duas depois — esta é a ÚNICA a aplicar
+--     (preserva os 18 checks + o e-mail-família, só troca a fonte de frescor do estoque_reposicao).
 --   • Envolto em transação (BEGIN/COMMIT): tudo-ou-nada.
 --
 -- ── Cabeçalho da 20260609085244 (preservado p/ contexto) ──
@@ -533,7 +540,10 @@ DECLARE
 BEGIN
   FOR r IN
     SELECT * FROM public._data_health_compute()
-    WHERE source IN ('estoque_reposicao','vendas_pedidos','estoque_inventario','reposicao_sugestoes','carteira_scores',
+    -- ⚠️ estoque_reposicao: 18º check, adicionado DIRETO EM PROD (migration fora do repo, drift §5),
+    --    promovido ao push (watchdog+heartbeat) lá. Descoberto no apply (total_checks=18 vs 17 do teste;
+    --    o heartbeat, não-tocado, ainda o tinha). PRESERVADO aqui pra não revertê-lo do e-mail.
+    WHERE source IN ('vendas_pedidos','estoque_inventario','estoque_reposicao','reposicao_sugestoes','carteira_scores',
                      'custos_produtos','vendas_cadastros',
                      'reposicao_disparo','reposicao_portal_pipeline','reposicao_portal_humano',
                      'reposicao_sayerlack_fabricado','omie_tipo_produto_oben','vendas_familia_ausente')
@@ -547,8 +557,14 @@ BEGIN
                                  'age_seconds', r.age_seconds, 'freshness_basis', r.freshness_basis))
       ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
       IF FOUND THEN
+        -- DELTA: só o source de família-ausente anexa a lista dos produtos ao corpo do e-mail.
+        -- COALESCE p/ não anexar nada se a lista vier NULL (defensivo; o branch só roda com n>0).
         INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
-        VALUES ('oben', 'outro', v_sev_forn, '[Saúde de dados] ' || r.source, r.message, 'pendente_notificacao');
+        VALUES ('oben', 'outro', v_sev_forn, '[Saúde de dados] ' || r.source,
+                CASE WHEN r.source = 'vendas_familia_ausente'
+                     THEN r.message || COALESCE(E'\n\n' || public._vendas_familia_ausente_lista_email(50), '')
+                     ELSE r.message END,
+                'pendente_notificacao');
       END IF;
     ELSE
       UPDATE fin_alertas SET dismissed_at = now()

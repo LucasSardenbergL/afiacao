@@ -79,10 +79,42 @@ Após **9 rounds adversariais** (7→6→3→2→2→1→1→2→1 P1, cada um c
 - ✅ **Passo 4 — bump no disparo** (`disparar-pedidos-aprovados`): helper `bumpSnapshotPendente` (OBEN-only, best-effort, **background via `EdgeRuntime.waitUntil`** p/ não somar a latência da varredura à resposta do disparo — crítico p/ o "aprovar=disparar na hora" #638) chama `omie-sync-estoque {only_pending, esperar_codints:[AFI-<id>…]}` com os IDs recém-disparados (só `modo='producao'`). Se falhar, a barreira do passo 3 (cond 3) cobre. **deno check · lint net-zero vs main.** ⚠️ requer deploy via Lovable.
 - ✅ **Passo 5 — Sentinela via marcador** (`20260611210000`): o check `estoque_reposicao` do `_data_health_compute` passa de `max(sku_estoque_atual.ultima_sincronizacao)` para o **worst-of** dos 2 markers `sync_state` com `status=complete` (`reposicao_estoque_full` físico + `reposicao_pendente_po` a-caminho). Marker ausente/não-complete → broken (pega o sync PARCIAL + o caso RPC-falha-com-físico-ok que o `max()` deixava verde). Conjunto de checks INALTERADO (18; watchdog/heartbeat recriados junto, verbatim — rito anti-cascata); diff mecânico prova (só o bloco do check muda). **PG17 C1..C6 verdes** (`db/test-data-health-estoque-marcador.sh`). ⚠️ migration MANUAL — aplicar só após a edge popular os markers (senão nasce broken); preflight `pg_get_functiondef`.
 
-## Estado: TODOS OS 5 PASSOS FEITOS + 3 rounds de Codex consertados. Falta o GATE final.
-- **Codex adversarial xhigh round 3** (re-rodar no código consertado) **ANTES de qualquer deploy**.
-- **Ordem de deploy** (fail-closed): (1) migrations passo 1 (`aplicar_snapshot_pendente` `20260611190000`) + **claim** (`20260611220000`) via SQL Editor; (2) deploy edges `omie-sync-estoque` (passo 2) + `disparar-pedidos-aprovados` (passo 4) + `gerar-pedidos-diario` (guard OBEN-only) via Lovable; (3) forçar 1 sync OBEN → confirmar `sync_state(reposicao_estoque_full, complete)` + `(reposicao_pendente_po, complete)`; (4) **só então** migration passo 3 (motor — senão a barreira aborta tudo) + passo 5 (Sentinela). Preflight `pg_get_functiondef` antes de cada `CREATE OR REPLACE`.
+## Estado: 5 PASSOS + 9 rounds de Codex consertados + RECONCILIADO com a main (#752). Falta o GATE final.
+- **Reconciliação com a main (2026-06-13):** descobriu-se que o branch **DESCENDE do #752** (`d3a74a38`, o cut Caminho-B inicial deste mesmo recurso, mergeado em prod 06/11) — não é reimplementação paralela. A main andou 54 commits desde o merge-base. **Merge da main no branch = LIMPO** (nenhum commit da main após o merge-base tocou helper/edge/test; só o roadmap conflitou — magnet). Ajustes da reconciliação: (a) migration `aplicar_snapshot_pendente` **realocada `190000`→`195000`** (colisão com `tint_sync_codex_fixes` da main); (b) **Sentinela `210000` rebaseado p/ `20260611180000`** (família-lista-email, que landou na main DEPOIS do #752/140000) — o watchdog do 210000 estava baseado no 140000 e **reverteria o append do e-mail da família** (5ª cascata, pega no preflight); agora `210000.watchdog == 180000.watchdog` byte-a-byte. **Motor `200000` confirmado SUPERSET LIMPO do HEAD do motor na main (`20260609160000`)** — diff = só barreira ADD + em_transito DEL; intra-day/cmc/account-aware/ceil/minimo preservados verbatim. **Re-validação pós-merge: PG17 4 suites (A1-A13·B1-B11·C1-C8·D1-D7b) · vitest 69 helper · deno (3 edges) · typecheck strict 0 · lint 0-erros.**
+- **Codex adversarial xhigh round 10** (confirmar o fix de aliases prefixadas do round 9) **ANTES de qualquer deploy** — Codex esgotou a cota 06/11 (reset diário ~19h18 BRT); retomar quando voltar.
+- **Ordem de deploy** (fail-closed): (1) migrations passo 1 (`aplicar_snapshot_pendente` `20260611195000` (realocado de `190000` por colisão com `tint_sync` da main)) + **claim** (`20260611220000`) via SQL Editor; (2) deploy edges `omie-sync-estoque` (passo 2) + `disparar-pedidos-aprovados` (passo 4) + `gerar-pedidos-diario` (guard OBEN-only) via Lovable; (3) forçar 1 sync OBEN → confirmar `sync_state(reposicao_estoque_full, complete)` + `(reposicao_pendente_po, complete)`; (4) **só então** migration passo 3 (motor — senão a barreira aborta tudo) + passo 5 (Sentinela). Preflight `pg_get_functiondef` antes de cada `CREATE OR REPLACE`.
 - **Smoke**: (a) FUNDO PU (8689734299) `estoque_pendente_entrada = 3`; (b) **[P1-F]** confirmar que um pedido recém-disparado tem o `AFI-<id>` em `sync_state(reposicao_pendente_po).metadata->'codints_aprovados'` (ou `codints_em_aprovacao`) → prova que o **cCodIntPed é legível** no PesquisarPedCompra (a barreira 3b/3a depende disso). Se setado `OMIE_OBEN_EMAIL_APROVADOR`, a PO nasce etapa-15 → deve aparecer em `codints_aprovados`.
+
+### Preflight (read-only, antes de CADA `CREATE OR REPLACE` — lição §10: repo pode divergir de prod no apply manual)
+
+**PREFLIGHT MOTOR** (antes do passo 3 `20260611200000`): a `gerar_pedidos_sugeridos_ciclo` VIVA deve == a base `20260609160000` (meu motor é superset dela). Todos TRUE → seguro; qualquer FALSE → ABORTAR e me mandar a saída de `pg_get_functiondef` p/ rebasear.
+
+```sql
+WITH d AS (SELECT pg_get_functiondef('public.gerar_pedidos_sugeridos_ciclo(text,date)'::regprocedure) AS def)
+SELECT
+  position('WITH em_transito AS' in def) > 0           AS tem_em_transito_esperado,  -- TRUE (ainda dual-source)
+  position('barreira_fonte_unica' in def) = 0          AS sem_barreira_ainda,         -- TRUE (não apliquei)
+  position('[INTRADAY]' in def) > 0                    AS tem_intraday,               -- TRUE (#711)
+  position('minimo_forcado_manual' in def) > 0         AS tem_minimo_forcado,         -- TRUE (#608)
+  position('cmc' in def) > 0                           AS tem_cmc,                    -- TRUE (#669/#679)
+  position('op.account = lower(p_empresa)' in def) > 0 AS tem_account_aware           -- TRUE (#646)
+FROM d;
+```
+
+**PREFLIGHT DATA_HEALTH** (antes do passo 5 `20260611210000`): a `data_health_watchdog` VIVA deve ser a do `20260611180000` (e-mail-família presente) e o `_data_health_compute` deve ter 18 checks com `estoque_reposicao` via frescor (ainda não-marcador). Divergência → me avisar p/ rebasear.
+
+```sql
+WITH w AS (SELECT pg_get_functiondef('public.data_health_watchdog()'::regprocedure) AS def),
+     c AS (SELECT pg_get_functiondef('public._data_health_compute()'::regprocedure) AS def)
+SELECT
+  position('_vendas_familia_ausente_lista_email' in (SELECT def FROM w)) > 0 AS watchdog_tem_email_familia, -- TRUE (180000)
+  position('reposicao_estoque_full' in (SELECT def FROM c)) = 0  AS compute_sem_marcador_ainda,              -- TRUE (frescor)
+  position('ultima_sincronizacao' in (SELECT def FROM c)) > 0    AS compute_estoque_via_frescor,             -- TRUE (140000)
+  (SELECT count(*) FROM public._data_health_compute())           AS n_checks                                 -- 18
+;
+```
+
+Para rigor total: colar a saída de `pg_get_functiondef(...)` das duas funções e eu faço o byte-diff contra `20260609160000` (motor) e `20260611180000` (watchdog) do repo.
 
 ## Problema
 
