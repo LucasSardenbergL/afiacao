@@ -10,6 +10,8 @@ import { ptBR } from 'date-fns/locale';
 import { Loader2, Database, Sparkles } from 'lucide-react';
 import type { KbDocument } from '@/lib/knowledge-base/types';
 import { useKbProductSpecs } from '@/hooks/useKbProductSpecs';
+import { VersionHistory } from '@/components/knowledge-base/VersionHistory';
+import { CompletudeBadge } from '@/components/knowledge-base/CompletudeBadge';
 
 export default function AdminKnowledgeBaseDetail() {
   const { id } = useParams<{ id: string }>();
@@ -145,8 +147,13 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
               Clique acima pra extrair specs automaticamente do texto via Claude.
             </div>
           )}
+
+          {existingSpecs && <CompletudeBadge spec={existingSpecs} />}
         </Card>
       )}
+
+      {/* Histórico de versões do produto (Fase B1) — null quando não há versões */}
+      <VersionHistory supplier={existingSpecs?.supplier} productCode={existingSpecs?.product_code} />
 
       {data.content_extracted && (
         <Card className="p-3">
