@@ -58,6 +58,11 @@ const ALLOWED = new Set([
   // ("todos os scores"). A PERSISTÊNCIA (upsert de farmer_recommendations) é PULADA na
   // lente — o master inspeciona, não regrava a carteira do alvo (igual useFarmerScoring).
   'src/hooks/useCrossSellEngine.ts',
+  // useBundleEngine: idêntico ao useCrossSellEngine — effectiveUserId escopa a LEITURA
+  // dos scores + do "melhor individual" (farmer_recommendations) ao alvo na lente, sem
+  // cair no fallback super-admin. A PERSISTÊNCIA (farmer_association_rules GLOBAL +
+  // farmer_bundle_recommendations) é PULADA na lente (if !isImpersonating).
+  'src/hooks/useBundleEngine.ts',
   // useFarmerExperiments: effectiveUserId SÓ em loadExperiments (filtra a LISTA exibida
   // pro alvo na lente). As mutations (criar/iniciar/medir/cancelar) usam user.id (write
   // identity = master real) e são bloqueadas na lente pelo write-guard + botões disabled.

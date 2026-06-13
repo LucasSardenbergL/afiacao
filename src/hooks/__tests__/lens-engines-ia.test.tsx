@@ -34,6 +34,7 @@ vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'master
 import { useFarmerExperiments } from '../useFarmerExperiments';
 import { useCrossSellEngine } from '../useCrossSellEngine';
 import { useDiagnosticQuestions } from '../useDiagnosticQuestions';
+import { useBundleEngine } from '../useBundleEngine';
 
 beforeEach(() => {
   eqCalls.length = 0;
@@ -90,5 +91,23 @@ describe('useDiagnosticQuestions — lente "Ver como"', () => {
     const { result } = renderHook(() => useDiagnosticQuestions());
     await act(async () => { await result.current.getEffectivenessStats(); });
     expect(eqCalls.map((c) => c[1])).toContain('master-id');
+  });
+});
+
+describe('useBundleEngine — lente "Ver como"', () => {
+  it('na lente: lê os scores do ALVO (farmer_id) e não cai no fallback super-admin (todos)', async () => {
+    impMock.mockReturnValue({ isImpersonating: true, effectiveUserId: 'alvo-id' });
+    const { result } = renderHook(() => useBundleEngine());
+    await act(async () => { await result.current.calculateBundles(); });
+    const farmerEq = eqCalls.filter((c) => c[0] === 'farmer_id').map((c) => c[1]);
+    expect(farmerEq).toContain('alvo-id');
+    expect(farmerEq).not.toContain('master-id');
+  });
+
+  it('fora da lente: lê os scores do próprio usuário', async () => {
+    impMock.mockReturnValue({ isImpersonating: false, effectiveUserId: 'master-id' });
+    const { result } = renderHook(() => useBundleEngine());
+    await act(async () => { await result.current.calculateBundles(); });
+    expect(eqCalls.filter((c) => c[0] === 'farmer_id').map((c) => c[1])).toContain('master-id');
   });
 });
