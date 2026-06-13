@@ -13,6 +13,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import type { PresetRadar } from '@/lib/radar/ui-helpers';
+import { track } from '@/lib/analytics';
 
 const RadarMapa = lazy(() => import('@/components/radar/RadarMapa'));
 
@@ -90,7 +91,7 @@ export default function RadarClientes() {
           <Button
             variant={raw.vista === 'mapa' ? 'default' : 'outline'}
             size="sm"
-            onClick={() => set({ vista: 'mapa' })}
+            onClick={() => { track('radar.mapa_aberto', {}); set({ vista: 'mapa' }); }}
           >
             Mapa
           </Button>
@@ -98,14 +99,14 @@ export default function RadarClientes() {
       </div>
       <RadarKpis />
       <Filtros filtros={filtros} set={set} />
-      <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} onPick={(nome) => set({ municipio: nome })} />
+      <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} onPick={(nome) => { track('radar.cidade_selecionada', {}); set({ municipio: nome }); }} />
 
       {raw.vista === 'mapa' ? (
         <Suspense fallback={<Skeleton className="h-[420px]" />}>
           <RadarMapa
             filtros={filtros}
             hojeISO={hojeISO}
-            onPick={(nome) => set({ municipio: nome, vista: 'lista' })}
+            onPick={(nome) => { track('radar.cidade_selecionada', {}); set({ municipio: nome, vista: 'lista' }); }}
           />
         </Suspense>
       ) : (

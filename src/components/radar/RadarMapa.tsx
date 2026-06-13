@@ -27,6 +27,12 @@ export default function RadarMapa({
   const mapRef = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
+  // Mantém a referência mais recente do onPick sem entrar nas deps do effect de
+  // marcadores. A página passa onPick inline; sem este ref, um refetch rotineiro
+  // da lista (staleTime 30s) re-renderiza → novo onPick → o effect [q.data, onPick]
+  // re-roda e o fitBounds dá "snap" de volta no meio do pan do usuário (P2 do review).
+  const onPickRef = useRef(onPick);
+  onPickRef.current = onPick;
 
   useEffect(() => {
     if (!mapRef.current || map.current) return;
@@ -61,14 +67,14 @@ export default function RadarMapa({
         .bindPopup(
           `<strong>${m.municipio_nome}/${m.uf}</strong><br/>${m.total} empresas · ${m.com_telefone} c/ telefone<br/>${m.a_contatar} a contatar`,
         )
-        .on('click', () => onPick(m.municipio_nome))
+        .on('click', () => onPickRef.current(m.municipio_nome))
         .addTo(layer.current!);
     });
     const bounds = L.latLngBounds(
       pts.map((m) => [m.lat as number, m.lng as number] as L.LatLngExpression),
     );
     map.current.fitBounds(bounds, { padding: [30, 30], maxZoom: 9 });
-  }, [q.data, onPick]);
+  }, [q.data]);
 
   return (
     <Card className="overflow-hidden">
