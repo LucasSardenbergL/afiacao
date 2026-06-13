@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **201** custom migrations totais
-- **772** objetos esperados (criados por estas migrations)
+- **204** custom migrations totais
+- **780** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 199
+  - `function`: 207
   - `rls_policy`: 192
   - `index`: 143
   - `cron_job`: 102
@@ -1785,6 +1785,29 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public._vendas_familia_ausente_lista_email` | — |
 | `function` | `public.data_health_watchdog` | — |
+
+### `20260611190000_tint_sync_codex_fixes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+| `function` | `public.tint_calc_preco_final` | — |
+| `function` | `public.tint_recalc_preco_oficial` | — |
+| `function` | `public.tint_apply_keys_snapshot` | — |
+
+### `20260612120000_auto_assign_role_omie_import_guard.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.auto_assign_user_role` | — |
+
+### `20260612130000_radar_rpcs_contato.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.registrar_contato_radar` | — |
+| `function` | `public.desfazer_contato_radar` | — |
+| `function` | `public.radar_kpis` | — |
 
 ## Próximos passos quando algo der `❌`
 

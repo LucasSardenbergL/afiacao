@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 201
+-- Total de custom migrations: 204
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -220,7 +220,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260611120000', 'reposicao_fixes_codex_711', '20260611120000_reposicao_fixes_codex_711.sql'),
   ('20260611140000', 'data_health_check_estoque_frescor', '20260611140000_data_health_check_estoque_frescor.sql'),
   ('20260611150000', 'route_city_norm', '20260611150000_route_city_norm.sql'),
-  ('20260611180000', 'familia_ausente_lista_email', '20260611180000_familia_ausente_lista_email.sql')
+  ('20260611180000', 'familia_ausente_lista_email', '20260611180000_familia_ausente_lista_email.sql'),
+  ('20260611190000', 'tint_sync_codex_fixes', '20260611190000_tint_sync_codex_fixes.sql'),
+  ('20260612120000', 'auto_assign_role_omie_import_guard', '20260612120000_auto_assign_role_omie_import_guard.sql'),
+  ('20260612130000', 'radar_rpcs_contato', '20260612130000_radar_rpcs_contato.sql')
 )
 SELECT
   e.version,
@@ -1010,7 +1013,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('route_city_norm', 'index', 'public', 'idx_cvs_city_norm', 'customer_visit_scores'),
   ('route_city_norm', 'function', 'public', 'route_city_norm', ''),
   ('familia_ausente_lista_email', 'function', 'public', '_vendas_familia_ausente_lista_email', ''),
-  ('familia_ausente_lista_email', 'function', 'public', 'data_health_watchdog', '')
+  ('familia_ausente_lista_email', 'function', 'public', 'data_health_watchdog', ''),
+  ('tint_sync_codex_fixes', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('tint_sync_codex_fixes', 'function', 'public', 'tint_calc_preco_final', ''),
+  ('tint_sync_codex_fixes', 'function', 'public', 'tint_recalc_preco_oficial', ''),
+  ('tint_sync_codex_fixes', 'function', 'public', 'tint_apply_keys_snapshot', ''),
+  ('auto_assign_role_omie_import_guard', 'function', 'public', 'auto_assign_user_role', ''),
+  ('radar_rpcs_contato', 'function', 'public', 'registrar_contato_radar', ''),
+  ('radar_rpcs_contato', 'function', 'public', 'desfazer_contato_radar', ''),
+  ('radar_rpcs_contato', 'function', 'public', 'radar_kpis', '')
 )
 SELECT
   e.migration,
