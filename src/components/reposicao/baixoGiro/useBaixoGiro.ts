@@ -104,6 +104,7 @@ export function useBaixoGiro() {
     onSuccess: () => {
       toast.success("SKU descontinuado — fora dos próximos ciclos");
       qc.invalidateQueries({ queryKey: ["reposicao-baixo-giro"] });
+      qc.invalidateQueries({ queryKey: ["pedidos-ciclo"] });
     },
     onError: (e: Error) => toast.error("Falha ao descontinuar: " + e.message),
   });

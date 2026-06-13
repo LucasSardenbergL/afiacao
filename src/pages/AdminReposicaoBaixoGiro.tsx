@@ -5,6 +5,16 @@ import { BaixoGiroFiltros } from "@/components/reposicao/baixoGiro/BaixoGiroFilt
 import { BaixoGiroTable } from "@/components/reposicao/baixoGiro/BaixoGiroTable";
 import { ManterEmEstoqueDialog } from "@/components/reposicao/baixoGiro/ManterEmEstoqueDialog";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { FiltrosBaixoGiro, RowBaixoGiro } from "@/components/reposicao/baixoGiro/types";
 import { toast } from "sonner";
 
@@ -13,6 +23,7 @@ export default function AdminReposicaoBaixoGiro() {
   const [filtros, setFiltros] = useState<FiltrosBaixoGiro>({ situacao: "todos", estoque: "todos", busca: "" });
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [dialogAlvos, setDialogAlvos] = useState<RowBaixoGiro[] | null>(null);
+  const [descontinuarAlvo, setDescontinuarAlvo] = useState<RowBaixoGiro | null>(null);
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
@@ -67,7 +78,7 @@ export default function AdminReposicaoBaixoGiro() {
           )
         }
         onManter={(r) => setDialogAlvos([r])}
-        onDescontinuar={(r) => descontinuar.mutate(r.sku_codigo_omie)}
+        onDescontinuar={(r) => setDescontinuarAlvo(r)}
       />
       <ManterEmEstoqueDialog
         open={!!dialogAlvos}
@@ -88,6 +99,30 @@ export default function AdminReposicaoBaixoGiro() {
       {isLoading && (
         <div className="text-sm text-muted-foreground">Carregando…</div>
       )}
+      <AlertDialog open={!!descontinuarAlvo} onOpenChange={(v) => { if (!v) setDescontinuarAlvo(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Descontinuar SKU?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <span className="font-mono">{descontinuarAlvo?.sku_codigo_omie}</span>
+              {descontinuarAlvo?.sku_descricao ? ` — ${descontinuarAlvo.sku_descricao}` : ""}
+              <br />
+              O item sai dos próximos ciclos de reposição automática. Você pode reativá-lo depois pela tela de Revisão.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (descontinuarAlvo) descontinuar.mutate(descontinuarAlvo.sku_codigo_omie);
+                setDescontinuarAlvo(null);
+              }}
+            >
+              Descontinuar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

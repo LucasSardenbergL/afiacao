@@ -25,6 +25,10 @@ export function ManterEmEstoqueDialog({ open, onOpenChange, alvos, onConfirm, sa
     Number(ponto) || 0, Number(max) || 0,
   ), [alvos, ponto, max]);
 
+  const nMin = Number(min), nPonto = Number(ponto), nMax = Number(max);
+  const numerosValidos = [nMin, nPonto, nMax].every((n) => Number.isFinite(n))
+    && nMax > 0 && nPonto >= nMin && nMin >= 0;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -41,7 +45,7 @@ export function ManterEmEstoqueDialog({ open, onOpenChange, alvos, onConfirm, sa
         <div><Label>Motivo (obrigatório)</Label><Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ex.: sortimento — não perder venda" /></div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button disabled={!motivo.trim() || saving} onClick={() => onConfirm({ codes: alvos.map((a) => a.sku_codigo_omie), min: Number(min), ponto: Number(ponto), max: Number(max), motivo })}>
+          <Button disabled={!motivo.trim() || saving || !numerosValidos} onClick={() => onConfirm({ codes: alvos.map((a) => a.sku_codigo_omie), min: Number(min), ponto: Number(ponto), max: Number(max), motivo })}>
             Confirmar
           </Button>
         </DialogFooter>
