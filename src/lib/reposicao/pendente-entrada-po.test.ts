@@ -138,7 +138,7 @@ describe("computeOnOrder — FAIL-CLOSED (problemas abortam o apply)", () => {
 // ── Coleta / paginação (parsing puro espelhado na edge) ──
 
 function copts(over: Partial<ColetaPaginaOpts> = {}): ColetaPaginaOpts {
-  return { etapasAprovadas: new Set([APROVADO]), ...over };
+  return { etapasAprovadas: new Set([APROVADO]), etapasEmAprovacao: new Set([EM_APROVACAO]), ...over };
 }
 function po(over: {
   cNumero?: string; cCodIntPed?: string; cEtapa?: string;
@@ -159,15 +159,17 @@ describe("coletarDaPagina", () => {
     expect(r.pedidosVistos).toBe(1);
   });
 
-  it("codint só de PO etapa-APROVADA (independe de saldo — PO recebida ainda conta p/ a barreira)", () => {
+  it("codint de PO aprovada COM item (independe de saldo) → aprovados; etapa-10 → emAprovacao (barreira 3b)", () => {
     const r = coletarDaPagina(
       [
-        po({ cCodIntPed: "AFI-aaa", itens: [{ nCodProd: "X", nQtde: 5, nQtdeRec: 5 }] }), // saldo 0, mas aprovada
-        po({ cCodIntPed: "AFI-bbb", cEtapa: EM_APROVACAO }), // etapa 10 → NÃO entra nos codints
+        po({ cCodIntPed: "AFI-aaa", itens: [{ nCodProd: "X", nQtde: 5, nQtdeRec: 5 }] }), // saldo 0, mas aprovada COM item
+        po({ cCodIntPed: "AFI-bbb", cEtapa: EM_APROVACAO }), // etapa 10 → emAprovacao
       ],
       copts(),
     );
     expect(r.codintsAprovados).toEqual(["AFI-aaa"]);
+    expect(r.codintsEmAprovacao).toEqual(["AFI-bbb"]);
+    expect(r.problemas).toEqual([]);
   });
 
   it("codint vazio não entra; cabecalho legado funciona", () => {
@@ -184,13 +186,24 @@ describe("coletarDaPagina", () => {
     expect(r.items.map((i) => i.sku)).toEqual(["HAB"]);
   });
 
-  it("item sem nCodProd é ignorado; produtos ausentes não quebra", () => {
+  it("[P1.1] PO aprovada sem item com SKU → PROBLEMA (fail-closed) e NÃO coleta codint (senão barreira passa c/ saldo 0)", () => {
     const r = coletarDaPagina(
       [po({ itens: [{ nQtde: 2 }] }), { cabecalho_consulta: { cEtapa: APROVADO, cCodIntPed: "AFI-x" } }],
       copts(),
     );
     expect(r.items).toEqual([]);
-    expect(r.codintsAprovados).toEqual(["AFI-x"]);
+    expect(r.codintsAprovados).toEqual([]); // AFI-x NÃO entra — PO sem item = resposta suspeita/truncada
+    expect(r.problemas.length).toBe(2); // ambas as POs aprovadas sem item-com-SKU
+  });
+
+  it("[P1.1] PO aprovada COM item de SKU não-habilitado ainda coleta o codint (a PO veio íntegra)", () => {
+    const r = coletarDaPagina(
+      [po({ cCodIntPed: "AFI-y", itens: [{ nCodProd: "FORA", nQtde: 3 }] })],
+      copts({ skusHabilitados: new Set(["HAB"]) }),
+    );
+    expect(r.items).toEqual([]); // FORA filtrado
+    expect(r.codintsAprovados).toEqual(["AFI-y"]); // mas a PO tem item com SKU → não é suspeita
+    expect(r.problemas).toEqual([]);
   });
 
   it("etapasVistas reúne as etapas distintas (diagnóstico)", () => {
@@ -239,7 +252,7 @@ describe("varrerPedidos — loop de paginação (paginar até página vazia, ant
   function fetcher(paginas: PaginaPedidos[]): (p: number) => Promise<PaginaPedidos> {
     return (p: number) => Promise.resolve(paginas[p - 1] ?? { pedidos: [] });
   }
-  const vopts = { etapasAprovadas: new Set([APROVADO]), maxPaginas: 100 };
+  const vopts = { etapasAprovadas: new Set([APROVADO]), etapasEmAprovacao: new Set([EM_APROVACAO]), maxPaginas: 100 };
 
   it("para na página vazia e acumula as anteriores (não confia em nTotalPaginas)", async () => {
     const r = await varrerPedidos(
@@ -256,21 +269,41 @@ describe("varrerPedidos — loop de paginação (paginar até página vazia, ant
   });
 
   it("para em fault 'sem registros' (fim legítimo), em variações", async () => {
-    for (const fim of ["Não foram encontrados registros", "Não existem registros para a página 3", "SEM REGISTROS", "not found"]) {
+    for (const fim of ["Não foram encontrados registros", "Não existem registros para a página 3", "SEM REGISTROS"]) {
       const r = await varrerPedidos(fetcher([{ pedidos: [po({ cNumero: "1" })] }, { faultstring: fim }]), vopts);
       expect(r.paginasLidas).toBe(1);
     }
   });
 
-  it("FATAL: fault de ERRO que menciona 'não'/'registro' separados NÃO é fim → lança (anti-falso-positivo)", async () => {
-    for (const erro of ["Não foi possível conectar ao servidor", "Erro ao gravar registro no banco", "App Key inválida"]) {
+  it("[P1.7] FATAL: fault de ERRO (incl. 'not found' SOLTO) NÃO é fim → lança (anti-falso-positivo)", async () => {
+    for (const erro of ["Não foi possível conectar ao servidor", "Erro ao gravar registro no banco", "App Key inválida", "Produto not found"]) {
       await expect(varrerPedidos(fetcher([{ faultstring: erro }]), vopts)).rejects.toThrow(/fault/);
     }
   });
 
-  it("FATAL: página repetida (loop do Omie) → lança", async () => {
+  it("FATAL: página repetida CONSECUTIVA → lança", async () => {
     const pg = { pedidos: [po({ cNumero: "1" }), po({ cNumero: "2" })] };
-    await expect(varrerPedidos(fetcher([pg, pg, { pedidos: [] }]), vopts)).rejects.toThrow(/LOOP/);
+    await expect(varrerPedidos(fetcher([pg, pg, { pedidos: [] }]), vopts)).rejects.toThrow(/REPETIÇÃO/);
+  });
+
+  it("[P1.7] FATAL: página repetida NÃO-consecutiva (A/B/A) → lança (overcount/double-buy)", async () => {
+    const a = { pedidos: [po({ cNumero: "1" })] };
+    const b = { pedidos: [po({ cNumero: "9" }), po({ cNumero: "8" })] };
+    await expect(varrerPedidos(fetcher([a, b, a, { pedidos: [] }]), vopts)).rejects.toThrow(/REPETIÇÃO/);
+  });
+
+  it("[P1.1/P1.2] propaga problemas (PO aprovada sem item) e codintsEmAprovacao (etapa-10) das páginas", async () => {
+    const r = await varrerPedidos(
+      fetcher([
+        { pedidos: [po({ cNumero: "1", cCodIntPed: "AFI-10", cEtapa: EM_APROVACAO })] }, // etapa-10
+        { pedidos: [{ cabecalho_consulta: { cEtapa: APROVADO, cCodIntPed: "AFI-bad" } }] }, // aprovada sem item
+        { pedidos: [] },
+      ]),
+      vopts,
+    );
+    expect(r.codintsEmAprovacao).toEqual(["AFI-10"]);
+    expect(r.problemas.length).toBe(1); // a PO aprovada sem item
+    expect(r.codintsAprovados).toEqual([]); // AFI-bad NÃO entra
   });
 
   it("FATAL: teto técnico sem ver fim → lança (anti-truncamento)", async () => {

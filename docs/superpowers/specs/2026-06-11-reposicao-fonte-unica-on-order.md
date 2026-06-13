@@ -1,6 +1,19 @@
 # Reposição — "a caminho" via FONTE ÚNICA (Omie POs) + barreira fail-closed
 
-**Data:** 2026-06-11 · **Escopo:** OBEN (money-path) · **Codex:** design consult ✅ + adversarial xhigh pendente
+**Data:** 2026-06-11 · **Escopo:** OBEN (money-path) · **Codex:** design consult ✅ + **adversarial xhigh ✅ RODADO (2026-06-13): 7 P1 + 2 P2, recomendação BLOQUEAR → 7 P1 consertados (ver seção abaixo) + re-validado**
+
+## ⚔️ Adversarial Codex xhigh (2026-06-13) — 7 P1 consertados
+O Codex (gpt-5.5 xhigh) achou furos reais que o auto-challenge não pegou; **todos consertados** + PG17/vitest re-verdes:
+- **P1.1 — parser aceita PO etapa-15 sem itens** → codint entrava no marcador mas saldo=0 → barreira passava, motor recomprava. Fix: `coletarDaPagina` só coleta o codint se a PO tem ≥1 item com SKU; PO aprovada sem item = `problemas` fail-closed (a edge não aplica).
+- **P1.2 — backstop expira em 30min mas snapshot vale 6h** (PO etapa-10/em-aprovação, bump falho). Fix: edge coleta `codints_em_aprovacao` (etapa-10) à parte; RPC grava no marcador; barreira **(3b)** aborta SEM janela enquanto a PO do app não virar etapa-15. A `(3a)` (janela 30min) cobre o "não-visto recente".
+- **P1.3 — `run_id` (fim da varredura) não-causal** → varredura velha sobrescrevia bump novo. Fix: `run_id` = **início** da varredura aplicada (quem começou a observar depois é o mais novo).
+- **P1.4 — físico+saldo lidos em momentos diferentes** (recebimento entre as 2 leituras). **Limitação inerente** (2 leituras não-atômicas do Omie; não há snapshot transacional). Janela de segundos, impacto 1 SKU, subcount=supercompra (menos pior que ruptura) e auto-cura no próximo ciclo. Ordem física→POs MANTIDA (a inversa daria overcount=ruptura). Documentado, não-bloqueante.
+- **P1.5 — COLACOR regrediu** (removi `em_transito` p/ TODAS as empresas, mas a barreira é OBEN-only). Fix: `em_transito` **CONDICIONAL** — `estoque_efetivo = fisico + pendente + (oben ? 0 : em_transito)`. COLACOR mantém o modelo antigo (sem regressão).
+- **P1.6 — marcador físico mente `complete`** com upsert parcial. Fix: edge grava `reposicao_estoque_full` `complete` só se `errosUpsert=0` (senão `error`); barreira **(4b)** checa AMBOS os markers (físico + a-caminho).
+- **P1.7 — fingerprint só pega páginas consecutivas** (A/B/A overcount) + regex de fim ampla. Fix: `Set` de TODOS os fingerprints vistos; regex sem `not found` solto (só "registro" + negação).
+- **P2:** etapa "15" precisa **validação operacional** antes do deploy (confirmar com o founder que etapa 15=Aprovado na conta OBEN e que não há etapa intermediária comprometida); recebimento <30min → bloqueio global falso (efeito do P1.2, aceitável).
+- Re-validação: **PG17 A1..A13 (RPC), B1..B11 (motor incl. B1b/B5b/B10b), C1..C6 (Sentinela)** · vitest 47 · deno check · lint. ⚠️ **Re-rodar o Codex adversarial no código consertado** antes do deploy (ciclo achar→consertar→validar).
+
 
 ## Estado da implementação (un componente por vez)
 

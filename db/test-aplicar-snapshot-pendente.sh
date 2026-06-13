@@ -90,7 +90,8 @@ BEGIN
   r := public.aplicar_snapshot_pendente(
         'OBEN',
         '{"8689734299": 3, "1002": 8}'::jsonb,
-        ARRAY['AFI-abc','AFI-def','AFI-abc',' ']::text[],   -- com duplicata + vazio (testa normalização)
+        ARRAY['AFI-abc','AFI-def','AFI-abc',' ']::text[],   -- aprovados: com duplicata + vazio (testa normalização)
+        ARRAY['AFI-emaprov','AFI-emaprov']::text[],         -- em aprovação (P1.2): testa normalização + gravação
         1000::bigint, '2026-06-11 12:00:00+00'::timestamptz,
         '{"empty_page_reached":"true","paginas":4,"modo":"full"}'::jsonb);
   ASSERT (r->>'applied')::boolean, format('A1 esperava applied=true, veio %s', r);
@@ -119,6 +120,10 @@ BEGIN
   ASSERT (meta->>'observed_at')::timestamptz = '2026-06-11 12:00:00+00'::timestamptz, 'A4 observed_at errado';
   ASSERT (meta->'codints_aprovados') ? 'AFI-abc', 'A4 marcador deveria conter AFI-abc';
   ASSERT (meta->'codints_aprovados') ? 'AFI-def', 'A4 marcador deveria conter AFI-def';
+  -- [P1.2] codints_em_aprovacao gravado e normalizado (distinto)
+  ASSERT (meta->'codints_em_aprovacao') ? 'AFI-emaprov', 'A4 marcador deveria conter codints_em_aprovacao';
+  ASSERT jsonb_array_length(meta->'codints_em_aprovacao') = 1, 'A4 codints_em_aprovacao deveria ser distinto (1)';
+  ASSERT NOT ((meta->'codints_aprovados') ? 'AFI-emaprov'), 'A4 em_aprovacao NÃO pode estar em codints_aprovados';
 
   -- A13: codints normalizados (distintos, sem vazio) → 2
   SELECT jsonb_array_length(meta->'codints_aprovados') INTO n;
@@ -130,7 +135,7 @@ BEGIN
   -- A5: run VELHO (999 < 1000) → SKIP, nada muda
   r := public.aplicar_snapshot_pendente(
         'OBEN', '{"8689734299": 777}'::jsonb, ARRAY['AFI-x']::text[],
-        999::bigint, '2026-06-11 13:00:00+00'::timestamptz, '{"empty_page_reached":"true"}'::jsonb);
+        ARRAY[]::text[], 999::bigint, '2026-06-11 13:00:00+00'::timestamptz, '{"empty_page_reached":"true"}'::jsonb);
   ASSERT (r->>'applied')::boolean = false AND r->>'skipped_reason' = 'stale_run', format('A5 esperava skip stale_run, veio %s', r);
   SELECT estoque_pendente_entrada INTO v FROM public.sku_estoque_atual WHERE empresa='OBEN' AND sku_codigo_omie='8689734299';
   ASSERT v = 3, format('A5 run velho NÃO podia alterar (esperava 3), veio %s', v);
@@ -140,7 +145,7 @@ BEGIN
   -- A6: idempotência — re-aplica run 1000 idêntico
   r := public.aplicar_snapshot_pendente(
         'OBEN', '{"8689734299": 3, "1002": 8}'::jsonb, ARRAY['AFI-abc','AFI-def']::text[],
-        1000::bigint, '2026-06-11 12:00:00+00'::timestamptz, '{"empty_page_reached":"true"}'::jsonb);
+        ARRAY[]::text[], 1000::bigint, '2026-06-11 12:00:00+00'::timestamptz, '{"empty_page_reached":"true"}'::jsonb);
   ASSERT (r->>'applied')::boolean, 'A6 re-aplicar mesmo run deveria aplicar (>=)';
   SELECT estoque_pendente_entrada INTO v FROM public.sku_estoque_atual WHERE empresa='OBEN' AND sku_codigo_omie='8689734299';
   ASSERT v = 3, format('A6 idempotente esperava 3, veio %s', v);
@@ -150,7 +155,7 @@ BEGIN
   -- A7: UPSERT cria linha só-pendente p/ SKU sem física (2002), run 1001
   r := public.aplicar_snapshot_pendente(
         'OBEN', '{"8689734299": 3, "1002": 8, "2002": 5}'::jsonb, ARRAY[]::text[],
-        1001::bigint, '2026-06-11 12:05:00+00'::timestamptz, '{"empty_page_reached":"true"}'::jsonb);
+        ARRAY[]::text[], 1001::bigint, '2026-06-11 12:05:00+00'::timestamptz, '{"empty_page_reached":"true"}'::jsonb);
   SELECT estoque_fisico, estoque_pendente_entrada, ultima_sincronizacao, fonte_sync INTO f, v, ts, fonte
     FROM public.sku_estoque_atual WHERE empresa='OBEN' AND sku_codigo_omie='2002';
   ASSERT f = 0, format('A7 linha nova físico esperava 0, veio %s', f);
@@ -163,7 +168,7 @@ BEGIN
 
   -- A8: GUARD empty_page_reached ausente → RAISE, NÃO altera (1002 continua 8)
   BEGIN
-    PERFORM public.aplicar_snapshot_pendente('OBEN', '{}'::jsonb, ARRAY[]::text[], 1002::bigint,
+    PERFORM public.aplicar_snapshot_pendente('OBEN', '{}'::jsonb, ARRAY[]::text[], ARRAY[]::text[], 1002::bigint,
               '2026-06-11 12:10:00+00'::timestamptz, '{"paginas":1}'::jsonb);
     ASSERT false, 'A8 deveria ter dado RAISE (empty_page_reached ausente)';
   EXCEPTION WHEN data_exception THEN NULL;  -- 22023 = invalid_parameter_value (classe 22)
@@ -173,14 +178,14 @@ BEGIN
 
   -- A9: GUARD saldo inválido (<=0)
   BEGIN
-    PERFORM public.aplicar_snapshot_pendente('OBEN', '{"8689734299": 0}'::jsonb, ARRAY[]::text[], 1003::bigint,
+    PERFORM public.aplicar_snapshot_pendente('OBEN', '{"8689734299": 0}'::jsonb, ARRAY[]::text[], ARRAY[]::text[], 1003::bigint,
               '2026-06-11 12:11:00+00'::timestamptz, '{"empty_page_reached":"true"}'::jsonb);
     ASSERT false, 'A9 deveria ter dado RAISE (saldo <= 0)';
   EXCEPTION WHEN data_exception THEN NULL;
   END;
   -- saldo não-numérico
   BEGIN
-    PERFORM public.aplicar_snapshot_pendente('OBEN', '{"8689734299": "x"}'::jsonb, ARRAY[]::text[], 1003::bigint,
+    PERFORM public.aplicar_snapshot_pendente('OBEN', '{"8689734299": "x"}'::jsonb, ARRAY[]::text[], ARRAY[]::text[], 1003::bigint,
               '2026-06-11 12:11:00+00'::timestamptz, '{"empty_page_reached":"true"}'::jsonb);
     ASSERT false, 'A9 deveria ter dado RAISE (saldo não-numérico)';
   EXCEPTION WHEN data_exception THEN NULL;
@@ -189,7 +194,7 @@ BEGIN
   RAISE NOTICE 'A8..A9 OK: guards de completude e de saldo (fail-closed)';
 
   -- A10: payload vazio LEGÍTIMO (empty_page_reached=true) → zera TUDO OBEN, run 1004
-  r := public.aplicar_snapshot_pendente('OBEN', '{}'::jsonb, ARRAY[]::text[], 1004::bigint,
+  r := public.aplicar_snapshot_pendente('OBEN', '{}'::jsonb, ARRAY[]::text[], ARRAY[]::text[], 1004::bigint,
             '2026-06-11 12:20:00+00'::timestamptz, '{"empty_page_reached":"true"}'::jsonb);
   ASSERT (r->>'applied')::boolean, 'A10 payload vazio legítimo deveria aplicar';
   SELECT count(*) INTO n FROM public.sku_estoque_atual WHERE empresa='OBEN' AND COALESCE(estoque_pendente_entrada,0) <> 0;
@@ -210,14 +215,14 @@ DECLARE ok boolean; err_state text;
 BEGIN
   -- master → passa
   PERFORM set_config('test.uid', '33333333-3333-3333-3333-333333333333', false);
-  PERFORM public.aplicar_snapshot_pendente('OBEN', '{"8689734299": 3}'::jsonb, ARRAY[]::text[], 2000::bigint,
+  PERFORM public.aplicar_snapshot_pendente('OBEN', '{"8689734299": 3}'::jsonb, ARRAY[]::text[], ARRAY[]::text[], 2000::bigint,
             now(), '{"empty_page_reached":"true"}'::jsonb);
   RAISE NOTICE 'A11 master OK (passa)';
 
   -- customer → 42501
   PERFORM set_config('test.uid', '44444444-4444-4444-4444-444444444444', false);
   BEGIN
-    PERFORM public.aplicar_snapshot_pendente('OBEN', '{"8689734299": 3}'::jsonb, ARRAY[]::text[], 2001::bigint,
+    PERFORM public.aplicar_snapshot_pendente('OBEN', '{"8689734299": 3}'::jsonb, ARRAY[]::text[], ARRAY[]::text[], 2001::bigint,
               now(), '{"empty_page_reached":"true"}'::jsonb);
     ASSERT false, 'A11 customer deveria ter sido barrado (42501)';
   EXCEPTION WHEN insufficient_privilege THEN
@@ -226,7 +231,7 @@ BEGIN
 
   -- service_role (uid NULL) → passa
   PERFORM set_config('test.uid', '', false);
-  PERFORM public.aplicar_snapshot_pendente('OBEN', '{"8689734299": 3}'::jsonb, ARRAY[]::text[], 2002::bigint,
+  PERFORM public.aplicar_snapshot_pendente('OBEN', '{"8689734299": 3}'::jsonb, ARRAY[]::text[], ARRAY[]::text[], 2002::bigint,
             now(), '{"empty_page_reached":"true"}'::jsonb);
   RAISE NOTICE 'A11 service_role OK (passa)';
 END $$;

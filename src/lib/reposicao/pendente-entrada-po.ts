@@ -104,6 +104,8 @@ export interface OmiePedConsultaRaw {
 export interface ColetaPaginaOpts {
   /** Etapas que CONTAM como aprovado-e-aberto. OBEN: {"15"}. */
   etapasAprovadas: ReadonlySet<string>;
+  /** Etapas EM APROVAÇÃO (não-comprometidas; não contam saldo). OBEN: {"10"}. Alimentam codintsEmAprovacao. */
+  etapasEmAprovacao?: ReadonlySet<string>;
   /** Se dado, só inclui itens de SKU habilitado (reduz volume; o motor só lê habilitados). */
   skusHabilitados?: ReadonlySet<string>;
 }
@@ -111,11 +113,15 @@ export interface ColetaPaginaOpts {
 export interface ColetaPaginaResult {
   /** Itens (já filtrados por habilitado, se opts.skusHabilitados) p/ alimentar computeOnOrder. */
   items: PoItemOmie[];
-  /** cCodIntPed de POs etapa-APROVADA vistas (independe de saldo) — alimenta a barreira do passo 3. */
+  /** cCodIntPed de POs etapa-APROVADA COM itens (independe de saldo) — alimenta a barreira (3a) do passo 3. */
   codintsAprovados: string[];
+  /** cCodIntPed de POs EM APROVAÇÃO (etapa-10) — a barreira (3b) aborta enquanto a PO do app não virar etapa-15. */
+  codintsEmAprovacao: string[];
   pedidosVistos: number;
   /** etapas distintas vistas (diagnóstico; o fail-closed REAL é no computeOnOrder, sobre os items). */
   etapasVistas: string[];
+  /** Razões fail-closed detectadas na COLETA (ex.: PO aprovada sem item com SKU = resposta suspeita). */
+  problemas: string[];
 }
 
 function norm(v: unknown): string {
@@ -123,17 +129,21 @@ function norm(v: unknown): string {
 }
 
 /**
- * Parsing PURO de uma página de PesquisarPedCompra. NÃO decide fail-closed (isso é do computeOnOrder,
- * que recebe os items). Coleta os itens (filtrando por habilitado, se dado) e os cCodIntPed das POs
- * etapa-aprovada. A edge ACUMULA o resultado de todas as páginas e chama computeOnOrder UMA vez no fim.
+ * Parsing PURO de uma página de PesquisarPedCompra. Coleta os itens (filtrando por habilitado, se dado),
+ * os cCodIntPed das POs etapa-aprovada (P1.1: SÓ se a PO tem ≥1 item com SKU — uma PO aprovada sem item é
+ * resposta truncada/suspeita → `problemas` fail-closed, e o codint NÃO entra; senão a barreira passaria
+ * com saldo zero = double-buy), e os cCodIntPed das POs em APROVAÇÃO (P1.2 / barreira 3b). A edge ACUMULA
+ * o resultado de todas as páginas; `problemas` (daqui + do computeOnOrder) não-vazio ⇒ a edge NÃO aplica.
  */
 export function coletarDaPagina(
   pedidos: readonly OmiePedConsultaRaw[] | undefined,
   opts: ColetaPaginaOpts,
 ): ColetaPaginaResult {
   const items: PoItemOmie[] = [];
-  const codints: string[] = [];
+  const codintsAprovados: string[] = [];
+  const codintsEmAprovacao: string[] = [];
   const etapasVistas = new Set<string>();
+  const problemas: string[] = [];
   const lista = pedidos ?? [];
   for (const ped of lista) {
     const cab = ped?.cabecalho_consulta ?? ped?.cabecalho ?? {};
@@ -141,10 +151,13 @@ export function coletarDaPagina(
     const cNumero = norm(cab.cNumero);
     const cCodIntPed = norm(cab.cCodIntPed);
     if (etapa) etapasVistas.add(etapa);
-    if (opts.etapasAprovadas.has(etapa) && cCodIntPed) codints.push(cCodIntPed);
+
+    // processa os itens primeiro; conta os que têm SKU (independe de habilitado).
+    let itensComSku = 0;
     for (const it of ped?.produtos_consulta ?? []) {
       const sku = norm(it.nCodProd);
       if (!sku) continue;
+      itensComSku++;
       if (opts.skusHabilitados && !opts.skusHabilitados.has(sku)) continue;
       items.push({
         sku,
@@ -154,8 +167,26 @@ export function coletarDaPagina(
         recebido: Number(it.nQtdeRec ?? 0),
       });
     }
+
+    if (opts.etapasAprovadas.has(etapa)) {
+      // [P1.1] PO aprovada SEM item com SKU = resposta truncada/anômala → fail-closed (o saldo dela se perderia
+      // e, se tiver codint, a barreira passaria com pendente 0 → double-buy). NÃO coleta o codint.
+      if (itensComSku === 0) {
+        problemas.push(`PO aprovada sem item com SKU (po=${cNumero} codint=${cCodIntPed || "manual"})`);
+      } else if (cCodIntPed) {
+        codintsAprovados.push(cCodIntPed);
+      }
+    } else if (opts.etapasEmAprovacao?.has(etapa) && cCodIntPed) {
+      // [P1.2] PO do app em APROVAÇÃO (não conta saldo, mas existe no Omie) → a barreira (3b) aborta a geração
+      // enquanto a PO não virar etapa-15 (sem janela de tempo).
+      codintsEmAprovacao.push(cCodIntPed);
+    }
+    // etapa aberta DESCONHECIDA (nem aprovada nem em-aprovação): o computeOnOrder pega via items (saldo>0 → problema).
   }
-  return { items, codintsAprovados: codints, pedidosVistos: lista.length, etapasVistas: [...etapasVistas] };
+  return {
+    items, codintsAprovados, codintsEmAprovacao, pedidosVistos: lista.length,
+    etapasVistas: [...etapasVistas], problemas,
+  };
 }
 
 /** Página sem pedidos = FIM da paginação (paginar até aqui; NÃO confiar em nTotalPaginas). */
@@ -192,6 +223,7 @@ export function codintsFaltantes(esperados: readonly string[], vistos: readonly 
 export interface PaginaPedidos { pedidos?: OmiePedConsultaRaw[]; faultstring?: string; }
 export interface VarrerPedidosOpts {
   etapasAprovadas: ReadonlySet<string>;
+  etapasEmAprovacao?: ReadonlySet<string>;
   skusHabilitados?: ReadonlySet<string>;
   /** Teto técnico FATAL anti-loop (se atinge sem ver página vazia, aborta). */
   maxPaginas: number;
@@ -199,20 +231,24 @@ export interface VarrerPedidosOpts {
 export interface VarrerPedidosResult {
   items: PoItemOmie[];
   codintsAprovados: string[];
+  codintsEmAprovacao: string[];
   etapasVistas: string[];
   pedidosVistos: number;
   paginasLidas: number;
+  /** Razões fail-closed acumuladas das páginas (coletarDaPagina). Não-vazio ⇒ a edge NÃO aplica. */
+  problemas: string[];
 }
 
 /**
  * faults do Omie que significam "fim legítimo" (sem registros), NÃO erro. Conservadora de propósito:
- * exige negação + verbo-de-existência + "registros" próximos (OU "sem/nenhum registro" / "not found").
+ * exige a palavra "registro(s)" + negação/quantificador próximo. [P1.7] o "not found" SOLTO foi REMOVIDO
+ * (casava erros reais como "Produto not found" → pararia a paginação cedo = PO perdida = double-buy).
  * Money-path: preferimos FALSO-NEGATIVO (fault não-reconhecido → throw → sync falha, Sentinela pega) a
- * FALSO-POSITIVO (erro tratado como fim → paginação para cedo → PO perdida → double-buy). O sinal
- * PRIMÁRIO de fim é a página VAZIA (paginaVazia); este fault é o caminho secundário.
+ * FALSO-POSITIVO (erro tratado como fim → para cedo → PO perdida → double-buy). O sinal PRIMÁRIO de fim
+ * é a página VAZIA (paginaVazia); este fault é o caminho secundário e SEMPRE exige "registro".
  */
 const FIM_SEM_REGISTROS =
-  /(not\s*found|sem\s+registros?\b|nenhum\s+registro|n[ãa]o\s+(existem?|h[áa]|foram|foi|possui|cont[ée]m|retornou)\b.{0,30}\bregistros?\b)/i;
+  /(sem\s+registros?\b|nenhum\s+registro|n[ãa]o\s+(existem?|h[áa]|foram|foi|possui|cont[ée]m|retornou)\b.{0,30}\bregistros?\b)/i;
 
 /**
  * Loop PURO de paginação do PesquisarPedCompra (o `fetchPagina` é injetado → testável sem rede/timers;
@@ -226,11 +262,15 @@ export async function varrerPedidos(
   opts: VarrerPedidosOpts,
 ): Promise<VarrerPedidosResult> {
   const items: PoItemOmie[] = [];
-  const codints = new Set<string>();
+  const codintsAprovados = new Set<string>();
+  const codintsEmAprovacao = new Set<string>();
   const etapas = new Set<string>();
+  const problemas: string[] = [];
   let pedidosVistos = 0;
   let paginasLidas = 0;
-  let fpAnterior = "";
+  // [P1.7] rastreia TODOS os fingerprints vistos (não só o anterior): pega repetição NÃO-consecutiva
+  // (A/B/A/vazia somaria A duas vezes = overcount → ruptura).
+  const fpsVistos = new Set<string>();
   let fim = false;
 
   for (let pagina = 1; pagina <= opts.maxPaginas; pagina++) {
@@ -243,21 +283,30 @@ export async function varrerPedidos(
     if (paginaVazia(pedidos)) { fim = true; break; } // FIM real = página vazia
 
     const fp = fingerprintPagina(pedidos);
-    if (fp !== "" && fp === fpAnterior) {
-      throw new Error(`PesquisarPedCompra LOOP (pág ${pagina} idêntica à anterior; fp=${fp}) — abortando p/ não double-buy`);
+    if (fp !== "" && fpsVistos.has(fp)) {
+      throw new Error(`PesquisarPedCompra REPETIÇÃO de página (pág ${pagina} fp=${fp} já vista) — abortando p/ não overcount/double-buy`);
     }
-    fpAnterior = fp;
+    fpsVistos.add(fp);
     paginasLidas++;
 
-    const c = coletarDaPagina(pedidos, { etapasAprovadas: opts.etapasAprovadas, skusHabilitados: opts.skusHabilitados });
+    const c = coletarDaPagina(pedidos, {
+      etapasAprovadas: opts.etapasAprovadas,
+      etapasEmAprovacao: opts.etapasEmAprovacao,
+      skusHabilitados: opts.skusHabilitados,
+    });
     for (const it of c.items) items.push(it);
-    for (const cc of c.codintsAprovados) codints.add(cc);
+    for (const cc of c.codintsAprovados) codintsAprovados.add(cc);
+    for (const cc of c.codintsEmAprovacao) codintsEmAprovacao.add(cc);
     for (const e of c.etapasVistas) etapas.add(e);
+    for (const p of c.problemas) problemas.push(p);
     pedidosVistos += c.pedidosVistos;
   }
 
   if (!fim) {
     throw new Error(`PesquisarPedCompra excedeu ${opts.maxPaginas} páginas sem ver fim — abortando (anti-truncamento)`);
   }
-  return { items, codintsAprovados: [...codints], etapasVistas: [...etapas], pedidosVistos, paginasLidas };
+  return {
+    items, codintsAprovados: [...codintsAprovados], codintsEmAprovacao: [...codintsEmAprovacao],
+    etapasVistas: [...etapas], pedidosVistos, paginasLidas, problemas,
+  };
 }

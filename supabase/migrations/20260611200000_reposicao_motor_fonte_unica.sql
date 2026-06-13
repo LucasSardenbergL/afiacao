@@ -53,19 +53,35 @@ BEGIN
     DECLARE
       v_snap_at        timestamptz;
       v_snap_status    text;
-      v_codints        jsonb;
-      v_pend_aprovado  int;
-      v_portal_sem_po  int;
-      v_disp_ausente   int;
+      v_codints         jsonb;
+      v_codints_emaprov jsonb;
+      v_full_at         timestamptz;
+      v_full_status     text;
+      v_pend_aprovado   int;
+      v_portal_sem_po   int;
+      v_disp_ausente    int;
+      v_disp_emaprov    int;
     BEGIN
-      SELECT ss.last_sync_at, ss.status, COALESCE(ss.metadata->'codints_aprovados', '[]'::jsonb)
-        INTO v_snap_at, v_snap_status, v_codints
+      SELECT ss.last_sync_at, ss.status,
+             COALESCE(ss.metadata->'codints_aprovados', '[]'::jsonb),
+             COALESCE(ss.metadata->'codints_em_aprovacao', '[]'::jsonb)
+        INTO v_snap_at, v_snap_status, v_codints, v_codints_emaprov
       FROM public.sync_state ss
       WHERE ss.entity_type = 'reposicao_pendente_po' AND ss.account = 'oben';
 
-      -- (4) snapshot ausente / não-complete / stale (>6h): não gerar com a-caminho velho.
+      SELECT ss.last_sync_at, ss.status INTO v_full_at, v_full_status
+      FROM public.sync_state ss
+      WHERE ss.entity_type = 'reposicao_estoque_full' AND ss.account = 'oben';
+
+      -- (4) snapshot do A-CAMINHO ausente / não-complete / stale (>6h): não gerar com dado velho.
       IF v_snap_at IS NULL OR v_snap_status IS DISTINCT FROM 'complete' OR (now() - v_snap_at) > INTERVAL '6 hours' THEN
         RAISE EXCEPTION 'barreira_fonte_unica: snapshot de a-caminho ausente/incompleto/stale (last=% status=%) — recusando gerar com dado velho; rode omie-sync-estoque', v_snap_at, v_snap_status;
+      END IF;
+
+      -- [P1.6] (4b) snapshot do FÍSICO (reposicao_estoque_full) ausente/incompleto/stale: o motor lê físico +
+      -- a-caminho; físico PARCIAL (upsert com erro grava status<>'complete') ou velho → recusa gerar.
+      IF v_full_at IS NULL OR v_full_status IS DISTINCT FROM 'complete' OR (now() - v_full_at) > INTERVAL '6 hours' THEN
+        RAISE EXCEPTION 'barreira_fonte_unica: snapshot do FÍSICO ausente/incompleto/stale (last=% status=%) — recusando gerar; rode omie-sync-estoque', v_full_at, v_full_status;
       END IF;
 
       -- (1) pedido aprovado_aguardando_disparo: aprovado mas ainda NÃO virou PO no Omie → fora do snapshot.
@@ -86,16 +102,29 @@ BEGIN
         RAISE EXCEPTION 'barreira_fonte_unica: % pedido(s) confirmado(s) no portal sem PO no Omie — aguarde a conciliação antes de gerar', v_portal_sem_po;
       END IF;
 
-      -- (3) pedido recém-disparado (atualizado <30min, status=disparado) cujo AFI-<id> NÃO consta no
-      -- snapshot.codints_aprovados → o bump falhou / o sync não pegou a PO ainda. Fecha o caso de borda do
-      -- run_id (full-sync de dados velhos sobrescreve o bump): aqui o marcador corrente não tem o codint → aborta.
+      -- (3a) pedido recém-disparado (atualizado <30min, status=disparado) cujo AFI-<id> NÃO consta em NENHUM
+      -- conjunto do snapshot (nem aprovados nem em-aprovação) → o bump falhou / o sync não pegou a PO ainda.
+      -- Fecha o caso de borda do run_id (full-sync de dados velhos sobrescreve o bump).
       SELECT count(*) INTO v_disp_ausente FROM public.pedido_compra_sugerido pcs
        WHERE pcs.empresa = p_empresa
          AND pcs.status = 'disparado'
          AND pcs.atualizado_em > now() - INTERVAL '30 minutes'
-         AND NOT (v_codints ? ('AFI-' || pcs.id::text));
+         AND NOT (v_codints ? ('AFI-' || pcs.id::text))
+         AND NOT (v_codints_emaprov ? ('AFI-' || pcs.id::text));
       IF v_disp_ausente > 0 THEN
         RAISE EXCEPTION 'barreira_fonte_unica: % pedido(s) recém-disparado(s) ainda não refletido(s) no snapshot de a-caminho — aguarde o próximo sync de estoque', v_disp_ausente;
+      END IF;
+
+      -- [P1.2] (3b) pedido do app DISPARADO cuja PO está EM APROVAÇÃO no Omie (etapa-10): não conta no a-caminho
+      -- (só etapa-15 conta), mas o app JÁ pediu → re-sugerir seria double-buy. Aborta SEM janela de tempo
+      -- (enquanto a PO não virar etapa-15). Cobre o que escapava da janela de 30min da (3a) — cEmailAprovador
+      -- ausente / lag de auto-aprovação fazem a PO ficar etapa-10 por mais de 30min.
+      SELECT count(*) INTO v_disp_emaprov FROM public.pedido_compra_sugerido pcs
+       WHERE pcs.empresa = p_empresa
+         AND pcs.status = 'disparado'
+         AND (v_codints_emaprov ? ('AFI-' || pcs.id::text));
+      IF v_disp_emaprov > 0 THEN
+        RAISE EXCEPTION 'barreira_fonte_unica: % pedido(s) disparado(s) com PO ainda EM APROVAÇÃO no Omie (etapa-10) — aprove a PO no Omie (ou configure OMIE_OBEN_EMAIL_APROVADOR) ou cancele antes de gerar', v_disp_emaprov;
       END IF;
     END;
   END IF;
@@ -117,9 +146,23 @@ BEGIN
     AND status IN ('pendente_aprovacao', 'bloqueado_guardrail')
     AND COALESCE(tipo_ciclo, 'normal') = 'normal';
 
-  -- [FONTE-ÚNICA] em_transito REMOVIDO. estoque_efetivo = estoque_fisico + estoque_pendente_entrada
-  -- (o pendente é a fonte única do snapshot de POs — substitui o que o em_transito contava, sem double-count).
-  WITH preco_medio AS (
+  -- [FONTE-ÚNICA / P1.5] em_transito CONDICIONAL por empresa. OBEN: o "a caminho" é FONTE ÚNICA (snapshot de
+  -- POs do Omie) + barreira fail-closed → o em_transito interno NÃO conta (CASE WHEN oben THEN 0). COLACOR
+  -- (ListarSaldoPendente, SEM fonte única e SEM barreira): o em_transito CONTINUA contando — senão perderia a
+  -- proteção contra re-sugerir pedidos recém-disparados (regressão que o adversarial do Codex pegou).
+  -- estoque_efetivo = estoque_fisico + estoque_pendente_entrada + (oben ? 0 : em_transito).
+  WITH em_transito AS (
+    SELECT pcs2.empresa, pci.sku_codigo_omie::text AS sku_codigo_omie, SUM(pci.qtde_final) AS qtde
+    FROM pedido_compra_item pci
+    JOIN pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
+    WHERE pcs2.empresa = p_empresa
+      AND (
+        (pcs2.status IN ('aprovado_aguardando_disparo','disparado','concluido_recebido') AND pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days'))
+        OR (pcs2.status_envio_portal IN ('sucesso_portal','enviado_portal') AND pcs2.portal_protocolo IS NOT NULL AND pcs2.omie_pedido_compra_numero IS NULL AND pcs2.status NOT IN ('cancelado','expirado_sem_aprovacao'))
+      )
+    GROUP BY pcs2.empresa, pci.sku_codigo_omie
+  ),
+  preco_medio AS (
     SELECT slh.empresa::text AS empresa, slh.sku_codigo_omie::text AS sku_codigo_omie,
            AVG(slh.valor_total / NULLIF(slh.quantidade_recebida, 0)) AS preco_unitario, COUNT(*) AS n
     FROM sku_leadtime_history slh
@@ -131,11 +174,11 @@ BEGIN
            sg.grupo_codigo, sp.ponto_pedido, sp.estoque_maximo,
            COALESCE(sea.estoque_fisico, 0) AS estoque_fisico,
            COALESCE(sea.estoque_pendente_entrada, 0) AS estoque_pendente,
-           (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0)) AS estoque_efetivo,
+           (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + CASE WHEN lower(p_empresa) = 'oben' THEN 0 ELSE COALESCE(et.qtde, 0) END) AS estoque_efetivo,
            -- [QTDE-INTEIRA] arredonda pra cima: o estoque vem do Omie com poeira decimal → max − estoque
            -- seria fracionário (3,99996). Arredondar pra cima preserva o sinal >0, então o filtro de
            -- necessidade abaixo fica idêntico (inclusão inalterada; só o valor muda).
-           ceil(sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0))) AS qtde_sugerida,
+           ceil(sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + CASE WHEN lower(p_empresa) = 'oben' THEN 0 ELSE COALESCE(et.qtde, 0) END)) AS qtde_sugerida,
            -- [MIN-FORCADO 1/3] qtde_final = piso(natural, mínimo forçado). Espelha o helper puro
            -- aplicarMinimoForcado: CASE WHEN min>0 THEN GREATEST(natural, min) ELSE natural END.
            -- Sem piso-0 fantasma (ELSE devolve o natural intocado). A guarda "só item que precisa
@@ -144,9 +187,9 @@ BEGIN
            -- estoque com poeira decimal OU de um mínimo forçado fracionário) chega ao pedido.
            CASE WHEN sp.minimo_forcado_manual IS NOT NULL AND sp.minimo_forcado_manual > 0
                 THEN ceil(GREATEST(
-                       (sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0))),
+                       (sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + CASE WHEN lower(p_empresa) = 'oben' THEN 0 ELSE COALESCE(et.qtde, 0) END)),
                        sp.minimo_forcado_manual))
-                ELSE ceil(sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0)))
+                ELSE ceil(sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + CASE WHEN lower(p_empresa) = 'oben' THEN 0 ELSE COALESCE(et.qtde, 0) END))
            END AS qtde_final,
            -- [A2-CMC-PEDIDO] cmc-PRIMEIRO (>0), senão média, senão 0. Espelha a view (preco_item_eoq):
            -- cmc=0/negativo/null não vira preço 0 (CASE devolve NULL → COALESCE cai pra média).
@@ -173,6 +216,7 @@ BEGIN
     LEFT JOIN omie_products op ON op.omie_codigo_produto::text = sp.sku_codigo_omie::text AND op.account = lower(p_empresa)
     LEFT JOIN familia_nao_comprada fnc ON fnc.empresa = sp.empresa AND fnc.familia = op.familia
     LEFT JOIN preco_medio pm ON pm.empresa = sp.empresa AND pm.sku_codigo_omie = sp.sku_codigo_omie::text
+    LEFT JOIN em_transito et ON et.empresa = sp.empresa AND et.sku_codigo_omie = sp.sku_codigo_omie::text
     LEFT JOIN inventory_position ip ON ip.omie_codigo_produto::text = sp.sku_codigo_omie::text AND ip.account = lower(p_empresa)
     LEFT JOIN sku_status_omie sso ON sso.empresa = sp.empresa AND sso.sku_codigo_omie = sp.sku_codigo_omie::text
     WHERE sp.empresa = p_empresa
@@ -206,7 +250,7 @@ BEGIN
           )
       AND sp.ponto_pedido IS NOT NULL
       AND sp.estoque_maximo IS NOT NULL
-      AND (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0)) <= sp.ponto_pedido
+      AND (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + CASE WHEN lower(p_empresa) = 'oben' THEN 0 ELSE COALESCE(et.qtde, 0) END) <= sp.ponto_pedido
   ),
   pedidos_por_fornecedor_grupo AS (
     INSERT INTO pedido_compra_sugerido (

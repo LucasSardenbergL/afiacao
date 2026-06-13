@@ -29,12 +29,13 @@
 -- ⚠️ MONEY-PATH — validado em PG17 (db/test-aplicar-snapshot-pendente.sh). Codex adversarial xhigh é GATE antes do deploy.
 
 CREATE OR REPLACE FUNCTION public.aplicar_snapshot_pendente(
-  p_empresa            text,
-  p_pendente           jsonb,
-  p_codints_aprovados  text[],
-  p_run_id             bigint,
-  p_observed_at        timestamptz,
-  p_meta               jsonb DEFAULT '{}'::jsonb
+  p_empresa              text,
+  p_pendente             jsonb,
+  p_codints_aprovados    text[],
+  p_codints_em_aprovacao text[],
+  p_run_id               bigint,
+  p_observed_at          timestamptz,
+  p_meta                 jsonb DEFAULT '{}'::jsonb
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -49,6 +50,7 @@ DECLARE
   v_skus_zerados   int := 0;
   v_skus_sem_linha int := 0;
   v_codints        text[];
+  v_codints_emaprov text[];
   v_n_pendente     int;
 BEGIN
   -- Gate: service_role (uid NULL) passa; usuário autenticado precisa ser staff.
@@ -127,9 +129,15 @@ BEGIN
   )
   SELECT count(*)::int, count(*) FILTER (WHERE inserted)::int INTO v_skus_setados, v_skus_sem_linha FROM up;
 
-  -- codints normalizados (distintos, sem vazio/NULL) → a barreira do passo 3 cruza com `metadata->'codints_aprovados' ? ('AFI-'||id)`.
+  -- codints normalizados (distintos, sem vazio/NULL) → a barreira do passo 3 cruza com `metadata->'codints_*' ? ('AFI-'||id)`.
   v_codints := COALESCE(
     (SELECT array_agg(DISTINCT c) FROM unnest(coalesce(p_codints_aprovados, ARRAY[]::text[])) c
+      WHERE c IS NOT NULL AND btrim(c) <> ''),
+    ARRAY[]::text[]
+  );
+  -- [P1.2] codints de POs do app EM APROVAÇÃO (etapa-10): a barreira (3b) aborta enquanto a PO não virar etapa-15.
+  v_codints_emaprov := COALESCE(
+    (SELECT array_agg(DISTINCT c) FROM unnest(coalesce(p_codints_em_aprovacao, ARRAY[]::text[])) c
       WHERE c IS NOT NULL AND btrim(c) <> ''),
     ARRAY[]::text[]
   );
@@ -143,6 +151,7 @@ BEGIN
       'run_id',                 p_run_id,
       'observed_at',            p_observed_at,
       'codints_aprovados',      to_jsonb(v_codints),
+      'codints_em_aprovacao',   to_jsonb(v_codints_emaprov),
       'skus_com_pendente',      v_n_pendente,
       'skus_zerados',           v_skus_zerados,
       'skus_sem_linha_criados', v_skus_sem_linha
@@ -169,13 +178,13 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.aplicar_snapshot_pendente(text, jsonb, text[], bigint, timestamptz, jsonb) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.aplicar_snapshot_pendente(text, jsonb, text[], bigint, timestamptz, jsonb) FROM anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.aplicar_snapshot_pendente(text, jsonb, text[], bigint, timestamptz, jsonb) TO service_role;
+REVOKE ALL ON FUNCTION public.aplicar_snapshot_pendente(text, jsonb, text[], text[], bigint, timestamptz, jsonb) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.aplicar_snapshot_pendente(text, jsonb, text[], text[], bigint, timestamptz, jsonb) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.aplicar_snapshot_pendente(text, jsonb, text[], text[], bigint, timestamptz, jsonb) TO service_role;
 
 -- Validação pós-apply (colar no SQL Editor do Lovable):
 SELECT 'MIGRATION aplicar_snapshot_pendente OK' AS status,
   (SELECT count(*) FROM pg_proc WHERE proname = 'aplicar_snapshot_pendente') AS func_existe,
   (SELECT prosecdef FROM pg_proc WHERE proname = 'aplicar_snapshot_pendente') AS security_definer,
-  has_function_privilege('service_role', 'public.aplicar_snapshot_pendente(text, jsonb, text[], bigint, timestamptz, jsonb)', 'EXECUTE') AS service_role_exec,
-  has_function_privilege('authenticated', 'public.aplicar_snapshot_pendente(text, jsonb, text[], bigint, timestamptz, jsonb)', 'EXECUTE') AS authenticated_exec_deve_ser_false;
+  has_function_privilege('service_role', 'public.aplicar_snapshot_pendente(text, jsonb, text[], text[], bigint, timestamptz, jsonb)', 'EXECUTE') AS service_role_exec,
+  has_function_privilege('authenticated', 'public.aplicar_snapshot_pendente(text, jsonb, text[], text[], bigint, timestamptz, jsonb)', 'EXECUTE') AS authenticated_exec_deve_ser_false;

@@ -97,133 +97,144 @@ SQL
 
 echo "ASSERTS:"
 P -v ON_ERROR_STOP=1 <<'SQL'
+-- helper: seta os 2 markers OBEN (pendente + físico). status NULL = marcador ausente.
+CREATE OR REPLACE FUNCTION _mk(p_ps text, p_pa interval, p_fs text, p_fa interval,
+                               p_cod jsonb DEFAULT '[]'::jsonb, p_cea jsonb DEFAULT '[]'::jsonb)
+RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM sync_state WHERE entity_type IN ('reposicao_pendente_po','reposicao_estoque_full') AND account='oben';
+  IF p_ps IS NOT NULL THEN
+    INSERT INTO sync_state (entity_type, account, status, last_sync_at, metadata)
+    VALUES ('reposicao_pendente_po','oben',p_ps, now()-p_pa,
+            jsonb_build_object('codints_aprovados',p_cod,'codints_em_aprovacao',p_cea));
+  END IF;
+  IF p_fs IS NOT NULL THEN
+    INSERT INTO sync_state (entity_type, account, status, last_sync_at)
+    VALUES ('reposicao_estoque_full','oben',p_fs, now()-p_fa);
+  END IF;
+END $$;
+
 DO $$
 DECLARE v_msg text; v_n int; v_efetivo numeric; v_id bigint;
 BEGIN
-  -- ── helper de reset: limpa pedidos + marcador ──
-  -- B1: marcador AUSENTE → barreira (4)
+  -- B1: AMBOS markers ausentes → barreira (4 a-caminho)
   DELETE FROM pedido_compra_item; DELETE FROM pedido_compra_sugerido;
-  DELETE FROM sync_state WHERE entity_type='reposicao_pendente_po';
-  BEGIN
-    PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE);
-    ASSERT false, 'B1 deveria abortar (marcador ausente)';
-  EXCEPTION WHEN raise_exception THEN
-    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
-    ASSERT v_msg LIKE '%barreira_fonte_unica%', format('B1 msg inesperada: %s', v_msg);
-  END;
+  PERFORM _mk(NULL,NULL,NULL,NULL);
+  BEGIN PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE); ASSERT false, 'B1 deveria abortar (markers ausentes)';
+  EXCEPTION WHEN raise_exception THEN GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+    ASSERT v_msg LIKE '%barreira_fonte_unica%', format('B1: %s', v_msg); END;
 
-  -- B2: marcador STALE (>6h) → barreira (4)
-  INSERT INTO sync_state (entity_type, account, status, last_sync_at, metadata)
-  VALUES ('reposicao_pendente_po','oben','complete', now() - interval '7 hours', '{"codints_aprovados":[]}'::jsonb);
-  BEGIN
-    PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE);
-    ASSERT false, 'B2 deveria abortar (marcador stale)';
-  EXCEPTION WHEN raise_exception THEN
-    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
-    ASSERT v_msg LIKE '%barreira_fonte_unica%' AND v_msg LIKE '%stale%', format('B2 msg: %s', v_msg);
-  END;
+  -- B1b [P1.6]: a-caminho OK, FÍSICO ausente → barreira (4b)
+  PERFORM _mk('complete','1 minute', NULL, NULL);
+  BEGIN PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE); ASSERT false, 'B1b deveria abortar (físico ausente)';
+  EXCEPTION WHEN raise_exception THEN GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+    ASSERT v_msg LIKE '%FÍSICO%', format('B1b: %s', v_msg); END;
 
-  -- marcador OK p/ os próximos (fresco, complete)
-  UPDATE sync_state SET last_sync_at = now(), metadata = '{"codints_aprovados":[]}'::jsonb
-   WHERE entity_type='reposicao_pendente_po' AND account='oben';
+  -- B2: a-caminho STALE (>6h), físico OK → barreira (4) stale
+  PERFORM _mk('complete','7 hours', 'complete','1 minute');
+  BEGIN PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE); ASSERT false, 'B2 deveria abortar (a-caminho stale)';
+  EXCEPTION WHEN raise_exception THEN GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+    ASSERT v_msg LIKE '%stale%', format('B2: %s', v_msg); END;
 
-  -- B3: pedido aprovado_aguardando_disparo → barreira (1)
+  -- B3: aprovado_aguardando_disparo → barreira (1)
   DELETE FROM pedido_compra_item; DELETE FROM pedido_compra_sugerido;
+  PERFORM _mk('complete','1 minute','complete','1 minute');
   INSERT INTO pedido_compra_sugerido (empresa, fornecedor_nome, data_ciclo, valor_total, num_skus, status)
   VALUES ('OBEN','FORN-A',CURRENT_DATE,100,1,'aprovado_aguardando_disparo');
-  BEGIN
-    PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE);
-    ASSERT false, 'B3 deveria abortar (aprovado_aguardando_disparo)';
-  EXCEPTION WHEN raise_exception THEN
-    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
-    ASSERT v_msg LIKE '%aprovado_aguardando_disparo%', format('B3 msg: %s', v_msg);
-  END;
+  BEGIN PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE); ASSERT false, 'B3 deveria abortar';
+  EXCEPTION WHEN raise_exception THEN GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+    ASSERT v_msg LIKE '%aprovado_aguardando_disparo%', format('B3: %s', v_msg); END;
 
   -- B4: portal-confirmado sem PO no Omie → barreira (2)
   DELETE FROM pedido_compra_item; DELETE FROM pedido_compra_sugerido;
   INSERT INTO pedido_compra_sugerido (empresa, fornecedor_nome, data_ciclo, valor_total, num_skus, status, status_envio_portal, portal_protocolo, omie_pedido_compra_numero)
   VALUES ('OBEN','FORN-A',CURRENT_DATE,100,1,'disparado','sucesso_portal','PROTO-1',NULL);
-  BEGIN
-    PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE);
-    ASSERT false, 'B4 deveria abortar (portal sem PO)';
-  EXCEPTION WHEN raise_exception THEN
-    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
-    ASSERT v_msg LIKE '%portal%', format('B4 msg: %s', v_msg);
-  END;
+  BEGIN PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE); ASSERT false, 'B4 deveria abortar';
+  EXCEPTION WHEN raise_exception THEN GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+    ASSERT v_msg LIKE '%portal%', format('B4: %s', v_msg); END;
 
-  -- B5: recém-disparado (status=disparado, <30min) SEM codint no snapshot → barreira (3)
+  -- B5: recém-disparado (<30min) cujo codint NÃO está em nenhum conjunto → barreira (3a)
   DELETE FROM pedido_compra_item; DELETE FROM pedido_compra_sugerido;
   INSERT INTO pedido_compra_sugerido (empresa, fornecedor_nome, data_ciclo, valor_total, num_skus, status, omie_pedido_compra_numero, atualizado_em)
   VALUES ('OBEN','FORN-A',CURRENT_DATE,100,1,'disparado','OMIE-1', now()) RETURNING id INTO v_id;
-  -- snapshot SEM o AFI-<id> deste pedido
-  UPDATE sync_state SET metadata = '{"codints_aprovados":[]}'::jsonb WHERE entity_type='reposicao_pendente_po' AND account='oben';
-  BEGIN
-    PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE);
-    ASSERT false, 'B5 deveria abortar (disparado recente sem codint)';
-  EXCEPTION WHEN raise_exception THEN
-    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
-    ASSERT v_msg LIKE '%recém-disparado%' OR v_msg LIKE '%recem-disparado%', format('B5 msg: %s', v_msg);
-  END;
+  PERFORM _mk('complete','1 minute','complete','1 minute');  -- codints vazios
+  BEGIN PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE); ASSERT false, 'B5 deveria abortar';
+  EXCEPTION WHEN raise_exception THEN GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+    ASSERT v_msg LIKE '%recém-disparado%', format('B5: %s', v_msg); END;
 
-  -- B6: agora o snapshot CONTÉM o AFI-<id> → barreira (3) NÃO dispara → gera
-  UPDATE sync_state SET metadata = jsonb_build_object('codints_aprovados', jsonb_build_array('AFI-' || v_id::text))
-   WHERE entity_type='reposicao_pendente_po' AND account='oben';
+  -- B5b [P1.2]: disparado ANTIGO (>30min, FORA da janela da 3a) cuja PO está EM APROVAÇÃO (etapa-10) → (3b) SEM janela
+  DELETE FROM pedido_compra_item; DELETE FROM pedido_compra_sugerido;
+  INSERT INTO pedido_compra_sugerido (empresa, fornecedor_nome, data_ciclo, valor_total, num_skus, status, omie_pedido_compra_numero, atualizado_em)
+  VALUES ('OBEN','FORN-A',CURRENT_DATE,100,1,'disparado','OMIE-2', now() - interval '3 hours') RETURNING id INTO v_id;
+  PERFORM _mk('complete','1 minute','complete','1 minute', '[]'::jsonb, jsonb_build_array('AFI-' || v_id::text));
+  BEGIN PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE); ASSERT false, 'B5b deveria abortar (PO em aprovação, sem janela)';
+  EXCEPTION WHEN raise_exception THEN GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+    ASSERT v_msg LIKE '%APROVAÇÃO%', format('B5b: %s', v_msg); END;
+
+  -- B6: codint em aprovados → barreira (3) NÃO dispara → gera
+  DELETE FROM pedido_compra_item; DELETE FROM pedido_compra_sugerido;
+  INSERT INTO pedido_compra_sugerido (empresa, fornecedor_nome, data_ciclo, valor_total, num_skus, status, omie_pedido_compra_numero, atualizado_em)
+  VALUES ('OBEN','FORN-A',CURRENT_DATE,100,1,'disparado','OMIE-3', now()) RETURNING id INTO v_id;
+  PERFORM _mk('complete','1 minute','complete','1 minute', jsonb_build_array('AFI-' || v_id::text));
   PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE);
   SELECT count(*) INTO v_n FROM pedido_compra_sugerido WHERE data_ciclo=CURRENT_DATE AND status='pendente_aprovacao';
-  ASSERT v_n >= 1, format('B6 esperava gerar (codint presente), veio %s pedidos', v_n);
+  ASSERT v_n >= 1, format('B6 esperava gerar (codint aprovado presente), veio %s', v_n);
 
-  RAISE NOTICE 'B1..B6 OK: barreira fail-closed (4 condições) + libera quando o codint está no snapshot';
+  RAISE NOTICE 'B1..B6 OK: barreira fail-closed (físico+a-caminho; 4 condições incl. etapa-10 SEM janela)';
 
-  -- B7..B9: geração limpa (marcador OK, sem pedidos em voo)
+  -- B7..B9: geração limpa (ambos markers OK, sem pedidos em voo)
   DELETE FROM pedido_compra_item; DELETE FROM pedido_compra_sugerido;
-  UPDATE sync_state SET last_sync_at = now(), metadata = '{"codints_aprovados":[]}'::jsonb WHERE entity_type='reposicao_pendente_po' AND account='oben';
+  PERFORM _mk('complete','1 minute','complete','1 minute');
   PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE);
-
-  -- B7: 5001 e 5003 sugeridos
   SELECT count(*) INTO v_n FROM pedido_compra_item pci JOIN pedido_compra_sugerido pcs ON pcs.id=pci.pedido_id
-    WHERE pcs.empresa='OBEN' AND pcs.data_ciclo=CURRENT_DATE AND pci.sku_codigo_omie IN ('5001','5003');
-  ASSERT v_n = 2, format('B7 esperava 5001+5003 sugeridos (2), veio %s', v_n);
-
-  -- B8: 5002 (pendente 60 → efetivo 110 > ponto 100) NÃO sugerido
+    WHERE pcs.empresa='OBEN' AND pci.sku_codigo_omie IN ('5001','5003');
+  ASSERT v_n = 2, format('B7 esperava 5001+5003 (2), veio %s', v_n);
   SELECT count(*) INTO v_n FROM pedido_compra_item pci JOIN pedido_compra_sugerido pcs ON pcs.id=pci.pedido_id
     WHERE pcs.empresa='OBEN' AND pci.sku_codigo_omie='5002';
   ASSERT v_n = 0, format('B8 5002 NÃO podia ser sugerido (pendente entra no efetivo), veio %s', v_n);
-
-  -- B9: estoque_atual do item de 5001 = fisico(90) + pendente(0) = 90 (sem em_transito)
   SELECT pci.estoque_atual INTO v_efetivo FROM pedido_compra_item pci JOIN pedido_compra_sugerido pcs ON pcs.id=pci.pedido_id
     WHERE pcs.empresa='OBEN' AND pci.sku_codigo_omie='5001';
-  ASSERT v_efetivo = 90, format('B9 estoque_efetivo de 5001 esperava 90 (fisico+pendente), veio %s', v_efetivo);
+  ASSERT v_efetivo = 90, format('B9 efetivo 5001 esperava 90 (OBEN NÃO conta em_transito), veio %s', v_efetivo);
 
-  RAISE NOTICE 'B7..B9 OK: gera com fonte única; pendente entra no efetivo; sem em_transito';
+  RAISE NOTICE 'B7..B9 OK: OBEN gera fonte única; pendente no efetivo; em_transito NÃO conta p/ OBEN';
 
-  -- B10: COLACOR sem marcador → barreira OBEN-only NÃO aborta → gera
+  -- B10 [P1.5]: COLACOR sem marcador → barreira OBEN-only NÃO aborta → gera
   DELETE FROM pedido_compra_item; DELETE FROM pedido_compra_sugerido;
-  -- (não há marcador 'colacor'; a barreira só roda p/ 'oben')
   PERFORM public.gerar_pedidos_sugeridos_ciclo('COLACOR', CURRENT_DATE);
   SELECT count(*) INTO v_n FROM pedido_compra_item pci JOIN pedido_compra_sugerido pcs ON pcs.id=pci.pedido_id
     WHERE pcs.empresa='COLACOR' AND pci.sku_codigo_omie='3001';
   ASSERT v_n = 1, format('B10 COLACOR deveria gerar (barreira OBEN-only), veio %s', v_n);
 
-  RAISE NOTICE 'B10 OK: barreira é OBEN-only (COLACOR não trava sem marcador)';
+  -- B10b [P1.5]: em_transito CONTINUA contando p/ COLACOR (pedido disparado de 3001, qtde 50 → efetivo 140 > 100 → NÃO sugere)
+  DELETE FROM pedido_compra_item; DELETE FROM pedido_compra_sugerido;
+  INSERT INTO pedido_compra_sugerido (empresa, fornecedor_nome, data_ciclo, valor_total, num_skus, status)
+  VALUES ('COLACOR','FORN-D',CURRENT_DATE,500,1,'disparado') RETURNING id INTO v_id;
+  INSERT INTO pedido_compra_item (pedido_id, sku_codigo_omie, qtde_sugerida, qtde_final, preco_unitario, valor_linha)
+  VALUES (v_id, '3001', 50, 50, 1, 50);
+  PERFORM public.gerar_pedidos_sugeridos_ciclo('COLACOR', CURRENT_DATE);
+  SELECT count(*) INTO v_n FROM pedido_compra_item pci JOIN pedido_compra_sugerido pcs ON pcs.id=pci.pedido_id
+    WHERE pcs.empresa='COLACOR' AND pcs.status='pendente_aprovacao' AND pci.sku_codigo_omie='3001';
+  ASSERT v_n = 0, format('B10b em_transito deveria contar p/ COLACOR (3001 NÃO sugerido), veio %s', v_n);
+
+  RAISE NOTICE 'B10 OK: barreira OBEN-only; em_transito CONTA p/ COLACOR (regressão P1.5 evitada)';
 END $$;
 
--- B11: a def não tem mais 'em_transito' e contém a barreira FONTE-ÚNICA
+-- B11: a def tem em_transito CONDICIONAL (P1.5) + barreira FONTE-ÚNICA + marcas INTRADAY preservadas
 DO $$
-DECLARE v_sem int; v_com int; v_intra int;
+DECLARE v_cond int; v_com int; v_intra int;
 BEGIN
-  -- checa a ausência do CÓDIGO do em_transito (a coluna et.qtde e a CTE), não a palavra do comentário.
-  SELECT count(*) INTO v_sem FROM pg_proc p WHERE p.proname='gerar_pedidos_sugeridos_ciclo'
-     AND pg_get_functiondef(p.oid) NOT LIKE '%et.qtde%'
-     AND pg_get_functiondef(p.oid) NOT LIKE '%em_transito AS%'
-     AND pg_get_functiondef(p.oid) NOT LIKE '%JOIN em_transito%';
+  -- em_transito condicional = a CTE existe E o termo só conta p/ não-OBEN (CASE … 'oben' THEN 0 ELSE et.qtde)
+  SELECT count(*) INTO v_cond FROM pg_proc p WHERE p.proname='gerar_pedidos_sugeridos_ciclo'
+     AND pg_get_functiondef(p.oid) LIKE '%em_transito AS%'
+     AND pg_get_functiondef(p.oid) LIKE '%THEN 0 ELSE COALESCE(et.qtde%';
   SELECT count(*) INTO v_com FROM pg_proc p WHERE p.proname='gerar_pedidos_sugeridos_ciclo'
      AND pg_get_functiondef(p.oid) LIKE '%FONTE-ÚNICA%';
   SELECT count(*) INTO v_intra FROM pg_proc p WHERE p.proname='gerar_pedidos_sugeridos_ciclo'
      AND pg_get_functiondef(p.oid) LIKE '%INTRADAY 4/4%';
-  ASSERT v_sem = 1, 'B11 a def ainda usa o CÓDIGO do em_transito (et.qtde / CTE / join)';
+  ASSERT v_cond = 1, 'B11 em_transito condicional (CTE + CASE oben→0) ausente';
   ASSERT v_com = 1, 'B11 a def não contém a barreira FONTE-ÚNICA';
   ASSERT v_intra = 1, 'B11 a def perdeu as marcas INTRADAY';
-  RAISE NOTICE 'B11 OK: sem em_transito, com barreira, marcas INTRADAY preservadas';
+  RAISE NOTICE 'B11 OK: em_transito condicional + barreira + INTRADAY preservados';
 END $$;
 
 SELECT '✅ TODOS OS ASSERTS (B1..B11) PASSARAM' AS resultado;

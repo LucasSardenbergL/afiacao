@@ -101,13 +101,15 @@ function computeOnOrder(items: readonly PoItemOmie[], opts: ComputeOnOrderOpts):
 interface OmiePedItemRaw { nCodProd?: number | string; nQtde?: number; nQtdeRec?: number; [k: string]: unknown; }
 interface OmiePedCabRaw { cNumero?: number | string; cCodIntPed?: string; cEtapa?: string; [k: string]: unknown; }
 interface OmiePedConsultaRaw { cabecalho_consulta?: OmiePedCabRaw; cabecalho?: OmiePedCabRaw; produtos_consulta?: OmiePedItemRaw[]; [k: string]: unknown; }
-interface ColetaPaginaOpts { etapasAprovadas: ReadonlySet<string>; skusHabilitados?: ReadonlySet<string>; }
-interface ColetaPaginaResult { items: PoItemOmie[]; codintsAprovados: string[]; pedidosVistos: number; etapasVistas: string[]; }
+interface ColetaPaginaOpts { etapasAprovadas: ReadonlySet<string>; etapasEmAprovacao?: ReadonlySet<string>; skusHabilitados?: ReadonlySet<string>; }
+interface ColetaPaginaResult { items: PoItemOmie[]; codintsAprovados: string[]; codintsEmAprovacao: string[]; pedidosVistos: number; etapasVistas: string[]; problemas: string[]; }
 function norm(v: unknown): string { return String(v ?? "").trim(); }
 function coletarDaPagina(pedidos: readonly OmiePedConsultaRaw[] | undefined, opts: ColetaPaginaOpts): ColetaPaginaResult {
   const items: PoItemOmie[] = [];
-  const codints: string[] = [];
+  const codintsAprovados: string[] = [];
+  const codintsEmAprovacao: string[] = [];
   const etapasVistas = new Set<string>();
+  const problemas: string[] = [];
   const lista = pedidos ?? [];
   for (const ped of lista) {
     const cab = ped?.cabecalho_consulta ?? ped?.cabecalho ?? {};
@@ -115,15 +117,27 @@ function coletarDaPagina(pedidos: readonly OmiePedConsultaRaw[] | undefined, opt
     const cNumero = norm(cab.cNumero);
     const cCodIntPed = norm(cab.cCodIntPed);
     if (etapa) etapasVistas.add(etapa);
-    if (opts.etapasAprovadas.has(etapa) && cCodIntPed) codints.push(cCodIntPed);
+    let itensComSku = 0;
     for (const it of ped?.produtos_consulta ?? []) {
       const sku = norm(it.nCodProd);
       if (!sku) continue;
+      itensComSku++;
       if (opts.skusHabilitados && !opts.skusHabilitados.has(sku)) continue;
       items.push({ sku, poNumero: cNumero, etapa, qtde: Number(it.nQtde ?? 0), recebido: Number(it.nQtdeRec ?? 0) });
     }
+    if (opts.etapasAprovadas.has(etapa)) {
+      // [P1.1] PO aprovada sem item com SKU = resposta suspeita → fail-closed; codint NÃO entra.
+      if (itensComSku === 0) {
+        problemas.push(`PO aprovada sem item com SKU (po=${cNumero} codint=${cCodIntPed || "manual"})`);
+      } else if (cCodIntPed) {
+        codintsAprovados.push(cCodIntPed);
+      }
+    } else if (opts.etapasEmAprovacao?.has(etapa) && cCodIntPed) {
+      // [P1.2] PO do app em aprovação → barreira (3b) aborta enquanto não virar etapa-15.
+      codintsEmAprovacao.push(cCodIntPed);
+    }
   }
-  return { items, codintsAprovados: codints, pedidosVistos: lista.length, etapasVistas: [...etapasVistas] };
+  return { items, codintsAprovados, codintsEmAprovacao, pedidosVistos: lista.length, etapasVistas: [...etapasVistas], problemas };
 }
 function paginaVazia(pedidos: readonly OmiePedConsultaRaw[] | undefined): boolean {
   return !pedidos || pedidos.length === 0;
@@ -145,20 +159,22 @@ function codintsFaltantes(esperados: readonly string[], vistos: readonly string[
   return out;
 }
 interface PaginaPedidos { pedidos?: OmiePedConsultaRaw[]; faultstring?: string; }
-interface VarrerPedidosOpts { etapasAprovadas: ReadonlySet<string>; skusHabilitados?: ReadonlySet<string>; maxPaginas: number; }
-interface VarrerPedidosResult { items: PoItemOmie[]; codintsAprovados: string[]; etapasVistas: string[]; pedidosVistos: number; paginasLidas: number; }
+interface VarrerPedidosOpts { etapasAprovadas: ReadonlySet<string>; etapasEmAprovacao?: ReadonlySet<string>; skusHabilitados?: ReadonlySet<string>; maxPaginas: number; }
+interface VarrerPedidosResult { items: PoItemOmie[]; codintsAprovados: string[]; codintsEmAprovacao: string[]; etapasVistas: string[]; pedidosVistos: number; paginasLidas: number; problemas: string[]; }
 const FIM_SEM_REGISTROS =
-  /(not\s*found|sem\s+registros?\b|nenhum\s+registro|n[ãa]o\s+(existem?|h[áa]|foram|foi|possui|cont[ée]m|retornou)\b.{0,30}\bregistros?\b)/i;
+  /(sem\s+registros?\b|nenhum\s+registro|n[ãa]o\s+(existem?|h[áa]|foram|foi|possui|cont[ée]m|retornou)\b.{0,30}\bregistros?\b)/i;
 async function varrerPedidos(
   fetchPagina: (pagina: number) => Promise<PaginaPedidos>,
   opts: VarrerPedidosOpts,
 ): Promise<VarrerPedidosResult> {
   const items: PoItemOmie[] = [];
-  const codints = new Set<string>();
+  const codintsAprovados = new Set<string>();
+  const codintsEmAprovacao = new Set<string>();
   const etapas = new Set<string>();
+  const problemas: string[] = [];
   let pedidosVistos = 0;
   let paginasLidas = 0;
-  let fpAnterior = "";
+  const fpsVistos = new Set<string>(); // [P1.7] todos os fps vistos (pega repetição não-consecutiva A/B/A)
   let fim = false;
   for (let pagina = 1; pagina <= opts.maxPaginas; pagina++) {
     const resp = await fetchPagina(pagina);
@@ -169,19 +185,21 @@ async function varrerPedidos(
     const pedidos = resp.pedidos ?? [];
     if (paginaVazia(pedidos)) { fim = true; break; }
     const fp = fingerprintPagina(pedidos);
-    if (fp !== "" && fp === fpAnterior) {
-      throw new Error(`PesquisarPedCompra LOOP (pág ${pagina} idêntica à anterior; fp=${fp}) — abortando p/ não double-buy`);
+    if (fp !== "" && fpsVistos.has(fp)) {
+      throw new Error(`PesquisarPedCompra REPETIÇÃO de página (pág ${pagina} fp=${fp} já vista) — abortando p/ não overcount/double-buy`);
     }
-    fpAnterior = fp;
+    fpsVistos.add(fp);
     paginasLidas++;
-    const c = coletarDaPagina(pedidos, { etapasAprovadas: opts.etapasAprovadas, skusHabilitados: opts.skusHabilitados });
+    const c = coletarDaPagina(pedidos, { etapasAprovadas: opts.etapasAprovadas, etapasEmAprovacao: opts.etapasEmAprovacao, skusHabilitados: opts.skusHabilitados });
     for (const it of c.items) items.push(it);
-    for (const cc of c.codintsAprovados) codints.add(cc);
+    for (const cc of c.codintsAprovados) codintsAprovados.add(cc);
+    for (const cc of c.codintsEmAprovacao) codintsEmAprovacao.add(cc);
     for (const e of c.etapasVistas) etapas.add(e);
+    for (const p of c.problemas) problemas.push(p);
     pedidosVistos += c.pedidosVistos;
   }
   if (!fim) throw new Error(`PesquisarPedCompra excedeu ${opts.maxPaginas} páginas sem ver fim — abortando (anti-truncamento)`);
-  return { items, codintsAprovados: [...codints], etapasVistas: [...etapas], pedidosVistos, paginasLidas };
+  return { items, codintsAprovados: [...codintsAprovados], codintsEmAprovacao: [...codintsEmAprovacao], etapasVistas: [...etapas], pedidosVistos, paginasLidas, problemas };
 }
 // ── fim do espelho verbatim ──
 
@@ -302,18 +320,25 @@ async function callOmiePedidos(appKey: string, appSecret: string, pagina: number
 interface OnOrderColeta {
   porSku: Record<string, number>;
   codints: string[];
+  codintsEmAprovacao: string[];
   problemas: string[];
   paginasLidas: number;
   pedidosVistos: number;
   etapasVistas: string[];
+  /** [P1.3] epoch-ms do INÍCIO desta varredura (run_id causal: quem começou a observar depois é o mais novo). */
+  runId: number;
+  observedAt: string;
 }
 
 // Varre TODAS as POs abertas (varrerPedidos: paginar até página vazia + anti-loop + teto fatal) e deriva
 // o "a caminho" por SKU via computeOnOrder. O fetchPagina injetado faz callOmiePedidos + sleep de rate-limit.
-// problemas != [] NÃO é fatal aqui — volta no resultado p/ o caller abortar o apply (mantendo o snapshot).
+// problemas != [] (coleta P1.1 + derivação computeOnOrder) NÃO é fatal aqui — volta no resultado p/ o caller
+// abortar o apply (mantendo o snapshot).
 async function coletarOnOrder(
   appKey: string, appSecret: string, habilitadoSet: ReadonlySet<string>,
 ): Promise<OnOrderColeta> {
+  const runId = Date.now();                       // [P1.3] run_id = INÍCIO da varredura (antes de paginar)
+  const observedAt = new Date(runId).toISOString();
   let primeira = true;
   const fetchPagina = async (pagina: number): Promise<PaginaPedidos> => {
     if (!primeira) await new Promise((r) => setTimeout(r, 1100)); // rate-limit do Omie entre páginas
@@ -322,16 +347,19 @@ async function coletarOnOrder(
     return { pedidos: resp.pedidos_pesquisa, faultstring: resp.faultstring };
   };
   const v = await varrerPedidos(fetchPagina, {
-    etapasAprovadas: ETAPAS_APROVADO_ABERTO, skusHabilitados: habilitadoSet, maxPaginas: PEDIDOS_MAX_PAGINAS,
+    etapasAprovadas: ETAPAS_APROVADO_ABERTO, etapasEmAprovacao: ETAPAS_IGNORADAS,
+    skusHabilitados: habilitadoSet, maxPaginas: PEDIDOS_MAX_PAGINAS,
   });
-  const { porSku, problemas } = computeOnOrder(v.items, {
+  const { porSku, problemas: problemasDerivacao } = computeOnOrder(v.items, {
     etapasAprovadas: ETAPAS_APROVADO_ABERTO, etapasIgnoradas: ETAPAS_IGNORADAS,
   });
   const porSkuObj: Record<string, number> = {};
   for (const [k, val] of porSku) porSkuObj[k] = val;
   return {
-    porSku: porSkuObj, codints: v.codintsAprovados, problemas,
+    porSku: porSkuObj, codints: v.codintsAprovados, codintsEmAprovacao: v.codintsEmAprovacao,
+    problemas: [...v.problemas, ...problemasDerivacao], // [P1.1] coleta + [helper] derivação
     paginasLidas: v.paginasLidas, pedidosVistos: v.pedidosVistos, etapasVistas: v.etapasVistas,
+    runId, observedAt,
   };
 }
 
@@ -445,15 +473,18 @@ Deno.serve(async (req) => {
       // FONTE ÚNICA. Com esperar_codints, re-varre até ver os AFI-<id> recém-disparados (poucos s).
       coleta = await coletarOnOrder(appKey, appSecret, habilitadoSet);
       if (esperarCodints.length) {
+        // PO recém-disparada conta como VISTA se aparece em qualquer estado (aprovada OU em aprovação): se está
+        // etapa-10, a barreira (3b) já a cobre, então não há por que re-varrer esperando ela virar etapa-15.
+        const vistos = (c: OnOrderColeta) => [...c.codints, ...c.codintsEmAprovacao];
         let tent = 1;
-        while (codintsFaltantes(esperarCodints, coleta.codints).length > 0 && tent < ESPERA_CODINTS_TENTATIVAS) {
+        while (codintsFaltantes(esperarCodints, vistos(coleta)).length > 0 && tent < ESPERA_CODINTS_TENTATIVAS) {
           await new Promise((r) => setTimeout(r, ESPERA_CODINTS_BACKOFF_MS));
           coleta = await coletarOnOrder(appKey, appSecret, habilitadoSet);
           tent++;
         }
-        const faltam = codintsFaltantes(esperarCodints, coleta.codints);
+        const faltam = codintsFaltantes(esperarCodints, vistos(coleta));
         if (faltam.length) {
-          // NÃO-fatal: aplica o que viu; a barreira fail-closed do motor (passo 3) cobre o AFI-<id> ausente.
+          // NÃO-fatal: aplica o que viu; a barreira fail-closed do motor (passo 3, cond 3) cobre o AFI-<id> ausente.
           console.warn(`[omie-sync-estoque] esperar_codints: faltam ${faltam.join(",")} após ${tent} tentativas — aplica mesmo assim (barreira do motor cobre).`);
         }
       }
@@ -471,8 +502,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    const runId = Date.now();              // epoch-ms do FIM da varredura — monotônico (run velho não sobrescreve)
-    const observedAt = new Date().toISOString();
+    const runId = Date.now();              // timestamp da GRAVAÇÃO do físico (marcador full + ultima_sincronizacao)
+    const observedAt = new Date(runId).toISOString(); // [P1.3] a RPC pendente usa coleta.runId/observedAt (início da varredura)
 
     // 4) GRAVAÇÃO
     let sincronizados = 0;
@@ -540,14 +571,18 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Marcador de frescor do FÍSICO (Sentinela passo 5 lê o marcador, não o max(ultima_sincronizacao)).
+      // Marcador de frescor do FÍSICO (Sentinela passo 5 lê o marcador). [P1.6] status='complete' SÓ se o upsert
+      // foi INTEGRAL — senão 'error' (físico parcial não pode passar por verde; a barreira (4) do motor ampliada
+      // checa ambos os markers e aborta se este não está complete).
+      const fullOk = errosUpsert.length === 0;
       const { error: mkErr } = await supabase.from("sync_state").upsert({
         entity_type: "reposicao_estoque_full",
         account: empresa.toLowerCase(),
-        status: "complete",
+        status: fullOk ? "complete" : "error",
         last_sync_at: observedAt,
         total_synced: sincronizados,
-        metadata: { run_id: runId, paginas: paginasFisico, total_omie: totalRegistros, nao_encontrados: naoEncontrados.length },
+        error_message: fullOk ? null : `${errosUpsert.length} SKU(s) com erro de upsert do físico`,
+        metadata: { run_id: runId, paginas: paginasFisico, total_omie: totalRegistros, nao_encontrados: naoEncontrados.length, erros_upsert: errosUpsert.length },
         updated_at: observedAt,
       }, { onConflict: "entity_type,account" });
       if (mkErr) console.error(`[omie-sync-estoque] erro marcador reposicao_estoque_full: ${mkErr.message}`);
@@ -560,13 +595,15 @@ Deno.serve(async (req) => {
         p_empresa: "OBEN",
         p_pendente: coleta.porSku,
         p_codints_aprovados: coleta.codints,
-        p_run_id: runId,
-        p_observed_at: observedAt,
+        p_codints_em_aprovacao: coleta.codintsEmAprovacao,
+        p_run_id: coleta.runId,            // [P1.3] início da varredura (causal)
+        p_observed_at: coleta.observedAt,
         p_meta: {
           empty_page_reached: "true",
           paginas: coleta.paginasLidas,
           pedidos_vistos: coleta.pedidosVistos,
           etapas_vistas: coleta.etapasVistas,
+          codints_em_aprovacao: coleta.codintsEmAprovacao.length || undefined,
           modo: onlyPending ? "only_pending" : "full",
           esperar_codints: esperarCodints.length || undefined,
         },
