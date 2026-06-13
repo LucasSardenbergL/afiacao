@@ -1,16 +1,35 @@
-# Onda 1 / Fase 0 — Fundação (identidade + idempotência + origem + currentParty) — Implementation Plan
+# Onda 1 / Fase 0 — Idempotência do pedido de venda (zero duplicado no Omie) — Implementation Plan (v2, pós-Codex)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Dar ao pedido de venda uma identidade estável e idempotência ponta-a-ponta (zero pedido duplicado no Omie), gravar a `origem` do pedido, e expor o cliente da ligação reativamente no contexto — a fundação que destrava a ponte e o co-piloto das fases seguintes.
+**Goal:** Tornar o envio de pedido de venda **idempotente ponta-a-ponta** — re-enviar o mesmo pedido (retry, duplo-clique, refresh) **nunca** cria um 2º pedido no Omie — sem depender de timing nem de comportamento não-verificado.
 
-**Architecture:** Idempotência em **duas camadas que se compõem**: (1) **client** — um `checkout_id` estável por tentativa de envio + `UNIQUE(checkout_id, account)` fazem o `sales_order_id` ser **reusado** no retry (em vez de criar linha nova); (2) **edge** — a chave de integração do Omie vira **determinística** (`PV_<sales_order_id>`, sem `Date.now()`), então re-enviar o mesmo `sales_order_id` produz a mesma chave → o Omie deduplica. Um skip-se-`enviado` no client evita re-invocar o edge (e de quebra impede OP duplicada). A `origem` e o `atendimento_id` entram como colunas plumadas (a fase 1 preenche o `atendimento_id`). E o `currentParty` no `WebRTCCallContext` expõe quem está na linha. A **RPC de CMC foi adiada para a Fase 2** (decisão de 2026-06-13: `inventory_position` já é staff-gated → sem urgência; melhor desenhar junto do cockpit que a consome).
+**Architecture (desenho LEAN, escolhido pelo founder):** dedup em duas camadas. (1) **Client**: um `checkout_id` **durável** por tentativa de envio + `UNIQUE(checkout_id, account)` + `ensureSalesOrderRow` (insert-or-get) → o `sales_order_id` é **reusado** no retry. (2) **Edge**: chave de integração **determinística** `PV_<sales_order_id>` → re-enviar produz a mesma chave → o **Omie rejeita a duplicata** e o edge **reconcilia** (consulta + vincula) em vez de falhar. A reconciliação é **obrigatória** (não opcional). O sinal de "já enviado" é **`omie_pedido_id IS NOT NULL`** (nunca o `status`, que o sync de entrada muda pra `faturado`/`separacao`). O reset do `checkout_id`/carrinho só acontece em **sucesso TOTAL**.
 
-**Tech Stack:** React 18 + TS (strict) + Vite · Supabase (Postgres + Edge Functions Deno) · Omie (3 contas) · vitest · PostgreSQL 17 local (harness `db/`). Apply de migração + deploy de edge + publish do front = **manuais via Lovable** (CLAUDE.md §5).
+> 🔴 **PREMISSA QUE GOVERNA O DESENHO (verificar — Task 8):** o Omie **rejeita `codigo_pedido_integracao` duplicado em `IncluirPedido` (pedido de venda)**. Já é **fato provado no pedido de COMPRA** (PR #628 trata "já cadastrado" como reconciliação) — mesma família de campo. **Se a verificação mostrar que o Omie de VENDA NÃO rejeita duplicata**, este desenho lean é insuficiente para concorrência real → escalar para **claim atômico no servidor** (`rascunho→enviando` com TTL, padrão do `envio_portal_claim_ids` #592). A verificação é **gate** do rollout.
 
-> **Correção de premissa da spec (registrar):** a §5/§18-A5 do spec assumiu que `inventory_position` tinha RLS `USING(true)` (cmc exposto). O schema real (`supabase/schema-snapshot.sql`) mostra que **já é staff-gated** (`has_role master/employee`). Isso (a) removeu a urgência de segurança da RPC de CMC → adiada p/ Fase 2; (b) não afeta nada na Fase 0.
+**Tech Stack:** React 18 + TS (strict) + Vite · Supabase (Postgres + Edge Functions Deno) · Omie · vitest · PostgreSQL 17 local (`db/`). Migração + deploy de edge + Publish = **manuais via Lovable** (CLAUDE.md §5).
 
-> **Escopo (não-objetivos desta fase):** a chave da **OS de afiação** (`omie-sync` `OS_..._${Date.now()}`) e a do **cadastro de cliente** (`APP_..._${Date.now()}`) e a da **ordem de produção** (`OP_..._${Date.now()}`) **também** usam `Date.now()`, mas ficam **fora** desta fase (o spec escopou a Fase 0 ao pedido de venda Oben/Colacor; o caminho da ligação é produto, não afiação). Ver §"Riscos residuais" no fim. A OP, em particular, deixa de ser risco de duplicação **vivo** após esta fase (o skip-se-`enviado` não re-invoca `criar_pedido`, e o bloco da OP roda dentro do sucesso dele).
+> **Refoco vs v1 (decisão pós-Codex):** a Fase 0 agora é **só idempotência**. As colunas `origem`/`atendimento_id` entram na migração (baratas, forward-looking) mas **quem as ESCREVE é a Fase 1** (a ponte grava `origem='ligacao_sainte'` + `atendimento_id`). O **`currentParty` no `WebRTCCallContext` MOVEU para a Fase 1** (é lá que é consumido pela ponte/HUD; e tem uma corrida de resolução-async a tratar — registrado pra Fase 1).
+
+> **Correção de premissa da v1:** `inventory_position` **já é staff-gated** (não `USING(true)`) → a RPC de CMC segue **adiada p/ Fase 2**.
+
+---
+
+## O que o passe adversário do Codex mudou (rastreabilidade)
+
+| Achado Codex | Onde estava | Correção nesta v2 |
+|---|---|---|
+| **P1-1** dedup dependia de "Omie rejeita chave duplicada" (não-documentado p/ venda) | premissa | **Task 8 verifica** (gate); precedente de compra (#628) sustenta o lean; senão escala p/ claim server-side |
+| **P1-2** reset do `checkout_id`/carrinho em sucesso PARCIAL duplica | Task 5/caller | **`allConfirmed`**: só reseta/limpa em sucesso TOTAL (Task 7) |
+| **P1-3** `checkout_id` em `useRef` morre no refresh / não roda na troca de cliente | caller | **durável** (localStorage) + reseta em troca de cliente e sucesso total (Task 7) |
+| **P1-5** write-back do edge ignora erro → linha órfã `rascunho` c/ pedido no Omie | edge | **checa o erro do write-back**; reconciliação **obrigatória** (Task 5) |
+| **P1-6** "já enviado" = `status='enviado'` perde `faturado`/`separacao` → reenvia | Task 2 | predicado = **`omie_pedido_id IS NOT NULL`** (Task 2) |
+| **P1-8** OP duplica/omite | edge | chave da OP **determinística** (Task 5) + janela de omissão registrada |
+| **P1-9** `types.ts` não tem as colunas novas → não compila | Task 1 | **atualizar `types.ts`** na migração (Task 1) |
+| **P2** detector lê `result.faultstring`, mas `callOmieVendasApi` **lança** | Task 7 | detector lê **`Error.message`** (Task 4) |
+| **P2** corrida do `currentParty` | (era Task 8) | **movido p/ Fase 1** com guard de geração |
+| Omie confirmado (Codex/docs) | — | `codigo_pedido_integracao`=60ch (`PV_<uuid>`=39 cabe ✅) · `ConsultarPedido` aceita `codigo_pedido_integracao` ✅ · troca de chave não quebra edição (usa id numérico) ✅ |
 
 ---
 
@@ -18,174 +37,184 @@
 
 | Arquivo | Papel | Tarefa |
 |---|---|---|
-| `supabase/migrations/20260613120000_onda1_fase0_sales_orders_identidade.sql` | **Criar** — colunas `origem`/`checkout_id`/`atendimento_id` + índice único parcial + índice de origem | T1 |
-| `db/test-fase0-sales-orders-identity.sh` | **Criar** — valida a migração em PG17 (colunas, índices, semântica do único parcial) | T1 |
+| `supabase/migrations/20260613120000_onda1_fase0_sales_orders_identidade.sql` | **Criar** — colunas + `UNIQUE(checkout_id,account)` + `UNIQUE(account,omie_pedido_id)` parciais | T1 |
+| `src/integrations/supabase/types.ts` | **Modificar** — add `checkout_id`/`origem`/`atendimento_id` no Row/Insert/Update de `sales_orders` | T1 |
+| `db/test-fase0-sales-orders-identity.sh` | **Criar** — PG17 (colunas, índices, semântica) | T1 |
 | `src/services/orderSubmission/idempotency.ts` | **Criar** — `decideSalesOrderAction` (puro) + `ensureSalesOrderRow` (I/O) | T2, T3 |
-| `src/services/orderSubmission/__tests__/idempotency.test.ts` | **Criar** — testes vitest | T2, T3 |
-| `src/services/orderSubmission/types.ts` | **Modificar** — `checkoutId`/`origem`/`atendimentoId` em `SubmitOrderParams` | T4 |
-| `src/services/orderSubmission/submitOrder.ts` | **Modificar** — usar `ensureSalesOrderRow` nos 2 blocos (Oben/Colacor) + skip-se-`alreadySent` | T4 |
-| `src/hooks/useUnifiedOrder.ts` | **Modificar** — `checkoutId` estável (ref) + passar `origem`/`atendimentoId` + reset no sucesso | T5 |
-| `src/lib/omie/pedido-integration-code.ts` | **Criar** — `buildPedidoIntegrationCode` (puro, espelhado no edge) | T6 |
-| `src/lib/omie/__tests__/pedido-integration-code.test.ts` | **Criar** — testes | T6 |
-| `supabase/functions/omie-vendas-sync/index.ts` | **Modificar** — chave determinística (T6) + reconciliação de duplicado (T7) | T6, T7 |
-| `src/lib/omie/pedido-duplicate.ts` | **Criar** — `isOmieDuplicatePedido` (puro, espelhado no edge) | T7 |
-| `src/lib/omie/__tests__/pedido-duplicate.test.ts` | **Criar** — testes | T7 |
-| `src/contexts/WebRTCCallContext.tsx` | **Modificar** — `currentParty`/`currentCustomerUserId` (interface + state + wiring + value) | T8 |
+| `src/services/orderSubmission/__tests__/idempotency.test.ts` | **Criar** — testes | T2, T3 |
+| `src/lib/omie/pedido-integration-code.ts` + `pedido-duplicate.ts` | **Criar** — helpers puros (espelhados no edge) | T4 |
+| `src/lib/omie/__tests__/*.test.ts` | **Criar** — testes | T4 |
+| `supabase/functions/omie-vendas-sync/index.ts` | **Modificar** — chave determinística + write-back checado + reconciliação + chave OP determinística | T5 |
+| `src/services/orderSubmission/types.ts` + `submitOrder.ts` | **Modificar** — `checkoutId` param + `ensureSalesOrderRow` + `allConfirmed` | T6 |
+| `src/hooks/useUnifiedOrder.ts` | **Modificar** — `checkout_id` durável + reset só em sucesso total | T7 |
+| (operacional) | **Rollout** — verificar dedup Omie (gate) + deploy coordenado | T8 |
 
 ---
 
-## Task 1: Migração — identidade + idempotência em `sales_orders`
+## Task 1: Migração + tipos gerados
 
 **Files:**
 - Create: `supabase/migrations/20260613120000_onda1_fase0_sales_orders_identidade.sql`
+- Modify: `src/integrations/supabase/types.ts`
 - Create: `db/test-fase0-sales-orders-identity.sh`
 
-**Contexto:** `sales_orders` hoje **não tem** `origem`, `checkout_id` nem `atendimento_id`, e **não tem nenhuma constraint UNIQUE** (confirmado em `supabase/schema-snapshot.sql:5465-5487`). Tem `account` (default `'oben'`), `status` (default `'rascunho'`), `omie_pedido_id` (bigint), `omie_numero_pedido` (text). O índice único é **parcial** (`WHERE checkout_id IS NOT NULL`) pra não afetar as ~milhares de linhas legadas (checkout_id nulo).
+**Contexto:** `sales_orders` não tem `checkout_id`/`origem`/`atendimento_id` e não tem UNIQUE (snapshot `:5465-5487`). Tem `omie_pedido_id bigint` (sinal de "enviado"). O `types.ts` gerado **também não tem** as colunas (`:9061`) → sem atualizar, `.eq('checkout_id', …)`/`.insert({checkout_id})` **não compilam** (P1-9).
 
 - [ ] **Step 1: Escrever a migração**
 
 Criar `supabase/migrations/20260613120000_onda1_fase0_sales_orders_identidade.sql`:
 
 ```sql
--- Onda 1 / Fase 0 — Fundação de identidade + idempotência do pedido de venda.
--- Adiciona à sales_orders: origem (canal de origem), checkout_id (chave de
--- idempotência por TENTATIVA de envio) e atendimento_id (liga ligação ↔ N pedidos;
--- preenchido pela Fase 1). Cria o índice único PARCIAL (checkout_id, account) que
--- impede 2 linhas para a mesma tentativa de envio na mesma conta Omie — base da
--- não-duplicação (junto da chave Omie determinística do edge).
+-- Onda 1 / Fase 0 — Idempotência do pedido de venda.
+-- checkout_id: chave de idempotência por TENTATIVA de envio (estável entre retries).
+-- origem / atendimento_id: plumbing forward-looking (a FASE 1 os escreve; nulos aqui).
 -- ⚠️ MONEY-PATH: aplicar via SQL Editor do Lovable; validar com a query no fim.
 
 ALTER TABLE public.sales_orders
-  ADD COLUMN IF NOT EXISTS origem text,
   ADD COLUMN IF NOT EXISTS checkout_id uuid,
+  ADD COLUMN IF NOT EXISTS origem text,
   ADD COLUMN IF NOT EXISTS atendimento_id uuid;
 
--- Único PARCIAL: só vale quando checkout_id IS NOT NULL → linhas legadas (checkout_id
--- nulo) não colidem entre si nem são afetadas. (checkout_id, account) porque cada conta
--- Omie gera 1 pedido próprio por tentativa de checkout (pedido multi-conta = N linhas).
+-- (1) Idempotência por tentativa: impede 2 linhas para o mesmo (checkout_id, account).
+--     PARCIAL → linhas legadas (checkout_id nulo) não colidem nem são afetadas.
 CREATE UNIQUE INDEX IF NOT EXISTS sales_orders_checkout_account_uq
   ON public.sales_orders (checkout_id, account)
   WHERE checkout_id IS NOT NULL;
 
--- Suporta a métrica "conversão por origem" (§14 do spec) sem seq-scan.
+-- (2) Âncora de reconciliação: 1 pedido Omie só pode estar vinculado a 1 linha por conta.
+--     Suporta a reconciliação (Task 5) e protege contra dupla-vinculação.
+CREATE UNIQUE INDEX IF NOT EXISTS sales_orders_account_omiepedido_uq
+  ON public.sales_orders (account, omie_pedido_id)
+  WHERE omie_pedido_id IS NOT NULL;
+
+-- (3) Métrica "conversão por origem" (Fase 1+), sem seq-scan.
 CREATE INDEX IF NOT EXISTS idx_sales_orders_origem
   ON public.sales_orders (origem)
   WHERE origem IS NOT NULL;
 ```
 
-- [ ] **Step 2: Escrever o teste PG17**
+- [ ] **Step 2: Atualizar os tipos gerados**
 
-Criar `db/test-fase0-sales-orders-identity.sh` (mesmo molde de `db/verify-snapshot-replay.sh`):
+Em `src/integrations/supabase/types.ts`, no bloco `sales_orders`, adicionar as 3 colunas em **`Row`**, **`Insert`** e **`Update`** (Row: tipos concretos; Insert/Update: opcionais):
+
+```ts
+// Em Row:
+        checkout_id: string | null
+        origem: string | null
+        atendimento_id: string | null
+// Em Insert:
+        checkout_id?: string | null
+        origem?: string | null
+        atendimento_id?: string | null
+// Em Update:
+        checkout_id?: string | null
+        origem?: string | null
+        atendimento_id?: string | null
+```
+
+> ⚠️ O `types.ts` é gerado pelo Lovable. Editar **só** o bloco `sales_orders` (não re-adicionar tabelas inteiras — CLAUDE.md alerta sobre `Duplicate identifier`). Na próxima regeneração do Lovable isso é sobrescrito (idempotente — as colunas vêm iguais).
+
+- [ ] **Step 3: Escrever o teste PG17**
+
+Criar `db/test-fase0-sales-orders-identity.sh` (molde de `db/verify-snapshot-replay.sh`):
 
 ```bash
 #!/usr/bin/env bash
-# Onda1/Fase0 — valida a migração de identidade/idempotência de sales_orders num PG17 local.
-# Prova: (a) as 3 colunas + os 2 índices existem após a migração; (b) o índice único PARCIAL
-# (checkout_id, account) bloqueia duplicata na MESMA conta, permite contas DISTINTAS, e NÃO
-# afeta linhas com checkout_id NULO. Base/armadilhas: db/verify-snapshot-replay.sh.
-# Pré-req: brew install postgresql@17 pgvector
+# Onda1/Fase0 — valida a migração de idempotência de sales_orders num PG17 local.
+# Prova: (a) as 3 colunas + os 3 índices; (b) UNIQUE(checkout_id,account) parcial bloqueia
+# duplicata na MESMA conta, permite contas distintas, ignora checkout_id NULO; (c)
+# UNIQUE(account,omie_pedido_id) parcial bloqueia dupla-vinculação. Base: verify-snapshot-replay.sh.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5434
-DATA="$(mktemp -d /tmp/pgtest-fase0.XXXXXX)/data"
-export LC_ALL=C LANG=C
+PGVER=17; PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"; PORT=5434
+DATA="$(mktemp -d /tmp/pgtest-fase0.XXXXXX)/data"; export LC_ALL=C LANG=C
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
 CELLAR="$(brew --prefix postgresql@${PGVER})"
 cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
+mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"; cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-fase0.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres fase0_verify
 P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d fase0_verify "$@"; }
-
-# Snapshot restore-ready (remove meta-comandos psql + CREATE SCHEMA public).
 RR="$(mktemp /tmp/snap-rr.XXXXXX.sql)"
-sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
-  | grep -vE '^\\(un)?restrict ' > "$RR"
+sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" | grep -vE '^\\(un)?restrict ' > "$RR"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/stubs-supabase.sql"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql"
 P --single-transaction -v ON_ERROR_STOP=1 -q -f "$RR"
 rm -f "$RR"
-
-# Aplica a migração da Fase 0.
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260613120000_onda1_fase0_sales_orders_identidade.sql"
-
 echo "── asserts ──"
-# (a) colunas + índices
 P -v ON_ERROR_STOP=1 -tA <<'SQL'
 DO $$
 BEGIN
-  ASSERT (SELECT count(*) FROM information_schema.columns
-    WHERE table_schema='public' AND table_name='sales_orders'
-      AND column_name IN ('origem','checkout_id','atendimento_id')) = 3, 'faltam colunas';
-  ASSERT (SELECT count(*) FROM pg_indexes WHERE indexname='sales_orders_checkout_account_uq')=1, 'falta unique idx';
-  ASSERT (SELECT count(*) FROM pg_indexes WHERE indexname='idx_sales_orders_origem')=1, 'falta origem idx';
+  ASSERT (SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='sales_orders'
+    AND column_name IN ('checkout_id','origem','atendimento_id'))=3, 'faltam colunas';
+  ASSERT (SELECT count(*) FROM pg_indexes WHERE indexname='sales_orders_checkout_account_uq')=1, 'falta uq checkout';
+  ASSERT (SELECT count(*) FROM pg_indexes WHERE indexname='sales_orders_account_omiepedido_uq')=1, 'falta uq omie';
+  ASSERT (SELECT count(*) FROM pg_indexes WHERE indexname='idx_sales_orders_origem')=1, 'falta idx origem';
   RAISE NOTICE 'OK colunas+indices';
 END $$;
 SQL
-
-# (b) semântica do único parcial — replica role desliga FK/trigger pra semear sem cadastros pais
-# (unique index continua sendo enforçado em replica role).
 P -v ON_ERROR_STOP=1 -tA <<'SQL'
-SET session_replication_role = replica;
+SET session_replication_role = replica;  -- desliga FK/trigger p/ semear; unique segue enforçado
 DO $$
 DECLARE ck uuid := gen_random_uuid();
 BEGIN
-  INSERT INTO sales_orders (customer_user_id, created_by, items, subtotal, total, status, account, checkout_id, origem)
-    VALUES (gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 0,0,'rascunho','oben', ck, 'ligacao_sainte');
+  INSERT INTO sales_orders (customer_user_id, created_by, items, subtotal, total, status, account, checkout_id)
+    VALUES (gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 0,0,'rascunho','oben', ck);
   BEGIN
-    INSERT INTO sales_orders (customer_user_id, created_by, items, subtotal, total, status, account, checkout_id, origem)
-      VALUES (gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 0,0,'rascunho','oben', ck, 'ligacao_sainte');
-    RAISE EXCEPTION 'FALHA: 2a linha (checkout,oben) deveria violar o unique';
-  EXCEPTION WHEN unique_violation THEN NULL; -- esperado
-  END;
-  -- mesma checkout, conta DIFERENTE: ok
-  INSERT INTO sales_orders (customer_user_id, created_by, items, subtotal, total, status, account, checkout_id, origem)
-    VALUES (gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 0,0,'rascunho','colacor', ck, 'ligacao_sainte');
-  -- checkout_id NULO: 2 linhas ok (parcial não indexa nulos)
-  INSERT INTO sales_orders (customer_user_id, created_by, items, subtotal, total, status, account)
-    VALUES (gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 0,0,'rascunho','oben');
-  INSERT INTO sales_orders (customer_user_id, created_by, items, subtotal, total, status, account)
-    VALUES (gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 0,0,'rascunho','oben');
-  RAISE NOTICE 'OK semantica do unique parcial';
+    INSERT INTO sales_orders (customer_user_id, created_by, items, subtotal, total, status, account, checkout_id)
+      VALUES (gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 0,0,'rascunho','oben', ck);
+    RAISE EXCEPTION 'FALHA: 2a (checkout,oben) deveria violar';
+  EXCEPTION WHEN unique_violation THEN NULL; END;
+  INSERT INTO sales_orders (customer_user_id, created_by, items, subtotal, total, status, account, checkout_id)
+    VALUES (gen_random_uuid(), gen_random_uuid(), '[]'::jsonb, 0,0,'rascunho','colacor', ck);  -- conta diferente ok
+  INSERT INTO sales_orders (customer_user_id, created_by, items, subtotal, total, status, account) VALUES
+    (gen_random_uuid(), gen_random_uuid(), '[]'::jsonb,0,0,'rascunho','oben'),
+    (gen_random_uuid(), gen_random_uuid(), '[]'::jsonb,0,0,'rascunho','oben');  -- 2 com checkout nulo ok
+  -- âncora omie_pedido_id: 2 linhas oben com o MESMO omie_pedido_id deve violar
+  INSERT INTO sales_orders (customer_user_id, created_by, items, subtotal, total, status, account, omie_pedido_id)
+    VALUES (gen_random_uuid(), gen_random_uuid(), '[]'::jsonb,0,0,'enviado','oben', 999001);
+  BEGIN
+    INSERT INTO sales_orders (customer_user_id, created_by, items, subtotal, total, status, account, omie_pedido_id)
+      VALUES (gen_random_uuid(), gen_random_uuid(), '[]'::jsonb,0,0,'enviado','oben', 999001);
+    RAISE EXCEPTION 'FALHA: 2a (oben,999001) deveria violar';
+  EXCEPTION WHEN unique_violation THEN NULL; END;
+  RAISE NOTICE 'OK semantica dos uniques parciais';
 END $$;
 SQL
 echo "FASE0 MIGRATION OK"
 ```
 
-- [ ] **Step 3: Rodar o teste e ver passar**
+- [ ] **Step 4: Rodar o teste**
 
 ```bash
 chmod +x db/test-fase0-sales-orders-identity.sh
 bash db/test-fase0-sales-orders-identity.sh
 ```
-Esperado: `OK colunas+indices`, `OK semantica do unique parcial`, `FASE0 MIGRATION OK`. (Se `postgresql@17` não estiver instalado: `brew install postgresql@17 pgvector` primeiro.)
+Esperado: `OK colunas+indices`, `OK semantica dos uniques parciais`, `FASE0 MIGRATION OK`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Typecheck (os tipos novos não quebram nada) + commit**
 
 ```bash
-git add supabase/migrations/20260613120000_onda1_fase0_sales_orders_identidade.sql db/test-fase0-sales-orders-identity.sh
-git commit -m "feat(onda1/fase0): migração de identidade+idempotência em sales_orders (origem/checkout_id/atendimento_id + unique parcial)"
+bun run typecheck
+git add supabase/migrations/20260613120000_onda1_fase0_sales_orders_identidade.sql src/integrations/supabase/types.ts db/test-fase0-sales-orders-identity.sh
+git commit -m "feat(onda1/fase0): migração idempotência sales_orders (checkout_id + uniques parciais) + types"
 ```
-
-> ⚠️ **A migração NÃO é aplicada pelo merge** (CLAUDE.md §5). O apply manual via SQL Editor + a query de validação estão na Task 9.
 
 ---
 
-## Task 2: Helper puro `decideSalesOrderAction`
+## Task 2: `decideSalesOrderAction` (predicado por `omie_pedido_id`)
 
 **Files:**
 - Create: `src/services/orderSubmission/idempotency.ts`
 - Test: `src/services/orderSubmission/__tests__/idempotency.test.ts`
 
-**Contexto:** Esta é a regra-mãe da idempotência client-side. Dado o que já existe em `sales_orders` para um `(checkout_id, account)`, decide: inserir (primeira vez), reusar (rascunho de tentativa anterior que não chegou no Omie) ou pular (já foi pro Omio = `status='enviado'`). O edge marca `status='enviado'` **junto** com `omie_pedido_id` no sucesso (`omie-vendas-sync` ~`:1372-1381`), então `status='enviado'` é o sinal confiável de "já enviado".
+**Contexto (P1-6):** o sinal de "já no Omie" é **`omie_pedido_id`**, NÃO o `status` — o sync de entrada muda `status` para `faturado`/`separacao`/`importado` (`omie-vendas-sync:1018`), então um pedido faturado com `status≠'enviado'` cairia em "reusar" e seria **reenviado**.
 
-- [ ] **Step 1: Escrever o teste que falha**
+- [ ] **Step 1: Teste que falha**
 
 Criar `src/services/orderSubmission/__tests__/idempotency.test.ts`:
 
@@ -197,17 +226,11 @@ describe('decideSalesOrderAction', () => {
   it('linha inexistente → insert', () => {
     expect(decideSalesOrderAction(null)).toBe('insert');
   });
-
-  it('status enviado → skip (idempotência: não re-enviar)', () => {
-    expect(decideSalesOrderAction({ status: 'enviado' })).toBe('skip');
+  it('já tem omie_pedido_id → skip (no Omie; não reenviar)', () => {
+    expect(decideSalesOrderAction({ omie_pedido_id: 12345 })).toBe('skip');
   });
-
-  it('status rascunho → reuse (tentativa anterior não chegou no Omie)', () => {
-    expect(decideSalesOrderAction({ status: 'rascunho' })).toBe('reuse');
-  });
-
-  it('qualquer status não-enviado → reuse', () => {
-    expect(decideSalesOrderAction({ status: 'cancelado' })).toBe('reuse');
+  it('omie_pedido_id null → reuse (rascunho de tentativa que não chegou no Omie)', () => {
+    expect(decideSalesOrderAction({ omie_pedido_id: null })).toBe('reuse');
   });
 });
 ```
@@ -217,7 +240,7 @@ describe('decideSalesOrderAction', () => {
 ```bash
 bun run test -- src/services/orderSubmission/__tests__/idempotency.test.ts
 ```
-Esperado: FALHA (`decideSalesOrderAction` não existe / módulo não encontrado).
+Esperado: FALHA (módulo não existe).
 
 - [ ] **Step 3: Implementar**
 
@@ -229,19 +252,18 @@ import type { SubmitClient } from './types';
 export type SalesOrderAction = 'insert' | 'reuse' | 'skip';
 
 /**
- * Decide o que fazer com a linha de sales_orders de um (checkout_id, account):
- *  - null               → 'insert' (primeira tentativa deste checkout/conta)
- *  - status === 'enviado'→ 'skip'   (já foi pro Omie; re-enviar duplicaria → idempotência)
- *  - qualquer outro      → 'reuse'  (rascunho de tentativa anterior que não chegou no Omie;
- *                                     reusa a MESMA linha → mesmo id → mesma chave determinística)
- * O edge grava status='enviado' JUNTO com omie_pedido_id no sucesso, então 'enviado' é o
- * sinal confiável de "já no Omie".
+ * Decide o que fazer com a linha de sales_orders de um (checkout_id, account).
+ * O sinal de "já no Omie" é omie_pedido_id (NÃO o status — o sync de entrada muda
+ * o status p/ faturado/separacao/importado após o envio; usar status reenviaria).
+ *  - null                → 'insert'
+ *  - omie_pedido_id != null → 'skip'  (idempotência: já está no Omie)
+ *  - omie_pedido_id null    → 'reuse' (tentativa anterior não chegou no Omie)
  */
 export function decideSalesOrderAction(
-  existing: { status: string } | null,
+  existing: { omie_pedido_id: number | null } | null,
 ): SalesOrderAction {
   if (!existing) return 'insert';
-  if (existing.status === 'enviado') return 'skip';
+  if (existing.omie_pedido_id != null) return 'skip';
   return 'reuse';
 }
 ```
@@ -251,117 +273,83 @@ export function decideSalesOrderAction(
 ```bash
 bun run test -- src/services/orderSubmission/__tests__/idempotency.test.ts
 ```
-Esperado: PASS (4 testes).
+Esperado: PASS (3 testes).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/services/orderSubmission/idempotency.ts src/services/orderSubmission/__tests__/idempotency.test.ts
-git commit -m "feat(onda1/fase0): decideSalesOrderAction (regra pura de idempotência do pedido)"
+git commit -m "feat(onda1/fase0): decideSalesOrderAction (predicado por omie_pedido_id)"
 ```
 
 ---
 
-## Task 3: Helper I/O `ensureSalesOrderRow`
+## Task 3: `ensureSalesOrderRow` (insert-or-get idempotente)
 
 **Files:**
 - Modify: `src/services/orderSubmission/idempotency.ts`
 - Modify: `src/services/orderSubmission/__tests__/idempotency.test.ts`
 
-**Contexto:** Wrapper de I/O que: busca a linha por `(checkout_id, account)` → decide (via Task 2) → pula / atualiza (refresca itens da tentativa atual) / insere. Trata corrida concorrente (23505 entre o SELECT e o INSERT) re-buscando. Retorna `{ id, alreadySent }`. O `submitOrder` (Task 4) chama isso no lugar dos `.insert()` crus.
+**Contexto:** busca por `(checkout_id, account)` → decide (Task 2) → pula (já no Omie) / atualiza itens (rascunho reusado) / insere (com 23505→re-busca). Retorna `{ id, alreadySent }`.
 
-- [ ] **Step 1: Escrever o teste que falha**
+- [ ] **Step 1: Teste que falha**
 
-Adicionar a `src/services/orderSubmission/__tests__/idempotency.test.ts`:
+Adicionar a `idempotency.test.ts`:
 
 ```ts
 import { ensureSalesOrderRow } from '../idempotency';
 import type { SubmitClient } from '../types';
 
-// Fake mínimo do supabase: só os métodos encadeados que ensureSalesOrderRow usa.
 function makeFakeSupabase(opts: {
-  existing?: { id: string; status: string } | null;
+  existing?: { id: string; omie_pedido_id: number | null } | null;
   insertResult?: { data: { id: string } | null; error: { code?: string } | null };
 }) {
-  const calls = { inserted: false, updated: false, selected: false };
+  const calls = { inserted: false, updated: false };
   const fake = {
     from() { return this; },
     select() { return this; },
     eq() { return this; },
-    maybeSingle: async () => {
-      calls.selected = true;
-      return { data: opts.existing ?? null, error: null };
-    },
-    insert(_row: unknown) {
-      calls.inserted = true;
-      return {
-        select() { return this; },
-        single: async () => opts.insertResult ?? { data: { id: 'new-id' }, error: null },
-      };
-    },
-    update(_fields: unknown) {
-      calls.updated = true;
-      return { eq: async () => ({ error: null }) };
-    },
+    maybeSingle: async () => ({ data: opts.existing ?? null, error: null }),
+    insert(_r: unknown) { calls.inserted = true; return {
+      select() { return this; },
+      single: async () => opts.insertResult ?? { data: { id: 'NEW' }, error: null },
+    }; },
+    update(_f: unknown) { calls.updated = true; return { eq: async () => ({ error: null }) }; },
   };
   return { fake: fake as unknown as SubmitClient, calls };
 }
 
 const baseArgs = {
-  checkoutId: 'ck-1',
-  account: 'oben',
-  origem: 'web_staff',
-  atendimentoId: null,
-  fields: {
-    customer_user_id: 'u1', created_by: 'u1', items: [], subtotal: 0, total: 0,
-    notes: null, customer_address: null, customer_phone: null, ready_by_date: null,
-  },
+  checkoutId: 'ck-1', account: 'oben', origem: null, atendimentoId: null,
+  fields: { customer_user_id: 'u1', created_by: 'u1', items: [], subtotal: 0, total: 0,
+    notes: null, customer_address: null, customer_phone: null, ready_by_date: null },
 };
 
 describe('ensureSalesOrderRow', () => {
-  it('não existe → insere e retorna alreadySent=false', async () => {
+  it('não existe → insere (alreadySent=false)', async () => {
     const { fake, calls } = makeFakeSupabase({ existing: null, insertResult: { data: { id: 'X' }, error: null } });
-    const r = await ensureSalesOrderRow(fake, baseArgs);
-    expect(r).toEqual({ id: 'X', alreadySent: false });
+    expect(await ensureSalesOrderRow(fake, baseArgs)).toEqual({ id: 'X', alreadySent: false });
     expect(calls.inserted).toBe(true);
   });
-
-  it('existe e enviado → pula (alreadySent=true), não insere nem atualiza', async () => {
-    const { fake, calls } = makeFakeSupabase({ existing: { id: 'Y', status: 'enviado' } });
-    const r = await ensureSalesOrderRow(fake, baseArgs);
-    expect(r).toEqual({ id: 'Y', alreadySent: true });
-    expect(calls.inserted).toBe(false);
-    expect(calls.updated).toBe(false);
+  it('existe com omie_pedido_id → skip (alreadySent=true), não muta', async () => {
+    const { fake, calls } = makeFakeSupabase({ existing: { id: 'Y', omie_pedido_id: 99 } });
+    expect(await ensureSalesOrderRow(fake, baseArgs)).toEqual({ id: 'Y', alreadySent: true });
+    expect(calls.inserted).toBe(false); expect(calls.updated).toBe(false);
   });
-
-  it('existe e rascunho → reusa a linha (update) com alreadySent=false', async () => {
-    const { fake, calls } = makeFakeSupabase({ existing: { id: 'Z', status: 'rascunho' } });
-    const r = await ensureSalesOrderRow(fake, baseArgs);
-    expect(r).toEqual({ id: 'Z', alreadySent: false });
-    expect(calls.updated).toBe(true);
-    expect(calls.inserted).toBe(false);
+  it('existe sem omie_pedido_id → reusa (update, alreadySent=false)', async () => {
+    const { fake, calls } = makeFakeSupabase({ existing: { id: 'Z', omie_pedido_id: null } });
+    expect(await ensureSalesOrderRow(fake, baseArgs)).toEqual({ id: 'Z', alreadySent: false });
+    expect(calls.updated).toBe(true); expect(calls.inserted).toBe(false);
   });
-
-  it('corrida: insert dá 23505 → re-busca e reusa', async () => {
-    // existing=null no 1º SELECT, mas o INSERT colide; o 2º SELECT acha a linha.
-    let selectCount = 0;
+  it('corrida: insert 23505 → re-busca e reusa', async () => {
+    let n = 0;
     const fake = {
-      from() { return this; },
-      select() { return this; },
-      eq() { return this; },
-      maybeSingle: async () => {
-        selectCount += 1;
-        return selectCount === 1
-          ? { data: null, error: null }
-          : { data: { id: 'RACED', status: 'rascunho' }, error: null };
-      },
-      insert() {
-        return { select() { return this; }, single: async () => ({ data: null, error: { code: '23505' } }) };
-      },
+      from() { return this; }, select() { return this; }, eq() { return this; },
+      maybeSingle: async () => (++n === 1 ? { data: null, error: null } : { data: { id: 'RACED', omie_pedido_id: null }, error: null }),
+      insert() { return { select() { return this; }, single: async () => ({ data: null, error: { code: '23505' } }) }; },
       update() { return { eq: async () => ({ error: null }) }; },
     } as unknown as SubmitClient;
-    const r = await ensureSalesOrderRow(fake, baseArgs);
-    expect(r).toEqual({ id: 'RACED', alreadySent: false });
+    expect(await ensureSalesOrderRow(fake, baseArgs)).toEqual({ id: 'RACED', alreadySent: false });
   });
 });
 ```
@@ -381,29 +369,21 @@ Adicionar a `src/services/orderSubmission/idempotency.ts`:
 export interface EnsureSalesOrderArgs {
   checkoutId: string;
   account: string;
-  origem: string;
+  origem: string | null;
   atendimentoId: string | null;
-  /** Campos derivados do carrinho (NÃO inclui status/account/checkout_id/origem/atendimento_id). */
   fields: {
-    customer_user_id: string;
-    created_by: string;
-    items: unknown;
-    subtotal: number;
-    total: number;
-    notes: string | null;
-    customer_address: string | null;
-    customer_phone: string | null;
-    ready_by_date: string | null;
+    customer_user_id: string; created_by: string; items: unknown;
+    subtotal: number; total: number; notes: string | null;
+    customer_address: string | null; customer_phone: string | null; ready_by_date: string | null;
   };
 }
 
 /**
- * Garante UMA linha de sales_orders por (checkout_id, account), idempotente:
- *  - já 'enviado' → não toca (alreadySent=true) → o caller PULA o edge (sem duplicar).
- *  - rascunho     → atualiza os campos do carrinho atual e reusa o MESMO id.
- *  - inexistente  → insere; em corrida (23505) re-busca e reusa.
- * O id retornado é estável entre retries do mesmo checkout → a chave determinística do
- * edge (PV_<id>) também é → o Omie deduplica.
+ * Garante 1 linha de sales_orders por (checkout_id, account), idempotente:
+ *  - já no Omie (omie_pedido_id) → não toca; alreadySent=true → o caller PULA o edge.
+ *  - rascunho                    → atualiza os campos do carrinho atual; reusa o id.
+ *  - inexistente                 → insere; em corrida (23505) re-busca e reusa.
+ * O id é estável entre retries do mesmo checkout → a chave determinística PV_<id> também.
  */
 export async function ensureSalesOrderRow(
   supabase: SubmitClient,
@@ -411,62 +391,37 @@ export async function ensureSalesOrderRow(
 ): Promise<{ id: string; alreadySent: boolean }> {
   const { checkoutId, account, origem, atendimentoId, fields } = args;
 
-  const findExisting = async (): Promise<{ id: string; status: string } | null> => {
+  const findExisting = async (): Promise<{ id: string; omie_pedido_id: number | null } | null> => {
     const { data, error } = await supabase
-      .from('sales_orders')
-      .select('id, status')
-      .eq('checkout_id', checkoutId)
-      .eq('account', account)
-      .maybeSingle();
+      .from('sales_orders').select('id, omie_pedido_id')
+      .eq('checkout_id', checkoutId).eq('account', account).maybeSingle();
     if (error) throw error;
-    return (data as { id: string; status: string } | null) ?? null;
+    return (data as { id: string; omie_pedido_id: number | null } | null) ?? null;
   };
 
   const existing = await findExisting();
   const action = decideSalesOrderAction(existing);
 
-  if (action === 'skip') {
-    return { id: existing!.id, alreadySent: true };
-  }
+  if (action === 'skip') return { id: existing!.id, alreadySent: true };
 
   if (action === 'reuse') {
-    const { error } = await supabase
-      .from('sales_orders')
-      .update({
-        items: fields.items,
-        subtotal: fields.subtotal,
-        total: fields.total,
-        notes: fields.notes,
-        customer_address: fields.customer_address,
-        customer_phone: fields.customer_phone,
-        ready_by_date: fields.ready_by_date,
-      })
-      .eq('id', existing!.id);
+    const { error } = await supabase.from('sales_orders').update({
+      items: fields.items, subtotal: fields.subtotal, total: fields.total, notes: fields.notes,
+      customer_address: fields.customer_address, customer_phone: fields.customer_phone,
+      ready_by_date: fields.ready_by_date,
+    }).eq('id', existing!.id);
     if (error) throw error;
     return { id: existing!.id, alreadySent: false };
   }
 
-  // action === 'insert'
-  const { data, error } = await supabase
-    .from('sales_orders')
-    .insert({
-      ...fields,
-      status: 'rascunho',
-      account,
-      checkout_id: checkoutId,
-      origem,
-      atendimento_id: atendimentoId,
-    })
-    .select('id')
-    .single();
+  const { data, error } = await supabase.from('sales_orders').insert({
+    ...fields, status: 'rascunho', account, checkout_id: checkoutId, origem, atendimento_id: atendimentoId,
+  }).select('id').single();
 
   if (error) {
-    // 23505 = unique_violation: corrida concorrente criou a linha entre o SELECT e o INSERT.
     if ((error as { code?: string }).code === '23505') {
       const raced = await findExisting();
-      if (raced) {
-        return { id: raced.id, alreadySent: decideSalesOrderAction(raced) === 'skip' };
-      }
+      if (raced) return { id: raced.id, alreadySent: decideSalesOrderAction(raced) === 'skip' };
     }
     throw error;
   }
@@ -479,55 +434,271 @@ export async function ensureSalesOrderRow(
 ```bash
 bun run test -- src/services/orderSubmission/__tests__/idempotency.test.ts
 ```
-Esperado: PASS (8 testes — 4 da Task 2 + 4 desta).
+Esperado: PASS (7 testes).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/services/orderSubmission/idempotency.ts src/services/orderSubmission/__tests__/idempotency.test.ts
-git commit -m "feat(onda1/fase0): ensureSalesOrderRow (insert-or-get idempotente por checkout_id+account)"
+git commit -m "feat(onda1/fase0): ensureSalesOrderRow (insert-or-get; skip se já no Omie)"
 ```
 
 ---
 
-## Task 4: Plumbar idempotência + origem em `submitOrder`
+## Task 4: Helpers puros do edge — chave determinística + detector de duplicado
+
+**Files:**
+- Create: `src/lib/omie/pedido-integration-code.ts` + `src/lib/omie/pedido-duplicate.ts`
+- Test: `src/lib/omie/__tests__/pedido-integration-code.test.ts` + `pedido-duplicate.test.ts`
+
+**Contexto:** dois helpers puros, **espelhados verbatim no edge** (Deno não importa de `src/`). (1) chave determinística. (2) detector de duplicado — **lê `Error.message`** porque `callOmieVendasApi` **lança** em fault (P2), não retorna o objeto.
+
+- [ ] **Step 1: Testes que falham**
+
+Criar `src/lib/omie/__tests__/pedido-integration-code.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { buildPedidoIntegrationCode } from '../pedido-integration-code';
+describe('buildPedidoIntegrationCode', () => {
+  const id = '550e8400-e29b-41d4-a716-446655440000';
+  it('determinístico', () => { expect(buildPedidoIntegrationCode(id)).toBe(buildPedidoIntegrationCode(id)); });
+  it('formato PV_<uuid> sem timestamp', () => { expect(buildPedidoIntegrationCode(id)).toBe(`PV_${id}`); });
+  it('cabe em 60 chars (limite Omie)', () => { expect(buildPedidoIntegrationCode(id).length).toBeLessThan(60); });
+});
+```
+
+Criar `src/lib/omie/__tests__/pedido-duplicate.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { isOmieDuplicatePedido } from '../pedido-duplicate';
+describe('isOmieDuplicatePedido', () => {
+  it('Error com "já cadastrado"', () => { expect(isOmieDuplicatePedido(new Error('Pedido já cadastrado p/ o código de integração'))).toBe(true); });
+  it('Error "ja cadastrado" sem acento', () => { expect(isOmieDuplicatePedido(new Error('codigo de integracao ja cadastrado'))).toBe(true); });
+  it('string crua também', () => { expect(isOmieDuplicatePedido('integração já cadastrada')).toBe(true); });
+  it('outro erro → false', () => { expect(isOmieDuplicatePedido(new Error('Cliente não encontrado'))).toBe(false); });
+  it('null/forma inesperada → false', () => {
+    expect(isOmieDuplicatePedido(null)).toBe(false);
+    expect(isOmieDuplicatePedido({})).toBe(false);
+  });
+});
+```
+
+- [ ] **Step 2: Rodar e ver falhar**
+
+```bash
+bun run test -- src/lib/omie/__tests__/pedido-integration-code.test.ts src/lib/omie/__tests__/pedido-duplicate.test.ts
+```
+Esperado: FALHA (módulos não existem).
+
+- [ ] **Step 3: Implementar**
+
+Criar `src/lib/omie/pedido-integration-code.ts`:
+
+```ts
+/**
+ * cCodIntPed determinístico do pedido de venda. PV_<uuid> (39 chars < 60, limite Omie).
+ * Determinístico (sem Date.now, sem truncar) → re-enviar o mesmo sales_order_id gera a
+ * mesma chave → o Omie rejeita a duplicata → idempotência.
+ * ⚠️ ESPELHADO verbatim em supabase/functions/omie-vendas-sync/index.ts.
+ */
+export function buildPedidoIntegrationCode(salesOrderId: string): string {
+  return `PV_${salesOrderId}`;
+}
+```
+
+Criar `src/lib/omie/pedido-duplicate.ts`:
+
+```ts
+/**
+ * Detecta a resposta do Omie de codigo_pedido_integracao DUPLICADO. Lê de Error.message
+ * (callOmieVendasApi LANÇA em fault) ou string crua. ⚠️ ESPELHADO no edge. As frases
+ * devem bater com a faultstring REAL do Omie (confirmar na Task 8).
+ */
+export function isOmieDuplicatePedido(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : typeof err === 'string' ? err : '').toLowerCase();
+  if (!msg) return false;
+  return msg.includes('já cadastrad') || msg.includes('ja cadastrad')
+    || (msg.includes('integra') && msg.includes('cadastrad'));
+}
+```
+
+- [ ] **Step 4: Rodar e ver passar**
+
+```bash
+bun run test -- src/lib/omie/__tests__/pedido-integration-code.test.ts src/lib/omie/__tests__/pedido-duplicate.test.ts
+```
+Esperado: PASS (8 testes).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/omie/pedido-integration-code.ts src/lib/omie/pedido-duplicate.ts src/lib/omie/__tests__/
+git commit -m "feat(onda1/fase0): helpers puros — chave determinística + detector de duplicado (Error.message)"
+```
+
+---
+
+## Task 5: Edge `criarPedidoVenda` — chave determinística + write-back checado + reconciliação + OP determinística
+
+**Files:**
+- Modify: `supabase/functions/omie-vendas-sync/index.ts`
+
+**Contexto:** money-path. Mudanças em `criarPedidoVenda` (e a OP em `criar_ordem_producao`):
+1. chave `PV_${salesOrderId}` (determinística).
+2. write-back do sucesso **com erro checado** (P1-5 — hoje o `.update()` ignora erro → linha órfã).
+3. **reconciliação obrigatória** (P1-5/A6): no fault "já cadastrado" do Omie, `ConsultarPedido({codigo_pedido_integracao})` → write-back → sucesso.
+4. chave da OP determinística (P1-8): `OP_${salesOrderId}_${omie_codigo_produto}` (sem `Date.now()`).
+
+- [ ] **Step 1: Ler o tratamento de fault do `callOmieVendasApi`**
+
+Em `supabase/functions/omie-vendas-sync/index.ts`, ler `callOmieVendasApi` (~`:230-260`) e confirmar: ela **lança** `Error` no fault do Omie (Codex apontou `:257`). Isso define que a detecção de duplicado fica num `try/catch` em volta do `IncluirPedido`, lendo `err` (não `result`). Confirmar a forma exata e ajustar o Step 2 se necessário.
+
+- [ ] **Step 2: Aplicar as mudanças em `criarPedidoVenda`**
+
+(a) Trocar a linha da chave:
+
+```ts
+  const cCodIntPed = `PV_${salesOrderId.substring(0, 8)}_${Date.now()}`;
+```
+por (com os mirrors inline — Deno não importa de `src/`):
+```ts
+  // Determinístico (espelha src/lib/omie/pedido-integration-code.ts): re-enviar o mesmo
+  // sales_order_id gera a MESMA chave → o Omie rejeita a duplicata (idempotência).
+  const cCodIntPed = `PV_${salesOrderId}`;
+  // Espelha src/lib/omie/pedido-duplicate.ts (callOmieVendasApi LANÇA em fault).
+  const isOmieDuplicatePedido = (e: unknown): boolean => {
+    const m = (e instanceof Error ? e.message : typeof e === 'string' ? e : '').toLowerCase();
+    return !!m && (m.includes('já cadastrad') || m.includes('ja cadastrad') || (m.includes('integra') && m.includes('cadastrad')));
+  };
+```
+
+(b) Envolver a chamada `IncluirPedido` num try/catch que reconcilia o duplicado. Substituir o bloco:
+
+```ts
+  const result = await callOmieVendasApi("produtos/pedido/", "IncluirPedido", payload, account);
+  if (!result) {
+    throw new Error(`Omie (${account}) não respondeu ... Tente novamente em alguns segundos.`);
+  }
+  const omie_pedido_id = (result.codigo_pedido as number | undefined) || null;
+  const omie_numero_pedido = (result.numero_pedido as string | number | undefined) || cCodIntPed;
+  // Atualizar sales_order com dados do Omie
+  await supabase.from("sales_orders").update({ omie_pedido_id, omie_numero_pedido: String(omie_numero_pedido), omie_payload: payload, omie_response: result, status: "enviado" }).eq("id", salesOrderId);
+  return { omie_pedido_id, omie_numero_pedido };
+```
+
+por:
+
+```ts
+  let omie_pedido_id: number | null;
+  let omie_numero_pedido: string | number;
+  let omie_response: unknown = null;
+  try {
+    const result = await callOmieVendasApi("produtos/pedido/", "IncluirPedido", payload, account);
+    if (!result) {
+      throw new Error(`Omie (${account}) não respondeu ao incluir pedido (provável rate limit 429 após retries). Tente novamente em alguns segundos.`);
+    }
+    omie_pedido_id = (result.codigo_pedido as number | undefined) || null;
+    omie_numero_pedido = (result.numero_pedido as string | number | undefined) || cCodIntPed;
+    omie_response = result;
+  } catch (e) {
+    // Reconciliação (idempotência): se a chave determinística já existe no Omie (tentativa
+    // anterior criou o pedido mas o write-back falhou), consultar e vincular em vez de falhar.
+    if (!isOmieDuplicatePedido(e)) throw e;
+    const consulta = await callOmieVendasApi(
+      "produtos/pedido/", "ConsultarPedido", { codigo_pedido_integracao: cCodIntPed }, account,
+    ) as { pedido_venda_produto?: { cabecalho?: { codigo_pedido?: number; numero_pedido?: string | number } } } | null;
+    const cab = consulta?.pedido_venda_produto?.cabecalho;
+    if (!cab?.codigo_pedido) {
+      throw new Error(`Omie (${account}) reportou pedido duplicado mas ConsultarPedido(${cCodIntPed}) não retornou o pedido — reconciliação falhou.`);
+    }
+    omie_pedido_id = cab.codigo_pedido;
+    omie_numero_pedido = cab.numero_pedido ?? cab.codigo_pedido;
+    omie_response = { reconciled: true, consulta };
+  }
+
+  // Write-back COM erro checado (P1-5): se falhar, NÃO retornar sucesso — a linha ficaria
+  // órfã (rascunho) com o pedido já no Omie. Lançar → o retry reconcilia via a chave determinística.
+  const { error: wbError } = await supabase.from("sales_orders").update({
+    omie_pedido_id, omie_numero_pedido: String(omie_numero_pedido),
+    omie_payload: payload, omie_response, status: "enviado",
+  }).eq("id", salesOrderId);
+  if (wbError) {
+    throw new Error(`Pedido criado no Omie (${omie_pedido_id}) mas o write-back em sales_orders falhou: ${wbError.message}. Retry vai reconciliar.`);
+  }
+  return { omie_pedido_id, omie_numero_pedido };
+```
+
+(c) **Chave da OP determinística** (P1-8). Localizar `cCodIntOP: \`OP_${opSalesId.substring(0, 8)}_${opItem.omie_codigo_produto}_${Date.now()}\`` e trocar por:
+
+```ts
+            cCodIntOP: `OP_${opSalesId}_${opItem.omie_codigo_produto}`,
+```
+
+> ⚠️ **Janela de omissão da OP (registrada, não-objetivo da Fase 0):** após os fixes, a OP **não duplica** (o retry de um PV já-enviado é PULADO no client → `criar_ordem_producao` não re-dispara). O resíduo é **omissão** (browser morre entre o PV ok e a invocação da OP). Recuperar a OP omitida é follow-up (ex.: garantir-OP no skip). A chave determinística é seguro adicional.
+
+- [ ] **Step 3: `deno check` (net-zero de erros) — informativo**
+
+O CI não roda `deno check`; o runtime do Supabase compila. Conferir visualmente que o diff não introduz erro novo de tipo (o `omie-vendas-sync` já tem 4 erros pré-existentes de typing do supabase-js — net-zero).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add supabase/functions/omie-vendas-sync/index.ts
+git commit -m "feat(onda1/fase0): edge idempotente — chave determinística + write-back checado + reconciliação + OP determinística"
+```
+
+> ⚠️ Deploy manual via Lovable **após o merge** (Task 8). A verificação de comportamento real (dedup + reconciliação) está na Task 8.
+
+---
+
+## Task 6: `submitOrder` — usar `ensureSalesOrderRow` + flag `allConfirmed`
 
 **Files:**
 - Modify: `src/services/orderSubmission/types.ts`
 - Modify: `src/services/orderSubmission/submitOrder.ts`
 
-**Contexto:** Trocar os dois `.insert()` crus (Oben `:103-116`, Colacor `:192-205`) por `ensureSalesOrderRow`, e **pular o edge** quando `alreadySent`. Os blocos são quase idênticos. A `origem`/`checkout_id`/`atendimento_id` chegam por `params`. O bloco de afiação (`serviceItems`, via `syncOrderToOmie`) **não** muda (não escreve em `sales_orders` — fora do escopo).
+**Contexto:** trocar os dois `.insert()` (Oben `:103`, Colacor `:192`) por `ensureSalesOrderRow`; pular o edge se `alreadySent`; e expor **`allConfirmed`** no resultado (P1-2 — o caller só reseta/limpa em sucesso TOTAL). O bloco de afiação (`syncOrderToOmie`) **não** muda.
 
-- [ ] **Step 1: Adicionar campos a `SubmitOrderParams`**
+- [ ] **Step 1: `SubmitOrderParams` + `SubmitOrderResult`**
 
-Em `src/services/orderSubmission/types.ts`, dentro de `SubmitOrderParams` (após `isCustomerMode?`):
+Em `src/services/orderSubmission/types.ts`, em `SubmitOrderParams` (após `isCustomerMode?`):
 
 ```ts
-  /** Chave de idempotência por TENTATIVA de envio (estável entre retries do mesmo checkout). */
+  /** Chave de idempotência por TENTATIVA de envio (estável entre retries; ver useUnifiedOrder). */
   checkoutId: string;
-  /** Canal de origem do pedido: 'web_staff' | 'web_customer' | 'ligacao_sainte' | ... (Fase 1+). */
-  origem: string;
-  /** Liga a ligação (ou atendimento) aos N pedidos gerados. null na Fase 0 (Fase 1 preenche). */
+  /** Canal de origem. Na Fase 0 é null/'web_*'; a Fase 1 grava 'ligacao_sainte' etc. */
+  origem?: string | null;
+  /** Liga ligação ↔ N pedidos. null na Fase 0 (Fase 1 preenche). */
   atendimentoId?: string | null;
 ```
 
-- [ ] **Step 2: Importar o helper + destruturar os novos params em `submitOrder.ts`**
+E em `SubmitOrderResult` (após `errors`):
 
-No topo de `src/services/orderSubmission/submitOrder.ts`, adicionar ao bloco de imports:
+```ts
+  /** true só quando TODA conta com itens foi confirmada/reconciliada (sem 'pendente ERP').
+   *  O caller usa isso p/ decidir limpar o carrinho + resetar o checkout_id (idempotência). */
+  allConfirmed: boolean;
+```
+
+- [ ] **Step 2: Import + destructuring + helper de resultado**
+
+No topo de `submitOrder.ts`:
 
 ```ts
 import { ensureSalesOrderRow } from './idempotency';
 ```
 
-No destructuring de `params` (atualmente termina em `isCustomerMode = false,`), adicionar:
+No destructuring de `params`, adicionar:
 
 ```ts
-    checkoutId, origem, atendimentoId = null,
+    checkoutId, origem = null, atendimentoId = null,
 ```
 
-- [ ] **Step 3: Substituir o bloco de insert Oben**
+- [ ] **Step 3: Bloco Oben — `ensureSalesOrderRow` + skip + marca de erro de sync**
 
-Substituir TODO o bloco do insert Oben (de `let salesOrderId: string;` até o fim do `catch` que retorna `errors: [{ step: 'insert_oben', message }]`) por:
+Substituir o `let salesOrderId: string; try { ...insert... } catch {...}` do Oben por:
 
 ```ts
     let salesOrderId: string;
@@ -536,210 +707,135 @@ Substituir TODO o bloco do insert Oben (de `let salesOrderId: string;` até o fi
       const ensured = await ensureSalesOrderRow(supabase, {
         checkoutId, account: 'oben', origem, atendimentoId,
         fields: {
-          customer_user_id: customerUserId || user.id,
-          created_by: user.id,
-          items: itemsPayload,
-          subtotal: subtotals.oben,
-          total: subtotals.oben,
-          notes: meta.notes || null,
-          customer_address: storedAddress,
-          customer_phone: storedPhone,
-          ready_by_date: meta.readyByDate || null,
+          customer_user_id: customerUserId || user.id, created_by: user.id, items: itemsPayload,
+          subtotal: subtotals.oben, total: subtotals.oben, notes: meta.notes || null,
+          customer_address: storedAddress, customer_phone: storedPhone, ready_by_date: meta.readyByDate || null,
         },
       });
-      salesOrderId = ensured.id;
-      alreadySent = ensured.alreadySent;
+      salesOrderId = ensured.id; alreadySent = ensured.alreadySent;
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Erro ao inserir pedido Oben';
       logger.critical('Failed to ensure sales_order in Supabase — aborting', {
-        stage: 'supabase_insert',
-        account: 'oben',
-        customerId: customer.codigo_cliente,
-        customerUserId: customerUserId || user.id,
-        itemCount: obenProductItems.length,
-        error: e,
+        stage: 'supabase_insert', account: 'oben', customerId: customer.codigo_cliente,
+        customerUserId: customerUserId || user.id, itemCount: obenProductItems.length, error: e,
       });
-      return {
-        success: false,
-        results,
-        printDataList: [],
-        lastOrderData: null,
-        errors: [{ step: 'insert_oben', message }],
-      };
+      return { success: false, results, printDataList: [], lastOrderData: null,
+        errors: [{ step: 'insert_oben', message }], allConfirmed: false };
     }
-```
 
-E logo em seguida, **envolver o invoke do edge** num guard `alreadySent`. O bloco `try { const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {...}) ... }` vira:
-
-```ts
     if (alreadySent) {
-      // Idempotência: este checkout/conta já foi pro Omie numa tentativa anterior.
-      // NÃO re-invocar o edge (evita 2ª chamada + protege a OP do bloco Colacor).
       results.push('PV Oben (já enviado)');
     } else {
       try {
         const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
           body: {
             action: 'criar_pedido', account: 'oben', sales_order_id: salesOrderId,
-            codigo_cliente: customer.codigo_cliente,
-            codigo_vendedor: customer.codigo_vendedor,
+            codigo_cliente: customer.codigo_cliente, codigo_vendedor: customer.codigo_vendedor,
             items: obenProductItems.map(c => ({
-              omie_codigo_produto: c.product.omie_codigo_produto,
-              quantidade: c.quantity,
-              valor_unitario: c.unit_price,
+              omie_codigo_produto: c.product.omie_codigo_produto, quantidade: c.quantity, valor_unitario: c.unit_price,
               descricao: c.product.descricao,
               ...(c.tint_cor_id ? { tint_cor_id: c.tint_cor_id, tint_nome_cor: c.tint_nome_cor } : {}),
             })),
-            observacao: meta.notes,
-            codigo_parcela: payment.parcelaOben,
-            quantidade_volumes: volumes.oben || undefined,
-            ordem_compra: meta.ordemCompra || undefined,
+            observacao: meta.notes, codigo_parcela: payment.parcelaOben,
+            quantidade_volumes: volumes.oben || undefined, ordem_compra: meta.ordemCompra || undefined,
           },
         });
-        if (!omieError) {
-          results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
-        } else {
-          results.push('PV Oben (pendente ERP)');
-          errors.push({ step: 'sync_oben_omie', message: omieError.message || 'Falha ao sincronizar Oben com Omie' });
-        }
+        if (!omieError) results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
+        else { results.push('PV Oben (pendente ERP)'); errors.push({ step: 'sync_oben_omie', message: omieError.message || 'Falha ao sincronizar Oben com Omie' }); }
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : 'Falha ao sincronizar Oben com Omie';
-        logger.error('Oben Omie sync exception', {
-          stage: 'omie_sync', account: 'oben', customerId: customer.codigo_cliente, salesOrderId, error: e,
-        });
-        results.push('PV Oben (pendente ERP)');
-        errors.push({ step: 'sync_oben_omie', message });
+        logger.error('Oben Omie sync exception', { stage: 'omie_sync', account: 'oben', customerId: customer.codigo_cliente, salesOrderId, error: e });
+        results.push('PV Oben (pendente ERP)'); errors.push({ step: 'sync_oben_omie', message });
       }
     }
 ```
 
-- [ ] **Step 4: Substituir o bloco de insert Colacor (mesmo padrão)**
+> Mantém os itens no body (o edge usa o body). Como o client grava `itemsPayload` na linha **e** envia os mesmos itens, não há divergência DB×Omie no nosso fluxo (1 vendedora, sem retries-com-edição-concorrente). Belt-and-suspenders "edge lê itens da linha" = follow-up se a concorrência crescer.
 
-No bloco Colacor, substituir o `let salesOrderId: string; try { ...insert... } catch {...}` por `ensureSalesOrderRow` (igual ao Oben, trocando `account: 'colacor'`, `subtotals.colacor`, `colacorProductItems.length`, e `customerId: customer.codigo_cliente_colacor || customer.codigo_cliente`):
+- [ ] **Step 4: Bloco Colacor — mesmo padrão**
 
-```ts
-    let salesOrderId: string;
-    let alreadySent: boolean;
-    try {
-      const ensured = await ensureSalesOrderRow(supabase, {
-        checkoutId, account: 'colacor', origem, atendimentoId,
-        fields: {
-          customer_user_id: customerUserId || user.id,
-          created_by: user.id,
-          items: itemsPayload,
-          subtotal: subtotals.colacor,
-          total: subtotals.colacor,
-          notes: meta.notes || null,
-          customer_address: storedAddress,
-          customer_phone: storedPhone,
-          ready_by_date: meta.readyByDate || null,
-        },
-      });
-      salesOrderId = ensured.id;
-      alreadySent = ensured.alreadySent;
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : 'Erro ao inserir pedido Colacor';
-      logger.critical('Failed to ensure sales_order in Supabase — aborting', {
-        stage: 'supabase_insert', account: 'colacor',
-        customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
-        customerUserId: customerUserId || user.id,
-        itemCount: colacorProductItems.length, error: e,
-      });
-      return {
-        success: false, results, printDataList: [], lastOrderData: null,
-        errors: [...errors, { step: 'insert_colacor', message }],
-      };
-    }
-```
+Repetir o padrão no Colacor (`account: 'colacor'`, `subtotals.colacor`, `customer.codigo_cliente_colacor!`, `customer.codigo_vendedor_colacor ?? null`, `payment.parcelaColacor`, `volumes.colacor`). O bloco da OP (`criar_ordem_producao`) fica **dentro** do `if (!omieError)` (preservar **verbatim** o filtro `produtoAcabadoItems` + invoke) → no `alreadySent`, OP é pulada junto.
 
-E envolver o invoke Colacor com o mesmo guard. **Importante:** o bloco da OP (`criar_ordem_producao`, dentro do `if (!omieError)`) fica **dentro** do `else { ... }` — então, quando `alreadySent`, o edge E a OP são pulados (a OP já foi criada na tentativa que enviou):
+- [ ] **Step 5: Computar `allConfirmed` no retorno final**
+
+No `return { success: true, ... }` final, adicionar:
 
 ```ts
-    if (alreadySent) {
-      results.push('PV Colacor (já enviado)');
-    } else {
-      try {
-        const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
-          body: {
-            action: 'criar_pedido', account: 'colacor', sales_order_id: salesOrderId,
-            codigo_cliente: customer.codigo_cliente_colacor!,
-            codigo_vendedor: customer.codigo_vendedor_colacor ?? null,
-            items: colacorProductItems.map(c => ({
-              omie_codigo_produto: c.product.omie_codigo_produto,
-              quantidade: c.quantity,
-              valor_unitario: c.unit_price,
-            })),
-            observacao: meta.notes,
-            codigo_parcela: payment.parcelaColacor,
-            quantidade_volumes: volumes.colacor || undefined,
-            ordem_compra: meta.ordemCompra || undefined,
-          },
-        });
-        if (!omieError) {
-          results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
-          // ⬇️ MANTER o bloco existente de auto-create production orders (produto acabado)
-          //    verbatim aqui dentro — ele não muda. (filtro produtoAcabadoItems + criar_ordem_producao)
-        } else {
-          results.push('PV Colacor (pendente ERP)');
-          errors.push({ step: 'sync_colacor_omie', message: omieError.message || 'Falha ao sincronizar Colacor com Omie' });
-        }
-      } catch (e: unknown) {
-        const message = e instanceof Error ? e.message : 'Falha ao sincronizar Colacor com Omie';
-        logger.error('Colacor Omie sync exception', {
-          stage: 'omie_sync', account: 'colacor',
-          customerId: customer.codigo_cliente_colacor || customer.codigo_cliente, salesOrderId, error: e,
-        });
-        results.push('PV Colacor (pendente ERP)');
-        errors.push({ step: 'sync_colacor_omie', message });
-      }
-    }
+    allConfirmed: !errors.some(e => e.step === 'sync_oben_omie' || e.step === 'sync_colacor_omie' || e.step === 'sync_os_omie'),
 ```
 
-> ⚠️ Preservar o bloco interno de `produtoAcabadoItems` / `criar_ordem_producao` **verbatim** dentro do `if (!omieError)` — só está indicado por comentário acima pra não repetir aqui. Não alterar sua lógica.
+E nos 2 `return { success: false, ... }` de abort (insert_oben / insert_colacor), incluir `allConfirmed: false` (já incluído no Step 3; replicar no Colacor).
 
-- [ ] **Step 5: Typecheck + testes + build**
+- [ ] **Step 6: Typecheck + testes**
 
 ```bash
 bun run typecheck
 heavy bun run test
 ```
-Esperado: typecheck limpo (a falta de `checkoutId`/`origem` nos CALLERS do `submitOrder` que ainda não passam vai aparecer — o único caller real é `useUnifiedOrder` (Task 5); se o typecheck acusar lá, é esperado e resolvido na Task 5). Se houver outros callers (ex.: testes), atualizá-los. Confirmar que só `useUnifiedOrder.ts` falta.
+Esperado: typecheck acusa só o caller `useUnifiedOrder` faltando `checkoutId` (resolvido na Task 7) + qualquer teste de `submitOrder` que precise do novo campo no mock (atualizar). Conferir `src/services/orderSubmission/__tests__/submitOrder.test.ts` (Codex citou `:151`) e passar `checkoutId` + assertar `allConfirmed` se fizer sentido.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/services/orderSubmission/types.ts src/services/orderSubmission/submitOrder.ts
-git commit -m "feat(onda1/fase0): submitOrder idempotente (ensureSalesOrderRow) + grava origem/atendimento_id"
+git add src/services/orderSubmission/types.ts src/services/orderSubmission/submitOrder.ts src/services/orderSubmission/__tests__/submitOrder.test.ts
+git commit -m "feat(onda1/fase0): submitOrder idempotente (ensureSalesOrderRow) + allConfirmed"
 ```
 
 ---
 
-## Task 5: Gerar `checkoutId` estável no caller + passar `origem`
+## Task 7: `useUnifiedOrder` — `checkout_id` durável + reset só em sucesso total
 
 **Files:**
 - Modify: `src/hooks/useUnifiedOrder.ts`
 
-**Contexto:** O `checkoutId` precisa ser **estável entre retries** do mesmo pedido (re-clicar "Enviar" após falha = mesmo `checkoutId`), e **resetar no sucesso** (próximo pedido = novo `checkoutId`). Um `useRef` resolve. A `origem` na Fase 0 = `'web_staff'`/`'web_customer'` (a origem da ligação chega na Fase 1). `atendimentoId` = `null` por ora.
+**Contexto (P1-2/P1-3):** o `checkout_id` precisa: (a) ser **durável** (sobreviver a refresh — localStorage), (b) **rotacionar** quando começa um pedido genuinamente diferente (troca de cliente), (c) **resetar só em sucesso TOTAL** (não em sucesso parcial — senão o retry duplica a conta que já foi). Sem fingerprint do carrinho (desproporcional p/ 2 farmers de escritório): editar o carrinho entre retries mantém o mesmo `checkout_id` (correto p/ não duplicar; editar pedido já enviado = fluxo de edição, fora de escopo).
 
-- [ ] **Step 1: Adicionar o ref do checkout**
+- [ ] **Step 1: Helper de persistência (localStorage)**
 
-No corpo do hook `useUnifiedOrder` (junto das outras declarações de `useRef`/estado no topo do hook — `useRef` já é importado no arquivo), adicionar:
-
-```ts
-  // Idempotência: 1 checkout_id por TENTATIVA de envio, estável entre retries.
-  // Reseta no sucesso (próximo pedido = novo id). Ver services/orderSubmission/idempotency.ts.
-  const checkoutIdRef = useRef<string | null>(null);
-```
-
-- [ ] **Step 2: Gerar/passar no `submitOrder` + resetar no sucesso**
-
-No `submitOrder` (useCallback em `:630`), logo após `setSubmitting(true);`:
+No topo do arquivo (após imports), um helper local simples:
 
 ```ts
-    if (!checkoutIdRef.current) checkoutIdRef.current = crypto.randomUUID();
+const CHECKOUT_ID_KEY = 'unified_order_checkout_id';
+function loadCheckoutId(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  try { return localStorage.getItem(CHECKOUT_ID_KEY); } catch { return null; }
+}
+function persistCheckoutId(id: string | null) {
+  if (typeof localStorage === 'undefined') return;
+  try { if (id) localStorage.setItem(CHECKOUT_ID_KEY, id); else localStorage.removeItem(CHECKOUT_ID_KEY); } catch { /* quota */ }
+}
 ```
 
-Na chamada `submitOrderService({ ... })`, adicionar os três campos (ex.: após `isCustomerMode,`):
+- [ ] **Step 2: Ref inicializado do localStorage**
+
+Junto das declarações de estado do hook:
+
+```ts
+  // Idempotência: 1 checkout_id por TENTATIVA, durável (refresh), reseta em troca de cliente
+  // e em sucesso TOTAL. Ver services/orderSubmission/idempotency.ts.
+  const checkoutIdRef = useRef<string | null>(loadCheckoutId());
+```
+
+- [ ] **Step 3: Resetar na troca de cliente**
+
+No `clearCustomer` (que já limpa cart/ordemCompra) e no `selectCustomer`/`selectCustomerByUserId` (início de um novo contexto de cliente), zerar o checkout:
+
+```ts
+    checkoutIdRef.current = null;
+    persistCheckoutId(null);
+```
+
+> No `clearCustomer` é direto. Em `selectCustomer`/`selectCustomerByUserId` (que vivem no `useCustomerSelection`), o reset pode ficar no wrapper local `clearCustomer` + num efeito que observa `selectedCustomer?.local_user_id` mudar. **Escolher o ponto que garante: cliente novo → checkout novo.** (Implementador: o mais simples é um `useEffect([selectedCustomer?.codigo_cliente, selectedCustomer?.local_user_id])` que zera o checkout quando o cliente muda.)
+
+- [ ] **Step 4: Gerar no submit + passar + resetar só em sucesso TOTAL**
+
+No `submitOrder` (`:630`), após `setSubmitting(true);`:
+
+```ts
+    if (!checkoutIdRef.current) { checkoutIdRef.current = crypto.randomUUID(); persistCheckoutId(checkoutIdRef.current); }
+```
+
+Na chamada `submitOrderService({ ... })`, adicionar:
 
 ```ts
         checkoutId: checkoutIdRef.current,
@@ -747,394 +843,100 @@ Na chamada `submitOrderService({ ... })`, adicionar os três campos (ex.: após 
         atendimentoId: null,
 ```
 
-No ramo de sucesso (`if (result.success && result.lastOrderData) { ... }`), após `clearCart();`:
+No tratamento do resultado, trocar o `clearCart()` incondicional por um gate em `allConfirmed`:
 
 ```ts
-        checkoutIdRef.current = null; // sucesso → próximo pedido começa um novo checkout
+      if (result.success && result.lastOrderData) {
+        setLastOrderData(result.lastOrderData);
+        setOrderSuccessOpen(true);
+        if (result.allConfirmed) {
+          clearCart();
+          setNotes('');
+          checkoutIdRef.current = null; persistCheckoutId(null); // sucesso TOTAL → novo checkout no próximo
+        } else {
+          // Sucesso PARCIAL (alguma conta 'pendente ERP'): NÃO limpar o carrinho nem resetar o
+          // checkout — o retry reusa a MESMA linha/chave e não duplica a conta já enviada.
+          toast.warning('Pedido parcialmente enviado', {
+            description: 'Alguma conta ficou pendente no ERP. Tente reenviar — não vai duplicar o que já foi.',
+          });
+        }
+        if (result.errors.length > 0) {
+          toast.success('Pedido criado com avisos', { description: result.errors.map(e => e.message).join(' | ') });
+        }
+      } else { /* ...erro... (inalterado) */ }
 ```
 
-- [ ] **Step 3: Typecheck + testes + build**
+- [ ] **Step 5: Typecheck + testes + build**
 
 ```bash
 bun run typecheck
 heavy bun run test
 heavy bun run build
 ```
-Esperado: tudo limpo (o caller agora satisfaz `SubmitOrderParams`).
+Esperado: tudo limpo.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/hooks/useUnifiedOrder.ts
-git commit -m "feat(onda1/fase0): checkoutId estável por tentativa + origem web no useUnifiedOrder"
+git commit -m "feat(onda1/fase0): checkout_id durável + reset só em sucesso total (não duplica em parcial)"
 ```
 
 ---
 
-## Task 6: Chave de integração determinística no edge
+## Task 8: Rollout coordenado + verificação do dedup do Omie (GATE)
 
-**Files:**
-- Create: `src/lib/omie/pedido-integration-code.ts`
-- Test: `src/lib/omie/__tests__/pedido-integration-code.test.ts`
-- Modify: `supabase/functions/omie-vendas-sync/index.ts`
+**Files:** nenhum (operacional). Money-path → sequência importa (P1-7).
 
-**Contexto:** A chave atual `PV_${salesOrderId.substring(0, 8)}_${Date.now()}` (em `omie-vendas-sync`, `criarPedidoVenda`) é **não-determinística** (Date.now muda a cada chamada) e usa só 8 chars do UUID (colisão possível). Trocar por `PV_<uuid completo>` (39 chars < 60, o limite do Omie). Como o `salesOrderId` agora é estável entre retries (Tasks 3-5), a mesma chave é gerada → o Omie deduplica. Helper puro testável + espelho verbatim no edge (Deno não importa de `src/` — CLAUDE.md §5).
-
-- [ ] **Step 1: Escrever o teste que falha**
-
-Criar `src/lib/omie/__tests__/pedido-integration-code.test.ts`:
-
-```ts
-import { describe, it, expect } from 'vitest';
-import { buildPedidoIntegrationCode } from '../pedido-integration-code';
-
-describe('buildPedidoIntegrationCode', () => {
-  const id = '550e8400-e29b-41d4-a716-446655440000';
-
-  it('é determinístico (mesma entrada → mesma saída)', () => {
-    expect(buildPedidoIntegrationCode(id)).toBe(buildPedidoIntegrationCode(id));
-  });
-
-  it('formato PV_<uuid completo> (sem timestamp, sem truncar)', () => {
-    expect(buildPedidoIntegrationCode(id)).toBe(`PV_${id}`);
-  });
-
-  it('cabe no limite do Omie (< 60 chars)', () => {
-    expect(buildPedidoIntegrationCode(id).length).toBeLessThan(60);
-  });
-});
-```
-
-- [ ] **Step 2: Rodar e ver falhar**
-
-```bash
-bun run test -- src/lib/omie/__tests__/pedido-integration-code.test.ts
-```
-Esperado: FALHA (módulo não existe).
-
-- [ ] **Step 3: Implementar o helper**
-
-Criar `src/lib/omie/pedido-integration-code.ts`:
-
-```ts
-/**
- * Código de integração determinístico do pedido de venda no Omie (cCodIntPed).
- * DETERMINÍSTICO por sales_order (sem Date.now, sem truncar): re-enviar o MESMO
- * sales_order_id produz o MESMO código → o Omie REJEITA codigo_pedido_integracao
- * repetido → não duplica. É o backstop server-side da idempotência (a camada client
- * garante que o retry reusa o mesmo sales_order_id via checkout_id + UNIQUE).
- * Formato: PV_<uuid> (3 + 36 = 39 chars < 60, limite do Omie).
- * ⚠️ ESPELHADO verbatim em supabase/functions/omie-vendas-sync/index.ts (Deno não
- *    importa de src/). Mudou aqui → mudar lá.
- */
-export function buildPedidoIntegrationCode(salesOrderId: string): string {
-  return `PV_${salesOrderId}`;
-}
-```
-
-- [ ] **Step 4: Rodar e ver passar**
-
-```bash
-bun run test -- src/lib/omie/__tests__/pedido-integration-code.test.ts
-```
-Esperado: PASS (3 testes).
-
-- [ ] **Step 5: Aplicar no edge (espelho)**
-
-Em `supabase/functions/omie-vendas-sync/index.ts`, na função `criarPedidoVenda`, substituir a linha:
-
-```ts
-  const cCodIntPed = `PV_${salesOrderId.substring(0, 8)}_${Date.now()}`;
-```
-
-por:
-
-```ts
-  // Determinístico (espelha src/lib/omie/pedido-integration-code.ts): re-enviar o mesmo
-  // sales_order_id gera a MESMA chave → o Omie deduplica (idempotência). NÃO usar Date.now()
-  // nem substring (8 chars colidem). PV_<uuid> = 39 chars < 60 (limite Omie).
-  const cCodIntPed = `PV_${salesOrderId}`;
-```
-
-- [ ] **Step 6: Typecheck (front) — o edge é Deno, não entra no tsc do app**
-
-```bash
-bun run typecheck
-```
-Esperado: limpo.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add src/lib/omie/pedido-integration-code.ts src/lib/omie/__tests__/pedido-integration-code.test.ts supabase/functions/omie-vendas-sync/index.ts
-git commit -m "feat(onda1/fase0): chave de integração determinística PV_<uuid> (idempotência no Omie)"
-```
-
-> ⚠️ **A chave determinística (T6) é a garantia de NÃO-DUPLICAÇÃO.** Sozinha (com Tasks 3-5) já elimina pedido duplicado: o caso comum (envio falhou antes do Omie / resposta perdida após o write-back server-side) é coberto pelo reuse + skip-se-`enviado`. A Task 7 só refina a **janela estreita** (Omie criou, write-back não completou): sem ela, o retry mostra erro "já cadastrado" (mas NÃO duplica); com ela, vira sucesso. **A T7 é gated em verificação do Omie — pode ser fast-follow sem comprometer a garantia.**
-
----
-
-## Task 7: Reconciliação de duplicado no edge (gated em verificação)
-
-**Files:**
-- Create: `src/lib/omie/pedido-duplicate.ts`
-- Test: `src/lib/omie/__tests__/pedido-duplicate.test.ts`
-- Modify: `supabase/functions/omie-vendas-sync/index.ts`
-
-**Contexto:** Na janela estreita (Omie criou o pedido com a chave determinística, mas o write-back em `sales_orders` não completou → linha fica `rascunho`), o retry re-invoca `IncluirPedido` com a MESMA chave → o Omie responde "já cadastrado". Em vez de virar `falha`, **reconciliar**: consultar o pedido por código de integração (`ConsultarPedido` já existe no edge, `:1567`, mas hoje só por `codigo_pedido` numérico) → fazer o write-back → retornar sucesso. Padrão do PR #628 (compras) aplicado a vendas.
-
-> 🔴 **GATE DE VERIFICAÇÃO (money-path, founder via Lovable):** antes de finalizar, confirmar contra o Omie real **dois** fatos: (a) qual a `faultstring`/código exato que o `IncluirPedido` retorna para `codigo_pedido_integracao` duplicado; (b) que o `ConsultarPedido` (`produtos/pedido/`) aceita o filtro `codigo_pedido_integracao` (e não só `codigo_pedido`). Sem isso confirmado, **não fazer merge da T7** — as Tasks 1-6+8 já entregam a não-duplicação. Forma de verificar: reenviar 2× um pedido de teste em prod (após a T6 deployada) e capturar a resposta crua do 2º envio nos logs da edge (Lovable → Edge functions → omie-vendas-sync).
-
-- [ ] **Step 1: Ler como o `callOmieVendasApi` trata fault do Omie**
-
-Antes de implementar, ler em `supabase/functions/omie-vendas-sync/index.ts` a função `callOmieVendasApi` e o ponto pós-`IncluirPedido` (`:1355-1369`): descobrir se um fault do Omie (a) **lança** exceção, ou (b) **retorna** o objeto de fault. Isso decide se a detecção fica num `try/catch` (lança) ou num `if (isOmieDuplicatePedido(result))` (retorna). Anotar o resultado e ajustar o Step 4.
-
-- [ ] **Step 2: Escrever o teste do detector (puro)**
-
-Criar `src/lib/omie/__tests__/pedido-duplicate.test.ts`:
-
-```ts
-import { describe, it, expect } from 'vitest';
-import { isOmieDuplicatePedido } from '../pedido-duplicate';
-
-describe('isOmieDuplicatePedido', () => {
-  it('detecta "já cadastrado" (com acento)', () => {
-    expect(isOmieDuplicatePedido({ faultstring: 'O pedido já cadastrado para o código de integração.' })).toBe(true);
-  });
-  it('detecta "ja cadastrado" (sem acento)', () => {
-    expect(isOmieDuplicatePedido({ faultstring: 'codigo de integracao ja cadastrado' })).toBe(true);
-  });
-  it('NÃO marca outros erros', () => {
-    expect(isOmieDuplicatePedido({ faultstring: 'Cliente não encontrado' })).toBe(false);
-  });
-  it('robusto a null/forma inesperada', () => {
-    expect(isOmieDuplicatePedido(null)).toBe(false);
-    expect(isOmieDuplicatePedido({})).toBe(false);
-    expect(isOmieDuplicatePedido('x')).toBe(false);
-  });
-});
-```
-
-> ⚠️ Ajustar as strings de teste conforme a `faultstring` REAL capturada no Gate de Verificação.
-
-- [ ] **Step 3: Implementar o detector**
-
-Criar `src/lib/omie/pedido-duplicate.ts`:
-
-```ts
-/**
- * Detecta se a resposta do Omie ao IncluirPedido indica codigo_pedido_integracao
- * DUPLICADO (uma tentativa anterior criou o pedido; o write-back não completou).
- * Tratado como reconciliação (consultar + vincular), não como falha.
- * ⚠️ ESPELHADO no edge omie-vendas-sync. As frases devem bater com a faultstring
- *    REAL do Omie (confirmar no Gate de Verificação da Task 7).
- */
-export function isOmieDuplicatePedido(resp: unknown): boolean {
-  if (!resp || typeof resp !== 'object') return false;
-  const fs = (resp as { faultstring?: unknown }).faultstring;
-  const msg = typeof fs === 'string' ? fs.toLowerCase() : '';
-  return msg.includes('já cadastrad') || msg.includes('ja cadastrad')
-    || (msg.includes('integra') && msg.includes('cadastrad'));
-}
-```
-
-- [ ] **Step 4: Rodar o teste, depois implementar a reconciliação no edge**
-
-```bash
-bun run test -- src/lib/omie/__tests__/pedido-duplicate.test.ts
-```
-Esperado: PASS.
-
-Depois, no `criarPedidoVenda` do edge, na falha pós-`IncluirPedido`, adicionar (forma conforme o Step 1 — exemplo para o caso "Omie retorna o fault no result"):
-
-```ts
-  // Reconciliação de idempotência: se a chave determinística já existe no Omie
-  // (tentativa anterior criou o pedido mas o write-back falhou), consultar e vincular
-  // em vez de falhar. (Espelha src/lib/omie/pedido-duplicate.ts.)
-  function isOmieDuplicatePedido(r: unknown): boolean {
-    if (!r || typeof r !== 'object') return false;
-    const fs = (r as { faultstring?: unknown }).faultstring;
-    const msg = typeof fs === 'string' ? fs.toLowerCase() : '';
-    return msg.includes('já cadastrad') || msg.includes('ja cadastrad')
-      || (msg.includes('integra') && msg.includes('cadastrad'));
-  }
-
-  // ... após o IncluirPedido, se detectar duplicado:
-  if (isOmieDuplicatePedido(result)) {
-    const consulta = await callOmieVendasApi(
-      "produtos/pedido/", "ConsultarPedido",
-      { codigo_pedido_integracao: cCodIntPed }, // ⚠️ confirmar no Gate que o Omie aceita este filtro
-      account,
-    ) as { pedido_venda_produto?: { cabecalho?: { codigo_pedido?: number; numero_pedido?: string } } } | null;
-    const cab = consulta?.pedido_venda_produto?.cabecalho;
-    if (cab?.codigo_pedido) {
-      await supabase.from("sales_orders").update({
-        omie_pedido_id: cab.codigo_pedido,
-        omie_numero_pedido: String(cab.numero_pedido ?? cab.codigo_pedido),
-        status: "enviado",
-      }).eq("id", salesOrderId);
-      return { omie_pedido_id: cab.codigo_pedido, omie_numero_pedido: cab.numero_pedido ?? cab.codigo_pedido, reconciled: true };
-    }
-  }
-```
-
-> A forma exata (try/catch vs if) depende do Step 1. O essencial: **detectar duplicado → consultar por `cCodIntPed` → write-back → retornar sucesso (não throw).**
-
-- [ ] **Step 5: Typecheck + commit (após o Gate)**
-
-```bash
-bun run typecheck
-git add src/lib/omie/pedido-duplicate.ts src/lib/omie/__tests__/pedido-duplicate.test.ts supabase/functions/omie-vendas-sync/index.ts
-git commit -m "feat(onda1/fase0): reconciliação de pedido duplicado no Omie (idempotência completa)"
-```
-
----
-
-## Task 8: `currentParty` reativo no `WebRTCCallContext`
-
-**Files:**
-- Modify: `src/contexts/WebRTCCallContext.tsx`
-
-**Contexto:** Hoje o cliente resolvido da ligação (`resolveCallParty`) fica só em variáveis locais do `makeCall`/inbound — **não é exposto reativamente** (a ponte/HUD da Fase 1 precisa dele pro `?customer=<user_id>`). Expor `currentParty` (set ao resolver, limpo ao voltar a idle) + `currentCustomerUserId` derivado. Totalmente frontend, independente das outras tasks.
-
-- [ ] **Step 1: Importar o tipo + adicionar à interface**
-
-Em `src/contexts/WebRTCCallContext.tsx`, o import de `:15` já traz `resolveCallParty`/`shouldAutoRecord` de `@/lib/call-log/recording-policy`. Adicionar o tipo:
-
-```ts
-import { resolveCallParty, shouldAutoRecord, type ResolvedCallParty } from '@/lib/call-log/recording-policy';
-```
-
-Na interface `WebRTCCallContextValue` (após `incomingCall`/`acceptIncoming`/`rejectIncoming`, antes do `}`):
-
-```ts
-  /** Cliente resolvido da ligação atual (BINA/telefone). null fora de ligação ou desconhecido. */
-  currentParty: ResolvedCallParty | null;
-  /** Atalho: user_id do cliente da ligação (pro deep-link ?customer=). null se não identificado. */
-  currentCustomerUserId: string | null;
-```
-
-- [ ] **Step 2: Adicionar o state**
-
-Após `const [incomingCall, setIncomingCall] = useState<IncomingCallInfo | null>(null);` (`:143`):
-
-```ts
-  const [currentParty, setCurrentParty] = useState<ResolvedCallParty | null>(null);
-```
-
-- [ ] **Step 3: Setar no outbound (`makeCall`)**
-
-No `makeCall`, no bloco de reset (perto de `setError(null); setCallDuration(0);`, `:328-329`), adicionar:
-
-```ts
-    setCurrentParty(null);
-```
-
-E logo após `const party = await resolveCallParty(phoneNumber);` (`:347`):
-
-```ts
-    setCurrentParty(party);
-```
-
-- [ ] **Step 4: Setar no inbound**
-
-No handler `client.on('incomingCall', ...)`, após `const party = await resolveCallParty(info.phone);` (`:209`):
-
-```ts
-          setCurrentParty(party);
-```
-
-- [ ] **Step 5: Limpar ao voltar a idle**
-
-No `useEffect` que libera o dono em idle (`:562-564`), adicionar a limpeza junto:
-
-```ts
-  useEffect(() => {
-    if (callState === 'idle') {
-      setCallOwnerId(null);
-      setCurrentParty(null);
-    }
-  }, [callState]);
-```
-
-- [ ] **Step 6: Expor no `value`**
-
-No objeto `value` (`:566-594`), após `rejectIncoming,`:
-
-```ts
-    currentParty,
-    currentCustomerUserId: currentParty?.customerUserId ?? null,
-```
-
-- [ ] **Step 7: Typecheck + build**
-
-```bash
-bun run typecheck
-heavy bun run build
-```
-Esperado: limpo.
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add src/contexts/WebRTCCallContext.tsx
-git commit -m "feat(onda1/fase0): expõe currentParty/currentCustomerUserId no WebRTCCallContext"
-```
-
-> **Nota de teste honesta:** Task 8 é wiring de contexto React em volta do SipClient — um teste unitário real seria desproporcional (precisa montar o provider + mockar SIP). A verificação é: `typecheck` + a Fase 1 (HUD) consumindo `currentCustomerUserId` + um smoke manual de 1 ligação (o cliente identificado aparece no contexto). Sem lógica pura nova a isolar aqui.
-
----
-
-## Task 9: Rollout coordenado (founder, via Lovable)
-
-**Files:** nenhum (operacional). Money-path → sequência importa.
-
-> Nada disto acontece no merge (CLAUDE.md §5/§"Deploy do FRONTEND"). Sequência:
+> 🔴 **GATE (governa o desenho):** antes/durante o rollout, **confirmar que o Omie de VENDA rejeita `codigo_pedido_integracao` duplicado**. Se rejeitar (esperado — igual ao pedido de COMPRA #628), o lean está correto. Se **NÃO** rejeitar, a concorrência/retry pode duplicar → **PARAR** e escalar para o claim atômico no servidor (não shippar o lean).
 
 - [ ] **Step 1: Aplicar a migração (SQL Editor do Lovable)**
 
-🟣 Lovable → SQL Editor → colar o conteúdo de `20260613120000_onda1_fase0_sales_orders_identidade.sql` → Run.
+🟣 Lovable → SQL Editor → colar `20260613120000_onda1_fase0_sales_orders_identidade.sql` → Run.
 
-- [ ] **Step 2: Validar a migração (SQL Editor)**
+- [ ] **Step 2: Validar (SQL Editor)**
 
 ```sql
 SELECT
-  (SELECT count(*) FROM information_schema.columns
-     WHERE table_schema='public' AND table_name='sales_orders'
-       AND column_name IN ('origem','checkout_id','atendimento_id')) AS colunas_3,
-  (SELECT count(*) FROM pg_indexes
-     WHERE schemaname='public' AND indexname='sales_orders_checkout_account_uq') AS unique_idx_1,
-  (SELECT count(*) FROM pg_indexes
-     WHERE schemaname='public' AND indexname='idx_sales_orders_origem') AS origem_idx_1;
--- Esperado: colunas_3=3, unique_idx_1=1, origem_idx_1=1
+  (SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='sales_orders'
+     AND column_name IN ('checkout_id','origem','atendimento_id')) AS colunas_3,
+  (SELECT count(*) FROM pg_indexes WHERE indexname='sales_orders_checkout_account_uq') AS uq_checkout_1,
+  (SELECT count(*) FROM pg_indexes WHERE indexname='sales_orders_account_omiepedido_uq') AS uq_omie_1;
+-- Esperado: colunas_3=3, uq_checkout_1=1, uq_omie_1=1
 ```
 
-- [ ] **Step 3: Redeploy do edge `omie-vendas-sync`**
+- [ ] **Step 3: Quiescer envios + deploy COORDENADO (edge + frontend juntos)**
 
-Chat do Lovable: "Edit the existing edge function `omie-vendas-sync` — leia `supabase/functions/omie-vendas-sync/index.ts` da branch main e faça deploy verbatim (não reinterprete o código)." Confirmar **Active**. ⚠️ Deployar **só depois do merge** (deployar "da main" com PR aberto pega a main velha — lição recorrente do §5/§10).
+P1-7: deployar o edge (chave determinística) com o frontend antigo (que cria `sales_order_id` novo a cada retry) ainda **duplica**. Então, numa janela sem as farmers enviando pedido: **(a)** redeploy do `omie-vendas-sync` (chat do Lovable, **verbatim da main, APÓS o merge**) **e (b)** Publish do frontend — **juntos**. Não reabrir envios até os dois estarem no ar.
 
-- [ ] **Step 4: Publish do frontend**
+- [ ] **Step 4: Verificar o dedup + a reconciliação (smoke, prod)**
 
-Lovable → editor → Publish (sincronizar com GitHub antes se preciso). Sem isso, `steu.lovable.app` segue servindo o build velho.
+Com um cliente de teste, criar 1 pedido Oben → 1 PV no Omie + linha com `checkout_id` + `omie_pedido_id` + `status='enviado'`. Depois **reenviar o mesmo checkout** (retry) → **confirmar que NÃO nasce 2º PV** (a linha é pulada por `alreadySent`). Para exercitar a **reconciliação**, capturar nos logs da edge (Lovable → Edge functions → `omie-vendas-sync`) a `faultstring` real de um `IncluirPedido` com chave repetida e confirmar que ela casa com `isOmieDuplicatePedido` (ajustar as frases do helper + do espelho no edge se preciso). Conferir:
 
-- [ ] **Step 5: Smoke de não-duplicação (prod)**
+```sql
+SELECT checkout_id, account, status, omie_pedido_id, omie_numero_pedido
+FROM sales_orders WHERE checkout_id = '<o do teste>';
+```
 
-Com um cliente de teste: criar 1 pedido Oben → confirmar 1 PV no Omie + a linha em `sales_orders` com `checkout_id` preenchido + `status='enviado'` + `origem='web_staff'`. Depois forçar um retry (re-clicar "Enviar" se a UI permitir, ou reinvocar) → confirmar que **NÃO** nasce um 2º PV no Omie (a 1ª linha é reusada/pulada). Conferir `SELECT checkout_id, account, status, omie_numero_pedido, origem FROM sales_orders WHERE checkout_id = '<o do teste>'`.
+- [ ] **Step 5: Reconciliar linhas legadas (opcional)**
+
+`rascunho` antigos com `checkout_id` NULL não são afetados (não duplicam — só não têm idempotência). Se houver `rascunho` que na verdade já estão no Omie, é higiene manual (fora do caminho da Fase 0).
 
 ---
 
 ## Riscos residuais (registrados, fora do escopo da Fase 0)
 
-- **Chave da OS de afiação** (`omie-sync`, `OS_..._${Date.now()}`) e do **cadastro de cliente** (`APP_..._${Date.now()}`) seguem não-determinísticas. Fora do escopo (o caminho da ligação é produto, não afiação). Follow-up se a afiação entrar numa onda futura.
-- **OP (ordem de produção)** `OP_..._${Date.now()}`: deixa de ser risco de duplicação **vivo** após a Fase 0 (o skip-se-`enviado` não re-invoca `criar_pedido`, e a OP roda dentro do sucesso dele). A chave em si não foi trocada — registrar.
-- **Edição de carrinho após envio parcial:** se a vendedora editar itens e reenviar com o MESMO `checkoutId` após uma falha em que o Omie JÁ recebeu, o skip-se-`enviado` mantém o pedido original (não aplica a edição). Editar pedido já enviado = fluxo de EDIÇÃO (separado), não reenvio. Aceitável na v1.
-- **Reconciliação (T7) gated:** se não verificada a tempo, fica de fast-follow — a não-duplicação (T1-6+8) não depende dela.
+- **OP omitida** (não duplicada): browser morre entre PV-ok e a invocação da OP → retry pula (PV já enviado). Follow-up: garantir-OP no skip.
+- **Afiação OS** (`omie-sync`, `OS_..._${Date.now()}`) e **cadastro** (`APP_..._${Date.now()}`) seguem não-idempotentes — fora do caminho da ligação (produto). Follow-up.
+- **`origem`/`atendimento_id`/`currentParty`** são da **Fase 1** (a ponte os escreve/usa; o `currentParty` tem uma corrida de resolução-async a tratar lá — guard por geração da chamada).
+- **Edge lê itens do body** (não da linha): seguro no fluxo de 1 vendedora (client grava a linha e envia os mesmos itens). Belt-and-suspenders "edge lê da linha" = follow-up se a concorrência crescer.
+- **Premissa do dedup do Omie**: se a Task 8 mostrar que o Omie de venda NÃO rejeita duplicata, escalar p/ claim server-side.
 
 ---
 
 ## Self-Review (feito)
 
-- **Cobertura do escopo da Fase 0 (§10 do spec):** `origem` ✅ (T1+T4+T5) · `atendimento_id`/`checkout_id` ✅ (T1+T3+T4+T5) · chave Omie determinística ✅ (T6) · unicidade/idempotência ✅ (T1+T3+T6, reconciliação T7) · `currentParty` no contexto ✅ (T8) · CMC RPC **adiada p/ Fase 2** (decisão registrada).
-- **Placeholders:** nenhum — todo passo de código tem o código; os pontos verificáveis só no Omie estão isolados na T7 (gated) e marcados.
-- **Consistência de tipos:** `decideSalesOrderAction(existing: {status} | null)` ↔ `ensureSalesOrderRow` passa `{id,status}` ✅ · `EnsureSalesOrderArgs.fields` ↔ colunas reais de `sales_orders` ✅ · `SubmitOrderParams` novos campos ↔ uso em `submitOrder.ts` ↔ caller em `useUnifiedOrder` ✅ · `buildPedidoIntegrationCode(salesOrderId)` ↔ edge `cCodIntPed` ✅ · `currentParty: ResolvedCallParty | null` ↔ import do tipo + value ✅.
-- **Ordem/risco:** migração + helpers (sem efeito em prod) → submitOrder/caller (idempotência client) → edge (chave determinística) → reconciliação (gated) → context (independente) → rollout coordenado. A não-duplicação está garantida por T1-6 mesmo sem T7.
+- **Cobertura:** idempotência (T1-T7) · chave determinística (T4/T5) · reconciliação obrigatória (T4/T5) · write-back checado (T5) · predicado por `omie_pedido_id` (T2) · não-duplica-em-parcial (T6/T7) · `checkout_id` durável (T7) · tipos (T1) · OP determinística (T5) · gate do dedup + rollout coordenado (T8). origem/currentParty → Fase 1.
+- **Achados do Codex:** P1-1 (gate T8) · P1-2 (allConfirmed T6/T7) · P1-3 (durável T7) · P1-5 (write-back+reconcile T5) · P1-6 (omie_pedido_id T2) · P1-7 (rollout T8) · P1-8 (OP det. T5 + omissão registrada) · P1-9 (types T1) · P2 detector via Error.message (T4) · P2 currentParty → Fase 1.
+- **Tipos:** `decideSalesOrderAction({omie_pedido_id})` ↔ `ensureSalesOrderRow` select `id, omie_pedido_id` ✅ · `SubmitOrderParams.checkoutId`/`SubmitOrderResult.allConfirmed` ↔ caller ✅ · `buildPedidoIntegrationCode` ↔ edge `cCodIntPed` ✅ · `isOmieDuplicatePedido(Error)` ↔ catch do edge ✅.
+- **Placeholders:** nenhum; os pontos verificáveis só no Omie (faultstring, dedup) estão no gate T8.
