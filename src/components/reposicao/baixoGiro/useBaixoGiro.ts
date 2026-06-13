@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { classificarSituacao, diasSemVender, somarCapitalParado } from "@/lib/reposicao/baixo-giro-helpers";
@@ -67,11 +68,51 @@ export function useBaixoGiro() {
     },
   });
 
+  const qc = useQueryClient();
+
+  const manterEmEstoque = useMutation({
+    mutationFn: async (args: { codes: number[]; min: number; ponto: number; max: number }) => {
+      const { error } = await supabase
+        .from("sku_parametros")
+        .update({
+          estoque_minimo: args.min,
+          ponto_pedido: args.ponto,
+          estoque_maximo: args.max,
+          habilitado_reposicao_automatica: true,
+          tipo_reposicao: "automatica",
+        })
+        .eq("empresa", empresa)
+        .in("sku_codigo_omie", args.codes);
+      if (error) throw error;
+    },
+    onSuccess: (_d, vars) => {
+      toast.success(`${vars.codes.length} item(ns) com estoque mínimo definido`);
+      qc.invalidateQueries({ queryKey: ["reposicao-baixo-giro"] });
+    },
+    onError: (e: Error) => toast.error("Falha ao salvar: " + e.message),
+  });
+
+  const descontinuar = useMutation({
+    mutationFn: async (code: number) => {
+      const { error } = await supabase
+        .from("sku_parametros")
+        .update({ tipo_reposicao: "descontinuado", habilitado_reposicao_automatica: false })
+        .eq("empresa", empresa)
+        .eq("sku_codigo_omie", code);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("SKU descontinuado — fora dos próximos ciclos");
+      qc.invalidateQueries({ queryKey: ["reposicao-baixo-giro"] });
+    },
+    onError: (e: Error) => toast.error("Falha ao descontinuar: " + e.message),
+  });
+
   const kpis = useMemo(() => {
     const rows = query.data ?? [];
     const cap = somarCapitalParado(rows.map((r) => ({ saldo: r.saldo, cmc: r.cmc })));
     return { ...cap, totalItens: rows.length };
   }, [query.data]);
 
-  return { rows: query.data ?? [], kpis, isLoading: query.isLoading, error: query.error, refetch: query.refetch };
+  return { rows: query.data ?? [], kpis, isLoading: query.isLoading, error: query.error, refetch: query.refetch, manterEmEstoque, descontinuar };
 }
