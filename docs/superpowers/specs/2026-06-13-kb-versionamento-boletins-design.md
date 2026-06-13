@@ -167,3 +167,12 @@ Padrão Lovable (SQL manual). **Pausa só nas aprovações por alguns minutos**;
 - **Snapshot no pedido = Sub-3** (a versão imutável já dá o `version_id` de snapshot quando a venda consumir).
 - **Matriz de catálise = Sub-2** (fonte própria, precisa do arquivo de exemplo).
 - **Dados faltantes + preenchimento junto à fábrica (§4f) entra na Sub-1** (parte do fluxo de curadoria do founder): visão de completude (por produto + agregado, exportável) + `change_type='data_completion'`. Não-objetivo: integração automática com a Sayerlack.
+
+## 10. Faseamento da implementação (decisão de risco — Claude)
+
+A base está **em uso ativo agora** (founder curando os ~297). O modelo completo do §4a (`kb_spec_products` identidade-estável + migrar `omie_product_spec_links`/view/fila) é o end-state limpo que o Codex recomendou e **mata os 2 bugs** — mas é uma migração **disruptiva** feita no meio da curadoria, e os 2 bugs são **latentes hoje** (orphan precisa de vínculo confirmado → ainda NÃO há nenhum; queue-thrash precisa de 2 boletins do mesmo produto → raro no 1º carregamento). Então a implementação é **faseada por risco**:
+
+- **Fase A (ADITIVA, não-disruptiva — este plano):** ADICIONA `kb_product_spec_versions` (append-only) + RPC `aprovar_versao_boletim` que grava a versão **E** atualiza a "atual" (`kb_product_specs` segue como ponteiro de atual, como hoje) numa transação só (single write path → sem drift) + backfill dos ~297 como versão 1. A fila passa a anti-juntar por **`kb_product_spec_versions.source_document_id`** (qualquer versão) → **conserta o queue-thrash de graça**. **NÃO** mexe em `omie_product_spec_links`/view/identidade. Entrega 100% do valor do founder (histórico + diff + dados faltantes) com risco baixo. A tabela de versões é a **fundação compartilhada** — nada é retrabalho.
+- **Fase A2 (full model, FOLLOW-UP):** quando o path-B (vínculos na venda) existir, aí sim `kb_spec_products` identidade-estável + `current_version_id` ponteiro + migrar o vínculo pra `product_id` → **mata o orphan** e vira single-source. Menos arriscado lá (a infra de versões já existe; e os vínculos já importam).
+
+⇒ O §4a/§4c/§6 acima descrevem o **end-state** (Fase A2). A **Fase A** entrega o mesmo valor por cima do `kb_product_specs` atual, aditivamente. O `change_type`, o diff (§4d), a completude (§4f), a UX de versão (§4b) e os testes (§8) valem **iguais** nas duas fases (vivem na tabela de versões).
