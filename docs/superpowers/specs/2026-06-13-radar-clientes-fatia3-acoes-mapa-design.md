@@ -40,17 +40,17 @@ Fatia 1 (fundação, 526k empresas RFB) e Fatia 2 (tela `/radar`: lista server-s
 - **Performance:** GROUP BY com scan; a RLS InitPlan (#792) já evita avaliação por-linha do gate. No front: **debounce** (não a cada tecla) + **cache React Query por conjunto de filtros**. Pior caso medido no PG17 = sem filtro (Brasil 526k) / só UF (MG 64k). Se o caso sem-filtro passar de ~1s, **materializa** uma tabela-resumo `radar_municipio_resumo` recomputada no `finalize` (follow-up §8) — **não** materializar preventivamente (YAGNI; a maioria dos usos tem UF/CNAE que reduz o scan).
 - **Gate:** valida `pode_ver_carteira_completa((SELECT auth.uid()))` **uma vez no início** (`IF NOT ... THEN RAISE`), `SET search_path = public`, `REVOKE ALL FROM anon, public`. Fail-closed.
 
-### 2b. Cadastrar no Omie (Oben) — edge `omie-sync` action `radar_cadastrar_cliente`
+### 2b. Cadastrar no Omie (Oben) — REUSA `omie-vendas-sync/criar_cliente` (sem edge nova)
 
-Reusa o caminho comprovado do **`criar_cliente_afiacao`** (omie-sync:779), que já: busca o CNPJ via `ListarClientes` **antes** de criar (reconciliação — existe? devolve `codigo_cliente_omie`, `created:false`); monta o cliente com `codigo_cliente_integracao` determinístico, razão/fantasia/cnpj/endereço/telefone; trata "cliente já cadastrado".
+⭐ **Melhoria descoberta na investigação (sem edge nova, sem deploy):** a action **`criar_cliente` do `omie-vendas-sync`** já faz exatamente o necessário — recebe `{ action, account, document, razao_social, nome_fantasia, endereco, ... }`, resolve as credenciais por conta via `getCredentials('oben')` (`OMIE_OBEN_APP_KEY/SECRET`), é **idempotente** (`buscarClienteVendas` = `ListarClientes`-first → se existe devolve `{ created:false, codigo_cliente }`), e já é usada pelo fluxo de vendas. ❌ NÃO usar `omie-sync` (seu `callOmieApi` é hardcoded Colacor SC). Reusar elimina a task de edge (a mais arriscada — money-path + deploy manual).
 
-A action nova:
-- Recebe `{ cnpj }`. **Lê os dados do lead de `radar_empresas` server-side** (não confia no client — anti-spoof do payload Omie).
-- **Uma conta: Oben** (`OMIE_OBEN_APP_KEY/SECRET`, padrão `getOmieAccounts`). `ListarClientes(cnpj)` → existe? reconcilia (usa o código retornado). Senão `IncluirCliente`.
-- **Persistência** (migration): `ALTER radar_empresas ADD omie_codigo_cliente text` + `omie_cadastrado_em timestamptz`. Em sucesso/já-existia: grava o código + timestamp, marca `prospeccao_status='virou_cliente'` + `ja_cliente=true`, loga em `radar_contatos` (ação `virou_cliente`, nota "Cadastrado no Omie/Oben (cód. X)" ou "já existia"). ⚠️ **NÃO** grava em `omie_clientes` (essa tabela é por `user_id`; o lead não tem conta no app — o vínculo do Radar é por CNPJ).
-- **Idempotência forte:** re-clicar é seguro (o `ListarClientes`-first intercepta e reconcilia em vez de duplicar). `codigo_cliente_integracao` determinístico (`RADAR_<cnpj>` — não timestamp, pra não criar PV-de-integração novo a cada clique).
-- **Gate:** o front chama a RPC `radar_cadastrar_omie(cnpj)` `SECURITY DEFINER` gestor/master, que invoca a edge com service-role (mesmo padrão das ações que cruzam pro Omie). A RPC valida o gate 1× e repassa; a edge confia no service-role. (Alternativa — edge valida JWT master direto — decidir no plano pelo menor atrito; preferência: RPC definer, consistente com o resto do Radar.)
-- **Money-path:** `IncluirCliente` escreve no ERP (cadastro, não pedido). Risco menor que disparo de compra, mas ainda escreve → **review adversarial + idempotência por `ListarClientes`-first**.
+Fluxo (2 chamadas, ambas idempotentes):
+1. **Front** (`useRadarCadastrarOmie`) lê os dados do lead (já na tela) e chama `supabase.functions.invoke('omie-vendas-sync', { body: { action:'criar_cliente', account:'oben', document: cnpj, razao_social, nome_fantasia, endereco, ... } })` → retorna `{ codigo_cliente, created }`.
+2. **Persistência** via RPC nova **`radar_registrar_cadastro_omie(p_cnpj, p_codigo_cliente, p_ja_existia)`** `SECURITY DEFINER` gestor/master (migration): `ALTER radar_empresas ADD omie_codigo_cliente text + omie_cadastrado_em timestamptz`; grava o código + timestamp, marca `prospeccao_status='virou_cliente'` + `ja_cliente=true`, loga em `radar_contatos` (ação `virou_cliente`, nota "Cadastrado/Já cadastrado no Omie/Oben (cód. X)"). ⚠️ NÃO grava em `omie_clientes` (é por `user_id`; o lead não tem conta no app — vínculo do Radar é por CNPJ).
+- **Idempotência:** re-clicar é seguro (a edge reconcilia o CNPJ via ListarClientes-first; a RPC sobrescreve o código e re-loga).
+- **Gate:** a tela é gestor/master-only (display) + a RPC de persistência valida `pode_ver_carteira_completa` 1×. A edge `omie-vendas-sync` aceita qualquer staff (`authorizeCronOrStaff`) — aceitável: cadastrar cliente na Oben já é operação de staff no resto do app (o fluxo de vendas faz isso).
+- **Decisão consciente (anti-spoof):** o front passa os dados do lead (que leu de `radar_empresas`); NÃO lemos server-side na edge (exigiria mexer no `omie-vendas-sync`, money-path de vendas — fora de escopo). Risco baixo: é staff, é cadastro (não pedido), e qualquer staff já pode criar cliente hoje.
+- **Nota:** o `codigo_cliente_integracao` da edge ainda é `APP_<doc>_<Date.now()>` (não-determinístico) — não refatoramos (money-path de vendas); a idempotência prática vem do `ListarClientes`-first, suficiente p/ a frequência manual do Radar.
 
 ### 2c. Atribuir Tarefa — RPC `radar_atribuir_tarefa(cnpj, dias_retomada?)`
 
@@ -92,27 +92,26 @@ A action nova:
 ## 4. Validação
 
 - **PG17** (`db/test-radar-fatia3.sh`, base `verify-snapshot-replay.sh`): `radar_contagem_por_municipio` (agrega por código+UF certo, respeita cada filtro, gate nega não-gestor, REVOKE anon, **mede o caso sem-filtro** e o só-UF → decide se materializa); `radar_atribuir_tarefa` (cria tarefa `assigned_to=caller`, `customer_user_id NULL`, gate, dedupe); `radar_cadastrar_omie` (gate, idempotência do marca-virou_cliente); colunas novas existem.
-- **Helpers puros TDD**: payload Omie do lead (razão/fantasia/cnpj/endereço/telefone → `IncluirCliente`) + interpretação do resultado (criado/já-existia/erro → virou_cliente?); celular×fixo (WhatsApp); descrição da tarefa; seleção de campos resumidos da lista. Espelhados verbatim na edge.
-- **Edge:** `deno check`; lógica do cadastro com reconciliação testada via helper puro (chamada Omie real mockada; smoke real com o founder).
+- **Helper puro TDD**: `isCellphone` (celular×fixo → decide o botão WhatsApp). O payload Omie é montado no hook (reusa a action existente) e a descrição da tarefa é server-side na RPC `radar_atribuir_tarefa` — sem helper/edge novos.
+- **Sem edge nova:** o cadastro reusa `omie-vendas-sync/criar_cliente` (já em prod); a persistência (`radar_registrar_cadastro_omie`) é coberta no PG17 (A6).
 - **UI:** testes de unidade dos helpers; smoke no device (headless não renderiza a SPA).
 
 ---
 
 ## 5. Entrega (1 PR; subagent-driven, two-stage review por task)
 
-1. **Migration** (`20260613xxxxxx_radar_fatia3.sql`, manual): `ALTER radar_empresas ADD omie_codigo_cliente text, omie_cadastrado_em timestamptz` + RPCs `radar_contagem_por_municipio` / `radar_atribuir_tarefa` / `radar_cadastrar_omie` + PG17.
-2. **Helpers puros TDD** (payload Omie + interpretação + celular×fixo + descrição tarefa).
-3. **Edge** `omie-sync` action `radar_cadastrar_cliente` (+ deploy manual pós-merge via chat Lovable).
-4. **Hooks** (`useRadarContagemMunicipios`, `useRadarCadastrarOmie`, `useRadarAtribuirTarefa`) + ajuste do `useRadarLista` (campos resumidos + filtro com-telefone).
-5. **UI:** ranking de cidades + totalizador/selo-lote no header + toggle Lista|Mapa + `RadarMapa` + 2 botões no Sheet + WhatsApp.
-6. **CI** (typecheck strict + test + lint + build) + PR + **rollout** (migration manual no SQL Editor + deploy edge + Publish + smoke no device).
+1. **Migration** (`20260613190000_radar_fatia3.sql`, manual): `ALTER radar_empresas ADD omie_codigo_cliente + omie_cadastrado_em` + RPCs `radar_contagem_por_municipio` / `radar_atribuir_tarefa` / `radar_registrar_cadastro_omie` + PG17 (A1–A9).
+2. **Helper puro TDD** `isCellphone` (decide WhatsApp p/ celular).
+3. **Hooks**: `useRadarContagemMunicipios` (ranking+mapa), `useRadarCadastrarOmie` (reusa `omie-vendas-sync/criar_cliente` account=oben + persiste via RPC), `useRadarAtribuirTarefa` + filtro `comTelefone` no `useRadarLista` (mantém `select('*')` — paginado 50/vez, sem gargalo).
+4. **UI:** ranking de cidades + totalizador/selo-lote + toggle Lista|Mapa + `RadarMapa` (Leaflet lazy) + ações no Sheet (Cadastrar Omie/Oben + Criar tarefa + WhatsApp).
+5. **CI** (typecheck + test + lint + build) + PR + **rollout** (migration manual no SQL Editor + **Publish** no Lovable + smoke no device). **Sem deploy de edge** (reuso).
 
 ---
 
 ## 6. Riscos / decisões a fechar no plano
 
 - **Performance do agregado sem-filtro** — medir no PG17; materializar só se >~1s (decisão data-driven, não preventiva).
-- **Gate do cadastro Omie** — RPC definer→edge service-role (preferido) vs edge valida JWT master. Escolher o de menor atrito.
+- **Cadastro Omie:** RESOLVIDO na investigação — reusa `omie-vendas-sync/criar_cliente` (account=oben, gate `authorizeCronOrStaff`) + persistência via RPC `radar_registrar_cadastro_omie` gestor/master. Sem edge nova, sem deploy.
 - **CHECK de `categoria`/`empresa` em `tarefas`** — confirmar valores aceitos no plano (`empresa='oben'`, `categoria='outro'` ou um valor de prospecção se o CHECK permitir).
 - **`omie_codigo_cliente`** guarda o vínculo; reconciliação futura = re-clicar (idempotente).
 - **Qualidade RFB exibida honesta** (Codex): porte `00` = "não informado" (não "grande"), capital social ≠ faturamento, telefone pode ser do contador — a UI rotula, não promete; campo vazio = "—".
