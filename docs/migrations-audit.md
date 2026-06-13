@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **209** custom migrations totais
-- **806** objetos esperados (criados por estas migrations)
+- **212** custom migrations totais
+- **819** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 214
-  - `rls_policy`: 202
-  - `index`: 147
+  - `function`: 219
+  - `rls_policy`: 203
+  - `index`: 152
   - `cron_job`: 102
-  - `table`: 95
-  - `trigger`: 42
+  - `table`: 96
+  - `trigger`: 43
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1850,6 +1850,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
 | `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
 
+### `20260613150000_kb_spec_versions_faseA.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.kb_product_spec_versions` | — |
+| `index` | `public.idx_kbv_identidade` | `kb_product_spec_versions` |
+| `index` | `public.idx_kbv_source_doc` | `kb_product_spec_versions` |
+| `function` | `public.kbv_block_mutation` | — |
+| `function` | `public.aprovar_versao_boletim` | — |
+| `trigger` | `public.trg_kbv_immutable` | `kb_product_spec_versions` |
+| `rls_policy` | `public.kbv_select_staff` | `kb_product_spec_versions` |
+
 ### `20260613160000_kb_extraction_drafts.sql`
 
 | Tipo | Objeto | Parent |
@@ -1859,6 +1871,22 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_kb_extraction_drafts_updated_at` | `kb_extraction_drafts` |
 | `rls_policy` | `public.kb_extraction_drafts_select_master` | `kb_extraction_drafts` |
 | `rls_policy` | `public.kb_extraction_drafts_delete_master` | `kb_extraction_drafts` |
+
+### `20260613190000_radar_fatia3.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_contagem_por_municipio` | — |
+| `function` | `public.radar_atribuir_tarefa` | — |
+| `function` | `public.radar_registrar_cadastro_omie` | — |
+
+### `20260613210000_radar_perf_indices.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_radar_lista_novas` | `radar_empresas` |
+| `index` | `public.idx_radar_lista_estab` | `radar_empresas` |
+| `index` | `public.idx_radar_muni` | `radar_empresas` |
 
 ## Próximos passos quando algo der `❌`
 

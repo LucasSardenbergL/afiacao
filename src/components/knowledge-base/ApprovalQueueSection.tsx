@@ -208,10 +208,8 @@ export function ApprovalQueueSection() {
   // Função chamada ao salvar um item de revisão manual
   function handleRevisado(documentId: string) {
     setRevisadosIds((prev) => new Set(prev).add(documentId));
-    // DELETE best-effort do rascunho (já aprovado, limpa lixo do banco)
-    bulk.deleteDraft(documentId).catch(() => {
-      // Silencioso: rascunho orphan é inofensivo
-    });
+    // Rascunho removido transacionalmente pela RPC aprovar_versao_boletim
+    // (não há mais deleteDraft client-side — ver nota de reconciliação PR #802)
   }
 
   // Dispara extração SOMENTE para docs sem rascunho ready no banco
