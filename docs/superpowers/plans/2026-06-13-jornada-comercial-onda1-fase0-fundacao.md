@@ -1,4 +1,6 @@
-# Onda 1 / Fase 0 — Idempotência do pedido de venda (zero duplicado no Omie) — Implementation Plan (v2, pós-Codex)
+# Onda 1 / Fase 0 — Idempotência do pedido de venda (zero duplicado no Omie) — Implementation Plan (v3 — 2 rounds de Codex incorporados)
+
+> **v3 (decisão "proporcional" do founder):** round 1 do Codex (9 P1) reescreveu o desenho de v1→v2 (lean: chave determinística + reconciliação). Round 2 (7 P1) endureceu o v2→v3: `codigo_pedido` positivo antes de 'enviado' (T5), write-back exige 1 linha (T5), `checkout_id` amarrado por impressão digital (T7), `items:Json` + `allConfirmed` em todo return (T1/T6). Concorrência cross-aba (P1-4/P1-5) e afiação-OS (P1-6) ficaram como **residuais conscientes** (ver "Riscos residuais"), não bloqueadores — mitigados pelo guard `submitting` + chaves determinísticas + aviso honesto.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -248,6 +250,7 @@ Criar `src/services/orderSubmission/idempotency.ts`:
 
 ```ts
 import type { SubmitClient } from './types';
+import type { Json } from '@/integrations/supabase/types';
 
 export type SalesOrderAction = 'insert' | 'reuse' | 'skip';
 
@@ -372,7 +375,7 @@ export interface EnsureSalesOrderArgs {
   origem: string | null;
   atendimentoId: string | null;
   fields: {
-    customer_user_id: string; created_by: string; items: unknown;
+    customer_user_id: string; created_by: string; items: Json;
     subtotal: number; total: number; notes: string | null;
     customer_address: string | null; customer_phone: string | null; ready_by_date: string | null;
   };
@@ -599,7 +602,14 @@ por:
     if (!result) {
       throw new Error(`Omie (${account}) não respondeu ao incluir pedido (provável rate limit 429 após retries). Tente novamente em alguns segundos.`);
     }
-    omie_pedido_id = (result.codigo_pedido as number | undefined) || null;
+    const codPed = result.codigo_pedido as number | undefined;
+    if (typeof codPed !== "number" || codPed <= 0) {
+      // P1-1: Omie respondeu "ok" mas SEM número → NÃO escrever 'enviado' (senão o retry
+      // acha omie_pedido_id=null, reusa e reenvia). Lançar → o retry tenta de novo
+      // (e a chave determinística + dedup do Omie reconciliam se o pedido já existir).
+      throw new Error(`Omie (${account}) retornou sucesso sem codigo_pedido válido (${JSON.stringify(result?.codigo_pedido)}).`);
+    }
+    omie_pedido_id = codPed;
     omie_numero_pedido = (result.numero_pedido as string | number | undefined) || cCodIntPed;
     omie_response = result;
   } catch (e) {
@@ -618,14 +628,21 @@ por:
     omie_response = { reconciled: true, consulta };
   }
 
-  // Write-back COM erro checado (P1-5): se falhar, NÃO retornar sucesso — a linha ficaria
-  // órfã (rascunho) com o pedido já no Omie. Lançar → o retry reconcilia via a chave determinística.
-  const { error: wbError } = await supabase.from("sales_orders").update({
+  // Write-back COM erro checado E exigindo EXATAMENTE 1 linha (P1-2: o PostgREST devolve
+  // error:null mesmo atualizando 0 linhas → deixaria pedido órfão no Omie com "sucesso").
+  // Casa por id + account.
+  const { data: wbRows, error: wbError } = await supabase.from("sales_orders").update({
     omie_pedido_id, omie_numero_pedido: String(omie_numero_pedido),
     omie_payload: payload, omie_response, status: "enviado",
-  }).eq("id", salesOrderId);
+  }).eq("id", salesOrderId).eq("account", account).select("id");
   if (wbError) {
-    throw new Error(`Pedido criado no Omie (${omie_pedido_id}) mas o write-back em sales_orders falhou: ${wbError.message}. Retry vai reconciliar.`);
+    // 23505 no índice (account, omie_pedido_id) = ESSE omie_pedido_id já está vinculado a OUTRA
+    // linha → conflito real, NÃO auto-reconciliável (não dizer "retry resolve"). Surfaça.
+    const conflict = (wbError as { code?: string }).code === "23505";
+    throw new Error(`Pedido no Omie (${omie_pedido_id}) mas write-back falhou${conflict ? " (CONFLITO de vínculo — investigar manualmente)" : ""}: ${wbError.message}.`);
+  }
+  if (!wbRows || wbRows.length !== 1) {
+    throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
   }
   return { omie_pedido_id, omie_numero_pedido };
 ```
@@ -764,7 +781,7 @@ No `return { success: true, ... }` final, adicionar:
     allConfirmed: !errors.some(e => e.step === 'sync_oben_omie' || e.step === 'sync_colacor_omie' || e.step === 'sync_os_omie'),
 ```
 
-E nos 2 `return { success: false, ... }` de abort (insert_oben / insert_colacor), incluir `allConfirmed: false` (já incluído no Step 3; replicar no Colacor).
+E em **TODOS** os `return` de saída antecipada (P1-7) — o de **carrinho vazio** (`submitOrder.ts:38`), o de **`validate_identity`** (`:66`), e os 2 aborts (insert_oben/insert_colacor) — incluir `allConfirmed: false`. (Os 2 aborts já no Step 3; falta adicionar nos 2 do topo.) Como `allConfirmed` virou **obrigatório** em `SubmitOrderResult`, o `tsc` acusa qualquer `return` que esqueça — confiar nele pra não passar nenhum.
 
 - [ ] **Step 6: Typecheck + testes**
 
@@ -783,67 +800,157 @@ git commit -m "feat(onda1/fase0): submitOrder idempotente (ensureSalesOrderRow) 
 
 ---
 
-## Task 7: `useUnifiedOrder` — `checkout_id` durável + reset só em sucesso total
+## Task 7: `useUnifiedOrder` — `checkout_id` durável + amarrado por impressão digital
 
 **Files:**
+- Create: `src/services/orderSubmission/checkout-envelope.ts`
+- Test: `src/services/orderSubmission/__tests__/checkout-envelope.test.ts`
 - Modify: `src/hooks/useUnifiedOrder.ts`
 
-**Contexto (P1-2/P1-3):** o `checkout_id` precisa: (a) ser **durável** (sobreviver a refresh — localStorage), (b) **rotacionar** quando começa um pedido genuinamente diferente (troca de cliente), (c) **resetar só em sucesso TOTAL** (não em sucesso parcial — senão o retry duplica a conta que já foi). Sem fingerprint do carrinho (desproporcional p/ 2 farmers de escritório): editar o carrinho entre retries mantém o mesmo `checkout_id` (correto p/ não duplicar; editar pedido já enviado = fluxo de edição, fora de escopo).
+**Contexto (P1-2/P1-3):** o `checkout_id` precisa: (a) ser **durável** (sobreviver a refresh — localStorage); (b) **amarrado a uma impressão digital** (cliente + carrinho de produtos) pra que um pedido GENUINAMENTE diferente nunca reuse um `checkout_id` antigo e **pule em silêncio** uma conta já enviada (= pedido perdido); (c) **resetar só em sucesso TOTAL** (não em parcial — senão o retry duplica a conta já enviada). A impressão digital distingue "retry do mesmo pedido" (mesma fp → reusa) de "pedido novo" (fp diferente, sem commit → novo) de "tem um envio pendente com outro carrinho" (fp diferente + já committed → **conflito**: avisa, NÃO age em silêncio). **Sem efeito de troca-de-cliente** (a fp já inclui o cliente → rotaciona sozinha; e um efeito no `selectedCustomer` dispararia no mount e apagaria o envelope restaurado no refresh — P1-3).
 
-- [ ] **Step 1: Helper de persistência (localStorage)**
+- [ ] **Step 1: Helper puro do envelope + testes (TDD)**
 
-No topo do arquivo (após imports), um helper local simples:
+Criar `src/services/orderSubmission/__tests__/checkout-envelope.test.ts`:
 
 ```ts
-const CHECKOUT_ID_KEY = 'unified_order_checkout_id';
-function loadCheckoutId(): string | null {
+import { describe, it, expect } from 'vitest';
+import { computeCheckoutFingerprint, decideCheckoutEnvelope } from '../checkout-envelope';
+
+describe('computeCheckoutFingerprint', () => {
+  const a = { account: 'oben', omie_codigo_produto: 1, quantity: 2, unit_price: 10 };
+  const b = { account: 'colacor', omie_codigo_produto: 9, quantity: 1, unit_price: 5 };
+  it('independe da ordem dos itens', () => {
+    expect(computeCheckoutFingerprint('c1', [a, b])).toBe(computeCheckoutFingerprint('c1', [b, a]));
+  });
+  it('muda com quantidade e com cliente', () => {
+    expect(computeCheckoutFingerprint('c1', [a])).not.toBe(computeCheckoutFingerprint('c1', [{ ...a, quantity: 3 }]));
+    expect(computeCheckoutFingerprint('c1', [a])).not.toBe(computeCheckoutFingerprint('c2', [a]));
+  });
+});
+
+describe('decideCheckoutEnvelope', () => {
+  const env = (fp: string, committed: boolean) => ({ checkoutId: 'k', fingerprint: fp, committed });
+  it('sem envelope → new', () => { expect(decideCheckoutEnvelope(null, 'fp')).toBe('new'); });
+  it('mesma fp, não committed → reuse', () => { expect(decideCheckoutEnvelope(env('fp', false), 'fp')).toBe('reuse'); });
+  it('mesma fp, committed → reuse (retry do mesmo envio)', () => { expect(decideCheckoutEnvelope(env('fp', true), 'fp')).toBe('reuse'); });
+  it('fp diferente, não committed → new (pedido mudou antes de enviar)', () => { expect(decideCheckoutEnvelope(env('old', false), 'fp')).toBe('new'); });
+  it('fp diferente, committed → conflict (envio pendente de outro carrinho)', () => { expect(decideCheckoutEnvelope(env('old', true), 'fp')).toBe('conflict'); });
+});
+```
+
+Rodar e ver falhar:
+```bash
+bun run test -- src/services/orderSubmission/__tests__/checkout-envelope.test.ts
+```
+
+Criar `src/services/orderSubmission/checkout-envelope.ts`:
+
+```ts
+export interface CheckoutEnvelope { checkoutId: string; fingerprint: string; committed: boolean; }
+export type CheckoutDecision = 'reuse' | 'new' | 'conflict';
+
+/** Impressão digital estável do pedido de PRODUTO (cliente + itens oben/colacor). Ordem-independente. */
+export function computeCheckoutFingerprint(
+  customerKey: string,
+  items: ReadonlyArray<{ account: string; omie_codigo_produto: number | string; quantity: number; unit_price: number }>,
+): string {
+  const sig = items.map(i => `${i.account}:${i.omie_codigo_produto}:${i.quantity}:${i.unit_price}`).sort().join('|');
+  return `${customerKey}#${sig}`;
+}
+
+/**
+ * Decide o que fazer com o envelope persistido dada a impressão digital atual:
+ *  - sem envelope                       → 'new'
+ *  - mesma fp                           → 'reuse'    (retry do MESMO pedido — com ou sem commit)
+ *  - fp diferente E ainda não committed → 'new'      (mudou o pedido antes de qualquer envio)
+ *  - fp diferente E já committed        → 'conflict' (há um envio pendente de OUTRO carrinho;
+ *                                                      não criar em silêncio → avisar)
+ */
+export function decideCheckoutEnvelope(stored: CheckoutEnvelope | null, fingerprint: string): CheckoutDecision {
+  if (!stored) return 'new';
+  if (stored.fingerprint === fingerprint) return 'reuse';
+  if (stored.committed) return 'conflict';
+  return 'new';
+}
+```
+
+Rodar e ver passar (7 testes).
+
+- [ ] **Step 2: Persistência do envelope no hook**
+
+No topo de `useUnifiedOrder.ts` (após imports):
+
+```ts
+import { computeCheckoutFingerprint, decideCheckoutEnvelope, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
+
+const CHECKOUT_ENV_KEY = 'unified_order_checkout_env';
+function loadCheckoutEnv(): CheckoutEnvelope | null {
   if (typeof localStorage === 'undefined') return null;
-  try { return localStorage.getItem(CHECKOUT_ID_KEY); } catch { return null; }
+  try { const r = localStorage.getItem(CHECKOUT_ENV_KEY); return r ? JSON.parse(r) as CheckoutEnvelope : null; } catch { return null; }
 }
-function persistCheckoutId(id: string | null) {
+function persistCheckoutEnv(e: CheckoutEnvelope | null) {
   if (typeof localStorage === 'undefined') return;
-  try { if (id) localStorage.setItem(CHECKOUT_ID_KEY, id); else localStorage.removeItem(CHECKOUT_ID_KEY); } catch { /* quota */ }
+  try { if (e) localStorage.setItem(CHECKOUT_ENV_KEY, JSON.stringify(e)); else localStorage.removeItem(CHECKOUT_ENV_KEY); } catch { /* quota */ }
 }
 ```
 
-- [ ] **Step 2: Ref inicializado do localStorage**
+- [ ] **Step 3: Ref do envelope + reset no `clearCustomer`**
 
-Junto das declarações de estado do hook:
-
-```ts
-  // Idempotência: 1 checkout_id por TENTATIVA, durável (refresh), reseta em troca de cliente
-  // e em sucesso TOTAL. Ver services/orderSubmission/idempotency.ts.
-  const checkoutIdRef = useRef<string | null>(loadCheckoutId());
-```
-
-- [ ] **Step 3: Resetar na troca de cliente**
-
-No `clearCustomer` (que já limpa cart/ordemCompra) e no `selectCustomer`/`selectCustomerByUserId` (início de um novo contexto de cliente), zerar o checkout:
+Junto das declarações do hook:
 
 ```ts
-    checkoutIdRef.current = null;
-    persistCheckoutId(null);
+  // Idempotência: envelope {checkout_id, fingerprint, committed} durável (refresh).
+  // A fp amarra o checkout ao pedido; reseta só no clearCustomer e no sucesso TOTAL.
+  const checkoutEnvRef = useRef<CheckoutEnvelope | null>(loadCheckoutEnv());
 ```
 
-> No `clearCustomer` é direto. Em `selectCustomer`/`selectCustomerByUserId` (que vivem no `useCustomerSelection`), o reset pode ficar no wrapper local `clearCustomer` + num efeito que observa `selectedCustomer?.local_user_id` mudar. **Escolher o ponto que garante: cliente novo → checkout novo.** (Implementador: o mais simples é um `useEffect([selectedCustomer?.codigo_cliente, selectedCustomer?.local_user_id])` que zera o checkout quando o cliente muda.)
+No `clearCustomer` (escape explícito de um conflito + começar do zero), zerar:
 
-- [ ] **Step 4: Gerar no submit + passar + resetar só em sucesso TOTAL**
+```ts
+    checkoutEnvRef.current = null; persistCheckoutEnv(null);
+```
+
+> **Sem `useEffect` em `selectedCustomer`** (P1-3): a fp já inclui o cliente → a rotação é automática no submit; um efeito dispararia no mount e apagaria o envelope restaurado no refresh.
+
+- [ ] **Step 4: Resolver o envelope no submit + passar o `checkout_id`**
 
 No `submitOrder` (`:630`), após `setSubmitting(true);`:
 
 ```ts
-    if (!checkoutIdRef.current) { checkoutIdRef.current = crypto.randomUUID(); persistCheckoutId(checkoutIdRef.current); }
+    // Impressão digital do pedido de produto (oben+colacor) + cliente.
+    const customerKey = String(selectedCustomer.local_user_id || selectedCustomer.codigo_cliente || '');
+    const fpItems = [
+      ...obenProductItems.map(c => ({ account: 'oben', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
+      ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
+    ];
+    const fingerprint = computeCheckoutFingerprint(customerKey, fpItems);
+    const decision = decideCheckoutEnvelope(checkoutEnvRef.current, fingerprint);
+    if (decision === 'conflict') {
+      setSubmitting(false);
+      toast.error('Há um envio pendente para este cliente com outro carrinho', {
+        description: 'Reenvie o pedido pendente (mesmo carrinho) ou limpe o cliente para começar um novo.',
+      });
+      return;
+    }
+    if (decision === 'new') {
+      checkoutEnvRef.current = { checkoutId: crypto.randomUUID(), fingerprint, committed: false };
+    }
+    // commit: um envio vai acontecer → trava a fp (editar o carrinho depois = conflito até resolver).
+    checkoutEnvRef.current = { ...checkoutEnvRef.current!, committed: true };
+    persistCheckoutEnv(checkoutEnvRef.current);
+    const checkoutId = checkoutEnvRef.current.checkoutId;
 ```
 
 Na chamada `submitOrderService({ ... })`, adicionar:
 
 ```ts
-        checkoutId: checkoutIdRef.current,
+        checkoutId,
         origem: isCustomerMode ? 'web_customer' : 'web_staff',
         atendimentoId: null,
 ```
 
-No tratamento do resultado, trocar o `clearCart()` incondicional por um gate em `allConfirmed`:
+- [ ] **Step 5: Tratar o resultado — limpar/resetar só em sucesso TOTAL**
 
 ```ts
       if (result.success && result.lastOrderData) {
@@ -852,12 +959,14 @@ No tratamento do resultado, trocar o `clearCart()` incondicional por um gate em 
         if (result.allConfirmed) {
           clearCart();
           setNotes('');
-          checkoutIdRef.current = null; persistCheckoutId(null); // sucesso TOTAL → novo checkout no próximo
+          checkoutEnvRef.current = null; persistCheckoutEnv(null); // sucesso TOTAL → próximo pedido = novo envelope
         } else {
-          // Sucesso PARCIAL (alguma conta 'pendente ERP'): NÃO limpar o carrinho nem resetar o
-          // checkout — o retry reusa a MESMA linha/chave e não duplica a conta já enviada.
+          // Sucesso PARCIAL: NÃO limpar o carrinho nem resetar o envelope — o retry (mesma fp)
+          // reusa a MESMA linha/chave e não duplica a conta de PRODUTO já enviada.
           toast.warning('Pedido parcialmente enviado', {
-            description: 'Alguma conta ficou pendente no ERP. Tente reenviar — não vai duplicar o que já foi.',
+            description: serviceItems.length > 0
+              ? 'Os produtos não duplicam no reenvio. Atenção: a OS de afiação pode duplicar — confira no Omie.'
+              : 'Alguma conta ficou pendente no ERP. Reenvie — os produtos não duplicam.',
           });
         }
         if (result.errors.length > 0) {
@@ -866,7 +975,7 @@ No tratamento do resultado, trocar o `clearCart()` incondicional por um gate em 
       } else { /* ...erro... (inalterado) */ }
 ```
 
-- [ ] **Step 5: Typecheck + testes + build**
+- [ ] **Step 6: Typecheck + testes + build**
 
 ```bash
 bun run typecheck
@@ -875,11 +984,11 @@ heavy bun run build
 ```
 Esperado: tudo limpo.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/hooks/useUnifiedOrder.ts
-git commit -m "feat(onda1/fase0): checkout_id durável + reset só em sucesso total (não duplica em parcial)"
+git add src/services/orderSubmission/checkout-envelope.ts src/services/orderSubmission/__tests__/checkout-envelope.test.ts src/hooks/useUnifiedOrder.ts
+git commit -m "feat(onda1/fase0): checkout_id durável amarrado por impressão digital (fecha pedido-perdido + não duplica em parcial)"
 ```
 
 ---
@@ -911,7 +1020,7 @@ P1-7: deployar o edge (chave determinística) com o frontend antigo (que cria `s
 
 - [ ] **Step 4: Verificar o dedup + a reconciliação (smoke, prod)**
 
-Com um cliente de teste, criar 1 pedido Oben → 1 PV no Omie + linha com `checkout_id` + `omie_pedido_id` + `status='enviado'`. Depois **reenviar o mesmo checkout** (retry) → **confirmar que NÃO nasce 2º PV** (a linha é pulada por `alreadySent`). Para exercitar a **reconciliação**, capturar nos logs da edge (Lovable → Edge functions → `omie-vendas-sync`) a `faultstring` real de um `IncluirPedido` com chave repetida e confirmar que ela casa com `isOmieDuplicatePedido` (ajustar as frases do helper + do espelho no edge se preciso). Conferir:
+Com um cliente de teste, criar 1 pedido Oben → 1 PV no Omie + linha com `checkout_id` + `omie_pedido_id` + `status='enviado'`. Depois **reenviar o mesmo checkout** (retry) → **confirmar que NÃO nasce 2º PV** (a linha é pulada por `alreadySent`). **⚠️ Esse retry pula o edge** (skip client-side) → portanto **NÃO** testa a reconciliação por si só (P2 do Codex). Pra exercitar a **reconciliação de verdade**, forçar uma 2ª invocação do edge com a MESMA chave **sem** o skip (ex.: invocar `omie-vendas-sync criar_pedido` direto com um `sales_order_id` cujo `omie_pedido_id` foi zerado à mão, simulando a janela "Omie criou, write-back falhou") e confirmar: **1 só PV no Omie**, ambas as respostas com sucesso, e a linha vinculada ao mesmo `omie_pedido_id`. Capturar nos logs da edge (Lovable → Edge functions → `omie-vendas-sync`) a `faultstring` real do `IncluirPedido` duplicado e confirmar que casa com `isOmieDuplicatePedido` (ajustar as frases do helper + do espelho no edge se preciso). Conferir:
 
 ```sql
 SELECT checkout_id, account, status, omie_pedido_id, omie_numero_pedido
@@ -924,19 +1033,23 @@ FROM sales_orders WHERE checkout_id = '<o do teste>';
 
 ---
 
-## Riscos residuais (registrados, fora do escopo da Fase 0)
+## Riscos residuais (registrados — decisão "proporcional" do founder, Codex round 2)
 
-- **OP omitida** (não duplicada): browser morre entre PV-ok e a invocação da OP → retry pula (PV já enviado). Follow-up: garantir-OP no skip.
-- **Afiação OS** (`omie-sync`, `OS_..._${Date.now()}`) e **cadastro** (`APP_..._${Date.now()}`) seguem não-idempotentes — fora do caminho da ligação (produto). Follow-up.
-- **`origem`/`atendimento_id`/`currentParty`** são da **Fase 1** (a ponte os escreve/usa; o `currentParty` tem uma corrida de resolução-async a tratar lá — guard por geração da chamada).
-- **Edge lê itens do body** (não da linha): seguro no fluxo de 1 vendedora (client grava a linha e envia os mesmos itens). Belt-and-suspenders "edge lê da linha" = follow-up se a concorrência crescer.
-- **Premissa do dedup do Omie**: se a Task 8 mostrar que o Omie de venda NÃO rejeita duplicata, escalar p/ claim server-side.
+> O founder escolheu o caminho **proporcional**: corrigir os bugs reais + fechar o pedido-perdido; e tratar concorrência/afiação como baixo-risco-no-nosso-cenário (2 farmers, 1 aba, botão "Enviar" já travado durante o envio). Os itens abaixo são **conscientes**, não esquecimentos.
+
+- **Concorrência cross-aba (P1-4/P1-5):** 2 envios *simultâneos* do MESMO pedido (2 abas/2 dispositivos) poderiam, em tese, gravar payloads divergentes ou disparar a OP 2×. Mitigado por: o guard `submitting` (trava o duplo-envio na mesma aba) + chaves determinísticas (PV/OP) + dedup do Omie (gate T8). **Não** construímos payload-imutável-no-servidor. Vira relevante só se subir o nº de vendedoras/abas → aí, claim server-side.
+- **OP — sem constraint local + omissão (P1-5/P1-8):** `production_orders` não tem UNIQUE; a OP não duplica no fluxo normal (retry de PV-enviado é pulado no client) mas pode ser **omitida** (browser morre entre PV-ok e a OP). Follow-up: garantir-OP no skip + UNIQUE`(sales_order_id, omie_codigo_produto)`.
+- **Afiação OS (P1-6):** `omie-sync` (`OS_..._${Date.now()}` + `orderId` aleatório por submit) segue **não-idempotente** — retry pode duplicar a OS. **Escopado pra fora** (fluxo/edge diferente do pedido de produto). O aviso de sucesso-parcial é **honesto** (avisa "a OS de afiação pode duplicar — confira no Omie") quando há `serviceItems`. Follow-up: `orderId` derivado do `checkout_id` + chave OS determinística + reconciliação no `omie-sync`.
+- **Edge lê itens do body** (não da linha): seguro no fluxo de 1 vendedora (o client grava a linha E envia os mesmos itens; sem retries-com-edição-concorrente). "Edge lê da linha (payload imutável)" = parte do caminho máximo-rigor, **não** feito.
+- **`origem`/`atendimento_id`/`currentParty`** são da **Fase 1** (a ponte os escreve/usa; o `currentParty` tem corrida de resolução-async — guard por geração da chamada — a tratar lá).
+- **Premissa do dedup do Omie (P1-1 round1)**: se a Task 8 mostrar que o Omie de venda NÃO rejeita duplicata, escalar p/ claim server-side.
 
 ---
 
-## Self-Review (feito)
+## Self-Review (feito — após 2 rounds de Codex)
 
-- **Cobertura:** idempotência (T1-T7) · chave determinística (T4/T5) · reconciliação obrigatória (T4/T5) · write-back checado (T5) · predicado por `omie_pedido_id` (T2) · não-duplica-em-parcial (T6/T7) · `checkout_id` durável (T7) · tipos (T1) · OP determinística (T5) · gate do dedup + rollout coordenado (T8). origem/currentParty → Fase 1.
-- **Achados do Codex:** P1-1 (gate T8) · P1-2 (allConfirmed T6/T7) · P1-3 (durável T7) · P1-5 (write-back+reconcile T5) · P1-6 (omie_pedido_id T2) · P1-7 (rollout T8) · P1-8 (OP det. T5 + omissão registrada) · P1-9 (types T1) · P2 detector via Error.message (T4) · P2 currentParty → Fase 1.
-- **Tipos:** `decideSalesOrderAction({omie_pedido_id})` ↔ `ensureSalesOrderRow` select `id, omie_pedido_id` ✅ · `SubmitOrderParams.checkoutId`/`SubmitOrderResult.allConfirmed` ↔ caller ✅ · `buildPedidoIntegrationCode` ↔ edge `cCodIntPed` ✅ · `isOmieDuplicatePedido(Error)` ↔ catch do edge ✅.
-- **Placeholders:** nenhum; os pontos verificáveis só no Omie (faultstring, dedup) estão no gate T8.
+- **Cobertura:** idempotência (T1-T7) · chave determinística (T4/T5) · reconciliação obrigatória (T4/T5) · write-back **checado + 1-linha** (T5) · `codigo_pedido` positivo antes de 'enviado' (T5) · predicado por `omie_pedido_id` (T2) · não-duplica-em-parcial (T6/T7) · `checkout_id` durável **+ impressão digital** (T7) · tipos `Json` + `allConfirmed` em todo return (T1/T6) · OP determinística (T5) · gate do dedup + rollout coordenado + **teste de reconciliação** (T8). origem/currentParty → Fase 1.
+- **Round 1 (9 P1):** A1 dedup→gate T8 · A2 reset-parcial→allConfirmed T6/T7 · A3 ref→durável+fp T7 · A4 payload→deliberadamente body (residual) · A5 write-back→checado T5 · A6 status→`omie_pedido_id` T2 · A7 OP→det. T5 · rollout T8 · types T1.
+- **Round 2 (7 P1):** P1-1 `codigo_pedido` positivo (T5) · P1-2 write-back 1-linha+account (T5) · P1-3 impressão digital + sem efeito-no-mount (T7) · P1-4 concorrência→proporcional (residual) · P1-5 OP concorrência→proporcional (residual) · P1-6 afiação→escopo+aviso honesto (residual) · P1-7 `allConfirmed` em todo return + `items:Json` (T1/T6). P2: `callOmieVendasApi` preserva faultstring ✅ (detector funciona) · 23505 do write-back surfado como conflito (T5) · teste de reconciliação no T8.
+- **Tipos:** `decideSalesOrderAction({omie_pedido_id})` ↔ `ensureSalesOrderRow` select `id, omie_pedido_id` ✅ · `SubmitOrderParams.checkoutId`/`SubmitOrderResult.allConfirmed` ↔ caller ✅ · `computeCheckoutFingerprint`/`decideCheckoutEnvelope` ↔ `useUnifiedOrder` ✅ · `buildPedidoIntegrationCode` ↔ edge `cCodIntPed` ✅.
+- **Placeholders:** nenhum; o que só se verifica no Omie (faultstring, dedup) está no gate T8.
