@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ImpersonationBanner } from '@/components/impersonation/ImpersonationBanner';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList, History, Lightbulb } from 'lucide-react';
+import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList, History, Lightbulb, Radar } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
@@ -177,6 +177,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: UserCheck, label: 'Liberar Acessos', path: '/admin/approvals', staffOnly: true },
       { icon: Users, label: 'Departamentos', path: '/admin/departments', staffOnly: true },
       { icon: UserX, label: 'Clientes não-vinculados', path: '/admin/clientes-nao-vinculados', gestorComercialOuMaster: true },
+      { icon: Radar, label: 'Radar de Clientes', path: '/radar', gestorComercialOuMaster: true },
       { icon: Library, label: 'Base de conhecimento', path: '/admin/knowledge-base', staffOnly: true },
       { icon: Calculator, label: 'Calculadora de rendimento', path: '/admin/calculadora' },
       { icon: Factory, label: 'Processos padrão', path: '/admin/standard-processes' },
