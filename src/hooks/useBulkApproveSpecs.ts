@@ -17,11 +17,15 @@ export interface BulkApproveResult {
  * - Execução sequencial evita corridas no upsert por `product_code`.
  * - Payload idêntico ao `useSaveProductSpecs` (`extracted_by`, `approved_by`, `approved_at`).
  * - Falha em uma ficha não derruba as demais — erro é registrado e o loop segue.
- * - Ao final, invalida as queries `kb-product-specs`, `kb-approval-queue` e `kb-documents`.
+ * - Ao final, invalida as queries `kb-product-specs`, `kb-approval-queue`, `kb-documents`
+ *   e `kb-extraction-drafts`.
+ * - `deleteDraft`: remove best-effort um rascunho de `kb_extraction_drafts` após aprovação
+ *   individual; falha é silenciosa (rascunho órfão é inofensivo).
  */
 export function useBulkApproveSpecs(): {
   isApproving: boolean;
   approve: (resultados: ResultadoExtracao[]) => Promise<BulkApproveResult>;
+  deleteDraft: (documentId: string) => Promise<void>;
 } {
   const [isApproving, setIsApproving] = useState(false);
   const queryClient = useQueryClient();
@@ -71,6 +75,7 @@ export function useBulkApproveSpecs(): {
       await queryClient.invalidateQueries({ queryKey: ['kb-product-specs'] });
       await queryClient.invalidateQueries({ queryKey: ['kb-approval-queue'] });
       await queryClient.invalidateQueries({ queryKey: ['kb-documents'] });
+      await queryClient.invalidateQueries({ queryKey: ['kb-extraction-drafts'] });
 
       setIsApproving(false);
       return { ok, erros };
@@ -78,5 +83,20 @@ export function useBulkApproveSpecs(): {
     [queryClient],
   );
 
-  return { isApproving, approve };
+  /**
+   * Remove best-effort um rascunho de `kb_extraction_drafts` após aprovação individual.
+   * Falha silenciosa — rascunho órfão no banco é inofensivo (TTL de cleanup por migration).
+   *
+   * Usa cast `as never`/`as any` porque a tabela ainda não está nos tipos gerados pelo Lovable.
+   * NÃO adicionar a tabela ao types.ts à mão — lição §10 do CLAUDE.md.
+   */
+  const deleteDraft = useCallback(async (documentId: string): Promise<void> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('kb_extraction_drafts' as never) as any)
+      .delete()
+      .eq('document_id', documentId);
+    // Ignora erros: o rascunho órfão é inofensivo
+  }, []);
+
+  return { isApproving, approve, deleteDraft };
 }
