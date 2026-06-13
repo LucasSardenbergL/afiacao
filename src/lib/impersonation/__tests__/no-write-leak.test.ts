@@ -67,6 +67,18 @@ const ALLOWED = new Set([
   // de vínculo (query react-query) pro "Ver como" mostrar as do alvo. O vínculo
   // (useLinkCallToCustomer) é write — bloqueado na lente + botão "Vincular" disabled.
   'src/pages/FarmerCallsPendingLink.tsx',
+  // useTacticalPlan: effectiveUserId nas leituras de EXIBIÇÃO (loadPlans / getActivePlan /
+  // getEffectivenessStats — planos/efetividade do alvo). A geração (generatePlan/
+  // checkEfficiency) e o recordResult usam user.id (write identity) e são bloqueados na
+  // lente pelo write-guard + botões disabled.
+  'src/hooks/useTacticalPlan.ts',
+  // useFarmerTacticalPlan: effectiveUserId SÓ em loadCustomers (dropdown da carteira do
+  // alvo) + na dep do effect (recarrega ao entrar/sair da lente). Geração = disabled.
+  'src/components/farmer/tacticalPlan/useFarmerTacticalPlan.ts',
+  // useFarmerCopilot: effectiveUserId SÓ no "load customers" (dropdown da carteira do
+  // alvo). Iniciar a sessão (startSession persiste + invoca edge) é write — bloqueado na
+  // lente pelo write-guard + botão "Iniciar" disabled (isImpersonating exposto pro card).
+  'src/components/farmer/copilot/useFarmerCopilot.ts',
   // Clientes (/admin/customers): useClientesScope escopa a LEITURA da lista pro alvo da lente
   // (effectiveUserId só filtra carteira_assignments/scores — read-only, é o hook que importa
   // useDisplayAccess e NÃO tem mutação). useAdminCustomers recebe effectiveUserId do scope

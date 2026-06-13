@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useScribe, CommitStrategy } from '@elevenlabs/react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useCopilotEngine, type CopilotContext } from '@/hooks/useCopilotEngine';
 import { useTacticalPlan, type TacticalPlan } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
@@ -15,6 +16,10 @@ import type { InputMode } from './types';
 export function useFarmerCopilot() {
   const navigate = useNavigate();
   const { user, isStaff } = useAuth();
+  // Lente "Ver como": o dropdown de clientes da carteira segue o id efetivo (o ALVO na
+  // lente, o próprio usuário fora). Iniciar a sessão (startSession persiste + invoca
+  // edge) é write — bloqueado na lente pelo write-guard + botão "Iniciar" disabled.
+  const { effectiveUserId, isImpersonating } = useImpersonation();
   const copilot = useCopilotEngine();
   const { getActivePlan } = useTacticalPlan();
   const [selectedCustomer, setSelectedCustomer] = useState<string>('');
@@ -43,14 +48,14 @@ export function useFarmerCopilot() {
     },
   });
 
-  // Load customers
+  // Load customers (dropdown da carteira — segue o id efetivo na lente)
   useEffect(() => {
-    if (!user?.id || !isStaff) return;
+    if (!effectiveUserId || !isStaff) return;
     (async () => {
       const { data: scores } = await supabase
         .from('farmer_client_scores')
         .select('customer_user_id')
-        .eq('farmer_id', user.id);
+        .eq('farmer_id', effectiveUserId);
       if (!scores?.length) return;
       const ids = scores.map((s) => s.customer_user_id).filter((id): id is string => id !== null);
       const { data: profiles } = await supabase
@@ -61,7 +66,7 @@ export function useFarmerCopilot() {
         setCustomers(profiles.map((p) => ({ id: p.user_id, name: p.name ?? '' })));
       }
     })();
-  }, [user, isStaff]);
+  }, [effectiveUserId, isStaff]);
 
   // Auto-scroll transcript
   useEffect(() => {
@@ -241,6 +246,7 @@ export function useFarmerCopilot() {
   return {
     navigate,
     isStaff,
+    isImpersonating,
     copilot,
     selectedCustomer,
     setSelectedCustomer,
