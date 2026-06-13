@@ -90,11 +90,23 @@ segue atualizando cada código normalmente). Canonicalizar **só na derivação 
 5. **Pedidos/itens/financeiro:** deixar onde estão (B já concentra ~99%). Calls/visitas/contatos/processos:
    migrar depois, tabela por tabela, com regra explícita p/ cada UNIQUE. **Nunca** num UPDATE genérico das 26.
 
-### Pré-requisito OBRIGATÓRIO (Codex): mesma conta vs cross-account
-- **Mesma conta Omie** (ambos Oben): duplicidade real → após o canário, pode-se corrigir no Omie.
-- **Contas diferentes** (Oben × Colacor): mesmo CNPJ comprando de 2 empresas — **NÃO** é duplicata, **não
-  inativar nada no Omie**; canonicalizar a carteira ainda resolve o visual, mas é multi-identidade.
-- ⚠️ O mapa (Fase 1) DEVE capturar a conta de cada código (X e Y) + detectar conflito de vendedor.
+### Pré-requisito OBRIGATÓRIO (Codex): mesma conta vs cross-account — RESOLVIDO (mapa, 2026-06-13)
+**`cross_account=1633` (100%), `mesma_conta=0`.** Amostra uniforme: clone na conta **`servicos`
+(Colacor SC)**, gêmeo na conta **`vendas` (Oben)**. `sem_gemeo=0`, `ambiguos=0`, `conta_multipla=0`,
+`conta_indefinida=0` → mapa 100% limpo, 1.633 apelidos gravados (inativos).
+
+**Contexto de negócio (founder, 2026-06-13):** *"são os mesmos clientes, elas atendem separado por CNPJ
+apenas por uma vantagem fiscal"*. Ou seja: **1 cliente real**, faturado via 2 CNPJs do grupo (Oben +
+Colacor SC) por economia tributária — NÃO são clientes distintos.
+
+**Implicação na estratégia:** confirma a B-lite (canonicalizar = "1 cliente canônico, 2 identidades ERP",
+exatamente o que o Codex recomendou pro cross-account). **NÃO** dar profile a cada cadastro (criaria 2
+entradas pro mesmo cliente). **NÃO** inativar nada no Omio (a separação fiscal é real e fica intacta).
+- **Canônico = o gêmeo Oben** (conta `vendas`): tem nome+documento+profile + ~99% do faturamento + é onde
+  o Farmer/positivação/score (tudo vendas Oben, §5) já vive → é o registro útil pra a vendedora.
+- O clone Colacor SC (`servicos`) tem o vínculo de vendedor (a vendedora) + histórico de afiação → o
+  rebuild faz o **canônico herdar o vendedor do clone** e marca o clone `eligible=false` (escondido,
+  preservado). Unificar histórico de afiação na view = fase posterior (o sintoma é só o NOME).
 
 ### Bugs estruturais que o Codex achou (relevantes ao plano)
 - `carteira-rebuild` cruza só o **código numérico, ignora a conta** (`omie_vendedor_map` é account-aware,
@@ -110,17 +122,52 @@ Substituir `omie_clientes` por `(omie_account, omie_codigo_cliente, canonical_us
 inativo)` UNIQUE(account, codigo) → vários códigos/contas → 1 cliente. Robusto, mas exige migrar o sync de
 pedidos também. Fica pra depois.
 
+## Correções pós-Codex adversarial (Fase 2 código, 2026-06-13) — INCORPORADAS
+Codex deu veredito "não ativaria ainda" (5 P1 + 3 P2). Todas triadas como reais e corrigidas:
+- **P1.1/P1.2 (conflito/rollback stateful):** o "não emitir" em conflito mantinha o clone escondido stale.
+  **Fix:** conflito (≥2 vendedores no grupo OU código→2 vendedores) → NÃO canonicaliza; cada membro vira
+  legado **VISÍVEL** (`eligible=true`, dono próprio) — nunca esconde sem unificar. Teste de transição.
+- **P1.4 (fail-closed nas leituras estruturais):** `mapRes.error`/`hunterRes.error`/`vendedor_map` vazio →
+  **aborta (500) antes de qualquer upsert** (senão a carteira inteira ia pro Hunter).
+- **P1.5/P2.8 (paginação/determinismo):** `.order('alias_user_id')` + `.order('user_id')` nas paginações;
+  clientes ordenados por id no helper → escolha de código determinística (`Math.min`).
+- **P2.7 (cadeia A→B→C):** helper retorna `chainViolations`; o edge **aborta** se não-vazio.
+- **P1.3 (resolução de vendedor ignora a conta Omie):** pré-existente, a B-lite pode agravar. **Não
+  consertado no hotfix** (o `omie_clientes.empresa_omie` é default 'colacor' não-confiável → sem fonte
+  limpa da conta do cliente client-side; refactor maior). **Mitigação:** o fail-closed (conflito → legado
+  visível) impede atribuição errada. **MEDIR antes do canário** (runbook abaixo); se 0 colisões, é não-issue.
+- **P2.6 (eligible=false legítimo):** gate de deploy (runbook): confirmar `count(eligible=false)=0` antes.
+
+### Runbook de pré-ativação (gates antes do canário)
+```sql
+-- GATE P2.6: hoje NÃO deve haver eligible=false (o rebuild novo seta true explícito; só a B-lite cria false)
+select count(*) as eligible_false_hoje from public.carteira_assignments where eligible = false; -- esperado 0
+
+-- MEDIÇÃO P1.3: códigos de vendedor que aparecem em >1 conta no map (risco de falso conflito/atribuição)
+select count(*) as codigos_vendedor_multi_conta from (
+  select omie_codigo_vendedor from public.omie_vendedor_map
+  group by omie_codigo_vendedor having count(distinct omie_account) > 1
+) t; -- se 0 → não-issue; se >0 → o fail-closed protege, mas revisar os afetados
+```
+### Rollback robusto
+`update customer_canonical_alias set status='inactive'` + rerodar o rebuild reativa os clones (com vendedor
+viram omie eligible=true). Backstop garantido (independe do rebuild):
+`update carteira_assignments set eligible=true where customer_user_id in (select alias_user_id from customer_canonical_alias)`.
+
 ## Fases (revisadas pós-Codex)
-1. **Mapa + alias (Fase 1):** action `mapa_consolidacao` (read do Omie nas 3 contas) → popula
-   `customer_canonical_alias` com `status='inactive'` + captura (conta X, conta Y, vendedor, conflito).
-   Relatório: 1:1, mesma-conta vs cross-account, conflitos de vendedor. **Não afeta nada** (alias inativo).
-2. **Rebuild canônico (Fase 2):** modificar `carteira-rebuild` (consulta aliases ativos, canonicaliza,
-   eligible explícito, conflito fail-closed). Deploy ANTES de ativar qualquer alias.
-3. **Dry-run:** rodar o rebuild novo com 0 aliases ativos → confirma comportamento inalterado.
-4. **Canário:** ativar 10–20 aliases → rodar rebuild → **1 ciclo completo `syncCustomers → carteira-rebuild`**
+1. ✅ **Mapa + alias (Fase 1)** — PR #781 em prod. Mapa rodado: **cross_account=1633 (clone `servicos` →
+   gêmeo `vendas`), mesma_conta=0, sem_gemeo=0, ambiguos=0**; 1.633 aliases gravados (inativos).
+2. 🔄 **Rebuild canônico (Fase 2)** — CONSTRUÍDO. `computeCarteira` ganhou `aliasMap` (clone→canônico) +
+   `eligible` explícito no `ComputedAssignment`. Helper `rebuild-helpers.ts` (9 testes TDD: legado inalterado,
+   canonicalização herda vendedor, clone eligible=false, conflito fail-closed, órfão→hunter). Espelhado no
+   edge `carteira-rebuild` + carrega aliases ATIVOS (fail-closed em erro de leitura) + upsert com `eligible`.
+   typecheck 0 · 3233 testes · deno check 0. Codex adversarial no código: **rodando**. Deploy ANTES de ativar.
+3. ⏳ **Dry-run:** rodar o rebuild novo com 0 aliases ativos → confirma comportamento inalterado.
+4. ⏳ **Canário:** ativar 10–20 aliases → rodar rebuild → **1 ciclo completo `syncCustomers → carteira-rebuild`**
    → conferir tela na lente da vendedora + owner dos scores + ausência de clones elegíveis.
-5. **Lote:** ativar o resto em levas.
-6. **Rollback:** `status='inactive'` nos aliases + rerodar rebuild.
+5. ⏳ **Lote:** ativar o resto em levas.
+6. **Rollback:** `update customer_canonical_alias set status='inactive'` + rerodar rebuild (o `eligible`
+   explícito reativa os clones).
 
 ## Fase 1 — MAPA (read-only, começa já)
 
