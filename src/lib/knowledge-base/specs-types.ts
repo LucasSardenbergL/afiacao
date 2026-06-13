@@ -90,6 +90,28 @@ export type KbExtractedSpec = Omit<
   | 'updated_at'
 >;
 
+/**
+ * Blinda o spec vindo da edge (LLM) contra campos de array AUSENTES.
+ * A tool `extract_product_specs` marca esses 7 campos como `required`, mas a API não
+ * garante a saída do modelo — se algum vier ausente, `extraction_gaps.length` (e os
+ * `joinTags`) estouram no render e DERRUBAM a tela (white screen). Normaliza na FRONTEIRA
+ * (onde a resposta da edge entra no front) → todo consumidor downstream fica seguro.
+ */
+export function normalizeExtractedSpec(raw: KbExtractedSpec): KbExtractedSpec {
+  const arr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  return {
+    ...raw,
+    equipamentos_aplicacao: arr(raw?.equipamentos_aplicacao),
+    substrato: arr(raw?.substrato),
+    certificacoes_aplicaveis: arr(raw?.certificacoes_aplicaveis),
+    isento_metais_pesados: arr(raw?.isento_metais_pesados),
+    isento_substancias: arr(raw?.isento_substancias),
+    diferenciais_chave: arr(raw?.diferenciais_chave),
+    extraction_gaps: arr(raw?.extraction_gaps),
+  };
+}
+
 export interface KbCompetitor {
   id: string;
   name: string;

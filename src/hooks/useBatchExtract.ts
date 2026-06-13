@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { invokeFunction } from '@/lib/invoke-function';
 import type { ResultadoExtracao } from '@/lib/knowledge-base/aprovacao-fila';
 import type { KbExtractedSpec } from '@/lib/knowledge-base/specs-types';
+import { normalizeExtractedSpec } from '@/lib/knowledge-base/specs-types';
 
 /** Erro ocorrido durante a extração de um documento específico. */
 export interface BatchExtractErro {
@@ -92,7 +93,7 @@ export function useBatchExtract(): BatchExtractState & {
 
         try {
           const response = await invokeFunction<ExtractResponse>('kb-extract-specs', { documentId });
-          const resultado: ResultadoExtracao = { documentId, spec: response.specs };
+          const resultado: ResultadoExtracao = { documentId, spec: normalizeExtractedSpec(response.specs) };
           resultadosAcumulados.push(resultado);
 
           setEstado(prev => ({
