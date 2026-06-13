@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **201** custom migrations totais
-- **772** objetos esperados (criados por estas migrations)
+- **204** custom migrations totais
+- **786** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 199
-  - `rls_policy`: 192
-  - `index`: 143
+  - `function`: 208
+  - `rls_policy`: 193
+  - `index`: 145
   - `cron_job`: 102
-  - `table`: 92
-  - `trigger`: 40
+  - `table`: 93
+  - `trigger`: 41
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1772,6 +1772,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
 
+### `20260611140000_kb_fundacao_casamento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.omie_product_spec_links` | — |
+| `index` | `public.omie_product_spec_links_one_confirmed` | `omie_product_spec_links` |
+| `index` | `public.omie_product_spec_links_unique_triple` | `omie_product_spec_links` |
+| `function` | `public.kb_specs_normalize` | — |
+| `function` | `public.buscar_skus_candidatos` | — |
+| `function` | `public.confirmar_vinculo_boletim` | — |
+| `function` | `public.rejeitar_sugestao` | — |
+| `trigger` | `public.trg_kb_specs_normalize` | `kb_product_specs` |
+| `rls_policy` | `public.omie_product_spec_links_select_staff` | `omie_product_spec_links` |
+
 ### `20260611150000_route_city_norm.sql`
 
 | Tipo | Objeto | Parent |
@@ -1785,6 +1799,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public._vendas_familia_ausente_lista_email` | — |
 | `function` | `public.data_health_watchdog` | — |
+
+### `20260611190000_tint_sync_codex_fixes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+| `function` | `public.tint_calc_preco_final` | — |
+| `function` | `public.tint_recalc_preco_oficial` | — |
+| `function` | `public.tint_apply_keys_snapshot` | — |
+
+### `20260612120000_auto_assign_role_omie_import_guard.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.auto_assign_user_role` | — |
 
 ## Próximos passos quando algo der `❌`
 

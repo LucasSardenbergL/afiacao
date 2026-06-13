@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 201
+-- Total de custom migrations: 204
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -219,8 +219,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260610200000', 'radar_fundacao', '20260610200000_radar_fundacao.sql'),
   ('20260611120000', 'reposicao_fixes_codex_711', '20260611120000_reposicao_fixes_codex_711.sql'),
   ('20260611140000', 'data_health_check_estoque_frescor', '20260611140000_data_health_check_estoque_frescor.sql'),
+  ('20260611140000', 'kb_fundacao_casamento', '20260611140000_kb_fundacao_casamento.sql'),
   ('20260611150000', 'route_city_norm', '20260611150000_route_city_norm.sql'),
-  ('20260611180000', 'familia_ausente_lista_email', '20260611180000_familia_ausente_lista_email.sql')
+  ('20260611180000', 'familia_ausente_lista_email', '20260611180000_familia_ausente_lista_email.sql'),
+  ('20260611190000', 'tint_sync_codex_fixes', '20260611190000_tint_sync_codex_fixes.sql'),
+  ('20260612120000', 'auto_assign_role_omie_import_guard', '20260612120000_auto_assign_role_omie_import_guard.sql')
 )
 SELECT
   e.version,
@@ -1007,10 +1010,24 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_check_estoque_frescor', 'function', 'public', '_data_health_compute', ''),
   ('data_health_check_estoque_frescor', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_check_estoque_frescor', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('kb_fundacao_casamento', 'table', 'public', 'omie_product_spec_links', ''),
+  ('kb_fundacao_casamento', 'index', 'public', 'omie_product_spec_links_one_confirmed', 'omie_product_spec_links'),
+  ('kb_fundacao_casamento', 'index', 'public', 'omie_product_spec_links_unique_triple', 'omie_product_spec_links'),
+  ('kb_fundacao_casamento', 'function', 'public', 'kb_specs_normalize', ''),
+  ('kb_fundacao_casamento', 'function', 'public', 'buscar_skus_candidatos', ''),
+  ('kb_fundacao_casamento', 'function', 'public', 'confirmar_vinculo_boletim', ''),
+  ('kb_fundacao_casamento', 'function', 'public', 'rejeitar_sugestao', ''),
+  ('kb_fundacao_casamento', 'trigger', 'public', 'trg_kb_specs_normalize', 'kb_product_specs'),
+  ('kb_fundacao_casamento', 'rls_policy', 'public', 'omie_product_spec_links_select_staff', 'omie_product_spec_links'),
   ('route_city_norm', 'index', 'public', 'idx_cvs_city_norm', 'customer_visit_scores'),
   ('route_city_norm', 'function', 'public', 'route_city_norm', ''),
   ('familia_ausente_lista_email', 'function', 'public', '_vendas_familia_ausente_lista_email', ''),
-  ('familia_ausente_lista_email', 'function', 'public', 'data_health_watchdog', '')
+  ('familia_ausente_lista_email', 'function', 'public', 'data_health_watchdog', ''),
+  ('tint_sync_codex_fixes', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('tint_sync_codex_fixes', 'function', 'public', 'tint_calc_preco_final', ''),
+  ('tint_sync_codex_fixes', 'function', 'public', 'tint_recalc_preco_oficial', ''),
+  ('tint_sync_codex_fixes', 'function', 'public', 'tint_apply_keys_snapshot', ''),
+  ('auto_assign_role_omie_import_guard', 'function', 'public', 'auto_assign_user_role', '')
 )
 SELECT
   e.migration,
