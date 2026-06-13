@@ -129,6 +129,7 @@ const AdminReposicaoAumentos = lazy(() => import("./pages/AdminReposicaoAumentos
 const AdminReposicaoAumentoDetail = lazy(() => import("./pages/AdminReposicaoAumentoDetail"));
 const AdminReposicaoOportunidades = lazy(() => import("./pages/AdminReposicaoOportunidades"));
 const AdminReposicaoNegociacaoParalela = lazy(() => import("./pages/AdminReposicaoNegociacaoParalela"));
+const AdminReposicaoBaixoGiro = lazy(() => import("./pages/AdminReposicaoBaixoGiro"));
 const AdminReposicaoCockpit = lazy(() => import("./pages/AdminReposicaoCockpit"));
 const AdminReposicaoParametros = lazy(() => import("./pages/AdminReposicaoParametros"));
 const AdminReposicaoMercado = lazy(() => import("./pages/AdminReposicaoMercado"));
@@ -345,6 +346,7 @@ const App = () => (
                 <Route path="admin/reposicao/aumentos/:id" element={<AdminReposicaoAumentoDetail />} />
                 <Route path="admin/reposicao/oportunidades" element={<AdminReposicaoOportunidades />} />
                 <Route path="admin/reposicao/negociacao-paralela" element={<AdminReposicaoNegociacaoParalela />} />
+                <Route path="admin/reposicao/baixo-giro" element={<AdminReposicaoBaixoGiro />} />
                 <Route element={<ReposicaoSessionLayout />}>
                   <Route path="admin/reposicao/sessao" element={<AdminReposicaoCockpit />} />
                   <Route path="admin/reposicao/sessao/mercado" element={<AdminReposicaoMercado />} />
