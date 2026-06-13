@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **204** custom migrations totais
-- **786** objetos esperados (criados por estas migrations)
+- **206** custom migrations totais
+- **794** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 208
-  - `rls_policy`: 193
-  - `index`: 145
+  - `function`: 210
+  - `rls_policy`: 196
+  - `index`: 147
   - `cron_job`: 102
-  - `table`: 93
+  - `table`: 94
   - `trigger`: 41
   - `enum_value`: 4
 
@@ -1814,6 +1814,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.auto_assign_user_role` | — |
+
+### `20260613120000_customer_canonical_alias.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.customer_canonical_alias` | — |
+| `index` | `public.idx_cca_canonical` | `customer_canonical_alias` |
+| `index` | `public.idx_cca_status_active` | `customer_canonical_alias` |
+| `rls_policy` | `public.cca_select_gestor_master` | `customer_canonical_alias` |
+
+### `20260613120000_kb_0c_aprovacao_master_only.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.confirmar_vinculo_boletim` | — |
+| `function` | `public.desvincular_boletim` | — |
+| `rls_policy` | `public.kb_product_specs_insert_master` | `kb_product_specs` |
+| `rls_policy` | `public.kb_product_specs_update_master` | `kb_product_specs` |
 
 ## Próximos passos quando algo der `❌`
 
