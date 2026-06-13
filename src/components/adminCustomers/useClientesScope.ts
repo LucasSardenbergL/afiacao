@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import {
-  resolveModoEscopo, fetchCarteiraClientes, fetchScoresPorCustomer,
+  resolveModoEscopo, fetchCarteiraClientes, fetchScoresPorCustomer, hashIds,
 } from '@/lib/carteira/escopo-clientes';
 import type { Customer, ClientScore } from './types';
 
@@ -87,10 +87,13 @@ export function useClientesScope(): ClientesScope {
   }, [isCarteira, carteiraQuery.data, baseQuery.data]);
 
   const visibleIds = useMemo(() => customers.map((c) => c.user_id), [customers]);
+  // Hash estável dos IDs (não só a contagem) p/ a key dos scores não reusar o map de um
+  // conjunto anterior de mesmo tamanho (reatribuição que mantém a length). Codex P2.
+  const idsHash = useMemo(() => hashIds(visibleIds), [visibleIds]);
 
   /* ─── SCORES por customer_user_id (ambos os modos) ─── */
   const scoresQuery = useQuery({
-    queryKey: ['admin-clientes-scores', isCarteira ? 'carteira' : 'completa', baseId, visibleIds.length],
+    queryKey: ['admin-clientes-scores', isCarteira ? 'carteira' : 'completa', baseId, idsHash],
     enabled: queriesReady && visibleIds.length > 0,
     staleTime: 60_000,
     queryFn: () => fetchScoresPorCustomer(visibleIds),
