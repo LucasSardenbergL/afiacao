@@ -8431,6 +8431,7 @@ export type Database = {
           criado_por: string
           id: string
           nota: string | null
+          status_anterior: string | null
         }
         Insert: {
           acao: string
@@ -8439,6 +8440,7 @@ export type Database = {
           criado_por: string
           id?: string
           nota?: string | null
+          status_anterior?: string | null
         }
         Update: {
           acao?: string
@@ -8447,6 +8449,7 @@ export type Database = {
           criado_por?: string
           id?: string
           nota?: string | null
+          status_anterior?: string | null
         }
         Relationships: [
           {
@@ -14709,6 +14712,10 @@ export type Database = {
         }
         Returns: Json
       }
+      confirmar_vinculo_boletim: {
+        Args: { p_kb_product_spec_id: string; p_skus: Json }
+        Returns: number
+      }
       converter_sugestao_em_campanha_flat: {
         Args: {
           p_canal?: string
@@ -14746,9 +14753,18 @@ export type Database = {
           volume_min: number
         }[]
       }
+      desfazer_contato_radar: { Args: { p_id: string }; Returns: Json }
       despinar_parametro: {
         Args: { p_empresa: string; p_sku: string }
         Returns: boolean
+      }
+      desvincular_boletim: {
+        Args: {
+          p_account: string
+          p_expected_kb_product_spec_id: string
+          p_omie_codigo_produto: number
+        }
+        Returns: number
       }
       detectar_outliers_empresa: {
         Args: { p_empresa?: string }
@@ -15150,6 +15166,7 @@ export type Database = {
         Returns: string
       }
       push_sla_tick: { Args: never; Returns: undefined }
+      radar_kpis: { Args: never; Returns: Json }
       radar_recruzar_ja_cliente: { Args: never; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
       refresh_customer_metrics: { Args: never; Returns: undefined }
@@ -15178,6 +15195,10 @@ export type Database = {
           p_origem_email_remetente?: string
         }
         Returns: number
+      }
+      registrar_contato_radar: {
+        Args: { p_acao: string; p_cnpj: string; p_nota?: string }
+        Returns: Json
       }
       registrar_polling_resultado: {
         Args: {
