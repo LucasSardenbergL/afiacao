@@ -158,9 +158,14 @@ export function ApprovalQueueSection() {
     toast.success(
       `${resultado.ok} ficha${resultado.ok !== 1 ? 's' : ''} aprovada${resultado.ok !== 1 ? 's' : ''}${errosStr}`,
     );
-    // Reseta o estado de extração; a fila vai recarregar via invalidate do useBulkApproveSpecs
-    extract.reset();
-    setRevisadosIds(new Set());
+    // Remove SÓ as fichas auto-aprovadas COM SUCESSO do estado; mantém as 'a revisar' (e as que
+    // falharam, pra retry). ⚠️ Antes era extract.reset() — apagava TUDO, e as fichas a revisar
+    // sumiam ao aprovar o lote, forçando re-extração (gasto de API à toa). A fila recarrega via
+    // invalidate do useBulkApproveSpecs.
+    const falharam = new Set(resultado.erros.map((e) => e.documentId));
+    extract.removerResultados(
+      auto.filter((a) => !falharam.has(a.documentId)).map((a) => a.documentId),
+    );
   }
 
   // ── Renderização: carregando ──

@@ -51,11 +51,25 @@ const ESTADO_INICIAL: BatchExtractState = {
 export function useBatchExtract(): BatchExtractState & {
   run: (documentIds: string[]) => Promise<ResultadoExtracao[]>;
   reset: () => void;
+  removerResultados: (documentIds: string[]) => void;
 } {
   const [estado, setEstado] = useState<BatchExtractState>(ESTADO_INICIAL);
 
   const reset = useCallback(() => {
     setEstado(ESTADO_INICIAL);
+  }, []);
+
+  /**
+   * Remove resultados específicos do estado (ex.: os aprovados em lote) SEM apagar os demais.
+   * ⚠️ Diferente de `reset()`, que zerava TUDO — incluindo as fichas 'a revisar' ainda não
+   * salvas, que sumiam ao aprovar o lote e exigiam re-extração (gasto de API à toa).
+   */
+  const removerResultados = useCallback((documentIds: string[]) => {
+    const ids = new Set(documentIds);
+    setEstado((prev) => ({
+      ...prev,
+      resultados: prev.resultados.filter((r) => !ids.has(r.documentId)),
+    }));
   }, []);
 
   const run = useCallback(async (documentIds: string[]): Promise<ResultadoExtracao[]> => {
@@ -124,5 +138,5 @@ export function useBatchExtract(): BatchExtractState & {
     return resultadosAcumulados;
   }, []);
 
-  return { ...estado, run, reset };
+  return { ...estado, run, reset, removerResultados };
 }
