@@ -9594,6 +9594,8 @@ export type Database = {
       sales_orders: {
         Row: {
           account: string
+          atendimento_id: string | null
+          checkout_id: string | null
           created_at: string
           created_by: string
           customer_address: string | null
@@ -9610,6 +9612,7 @@ export type Database = {
           omie_pedido_id: number | null
           omie_response: Json | null
           order_date_kpi: string | null
+          origem: string | null
           ready_by_date: string | null
           status: string
           subtotal: number
@@ -9618,6 +9621,8 @@ export type Database = {
         }
         Insert: {
           account?: string
+          atendimento_id?: string | null
+          checkout_id?: string | null
           created_at?: string
           created_by: string
           customer_address?: string | null
@@ -9634,6 +9639,7 @@ export type Database = {
           omie_pedido_id?: number | null
           omie_response?: Json | null
           order_date_kpi?: string | null
+          origem?: string | null
           ready_by_date?: string | null
           status?: string
           subtotal?: number
@@ -9642,6 +9648,8 @@ export type Database = {
         }
         Update: {
           account?: string
+          atendimento_id?: string | null
+          checkout_id?: string | null
           created_at?: string
           created_by?: string
           customer_address?: string | null
@@ -9658,6 +9666,7 @@ export type Database = {
           omie_pedido_id?: number | null
           omie_response?: Json | null
           order_date_kpi?: string | null
+          origem?: string | null
           ready_by_date?: string | null
           status?: string
           subtotal?: number

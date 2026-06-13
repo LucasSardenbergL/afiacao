@@ -1411,7 +1411,14 @@ async function criarPedidoVenda(
   quantidadeVolumes?: number,
   ordemCompra?: string
 ) {
-  const cCodIntPed = `PV_${salesOrderId.substring(0, 8)}_${Date.now()}`;
+  // Determinístico (espelha src/lib/omie/pedido-integration-code.ts): re-enviar o mesmo
+  // sales_order_id gera a MESMA chave → o Omie rejeita a duplicata (idempotência).
+  const cCodIntPed = `PV_${salesOrderId}`;
+  // Espelha src/lib/omie/pedido-duplicate.ts (callOmieVendasApi LANÇA em fault).
+  const isOmieDuplicatePedido = (e: unknown): boolean => {
+    const m = (e instanceof Error ? e.message : typeof e === 'string' ? e : '').toLowerCase();
+    return !!m && (m.includes('já cadastrad') || m.includes('ja cadastrad') || (m.includes('integra') && m.includes('cadastrad')));
+  };
   const config = getAccountConfig(account);
 
   const det = items.map((item, index) => {
@@ -1501,33 +1508,74 @@ async function criarPedidoVenda(
 
   console.log(`[Omie Vendas][${account}] Payload PedidoVenda:`, JSON.stringify(payload, null, 2));
 
-  const result = await callOmieVendasApi(
-    "produtos/pedido/",
-    "IncluirPedido",
-    payload,
-    account
-  );
-
-  if (!result) {
-    throw new Error(
-      `Omie (${account}) não respondeu ao incluir pedido (provável rate limit 429 após retries). Tente novamente em alguns segundos.`
+  let omie_pedido_id: number | null;
+  let omie_numero_pedido: string | number;
+  let omie_response: unknown = null;
+  try {
+    const result = await callOmieVendasApi(
+      "produtos/pedido/",
+      "IncluirPedido",
+      payload,
+      account
     );
+    if (!result) {
+      throw new Error(
+        `Omie (${account}) não respondeu ao incluir pedido (provável rate limit 429 após retries). Tente novamente em alguns segundos.`
+      );
+    }
+    const codPed = result.codigo_pedido as number | undefined;
+    if (typeof codPed !== "number" || codPed <= 0) {
+      // P1-1: Omie respondeu "ok" mas SEM número → NÃO escrever 'enviado' (senão o retry
+      // acha omie_pedido_id=null, reusa e reenvia). Lançar → o retry tenta de novo
+      // (e a chave determinística + dedup do Omie reconciliam se o pedido já existir).
+      throw new Error(`Omie (${account}) retornou sucesso sem codigo_pedido válido (${JSON.stringify(result?.codigo_pedido)}).`);
+    }
+    omie_pedido_id = codPed;
+    omie_numero_pedido = (result.numero_pedido as string | number | undefined) || cCodIntPed;
+    omie_response = result;
+  } catch (e) {
+    // Reconciliação (idempotência): se a chave determinística já existe no Omie (tentativa
+    // anterior criou o pedido mas o write-back falhou), consultar e vincular em vez de falhar.
+    if (!isOmieDuplicatePedido(e)) throw e;
+    const consulta = await callOmieVendasApi(
+      "produtos/pedido/", "ConsultarPedido", { codigo_pedido_integracao: cCodIntPed }, account,
+    ) as {
+      pedido_venda_produto?: { cabecalho?: { codigo_pedido?: number; numero_pedido?: string | number } };
+      cabecalho?: { codigo_pedido?: number; numero_pedido?: string | number };
+    } | null;
+    const cab = consulta?.pedido_venda_produto?.cabecalho ?? consulta?.cabecalho;
+    if (!cab?.codigo_pedido) {
+      throw new Error(`Omie (${account}) reportou pedido duplicado mas ConsultarPedido(${cCodIntPed}) não retornou o pedido — reconciliação falhou.`);
+    }
+    omie_pedido_id = cab.codigo_pedido;
+    omie_numero_pedido = cab.numero_pedido ?? cab.codigo_pedido;
+    omie_response = { reconciled: true, consulta };
   }
 
-  const omie_pedido_id = (result.codigo_pedido as number | undefined) || null;
-  const omie_numero_pedido = (result.numero_pedido as string | number | undefined) || cCodIntPed;
-
-  // Atualizar sales_order com dados do Omie
-  await supabase
+  // Write-back COM erro checado E exigindo EXATAMENTE 1 linha (P1-2: o PostgREST devolve
+  // error:null mesmo atualizando 0 linhas → deixaria pedido órfão no Omie com "sucesso").
+  // Casa por id + account.
+  const { data: wbRows, error: wbError } = await supabase
     .from("sales_orders")
     .update({
       omie_pedido_id,
       omie_numero_pedido: String(omie_numero_pedido),
       omie_payload: payload,
-      omie_response: result,
+      omie_response,
       status: "enviado",
     })
-    .eq("id", salesOrderId);
+    .eq("id", salesOrderId)
+    .eq("account", account)
+    .select("id");
+  if (wbError) {
+    // Qualquer erro de DB no write-back DEPOIS do pedido existir no Omie = linha potencialmente
+    // órfã → surfaça (NÃO engolir). (Não há UNIQUE(account, omie_pedido_id): push+pull gravam o
+    // mesmo omie_pedido_id em linhas distintas por design — ver a migração 20260613120000.)
+    throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back em sales_orders falhou: ${wbError.message}.`);
+  }
+  if (!wbRows || wbRows.length !== 1) {
+    throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
+  }
 
   return { omie_pedido_id, omie_numero_pedido };
 }
@@ -2271,7 +2319,10 @@ serve(async (req) => {
         for (const opItem of opItemsTyped) {
           // Create production order in Omie
           const opPayload = {
-            cCodIntOP: `OP_${opSalesId.substring(0, 8)}_${opItem.omie_codigo_produto}_${Date.now()}`,
+            // Determinística por (sales_order, produto) → o Omie dedup o re-fire da OP.
+            // Últimos 12 chars do UUID (não o inteiro): mantém a chave curta — o limite do
+            // cCodIntOP no Omie não é confirmado e a chave precisa caber com folga (~16+N chars).
+            cCodIntOP: `OP_${opSalesId.slice(-12)}_${opItem.omie_codigo_produto}`,
             nCodProd: opItem.omie_codigo_produto,
             nQtde: opItem.quantidade,
             dDtPrevisao: new Date().toISOString().split("T")[0].split("-").reverse().join("/"),
