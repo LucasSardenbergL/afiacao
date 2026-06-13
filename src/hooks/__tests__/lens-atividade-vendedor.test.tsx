@@ -34,6 +34,7 @@ import { useKpisVisita } from '../useKpisVisita';
 import { useMyKpis } from '../useMyKpis';
 import { useFollowupsVisita } from '../useFollowupsVisita';
 import { useMinhasVisitasResultado } from '../useMinhasVisitasResultado';
+import { useKpisVisitaMtd } from '../useKpisVisitaMtd';
 
 let qc: QueryClient;
 const wrapper = ({ children }: { children: ReactNode }) => (
@@ -50,6 +51,7 @@ beforeEach(() => {
 /* eslint-disable react-hooks/rules-of-hooks */
 const hooks: Array<{ name: string; run: () => unknown }> = [
   { name: 'useKpisVisita', run: () => useKpisVisita(30) },
+  { name: 'useKpisVisitaMtd', run: () => useKpisVisitaMtd() },
   { name: 'useMyKpis', run: () => useMyKpis() },
   { name: 'useFollowupsVisita', run: () => useFollowupsVisita() },
   { name: 'useMinhasVisitasResultado', run: () => useMinhasVisitasResultado(30) },
