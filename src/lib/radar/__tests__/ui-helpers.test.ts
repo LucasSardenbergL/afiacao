@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACOES_CONTATO, presetParaParams, idadeEmAnos, rotuloPorte,
-  formatarCapital, formatarCnpj,
+  formatarCapital, formatarCnpj, digitosCnae,
 } from '../ui-helpers';
 
 describe('ACOES_CONTATO', () => {
@@ -56,4 +56,15 @@ describe('formatarCapital', () => {
 describe('formatarCnpj', () => {
   it('aplica a máscara', () => expect(formatarCnpj('11222333000144')).toBe('11.222.333/0001-44'));
   it('tamanho errado → devolve cru', () => expect(formatarCnpj('123')).toBe('123'));
+});
+
+describe('digitosCnae', () => {
+  it('extrai dígitos do CNAE formatado', () => expect(digitosCnae('3101-2/00')).toBe('3101200'));
+  it('preserva dígitos puros', () => expect(digitosCnae('3101200')).toBe('3101200'));
+  it('aceita parcial (prefixo da família)', () => expect(digitosCnae('3101')).toBe('3101'));
+  it('corta acima de 7 dígitos', () => expect(digitosCnae('310120099')).toBe('3101200'));
+  it('vazio/null → vazio', () => {
+    expect(digitosCnae('')).toBe('');
+    expect(digitosCnae(null)).toBe('');
+  });
 });
