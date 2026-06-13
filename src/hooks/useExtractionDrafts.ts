@@ -10,8 +10,9 @@ import type { ResultadoExtracao } from '@/lib/knowledge-base/aprovacao-fila';
  */
 interface KbExtractionDraft {
   document_id: string;
-  status: 'extracting' | 'ready' | 'error';
-  specs: Record<string, unknown> | null;
+  status: 'extracting' | 'ready' | 'failed';
+  // ⚠️ coluna SINGULAR `spec` (= migration 20260613160000 + a edge). NÃO `specs`.
+  spec: Record<string, unknown> | null;
 }
 
 /**
@@ -39,9 +40,9 @@ export function useExtractionDrafts(): {
       const { data, error } = await (
         supabase.from('kb_extraction_drafts' as never) as any
       )
-        .select('document_id, status, specs')
+        .select('document_id, status, spec')
         .eq('status', 'ready')
-        .not('specs', 'is', null);
+        .not('spec', 'is', null);
       /* eslint-enable @typescript-eslint/no-explicit-any */
 
       if (error) throw error;
@@ -49,10 +50,10 @@ export function useExtractionDrafts(): {
       const rows: KbExtractionDraft[] = data ?? [];
 
       return rows
-        .filter((row) => row.specs != null)
+        .filter((row) => row.spec != null)
         .map((row) => ({
           documentId: row.document_id,
-          spec: normalizeExtractedSpec(row.specs as Parameters<typeof normalizeExtractedSpec>[0]),
+          spec: normalizeExtractedSpec(row.spec as Parameters<typeof normalizeExtractedSpec>[0]),
         }));
     },
     staleTime: 60_000,

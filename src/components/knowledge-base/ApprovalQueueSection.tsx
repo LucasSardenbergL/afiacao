@@ -197,8 +197,13 @@ export function ApprovalQueueSection() {
   // ID do item em processo de re-extração individual
   const [reExtraindoId, setReExtraindoId] = useState<string | null>(null);
 
-  // Mescla rascunhos do banco com os resultados da sessão atual (memória wins)
-  const resultadosMesclados = mesclarResultados(drafts.drafts, extract.resultados);
+  // Mescla rascunhos do banco com os resultados da sessão atual (memória wins) e
+  // RESTRINGE à fila atual: um rascunho órfão (DELETE best-effort que falhou após
+  // aprovar) não deve reaparecer como item a aprovar.
+  const filaIdsSet = new Set((fila.data ?? []).map((d) => d.id));
+  const resultadosMesclados = mesclarResultados(drafts.drafts, extract.resultados).filter(
+    (r) => filaIdsSet.has(r.documentId),
+  );
 
   // Função chamada ao salvar um item de revisão manual
   function handleRevisado(documentId: string) {
