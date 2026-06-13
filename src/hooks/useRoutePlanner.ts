@@ -4,7 +4,7 @@
 // allStops/filteredStops/optimizedRoute, memos de stats e navegação.
 // A página mantém apenas os refs/efeitos do Leaflet (acoplados ao DOM) + o JSX.
 // Movimento puro, behavior-preserving — sem mudança de lógica.
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -19,6 +19,7 @@ import type {
   ManualCustomer,
   VisitStatus,
   RouteStop,
+  CityOption,
 } from '@/components/reposicao/routePlanner/types';
 import { enrichWithPriority } from '@/components/reposicao/routePlanner/priority';
 import { STOP_DURATION_MIN } from '@/components/reposicao/routePlanner/constants';
@@ -26,6 +27,8 @@ import type { Tables } from '@/integrations/supabase/types';
 import { visitasAgendadasTable } from '@/integrations/supabase/visitasAgendadas';
 import type { VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas';
 import { agendaToRouteStop } from '@/lib/visitas/agenda-to-stop';
+import { prospectRowToStopDraft, buildGeocodeQuery } from '@/lib/route/prospect-stop';
+import type { ProspectRow } from '@/lib/route/prospect-stop';
 
 // Linha de route_visits enriquecida com o nome do cliente (resolvido via profiles).
 export type TodayVisitRow = Tables<'route_visits'> & { customerName: string };
@@ -49,7 +52,7 @@ type OverdueToolRow = {
 
 export function useRoutePlanner() {
   const navigate = useNavigate();
-  const { user, isStaff, loading: authLoading } = useAuth();
+  const { user, isStaff, isMaster, isGestorComercial, loading: authLoading } = useAuth();
 
   const [logisticStops, setLogisticStops] = useState<RouteStop[]>([]);
   const [commercialStops, setCommercialStops] = useState<RouteStop[]>([]);
@@ -77,6 +80,11 @@ export function useRoutePlanner() {
   const [checkoutRevenue, setCheckoutRevenue] = useState('');
   // Visit timers (seconds elapsed per active check-in)
   const [visitTimers, setVisitTimers] = useState<Map<string, number>>(new Map());
+
+  // Prospecção mode state
+  const [selectedCity, setSelectedCity] = useState<CityOption | null>(null);
+  const [prospectStops, setProspectStops] = useState<RouteStop[]>([]);
+  const [loadingProspects, setLoadingProspects] = useState(false);
 
   const { agenda, clientScores, loading: scoringLoading } = useFarmerScoring();
 
@@ -692,6 +700,61 @@ export function useRoutePlanner() {
     }
   };
 
+  const loadProspectStops = useCallback(async (city: CityOption) => {
+    setLoadingProspects(true);
+    try {
+      const { data, error } = await supabase.rpc(
+        'radar_prospects_para_rota' as never,
+        { p_municipio_codigo: city.codigo, p_limit: 50 } as never,
+      );
+      if (error) throw error;
+      const rows = (data ?? []) as unknown as ProspectRow[];
+      const stops: RouteStop[] = rows.map((row) => {
+        const draft = prospectRowToStopDraft(row);
+        // Pre-cache coordinates for already-geocoded prospects
+        if (draft.lat != null && draft.lng != null && draft.geocodeFailed !== true) {
+          geocodedCoords.current.set(draft.id, { lat: draft.lat, lng: draft.lng });
+        }
+        const base: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'> = {
+          id: draft.id,
+          customerUserId: '',  // intentional — blocks check-in (route_visits FK)
+          customerName: draft.customerName,
+          phone: draft.phone ?? null,
+          address: draft.address,
+          visitReason: draft.visitReason,
+          stopType: 'prospect_visit',
+          timeSlot: null,
+          businessHoursOpen: null,
+          businessHoursClose: null,
+          status: 'prospect',
+          lat: draft.lat ?? undefined,
+          lng: draft.lng ?? undefined,
+          radarCnpj: draft.radarCnpj,
+          geocodeFailed: draft.geocodeFailed,
+          prospeccaoStatus: draft.prospeccaoStatus,
+        };
+        return enrichWithPriority(base);
+      });
+      setProspectStops(stops);
+    } catch (err) {
+      console.error('Error loading prospect stops:', err);
+      toast.error('Erro ao carregar prospects');
+      setProspectStops([]);
+    } finally {
+      setLoadingProspects(false);
+    }
+  }, []);
+
+  // Load prospect stops when in prospeccao mode and a city is selected
+  // NOTE: must live AFTER loadProspectStops declaration (const is not hoisted)
+  useEffect(() => {
+    if (planningMode === 'prospeccao' && selectedCity) {
+      void loadProspectStops(selectedCity);
+    } else if (planningMode !== 'prospeccao') {
+      setProspectStops([]);
+    }
+  }, [planningMode, selectedCity, loadProspectStops]);
+
   // Merge stops based on planning mode
   const allStops = useMemo(() => {
     // Also upgrade logistic stops to hybrid if they overlap with commercial
@@ -750,8 +813,9 @@ export function useRoutePlanner() {
 
         return manualStops;
       }
+      case 'prospeccao': return prospectStops;
     }
-  }, [logisticStops, commercialStops, scheduledVisitStops, planningMode, selectedCustomerIds, manualCustomers]);
+  }, [logisticStops, commercialStops, scheduledVisitStops, planningMode, selectedCustomerIds, manualCustomers, prospectStops]);
 
   // Geocode stops progressively (max 15, 1.1s delay between calls)
   const geocodedCoords = useRef<Map<string, { lat: number; lng: number }>>(new Map());
@@ -786,7 +850,9 @@ export function useRoutePlanner() {
       for (const stop of toGeocode) {
         if (controller.signal.aborted) break;
         try {
-          const query = `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}, Brazil`;
+          const query = stop.stopType === 'prospect_visit'
+            ? buildGeocodeQuery(stop.address)
+            : `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}, Brazil`;
           const res = await fetch(
             `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`,
             { signal: controller.signal }
@@ -799,10 +865,28 @@ export function useRoutePlanner() {
             setGeocodedAllStops(prev => prev.map(s =>
               s.id === stop.id ? { ...s, lat: coords.lat, lng: coords.lng } : s
             ));
+            // Persist geocode for prospects (best-effort, fire-and-forget)
+            if (stop.radarCnpj) {
+              void supabase.rpc('radar_salvar_geocode' as never, {
+                p_cnpj: stop.radarCnpj,
+                p_lat: coords.lat,
+                p_lng: coords.lng,
+                p_status: 'ok',
+              } as never);
+            }
           }
         } catch (e) {
           if ((e as { name?: string })?.name === 'AbortError') break;
           console.warn('Geocode failed for', stop.address.street);
+          // Persist geocode failure for prospects (best-effort, fire-and-forget)
+          if (stop.stopType === 'prospect_visit' && stop.radarCnpj) {
+            void supabase.rpc('radar_salvar_geocode' as never, {
+              p_cnpj: stop.radarCnpj,
+              p_lat: 0,
+              p_lng: 0,
+              p_status: 'falhou',
+            } as never);
+          }
         }
         // Nominatim rate limit: max 1 req/sec
         if (!controller.signal.aborted) {
@@ -957,7 +1041,7 @@ export function useRoutePlanner() {
 
   // Stats
   const stopCounts = useMemo(() => {
-    const counts: Record<string, number> = { pickup_tools: 0, deliver_tools: 0, sales_visit: 0, hybrid_visit: 0, scheduled_visit: 0 };
+    const counts: Record<string, number> = { pickup_tools: 0, deliver_tools: 0, sales_visit: 0, hybrid_visit: 0, scheduled_visit: 0, manual_visit: 0, prospect_visit: 0 };
     optimizedRoute.forEach(s => counts[s.stopType]++);
     return counts;
   }, [optimizedRoute]);
@@ -1022,6 +1106,11 @@ export function useRoutePlanner() {
     setCheckoutNotes,
     checkoutRevenue,
     setCheckoutRevenue,
+    // prospeccao mode
+    showProspeccao: isMaster || isGestorComercial,
+    selectedCity,
+    setSelectedCity,
+    loadingProspects,
     // handlers
     toggleCustomerSelection,
     handleCheckIn,

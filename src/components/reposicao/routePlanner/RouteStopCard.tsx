@@ -88,11 +88,13 @@ export function RouteStopCard({
               )}
               {!stop.lat && <span className="text-destructive">Sem coordenadas</span>}
             </div>
-            {/* CTAs */}
+            {/* CTAs — prospect_visit não tem CTA/check-in/checkout (customerUserId vazio bloquearia route_visits) */}
             <div className="flex items-center gap-2 mt-2 flex-wrap">
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onStopCTA}>
-                {getCTALabel(stop)}
-              </Button>
+              {stop.stopType !== 'prospect_visit' && (
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onStopCTA}>
+                  {getCTALabel(stop)}
+                </Button>
+              )}
               {stop.phone && (
                 <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" asChild>
                   <a href={`tel:${stop.phone}`}>
@@ -100,7 +102,11 @@ export function RouteStopCard({
                   </a>
                 </Button>
               )}
-              {!isCheckedIn ? (
+              {stop.stopType === 'prospect_visit' ? (
+                <span className="text-xs text-muted-foreground italic">
+                  Prospect — registrar contato no Radar
+                </span>
+              ) : !isCheckedIn ? (
                 <Button
                   size="sm" variant="outline"
                   className="h-7 text-xs gap-1 border-status-success text-status-success hover:bg-status-success-bg"
