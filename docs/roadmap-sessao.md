@@ -1,8 +1,26 @@
-# Roadmap da Sessão — atualizado 2026-06-11
+# Roadmap da Sessão — atualizado 2026-06-13
 
 > **Documento vivo.** Re-feito sempre que acrescentamos OU concluímos uma atividade, e renderizado no chat quando muda, pra o founder acompanhar. Prática padrão de toda sessão (registrada no CLAUDE.md, topo).
 >
 > **Legenda:** ✅ feito · 🔄 em andamento · ⏳ pendente · 🚧 bloqueado · ⏸️ adiado (decisão consciente) · 🧭 aguardando decisão (eu+codex)
+
+---
+
+## 🗺️ SESSÃO 2026-06-13 (roteirizador-prospects) — Mapa de visitas do hunter: carteira + prospects do Radar
+
+> Pedido do founder: como hunter, ele visita clientes antigos (carteira) E prospects novos. O Radar
+> lista prospects mas não dá pra plotar/rotear; o Roteirizador (`/admin/route-planner`) já faz
+> mapa+rota+check-in mas só da carteira. Objetivo: juntar os dois — numa cidade, ver carteira +
+> prospects no mesmo mapa, montar UMA rota e fazer check-in. Decisões (AskUserQuestion): estender o
+> Roteirizador (reusa mapa/rota/geo/check-in) · já com rota do dia + check-in.
+> Spec: `docs/superpowers/specs/2026-06-13-roteirizador-prospects-radar-design.md`. Branch `claude/roteirizador-prospects`.
+> ⚠️ Codex fora da cota (volta 19:18) → **Caminho B** (PG17 + validação própria); adversarial retroativo pendente.
+
+- ✅ **Investigação dos contratos (Explore):** `radar_empresas` TEM endereço de rua (logradouro/numero/bairro/cep → geo acerta o PONTO exato, não só o centro da cidade); `RouteStop`/`StopType`/`PlanningMode`/`STOP_CONFIG` mapeados; o geocoding usa ref in-memory (cache só de sessão → vou persistir no banco); **NÃO existe** loader de carteira por cidade (vou criar).
+- ✅ **Sub-PR A — fundação SQL (construído, PG17 A1-A10 verde + helper TDD verde):** migration `20260613230000_roteirizador_prospects.sql` = colunas de geo em `radar_empresas` (lat/lng/geocoded_em/geocode_status + CHECK) + RPC `radar_salvar_geocode` (gate gestor/master; valida cnpj/range/status) + RPC `radar_prospects_para_rota` (prospects da cidade por `municipio_codigo`; exclui já-cliente/descartado/virou; a_contatar primeiro; top-N) + REVOKE/GRANT. Helper puro TDD `src/lib/route/prospect-stop.ts` (`prospectRowToStopDraft` + `buildGeocodeQuery`, espelha o inline do Nominatim).
+- 🔄 **Sub-PR B — modo "Cidade" no Roteirizador (em construção, subagent-driven):** `StopType`+'prospect_visit' (amarelo) · `PlanningMode`+'prospeccao' · `RouteStop`+radarCnpj/geocodeFailed · `CitySelector` · `loadProspectStops` (RPC + geo persistido) · carteira-da-cidade junto · geocoding persiste via `radar_salvar_geocode` · gate do modo p/ gestor/master.
+- ⏳ **Sub-PR C — check-in de prospect (Caminho B valida `route_visits` ANTES):** `route_visits` nullable + radar_cnpj + `handleCheckInProspect` + reflexo no Radar (check-out → `registrar_contato_radar`). ⚠️ Valido os consumidores de `route_visits` que assumem `customer_user_id NOT NULL` antes de construir.
+- ⏳ **Founder (ao fim):** aplicar migration `20260613230000` no SQL Editor + Publish do frontend.
 
 ---
 
