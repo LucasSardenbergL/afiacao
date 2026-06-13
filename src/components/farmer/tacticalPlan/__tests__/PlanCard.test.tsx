@@ -3,6 +3,10 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { PlanCard } from "../PlanCard";
 import type { TacticalPlan } from "@/hooks/useTacticalPlan";
 
+// PlanCard → RecordResultDialog lê useImpersonation pra desabilitar o registro na lente
+// "Ver como". Fora da lente (isImpersonating=false) o botão segue habilitado — testado aqui.
+vi.mock("@/contexts/ImpersonationContext", () => ({ useImpersonation: vi.fn(() => ({ isImpersonating: false })) }));
+
 function makePlan(overrides: Partial<TacticalPlan> = {}): TacticalPlan {
   return {
     id: "p1",

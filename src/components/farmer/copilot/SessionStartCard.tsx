@@ -15,6 +15,7 @@ interface SessionStartCardProps {
   customers: { id: string; name: string }[];
   isConnecting: boolean;
   onStart: () => void;
+  disabled?: boolean;
 }
 
 export function SessionStartCard({
@@ -25,6 +26,7 @@ export function SessionStartCard({
   customers,
   isConnecting,
   onStart,
+  disabled,
 }: SessionStartCardProps) {
   return (
     <Card className="border-primary/20">
@@ -85,7 +87,8 @@ export function SessionStartCard({
 
         <Button
           onClick={onStart}
-          disabled={isConnecting}
+          disabled={isConnecting || disabled}
+          title={disabled ? 'Indisponível em modo Ver como' : undefined}
           className="w-full gap-2"
         >
           {isConnecting ? (
