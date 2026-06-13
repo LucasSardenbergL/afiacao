@@ -24,6 +24,7 @@ import {
   useRegistrarContatoRadar,
   useDesfazerContatoRadar,
 } from '@/queries/useRegistrarContatoRadar';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { ACOES_CONTATO, type AcaoContato } from '@/lib/radar/ui-helpers';
 
 const ICON_MAP = {
@@ -43,6 +44,7 @@ const LABEL_OK: Record<AcaoContato, string> = {
 export function RadarOutcomeMenu({ cnpj }: { cnpj: string }) {
   const reg = useRegistrarContatoRadar();
   const undo = useDesfazerContatoRadar();
+  const { isImpersonating } = useImpersonation();
   const [confirmDescartar, setConfirmDescartar] = useState(false);
   const [motivo, setMotivo] = useState('');
 
@@ -71,7 +73,12 @@ export function RadarOutcomeMenu({ cnpj }: { cnpj: string }) {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" disabled={reg.isPending}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={reg.isPending || isImpersonating}
+            title={isImpersonating ? 'Indisponível em modo Ver como' : 'Registrar contato'}
+          >
             <ClipboardCheck className="w-4 h-4 mr-2" /> Registrar contato
           </Button>
         </DropdownMenuTrigger>

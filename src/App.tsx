@@ -172,6 +172,7 @@ const RotaPropostas = lazy(() => import("./pages/RotaPropostas"));
 const Caca = lazy(() => import("./pages/Caca"));
 const Melhorias = lazy(() => import("./pages/Melhorias"));
 const GestaoMelhorias = lazy(() => import("./pages/GestaoMelhorias"));
+const RadarClientes = lazy(() => import("./pages/RadarClientes"));
 
 const PageLoader = () => <PageSkeleton variant="auto" />;
 
@@ -379,6 +380,7 @@ const App = () => {
                 <Route path="gestao/saude-dados" element={<SaudeDados />} />
                 <Route path="gestao/melhorias" element={<GestaoMelhorias />} />
                 <Route path="melhorias" element={<Melhorias />} />
+                <Route path="radar" element={<RadarClientes />} />
                 <Route path="admin/ajuda" element={<AdminAjuda />} />
                 <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
                 <Route path="admin/des/configuracao" element={<AdminDesTrimestreAtual />} />
