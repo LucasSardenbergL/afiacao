@@ -3,10 +3,12 @@ import { Radar } from 'lucide-react';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
+import { useRadarKpis } from '@/queries/useRadarKpis';
 import { RadarKpis } from '@/components/radar/RadarKpis';
 import { RadarFiltros as Filtros } from '@/components/radar/RadarFiltros';
 import { RadarLinha } from '@/components/radar/RadarLinha';
 import { RadarDetailSheet } from '@/components/radar/RadarDetailSheet';
+import { RadarRankingCidades } from '@/components/radar/RadarRankingCidades';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { PresetRadar } from '@/lib/radar/ui-helpers';
@@ -26,6 +28,7 @@ type RadarUrlState = {
   cnae: string;
   status: string;
   incluirJaClientes: boolean;
+  comTelefone: boolean;
   preset: string;
   [k: string]: string | boolean;
 };
@@ -37,6 +40,7 @@ const DEFAULTS: RadarUrlState = {
   cnae: '',
   status: '',
   incluirJaClientes: false,
+  comTelefone: false,
   preset: 'novas',
 };
 
@@ -54,6 +58,7 @@ export default function RadarClientes() {
   }, []);
 
   const q = useRadarLista(filtros, hojeISO);
+  const kpis = useRadarKpis();
   const [aberta, setAberta] = useState<RadarEmpresa | null>(null);
   const sentinelRef = useInfiniteScroll(() => q.fetchNextPage(), !!q.hasNextPage && !q.isFetchingNextPage);
 
@@ -64,9 +69,15 @@ export default function RadarClientes() {
       <div className="flex items-center gap-2">
         <Radar className="w-5 h-5" />
         <h1 className="text-2xl font-display">Radar de Clientes</h1>
+        {kpis.data?.lote && (
+          <span className="ml-2 text-xs text-muted-foreground border rounded px-2 py-0.5">
+            lote {kpis.data.lote}
+          </span>
+        )}
       </div>
       <RadarKpis />
       <Filtros filtros={filtros} set={set} />
+      <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} onPick={(nome) => set({ municipio: nome })} />
 
       <div className="rounded-md border">
         {q.isLoading ? (
