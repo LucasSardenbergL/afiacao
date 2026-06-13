@@ -50,6 +50,23 @@ const ALLOWED = new Set([
   // useFarmerScoring: effectiveUserId na leitura/cálculo da agenda do alvo; o upsert de scores
   // é PULADO na lente (skip por isImpersonating) — o master não recalcula a carteira do alvo.
   'src/hooks/useFarmerScoring.ts',
+  // useCrossSellEngine: effectiveUserId escopa a LEITURA/recálculo das recomendações ao
+  // alvo na lente (lê os scores DELE pra inspeção) e NÃO cai no fallback super-admin
+  // ("todos os scores"). A PERSISTÊNCIA (upsert de farmer_recommendations) é PULADA na
+  // lente — o master inspeciona, não regrava a carteira do alvo (igual useFarmerScoring).
+  'src/hooks/useCrossSellEngine.ts',
+  // useFarmerExperiments: effectiveUserId SÓ em loadExperiments (filtra a LISTA exibida
+  // pro alvo na lente). As mutations (criar/iniciar/medir/cancelar) usam user.id (write
+  // identity = master real) e são bloqueadas na lente pelo write-guard + botões disabled.
+  'src/hooks/useFarmerExperiments.ts',
+  // useDiagnosticQuestions: effectiveUserId SÓ em getEffectivenessStats (estatísticas
+  // exibidas seguem o alvo). A geração (edge) e o save (insert farmer_id=user.id) são
+  // bloqueados na lente pelo write-guard.
+  'src/hooks/useDiagnosticQuestions.ts',
+  // FarmerCallsPendingLink: effectiveUserId SÓ na LEITURA da lista de chamadas pendentes
+  // de vínculo (query react-query) pro "Ver como" mostrar as do alvo. O vínculo
+  // (useLinkCallToCustomer) é write — bloqueado na lente + botão "Vincular" disabled.
+  'src/pages/FarmerCallsPendingLink.tsx',
   // Clientes (/admin/customers): useClientesScope escopa a LEITURA da lista pro alvo da lente
   // (effectiveUserId só filtra carteira_assignments/scores — read-only, é o hook que importa
   // useDisplayAccess e NÃO tem mutação). useAdminCustomers recebe effectiveUserId do scope

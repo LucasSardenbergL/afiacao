@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useLinkCallToCustomer } from '@/hooks/useLinkCallToCustomer';
 import { ilikeOr } from '@/lib/postgrest';
 import { Card } from '@/components/ui/card';
@@ -37,15 +37,18 @@ interface ProfileMatch {
 }
 
 export default function FarmerCallsPendingLink() {
-  const { user } = useAuth();
+  // Lente "Ver como": a lista de chamadas pendentes exibida segue o id efetivo (o ALVO
+  // na lente, o próprio usuário fora). O vínculo (mutation) é write — bloqueado na lente
+  // pelo write-guard + botão "Vincular cliente" disabled.
+  const { effectiveUserId, isImpersonating } = useImpersonation();
   const { data, refetch } = useQuery({
-    queryKey: ['farmer-pending-link', user?.id],
-    enabled: !!user,
+    queryKey: ['farmer-pending-link', effectiveUserId],
+    enabled: !!effectiveUserId,
     queryFn: async (): Promise<Pending[]> => {
-       
+
       const { data, error } = await supabase.from('farmer_calls')
         .select('id, phone_dialed, started_at, duration_seconds')
-        .eq('farmer_id', user!.id)
+        .eq('farmer_id', effectiveUserId!)
         .is('customer_user_id', null)
         .not('transcript', 'is', null)
         .order('started_at', { ascending: false })
@@ -70,7 +73,7 @@ export default function FarmerCallsPendingLink() {
       ) : (
         <div className="space-y-2">
           {data.map((p) => (
-            <PendingRow key={p.id} pending={p} onLinked={refetch} />
+            <PendingRow key={p.id} pending={p} onLinked={refetch} disabled={isImpersonating} />
           ))}
         </div>
       )}
@@ -81,9 +84,11 @@ export default function FarmerCallsPendingLink() {
 function PendingRow({
   pending,
   onLinked,
+  disabled,
 }: {
   pending: Pending;
   onLinked: () => void;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -119,7 +124,12 @@ function PendingRow({
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
-          <Button size="sm" variant="outline">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            title={disabled ? 'Indisponível em modo Ver como' : undefined}
+          >
             Vincular cliente
           </Button>
         </DialogTrigger>

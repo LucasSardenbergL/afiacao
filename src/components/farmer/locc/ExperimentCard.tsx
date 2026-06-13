@@ -7,11 +7,12 @@ import { BarChart3, CheckCircle, Play, XCircle } from 'lucide-react';
 import { type Experiment } from '@/hooks/useFarmerExperiments';
 import { metricLabels, statusColors } from './helpers';
 
-export const ExperimentCard = ({ experiment, onStart, onMeasure, onCancel }: {
+export const ExperimentCard = ({ experiment, onStart, onMeasure, onCancel, disabled }: {
   experiment: Experiment;
   onStart: (id: string) => void;
   onMeasure: (id: string) => void;
   onCancel: (id: string) => void;
+  disabled?: boolean;
 }) => {
   const sc = statusColors[experiment.status] || statusColors.rascunho;
 
@@ -88,16 +89,16 @@ export const ExperimentCard = ({ experiment, onStart, onMeasure, onCancel }: {
         {/* Actions */}
         <div className="flex gap-1">
           {experiment.status === 'rascunho' && (
-            <Button size="sm" className="flex-1 h-7 text-[10px]" onClick={() => onStart(experiment.id)}>
+            <Button size="sm" className="flex-1 h-7 text-[10px]" onClick={() => onStart(experiment.id)} disabled={disabled} title={disabled ? 'Indisponível em modo Ver como' : undefined}>
               <Play className="w-3 h-3 mr-1" /> Iniciar
             </Button>
           )}
           {experiment.status === 'ativo' && (
             <>
-              <Button size="sm" variant="outline" className="flex-1 h-7 text-[10px]" onClick={() => onMeasure(experiment.id)}>
+              <Button size="sm" variant="outline" className="flex-1 h-7 text-[10px]" onClick={() => onMeasure(experiment.id)} disabled={disabled} title={disabled ? 'Indisponível em modo Ver como' : undefined}>
                 <BarChart3 className="w-3 h-3 mr-1" /> Medir
               </Button>
-              <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" onClick={() => onCancel(experiment.id)}>
+              <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" onClick={() => onCancel(experiment.id)} disabled={disabled} title={disabled ? 'Indisponível em modo Ver como' : undefined}>
                 <XCircle className="w-3 h-3" />
               </Button>
             </>

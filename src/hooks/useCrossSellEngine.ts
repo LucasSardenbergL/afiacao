@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface Recommendation {
@@ -107,13 +107,17 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 
 // ─── Main Hook ───────────────────────────────────────────────────────
 export const useCrossSellEngine = () => {
-  const { user } = useAuth();
+  // Lente "Ver como": id efetivo = ALVO na lente (lê/recalcula as recomendações DELE
+  // pra inspeção), próprio usuário fora. Na lente a persistência é PULADA (igual
+  // useFarmerScoring): o master inspeciona, não regrava a carteira do alvo. Fora da
+  // lente effectiveUserId === user.id (byte-equivalente, zero regressão).
+  const { effectiveUserId, isImpersonating } = useImpersonation();
   const [recommendations, setRecommendations] = useState<CustomerRecommendations[]>([]);
   const [loading, setLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
 
   const calculateRecommendations = useCallback(async () => {
-    if (!user?.id) return;
+    if (!effectiveUserId) return;
     setCalculating(true);
     setLoading(true);
 
@@ -134,9 +138,11 @@ export const useCrossSellEngine = () => {
         return all;
       };
 
-      // Try farmer-specific first, fallback to all (for super_admin)
-      let clientScores = await fetchAllScores(user.id);
-      if (!clientScores.length) {
+      // Try farmer-specific first, fallback to all (for super_admin). Na lente NÃO cai
+      // no fallback de "todos os scores" — escopa estritamente ao alvo (degradação
+      // honesta: alvo sem score → lista vazia, nunca a carteira de todo mundo).
+      let clientScores = await fetchAllScores(effectiveUserId);
+      if (!clientScores.length && !isImpersonating) {
         clientScores = await fetchAllScores();
       }
 
@@ -451,7 +457,7 @@ export const useCrossSellEngine = () => {
       // Persist recommendations (batch upsert único — antes era N×M serial)
       const recRows = allRecs.flatMap((cr) =>
         [...cr.crossSell, ...cr.upSell].map((rec) => ({
-          farmer_id: user.id,
+          farmer_id: effectiveUserId,
           customer_user_id: rec.customerId,
           recommendation_type: rec.type,
           product_id: rec.productId,
@@ -465,7 +471,9 @@ export const useCrossSellEngine = () => {
           updated_at: new Date().toISOString(),
         })),
       );
-      if (recRows.length > 0) {
+      // Persistência PULADA na lente "Ver como" (somente leitura: o master inspeciona
+      // as recomendações do alvo sem regravar a carteira dele).
+      if (!isImpersonating && recRows.length > 0) {
         await supabase.from('farmer_recommendations').upsert(recRows);
       }
     } catch (error) {
@@ -474,7 +482,7 @@ export const useCrossSellEngine = () => {
       setCalculating(false);
       setLoading(false);
     }
-  }, [user?.id]);
+  }, [effectiveUserId, isImpersonating]);
 
   // ─── Actions ─────────────────────────────────────────────────────────
   const markAsOffered = useCallback(async (recId: string) => {
