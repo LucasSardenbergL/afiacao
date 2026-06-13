@@ -79,6 +79,14 @@ interface Props {
   initialValues: KbExtractedSpec;
   documentId?: string;
   onSaved?: () => void;
+  /** B2: quando fornecida, o submit chama isto (com os specs montados) em vez de salvar direto.
+   *  O wrapper (KbSpecsEditButton) orquestra diff/preview/RPC. */
+  onSubmitOverride?: (specs: KbExtractedSpec) => void;
+  /** B2: trava product_code/supplier (identidade) — corrige dados, não troca de produto.
+   *  Usa readOnly (não disabled) p/ o valor continuar sendo submetido pelo react-hook-form. */
+  lockIdentity?: boolean;
+  /** Texto do botão de submit. Default "Aprovar e salvar". */
+  submitLabel?: string;
 }
 
 function splitTags(s: string | undefined | null): string[] {
@@ -93,7 +101,7 @@ function joinTags(arr: string[] | undefined | null): string {
   return (arr ?? []).join(', ');
 }
 
-export function KbSpecsForm({ initialValues, documentId, onSaved }: Props) {
+export function KbSpecsForm({ initialValues, documentId, onSaved, onSubmitOverride, lockIdentity, submitLabel }: Props) {
   const save = useSaveProductSpecs();
 
   const {
@@ -188,6 +196,10 @@ export function KbSpecsForm({ initialValues, documentId, onSaved }: Props) {
       extraction_confidence: values.extraction_confidence,
       extraction_gaps: initialValues.extraction_gaps,
     };
+    if (onSubmitOverride) {
+      onSubmitOverride(specs);
+      return;
+    }
     save.mutate(
       { specs, documentId },
       { onSuccess: () => onSaved?.() },
@@ -199,11 +211,13 @@ export function KbSpecsForm({ initialValues, documentId, onSaved }: Props) {
     label,
     type = 'text',
     placeholder,
+    readOnly,
   }: {
     name: keyof FormValues;
     label: string;
     type?: string;
     placeholder?: string;
+    readOnly?: boolean;
   }) => (
     <div>
       <Label htmlFor={name as string} className="text-xs">
@@ -214,8 +228,9 @@ export function KbSpecsForm({ initialValues, documentId, onSaved }: Props) {
         type={type}
         step={type === 'number' ? 'any' : undefined}
         placeholder={placeholder}
+        readOnly={readOnly}
         {...register(name)}
-        className="text-xs h-8"
+        className={`text-xs h-8 ${readOnly ? 'bg-muted cursor-not-allowed' : ''}`}
       />
       {errors[name] && (
         <div className="text-[10px] text-status-error mt-0.5">
@@ -243,8 +258,8 @@ export function KbSpecsForm({ initialValues, documentId, onSaved }: Props) {
           Identificação
         </legend>
         <div className="grid grid-cols-2 gap-2">
-          <Field name="product_code" label="Código *" />
-          <Field name="supplier" label="Fornecedor *" />
+          <Field name="product_code" label="Código *" readOnly={lockIdentity} />
+          <Field name="supplier" label="Fornecedor *" readOnly={lockIdentity} />
         </div>
         <Field name="product_name" label="Nome *" />
         <div className="grid grid-cols-2 gap-2">
@@ -384,7 +399,7 @@ export function KbSpecsForm({ initialValues, documentId, onSaved }: Props) {
           ) : (
             <Save className="w-3.5 h-3.5 mr-2" />
           )}
-          Aprovar e salvar
+          {submitLabel ?? 'Aprovar e salvar'}
         </Button>
       </div>
     </form>

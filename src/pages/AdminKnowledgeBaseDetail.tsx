@@ -4,6 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Card } from '@/components/ui/card';
 import { KbStatusBadge } from '@/components/knowledge-base/KbStatusBadge';
 import { KbSpecsExtractButton } from '@/components/knowledge-base/KbSpecsExtractButton';
+import { KbSpecsEditButton } from '@/components/knowledge-base/KbSpecsEditButton';
 import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -106,12 +107,17 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
                 </Badge>
               )}
             </div>
-            <KbSpecsExtractButton
-              documentId={data.id}
-              documentTitle={data.title}
-              productCode={data.product_code}
-              onSaved={() => refetchSpecs()}
-            />
+            <div className="flex items-center gap-2 flex-wrap">
+              {existingSpecs && (
+                <KbSpecsEditButton spec={existingSpecs} onSaved={() => refetchSpecs()} />
+              )}
+              <KbSpecsExtractButton
+                documentId={data.id}
+                documentTitle={data.title}
+                productCode={data.product_code}
+                onSaved={() => refetchSpecs()}
+              />
+            </div>
           </div>
 
           {existingSpecs ? (
