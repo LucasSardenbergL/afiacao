@@ -160,8 +160,10 @@ Deno.serve(async (req) => {
       .eq("sync_type", syncType)
       .maybeSingle();
     if (!data) return null;
-    // Fix: if previous attempt was incomplete (running or no stored response), return 409
-    if (data.status === "running" || data.idempotency_response == null) {
+    // Fix (S5/codex P1-3): if the previous attempt was incomplete (running), FAILED (error), or has
+    // no stored response → 409 retry. An error run with a stored success response would otherwise
+    // replay fake success and the connector would advance its high-water mark past the failed batch.
+    if (data.status === "running" || data.status === "error" || data.idempotency_response == null) {
       return json({ ok: false, error: "previous attempt incomplete, retry later", retry: true }, 409);
     }
     // Return the stored response deterministically

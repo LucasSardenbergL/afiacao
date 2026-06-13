@@ -76,8 +76,10 @@ type Company = 'oben' | 'colacor' | 'colacor_sc';
 // NÃO incluir liquidados em "aberto": saldo é coluna gerada e valor_recebido=0
 // (#396) → liquidado tem saldo cheio → contá-lo infla o NCG em dezenas de milhões.
 // Editou aqui? Edite lá também.
-const OPEN_TITLE_STATUSES = ['A VENCER', 'ATRASADO', 'VENCE HOJE'] as const;
-const OPEN_NOT_OVERDUE_TITLE_STATUSES = ['A VENCER', 'VENCE HOJE'] as const;
+// + fallbacks do ingest ('ABERTO'/'VENCIDO' quando o Omie não manda status;
+// 'PARCIAL' = baixa parcial) — espelho de src/lib/financeiro/titulo-status.ts.
+const OPEN_TITLE_STATUSES = ['A VENCER', 'ATRASADO', 'VENCE HOJE', 'ABERTO', 'VENCIDO', 'PARCIAL'] as const;
+const OPEN_NOT_OVERDUE_TITLE_STATUSES = ['A VENCER', 'VENCE HOJE', 'ABERTO'] as const;
 const SETTLED_TITLE_STATUSES = ['RECEBIDO', 'PAGO', 'LIQUIDADO'] as const;
 const OPEN_SET = new Set<string>(OPEN_TITLE_STATUSES);
 const OPEN_NOT_OVERDUE_SET = new Set<string>(OPEN_NOT_OVERDUE_TITLE_STATUSES);

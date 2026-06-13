@@ -11,10 +11,10 @@
 // Chamado uma vez por RunCycle quando a data mudou desde a última verificação.
 //
 // Segurança:
-//  - UpdateManifestURL fica num bucket PÚBLICO read-only do Supabase; escrita = service_role apenas.
-//  - sha256 verificado antes de instalar (falha → descarta o download, conta como falha).
-//  - Anti-downgrade: só atualiza se manifest.version > current (semver estrito).
-//  - Crash-loop guard: 3 falhas em 24h → restaura .prev + desativa tentativas por 24h.
+//   - UpdateManifestURL fica num bucket PÚBLICO read-only do Supabase; escrita = service_role apenas.
+//   - sha256 verificado antes de instalar (falha → descarta o download, conta como falha).
+//   - Anti-downgrade: só atualiza se manifest.version > current (semver estrito).
+//   - Crash-loop guard: 3 falhas em 24h → restaura .prev + desativa tentativas por 24h.
 //
 // Spec: docs/superpowers/specs/2026-06-09-tint-sync-sayersystem-design.md §6.4
 package main

@@ -16,9 +16,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	_ "github.com/jackc/pgx/v5/stdlib" // driver pgx para database/sql
 )
 
@@ -86,67 +89,92 @@ func ExtractDelta(
 		return nil, time.Time{}, fmt.Errorf("ExtractDelta: entidade %q não encontrada no mapeamento resolvido", entity)
 	}
 
-	// Monta a lista de colunas a selecionar (nome real no PG).
-	// Preserva o mapeamento lógico→real para nomear as colunas no resultado.
-	var selectCols []colPair
-	for logic, real := range resolvedCols {
-		selectCols = append(selectCols, colPair{logic, real})
-	}
-	// Ordena por nome lógico para SELECT determinístico.
-	sortColPairs(selectCols)
-
+	// Monta a lista de colunas a selecionar — inclui os slots flat das fórmulas
+	// (P0: sem isso corante1..6/qtd1..6 nunca entravam no SELECT e os itens saíam vazios).
+	selectCols := buildDeltaSelectCols(rm, entity)
 	colNames := make([]string, len(selectCols))
 	for i, cp := range selectCols {
 		colNames[i] = cp.real
 	}
 
+	// FROM usa o nome FÍSICO da tabela (ex: lógico "corantes" → físico "corante").
+	physical := rm.TableFor(entity)
+
 	daCol, hasDA := resolvedCols["data_atualizacao"]
 	if !hasDA {
-		// Tabela sem data_atualizacao: faz full scan (ex: colecao, subcolecao).
-		return extractFullScan(ctx, db, entity, selectCols, colNames)
+		// Tabela sem data_atualizacao: faz full scan (ex: personcor no schema real).
+		rows, maxDA, err = extractFullScan(ctx, db, entity, physical, selectCols, colNames)
+	} else {
+		// Monta a query de delta.
+		query := fmt.Sprintf(
+			`SELECT %s FROM %s WHERE %s > $1 OR %s IS NULL ORDER BY %s ASC`,
+			strings.Join(quoteIdents(colNames), ", "),
+			quoteIdent(physical),
+			quoteIdent(daCol),
+			quoteIdent(daCol),
+			quoteIdent(daCol),
+		)
+
+		sqlRows, qErr := db.QueryContext(ctx, query, hwm)
+		if qErr != nil {
+			return nil, time.Time{}, fmt.Errorf("ExtractDelta %s: erro na query: %w", entity, qErr)
+		}
+		defer sqlRows.Close()
+
+		rows, maxDA, err = scanRows(sqlRows, selectCols, daCol)
+		if err != nil {
+			err = fmt.Errorf("ExtractDelta %s: erro ao ler linhas: %w", entity, err)
+		}
 	}
-
-	// Monta a query de delta.
-	query := fmt.Sprintf(
-		`SELECT %s FROM %s WHERE %s > $1 OR %s IS NULL ORDER BY %s ASC`,
-		strings.Join(quoteIdents(colNames), ", "),
-		quoteIdent(entity),
-		quoteIdent(daCol),
-		quoteIdent(daCol),
-		quoteIdent(daCol),
-	)
-
-	sqlRows, err := db.QueryContext(ctx, query, hwm)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("ExtractDelta %s: erro na query: %w", entity, err)
-	}
-	defer sqlRows.Close()
-
-	rows, maxDA, err = scanRows(sqlRows, selectCols, daCol)
-	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("ExtractDelta %s: erro ao ler linhas: %w", entity, err)
+		return nil, time.Time{}, err
 	}
 
-	// Para a shape flat da FORMULA, agrega os itens de corante em []map[string]any.
-	if entity == "formula" && rm.FormulaShape == FormulaShapeFlat {
-		rows = aggregateFlatFormulaItems(rows, rm.FlatFormulaCols)
+	// Para a shape flat das FÓRMULAS (formula E formulaperson), agrega os itens de
+	// corante em []map[string]any usando os flat cols da TABELA correspondente.
+	if (entity == "formula" || entity == "formulaperson") && rm.FormulaShape == FormulaShapeFlat {
+		rows = aggregateFlatFormulaItems(rows, rm.FlatColsByTable[entity])
 	}
 
 	return rows, maxDA, nil
 }
 
+// buildDeltaSelectCols monta a lista de colunas (lógico→real) do SELECT de delta
+// de uma entidade. Para fórmulas no shape FLAT, APPENDA os slots corante1..6 +
+// qtd1ml..6ml resolvidos em rm.FlatColsByTable[entity] — eles não estão em
+// rm.Resolved (são detectados pelo shape, não pelo mapeamento declarativo) e sem
+// isso o aggregateFlatFormulaItems produzia itens VAZIOS para toda fórmula (P0).
+// Função pura (testável sem banco).
+func buildDeltaSelectCols(rm *ResolvedMapping, entity string) []colPair {
+	resolvedCols := rm.Resolved[entity]
+	selectCols := make([]colPair, 0, len(resolvedCols)+12)
+	for logic, real := range resolvedCols {
+		selectCols = append(selectCols, colPair{logic, real})
+	}
+	if (entity == "formula" || entity == "formulaperson") && rm.FormulaShape == FormulaShapeFlat {
+		for slotKey, realName := range rm.FlatColsByTable[entity] {
+			selectCols = append(selectCols, colPair{slotKey, realName})
+		}
+	}
+	// Ordena por nome lógico para SELECT determinístico.
+	sortColPairs(selectCols)
+	return selectCols
+}
+
 // extractFullScan faz um SELECT sem filtro de data (para tabelas sem data_atualizacao).
+// physical é o nome FÍSICO da tabela; entity (lógico) só aparece nas mensagens de erro.
 func extractFullScan(
 	ctx context.Context,
 	db *sql.DB,
 	entity string,
+	physical string,
 	selectCols []colPair,
 	colNames []string,
 ) ([]map[string]any, time.Time, error) {
 	query := fmt.Sprintf(
 		`SELECT %s FROM %s`,
 		strings.Join(quoteIdents(colNames), ", "),
-		quoteIdent(entity),
+		quoteIdent(physical),
 	)
 	sqlRows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -231,9 +259,10 @@ func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string
 				continue
 			}
 
-			// Converte qtd para float64; pula se <= 0.
-			qtd := toFloat64(qtdVal)
-			if qtd <= 0 {
+			// Converte qtd para float64; pula se ausente/não-parseável ou <= 0.
+			// (numeric do PG chega como string — toFloat64OK parseia; falha ≠ 0.)
+			qtd, ok := toFloat64OK(qtdVal)
+			if !ok || qtd <= 0 {
 				continue
 			}
 
@@ -249,29 +278,49 @@ func aggregateFlatFormulaItems(rows []map[string]any, flatCols map[string]string
 }
 
 // ExtractFormulaChildItems extrai os itens da tabela filha formula_item e os
-// agrega por id_formula (para shape child). Retorna map[id_formula → []item].
-// Usado pelo sync.go quando FormulaShape == FormulaShapeChild.
-func ExtractFormulaChildItems(ctx context.Context, db *sql.DB) (map[string][]map[string]any, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT id_formula::text, id_corante::text, ordem, qtd_ml
-		FROM formula_item
-		ORDER BY id_formula, ordem
-	`)
+// agrega por id_formula (= PK da fórmula no pai; ver F5 em sync.go). Retorna
+// map[id_formula → []item]. Usado pelo sync.go quando FormulaShape == Child.
+//
+// hasOrdem: se a tabela filha tem a coluna "ordem" (detectada em Validate). Quando
+// false, NÃO seleciona "ordem" (evita erro de coluna ausente) e deriva a ordem
+// pela sequência de leitura por fórmula.
+//
+// qtd_ml é numeric na origem → pode chegar como string via pgx; usa toFloat64OK
+// (item com qtd não-parseável/<=0 é pulado, nunca vira 0).
+func ExtractFormulaChildItems(ctx context.Context, db *sql.DB, hasOrdem bool) (map[string][]map[string]any, error) {
+	query := `SELECT id_formula::text, id_corante::text, qtd_ml FROM formula_item ORDER BY id_formula`
+	if hasOrdem {
+		query = `SELECT id_formula::text, id_corante::text, qtd_ml, ordem FROM formula_item ORDER BY id_formula, ordem`
+	}
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("ExtractFormulaChildItems: %w", err)
 	}
 	defer rows.Close()
 
 	out := make(map[string][]map[string]any)
+	seq := make(map[string]int) // ordem derivada quando a coluna não existe
 	for rows.Next() {
 		var idFormula, idCorante string
+		var qtdRaw any
 		var ordem int
-		var qtdML float64
-		if err := rows.Scan(&idFormula, &idCorante, &ordem, &qtdML); err != nil {
-			return nil, err
+		if hasOrdem {
+			if err := rows.Scan(&idFormula, &idCorante, &qtdRaw, &ordem); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := rows.Scan(&idFormula, &idCorante, &qtdRaw); err != nil {
+				return nil, err
+			}
 		}
-		if qtdML <= 0 {
-			continue // pula slots vazios
+		qtdML, ok := toFloat64OK(qtdRaw)
+		if !ok || qtdML <= 0 {
+			continue // pula slots vazios/ausentes (qtd não-parseável NUNCA vira 0)
+		}
+		if !hasOrdem {
+			seq[idFormula]++
+			ordem = seq[idFormula]
 		}
 		out[idFormula] = append(out[idFormula], map[string]any{
 			"id_corante": idCorante,
@@ -328,25 +377,64 @@ func toTime(v any) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// toFloat64 converte um valor retornado pelo driver pgx em float64.
-// Retorna 0 se não for conversível.
-func toFloat64(v any) float64 {
+// toFloat64OK converte um valor retornado pelo driver pgx em float64.
+//
+// ⚠️ Crítico: o pgx (database/sql, stdlib) entrega `numeric` do Postgres como
+// STRING (cai no default do switch de Rows.Next → scan em string), NÃO como
+// float64. Sem tratar string/[]byte, todo custo/imposto/margem/volume/qtd_ml
+// (colunas numeric) virava 0 SILENCIOSAMENTE (F1 do review adversário). float8
+// vem como float64; int* como int64/etc.
+//
+// Retorna (valor, true) quando conversível; (0, false) quando ausente (nil) ou
+// não-parseável. O caller decide o que "ausente" significa — NUNCA tratar uma
+// falha de parse como 0 válido no caminho de preço (omitir a chave / dropar).
+func toFloat64OK(v any) (float64, bool) {
 	if v == nil {
-		return 0
+		return 0, false
 	}
 	switch n := v.(type) {
 	case float64:
-		return n
+		return n, true
 	case float32:
-		return float64(n)
+		return float64(n), true
 	case int64:
-		return float64(n)
+		return float64(n), true
 	case int32:
-		return float64(n)
+		return float64(n), true
+	case int16:
+		return float64(n), true
 	case int:
-		return float64(n)
+		return float64(n), true
+	case string:
+		return parseFloatStr(n)
+	case []byte:
+		return parseFloatStr(string(n))
+	case pgtype.Numeric:
+		// Defensivo: caso o driver/typemap entregue pgtype.Numeric (não acontece
+		// no caminho stdlib atual, mas custa pouco blindar).
+		f8, err := n.Float64Value()
+		if err != nil || !f8.Valid {
+			return 0, false
+		}
+		return f8.Float64, true
 	}
-	return 0
+	return 0, false
+}
+
+// parseFloatStr converte uma string numérica (formato Postgres: ponto decimal,
+// sem separador de milhar) em float64. Espaços ao redor são tolerados; valores
+// vazios ou não-numéricos retornam (0, false). NaN/Inf são rejeitados (não são
+// preço/volume válidos).
+func parseFloatStr(s string) (float64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return f, true
 }
 
 // sanitizeConnStr remove a senha da string de conexão para logs.

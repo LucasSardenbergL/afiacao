@@ -183,27 +183,205 @@ func TestAggregateFlatFormulaItems_MultipleRows(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────
-// toFloat64
+// buildDeltaSelectCols — P0: os slots flat TÊM que entrar no SELECT
 // ──────────────────────────────────────────────────────────────
 
-func TestToFloat64(t *testing.T) {
+// rmFlatParaSelect monta um ResolvedMapping flat com colunas base + slots reais
+// no formato do schema REAL (qtd1ml lógico → qtd1 real) para as duas fórmulas.
+func rmFlatParaSelect() *ResolvedMapping {
+	flat := func() map[string]string {
+		m := make(map[string]string, 12)
+		for i := 1; i <= 6; i++ {
+			m[fmt.Sprintf("corante%d", i)] = fmt.Sprintf("corante%d", i)
+			m[fmt.Sprintf("qtd%dml", i)] = fmt.Sprintf("qtd%d", i)
+		}
+		return m
+	}
+	return &ResolvedMapping{
+		FormulaShape: FormulaShapeFlat,
+		Resolved: map[string]map[string]string{
+			"formula": {
+				"id_padraocor": "id_padraocor", "id_produto": "id_produto",
+				"id_base": "id_base", "id_emb": "id_embalagem",
+				"data_atualizacao": "data_alteracao",
+			},
+			"formulaperson": {
+				"id_padraocor": "id_personcor", "id_produto": "id_produto",
+				"id_base": "id_base", "id_emb": "id_embalagem",
+				"data_atualizacao": "data_atualizacao",
+			},
+			"produto": {
+				"id_produto": "id", "descricao": "descricao",
+				"data_atualizacao": "data_alteracao",
+			},
+		},
+		FlatColsByTable: map[string]map[string]string{
+			"formula":       flat(),
+			"formulaperson": flat(),
+		},
+	}
+}
+
+// indexSelectCols indexa os pares lógico→real para asserts.
+func indexSelectCols(cols []colPair) map[string]string {
+	out := make(map[string]string, len(cols))
+	for _, cp := range cols {
+		out[cp.logic] = cp.real
+	}
+	return out
+}
+
+func TestBuildDeltaSelectCols_flatFormulaIncluiOs12Slots(t *testing.T) {
+	rm := rmFlatParaSelect()
+	got := indexSelectCols(buildDeltaSelectCols(rm, "formula"))
+	for i := 1; i <= 6; i++ {
+		ck := fmt.Sprintf("corante%d", i)
+		if got[ck] != ck {
+			t.Errorf("formula: slot %s ausente/errado no SELECT: %q", ck, got[ck])
+		}
+		qk := fmt.Sprintf("qtd%dml", i)
+		want := fmt.Sprintf("qtd%d", i)
+		if got[qk] != want {
+			t.Errorf("formula: slot %s deveria selecionar %q, got %q", qk, want, got[qk])
+		}
+	}
+	// As colunas base também presentes (com nome REAL).
+	if got["id_emb"] != "id_embalagem" {
+		t.Errorf("formula: id_emb deveria selecionar 'id_embalagem', got %q", got["id_emb"])
+	}
+}
+
+func TestBuildDeltaSelectCols_flatFormulapersonIncluiOs12Slots(t *testing.T) {
+	rm := rmFlatParaSelect()
+	got := indexSelectCols(buildDeltaSelectCols(rm, "formulaperson"))
+	for i := 1; i <= 6; i++ {
+		if got[fmt.Sprintf("corante%d", i)] == "" {
+			t.Errorf("formulaperson: corante%d ausente do SELECT", i)
+		}
+		if got[fmt.Sprintf("qtd%dml", i)] != fmt.Sprintf("qtd%d", i) {
+			t.Errorf("formulaperson: qtd%dml deveria selecionar qtd%d, got %q", i, i, got[fmt.Sprintf("qtd%dml", i)])
+		}
+	}
+	if got["id_padraocor"] != "id_personcor" {
+		t.Errorf("formulaperson: id_padraocor deveria selecionar 'id_personcor', got %q", got["id_padraocor"])
+	}
+}
+
+func TestBuildDeltaSelectCols_childShapeNaoIncluiSlots(t *testing.T) {
+	rm := rmFlatParaSelect()
+	rm.FormulaShape = FormulaShapeChild
+	got := indexSelectCols(buildDeltaSelectCols(rm, "formula"))
+	for i := 1; i <= 6; i++ {
+		if _, tem := got[fmt.Sprintf("corante%d", i)]; tem {
+			t.Errorf("shape child NÃO deve selecionar corante%d (vem da tabela filha)", i)
+		}
+		if _, tem := got[fmt.Sprintf("qtd%dml", i)]; tem {
+			t.Errorf("shape child NÃO deve selecionar qtd%dml", i)
+		}
+	}
+}
+
+func TestBuildDeltaSelectCols_entidadeComumNaoIncluiSlots(t *testing.T) {
+	rm := rmFlatParaSelect()
+	got := indexSelectCols(buildDeltaSelectCols(rm, "produto"))
+	if len(got) != 3 {
+		t.Errorf("produto deveria ter só as 3 colunas resolvidas, got %d: %v", len(got), got)
+	}
+	if _, tem := got["corante1"]; tem {
+		t.Error("entidade comum NÃO deve carregar slots flat de fórmula")
+	}
+}
+
+// ──────────────────────────────────────────────────────────────
+// toFloat64OK — F1: numeric do PG chega como STRING via pgx stdlib
+// ──────────────────────────────────────────────────────────────
+
+func TestToFloat64OK(t *testing.T) {
 	cases := []struct {
+		name     string
 		input    any
 		expected float64
+		ok       bool
 	}{
-		{float64(3.14), 3.14},
-		{float32(2.5), float64(float32(2.5))},
-		{int64(100), 100.0},
-		{int32(50), 50.0},
-		{int(7), 7.0},
-		{nil, 0.0},
-		{"texto", 0.0},
+		{"float64", float64(3.14), 3.14, true},
+		{"float32", float32(2.5), float64(float32(2.5)), true},
+		{"int64", int64(100), 100.0, true},
+		{"int32", int32(50), 50.0, true},
+		{"int16", int16(12), 12.0, true},
+		{"int", int(7), 7.0, true},
+		// ── O caso central do F1: numeric do Postgres chega como string ──
+		{"numeric-as-string", "123.45", 123.45, true},
+		{"string-zero", "0", 0.0, true},
+		{"string-int", "900", 900.0, true},
+		{"string-negative", "-1.5", -1.5, true},
+		{"string-with-spaces", "  42.5  ", 42.5, true},
+		{"bytes-numeric", []byte("0.5"), 0.5, true},
+		{"bytes-int", []byte("100"), 100.0, true},
+		// ── Falhas: NÃO podem virar 0 válido ──
+		{"nil", nil, 0.0, false},
+		{"garbage-string", "abc", 0.0, false},
+		{"empty-string", "", 0.0, false},
+		{"empty-bytes", []byte(""), 0.0, false},
+		{"whitespace-string", "   ", 0.0, false},
+		{"not-a-number-bytes", []byte("xyz"), 0.0, false},
+		{"nan-string", "NaN", 0.0, false},
+		{"inf-string", "Inf", 0.0, false},
+		{"bool-unsupported", true, 0.0, false},
 	}
 	for _, tc := range cases {
-		got := toFloat64(tc.input)
-		if got != tc.expected {
-			t.Errorf("toFloat64(%v): esperava %v, got %v", tc.input, tc.expected, got)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := toFloat64OK(tc.input)
+			if ok != tc.ok {
+				t.Fatalf("toFloat64OK(%v): ok esperado %v, got %v (valor=%v)", tc.input, tc.ok, ok, got)
+			}
+			if ok && got != tc.expected {
+				t.Errorf("toFloat64OK(%v): esperava %v, got %v", tc.input, tc.expected, got)
+			}
+			// Garante que uma falha NUNCA entregue um número não-zero acidental.
+			if !ok && got != 0 {
+				t.Errorf("toFloat64OK(%v): falha deveria retornar 0, got %v", tc.input, got)
+			}
+		})
+	}
+}
+
+// TestAggregateFlatFormulaItems_NumericAsString prova que qtd em string (como o
+// pgx entrega numeric) é parseada — antes do F1 virava 0 e o item era dropado.
+func TestAggregateFlatFormulaItems_NumericAsString(t *testing.T) {
+	row := map[string]any{
+		"id_padraocor":     "COR001",
+		"id_produto":       int64(1),
+		"id_base":          int64(1),
+		"id_emb":           int64(1),
+		"data_atualizacao": time.Now(),
+	}
+	for i := 1; i <= 6; i++ {
+		row[fmt.Sprintf("corante%d", i)] = nil
+		row[fmt.Sprintf("qtd%dml", i)] = nil
+	}
+	// Slot 1: qtd como STRING numérica (caso real do pgx) → deve virar 12.5.
+	row["corante1"] = "C01"
+	row["qtd1ml"] = "12.5"
+	// Slot 2: qtd como []byte → deve virar 3.
+	row["corante2"] = "C02"
+	row["qtd2ml"] = []byte("3")
+	// Slot 3: qtd string não-numérica → deve ser DROPADO (não virar 0).
+	row["corante3"] = "C03"
+	row["qtd3ml"] = "abc"
+
+	result := aggregateFlatFormulaItems([]map[string]any{row}, testFlatCols())
+	itens, ok := result[0]["itens"].([]map[string]any)
+	if !ok {
+		t.Fatalf("itens deve ser []map[string]any, got %T", result[0]["itens"])
+	}
+	if len(itens) != 2 {
+		t.Fatalf("esperava 2 itens (slot 3 dropado por qtd não-numérica), got %d: %+v", len(itens), itens)
+	}
+	if itens[0]["qtd_ml"] != 12.5 {
+		t.Errorf("slot 1 qtd_ml: esperava 12.5, got %v", itens[0]["qtd_ml"])
+	}
+	if itens[1]["qtd_ml"] != 3.0 {
+		t.Errorf("slot 2 qtd_ml: esperava 3.0, got %v", itens[1]["qtd_ml"])
 	}
 }
 

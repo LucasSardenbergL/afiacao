@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **199** custom migrations totais
-- **764** objetos esperados (criados por estas migrations)
+- **204** custom migrations totais
+- **786** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 199
-  - `rls_policy`: 189
-  - `index`: 140
+  - `function`: 208
+  - `rls_policy`: 193
+  - `index`: 145
   - `cron_job`: 102
-  - `table`: 89
+  - `table`: 93
   - `trigger`: 41
   - `enum_value`: 4
 
@@ -1739,6 +1739,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.push_subscriptions_own` | `push_subscriptions` |
 | `rls_policy` | `public.push_subscriptions_service` | `push_subscriptions` |
 
+### `20260610200000_radar_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.radar_empresas` | — |
+| `table` | `public.radar_contatos` | — |
+| `table` | `public.radar_municipios` | — |
+| `table` | `public.radar_ingest_state` | — |
+| `index` | `public.idx_radar_empresas_fila` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_local` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_cnae` | `radar_empresas` |
+| `index` | `public.idx_radar_contatos_cnpj` | `radar_contatos` |
+| `function` | `public.radar_recruzar_ja_cliente` | — |
+| `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
+| `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
+| `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
+| `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
+
 ### `20260611120000_reposicao_fixes_codex_711.sql`
 
 | Tipo | Objeto | Parent |
@@ -1767,6 +1785,35 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.rejeitar_sugestao` | — |
 | `trigger` | `public.trg_kb_specs_normalize` | `kb_product_specs` |
 | `rls_policy` | `public.omie_product_spec_links_select_staff` | `omie_product_spec_links` |
+
+### `20260611150000_route_city_norm.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_cvs_city_norm` | `customer_visit_scores` |
+| `function` | `public.route_city_norm` | — |
+
+### `20260611180000_familia_ausente_lista_email.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._vendas_familia_ausente_lista_email` | — |
+| `function` | `public.data_health_watchdog` | — |
+
+### `20260611190000_tint_sync_codex_fixes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+| `function` | `public.tint_calc_preco_final` | — |
+| `function` | `public.tint_recalc_preco_oficial` | — |
+| `function` | `public.tint_apply_keys_snapshot` | — |
+
+### `20260612120000_auto_assign_role_omie_import_guard.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.auto_assign_user_role` | — |
 
 ## Próximos passos quando algo der `❌`
 

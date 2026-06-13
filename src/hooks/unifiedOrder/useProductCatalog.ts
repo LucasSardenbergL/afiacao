@@ -107,6 +107,7 @@ function scheduleStockSyncOnce(
   // Claim ANTES de entrar na queue: dois mounts concorrentes não duplicam o sync.
   lastStockSyncAt[account] = Date.now();
   stockSyncQueue = stockSyncQueue.then(async () => {
+    let completed = false;
     try {
       let nextPage: number | null = 1;
       while (nextPage) {
@@ -114,19 +115,28 @@ function scheduleStockSyncOnce(
           'omie-vendas-sync',
           { body: { action: 'sync_estoque', start_page: nextPage, account } },
         );
-        if (result.error) break;
-        nextPage = (result.data as { nextPage?: number | null } | null)?.nextPage ?? null;
+        if (result.error) break; // incompleto — o finally libera a janela
+        const proposed = (result.data as { nextPage?: number | null } | null)?.nextPage ?? null;
+        // Guard anti-loop (retroativo Codex): a edge sob rate-limit pode
+        // devolver a MESMA página — sem progresso estrito, este while
+        // re-invocaria a edge indefinidamente.
+        if (proposed !== null && proposed <= nextPage) break;
+        nextPage = proposed;
       }
+      completed = nextPage === null;
       const refreshed = await fetchProductsForAccount(account);
       if (refreshed.length > 0) publishFresh(refreshed);
     } catch (e) {
-      // Falhou → libera a janela pra próxima abertura re-tentar.
-      lastStockSyncAt[account] = 0;
       logger.error('Background stock sync error', {
         account,
         stage: 'background_stock_sync',
         error: e,
       });
+    } finally {
+      // Sync INCOMPLETO (erro ou sem progresso) não consome a janela de 10min
+      // — antes, um break por erro mantinha o claim e bloqueava o retry da
+      // próxima abertura do wizard (retroativo Codex).
+      if (!completed) lastStockSyncAt[account] = 0;
     }
   });
 }

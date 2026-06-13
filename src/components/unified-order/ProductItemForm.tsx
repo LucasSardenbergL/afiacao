@@ -122,7 +122,11 @@ export function ProductItemForm({
                       size="sm"
                       variant={isInCart ? 'secondary' : 'default'}
                       className="h-7 text-xs flex-1"
+                      disabled={!product.ativo}
                       onClick={() => {
+                        // Inativo no Omie era só badge — continuava adicionável
+                        // e o pedido iria com item desativado (retroativo Codex).
+                        if (!product.ativo) return;
                         onAddProduct(product, qty);
                         setQty(product.id, 1);
                       }}

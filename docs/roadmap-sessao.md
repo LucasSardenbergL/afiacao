@@ -1,8 +1,54 @@
-# Roadmap da Sessão — atualizado 2026-06-10
+# Roadmap da Sessão — atualizado 2026-06-11
 
 > **Documento vivo.** Re-feito sempre que acrescentamos OU concluímos uma atividade, e renderizado no chat quando muda, pra o founder acompanhar. Prática padrão de toda sessão (registrada no CLAUDE.md, topo).
 >
 > **Legenda:** ✅ feito · 🔄 em andamento · ⏳ pendente · 🚧 bloqueado · ⏸️ adiado (decisão consciente) · 🧭 aguardando decisão (eu+codex)
+
+---
+
+## 📡 SESSÃO 2026-06-10 (radar) — Radar de Clientes: prospecção de empresas novas (estilo Omie)
+
+> Pedido do founder: "funcionalidade similar ao radar de clientes do Omie". Brainstorming
+> concluído com decisões 1-a-1 (prospecção hunter; Brasil + CNAEs curados; dump mensal
+> gratuito da RFB; GitHub Action mensal; founder-only; lista + mapa na v1; ações =
+> registrar contato + cadastrar no Omie + atribuir Tarefa). Lag mensal aceito.
+> Spec: `docs/superpowers/specs/2026-06-10-radar-clientes-design.md`.
+
+- ✅ **Brainstorming + decisões de produto** (objetivo, cobertura, fonte, cadência, quem usa, ações, visual; +2 decisões pós-spec: dois modos de ataque novas/estabelecidas; **filtro v1 = só CNAE principal** — secundários inflavam 526k→1,17M com falso-positivo tipo hospital-com-oficina; `match_via` registrado pra v2)
+- ✅ **Spec + plano** (subagent-driven, two-stage review por task)
+- ✅ **Fatia 1 — fundação de dados (TODAS as tasks FECHADAS + EM PRODUÇÃO)**, [PR #766](https://github.com/LucasSardenbergL/afiacao/pull/766) mergeado: migration `20260610200000_radar_fundacao` (validada PG17, A1-A7) · helpers TDD (19 testes) · curadoria 21 CNAEs (TODOS validados na Concla — pegou 1 código inexistente) · edge `radar-ingest` (verify_jwt=false, re-run preserva iniciado_em, dedup intra-chunk) · `carga.ts`. **6 lições da 1ª carga commitadas**: share Nextcloud/WebDAV, execFileSync anti-quoting, names= explícitos, parallel=false, saneamento iconv -c + awk paridade de aspas + DuckDB ESTRITO (opções tolerantes ativavam assert do DuckDB 1.5.3), cache de parquets.
+- ✅ **CARGA REAL DE PRODUÇÃO VALIDADA (2026-06-12)**: **526.176 empresas** no `radar_empresas` (idêntico ao dry-run — zero perda), **2.993 já-clientes** (cruzamento `radar_recruzar_ja_cliente` com a base Omie ✅ — smoke perfeito), **64.251 em MG**, **5.440 municípios com lat/lng**, **233 MB** de tabela, `radar_ingest_state` 2026-05 = `complete`. Top CNAEs: 134k móveis-madeira, 100k serralheria, 81k usinagem.
+- ⏳ **FOLLOW-UP (não-bloqueante): re-deploy da edge `radar-ingest`** via Lovable (verbatim da main) pro fix `def3c839` (erro PostgREST serializado com `JSON.stringify` em vez de `String(e)`→`[object Object]`) entrar em prod. A 1ª carga foi fechada por SQL manual (o `finalize` da edge estoura o timeout 8s do PostgREST no recompute de 526k — esse é o **modo de operação esperado** da carga inicial; cargas incrementais mensais não terão esse volume).
+- ⏳ **Fatia 2 — tela `/radar`**: lista + filtros server-side + detalhe + registrar contato + KPIs (presets "Novas do lote" / "Estabelecidas")
+- ⏳ **Fatia 3 — ações + mapa**: cadastrar no Omie (`IncluirCliente`) + atribuir Tarefa (customer_user_id NULL) + mapa Leaflet agregado por cidade
+- ⏳ **Fatia 4 — automação**: GitHub Action mensal (CRON_SECRET como secret do GH, founder configura 1×) + check `radar_ingest` no Sentinela
+## 🧹 SESSÃO 2026-06-11 — Fila do Meu Dia: instrumentar erro + enxugar menu de Vendas
+
+> Founder na lente "Ver como tatyanamartins2002": (1) o card "O que fazer agora" mostrava
+> "uma das fontes falhou ao carregar" sem dizer qual; (2) a seção Vendas do menu (8 itens) está
+> inchada e confusa pras vendedoras ("até pra mim está confuso o que serve cada coisa").
+
+- ✅ **Bug — instrumentação por fonte (decisão do founder: cravar a fonte ANTES de consertar a causa):**
+  `useFilaAcoes` agrega 3 fontes (tarefas/rota/mix-gap) num `isError` colapsado que NÃO dizia qual
+  falhou nem logava → impossível diagnosticar pela tela. Agora expõe `fontesComErro: FonteFila[]` +
+  `logger.warn` com a mensagem de cada fonte; `FilaDoDia` nomeia a fonte nos 2 avisos ("Falha ao
+  carregar: lista de ligação — …"). **Hipótese de causa-raiz (não confirmada sem o console):** a ROTA
+  (`useRouteContactList`) NÃO é lente-aware (≠ mix-gap/tarefas) → na lente do master lê ~12× mais
+  linhas (carteira inteira vs a da vendedora) → frágil no preview instável de 11/06. Bug de fidelidade
+  junto: na lente a rota mostra TODAS as carteiras, não só a do alvo. Fix lente-aware = follow-up
+  quando o log/UI cravar que é a rota.
+- ✅ **Menu Vendas enxugado (decisão founder):** "Lista de ligação"→"Quem ligar hoje"; "Novo Pedido"→
+  "Novo pedido"; **"Chamadas pendentes" SAIU do menu** → virou nudge condicional no Meu Dia
+  (`ChamadasPendentesNudge` nos 3 dashboards de vendedor — Farmer/Hunter/Closer; some quando vazio,
+  suprimido na lente pois o contador seria do master); **"Preview propostas"** (tela técnica de
+  inspeção das propostas que a IA gera) → restrita a `gestorComercialOuMaster`; Telefonia/Ferramentas
+  viram secundários após os 4 essenciais. Vendedora passa de **8 → 6 itens**, os 2 mais confusos fora.
+  Fonte única `unifiedNavSections` → propaga p/ desktop + mobile.
+- ✅ CI local verde: typecheck 0 · vitest 3175/3175 · lint 0 errors. 100% frontend (sem migration/edge).
+- ⏳ **Founder: Publish no Lovable** pra ir ao ar.
+- ⏳ **Follow-up:** quando o erro reaparecer com a fonte nomeada, confirmar se é a rota → aí avaliar
+  tornar `useRouteContactList` lente-aware (escopar à carteira do alvo: conserta fidelidade + reduz
+  o volume que provavelmente dispara o erro na lente).
 
 ---
 
@@ -61,22 +107,32 @@
 > e o sales-only escondia toda seção ≠ Vendas → o Meu Dia e Clientes eram INALCANÇÁVEIS pelo menu.
 > Founder aprovou as 3 frentes na ordem: home+menu → push → ficha pré-contato.
 
-- ✅ **Frente 1 — home por persona + menu (PR aberto, branch `claude/festive-babbage-8e8545`)**:
+- ✅ **Frente 1 — home por persona + menu ([#734](https://github.com/LucasSardenbergL/afiacao/pull/734), MERGEADO + publicado, validado na lente)**:
   helper TDD `src/lib/nav/home-por-persona.ts` (19 testes) — vendedora (farmer/hunter/closer/
   operacional ou sales-only) aterrissa no `/meu-dia`; menu sales-only vira allowlist por ITEM
   (ganha Meu dia + Clientes); seção Vendas reordenada pelo fluxo do dia; badge SLA religado pra
   sales-only; rename `managerOnly`→`staffOnly`. Adversarial: 0 P1; P2.1 (anti-loop lente) e
-  P2.3 (badge SLA) corrigidos. CI local verde (3024 testes).
-- 🔄 **Frente 2 — Web Push da vendedora (PR aberto; BACKEND JÁ EM PROD)**: tabela
+  P2.3 (badge SLA) corrigidos.
+- ✅ **Frente 2 — Web Push da vendedora ([#736](https://github.com/LucasSardenbergL/afiacao/pull/736) + card master [#746](https://github.com/LucasSardenbergL/afiacao/pull/746), MERGEADOS; backend 100% EM PROD)**: tabela
   `push_subscriptions` + RPCs device-aware (anti-vazamento em device compartilhado, P1 da
   adversarial), 3 produtores SQL (WhatsApp inbound c/ throttle 10min + dona via
   `wa_owner_efetivo`; tarefa nova c/ throttle 2min; SLA tick c/ gate de expediente), edge
   `enviar-push` (npm:web-push, VAPID), SW handlers via `workbox.importScripts`, card de opt-in
-  no Meu Dia (instrução iOS), limpeza no logout. PG17: 17 asserts. ✅ Migration aplicada via SQL
-  Editor (`PUSH VENDEDORA OK 1/2/1/1/6/1`) + ✅ edge deployada verbatim (Active) + secrets VAPID
-  + ✅ smoke do runtime (200 `sem subscriptions` = npm:web-push vivo no Deno; Lovable commitou a
-  edge na main byte-idêntica). ⚠️ Falta: merge do PR + **Publish** + smoke final no device. Spec:
+  no Meu Dia + MasterDashboard, limpeza no logout. PG17: 17 asserts. ✅ Migration aplicada +
+  edge deployada + secrets VAPID + smoke do runtime (200). ⏳ **Smoke no DEVICE pendente** —
+  SÓ no `steu.lovable.app` (o card NUNCA aparece no preview do Lovable: PWA off lá). Spec:
   `docs/superpowers/specs/2026-06-10-push-vendedora-design.md`.
+- 🚧 **Cold-start dos dados da farmer — backfill de pedidos (TRAVADO em incidente de plataforma 11/06)**:
+  diagnóstico fechado — `sales_orders` tem 10/571 clientes da carteira da Tatyana (o score via
+  `order_items` sabe de 102 compradores <90d); vínculo `omie_clientes` 571/571 OK; causa = janela
+  rolante 5d do `sync_pedidos` sem backfill histórico. Plano provado: levas de `sync_pedidos` com
+  `date_from` 12m + `start_page`/`max_pages` 8-15, idempotente. **Supabase edge com 503 de boot +
+  timeouts em cascata em 11/06 à noite** → retomar com sonda `max_pages=1`; depois recompute scores.
+- ✅ **Erro "uma das fontes falhou" na FilaDoDia — INSTRUMENTADO (sessão 2026-06-11, topo):** agora a
+  UI nomeia a fonte que falhou + log estruturado. Hipótese: rota não-lente-aware (volume de master).
+  Confirmar a fonte no próximo erro; fix lente-aware da rota é o follow-up.
+- ⏳ **Timeouts 60s recorrentes nos crons `*/15`** — provável mesmo incidente de plataforma;
+  re-checar quando estabilizar.
 - ⏳ **Frente 3 — ficha de 30s pré-contato** (últimas compras, preço praticado, títulos abertos,
   cores, última conversa — drawer no card da fila/lista de ligação).
 - 📌 Gaps registrados sem frente: meta vs realizado + comissão estimada; auditoria mobile do
@@ -138,9 +194,11 @@
 - ✅ **Onda 3 — dia a dia da vendedora** ([#724](https://github.com/LucasSardenbergL/afiacao/pull/724)): **B2** thread WhatsApp (era asc sem limit → >1000 msgs escondia as NOVAS; agora últimas 100 + realtime em append incremental via `thread-cache` testado); **#18** enviar WhatsApp + concluir/adiar tarefa otimistas (rollback CIRÚRGICO por id — snapshot-restore apagava INBOUND do cliente, achado adversarial); **B3** erro ≠ falso-verde (FilaDoDia "carteira em dia", RotaListaLigacao "sem rota" e inbox "sem conversas" agora distinguem erro com retry); **#16-lite** fila de rota ~11→~4 rodadas de rede; canal `wa-sla` singleton refcount + topic geracional.
 - ✅ **Onda 4 — bundle + PWA** ([#726](https://github.com/LucasSardenbergL/afiacao/pull/726)): **#17** jssip estava DENTRO do entry (IncomingCallModal no shell importava hooks do Provider pesado → Rollup anulava o lazy) → context object extraído pra `webrtc-call-context.ts` leve + guardrail de CI → **entry 472→209KB bruto (−56%)**; **#20** precache PWA 6.2→4.88MB (globIgnores só em telas inerentemente online; picking/recebimento/pedido/Meu Dia/rota VERIFICADOS dentro; CacheFirst progressivo de /assets/). Adversarial pegou: glob `UxRules` case-errado (vivia no mac, morria no Linux do builder), `module-*` genérico → `vendor-posthog` nomeado. **#19 prefetch deliberadamente não feito** (precache já é o prefetch); #17b/B4 já estavam na main.
 - ✅ **Paginação reversa da thread** ([#727](https://github.com/LucasSardenbergL/afiacao/pull/727)): "Carregar mensagens anteriores" fecha a regressão da janela de 100 (Onda 3). Cursor `.lte` anti-empate + `mergeThreadWindow` (refetch não descarta histórico carregado). Adversarial: guard ANTI-BURACO (realtime morto >100 msgs → não costura conversa não-contígua) + INBOUND do RTT do refetch não some mais (P2 pré-existente fechado de graça). 20 testes no thread-cache.
-- ⚠️ **PENDENTE (founder): Publish no Lovable** — NADA disso está no ar até publicar (1× cobre tudo; sem migration, sem edge em nenhum PR).
-- ⏳ **Quando o Codex voltar (~11/06):** (a) **adversarial retroativo** das Ondas 1-4 + #727 (Caminho B acordado — validação própria exaustiva + subagentes adversariais fizeram a 2ª opinião desta rodada); (b) **#16-full** — filtro de cidade server-side na fila de rota (`city_key` persistida + migration; modo de falha = cliente sumindo da fila em silêncio → rito completo com Codex no design, decisão conjunta de NÃO fazer sem ele).
-- 📌 Follow-ups menores registrados nos PRs: virtualização da thread se >1000 msgs virar rotina; "Início da conversa" como feedback de exhausted; `resolverSugestao` não checa erro do 2º UPDATE (pré-existente, paridade); scroll restoration no Safari (sem overflow-anchor).
+- ✅ **Retroativo Codex EXECUTADO (2026-06-11, [#758](https://github.com/LucasSardenbergL/afiacao/pull/758), na main):** 2 passes paralelos (gpt-5.5 high) + triagem validada achado-a-achado. **1 P1 REAL corrigido** (edge `omie-vendas-sync`: null ambíguo transient×ausência no anti-duplicação do `criar_cliente` → flake do Omie criava CLIENTE DUPLICADO; fix = `throwOnTransient` + chave de integração determinística `APP_<CONTA>_<doc>`; ⚠️ requer deploy da edge via Lovable) + **5 P2** (OPEN_TITLE_STATUSES com fallbacks do ingest; claim do stock sync; inativo bloqueado no carrinho; thread invalida no SUBSCRIBED; resolverSugestao não engole erro). 2 "P1" do wizard DERRUBADOS (o preflight fail-closed do submitOrderService cobre — Codex não pesou a rede).
+- ✅ **#16-full fase 1 EXECUTADO (2026-06-11, [#759](https://github.com/LucasSardenbergL/afiacao/pull/759)+[#760](https://github.com/LucasSardenbergL/afiacao/pull/760)+[#761](https://github.com/LucasSardenbergL/afiacao/pull/761), na main; migration `20260611150000` APLICADA em prod pelo founder):** desenho do consult Codex — `city_norm` GENERATED STORED (função IMMUTABLE sem unaccent, escapes \uXXXX) + harness diferencial TS×SQL (`db/test-city-norm-paridade.sh`: 51 sintéticos + **corpus de PROD 222/222 byte a byte**) + **SHADOW no useRouteContactList** (exibe o legado; telemetria `rota.city_shadow` no PostHog; fail-open total).
+- ⏳ **D+7 úteis do Publish — PR de CORTE do full-fetch:** ler `rota.city_shadow` no PostHog; com `faltando_no_novo=0` no período → trocar a fonte pra `fetchVisitScoresByCityNorm`, manter `cityKeyEquals` client (PERMANENTE — UF assimétrica), remover `fetchAllVisitScores` (~7k→dezenas de linhas). Chip de follow-up criado pro founder.
+- ⚠️ **PENDENTE (founder):** deploy do `omie-vendas-sync` via chat do Lovable (P1 anti-duplicata) + `fin-cashflow-engine` opcional + **Publish** (liga o shadow — o relógio dos 7 dias começa nele).
+- 📌 Follow-ups menores registrados nos PRs: RPC `SUM` pro KPI (offset×concorrência); RPC transacional do resolverSugestao; revalidação de preço no preflight do submit; virtualização da thread se >1000 msgs virar rotina; "Início da conversa" como feedback de exhausted; scroll restoration no Safari.
 
 ---
 
@@ -420,8 +478,16 @@
 - ✅ **PR2 MERGEADO ([#723](https://github.com/LucasSardenbergL/afiacao/pull/723)) + RELEASE [`sayersync-v0.1.0`](https://github.com/LucasSardenbergL/afiacao/releases/tag/sayersync-v0.1.0)** com o `sayersync.exe` (11 MB, sha256 `f5441c49…`) anexado — download direto pro PC do balcão. Audit de migrations regenerado (20260609150000 incluída).
 - ✅ **Entregue ao founder na conversa:** **BLOCO A** (migration `20260609150000`, 780 linhas + validação `BLOCO A OK`) pro SQL Editor + **prompt de deploy** da edge `tint-sync-agent` pro chat do Lovable. **⏳ founder aplica os dois** (independem da máquina do balcão).
 - ⏳ **ROTEIRO DE AMANHÃ (a parte da máquina, ~15 min de founder):** (0) pré-requisito: BLOCO A `Success` + edge deployada; (1) no app: `/tintometrico/integracao` → Integrações → criar a loja (modo **shadow_mode**) → copiar store_code + token; (2) no PC do balcão: baixar o `sayersync.exe` do release → `connector/INSTALACAO.md` (install + 4 perguntas + `once`); (3) heartbeat verde na tela; se `schema divergente` → `sayersync.exe discovery` → me mandar `sayersystem-schema.txt` (1 ida-e-volta prevista; ajusto o mapping e solto v0.1.1); (4) full sync → `TintReconciliation` (divergências esperadas = o que mudou desde o último CSV); (5) founder exporta o **CSV gabarito** 1× → valido expansão+preço; (6) bateu → flip pra **automatic_primary** → teste do critério de pronto (muda 1 preço no SayerSystem → app reflete ≤15 min) → **CSV aposentado pra sempre**.
-- 🚧 **Codex adversarial RETROATIVO obrigatório 11/06 9h24+** (cota volta): spec §11 + promoção SQL + edge + conector Go (precedente `aplicar_promocoes`). Achados → fix-forward.
-- ⏸️ **v2 anotado:** VENDAS_ITEM→`/preparations` (consumo de corante/analytics; endpoint pronto) · etiqueta EAN-13/PDV · bucket Storage `sayersync` p/ auto-update (sem ele o conector só loga o 404 e segue; release manual cobre a v1) · multi-loja ativa · campos de preço (3 níveis) do codex.
+- ✅ **Codex adversarial RETROATIVO RODOU (11/06, xhigh) + TODOS os achados corrigidos:** 11 P1s triados → 7 do conector REAIS (numeric→0 silencioso, provado na fonte do pgx; keys-snapshot 400 sempre [faltava entity+snapshot_id]; chave de exclusão fonte-4 `cor_id|cod_produto|id_base|personalizada`; candidatos da embalagem de formulação; child-shape join pelo PK da fórmula [antes: pela COR → fórmulas vazias]; corante só-descrição omite custo [não manda null/0]; falha parcial não fica verde) + 4 do servidor REAIS (S1 advisory lock promoção+apply; S2 `p_store_code` nas 2 funções de preço [cross-store leak]; S3 insumo latest NÃO-NULO [update só-descrição não regride preço a NULL]; S4 keys-snapshot por chave-fonte-4; S5 edge: replay de run error→**409**). Dispensados com prova: SQL injection (sem SQL dinâmico), temp-table collision (per-session), timezone (timestamptz), 29× full-sync (shadow não promove).
+- ✅ **PR3 MERGEADO ([#767](https://github.com/LucasSardenbergL/afiacao/pull/767), 12/06 9h38 BRT) + RELEASE [`sayersync-v0.1.1`](https://github.com/LucasSardenbergL/afiacao/releases/tag/sayersync-v0.1.1)** com `sayersync.exe` (11 MB) — conector v0.1.1 (**172 testes Go**, +40) + servidor v2 (migration `20260611190000`; PG17 **17 grupos** C1-C12b verdes, 3× determinístico). ⚠️ **v0.1.0 NÃO usar** (bug decimal). **BLOCO A (`20260609150000`) e BLOCO B (`20260611190000`) APLICADOS em prod** (founder validou `BLOCO A OK` + `BLOCO B OK` no SQL Editor). O outage da API do GitHub em 11/06 atrasou PR+release pra manhã de 12/06.
+- ✅ **DIA DA MÁQUINA (12/06) — instalação feita; rendeu 2 bugs reais consertados + o schema REAL:** loja já existia ("Matriz", M01, oben, Shadow Mode — dos testes de março; reusada). **(a) Serviço Windows não iniciava (timeout 1053)** — o registro NÃO tinha o argumento `run` → exe pelado imprime ajuda e sai; consertado EM CAMPO com `sc config SayerSync binPath= "C:\SayerSync\sayersync.exe run"` + `sc start` (ÊXITO, serviço de pé) e PERMANENTE na **v0.1.2** ([#769](https://github.com/LucasSardenbergL/afiacao/pull/769) + release, `Arguments:["run"]` + install idempotente stop+uninstall+retry + teste de regressão). ⚠️ Race de release: o asset da v0.1.2 subiu com o binário da v0.1.1 (auto-merge mergeou antes do push do fix) → asset trocado pelo correto + fix re-PRado (#769). **(b) `once` → "schema diverge" (fail-closed funcionou):** o schema REAL (discovery em campo, 13 tabelas) provou que os nomes da Kelly eram FANTASIA — tabelas no singular, PK=`id`, `data_alteracao` (formulaperson=`data_atualizacao`; personcor SEM timestamp), formula+formulaperson FLAT `corante1..6`/`qtd1..6`, `formulaperson.id_personcor`, `embalagem.conteudo` em LITROS (founder: "0.810 L"), **SEM tabelas de preço** (preço mora em outro banco/schema → discovery v2 lista pra achar; v0.1.4). **Matriz de identidade CONFIRMADA por query de prod** (founder colou): produto=`codigo` ("JO05.7796") · base/embalagem/corante=**id numérico** ("90"/"1"/"3") · cor padrão=`codigo` (⚠️ sufixo " - BS" de prod ainda não decifrado — perguntado ao founder) · personalizada=`codigo_cor` ("AZUL PURO"). Spec §13.
+- 🔄 **v0.1.3 — conector adaptado ao SCHEMA REAL (12/06, [PR #770](https://github.com/LucasSardenbergL/afiacao/pull/770)):** mapping com candidatos de TABELA (`corante`/`embalagem`/`padraocor` singulares) + colunas reais; **P0 achado na revisão: ExtractDelta não selecionava os slots flat** (corante1..6 fora do `Resolved`) → toda fórmula subia com **0 itens**; `buildDeltaSelectCols` conserta (formula+formulaperson). **`Lookups` 1×/ciclo** (id→identidade da matriz de prod + `EmbVolumeML` litros→ml ×1000 `litrosLimiar=100` + `CorPadrao`/`CorPerson` SEPARADOS — ids colidem em mapa único) injetados nos mapeadores; lookup falhou=FATAL; itens traduzem corante id; snapshot reescrito (nomes resolvidos + filtro `liberado` + MESMA identidade dos payloads); subcoleção da fórmula vem da COR (`padraocor.id_subcolecao`); preços ausentes = warnings, ciclo segue; **discovery v2** (outros schemas + databases + contagens + amostra embalagem) pra LOCALIZAR o preço. **199 testes Go** + vet + gofmt. Implementação por subagente background (morto no finalzinho — trabalho estava completo e verde) + review meu linha-a-linha nos caminhos críticos + flip de 3 identidades pela query de prod. **Carlos troca o exe na loja** (stop service → substituir → start). ✅ **Sufixo " - BS" DECIFRADO pelo founder = "Base Solvente"** (rótulo fixo da fábrica; linha à base d'água não existe mais) → **v0.1.4** compõe `cor_id = codigo + " - BS"` + `nome_cor = descricao + " - BS"` (`composeCorPadrao` puro testado; personalizada SEM sufixo; sem codigo → id cru sem sufixo) + amostras colecao/subcolecao/padraocor no discovery; **201 testes**. ⚠️ A release v0.1.3 saiu ANTES do sufixo (CI mais rápido que a edição) → deletada.
+- ✅ **v0.1.5 — 1º ciclo REAL em campo (foto do founder) rendeu diagnóstico triplo ([#774](https://github.com/LucasSardenbergL/afiacao/pull/774)):** (1) 🎉 `schema OK shape=flat` — o mapeamento FUNCIONA; (2) heurística de volume salvou — a origem grava **810 (ml)**, não 0.810 (a UI do SayerSystem é que formata em L); `litrosLimiar` interpretou certo sozinho; (3) 🔴 **bug real: `mapProduto` mandava `ativo`, campo que `tint_staging_produtos` NÃO tem → a edge espalha todos os campos no INSERT → o lote INTEIRO de produtos morria ("20 erro(s) no lote 0-20")** → campo removido + teste de regressão; sweep payload×staging completo = era o único mismatch (corantes custo/volume_ml EXISTEM em prod via BLOCO A; o schema-snapshot local é que está stale). ⚠️ **Lições multi-PR-mesma-frente:** branch reutilizada conflita com o próprio squash → **branch nova POR PR**; e SEMPRE `git fetch origin main` antes de branchar (a v0.1.5 nasceu de ref stale SEM o BS do #773 — pego por grep antes da release). **Releases antigas todas deletadas — a página tem SÓ a v0.1.5.** Queda de energia na loja no meio do 1º `once` = inofensiva (serviço auto-inicia com o Windows; reenvio idempotente).
+- ✅ **Edge `tint-sync-agent` REDEPLOYADA** (founder via chat do Lovable, 901 linhas verbatim, Active) + **v0.1.5 instalada na loja e 1º ciclo REAL completo**: catálogo subiu inteiro (padracor **8.174**, pbe 220, bases 56, corantes 14, produtos 20 SEM erro — fix do `ativo` confirmado); fórmulas (~84k linhas na origem) estouraram o limite de 5min do `once` (esperado) → serviço drena. `sc config start= auto` aplicado (pós-queda de energia o serviço não tinha subido sozinho).
+- ✅ **GABARITO ENTREGUE E VALIDADO (42 CSVs, 485k linhas, export 13h50):** regra de 3 **PERFEITA** (desvio máx 0,0023 ml em 1,3 mi comparações); `volume_final = embalagem + Σcorantes` 0 falhas; counts batem com o sync (14/220/20 ✓). **E o gabarito DERRUBOU 2 apostas da v0.1.4/5:** (a) o `" - BS"` JÁ VEM DENTRO do `padraocor.codigo` ("001B - BS", "01 - ACRIL BS") → meu compose sufixava em DOBRO; (b) identidade NUNCA trima (gabarito preserva espaço no fim: personcor `"0105 IVE "`); (c) corante = **CODIGO** (1..16, espaço do CORANTES.CSV e do app), não id → slots FK id→codigo. → **v0.1.6** (verbatim everywhere + corante codigo; 201 testes). **LIÇÃO: a identidade real só se prova contra o EXPORT oficial — a query do app mostrou os valores mas não a ORIGEM deles (codigo verbatim × composição).**
+- ⏳ **Abertos:** Carlos trocar exe pra **v0.1.6** + **deletar `state.json`** (força full re-scan com identidades corrigidas) + `sc start` · founder colar SQL de **limpeza do staging** (fórmulas v0.1.4/5 com cor_id duplo-sufixado) · **Reconciliação** pós-recarga · **preço** (v0.1.7 — o gabarito tem `preco_final`, falta achar o banco-fonte; discovery v2 instalado lista os candidatos) · flip `automatic_primary`.
+- ⏸️ **v2 anotado:** VENDAS_ITEM→`/preparations` (consumo de corante/analytics; endpoint pronto — schema real confirma: `vendas_item` tem cor/corantes/qtds/preço/`data_dosagem` POR DOSAGEM) · etiqueta EAN-13/PDV · bucket Storage `sayersync` p/ auto-update (sem ele o conector só loga o 404 e segue; release manual cobre a v1) · multi-loja ativa · campos de preço (3 níveis) do codex.
+- ⏸️ **v1.5 — DEMANDAS DO FOUNDER (2026-06-11, pós-sync estável; construídas EM CIMA do sync) — AMBAS DESBLOQUEADAS pelo founder:** **(1) Histórico de versões de fórmula + aviso na venda** — dor real: Sayerlack atualiza a fórmula → cliente que comprou ANTES quer a MESMA cor (receita nova = diferença de cor visível). Hoje a promoção sobrescreve (latest wins; staging purga superseded >30d → NÃO é histórico). Plano: versionar na promoção (mudou a RECEITA → guarda versão anterior c/ vigência, nunca deleta) + cruzar com "Cores do cliente" (#714) → aviso "⚠️ cor mudou em DD/MM, DEPOIS da última compra deste cliente" + 2 receitas lado a lado. `VENDAS_ITEM`/preparations (v2) = registro fiel POR DOSAGEM. ✅ **Founder confirmou: a dosadora doseia QUALQUER fórmula manualmente (é só parametrizar na máquina)** → a vendedora doseia a receita antiga na mão; zero dependência da Dnaxis. **(2) Cor personalizada em todos os acabamentos — VIÁVEL pela 🔑 REGRA DA AFINIDADE (conhecimento de domínio do founder, 2026-06-11):** o código de toda BASE é `W??X.NNNN` onde **X = 3ª letra depois do W = família de afinidade (B, I ou T)**; a receita de corantes de uma cor **independe da base DENTRO da mesma família** — cor cadastrada na `WFOB.6861` vale verbatim em QUALQUER base B (`WFOB.6464`, `WFOB.6865`, `WFOB.6854`...), idem famílias I e T; **NUNCA cruza famílias**. ⇒ o app replica a cor personalizada pra todos os acabamentos cuja base ∈ mesma família, rotulando "replicada (afinidade X)" × "cadastrada no SayerSystem" + checklist; vendedora doseia manual. **Gate do piloto:** validar 1 cor real replicada (dosar + comparar a olho) + confirmar exceções (metálicas) ANTES de liberar pra equipe — regra de ouro anti-diferença-de-cor.
 
 ---
 

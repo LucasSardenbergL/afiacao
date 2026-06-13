@@ -225,15 +225,28 @@ export function useTarefaMutations() {
       throw error;
     }
     if (aceitar) {
-      await tarefas().update(
+      const { error: tarefaErr } = await tarefas().update(
         { status: 'concluida', concluida_em: new Date().toISOString(), concluida_por: user!.id,
           conclusao_origem: 'sugestao_confirmada', updated_at: new Date().toISOString() } as never)
         .eq('id', tarefaId);
-      await eventos().insert(
+      if (tarefaErr) {
+        // O candidato JÁ está accepted no servidor (não reverter a sugestão);
+        // a TAREFA não concluiu — devolve o item otimista e avisa. Antes este
+        // erro era engolido: sugestão sumia, tarefa seguia aberta e a UI dizia
+        // "Confirmada" (retroativo Codex). Transação de verdade = follow-up
+        // de RPC (migration).
+        rollbackTarefa?.();
+        toast.error('Sugestão registrada, mas não consegui concluir a tarefa — use o botão Feito.');
+        invalidate();
+        throw tarefaErr;
+      }
+      const { error: evErr } = await eventos().insert(
         { tarefa_id: tarefaId, tipo_evento: 'sugestao_confirmada', ator: user!.id } as never);
+      if (evErr) console.warn('[tarefas] evento sugestao_confirmada falhou (trilha de auditoria):', evErr.message);
     } else {
-      await eventos().insert(
+      const { error: evErr } = await eventos().insert(
         { tarefa_id: tarefaId, tipo_evento: 'sugestao_rejeitada', ator: user!.id } as never);
+      if (evErr) console.warn('[tarefas] evento sugestao_rejeitada falhou (trilha de auditoria):', evErr.message);
     }
     track('tarefas.suggestion_resolved', { aceitar });
     toast.success(aceitar ? 'Confirmada' : 'Ok, segue aberta');
