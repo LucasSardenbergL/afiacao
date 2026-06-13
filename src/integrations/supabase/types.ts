@@ -5850,6 +5850,56 @@ export type Database = {
           },
         ]
       }
+      kb_extraction_drafts: {
+        Row: {
+          claim_token: string | null
+          created_at: string
+          document_id: string
+          extracted_at: string | null
+          last_error: string | null
+          model: string | null
+          spec: Json | null
+          started_at: string | null
+          status: string
+          updated_at: string
+          usage: Json | null
+        }
+        Insert: {
+          claim_token?: string | null
+          created_at?: string
+          document_id: string
+          extracted_at?: string | null
+          last_error?: string | null
+          model?: string | null
+          spec?: Json | null
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+          usage?: Json | null
+        }
+        Update: {
+          claim_token?: string | null
+          created_at?: string
+          document_id?: string
+          extracted_at?: string | null
+          last_error?: string | null
+          model?: string | null
+          spec?: Json | null
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+          usage?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "kb_extraction_drafts_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: true
+            referencedRelation: "kb_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       kb_product_specs: {
         Row: {
           approved_at: string | null
@@ -8528,6 +8578,8 @@ export type Database = {
           municipio_nome: string | null
           nome_fantasia: string | null
           numero: string | null
+          omie_cadastrado_em: string | null
+          omie_codigo_cliente: string | null
           porte: string | null
           primeira_vista_em: string
           prospeccao_atualizado_em: string | null
@@ -8559,6 +8611,8 @@ export type Database = {
           municipio_nome?: string | null
           nome_fantasia?: string | null
           numero?: string | null
+          omie_cadastrado_em?: string | null
+          omie_codigo_cliente?: string | null
           porte?: string | null
           primeira_vista_em?: string
           prospeccao_atualizado_em?: string | null
@@ -8590,6 +8644,8 @@ export type Database = {
           municipio_nome?: string | null
           nome_fantasia?: string | null
           numero?: string | null
+          omie_cadastrado_em?: string | null
+          omie_codigo_cliente?: string | null
           porte?: string | null
           primeira_vista_em?: string
           prospeccao_atualizado_em?: string | null
@@ -15142,6 +15198,10 @@ export type Database = {
         Returns: boolean
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
+      kb_extraction_draft_claim: {
+        Args: { p_claim_token: string; p_document_id: string }
+        Returns: boolean
+      }
       limpar_sugestoes_antigas: {
         Args: never
         Returns: {
@@ -15253,8 +15313,42 @@ export type Database = {
         Returns: string
       }
       push_sla_tick: { Args: never; Returns: undefined }
+      radar_atribuir_tarefa: {
+        Args: { p_cnpj: string; p_dias_retomada?: number }
+        Returns: Json
+      }
+      radar_contagem_por_municipio: {
+        Args: {
+          p_cnae_exato?: string
+          p_cnae_prefix?: string
+          p_data_abertura_max?: string
+          p_data_abertura_min?: string
+          p_incluir_ja_clientes?: boolean
+          p_limit?: number
+          p_status?: string
+          p_uf?: string
+        }
+        Returns: {
+          a_contatar: number
+          com_telefone: number
+          lat: number
+          lng: number
+          municipio_codigo: string
+          municipio_nome: string
+          total: number
+          uf: string
+        }[]
+      }
       radar_kpis: { Args: never; Returns: Json }
       radar_recruzar_ja_cliente: { Args: never; Returns: number }
+      radar_registrar_cadastro_omie: {
+        Args: {
+          p_cnpj: string
+          p_codigo_cliente: string
+          p_ja_existia?: boolean
+        }
+        Returns: Json
+      }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
