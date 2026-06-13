@@ -64,3 +64,10 @@ export function formatarCnpj(cnpj: string): string {
   if (!/^\d{14}$/.test(cnpj)) return cnpj;
   return cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
 }
+
+/** Extrai só os dígitos de um input de CNAE (até 7). O banco guarda o CNAE como
+ *  7 dígitos puros (`3101200`); o usuário costuma digitar o formato oficial
+ *  (`3101-2/00`). Normaliza p/ a query casar — prefix match permite parcial. */
+export function digitosCnae(input: string | null | undefined): string {
+  return (input ?? '').replace(/\D/g, '').slice(0, 7);
+}

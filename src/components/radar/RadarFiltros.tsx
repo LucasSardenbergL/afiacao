@@ -94,8 +94,8 @@ export function RadarFiltros({
         />
 
         <Input
-          className="w-28"
-          placeholder="CNAE"
+          className="w-40"
+          placeholder="CNAE (ex.: 3101-2/00)"
           value={filtros.cnae}
           onChange={(e) => set({ cnae: e.target.value })}
         />
