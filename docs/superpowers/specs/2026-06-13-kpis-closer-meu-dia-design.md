@@ -4,6 +4,12 @@
 **Autor:** Claude + **Codex (gpt-5.5, consult, web search — citou IFRS 15)** — 2ª opinião conforme CLAUDE.md §12.
 **Status:** aprovado pelo founder pra implementar (frente "expandir"; farmer #690, hunter #795).
 
+## ⚠️ Coerência com o OTE (atualização 2026-06-13, eu+Codex)
+
+Estes KPIs são **placar de visibilidade (gestão)**, NÃO a engine de comissão. A elegibilidade pra remuneração é definida **exclusivamente** pelo spec vigente de OTE (`2026-06-13-ote-remuneracao-variavel-farmer-design.md`). O OTE está em DESIGN. Notas:
+- **Específico closer:** o OTE atual cobre **só farmers** — o closer ainda não tem modelo de comissão. O placar aqui é **valor auto-reportado** (`route_visits.revenue_generated`, não-ERP) → já é não-comissionável por construção, e **não** depende de `sales_orders` (logo, não leva o `DadosVendaParciaisBanner`).
+- **Janela:** MTD (operacional) × quota trimestral cumulativa que o OTE usará quando expandir pro closer (mesma filosofia: margem>receita, liberação no recebimento).
+
 ## Contexto / problema
 
 3ª persona da redefinição de KPIs por papel no `/meu-dia`. O **closer** = visita presencial / outbound / fechamento (≠ hunter inbound, ≠ farmer account-management por ligação).

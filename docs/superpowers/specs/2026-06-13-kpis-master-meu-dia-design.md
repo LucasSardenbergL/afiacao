@@ -4,6 +4,14 @@
 **Autor:** Claude + **Codex (gpt-5.5, consult)** — 2ª opinião conforme CLAUDE.md §12.
 **Status:** aprovado pelo founder pra implementar (frente "expandir"; farmer #690, hunter #795, closer #797).
 
+## ⚠️ Coerência com o OTE (atualização 2026-06-13, eu+Codex)
+
+Estes KPIs são **placar de visibilidade (gestão)**, NÃO a engine de comissão. A elegibilidade pra remuneração é definida **exclusivamente** pelo spec vigente de OTE (`2026-06-13-ote-remuneracao-variavel-farmer-design.md`). O OTE está em DESIGN. Divergências a reconciliar:
+- **Dados parciais:** "Receita do time" e o ranking vêm de `sales_orders`, hoje parcial (backfill pendente) → `DadosVendaParciaisBanner` avisa; **não usar pra comissão/decisão dura até reconciliar**.
+- **Trend MoM (`TeamKpiTiles`):** ⚠️ suspeito sob cobertura parcial — comparar duas janelas (mês atual × anterior) com coberturas diferentes distorce a tendência. **NÃO removido aqui** (é trabalho recém-mergeado da frente `master-receita-trend`; remover unilateralmente = treadmill/conflito multi-sessão). O banner mitiga; aquela frente deve **condicionar/ocultar o MoM** quando o backfill rodar. (Divergência fundamentada com o Codex, que sugeria remover o MoM já.)
+- **Painel de saúde do OTE:** o OTE §14 prevê % batendo quota / CCOS / distribuição de atingimento (saúde do MODELO, não KPI do vendedor) → entra no master **quando o OTE rodar**, não agora.
+- **Janela:** MTD (operacional) × quota trimestral cumulativa do OTE.
+
 ## Contexto / problema
 
 Última persona da redefinição de KPIs por papel no `/meu-dia`. O **master** é o founder/CEO (também atua como vendedor de campo). Trabalho-norte = **gerir o time** (visão consolidada + gestão por exceção) + as próprias vendas.
