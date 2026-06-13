@@ -1,15 +1,21 @@
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { Radar } from 'lucide-react';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
+import { useRadarKpis } from '@/queries/useRadarKpis';
 import { RadarKpis } from '@/components/radar/RadarKpis';
 import { RadarFiltros as Filtros } from '@/components/radar/RadarFiltros';
 import { RadarLinha } from '@/components/radar/RadarLinha';
 import { RadarDetailSheet } from '@/components/radar/RadarDetailSheet';
+import { RadarRankingCidades } from '@/components/radar/RadarRankingCidades';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
 import type { PresetRadar } from '@/lib/radar/ui-helpers';
+import { track } from '@/lib/analytics';
+
+const RadarMapa = lazy(() => import('@/components/radar/RadarMapa'));
 
 // useUrlState exige um shape com index signature (Record<string, Primitive>).
 // RadarFiltros é uma interface (sem index signature) e tem `preset` como union
@@ -26,7 +32,9 @@ type RadarUrlState = {
   cnae: string;
   status: string;
   incluirJaClientes: boolean;
+  comTelefone: boolean;
   preset: string;
+  vista: string;
   [k: string]: string | boolean;
 };
 
@@ -37,7 +45,9 @@ const DEFAULTS: RadarUrlState = {
   cnae: '',
   status: '',
   incluirJaClientes: false,
+  comTelefone: false,
   preset: 'novas',
+  vista: 'lista',
 };
 
 function narrowPreset(v: string): PresetRadar {
@@ -54,6 +64,7 @@ export default function RadarClientes() {
   }, []);
 
   const q = useRadarLista(filtros, hojeISO);
+  const kpis = useRadarKpis();
   const [aberta, setAberta] = useState<RadarEmpresa | null>(null);
   const sentinelRef = useInfiniteScroll(() => q.fetchNextPage(), !!q.hasNextPage && !q.isFetchingNextPage);
 
@@ -64,42 +75,74 @@ export default function RadarClientes() {
       <div className="flex items-center gap-2">
         <Radar className="w-5 h-5" />
         <h1 className="text-2xl font-display">Radar de Clientes</h1>
+        {kpis.data?.lote && (
+          <span className="ml-2 text-xs text-muted-foreground border rounded px-2 py-0.5">
+            lote {kpis.data.lote}
+          </span>
+        )}
+        <div className="ml-auto flex gap-1">
+          <Button
+            variant={raw.vista !== 'mapa' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => set({ vista: 'lista' })}
+          >
+            Lista
+          </Button>
+          <Button
+            variant={raw.vista === 'mapa' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => { track('radar.mapa_aberto', {}); set({ vista: 'mapa' }); }}
+          >
+            Mapa
+          </Button>
+        </div>
       </div>
       <RadarKpis />
       <Filtros filtros={filtros} set={set} />
+      <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} onPick={(nome) => { track('radar.cidade_selecionada', {}); set({ municipio: nome }); }} />
 
-      <div className="rounded-md border">
-        {q.isLoading ? (
-          <div className="p-3 space-y-2">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-10" />
-            ))}
-          </div>
-        ) : q.isError ? (
-          <EmptyState
-            tone="operational"
-            icon={Radar}
-            title="Não foi possível carregar"
-            description="Tente novamente em instantes."
+      {raw.vista === 'mapa' ? (
+        <Suspense fallback={<Skeleton className="h-[420px]" />}>
+          <RadarMapa
+            filtros={filtros}
+            hojeISO={hojeISO}
+            onPick={(nome) => { track('radar.cidade_selecionada', {}); set({ municipio: nome, vista: 'lista' }); }}
           />
-        ) : empresas.length === 0 ? (
-          <EmptyState
-            tone="operational"
-            icon={Radar}
-            title="Nenhuma empresa nesta fila"
-            description="Ajuste os filtros ou troque o modo de ataque."
-          />
-        ) : (
-          <>
-            {empresas.map((e) => (
-              <RadarLinha key={e.cnpj} empresa={e} hojeISO={hojeISO} onAbrir={() => setAberta(e)} />
-            ))}
-            <div ref={sentinelRef} className="h-10 flex items-center justify-center text-xs text-muted-foreground">
-              {q.isFetchingNextPage ? 'Carregando…' : q.hasNextPage ? '' : 'Fim da lista'}
+        </Suspense>
+      ) : (
+        <div className="rounded-md border">
+          {q.isLoading ? (
+            <div className="p-3 space-y-2">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <Skeleton key={i} className="h-10" />
+              ))}
             </div>
-          </>
-        )}
-      </div>
+          ) : q.isError ? (
+            <EmptyState
+              tone="operational"
+              icon={Radar}
+              title="Não foi possível carregar"
+              description="Tente novamente em instantes."
+            />
+          ) : empresas.length === 0 ? (
+            <EmptyState
+              tone="operational"
+              icon={Radar}
+              title="Nenhuma empresa nesta fila"
+              description="Ajuste os filtros ou troque o modo de ataque."
+            />
+          ) : (
+            <>
+              {empresas.map((e) => (
+                <RadarLinha key={e.cnpj} empresa={e} hojeISO={hojeISO} onAbrir={() => setAberta(e)} />
+              ))}
+              <div ref={sentinelRef} className="h-10 flex items-center justify-center text-xs text-muted-foreground">
+                {q.isFetchingNextPage ? 'Carregando…' : q.hasNextPage ? '' : 'Fim da lista'}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <RadarDetailSheet empresa={aberta} hojeISO={hojeISO} onClose={() => setAberta(null)} />
     </div>

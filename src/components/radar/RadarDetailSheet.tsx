@@ -1,7 +1,9 @@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
-import { MapPin, Phone, Mail } from 'lucide-react';
+import { MapPin, Phone, Mail, MessageSquare } from 'lucide-react';
 import { RadarOutcomeMenu } from './RadarOutcomeMenu';
+import { RadarAcoesLead } from './RadarAcoesLead';
+import { isCellphone, whatsappLink } from '@/lib/phone';
 import {
   formatarCnpj,
   formatarCapital,
@@ -54,6 +56,9 @@ export function RadarDetailSheet({
         <div className="mt-4 flex justify-end">
           <RadarOutcomeMenu cnpj={empresa.cnpj} />
         </div>
+        <div className="mt-3">
+          <RadarAcoesLead empresa={empresa} />
+        </div>
         <div className="mt-4 divide-y">
           {empresa.nome_fantasia && <Linha label="Fantasia">{empresa.nome_fantasia}</Linha>}
           <Linha label="CNPJ">
@@ -79,6 +84,16 @@ export function RadarDetailSheet({
               </a>
             ) : (
               '—'
+            )}
+            {isCellphone(empresa.telefone1) && whatsappLink(empresa.telefone1) && (
+              <a
+                className="ml-2 inline-flex items-center gap-1 text-xs text-status-success-bold"
+                href={whatsappLink(empresa.telefone1) as string}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <MessageSquare className="w-3 h-3" /> WhatsApp
+              </a>
             )}
             {empresa.telefone2 ? ` · ${empresa.telefone2}` : ''}
           </Linha>

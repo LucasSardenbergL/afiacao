@@ -128,6 +128,18 @@ export function RadarFiltros({
             Incluir já-clientes
           </Label>
         </div>
+
+        {/* Toggle só com telefone */}
+        <div className="flex items-center gap-2">
+          <Switch
+            id="radar-com-telefone"
+            checked={filtros.comTelefone}
+            onCheckedChange={(checked) => set({ comTelefone: checked })}
+          />
+          <Label htmlFor="radar-com-telefone" className="text-sm cursor-pointer">
+            Só com telefone
+          </Label>
+        </div>
       </div>
     </div>
   );
