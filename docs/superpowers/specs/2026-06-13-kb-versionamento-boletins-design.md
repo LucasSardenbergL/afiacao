@@ -28,7 +28,7 @@ A Sub-1 é **pré-requisito** das outras duas (a identidade estável do produto 
 
 ## 3. Objetivo e não-objetivos (Sub-1)
 
-**Objetivo:** parar de perder conhecimento — toda aprovação de boletim vira uma **versão imutável** (append-only); o produto tem uma **versão vigente** explícita; o master vê o **diff completo** ("o que mudou de um boletim pro outro") na tela do KB; a migração preserva os ~297 sem perda; e os 2 bugs morrem.
+**Objetivo:** parar de perder conhecimento — toda aprovação de boletim vira uma **versão imutável** (append-only); o produto tem uma **versão vigente** explícita; o master vê o **diff completo** ("o que mudou de um boletim pro outro") na tela do KB; **vê os dados FALTANTES por produto pra completar junto à fábrica** (§4f); a migração preserva os ~297 sem perda; e os 2 bugs morrem.
 
 **Não-objetivos (adiados, registrados):**
 - ❌ Surfacing na venda (Sub-3 / path-B — a venda ainda nem lê a ficha).
@@ -61,8 +61,8 @@ A Sub-1 é **pré-requisito** das outras duas (a identidade estável do produto 
 | `product_id` | uuid FK → kb_spec_products(id) ON DELETE CASCADE | |
 | `version_number` | int | sequencial por produto (1,2,3…) |
 | `source_document_id` | uuid FK → kb_documents(id) | o PDF de origem |
-| `change_type` | text CHECK ('bulletin_revision','correction','initial') | revisão da Sayerlack × correção de extração × migração |
-| `change_note` | text NULL | obrigatória em `correction`, opcional em `bulletin_revision` |
+| `change_type` | text CHECK ('initial','bulletin_revision','correction','data_completion') | migração × revisão da Sayerlack × correção de erro × preenchimento de dado faltante (junto à fábrica) |
+| `change_note` | text NULL | obrigatória em `correction`/`data_completion`, opcional em `bulletin_revision` |
 | **os ~40 campos técnicos** | (mesmos de kb_product_specs) | snapshot imutável dos specs daquela versão |
 | `approved_by` | uuid FK → auth.users | server-side |
 | `approved_at` | timestamptz | = `valid_from` |
@@ -111,6 +111,19 @@ Toda escrita de versão passa por **RPC `SECURITY DEFINER` master-gated** (a cur
 - A RLS de `kb_product_spec_versions` e `kb_spec_products`: SELECT staff; INSERT/UPDATE/DELETE **negado a authenticated** (só via as RPCs DEFINER + service_role). A imutabilidade vem do trigger + do gate.
 - `confirmar_vinculo_boletim`/`desvincular_boletim` (do 0c) passam a referenciar `product_id` (a identidade estável) em vez de `kb_product_spec_id`.
 
+### 4f. Dados faltantes (completude) + preenchimento junto à fábrica
+
+O founder cura a base e, ao revisar, precisa saber **o que falta** pra ir buscar com a Sayerlack. Duas peças:
+
+**(1) Ver o que falta.** Helper puro `camposFaltantes(versao)` → lista os **campos IMPORTANTES** vazios da versão vigente. "Importante" = um conjunto CURADO (decisão de produto), não os 40 — os que pesam na recomendação de venda:
+`rendimento_m2_por_litro`, `catalisador_codigo`, `catalisador_proporcao_pct`, `demaos_recomendadas`, `validade_dias`, `pot_life_horas`, `diluente_codigo`, `substrato`, `solidos_pct`, `dureza`. (Lista versionável no código; ajustável.) Um campo conta como faltante se está `null`/vazio **ou** está em `extraction_gaps`.
+- **Por produto:** painel "Dados faltantes" no `AdminKnowledgeBaseDetail` (os campos vazios + os gaps da IA).
+- **Agregado:** seção/relatório "Completude da base" — lista os produtos com campos importantes faltando + quais campos, ordenável, pra o founder **compilar o que pedir pra fábrica** (e exportável CSV, reusando o helper `toCsv` que já existe). Helper puro `relatorioCompletude(versõesVigentes)` → por produto, os faltantes.
+
+**(2) Preencher.** Quando o founder recebe o dado da fábrica, preenche via a ação **"Completar dados"** → cria uma versão **`data_completion`** (append-only, vira vigente, `change_note` ex.: "obtido com a Sayerlack em DD/MM") pela MESMA RPC `aprovar_versao_boletim`. Distinta de `correction` (que conserta um valor ERRADO) — `data_completion` preenche um valor AUSENTE. Aparece no histórico/diff rotulada, e a auditoria mostra que veio da fábrica.
+
+> Não-objetivo: buscar o dado automaticamente / integração com a Sayerlack. É curadoria manual do founder — o sistema só **mostra o buraco** e **registra o preenchimento** como versão.
+
 ## 5. Contratos de interface (front)
 
 - `useSaveProductSpecs` / `useBulkApproveSpecs` → passam a chamar `aprovar_versao_boletim` (em vez do `upsert` direto). Sem mudança de assinatura externa pros componentes.
@@ -118,6 +131,7 @@ Toda escrita de versão passa por **RPC `SECURITY DEFINER` master-gated** (a cur
 - `useApprovalQueue` → novo anti-join (§4c).
 - Novo `useSpecVersionHistory(productId)` + `useSpecVersionDiff(versionA, versionB)` → alimentam a seção de histórico/diff no `AdminKnowledgeBaseDetail`.
 - A UI de "nova revisão × outro produto × corrigir dados" (§4b) entra no fluxo de aprovação.
+- Novo `useCompletudeBase()` (agregado) + painel de faltantes no detalhe → §4f. Ação "Completar dados" → `aprovar_versao_boletim` com `change_type='data_completion'`.
 
 ## 6. Migração (aditiva, sem perda — ~297 linhas)
 
@@ -141,6 +155,7 @@ Padrão Lovable (SQL manual). **Pausa só nas aprovações por alguns minutos**;
 
 - **Helper puro `diffVersions`** (vitest): added/removed/changed, campo-a-campo, ordem estável.
 - **Helper puro** da decisão nova-versão/correção (mapeia entrada → `change_type`).
+- **Helper puro `camposFaltantes`/`relatorioCompletude`** (vitest): campo importante null/vazio ou em `extraction_gaps` → faltante; agregação por produto; ordem estável.
 - **PG17 (padrão `db/test-*.sh`, com falsificação):** append-only (UPDATE de versão aprovada → rejeitado); `version_number` sequencial sob concorrência (advisory lock); `aprovar_versao_boletim` promove vigente + seta `superseded_at`; fila anti-junta certo (doc aprovado não re-entra); link resolve produto→vigente; gate master (não-master barrado); migração preserva contagem+hash; orphan e queue-thrash **provados mortos** (cenário antes/depois).
 - **Codex adversarial** no SQL final (money-path) antes do apply.
 
@@ -151,3 +166,4 @@ Padrão Lovable (SQL manual). **Pausa só nas aprovações por alguns minutos**;
 - **Diff completo no histórico** (todos os campos), mas **rótulo não-afirmativo** (founder quer clareza do que mudou; o sistema não decide se a opção antiga vale).
 - **Snapshot no pedido = Sub-3** (a versão imutável já dá o `version_id` de snapshot quando a venda consumir).
 - **Matriz de catálise = Sub-2** (fonte própria, precisa do arquivo de exemplo).
+- **Dados faltantes + preenchimento junto à fábrica (§4f) entra na Sub-1** (parte do fluxo de curadoria do founder): visão de completude (por produto + agregado, exportável) + `change_type='data_completion'`. Não-objetivo: integração automática com a Sayerlack.
