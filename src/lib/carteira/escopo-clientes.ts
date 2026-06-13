@@ -69,6 +69,33 @@ export async function coletarEmLotes<I, O>(
   return out;
 }
 
+/** Hash estável e barato dos IDs visíveis. A contagem sozinha não pega reatribuição
+ *  que mantém o tamanho (cliente sai/entra, length igual); o hash muda se qualquer id
+ *  mudar. Usado na queryKey dos scores p/ não reusar o map do conjunto anterior. */
+export function hashIds(ids: string[]): string {
+  let h = 0;
+  for (const id of ids) {
+    for (let i = 0; i < id.length; i++) {
+      h = (Math.imul(h, 31) + id.charCodeAt(i)) | 0;
+    }
+  }
+  return `${ids.length}:${h}`;
+}
+
+/** Owners do escopo do ALVO na lente: posse direta + carteiras que ele cobre (ativas e
+ *  dentro da validade). `coverageRows` vêm de carteira_coverage já filtradas por active.
+ *  Reproduz, com a sessão do master, o que a RLS carteira_visivel_para daria ao alvo. */
+export function ownersAtivosDoAlvo(
+  coverageRows: { covered_user_id: string; valid_until: string | null }[],
+  alvoId: string,
+  nowIso: string,
+): string[] {
+  const cobertos = coverageRows
+    .filter((c) => !c.valid_until || c.valid_until > nowIso)
+    .map((c) => c.covered_user_id);
+  return [alvoId, ...cobertos];
+}
+
 const LOTE_IN = 150; // 1000 UUIDs estouram o limite de URL do proxy (≠ cap de linhas do PostgREST)
 
 /**
@@ -81,14 +108,28 @@ export async function fetchCarteiraClientes(opts: {
   effectiveUserId: string | null;
   baseId: string | null;
 }): Promise<{ customers: Customer[]; ids: string[] }> {
+  // Na lente a sessão é a do MASTER (RLS vê tudo), então REPRODUZIMOS o escopo do alvo:
+  // posse direta + carteiras que o alvo cobre. Fora da lente, a RLS carteira_visivel_para
+  // já entrega carteira própria + cobertura — sem filtro de owner aqui.
+  let ownerFilter: string[] | null = null;
+  if (opts.isImpersonating && opts.effectiveUserId) {
+    const { data: cov, error: covErr } = await supabase
+      .from('carteira_coverage')
+      .select('covered_user_id, valid_until')
+      .eq('covering_user_id', opts.effectiveUserId)
+      .eq('active', true);
+    if (covErr) throw covErr;
+    ownerFilter = ownersAtivosDoAlvo(cov ?? [], opts.effectiveUserId, new Date().toISOString());
+  }
+
   const assignments = await paginarTudo<{ customer_user_id: string; owner_user_id: string }>(
     async (from, to) => {
       let q = supabase
         .from('carteira_assignments')
         .select('customer_user_id, owner_user_id')
         .eq('eligible', true);
-      if (opts.isImpersonating && opts.effectiveUserId) {
-        q = q.eq('owner_user_id', opts.effectiveUserId);
+      if (ownerFilter) {
+        q = q.in('owner_user_id', ownerFilter);
       }
       const { data, error } = await q.order('customer_user_id').range(from, to);
       if (error) throw error;

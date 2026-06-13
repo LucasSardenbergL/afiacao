@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveModoEscopo, chunk, marcarCobertura, ordenarPorNome, paginarTudo, coletarEmLotes,
+  hashIds, ownersAtivosDoAlvo,
 } from '@/lib/carteira/escopo-clientes';
 
 describe('resolveModoEscopo', () => {
@@ -83,5 +84,31 @@ describe('coletarEmLotes', () => {
   });
   it('lista vazia → []', async () => {
     expect(await coletarEmLotes([], 2, async () => [99])).toEqual([]);
+  });
+});
+
+describe('hashIds', () => {
+  it('mesmos ids → mesmo hash; um id diferente (mesma length) → hash diferente', () => {
+    expect(hashIds(['a', 'b'])).toBe(hashIds(['a', 'b']));
+    expect(hashIds(['a', 'b'])).not.toBe(hashIds(['a', 'c']));
+  });
+  it('a contagem entra no hash (mesmo prefixo, tamanhos diferentes)', () => {
+    expect(hashIds(['a'])).not.toBe(hashIds(['a', 'a']));
+  });
+  it('lista vazia → "0:0"', () => expect(hashIds([])).toBe('0:0'));
+});
+
+describe('ownersAtivosDoAlvo', () => {
+  const NOW = '2026-06-13T12:00:00Z';
+  it('sem cobertura → só o alvo', () => {
+    expect(ownersAtivosDoAlvo([], 'alvo', NOW)).toEqual(['alvo']);
+  });
+  it('cobertura sem validade e ainda-válida entram; expirada sai', () => {
+    const rows = [
+      { covered_user_id: 'A', valid_until: null },                  // sem validade → entra
+      { covered_user_id: 'B', valid_until: '2026-06-20T00:00:00Z' }, // válida até o futuro → entra
+      { covered_user_id: 'C', valid_until: '2026-06-01T00:00:00Z' }, // já expirou → sai
+    ];
+    expect(ownersAtivosDoAlvo(rows, 'alvo', NOW)).toEqual(['alvo', 'A', 'B']);
   });
 });

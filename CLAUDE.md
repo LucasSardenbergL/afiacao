@@ -8,6 +8,8 @@
 
 > **🧭 Roadmap da sessão (preferência do Lucas, 2026-06-01):** manter um **roadmap vivo** de todas as atividades acordadas na sessão em **`docs/roadmap-sessao.md`** — **re-fazer/atualizar** sempre que uma atividade for acrescentada ou concluída, e **renderizar o roadmap no chat** quando mudar, pra o founder acompanhar. **Prática padrão de TODA sessão** (nova ou spawnada): no começo, montar/retomar o roadmap; ao longo, manter em dia; no fim, refletir o estado real. Legenda: ✅ feito · 🔄 em andamento · ⏳ pendente · 🚧 bloqueado · ⏸️ adiado · 🧭 aguardando decisão.
 
+> **🗑️ Resumo de fecho antes de excluir a sessão (preferência do Lucas, 2026-06-13):** sempre que o Lucas perguntar se **pode excluir/apagar/deletar a sessão/conversa/chat** (qualquer fraseado — "posso excluir essa conversa?", "dá pra apagar?", "existe algo a mais a ser feito?"), responder ANTES com um **resumo de fecho COMPLETO do que a sessão se propôs a resolver — do problema até a solução implementada**: (1) **problema/pedido** original; (2) **diagnóstico/causa-raiz**; (3) **decisões de design** (incl. consultas ao Codex/2ª opinião e o que mudou por elas); (4) **o que foi implementado** (arquivos/helpers, PRs com número, migrations); (5) **verificação** (testes/typecheck/lint/build); (6) **pendências que dependem do founder** (merge, Publish no Lovable, migration manual, QA) + **onde tudo está persistido** (PRs, spec/plano em `docs/superpowers/`, git) — pra ele confirmar que nada se perde ao descartar o histórico. Vale pra QUALQUER sessão (nova ou spawnada).
+
 ---
 
 ## 1. Produto
