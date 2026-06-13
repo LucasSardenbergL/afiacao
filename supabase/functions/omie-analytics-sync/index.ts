@@ -1313,6 +1313,163 @@ async function syncBackfillCadastro(db: SupabaseClient, dryRun: boolean, limite:
   }
 }
 
+// ======== MAPA DE CONSOLIDAÇÃO — popula customer_canonical_alias (clone → gêmeo) ========
+// Fase 1 da consolidação (estratégia "B-lite", spec 2026-06-13). Casa cada clone (omie_clientes SEM
+// profile) ao gêmeo (profile com o mesmo CNPJ) e grava o apelido com status='inactive' (INERTE: só o
+// carteira-rebuild da Fase 2 lê aliases ATIVOS; até ativar, NÃO afeta carteira/tela). Captura a conta
+// Omie de cada código (clone X e gêmeo Y) p/ revelar mesma-conta (duplicata real) vs cross-account
+// (mesmo CNPJ em empresas diferentes — NÃO é duplicata). NÃO toca omie_clientes/carteira/scores.
+
+interface AliasRow {
+  alias_user_id: string;
+  canonical_user_id: string;
+  documento: string | null;
+  alias_omie_codigo: number | null;
+  alias_conta: string | null;
+  canonical_omie_codigo: number | null;
+  canonical_conta: string | null;
+  status: "inactive" | "conflict";
+  reason: string | null;
+  batch_id: string;
+}
+
+// Map<doc_normalizado, {userId, name}> de profiles (resolve o gêmeo por documento; 1º vence).
+async function fetchProfileDocNameMap(
+  db: SupabaseClient,
+): Promise<Map<string, { userId: string; name: string | null }>> {
+  const map = new Map<string, { userId: string; name: string | null }>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db
+      .from("profiles").select("user_id, name, document").not("document", "is", null).range(from, from + 999);
+    if (error) throw new Error(`fetch profiles doc/name: ${error.message}`);
+    const rows = (data ?? []) as { user_id: string; name: string | null; document: string | null }[];
+    for (const r of rows) {
+      const d = (r.document ?? "").replace(/\D/g, "");
+      if (d && r.user_id && !map.has(d)) map.set(d, { userId: r.user_id, name: r.name });
+    }
+    if (rows.length < 1000) break;
+  }
+  return map;
+}
+
+// Map<user_id, omie_codigo_cliente> (p/ achar o código Y do gêmeo).
+async function fetchOmieCodigoPorUser(db: SupabaseClient): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db
+      .from("omie_clientes").select("user_id, omie_codigo_cliente").range(from, from + 999);
+    if (error) throw new Error(`fetch omie_clientes codigo: ${error.message}`);
+    const rows = (data ?? []) as { user_id: string; omie_codigo_cliente: number | null }[];
+    for (const r of rows) if (r.user_id && r.omie_codigo_cliente != null) map.set(r.user_id, Number(r.omie_codigo_cliente));
+    if (rows.length < 1000) break;
+  }
+  return map;
+}
+
+async function mapaConsolidacao(db: SupabaseClient, dryRun: boolean, batchId: string) {
+  const startedAt = new Date().toISOString();
+  await updateSyncState(db, "mapa_consolidacao", "all", {
+    status: "running", error_message: null, metadata: { dry_run: dryRun, batch_id: batchId, started_at: startedAt },
+  });
+  try {
+    // 1. clones (omie sem profile): user → código (omie_clientes é UNIQUE(user_id) → 1 código/user);
+    //    código com >1 user (ambíguo) fica de fora — não dá p/ apelidar com segurança.
+    const alvosPorCodigo = await fetchAlvosSemProfile(db);
+    const codigoPorCloneUser = new Map<string, number>();
+    let ambiguos = 0;
+    for (const [codigo, lista] of alvosPorCodigo) {
+      if (lista.length > 1) { ambiguos += lista.length; continue; }
+      codigoPorCloneUser.set(lista[0].userId, codigo);
+    }
+    const codigosClone = new Set(codigoPorCloneUser.values());
+
+    // 2. gêmeo por documento + código Y do gêmeo.
+    const gemeoPorDoc = await fetchProfileDocNameMap(db);
+    const codigoPorUser = await fetchOmieCodigoPorUser(db);
+
+    // 3. enumera as 3 contas: doc por código (só clones) + conta por código (todos, p/ achar a conta de Y).
+    const docPorCodigo = new Map<number, string | null>();
+    const contaPorCodigo = new Map<number, string>();
+    const codigoMultiConta = new Set<number>();
+    const contasProcessadas: OmieAccount[] = [];
+    const contasSemCredencial: OmieAccount[] = [];
+    for (const account of ["vendas", "colacor_vendas", "servicos"] as OmieAccount[]) {
+      const creds = getCredentials(account);
+      if (!creds.key || !creds.secret) { contasSemCredencial.push(account); continue; }
+      contasProcessadas.push(account);
+      let pagina = 1, totalPaginas = 1;
+      while (pagina <= totalPaginas) {
+        const result = (await callOmie(account, "geral/clientes/", "ListarClientes", {
+          pagina, registros_por_pagina: 100, apenas_importado_api: "N",
+        })) as unknown as OmieListarClientesResponse;
+        totalPaginas = result.total_de_paginas || 1;
+        for (const c of result.clientes_cadastro || []) {
+          if (c.codigo_cliente_omie == null) continue;
+          const codigo = Number(c.codigo_cliente_omie);
+          const prev = contaPorCodigo.get(codigo);
+          if (prev && prev !== account) codigoMultiConta.add(codigo);
+          contaPorCodigo.set(codigo, account);
+          if (codigosClone.has(codigo)) docPorCodigo.set(codigo, normalizarDocumento(c.cnpj_cpf ?? null));
+        }
+        pagina++;
+      }
+      console.log(`[MapaConsolidacao] ${account}: ${totalPaginas} páginas`);
+    }
+
+    // 4. monta os apelidos (clone → gêmeo) + classifica mesma-conta vs cross-account.
+    const aliases: AliasRow[] = [];
+    const stats = { mesma_conta: 0, cross_account: 0, conta_indefinida: 0, sem_gemeo: 0, conta_multipla: 0 };
+    for (const [cloneUserId, codigoX] of codigoPorCloneUser) {
+      const doc = docPorCodigo.get(codigoX) ?? null;
+      const gemeo = doc ? gemeoPorDoc.get(doc) : undefined;
+      if (!gemeo) { stats.sem_gemeo++; continue; }
+      const codigoY = codigoPorUser.get(gemeo.userId) ?? null;
+      const contaX = contaPorCodigo.get(codigoX) ?? null;
+      const contaY = codigoY != null ? (contaPorCodigo.get(codigoY) ?? null) : null;
+      if (codigoMultiConta.has(codigoX) || (codigoY != null && codigoMultiConta.has(codigoY))) stats.conta_multipla++;
+      if (contaY == null) stats.conta_indefinida++;
+      else if (contaX === contaY) stats.mesma_conta++;
+      else stats.cross_account++;
+      aliases.push({
+        alias_user_id: cloneUserId, canonical_user_id: gemeo.userId, documento: doc,
+        alias_omie_codigo: codigoX, alias_conta: contaX,
+        canonical_omie_codigo: codigoY, canonical_conta: contaY,
+        status: "inactive", reason: null, batch_id: batchId,
+      });
+    }
+
+    // 5. persiste com status='inactive' (inerte). Upsert por alias_user_id (idempotente).
+    let gravados = 0;
+    if (!dryRun) {
+      for (let i = 0; i < aliases.length; i += 500) {
+        const chunk = aliases.slice(i, i + 500);
+        const { error } = await db.from("customer_canonical_alias").upsert(chunk, { onConflict: "alias_user_id" });
+        if (error) throw new Error(`upsert customer_canonical_alias: ${error.message}`);
+        gravados += chunk.length;
+      }
+    }
+
+    const relatorio = {
+      dry_run: dryRun, batch_id: batchId,
+      contas_processadas: contasProcessadas, contas_sem_credencial: contasSemCredencial,
+      clones_total: codigoPorCloneUser.size, ambiguos, aliases: aliases.length, gravados,
+      mesma_conta: stats.mesma_conta, cross_account: stats.cross_account,
+      conta_indefinida: stats.conta_indefinida, conta_multipla: stats.conta_multipla, sem_gemeo: stats.sem_gemeo,
+      amostra: aliases.slice(0, 10).map((a) => ({
+        alias: a.alias_user_id, canonical: a.canonical_user_id, doc: a.documento,
+        contaX: a.alias_conta, contaY: a.canonical_conta,
+      })),
+      finished_at: new Date().toISOString(),
+    };
+    await updateSyncState(db, "mapa_consolidacao", "all", { status: "complete", total_synced: gravados, metadata: relatorio });
+    console.log(`[MapaConsolidacao] ${JSON.stringify(relatorio)}`);
+    return relatorio;
+  } catch (error) {
+    await updateSyncState(db, "mapa_consolidacao", "all", { status: "error", error_message: String(error) });
+    throw error;
+  }
+}
+
 // ======== MAIN HANDLER ========
 
 serve(async (req) => {
@@ -1329,7 +1486,7 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const { action, account = "vendas", start_page, max_pages, dry_run, limite } = await req.json();
+    const { action, account = "vendas", start_page, max_pages, dry_run, limite, batch_id } = await req.json();
     let result: unknown;
 
     switch (action) {
@@ -1467,6 +1624,42 @@ serve(async (req) => {
           EdgeRuntime.waitUntil(bgTask);
         }
         return new Response(JSON.stringify({ accepted: true, dry_run: dryRun, limite: limiteNum }), {
+          status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      case "mapa_consolidacao": {
+        // Fase 1 da consolidação (B-lite). Casa clone→gêmeo, popula customer_canonical_alias com
+        // status='inactive' (INERTE até o canário). dry_run=true só conta (não grava). Reporta
+        // mesma-conta vs cross-account. Gate master/gestor; background.
+        const dryRun = dry_run === true; // padrão: GRAVA (alias inativo é inerte); dry_run=true só conta.
+        const batchId = typeof batch_id === "string" && batch_id.trim() ? batch_id.trim() : "mapa-inicial";
+        if (auth.via === "staff") {
+          const { data: pode } = await supabaseAdmin.rpc("pode_ver_carteira_completa", { _uid: auth.userId });
+          if (!pode) {
+            return new Response(JSON.stringify({ error: "Forbidden: requer master ou gestor comercial" }), {
+              status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        }
+        const stMapa = await getSyncState(supabaseAdmin, "mapa_consolidacao", "all");
+        const runningMapa = stMapa?.status === "running" && stMapa?.updated_at &&
+          (Date.now() - new Date(stMapa.updated_at as string).getTime() < 15 * 60 * 1000);
+        if (runningMapa) {
+          return new Response(JSON.stringify({ accepted: false, already_running: true }), {
+            status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const bgTask = mapaConsolidacao(supabaseAdmin, dryRun, batchId).catch((e) => {
+          console.error("[mapa_consolidacao][bg]", e instanceof Error ? e.message : e);
+        });
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore - EdgeRuntime existe no runtime do Supabase Edge
+        if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore
+          EdgeRuntime.waitUntil(bgTask);
+        }
+        return new Response(JSON.stringify({ accepted: true, dry_run: dryRun, batch_id: batchId }), {
           status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
