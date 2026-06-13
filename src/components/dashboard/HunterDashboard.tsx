@@ -3,6 +3,7 @@ import { CacaConteudo } from '@/components/caca/CacaConteudo';
 import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNudge';
 import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
 import { useMyPositivacao } from '@/hooks/useMyPositivacao';
+import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
 
 /**
  * Dashboard Hunter (aquisição) — Meu Dia do hunter.
@@ -27,6 +28,9 @@ export function HunterDashboard() {
           Seu placar de aquisição e a fila de caça: clientes parecidos com os melhores que ainda não compram.
         </p>
       </div>
+
+      {/* Receita/novos vêm de sales_orders, hoje parcial (backfill pendente) → aviso honesto */}
+      <DadosVendaParciaisBanner />
 
       {/* Placar de aquisição — o norte do hunter (proxy honesto, não-OTE ainda) */}
       {positivacao && <PositivacaoHero kpis={positivacao} isHunter={true} />}

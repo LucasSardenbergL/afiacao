@@ -4,6 +4,13 @@
 **Autor:** Claude + **Codex (gpt-5.5, consult, reasoning high)** — 2ª opinião conforme CLAUDE.md §12.
 **Status:** aprovado pelo founder pra implementar (frente "começar pela farmer e expandir" — farmer feita em #690; hunter→closer→master em PRs separados).
 
+## ⚠️ Coerência com o OTE (atualização 2026-06-13, eu+Codex)
+
+Estes KPIs são **placar de visibilidade (gestão)**, NÃO a engine de comissão. A elegibilidade pra remuneração é definida **exclusivamente** pelo spec vigente de OTE (`2026-06-13-ote-remuneracao-variavel-farmer-design.md`) — os rótulos abaixo são design de dashboard, não pagamento. O OTE está em DESIGN. Divergências a reconciliar:
+- **Dados parciais:** receita/novos vêm de `sales_orders`, hoje parcial (backfill pendente) → `DadosVendaParciaisBanner` avisa; **não usar pra comissão**.
+- **Janela:** MTD (operacional) × quota trimestral cumulativa do OTE.
+- **Específico hunter:** o KPI-norte (novos na carteira) já é **proxy não-comissionável** — coerente com o OTE. O OTE trata aquisição como **bounty por cliente** (50/25/25, V2/V3), não % perpétuo — alinha com o `acquired_by_user_id` imutável já registrado nos gaps v2.
+
 ## Contexto / problema
 
 Continuação da redefinição de KPIs por persona (a farmer foi a 1ª — `docs/superpowers/specs/2026-06-06-kpis-farmer-meu-dia-design.md`). O `/meu-dia` roteia por `commercial_role` (lente-aware) e cada papel tem seu dashboard. Os dashboards foram montados **ad-hoc** e **vazam cards entre personas**.
