@@ -117,6 +117,19 @@ BEGIN
   RAISE NOTICE 'A5 OK';
 END $$;
 
+-- A8: descarte_motivo NÃO fica stale — ao descartar grava o motivo, e ao mudar
+--     pra outra ação (em_conversa) o motivo é LIMPO (não vaza pra status não-descartado).
+DO $$
+BEGIN
+  PERFORM public.registrar_contato_radar('22222222000122','descartado','fora do ramo');
+  IF (SELECT descarte_motivo FROM public.radar_empresas WHERE cnpj='22222222000122') <> 'fora do ramo'
+    THEN RAISE EXCEPTION 'A8 FALHOU: motivo não gravou no descarte'; END IF;
+  PERFORM public.registrar_contato_radar('22222222000122','em_conversa',NULL);
+  IF (SELECT descarte_motivo FROM public.radar_empresas WHERE cnpj='22222222000122') IS NOT NULL
+    THEN RAISE EXCEPTION 'A8 FALHOU: motivo ficou stale ao sair de descartado'; END IF;
+  RAISE NOTICE 'A8 OK';
+END $$;
+
 RESET ROLE; SET test.uid = '';
 
 -- A6: gate — não-gestor não registra nem lê KPIs (SQLSTATE de RAISE = P0001)

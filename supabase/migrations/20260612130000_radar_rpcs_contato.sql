@@ -55,7 +55,7 @@ BEGIN
   UPDATE public.radar_empresas SET
     prospeccao_status = p_acao,
     prospeccao_atualizado_em = now(),
-    descarte_motivo = CASE WHEN p_acao = 'descartado' THEN p_nota ELSE descarte_motivo END,
+    descarte_motivo = CASE WHEN p_acao = 'descartado' THEN p_nota ELSE NULL END,  -- limpa ao sair de descartado (não deixa motivo stale)
     updated_at = now()
   WHERE cnpj = p_cnpj;
 
