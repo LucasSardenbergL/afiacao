@@ -6,6 +6,10 @@ import type { KbExtractedSpec, KbProductSpec } from '@/lib/knowledge-base/specs-
 interface SaveInput {
   specs: KbExtractedSpec;
   documentId?: string;
+  /** Default 'bulletin_revision' (aprovação de boletim). B2 passa 'correction'/'data_completion'. */
+  changeType?: 'bulletin_revision' | 'correction' | 'data_completion';
+  /** Obrigatória (server-side) quando changeType é correction/data_completion. */
+  changeNote?: string | null;
 }
 
 export function useSaveProductSpecs() {
@@ -24,8 +28,8 @@ export function useSaveProductSpecs() {
         {
           p_payload: input.specs,
           p_document_id: input.documentId ?? null,
-          p_change_type: 'bulletin_revision',
-          p_change_note: null,
+          p_change_type: input.changeType ?? 'bulletin_revision',
+          p_change_note: input.changeNote ?? null,
         } as never,
       );
 
