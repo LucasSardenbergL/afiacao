@@ -91,3 +91,27 @@ export interface ConvertForm {
   canal: CanalNegociacao;
   observacoes: string;
 }
+
+// --- Negociação Paralela v2 (fila por R$ líquido) ---
+
+// Linha crua da view v_sku_parametros_sugeridos (subset usado pela fila).
+export interface LinhaViewSugeridos {
+  sku_codigo_omie: number | string;
+  sku_descricao: string | null;
+  demanda_media_diaria: number | null;
+  preco_compra_real: number | null;
+  preco_item_eoq: number | null;     // = CMC quando fonte_preco='cmc'
+  fonte_preco: string | null;        // 'cmc' | 'compra_real' | 'venda_estimado' | 'sem_preco'
+  custo_capital_efetivo_perc: number | null; // %/ano
+}
+
+// Candidato pronto pra UI: identidade + insumos + avaliação corrente (recalculada com o desconto do card).
+export interface CandidatoNegociacao {
+  sku_codigo_omie: string;
+  sku_descricao: string | null;
+  consumo_anual: number;
+  preco_compra: number | null;
+  cmc: number | null;            // só quando fonte_preco='cmc'
+  custo_capital_anual: number;
+  gasto_anual: number | null;    // preco_compra × consumo_anual (referência exibida)
+}

@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Plus } from 'lucide-react';
 import { type NewExperimentInput } from './types';
 
-export const NewExperimentDialog = ({ onCreate }: { onCreate: (input: NewExperimentInput) => void }) => {
+export const NewExperimentDialog = ({ onCreate, disabled }: { onCreate: (input: NewExperimentInput) => void; disabled?: boolean }) => {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
     title: '',
@@ -36,7 +36,7 @@ export const NewExperimentDialog = ({ onCreate }: { onCreate: (input: NewExperim
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" className="h-7 text-[10px]">
+        <Button size="sm" className="h-7 text-[10px]" disabled={disabled} title={disabled ? 'Indisponível em modo Ver como' : undefined}>
           <Plus className="w-3 h-3 mr-1" /> Novo
         </Button>
       </DialogTrigger>

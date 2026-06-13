@@ -4,19 +4,24 @@
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Printer, Share2, Pencil } from 'lucide-react';
-import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-import { statusLabels, type SalesOrder } from './types';
+import { Printer, Share2, Pencil, Loader2, RotateCcw } from 'lucide-react';
+import { formatarDataPedido } from '@/lib/pedido/data-pedido';
+import { statusDoPedido, type SalesOrder } from './types';
 import { itemTotal } from './print';
 
 interface SalesOrderDetailSheetProps {
+  // O painel abre antes do detalhe chegar (busca por id sob demanda) — `open`
+  // controla o Sheet e `loading` mostra o estado enquanto `order` é null.
+  open: boolean;
+  loading?: boolean;
   order: SalesOrder | null;
   customerName: string;
   onClose: () => void;
   onPrint: () => void;
   onShare: () => void;
   onEdit: () => void;
+  /** "Repetir pedido": abre o wizard com cliente + itens deste pedido. */
+  onRepeat?: () => void;
 }
 
 const fmt = (v: number) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -25,15 +30,17 @@ const fmt = (v: number) => (v || 0).toLocaleString('pt-BR', { style: 'currency',
 const canEditStatus = (status: string) => !['cancelado', 'entregue', 'faturado'].includes(status);
 
 export function SalesOrderDetailSheet({
+  open,
+  loading,
   order,
   customerName,
   onClose,
   onPrint,
   onShare,
   onEdit,
+  onRepeat,
 }: SalesOrderDetailSheetProps) {
-  const open = !!order;
-  const status = order ? statusLabels[order.status] || statusLabels.rascunho : null;
+  const status = order ? statusDoPedido(order.status) : null;
   const accountLabel =
     order?.account === 'colacor_sc' ? 'Colacor SC' : order?.account === 'colacor' ? 'Colacor' : 'Oben';
   const pv = order?.omie_numero_pedido ? order.omie_numero_pedido.replace(/^0+/, '') || '0' : null;
@@ -41,6 +48,16 @@ export function SalesOrderDetailSheet({
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="w-full sm:max-w-md overflow-y-auto flex flex-col">
+        {!order && loading && (
+          <div className="flex-1 flex items-center justify-center">
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        {!order && !loading && open && (
+          <p className="text-sm text-muted-foreground pt-8 text-center">
+            Não foi possível carregar o pedido.
+          </p>
+        )}
         {order && (
           <>
             <SheetHeader>
@@ -62,7 +79,7 @@ export function SalesOrderDetailSheet({
                     {' · '}
                   </>
                 )}
-                {format(new Date(order.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                {formatarDataPedido(order.created_at)}
               </SheetDescription>
             </SheetHeader>
 
@@ -79,7 +96,7 @@ export function SalesOrderDetailSheet({
                         <p className="truncate">{item.descricao || 'Item'}</p>
                         {item.tint_nome_cor && (
                           <p className="text-xs text-muted-foreground truncate">
-                            🎨 {item.tint_cor_id} - {item.tint_nome_cor}
+                            🎨 {item.tint_cor_id ? `${item.tint_cor_id} - ` : ''}{item.tint_nome_cor}
                           </p>
                         )}
                         <p className="text-xs text-muted-foreground">
@@ -124,6 +141,13 @@ export function SalesOrderDetailSheet({
                 <Printer className="w-4 h-4" />
                 Imprimir
               </Button>
+              {/* Repetir: só pedidos comerciais com itens (afiação tem outro formato de item) */}
+              {onRepeat && order._source !== 'afiacao' && (order.items?.length || 0) > 0 && (
+                <Button variant="outline" onClick={onRepeat} className="gap-2" title="Repetir este pedido num pedido novo">
+                  <RotateCcw className="w-4 h-4" />
+                  Repetir
+                </Button>
+              )}
               <Button variant="outline" onClick={onShare} className="gap-2">
                 <Share2 className="w-4 h-4" />
                 Compartilhar

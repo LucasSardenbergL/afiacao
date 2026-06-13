@@ -2,8 +2,9 @@
 // Extraída de src/pages/AdminReposicaoRevisao.tsx (god-component split). A aprovação manual
 // (que não travava nada — o motor e o auto-apply ignoram aprovado_em) foi aposentada (#639+).
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { toast } from "sonner";
 import { type SkuParam, type RowWithPrice, type StatusFilterValue, reativarPayload } from "@/lib/reposicao/sku-param";
@@ -16,11 +17,19 @@ export function useRevisaoParametros() {
   const [classes, setClasses] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("todos");
   const [search, setSearch] = useState("");
+  // A queryKey usa o termo DEBOUNCED: com o termo cru, cada tecla criava uma
+  // key nova e disparava count exact + ILIKE + a query de preços na view cara
+  // (digitar "CATALISADOR" = ~11 pares de request). O input continua
+  // controlado por `search` (digitação fluida).
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [page, setPage] = useState(0);
   const [openSku, setOpenSku] = useState<RowWithPrice | null>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["sku_parametros_revisao", empresa, classes, statusFilter, search, page],
+    queryKey: ["sku_parametros_revisao", empresa, classes, statusFilter, debouncedSearch, page],
+    // Mantém a página anterior visível enquanto a busca nova carrega — sem
+    // isso a tabela pisca pra vazio a cada pausa de digitação (troca de key).
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       // Caso especial: SKUs aguardando habilitação de fornecedor vêm da view
       if (statusFilter === "aguardando_fornecedor") {
@@ -31,8 +40,8 @@ export function useRevisaoParametros() {
           .eq("status_sugestao", "AGUARDANDO_HABILITACAO_FORNECEDOR");
 
         if (classes.length > 0) q = q.in("classe_consolidada", classes);
-        if (search.trim()) {
-          const s = search.trim();
+        if (debouncedSearch.trim()) {
+          const s = debouncedSearch.trim();
           if (/^\d+$/.test(s)) {
             q = q.eq("sku_codigo_omie", Number(s));
           } else {
@@ -100,8 +109,8 @@ export function useRevisaoParametros() {
           .eq("empresa", empresa);
 
         if (classes.length > 0) q = q.in("classe_consolidada", classes);
-        if (search.trim()) {
-          const s = search.trim();
+        if (debouncedSearch.trim()) {
+          const s = debouncedSearch.trim();
           if (/^\d+$/.test(s)) {
             q = q.eq("sku_codigo_omie", Number(s));
           } else {
@@ -187,8 +196,8 @@ export function useRevisaoParametros() {
       }
 
       if (classes.length > 0) q = q.in("classe_consolidada", classes);
-      if (search.trim()) {
-        const s = search.trim();
+      if (debouncedSearch.trim()) {
+        const s = debouncedSearch.trim();
         if (/^\d+$/.test(s)) {
           q = q.eq("sku_codigo_omie", Number(s));
         } else {

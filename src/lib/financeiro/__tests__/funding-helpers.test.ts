@@ -128,6 +128,23 @@ describe('decidirTitulo', () => {
     expect(d.recomendacao).toBe('nao_antecipar');
     expect(d.net_rs!).toBeLessThan(0);
   });
+  it('GAP: com AS DUAS alternativas, faz benchmark contra a MAIS BARATA (capital de giro < cheque)', () => {
+    // gap real com linha de capital de giro (10% a.a.) E cheque especial (200% a.a.) disponíveis:
+    // o benchmark da antecipação tem de ser a fonte MAIS BARATA, não a mais cara (senão o net infla e
+    // enviesa pra "antecipar"). Fecha o gap de cobertura: os outros casos GAP passam 1 alternativa só.
+    const d = decidirTitulo({
+      titulo: baseTitulo, antecipacao: baseAnt,
+      alternativas: { capital_giro_cet: 0.10, cheque_cet: 2.0 },
+      cm_anual: 0.18, retorno_marginal_a4: null, contexto: 'gap', flags_extra: [],
+    });
+    expect(d.benchmark_fonte).toBe('capital_giro'); // a mais barata, não 'cheque_especial'
+    const soCheque = decidirTitulo({
+      titulo: baseTitulo, antecipacao: baseAnt,
+      alternativas: { capital_giro_cet: null, cheque_cet: 2.0 },
+      cm_anual: 0.18, retorno_marginal_a4: null, contexto: 'gap', flags_extra: [],
+    });
+    expect(d.custo_rs_benchmark!).toBeLessThan(soCheque.custo_rs_benchmark!); // pegou o barato (giro), não o caro (cheque)
+  });
   it('SOBRA: deságio > cm_anual e sem uso A4 → não antecipar', () => {
     const d = decidirTitulo({
       titulo: baseTitulo, antecipacao: baseAnt, alternativas: {},

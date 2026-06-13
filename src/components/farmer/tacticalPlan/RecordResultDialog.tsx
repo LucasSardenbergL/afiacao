@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { RecordResultPayload } from './types';
 
 export const RecordResultDialog = ({
@@ -18,6 +19,8 @@ export const RecordResultDialog = ({
   planId: string;
   onRecord: (planId: string, result: RecordResultPayload) => Promise<void>;
 }) => {
+  // Lente "Ver como": registrar resultado é write (update) — desabilitado.
+  const { isImpersonating } = useImpersonation();
   const [open, setOpen] = useState(false);
   const [planFollowed, setPlanFollowed] = useState(true);
   const [callResult, setCallResult] = useState('');
@@ -44,7 +47,13 @@ export const RecordResultDialog = ({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="w-full text-[10px] gap-1">
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full text-[10px] gap-1"
+          disabled={isImpersonating}
+          title={isImpersonating ? 'Indisponível em modo Ver como' : undefined}
+        >
           <FileText className="w-3 h-3" /> Registrar Resultado
         </Button>
       </DialogTrigger>

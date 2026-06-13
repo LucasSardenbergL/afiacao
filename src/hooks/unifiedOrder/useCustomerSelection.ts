@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { eqText, orFilter } from '@/lib/postgrest';
+import { deveCriarClienteNaConta } from './ensure-helpers';
 import type {
   OmieCustomer,
   AddressData,
@@ -59,6 +60,22 @@ export function useCustomerSelection({
      usuário troca de cliente no meio (corrida A→B). Cada selectCustomer
      incrementa o token; awaits que voltam com token vencido não setam estado. */
   const selectionTokenRef = useRef(0);
+
+  /* Promise RETIDA do auto-cadastro em background (Etapa 3 do spec
+     preco-realtime): a seleção dispara o ensure SEM esperar (o spinner do
+     cliente não paga mais ~2-4s de WRITE no Omie) e o submit faz JOIN nela
+     via waitForAccountEnsure — recebendo o cliente PÓS-ensure (a closure de
+     selectedCustomer pode ser a cópia anterior aos códigos criados). O
+     preflight fail-closed do submit (Etapa 2a) segue como rede.
+     TOKEN-STAMP (revisão adversarial): a retenção carrega o token da seleção
+     que a criou — o join só devolve o cliente se ele ainda é a seleção
+     CORRENTE. Identidade por documento NÃO serve de guard aqui: existem
+     duplicatas mesmo-CNPJ em prod (plantadas pelo bug histórico de
+     auto-criação) e o AI-flow monta cliente com documento vazio. */
+  const ensureAccountsRef = useRef<{ token: number; promise: Promise<OmieCustomer | null> }>({
+    token: 0,
+    promise: Promise.resolve(null),
+  });
 
   /* ─── State ─── */
   const [customerSearch, setCustomerSearch] = useState('');
@@ -250,8 +267,14 @@ export function useCustomerSelection({
     return localUserId;
   }, []);
 
-  /** Auto-create customer in Colacor and Afiação if missing. Mutates `cust` in place. */
-  const autoCreateInMissingAccounts = useCallback(async (cust: OmieCustomer) => {
+  /** Auto-create customer in Colacor and Afiação if missing. Mutates `cust` in place.
+   *  Tri-state (deveCriarClienteNaConta): conta cujo LOOKUP falhou NÃO cria às
+   *  cegas — ausência não confirmada; criar em cima de erro de leitura
+   *  duplicaria no Omie um cliente que já existe. */
+  const autoCreateInMissingAccounts = useCallback(async (
+    cust: OmieCustomer,
+    lookupFailed: { colacor: boolean; afiacao: boolean },
+  ) => {
     const customerPayload = {
       document: cust.cnpj_cpf,
       razao_social: cust.razao_social,
@@ -268,7 +291,13 @@ export function useCustomerSelection({
 
     const promises: Promise<unknown>[] = [];
 
-    if (!cust.codigo_cliente_colacor && cust.cnpj_cpf) {
+    if (
+      deveCriarClienteNaConta({
+        codigoExistente: cust.codigo_cliente_colacor,
+        temDocumento: !!cust.cnpj_cpf,
+        lookupFalhou: lookupFailed.colacor,
+      })
+    ) {
       promises.push(
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'criar_cliente', account: 'colacor', ...customerPayload },
@@ -290,7 +319,13 @@ export function useCustomerSelection({
       );
     }
 
-    if (!cust.codigo_cliente_afiacao && cust.cnpj_cpf) {
+    if (
+      deveCriarClienteNaConta({
+        codigoExistente: cust.codigo_cliente_afiacao,
+        temDocumento: !!cust.cnpj_cpf,
+        lookupFalhou: lookupFailed.afiacao,
+      })
+    ) {
       promises.push(
         supabase.functions.invoke('omie-sync', {
           body: { action: 'criar_cliente_afiacao', ...customerPayload },
@@ -348,6 +383,12 @@ export function useCustomerSelection({
     // atrasadas desta chamada são descartadas (não sobrescrevem o cliente novo).
     const myToken = ++selectionTokenRef.current;
     const isStale = () => selectionTokenRef.current !== myToken;
+
+    // Fecha a janela da seleção ANTERIOR: até esta seleção reter o próprio
+    // ensure (após os lookups, ~1-10s), o join do submit NÃO pode devolver o
+    // ensure do cliente antigo — devolve null e o submit usa o preflight
+    // fail-closed como rede.
+    ensureAccountsRef.current = { token: myToken, promise: Promise.resolve(null) };
 
     setLoadingCustomer(true);
     setCustomerSearch('');
@@ -419,6 +460,11 @@ export function useCustomerSelection({
         'cliente Afiação',
       ];
       const failedParts: string[] = [];
+      // Índices falhos registrados À PARTE dos labels: o tri-state do
+      // auto-cadastro deriva DAQUI (por posição no allSettled), não das
+      // strings de log — renomear um label não pode desarmar o guard
+      // anti-duplicação silenciosamente (revisão adversarial).
+      const failedIdxs = new Set<number>();
       const getResult = <T = unknown>(idx: number): FunctionInvokeResult<T> => {
         const r = settledResults[idx];
         if (r.status === 'fulfilled') {
@@ -432,6 +478,7 @@ export function useCustomerSelection({
               error: val.error,
             });
             failedParts.push(labels[idx]);
+            failedIdxs.add(idx);
             return { data: null };
           }
           return val ?? { data: null };
@@ -444,6 +491,7 @@ export function useCustomerSelection({
           error: r.reason,
         });
         failedParts.push(labels[idx]);
+        failedIdxs.add(idx);
         return { data: null };
       };
 
@@ -512,13 +560,38 @@ export function useCustomerSelection({
         }).catch(() => {});
       }
 
-      // Auto-cadastro nas contas faltantes roda DEPOIS do preço já visível.
-      // Mantido awaited por ora; a Etapa 2/3 (ver spec) troca por ensure idempotente
-      // + join no submit. Conclusão atrasada não sobrescreve um cliente novo (guard).
-      await autoCreateInMissingAccounts(cust);
-      if (isStale()) return;
-      // Reflete códigos recém-criados pelo auto-cadastro (purchase-history reage à key).
-      setSelectedCustomer({ ...cust });
+      // ── Etapa 3 (spec preco-realtime): auto-cadastro em BACKGROUND ──
+      // A promise fica retida em ensureAccountsRef e o submit faz join nela —
+      // a seleção não espera mais o WRITE no Omie (~2-4s no caminho do
+      // spinner). Tri-state: conta cujo lookup FALHOU não cria às cegas (o
+      // preflight fail-closed do submit bloqueia a conta, se usada).
+      // Índices 3/4 = posições dos lookups de cliente no Promise.allSettled acima.
+      const LOOKUP_IDX_CLIENTE_COLACOR = 3;
+      const LOOKUP_IDX_CLIENTE_AFIACAO = 4;
+      const lookupFailed = {
+        colacor: failedIdxs.has(LOOKUP_IDX_CLIENTE_COLACOR),
+        afiacao: failedIdxs.has(LOOKUP_IDX_CLIENTE_AFIACAO),
+      };
+      ensureAccountsRef.current = {
+        token: myToken,
+        promise: autoCreateInMissingAccounts(cust, lookupFailed)
+          .then(() => {
+            // Reflete códigos recém-criados (purchase-history reage à key);
+            // conclusão atrasada de cliente trocado não sobrescreve (guard).
+            if (!isStale()) setSelectedCustomer({ ...cust });
+            return cust;
+          })
+          .catch((e) => {
+            // autoCreate já isola falhas por conta; este catch é só pra ref
+            // nunca rejeitar sem handler (o join do submit trata null).
+            logger.warn('Ensure de cadastro em background falhou', {
+              stage: 'ensure_accounts_background',
+              customerCnpjCpf: maskDocument(cust.cnpj_cpf),
+              error: e,
+            });
+            return cust;
+          }),
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro desconhecido';
       if (!isStale()) toast.error('Erro', { description: message });
@@ -554,11 +627,22 @@ export function useCustomerSelection({
     onLocalUserResolved, reloadPriceHistory,
   ]);
 
+  /** Join da Etapa 3: o submit espera o ensure em background terminar e
+   *  recebe o cliente com os códigos por-conta atualizados — SÓ se a retenção
+   *  ainda é da seleção corrente (token-stamp); senão null (e o preflight
+   *  fail-closed do submit cobre). */
+  const waitForAccountEnsure = useCallback(async (): Promise<OmieCustomer | null> => {
+    const retained = ensureAccountsRef.current;
+    const cliente = await retained.promise;
+    return retained.token === selectionTokenRef.current ? cliente : null;
+  }, []);
+
   const clearCustomer = useCallback(() => {
     // Invalida qualquer selectCustomer em voo: suas conclusões viram stale e não
     // ressuscitam o cliente que estamos limpando. Como o finally da seleção pula
     // o setLoadingCustomer(false) quando stale, zeramos os flags de loading aqui.
     selectionTokenRef.current++;
+    ensureAccountsRef.current = { token: selectionTokenRef.current, promise: Promise.resolve(null) };
     setSelectedCustomer(null);
     setLoadingCustomer(false);
     setValidatingVendedor(false);
@@ -603,6 +687,6 @@ export function useCustomerSelection({
     // Vendedor
     vendedorDivergencias, validatingVendedor,
     // Actions
-    selectCustomer, clearCustomer,
+    selectCustomer, clearCustomer, waitForAccountEnsure,
   };
 }

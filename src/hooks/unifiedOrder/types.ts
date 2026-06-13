@@ -19,17 +19,50 @@ export const EXCLUDED_FAMILIA_PATTERNS = [
 ] as const;
 
 /**
+ * Caracteres que quebram a ESTRUTURA do predicado `.or()` do PostgREST: vírgula
+ * (separa cláusulas), parênteses (agrupam) e aspas duplas (delimitam valor). NÃO
+ * inclui os wildcards do ILIKE (`%` `_`), que são intencionais nos patterns.
+ */
+const POSTGREST_OR_STRUCTURAL = /[,()"]/;
+
+/**
+ * Monta o predicado do `.or()` que exclui as famílias indesejadas SEM descartar
+ * produtos com `familia` NULL.
+ *
+ * O `.not('familia','ilike',p)` encadeado vira `familia NOT ILIKE p`, que avalia
+ * para NULL quando `familia` é NULL → a linha some (footgun, CLAUDE.md §10).
+ * Aqui geramos `familia IS NULL OR (familia NOT ILIKE p1 AND ...)`, no formato do
+ * PostgREST: `familia.is.null,and(familia.not.ilike.p1,...)`.
+ *
+ * Os patterns são CONSTANTES confiáveis (`EXCLUDED_FAMILIA_PATTERNS`), não input
+ * do usuário — por isso NÃO passam por `sanitizeForPostgrestOr` (que removeria o
+ * `%` do ILIKE parcial). Como contrapartida da não-sanitização, validamos que
+ * nenhum pattern carrega um metacaractere estrutural: money-path, falhar alto é
+ * melhor que query silenciosamente errada.
+ */
+export function buildFamiliaExclusionOrFilter(patterns: readonly string[]): string {
+  if (patterns.length === 0) {
+    // Sem patterns geraria `familia.is.null,and()` → 400 do parser → catálogo
+    // vira [] silencioso. Falha alto: chamar com lista vazia é bug de programação.
+    throw new Error('buildFamiliaExclusionOrFilter requer ao menos um pattern de família');
+  }
+  for (const pattern of patterns) {
+    if (POSTGREST_OR_STRUCTURAL.test(pattern)) {
+      throw new Error(
+        `Pattern de família inválido para .or() do PostgREST: ${JSON.stringify(pattern)} (contém , ( ) ou ")`,
+      );
+    }
+  }
+  const nots = patterns.map((pattern) => `familia.not.ilike.${pattern}`).join(',');
+  return `familia.is.null,and(${nots})`;
+}
+
+/**
  * Aplica os filtros de exclusão de família a uma query do Supabase.
  * Use sempre que listar de `omie_products` no contexto de venda.
  */
-export function buildExclusionQuery<T extends { not: (col: string, op: string, val: string) => T }>(
-  query: T,
-): T {
-  let q = query;
-  for (const pattern of EXCLUDED_FAMILIA_PATTERNS) {
-    q = q.not('familia', 'ilike', pattern);
-  }
-  return q;
+export function buildExclusionQuery<T extends { or: (filter: string) => T }>(query: T): T {
+  return query.or(buildFamiliaExclusionOrFilter(EXCLUDED_FAMILIA_PATTERNS));
 }
 
 export interface Product {

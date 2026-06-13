@@ -1,0 +1,32 @@
+# Radar de Clientes — CNAEs-alvo (curadoria versionada; founder revisa).
+# Expandir = editar + re-rodar a carga. Códigos de 7 dígitos como no dump RFB.
+# ⚠️ O script de carga valida cada código contra o Cnaes.zip do próprio dump (DV errado = abort).
+
+# — Moveleiro (Oben: vernizes/tintas/insumos Sayerlack) —
+3101200	Fabricação de móveis com predominância de madeira
+3102100	Fabricação de móveis com predominância de metal
+3103900	Fabricação de móveis de outros materiais (exceto madeira e metal)
+1621800	Fabricação de madeira laminada e chapas (compensado/aglomerado/MDF)
+1622601	Fabricação de casas de madeira pré-fabricadas
+1622602	Fabricação de esquadrias de madeira p/ instalações industriais e comerciais
+1622699	Fabricação de outros artigos de carpintaria para construção
+1623400	Fabricação de artefatos de tanoaria e embalagens de madeira
+1629301	Fabricação de artefatos diversos de madeira (exceto móveis)
+9529105	Reparação de artigos do mobiliário (restauradores/estofadores)
+
+# — Madeira bruta / serrarias (Colacor abrasivos + afiação Colacor SC) —
+1610203	Serrarias com desdobramento de madeira em bruto
+1610204	Serrarias sem desdobramento (resserragem)
+1610205	Serviço de tratamento de madeira sob contrato
+
+# — Metal (Colacor abrasivos) —
+2542000	Fabricação de artigos de serralheria (exceto esquadrias)
+2512800	Fabricação de esquadrias de metal
+2511000	Fabricação de estruturas metálicas
+2539001	Serviços de usinagem, tornearia e solda
+2539002	Serviços de tratamento e revestimento em metais (polimento)
+
+# — Pedra e vidro (Colacor abrasivos) —
+2391503	Aparelhamento de placas e trabalhos em mármore/granito (marmorarias)
+2319200	Fabricação de artigos de vidro
+4743100	Comércio varejista de vidros (vidraçarias — corte/lapidação)

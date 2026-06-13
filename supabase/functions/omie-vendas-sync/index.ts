@@ -77,6 +77,25 @@ interface OmieDetalheItem {
     cfop?: string;
   };
   imposto?: { cfop?: string };
+  // Observação/dados adicionais do item — o submit grava a cor da tinta aqui
+  // ("Cor: ..."). O sync de entrada extrai de volta (ver parseCorObs).
+  observacao?: { obs_item?: string };
+  inf_adic?: { dados_adicionais_item?: string };
+}
+
+/**
+ * Extrai a cor da tinta da observação do item do Omie. Espelho VERBATIM de
+ * `src/lib/tint/parse-cor-obs.ts` (Deno não importa de src/). Formato gravado
+ * pelo submit: "Cor: <label> - <embalagem>". Conservador: só prefixo "Cor:",
+ * remove embalagem conhecida no fim, não quebra nome com hífen, null sem cor.
+ */
+function parseCorObs(obs: string | null | undefined): { tint_nome_cor: string } | null {
+  if (!obs) return null;
+  const m = /^\s*cor:\s*(.+)$/i.exec(obs);
+  if (!m) return null;
+  const label = m[1].replace(/\s*-\s*(?:QT|GL|LT|\d+(?:[.,]\d+)?\s*ML)\s*$/i, '').trim();
+  if (!label) return null;
+  return { tint_nome_cor: label };
 }
 
 interface OmiePedidoCabecalho {
@@ -112,6 +131,8 @@ interface OrderItemPayload {
   quantidade: number;
   valor_unitario: number;
   desconto?: number;
+  tint_cor_id?: string;
+  tint_nome_cor?: string;
 }
 
 interface OrderBatchRow {
@@ -203,7 +224,13 @@ async function callOmieVendasApi(
   endpoint: string,
   call: string,
   params: Record<string, unknown>,
-  account: Account = "oben"
+  account: Account = "oben",
+  // throwOnTransient: erro transitório que ESGOTOU os retries vira THROW em
+  // vez de null. Sem isso, o null é AMBÍGUO ("não existe" × "Omie fora do
+  // ar") — e no caminho de criação de cliente a ambiguidade vira DUPLICATA
+  // no ERP (lookup falho lido como ausência → IncluirCliente). Usar nos
+  // lookups de identidade; syncs paginados continuam tratando null como fim.
+  opts?: { throwOnTransient?: boolean },
 ): Promise<OmieGenericResponse | null> {
   const { APP_KEY, APP_SECRET } = getCredentials(account);
 
@@ -245,6 +272,9 @@ async function callOmieVendasApi(
           console.log(`[Omie Vendas][${account}] ${isRateLimit ? 'Rate limit' : 'Transient error'}, waiting ${delay/1000}s (attempt ${attempt + 1}/${maxRetries})`);
           await new Promise(r => setTimeout(r, delay));
           continue;
+        }
+        if (opts?.throwOnTransient) {
+          throw new Error(`OMIE_TRANSIENT (${account}): ${isRateLimit ? 'rate limit' : 'erro transitório'} persistiu após ${maxRetries} tentativas — não dá pra afirmar ausência`);
         }
         console.log(`[Omie Vendas][${account}] ${isRateLimit ? 'Rate limit' : 'Transient error'} persists after ${maxRetries} retries, returning null`);
         return null;
@@ -592,8 +622,15 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
   return results;
 }
 
-// Buscar cliente na empresa de vendas pelo CPF/CNPJ
-async function buscarClienteVendas(document: string, account: Account = "oben") {
+// Buscar cliente na empresa de vendas pelo CPF/CNPJ.
+// opts.throwOnTransient: falha transitória do Omie LANÇA em vez de retornar
+// null (null = ausência CONFIRMADA) — obrigatório nos caminhos de decisão de
+// criação (anti-duplicata); enriquecimentos best-effort ficam sem.
+async function buscarClienteVendas(
+  document: string,
+  account: Account = "oben",
+  opts?: { throwOnTransient?: boolean },
+) {
   const documentClean = document.replace(/\D/g, "");
 
   const result = await callOmieVendasApi(
@@ -604,7 +641,8 @@ async function buscarClienteVendas(document: string, account: Account = "oben") 
       registros_por_pagina: 1,
       clientesFiltro: { cnpj_cpf: documentClean },
     },
-    account
+    account,
+    opts
   );
 
   const clientesArr = result?.clientes_cadastro as OmieClienteCadastro[] | undefined;
@@ -752,6 +790,112 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
     console.error(`[Omie Vendas][${account}] Erro ao buscar última parcela:`, error);
     return { ultima_parcela: null, parcela_ranking: [] };
   }
+}
+
+// dInc do Omie é DD/MM/YYYY → ms UTC (0 se ausente/ilegível, p/ NÃO vencer o merge
+// por data no frontend). Usado p/ escolher, por produto/parcela, o pedido de maior data.
+function parseDIncMs(s: string): number {
+  const m = (s || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return 0;
+  const d = Number(m[1]), mo = Number(m[2]), y = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
+  return Date.UTC(y, mo - 1, d);
+}
+
+// Fase 2: CONTEXTO COMERCIAL do cliente numa ÚNICA passada de ListarPedidos.
+// Substitui buscar_precos_cliente + buscar_ultima_parcela + buscar_cliente (colacor) +
+// historico_produtos_cliente, que disparavam VÁRIAS ListarPedidos concorrentes na mesma
+// conta → rate-limit do Omie ("Já existe uma requisição desse método") → retries 5-15s×3
+// → ~40s. Aqui: 1 ListarPedidos/conta (ordenar_por DATA_INCLUSAO) devolve preço + dInc
+// por produto + parcela + ranking. Para colacor (sem código conhecido), resolve o código
+// por documento ANTES (ListarClientes → ListarPedidos, SERIAL → métodos diferentes, sem
+// colisão). dInc (inclusão) é a data de precedência — NÃO data_previsao.
+async function buscarContextoComercialCliente(
+  opts: { codigoCliente?: number | null; document?: string | null },
+  account: Account = "oben",
+) {
+  let codigoCliente = opts.codigoCliente ?? null;
+  let codigoVendedor: number | null = null;
+
+  if (!codigoCliente && opts.document) {
+    const cli = await buscarClienteVendas(opts.document, account);
+    if (cli?.codigo_cliente) {
+      codigoCliente = cli.codigo_cliente;
+      codigoVendedor = cli.codigo_vendedor ?? null;
+    }
+  }
+
+  const empty = {
+    codigo_cliente: codigoCliente,
+    codigo_vendedor: codigoVendedor,
+    precos: {} as Record<number, number>,
+    datas: {} as Record<number, string>,
+    ultima_parcela: null as string | null,
+    parcela_ranking: [] as Array<{ codigo: string; count: number }>,
+  };
+  if (!codigoCliente) return empty;
+
+  const result = await callOmieVendasApi(
+    "produtos/pedido/",
+    "ListarPedidos",
+    {
+      pagina: 1,
+      registros_por_pagina: 50,
+      filtrar_por_cliente: codigoCliente,
+      filtrar_apenas_inclusao: "N",
+      ordenar_por: "DATA_INCLUSAO",
+    },
+    account,
+  );
+
+  const pedidos: OmiePedidoVendaProduto[] =
+    (result?.pedido_venda_produto as OmiePedidoVendaProduto[] | undefined) || [];
+
+  const precos: Record<number, number> = {};
+  const datas: Record<number, string> = {};
+  const parcelaCount: Record<string, number> = {};
+  let ultimaParcela: string | null = null;
+
+  // Order-independent: por produto/parcela mantém o de MAIOR dInc (a ordem da lista do
+  // Omie NÃO é garantida). dInc = precedência; NÃO data_previsao (data futura de entrega
+  // venceria o merge indevidamente). Sem dInc → '' → o frontend trata como sem-data e o
+  // local datado vence (seguro).
+  const dIncMs: Record<number, number> = {};
+  let ultimaParcelaMs = -1;
+  for (const pedido of pedidos) {
+    const dataInc = pedido.infoCadastro?.dInc || "";
+    const incMs = parseDIncMs(dataInc);
+    const parcela = pedido.cabecalho?.codigo_parcela;
+    if (parcela) {
+      parcelaCount[parcela] = (parcelaCount[parcela] || 0) + 1;
+      if (ultimaParcela === null || incMs > ultimaParcelaMs) {
+        ultimaParcela = parcela;
+        ultimaParcelaMs = incMs;
+      }
+    }
+    for (const item of pedido.det || []) {
+      const cod = item.produto?.codigo_produto;
+      const val = item.produto?.valor_unitario;
+      if (cod && val && val > 0 && (precos[cod] === undefined || incMs > (dIncMs[cod] ?? -1))) {
+        precos[cod] = val;
+        datas[cod] = dataInc;
+        dIncMs[cod] = incMs;
+      }
+    }
+  }
+
+  const parcela_ranking = Object.entries(parcelaCount)
+    .sort((a, b) => b[1] - a[1])
+    .map(([codigo, count]) => ({ codigo, count }));
+
+  return {
+    codigo_cliente: codigoCliente,
+    codigo_vendedor: codigoVendedor,
+    precos,
+    datas,
+    ultima_parcela: ultimaParcela,
+    parcela_ranking,
+  };
 }
 
 // Sincronizar pedidos de venda do Omie para o banco local (OPTIMIZED)
@@ -1006,12 +1150,17 @@ async function syncPedidos(
         const price = prod.valor_unitario || 0;
         const desc = prod.desconto || 0;
         subtotal += qty * price * (1 - desc / 100);
+        // Cor da tinta: preferimos obs_item (onde a cor sempre vai); o
+        // dados_adicionais_item pode conter ordem de compra (parseCorObs filtra
+        // por "Cor:", então não confunde). Sem cor → item comum.
+        const cor = parseCorObs(det.observacao?.obs_item ?? det.inf_adic?.dados_adicionais_item);
         itemsJson.push({
           omie_codigo_produto: prod.codigo_produto,
           descricao: prod.descricao || '',
           quantidade: qty,
           valor_unitario: price,
           desconto: desc,
+          ...(cor ? { tint_nome_cor: cor.tint_nome_cor } : {}),
         });
       }
 
@@ -1495,6 +1644,95 @@ serve(async (req) => {
         break;
       }
 
+      case "backfill_tint_cor": {
+        // Fase 2 — backfill da cor da tinta nos pedidos JÁ sincronizados: re-lê a
+        // observação do item no Omie (que o sync de entrada descartava) e popula
+        // tint_nome_cor no jsonb `sales_orders.items`.
+        //   dry_run=true  → PROBE: amostra o que o Omie devolve (obs crua + cor
+        //                   parseada), NÃO altera nada. Use p/ confirmar a fonte.
+        //   dry_run=false → atualiza SÓ registros sem cor (idempotente, não toca
+        //                   o registro do wizard que já tem cor; não-destrutivo).
+        // Cursor por `start_page`; retorna `next_page` p/ retomar. Rate-limit via callOmie.
+        const bfDryRun = params.dry_run === true;
+        const bfNumeroPedido = params.numero_pedido ? Number(params.numero_pedido) : undefined;
+        let bfPagina = Number(params.start_page) || 1;
+        const bfMaxPages = Number(params.max_pages) || 5;
+        let bfTotalPaginas = 1;
+        let bfPages = 0;
+        let bfPedidosComCor = 0;
+        let bfPedidosAtualizados = 0;
+        const bfAmostra: Array<Record<string, unknown>> = [];
+
+        while ((bfPagina <= bfTotalPaginas || bfPages === 0) && bfPages < bfMaxPages) {
+          const bfParams: Record<string, unknown> = { pagina: bfPagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" };
+          if (bfNumeroPedido) { bfParams.numero_pedido_de = bfNumeroPedido; bfParams.numero_pedido_ate = bfNumeroPedido; }
+          const bfRes = (await callOmieVendasApi("produtos/pedido/", "ListarPedidos", bfParams, account)) as OmieListarPedidosResponse | null;
+          if (!bfRes) break; // rate limit → retoma na próxima invocação
+          bfTotalPaginas = bfRes.total_de_paginas || 1;
+          const bfPedidos = bfRes.pedido_venda_produto || [];
+
+          for (const bfPedido of bfPedidos) {
+            const bfCab = bfPedido.cabecalho || {};
+            const bfCodigoPedido = bfCab.codigo_pedido;
+            if (!bfCodigoPedido) continue;
+            const bfDet: OmieDetalheItem[] = bfPedido.det || [];
+            let bfTemCor = false;
+            const bfItems: OrderItemPayload[] = bfDet.map((d) => {
+              const prod = d.produto || {};
+              const obsItem = d.observacao?.obs_item ?? d.inf_adic?.dados_adicionais_item;
+              const cor = parseCorObs(obsItem);
+              if (cor) bfTemCor = true;
+              // amostra do probe: só itens com observação preenchida (mostra a fonte crua).
+              if (bfDryRun && bfAmostra.length < 25 && obsItem) {
+                bfAmostra.push({
+                  numero_pedido: bfCab.numero_pedido,
+                  descricao: prod.descricao ?? null,
+                  obs_item: d.observacao?.obs_item ?? null,
+                  dados_adicionais_item: d.inf_adic?.dados_adicionais_item ?? null,
+                  cor_parseada: cor?.tint_nome_cor ?? null,
+                });
+              }
+              return {
+                omie_codigo_produto: prod.codigo_produto,
+                descricao: prod.descricao || '',
+                quantidade: prod.quantidade || 1,
+                valor_unitario: prod.valor_unitario || 0,
+                desconto: prod.desconto || 0,
+                ...(cor ? { tint_nome_cor: cor.tint_nome_cor } : {}),
+              };
+            });
+            if (bfTemCor) bfPedidosComCor++;
+            if (!bfDryRun && bfTemCor) {
+              // UPDATE só registros SEM cor (idempotente; não toca o do wizard que já tem).
+              const { data: bfRows } = await supabaseAdmin
+                .from('sales_orders')
+                .select('id, items')
+                .eq('account', account)
+                .eq('omie_pedido_id', bfCodigoPedido);
+              for (const bfRow of bfRows || []) {
+                const jaTemCor = JSON.stringify(bfRow.items ?? []).includes('tint_nome_cor');
+                if (!jaTemCor) {
+                  const { error: bfUpErr } = await supabaseAdmin.from('sales_orders').update({ items: bfItems }).eq('id', bfRow.id);
+                  if (!bfUpErr) bfPedidosAtualizados++;
+                }
+              }
+            }
+          }
+          bfPages++;
+          bfPagina++;
+        }
+        result = {
+          success: true,
+          dry_run: bfDryRun,
+          account,
+          pedidos_com_cor: bfPedidosComCor,
+          pedidos_atualizados: bfPedidosAtualizados,
+          next_page: bfPagina <= bfTotalPaginas ? bfPagina : null,
+          ...(bfDryRun ? { amostra: bfAmostra } : {}),
+        };
+        break;
+      }
+
       case "listar_clientes": {
         const { search } = params;
         if (!search || String(search).length < 2) throw new Error("Busca deve ter ao menos 2 caracteres");
@@ -1506,7 +1744,10 @@ serve(async (req) => {
       case "buscar_cliente": {
         const { document } = params;
         if (!document) throw new Error("Documento é obrigatório");
-        const cliente = await buscarClienteVendas(document, account);
+        // Estrito: transient esgotado vira ERRO da action (o invoke do client
+        // rejeita → o tri-state marca lookupFalhou e NÃO cria às cegas) em vez
+        // de 200 com null, que o client lia como "não existe".
+        const cliente = await buscarClienteVendas(document, account, { throwOnTransient: true });
         result = { success: true, cliente };
         break;
       }
@@ -1515,15 +1756,21 @@ serve(async (req) => {
         const { document: docCriar, razao_social, nome_fantasia, endereco, endereco_numero, bairro, cidade, estado, cep, telefone, contato } = params;
         if (!docCriar || !razao_social) throw new Error("Documento e razão social são obrigatórios");
         const docClean = String(docCriar).replace(/\D/g, "");
-        // First check if already exists
-        const existingCliente = await buscarClienteVendas(docCriar, account);
+        // Lookup anti-duplicação ESTRITO (retroativo Codex): com o null
+        // ambíguo, um flake do Omie pós-retries era lido como "não existe" e
+        // o IncluirCliente abaixo criava DUPLICATA no ERP. Transient → throw
+        // → a action falha honesta e o client não cria.
+        const existingCliente = await buscarClienteVendas(docCriar, account, { throwOnTransient: true });
         if (existingCliente) {
           result = { success: true, ...existingCliente, created: false };
           break;
         }
-        // Create the client
+        // Create the client. Chave de integração DETERMINÍSTICA por
+        // conta+documento (era Date.now()): se dois caminhos tentarem criar o
+        // mesmo cliente, o Omie rejeita a 2ª por integração duplicada
+        // ("já cadastrado") em vez de aceitar uma duplicata.
         const clienteParams: Record<string, unknown> = {
-          codigo_cliente_integracao: `APP_${docClean}_${Date.now()}`,
+          codigo_cliente_integracao: `APP_${account.toUpperCase()}_${docClean}`,
           razao_social,
           nome_fantasia: nome_fantasia || razao_social,
           cnpj_cpf: docClean,
@@ -1590,6 +1837,19 @@ serve(async (req) => {
         if (!codCli) throw new Error("Código do cliente é obrigatório");
         const parcelaData = await buscarUltimaParcela(codCli, account);
         result = { success: true, ...parcelaData };
+        break;
+      }
+
+      // Fase 2: 1 chamada consolidada (preço+dInc por produto + parcela + ranking +
+      // código resolvido p/ colacor). Substitui as ListarPedidos concorrentes que
+      // colidiam no rate-limit (~40s). codigo_cliente p/ oben; document p/ colacor.
+      case "buscar_contexto_comercial_cliente": {
+        const { codigo_cliente: ctxCod, document: ctxDoc } = params;
+        const ctx = await buscarContextoComercialCliente(
+          { codigoCliente: ctxCod ?? null, document: ctxDoc ?? null },
+          account,
+        );
+        result = { success: true, ...ctx };
         break;
       }
 

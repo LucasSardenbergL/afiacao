@@ -26,11 +26,6 @@ export type FilaItem = {
   criado_em: string;
 };
 
-export interface FilaCounterRow {
-  status_validacao: string;
-  aplicado_em: string | null;
-}
-
 export interface GerarFilaResult {
   prontos?: number;
   bloqueados_inativos?: number;

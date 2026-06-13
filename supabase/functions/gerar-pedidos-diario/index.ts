@@ -247,15 +247,20 @@ Deno.serve(async (req: Request) => {
 
   let empresa = "OBEN";
   let dataCiclo = new Date().toISOString().slice(0, 10);
+  // [INTRADAY] rodadas extras (cron gerar-pedidos-intraday-oben, 2/2h em horário comercial):
+  // mesma orquestração (RPC + promoções + tick do alerta), mas SEM o digest de e-mail — senão
+  // seriam 6 digests/dia. O digest fica só na rodada matinal (9h15 UTC, body sem a flag).
+  let intraday = false;
 
   try {
     if (req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       if (body.empresa) empresa = body.empresa;
       if (body.data_ciclo) dataCiclo = body.data_ciclo;
+      if (body.intraday === true) intraday = true;
     }
 
-    console.log(`[gerar-pedidos-diario] Iniciando ciclo ${empresa} ${dataCiclo}`);
+    console.log(`[gerar-pedidos-diario] Iniciando ciclo ${empresa} ${dataCiclo}${intraday ? " (intraday)" : ""}`);
 
     // 1. RPC de geração
     const { data: rpcRows, error: rpcErr } = await db.rpc(
@@ -292,6 +297,18 @@ Deno.serve(async (req: Request) => {
       console.error(`[gerar-pedidos-diario] promo throw:`, e);
     }
 
+    // 1.7. Tick do alerta de pedido mínimo (R$3k Sayerlack) — best-effort. O cron */30 já roda
+    // o tick sozinho; chamar aqui derruba a latência do e-mail pra "próximo dispatch" (≤30min)
+    // logo após a rodada que criou/encheu o pedido.
+    try {
+      const { error: tickErr } = await db.rpc("reposicao_alerta_pedido_minimo_tick");
+      if (tickErr) {
+        console.error(`[gerar-pedidos-diario] tick alerta pedido mínimo falhou: ${tickErr.message}`);
+      }
+    } catch (e) {
+      console.error(`[gerar-pedidos-diario] tick alerta throw:`, e);
+    }
+
     // 2. Detalhes dos pedidos do ciclo
     const { data: pedidos, error: pedErr } = await db
       .from("pedido_compra_sugerido")
@@ -317,7 +334,7 @@ Deno.serve(async (req: Request) => {
     let emailStatus: "sent" | "skipped" | "failed" = "skipped";
     let emailDetail: string | null = null;
 
-    if (recipient && resendKey) {
+    if (recipient && resendKey && !intraday) {
       const html = buildEmailHtml(empresa, dataCiclo, rpc, pedidosList);
       const subject = rpc.bloqueados > 0
         ? `⚠ ${empresa} — ${rpc.pedidos_gerados} pedidos (${rpc.bloqueados} bloqueados) — ${dataCiclo}`
@@ -347,7 +364,9 @@ Deno.serve(async (req: Request) => {
         console.error(`[gerar-pedidos-diario] Resend erro:`, emailDetail);
       }
     } else {
-      emailDetail = !recipient
+      emailDetail = intraday
+        ? "Rodada intraday (digest suprimido — alerta R$3k cobre o intra-day)"
+        : !recipient
         ? "Sem email_notificacoes cadastrado"
         : "RESEND_API_KEY ausente";
       console.warn(`[gerar-pedidos-diario] Email pulado: ${emailDetail}`);
@@ -367,6 +386,7 @@ Deno.serve(async (req: Request) => {
       duration_ms: duration,
       metadata: {
         data_ciclo: dataCiclo,
+        intraday,
         skus_incluidos: rpc.skus_incluidos,
         valor_total: rpc.valor_total_ciclo,
         email_status: emailStatus,

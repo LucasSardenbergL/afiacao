@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
-import { useWebRTCCallContextOptional } from '@/contexts/WebRTCCallContext';
+import { useWebRTCCallContextOptional } from '@/contexts/webrtc-call-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { qtdMinimaEfetiva, qtdBase, aplicarMinimoForcado, quantidadeCompraInteira, descontoAplicavel, gerarCandidatos } from '../compras-otimizador-helpers';
+import { qtdMinimaEfetiva, qtdBase, aplicarMinimoForcado, quantidadeCompraInteira, descontoAplicavel, prazoAplicavel, gerarCandidatos } from '../compras-otimizador-helpers';
 import { capitalExtra, aumentoEvitadoRs, impactoPrazoRs, freteIncrementalRs, descontoIncrementalRs } from '../compras-otimizador-helpers';
 import { avaliarComprarMais } from '../compras-otimizador-helpers';
 import type { InsumoSku } from '../compras-otimizador-helpers';
@@ -13,10 +13,15 @@ describe('qtdMinimaEfetiva', () => {
 });
 
 describe('qtdBase', () => {
-  it('= max(qtde_base operacional, mínimo efetivo)', () => {
+  it('= max(qtde_base operacional, mínimo efetivo), arredondado ao lote', () => {
     expect(qtdBase({ qtde_base: 100, lote_minimo_fornecedor: 50, minimo_forcado_manual: null })).toBe(100);
     expect(qtdBase({ qtde_base: 100, lote_minimo_fornecedor: 50, minimo_forcado_manual: 200 })).toBe(200);
     expect(qtdBase({ qtde_base: 30, lote_minimo_fornecedor: 50, minimo_forcado_manual: null })).toBe(50);
+  });
+  it('arredonda ao múltiplo do lote (spec §2/§8; a RPC entrega qtde não-arredondada — re-Codex)', () => {
+    expect(qtdBase({ qtde_base: 101, lote_minimo_fornecedor: 50, minimo_forcado_manual: null })).toBe(150); // ceil(101/50)×50
+    expect(qtdBase({ qtde_base: 110, lote_minimo_fornecedor: 50, minimo_forcado_manual: null })).toBe(150);
+    expect(qtdBase({ qtde_base: 101, lote_minimo_fornecedor: null, minimo_forcado_manual: null })).toBe(101); // sem lote → ceil só
   });
 });
 
@@ -49,6 +54,24 @@ describe('descontoAplicavel — melhor faixa cujo volume_minimo ≤ q', () => {
   it('q abaixo de tudo → 0', () => { expect(descontoAplicavel(curva, 50)).toBe(0); });
   it('q na 1ª faixa → 5', () => { expect(descontoAplicavel(curva, 150)).toBe(5); });
   it('q na 2ª faixa → 8 (melhor)', () => { expect(descontoAplicavel(curva, 400)).toBe(8); });
+});
+
+describe('prazoAplicavel — prazo da faixa de MAIOR volume aplicável (não a primeira)', () => {
+  const curva = [{ volume_minimo: 100, desconto_promo_perc: 0, prazo_perc: 0 }, { volume_minimo: 300, desconto_promo_perc: 10, prazo_perc: 12 }];
+  it('q atinge a faixa alta → prazo dela (12), não o da primeira (0)', () => { expect(prazoAplicavel(curva, 300)).toBe(12); });
+  it('q só na faixa baixa → prazo da baixa (0)', () => { expect(prazoAplicavel(curva, 150)).toBe(0); });
+  it('q abaixo de tudo → null (cai no padrão no caller)', () => { expect(prazoAplicavel(curva, 50)).toBeNull(); });
+  it('nenhuma faixa com prazo_perc → null', () => { expect(prazoAplicavel([{ volume_minimo: 100, desconto_promo_perc: 5 }], 200)).toBeNull(); });
+  it('faixa aplicável (maior volume) SEM prazo → null, NÃO herda o prazo de uma faixa menor (re-Codex)', () => {
+    const c = [{ volume_minimo: 100, desconto_promo_perc: 0, prazo_perc: 12 }, { volume_minimo: 300, desconto_promo_perc: 10 }];
+    expect(prazoAplicavel(c, 300)).toBeNull(); // faixa 300 (aplicável) não tem prazo → padrão, não o 12 da faixa 100
+  });
+  it('empate de volume → maior prazo (conservador, determinístico, independe da ordem)', () => {
+    const c1 = [{ volume_minimo: 300, desconto_promo_perc: 5, prazo_perc: 2 }, { volume_minimo: 300, desconto_promo_perc: 5, prazo_perc: 7 }];
+    const c2 = [{ volume_minimo: 300, desconto_promo_perc: 5, prazo_perc: 7 }, { volume_minimo: 300, desconto_promo_perc: 5, prazo_perc: 2 }];
+    expect(prazoAplicavel(c1, 300)).toBe(7);
+    expect(prazoAplicavel(c2, 300)).toBe(7);
+  });
 });
 
 describe('gerarCandidatos — q_base + thresholds + limites de aumento/ruptura, arredondados ao lote', () => {
@@ -102,10 +125,12 @@ describe('impactoPrazoRs — (prazo_cand% − prazo_padrão%) × valor_candidato
   });
 });
 
-describe('freteIncrementalRs — % valor + fixo + taxa de pedido sobre o incremento', () => {
-  it('soma as 3 formas sobre o valor extra', () => {
-    const r = freteIncrementalRs({ valor_extra: 10000, frete_perc_valor: 2, frete_fixo: 0, frete_taxa_pedido: 0 });
-    expect(r).toBeCloseTo(200, 2);
+describe('freteIncrementalRs — só o % do valor (fixo/taxa por-pedido são SUNK no mesmo pedido)', () => {
+  it('% sobre o valor extra', () => {
+    expect(freteIncrementalRs({ valor_extra: 10000, frete_perc_valor: 2 })).toBeCloseTo(200, 2);
+  });
+  it('frete_perc nulo → 0', () => {
+    expect(freteIncrementalRs({ valor_extra: 10000, frete_perc_valor: null })).toBe(0);
   });
 });
 
@@ -162,6 +187,30 @@ describe('avaliarComprarMais — oportunidade só de aumento', () => {
     expect(r.q_candidata).toBe(400);
     expect(r.aumento_evitado_rs).toBeGreaterThan(0);
     expect(r.recomendacao).toBe('comprar_mais');
+  });
+});
+
+// Correções do adversarial review (Codex, 2026-06) — bugs em caminhos NÃO-testados.
+// (Confirmados no spec 2026-05-25-otimizador-compras-design.md; semântica "comprar mais = aumentar
+// o MESMO pedido" confirmada pelo founder → frete fixo/taxa por-pedido são SUNK, não incrementais.)
+describe('avaliarComprarMais — correções do review adversarial (Codex)', () => {
+  it('bug 1: frete fixo/taxa NÃO rebaixa comprar_mais (mesmo pedido → sunk, não incremental)', () => {
+    // o frete_fixo/taxa seria pago no pedido base de qualquer forma → não é custo marginal de comprar mais.
+    const r = avaliarComprarMais({ ...base, frete_fixo: 999999, frete_taxa_pedido: 999999 });
+    expect(r.recomendacao).toBe('comprar_mais');
+    expect(r.frete_incremental_rs).toBe(0); // só o % do valor entra; aqui frete_perc=0
+  });
+  it('bug 3: prazo da faixa de MAIOR volume aplicável, não a primeira (.find pegava a 1ª)', () => {
+    // curva: 100→prazo 0, 300→prazo 12 (encargo). Comprando 300 o prazo aplicável é 12, não 0.
+    const r = avaliarComprarMais({ ...base, prazo_padrao_perc: 0,
+      curva_desconto: [{ volume_minimo: 100, desconto_promo_perc: 0, prazo_perc: 0 }, { volume_minimo: 300, desconto_promo_perc: 50, prazo_perc: 12 }] });
+    expect(r.q_candidata).toBe(300);
+    expect(r.impacto_prazo_rs).toBeCloseTo(1800, 0); // (12−0)% × 15000 (faixa 300), NÃO 0 (faixa 100)
+  });
+  it('cm_anual ≤ 0 → falta_dado (sem custo de capital não neta o carregamento; não assume custo 0)', () => {
+    const r = avaliarComprarMais({ ...base, cm_anual: 0 });
+    expect(r.recomendacao).toBe('falta_dado');
+    expect(r.flags.join(' ')).toMatch(/capital/i);
   });
 });
 

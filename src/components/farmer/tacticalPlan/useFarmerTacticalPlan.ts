@@ -3,12 +3,17 @@
 // state, carregamento de clientes, geração com checagem de eficiência e handlers.
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useTacticalPlan, type PlanType } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
 import type { FarmerClientScoreRow, ProfileRow, CustomerLite } from './types';
 
 export function useFarmerTacticalPlan() {
   const { user, isStaff } = useAuth();
+  // Lente "Ver como": o dropdown de clientes da carteira segue o id efetivo (o ALVO na
+  // lente, o próprio usuário fora). A geração de plano (botões em GerarPlanoCard) é write
+  // — bloqueada na lente pelo write-guard + disabled. Fora da lente effectiveUserId === user.id.
+  const { effectiveUserId } = useImpersonation();
   const { plans, loading, generating, loadPlans, generatePlan, checkEfficiency, recordResult } = useTacticalPlan();
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [expandedPlan, setExpandedPlan] = useState<string | null>(null);
@@ -21,14 +26,16 @@ export function useFarmerTacticalPlan() {
       loadPlans();
       loadCustomers();
     }
-  }, [user, isStaff]);
+    // effectiveUserId na dep: ao entrar/sair da lente, recarrega planos + dropdown do alvo.
+
+  }, [user, isStaff, effectiveUserId]);
 
   const loadCustomers = async () => {
-    if (!user?.id) return;
+    if (!effectiveUserId) return;
     const { data: scoresData } = await supabase
       .from('farmer_client_scores')
       .select('customer_user_id, health_score, churn_risk')
-      .eq('farmer_id', user.id)
+      .eq('farmer_id', effectiveUserId)
       .order('priority_score', { ascending: false });
     const scores = (scoresData ?? []) as FarmerClientScoreRow[];
     if (!scores.length) return;

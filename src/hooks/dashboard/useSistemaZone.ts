@@ -38,6 +38,8 @@ export function useSistemaZone() {
           .from('profiles')
           .select('user_id, name, created_at', { count: 'exact' })
           .eq('is_approved', false)
+          // Exclui clientes-fantasma importados do Omie (nunca pediram conta) do KPI de pendências.
+          .or('prospect_source.is.null,prospect_source.neq.omie_import')
           .order('created_at', { ascending: true })
           .limit(3);
         aprovacoesPendentes = count ?? 0;

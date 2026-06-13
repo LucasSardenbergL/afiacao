@@ -50,6 +50,16 @@ describe('derivarSinaisContato', () => {
     expect(s.cadenciaBloqueadaPor).toBe('real');
   });
 
+  // Mutation-check (auto-ensino 2026-06-06): com 1 só real, Math.min==Math.max — a mutação
+  // min->max em `ultimoContatoRealHaDias` sobrevivia. Com 2+ reais em dias distintos, o gate
+  // DEVE herdar o MAIS RECENTE (Math.min); o mais antigo liberaria re-ligação cedo demais.
+  it('múltiplos contatos reais → usa o MAIS RECENTE, não o mais antigo (Math.min)', () => {
+    const s = derivarSinaisContato([reg('respondido', '2026-05-19'), reg('respondido', '2026-05-29')], HOJE, ROTA); // 12d e 2d
+    expect(s.ultimoContatoRealHaDias).toBe(2);
+    expect(s.contatadoHaDiasParaGate).toBe(2);
+    expect(s.cadenciaBloqueadaPor).toBe('real');
+  });
+
   it('sem_resposta ISOLADO (N<3) NÃO bloqueia — só badge', () => {
     const s = derivarSinaisContato([reg('sem_resposta', '2026-05-30')], HOJE, ROTA); // ontem
     expect(s.semRespostaRecenteN).toBe(1);

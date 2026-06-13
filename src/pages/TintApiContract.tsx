@@ -239,7 +239,25 @@ Headers: x-sync-token, x-store-code
                       <FieldTable fields={[
                         { name: 'id_corante_sayersystem', type: 'string', required: true, desc: 'ID do corante (ex: AX, BV, RO)' },
                         { name: 'descricao', type: 'string', required: true, desc: 'Nome do corante' },
-                        { name: 'preco_litro', type: 'number', required: false, desc: 'Preço por litro (R$)' },
+                        { name: 'preco_litro', type: 'number', required: false, desc: 'Preço por litro (R$) — legado, preferir custo+volume_ml' },
+                        { name: 'custo', type: 'number', required: false, desc: 'Custo do concentrado na embalagem (R$) — de PRECO_CORANTE' },
+                        { name: 'volume_ml', type: 'number', required: false, desc: 'Volume da embalagem do concentrado em ml — de PRECO_CORANTE; usado junto com custo para calcular custo/ml' },
+                      ]} />
+                    </AccordionContent>
+                  </AccordionItem>
+                  <AccordionItem value="cat-precos-base">
+                    <AccordionTrigger className="text-xs py-2">precos_base[]</AccordionTrigger>
+                    <AccordionContent>
+                      <p className="text-xs text-muted-foreground mb-2">
+                        Preços de base por embalagem, provenientes de <code>PRECO_BASEEMB</code> no SAYER. Opcional — quando presente, o servidor upserta os custos nos SKUs correspondentes sem reprocessar toda a tabela de SKUs.
+                      </p>
+                      <FieldTable fields={[
+                        { name: 'cod_produto', type: 'string', required: true, desc: 'Referência ao produto' },
+                        { name: 'id_base', type: 'string', required: true, desc: 'Referência à base' },
+                        { name: 'id_embalagem', type: 'string', required: true, desc: 'Referência à embalagem de venda' },
+                        { name: 'custo', type: 'number', required: true, desc: 'Custo da base nessa embalagem (R$) — de PRECO_BASEEMB' },
+                        { name: 'imposto_pct', type: 'number', required: false, desc: 'Percentual de imposto aplicado (ex: 12.5 para 12,5%)' },
+                        { name: 'margem_pct', type: 'number', required: false, desc: 'Margem de venda aplicada (ex: 30 para 30%)' },
                       ]} />
                     </AccordionContent>
                   </AccordionItem>
@@ -272,10 +290,26 @@ Headers:
     { "id_embalagem_sayersystem": "EMB-3600", "descricao": "Galão 3.6L", "volume_ml": 3600 }
   ],
   "corantes": [
-    { "id_corante_sayersystem": "AX", "descricao": "Amarelo Óxido", "preco_litro": 45.90 }
+    {
+      "id_corante_sayersystem": "AX",
+      "descricao": "Amarelo Óxido",
+      "preco_litro": 45.90,
+      "custo": 22.95,
+      "volume_ml": 500
+    }
   ],
   "skus": [
     { "cod_produto": "WFO0098", "id_base": "BASE-T", "id_embalagem": "EMB-3600" }
+  ],
+  "precos_base": [
+    {
+      "cod_produto": "WFO0098",
+      "id_base": "BASE-T",
+      "id_embalagem": "EMB-3600",
+      "custo": 89.90,
+      "imposto_pct": 12.5,
+      "margem_pct": 30.0
+    }
   ]
 }`} />
                 <div className="grid gap-3 md:grid-cols-2">
@@ -341,13 +375,27 @@ Headers:
 
                 <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
                   <h4 className="font-semibold text-sm flex items-center gap-1.5"><Fingerprint className="h-4 w-4" /> Chave Lógica de Unicidade</h4>
-                  <code className="text-sm font-mono bg-muted px-2 py-1 rounded mt-1 inline-block">cor_id | cod_produto | id_base | id_embalagem</code>
+                  <code className="text-sm font-mono bg-muted px-2 py-1 rounded mt-1 inline-block">cor_id | cod_produto | id_base | id_embalagem | personalizada</code>
                   <p className="text-xs text-muted-foreground mt-2">
                     <strong>subcolecao NÃO faz parte da chave de unicidade.</strong> Uma mesma cor pode ter subcoleção diferente sem ser considerada fórmula distinta.
                     A subcoleção é informação descritiva armazenada junto à fórmula mas não participa do pareamento na reconciliação.
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
                     Esta chave é idêntica à usada na função <code>tint_run_reconciliation</code> e no staging.
+                  </p>
+                </div>
+
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                  <h4 className="font-semibold text-sm">⚗️ id_embalagem = embalagem de formulação (lab)</h4>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    O campo <code>id_embalagem</code> referencia a <strong>embalagem usada no laboratório para formular</strong> a cor —
+                    não a embalagem de venda ao cliente. As quantidades em <code>itens[].qtd_ml</code> são em <strong>ml brutos dessa embalagem de formulação</strong>.
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    O servidor expande automaticamente para embalagens vendáveis por <strong>regra de três</strong>:
+                    ao sincronizar, o sistema calcula a proporção de cada corante em relação ao volume de formulação
+                    e aplica a mesma proporção para cada embalagem de venda cadastrada no SKU correspondente.
+                    O agent não precisa enviar fórmulas duplicadas para cada tamanho de embalagem de venda.
                   </p>
                 </div>
 
@@ -410,6 +458,106 @@ Headers:
       "entity_id": null,
       "message": "Missing required field: cor_id, cod_produto, id_base, id_embalagem" }
   ]
+}`} />
+              </AccordionContent>
+            </AccordionItem>
+
+            {/* ── KEYS-SNAPSHOT ── */}
+            <AccordionItem value="keys-snapshot">
+              <AccordionTrigger className="hover:no-underline">
+                <div className="flex items-center gap-3 text-left">
+                  <Badge variant="outline" className="font-mono text-xs bg-primary/10 text-primary">POST</Badge>
+                  <span className="font-mono text-sm">/keys-snapshot</span>
+                  <span className="text-muted-foreground text-sm hidden sm:inline">— Snapshot diário de chaves (detecção de desativações)</span>
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="space-y-4 pt-2">
+                <div className="flex gap-2 flex-wrap">
+                  <Badge variant="secondary">Semântica: snapshot de chaves</Badge>
+                  <Badge variant="outline">Frequência: diário (automatic_primary)</Badge>
+                  <Badge variant="outline">Chunks: ≤ 50.000 chaves</Badge>
+                </div>
+
+                <p className="text-sm text-muted-foreground">
+                  Envia o conjunto completo de chaves lógicas existentes no SAYER para que o servidor identifique
+                  fórmulas que desapareceram da fonte e as marque como desativadas (<code>desativada_em</code> preenchido).
+                  O servidor <strong>aplica a desativação somente quando receber todos os chunks</strong> e somente
+                  no modo <code>automatic_primary</code>.
+                </p>
+
+                <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
+                  <h4 className="font-semibold text-sm flex items-center gap-1.5"><Fingerprint className="h-4 w-4" /> Formato de cada chave</h4>
+                  <code className="text-sm font-mono bg-muted px-2 py-1 rounded mt-1 inline-block">cor_id|cod_produto|id_base|id_embalagem|personalizada</code>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Cinco campos separados por pipe (<code>|</code>) na mesma ordem da chave lógica de unicidade do <code>/formulas</code>.
+                    O campo <code>personalizada</code> é <code>true</code> ou <code>false</code> (string literal).
+                  </p>
+                </div>
+
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                  <h4 className="font-semibold text-sm">⚠️ Guardrails server-side</h4>
+                  <ul className="text-xs text-muted-foreground mt-1 space-y-1 list-disc list-inside">
+                    <li><strong>Todos os chunks obrigatórios:</strong> o servidor aguarda receber <code>chunk_index 0..total_chunks-1</code> antes de aplicar. Chunk faltante = nenhuma desativação ocorre naquele snapshot.</li>
+                    <li><strong>Anti-blast-radius:</strong> se o snapshot aplicado desativaria mais de 20% das fórmulas ativas, o servidor rejeita com <code>400</code> e exige confirmação explícita. Evita apagar o catálogo inteiro por erro de geração.</li>
+                    <li><strong>Fora de ordem (out-of-order):</strong> chunks podem chegar em qualquer ordem; o servidor os agrupa por <code>snapshot_id</code> antes de aplicar.</li>
+                    <li><strong>Somente automatic_primary:</strong> em modo <code>shadow_mode</code> o snapshot é recebido mas nenhuma desativação é executada — serve para auditar o que seria desativado.</li>
+                  </ul>
+                </div>
+
+                <FieldTable fields={[
+                  { name: 'entity', type: 'string', required: true, desc: 'Entidade do snapshot — atualmente apenas "formulas"' },
+                  { name: 'snapshot_id', type: 'string (UUID)', required: true, desc: 'Identificador único desta rodada de snapshot. Todos os chunks do mesmo dia devem ter o mesmo snapshot_id.' },
+                  { name: 'generated_at', type: 'ISO 8601', required: true, desc: 'Timestamp de quando o snapshot foi gerado no SAYER' },
+                  { name: 'total_chunks', type: 'integer', required: true, desc: 'Número total de chunks neste snapshot. Permite ao servidor saber quando recebeu tudo.' },
+                  { name: 'chunk_index', type: 'integer', required: true, desc: 'Índice deste chunk (0-based). Deve cobrir 0 até total_chunks-1.' },
+                  { name: 'keys', type: 'string[]', required: true, desc: 'Array de chaves lógicas neste chunk. Máximo 50.000 por chunk.' },
+                ]} />
+
+                <CodeBlock title="Request — chunk 0 de 2" code={`POST /keys-snapshot
+Headers:
+  x-sync-token: abc-123
+  x-store-code: LOJA01
+  x-idempotency-key: snap-form-20260609-c0
+
+{
+  "entity": "formulas",
+  "snapshot_id": "550e8400-e29b-41d4-a716-446655440001",
+  "generated_at": "2026-06-09T03:00:00-03:00",
+  "total_chunks": 2,
+  "chunk_index": 0,
+  "keys": [
+    "2345|WFO0098|BASE-T|EMB-3600|false",
+    "2346|WFO0098|BASE-T|EMB-3600|false",
+    "9001|TH0044|BASE-B|EMB-0900|true"
+  ]
+}`} />
+
+                <CodeBlock title="Response 200 — chunk recebido, aguardando demais" code={`{
+  "ok": true,
+  "snapshot_id": "550e8400-e29b-41d4-a716-446655440001",
+  "chunk_index": 0,
+  "chunks_received": 1,
+  "chunks_total": 2,
+  "applied": false
+}`} />
+
+                <CodeBlock title="Response 200 — último chunk, snapshot aplicado" code={`{
+  "ok": true,
+  "snapshot_id": "550e8400-e29b-41d4-a716-446655440001",
+  "chunk_index": 1,
+  "chunks_received": 2,
+  "chunks_total": 2,
+  "applied": true,
+  "deactivated_count": 3,
+  "keys_in_snapshot": 47821
+}`} />
+
+                <CodeBlock title="Response 400 — blast-radius excedido" code={`{
+  "ok": false,
+  "error": "BLAST_RADIUS_EXCEEDED",
+  "message": "Snapshot desativaria 3412 fórmulas (28.4% do total ativo). Limite é 20%. Confirme explicitamente antes de prosseguir.",
+  "would_deactivate": 3412,
+  "total_active": 12019
 }`} />
               </AccordionContent>
             </AccordionItem>
@@ -626,6 +774,12 @@ throw new Error('MAX_RETRIES_EXCEEDED');`} />
                       <td className="p-3"><code>id sequencial</code></td>
                       <td className="p-3">Enviar apenas preparações novas (nunca retroativa). Não há update.</td>
                     </tr>
+                    <tr className="border-t">
+                      <td className="p-3 font-mono">/keys-snapshot</td>
+                      <td className="p-3"><Badge variant="outline">snapshot completo</Badge></td>
+                      <td className="p-3"><code>snapshot_id</code></td>
+                      <td className="p-3">Enviado uma vez por dia com TODAS as chaves existentes no SAYER. O servidor deduz desativações por diferença. Somente em automatic_primary.</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -804,6 +958,7 @@ throw new Error('MAX_RETRIES_EXCEEDED');`} />
                 { id: 'ativo-flag', label: 'Registros inativos enviados com ativo:false (não omitidos)' },
                 { id: 'shadow-mode', label: 'Integração configurada em shadow_mode para validação inicial' },
                 { id: 'reconciliation', label: 'Operador validou reconciliação com dados reais antes de ativar automatic_primary' },
+                { id: 'keys-snapshot', label: 'Snapshot diário de chaves (/keys-snapshot) implementado para detecção de fórmulas desativadas' },
               ].map((item) => (
                 <div key={item.id} className="flex items-start gap-3 py-1">
                   <Checkbox
@@ -820,12 +975,12 @@ throw new Error('MAX_RETRIES_EXCEEDED');`} />
 
               <div className="border-t pt-4 mt-4">
                 <p className="text-sm text-muted-foreground">
-                  {Object.values(checklist).filter(Boolean).length} de 16 itens concluídos
+                  {Object.values(checklist).filter(Boolean).length} de 17 itens concluídos
                 </p>
                 <div className="w-full bg-muted rounded-full h-2 mt-2">
                   <div
                     className="bg-primary h-2 rounded-full transition-all"
-                    style={{ width: `${(Object.values(checklist).filter(Boolean).length / 16) * 100}%` }}
+                    style={{ width: `${(Object.values(checklist).filter(Boolean).length / 17) * 100}%` }}
                   />
                 </div>
               </div>

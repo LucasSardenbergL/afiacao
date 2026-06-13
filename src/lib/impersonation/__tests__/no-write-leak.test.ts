@@ -27,6 +27,10 @@ const ALLOWED = new Set([
   // useCriticaFila: effectiveUserId SÓ como filtro de LEITURA (owner_user_id === donoEfetivo no slaQ.data);
   // sem mutation alguma neste hook — é read-only (crítica da fila).
   'src/hooks/useCriticaFila.ts',
+  // useRouteContactList: effectiveUserId SÓ escopa a LEITURA da fila de ligação à carteira do ALVO no
+  // "Ver como" (.eq('farmer_id', …) em customer_visit_scores, no servidor) — conserta a fidelidade da
+  // lente E corta o volume que estourava. Hook 100% read-only (só SELECTs), sem mutation alguma.
+  'src/queries/useRouteContactList.ts',
   // Telefonia: effectiveUserId SÓ alimenta o filtro de LEITURA do histórico de chamadas
   // (useCallLog via CallHistoryTabs) pro "Ver como" mostrar as ligações do ALVO. A ligação
   // em si (call.makeCall) é bloqueada na FONTE (WebRTCCallContext) na lente; nenhum write usa effectiveUserId.
@@ -38,6 +42,9 @@ const ALLOWED = new Set([
   // da lente (KPIs do dia, KPIs/follow-ups/resultado de visitas). Read-only, sem mutation.
   'src/hooks/useMyKpis.ts',
   'src/hooks/useKpisVisita.ts',
+  // useKpisVisitaMtd: igual ao useKpisVisita, mas janela MTD (placar do closer). effectiveUserId
+  // SÓ filtra a LEITURA de route_visits pro alvo na lente (.eq visited_by); read-only, sem mutation.
+  'src/hooks/useKpisVisitaMtd.ts',
   'src/hooks/useFollowupsVisita.ts',
   'src/hooks/useMinhasVisitasResultado.ts',
   // FarmerCalls: effectiveUserId SÓ na leitura da lista de ligações (loadCallLogs); a escrita
@@ -46,6 +53,44 @@ const ALLOWED = new Set([
   // useFarmerScoring: effectiveUserId na leitura/cálculo da agenda do alvo; o upsert de scores
   // é PULADO na lente (skip por isImpersonating) — o master não recalcula a carteira do alvo.
   'src/hooks/useFarmerScoring.ts',
+  // useCrossSellEngine: effectiveUserId escopa a LEITURA/recálculo das recomendações ao
+  // alvo na lente (lê os scores DELE pra inspeção) e NÃO cai no fallback super-admin
+  // ("todos os scores"). A PERSISTÊNCIA (upsert de farmer_recommendations) é PULADA na
+  // lente — o master inspeciona, não regrava a carteira do alvo (igual useFarmerScoring).
+  'src/hooks/useCrossSellEngine.ts',
+  // useFarmerExperiments: effectiveUserId SÓ em loadExperiments (filtra a LISTA exibida
+  // pro alvo na lente). As mutations (criar/iniciar/medir/cancelar) usam user.id (write
+  // identity = master real) e são bloqueadas na lente pelo write-guard + botões disabled.
+  'src/hooks/useFarmerExperiments.ts',
+  // useDiagnosticQuestions: effectiveUserId SÓ em getEffectivenessStats (estatísticas
+  // exibidas seguem o alvo). A geração (edge) e o save (insert farmer_id=user.id) são
+  // bloqueados na lente pelo write-guard.
+  'src/hooks/useDiagnosticQuestions.ts',
+  // FarmerCallsPendingLink: effectiveUserId SÓ na LEITURA da lista de chamadas pendentes
+  // de vínculo (query react-query) pro "Ver como" mostrar as do alvo. O vínculo
+  // (useLinkCallToCustomer) é write — bloqueado na lente + botão "Vincular" disabled.
+  'src/pages/FarmerCallsPendingLink.tsx',
+  // useTacticalPlan: effectiveUserId nas leituras de EXIBIÇÃO (loadPlans / getActivePlan /
+  // getEffectivenessStats — planos/efetividade do alvo). A geração (generatePlan/
+  // checkEfficiency) e o recordResult usam user.id (write identity) e são bloqueados na
+  // lente pelo write-guard + botões disabled.
+  'src/hooks/useTacticalPlan.ts',
+  // useFarmerTacticalPlan: effectiveUserId SÓ em loadCustomers (dropdown da carteira do
+  // alvo) + na dep do effect (recarrega ao entrar/sair da lente). Geração = disabled.
+  'src/components/farmer/tacticalPlan/useFarmerTacticalPlan.ts',
+  // useFarmerCopilot: effectiveUserId SÓ no "load customers" (dropdown da carteira do
+  // alvo). Iniciar a sessão (startSession persiste + invoca edge) é write — bloqueado na
+  // lente pelo write-guard + botão "Iniciar" disabled (isImpersonating exposto pro card).
+  'src/components/farmer/copilot/useFarmerCopilot.ts',
+  // Clientes (/admin/customers): useClientesScope escopa a LEITURA da lista pro alvo da lente
+  // (effectiveUserId só filtra carteira_assignments/scores — read-only, é o hook que importa
+  // useDisplayAccess e NÃO tem mutação). useAdminCustomers recebe effectiveUserId do scope
+  // SÓ pra resetar o detalhe ao trocar de lente; a escrita (handleDeleteTool) usa toolId +
+  // sessão real, nunca effectiveUserId. escopo-clientes usa effectiveUserId como filtro de
+  // leitura (.eq owner_user_id na lente), sem mutação.
+  'src/components/adminCustomers/useClientesScope.ts',
+  'src/components/adminCustomers/useAdminCustomers.ts',
+  'src/lib/carteira/escopo-clientes.ts',
 ]);
 
 describe('anti write-leak: effectiveUserId só em leitura', () => {

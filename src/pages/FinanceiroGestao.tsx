@@ -2,6 +2,8 @@ import { lazy, Suspense, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { somarSaldoAberto } from "@/services/financeiroService";
+import type { Company } from "@/contexts/CompanyContext";
 import {
   Wallet,
   Loader2,
@@ -38,50 +40,42 @@ const fmtBRL = (v: number) =>
   v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 function KpiCards({ empresa }: { empresa: string }) {
+  // O Select acima só produz "OBEN"/"COLACOR" → lowercase casa o Company do service.
+  const company = empresa.toLowerCase() as Company;
+
+  // Σ saldo dos títulos EM ABERTO via somarSaldoAberto — a mesma fonte do DSO:
+  // OPEN_TITLE_STATUSES (vocabulário nativo do Omie) + paginação do cap de
+  // 1000 + throw em erro. A versão anterior fazia .neq('status_titulo','PAGO')
+  // — que INCLUÍA RECEBIDO/LIQUIDADO (saldo cheio por causa do #396, com
+  // fallback pro valor_documento) e até CANCELADO — e sem .limit() truncava a
+  // soma nas 1000 primeiras linhas (a oben tem ~12k títulos de CR): o número
+  // exibido era errado nos dois sentidos.
   const { data: receber } = useQuery({
-    queryKey: ["fin-gestao-receber", empresa],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("fin_contas_receber")
-        .select("saldo, valor_documento, status_titulo")
-        .eq("company", empresa.toLowerCase())
-        .neq("status_titulo", "PAGO");
-      return (data ?? []).reduce(
-        (acc: number, r: { saldo: number | null; valor_documento: number | null }) =>
-          acc + Number(r.saldo ?? r.valor_documento ?? 0),
-        0,
-      );
-    },
-    refetchInterval: 60000,
+    queryKey: ["fin-gestao-receber", company],
+    queryFn: () => somarSaldoAberto("fin_contas_receber", company),
+    // Posição de carteira (não muda por minuto) e a query pagina ~12 requests
+    // na oben — 5min em vez do 60s da versão truncada.
+    refetchInterval: 300_000,
+    staleTime: 240_000,
   });
 
   const { data: pagar } = useQuery({
-    queryKey: ["fin-gestao-pagar", empresa],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("fin_contas_pagar")
-        .select("saldo, valor_documento, status_titulo")
-        .eq("company", empresa.toLowerCase())
-        .neq("status_titulo", "PAGO");
-      return (data ?? []).reduce(
-        (acc: number, r: { saldo: number | null; valor_documento: number | null }) =>
-          acc + Number(r.saldo ?? r.valor_documento ?? 0),
-        0,
-      );
-    },
-    refetchInterval: 60000,
+    queryKey: ["fin-gestao-pagar", company],
+    queryFn: () => somarSaldoAberto("fin_contas_pagar", company),
+    refetchInterval: 300_000,
+    staleTime: 240_000,
   });
 
   // TODO: tabela fin_saldo_bancario ainda não existe — exibir 0 até ser criada.
   const saldoBancario = 0;
 
   const { data: inadimplencia } = useQuery({
-    queryKey: ["fin-gestao-inadimp", empresa],
+    queryKey: ["fin-gestao-inadimp", company],
     queryFn: async () => {
       const { data } = await supabase
         .from("fin_aging_receber")
         .select("*")
-        .eq("company", empresa.toLowerCase())
+        .eq("company", company)
         .maybeSingle();
       if (!data) return 0;
       const vencido =
@@ -92,7 +86,9 @@ function KpiCards({ empresa }: { empresa: string }) {
       const total = vencido + Number(data.a_vencer_valor ?? 0);
       return total > 0 ? (vencido / total) * 100 : 0;
     },
-    refetchInterval: 60000,
+    // Alinhado aos KPIs de CR/CP: posição, não tempo-real.
+    refetchInterval: 300_000,
+    staleTime: 240_000,
   });
 
   const cards = [

@@ -8,7 +8,7 @@ const makeCall = vi.fn();
 // contexto (ocioso × ocupado) entre os testes.
 const h = vi.hoisted(() => ({ ctx: null as unknown }));
 
-vi.mock('@/contexts/WebRTCCallContext', () => ({
+vi.mock('@/contexts/webrtc-call-context', () => ({
   useWebRTCCallContextOptional: () => h.ctx,
 }));
 

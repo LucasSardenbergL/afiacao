@@ -45,6 +45,8 @@ function setup(overrides: Partial<React.ComponentProps<typeof CustomerListView>>
     customers: [customer],
     scores: new Map([["c1", score]]),
     loading: false,
+    total: 1,
+    isCarteira: true,
     onSelect: vi.fn(),
     hasNextPage: false,
     isFetchingNextPage: false,
@@ -56,13 +58,16 @@ function setup(overrides: Partial<React.ComponentProps<typeof CustomerListView>>
 }
 
 describe("CustomerListView", () => {
-  it("mostra loader quando loading", () => {
+  it("mostra skeleton quando loading", () => {
     const { container } = render(
       <MemoryRouter>
-        <CustomerListView customers={[]} scores={new Map()} loading onSelect={vi.fn()} hasNextPage={false} isFetchingNextPage={false} onLoadMore={vi.fn()} />
+        <CustomerListView customers={[]} scores={new Map()} loading total={0} isCarteira onSelect={vi.fn()} hasNextPage={false} isFetchingNextPage={false} onLoadMore={vi.fn()} />
       </MemoryRouter>,
     );
-    expect(container.querySelector(".animate-spin")).toBeTruthy();
+    // PageSkeleton (Skeleton usa animate-shimmer), não mais Loader2 full-page
+    // (.animate-spin) — convenção §9.
+    expect(container.querySelector(".animate-shimmer")).toBeTruthy();
+    expect(container.querySelector(".animate-spin")).toBeNull();
   });
 
   it("renderiza cliente com badge de saúde e dispara onSelect", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { expectRenderToThrow } from '@/test/render-throws';
 
@@ -44,7 +44,30 @@ vi.mock('@/hooks/useSpinAnalysis', () => ({
   }),
 }));
 
-import { WebRTCCallProvider, useWebRTCCallContext } from '../WebRTCCallContext';
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
+
+vi.mock('@/lib/call-log/recording-policy', () => ({
+  resolveCallParty: vi.fn(async (raw: string) => ({
+    kind: 'desconhecido' as const,
+    customerUserId: null,
+    matchConfidence: 'none' as const,
+    phoneNormalized: raw.replace(/\D/g, ''),
+  })),
+  shouldAutoRecord: () => false,
+}));
+
+vi.mock('@/lib/call-log/record', () => ({
+  logCallStart: vi.fn(async () => {}),
+  logAnswered: vi.fn(async () => {}),
+  logClosed: vi.fn(async () => {}),
+  enrichCallLog: vi.fn(async () => {}),
+  markRecorded: vi.fn(async () => {}),
+}));
+
+import { WebRTCCallProvider } from '../WebRTCCallContext';
+import { useWebRTCCallContext } from '../webrtc-call-context';
 import { SipClient } from '@/lib/sip/sip-client';
 
 const wrapper = ({ children }: { children: ReactNode }) => (
@@ -128,5 +151,34 @@ describe('WebRTCCallProvider', () => {
     expect(result.current.spinAnalysisStatus).toBe('idle');
     expect(result.current.spinAnalysis).toBeNull();
     expect(result.current.spinAnalysisError).toBeNull();
+  });
+
+  // Incidente 2026-06-09 (LGPD): após hangup REMOTO o rawMic ficava capturado
+  // (red dot aceso, cliente seguia ouvindo a vendedora) até a próxima ação.
+  // Estado terminal deve liberar os recursos de áudio imediatamente.
+  it('estado terminal libera o microfone (rawMic) após fim remoto da chamada', async () => {
+    const stopMock = vi.fn();
+    const fakeMic = { getTracks: () => [{ kind: 'audio', stop: stopMock }] } as unknown as MediaStream;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      value: { getUserMedia: vi.fn(async () => fakeMic) },
+      configurable: true,
+    });
+
+    const { result } = renderHook(() => useWebRTCCallContext(), { wrapper });
+    await waitFor(() => expect(SipClient).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await result.current.makeCall('37999998888');
+    });
+    expect(sipClientMock.makeCall).toHaveBeenCalled();
+    expect(stopMock).not.toHaveBeenCalled();
+
+    const stateHandler = sipClientMock.on.mock.calls.find((c) => c[0] === 'stateChange')?.[1];
+    expect(stateHandler).toBeDefined();
+    act(() => stateHandler('established'));
+    // Cliente desligou (BYE remoto) — nenhum clique em "Encerrar" acontece
+    act(() => stateHandler('ended'));
+
+    await waitFor(() => expect(stopMock).toHaveBeenCalled());
   });
 });
