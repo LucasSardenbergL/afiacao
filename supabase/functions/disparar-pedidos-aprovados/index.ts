@@ -651,6 +651,41 @@ async function iniciarEnvioPortalSayerlack(
   return { state: "queued", accepted: true };
 }
 
+// [FONTE-ÚNICA passo 4] Bump do snapshot de "a caminho": após disparar (IncluirPedCompra cria a PO no Omie
+// com cCodIntPed=AFI-<id>), atualiza estoque_pendente_entrada chamando omie-sync-estoque {only_pending,
+// esperar_codints} — a edge re-varre as POs até VER os AFI-<id> recém-criados, p/ o PRÓXIMO motor NÃO
+// re-sugerir o que acabou de ser pedido. BEST-EFFORT (OBEN-only; se falhar, a barreira fail-closed do
+// motor — passo 3, condição 3 — cobre, abortando a geração até o snapshot refletir). Roda em background
+// (EdgeRuntime.waitUntil) p/ não somar a latência da varredura (~10-40s) à resposta do disparo.
+async function bumpSnapshotPendente(empresa: string, pedidoIds: number[]): Promise<void> {
+  if ((empresa ?? "").toUpperCase() !== "OBEN" || pedidoIds.length === 0) return;
+  const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
+  const SVC_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 60_000);
+  try {
+    const resp = await fetch(`${SUPA_URL}/functions/v1/omie-sync-estoque`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${SVC_KEY}` },
+      body: JSON.stringify({
+        empresa: "OBEN",
+        only_pending: true,
+        esperar_codints: pedidoIds.map((id) => `AFI-${id}`),
+      }),
+      signal: ctrl.signal,
+    });
+    if (!resp.ok) {
+      console.warn(`[disparar-pedidos] bump omie-sync-estoque ${resp.status} (best-effort; a barreira do motor cobre)`);
+    } else {
+      console.log(`[disparar-pedidos] bump omie-sync-estoque OK p/ ${pedidoIds.length} pedido(s) recém-disparado(s)`);
+    }
+  } catch (e) {
+    console.warn(`[disparar-pedidos] bump omie-sync-estoque falhou (best-effort; barreira do motor cobre): ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function processarPedido(
   db: SupabaseClient,
   pedido: PedidoRow,
@@ -1606,6 +1641,24 @@ Deno.serve(async (req: Request) => {
     });
     // Insert da auditoria não pode falhar em silêncio (sucesso HTTP sem trilha persistida).
     if (logErr) console.error(`[disparar-pedidos] FALHA ao gravar sync_reprocess_log (auditoria): ${logErr.message}`);
+
+    // [FONTE-ÚNICA passo 4] bump em background do snapshot de a-caminho com os AFI-<id> recém-disparados
+    // (só produção; OBEN-only no helper). Não soma a latência da varredura à resposta; a barreira do motor cobre.
+    if (modo === "producao") {
+      const disparadosIds = resultados.filter((r) => r.status_final === "disparado").map((r) => r.pedido_id);
+      if (disparadosIds.length > 0) {
+        const bumpTask = bumpSnapshotPendente(empresa, disparadosIds);
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore - EdgeRuntime existe no runtime do Supabase Edge
+        if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore
+          EdgeRuntime.waitUntil(bumpTask);
+        } else {
+          void bumpTask; // ambiente sem EdgeRuntime: fire-and-forget
+        }
+      }
+    }
 
     return new Response(
       JSON.stringify({
