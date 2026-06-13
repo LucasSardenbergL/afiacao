@@ -16,7 +16,7 @@
 //  - Bump pós-disparo (só a caminho): POST { empresa: "OBEN", only_pending: true, esperar_codints: ["AFI-<id>"] }
 //  - Manual: POST { empresa: "OBEN" | "COLACOR" }
 
-import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders as sharedCors } from "../_shared/auth.ts";
 
 const corsHeaders = {
@@ -72,6 +72,20 @@ interface OmieSaldoPendenteResponse {
 interface PoItemOmie { sku: string; poNumero: string; etapa: string; qtde: number; recebido: number; }
 interface ComputeOnOrderOpts { etapasAprovadas: ReadonlySet<string>; etapasIgnoradas: ReadonlySet<string>; }
 interface ComputeOnOrderResult { porSku: Map<string, number>; problemas: string[]; }
+// [P2 round6/7] parse estrito: number finito; string SÓ decimal (regex; rejeita ""/" "/hex/científico); resto→NaN.
+function parseQtd(v: unknown): number {
+  if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+  if (typeof v !== "string") return NaN;
+  const s = v.trim();
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(s)) return NaN;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+}
+// [P1 round7] recebido: AUSENTE (undefined) = nada recebido → 0; null/inválido → NaN → flag (null num parcialmente
+// recebido contaria saldo cheio = ruptura).
+function parseRecebido(v: unknown): number {
+  return v === undefined ? 0 : parseQtd(v);
+}
 function quantidadesValidas(qtde: number, recebido: number): boolean {
   return Number.isFinite(qtde) && Number.isFinite(recebido) && qtde >= 0 && recebido >= 0;
 }
@@ -98,17 +112,18 @@ function computeOnOrder(items: readonly PoItemOmie[], opts: ComputeOnOrderOpts):
   }
   return { porSku, problemas };
 }
-interface OmiePedItemRaw { nCodProd?: number | string; nQtde?: number; nQtdeRec?: number; [k: string]: unknown; }
-interface OmiePedCabRaw { cNumero?: number | string; cCodIntPed?: string; cEtapa?: string; [k: string]: unknown; }
+interface OmiePedItemRaw { nCodProd?: number | string; nQtde?: number | null; nQtdeRec?: number | null; [k: string]: unknown; }
+interface OmiePedCabRaw { nCodPed?: number | string; cNumero?: number | string; cCodIntPed?: string; cEtapa?: string; [k: string]: unknown; }
 interface OmiePedConsultaRaw { cabecalho_consulta?: OmiePedCabRaw; cabecalho?: OmiePedCabRaw; produtos_consulta?: OmiePedItemRaw[]; [k: string]: unknown; }
 interface ColetaPaginaOpts { etapasAprovadas: ReadonlySet<string>; etapasEmAprovacao?: ReadonlySet<string>; skusHabilitados?: ReadonlySet<string>; }
-interface ColetaPaginaResult { items: PoItemOmie[]; codintsAprovados: string[]; codintsEmAprovacao: string[]; pedidosVistos: number; etapasVistas: string[]; problemas: string[]; }
+interface ColetaPaginaResult { items: PoItemOmie[]; codintsAprovados: string[]; codintsEmAprovacao: string[]; pedidosVistos: number; etapasVistas: string[]; numerosVistos: string[]; problemas: string[]; }
 function norm(v: unknown): string { return String(v ?? "").trim(); }
 function coletarDaPagina(pedidos: readonly OmiePedConsultaRaw[] | undefined, opts: ColetaPaginaOpts): ColetaPaginaResult {
   const items: PoItemOmie[] = [];
   const codintsAprovados: string[] = [];
   const codintsEmAprovacao: string[] = [];
   const etapasVistas = new Set<string>();
+  const numerosVistos: string[] = [];
   const problemas: string[] = [];
   const lista = pedidos ?? [];
   for (const ped of lista) {
@@ -117,13 +132,38 @@ function coletarDaPagina(pedidos: readonly OmiePedConsultaRaw[] | undefined, opt
     const cNumero = norm(cab.cNumero);
     const cCodIntPed = norm(cab.cCodIntPed);
     if (etapa) etapasVistas.add(etapa);
+    // [P1 round8/9] aliases de identidade da PO p/ de-dup: `id:<nCodPed>` E `numero:<cNumero>` (AS DUAS — pega a PO
+    // mesmo se a identidade variar entre páginas; prefixo evita colisão nCodPed×cNumero). Nenhuma → fail-closed.
+    const nCodPed = norm(cab.nCodPed);
+    const aliasesPO: string[] = [];
+    if (nCodPed) aliasesPO.push(`id:${nCodPed}`);
+    if (cNumero) aliasesPO.push(`numero:${cNumero}`);
+    if (aliasesPO.length === 0) problemas.push(`PO sem identidade (sem nCodPed nem cNumero) — não dá p/ de-dup entre páginas (etapa=${etapa})`);
+    else for (const a of aliasesPO) numerosVistos.push(a);
+    // [novo furo Codex] etapa que CONTA o saldo (não em-aprovação) com item SEM nCodProd e saldo>0 → fail-closed.
+    const etapaConta = !opts.etapasEmAprovacao?.has(etapa);
     let itensComSku = 0;
+    let itemSemSkuComSaldo = false;
     for (const it of ped?.produtos_consulta ?? []) {
       const sku = norm(it.nCodProd);
-      if (!sku) continue;
+      if (!sku) {
+        // [P2 round4/5/6/7] sem nCodProd em etapa que conta: anômalo se qty/recebido INVÁLIDA OU saldo>0.
+        // parseQtd estrito; parseRecebido (r: SÓ undefined→0, null→NaN→flag).
+        if (etapaConta) {
+          const q = parseQtd(it.nQtde), r = parseRecebido(it.nQtdeRec);
+          if (!quantidadesValidas(q, r) || (q - r) > 0) itemSemSkuComSaldo = true;
+        }
+        continue;
+      }
       itensComSku++;
       if (opts.skusHabilitados && !opts.skusHabilitados.has(sku)) continue;
-      items.push({ sku, poNumero: cNumero, etapa, qtde: Number(it.nQtde ?? 0), recebido: Number(it.nQtdeRec ?? 0) });
+      // [P1-E/round6/7] qtde via parseQtd (ausente/null/inválida→NaN→problema→abort); recebido via parseRecebido
+      // (undefined=nada recebido→0; null/""→NaN→flag — null num parcialmente recebido contaria saldo cheio=ruptura).
+      items.push({ sku, poNumero: cNumero, etapa, qtde: parseQtd(it.nQtde), recebido: parseRecebido(it.nQtdeRec) });
+    }
+    // [novo furo] item sem nCodProd com saldo numa etapa que conta → saldo omitido → fail-closed.
+    if (etapaConta && itemSemSkuComSaldo) {
+      problemas.push(`PO com item SEM nCodProd e saldo>0 (po=${cNumero} etapa=${etapa}) — saldo seria omitido`);
     }
     if (opts.etapasAprovadas.has(etapa)) {
       // [P1.1] PO aprovada sem item com SKU = resposta suspeita → fail-closed; codint NÃO entra.
@@ -137,7 +177,7 @@ function coletarDaPagina(pedidos: readonly OmiePedConsultaRaw[] | undefined, opt
       codintsEmAprovacao.push(cCodIntPed);
     }
   }
-  return { items, codintsAprovados, codintsEmAprovacao, pedidosVistos: lista.length, etapasVistas: [...etapasVistas], problemas };
+  return { items, codintsAprovados, codintsEmAprovacao, pedidosVistos: lista.length, etapasVistas: [...etapasVistas], numerosVistos, problemas };
 }
 function paginaVazia(pedidos: readonly OmiePedConsultaRaw[] | undefined): boolean {
   return !pedidos || pedidos.length === 0;
@@ -161,8 +201,11 @@ function codintsFaltantes(esperados: readonly string[], vistos: readonly string[
 interface PaginaPedidos { pedidos?: OmiePedConsultaRaw[]; faultstring?: string; }
 interface VarrerPedidosOpts { etapasAprovadas: ReadonlySet<string>; etapasEmAprovacao?: ReadonlySet<string>; skusHabilitados?: ReadonlySet<string>; maxPaginas: number; }
 interface VarrerPedidosResult { items: PoItemOmie[]; codintsAprovados: string[]; codintsEmAprovacao: string[]; etapasVistas: string[]; pedidosVistos: number; paginasLidas: number; problemas: string[]; }
+// [P1-D] verbos genéricos REMOVIDOS. [P2-D] `\b` após `h[áa]` falhava (á não é \w no JS) → exige "registros"
+// ADJACENTE ao verbo (`\s+registros`, sem `.{0,30}` que abria over-match em "Não há permissão ... registros" =
+// ERRO). Espelho VERBATIM de src/lib/reposicao/pendente-entrada-po.ts.
 const FIM_SEM_REGISTROS =
-  /(sem\s+registros?\b|nenhum\s+registro|n[ãa]o\s+(existem?|h[áa]|foram|foi|possui|cont[ée]m|retornou)\b.{0,30}\bregistros?\b)/i;
+  /(\bsem\s+registros?\b|\bnenhum\s+registros?\b|n[ãa]o\s+(existem?|h[áa])\s+registros?\b|n[ãa]o\s+foram\s+encontrad\w*\s+registros?\b|\bregistros?\s+n[ãa]o\s+(existem?|foram\s+encontrad\w*|encontrad\w*)\b)/i;
 async function varrerPedidos(
   fetchPagina: (pagina: number) => Promise<PaginaPedidos>,
   opts: VarrerPedidosOpts,
@@ -175,6 +218,7 @@ async function varrerPedidos(
   let pedidosVistos = 0;
   let paginasLidas = 0;
   const fpsVistos = new Set<string>(); // [P1.7] todos os fps vistos (pega repetição não-consecutiva A/B/A)
+  const numerosGlobais = new Set<string>(); // [P1 round7] PO (cNumero) vista globalmente — pega sobreposição entre páginas
   let fim = false;
   for (let pagina = 1; pagina <= opts.maxPaginas; pagina++) {
     const resp = await fetchPagina(pagina);
@@ -191,6 +235,10 @@ async function varrerPedidos(
     fpsVistos.add(fp);
     paginasLidas++;
     const c = coletarDaPagina(pedidos, { etapasAprovadas: opts.etapasAprovadas, etapasEmAprovacao: opts.etapasEmAprovacao, skusHabilitados: opts.skusHabilitados });
+    for (const alias of c.numerosVistos) { // [P1 round7/9] PO (qualquer alias) repetida entre páginas → FATAL (shift)
+      if (numerosGlobais.has(alias)) throw new Error(`PesquisarPedCompra PO REPETIDA entre páginas (identidade ${alias} na pág ${pagina} já vista) — abortando p/ não overcount/double-buy`);
+      numerosGlobais.add(alias);
+    }
     for (const it of c.items) items.push(it);
     for (const cc of c.codintsAprovados) codintsAprovados.add(cc);
     for (const cc of c.codintsEmAprovacao) codintsEmAprovacao.add(cc);
@@ -385,6 +433,63 @@ async function computePendenteViaSaldoPendente(
   return pendente;
 }
 
+// Lê o físico (ListarPosEstoque) paginado e agrega por SKU habilitado. [round6] Chamado UMA vez (físico-first;
+// o "bracket" de 2ª leitura foi removido — ver o bloco-doc abaixo). A agregação Σ por locais pode ter poeira
+// de soma-float, mas isso não é mais comparado (sem bracket).
+async function lerFisicoOmie(
+  appKey: string, appSecret: string, habilitadoMap: Map<string, string | null>,
+): Promise<{ map: Map<string, { fisico: number; reservado: number; locais: number }>; totalRegistros: number; paginas: number }> {
+  const map = new Map<string, { fisico: number; reservado: number; locais: number }>();
+  const dataPosicao = ddmmyyyy(new Date());
+  let page = 1, totalPaginas = 1, totalRegistros = 0, paginas = 0;
+  do {
+    const resp = await callOmie<OmiePosEstoqueResponse>(
+      appKey, appSecret, "ListarPosEstoque",
+      { nPagina: page, nRegPorPagina: PAGE_SIZE, dDataPosicao: dataPosicao, cExibeTodos: "S" },
+    );
+    totalPaginas = resp.nTotPaginas ?? 1;
+    totalRegistros = resp.nTotRegistros ?? totalRegistros;
+    for (const item of resp.produtos ?? []) {
+      const codigo = String(item.nCodProd ?? "").trim();
+      if (!codigo || !habilitadoMap.has(codigo)) continue;
+      const acc = map.get(codigo) ?? { fisico: 0, reservado: 0, locais: 0 };
+      acc.fisico += Number(item.fisico ?? 0);
+      acc.reservado += Number(item.reservado ?? 0);
+      acc.locais += 1;
+      map.set(codigo, acc);
+    }
+    paginas = page;
+    page++;
+  } while (page <= totalPaginas);
+  return { map, totalRegistros, paginas };
+}
+
+// [P1-B round5] O "bracket" (re-ler físico T3 e abortar no AUMENTO) foi REMOVIDO — era over-engineering que
+// PIOROU a coisa: ao gravar o físico T3 (mais NOVO que o saldo lido em T2), criou skew na direção RUPTURA, e a
+// detecção por aumento de físico era furada (uma VENDA concorrente mascara o recebimento — Δfísico líquido 0 →
+// não abortava → grava saldo stale-alto → overcount → ruptura; Codex round5). Decisão: voltar ao FÍSICO-FIRST e
+// gravar o físico da PRIMEIRA leitura (T1, ANTES da varredura das POs). Aí o skew físico×a-caminho é SEMPRE a
+// direção SEGURA: um recebimento em [T1,T2] → físico-T1 (não tem os bens) + saldo-T2 (já reduzido) → SUBcount →
+// supercompra (nunca ruptura); um recebimento DEPOIS de T2 → físico-T1 + saldo-alto = correto (em trânsito). A
+// staleness por VENDA (físico-T1 vira stale-alto) NÃO é o skew de recebimento — é a idade-de-snapshot inerente a
+// QUALQUER motor (o físico já é minutos-velho na hora do motor); aceita, igual ao P1-F. Snapshot atômico físico+
+// saldo o Omie não dá → o skew é inevitável; físico-first garante que ele caia no lado supercompra.
+// ⚠️ RESIDUAL INERENTE (Codex round6, P1 sem fix client-side): o físico-first é seguro SOB consistência causal dos
+//   2 endpoints do Omie. Se o ListarPosEstoque (físico) JÁ enxergar um recebimento mas o PesquisarPedCompra
+//   POSTERIOR ainda devolver o nQtdeRec ANTIGO (lag/cache interno entre os subsistemas do Omie), grava físico-novo
+//   + saldo-velho → overcount → ruptura. NENHUMA ordem de leitura nem snapshot do nosso lado conserta (é a
+//   consistência INTERNA do Omie). Mitigantes: (a) um recebimento no Omie atualiza estoque E a OS no MESMO
+//   recebimento (provável commit conjunto → janela ~0); (b) se houver lag, exige que ele seja > a duração do sync
+//   (~10-30s) E que o físico vá na frente da OS — improvável; (c) bounded (1 SKU) + auto-corrige no próximo sync.
+//   Aceito como limitação da API do Omie (decisão founder), igual ao P1-F. O bracket NÃO resolvia isto (o recebido
+//   já estava no físico em T1 → T3 igual → sem aborto) e ainda criava ruptura por máscara de venda — por isso fora.
+
+// [P1-A round3] A gravação do marcador de frescor do FÍSICO virou 2 RPCs SQL-puras com lock/ownership:
+//   • claim_estoque_full_sync  — reivindica 'syncing' ATOMICAMENTE no início (substitui o guard TOCTOU).
+//   • finalizar_estoque_full_sync — grava 'complete'/'error' SÓ se ESTE run ainda é dono do claim (run_id),
+//     senão (claim roubado (TTL 15min > teto da plataforma)) NÃO finaliza → o motor não lê físico-de-A + a-caminho-de-B.
+// 'syncing' no início + 'complete'/'error' só no fim do MESMO run dono = par atômico p/ o motor (barreira 4b).
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -436,33 +541,34 @@ Deno.serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // 2) FÍSICO (ListarPosEstoque) — só no full (only_pending NÃO atualiza frescor do físico).
-    const encontrados = new Map<string, { fisico: number; reservado: number; locais: number }>();
+    // [P1-A] CLAIM ATÔMICO do full sync (substitui a guarda TOCTOU + o marcarFullSync('syncing') inicial). A RPC
+    // claim_estoque_full_sync grava status='syncing' SE livre (não-'syncing' OU 'syncing' velho >15min), numa única
+    // instrução com lock de linha → SÓ um concorrente reivindica (cron×manual). false = outro full sync recente em
+    // andamento → PULA. Bloqueia o motor (barreira 4b: status<>'complete') durante TODA a janela de escrita; só vira
+    // 'complete'/'error' no FIM (par físico+a-caminho atômico do ponto de vista do motor). 'syncing' preso (sync que
+    // morreu) auto-liberta após 15min. only_pending (bump) NÃO reivindica nem toca o full marker.
+    const fullRunId = Date.now();
+    const syncStartIso = new Date(fullRunId).toISOString();
+    if (!onlyPending) {
+      const { data: claimed, error: claimErr } = await supabase.rpc("claim_estoque_full_sync", {
+        p_account: empresa.toLowerCase(), p_run_id: fullRunId, p_at: syncStartIso,
+      });
+      if (claimErr) throw new Error(`claim_estoque_full_sync: ${claimErr.message}`);
+      if (claimed !== true) {
+        console.log(`[omie-sync-estoque] ${empresa}: full sync já em andamento (claim negado) — pulando.`);
+        return new Response(JSON.stringify({ ok: true, empresa, skipped: "full sync já em andamento (claim negado)" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
+    // 2) FÍSICO (ListarPosEstoque) — só no full (only_pending NÃO atualiza frescor do físico). [P1-B] leitura T1.
+    let encontrados = new Map<string, { fisico: number; reservado: number; locais: number }>();
     let totalRegistros = 0;
     let paginasFisico = 0;
     if (!onlyPending) {
-      const dataPosicao = ddmmyyyy(new Date());
-      let page = 1, totalPaginas = 1;
-      do {
-        const resp = await callOmie<OmiePosEstoqueResponse>(
-          appKey, appSecret, "ListarPosEstoque",
-          { nPagina: page, nRegPorPagina: PAGE_SIZE, dDataPosicao: dataPosicao, cExibeTodos: "S" },
-        );
-        totalPaginas = resp.nTotPaginas ?? 1;
-        totalRegistros = resp.nTotRegistros ?? totalRegistros;
-        for (const item of resp.produtos ?? []) {
-          const codigo = String(item.nCodProd ?? "").trim();
-          if (!codigo || !habilitadoMap.has(codigo)) continue;
-          const acc = encontrados.get(codigo) ?? { fisico: 0, reservado: 0, locais: 0 };
-          acc.fisico += Number(item.fisico ?? 0);
-          acc.reservado += Number(item.reservado ?? 0);
-          acc.locais += 1;
-          encontrados.set(codigo, acc);
-        }
-        paginasFisico = page;
-        page++;
-      } while (page <= totalPaginas);
-      console.log(`[omie-sync-estoque] físico: ${totalRegistros} no Omie, ${encontrados.size}/${totalEsperado} habilitados encontrados.`);
+      const r1 = await lerFisicoOmie(appKey, appSecret, habilitadoMap);
+      encontrados = r1.map; totalRegistros = r1.totalRegistros; paginasFisico = r1.paginas;
+      console.log(`[omie-sync-estoque] físico T1: ${totalRegistros} no Omie, ${encontrados.size}/${totalEsperado} habilitados encontrados.`);
     }
 
     // 3) "A CAMINHO"
@@ -502,13 +608,32 @@ Deno.serve(async (req) => {
       }
     }
 
-    const runId = Date.now();              // timestamp da GRAVAÇÃO do físico (marcador full + ultima_sincronizacao)
+    // [P1-B round5] SEM bracket: grava o físico da PRIMEIRA leitura (T1, ANTES da varredura das POs). físico-first
+    // → o skew físico×a-caminho cai SEMPRE no lado SEGURO (supercompra, nunca ruptura): recebimento em [T1,T2] →
+    // físico-T1-baixo + saldo-T2-reduzido → subcount → supercompra; recebimento após T2 → físico-T1 + saldo-alto =
+    // correto (em trânsito). A staleness por venda é idade-de-snapshot inerente (aceita). Ver o bloco-doc acima.
+
+    const runId = Date.now();              // timestamp da GRAVAÇÃO do físico (ultima_sincronizacao + marcador final)
     const observedAt = new Date(runId).toISOString(); // [P1.3] a RPC pendente usa coleta.runId/observedAt (início da varredura)
 
     // 4) GRAVAÇÃO
     let sincronizados = 0;
     const errosUpsert: Array<{ sku: string; erro: string }> = [];
     const naoEncontrados: string[] = [];
+
+    // [P1-A round3] re-checa OWNERSHIP do claim ANTES de escrever o físico: se outro run re-reivindicou o claim,
+    // ABORTA aqui (não escreve físico → não mistura linhas com o run que assumiu). Cinto+suspensório do finalize
+    // com ownership. [round4] o roubo em si é IMPOSSÍVEL de um sync vivo: o TTL do claim (15min) > o teto de
+    // wall-clock do edge function do Supabase (~150-400s) → o runtime mata o sync ANTES do TTL (não depende do cron).
+    if (!onlyPending) {
+      const { data: dono } = await supabase.from("sync_state")
+        .select("status, metadata").eq("entity_type", "reposicao_estoque_full")
+        .eq("account", empresa.toLowerCase()).maybeSingle();
+      const donoRunId = (dono?.metadata as { run_id?: number } | null)?.run_id;
+      if (dono?.status !== "syncing" || donoRunId !== fullRunId) {
+        throw new Error(`claim perdido antes da gravação do físico (status=${dono?.status} run=${donoRunId} != ${fullRunId}) — outro sync assumiu; abortando p/ não misturar físico`);
+      }
+    }
 
     if (!onlyPending) {
       // Upsert do FÍSICO. OBEN: SEM estoque_pendente_entrada (a RPC é dona da coluna — D1).
@@ -571,25 +696,17 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Marcador de frescor do FÍSICO (Sentinela passo 5 lê o marcador). [P1.6] status='complete' SÓ se o upsert
-      // foi INTEGRAL — senão 'error' (físico parcial não pode passar por verde; a barreira (4) do motor ampliada
-      // checa ambos os markers e aborta se este não está complete).
-      const fullOk = errosUpsert.length === 0;
-      const { error: mkErr } = await supabase.from("sync_state").upsert({
-        entity_type: "reposicao_estoque_full",
-        account: empresa.toLowerCase(),
-        status: fullOk ? "complete" : "error",
-        last_sync_at: observedAt,
-        total_synced: sincronizados,
-        error_message: fullOk ? null : `${errosUpsert.length} SKU(s) com erro de upsert do físico`,
-        metadata: { run_id: runId, paginas: paginasFisico, total_omie: totalRegistros, nao_encontrados: naoEncontrados.length, erros_upsert: errosUpsert.length },
-        updated_at: observedAt,
-      }, { onConflict: "entity_type,account" });
-      if (mkErr) console.error(`[omie-sync-estoque] erro marcador reposicao_estoque_full: ${mkErr.message}`);
+      // [P1-A] o marcador 'complete'/'error' do físico NÃO é gravado aqui — vai pro FIM (após o a-caminho do
+      // MESMO run), pra o par físico+a-caminho ser atômico do ponto de vista do motor. Aqui o marcador segue 'syncing'.
     }
 
     // "A caminho" — OBEN via RPC atômica; COLACOR já foi gravado no upsert do físico.
     let rpcResult: unknown = null;
+    // [P1-A] pendenteApplied: o a-caminho DESTE run foi de fato gravado? COLACOR grava inline (true). OBEN: a RPC
+    // retorna {applied:false, skipped_reason:'stale_run'} se um run MAIS NOVO (ex.: bump only_pending pós-disparo
+    // concorrente) já gravou um a-caminho mais recente. Nesse caso o físico DESTE run + o a-caminho do run novo NÃO
+    // são um par provadamente coerente → NÃO declaro 'complete' (deixo 'syncing'; o próximo full sync limpo fecha).
+    let pendenteApplied = empresa === "COLACOR";
     if (empresa === "OBEN" && coleta) {
       const { data: rpcData, error: rpcErr } = await supabase.rpc("aplicar_snapshot_pendente", {
         p_empresa: "OBEN",
@@ -610,6 +727,33 @@ Deno.serve(async (req) => {
       });
       if (rpcErr) throw new Error(`aplicar_snapshot_pendente: ${rpcErr.message}`);
       rpcResult = rpcData;
+      pendenteApplied = (rpcData as { applied?: boolean } | null)?.applied === true;
+      if (!pendenteApplied) {
+        console.warn(`[omie-sync-estoque] aplicar_snapshot_pendente NÃO aplicou (${JSON.stringify(rpcData)}) — run mais novo venceu; deixo o full marker em 'syncing' (próximo sync fecha).`);
+      }
+    }
+
+    // [P1-A] marcador FINAL do físico = 'complete'/'error', AO FIM (após físico E a-caminho do MESMO run). Só agora
+    // o motor (barreira 4b) pode gerar — lendo um par físico+a-caminho coerente do mesmo ciclo. 'error' se o upsert
+    // do físico teve falha parcial. [P1-A round3] via finalizar_estoque_full_sync com OWNERSHIP (run_id): se um
+    // concorrente roubou o claim (impossível de um sync vivo: TTL 15min > teto de wall-clock da plataforma), o UPDATE casa 0 linhas → finalized=false
+    // → NÃO marco 'complete' (não exponho físico-deste-run + a-caminho-de-outro). [P1-A] e só finaliza se o
+    // a-caminho deste run foi aplicado (pendenteApplied) — senão deixa 'syncing' p/ o próximo sync limpo.
+    if (!onlyPending && pendenteApplied) {
+      const fullOk = errosUpsert.length === 0;
+      const { data: finalized, error: finErr } = await supabase.rpc("finalizar_estoque_full_sync", {
+        p_account: empresa.toLowerCase(),
+        p_run_id: fullRunId,
+        p_status: fullOk ? "complete" : "error",
+        p_at: observedAt,
+        p_total_synced: sincronizados,
+        p_error_message: fullOk ? null : `${errosUpsert.length} SKU(s) com erro de upsert do físico`,
+        p_meta: { paginas: paginasFisico, total_omie: totalRegistros, nao_encontrados: naoEncontrados.length, erros_upsert: errosUpsert.length },
+      });
+      if (finErr) throw new Error(`finalizar_estoque_full_sync: ${finErr.message}`);
+      if (finalized !== true) {
+        console.warn(`[omie-sync-estoque] ${empresa}: claim roubado durante o sync (outro run assumiu) — NÃO marco 'complete' (fail-closed).`);
+      }
     }
 
     const summary = {

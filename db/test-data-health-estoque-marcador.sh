@@ -7,6 +7,8 @@
 #   C3  marker pendente status='running' (não-complete) → 'broken'
 #   C4  ambos complete, mas a-caminho velho (20h) → 'stale' (worst-of pega o mais velho)
 #   C5  RPC-falha: full fresco + pendente 31h → 'broken' (o que o max(ultima_sincronizacao) deixava verde)
+#   C7  [P1-A] full 'syncing' <30min → 'ok' (sync em andamento, motor já bloqueado)
+#   C8  [P1-A] full 'syncing' >30min → 'broken' (sync travou no meio)
 #   C6  total de checks = 18 (o conjunto NÃO mudou)
 # Base: db/test-rpc-intraday.sh. Pré-req: brew install postgresql@17 pgvector.
 set -euo pipefail
@@ -94,7 +96,7 @@ BEGIN
   SELECT status INTO v_status FROM public._data_health_compute() WHERE source='estoque_reposicao';
   ASSERT v_status = 'broken', format('C2 (pendente ausente) esperava broken, veio %s', v_status);
 
-  -- C3: pendente status='running' (não-complete) → broken (JOIN exige complete → faltando=1)
+  -- C3: pendente status='running' (não-complete, não-syncing) → broken (não saudável → faltando=1)
   PERFORM _set_markers(interval '10 minutes','complete', interval '10 minutes','running');
   SELECT status INTO v_status FROM public._data_health_compute() WHERE source='estoque_reposicao';
   ASSERT v_status = 'broken', format('C3 (pendente running) esperava broken, veio %s', v_status);
@@ -109,7 +111,17 @@ BEGIN
   SELECT status INTO v_status FROM public._data_health_compute() WHERE source='estoque_reposicao';
   ASSERT v_status = 'broken', format('C5 (RPC-falha, pendente 31h) esperava broken, veio %s', v_status);
 
-  RAISE NOTICE 'C1..C5 OK: worst-of dos 2 markers (físico + a-caminho); pega parcial/RPC-falha';
+  -- C7 [P1-A]: full 'syncing' RECENTE (<30min) + pendente complete fresco → ok (tolera sync em andamento)
+  PERFORM _set_markers(interval '10 minutes','syncing', interval '10 minutes','complete');
+  SELECT status INTO v_status FROM public._data_health_compute() WHERE source='estoque_reposicao';
+  ASSERT v_status = 'ok', format('C7 (full syncing <30min) esperava ok, veio %s', v_status);
+
+  -- C8 [P1-A]: full 'syncing' STALE (>30min) → broken (sync travou/falhou no meio)
+  PERFORM _set_markers(interval '45 minutes','syncing', interval '10 minutes','complete');
+  SELECT status INTO v_status FROM public._data_health_compute() WHERE source='estoque_reposicao';
+  ASSERT v_status = 'broken', format('C8 (full syncing >30min stale) esperava broken, veio %s', v_status);
+
+  RAISE NOTICE 'C1..C8 OK: worst-of dos 2 markers; pega parcial/RPC-falha; tolera syncing<30min, alerta syncing stale';
 
   -- C6: total de checks = 18 (conjunto inalterado) + estoque_reposicao presente
   PERFORM _set_markers(interval '10 minutes','complete', interval '10 minutes','complete');
@@ -125,7 +137,7 @@ BEGIN
   RAISE NOTICE 'C6 OK: 18 checks, conjunto inalterado, watchdog ainda referencia estoque_reposicao';
 END $$;
 
-SELECT '✅ TODOS OS ASSERTS (C1..C6) PASSARAM' AS resultado;
+SELECT '✅ TODOS OS ASSERTS (C1..C8) PASSARAM' AS resultado;
 SQL
 
 echo "✅ test-data-health-estoque-marcador: OK"

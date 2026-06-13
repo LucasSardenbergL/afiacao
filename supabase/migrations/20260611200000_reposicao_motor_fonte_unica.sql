@@ -4,11 +4,14 @@
 -- endurecida"). O "a caminho" (estoque_pendente_entrada) passou a ser FONTE ÚNICA = snapshot das POs
 -- abertas APROVADAS do Omie, gravado atomicamente pela RPC aplicar_snapshot_pendente (passo 1) a partir
 -- da edge omie-sync-estoque (passo 2). Esta migration ajusta o MOTOR:
---   (A) REMOVE o `em_transito` (CTE + projeções + JOIN + termo do estoque_efetivo + WHERE). Ele contava
---       qtde_final CHEIA (inclusive já-recebido) → inconsistente com o saldo da fonte única → overcount
---       → ruptura (o adversarial do Codex bloqueou o keep-both por isso). estoque_efetivo = fisico + pendente.
+--   (A) [P1-C] REMOVE o `em_transito` POR COMPLETO (CTE + projeções + JOIN + termo do estoque_efetivo + WHERE),
+--       p/ AMBAS as empresas. Para OBEN ele já contava 0 (fonte única + barreira). Para COLACOR ele DUPLICAVA o
+--       estoque_pendente_entrada (ListarSaldoPendente) e somava 'concluido_recebido' por 7 dias sobre o físico
+--       já recebido → double-count → ruptura (adversarial Codex). O motor não roda p/ COLACOR (CTE sobre 0 linhas).
+--       estoque_efetivo = estoque_fisico + estoque_pendente_entrada (ambas as empresas).
 --   (B) ADICIONA a BARREIRA fail-closed (OBEN-only): antes de gerar, ABORTA se não puder garantir que o
---       snapshot reflete TUDO em voo (4 condições). Mata o double-buy (latência) sem 2 fontes de quantidade.
+--       snapshot reflete TUDO em voo. Mata o double-buy (latência) sem 2 fontes de quantidade. [P1-F] a janela
+--       da (3a) é 6h (não 30min): cobre lag de aprovação SEM cEmailAprovador + cCodIntPed transitoriamente ilegível.
 --
 -- ⚠️ ANTI-CASCATA (multi-sessão): esta def PARTE da 20260609160000_reposicao_ciclo_intraday.sql (confirmada
 --   a de MAIOR timestamp que define gerar_pedidos_sugeridos_ciclo — o #743/20260611120000 tocou só a
@@ -37,6 +40,15 @@ DECLARE
   v_valor NUMERIC := 0;
   v_bloqueados INT := 0;
 BEGIN
+  -- [P2 estrutural round3] geração SÓ p/ OBEN — RECUSA no MOTOR (não só na edge): a UI (AdminReposicaoPedidos)
+  -- chama esta RPC DIRETO (não só via gerar-pedidos-diario), então um guard só na edge não cobre. Só OBEN tem o
+  -- "a caminho" FONTE ÚNICA + a barreira fail-closed abaixo; com o em_transito removido, outra empresa rodaria SEM
+  -- proteção contra re-sugerir recém-disparado → double-buy se o pendente zerar/atrasar. RAISE antes de qualquer
+  -- escrita. (REPOSICAO_EMPRESA='OBEN'; nenhum SKU não-OBEN habilitado na esteira → recusar é zero-impacto hoje.)
+  IF lower(p_empresa) <> 'oben' THEN
+    RAISE EXCEPTION 'reposicao_motor: geração só habilitada p/ OBEN (fonte-única + barreira fail-closed); % sem on-order próprio protegido — habilite a fonte-única/barreira p/ essa empresa antes de gerar', p_empresa;
+  END IF;
+
   -- [INTRADAY 1/4] serializa execuções concorrentes (cron 2/2h × botão "Recalcular" × retry).
   -- xact-lock: solta sozinho no fim da transação. Por empresa (a expiração 2/4 cruza datas).
   PERFORM pg_advisory_xact_lock(hashtext('gerar_pedidos_sugeridos_ciclo:' || lower(p_empresa)));
@@ -102,17 +114,28 @@ BEGIN
         RAISE EXCEPTION 'barreira_fonte_unica: % pedido(s) confirmado(s) no portal sem PO no Omie — aguarde a conciliação antes de gerar', v_portal_sem_po;
       END IF;
 
-      -- (3a) pedido recém-disparado (atualizado <30min, status=disparado) cujo AFI-<id> NÃO consta em NENHUM
-      -- conjunto do snapshot (nem aprovados nem em-aprovação) → o bump falhou / o sync não pegou a PO ainda.
-      -- Fecha o caso de borda do run_id (full-sync de dados velhos sobrescreve o bump).
+      -- (3a) pedido disparado (status=disparado, atualizado <6h) cujo AFI-<id> NÃO consta em NENHUM conjunto do
+      -- snapshot (nem aprovados nem em-aprovação) → o bump falhou / o sync não pegou a PO ainda / a PO está
+      -- etapa-10 com cCodIntPed transitoriamente ilegível no PesquisarPedCompra. Fecha o caso de borda do run_id
+      -- (full-sync de dados velhos sobrescreve o bump). [P1-F] janela 30min→6h.
+      -- ⚠️ POR QUE JANELA (e não window-less): 'concluido_recebido' NUNCA é setado no app (grep vazio) → um pedido
+      --   'disparado' NÃO termina de status. Uma barreira window-less ('disparado' + AFI ausente) bloquearia PARA
+      --   SEMPRE um pedido já RECEBIDO (PO fechada → sai de codints_aprovados) mas ainda 'disparado' → travaria a
+      --   reposição do SKU indefinidamente = RUPTURA. A janela 6h limita esse falso-bloqueio (raro: lead time=dias).
+      -- ⚠️ RESIDUAL (codint etapa-10 ilegível >6h): a (3a) deixa de cobrir e o motor pode RE-SUGERIR o SKU. É
+      --   direção SUPERCOMPRA (o app pediu + o motor sugere → founder aprova os 2 → excesso), NÃO ruptura — o lado
+      --   SEGURO (contar etapa-10 ou bloquear por SKU arriscaria ruptura se a PO for rejeitada → pior). Mitigação:
+      --   (i) cEmailAprovador SETADO (OMIE_OBEN_EMAIL_APROVADOR, #609) → PO nasce etapa-15 → AFI em codints_aprovados
+      --   na hora → etapa-10 nunca acontece p/ PO do app → residual MOOT; (ii) o smoke do deploy confirma que o
+      --   cCodIntPed é legível no PesquisarPedCompra (o #628/#592 já dependem disso no ConsultarPedCompra).
       SELECT count(*) INTO v_disp_ausente FROM public.pedido_compra_sugerido pcs
        WHERE pcs.empresa = p_empresa
          AND pcs.status = 'disparado'
-         AND pcs.atualizado_em > now() - INTERVAL '30 minutes'
+         AND pcs.atualizado_em > now() - INTERVAL '6 hours'
          AND NOT (v_codints ? ('AFI-' || pcs.id::text))
          AND NOT (v_codints_emaprov ? ('AFI-' || pcs.id::text));
       IF v_disp_ausente > 0 THEN
-        RAISE EXCEPTION 'barreira_fonte_unica: % pedido(s) recém-disparado(s) ainda não refletido(s) no snapshot de a-caminho — aguarde o próximo sync de estoque', v_disp_ausente;
+        RAISE EXCEPTION 'barreira_fonte_unica: % pedido(s) disparado(s) ainda não refletido(s) no snapshot de a-caminho (PO não apareceu/etapa-10 sem codint legível) — aguarde o próximo sync de estoque ou aprove/cancele a PO no Omie', v_disp_ausente;
       END IF;
 
       -- [P1.2] (3b) pedido do app DISPARADO cuja PO está EM APROVAÇÃO no Omie (etapa-10): não conta no a-caminho
@@ -146,23 +169,16 @@ BEGIN
     AND status IN ('pendente_aprovacao', 'bloqueado_guardrail')
     AND COALESCE(tipo_ciclo, 'normal') = 'normal';
 
-  -- [FONTE-ÚNICA / P1.5] em_transito CONDICIONAL por empresa. OBEN: o "a caminho" é FONTE ÚNICA (snapshot de
-  -- POs do Omie) + barreira fail-closed → o em_transito interno NÃO conta (CASE WHEN oben THEN 0). COLACOR
-  -- (ListarSaldoPendente, SEM fonte única e SEM barreira): o em_transito CONTINUA contando — senão perderia a
-  -- proteção contra re-sugerir pedidos recém-disparados (regressão que o adversarial do Codex pegou).
-  -- estoque_efetivo = estoque_fisico + estoque_pendente_entrada + (oben ? 0 : em_transito).
-  WITH em_transito AS (
-    SELECT pcs2.empresa, pci.sku_codigo_omie::text AS sku_codigo_omie, SUM(pci.qtde_final) AS qtde
-    FROM pedido_compra_item pci
-    JOIN pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
-    WHERE pcs2.empresa = p_empresa
-      AND (
-        (pcs2.status IN ('aprovado_aguardando_disparo','disparado','concluido_recebido') AND pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days'))
-        OR (pcs2.status_envio_portal IN ('sucesso_portal','enviado_portal') AND pcs2.portal_protocolo IS NOT NULL AND pcs2.omie_pedido_compra_numero IS NULL AND pcs2.status NOT IN ('cancelado','expirado_sem_aprovacao'))
-      )
-    GROUP BY pcs2.empresa, pci.sku_codigo_omie
-  ),
-  preco_medio AS (
+  -- [FONTE-ÚNICA / P1.5 / P1-C] em_transito REMOVIDO por completo (era CONDICIONAL: 0 p/ OBEN, cheio p/ COLACOR).
+  -- OBEN: o "a caminho" é FONTE ÚNICA (snapshot das POs do Omie) + barreira fail-closed → em_transito já contava 0.
+  -- COLACOR: o em_transito DUPLICAVA o estoque_pendente_entrada (ListarSaldoPendente já é o on-order do COLACOR) E
+  --   somava qtde_final de 'concluido_recebido' por 7 dias SOBRE o físico já recebido → double-count → RUPTURA
+  --   (P1-C do adversarial). E o motor NÃO roda para COLACOR (não há cron COLACOR; nenhum SKU COLACOR habilitado
+  --   na esteira → skus_necessitando vazio), então a CTE operava sobre ZERO linhas (remoção = zero mudança real
+  --   para COLACOR, elimina o bug latente). estoque_efetivo = estoque_fisico + estoque_pendente_entrada (ambas
+  --   as empresas). ⚠️ Se COLACOR vier a entrar na esteira no futuro: validar a latência do ListarSaldoPendente
+  --   vs. recém-disparado (COLACOR hoje não tem fluxo de disparo pelo app — disparar-pedidos-aprovados é OBEN).
+  WITH preco_medio AS (
     SELECT slh.empresa::text AS empresa, slh.sku_codigo_omie::text AS sku_codigo_omie,
            AVG(slh.valor_total / NULLIF(slh.quantidade_recebida, 0)) AS preco_unitario, COUNT(*) AS n
     FROM sku_leadtime_history slh
@@ -174,11 +190,11 @@ BEGIN
            sg.grupo_codigo, sp.ponto_pedido, sp.estoque_maximo,
            COALESCE(sea.estoque_fisico, 0) AS estoque_fisico,
            COALESCE(sea.estoque_pendente_entrada, 0) AS estoque_pendente,
-           (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + CASE WHEN lower(p_empresa) = 'oben' THEN 0 ELSE COALESCE(et.qtde, 0) END) AS estoque_efetivo,
+           (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0)) AS estoque_efetivo,
            -- [QTDE-INTEIRA] arredonda pra cima: o estoque vem do Omie com poeira decimal → max − estoque
            -- seria fracionário (3,99996). Arredondar pra cima preserva o sinal >0, então o filtro de
            -- necessidade abaixo fica idêntico (inclusão inalterada; só o valor muda).
-           ceil(sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + CASE WHEN lower(p_empresa) = 'oben' THEN 0 ELSE COALESCE(et.qtde, 0) END)) AS qtde_sugerida,
+           ceil(sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0))) AS qtde_sugerida,
            -- [MIN-FORCADO 1/3] qtde_final = piso(natural, mínimo forçado). Espelha o helper puro
            -- aplicarMinimoForcado: CASE WHEN min>0 THEN GREATEST(natural, min) ELSE natural END.
            -- Sem piso-0 fantasma (ELSE devolve o natural intocado). A guarda "só item que precisa
@@ -187,9 +203,9 @@ BEGIN
            -- estoque com poeira decimal OU de um mínimo forçado fracionário) chega ao pedido.
            CASE WHEN sp.minimo_forcado_manual IS NOT NULL AND sp.minimo_forcado_manual > 0
                 THEN ceil(GREATEST(
-                       (sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + CASE WHEN lower(p_empresa) = 'oben' THEN 0 ELSE COALESCE(et.qtde, 0) END)),
+                       (sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0))),
                        sp.minimo_forcado_manual))
-                ELSE ceil(sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + CASE WHEN lower(p_empresa) = 'oben' THEN 0 ELSE COALESCE(et.qtde, 0) END))
+                ELSE ceil(sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0)))
            END AS qtde_final,
            -- [A2-CMC-PEDIDO] cmc-PRIMEIRO (>0), senão média, senão 0. Espelha a view (preco_item_eoq):
            -- cmc=0/negativo/null não vira preço 0 (CASE devolve NULL → COALESCE cai pra média).
@@ -216,7 +232,6 @@ BEGIN
     LEFT JOIN omie_products op ON op.omie_codigo_produto::text = sp.sku_codigo_omie::text AND op.account = lower(p_empresa)
     LEFT JOIN familia_nao_comprada fnc ON fnc.empresa = sp.empresa AND fnc.familia = op.familia
     LEFT JOIN preco_medio pm ON pm.empresa = sp.empresa AND pm.sku_codigo_omie = sp.sku_codigo_omie::text
-    LEFT JOIN em_transito et ON et.empresa = sp.empresa AND et.sku_codigo_omie = sp.sku_codigo_omie::text
     LEFT JOIN inventory_position ip ON ip.omie_codigo_produto::text = sp.sku_codigo_omie::text AND ip.account = lower(p_empresa)
     LEFT JOIN sku_status_omie sso ON sso.empresa = sp.empresa AND sso.sku_codigo_omie = sp.sku_codigo_omie::text
     WHERE sp.empresa = p_empresa
@@ -250,7 +265,7 @@ BEGIN
           )
       AND sp.ponto_pedido IS NOT NULL
       AND sp.estoque_maximo IS NOT NULL
-      AND (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + CASE WHEN lower(p_empresa) = 'oben' THEN 0 ELSE COALESCE(et.qtde, 0) END) <= sp.ponto_pedido
+      AND (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0)) <= sp.ponto_pedido
   ),
   pedidos_por_fornecedor_grupo AS (
     INSERT INTO pedido_compra_sugerido (

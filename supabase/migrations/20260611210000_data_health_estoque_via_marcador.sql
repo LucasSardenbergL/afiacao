@@ -431,11 +431,13 @@ AS $$
     -- Janela comercial BRT 08:00-18:00 (sync a cada ~2h) => >4h morto; fora dela tolera o vão noturno
     -- (~13h) => só >16h; >30h ou nunca = broken. critical (money-path).
     SELECT 'estoque_reposicao'::text, 'estoque'::text,
-      -- [FONTE-ÚNICA passo 5] frescor via MARCADOR sync_state (status=complete) dos DOIS markers que a edge
-      -- omie-sync-estoque grava: reposicao_estoque_full (físico) E reposicao_pendente_po (a-caminho, gravado
-      -- pela RPC aplicar_snapshot_pendente). Worst-of: o mais velho decide. Marker ausente OU não-'complete'
-      -- => broken — pega o sync PARCIAL (que o max(ultima_sincronizacao) deixava passar verde) E o caso
-      -- RPC-falha-com-físico-ok (o marker pendente fica velho enquanto o full não). Mesma janela comercial.
+      -- [FONTE-ÚNICA passo 5 / P1-A] frescor via MARCADOR sync_state dos DOIS markers que a edge omie-sync-estoque
+      -- grava: reposicao_estoque_full (físico) E reposicao_pendente_po (a-caminho, gravado pela RPC). Worst-of: o
+      -- mais velho decide. [P1-A] o full marker passou a ter ESTADO 'syncing' durante a janela de escrita (entre o
+      -- físico e o a-caminho do mesmo run) — TOLERA 'syncing' RECENTE (<30min = sync em andamento; o motor já está
+      -- bloqueado pela barreira 4b) mas ALERTA 'syncing' STALE (>30min = sync travou/falhou no meio). Marker ausente,
+      -- 'error', ou 'syncing' stale => NÃO saudável => broken. Pega o sync PARCIAL (que o max(ultima_sincronizacao)
+      -- deixava passar verde) E o RPC-falha-com-físico-ok. Mesma janela comercial p/ a staleness do 'complete'.
       CASE WHEN m.faltando > 0 THEN 'broken'
            WHEN m.idade_max > interval '30 hours' THEN 'broken'
            WHEN m.idade_max > interval '16 hours' THEN 'stale'
@@ -444,24 +446,33 @@ AS $$
             AND m.idade_max > interval '4 hours' THEN 'stale'
            ELSE 'ok' END,
       EXTRACT(EPOCH FROM m.idade_max)::bigint, (4*3600)::bigint,
-      'sync_state reposicao_estoque_full + reposicao_pendente_po (OBEN, status=complete)'::text,
-      CASE WHEN m.faltando > 0 THEN 'Estoque de reposição: ' || m.faltando::text || ' marcador(es) de sync ausente(s)/incompleto(s) (físico e/ou a-caminho)'
+      'sync_state reposicao_estoque_full + reposicao_pendente_po (OBEN; complete, ou full=syncing<30min em andamento)'::text,
+      CASE WHEN m.faltando > 0 THEN 'Estoque de reposição: ' || m.faltando::text || ' marcador(es) de sync ausente(s)/incompleto(s)/preso(s) em syncing (físico e/ou a-caminho)'
            ELSE 'Estoque de reposição (motor de compra): físico+a-caminho sincronizados, mais antigo ' || to_char(m.mais_antigo AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') END,
       NULL,
       CASE WHEN m.faltando > 0 OR m.idade_max > interval '4 hours'
-           THEN 'A edge omie-sync-estoque parou de atualizar o snapshot de estoque/a-caminho (marcador sync_state status=complete). ARMADILHA: o cron marca "succeeded" mesmo quando a função dá 503/erro — a verdade está em net._http_response, NÃO em job_run_details. Estoque/a-caminho congelado faz o motor abortar (barreira) ou sugerir comprar o que já tem.'
+           THEN 'A edge omie-sync-estoque parou de atualizar o snapshot de estoque/a-caminho (marcador sync_state). Um marcador preso em "syncing" >30min = o sync travou/falhou no meio (físico ou a-caminho). ARMADILHA: o cron marca "succeeded" mesmo quando a função dá 503/erro — a verdade está em net._http_response, NÃO em job_run_details. Estoque/a-caminho congelado faz o motor abortar (barreira) ou sugerir comprar o que já tem.'
            ELSE NULL END,
       'Cheque a edge omie-sync-estoque (logs no Lovable) + o net._http_response dos crons omie-sync-estoque-{intraday,diario}-oben. Se for LOAD_FUNCTION_ERROR, faça redeploy verbatim de supabase/functions/omie-sync-estoque/index.ts.'::text,
       'critical'::text
     FROM (
       SELECT max(idade) AS idade_max, min(last_sync_at) AS mais_antigo,
-             count(*) FILTER (WHERE idade IS NULL) AS faltando
+             count(*) FILTER (WHERE NOT saudavel) AS faltando
       FROM (
         SELECT ss.last_sync_at,
-               CASE WHEN ss.last_sync_at IS NOT NULL THEN now() - ss.last_sync_at END AS idade
+               -- [P1-A] SAUDÁVEL = 'complete' OU 'syncing' RECENTE (<30min). 'syncing' STALE / 'error' / ausente =
+               -- NÃO saudável (COALESCE p/ false: marker ausente tem status NULL). 'syncing' fresco conta idade=0
+               -- (não trip a staleness — o sync está em andamento e o motor já está bloqueado pela barreira).
+               COALESCE(ss.status = 'complete'
+                        OR (ss.status = 'syncing' AND ss.last_sync_at > now() - interval '30 minutes'), false) AS saudavel,
+               CASE
+                 WHEN ss.status = 'complete' THEN now() - ss.last_sync_at
+                 WHEN ss.status = 'syncing' AND ss.last_sync_at > now() - interval '30 minutes' THEN interval '0'
+                 ELSE NULL
+               END AS idade
         FROM (VALUES ('reposicao_estoque_full'::text), ('reposicao_pendente_po'::text)) AS req(et)
         LEFT JOIN public.sync_state ss
-          ON ss.entity_type = req.et AND ss.account = 'oben' AND ss.status = 'complete'
+          ON ss.entity_type = req.et AND ss.account = 'oben'
       ) x
     ) m
     UNION ALL

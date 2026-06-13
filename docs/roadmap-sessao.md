@@ -20,9 +20,47 @@
 - ✅ **Passo 3 — motor `gerar_pedidos_sugeridos_ciclo` fonte única** (`20260611200000`): remove `em_transito` (efetivo = fisico+pendente) + barreira fail-closed OBEN-only (4 condições). Diff mecânico prova fidelidade (só barreira ADD + em_transito DEL). **PG17 B1..B11 verdes.**
 - ✅ **Passo 4 — bump no disparo** (`disparar-pedidos-aprovados`): `bumpSnapshotPendente` (OBEN-only, best-effort, background via `EdgeRuntime.waitUntil`) chama `omie-sync-estoque {only_pending, esperar_codints}` com os AFI-<id> recém-disparados. **deno check · lint net-zero.**
 - ✅ **Passo 5 — Sentinela via marcador** (`20260611210000`): check `estoque_reposicao` usa worst-of dos 2 markers `sync_state` complete (físico + a-caminho) em vez de `max(ultima_sincronizacao)`. Conjunto inalterado (18 checks), diff mecânico prova. **PG17 C1..C6 verdes.**
-- ✅ **Os 5 passos feitos** + **Codex adversarial xhigh RODADO (2026-06-13): 7 P1 → todos consertados** (P1.1 PO-sem-item, P1.2 etapa-10 barreira 3b sem janela, P1.3 run_id=início, P1.4 físico×saldo limitação documentada, P1.5 em_transito condicional COLACOR, P1.6 marcador físico condicional + barreira 4b, P1.7 fingerprint-set + regex). Re-validado: PG17 A1-13/B1-11/C1-6 · vitest 47 · deno · lint · typecheck.
-- ⏳ **Re-rodar Codex no código consertado** (ciclo achar→consertar→validar) + deploy ordenado (migrations SQL Editor + 2 edges Lovable; ordem fail-closed no spec).
-- 🚧 **Codex esgotou** (usage limit, volta 12/06 00:11) → **Caminho B** (auto-challenge + PG17). **Adversarial xhigh é GATE antes do deploy** — retroativo quando voltar. Nada de deploy até lá.
+- ✅ **Round 1 — Codex adversarial xhigh: 7 P1 → todos consertados** (P1.1 PO-sem-item, P1.2 etapa-10 barreira 3b, P1.3 run_id=início, P1.4 doc, P1.5 em_transito condicional, P1.6 marcador físico, P1.7 fingerprint-set+regex).
+- ✅ **Round 2 — Codex re-leu, recomendou BLOQUEAR (6 P1: 2 reais + 4 inerentes) → founder: "fechar TUDO" → 6 P1 FECHADOS:**
+  - **P1-D (regex fim fail-open):** "Não foi possível retornar registros" casava (verbo 'foi'). Fix: regex só negação de EXISTÊNCIA inequívoca; removidos verbos genéricos. Helper+edge+4 testes.
+  - **P1-E (nQtde ausente→0):** `Number(it.nQtde ?? NaN)` → `problema` → abort apply (saldo fantasma eliminado). +teste.
+  - **P1-C (COLACOR dupla-conta em_transito):** em_transito REMOVIDO por completo (ambas empresas; OBEN já era 0, COLACOR não roda o motor). REVERTE o P1.5 (condicional desnecessário). `efetivo = fisico+pendente`. PG17 B10b/c/B11.
+  - **P1-A (físico×pendente não-atômicos + marcador só logado):** marcador `reposicao_estoque_full='syncing'` no início → `'complete'/'error'` só no FIM (par atômico p/ o motor); `marcarFullSync` LANÇA em erro. Sentinela tolera `syncing`<30min / alerta stale. PG17 C7/C8.
+  - **P1-B (físico×saldo na varredura):** bracket — re-lê físico após varrer POs; THROW se físico AUMENTADO (recebimento na janela). Venda (físico↓) não aborta. EPSILON 0.5.
+  - **P1-F (etapa-10 escapa 3a/3b >30min):** janela da (3a) 30min→6h + doc (cEmailAprovador→etapa-15). PG17 B5/B5a/B5b.
+- ✅ **Round 3 — Codex re-leu o round 2 (3 P1 + 3 P2, a maioria nos próprios fixes) → fechados:**
+  - **P1-A (TOCTOU + retorno RPC):** guarda read-then-skip → **CLAIM ATÔMICO** (RPC `claim_estoque_full_sync`, migration `20260611220000`, `INSERT…ON CONFLICT…WHERE…RETURNING`, auto-libera >5min) + edge só grava `complete` se `rpcData.applied===true` (senão deixa 'syncing'). PG17 D1-D5.
+  - **NOVO furo (item sem nCodProd):** item sem `nCodProd` com saldo>0 em etapa que conta → `problema` → abort. Helper+edge+3 testes.
+  - **P1-F (codint etapa-10 ilegível >6h):** NÃO 100%-fechável sem ruptura (`concluido_recebido` nunca setado → 'disparado' não termina → window-less = ruptura). Residual = SUPERCOMPRA (segura), MOOT com `cEmailAprovador` (etapa-15). Smoke confirma cCodIntPed legível. Documentado.
+  - **P2-COLACOR:** `gerar-pedidos-diario` (único caller) RECUSA `!=OBEN` (400). Zero-impacto (`REPOSICAO_EMPRESA='OBEN'`).
+  - **P2-D (regex `\b` acento):** removido `\b` após `h[áa]` (á não é `\w` em JS) → "Não há registros" volta a casar. +testes.
+  - **P2-B (EPSILON):** 0.5→0.001 (pega recebimento fracionário).
+- ✅ **Round 4 — Codex re-leu o round 3 (2 P1 + 3 P2, nos próprios fixes) → fechados:**
+  - **P1 claim roubável + complete sem ownership:** RPC `finalizar_estoque_full_sync` (só finaliza se o run é dono via `metadata.run_id`) + edge re-checa ownership ANTES do upsert do físico (não mistura linhas) + doc do timeout do cron <5min. PG17 D6/D7/D7b.
+  - **P1 regex over-match** ("Não há permissão... registros"): exige "registros" ADJACENTE ao verbo (sem `.{0,30}`). +testes.
+  - **P2 COLACOR (caller não é único — UI chama a RPC direto):** RAISE não-OBEN DENTRO do motor (+ guard na edge fica como camada extra). PG17 B10/B10b.
+  - **P2 pendenteApplied/EPSILON/nCodProd:** aceitos sem mudança (Codex concordou: alerta 30min é correto; poeira IEEE não chega a 0.001; nCodProd fechado).
+- ✅ **Round 5 — Codex re-leu o round 4 (2 P1 + 1 P2, refinamentos pequenos) → fechados:**
+  - **P1 claim TTL** (5min era "invariante operacional"): **TTL 5min→15min** > teto de wall-clock do edge do Supabase (~150-400s, não-configurável) → roubo impossível por construção da plataforma. PG17 D2b/D3.
+  - **P1 EPSILON**: 0.001→**1e-6** (acima da poeira de soma-float, abaixo de qualquer recebimento real).
+  - **P2 nCodProd**: qty **ausente/inválida** em item sem SKU → anômalo → flag (não vira saldo 0).
+- ✅ **Round 6 — Codex achou 1 P1 (REAL, no bracket) + 1 P2 → fechados:**
+  - **P1 recebimento mascarado por venda:** o bracket comparava Δfísico LÍQUIDO → recebimento+venda na janela = Δ0 → não abortava → ruptura. ⭐ **O bracket foi over-engineering que PIOROU (físico T3 mais novo que o saldo = direção ruptura). REVERTIDO** → físico-FIRST (grava T1) → skew sempre supercompra (seguro), igual ao P1-F. Removidos `detectarAumentoFisico`/`FISICO_EPSILON`/2ª leitura.
+  - **P2 validação item sem nCodProd:** `!quantidadesValidas(q, r)` (cobre q E r NaN/Inf/negativo, não só q). +testes.
+- ✅ **Round 7 (gate final) — 1 P1 INERENTE + 1 P2 + 1 P3:**
+  - **P1 consistência interna do Omie** (físico vê recebimento antes da OS): **SEM fix client-side** (nenhuma ordem/re-leitura conserta a consistência interna do Omie; não há snapshot atômico). Bounded + auto-corrige + provavelmente commit-conjunto no Omie. **Documentado como residual inerente, igual ao P1-F.**
+  - **P2** `Number("")/false→0` mascarava (inclusive `nQtdeRec=""→0`=ruptura): **`parseQtd`** estrito. +testes.
+  - **P3** comentário stale corrigido.
+- ✅ **Re-validação round 7:** PG17 **B1-11 · C1-8 · A1-13 · D1-D7b** · **vitest 58 helper + 3193 total** · deno check (2 edges) · typecheck strict · lint 0-erros.
+- ✅ **Round 8 — 2 P1 (CONSERTÁVEIS) + 1 P2 → fechados:**
+  - **P1 `nQtdeRec:null`→0→ruptura:** `parseRecebido` (só undefined→0; null/inválido→NaN→flag). +testes.
+  - **P1 PO sobreposta entre páginas** (shift de paginação → soma 2× → overcount): de-dup global no `varrerPedidos` por **identidade = `nCodPed` (ID interno Omie) OU `cNumero`; nenhum → fail-closed** (Codex round8 pegou que cNumero vazio escaparia). +testes.
+  - **P2** `Number("0x10")`/científico/array: `parseQtd` com regex decimal. +testes.
+- ✅ **Re-validação round 8:** PG17 (4 suites) · **vitest 66 helper + verde total** · deno (2 edges) · typecheck · lint 0-erros.
+- ✅ **Round 9 — Codex AJUSTAR (1 P1: assimetria de identidade do de-dup) → fechado:** registrar AMBAS as aliases prefixadas (`id:<nCodPed>` E `numero:<cNumero>`) — PO com identidade assimétrica entre páginas bate pela alias compartilhada. `OmiePedItemRaw.nQtde/nQtdeRec` → `number|null`. +testes. **vitest 69 helper + 3204 total** · PG17 (4) · deno · typecheck · lint verdes.
+- 🏁 **CHÃO DE FIXABILIDADE CLIENT-SIDE** (9 rounds: 7→6→3→2→2→1→1→2→1 P1; o Codex CONFIRMOU que o residual de consistência do Omie é insolúvel no client). Núcleo sólido; residuais = inerentes do Omie OU direção-supercompra. **Nenhum P1 de ruptura consertável no client.**
+- ⚠️ **Round 10 (confirmar o fix de aliases) — Codex ESGOTOU a cota** (volta ~19h18 BRT). **Caminho B:** o fix foi a sugestão LITERAL do Codex; auto-challenge próprio OK. **Codex retroativo do round 10 quando voltar.** Decisão de deploy = founder (aguardar round 10 ~19h18 OU Caminho B).
+- ⏳ **Deploy ordenado (fail-closed, só pós-Codex):** (1) migrations passo 1 (`190000`) + claim+finalize (`220000`) SQL Editor; (2) edges `omie-sync-estoque`+`disparar-pedidos-aprovados`+`gerar-pedidos-diario` Lovable; (3) forçar 1 sync OBEN → markers `complete`; (4) migrations passo 3 (motor) + 5 (Sentinela). ⚠️ timeout dos crons omie-sync-estoque <5min. Smoke FUNDO PU=3 + cCodIntPed legível. Preflight `pg_get_functiondef`.
 
 ---
 

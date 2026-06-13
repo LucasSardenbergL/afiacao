@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   quantidadesValidas,
+  parseQtd,
+  parseRecebido,
   saldoAReceber,
   computeOnOrder,
   coletarDaPagina,
@@ -24,6 +26,46 @@ function opts(over: Partial<ComputeOnOrderOpts> = {}): ComputeOnOrderOpts {
 function item(over: Partial<PoItemOmie> = {}): PoItemOmie {
   return { sku: "8689734299", poNumero: "1054", etapa: APROVADO, qtde: 3, recebido: 0, ...over };
 }
+
+describe("parseQtd [P2 round6] — Number('')/Number(false)→0 mascarava dado torto", () => {
+  it("número finito passa; numérico-string passa", () => {
+    expect(parseQtd(5)).toBe(5);
+    expect(parseQtd(0)).toBe(0);
+    expect(parseQtd("5")).toBe(5);
+    expect(parseQtd("5.5")).toBe(5.5);
+  });
+  it("'' / ' ' / false / array / objeto / não-numérico → NaN (não 0/coerção)", () => {
+    expect(Number.isNaN(parseQtd(""))).toBe(true);
+    expect(Number.isNaN(parseQtd(" "))).toBe(true);
+    expect(Number.isNaN(parseQtd(false as unknown))).toBe(true);
+    expect(Number.isNaN(parseQtd("abc"))).toBe(true);
+    expect(Number.isNaN(parseQtd(Infinity))).toBe(true);
+    expect(Number.isNaN(parseQtd(NaN))).toBe(true);
+    expect(Number.isNaN(parseQtd([] as unknown))).toBe(true); // Number([])=0 mascararia
+    expect(Number.isNaN(parseQtd([5] as unknown))).toBe(true); // Number([5])=5 mascararia
+    expect(Number.isNaN(parseQtd({} as unknown))).toBe(true);
+  });
+  it("[P2 round7] rejeita hex/binário/científico (Number() aceitaria)", () => {
+    expect(Number.isNaN(parseQtd("0x10"))).toBe(true); // Number=16
+    expect(Number.isNaN(parseQtd("0b10"))).toBe(true); // Number=2
+    expect(Number.isNaN(parseQtd("1e3"))).toBe(true);  // Number=1000
+  });
+});
+
+describe("parseRecebido [P1 round7] — undefined(ausente)→0; null/inválido→NaN→flag", () => {
+  it("undefined (ausente = nada recebido) → 0", () => {
+    expect(parseRecebido(undefined)).toBe(0);
+  });
+  it("null EXPLÍCITO → NaN (não 0 — null num parcial contaria saldo cheio = ruptura)", () => {
+    expect(Number.isNaN(parseRecebido(null))).toBe(true);
+    expect(Number.isNaN(parseRecebido(""))).toBe(true);
+    expect(Number.isNaN(parseRecebido("xx" as unknown))).toBe(true);
+  });
+  it("valor válido passa", () => {
+    expect(parseRecebido(5)).toBe(5);
+    expect(parseRecebido(0)).toBe(0);
+  });
+});
 
 describe("quantidadesValidas", () => {
   it("válido", () => expect(quantidadesValidas(3, 0)).toBe(true));
@@ -141,11 +183,11 @@ function copts(over: Partial<ColetaPaginaOpts> = {}): ColetaPaginaOpts {
   return { etapasAprovadas: new Set([APROVADO]), etapasEmAprovacao: new Set([EM_APROVACAO]), ...over };
 }
 function po(over: {
-  cNumero?: string; cCodIntPed?: string; cEtapa?: string;
-  itens?: Array<{ nCodProd?: number | string; nQtde?: number; nQtdeRec?: number }>;
+  nCodPed?: string; cNumero?: string; cCodIntPed?: string; cEtapa?: string;
+  itens?: Array<{ nCodProd?: number | string; nQtde?: number; nQtdeRec?: number | null }>;
   usarCabecalhoLegado?: boolean;
 } = {}): OmiePedConsultaRaw {
-  const cab = { cNumero: over.cNumero ?? "1054", cCodIntPed: over.cCodIntPed ?? "", cEtapa: over.cEtapa ?? APROVADO };
+  const cab = { nCodPed: over.nCodPed, cNumero: over.cNumero ?? "1054", cCodIntPed: over.cCodIntPed ?? "", cEtapa: over.cEtapa ?? APROVADO };
   const produtos = over.itens ?? [{ nCodProd: "8689734299", nQtde: 3, nQtdeRec: 0 }];
   return over.usarCabecalhoLegado
     ? { cabecalho: cab, produtos_consulta: produtos }
@@ -187,8 +229,10 @@ describe("coletarDaPagina", () => {
   });
 
   it("[P1.1] PO aprovada sem item com SKU → PROBLEMA (fail-closed) e NÃO coleta codint (senão barreira passa c/ saldo 0)", () => {
+    // 1ª PO: 1 item sem nCodProd JÁ RECEBIDO (saldo 0 → não dispara o novo check de saldo-omitido) → só o
+    // problema "sem item com SKU". 2ª PO: cabeçalho sem itens → idem. Total = 2 (isola o caso P1.1).
     const r = coletarDaPagina(
-      [po({ itens: [{ nQtde: 2 }] }), { cabecalho_consulta: { cEtapa: APROVADO, cCodIntPed: "AFI-x" } }],
+      [po({ itens: [{ nQtde: 2, nQtdeRec: 2 }] }), { cabecalho_consulta: { cNumero: "200", cEtapa: APROVADO, cCodIntPed: "AFI-x" } }],
       copts(),
     );
     expect(r.items).toEqual([]);
@@ -214,6 +258,109 @@ describe("coletarDaPagina", () => {
   it("string numérica em qtde/recebido é coagida; não-numérica vira NaN (computeOnOrder pega)", () => {
     const r = coletarDaPagina([po({ itens: [{ nCodProd: "A", nQtde: "abc" as unknown as number }] })], copts());
     expect(Number.isNaN(r.items[0].qtde)).toBe(true);
+  });
+
+  it("[P1-E] nQtde AUSENTE vira NaN (fail-closed), mas nQtdeRec ausente vira 0 (normal)", () => {
+    const r = coletarDaPagina([po({ itens: [{ nCodProd: "A" }] })], copts()); // sem nQtde nem nQtdeRec
+    expect(Number.isNaN(r.items[0].qtde)).toBe(true); // ausente → NaN → computeOnOrder marca problema
+    expect(r.items[0].recebido).toBe(0); // recebido ausente é normal → 0
+    // e computeOnOrder transforma o NaN em PROBLEMA (abort apply)
+    const onOrder = computeOnOrder(r.items, opts());
+    expect(onOrder.problemas.length).toBe(1);
+    expect(onOrder.porSku.size).toBe(0);
+  });
+
+  it("[novo furo] PO aprovada com item SEM nCodProd e saldo>0 → PROBLEMA (saldo seria omitido)", () => {
+    // PO aprovada: 1 item bom (SKU A) + 1 item sem nCodProd com saldo 5 → fail-closed (saldo do 2º omitido)
+    const r = coletarDaPagina(
+      [po({ cCodIntPed: "AFI-z", itens: [{ nCodProd: "A", nQtde: 3 }, { nQtde: 5, nQtdeRec: 0 }] })],
+      copts(),
+    );
+    expect(r.problemas.length).toBe(1);
+    expect(r.problemas[0]).toMatch(/SEM nCodProd/);
+    expect(r.items.map((i) => i.sku)).toEqual(["A"]); // o item bom foi coletado, mas o problema aborta o apply
+  });
+
+  it("[novo furo] item SEM nCodProd com saldo 0 (já recebido) NÃO vira problema", () => {
+    const r = coletarDaPagina(
+      [po({ itens: [{ nCodProd: "A", nQtde: 3 }, { nQtde: 5, nQtdeRec: 5 }] })], // 2º item: saldo 0
+      copts(),
+    );
+    expect(r.problemas).toEqual([]);
+  });
+
+  it("[novo furo] item SEM nCodProd com saldo>0 numa etapa EM APROVAÇÃO (não conta) NÃO vira problema", () => {
+    const r = coletarDaPagina(
+      [po({ cEtapa: EM_APROVACAO, itens: [{ nQtde: 9, nQtdeRec: 0 }] })], // só item sem SKU, etapa-10
+      copts(),
+    );
+    expect(r.problemas).toEqual([]);
+  });
+
+  it("[P2 round4] item SEM nCodProd com nQtde AUSENTE (saldo desconhecido) em etapa aprovada → PROBLEMA", () => {
+    // PO aprovada: 1 item bom + 1 item sem nCodProd E sem nQtde (truncado?) → fail-closed (não trata como saldo 0)
+    const r = coletarDaPagina(
+      [po({ cCodIntPed: "AFI-w", itens: [{ nCodProd: "A", nQtde: 3 }, { nQtdeRec: 0 }] })], // 2º item: sem SKU, sem nQtde
+      copts(),
+    );
+    expect(r.problemas.length).toBe(1);
+    expect(r.problemas[0]).toMatch(/SEM nCodProd/);
+  });
+
+  it("[P2 round5] item SEM nCodProd com nQtde negativa OU nQtdeRec inválida → PROBLEMA (quantidadesValidas)", () => {
+    // q < 0 (saldo q-r ≤ 0 não pegaria, mas quantidadesValidas pega)
+    const rNeg = coletarDaPagina([po({ itens: [{ nQtde: -5 as unknown as number, nQtdeRec: 0 }] })], copts());
+    expect(rNeg.problemas.length).toBeGreaterThanOrEqual(1);
+    expect(rNeg.problemas.some((p) => /SEM nCodProd/.test(p))).toBe(true);
+    // nQtdeRec presente-inválido (NaN via string) com nQtde válida → r=NaN → quantidadesValidas false → flag
+    const rRecInval = coletarDaPagina(
+      [po({ itens: [{ nCodProd: "A", nQtde: 3 }, { nQtde: 5, nQtdeRec: "xx" as unknown as number }] })],
+      copts(),
+    );
+    expect(rRecInval.problemas.some((p) => /SEM nCodProd/.test(p))).toBe(true);
+  });
+
+  it("[P2 round6] item SEM nCodProd com nQtde='' (Number('')→0 mascarava) → PROBLEMA via parseQtd", () => {
+    const r = coletarDaPagina([po({ itens: [{ nQtde: "" as unknown as number }] })], copts());
+    expect(r.problemas.some((p) => /SEM nCodProd/.test(p))).toBe(true);
+  });
+
+  it("[round6] item COM SKU mas nQtde='' → NaN → computeOnOrder marca problema (não vira saldo 0)", () => {
+    const r = coletarDaPagina([po({ itens: [{ nCodProd: "A", nQtde: "" as unknown as number }] })], copts());
+    expect(Number.isNaN(r.items[0].qtde)).toBe(true);
+    const onOrder = computeOnOrder(r.items, opts());
+    expect(onOrder.problemas.length).toBe(1);
+  });
+
+  it("[P1 round7] item COM SKU com nQtdeRec=null (≠ ausente) → recebido NaN → computeOnOrder problema", () => {
+    const r = coletarDaPagina([po({ itens: [{ nCodProd: "A", nQtde: 5, nQtdeRec: null as unknown as number }] })], copts());
+    expect(Number.isNaN(r.items[0].recebido)).toBe(true);
+    expect(computeOnOrder(r.items, opts()).problemas.length).toBe(1);
+  });
+
+  it("[P1 round7] item COM SKU SEM nQtdeRec (ausente) → recebido 0 (normal, nada recebido)", () => {
+    const r = coletarDaPagina([po({ itens: [{ nCodProd: "A", nQtde: 5 }] })], copts());
+    expect(r.items[0].recebido).toBe(0);
+    expect(computeOnOrder(r.items, opts()).problemas).toEqual([]);
+  });
+
+  it("[P1 round8/9] identidade da PO = AMBAS as aliases prefixadas (id:<nCodPed> E numero:<cNumero>)", () => {
+    const r = coletarDaPagina(
+      [po({ nCodPed: "9001", cNumero: "100" }), po({ cNumero: "101" })], // 1ª tem as duas; 2ª só cNumero
+      copts(),
+    );
+    expect(r.numerosVistos).toEqual(["id:9001", "numero:100", "numero:101"]);
+  });
+
+  it("[P1 round8] PO SEM nCodPed E SEM cNumero → PROBLEMA (não escapa do de-dup)", () => {
+    const r = coletarDaPagina([po({ cNumero: "" })], copts()); // sem nCodPed, cNumero vazio
+    expect(r.numerosVistos).toEqual([]);
+    expect(r.problemas.some((p) => /sem identidade/.test(p))).toBe(true);
+  });
+
+  it("[P1 round8] PO com só nCodPed (cNumero vazio) → alias id:", () => {
+    const r1 = coletarDaPagina([po({ nCodPed: "555", cNumero: "" })], copts());
+    expect(r1.numerosVistos).toEqual(["id:555"]); // entra via nCodPed
   });
 });
 
@@ -269,7 +416,11 @@ describe("varrerPedidos — loop de paginação (paginar até página vazia, ant
   });
 
   it("para em fault 'sem registros' (fim legítimo), em variações", async () => {
-    for (const fim of ["Não foram encontrados registros", "Não existem registros para a página 3", "SEM REGISTROS"]) {
+    // [P2-D] "Não há registros" (com á) e "Não existe registro" incluídos: o `\b` após h[áa] falhava antes.
+    for (const fim of [
+      "Não foram encontrados registros", "Não existem registros para a página 3", "SEM REGISTROS",
+      "Não há registros", "Não há registros para a página informada", "Não existe registro", "Nenhum registro encontrado",
+    ]) {
       const r = await varrerPedidos(fetcher([{ pedidos: [po({ cNumero: "1" })] }, { faultstring: fim }]), vopts);
       expect(r.paginasLidas).toBe(1);
     }
@@ -278,6 +429,21 @@ describe("varrerPedidos — loop de paginação (paginar até página vazia, ant
   it("[P1.7] FATAL: fault de ERRO (incl. 'not found' SOLTO) NÃO é fim → lança (anti-falso-positivo)", async () => {
     for (const erro of ["Não foi possível conectar ao servidor", "Erro ao gravar registro no banco", "App Key inválida", "Produto not found"]) {
       await expect(varrerPedidos(fetcher([{ faultstring: erro }]), vopts)).rejects.toThrow(/fault/);
+    }
+  });
+
+  it("[P1-D] FATAL: 'Não foi possível retornar registros' (verbo 'foi') NÃO é fim → lança (anti-double-buy)", async () => {
+    // o verbo genérico 'foi' foi removido do regex de fim; este erro tem que parar o sync (não truncar a paginação)
+    for (const erro of [
+      "Não foi possível retornar registros",
+      "Não foi possível processar a lista de registros",
+      "Falha ao retornar registros: timeout",
+      "O serviço não retornou registros válidos por indisponibilidade",
+      // [P2-D round3] over-match fechado: palavras entre o verbo e "registros" = ERRO, não fim
+      "Não há permissão para acessar registros",
+      "Não existem credenciais válidas para listar registros",
+    ]) {
+      await expect(varrerPedidos(fetcher([{ pedidos: [po({ cNumero: "1" })] }, { faultstring: erro }]), vopts)).rejects.toThrow(/fault/);
     }
   });
 
@@ -292,11 +458,27 @@ describe("varrerPedidos — loop de paginação (paginar até página vazia, ant
     await expect(varrerPedidos(fetcher([a, b, a, { pedidos: [] }]), vopts)).rejects.toThrow(/REPETIÇÃO/);
   });
 
+  it("[P1 round7] FATAL: PO SOBREPOSTA entre páginas DISTINTAS (shift de paginação) → lança (overcount)", async () => {
+    // páginas diferentes (fingerprints distintos → o anti-loop de página NÃO pega), mas a PO '2' aparece nas duas
+    const pag1 = { pedidos: [po({ cNumero: "1" }), po({ cNumero: "2" })] };
+    const pag2 = { pedidos: [po({ cNumero: "2" }), po({ cNumero: "3" })] }; // '2' repetida
+    await expect(varrerPedidos(fetcher([pag1, pag2, { pedidos: [] }]), vopts)).rejects.toThrow(/PO REPETIDA/);
+  });
+
+  it("[P1 round9] FATAL: PO com identidade ASSIMÉTRICA entre páginas (nCodPed numa, só cNumero noutra) → lança", async () => {
+    // pág1: a PO "100" tem nCodPed E cNumero; pág2: a MESMA PO "100" vem só com cNumero (nCodPed ausente). A alias
+    // `numero:100` bate nas duas → o de-dup pega (com "só a 1ª identidade" as chaves divergiriam e o overcount
+    // passaria). 2ª PO distinta em cada página (501/502) só p/ os FINGERPRINTS diferirem (isola o de-dup do anti-loop).
+    const pag1 = { pedidos: [po({ nCodPed: "9001", cNumero: "100" }), po({ cNumero: "501" })] };
+    const pag2 = { pedidos: [po({ cNumero: "100" }), po({ cNumero: "502" })] }; // mesma PO "100", sem nCodPed
+    await expect(varrerPedidos(fetcher([pag1, pag2, { pedidos: [] }]), vopts)).rejects.toThrow(/PO REPETIDA/);
+  });
+
   it("[P1.1/P1.2] propaga problemas (PO aprovada sem item) e codintsEmAprovacao (etapa-10) das páginas", async () => {
     const r = await varrerPedidos(
       fetcher([
         { pedidos: [po({ cNumero: "1", cCodIntPed: "AFI-10", cEtapa: EM_APROVACAO })] }, // etapa-10
-        { pedidos: [{ cabecalho_consulta: { cEtapa: APROVADO, cCodIntPed: "AFI-bad" } }] }, // aprovada sem item
+        { pedidos: [{ cabecalho_consulta: { cNumero: "300", cEtapa: APROVADO, cCodIntPed: "AFI-bad" } }] }, // aprovada sem item
         { pedidos: [] },
       ]),
       vopts,
