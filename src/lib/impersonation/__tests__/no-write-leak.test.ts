@@ -27,6 +27,10 @@ const ALLOWED = new Set([
   // useCriticaFila: effectiveUserId SÓ como filtro de LEITURA (owner_user_id === donoEfetivo no slaQ.data);
   // sem mutation alguma neste hook — é read-only (crítica da fila).
   'src/hooks/useCriticaFila.ts',
+  // useRouteContactList: effectiveUserId SÓ escopa a LEITURA da fila de ligação à carteira do ALVO no
+  // "Ver como" (.eq('farmer_id', …) em customer_visit_scores, no servidor) — conserta a fidelidade da
+  // lente E corta o volume que estourava. Hook 100% read-only (só SELECTs), sem mutation alguma.
+  'src/queries/useRouteContactList.ts',
   // Telefonia: effectiveUserId SÓ alimenta o filtro de LEITURA do histórico de chamadas
   // (useCallLog via CallHistoryTabs) pro "Ver como" mostrar as ligações do ALVO. A ligação
   // em si (call.makeCall) é bloqueada na FONTE (WebRTCCallContext) na lente; nenhum write usa effectiveUserId.
