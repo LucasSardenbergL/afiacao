@@ -221,7 +221,7 @@ async function varrerPedidos(
   let pedidosVistos = 0;
   let paginasLidas = 0;
   const fpsVistos = new Set<string>(); // [P1.7] todos os fps vistos (pega repetição não-consecutiva A/B/A)
-  const numerosGlobais = new Set<string>(); // [P1 round7] PO (cNumero) vista globalmente — pega sobreposição entre páginas
+  const numerosGlobais = new Set<string>(); // [P1 round7/10] identidade de PO (id:<nCodPed> canônico + numero: secundário) vista globalmente — pega sobreposição entre páginas
   let fim = false;
   for (let pagina = 1; pagina <= opts.maxPaginas; pagina++) {
     const resp = await fetchPagina(pagina);

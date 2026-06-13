@@ -145,8 +145,8 @@ export interface ColetaPaginaResult {
   pedidosVistos: number;
   /** etapas distintas vistas (diagnóstico; o fail-closed REAL é no computeOnOrder, sobre os items). */
   etapasVistas: string[];
-  /** [P1 round7/9] aliases de identidade PREFIXADAS (`id:<nCodPed>` e/ou `numero:<cNumero>`) das POs desta página
-   *  — p/ o varrerPedidos detectar PO REPETIDA entre páginas (bate em qualquer alias). */
+  /** [P1 round7/9/10] aliases de identidade das POs desta página: `id:<nCodPed>` CANÔNICO (obrigatório em toda PO)
+   *  + `numero:<cNumero>` secundário — p/ o varrerPedidos detectar PO REPETIDA entre páginas (bate em qualquer alias). */
   numerosVistos: string[];
   /** Razões fail-closed detectadas na COLETA (ex.: PO aprovada sem item com SKU = resposta suspeita). */
   problemas: string[];
@@ -350,10 +350,11 @@ export async function varrerPedidos(
   // [P1.7] rastreia TODOS os fingerprints vistos (não só o anterior): pega repetição NÃO-consecutiva
   // (A/B/A/vazia somaria A duas vezes = overcount → ruptura).
   const fpsVistos = new Set<string>();
-  // [P1 round7/9] aliases de identidade de PO (`id:<nCodPed>`/`numero:<cNumero>`) vistas GLOBALMENTE: pega a MESMA
-  // PO repetida entre páginas DISTINTAS (insert/remove durante a paginação por offset desloca a janela → uma PO
-  // reaparece → itens somados 2× → overcount → ruptura). O fingerprint de página só pega página INTEIRA repetida,
-  // não a sobreposição parcial. Registrar AS DUAS aliases pega a PO mesmo se a identidade varia entre páginas.
+  // [P1 round7/9/10] aliases de identidade de PO (`id:<nCodPed>` canônico + `numero:<cNumero>` secundário) vistas
+  // GLOBALMENTE: pega a MESMA PO repetida entre páginas DISTINTAS (insert/remove durante a paginação por offset
+  // desloca a janela → uma PO reaparece → itens somados 2× → overcount → ruptura). O fingerprint de página só pega
+  // página INTEIRA repetida, não a sobreposição parcial. Exigir `nCodPed` em toda PO garante a chave canônica
+  // compartilhada em TODA aparição (round10: "id OU numero" escapava em omissões complementares).
   const numerosGlobais = new Set<string>();
   let fim = false;
 
