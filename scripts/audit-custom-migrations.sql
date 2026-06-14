@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 212
+-- Total de custom migrations: 219
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -223,13 +223,20 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260611150000', 'route_city_norm', '20260611150000_route_city_norm.sql'),
   ('20260611180000', 'familia_ausente_lista_email', '20260611180000_familia_ausente_lista_email.sql'),
   ('20260611190000', 'tint_sync_codex_fixes', '20260611190000_tint_sync_codex_fixes.sql'),
+  ('20260611195000', 'reposicao_aplicar_snapshot_pendente', '20260611195000_reposicao_aplicar_snapshot_pendente.sql'),
+  ('20260611200000', 'reposicao_motor_fonte_unica', '20260611200000_reposicao_motor_fonte_unica.sql'),
+  ('20260611210000', 'data_health_estoque_via_marcador', '20260611210000_data_health_estoque_via_marcador.sql'),
+  ('20260611220000', 'reposicao_claim_full_sync', '20260611220000_reposicao_claim_full_sync.sql'),
   ('20260612120000', 'auto_assign_role_omie_import_guard', '20260612120000_auto_assign_role_omie_import_guard.sql'),
   ('20260612130000', 'radar_rpcs_contato', '20260612130000_radar_rpcs_contato.sql'),
   ('20260613120000', 'customer_canonical_alias', '20260613120000_customer_canonical_alias.sql'),
   ('20260613120000', 'kb_0c_aprovacao_master_only', '20260613120000_kb_0c_aprovacao_master_only.sql'),
+  ('20260613120000', 'onda1_fase0_sales_orders_identidade', '20260613120000_onda1_fase0_sales_orders_identidade.sql'),
   ('20260613130000', 'radar_rls_initplan_perf', '20260613130000_radar_rls_initplan_perf.sql'),
   ('20260613150000', 'kb_spec_versions_faseA', '20260613150000_kb_spec_versions_faseA.sql'),
   ('20260613160000', 'kb_extraction_drafts', '20260613160000_kb_extraction_drafts.sql'),
+  ('20260613170000', 'fix_auto_assign_master_escalation', '20260613170000_fix_auto_assign_master_escalation.sql'),
+  ('20260613180000', 'kb_hardening_codex', '20260613180000_kb_hardening_codex.sql'),
   ('20260613190000', 'radar_fatia3', '20260613190000_radar_fatia3.sql'),
   ('20260613210000', 'radar_perf_indices', '20260613210000_radar_perf_indices.sql')
 )
@@ -1035,6 +1042,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_sync_codex_fixes', 'function', 'public', 'tint_calc_preco_final', ''),
   ('tint_sync_codex_fixes', 'function', 'public', 'tint_recalc_preco_oficial', ''),
   ('tint_sync_codex_fixes', 'function', 'public', 'tint_apply_keys_snapshot', ''),
+  ('reposicao_aplicar_snapshot_pendente', 'function', 'public', 'aplicar_snapshot_pendente', ''),
+  ('reposicao_motor_fonte_unica', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('data_health_estoque_via_marcador', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_estoque_via_marcador', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_estoque_via_marcador', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('reposicao_claim_full_sync', 'function', 'public', 'claim_estoque_full_sync', ''),
+  ('reposicao_claim_full_sync', 'function', 'public', 'finalizar_estoque_full_sync', ''),
   ('auto_assign_role_omie_import_guard', 'function', 'public', 'auto_assign_user_role', ''),
   ('radar_rpcs_contato', 'function', 'public', 'registrar_contato_radar', ''),
   ('radar_rpcs_contato', 'function', 'public', 'desfazer_contato_radar', ''),
@@ -1047,6 +1061,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('kb_0c_aprovacao_master_only', 'function', 'public', 'desvincular_boletim', ''),
   ('kb_0c_aprovacao_master_only', 'rls_policy', 'public', 'kb_product_specs_insert_master', 'kb_product_specs'),
   ('kb_0c_aprovacao_master_only', 'rls_policy', 'public', 'kb_product_specs_update_master', 'kb_product_specs'),
+  ('onda1_fase0_sales_orders_identidade', 'index', 'public', 'sales_orders_checkout_account_uq', 'sales_orders'),
+  ('onda1_fase0_sales_orders_identidade', 'index', 'public', 'idx_sales_orders_origem', 'sales_orders'),
   ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_empresas_select_gestor', 'radar_empresas'),
   ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_contatos_select_gestor', 'radar_contatos'),
   ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_municipios_select_gestor', 'radar_municipios'),
@@ -1063,6 +1079,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('kb_extraction_drafts', 'trigger', 'public', 'trg_kb_extraction_drafts_updated_at', 'kb_extraction_drafts'),
   ('kb_extraction_drafts', 'rls_policy', 'public', 'kb_extraction_drafts_select_master', 'kb_extraction_drafts'),
   ('kb_extraction_drafts', 'rls_policy', 'public', 'kb_extraction_drafts_delete_master', 'kb_extraction_drafts'),
+  ('fix_auto_assign_master_escalation', 'function', 'public', 'auto_assign_user_role', ''),
+  ('kb_hardening_codex', 'index', 'public', 'kbv_uma_viva', 'kb_product_spec_versions'),
+  ('kb_hardening_codex', 'function', 'public', 'aprovar_versao_boletim', ''),
+  ('kb_hardening_codex', 'function', 'public', 'kbv_block_mutation', ''),
+  ('kb_hardening_codex', 'trigger', 'public', 'trg_kbv_immutable', 'kb_product_spec_versions'),
   ('radar_fatia3', 'function', 'public', 'radar_contagem_por_municipio', ''),
   ('radar_fatia3', 'function', 'public', 'radar_atribuir_tarefa', ''),
   ('radar_fatia3', 'function', 'public', 'radar_registrar_cadastro_omie', ''),

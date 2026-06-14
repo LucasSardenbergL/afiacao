@@ -3,7 +3,9 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Search, Plus, Loader2, Package } from 'lucide-react';
+import { Search, Plus, Loader2, Package, FileText } from 'lucide-react';
+import { keyDeSku, type CurrentSpec } from '@/lib/knowledge-base/spec-link';
+import { FichaTecnicaSheet } from '@/components/unified-order/FichaTecnicaSheet';
 import { cn } from '@/lib/utils';
 import type { Product, ProductCartItem } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
@@ -23,14 +25,19 @@ interface ProductItemFormProps {
    *  (logo após selecionar o cliente). Mostra que os valores exibidos são de
    *  tabela e ainda vão atualizar — evita a percepção de "travado". */
   customerPricesLoading?: boolean;
+  /** Mapa de fichas técnicas por keyDeSku(account, cod). Só vínculos confirmados+aprovados. */
+  specsByKey?: Map<string, CurrentSpec>;
+  /** Mostra "Ver ficha" só p/ staff (a view RLS já é staff; isto evita o affordance p/ não-staff). */
+  canSeeFicha?: boolean;
 }
 
 export function ProductItemForm({
   title, products, prices, loading, productSearch, onSearchChange,
   productItems, onAddProduct, customerPurchaseHistory = {},
-  customerPricesLoading = false,
+  customerPricesLoading = false, specsByKey, canSeeFicha = false,
 }: ProductItemFormProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [fichaAberta, setFichaAberta] = useState<string | null>(null);
 
   const getQty = (id: string) => quantities[id] ?? 1;
   const setQty = (id: string, v: number) => setQuantities(prev => ({ ...prev, [id]: Math.max(1, v) }));
@@ -70,6 +77,9 @@ export function ProductItemForm({
               const customerPrice = prices[product.omie_codigo_produto];
               const lastOrderDate = customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`] || customerPurchaseHistory[`omie:${product.omie_codigo_produto}`] || '';
               const qty = getQty(product.id);
+              const ficha = canSeeFicha
+                ? specsByKey?.get(keyDeSku(product.account, product.omie_codigo_produto))
+                : undefined;
               return (
                 <div
                   key={product.id}
@@ -118,6 +128,17 @@ export function ProductItemForm({
                         className="h-7 w-16 text-xs text-center"
                       />
                     </div>
+                    {ficha && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs gap-1 text-primary shrink-0"
+                        onClick={() => setFichaAberta(product.id)}
+                      >
+                        <FileText className="w-3 h-3" /> Ficha
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant={isInCart ? 'secondary' : 'default'}
@@ -135,6 +156,13 @@ export function ProductItemForm({
                       {isInCart ? 'Adicionar +' : 'Adicionar'}
                     </Button>
                   </div>
+                  {ficha && (
+                    <FichaTecnicaSheet
+                      spec={ficha}
+                      open={fichaAberta === product.id}
+                      onOpenChange={(o) => setFichaAberta(o ? product.id : null)}
+                    />
+                  )}
                 </div>
               );
             })}

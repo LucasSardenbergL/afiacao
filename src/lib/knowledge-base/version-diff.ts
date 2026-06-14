@@ -48,3 +48,14 @@ export function decidirChangeType(input: { acao: AcaoVersao }): 'bulletin_revisi
     case 'completar': return 'data_completion';
   }
 }
+
+/**
+ * Infere o change_type de uma edição manual (Fase B2) a partir do diff vs a ficha atual.
+ * Mudou/removeu valor que já existia → 'correction'; só preencheu campos vazios (added) →
+ * 'data_completion'. Pré: diff NÃO-vazio (o chamador barra diff vazio = "nenhuma alteração").
+ */
+export function inferirChangeTypeDoDiff(diff: CampoDiff[]): 'correction' | 'data_completion' {
+  return diff.some((d) => d.tipo === 'changed' || d.tipo === 'removed')
+    ? 'correction'
+    : 'data_completion';
+}

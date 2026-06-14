@@ -1,6 +1,6 @@
 // Helpers de apresentação das paradas de rota.
 // Extraído de src/pages/AdminRoutePlanner.tsx (god-component split).
-import { Truck, ShoppingBag, Layers, Users, Calendar } from 'lucide-react';
+import { Truck, ShoppingBag, Layers, Users, Calendar, Target } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import type { StopType, ManualCustomer, RouteStop } from './types';
 
@@ -19,6 +19,7 @@ export const getStopIcon = (type: StopType) => {
     case 'hybrid_visit': return <Layers className="w-3.5 h-3.5" />;
     case 'manual_visit': return <Users className="w-3.5 h-3.5" />;
     case 'scheduled_visit': return <Calendar className="w-3.5 h-3.5" />;
+    case 'prospect_visit': return <Target className="w-3.5 h-3.5" />;
   }
 };
 

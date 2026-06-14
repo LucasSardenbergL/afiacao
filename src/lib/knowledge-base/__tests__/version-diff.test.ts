@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { diffVersions, decidirChangeType } from '@/lib/knowledge-base/version-diff';
+import { diffVersions, decidirChangeType, inferirChangeTypeDoDiff } from '@/lib/knowledge-base/version-diff';
 
 const base = { rendimento_m2_por_litro: 10, catalisador_codigo: 'FC.1', substrato: ['mdf'], demaos_recomendadas: 2, validade_dias: 365 };
 
@@ -31,5 +31,23 @@ describe('decidirChangeType', () => {
   });
   it('completar dado faltante → data_completion', () => {
     expect(decidirChangeType({ acao: 'completar' })).toBe('data_completion');
+  });
+});
+
+describe('inferirChangeTypeDoDiff', () => {
+  it('só added (preencheu vazios) → data_completion', () => {
+    expect(inferirChangeTypeDoDiff([{ campo: 'diluente_codigo', de: null, para: 'DF.1', tipo: 'added' }])).toBe('data_completion');
+  });
+  it('com changed → correction', () => {
+    expect(inferirChangeTypeDoDiff([{ campo: 'catalisador_codigo', de: 'FC.1', para: 'FC.2', tipo: 'changed' }])).toBe('correction');
+  });
+  it('com removed → correction', () => {
+    expect(inferirChangeTypeDoDiff([{ campo: 'catalisador_codigo', de: 'FC.1', para: null, tipo: 'removed' }])).toBe('correction');
+  });
+  it('misto added+changed → correction (houve correção de algo existente)', () => {
+    expect(inferirChangeTypeDoDiff([
+      { campo: 'diluente_codigo', de: null, para: 'DF.1', tipo: 'added' },
+      { campo: 'rendimento_m2_por_litro', de: 10, para: 12, tipo: 'changed' },
+    ])).toBe('correction');
   });
 });
