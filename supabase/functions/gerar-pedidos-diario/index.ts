@@ -260,18 +260,6 @@ Deno.serve(async (req: Request) => {
       if (body.intraday === true) intraday = true;
     }
 
-    // [P2 estrutural — fonte única] SÓ OBEN tem o "a caminho" FONTE ÚNICA (snapshot das POs do Omie) + a barreira
-    // fail-closed do motor (que é OBEN-only). Gerar p/ outra empresa rodaria o motor SEM a barreira contra
-    // re-sugerir recém-disparado (com em_transito removido, COLACOR ficaria sem proteção) → double-buy se o
-    // ListarSaldoPendente zerar/atrasar. Recusa explicitamente até a empresa ter on-order próprio protegido.
-    if (String(empresa).toUpperCase() !== "OBEN") {
-      console.warn(`[gerar-pedidos-diario] geração recusada p/ ${empresa} — só OBEN tem fonte-única+barreira.`);
-      return new Response(
-        JSON.stringify({ ok: false, error: `geração só habilitada p/ OBEN (fonte-única + barreira); ${empresa} sem on-order protegido` }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
     console.log(`[gerar-pedidos-diario] Iniciando ciclo ${empresa} ${dataCiclo}${intraday ? " (intraday)" : ""}`);
 
     // 1. RPC de geração
