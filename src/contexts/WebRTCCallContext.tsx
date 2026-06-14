@@ -306,9 +306,10 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       toast.error('Ligação indisponível na lente (somente leitura). Saia da lente para ligar.');
       return;
     }
-    // Start-mutex: barra makeCall/accept concorrente (a sessão SIP é única/global).
+    // Start-mutex: serializa makeCall concorrente (a sessão SIP é única/global).
     // Sem isso, duplo-toque/race abriria 2 INVITEs e o atendimento minted ficaria
-    // inconsistente. Liberado no finally em TODOS os caminhos de saída.
+    // inconsistente. Nota: acceptIncoming NÃO usa este mutex (atende chamada já
+    // existente, não abre novo INVITE). Auto-limpo no finally em TODOS os caminhos.
     if (startingCallRef.current) {
       toast.error('Já há uma chamada sendo iniciada.');
       return;

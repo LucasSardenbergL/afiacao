@@ -16,6 +16,10 @@ const { sipClientMock, invokeMock } = vi.hoisted(() => ({
     mute: vi.fn(),
     unmute: vi.fn(),
     isMuted: vi.fn(() => false),
+    // acceptIncoming precisa existir para que o caminho de áudio no acceptIncoming
+    // não lance TypeError; sem ele, o try/catch captura antes do fire-and-forget
+    // resolveCallParty().then() poder ser flushed pelo act().
+    acceptIncoming: vi.fn(),
   },
   invokeMock: vi.fn(),
 }));
@@ -305,6 +309,60 @@ describe('currentParty / atendimento / direção (Fase 1)', () => {
     });
 
     await waitFor(() => expect(result.current.currentCustomerUserId).toBe('cust-inbound'));
+    expect(result.current.callDirection).toBe('inbound');
+    expect(result.current.currentAtendimentoId).toMatch(UUID_RE);
+  });
+
+  it('inbound: accept com sipCallId diferente do ring re-resolve via branch else e reflete o cliente', async () => {
+    // Prova o branch else de acceptIncoming (~L489-492 do WebRTCCallContext.tsx):
+    // quando incomingPartyRef.current não bate o sipCallId da chamada recebida,
+    // o accept re-resolve em background guardado por geração (callGenerationRef).
+    //
+    // Mecanismo: o handler 'incomingCall' checa currentUserIdRef antes de chamar
+    // resolveCallParty. No ambiente de teste, supabase.auth.getUser() resolve com
+    // user=null → uid=null → handler sai cedo (L159-160) sem atualizar incomingPartyRef.
+    // Logo incomingPartyRef.current === null → sipCallId check retorna null →
+    // acceptIncoming toma o branch else → chama resolveCallParty diretamente.
+
+    const { result } = renderHook(() => useWebRTCCallContext(), { wrapper });
+    await waitFor(() => expect(SipClient).toHaveBeenCalledTimes(1));
+
+    const info: IncomingCallInfo = {
+      phone: '37977776666',
+      sipCallId: 'sip-else-branch',
+    } as IncomingCallInfo;
+
+    const incomingHandler = getHandler('incomingCall');
+
+    // Dispara e aguarda o handler concluir.
+    // Com uid=null (supabase não mockado → user sem id), o handler sai cedo sem
+    // chamar resolveCallParty → incomingPartyRef permanece null.
+    await act(async () => { await incomingHandler(info); });
+    await waitFor(() => expect(result.current.incomingCall?.sipCallId).toBe('sip-else-branch'));
+
+    // Confirma que o ring NÃO chamou resolveCallParty (uid era null → early return).
+    // O incomingPartyRef continua null → acceptIncoming GARANTIDAMENTE toma o branch else.
+    expect(vi.mocked(resolveCallParty)).not.toHaveBeenCalled();
+
+    // Configura o mock DEPOIS do beforeEach e do renderHook (para não ser sobrescrito
+    // pelo mockImplementation do beforeEach interno). O ring não consumiu nenhuma
+    // chamada, então o Once abaixo será consumido exclusivamente pelo branch else.
+    vi.mocked(resolveCallParty).mockResolvedValueOnce({
+      kind: 'cliente',
+      customerUserId: 'cust-reresolvido',
+      matchConfidence: 'last8',
+      phoneNormalized: '37977776666',
+    });
+
+    // acceptIncoming: sipId='sip-else-branch', incomingPartyRef.current=null →
+    // (null?.sipCallId === 'sip-else-branch') === false → branch else →
+    // void resolveCallParty(phone).then(p => setCurrentParty(p)) [fire-and-forget].
+    await act(async () => {
+      await result.current.acceptIncoming();
+    });
+
+    // O party re-resolvido pelo branch else deve aparecer no estado.
+    await waitFor(() => expect(result.current.currentCustomerUserId).toBe('cust-reresolvido'));
     expect(result.current.callDirection).toBe('inbound');
     expect(result.current.currentAtendimentoId).toMatch(UUID_RE);
   });
