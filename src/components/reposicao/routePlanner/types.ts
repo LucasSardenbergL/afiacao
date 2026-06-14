@@ -10,6 +10,10 @@ export type StopType =
   | 'scheduled_visit'
   | 'prospect_visit';
 export type PlanningMode = 'logistica' | 'comercial' | 'hibrido' | 'manual' | 'prospeccao';
+/** Contexto de uso da tela: "campo" (hunter) vs "equipe" (operacional). */
+export type PlanningContext = 'campo' | 'equipe';
+/** Filtro do universo de alvos no contexto campo. */
+export type TargetFilter = 'todos' | 'clientes' | 'prospects';
 export type FilterPeriod = 'all' | 'manha' | 'tarde';
 export type ManualFilter = 'todos' | 'nunca_visitados' | 'sem_compra_30d';
 
