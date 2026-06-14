@@ -13,8 +13,7 @@
     "github@claude-plugins-official": false,
     "posthog@claude-plugins-official": false,
     "chrome-devtools-mcp@claude-plugins-official": false,
-    "serena@claude-plugins-official": false,
-    "context7@claude-plugins-official": false
+    "serena@claude-plugins-official": false
   },
   "permissions": {
     "allow": [
