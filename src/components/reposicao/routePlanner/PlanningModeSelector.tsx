@@ -1,18 +1,17 @@
-// Seletor de modo de planejamento (logística/comercial/híbrido/manual/prospecção).
-// Extraído de src/pages/AdminRoutePlanner.tsx (god-component split).
+// Seletor de modo do contexto "Planejamento da equipe" (logística/comercial/
+// híbrido/manual). O modo "prospecção" saiu daqui — virou o contexto "Visitas em
+// campo" (RoutePlannerContextTabs). Renderizado só no contexto equipe.
 import type { ReactNode } from 'react';
-import { Route, Truck, ShoppingBag, Layers, Users, Target } from 'lucide-react';
+import { Route, Truck, ShoppingBag, Layers, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { PlanningMode } from './types';
 
 export function PlanningModeSelector({
   value,
   onChange,
-  showProspeccao = false,
 }: {
   value: PlanningMode;
   onChange: (mode: PlanningMode) => void;
-  showProspeccao?: boolean;
 }) {
   const baseModes: { key: PlanningMode; label: string; icon: ReactNode }[] = [
     { key: 'logistica', label: 'Logística', icon: <Truck className="w-3.5 h-3.5" /> },
@@ -25,7 +24,7 @@ export function PlanningModeSelector({
     <div className="flex flex-wrap items-center gap-2">
       <Route className="w-4 h-4 text-muted-foreground" />
       <span className="text-sm font-medium text-muted-foreground">Modo:</span>
-      {baseModes.map(mode => (
+      {baseModes.map((mode) => (
         <Button
           key={mode.key}
           variant={value === mode.key ? 'default' : 'outline'}
@@ -37,18 +36,6 @@ export function PlanningModeSelector({
           {mode.label}
         </Button>
       ))}
-      {showProspeccao && (
-        <Button
-          key="prospeccao"
-          variant={value === 'prospeccao' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => onChange('prospeccao')}
-          className="gap-1.5"
-        >
-          <Target className="w-3.5 h-3.5" />
-          Prospecção
-        </Button>
-      )}
     </div>
   );
 }

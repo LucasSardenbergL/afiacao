@@ -11,6 +11,7 @@ import { RouteStopCard } from '@/components/reposicao/routePlanner/RouteStopCard
 import { TodayVisitCard } from '@/components/reposicao/routePlanner/TodayVisitCard';
 import { CheckoutDialog } from '@/components/reposicao/routePlanner/CheckoutDialog';
 import { PlanningModeSelector } from '@/components/reposicao/routePlanner/PlanningModeSelector';
+import { RoutePlannerContextTabs } from '@/components/reposicao/routePlanner/RoutePlannerContextTabs';
 import { CitySelector } from '@/components/reposicao/routePlanner/CitySelector';
 import { PeriodFilter } from '@/components/reposicao/routePlanner/PeriodFilter';
 import { RouteActionButtons } from '@/components/reposicao/routePlanner/RouteActionButtons';
@@ -75,8 +76,10 @@ const AdminRoutePlanner = () => {
     handleStopCTA,
     openInWaze,
     openInGoogleMaps,
-    // prospeccao mode
-    showProspeccao,
+    // contexto campo/equipe
+    planningContext,
+    setPlanningContext,
+    temAcessoCampo,
     selectedCity,
     setSelectedCity,
     loadingProspects,
@@ -164,42 +167,44 @@ const AdminRoutePlanner = () => {
     <div className="min-h-screen bg-background pb-24">
 
       <main className="pt-16 px-4 max-w-4xl mx-auto space-y-4">
-        {/* Planning mode selector */}
-        <PlanningModeSelector value={planningMode} onChange={setPlanningMode} showProspeccao={showProspeccao} />
+        {/* Abas de contexto — só p/ quem tem acesso ao campo (gestor/master).
+            Sem isso, a equipe vê só o conteúdo de "equipe", sem switcher. */}
+        {temAcessoCampo && (
+          <RoutePlannerContextTabs value={planningContext} onChange={setPlanningContext} />
+        )}
 
-        {/* Prospeccao mode: city selector */}
-        {planningMode === 'prospeccao' && (
+        {planningContext === 'campo' ? (
+          /* ---------- VISITAS EM CAMPO (hunter) — UI enxuta ---------- */
           <CitySelector value={selectedCity} onChange={setSelectedCity} />
+        ) : (
+          /* ---------- PLANEJAMENTO DA EQUIPE — tela atual idêntica ---------- */
+          <>
+            <PlanningModeSelector value={planningMode} onChange={setPlanningMode} />
+
+            {planningMode === 'manual' && (
+              <ManualModeCard
+                selectedCount={selectedCustomerIds.size}
+                estimatedHours={estimatedManualHours}
+                filter={manualFilter}
+                onFilterChange={setManualFilter}
+                search={manualSearch}
+                onSearchChange={setManualSearch}
+                loading={loadingManual}
+                customers={filteredManualCustomers}
+                isSelected={(id) => selectedCustomerIds.has(id)}
+                isCheckedIn={(id) => !!visitStatuses.get(id)?.isCheckedIn}
+                timerLabel={(id) => formatTimer(visitTimers.get(id) ?? 0)}
+                onToggle={toggleCustomerSelection}
+                onCheckIn={handleCheckIn}
+                onCheckout={openCheckoutDialog}
+              />
+            )}
+
+            <PeriodFilter value={filterPeriod} onChange={setFilterPeriod} />
+            <StatsStrip planningMode={planningMode} stopCounts={stopCounts} />
+            <ScheduledVisitsPanel />
+          </>
         )}
-
-        {/* Manual mode UI */}
-        {planningMode === 'manual' && (
-          <ManualModeCard
-            selectedCount={selectedCustomerIds.size}
-            estimatedHours={estimatedManualHours}
-            filter={manualFilter}
-            onFilterChange={setManualFilter}
-            search={manualSearch}
-            onSearchChange={setManualSearch}
-            loading={loadingManual}
-            customers={filteredManualCustomers}
-            isSelected={(id) => selectedCustomerIds.has(id)}
-            isCheckedIn={(id) => !!visitStatuses.get(id)?.isCheckedIn}
-            timerLabel={(id) => formatTimer(visitTimers.get(id) ?? 0)}
-            onToggle={toggleCustomerSelection}
-            onCheckIn={handleCheckIn}
-            onCheckout={openCheckoutDialog}
-          />
-        )}
-
-        {/* Period filter */}
-        <PeriodFilter value={filterPeriod} onChange={setFilterPeriod} />
-
-        {/* Stats */}
-        <StatsStrip planningMode={planningMode} stopCounts={stopCounts} />
-
-        {/* Próximas visitas agendadas */}
-        <ScheduledVisitsPanel />
 
         {/* Map */}
         <Card className="overflow-hidden">
@@ -219,7 +224,7 @@ const AdminRoutePlanner = () => {
         <div className="space-y-2">
           <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
             <Navigation className="w-5 h-5 text-primary" />
-            Rota Otimizada
+            {planningContext === 'campo' ? 'Rota de hoje' : 'Rota Otimizada'}
             <Badge variant="outline" className="ml-auto text-xs">
               {optimizedRoute.length} paradas — ~{formatDuration(totalEstimatedMin.totalMin)}
             </Badge>

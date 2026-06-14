@@ -14,6 +14,7 @@ import { navLink } from '@/lib/maps/nav-link';
 import type {
   StopType,
   PlanningMode,
+  PlanningContext,
   FilterPeriod,
   ManualFilter,
   ManualCustomer,
@@ -29,6 +30,7 @@ import type { VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas
 import { agendaToRouteStop } from '@/lib/visitas/agenda-to-stop';
 import { prospectRowToStopDraft, buildGeocodeQuery } from '@/lib/route/prospect-stop';
 import type { ProspectRow } from '@/lib/route/prospect-stop';
+import { defaultContextForRole, nextModeForContext } from '@/lib/route/field-targets';
 
 // Linha de route_visits enriquecida com o nome do cliente (resolvido via profiles).
 export type TodayVisitRow = Tables<'route_visits'> & { customerName: string };
@@ -61,10 +63,12 @@ export function useRoutePlanner() {
   const [geocoding, setGeocoding] = useState(false);
   const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>('all');
   const [planningMode, setPlanningMode] = useState<PlanningMode>('hibrido');
-  // Gestor/master (que enxerga o modo Prospecção) abre direto nele — é o uso do
-  // hunter (visitar prospects) e evita o "Calculando oportunidades comerciais..."
-  // do Híbrido (scoring pesado) na largada. Setado 1× quando o auth confirma.
-  const modoInicialDefinido = useRef(false);
+  const [planningContext, setPlanningContext] = useState<PlanningContext>('equipe');
+  // Quem tem acesso ao contexto "campo" (a caça): master e gestor comercial.
+  const temAcessoCampo = isMaster || isGestorComercial;
+  // Define o contexto inicial 1× quando o auth confirma: master entra no campo,
+  // o resto na equipe. Sem isso, master cairia no Híbrido (scoring pesado).
+  const contextoInicialDefinido = useRef(false);
 
   // Manual mode state
   const [manualCustomers, setManualCustomers] = useState<ManualCustomer[]>([]);
@@ -99,14 +103,23 @@ export function useRoutePlanner() {
     }
   }, [authLoading, isStaff, navigate]);
 
-  // O master (founder/hunter) abre direto na Prospecção. Gestores comerciais
-  // mantêm o Híbrido (rota de visitas do dia) e trocam de modo num clique.
+  // Troca de contexto: ajusta o modo interno coerentemente (campo→prospeccao;
+  // equipe→hibrido se vinha de prospeccao). Helper puro testado.
+  const mudarContexto = useCallback((ctx: PlanningContext) => {
+    setPlanningContext(ctx);
+    setPlanningMode((prev) => nextModeForContext(ctx, prev));
+  }, []);
+
+  // Contexto inicial por papel, 1× quando o auth confirma. Só quem tem acesso ao
+  // campo é redirecionado; o resto fica em 'equipe' (default do estado).
   useEffect(() => {
-    if (!modoInicialDefinido.current && !authLoading && isMaster) {
-      setPlanningMode('prospeccao');
-      modoInicialDefinido.current = true;
+    if (!contextoInicialDefinido.current && !authLoading && temAcessoCampo) {
+      const ctx = defaultContextForRole(isMaster);
+      setPlanningContext(ctx);
+      setPlanningMode((prev) => nextModeForContext(ctx, prev));
+      contextoInicialDefinido.current = true;
     }
-  }, [authLoading, isMaster]);
+  }, [authLoading, temAcessoCampo, isMaster]);
 
   // Load logistic stops (existing orders)
   useEffect(() => {
@@ -1180,8 +1193,10 @@ export function useRoutePlanner() {
     setCheckoutNotes,
     checkoutRevenue,
     setCheckoutRevenue,
-    // prospeccao mode
-    showProspeccao: isMaster || isGestorComercial,
+    // contexto campo/equipe
+    planningContext,
+    setPlanningContext: mudarContexto,
+    temAcessoCampo,
     selectedCity,
     setSelectedCity,
     loadingProspects,
