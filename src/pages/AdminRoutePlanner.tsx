@@ -125,18 +125,20 @@ const AdminRoutePlanner = () => {
 
     fonteComCoords.forEach((stop) => {
       const numero = ordemRota.get(stop.id);
-      const cor = numero != null ? '#2563eb' : STOP_CONFIG[stop.stopType].markerColor;
+      const noModoCampo = planningContext === 'campo';
+      // Azul de "selecionado pra rota" só no campo; no equipe, cor do tipo (intacto).
+      const cor = (noModoCampo && numero != null) ? '#2563eb' : STOP_CONFIG[stop.stopType].markerColor;
       const conteudo = numero != null ? String(numero) : '';
       const icon = L.divIcon({
         className: 'custom-marker',
         html: `<div style="
           background: ${cor};
-          color: white; width: 26px; height: 26px; border-radius: 50%;
+          color: white; width: 28px; height: 28px; border-radius: 50%;
           display: flex; align-items: center; justify-content: center;
-          font-weight: 700; font-size: 12px; border: 2px solid white;
+          font-weight: 700; font-size: 13px; border: 2px solid white;
           box-shadow: 0 2px 6px rgba(0,0,0,0.3);
         ">${conteudo}</div>`,
-        iconSize: [26, 26], iconAnchor: [13, 13],
+        iconSize: [28, 28], iconAnchor: [14, 14],
       });
 
       const hoursLabel = stop.businessHoursOpen && stop.businessHoursClose
