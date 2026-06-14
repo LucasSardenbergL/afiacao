@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **212** custom migrations totais
-- **819** objetos esperados (criados por estas migrations)
+- **219** custom migrations totais
+- **833** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 219
+  - `function`: 229
   - `rls_policy`: 203
-  - `index`: 152
+  - `index`: 155
   - `cron_job`: 102
   - `table`: 96
-  - `trigger`: 43
+  - `trigger`: 44
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1809,6 +1809,33 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.tint_recalc_preco_oficial` | — |
 | `function` | `public.tint_apply_keys_snapshot` | — |
 
+### `20260611195000_reposicao_aplicar_snapshot_pendente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_snapshot_pendente` | — |
+
+### `20260611200000_reposicao_motor_fonte_unica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260611210000_data_health_estoque_via_marcador.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260611220000_reposicao_claim_full_sync.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.claim_estoque_full_sync` | — |
+| `function` | `public.finalizar_estoque_full_sync` | — |
+
 ### `20260612120000_auto_assign_role_omie_import_guard.sql`
 
 | Tipo | Objeto | Parent |
@@ -1841,6 +1868,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.kb_product_specs_insert_master` | `kb_product_specs` |
 | `rls_policy` | `public.kb_product_specs_update_master` | `kb_product_specs` |
 
+### `20260613120000_onda1_fase0_sales_orders_identidade.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.sales_orders_checkout_account_uq` | `sales_orders` |
+| `index` | `public.idx_sales_orders_origem` | `sales_orders` |
+
 ### `20260613130000_radar_rls_initplan_perf.sql`
 
 | Tipo | Objeto | Parent |
@@ -1871,6 +1905,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_kb_extraction_drafts_updated_at` | `kb_extraction_drafts` |
 | `rls_policy` | `public.kb_extraction_drafts_select_master` | `kb_extraction_drafts` |
 | `rls_policy` | `public.kb_extraction_drafts_delete_master` | `kb_extraction_drafts` |
+
+### `20260613170000_fix_auto_assign_master_escalation.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.auto_assign_user_role` | — |
+
+### `20260613180000_kb_hardening_codex.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.kbv_uma_viva` | `kb_product_spec_versions` |
+| `function` | `public.aprovar_versao_boletim` | — |
+| `function` | `public.kbv_block_mutation` | — |
+| `trigger` | `public.trg_kbv_immutable` | `kb_product_spec_versions` |
 
 ### `20260613190000_radar_fatia3.sql`
 

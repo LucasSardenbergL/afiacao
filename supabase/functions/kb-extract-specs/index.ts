@@ -244,7 +244,11 @@ Use a tool extract_product_specs.`;
     }
 
     // PERSIST-BEFORE-RESPONSE (compare-and-set por claim_token — não pisa claim de outra aba).
-    await supabase
+    // Codex #802-P1.2: NÃO mascarar error/rowcount. Mas o princípio é anti-custo — o resultado
+    // já foi PAGO, então devolvemos a spec ao front de qualquer forma (+ flag `persisted` + log),
+    // em vez de 4xx/5xx que fariam o front re-extrair e re-pagar. rowcount 0 = claim perdido
+    // (outra aba reclamou após o lease); error = falha de DB. Ambos viram log, não silêncio.
+    const { data: persistRows, error: persistErr } = await supabase
       .from("kb_extraction_drafts")
       .update({
         status: "ready",
@@ -255,9 +259,17 @@ Use a tool extract_product_specs.`;
         last_error: null,
       })
       .eq("document_id", documentId)
-      .eq("claim_token", claimToken);
+      .eq("claim_token", claimToken)
+      .select("document_id");
 
-    return new Response(JSON.stringify({ specs: spec, usage }), {
+    const persisted = !persistErr && (persistRows?.length ?? 0) === 1;
+    if (persistErr) {
+      console.error("[kb-extract-specs] persist falhou (resultado pago devolvido sem salvar):", persistErr.message);
+    } else if ((persistRows?.length ?? 0) === 0) {
+      console.warn("[kb-extract-specs] claim perdido na persistência (outra aba reclamou após o lease); spec devolvida sem persistir");
+    }
+
+    return new Response(JSON.stringify({ specs: spec, usage, persisted }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
