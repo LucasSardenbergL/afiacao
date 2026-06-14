@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { defaultContextForRole, nextModeForContext } from './field-targets';
+import { defaultContextForRole, nextModeForContext, dedupeStopsById } from './field-targets';
 
 describe('defaultContextForRole', () => {
   it('master abre no contexto campo (caça)', () => {
@@ -23,5 +23,23 @@ describe('nextModeForContext', () => {
     expect(nextModeForContext('equipe', 'comercial')).toBe('comercial');
     expect(nextModeForContext('equipe', 'hibrido')).toBe('hibrido');
     expect(nextModeForContext('equipe', 'manual')).toBe('manual');
+  });
+});
+
+describe('dedupeStopsById', () => {
+  it('remove ids repetidos preservando a primeira ocorrência', () => {
+    const out = dedupeStopsById([
+      { id: 'a', n: 1 },
+      { id: 'b', n: 2 },
+      { id: 'a', n: 3 },
+    ]);
+    expect(out).toEqual([{ id: 'a', n: 1 }, { id: 'b', n: 2 }]);
+  });
+  it('lista vazia → vazia', () => {
+    expect(dedupeStopsById([])).toEqual([]);
+  });
+  it('sem repetição → idêntica', () => {
+    const input = [{ id: 'x' }, { id: 'y' }, { id: 'z' }];
+    expect(dedupeStopsById(input)).toEqual(input);
   });
 });

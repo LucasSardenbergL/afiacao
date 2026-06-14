@@ -18,3 +18,15 @@ export function nextModeForContext(ctx: PlanningContext, currentMode: PlanningMo
   if (ctx === 'campo') return 'prospeccao';
   return currentMode === 'prospeccao' ? 'hibrido' : currentMode;
 }
+
+/** Dedupe por `id`, preservando a primeira ocorrência (ordem estável). */
+export function dedupeStopsById<T extends { id: string }>(stops: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const s of stops) {
+    if (seen.has(s.id)) continue;
+    seen.add(s.id);
+    out.push(s);
+  }
+  return out;
+}
