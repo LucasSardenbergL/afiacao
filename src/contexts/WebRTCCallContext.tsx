@@ -12,7 +12,7 @@ import { useSpinAnalysis } from '@/hooks/useSpinAnalysis';
 import type { SpinAnalysis } from '@/lib/spin/types';
 import { resolveCustomerByPhone } from '@/lib/call-session/resolve-customer';
 import { buildSessionPayload } from '@/lib/call-session/build-session-payload';
-import { resolveCallParty, shouldAutoRecord } from '@/lib/call-log/recording-policy';
+import { resolveCallParty, shouldAutoRecord, type ResolvedCallParty } from '@/lib/call-log/recording-policy';
 import { logCallStart, logAnswered, logClosed, enrichCallLog, markRecorded } from '@/lib/call-log/record';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 // O context OBJECT + hooks + types vivem no módulo LEVE webrtc-call-context.ts
@@ -49,6 +49,7 @@ async function persistCallSession(opts: {
   turns: TranscriptTurn[];
   analyses: SpinAnalysis[];
   dialedPhone: string;
+  atendimentoId: string | null;
 }): Promise<void> {
   try {
     const { data: { user } } = await supabase.auth.getUser();
@@ -56,6 +57,9 @@ async function persistCallSession(opts: {
 
     const { customerUserId, phoneDialed } = await resolveCustomerByPhone(opts.dialedPhone);
 
+    // Reverse-link best-effort: grava atendimento_id em farmer_calls quando disponível.
+    // O link primário confiável é sales_orders.atendimento_id — este é auxiliar (só existe
+    // quando endCall tem conteúdo gravável; remote-hangup/sem-transcrição não geram linha).
     const payload = buildSessionPayload({
       farmerId: user.id,
       customerUserId,
@@ -65,6 +69,7 @@ async function persistCallSession(opts: {
       endedAt: opts.endedAt,
       turns: opts.turns,
       analyses: opts.analyses,
+      atendimentoId: opts.atendimentoId,
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -95,6 +100,10 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   const [callOwnerId, setCallOwnerId] = useState<string | null>(null);
   // PR-INBOUND-CALLS
   const [incomingCall, setIncomingCall] = useState<IncomingCallInfo | null>(null);
+  // Onda 1 / Fase 1 — contexto da ligação ATIVA exposto pro HUD global.
+  const [currentParty, setCurrentParty] = useState<ResolvedCallParty | null>(null);
+  const [currentAtendimentoId, setCurrentAtendimentoId] = useState<string | null>(null);
+  const [callDirection, setCallDirection] = useState<'inbound' | 'outbound' | null>(null);
 
   const clientRef = useRef<SipClient | null>(null);
   const durationTimerRef = useRef<number | null>(null);
@@ -124,6 +133,11 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   // Ref atualizado por effect pra evitar problema de hoisting com transcription
   // (transcription é declarado depois dos useCallbacks)
   const turnsRef = useRef<TranscriptTurn[]>([]);
+  // Onda 1 / Fase 1 — guards do contexto da ligação:
+  const callGenerationRef = useRef(0);                          // guard de async-race (resolução tardia de party descartada)
+  const startingCallRef = useRef(false);                        // start-mutex (anti-concorrência de makeCall/accept)
+  const atendimentoIdRef = useRef<string | null>(null);         // snapshot do atendimento pro persist (Task 2 usa)
+  const incomingPartyRef = useRef<{ sipCallId: string; party: ResolvedCallParty } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -161,6 +175,9 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
           });
           // Enriquece com BINA (query mais lenta) — não bloqueia o ring.
           const party = await resolveCallParty(info.phone);
+          // Guarda o party do ring por sipCallId pro acceptIncoming reusar sem
+          // re-resolver (se o accept chegar depois do lookup terminar).
+          incomingPartyRef.current = { sipCallId: info.sipCallId, party };
           if (party.customerUserId) {
             await enrichCallLog(info.sipCallId, party, shouldAutoRecord(party.kind));
           }
@@ -221,6 +238,16 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     // cliente, falha) — sem isso o rawMic ficava capturado (red dot aceso) até a
     // próxima ação do vendedor. Idempotente com o cleanup do endCall.
     cleanupAudioResources();
+    // Onda 1 / Fase 1 — fim da ligação: limpa o contexto exposto pro HUD e
+    // invalida qualquer resolução de party em voo (gen++). Reseta o mutex como
+    // backstop (se algum caminho de saída do makeCall não chegou no finally).
+    callGenerationRef.current += 1;
+    startingCallRef.current = false;
+    setCurrentParty(null);
+    setCurrentAtendimentoId(null);
+    setCallDirection(null);
+    atendimentoIdRef.current = null;
+    incomingPartyRef.current = null;
     if (dialedSipCallIdRef.current) {
       const sid = dialedSipCallIdRef.current;
       dialedSipCallIdRef.current = null;
@@ -284,78 +311,101 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       toast.error('Ligação indisponível na lente (somente leitura). Saia da lente para ligar.');
       return;
     }
-    setError(null);
-    setCallDuration(0);
-
-    const normalized = normalizeBrPhone(phoneNumber);
-    if (normalized.length < 10) {
-      const msg = 'Telefone inválido. É necessário DDD + número.';
-      setError(msg);
-      toast.error('Erro', { description: msg });
+    // Start-mutex: serializa makeCall concorrente (a sessão SIP é única/global).
+    // Sem isso, duplo-toque/race abriria 2 INVITEs e o atendimento minted ficaria
+    // inconsistente. Nota: acceptIncoming NÃO usa este mutex (atende chamada já
+    // existente, não abre novo INVITE). Auto-limpo no finally em TODOS os caminhos.
+    if (startingCallRef.current) {
+      toast.error('Já há uma chamada sendo iniciada.');
       return;
     }
-
-    if (!clientRef.current) {
-      setError('WebRTC não inicializado');
-      return;
-    }
-
-    // Telefonia — resolve quem é o número e decide se grava (cliente/fornecedor → auto;
-    // ou forceRecord pelo caller). recordingRef guia preroll/transcrição/persist abaixo.
-    const { data: { user } } = await supabase.auth.getUser();
-    const party = await resolveCallParty(phoneNumber);
-    const record = (opts?.forceRecord ?? false) || shouldAutoRecord(party.kind);
-    recordingRef.current = record;
-    const sipCallId = crypto.randomUUID();
-    dialedSipCallIdRef.current = sipCallId;
-    if (user) {
-      await logCallStart({
-        farmerId: user.id,
-        direction: 'outbound',
-        provider: 'nvoip_sip',
-        phoneRaw: phoneNumber,
-        party,
-        recorded: record,
-        sipCallId,
-        callerIdUsed: callerIdRef.current,
-      });
-    }
-
-    // PR4 — Reset refs de sessão antes de iniciar nova chamada
-    analysisHistoryRef.current = [];
-    dialedPhoneRef.current = normalized;
-    callStartedAtRef.current = new Date();
-
-    cleanupAudioResources();
-
+    startingCallRef.current = true;
     try {
-      const rawMic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      rawMicRef.current = rawMic;
+      setError(null);
+      setCallDuration(0);
 
-      let streamForCall: MediaStream = rawMic;
-      if (record) {
-        // Gravação ON: expõe vendorMicStream (liga transcrição) + mixa preroll LGPD.
-        setVendorMicStream(rawMic);
-        if (prerollUrl) {
-          const mix = await mixPrerollWithMic(prerollUrl, rawMic);
-          streamForCall = mix.stream;
-          // play() é disparado pelo useEffect ao detectar callState === 'established'
-          prerollPlayRef.current = mix.play;
-          prerollCloseRef.current = mix.close;
-          prerollDurationRef.current = mix.durationSeconds;
-        }
+      const normalized = normalizeBrPhone(phoneNumber);
+      if (normalized.length < 10) {
+        const msg = 'Telefone inválido. É necessário DDD + número.';
+        setError(msg);
+        toast.error('Erro', { description: msg });
+        return;
       }
-      // Gravação OFF (número avulso/desconhecido sem forceRecord): liga direto com o
-      // mic cru — sem preroll, sem transcrição (vendorMicStream fica null → useTranscription
-      // não inicia), sem prerollPlaying. Áudio bidirecional segue funcionando.
 
-      clientRef.current.makeCall(normalized, streamForCall);
-      toast.success('📞 Chamada iniciada', { description: `Ligando para ${formatBrPhone(normalized)}...` });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Erro ao iniciar chamada';
-      setError(msg);
+      if (!clientRef.current) {
+        setError('WebRTC não inicializado');
+        return;
+      }
+
+      // Cunha o atendimento + direção SÓ depois das validações de telefone/clientRef
+      // (telefone inválido não deve gerar atendimento). gen é capturado ANTES do
+      // await de resolveCallParty → uma resolução tardia de geração antiga é descartada.
+      const gen = ++callGenerationRef.current;
+      const atendimentoId = crypto.randomUUID();
+      atendimentoIdRef.current = atendimentoId;
+      setCurrentAtendimentoId(atendimentoId);
+      setCallDirection('outbound');
+
+      // Telefonia — resolve quem é o número e decide se grava (cliente/fornecedor → auto;
+      // ou forceRecord pelo caller). recordingRef guia preroll/transcrição/persist abaixo.
+      const { data: { user } } = await supabase.auth.getUser();
+      const party = await resolveCallParty(phoneNumber);
+      if (callGenerationRef.current === gen) setCurrentParty(party);
+      const record = (opts?.forceRecord ?? false) || shouldAutoRecord(party.kind);
+      recordingRef.current = record;
+      const sipCallId = crypto.randomUUID();
+      dialedSipCallIdRef.current = sipCallId;
+      if (user) {
+        await logCallStart({
+          farmerId: user.id,
+          direction: 'outbound',
+          provider: 'nvoip_sip',
+          phoneRaw: phoneNumber,
+          party,
+          recorded: record,
+          sipCallId,
+          callerIdUsed: callerIdRef.current,
+        });
+      }
+
+      // PR4 — Reset refs de sessão antes de iniciar nova chamada
+      analysisHistoryRef.current = [];
+      dialedPhoneRef.current = normalized;
+      callStartedAtRef.current = new Date();
+
       cleanupAudioResources();
-      toast.error('Erro na chamada', { description: msg });
+
+      try {
+        const rawMic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        rawMicRef.current = rawMic;
+
+        let streamForCall: MediaStream = rawMic;
+        if (record) {
+          // Gravação ON: expõe vendorMicStream (liga transcrição) + mixa preroll LGPD.
+          setVendorMicStream(rawMic);
+          if (prerollUrl) {
+            const mix = await mixPrerollWithMic(prerollUrl, rawMic);
+            streamForCall = mix.stream;
+            // play() é disparado pelo useEffect ao detectar callState === 'established'
+            prerollPlayRef.current = mix.play;
+            prerollCloseRef.current = mix.close;
+            prerollDurationRef.current = mix.durationSeconds;
+          }
+        }
+        // Gravação OFF (número avulso/desconhecido sem forceRecord): liga direto com o
+        // mic cru — sem preroll, sem transcrição (vendorMicStream fica null → useTranscription
+        // não inicia), sem prerollPlaying. Áudio bidirecional segue funcionando.
+
+        clientRef.current.makeCall(normalized, streamForCall);
+        toast.success('📞 Chamada iniciada', { description: `Ligando para ${formatBrPhone(normalized)}...` });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Erro ao iniciar chamada';
+        setError(msg);
+        cleanupAudioResources();
+        toast.error('Erro na chamada', { description: msg });
+      }
+    } finally {
+      startingCallRef.current = false;
     }
   }, [prerollUrl]);
 
@@ -367,6 +417,8 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     const analysesSnapshot = [...analysisHistoryRef.current];
     const dialedPhone = dialedPhoneRef.current;
     const wasRecording = recordingRef.current;
+    // Onda 1 / Fase 1 — captura antes do efeito terminal zerar o ref.
+    const atendimentoIdSnapshot = atendimentoIdRef.current;
 
     // Telefonia — duração/answered vêm do SipClient (callStartedAt só existe após accept).
     // Captura ANTES de hangUp (hangUp não zera callStartedAt, mas captura é mais seguro).
@@ -394,6 +446,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
         turns: turnsSnapshot,
         analyses: analysesSnapshot,
         dialedPhone,
+        atendimentoId: atendimentoIdSnapshot,
       });
     }
   }, []);
@@ -428,6 +481,24 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       return;
     }
     if (!incomingCall || !clientRef.current) return;
+
+    // Onda 1 / Fase 1 — cunha o atendimento + direção (inbound) e resolve o party.
+    const gen = ++callGenerationRef.current;
+    const atendimentoId = crypto.randomUUID();
+    atendimentoIdRef.current = atendimentoId;
+    setCurrentAtendimentoId(atendimentoId);
+    setCallDirection('inbound');
+    const sipId = incomingCall.sipCallId;
+    // Reusa o party já resolvido pelo ring (por sipCallId); se o ring ainda não
+    // resolveu (accept rápido), re-resolve em background e guarda por geração.
+    const ringParty = incomingPartyRef.current?.sipCallId === sipId ? incomingPartyRef.current.party : null;
+    if (ringParty) {
+      setCurrentParty(ringParty);
+    } else {
+      void resolveCallParty(incomingCall.phone).then((p) => {
+        if (callGenerationRef.current === gen) setCurrentParty(p);
+      });
+    }
 
     // Reset refs de sessão (mesma lógica do makeCall pro persist funcionar)
     analysisHistoryRef.current = [];
@@ -482,6 +553,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     }
     clientRef.current.rejectIncoming();
     setIncomingCall(null);
+    incomingPartyRef.current = null;
     toast.info('Chamada rejeitada');
   }, [incomingCall]);
 
@@ -550,6 +622,10 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     incomingCall,
     acceptIncoming,
     rejectIncoming,
+    currentParty,
+    currentCustomerUserId: currentParty?.customerUserId ?? null,
+    currentAtendimentoId,
+    callDirection,
   };
 
   return <WebRTCCallContext.Provider value={value}>{children}</WebRTCCallContext.Provider>;

@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react';
 import type { IncomingCallInfo } from '@/lib/sip/types';
 import type { TranscriptTurn, TranscriptionStatus } from '@/lib/transcription/types';
 import type { SpinAnalysis, SpinAnalysisStatus } from '@/lib/spin/types';
+import type { ResolvedCallParty } from '@/lib/call-log/recording-policy';
 
 /**
  * Context OBJECT + hooks do WebRTC — módulo LEVE, separado de propósito do
@@ -70,6 +71,13 @@ export interface WebRTCCallContextValue {
   incomingCall: IncomingCallInfo | null;
   acceptIncoming: () => Promise<void>;
   rejectIncoming: () => void;
+  /** Cliente resolvido da ligação ATIVA (guardado por geração; resolução tardia descartada). */
+  currentParty: ResolvedCallParty | null;
+  currentCustomerUserId: string | null;
+  /** Identidade do ATENDIMENTO (1 por ligação). Liga ligação ↔ N pedidos. */
+  currentAtendimentoId: string | null;
+  /** Direção da ligação ativa — define a origem do pedido (entrante/sainte). */
+  callDirection: 'inbound' | 'outbound' | null;
 }
 
 export const WebRTCCallContext = createContext<WebRTCCallContextValue | null>(null);
