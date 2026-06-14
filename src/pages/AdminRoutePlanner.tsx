@@ -12,7 +12,7 @@ import { TodayVisitCard } from '@/components/reposicao/routePlanner/TodayVisitCa
 import { CheckoutDialog } from '@/components/reposicao/routePlanner/CheckoutDialog';
 import { PlanningModeSelector } from '@/components/reposicao/routePlanner/PlanningModeSelector';
 import { RoutePlannerContextTabs } from '@/components/reposicao/routePlanner/RoutePlannerContextTabs';
-import { CitySelector } from '@/components/reposicao/routePlanner/CitySelector';
+import { CityMultiSelector } from '@/components/reposicao/routePlanner/CityMultiSelector';
 import { PeriodFilter } from '@/components/reposicao/routePlanner/PeriodFilter';
 import { RouteActionButtons } from '@/components/reposicao/routePlanner/RouteActionButtons';
 import { ManualModeCard } from '@/components/reposicao/routePlanner/ManualModeCard';
@@ -80,8 +80,9 @@ const AdminRoutePlanner = () => {
     planningContext,
     setPlanningContext,
     temAcessoCampo,
-    selectedCity,
-    setSelectedCity,
+    selectedCities,
+    toggleCity,
+    removeCity,
     loadingProspects,
   } = useRoutePlanner();
 
@@ -175,7 +176,7 @@ const AdminRoutePlanner = () => {
 
         {planningContext === 'campo' ? (
           /* ---------- VISITAS EM CAMPO (hunter) — UI enxuta ---------- */
-          <CitySelector value={selectedCity} onChange={setSelectedCity} />
+          <CityMultiSelector value={selectedCities} onToggle={toggleCity} onRemove={removeCity} />
         ) : (
           /* ---------- PLANEJAMENTO DA EQUIPE — tela atual idêntica ---------- */
           <>
@@ -260,7 +261,7 @@ const AdminRoutePlanner = () => {
               <CardContent className="py-8 text-center text-muted-foreground">
                 {planningMode === 'logistica' ? 'Nenhum pedido com coleta/entrega pendente.'
                   : planningMode === 'comercial' ? 'Nenhuma visita comercial disponível. Configure datas de afiação nas ferramentas dos clientes para ativar visitas preventivas.'
-                  : planningMode === 'prospeccao' ? 'Selecione uma cidade acima para ver os prospects.'
+                  : planningMode === 'prospeccao' ? 'Selecione uma ou mais cidades acima para ver os alvos (clientes + prospects).'
                   : 'Nenhuma parada encontrada.'}
               </CardContent>
             </Card>

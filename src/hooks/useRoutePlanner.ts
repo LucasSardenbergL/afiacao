@@ -30,7 +30,7 @@ import type { VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas
 import { agendaToRouteStop } from '@/lib/visitas/agenda-to-stop';
 import { prospectRowToStopDraft, buildGeocodeQuery } from '@/lib/route/prospect-stop';
 import type { ProspectRow } from '@/lib/route/prospect-stop';
-import { defaultContextForRole, nextModeForContext } from '@/lib/route/field-targets';
+import { defaultContextForRole, nextModeForContext, dedupeStopsById } from '@/lib/route/field-targets';
 
 // Linha de route_visits enriquecida com o nome do cliente (resolvido via profiles).
 export type TodayVisitRow = Tables<'route_visits'> & { customerName: string };
@@ -89,11 +89,23 @@ export function useRoutePlanner() {
   // Visit timers (seconds elapsed per active check-in)
   const [visitTimers, setVisitTimers] = useState<Map<string, number>>(new Map());
 
-  // Prospecção mode state
-  const [selectedCity, setSelectedCity] = useState<CityOption | null>(null);
+  // Contexto campo: cidades escolhidas (multi) + alvos carregados.
+  const [selectedCities, setSelectedCities] = useState<CityOption[]>([]);
   const [prospectStops, setProspectStops] = useState<RouteStop[]>([]);
   const [carteiraCidadeStops, setCarteiraCidadeStops] = useState<RouteStop[]>([]);
   const [loadingProspects, setLoadingProspects] = useState(false);
+
+  const toggleCity = useCallback((city: CityOption) => {
+    setSelectedCities((prev) =>
+      prev.some((c) => c.codigo === city.codigo)
+        ? prev.filter((c) => c.codigo !== city.codigo)
+        : [...prev, city],
+    );
+  }, []);
+
+  const removeCity = useCallback((codigo: string) => {
+    setSelectedCities((prev) => prev.filter((c) => c.codigo !== codigo));
+  }, []);
 
   const { agenda, clientScores, loading: scoringLoading } = useFarmerScoring();
 
@@ -727,15 +739,25 @@ export function useRoutePlanner() {
     }
   };
 
-  const loadProspectStops = useCallback(async (city: CityOption) => {
+  // Prospects de N cidades: N chamadas à RPC single (top-50 por cidade),
+  // juntadas e deduplicadas no client. 2-4 cidades = 2-4 round-trips (OK).
+  const loadProspectStops = useCallback(async (cities: CityOption[]) => {
+    if (cities.length === 0) { setProspectStops([]); return; }
     setLoadingProspects(true);
     try {
-      const { data, error } = await supabase.rpc(
-        'radar_prospects_para_rota' as never,
-        { p_municipio_codigo: city.codigo, p_limit: 50 } as never,
+      const results = await Promise.all(
+        cities.map((city) =>
+          supabase.rpc(
+            'radar_prospects_para_rota' as never,
+            { p_municipio_codigo: city.codigo, p_limit: 50 } as never,
+          ),
+        ),
       );
-      if (error) throw error;
-      const rows = (data ?? []) as unknown as ProspectRow[];
+      const rows: ProspectRow[] = [];
+      for (const { data, error } of results) {
+        if (error) throw error;
+        rows.push(...((data ?? []) as unknown as ProspectRow[]));
+      }
       const stops: RouteStop[] = rows.map((row) => {
         const draft = prospectRowToStopDraft(row);
         // Pre-cache coordinates for already-geocoded prospects
@@ -762,7 +784,7 @@ export function useRoutePlanner() {
         };
         return enrichWithPriority(base);
       });
-      setProspectStops(stops);
+      setProspectStops(dedupeStopsById(stops));
     } catch (err) {
       console.error('Error loading prospect stops:', err);
       toast.error('Erro ao carregar prospects');
@@ -777,18 +799,29 @@ export function useRoutePlanner() {
   // ver clientes antigos + prospects da cidade numa rota única. addresses.city é
   // texto livre (pode divergir do municipio_nome RFB em acento/caixa) → ilike;
   // imprecisão aceita na v1 (prospects vêm por municipio_codigo, exatos).
-  const loadCarteiraDaCidade = useCallback(async (city: CityOption) => {
+  // Clientes da CARTEIRA nas cidades escolhidas (sales_visit, laranja). N queries
+  // ilike (addresses.city é texto livre), juntadas e deduplicadas por user_id.
+  const loadCarteiraDaCidade = useCallback(async (cities: CityOption[]) => {
+    if (cities.length === 0) { setCarteiraCidadeStops([]); return; }
     try {
-      const { data: addrs, error: addrErr } = await supabase
-        .from('addresses')
-        .select('user_id, street, number, neighborhood, city, state, zip_code, complement')
-        .ilike('city', city.nome)
-        .order('user_id', { ascending: true })  // determinístico: trunca sempre o mesmo subconjunto
-        .limit(100);
-      if (addrErr) throw addrErr;
-      const byUser = new Map<string, NonNullable<typeof addrs>[number]>();
-      for (const a of addrs ?? []) {
-        if (a.user_id && !byUser.has(a.user_id)) byUser.set(a.user_id, a);
+      const perCity = await Promise.all(
+        cities.map(async (city) => {
+          const { data: addrs, error } = await supabase
+            .from('addresses')
+            .select('user_id, street, number, neighborhood, city, state, zip_code, complement')
+            .ilike('city', city.nome)
+            .order('user_id', { ascending: true })  // determinístico: trunca o mesmo subconjunto
+            .limit(100);
+          if (error) throw error;
+          return { cityNome: city.nome, addrs: addrs ?? [] };
+        }),
+      );
+      // Dedup por user_id (primeira cidade que o trouxe vence) + guarda a cidade.
+      const byUser = new Map<string, { addr: (typeof perCity)[number]['addrs'][number]; cityNome: string }>();
+      for (const { cityNome, addrs } of perCity) {
+        for (const a of addrs) {
+          if (a.user_id && !byUser.has(a.user_id)) byUser.set(a.user_id, { addr: a, cityNome });
+        }
       }
       const userIds = Array.from(byUser.keys());
       if (userIds.length === 0) { setCarteiraCidadeStops([]); return; }
@@ -799,7 +832,7 @@ export function useRoutePlanner() {
         .or('is_employee.is.null,is_employee.eq.false');
       if (profErr) throw profErr;
       const stops: RouteStop[] = (profiles ?? []).map((p) => {
-        const a = byUser.get(p.user_id)!;
+        const { addr: a, cityNome } = byUser.get(p.user_id)!;
         const base: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'> = {
           id: `carteira-cidade-${p.user_id}`,
           customerUserId: p.user_id,
@@ -814,7 +847,7 @@ export function useRoutePlanner() {
             zip_code: a.zip_code ?? '',
             complement: a.complement ?? undefined,
           },
-          visitReason: `Cliente em ${city.nome}`,
+          visitReason: `Cliente em ${cityNome}`,
           stopType: 'sales_visit',
           timeSlot: null,
           businessHoursOpen: p.business_hours_open ?? null,
@@ -823,7 +856,7 @@ export function useRoutePlanner() {
         };
         return enrichWithPriority(base);
       });
-      setCarteiraCidadeStops(stops);
+      setCarteiraCidadeStops(dedupeStopsById(stops));
     } catch (err) {
       console.error('Error loading carteira da cidade:', err);
       setCarteiraCidadeStops([]);
@@ -833,14 +866,14 @@ export function useRoutePlanner() {
   // Load prospects + carteira when in prospeccao mode and a city is selected
   // NOTE: must live AFTER load* declarations (const is not hoisted)
   useEffect(() => {
-    if (planningMode === 'prospeccao' && selectedCity) {
-      void loadProspectStops(selectedCity);
-      void loadCarteiraDaCidade(selectedCity);
-    } else if (planningMode !== 'prospeccao') {
+    if (planningMode === 'prospeccao' && selectedCities.length > 0) {
+      void loadProspectStops(selectedCities);
+      void loadCarteiraDaCidade(selectedCities);
+    } else {
       setProspectStops([]);
       setCarteiraCidadeStops([]);
     }
-  }, [planningMode, selectedCity, loadProspectStops, loadCarteiraDaCidade]);
+  }, [planningMode, selectedCities, loadProspectStops, loadCarteiraDaCidade]);
 
   // Merge stops based on planning mode
   const allStops = useMemo(() => {
@@ -1197,8 +1230,9 @@ export function useRoutePlanner() {
     planningContext,
     setPlanningContext: mudarContexto,
     temAcessoCampo,
-    selectedCity,
-    setSelectedCity,
+    selectedCities,
+    toggleCity,
+    removeCity,
     loadingProspects,
     // handlers
     toggleCustomerSelection,
