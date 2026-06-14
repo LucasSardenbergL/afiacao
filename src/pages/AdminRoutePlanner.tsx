@@ -91,7 +91,9 @@ const AdminRoutePlanner = () => {
     }).addTo(leafletMap.current);
     markersRef.current = L.layerGroup().addTo(leafletMap.current);
     return () => { leafletMap.current?.remove(); leafletMap.current = null; };
-  }, [loading]);
+    // Inicializa o mapa quando a tela renderiza (auth pronto), NÃO quando a carga
+    // logística termina — senão uma query pendurada travava o mapa junto com a tela.
+  }, [authLoading]);
 
   // Update map markers
   useEffect(() => {
@@ -141,7 +143,10 @@ const AdminRoutePlanner = () => {
     leafletMap.current.fitBounds(bounds, { padding: [40, 40] });
   }, [optimizedRoute]);
 
-  const isLoading = authLoading || loading;
+  // Só o auth bloqueia a tela inteira. A carga logística (`loading`) e as demais
+  // cargas (scoring/prospects) têm loading INLINE por seção — uma query pendurada
+  // (ex.: pedidos) não pode mais travar a tela toda no spinner eterno.
+  const isLoading = authLoading;
 
   if (isLoading) {
     return (
@@ -236,8 +241,16 @@ const AdminRoutePlanner = () => {
               </CardContent>
             </Card>
           )}
+          {loading && planningMode !== 'prospeccao' && (
+            <Card>
+              <CardContent className="py-6 flex items-center justify-center gap-3">
+                <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                <span className="text-sm text-muted-foreground">Carregando paradas...</span>
+              </CardContent>
+            </Card>
+          )}
 
-          {optimizedRoute.length === 0 && !scoringLoading && !loadingProspects ? (
+          {optimizedRoute.length === 0 && !scoringLoading && !loadingProspects && !loading ? (
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
                 {planningMode === 'logistica' ? 'Nenhum pedido com coleta/entrega pendente.'
