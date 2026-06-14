@@ -31,7 +31,11 @@ const MAX_RETRIES = 3;
 
 // PesquisarPedCompra — paginar ATÉ A PÁGINA VAZIA (o nTotalPaginas do Omie SUB-REPORTA em listas grandes;
 // já mordeu CR/CP em omie-financeiro → PO omitida = double-buy). Sem corte de data (todas as POs abertas).
-const PEDIDOS_REGS_POR_PAGINA = 50;
+// [perf 2026-06-13] 50→200: o full sync varre TODAS as POs abertas de OBEN (acúmulo desde 2010) até a página
+// vazia, com 1,1s de sleep/página → a 50/página estourava o wall-clock do edge (~400s) e morria sem escrever o
+// snapshot (marker preso em 'syncing'). 200/página = 4× menos páginas → 4× menos sleeps. PURA PERF: mesmas POs,
+// zero mudança de semântica (derivação/de-dup/etapa-filtro independem do tamanho da página; o físico já usa 500).
+const PEDIDOS_REGS_POR_PAGINA = 200;
 const PEDIDOS_MAX_PAGINAS = 2000;          // teto técnico FATAL anti-loop (~100k POs, muito acima do real)
 const PEDIDOS_DATA_INICIAL = "01/01/2010"; // antes do início operacional — SEM corte de janela
 const ESPERA_CODINTS_TENTATIVAS = 4;       // bump: re-varre até ver os AFI-<id> recém-disparados
