@@ -15,6 +15,7 @@ import type {
   StopType,
   PlanningMode,
   PlanningContext,
+  TargetFilter,
   FilterPeriod,
   ManualFilter,
   ManualCustomer,
@@ -30,7 +31,14 @@ import type { VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas
 import { agendaToRouteStop } from '@/lib/visitas/agenda-to-stop';
 import { prospectRowToStopDraft, buildGeocodeQuery } from '@/lib/route/prospect-stop';
 import type { ProspectRow } from '@/lib/route/prospect-stop';
-import { defaultContextForRole, nextModeForContext, dedupeStopsById } from '@/lib/route/field-targets';
+import {
+  defaultContextForRole,
+  nextModeForContext,
+  dedupeStopsById,
+  particionarAlvos,
+  filtrarAlvos,
+  toggleTarget,
+} from '@/lib/route/field-targets';
 
 // Linha de route_visits enriquecida com o nome do cliente (resolvido via profiles).
 export type TodayVisitRow = Tables<'route_visits'> & { customerName: string };
@@ -105,6 +113,14 @@ export function useRoutePlanner() {
 
   const removeCity = useCallback((codigo: string) => {
     setSelectedCities((prev) => prev.filter((c) => c.codigo !== codigo));
+  }, []);
+
+  // Curadoria do contexto campo: alvos marcados pra rota + filtro do universo.
+  const [selectedTargetIds, setSelectedTargetIds] = useState<Set<string>>(new Set());
+  const [targetFilter, setTargetFilter] = useState<TargetFilter>('todos');
+
+  const toggleTargetId = useCallback((id: string) => {
+    setSelectedTargetIds((prev) => toggleTarget(prev, id));
   }, []);
 
   const { agenda, clientScores, loading: scoringLoading } = useFarmerScoring();
@@ -875,6 +891,11 @@ export function useRoutePlanner() {
     }
   }, [planningMode, selectedCities, loadProspectStops, loadCarteiraDaCidade]);
 
+  // Trocar as cidades reinicia a curadoria (ids antigos não pertencem ao novo universo).
+  useEffect(() => {
+    setSelectedTargetIds(new Set());
+  }, [selectedCities]);
+
   // Merge stops based on planning mode
   const allStops = useMemo(() => {
     // Also upgrade logistic stops to hybrid if they overlap with commercial
@@ -1025,12 +1046,38 @@ export function useRoutePlanner() {
     return geocodedAllStops.filter(s => s.timeSlot === filterPeriod || !s.timeSlot);
   }, [geocodedAllStops, filterPeriod]);
 
+  // ----- Contexto campo: universo de alvos vs rota curada -----
+  // O universo é tudo que veio das cidades (prospects + carteira), já geocodificado
+  // progressivamente. A rota contém SÓ os alvos marcados.
+  const fieldTargets = useMemo(
+    () => (planningContext === 'campo' ? geocodedAllStops : []),
+    [planningContext, geocodedAllStops],
+  );
+
+  const filteredFieldTargets = useMemo(
+    () => filtrarAlvos(fieldTargets, targetFilter),
+    [fieldTargets, targetFilter],
+  );
+
+  const resumoAlvos = useMemo(() => {
+    const { clientes, prospects } = particionarAlvos(fieldTargets);
+    return { totalClientes: clientes.length, totalProspects: prospects.length };
+  }, [fieldTargets]);
+
+  // Paradas que entram na otimização: no campo, só os marcados; na equipe, como hoje.
+  const stopsParaRota = useMemo(() => {
+    if (planningContext === 'campo') {
+      return geocodedAllStops.filter((s) => selectedTargetIds.has(s.id));
+    }
+    return filteredStops;
+  }, [planningContext, geocodedAllStops, selectedTargetIds, filteredStops]);
+
   // Optimize route: priority-grouped nearest-neighbor
   const optimizedRoute = useMemo(() => {
-    if (filteredStops.length <= 1) return filteredStops;
+    if (stopsParaRota.length <= 1) return stopsParaRota;
 
-    const withCoords = filteredStops.filter(s => s.lat && s.lng);
-    const withoutCoords = filteredStops.filter(s => !s.lat || !s.lng)
+    const withCoords = stopsParaRota.filter(s => s.lat && s.lng);
+    const withoutCoords = stopsParaRota.filter(s => !s.lat || !s.lng)
       .sort((a, b) => b.priorityScore - a.priorityScore);
 
     // Nearest-neighbor within a group, optionally starting from a given point
@@ -1093,7 +1140,7 @@ export function useRoutePlanner() {
       : [...buildPriorityRoute(morning), ...buildPriorityRoute(afternoon)];
 
     return [...optimized, ...withoutCoords];
-  }, [filteredStops, filterPeriod]);
+  }, [stopsParaRota, filterPeriod]);
 
   const openInWaze = (stop: RouteStop) => {
     const q = `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}`;
@@ -1234,6 +1281,14 @@ export function useRoutePlanner() {
     toggleCity,
     removeCity,
     loadingProspects,
+    // curadoria de alvos (contexto campo)
+    fieldTargets,
+    filteredFieldTargets,
+    resumoAlvos,
+    selectedTargetIds,
+    toggleTargetId,
+    targetFilter,
+    setTargetFilter,
     // handlers
     toggleCustomerSelection,
     handleCheckIn,
