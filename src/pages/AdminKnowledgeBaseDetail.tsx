@@ -13,6 +13,9 @@ import type { KbDocument } from '@/lib/knowledge-base/types';
 import { useKbProductSpecs } from '@/hooks/useKbProductSpecs';
 import { VersionHistory } from '@/components/knowledge-base/VersionHistory';
 import { CompletudeBadge } from '@/components/knowledge-base/CompletudeBadge';
+import { SpecLinkPanel } from '@/components/knowledge-base/SpecLinkPanel';
+import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 
 export default function AdminKnowledgeBaseDetail() {
   const { id } = useParams<{ id: string }>();
@@ -63,6 +66,8 @@ export default function AdminKnowledgeBaseDetail() {
 
 function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: number | undefined }) {
   const { data: existingSpecs, refetch: refetchSpecs } = useKbProductSpecs(data.product_code);
+  const { isMaster } = useAuth();
+  const { isImpersonating } = useImpersonation();
 
   return (
     <div className="container mx-auto p-4 space-y-3 max-w-4xl">
@@ -156,6 +161,14 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
 
           {existingSpecs && <CompletudeBadge spec={existingSpecs} />}
         </Card>
+      )}
+
+      {/* Itens de venda vinculados — só master, só ficha aprovada (a venda lê a view confirmed+approved). */}
+      {existingSpecs?.approved_at && existingSpecs.id && isMaster && (
+        <SpecLinkPanel
+          spec={{ id: existingSpecs.id, product_code: existingSpecs.product_code, product_name: existingSpecs.product_name }}
+          disabled={isImpersonating}
+        />
       )}
 
       {/* Histórico de versões do produto (Fase B1) — null quando não há versões */}
