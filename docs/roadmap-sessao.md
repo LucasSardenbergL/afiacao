@@ -16,11 +16,13 @@
 > em prod) — sem migration/PG17/edge, só Publish no fim.
 > Spec `docs/superpowers/specs/2026-06-14-roteirizador-visitas-campo-design.md` · Plano `docs/superpowers/plans/2026-06-14-roteirizador-visitas-campo.md`. Execução: **inline** (lição #819: subagentes thrasham neste repo).
 
-- 🔄 **Fase 1 (sub-PR 1) — Navegação 2-contextos**: eixo `PlanningContext` ('campo'|'equipe') acima do modo; master abre na caça, gestor na equipe, vendedor/separador sem switcher (tela atual idêntica); "Prospecção" sai da faixa de modos → vira o contexto Campo. Helper TDD `defaultContextForRole`/`nextModeForContext`.
-- ⏳ **Fase 2 (sub-PR 2) — Multi-cidade**: `CityMultiSelector` (chips removíveis) + N chamadas à RPC single `radar_prospects_para_rota` juntadas/dedupadas no client; carteira de N cidades via N `ilike`. Helper TDD `dedupeStopsById`.
-- ⏳ **Fase 3 (sub-PR 3) — Curadoria de alvos**: universo no mapa/lista, hunter marca quem visitar, "Rota de hoje" só dos marcados + resumo "N alvos: X clientes · Y prospects" + filtro Todos/Clientes/Prospects + fitBounds estável. Helpers TDD `particionar/filtrar/toggle`.
-- ⏳ **Founder (ao fim):** **Publish** do frontend no Lovable (sem migration/edge).
-- 📌 **Limitações v1 (registradas):** `useFarmerScoring` roda em background no campo (não-mexível, money-path) mas não aparece/trava; geocoding capa 15/vez (Nominatim); contagem de clientes no resumo (não no seletor); marcar alvo pela lista (toggle-no-pino = v2).
+- ✅ **Fase 1 — Navegação 2-contextos**: eixo `PlanningContext` ('campo'|'equipe') acima do modo; master abre na caça, gestor na equipe, vendedor/separador sem switcher (tela atual idêntica); "Prospecção" sai da faixa de modos → vira o contexto Campo. Helper TDD `defaultContextForRole`/`nextModeForContext`. `RoutePlannerContextTabs`.
+- ✅ **Fase 2 — Multi-cidade**: `CityMultiSelector` (chips removíveis) + N chamadas à RPC single `radar_prospects_para_rota` juntadas/dedupadas no client; carteira de N cidades via N `ilike`. Helper TDD `dedupeStopsById`. `CitySelector` (single) deletado.
+- ✅ **Fase 3 — Curadoria de alvos**: universo no mapa/lista (`FieldTargetsSummary`+`FieldTargetCard`), hunter marca quem visitar, "Rota de hoje" só dos marcados (`stopsParaRota`) + resumo "N alvos: X clientes · Y prospects" + filtro Todos/Clientes/Prospects + fitBounds estável (guard por chave de ids). Helpers TDD `particionar/filtrar/toggle` (53 testes).
+- ✅ **Auto-revisão adversária** (subagentes thrasham — Caminho B): pegou 1 regressão real (equipe pintava todos os pinos de azul → corrigida: azul só no campo-marcado, equipe mantém cor por tipo) + reverteu pino 28→26px. CI: TC 0 · LINT 0 · TEST 53 · BUILD 0.
+- ✅ **[PR #822](https://github.com/LucasSardenbergL/afiacao/pull/822)** (as 3 fases num PR — mesma tela, 1 Publish).
+- ⏳ **Founder (ao fim):** **Publish** do frontend no Lovable (sem migration/edge). Smoke no device (geolocation + Nominatim só no domínio publicado, não no preview).
+- 📌 **Limitações v1 (registradas):** `useFarmerScoring` roda em background no campo (não-mexível, money-path) mas não aparece/trava; geocoding capa 15/vez (Nominatim); contagem de clientes no resumo (não no seletor); marcar alvo pela lista (toggle-no-pino = v2); filtrar o universo com alvos já marcados de outro tipo deixa a linha da rota sem pino até voltar pra "Todos".
 
 ---
 
