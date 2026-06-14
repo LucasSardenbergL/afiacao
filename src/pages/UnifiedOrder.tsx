@@ -26,6 +26,7 @@ import { montarPlanoReplicacao, type ItemTinta } from '@/lib/pedido/replicar-ped
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { ProductItemForm } from '@/components/unified-order/ProductItemForm';
+import { useCurrentSpecsMap } from '@/hooks/useProductSpecLink';
 import { ServiceItemForm } from '@/components/unified-order/ServiceItemForm';
 import { CartItemList } from '@/components/unified-order/CartItemList';
 import { CartSummaryBar } from '@/components/unified-order/CartSummaryBar';
@@ -53,6 +54,8 @@ const UnifiedOrder = () => {
   const h = useUnifiedOrder();
   const { isCustomerMode } = h;
   const { user } = useAuth();
+  // Fichas técnicas (boletim↔SKU): mapa pequeno (só vínculos confirmados+aprovados), 1 query.
+  const { byKey: fichasByKey } = useCurrentSpecsMap();
   const [restoreOpen, setRestoreOpen] = useState(false);
 
   // "Cores do cliente": histórico de cores + pré-preenchimento do dialog de tingir.
@@ -339,13 +342,15 @@ const UnifiedOrder = () => {
                     <ProductItemForm title="Produtos Oben" products={h.filteredObenProducts} prices={h.customerPricesOben}
                       loading={h.loadingObenProducts} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
                       productItems={h.productItems} onAddProduct={h.addProductToCart}
-                      customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer} />
+                      customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer}
+                      specsByKey={fichasByKey} canSeeFicha={h.isStaff} />
                   </TabsContent>
                   <TabsContent value="colacor">
                     <ProductItemForm title="Produtos Colacor" products={h.filteredColacorProducts} prices={h.customerPricesColacor}
                       loading={h.loadingColacorProducts} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
                       productItems={h.productItems} onAddProduct={h.addProductToCart}
-                      customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer} />
+                      customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer}
+                      specsByKey={fichasByKey} canSeeFicha={h.isStaff} />
                   </TabsContent>
                   <TabsContent value="services">
                     <ServiceItemForm
