@@ -6,6 +6,23 @@
 
 ---
 
+## 🗺️ SESSÃO 2026-06-13 (roteirizador-prospects) — Mapa de visitas do hunter: carteira + prospects do Radar
+
+> Pedido do founder: como hunter, ele visita clientes antigos (carteira) E prospects novos. O Radar
+> lista prospects mas não dá pra plotar/rotear; o Roteirizador (`/admin/route-planner`) já faz
+> mapa+rota+check-in mas só da carteira. Objetivo: juntar os dois — numa cidade, ver carteira +
+> prospects no mesmo mapa, montar UMA rota e fazer check-in. Decisões (AskUserQuestion): estender o
+> Roteirizador (reusa mapa/rota/geo/check-in) · já com rota do dia + check-in.
+> **[PR #812](https://github.com/LucasSardenbergL/afiacao/pull/812) aberto + auto-merge squash** (CI local verde). Codex fora da cota → **Caminho B** (PG17 + review adversarial por subagente opus).
+
+- ✅ **Sub-PR A — fundação SQL** (`20260613230000_roteirizador_prospects.sql`): colunas de geo em `radar_empresas` (lat/lng/geocoded_em/geocode_status + CHECK) + RPCs `radar_salvar_geocode` e `radar_prospects_para_rota` (gate gestor/master, REVOKE anon) + helper TDD `src/lib/route/prospect-stop.ts`. **PG17 `db/test-roteirizador-prospects.sh` A1–A10 verde.**
+- ✅ **Sub-PR B — modo "Cidade"**: `StopType`+`prospect_visit` (amarelo) · `PlanningMode`+`prospeccao` · `CitySelector` (combobox via `radar_contagem_por_municipio`) · `loadProspectStops` (RPC + pré-cache do geo) · **`loadCarteiraDaCidade`** (clientes da cidade via `addresses`, laranja, junto dos prospects = o "juntar") · geocoding Nominatim persiste no banco via `radar_salvar_geocode` (filtro pula cacheado/falhado, não regride a carteira) · gate do modo `showProspeccao` (gestor/master). ⚠️ O implementer pulou a carteira-da-cidade (pedido central) — completei à mão.
+- ✅ **Sub-PR C — resultado da visita ao prospect (MUDANÇA DE DESENHO)**: em vez de `route_visits` nullable, o card do prospect reusa o **`RadarOutcomeMenu`** (Fatia 3) → registra direto no Radar (em conversa / não atendeu / virou cliente / descartado) via `registrar_contato_radar`, toast+undo+lente-aware. **Zero migration, zero risco.** O Caminho B (Explore dos consumidores de `route_visits`) confirmou que nullable SERIA seguro (trigger guarda `IS NOT NULL`, RLS via `visited_by`, sem FK) → follow-up se quiser prospect no "visitas de hoje".
+- ✅ **Review adversarial (subagente opus, Codex fora):** sem P1; 1 P2 (truncamento silencioso da carteira `.limit(50)` sem order → `.order('user_id').limit(100)`) + 3 P3 (ícone do prospect, guarda do geocode, isCheckedIn, label honesto) — todos corrigidos. Contratos SQL↔TS 1:1, gate fail-closed, sem loop de geocode. CI: TSC/LINT/BUILD 0 · 3321 testes.
+- ⏳ **Founder (ao fim):** aplicar migration `20260613230000_roteirizador_prospects.sql` no SQL Editor + **Publish** do frontend (a feature tem UI). Smoke no device (geolocation + Nominatim só no domínio publicado, não no preview).
+
+---
+
 ## 🔁 SESSÃO 2026-06-11 — Reposição: "a caminho" (on-order) para FONTE ÚNICA (money-path, retomada)
 
 > Rework pós-bloqueio do Codex (keep-both → overcount → ruptura). "Opção A endurecida":

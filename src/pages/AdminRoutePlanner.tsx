@@ -11,6 +11,7 @@ import { RouteStopCard } from '@/components/reposicao/routePlanner/RouteStopCard
 import { TodayVisitCard } from '@/components/reposicao/routePlanner/TodayVisitCard';
 import { CheckoutDialog } from '@/components/reposicao/routePlanner/CheckoutDialog';
 import { PlanningModeSelector } from '@/components/reposicao/routePlanner/PlanningModeSelector';
+import { CitySelector } from '@/components/reposicao/routePlanner/CitySelector';
 import { PeriodFilter } from '@/components/reposicao/routePlanner/PeriodFilter';
 import { RouteActionButtons } from '@/components/reposicao/routePlanner/RouteActionButtons';
 import { ManualModeCard } from '@/components/reposicao/routePlanner/ManualModeCard';
@@ -74,6 +75,11 @@ const AdminRoutePlanner = () => {
     handleStopCTA,
     openInWaze,
     openInGoogleMaps,
+    // prospeccao mode
+    showProspeccao,
+    selectedCity,
+    setSelectedCity,
+    loadingProspects,
   } = useRoutePlanner();
 
   // Initialize map
@@ -154,7 +160,12 @@ const AdminRoutePlanner = () => {
 
       <main className="pt-16 px-4 max-w-4xl mx-auto space-y-4">
         {/* Planning mode selector */}
-        <PlanningModeSelector value={planningMode} onChange={setPlanningMode} />
+        <PlanningModeSelector value={planningMode} onChange={setPlanningMode} showProspeccao={showProspeccao} />
+
+        {/* Prospeccao mode: city selector */}
+        {planningMode === 'prospeccao' && (
+          <CitySelector value={selectedCity} onChange={setSelectedCity} />
+        )}
 
         {/* Manual mode UI */}
         {planningMode === 'manual' && (
@@ -217,12 +228,21 @@ const AdminRoutePlanner = () => {
               </CardContent>
             </Card>
           )}
+          {loadingProspects && planningMode === 'prospeccao' && (
+            <Card>
+              <CardContent className="py-6 flex items-center justify-center gap-3">
+                <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                <span className="text-sm text-muted-foreground">Carregando prospects...</span>
+              </CardContent>
+            </Card>
+          )}
 
-          {optimizedRoute.length === 0 && !scoringLoading ? (
+          {optimizedRoute.length === 0 && !scoringLoading && !loadingProspects ? (
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
                 {planningMode === 'logistica' ? 'Nenhum pedido com coleta/entrega pendente.'
                   : planningMode === 'comercial' ? 'Nenhuma visita comercial disponível. Configure datas de afiação nas ferramentas dos clientes para ativar visitas preventivas.'
+                  : planningMode === 'prospeccao' ? 'Selecione uma cidade acima para ver os prospects.'
                   : 'Nenhuma parada encontrada.'}
               </CardContent>
             </Card>
@@ -232,7 +252,7 @@ const AdminRoutePlanner = () => {
                 key={stop.id}
                 stop={stop}
                 idx={idx}
-                isCheckedIn={!!visitStatuses.get(stop.customerUserId)?.isCheckedIn}
+                isCheckedIn={stop.stopType === 'prospect_visit' ? false : !!visitStatuses.get(stop.customerUserId)?.isCheckedIn}
                 timerLabel={formatTimer(visitTimers.get(stop.customerUserId) ?? 0)}
                 onStopCTA={() => handleStopCTA(stop)}
                 onCheckIn={() => handleCheckInStop(stop)}

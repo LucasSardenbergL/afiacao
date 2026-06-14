@@ -10,6 +10,7 @@ export const STOP_DURATION_MIN: Record<StopType, number> = {
   hybrid_visit: 30,
   manual_visit: 15,
   scheduled_visit: 20,
+  prospect_visit: 15,
 };
 
 export const PRIORITY_CONFIG: Record<
@@ -31,4 +32,5 @@ export const STOP_CONFIG: Record<
   hybrid_visit: { label: 'Híbrido', color: 'hsl(270, 70%, 55%)', bgClass: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200', textClass: 'text-purple-600', markerColor: '#a855f7' },
   manual_visit: { label: 'Manual', color: 'hsl(180, 70%, 45%)', bgClass: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200', textClass: 'text-cyan-600', markerColor: '#06b6d4' },
   scheduled_visit: { label: 'Agendada', color: 'hsl(45, 100%, 50%)', bgClass: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200', textClass: 'text-yellow-600', markerColor: '#eab308' },
+  prospect_visit: { label: 'Prospecção', color: 'hsl(48, 95%, 50%)', bgClass: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200', textClass: 'text-yellow-600', markerColor: '#eab308' },
 };

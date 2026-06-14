@@ -4,7 +4,7 @@
 // allStops/filteredStops/optimizedRoute, memos de stats e navegação.
 // A página mantém apenas os refs/efeitos do Leaflet (acoplados ao DOM) + o JSX.
 // Movimento puro, behavior-preserving — sem mudança de lógica.
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -19,6 +19,7 @@ import type {
   ManualCustomer,
   VisitStatus,
   RouteStop,
+  CityOption,
 } from '@/components/reposicao/routePlanner/types';
 import { enrichWithPriority } from '@/components/reposicao/routePlanner/priority';
 import { STOP_DURATION_MIN } from '@/components/reposicao/routePlanner/constants';
@@ -26,6 +27,8 @@ import type { Tables } from '@/integrations/supabase/types';
 import { visitasAgendadasTable } from '@/integrations/supabase/visitasAgendadas';
 import type { VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas';
 import { agendaToRouteStop } from '@/lib/visitas/agenda-to-stop';
+import { prospectRowToStopDraft, buildGeocodeQuery } from '@/lib/route/prospect-stop';
+import type { ProspectRow } from '@/lib/route/prospect-stop';
 
 // Linha de route_visits enriquecida com o nome do cliente (resolvido via profiles).
 export type TodayVisitRow = Tables<'route_visits'> & { customerName: string };
@@ -49,7 +52,7 @@ type OverdueToolRow = {
 
 export function useRoutePlanner() {
   const navigate = useNavigate();
-  const { user, isStaff, loading: authLoading } = useAuth();
+  const { user, isStaff, isMaster, isGestorComercial, loading: authLoading } = useAuth();
 
   const [logisticStops, setLogisticStops] = useState<RouteStop[]>([]);
   const [commercialStops, setCommercialStops] = useState<RouteStop[]>([]);
@@ -77,6 +80,12 @@ export function useRoutePlanner() {
   const [checkoutRevenue, setCheckoutRevenue] = useState('');
   // Visit timers (seconds elapsed per active check-in)
   const [visitTimers, setVisitTimers] = useState<Map<string, number>>(new Map());
+
+  // Prospecção mode state
+  const [selectedCity, setSelectedCity] = useState<CityOption | null>(null);
+  const [prospectStops, setProspectStops] = useState<RouteStop[]>([]);
+  const [carteiraCidadeStops, setCarteiraCidadeStops] = useState<RouteStop[]>([]);
+  const [loadingProspects, setLoadingProspects] = useState(false);
 
   const { agenda, clientScores, loading: scoringLoading } = useFarmerScoring();
 
@@ -692,6 +701,121 @@ export function useRoutePlanner() {
     }
   };
 
+  const loadProspectStops = useCallback(async (city: CityOption) => {
+    setLoadingProspects(true);
+    try {
+      const { data, error } = await supabase.rpc(
+        'radar_prospects_para_rota' as never,
+        { p_municipio_codigo: city.codigo, p_limit: 50 } as never,
+      );
+      if (error) throw error;
+      const rows = (data ?? []) as unknown as ProspectRow[];
+      const stops: RouteStop[] = rows.map((row) => {
+        const draft = prospectRowToStopDraft(row);
+        // Pre-cache coordinates for already-geocoded prospects
+        if (draft.lat != null && draft.lng != null && draft.geocodeFailed !== true) {
+          geocodedCoords.current.set(draft.id, { lat: draft.lat, lng: draft.lng });
+        }
+        const base: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'> = {
+          id: draft.id,
+          customerUserId: '',  // intentional — blocks check-in (route_visits FK)
+          customerName: draft.customerName,
+          phone: draft.phone ?? null,
+          address: draft.address,
+          visitReason: draft.visitReason,
+          stopType: 'prospect_visit',
+          timeSlot: null,
+          businessHoursOpen: null,
+          businessHoursClose: null,
+          status: 'prospect',
+          lat: draft.lat ?? undefined,
+          lng: draft.lng ?? undefined,
+          radarCnpj: draft.radarCnpj,
+          geocodeFailed: draft.geocodeFailed,
+          prospeccaoStatus: draft.prospeccaoStatus,
+        };
+        return enrichWithPriority(base);
+      });
+      setProspectStops(stops);
+    } catch (err) {
+      console.error('Error loading prospect stops:', err);
+      toast.error('Erro ao carregar prospects');
+      setProspectStops([]);
+    } finally {
+      setLoadingProspects(false);
+    }
+  }, []);
+
+  // Clientes da CARTEIRA na mesma cidade do prospect — entram no mapa como
+  // sales_visit (laranja) ao lado dos prospects (amarelo). É o "juntar" pedido:
+  // ver clientes antigos + prospects da cidade numa rota única. addresses.city é
+  // texto livre (pode divergir do municipio_nome RFB em acento/caixa) → ilike;
+  // imprecisão aceita na v1 (prospects vêm por municipio_codigo, exatos).
+  const loadCarteiraDaCidade = useCallback(async (city: CityOption) => {
+    try {
+      const { data: addrs, error: addrErr } = await supabase
+        .from('addresses')
+        .select('user_id, street, number, neighborhood, city, state, zip_code, complement')
+        .ilike('city', city.nome)
+        .order('user_id', { ascending: true })  // determinístico: trunca sempre o mesmo subconjunto
+        .limit(100);
+      if (addrErr) throw addrErr;
+      const byUser = new Map<string, NonNullable<typeof addrs>[number]>();
+      for (const a of addrs ?? []) {
+        if (a.user_id && !byUser.has(a.user_id)) byUser.set(a.user_id, a);
+      }
+      const userIds = Array.from(byUser.keys());
+      if (userIds.length === 0) { setCarteiraCidadeStops([]); return; }
+      const { data: profiles, error: profErr } = await supabase
+        .from('profiles')
+        .select('user_id, name, phone, business_hours_open, business_hours_close')
+        .in('user_id', userIds)
+        .or('is_employee.is.null,is_employee.eq.false');
+      if (profErr) throw profErr;
+      const stops: RouteStop[] = (profiles ?? []).map((p) => {
+        const a = byUser.get(p.user_id)!;
+        const base: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'> = {
+          id: `carteira-cidade-${p.user_id}`,
+          customerUserId: p.user_id,
+          customerName: p.name ?? 'Cliente',
+          phone: p.phone ?? null,
+          address: {
+            street: a.street ?? '',
+            number: a.number ?? '',
+            neighborhood: a.neighborhood ?? '',
+            city: a.city ?? '',
+            state: a.state ?? '',
+            zip_code: a.zip_code ?? '',
+            complement: a.complement ?? undefined,
+          },
+          visitReason: `Cliente em ${city.nome}`,
+          stopType: 'sales_visit',
+          timeSlot: null,
+          businessHoursOpen: p.business_hours_open ?? null,
+          businessHoursClose: p.business_hours_close ?? null,
+          status: 'carteira',
+        };
+        return enrichWithPriority(base);
+      });
+      setCarteiraCidadeStops(stops);
+    } catch (err) {
+      console.error('Error loading carteira da cidade:', err);
+      setCarteiraCidadeStops([]);
+    }
+  }, []);
+
+  // Load prospects + carteira when in prospeccao mode and a city is selected
+  // NOTE: must live AFTER load* declarations (const is not hoisted)
+  useEffect(() => {
+    if (planningMode === 'prospeccao' && selectedCity) {
+      void loadProspectStops(selectedCity);
+      void loadCarteiraDaCidade(selectedCity);
+    } else if (planningMode !== 'prospeccao') {
+      setProspectStops([]);
+      setCarteiraCidadeStops([]);
+    }
+  }, [planningMode, selectedCity, loadProspectStops, loadCarteiraDaCidade]);
+
   // Merge stops based on planning mode
   const allStops = useMemo(() => {
     // Also upgrade logistic stops to hybrid if they overlap with commercial
@@ -750,8 +874,9 @@ export function useRoutePlanner() {
 
         return manualStops;
       }
+      case 'prospeccao': return [...prospectStops, ...carteiraCidadeStops];
     }
-  }, [logisticStops, commercialStops, scheduledVisitStops, planningMode, selectedCustomerIds, manualCustomers]);
+  }, [logisticStops, commercialStops, scheduledVisitStops, planningMode, selectedCustomerIds, manualCustomers, prospectStops, carteiraCidadeStops]);
 
   // Geocode stops progressively (max 15, 1.1s delay between calls)
   const geocodedCoords = useRef<Map<string, { lat: number; lng: number }>>(new Map());
@@ -775,7 +900,7 @@ export function useRoutePlanner() {
     geocodingAbort.current = controller;
 
     const toGeocode = allStops
-      .filter(s => s.address.street && !geocodedCoords.current.has(s.id))
+      .filter(s => s.address.street && s.lat === undefined && !s.geocodeFailed && !geocodedCoords.current.has(s.id))
       .slice(0, 15); // Limit to 15
 
     if (toGeocode.length === 0) return;
@@ -786,7 +911,9 @@ export function useRoutePlanner() {
       for (const stop of toGeocode) {
         if (controller.signal.aborted) break;
         try {
-          const query = `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}, Brazil`;
+          const query = stop.stopType === 'prospect_visit'
+            ? buildGeocodeQuery(stop.address)
+            : `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}, Brazil`;
           const res = await fetch(
             `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`,
             { signal: controller.signal }
@@ -799,10 +926,28 @@ export function useRoutePlanner() {
             setGeocodedAllStops(prev => prev.map(s =>
               s.id === stop.id ? { ...s, lat: coords.lat, lng: coords.lng } : s
             ));
+            // Persist geocode for prospects (best-effort, fire-and-forget)
+            if (stop.stopType === 'prospect_visit' && stop.radarCnpj) {
+              void supabase.rpc('radar_salvar_geocode' as never, {
+                p_cnpj: stop.radarCnpj,
+                p_lat: coords.lat,
+                p_lng: coords.lng,
+                p_status: 'ok',
+              } as never);
+            }
           }
         } catch (e) {
           if ((e as { name?: string })?.name === 'AbortError') break;
           console.warn('Geocode failed for', stop.address.street);
+          // Persist geocode failure for prospects (best-effort, fire-and-forget)
+          if (stop.stopType === 'prospect_visit' && stop.radarCnpj) {
+            void supabase.rpc('radar_salvar_geocode' as never, {
+              p_cnpj: stop.radarCnpj,
+              p_lat: 0,
+              p_lng: 0,
+              p_status: 'falhou',
+            } as never);
+          }
         }
         // Nominatim rate limit: max 1 req/sec
         if (!controller.signal.aborted) {
@@ -957,7 +1102,7 @@ export function useRoutePlanner() {
 
   // Stats
   const stopCounts = useMemo(() => {
-    const counts: Record<string, number> = { pickup_tools: 0, deliver_tools: 0, sales_visit: 0, hybrid_visit: 0, scheduled_visit: 0 };
+    const counts: Record<string, number> = { pickup_tools: 0, deliver_tools: 0, sales_visit: 0, hybrid_visit: 0, scheduled_visit: 0, manual_visit: 0, prospect_visit: 0 };
     optimizedRoute.forEach(s => counts[s.stopType]++);
     return counts;
   }, [optimizedRoute]);
@@ -1022,6 +1167,11 @@ export function useRoutePlanner() {
     setCheckoutNotes,
     checkoutRevenue,
     setCheckoutRevenue,
+    // prospeccao mode
+    showProspeccao: isMaster || isGestorComercial,
+    selectedCity,
+    setSelectedCity,
+    loadingProspects,
     // handlers
     toggleCustomerSelection,
     handleCheckIn,
