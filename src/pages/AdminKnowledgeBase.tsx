@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useKnowledgeBaseList } from '@/hooks/useKnowledgeBaseList';
 import { useApprovalQueue } from '@/hooks/useApprovalQueue';
+import { useCompletude } from '@/hooks/useCompletude';
 import { KbDocumentRow } from '@/components/knowledge-base/KbDocumentRow';
 import { BatchUploadDialog } from '@/components/knowledge-base/BatchUploadDialog';
 import { ApprovalQueueSection } from '@/components/knowledge-base/ApprovalQueueSection';
+import { CompletudeSection } from '@/components/knowledge-base/CompletudeSection';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,6 +23,10 @@ export default function AdminKnowledgeBase() {
   // Fila de aprovação — lida aqui apenas para o badge da aba
   const filaAprovacao = useApprovalQueue();
   const qtdPendentes = filaAprovacao.data?.length ?? 0;
+
+  // Completude — lida aqui apenas para o badge da aba "Dados faltantes"
+  const completude = useCompletude();
+  const qtdFaltantes = completude.data?.length ?? 0;
 
   // Controla o dialog de upload em lote
   const [uploadAberto, setUploadAberto] = useState(false);
@@ -47,6 +53,17 @@ export default function AdminKnowledgeBase() {
                 className="text-[10px] px-1.5 py-0 h-4 min-w-4 flex items-center justify-center"
               >
                 {qtdPendentes}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="completude" className="gap-1.5">
+            Dados faltantes
+            {qtdFaltantes > 0 && (
+              <Badge
+                variant="secondary"
+                className="text-[10px] px-1.5 py-0 h-4 min-w-4 flex items-center justify-center"
+              >
+                {qtdFaltantes}
               </Badge>
             )}
           </TabsTrigger>
@@ -88,6 +105,11 @@ export default function AdminKnowledgeBase() {
         {/* ── Aba: A aprovar ── */}
         <TabsContent value="aprovacao" className="mt-3">
           <ApprovalQueueSection />
+        </TabsContent>
+
+        {/* ── Aba: Dados faltantes (completude) ── */}
+        <TabsContent value="completude" className="mt-3">
+          <CompletudeSection />
         </TabsContent>
       </Tabs>
 

@@ -4,6 +4,13 @@
 **Autor:** Claude (decisão solo; ⚠️ Codex fora por usage limit do Plus — **validação adversária retroativa pendente**, padrão do CLAUDE.md "Caminho B")
 **Status:** aprovado pelo founder pra implementar ("decido você e o Codex... pode ir implementando sem me perguntar")
 
+## ⚠️ Coerência com o OTE (atualização 2026-06-13, eu+Codex)
+
+Estes KPIs são **placar de visibilidade (gestão)**, NÃO a engine de comissão. A elegibilidade pra remuneração é definida **exclusivamente** pelo spec vigente de OTE (`2026-06-13-ote-remuneracao-variavel-farmer-design.md`) — qualquer rótulo "comissionável/output/higiene" abaixo é classificação de **design de dashboard**, não de pagamento. O OTE está em DESIGN (não-pronto pra virar folha). Divergências a reconciliar quando ele virar implementação:
+- **Dados parciais:** receita/positivação vêm de `sales_orders`, que cobre só uma fração do faturamento da Oben (backfill histórico pendente) → `DadosVendaParciaisBanner` avisa no dashboard; **não usar pra comissão até reconciliar**.
+- **Janela:** aqui é MTD (operacional); o OTE usa **quota trimestral cumulativa** (anti-Parkinson). A copy "do mês" é descritiva, não imperativa — migrar pra trimestral quando houver quota no sistema.
+- **Específico farmer:** **win-back** é placar de gestão (o OTE só talvez paga em V3); a **positivação** aqui **não tem ticket mínimo** (o OTE exige — pedido de R$1 não conta); **Receita MTD** é observação, não base (o OTE paga receita-vs-quota na V1 / margem-padrão na V2). A classificação "comissionável" da tabela abaixo é superseded por este aviso.
+
 ## Contexto / problema
 
 A lente "Ver como pessoa" expôs que o dashboard "Meu Dia" da **farmer** (account manager de carteira, tipo a Tatyana) mostra cards de **visita** — que não é o trabalho dela (visita é do "closer"). Investigando, achei que:

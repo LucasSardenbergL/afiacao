@@ -19,6 +19,17 @@ import type { IdentifiedItem } from '@/components/VoiceServiceInput';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
+import { computeCheckoutFingerprint, decideCheckoutEnvelope, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
+
+const CHECKOUT_ENV_KEY = 'unified_order_checkout_env';
+function loadCheckoutEnv(): CheckoutEnvelope | null {
+  if (typeof localStorage === 'undefined') return null;
+  try { const r = localStorage.getItem(CHECKOUT_ENV_KEY); return r ? JSON.parse(r) as CheckoutEnvelope : null; } catch { return null; }
+}
+function persistCheckoutEnv(e: CheckoutEnvelope | null) {
+  if (typeof localStorage === 'undefined') return;
+  try { if (e) localStorage.setItem(CHECKOUT_ENV_KEY, JSON.stringify(e)); else localStorage.removeItem(CHECKOUT_ENV_KEY); } catch { /* quota */ }
+}
 
 // Re-export shared types for backwards compatibility
 export { VOLUME_UNITS };
@@ -281,11 +292,16 @@ export function useUnifiedOrder() {
     filteredObenProducts, filteredColacorProducts,
   } = catalog;
 
+  // Idempotência: envelope {checkout_id, fingerprint, committed} durável (refresh).
+  // A fp amarra o checkout ao pedido; reseta só no clearCustomer e no sucesso TOTAL.
+  const checkoutEnvRef = useRef<CheckoutEnvelope | null>(loadCheckoutEnv());
+
   // Wrap clearCustomer to also clear cart + ordem de compra
   const clearCustomer = useCallback(() => {
     clearCustomerInternal();
     setCart([]);
     setOrdemCompra('');
+    checkoutEnvRef.current = null; persistCheckoutEnv(null);
     // user-tools cache é invalidado dentro de clearCustomerInternal
   }, [clearCustomerInternal, setCart]);
 
@@ -644,6 +660,29 @@ export function useUnifiedOrder() {
     if (submittingRef.current) return; // re-entrância: ver comentário na declaração
     submittingRef.current = true;
     setSubmitting(true);
+    // Impressão digital do pedido de produto (oben+colacor) + cliente.
+    const customerKey = String(selectedCustomer.local_user_id || selectedCustomer.codigo_cliente || '');
+    const fpItems = [
+      ...obenProductItems.map(c => ({ account: 'oben', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
+      ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
+    ];
+    const fingerprint = computeCheckoutFingerprint(customerKey, fpItems);
+    const decision = decideCheckoutEnvelope(checkoutEnvRef.current, fingerprint);
+    if (decision === 'conflict') {
+      setSubmitting(false);
+      toast.error('Há um envio pendente para este cliente com outro carrinho', {
+        description: 'Reenvie o pedido pendente (mesmo carrinho) ou limpe o cliente para começar um novo.',
+      });
+      return;
+    }
+    if (decision === 'new') {
+      checkoutEnvRef.current = { checkoutId: crypto.randomUUID(), fingerprint, committed: true };
+    } else {
+      // reuse: mantém o MESMO checkoutId; commit trava a fp (editar o carrinho depois = conflito).
+      checkoutEnvRef.current = { ...checkoutEnvRef.current, committed: true } as CheckoutEnvelope;
+    }
+    persistCheckoutEnv(checkoutEnvRef.current);
+    const checkoutId = checkoutEnvRef.current.checkoutId;
     try {
       // Etapa 3 (spec preco-realtime): a seleção dispara o auto-cadastro em
       // BACKGROUND; o join é AQUI — garante os códigos por-conta antes do
@@ -678,12 +717,26 @@ export function useUnifiedOrder() {
         getServicePrice,
         supabase,
         isCustomerMode,
+        checkoutId,
+        origem: isCustomerMode ? 'web_customer' : 'web_staff',
+        atendimentoId: null,
       });
       if (result.success && result.lastOrderData) {
         setLastOrderData(result.lastOrderData);
         setOrderSuccessOpen(true);
-        clearCart();
-        setNotes('');
+        if (result.allConfirmed) {
+          clearCart();
+          setNotes('');
+          checkoutEnvRef.current = null; persistCheckoutEnv(null); // sucesso TOTAL → próximo pedido = novo envelope
+        } else {
+          // Sucesso PARCIAL: NÃO limpar o carrinho nem resetar o envelope — o retry (mesma fp)
+          // reusa a MESMA linha/chave e não duplica a conta de PRODUTO já enviada.
+          toast.warning('Pedido parcialmente enviado', {
+            description: serviceItems.length > 0
+              ? 'Os produtos não duplicam no reenvio. Atenção: a OS de afiação pode duplicar — confira no Omie.'
+              : 'Alguma conta ficou pendente no ERP. Reenvie — os produtos não duplicam.',
+          });
+        }
         if (result.errors.length > 0) {
           toast.success('Pedido criado com avisos', {
             description: result.errors.map(e => e.message).join(' | '),

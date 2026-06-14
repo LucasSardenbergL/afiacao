@@ -12,6 +12,7 @@ import { SlaCardMeuDia } from '@/components/whatsapp/SlaCardMeuDia';
 import { FilaDoDia } from '@/components/fila/FilaDoDia';
 import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
 import { useMyPositivacao } from '@/hooks/useMyPositivacao';
+import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
 import { AtivarNotificacoesCard } from '@/components/push/AtivarNotificacoesCard';
 import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNudge';
 
@@ -46,6 +47,9 @@ export function FarmerDashboardV2() {
 
       {/* Opt-in de Web Push — some quando ativo/negado/sem suporte/dispensado */}
       <AtivarNotificacoesCard />
+
+      {/* Receita/positivação vêm de sales_orders, hoje parcial (backfill pendente) → aviso honesto */}
+      <DadosVendaParciaisBanner />
 
       {/* Placar do mês (KPIs da carteira) — o norte da farmer */}
       {positivacao && <PositivacaoHero kpis={positivacao} isHunter={false} />}

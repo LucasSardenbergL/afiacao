@@ -14,6 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      _backfill_oben_fila: {
+        Row: {
+          date_from: string
+          date_to: string
+          disparado_em: string | null
+          ordem: number
+          request_id: number | null
+        }
+        Insert: {
+          date_from: string
+          date_to: string
+          disparado_em?: string | null
+          ordem: number
+          request_id?: number | null
+        }
+        Update: {
+          date_from?: string
+          date_to?: string
+          disparado_em?: string | null
+          ordem?: number
+          request_id?: number | null
+        }
+        Relationships: []
+      }
       abc_xyz_classification: {
         Row: {
           classe_abc: Database["public"]["Enums"]["classe_abc"] | null
@@ -5900,6 +5924,176 @@ export type Database = {
           },
         ]
       }
+      kb_product_spec_versions: {
+        Row: {
+          approved_at: string
+          approved_by: string | null
+          brilho_ub: number | null
+          catalisador_codigo: string | null
+          catalisador_proporcao_pct: number | null
+          certificacoes_aplicaveis: string[] | null
+          change_note: string | null
+          change_type: string
+          created_at: string
+          demaos_recomendadas: number | null
+          densidade_g_cm3: number | null
+          diferenciais_chave: string[] | null
+          diluente_codigo: string | null
+          dureza: string | null
+          equipamentos_aplicacao: string[] | null
+          extraction_confidence: number | null
+          extraction_gaps: string[] | null
+          gramatura_g_m2_max: number | null
+          gramatura_g_m2_min: number | null
+          id: string
+          isento_metais_pesados: string[] | null
+          isento_substancias: string[] | null
+          kb_product_spec_id: string | null
+          lixa_recomendada: string | null
+          pot_life_horas: number | null
+          product_category: string | null
+          product_code: string
+          product_code_normalized: string
+          product_line: string | null
+          product_name: string | null
+          publico_alvo: string | null
+          rendimento_m2_por_litro: number | null
+          secagem_empilhamento_h: number | null
+          secagem_manuseio_h: number | null
+          secagem_total_h: number | null
+          solidos_pct: number | null
+          source_document_id: string | null
+          substrato: string[] | null
+          superseded_at: string | null
+          supplier: string
+          temp_aplicacao_c_max: number | null
+          temp_aplicacao_c_min: number | null
+          temp_armazenamento_c_max: number | null
+          temp_armazenamento_c_min: number | null
+          umidade_aplicacao_pct_max: number | null
+          umidade_aplicacao_pct_min: number | null
+          uso_recomendado: string | null
+          validade_dias: number | null
+          version_number: number
+          viscosidade_aplicacao_s: number | null
+          viscosidade_copo: string | null
+        }
+        Insert: {
+          approved_at?: string
+          approved_by?: string | null
+          brilho_ub?: number | null
+          catalisador_codigo?: string | null
+          catalisador_proporcao_pct?: number | null
+          certificacoes_aplicaveis?: string[] | null
+          change_note?: string | null
+          change_type: string
+          created_at?: string
+          demaos_recomendadas?: number | null
+          densidade_g_cm3?: number | null
+          diferenciais_chave?: string[] | null
+          diluente_codigo?: string | null
+          dureza?: string | null
+          equipamentos_aplicacao?: string[] | null
+          extraction_confidence?: number | null
+          extraction_gaps?: string[] | null
+          gramatura_g_m2_max?: number | null
+          gramatura_g_m2_min?: number | null
+          id?: string
+          isento_metais_pesados?: string[] | null
+          isento_substancias?: string[] | null
+          kb_product_spec_id?: string | null
+          lixa_recomendada?: string | null
+          pot_life_horas?: number | null
+          product_category?: string | null
+          product_code: string
+          product_code_normalized: string
+          product_line?: string | null
+          product_name?: string | null
+          publico_alvo?: string | null
+          rendimento_m2_por_litro?: number | null
+          secagem_empilhamento_h?: number | null
+          secagem_manuseio_h?: number | null
+          secagem_total_h?: number | null
+          solidos_pct?: number | null
+          source_document_id?: string | null
+          substrato?: string[] | null
+          superseded_at?: string | null
+          supplier: string
+          temp_aplicacao_c_max?: number | null
+          temp_aplicacao_c_min?: number | null
+          temp_armazenamento_c_max?: number | null
+          temp_armazenamento_c_min?: number | null
+          umidade_aplicacao_pct_max?: number | null
+          umidade_aplicacao_pct_min?: number | null
+          uso_recomendado?: string | null
+          validade_dias?: number | null
+          version_number: number
+          viscosidade_aplicacao_s?: number | null
+          viscosidade_copo?: string | null
+        }
+        Update: {
+          approved_at?: string
+          approved_by?: string | null
+          brilho_ub?: number | null
+          catalisador_codigo?: string | null
+          catalisador_proporcao_pct?: number | null
+          certificacoes_aplicaveis?: string[] | null
+          change_note?: string | null
+          change_type?: string
+          created_at?: string
+          demaos_recomendadas?: number | null
+          densidade_g_cm3?: number | null
+          diferenciais_chave?: string[] | null
+          diluente_codigo?: string | null
+          dureza?: string | null
+          equipamentos_aplicacao?: string[] | null
+          extraction_confidence?: number | null
+          extraction_gaps?: string[] | null
+          gramatura_g_m2_max?: number | null
+          gramatura_g_m2_min?: number | null
+          id?: string
+          isento_metais_pesados?: string[] | null
+          isento_substancias?: string[] | null
+          kb_product_spec_id?: string | null
+          lixa_recomendada?: string | null
+          pot_life_horas?: number | null
+          product_category?: string | null
+          product_code?: string
+          product_code_normalized?: string
+          product_line?: string | null
+          product_name?: string | null
+          publico_alvo?: string | null
+          rendimento_m2_por_litro?: number | null
+          secagem_empilhamento_h?: number | null
+          secagem_manuseio_h?: number | null
+          secagem_total_h?: number | null
+          solidos_pct?: number | null
+          source_document_id?: string | null
+          substrato?: string[] | null
+          superseded_at?: string | null
+          supplier?: string
+          temp_aplicacao_c_max?: number | null
+          temp_aplicacao_c_min?: number | null
+          temp_armazenamento_c_max?: number | null
+          temp_armazenamento_c_min?: number | null
+          umidade_aplicacao_pct_max?: number | null
+          umidade_aplicacao_pct_min?: number | null
+          uso_recomendado?: string | null
+          validade_dias?: number | null
+          version_number?: number
+          viscosidade_aplicacao_s?: number | null
+          viscosidade_copo?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "kb_product_spec_versions_source_document_id_fkey"
+            columns: ["source_document_id"]
+            isOneToOne: false
+            referencedRelation: "kb_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       kb_product_specs: {
         Row: {
           approved_at: string | null
@@ -9594,6 +9788,8 @@ export type Database = {
       sales_orders: {
         Row: {
           account: string
+          atendimento_id: string | null
+          checkout_id: string | null
           created_at: string
           created_by: string
           customer_address: string | null
@@ -9610,6 +9806,7 @@ export type Database = {
           omie_pedido_id: number | null
           omie_response: Json | null
           order_date_kpi: string | null
+          origem: string | null
           ready_by_date: string | null
           status: string
           subtotal: number
@@ -9618,6 +9815,8 @@ export type Database = {
         }
         Insert: {
           account?: string
+          atendimento_id?: string | null
+          checkout_id?: string | null
           created_at?: string
           created_by: string
           customer_address?: string | null
@@ -9634,6 +9833,7 @@ export type Database = {
           omie_pedido_id?: number | null
           omie_response?: Json | null
           order_date_kpi?: string | null
+          origem?: string | null
           ready_by_date?: string | null
           status?: string
           subtotal?: number
@@ -9642,6 +9842,8 @@ export type Database = {
         }
         Update: {
           account?: string
+          atendimento_id?: string | null
+          checkout_id?: string | null
           created_at?: string
           created_by?: string
           customer_address?: string | null
@@ -9658,6 +9860,7 @@ export type Database = {
           omie_pedido_id?: number | null
           omie_response?: Json | null
           order_date_kpi?: string | null
+          origem?: string | null
           ready_by_date?: string | null
           status?: string
           subtotal?: number
@@ -14707,6 +14910,7 @@ export type Database = {
       }
     }
     Functions: {
+      _backfill_oben_tick: { Args: never; Returns: undefined }
       _carteira_mixgap_for_owner: { Args: { p_owner: string }; Returns: Json }
       _carteira_positivacao_for_owner: {
         Args: { p_owner: string }
@@ -14761,9 +14965,30 @@ export type Database = {
           pedidos_bloqueados_por_delta: number
         }[]
       }
+      aplicar_snapshot_pendente: {
+        Args: {
+          p_codints_aprovados: string[]
+          p_codints_em_aprovacao: string[]
+          p_empresa: string
+          p_meta?: Json
+          p_observed_at: string
+          p_pendente: Json
+          p_run_id: number
+        }
+        Returns: Json
+      }
       aprovar_pedido_sugerido: {
         Args: { p_pedido_id: number; p_usuario: string }
         Returns: Json
+      }
+      aprovar_versao_boletim: {
+        Args: {
+          p_change_note?: string
+          p_change_type: string
+          p_document_id: string
+          p_payload: Json
+        }
+        Returns: string
       }
       atualizar_campanha_datas_corte: {
         Args: {
@@ -14837,6 +15062,10 @@ export type Database = {
           pedidos_gerados: number
           skus_incluidos: number
         }[]
+      }
+      claim_estoque_full_sync: {
+        Args: { p_account: string; p_at: string; p_run_id: number }
+        Returns: boolean
       }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
       concluir_com_comprovacao: {
@@ -15068,6 +15297,18 @@ export type Database = {
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_user_can_access: {
         Args: { check_company?: string }
+        Returns: boolean
+      }
+      finalizar_estoque_full_sync: {
+        Args: {
+          p_account: string
+          p_at: string
+          p_error_message: string
+          p_meta: Json
+          p_run_id: number
+          p_status: string
+          p_total_synced: number
+        }
         Returns: boolean
       }
       finalize_nao_vinculados_snapshot: {

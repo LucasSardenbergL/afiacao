@@ -4,12 +4,15 @@ import { supabase } from '@/integrations/supabase/client';
 import { Card } from '@/components/ui/card';
 import { KbStatusBadge } from '@/components/knowledge-base/KbStatusBadge';
 import { KbSpecsExtractButton } from '@/components/knowledge-base/KbSpecsExtractButton';
+import { KbSpecsEditButton } from '@/components/knowledge-base/KbSpecsEditButton';
 import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Loader2, Database, Sparkles } from 'lucide-react';
 import type { KbDocument } from '@/lib/knowledge-base/types';
 import { useKbProductSpecs } from '@/hooks/useKbProductSpecs';
+import { VersionHistory } from '@/components/knowledge-base/VersionHistory';
+import { CompletudeBadge } from '@/components/knowledge-base/CompletudeBadge';
 
 export default function AdminKnowledgeBaseDetail() {
   const { id } = useParams<{ id: string }>();
@@ -104,12 +107,17 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
                 </Badge>
               )}
             </div>
-            <KbSpecsExtractButton
-              documentId={data.id}
-              documentTitle={data.title}
-              productCode={data.product_code}
-              onSaved={() => refetchSpecs()}
-            />
+            <div className="flex items-center gap-2 flex-wrap">
+              {existingSpecs && (
+                <KbSpecsEditButton spec={existingSpecs} onSaved={() => refetchSpecs()} />
+              )}
+              <KbSpecsExtractButton
+                documentId={data.id}
+                documentTitle={data.title}
+                productCode={data.product_code}
+                onSaved={() => refetchSpecs()}
+              />
+            </div>
           </div>
 
           {existingSpecs ? (
@@ -145,8 +153,13 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
               Clique acima pra extrair specs automaticamente do texto via Claude.
             </div>
           )}
+
+          {existingSpecs && <CompletudeBadge spec={existingSpecs} />}
         </Card>
       )}
+
+      {/* Histórico de versões do produto (Fase B1) — null quando não há versões */}
+      <VersionHistory supplier={existingSpecs?.supplier} productCode={existingSpecs?.product_code} />
 
       {data.content_extracted && (
         <Card className="p-3">

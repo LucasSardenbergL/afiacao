@@ -68,6 +68,12 @@ export interface SubmitOrderParams {
    *  resolve a identidade por user/documento. Desliga o preflight de identidade
    *  por-conta (que é regra de pedido STAFF multi-conta). Default: false. */
   isCustomerMode?: boolean;
+  /** Chave de idempotência por TENTATIVA de envio (estável entre retries; ver useUnifiedOrder). */
+  checkoutId: string;
+  /** Canal de origem. Na Fase 0 é null/'web_*'; a Fase 1 grava 'ligacao_sainte' etc. */
+  origem?: string | null;
+  /** Liga ligação ↔ N pedidos. null na Fase 0 (Fase 1 preenche). */
+  atendimentoId?: string | null;
 }
 
 export interface SubmitErrorEntry {
@@ -100,6 +106,9 @@ export interface SubmitOrderResult {
   printDataList: PrintOrderData[];
   lastOrderData: LastOrderDataShape | null;
   errors: SubmitErrorEntry[];
+  /** true só quando TODA conta com itens foi confirmada/reconciliada (sem 'pendente ERP').
+   *  O caller usa isso p/ decidir limpar o carrinho + resetar o checkout_id (idempotência). */
+  allConfirmed: boolean;
 }
 
 export interface SubmitQuoteParams {

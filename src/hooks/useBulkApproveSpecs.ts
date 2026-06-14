@@ -14,18 +14,19 @@ export interface BulkApproveResult {
 /**
  * Aprova (persiste) várias fichas técnicas em lote de forma **sequencial**.
  *
- * - Execução sequencial evita corridas no upsert por `product_code`.
- * - Payload idêntico ao `useSaveProductSpecs` (`extracted_by`, `approved_by`, `approved_at`).
+ * - Execução sequencial evita corridas na RPC por `product_code` (advisory lock server-side).
+ * - Aprovação passa pela RPC `aprovar_versao_boletim` (grava versão imutável + atualiza atual
+ *   + deleta rascunho de kb_extraction_drafts — tudo numa transação).
+ * - NÃO inclui document_id/approved_at/approved_by/extracted_by no p_payload: a RPC seta server-side.
+ * - `deleteDraft` foi REMOVIDO: a RPC cuida da limpeza do rascunho transacionalmente
+ *   (nota de RECONCILIAÇÃO com PR #802 no plano de versionamento).
  * - Falha em uma ficha não derruba as demais — erro é registrado e o loop segue.
- * - Ao final, invalida as queries `kb-product-specs`, `kb-approval-queue`, `kb-documents`
- *   e `kb-extraction-drafts`.
- * - `deleteDraft`: remove best-effort um rascunho de `kb_extraction_drafts` após aprovação
- *   individual; falha é silenciosa (rascunho órfão é inofensivo).
+ * - Ao final, invalida as queries `kb-product-specs`, `kb-approval-queue`, `kb-documents`,
+ *   `kb-extraction-drafts` e `kb-spec-versions`.
  */
 export function useBulkApproveSpecs(): {
   isApproving: boolean;
   approve: (resultados: ResultadoExtracao[]) => Promise<BulkApproveResult>;
-  deleteDraft: (documentId: string) => Promise<void>;
 } {
   const [isApproving, setIsApproving] = useState(false);
   const queryClient = useQueryClient();
@@ -44,25 +45,22 @@ export function useBulkApproveSpecs(): {
         throw new Error('Não autenticado');
       }
 
-      // Captura o ID em const tipada para satisfazer strictNullChecks no closure abaixo
-      const userId: string = user.id;
-
       let ok = 0;
       const erros: BulkApproveResult['erros'] = [];
 
-      // Loop sequencial: garante que o upsert por `product_code` nunca corra consigo mesmo
+      // Loop sequencial: garante que a RPC por `product_code` nunca corra consigo mesma.
+      // Cast `as never` no nome da RPC: aprovar_versao_boletim ainda não está em types.ts
+      // (Lovable regenera após apply da migration). NÃO adicionar ao types.ts à mão — lição §10.
       for (const { documentId, spec } of resultados) {
-        const payload = {
-          ...spec,
-          document_id: documentId,
-          extracted_by: userId,
-          approved_by: userId,
-          approved_at: new Date().toISOString(),
-        };
-
-        const { error } = await supabase
-          .from('kb_product_specs')
-          .upsert(payload, { onConflict: 'product_code' });
+        const { error } = await supabase.rpc(
+          'aprovar_versao_boletim' as never,
+          {
+            p_payload: spec,
+            p_document_id: documentId,
+            p_change_type: 'bulletin_revision',
+            p_change_note: null,
+          } as never,
+        );
 
         if (error) {
           erros.push({ documentId, error: error.message });
@@ -71,11 +69,13 @@ export function useBulkApproveSpecs(): {
         }
       }
 
-      // Invalida as queries dependentes para que a UI reflita o novo estado
+      // Invalida as queries dependentes para que a UI reflita o novo estado.
+      // kb-extraction-drafts: a RPC deleta transacionalmente, mas a UI precisa refrescar.
       await queryClient.invalidateQueries({ queryKey: ['kb-product-specs'] });
       await queryClient.invalidateQueries({ queryKey: ['kb-approval-queue'] });
       await queryClient.invalidateQueries({ queryKey: ['kb-documents'] });
       await queryClient.invalidateQueries({ queryKey: ['kb-extraction-drafts'] });
+      await queryClient.invalidateQueries({ queryKey: ['kb-spec-versions'] });
 
       setIsApproving(false);
       return { ok, erros };
@@ -83,20 +83,5 @@ export function useBulkApproveSpecs(): {
     [queryClient],
   );
 
-  /**
-   * Remove best-effort um rascunho de `kb_extraction_drafts` após aprovação individual.
-   * Falha silenciosa — rascunho órfão no banco é inofensivo (TTL de cleanup por migration).
-   *
-   * Usa cast `as never`/`as any` porque a tabela ainda não está nos tipos gerados pelo Lovable.
-   * NÃO adicionar a tabela ao types.ts à mão — lição §10 do CLAUDE.md.
-   */
-  const deleteDraft = useCallback(async (documentId: string): Promise<void> => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase.from('kb_extraction_drafts' as never) as any)
-      .delete()
-      .eq('document_id', documentId);
-    // Ignora erros: o rascunho órfão é inofensivo
-  }, []);
-
-  return { isApproving, approve, deleteDraft };
+  return { isApproving, approve };
 }

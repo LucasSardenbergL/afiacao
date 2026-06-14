@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 209
+-- Total de custom migrations: 212
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -228,7 +228,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260613120000', 'customer_canonical_alias', '20260613120000_customer_canonical_alias.sql'),
   ('20260613120000', 'kb_0c_aprovacao_master_only', '20260613120000_kb_0c_aprovacao_master_only.sql'),
   ('20260613130000', 'radar_rls_initplan_perf', '20260613130000_radar_rls_initplan_perf.sql'),
-  ('20260613160000', 'kb_extraction_drafts', '20260613160000_kb_extraction_drafts.sql')
+  ('20260613150000', 'kb_spec_versions_faseA', '20260613150000_kb_spec_versions_faseA.sql'),
+  ('20260613160000', 'kb_extraction_drafts', '20260613160000_kb_extraction_drafts.sql'),
+  ('20260613190000', 'radar_fatia3', '20260613190000_radar_fatia3.sql'),
+  ('20260613210000', 'radar_perf_indices', '20260613210000_radar_perf_indices.sql')
 )
 SELECT
   e.version,
@@ -1048,11 +1051,24 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_contatos_select_gestor', 'radar_contatos'),
   ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_municipios_select_gestor', 'radar_municipios'),
   ('radar_rls_initplan_perf', 'rls_policy', 'public', 'radar_ingest_state_select_gestor', 'radar_ingest_state'),
+  ('kb_spec_versions_faseA', 'table', 'public', 'kb_product_spec_versions', ''),
+  ('kb_spec_versions_faseA', 'index', 'public', 'idx_kbv_identidade', 'kb_product_spec_versions'),
+  ('kb_spec_versions_faseA', 'index', 'public', 'idx_kbv_source_doc', 'kb_product_spec_versions'),
+  ('kb_spec_versions_faseA', 'function', 'public', 'kbv_block_mutation', ''),
+  ('kb_spec_versions_faseA', 'function', 'public', 'aprovar_versao_boletim', ''),
+  ('kb_spec_versions_faseA', 'trigger', 'public', 'trg_kbv_immutable', 'kb_product_spec_versions'),
+  ('kb_spec_versions_faseA', 'rls_policy', 'public', 'kbv_select_staff', 'kb_product_spec_versions'),
   ('kb_extraction_drafts', 'table', 'public', 'kb_extraction_drafts', ''),
   ('kb_extraction_drafts', 'function', 'public', 'kb_extraction_draft_claim', ''),
   ('kb_extraction_drafts', 'trigger', 'public', 'trg_kb_extraction_drafts_updated_at', 'kb_extraction_drafts'),
   ('kb_extraction_drafts', 'rls_policy', 'public', 'kb_extraction_drafts_select_master', 'kb_extraction_drafts'),
-  ('kb_extraction_drafts', 'rls_policy', 'public', 'kb_extraction_drafts_delete_master', 'kb_extraction_drafts')
+  ('kb_extraction_drafts', 'rls_policy', 'public', 'kb_extraction_drafts_delete_master', 'kb_extraction_drafts'),
+  ('radar_fatia3', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('radar_fatia3', 'function', 'public', 'radar_atribuir_tarefa', ''),
+  ('radar_fatia3', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
+  ('radar_perf_indices', 'index', 'public', 'idx_radar_lista_novas', 'radar_empresas'),
+  ('radar_perf_indices', 'index', 'public', 'idx_radar_lista_estab', 'radar_empresas'),
+  ('radar_perf_indices', 'index', 'public', 'idx_radar_muni', 'radar_empresas')
 )
 SELECT
   e.migration,

@@ -35,13 +35,24 @@ interface MakeSupabaseOpts {
   invokeImpl?: (body: { action?: string }) => { data?: unknown; error?: unknown };
 }
 function makeSupabase(opts: MakeSupabaseOpts = {}) {
+  // ── caminho do INSERT: .from('sales_orders').insert().select('id').single() ──
   const single = vi.fn().mockResolvedValue({
     data: opts.insertError ? null : { id: opts.insertId ?? 'so-1' },
     error: opts.insertError ?? null,
   });
-  const select = vi.fn().mockReturnValue({ single });
-  const insert = vi.fn().mockReturnValue({ select });
-  const from = vi.fn().mockReturnValue({ insert });
+  const insertSelect = vi.fn().mockReturnValue({ single });
+  const insert = vi.fn().mockReturnValue({ select: insertSelect });
+  // ── caminho do LOOKUP idempotente: .from('sales_orders')
+  //    .select('id, omie_pedido_id').eq('checkout_id', …).eq('account', …).maybeSingle()
+  //    Fase 0 (sem linha prévia) → sempre null → ensureSalesOrderRow vai pro INSERT. ──
+  const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+  const eqAccount = vi.fn().mockReturnValue({ maybeSingle });
+  const eqCheckout = vi.fn().mockReturnValue({ eq: eqAccount });
+  const lookupSelect = vi.fn().mockReturnValue({ eq: eqCheckout });
+  // .select() é polimórfico: com args (lookup) usa a cadeia .eq().eq().maybeSingle();
+  // após .insert() (sem args, ou só 'id') usa .single(). Diferenciamos pelo callsite:
+  // o lookup chama from().select(...) direto; o insert chama from().insert().select().single().
+  const from = vi.fn().mockReturnValue({ insert, select: lookupSelect });
   const invoke = vi.fn().mockImplementation(async (_name: string, arg: { body: { action?: string } }) =>
     opts.invokeImpl ? opts.invokeImpl(arg.body) : { data: { omie_numero_pedido: '999' }, error: null },
   );
@@ -108,6 +119,9 @@ function makeParams(over: Partial<SubmitOrderParams> & { supabase: SubmitClient 
     companyProfiles: {},
     defaultProductionAssigneeId: null,
     getServicePrice: () => 0,
+    checkoutId: 'test-checkout',
+    origem: null,
+    atendimentoId: null,
     ...over,
   } as SubmitOrderParams;
 }
@@ -153,6 +167,8 @@ describe('submitOrder', () => {
       body: expect.objectContaining({ action: 'criar_pedido', account: 'oben' }),
     }));
     expect(r.results.some((s) => s.includes('PV Oben'))).toBe(true);
+    // Sync Omie OK → confirmação total → o caller pode limpar o carrinho + resetar o checkout_id.
+    expect(r.allConfirmed).toBe(true);
   });
 
   it('Oben: insert FALHA → aborta e NÃO chama o Omie', async () => {
@@ -180,6 +196,8 @@ describe('submitOrder', () => {
     expect(r.success).toBe(true);
     expect(r.results.some((s) => s.includes('pendente ERP'))).toBe(true);
     expect(r.errors.some((e) => e.step === 'sync_oben_omie')).toBe(true);
+    // Pendente ERP → NÃO é confirmação total → o caller mantém o carrinho/checkout_id p/ retry idempotente.
+    expect(r.allConfirmed).toBe(false);
   });
 
   it('Colacor produto acabado + responsável setado → cria ordem de produção', async () => {
