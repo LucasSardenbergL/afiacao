@@ -8766,7 +8766,11 @@ export type Database = {
           data_abertura: string | null
           descarte_motivo: string | null
           email: string | null
+          geocode_status: string | null
+          geocoded_em: string | null
           ja_cliente: boolean
+          lat: number | null
+          lng: number | null
           logradouro: string | null
           municipio_codigo: string | null
           municipio_nome: string | null
@@ -8799,7 +8803,11 @@ export type Database = {
           data_abertura?: string | null
           descarte_motivo?: string | null
           email?: string | null
+          geocode_status?: string | null
+          geocoded_em?: string | null
           ja_cliente?: boolean
+          lat?: number | null
+          lng?: number | null
           logradouro?: string | null
           municipio_codigo?: string | null
           municipio_nome?: string | null
@@ -8832,7 +8840,11 @@ export type Database = {
           data_abertura?: string | null
           descarte_motivo?: string | null
           email?: string | null
+          geocode_status?: string | null
+          geocoded_em?: string | null
           ja_cliente?: boolean
+          lat?: number | null
+          lng?: number | null
           logradouro?: string | null
           municipio_codigo?: string | null
           municipio_nome?: string | null
@@ -15581,12 +15593,42 @@ export type Database = {
         }[]
       }
       radar_kpis: { Args: never; Returns: Json }
+      radar_prospects_para_rota: {
+        Args: { p_limit?: number; p_municipio_codigo: string }
+        Returns: {
+          bairro: string
+          cep: string
+          cnpj: string
+          complemento: string
+          geocode_status: string
+          lat: number
+          lng: number
+          logradouro: string
+          municipio_nome: string
+          nome_fantasia: string
+          numero: string
+          prospeccao_status: string
+          razao_social: string
+          telefone1: string
+          telefone2: string
+          uf: string
+        }[]
+      }
       radar_recruzar_ja_cliente: { Args: never; Returns: number }
       radar_registrar_cadastro_omie: {
         Args: {
           p_cnpj: string
           p_codigo_cliente: string
           p_ja_existia?: boolean
+        }
+        Returns: Json
+      }
+      radar_salvar_geocode: {
+        Args: {
+          p_cnpj: string
+          p_lat?: number
+          p_lng?: number
+          p_status?: string
         }
         Returns: Json
       }
