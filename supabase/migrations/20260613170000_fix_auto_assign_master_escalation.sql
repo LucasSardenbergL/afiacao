@@ -55,8 +55,9 @@ $$;
 -- Validação inline.
 SELECT
   'auto_assign_master_escalation_fix OK'                                                              AS status,
-  -- o corpo NÃO referencia mais master_cnpj (ramo master removido):
-  (position('master_cnpj' in pg_get_functiondef('public.auto_assign_user_role()'::regprocedure)) = 0) AS ramo_master_removido,
+  -- o corpo NÃO lê mais company_config (= ramo master removido). NÃO usar 'master_cnpj' como marcador:
+  -- o pg_get_functiondef inclui COMENTÁRIOS, e o comentário acima menciona master_cnpj → falso-negativo.
+  (position('company_config' in pg_get_functiondef('public.auto_assign_user_role()'::regprocedure)) = 0) AS ramo_master_removido,
   -- mas segue atribuindo employee/customer:
   (position('''employee''' in pg_get_functiondef('public.auto_assign_user_role()'::regprocedure)) > 0) AS atribui_employee,
   (position('''customer''' in pg_get_functiondef('public.auto_assign_user_role()'::regprocedure)) > 0) AS atribui_customer,
