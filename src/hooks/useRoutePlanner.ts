@@ -61,6 +61,10 @@ export function useRoutePlanner() {
   const [geocoding, setGeocoding] = useState(false);
   const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>('all');
   const [planningMode, setPlanningMode] = useState<PlanningMode>('hibrido');
+  // Gestor/master (que enxerga o modo Prospecção) abre direto nele — é o uso do
+  // hunter (visitar prospects) e evita o "Calculando oportunidades comerciais..."
+  // do Híbrido (scoring pesado) na largada. Setado 1× quando o auth confirma.
+  const modoInicialDefinido = useRef(false);
 
   // Manual mode state
   const [manualCustomers, setManualCustomers] = useState<ManualCustomer[]>([]);
@@ -94,6 +98,15 @@ export function useRoutePlanner() {
       navigate('/', { replace: true });
     }
   }, [authLoading, isStaff, navigate]);
+
+  // O master (founder/hunter) abre direto na Prospecção. Gestores comerciais
+  // mantêm o Híbrido (rota de visitas do dia) e trocam de modo num clique.
+  useEffect(() => {
+    if (!modoInicialDefinido.current && !authLoading && isMaster) {
+      setPlanningMode('prospeccao');
+      modoInicialDefinido.current = true;
+    }
+  }, [authLoading, isMaster]);
 
   // Load logistic stops (existing orders)
   useEffect(() => {
