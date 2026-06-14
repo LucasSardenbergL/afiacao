@@ -252,7 +252,7 @@ const AdminRoutePlanner = () => {
                 key={stop.id}
                 stop={stop}
                 idx={idx}
-                isCheckedIn={!!visitStatuses.get(stop.customerUserId)?.isCheckedIn}
+                isCheckedIn={stop.stopType === 'prospect_visit' ? false : !!visitStatuses.get(stop.customerUserId)?.isCheckedIn}
                 timerLabel={formatTimer(visitTimers.get(stop.customerUserId) ?? 0)}
                 onStopCTA={() => handleStopCTA(stop)}
                 onCheckIn={() => handleCheckInStop(stop)}

@@ -60,7 +60,7 @@ export function CitySelector({ value, onChange }: CitySelectorProps) {
   });
 
   const label = value
-    ? `${value.nome} (${value.uf}) — ${value.aContatar} prospects`
+    ? `${value.nome} (${value.uf}) — ${value.total} prospects`
     : 'Selecione uma cidade…';
 
   return (
@@ -105,7 +105,7 @@ export function CitySelector({ value, onChange }: CitySelectorProps) {
                       {cidade.nome} ({cidade.uf})
                     </span>
                     <span className="ml-2 text-xs text-muted-foreground tabular-nums">
-                      {cidade.aContatar}
+                      {cidade.total}
                     </span>
                   </CommandItem>
                 ))}

@@ -14,6 +14,7 @@ import {
 import type { RouteStop } from './types';
 import { STOP_CONFIG, STOP_DURATION_MIN, PRIORITY_CONFIG } from './constants';
 import { getStopIcon, getCTALabel } from './renderHelpers';
+import { RadarOutcomeMenu } from '@/components/radar/RadarOutcomeMenu';
 
 export function RouteStopCard({
   stop,
@@ -103,9 +104,7 @@ export function RouteStopCard({
                 </Button>
               )}
               {stop.stopType === 'prospect_visit' ? (
-                <span className="text-xs text-muted-foreground italic">
-                  Prospect — registrar contato no Radar
-                </span>
+                stop.radarCnpj ? <RadarOutcomeMenu cnpj={stop.radarCnpj} /> : null
               ) : !isCheckedIn ? (
                 <Button
                   size="sm" variant="outline"

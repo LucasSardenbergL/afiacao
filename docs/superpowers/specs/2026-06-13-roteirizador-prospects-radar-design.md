@@ -49,12 +49,20 @@ O founder é o **hunter** — visita pessoalmente clientes antigos (carteira) **
 - **Juntar a carteira da cidade:** no modo `prospeccao`, também carrega os **clientes da carteira daquela cidade** (reusa a query de `customer_visit_scores`/`addresses` filtrada por `city`) como `sales_visit` stops → o `allStops` do modo mistura **prospects (amarelo) + carteira (laranja)** → `optimizedRoute` roteiriza os dois juntos. É o "mapa de visitas da cidade".
 - **Mapa:** automático (o `STOP_CONFIG` novo pinta o pin amarelo; popup do prospect mostra razão/CNAE/telefone + "navegar").
 
-### 3.3 Sub-PR 3 — Check-in de prospect (+ reflexo no Radar) ⚠️ Codex valida
+### 3.3 Sub-PR 3 — Resultado da visita ao prospect (registra direto no Radar) ✅ entregue
 
-- **Migration:** `ALTER route_visits ALTER customer_user_id DROP NOT NULL, ADD radar_cnpj text` + CHECK `(customer_user_id IS NOT NULL OR radar_cnpj IS NOT NULL)` (toda visita tem um alvo). O trigger de scoring **já** guarda `customer_user_id IS NOT NULL` → prospect (cnpj, customer NULL) não enfileira scoring (correto).
-- **`handleCheckInProspect(stop)`**: insere `route_visits {customer_user_id: NULL, radar_cnpj: stop.radarCnpj, visited_by: auth.uid(), visit_type: 'prospeccao', check_in_at, lat/lng}`. (A RLS "Staff can manage" permite; **Codex confirma se o #340 a apertou pra `visited_by`-scoped** — o check-in tem `visited_by=auth.uid()`, deve passar.)
-- **Check-out de prospect reflete no Radar:** o `CheckoutDialog` (result/notes) → além de atualizar `route_visits`, chama **`registrar_contato_radar(cnpj, acao, nota)`** (Fatia 2): `result='pedido_fechado'` → não fecha cliente sozinho (cadastro Omie é ação deliberada) mas marca `em_conversa`/oferece "Cadastrar no Omie"; `result` de conversa → `em_conversa`; `sem_intencao` → `descartado` (com confirmação). Mantém o Radar em dia com o que aconteceu na visita.
-- **Decisão a validar com Codex:** (a) `customer_user_id` nullable em `route_visits` é seguro vs todos os consumidores (queries que assumem NOT NULL?); (b) a RLS atual permite insert de prospect; (c) o reflexo no Radar (qual `result` → qual `acao`).
+> **Mudança de desenho (2026-06-13, decidida na implementação):** a spec previa `route_visits`
+> nullable + `radar_cnpj` pra gravar o check-in do prospect. Ao construir, optei por uma abordagem
+> **mais simples e segura**: o prospect "vive" no **Radar** (`radar_contatos`), não em `route_visits`
+> (que é a tabela de visitas de CLIENTES). O card do prospect reusa o **`RadarOutcomeMenu`** (componente
+> da Fatia 3, já em prod) → o founder registra o resultado **direto no Radar** via
+> `registrar_contato_radar` (em conversa / não atendeu / virou cliente / descartado-com-motivo), com
+> toast + undo + lente-aware. **Zero migration, zero risco em `route_visits`, fecha o loop no Radar.**
+
+- **`RouteStopCard`**: para `stopType==='prospect_visit'`, renderiza `<RadarOutcomeMenu cnpj={stop.radarCnpj} />` no lugar de check-in/checkout. Reusa 100% `useRegistrarContatoRadar`/`useDesfazerContatoRadar`.
+- **Carteira da cidade**: clientes mantêm check-in/checkout completo (`route_visits`, infra existente — inalterado).
+- **Caminho B (validado, vira follow-up):** o Explore dos consumidores de `route_visits` confirmou que tornar `customer_user_id` nullable **seria seguro** — o trigger de scoring já guarda `IS NOT NULL`; a RLS passa por `visited_by`/`carteira_visivel_para(NULL)→FALSE`; as edge functions de scoring filtram `IS NOT NULL`; sem FK. Fica registrado caso o founder queira o prospect também no "visitas de hoje" com geo/timestamp.
+- **Follow-up (não-bloqueante):** recarregar/remover o stop do prospect ao registrar resultado (hoje permanece visível com o toast; re-selecionar a cidade atualiza o mapa).
 
 ## 4. Acesso
 
@@ -70,7 +78,7 @@ Já é `isStaff` (master/farmer acham em **Admin → Roteirizador**). O founder 
 
 1. **Geocodificação** — migration (colunas + RPC `radar_salvar_geocode`) + geocodificação client cacheada + PG17.
 2. **Modo Cidade** — StopType/PlanningMode/CitySelector + RPC `radar_prospects_para_rota` + `loadProspectStops` + carteira-da-cidade junto + mapa.
-3. **Check-in de prospect** — migration `route_visits` nullable + `radar_cnpj` + `handleCheckInProspect` + reflexo no Radar. ⚠️ **Codex valida o design antes** (mexe em tabela existente + RLS #340).
+3. **Resultado da visita ao prospect** — `RouteStopCard` reusa `RadarOutcomeMenu` (registra direto no Radar via `registrar_contato_radar`). **Sem migration, sem mexer em `route_visits`.** O Caminho B validou que `route_visits` nullable seria seguro (vira follow-up se quiser prospect no "visitas de hoje").
 
 ## 7. Riscos / pontos honestos
 
