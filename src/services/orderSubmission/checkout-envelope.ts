@@ -1,4 +1,8 @@
-export interface CheckoutEnvelope { checkoutId: string; fingerprint: string; committed: boolean; }
+export interface CheckoutEnvelope {
+  checkoutId: string; fingerprint: string; committed: boolean;
+  // Metadata da ponte CONGELADA na criação (Fase 1): nunca lida ao vivo no submit.
+  customerUserId?: string | null; origem?: string | null; atendimentoId?: string | null;
+}
 export type CheckoutDecision = 'reuse' | 'new' | 'conflict';
 
 /** Impressão digital estável do pedido de PRODUTO (cliente + itens oben/colacor). Ordem-independente.

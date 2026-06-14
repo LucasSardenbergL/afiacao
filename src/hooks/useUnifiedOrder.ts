@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -20,6 +20,7 @@ import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
 import { computeCheckoutFingerprint, decideCheckoutEnvelope, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
+import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
 
 const CHECKOUT_ENV_KEY = 'unified_order_checkout_env';
 function loadCheckoutEnv(): CheckoutEnvelope | null {
@@ -75,6 +76,7 @@ export const getToolName = (t: UserTool) => t.generated_name || t.custom_name ||
 
 export function useUnifiedOrder() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, isStaff, loading: authLoading } = useAuth();
 
   // Company profiles (printing) — react-query, 1h stale
@@ -676,9 +678,28 @@ export function useUnifiedOrder() {
       return;
     }
     if (decision === 'new') {
-      checkoutEnvRef.current = { checkoutId: crypto.randomUUID(), fingerprint, committed: true };
+      // CONGELA a metadata da ponte UMA VEZ, na criação do envelope. Anti-troca-de-cliente:
+      // a navegação SPA muda os query params sem remontar o estado do pedido, então uma ligação
+      // ENTRANTE de B durante o pedido de A NÃO pode herdar origem/atendimento de A. O helper só
+      // aplica a metadata da ligação quando ?customer== o cliente realmente selecionado; o submit
+      // lê SEMPRE do envelope abaixo, nunca da URL ao vivo.
+      const bridge = resolveBridgeMetadata({
+        urlCustomer: searchParams.get('customer'),
+        selectedCustomerUserId: customerUserId,
+        urlOrigem: searchParams.get('origem'),
+        urlAtendimento: searchParams.get('atendimento'),
+        isCustomerMode,
+      });
+      checkoutEnvRef.current = {
+        checkoutId: crypto.randomUUID(), fingerprint, committed: true,
+        customerUserId: customerUserId ?? null,
+        origem: bridge.origem,
+        atendimentoId: bridge.atendimentoId,
+      };
     } else {
-      // reuse: mantém o MESMO checkoutId; commit trava a fp (editar o carrinho depois = conflito).
+      // reuse: mantém o MESMO checkoutId E a metadata da ponte CONGELADA na criação (não
+      // re-capturar da URL — o spread preserva origem/atendimento/customerUserId originais).
+      // commit trava a fp (editar o carrinho depois = conflito).
       checkoutEnvRef.current = { ...checkoutEnvRef.current, committed: true } as CheckoutEnvelope;
     }
     persistCheckoutEnv(checkoutEnvRef.current);
@@ -718,8 +739,10 @@ export function useUnifiedOrder() {
         supabase,
         isCustomerMode,
         checkoutId,
-        origem: isCustomerMode ? 'web_customer' : 'web_staff',
-        atendimentoId: null,
+        // Lê do ENVELOPE congelado (nunca da URL ao vivo). Fallback defensivo p/ envelopes
+        // legados (criados antes desta fase, sem os campos da ponte).
+        origem: checkoutEnvRef.current.origem ?? (isCustomerMode ? 'web_customer' : 'web_staff'),
+        atendimentoId: checkoutEnvRef.current.atendimentoId ?? null,
       });
       if (result.success && result.lastOrderData) {
         setLastOrderData(result.lastOrderData);
@@ -764,7 +787,7 @@ export function useUnifiedOrder() {
     notes, readyByDate, ordemCompra,
     companyProfiles, defaultProductionAssigneeId,
     getServicePrice, clearCart, isCustomerMode,
-    waitForAccountEnsure, loadingCustomer,
+    waitForAccountEnsure, loadingCustomer, searchParams,
   ]);
 
   // clearCustomer defined earlier (wraps useCustomerSelection.clearCustomer + clears cart/ordemCompra/userTools)

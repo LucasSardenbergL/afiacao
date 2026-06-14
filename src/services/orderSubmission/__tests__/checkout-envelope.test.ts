@@ -20,4 +20,8 @@ describe('decideCheckoutEnvelope', () => {
   it('mesma fp, committed → reuse (retry do mesmo envio)', () => { expect(decideCheckoutEnvelope(env('fp', true), 'fp')).toBe('reuse'); });
   it('fp diferente, não committed → new (pedido mudou antes de enviar)', () => { expect(decideCheckoutEnvelope(env('old', false), 'fp')).toBe('new'); });
   it('fp diferente, committed → conflict (envio pendente de outro carrinho)', () => { expect(decideCheckoutEnvelope(env('old', true), 'fp')).toBe('conflict'); });
+  it('metadata da ponte (origem/atendimento) NÃO afeta a decisão — fp bate → reuse', () => {
+    const withMeta = { checkoutId: 'k', fingerprint: 'fp', committed: false, customerUserId: 'cli-A', origem: 'ligacao_sainte', atendimentoId: '3f2504e0-4f89-41d3-9a0c-0305e82c3301' };
+    expect(decideCheckoutEnvelope(withMeta, 'fp')).toBe('reuse');
+  });
 });
