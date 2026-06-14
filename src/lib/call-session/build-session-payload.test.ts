@@ -121,4 +121,12 @@ describe('buildSessionPayload', () => {
 
     expect(payload.duration_seconds).toBe(0);
   });
+
+  it('inclui atendimento_id quando fornecido (e null quando ausente)', () => {
+    const base = { farmerId:'f1', customerUserId:'c1', phoneDialed:'5531999999999',
+      callBackend:'webrtc' as const, startedAt:new Date('2026-06-13T10:00:00Z'),
+      endedAt:new Date('2026-06-13T10:05:00Z'), turns:[], analyses:[] };
+    expect(buildSessionPayload({ ...base, atendimentoId:'atend-1' }).atendimento_id).toBe('atend-1');
+    expect(buildSessionPayload(base).atendimento_id).toBeNull();
+  });
 });

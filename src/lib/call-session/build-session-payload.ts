@@ -11,6 +11,8 @@ export interface BuildSessionPayloadInput {
   endedAt: Date;
   turns: TranscriptTurn[];
   analyses: SpinAnalysis[];
+  /** Reverse-link ligação ↔ pedidos (best-effort). Mesmo uuid de sales_orders.atendimento_id. */
+  atendimentoId?: string | null;
 }
 
 /** Subset de Insert<farmer_calls> que este helper preenche */
@@ -28,6 +30,8 @@ export interface SessionPayload {
   // defaults pra campos que vendedor edita depois
   call_type: string;
   call_result: string;
+  /** Reverse-link ligação ↔ pedidos (best-effort). Mesmo uuid de sales_orders.atendimento_id. */
+  atendimento_id: string | null;
 }
 
 /**
@@ -62,5 +66,6 @@ export function buildSessionPayload(input: BuildSessionPayloadInput): SessionPay
     // Defaults — vendedor edita depois no form
     call_type: 'venda',
     call_result: 'atendeu',
+    atendimento_id: input.atendimentoId ?? null,
   };
 }

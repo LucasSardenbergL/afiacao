@@ -49,6 +49,7 @@ async function persistCallSession(opts: {
   turns: TranscriptTurn[];
   analyses: SpinAnalysis[];
   dialedPhone: string;
+  atendimentoId: string | null;
 }): Promise<void> {
   try {
     const { data: { user } } = await supabase.auth.getUser();
@@ -56,6 +57,9 @@ async function persistCallSession(opts: {
 
     const { customerUserId, phoneDialed } = await resolveCustomerByPhone(opts.dialedPhone);
 
+    // Reverse-link best-effort: grava atendimento_id em farmer_calls quando disponível.
+    // O link primário confiável é sales_orders.atendimento_id — este é auxiliar (só existe
+    // quando endCall tem conteúdo gravável; remote-hangup/sem-transcrição não geram linha).
     const payload = buildSessionPayload({
       farmerId: user.id,
       customerUserId,
@@ -65,6 +69,7 @@ async function persistCallSession(opts: {
       endedAt: opts.endedAt,
       turns: opts.turns,
       analyses: opts.analyses,
+      atendimentoId: opts.atendimentoId,
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -412,6 +417,8 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     const analysesSnapshot = [...analysisHistoryRef.current];
     const dialedPhone = dialedPhoneRef.current;
     const wasRecording = recordingRef.current;
+    // Onda 1 / Fase 1 — captura antes do efeito terminal zerar o ref.
+    const atendimentoIdSnapshot = atendimentoIdRef.current;
 
     // Telefonia — duração/answered vêm do SipClient (callStartedAt só existe após accept).
     // Captura ANTES de hangUp (hangUp não zera callStartedAt, mas captura é mais seguro).
@@ -439,6 +446,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
         turns: turnsSnapshot,
         analyses: analysesSnapshot,
         dialedPhone,
+        atendimentoId: atendimentoIdSnapshot,
       });
     }
   }, []);
