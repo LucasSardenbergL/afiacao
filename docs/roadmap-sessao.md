@@ -1,8 +1,26 @@
-# Roadmap da Sessão — atualizado 2026-06-13
+# Roadmap da Sessão — atualizado 2026-06-14
 
 > **Documento vivo.** Re-feito sempre que acrescentamos OU concluímos uma atividade, e renderizado no chat quando muda, pra o founder acompanhar. Prática padrão de toda sessão (registrada no CLAUDE.md, topo).
 >
 > **Legenda:** ✅ feito · 🔄 em andamento · ⏳ pendente · 🚧 bloqueado · ⏸️ adiado (decisão consciente) · 🧭 aguardando decisão (eu+codex)
+
+---
+
+## 🧭 SESSÃO 2026-06-14 (roteirizador-visitas-campo) — Tela do hunter separada da equipe
+
+> Founder achou a tela do Roteirizador confusa (5 modos numa tela só, feita pra equipe inteira). Ele é o
+> hunter (master): dirige e visita carteira + prospects de cidade em cidade. Objetivo: dar a ele uma tela
+> própria e limpa. Brainstorming (founder + Codex gpt-5.5) → spec aprovada ("Pode seguir"). Decisões:
+> 2 contextos (não 5 modos) · multi-cidade · clientes+prospects juntos · "eu escolho quem visitar" (rota
+> só dos marcados) · OpenStreetMap mantido · equipe NÃO vê mudança. **100% frontend** (reusa RPCs do Radar
+> em prod) — sem migration/PG17/edge, só Publish no fim.
+> Spec `docs/superpowers/specs/2026-06-14-roteirizador-visitas-campo-design.md` · Plano `docs/superpowers/plans/2026-06-14-roteirizador-visitas-campo.md`. Execução: **inline** (lição #819: subagentes thrasham neste repo).
+
+- 🔄 **Fase 1 (sub-PR 1) — Navegação 2-contextos**: eixo `PlanningContext` ('campo'|'equipe') acima do modo; master abre na caça, gestor na equipe, vendedor/separador sem switcher (tela atual idêntica); "Prospecção" sai da faixa de modos → vira o contexto Campo. Helper TDD `defaultContextForRole`/`nextModeForContext`.
+- ⏳ **Fase 2 (sub-PR 2) — Multi-cidade**: `CityMultiSelector` (chips removíveis) + N chamadas à RPC single `radar_prospects_para_rota` juntadas/dedupadas no client; carteira de N cidades via N `ilike`. Helper TDD `dedupeStopsById`.
+- ⏳ **Fase 3 (sub-PR 3) — Curadoria de alvos**: universo no mapa/lista, hunter marca quem visitar, "Rota de hoje" só dos marcados + resumo "N alvos: X clientes · Y prospects" + filtro Todos/Clientes/Prospects + fitBounds estável. Helpers TDD `particionar/filtrar/toggle`.
+- ⏳ **Founder (ao fim):** **Publish** do frontend no Lovable (sem migration/edge).
+- 📌 **Limitações v1 (registradas):** `useFarmerScoring` roda em background no campo (não-mexível, money-path) mas não aparece/trava; geocoding capa 15/vez (Nominatim); contagem de clientes no resumo (não no seletor); marcar alvo pela lista (toggle-no-pino = v2).
 
 ---
 
