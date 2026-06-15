@@ -2,6 +2,7 @@
 // Extraído de src/pages/SalesPrintDashboard.tsx (god-component split).
 import { addDays } from 'date-fns';
 import { formatarDataPedido } from '@/lib/pedido/data-pedido';
+import { escapeHtml } from '@/lib/escape-html';
 import { type PrintOrderData } from '@/components/OrderPrintLayout';
 import type { CompanyFilter, SalesOrderRow } from './types';
 
@@ -68,11 +69,6 @@ export function buildPrintData(order: SalesOrderRow, company: CompanyFilter, log
     observacoes: order.notes || undefined,
     isOben: isOben,
   };
-}
-
-export function escapeHtml(s: string | undefined | null): string {
-  if (!s) return '';
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 // Build HTML for a single order page (without <html>/<body> wrappers)
