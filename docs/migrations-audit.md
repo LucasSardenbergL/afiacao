@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **230** custom migrations totais
-- **865** objetos esperados (criados por estas migrations)
+- **231** custom migrations totais
+- **866** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 239
   - `rls_policy`: 206
-  - `index`: 168
+  - `index`: 169
   - `cron_job`: 105
   - `table`: 98
   - `trigger`: 45
@@ -2023,6 +2023,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_fin_contas_pagar_updated_at` | `fin_contas_pagar` |
 | `index` | `public.idx_farmer_client_scores_calculated_at` | `farmer_client_scores` |
 | `index` | `public.idx_pedido_compra_sugerido_data_ciclo` | `pedido_compra_sugerido` |
+
+### `20260615103111_idx_omie_products_codigo_text_account.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_omie_products_codigo_text_account` | `omie_products` |
 
 ## Próximos passos quando algo der `❌`
 

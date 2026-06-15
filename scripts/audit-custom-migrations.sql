@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 230
+-- Total de custom migrations: 231
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -249,7 +249,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260614190000', 'get_preco_cockpit', '20260614190000_get_preco_cockpit.sql'),
   ('20260614231801', 'reposicao_timeout_sync_inventory', '20260614231801_reposicao_timeout_sync_inventory.sql'),
   ('20260615091839', 'retencao_cron_job_run_details', '20260615091839_retencao_cron_job_run_details.sql'),
-  ('20260615095710', 'idx_data_health_freshness_cols', '20260615095710_idx_data_health_freshness_cols.sql')
+  ('20260615095710', 'idx_data_health_freshness_cols', '20260615095710_idx_data_health_freshness_cols.sql'),
+  ('20260615103111', 'idx_omie_products_codigo_text_account', '20260615103111_idx_omie_products_codigo_text_account.sql')
 )
 SELECT
   e.version,
@@ -1132,7 +1133,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_receber_updated_at', 'fin_contas_receber'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_pagar_updated_at', 'fin_contas_pagar'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_farmer_client_scores_calculated_at', 'farmer_client_scores'),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_pedido_compra_sugerido_data_ciclo', 'pedido_compra_sugerido')
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_pedido_compra_sugerido_data_ciclo', 'pedido_compra_sugerido'),
+  ('idx_omie_products_codigo_text_account', 'index', 'public', 'idx_omie_products_codigo_text_account', 'omie_products')
 )
 SELECT
   e.migration,
