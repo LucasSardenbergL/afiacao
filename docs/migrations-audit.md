@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **219** custom migrations totais
-- **833** objetos esperados (criados por estas migrations)
+- **225** custom migrations totais
+- **844** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 229
+  - `function`: 235
   - `rls_policy`: 203
-  - `index`: 155
-  - `cron_job`: 102
+  - `index`: 157
+  - `cron_job`: 105
   - `table`: 96
   - `trigger`: 44
   - `enum_value`: 4
@@ -1936,6 +1936,47 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_radar_lista_novas` | `radar_empresas` |
 | `index` | `public.idx_radar_lista_estab` | `radar_empresas` |
 | `index` | `public.idx_radar_muni` | `radar_empresas` |
+
+### `20260613230000_roteirizador_prospects.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_salvar_geocode` | — |
+| `function` | `public.radar_prospects_para_rota` | — |
+
+### `20260614103251_onda1_fase1_farmer_calls_atendimento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_farmer_calls_atendimento_id` | `farmer_calls` |
+
+### `20260614140000_radar_contagem_perf.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_radar_muni_cover` | `radar_empresas` |
+| `function` | `public.radar_contagem_por_municipio` | — |
+
+### `20260614160000_roteirizador_campo_banco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.norm_cidade` | — |
+| `function` | `public.carteira_por_municipio` | — |
+| `function` | `public.radar_prospects_para_rota` | — |
+
+### `20260614231801_reposicao_timeout_sync_inventory.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sync-inventory-vendas-30m` | — |
+| `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
+
+### `20260615091839_retencao_cron_job_run_details.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.purge-cron-job-run-details` | — |
 
 ## Próximos passos quando algo der `❌`
 

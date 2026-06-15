@@ -14,6 +14,8 @@ import { navLink } from '@/lib/maps/nav-link';
 import type {
   StopType,
   PlanningMode,
+  PlanningContext,
+  TargetFilter,
   FilterPeriod,
   ManualFilter,
   ManualCustomer,
@@ -29,6 +31,14 @@ import type { VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas
 import { agendaToRouteStop } from '@/lib/visitas/agenda-to-stop';
 import { prospectRowToStopDraft, buildGeocodeQuery } from '@/lib/route/prospect-stop';
 import type { ProspectRow } from '@/lib/route/prospect-stop';
+import {
+  defaultContextForRole,
+  nextModeForContext,
+  dedupeStopsById,
+  particionarAlvos,
+  filtrarAlvos,
+  toggleTarget,
+} from '@/lib/route/field-targets';
 
 // Linha de route_visits enriquecida com o nome do cliente (resolvido via profiles).
 export type TodayVisitRow = Tables<'route_visits'> & { customerName: string };
@@ -61,10 +71,12 @@ export function useRoutePlanner() {
   const [geocoding, setGeocoding] = useState(false);
   const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>('all');
   const [planningMode, setPlanningMode] = useState<PlanningMode>('hibrido');
-  // Gestor/master (que enxerga o modo Prospecção) abre direto nele — é o uso do
-  // hunter (visitar prospects) e evita o "Calculando oportunidades comerciais..."
-  // do Híbrido (scoring pesado) na largada. Setado 1× quando o auth confirma.
-  const modoInicialDefinido = useRef(false);
+  const [planningContext, setPlanningContext] = useState<PlanningContext>('equipe');
+  // Quem tem acesso ao contexto "campo" (a caça): master e gestor comercial.
+  const temAcessoCampo = isMaster || isGestorComercial;
+  // Define o contexto inicial 1× quando o auth confirma: master entra no campo,
+  // o resto na equipe. Sem isso, master cairia no Híbrido (scoring pesado).
+  const contextoInicialDefinido = useRef(false);
 
   // Manual mode state
   const [manualCustomers, setManualCustomers] = useState<ManualCustomer[]>([]);
@@ -85,11 +97,31 @@ export function useRoutePlanner() {
   // Visit timers (seconds elapsed per active check-in)
   const [visitTimers, setVisitTimers] = useState<Map<string, number>>(new Map());
 
-  // Prospecção mode state
-  const [selectedCity, setSelectedCity] = useState<CityOption | null>(null);
+  // Contexto campo: cidades escolhidas (multi) + alvos carregados.
+  const [selectedCities, setSelectedCities] = useState<CityOption[]>([]);
   const [prospectStops, setProspectStops] = useState<RouteStop[]>([]);
   const [carteiraCidadeStops, setCarteiraCidadeStops] = useState<RouteStop[]>([]);
   const [loadingProspects, setLoadingProspects] = useState(false);
+
+  const toggleCity = useCallback((city: CityOption) => {
+    setSelectedCities((prev) =>
+      prev.some((c) => c.codigo === city.codigo)
+        ? prev.filter((c) => c.codigo !== city.codigo)
+        : [...prev, city],
+    );
+  }, []);
+
+  const removeCity = useCallback((codigo: string) => {
+    setSelectedCities((prev) => prev.filter((c) => c.codigo !== codigo));
+  }, []);
+
+  // Curadoria do contexto campo: alvos marcados pra rota + filtro do universo.
+  const [selectedTargetIds, setSelectedTargetIds] = useState<Set<string>>(new Set());
+  const [targetFilter, setTargetFilter] = useState<TargetFilter>('todos');
+
+  const toggleTargetId = useCallback((id: string) => {
+    setSelectedTargetIds((prev) => toggleTarget(prev, id));
+  }, []);
 
   const { agenda, clientScores, loading: scoringLoading } = useFarmerScoring();
 
@@ -99,14 +131,23 @@ export function useRoutePlanner() {
     }
   }, [authLoading, isStaff, navigate]);
 
-  // O master (founder/hunter) abre direto na Prospecção. Gestores comerciais
-  // mantêm o Híbrido (rota de visitas do dia) e trocam de modo num clique.
+  // Troca de contexto: ajusta o modo interno coerentemente (campo→prospeccao;
+  // equipe→hibrido se vinha de prospeccao). Helper puro testado.
+  const mudarContexto = useCallback((ctx: PlanningContext) => {
+    setPlanningContext(ctx);
+    setPlanningMode((prev) => nextModeForContext(ctx, prev));
+  }, []);
+
+  // Contexto inicial por papel, 1× quando o auth confirma. Só quem tem acesso ao
+  // campo é redirecionado; o resto fica em 'equipe' (default do estado).
   useEffect(() => {
-    if (!modoInicialDefinido.current && !authLoading && isMaster) {
-      setPlanningMode('prospeccao');
-      modoInicialDefinido.current = true;
+    if (!contextoInicialDefinido.current && !authLoading && temAcessoCampo) {
+      const ctx = defaultContextForRole(isMaster);
+      setPlanningContext(ctx);
+      setPlanningMode((prev) => nextModeForContext(ctx, prev));
+      contextoInicialDefinido.current = true;
     }
-  }, [authLoading, isMaster]);
+  }, [authLoading, temAcessoCampo, isMaster]);
 
   // Load logistic stops (existing orders)
   useEffect(() => {
@@ -714,15 +755,25 @@ export function useRoutePlanner() {
     }
   };
 
-  const loadProspectStops = useCallback(async (city: CityOption) => {
+  // Prospects de N cidades: N chamadas à RPC single (top-50 por cidade),
+  // juntadas e deduplicadas no client. 2-4 cidades = 2-4 round-trips (OK).
+  const loadProspectStops = useCallback(async (cities: CityOption[]) => {
+    if (cities.length === 0) { setProspectStops([]); return; }
     setLoadingProspects(true);
     try {
-      const { data, error } = await supabase.rpc(
-        'radar_prospects_para_rota' as never,
-        { p_municipio_codigo: city.codigo, p_limit: 50 } as never,
+      const results = await Promise.all(
+        cities.map((city) =>
+          supabase.rpc(
+            'radar_prospects_para_rota' as never,
+            { p_municipio_codigo: city.codigo, p_limit: 50 } as never,
+          ),
+        ),
       );
-      if (error) throw error;
-      const rows = (data ?? []) as unknown as ProspectRow[];
+      const rows: ProspectRow[] = [];
+      for (const { data, error } of results) {
+        if (error) throw error;
+        rows.push(...((data ?? []) as unknown as ProspectRow[]));
+      }
       const stops: RouteStop[] = rows.map((row) => {
         const draft = prospectRowToStopDraft(row);
         // Pre-cache coordinates for already-geocoded prospects
@@ -749,7 +800,7 @@ export function useRoutePlanner() {
         };
         return enrichWithPriority(base);
       });
-      setProspectStops(stops);
+      setProspectStops(dedupeStopsById(stops));
     } catch (err) {
       console.error('Error loading prospect stops:', err);
       toast.error('Erro ao carregar prospects');
@@ -764,18 +815,29 @@ export function useRoutePlanner() {
   // ver clientes antigos + prospects da cidade numa rota única. addresses.city é
   // texto livre (pode divergir do municipio_nome RFB em acento/caixa) → ilike;
   // imprecisão aceita na v1 (prospects vêm por municipio_codigo, exatos).
-  const loadCarteiraDaCidade = useCallback(async (city: CityOption) => {
+  // Clientes da CARTEIRA nas cidades escolhidas (sales_visit, laranja). N queries
+  // ilike (addresses.city é texto livre), juntadas e deduplicadas por user_id.
+  const loadCarteiraDaCidade = useCallback(async (cities: CityOption[]) => {
+    if (cities.length === 0) { setCarteiraCidadeStops([]); return; }
     try {
-      const { data: addrs, error: addrErr } = await supabase
-        .from('addresses')
-        .select('user_id, street, number, neighborhood, city, state, zip_code, complement')
-        .ilike('city', city.nome)
-        .order('user_id', { ascending: true })  // determinístico: trunca sempre o mesmo subconjunto
-        .limit(100);
-      if (addrErr) throw addrErr;
-      const byUser = new Map<string, NonNullable<typeof addrs>[number]>();
-      for (const a of addrs ?? []) {
-        if (a.user_id && !byUser.has(a.user_id)) byUser.set(a.user_id, a);
+      const perCity = await Promise.all(
+        cities.map(async (city) => {
+          const { data: addrs, error } = await supabase
+            .from('addresses')
+            .select('user_id, street, number, neighborhood, city, state, zip_code, complement')
+            .ilike('city', city.nome)
+            .order('user_id', { ascending: true })  // determinístico: trunca o mesmo subconjunto
+            .limit(100);
+          if (error) throw error;
+          return { cityNome: city.nome, addrs: addrs ?? [] };
+        }),
+      );
+      // Dedup por user_id (primeira cidade que o trouxe vence) + guarda a cidade.
+      const byUser = new Map<string, { addr: (typeof perCity)[number]['addrs'][number]; cityNome: string }>();
+      for (const { cityNome, addrs } of perCity) {
+        for (const a of addrs) {
+          if (a.user_id && !byUser.has(a.user_id)) byUser.set(a.user_id, { addr: a, cityNome });
+        }
       }
       const userIds = Array.from(byUser.keys());
       if (userIds.length === 0) { setCarteiraCidadeStops([]); return; }
@@ -786,7 +848,7 @@ export function useRoutePlanner() {
         .or('is_employee.is.null,is_employee.eq.false');
       if (profErr) throw profErr;
       const stops: RouteStop[] = (profiles ?? []).map((p) => {
-        const a = byUser.get(p.user_id)!;
+        const { addr: a, cityNome } = byUser.get(p.user_id)!;
         const base: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'> = {
           id: `carteira-cidade-${p.user_id}`,
           customerUserId: p.user_id,
@@ -801,7 +863,7 @@ export function useRoutePlanner() {
             zip_code: a.zip_code ?? '',
             complement: a.complement ?? undefined,
           },
-          visitReason: `Cliente em ${city.nome}`,
+          visitReason: `Cliente em ${cityNome}`,
           stopType: 'sales_visit',
           timeSlot: null,
           businessHoursOpen: p.business_hours_open ?? null,
@@ -810,7 +872,7 @@ export function useRoutePlanner() {
         };
         return enrichWithPriority(base);
       });
-      setCarteiraCidadeStops(stops);
+      setCarteiraCidadeStops(dedupeStopsById(stops));
     } catch (err) {
       console.error('Error loading carteira da cidade:', err);
       setCarteiraCidadeStops([]);
@@ -820,14 +882,19 @@ export function useRoutePlanner() {
   // Load prospects + carteira when in prospeccao mode and a city is selected
   // NOTE: must live AFTER load* declarations (const is not hoisted)
   useEffect(() => {
-    if (planningMode === 'prospeccao' && selectedCity) {
-      void loadProspectStops(selectedCity);
-      void loadCarteiraDaCidade(selectedCity);
-    } else if (planningMode !== 'prospeccao') {
+    if (planningMode === 'prospeccao' && selectedCities.length > 0) {
+      void loadProspectStops(selectedCities);
+      void loadCarteiraDaCidade(selectedCities);
+    } else {
       setProspectStops([]);
       setCarteiraCidadeStops([]);
     }
-  }, [planningMode, selectedCity, loadProspectStops, loadCarteiraDaCidade]);
+  }, [planningMode, selectedCities, loadProspectStops, loadCarteiraDaCidade]);
+
+  // Trocar as cidades reinicia a curadoria (ids antigos não pertencem ao novo universo).
+  useEffect(() => {
+    setSelectedTargetIds(new Set());
+  }, [selectedCities]);
 
   // Merge stops based on planning mode
   const allStops = useMemo(() => {
@@ -979,12 +1046,38 @@ export function useRoutePlanner() {
     return geocodedAllStops.filter(s => s.timeSlot === filterPeriod || !s.timeSlot);
   }, [geocodedAllStops, filterPeriod]);
 
+  // ----- Contexto campo: universo de alvos vs rota curada -----
+  // O universo é tudo que veio das cidades (prospects + carteira), já geocodificado
+  // progressivamente. A rota contém SÓ os alvos marcados.
+  const fieldTargets = useMemo(
+    () => (planningContext === 'campo' ? geocodedAllStops : []),
+    [planningContext, geocodedAllStops],
+  );
+
+  const filteredFieldTargets = useMemo(
+    () => filtrarAlvos(fieldTargets, targetFilter),
+    [fieldTargets, targetFilter],
+  );
+
+  const resumoAlvos = useMemo(() => {
+    const { clientes, prospects } = particionarAlvos(fieldTargets);
+    return { totalClientes: clientes.length, totalProspects: prospects.length };
+  }, [fieldTargets]);
+
+  // Paradas que entram na otimização: no campo, só os marcados; na equipe, como hoje.
+  const stopsParaRota = useMemo(() => {
+    if (planningContext === 'campo') {
+      return geocodedAllStops.filter((s) => selectedTargetIds.has(s.id));
+    }
+    return filteredStops;
+  }, [planningContext, geocodedAllStops, selectedTargetIds, filteredStops]);
+
   // Optimize route: priority-grouped nearest-neighbor
   const optimizedRoute = useMemo(() => {
-    if (filteredStops.length <= 1) return filteredStops;
+    if (stopsParaRota.length <= 1) return stopsParaRota;
 
-    const withCoords = filteredStops.filter(s => s.lat && s.lng);
-    const withoutCoords = filteredStops.filter(s => !s.lat || !s.lng)
+    const withCoords = stopsParaRota.filter(s => s.lat && s.lng);
+    const withoutCoords = stopsParaRota.filter(s => !s.lat || !s.lng)
       .sort((a, b) => b.priorityScore - a.priorityScore);
 
     // Nearest-neighbor within a group, optionally starting from a given point
@@ -1047,7 +1140,7 @@ export function useRoutePlanner() {
       : [...buildPriorityRoute(morning), ...buildPriorityRoute(afternoon)];
 
     return [...optimized, ...withoutCoords];
-  }, [filteredStops, filterPeriod]);
+  }, [stopsParaRota, filterPeriod]);
 
   const openInWaze = (stop: RouteStop) => {
     const q = `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}`;
@@ -1180,11 +1273,22 @@ export function useRoutePlanner() {
     setCheckoutNotes,
     checkoutRevenue,
     setCheckoutRevenue,
-    // prospeccao mode
-    showProspeccao: isMaster || isGestorComercial,
-    selectedCity,
-    setSelectedCity,
+    // contexto campo/equipe
+    planningContext,
+    setPlanningContext: mudarContexto,
+    temAcessoCampo,
+    selectedCities,
+    toggleCity,
+    removeCity,
     loadingProspects,
+    // curadoria de alvos (contexto campo)
+    fieldTargets,
+    filteredFieldTargets,
+    resumoAlvos,
+    selectedTargetIds,
+    toggleTargetId,
+    targetFilter,
+    setTargetFilter,
     // handlers
     toggleCustomerSelection,
     handleCheckIn,

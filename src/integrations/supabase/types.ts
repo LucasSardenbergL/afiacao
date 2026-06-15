@@ -21,6 +21,7 @@ export type Database = {
           disparado_em: string | null
           ordem: number
           request_id: number | null
+          start_page: number
         }
         Insert: {
           date_from: string
@@ -28,6 +29,7 @@ export type Database = {
           disparado_em?: string | null
           ordem: number
           request_id?: number | null
+          start_page?: number
         }
         Update: {
           date_from?: string
@@ -35,6 +37,22 @@ export type Database = {
           disparado_em?: string | null
           ordem?: number
           request_id?: number | null
+          start_page?: number
+        }
+        Relationships: []
+      }
+      _tmp_backfill_pedidos_cursor: {
+        Row: {
+          id: number
+          next_page: number
+        }
+        Insert: {
+          id: number
+          next_page: number
+        }
+        Update: {
+          id?: number
+          next_page?: number
         }
         Relationships: []
       }
@@ -604,6 +622,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      cmc_ledger: {
+        Row: {
+          account: string
+          cmc_anterior: number | null
+          cmc_novo: number
+          id: string
+          observed_at: string
+          omie_codigo_produto: number
+          saldo: number | null
+          synced_at: string | null
+        }
+        Insert: {
+          account: string
+          cmc_anterior?: number | null
+          cmc_novo: number
+          id?: string
+          observed_at?: string
+          omie_codigo_produto: number
+          saldo?: number | null
+          synced_at?: string | null
+        }
+        Update: {
+          account?: string
+          cmc_anterior?: number | null
+          cmc_novo?: number
+          id?: string
+          observed_at?: string
+          omie_codigo_produto?: number
+          saldo?: number | null
+          synced_at?: string | null
+        }
+        Relationships: []
       }
       cockpit_audit_log: {
         Row: {
@@ -1951,6 +2002,7 @@ export type Database = {
       farmer_calls: {
         Row: {
           analyses: Json | null
+          atendimento_id: string | null
           attempt_number: number | null
           call_backend: string | null
           call_result: Database["public"]["Enums"]["farmer_call_result"]
@@ -1975,6 +2027,7 @@ export type Database = {
         }
         Insert: {
           analyses?: Json | null
+          atendimento_id?: string | null
           attempt_number?: number | null
           call_backend?: string | null
           call_result?: Database["public"]["Enums"]["farmer_call_result"]
@@ -1999,6 +2052,7 @@ export type Database = {
         }
         Update: {
           analyses?: Json | null
+          atendimento_id?: string | null
           attempt_number?: number | null
           call_backend?: string | null
           call_result?: Database["public"]["Enums"]["farmer_call_result"]
@@ -6362,6 +6416,42 @@ export type Database = {
           period_end?: string
           period_start?: string
           top_gap_products?: Json | null
+        }
+        Relationships: []
+      }
+      markup_policy: {
+        Row: {
+          account: string
+          escopo: string
+          familia: string | null
+          id: string
+          meta_markup: number
+          piso_markup: number
+          sku_codigo: number | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          account: string
+          escopo: string
+          familia?: string | null
+          id?: string
+          meta_markup: number
+          piso_markup: number
+          sku_codigo?: number | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          account?: string
+          escopo?: string
+          familia?: string | null
+          id?: string
+          meta_markup?: number
+          piso_markup?: number
+          sku_codigo?: number | null
+          updated_at?: string
+          updated_by?: string | null
         }
         Relationships: []
       }
@@ -14954,6 +15044,7 @@ export type Database = {
         }
         Returns: undefined
       }
+      _tmp_backfill_pedidos_oben_tick: { Args: never; Returns: undefined }
       _vendas_familia_ausente_lista_email: {
         Args: { p_limit?: number }
         Returns: string
@@ -15060,6 +15151,25 @@ export type Database = {
           p_usuario: string
         }
         Returns: Json
+      }
+      carteira_por_municipio: {
+        Args: { p_municipio_codigo: string }
+        Returns: {
+          business_hours_close: string
+          business_hours_open: string
+          city: string
+          complement: string
+          dias_desde_visita: number
+          name: string
+          neighborhood: string
+          number: string
+          phone: string
+          state: string
+          street: string
+          ultima_visita: string
+          user_id: string
+          zip_code: string
+        }[]
       }
       carteira_visivel_para: {
         Args: { _customer_user_id: string; _uid: string }
@@ -15419,6 +15529,7 @@ export type Database = {
       get_meu_mixgap_for: { Args: { p_target: string }; Returns: Json }
       get_minha_positivacao: { Args: never; Returns: Json }
       get_minha_positivacao_for: { Args: { p_target: string }; Returns: Json }
+      get_preco_cockpit: { Args: { p_itens: Json }; Returns: Json }
       get_sku_ranking_negociacao_paralela: {
         Args: { p_empresa?: string }
         Returns: unknown[]
@@ -15523,6 +15634,7 @@ export type Database = {
           owner_user_id: string
         }[]
       }
+      norm_cidade: { Args: { t: string }; Returns: string }
       pedido_compra_split: {
         Args: { p_chunk_size?: number; p_pedido_id: number }
         Returns: {
@@ -15722,6 +15834,13 @@ export type Database = {
         }[]
       }
       resgatar_recompensa: { Args: { p_reward_key: string }; Returns: string }
+      resolve_markup_policy: {
+        Args: { p_codigo: number; p_empresa: string; p_familia: string }
+        Returns: {
+          meta_markup: number
+          piso_markup: number
+        }[]
+      }
       resolver_outlier: {
         Args: {
           p_decisao: string
@@ -15816,6 +15935,7 @@ export type Database = {
         Args: { p_account: string; p_id_corante: string }
         Returns: string
       }
+      tint_marcar_bases_mixmachine: { Args: never; Returns: number }
       tint_promote_sync_run: { Args: { p_sync_run_id: string }; Returns: Json }
       tint_recalc_preco_oficial: {
         Args: {

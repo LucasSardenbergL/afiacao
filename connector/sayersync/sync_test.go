@@ -741,9 +741,10 @@ func TestSyncCorantes_precoCoranteAusenteNaoFalha(t *testing.T) {
 	maxDA := time.Now()
 	ex := &fakeExtractor{
 		rows: map[string][]map[string]any{
-			// Corante real: codigo é a identidade; volume_ml próprio (JÁ em ml).
+			// Corante real: id NUMÉRICO é a identidade (reconciliação 12/06);
+			// volume_ml próprio (JÁ em ml).
 			"corantes": {
-				{"id_corante": int64(7), "codigo": "892", "descricao": "Amarelo Óxido", "volume_ml": "550"},
+				{"id_corante": int64(7), "codigo": "WP53", "descricao": "Amarelo Óxido", "volume_ml": "550"},
 			},
 		},
 		maxDA: map[string]time.Time{"corantes": maxDA},
@@ -758,8 +759,8 @@ func TestSyncCorantes_precoCoranteAusenteNaoFalha(t *testing.T) {
 		t.Fatalf("esperava 1 POST de corantes, got %d", len(srv.requests))
 	}
 	item := srv.requests[0].Body["corantes"].([]any)[0].(map[string]any)
-	if item["id_corante_sayersystem"] != "892" {
-		t.Errorf("identidade do corante esperada '892' (codigo, validado no gabarito), got %v", item["id_corante_sayersystem"])
+	if item["id_corante_sayersystem"] != "7" {
+		t.Errorf("identidade do corante esperada '7' (id numérico, reconciliação 12/06), got %v", item["id_corante_sayersystem"])
 	}
 	if item["volume_ml"] != 550.0 {
 		t.Errorf("volume_ml próprio do corante esperado 550 (JÁ em ml, sem conversão), got %v", item["volume_ml"])
@@ -1423,15 +1424,11 @@ func TestMappers_identidadeConfirmadaProd(t *testing.T) {
 	if mb["id_base_sayersystem"] != "90" {
 		t.Errorf("base: identidade esperada '90' (id numérico), got %v", mb["id_base_sayersystem"])
 	}
-	// corante: CODIGO verbatim (gabarito: CORANTES.CSV codigo "3" = WP04 AZUL;
-	// o id interno da origem NÃO aparece no export).
-	mc := mapCorante(map[string]any{"id_corante": int64(7), "codigo": "3", "descricao": "WP04.3900 - CONCENTRADO AZUL"})
+	// corante: id NUMÉRICO (reconciliação 12/06: app tem "1".."16", 0 dos "WP01"
+	// casavam). corante.codigo "WP04" é só descrição; a identidade é o id "3".
+	mc := mapCorante(map[string]any{"id_corante": int64(3), "codigo": "WP04", "descricao": "WP04.3900 - CONCENTRADO AZUL"})
 	if mc["id_corante_sayersystem"] != "3" {
-		t.Errorf("corante: identidade esperada '3' (codigo), got %v", mc["id_corante_sayersystem"])
-	}
-	mcFallback := mapCorante(map[string]any{"id_corante": int64(9), "descricao": "X"})
-	if mcFallback["id_corante_sayersystem"] != "9" {
-		t.Errorf("corante sem codigo: fallback no id, got %v", mcFallback["id_corante_sayersystem"])
+		t.Errorf("corante: identidade esperada '3' (id numérico), got %v", mc["id_corante_sayersystem"])
 	}
 	// padracor: codigo VERBATIM — o " - BS" JÁ VEM no codigo (gabarito:
 	// "001B - BS"); sufixar duplicaria (bug v0.1.4/5).
@@ -1854,9 +1851,11 @@ func TestSyncFormulas_missingIdBaseDropped(t *testing.T) {
 	}
 }
 
-// TestSyncFormulas_traduzIdCoranteDosItens prova que o id_corante CRU dos itens
-// (id numérico da origem, ex: 7) vira a identidade canônica (corante.codigo, ex:
-// "892") no payload — e que item sem entrada no lookup mantém o cru.
+// TestSyncFormulas_traduzIdCoranteDosItens prova a MECÂNICA de tradução: o
+// id_corante CRU dos itens passa por CoranteIdent antes do payload, e item sem
+// entrada no lookup mantém o cru. (Em prod, v0.1.7: CoranteIdent é id→id — o
+// corante é identificado pelo número 1..16; aqui injetamos 7→"892" só para provar
+// que a tradução É aplicada, independente do valor.)
 func TestSyncFormulas_traduzIdCoranteDosItens(t *testing.T) {
 	srv := &captureServer{}
 	ts := httptest.NewServer(srv)

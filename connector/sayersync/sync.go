@@ -199,10 +199,13 @@ func (p *pgExtractor) LoadLookups(ctx context.Context) (*Lookups, error) {
 	if err := p.loadIDAsIdent(ctx, "base", "id_base", lk.BaseIdent); err != nil {
 		return nil, err
 	}
-	// corantes: identidade = CODIGO (gabarito: CORANTES.CSV codigo=1..16 é o
-	// espaço usado nos slots das fórmulas E no app; o id interno NÃO aparece
-	// no export). Os slots corante1..6 da origem são FK→id → traduz id→codigo.
-	if err := p.loadIdentLookup(ctx, "corantes", "id_corante", lk.CoranteIdent); err != nil {
+	// corantes: identidade = id NUMÉRICO (1..16). ⚠️ A RECONCILIAÇÃO de prod
+	// (12/06, staging × oficial) PROVOU: o app tem id_corante "1".."16" e 0 dos
+	// "WP01" da v0.1.6 casavam. A coluna "codigo" do CORANTES.CSV do gabarito É o
+	// banco corante.id (o export renomeia id→codigo); o banco corante.codigo é
+	// "WP01" = só descrição. Os slots formula.corante1..6 são FK→corante.id, então
+	// CoranteIdent id→id deixa o slot cru = a identidade certa (como na v0.1.5).
+	if err := p.loadIDAsIdent(ctx, "corantes", "id_corante", lk.CoranteIdent); err != nil {
 		return nil, err
 	}
 
@@ -1402,15 +1405,12 @@ func mapCorante(row map[string]any) map[string]any {
 	if id == "" {
 		return nil
 	}
-	// Identidade do corante = CODIGO verbatim (gabarito 12/06: CORANTES.CSV
-	// codigo=1..16 é o espaço do app e dos slots; ex. codigo "3" = WP04 AZUL).
-	// Fallback no id quando codigo vazio/só-espaço.
-	ident := toString(row["codigo"])
-	if strings.TrimSpace(ident) == "" {
-		ident = id
-	}
+	// Identidade do corante = id NUMÉRICO (1..16). ⚠️ A RECONCILIAÇÃO de prod
+	// (12/06) PROVOU: o app tem id_corante "1".."16" e 0 dos "WP01" (corante.codigo)
+	// casavam. O número (corante.id) é o que o CSV-import gravou e o que os slots
+	// formula.corante1..6 referenciam. corante.codigo ("WP01") é só descrição.
 	m := map[string]any{
-		"id_corante_sayersystem": ident,
+		"id_corante_sayersystem": id,
 		"descricao":              toString(row["descricao"]),
 	}
 	// corante.volume_ml da origem JÁ está em ML — NÃO converter (≠ embalagem).

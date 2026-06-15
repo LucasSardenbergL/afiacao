@@ -11,7 +11,10 @@ import { RouteStopCard } from '@/components/reposicao/routePlanner/RouteStopCard
 import { TodayVisitCard } from '@/components/reposicao/routePlanner/TodayVisitCard';
 import { CheckoutDialog } from '@/components/reposicao/routePlanner/CheckoutDialog';
 import { PlanningModeSelector } from '@/components/reposicao/routePlanner/PlanningModeSelector';
-import { CitySelector } from '@/components/reposicao/routePlanner/CitySelector';
+import { RoutePlannerContextTabs } from '@/components/reposicao/routePlanner/RoutePlannerContextTabs';
+import { CityMultiSelector } from '@/components/reposicao/routePlanner/CityMultiSelector';
+import { FieldTargetsSummary } from '@/components/reposicao/routePlanner/FieldTargetsSummary';
+import { FieldTargetCard } from '@/components/reposicao/routePlanner/FieldTargetCard';
 import { PeriodFilter } from '@/components/reposicao/routePlanner/PeriodFilter';
 import { RouteActionButtons } from '@/components/reposicao/routePlanner/RouteActionButtons';
 import { ManualModeCard } from '@/components/reposicao/routePlanner/ManualModeCard';
@@ -75,11 +78,21 @@ const AdminRoutePlanner = () => {
     handleStopCTA,
     openInWaze,
     openInGoogleMaps,
-    // prospeccao mode
-    showProspeccao,
-    selectedCity,
-    setSelectedCity,
+    // contexto campo/equipe
+    planningContext,
+    setPlanningContext,
+    temAcessoCampo,
+    selectedCities,
+    toggleCity,
+    removeCity,
     loadingProspects,
+    fieldTargets,
+    filteredFieldTargets,
+    resumoAlvos,
+    selectedTargetIds,
+    toggleTargetId,
+    targetFilter,
+    setTargetFilter,
   } = useRoutePlanner();
 
   // Initialize map
@@ -95,35 +108,46 @@ const AdminRoutePlanner = () => {
     // logística termina — senão uma query pendurada travava o mapa junto com a tela.
   }, [authLoading]);
 
-  // Update map markers
+  // Update map markers.
+  // No contexto campo: mostra o UNIVERSO de alvos (filtrado); os marcados ganham
+  // número (posição na rota) + azul; os não-marcados, a cor do tipo, sem número.
+  // No contexto equipe: a rota otimizada numerada (como antes).
   useEffect(() => {
     if (!leafletMap.current || !markersRef.current) return;
     markersRef.current.clearLayers();
     routeLineRef.current?.remove();
 
-    const stopsWithCoords = optimizedRoute.filter(s => s.lat && s.lng);
-    if (stopsWithCoords.length === 0) return;
+    const fonte = planningContext === 'campo' ? filteredFieldTargets : optimizedRoute;
+    const ordemRota = new Map(optimizedRoute.map((s, i) => [s.id, i + 1]));
 
-    stopsWithCoords.forEach((stop, idx) => {
-      const cfg = STOP_CONFIG[stop.stopType];
+    const fonteComCoords = fonte.filter((s) => s.lat && s.lng);
+    if (fonteComCoords.length === 0) return;
+
+    fonteComCoords.forEach((stop) => {
+      const numero = ordemRota.get(stop.id);
+      const noModoCampo = planningContext === 'campo';
+      // Azul de "selecionado pra rota" só no campo; no equipe, cor do tipo (intacto).
+      const cor = (noModoCampo && numero != null) ? '#2563eb' : STOP_CONFIG[stop.stopType].markerColor;
+      const conteudo = numero != null ? String(numero) : '';
       const icon = L.divIcon({
         className: 'custom-marker',
         html: `<div style="
-          background: ${cfg.markerColor};
+          background: ${cor};
           color: white; width: 28px; height: 28px; border-radius: 50%;
           display: flex; align-items: center; justify-content: center;
           font-weight: 700; font-size: 13px; border: 2px solid white;
           box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-        ">${idx + 1}</div>`,
+        ">${conteudo}</div>`,
         iconSize: [28, 28], iconAnchor: [14, 14],
       });
 
       const hoursLabel = stop.businessHoursOpen && stop.businessHoursClose
         ? `${stop.businessHoursOpen} - ${stop.businessHoursClose}` : 'Não informado';
+      const cfg = STOP_CONFIG[stop.stopType];
 
       L.marker([stop.lat!, stop.lng!], { icon })
         .bindPopup(`
-          <strong>${idx + 1}. ${stop.customerName}</strong><br/>
+          <strong>${numero != null ? `${numero}. ` : ''}${stop.customerName}</strong><br/>
           <span style="color: ${cfg.markerColor}; font-weight: 600">${cfg.label}</span><br/>
           ${stop.address.street}, ${stop.address.number}<br/>
           ${stop.address.neighborhood} - ${stop.address.city}<br/>
@@ -133,15 +157,34 @@ const AdminRoutePlanner = () => {
         .addTo(markersRef.current!);
     });
 
-    const coords: L.LatLngExpression[] = stopsWithCoords.map(s => [s.lat!, s.lng!]);
+    // Linha da rota: só os marcados/otimizados (em ambos os contextos).
+    const coords: L.LatLngExpression[] = optimizedRoute
+      .filter((s) => s.lat && s.lng)
+      .map((s) => [s.lat!, s.lng!]);
     if (coords.length > 1) {
       routeLineRef.current = L.polyline(coords, {
         color: 'hsl(var(--primary))', weight: 3, opacity: 0.7, dashArray: '8, 8',
       }).addTo(leafletMap.current);
     }
-    const bounds = L.latLngBounds(coords);
-    leafletMap.current.fitBounds(bounds, { padding: [40, 40] });
-  }, [optimizedRoute]);
+  }, [optimizedRoute, filteredFieldTargets, planningContext]);
+
+  // fitBounds SEPARADO: re-enquadra só quando o CONJUNTO de pinos muda (cidades/
+  // filtro/geocode) — NÃO quando a seleção muda (senão o mapa "pula" enquanto o
+  // hunter marca alvos). Guardado por uma chave de ids.
+  const lastBoundsKey = useRef('');
+  useEffect(() => {
+    if (!leafletMap.current) return;
+    const fonte = planningContext === 'campo' ? filteredFieldTargets : optimizedRoute;
+    const withCoords = fonte.filter((s) => s.lat && s.lng);
+    const key = withCoords.map((s) => s.id).join('|');
+    if (key && key !== lastBoundsKey.current) {
+      leafletMap.current.fitBounds(
+        L.latLngBounds(withCoords.map((s) => [s.lat!, s.lng!] as L.LatLngExpression)),
+        { padding: [40, 40] },
+      );
+      lastBoundsKey.current = key;
+    }
+  }, [planningContext, filteredFieldTargets, optimizedRoute]);
 
   // Só o auth bloqueia a tela inteira. A carga logística (`loading`) e as demais
   // cargas (scoring/prospects) têm loading INLINE por seção — uma query pendurada
@@ -164,42 +207,54 @@ const AdminRoutePlanner = () => {
     <div className="min-h-screen bg-background pb-24">
 
       <main className="pt-16 px-4 max-w-4xl mx-auto space-y-4">
-        {/* Planning mode selector */}
-        <PlanningModeSelector value={planningMode} onChange={setPlanningMode} showProspeccao={showProspeccao} />
-
-        {/* Prospeccao mode: city selector */}
-        {planningMode === 'prospeccao' && (
-          <CitySelector value={selectedCity} onChange={setSelectedCity} />
+        {/* Abas de contexto — só p/ quem tem acesso ao campo (gestor/master).
+            Sem isso, a equipe vê só o conteúdo de "equipe", sem switcher. */}
+        {temAcessoCampo && (
+          <RoutePlannerContextTabs value={planningContext} onChange={setPlanningContext} />
         )}
 
-        {/* Manual mode UI */}
-        {planningMode === 'manual' && (
-          <ManualModeCard
-            selectedCount={selectedCustomerIds.size}
-            estimatedHours={estimatedManualHours}
-            filter={manualFilter}
-            onFilterChange={setManualFilter}
-            search={manualSearch}
-            onSearchChange={setManualSearch}
-            loading={loadingManual}
-            customers={filteredManualCustomers}
-            isSelected={(id) => selectedCustomerIds.has(id)}
-            isCheckedIn={(id) => !!visitStatuses.get(id)?.isCheckedIn}
-            timerLabel={(id) => formatTimer(visitTimers.get(id) ?? 0)}
-            onToggle={toggleCustomerSelection}
-            onCheckIn={handleCheckIn}
-            onCheckout={openCheckoutDialog}
-          />
+        {planningContext === 'campo' ? (
+          /* ---------- VISITAS EM CAMPO (hunter) — UI enxuta ---------- */
+          <>
+            <CityMultiSelector value={selectedCities} onToggle={toggleCity} onRemove={removeCity} />
+            {fieldTargets.length > 0 && (
+              <FieldTargetsSummary
+                totalClientes={resumoAlvos.totalClientes}
+                totalProspects={resumoAlvos.totalProspects}
+                filtro={targetFilter}
+                onFiltroChange={setTargetFilter}
+              />
+            )}
+          </>
+        ) : (
+          /* ---------- PLANEJAMENTO DA EQUIPE — tela atual idêntica ---------- */
+          <>
+            <PlanningModeSelector value={planningMode} onChange={setPlanningMode} />
+
+            {planningMode === 'manual' && (
+              <ManualModeCard
+                selectedCount={selectedCustomerIds.size}
+                estimatedHours={estimatedManualHours}
+                filter={manualFilter}
+                onFilterChange={setManualFilter}
+                search={manualSearch}
+                onSearchChange={setManualSearch}
+                loading={loadingManual}
+                customers={filteredManualCustomers}
+                isSelected={(id) => selectedCustomerIds.has(id)}
+                isCheckedIn={(id) => !!visitStatuses.get(id)?.isCheckedIn}
+                timerLabel={(id) => formatTimer(visitTimers.get(id) ?? 0)}
+                onToggle={toggleCustomerSelection}
+                onCheckIn={handleCheckIn}
+                onCheckout={openCheckoutDialog}
+              />
+            )}
+
+            <PeriodFilter value={filterPeriod} onChange={setFilterPeriod} />
+            <StatsStrip planningMode={planningMode} stopCounts={stopCounts} />
+            <ScheduledVisitsPanel />
+          </>
         )}
-
-        {/* Period filter */}
-        <PeriodFilter value={filterPeriod} onChange={setFilterPeriod} />
-
-        {/* Stats */}
-        <StatsStrip planningMode={planningMode} stopCounts={stopCounts} />
-
-        {/* Próximas visitas agendadas */}
-        <ScheduledVisitsPanel />
 
         {/* Map */}
         <Card className="overflow-hidden">
@@ -215,11 +270,32 @@ const AdminRoutePlanner = () => {
         {/* Route action buttons */}
         <RouteActionButtons optimizedRoute={optimizedRoute} />
 
+        {/* Universo de alvos (contexto campo): marque quem visitar */}
+        {planningContext === 'campo' && filteredFieldTargets.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold text-foreground">
+              Alvos nas cidades
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                marque quem visitar hoje
+              </span>
+            </h2>
+            <div className="space-y-1.5">
+              {filteredFieldTargets.map((stop) => (
+                <FieldTargetCard
+                  key={stop.id}
+                  stop={stop}
+                  naRota={selectedTargetIds.has(stop.id)}
+                  onToggleRota={() => toggleTargetId(stop.id)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="space-y-2">
           <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
             <Navigation className="w-5 h-5 text-primary" />
-            Rota Otimizada
+            {planningContext === 'campo' ? 'Rota de hoje' : 'Rota Otimizada'}
             <Badge variant="outline" className="ml-auto text-xs">
               {optimizedRoute.length} paradas — ~{formatDuration(totalEstimatedMin.totalMin)}
             </Badge>
@@ -255,7 +331,10 @@ const AdminRoutePlanner = () => {
               <CardContent className="py-8 text-center text-muted-foreground">
                 {planningMode === 'logistica' ? 'Nenhum pedido com coleta/entrega pendente.'
                   : planningMode === 'comercial' ? 'Nenhuma visita comercial disponível. Configure datas de afiação nas ferramentas dos clientes para ativar visitas preventivas.'
-                  : planningMode === 'prospeccao' ? 'Selecione uma cidade acima para ver os prospects.'
+                  : planningMode === 'prospeccao'
+                    ? (fieldTargets.length === 0
+                        ? 'Selecione uma ou mais cidades acima para ver os alvos (clientes + prospects).'
+                        : 'Marque os alvos que você quer visitar hoje — a rota otimizada aparece aqui.')
                   : 'Nenhuma parada encontrada.'}
               </CardContent>
             </Card>
