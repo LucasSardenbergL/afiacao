@@ -14,33 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      _backfill_oben_fila: {
-        Row: {
-          date_from: string
-          date_to: string
-          disparado_em: string | null
-          ordem: number
-          request_id: number | null
-          start_page: number
-        }
-        Insert: {
-          date_from: string
-          date_to: string
-          disparado_em?: string | null
-          ordem: number
-          request_id?: number | null
-          start_page?: number
-        }
-        Update: {
-          date_from?: string
-          date_to?: string
-          disparado_em?: string | null
-          ordem?: number
-          request_id?: number | null
-          start_page?: number
-        }
-        Relationships: []
-      }
       _tmp_backfill_pedidos_cursor: {
         Row: {
           id: number
@@ -11701,6 +11674,69 @@ export type Database = {
           },
         ]
       }
+      tint_formulas_backup_preflip: {
+        Row: {
+          account: string | null
+          base_id: string | null
+          cor_id: string | null
+          created_at: string | null
+          data_geracao: string | null
+          desativada_em: string | null
+          embalagem_id: string | null
+          id: string | null
+          id_seq: number | null
+          importacao_id: string | null
+          nome_cor: string | null
+          personalizada: boolean | null
+          preco_final_sayersystem: number | null
+          produto_id: string | null
+          sku_id: string | null
+          subcolecao_id: string | null
+          updated_at: string | null
+          volume_final_ml: number | null
+        }
+        Insert: {
+          account?: string | null
+          base_id?: string | null
+          cor_id?: string | null
+          created_at?: string | null
+          data_geracao?: string | null
+          desativada_em?: string | null
+          embalagem_id?: string | null
+          id?: string | null
+          id_seq?: number | null
+          importacao_id?: string | null
+          nome_cor?: string | null
+          personalizada?: boolean | null
+          preco_final_sayersystem?: number | null
+          produto_id?: string | null
+          sku_id?: string | null
+          subcolecao_id?: string | null
+          updated_at?: string | null
+          volume_final_ml?: number | null
+        }
+        Update: {
+          account?: string | null
+          base_id?: string | null
+          cor_id?: string | null
+          created_at?: string | null
+          data_geracao?: string | null
+          desativada_em?: string | null
+          embalagem_id?: string | null
+          id?: string | null
+          id_seq?: number | null
+          importacao_id?: string | null
+          nome_cor?: string | null
+          personalizada?: boolean | null
+          preco_final_sayersystem?: number | null
+          produto_id?: string | null
+          sku_id?: string | null
+          subcolecao_id?: string | null
+          updated_at?: string | null
+          volume_final_ml?: number | null
+        }
+        Relationships: []
+      }
       tint_importacoes: {
         Row: {
           account: string
@@ -15012,7 +15048,6 @@ export type Database = {
       }
     }
     Functions: {
-      _backfill_oben_tick: { Args: never; Returns: undefined }
       _carteira_mixgap_for_owner: { Args: { p_owner: string }; Returns: Json }
       _carteira_positivacao_for_owner: {
         Args: { p_owner: string }
