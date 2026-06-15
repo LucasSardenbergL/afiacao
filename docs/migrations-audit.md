@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **223** custom migrations totais
-- **840** objetos esperados (criados por estas migrations)
+- **225** custom migrations totais
+- **846** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 232
+  - `function`: 238
   - `rls_policy`: 203
   - `index`: 157
   - `cron_job`: 104
@@ -1957,12 +1957,28 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_radar_muni_cover` | `radar_empresas` |
 | `function` | `public.radar_contagem_por_municipio` | — |
 
+### `20260614160000_roteirizador_campo_banco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.norm_cidade` | — |
+| `function` | `public.carteira_por_municipio` | — |
+| `function` | `public.radar_prospects_para_rota` | — |
+
 ### `20260614231801_reposicao_timeout_sync_inventory.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.sync-inventory-vendas-30m` | — |
 | `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
+
+### `20260615130000_tint_vigia_cobertura_sentinela.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
 
 ## Próximos passos quando algo der `❌`
 
