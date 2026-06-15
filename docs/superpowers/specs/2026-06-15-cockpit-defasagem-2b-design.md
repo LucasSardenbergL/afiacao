@@ -22,11 +22,11 @@ Na ligação, quando a vendedora monta um pedido pra um cliente que **já compro
 
 **O CMC histórico EXISTE no Omie.** `estoque/consulta/ListarPosEstoque` é parametrizado por **`dDataPosicao`** e devolve o `nCMC` **como estava naquela data**. O `omie-analytics-sync` (~L716) só pede "hoje". → dá pra puxar o CMC de qualquer data passada (e backfillar).
 
-⚠️ **GATE 1 — smoke `dDataPosicao` (prova de 2 datas):** pegar 1 SKU que comprovadamente **mudou de CMC** entre duas datas e confirmar que `dDataPosicao` devolve os **dois valores distintos** — não o atual com rótulo de data. (Codex: subir de "1 chamada" pra prova de duas datas.) Não temos Omie pela RPC/terminal → roda numa edge pontual ou o founder testa.
+🚧 **GATE 1 — smoke `dDataPosicao` (prova de 2 datas):** pegar SKUs que comprovadamente **mudaram de CMC** entre duas datas e confirmar que `dDataPosicao` devolve os **valores distintos** — não o atual com rótulo de data. (Codex: subir de "1 chamada" pra prova de duas datas.) Não temos Omie pela RPC/terminal → **edge `cmc-snapshot-smoke` já rascunhado** (só lê o Omie, staff-gated, deno-check ok): basta deploy + 1 invoke com `{account, dataA, dataB}`. Veredito `PROVADO`/`SUSPEITO`/`INCONCLUSIVO` no JSON.
 
-⚠️ **GATE 2 — smoke semântica de desconto do Omie:** provar como `order_items.discount` e `sales_orders.discount` representam o desconto (**R$ vs %**, **por-linha vs por-pedido**) ANTES de computar o `P_last` líquido. Enquanto não provado, **linha com desconto > 0 → neutro** (§5.1).
+✅ **GATE 2 — semântica de desconto: RESOLVIDO no dado (15/06).** Forense read-only: `order_items.discount > 0` = **0 de 13.627**; `sales_orders.discount > 0` = **0 de 6.687**. Nenhum pedido carrega desconto → `P_last = unit_price` é o líquido pra **100%** das âncoras atuais, e a RPC lê as **colunas** (não o payload cru). O guard "`discount > 0` → neutro" (§5.1) permanece como **proteção futura de custo zero** (neutraliza 0 linhas hoje). **Sem edge/smoke.**
 
-Sem os 2 gates confirmados, NÃO construir o backfill/RPC.
+Sem o GATE 1 confirmado, NÃO construir o backfill/RPC.
 
 ## 4. Arquitetura
 
@@ -51,7 +51,7 @@ Sem os 2 gates confirmados, NÃO construir o backfill/RPC.
 - **Âncora:** última linha de `order_items` do `(customer_user_id, omie_codigo_produto)` **JOIN `sales_orders`** por `sales_order_id`, **account-aware** (`account` = ponte da empresa, igual à 2a — Oben→['vendas','oben'] etc.). → `P_last` (líquido) + data real.
 - **Status allowlist (aterrada):** `status IN ('faturado','importado','separacao','enviado')` — vendas reais. Exclui `cancelado`/`rascunho`/`orcamento`. + `omie_pedido_id IS NOT NULL` + `deleted_at IS NULL`. (Lista **positiva**, não denylist — Codex #6. `importado`=1206 pedidos reais do Omie, mantidos: são a recompra histórica.)
 - **Data da âncora (proveniência — Codex #7):** preferir **`dInc` extraído do `omie_payload`** (verdade canônica do Omie) → fallback `order_date_kpi` → se nenhum confiável, **neutro**. (Grounded: **89%** dos `order_date_kpi` == `created_at::date` → proveniência impura; não confiar cega no `order_date_kpi`.)
-- **`P_last` líquido (Codex #4):** `unit_price` − desconto da linha (− rateio do `sales_orders.discount` por pedido). São **2 camadas** de desconto. Enquanto o **GATE 2** não provar a semântica (R$ vs %) → **linha com `discount > 0` em qualquer camada = neutro**.
+- **`P_last` líquido (Codex #4):** **empírico (15/06): desconto é sempre 0 no histórico** (0/13.627 linhas, 0/6.687 pedidos) → `P_last = unit_price` hoje. O guard **`discount > 0` (qualquer das 2 camadas: linha `order_items.discount` + pedido `sales_orders.discount`) → neutro** permanece como proteção futura de custo zero (se o Omie passar a mandar desconto, neutraliza até a semântica R$/% ser provada).
 - **Multi-pedido no mesmo dia (Codex #8):** `order_date_kpi` é `date` (sem hora) → empate possível. Resolver por **média ponderada pela `quantity`** do preço líquido; se a divergência de preço entre as linhas do dia for alta → **neutro**.
 - **Custo:** `C_last` = `cmc_snapshot` da **data exata da âncora** (janela ±7 dias; senão neutro); `C_now` = `inventory_position` atual (freshest por `synced_at`, igual à 2a).
 
@@ -102,8 +102,8 @@ O `cmc_snapshot` guarda o que o Omie devolve **hoje** pra uma data passada. Se o
 - **Backfill edge:** smoke dos 2 gates (dDataPosicao 2 datas + desconto) + paginação até página vazia + idempotência do upsert.
 
 ## 9. Sequência de build (gated)
-1. **GATE 1 — smoke `dDataPosicao`** (prova de 2 datas). 🚧
-2. **GATE 2 — smoke semântica de desconto Omie.** 🚧
+1. **GATE 1 — smoke `dDataPosicao`** (prova de 2 datas). 🚧 edge `cmc-snapshot-smoke` pronto → deploy + invoke.
+2. **GATE 2 — semântica de desconto** — ✅ **RESOLVIDO no dado** (15/06; desconto sempre 0 → guard de custo zero).
 3. **Codex challenge da metodologia** — ✅ **FEITO (15/06)**, achados foldados nesta v2.
 4. `cmc_snapshot` + edge backfill (exato-por-âncora + grade mensal) + cron.
 5. Helper TDD + RPC `get_defasagem_cliente` + PG17 (+falsificações §8).
