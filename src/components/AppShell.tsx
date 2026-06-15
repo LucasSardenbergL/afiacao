@@ -21,7 +21,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { HelpDrawer } from '@/components/help/HelpDrawer';
-import { MelhoriaDialog } from '@/components/melhorias/MelhoriaDialog';
+import { MelhoriasPopover } from '@/components/melhorias/MelhoriasPopover';
 import { useMelhoriasBadge } from '@/hooks/useMelhorias';
 import { useAlertasCriticos } from '@/hooks/useAlertasCriticos';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
@@ -75,7 +75,6 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
       { icon: Target, label: 'Meu dia', path: '/meu-dia' },
       { icon: Users, label: 'Clientes', path: '/admin/customers' },
-      { icon: Lightbulb, label: 'Melhorias', path: '/melhorias', staffOnly: true },
     ],
   },
   {
@@ -697,7 +696,6 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
   const { signOut } = useAuth();
   const { isImpersonating } = useImpersonation();
   const { displayIsStaff } = useDisplayAccess();
-  const [melhoriaOpen, setMelhoriaOpen] = useState(false);
 
   return (
     <header
@@ -729,22 +727,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
         <NetworkStatusIndicator />
         <DataHealthBadge />
         <ThemeToggle />
-        {displayIsStaff && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground"
-                onClick={() => setMelhoriaOpen(true)}
-                aria-label="Sugerir melhoria ou reportar problema"
-              >
-                <Lightbulb className="w-4 h-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Sugerir melhoria · reportar problema</TooltipContent>
-          </Tooltip>
-        )}
+        {displayIsStaff && <MelhoriasPopover />}
         <HelpDrawer />
 
         <DropdownMenu>
@@ -765,7 +748,6 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
         </DropdownMenu>
       </div>
 
-      <MelhoriaDialog open={melhoriaOpen} onOpenChange={setMelhoriaOpen} />
     </header>
   );
 }
