@@ -1,7 +1,7 @@
 // Seletor MULTI-cidade do contexto "Visitas em campo". Reusa a RPC
 // radar_contagem_por_municipio (até 500 cidades, com nº de prospects por cidade).
 // Selecionar NÃO fecha o popover (multi); cidades viram chips removíveis.
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Check, ChevronsUpDown, MapPin, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +16,9 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { useRadarCidadesRota } from '@/queries/useRadarCidadesRota';
+import { useAuth } from '@/contexts/AuthContext';
+import { filtrarCidadesPorUf } from '@/lib/route/city-filter';
+import { UfSelector } from './UfSelector';
 import type { CityOption } from './types';
 
 interface CityMultiSelectorProps {
@@ -29,9 +32,23 @@ export function CityMultiSelector({ value, onToggle, onRemove }: CityMultiSelect
   const selectedCodes = new Set(value.map((c) => c.codigo));
 
   const { data: cidades = [], isLoading } = useRadarCidadesRota();
+  const { user } = useAuth();
+  const ufKey = user?.id ? `radar-uf-rota:v1:${user.id}` : null;
+  const [uf, setUf] = useState<string | null>(() => {
+    if (!ufKey || typeof localStorage === 'undefined') return null;
+    return localStorage.getItem(ufKey) || null;
+  });
+  useEffect(() => {
+    if (!ufKey || typeof localStorage === 'undefined') return;
+    if (uf) localStorage.setItem(ufKey, uf);
+    else localStorage.removeItem(ufKey);
+  }, [uf, ufKey]);
+
+  const cidadesFiltradas = filtrarCidadesPorUf(cidades, uf);
 
   return (
     <div className="space-y-2">
+      <UfSelector cidades={cidades} value={uf} onChange={setUf} />
       <div className="flex items-center gap-2">
         <MapPin className="w-4 h-4 text-muted-foreground shrink-0" />
         <span className="text-sm font-medium text-muted-foreground shrink-0">Cidades:</span>
@@ -60,7 +77,7 @@ export function CityMultiSelector({ value, onToggle, onRemove }: CityMultiSelect
               <CommandList>
                 <CommandEmpty>Nenhuma cidade encontrada.</CommandEmpty>
                 <CommandGroup>
-                  {cidades.map((cidade) => {
+                  {cidadesFiltradas.map((cidade) => {
                     const selected = selectedCodes.has(cidade.codigo);
                     return (
                       <CommandItem

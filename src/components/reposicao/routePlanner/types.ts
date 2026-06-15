@@ -77,6 +77,9 @@ export interface RouteStop {
   radarCnpj?: string;
   geocodeFailed?: boolean;
   prospeccaoStatus?: string;
+  // Recência da carteira (RPC carteira_por_municipio); null = nunca visitado.
+  // Capturado no Sub-PR 2; consumido pelas cores do mapa no Sub-PR 4.
+  diasDesdeVisita?: number | null;
 }
 
 /** Cidade retornada por radar_contagem_por_municipio, usada no CitySelector. */
