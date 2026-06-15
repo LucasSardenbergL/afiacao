@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **233** custom migrations totais
-- **869** objetos esperados (criados por estas migrations)
+- **237** custom migrations totais
+- **881** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 242
-  - `rls_policy`: 206
-  - `index`: 169
+  - `function`: 245
+  - `rls_policy`: 207
+  - `index`: 177
   - `cron_job`: 105
   - `table`: 98
   - `trigger`: 45
@@ -2041,6 +2041,38 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260615133000_tint_remapeia_skus_omie_desalinhadas.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260615140000_tint_promote_indices_timeout.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_tsfi_staging_formula_id` | `tint_staging_formula_itens` |
+| `index` | `public.idx_tsc_acct_corante` | `tint_staging_corantes` |
+| `index` | `public.idx_tsf_acct_par` | `tint_staging_formulas` |
+| `index` | `public.idx_tsf_run` | `tint_staging_formulas` |
+| `index` | `public.idx_tss_run` | `tint_staging_skus` |
+| `index` | `public.idx_tsprod_run` | `tint_staging_produtos` |
+| `index` | `public.idx_tsbase_run` | `tint_staging_bases` |
+| `index` | `public.idx_tsemb_run` | `tint_staging_embalagens` |
+
+### `20260615150000_cockpit_preco_fixes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_preco_cockpit` | — |
+| `rls_policy` | `public.cmc_ledger_select_gestor` | `cmc_ledger` |
+
+### `20260615160000_tint_promote_set_based.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260615200000_tint_get_price_base.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_price` | — |
 
 ## Próximos passos quando algo der `❌`
 

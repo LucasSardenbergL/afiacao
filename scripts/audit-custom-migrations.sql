@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 233
+-- Total de custom migrations: 237
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -252,7 +252,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615095710', 'idx_data_health_freshness_cols', '20260615095710_idx_data_health_freshness_cols.sql'),
   ('20260615103111', 'idx_omie_products_codigo_text_account', '20260615103111_idx_omie_products_codigo_text_account.sql'),
   ('20260615130000', 'tint_vigia_cobertura_sentinela', '20260615130000_tint_vigia_cobertura_sentinela.sql'),
-  ('20260615133000', 'tint_remapeia_skus_omie_desalinhadas', '20260615133000_tint_remapeia_skus_omie_desalinhadas.sql')
+  ('20260615133000', 'tint_remapeia_skus_omie_desalinhadas', '20260615133000_tint_remapeia_skus_omie_desalinhadas.sql'),
+  ('20260615140000', 'tint_promote_indices_timeout', '20260615140000_tint_promote_indices_timeout.sql'),
+  ('20260615150000', 'cockpit_preco_fixes', '20260615150000_cockpit_preco_fixes.sql'),
+  ('20260615160000', 'tint_promote_set_based', '20260615160000_tint_promote_set_based.sql'),
+  ('20260615200000', 'tint_get_price_base', '20260615200000_tint_get_price_base.sql')
 )
 SELECT
   e.version,
@@ -1139,7 +1143,19 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('idx_omie_products_codigo_text_account', 'index', 'public', 'idx_omie_products_codigo_text_account', 'omie_products'),
   ('tint_vigia_cobertura_sentinela', 'function', 'public', '_data_health_compute', ''),
   ('tint_vigia_cobertura_sentinela', 'function', 'public', 'data_health_watchdog', ''),
-  ('tint_vigia_cobertura_sentinela', 'function', 'public', 'fin_sync_heartbeat', '')
+  ('tint_vigia_cobertura_sentinela', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsfi_staging_formula_id', 'tint_staging_formula_itens'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsc_acct_corante', 'tint_staging_corantes'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsf_acct_par', 'tint_staging_formulas'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsf_run', 'tint_staging_formulas'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tss_run', 'tint_staging_skus'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsprod_run', 'tint_staging_produtos'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsbase_run', 'tint_staging_bases'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsemb_run', 'tint_staging_embalagens'),
+  ('cockpit_preco_fixes', 'function', 'public', 'get_preco_cockpit', ''),
+  ('cockpit_preco_fixes', 'rls_policy', 'public', 'cmc_ledger_select_gestor', 'cmc_ledger'),
+  ('tint_promote_set_based', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('tint_get_price_base', 'function', 'public', 'get_tint_price', '')
 )
 SELECT
   e.migration,
