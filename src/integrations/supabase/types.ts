@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      _preflight_tint: {
+        Row: {
+          erro: string | null
+          ok: boolean | null
+          resultado: Json | null
+          run_id: string | null
+          staging_formulas: number | null
+          tempo_ms: number | null
+          ts: string | null
+        }
+        Insert: {
+          erro?: string | null
+          ok?: boolean | null
+          resultado?: Json | null
+          run_id?: string | null
+          staging_formulas?: number | null
+          tempo_ms?: number | null
+          ts?: string | null
+        }
+        Update: {
+          erro?: string | null
+          ok?: boolean | null
+          resultado?: Json | null
+          run_id?: string | null
+          staging_formulas?: number | null
+          tempo_ms?: number | null
+          ts?: string | null
+        }
+        Relationships: []
+      }
       _tmp_backfill_pedidos_cursor: {
         Row: {
           id: number
@@ -595,6 +625,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      cliente_classificacao: {
+        Row: {
+          excluir_da_carteira: boolean
+          is_fornecedor: boolean
+          tags_omie: string[]
+          tags_synced_at: string | null
+          tem_venda_real: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          excluir_da_carteira?: boolean
+          is_fornecedor?: boolean
+          tags_omie?: string[]
+          tags_synced_at?: string | null
+          tem_venda_real?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          excluir_da_carteira?: boolean
+          is_fornecedor?: boolean
+          tags_omie?: string[]
+          tags_synced_at?: string | null
+          tem_venda_real?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       cmc_ledger: {
         Row: {
@@ -5202,6 +5262,27 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      fornecedor_excecao: {
+        Row: {
+          criado_em: string
+          criado_por: string | null
+          motivo: string | null
+          user_id: string
+        }
+        Insert: {
+          criado_em?: string
+          criado_por?: string | null
+          motivo?: string | null
+          user_id: string
+        }
+        Update: {
+          criado_em?: string
+          criado_por?: string | null
+          motivo?: string | null
+          user_id?: string
+        }
+        Relationships: []
       }
       fornecedor_grupo_producao: {
         Row: {
@@ -15079,6 +15160,7 @@ export type Database = {
         }
         Returns: undefined
       }
+      _tint_preflight: { Args: never; Returns: Json }
       _tmp_backfill_pedidos_oben_tick: { Args: never; Returns: undefined }
       _vendas_familia_ausente_lista_email: {
         Args: { p_limit?: number }
