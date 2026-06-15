@@ -29,6 +29,12 @@ describe('classificarFaixa', () => {
   it('preço exatamente no piso → verde (≥ piso)', () => {
     expect(classificarFaixa(base({ preco: 78 }))).toEqual({ faixa: 'verde', motivo: 'abaixo_da_meta' });
   });
+  it('preço inválido (NaN) → neutro, NUNCA verde (#7)', () => {
+    expect(classificarFaixa(base({ preco: NaN }))).toEqual({ faixa: 'neutro', motivo: 'sem_custo' });
+  });
+  it('cmc inválido (NaN) com custo declarado → neutro (#7)', () => {
+    expect(classificarFaixa(base({ cmc: NaN }))).toEqual({ faixa: 'neutro', motivo: 'sem_custo' });
+  });
 });
 
 describe('markupSobreCmc', () => {

@@ -1,5 +1,7 @@
-// Oráculo puro do cockpit de preço (Fase 2a). A RPC get_preco_cockpit espelha
-// esta lógica VERBATIM (teste de paridade no PG17). Faixas idênticas à spec §4.3.
+// Oráculo puro do cockpit de preço (Fase 2a). A RPC get_preco_cockpit (SQL numeric)
+// é a AUTORIDADE em runtime — a UI lê a faixa da RPC, não deste helper. Este helper
+// documenta a lógica e é o oráculo do teste; por ser float (JS), pode divergir da RPC
+// (numeric exato) em fronteiras decimais — NÃO usar pra decisão em runtime.
 
 export type Faixa = 'vermelho' | 'amarelo' | 'verde' | 'neutro';
 export type Motivo =
@@ -16,7 +18,11 @@ export interface FaixaInput {
 }
 
 export function classificarFaixa(i: FaixaInput): { faixa: Faixa; motivo: Motivo } {
-  if (!i.temCusto || i.cmc == null || !(i.cmc > 0)) {
+  // #7: preço/cmc inválido (null/NaN/Infinity) → neutro, NUNCA verde fabricado.
+  if (!Number.isFinite(i.preco)) {
+    return { faixa: 'neutro', motivo: 'sem_custo' };
+  }
+  if (!i.temCusto || i.cmc == null || !Number.isFinite(i.cmc) || !(i.cmc > 0)) {
     return { faixa: 'neutro', motivo: 'sem_custo' };
   }
   if (i.preco < i.cmc) {
