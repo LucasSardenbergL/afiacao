@@ -223,15 +223,24 @@ async function recalcOne(
   // Safety cap: 200 calls in 30 days = ~7/day average. Beyond that, decay already
   // makes older calls negligible. Order by most-recent first so the cap drops
   // the lowest-weight calls.
-  const { data: calls, error: cErr } = await supabase
-    .from('farmer_calls')
-    .select('id, started_at, entities_extracted, analyses')
-    .eq('customer_user_id', customer_user_id)
-    .eq('farmer_id', farmer_id)
-    .gte('started_at', cutoff)
-    .order('started_at', { ascending: false })
-    .limit(200);
+  // Anti-ressurreição (fornecedores fora da carteira): cliente marcado p/ exclusão
+  // (cliente_classificacao.excluir_da_carteira) não recebe score. Checagem em paralelo
+  // com as calls → zero latência extra. Ausência de linha = não-fornecedor = segue (fail-safe).
+  const [flagRes, callsRes] = await Promise.all([
+    supabase.from('cliente_classificacao').select('user_id')
+      .eq('user_id', customer_user_id).eq('excluir_da_carteira', true).maybeSingle(),
+    supabase
+      .from('farmer_calls')
+      .select('id, started_at, entities_extracted, analyses')
+      .eq('customer_user_id', customer_user_id)
+      .eq('farmer_id', farmer_id)
+      .gte('started_at', cutoff)
+      .order('started_at', { ascending: false })
+      .limit(200),
+  ]);
 
+  if (flagRes.data) return { ok: true };
+  const { data: calls, error: cErr } = callsRes;
   if (cErr) return { ok: false, error: `farmer_calls: ${cErr.message}` };
 
   const now = new Date();

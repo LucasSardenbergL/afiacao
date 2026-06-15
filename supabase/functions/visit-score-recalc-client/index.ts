@@ -158,7 +158,10 @@ async function recalcOne(
   customer_user_id: string,
   farmer_id: string,
 ): Promise<{ ok: boolean; error?: string; visit_score?: number; primary_mission?: MissionType }> {
-  const [scoresRes, visitsRes, ordersRes, addressRes, profileRes] = await Promise.all([
+  const [flagRes, scoresRes, visitsRes, ordersRes, addressRes, profileRes] = await Promise.all([
+    // Anti-ressurreição (fornecedores fora da carteira): cliente marcado p/ exclusão não recebe
+    // visit score. Checagem na mesma rodada paralela → zero latência extra. Ausência = segue.
+    supabase.from('cliente_classificacao').select('user_id').eq('user_id', customer_user_id).eq('excluir_da_carteira', true).maybeSingle(),
     // Opção A (carteira-Omie): 1 linha de score por cliente → lê por customer_user_id só.
     supabase.from('farmer_client_scores').select('churn_risk, expansion_score, health_score, recover_score, revenue_potential, avg_monthly_spend_180d, days_since_last_purchase, signal_modifiers').eq('customer_user_id', customer_user_id).maybeSingle(),
     supabase.from('route_visits').select('check_in_at').eq('customer_user_id', customer_user_id).order('check_in_at', { ascending: false }).limit(1),
@@ -167,6 +170,7 @@ async function recalcOne(
     supabase.from('profiles').select('created_at, is_prospect').eq('user_id', customer_user_id).maybeSingle(),
   ]);
 
+  if (flagRes.data) return { ok: true };
   if (scoresRes.error) return { ok: false, error: `farmer_client_scores: ${scoresRes.error.message}` };
 
   const scores = (scoresRes.data ?? {}) as Record<string, unknown>;
