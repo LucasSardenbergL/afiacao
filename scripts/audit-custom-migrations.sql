@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 225
+-- Total de custom migrations: 230
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -243,8 +243,13 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260614103251', 'onda1_fase1_farmer_calls_atendimento', '20260614103251_onda1_fase1_farmer_calls_atendimento.sql'),
   ('20260614140000', 'radar_contagem_perf', '20260614140000_radar_contagem_perf.sql'),
   ('20260614160000', 'roteirizador_campo_banco', '20260614160000_roteirizador_campo_banco.sql'),
+  ('20260614170000', 'cmc_ledger', '20260614170000_cmc_ledger.sql'),
+  ('20260614170000', 'roteirizador_campo_carteira_sufixo_uf', '20260614170000_roteirizador_campo_carteira_sufixo_uf.sql'),
+  ('20260614180000', 'markup_policy', '20260614180000_markup_policy.sql'),
+  ('20260614190000', 'get_preco_cockpit', '20260614190000_get_preco_cockpit.sql'),
   ('20260614231801', 'reposicao_timeout_sync_inventory', '20260614231801_reposicao_timeout_sync_inventory.sql'),
-  ('20260615091839', 'retencao_cron_job_run_details', '20260615091839_retencao_cron_job_run_details.sql')
+  ('20260615091839', 'retencao_cron_job_run_details', '20260615091839_retencao_cron_job_run_details.sql'),
+  ('20260615095710', 'idx_data_health_freshness_cols', '20260615095710_idx_data_health_freshness_cols.sql')
 )
 SELECT
   e.version,
@@ -1104,9 +1109,30 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('roteirizador_campo_banco', 'function', 'public', 'norm_cidade', ''),
   ('roteirizador_campo_banco', 'function', 'public', 'carteira_por_municipio', ''),
   ('roteirizador_campo_banco', 'function', 'public', 'radar_prospects_para_rota', ''),
+  ('cmc_ledger', 'table', 'public', 'cmc_ledger', ''),
+  ('cmc_ledger', 'index', 'public', 'idx_cmc_ledger_lookup', 'cmc_ledger'),
+  ('cmc_ledger', 'function', 'public', 'cmc_ledger_capture', ''),
+  ('cmc_ledger', 'trigger', 'public', 'trg_cmc_ledger_capture', 'inventory_position'),
+  ('cmc_ledger', 'rls_policy', 'public', 'cmc_ledger_select_staff', 'cmc_ledger'),
+  ('roteirizador_campo_carteira_sufixo_uf', 'function', 'public', 'carteira_por_municipio', ''),
+  ('markup_policy', 'table', 'public', 'markup_policy', ''),
+  ('markup_policy', 'index', 'public', 'uq_markup_policy_conta', 'markup_policy'),
+  ('markup_policy', 'index', 'public', 'uq_markup_policy_fam', 'markup_policy'),
+  ('markup_policy', 'index', 'public', 'uq_markup_policy_sku', 'markup_policy'),
+  ('markup_policy', 'function', 'public', 'resolve_markup_policy', ''),
+  ('markup_policy', 'rls_policy', 'public', 'markup_policy_select_staff', 'markup_policy'),
+  ('markup_policy', 'rls_policy', 'public', 'markup_policy_write_master', 'markup_policy'),
+  ('get_preco_cockpit', 'function', 'public', 'get_preco_cockpit', ''),
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
-  ('retencao_cron_job_run_details', 'cron_job', 'cron', 'purge-cron-job-run-details', '')
+  ('retencao_cron_job_run_details', 'cron_job', 'cron', 'purge-cron-job-run-details', ''),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_inventory_position_synced_at', 'inventory_position'),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_omie_products_updated_at', 'omie_products'),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_product_costs_updated_at', 'product_costs'),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_receber_updated_at', 'fin_contas_receber'),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_pagar_updated_at', 'fin_contas_pagar'),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_farmer_client_scores_calculated_at', 'farmer_client_scores'),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_pedido_compra_sugerido_data_ciclo', 'pedido_compra_sugerido')
 )
 SELECT
   e.migration,
