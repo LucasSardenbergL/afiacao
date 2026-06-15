@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { track } from '@/lib/analytics';
+import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { useFilaAcoes, type FonteFila } from '@/hooks/useFilaAcoes';
 import { useCriticaFila } from '@/hooks/useCriticaFila';
 import { PorQueAgora } from '@/components/fila/PorQueAgora';
@@ -42,7 +43,7 @@ function AcaoCta({ a, temCritica }: { a: AcaoSugerida; temCritica: boolean }) {
   };
   const tel = a.telefone?.replace(/\D/g, '');
   if (a.cta === 'ligar' && tel) {
-    return <Button asChild size="sm" variant="outline"><a href={`tel:${tel}`} onClick={onClick}>Ligar</a></Button>;
+    return <BotaoLigar telefone={a.telefone} nomeCliente={a.clienteNome ?? a.titulo} onLigar={onClick} />;
   }
   if (a.cta === 'whatsapp' && tel) {
     return <Button asChild size="sm" variant="outline"><a href={`https://wa.me/${tel}`} target="_blank" rel="noopener noreferrer" onClick={onClick}>WhatsApp</a></Button>;

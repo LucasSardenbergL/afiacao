@@ -1,7 +1,7 @@
 // Card de uma parada na rota otimizada (planejador de rotas).
 // Extraído de src/pages/AdminRoutePlanner.tsx (god-component split).
 // Presentational: recebe a parada + estado de check-in/timer já resolvidos + callbacks.
-import { Clock, Phone, CheckCircle2, XCircle, ExternalLink } from 'lucide-react';
+import { Clock, CheckCircle2, XCircle, ExternalLink } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ import type { RouteStop } from './types';
 import { STOP_CONFIG, STOP_DURATION_MIN, PRIORITY_CONFIG } from './constants';
 import { getStopIcon, getCTALabel } from './renderHelpers';
 import { RadarOutcomeMenu } from '@/components/radar/RadarOutcomeMenu';
+import { BotaoLigar } from '@/components/call/BotaoLigar';
 
 export function RouteStopCard({
   stop,
@@ -97,11 +98,7 @@ export function RouteStopCard({
                 </Button>
               )}
               {stop.phone && (
-                <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" asChild>
-                  <a href={`tel:${stop.phone}`}>
-                    <Phone className="w-3 h-3" /> Ligar
-                  </a>
-                </Button>
+                <BotaoLigar telefone={stop.phone} nomeCliente={stop.customerName} />
               )}
               {stop.stopType === 'prospect_visit' ? (
                 stop.radarCnpj ? <RadarOutcomeMenu cnpj={stop.radarCnpj} /> : null
