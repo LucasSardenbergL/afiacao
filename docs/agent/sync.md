@@ -13,6 +13,12 @@
 - **Todo cron `net.http_post` PRECISA de `timeout_milliseconds` explícito** — o default do `pg_net` é **5s** e mata SILENCIOSAMENTE qualquer função >5s (o `job_run_details` ainda diz "succeeded"). Teto padrão da casa: **150000** (150s).
 - **Crons devem ser versionados em migration** — um cron que vive só no banco some sem rastro (já aconteceu: vendas ficou 8 dias morto porque o cron nunca foi versionado).
 
+## Enumeração pesada do Omie (paginação)
+
+- **Não confiar em `total_de_paginas`** — sub-reporta em lista grande. Paginar **até página vazia** + guard anti-loop; `registros_por_pagina>100` é **ignorado** pelo Omie.
+- Enumeração pesada (~10k+) precisa de **bulk reads + background (`waitUntil`) + retry**, nunca N+1.
+- ⚠️ Após corrigir a FONTE, **snapshots derivados não se regeneram sozinhos** — re-invocar o recompute (ver `docs/agent/reposicao.md`, cmc).
+
 ## Assinaturas de incidente (sintoma → causa → ação)
 
 - **401 em muitas edges** → `CRON_SECRET` do Vault divergiu da env das edges → realinhar (Vault + edges no Lovable). ⚠️ `401` **isolado** (1 edge) pode ser `verify_jwt`/header/gate da própria edge, não secret.

@@ -1,10 +1,14 @@
-# docs/historico — diário de PR (movido do CLAUDE.md)
+# docs/historico/ — diário de PR / entregas (movido do CLAUDE.md)
 
-Aqui vive a **narrativa íntegra dos PRs** (problema → diagnóstico → fix → lição), movida das §5/§10 do `CLAUDE.md` no refactor da frente 1 (decisão do founder 2026-06-14: **mover íntegro, zero descarte**).
+Registro consultável de **PRs/bugs/programas/auditorias já entregues** — a narrativa íntegra (problema → diagnóstico → fix → lição), movida das §5/§9/§10 do CLAUDE.md na frente 1 do refactor (2026-06-14/15; decisão do founder: **mover íntegro, zero descarte**). Consolidou a antiga `docs/registro/`.
 
-- **Lições duráveis reutilizáveis** ficam em `docs/agent/<dominio>.md` (carregadas sob demanda).
-- **A narrativa histórica completa** fica aqui, por domínio (`financeiro.md`, `reposicao.md`, `sync.md`, `kb.md`, `radar.md`, `vendas.md`, `ux.md`, …) — fora do contexto automático de toda sessão.
+**Não é lido a cada sessão** — o CLAUDE.md ficou só com regras vivas. Venha aqui quando precisar do **detalhe/contexto** de uma entrega. Ao concluir uma entrega nova, **registre aqui** (não no CLAUDE.md).
 
-Plano completo: `docs/superpowers/plans/2026-06-14-refactor-claude-md.md`.
+| Arquivo | O que tem |
+| --- | --- |
+| [bugs-resolvidos.md](bugs-resolvidos.md) | (era §10) cada bug/contradição/débito resolvido, com PR + lição (multi-domínio: KB, Radar, reposição, sync…) |
+| [programas-vendas.md](programas-vendas.md) | WhatsApp + Motor de Rota; copiloto "Buddy" |
+| [auditoria-ux-redesign.md](auditoria-ux-redesign.md) | (era §9/§9b/§11) auditoria UX 2026-05-13 + redesign visual v3 + premissas/glossário |
+| [estoque-picking-recebimento.md](estoque-picking-recebimento.md) | offline-first + closed-loop (Picking Bridge Oben, Recebimento honesto) |
 
-> Status: **Fase A em andamento.** Os `docs/agent/*` dos domínios trabalhados em 2026-06-14 (database, sync, money-path) já existem. O restante (financeiro, reposicao, impersonation, knowledge-base, deploy) + o **movimento do diário pra cá** + a **Fase B** (esvaziar o `CLAUDE.md` + CI de budget) ficam pra uma **sessão dedicada de contexto limpo** (o refactor exige precisão pra não perder lição).
+> **As 3 camadas do refactor:** lição durável reutilizável → `docs/agent/<dominio>.md` (carregada sob demanda); **narrativa histórica** → aqui; detalhe profundo (spec/plano) → `docs/superpowers/{specs,plans}/`. Plano: `docs/superpowers/plans/2026-06-14-refactor-claude-md.md`.
