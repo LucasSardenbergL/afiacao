@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPrintData, escapeHtml, buildSingleOrderHtml, buildPrintDocument } from '../buildPrintHtml';
+import { buildPrintData, buildSingleOrderHtml, buildPrintDocument } from '../buildPrintHtml';
 import type { SalesOrderRow } from '../types';
 
 const order: SalesOrderRow = {
@@ -17,14 +17,6 @@ const order: SalesOrderRow = {
   customer_name: 'João Cliente',
   customer_document: '123',
 };
-
-describe('escapeHtml', () => {
-  it('escapa caracteres especiais HTML', () => {
-    expect(escapeHtml('<b>"a" & \'b\'>')).toBe('&lt;b&gt;&quot;a&quot; &amp; &#39;b&#39;&gt;');
-    expect(escapeHtml(null)).toBe('');
-    expect(escapeHtml(undefined)).toBe('');
-  });
-});
 
 describe('buildPrintData', () => {
   it('mapeia pedido para PrintOrderData (oben) com número sem zeros à esquerda', () => {

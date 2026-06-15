@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Download } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { escapeHtml } from '@/lib/escape-html';
 
 interface CertificateProps {
   userName: string;
@@ -23,11 +24,6 @@ export function GamificationCertificate({ userName, levelName, level, totalScore
     if (!printWindow) return;
 
     const certDate = date || format(new Date(), "dd 'de' MMMM 'de' yyyy", { locale: ptBR });
-
-    function escapeHtml(s: string | undefined | null): string {
-      if (!s) return '';
-      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-    }
 
     printWindow.document.write(`
       <!DOCTYPE html>
