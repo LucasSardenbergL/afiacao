@@ -126,6 +126,9 @@ P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260614180000_markup
 echo "→ migration 20260614190000_get_preco_cockpit.sql…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260614190000_get_preco_cockpit.sql" >/dev/null
 
+echo "→ migration 20260615150000_cockpit_preco_fixes.sql (fixes do challenge)…"
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260615150000_cockpit_preco_fixes.sql" >/dev/null
+
 echo "→ seed (roles + grants + produtos/CMC + política de conta + tint)…"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 -- a=master(gestor) b=employee(vendedora) c=customer
@@ -463,4 +466,119 @@ END $$;
 SQL
 
 echo ""
-echo "✅ test-cockpit-preco: todos os asserts passaram (A1..A10)"
+echo "→ seed fixes (grant ledger; B2 synced_at; B3 NaN/null)…"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+GRANT SELECT ON public.cmc_ledger TO authenticated;
+-- B2: codigo 2002 em 2 contas; vendas tem synced_at MAIS NOVO (deve vencer) e updated_at velho.
+INSERT INTO public.inventory_position (omie_codigo_produto, account, cmc, saldo, synced_at, updated_at) VALUES
+  (2002, 'vendas', 50,  5, now(),                      now() - interval '10 days'),
+  (2002, 'oben',   999, 5, now() - interval '10 days', now());
+INSERT INTO public.omie_products (omie_codigo_produto, account, familia) VALUES (2002, 'oben', 'vernizes');
+-- B3: codigo 2003 com cmc (+ política de conta oben 30/50) → sem o guard, preco NULL/NaN cairia em verde.
+INSERT INTO public.inventory_position (omie_codigo_produto, account, cmc, saldo) VALUES (2003, 'vendas', 60, 5);
+INSERT INTO public.omie_products (omie_codigo_produto, account, familia) VALUES (2003, 'oben', 'vernizes');
+SQL
+
+echo "→ ASSERT B1 — employee NÃO lê cmc_ledger (gate #1) + FALSIFICAÇÃO:"
+P -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE n_emp int; n_master int;
+BEGIN
+  SET ROLE authenticated; SET LOCAL test.uid='00000000-0000-0000-0000-00000000000b';  -- employee
+  SELECT count(*) INTO n_emp FROM public.cmc_ledger;
+  RESET ROLE;
+  SET ROLE authenticated; SET LOCAL test.uid='00000000-0000-0000-0000-00000000000a';  -- master
+  SELECT count(*) INTO n_master FROM public.cmc_ledger;
+  RESET ROLE;
+  IF n_master = 0 THEN RAISE EXCEPTION 'B1 setup: ledger vazio (A8 devia ter inserido)'; END IF;
+  IF n_emp <> 0 THEN RAISE EXCEPTION 'B1 FALHOU: employee leu % linha(s) do ledger (gate furado)', n_emp; END IF;
+  RAISE NOTICE 'OK B1 — employee vê 0 do ledger, master vê % (gate #1)', n_master;
+END $$;
+SQL
+# FALSIFICAÇÃO: recria a policy ANTIGA (staff) → employee passa a ver → prova que B1 tem dente.
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DROP POLICY IF EXISTS "cmc_ledger_select_gestor" ON public.cmc_ledger;
+CREATE POLICY "cmc_ledger_select_staff" ON public.cmc_ledger FOR SELECT TO authenticated
+  USING (has_role(auth.uid(),'employee'::app_role) OR has_role(auth.uid(),'master'::app_role));
+SQL
+SAB=$(P -tA 2>&1 <<'SQL' || true
+DO $$
+DECLARE n int;
+BEGIN
+  SET ROLE authenticated; SET LOCAL test.uid='00000000-0000-0000-0000-00000000000b';
+  SELECT count(*) INTO n FROM public.cmc_ledger; RESET ROLE;
+  IF n > 0 THEN RAISE NOTICE 'SAB_PASSOU'; ELSE RAISE NOTICE 'SAB_NAO n=%', n; END IF;
+END $$;
+SQL
+)
+echo "$SAB" | grep -q 'SAB_PASSOU' && echo "  OK B1 (falsificação) — policy velha deixou o employee ler → B1 tem dente" || { echo "  B1 FALHOU (falsificação): $SAB"; exit 1; }
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DROP POLICY IF EXISTS "cmc_ledger_select_staff" ON public.cmc_ledger;
+CREATE POLICY "cmc_ledger_select_gestor" ON public.cmc_ledger FOR SELECT TO authenticated
+  USING (pode_ver_carteira_completa(auth.uid()));
+SQL
+
+echo "→ ASSERT B2 — CMC ordena por synced_at (não updated_at):"
+P -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE r jsonb;
+BEGIN
+  SET LOCAL test.uid='00000000-0000-0000-0000-00000000000a';  -- master (vê cmc)
+  SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":2002,"preco":100}]'::jsonb))->0 INTO r;
+  IF (r->>'cmc')::numeric <> 50 THEN
+    RAISE EXCEPTION 'B2 FALHOU: cmc=% (esperado 50 — vendas synced_at novo; oben 999 só updated_at novo)', r->>'cmc';
+  END IF;
+  RAISE NOTICE 'OK B2 — venceu o synced_at mais novo (cmc 50), não o updated_at';
+END $$;
+SQL
+
+echo "→ ASSERT B3 — preco NULL/NaN → neutro, NUNCA verde (#7):"
+P -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE r jsonb;
+BEGIN
+  SET LOCAL test.uid='00000000-0000-0000-0000-00000000000a';
+  SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":2003}]'::jsonb))->0 INTO r;
+  IF r->>'faixa' <> 'neutro' OR r->>'motivo' <> 'sem_custo' THEN
+    RAISE EXCEPTION 'B3a FALHOU: preco ausente deu %/% (esperado neutro/sem_custo)', r->>'faixa', r->>'motivo';
+  END IF;
+  SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":2003,"preco":"NaN"}]'::jsonb))->0 INTO r;
+  IF r->>'faixa' <> 'neutro' THEN
+    RAISE EXCEPTION 'B3b FALHOU: preco NaN deu faixa % (esperado neutro)', r->>'faixa';
+  END IF;
+  RAISE NOTICE 'OK B3 — preco ausente/NaN → neutro (não verde fabricado)';
+END $$;
+SQL
+
+echo "→ ASSERT B4 — fórmula tint de outra empresa → neutro (#5):"
+P -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE r jsonb;
+BEGIN
+  SET LOCAL test.uid='00000000-0000-0000-0000-00000000000a';
+  SELECT (public.get_preco_cockpit('[{"empresa":"colacor","codigo":9999,"preco":100,"tint_formula_id":"00000000-0000-0000-0000-0000000f0001"}]'::jsonb))->0 INTO r;
+  IF (r->>'tem_custo')::boolean IS NOT FALSE THEN
+    RAISE EXCEPTION 'B4 FALHOU: fórmula oben casou com empresa colacor (tem_custo=%)', r->>'tem_custo';
+  END IF;
+  RAISE NOTICE 'OK B4 — fórmula de outra empresa → custo nulo (neutro)';
+END $$;
+SQL
+
+echo "→ ASSERT B5 — qtd_ml<=0 no tint → incompleto (#8):"
+P -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE r jsonb;
+BEGIN
+  UPDATE public.tint_formula_itens SET qtd_ml = 0
+    WHERE formula_id='00000000-0000-0000-0000-0000000f0001' AND corante_id='00000000-0000-0000-0000-00000000c001';
+  SET LOCAL test.uid='00000000-0000-0000-0000-00000000000a';
+  SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":9999,"preco":100,"tint_formula_id":"00000000-0000-0000-0000-0000000f0001"}]'::jsonb))->0 INTO r;
+  IF (r->>'tem_custo')::boolean IS NOT FALSE THEN
+    RAISE EXCEPTION 'B5 FALHOU: qtd_ml=0 contou como presente (tem_custo=% — soma parcial)', r->>'tem_custo';
+  END IF;
+  RAISE NOTICE 'OK B5 — qtd_ml=0 → custo incompleto (neutro), não soma parcial';
+END $$;
+SQL
+
+echo ""
+echo "✅ test-cockpit-preco: todos os asserts passaram (A1..A10 + B1..B5 fixes)"
