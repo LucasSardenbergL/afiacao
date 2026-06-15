@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **231** custom migrations totais
-- **866** objetos esperados (criados por estas migrations)
+- **232** custom migrations totais
+- **869** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 239
+  - `function`: 242
   - `rls_policy`: 206
   - `index`: 169
   - `cron_job`: 105
@@ -2029,6 +2029,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `index` | `public.idx_omie_products_codigo_text_account` | `omie_products` |
+
+### `20260615130000_tint_vigia_cobertura_sentinela.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
 
 ## Próximos passos quando algo der `❌`
 
