@@ -49,19 +49,6 @@ export function classeSabor(s: SaborCaca): string {
   }
 }
 
-/**
- * Monta um href `tel:` para o telefone fornecido.
- *
- * Retorna `null` se o telefone for null, vazio ou contiver apenas espaços.
- * Mantém apenas os dígitos no href para compatibilidade máxima com apps nativos.
- */
-export function telLink(tel: string | null): string | null {
-  if (tel === null) return null;
-  const digitos = tel.replace(/\D/g, '');
-  if (digitos.length === 0) return null;
-  return `tel:${digitos}`;
-}
-
 // ─── Agrupamento por documento ────────────────────────────────────────────────
 
 import type { CacaCandidatoDisplay } from './types';

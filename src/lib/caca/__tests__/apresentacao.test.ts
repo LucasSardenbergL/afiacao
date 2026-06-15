@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { labelSabor, faixaConfianca, classeSabor, telLink, agruparPorDocumento } from '../apresentacao';
+import { labelSabor, faixaConfianca, classeSabor, agruparPorDocumento } from '../apresentacao';
 import type { SaborCaca, CacaCandidatoDisplay } from '../types';
 
 // ─── labelSabor ────────────────────────────────────────────────────────────────
@@ -111,51 +111,6 @@ describe('classeSabor', () => {
     for (const s of sabores) {
       expect(classeSabor(s).length).toBeGreaterThan(0);
     }
-  });
-});
-
-// ─── telLink ───────────────────────────────────────────────────────────────────
-
-describe('telLink', () => {
-  it('null → null', () => {
-    expect(telLink(null)).toBeNull();
-  });
-
-  it('string vazia → null', () => {
-    expect(telLink('')).toBeNull();
-  });
-
-  it('string só de espaços → null', () => {
-    expect(telLink('   ')).toBeNull();
-  });
-
-  it('string com hífens e espaços → tel: com apenas dígitos', () => {
-    expect(telLink('(31) 99999-8888')).toBe('tel:31999998888');
-  });
-
-  it('E.164 → preserva dígitos', () => {
-    expect(telLink('+5531999998888')).toBe('tel:5531999998888');
-  });
-
-  it('só dígitos → prefixo tel: adicionado', () => {
-    expect(telLink('31999998888')).toBe('tel:31999998888');
-  });
-
-  it('telefone com pontos e parênteses → só dígitos no href', () => {
-    expect(telLink('(31) 3333-4444')).toBe('tel:3133334444');
-  });
-
-  it('retorna string começando com "tel:" quando não nulo', () => {
-    const resultado = telLink('31999998888');
-    expect(resultado).toMatch(/^tel:/);
-  });
-
-  it('não contém caracteres não-dígitos após o prefixo tel:', () => {
-    const resultado = telLink('(11) 98765-4321');
-    expect(resultado).toBe('tel:11987654321');
-    // confirma que só há dígitos depois do "tel:"
-    const semPrefixo = resultado!.replace('tel:', '');
-    expect(semPrefixo).toMatch(/^\d+$/);
   });
 });
 
