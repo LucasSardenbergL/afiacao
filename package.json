@@ -17,6 +17,7 @@
     "wt": "bash scripts/new-worktree.sh",
     "wt:status": "bash scripts/wt-status.sh",
     "wt:clean": "bash scripts/wt-clean.sh",
+    "wt:reap": "bash scripts/wt-reap.sh",
     "wt:prune": "bash scripts/wt-prune.sh",
     "wt:map": "bash scripts/wt-map.sh",
     "wt:label": "bash scripts/wt-map.sh label",
