@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 187
+-- Total de custom migrations: 188
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -206,7 +206,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260606190000', 'reposicao_preco_pedido_cmc_account', '20260606190000_reposicao_preco_pedido_cmc_account.sql'),
   ('20260606190000', 'reposicao_qtde_inteira_persist', '20260606190000_reposicao_qtde_inteira_persist.sql'),
   ('20260606200000', 'reposicao_promo_forward_buying_min', '20260606200000_reposicao_promo_forward_buying_min.sql'),
-  ('20260606230000', 'negociacao_paralela_v2_cleanup', '20260606230000_negociacao_paralela_v2_cleanup.sql')
+  ('20260606230000', 'negociacao_paralela_v2_cleanup', '20260606230000_negociacao_paralela_v2_cleanup.sql'),
+  ('20260606240000', 'cron_sync_inventory_full', '20260606240000_cron_sync_inventory_full.sql')
 )
 SELECT
   e.version,
@@ -922,7 +923,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_preco_pedido_cmc', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_preco_pedido_cmc_account', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_qtde_inteira_persist', 'function', 'public', 'reposicao_persistir_qtde_inteira', ''),
-  ('reposicao_promo_forward_buying_min', 'function', 'public', 'aplicar_promocoes_no_ciclo', '')
+  ('reposicao_promo_forward_buying_min', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
+  ('cron_sync_inventory_full', 'cron_job', 'cron', 'sync-inventory-full-vendas-daily', '')
 )
 SELECT
   e.migration,
