@@ -32,7 +32,7 @@ RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path TO 'public'
-AS $$
+AS $ledger$
 BEGIN
   IF NEW.cmc IS NOT NULL
      AND NEW.cmc > 0
@@ -49,7 +49,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$;
+$ledger$;
 
 DROP TRIGGER IF EXISTS trg_cmc_ledger_capture ON public.inventory_position;
 CREATE TRIGGER trg_cmc_ledger_capture

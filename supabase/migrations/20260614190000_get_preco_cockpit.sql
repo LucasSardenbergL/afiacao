@@ -21,7 +21,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path TO 'public'
-AS $$
+AS $cockpit$
 DECLARE
   v_pode_num boolean;
   v_out jsonb := '[]'::jsonb;
@@ -167,7 +167,7 @@ BEGIN
 
   RETURN v_out;
 END;
-$$;
+$cockpit$;
 
 REVOKE ALL ON FUNCTION public.get_preco_cockpit(jsonb) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.get_preco_cockpit(jsonb) TO authenticated;

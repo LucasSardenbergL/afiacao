@@ -47,7 +47,7 @@ RETURNS TABLE (piso_markup numeric, meta_markup numeric)
 LANGUAGE sql
 STABLE
 SET search_path TO 'public'
-AS $$
+AS $resolve$
   SELECT piso_markup, meta_markup
   FROM public.markup_policy
   WHERE account = lower(p_empresa)
@@ -58,7 +58,7 @@ AS $$
     )
   ORDER BY CASE escopo WHEN 'sku' THEN 1 WHEN 'familia' THEN 2 ELSE 3 END
   LIMIT 1;
-$$;
+$resolve$;
 
 -- ── Validação pós-apply ──
 SELECT
