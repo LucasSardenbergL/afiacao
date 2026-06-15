@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **238** custom migrations totais
-- **882** objetos esperados (criados por estas migrations)
+- **239** custom migrations totais
+- **883** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 244
   - `rls_policy`: 207
   - `index`: 177
-  - `cron_job`: 105
+  - `cron_job`: 106
   - `table`: 100
   - `trigger`: 45
   - `enum_value`: 4
@@ -1653,6 +1653,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260606230000_negociacao_paralela_v2_cleanup.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260606240000_cron_sync_inventory_full.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sync-inventory-full-vendas-daily` | — |
 
 ### `20260608120000_tool_spec_custom_option.sql`
 
