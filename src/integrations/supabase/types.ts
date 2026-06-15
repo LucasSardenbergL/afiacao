@@ -623,6 +623,39 @@ export type Database = {
           },
         ]
       }
+      cmc_ledger: {
+        Row: {
+          account: string
+          cmc_anterior: number | null
+          cmc_novo: number
+          id: string
+          observed_at: string
+          omie_codigo_produto: number
+          saldo: number | null
+          synced_at: string | null
+        }
+        Insert: {
+          account: string
+          cmc_anterior?: number | null
+          cmc_novo: number
+          id?: string
+          observed_at?: string
+          omie_codigo_produto: number
+          saldo?: number | null
+          synced_at?: string | null
+        }
+        Update: {
+          account?: string
+          cmc_anterior?: number | null
+          cmc_novo?: number
+          id?: string
+          observed_at?: string
+          omie_codigo_produto?: number
+          saldo?: number | null
+          synced_at?: string | null
+        }
+        Relationships: []
+      }
       cockpit_audit_log: {
         Row: {
           action: string
@@ -15083,6 +15116,25 @@ export type Database = {
         }
         Returns: Json
       }
+      carteira_por_municipio: {
+        Args: { p_municipio_codigo: string }
+        Returns: {
+          business_hours_close: string
+          business_hours_open: string
+          city: string
+          complement: string
+          dias_desde_visita: number
+          name: string
+          neighborhood: string
+          number: string
+          phone: string
+          state: string
+          street: string
+          ultima_visita: string
+          user_id: string
+          zip_code: string
+        }[]
+      }
       carteira_visivel_para: {
         Args: { _customer_user_id: string; _uid: string }
         Returns: boolean
@@ -15545,6 +15597,7 @@ export type Database = {
           owner_user_id: string
         }[]
       }
+      norm_cidade: { Args: { t: string }; Returns: string }
       pedido_compra_split: {
         Args: { p_chunk_size?: number; p_pedido_id: number }
         Returns: {
@@ -15838,6 +15891,7 @@ export type Database = {
         Args: { p_account: string; p_id_corante: string }
         Returns: string
       }
+      tint_marcar_bases_mixmachine: { Args: never; Returns: number }
       tint_promote_sync_run: { Args: { p_sync_run_id: string }; Returns: Json }
       tint_recalc_preco_oficial: {
         Args: {
