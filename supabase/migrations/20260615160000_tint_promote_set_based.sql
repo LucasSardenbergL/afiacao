@@ -313,6 +313,7 @@ BEGIN
   SELECT
     row_number() OVER () AS eid,
     fl.staging_formula_id, fl.cor_id, fl.nome_cor, fl.cod_produto, fl.id_base, fl.personalizada,
+    fl.subcolecao,  -- texto CRU (p/ o desempate espelhar a ordem do loop; ver _expand_uniq)
     fl.produto_id, fl.base_id,
     sub.id AS subcolecao_id,
     sk.id  AS sku_id,
@@ -382,10 +383,13 @@ BEGIN
     ON bl.cod_produto = ex.cod_produto AND bl.id_base = ex.id_base AND bl.id_embalagem = ex.id_emb
   LEFT JOIN itens it ON it.eid = ex.eid;
 
-  -- Dedup pela CHAVE OFICIAL (uq_tint_formulas_chave — SEM personalizada): no loop, se duas
-  -- fórmulas-fonte (personalizada false/true) colidem na mesma embalagem, a ÚLTIMA (true, pois
-  -- _formulas_latest ordena personalizada ASC) vence. INSERT...SELECT não pode ter a chave 2× no
-  -- mesmo comando (cardinality violation) → DISTINCT ON mantendo personalizada DESC (= o vencedor).
+  -- Dedup pela CHAVE OFICIAL (uq_tint_formulas_chave — SEM personalizada): INSERT...SELECT não pode
+  -- ter a mesma chave 2× no mesmo comando (cardinality violation). O loop processa _formulas_latest
+  -- em ORDER BY ... COALESCE(subcolecao,'') ASC, personalizada ASC e o ÚLTIMO vence o upsert. A chave
+  -- oficial COLAPSA subcoleções que resolvem ao MESMO subcolecao_id (NULL e whitespace-only viram
+  -- NULL → btrim vazio), então a colisão pode ser entre linhas com COALESCE(subcolecao,'') DIFERENTE
+  -- (não só personalizada). Para escolher o MESMO vencedor do loop, desempata por COALESCE(subcolecao,
+  -- '') DESC PRIMEIRO, depois personalizada DESC (= o último que o loop processaria), eid DESC final.
   CREATE TEMP TABLE _expand_uniq ON COMMIT DROP AS
   SELECT DISTINCT ON (ex.cor_id, ex.produto_id, ex.base_id, COALESCE(ex.subcolecao_id, v_zero_uuid), ex.emb_id)
          ex.staging_formula_id, ex.cor_id, ex.nome_cor, ex.personalizada,
@@ -394,7 +398,7 @@ BEGIN
   FROM _expand ex
   JOIN _preco pr ON pr.eid = ex.eid
   ORDER BY ex.cor_id, ex.produto_id, ex.base_id, COALESCE(ex.subcolecao_id, v_zero_uuid), ex.emb_id,
-           ex.personalizada DESC, ex.eid DESC;
+           COALESCE(ex.subcolecao, '') DESC, ex.personalizada DESC, ex.eid DESC;
 
   -- Corante stubs em massa ANTES dos itens (espelha tint_ensure_corante_stub: volume 1000).
   -- A partir de _expand (todas as expansões, inclui colisão) p/ casar o side-effect do loop.

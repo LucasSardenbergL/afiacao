@@ -12,6 +12,14 @@
 > em 481k: o loop é O(linhas) com subqueries por linha → estoura o gateway; o set-based são ~10
 > operações em lote). PR: `claude/tint-promote-set-based`. **Falta só o re-flip** (roteiro no fim).
 >
+> 🔎 **Codex challenge (2ª opinião money-path) — 1 achado P1 CORRIGIDO:** o desempate do upsert. Quando
+> duas fórmulas-fonte colidem na chave oficial com subcoleção que COLAPSA p/ `subcolecao_id` NULL
+> (`NULL` vs whitespace `' '`), o loop ordena por `COALESCE(subcolecao,'')` ASC, depois `personalizada`
+> ASC, e o ÚLTIMO vence; meu `DISTINCT ON` desempatava só por `personalizada DESC` → vencedor errado.
+> Fix: `ORDER BY COALESCE(subcolecao,'') DESC, personalizada DESC, eid DESC` (espelha o último que o
+> loop processaria). Regressão coberta (CENÁRIO 13 CVCOLLIDE) — provado com dente (versão buggy →
+> `C13.4 DIVERGE em 12 linhas`; com fix → 0). Demais (preço CTE, fator, stubs, contadores): sem achado.
+>
 > **Re-flip (founder, quando quiser):** 1) Aplicar `20260615160000` no SQL Editor (pode ser em shadow —
 > só troca a função, não roda nada). 2) Pré-flight opcional (de-risca): `BEGIN; SELECT
 > tint_promote_sync_run('<run formulas recente>'); ROLLBACK;` com `clock_timestamp()` → prova que roda

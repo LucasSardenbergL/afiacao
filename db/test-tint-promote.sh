@@ -838,6 +838,23 @@ UNION ALL
 SELECT sf.sync_run_id, sf.id, 'CVCOR'||lpad((1+((sf.gnum+4)%10))::text,2,'0'), 2, (2 + (sf.gnum%5))::numeric
 FROM (SELECT *, substring(cor_id from 3)::int AS gnum FROM tint_staging_formulas WHERE cod_produto='PV' AND account IN ('difa','difb')) sf;
 
+-- COLISÃO de chave oficial (regressão do bug que o Codex pegou): duas fórmulas-fonte com a MESMA
+-- (cor_id,produto,base,embalagem) mas subcoleção que COLAPSA p/ subcolecao_id NULL (NULL vs ' ') +
+-- personalizada diferente. O loop ordena _formulas_latest por COALESCE(subcolecao,'') ASC, personalizada
+-- ASC e o ÚLTIMO vence → vencedor = B (subcolecao=' ' > '', personalizada=false). O set-based DEVE
+-- escolher o MESMO (sem o fix de desempate escolheria A por personalizada DESC → divergiria do loop).
+-- (Inserido DEPOIS do INSERT de itens por gnum — senão substring('CVCOLLIDE' from 3)::int quebraria.)
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, subcolecao) VALUES
+  ('fa000000-0000-0000-0000-0000000000aa','da000000-0000-0000-0000-000000000002','difa','L1','CVCOLLIDE','COLLIDE_A','PV','BV1','EV0900',900,true , NULL),
+  ('fa000000-0000-0000-0000-0000000000bb','da000000-0000-0000-0000-000000000002','difa','L1','CVCOLLIDE','COLLIDE_B','PV','BV1','EV0900',900,false,' '),
+  ('fb000000-0000-0000-0000-0000000000aa','db000000-0000-0000-0000-000000000002','difb','L1','CVCOLLIDE','COLLIDE_A','PV','BV1','EV0900',900,true , NULL),
+  ('fb000000-0000-0000-0000-0000000000bb','db000000-0000-0000-0000-000000000002','difb','L1','CVCOLLIDE','COLLIDE_B','PV','BV1','EV0900',900,false,' ');
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml) VALUES
+  ('da000000-0000-0000-0000-000000000002','fa000000-0000-0000-0000-0000000000aa','CVCOR01',1,10),
+  ('da000000-0000-0000-0000-000000000002','fa000000-0000-0000-0000-0000000000bb','CVCOR02',1,20),
+  ('db000000-0000-0000-0000-000000000002','fb000000-0000-0000-0000-0000000000aa','CVCOR01',1,10),
+  ('db000000-0000-0000-0000-000000000002','fb000000-0000-0000-0000-0000000000bb','CVCOR02',1,20);
+
 -- Comparador: total de diferenças (EXCEPT nos dois sentidos) em fórmulas + itens entre difa e difb.
 -- Normaliza account/id/timestamps; compara por chave de NEGÓCIO (ids SAYER). EXCEPT trata NULL=NULL.
 CREATE OR REPLACE FUNCTION _dif_count() RETURNS int LANGUAGE sql AS $fn$
@@ -887,7 +904,7 @@ BEGIN
   SELECT count(*) INTO na FROM tint_formulas WHERE account='difa';
   SELECT count(*) INTO nb FROM tint_formulas WHERE account='difb';
   IF na <> nb THEN RAISE EXCEPTION 'C13.1 FALHOU: nº de fórmulas difere (set-based %, loop %)', na, nb; END IF;
-  IF na <> 600 THEN RAISE EXCEPTION 'C13.1b FALHOU: esperado 600 fórmulas (200×3 embalagens), achei %', na; END IF;
+  IF na <> 603 THEN RAISE EXCEPTION 'C13.1b FALHOU: esperado 603 fórmulas (200×3 + 3 da colisão CVCOLLIDE), achei %', na; END IF;
 
   SELECT count(*) INTO ia FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='difa';
   SELECT count(*) INTO ib FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='difb';
@@ -908,11 +925,21 @@ BEGIN
   d := _dif_count();
   IF d <> 0 THEN RAISE EXCEPTION 'C13.4 FALHOU: set-based DIVERGE do loop em % linhas (fórmulas+itens)', d; END IF;
 
+  -- Colisão de chave oficial: exercitada (3 expansões, 1 vencedor/embalagem) e o vencedor é B
+  -- (subcolecao=' ' > '', personalizada=false) — o MESMO que o loop. _dif_count já garante difa≡difb;
+  -- este assert documenta QUAL é o vencedor e que a colisão de fato ocorreu (não-trivial).
+  IF (SELECT count(*) FROM tint_formulas WHERE account='difa' AND cor_id='CVCOLLIDE') <> 3 THEN
+    RAISE EXCEPTION 'C13.6 FALHOU: CVCOLLIDE deveria colapsar em 3 expansões (1 vencedor/embalagem), achei %',
+      (SELECT count(*) FROM tint_formulas WHERE account='difa' AND cor_id='CVCOLLIDE'); END IF;
+  IF EXISTS (SELECT 1 FROM tint_formulas WHERE account='difa' AND cor_id='CVCOLLIDE'
+             AND (personalizada IS DISTINCT FROM false OR nome_cor IS DISTINCT FROM 'COLLIDE_B')) THEN
+    RAISE EXCEPTION 'C13.6 FALHOU: vencedor da colisão != B (esperado personalizada=false / nome COLLIDE_B = escolha do loop)'; END IF;
+
   SELECT round(extract(epoch from ((SELECT ts FROM _t13 WHERE k='a1') - (SELECT ts FROM _t13 WHERE k='a0')))*1000,1),
          round(extract(epoch from ((SELECT ts FROM _t13 WHERE k='a2') - (SELECT ts FROM _t13 WHERE k='a1')))*1000,1)
     INTO ms_new, ms_old;
   IF ms_new > 30000 THEN RAISE EXCEPTION 'C13.5 FALHOU: set-based demorou % ms (>30s — regressão grave)', ms_new; END IF;
-  RAISE NOTICE 'OK C13 — identidade set-based≡loop: % fórmulas / % itens (% NULL, % com preço); tempo set-based % ms vs loop % ms',
+  RAISE NOTICE 'OK C13 — identidade set-based≡loop: % fórmulas / % itens (% NULL, % com preço; +colisão CVCOLLIDE→B); tempo set-based % ms vs loop % ms',
     na, ia, nulls_a, reais_a, ms_new, ms_old;
 END $$;
 SQL
