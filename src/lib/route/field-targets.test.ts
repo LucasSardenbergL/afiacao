@@ -6,6 +6,9 @@ import {
   particionarAlvos,
   filtrarAlvos,
   toggleTarget,
+  FILTROS_ALVO_INICIAL,
+  aplicarFiltrosAlvos,
+  bairrosDe,
 } from './field-targets';
 import type { RouteStop } from '@/components/reposicao/routePlanner/types';
 
@@ -52,7 +55,11 @@ describe('dedupeStopsById', () => {
   });
 });
 
-const mk = (id: string, stopType: RouteStop['stopType']): RouteStop => ({
+const mk = (
+  id: string,
+  stopType: RouteStop['stopType'],
+  over: Partial<RouteStop> = {},
+): RouteStop => ({
   id,
   stopType,
   customerUserId: stopType === 'prospect_visit' ? '' : `u-${id}`,
@@ -67,6 +74,7 @@ const mk = (id: string, stopType: RouteStop['stopType']): RouteStop => ({
   priorityScore: 0,
   priorityLabel: 'baixa',
   priorityFactors: [],
+  ...over,
 });
 
 describe('particionarAlvos', () => {
@@ -100,5 +108,52 @@ describe('toggleTarget', () => {
   });
   it('remove id presente', () => {
     expect([...toggleTarget(new Set(['x', 'y']), 'x')]).toEqual(['y']);
+  });
+});
+
+describe('aplicarFiltrosAlvos', () => {
+  const stops = [
+    mk('ana', 'sales_visit', { customerName: 'Ana Marcenaria', phone: '3399', address: { street: '', number: '', neighborhood: 'Centro', city: '', state: '', zip_code: '' } }),
+    mk('beto', 'prospect_visit', { customerName: 'Beto Móveis', phone: null, prospeccaoStatus: 'a_contatar', address: { street: '', number: '', neighborhood: 'Niterói', city: '', state: '', zip_code: '' } }),
+    mk('caio', 'prospect_visit', { customerName: 'Caio MDF', phone: '3311', prospeccaoStatus: 'em_conversa', address: { street: '', number: '', neighborhood: 'Centro', city: '', state: '', zip_code: '' } }),
+  ];
+
+  it('inicial (todos, sem critérios) → tudo', () => {
+    expect(aplicarFiltrosAlvos(stops, FILTROS_ALVO_INICIAL)).toHaveLength(3);
+  });
+  it('busca por nome ignora acento e caixa', () => {
+    const out = aplicarFiltrosAlvos(stops, { ...FILTROS_ALVO_INICIAL, busca: 'moveis' });
+    expect(out.map((s) => s.id)).toEqual(['beto']);
+  });
+  it('comTelefone exclui quem não tem phone', () => {
+    const out = aplicarFiltrosAlvos(stops, { ...FILTROS_ALVO_INICIAL, comTelefone: true });
+    expect(out.map((s) => s.id)).toEqual(['ana', 'caio']);
+  });
+  it('status (multi) filtra prospects pelo prospeccaoStatus e exclui clientes', () => {
+    const out = aplicarFiltrosAlvos(stops, { ...FILTROS_ALVO_INICIAL, status: ['em_conversa'] });
+    expect(out.map((s) => s.id)).toEqual(['caio']);
+  });
+  it('bairro exato', () => {
+    const out = aplicarFiltrosAlvos(stops, { ...FILTROS_ALVO_INICIAL, bairro: 'Centro' });
+    expect(out.map((s) => s.id)).toEqual(['ana', 'caio']);
+  });
+  it('combina tipo + telefone', () => {
+    const out = aplicarFiltrosAlvos(stops, { ...FILTROS_ALVO_INICIAL, tipo: 'prospects', comTelefone: true });
+    expect(out.map((s) => s.id)).toEqual(['caio']);
+  });
+});
+
+describe('bairrosDe', () => {
+  it('únicos, ordenados pt-BR, ignora vazio/whitespace', () => {
+    const stops = [
+      mk('a', 'sales_visit', { address: { street: '', number: '', neighborhood: 'Niterói', city: '', state: '', zip_code: '' } }),
+      mk('b', 'prospect_visit', { address: { street: '', number: '', neighborhood: 'Centro', city: '', state: '', zip_code: '' } }),
+      mk('c', 'sales_visit', { address: { street: '', number: '', neighborhood: '  ', city: '', state: '', zip_code: '' } }),
+      mk('d', 'sales_visit', { address: { street: '', number: '', neighborhood: 'Centro', city: '', state: '', zip_code: '' } }),
+    ];
+    expect(bairrosDe(stops)).toEqual(['Centro', 'Niterói']);
+  });
+  it('lista vazia → vazia', () => {
+    expect(bairrosDe([])).toEqual([]);
   });
 });
