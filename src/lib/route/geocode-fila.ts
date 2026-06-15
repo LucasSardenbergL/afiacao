@@ -16,6 +16,7 @@ export function ordenarFilaGeocode(stops: RouteStop[], estado: EstadoFila): Rout
     (s) =>
       !!s.address.street &&
       s.lat == null &&
+      !s.geocodeFailed && // falha persistida (DB) — não re-tentar entre sessões
       !estado.resolvidos.has(s.id) &&
       !estado.falhados.has(s.id),
   );

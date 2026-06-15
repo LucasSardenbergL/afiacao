@@ -43,6 +43,7 @@ import {
 } from '@/lib/route/field-targets';
 import { carteiraRowToStop, type CarteiraRow } from '@/lib/route/carteira-stop';
 import { montarDetalheAlvo, type AlvoDetalhe } from '@/lib/route/alvo-detalhe';
+import { ordenarFilaGeocode } from '@/lib/route/geocode-fila';
 
 // Teto de prospects por cidade pedido à RPC (a RPC capa em 2000 no SQL).
 // Divinópolis (600) cabe inteira; metrópole mostra os 1000 mais quentes.
@@ -76,7 +77,7 @@ export function useRoutePlanner() {
   const [commercialStops, setCommercialStops] = useState<RouteStop[]>([]);
   const [scheduledVisitStops, setScheduledVisitStops] = useState<RouteStop[]>([]);
   const [loading, setLoading] = useState(true);
-  const [geocoding, setGeocoding] = useState(false);
+  const [geocodingPendentes, setGeocodingPendentes] = useState(0);
   const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>('all');
   const [planningMode, setPlanningMode] = useState<PlanningMode>('hibrido');
   const [planningContext, setPlanningContext] = useState<PlanningContext>('equipe');
@@ -923,6 +924,7 @@ export function useRoutePlanner() {
     setSelectedTargetIds(new Set());
     setFiltros(FILTROS_ALVO_INICIAL);
     setRemovidos(new Set());
+    geocodeFalhados.current.clear(); // nova cidade → permite re-tentar geocodes que falharam
   }, [selectedCities]);
 
   // Merge stops based on planning mode
@@ -990,6 +992,10 @@ export function useRoutePlanner() {
   // Geocode stops progressively (max 15, 1.1s delay between calls)
   const geocodedCoords = useRef<Map<string, { lat: number; lng: number }>>(new Map());
   const geocodingAbort = useRef<AbortController | null>(null);
+  const geocodeFalhados = useRef<Set<string>>(new Set());
+  // Espelha a seleção num ref p/ o worker priorizar marcados sem re-disparar a fila.
+  const selectedIdsRef = useRef<Set<string>>(new Set());
+  selectedIdsRef.current = selectedTargetIds;
 
   const [geocodedAllStops, setGeocodedAllStops] = useState<RouteStop[]>([]);
 
@@ -1002,23 +1008,24 @@ export function useRoutePlanner() {
     setGeocodedAllStops(enriched);
   }, [allStops]);
 
-  // Background geocoding: max 15 stops, sequential with 1.1s delay
+  // Geocoding progressivo (G): fila CONTÍNUA ~1/s, marcados-na-rota primeiro.
+  // Re-deriva a fila a cada ciclo (via ordenarFilaGeocode) → marcar um alvo no meio
+  // re-prioriza o PRÓXIMO pick; resolvidos/falhados saem da fila → o loop termina.
   useEffect(() => {
     geocodingAbort.current?.abort();
     const controller = new AbortController();
     geocodingAbort.current = controller;
 
-    const toGeocode = allStops
-      .filter(s => s.address.street && s.lat === undefined && !s.geocodeFailed && !geocodedCoords.current.has(s.id))
-      .slice(0, 15); // Limit to 15
-
-    if (toGeocode.length === 0) return;
-
-    setGeocoding(true);
-
     (async () => {
-      for (const stop of toGeocode) {
-        if (controller.signal.aborted) break;
+      while (!controller.signal.aborted) {
+        const fila = ordenarFilaGeocode(allStops, {
+          resolvidos: new Set(geocodedCoords.current.keys()),
+          falhados: geocodeFalhados.current,
+          marcados: selectedIdsRef.current,
+        });
+        setGeocodingPendentes(fila.length);
+        if (fila.length === 0) break;
+        const stop = fila[0];
         try {
           const query = stop.stopType === 'prospect_visit'
             ? buildGeocodeQuery(stop.address)
@@ -1031,39 +1038,37 @@ export function useRoutePlanner() {
           if (data?.[0]) {
             const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
             geocodedCoords.current.set(stop.id, coords);
-            // Update state progressively
             setGeocodedAllStops(prev => prev.map(s =>
               s.id === stop.id ? { ...s, lat: coords.lat, lng: coords.lng } : s
             ));
-            // Persist geocode for prospects (best-effort, fire-and-forget)
             if (stop.stopType === 'prospect_visit' && stop.radarCnpj) {
               void supabase.rpc('radar_salvar_geocode' as never, {
-                p_cnpj: stop.radarCnpj,
-                p_lat: coords.lat,
-                p_lng: coords.lng,
-                p_status: 'ok',
+                p_cnpj: stop.radarCnpj, p_lat: coords.lat, p_lng: coords.lng, p_status: 'ok',
+              } as never);
+            }
+          } else {
+            // sem resultado = falha; senão a fila reciclaria o mesmo stop pra sempre
+            geocodeFalhados.current.add(stop.id);
+            if (stop.stopType === 'prospect_visit' && stop.radarCnpj) {
+              void supabase.rpc('radar_salvar_geocode' as never, {
+                p_cnpj: stop.radarCnpj, p_lat: 0, p_lng: 0, p_status: 'falhou',
               } as never);
             }
           }
         } catch (e) {
           if ((e as { name?: string })?.name === 'AbortError') break;
           console.warn('Geocode failed for', stop.address.street);
-          // Persist geocode failure for prospects (best-effort, fire-and-forget)
+          geocodeFalhados.current.add(stop.id);
           if (stop.stopType === 'prospect_visit' && stop.radarCnpj) {
             void supabase.rpc('radar_salvar_geocode' as never, {
-              p_cnpj: stop.radarCnpj,
-              p_lat: 0,
-              p_lng: 0,
-              p_status: 'falhou',
+              p_cnpj: stop.radarCnpj, p_lat: 0, p_lng: 0, p_status: 'falhou',
             } as never);
           }
         }
-        // Nominatim rate limit: max 1 req/sec
-        if (!controller.signal.aborted) {
-          await new Promise(r => setTimeout(r, 1100));
-        }
+        // Nominatim rate limit: máx 1 req/s
+        if (!controller.signal.aborted) await new Promise(r => setTimeout(r, 1100));
       }
-      if (!controller.signal.aborted) setGeocoding(false);
+      if (!controller.signal.aborted) setGeocodingPendentes(0);
     })();
 
     return () => controller.abort();
@@ -1284,7 +1289,7 @@ export function useRoutePlanner() {
     authLoading,
     isStaff,
     loading,
-    geocoding,
+    geocodingPendentes,
     scoringLoading,
     // mode + period
     planningMode,

@@ -44,6 +44,11 @@ describe('ordenarFilaGeocode', () => {
     expect(ordenarFilaGeocode(stops, vazio).map((s) => s.id)).toEqual(['a', 'b', 'c']);
   });
 
+  it('exclui geocodeFailed persistido (não re-tenta known-failure)', () => {
+    const stops = [stop('a'), stop('falhouAntes', { geocodeFailed: true })];
+    expect(ordenarFilaGeocode(stops, vazio).map((s) => s.id)).toEqual(['a']);
+  });
+
   it('lat null (não só undefined) também conta como pendente', () => {
     const stops = [stop('a', { lat: null as unknown as undefined, lng: null as unknown as undefined })];
     expect(ordenarFilaGeocode(stops, vazio).map((s) => s.id)).toEqual(['a']);

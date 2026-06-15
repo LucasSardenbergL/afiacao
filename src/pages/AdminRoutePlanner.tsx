@@ -83,7 +83,7 @@ const AdminRoutePlanner = () => {
     authLoading,
     isStaff,
     loading,
-    geocoding,
+    geocodingPendentes,
     scoringLoading,
     planningMode,
     setPlanningMode,
@@ -339,15 +339,15 @@ const AdminRoutePlanner = () => {
         )}
 
         {/* Map */}
-        <Card className="overflow-hidden">
+        <Card className="relative overflow-hidden">
           <div ref={mapRef} className="w-full h-[350px] md:h-[450px]" style={{ zIndex: 1 }} />
-          <MapLegend />
-          {geocoding && (
-            <div className="flex items-center gap-2 p-3 bg-muted/50 text-sm text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Geocodificando endereços...
+          {geocodingPendentes > 0 && (
+            <div className="pointer-events-none absolute right-3 top-3 z-[400] flex items-center gap-1.5 rounded-full bg-background/90 px-2.5 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              localizando {geocodingPendentes}…
             </div>
           )}
+          <MapLegend />
         </Card>
 
         {/* Route action buttons */}
