@@ -60,7 +60,7 @@ Botão **"Sugerir mapeamentos"**: roda o motor sobre as bases **não-mapeadas vi
 - **Reescrever o sync** (follow-up).
 - Reativar SKUs ocultos em massa sem mapear (a reativação acontece *ao aprovar a sugestão*).
 
-## Follow-up — cobertura automatizada [FEITO 2026-06-14; migration manual pendente]
+## Follow-up — cobertura automatizada [FEITO; migration ✅ APLICADA em prod 2026-06-15: cron 132, validado `marcados_agora=0`]
 
 Em vez de mexer no edge `tint-omie-sync` (money-path, frágil), a cobertura virou um passo SQL idempotente que reusa o que o sync geral já entrega: o `omie-sync-metadados` pagina o catálogo INTEIRO (sem teto, `while pagina <= totalPaginas`) e grava a coluna `familia` em `account='oben'` → o produto novo já está em `omie_products` com a família, faltando só a marca.
 
