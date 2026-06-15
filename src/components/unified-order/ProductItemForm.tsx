@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -6,10 +6,19 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Search, Plus, Loader2, Package, FileText } from 'lucide-react';
 import { keyDeSku, type CurrentSpec } from '@/lib/knowledge-base/spec-link';
 import { FichaTecnicaSheet } from '@/components/unified-order/FichaTecnicaSheet';
+import { usePrecoCockpit, type ItemCockpitInput } from '@/hooks/usePrecoCockpit';
 import { cn } from '@/lib/utils';
 import type { Product, ProductCartItem } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
 import { format } from 'date-fns';
+
+// Cockpit de preço (Fase 2a): faixa → rótulo + cor (tokens text-status-*).
+// neutro não renderiza badge (⚪ = "—", sem ruído).
+const FAIXA_UI: Record<string, { label: string; cls: string }> = {
+  vermelho: { label: 'Abaixo do custo', cls: 'text-status-error' },
+  amarelo:  { label: 'Abaixo do piso',  cls: 'text-status-warning' },
+  verde:    { label: 'Saudável',        cls: 'text-status-success' },
+};
 
 interface ProductItemFormProps {
   title: string;
@@ -38,6 +47,16 @@ export function ProductItemForm({
 }: ProductItemFormProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [fichaAberta, setFichaAberta] = useState<string | null>(null);
+
+  // Cockpit de preço por linha (batch). Enquanto os preços do contrato carregam,
+  // não consulta (o preço exibido ainda vai mudar). Saúde sobre o preço aplicado.
+  const cockpitInputs = useMemo<ItemCockpitInput[]>(() => {
+    if (customerPricesLoading) return [];
+    return products
+      .map(p => ({ empresa: p.account ?? '', codigo: p.omie_codigo_produto, preco: prices[p.omie_codigo_produto] || p.valor_unitario }))
+      .filter(i => i.preco > 0 && Number.isFinite(i.codigo) && i.empresa !== '');
+  }, [products, prices, customerPricesLoading]);
+  const { data: cockpitByCode } = usePrecoCockpit(cockpitInputs);
 
   const getQty = (id: string) => quantities[id] ?? 1;
   const setQty = (id: string, v: number) => setQuantities(prev => ({ ...prev, [id]: Math.max(1, v) }));
@@ -80,6 +99,7 @@ export function ProductItemForm({
               const ficha = canSeeFicha
                 ? specsByKey?.get(keyDeSku(product.account, product.omie_codigo_produto))
                 : undefined;
+              const health = cockpitByCode?.get(product.omie_codigo_produto);
               return (
                 <div
                   key={product.id}
@@ -104,6 +124,20 @@ export function ProductItemForm({
                           <span className="text-[9px] text-status-success">
                             {formatDate(lastOrderDate)}
                           </span>
+                        )}
+                        {health && health.faixa !== 'neutro' && FAIXA_UI[health.faixa] && (
+                          <Badge
+                            variant="outline"
+                            className={cn('text-[9px] px-1 py-0', FAIXA_UI[health.faixa].cls)}
+                            title={health.cmc != null ? 'Markup bruto sobre o custo (CMC) — não inclui imposto/comissão/frete/prazo' : undefined}
+                          >
+                            {FAIXA_UI[health.faixa].label}
+                            {health.cmc != null && health.markup_perc != null && (
+                              <span className="ml-1 font-mono">
+                                {Math.round(health.markup_perc)}%{health.folga_reais != null ? ` · ${fmt(health.folga_reais)}` : ''}
+                              </span>
+                            )}
+                          </Badge>
                         )}
                       </div>
                     </div>
