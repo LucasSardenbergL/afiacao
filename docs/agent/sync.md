@@ -1,6 +1,6 @@
 # Sync / cron / Sentinela — referência operacional
 
-> Lições de design e armadilhas de cron/sync. Para **diagnosticar** um incidente, use a skill `diagnose-supabase-sync` (árvore de 8 passos + queries prontas pro `psql-ro`). Histórico de incidentes em `docs/historico/sync.md`.
+> Lições de design e armadilhas de cron/sync. Para **diagnosticar** um incidente, use a skill `diagnose-supabase-sync` (árvore de 8 passos + queries prontas pro `psql-ro`). Histórico de incidentes em `docs/historico/bugs-resolvidos.md` (bullets de sync) + os specs de incidente.
 
 ## A verdade está em `net._http_response`, não no `job_run_details`
 
@@ -36,4 +36,4 @@
 
 ## Incidente em aberto (2026-06-14)
 
-`omie-analytics-sync sync_inventory` das contas pesadas estoura 60s → `inventory_position` defasado (cmc velho). Mitigação aplicada (timeout 60→150s); medição do efeito pendente. Detalhe: `docs/historico/sync.md` + `docs/superpowers/specs/2026-06-14-incidente-sync-inventory-timeout.md`.
+`omie-analytics-sync sync_inventory` das contas pesadas estoura 60s → `inventory_position` defasado (cmc velho). Mitigação aplicada (timeout 60→150s); medição do efeito pendente. Detalhe: `docs/superpowers/specs/2026-06-14-incidente-sync-inventory-timeout.md` + diário em `docs/historico/bugs-resolvidos.md`.

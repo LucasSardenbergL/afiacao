@@ -40,6 +40,7 @@ As migrations em `supabase/migrations/` **NÃO são uma cadeia restaurável** �
 - Helpers: `pode_ver_carteira_completa(uid)` (master OU gestor comercial), `carteira_visivel_para(customer)` (carteira + cobertura). `service_role` bypassa (engines).
 - **Hardening de tabela exposta:** `FOR ALL` amplo (`master OR employee`) é BFLA — qualquer staff gerencia tudo via PostgREST. Padrão: split do `FOR ALL` → SELECT (gestor/master OR own OR carteira) + IUD (gestor/master OR own). Assimetria leitura>escrita: cobertura lê, não muta.
 - Tabela nova **sempre** sai com RLS (CLAUDE.md §11). Catálogo de policies no estilo do repo: `references/sql-house-style.md` da skill `lovable-db-operator`.
+- **Trigger de auto-atribuição de role é superfície de privilege-escalation.** O `auto_assign_user_role` (AFTER INSERT em `profiles`) concedia **master** quando o `document` batia com o CNPJ da empresa — que é **público** — e a policy `"Users can insert own profile"` deixa qualquer autenticado se auto-inserir → **criar conta + saber o CNPJ = virar master** (achado do Codex retroativo, 2026-06-13, fora do escopo do KB onde apareceu). Fix: removido o ramo master do trigger; **master virou provisionamento MANUAL** (`INSERT INTO user_roles(user_id,role) VALUES(<uid>,'master')`). Lição: validação contra dado público é guardrail de **INTEGRIDADE**, não barreira adversarial — a barreira real é o gate explícito; CNPJ/dado público nunca é segredo de autorização.
 
 ## 5. Armadilhas caras (todas mordidas em prod)
 
