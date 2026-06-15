@@ -16,6 +16,8 @@
 
 **Política (mantém enxuto — leia antes de adicionar linha aqui):** o CLAUDE.md guarda só **regras/invariantes que valem sempre**. **Histórico de PR/incidente** vai pra `docs/registro/`; **procedimento operacional** (banco, deploy, cron) pra `docs/runbooks/`; **pendência em voo** pro PR/issue do GitHub. Ao concluir uma entrega, registre em `docs/registro/<modulo>.md` — **NÃO** engorde este arquivo; só acrescente aqui se for uma **REGRA/LIÇÃO** nova. O CI vigia o tamanho (`bun run claude:size`: teto 90 KB / 12k palavras / linha ≤ 2.000 chars).
 
+**Merge (auto, 2026-06-14):** todo PR não-draft **auto-mergeia (squash) quando o CI `validate` passa** — via `.github/workflows/auto-merge.yml` (zero clique do founder; o GitHub espera o check e mergeia + deleta a branch). Pra **segurar** um PR (não querer que mergeie sozinho), deixe-o **DRAFT**. Nunca `gh pr merge --admin` de rotina (bypassa o CI — o auto-merge **não** bypassa, espera o verde).
+
 **Mapa de leitura sob demanda (se for tocar… leia antes):**
 
 | Domínio | Onde |
