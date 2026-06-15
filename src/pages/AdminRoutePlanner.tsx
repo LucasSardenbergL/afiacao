@@ -15,7 +15,7 @@ import { RoutePlannerContextTabs } from '@/components/reposicao/routePlanner/Rou
 import { CityMultiSelector } from '@/components/reposicao/routePlanner/CityMultiSelector';
 import { FieldTargetsSummary } from '@/components/reposicao/routePlanner/FieldTargetsSummary';
 import { AlvosFiltros } from '@/components/reposicao/routePlanner/AlvosFiltros';
-import { FieldTargetCard } from '@/components/reposicao/routePlanner/FieldTargetCard';
+import { FieldTargetsList } from '@/components/reposicao/routePlanner/FieldTargetsList';
 import { PeriodFilter } from '@/components/reposicao/routePlanner/PeriodFilter';
 import { RouteActionButtons } from '@/components/reposicao/routePlanner/RouteActionButtons';
 import { ManualModeCard } from '@/components/reposicao/routePlanner/ManualModeCard';
@@ -288,16 +288,11 @@ const AdminRoutePlanner = () => {
                 marque quem visitar hoje
               </span>
             </h2>
-            <div className="space-y-1.5">
-              {filteredFieldTargets.map((stop) => (
-                <FieldTargetCard
-                  key={stop.id}
-                  stop={stop}
-                  naRota={selectedTargetIds.has(stop.id)}
-                  onToggleRota={() => toggleTargetId(stop.id)}
-                />
-              ))}
-            </div>
+            <FieldTargetsList
+              stops={filteredFieldTargets}
+              isNaRota={(id) => selectedTargetIds.has(id)}
+              onToggleRota={toggleTargetId}
+            />
           </div>
         )}
 
