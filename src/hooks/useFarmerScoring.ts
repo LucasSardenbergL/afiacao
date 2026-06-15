@@ -143,6 +143,19 @@ export const useFarmerScoring = (farmerId?: string) => {
         return;
       }
 
+      // Fornecedores fora da carteira: clientes marcados p/ exclusão saem do universo ANTES do cálculo.
+      const flaggeds = new Set<string>();
+      for (let fp = 0; ; fp++) {
+        const { data: fPage } = await supabase
+          .from('cliente_classificacao')
+          .select('user_id')
+          .eq('excluir_da_carteira', true)
+          .range(fp * 1000, fp * 1000 + 999);
+        if (!fPage || fPage.length === 0) break;
+        for (const r of fPage) flaggeds.add(r.user_id);
+        if (fPage.length < 1000) break;
+      }
+
       // 2. Load product costs for margin calculation
       const { data: productCostsData } = await supabase
         .from('product_costs')
@@ -191,6 +204,7 @@ export const useFarmerScoring = (farmerId?: string) => {
 
       for (const order of salesOrders) {
         const cid = order.customer_user_id;
+        if (flaggeds.has(cid)) continue;
         if (!customerMap.has(cid)) {
           customerMap.set(cid, {
             orderDates: [], totalSpend: 0, spend180d: 0,
