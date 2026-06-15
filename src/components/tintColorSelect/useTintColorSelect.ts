@@ -117,31 +117,39 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     // filtro, exibindo/permitindo selecionar cor de OUTRA família no flash.
     enabled: !!colorNotFoundInBase && (!!currentBaseSuffix || baseInfoFetched || !skuInfo?.base_id),
     queryFn: async (): Promise<{ matches: AlternativePackaging[]; colorExists: boolean }> => {
-      // Search formulas across all SKUs
-      const { data: globalFormulas } = await supabase
-        .from('tint_formulas')
-        .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem')
-        .eq('account', 'oben')
-        .is('desativada_em', null)
-        .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
-        .limit(50);
+      // Duas queries paralelas, propósitos distintos (Codex P2):
+      // (1) EXISTÊNCIA — conta QUALQUER fórmula que casa, inclusive sku_id null
+      //     (o caso não-mapeado), p/ a UI nunca mentir "não existe".
+      // (2) MATCHES vendáveis — filtra sku_id null JÁ no banco, senão linhas
+      //     não-mapeadas consomem o cap de 50 e empurram as vendáveis pra fora.
+      const [{ count: existsCount }, { data: globalFormulas }] = await Promise.all([
+        supabase
+          .from('tint_formulas')
+          .select('id', { count: 'exact', head: true })
+          .eq('account', 'oben')
+          .is('desativada_em', null)
+          .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch)),
+        supabase
+          .from('tint_formulas')
+          .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem')
+          .eq('account', 'oben')
+          .is('desativada_em', null)
+          .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
+          .not('sku_id', 'is', null)
+          .limit(50),
+      ]);
+      const colorExists = (existsCount ?? 0) > 0;
 
-      // Achou fórmula = a cor EXISTE no catálogo (mesmo sem SKU/produto vendável).
-      // NÃO filtra sku_id aqui de propósito: fórmula com sku_id null é o próprio
-      // caso não-mapeado que queremos contar como "existe" (senão a UI mente
-      // "não existe"). O filtro de vendabilidade vem depois, ao montar matches.
-      if (!globalFormulas || globalFormulas.length === 0) return { matches: [], colorExists: false };
+      if (!globalFormulas || globalFormulas.length === 0) return { matches: [], colorExists };
 
-      // SKUs vendáveis (descarta sku_id null — contam p/ existência, não p/ venda).
-      const skuIds = [...new Set(globalFormulas.map(f => f.sku_id).filter((id): id is string => !!id))];
-      if (skuIds.length === 0) return { matches: [], colorExists: true };
+      const skuIds = [...new Set(globalFormulas.map(f => f.sku_id!))];
       const { data: skus } = await supabase
         .from('tint_skus')
         .select('id, omie_product_id, produto_id, base_id')
         .in('id', skuIds)
         .not('omie_product_id', 'is', null);
 
-      if (!skus || skus.length === 0) return { matches: [], colorExists: true };
+      if (!skus || skus.length === 0) return { matches: [], colorExists };
 
       // Filter SKUs to only those with the same base suffix (e.g. ".7666")
       if (currentBaseSuffix) {
@@ -162,7 +170,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
         // Remove SKUs with non-matching bases — filtra skus in-place
         const filteredSkus = skus.filter(s => validBaseIds.has(s.base_id));
-        if (filteredSkus.length === 0) return { matches: [], colorExists: true };
+        if (filteredSkus.length === 0) return { matches: [], colorExists };
         // Replace skus reference
         skus.length = 0;
         skus.push(...filteredSkus);
@@ -175,7 +183,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
         .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
         .in('id', productIds);
 
-      if (!products) return { matches: [], colorExists: true };
+      if (!products) return { matches: [], colorExists };
 
       const result: AlternativePackaging[] = [];
       for (const gf of globalFormulas) {
@@ -199,7 +207,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       }
 
       result.sort((a, b) => a.productDescricao.localeCompare(b.productDescricao));
-      return { matches: result, colorExists: true };
+      return { matches: result, colorExists };
     },
   });
 
