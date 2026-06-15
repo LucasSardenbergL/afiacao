@@ -24,6 +24,11 @@ import { ManualModeCard } from '@/components/reposicao/routePlanner/ManualModeCa
 import { ScheduledVisitsPanel } from '@/components/reposicao/routePlanner/ScheduledVisitsPanel';
 import { useRoutePlanner } from '@/hooks/useRoutePlanner';
 import { escapeHtml } from '@/lib/escape-html';
+import 'leaflet.markercluster';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+import { markerVisual, clusterStats, TONE_CSS, type MarkerTone, type MarkerShape } from '@/lib/route/marker-visual';
+import { MapLegend } from '@/components/reposicao/routePlanner/MapLegend';
 
 // Fix default marker icons for Leaflet + bundlers
 delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
@@ -33,6 +38,40 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
 
+// Pino do contexto campo (Sub-PR 4, E): cor = urgência (tom), forma = tipo.
+// error ganha borda dupla (reforço p/ daltonismo — não depender só da matiz).
+type StopMarker = L.Marker & { __stop?: RouteStop };
+
+function divIconAlvo(tone: MarkerTone, shape: MarkerShape, numero?: number): L.DivIcon {
+  const cor = TONE_CSS[tone];
+  const borda = tone === 'error' ? '3px double #fff' : '2px solid #fff';
+  const raio = shape === 'circle' ? '50%' : '3px';
+  const rot = shape === 'diamond' ? 'rotate(45deg)' : 'none';
+  // número (posição na rota) num filho contra-rotacionado p/ não deitar no losango
+  const conteudo = numero != null
+    ? `<span style="transform:${shape === 'diamond' ? 'rotate(-45deg)' : 'none'};color:#fff;font-weight:700;font-size:12px">${numero}</span>`
+    : '';
+  return L.divIcon({
+    className: 'custom-marker',
+    html: `<div style="background:${cor};width:26px;height:26px;border-radius:${raio};transform:${rot};border:${borda};box-shadow:0 2px 6px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center">${conteudo}</div>`,
+    iconSize: [26, 26], iconAnchor: [13, 13],
+  });
+}
+
+// Ícone do cluster (Sub-PR 4, E): SEM cor-média — total no centro, borda na MAIOR
+// urgência presente, badge !N de quantos vermelhos (1 urgente entre 80 não some).
+function iconClusterAlvos(cluster: L.MarkerCluster): L.DivIcon {
+  const filhos = cluster.getAllChildMarkers() as StopMarker[];
+  const st = clusterStats(filhos.map((m) => m.__stop).filter((s): s is RouteStop => s != null));
+  const badge = st.vermelhos > 0
+    ? `<span style="position:absolute;top:-6px;right:-6px;background:${TONE_CSS.error};color:#fff;border-radius:9px;font-size:10px;font-weight:700;padding:0 5px;border:1px solid #fff">!${st.vermelhos}</span>`
+    : '';
+  return L.divIcon({
+    className: 'custom-cluster',
+    html: `<div style="position:relative;width:40px;height:40px;border-radius:50%;background:hsl(var(--background));border:3px solid ${TONE_CSS[st.maiorUrgencia]};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:hsl(var(--foreground));box-shadow:0 2px 8px rgba(0,0,0,.25)">${st.total}${badge}</div>`,
+    iconSize: [40, 40], iconAnchor: [20, 20],
+  });
+}
 
 const AdminRoutePlanner = () => {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -44,7 +83,7 @@ const AdminRoutePlanner = () => {
     authLoading,
     isStaff,
     loading,
-    geocoding,
+    geocodingPendentes,
     scoringLoading,
     planningMode,
     setPlanningMode,
@@ -120,7 +159,8 @@ const AdminRoutePlanner = () => {
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors',
     }).addTo(leafletMap.current);
-    markersRef.current = L.layerGroup().addTo(leafletMap.current);
+    // O grupo de marcadores (cluster no campo / layerGroup no equipe) é criado no
+    // effect de marcadores abaixo — aqui só o mapa + tiles.
     return () => { leafletMap.current?.remove(); leafletMap.current = null; };
     // Inicializa o mapa quando a tela renderiza (auth pronto), NÃO quando a carga
     // logística termina — senão uma query pendurada travava o mapa junto com a tela.
@@ -131,33 +171,44 @@ const AdminRoutePlanner = () => {
   // número (posição na rota) + azul; os não-marcados, a cor do tipo, sem número.
   // No contexto equipe: a rota otimizada numerada (como antes).
   useEffect(() => {
-    if (!leafletMap.current || !markersRef.current) return;
-    markersRef.current.clearLayers();
+    if (!leafletMap.current) return;
+    markersRef.current?.remove();
     routeLineRef.current?.remove();
 
-    const fonte = planningContext === 'campo' ? filteredFieldTargets : optimizedRoute;
+    const noModoCampo = planningContext === 'campo';
+    const fonte = noModoCampo ? filteredFieldTargets : optimizedRoute;
     const ordemRota = new Map(optimizedRoute.map((s, i) => [s.id, i + 1]));
-
     const fonteComCoords = fonte.filter((s) => s.lat && s.lng);
-    if (fonteComCoords.length === 0) return;
+
+    // Cluster só no campo (600+ pinos viram aglomerados legíveis); no equipe a rota
+    // numerada fica sem cluster (a sequência importa). O cluster agrega por urgência.
+    const grupo: L.LayerGroup = noModoCampo
+      ? L.markerClusterGroup({
+          maxClusterRadius: 48,
+          showCoverageOnHover: false,
+          spiderfyOnMaxZoom: true,
+          chunkedLoading: true,
+          iconCreateFunction: iconClusterAlvos,
+        })
+      : L.layerGroup();
+    markersRef.current = grupo;
 
     fonteComCoords.forEach((stop) => {
       const numero = ordemRota.get(stop.id);
-      const noModoCampo = planningContext === 'campo';
-      // Azul de "selecionado pra rota" só no campo; no equipe, cor do tipo (intacto).
-      const cor = (noModoCampo && numero != null) ? '#2563eb' : STOP_CONFIG[stop.stopType].markerColor;
-      const conteudo = numero != null ? String(numero) : '';
-      const icon = L.divIcon({
-        className: 'custom-marker',
-        html: `<div style="
-          background: ${cor};
-          color: white; width: 28px; height: 28px; border-radius: 50%;
-          display: flex; align-items: center; justify-content: center;
-          font-weight: 700; font-size: 13px; border: 2px solid white;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-        ">${conteudo}</div>`,
-        iconSize: [28, 28], iconAnchor: [14, 14],
-      });
+      let icon: L.DivIcon;
+      if (noModoCampo) {
+        // Campo: cor = urgência (mesmo marcado), forma = tipo; número se está na rota.
+        const { tone, shape } = markerVisual(stop);
+        icon = divIconAlvo(tone, shape, numero);
+      } else {
+        // Equipe: comportamento antigo (cor do tipo, círculo numerado).
+        const cor = STOP_CONFIG[stop.stopType].markerColor;
+        icon = L.divIcon({
+          className: 'custom-marker',
+          html: `<div style="background:${cor};color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3)">${numero != null ? numero : ''}</div>`,
+          iconSize: [28, 28], iconAnchor: [14, 14],
+        });
+      }
 
       const hoursLabel = stop.businessHoursOpen && stop.businessHoursClose
         ? `${escapeHtml(stop.businessHoursOpen)} - ${escapeHtml(stop.businessHoursClose)}` : 'Não informado';
@@ -165,19 +216,22 @@ const AdminRoutePlanner = () => {
 
       // Leaflet renderiza o popup como HTML cru (≈ dangerouslySetInnerHTML) →
       // escapar TODO dado de cliente/prospect (nome, endereço, motivo, horário)
-      // antes de interpolar, senão um `<img onerror=…>` no nome vira XSS stored.
+      // antes de interpolar, senão um `<img onerror=…>` no nome vira XSS stored (#862).
       // cfg.label/markerColor e numero são constantes/numéricos (seguros).
-      L.marker([stop.lat!, stop.lng!], { icon })
-        .bindPopup(`
+      const m = L.marker([stop.lat!, stop.lng!], { icon }) as StopMarker;
+      m.__stop = stop; // o cluster lê __stop p/ agregar por urgência (clusterStats)
+      m.bindPopup(`
           <strong>${numero != null ? `${numero}. ` : ''}${escapeHtml(stop.customerName)}</strong><br/>
           <span style="color: ${cfg.markerColor}; font-weight: 600">${cfg.label}</span><br/>
           ${escapeHtml(stop.address.street)}, ${escapeHtml(stop.address.number)}<br/>
           ${escapeHtml(stop.address.neighborhood)} - ${escapeHtml(stop.address.city)}<br/>
           <em>${escapeHtml(stop.visitReason)}</em><br/>
           <em>Horário: ${hoursLabel}</em>
-        `)
-        .addTo(markersRef.current!);
+        `);
+      grupo.addLayer(m);
     });
+
+    grupo.addTo(leafletMap.current);
 
     // Linha da rota: só os marcados/otimizados (em ambos os contextos).
     const coords: L.LatLngExpression[] = optimizedRoute
@@ -285,14 +339,15 @@ const AdminRoutePlanner = () => {
         )}
 
         {/* Map */}
-        <Card className="overflow-hidden">
+        <Card className="relative overflow-hidden">
           <div ref={mapRef} className="w-full h-[350px] md:h-[450px]" style={{ zIndex: 1 }} />
-          {geocoding && (
-            <div className="flex items-center gap-2 p-3 bg-muted/50 text-sm text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Geocodificando endereços...
+          {geocodingPendentes > 0 && (
+            <div className="pointer-events-none absolute right-3 top-3 z-[400] flex items-center gap-1.5 rounded-full bg-background/90 px-2.5 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              localizando {geocodingPendentes}…
             </div>
           )}
+          <MapLegend />
         </Card>
 
         {/* Route action buttons */}
