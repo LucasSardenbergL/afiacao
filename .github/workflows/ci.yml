@@ -73,9 +73,9 @@ jobs:
         run: bun lint
 
       # Anti-inchaço do CLAUDE.md (carregado em toda sessão+subagente). Teto
-      # generoso (90 KB / 12k palavras / linha ≤2000c) vs ~64 KB pós-faxina de
-      # 2026-06-14. Estourar = entrou registro/histórico → mover pra docs/registro
-      # ou docs/runbooks (ver CLAUDE.md §0). Ver scripts/check-claudemd-size.sh.
+      # apertado (20 KB / 2,6k palavras / linha ≤2000c) vs ~13 KB pós-refactor
+      # da frente 1 (2026-06-15). Estourar = mover a lição pra docs/agent/ e o
+      # histórico pra docs/historico/ (ver topo do CLAUDE.md). Ver scripts/check-claude-md-budget.sh.
       - name: CLAUDE.md size budget
         run: bun run claude:size
 

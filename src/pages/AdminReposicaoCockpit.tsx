@@ -22,6 +22,7 @@ import {
 } from "@/hooks/useReposicaoSessao";
 import { downloadCsv, formatBRL, formatDate, logAudit } from "@/lib/reposicao";
 import { createLeadingTrailingThrottle } from "@/lib/leading-trailing-throttle";
+import { escapeHtml } from "@/lib/escape-html";
 import { ContinuarBanner } from "@/components/reposicao/ContinuarBanner";
 import { EtapasGrid } from "@/components/reposicao/EtapasGrid";
 import { SmartAlertsSection } from "@/components/reposicao/SmartAlertsSection";
@@ -226,12 +227,12 @@ export default function AdminReposicaoCockpit() {
     const rowsHtml = itensDia
       .map(
         (r) => `<tr>
-        <td>${r.grupo_codigo ?? "—"}</td>
-        <td>${r.fornecedor_nome ?? "—"}</td>
+        <td>${escapeHtml(r.grupo_codigo ?? "—")}</td>
+        <td>${escapeHtml(r.fornecedor_nome ?? "—")}</td>
         <td class="right">${r.num_skus ?? 0}</td>
         <td class="right">${r.aprovado_em ? (r.num_skus ?? 0) : ""}</td>
         <td class="right">${formatBRL(r.valor_total)}</td>
-        <td>${r.status ?? "—"}</td>
+        <td>${escapeHtml(r.status ?? "—")}</td>
       </tr>`,
       )
       .join("");

@@ -5,8 +5,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
-import { Phone, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import { track } from '@/lib/analytics';
+import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { AcaoOutcomeMenu } from './AcaoOutcomeMenu';
 import type { AcaoSugerida, CategoriaAcao } from '@/lib/fila/types';
 
@@ -36,11 +37,11 @@ export function FilaContextPanel({ acao, onClose, onNaoUtilAgora }: Props) {
             </SheetHeader>
             <div className="mt-4 space-y-4">
               {acao.telefone && (
-                <Button asChild variant="outline" className="w-full justify-start gap-2">
-                  <a href={`tel:${acao.telefone.replace(/\D/g, '')}`}>
-                    <Phone className="w-4 h-4" /> Ligar para {acao.clienteNome ?? 'cliente'}
-                  </a>
-                </Button>
+                <BotaoLigar
+                  telefone={acao.telefone}
+                  nomeCliente={acao.clienteNome ?? 'cliente'}
+                  className="w-full justify-start"
+                />
               )}
 
               {acao.payload.kind === 'mixgap' && (

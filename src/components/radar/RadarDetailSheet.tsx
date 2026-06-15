@@ -1,9 +1,10 @@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
-import { MapPin, Phone, Mail, MessageSquare } from 'lucide-react';
+import { MapPin, Mail, MessageSquare } from 'lucide-react';
 import { RadarOutcomeMenu } from './RadarOutcomeMenu';
 import { RadarAcoesLead } from './RadarAcoesLead';
 import { isCellphone, whatsappLink } from '@/lib/phone';
+import { BotaoLigar } from '@/components/call/BotaoLigar';
 import {
   formatarCnpj,
   formatarCapital,
@@ -75,13 +76,14 @@ export function RadarDetailSheet({
           <Linha label="Capital">{formatarCapital(empresa.capital_social)}</Linha>
           <Linha label="Telefone">
             {empresa.telefone1 ? (
-              <a
-                className="inline-flex items-center gap-1 underline"
-                href={`tel:${empresa.telefone1}`}
-              >
-                <Phone className="w-3 h-3" />
-                {empresa.telefone1}
-              </a>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="font-tabular">{empresa.telefone1}</span>
+                <BotaoLigar
+                  telefone={empresa.telefone1}
+                  nomeCliente={empresa.razao_social || empresa.cnpj}
+                  variant="icon"
+                />
+              </span>
             ) : (
               '—'
             )}

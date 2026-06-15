@@ -11,7 +11,6 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   MoreHorizontal,
-  Phone,
   UserRound,
   CheckCircle2,
   XCircle,
@@ -30,12 +29,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { track } from '@/lib/analytics';
+import { BotaoLigar } from '@/components/call/BotaoLigar';
 import type { CacaCandidatoDisplay } from '@/lib/caca/types';
 import {
   labelSabor,
   faixaConfianca,
   classeSabor,
-  telLink,
   agruparPorDocumento,
 } from '@/lib/caca/apresentacao';
 
@@ -147,7 +146,6 @@ interface CandidatoCardProps {
 function CandidatoCard({ documento, empresasAlvo, display, onOcultar }: CandidatoCardProps) {
   const faixa = faixaConfianca(display.confianca);
   const conf = CONFIANCA_UI[faixa];
-  const tel = telLink(display.telefone);
   const fichaHref = display.clienteUserId
     ? `/admin/customers/${display.clienteUserId}/360`
     : null;
@@ -206,18 +204,12 @@ function CandidatoCard({ documento, empresasAlvo, display, onOcultar }: Candidat
 
       {/* Ações à direita */}
       <div className="shrink-0 flex items-center gap-1">
-        {tel && (
-          <Button
-            asChild
-            size="sm"
-            variant="outline"
-            onClick={() => track('caca.acao', { ...eventoBase(display), cta: 'ligar' })}
-          >
-            <a href={tel} aria-label="Ligar para o cliente">
-              <Phone className="w-3.5 h-3.5 mr-1" />
-              Ligar
-            </a>
-          </Button>
+        {display.telefone && (
+          <BotaoLigar
+            telefone={display.telefone}
+            nomeCliente={nomeExibido}
+            onLigar={() => track('caca.acao', { ...eventoBase(display), cta: 'ligar' })}
+          />
         )}
         {fichaHref && (
           <Button

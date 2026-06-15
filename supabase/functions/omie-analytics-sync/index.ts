@@ -65,6 +65,7 @@ interface OmieClienteCadastro {
   nome_fantasia?: string;
   cidade?: string;
   estado?: string;
+  tags?: Array<{ tag?: string } | string>;
 }
 
 interface OmieListarClientesResponse {
@@ -311,6 +312,7 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       omie_codigo_vendedor: number | null;
       updated_at: string;
     }>();
+    const tagsByUser = new Map<string, string[]>();
     let pagina = 1;
     let totalPaginas = 1;
 
@@ -336,6 +338,11 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
           omie_codigo_vendedor: c.codigo_vendedor || null,
           updated_at: new Date().toISOString(),
         });
+        // Captura tags do cadastro Omie para derivar is_fornecedor / excluir_da_carteira depois.
+        const tags = (c.tags || [])
+          .map((t) => (typeof t === "string" ? t : (t.tag ?? "")))
+          .filter((t) => t.length > 0);
+        tagsByUser.set(userId, tags);
       }
 
       console.log(`[Sync ${account}] Clientes página ${pagina}/${totalPaginas}`);
@@ -352,6 +359,23 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       if (upErr) throw new Error(`upsert omie_clientes: ${upErr.message}`);
       totalSynced += chunk.length;
     }
+
+    // Upsert das tags em cliente_classificacao (prova se o ListarClientes em lote retorna tags).
+    // Grava user_id + tags_omie + tags_synced_at; as colunas derivadas (is_fornecedor,
+    // excluir_da_carteira) ficam com o default da tabela e serão calculadas em outra tarefa.
+    const tagsNowIso = new Date().toISOString();
+    const tagRows = Array.from(tagsByUser.entries()).map(([user_id, tags_omie]) => ({
+      user_id,
+      tags_omie,
+      tags_synced_at: tagsNowIso,
+    }));
+    for (let i = 0; i < tagRows.length; i += 500) {
+      const { error: tagErr } = await db
+        .from("cliente_classificacao")
+        .upsert(tagRows.slice(i, i + 500), { onConflict: "user_id" });
+      if (tagErr) throw new Error(`upsert cliente_classificacao: ${tagErr.message}`);
+    }
+    console.log(`[Sync ${account}] tags gravadas em cliente_classificacao: ${tagRows.length} clientes`);
 
     await updateSyncState(db, "customers", account, {
       status: "complete",
@@ -694,13 +718,24 @@ async function syncOrdersIncremental(db: SupabaseClient, account: OmieAccount) {
 
 // ======== SYNC INVENTORY ========
 
+// Divide um array em lotes de tamanho fixo (para upsert/insert/IN em massa).
+function chunked<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 async function syncInventory(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "inventory", account, { status: "running", error_message: null });
   let pagina = 1;
   let totalPaginas = 1;
-  let totalSynced = 0;
+  const nowIso = new Date().toISOString();
 
   try {
+    // 1) COLETA todas as páginas do Omie em memória (dedupe last-wins por código).
+    //    Antes: ~4 writes PostgREST POR produto (N+1) → ~3M statements e saturava o disk IO.
+    //    Agora: acumula e escreve em LOTE (upsert chunked), o padrão que o resto deste arquivo já usa.
+    const posicoes = new Map<number, { saldo: number; cmc: number; precoMedio: number }>();
     while (pagina <= totalPaginas) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
@@ -714,70 +749,118 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       for (const prod of produtos) {
         const codProd = prod.nCodProd;
         if (!codProd) continue;
-
-        const saldo = prod.nSaldo ?? 0;
-        const cmc = prod.nCMC ?? 0;
-        const precoMedio = prod.nPrecoMedio ?? 0;
-
-        // Find product_id
-        const { data: product } = await db
-          .from("omie_products")
-          .select("id")
-          .eq("omie_codigo_produto", codProd)
-          .maybeSingle();
-
-        // Upsert inventory_position
-        await db.from("inventory_position").upsert({
-          omie_codigo_produto: codProd,
-          product_id: product?.id || null,
-          saldo,
-          cmc,
-          preco_medio: precoMedio,
-          account,
-          synced_at: new Date().toISOString(),
-        }, { onConflict: "omie_codigo_produto,account" });
-
-        // Update omie_products stock
-        if (product?.id) {
-          await db.from("omie_products")
-            .update({ estoque: saldo, updated_at: new Date().toISOString() })
-            .eq("id", product.id);
-        }
-
-        // Update product_costs with CMC if available
-        if (product?.id && cmc > 0) {
-          const { data: existingCost } = await db
-            .from("product_costs")
-            .select("id, cost_price")
-            .eq("product_id", product.id)
-            .maybeSingle();
-
-          if (existingCost) {
-            await db.from("product_costs")
-              .update({ cmc, updated_at: new Date().toISOString() })
-              .eq("id", existingCost.id);
-          } else {
-            await db.from("product_costs").insert({
-              product_id: product.id,
-              cost_price: cmc,
-              cmc,
-              cost_source: "CMC",
-              cost_confidence: 0.7,
-            });
-          }
-        }
-
-        totalSynced++;
+        posicoes.set(codProd, {
+          saldo: prod.nSaldo ?? 0,
+          cmc: prod.nCMC ?? 0,
+          precoMedio: prod.nPrecoMedio ?? 0,
+        });
       }
 
-      console.log(`[Sync ${account}] Estoque página ${pagina}/${totalPaginas}`);
+      console.log(`[Sync ${account}] Estoque página ${pagina}/${totalPaginas} (${produtos.length})`);
       pagina++;
+    }
+
+    const codProds = [...posicoes.keys()];
+    const totalSynced = codProds.length;
+
+    if (totalSynced === 0) {
+      await updateSyncState(db, "inventory", account, {
+        status: "complete",
+        total_synced: 0,
+        last_sync_at: nowIso,
+        last_page: totalPaginas,
+      });
+      return { totalSynced: 0 };
+    }
+
+    // 2) RESOLVE product_id em LOTE. Preserva a semântica do .maybeSingle() anterior:
+    //    exatamente 1 match → id; 0 ou 2+ (ambíguo — omie_products é UNIQUE por (código,account)) → null.
+    const idByCod = new Map<number, string | null>();
+    for (const chunk of chunked(codProds, 300)) {
+      const { data, error } = await db
+        .from("omie_products")
+        .select("id, omie_codigo_produto")
+        .in("omie_codigo_produto", chunk);
+      if (error) {
+        console.error(`[Sync ${account}] resolve product_id:`, error);
+        continue;
+      }
+      for (const r of data || []) {
+        const cod = r.omie_codigo_produto as number;
+        idByCod.set(cod, idByCod.has(cod) ? null : (r.id as string)); // 2+ ocorrências → null (ambíguo)
+      }
+    }
+
+    // 3) inventory_position — upsert em LOTE (onConflict (omie_codigo_produto, account)).
+    const invRows = codProds.map((cod) => {
+      const p = posicoes.get(cod)!;
+      return {
+        omie_codigo_produto: cod,
+        product_id: idByCod.get(cod) ?? null,
+        saldo: p.saldo,
+        cmc: p.cmc,
+        preco_medio: p.precoMedio,
+        account,
+        synced_at: nowIso,
+      };
+    });
+    for (const chunk of chunked(invRows, 500)) {
+      const { error } = await db
+        .from("inventory_position")
+        .upsert(chunk, { onConflict: "omie_codigo_produto,account" });
+      if (error) console.error(`[Sync ${account}] upsert inventory_position:`, error);
+    }
+
+    // 4) omie_products.estoque — upsert em LOTE pela PK id (só estoque+updated_at).
+    //    Todos os ids vieram de linhas existentes → ON CONFLICT sempre faz UPDATE, nunca INSERT.
+    const stockRows = codProds
+      .map((cod) => ({ id: idByCod.get(cod), saldo: posicoes.get(cod)!.saldo }))
+      .filter((x): x is { id: string; saldo: number } => !!x.id)
+      .map((x) => ({ id: x.id, estoque: x.saldo, updated_at: nowIso }));
+    for (const chunk of chunked(stockRows, 500)) {
+      const { error } = await db.from("omie_products").upsert(chunk, { onConflict: "id" });
+      if (error) console.error(`[Sync ${account}] upsert estoque omie_products:`, error);
+    }
+
+    // 5) product_costs — só onde há product_id E cmc>0. Preserva a semântica anterior:
+    //    já existe → atualiza SÓ cmc+updated_at (não toca cost_price/source/confidence);
+    //    novo → insere linha completa (cost_source='CMC', cost_confidence=0.7).
+    const costCandidatos = codProds
+      .map((cod) => ({ id: idByCod.get(cod), cmc: posicoes.get(cod)!.cmc }))
+      .filter((x): x is { id: string; cmc: number } => !!x.id && x.cmc > 0);
+
+    if (costCandidatos.length > 0) {
+      const jaTemCusto = new Set<string>();
+      for (const chunk of chunked(costCandidatos.map((x) => x.id), 300)) {
+        const { data, error } = await db.from("product_costs").select("product_id").in("product_id", chunk);
+        if (error) {
+          console.error(`[Sync ${account}] resolve product_costs:`, error);
+          continue;
+        }
+        for (const r of data || []) jaTemCusto.add(r.product_id as string);
+      }
+
+      const aAtualizar = costCandidatos
+        .filter((x) => jaTemCusto.has(x.id))
+        .map((x) => ({ product_id: x.id, cmc: x.cmc, updated_at: nowIso }));
+      const aInserir = costCandidatos
+        .filter((x) => !jaTemCusto.has(x.id))
+        .map((x) => ({ product_id: x.id, cost_price: x.cmc, cmc: x.cmc, cost_source: "CMC", cost_confidence: 0.7 }));
+
+      for (const chunk of chunked(aAtualizar, 500)) {
+        const { error } = await db.from("product_costs").upsert(chunk, { onConflict: "product_id" });
+        if (error) console.error(`[Sync ${account}] upsert cmc product_costs:`, error);
+      }
+      for (const chunk of chunked(aInserir, 500)) {
+        const { error } = await db.from("product_costs").insert(chunk);
+        if (error) console.error(`[Sync ${account}] insert product_costs:`, error);
+      }
     }
 
     await updateSyncState(db, "inventory", account, {
       status: "complete",
       total_synced: totalSynced,
-      last_sync_at: new Date().toISOString(),
+      last_sync_at: nowIso,
       last_page: totalPaginas,
     });
     return { totalSynced };

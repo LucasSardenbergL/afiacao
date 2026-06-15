@@ -15,7 +15,6 @@ import type {
   StopType,
   PlanningMode,
   PlanningContext,
-  TargetFilter,
   FilterPeriod,
   ManualFilter,
   ManualCustomer,
@@ -36,9 +35,18 @@ import {
   nextModeForContext,
   dedupeStopsById,
   particionarAlvos,
-  filtrarAlvos,
+  aplicarFiltrosAlvos,
+  bairrosDe,
   toggleTarget,
+  FILTROS_ALVO_INICIAL,
+  type FiltrosAlvo,
 } from '@/lib/route/field-targets';
+import { carteiraRowToStop, type CarteiraRow } from '@/lib/route/carteira-stop';
+import { montarDetalheAlvo, type AlvoDetalhe } from '@/lib/route/alvo-detalhe';
+
+// Teto de prospects por cidade pedido à RPC (a RPC capa em 2000 no SQL).
+// Divinópolis (600) cabe inteira; metrópole mostra os 1000 mais quentes.
+const PROSPECTS_POR_CIDADE = 1000;
 
 // Linha de route_visits enriquecida com o nome do cliente (resolvido via profiles).
 export type TodayVisitRow = Tables<'route_visits'> & { customerName: string };
@@ -102,6 +110,10 @@ export function useRoutePlanner() {
   const [prospectStops, setProspectStops] = useState<RouteStop[]>([]);
   const [carteiraCidadeStops, setCarteiraCidadeStops] = useState<RouteStop[]>([]);
   const [loadingProspects, setLoadingProspects] = useState(false);
+  // Linha crua do prospect por stopId — preserva razão social + telefone2 que o
+  // prospectRowToStopDraft colapsa. Lido sob-demanda quando o Sheet de detalhe abre
+  // (ref, sem re-render). A carteira não precisa (o RouteStop já carrega tudo).
+  const rawProspectById = useRef<Map<string, ProspectRow>>(new Map());
 
   const toggleCity = useCallback((city: CityOption) => {
     setSelectedCities((prev) =>
@@ -117,11 +129,45 @@ export function useRoutePlanner() {
 
   // Curadoria do contexto campo: alvos marcados pra rota + filtro do universo.
   const [selectedTargetIds, setSelectedTargetIds] = useState<Set<string>>(new Set());
-  const [targetFilter, setTargetFilter] = useState<TargetFilter>('todos');
+  const [filtros, setFiltros] = useState<FiltrosAlvo>(FILTROS_ALVO_INICIAL);
 
   const toggleTargetId = useCallback((id: string) => {
     setSelectedTargetIds((prev) => toggleTarget(prev, id));
   }, []);
+
+  // Curadoria F: "remover da sessão" — Set em memória, sem tocar o banco. Some da
+  // lista E do mapa (via filteredFieldTargets). Reseta ao trocar de cidade.
+  const [removidos, setRemovidos] = useState<Set<string>>(new Set());
+
+  const restaurarAlvo = useCallback((id: string) => {
+    setRemovidos((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const removerAlvo = useCallback((id: string, nome?: string) => {
+    setRemovidos((prev) => new Set(prev).add(id));
+    // Se estava marcado pra rota, desmarca (senão seguiria na rota otimizada).
+    setSelectedTargetIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    toast(`${nome?.trim() || 'Alvo'} removido da lista`, {
+      action: { label: 'Desfazer', onClick: () => restaurarAlvo(id) },
+    });
+  }, [restaurarAlvo]);
+
+  // Monta o view-model do Sheet de detalhe: lê a linha crua do prospect (ref) e
+  // delega ao helper puro. Carteira não tem raw → o helper usa só o stop.
+  const detalheDoAlvo = useCallback(
+    (stop: RouteStop): AlvoDetalhe =>
+      montarDetalheAlvo({ stop, prospectRow: rawProspectById.current.get(stop.id) ?? null }),
+    [],
+  );
 
   const { agenda, clientScores, loading: scoringLoading } = useFarmerScoring();
 
@@ -760,12 +806,13 @@ export function useRoutePlanner() {
   const loadProspectStops = useCallback(async (cities: CityOption[]) => {
     if (cities.length === 0) { setProspectStops([]); return; }
     setLoadingProspects(true);
+    rawProspectById.current.clear();
     try {
       const results = await Promise.all(
         cities.map((city) =>
           supabase.rpc(
             'radar_prospects_para_rota' as never,
-            { p_municipio_codigo: city.codigo, p_limit: 50 } as never,
+            { p_municipio_codigo: city.codigo, p_limit: PROSPECTS_POR_CIDADE } as never,
           ),
         ),
       );
@@ -776,6 +823,7 @@ export function useRoutePlanner() {
       }
       const stops: RouteStop[] = rows.map((row) => {
         const draft = prospectRowToStopDraft(row);
+        rawProspectById.current.set(draft.id, row);
         // Pre-cache coordinates for already-geocoded prospects
         if (draft.lat != null && draft.lng != null && draft.geocodeFailed !== true) {
           geocodedCoords.current.set(draft.id, { lat: draft.lat, lng: draft.lng });
@@ -810,68 +858,47 @@ export function useRoutePlanner() {
     }
   }, []);
 
-  // Clientes da CARTEIRA na mesma cidade do prospect — entram no mapa como
-  // sales_visit (laranja) ao lado dos prospects (amarelo). É o "juntar" pedido:
-  // ver clientes antigos + prospects da cidade numa rota única. addresses.city é
-  // texto livre (pode divergir do municipio_nome RFB em acento/caixa) → ilike;
-  // imprecisão aceita na v1 (prospects vêm por municipio_codigo, exatos).
-  // Clientes da CARTEIRA nas cidades escolhidas (sales_visit, laranja). N queries
-  // ilike (addresses.city é texto livre), juntadas e deduplicadas por user_id.
+  // Clientes da CARTEIRA nas cidades escolhidas via RPC carteira_por_municipio
+  // (SECURITY DEFINER, gate gestor/master). Casa por nome RFB normalizado + UF no
+  // servidor (corrige o "zero clientes" do ilike sensível a acento/sufixo "(UF)") e
+  // já traz a recência (dias_desde_visita). Entram no mapa como sales_visit.
   const loadCarteiraDaCidade = useCallback(async (cities: CityOption[]) => {
     if (cities.length === 0) { setCarteiraCidadeStops([]); return; }
     try {
       const perCity = await Promise.all(
         cities.map(async (city) => {
-          const { data: addrs, error } = await supabase
-            .from('addresses')
-            .select('user_id, street, number, neighborhood, city, state, zip_code, complement')
-            .ilike('city', city.nome)
-            .order('user_id', { ascending: true })  // determinístico: trunca o mesmo subconjunto
-            .limit(100);
+          const { data, error } = await supabase.rpc('carteira_por_municipio', {
+            p_municipio_codigo: city.codigo,
+          });
           if (error) throw error;
-          return { cityNome: city.nome, addrs: addrs ?? [] };
+          return { cityNome: city.nome, rows: (data ?? []) as unknown as CarteiraRow[] };
         }),
       );
-      // Dedup por user_id (primeira cidade que o trouxe vence) + guarda a cidade.
-      const byUser = new Map<string, { addr: (typeof perCity)[number]['addrs'][number]; cityNome: string }>();
-      for (const { cityNome, addrs } of perCity) {
-        for (const a of addrs) {
-          if (a.user_id && !byUser.has(a.user_id)) byUser.set(a.user_id, { addr: a, cityNome });
+      // Dedup por user_id (a primeira cidade que trouxe vence).
+      const seen = new Set<string>();
+      const stops: RouteStop[] = [];
+      for (const { cityNome, rows } of perCity) {
+        for (const row of rows) {
+          if (!row.user_id || seen.has(row.user_id)) continue;
+          seen.add(row.user_id);
+          const draft = carteiraRowToStop(row, cityNome);
+          const base: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'> = {
+            id: draft.id,
+            customerUserId: draft.customerUserId,
+            customerName: draft.customerName,
+            phone: draft.phone,
+            address: draft.address,
+            visitReason: draft.visitReason,
+            stopType: 'sales_visit',
+            timeSlot: null,
+            businessHoursOpen: draft.businessHoursOpen,
+            businessHoursClose: draft.businessHoursClose,
+            status: 'carteira',
+            diasDesdeVisita: draft.diasDesdeVisita,
+          };
+          stops.push(enrichWithPriority(base));
         }
       }
-      const userIds = Array.from(byUser.keys());
-      if (userIds.length === 0) { setCarteiraCidadeStops([]); return; }
-      const { data: profiles, error: profErr } = await supabase
-        .from('profiles')
-        .select('user_id, name, phone, business_hours_open, business_hours_close')
-        .in('user_id', userIds)
-        .or('is_employee.is.null,is_employee.eq.false');
-      if (profErr) throw profErr;
-      const stops: RouteStop[] = (profiles ?? []).map((p) => {
-        const { addr: a, cityNome } = byUser.get(p.user_id)!;
-        const base: Omit<RouteStop, 'priorityScore' | 'priorityLabel' | 'priorityFactors'> = {
-          id: `carteira-cidade-${p.user_id}`,
-          customerUserId: p.user_id,
-          customerName: p.name ?? 'Cliente',
-          phone: p.phone ?? null,
-          address: {
-            street: a.street ?? '',
-            number: a.number ?? '',
-            neighborhood: a.neighborhood ?? '',
-            city: a.city ?? '',
-            state: a.state ?? '',
-            zip_code: a.zip_code ?? '',
-            complement: a.complement ?? undefined,
-          },
-          visitReason: `Cliente em ${cityNome}`,
-          stopType: 'sales_visit',
-          timeSlot: null,
-          businessHoursOpen: p.business_hours_open ?? null,
-          businessHoursClose: p.business_hours_close ?? null,
-          status: 'carteira',
-        };
-        return enrichWithPriority(base);
-      });
       setCarteiraCidadeStops(dedupeStopsById(stops));
     } catch (err) {
       console.error('Error loading carteira da cidade:', err);
@@ -891,9 +918,11 @@ export function useRoutePlanner() {
     }
   }, [planningMode, selectedCities, loadProspectStops, loadCarteiraDaCidade]);
 
-  // Trocar as cidades reinicia a curadoria (ids antigos não pertencem ao novo universo).
+  // Trocar as cidades reinicia a curadoria e os filtros (universo novo).
   useEffect(() => {
     setSelectedTargetIds(new Set());
+    setFiltros(FILTROS_ALVO_INICIAL);
+    setRemovidos(new Set());
   }, [selectedCities]);
 
   // Merge stops based on planning mode
@@ -1054,15 +1083,32 @@ export function useRoutePlanner() {
     [planningContext, geocodedAllStops],
   );
 
+  // Universo "vivo" = alvos que não foram removidos da sessão (curadoria F). Tudo
+  // (lista, mapa, contagens, bairros) parte daqui pra ficar coerente com a curadoria.
+  const fieldTargetsVivos = useMemo(
+    () => fieldTargets.filter((s) => !removidos.has(s.id)),
+    [fieldTargets, removidos],
+  );
+
   const filteredFieldTargets = useMemo(
-    () => filtrarAlvos(fieldTargets, targetFilter),
-    [fieldTargets, targetFilter],
+    () => aplicarFiltrosAlvos(fieldTargetsVivos, filtros),
+    [fieldTargetsVivos, filtros],
+  );
+
+  // Bairros presentes no universo vivo (pro Select de filtro).
+  const bairrosDisponiveis = useMemo(() => bairrosDe(fieldTargetsVivos), [fieldTargetsVivos]);
+
+  // Prospects disponíveis no Radar nas cidades (soma do total já cacheado) — base
+  // do aviso "1.000 de N" quando o teto trunca a carga.
+  const prospectsDisponiveis = useMemo(
+    () => selectedCities.reduce((acc, c) => acc + (c.total ?? 0), 0),
+    [selectedCities],
   );
 
   const resumoAlvos = useMemo(() => {
-    const { clientes, prospects } = particionarAlvos(fieldTargets);
+    const { clientes, prospects } = particionarAlvos(fieldTargetsVivos);
     return { totalClientes: clientes.length, totalProspects: prospects.length };
-  }, [fieldTargets]);
+  }, [fieldTargetsVivos]);
 
   // Paradas que entram na otimização: no campo, só os marcados; na equipe, como hoje.
   const stopsParaRota = useMemo(() => {
@@ -1285,10 +1331,14 @@ export function useRoutePlanner() {
     fieldTargets,
     filteredFieldTargets,
     resumoAlvos,
+    prospectsDisponiveis,
+    bairrosDisponiveis,
     selectedTargetIds,
     toggleTargetId,
-    targetFilter,
-    setTargetFilter,
+    filtros,
+    setFiltros,
+    removerAlvo,
+    detalheDoAlvo,
     // handlers
     toggleCustomerSelection,
     handleCheckIn,

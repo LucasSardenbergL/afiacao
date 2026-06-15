@@ -17,10 +17,11 @@
     "wt": "bash scripts/new-worktree.sh",
     "wt:status": "bash scripts/wt-status.sh",
     "wt:clean": "bash scripts/wt-clean.sh",
+    "wt:reap": "bash scripts/wt-reap.sh",
     "wt:prune": "bash scripts/wt-prune.sh",
     "wt:map": "bash scripts/wt-map.sh",
     "wt:label": "bash scripts/wt-map.sh label",
-    "claude:size": "bash scripts/check-claudemd-size.sh"
+    "claude:size": "bash scripts/check-claude-md-budget.sh"
   },
   "dependencies": {
     "@elevenlabs/react": "^0.14.0",
@@ -48,6 +49,7 @@
     "@radix-ui/react-tooltip": "^1.2.7",
     "@supabase/supabase-js": "^2.95.3",
     "@tanstack/react-query": "^5.83.0",
+    "@tanstack/react-virtual": "^3.14.2",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.0.0",
     "@types/leaflet": "^1.9.21",

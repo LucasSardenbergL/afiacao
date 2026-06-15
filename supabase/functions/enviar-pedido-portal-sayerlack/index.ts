@@ -42,6 +42,14 @@ export default async ({ page, context }) => {
   // nunca lançar ReferenceError (que mascararia o envelope estruturado).
   let preLoginScreenshot = null;
 
+  // Flag de finalização (money-path). Setado IMEDIATAMENTE ANTES do clique em
+  // "Efetivar Pedido" (#btnSalvarNovoPedido) — o ÚNICO ponto que coloca o pedido
+  // na Sayerlack. Em closure (fora do runFlow) p/ sobreviver aos try/catch e ser
+  // lido pelo buildEnvelope. false EXPLÍCITO = prova de que nenhum pedido foi
+  // colocado → falha vira erro_retentavel; true/desconhecido → indeterminado.
+  // Ver src/lib/reposicao/sayerlack-classificacao.ts (espelho).
+  let efetivarAttempted = false;
+
   // === PR2: Budget management (deadline global) ===
   // O Browserless mata a função em ~60s. Em vez de esperar isso acontecer com
   // um waitFor pendurado (cenário do bug original — "Waiting failed: 7000ms"
@@ -101,9 +109,10 @@ export default async ({ page, context }) => {
 
   // === PR1: Network Recorder ===
   // Listener global armado ANTES de qualquer navegação. Captura todo POST que
-  // bate em endpoints suspeitos de efetivação. É a fonte primária de evidência
-  // para classificação: se um POST saiu, o pedido NUNCA é tratado como
-  // retentável — vai para conciliação.
+  // bate em endpoints suspeitos de efetivação (campo requestSent). ATENCAO:
+  // requestSent hoje é só EVIDENCIA/log — NAO mais a regra de classificação. A
+  // regra usa efetivarAttempted (o clique do Efetivar); ver buildEnvelope +
+  // src/lib/reposicao/sayerlack-classificacao.ts.
   const installOrderNetworkRecorder = (pg) => {
     const SUSPECT_RE = /pedido|efetivar|salvar|criar|order|novo[-_]?pedido/i;
     const events = [];
@@ -291,14 +300,14 @@ export default async ({ page, context }) => {
 
   // === PR1: Envelope estruturado ===
   // Traduz o resultado bruto do runFlow (legado: { data: {...} }) + a evidência
-  // do recorder na máquina de estados. Regra de ouro: requestSent === true
-  // jamais resulta em estado retentável.
+  // do recorder na máquina de estados. Regra de ouro (efetivarAttempted): só
+  // relaxa pra retentável quando o clique do Efetivar NAO ocorreu
+  // (efetivarAttempted === false). Ver src/lib/reposicao/sayerlack-classificacao.ts.
   const buildEnvelope = (raw, evidence) => {
     const elapsedMs = Date.now() - t0;
     const data = (raw && raw.data) ? raw.data : {};
     const screenshot = raw ? (raw.screenshot || null) : null;
     const preLogin = raw ? (raw.preLoginScreenshot || null) : null;
-    const requestSent = !!(evidence && evidence.requestSent);
     let protocolo = data.protocolo || null;
 
     // PR1.5: se a runFlow não capturou protocolo, tenta extrair do recorder.
@@ -311,47 +320,51 @@ export default async ({ page, context }) => {
       }
     }
 
+    // ESPELHO VERBATIM de classifyEnvelopeStatus (src/lib/reposicao/sayerlack-classificacao.ts).
+    // Decisão de FALHA é PURA por efetivarAttempted (closure); requestSent NÃO entra
+    // (era proxy ruim: falso-perigo no rascunho + falso-seguro quando o recorder perde
+    // o POST de finalização). Manter as duas cópias em sincronia.
     let status;
     let ok;
     let safeToRetry;
     let needsReconciliation;
+
+    const tipo = data.erroTipo || 'UNKNOWN';
+    const erroLogicoPreSubmit =
+      tipo === 'LOGIN_FAILED' || tipo === 'CLIENTE_NOT_FOUND' || tipo === 'SKU_NOT_FOUND'
+      || tipo === 'GRUPO_LEADTIME_MISMATCH';
 
     if (data.success === true) {
       ok = true;
       status = protocolo ? 'sucesso_portal' : 'aceito_portal_sem_protocolo';
       safeToRetry = false;
       needsReconciliation = !protocolo;
-    } else if (protocoloAutoExtraido && requestSent) {
-      // PR1.5: recuperação automática. O script morreu (timeout do Browserless)
-      // mas o portal já respondeu OK ao POST e conseguimos extrair o protocolo
-      // do corpo. Trata como sucesso completo.
+    } else if (protocoloAutoExtraido && efetivarAttempted === true) {
+      // PR1.5: protocolo auto-extraído SÓ vira sucesso se o Efetivar foi REALMENTE
+      // clicado. Protocolo de resposta de rascunho é pré-clique (efetivarAttempted
+      // false) → este ramo é pulado → não vira falso-sucesso.
       ok = true;
       status = 'sucesso_portal';
       safeToRetry = false;
       needsReconciliation = false;
-    } else {
+    } else if (erroLogicoPreSubmit) {
+      // Erro lógico pré-submit (login/cliente/sku/grupo) — retentar não adianta.
       ok = false;
-      const tipo = data.erroTipo || 'UNKNOWN';
-      const erroLogicoPreSubmit =
-        tipo === 'LOGIN_FAILED' || tipo === 'CLIENTE_NOT_FOUND' || tipo === 'SKU_NOT_FOUND'
-        || tipo === 'GRUPO_LEADTIME_MISMATCH';
-      if (requestSent) {
-        // Houve POST: independente do tipo de erro, só conciliação resolve.
-        status = 'indeterminado_requer_conciliacao';
-        safeToRetry = false;
-        needsReconciliation = true;
-      } else if (erroLogicoPreSubmit) {
-        // Erro lógico antes de qualquer submit — retentar não adianta.
-        status = 'erro_nao_retentavel';
-        safeToRetry = false;
-        needsReconciliation = false;
-      } else {
-        // NAVIGATION_FAILED / INCLUIR_ITEM_NOT_FOUND / EXCEPTION (inclui o
-        // timeout do Browserless) / UNKNOWN, sem POST capturado.
-        status = 'erro_retentavel';
-        safeToRetry = true;
-        needsReconciliation = false;
-      }
+      status = 'erro_nao_retentavel';
+      safeToRetry = false;
+      needsReconciliation = false;
+    } else if (efetivarAttempted === false) {
+      // Clique de Efetivar NUNCA ocorreu → nenhum pedido colocado → seguro retentar.
+      ok = false;
+      status = 'erro_retentavel';
+      safeToRetry = true;
+      needsReconciliation = false;
+    } else {
+      // efetivarAttempted true (clicou → pode ter colocado) OU desconhecido.
+      ok = false;
+      status = 'indeterminado_requer_conciliacao';
+      safeToRetry = false;
+      needsReconciliation = true;
     }
 
     // Mantém a forma externa { data, type, screenshot, preLoginScreenshot } que
@@ -370,6 +383,7 @@ export default async ({ page, context }) => {
         safeToRetry,
         needsReconciliation,
         evidence: {
+          efetivarAttempted,
           requestSent: evidence ? evidence.requestSent : false,
           requestCount: evidence ? evidence.requestCount : 0,
           responseCount: evidence ? evidence.responseCount : 0,
@@ -1083,6 +1097,11 @@ export default async ({ page, context }) => {
     const postSubmitBudget = budgetFor('submit-pedido', 60_000, { reserveSubmit: false, minMs: 2_000 });
     const signalPromise = waitForPositiveSubmitSignal(page, postSubmitBudget);
 
+    // Fronteira money-path: a partir DAQUI o pedido pode ter sido colocado na
+    // Sayerlack. Setar ANTES do click (não depois): se o próprio click pendurar
+    // ou lançar, efetivarAttempted já é true → classificação cai em indeterminado
+    // (conservador), nunca em retentável.
+    efetivarAttempted = true;
     await page.click('#btnSalvarNovoPedido');
     trace.push({ step: 'efetivar_clicked', t: Date.now() - t0, postSubmitBudget, remaining: remainingMs() });
 
@@ -1193,16 +1212,16 @@ export default async ({ page, context }) => {
     const screenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: false, encoding: 'base64' }).catch(() => null);
 
     // Decisão final (alinhada com a cascata de classifySubmitResult do doc):
-    //  - Portal devolveu success:false explícito → falha; buildEnvelope vê
-    //    requestSent e classifica como indeterminado (operador concilia).
+    //  - Portal devolveu success:false explícito → falha; aqui o Efetivar JÁ foi
+    //    clicado (efetivarAttempted=true) → buildEnvelope classifica indeterminado.
     //  - Sinal positivo (network/banner/modal) OU protocolo extraído de
     //    qualquer fonte → success:true; buildEnvelope mapeia para
     //    sucesso_portal (com protocolo) ou aceito_portal_sem_protocolo.
     //  - firstSignal === 'url' (só URL change, sem nada mais) → success:false
     //    com erroTipo AMBIGUO_URL_ONLY → indeterminado.
     //  - firstSignal === 'none' → success:false com erroTipo NO_POSITIVE_SIGNAL
-    //    → buildEnvelope decide via requestSent (POST capturado → indeterminado;
-    //    sem POST → erro_retentavel).
+    //    → buildEnvelope decide via efetivarAttempted (aqui clicou=true →
+    //    indeterminado; NUNCA retentável após o clique do Efetivar).
     if (bodySuccessFalse) {
       return {
         data: {
@@ -1862,7 +1881,11 @@ async function processarPedido(
   const screenshotB64: string | null = bResp?.screenshot ?? null;
   const preLoginScreenshotB64: string | null = bResp?.preLoginScreenshot ?? null;
   const evidence: Record<string, unknown> = (envelope?.evidence ?? {}) as Record<string, unknown>;
-  const requestSent = evidence?.requestSent === true;
+  // Sinal money-path: o clique de "Efetivar Pedido" foi disparado? `false`
+  // EXPLÍCITO = prova de que nenhum pedido foi colocado; `undefined` (envelope
+  // velho/parcial) = desconhecido → fail-closed (indeterminado). Substitui o
+  // antigo `requestSent` (proxy ruim — ver sayerlack-classificacao.ts).
+  const efetivarAttempted = evidence?.efetivarAttempted as boolean | undefined;
 
   // Upload de screenshots (instrumentacao — comportamento inalterado)
   if (screenshotB64) {
@@ -1952,16 +1975,13 @@ async function processarPedido(
         erro: `Browserless sem resposta (ambiguo): ${erroMsg}`,
       });
     }
-    // Status HTTP de erro do Browserless (>=500 / 0 / 408): a camada HTTP
-    // respondeu erro, o script nao chegou a submeter. Retentavel.
-    const esgotado = novasTentativas >= MAX_TENTATIVAS;
-    return await aplicarTransicao(
-      esgotado ? "erro_nao_retentavel" : "erro_retentavel",
-      {
-        erro: erroMsg,
-        proximoRetryEm: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      },
-    );
+    // Status HTTP de erro do Browserless (>=500 / 0 / 408): SEM envelope
+    // estruturado, NAO da pra provar que o script nao clicou "Efetivar" antes do
+    // erro HTTP. Estado desconhecido → conciliacao (money-path: nunca retentar um
+    // pedido talvez-colocado; tempo decorrido nao prova ausencia de clique).
+    return await aplicarTransicao("indeterminado_requer_conciliacao", {
+      erro: `Browserless erro HTTP sem envelope (ambiguo): ${erroMsg}`,
+    });
   }
 
   // HTTP 200 mas sem envelope estruturado inteligivel — nao da pra descartar
@@ -1972,11 +1992,21 @@ async function processarPedido(
     });
   }
 
-  // Rede de seguranca: se o recorder viu um POST sair, o pedido NUNCA pode
-  // terminar em estado retentavel, ainda que o envelope diga o contrario.
+  // Rede de seguranca (efetivarAttempted-aware) — ESPELHO de decidirStatusDeno
+  // (src/lib/reposicao/sayerlack-classificacao.ts). So' ENDURECE, nunca afrouxa.
+  const STATUS_CONHECIDOS = [
+    "sucesso_portal", "aceito_portal_sem_protocolo", "indeterminado_requer_conciliacao",
+    "erro_nao_retentavel", "erro_retentavel",
+  ];
   let envStatus: string = envelope.status;
-  if (requestSent && envStatus === "erro_retentavel") {
-    console.warn(`[envio-portal] Pedido #${pedido.id}: requestSent=true mas envelope=erro_retentavel — forcando indeterminado`);
+  if (STATUS_CONHECIDOS.indexOf(envStatus) === -1) {
+    // Status desconhecido (envelope corrompido / formato futuro) → fail-closed.
+    console.warn(`[envio-portal] Pedido #${pedido.id}: envelope.status desconhecido ("${envStatus}") — forcando indeterminado`);
+    envStatus = "indeterminado_requer_conciliacao";
+  } else if (envStatus === "erro_retentavel" && efetivarAttempted !== false) {
+    // So' mantem retentavel com efetivarAttempted EXPLICITO false (prova de que o
+    // Efetivar nunca foi clicado). true/undefined → conciliacao (pode ter colocado).
+    console.warn(`[envio-portal] Pedido #${pedido.id}: erro_retentavel mas efetivarAttempted!==false (${String(efetivarAttempted)}) — forcando indeterminado`);
     envStatus = "indeterminado_requer_conciliacao";
   }
 
@@ -2058,7 +2088,9 @@ async function processarPedido(
     return r;
   }
 
-  // erro_retentavel (default): POST comprovadamente nunca saiu, seguro retentar.
+  // erro_retentavel (default): só chega aqui com efetivarAttempted === false
+  // (Efetivar nunca clicado → nenhum pedido colocado), seguro retentar. Status
+  // desconhecido já foi endurecido pra indeterminado na rede de segurança acima.
   const erroMsg: string = evidence?.erro ?? "Falha do automador (retentavel)";
   const esgotado = novasTentativas >= MAX_TENTATIVAS;
   return await aplicarTransicao(
@@ -2122,7 +2154,14 @@ async function runWatchdog(supabase: SupabaseClient, minutos = 5) {
       status_envio_portal: "indeterminado_requer_conciliacao",
       portal_erro: erroMsg,
       portal_proximo_retry_em: null,
-    }).eq("id", p.id);
+      // Sobrescreve evidencia OBSOLETA: a tentativa ANTERIOR pode ter gravado
+      // efetivarAttempted=false; esta interrupcao e' de uma tentativa que talvez
+      // efetivou → marca desconhecido (null) pra nenhum leitor concluir "sem
+      // pedido" e re-enviar (duplicata).
+      portal_resposta: { phase: "watchdog", motivo: "travado_em_enviando_portal", efetivarAttempted: null },
+    })
+      .eq("id", p.id)
+      .eq("status_envio_portal", "enviando_portal"); // condicional: nao pisa conclusao concorrente
     await gravarTentativa(supabase, p.id, {
       iniciadoEm: agora,
       statusResultado: "indeterminado_requer_conciliacao",

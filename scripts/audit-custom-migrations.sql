@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 223
+-- Total de custom migrations: 238
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -200,6 +200,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260606140000', 'detectar_skus_sem_grupo_self_heal', '20260606140000_detectar_skus_sem_grupo_self_heal.sql'),
   ('20260606150000', 'a2_cmc_base_custo_view', '20260606150000_a2_cmc_base_custo_view.sql'),
   ('20260606150000', 'reposicao_qtde_inteira', '20260606150000_reposicao_qtde_inteira.sql'),
+  ('20260606170000', 'fornecedores_classificacao_schema', '20260606170000_fornecedores_classificacao_schema.sql'),
   ('20260606170000', 'reposicao_fix_aplicar_promocoes', '20260606170000_reposicao_fix_aplicar_promocoes.sql'),
   ('20260606180000', 'reposicao_aplicar_promocoes_hardening', '20260606180000_reposicao_aplicar_promocoes_hardening.sql'),
   ('20260606180000', 'reposicao_preco_pedido_cmc', '20260606180000_reposicao_preco_pedido_cmc.sql'),
@@ -242,6 +243,20 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260613230000', 'roteirizador_prospects', '20260613230000_roteirizador_prospects.sql'),
   ('20260614103251', 'onda1_fase1_farmer_calls_atendimento', '20260614103251_onda1_fase1_farmer_calls_atendimento.sql'),
   ('20260614140000', 'radar_contagem_perf', '20260614140000_radar_contagem_perf.sql'),
+  ('20260614160000', 'roteirizador_campo_banco', '20260614160000_roteirizador_campo_banco.sql'),
+  ('20260614170000', 'cmc_ledger', '20260614170000_cmc_ledger.sql'),
+  ('20260614170000', 'roteirizador_campo_carteira_sufixo_uf', '20260614170000_roteirizador_campo_carteira_sufixo_uf.sql'),
+  ('20260614180000', 'markup_policy', '20260614180000_markup_policy.sql'),
+  ('20260614190000', 'get_preco_cockpit', '20260614190000_get_preco_cockpit.sql'),
+  ('20260614231801', 'reposicao_timeout_sync_inventory', '20260614231801_reposicao_timeout_sync_inventory.sql'),
+  ('20260615091839', 'retencao_cron_job_run_details', '20260615091839_retencao_cron_job_run_details.sql'),
+  ('20260615095710', 'idx_data_health_freshness_cols', '20260615095710_idx_data_health_freshness_cols.sql'),
+  ('20260615103111', 'idx_omie_products_codigo_text_account', '20260615103111_idx_omie_products_codigo_text_account.sql'),
+  ('20260615130000', 'tint_vigia_cobertura_sentinela', '20260615130000_tint_vigia_cobertura_sentinela.sql'),
+  ('20260615133000', 'tint_remapeia_skus_omie_desalinhadas', '20260615133000_tint_remapeia_skus_omie_desalinhadas.sql'),
+  ('20260615140000', 'tint_promote_indices_timeout', '20260615140000_tint_promote_indices_timeout.sql'),
+  ('20260615150000', 'cockpit_preco_fixes', '20260615150000_cockpit_preco_fixes.sql'),
+  ('20260615160000', 'tint_promote_set_based', '20260615160000_tint_promote_set_based.sql'),
   ('20260615182814', 'vincular_tint_skus_omie_orfaos', '20260615182814_vincular_tint_skus_omie_orfaos.sql')
 )
 SELECT
@@ -953,6 +968,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('detectar_skus_sem_grupo_exclui_04', 'function', 'public', 'detectar_skus_sem_grupo', ''),
   ('detectar_skus_sem_grupo_self_heal', 'function', 'public', 'detectar_skus_sem_grupo', ''),
   ('reposicao_qtde_inteira', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('fornecedores_classificacao_schema', 'table', 'public', 'cliente_classificacao', ''),
+  ('fornecedores_classificacao_schema', 'table', 'public', 'fornecedor_excecao', ''),
   ('reposicao_fix_aplicar_promocoes', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_aplicar_promocoes_hardening', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_preco_pedido_cmc', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
@@ -1098,7 +1115,49 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('roteirizador_prospects', 'function', 'public', 'radar_prospects_para_rota', ''),
   ('onda1_fase1_farmer_calls_atendimento', 'index', 'public', 'idx_farmer_calls_atendimento_id', 'farmer_calls'),
   ('radar_contagem_perf', 'index', 'public', 'idx_radar_muni_cover', 'radar_empresas'),
-  ('radar_contagem_perf', 'function', 'public', 'radar_contagem_por_municipio', '')
+  ('radar_contagem_perf', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('roteirizador_campo_banco', 'function', 'public', 'norm_cidade', ''),
+  ('roteirizador_campo_banco', 'function', 'public', 'carteira_por_municipio', ''),
+  ('roteirizador_campo_banco', 'function', 'public', 'radar_prospects_para_rota', ''),
+  ('cmc_ledger', 'table', 'public', 'cmc_ledger', ''),
+  ('cmc_ledger', 'index', 'public', 'idx_cmc_ledger_lookup', 'cmc_ledger'),
+  ('cmc_ledger', 'function', 'public', 'cmc_ledger_capture', ''),
+  ('cmc_ledger', 'trigger', 'public', 'trg_cmc_ledger_capture', 'inventory_position'),
+  ('cmc_ledger', 'rls_policy', 'public', 'cmc_ledger_select_staff', 'cmc_ledger'),
+  ('roteirizador_campo_carteira_sufixo_uf', 'function', 'public', 'carteira_por_municipio', ''),
+  ('markup_policy', 'table', 'public', 'markup_policy', ''),
+  ('markup_policy', 'index', 'public', 'uq_markup_policy_conta', 'markup_policy'),
+  ('markup_policy', 'index', 'public', 'uq_markup_policy_fam', 'markup_policy'),
+  ('markup_policy', 'index', 'public', 'uq_markup_policy_sku', 'markup_policy'),
+  ('markup_policy', 'function', 'public', 'resolve_markup_policy', ''),
+  ('markup_policy', 'rls_policy', 'public', 'markup_policy_select_staff', 'markup_policy'),
+  ('markup_policy', 'rls_policy', 'public', 'markup_policy_write_master', 'markup_policy'),
+  ('get_preco_cockpit', 'function', 'public', 'get_preco_cockpit', ''),
+  ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
+  ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
+  ('retencao_cron_job_run_details', 'cron_job', 'cron', 'purge-cron-job-run-details', ''),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_inventory_position_synced_at', 'inventory_position'),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_omie_products_updated_at', 'omie_products'),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_product_costs_updated_at', 'product_costs'),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_receber_updated_at', 'fin_contas_receber'),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_pagar_updated_at', 'fin_contas_pagar'),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_farmer_client_scores_calculated_at', 'farmer_client_scores'),
+  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_pedido_compra_sugerido_data_ciclo', 'pedido_compra_sugerido'),
+  ('idx_omie_products_codigo_text_account', 'index', 'public', 'idx_omie_products_codigo_text_account', 'omie_products'),
+  ('tint_vigia_cobertura_sentinela', 'function', 'public', '_data_health_compute', ''),
+  ('tint_vigia_cobertura_sentinela', 'function', 'public', 'data_health_watchdog', ''),
+  ('tint_vigia_cobertura_sentinela', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsfi_staging_formula_id', 'tint_staging_formula_itens'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsc_acct_corante', 'tint_staging_corantes'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsf_acct_par', 'tint_staging_formulas'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsf_run', 'tint_staging_formulas'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tss_run', 'tint_staging_skus'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsprod_run', 'tint_staging_produtos'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsbase_run', 'tint_staging_bases'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsemb_run', 'tint_staging_embalagens'),
+  ('cockpit_preco_fixes', 'function', 'public', 'get_preco_cockpit', ''),
+  ('cockpit_preco_fixes', 'rls_policy', 'public', 'cmc_ledger_select_gestor', 'cmc_ledger'),
+  ('tint_promote_set_based', 'function', 'public', 'tint_promote_sync_run', '')
 )
 SELECT
   e.migration,

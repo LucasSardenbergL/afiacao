@@ -56,3 +56,54 @@ export function toggleTarget(set: Set<string>, id: string): Set<string> {
   else next.add(id);
   return next;
 }
+
+/** lower + remove acentos (busca tolerante: "moveis" acha "Móveis"). */
+const semAcento = (t: string): string =>
+  t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+/** Critérios de filtro do universo de alvos (contexto campo). */
+export interface FiltrosAlvo {
+  /** Tipo: 'todos' | 'clientes' | 'prospects'. */
+  tipo: TargetFilter;
+  /** Busca por nome (ignora acento e caixa, substring). */
+  busca: string;
+  /** Só alvos com telefone. */
+  comTelefone: boolean;
+  /** prospeccao_status incluídos (vazio = todos). Só afeta prospects. */
+  status: string[];
+  /** Bairro exato (null = todos). */
+  bairro: string | null;
+}
+
+export const FILTROS_ALVO_INICIAL: FiltrosAlvo = {
+  tipo: 'todos',
+  busca: '',
+  comTelefone: false,
+  status: [],
+  bairro: null,
+};
+
+/** Aplica todos os critérios (AND) sobre o universo de alvos. Puro. */
+export function aplicarFiltrosAlvos(stops: RouteStop[], f: FiltrosAlvo): RouteStop[] {
+  let out = filtrarAlvos(stops, f.tipo);
+  const q = semAcento(f.busca.trim());
+  if (q) out = out.filter((s) => semAcento(s.customerName).includes(q));
+  if (f.comTelefone) out = out.filter((s) => !!s.phone && s.phone.trim() !== '');
+  if (f.status.length > 0) {
+    out = out.filter((s) => s.prospeccaoStatus != null && f.status.includes(s.prospeccaoStatus));
+  }
+  if (f.bairro != null) {
+    out = out.filter((s) => s.address.neighborhood === f.bairro);
+  }
+  return out;
+}
+
+/** Bairros distintos presentes no universo (ordenados pt-BR, sem vazios). Puro. */
+export function bairrosDe(stops: RouteStop[]): string[] {
+  const set = new Set<string>();
+  for (const s of stops) {
+    const b = s.address.neighborhood?.trim();
+    if (b) set.add(b);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}

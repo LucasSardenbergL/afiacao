@@ -6,9 +6,13 @@ import { Separator } from '@/components/ui/separator';
 import {
   ShoppingCart, Plus, Minus, Trash2, Building2, Scissors,
 } from 'lucide-react';
+import { useMemo } from 'react';
 import { DELIVERY_OPTIONS, TIME_SLOTS, DeliveryOption } from '@/types';
 import type { ProductCartItem, ServiceCartItem } from '@/hooks/useUnifiedOrder';
 import { fmt, getToolName } from '@/hooks/useUnifiedOrder';
+import { usePrecoCockpit, chaveCockpit, type ItemCockpitInput, type LinhaCockpit } from '@/hooks/usePrecoCockpit';
+import { FAIXA_UI } from '@/lib/preco/faixa-ui';
+import { cn } from '@/lib/utils';
 
 interface CartItemListProps {
   cart: { length: number };
@@ -35,6 +39,30 @@ export function CartItemList({
   onUpdateQuantity, onUpdateProductPrice, onRemoveFromCart,
   getServicePrice, getCartIndex,
 }: CartItemListProps) {
+  // #6 (B): faixa do cockpit na linha do carrinho — aqui o tint_formula_id existe,
+  // então a linha tinta recebe o custo REAL (base+corantes); item normal usa o preço
+  // negociado. Chave composta (tint repete codigo por cor).
+  const cockpitItens = useMemo<ItemCockpitInput[]>(() =>
+    [...obenProductItems, ...colacorProductItems]
+      .map(it => ({
+        empresa: it.product.account ?? '',
+        codigo: it.product.omie_codigo_produto,
+        preco: it.unit_price,
+        tint_formula_id: it.tint_formula_id ?? null,
+      }))
+      .filter(i => i.preco > 0 && Number.isFinite(i.codigo) && i.empresa !== ''),
+    [obenProductItems, colacorProductItems],
+  );
+  const { data: cockpitList } = usePrecoCockpit(cockpitItens);
+  const cockpitByKey = useMemo(() => {
+    const m = new Map<string, LinhaCockpit>();
+    cockpitItens.forEach((inp, i) => {
+      const l = cockpitList?.[i];
+      if (l) m.set(chaveCockpit(inp.empresa, inp.codigo, inp.tint_formula_id), l);
+    });
+    return m;
+  }, [cockpitItens, cockpitList]);
+
   const renderProductGroup = (items: ProductCartItem[], label: string, icon: React.ReactNode) => (
     <div>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
@@ -42,6 +70,7 @@ export function CartItemList({
       </p>
       {items.map(item => {
         const cartIdx = getCartIndex(item);
+        const health = cockpitByKey.get(chaveCockpit(item.product.account ?? '', item.product.omie_codigo_produto, item.tint_formula_id));
         return (
           <div key={`${item.product.id}-${item.tint_formula_id || 'base'}`} className="space-y-1.5 mb-2">
             <div className="flex items-start justify-between gap-1.5">
@@ -51,6 +80,22 @@ export function CartItemList({
                   <div className="flex items-center gap-1 mt-0.5">
                     <Badge variant="outline" className="text-[9px] px-1 py-0 border-primary/40 text-primary">
                       🎨 {item.tint_cor_id} — {item.tint_nome_cor}
+                    </Badge>
+                  </div>
+                )}
+                {health && health.faixa !== 'neutro' && FAIXA_UI[health.faixa] && (
+                  <div className="mt-0.5">
+                    <Badge
+                      variant="outline"
+                      className={cn('text-[9px] px-1 py-0', FAIXA_UI[health.faixa].cls)}
+                      title={health.cmc != null ? 'Markup bruto sobre o custo (CMC) — não inclui imposto/comissão/frete/prazo' : undefined}
+                    >
+                      {FAIXA_UI[health.faixa].label}
+                      {health.cmc != null && health.markup_perc != null && (
+                        <span className="ml-1 font-mono">
+                          {Math.round(health.markup_perc)}%{health.folga_reais != null ? ` · ${fmt(health.folga_reais)}` : ''}
+                        </span>
+                      )}
                     </Badge>
                   </div>
                 )}
