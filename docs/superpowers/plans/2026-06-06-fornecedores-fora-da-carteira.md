@@ -200,9 +200,13 @@ BEGIN
   ON CONFLICT (user_id) DO NOTHING;
   UPDATE public.cliente_classificacao SET excluir_da_carteira = false, updated_at = now() WHERE user_id = p_user_id;
   UPDATE public.carteira_assignments SET eligible = true, updated_at = now() WHERE customer_user_id = p_user_id;
-  -- backfill dos scores: enfileira visit recalc p/ cada owner do cliente
-  INSERT INTO public.visit_score_recalc_pending (customer_user_id, farmer_id)
-  SELECT customer_user_id, owner_user_id FROM public.carteira_assignments WHERE customer_user_id = p_user_id
+  -- backfill dos scores: re-enfileira AMBOS os recalcs (visit + score). A fila é a TABELA *_queue
+  -- (⚠️ visit_score_recalc_pending é VIEW, não-inserível; reason é NOT NULL; índice único parcial cobre o ON CONFLICT).
+  INSERT INTO public.visit_score_recalc_queue (customer_user_id, farmer_id, reason)
+  SELECT customer_user_id, owner_user_id, 'reversao_fornecedor' FROM public.carteira_assignments WHERE customer_user_id = p_user_id
+  ON CONFLICT DO NOTHING;
+  INSERT INTO public.score_recalc_queue (customer_user_id, farmer_id, reason)
+  SELECT customer_user_id, owner_user_id, 'reversao_fornecedor' FROM public.carteira_assignments WHERE customer_user_id = p_user_id
   ON CONFLICT DO NOTHING;
   RETURN jsonb_build_object('revertido', p_user_id);
 END $$;
@@ -223,12 +227,15 @@ CREATE TRIGGER trg_cliente_classificacao_derive
   FOR EACH ROW EXECUTE FUNCTION public.cliente_classificacao_after_write();
 
 SELECT 'MIGRATION B OK' AS status,
-  (SELECT count(*) FROM pg_proc WHERE proname IN ('classificar_clientes_fornecedores','reverter_exclusao_fornecedor')) AS funcs;
+  (SELECT count(*) FROM pg_proc WHERE proname IN ('classificar_clientes_fornecedores','reverter_exclusao_fornecedor')) AS rpcs,
+  (SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_cliente_classificacao_derive') AS trigger_ok;
 ```
 
-- [ ] **Step 2: Validar em PG17** (Task 5).
+> ⚠️ **Canônico = o ARQUIVO** `supabase/migrations/20260606170100_fornecedores_classificacao_rpcs.sql` (não o embed acima). O arquivo foi validado em PG17 (Task 5) e corrige 2 bugs que estavam no embed: (a) reverter escrevia na VIEW `visit_score_recalc_pending` (→ tabela `visit_score_recalc_queue` + `score_recalc_queue`, com `reason`); (b) função do trigger renomeada p/ `cliente_classificacao_derive` + `DROP TRIGGER IF EXISTS` (idempotente).
+
+- [ ] **Step 2: Validar em PG17** (Task 5). ✅ `db/test-fornecedores-classificacao.sh` — 12 asserts PASS.
 - [ ] **Step 3: Commit** — `git commit -m "feat(fornecedores): migration B — RPCs classificar/reverter + trigger de derivação"`
-- [ ] **Step 4 (rollout, manual):** colar no SQL Editor → "Success" + `funcs = 2`.
+- [ ] **Step 4 (rollout, manual):** colar **o arquivo** `20260606170100_*.sql` no SQL Editor → "Success" + `rpcs = 2, trigger_ok = 1`.
 
 ---
 
@@ -269,7 +276,7 @@ A2  fornecedor COM exceção → excluir_da_carteira=false (curadoria vence)
 A3  cliente comum (sem tag) → excluir_da_carteira=false
 A4  tag 'FORNECEDOR' maiúscula e ' Transportadora ' → detectadas (case/trim)
 A5  cleanup: eligible=false para flaggeds; eligible permanece true p/ não-flaggeds
-A6  multi-linha por user (mesmo user_id em 2 linhas de carteira) → ambas eligible=false
+A6  transportadora pura no cleanup → eligible=false (carteira é 1:1 por UNIQUE(customer_user_id); multi-linha por user é IMPOSSÍVEL — descoberto no PG17)
 A7  reverter_exclusao_fornecedor → exceção criada, excluir=false, eligible=true, fila visit_recalc tem a linha
 A8  tem_venda_real reflete sales_orders válido (informativo, NÃO altera excluir)
 A9  trigger: UPDATE de tags_omie re-deriva is_fornecedor/excluir sem chamar a RPC
