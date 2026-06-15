@@ -17,6 +17,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     loadingFormulas,
     colorNotFoundInBase,
     globalColorMatches,
+    globalColorExists,
     loadingGlobalColors,
     selectedFormula,
     setSelectedFormula,
@@ -77,6 +78,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
               <GlobalColorMatches
                 product={product}
                 matches={globalColorMatches ?? []}
+                colorExists={globalColorExists}
                 onConfirm={onConfirm}
               />
             )}
