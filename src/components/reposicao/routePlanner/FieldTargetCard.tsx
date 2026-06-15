@@ -1,9 +1,10 @@
 // Linha de um alvo (cliente da carteira OU prospect do Radar) no universo de
 // alvos do contexto campo. Botão "Adicionar à rota" / "Na rota ✓" (toggle).
-import { Plus, Check, Phone } from 'lucide-react';
+import { Plus, Check } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { BotaoLigar } from '@/components/call/BotaoLigar';
 import type { RouteStop } from './types';
 import { STOP_CONFIG } from './constants';
 
@@ -32,11 +33,7 @@ export function FieldTargetCard({
             </p>
           </div>
           {stop.phone && (
-            <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" asChild>
-              <a href={`tel:${stop.phone}`} aria-label="Ligar">
-                <Phone className="w-3.5 h-3.5" />
-              </a>
-            </Button>
+            <BotaoLigar telefone={stop.phone} nomeCliente={stop.customerName} variant="icon" className="shrink-0" />
           )}
           <Button
             size="sm"
