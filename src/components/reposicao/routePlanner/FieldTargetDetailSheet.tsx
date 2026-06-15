@@ -2,7 +2,7 @@
 // AlvoDetalhe (montado pelo hook): razão social + CNPJ + status (prospect) ou
 // recência (carteira), endereço completo e os telefones com Ligar (tel:) / WhatsApp
 // (wa.me). Rodapé: adicionar/remover da rota + remover da sessão (ponto F).
-import { Plus, Check, Phone, MessageCircle, Trash2, MapPin } from 'lucide-react';
+import { Plus, Check, Trash2, MapPin, MessageSquare } from 'lucide-react';
 import {
   Sheet,
   SheetContent,
@@ -14,6 +14,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { STOP_CONFIG } from './constants';
 import type { RouteStop } from './types';
 import type { AlvoDetalhe } from '@/lib/route/alvo-detalhe';
@@ -100,15 +101,16 @@ export function FieldTargetDetailSheet({
                           <p className="text-[11px] text-muted-foreground">{c.rotulo}</p>
                           <p className="text-foreground tabular-nums truncate">{c.display}</p>
                         </div>
-                        <Button size="sm" variant="outline" className="h-8 gap-1 shrink-0" asChild>
-                          <a href={c.telHref} aria-label={`Ligar ${c.display}`}>
-                            <Phone className="w-3.5 h-3.5" /> Ligar
-                          </a>
-                        </Button>
+                        <BotaoLigar
+                          telefone={c.telefone}
+                          nomeCliente={detalhe.nome}
+                          variant="icon"
+                          className="shrink-0"
+                        />
                         {c.whatsappHref && (
-                          <Button size="sm" variant="outline" className="h-8 gap-1 shrink-0" asChild>
+                          <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 text-status-success-bold" asChild>
                             <a href={c.whatsappHref} target="_blank" rel="noopener noreferrer" aria-label={`WhatsApp ${c.display}`}>
-                              <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
+                              <MessageSquare className="w-4 h-4" />
                             </a>
                           </Button>
                         )}

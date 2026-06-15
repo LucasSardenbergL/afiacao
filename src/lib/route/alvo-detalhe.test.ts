@@ -71,12 +71,13 @@ describe('montarDetalheAlvo — prospect', () => {
     expect(d.statusLabel).toBe('a contatar');
     expect(d.recenciaLabel).toBeNull();
   });
-  it('dois contatos (tel1+tel2) com wa.me e tel: corretos', () => {
+  it('dois contatos (tel1+tel2): tel1 celular tem WhatsApp, tel2 fixo não', () => {
     expect(d.contatos).toHaveLength(2);
     expect(d.contatos[0].rotulo).toBe('Telefone 1');
+    expect(d.contatos[0].telefone).toBe('37999990000');
     expect(d.contatos[0].whatsappHref).toBe('https://wa.me/5537999990000');
-    expect(d.contatos[0].telHref).toBe('tel:37999990000');
     expect(d.contatos[1].rotulo).toBe('Telefone 2');
+    expect(d.contatos[1].whatsappHref).toBeNull(); // 3733331111 é fixo (10 díg)
   });
   it('endereço em linhas (rua+num, complemento, bairro, cidade-UF, CEP)', () => {
     expect(d.enderecoLinhas).toEqual([
@@ -123,9 +124,10 @@ describe('montarDetalheAlvo — carteira', () => {
     const d = montarDetalheAlvo({ stop: stopCarteira({ phone: null }) });
     expect(d.contatos).toHaveLength(0);
   });
-  it('telefone fixo válido → tem tel:, whatsappHref pode existir; lixo → whatsappHref null', () => {
+  it('telefone lixo → contato existe (display cru) mas sem WhatsApp', () => {
     const d = montarDetalheAlvo({ stop: stopCarteira({ phone: '123' }) });
     expect(d.contatos).toHaveLength(1);
-    expect(d.contatos[0].whatsappHref).toBeNull(); // < 10 dígitos → sem WhatsApp
+    expect(d.contatos[0].telefone).toBe('123');
+    expect(d.contatos[0].whatsappHref).toBeNull(); // não é celular → sem WhatsApp
   });
 });

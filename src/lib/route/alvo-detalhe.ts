@@ -8,14 +8,14 @@
 import type { RouteStop } from '@/components/reposicao/routePlanner/types';
 import type { ProspectRow } from './prospect-stop';
 import { labelProspeccaoStatus } from './prospect-stop';
-import { formatBrPhone, normalizeBrPhone, whatsappLink } from '@/lib/phone';
+import { formatBrPhone, isCellphone, whatsappLink } from '@/lib/phone';
 import { formatarCnpj } from '@/lib/radar/ui-helpers';
 
 export interface ContatoAlvo {
   rotulo: string;                 // "Telefone 1" | "Telefone 2" | "Telefone"
+  telefone: string;               // cru — o BotaoLigar normaliza e escolhe o caminho
   display: string;                // (DD) 9XXXX-XXXX
-  telHref: string;                // tel:DDDD...
-  whatsappHref: string | null;    // wa.me/55... ou null (esconde o botão)
+  whatsappHref: string | null;    // só se celular + link válido (esconde senão)
 }
 
 export interface AlvoDetalhe {
@@ -42,12 +42,13 @@ export function recenciaLabel(dias: number | null | undefined): string {
 function montarContato(rotulo: string, telefone: string | null | undefined): ContatoAlvo | null {
   const raw = t(telefone);
   if (!raw) return null;
-  const digits = normalizeBrPhone(raw) || raw.replace(/\D/g, '');
   return {
     rotulo,
+    telefone: raw,
     display: formatBrPhone(raw),
-    telHref: `tel:${digits}`,
-    whatsappHref: whatsappLink(raw),
+    // WhatsApp só pra celular (mesmo critério do RadarDetailSheet) — evita link
+    // pra fixo. whatsappLink ainda devolve null em número incompleto.
+    whatsappHref: isCellphone(raw) ? whatsappLink(raw) : null,
   };
 }
 

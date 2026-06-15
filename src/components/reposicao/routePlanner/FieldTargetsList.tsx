@@ -10,10 +10,14 @@ export function FieldTargetsList({
   stops,
   isNaRota,
   onToggleRota,
+  onAbrirDetalhe,
+  onRemover,
 }: {
   stops: RouteStop[];
   isNaRota: (id: string) => boolean;
   onToggleRota: (id: string) => void;
+  onAbrirDetalhe: (stop: RouteStop) => void;
+  onRemover: (stop: RouteStop) => void;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -40,6 +44,8 @@ export function FieldTargetsList({
                 stop={stop}
                 naRota={isNaRota(stop.id)}
                 onToggleRota={() => onToggleRota(stop.id)}
+                onAbrirDetalhe={() => onAbrirDetalhe(stop)}
+                onRemover={() => onRemover(stop)}
               />
             </div>
           );

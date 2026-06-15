@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Navigation, CheckCircle2 } from 'lucide-react';
@@ -16,6 +16,8 @@ import { CityMultiSelector } from '@/components/reposicao/routePlanner/CityMulti
 import { FieldTargetsSummary } from '@/components/reposicao/routePlanner/FieldTargetsSummary';
 import { AlvosFiltros } from '@/components/reposicao/routePlanner/AlvosFiltros';
 import { FieldTargetsList } from '@/components/reposicao/routePlanner/FieldTargetsList';
+import { FieldTargetDetailSheet } from '@/components/reposicao/routePlanner/FieldTargetDetailSheet';
+import type { RouteStop } from '@/components/reposicao/routePlanner/types';
 import { PeriodFilter } from '@/components/reposicao/routePlanner/PeriodFilter';
 import { RouteActionButtons } from '@/components/reposicao/routePlanner/RouteActionButtons';
 import { ManualModeCard } from '@/components/reposicao/routePlanner/ManualModeCard';
@@ -97,7 +99,16 @@ const AdminRoutePlanner = () => {
     toggleTargetId,
     filtros,
     setFiltros,
+    removerAlvo,
+    detalheDoAlvo,
   } = useRoutePlanner();
+
+  // Sheet de detalhe do alvo (contexto campo). alvoAberto = qual alvo está aberto.
+  const [alvoAberto, setAlvoAberto] = useState<RouteStop | null>(null);
+  const detalheAberto = useMemo(
+    () => (alvoAberto ? detalheDoAlvo(alvoAberto) : null),
+    [alvoAberto, detalheDoAlvo],
+  );
 
   // Initialize map
   useEffect(() => {
@@ -297,6 +308,8 @@ const AdminRoutePlanner = () => {
               stops={filteredFieldTargets}
               isNaRota={(id) => selectedTargetIds.has(id)}
               onToggleRota={toggleTargetId}
+              onAbrirDetalhe={setAlvoAberto}
+              onRemover={(stop) => removerAlvo(stop.id, stop.customerName)}
             />
           </div>
         )}
@@ -402,6 +415,20 @@ const AdminRoutePlanner = () => {
         notes={checkoutNotes}
         onNotesChange={setCheckoutNotes}
         onConfirm={confirmCheckout}
+      />
+
+      <FieldTargetDetailSheet
+        stop={alvoAberto}
+        detalhe={detalheAberto}
+        naRota={alvoAberto ? selectedTargetIds.has(alvoAberto.id) : false}
+        onToggleRota={() => alvoAberto && toggleTargetId(alvoAberto.id)}
+        onRemover={() => {
+          if (alvoAberto) {
+            removerAlvo(alvoAberto.id, alvoAberto.customerName);
+            setAlvoAberto(null);
+          }
+        }}
+        onOpenChange={(open) => { if (!open) setAlvoAberto(null); }}
       />
 
     </div>
