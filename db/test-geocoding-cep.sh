@@ -22,10 +22,17 @@ trap '"$PGBIN/pg_ctl" -D "$DB_DIR" stop -m immediate >/dev/null 2>&1; rm -rf "$D
 P=("$PGBIN/psql" -h "$DB_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
 MIG="$(cd "$(dirname "$0")/.." && pwd)/supabase/migrations/20260615190000_geocoding_cep_geo.sql"
 
-echo "=== roles mínimos (Supabase provê em prod) ==="
+echo "=== roles + stubs (Supabase/prod provê: auth.uid + gate da carteira) ==="
 "${P[@]}" <<'SQL'
 CREATE ROLE authenticated;
 CREATE ROLE anon;
+CREATE SCHEMA auth;
+-- auth.uid() fixo (caller). pode_ver_carteira_completa: gate por GUC test.gate
+-- ('on' libera; qualquer outra coisa nega) — espelha o gate REAL gestor/master.
+CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE
+  AS $$ SELECT '00000000-0000-0000-0000-0000000000a1'::uuid $$;
+CREATE FUNCTION public.pode_ver_carteira_completa(uuid) RETURNS boolean LANGUAGE sql STABLE
+  AS $$ SELECT current_setting('test.gate', true) IS NOT DISTINCT FROM 'on' $$;
 SQL
 
 echo "=== aplica a migration REAL ==="
@@ -91,4 +98,56 @@ END $$;
 RESET ROLE;
 SQL
 
-echo "✅ Task 1 verde (normalizar_cep + cep_geo/municipio_geo + CHECKs + RLS)"
+echo "=== U: cep_geo_upsert — gate / idempotência / anti-downgrade ==="
+"${P[@]}" <<'SQL'
+-- GATE: sem permissão (test.gate='off') → forbidden
+SET test.gate='off';
+DO $$ BEGIN
+  PERFORM cep_geo_upsert('30140071',-19.93,-43.93,'nom','street');
+  RAISE EXCEPTION 'U-GATE FAIL: upsert passou sem permissão';
+EXCEPTION WHEN raise_exception THEN
+  IF SQLERRM LIKE '%forbidden%' THEN RAISE NOTICE 'U-GATE OK (forbidden sem gate)';
+  ELSE RAISE; END IF;
+END $$;
+
+SET test.gate='on';
+-- IDEMPOTÊNCIA: 2× mesmo CEP/precision → 1 linha, street
+SELECT cep_geo_upsert('30140071',-19.93,-43.93,'nom','street');
+SELECT cep_geo_upsert('30140071',-19.93,-43.93,'nom','street');
+DO $$ DECLARE n int; p text; BEGIN
+  SELECT count(*), max(precision) INTO n, p FROM cep_geo WHERE cep='30140071';
+  IF n<>1 THEN RAISE EXCEPTION 'U-IDEMP FAIL: % linhas', n; END IF;
+  IF p<>'street' THEN RAISE EXCEPTION 'U-IDEMP FAIL: precision=%', p; END IF;
+  RAISE NOTICE 'U-IDEMP OK (1 linha, street)';
+END $$;
+
+-- ANTI-DOWNGRADE: city_centroid (pior) NÃO sobrescreve street
+SELECT cep_geo_upsert('30140071',-1,-1,'mun','city_centroid');
+DO $$ DECLARE p text; la double precision; BEGIN
+  SELECT precision, lat INTO p, la FROM cep_geo WHERE cep='30140071';
+  IF p<>'street' OR la<>-19.93 THEN RAISE EXCEPTION 'U-DOWNGRADE FAIL: %/%', p, la; END IF;
+  RAISE NOTICE 'U-DOWNGRADE OK (street preservado contra city_centroid)';
+END $$;
+
+-- UPGRADE: rooftop (melhor) SOBRESCREVE + avança updated_at
+DO $$ DECLARE t0 timestamptz; t1 timestamptz; p text; BEGIN
+  SELECT updated_at INTO t0 FROM cep_geo WHERE cep='30140071';
+  PERFORM cep_geo_upsert('30140071',-19.9,-43.9,'nom','rooftop');
+  SELECT precision, updated_at INTO p, t1 FROM cep_geo WHERE cep='30140071';
+  IF p<>'rooftop' THEN RAISE EXCEPTION 'U-UPGRADE FAIL: precision=%', p; END IF;
+  IF t1<=t0 THEN RAISE EXCEPTION 'U-UPGRADE FAIL: updated_at não avançou'; END IF;
+  RAISE NOTICE 'U-UPGRADE OK (rooftop sobrescreve + updated_at avança)';
+END $$;
+
+-- CEP lixo → no-op (sem linha nova, sem erro)
+DO $$ DECLARE n0 int; n1 int; BEGIN
+  SELECT count(*) INTO n0 FROM cep_geo;
+  PERFORM cep_geo_upsert('abc',-1,-1,'x','street');   -- sem dígito
+  PERFORM cep_geo_upsert('123',-1,-1,'x','street');   -- < 8 dígitos
+  SELECT count(*) INTO n1 FROM cep_geo;
+  IF n1<>n0 THEN RAISE EXCEPTION 'U-LIXO FAIL: % -> %', n0, n1; END IF;
+  RAISE NOTICE 'U-LIXO OK (CEP inválido = no-op)';
+END $$;
+SQL
+
+echo "✅ Tasks 1-2 verdes (schema/CHECKs/RLS + upsert gate/idempotência/anti-downgrade)"
