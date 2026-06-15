@@ -42,6 +42,7 @@ import {
   type FiltrosAlvo,
 } from '@/lib/route/field-targets';
 import { carteiraRowToStop, type CarteiraRow } from '@/lib/route/carteira-stop';
+import { montarDetalheAlvo, type AlvoDetalhe } from '@/lib/route/alvo-detalhe';
 
 // Teto de prospects por cidade pedido à RPC (a RPC capa em 2000 no SQL).
 // Divinópolis (600) cabe inteira; metrópole mostra os 1000 mais quentes.
@@ -109,6 +110,10 @@ export function useRoutePlanner() {
   const [prospectStops, setProspectStops] = useState<RouteStop[]>([]);
   const [carteiraCidadeStops, setCarteiraCidadeStops] = useState<RouteStop[]>([]);
   const [loadingProspects, setLoadingProspects] = useState(false);
+  // Linha crua do prospect por stopId — preserva razão social + telefone2 que o
+  // prospectRowToStopDraft colapsa. Lido sob-demanda quando o Sheet de detalhe abre
+  // (ref, sem re-render). A carteira não precisa (o RouteStop já carrega tudo).
+  const rawProspectById = useRef<Map<string, ProspectRow>>(new Map());
 
   const toggleCity = useCallback((city: CityOption) => {
     setSelectedCities((prev) =>
@@ -129,6 +134,40 @@ export function useRoutePlanner() {
   const toggleTargetId = useCallback((id: string) => {
     setSelectedTargetIds((prev) => toggleTarget(prev, id));
   }, []);
+
+  // Curadoria F: "remover da sessão" — Set em memória, sem tocar o banco. Some da
+  // lista E do mapa (via filteredFieldTargets). Reseta ao trocar de cidade.
+  const [removidos, setRemovidos] = useState<Set<string>>(new Set());
+
+  const restaurarAlvo = useCallback((id: string) => {
+    setRemovidos((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const removerAlvo = useCallback((id: string, nome?: string) => {
+    setRemovidos((prev) => new Set(prev).add(id));
+    // Se estava marcado pra rota, desmarca (senão seguiria na rota otimizada).
+    setSelectedTargetIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    toast(`${nome?.trim() || 'Alvo'} removido da lista`, {
+      action: { label: 'Desfazer', onClick: () => restaurarAlvo(id) },
+    });
+  }, [restaurarAlvo]);
+
+  // Monta o view-model do Sheet de detalhe: lê a linha crua do prospect (ref) e
+  // delega ao helper puro. Carteira não tem raw → o helper usa só o stop.
+  const detalheDoAlvo = useCallback(
+    (stop: RouteStop): AlvoDetalhe =>
+      montarDetalheAlvo({ stop, prospectRow: rawProspectById.current.get(stop.id) ?? null }),
+    [],
+  );
 
   const { agenda, clientScores, loading: scoringLoading } = useFarmerScoring();
 
@@ -767,6 +806,7 @@ export function useRoutePlanner() {
   const loadProspectStops = useCallback(async (cities: CityOption[]) => {
     if (cities.length === 0) { setProspectStops([]); return; }
     setLoadingProspects(true);
+    rawProspectById.current.clear();
     try {
       const results = await Promise.all(
         cities.map((city) =>
@@ -783,6 +823,7 @@ export function useRoutePlanner() {
       }
       const stops: RouteStop[] = rows.map((row) => {
         const draft = prospectRowToStopDraft(row);
+        rawProspectById.current.set(draft.id, row);
         // Pre-cache coordinates for already-geocoded prospects
         if (draft.lat != null && draft.lng != null && draft.geocodeFailed !== true) {
           geocodedCoords.current.set(draft.id, { lat: draft.lat, lng: draft.lng });
@@ -881,6 +922,7 @@ export function useRoutePlanner() {
   useEffect(() => {
     setSelectedTargetIds(new Set());
     setFiltros(FILTROS_ALVO_INICIAL);
+    setRemovidos(new Set());
   }, [selectedCities]);
 
   // Merge stops based on planning mode
@@ -1041,13 +1083,20 @@ export function useRoutePlanner() {
     [planningContext, geocodedAllStops],
   );
 
-  const filteredFieldTargets = useMemo(
-    () => aplicarFiltrosAlvos(fieldTargets, filtros),
-    [fieldTargets, filtros],
+  // Universo "vivo" = alvos que não foram removidos da sessão (curadoria F). Tudo
+  // (lista, mapa, contagens, bairros) parte daqui pra ficar coerente com a curadoria.
+  const fieldTargetsVivos = useMemo(
+    () => fieldTargets.filter((s) => !removidos.has(s.id)),
+    [fieldTargets, removidos],
   );
 
-  // Bairros presentes no universo (pro Select de filtro).
-  const bairrosDisponiveis = useMemo(() => bairrosDe(fieldTargets), [fieldTargets]);
+  const filteredFieldTargets = useMemo(
+    () => aplicarFiltrosAlvos(fieldTargetsVivos, filtros),
+    [fieldTargetsVivos, filtros],
+  );
+
+  // Bairros presentes no universo vivo (pro Select de filtro).
+  const bairrosDisponiveis = useMemo(() => bairrosDe(fieldTargetsVivos), [fieldTargetsVivos]);
 
   // Prospects disponíveis no Radar nas cidades (soma do total já cacheado) — base
   // do aviso "1.000 de N" quando o teto trunca a carga.
@@ -1057,9 +1106,9 @@ export function useRoutePlanner() {
   );
 
   const resumoAlvos = useMemo(() => {
-    const { clientes, prospects } = particionarAlvos(fieldTargets);
+    const { clientes, prospects } = particionarAlvos(fieldTargetsVivos);
     return { totalClientes: clientes.length, totalProspects: prospects.length };
-  }, [fieldTargets]);
+  }, [fieldTargetsVivos]);
 
   // Paradas que entram na otimização: no campo, só os marcados; na equipe, como hoje.
   const stopsParaRota = useMemo(() => {
@@ -1288,6 +1337,8 @@ export function useRoutePlanner() {
     toggleTargetId,
     filtros,
     setFiltros,
+    removerAlvo,
+    detalheDoAlvo,
     // handlers
     toggleCustomerSelection,
     handleCheckIn,
