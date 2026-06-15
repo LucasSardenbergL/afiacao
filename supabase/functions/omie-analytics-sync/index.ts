@@ -65,6 +65,7 @@ interface OmieClienteCadastro {
   nome_fantasia?: string;
   cidade?: string;
   estado?: string;
+  tags?: Array<{ tag?: string } | string>;
 }
 
 interface OmieListarClientesResponse {
@@ -311,6 +312,7 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       omie_codigo_vendedor: number | null;
       updated_at: string;
     }>();
+    const tagsByUser = new Map<string, string[]>();
     let pagina = 1;
     let totalPaginas = 1;
 
@@ -336,6 +338,11 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
           omie_codigo_vendedor: c.codigo_vendedor || null,
           updated_at: new Date().toISOString(),
         });
+        // Captura tags do cadastro Omie para derivar is_fornecedor / excluir_da_carteira depois.
+        const tags = (c.tags || [])
+          .map((t) => (typeof t === "string" ? t : (t.tag ?? "")))
+          .filter((t) => t.length > 0);
+        tagsByUser.set(userId, tags);
       }
 
       console.log(`[Sync ${account}] Clientes página ${pagina}/${totalPaginas}`);
@@ -352,6 +359,23 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       if (upErr) throw new Error(`upsert omie_clientes: ${upErr.message}`);
       totalSynced += chunk.length;
     }
+
+    // Upsert das tags em cliente_classificacao (prova se o ListarClientes em lote retorna tags).
+    // Grava user_id + tags_omie + tags_synced_at; as colunas derivadas (is_fornecedor,
+    // excluir_da_carteira) ficam com o default da tabela e serão calculadas em outra tarefa.
+    const tagsNowIso = new Date().toISOString();
+    const tagRows = Array.from(tagsByUser.entries()).map(([user_id, tags_omie]) => ({
+      user_id,
+      tags_omie,
+      tags_synced_at: tagsNowIso,
+    }));
+    for (let i = 0; i < tagRows.length; i += 500) {
+      const { error: tagErr } = await db
+        .from("cliente_classificacao")
+        .upsert(tagRows.slice(i, i + 500), { onConflict: "user_id" });
+      if (tagErr) throw new Error(`upsert cliente_classificacao: ${tagErr.message}`);
+    }
+    console.log(`[Sync ${account}] tags gravadas em cliente_classificacao: ${tagRows.length} clientes`);
 
     await updateSyncState(db, "customers", account, {
       status: "complete",
