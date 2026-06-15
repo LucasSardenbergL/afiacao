@@ -1,4 +1,20 @@
 {
+  "env": {
+    "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
+  },
+  "enabledPlugins": {
+    "adobe-for-creativity@claude-plugins-official": false,
+    "mercadopago@claude-plugins-official": false,
+    "sentry@claude-plugins-official": false,
+    "slack@claude-plugins-official": false,
+    "telegram@claude-plugins-official": false,
+    "airtable@claude-plugins-official": false,
+    "zapier@claude-plugins-official": false,
+    "github@claude-plugins-official": false,
+    "posthog@claude-plugins-official": false,
+    "chrome-devtools-mcp@claude-plugins-official": false,
+    "serena@claude-plugins-official": false
+  },
   "permissions": {
     "allow": [
       "Bash(bun run test*)",
@@ -16,6 +32,15 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/check-gstack.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/heavy-guard.sh\""
           }
         ]
       }

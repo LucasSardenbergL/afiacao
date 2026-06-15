@@ -8,18 +8,28 @@ import { track } from '@/lib/analytics';
 import { KpisToday } from './KpisToday';
 import { AgendaTodayList } from './AgendaTodayList';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
-import { VisitasHojeCard } from './VisitasHojeCard';
 import { SlaCardMeuDia } from '@/components/whatsapp/SlaCardMeuDia';
 import { FilaDoDia } from '@/components/fila/FilaDoDia';
+import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
+import { useMyPositivacao } from '@/hooks/useMyPositivacao';
+import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
+import { AtivarNotificacoesCard } from '@/components/push/AtivarNotificacoesCard';
+import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNudge';
 
 /**
- * Dashboard Farmer V2 — a FILA é o dia (G1). Os cards antigos (tarefas, ligações
- * da rota, agenda) repetem o que a fila já mostra → recolhidos num "modo antigo"
- * (fallback a 1 clique). Mantém fora do colapso só o que a fila NÃO cobre:
- * KPIs (informativo) e visitas. Decisão founder + Codex (piloto).
+ * Dashboard Farmer V2 — placar do mês (positivação) + a FILA é o dia (G1).
+ *
+ * O bloco de positivação (PositivacaoHero) é o NORTE da farmer: positivação MTD,
+ * receita MTD, win-back, cobertura — KPIs comerciais que também serão base do OTE
+ * (ver docs/superpowers/specs/2026-06-06-kpis-farmer-meu-dia-design.md). A fila é
+ * a ação do dia. Os cards antigos (tarefas, ligações da rota, agenda) repetem a
+ * fila → recolhidos num "modo antigo" (1 clique). VISITAS foram removidas: não são
+ * o trabalho da farmer (isso é o CloserDashboard). isHunter=false: hunter tem o
+ * próprio dashboard (HunterDashboard), não chega aqui pelo CommercialDashboard.
  */
 export function FarmerDashboardV2() {
   const [modoAntigoAberto, setModoAntigoAberto] = useState(false);
+  const { data: positivacao } = useMyPositivacao();
   const onToggleModoAntigo = (open: boolean) => {
     setModoAntigoAberto(open);
     // sinal do piloto: se ela abre o modo antigo todo dia, a fila não está servindo.
@@ -31,19 +41,30 @@ export function FarmerDashboardV2() {
       <div>
         <h1 className="text-xl font-semibold">Meu dia</h1>
         <p className="text-xs text-muted-foreground">
-          Sua fila priorizada: comece de cima. Tarefas, ligações da rota e oportunidades, do mais urgente ao menos.
+          Seu placar do mês e a fila priorizada: olhe a positivação, depois trabalhe a fila de cima pra baixo.
         </p>
       </div>
+
+      {/* Opt-in de Web Push — some quando ativo/negado/sem suporte/dispensado */}
+      <AtivarNotificacoesCard />
+
+      {/* Receita/positivação vêm de sales_orders, hoje parcial (backfill pendente) → aviso honesto */}
+      <DadosVendaParciaisBanner />
+
+      {/* Placar do mês (KPIs da carteira) — o norte da farmer */}
+      {positivacao && <PositivacaoHero kpis={positivacao} isHunter={false} />}
 
       {/* A fila É o dia. */}
       <FilaDoDia />
 
+      {/* Atividade de hoje */}
       <KpisToday />
 
       {/* nudge saliente: clientes sem resposta no WhatsApp — fica FORA do "modo antigo" recolhido */}
       <SlaCardMeuDia />
 
-      <VisitasHojeCard />
+      {/* nudge condicional: ligações registradas sem cliente vinculado (era item do menu Vendas) */}
+      <ChamadasPendentesNudge />
 
       <Collapsible open={modoAntigoAberto} onOpenChange={onToggleModoAntigo}>
         <CollapsibleTrigger asChild>

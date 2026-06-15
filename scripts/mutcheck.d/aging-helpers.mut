@@ -1,0 +1,12 @@
+# Invariantes money-path de src/lib/financeiro/aging-helpers.ts (curvas de aging, projeção 13s de caixa).
+# @src: src/lib/financeiro/aging-helpers.ts
+# @test: src/lib/financeiro/__tests__/aging-helpers.test.ts
+# Rode: scripts/mutcheck.sh src/lib/financeiro/aging-helpers.ts src/lib/financeiro/__tests__/aging-helpers.test.ts scripts/mutcheck.d/aging-helpers.mut
+PEGA      | valorPagoEfetivo recebido >0 -> >=0   | s/t\.valor_recebido > 0/t.valor_recebido >= 0/
+PEGA      | prazoComGate cobertura >= -> >        | s/\(cobertura \?\? 0\) >= min/(cobertura ?? 0) > min/
+PEGA      | faixaAging <=30 -> <30                | s/diasAtraso <= 30/diasAtraso < 30/
+PEGA      | mediana ramo par/impar trocado        | s/s\.length % 2 \?/!(s.length % 2) ?/
+PEGA      | diasCobertura piso >0.01->>0 (fechado)| s/saidaDiaria > 0\.01/saidaDiaria > 0/
+PEGA      | calibrar cobertura empresa >=->> (fechado) | s/coberturaEmpresa >= coberturaMinEmpresa/coberturaEmpresa > coberturaMinEmpresa/
+SOBREVIVE | concentracao <=0.6 (borda heuristica) | s/<= 0\.6/< 0.6/
+SOBREVIVE | daysBetween round->trunc (UTC)        | s/return Math\.round\(/return Math.trunc(/

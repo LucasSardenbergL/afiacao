@@ -23,8 +23,20 @@ function alt(partial: Partial<AlternativePackaging>): AlternativePackaging {
 }
 
 describe('GlobalColorMatches', () => {
-  it('mostra mensagem vazia quando não há matches', () => {
+  it('mostra mensagem vazia quando não há matches nem a cor existe', () => {
     render(<GlobalColorMatches product={product} matches={[]} onConfirm={() => {}} />);
+    expect(screen.getByText('Nenhuma cor encontrada em nenhuma base.')).toBeTruthy();
+  });
+
+  it('mensagem honesta: cor existe mas sem embalagem vendável (colorExists)', () => {
+    render(<GlobalColorMatches product={product} matches={[]} colorExists onConfirm={() => {}} />);
+    expect(screen.getByText('Esta cor existe, mas não há embalagem vendável para esta base')).toBeTruthy();
+    // nunca afirma ausência quando a cor está no catálogo
+    expect(screen.queryByText('Nenhuma cor encontrada em nenhuma base.')).toBeNull();
+  });
+
+  it('colorExists=false mantém "nenhuma cor encontrada"', () => {
+    render(<GlobalColorMatches product={product} matches={[]} colorExists={false} onConfirm={() => {}} />);
     expect(screen.getByText('Nenhuma cor encontrada em nenhuma base.')).toBeTruthy();
   });
 

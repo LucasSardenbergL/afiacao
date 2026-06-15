@@ -1,10 +1,17 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { BundleCardFull } from "../BundleCardFull";
 import type { BundleRecommendation } from "@/hooks/useBundleEngine";
 import type { CustomerProfile } from "@/hooks/useBundleArguments";
 import type { CustomerCtx } from "../types";
+
+// BundleCardFull lê useImpersonation() direto (leaf) pra desabilitar os botões de
+// gerar/salvar na lente "Ver como". Mock dinâmico: default fora da lente.
+const impMock = vi.fn();
+vi.mock("@/contexts/ImpersonationContext", () => ({ useImpersonation: () => impMock() }));
+
+beforeEach(() => { impMock.mockReturnValue({ isImpersonating: false }); });
 
 const bundle = {
   id: "b1",
@@ -80,5 +87,12 @@ describe("BundleCardFull", () => {
     const props = setup();
     fireEvent.click(screen.getByRole("button", { name: /Argumentação/ }));
     expect(props.onGenerateArg).toHaveBeenCalledTimes(1);
+  });
+
+  it("na lente: os botões de gerar (Perguntas SPIN / Argumentação) ficam disabled", () => {
+    impMock.mockReturnValue({ isImpersonating: true });
+    setup();
+    expect(screen.getByRole("button", { name: /Perguntas SPIN/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Argumentação/ })).toBeDisabled();
   });
 });

@@ -40,7 +40,6 @@ export default function AdminReposicaoAplicacao() {
     handleAplicarLote,
     toggleAll,
     invalidateFila,
-    invalidateAll,
   } = useAplicacaoFila();
 
   return (
@@ -137,8 +136,11 @@ export default function AdminReposicaoAplicacao() {
               Nenhuma substituição pendente.
             </p>
           )}
+          {/* onChange usa invalidateFila (escopado): a versão anterior chamava
+              qc.invalidateQueries() SEM key — resolver 1 substituição refazia
+              TODAS as queries ativas do app numa rajada. */}
           {filteredItens.map((it) => (
-            <SubstituicaoPendenteCard key={it.id} item={it} onChange={() => invalidateAll()} />
+            <SubstituicaoPendenteCard key={it.id} item={it} onChange={() => invalidateFila()} />
           ))}
         </TabsContent>
 

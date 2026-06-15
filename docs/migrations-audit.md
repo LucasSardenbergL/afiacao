@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **183** custom migrations totais
-- **695** objetos esperados (criados por estas migrations)
+- **238** custom migrations totais
+- **882** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 181
-  - `function`: 165
-  - `index`: 130
-  - `cron_job`: 97
-  - `table`: 81
-  - `trigger`: 37
+  - `function`: 244
+  - `rls_policy`: 207
+  - `index`: 177
+  - `cron_job`: 105
+  - `table`: 100
+  - `trigger`: 45
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1603,6 +1603,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
 
+### `20260606170000_fornecedores_classificacao_schema.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.cliente_classificacao` | — |
+| `table` | `public.fornecedor_excecao` | — |
+
 ### `20260606170000_reposicao_fix_aplicar_promocoes.sql`
 
 | Tipo | Objeto | Parent |
@@ -1620,6 +1627,457 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260606190000_reposicao_preco_pedido_cmc_account.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260606190000_reposicao_qtde_inteira_persist.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_persistir_qtde_inteira` | — |
+
+### `20260606200000_reposicao_promo_forward_buying_min.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_promocoes_no_ciclo` | — |
+
+### `20260606210000_order_feed_view.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260606230000_negociacao_paralela_v2_cleanup.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260608120000_tool_spec_custom_option.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.adicionar_opcao_tool_spec` | — |
+
+### `20260609085244_data_health_check_familia_ausente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260609150000_reposicao_alerta_pedido_minimo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_alerta_pedido_minimo` | — |
+| `index` | `public.reposicao_alerta_pedido_minimo_ativo` | `reposicao_alerta_pedido_minimo` |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+| `cron_job` | `cron.reposicao-alerta-pedido-minimo` | — |
+
+### `20260609150000_tint_sync_promote.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.tint_staging_precos_base` | — |
+| `table` | `public.tint_keys_snapshots` | — |
+| `index` | `public.idx_tsp_precos_chave` | `tint_staging_precos_base` |
+| `index` | `public.idx_tint_formulas_ativas` | `tint_formulas` |
+| `function` | `public.tint_promote_sync_run` | — |
+| `function` | `public.tint_ensure_corante_stub` | — |
+| `function` | `public.tint_calc_preco_final` | — |
+| `function` | `public.tint_recalc_preco_oficial` | — |
+| `function` | `public.tint_apply_keys_snapshot` | — |
+
+### `20260609160000_reposicao_ciclo_intraday.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `cron_job` | `cron.gerar-pedidos-intraday-oben` | — |
+| `cron_job` | `cron.omie-sync-estoque-intraday-oben` | — |
+| `cron_job` | `cron.omie-sync-estoque-diario` | — |
+
+### `20260610130000_melhorias_canal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.melhoria_itens` | — |
+| `table` | `public.melhoria_mensagens` | — |
+| `index` | `public.idx_melhoria_itens_status` | `melhoria_itens` |
+| `index` | `public.idx_melhoria_itens_autor` | `melhoria_itens` |
+| `index` | `public.idx_melhoria_mensagens_item` | `melhoria_mensagens` |
+| `function` | `public.melhoria_itens_touch_updated_at` | — |
+| `function` | `public.melhoria_clientes_por_produto` | — |
+| `function` | `public.melhoria_produtos_relacionados` | — |
+| `trigger` | `public.trg_melhoria_itens_touch` | `melhoria_itens` |
+| `rls_policy` | `public.melhoria_itens_select` | `melhoria_itens` |
+| `rls_policy` | `public.melhoria_itens_insert` | `melhoria_itens` |
+| `rls_policy` | `public.melhoria_itens_update` | `melhoria_itens` |
+| `rls_policy` | `public.melhoria_mensagens_select` | `melhoria_mensagens` |
+| `rls_policy` | `public.melhoria_mensagens_insert` | `melhoria_mensagens` |
+
+### `20260610150000_reposicao_auto_aprovacao_piloto.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_auto_aprovacao_log` | — |
+| `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
+| `function` | `public.reposicao_pedido_auto_aprovavel` | — |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+
+### `20260610200000_push_vendedora.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.push_subscriptions` | — |
+| `index` | `public.idx_push_subscriptions_user` | `push_subscriptions` |
+| `function` | `public.upsert_push_subscription` | — |
+| `function` | `public.delete_push_subscription` | — |
+| `function` | `public._push_enviar` | — |
+| `function` | `public.push_whatsapp_inbound` | — |
+| `function` | `public.push_tarefa_nova` | — |
+| `function` | `public.push_sla_tick` | — |
+| `trigger` | `public.trg_push_whatsapp_inbound` | `whatsapp_messages` |
+| `trigger` | `public.trg_push_tarefa_nova` | `tarefas` |
+| `cron_job` | `cron.push-sla-tick` | — |
+| `rls_policy` | `public.push_subscriptions_own` | `push_subscriptions` |
+| `rls_policy` | `public.push_subscriptions_service` | `push_subscriptions` |
+
+### `20260610200000_radar_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.radar_empresas` | — |
+| `table` | `public.radar_contatos` | — |
+| `table` | `public.radar_municipios` | — |
+| `table` | `public.radar_ingest_state` | — |
+| `index` | `public.idx_radar_empresas_fila` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_local` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_cnae` | `radar_empresas` |
+| `index` | `public.idx_radar_contatos_cnpj` | `radar_contatos` |
+| `function` | `public.radar_recruzar_ja_cliente` | — |
+| `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
+| `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
+| `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
+| `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
+
+### `20260611120000_reposicao_fixes_codex_711.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_oportunidade_ciclo` | — |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+
+### `20260611140000_data_health_check_estoque_frescor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260611140000_kb_fundacao_casamento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.omie_product_spec_links` | — |
+| `index` | `public.omie_product_spec_links_one_confirmed` | `omie_product_spec_links` |
+| `index` | `public.omie_product_spec_links_unique_triple` | `omie_product_spec_links` |
+| `function` | `public.kb_specs_normalize` | — |
+| `function` | `public.buscar_skus_candidatos` | — |
+| `function` | `public.confirmar_vinculo_boletim` | — |
+| `function` | `public.rejeitar_sugestao` | — |
+| `trigger` | `public.trg_kb_specs_normalize` | `kb_product_specs` |
+| `rls_policy` | `public.omie_product_spec_links_select_staff` | `omie_product_spec_links` |
+
+### `20260611150000_route_city_norm.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_cvs_city_norm` | `customer_visit_scores` |
+| `function` | `public.route_city_norm` | — |
+
+### `20260611180000_familia_ausente_lista_email.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._vendas_familia_ausente_lista_email` | — |
+| `function` | `public.data_health_watchdog` | — |
+
+### `20260611190000_tint_sync_codex_fixes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+| `function` | `public.tint_calc_preco_final` | — |
+| `function` | `public.tint_recalc_preco_oficial` | — |
+| `function` | `public.tint_apply_keys_snapshot` | — |
+
+### `20260611195000_reposicao_aplicar_snapshot_pendente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_snapshot_pendente` | — |
+
+### `20260611200000_reposicao_motor_fonte_unica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260611210000_data_health_estoque_via_marcador.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260611220000_reposicao_claim_full_sync.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.claim_estoque_full_sync` | — |
+| `function` | `public.finalizar_estoque_full_sync` | — |
+
+### `20260612120000_auto_assign_role_omie_import_guard.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.auto_assign_user_role` | — |
+
+### `20260612130000_radar_rpcs_contato.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.registrar_contato_radar` | — |
+| `function` | `public.desfazer_contato_radar` | — |
+| `function` | `public.radar_kpis` | — |
+
+### `20260613120000_customer_canonical_alias.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.customer_canonical_alias` | — |
+| `index` | `public.idx_cca_canonical` | `customer_canonical_alias` |
+| `index` | `public.idx_cca_status_active` | `customer_canonical_alias` |
+| `rls_policy` | `public.cca_select_gestor_master` | `customer_canonical_alias` |
+
+### `20260613120000_kb_0c_aprovacao_master_only.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.confirmar_vinculo_boletim` | — |
+| `function` | `public.desvincular_boletim` | — |
+| `rls_policy` | `public.kb_product_specs_insert_master` | `kb_product_specs` |
+| `rls_policy` | `public.kb_product_specs_update_master` | `kb_product_specs` |
+
+### `20260613120000_onda1_fase0_sales_orders_identidade.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.sales_orders_checkout_account_uq` | `sales_orders` |
+| `index` | `public.idx_sales_orders_origem` | `sales_orders` |
+
+### `20260613130000_radar_rls_initplan_perf.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
+| `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
+| `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
+| `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
+
+### `20260613150000_kb_spec_versions_faseA.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.kb_product_spec_versions` | — |
+| `index` | `public.idx_kbv_identidade` | `kb_product_spec_versions` |
+| `index` | `public.idx_kbv_source_doc` | `kb_product_spec_versions` |
+| `function` | `public.kbv_block_mutation` | — |
+| `function` | `public.aprovar_versao_boletim` | — |
+| `trigger` | `public.trg_kbv_immutable` | `kb_product_spec_versions` |
+| `rls_policy` | `public.kbv_select_staff` | `kb_product_spec_versions` |
+
+### `20260613160000_kb_extraction_drafts.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.kb_extraction_drafts` | — |
+| `function` | `public.kb_extraction_draft_claim` | — |
+| `trigger` | `public.trg_kb_extraction_drafts_updated_at` | `kb_extraction_drafts` |
+| `rls_policy` | `public.kb_extraction_drafts_select_master` | `kb_extraction_drafts` |
+| `rls_policy` | `public.kb_extraction_drafts_delete_master` | `kb_extraction_drafts` |
+
+### `20260613170000_fix_auto_assign_master_escalation.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.auto_assign_user_role` | — |
+
+### `20260613180000_kb_hardening_codex.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.kbv_uma_viva` | `kb_product_spec_versions` |
+| `function` | `public.aprovar_versao_boletim` | — |
+| `function` | `public.kbv_block_mutation` | — |
+| `trigger` | `public.trg_kbv_immutable` | `kb_product_spec_versions` |
+
+### `20260613190000_radar_fatia3.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_contagem_por_municipio` | — |
+| `function` | `public.radar_atribuir_tarefa` | — |
+| `function` | `public.radar_registrar_cadastro_omie` | — |
+
+### `20260613210000_radar_perf_indices.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_radar_lista_novas` | `radar_empresas` |
+| `index` | `public.idx_radar_lista_estab` | `radar_empresas` |
+| `index` | `public.idx_radar_muni` | `radar_empresas` |
+
+### `20260613230000_roteirizador_prospects.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_salvar_geocode` | — |
+| `function` | `public.radar_prospects_para_rota` | — |
+
+### `20260614103251_onda1_fase1_farmer_calls_atendimento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_farmer_calls_atendimento_id` | `farmer_calls` |
+
+### `20260614140000_radar_contagem_perf.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_radar_muni_cover` | `radar_empresas` |
+| `function` | `public.radar_contagem_por_municipio` | — |
+
+### `20260614160000_roteirizador_campo_banco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.norm_cidade` | — |
+| `function` | `public.carteira_por_municipio` | — |
+| `function` | `public.radar_prospects_para_rota` | — |
+
+### `20260614170000_cmc_ledger.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.cmc_ledger` | — |
+| `index` | `public.idx_cmc_ledger_lookup` | `cmc_ledger` |
+| `function` | `public.cmc_ledger_capture` | — |
+| `trigger` | `public.trg_cmc_ledger_capture` | `inventory_position` |
+| `rls_policy` | `public.cmc_ledger_select_staff` | `cmc_ledger` |
+
+### `20260614170000_roteirizador_campo_carteira_sufixo_uf.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.carteira_por_municipio` | — |
+
+### `20260614180000_markup_policy.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.markup_policy` | — |
+| `index` | `public.uq_markup_policy_conta` | `markup_policy` |
+| `index` | `public.uq_markup_policy_fam` | `markup_policy` |
+| `index` | `public.uq_markup_policy_sku` | `markup_policy` |
+| `function` | `public.resolve_markup_policy` | — |
+| `rls_policy` | `public.markup_policy_select_staff` | `markup_policy` |
+| `rls_policy` | `public.markup_policy_write_master` | `markup_policy` |
+
+### `20260614190000_get_preco_cockpit.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_preco_cockpit` | — |
+
+### `20260614231801_reposicao_timeout_sync_inventory.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sync-inventory-vendas-30m` | — |
+| `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
+
+### `20260615091839_retencao_cron_job_run_details.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.purge-cron-job-run-details` | — |
+
+### `20260615095710_idx_data_health_freshness_cols.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_inventory_position_synced_at` | `inventory_position` |
+| `index` | `public.idx_omie_products_updated_at` | `omie_products` |
+| `index` | `public.idx_product_costs_updated_at` | `product_costs` |
+| `index` | `public.idx_fin_contas_receber_updated_at` | `fin_contas_receber` |
+| `index` | `public.idx_fin_contas_pagar_updated_at` | `fin_contas_pagar` |
+| `index` | `public.idx_farmer_client_scores_calculated_at` | `farmer_client_scores` |
+| `index` | `public.idx_pedido_compra_sugerido_data_ciclo` | `pedido_compra_sugerido` |
+
+### `20260615103111_idx_omie_products_codigo_text_account.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_omie_products_codigo_text_account` | `omie_products` |
+
+### `20260615130000_tint_vigia_cobertura_sentinela.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260615133000_tint_remapeia_skus_omie_desalinhadas.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260615140000_tint_promote_indices_timeout.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_tsfi_staging_formula_id` | `tint_staging_formula_itens` |
+| `index` | `public.idx_tsc_acct_corante` | `tint_staging_corantes` |
+| `index` | `public.idx_tsf_acct_par` | `tint_staging_formulas` |
+| `index` | `public.idx_tsf_run` | `tint_staging_formulas` |
+| `index` | `public.idx_tss_run` | `tint_staging_skus` |
+| `index` | `public.idx_tsprod_run` | `tint_staging_produtos` |
+| `index` | `public.idx_tsbase_run` | `tint_staging_bases` |
+| `index` | `public.idx_tsemb_run` | `tint_staging_embalagens` |
+
+### `20260615150000_cockpit_preco_fixes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_preco_cockpit` | — |
+| `rls_policy` | `public.cmc_ledger_select_gestor` | `cmc_ledger` |
+
+### `20260615160000_tint_promote_set_based.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260615182814_vincular_tint_skus_omie_orfaos.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos quando algo der `❌`
 

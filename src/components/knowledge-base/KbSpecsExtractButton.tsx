@@ -25,8 +25,8 @@ export function KbSpecsExtractButton({ documentId, documentTitle, productCode, o
   const handleExtract = () => {
     extract.mutate(documentId, {
       onSuccess: (data) => {
-        setExtracted(data.specs);
-        setOpen(true);
+        setExtracted(data.specs ?? null);
+        setOpen(data.specs != null);
       },
     });
   };

@@ -1,7 +1,7 @@
 // Card de uma parada na rota otimizada (planejador de rotas).
 // Extraído de src/pages/AdminRoutePlanner.tsx (god-component split).
 // Presentational: recebe a parada + estado de check-in/timer já resolvidos + callbacks.
-import { Clock, Phone, CheckCircle2, XCircle, ExternalLink } from 'lucide-react';
+import { Clock, CheckCircle2, XCircle, ExternalLink } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,8 @@ import {
 import type { RouteStop } from './types';
 import { STOP_CONFIG, STOP_DURATION_MIN, PRIORITY_CONFIG } from './constants';
 import { getStopIcon, getCTALabel } from './renderHelpers';
+import { RadarOutcomeMenu } from '@/components/radar/RadarOutcomeMenu';
+import { BotaoLigar } from '@/components/call/BotaoLigar';
 
 export function RouteStopCard({
   stop,
@@ -88,19 +90,19 @@ export function RouteStopCard({
               )}
               {!stop.lat && <span className="text-destructive">Sem coordenadas</span>}
             </div>
-            {/* CTAs */}
+            {/* CTAs — prospect_visit não tem CTA/check-in/checkout (customerUserId vazio bloquearia route_visits) */}
             <div className="flex items-center gap-2 mt-2 flex-wrap">
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onStopCTA}>
-                {getCTALabel(stop)}
-              </Button>
-              {stop.phone && (
-                <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" asChild>
-                  <a href={`tel:${stop.phone}`}>
-                    <Phone className="w-3 h-3" /> Ligar
-                  </a>
+              {stop.stopType !== 'prospect_visit' && (
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onStopCTA}>
+                  {getCTALabel(stop)}
                 </Button>
               )}
-              {!isCheckedIn ? (
+              {stop.phone && (
+                <BotaoLigar telefone={stop.phone} nomeCliente={stop.customerName} />
+              )}
+              {stop.stopType === 'prospect_visit' ? (
+                stop.radarCnpj ? <RadarOutcomeMenu cnpj={stop.radarCnpj} /> : null
+              ) : !isCheckedIn ? (
                 <Button
                   size="sm" variant="outline"
                   className="h-7 text-xs gap-1 border-status-success text-status-success hover:bg-status-success-bg"

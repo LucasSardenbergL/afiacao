@@ -14,6 +14,21 @@ export function StatusBadge({ status }: { status: Status }) {
   );
 }
 
+// Piloto N3: marca pedido aprovado pela MÁQUINA (tick de auto-aprovação Sayerlack,
+// aprovado_por = 'auto:<estrato>'). Visibilidade de qual compra foi decidida sem humano.
+export function AutoBadge({ pedido }: { pedido: PedidoSugerido }) {
+  if (!pedido.aprovado_por?.startsWith('auto:')) return null;
+  return (
+    <Badge
+      variant="outline"
+      className="bg-status-info-bg text-status-info border-status-info/30 ml-1"
+      title={`Aprovado automaticamente (${pedido.aprovado_por})`}
+    >
+      auto
+    </Badge>
+  );
+}
+
 // Ícone de info com tooltip ao lado do status — revela o MOTIVO (bloqueio do
 // guardrail / falha do disparo) sem precisar abrir os detalhes. Renderiza null
 // quando o motivo é vazio. Compartilhado entre PedidoRow e a fila de atenção.
@@ -43,6 +58,7 @@ export function StatusComMotivo({ pedido }: { pedido: PedidoSugerido }) {
   return (
     <div className="flex flex-wrap items-center gap-1">
       <StatusBadge status={pedido.status} />
+      <AutoBadge pedido={pedido} />
       {pedido.status === 'bloqueado_guardrail' && (
         <MotivoTooltip motivo={pedido.mensagem_bloqueio} label="Motivo do bloqueio" />
       )}

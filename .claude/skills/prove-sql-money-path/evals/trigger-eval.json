@@ -1,0 +1,23 @@
+[
+  { "query": "escrevi a RPC que aprova o pedido de compra e dispara pro fornecedor, quero garantir antes de mandar pro Lovable", "should_trigger": true, "note": "RPC money-path — prova antes de aplicar em prod" },
+  { "query": "cria a função gerar_pedidos_sugeridos_ciclo valorizando o preço pelo cmc em vez da média de compras", "should_trigger": true, "note": "RPC money-path (preço do pedido) — bug aqui = compra com valor errado" },
+  { "query": "RLS nova na fin_contas_pagar pra vendedor não enxergar o custo do fornecedor", "should_trigger": true, "note": "autorização — provar own/staff/anon com SET ROLE" },
+  { "query": "trigger que enfileira o recálculo de score quando o pedido muda de status", "should_trigger": true, "note": "trigger de automação — late-bound, roda atrás de cron" },
+  { "query": "CHECK pra não deixar comprar abaixo do mínimo de faturamento da Sayerlack", "should_trigger": true, "note": "constraint que protege o money-path" },
+  { "query": "UNIQUE(pedido_id, sku_codigo_omie) pra não duplicar item de compra silenciosamente", "should_trigger": true, "note": "constraint anti-compra-dupla = money-path, vale provar" },
+  { "query": "REVOKE da função de claim pra só service_role poder executar", "should_trigger": true, "note": "autorização — provar permission denied (42501) pra authenticated" },
+  { "query": "cria a SECURITY DEFINER que confirma o vínculo do boletim, só master pode", "should_trigger": true, "note": "gate master + SECDEF — provar que nega não-master e que valida a entrada" },
+  { "query": "view que decide quem positivou no mês pra base de comissão da vendedora", "should_trigger": true, "note": "view money-path (comissão) — provar a regra de elegibilidade + RLS" },
+  { "query": "migration que muda o gate da auto-aprovação de compra Sayerlack", "should_trigger": true, "note": "money-path + autorização — o caso mais sensível, falsificação obrigatória" },
+  { "query": "consertei a aplicar_promocoes_no_ciclo que estava com JOIN inválido, roda local pra confirmar", "should_trigger": true, "note": "bug late-bound de plpgsql — exatamente o que o PG17 pega" },
+
+  { "query": "roda uma query pra ver quantos pedidos a oben fechou esse mês", "should_trigger": false, "note": "SELECT read-only — não muda estado, nada a provar" },
+  { "query": "o login não persiste depois do refresh, o supabase client perde a sessão", "should_trigger": false, "note": "bug de frontend/auth — investigate/supabase, não SQL de banco" },
+  { "query": "edge function nova pro webhook de status da nvoip", "should_trigger": false, "note": "edge sem SQL novo — testa pelo helper espelhado (vitest)" },
+  { "query": "regenera os tipos TypeScript do supabase depois das tabelas novas", "should_trigger": false, "note": "regen de tipos TS — não toca o banco" },
+  { "query": "adiciona um índice em sales_orders(created_at) pra acelerar a listagem", "should_trigger": false, "note": "índice puro de performance — não muda resultado nem money-path" },
+  { "query": "adiciona uma coluna observacao text na customer_contacts, sem lógica nenhuma", "should_trigger": false, "note": "coluna pura sem trigger/RLS/CHECK — db-operator basta; nada a 'provar' rodando" },
+  { "query": "muda o staleTime do react-query pra 30s nas queries de pedidos", "should_trigger": false, "note": "config frontend, mesmo citando 'pedidos'" },
+  { "query": "COMMENT ON na tabela radar_empresas explicando os campos", "should_trigger": false, "note": "cosmético — sem invariante" },
+  { "query": "revisa as RLS que já existem na fin_contas_receber e me diz se tem buraco", "should_trigger": false, "note": "auditoria de policy existente ≠ provar mudança nova — security-review/codex" }
+]

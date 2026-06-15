@@ -87,6 +87,87 @@ export function useTarefaMutations() {
     qc.invalidateQueries({ queryKey: ['tarefas-badge-count'] });
   };
 
+  /** Remoção OTIMISTA da tarefa de todas as listas ['minhas-tarefas']: a
+   *  vendedora vê o item sumir NO CLIQUE (antes esperava UPDATE + INSERT de
+   *  evento + invalidate + refetch ~1-2s com o botão parado). O rollback é
+   *  CIRÚRGICO (re-insere só o próprio item na posição original) — restaurar
+   *  um snapshot inteiro sobrescreveria mudanças concorrentes de outras
+   *  mutações/refetches. cancelQueries AGUARDADO: um refetch em voo que
+   *  aterrissasse depois ressuscitaria o item. */
+  const removerTarefaOtimista = async (id: string) => {
+    await qc.cancelQueries({ queryKey: ['minhas-tarefas'] });
+    const removidos: Array<[readonly unknown[], number, TarefaEstado]> = [];
+    for (const [key, data] of qc.getQueriesData<TarefaEstado[]>({ queryKey: ['minhas-tarefas'] })) {
+      if (!data) continue;
+      const idx = data.findIndex((t) => t.id === id);
+      if (idx < 0) continue;
+      removidos.push([key, idx, data[idx]]);
+      const next = data.slice();
+      next.splice(idx, 1);
+      qc.setQueryData(key, next);
+    }
+    return () => {
+      for (const [key, idx, item] of removidos) {
+        qc.setQueryData<TarefaEstado[]>(key, (old) => {
+          if (!old) return old;
+          if (old.some((t) => t.id === id)) return old; // já voltou via refetch
+          const next = old.slice();
+          next.splice(Math.min(idx, next.length), 0, item);
+          return next;
+        });
+      }
+    };
+  };
+
+  /** Update OTIMISTA do adiamento: a tarefa adiada NÃO sai da lista (a view
+   *  v_tarefas_estado mantém status='aberta' e só recalcula effective_due) —
+   *  removê-la faria o refetch DEVOLVER o item ("adiei e voltou"). Atualiza
+   *  os campos no lugar; rollback cirúrgico restaura só o item. */
+  const adiarOtimista = async (id: string, novaData: string) => {
+    await qc.cancelQueries({ queryKey: ['minhas-tarefas'] });
+    let original: TarefaEstado | undefined;
+    qc.setQueriesData<TarefaEstado[]>({ queryKey: ['minhas-tarefas'] }, (old) =>
+      old
+        ? old.map((t) => {
+            if (t.id !== id) return t;
+            original ??= t;
+            return { ...t, adiada_para: novaData, effective_due: novaData, atrasada: false };
+          })
+        : old);
+    return () => {
+      if (!original) return;
+      const orig = original;
+      qc.setQueriesData<TarefaEstado[]>({ queryKey: ['minhas-tarefas'] }, (old) =>
+        old ? old.map((t) => (t.id === id ? orig : t)) : old);
+    };
+  };
+
+  /** Remoção otimista de uma sugestão (candidato) — rollback cirúrgico. */
+  const removerSugestaoOtimista = async (candidatoId: string) => {
+    await qc.cancelQueries({ queryKey: ['tarefa-sugestoes'] });
+    const removidos: Array<[readonly unknown[], number, { id: string }]> = [];
+    for (const [key, data] of qc.getQueriesData<Array<{ id: string }>>({ queryKey: ['tarefa-sugestoes'] })) {
+      if (!data) continue;
+      const idx = data.findIndex((s) => s.id === candidatoId);
+      if (idx < 0) continue;
+      removidos.push([key, idx, data[idx]]);
+      const next = data.slice();
+      next.splice(idx, 1);
+      qc.setQueryData(key, next);
+    }
+    return () => {
+      for (const [key, idx, item] of removidos) {
+        qc.setQueryData<Array<{ id: string }>>(key, (old) => {
+          if (!old) return old;
+          if (old.some((s) => s.id === candidatoId)) return old;
+          const next = old.slice();
+          next.splice(Math.min(idx, next.length), 0, item);
+          return next;
+        });
+      }
+    };
+  };
+
   /** Cria N tarefas (cada linha carrega seu próprio cliente). Opcional: auditoria da origem por voz. */
   const criarTarefas = async (
     linhas: Array<Record<string, unknown>>,
@@ -115,12 +196,13 @@ export function useTarefaMutations() {
 
   /** Conclusão manual (inclui o botão WhatsApp, que passa origem='whatsapp'). */
   const concluir = async (id: string, origem: 'manual' | 'whatsapp', nota?: string) => {
+    const rollback = await removerTarefaOtimista(id);
     const { error } = await tarefas()
       .update({ status: 'concluida', concluida_em: new Date().toISOString(),
                 concluida_por: user!.id, conclusao_origem: origem, nota_conclusao: nota ?? null,
                 updated_at: new Date().toISOString() } as never)
       .eq('id', id);
-    if (error) { toast.error('Erro ao concluir'); throw error; }
+    if (error) { rollback(); toast.error('Erro ao concluir'); throw error; }
     await eventos().insert(
       { tarefa_id: id, tipo_evento: origem === 'whatsapp' ? 'concluida_whatsapp' : 'concluida_manual',
         ator: user!.id } as never);
@@ -131,32 +213,54 @@ export function useTarefaMutations() {
 
   /** Confirma/rejeita uma sugestão (1 toque). accepted → conclui a tarefa. */
   const resolverSugestao = async (candidatoId: string, tarefaId: string, aceitar: boolean) => {
+    const rollbackSugestao = await removerSugestaoOtimista(candidatoId);
+    const rollbackTarefa = aceitar ? await removerTarefaOtimista(tarefaId) : null;
     const { error } = await candidatos()
       .update({ status: aceitar ? 'accepted' : 'rejected', resolved_at: new Date().toISOString(),
                 resolved_by: user!.id } as never).eq('id', candidatoId);
-    if (error) { toast.error('Erro ao responder sugestão'); throw error; }
+    if (error) {
+      rollbackSugestao();
+      rollbackTarefa?.();
+      toast.error('Erro ao responder sugestão');
+      throw error;
+    }
     if (aceitar) {
-      await tarefas().update(
+      const { error: tarefaErr } = await tarefas().update(
         { status: 'concluida', concluida_em: new Date().toISOString(), concluida_por: user!.id,
           conclusao_origem: 'sugestao_confirmada', updated_at: new Date().toISOString() } as never)
         .eq('id', tarefaId);
-      await eventos().insert(
+      if (tarefaErr) {
+        // O candidato JÁ está accepted no servidor (não reverter a sugestão);
+        // a TAREFA não concluiu — devolve o item otimista e avisa. Antes este
+        // erro era engolido: sugestão sumia, tarefa seguia aberta e a UI dizia
+        // "Confirmada" (retroativo Codex). Transação de verdade = follow-up
+        // de RPC (migration).
+        rollbackTarefa?.();
+        toast.error('Sugestão registrada, mas não consegui concluir a tarefa — use o botão Feito.');
+        invalidate();
+        throw tarefaErr;
+      }
+      const { error: evErr } = await eventos().insert(
         { tarefa_id: tarefaId, tipo_evento: 'sugestao_confirmada', ator: user!.id } as never);
+      if (evErr) console.warn('[tarefas] evento sugestao_confirmada falhou (trilha de auditoria):', evErr.message);
     } else {
-      await eventos().insert(
+      const { error: evErr } = await eventos().insert(
         { tarefa_id: tarefaId, tipo_evento: 'sugestao_rejeitada', ator: user!.id } as never);
+      if (evErr) console.warn('[tarefas] evento sugestao_rejeitada falhou (trilha de auditoria):', evErr.message);
     }
     track('tarefas.suggestion_resolved', { aceitar });
     toast.success(aceitar ? 'Confirmada' : 'Ok, segue aberta');
     invalidate();
   };
 
-  /** Adiar com motivo (snooze). */
+  /** Adiar com motivo (snooze). Update otimista no lugar (a adiada continua
+   *  listada com a data nova — ver adiarOtimista). */
   const adiar = async (id: string, novaData: string, motivo: string) => {
+    const rollback = await adiarOtimista(id, novaData);
     const { error } = await tarefas()
       .update({ adiada_para: novaData, motivo_adiamento: motivo, updated_at: new Date().toISOString() } as never)
       .eq('id', id);
-    if (error) { toast.error('Erro ao adiar'); throw error; }
+    if (error) { rollback(); toast.error('Erro ao adiar'); throw error; }
     await eventos().insert(
       { tarefa_id: id, tipo_evento: 'adiada', ator: user!.id,
         payload: { adiada_para: novaData, motivo } } as never);

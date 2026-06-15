@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -19,6 +19,18 @@ import type { IdentifiedItem } from '@/components/VoiceServiceInput';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
+import { computeCheckoutFingerprint, decideCheckoutEnvelope, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
+import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
+
+const CHECKOUT_ENV_KEY = 'unified_order_checkout_env';
+function loadCheckoutEnv(): CheckoutEnvelope | null {
+  if (typeof localStorage === 'undefined') return null;
+  try { const r = localStorage.getItem(CHECKOUT_ENV_KEY); return r ? JSON.parse(r) as CheckoutEnvelope : null; } catch { return null; }
+}
+function persistCheckoutEnv(e: CheckoutEnvelope | null) {
+  if (typeof localStorage === 'undefined') return;
+  try { if (e) localStorage.setItem(CHECKOUT_ENV_KEY, JSON.stringify(e)); else localStorage.removeItem(CHECKOUT_ENV_KEY); } catch { /* quota */ }
+}
 
 // Re-export shared types for backwards compatibility
 export { VOLUME_UNITS };
@@ -64,6 +76,7 @@ export const getToolName = (t: UserTool) => t.generated_name || t.custom_name ||
 
 export function useUnifiedOrder() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, isStaff, loading: authLoading } = useAuth();
 
   // Company profiles (printing) — react-query, 1h stale
@@ -161,6 +174,10 @@ export function useUnifiedOrder() {
   // Cart state lives in useCart hook (declared after pricing helpers below)
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Guard re-entrante do submit por REF (não state): double-tap entre o clique
+  // e o re-render do disabled veria a MESMA closure com submitting=false e
+  // dispararia 2 fluxos completos (= 2 PVs cobrados no Omie).
+  const submittingRef = useRef(false);
   // activeTab moved into useCart hook below
   const [readyByDate, setReadyByDate] = useState<string>('');
   const [defaultProductionAssigneeId, setDefaultProductionAssigneeId] = useState<string | null>(null);
@@ -206,6 +223,7 @@ export function useUnifiedOrder() {
     customerPurchaseHistory,
     vendedorDivergencias, validatingVendedor,
     selectCustomer, clearCustomer: clearCustomerInternal,
+    waitForAccountEnsure,
   } = customerSel;
 
   // User tools (afiação) — react-query, 2min stale; auto-loads quando customerUserId muda
@@ -276,11 +294,16 @@ export function useUnifiedOrder() {
     filteredObenProducts, filteredColacorProducts,
   } = catalog;
 
+  // Idempotência: envelope {checkout_id, fingerprint, committed} durável (refresh).
+  // A fp amarra o checkout ao pedido; reseta só no clearCustomer e no sucesso TOTAL.
+  const checkoutEnvRef = useRef<CheckoutEnvelope | null>(loadCheckoutEnv());
+
   // Wrap clearCustomer to also clear cart + ordem de compra
   const clearCustomer = useCallback(() => {
     clearCustomerInternal();
     setCart([]);
     setOrdemCompra('');
+    checkoutEnvRef.current = null; persistCheckoutEnv(null);
     // user-tools cache é invalidado dentro de clearCustomerInternal
   }, [clearCustomerInternal, setCart]);
 
@@ -629,10 +652,70 @@ export function useUnifiedOrder() {
 
   const submitOrder = useCallback(async () => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
+    // Seleção em andamento: o ensure desta seleção ainda nem foi retido (a ref
+    // tem a promise placeholder) — o preflight fail-closed do service já
+    // bloquearia, mas barrar aqui dá feedback melhor que o erro do preflight.
+    if (loadingCustomer) {
+      toast.info('Aguarde — ainda carregando os dados do cliente.');
+      return;
+    }
+    if (submittingRef.current) return; // re-entrância: ver comentário na declaração
+    submittingRef.current = true;
     setSubmitting(true);
+    // Impressão digital do pedido de produto (oben+colacor) + cliente.
+    const customerKey = String(selectedCustomer.local_user_id || selectedCustomer.codigo_cliente || '');
+    const fpItems = [
+      ...obenProductItems.map(c => ({ account: 'oben', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
+      ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
+    ];
+    const fingerprint = computeCheckoutFingerprint(customerKey, fpItems);
+    const decision = decideCheckoutEnvelope(checkoutEnvRef.current, fingerprint);
+    if (decision === 'conflict') {
+      setSubmitting(false);
+      toast.error('Há um envio pendente para este cliente com outro carrinho', {
+        description: 'Reenvie o pedido pendente (mesmo carrinho) ou limpe o cliente para começar um novo.',
+      });
+      return;
+    }
+    if (decision === 'new') {
+      // CONGELA a metadata da ponte UMA VEZ, na criação do envelope. Anti-troca-de-cliente:
+      // a navegação SPA muda os query params sem remontar o estado do pedido, então uma ligação
+      // ENTRANTE de B durante o pedido de A NÃO pode herdar origem/atendimento de A. O helper só
+      // aplica a metadata da ligação quando ?customer== o cliente realmente selecionado; o submit
+      // lê SEMPRE do envelope abaixo, nunca da URL ao vivo.
+      const bridge = resolveBridgeMetadata({
+        urlCustomer: searchParams.get('customer'),
+        selectedCustomerUserId: customerUserId,
+        urlOrigem: searchParams.get('origem'),
+        urlAtendimento: searchParams.get('atendimento'),
+        isCustomerMode,
+      });
+      checkoutEnvRef.current = {
+        checkoutId: crypto.randomUUID(), fingerprint, committed: true,
+        customerUserId: customerUserId ?? null,
+        origem: bridge.origem,
+        atendimentoId: bridge.atendimentoId,
+      };
+    } else {
+      // reuse: mantém o MESMO checkoutId E a metadata da ponte CONGELADA na criação (não
+      // re-capturar da URL — o spread preserva origem/atendimento/customerUserId originais).
+      // commit trava a fp (editar o carrinho depois = conflito).
+      checkoutEnvRef.current = { ...checkoutEnvRef.current, committed: true } as CheckoutEnvelope;
+    }
+    persistCheckoutEnv(checkoutEnvRef.current);
+    const checkoutId = checkoutEnvRef.current.checkoutId;
     try {
+      // Etapa 3 (spec preco-realtime): a seleção dispara o auto-cadastro em
+      // BACKGROUND; o join é AQUI — garante os códigos por-conta antes do
+      // envio, sem segurar o spinner da seleção. O retorno é o cliente
+      // PÓS-ensure DA SELEÇÃO CORRENTE (token-stamp; null se a retenção é de
+      // outra seleção) — a closure de selectedCustomer pode ser a cópia
+      // anterior aos códigos criados. O preflight fail-closed do
+      // submitOrderService segue como rede pra conta sem identidade.
+      const ensuredCustomer = await waitForAccountEnsure();
+      const effectiveCustomer = ensuredCustomer ?? selectedCustomer;
       const result = await submitOrderService({
-        customer: selectedCustomer,
+        customer: effectiveCustomer,
         customerUserId,
         user,
         cart: { obenProductItems, colacorProductItems, serviceItems },
@@ -655,12 +738,28 @@ export function useUnifiedOrder() {
         getServicePrice,
         supabase,
         isCustomerMode,
+        checkoutId,
+        // Lê do ENVELOPE congelado (nunca da URL ao vivo). Fallback defensivo p/ envelopes
+        // legados (criados antes desta fase, sem os campos da ponte).
+        origem: checkoutEnvRef.current.origem ?? (isCustomerMode ? 'web_customer' : 'web_staff'),
+        atendimentoId: checkoutEnvRef.current.atendimentoId ?? null,
       });
       if (result.success && result.lastOrderData) {
         setLastOrderData(result.lastOrderData);
         setOrderSuccessOpen(true);
-        clearCart();
-        setNotes('');
+        if (result.allConfirmed) {
+          clearCart();
+          setNotes('');
+          checkoutEnvRef.current = null; persistCheckoutEnv(null); // sucesso TOTAL → próximo pedido = novo envelope
+        } else {
+          // Sucesso PARCIAL: NÃO limpar o carrinho nem resetar o envelope — o retry (mesma fp)
+          // reusa a MESMA linha/chave e não duplica a conta de PRODUTO já enviada.
+          toast.warning('Pedido parcialmente enviado', {
+            description: serviceItems.length > 0
+              ? 'Os produtos não duplicam no reenvio. Atenção: a OS de afiação pode duplicar — confira no Omie.'
+              : 'Alguma conta ficou pendente no ERP. Reenvie — os produtos não duplicam.',
+          });
+        }
         if (result.errors.length > 0) {
           toast.success('Pedido criado com avisos', {
             description: result.errors.map(e => e.message).join(' | '),
@@ -674,6 +773,7 @@ export function useUnifiedOrder() {
     } catch (error) {
       toast.error('Erro ao criar pedido', { description: error instanceof Error ? error.message : String(error) });
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }, [
@@ -687,6 +787,7 @@ export function useUnifiedOrder() {
     notes, readyByDate, ordemCompra,
     companyProfiles, defaultProductionAssigneeId,
     getServicePrice, clearCart, isCustomerMode,
+    waitForAccountEnsure, loadingCustomer, searchParams,
   ]);
 
   // clearCustomer defined earlier (wraps useCustomerSelection.clearCustomer + clears cart/ordemCompra/userTools)

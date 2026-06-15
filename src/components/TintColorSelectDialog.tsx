@@ -7,7 +7,7 @@ import { FormulaSearchResults } from './tintColorSelect/FormulaSearchResults';
 import { GlobalColorMatches } from './tintColorSelect/GlobalColorMatches';
 import { SelectedFormulaCard } from './tintColorSelect/SelectedFormulaCard';
 
-export function TintColorSelectDialog({ product, open, onClose, onConfirm, customerUserId }: TintColorSelectDialogProps) {
+export function TintColorSelectDialog({ product, open, onClose, onConfirm, customerUserId, initialSearch }: TintColorSelectDialogProps) {
   const {
     search,
     onSearchChange,
@@ -17,6 +17,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     loadingFormulas,
     colorNotFoundInBase,
     globalColorMatches,
+    globalColorExists,
     loadingGlobalColors,
     selectedFormula,
     setSelectedFormula,
@@ -36,7 +37,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     custoCorantes,
     precoSemDesconto,
     precoFinal,
-  } = useTintColorSelect({ product, open, customerUserId });
+  } = useTintColorSelect({ product, open, customerUserId, initialSearch });
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -77,6 +78,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
               <GlobalColorMatches
                 product={product}
                 matches={globalColorMatches ?? []}
+                colorExists={globalColorExists}
                 onConfirm={onConfirm}
               />
             )}

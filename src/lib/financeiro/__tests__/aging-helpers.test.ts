@@ -113,6 +113,13 @@ describe('diasCoberturaProjetado (caixa operacional projetado)', () => {
     expect(r).toBe(1);
     expect(Number.isFinite(r as number)).toBe(true);
   });
+  // Mutation-check (auto-ensino 2026-06-06): o teste de "sem base" usa saidas=0 exato, que
+  // `> 0` também pega — o PISO 0.01 (saída diária minúscula mas não-zero) nunca era exercitado.
+  // Sem o piso, saldo/0.0055 dá milhões de dias e DESLIGA o alerta "caixa cobre só X dias".
+  it('saída diária abaixo do piso (entre 0 e 0.01/dia) → null, não cobertura "quase infinita"', () => {
+    // 0.5 em 13 sem (91 dias) → ~0.0055/dia < piso 0.01 → null (guard money-path explícito)
+    expect(diasCoberturaProjetado(30000, 0.5, 13)).toBe(null);
+  });
 });
 
 describe('calibrarCurvas (por exposição, baixa derivada + status)', () => {
@@ -167,6 +174,23 @@ describe('calibrarCurvas (por exposição, baixa derivada + status)', () => {
     const curvas = calibrarCurvas(titulos, hoje, 1, 1, 1);
     expect(curvas['31-60'].confianca).toBe('baixa');
     expect(curvas['31-60'].taxa_recebimento).toBe(CURVA_DEFAULT['31-60'].taxa_recebimento);
+  });
+
+  // Mutation-check (auto-ensino 2026-06-06): prazoComGate testa a borda exata 0.40, mas
+  // calibrarCurvas (mesma constante COBERTURA_MIN_EMPRESA) não — a mutação `>=`→`>` sobrevivia.
+  // O limiar de 40% é INCLUSIVO: exatamente 40% de cobertura ainda calibra.
+  it('GATE EMPRESA na BORDA: cobertura == 40% (limiar exato) ainda calibra (>=, não >)', () => {
+    const titulos = [
+      // 2 liquidados-COM-data na 31-60 (entram na calibração)
+      { valor_documento: 100000, valor_recebido: 100000, saldo: 0, data_vencimento: '2026-03-20', data_baixa_derivada: '2026-04-24', status_titulo: 'RECEBIDO' },
+      { valor_documento: 100000, valor_recebido: 100000, saldo: 0, data_vencimento: '2026-03-20', data_baixa_derivada: '2026-04-24', status_titulo: 'RECEBIDO' },
+      // 3 liquidados-SEM-data → cobertura = 2/5 = 0.40 EXATO (só contam no denominador)
+      { valor_documento: 100000, valor_recebido: 100000, saldo: 0, data_vencimento: '2026-03-20', data_baixa_derivada: null, status_titulo: 'RECEBIDO' },
+      { valor_documento: 100000, valor_recebido: 100000, saldo: 0, data_vencimento: '2026-03-20', data_baixa_derivada: null, status_titulo: 'LIQUIDADO' },
+      { valor_documento: 100000, valor_recebido: 100000, saldo: 0, data_vencimento: '2026-03-20', data_baixa_derivada: null, status_titulo: 'PAGO' },
+    ];
+    const curvas = calibrarCurvas(titulos, hoje, 1, 1, 1); // gates de faixa frouxos → só a cobertura (0.40) decide
+    expect(curvas['31-60'].confianca).toBe('alta'); // 0.40 >= 0.40 inclui o limiar
   });
 
   it('GATE FAIXA: com empresa calibrável, faixa sem liquidado-datado cai no default', () => {

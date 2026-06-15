@@ -5,10 +5,14 @@ import { supabase } from '@/integrations/supabase/client';
  * Conta títulos a pagar atrasados (fin_contas_pagar).
  * Retorna null se a tabela estiver indisponível ou em caso de erro,
  * para que a UI possa optar por não exibir o badge.
+ *
+ * `enabled` é OBRIGATÓRIO — ver nota em useAlertasCriticos (sem gate, usuários
+ * não-staff polavam a tabela a cada 60s contra RLS que nega).
  */
-export function useFinanceiroAlertas() {
+export function useFinanceiroAlertas(enabled: boolean) {
   return useQuery<number | null>({
     queryKey: ['financeiro-alertas-atrasado-count'],
+    enabled,
     queryFn: async () => {
       try {
         const { count, error } = await supabase
@@ -22,6 +26,7 @@ export function useFinanceiroAlertas() {
       }
     },
     refetchInterval: 60000,
+    refetchIntervalInBackground: false,
     staleTime: 30000,
   });
 }

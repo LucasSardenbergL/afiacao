@@ -15,6 +15,8 @@ const AdminCustomers = () => {
     customers,
     scores,
     categories,
+    total,
+    isCarteira,
     selectedCustomer,
     customerTools,
     orders,
@@ -69,6 +71,8 @@ const AdminCustomers = () => {
           customers={customers}
           scores={scores}
           loading={loading}
+          total={total}
+          isCarteira={isCarteira}
           onSelect={handleSelectCustomer}
           hasNextPage={hasNextPage}
           isFetchingNextPage={isFetchingNextPage}

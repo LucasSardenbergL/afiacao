@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ImpersonationBanner } from '@/components/impersonation/ImpersonationBanner';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Link2, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList, History } from 'lucide-react';
+import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Database, Library, Crosshair, ListChecks, Landmark, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList, History, Lightbulb, Radar, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
@@ -21,6 +21,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { HelpDrawer } from '@/components/help/HelpDrawer';
+import { MelhoriaDialog } from '@/components/melhorias/MelhoriaDialog';
+import { useMelhoriasBadge } from '@/hooks/useMelhorias';
 import { useAlertasCriticos } from '@/hooks/useAlertasCriticos';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
 import { useTintAlertas } from '@/hooks/useTintAlertas';
@@ -41,12 +43,14 @@ import { useFeatureFlagBodyClass } from '@/hooks/useFeatureFlag';
 import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
 import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
 import { useDisplayAccess } from '@/hooks/useDisplayAccess';
+import { itemVisivelParaSalesOnly, SECAO_VENDAS } from '@/lib/nav/home-por-persona';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useRouteTracker } from '@/lib/dashboard/route-tracker';
 import { useOfflineFlush } from '@/hooks/useOfflineFlush';
 import { registerAllOfflineHandlers } from '@/lib/offline-handlers';
 import { useMissedCount } from '@/hooks/useCallLog';
 import { useMinhasTarefas } from '@/hooks/useTarefas';
+import { useWhatsappSlaBadge } from '@/queries/useWhatsappSla';
 import { Star } from 'lucide-react';
 
 /* ─── Navigation config ─── */
@@ -56,7 +60,8 @@ interface NavItem {
   path: string;
   badge?: number;
   badgeVariant?: 'default' | 'destructive';
-  managerOnly?: boolean;
+  /** Visível a QUALQUER staff (employee/master). Era `managerOnly` — nome mentiroso. */
+  staffOnly?: boolean;
   masterOnly?: boolean;
   /** Visível apenas a gestor comercial (gerencial/estrategico/super_admin) OU master. */
   gestorComercialOuMaster?: boolean;
@@ -69,6 +74,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
       { icon: Target, label: 'Meu dia', path: '/meu-dia' },
       { icon: Users, label: 'Clientes', path: '/admin/customers' },
+      { icon: Lightbulb, label: 'Melhorias', path: '/melhorias', staffOnly: true },
     ],
   },
   {
@@ -79,18 +85,25 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
-    title: 'Vendas',
+    title: SECAO_VENDAS,
+    // Ordem = fluxo do dia da vendedora: ligar (rota D-1) → responder (WhatsApp) →
+    // vender (novo pedido) → acompanhar (pedidos). Secundários (telefone/hub) depois.
+    // Enxugado p/ a vendedora não se perder (decisão Lucas, 2026-06-11):
+    //  • "Lista de ligação" → "Quem ligar hoje" (nome auto-explicativo do trabalho do dia).
+    //  • "Chamadas pendentes" SAIU daqui → virou nudge condicional no Meu Dia
+    //    (FarmerDashboardV2) — é housekeeping, só aparece quando há o que vincular.
+    //  • "Preview propostas" é tela TÉCNICA de inspeção das propostas que a IA gera
+    //    no WhatsApp → restrita a gestor/master (a vendedora não a usa).
     items: [
+      { icon: ListChecks, label: 'Quem ligar hoje', path: '/rota/ligacoes', staffOnly: true },
+      { icon: MessageCircle, label: 'WhatsApp', path: '/whatsapp', staffOnly: true },
+      { icon: PlusCircle, label: 'Novo pedido', path: '/sales/new' },
       { icon: ShoppingCart, label: 'Pedidos', path: '/sales' },
-      { icon: PlusCircle, label: 'Novo Pedido', path: '/sales/new' },
+      { icon: Phone, label: 'Telefonia', path: '/telefonia' },
+      { icon: Wrench, label: 'Ferramentas de venda', path: '/vendas/ferramentas' },
       { icon: ClipboardList, label: 'Tarefas', path: '/tarefas', gestorComercialOuMaster: true },
       { icon: ListChecks, label: 'Tarefas recorrentes', path: '/tarefas/templates', gestorComercialOuMaster: true },
-      { icon: Wrench, label: 'Ferramentas de Venda', path: '/vendas/ferramentas' },
-      { icon: Link2, label: 'Chamadas pendentes', path: '/farmer/calls/pending-link' },
-      { icon: Phone, label: 'Telefonia', path: '/telefonia' },
-      { icon: MessageCircle, label: 'WhatsApp', path: '/whatsapp', managerOnly: true },
-      { icon: ListChecks, label: 'Lista de ligação', path: '/rota/ligacoes', managerOnly: true },
-      { icon: MessageSquareText, label: 'Preview propostas', path: '/rota/propostas', managerOnly: true },
+      { icon: MessageSquareText, label: 'Preview propostas', path: '/rota/propostas', gestorComercialOuMaster: true },
     ],
   },
   {
@@ -103,12 +116,13 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Reposição',
     items: [
-      { icon: LayoutDashboard, label: 'Cockpit', path: '/admin/reposicao/sessao', managerOnly: true },
-      { icon: TrendingUp, label: 'Mercado', path: '/admin/reposicao/sessao/mercado', managerOnly: true },
-      { icon: Settings, label: 'Parâmetros', path: '/admin/reposicao/sessao/parametros', managerOnly: true },
-      { icon: Database, label: 'Cadastros', path: '/admin/reposicao/cadastros', managerOnly: true },
-      { icon: Package, label: 'Embalagem econômica', path: '/admin/reposicao/embalagem', managerOnly: true },
-      { icon: History, label: 'Mudanças automáticas', path: '/admin/reposicao/mudancas-automaticas', managerOnly: true },
+      { icon: LayoutDashboard, label: 'Cockpit', path: '/admin/reposicao/sessao', staffOnly: true },
+      { icon: TrendingUp, label: 'Mercado', path: '/admin/reposicao/sessao/mercado', staffOnly: true },
+      { icon: Settings, label: 'Parâmetros', path: '/admin/reposicao/sessao/parametros', staffOnly: true },
+      { icon: Database, label: 'Cadastros', path: '/admin/reposicao/cadastros', staffOnly: true },
+      { icon: Package, label: 'Embalagem econômica', path: '/admin/reposicao/embalagem', staffOnly: true },
+      { icon: History, label: 'Mudanças automáticas', path: '/admin/reposicao/mudancas-automaticas', staffOnly: true },
+      { icon: AlertTriangle, label: 'Baixo giro', path: '/admin/reposicao/baixo-giro', staffOnly: true },
     ],
   },
   {
@@ -133,10 +147,10 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Financeiro',
     items: [
-      { icon: Shield, label: 'Cockpit CFO', path: '/financeiro/cockpit', managerOnly: true },
-      { icon: DollarSign, label: 'Gestão Financeira', path: '/financeiro/gestao', managerOnly: true },
-      { icon: BarChart3, label: 'Análise e Config', path: '/financeiro/analise', managerOnly: true },
-      { icon: Target, label: 'Orçamento', path: '/financeiro/orcamento', managerOnly: true },
+      { icon: Shield, label: 'Cockpit CFO', path: '/financeiro/cockpit', staffOnly: true },
+      { icon: DollarSign, label: 'Gestão Financeira', path: '/financeiro/gestao', staffOnly: true },
+      { icon: BarChart3, label: 'Análise e Config', path: '/financeiro/analise', staffOnly: true },
+      { icon: Target, label: 'Orçamento', path: '/financeiro/orcamento', staffOnly: true },
       { icon: TrendingUp, label: 'Retorno & Valor', path: '/financeiro/valor', masterOnly: true },
       { icon: Percent, label: 'Regime Tributário', path: '/financeiro/regime-tributario', masterOnly: true },
       { icon: Landmark, label: 'Custo de Funding', path: '/financeiro/funding', masterOnly: true },
@@ -147,30 +161,32 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Tintométrico',
     items: [
-      { icon: BarChart3, label: 'Dashboard', path: '/tintometrico', managerOnly: true },
-      { icon: Palette, label: 'Catálogo e Preços', path: '/tintometrico/catalogo', managerOnly: true },
-      { icon: Settings, label: 'Integração e Sync', path: '/tintometrico/integracao', managerOnly: true },
+      { icon: BarChart3, label: 'Dashboard', path: '/tintometrico', staffOnly: true },
+      { icon: Palette, label: 'Catálogo e Preços', path: '/tintometrico/catalogo', staffOnly: true },
+      { icon: Settings, label: 'Integração e Sync', path: '/tintometrico/integracao', staffOnly: true },
     ],
   },
   {
     title: 'Automação',
     items: [
-      { icon: Bell, label: 'Notificações', path: '/admin/notificacoes', managerOnly: true },
+      { icon: Bell, label: 'Notificações', path: '/admin/notificacoes', staffOnly: true },
     ],
   },
   {
     title: 'Gestão',
     items: [
-      { icon: UserCheck, label: 'Liberar Acessos', path: '/admin/approvals', managerOnly: true },
-      { icon: Users, label: 'Departamentos', path: '/admin/departments', managerOnly: true },
+      { icon: UserCheck, label: 'Liberar Acessos', path: '/admin/approvals', staffOnly: true },
+      { icon: Users, label: 'Departamentos', path: '/admin/departments', staffOnly: true },
       { icon: UserX, label: 'Clientes não-vinculados', path: '/admin/clientes-nao-vinculados', gestorComercialOuMaster: true },
-      { icon: Library, label: 'Base de conhecimento', path: '/admin/knowledge-base', managerOnly: true },
+      { icon: Radar, label: 'Radar de Clientes', path: '/radar', gestorComercialOuMaster: true },
+      { icon: Library, label: 'Base de conhecimento', path: '/admin/knowledge-base', staffOnly: true },
       { icon: Calculator, label: 'Calculadora de rendimento', path: '/admin/calculadora' },
       { icon: Factory, label: 'Processos padrão', path: '/admin/standard-processes' },
-      { icon: Shield, label: 'Admin & Relatórios', path: '/gestao/admin', managerOnly: true },
-      { icon: Lock, label: 'Governança', path: '/gestao/governanca', managerOnly: true },
-      { icon: ShieldCheck, label: 'Saúde de Dados', path: '/gestao/saude-dados', managerOnly: true },
+      { icon: Shield, label: 'Admin & Relatórios', path: '/gestao/admin', staffOnly: true },
+      { icon: Lock, label: 'Governança', path: '/gestao/governanca', staffOnly: true },
+      { icon: ShieldCheck, label: 'Saúde de Dados', path: '/gestao/saude-dados', gestorComercialOuMaster: true },
       { icon: MessageCircle, label: 'SLA WhatsApp', path: '/whatsapp/sla', gestorComercialOuMaster: true },
+      { icon: Lightbulb, label: 'Melhorias (fila)', path: '/gestao/melhorias', masterOnly: true },
     ],
   },
 ];
@@ -356,19 +372,20 @@ function SidebarItem({
 function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isStaff, user } = useAuth();
+  const { isStaff, isMaster, user } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
   const { displayIsStaff, displayIsMaster, displayIsGestorComercial, displayIsSalesOnly, displayLoading } = useDisplayAccess();
   const { isImpersonating, effectiveUserId } = useImpersonation();
   const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
-  // Os 6 contadores de badges abaixo são todos da seção Reposição. Não fazem
-  // sentido pra vendedor sales-only (que não acessa /admin/reposicao). Gate por
-  // `!isSalesOnly` evita ~6 req/min por usuário sales-only em idle.
+  // Gate único de TODOS os polls de badge do shell (Reposição, outliers,
+  // financeiro, tint): cliente final e vendedor sales-only não acessam essas
+  // telas — sem o gate eles polavam tabelas que a RLS nega a cada 30-60s
+  // (com retry 2 = até 9 req/min desperdiçados por usuário em idle).
   // `refetchIntervalInBackground: false` (default do React Query) já pausa
   // polls quando o tab está hidden — explicitado abaixo pra deixar a intenção
   // clara e evitar mudança silenciosa se algum dia alguém ligar pra true.
-  const enableReposicaoPolls = isStaff && !isSalesOnly;
+  const enableStaffPolls = isStaff && !isSalesOnly;
 
   // Contador de alertas de outlier pendentes (críticos + atenção)
   const { data: outlierPendentes } = useQuery({
@@ -381,7 +398,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .in('severidade', ['critico', 'atencao']);
       return count ?? 0;
     },
-    enabled: enableReposicaoPolls,
+    enabled: enableStaffPolls,
     refetchInterval: 60000,
     refetchIntervalInBackground: false,
     staleTime: 30000,
@@ -399,7 +416,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .in('status', ['pendente_aprovacao', 'bloqueado_guardrail']);
       return count ?? 0;
     },
-    enabled: enableReposicaoPolls,
+    enabled: enableStaffPolls,
     refetchInterval: 30000,
     refetchIntervalInBackground: false,
     staleTime: 15000,
@@ -416,7 +433,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .eq('estado', 'ativo');
       return count ?? 0;
     },
-    enabled: enableReposicaoPolls,
+    enabled: enableStaffPolls,
     refetchInterval: 60000,
     refetchIntervalInBackground: false,
   });
@@ -431,7 +448,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .eq('empresa', 'OBEN');
       return count ?? 0;
     },
-    enabled: enableReposicaoPolls,
+    enabled: enableStaffPolls,
     refetchInterval: 60000,
     refetchIntervalInBackground: false,
     staleTime: 30000,
@@ -448,7 +465,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .eq('status', 'nova');
       return count ?? 0;
     },
-    enabled: enableReposicaoPolls,
+    enabled: enableStaffPolls,
     refetchInterval: 60000,
     refetchIntervalInBackground: false,
     staleTime: 30000,
@@ -464,15 +481,15 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         .eq('status', 'pendente_notificacao');
       return count ?? 0;
     },
-    enabled: enableReposicaoPolls,
+    enabled: enableStaffPolls,
     refetchInterval: 60000,
     refetchIntervalInBackground: false,
     staleTime: 30000,
   });
 
-  const { data: alertasCriticos } = useAlertasCriticos();
-  const { data: financeiroAtrasados } = useFinanceiroAlertas();
-  const { data: tintErros } = useTintAlertas();
+  const { data: alertasCriticos } = useAlertasCriticos(enableStaffPolls);
+  const { data: financeiroAtrasados } = useFinanceiroAlertas(enableStaffPolls);
+  const { data: tintErros } = useTintAlertas(enableStaffPolls);
 
   // Badge de perdidas não-lidas na Central de Telefonia (refetch a cada 30s).
   // Na lente "Ver como", conta as do ALVO (effectiveUserId) — coerente com o
@@ -486,18 +503,17 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const tarefasCount = minhasTarefas?.length ?? 0;
 
   // Badge vermelho de WhatsApp: clientes MEUS com SLA vencido (vermelho).
-  const { data: waSlaMeusVermelhos } = useQuery({
-    queryKey: ['whatsapp-sla-badge', user?.id],
-    queryFn: async () => {
-      const client = supabase as unknown as { from: (t: string) => { select: (c: string) => PromiseLike<{ data: unknown; error: unknown }> } };
-      const res = await (client.from('v_whatsapp_sla').select('owner_user_id,nivel') as PromiseLike<{ data: unknown; error: unknown }>);
-      const rows = (res.data ?? []) as Array<{ owner_user_id: string | null; nivel: string }>;
-      return rows.filter((r) => r.owner_user_id === user?.id && r.nivel === 'vermelho').length;
-    },
-    enabled: isStaff && !!user?.id,
-    refetchInterval: 60000,
-    staleTime: 30000,
-  });
+  // Compartilha a queryKey/cache do useWhatsappSla (dado consistente com o
+  // card/inbox; realtime das telas ricas atualiza o badge). Gate `isStaff`
+  // SEM o !isSalesOnly do enableStaffPolls: a vendedora sales-only VÊ o item
+  // /whatsapp (allowlist) e é justamente o público-alvo do SLA (#587) — o
+  // poll dela é 1 view/60s que ela já paga ao abrir o inbox.
+  const { data: waSlaMeusVermelhos } = useWhatsappSlaBadge(user?.id, isStaff);
+
+  // Badge de melhorias abertas: a fila é master-only (item de nav masterOnly),
+  // então o poll só roda pro master REAL — um employee polando contaria só os
+  // PRÓPRIOS abertos (RLS) e mostraria badge errado.
+  const { data: melhoriasAbertas } = useMelhoriasBadge(enableStaffPolls && isMaster);
 
   const sectionsWithBadges = React.useMemo(
     () => [...unifiedNavSections, docNavSection].map((s) => ({
@@ -540,10 +556,13 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         if (it.path === '/whatsapp' && waSlaMeusVermelhos && waSlaMeusVermelhos > 0) {
           return { ...it, badge: waSlaMeusVermelhos, badgeVariant: 'destructive' as const };
         }
+        if (it.path === '/gestao/melhorias' && melhoriasAbertas && melhoriasAbertas > 0) {
+          return { ...it, badge: melhoriasAbertas };
+        }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, isImpersonating],
+    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, isImpersonating],
   );
 
   const isActive = (path: string) => {
@@ -620,7 +639,7 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
               sectionsWithBadges
                 .flatMap((s) => s.items)
                 .filter((item) => favorites.includes(item.path))
-                .filter((item) => (!item.managerOnly || displayIsStaff) && (!item.masterOnly || displayIsMaster) && (!item.gestorComercialOuMaster || displayIsMaster || displayIsGestorComercial))
+                .filter((item) => (!item.staffOnly || displayIsStaff) && (!item.masterOnly || displayIsMaster) && (!item.gestorComercialOuMaster || displayIsMaster || displayIsGestorComercial))
             }
             onToggleFavorite={toggleFavorite}
             isFavorite={isFavorite}
@@ -628,9 +647,11 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
         )}
 
         {sectionsWithBadges.map((section) => {
-          if (displayIsSalesOnly && section.title !== 'Vendas') return null;
-
-          const visibleItems = section.items.filter(item => (!item.managerOnly || displayIsStaff) && (!item.masterOnly || displayIsMaster) && (!item.gestorComercialOuMaster || displayIsMaster || displayIsGestorComercial));
+          // Sales-only filtra por ITEM (allowlist: seção Vendas + Meu dia + Clientes),
+          // não mais por título de seção — senão o Meu Dia ficava inalcançável.
+          const visibleItems = section.items.filter(item =>
+            (!displayIsSalesOnly || itemVisivelParaSalesOnly(section.title, item.path)) &&
+            (!item.staffOnly || displayIsStaff) && (!item.masterOnly || displayIsMaster) && (!item.gestorComercialOuMaster || displayIsMaster || displayIsGestorComercial));
           if (visibleItems.length === 0) return null;
 
           const isSecondary = SECONDARY_SECTIONS.includes(section.title);
@@ -674,6 +695,8 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
   const navigate = useNavigate();
   const { signOut } = useAuth();
   const { isImpersonating } = useImpersonation();
+  const { displayIsStaff } = useDisplayAccess();
+  const [melhoriaOpen, setMelhoriaOpen] = useState(false);
 
   return (
     <header
@@ -704,6 +727,22 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
         <NetworkStatusIndicator />
         <DataHealthBadge />
         <ThemeToggle />
+        {displayIsStaff && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground"
+                onClick={() => setMelhoriaOpen(true)}
+                aria-label="Sugerir melhoria ou reportar problema"
+              >
+                <Lightbulb className="w-4 h-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Sugerir melhoria · reportar problema</TooltipContent>
+          </Tooltip>
+        )}
         <HelpDrawer />
 
         <DropdownMenu>
@@ -723,6 +762,8 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      <MelhoriaDialog open={melhoriaOpen} onOpenChange={setMelhoriaOpen} />
     </header>
   );
 }
@@ -765,8 +806,10 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
             </div>
           ) : (
           [...unifiedNavSections, docNavSection].map((section) => {
-            if (isSalesOnly && section.title !== 'Vendas') return null;
-            const visibleItems = section.items.filter(item => (!item.managerOnly || isStaff) && (!item.masterOnly || isMaster) && (!item.gestorComercialOuMaster || isMaster || isGestorComercial));
+            // Espelha o filtro do desktop: sales-only por ITEM (allowlist), não por seção.
+            const visibleItems = section.items.filter(item =>
+              (!isSalesOnly || itemVisivelParaSalesOnly(section.title, item.path)) &&
+              (!item.staffOnly || isStaff) && (!item.masterOnly || isMaster) && (!item.gestorComercialOuMaster || isMaster || isGestorComercial));
             if (visibleItems.length === 0) return null;
             return (
               <div key={section.title} className="mb-1">

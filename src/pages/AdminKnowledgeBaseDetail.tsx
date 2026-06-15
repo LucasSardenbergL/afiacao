@@ -4,12 +4,18 @@ import { supabase } from '@/integrations/supabase/client';
 import { Card } from '@/components/ui/card';
 import { KbStatusBadge } from '@/components/knowledge-base/KbStatusBadge';
 import { KbSpecsExtractButton } from '@/components/knowledge-base/KbSpecsExtractButton';
+import { KbSpecsEditButton } from '@/components/knowledge-base/KbSpecsEditButton';
 import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Loader2, Database, Sparkles } from 'lucide-react';
 import type { KbDocument } from '@/lib/knowledge-base/types';
 import { useKbProductSpecs } from '@/hooks/useKbProductSpecs';
+import { VersionHistory } from '@/components/knowledge-base/VersionHistory';
+import { CompletudeBadge } from '@/components/knowledge-base/CompletudeBadge';
+import { SpecLinkPanel } from '@/components/knowledge-base/SpecLinkPanel';
+import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 
 export default function AdminKnowledgeBaseDetail() {
   const { id } = useParams<{ id: string }>();
@@ -60,6 +66,8 @@ export default function AdminKnowledgeBaseDetail() {
 
 function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: number | undefined }) {
   const { data: existingSpecs, refetch: refetchSpecs } = useKbProductSpecs(data.product_code);
+  const { isMaster } = useAuth();
+  const { isImpersonating } = useImpersonation();
 
   return (
     <div className="container mx-auto p-4 space-y-3 max-w-4xl">
@@ -97,19 +105,24 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
             <div className="flex items-center gap-2">
               <Database className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm font-medium">Specs estruturados</span>
-              {existingSpecs && (
+              {existingSpecs?.approved_at && (
                 <Badge variant="outline" className="text-2xs gap-1">
                   <Sparkles className="w-2.5 h-2.5" />
                   Aprovado
                 </Badge>
               )}
             </div>
-            <KbSpecsExtractButton
-              documentId={data.id}
-              documentTitle={data.title}
-              productCode={data.product_code}
-              onSaved={() => refetchSpecs()}
-            />
+            <div className="flex items-center gap-2 flex-wrap">
+              {existingSpecs && (
+                <KbSpecsEditButton spec={existingSpecs} onSaved={() => refetchSpecs()} />
+              )}
+              <KbSpecsExtractButton
+                documentId={data.id}
+                documentTitle={data.title}
+                productCode={data.product_code}
+                onSaved={() => refetchSpecs()}
+              />
+            </div>
           </div>
 
           {existingSpecs ? (
@@ -145,8 +158,21 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
               Clique acima pra extrair specs automaticamente do texto via Claude.
             </div>
           )}
+
+          {existingSpecs && <CompletudeBadge spec={existingSpecs} />}
         </Card>
       )}
+
+      {/* Itens de venda vinculados — só master, só ficha aprovada (a venda lê a view confirmed+approved). */}
+      {existingSpecs?.approved_at && existingSpecs.id && isMaster && (
+        <SpecLinkPanel
+          spec={{ id: existingSpecs.id, product_code: existingSpecs.product_code, product_name: existingSpecs.product_name }}
+          disabled={isImpersonating}
+        />
+      )}
+
+      {/* Histórico de versões do produto (Fase B1) — null quando não há versões */}
+      <VersionHistory supplier={existingSpecs?.supplier} productCode={existingSpecs?.product_code} />
 
       {data.content_extracted && (
         <Card className="p-3">

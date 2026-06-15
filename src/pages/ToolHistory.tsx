@@ -15,6 +15,7 @@ import { format, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
+import { escapeHtml } from '@/lib/escape-html';
 
 /* ─── Types ─── */
 
@@ -151,11 +152,6 @@ const ToolHistory = () => {
       setLoading(false);
     }
   };
-
-function escapeHtml(s: string | undefined | null): string {
-  if (!s) return '';
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
 
   const handlePrintQR = () => {
     if (!qrRef.current || !tool) return;

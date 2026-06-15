@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, ReactNode } from 'react
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
+import { limparPushDoDevice } from '@/lib/push/device';
 
 export type AppRole = 'employee' | 'customer' | 'master';
 
@@ -270,6 +271,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
+    // ANTES do signOut (a RPC precisa da sessão): desinscreve o Web Push do
+    // device — senão quem logar depois neste navegador recebe os pushes de
+    // quem saiu. Best-effort (nunca lança, não trava o logout).
+    await limparPushDoDevice();
     await supabase.auth.signOut();
     setRole(null);
     setIsApproved(false);

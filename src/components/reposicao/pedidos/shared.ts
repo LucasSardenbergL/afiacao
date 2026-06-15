@@ -143,6 +143,24 @@ export function pedidoPrecisaAtencao(p: {
   return STATUS_PORTAL_PRECISA_ATENCAO.has((p.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal);
 }
 
+/* ─── Override do gate de mínimo de faturamento Sayerlack ─── */
+//
+// O gate [GATE-MIN-FATURAMENTO] da edge marca falha_envio + resposta_canal.gate=
+// 'minimo_faturamento' quando um pedido Sayerlack fica abaixo da régua (R$3k = mínimo de
+// faturamento do fornecedor; abaixo disso ele não fatura, o pedido fica parado lá). O botão
+// "Re-disparar" re-bate no gate → loop sem saída. A exceção é o override consciente por
+// pedido ("Disparar mesmo assim"), só pra gestor/master.
+//
+// Este predicado detecta SÓ esse estado: falha_envio cuja causa É o gate. Uma falha_envio
+// por OUTRO motivo (SKU sem custo, qtde 0, erro do Omie) NÃO casa — oferecer override ali
+// seria inútil (não há régua a pular) e mascararia o erro real.
+export function ehGateMinimoFaturamento(p: {
+  status: string;
+  resposta_canal: { gate?: unknown; [key: string]: unknown } | null | undefined;
+}): boolean {
+  return p.status === 'falha_envio' && p.resposta_canal?.gate === 'minimo_faturamento';
+}
+
 /* ─── Split (PR5) — esconder o pai da lista ─── */
 //
 // Quando um pedido grande é dividido em chunks, o PAI vira status='split_em_filhos':
@@ -159,6 +177,33 @@ export function ehPaiSplit(p: { status: string }): boolean {
 // quanto pro cálculo de valor/contagem do ciclo — consistente em todo lugar.
 export function pedidosVisiveis<T extends { status: string }>(lista: readonly T[]): T[] {
   return lista.filter((p) => !ehPaiSplit(p));
+}
+
+/* ─── Partição do ciclo de hoje: ativos × terminais ─── */
+//
+// A geração só apaga 'pendente_aprovacao'; o que já virou terminal (cancelado pelo
+// humano, cancelado vazio, ou expirado por falta de aprovação) fica como fantasma no
+// ciclo de hoje. A lista principal mostra só os ATIVOS; os terminais vão pro
+// "Histórico de hoje" recolhido. Pura organização de UI — nada some do banco.
+export const STATUS_TERMINAIS_CICLO: ReadonlySet<string> = new Set([
+  'cancelado',
+  'cancelado_humano',
+  'expirado_sem_aprovacao',
+]);
+
+export function ehTerminalCiclo(p: { status: string }): boolean {
+  return STATUS_TERMINAIS_CICLO.has(p.status);
+}
+
+// Particiona a lista do ciclo (JÁ sem pais de split — chamar sobre pedidosVisiveis)
+// em ativos (lista principal) e historico (terminais, recolhido). Ordem preservada.
+export function particionarCicloHoje<T extends { status: string }>(
+  lista: readonly T[],
+): { ativos: T[]; historico: T[] } {
+  const ativos: T[] = [];
+  const historico: T[] = [];
+  for (const p of lista) (ehTerminalCiclo(p) ? historico : ativos).push(p);
+  return { ativos, historico };
 }
 
 /* ─── Portal B2B status meta ─── */

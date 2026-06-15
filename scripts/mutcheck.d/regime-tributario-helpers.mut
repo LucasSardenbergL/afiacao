@@ -1,0 +1,13 @@
+# Invariantes money-path de src/lib/financeiro/regime-tributario-helpers.ts (otimizador tributário Simples×Presumido×Real).
+# @src: src/lib/financeiro/regime-tributario-helpers.ts
+# @test: src/lib/financeiro/__tests__/regime-tributario-helpers.test.ts
+# Rode: scripts/mutcheck.sh src/lib/financeiro/regime-tributario-helpers.ts src/lib/financeiro/__tests__/regime-tributario-helpers.test.ts scripts/mutcheck.d/regime-tributario-helpers.mut
+PEGA      | sort: recomendaria o regime MAIS caro   | s/a\.total_federal_cpp - b\.total_federal_cpp/b.total_federal_cpp - a.total_federal_cpp/
+PEGA      | recomendar: melhor=elegiveis[1]         | s/const melhor = elegiveis\[0\]/const melhor = elegiveis[1]/
+PEGA      | fatorR inverte anexo III/V (>= -> <)    | s/fr >= FATOR_R_LIMIAR/fr < FATOR_R_LIMIAR/
+PEGA      | elegib teto invertido (> -> <)          | s/rba > TETO_RBA/rba < TETO_RBA/
+PEGA      | fatorR borda 0.28 (>= -> >) [fechado]   | s/fr >= FATOR_R_LIMIAR/fr > FATOR_R_LIMIAR/
+PEGA      | elegib borda 4.8M (> -> >=) [fechado]   | s/rba > TETO_RBA/rba >= TETO_RBA/
+PEGA      | elegib borda 3.6M (> -> >=) [fechado]   | s/rba > SUBLIMITE_RBA/rba >= SUBLIMITE_RBA/
+SOBREVIVE | banda erro < -> <= (borda heuristica)   | s/< opts\.bandaErro/<= opts.bandaErro/
+SOBREVIVE | real lt <= 0 -> < 0 (lt=0 da imposto 0) | s/if \(lt <= 0\) continue/if (lt < 0) continue/

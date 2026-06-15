@@ -22,10 +22,13 @@ export function hurdleEfetivo(input: {
   retorno_minimo_dono: number | null;
   mediana_hurdles: number | null;
 }): { hurdle: number | null; fonte: FonteHurdle } {
-  if (input.wacc != null) return { hurdle: input.wacc, fonte: 'wacc' };
-  if (input.retorno_minimo_dono != null) return { hurdle: input.retorno_minimo_dono, fonte: 'retorno_dono' };
-  if (input.custo_divida_pos_imposto != null) return { hurdle: input.custo_divida_pos_imposto, fonte: 'custo_divida' };
-  if (input.mediana_hurdles != null) return { hurdle: input.mediana_hurdles, fonte: 'mediana' };
+  // hurdle ≤0 é implausível (custo de capital nunca é não-positivo) → trata como ausente e pula pro próximo
+  // fallback. Coerente com os guards do A2/A3 ("soma ≤0 = capital grátis → null"). "ausente ≠ R$0".
+  const ok = (x: number | null): x is number => x != null && Number.isFinite(x) && x > 0;
+  if (ok(input.wacc)) return { hurdle: input.wacc, fonte: 'wacc' };
+  if (ok(input.retorno_minimo_dono)) return { hurdle: input.retorno_minimo_dono, fonte: 'retorno_dono' };
+  if (ok(input.custo_divida_pos_imposto)) return { hurdle: input.custo_divida_pos_imposto, fonte: 'custo_divida' };
+  if (ok(input.mediana_hurdles)) return { hurdle: input.mediana_hurdles, fonte: 'mediana' };
   return { hurdle: null, fonte: 'indisponivel' };
 }
 
@@ -49,8 +52,9 @@ export function classificarStatus(input: {
   if (input.tipo === 'crescer') {
     if (input.spread_positivo !== true) return 'nao_financiar';
     // Sem custo estimado (ex.: sleeve company-level ou "crescer" do cockpit sem ticket) → precisa
-    // dimensionar antes de financiar. NÃO assume custo 0 (crescer consome caixa via NCG).
-    if (input.caixa_consumido == null) return 'falta_dado';
+    // dimensionar antes de financiar. NÃO assume custo 0/negativo: crescer SEMPRE consome caixa via
+    // NCG, então custo ≤0 é dado implausível, não "grátis". "ausente ≠ R$0".
+    if (input.caixa_consumido == null || input.caixa_consumido <= 0) return 'falta_dado';
     return input.caixa_consumido <= input.caixa_disponivel ? 'financiar_ja' : 'financiar_condicional';
   }
   return 'falta_dado';
@@ -86,7 +90,10 @@ export function montarFilaAcoes(input: {
   candidatos.push({ empresa: '—', descricao: 'Não fazer nada / pagar dívida / distribuir ao dono (benchmark do hurdle)', tipo: 'benchmark', impacto_eva: null, caixa_consumido: 0, payback_meses: null, spread_positivo: null, confianca: 'alta' });
 
   const fila: AcaoFila[] = candidatos.map((c) => {
-    const hurdle = c.empresa in input.hurdlePorEmpresa ? input.hurdlePorEmpresa[c.empresa] : null;
+    // A edge passa o WACC cru (não chama hurdleEfetivo) → a defesa contra hurdle ≤0 tem de estar aqui:
+    // hurdle implausível (≤0) é tratado como ausente → crescer cai em falta_dado (não financia no escuro).
+    const hurdleRaw = c.empresa in input.hurdlePorEmpresa ? input.hurdlePorEmpresa[c.empresa] : null;
+    const hurdle = hurdleRaw != null && Number.isFinite(hurdleRaw) && hurdleRaw > 0 ? hurdleRaw : null;
     const caixaDisp = input.caixaPorEmpresa[c.empresa]?.disponivel ?? 0;
     // tem_dado: crescer precisa de hurdle + sinal de spread; consertar/liberar/benchmark sempre têm.
     const tem_dado = c.tipo === 'crescer' ? (hurdle != null && c.spread_positivo != null) : true;
@@ -94,15 +101,22 @@ export function montarFilaAcoes(input: {
     return { ...c, hurdle, status };
   });
 
-  // Ordena: por prioridade de tipo; dentro do tipo, sem-caixa antes; depois EVA/caixa desc; payback asc.
+  // Ordena: por prioridade de tipo; dentro do tipo, por bucket de custo; depois EVA/caixa desc; payback asc.
+  // "ausente ≠ R$0": custo null NÃO é tratado como grátis (0) e EVA null NÃO vira ratio 0 — ambos vão
+  // para o fim do seu critério em vez de fabricar um número que reordenaria a fila.
   fila.sort((a, b) => {
     if (PRIORIDADE_TIPO[a.tipo] !== PRIORIDADE_TIPO[b.tipo]) return PRIORIDADE_TIPO[a.tipo] - PRIORIDADE_TIPO[b.tipo];
-    const semCaixaA = (a.caixa_consumido ?? 0) === 0 ? 0 : 1;
-    const semCaixaB = (b.caixa_consumido ?? 0) === 0 ? 0 : 1;
-    if (semCaixaA !== semCaixaB) return semCaixaA - semCaixaB;
-    const ratioA = a.caixa_consumido && a.caixa_consumido > 0 ? (a.impacto_eva ?? 0) / a.caixa_consumido : Infinity;
-    const ratioB = b.caixa_consumido && b.caixa_consumido > 0 ? (b.impacto_eva ?? 0) / b.caixa_consumido : Infinity;
-    if (ratioA !== ratioB) return ratioB - ratioA;
+    // bucket de custo: 0 = grátis genuíno (preço/prazo, "retorno infinito" — vem primeiro) · 1 = dimensionado
+    // (caixa>0) · 2 = custo ausente/inválido (null/≤0 — desconhecido, vai por último; ausente ≠ grátis).
+    const custoBucket = (x: AcaoFila) => x.caixa_consumido === 0 ? 0 : (x.caixa_consumido != null && x.caixa_consumido > 0 ? 1 : 2);
+    const cbA = custoBucket(a), cbB = custoBucket(b);
+    if (cbA !== cbB) return cbA - cbB;
+    // ratio EVA/caixa (desc) só para dimensionados COM eva conhecido; sem ratio (null) → depois do que tem.
+    const ratio = (x: AcaoFila) => x.caixa_consumido != null && x.caixa_consumido > 0 && x.impacto_eva != null ? x.impacto_eva / x.caixa_consumido : null;
+    const rA = ratio(a), rB = ratio(b);
+    if (rA != null && rB != null) { if (rA !== rB) return rB - rA; }
+    else if (rA != null) return -1;
+    else if (rB != null) return 1;
     return (a.payback_meses ?? Infinity) - (b.payback_meses ?? Infinity);
   });
 
@@ -111,6 +125,8 @@ export function montarFilaAcoes(input: {
   let nivel: 'alta' | 'media' | 'baixa' = 'alta';
   const rebaixa = (n: 'media' | 'baixa', m: string) => { if (n === 'baixa' || nivel === 'alta') nivel = n; motivos.push(m); };
   if (fila.some((a) => a.status === 'falta_dado')) rebaixa('media', 'Algumas ações sem hurdle/cockpit (Falta dado).');
+  // pior sinal entre os CANDIDATOS também conta (antes era ignorado): ex. sleeve company-level sem cockpit granular.
+  if (fila.some((a) => a.confianca === 'baixa')) rebaixa('media', 'Inclui ação de confiança baixa (ex.: sleeve company-level sem cockpit granular).');
   if (Object.values(input.caixaPorEmpresa).some((c) => c.confianca === 'baixa')) rebaixa('baixa', 'Projeção de caixa de alguma empresa com confiança baixa.');
 
   return { fila, caixa_por_empresa: input.caixaPorEmpresa, confianca: { nivel, motivos }, gerado_em: new Date().toISOString() };

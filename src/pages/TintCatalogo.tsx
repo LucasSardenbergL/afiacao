@@ -23,7 +23,7 @@ function KpiCards() {
     queryKey: ["tint-catalogo-kpis"],
     queryFn: async () => {
       const [formulas, skusTotal, skusMapeados, corantes] = await Promise.all([
-        supabase.from("tint_formulas").select("id", { count: "exact", head: true }).eq("account", "oben"),
+        supabase.from("tint_formulas").select("id", { count: "exact", head: true }).eq("account", "oben").is("desativada_em", null),
         supabase.from("tint_skus").select("id", { count: "exact", head: true }).eq("account", "oben"),
         supabase
           .from("tint_skus")

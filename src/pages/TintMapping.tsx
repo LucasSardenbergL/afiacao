@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
@@ -10,8 +10,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Search, EyeOff, Eye } from 'lucide-react';
+import { Search, EyeOff, Eye, Wand2, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { OmieBaseCombobox, type ProdutoOmieOption } from '@/components/tint/OmieBaseCombobox';
+import { sugerirMapeamento, type LinhaSku } from '@/lib/tint/omie-match';
 
 const ACCOUNT = 'oben';
 
@@ -145,6 +147,79 @@ function SkuTab() {
   });
 
   const omieMap = new Map((omieProducts ?? []).map(p => [p.id, p]));
+  const omieOptions = (omieProducts ?? []) as ProdutoOmieOption[];
+
+  // Auto-sugestão de mapeamento (eu sugiro, você aprova). As 'forte' ficam em
+  // estado local até aprovar; aprovar reativa o SKU se estiver oculto.
+  const [sugestoes, setSugestoes] = useState<Map<string, string>>(new Map());
+  const idsJaMapeados = useMemo(
+    () =>
+      new Set(
+        ((skus ?? []) as SkuRow[]).map((s) => s.omie_product_id).filter((x): x is string => !!x),
+      ),
+    [skus],
+  );
+  function linhaDoSku(s: SkuRow): LinhaSku {
+    return {
+      baseDescricao: s.tint_bases?.descricao ?? '',
+      embalagemDescricao: s.tint_embalagens?.descricao ?? '',
+      produtoDescricao: s.tint_produtos?.descricao ?? '',
+    };
+  }
+  function gerarSugestoes() {
+    const novas = new Map<string, string>();
+    for (const s of filtered) {
+      if (s.omie_product_id) continue;
+      const sug = sugerirMapeamento(linhaDoSku(s), omieOptions, idsJaMapeados);
+      if (sug.tipo === 'forte') novas.set(s.id, sug.produtoId);
+    }
+    setSugestoes(novas);
+    toast[novas.size ? 'success' : 'info'](
+      novas.size
+        ? `${novas.size} sugestão(ões) forte(s) — revise e aprove`
+        : 'Nenhuma sugestão forte encontrada (os ambíguos ficam pra você escolher no seletor)',
+    );
+  }
+  function descartarSugestao(skuId: string) {
+    setSugestoes((prev) => {
+      const m = new Map(prev);
+      m.delete(skuId);
+      return m;
+    });
+  }
+  async function aprovarSugestao(skuId: string, omieProductId: string) {
+    const { error } = await supabase
+      .from('tint_skus')
+      .update({ omie_product_id: omieProductId, ativo: true, updated_at: new Date().toISOString() })
+      .eq('id', skuId);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    descartarSugestao(skuId);
+    queryClient.invalidateQueries({ queryKey: ['tint-skus-mapping'] });
+    queryClient.invalidateQueries({ queryKey: ['tint-dashboard-metrics'] });
+    toast.success('Mapeamento aprovado');
+  }
+  async function aprovarTodas() {
+    const entries = [...sugestoes.entries()];
+    let ok = 0;
+    for (const [skuId, pid] of entries) {
+      const { error } = await supabase
+        .from('tint_skus')
+        .update({ omie_product_id: pid, ativo: true, updated_at: new Date().toISOString() })
+        .eq('id', skuId);
+      if (error) {
+        toast.error(error.message);
+        break;
+      }
+      ok++;
+    }
+    setSugestoes(new Map());
+    queryClient.invalidateQueries({ queryKey: ['tint-skus-mapping'] });
+    queryClient.invalidateQueries({ queryKey: ['tint-dashboard-metrics'] });
+    if (ok) toast.success(`${ok} mapeamento(s) aprovado(s)`);
+  }
 
   const totalSkus = skus?.length ?? 0;
   const activeSkus = ((skus ?? []) as SkuRow[]).filter((s) => s.ativo !== false).length;
@@ -177,6 +252,22 @@ function SkuTab() {
             Mostrar ocultos ({inactiveSkus})
           </Label>
         </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="outline" size="sm" className="h-9 gap-1.5" onClick={gerarSugestoes}>
+            <Wand2 className="h-4 w-4" /> Sugerir mapeamentos
+          </Button>
+          {sugestoes.size > 0 && (
+            <>
+              <Button size="sm" className="h-9 gap-1.5" onClick={aprovarTodas}>
+                <Check className="h-4 w-4" /> Aprovar todas ({sugestoes.size})
+              </Button>
+              <Button variant="ghost" size="sm" className="h-9" onClick={() => setSugestoes(new Map())}>
+                Descartar
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       <p className="text-sm text-muted-foreground">
@@ -206,21 +297,45 @@ function SkuTab() {
                   <TableCell className="text-sm max-w-[200px] truncate">{sku.tint_bases?.descricao}</TableCell>
                   <TableCell className="text-sm">{sku.tint_embalagens?.descricao} ({sku.tint_embalagens?.volume_ml}ml)</TableCell>
                   <TableCell>
-                    <Select
-                      value={sku.omie_product_id || ''}
-                      onValueChange={val => mutation.mutate({ skuId: sku.id, omieProductId: val || null })}
-                    >
-                      <SelectTrigger className="text-sm h-8">
-                        <SelectValue placeholder="Selecionar..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(omieProducts ?? []).map(p => (
-                          <SelectItem key={p.id} value={p.id} className="text-sm">
-                            {p.codigo} — {p.descricao}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {(() => {
+                      const sugId = sugestoes.get(sku.id);
+                      const sug = sugId ? omieMap.get(sugId) : null;
+                      return (
+                        <div className="space-y-1.5">
+                          {sug && sugId && (
+                            <div className="flex items-center gap-1.5 rounded-md border border-status-warning/40 bg-status-warning-bg px-2 py-1">
+                              <span className="flex-1 truncate text-xs">
+                                <span className="font-medium text-status-warning">Sugestão:</span>{' '}
+                                <span className="font-mono">{sug.codigo}</span> — {sug.descricao}
+                              </span>
+                              <Button
+                                size="sm"
+                                className="h-6 px-2"
+                                onClick={() => aprovarSugestao(sku.id, sugId)}
+                                title="Aprovar (mapeia e reativa o SKU)"
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2"
+                                onClick={() => descartarSugestao(sku.id)}
+                                title="Descartar sugestão"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          )}
+                          <OmieBaseCombobox
+                            produtos={omieOptions}
+                            linha={linhaDoSku(sku)}
+                            value={sku.omie_product_id}
+                            onChange={(id) => mutation.mutate({ skuId: sku.id, omieProductId: id })}
+                          />
+                        </div>
+                      );
+                    })()}
                   </TableCell>
                   <TableCell className="text-sm">{linked ? `R$ ${linked.valor_unitario.toFixed(2)}` : '—'}</TableCell>
                   <TableCell className="text-sm">{linked?.estoque ?? '—'}</TableCell>

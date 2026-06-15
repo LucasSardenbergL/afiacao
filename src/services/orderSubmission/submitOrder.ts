@@ -16,6 +16,7 @@ import {
   resolveCustomerPhone,
 } from './helpers';
 import { buildPrintData } from './buildPrintData';
+import { ensureSalesOrderRow } from './idempotency';
 
 /**
  * Pure submitOrder function. Orchestrates:
@@ -30,6 +31,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     customer, customerUserId, user, cart, subtotals, volumes,
     payment, delivery, meta, companyProfiles, defaultProductionAssigneeId,
     getServicePrice, supabase, isCustomerMode = false,
+    checkoutId, origem = null, atendimentoId = null,
   } = params;
   const { obenProductItems, colacorProductItems, serviceItems } = cart;
   const errors: SubmitErrorEntry[] = [];
@@ -42,6 +44,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       printDataList: [],
       lastOrderData: null,
       errors: [{ step: 'validate', message: 'Carrinho vazio' }],
+      allConfirmed: false,
     };
   }
 
@@ -73,6 +76,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           step: 'validate_identity',
           message: `Não foi possível confirmar o cadastro do cliente na(s) conta(s): ${missingIdentities.join(', ')} (provável falha temporária do Omie). O pedido NÃO foi enviado — evita registrar na conta errada. Para revalidar, re-selecione o cliente (atenção: isso limpa o carrinho).`,
         }],
+        allConfirmed: false,
       };
     }
   }
@@ -99,26 +103,27 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     }));
 
     let salesOrderId: string;
+    let alreadySent: boolean;
     try {
-      const { data: salesOrder, error: insertError } = await supabase
-        .from('sales_orders').insert({
+      const ensured = await ensureSalesOrderRow(supabase, {
+        checkoutId, account: 'oben', origem, atendimentoId,
+        fields: {
           customer_user_id: customerUserId || user.id,
           created_by: user.id,
           items: itemsPayload,
           subtotal: subtotals.oben,
           total: subtotals.oben,
-          status: 'rascunho',
           notes: meta.notes || null,
-          account: 'oben',
           customer_address: storedAddress,
           customer_phone: storedPhone,
           ready_by_date: meta.readyByDate || null,
-        }).select('id').single();
-      if (insertError) throw insertError;
-      salesOrderId = salesOrder.id;
+        },
+      });
+      salesOrderId = ensured.id;
+      alreadySent = ensured.alreadySent;
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Erro ao inserir pedido Oben';
-      logger.critical('Failed to insert sales_order in Supabase — aborting', {
+      logger.critical('Failed to ensure sales_order in Supabase — aborting', {
         stage: 'supabase_insert',
         account: 'oben',
         customerId: customer.codigo_cliente,
@@ -132,45 +137,50 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         printDataList: [],
         lastOrderData: null,
         errors: [{ step: 'insert_oben', message }],
+        allConfirmed: false,
       };
     }
 
-    try {
-      const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: {
-          action: 'criar_pedido', account: 'oben', sales_order_id: salesOrderId,
-          codigo_cliente: customer.codigo_cliente,
-          codigo_vendedor: customer.codigo_vendedor,
-          items: obenProductItems.map(c => ({
-            omie_codigo_produto: c.product.omie_codigo_produto,
-            quantidade: c.quantity,
-            valor_unitario: c.unit_price,
-            descricao: c.product.descricao,
-            ...(c.tint_cor_id ? { tint_cor_id: c.tint_cor_id, tint_nome_cor: c.tint_nome_cor } : {}),
-          })),
-          observacao: meta.notes,
-          codigo_parcela: payment.parcelaOben,
-          quantidade_volumes: volumes.oben || undefined,
-          ordem_compra: meta.ordemCompra || undefined,
-        },
-      });
-      if (!omieError) {
-        results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
-      } else {
+    if (alreadySent) {
+      results.push('PV Oben (já enviado)');
+    } else {
+      try {
+        const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
+          body: {
+            action: 'criar_pedido', account: 'oben', sales_order_id: salesOrderId,
+            codigo_cliente: customer.codigo_cliente,
+            codigo_vendedor: customer.codigo_vendedor,
+            items: obenProductItems.map(c => ({
+              omie_codigo_produto: c.product.omie_codigo_produto,
+              quantidade: c.quantity,
+              valor_unitario: c.unit_price,
+              descricao: c.product.descricao,
+              ...(c.tint_cor_id ? { tint_cor_id: c.tint_cor_id, tint_nome_cor: c.tint_nome_cor } : {}),
+            })),
+            observacao: meta.notes,
+            codigo_parcela: payment.parcelaOben,
+            quantidade_volumes: volumes.oben || undefined,
+            ordem_compra: meta.ordemCompra || undefined,
+          },
+        });
+        if (!omieError) {
+          results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
+        } else {
+          results.push('PV Oben (pendente ERP)');
+          errors.push({ step: 'sync_oben_omie', message: omieError.message || 'Falha ao sincronizar Oben com Omie' });
+        }
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : 'Falha ao sincronizar Oben com Omie';
+        logger.error('Oben Omie sync exception', {
+          stage: 'omie_sync',
+          account: 'oben',
+          customerId: customer.codigo_cliente,
+          salesOrderId,
+          error: e,
+        });
         results.push('PV Oben (pendente ERP)');
-        errors.push({ step: 'sync_oben_omie', message: omieError.message || 'Falha ao sincronizar Oben com Omie' });
+        errors.push({ step: 'sync_oben_omie', message });
       }
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : 'Falha ao sincronizar Oben com Omie';
-      logger.error('Oben Omie sync exception', {
-        stage: 'omie_sync',
-        account: 'oben',
-        customerId: customer.codigo_cliente,
-        salesOrderId,
-        error: e,
-      });
-      results.push('PV Oben (pendente ERP)');
-      errors.push({ step: 'sync_oben_omie', message });
     }
   }
 
@@ -188,26 +198,27 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     }));
 
     let salesOrderId: string;
+    let alreadySent: boolean;
     try {
-      const { data: salesOrder, error: insertError } = await supabase
-        .from('sales_orders').insert({
+      const ensured = await ensureSalesOrderRow(supabase, {
+        checkoutId, account: 'colacor', origem, atendimentoId,
+        fields: {
           customer_user_id: customerUserId || user.id,
           created_by: user.id,
           items: itemsPayload,
           subtotal: subtotals.colacor,
           total: subtotals.colacor,
-          status: 'rascunho',
           notes: meta.notes || null,
-          account: 'colacor',
           customer_address: storedAddress,
           customer_phone: storedPhone,
           ready_by_date: meta.readyByDate || null,
-        }).select('id').single();
-      if (insertError) throw insertError;
-      salesOrderId = salesOrder.id;
+        },
+      });
+      salesOrderId = ensured.id;
+      alreadySent = ensured.alreadySent;
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Erro ao inserir pedido Colacor';
-      logger.critical('Failed to insert sales_order in Supabase — aborting', {
+      logger.critical('Failed to ensure sales_order in Supabase — aborting', {
         stage: 'supabase_insert',
         account: 'colacor',
         customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
@@ -221,100 +232,105 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         printDataList: [],
         lastOrderData: null,
         errors: [...errors, { step: 'insert_colacor', message }],
+        allConfirmed: false,
       };
     }
 
-    try {
-      const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: {
-          action: 'criar_pedido', account: 'colacor', sales_order_id: salesOrderId,
-          // Identidade Colacor garantida pelo preflight (staff; Colacor não existe em modo cliente).
-          codigo_cliente: customer.codigo_cliente_colacor!,
-          // Vendedor é por-conta: NUNCA cair no vendedor Oben (comissão na conta errada). Ausente = null (edge tolera).
-          codigo_vendedor: customer.codigo_vendedor_colacor ?? null,
-          items: colacorProductItems.map(c => ({
-            omie_codigo_produto: c.product.omie_codigo_produto,
-            quantidade: c.quantity,
-            valor_unitario: c.unit_price,
-          })),
-          observacao: meta.notes,
-          codigo_parcela: payment.parcelaColacor,
-          quantidade_volumes: volumes.colacor || undefined,
-          ordem_compra: meta.ordemCompra || undefined,
-        },
-      });
-      if (!omieError) {
-        results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
-        // Auto-create production orders for "produto acabado"
-        const produtoAcabadoItems = colacorProductItems.filter(c => {
-          // Coluna dedicada tipo_produto (Migration 2026-06-04) com fallback ao metadata legado.
-          const tp = c.product.tipo_produto ?? c.product.metadata?.tipo_produto;
-          return tp === '04' || tp === 4 || tp === '4';
+    if (alreadySent) {
+      results.push('PV Colacor (já enviado)');
+    } else {
+      try {
+        const { data: omieResult, error: omieError } = await supabase.functions.invoke('omie-vendas-sync', {
+          body: {
+            action: 'criar_pedido', account: 'colacor', sales_order_id: salesOrderId,
+            // Identidade Colacor garantida pelo preflight (staff; Colacor não existe em modo cliente).
+            codigo_cliente: customer.codigo_cliente_colacor!,
+            // Vendedor é por-conta: NUNCA cair no vendedor Oben (comissão na conta errada). Ausente = null (edge tolera).
+            codigo_vendedor: customer.codigo_vendedor_colacor ?? null,
+            items: colacorProductItems.map(c => ({
+              omie_codigo_produto: c.product.omie_codigo_produto,
+              quantidade: c.quantity,
+              valor_unitario: c.unit_price,
+            })),
+            observacao: meta.notes,
+            codigo_parcela: payment.parcelaColacor,
+            quantidade_volumes: volumes.colacor || undefined,
+            ordem_compra: meta.ordemCompra || undefined,
+          },
         });
-        if (produtoAcabadoItems.length > 0) {
-          if (!defaultProductionAssigneeId) {
-            errors.push({
-              step: 'create_production_order',
-              message: 'Responsável padrão de produção não configurado (Governance > Settings).',
-            });
-            logger.warn('Skipping production order: default_production_assignee_id is not set', {
-              stage: 'op_creation',
-              account: 'colacor',
-              salesOrderId,
-              produtoAcabadoCount: produtoAcabadoItems.length,
-            });
-          } else {
-            try {
-              await supabase.functions.invoke('omie-vendas-sync', {
-                body: {
-                  action: 'criar_ordem_producao', account: 'colacor',
-                  sales_order_id: salesOrderId,
-                  items: produtoAcabadoItems.map(c => ({
-                    product_id: c.product.id,
-                    omie_codigo_produto: c.product.omie_codigo_produto,
-                    codigo: c.product.codigo,
-                    descricao: c.product.descricao,
-                    quantidade: c.quantity,
-                    unidade: c.product.unidade,
-                    assigned_to: defaultProductionAssigneeId,
-                  })),
-                },
+        if (!omieError) {
+          results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
+          // Auto-create production orders for "produto acabado"
+          const produtoAcabadoItems = colacorProductItems.filter(c => {
+            // Coluna dedicada tipo_produto (Migration 2026-06-04) com fallback ao metadata legado.
+            const tp = c.product.tipo_produto ?? c.product.metadata?.tipo_produto;
+            return tp === '04' || tp === 4 || tp === '4';
+          });
+          if (produtoAcabadoItems.length > 0) {
+            if (!defaultProductionAssigneeId) {
+              errors.push({
+                step: 'create_production_order',
+                message: 'Responsável padrão de produção não configurado (Governance > Settings).',
               });
-              logger.info('Production orders created', {
+              logger.warn('Skipping production order: default_production_assignee_id is not set', {
                 stage: 'op_creation',
                 account: 'colacor',
                 salesOrderId,
-                count: produtoAcabadoItems.length,
+                produtoAcabadoCount: produtoAcabadoItems.length,
               });
-            } catch (opErr: unknown) {
-              const opMessage = opErr instanceof Error ? opErr.message : 'Falha ao criar OP';
-              logger.critical('Failed to create production orders for produto acabado', {
-                stage: 'op_creation',
-                account: 'colacor',
-                customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
-                salesOrderId,
-                itemCount: produtoAcabadoItems.length,
-                error: opErr,
-              });
-              errors.push({ step: 'create_production_order', message: opMessage });
+            } else {
+              try {
+                await supabase.functions.invoke('omie-vendas-sync', {
+                  body: {
+                    action: 'criar_ordem_producao', account: 'colacor',
+                    sales_order_id: salesOrderId,
+                    items: produtoAcabadoItems.map(c => ({
+                      product_id: c.product.id,
+                      omie_codigo_produto: c.product.omie_codigo_produto,
+                      codigo: c.product.codigo,
+                      descricao: c.product.descricao,
+                      quantidade: c.quantity,
+                      unidade: c.product.unidade,
+                      assigned_to: defaultProductionAssigneeId,
+                    })),
+                  },
+                });
+                logger.info('Production orders created', {
+                  stage: 'op_creation',
+                  account: 'colacor',
+                  salesOrderId,
+                  count: produtoAcabadoItems.length,
+                });
+              } catch (opErr: unknown) {
+                const opMessage = opErr instanceof Error ? opErr.message : 'Falha ao criar OP';
+                logger.critical('Failed to create production orders for produto acabado', {
+                  stage: 'op_creation',
+                  account: 'colacor',
+                  customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
+                  salesOrderId,
+                  itemCount: produtoAcabadoItems.length,
+                  error: opErr,
+                });
+                errors.push({ step: 'create_production_order', message: opMessage });
+              }
             }
           }
+        } else {
+          results.push('PV Colacor (pendente ERP)');
+          errors.push({ step: 'sync_colacor_omie', message: omieError.message || 'Falha ao sincronizar Colacor com Omie' });
         }
-      } else {
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : 'Falha ao sincronizar Colacor com Omie';
+        logger.error('Colacor Omie sync exception', {
+          stage: 'omie_sync',
+          account: 'colacor',
+          customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
+          salesOrderId,
+          error: e,
+        });
         results.push('PV Colacor (pendente ERP)');
-        errors.push({ step: 'sync_colacor_omie', message: omieError.message || 'Falha ao sincronizar Colacor com Omie' });
+        errors.push({ step: 'sync_colacor_omie', message });
       }
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : 'Falha ao sincronizar Colacor com Omie';
-      logger.error('Colacor Omie sync exception', {
-        stage: 'omie_sync',
-        account: 'colacor',
-        customerId: customer.codigo_cliente_colacor || customer.codigo_cliente,
-        salesOrderId,
-        error: e,
-      });
-      results.push('PV Colacor (pendente ERP)');
-      errors.push({ step: 'sync_colacor_omie', message });
     }
   }
 
@@ -456,5 +472,6 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     printDataList,
     lastOrderData,
     errors,
+    allConfirmed: !errors.some(e => e.step === 'sync_oben_omie' || e.step === 'sync_colacor_omie' || e.step === 'sync_os_omie'),
   };
 }
