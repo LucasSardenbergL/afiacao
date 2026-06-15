@@ -32,6 +32,7 @@ import { CommandsRegistryProvider } from '@/components/shell/CommandsRegistry';
 import { CommandPalette } from '@/components/shell/CommandPalette';
 import { CommandPaletteTrigger } from '@/components/shell/CommandPaletteTrigger';
 import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
+import { PersonaSwitcherChip } from '@/components/dashboard/PersonaSwitcherChip';
 import { ActiveOverrideBadge } from '@/components/financeiro/ActiveOverrideBadge';
 import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
 import { DataHealthBadge } from '@/components/shell/DataHealthBadge';
@@ -723,6 +724,7 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
 
       <div className="flex items-center gap-1">
         <ActiveOverrideBadge />
+        <PersonaSwitcherChip />
         <CompanySwitcher />
         <NetworkStatusIndicator />
         <DataHealthBadge />
