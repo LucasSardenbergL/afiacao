@@ -19,6 +19,7 @@ DB_DIR="$(mktemp -d)"; PORT=55478
 trap '"$PGBIN/pg_ctl" -D "$DB_DIR" stop -m immediate >/dev/null 2>&1; rm -rf "$DB_DIR"' EXIT
 P=("$PGBIN/psql" -h "$DB_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
 MIG="$(cd "$(dirname "$0")/.." && pwd)/supabase/migrations/20260614160000_roteirizador_campo_banco.sql"
+MIG2="$(cd "$(dirname "$0")/.." && pwd)/supabase/migrations/20260614170000_roteirizador_campo_carteira_sufixo_uf.sql"
 
 echo "=== schema mínimo + stubs + seed ==="
 "${P[@]}" <<'SQL'
@@ -56,16 +57,16 @@ INSERT INTO public.radar_empresas (cnpj, municipio_codigo, municipio_nome, uf, p
   SELECT lpad((100+g)::text,14,'0'),'3122306','DIVINÓPOLIS','MG','a_contatar',false, date '2020-01-01'+g
   FROM generate_series(1,250) g;
 
--- clientes:
--- b1 city sem acento 'Divinopolis' MG (A1) + visita há 10d (A5)
--- b2 city caixa alta 'DIVINÓPOLIS' mg (A2) sem visita (A5 NULL)
--- b3 'Divinópolis' SP homônimo outra uf (A3) — NÃO casa
--- b4 'Divinopolis' MG mas is_employee=true (A4) — NÃO casa
+-- clientes (city no formato REAL de prod: 'NOME (UF)' embutido, geralmente sem acento):
+-- b1 'DIVINOPOLIS (MG)' sem acento + sufixo UF (A1) + visita há 10d (A5)
+-- b2 'DIVINÓPOLIS (MG)' com acento + sufixo, mg minúsculo (A2) sem visita (A5 NULL)
+-- b3 'DIVINOPOLIS (SP)' SP homônimo outra uf (A3) — NÃO casa
+-- b4 'DIVINOPOLIS (MG)' MG mas is_employee=true (A4) — NÃO casa
 INSERT INTO public.addresses (user_id, street, city, state, is_default) VALUES
-  ('00000000-0000-0000-0000-0000000000b1'::uuid,'Rua A','Divinopolis','MG',true),
-  ('00000000-0000-0000-0000-0000000000b2'::uuid,'Rua B','DIVINÓPOLIS','mg',true),
-  ('00000000-0000-0000-0000-0000000000b3'::uuid,'Rua C','Divinópolis','SP',true),
-  ('00000000-0000-0000-0000-0000000000b4'::uuid,'Rua D','Divinopolis','MG',true);
+  ('00000000-0000-0000-0000-0000000000b1'::uuid,'Rua A','DIVINOPOLIS (MG)','MG',true),
+  ('00000000-0000-0000-0000-0000000000b2'::uuid,'Rua B','DIVINÓPOLIS (MG)','mg',true),
+  ('00000000-0000-0000-0000-0000000000b3'::uuid,'Rua C','DIVINOPOLIS (SP)','SP',true),
+  ('00000000-0000-0000-0000-0000000000b4'::uuid,'Rua D','DIVINOPOLIS (MG)','MG',true);
 INSERT INTO public.profiles (user_id, name, is_employee) VALUES
   ('00000000-0000-0000-0000-0000000000b1'::uuid,'Cliente Um',false),
   ('00000000-0000-0000-0000-0000000000b2'::uuid,'Cliente Dois',false),
@@ -75,8 +76,9 @@ INSERT INTO public.route_visits (customer_user_id, check_in_at) VALUES
   ('00000000-0000-0000-0000-0000000000b1'::uuid, now() - interval '10 days');
 SQL
 
-echo "=== aplica a migration ==="
-"${P[@]}" -f "$MIG" | grep -E "ROTEIRIZADOR CAMPO BANCO|funcoes_3" || true
+echo "=== aplica as migrations (160000 + 170000 fix sufixo UF) ==="
+"${P[@]}" -f "$MIG"  | grep -E "ROTEIRIZADOR CAMPO BANCO|funcoes_3" || true
+"${P[@]}" -f "$MIG2" | grep -E "CARTEIRA SUFIXO UF|divinopolis" || true
 
 echo "=== asserts ==="
 "${P[@]}" <<'SQL'
