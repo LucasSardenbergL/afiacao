@@ -18,7 +18,7 @@
 - ✅ Auto-sugestão + aprovação ("Sugerir mapeamentos" / "Aprovar todas (N)"; aprovar oculto = reativa `ativo=true` + mapeia).
 - ✅ Validado: typecheck strict **0** · lint **0 erros** (76 warnings pré-existentes) · **3481** testes (469 files) · build OK.
 - ⏳ **Founder: mergear o PR + Publish no Lovable** (100% frontend → só vai ao ar após Publish).
-- ⏳ Follow-up (não bloqueia): `tint-omie-sync` robusto à cobertura (senão produto novo volta a escapar e precisa de re-backfill).
+- ✅ Follow-up — cobertura automatizada: função SQL `tint_marcar_bases_mixmachine()` + cron diário (`0 11 * * *`) marca por família, **idempotente/aditivo, sem tocar o edge** (Codex: `is_tintometric` é flag de venda → marcar por família é consistente c/ o `tint-omie-sync`; fixes: drift de `tint_type` + `familia` autoritativa). PG17 `db/test-tint-cobertura.sh` A1-A4 verde. Migration `20260614210000` (⚠️ **manual — SQL Editor**). Não-feito (registrado na spec): vigia no Sentinela · desmarcar drift · aposentar `tint-omie-sync` · desenho "ideal" (candidatos por família).
 
 ---
 

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 219
+-- Total de custom migrations: 222
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -238,7 +238,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260613170000', 'fix_auto_assign_master_escalation', '20260613170000_fix_auto_assign_master_escalation.sql'),
   ('20260613180000', 'kb_hardening_codex', '20260613180000_kb_hardening_codex.sql'),
   ('20260613190000', 'radar_fatia3', '20260613190000_radar_fatia3.sql'),
-  ('20260613210000', 'radar_perf_indices', '20260613210000_radar_perf_indices.sql')
+  ('20260613210000', 'radar_perf_indices', '20260613210000_radar_perf_indices.sql'),
+  ('20260613230000', 'roteirizador_prospects', '20260613230000_roteirizador_prospects.sql'),
+  ('20260614103251', 'onda1_fase1_farmer_calls_atendimento', '20260614103251_onda1_fase1_farmer_calls_atendimento.sql'),
+  ('20260614210000', 'tint_cobertura_bases_mixmachine', '20260614210000_tint_cobertura_bases_mixmachine.sql')
 )
 SELECT
   e.version,
@@ -1089,7 +1092,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_fatia3', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
   ('radar_perf_indices', 'index', 'public', 'idx_radar_lista_novas', 'radar_empresas'),
   ('radar_perf_indices', 'index', 'public', 'idx_radar_lista_estab', 'radar_empresas'),
-  ('radar_perf_indices', 'index', 'public', 'idx_radar_muni', 'radar_empresas')
+  ('radar_perf_indices', 'index', 'public', 'idx_radar_muni', 'radar_empresas'),
+  ('roteirizador_prospects', 'function', 'public', 'radar_salvar_geocode', ''),
+  ('roteirizador_prospects', 'function', 'public', 'radar_prospects_para_rota', ''),
+  ('onda1_fase1_farmer_calls_atendimento', 'index', 'public', 'idx_farmer_calls_atendimento_id', 'farmer_calls'),
+  ('tint_cobertura_bases_mixmachine', 'function', 'public', 'tint_marcar_bases_mixmachine', ''),
+  ('tint_cobertura_bases_mixmachine', 'cron_job', 'cron', 'tint-marcar-bases-diario', '')
 )
 SELECT
   e.migration,

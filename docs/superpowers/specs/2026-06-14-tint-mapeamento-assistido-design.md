@@ -60,9 +60,19 @@ Botão **"Sugerir mapeamentos"**: roda o motor sobre as bases **não-mapeadas vi
 - **Reescrever o sync** (follow-up).
 - Reativar SKUs ocultos em massa sem mapear (a reativação acontece *ao aprovar a sugestão*).
 
-## Follow-up (não bloqueia)
+## Follow-up — cobertura automatizada [FEITO 2026-06-14; migration manual pendente]
 
-- Tornar `tint-omie-sync` robusto à cobertura (paginação completa / filtrar por família na API Omie) pra produtos novos não escaparem e dispensar re-backfill.
+Em vez de mexer no edge `tint-omie-sync` (money-path, frágil), a cobertura virou um passo SQL idempotente que reusa o que o sync geral já entrega: o `omie-sync-metadados` pagina o catálogo INTEIRO (sem teto, `while pagina <= totalPaginas`) e grava a coluna `familia` em `account='oben'` → o produto novo já está em `omie_products` com a família, faltando só a marca.
+
+Função **`tint_marcar_bases_mixmachine()`** (`SECURITY DEFINER`, `REVOKE` de anon/authenticated/public) + cron **`tint-marcar-bases-diario`** (`0 11 * * *`, SQL local sem `net.http_post`): marca `is_tintometric=true` + `tint_type` por família, **idempotente e aditivo**. Migration `20260614210000_tint_cobertura_bases_mixmachine.sql`. PG17 `db/test-tint-cobertura.sh` (A1-A4: marca faltante, corrige drift de `tint_type`, ignora não-elegível, idempotente).
+
+**Codex consult (2026-06-14):** `is_tintometric` é flag OPERACIONAL de venda (abre o fluxo de cor em `useCart`/`useSalesOrderEdit`/`replicar-pedido`) — mas marcar por família é CONSISTENTE com o que o `tint-omie-sync` já faz pras 106 bases existentes (não introduz comportamento novo). Fixes incorporados: corrige drift de `tint_type` (não só ausência); usa `familia` autoritativa (sem fallback `metadata`, que é jsonb compartilhado e sofre sobrescrita).
+
+**Não-feito (registrado, decisão consciente):**
+- **Vigia no Sentinela** — bases elegíveis não-marcadas / `tint_type` divergente / vínculo com produto inativo ou ausente / produto Omie vinculado a >1 SKU (FK não garante unicidade). É a rede que pega quando o cron falha ou o drift acontece. ⚠️ toca `_data_health_compute` (arquivo quente multi-sessão, risco de cascata — fazer com o pré-flight do CLAUDE.md).
+- **Desmarcar drift** ("saiu da família"/"ficou inativo") — NÃO automatizar: desmarcar base já mapeada (`tint_skus.omie_product_id`) transformaria a base em produto vendido sem cor. O vigia acima sinaliza; a ação fica humana.
+- **Aposentar o `tint-omie-sync`** (redundante com o sync geral exceto o botão manual de `TintImport` + retry de rate-limit) — e o upsert dele regrava `metadata` incompleto. Refactor maior.
+- **Desenho "ideal" do Codex** (tela de mapeamento lista candidatos por família e só marca `is_tintometric` na aprovação humana) — desacopla a semântica dual do flag; refactor de maior porte, fora do escopo desta sessão.
 
 ## Validação
 
