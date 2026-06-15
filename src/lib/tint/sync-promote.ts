@@ -1,6 +1,10 @@
 // src/lib/tint/sync-promote.ts
 // Oráculo puro da promoção staging→oficial do tint sync.
-// ESPELHADO VERBATIM na migration tint_promote_sync_run (PG17 valida o espelho).
+// ESPELHADO na migration tint_promote_sync_run. A promoção virou SET-BASED em
+// 20260615160000 (antes era FOR LOOP procedural — estourava o gateway no bootstrap de ~481k),
+// mas a REGRA é a mesma destas funções puras: regra de 3 (expandirFormula) + preço pág 9
+// NULL-honesto (precoFinalSayer). PG17 db/test-tint-promote.sh prova a identidade contábil
+// (set-based ≡ loop antigo no mesmo seed, EXCEPT=0) + falsificação.
 // Spec: docs/superpowers/specs/2026-06-09-tint-sync-sayersystem-design.md §6.2
 
 export interface FormulaBase {

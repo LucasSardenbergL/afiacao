@@ -1,5 +1,25 @@
 # Plano — reescrever a promoção tintométrica para set-based (eliminar timeout/lock no bootstrap)
 
+> ✅ **IMPLEMENTADO 15/06 (Opção A).** Migration `20260615160000_tint_promote_set_based.sql`
+> (CREATE OR REPLACE da `tint_promote_sync_run` — só o motor E2/E3 virou set-based; advisory lock,
+> latest-staging, E1, E4 recalc e E5 purge ficaram VERBATIM). `statement_timeout='300s'` movido p/ o
+> cabeçalho da função (CREATE OR REPLACE descartaria o ALTER de 20260615140000). Validado em PG17
+> `db/test-tint-promote.sh`: os 12 cenários antigos (C1-C12) passam inalterados + **CENÁRIO 13** de
+> VOLUME que roda o **loop antigo preservado** (RENAME → `tint_promote_sync_run_oldloop`) e o set-based
+> sobre o MESMO seed (600 expansões, mix NULL-honesto + subcoleção) e exige **EXCEPT=0 nos dois sentidos**
+> (identidade contábil) + **falsificação** (F1 NULL-honesto furado → 720 divergências; F2 fator=1 →
+> 1920 divergências; restauração → 0). Tempo no teste: set-based ~180ms vs loop ~250ms (o ganho explode
+> em 481k: o loop é O(linhas) com subqueries por linha → estoura o gateway; o set-based são ~10
+> operações em lote). PR: `claude/tint-promote-set-based`. **Falta só o re-flip** (roteiro no fim).
+>
+> **Re-flip (founder, quando quiser):** 1) Aplicar `20260615160000` no SQL Editor (pode ser em shadow —
+> só troca a função, não roda nada). 2) Pré-flight opcional (de-risca): `BEGIN; SELECT
+> tint_promote_sync_run('<run formulas recente>'); ROLLBACK;` com `clock_timestamp()` → prova que roda
+> rápido em dados REAIS sem commitar nada. 3) Flip: `sc stop` → apagar `state.json` → `automatic_primary`
+> → `sc start` → BLOCO 4 (`publicadas_30min` alto). 4) CSV aposentado.
+
+
+
 ## Contexto / diagnóstico (15/06, flip ao vivo)
 - Sync validado 100% (corantes 14/14, cores 8238, bases 56, emb 4, produtos 20, regra de 3 exata, blast 3,2%).
 - Flip pra `automatic_primary` revelou bug de PERFORMANCE na `tint_promote_sync_run`:
