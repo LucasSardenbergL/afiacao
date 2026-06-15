@@ -61,8 +61,8 @@ export const TONE_CSS: Record<MarkerTone, string> = {
   neutral: 'hsl(var(--muted-foreground))',
 };
 
-/** Maior→menor urgência (a borda do cluster pega o 1º tom presente). */
-export const URGENCIA_ORDEM: MarkerTone[] = ['error', 'warning', 'info', 'success', 'neutral'];
+/** Maior→menor urgência (a borda do cluster pega o 1º tom presente). Interno. */
+const URGENCIA_ORDEM: MarkerTone[] = ['error', 'warning', 'info', 'success', 'neutral'];
 
 export interface ClusterStats {
   total: number;
