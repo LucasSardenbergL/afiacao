@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# wt-prune.sh — remove worktrees FANTASMA (sessão morta + trabalho 100% salvo).
+# wt-prune.sh — remove a worktree cuja CONVERSA foi EXCLUÍDA do histórico do app
+#               (e cujo trabalho está 100% salvo). É o "excluir a worktree junto
+#               com a conversa" — de forma diferida e segura.
 #
-# Cada sessão Claude isolada vive numa git worktree. Quando a sessão fecha, a
-# worktree FICA no disco (vira lixo na `git worktree list`). Este comando enxuga
-# a lista removendo só as comprovadamente seguras — o que o wt:clean NÃO faz (ele
-# só apaga node_modules; este apaga o worktree inteiro).
+# Excluir a conversa nos "três pontos" do app NÃO dispara hook nenhum (a ação é
+# muda — só some o .jsonl de ~/.claude/projects). Então, em vez de reagir ao
+# evento, este comando RECONCILIA: a worktree cuja conversa sumiu vira candidata.
+# A worktree de uma conversa que AINDA existe no histórico é preservada (você
+# pode voltar nela). O wt:clean só apaga node_modules; este remove a worktree.
 #
 # SÓ remove uma worktree quando TODAS estas condições valem (desenho com o codex):
 #   - não é a atual, não tem sessão/processo VIVO (lsof), não está `locked`;
+#   - a CONVERSA foi EXCLUÍDA do histórico (não há mais .jsonl da worktree em
+#     ~/.claude/projects) — conversa ainda viva no histórico = PRESERVA;
 #   - working tree limpo: `git status --porcelain --untracked-files=all` vazio;
 #   - arquivos IGNORADOS só na allowlist de descartáveis (node_modules, dist, …);
 #     um .env só passa se for byte-idêntico ao da worktree atual (senão pode ter
@@ -104,6 +109,16 @@ ignored_blockers() {
   done
 }
 
+# path da worktree -> diretório de transcript do Claude Code -----------------
+enc() { printf '%s' "$1" | sed 's#[/.]#-#g'; }
+has_transcript() {
+  # conversa "ainda no histórico" = há ≥1 .jsonl no dir de transcript da worktree.
+  # excluir a conversa nos 3-pontos remove o .jsonl → este teste passa a falhar.
+  local wt="$1" dir
+  dir="$HOME/.claude/projects/$(enc "$wt")"
+  ls "$dir"/*.jsonl >/dev/null 2>&1
+}
+
 # elegível? define REASON. retorna 0 se pode remover -------------------------
 classify() {
   local wt="$1" branch head dirty blk
@@ -115,6 +130,8 @@ classify() {
 
   blk="$(ignored_blockers "$wt" | head -3 | tr '\n' ' ')"
   [ -n "$blk" ] && { REASON="ignored não-descartável: $blk"; return 1; }
+
+  if has_transcript "$wt"; then REASON="conversa ainda no histórico [$branch]"; return 1; fi
 
   if git -C "$wt" merge-base --is-ancestor "$head" origin/main 2>/dev/null; then
     REASON="na main [$branch]"; return 0
@@ -174,9 +191,9 @@ handle
 
 echo
 if [ "$YES" -eq 1 ]; then
-  echo "✅ removidas ${removed} worktree(s), ~${freed} MB liberados. ${kept} preservada(s)."
+  echo "✅ removidas ${removed} worktree(s) de conversa excluída, ~${freed} MB liberados. ${kept} preservada(s)."
   echo "   Branches NÃO foram apagadas — recupere qualquer uma com: git worktree add <path> <branch>"
 else
-  echo "DRY-RUN: removeria ${removed} worktree(s) (~${freed} MB); preservaria ${kept}."
+  echo "DRY-RUN: removeria ${removed} worktree(s) de conversa EXCLUÍDA (~${freed} MB); preservaria ${kept}."
   echo "         Rode 'bun run wt:prune --yes' pra executar."
 fi
