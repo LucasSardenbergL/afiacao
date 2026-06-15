@@ -8,6 +8,8 @@
 
 **Tech Stack:** Supabase Edge Function (Deno/TS), Omie API (`ListarPosEstoque`), pg_cron + pg_net (migration via Lovable SQL Editor). Spec: `docs/superpowers/specs/2026-06-06-sync-cmc-cobertura-catalogo-design.md`.
 
+> ⚠️ **ATUALIZAÇÃO (pós-merge com #843):** o `syncInventory` já virou bulk na main. A implementação final NÃO criou uma rotina nova `syncInventoryFull` — em vez disso **parametrizou o `syncInventory` com `opts.exibeTodos`** (adiciona `cExibeTodos:"S"` no payload + entity `inventory_full` no `sync_state`), e a action `sync_inventory_full` chama `syncInventory(db, account, { exibeTodos: true })` em background. Reusa toda a lógica bulk existente (incl. `product_costs`/`omie_products`). As Tasks 2 abaixo descrevem a versão pré-#843 (função separada); o resultado mergeado é a parametrização. Cron (Task 3), gate (Task 1) e probe (Task 4) inalterados.
+
 > **Nota sobre testes:** este fix é I/O puro (Omie → tabela, cópia 1:1 do `nCMC`, sem lógica de decisão/cálculo). Não há helper puro que valha TDD vitest. A verificação é: **lint** (o CI linta `supabase/functions/`), **`deno check` best-effort**, e o **probe em produção** (Task 5) — os 8 SKUs de alto giro passam a ter `cmc > 0` e a contagem salta de ~738 → ~catálogo. Isso é o gate de comportamento real.
 
 ---

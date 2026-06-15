@@ -725,8 +725,12 @@ function chunked<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
-async function syncInventory(db: SupabaseClient, account: OmieAccount) {
-  await updateSyncState(db, "inventory", account, { status: "running", error_message: null });
+async function syncInventory(db: SupabaseClient, account: OmieAccount, opts: { exibeTodos?: boolean } = {}) {
+  // exibeTodos:true (cExibeTodos:"S") cobre o catálogo INTEIRO (inclusive saldo 0) p/ popular o CMC
+  // dos itens de alto giro que zeram — usado pela action sync_inventory_full (cron diário, background).
+  // entity "inventory_full" no sync_state separa do sync de saldo de 30 min ("inventory").
+  const entity = opts.exibeTodos ? "inventory_full" : "inventory";
+  await updateSyncState(db, entity, account, { status: "running", error_message: null });
   let pagina = 1;
   let totalPaginas = 1;
   const nowIso = new Date().toISOString();
@@ -741,6 +745,7 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
         nPagina: pagina,
         nRegPorPagina: 100,
         dDataPosicao: new Date().toLocaleDateString("pt-BR"),
+        ...(opts.exibeTodos ? { cExibeTodos: "S" } : {}),
       })) as unknown as OmieListarPosEstoqueResponse;
 
       totalPaginas = result.nTotPaginas || 1;
@@ -764,7 +769,7 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
     const totalSynced = codProds.length;
 
     if (totalSynced === 0) {
-      await updateSyncState(db, "inventory", account, {
+      await updateSyncState(db, entity, account, {
         status: "complete",
         total_synced: 0,
         last_sync_at: nowIso,
@@ -857,7 +862,7 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       }
     }
 
-    await updateSyncState(db, "inventory", account, {
+    await updateSyncState(db, entity, account, {
       status: "complete",
       total_synced: totalSynced,
       last_sync_at: nowIso,
@@ -865,92 +870,7 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
     });
     return { totalSynced };
   } catch (error) {
-    await updateSyncState(db, "inventory", account, { status: "error", error_message: String(error) });
-    throw error;
-  }
-}
-
-// ======== SYNC INVENTORY FULL (catálogo inteiro, p/ cobertura de CMC) ========
-// Diferente do syncInventory (30 min, só itens COM saldo): usa cExibeTodos:"S" pra trazer
-// o catálogo inteiro (inclusive saldo 0) e popular o cmc. Bulk (sem o N+1 do syncInventory)
-// + roda em background (waitUntil) por causa do volume (~5x). Foco: inventory_position.cmc
-// (fonte de custo do EOQ da Reposição). NÃO toca product_costs/omie_products (não-objetivo v1).
-async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
-  await updateSyncState(db, "inventory_full", account, { status: "running", error_message: null });
-  try {
-    // 1) Map omie_products: omie_codigo_produto -> id (bulk paginado, fura o cap de 1000 do PostgREST)
-    const idMap = new Map<number, string>();
-    for (let from = 0; ; from += 1000) {
-      const { data, error } = await db
-        .from("omie_products")
-        .select("id, omie_codigo_produto")
-        .range(from, from + 999);
-      if (error) throw error;
-      const rows = data ?? [];
-      for (const r of rows) idMap.set(Number(r.omie_codigo_produto), r.id as string);
-      if (rows.length < 1000) break;
-    }
-
-    // 2) Paginar ListarPosEstoque com cExibeTodos:"S" (callOmie já tem retry/backoff p/ falha transitória)
-    let pagina = 1;
-    let totalPaginas = 1;
-    let totalSynced = 0;
-    const invRows: Array<{
-      omie_codigo_produto: number;
-      product_id: string | null;
-      saldo: number;
-      cmc: number;
-      preco_medio: number;
-      account: string;
-      synced_at: string;
-    }> = [];
-    while (pagina <= totalPaginas) {
-      const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
-        nPagina: pagina,
-        nRegPorPagina: 100,
-        dDataPosicao: new Date().toLocaleDateString("pt-BR"),
-        cExibeTodos: "S",
-      })) as unknown as OmieListarPosEstoqueResponse;
-
-      totalPaginas = result.nTotPaginas || 1;
-      const now = new Date().toISOString();
-      for (const prod of result.produtos || []) {
-        const codProd = prod.nCodProd;
-        if (!codProd) continue;
-        invRows.push({
-          omie_codigo_produto: codProd,
-          product_id: idMap.get(codProd) ?? null,
-          saldo: prod.nSaldo ?? 0,
-          cmc: prod.nCMC ?? 0,
-          preco_medio: prod.nPrecoMedio ?? 0,
-          account,
-          synced_at: now,
-        });
-        totalSynced++;
-      }
-      console.log(`[Sync ${account}] inventory_full página ${pagina}/${totalPaginas} — ${totalSynced} itens acumulados`);
-      pagina++;
-    }
-
-    // 3) Upsert em lote (chunks de 500) — onConflict igual ao syncInventory
-    const CHUNK = 500;
-    for (let i = 0; i < invRows.length; i += CHUNK) {
-      const slice = invRows.slice(i, i + CHUNK);
-      const { error } = await db
-        .from("inventory_position")
-        .upsert(slice, { onConflict: "omie_codigo_produto,account" });
-      if (error) throw error;
-    }
-
-    await updateSyncState(db, "inventory_full", account, {
-      status: "complete",
-      total_synced: totalSynced,
-      last_sync_at: new Date().toISOString(),
-      last_page: totalPaginas,
-    });
-    return { totalSynced };
-  } catch (error) {
-    await updateSyncState(db, "inventory_full", account, { status: "error", error_message: String(error) });
+    await updateSyncState(db, entity, account, { status: "error", error_message: String(error) });
     throw error;
   }
 }
@@ -1702,7 +1622,7 @@ serve(async (req) => {
             status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
-        const bgTask = syncInventoryFull(supabaseAdmin, account as OmieAccount).catch((e) => {
+        const bgTask = syncInventory(supabaseAdmin, account as OmieAccount, { exibeTodos: true }).catch((e) => {
           console.error("[sync_inventory_full][bg]", e instanceof Error ? e.message : e);
         });
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment

@@ -2,6 +2,8 @@
 
 > Spec de design. Data: 2026-06-06. Substrato: `supabase/functions/omie-analytics-sync` (`syncInventory`) → `inventory_position` → base de custo (CMC) da Reposição.
 > Money-path (afeta o EOQ de toda a Reposição). Codex fora → validação rigorosa + Codex adversarial retroativo quando voltar.
+>
+> ⚠️ **ATUALIZAÇÃO (pós-merge):** o [#843](https://github.com/LucasSardenbergL/afiacao/pull/843) refatorou o `syncInventory` de N+1 para **bulk** enquanto este spec era escrito. O fix foi então implementado **parametrizando o `syncInventory` com `{exibeTodos}`** (reusa toda a lógica bulk + `product_costs`/`omie_products` + a semântica de ambiguidade de `product_id`) em vez de uma rotina nova duplicada `syncInventoryFull`. A premissa "o `syncInventory` é N+1" abaixo está **stale**; o cerne (`cExibeTodos:"S"` para cobrir o catálogo) permanece igual.
 
 ## 1. Problema (causa-raiz confirmada)
 
