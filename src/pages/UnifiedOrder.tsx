@@ -22,6 +22,7 @@ import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { CoresDoClienteCard } from '@/components/unified-order/CoresDoClienteCard';
 import { useCoresDoCliente } from '@/hooks/unifiedOrder/useCoresDoCliente';
 import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
+import { termoBuscaCor } from '@/lib/tint/cores-do-cliente';
 import { montarPlanoReplicacao, type ItemTinta } from '@/lib/pedido/replicar-pedido';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -69,7 +70,9 @@ const UnifiedOrder = () => {
         : undefined;
     if (product?.is_tintometric && product.tint_type === 'base') {
       track('pedido.repetir_cor');
-      setTintInitialSearch(cor.nome);
+      // Busca pelo CÓDIGO da cor, não pelo rótulo cru do histórico ("346J -
+      // PLATINA BIANCA 900ML") — o rótulo não casa com cor_id/nome_cor do catálogo.
+      setTintInitialSearch(termoBuscaCor(cor.nome));
       h.setTintPendingProduct(product);
       return;
     }
@@ -160,7 +163,8 @@ const UnifiedOrder = () => {
     if (h.tintPendingProduct || tintQueue.length === 0) return;
     const [proxima, ...resto] = tintQueue;
     setTintQueue(resto);
-    setTintInitialSearch(proxima.nomeCor);
+    // Mesmo motivo do "Pedir de novo": pré-busca pelo código, não pelo rótulo cru.
+    setTintInitialSearch(proxima.nomeCor ? termoBuscaCor(proxima.nomeCor) : null);
     h.setTintPendingProduct(proxima.product);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [h.tintPendingProduct, tintQueue]);

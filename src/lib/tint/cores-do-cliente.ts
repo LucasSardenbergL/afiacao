@@ -115,3 +115,36 @@ export function filtrarCores(cores: CorDoCliente[], termo: string): CorDoCliente
   if (!q) return cores;
   return cores.filter((c) => normalizarBusca(c.nome).includes(q));
 }
+
+const EH_EMBALAGEM = (t: string) => /^\d+(?:[.,]\d+)?ml$/i.test(t) || /^(?:qt|gl|lt)$/i.test(t);
+
+/**
+ * Converte o rótulo livre de uma cor do histórico (`tint_nome_cor`, ex.:
+ * "346J - PLATINA BIANCA 900ML" ou "346J PLATINA BIANCA 900ML QT|TULIO LEVOU ESSA")
+ * num termo que CASA com o catálogo vivo (`tint_formulas.cor_id`/`nome_cor`) ao
+ * pré-preencher o seletor de cor no re-pedido ("Pedir de novo" / "Repetir pedido").
+ *
+ * Por quê: o catálogo guarda `cor_id` = "346J - ACRIL BS" e `nome_cor` =
+ * "PLATINA BIANCA". O rótulo INTEIRO nunca casa (carrega embalagem "900ML",
+ * notas após "|", grafias antigas), então o seletor devolvia "nenhuma cor
+ * encontrada" mesmo a cor existindo na própria base. O código Sayer é o sinal
+ * mais seletivo e casa por ILIKE; extraímos ele:
+ *  1) token líder com dígito (cor_id que lidera: "346J", "1247", "339H");
+ *  2) senão, primeiro código embutido (letra+dígito: "H101", "G155") que não
+ *     seja embalagem;
+ *  3) senão, a primeira palavra (cor só por nome) — degradação honesta, nunca
+ *     o rótulo cru que não casa.
+ */
+export function termoBuscaCor(nome: string): string {
+  const limpo = nome.split('|')[0].trim();
+  if (!limpo) return nome.trim();
+
+  const tokens = limpo.split(/[\s-]+/).filter(Boolean);
+  if (tokens.length === 0) return limpo;
+
+  const lider = tokens[0];
+  if (/\d/.test(lider) && !EH_EMBALAGEM(lider)) return lider;
+
+  const codigo = tokens.find((t) => /\d/.test(t) && /[a-z]/i.test(t) && !EH_EMBALAGEM(t));
+  return codigo ?? lider;
+}
