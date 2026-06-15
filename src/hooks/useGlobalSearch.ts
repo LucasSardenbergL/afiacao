@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { ilikeOr } from '@/lib/postgrest';
 
 /**
@@ -41,15 +42,6 @@ function writeRecents(items: SearchResult[]): void {
   if (typeof localStorage === 'undefined') return;
   localStorage.setItem(RECENTS_KEY, JSON.stringify(items.slice(0, MAX_RECENTS)));
   window.dispatchEvent(new StorageEvent('storage', { key: RECENTS_KEY }));
-}
-
-function useDebouncedValue<T>(value: T, delay = 200): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(id);
-  }, [value, delay]);
-  return debounced;
 }
 
 export function useGlobalSearch(query: string, enabled = true) {
@@ -92,6 +84,7 @@ export function useGlobalSearch(query: string, enabled = true) {
       const { data } = await supabase
         .from('tint_formulas')
         .select('id, cor_id, nome_cor')
+        .is('desativada_em', null)
         .or(ilikeOr(['cor_id', 'nome_cor'], trimmed))
         .limit(5);
       return (data ?? []).map((f): SearchResult => ({

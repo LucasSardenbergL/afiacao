@@ -1,0 +1,16 @@
+# @src: src/lib/financeiro/dre-helpers.ts
+# @test: src/lib/financeiro/__tests__/dre-helpers.test.ts
+# Invariantes money-path do DRE v2 (Onda 3a, regime-aware; espelhado no engine Deno calcularDRE).
+# Dedução vs imposto sobre lucro, gate de regime (Simples=DAS único / Presumido específico),
+# alíquota efetiva do Simples, janela RBT12, adicional de IRPJ, sinal do resultado, gate de confiança.
+PEGA | montarDRE: DAS entra nas deduções (+ vira -)        | s/t\('deducoes'\) \+ indiretos \+ das/t('deducoes') + indiretos - das/
+PEGA | montarDRE: gate de regime do imposto/lucro (=== -> !==) | s/input\.regime === 'simples' \? 0/input.regime !== 'simples' ? 0/
+PEGA | montarDRE: receita_liquida = bruta − deduções (- vira +) | s/receita_bruta - deducoes/receita_bruta + deducoes/
+PEGA | montarDRE: resultado_liquido = RAI − imposto (- vira +) | s/resultado_antes_impostos - impostoLucro/resultado_antes_impostos + impostoLucro/
+PEGA | aliquotaEfetivaSimples: − parcela a deduzir (- vira +) | s/f\.aliquota - f\.deduzir/f.aliquota + f.deduzir/
+PEGA | aliquotaEfetivaSimples: gate RBT12<=0 (<= vira <)   | s/if \(rbt12 <= 0\) return 0/if (rbt12 < 0) return 0/
+PEGA | impostoTeoricoPresumido: adicional só excedente (max -> min) | s/Math\.max\(0, baseIrpj - PRESUMIDO/Math.min(0, baseIrpj - PRESUMIDO/
+PEGA | impostoPorKeyword: gate regime Simples->DAS (=== -> !==) | s/if \(regime === 'simples'\) \{/if (regime !== 'simples') {/
+PEGA | calcularRBT12: janela 12m anteriores exclusiva (< vira <=) | s/idx < idxApuracao/idx <= idxApuracao/
+PEGA | faixaPorRBT12: 1ª faixa rbt12<=ate (<= vira >=)     | s/if \(rbt12 <= f\.ate\) return f/if (rbt12 >= f.ate) return f/
+PEGA | scoreConfianca: fallback>20% rebaixa p/ baixa (> vira <) | s/input\.fallback_pct > 0\.2\) rebaixar/input.fallback_pct < 0.2) rebaixar/

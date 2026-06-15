@@ -2,15 +2,24 @@ import { useNavigate } from 'react-router-dom';
 import { ShieldAlert, ShieldQuestion } from 'lucide-react';
 import { useDataHealth } from '@/hooks/useDataHealth';
 import { badgeLevel } from '@/lib/dataHealth/health-helpers';
-import { useAuth } from '@/contexts/AuthContext';
+import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { cn } from '@/lib/utils';
 
 export function DataHealthBadge() {
   const navigate = useNavigate();
-  const { isStaff } = useAuth();
-  const { data, isError } = useDataHealth();
+  // Saúde de dados é tarefa de quem ADMINISTRA o sistema (master/gestor), não de
+  // qualquer funcionário: uma vendedora não tem o que fazer com "sync stale" nem
+  // com a instrução de TI que a tela exibe ("rode sync_X no chat do Lovable").
+  // Antes o gate era `isStaff` puro — aparecia até p/ vendedora sales-only, que
+  // nem vê o item "Saúde de Dados" no menu (inconsistência). Lente-aware
+  // (useDisplayAccess): some quando o master "vira" vendedora na lente.
+  // Gate na QUERY também, não só na UI: sem ele, o employee executava a RPC
+  // get_data_health (14 checks) a cada 2min sem ver o badge.
+  const { displayIsMaster, displayIsGestorComercial } = useDisplayAccess();
+  const podeVer = displayIsMaster || displayIsGestorComercial;
+  const { data, isError } = useDataHealth(podeVer);
 
-  if (!isStaff) return null;
+  if (!podeVer) return null;
 
   const level = isError ? 'red' : badgeLevel(data ?? []);
   if (level === 'green') return null; // verde não polui o topbar

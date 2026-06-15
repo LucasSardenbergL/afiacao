@@ -1,0 +1,35 @@
+# auto-merge.yml — liga o auto-merge (squash) automaticamente em TODO PR.
+#
+# Por que existe: o auto-merge do GitHub é opt-in POR PR — sem habilitar, o PR
+# fica parado esperando clique manual mesmo com o CI verde. Este workflow habilita
+# auto-merge em todo PR não-draft; quando o check required `validate` (ci.yml) passa,
+# o GitHub mergeia sozinho (squash + deleta a branch). Zero clique do founder.
+#
+# Pré-condições (já satisfeitas no repo): allow_auto_merge=true, branch protection
+# exige `validate`, sem review obrigatório, workflow permissions=write.
+#
+# NÃO bypassa o CI: o merge só acontece DEPOIS de `validate` passar (≠ `--admin`,
+# que pula o CI e é proibido por rotina). Pra SEGURAR um PR (não querer que mergeie
+# sozinho), deixe-o como DRAFT — o `if` abaixo pula drafts.
+name: Auto-merge
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable-auto-merge:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Habilita auto-merge (squash)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr merge --auto --squash "$PR" \
+            || echo "::notice::auto-merge não habilitável agora (conflito/estado não-mergeável) — segue sem bloquear; re-tenta no próximo push"

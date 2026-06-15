@@ -9,11 +9,31 @@ import type { AlternativePackaging } from './types';
 interface GlobalColorMatchesProps {
   product: Product;
   matches: AlternativePackaging[];
+  /** A cor existe no catálogo, mas sem embalagem vendável p/ esta base (vs. não existir de todo). */
+  colorExists?: boolean;
   onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, alternativeProduct?: Product) => void;
 }
 
-export function GlobalColorMatches({ product, matches, onConfirm }: GlobalColorMatchesProps) {
+export function GlobalColorMatches({ product, matches, colorExists, onConfirm }: GlobalColorMatchesProps) {
   if (matches.length === 0) {
+    // Degradação honesta: distingue "existe mas não é vendável nesta base" de
+    // "não existe". O sinal money-path nunca afirma ausência quando a cor está
+    // no catálogo (só falta vincular o produto Omie / é de outra família de base).
+    if (colorExists) {
+      return (
+        <div className="flex items-start gap-2 p-3 rounded-md bg-status-warning-bg border border-status-warning/30">
+          <AlertTriangle className="w-5 h-5 text-status-warning shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-status-warning-foreground">
+              Esta cor existe, mas não há embalagem vendável para esta base
+            </p>
+            <p className="text-xs text-status-warning mt-1">
+              A cor está no catálogo, mas nenhuma embalagem dela está vinculada a um produto Omie vendável na família de <strong>{product.descricao}</strong>. Avise o tintométrico para vincular ou cadastrar o produto.
+            </p>
+          </div>
+        </div>
+      );
+    }
     return <p className="text-xs text-muted-foreground text-center py-4">Nenhuma cor encontrada em nenhuma base.</p>;
   }
 

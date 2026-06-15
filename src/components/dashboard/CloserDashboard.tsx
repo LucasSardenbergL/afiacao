@@ -1,56 +1,53 @@
-import { Card } from '@/components/ui/card';
-import { Construction } from 'lucide-react';
-import { VisitSuggestionsCard } from './VisitSuggestionsCard';
-import { VisitasHojeCard } from './VisitasHojeCard';
-import { MinhasVisitasResultadoCard } from './MinhasVisitasResultadoCard';
-import { FollowupsSugeridosCard } from './FollowupsSugeridosCard';
+import { ClosersMtdHero } from './ClosersMtdHero';
 import { VisitasKpiTiles } from './VisitasKpiTiles';
+import { VisitasHojeCard } from './VisitasHojeCard';
+import { VisitSuggestionsCard } from './VisitSuggestionsCard';
+import { FollowupsSugeridosCard } from './FollowupsSugeridosCard';
+import { MinhasVisitasResultadoCard } from './MinhasVisitasResultadoCard';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
+import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNudge';
 
 /**
- * Dashboard Closer — placeholder rico até PR-VISIT-INTELLIGENCE implementar
- * algoritmo de sugestão de visita + rota geo + 4 tipos de missão.
+ * Dashboard Closer (visitas / outbound presencial) — lidera com o PLACAR DO MÊS
+ * (output, MTD), depois eficiência recente (30d), depois ação (visitas de hoje,
+ * sugestões, follow-ups) e histórico. Tarefas (trabalho dirigido) e o nudge de
+ * chamadas (higiene) ficam abaixo, fora do placar.
+ *
+ * Ordem e definições validadas com Codex
+ * (docs/superpowers/specs/2026-06-13-kpis-closer-meu-dia-design.md). O antigo card
+ * "Em construção — PR-VISIT-INTELLIGENCE" foi removido: o placar real já está aqui.
  */
 export function CloserDashboard() {
   return (
     <div className="container mx-auto p-4 space-y-4 max-w-5xl">
       <div>
-        <h1 className="text-xl font-semibold">Dashboard Closer (outbound presencial)</h1>
+        <h1 className="text-xl font-semibold">Meu dia (visitas)</h1>
         <p className="text-xs text-muted-foreground">
-          Foco em visitas de alto valor — fechar deals complexos pro Hunter, expansão pra Farmer, recovery de churn, relationship pra clientes VIP.
+          Seu placar de visitas do mês e a eficiência recente. Visitas de alto valor: fechar, expandir, recuperar.
         </p>
       </div>
 
-      <MinhasTarefasCard />
+      {/* Placar do mês (output, MTD) — o norte do closer */}
+      <ClosersMtdHero />
 
+      {/* Atividade + eficiência recente (30d): pendentes · próxima · conversão · ticket */}
+      <VisitasKpiTiles />
+
+      {/* Visitas firmes de hoje */}
       <VisitasHojeCard />
 
-      {/* Sugestões de visita — PR-VISIT-INTELLIGENCE Sub-PR A */}
+      {/* Sugestões de visita — ação (PR-VISIT-INTELLIGENCE Sub-PR A) */}
       <VisitSuggestionsCard />
 
       {/* Follow-ups pós-visita: visitas mornas que pedem retorno (read-only, deep-link) */}
       <FollowupsSugeridosCard />
 
+      {/* Breakdown histórico por resultado (90d) */}
       <MinhasVisitasResultadoCard />
 
-      <Card className="p-4 border-dashed border-2 border-status-warning/30 bg-status-warning-bg/20">
-        <div className="flex items-center gap-2 mb-2">
-          <Construction className="w-4 h-4 text-status-warning" />
-          <span className="text-sm font-medium">Em construção — PR-VISIT-INTELLIGENCE</span>
-        </div>
-        <p className="text-2xs text-muted-foreground">Próximas features:</p>
-        <ul className="text-2xs text-muted-foreground space-y-1 mt-2 ml-4 list-disc">
-          <li>4 tipos de missão: 🎯 Closing / 🌟 Expansion / 🚨 Recovery / 🤝 Relationship</li>
-          <li>Algoritmo de visit_score (potencial × probabilidade × urgência × proximidade)</li>
-          <li>Rota geográfica eficiente (visitas agrupadas por região)</li>
-          <li>Pre-call brief incrível antes de cada visita (consome PR-P3 + PR-CAPTURE + KB)</li>
-          <li>Registro de resultado da visita + métricas (Visit Conversion, ROI por visita)</li>
-          <li>Fila de pedidos vindos de Farmer/Hunter (&quot;solicitar visita&quot;)</li>
-        </ul>
-      </Card>
-
-      {/* KPIs reais (read-only, own-scoped); cada tile exibe sua definição */}
-      <VisitasKpiTiles />
+      {/* Trabalho dirigido + higiene — abaixo do placar */}
+      <MinhasTarefasCard />
+      <ChamadasPendentesNudge />
     </div>
   );
 }

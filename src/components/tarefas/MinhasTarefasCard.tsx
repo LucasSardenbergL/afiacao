@@ -19,6 +19,7 @@ export function MinhasTarefasCard() {
   const [adiarAlvo, setAdiarAlvo] = useState<TarefaEstado | null>(null);
   const [adiarData, setAdiarData] = useState('');
   const [adiarMotivo, setAdiarMotivo] = useState('');
+  const [salvandoAdiar, setSalvandoAdiar] = useState(false);
 
   if (isLoading || tarefas.length === 0) return null; // empty → não polui o topo
 
@@ -80,11 +81,19 @@ export function MinhasTarefasCard() {
             <Textarea placeholder="Motivo (ex: cliente pediu pra semana que vem)" value={adiarMotivo} onChange={(e) => setAdiarMotivo(e.target.value)} />
           </div>
           <DialogFooter>
-            <Button disabled={!adiarData || !adiarMotivo} onClick={async () => {
+            <Button disabled={!adiarData || !adiarMotivo || salvandoAdiar} onClick={async () => {
               if (!adiarAlvo) return;
-              await adiar(adiarAlvo.id, new Date(adiarData + 'T12:00:00').toISOString(), adiarMotivo);
-              setAdiarAlvo(null);
-            }}>Adiar</Button>
+              setSalvandoAdiar(true);
+              try {
+                await adiar(adiarAlvo.id, new Date(adiarData + 'T12:00:00').toISOString(), adiarMotivo);
+                setAdiarAlvo(null);
+              } catch {
+                // o hook já fez rollback otimista + toast; o dialog fica
+                // aberto pro usuário tentar de novo.
+              } finally {
+                setSalvandoAdiar(false);
+              }
+            }}>{salvandoAdiar ? 'Adiando…' : 'Adiar'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

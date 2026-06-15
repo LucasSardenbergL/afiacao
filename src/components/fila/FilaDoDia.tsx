@@ -5,7 +5,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { track } from '@/lib/analytics';
-import { useFilaAcoes } from '@/hooks/useFilaAcoes';
+import { BotaoLigar } from '@/components/call/BotaoLigar';
+import { useFilaAcoes, type FonteFila } from '@/hooks/useFilaAcoes';
 import { useCriticaFila } from '@/hooks/useCriticaFila';
 import { PorQueAgora } from '@/components/fila/PorQueAgora';
 import type { AcaoSugerida, CategoriaAcao } from '@/lib/fila/types';
@@ -22,6 +23,14 @@ const CATEGORIA_UI: Record<CategoriaAcao, { label: string; cls: string }> = {
   risco: { label: 'Risco', cls: 'text-status-error' },
 };
 
+/** Rótulos das fontes na linguagem da vendedora (rota = a lista de ligação; mix-gap = oportunidades). */
+const ROTULO_FONTE: Record<FonteFila, string> = {
+  tarefas: 'tarefas',
+  rota: 'lista de ligação',
+  'mix-gap': 'oportunidades',
+};
+const rotularFontes = (fontes: FonteFila[]) => fontes.map((f) => ROTULO_FONTE[f]).join(', ');
+
 function clienteHref(a: AcaoSugerida): string | null {
   return a.clienteUserId ? `/admin/customers/${a.clienteUserId}/360` : null;
 }
@@ -34,7 +43,7 @@ function AcaoCta({ a, temCritica }: { a: AcaoSugerida; temCritica: boolean }) {
   };
   const tel = a.telefone?.replace(/\D/g, '');
   if (a.cta === 'ligar' && tel) {
-    return <Button asChild size="sm" variant="outline"><a href={`tel:${tel}`} onClick={onClick}>Ligar</a></Button>;
+    return <BotaoLigar telefone={a.telefone} nomeCliente={a.clienteNome ?? a.titulo} onLigar={onClick} />;
   }
   if (a.cta === 'whatsapp' && tel) {
     return <Button asChild size="sm" variant="outline"><a href={`https://wa.me/${tel}`} target="_blank" rel="noopener noreferrer" onClick={onClick}>WhatsApp</a></Button>;
@@ -53,7 +62,7 @@ function AcaoCta({ a, temCritica }: { a: AcaoSugerida; temCritica: boolean }) {
  * Fase 3 (flag `filaContextPanel`): clicar no item abre o FilaContextPanel (painel de contexto).
  */
 export function FilaDoDia() {
-  const { acoes, isLoading } = useFilaAcoes();
+  const { acoes, isLoading, isError, fontesComErro, retry } = useFilaAcoes();
   const packs = useCriticaFila(acoes);
   const shownRef = useRef<Set<string>>(new Set());
 
@@ -96,6 +105,19 @@ export function FilaDoDia() {
   }
 
   if (visiveis.length === 0) {
+    // Erro ≠ dia limpo: sem isto, RLS negada/rede ruim virava "carteira em
+    // dia" — falso-verde num motor de receita (a vendedora deixava de ligar).
+    if (isError) {
+      return (
+        <Card className="p-6">
+          <p className="text-sm font-medium">Não consegui carregar sua fila.</p>
+          <p className="text-2xs text-muted-foreground mt-1">
+            Falha em: {rotularFontes(fontesComErro)} — isso NÃO significa que a carteira está em dia.
+          </p>
+          <Button size="sm" variant="outline" className="mt-3" onClick={retry}>Tentar de novo</Button>
+        </Card>
+      );
+    }
     return (
       <Card className="p-6">
         <p className="text-sm font-medium">Nada prioritário na fila agora.</p>
@@ -118,6 +140,12 @@ export function FilaDoDia() {
           <p className="text-2xs text-muted-foreground">
             {visiveis.length} ações priorizadas — tarefas, rota e oportunidades, do mais urgente ao menos.
           </p>
+          {isError && (
+            <p className="text-2xs text-status-warning">
+              Falha ao carregar: {rotularFontes(fontesComErro)} — a lista pode estar incompleta.{' '}
+              <button type="button" className="underline" onClick={retry}>Tentar de novo</button>
+            </p>
+          )}
         </CardHeader>
         <div className="divide-y divide-border">
           {visiveis.slice(0, 30).map((a, i) => {

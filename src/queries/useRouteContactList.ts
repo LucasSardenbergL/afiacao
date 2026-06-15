@@ -8,6 +8,8 @@ import type { ContactCandidate, ContactConfig, ScoredCandidate } from '@/lib/wha
 import { spBusinessDate } from '@/lib/time/sp-day';
 import { derivarSinaisContato, type ContatoLog, type OutcomeStatus, type SinaisContato } from '@/lib/route/route-outcome';
 import { logger } from '@/lib/logger';
+import { track } from '@/lib/analytics';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 
 interface VisitScoreRow {
   customer_user_id: string;
@@ -104,12 +106,18 @@ async function fetchContactLog(ids: string[]): Promise<Map<string, ContatoLog[]>
   const rows: ContactLogRow[] = [];
   for (let i = 0; i < ids.length; i += IN_CHUNK) {
     const chunk = ids.slice(i, i + IN_CHUNK);
-    await paginarLog(from => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
-      .in('customer_user_id', chunk).eq('status', 'opt_out')
-      .order('created_at', { ascending: true }).range(from, from + PAGE - 1) as PromiseLike<PgRes>, rows);
-    await paginarLog(from => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
-      .in('customer_user_id', chunk).gte('created_at', cutoff90)
-      .order('created_at', { ascending: true }).range(from, from + PAGE - 1) as PromiseLike<PgRes>, rows);
+    // Os 2 ramos (opt_out full-history + cadência 90d) são independentes →
+    // PARALELOS por chunk (eram seriais). O sink compartilhado é seguro
+    // (single-thread) e o derivarSinaisContato não depende da ordem global
+    // (já era intercalada por ramo na versão serial); o dedupe abaixo cobre.
+    await Promise.all([
+      paginarLog(from => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
+        .in('customer_user_id', chunk).eq('status', 'opt_out')
+        .order('created_at', { ascending: true }).range(from, from + PAGE - 1) as PromiseLike<PgRes>, rows),
+      paginarLog(from => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
+        .in('customer_user_id', chunk).gte('created_at', cutoff90)
+        .order('created_at', { ascending: true }).range(from, from + PAGE - 1) as PromiseLike<PgRes>, rows),
+    ]);
   }
   // dedup por (cliente|created_at|status) — opt_out recente aparece nas 2 queries
   const seen = new Set<string>();
@@ -125,20 +133,77 @@ async function fetchContactLog(ids: string[]): Promise<Map<string, ContatoLog[]>
   return byCustomer;
 }
 
-/** Lê TODOS os customer_visit_scores com cidade (pagina o cap de 1000 do PostgREST). */
-async function fetchAllVisitScores(): Promise<VisitScoreRow[]> {
-  const out: VisitScoreRow[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
+/**
+ * Lê TODOS os customer_visit_scores com cidade (~7 páginas de 1000). A 1ª
+ * página traz o count exato e as DEMAIS saem em PARALELO — a versão serial
+ * (7 round-trips encadeados) era o estágio mais lento da fila de ligação,
+ * pago a cada visita à tela (staleTime 60s).
+ */
+async function fetchAllVisitScores(farmerId: string | null): Promise<VisitScoreRow[]> {
+  const baseSelect = (withCount: boolean) => {
+    let q = supabase
       .from('customer_visit_scores')
-      .select('customer_user_id, farmer_id, city, visit_score')
-      .not('city', 'is', null)
-      .order('customer_user_id', { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (error) throw error;
-    const rows = (data ?? []) as VisitScoreRow[];
-    out.push(...rows);
-    if (rows.length < PAGE) break;
+      .select('customer_user_id, farmer_id, city, visit_score', withCount ? { count: 'exact' } : undefined)
+      .not('city', 'is', null);
+    // Lente "Ver como": escopa à carteira do ALVO NO SERVIDOR. O master lê
+    // customer_visit_scores sem o filtro de RLS → sem isto a rota traria TODAS
+    // as carteiras (infiel ao alvo) e baixaria ~12× mais linhas em ~7 páginas
+    // (provável causa do erro "uma das fontes falhou" na lente). Fora da lente
+    // farmerId=null → query IDÊNTICA à anterior; a RLS escopa a vendedora real.
+    if (farmerId) q = q.eq('farmer_id', farmerId);
+    return q.order('customer_user_id', { ascending: true });
+  };
+
+  const first = await baseSelect(true).range(0, PAGE - 1);
+  if (first.error) throw first.error;
+  const out: VisitScoreRow[] = [...((first.data ?? []) as VisitScoreRow[])];
+  const total = first.count ?? out.length;
+
+  if (total > PAGE) {
+    const ranges: Array<[number, number]> = [];
+    for (let from = PAGE; from < total; from += PAGE) ranges.push([from, from + PAGE - 1]);
+    const pages = await Promise.all(ranges.map(([f, t]) => baseSelect(false).range(f, t)));
+    for (const p of pages) {
+      if (p.error) throw p.error;
+      out.push(...((p.data ?? []) as VisitScoreRow[]));
+    }
+  }
+  return out;
+}
+
+/**
+ * #16-full (fase 1, SHADOW): candidatos filtrados NO SERVIDOR pela coluna
+ * persistida city_norm (migration 20260611150000 — generated column que
+ * espelha a parte-cidade do normalizeCityKey; paridade provada pelo harness
+ * db/test-city-norm-paridade.sh). O filtro server é um SUPERSET seguro: só
+ * cidade, NUNCA UF — quem julga a UF segue sendo o cityKeyEquals no client
+ * (semântica assimétrica: cadastro sem UF casa por cidade). Durante o shadow
+ * (7 dias úteis), o resultado EXIBIDO continua vindo do full-fetch legado;
+ * esta query roda em paralelo só pra telemetria de divergência.
+ */
+async function fetchVisitScoresByCityNorm(cityNorms: string[], farmerId: string | null): Promise<VisitScoreRow[]> {
+  const baseSelect = (withCount: boolean) => {
+    let q = supabase
+      .from('customer_visit_scores')
+      .select('customer_user_id, farmer_id, city, visit_score', withCount ? { count: 'exact' } : undefined)
+      .in('city_norm' as never, cityNorms);
+    // Lente: mesmo escopo do full-fetch acima (mantém a telemetria do shadow válida).
+    if (farmerId) q = q.eq('farmer_id', farmerId);
+    return q.order('customer_user_id', { ascending: true });
+  };
+
+  const first = await baseSelect(true).range(0, PAGE - 1);
+  if (first.error) throw first.error;
+  const out: VisitScoreRow[] = [...((first.data ?? []) as VisitScoreRow[])];
+  const total = first.count ?? out.length;
+  if (total > PAGE) {
+    const ranges: Array<[number, number]> = [];
+    for (let from = PAGE; from < total; from += PAGE) ranges.push([from, from + PAGE - 1]);
+    const pages = await Promise.all(ranges.map(([f, t]) => baseSelect(false).range(f, t)));
+    for (const p of pages) {
+      if (p.error) throw p.error;
+      out.push(...((p.data ?? []) as VisitScoreRow[]));
+    }
   }
   return out;
 }
@@ -170,8 +235,12 @@ async function fetchProfiles(ids: string[]): Promise<ProfileRow[]> {
 }
 
 export function useRouteContactList(workdayIso: string) {
+  const { isImpersonating, effectiveUserId } = useImpersonation();
+  // Na lente "Ver como", escopa a fila à carteira do ALVO (ver fetchAllVisitScores).
+  // Fora da lente: null → a RLS escopa a vendedora real, comportamento INALTERADO.
+  const lensFarmerId = isImpersonating && effectiveUserId ? effectiveUserId : null;
   return useQuery<RouteContactListData>({
-    queryKey: ['route-contact-list', workdayIso],
+    queryKey: ['route-contact-list', workdayIso, lensFarmerId],
     staleTime: 60_000,
     queryFn: async () => {
       // 1) agenda + override + config → cidades D-1
@@ -195,11 +264,59 @@ export function useRouteContactList(workdayIso: string) {
       if (prep.cities.length === 0) return empty;
 
       // 2) candidatos das cidades-alvo (customer_visit_scores é city-aware + RLS por carteira)
-      const allScores = await fetchAllVisitScores();
-      const cands0 = allScores.filter(r => {
+      // SHADOW #16-full: a query server-side (city_norm) roda em PARALELO ao
+      // full-fetch legado, com fail-open TOTAL — erro (ex.: migration ainda
+      // não aplicada → coluna inexistente) vira telemetria, nunca afeta a fila.
+      const cityNorms = [...new Set(prep.cities.map(c => c.city))];
+      const [allScores, shadowRes] = await Promise.all([
+        fetchAllVisitScores(lensFarmerId),
+        fetchVisitScoresByCityNorm(cityNorms, lensFarmerId)
+          .then(rows => ({ ok: true as const, rows }))
+          .catch((e: unknown) => ({ ok: false as const, err: e instanceof Error ? e.message : String(e) })),
+      ]);
+      const candsFiltrados = allScores.filter(r => {
         const ck = normalizeCityKey(r.city);
         return ck !== null && prep.cities.some(pc => cityKeyEquals(pc, ck));
       });
+      // Dedupe por cliente: as páginas PARALELAS do fetch podem (raro) trazer
+      // uma linha duplicada em shift de offset — cliente 2× na fila ocuparia
+      // 2 slots de capacidade e geraria 2 ligações.
+      const candByUser = new Map<string, VisitScoreRow>();
+      for (const r of candsFiltrados) {
+        if (!candByUser.has(r.customer_user_id)) candByUser.set(r.customer_user_id, r);
+      }
+      const cands0 = [...candByUser.values()];
+
+      // Telemetria do shadow: aplica o MESMO filtro client (cityKeyEquals) ao
+      // resultado do servidor e compara os conjuntos de clientes. Só
+      // contagens/direção — sem IDs (PII). Critério de corte (Codex): 7 dias
+      // úteis com faltando_no_novo=0 nas cidades exercitadas → aí o
+      // full-fetch sai e o .in(city_norm) vira a fonte (PR futuro).
+      if (shadowRes.ok) {
+        const novoIds = new Set(
+          shadowRes.rows
+            .filter(r => {
+              const ck = normalizeCityKey(r.city);
+              return ck !== null && prep.cities.some(pc => cityKeyEquals(pc, ck));
+            })
+            .map(r => r.customer_user_id),
+        );
+        const legacyIds = new Set(cands0.map(c => c.customer_user_id));
+        let faltandoNoNovo = 0;
+        for (const id of legacyIds) if (!novoIds.has(id)) faltandoNoNovo++;
+        let sobrandoNoNovo = 0;
+        for (const id of novoIds) if (!legacyIds.has(id)) sobrandoNoNovo++;
+        track('rota.city_shadow', {
+          legacy: legacyIds.size,
+          novo: novoIds.size,
+          faltando_no_novo: faltandoNoNovo,
+          sobrando_no_novo: sobrandoNoNovo,
+          cidades: prep.cities.length,
+        });
+      } else {
+        track('rota.city_shadow', { erro: true, mensagem: shadowRes.err.slice(0, 120) });
+      }
+
       if (cands0.length === 0) return empty;
 
       // 3) métricas econômicas + perfis (nome/telefone) em lote
@@ -207,24 +324,26 @@ export function useRouteContactList(workdayIso: string) {
       const farmerIds = [...new Set(cands0.map(c => c.farmer_id).filter((x): x is string => !!x))];
       const profileIds = [...new Set([...userIds, ...farmerIds])];
 
-      const [metrics, profiles] = await Promise.all([fetchMetrics(userIds), fetchProfiles(profileIds)]);
-      const mByUser = new Map(metrics.map(m => [m.customer_user_id, m]));
-      const pByUser = new Map(profiles.map(p => [p.user_id, p]));
-
-      // cadência ao vivo: lê route_contact_log e deriva os sinais por cliente. Fail-open:
-      // erro de leitura → defaults (fila funciona como antes), NÃO esconde cliente.
+      // Métricas + perfis + log de contato dependem SÓ de userIds → 1 rodada
+      // PARALELA (o log era um await separado DEPOIS de metrics/profiles).
+      // O fail-open do log (erro → defaults, NÃO esconde cliente) é preservado
+      // pelo catch inline — falha do log não derruba os outros dois.
       const hoje = spBusinessDate(new Date());
       // mesmo fallback da UI (RotaListaLigacao grava data_rota = routeDate ?? workday) — senão em dia
       // de diária (routeDate null) o convertido gravado com workday nunca casaria → some de "Resolvidos".
       const dataRotaFila = prep.routeDate ?? workdayIso;
-      let logByCustomer = new Map<string, ContatoLog[]>();
       let cadenciaIndisponivel = false;
-      try {
-        logByCustomer = await fetchContactLog(userIds);
-      } catch (e) {
-        cadenciaIndisponivel = true;
-        logger.warn('Leitura de route_contact_log falhou — cadência ao vivo indisponível', { error: e instanceof Error ? e.message : String(e) });
-      }
+      const [metrics, profiles, logByCustomer] = await Promise.all([
+        fetchMetrics(userIds),
+        fetchProfiles(profileIds),
+        fetchContactLog(userIds).catch((e) => {
+          cadenciaIndisponivel = true;
+          logger.warn('Leitura de route_contact_log falhou — cadência ao vivo indisponível', { error: e instanceof Error ? e.message : String(e) });
+          return new Map<string, ContatoLog[]>();
+        }),
+      ]);
+      const mByUser = new Map(metrics.map(m => [m.customer_user_id, m]));
+      const pByUser = new Map(profiles.map(p => [p.user_id, p]));
       const sinaisByCustomer = new Map<string, SinaisContato>();
       for (const id of userIds) {
         sinaisByCustomer.set(id, derivarSinaisContato(logByCustomer.get(id) ?? [], hoje, dataRotaFila));

@@ -18,6 +18,13 @@ import type { CacaCandidatoDisplay } from '@/lib/caca/types';
 
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
 
+// BotaoLigar carrega a árvore de telefonia (softphone WebRTC, lazy) e tem teste
+// dedicado (call/__tests__/BotaoLigar.test.tsx). Stub aqui mantém o foco no
+// FilaDeCaca: o botão "Ligar" só monta quando há telefone (condicionado no call-site).
+vi.mock('@/components/call/BotaoLigar', () => ({
+  BotaoLigar: () => <button type="button">Ligar</button>,
+}));
+
 // ─── Helpers de fixture ────────────────────────────────────────────────────────
 
 function makeDisplay(overrides: {

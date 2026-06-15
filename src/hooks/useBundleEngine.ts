@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
-import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -142,14 +142,19 @@ const DEFAULT_CONFIG = {
 
 // ─── Main Hook ───────────────────────────────────────────────────────
 export const useBundleEngine = () => {
-  const { user } = useAuth();
+  // Lente "Ver como": id efetivo = ALVO na lente (lê/recalcula os bundles DELE pra
+  // inspeção), próprio usuário fora. Na lente a persistência (regras + recomendações)
+  // é PULADA (igual useCrossSellEngine/useFarmerScoring): o master inspeciona, não
+  // regrava a carteira do alvo. Fora da lente effectiveUserId === user.id (byte-
+  // equivalente, zero regressão).
+  const { effectiveUserId, isImpersonating } = useImpersonation();
   const [customerBundles, setCustomerBundles] = useState<CustomerBundles[]>([]);
   const [rules, setRules] = useState<AssociationRule[]>([]);
   const [loading, setLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
 
   const calculateBundles = useCallback(async (config = DEFAULT_CONFIG) => {
-    if (!user?.id) return;
+    if (!effectiveUserId) return;
     setCalculating(true);
     setLoading(true);
 
@@ -170,8 +175,11 @@ export const useBundleEngine = () => {
         return all;
       };
 
-      let clientScores = await fetchAllScores(user.id);
-      if (!clientScores.length) clientScores = await fetchAllScores();
+      // Try farmer-specific first, fallback to all (super_admin). Na lente NÃO cai no
+      // fallback "todos os scores" — escopa estritamente ao alvo (degradação honesta:
+      // alvo sem score → lista vazia, nunca a carteira de todo mundo).
+      let clientScores = await fetchAllScores(effectiveUserId);
+      if (!clientScores.length && !isImpersonating) clientScores = await fetchAllScores();
 
       const [
         { data: products },
@@ -352,19 +360,23 @@ export const useBundleEngine = () => {
       discoveredRules.sort((a, b) => b.lift - a.lift);
       setRules(discoveredRules.slice(0, 50)); // Keep top 50
 
-      // Persist top rules
-      await supabase.from('farmer_association_rules').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      if (discoveredRules.length > 0) {
-        const rulesToInsert = discoveredRules.slice(0, 50).map(r => ({
-          antecedent_product_ids: r.antecedent,
-          consequent_product_ids: r.consequent,
-          support: Math.round(r.support * 10000) / 10000,
-          confidence: Math.round(r.confidence * 10000) / 10000,
-          lift: Math.round(r.lift * 100) / 100,
-          rule_type: r.type,
-          sample_size: totalBaskets,
-        }));
-        await supabase.from('farmer_association_rules').insert(rulesToInsert);
+      // Persist top rules — PULADO na lente "Ver como" (a tabela é GLOBAL: o delete
+      // apaga as regras de toda a base; o master inspeciona os bundles do alvo sem
+      // recalcular regras/recomendações da carteira dele).
+      if (!isImpersonating) {
+        await supabase.from('farmer_association_rules').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        if (discoveredRules.length > 0) {
+          const rulesToInsert = discoveredRules.slice(0, 50).map(r => ({
+            antecedent_product_ids: r.antecedent,
+            consequent_product_ids: r.consequent,
+            support: Math.round(r.support * 10000) / 10000,
+            confidence: Math.round(r.confidence * 10000) / 10000,
+            lift: Math.round(r.lift * 100) / 100,
+            rule_type: r.type,
+            sample_size: totalBaskets,
+          }));
+          await supabase.from('farmer_association_rules').insert(rulesToInsert);
+        }
       }
 
       // 5. Generate bundles per customer
@@ -474,7 +486,7 @@ export const useBundleEngine = () => {
         const { data: existingRecs } = (await supabase
           .from('farmer_recommendations')
           .select('product_id, lie, recommendation_type')
-          .eq('farmer_id', user.id)
+          .eq('farmer_id', effectiveUserId)
           .eq('customer_user_id', cid)
           .eq('status', 'pendente')
           .order('lie', { ascending: false })
@@ -521,22 +533,25 @@ export const useBundleEngine = () => {
 
       setCustomerBundles(allCustomerBundles);
 
-      // Persist bundle recommendations
-      for (const cb of allCustomerBundles) {
-        for (const bundle of cb.bundles) {
-          await supabase.from('farmer_bundle_recommendations').insert({
-            farmer_id: user.id,
-            customer_user_id: bundle.customerId,
-            bundle_products: bundle.products as unknown as Json,
-            support: bundle.support,
-            confidence: bundle.confidence,
-            lift: bundle.lift,
-            p_bundle: bundle.pBundle,
-            m_bundle: bundle.mBundle,
-            lie_bundle: bundle.lieBundle,
-            complexity_factor: bundle.complexityFactor,
-            status: 'pendente',
-          });
+      // Persist bundle recommendations — PULADO na lente "Ver como" (só leitura: o
+      // master inspeciona os bundles do alvo sem regravar a carteira dele).
+      if (!isImpersonating) {
+        for (const cb of allCustomerBundles) {
+          for (const bundle of cb.bundles) {
+            await supabase.from('farmer_bundle_recommendations').insert({
+              farmer_id: effectiveUserId,
+              customer_user_id: bundle.customerId,
+              bundle_products: bundle.products as unknown as Json,
+              support: bundle.support,
+              confidence: bundle.confidence,
+              lift: bundle.lift,
+              p_bundle: bundle.pBundle,
+              m_bundle: bundle.mBundle,
+              lie_bundle: bundle.lieBundle,
+              complexity_factor: bundle.complexityFactor,
+              status: 'pendente',
+            });
+          }
         }
       }
 
@@ -548,7 +563,7 @@ export const useBundleEngine = () => {
       setCalculating(false);
       setLoading(false);
     }
-  }, [user?.id]);
+  }, [effectiveUserId, isImpersonating]);
 
   // ─── Actions ─────────────────────────────────────────────────────────
   const markBundleOffered = useCallback(async (bundleId: string) => {

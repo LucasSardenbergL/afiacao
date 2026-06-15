@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { isOmiePedidoJaCadastrado, extrairPedidoOmie, deveCriarPedidoOmie } from '../omie-disparo-helpers';
+import {
+  isOmiePedidoJaCadastrado,
+  extrairPedidoOmie,
+  deveCriarPedidoOmie,
+  portalEnviadoPorAutomacao,
+  deveEnviarEmailPortalManual,
+} from '../omie-disparo-helpers';
 
 describe('isOmiePedidoJaCadastrado', () => {
   it('detecta "já cadastrado" em pt-BR (com acento)', () => {
@@ -74,5 +80,39 @@ describe('deveCriarPedidoOmie (guard anti-PO-duplicado · 3b)', () => {
   it('"0" / 0 representam vazio → criar (não bloqueia criação legítima)', () => {
     expect(deveCriarPedidoOmie('0')).toBe(true);
     expect(deveCriarPedidoOmie(0)).toBe(true);
+  });
+});
+
+describe('portalEnviadoPorAutomacao (Sayerlack/OBEN cola sozinho via Browserless)', () => {
+  it('OBEN + RENNER SAYERLACK → automatizado', () => {
+    expect(portalEnviadoPorAutomacao({ empresa: 'OBEN', fornecedor_nome: 'RENNER SAYERLACK S/A' })).toBe(true);
+  });
+  it('reconhece "sayerlack" em qualquer caixa / posição no nome', () => {
+    expect(portalEnviadoPorAutomacao({ empresa: 'OBEN', fornecedor_nome: 'Sayerlack' })).toBe(true);
+    expect(portalEnviadoPorAutomacao({ empresa: 'oben', fornecedor_nome: 'tintas sayerlack ltda' })).toBe(true);
+  });
+  it('OBEN + fornecedor não-Sayerlack → NÃO automatizado', () => {
+    expect(portalEnviadoPorAutomacao({ empresa: 'OBEN', fornecedor_nome: 'ACRE CAXIAS IND. E COM. DE ABRASIVOS LTDA' })).toBe(false);
+  });
+  it('Sayerlack em outra empresa que não OBEN → NÃO automatizado (automação é OBEN-only)', () => {
+    expect(portalEnviadoPorAutomacao({ empresa: 'COLACOR', fornecedor_nome: 'RENNER SAYERLACK S/A' })).toBe(false);
+  });
+  it('empresa/nome nulos ou vazios → NÃO automatizado', () => {
+    expect(portalEnviadoPorAutomacao({ empresa: null, fornecedor_nome: null })).toBe(false);
+    expect(portalEnviadoPorAutomacao({ empresa: 'OBEN', fornecedor_nome: '' })).toBe(false);
+    expect(portalEnviadoPorAutomacao({})).toBe(false);
+  });
+});
+
+describe('deveEnviarEmailPortalManual (suprime o "[Portal B2B] cole na mão" redundante)', () => {
+  it('Sayerlack/OBEN → NÃO enviar (automação já colou; aviso "insere manualmente" é enganoso)', () => {
+    expect(deveEnviarEmailPortalManual({ empresa: 'OBEN', fornecedor_nome: 'RENNER SAYERLACK S/A' })).toBe(false);
+  });
+  it('portal_b2b SEM automação (não-Sayerlack) → AINDA enviar (staff cola de verdade)', () => {
+    expect(deveEnviarEmailPortalManual({ empresa: 'OBEN', fornecedor_nome: 'OUTRO FORNECEDOR PORTAL' })).toBe(true);
+  });
+  it('conservador: na dúvida (empresa/nome ausentes) → enviar (não suprime sem certeza de automação)', () => {
+    expect(deveEnviarEmailPortalManual({ empresa: null, fornecedor_nome: null })).toBe(true);
+    expect(deveEnviarEmailPortalManual({})).toBe(true);
   });
 });

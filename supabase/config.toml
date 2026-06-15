@@ -93,6 +93,9 @@ verify_jwt = false
 [functions.omie-sync-metadados]
 verify_jwt = false
 
+[functions.radar-ingest]
+verify_jwt = false
+
 [functions.sync-reprocess]
 verify_jwt = false
 
@@ -127,4 +130,10 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.posthog-error-webhook]
+verify_jwt = false
+
+[functions.enviar-push]
+verify_jwt = false
+
+[functions.radar-ingest]
 verify_jwt = false

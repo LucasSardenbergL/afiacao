@@ -15,6 +15,7 @@ const FarmerCopilot = () => {
   const {
     navigate,
     isStaff,
+    isImpersonating,
     copilot,
     selectedCustomer,
     setSelectedCustomer,
@@ -57,6 +58,7 @@ const FarmerCopilot = () => {
             customers={customers}
             isConnecting={isConnecting}
             onStart={handleStart}
+            disabled={isImpersonating}
           />
         ) : (
           <>

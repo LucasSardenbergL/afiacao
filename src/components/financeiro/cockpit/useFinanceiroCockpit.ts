@@ -47,10 +47,20 @@ export function useFinanceiroCockpit() {
     setLoading(true);
     try {
       const [res, ag, dr, inad, snaps] = await Promise.all([
-        getResumoFinanceiro(['oben', 'colacor', 'colacor_sc']),
+        // getResumoFinanceiro agora LANÇA em erro de query (era swallow→R$0); o catch
+        // por fonte impede que uma falha do resumo derrube aging/DRE/inadimplentes junto.
+        getResumoFinanceiro(['oben', 'colacor', 'colacor_sc']).catch((e): Record<string, FinResumo> => {
+          logger.warn('Resumo financeiro indisponível', { error: e instanceof Error ? e.message : String(e) });
+          return {};
+        }),
         getAgingReceber('all'),
         Promise.all(['oben', 'colacor', 'colacor_sc'].map(co => getDRE(co as Company, ano, undefined, regime))).then(r => r.flat()),
-        getTopInadimplentes('all', 5),
+        // getTopInadimplentes agora LANÇA em erro (era [] silencioso = falso
+        // "ninguém inadimplente"); catch por fonte pra não derrubar o resto.
+        getTopInadimplentes('all', 5).catch((e): InadimplenteRow[] => {
+          logger.warn('Top inadimplentes indisponível', { error: e instanceof Error ? e.message : String(e) });
+          return [];
+        }),
         // Projeção 13s + NCG consolidados via snapshot real da engine A1 (não a RPC ingênua)
         getProjecaoSnapshotsCockpit(EMPRESAS_COCKPIT).catch((e) => {
           logger.warn('Snapshots de projeção indisponíveis', { error: e instanceof Error ? e.message : String(e) });

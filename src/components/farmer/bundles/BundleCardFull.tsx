@@ -2,6 +2,7 @@
 // Extraído verbatim de src/pages/FarmerBundles.tsx (god-component split).
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -40,6 +41,11 @@ export const BundleCardFull = ({
   questions, isQuestionsGenerating, onGenerateQuestions, onSetResponse, onToggleAlt, onSaveQuestions,
 }: BundleCardFullProps) => {
   const navigate = useNavigate();
+  // Lente "Ver como": a geração (perguntas/argumentação via edge) e o save de respostas
+  // são WRITES — bloqueados na fonte pelo write-guard. Desabilitar os botões é UX honesta
+  // (evita o toast de erro do guard). A leitura/inspeção dos bundles do alvo segue normal.
+  const { isImpersonating } = useImpersonation();
+  const lensTitle = isImpersonating ? 'Indisponível em modo Ver como' : undefined;
   const [argTab, setArgTab] = useState<'phone' | 'whatsapp' | 'tecnica'>('phone');
   const [activeSection, setActiveSection] = useState<'none' | 'args' | 'questions'>('none');
   const [copied, setCopied] = useState(false);
@@ -92,6 +98,8 @@ export const BundleCardFull = ({
           size="sm"
           variant={activeSection === 'questions' ? 'default' : 'outline'}
           className="flex-1 h-7 text-[9px] gap-1"
+          disabled={isImpersonating}
+          title={lensTitle}
           onClick={() => {
             if (activeSection === 'questions') { setActiveSection('none'); return; }
             setActiveSection('questions');
@@ -104,6 +112,8 @@ export const BundleCardFull = ({
           size="sm"
           variant={activeSection === 'args' ? 'default' : 'outline'}
           className="flex-1 h-7 text-[9px] gap-1"
+          disabled={isImpersonating}
+          title={lensTitle}
           onClick={() => {
             if (activeSection === 'args') { setActiveSection('none'); return; }
             setActiveSection('args');
@@ -158,6 +168,8 @@ export const BundleCardFull = ({
                   size="sm"
                   variant="outline"
                   className="flex-1 h-7 text-[9px] gap-1"
+                  disabled={isImpersonating}
+                  title={lensTitle}
                   onClick={() => onSaveQuestions(false)}
                 >
                   <Save className="w-3 h-3" /> Salvar (sem oferta)
@@ -165,6 +177,8 @@ export const BundleCardFull = ({
                 <Button
                   size="sm"
                   className="flex-1 h-7 text-[9px] gap-1"
+                  disabled={isImpersonating}
+                  title={lensTitle}
                   onClick={() => onSaveQuestions(true)}
                 >
                   <Save className="w-3 h-3" /> Salvar (ofertou)

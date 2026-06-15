@@ -1,7 +1,8 @@
 // Geração pura de HTML para impressão de pedidos.
 // Extraído de src/pages/SalesPrintDashboard.tsx (god-component split).
-import { addDays, format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { addDays } from 'date-fns';
+import { formatarDataPedido } from '@/lib/pedido/data-pedido';
+import { escapeHtml } from '@/lib/escape-html';
 import { type PrintOrderData } from '@/components/OrderPrintLayout';
 import type { CompanyFilter, SalesOrderRow } from './types';
 
@@ -41,7 +42,9 @@ export function buildPrintData(order: SalesOrderRow, company: CompanyFilter, log
     companyAddress: c.address,
     companyLogoUrl: logoUrls?.[company] || undefined,
     orderNumber: order.omie_numero_pedido?.replace(/^0+/, '') || order.id.slice(0, 8).toUpperCase(),
-    date: format(new Date(order.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR }),
+    // Pedido do sync tem created_at = data-pura (meia-noite UTC, sem hora real):
+    // o helper imprime só a data no dia certo; com hora real, formato inalterado.
+    date: formatarDataPedido(order.created_at, 'dd/MM/yyyy HH:mm'),
     customerName: order.customer_name || 'Cliente',
     customerDocument: order.customer_document || '',
     customerPhone: order.customer_phone,
@@ -66,11 +69,6 @@ export function buildPrintData(order: SalesOrderRow, company: CompanyFilter, log
     observacoes: order.notes || undefined,
     isOben: isOben,
   };
-}
-
-export function escapeHtml(s: string | undefined | null): string {
-  if (!s) return '';
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 // Build HTML for a single order page (without <html>/<body> wrappers)

@@ -11,9 +11,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   Phone, Users, Target, BarChart3, Brain,
   Zap, Activity,
-  Shield, Heart, Loader2,
+  Shield, Heart,
   Eye, ShoppingCart,
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CallButton } from '@/components/call/CallButton';
 
@@ -47,11 +48,9 @@ const FarmerDashboard = () => {
   const [selectedClient, setSelectedClient] = useState<ClientScore | null>(null);
 
   if (authLoading || loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    // PageSkeleton (não Loader2 full-page): o Suspense da rota já mostrou um
+    // skeleton — regredir pra spinner vazio fazia o layout sumir e voltar.
+    return <PageSkeleton variant="cockpit" />;
   }
 
   if (!isStaff) { navigate('/', { replace: true }); return null; }

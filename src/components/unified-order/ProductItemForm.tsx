@@ -1,9 +1,13 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Search, Plus, Loader2, Package } from 'lucide-react';
+import { Search, Plus, Loader2, Package, FileText } from 'lucide-react';
+import { keyDeSku, type CurrentSpec } from '@/lib/knowledge-base/spec-link';
+import { FichaTecnicaSheet } from '@/components/unified-order/FichaTecnicaSheet';
+import { usePrecoCockpit, type ItemCockpitInput } from '@/hooks/usePrecoCockpit';
+import { FAIXA_UI } from '@/lib/preco/faixa-ui';
 import { cn } from '@/lib/utils';
 import type { Product, ProductCartItem } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
@@ -23,14 +27,38 @@ interface ProductItemFormProps {
    *  (logo após selecionar o cliente). Mostra que os valores exibidos são de
    *  tabela e ainda vão atualizar — evita a percepção de "travado". */
   customerPricesLoading?: boolean;
+  /** Mapa de fichas técnicas por keyDeSku(account, cod). Só vínculos confirmados+aprovados. */
+  specsByKey?: Map<string, CurrentSpec>;
+  /** Mostra "Ver ficha" só p/ staff (a view RLS já é staff; isto evita o affordance p/ não-staff). */
+  canSeeFicha?: boolean;
 }
 
 export function ProductItemForm({
   title, products, prices, loading, productSearch, onSearchChange,
   productItems, onAddProduct, customerPurchaseHistory = {},
-  customerPricesLoading = false,
+  customerPricesLoading = false, specsByKey, canSeeFicha = false,
 }: ProductItemFormProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [fichaAberta, setFichaAberta] = useState<string | null>(null);
+
+  // Cockpit de preço por linha (batch). Enquanto os preços do contrato carregam,
+  // não consulta (o preço exibido ainda vai mudar). Saúde sobre o preço aplicado.
+  const cockpitInputs = useMemo<ItemCockpitInput[]>(() => {
+    if (customerPricesLoading) return [];
+    // #6: produto tintométrico NÃO recebe faixa na lista — a faixa real (custo
+    // base+corantes) depende da cor escolhida e aparece na linha do carrinho.
+    // O custo da base aqui enganaria. Filtra fora os tintométricos.
+    return products
+      .filter(p => !p.is_tintometric)
+      .map(p => ({ empresa: p.account ?? '', codigo: p.omie_codigo_produto, preco: prices[p.omie_codigo_produto] || p.valor_unitario }))
+      .filter(i => i.preco > 0 && Number.isFinite(i.codigo) && i.empresa !== '');
+  }, [products, prices, customerPricesLoading]);
+  const { data: cockpitList } = usePrecoCockpit(cockpitInputs);
+  // produtos da busca são únicos por código (e tint é filtrado fora) → Map por código.
+  const cockpitByCode = useMemo(
+    () => new Map((cockpitList ?? []).map(l => [l.codigo, l])),
+    [cockpitList],
+  );
 
   const getQty = (id: string) => quantities[id] ?? 1;
   const setQty = (id: string, v: number) => setQuantities(prev => ({ ...prev, [id]: Math.max(1, v) }));
@@ -70,6 +98,10 @@ export function ProductItemForm({
               const customerPrice = prices[product.omie_codigo_produto];
               const lastOrderDate = customerPurchaseHistory[product.codigo] || customerPurchaseHistory[`pid:${product.id}`] || customerPurchaseHistory[`omie:${product.omie_codigo_produto}`] || '';
               const qty = getQty(product.id);
+              const ficha = canSeeFicha
+                ? specsByKey?.get(keyDeSku(product.account, product.omie_codigo_produto))
+                : undefined;
+              const health = cockpitByCode?.get(product.omie_codigo_produto);
               return (
                 <div
                   key={product.id}
@@ -95,6 +127,20 @@ export function ProductItemForm({
                             {formatDate(lastOrderDate)}
                           </span>
                         )}
+                        {health && health.faixa !== 'neutro' && FAIXA_UI[health.faixa] && (
+                          <Badge
+                            variant="outline"
+                            className={cn('text-[9px] px-1 py-0', FAIXA_UI[health.faixa].cls)}
+                            title={health.cmc != null ? 'Markup bruto sobre o custo (CMC) — não inclui imposto/comissão/frete/prazo' : undefined}
+                          >
+                            {FAIXA_UI[health.faixa].label}
+                            {health.cmc != null && health.markup_perc != null && (
+                              <span className="ml-1 font-mono">
+                                {Math.round(health.markup_perc)}%{health.folga_reais != null ? ` · ${fmt(health.folga_reais)}` : ''}
+                              </span>
+                            )}
+                          </Badge>
+                        )}
                       </div>
                     </div>
                     <div className="text-right shrink-0">
@@ -118,11 +164,26 @@ export function ProductItemForm({
                         className="h-7 w-16 text-xs text-center"
                       />
                     </div>
+                    {ficha && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs gap-1 text-primary shrink-0"
+                        onClick={() => setFichaAberta(product.id)}
+                      >
+                        <FileText className="w-3 h-3" /> Ficha
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant={isInCart ? 'secondary' : 'default'}
                       className="h-7 text-xs flex-1"
+                      disabled={!product.ativo}
                       onClick={() => {
+                        // Inativo no Omie era só badge — continuava adicionável
+                        // e o pedido iria com item desativado (retroativo Codex).
+                        if (!product.ativo) return;
                         onAddProduct(product, qty);
                         setQty(product.id, 1);
                       }}
@@ -131,6 +192,13 @@ export function ProductItemForm({
                       {isInCart ? 'Adicionar +' : 'Adicionar'}
                     </Button>
                   </div>
+                  {ficha && (
+                    <FichaTecnicaSheet
+                      spec={ficha}
+                      open={fichaAberta === product.id}
+                      onOpenChange={(o) => setFichaAberta(o ? product.id : null)}
+                    />
+                  )}
                 </div>
               );
             })}

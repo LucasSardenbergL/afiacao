@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { HelpCircle, X, ExternalLink } from 'lucide-react';
+import { HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { MarkdownContent } from './MarkdownContent';
-import { getHelpModule, defaultHelpModule } from '@/content/help';
-import { extractSection, getHelpMappingForRoute, slugify } from '@/lib/help-utils';
+import { Skeleton } from '@/components/ui/skeleton';
+import { getHelpMappingForRoute } from '@/lib/help-utils';
+
+// O corpo (react-markdown + manuais .md em string) é pesado e raramente
+// usado — carrega num chunk próprio só no primeiro open (ver HelpDrawerContent).
+const HelpDrawerContent = lazy(() => import('./HelpDrawerContent'));
 
 interface HelpDrawerProps {
   /** Override the route-based anchor */
@@ -17,18 +19,41 @@ interface HelpDrawerProps {
   trigger?: React.ReactNode;
 }
 
+const ContentSkeleton = () => (
+  <>
+    {/* espelha a barra "Ver documentação completa" — sem ela o conteúdo
+        empurraria pra baixo quando o chunk carrega (layout shift) */}
+    <div className="px-6 py-3 border-b border-border bg-muted/30">
+      <Skeleton className="h-4 w-44" />
+    </div>
+    <div className="px-6 py-6 space-y-3">
+      <Skeleton className="h-4 w-2/3" />
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-5/6" />
+    </div>
+  </>
+);
+
 /**
  * Side drawer that shows the contextual help section for the current route.
  */
 export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
   const location = useLocation();
   const [open, setOpen] = useState(false);
+  // Latch: monta o conteúdo no 1º open e MANTÉM montado — desmontar em
+  // open=false faria o corpo sumir na hora enquanto o Sheet ainda anima o
+  // slide-out (~300ms de drawer vazio). O chunk lazy continua carregando só
+  // no primeiro uso.
+  const [hasOpened, setHasOpened] = useState(false);
+  const handleOpenChange = (v: boolean) => {
+    setOpen(v);
+    if (v) setHasOpened(true);
+  };
 
   const routeMapping = getHelpMappingForRoute(location.pathname);
-  const resolvedModuleSlug = module ?? routeMapping.module;
-  const resolvedAnchor = anchor ?? routeMapping.anchor;
-  const activeModule = getHelpModule(resolvedModuleSlug) ?? defaultHelpModule;
-  const sectionContent = extractSection(activeModule.content, resolvedAnchor);
+  const resolvedModuleSlug = module ?? routeMapping?.module;
+  const resolvedAnchor = anchor ?? routeMapping?.anchor;
 
   // ESC closes (Sheet handles it natively, kept here for completeness)
   useEffect(() => {
@@ -40,12 +65,13 @@ export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
-  const fullDocsUrl = `/admin/ajuda?modulo=${activeModule.slug}#${slugify(
-    sectionContent.match(/^#{1,6}\s+(.+)$/m)?.[1] ?? resolvedAnchor,
-  )}`;
+  // Sem override de prop e sem ajuda mapeada p/ a rota atual → não há o que
+  // mostrar: esconde o botão "?" em vez de abrir um drawer "nenhuma seção
+  // encontrada". (Vem DEPOIS dos hooks acima p/ não violar as regras de hooks.)
+  if (!resolvedModuleSlug || !resolvedAnchor) return null;
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetTrigger asChild>
         {trigger ?? (
           <Button
@@ -59,42 +85,17 @@ export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
         )}
       </SheetTrigger>
       <SheetContent side="right" className="w-full sm:max-w-md md:max-w-lg p-0 flex flex-col">
-        <SheetHeader className="px-6 py-4 border-b border-border flex-row items-center justify-between space-y-0">
+        <SheetHeader className="px-6 py-4 border-b border-border space-y-0">
+          {/* O X de fechar vem do próprio SheetContent (shadcn), no canto
+              superior direito — não duplicar aqui (dava dois "X" sobrepostos). */}
           <SheetTitle className="text-base font-semibold">Ajuda contextual</SheetTitle>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => setOpen(false)}
-            aria-label="Fechar"
-          >
-            <X className="h-4 w-4" />
-          </Button>
         </SheetHeader>
 
-        <div className="px-6 py-3 border-b border-border bg-muted/30">
-          <a
-            href={fullDocsUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-primary hover:underline inline-flex items-center gap-1.5"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            Ver documentação completa
-          </a>
-        </div>
-
-        <ScrollArea className="flex-1">
-          <div className="px-6 py-6">
-            {sectionContent ? (
-              <MarkdownContent content={sectionContent} className="prose-sm" />
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Nenhuma seção de ajuda encontrada para esta tela.
-              </p>
-            )}
-          </div>
-        </ScrollArea>
+        {hasOpened && (
+          <Suspense fallback={<ContentSkeleton />}>
+            <HelpDrawerContent moduleSlug={resolvedModuleSlug} anchor={resolvedAnchor} />
+          </Suspense>
+        )}
       </SheetContent>
     </Sheet>
   );

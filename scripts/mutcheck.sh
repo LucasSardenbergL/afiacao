@@ -15,6 +15,9 @@
 #   - backup-por-cópia + trap: NUNCA deixa o arquivo de produção mutado, nem em Ctrl-C.
 #   - baseline-check: se a suíte já está vermelha, aborta (resultado seria lixo).
 #   - guard anti-não-aplicação: perl que não casou = INVÁLIDO, não falso "sobrevive".
+#   - substituição única: mutação que toca >1 linha = regex largo (nó incerto) → INVÁLIDO.
+#   - compila-check: mutante que NÃO compila = morto pelo COMPILADOR, não por um teste →
+#     INVÁLIDO, não falso-PEGA (senão o poder aparente da suíte fica inflado). [achado do Codex]
 #   - controle+ : exige ≥1 mutação EXPECT=PEGA que de fato pegue, senão o harness é suspeito.
 #
 # Uso:
@@ -41,7 +44,11 @@ if [[ "${1:-}" == "--selftest" ]]; then
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
   src="$tmp/fixture.ts"; test="$tmp/fixture.runner"; mut="$tmp/fixture.mut"
-  printf 'export const pick = (xs)=> Math.min(...xs); // anchor\n' > "$src"
+  cat > "$src" <<'EOF'
+export const pick = (xs)=> Math.min(...xs); // anchor
+let a = 1;
+let b = 2;
+EOF
   # runner FAKE: recebe o TEST (como o vitest) e inspeciona o SRC vizinho (como um
   # import faria) — NÃO a si mesmo. "passa" só se o SRC ainda contém Math.min.
   cat > "$test" <<'EOF'
@@ -50,9 +57,12 @@ grep -q 'Math.min' "$(dirname "$1")/fixture.ts" && exit 0 || exit 1
 EOF
   chmod +x "$test"
   cat > "$mut" <<'EOF'
-PEGA      | min->max (coberto)      | s/Math\.min/Math.max/
-SOBREVIVE | comentario (inerte)     | s/anchor/ANCHOR/
-?         | inexistente (nao casa)  | s/NAO_EXISTE_XYZ/z/
+PEGA      | min->max (coberto)        | s/Math\.min/Math.max/
+SOBREVIVE | comentario (inerte)       | s/anchor/ANCHOR/
+?         | inexistente (nao casa)    | s/NAO_EXISTE_XYZ/z/
+?         | multi-linha (regex largo) | s/let /const /
+?         | quebra sintaxe            | s/Math\.min\(/Math.min((/
+PEGAA     | typo no EXPECT            | s/let a/let aa/
 EOF
   out=$(MUTCHECK_TEST_CMD="$test" "$0" "$src" "$test" "$mut" 2>&1) || true
   fail=0
@@ -60,9 +70,15 @@ EOF
   grep -qE "min->max.*✓ PEGA|min->max.*PEGA" <<<"$out" || { echo "selftest: FALHOU — controle+ não pegou"; fail=1; }
   grep -qE "comentario.*SOBREVIVE" <<<"$out" || { echo "selftest: FALHOU — mutação inerte devia sobreviver"; fail=1; }
   grep -qiE "inexistente.*(INVÁLID|INVALID)" <<<"$out" || { echo "selftest: FALHOU — mutação que não casa devia ser INVÁLIDA"; fail=1; }
-  # revert: o fixture tem que voltar ao original (com Math.min)
-  grep -q 'Math.min(...xs)' "$src" || { echo "selftest: FALHOU — backup/revert não restaurou o arquivo"; fail=1; }
-  if [[ $fail -eq 0 ]]; then echo "selftest: ✓ mecânica ok (PEGA/SOBREVIVE/INVÁLIDO/revert)"; exit 0; fi
+  grep -qiE "multi-linha.*(INVÁLID|INVALID).*linhas" <<<"$out" || { echo "selftest: FALHOU — multi-linha (regex largo) devia ser INVÁLIDA"; fail=1; }
+  grep -qiE "quebra sintaxe.*(INVÁLID|INVALID).*compila" <<<"$out" || { echo "selftest: FALHOU — mutante que não compila devia ser INVÁLIDO"; fail=1; }
+  # ancora na MARCA "✓ PEGA", não na substring "PEGA" (a própria mensagem INVÁLIDO diz "seria falso-PEGA")
+  if grep -qE "quebra sintaxe.*✓ PEGA" <<<"$out"; then echo "selftest: FALHOU — mutante que não compila virou FALSO-PEGA"; fail=1; fi
+  # revert: o fixture tem que voltar ao original (Math.min E os `let` que a mutação multi-linha tocou)
+  grep -q 'Math.min(...xs)' "$src" || { echo "selftest: FALHOU — backup/revert não restaurou Math.min"; fail=1; }
+  grep -qiE "typo no EXPECT.*(INVÁLID|INVALID).*EXPECT desconhecido" <<<"$out" || { echo "selftest: FALHOU — EXPECT inválido (typo) devia ser recusado, não tratado como exploratório"; fail=1; }
+  grep -q 'let a = 1' "$src" || { echo "selftest: FALHOU — revert não restaurou a mutação multi-linha"; fail=1; }
+  if [[ $fail -eq 0 ]]; then echo "selftest: ✓ mecânica ok (PEGA/SOBREVIVE/INVÁLIDO[não-casou·multi-linha·não-compila]/revert)"; exit 0; fi
   echo "--- saída do mutcheck sob teste ---"; echo "$out"; exit 1
 fi
 
@@ -77,6 +93,14 @@ for f in "$SRC" "$TEST" "$MUT"; do
 done
 
 read -ra TEST_CMD <<< "${MUTCHECK_TEST_CMD:-bunx vitest run}"
+# Compila-check: distingue "morto por TESTE" (PEGA real) de "morto pelo COMPILADOR"
+# (mutante com sintaxe inválida — sem isso vira falso-PEGA, inflando o poder aparente).
+# Default bun build = aproximação RÁPIDA de validade de sintaxe; NÃO é o mesmo transform
+# do vitest (bun usa bundler próprio, vitest usa Vite/esbuild) — concordam em sintaxe TS
+# comum, podem divergir em casos exóticos. Pega SINTAXE, não tipos (coerente com o vitest,
+# que ignora tipos). Limitação: NÃO pega mutante que compila mas LANÇA no import (runtime
+# top-level) — esse ainda vira falso-PEGA. MUTCHECK_COMPILE_CMD="" desliga (degrada honesto).
+read -ra COMPILE_CMD <<< "${MUTCHECK_COMPILE_CMD-bun build --target node --outfile /dev/null}"
 
 # ───────────────────────── backup + revert garantido ─────────────────────────
 BACKUP=$(mktemp)
@@ -85,14 +109,25 @@ restore() { cp "$BACKUP" "$SRC"; }
 trap 'restore; rm -f "$BACKUP"' EXIT INT TERM
 
 run_tests() { "${TEST_CMD[@]}" "$TEST" >/dev/null 2>&1; }  # exit code é a verdade
+compila() { [[ ${#COMPILE_CMD[@]} -eq 0 ]] && return 0; "${COMPILE_CMD[@]}" "$SRC" >/dev/null 2>&1; }
+linhas_mudadas() { diff "$BACKUP" "$SRC" | grep -cE '^> ' || true; }  # nº de linhas novas (1 = subst. única)
 
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"; printf '%s' "$s"; }
 
 echo "mutcheck: $SRC × $TEST"
 
 # ───────────────────────── baseline ─────────────────────────
+# baseline do COMPILADOR (gêmeo do baseline-de-testes): o SRC original PRECISA compilar —
+# senão `bun`/o compilador está ausente/quebrado no PATH e TODOS os mutantes virariam
+# falso-INVÁLIDO ("não compila"), mascarando a causa como se fosse cobertura. É controle do
+# AMBIENTE, não da cobertura. (Achado do Codex: sem isso o gate de CI fica vermelho mudo se
+# o bun sumir.)
+if ! compila; then
+  echo "  baseline: ✗ o SRC ORIGINAL não compila com '${COMPILE_CMD[*]:-}' — harness/ambiente quebrado (bun no PATH?). Abortando." >&2
+  exit 1
+fi
 if run_tests; then
-  echo "  baseline: ✓ verde"
+  echo "  baseline: ✓ verde (compila + suíte passa)"
 else
   echo "  baseline: ✗ VERMELHO — a suíte já falha sem mutação. Resultados seriam lixo. Abortando." >&2
   exit 1
@@ -107,13 +142,31 @@ while IFS='|' read -r c_expect c_label c_expr || [[ -n "${c_expect:-}" ]]; do
   c_label=$(trim "${c_label:-}")
   c_expr=$(trim "${c_expr:-}")
   n=$((n+1))
+  # enum de EXPECT: um typo (ex.: "PEGAA") cairia no ramo exploratório e DESLIGARIA o gate
+  # pra essa linha em silêncio — recusa explícita (achado do Codex).
+  if [[ "$c_expect" != "PEGA" && "$c_expect" != "SOBREVIVE" && "$c_expect" != "?" ]]; then
+    printf "  %-9s %-40s %s\n" "$c_expect" "$c_label" "⚠ INVÁLIDO (EXPECT desconhecido — use PEGA|SOBREVIVE|?)"
+    invalid=$((invalid+1)); problems=$((problems+1)); continue
+  fi
 
   perl -i -pe "$c_expr" "$SRC"
+  # guard 1: a mutação aplicou? (não-casou = perl errado / .mut stale após refactor)
   if cmp -s "$SRC" "$BACKUP"; then
-    printf "  %-9s %-40s %s\n" "$c_expect" "$c_label" "⚠ INVÁLIDO (perl não casou)"
-    invalid=$((invalid+1)); problems=$((problems+1))
-    continue
+    printf "  %-9s %-40s %s\n" "$c_expect" "$c_label" "⚠ INVÁLIDO (não casou)"
+    invalid=$((invalid+1)); problems=$((problems+1)); restore; continue
   fi
+  # guard 2: substituição ÚNICA? (mutação de operador toca 1 linha; >1 = regex largo, nó incerto)
+  nl=$(linhas_mudadas)
+  if [[ "$nl" -ne 1 ]]; then
+    printf "  %-9s %-40s %s\n" "$c_expect" "$c_label" "⚠ INVÁLIDO (tocou $nl linhas — regex largo)"
+    invalid=$((invalid+1)); problems=$((problems+1)); restore; continue
+  fi
+  # guard 3: o mutante COMPILA? senão "morto pelo compilador" seria falso-PEGA (poder inflado)
+  if ! compila; then
+    printf "  %-9s %-40s %s\n" "$c_expect" "$c_label" "⚠ INVÁLIDO (não compila — seria falso-PEGA)"
+    invalid=$((invalid+1)); problems=$((problems+1)); restore; continue
+  fi
+  # sinal limpo: compila + única → o teste MATA o mutante?
   if run_tests; then got="SOBREVIVE"; else got="PEGA"; fi
   restore
 

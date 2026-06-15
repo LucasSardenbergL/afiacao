@@ -47,7 +47,8 @@ export function useTintometricoZone() {
         const { count } = await supabase
           .from('tint_formulas')
           .select('id', { count: 'exact', head: true })
-          .eq('account', ACCOUNT);
+          .eq('account', ACCOUNT)
+          .is('desativada_em', null);
         totalFormulas = count ?? 0;
       } catch { /* */ }
 

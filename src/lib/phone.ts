@@ -41,6 +41,15 @@ export function formatBrPhone(input: string | null | undefined): string {
 }
 
 /**
+ * Retorna true se o telefone é celular (11 dígitos normalizados com 9 na 3ª posição).
+ * Fixo = 10 dígitos. Usado p/ decidir mostrar o botão WhatsApp (celular) vs só ligar.
+ */
+export function isCellphone(phone: string | null | undefined): boolean {
+  const d = normalizeBrPhone(phone);
+  return d.length === 11 && d[2] === '9';
+}
+
+/**
  * Monta um link wa.me confiável a partir de um telefone brasileiro.
  * Normaliza (aplica o DDD padrão se faltar) e prefixa o código do país 55.
  * Retorna null quando o número não tem DDD + número válido (≥ 10 dígitos):

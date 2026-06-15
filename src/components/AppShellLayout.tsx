@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { IncomingCallModal } from './call/IncomingCallModal';
 import { TransferSpikePanel } from './call/TransferSpikePanel';
+import { CallCopilotHud } from './call/CallCopilotHud';
 
 /**
  * Limpa scroll-locks e pointer-events deixados por overlays Radix
@@ -61,6 +62,8 @@ export function AppShellLayout() {
       <IncomingCallModal />
       {/* SPIKE (flag telefoniaTransferSpike): painel de teste de transferência *2/REFER */}
       <TransferSpikePanel />
+      {/* Onda 1 / Fase 1: co-piloto flutuante global durante a ligação */}
+      <CallCopilotHud />
     </AppShell>
   );
 }

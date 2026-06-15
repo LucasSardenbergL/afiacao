@@ -4,6 +4,7 @@ import { Plus, Loader2, Zap, Layers } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { PlanType } from '@/hooks/useTacticalPlan';
 import type { CustomerLite } from './types';
 
@@ -22,6 +23,9 @@ export function GerarPlanoCard({
   generating,
   onGenerate,
 }: GerarPlanoCardProps) {
+  // Lente "Ver como": gerar plano é write (insert) — desabilitado (o write-guard já
+  // bloqueia; o disable evita o erro/ruído).
+  const { isImpersonating } = useImpersonation();
   return (
     <Card>
       <CardHeader className="p-3 pb-2">
@@ -52,7 +56,8 @@ export function GerarPlanoCard({
                   size="sm"
                   variant="outline"
                   className="h-6 text-[8px] px-2"
-                  disabled={generating === c.id}
+                  disabled={generating === c.id || isImpersonating}
+                  title={isImpersonating ? 'Indisponível em modo Ver como' : undefined}
                   onClick={() => onGenerate(c.id, 'essencial')}
                 >
                   {generating === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Zap className="w-2.5 h-2.5 mr-0.5" />Essencial</>}
@@ -61,7 +66,8 @@ export function GerarPlanoCard({
                   size="sm"
                   variant="default"
                   className="h-6 text-[8px] px-2"
-                  disabled={generating === c.id}
+                  disabled={generating === c.id || isImpersonating}
+                  title={isImpersonating ? 'Indisponível em modo Ver como' : undefined}
                   onClick={() => onGenerate(c.id, 'estrategico')}
                 >
                   {generating === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Layers className="w-2.5 h-2.5 mr-0.5" />Estratégico</>}
