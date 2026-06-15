@@ -23,10 +23,10 @@ A funcionalidade tem **duas partes com dependências de dados radicalmente difer
 
 | Parte | Precisa de | Entrega valor |
 |---|---|---|
-| **2a — Saúde estática (markup sobre CMC)** | só o **CMC atual** + config de meta-markup | **Imediato** (zero histórico) |
-| **2b — Defasagem ("o CMC subiu e o preço não acompanhou")** | **histórico de CMC que NÃO existe hoje** | **Nasce cega**, acende conforme acumula (sem backfill — não temos CMC passado) |
+| **2a — Saúde estática (markup sobre CMC)** | só o **CMC atual** + config de meta-markup | **Imediato** |
+| **2b — Defasagem ("o CMC subiu e o preço não acompanhou")** | **CMC histórico** — disponível no **Omie por data** (`ListarPosEstoque` + `dDataPosicao`, point-in-time) + design da âncora/quarentena | **Sem espera de acúmulo** — pode até backfill (CMC de qualquer data passada) |
 
-**Decisão D1 (founder):** **2a agora + 2b depois**, com o **ledger de CMC ligado já na 2a** (write-only, sem UI) pra começar a acumular histórico desde o dia 1 — quando a 2b chegar, já há dado.
+**Decisão D1 (founder):** **2a agora + 2b depois** — a 2b é fatiada por **complexidade de design** (âncora de repasse, quarentena de saltos, UI), NÃO por falta de dado. **CORREÇÃO (2026-06-15, founder):** o histórico de CMC **existe na fonte** — o `ListarPosEstoque` do Omie é parametrizado por `dDataPosicao` e devolve o `nCMC` **como estava naquela data**; o sync só sempre pediu "hoje". Então a 2b puxa `CMC_referência` do Omie sob demanda (e pode backfill), **não nasce cega**. O **`cmc_ledger`** ligado na 2a deixa de ser o "gate" e vira **cache barato** de mudanças observadas (evita N chamadas ao Omie + marca QUANDO o CMC mudou). ⚠️ Antes de fechar o design da 2b: **smoke do `dDataPosicao`** (confirmar que data passada devolve `nCMC` histórico, não o atual com rótulo de data — money-path).
 
 **Decisão D2 (founder):** **faixa de cor pra vendedora, número pro gestor.** A vendedora vê 🔴🟡🟢⚪ + rótulo ("abaixo do custo / abaixo do piso / saudável / sem dado"); markup% e folga R$ só pro **gestor/master**. Protege o CMC (custo é segredo — coerente com o hardening da receita tintométrica, CLAUDE.md §10). Implementação: a **RPC role-gateia o payload numérico** — o client da vendedora **nunca recebe o número** (não basta esconder na UI).
 
@@ -96,8 +96,8 @@ A funcionalidade tem **duas partes com dependências de dados radicalmente difer
 
 - **`cmc_ledger`** (append-only): `account, omie_codigo_produto, cmc_anterior, cmc_novo, saldo, observed_at, synced_at, origem`. Alimentado por **TRIGGER** no `inventory_position` quando o CMC **realmente muda** (não cron — o sync já atualiza, o banco observa a mudança exata). Seed inicial = CMC atual no lançamento.
 - Rótulo: **"alta observada pelo sistema"**, NÃO data contábil real da compra.
-- **Sem backfill** (não temos CMC passado). Cegueira inicial é honesta: "⚪ Histórico de custo insuficiente desde DD/MM/AAAA".
-- **Fonte da âncora (price side) — decisão de 2b, NÃO toca money-path na 2a:** ⚠️ `sales_price_history` é baseline **ruim** (preço **bruto** sem desconto; `created_at` às vezes = previsão de entrega; sem account/unidade/`sold_at` explícitos — Codex, refs em §10). 2b decide entre: (A) **snapshot econômico imutável por linha no `submitOrder`** (preço líquido real + cmc no momento — toca money-path, ganha review focado na 2b), ou (B) **reconstruir** a âncora de `sales_orders` (líquido) × `cmc_ledger` (cmc na data). A 2a **só liga o ledger** (DB-only); a escrita no submit fica pra 2b.
+- **CORREÇÃO (2026-06-15):** o ledger é **complemento**, não a única fonte. O **CMC histórico (cost side)** vem do **Omie por `dDataPosicao`** (`ListarPosEstoque` point-in-time) → **backfill possível**, sem nascer cego. O ledger evita N chamadas ao Omie e marca QUANDO o CMC mudou; o Omie é a fonte autoritativa do CMC numa data arbitrária. Rótulo do ledger continua "alta observada pelo sistema", não data contábil real.
+- **Fonte da âncora — decisão de 2b:** o **cost side** (CMC na data de referência) = Omie `dDataPosicao` (autoritativo) e/ou `cmc_ledger` (cache). O **price side** é o problema delicado: ⚠️ `sales_price_history` é baseline **ruim** (preço **bruto** sem desconto; `created_at` às vezes = previsão de entrega; sem account/unidade/`sold_at` explícitos — Codex, refs em §10). 2b decide entre: (A) **snapshot econômico imutável por linha no `submitOrder`** (preço líquido real + cmc no momento — toca money-path, review focado na 2b), ou (B) **reconstruir** de `sales_orders` (líquido) × CMC-na-data (Omie/ledger). A 2a **só liga o ledger** (DB-only); a escrita no submit fica pra 2b.
 
 ### 4.6 Break-even (v2, não bloqueia a v1)
 
@@ -174,8 +174,9 @@ A funcionalidade tem **duas partes com dependências de dados radicalmente difer
 
 ## 9. Fase 2b (próximo sub-projeto — esboço, spec própria depois)
 
-Quando houver histórico acumulado (`cmc_ledger` rodando há semanas):
-- **Fonte da âncora (price side):** decidir A (snapshot no submit) vs B (reconstruir de `sales_orders` × `cmc_ledger`) — A é mais limpo mas toca money-path (review focado); B evita tocar o submit.
+**Não depende de acúmulo** — o CMC histórico vem do Omie por `dDataPosicao` (point-in-time), backfill possível. Pré-requisito: **smoke do `dDataPosicao`** (confirmar `nCMC` histórico de verdade — money-path).
+- **Cost side (CMC na data):** Omie `ListarPosEstoque` + `dDataPosicao` (autoritativo) e/ou `cmc_ledger` (cache). Definir a data de referência (N dias / última compra / último pedido do cliente).
+- **Fonte da âncora (price side):** decidir A (snapshot no submit) vs B (reconstruir de `sales_orders` × CMC-na-data) — A é mais limpo mas toca money-path (review focado); B evita tocar o submit.
 - **Cálculo da âncora de repasse** + a regra `P/C < Pₐ/Cₐ` (§4.4) num helper puro TDD + RPC.
 - **Shadow-mode** pra calibrar tolerância (alta material, déficit mínimo) antes de exibir.
 - **Quarentena** de saltos absurdos (P1 #6).
