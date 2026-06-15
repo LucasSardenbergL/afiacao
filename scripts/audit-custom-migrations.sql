@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 238
+-- Total de custom migrations: 239
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -257,7 +257,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615140000', 'tint_promote_indices_timeout', '20260615140000_tint_promote_indices_timeout.sql'),
   ('20260615150000', 'cockpit_preco_fixes', '20260615150000_cockpit_preco_fixes.sql'),
   ('20260615160000', 'tint_promote_set_based', '20260615160000_tint_promote_set_based.sql'),
-  ('20260615182814', 'vincular_tint_skus_omie_orfaos', '20260615182814_vincular_tint_skus_omie_orfaos.sql')
+  ('20260615182814', 'vincular_tint_skus_omie_orfaos', '20260615182814_vincular_tint_skus_omie_orfaos.sql'),
+  ('20260615190000', 'geocoding_cep_geo', '20260615190000_geocoding_cep_geo.sql')
 )
 SELECT
   e.version,
@@ -1157,7 +1158,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsemb_run', 'tint_staging_embalagens'),
   ('cockpit_preco_fixes', 'function', 'public', 'get_preco_cockpit', ''),
   ('cockpit_preco_fixes', 'rls_policy', 'public', 'cmc_ledger_select_gestor', 'cmc_ledger'),
-  ('tint_promote_set_based', 'function', 'public', 'tint_promote_sync_run', '')
+  ('tint_promote_set_based', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('geocoding_cep_geo', 'table', 'public', 'cep_geo', ''),
+  ('geocoding_cep_geo', 'table', 'public', 'municipio_geo', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'normalizar_cep', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'rank_precisao', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'cep_geo_upsert', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'carteira_por_municipio', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'radar_prospects_para_rota', ''),
+  ('geocoding_cep_geo', 'rls_policy', 'public', 'cep_geo_sel', 'cep_geo'),
+  ('geocoding_cep_geo', 'rls_policy', 'public', 'municipio_geo_sel', 'municipio_geo')
 )
 SELECT
   e.migration,

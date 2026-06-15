@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **238** custom migrations totais
-- **882** objetos esperados (criados por estas migrations)
+- **239** custom migrations totais
+- **891** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 244
-  - `rls_policy`: 207
+  - `function`: 249
+  - `rls_policy`: 209
   - `index`: 177
   - `cron_job`: 105
-  - `table`: 100
+  - `table`: 102
   - `trigger`: 45
   - `enum_value`: 4
 
@@ -2078,6 +2078,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260615182814_vincular_tint_skus_omie_orfaos.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260615190000_geocoding_cep_geo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.cep_geo` | — |
+| `table` | `public.municipio_geo` | — |
+| `function` | `public.normalizar_cep` | — |
+| `function` | `public.rank_precisao` | — |
+| `function` | `public.cep_geo_upsert` | — |
+| `function` | `public.carteira_por_municipio` | — |
+| `function` | `public.radar_prospects_para_rota` | — |
+| `rls_policy` | `public.cep_geo_sel` | `cep_geo` |
+| `rls_policy` | `public.municipio_geo_sel` | `municipio_geo` |
 
 ## Próximos passos quando algo der `❌`
 
