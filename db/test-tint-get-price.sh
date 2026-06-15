@@ -124,7 +124,8 @@ INSERT INTO public.user_roles(user_id, role) VALUES
 INSERT INTO public.omie_products(id, valor_unitario) VALUES
   ('b0000000-0000-0000-0000-000000000001', 449.9),  -- base ok
   ('b0000000-0000-0000-0000-000000000002', 0),       -- base zerada (PRD03657)
-  ('b0000000-0000-0000-0000-000000000003', 100);     -- corante (100/1000ml = 0,10/ml)
+  ('b0000000-0000-0000-0000-000000000003', 100),     -- corante (100/1000ml = 0,10/ml)
+  ('b0000000-0000-0000-0000-000000000004', 0);       -- corante com preço ZERO (dado inválido)
 
 INSERT INTO public.tint_skus(id, omie_product_id) VALUES
   ('50000000-0000-0000-0000-000000000001','b0000000-0000-0000-0000-000000000001'),  -- sku base ok
@@ -132,13 +133,15 @@ INSERT INTO public.tint_skus(id, omie_product_id) VALUES
 
 INSERT INTO public.tint_corantes(id, descricao, volume_total_ml, omie_product_id) VALUES
   ('c0000000-0000-0000-0000-000000000001','Corante OK', 1000, 'b0000000-0000-0000-0000-000000000003'),  -- com custo
-  ('c0000000-0000-0000-0000-000000000002','Corante sem Omie', 1000, NULL);                               -- sem custo
+  ('c0000000-0000-0000-0000-000000000002','Corante sem Omie', 1000, NULL),                               -- sem custo
+  ('c0000000-0000-0000-0000-000000000003','Corante preço 0', 1000, 'b0000000-0000-0000-0000-000000000004'); -- preço 0 (inválido)
 
 INSERT INTO public.tint_formulas(id, sku_id) VALUES
   ('f0000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000001'),  -- f_ok: base ok
   ('f0000000-0000-0000-0000-000000000002','50000000-0000-0000-0000-000000000002'),  -- f_zero: base zerada
-  ('f0000000-0000-0000-0000-000000000003','50000000-0000-0000-0000-000000000001'),  -- f_pura: base ok, sem corantes
-  ('f0000000-0000-0000-0000-000000000004','50000000-0000-0000-0000-000000000001');   -- f_inc: base ok, corante incompleto
+  ('f0000000-0000-0000-0000-000000000003','50000000-0000-0000-0000-000000000001'),  -- f_pura: base ok, SEM itens (receita faltando)
+  ('f0000000-0000-0000-0000-000000000004','50000000-0000-0000-0000-000000000001'),  -- f_inc: base ok, corante incompleto
+  ('f0000000-0000-0000-0000-000000000005','50000000-0000-0000-0000-000000000001');   -- f_cor_zero: base ok + corante preço 0
 
 INSERT INTO public.tint_formula_itens(formula_id, corante_id, qtd_ml, ordem) VALUES
   -- f_ok: 1135,4ml × 0,10 = 113,54 → precoFinal = 449,90 + 113,54 = 563,44 (= CSV real medido em prod)
@@ -147,7 +150,9 @@ INSERT INTO public.tint_formula_itens(formula_id, corante_id, qtd_ml, ordem) VAL
   ('f0000000-0000-0000-0000-000000000002','c0000000-0000-0000-0000-000000000001', 10, 1),
   -- f_inc: corante OK (10ml × 0,10 = 1,00) + corante sem custo (parcial → precoFinal NULL)
   ('f0000000-0000-0000-0000-000000000004','c0000000-0000-0000-0000-000000000001', 10, 1),
-  ('f0000000-0000-0000-0000-000000000004','c0000000-0000-0000-0000-000000000002', 20, 2);
+  ('f0000000-0000-0000-0000-000000000004','c0000000-0000-0000-0000-000000000002', 20, 2),
+  -- f_cor_zero: único corante tem preço 0 no Omie → custo indisponível → precoFinal NULL
+  ('f0000000-0000-0000-0000-000000000005','c0000000-0000-0000-0000-000000000003', 10, 1);
 
 -- a RPC é SECURITY DEFINER (roda como owner, bypassa RLS das tabelas); basta EXECUTE p/ os asserts de staff
 GRANT EXECUTE ON FUNCTION public.get_tint_price(uuid) TO authenticated, anon;
@@ -171,6 +176,7 @@ F_OK="f0000000-0000-0000-0000-000000000001"
 F_ZERO="f0000000-0000-0000-0000-000000000002"
 F_PURA="f0000000-0000-0000-0000-000000000003"
 F_INC="f0000000-0000-0000-0000-000000000004"
+F_COR_ZERO="f0000000-0000-0000-0000-000000000005"
 UID_STAFF="11111111-1111-1111-1111-111111111111"
 UID_CLI="22222222-2222-2222-2222-222222222222"
 # comparações numéricas (= devolve t/f) p/ não depender da formatação do numeric->text
@@ -185,11 +191,19 @@ eq "P1c baseDisponivel = true" "$V" "true"
 V=$(Pq -c "SELECT (public.get_tint_price('$F_OK'::uuid)->>'corantesCompletos');")
 eq "P1d corantesCompletos = true" "$V" "true"
 
-# P2 — base pura (sem corantes) → precoFinal = base
-V=$(Pq -c "SELECT ((public.get_tint_price('$F_PURA'::uuid)->>'precoFinal')::numeric = 449.9);")
-eq "P2 base pura → precoFinal = base" "$V" "t"
-V=$(Pq -c "SELECT ((public.get_tint_price('$F_PURA'::uuid)->>'custoCorantes')::numeric = 0);")
-eq "P2b base pura → custoCorantes = 0" "$V" "t"
+# N3 — fórmula SEM itens (receita faltando) → precoFinal NULL (fail closed), não cobra só a base
+V=$(Pq -c "SELECT (public.get_tint_price('$F_PURA'::uuid)->>'precoFinal') IS NULL;")
+eq "N3 fórmula sem itens → precoFinal NULL (fail closed)" "$V" "t"
+V=$(Pq -c "SELECT (public.get_tint_price('$F_PURA'::uuid)->>'corantesCompletos');")
+eq "N3b fórmula sem itens → corantesCompletos false" "$V" "false"
+V=$(Pq -c "SELECT (public.get_tint_price('$F_PURA'::uuid)->>'baseDisponivel');")
+eq "N3c fórmula sem itens → baseDisponivel true (a base existe)" "$V" "true"
+
+# N4 — corante com preço 0 no Omie → custo indisponível → precoFinal NULL
+V=$(Pq -c "SELECT (public.get_tint_price('$F_COR_ZERO'::uuid)->>'precoFinal') IS NULL;")
+eq "N4 corante preço 0 → precoFinal NULL (não subfatura)" "$V" "t"
+V=$(Pq -c "SELECT (public.get_tint_price('$F_COR_ZERO'::uuid)->>'corantesCompletos');")
+eq "N4b corante preço 0 → corantesCompletos false" "$V" "false"
 
 # N1 — base zerada (PRD03657) → custoBase/precoFinal NULL (ausente != zero)
 V=$(Pq -c "SELECT (public.get_tint_price('$F_ZERO'::uuid)->>'precoFinal') IS NULL;")
@@ -265,6 +279,52 @@ END; $fn$;
 SQL
 V=$(Pq -c "SELECT (public.get_tint_price('$F_INC'::uuid)->>'precoFinal') IS NULL;")
 if [ "$V" = "f" ]; then ok "F2 blindagem sabotada → N2 ficou vermelho (o assert pega o corante)"; else bad "F2 sabotei a blindagem e N2 seguiu verde → N2 é fraco"; fi
+P -q -f "$MIG"   # restaura
+
+# F3 — SABOTA a checagem do corante: volta pra 'IS NOT NULL' (trata preço 0 como custo válido).
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.get_tint_price(p_formula_id uuid)
+ RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $fn$
+DECLARE v_bp numeric; v_bd boolean; v_cb numeric; v_cc numeric; v_comp boolean;
+BEGIN
+  SELECT op.valor_unitario INTO v_bp FROM tint_formulas f
+  LEFT JOIN tint_skus s ON s.id=f.sku_id LEFT JOIN omie_products op ON op.id=s.omie_product_id WHERE f.id=p_formula_id;
+  v_bd := v_bp IS NOT NULL AND v_bp>0; v_cb := CASE WHEN v_bd THEN v_bp ELSE NULL END;
+  WITH calc AS (
+    SELECT (op.valor_unitario IS NOT NULL AND c.volume_total_ml>0) AS cd,   -- SABOTADO: IS NOT NULL aceita preço 0
+           CASE WHEN op.valor_unitario IS NOT NULL AND c.volume_total_ml>0 THEN fi.qtd_ml*op.valor_unitario/c.volume_total_ml ELSE 0 END AS ci
+    FROM tint_formula_itens fi LEFT JOIN tint_corantes c ON c.id=fi.corante_id LEFT JOIN omie_products op ON op.id=c.omie_product_id
+    WHERE fi.formula_id=p_formula_id)
+  SELECT COALESCE(SUM(ci),0), COALESCE(bool_and(cd),false) INTO v_cc, v_comp FROM calc;
+  RETURN jsonb_build_object('precoFinal', CASE WHEN v_bd AND v_comp THEN v_cb+v_cc ELSE NULL END);
+END; $fn$;
+SQL
+V=$(Pq -c "SELECT (public.get_tint_price('$F_COR_ZERO'::uuid)->>'precoFinal') IS NULL;")
+if [ "$V" = "f" ]; then ok "F3 corante>0 sabotado → N4 ficou vermelho (assert pega preço 0)"; else bad "F3 sabotei o >0 e N4 seguiu verde → N4 é fraco"; fi
+P -q -f "$MIG"   # restaura
+
+# F4 — SABOTA o fail-closed da fórmula vazia: COALESCE(...,true) trata receita vazia como completa.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.get_tint_price(p_formula_id uuid)
+ RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $fn$
+DECLARE v_bp numeric; v_bd boolean; v_cb numeric; v_cc numeric; v_comp boolean;
+BEGIN
+  SELECT op.valor_unitario INTO v_bp FROM tint_formulas f
+  LEFT JOIN tint_skus s ON s.id=f.sku_id LEFT JOIN omie_products op ON op.id=s.omie_product_id WHERE f.id=p_formula_id;
+  v_bd := v_bp IS NOT NULL AND v_bp>0; v_cb := CASE WHEN v_bd THEN v_bp ELSE NULL END;
+  WITH calc AS (
+    SELECT (op.valor_unitario>0 AND c.volume_total_ml>0) AS cd,
+           CASE WHEN op.valor_unitario>0 AND c.volume_total_ml>0 THEN fi.qtd_ml*op.valor_unitario/c.volume_total_ml ELSE 0 END AS ci
+    FROM tint_formula_itens fi LEFT JOIN tint_corantes c ON c.id=fi.corante_id LEFT JOIN omie_products op ON op.id=c.omie_product_id
+    WHERE fi.formula_id=p_formula_id)
+  SELECT COALESCE(SUM(ci),0), COALESCE(bool_and(cd),true) INTO v_cc, v_comp FROM calc;  -- SABOTADO: true => vazia vira "completa"
+  RETURN jsonb_build_object('precoFinal', CASE WHEN v_bd AND v_comp THEN v_cb+v_cc ELSE NULL END);
+END; $fn$;
+SQL
+V=$(Pq -c "SELECT (public.get_tint_price('$F_PURA'::uuid)->>'precoFinal') IS NULL;")
+if [ "$V" = "f" ]; then ok "F4 fail-closed sabotado → N3 ficou vermelho (assert pega receita vazia)"; else bad "F4 sabotei o fail-closed e N3 seguiu verde → N3 é fraco"; fi
 P -q -f "$MIG"   # restaura
 
 

@@ -6,10 +6,13 @@
 --
 -- Agora: resolve a base pela própria fórmula (tint_formulas -> tint_skus ->
 -- omie_products.valor_unitario) e devolve precoFinal = base + corantes.
--- Money-path (ausente != zero): precoFinal/custoBase são NULL quando a base não
--- tem preço (ex.: PRD03657 valor_unitario=0) OU quando qualquer corante não tem
--- custo no Omie — nunca um número subfaturado. custoCorantes ainda traz a soma
--- parcial (exibição) e corantesCompletos/baseDisponivel sinalizam o porquê.
+-- Money-path (ausente != zero): precoFinal/custoBase são NULL quando:
+--   (a) a base não tem preço (ex.: PRD03657 valor_unitario=0);
+--   (b) qualquer corante não tem custo > 0 (preço 0/negativo no Omie = dado inválido);
+--   (c) a fórmula não tem itens (receita faltando = dado incompleto, NÃO "base pura":
+--       confirmado em prod que são cores sem receita, cobrar só a base subfaturaria).
+-- Nunca um número subfaturado. custoCorantes ainda traz a soma parcial (exibição)
+-- e corantesCompletos/baseDisponivel sinalizam o porquê.
 --
 -- Espelha verbatim o helper TS src/lib/tint/compute-price.ts (oráculo de paridade).
 -- Hardening preservado: itensCorantes (a receita) só volta preenchido para staff.
@@ -50,10 +53,10 @@ BEGIN
       fi.ordem,
       COALESCE(c.descricao, '?') AS corante_descricao,
       fi.qtd_ml,
-      (op.valor_unitario IS NOT NULL AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml > 0) AS custo_disponivel,
-      CASE WHEN op.valor_unitario IS NOT NULL AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml > 0
+      (COALESCE(op.valor_unitario, 0) > 0 AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml > 0) AS custo_disponivel,
+      CASE WHEN COALESCE(op.valor_unitario, 0) > 0 AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml > 0
            THEN op.valor_unitario / c.volume_total_ml ELSE 0 END AS custo_por_ml,
-      CASE WHEN op.valor_unitario IS NOT NULL AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml > 0
+      CASE WHEN COALESCE(op.valor_unitario, 0) > 0 AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml > 0
            THEN fi.qtd_ml * (op.valor_unitario / c.volume_total_ml) ELSE 0 END AS custo_item
     FROM tint_formula_itens fi
     LEFT JOIN tint_corantes c  ON c.id = fi.corante_id
@@ -62,7 +65,7 @@ BEGIN
   )
   SELECT
     COALESCE(SUM(custo_item), 0),
-    COALESCE(bool_and(custo_disponivel), true),   -- fórmula sem itens => true (vacuamente completa)
+    COALESCE(bool_and(custo_disponivel), false),  -- fórmula sem itens => receita faltando (fail closed), não base pura
     COALESCE(jsonb_agg(jsonb_build_object(
       'coranteDescricao', corante_descricao, 'qtdMl', qtd_ml, 'custoPorMl', custo_por_ml,
       'custoItem', custo_item, 'custoDisponivel', custo_disponivel

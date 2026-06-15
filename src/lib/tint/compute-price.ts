@@ -67,7 +67,8 @@ export function computeTintPrice(
     }
 
     const omie = corante.omie_product_id ? omieProducts[corante.omie_product_id] : null;
-    const custoDisponivel = !!omie && !!corante.volume_total_ml && corante.volume_total_ml > 0;
+    // valor_unitario > 0 (não só presente): preço 0/negativo é dado inválido, não custo real.
+    const custoDisponivel = !!omie && omie.valor_unitario > 0 && !!corante.volume_total_ml && corante.volume_total_ml > 0;
     const custoPorMl = custoDisponivel ? omie!.valor_unitario / corante.volume_total_ml! : 0;
     const custoItem = item.qtd_ml * custoPorMl;
 
@@ -81,7 +82,9 @@ export function computeTintPrice(
   });
 
   const custoCorantes = itensCorantes.reduce((sum, i) => sum + i.custoItem, 0);
-  const corantesCompletos = itensCorantes.every((i) => i.custoDisponivel);
+  // length > 0: fórmula sem itens é receita faltando (dado incompleto), não "completa".
+  // Cobrar só a base subfaturaria (confirmado em prod). Fail closed → precoFinal null.
+  const corantesCompletos = itensCorantes.length > 0 && itensCorantes.every((i) => i.custoDisponivel);
 
   const baseDisponivel = precoBase != null && precoBase > 0;
   const custoBase = baseDisponivel ? precoBase : null;

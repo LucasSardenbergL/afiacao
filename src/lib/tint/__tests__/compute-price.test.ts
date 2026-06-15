@@ -122,12 +122,35 @@ describe('computeTintPrice — a base entra no preço (Passo 1, money-path)', ()
     expect(r.precoFinal).toBeNull(); // não fabrica preço subfaturado
   });
 
-  it('base pura (fórmula sem corantes) → precoFinal = base', () => {
+  it('fórmula SEM itens → receita faltando: corantesCompletos false, precoFinal null (fail closed)', () => {
+    // Confirmado em prod: cores (verde, vermelho) sem receita são dado incompleto,
+    // não "base pura". Cobrar só a base subfaturaria em até R$370. Não existe base
+    // pura nessa tela (base sem tingir sai como produto Omie direto).
     const r = computeTintPrice([], [], {}, 99.366);
-    expect(r.custoBase).toBe(99.366);
-    expect(r.corantesCompletos).toBe(true);
+    expect(r.custoBase).toBe(99.366);      // a base existe
+    expect(r.baseDisponivel).toBe(true);
     expect(r.custoCorantes).toBe(0);
-    expect(r.precoFinal).toBe(99.366);
+    expect(r.corantesCompletos).toBe(false); // sem itens = receita faltando, não "completa"
+    expect(r.precoFinal).toBeNull();         // não cobra só a base
+  });
+
+  it('corante com valor_unitario 0 → custo indisponível, precoFinal null (não subfatura)', () => {
+    const items = [{ corante_id: 'c1', qtd_ml: 10 }];
+    const corantes = [corante('c1', 'Corante a 0?', 1000, 'o1')];
+    const omie: TintOmiePriceMap = { o1: { valor_unitario: 0 } };
+    const r = computeTintPrice(items, corantes, omie, 100);
+    expect(r.itensCorantes[0].custoDisponivel).toBe(false);
+    expect(r.corantesCompletos).toBe(false);
+    expect(r.precoFinal).toBeNull();
+  });
+
+  it('corante com valor_unitario negativo → custo indisponível, precoFinal null', () => {
+    const items = [{ corante_id: 'c1', qtd_ml: 10 }];
+    const corantes = [corante('c1', 'Corante neg', 1000, 'o1')];
+    const omie: TintOmiePriceMap = { o1: { valor_unitario: -50 } };
+    const r = computeTintPrice(items, corantes, omie, 100);
+    expect(r.itensCorantes[0].custoDisponivel).toBe(false);
+    expect(r.precoFinal).toBeNull();
   });
 
   it('reproduz o CSV do SayerSystem ao centavo (base + corantes), prova de paridade do desenho', () => {
