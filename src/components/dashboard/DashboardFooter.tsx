@@ -1,6 +1,4 @@
 import { Keyboard, Settings2 } from 'lucide-react';
-import { PersonaSwitcherChip } from './PersonaSwitcherChip';
-import { CompanyChip } from './CompanyChip';
 import { useDashboardEditMode } from '@/contexts/DashboardEditModeContext';
 import { cn } from '@/lib/utils';
 
@@ -9,11 +7,7 @@ export function DashboardFooter() {
 
   return (
     <footer className="border-t border-border mt-2">
-      <div className="max-w-7xl mx-auto px-4 lg:px-6 py-3 flex items-center justify-between gap-4 flex-wrap text-xs text-muted-foreground">
-        <div className="flex items-center gap-2 flex-wrap">
-          <PersonaSwitcherChip />
-          <CompanyChip />
-        </div>
+      <div className="max-w-7xl mx-auto px-4 lg:px-6 py-3 flex items-center justify-end gap-4 flex-wrap text-xs text-muted-foreground">
         <div className="flex items-center gap-3 font-mono text-[11px]">
           <span className="inline-flex items-center gap-1">
             <Keyboard className="w-3 h-3" />
