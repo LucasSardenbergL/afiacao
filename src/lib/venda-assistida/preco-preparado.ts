@@ -6,6 +6,12 @@
  * → "sob consulta" (status incomplete), NUNCA somado como zero (risco P0 do Codex).
  *
  * Design: docs/superpowers/specs/2026-06-14-venda-assistida-ia-design.md (§3 risco P0.2, §5).
+ * Revisado por Codex adversarial (2026-06-14): P0 proporção-ausente, P1 empate/maior-sem-preço/regex-base.
+ *
+ * ⚠️ ESTE preço é a estimativa de ENCOMENDA pela MAIOR embalagem ("R$/litro preparado teórico").
+ * NÃO é o preço de um item EM ESTOQUE (esse é o preço-do-cliente do item em estoque) — o resolver
+ * (Fatia 2) NÃO deve casar este preço com estado SELLABLE_NOW (risco P0.2: preço e estoque de
+ * embalagens diferentes). Também não é "preço do kit/lote" (o catalisador vem em embalagem fechada).
  *
  * De-para de litros por embalagem — CONFIRMADO PELO FOUNDER (2026-06-14):
  *   GL 3,6 (base 3,24) · QT 0,9 (base 0,81) · BH 20 (base 18) · LT 18 · L5 5 · BB 5 · BD 18 · 405ML 0,405.
@@ -16,12 +22,16 @@
  * lote final = 1+r litros → R$/litro preparado = (B + r·C)/(1+r).
  */
 
+/** "base" como PALAVRA. O \b do JS conta `_` como letra (deixaria "BASE_GL" passar como não-base) e o
+ *  \b ASCII casa após acento ("ábase"). Aqui: separador = qualquer não-letra (incl. `_`, dígito, pontuação). */
+const RE_PALAVRA_BASE = /(?:^|[^a-zà-ÿ])base(?:[^a-zà-ÿ]|$)/i;
+
 /** Litros da embalagem pelo sufixo Sayerlack + descrição. null = desconhecido → "sob consulta". */
 export function litrosDaEmbalagem(sufixo: string, descricao: string): number | null {
   const desc = (descricao ?? '').toLowerCase();
   // Fracionado: o item-pai no Omie é QT, mas a descrição diz "405ML" e é o que se vende → manda a descrição.
   if (/\b405\s*ml\b/.test(desc)) return 0.405;
-  const isBase = /\bbase\b/.test(desc);
+  const isBase = RE_PALAVRA_BASE.test(desc);
   switch ((sufixo ?? '').toUpperCase()) {
     case 'GL': return isBase ? 3.24 : 3.6;
     case 'QT': return isBase ? 0.81 : 0.9;
@@ -48,15 +58,18 @@ export type PrecoPreparado =
       precoLitroBase: number;
       precoLitroCatalisador: number | null;
       litrosBaseUsada: number;
+      litrosCatalisadorUsada: number | null;
     }
   | { status: 'incomplete'; motivo: string };
 
 export interface PrecoPreparadoInput {
-  /** Embalagens da base (escolhe a MAIOR com litros conhecidos). */
+  /** Embalagens da base (escolhe a MAIOR com preço+litros conhecidos). */
   baseEmbalagens: EmbalagemPreco[];
-  /** Embalagens do catalisador (maior com litros conhecidos); null = catalisador não mapeado. */
+  /** O boletim TEM catalisador (catalisador_codigo presente)? Se sim, proporção VÁLIDA é obrigatória. */
+  temCatalisador: boolean;
+  /** Embalagens do catalisador (maior com preço+litros); null = catalisador não mapeado. */
   catalisadorEmbalagens: EmbalagemPreco[] | null;
-  /** catalisador_proporcao_pct do boletim. null/0 = produto 1-componente (sem catalisador). */
+  /** catalisador_proporcao_pct do boletim. Só usado quando temCatalisador=true. */
   proporcaoPct: number | null;
 }
 
@@ -68,43 +81,64 @@ function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
 }
 
-/** Maior embalagem com litros conhecidos → {preço/litro, litros}. null se nenhuma válida. */
+/**
+ * Preço/litro da MAIOR embalagem (por litros). Codex P1:
+ *  - se a maior-por-litros NÃO tem preço válido → null (sob consulta), NÃO substitui por uma menor;
+ *  - empate de litros → menor `valor` vence (determinístico, não depende da ordem do array).
+ */
 function precoLitroMaiorEmbalagem(
   embalagens: EmbalagemPreco[],
 ): { precoLitro: number; litros: number } | null {
-  let melhor: { precoLitro: number; litros: number } | null = null;
+  // 1) maior litragem entre as embalagens com litros válidos.
+  let maxLitros = -Infinity;
   for (const e of embalagens) {
-    if (!valido(e.valor) || !valido(e.litros)) continue;
-    if (!melhor || e.litros > melhor.litros) {
-      melhor = { precoLitro: e.valor / e.litros, litros: e.litros };
+    if (valido(e.litros) && e.litros > maxLitros) maxLitros = e.litros;
+  }
+  if (!Number.isFinite(maxLitros)) return null; // nenhuma com litros válidos
+
+  // 2) entre as DA maior litragem, a de menor valor válido. Nenhuma precificada → sob consulta.
+  let melhorValor = Infinity;
+  for (const e of embalagens) {
+    if (valido(e.litros) && e.litros === maxLitros && valido(e.valor) && e.valor < melhorValor) {
+      melhorValor = e.valor;
     }
   }
-  return melhor;
+  if (!Number.isFinite(melhorValor)) return null; // a maior embalagem não tem preço → sob consulta
+
+  return { precoLitro: melhorValor / maxLitros, litros: maxLitros };
 }
 
 /**
  * R$/litro preparado (catalisado), determinístico. Degrada honesto a "incomplete" ("sob consulta")
- * quando falta litro de base ou o catalisador obrigatório não tem SKU/preço/litros. Nunca zero-fill.
+ * quando falta preço/litro de base, quando a proporção do catalisador obrigatório é desconhecida,
+ * ou quando o catalisador obrigatório não tem SKU/preço/litros. Nunca zero-fill (Codex P0).
  */
 export function precoLitroPreparado(input: PrecoPreparadoInput): PrecoPreparado {
   const base = precoLitroMaiorEmbalagem(input.baseEmbalagens ?? []);
-  if (!base) return { status: 'incomplete', motivo: 'base sem embalagem com litros conhecidos' };
+  if (!base) return { status: 'incomplete', motivo: 'base sem embalagem (maior) com preço/litros conhecidos' };
   const B = base.precoLitro;
 
-  const pct = input.proporcaoPct;
-  // Sem catalisador (produto 1-componente): o "preparado" é a própria base.
-  if (pct == null || !Number.isFinite(pct) || pct <= 0) {
+  // Produto 1-componente (boletim SEM catalisador): o "preparado" é a própria base.
+  if (!input.temCatalisador) {
+    if (!valido(B)) return { status: 'incomplete', motivo: 'preço-base inválido' };
     return {
       status: 'ok',
       valorLitroPreparado: round4(B),
       precoLitroBase: round4(B),
       precoLitroCatalisador: null,
       litrosBaseUsada: base.litros,
+      litrosCatalisadorUsada: null,
     };
   }
 
-  // Catalisador OBRIGATÓRIO (r > 0): precisa de preço/litro. Ausente → incomplete (nunca zero).
+  // Catalisador OBRIGATÓRIO: proporção VÁLIDA é necessária. null/NaN/Infinity/<=0 → "sob consulta"
+  // (NÃO vira preço só-da-base — risco P0 do Codex: boletim incompleto virava SELLABLE_NOW barato).
+  const pct = input.proporcaoPct;
+  if (pct == null || !Number.isFinite(pct) || pct <= 0) {
+    return { status: 'incomplete', motivo: 'catalisador obrigatório com proporção desconhecida/inválida' };
+  }
   const r = pct / 100;
+
   const cat = precoLitroMaiorEmbalagem(input.catalisadorEmbalagens ?? []);
   if (!cat) return { status: 'incomplete', motivo: 'catalisador obrigatório sem SKU/preço/litros' };
   const C = cat.precoLitro;
@@ -118,5 +152,6 @@ export function precoLitroPreparado(input: PrecoPreparadoInput): PrecoPreparado 
     precoLitroBase: round4(B),
     precoLitroCatalisador: round4(C),
     litrosBaseUsada: base.litros,
+    litrosCatalisadorUsada: cat.litros,
   };
 }
