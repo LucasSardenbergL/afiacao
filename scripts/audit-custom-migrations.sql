@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 233
+-- Total de custom migrations: 238
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -200,6 +200,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260606140000', 'detectar_skus_sem_grupo_self_heal', '20260606140000_detectar_skus_sem_grupo_self_heal.sql'),
   ('20260606150000', 'a2_cmc_base_custo_view', '20260606150000_a2_cmc_base_custo_view.sql'),
   ('20260606150000', 'reposicao_qtde_inteira', '20260606150000_reposicao_qtde_inteira.sql'),
+  ('20260606170000', 'fornecedores_classificacao_schema', '20260606170000_fornecedores_classificacao_schema.sql'),
   ('20260606170000', 'reposicao_fix_aplicar_promocoes', '20260606170000_reposicao_fix_aplicar_promocoes.sql'),
   ('20260606180000', 'reposicao_aplicar_promocoes_hardening', '20260606180000_reposicao_aplicar_promocoes_hardening.sql'),
   ('20260606180000', 'reposicao_preco_pedido_cmc', '20260606180000_reposicao_preco_pedido_cmc.sql'),
@@ -252,7 +253,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615095710', 'idx_data_health_freshness_cols', '20260615095710_idx_data_health_freshness_cols.sql'),
   ('20260615103111', 'idx_omie_products_codigo_text_account', '20260615103111_idx_omie_products_codigo_text_account.sql'),
   ('20260615130000', 'tint_vigia_cobertura_sentinela', '20260615130000_tint_vigia_cobertura_sentinela.sql'),
-  ('20260615133000', 'tint_remapeia_skus_omie_desalinhadas', '20260615133000_tint_remapeia_skus_omie_desalinhadas.sql')
+  ('20260615133000', 'tint_remapeia_skus_omie_desalinhadas', '20260615133000_tint_remapeia_skus_omie_desalinhadas.sql'),
+  ('20260615140000', 'tint_promote_indices_timeout', '20260615140000_tint_promote_indices_timeout.sql'),
+  ('20260615150000', 'cockpit_preco_fixes', '20260615150000_cockpit_preco_fixes.sql'),
+  ('20260615160000', 'tint_promote_set_based', '20260615160000_tint_promote_set_based.sql'),
+  ('20260615182814', 'vincular_tint_skus_omie_orfaos', '20260615182814_vincular_tint_skus_omie_orfaos.sql')
 )
 SELECT
   e.version,
@@ -963,6 +968,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('detectar_skus_sem_grupo_exclui_04', 'function', 'public', 'detectar_skus_sem_grupo', ''),
   ('detectar_skus_sem_grupo_self_heal', 'function', 'public', 'detectar_skus_sem_grupo', ''),
   ('reposicao_qtde_inteira', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('fornecedores_classificacao_schema', 'table', 'public', 'cliente_classificacao', ''),
+  ('fornecedores_classificacao_schema', 'table', 'public', 'fornecedor_excecao', ''),
   ('reposicao_fix_aplicar_promocoes', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_aplicar_promocoes_hardening', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_preco_pedido_cmc', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
@@ -1139,7 +1146,18 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('idx_omie_products_codigo_text_account', 'index', 'public', 'idx_omie_products_codigo_text_account', 'omie_products'),
   ('tint_vigia_cobertura_sentinela', 'function', 'public', '_data_health_compute', ''),
   ('tint_vigia_cobertura_sentinela', 'function', 'public', 'data_health_watchdog', ''),
-  ('tint_vigia_cobertura_sentinela', 'function', 'public', 'fin_sync_heartbeat', '')
+  ('tint_vigia_cobertura_sentinela', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsfi_staging_formula_id', 'tint_staging_formula_itens'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsc_acct_corante', 'tint_staging_corantes'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsf_acct_par', 'tint_staging_formulas'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsf_run', 'tint_staging_formulas'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tss_run', 'tint_staging_skus'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsprod_run', 'tint_staging_produtos'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsbase_run', 'tint_staging_bases'),
+  ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsemb_run', 'tint_staging_embalagens'),
+  ('cockpit_preco_fixes', 'function', 'public', 'get_preco_cockpit', ''),
+  ('cockpit_preco_fixes', 'rls_policy', 'public', 'cmc_ledger_select_gestor', 'cmc_ledger'),
+  ('tint_promote_set_based', 'function', 'public', 'tint_promote_sync_run', '')
 )
 SELECT
   e.migration,
