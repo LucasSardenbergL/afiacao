@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 231
+-- Total de custom migrations: 232
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -250,7 +250,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260614231801', 'reposicao_timeout_sync_inventory', '20260614231801_reposicao_timeout_sync_inventory.sql'),
   ('20260615091839', 'retencao_cron_job_run_details', '20260615091839_retencao_cron_job_run_details.sql'),
   ('20260615095710', 'idx_data_health_freshness_cols', '20260615095710_idx_data_health_freshness_cols.sql'),
-  ('20260615103111', 'idx_omie_products_codigo_text_account', '20260615103111_idx_omie_products_codigo_text_account.sql')
+  ('20260615103111', 'idx_omie_products_codigo_text_account', '20260615103111_idx_omie_products_codigo_text_account.sql'),
+  ('20260615104342', 'tint_staging_unlogged', '20260615104342_tint_staging_unlogged.sql')
 )
 SELECT
   e.version,
