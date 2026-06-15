@@ -2,7 +2,6 @@
 // radar_contagem_por_municipio (até 500 cidades, com nº de prospects por cidade).
 // Selecionar NÃO fecha o popover (multi); cidades viram chips removíveis.
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Check, ChevronsUpDown, MapPin, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,36 +15,8 @@ import {
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
-import { supabase } from '@/integrations/supabase/client';
+import { useRadarCidadesRota } from '@/queries/useRadarCidadesRota';
 import type { CityOption } from './types';
-
-interface RawCidadeRow {
-  municipio_codigo: string;
-  municipio_nome: string;
-  uf: string;
-  lat: number | null;
-  lng: number | null;
-  total: number;
-  com_telefone: number;
-  a_contatar: number;
-}
-
-async function fetchCidades(): Promise<CityOption[]> {
-  const { data, error } = await supabase.rpc(
-    'radar_contagem_por_municipio',
-    { p_limit: 500 } as never,
-  );
-  if (error) throw error;
-  const rows = (data ?? []) as RawCidadeRow[];
-  return rows.map((r) => ({
-    codigo: r.municipio_codigo,
-    nome: r.municipio_nome,
-    uf: r.uf,
-    total: r.total,
-    comTelefone: r.com_telefone,
-    aContatar: r.a_contatar,
-  }));
-}
 
 interface CityMultiSelectorProps {
   value: CityOption[];
@@ -57,11 +28,7 @@ export function CityMultiSelector({ value, onToggle, onRemove }: CityMultiSelect
   const [open, setOpen] = useState(false);
   const selectedCodes = new Set(value.map((c) => c.codigo));
 
-  const { data: cidades = [], isLoading } = useQuery({
-    queryKey: ['radar-cidades-rota'],
-    queryFn: fetchCidades,
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: cidades = [], isLoading } = useRadarCidadesRota();
 
   return (
     <div className="space-y-2">
