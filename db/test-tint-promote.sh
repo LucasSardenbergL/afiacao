@@ -52,6 +52,17 @@ P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260609150000_tint_s
 echo "→ migration 20260611190000_tint_sync_codex_fixes.sql (na ordem de prod)…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260611190000_tint_sync_codex_fixes.sql" >/dev/null
 
+echo "→ migration 20260615140000_tint_promote_indices_timeout.sql (índices + timeout)…"
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260615140000_tint_promote_indices_timeout.sql" >/dev/null
+
+# PRESERVA o loop PROCEDURAL (a versão 20260611190000) como ORÁCULO diferencial: rename ANTES de
+# aplicar a set-based. O CENÁRIO 13 roda os DOIS sobre o MESMO seed e exige resultado idêntico.
+echo "→ preserva o loop antigo como tint_promote_sync_run_oldloop (oráculo diferencial)…"
+P -v ON_ERROR_STOP=1 -q -c "ALTER FUNCTION public.tint_promote_sync_run(uuid) RENAME TO tint_promote_sync_run_oldloop;" >/dev/null
+
+echo "→ migration 20260615160000_tint_promote_set_based.sql (a reescrita sob teste)…"
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260615160000_tint_promote_set_based.sql" >/dev/null
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers de seed: monta um setting + runs, e semeia staging. UUIDs determinísticos.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -758,6 +769,215 @@ BEGIN
   RAISE NOTICE 'OK C12b — com a precos_base da L1 presente (custo 50), COR12=50.00 (era o filtro de store_code que zerava)';
 END $$;
 SQL
+
+echo ""
+echo "════════ CENÁRIO 13 — IDENTIDADE em VOLUME: set-based ≡ loop antigo (mesmo seed) ════════"
+# Prova de identidade contábil (money-path): 200 fórmulas × 3 embalagens = 600 expansões, semeadas
+# IDÊNTICAS em dois accounts (difa promovido pela set-based NOVA; difb pelo loop antigo preservado).
+# Mix NULL-honesto real (corantes 08-10 sem preço → fórmulas que os usam saem com preço NULL).
+# Compara via EXCEPT nos DOIS sentidos (fórmulas + itens) → 0 diferenças = idêntico.
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- settings + runs (catalogs + formulas) por account.
+INSERT INTO tint_integration_settings (id, account, store_code, integration_mode, sync_token, sync_enabled) VALUES
+  ('dddddddd-0000-0000-0000-00000000000a','difa','L1','automatic_primary','tok_a',true),
+  ('dddddddd-0000-0000-0000-00000000000b','difb','L1','automatic_primary','tok_b',true);
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status) VALUES
+  ('da000000-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-00000000000a','difa','L1','catalogs','complete'),
+  ('da000000-0000-0000-0000-000000000002','dddddddd-0000-0000-0000-00000000000a','difa','L1','formulas','complete'),
+  ('db000000-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-00000000000b','difb','L1','catalogs','complete'),
+  ('db000000-0000-0000-0000-000000000002','dddddddd-0000-0000-0000-00000000000b','difb','L1','formulas','complete');
+
+-- Catálogo IDÊNTICO nos dois accounts (cross join account × linhas de catálogo).
+INSERT INTO tint_staging_produtos (sync_run_id, account, store_code, cod_produto, descricao)
+SELECT acc.cat_run, acc.account, 'L1', 'PV', 'Produto Volume'
+FROM (VALUES ('difa','da000000-0000-0000-0000-000000000001'::uuid),('difb','db000000-0000-0000-0000-000000000001'::uuid)) acc(account,cat_run);
+
+INSERT INTO tint_staging_bases (sync_run_id, account, store_code, id_base_sayersystem, descricao)
+SELECT acc.cat_run, acc.account, 'L1', bs.b, 'Base '||bs.b
+FROM (VALUES ('difa','da000000-0000-0000-0000-000000000001'::uuid),('difb','db000000-0000-0000-0000-000000000001'::uuid)) acc(account,cat_run)
+CROSS JOIN (VALUES ('BV1'),('BV2'),('BV3')) bs(b);
+
+INSERT INTO tint_staging_embalagens (sync_run_id, account, store_code, id_embalagem_sayersystem, descricao, volume_ml)
+SELECT acc.cat_run, acc.account, 'L1', e.id, 'Emb '||e.id, e.vol
+FROM (VALUES ('difa','da000000-0000-0000-0000-000000000001'::uuid),('difb','db000000-0000-0000-0000-000000000001'::uuid)) acc(account,cat_run)
+CROSS JOIN (VALUES ('EV0900',900),('EV3600',3600),('EV5000',5000)) e(id,vol);
+
+INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem)
+SELECT acc.cat_run, acc.account, 'L1', 'PV', bs.b, e.id
+FROM (VALUES ('difa','da000000-0000-0000-0000-000000000001'::uuid),('difb','db000000-0000-0000-0000-000000000001'::uuid)) acc(account,cat_run)
+CROSS JOIN (VALUES ('BV1'),('BV2'),('BV3')) bs(b)
+CROSS JOIN (VALUES ('EV0900'),('EV3600'),('EV5000')) e(id);
+
+-- Corantes 01-07 COM preço; 08-10 SEM (custo/volume NULL → fórmula que usa sai NULL-honesta).
+INSERT INTO tint_staging_corantes (sync_run_id, account, store_code, id_corante_sayersystem, descricao, custo, volume_ml)
+SELECT acc.cat_run, acc.account, 'L1', 'CVCOR'||lpad(n::text,2,'0'), 'Corante '||n,
+       CASE WHEN n <= 7 THEN (50 + n*10)::numeric ELSE NULL END,
+       CASE WHEN n <= 7 THEN 900::numeric ELSE NULL END
+FROM (VALUES ('difa','da000000-0000-0000-0000-000000000001'::uuid),('difb','db000000-0000-0000-0000-000000000001'::uuid)) acc(account,cat_run)
+CROSS JOIN generate_series(1,10) n;
+
+INSERT INTO tint_staging_precos_base (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct)
+SELECT acc.cat_run, acc.account, 'L1', 'PV', bs.b, e.id, (100 + bs.bi*10 + e.ei*5)::numeric, 30, 50
+FROM (VALUES ('difa','da000000-0000-0000-0000-000000000001'::uuid),('difb','db000000-0000-0000-0000-000000000001'::uuid)) acc(account,cat_run)
+CROSS JOIN (VALUES ('BV1',1),('BV2',2),('BV3',3)) bs(b,bi)
+CROSS JOIN (VALUES ('EV0900',1),('EV3600',2),('EV5000',3)) e(id,ei);
+
+-- 200 fórmulas (formulação 900ml na EV0900), base rotativa BV1/2/3. 1/4 delas com SUBCOLEÇÃO
+-- (exercita o ensure por texto cru + resolução + a chave única subcolecao_id).
+INSERT INTO tint_staging_formulas (sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, subcolecao)
+SELECT acc.fml_run, acc.account, 'L1', 'CV'||lpad(g::text,4,'0'), 'Cor '||g, 'PV', 'BV'||(1+(g%3)), 'EV0900', 900, false,
+       CASE WHEN g % 4 = 0 THEN 'SUBV'||(1+(g%2)) ELSE NULL END
+FROM (VALUES ('difa','da000000-0000-0000-0000-000000000002'::uuid),('difb','db000000-0000-0000-0000-000000000002'::uuid)) acc(account,fml_run)
+CROSS JOIN generate_series(1,200) g;
+
+-- 2 itens por fórmula, corante derivado do nº da cor (offset 4 → 2 corantes distintos).
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
+SELECT sf.sync_run_id, sf.id, 'CVCOR'||lpad((1+(sf.gnum%10))::text,2,'0'), 1, (5 + (sf.gnum%7))::numeric
+FROM (SELECT *, substring(cor_id from 3)::int AS gnum FROM tint_staging_formulas WHERE cod_produto='PV' AND account IN ('difa','difb')) sf
+UNION ALL
+SELECT sf.sync_run_id, sf.id, 'CVCOR'||lpad((1+((sf.gnum+4)%10))::text,2,'0'), 2, (2 + (sf.gnum%5))::numeric
+FROM (SELECT *, substring(cor_id from 3)::int AS gnum FROM tint_staging_formulas WHERE cod_produto='PV' AND account IN ('difa','difb')) sf;
+
+-- COLISÃO de chave oficial (regressão do bug que o Codex pegou): duas fórmulas-fonte com a MESMA
+-- (cor_id,produto,base,embalagem) mas subcoleção que COLAPSA p/ subcolecao_id NULL (NULL vs ' ') +
+-- personalizada diferente. O loop ordena _formulas_latest por COALESCE(subcolecao,'') ASC, personalizada
+-- ASC e o ÚLTIMO vence → vencedor = B (subcolecao=' ' > '', personalizada=false). O set-based DEVE
+-- escolher o MESMO (sem o fix de desempate escolheria A por personalizada DESC → divergiria do loop).
+-- (Inserido DEPOIS do INSERT de itens por gnum — senão substring('CVCOLLIDE' from 3)::int quebraria.)
+INSERT INTO tint_staging_formulas (id, sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, volume_final_ml, personalizada, subcolecao) VALUES
+  ('fa000000-0000-0000-0000-0000000000aa','da000000-0000-0000-0000-000000000002','difa','L1','CVCOLLIDE','COLLIDE_A','PV','BV1','EV0900',900,true , NULL),
+  ('fa000000-0000-0000-0000-0000000000bb','da000000-0000-0000-0000-000000000002','difa','L1','CVCOLLIDE','COLLIDE_B','PV','BV1','EV0900',900,false,' '),
+  ('fb000000-0000-0000-0000-0000000000aa','db000000-0000-0000-0000-000000000002','difb','L1','CVCOLLIDE','COLLIDE_A','PV','BV1','EV0900',900,true , NULL),
+  ('fb000000-0000-0000-0000-0000000000bb','db000000-0000-0000-0000-000000000002','difb','L1','CVCOLLIDE','COLLIDE_B','PV','BV1','EV0900',900,false,' ');
+INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml) VALUES
+  ('da000000-0000-0000-0000-000000000002','fa000000-0000-0000-0000-0000000000aa','CVCOR01',1,10),
+  ('da000000-0000-0000-0000-000000000002','fa000000-0000-0000-0000-0000000000bb','CVCOR02',1,20),
+  ('db000000-0000-0000-0000-000000000002','fb000000-0000-0000-0000-0000000000aa','CVCOR01',1,10),
+  ('db000000-0000-0000-0000-000000000002','fb000000-0000-0000-0000-0000000000bb','CVCOR02',1,20);
+
+-- Comparador: total de diferenças (EXCEPT nos dois sentidos) em fórmulas + itens entre difa e difb.
+-- Normaliza account/id/timestamps; compara por chave de NEGÓCIO (ids SAYER). EXCEPT trata NULL=NULL.
+CREATE OR REPLACE FUNCTION _dif_count() RETURNS int LANGUAGE sql AS $fn$
+  WITH na AS (SELECT f.cor_id, p.cod_produto, b.id_base_sayersystem AS id_base, e.id_embalagem_sayersystem AS id_emb,
+                     COALESCE(sc.id_subcolecao_sayersystem,'') AS subcol,
+                     f.volume_final_ml, f.preco_final_sayersystem AS preco, f.personalizada
+              FROM tint_formulas f JOIN tint_produtos p ON p.id=f.produto_id JOIN tint_bases b ON b.id=f.base_id
+                   JOIN tint_embalagens e ON e.id=f.embalagem_id
+                   LEFT JOIN tint_subcolecoes sc ON sc.id=f.subcolecao_id WHERE f.account='difa'),
+       nb AS (SELECT f.cor_id, p.cod_produto, b.id_base_sayersystem AS id_base, e.id_embalagem_sayersystem AS id_emb,
+                     COALESCE(sc.id_subcolecao_sayersystem,'') AS subcol,
+                     f.volume_final_ml, f.preco_final_sayersystem AS preco, f.personalizada
+              FROM tint_formulas f JOIN tint_produtos p ON p.id=f.produto_id JOIN tint_bases b ON b.id=f.base_id
+                   JOIN tint_embalagens e ON e.id=f.embalagem_id
+                   LEFT JOIN tint_subcolecoes sc ON sc.id=f.subcolecao_id WHERE f.account='difb'),
+       fdiff AS ((SELECT * FROM na EXCEPT SELECT * FROM nb) UNION ALL (SELECT * FROM nb EXCEPT SELECT * FROM na)),
+       ia AS (SELECT f.cor_id, e.id_embalagem_sayersystem AS id_emb, co.id_corante_sayersystem AS corante, fi.ordem, fi.qtd_ml
+              FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
+                   JOIN tint_embalagens e ON e.id=f.embalagem_id JOIN tint_corantes co ON co.id=fi.corante_id
+              WHERE f.account='difa'),
+       ib AS (SELECT f.cor_id, e.id_embalagem_sayersystem AS id_emb, co.id_corante_sayersystem AS corante, fi.ordem, fi.qtd_ml
+              FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
+                   JOIN tint_embalagens e ON e.id=f.embalagem_id JOIN tint_corantes co ON co.id=fi.corante_id
+              WHERE f.account='difb'),
+       idiff AS ((SELECT * FROM ia EXCEPT SELECT * FROM ib) UNION ALL (SELECT * FROM ib EXCEPT SELECT * FROM ia))
+  SELECT (SELECT count(*) FROM fdiff) + (SELECT count(*) FROM idiff);
+$fn$;
+SQL
+
+# Promove (com cronômetro): difa pela set-based NOVA, difb pelo loop ANTIGO. Statements separados
+# = transações auto-commit distintas (os TEMP TABLE ON COMMIT DROP da função não colidem).
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DROP TABLE IF EXISTS _t13;
+CREATE TABLE _t13 (k text, ts timestamptz);
+INSERT INTO _t13 VALUES ('a0', clock_timestamp());
+SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000001');
+SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');
+INSERT INTO _t13 VALUES ('a1', clock_timestamp());
+SELECT tint_promote_sync_run_oldloop('db000000-0000-0000-0000-000000000001');
+SELECT tint_promote_sync_run_oldloop('db000000-0000-0000-0000-000000000002');
+INSERT INTO _t13 VALUES ('a2', clock_timestamp());
+SQL
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE na int; nb int; ia int; ib int; nulls_a int; reais_a int; d int; ms_new numeric; ms_old numeric;
+BEGIN
+  SELECT count(*) INTO na FROM tint_formulas WHERE account='difa';
+  SELECT count(*) INTO nb FROM tint_formulas WHERE account='difb';
+  IF na <> nb THEN RAISE EXCEPTION 'C13.1 FALHOU: nº de fórmulas difere (set-based %, loop %)', na, nb; END IF;
+  IF na <> 603 THEN RAISE EXCEPTION 'C13.1b FALHOU: esperado 603 fórmulas (200×3 + 3 da colisão CVCOLLIDE), achei %', na; END IF;
+
+  SELECT count(*) INTO ia FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='difa';
+  SELECT count(*) INTO ib FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='difb';
+  IF ia <> ib THEN RAISE EXCEPTION 'C13.2 FALHOU: nº de itens difere (set-based %, loop %)', ia, ib; END IF;
+
+  -- Mix NULL-honesto real: tem fórmula NULL (corante sem preço) E fórmula com preço.
+  SELECT count(*) FILTER (WHERE preco_final_sayersystem IS NULL),
+         count(*) FILTER (WHERE preco_final_sayersystem IS NOT NULL)
+    INTO nulls_a, reais_a FROM tint_formulas WHERE account='difa';
+  IF nulls_a = 0 OR reais_a = 0 THEN RAISE EXCEPTION 'C13.3 FALHOU: cenário trivial (nulls=% reais=%) — sem mix NULL-honesto', nulls_a, reais_a; END IF;
+
+  -- subcoleção exercitada (não-trivial): tem fórmula com subcolecao_id resolvido (entra na chave única).
+  IF (SELECT count(*) FROM tint_formulas WHERE account='difa' AND subcolecao_id IS NOT NULL) = 0 THEN
+    RAISE EXCEPTION 'C13.3b FALHOU: nenhuma fórmula com subcoleção — dimensão não exercitada';
+  END IF;
+
+  -- IDENTIDADE CONTÁBIL: set-based ≡ loop em TODAS as fórmulas e itens.
+  d := _dif_count();
+  IF d <> 0 THEN RAISE EXCEPTION 'C13.4 FALHOU: set-based DIVERGE do loop em % linhas (fórmulas+itens)', d; END IF;
+
+  -- Colisão de chave oficial: exercitada (3 expansões, 1 vencedor/embalagem) e o vencedor é B
+  -- (subcolecao=' ' > '', personalizada=false) — o MESMO que o loop. _dif_count já garante difa≡difb;
+  -- este assert documenta QUAL é o vencedor e que a colisão de fato ocorreu (não-trivial).
+  IF (SELECT count(*) FROM tint_formulas WHERE account='difa' AND cor_id='CVCOLLIDE') <> 3 THEN
+    RAISE EXCEPTION 'C13.6 FALHOU: CVCOLLIDE deveria colapsar em 3 expansões (1 vencedor/embalagem), achei %',
+      (SELECT count(*) FROM tint_formulas WHERE account='difa' AND cor_id='CVCOLLIDE'); END IF;
+  IF EXISTS (SELECT 1 FROM tint_formulas WHERE account='difa' AND cor_id='CVCOLLIDE'
+             AND (personalizada IS DISTINCT FROM false OR nome_cor IS DISTINCT FROM 'COLLIDE_B')) THEN
+    RAISE EXCEPTION 'C13.6 FALHOU: vencedor da colisão != B (esperado personalizada=false / nome COLLIDE_B = escolha do loop)'; END IF;
+
+  SELECT round(extract(epoch from ((SELECT ts FROM _t13 WHERE k='a1') - (SELECT ts FROM _t13 WHERE k='a0')))*1000,1),
+         round(extract(epoch from ((SELECT ts FROM _t13 WHERE k='a2') - (SELECT ts FROM _t13 WHERE k='a1')))*1000,1)
+    INTO ms_new, ms_old;
+  IF ms_new > 30000 THEN RAISE EXCEPTION 'C13.5 FALHOU: set-based demorou % ms (>30s — regressão grave)', ms_new; END IF;
+  RAISE NOTICE 'OK C13 — identidade set-based≡loop: % fórmulas / % itens (% NULL, % com preço; +colisão CVCOLLIDE→B); tempo set-based % ms vs loop % ms',
+    na, ia, nulls_a, reais_a, ms_new, ms_old;
+END $$;
+SQL
+
+echo ""
+echo "── falsificação C13 (prova que a identidade diferencial tem DENTE) ──"
+MIG="$REPO_ROOT/supabase/migrations/20260615160000_tint_promote_set_based.sql"
+
+# F1 — sabota o NULL-honesto: corante faltante deixa de zerar p/ NULL → fabrica preço.
+sed 's/WHEN COALESCE(it.faltante, false) THEN NULL/WHEN false THEN NULL/' "$MIG" > /tmp/sab-tint-nullhonest.sql
+grep -q 'WHEN false THEN NULL' /tmp/sab-tint-nullhonest.sql || { echo "✗ F1: sed não casou o alvo NULL-honesto"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-nullhonest.sql >/dev/null
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
+DSAB=$(P -tA -c "SELECT _dif_count();")
+case "$DSAB" in
+  0|"") echo "✗ F1 FALHOU: sabotei o NULL-honesto e a identidade NÃO acusou → C13.4 é fraco"; exit 1 ;;
+  *)    echo "  ✓ F1 — NULL-honesto furado diverge do loop em $DSAB linhas (C13.4 tem dente)" ;;
+esac
+P -v ON_ERROR_STOP=1 -q -f "$MIG" >/dev/null
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
+
+# F2 — sabota o fator (regra de 3 → 1): expansão p/ embalagem ≠ formulação fica errada.
+sed 's#(e.volume_ml / fl.volume_final_ml) AS fator#(1) AS fator#' "$MIG" > /tmp/sab-tint-fator.sql
+grep -q '(1) AS fator' /tmp/sab-tint-fator.sql || { echo "✗ F2: sed não casou o alvo fator"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-fator.sql >/dev/null
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
+DSAB2=$(P -tA -c "SELECT _dif_count();")
+case "$DSAB2" in
+  0|"") echo "✗ F2 FALHOU: troquei o fator e a identidade NÃO acusou → C13.4 é fraco"; exit 1 ;;
+  *)    echo "  ✓ F2 — fator=1 diverge do loop em $DSAB2 linhas (regra de 3 coberta)" ;;
+esac
+P -v ON_ERROR_STOP=1 -q -f "$MIG" >/dev/null
+P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
+
+# Restauração confirmada: set-based ≡ loop de novo.
+DOK=$(P -tA -c "SELECT _dif_count();")
+[ "$DOK" = "0" ] || { echo "✗ restauração falhou: _dif_count=$DOK (esperado 0)"; exit 1; }
+echo "  ✓ restauração OK — set-based≡loop de novo (_dif_count=0)"
 
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 SELECT 'TODOS OS TESTES PG17 DA PROMOÇÃO PASSARAM ✓' AS resultado;
