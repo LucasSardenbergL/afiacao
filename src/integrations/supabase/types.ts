@@ -6419,6 +6419,42 @@ export type Database = {
         }
         Relationships: []
       }
+      markup_policy: {
+        Row: {
+          account: string
+          escopo: string
+          familia: string | null
+          id: string
+          meta_markup: number
+          piso_markup: number
+          sku_codigo: number | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          account: string
+          escopo: string
+          familia?: string | null
+          id?: string
+          meta_markup: number
+          piso_markup: number
+          sku_codigo?: number | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          account?: string
+          escopo?: string
+          familia?: string | null
+          id?: string
+          meta_markup?: number
+          piso_markup?: number
+          sku_codigo?: number | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       melhoria_itens: {
         Row: {
           autor_user_id: string
@@ -15493,6 +15529,7 @@ export type Database = {
       get_meu_mixgap_for: { Args: { p_target: string }; Returns: Json }
       get_minha_positivacao: { Args: never; Returns: Json }
       get_minha_positivacao_for: { Args: { p_target: string }; Returns: Json }
+      get_preco_cockpit: { Args: { p_itens: Json }; Returns: Json }
       get_sku_ranking_negociacao_paralela: {
         Args: { p_empresa?: string }
         Returns: unknown[]
@@ -15797,6 +15834,13 @@ export type Database = {
         }[]
       }
       resgatar_recompensa: { Args: { p_reward_key: string }; Returns: string }
+      resolve_markup_policy: {
+        Args: { p_codigo: number; p_empresa: string; p_familia: string }
+        Returns: {
+          meta_markup: number
+          piso_markup: number
+        }[]
+      }
       resolver_outlier: {
         Args: {
           p_decisao: string

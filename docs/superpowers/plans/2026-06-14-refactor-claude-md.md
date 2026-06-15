@@ -1,6 +1,6 @@
 # Plano — Refactor do `CLAUDE.md` (de 96k → ~3-5k tokens)
 
-> Frente 1 do programa de skills (decidida com Codex). Status: **PLANO PRONTO, execução pendente.**
+> Frente 1 do programa de skills (decidida com Codex). Status: **✅ EXECUTADO** (Fase A #842 + Fase B #844, mergeados 2026-06-15 — CLAUDE.md 68 KB → 13 KB / ~3,6k tokens; subagente Explore validado sem thrashing; lições em `docs/agent/*`, diário consolidado em `docs/historico/*`, gate de budget no CI).
 > Decisão do founder (2026-06-14): o diário de PRs é **movido íntegro pra `docs/historico/`** (preserva tudo, fora do contexto automático). Zero descarte.
 
 ## Por que
