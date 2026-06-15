@@ -7,18 +7,11 @@ import { Search, Plus, Loader2, Package, FileText } from 'lucide-react';
 import { keyDeSku, type CurrentSpec } from '@/lib/knowledge-base/spec-link';
 import { FichaTecnicaSheet } from '@/components/unified-order/FichaTecnicaSheet';
 import { usePrecoCockpit, type ItemCockpitInput } from '@/hooks/usePrecoCockpit';
+import { FAIXA_UI } from '@/lib/preco/faixa-ui';
 import { cn } from '@/lib/utils';
 import type { Product, ProductCartItem } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
 import { format } from 'date-fns';
-
-// Cockpit de preço (Fase 2a): faixa → rótulo + cor (tokens text-status-*).
-// neutro não renderiza badge (⚪ = "—", sem ruído).
-const FAIXA_UI: Record<string, { label: string; cls: string }> = {
-  vermelho: { label: 'Abaixo do custo', cls: 'text-status-error' },
-  amarelo:  { label: 'Abaixo do piso',  cls: 'text-status-warning' },
-  verde:    { label: 'Saudável',        cls: 'text-status-success' },
-};
 
 interface ProductItemFormProps {
   title: string;
@@ -52,11 +45,20 @@ export function ProductItemForm({
   // não consulta (o preço exibido ainda vai mudar). Saúde sobre o preço aplicado.
   const cockpitInputs = useMemo<ItemCockpitInput[]>(() => {
     if (customerPricesLoading) return [];
+    // #6: produto tintométrico NÃO recebe faixa na lista — a faixa real (custo
+    // base+corantes) depende da cor escolhida e aparece na linha do carrinho.
+    // O custo da base aqui enganaria. Filtra fora os tintométricos.
     return products
+      .filter(p => !p.is_tintometric)
       .map(p => ({ empresa: p.account ?? '', codigo: p.omie_codigo_produto, preco: prices[p.omie_codigo_produto] || p.valor_unitario }))
       .filter(i => i.preco > 0 && Number.isFinite(i.codigo) && i.empresa !== '');
   }, [products, prices, customerPricesLoading]);
-  const { data: cockpitByCode } = usePrecoCockpit(cockpitInputs);
+  const { data: cockpitList } = usePrecoCockpit(cockpitInputs);
+  // produtos da busca são únicos por código (e tint é filtrado fora) → Map por código.
+  const cockpitByCode = useMemo(
+    () => new Map((cockpitList ?? []).map(l => [l.codigo, l])),
+    [cockpitList],
+  );
 
   const getQty = (id: string) => quantities[id] ?? 1;
   const setQty = (id: string, v: number) => setQuantities(prev => ({ ...prev, [id]: Math.max(1, v) }));
