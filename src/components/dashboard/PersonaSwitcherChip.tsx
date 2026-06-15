@@ -19,15 +19,15 @@ export function PersonaSwitcherChip() {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-background/60 backdrop-blur border border-border/60 text-xs font-medium text-foreground hover:bg-background/80 transition-colors"
+          className="group inline-flex items-center gap-1.5 h-8 px-2 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
         >
-          <Eye className="w-3 h-3 opacity-70" />
-          <span className="text-muted-foreground">Ver como:</span>
-          <span>{label}</span>
-          <ChevronDown className="w-3 h-3 opacity-60" />
+          <Eye className="w-4 h-4 opacity-70 shrink-0" />
+          <span className="hidden sm:inline">Ver como:</span>
+          <span className={cn('truncate max-w-[8rem]', isImpersonating && 'text-foreground font-semibold')}>{label}</span>
+          <ChevronDown className="w-3 h-3 opacity-60 shrink-0" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 p-0">
+      <PopoverContent align="end" className="w-72 p-0">
         <div className="p-3 border-b border-border">
           <p className="text-xs font-semibold text-foreground">Ver o app como outra pessoa</p>
           <p className="text-[11px] text-muted-foreground mt-0.5">
