@@ -109,6 +109,9 @@ const AdminRoutePlanner = () => {
     () => (alvoAberto ? detalheDoAlvo(alvoAberto) : null),
     [alvoAberto, detalheDoAlvo],
   );
+  // Trocar de cidade troca o universo — fecha o detalhe aberto (evita sheet órfão
+  // apontando pra um alvo da cidade anterior, cujo raw já foi limpo).
+  useEffect(() => { setAlvoAberto(null); }, [selectedCities]);
 
   // Initialize map
   useEffect(() => {
