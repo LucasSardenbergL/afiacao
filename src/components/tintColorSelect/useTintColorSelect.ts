@@ -107,11 +107,13 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // When color not found in current base, search ALL bases for it
   const colorNotFoundInBase = debouncedSearch.length >= 2 && !loadingFormulas && formulas && formulas.length === 0;
 
-  const { data: globalColorMatches, isLoading: loadingGlobalColors } = useQuery({
+  const { data: globalColorData, isLoading: loadingGlobalColors } = useQuery({
     queryKey: ['tint-global-color-search', debouncedSearch, currentBaseSuffix],
     staleTime: 5 * 60 * 1000,
-    enabled: !!colorNotFoundInBase && !!currentBaseSuffix,
-    queryFn: async (): Promise<AlternativePackaging[]> => {
+    // Roda mesmo sem sufixo (base sem código na descrição): aí não filtra por
+    // família e mostra todas as bases vendáveis — nunca esconde a cor em silêncio.
+    enabled: !!colorNotFoundInBase,
+    queryFn: async (): Promise<{ matches: AlternativePackaging[]; colorExists: boolean }> => {
       // Search formulas across all SKUs
       const { data: globalFormulas } = await supabase
         .from('tint_formulas')
@@ -122,7 +124,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
         .not('sku_id', 'is', null)
         .limit(50);
 
-      if (!globalFormulas || globalFormulas.length === 0) return [];
+      // Achou fórmula = a cor EXISTE no catálogo (mesmo que nenhuma seja vendável).
+      if (!globalFormulas || globalFormulas.length === 0) return { matches: [], colorExists: false };
 
       // Get SKU details
       const skuIds = [...new Set(globalFormulas.map(f => f.sku_id!))];
@@ -132,7 +135,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
         .in('id', skuIds)
         .not('omie_product_id', 'is', null);
 
-      if (!skus || skus.length === 0) return [];
+      if (!skus || skus.length === 0) return { matches: [], colorExists: true };
 
       // Filter SKUs to only those with the same base suffix (e.g. ".7666")
       if (currentBaseSuffix) {
@@ -153,7 +156,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
         // Remove SKUs with non-matching bases — filtra skus in-place
         const filteredSkus = skus.filter(s => validBaseIds.has(s.base_id));
-        if (filteredSkus.length === 0) return [];
+        if (filteredSkus.length === 0) return { matches: [], colorExists: true };
         // Replace skus reference
         skus.length = 0;
         skus.push(...filteredSkus);
@@ -166,7 +169,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
         .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
         .in('id', productIds);
 
-      if (!products) return [];
+      if (!products) return { matches: [], colorExists: true };
 
       const result: AlternativePackaging[] = [];
       for (const gf of globalFormulas) {
@@ -190,9 +193,12 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       }
 
       result.sort((a, b) => a.productDescricao.localeCompare(b.productDescricao));
-      return result;
+      return { matches: result, colorExists: true };
     },
   });
+
+  const globalColorMatches = globalColorData?.matches ?? [];
+  const globalColorExists = globalColorData?.colorExists ?? false;
 
   // Pricing breakdown for selected formula (for informational display)
   const { data: pricing } = useTintPricing(selectedFormula?.id || null);
@@ -349,6 +355,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     loadingFormulas,
     colorNotFoundInBase,
     globalColorMatches,
+    globalColorExists,
     loadingGlobalColors,
     selectedFormula,
     setSelectedFormula,

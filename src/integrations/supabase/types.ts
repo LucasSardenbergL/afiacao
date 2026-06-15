@@ -21,6 +21,7 @@ export type Database = {
           disparado_em: string | null
           ordem: number
           request_id: number | null
+          start_page: number
         }
         Insert: {
           date_from: string
@@ -28,6 +29,7 @@ export type Database = {
           disparado_em?: string | null
           ordem: number
           request_id?: number | null
+          start_page?: number
         }
         Update: {
           date_from?: string
@@ -35,6 +37,22 @@ export type Database = {
           disparado_em?: string | null
           ordem?: number
           request_id?: number | null
+          start_page?: number
+        }
+        Relationships: []
+      }
+      _tmp_backfill_pedidos_cursor: {
+        Row: {
+          id: number
+          next_page: number
+        }
+        Insert: {
+          id: number
+          next_page: number
+        }
+        Update: {
+          id?: number
+          next_page?: number
         }
         Relationships: []
       }
@@ -1951,6 +1969,7 @@ export type Database = {
       farmer_calls: {
         Row: {
           analyses: Json | null
+          atendimento_id: string | null
           attempt_number: number | null
           call_backend: string | null
           call_result: Database["public"]["Enums"]["farmer_call_result"]
@@ -1975,6 +1994,7 @@ export type Database = {
         }
         Insert: {
           analyses?: Json | null
+          atendimento_id?: string | null
           attempt_number?: number | null
           call_backend?: string | null
           call_result?: Database["public"]["Enums"]["farmer_call_result"]
@@ -1999,6 +2019,7 @@ export type Database = {
         }
         Update: {
           analyses?: Json | null
+          atendimento_id?: string | null
           attempt_number?: number | null
           call_backend?: string | null
           call_result?: Database["public"]["Enums"]["farmer_call_result"]
@@ -14954,6 +14975,7 @@ export type Database = {
         }
         Returns: undefined
       }
+      _tmp_backfill_pedidos_oben_tick: { Args: never; Returns: undefined }
       _vendas_familia_ausente_lista_email: {
         Args: { p_limit?: number }
         Returns: string

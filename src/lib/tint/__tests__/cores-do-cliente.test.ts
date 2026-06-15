@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extrairCoresDoHistorico, filtrarCores, normalizarBusca } from '../cores-do-cliente';
+import { extrairCoresDoHistorico, filtrarCores, normalizarBusca, termoBuscaCor } from '../cores-do-cliente';
 import type { PedidoHistorico } from '../cores-do-cliente';
 
 const pedido = (over: Partial<PedidoHistorico> = {}): PedidoHistorico => ({
@@ -136,5 +136,42 @@ describe('filtrarCores / normalizarBusca', () => {
 
   it('normalizarBusca: minúsculas + sem acento + trim', () => {
     expect(normalizarBusca('  Afiação ')).toBe('afiacao');
+  });
+});
+
+describe('termoBuscaCor', () => {
+  it('regressão: rótulo cru com embalagem → código líder (o bug do "Pedir de novo")', () => {
+    // "346J - PLATINA BIANCA 900ML" como busca não casava com cor_id "346J - ACRIL BS"
+    // nem nome_cor "PLATINA BIANCA" → "nenhuma cor encontrada". Agora vira "346J".
+    expect(termoBuscaCor('346J - PLATINA BIANCA 900ML')).toBe('346J');
+  });
+
+  it('código líder em grafias variadas do mesmo histórico', () => {
+    expect(termoBuscaCor('346J - ACRIL BS - PLATINA BIANCA')).toBe('346J');
+    expect(termoBuscaCor('346J ACRIL BS - PLATINA BIANCA')).toBe('346J');
+    expect(termoBuscaCor('339H - ACRIL BS - GRAFITE - BS')).toBe('339H');
+    expect(termoBuscaCor('985H - ACRIL BS - ONIX I - BS')).toBe('985H');
+  });
+
+  it('descarta nota após "|" e embalagem no fim', () => {
+    expect(termoBuscaCor('346J PLATINA BIANCA 900ML QT|TULIO LEVOU ESSA')).toBe('346J');
+  });
+
+  it('cor_id puramente numérico que lidera (RAL etc.)', () => {
+    expect(termoBuscaCor('1247 - AZUL RAL 5010 - QT')).toBe('1247');
+  });
+
+  it('nome-líder com código embutido → pega o código (letra+dígito), não a embalagem', () => {
+    expect(termoBuscaCor('OVO H101 - BS')).toBe('H101');
+    expect(termoBuscaCor('CINZA G155 - BS')).toBe('G155');
+  });
+
+  it('cor só por nome (sem código) → primeira palavra, degradação honesta', () => {
+    expect(termoBuscaCor('VERDE AFIAÇÃO')).toBe('VERDE');
+  });
+
+  it('vazio/espaços não quebra', () => {
+    expect(termoBuscaCor('')).toBe('');
+    expect(termoBuscaCor('   ')).toBe('');
   });
 });
