@@ -34,9 +34,17 @@
 - `ORDERABLE` — mapeado mas não tudo disponível/precificável agora → encomenda.
 
 ## Construído (✅ neste branch `claude/venda-assistida-fatia1-pricing`)
-- `src/lib/venda-assistida/preco-preparado.ts` — `litrosDaEmbalagem` + `precoLitroPreparado` (16 testes).
-- `src/lib/venda-assistida/resolver-estado.ts` — `classificarEstadoVenda` (7 testes).
-- Ambos **puros, agnósticos à fonte do preço** (recebem R$/embalagem prontos) → a camada de cima decide cliente/tabela/markup.
+- `src/lib/venda-assistida/preco-preparado.ts` — `litrosDaEmbalagem` + `precoLitroPreparado`.
+- `src/lib/venda-assistida/resolver-estado.ts` — `classificarEstadoVenda` (primitivo de regras).
+- `src/lib/venda-assistida/resolver-opcao.ts` — **`resolverOpcaoVenda`** (entrada money-path coerente: estado + preço das MESMAS embalagens).
+- **35 testes** (puros, agnósticos à fonte do preço → a camada de cima decide cliente/tabela/markup).
+
+## Codex adversarial (2026-06-14, xhigh) — 2 P0 + P1/P2, todos fechados
+- **P0.1 — proporção ausente eliminava catalisador obrigatório:** `pct=null/NaN/<=0` com catalisador presente virava preço só-da-base (barato) → podia ir a SELLABLE_NOW. Fix: param `temCatalisador`; proporção inválida + temCatalisador → **incomplete** (nunca vira base).
+- **P0.2 — preço e estoque de embalagens diferentes:** preço pegava a maior, estado perguntava "alguma em estoque". Fix: **`resolverOpcaoVenda`** calcula o preço de SELLABLE_NOW SÓ sobre embalagens EM ESTOQUE (preço == disponibilidade, coerente por construção).
+- **P1:** empate de litros não-determinístico → menor valor vence; maior embalagem sem preço → "sob consulta" (não substitui silenciosa); `\bbase\b` falhava em `BASE_GL` (`_` é word-char) e dava falso-positivo com acento → regex robusta (separador = não-letra).
+- **P2:** guard do valor final (Infinity/0) no ramo mono-componente; devolve litros do catalisador (auditável).
+- ⚠️ **Decisões mantidas (founder, não-bug):** "base" = literalmente a palavra "base" na descrição; "maior embalagem" pode ter pior R$/L que uma menor (é a regra do founder). Rotular na UI: **"R$/litro preparado (teórico)"**, não "preço do kit/lote".
 
 ## Restante da Fatia 1 + Fatia 2 (data-wiring + UI — espera Publish/popular vínculos)
 - **Resolver de dados** (hook/RPC): por boletim → SKUs vinculados (casamento `v_omie_product_current_spec`) → agrupar embalagens (sufixo + litros + preço-do-cliente + estoque) → escolher maior → catalisador (casamento do catalisador) → chamar os 2 helpers → opção resolvida `{ estado, preco }`.
