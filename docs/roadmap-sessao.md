@@ -6,6 +6,22 @@
 
 ---
 
+## 🎨 SESSÃO 2026-06-14 (tint-mapeamento-assistido) — Mapeamento Omie das bases: cobertura + busca + auto-sugestão
+
+> Founder na tela `/tintometrico/catalogo` → Mapeamento → Bases: (1) produto Omie que existe some (WJOB.7796 GL), (2) seletor sem busca digitável, (3) ordenação alfabética cega, (4) sem auto-sugestão ("eu sugiro, você aprova"). Brainstorming → spec aprovada ("pode seguir") + Codex consult no algoritmo. Spec `docs/superpowers/specs/2026-06-14-tint-mapeamento-assistido-design.md`. Execução **inline** (lição #819: subagentes thrasham neste repo).
+
+- ✅ Diagnóstico: causa = **cobertura do sync** (não mismatch da família "Bases MixMachine"). 67 bases (+5 conc.) ativas sem `is_tintometric`. As 80 ATIVAS já 100% mapeadas → o não-mapeado que o founder vê são SKUs **OCULTOS**.
+- ✅ Backfill em prod (SQL Editor): marcou **13 ativos** (8 bases + 5 conc.), incl. WJOB.7796 GL. 59 restantes = `ativo=false` (descontinuados, fora de propósito).
+- ✅ Spec + **Codex consult** (furo principal: `forte` NÃO vem do score — vem da **cardinalidade de chave dura exata** [código-base + embalagem]; parsing exato sem normalizar `.00`; embalagem sem alias implícito; unicidade global; candidato já-mapeado → `revisar`).
+- ✅ Motor puro `src/lib/tint/omie-match.ts` (TDD, **23/23**) — chave dura EXATA (código-base + embalagem), casamento conservador (dúvida = `revisar`); genérico p/ carregar custo/estoque.
+- ✅ Combobox `OmieBaseCombobox` — busca digitável + ranqueamento (`shouldFilter={false}`, "Sugeridos pra esta base" no topo, resto agrupado) — substitui o `<Select>` em `TintMapping.tsx`.
+- ✅ Auto-sugestão + aprovação ("Sugerir mapeamentos" / "Aprovar todas (N)"; aprovar oculto = reativa `ativo=true` + mapeia).
+- ✅ Validado: typecheck strict **0** · lint **0 erros** (76 warnings pré-existentes) · **3481** testes (469 files) · build OK.
+- ⏳ **Founder: mergear o PR + Publish no Lovable** (100% frontend → só vai ao ar após Publish).
+- ⏳ Follow-up (não bloqueia): `tint-omie-sync` robusto à cobertura (senão produto novo volta a escapar e precisa de re-backfill).
+
+---
+
 ## 🧭 SESSÃO 2026-06-14 (roteirizador-visitas-campo) — Tela do hunter separada da equipe
 
 > Founder achou a tela do Roteirizador confusa (5 modos numa tela só, feita pra equipe inteira). Ele é o
