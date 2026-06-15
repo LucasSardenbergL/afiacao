@@ -1,0 +1,20 @@
+[
+  { "query": "os dados do financeiro estão desatualizados, parece que o contas a receber parou", "should_trigger": true, "note": "dado velho + sync suspeito — caso canônico" },
+  { "query": "recebi um email '[Sync parado]' das contas a pagar da colacor", "should_trigger": true, "note": "alerta do watchdog por email" },
+  { "query": "chegou '[Saúde de dados] vendas_pedidos degradado', o que houve?", "should_trigger": true, "note": "alerta do Sentinela" },
+  { "query": "a positivação do mês não atualizou hoje, tá com número de ontem", "should_trigger": true, "note": "KPI defasado → diagnóstico de frescor" },
+  { "query": "não apareceu pedido de compra sugerido hoje, acho que o cron de reposição não rodou", "should_trigger": true, "note": "cron suspeito de não ter rodado" },
+  { "query": "o sync do Omie tá quebrado faz dias?", "should_trigger": true, "note": "incidente de sync prolongado" },
+  { "query": "o estoque não está atualizando no app", "should_trigger": true, "note": "frescor de dado de sync" },
+  { "query": "os scores da carteira parecem congelados, calculated_at antigo", "should_trigger": true, "note": "sync de scoring parado" },
+  { "query": "por que o relatório financeiro está com dado de 3 dias atrás?", "should_trigger": true, "note": "frescor → multi-camada (cron/HTTP/handler)" },
+  { "query": "tem cron rodando 'succeeded' mas o dado não muda, confia nisso?", "should_trigger": true, "note": "o exato falso-positivo do job_run_details" },
+
+  { "query": "aplica a correção do sync que você diagnosticou (rotaciona o CRON_SECRET)", "should_trigger": false, "note": "AÇÃO de escrita → SQL Editor / chat Lovable, não esta skill" },
+  { "query": "redeploya a edge omie-financeiro", "should_trigger": false, "note": "deploy = ação humana via chat Lovable; a skill entrega, não executa" },
+  { "query": "consertei a aplicar_promocoes que tinha JOIN inválido, valida a lógica", "should_trigger": false, "note": "bug de lógica SQL → prove-sql-money-path" },
+  { "query": "cria um cron novo pra rodar o sync de estoque às 9h", "should_trigger": false, "note": "criar objeto → lovable-db-operator" },
+  { "query": "o build quebrou com erro de tipo em useOrders", "should_trigger": false, "note": "erro de frontend/build — investigate" },
+  { "query": "roda um SELECT pra exportar os pedidos do mês pro Excel", "should_trigger": false, "note": "leitura comum, não diagnóstico de sync" },
+  { "query": "o login não persiste depois do refresh", "should_trigger": false, "note": "bug de auth no frontend" }
+]
