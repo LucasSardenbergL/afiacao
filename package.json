@@ -14,7 +14,10 @@
     "audit:migrations": "bun scripts/audit-custom-migrations.ts",
     "mutcheck": "bash scripts/mutcheck-all.sh",
     "mutcheck:selftest": "bash scripts/mutcheck.sh --selftest",
-    "wt": "bash scripts/new-worktree.sh"
+    "wt": "bash scripts/new-worktree.sh",
+    "wt:status": "bash scripts/wt-status.sh",
+    "wt:clean": "bash scripts/wt-clean.sh",
+    "claude:size": "bash scripts/check-claudemd-size.sh"
   },
   "dependencies": {
     "@elevenlabs/react": "^0.14.0",
