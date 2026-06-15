@@ -146,5 +146,10 @@ export function termoBuscaCor(nome: string): string {
   if (/\d/.test(lider) && !EH_EMBALAGEM(lider)) return lider;
 
   const codigo = tokens.find((t) => /\d/.test(t) && /[a-z]/i.test(t) && !EH_EMBALAGEM(t));
-  return codigo ?? lider;
+  if (codigo) return codigo;
+
+  // Sem código: cor só por NOME → mantém o rótulo limpo INTEIRO (só remove a
+  // embalagem do fim), nunca só a 1ª palavra — senão "AZUL RAL 5010" vira "AZUL"
+  // e some entre dezenas de azuis (a busca capa em 20/50 resultados).
+  return limpo.replace(/\s*-?\s*(?:QT|GL|LT|\d+(?:[.,]\d+)?\s*ML)\s*$/i, '').trim() || limpo;
 }

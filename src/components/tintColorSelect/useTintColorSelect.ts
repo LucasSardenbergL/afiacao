@@ -65,7 +65,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   const skuId = skuInfo?.id || null;
 
   // Get base description to extract the numeric suffix (e.g. ".7666" from "WFOB.7666 BASE BRANCA...")
-  const { data: currentBaseInfo } = useQuery({
+  const { data: currentBaseInfo, isFetched: baseInfoFetched } = useQuery({
     queryKey: ['tint-base-info', skuInfo?.base_id],
     staleTime: 10 * 60 * 1000,
     enabled: !!skuInfo?.base_id,
@@ -112,7 +112,10 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     staleTime: 5 * 60 * 1000,
     // Roda mesmo sem sufixo (base sem código na descrição): aí não filtra por
     // família e mostra todas as bases vendáveis — nunca esconde a cor em silêncio.
-    enabled: !!colorNotFoundInBase,
+    // Mas só DEPOIS da base-info assentar (fetched, ou sem base_id pra buscar):
+    // senão currentBaseSuffix fica null no transiente e o global rodaria sem
+    // filtro, exibindo/permitindo selecionar cor de OUTRA família no flash.
+    enabled: !!colorNotFoundInBase && (!!currentBaseSuffix || baseInfoFetched || !skuInfo?.base_id),
     queryFn: async (): Promise<{ matches: AlternativePackaging[]; colorExists: boolean }> => {
       // Search formulas across all SKUs
       const { data: globalFormulas } = await supabase
@@ -121,14 +124,17 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
         .eq('account', 'oben')
         .is('desativada_em', null)
         .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
-        .not('sku_id', 'is', null)
         .limit(50);
 
-      // Achou fórmula = a cor EXISTE no catálogo (mesmo que nenhuma seja vendável).
+      // Achou fórmula = a cor EXISTE no catálogo (mesmo sem SKU/produto vendável).
+      // NÃO filtra sku_id aqui de propósito: fórmula com sku_id null é o próprio
+      // caso não-mapeado que queremos contar como "existe" (senão a UI mente
+      // "não existe"). O filtro de vendabilidade vem depois, ao montar matches.
       if (!globalFormulas || globalFormulas.length === 0) return { matches: [], colorExists: false };
 
-      // Get SKU details
-      const skuIds = [...new Set(globalFormulas.map(f => f.sku_id!))];
+      // SKUs vendáveis (descarta sku_id null — contam p/ existência, não p/ venda).
+      const skuIds = [...new Set(globalFormulas.map(f => f.sku_id).filter((id): id is string => !!id))];
+      if (skuIds.length === 0) return { matches: [], colorExists: true };
       const { data: skus } = await supabase
         .from('tint_skus')
         .select('id, omie_product_id, produto_id, base_id')

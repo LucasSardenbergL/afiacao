@@ -166,8 +166,15 @@ describe('termoBuscaCor', () => {
     expect(termoBuscaCor('CINZA G155 - BS')).toBe('G155');
   });
 
-  it('cor só por nome (sem código) → primeira palavra, degradação honesta', () => {
-    expect(termoBuscaCor('VERDE AFIAÇÃO')).toBe('VERDE');
+  it('cor só por nome (sem código) → rótulo limpo INTEIRO, não a 1ª palavra', () => {
+    // Codex P1: "AZUL" sozinho some entre dezenas de azuis (cap de 20/50).
+    expect(termoBuscaCor('VERDE AFIAÇÃO')).toBe('VERDE AFIAÇÃO');
+    expect(termoBuscaCor('AZUL RAL 5010')).toBe('AZUL RAL 5010');
+  });
+
+  it('nome sem código + embalagem no fim → tira só a embalagem', () => {
+    expect(termoBuscaCor('AZUL RAL 5010 900ML')).toBe('AZUL RAL 5010');
+    expect(termoBuscaCor('VERDE AFIAÇÃO - QT')).toBe('VERDE AFIAÇÃO');
   });
 
   it('vazio/espaços não quebra', () => {
