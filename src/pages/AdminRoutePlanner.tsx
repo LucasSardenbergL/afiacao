@@ -14,6 +14,7 @@ import { PlanningModeSelector } from '@/components/reposicao/routePlanner/Planni
 import { RoutePlannerContextTabs } from '@/components/reposicao/routePlanner/RoutePlannerContextTabs';
 import { CityMultiSelector } from '@/components/reposicao/routePlanner/CityMultiSelector';
 import { FieldTargetsSummary } from '@/components/reposicao/routePlanner/FieldTargetsSummary';
+import { AlvosFiltros } from '@/components/reposicao/routePlanner/AlvosFiltros';
 import { FieldTargetCard } from '@/components/reposicao/routePlanner/FieldTargetCard';
 import { PeriodFilter } from '@/components/reposicao/routePlanner/PeriodFilter';
 import { RouteActionButtons } from '@/components/reposicao/routePlanner/RouteActionButtons';
@@ -89,10 +90,12 @@ const AdminRoutePlanner = () => {
     fieldTargets,
     filteredFieldTargets,
     resumoAlvos,
+    prospectsDisponiveis,
+    bairrosDisponiveis,
     selectedTargetIds,
     toggleTargetId,
-    targetFilter,
-    setTargetFilter,
+    filtros,
+    setFiltros,
   } = useRoutePlanner();
 
   // Initialize map
@@ -218,12 +221,18 @@ const AdminRoutePlanner = () => {
           <>
             <CityMultiSelector value={selectedCities} onToggle={toggleCity} onRemove={removeCity} />
             {fieldTargets.length > 0 && (
-              <FieldTargetsSummary
-                totalClientes={resumoAlvos.totalClientes}
-                totalProspects={resumoAlvos.totalProspects}
-                filtro={targetFilter}
-                onFiltroChange={setTargetFilter}
-              />
+              <>
+                <FieldTargetsSummary
+                  totalClientes={resumoAlvos.totalClientes}
+                  totalProspects={resumoAlvos.totalProspects}
+                  prospectsDisponiveis={prospectsDisponiveis}
+                />
+                <AlvosFiltros
+                  filtros={filtros}
+                  onChange={(patch) => setFiltros((prev) => ({ ...prev, ...patch }))}
+                  bairros={bairrosDisponiveis}
+                />
+              </>
             )}
           </>
         ) : (
