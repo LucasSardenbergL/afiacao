@@ -96,3 +96,126 @@ END $$;
 
 REVOKE ALL ON FUNCTION cep_geo_upsert(text,double precision,double precision,text,text,numeric,text,text,jsonb) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION cep_geo_upsert(text,double precision,double precision,text,text,numeric,text,text,jsonb) TO authenticated;
+
+-- =============================================================================
+-- Parte 3/3 — seed municipio_geo (de radar_municipios) + RPCs resolvem coord
+-- DROP+CREATE: adicionar coluna ao RETURNS TABLE muda o tipo de retorno →
+-- Postgres recusa CREATE OR REPLACE. Re-GRANT (authenticated, service_role)
+-- após recriar (o DROP derruba os grants). sandbox_exec volta por default-priv.
+-- =============================================================================
+
+-- seed dos centróides reusando radar_municipios (já IBGE-matched: rm.codigo =
+-- radar_empresas.municipio_codigo). Idempotente; decoupla do radar-ingest.
+INSERT INTO municipio_geo (municipio_codigo, lat, lng, uf, nome, source)
+SELECT codigo, lat, lng, uf, nome, 'radar_municipios'
+  FROM radar_municipios
+ WHERE lat IS NOT NULL AND lng IS NOT NULL
+ON CONFLICT (municipio_codigo) DO NOTHING;
+
+-- carteira_por_municipio: + lat/lng/precision no FIM. cep_geo por zip_code
+-- normalizado; fallback = centróide do município (city_centroid). Corpo idêntico
+-- ao vivo + 2 LEFT JOINs de geo (city-matching inalterado, já provado no redesign).
+DROP FUNCTION IF EXISTS carteira_por_municipio(text);
+CREATE FUNCTION carteira_por_municipio(p_municipio_codigo text)
+RETURNS TABLE(user_id uuid, name text, phone text, street text, number text, neighborhood text, city text, state text, zip_code text, complement text, business_hours_open text, business_hours_close text, ultima_visita timestamp with time zone, dias_desde_visita integer, lat double precision, lng double precision, "precision" text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+#variable_conflict use_column
+DECLARE
+  v_nome text;
+  v_uf   text;
+BEGIN
+  IF NOT COALESCE(public.pode_ver_carteira_completa((SELECT auth.uid())), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only';
+  END IF;
+  IF p_municipio_codigo IS NULL OR btrim(p_municipio_codigo) = '' THEN
+    RAISE EXCEPTION 'municipio_codigo obrigatório';
+  END IF;
+
+  SELECT re.municipio_nome, re.uf INTO v_nome, v_uf
+    FROM public.radar_empresas re
+   WHERE re.municipio_codigo = p_municipio_codigo
+   LIMIT 1;
+  IF v_nome IS NULL THEN RETURN; END IF;
+
+  RETURN QUERY
+  WITH alvo AS (
+    SELECT a.user_id, a.street, a.number, a.neighborhood, a.city, a.state,
+           a.zip_code, a.complement, a.is_default
+      FROM public.addresses a
+     WHERE public.norm_cidade(regexp_replace(a.city, '\s*\([^)]*\)\s*$', '')) = public.norm_cidade(v_nome)
+       AND upper(btrim(a.state)) = upper(btrim(v_uf))
+  ),
+  ende AS (
+    SELECT DISTINCT ON (user_id)
+           user_id, street, number, neighborhood, city, state, zip_code, complement
+      FROM alvo
+     ORDER BY user_id, is_default DESC NULLS LAST
+  ),
+  ult AS (
+    SELECT rv.customer_user_id, max(rv.check_in_at) AS ultima
+      FROM public.route_visits rv
+     WHERE rv.customer_user_id IN (SELECT e.user_id FROM ende e)
+       AND rv.check_in_at IS NOT NULL
+     GROUP BY rv.customer_user_id
+  )
+  SELECT e.user_id, p.name, p.phone,
+         e.street, e.number, e.neighborhood, e.city, e.state, e.zip_code, e.complement,
+         p.business_hours_open, p.business_hours_close,
+         u.ultima,
+         CASE WHEN u.ultima IS NULL THEN NULL
+              ELSE floor(extract(epoch FROM (now() - u.ultima)) / 86400)::int END,
+         COALESCE(cg.lat, mg.lat),
+         COALESCE(cg.lng, mg.lng),
+         COALESCE(cg.precision, CASE WHEN mg.lat IS NOT NULL THEN 'city_centroid' END)
+    FROM ende e
+    JOIN public.profiles p ON p.user_id = e.user_id
+    LEFT JOIN ult u ON u.customer_user_id = e.user_id
+    LEFT JOIN cep_geo cg ON cg.cep = public.normalizar_cep(e.zip_code)
+    LEFT JOIN municipio_geo mg ON mg.municipio_codigo = p_municipio_codigo
+   WHERE COALESCE(p.is_employee, false) = false;
+END $function$;
+REVOKE ALL ON FUNCTION carteira_por_municipio(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION carteira_por_municipio(text) TO authenticated, service_role;
+
+-- radar_prospects_para_rota: lat/lng resolvem por cep_geo (SoT) → re.lat legado
+-- → centróide do município; + precision no FIM. Mantém re.lat na cadeia p/ não
+-- regredir o front atual na janela Sub-PR1→Sub-PR2 (legado = 'street').
+DROP FUNCTION IF EXISTS radar_prospects_para_rota(text, integer);
+CREATE FUNCTION radar_prospects_para_rota(p_municipio_codigo text, p_limit integer DEFAULT 30)
+RETURNS TABLE(cnpj text, razao_social text, nome_fantasia text, logradouro text, numero text, complemento text, bairro text, municipio_nome text, uf text, cep text, telefone1 text, telefone2 text, prospeccao_status text, lat double precision, lng double precision, geocode_status text, "precision" text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+BEGIN
+  IF NOT COALESCE(public.pode_ver_carteira_completa((SELECT auth.uid())), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only';
+  END IF;
+  IF p_municipio_codigo IS NULL OR btrim(p_municipio_codigo) = '' THEN
+    RAISE EXCEPTION 'municipio_codigo obrigatório';
+  END IF;
+
+  RETURN QUERY
+  SELECT re.cnpj, re.razao_social, re.nome_fantasia,
+         re.logradouro, re.numero, re.complemento, re.bairro,
+         re.municipio_nome, re.uf, re.cep,
+         re.telefone1, re.telefone2,
+         re.prospeccao_status,
+         COALESCE(cg.lat, re.lat, mg.lat),
+         COALESCE(cg.lng, re.lng, mg.lng),
+         re.geocode_status,
+         CASE WHEN cg.cep IS NOT NULL THEN cg.precision
+              WHEN re.lat IS NOT NULL THEN 'street'
+              WHEN mg.lat IS NOT NULL THEN 'city_centroid' END
+    FROM public.radar_empresas re
+    LEFT JOIN cep_geo cg ON cg.cep = public.normalizar_cep(re.cep)
+    LEFT JOIN municipio_geo mg ON mg.municipio_codigo = re.municipio_codigo
+   WHERE re.municipio_codigo = p_municipio_codigo
+     AND re.ja_cliente = false
+     AND re.prospeccao_status IN ('a_contatar','contatado_sem_resposta','em_conversa')
+   ORDER BY (re.prospeccao_status = 'a_contatar') DESC,
+            re.data_abertura DESC NULLS LAST,
+            re.cnpj
+   LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 30), 2000));
+END $function$;
+REVOKE ALL ON FUNCTION radar_prospects_para_rota(text, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION radar_prospects_para_rota(text, integer) TO authenticated, service_role;
