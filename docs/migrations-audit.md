@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **225** custom migrations totais
-- **844** objetos esperados (criados por estas migrations)
+- **230** custom migrations totais
+- **865** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 235
-  - `rls_policy`: 203
-  - `index`: 157
+  - `function`: 239
+  - `rls_policy`: 206
+  - `index`: 168
   - `cron_job`: 105
-  - `table`: 96
-  - `trigger`: 44
+  - `table`: 98
+  - `trigger`: 45
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1965,6 +1965,40 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.carteira_por_municipio` | — |
 | `function` | `public.radar_prospects_para_rota` | — |
 
+### `20260614170000_cmc_ledger.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.cmc_ledger` | — |
+| `index` | `public.idx_cmc_ledger_lookup` | `cmc_ledger` |
+| `function` | `public.cmc_ledger_capture` | — |
+| `trigger` | `public.trg_cmc_ledger_capture` | `inventory_position` |
+| `rls_policy` | `public.cmc_ledger_select_staff` | `cmc_ledger` |
+
+### `20260614170000_roteirizador_campo_carteira_sufixo_uf.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.carteira_por_municipio` | — |
+
+### `20260614180000_markup_policy.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.markup_policy` | — |
+| `index` | `public.uq_markup_policy_conta` | `markup_policy` |
+| `index` | `public.uq_markup_policy_fam` | `markup_policy` |
+| `index` | `public.uq_markup_policy_sku` | `markup_policy` |
+| `function` | `public.resolve_markup_policy` | — |
+| `rls_policy` | `public.markup_policy_select_staff` | `markup_policy` |
+| `rls_policy` | `public.markup_policy_write_master` | `markup_policy` |
+
+### `20260614190000_get_preco_cockpit.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_preco_cockpit` | — |
+
 ### `20260614231801_reposicao_timeout_sync_inventory.sql`
 
 | Tipo | Objeto | Parent |
@@ -1977,6 +2011,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.purge-cron-job-run-details` | — |
+
+### `20260615095710_idx_data_health_freshness_cols.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_inventory_position_synced_at` | `inventory_position` |
+| `index` | `public.idx_omie_products_updated_at` | `omie_products` |
+| `index` | `public.idx_product_costs_updated_at` | `product_costs` |
+| `index` | `public.idx_fin_contas_receber_updated_at` | `fin_contas_receber` |
+| `index` | `public.idx_fin_contas_pagar_updated_at` | `fin_contas_pagar` |
+| `index` | `public.idx_farmer_client_scores_calculated_at` | `farmer_client_scores` |
+| `index` | `public.idx_pedido_compra_sugerido_data_ciclo` | `pedido_compra_sugerido` |
 
 ## Próximos passos quando algo der `❌`
 
