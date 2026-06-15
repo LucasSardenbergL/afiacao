@@ -12,10 +12,17 @@ function setup(overrides: Partial<React.ComponentProps<typeof SelectedFormulaCar
     loadingLastPrice: false,
     lastPracticedPrice: null,
     precoCsv: 50,
+    precoCalc: null,
+    precoCliente: null,
     priceSource: 'tabela',
     setPriceSourceOverride: vi.fn(),
     precoFinal: 50,
     precoSemDesconto: 50,
+    disponivel: true,
+    precoCarregando: false,
+    recalculado: false,
+    precoImportadoAnterior: null,
+    motivoSemPreco: null,
     discountPct: 0,
     setDiscountPct: vi.fn(),
     syncDiscount: false,
@@ -53,7 +60,7 @@ describe('SelectedFormulaCard', () => {
   });
 
   it('mostra seletor de preço quando há último preço cliente e tabela; dispara override', () => {
-    const props = setup({ lastPracticedPrice: { price: 40, date: '2026-05-01T00:00:00Z' }, precoCsv: 50, priceSource: 'cliente' });
+    const props = setup({ lastPracticedPrice: { price: 40, date: '2026-05-01T00:00:00Z' }, precoCsv: 50, precoCliente: 40, priceSource: 'cliente' });
     fireEvent.click(screen.getByRole('button', { name: /Tabela/ }));
     expect(props.setPriceSourceOverride).toHaveBeenCalledWith('tabela');
   });
@@ -71,5 +78,45 @@ describe('SelectedFormulaCard', () => {
     expect(screen.getByText('Mesma cor em outras embalagens')).toBeTruthy();
     fireEvent.click(screen.getByText('Base 3.6L'));
     expect(props.onConfirm).toHaveBeenCalledWith('fa', 'RAL5005', 'Azul Sinal', 200, 5, altProduct);
+  });
+
+  // --- Passo 2: motor honesto no balcão ---
+
+  it('calculando preço (RPC carregando): não mostra preço nem "sem preço", esconde Adicionar', () => {
+    setup({ precoCarregando: true, disponivel: false, precoFinal: null, precoSemDesconto: null, priceSource: null });
+    expect(screen.getByText(/calculando/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Adicionar ao Pedido/ })).toBeNull();
+    expect(screen.queryByText(/sem pre[çc]o/i)).toBeNull(); // não afirma "sem preço" durante o loading
+  });
+
+  it('sem preço (base sem preço no Omie): mostra aviso honesto e NÃO renderiza Adicionar', () => {
+    setup({ disponivel: false, precoFinal: null, precoSemDesconto: null, priceSource: null, motivoSemPreco: 'base' });
+    expect(screen.getByText(/sem pre[çc]o/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Adicionar ao Pedido/ })).toBeNull();
+  });
+
+  it('sem preço por corante: explica que falta custo de corante', () => {
+    setup({ disponivel: false, precoFinal: null, precoSemDesconto: null, priceSource: null, motivoSemPreco: 'corante' });
+    expect(screen.getByText(/corante/i)).toBeTruthy();
+  });
+
+  it('preço recalculado (Grupo B): avisa que o importado não incluía a base, com antes e agora', () => {
+    setup({
+      priceSource: 'calculado', precoCalc: 170.2, precoFinal: 170.2, precoSemDesconto: 170.2,
+      recalculado: true, precoImportadoAnterior: 13.7,
+    });
+    expect(screen.getByText(/recalculad/i)).toBeTruthy();
+    expect(screen.getByText(/incluía a base|incluia a base/i)).toBeTruthy();
+    expect(screen.getByText(/13,70/)).toBeTruthy();                      // antes (importado) — só no aviso
+    expect(screen.getAllByText(/170,20/).length).toBeGreaterThan(0);     // agora (aviso + preço + botão)
+  });
+
+  it('oferece a fonte "Calculado" quando há cálculo, e dispara o override', () => {
+    const props = setup({
+      lastPracticedPrice: { price: 40, date: '2026-05-01T00:00:00Z' }, precoCliente: 40,
+      precoCsv: 50, precoCalc: 60, priceSource: 'cliente',
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Calculado/ }));
+    expect(props.setPriceSourceOverride).toHaveBeenCalledWith('calculado');
   });
 });

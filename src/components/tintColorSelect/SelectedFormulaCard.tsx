@@ -1,6 +1,6 @@
 // Card de detalhe da cor selecionada: preço, fonte, desconto e embalagens alternativas.
 // Extraído verbatim de src/components/TintColorSelectDialog.tsx (god-component split).
-import { Loader2, History, Package, Palette } from 'lucide-react';
+import { Loader2, History, Package, Palette, Info, AlertTriangle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,19 +8,38 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
+import type { TintPriceSource, SemPrecoMotivo } from '@/lib/tint/select-price';
 import type { FormulaResult, AlternativePackaging } from './types';
 
-type PriceSource = 'cliente' | 'tabela' | 'calculado';
+const LABEL_FONTE: Record<TintPriceSource, string> = {
+  cliente: 'Preço cliente',
+  tabela: 'Tabela',
+  calculado: 'Calculado',
+};
+
+// Mensagem honesta quando não há preço — diz o que fazer, nunca vende a R$ 0.
+const MOTIVO_SEM_PRECO: Record<SemPrecoMotivo, string> = {
+  base: 'A base não tem preço cadastrado no Omie. Ajuste o produto no Omie para vender esta cor.',
+  corante: 'Falta o custo de um corante no Omie. Avise o tintométrico para vincular o corante.',
+  receita: 'A receita desta cor está incompleta. Avise o tintométrico.',
+};
 
 interface SelectedFormulaCardProps {
   selectedFormula: FormulaResult;
   loadingLastPrice: boolean;
   lastPracticedPrice: { price: number; date: string } | null | undefined;
   precoCsv: number;
-  priceSource: string;
-  setPriceSourceOverride: (s: PriceSource | null) => void;
-  precoFinal: number;
-  precoSemDesconto: number;
+  precoCalc: number | null;
+  precoCliente: number | null;
+  priceSource: TintPriceSource | null;
+  setPriceSourceOverride: (s: TintPriceSource | null) => void;
+  precoFinal: number | null;
+  precoSemDesconto: number | null;
+  disponivel: boolean;
+  precoCarregando: boolean;
+  recalculado: boolean;
+  precoImportadoAnterior: number | null;
+  motivoSemPreco: SemPrecoMotivo | null;
   discountPct: number;
   setDiscountPct: (n: number) => void;
   syncDiscount: boolean;
@@ -38,10 +57,17 @@ export function SelectedFormulaCard({
   loadingLastPrice,
   lastPracticedPrice,
   precoCsv,
+  precoCalc,
+  precoCliente,
   priceSource,
   setPriceSourceOverride,
   precoFinal,
   precoSemDesconto,
+  disponivel,
+  precoCarregando,
+  recalculado,
+  precoImportadoAnterior,
+  motivoSemPreco,
   discountPct,
   setDiscountPct,
   syncDiscount,
@@ -53,6 +79,12 @@ export function SelectedFormulaCard({
   custoCorantes,
   onConfirm,
 }: SelectedFormulaCardProps) {
+  // Fontes de preço disponíveis (com valor), para a vendedora escolher manualmente.
+  const fontes: { key: TintPriceSource; label: string; preco: number }[] = [];
+  if (precoCliente != null) fontes.push({ key: 'cliente', label: 'Cliente', preco: precoCliente });
+  if (precoCalc != null) fontes.push({ key: 'calculado', label: 'Calculado', preco: precoCalc });
+  if (precoCsv > 0) fontes.push({ key: 'tabela', label: 'Tabela', preco: precoCsv });
+
   return (
     <Card className="border-primary/30">
       <CardContent className="pt-4 space-y-3">
@@ -81,86 +113,113 @@ export function SelectedFormulaCard({
           </div>
         ) : null}
 
-        {/* Price source selection when multiple options available */}
-        {lastPracticedPrice && precoCsv > 0 ? (
-          <div className="space-y-1.5">
-            <p className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">Selecionar preço</p>
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                onClick={() => setPriceSourceOverride('cliente')}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs transition-all ${priceSource === 'cliente' ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border hover:border-primary/50'}`}
-              >
-                <History className="w-3 h-3" />
-                Cliente {fmt(lastPracticedPrice.price)}
-              </button>
-              <button
-                onClick={() => setPriceSourceOverride('tabela')}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs transition-all ${priceSource === 'tabela' ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border hover:border-primary/50'}`}
-              >
-                Tabela {fmt(precoCsv)}
-              </button>
-            </div>
+        {precoCarregando ? (
+          /* RPC de preço carregando: não decide preço ainda, segura a venda */
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Calculando preço...
           </div>
-        ) : null}
-
-        {/* Price breakdown */}
-        <div className="space-y-2">
-          {/* Main price */}
-          <div className="flex justify-between text-sm font-bold border-b pb-2">
-            <span className="flex items-center gap-1.5">
-              Preço Final
-              <Badge variant="secondary" className="text-[9px] px-1.5 py-0">
-                {priceSource === 'cliente' ? 'Preço cliente' : 'Tabela'}
-              </Badge>
-            </span>
-            <span className="text-primary">{fmt(precoFinal)}</span>
-          </div>
-
-          {/* Discount field */}
-          <div className="flex items-center gap-2 pt-1">
-            <label className="text-xs text-muted-foreground whitespace-nowrap">Desconto %</label>
-            <Input
-              type="number"
-              min={0}
-              max={100}
-              step={1}
-              value={discountPct || ''}
-              onChange={(e) => setDiscountPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
-              className="h-7 w-20 text-xs text-right"
-              placeholder="0"
-            />
-            {discountPct > 0 && (
-              <span className="text-[10px] text-muted-foreground line-through">{fmt(precoSemDesconto)}</span>
+        ) : disponivel ? (
+          <>
+            {/* Seletor de fonte quando há mais de uma opção de preço */}
+            {fontes.length > 1 && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">Selecionar preço</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {fontes.map((f) => (
+                    <button
+                      key={f.key}
+                      onClick={() => setPriceSourceOverride(f.key)}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs transition-all ${priceSource === f.key ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border hover:border-primary/50'}`}
+                    >
+                      {f.key === 'cliente' && <History className="w-3 h-3" />}
+                      {f.label} {fmt(f.preco)}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
-          </div>
-          {alternatives && alternatives.length > 0 && (
-            <div className="flex items-center gap-2 pt-1">
-              <Checkbox
-                id="sync-discount"
-                checked={syncDiscount}
-                onCheckedChange={(v) => setSyncDiscount(!!v)}
-                className="h-3.5 w-3.5"
-              />
-              <label htmlFor="sync-discount" className="text-[10px] text-muted-foreground cursor-pointer">
-                Aplicar mesmo desconto nas outras embalagens
-              </label>
-            </div>
-          )}
-        </div>
 
-        <Button
-          size="sm"
-          onClick={() => onConfirm(
-            selectedFormula.id,
-            selectedFormula.cor_id,
-            selectedFormula.nome_cor,
-            precoFinal,
-            custoCorantes,
-          )}
-        >
-          <Palette className="w-3.5 h-3.5 mr-1.5" />
-          Adicionar ao Pedido — {fmt(precoFinal)}
-        </Button>
+            {/* Aviso de recálculo (Grupo B): o preço importado não incluía a base */}
+            {recalculado && precoImportadoAnterior != null && precoSemDesconto != null && (
+              <div className="flex items-start gap-2 p-2 rounded-md bg-status-info-bg border border-status-info/30">
+                <Info className="w-3.5 h-3.5 text-status-info shrink-0 mt-0.5" />
+                <p className="text-[11px] text-status-info-foreground">
+                  <strong>Preço recalculado.</strong> O preço importado não incluía a base.
+                  Antes <span className="line-through">{fmt(precoImportadoAnterior)}</span> → agora <strong>{fmt(precoSemDesconto)}</strong>.
+                </p>
+              </div>
+            )}
+
+            {/* Price breakdown */}
+            <div className="space-y-2">
+              {/* Main price */}
+              <div className="flex justify-between text-sm font-bold border-b pb-2">
+                <span className="flex items-center gap-1.5">
+                  Preço Final
+                  <Badge variant="secondary" className="text-[9px] px-1.5 py-0">
+                    {LABEL_FONTE[priceSource ?? 'tabela']}
+                  </Badge>
+                </span>
+                <span className="text-primary">{fmt(precoFinal ?? 0)}</span>
+              </div>
+
+              {/* Discount field */}
+              <div className="flex items-center gap-2 pt-1">
+                <label className="text-xs text-muted-foreground whitespace-nowrap">Desconto %</label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={discountPct || ''}
+                  onChange={(e) => setDiscountPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
+                  className="h-7 w-20 text-xs text-right"
+                  placeholder="0"
+                />
+                {discountPct > 0 && precoSemDesconto != null && (
+                  <span className="text-[10px] text-muted-foreground line-through">{fmt(precoSemDesconto)}</span>
+                )}
+              </div>
+              {alternatives && alternatives.length > 0 && (
+                <div className="flex items-center gap-2 pt-1">
+                  <Checkbox
+                    id="sync-discount"
+                    checked={syncDiscount}
+                    onCheckedChange={(v) => setSyncDiscount(!!v)}
+                    className="h-3.5 w-3.5"
+                  />
+                  <label htmlFor="sync-discount" className="text-[10px] text-muted-foreground cursor-pointer">
+                    Aplicar mesmo desconto nas outras embalagens
+                  </label>
+                </div>
+              )}
+            </div>
+
+            <Button
+              size="sm"
+              onClick={() => onConfirm(
+                selectedFormula.id,
+                selectedFormula.cor_id,
+                selectedFormula.nome_cor,
+                precoFinal ?? 0,
+                custoCorantes,
+              )}
+            >
+              <Palette className="w-3.5 h-3.5 mr-1.5" />
+              Adicionar ao Pedido — {fmt(precoFinal ?? 0)}
+            </Button>
+          </>
+        ) : (
+          /* Sem preço: degradação honesta — diz o porquê, não vende a R$ 0 */
+          <div className="flex items-start gap-2 p-3 rounded-md bg-status-warning-bg border border-status-warning/30">
+            <AlertTriangle className="w-5 h-5 text-status-warning shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-status-warning-foreground">Sem preço para esta cor</p>
+              <p className="text-xs text-status-warning mt-1">{MOTIVO_SEM_PRECO[motivoSemPreco ?? 'receita']}</p>
+            </div>
+          </div>
+        )}
 
         {/* Alternative packagings */}
         {loadingAlternatives ? (

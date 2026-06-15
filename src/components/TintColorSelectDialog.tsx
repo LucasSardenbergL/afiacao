@@ -34,9 +34,16 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     priceSource,
     setPriceSourceOverride,
     precoCsv,
+    precoCalc,
+    precoCliente,
     custoCorantes,
     precoSemDesconto,
     precoFinal,
+    disponivel,
+    precoCarregando,
+    recalculado,
+    precoImportadoAnterior,
+    motivoSemPreco,
   } = useTintColorSelect({ product, open, customerUserId, initialSearch });
 
   return (
@@ -92,8 +99,15 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                 precoCsv={precoCsv}
                 priceSource={priceSource}
                 setPriceSourceOverride={setPriceSourceOverride}
+                precoCalc={precoCalc}
+                precoCliente={precoCliente}
                 precoFinal={precoFinal}
                 precoSemDesconto={precoSemDesconto}
+                disponivel={disponivel}
+                precoCarregando={precoCarregando}
+                recalculado={recalculado}
+                precoImportadoAnterior={precoImportadoAnterior}
+                motivoSemPreco={motivoSemPreco}
                 discountPct={discountPct}
                 setDiscountPct={setDiscountPct}
                 syncDiscount={syncDiscount}
