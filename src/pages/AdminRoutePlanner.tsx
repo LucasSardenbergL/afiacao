@@ -21,6 +21,7 @@ import { RouteActionButtons } from '@/components/reposicao/routePlanner/RouteAct
 import { ManualModeCard } from '@/components/reposicao/routePlanner/ManualModeCard';
 import { ScheduledVisitsPanel } from '@/components/reposicao/routePlanner/ScheduledVisitsPanel';
 import { useRoutePlanner } from '@/hooks/useRoutePlanner';
+import { escapeHtml } from '@/lib/escape-html';
 
 // Fix default marker icons for Leaflet + bundlers
 delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
@@ -145,16 +146,20 @@ const AdminRoutePlanner = () => {
       });
 
       const hoursLabel = stop.businessHoursOpen && stop.businessHoursClose
-        ? `${stop.businessHoursOpen} - ${stop.businessHoursClose}` : 'Não informado';
+        ? `${escapeHtml(stop.businessHoursOpen)} - ${escapeHtml(stop.businessHoursClose)}` : 'Não informado';
       const cfg = STOP_CONFIG[stop.stopType];
 
+      // Leaflet renderiza o popup como HTML cru (≈ dangerouslySetInnerHTML) →
+      // escapar TODO dado de cliente/prospect (nome, endereço, motivo, horário)
+      // antes de interpolar, senão um `<img onerror=…>` no nome vira XSS stored.
+      // cfg.label/markerColor e numero são constantes/numéricos (seguros).
       L.marker([stop.lat!, stop.lng!], { icon })
         .bindPopup(`
-          <strong>${numero != null ? `${numero}. ` : ''}${stop.customerName}</strong><br/>
+          <strong>${numero != null ? `${numero}. ` : ''}${escapeHtml(stop.customerName)}</strong><br/>
           <span style="color: ${cfg.markerColor}; font-weight: 600">${cfg.label}</span><br/>
-          ${stop.address.street}, ${stop.address.number}<br/>
-          ${stop.address.neighborhood} - ${stop.address.city}<br/>
-          <em>${stop.visitReason}</em><br/>
+          ${escapeHtml(stop.address.street)}, ${escapeHtml(stop.address.number)}<br/>
+          ${escapeHtml(stop.address.neighborhood)} - ${escapeHtml(stop.address.city)}<br/>
+          <em>${escapeHtml(stop.visitReason)}</em><br/>
           <em>Horário: ${hoursLabel}</em>
         `)
         .addTo(markersRef.current!);

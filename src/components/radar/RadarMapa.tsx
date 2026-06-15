@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useRadarContagemMunicipios } from '@/queries/useRadarContagemMunicipios';
+import { escapeHtml } from '@/lib/escape-html';
 import type { RadarFiltros } from '@/queries/useRadarLista';
 
 // Fix dos ícones padrão do Leaflet com bundler (mesmo do AdminRoutePlanner).
@@ -65,7 +66,9 @@ export default function RadarMapa({
       });
       L.marker([m.lat as number, m.lng as number], { icon })
         .bindPopup(
-          `<strong>${m.municipio_nome}/${m.uf}</strong><br/>${m.total} empresas · ${m.com_telefone} c/ telefone<br/>${m.a_contatar} a contatar`,
+          // Leaflet renderiza o popup como HTML cru → escapar dado textual
+          // (nome de município/UF) antes de interpolar (defesa-em-profundidade).
+          `<strong>${escapeHtml(m.municipio_nome)}/${escapeHtml(m.uf)}</strong><br/>${m.total} empresas · ${m.com_telefone} c/ telefone<br/>${m.a_contatar} a contatar`,
         )
         .on('click', () => onPickRef.current(m.municipio_nome))
         .addTo(layer.current!);
