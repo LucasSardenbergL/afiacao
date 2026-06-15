@@ -72,6 +72,13 @@ jobs:
       - name: Lint
         run: bun lint
 
+      # Anti-inchaço do CLAUDE.md (carregado em toda sessão+subagente). Teto
+      # generoso (90 KB / 12k palavras / linha ≤2000c) vs ~64 KB pós-faxina de
+      # 2026-06-14. Estourar = entrou registro/histórico → mover pra docs/registro
+      # ou docs/runbooks (ver CLAUDE.md §0). Ver scripts/check-claudemd-size.sh.
+      - name: CLAUDE.md size budget
+        run: bun run claude:size
+
   # ─── Job NÃO-bloqueante (informativo, sinal próprio) ────────────────
   # Gate de regressão de COBERTURA money-path (≠ os checks do `validate`, que
   # cobrem tipos/comportamento/build/lint). Roda os contratos scripts/mutcheck.d/*.mut
