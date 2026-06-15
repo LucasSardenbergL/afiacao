@@ -19,6 +19,17 @@
 - Enumeração pesada (~10k+) precisa de **bulk reads + background (`waitUntil`) + retry**, nunca N+1.
 - ⚠️ Após corrigir a FONTE, **snapshots derivados não se regeneram sozinhos** — re-invocar o recompute (ver `docs/agent/reposicao.md`, cmc).
 
+## Backfill histórico via invocação SERIALIZADA (motor cron temporário)
+
+Pra disparar MUITAS invocações da MESMA edge/conta Omie (ex.: backfill mês-a-mês de `sync_pedidos`), monte um **motor cron temporário**: tabela de fila `(ordem, params, start_page, disparado_em, request_id)` + função tick que pega o próximo não-disparado e dispara **1** `net.http_post` + cron `*/6` que chama a função; `cron.unschedule`+`drop` no fim. Validado no backfill da Oben (2026-06-14, `docs/historico/programas-vendas.md`). Quatro armadilhas, cada uma custou uma rodada:
+
+1. **Invocações CONCORRENTES na mesma conta Omie = rate-limit FATAL e SILENCIOSO.** O `callOmie` esgota os retries, retorna `null`, a edge trata como "página vazia = fim" e responde `{synced:0, totalPaginas:1, complete:false}` com **`status=complete` mentindo** — NÃO é "vazio", é rate-limit (o sinal é `synced=0` num período que você SABE ter dados). Serialize: **intervalo do cron > duração da invocação**. A `omie-vendas-sync` leva **~40s/página** (`getClientAddressPhone`/`ConsultarCliente` por cliente, cache por-invocação não persiste) → um mês ≈ 4-7 min → `*/6`+.
+2. **A edge INSERE POR PÁGINA e roda em BACKGROUND além do timeout do `pg_net`** (150s) — páginas processadas antes do corte FORAM commitadas; o "timeout" não perde trabalho, e re-disparar (idempotente por `hash_payload`) continua. **Valide pela CONTAGEM no banco, não pela resposta** (que vem `NULL`/timeout). Mês de >10 páginas precisa de uma faixa extra com `start_page` alto (a edge morre no wall-clock antes das páginas finais com `start_page=1`).
+3. **`pg_sleep` + `net.http_post` no MESMO Run do SQL Editor = ROLLBACK.** O Run é 1 transação, o `http_post` só enfileira no COMMIT, e o `pg_sleep` longo bate no `statement_timeout` do editor → rollback → os disparos somem (zero em `fin_sync_log`/`net._http_response`, fila vazia). O escalonamento é do CRON (intervalo), nunca do sleep.
+4. **`filtrar_por_data_de/ate` do `ListarPedidos` filtra por data de PREVISÃO, não `dInc`** (com `filtrar_apenas_inclusao:"N"`) → pedidos de uma janela mensal espalham ±1 mês no eixo `order_date_kpi`. Cubra com leve overlap e valide a cobertura TOTAL, não mês-a-mês exato.
+
+⚠️ **Recência pós-backfill:** `order_items.created_at` é `DEFAULT now()` e o `syncPedidos` NÃO o seta → itens backfillados nascem com `created_at=hoje`. O `calculate-scores`/`daily-calculate-scores` usa esse campo p/ recência → recomputar sem corrigir faz todo cliente do backfill parecer "comprou hoje". Após o backfill, **`UPDATE order_items.created_at = sales_orders.order_date_kpi`** nos itens backfillados, ANTES dos crons de scoring (`0 6`/`0 7`). A `customer_metrics_mv` usa `sales_orders.created_at` (= previsão, mais segura) — mas o `refresh_customer_metrics()` tem **gate de staff e falha no SQL Editor** (`auth.uid()` nulo) → `refresh materialized view concurrently public.customer_metrics_mv` DIRETO.
+
 ## Assinaturas de incidente (sintoma → causa → ação)
 
 - **401 em muitas edges** → `CRON_SECRET` do Vault divergiu da env das edges → realinhar (Vault + edges no Lovable). ⚠️ `401` **isolado** (1 edge) pode ser `verify_jwt`/header/gate da própria edge, não secret.
