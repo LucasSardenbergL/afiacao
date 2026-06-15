@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 223
+-- Total de custom migrations: 225
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -242,7 +242,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260613230000', 'roteirizador_prospects', '20260613230000_roteirizador_prospects.sql'),
   ('20260614103251', 'onda1_fase1_farmer_calls_atendimento', '20260614103251_onda1_fase1_farmer_calls_atendimento.sql'),
   ('20260614140000', 'radar_contagem_perf', '20260614140000_radar_contagem_perf.sql'),
-  ('20260614231801', 'reposicao_timeout_sync_inventory', '20260614231801_reposicao_timeout_sync_inventory.sql')
+  ('20260614160000', 'roteirizador_campo_banco', '20260614160000_roteirizador_campo_banco.sql'),
+  ('20260614231801', 'reposicao_timeout_sync_inventory', '20260614231801_reposicao_timeout_sync_inventory.sql'),
+  ('20260615091839', 'retencao_cron_job_run_details', '20260615091839_retencao_cron_job_run_details.sql')
 )
 SELECT
   e.version,
@@ -1099,8 +1101,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('onda1_fase1_farmer_calls_atendimento', 'index', 'public', 'idx_farmer_calls_atendimento_id', 'farmer_calls'),
   ('radar_contagem_perf', 'index', 'public', 'idx_radar_muni_cover', 'radar_empresas'),
   ('radar_contagem_perf', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('roteirizador_campo_banco', 'function', 'public', 'norm_cidade', ''),
+  ('roteirizador_campo_banco', 'function', 'public', 'carteira_por_municipio', ''),
+  ('roteirizador_campo_banco', 'function', 'public', 'radar_prospects_para_rota', ''),
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
-  ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', '')
+  ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
+  ('retencao_cron_job_run_details', 'cron_job', 'cron', 'purge-cron-job-run-details', '')
 )
 SELECT
   e.migration,
