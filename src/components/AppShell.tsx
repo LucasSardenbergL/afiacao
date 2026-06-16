@@ -178,6 +178,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: UserCheck, label: 'Liberar Acessos', path: '/admin/approvals', staffOnly: true },
       { icon: Users, label: 'Departamentos', path: '/admin/departments', staffOnly: true },
       { icon: UserX, label: 'Clientes não-vinculados', path: '/admin/clientes-nao-vinculados', gestorComercialOuMaster: true },
+      { icon: Users, label: 'Grupos de Cliente', path: '/gestao/grupos-cliente', gestorComercialOuMaster: true },
       { icon: Radar, label: 'Radar de Clientes', path: '/radar', gestorComercialOuMaster: true },
       { icon: Library, label: 'Base de conhecimento', path: '/admin/knowledge-base', staffOnly: true },
       { icon: Calculator, label: 'Calculadora de rendimento', path: '/admin/calculadora' },
