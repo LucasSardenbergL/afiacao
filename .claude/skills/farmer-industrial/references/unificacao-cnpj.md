@@ -142,11 +142,17 @@ Para cada par A/B com `A_first/A_last`, `B_first/B_last`:
   com **várias entidades de faturamento**.
 - Senão → `incerto`: dedup de ligação pode valer, fusão de métrica não.
 
-## 4. Confirmação sem tabela no banco (a interface é a skill, não o git)
+## 4. Confirmação — AGORA é a tabela real do app (Grupo de Cliente 360)
 
-Não dá pra persistir tabela (read-only). O dono também não edita `VALUES` cru com segurança.
-**Melhor**: o dono te passa um bloco estruturado simples (CSV/lista), **a skill gera o CTE** com
-metadata e auto-validação. O alias mínimo NÃO é `(doc, grupo)` — é:
+> **ATUALIZADO (2026-06-16):** o que abaixo era "sem tabela / VALUES inline" virou **feature de
+> produto**: a tela **Gestão → Grupos de Cliente** persiste `cliente_grupos` + `cliente_grupo_membros`
+> (com `relation_type`, `valid_from/to`, `UNIQUE(documento)`). O dono confirma os grupos na UI; a
+> query da carteira (§2) já **lê essa tabela** no `cliente_key` (`grupo:<uuid>`) → dedup automático.
+> Os diagnósticos abaixo (sucessão com âncora, multi-sinal) alimentam as **sugestões** dessa tela.
+> O VALUES inline a seguir fica como **fallback** (quando a tabela não existe ou pra teste pontual).
+
+Versão fallback (sem a tabela): o dono te passa um bloco estruturado simples (CSV/lista), **a
+skill gera o CTE** com metadata e auto-validação. O alias mínimo NÃO é `(doc, grupo)` — é:
 
 ```sql
 aliases(doc, grupo, relation_type, valid_from, valid_to, confirmed_at, note) as (

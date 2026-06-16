@@ -105,6 +105,8 @@ const FinanceiroAnalytics = lazy(() => import("./pages/FinanceiroAnalytics"));
 const FinanceiroCockpit = lazy(() => import("./pages/FinanceiroCockpit"));
 const FinanceiroConciliacao = lazy(() => import("./pages/FinanceiroConciliacao"));
 const FinanceiroOrcamento = lazy(() => import("./pages/FinanceiroOrcamento"));
+const GestaoGruposCliente = lazy(() => import("./pages/GestaoGruposCliente"));
+const GrupoCliente360 = lazy(() => import("./pages/GrupoCliente360"));
 const FinanceiroIntercompany = lazy(() => import("./pages/FinanceiroIntercompany"));
 const FinanceiroIntercompanyFila = lazy(() => import("./pages/FinanceiroIntercompanyFila"));
 const FinanceiroTributario = lazy(() => import("./pages/FinanceiroTributario"));
@@ -265,6 +267,9 @@ const App = () => {
                 <Route path="financeiro/funding" element={<FinanceiroFunding />} />
                 <Route path="financeiro/gestao" element={<FinanceiroGestao />} />
                 <Route path="financeiro/analise" element={<FinanceiroAnalise />} />
+                {/* Grupo de Cliente 360 (mesmo gate do financeiro — mostra recebível) */}
+                <Route path="gestao/grupos-cliente" element={<GestaoGruposCliente />} />
+                <Route path="gestao/grupos-cliente/:grupoId" element={<GrupoCliente360 />} />
               </Route>
 
               {/* ─── Staff-only (fail-closed: todo o resto) ─── */}
