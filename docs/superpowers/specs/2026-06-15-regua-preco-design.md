@@ -174,6 +174,16 @@ Rodada via `psql-ro` **antes** do plano, pra blindar premissas. Confirmou e ajus
 
 **Ordem de cobertura confirmada:** piso de MC (~78%) > auto-referência (~50%) > benchmark (~19%). O plano prioriza nessa ordem.
 
+## 10.2 Alíquota de venda da Oben (derivada 2026-06-16, com o founder)
+
+O DRE não traz o ICMS (`deducoes`=0), então a alíquota efetiva foi montada por **componentes + mix de operações**:
+- **Mix** (`venda_items_history`, por CFOP, 12m, por receita): **59,8% interno** (MG, 5xxx) / **40,2% interestadual** (6xxx).
+- **PIS/COFINS** (Lucro Presumido, cumulativo): **3,65%**.
+- **ICMS efetivo** (crédito presumido de e-commerce de MG, fornecido pelo founder): interno **6%**, interestadual nacional **~1,4%** (importado 1,3% + DIFAL, tratado como repassado → fora do custo).
+- **Ponderado:** `ICMS = 0,598×6% + 0,402×1,4% = 4,15%` → `+ 3,65% = 7,8%`.
+
+Gravado em `company_config['regua_preco_aliquota_venda_oben'] = 0.078`. **Calibrável** (recalcular se o mix ou o regime mudar). Refinamento v2: alíquota **por linha** (destino interno/interestadual via CFOP + origem nacional/importado via NCM) em vez de média ponderada.
+
 ## 11. Validação
 
 - **Helper puro:** vitest (TDD) — fórmulas, gates, hierarquia, degradação. Casos: amostra mínima, SKU concentrado (n_eff), custo ausente, MC negativa exata na fronteira, discount inválido.
