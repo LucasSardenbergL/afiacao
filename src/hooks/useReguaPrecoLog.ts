@@ -5,25 +5,28 @@ import { registrarExibicaoRegua, registrarAplicacaoRegua, type ExibicaoReguaPayl
 type DadosExibicao = Omit<ExibicaoReguaPayload, 'salespersonId'>;
 
 /**
- * Closed-loop da Régua. Dedup por (chave + sinal + precoReferencia): cada combinação
- * loga UMA vez por montagem do carrinho. Guarda o logId p/ casar o UPDATE no Aplicar.
+ * Closed-loop da Régua. Dedup por (cliente + chave + sinal + precoReferencia): cada
+ * combinação loga UMA vez por montagem do carrinho — o cliente entra na chave p/ NÃO
+ * atribuir o log ao cliente anterior se o vendedor trocar sem desmontar (Codex P1).
+ * Guarda o logId por (cliente, item) p/ casar o UPDATE no Aplicar.
  */
 export function useReguaPrecoLog() {
   const { user } = useAuth();
-  const logIds = useRef(new Map<string, string>());   // chaveItem → logId (último exibido)
+  const logIds = useRef(new Map<string, string>());   // `${cliente}:${chaveItem}` → logId
   const jaLogado = useRef(new Set<string>());          // chave dedupe
 
   const marcarExibido = useCallback(async (chaveItem: string, dados: DadosExibicao) => {
     if (!user?.id) return;
-    const dedupeKey = `${chaveItem}:${dados.result.sinal}:${dados.result.precoReferencia}`;
+    const chaveCliente = `${dados.customerUserId}:${chaveItem}`;
+    const dedupeKey = `${chaveCliente}:${dados.result.sinal}:${dados.result.precoReferencia}`;
     if (jaLogado.current.has(dedupeKey)) return;
     jaLogado.current.add(dedupeKey);
     const id = await registrarExibicaoRegua({ ...dados, salespersonId: user.id });
-    if (id) logIds.current.set(chaveItem, id);
+    if (id) logIds.current.set(chaveCliente, id);
   }, [user?.id]);
 
-  const marcarAplicado = useCallback((chaveItem: string, precoFinal: number) => {
-    const id = logIds.current.get(chaveItem);
+  const marcarAplicado = useCallback((chaveItem: string, customerUserId: string, precoFinal: number) => {
+    const id = logIds.current.get(`${customerUserId}:${chaveItem}`);
     if (id) void registrarAplicacaoRegua(id, precoFinal);
   }, []);
 

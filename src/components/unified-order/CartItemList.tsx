@@ -75,12 +75,17 @@ export function CartItemList({
   // autoridade do vermelho de margem — quando abaixoPiso, o badge do cockpit recua a neutro.
   const [reguaFlag] = useFeatureFlag('regua_preco_carrinho');
   const reguaItens = useMemo<ReguaCartItem[]>(() =>
-    obenProductItems.map((it) => ({
-      chave: chaveCockpit(it.product.account ?? '', it.product.omie_codigo_produto, it.tint_formula_id),
-      productId: it.product.id,
-      qty: it.quantity,
-      precoAtual: it.unit_price,
-    })),
+    obenProductItems
+      // Tinta tem custo formula-aware (base + corantes); a RPC da Régua só conhece o
+      // product.id da BASE → piso de MC subestimado (Codex P1). v1 exclui tinta — o
+      // cockpit, que é formula-aware, segue cobrindo. Incluir quando a RPC somar corantes.
+      .filter((it) => !it.tint_formula_id)
+      .map((it) => ({
+        chave: chaveCockpit(it.product.account ?? '', it.product.omie_codigo_produto, it.tint_formula_id),
+        productId: it.product.id,
+        qty: it.quantity,
+        precoAtual: it.unit_price,
+      })),
     [obenProductItems],
   );
   const { reguaByKey } = useReguaPreco(reguaItens, customerUserId, reguaFlag);
@@ -97,7 +102,9 @@ export function CartItemList({
         const health = cockpitByKey.get(chave);
         const regua = reguaByKey.get(chave);
         const reguaVermelho = regua?.sinal === 'piso'; // Régua = autoridade do vermelho de margem
-        const cockpitSuprimido = reguaVermelho && health?.faixa === 'vermelho';
+        // Só suprime o vermelho FORTE do cockpit quando a Régua tem piso CONFIÁVEL (com
+        // botão). Piso por CMC proxy (precoReferencia null) NÃO esconde o cockpit (Codex P1/P2).
+        const cockpitSuprimido = reguaVermelho && regua?.precoReferencia != null && health?.faixa === 'vermelho';
         return (
           <div key={`${item.product.id}-${item.tint_formula_id || 'base'}`} className="space-y-1.5 mb-2">
             <div className="flex items-start justify-between gap-1.5">
@@ -136,7 +143,7 @@ export function CartItemList({
                           quantity: item.quantity, precoAtual: item.unit_price,
                           cmcUsado: health?.cmc ?? null, result: r,
                         })}
-                        onAplicar={(preco) => { onUpdateProductPrice(cartIdx, preco); marcarAplicado(chave, preco); }}
+                        onAplicar={(preco) => { onUpdateProductPrice(cartIdx, preco); marcarAplicado(chave, customerUserId!, preco); }}
                       />
                     )}
                   </div>
