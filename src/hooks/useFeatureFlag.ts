@@ -16,6 +16,7 @@ const STORAGE_PREFIX = 'feature_flag_';
 
 const DEFAULTS: Record<string, boolean> = {
   newVisual: true, // Novo visual ativo por padrão (rollout completo)
+  regua_preco_carrinho: false, // Régua de Preço no carrinho — sombra→balcão (off por padrão)
 };
 
 function readFlag(name: string, fallback: boolean): boolean {
