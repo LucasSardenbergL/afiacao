@@ -17,6 +17,7 @@ import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { useReguaPreco } from '@/hooks/useReguaPreco';
 import { ReguaPrecoSinal } from '@/components/regua-preco/ReguaPrecoSinal';
 import type { ReguaCartItem } from '@/lib/regua-preco/regua-preco-ui';
+import { useReguaPrecoLog } from '@/hooks/useReguaPrecoLog';
 
 interface CartItemListProps {
   cart: { length: number };
@@ -83,6 +84,7 @@ export function CartItemList({
     [obenProductItems],
   );
   const { reguaByKey } = useReguaPreco(reguaItens, customerUserId, reguaFlag);
+  const { marcarExibido, marcarAplicado } = useReguaPrecoLog();
 
   const renderProductGroup = (items: ProductCartItem[], label: string, icon: React.ReactNode) => (
     <div>
@@ -129,7 +131,12 @@ export function CartItemList({
                         result={regua}
                         precoAtual={item.unit_price}
                         contexto={{ produto: item.product.descricao, cliente: customerName, qty: item.quantity }}
-                        onAplicar={(preco) => onUpdateProductPrice(cartIdx, preco)}
+                        onExibido={(r) => marcarExibido(chave, {
+                          account: 'oben', customerUserId: customerUserId!, productId: item.product.id,
+                          quantity: item.quantity, precoAtual: item.unit_price,
+                          cmcUsado: health?.cmc ?? null, result: r,
+                        })}
+                        onAplicar={(preco) => { onUpdateProductPrice(cartIdx, preco); marcarAplicado(chave, preco); }}
                       />
                     )}
                   </div>
