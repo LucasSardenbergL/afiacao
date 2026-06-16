@@ -23,13 +23,17 @@ const state: {
   responder: () => ProductRow[];
   catalogFetches: number;
   invokes: Array<{ action: string; account: string }>;
-} = { responder: () => [], catalogFetches: 0, invokes: [] };
+  eqCalls: Array<[string, unknown]>;
+} = { responder: () => [], catalogFetches: 0, invokes: [], eqCalls: [] };
 
 vi.mock('@/integrations/supabase/client', () => {
   const builder = () => {
     const b = {
       select: () => b,
-      eq: () => b,
+      eq: (col: string, val: unknown) => {
+        state.eqCalls.push([col, val]);
+        return b;
+      },
       or: () => b,
       not: () => b,
       order: () => b,
@@ -95,6 +99,19 @@ describe('useProductCatalog (#14 — cache React Query)', () => {
     state.responder = () => [PRODUTO];
     state.catalogFetches = 0;
     state.invokes = [];
+    state.eqCalls = [];
+  });
+
+  it('o fetch do catálogo filtra ativo=true (não oferece produto inativo no wizard)', async () => {
+    const { useProductCatalog } = await importFresh();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result, unmount } = renderHook(() => useProductCatalog(OPTS), {
+      wrapper: makeWrapper(client),
+    });
+    await waitFor(() => expect(result.current.loadingObenProducts).toBe(false));
+    // Money-path: a query base do catálogo precisa carregar o filtro de ativo.
+    expect(state.eqCalls).toContainEqual(['ativo', true]);
+    unmount();
   });
 
   it('reabrir o wizard dentro da janela usa o CACHE (remount não re-baixa o catálogo)', async () => {

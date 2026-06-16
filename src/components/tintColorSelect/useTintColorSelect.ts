@@ -168,6 +168,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       const { data: products } = await supabase
         .from('omie_products')
         .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
+        // money-path: não oferecer produto-base desativado no Omie (UX; o gate final é no submit)
+        .eq('ativo', true)
         .in('id', productIds);
 
       if (!products) return { matches: [], colorExists: true };
@@ -276,6 +278,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
       const { data: products } = await supabase
         .from('omie_products')
         .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
+        // money-path: não oferecer produto-base desativado no Omie (UX; o gate final é no submit)
+        .eq('ativo', true)
         .in('id', productIds);
 
       if (!products) return [];

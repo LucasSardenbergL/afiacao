@@ -1,6 +1,7 @@
 import type { SubmitQuoteParams, SubmitQuoteResult, SubmitErrorEntry } from './types';
 import { logger } from '@/lib/logger';
 import { formatCustomerAddress, resolveCustomerPhone } from './helpers';
+import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
 
 /**
  * Saves cart as quotes (orcamento) — no Omie sync.
@@ -14,6 +15,14 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
 
   if (obenProductItems.length === 0 && colacorProductItems.length === 0) {
     return { success: false, results: [], errors: [{ step: 'validate', message: 'Carrinho vazio' }] };
+  }
+
+  // Preflight de vendabilidade (fail-closed) — mesma fronteira money-path do submitOrder:
+  // não salvar orçamento de produto que ficou inativo no Omie (rascunho/cache podem trazê-lo).
+  const vend = await validarVendabilidade(supabase, [...obenProductItems, ...colacorProductItems]);
+  const bloqueioVend = bloqueioVendabilidade(vend);
+  if (bloqueioVend) {
+    return { success: false, results: [], errors: [{ step: 'validate_vendabilidade', message: bloqueioVend }] };
   }
 
   const storedAddress = formatCustomerAddress(delivery.selectedAddress, customer);

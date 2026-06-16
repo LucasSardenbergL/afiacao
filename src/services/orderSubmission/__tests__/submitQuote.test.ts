@@ -16,12 +16,31 @@ import type { OmieCustomer, ProductCartItem } from '@/hooks/unifiedOrder/types';
 interface MakeSupabaseOpts {
   obenError?: unknown;
   colacorError?: unknown;
+  /** Ids de omie_products que o preflight de vendabilidade deve ver como inativos. */
+  produtosInativos?: string[];
+  /** Força erro na query do preflight de vendabilidade (fail-closed). */
+  preflightError?: unknown;
 }
 function makeSupabase(opts: MakeSupabaseOpts = {}) {
   const insert = vi.fn().mockImplementation((payload: { account?: string }) =>
     Promise.resolve({ error: payload.account === 'colacor' ? (opts.colacorError ?? null) : (opts.obenError ?? null) }),
   );
-  const from = vi.fn().mockReturnValue({ insert });
+  const inativosSet = new Set(opts.produtosInativos ?? []);
+  const from = vi.fn().mockImplementation((table: string) => {
+    if (table === 'omie_products') {
+      // preflight de vendabilidade: .select('id, ativo').in('id', ids). Default: ativos.
+      return {
+        select: () => ({
+          in: (_col: string, ids: string[]) =>
+            Promise.resolve({
+              data: opts.preflightError ? null : ids.map((id) => ({ id, ativo: !inativosSet.has(id) })),
+              error: opts.preflightError ?? null,
+            }),
+        }),
+      };
+    }
+    return { insert };
+  });
   const invoke = vi.fn();
   const client = { from, functions: { invoke } } as unknown as SubmitClient;
   return { client, from, insert, invoke };
@@ -70,6 +89,19 @@ describe('submitQuote', () => {
     const r = await submitQuote(makeParams({ supabase: client }));
     expect(r.success).toBe(false);
     expect(r.errors[0]).toEqual({ step: 'validate', message: 'Carrinho vazio' });
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('produto INATIVO no carrinho → bloqueia (validate_vendabilidade), sem insert', async () => {
+    const { client, insert } = makeSupabase({ produtosInativos: ['p1'] });
+    const r = await submitQuote(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [] }, // obenItem → id 'p1'
+      subtotals: { oben: 20, colacor: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_vendabilidade');
+    expect(r.errors[0].message).toContain('C1');
     expect(insert).not.toHaveBeenCalled();
   });
 
