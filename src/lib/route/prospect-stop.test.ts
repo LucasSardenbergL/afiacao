@@ -23,6 +23,7 @@ const base: ProspectRow = {
   lat: null,
   lng: null,
   geocode_status: null,
+  precision: null,
 };
 
 describe('prospectRowToStopDraft', () => {
@@ -59,29 +60,28 @@ describe('prospectRowToStopDraft', () => {
     expect(prospectRowToStopDraft({ ...base, telefone1: null, telefone2: null }).phone).toBeNull();
   });
 
-  it('adota lat/lng só quando geocode_status=ok com ambos não-null', () => {
-    const ok = prospectRowToStopDraft({ ...base, geocode_status: 'ok', lat: -19.97, lng: -44.2 });
-    expect(ok.lat).toBe(-19.97);
-    expect(ok.lng).toBe(-44.2);
-    expect(ok.geocodeFailed).toBeUndefined();
+  it('adota lat/lng resolvidos pela RPC independente de geocode_status', () => {
+    const r = prospectRowToStopDraft({ ...base, geocode_status: null, lat: -19.97, lng: -44.2, precision: 'city_centroid' });
+    expect(r.lat).toBe(-19.97);
+    expect(r.lng).toBe(-44.2);
+    expect(r.precisao).toBe('city_centroid');
   });
 
-  it('marca geocodeFailed quando status=falhou (sem lat/lng)', () => {
-    const f = prospectRowToStopDraft({ ...base, geocode_status: 'falhou' });
-    expect(f.geocodeFailed).toBe(true);
-    expect(f.lat).toBeUndefined();
-    expect(f.lng).toBeUndefined();
+  it('precisão street (re.lat legado) é adotada — não regride pra postcode', () => {
+    const r = prospectRowToStopDraft({ ...base, geocode_status: 'ok', lat: -19.9, lng: -44.1, precision: 'street' });
+    expect(r.precisao).toBe('street');
+    expect(r.lat).toBe(-19.9);
   });
 
-  it('status NULL = nunca tentado: sem lat/lng e sem geocodeFailed (geocodifica depois)', () => {
-    const d = prospectRowToStopDraft(base);
+  it('sem coord da RPC (lat/lng null) → sem lat/lng/precisao no draft', () => {
+    const d = prospectRowToStopDraft({ ...base, lat: null, lng: null, precision: null });
     expect(d.lat).toBeUndefined();
     expect(d.lng).toBeUndefined();
-    expect(d.geocodeFailed).toBeUndefined();
+    expect(d.precisao).toBeUndefined();
   });
 
-  it('não adota lat/lng se status=ok mas algum coord é null (defensivo)', () => {
-    const d = prospectRowToStopDraft({ ...base, geocode_status: 'ok', lat: -19.9, lng: null });
+  it('defensivo: lat presente mas lng null → não adota coord', () => {
+    const d = prospectRowToStopDraft({ ...base, lat: -19.9, lng: null, precision: 'city_centroid' });
     expect(d.lat).toBeUndefined();
     expect(d.lng).toBeUndefined();
   });
