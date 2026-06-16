@@ -5,26 +5,31 @@ Todas read-only. Período com defaults sensatos; o comentário diz onde ajustar.
 
 ---
 
-## #1 — Faturamento por empresa (NF-e): mês atual vs mês anterior
+## #1 — Faturamento por empresa (NF-e): mês-até-hoje (MTD) vs mesmo período do mês anterior
 Confiabilidade: **alta** (dado fiscal). Fonte: `venda_items_history`.
+> **Comparação JUSTA por design:** confronta `[1º do mês → hoje]` com `[1º do mês passado → mesmo
+> dia]` (ex.: 01–15/jun vs 01–15/mai). Comparar mês-até-hoje com mês ANTERIOR INTEIRO infla uma
+> "queda" que é só o mês corrente ainda não ter acabado — esse era o viés da versão antiga. Para
+> fechar um mês cheio, troque `current_date` pelo último dia do mês desejado.
 ```sql
--- Ajuste o período trocando 'month' por 'week' ou usando intervals diretos.
-with periodo as (
-  select date_trunc('month', current_date)                      as mes_atual,
-         date_trunc('month', current_date - interval '1 month')  as mes_anterior
+with p as (
+  select date_trunc('month', current_date)                          as ini_atual,
+         (current_date + interval '1 day')                          as fim_atual,  -- inclui hoje
+         date_trunc('month', current_date - interval '1 month')     as ini_ant,
+         ((current_date - interval '1 month')::date + interval '1 day') as fim_ant  -- mesmo dia, mês passado
 )
 select
   v.empresa,
-  round(sum(v.valor_total) filter (where v.data_emissao >= p.mes_atual), 2)                                            as fat_mes_atual,
-  round(sum(v.valor_total) filter (where v.data_emissao >= p.mes_anterior and v.data_emissao < p.mes_atual), 2)        as fat_mes_anterior,
+  round(sum(v.valor_total) filter (where v.data_emissao >= p.ini_atual and v.data_emissao < p.fim_atual), 2) as fat_mtd_atual,
+  round(sum(v.valor_total) filter (where v.data_emissao >= p.ini_ant   and v.data_emissao < p.fim_ant),   2) as fat_mtd_mes_ant,
   round(100.0 * (
-      sum(v.valor_total) filter (where v.data_emissao >= p.mes_atual)
-    - sum(v.valor_total) filter (where v.data_emissao >= p.mes_anterior and v.data_emissao < p.mes_atual)
-  ) / nullif(sum(v.valor_total) filter (where v.data_emissao >= p.mes_anterior and v.data_emissao < p.mes_atual), 0), 1) as variacao_pct
-from venda_items_history v, periodo p
-where v.data_emissao >= p.mes_anterior
+      sum(v.valor_total) filter (where v.data_emissao >= p.ini_atual and v.data_emissao < p.fim_atual)
+    - sum(v.valor_total) filter (where v.data_emissao >= p.ini_ant   and v.data_emissao < p.fim_ant)
+  ) / nullif(sum(v.valor_total) filter (where v.data_emissao >= p.ini_ant and v.data_emissao < p.fim_ant), 0), 1) as variacao_pct
+from venda_items_history v, p
+where v.data_emissao >= p.ini_ant
 group by v.empresa
-order by fat_mes_atual desc nulls last;
+order by fat_mtd_atual desc nulls last;
 ```
 
 ## #1b — Pedidos comerciais por empresa (momentum): 7 dias vs 7 anteriores
@@ -123,19 +128,28 @@ limit 50;
 
 ---
 
-## #15 — Vendas tintométrico por empresa: mês atual vs anterior
+## #15 — Vendas tintométrico por empresa: mês-até-hoje (MTD) vs mesmo período do mês anterior
 Confiabilidade: **média** (`preco_praticado` é nullable — a coluna `itens_sem_preco` mede o
 buraco). Fontes: `tint_vendas` (header: empresa+data) × `tint_vendas_itens` (valor).
+> Mesma janela simétrica da #1 (MTD vs mesmo período do mês passado) — não compara meio mês com
+> mês cheio. Para fechar mês cheio, troque `current_date` pelo último dia do mês.
 ```sql
+with p as (
+  select date_trunc('month', current_date)                          as ini_atual,
+         (current_date + interval '1 day')                          as fim_atual,
+         date_trunc('month', current_date - interval '1 month')     as ini_ant,
+         ((current_date - interval '1 month')::date + interval '1 day') as fim_ant
+)
 select
   tv.account as empresa,
-  round(sum(ti.preco_praticado) filter (where tv.data_venda >= date_trunc('month', current_date)), 2)                                                     as fat_mes_atual,
-  round(sum(ti.preco_praticado) filter (where tv.data_venda >= date_trunc('month', current_date - interval '1 month') and tv.data_venda < date_trunc('month', current_date)), 2) as fat_mes_anterior,
-  count(distinct tv.id) filter (where tv.data_venda >= date_trunc('month', current_date))            as vendas_mes_atual,
-  count(*)              filter (where ti.preco_praticado is null)                                     as itens_sem_preco
+  round(sum(ti.preco_praticado) filter (where tv.data_venda >= p.ini_atual and tv.data_venda < p.fim_atual), 2) as fat_mtd_atual,
+  round(sum(ti.preco_praticado) filter (where tv.data_venda >= p.ini_ant   and tv.data_venda < p.fim_ant),   2) as fat_mtd_mes_ant,
+  count(distinct tv.id) filter (where tv.data_venda >= p.ini_atual and tv.data_venda < p.fim_atual)            as vendas_mtd_atual,
+  count(*)              filter (where ti.preco_praticado is null)                                               as itens_sem_preco
 from tint_vendas tv
 join tint_vendas_itens ti on ti.venda_id = tv.id
-where tv.data_venda >= date_trunc('month', current_date - interval '1 month')
+cross join p
+where tv.data_venda >= p.ini_ant
 group by tv.account
-order by fat_mes_atual desc nulls last;
+order by fat_mtd_atual desc nulls last;
 ```
