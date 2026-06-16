@@ -15,22 +15,91 @@ serve(async (req) => {
   if (!__auth.ok) return __auth.response;
 
   try {
-    // Authenticate user
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
-    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
-      global: { headers: { Authorization: authHeader } },
-      auth: { persistSession: false },
-    });
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    const body = await req.json();
+    // Modo self-contained (cron): body traz { customerId, farmerId } e a edge monta o
+    // contexto + grava o plano. Modo front (legado): body traz customerContext já montado
+    // e o front é quem grava (useTacticalPlan.generatePlan).
+    const selfContained = Boolean(body.customerId && body.farmerId);
+
+    // Modo front (legado): exige Bearer-user. Modo self-contained já foi autenticado por
+    // authorizeCronOrStaff (via x-cron-secret) lá em cima — não precisa do user token.
+    if (!selfContained) {
+      const authHeader = req.headers.get('Authorization');
+      if (!authHeader?.startsWith('Bearer ')) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
+        global: { headers: { Authorization: authHeader } },
+        auth: { persistSession: false },
+      });
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
     }
 
-    const { customerContext, bundleContext, diagnosticData, historicalObjections, planType } = await req.json();
-    const mode = planType || 'essencial';
+    const mode = body.planType || 'essencial';
+
+    // No modo front estas chegam prontas no body; no self-contained são montadas abaixo.
+    let customerContext = body.customerContext;
+    let bundleContext = body.bundleContext;
+    let diagnosticData = body.diagnosticData;
+    let historicalObjections = body.historicalObjections;
+    let topBundleRow: Record<string, unknown> | null = null;
+    let secondBundleRow: Record<string, unknown> | null = null;
+
+    if (selfContained) {
+      const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
+      const { customerId, farmerId } = body;
+
+      // Idempotência: pula se já há plano 'gerado' criado hoje (>= 00:00 UTC).
+      const hojeIso = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z').toISOString();
+      const { data: existente } = await admin.from('farmer_tactical_plans')
+        .select('id').eq('farmer_id', farmerId).eq('customer_user_id', customerId)
+        .eq('status', 'gerado').gte('created_at', hojeIso).limit(1);
+      if (existente?.length) {
+        return new Response(JSON.stringify({ id: existente[0].id, skipped: 'ja_gerado_hoje' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      const [{ data: score }, { data: profile }, { data: bundles }, { data: allScores }, { data: objEvents }] = await Promise.all([
+        admin.from('farmer_client_scores').select('*').eq('customer_user_id', customerId).eq('farmer_id', farmerId).maybeSingle(),
+        admin.from('profiles').select('name, customer_type, cnae').eq('user_id', customerId).maybeSingle(),
+        admin.from('farmer_bundle_recommendations').select('*').eq('customer_user_id', customerId).eq('farmer_id', farmerId).eq('status', 'pendente').order('lie_bundle', { ascending: false }).limit(2),
+        admin.from('farmer_client_scores').select('gross_margin_pct').eq('farmer_id', farmerId),
+        admin.from('farmer_copilot_events').select('event_data').eq('event_type', 'suggestion').limit(20),
+      ]);
+      if (!score) {
+        return new Response(JSON.stringify({ skipped: 'sem_score' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      const num = (v: unknown) => Number(v ?? 0);
+      const healthScore = num(score.health_score), churnRisk = num(score.churn_risk), avgSpend = num(score.avg_monthly_spend_180d);
+      const marginPct = num(score.gross_margin_pct), categoryCount = num(score.category_count), daysSince = num(score.days_since_last_purchase);
+      const clusterMargin = allScores?.length ? allScores.reduce((s: number, r: { gross_margin_pct: unknown }) => s + num(r.gross_margin_pct), 0) / allScores.length : 25;
+      const mixGap = Math.max(0, 8 - categoryCount);
+
+      // classifyProfile/selectObjective — espelham useTacticalPlan.ts:183-196 (validado).
+      const customerProfile = avgSpend < 500 && marginPct < 20 ? 'sensivel_preco'
+        : marginPct > 35 && categoryCount <= 3 ? 'orientado_qualidade'
+        : avgSpend > 2000 && categoryCount >= 4 && healthScore > 60 ? 'orientado_produtividade' : 'misto';
+      const strategicObjective = daysSince > 90 ? 'reativacao' : churnRisk > 60 ? 'recuperacao'
+        : mixGap > 3 ? 'expansao_mix' : marginPct < clusterMargin * 0.8 ? 'consolidacao_margem' : 'upsell_premium';
+
+      topBundleRow = bundles?.[0] ?? null;
+      secondBundleRow = bundles?.[1] ?? null;
+      historicalObjections = (objEvents ?? [])
+        .map((e: { event_data: { intent?: unknown } | null }) => (e.event_data as { intent?: unknown } | null)?.intent)
+        .filter((i: unknown): i is string => typeof i === 'string' && i.startsWith('objecao')).slice(0, 5);
+
+      customerContext = { name: profile?.name, cnae: profile?.cnae, customerType: profile?.customer_type, profile: customerProfile, healthScore, churnRisk, avgMonthlySpend: avgSpend, grossMarginPct: marginPct, categoryCount, daysSinceLastPurchase: daysSince, mixGap, clusterAvgMargin: clusterMargin, expansionPotential: num(score.expansion_score), revenuePotential: num(score.revenue_potential) };
+      bundleContext = topBundleRow ? { products: topBundleRow.bundle_products, lie: topBundleRow.lie_bundle, probability: topBundleRow.p_bundle, margin: topBundleRow.m_bundle } : null;
+      diagnosticData = { strategicObjective };
+      // Paridade com o front: no modo estratégico, inclui o 2º bundle p/ comparação.
+      if (mode === 'estrategico' && secondBundleRow) {
+        (diagnosticData as Record<string, unknown>).secondBundle = { products: secondBundleRow.bundle_products, lie: secondBundleRow.lie_bundle, probability: secondBundleRow.p_bundle, margin: secondBundleRow.m_bundle };
+      }
+      (body as Record<string, unknown>)._derived = { healthScore, churnRisk, mixGap, marginPct, clusterMargin, expansionPotential: num(score.expansion_score), customerProfile, strategicObjective };
+    }
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
@@ -181,6 +250,32 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
 
     // Add plan_type to response
     plan.plan_type = mode;
+
+    // Modo self-contained (cron): grava o plano e devolve o id (colunas espelham o
+    // INSERT do front em useTacticalPlan.ts:432-461 — validado).
+    if (selfContained) {
+      const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
+      const d = (body as { _derived: Record<string, number | string> })._derived;
+      const { data: ins } = await admin.from('farmer_tactical_plans').insert({
+        farmer_id: body.farmerId, customer_user_id: body.customerId,
+        bundle_recommendation_id: (topBundleRow as { id?: string } | null)?.id ?? null,
+        health_score: d.healthScore, churn_risk: d.churnRisk, mix_gap: d.mixGap,
+        current_margin_pct: d.marginPct, cluster_avg_margin_pct: d.clusterMargin, expansion_potential: d.expansionPotential,
+        strategic_objective: plan.strategic_objective || d.strategicObjective, customer_profile: d.customerProfile, plan_type: mode,
+        top_bundle: (topBundleRow ? topBundleRow.bundle_products : {}),
+        second_bundle: (secondBundleRow ? (secondBundleRow as { bundle_products: unknown }).bundle_products : {}),
+        bundle_lie: Number((topBundleRow as { lie_bundle?: unknown } | null)?.lie_bundle ?? 0),
+        bundle_probability: Number((topBundleRow as { p_bundle?: unknown } | null)?.p_bundle ?? 0),
+        bundle_incremental_margin: Number((topBundleRow as { m_bundle?: unknown } | null)?.m_bundle ?? 0),
+        best_individual_lie: 0,
+        diagnostic_questions: plan.diagnostic_questions ?? [], implication_question: plan.implication_question ?? '',
+        offer_transition: plan.offer_transition ?? '', probable_objections: plan.probable_objections ?? [],
+        approach_strategy: plan.approach_strategy ?? '', approach_strategy_b: plan.approach_strategy_b ?? '',
+        ltv_projection: plan.ltv_projection ?? null, expected_result: plan.expected_result ?? null,
+        operational_risks: plan.operational_risks ?? [], status: 'gerado',
+      }).select('id').single();
+      return new Response(JSON.stringify({ id: ins?.id, generated: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     return new Response(
       JSON.stringify(plan),
