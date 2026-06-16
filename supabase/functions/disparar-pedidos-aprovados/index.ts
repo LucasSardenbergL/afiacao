@@ -1367,6 +1367,29 @@ Deno.serve(async (req: Request) => {
     let aprovados = (aprovadosRaw ?? []) as PedidoRow[];
     if (pedidoId && aprovados[0]?.data_ciclo) dataCiclo = aprovados[0].data_ciclo;
 
+    // [BACKLOG-AUTO-V2] A auto-aprovação Sayerlack v2 (sem janela de horário) aprova à tarde,
+    // depois do corte do dia → o pedido fica com data_ciclo=hoje e o corte de AMANHÃ procura
+    // data_ciclo=amanhã (.eq acima) → órfão. 2ª query (Codex consult 2026-06-15, opção A) traz o
+    // backlog SÓ de auto-aprovados, com guards apertados, e concatena dedupado. Não altera o
+    // comportamento dos pedidos humanos (seguem só pelo lote do dia). Só no modo lote.
+    if (!pedidoId) {
+      const cutoff72h = new Date(Date.now() - 72 * 3600 * 1000).toISOString();
+      const { data: backlogRaw, error: backErr } = await db
+        .from("pedido_compra_sugerido")
+        .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total, portal_protocolo, status_envio_portal")
+        .eq("empresa", empresa)
+        .eq("status", "aprovado_aguardando_disparo")
+        .lt("data_ciclo", dataCiclo)            // < hoje (não <=): o lote do dia já foi pego acima
+        .gte("aprovado_em", cutoff72h)          // 72h cobre fim de semana / falha de cron/deploy
+        .like("aprovado_por", "auto:sayerlack%") // só a automação Sayerlack; humano segue pelo lote
+        .is("cancelado_em", null);
+      if (backErr) throw new Error(`Backlog auto: ${backErr.message}`);
+      const seen = new Set(aprovados.map((p) => p.id));
+      for (const p of (backlogRaw ?? []) as PedidoRow[]) {
+        if (!seen.has(p.id)) { aprovados.push(p); seen.add(p.id); }
+      }
+    }
+
     // Enrich com dados do fornecedor
     for (const p of aprovados) {
       const { data: fh } = await db

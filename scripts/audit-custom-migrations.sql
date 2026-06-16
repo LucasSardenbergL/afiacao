@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 240
+-- Total de custom migrations: 241
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -259,7 +259,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615150000', 'cockpit_preco_fixes', '20260615150000_cockpit_preco_fixes.sql'),
   ('20260615160000', 'tint_promote_set_based', '20260615160000_tint_promote_set_based.sql'),
   ('20260615182814', 'vincular_tint_skus_omie_orfaos', '20260615182814_vincular_tint_skus_omie_orfaos.sql'),
-  ('20260615190000', 'geocoding_cep_geo', '20260615190000_geocoding_cep_geo.sql')
+  ('20260615190000', 'geocoding_cep_geo', '20260615190000_geocoding_cep_geo.sql'),
+  ('20260615210000', 'reposicao_auto_aprovacao_v2', '20260615210000_reposicao_auto_aprovacao_v2.sql')
 )
 SELECT
   e.version,
@@ -1169,7 +1170,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('geocoding_cep_geo', 'function', 'public', 'carteira_por_municipio', ''),
   ('geocoding_cep_geo', 'function', 'public', 'radar_prospects_para_rota', ''),
   ('geocoding_cep_geo', 'rls_policy', 'public', 'cep_geo_sel', 'cep_geo'),
-  ('geocoding_cep_geo', 'rls_policy', 'public', 'municipio_geo_sel', 'municipio_geo')
+  ('geocoding_cep_geo', 'rls_policy', 'public', 'municipio_geo_sel', 'municipio_geo'),
+  ('reposicao_auto_aprovacao_v2', 'table', 'public', 'reposicao_auto_aprovacao_log', ''),
+  ('reposicao_auto_aprovacao_v2', 'index', 'public', 'reposicao_auto_aprovacao_log_criado_em', 'reposicao_auto_aprovacao_log'),
+  ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
+  ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', '')
 )
 SELECT
   e.migration,
