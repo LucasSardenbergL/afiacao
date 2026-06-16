@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  prospectRowToStopDraft,
-  buildGeocodeQuery,
-  labelProspeccaoStatus,
-  type ProspectRow,
-} from './prospect-stop';
+import { prospectRowToStopDraft, labelProspeccaoStatus, type ProspectRow } from './prospect-stop';
 
 const base: ProspectRow = {
   cnpj: '00000000000001',
@@ -107,29 +102,6 @@ describe('prospectRowToStopDraft', () => {
     expect(d.address.street).toBe('');
     expect(d.address.number).toBe('');
     expect(d.address.complement).toBeUndefined();
-  });
-});
-
-describe('buildGeocodeQuery', () => {
-  it('monta rua, número, cidade, uf, Brazil', () => {
-    expect(buildGeocodeQuery({ street: 'Rua A', number: '10', city: 'Betim', state: 'MG' })).toBe(
-      'Rua A, 10, Betim, MG, Brazil',
-    );
-  });
-
-  it('pula partes vazias', () => {
-    expect(buildGeocodeQuery({ street: 'Rua A', number: '', city: 'Betim', state: 'MG' })).toBe(
-      'Rua A, Betim, MG, Brazil',
-    );
-    expect(buildGeocodeQuery({ street: '', number: '', city: 'Betim', state: 'MG' })).toBe(
-      'Betim, MG, Brazil',
-    );
-  });
-
-  it('trim nas partes', () => {
-    expect(buildGeocodeQuery({ street: '  Rua A  ', city: ' Betim ', state: 'MG' })).toBe(
-      'Rua A, Betim, MG, Brazil',
-    );
   });
 });
 

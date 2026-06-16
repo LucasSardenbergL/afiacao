@@ -91,15 +91,3 @@ export function prospectRowToStopDraft(row: ProspectRow): ProspectStopDraft {
     ...(row.precision ? { precisao: row.precision } : {}),
   };
 }
-
-// Query do Nominatim a partir do endereço (filtra partes vazias; sempre termina em
-// "Brazil"). Extraída do inline do useRoutePlanner para o sub-PR B reusar e testar.
-export function buildGeocodeQuery(a: {
-  street?: string;
-  number?: string;
-  city?: string;
-  state?: string;
-}): string {
-  const parts = [s(a.street), s(a.number), s(a.city), s(a.state)].filter(Boolean);
-  return [...parts, 'Brazil'].join(', ');
-}
