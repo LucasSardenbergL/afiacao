@@ -24,7 +24,6 @@ export type FetchData360 = Partial<FetchDataRegua> & {
   preco_atual: number | null;
   preco_atual_at: string | null;
   qty_ref: number | null;
-  qty_ref_n: number | null;
   qty_ref_source: string | null;
   hide_reason: string | null;
 };

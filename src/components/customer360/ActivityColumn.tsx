@@ -45,7 +45,8 @@ export function ActivityColumn({
           ) : preferred.data && preferred.data.length > 0 ? (
             <ul className="divide-y divide-border -my-2">
               {preferred.data.map((it) => {
-                const regua = it.omie_codigo_produto != null
+                // só Oben (os códigos do batch são oben); guarda contra colisão de omie_codigo entre contas
+                const regua = it.account === 'oben' && it.omie_codigo_produto != null
                   ? reguaByOmie?.get(it.omie_codigo_produto)
                   : undefined;
                 return (

@@ -47,6 +47,9 @@ export function useReguaPreco360(
 
   const reguaByOmie = useMemo(() => {
     const out = new Map<number, Regua360Entry>();
+    // fail-closed: se a flag/role desligar (ou some o alvo), o React Query mantém o cache de
+    // query.data — então gateamos AQUI também, pra o sinal sumir na hora (rollback por flag real).
+    if (!enabled || !customerId || omieCodigos.length === 0) return out;
     for (const row of query.data ?? []) {
       // sem_produto / sem_preco → não há o que avaliar (o componente apenas não renderiza nada).
       if (row.hide_reason != null || row.preco_atual == null) continue;
@@ -66,7 +69,7 @@ export function useReguaPreco360(
       });
     }
     return out;
-  }, [query.data]);
+  }, [query.data, enabled, customerId, omieCodigos.length]);
 
   return { reguaByOmie, isLoading: query.isLoading };
 }
