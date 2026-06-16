@@ -13,18 +13,13 @@ import {
 } from '@/queries/useClienteGrupos';
 import { GrupoFormDialog } from '@/components/grupos/GrupoFormDialog';
 import { AddDocumentoDialog } from '@/components/grupos/AddDocumentoDialog';
+import { formatDoc } from '@/lib/grupos/format';
 
 const RELATION_BADGE: Record<RelationType, string> = {
   sucessao: 'sucessão',
   multi_ativo: 'multi-CNPJ',
   incerto: 'incerto',
 };
-
-function formatDoc(d: string): string {
-  if (d.length === 14) return d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
-  if (d.length === 11) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
-  return d;
-}
 
 function GrupoCard({ grupo }: { grupo: ClienteGrupo }) {
   const navigate = useNavigate();

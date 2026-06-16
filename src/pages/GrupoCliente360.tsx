@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Building2, Plus, Trash2, Wallet, Users, Loader2, Info } from 'lucide-react';
+import { ArrowLeft, Building2, Plus, Trash2, Wallet, Users, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,18 +12,14 @@ import {
   type RelationType,
 } from '@/queries/useClienteGrupos';
 import { AddDocumentoDialog } from '@/components/grupos/AddDocumentoDialog';
+import { GrupoFinanceiroTab } from '@/components/grupos/GrupoFinanceiroTab';
+import { formatDoc } from '@/lib/grupos/format';
 
 const RELATION_BADGE: Record<RelationType, string> = {
   sucessao: 'sucessão',
   multi_ativo: 'multi-CNPJ',
   incerto: 'incerto',
 };
-
-function formatDoc(d: string): string {
-  if (d.length === 14) return d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
-  if (d.length === 11) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
-  return d;
-}
 
 /** Estado "aguardando a view de consolidação" (Financeiro/Contatos chegam na Task 3). */
 function PendingRollup({ icon: Icon, titulo, descricao }: { icon: typeof Wallet; titulo: string; descricao: string }) {
@@ -130,16 +126,8 @@ export default function GrupoCliente360() {
           <TabsTrigger value="contatos" className="gap-1.5"><Users className="h-4 w-4" /> Contatos</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="financeiro" className="m-0 space-y-2">
-          <div className="flex items-start gap-2 rounded-md border border-status-info/30 bg-status-info/5 px-3 py-2 text-xs text-muted-foreground">
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-info" />
-            <span>Visão consolidada — a cobrança é emitida no Omie por documento; aqui é só a soma.</span>
-          </div>
-          <PendingRollup
-            icon={Wallet}
-            titulo="Recebíveis consolidados (em implementação)"
-            descricao="A soma de recebíveis em aberto e aging do grupo, somando os documentos nas 3 empresas, chega com a view de recebível (próximo passo da Fase 1)."
-          />
+        <TabsContent value="financeiro" className="m-0">
+          <GrupoFinanceiroTab grupoId={grupo.id} />
         </TabsContent>
 
         <TabsContent value="contatos" className="m-0">
