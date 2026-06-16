@@ -8,16 +8,20 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
+import { ReguaPrecoSinal } from '@/components/regua-preco/ReguaPrecoSinal';
+import type { Regua360Entry } from '@/hooks/useReguaPreco360';
 import { formatBRL, formatRelative, formatDateOrDash, orderStatusTone } from './format';
 import type { Customer, PreferredQuery, OrdersQuery, InteractionsQuery } from './viewTypes';
 
 export function ActivityColumn({
-  preferred, interactions, orders, customer,
+  preferred, interactions, orders, customer, reguaByOmie,
 }: {
   preferred: PreferredQuery;
   interactions: InteractionsQuery;
   orders: OrdersQuery;
   customer: Customer;
+  /** Régua de Preço por omie_codigo (readonly). Vazio/undefined quando a flag está off. */
+  reguaByOmie?: Map<number, Regua360Entry>;
 }) {
   return (
     <div className="lg:col-span-2 space-y-4">
@@ -40,13 +44,17 @@ export function ActivityColumn({
             </div>
           ) : preferred.data && preferred.data.length > 0 ? (
             <ul className="divide-y divide-border -my-2">
-              {preferred.data.map((it) => (
+              {preferred.data.map((it) => {
+                const regua = it.omie_codigo_produto != null
+                  ? reguaByOmie?.get(it.omie_codigo_produto)
+                  : undefined;
+                return (
                 <li key={`${it.product_codigo}-${it.account}`} className="py-2.5 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium truncate">
                       {it.product_descricao ?? `Produto ${it.product_codigo}`}
                     </div>
-                    <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
+                    <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
                       <span className="font-tabular">{it.product_codigo}</span>
                       {it.familia && (
                         <>
@@ -60,6 +68,18 @@ export function ActivityColumn({
                           <span className="uppercase tracking-wide">{it.account}</span>
                         </>
                       )}
+                      {regua && (
+                        <ReguaPrecoSinal
+                          mode="readonly"
+                          result={regua.result}
+                          precoAtual={regua.precoAtual}
+                          contexto={{
+                            produto: it.product_descricao ?? `Produto ${it.product_codigo}`,
+                            cliente: customer.name ?? null,
+                            qty: regua.qtyRef,
+                          }}
+                        />
+                      )}
                     </div>
                   </div>
                   <div className="text-right">
@@ -69,7 +89,8 @@ export function ActivityColumn({
                     </div>
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           ) : (
             <EmptyState

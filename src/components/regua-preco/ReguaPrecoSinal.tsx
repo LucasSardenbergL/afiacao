@@ -9,16 +9,26 @@ interface ReguaPrecoSinalProps {
   result: ReguaPrecoResult;
   precoAtual: number;
   contexto: { produto: string; cliente: string | null; qty: number };
-  onAplicar: (preco: number) => void;
+  /**
+   * 'carrinho' (default): mostra o valor do piso + botão Aplicar (vendedor interno age na hora).
+   * 'readonly' (360): sem botão; o sinal de PISO NÃO expõe valor/custo (tela mais exposta) —
+   * copy neutra "abaixo do piso comercial". Os sinais de folga não vazam custo, ficam normais.
+   */
+  mode?: 'carrinho' | 'readonly';
+  onAplicar?: (preco: number) => void;
   /** chamado quando o sinal está visível ≥800ms (debounce) — log de exibição. */
   onExibido?: (result: ReguaPrecoResult) => void;
 }
 
-export function ReguaPrecoSinal({ result, precoAtual, contexto, onAplicar, onExibido }: ReguaPrecoSinalProps) {
+export function ReguaPrecoSinal({
+  result, precoAtual, contexto, mode = 'carrinho', onAplicar, onExibido,
+}: ReguaPrecoSinalProps) {
+  const readonly = mode === 'readonly';
   const ehPiso = result.sinal === 'piso';
   const ehFolga = result.sinal === 'auto_ref' || result.sinal === 'benchmark';
   const visivel = ehPiso || ehFolga; // nenhum/discordância/preço-acima = invisível
-  const temBotao = result.precoReferencia != null; // helper já zera em proxy/baixa/discordância
+  const temBotao = !readonly && result.precoReferencia != null && onAplicar != null;
+  const pisoOculto = readonly && ehPiso; // no 360 o valor do piso vaza o custo → não expõe
   const pct = result.suggestedGapPct != null ? Math.round(result.suggestedGapPct * 100) : 0;
 
   useEffect(() => {
@@ -33,8 +43,10 @@ export function ReguaPrecoSinal({ result, precoAtual, contexto, onAplicar, onExi
 
   const cls = ehPiso ? 'text-status-error border-status-error/40' : 'text-status-info border-status-info/40';
   const label = ehPiso
-    ? (temBotao ? `MC<0 · piso ${fmt(result.precoReferencia!)}` : 'MC<0 · confira custo')
-    : (temBotao ? `💰 ${fmt(result.precoReferencia!)} (+${pct}%)` : '💰 ⓘ');
+    ? pisoOculto
+      ? 'abaixo do piso'
+      : result.precoReferencia != null ? `MC<0 · piso ${fmt(result.precoReferencia)}` : 'MC<0 · confira custo'
+    : result.precoReferencia != null ? `💰 ${fmt(result.precoReferencia)} (+${pct}%)` : '💰 ⓘ';
 
   return (
     <Popover>
@@ -50,25 +62,41 @@ export function ReguaPrecoSinal({ result, precoAtual, contexto, onAplicar, onExi
         <p className="font-medium leading-tight">
           {contexto.produto}{contexto.cliente ? ` · ${contexto.cliente}` : ''} · {contexto.qty}un
         </p>
-        {temBotao && (
-          <p className="text-muted-foreground">
-            Você: {fmt(precoAtual)}/un · Referência: <span className="font-mono">{fmt(result.precoReferencia!)}/un</span>
-          </p>
+
+        {pisoOculto ? (
+          // 360: não expõe o piso/custo — só sinaliza o risco + o preço atual do cliente.
+          <>
+            <p className="text-muted-foreground">
+              Você: <span className="font-mono">{fmt(precoAtual)}/un</span>
+            </p>
+            <p className="text-status-error leading-snug">
+              Preço atual abaixo do piso comercial — revise antes de repetir.
+            </p>
+          </>
+        ) : (
+          <>
+            {result.precoReferencia != null && (
+              <p className="text-muted-foreground">
+                Você: {fmt(precoAtual)}/un · Referência: <span className="font-mono">{fmt(result.precoReferencia)}/un</span>
+              </p>
+            )}
+            {result.recibos.map((r, i) => (
+              <p key={i} className="text-muted-foreground leading-snug">{r}</p>
+            ))}
+            {result.disclaimers.length > 0 && (
+              <p className="text-[10px] text-muted-foreground/80 leading-snug border-t pt-1">
+                ⓘ {result.disclaimers.join(' · ')}
+              </p>
+            )}
+          </>
         )}
-        {result.recibos.map((r, i) => (
-          <p key={i} className="text-muted-foreground leading-snug">{r}</p>
-        ))}
-        {result.disclaimers.length > 0 && (
-          <p className="text-[10px] text-muted-foreground/80 leading-snug border-t pt-1">
-            ⓘ {result.disclaimers.join(' · ')}
-          </p>
-        )}
+
         {temBotao && (
           <Button
             size="sm"
             variant="outline"
             className="w-full h-7 text-xs"
-            onClick={() => onAplicar(result.precoReferencia!)}
+            onClick={() => onAplicar!(result.precoReferencia!)}
           >
             {ehPiso ? 'Aplicar piso' : 'Aplicar referência'} · {fmt(result.precoReferencia!)}
           </Button>

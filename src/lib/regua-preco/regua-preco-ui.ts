@@ -13,6 +13,22 @@ export interface FetchDataRegua {
   comparaveis: { preco: number; c: number }[]; // c = cliente anonimizado (dense_rank)
 }
 
+/**
+ * Retorno cru de um item da RPC `get_regua_preco_customer360` (jsonb array):
+ * a camada 360 (resolução/preço/qty) + o pacote bruto da get_regua_preco.
+ * Quando `hide_reason` é 'sem_produto'/'sem_preco', os campos do pacote vêm ausentes.
+ */
+export type FetchData360 = Partial<FetchDataRegua> & {
+  omie_codigo: number;
+  product_id: string | null;
+  preco_atual: number | null;
+  preco_atual_at: string | null;
+  qty_ref: number | null;
+  qty_ref_n: number | null;
+  qty_ref_source: string | null;
+  hide_reason: string | null;
+};
+
 /** Linha do carrinho relevante p/ a Régua. `chave` casa com o cockpit (chaveCockpit). */
 export interface ReguaCartItem {
   chave: string;
