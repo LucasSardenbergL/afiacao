@@ -22,6 +22,10 @@
 
 import type { TintPriceBreakdown } from './compute-price';
 
+/** O agregado de preço SEM a receita (itensCorantes) — o que a RPC batch devolve e o
+ *  que a seleção realmente usa. O breakdown completo (single) é atribuível a este. */
+export type TintPriceBreakdownLite = Omit<TintPriceBreakdown, 'itensCorantes'>;
+
 export type TintPriceSource = 'cliente' | 'tabela' | 'calculado';
 /** Por que não há preço — alimenta a mensagem honesta na UI. */
 export type SemPrecoMotivo = 'base' | 'corante' | 'receita';
@@ -65,31 +69,62 @@ export function selectTintPrice(input: {
   /** CSV bruto (>0) ou null/0; arredondado internamente. */
   precoCsv: number | null;
   /** Breakdown do motor honesto; null enquanto carrega. */
-  pricing: TintPriceBreakdown | null;
+  pricing: TintPriceBreakdownLite | null;
 }): TintPriceSelection {
   const { lastPracticedPrice, pricing } = input;
   const csv = input.precoCsv != null && input.precoCsv > 0 ? arredonda(input.precoCsv) : null;
   const calc = pricing?.precoFinal != null ? arredonda(pricing.precoFinal) : null;
 
-  // 1. Base ausente/zero (pricing carregado e baseDisponivel=false): sem preço SEMPRE.
-  //    Não confiar no CSV nem perpetuar preço de cliente — o dado precisa de correção no Omie.
-  if (pricing && !pricing.baseDisponivel) return semPreco('base');
+  // 1. Motor honesto JÁ respondeu e SEM preço confiável (precoFinal null = base ausente/zero OU
+  //    corante sem custo) → SEM PREÇO, mesmo havendo CSV ou preço de cliente. Não confiar no
+  //    importado nem perpetuar preço antigo: o dado precisa de correção no Omie (self-healing).
+  if (pricing && pricing.precoFinal == null) {
+    if (!pricing.baseDisponivel) return semPreco('base');
+    if (!pricing.corantesCompletos) return semPreco('corante');
+    return semPreco('receita');
+  }
 
   // 2. Preço do cliente (negociado) vence.
   if (lastPracticedPrice != null && lastPracticedPrice > 0) return comPreco('cliente', lastPracticedPrice);
 
-  // 3. Calc e CSV coexistem.
+  // 3. Calc e CSV coexistem → o MAIOR; avisa quando o calc sobe (Grupo B).
   if (calc != null && csv != null) {
     if (calc > csv + TOLERANCIA) return comPreco('calculado', calc, true, csv); // Grupo B: sobe → avisa
     if (calc >= csv - TOLERANCIA) return comPreco('calculado', calc);            // batem: usa o calc, sem aviso
     return comPreco('tabela', csv);                                              // calc < CSV: mantém (não baixa)
   }
 
-  // 4. Só uma das fontes.
+  // 4. Só uma fonte (pricing null aqui = ainda carregando; o consumidor segura a venda no loading).
   if (calc != null) return comPreco('calculado', calc);
   if (csv != null) return comPreco('tabela', csv);
 
-  // 5. Sem nada confiável → sem preço, com o motivo (para a mensagem).
-  if (pricing && !pricing.corantesCompletos) return semPreco('corante');
   return semPreco('receita');
+}
+
+/** Preço de exibição de uma EMBALAGEM ALTERNATIVA (outras embalagens / busca global).
+ *  Não há "último preço do cliente" por alternativa — só calc honesto vs CSV. Devolve o
+ *  custoCorantes DA PRÓPRIA fórmula (não o da cor selecionada), e null quando sem preço. */
+export interface AltPriceDisplay {
+  /** Preço a cobrar; null = sem preço (a UI desabilita o item, nunca vende a R$ 0). */
+  preco: number | null;
+  fonte: 'calculado' | 'tabela' | null;
+  /** O cálculo recalculou acima do importado (base não estava no CSV). */
+  recalculado: boolean;
+  custoCorantes: number;
+}
+
+export function selectAltPrice(
+  precoCsv: number | null,
+  pricing: TintPriceBreakdownLite | null,
+): AltPriceDisplay {
+  // Fail-closed: sem o breakdown do motor (batch ainda carregando, erro, ou RPC não aplicada),
+  // NÃO cair no CSV legado — a alternativa fica "sem preço" até o cálculo honesto chegar.
+  if (!pricing) return { preco: null, fonte: null, recalculado: false, custoCorantes: 0 };
+  const sel = selectTintPrice({ lastPracticedPrice: null, precoCsv, pricing });
+  return {
+    preco: sel.precoSemDesconto,
+    fonte: sel.source === 'cliente' ? null : sel.source, // alternativa nunca usa preço de cliente
+    recalculado: sel.recalculado,
+    custoCorantes: pricing.custoCorantes,
+  };
 }

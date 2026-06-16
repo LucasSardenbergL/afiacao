@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ilikeOr } from '@/lib/postgrest';
-import { useTintPricing } from '@/hooks/useTintPricing';
+import { useTintPricing, useTintPrices } from '@/hooks/useTintPricing';
 import { selectTintPrice, type TintPriceSource } from '@/lib/tint/select-price';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import type { FormulaResult, AlternativePackaging } from './types';
@@ -313,6 +313,15 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     },
   });
 
+  // Preços honestos (motor batch get_tint_prices) das "outras embalagens" + "busca global":
+  // uma cor em várias bases, cada fórmula com seu próprio preço. Mapa { formulaId: breakdown }.
+  const altFormulaIds = useMemo(
+    () => [...(alternatives ?? []), ...globalColorMatches].map((a) => a.formulaId),
+    [alternatives, globalColorMatches],
+  );
+  const { data: altPriceMap, isLoading: altPriceQueryLoading } = useTintPrices(altFormulaIds);
+  const altPriceLoading = altFormulaIds.length > 0 && altPriceQueryLoading;
+
   // Preço honesto da cor selecionada: motor get_tint_price (base + corantes, NULL quando
   // a base/corante falta) + CSV legado + último preço do cliente. Quando o motor não tem
   // preço, vira "sem preço" — nunca um número fabricado. Regras em src/lib/tint/select-price.ts.
@@ -338,12 +347,13 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     pricing: pricing ?? null,
   });
 
-  // Preços por fonte (null = indisponível). Base ausente/zero (ex.: PRD03657) bloqueia TUDO:
-  // não confiar no CSV nem no preço de cliente antigo — corrigir no Omie.
-  const baseBloqueada = selection.motivoSemPreco === 'base';
-  const precoCsv = !baseBloqueada && rawCsv && rawCsv > 0 ? Math.ceil(rawCsv * 10) / 10 : 0;
-  const precoCalc = !baseBloqueada && pricing?.precoFinal != null ? Math.ceil(pricing.precoFinal * 10) / 10 : null;
-  const precoCliente = !baseBloqueada ? (lastPracticedPrice?.price ?? null) : null;
+  // Qualquer "sem preço confiável" (base ausente/zero ex. PRD03657, corante sem custo, receita
+  // faltando) bloqueia TODAS as fontes — inclusive o override manual: não deixar a vendedora
+  // forçar CSV/cliente quando o motor honesto não tem preço. Corrigir no Omie (self-healing).
+  const semPrecoConfiavel = selection.motivoSemPreco != null;
+  const precoCsv = !semPrecoConfiavel && rawCsv && rawCsv > 0 ? Math.ceil(rawCsv * 10) / 10 : 0;
+  const precoCalc = !semPrecoConfiavel && pricing?.precoFinal != null ? Math.ceil(pricing.precoFinal * 10) / 10 : null;
+  const precoCliente = !semPrecoConfiavel ? (lastPracticedPrice?.price ?? null) : null;
   const precoPorFonte: Record<TintPriceSource, number | null> = {
     cliente: precoCliente,
     tabela: precoCsv > 0 ? precoCsv : null,
@@ -389,6 +399,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     loadingLastPrice,
     alternatives,
     loadingAlternatives,
+    altPriceMap,
+    altPriceLoading,
     discountPct,
     setDiscountPct,
     altDiscounts,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectTintPrice } from '../select-price';
+import { selectTintPrice, selectAltPrice } from '../select-price';
 import type { TintPriceBreakdown } from '../compute-price';
 
 // Helper: monta um breakdown do motor honesto (get_tint_price) para os testes.
@@ -83,14 +83,26 @@ describe('selectTintPrice — seleção honesta da fonte de preço (Passo 2, mon
     expect(r.precoSemDesconto).toBe(150);
   });
 
-  it('calc null por corante incompleto mas base OK + CSV existe → fallback no importado', () => {
+  it('corante incompleto (base OK) + CSV → sem preço, NÃO cai no CSV (fail-closed money-path)', () => {
+    // Se o motor não sabe o custo de um corante, o CSV pode estar velho/errado → não vender.
     const r = selectTintPrice({
       lastPracticedPrice: null,
       precoCsv: 180,
       pricing: pricing({ corantesCompletos: false, precoFinal: null }),
     });
-    expect(r.source).toBe('tabela');
-    expect(r.precoSemDesconto).toBe(180);
+    expect(r.source).toBeNull();
+    expect(r.precoSemDesconto).toBeNull();
+    expect(r.motivoSemPreco).toBe('corante');
+  });
+
+  it('corante incompleto + preço de cliente antigo → sem preço (não perpetua subfaturamento)', () => {
+    const r = selectTintPrice({
+      lastPracticedPrice: 999,
+      precoCsv: 180,
+      pricing: pricing({ corantesCompletos: false, precoFinal: null }),
+    });
+    expect(r.source).toBeNull();
+    expect(r.motivoSemPreco).toBe('corante');
   });
 
   it('calc null por corante incompleto e SEM CSV → sem preço, motivo corante', () => {
@@ -124,5 +136,40 @@ describe('selectTintPrice — seleção honesta da fonte de preço (Passo 2, mon
     const r = selectTintPrice({ lastPracticedPrice: null, precoCsv: null, pricing: null });
     expect(r.source).toBeNull();
     expect(r.precoSemDesconto).toBeNull();
+  });
+});
+
+describe('selectAltPrice — preço de embalagem alternativa (1b)', () => {
+  it('Grupo B (calc > CSV): usa o calc, marca recalculado e traz o custoCorantes DA fórmula', () => {
+    const r = selectAltPrice(13.68, pricing({ custoBase: 152.1, custoCorantes: 18.06, precoFinal: 170.16 }));
+    expect(r.preco).toBe(170.2);
+    expect(r.fonte).toBe('calculado');
+    expect(r.recalculado).toBe(true);
+    expect(r.custoCorantes).toBe(18.06); // da própria alternativa, não da cor selecionada
+  });
+
+  it('base ausente → sem preço (preco null), não vende', () => {
+    const r = selectAltPrice(101.7, pricing({ baseDisponivel: false, custoBase: null, precoFinal: null }));
+    expect(r.preco).toBeNull();
+    expect(r.fonte).toBeNull();
+  });
+
+  it('sem breakdown (batch carregando/erro/RPC ausente) → sem preço, NÃO cai no CSV (fail-closed)', () => {
+    const r = selectAltPrice(200, null);
+    expect(r.preco).toBeNull();
+    expect(r.fonte).toBeNull();
+    expect(r.custoCorantes).toBe(0);
+  });
+
+  it('calc < CSV → mantém o importado (não baixa)', () => {
+    const r = selectAltPrice(200, pricing({ precoFinal: 150 }));
+    expect(r.preco).toBe(200);
+    expect(r.fonte).toBe('tabela');
+  });
+
+  it('só base (sem CSV) e cálculo disponível → usa o calc', () => {
+    const r = selectAltPrice(null, pricing({ precoFinal: 150 }));
+    expect(r.preco).toBe(150);
+    expect(r.fonte).toBe('calculado');
   });
 });

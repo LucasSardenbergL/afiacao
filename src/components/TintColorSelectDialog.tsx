@@ -25,6 +25,8 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     loadingLastPrice,
     alternatives,
     loadingAlternatives,
+    altPriceMap,
+    altPriceLoading,
     discountPct,
     setDiscountPct,
     altDiscounts,
@@ -86,6 +88,8 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                 product={product}
                 matches={globalColorMatches ?? []}
                 colorExists={globalColorExists}
+                precoMap={altPriceMap}
+                precoLoading={altPriceLoading}
                 onConfirm={onConfirm}
               />
             )}
@@ -114,6 +118,8 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                 setSyncDiscount={setSyncDiscount}
                 alternatives={alternatives}
                 loadingAlternatives={loadingAlternatives}
+                altPriceMap={altPriceMap}
+                altPriceLoading={altPriceLoading}
                 altDiscounts={altDiscounts}
                 setAltDiscounts={setAltDiscounts}
                 custoCorantes={custoCorantes}

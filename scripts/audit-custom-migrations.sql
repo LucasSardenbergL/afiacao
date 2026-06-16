@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 237
+-- Total de custom migrations: 238
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -256,7 +256,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615140000', 'tint_promote_indices_timeout', '20260615140000_tint_promote_indices_timeout.sql'),
   ('20260615150000', 'cockpit_preco_fixes', '20260615150000_cockpit_preco_fixes.sql'),
   ('20260615160000', 'tint_promote_set_based', '20260615160000_tint_promote_set_based.sql'),
-  ('20260615200000', 'tint_get_price_base', '20260615200000_tint_get_price_base.sql')
+  ('20260615200000', 'tint_get_price_base', '20260615200000_tint_get_price_base.sql'),
+  ('20260615210000', 'tint_get_prices_batch', '20260615210000_tint_get_prices_batch.sql')
 )
 SELECT
   e.version,
@@ -1155,7 +1156,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cockpit_preco_fixes', 'function', 'public', 'get_preco_cockpit', ''),
   ('cockpit_preco_fixes', 'rls_policy', 'public', 'cmc_ledger_select_gestor', 'cmc_ledger'),
   ('tint_promote_set_based', 'function', 'public', 'tint_promote_sync_run', ''),
-  ('tint_get_price_base', 'function', 'public', 'get_tint_price', '')
+  ('tint_get_price_base', 'function', 'public', 'get_tint_price', ''),
+  ('tint_get_prices_batch', 'function', 'public', 'get_tint_prices', '')
 )
 SELECT
   e.migration,

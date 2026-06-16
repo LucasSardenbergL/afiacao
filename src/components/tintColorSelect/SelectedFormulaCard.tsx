@@ -1,5 +1,6 @@
 // Card de detalhe da cor selecionada: preço, fonte, desconto e embalagens alternativas.
 // Extraído verbatim de src/components/TintColorSelectDialog.tsx (god-component split).
+import { Fragment } from 'react';
 import { Loader2, History, Package, Palette, Info, AlertTriangle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -8,7 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
-import type { TintPriceSource, SemPrecoMotivo } from '@/lib/tint/select-price';
+import { selectAltPrice, type TintPriceSource, type SemPrecoMotivo, type TintPriceBreakdownLite } from '@/lib/tint/select-price';
 import type { FormulaResult, AlternativePackaging } from './types';
 
 const LABEL_FONTE: Record<TintPriceSource, string> = {
@@ -46,6 +47,10 @@ interface SelectedFormulaCardProps {
   setSyncDiscount: (v: boolean) => void;
   alternatives: AlternativePackaging[] | undefined;
   loadingAlternatives: boolean;
+  /** Preço honesto (motor batch) por formulaId das alternativas. */
+  altPriceMap: Record<string, TintPriceBreakdownLite> | undefined;
+  /** Batch de preços das alternativas ainda carregando (mostra "calculando", não "sem preço"). */
+  altPriceLoading: boolean;
   altDiscounts: Record<string, number>;
   setAltDiscounts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   custoCorantes: number;
@@ -74,6 +79,8 @@ export function SelectedFormulaCard({
   setSyncDiscount,
   alternatives,
   loadingAlternatives,
+  altPriceMap,
+  altPriceLoading,
   altDiscounts,
   setAltDiscounts,
   custoCorantes,
@@ -237,13 +244,14 @@ export function SelectedFormulaCard({
               {alternatives.map((alt, idx) => {
                 const prevAlt = idx > 0 ? alternatives[idx - 1] : null;
                 const showDivider = prevAlt && prevAlt.sameAcabamento && !alt.sameAcabamento;
-                const altBasePrice = alt.precoFinalCsv && alt.precoFinalCsv > 0
-                  ? alt.precoFinalCsv
-                  : alt.product.valor_unitario + custoCorantes;
+                // Preço honesto da alternativa (motor batch): calc vs CSV; custoCorantes DA própria fórmula.
+                const altSel = selectAltPrice(alt.precoFinalCsv, altPriceMap?.[alt.formulaId] ?? null);
+                const altDisponivel = altSel.preco != null;
+                const altBasePrice = altSel.preco ?? 0;
                 const altDisc = syncDiscount ? discountPct : (altDiscounts[alt.formulaId] || 0);
                 const altPrice = altDisc > 0 ? Math.round(altBasePrice * (1 - altDisc / 100) * 100) / 100 : altBasePrice;
                 return (
-                  <>
+                  <Fragment key={alt.formulaId}>
                     {showDivider && (
                       <div className="flex items-center gap-2 pt-1 pb-0.5">
                         <div className="flex-1 border-t border-border" />
@@ -253,15 +261,16 @@ export function SelectedFormulaCard({
                     )}
                     <div className={`rounded-md border transition-all text-xs group ${alt.sameAcabamento ? 'border-primary/30 bg-primary/5' : 'border-border hover:border-primary/50'}`}>
                     <button
-                      onClick={() => onConfirm(
+                      disabled={!altDisponivel}
+                      onClick={() => altDisponivel && onConfirm(
                         alt.formulaId,
                         selectedFormula.cor_id,
                         selectedFormula.nome_cor,
                         altPrice,
-                        custoCorantes,
+                        altSel.custoCorantes,
                         alt.product,
                       )}
-                      className="w-full flex items-center justify-between gap-2 p-2 hover:bg-primary/5"
+                      className={`w-full flex items-center justify-between gap-2 p-2 ${altDisponivel ? 'hover:bg-primary/5' : 'opacity-60 cursor-not-allowed'}`}
                     >
                       <div className="flex-1 text-left min-w-0">
                         <p className="font-medium group-hover:text-primary transition-colors break-words whitespace-normal">
@@ -270,30 +279,43 @@ export function SelectedFormulaCard({
                         <p className="text-[10px] text-muted-foreground font-mono">{alt.productCodigo}</p>
                       </div>
                       <div className="text-right shrink-0">
-                        <span className="font-bold text-primary">{fmt(altPrice)}</span>
-                        {altDisc > 0 && <span className="text-[10px] text-muted-foreground line-through ml-1">{fmt(altBasePrice)}</span>}
-                        {alt.precoFinalCsv && alt.precoFinalCsv > 0 ? (
-                          <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">Tabela</Badge>
+                        {altDisponivel ? (
+                          <>
+                            <span className="font-bold text-primary">{fmt(altPrice)}</span>
+                            {altDisc > 0 && <span className="text-[10px] text-muted-foreground line-through ml-1">{fmt(altBasePrice)}</span>}
+                            {altSel.fonte === 'tabela' ? (
+                              <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">Tabela</Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1">Calc.</Badge>
+                            )}
+                            {altSel.recalculado && (
+                              <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1 text-status-info border-status-info/40">recalc.</Badge>
+                            )}
+                          </>
+                        ) : altPriceLoading ? (
+                          <span className="text-[10px] text-muted-foreground">calculando…</span>
                         ) : (
-                          <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1">Calc.</Badge>
+                          <span className="text-[10px] font-medium text-status-warning">sem preço</span>
                         )}
                       </div>
                     </button>
-                    <div className="flex items-center gap-2 px-2 pb-2" onClick={(e) => e.stopPropagation()}>
-                      <label className="text-[10px] text-muted-foreground whitespace-nowrap">Desconto %</label>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={100}
-                        step={1}
-                        value={altDisc || ''}
-                        onChange={(e) => setAltDiscounts(prev => ({ ...prev, [alt.formulaId]: Math.min(100, Math.max(0, Number(e.target.value) || 0)) }))}
-                        className="h-6 w-16 text-[10px] text-right"
-                        placeholder="0"
-                      />
-                    </div>
+                    {altDisponivel && (
+                      <div className="flex items-center gap-2 px-2 pb-2" onClick={(e) => e.stopPropagation()}>
+                        <label className="text-[10px] text-muted-foreground whitespace-nowrap">Desconto %</label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={altDisc || ''}
+                          onChange={(e) => setAltDiscounts(prev => ({ ...prev, [alt.formulaId]: Math.min(100, Math.max(0, Number(e.target.value) || 0)) }))}
+                          className="h-6 w-16 text-[10px] text-right"
+                          placeholder="0"
+                        />
+                      </div>
+                    )}
                   </div>
-                  </>
+                  </Fragment>
                 );
               })}
             </div>
