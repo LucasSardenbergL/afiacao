@@ -161,4 +161,25 @@ describe('computeTintPrice — a base entra no preço (Passo 1, money-path)', ()
     const r = computeTintPrice(items, corantes, omie, 449.9);
     expect(r.precoFinal).toBeCloseTo(563.44, 2);
   });
+
+  it('base com preço mas INATIVA no Omie (baseAtiva=false) → indisponível, precoFinal null (gate de ativo)', () => {
+    const items = [{ corante_id: 'c1', qtd_ml: 10 }];
+    const corantes = [corante('c1', 'Amarelo', 1000, 'o1')];
+    const omie: TintOmiePriceMap = { o1: { valor_unitario: 100, ativo: true } };
+    const r = computeTintPrice(items, corantes, omie, 449.9, false); // base desativada no Omie
+    expect(r.baseDisponivel).toBe(false);
+    expect(r.custoBase).toBeNull();
+    expect(r.precoFinal).toBeNull(); // não vende base que a empresa desativou
+  });
+
+  it('corante cujo produto Omie está INATIVO (ativo=false) → custo indisponível, precoFinal null', () => {
+    const items = [{ corante_id: 'c1', qtd_ml: 10 }];
+    const corantes = [corante('c1', 'Corante inativo', 1000, 'o1')];
+    const omie: TintOmiePriceMap = { o1: { valor_unitario: 100, ativo: false } };
+    const r = computeTintPrice(items, corantes, omie, 449.9); // base ativa (default)
+    expect(r.itensCorantes[0].custoDisponivel).toBe(false);
+    expect(r.corantesCompletos).toBe(false);
+    expect(r.precoFinal).toBeNull();
+    expect(r.baseDisponivel).toBe(true); // base existe e ativa → isola: o NULL veio do corante
+  });
 });

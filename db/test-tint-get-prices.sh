@@ -52,8 +52,19 @@ CREATE TABLE public.tint_formulas (id uuid PRIMARY KEY, sku_id uuid);
 CREATE TABLE public.tint_formula_itens (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), formula_id uuid, corante_id uuid, qtd_ml numeric, ordem int);
 SQL
 
+# A migration de gate recria as DUAS RPCs: get_tint_prices (testada aqui) E get_tint_price
+# (single, plpgsql, referencia app_role/has_role/auth.uid no corpo). Stub mínimo p/ o arquivo
+# aplicar limpo — a single não é exercida neste harness, mas o CREATE dela vem junto.
+P -q <<'SQL'
+CREATE TYPE public.app_role AS ENUM ('customer','employee','master');
+CREATE TABLE public.user_roles (user_id uuid, role public.app_role);
+CREATE FUNCTION public.has_role(_uid uuid, _role public.app_role) RETURNS boolean
+  LANGUAGE sql STABLE AS $f$ SELECT EXISTS(SELECT 1 FROM public.user_roles WHERE user_id=_uid AND role=_role) $f$;
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.uid', true), '')::uuid $f$;
+SQL
+
 # ── ZONA 2 — aplicar a migration REAL ──
-MIG="$REPO_ROOT/supabase/migrations/20260615210000_tint_get_prices_batch.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260616120000_tint_price_gate_ativo.sql"
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
@@ -91,6 +102,23 @@ INSERT INTO public.tint_formula_itens(formula_id, corante_id, qtd_ml, ordem) VAL
 GRANT EXECUTE ON FUNCTION public.get_tint_prices(uuid[]) TO authenticated, anon;
 SQL
 
+# Seed do GATE DE ativo (achado Codex 16/06): base/corante INATIVOS no Omie, valor congelado > 0.
+P -q <<'SQL'
+INSERT INTO public.omie_products(id, valor_unitario, ativo) VALUES
+  ('b0000000-0000-0000-0000-000000000005', 500, false),  -- base INATIVA (valor > 0)
+  ('b0000000-0000-0000-0000-000000000006', 100, false);   -- corante c/ produto Omie INATIVO (valor > 0)
+INSERT INTO public.tint_skus(id, omie_product_id) VALUES
+  ('50000000-0000-0000-0000-000000000003','b0000000-0000-0000-0000-000000000005');
+INSERT INTO public.tint_corantes(id, descricao, volume_total_ml, omie_product_id) VALUES
+  ('c0000000-0000-0000-0000-000000000004','Corante c/ produto inativo', 1000, 'b0000000-0000-0000-0000-000000000006');
+INSERT INTO public.tint_formulas(id, sku_id) VALUES
+  ('f0000000-0000-0000-0000-000000000006','50000000-0000-0000-0000-000000000003'),  -- f_base_inat: base inativa + corante OK
+  ('f0000000-0000-0000-0000-000000000007','50000000-0000-0000-0000-000000000001');   -- f_cor_inat: base ativa + corante inativo
+INSERT INTO public.tint_formula_itens(formula_id, corante_id, qtd_ml, ordem) VALUES
+  ('f0000000-0000-0000-0000-000000000006','c0000000-0000-0000-0000-000000000001', 10, 1),  -- corante OK (isola: NULL vem da base)
+  ('f0000000-0000-0000-0000-000000000007','c0000000-0000-0000-0000-000000000004', 10, 1);   -- corante inativo (isola: base ativa)
+SQL
+
 # ── ZONA 4 — asserts ──
 echo "── asserts ──"
 F_OK="f0000000-0000-0000-0000-000000000001"
@@ -98,6 +126,8 @@ F_ZERO="f0000000-0000-0000-0000-000000000002"
 F_PURA="f0000000-0000-0000-0000-000000000003"
 F_INC="f0000000-0000-0000-0000-000000000004"
 F_COR_ZERO="f0000000-0000-0000-0000-000000000005"
+F_BASE_INAT="f0000000-0000-0000-0000-000000000006"
+F_COR_INAT="f0000000-0000-0000-0000-000000000007"
 GHOST="99999999-9999-9999-9999-999999999999"
 
 # P1 — single id no batch → precoFinal = base + corantes
@@ -128,6 +158,22 @@ V=$(Pq -c "SELECT (public.get_tint_prices(ARRAY['$F_PURA']::uuid[]) -> '$F_PURA'
 eq "N3 receita vazia → corantesCompletos false" "$V" "false"
 V=$(Pq -c "SELECT ((public.get_tint_prices(ARRAY['$F_INC']::uuid[]) -> '$F_INC' ->> 'custoCorantes')::numeric = 1.0);")
 eq "N2c corante incompleto → custoCorantes parcial (1,00)" "$V" "t"
+
+# N5 — base INATIVA no Omie (valor>0) → baseDisponivel false, custoBase/precoFinal NULL (não vende descontinuado)
+V=$(Pq -c "SELECT (public.get_tint_prices(ARRAY['$F_BASE_INAT']::uuid[]) -> '$F_BASE_INAT' ->> 'baseDisponivel');")
+eq "N5 base inativa → baseDisponivel false" "$V" "false"
+V=$(Pq -c "SELECT (public.get_tint_prices(ARRAY['$F_BASE_INAT']::uuid[]) -> '$F_BASE_INAT' ->> 'custoBase') IS NULL;")
+eq "N5b base inativa → custoBase NULL" "$V" "t"
+V=$(Pq -c "SELECT (public.get_tint_prices(ARRAY['$F_BASE_INAT']::uuid[]) -> '$F_BASE_INAT' ->> 'precoFinal') IS NULL;")
+eq "N5c base inativa → precoFinal NULL (não vende base desativada no Omie)" "$V" "t"
+
+# N6 — corante c/ produto Omie INATIVO → corantesCompletos false, precoFinal NULL (base é ativa → isola)
+V=$(Pq -c "SELECT (public.get_tint_prices(ARRAY['$F_COR_INAT']::uuid[]) -> '$F_COR_INAT' ->> 'baseDisponivel');")
+eq "N6 corante inativo → baseDisponivel true (base ativa)" "$V" "true"
+V=$(Pq -c "SELECT (public.get_tint_prices(ARRAY['$F_COR_INAT']::uuid[]) -> '$F_COR_INAT' ->> 'corantesCompletos');")
+eq "N6b corante inativo → corantesCompletos false" "$V" "false"
+V=$(Pq -c "SELECT (public.get_tint_prices(ARRAY['$F_COR_INAT']::uuid[]) -> '$F_COR_INAT' ->> 'precoFinal') IS NULL;")
+eq "N6c corante inativo → precoFinal NULL" "$V" "t"
 
 # Bordas do batch
 V=$(Pq -c "SELECT public.get_tint_prices(ARRAY[]::uuid[]) = '{}'::jsonb;")
@@ -238,6 +284,42 @@ $fn$;
 SQL
 V=$(Pq -c "SELECT (public.get_tint_prices(ARRAY['$F_PURA']::uuid[]) -> '$F_PURA' ->> 'precoFinal') IS NULL;")
 if [ "$V" = "f" ]; then ok "F5 fail-closed sabotado → PB[F_PURA] vermelho (receita vazia deixou de ser NULL)"; else bad "F5 sabotei o fail-closed e seguiu verde → fraco"; fi
+apply_real
+
+# F6 — SABOTA o gate da BASE: tira o "AND COALESCE(op.ativo,false)" da base → base inativa precifica.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.get_tint_prices(p_formula_ids uuid[])
+ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $fn$
+  WITH bases AS (SELECT f.id fid, op.valor_unitario bp, (op.valor_unitario IS NOT NULL AND op.valor_unitario>0) bd  -- SABOTADO: sem ativo
+    FROM tint_formulas f LEFT JOIN tint_skus s ON s.id=f.sku_id LEFT JOIN omie_products op ON op.id=s.omie_product_id WHERE f.id=ANY(p_formula_ids)),
+  cor AS (SELECT fi.formula_id, COALESCE(SUM(CASE WHEN COALESCE(op.valor_unitario,0)>0 AND COALESCE(op.ativo,false) AND c.volume_total_ml>0 THEN fi.qtd_ml*op.valor_unitario/c.volume_total_ml ELSE 0 END),0) cc,
+            COALESCE(bool_and(COALESCE(op.valor_unitario,0)>0 AND COALESCE(op.ativo,false) AND c.volume_total_ml>0), false) comp
+    FROM tint_formula_itens fi LEFT JOIN tint_corantes c ON c.id=fi.corante_id LEFT JOIN omie_products op ON op.id=c.omie_product_id WHERE fi.formula_id=ANY(p_formula_ids) GROUP BY fi.formula_id)
+  SELECT COALESCE(jsonb_object_agg(b.fid, jsonb_build_object('precoFinal', CASE WHEN b.bd AND COALESCE(co.comp,false) THEN b.bp+COALESCE(co.cc,0) ELSE NULL END)),'{}'::jsonb)
+  FROM bases b LEFT JOIN cor co ON co.formula_id=b.fid;
+$fn$;
+SQL
+V=$(Pq -c "SELECT (public.get_tint_prices(ARRAY['$F_BASE_INAT']::uuid[]) -> '$F_BASE_INAT' ->> 'precoFinal') IS NULL;")
+if [ "$V" = "f" ]; then ok "F6 gate-base sabotado → N5 vermelho (base inativa voltou a precificar)"; else bad "F6 sabotei o gate da base e N5 seguiu verde → fraco"; fi
+apply_real
+
+# F7 — SABOTA o gate do CORANTE: tira o "AND COALESCE(op.ativo,false)" do corante → corante inativo conta.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.get_tint_prices(p_formula_ids uuid[])
+ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $fn$
+  WITH bases AS (SELECT f.id fid, op.valor_unitario bp, (op.valor_unitario IS NOT NULL AND op.valor_unitario>0 AND COALESCE(op.ativo,false)) bd
+    FROM tint_formulas f LEFT JOIN tint_skus s ON s.id=f.sku_id LEFT JOIN omie_products op ON op.id=s.omie_product_id WHERE f.id=ANY(p_formula_ids)),
+  cor AS (SELECT fi.formula_id, COALESCE(SUM(CASE WHEN COALESCE(op.valor_unitario,0)>0 AND c.volume_total_ml>0 THEN fi.qtd_ml*op.valor_unitario/c.volume_total_ml ELSE 0 END),0) cc,  -- SABOTADO: sem ativo
+            COALESCE(bool_and(COALESCE(op.valor_unitario,0)>0 AND c.volume_total_ml>0), false) comp
+    FROM tint_formula_itens fi LEFT JOIN tint_corantes c ON c.id=fi.corante_id LEFT JOIN omie_products op ON op.id=c.omie_product_id WHERE fi.formula_id=ANY(p_formula_ids) GROUP BY fi.formula_id)
+  SELECT COALESCE(jsonb_object_agg(b.fid, jsonb_build_object('precoFinal', CASE WHEN b.bd AND COALESCE(co.comp,false) THEN b.bp+COALESCE(co.cc,0) ELSE NULL END)),'{}'::jsonb)
+  FROM bases b LEFT JOIN cor co ON co.formula_id=b.fid;
+$fn$;
+SQL
+V=$(Pq -c "SELECT (public.get_tint_prices(ARRAY['$F_COR_INAT']::uuid[]) -> '$F_COR_INAT' ->> 'precoFinal') IS NULL;")
+if [ "$V" = "f" ]; then ok "F7 gate-corante sabotado → N6 vermelho (corante inativo voltou a contar)"; else bad "F7 sabotei o gate do corante e N6 seguiu verde → fraco"; fi
 apply_real
 
 # ── veredito ──

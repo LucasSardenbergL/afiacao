@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 246
+-- Total de custom migrations: 247
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -265,7 +265,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615200000', 'tint_get_price_base', '20260615200000_tint_get_price_base.sql'),
   ('20260615210000', 'reposicao_auto_aprovacao_v2', '20260615210000_reposicao_auto_aprovacao_v2.sql'),
   ('20260615210000', 'tint_get_prices_batch', '20260615210000_tint_get_prices_batch.sql'),
-  ('20260616020000', 'fix_aging_views_status_vocab', '20260616020000_fix_aging_views_status_vocab.sql')
+  ('20260616020000', 'fix_aging_views_status_vocab', '20260616020000_fix_aging_views_status_vocab.sql'),
+  ('20260616120000', 'tint_price_gate_ativo', '20260616120000_tint_price_gate_ativo.sql')
 )
 SELECT
   e.version,
@@ -1187,7 +1188,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_auto_aprovacao_v2', 'index', 'public', 'reposicao_auto_aprovacao_log_criado_em', 'reposicao_auto_aprovacao_log'),
   ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
   ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
-  ('tint_get_prices_batch', 'function', 'public', 'get_tint_prices', '')
+  ('tint_get_prices_batch', 'function', 'public', 'get_tint_prices', ''),
+  ('tint_price_gate_ativo', 'function', 'public', 'get_tint_price', ''),
+  ('tint_price_gate_ativo', 'function', 'public', 'get_tint_prices', '')
 )
 SELECT
   e.migration,

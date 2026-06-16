@@ -11,6 +11,9 @@
 // Omie mais novo, ou dado a revisar): nessas, manter o CSV (não baixar por engano).
 //
 // Regras (money-path — precisão > recall, nunca fabricar, nunca baixar silencioso):
+//  0. Motor (RPC) FALHOU/não respondeu e NÃO está mais carregando → SEM PREÇO (fail-closed):
+//     não cair no CSV/cliente quando a fronteira honesta não confirmou (a RPC pode estar barrando
+//     base/corante inativo ou zerado). Diferente de "carregando" (aí o consumidor segura a venda).
 //  1. Base ausente/zero num produto vendável → SEM PREÇO, mesmo havendo CSV/cliente
 //     (o CSV também subfatura aqui; ex.: PRD03657). Corrigir no Omie.
 //  2. Preço do cliente (último praticado) vence — é acordo comercial explícito.
@@ -28,7 +31,7 @@ export type TintPriceBreakdownLite = Omit<TintPriceBreakdown, 'itensCorantes'>;
 
 export type TintPriceSource = 'cliente' | 'tabela' | 'calculado';
 /** Por que não há preço — alimenta a mensagem honesta na UI. */
-export type SemPrecoMotivo = 'base' | 'corante' | 'receita';
+export type SemPrecoMotivo = 'base' | 'corante' | 'receita' | 'indisponivel';
 
 export interface TintPriceSelection {
   /** Fonte escolhida; NULL = sem preço (não vender com número fabricado). */
@@ -70,8 +73,18 @@ export function selectTintPrice(input: {
   precoCsv: number | null;
   /** Breakdown do motor honesto; null enquanto carrega. */
   pricing: TintPriceBreakdownLite | null;
+  /** A RPC do motor já respondeu mas FALHOU (erro/permissão/runtime) ou não trouxe breakdown, e
+   *  NÃO está mais carregando. Fail-closed: aqui NÃO cair no CSV legado / preço-cliente — a RPC é a
+   *  fronteira honesta (pode estar barrando base/corante inativo); número velho subfatura ou vende
+   *  produto desativado. ≠ `pricing == null` por loading (nesse caso o consumidor segura a venda). */
+  motorFalhou?: boolean;
 }): TintPriceSelection {
   const { lastPracticedPrice, pricing } = input;
+
+  // 0. Motor falhou (≠ carregando) → SEM PREÇO, mesmo havendo CSV/cliente. A RPC não confirmou o
+  //    preço honesto; cair no importado aqui venderia justamente o que a RPC poderia estar barrando.
+  if (input.motorFalhou) return semPreco('indisponivel');
+
   const csv = input.precoCsv != null && input.precoCsv > 0 ? arredonda(input.precoCsv) : null;
   const calc = pricing?.precoFinal != null ? arredonda(pricing.precoFinal) : null;
 
