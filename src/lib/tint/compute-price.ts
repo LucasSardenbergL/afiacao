@@ -1,10 +1,11 @@
-// Cálculo puro do preço de uma fórmula tintométrica (custo dos corantes).
-// Espelha VERBATIM a lógica que vivia inline em `useTintPricing` — extraído para:
-//  (a) tornar o money-path de preço testável (antes não era), e
-//  (b) servir de oráculo de paridade para a futura RPC SQL `get_tint_price`
-//      (hardening da receita; ver
-//      docs/superpowers/specs/2026-05-27-tint-recipe-hardening-design.md).
-// Qualquer mudança aqui muda o preço cobrado — alterar só com teste de paridade.
+// Cálculo puro do preço de uma fórmula tintométrica: BASE (Omie) + Σ corantes.
+// É o oráculo de paridade da RPC SQL `get_tint_price` (espelhada verbatim) — e o
+// único ponto onde "preço calculado" é definido. Qualquer mudança aqui muda o
+// preço cobrado: alterar só com teste de paridade (vitest + PG17 falsificável).
+//
+// Money-path (ausente ≠ zero): se a base não tem preço, OU se qualquer corante
+// não tem custo, o `precoFinal` é NULL — nunca um número subfaturado. O consumidor
+// mostra "sem preço" / "vincular no Omie", jamais R$ 0.
 
 export interface TintCoranteItem {
   coranteDescricao: string;
@@ -15,10 +16,17 @@ export interface TintCoranteItem {
 }
 
 export interface TintPriceBreakdown {
-  custoBase: number;
+  /** Preço da base (valor_unitario Omie). NULL quando ausente/zero — nunca fabricar 0. */
+  custoBase: number | null;
+  /** A base tem preço utilizável (> 0)? */
+  baseDisponivel: boolean;
   itensCorantes: TintCoranteItem[];
+  /** Soma dos corantes COM custo (pode ser parcial — apenas para exibição). */
   custoCorantes: number;
-  precoFinal: number;
+  /** Todos os itens da fórmula têm custo disponível? */
+  corantesCompletos: boolean;
+  /** base + corantes; NULL se a base OU qualquer corante faltar (ausente ≠ zero). */
+  precoFinal: number | null;
 }
 
 /** Item da fórmula: quantidade de um corante (a "receita" — IP a proteger). */
@@ -39,14 +47,18 @@ export interface TintCoranteInput {
 export type TintOmiePriceMap = Record<string, { valor_unitario: number }>;
 
 /**
- * Custo dos corantes de uma fórmula = Σ (qtd_ml × valor_unitario / volume_total_ml).
- * `custoBase` é 0 (a base entra no preço fora deste cálculo, no consumidor).
- * `precoFinal` aqui = `custoCorantes` (idêntico ao comportamento original).
+ * Preço de uma fórmula = base + Σ (qtd_ml × valor_unitario / volume_total_ml).
+ * @param precoBase `valor_unitario` Omie da base (do SKU da fórmula); `null`/`<=0` = indisponível.
+ *
+ * `precoFinal` só é número quando a base existe E todos os corantes têm custo.
+ * Senão é `null` (degradação honesta), enquanto `custoCorantes` ainda traz a
+ * soma parcial para exibição.
  */
 export function computeTintPrice(
   items: TintFormulaItemInput[],
   corantes: TintCoranteInput[],
   omieProducts: TintOmiePriceMap,
+  precoBase: number | null,
 ): TintPriceBreakdown {
   const itensCorantes: TintCoranteItem[] = items.map((item) => {
     const corante = corantes.find((c) => c.id === item.corante_id);
@@ -55,7 +67,8 @@ export function computeTintPrice(
     }
 
     const omie = corante.omie_product_id ? omieProducts[corante.omie_product_id] : null;
-    const custoDisponivel = !!omie && !!corante.volume_total_ml && corante.volume_total_ml > 0;
+    // valor_unitario > 0 (não só presente): preço 0/negativo é dado inválido, não custo real.
+    const custoDisponivel = !!omie && omie.valor_unitario > 0 && !!corante.volume_total_ml && corante.volume_total_ml > 0;
     const custoPorMl = custoDisponivel ? omie!.valor_unitario / corante.volume_total_ml! : 0;
     const custoItem = item.qtd_ml * custoPorMl;
 
@@ -69,6 +82,13 @@ export function computeTintPrice(
   });
 
   const custoCorantes = itensCorantes.reduce((sum, i) => sum + i.custoItem, 0);
+  // length > 0: fórmula sem itens é receita faltando (dado incompleto), não "completa".
+  // Cobrar só a base subfaturaria (confirmado em prod). Fail closed → precoFinal null.
+  const corantesCompletos = itensCorantes.length > 0 && itensCorantes.every((i) => i.custoDisponivel);
 
-  return { custoBase: 0, itensCorantes, custoCorantes, precoFinal: custoCorantes };
+  const baseDisponivel = precoBase != null && precoBase > 0;
+  const custoBase = baseDisponivel ? precoBase : null;
+  const precoFinal = baseDisponivel && corantesCompletos ? custoBase! + custoCorantes : null;
+
+  return { custoBase, baseDisponivel, itensCorantes, custoCorantes, corantesCompletos, precoFinal };
 }

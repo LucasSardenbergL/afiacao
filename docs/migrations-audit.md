@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **241** custom migrations totais
-- **896** objetos esperados (criados por estas migrations)
+- **245** custom migrations totais
+- **904** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 251
+  - `function`: 258
   - `rls_policy`: 209
   - `index`: 178
   - `cron_job`: 106
   - `table`: 103
-  - `trigger`: 45
+  - `trigger`: 46
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1616,6 +1616,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.aplicar_promocoes_no_ciclo` | — |
 
+### `20260606170100_fornecedores_classificacao_rpcs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.classificar_clientes_fornecedores` | — |
+| `function` | `public.aplicar_exclusao_fornecedores` | — |
+| `function` | `public.reverter_exclusao_fornecedor` | — |
+| `function` | `public.cliente_classificacao_derive` | — |
+| `trigger` | `public.trg_cliente_classificacao_derive` | `cliente_classificacao` |
+
 ### `20260606180000_reposicao_aplicar_promocoes_hardening.sql`
 
 | Tipo | Objeto | Parent |
@@ -2099,6 +2109,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.cep_geo_sel` | `cep_geo` |
 | `rls_policy` | `public.municipio_geo_sel` | `municipio_geo` |
 
+### `20260615194500_fix_tarefas_matcher_enum.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_matcher_tick` | — |
+
+### `20260615200000_tint_get_price_base.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_price` | — |
+
 ### `20260615210000_reposicao_auto_aprovacao_v2.sql`
 
 | Tipo | Objeto | Parent |
@@ -2107,6 +2129,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
 | `function` | `public.reposicao_pedido_auto_aprovavel` | — |
 | `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+
+### `20260615210000_tint_get_prices_batch.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_prices` | — |
 
 ## Próximos passos quando algo der `❌`
 

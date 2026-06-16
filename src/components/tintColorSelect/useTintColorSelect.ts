@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ilikeOr } from '@/lib/postgrest';
-import { useTintPricing } from '@/hooks/useTintPricing';
+import { useTintPricing, useTintPrices } from '@/hooks/useTintPricing';
+import { selectTintPrice, type TintPriceSource } from '@/lib/tint/select-price';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import type { FormulaResult, AlternativePackaging } from './types';
 
@@ -200,8 +201,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   const globalColorMatches = globalColorData?.matches ?? [];
   const globalColorExists = globalColorData?.colorExists ?? false;
 
-  // Pricing breakdown for selected formula (for informational display)
-  const { data: pricing } = useTintPricing(selectedFormula?.id || null);
+  // Pricing breakdown for selected formula (motor honesto get_tint_price)
+  const { data: pricing, isLoading: pricingLoading } = useTintPricing(selectedFormula?.id || null);
 
   // Last practiced price for this color+base for the customer
   const { data: lastPracticedPrice, isLoading: loadingLastPrice } = useQuery({
@@ -312,33 +313,68 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     },
   });
 
-  // Use CSV price rounded up to the nearest R$0.10
-  const rawCsv = selectedFormula?.preco_final_sayersystem ?? 0;
-  const precoCsv = rawCsv > 0 ? Math.ceil(rawCsv * 10) / 10 : 0;
+  // Preços honestos (motor batch get_tint_prices) das "outras embalagens" + "busca global":
+  // uma cor em várias bases, cada fórmula com seu próprio preço. Mapa { formulaId: breakdown }.
+  const altFormulaIds = useMemo(
+    () => [...(alternatives ?? []), ...globalColorMatches].map((a) => a.formulaId),
+    [alternatives, globalColorMatches],
+  );
+  const { data: altPriceMap, isLoading: altPriceQueryLoading } = useTintPrices(altFormulaIds);
+  const altPriceLoading = altFormulaIds.length > 0 && altPriceQueryLoading;
+
+  // Preço honesto da cor selecionada: motor get_tint_price (base + corantes, NULL quando
+  // a base/corante falta) + CSV legado + último preço do cliente. Quando o motor não tem
+  // preço, vira "sem preço" — nunca um número fabricado. Regras em src/lib/tint/select-price.ts.
+  const rawCsv = selectedFormula?.preco_final_sayersystem ?? null;
   const custoCorantes = pricing?.custoCorantes || 0;
 
-  // Price source selection: user can choose between historical, CSV, or calculated
-  const [priceSourceOverride, setPriceSourceOverride] = useState<'cliente' | 'tabela' | 'calculado' | null>(null);
+  const [priceSourceOverride, setPriceSourceOverride] = useState<TintPriceSource | null>(null);
 
-  const precoBase = product.valor_unitario;
-  const precoCalculado = precoBase + custoCorantes;
+  // Trocar de cor reseta a escolha manual de fonte — senão um override antigo (ex.: "tabela")
+  // venceria o auto da nova cor e esconderia o aviso de recálculo dela.
+  useEffect(() => {
+    setPriceSourceOverride(null);
+  }, [selectedFormula?.id]);
 
-  // Auto-detect best price source
-  const precoCsvValido = precoCsv > 0 && precoCsv >= precoBase ? precoCsv : 0;
-  const autoSource = lastPracticedPrice
-    ? 'cliente'
-    : precoCsvValido > 0
-      ? 'tabela'
-      : 'calculado';
-  const priceSource = priceSourceOverride || autoSource;
+  // Enquanto a RPC de preço (ou o último preço do cliente) carrega, NÃO decidir o preço: o motor
+  // honesto ainda não respondeu e cair no CSV/cliente aqui venderia o preço legado (subfaturado)
+  // antes de saber. A UI mostra "calculando" e segura o "Adicionar".
+  const precoCarregando = !!selectedFormula && (pricingLoading || loadingLastPrice);
 
-  // Se o preço CSV for menor que o preço da base, usar o calculado (base + corantes) como piso
-  const precoSemDesconto = priceSource === 'cliente' && lastPracticedPrice
-    ? lastPracticedPrice.price
-    : priceSource === 'tabela' && precoCsvValido > 0
-      ? precoCsvValido
-      : precoCalculado;
-  const precoFinal = discountPct > 0 ? Math.round(precoSemDesconto * (1 - discountPct / 100) * 100) / 100 : precoSemDesconto;
+  const selection = selectTintPrice({
+    lastPracticedPrice: lastPracticedPrice?.price ?? null,
+    precoCsv: rawCsv,
+    pricing: pricing ?? null,
+  });
+
+  // Qualquer "sem preço confiável" (base ausente/zero ex. PRD03657, corante sem custo, receita
+  // faltando) bloqueia TODAS as fontes — inclusive o override manual: não deixar a vendedora
+  // forçar CSV/cliente quando o motor honesto não tem preço. Corrigir no Omie (self-healing).
+  const semPrecoConfiavel = selection.motivoSemPreco != null;
+  const precoCsv = !semPrecoConfiavel && rawCsv && rawCsv > 0 ? Math.ceil(rawCsv * 10) / 10 : 0;
+  const precoCalc = !semPrecoConfiavel && pricing?.precoFinal != null ? Math.ceil(pricing.precoFinal * 10) / 10 : null;
+  const precoCliente = !semPrecoConfiavel ? (lastPracticedPrice?.price ?? null) : null;
+  const precoPorFonte: Record<TintPriceSource, number | null> = {
+    cliente: precoCliente,
+    tabela: precoCsv > 0 ? precoCsv : null,
+    calculado: precoCalc,
+  };
+
+  // Override manual da vendedora só vale se aquela fonte tiver preço.
+  const overrideValido = priceSourceOverride && precoPorFonte[priceSourceOverride] != null ? priceSourceOverride : null;
+  const priceSource = overrideValido ?? selection.source;
+  // Durante o carregando, segura o preço (null) até o motor responder.
+  const precoSemDesconto = precoCarregando ? null : (priceSource ? precoPorFonte[priceSource] : null);
+  const disponivel = precoSemDesconto != null;
+
+  // Aviso de recálculo só quando a fonte mostrada é o cálculo que subiu vs o importado.
+  const recalculado = priceSource === 'calculado' && selection.recalculado;
+  const precoImportadoAnterior = recalculado ? selection.precoImportadoAnterior : null;
+  const motivoSemPreco = disponivel ? null : selection.motivoSemPreco;
+
+  const precoFinal = precoSemDesconto == null
+    ? null
+    : (discountPct > 0 ? Math.round(precoSemDesconto * (1 - discountPct / 100) * 100) / 100 : precoSemDesconto);
 
   const onSearchChange = (value: string) => {
     setSearch(value);
@@ -363,6 +399,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     loadingLastPrice,
     alternatives,
     loadingAlternatives,
+    altPriceMap,
+    altPriceLoading,
     discountPct,
     setDiscountPct,
     altDiscounts,
@@ -372,8 +410,15 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     priceSource,
     setPriceSourceOverride,
     precoCsv,
+    precoCalc,
+    precoCliente,
     custoCorantes,
     precoSemDesconto,
     precoFinal,
+    disponivel,
+    precoCarregando,
+    recalculado,
+    precoImportadoAnterior,
+    motivoSemPreco,
   };
 }

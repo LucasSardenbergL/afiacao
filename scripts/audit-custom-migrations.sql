@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 241
+-- Total de custom migrations: 245
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -202,6 +202,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260606150000', 'reposicao_qtde_inteira', '20260606150000_reposicao_qtde_inteira.sql'),
   ('20260606170000', 'fornecedores_classificacao_schema', '20260606170000_fornecedores_classificacao_schema.sql'),
   ('20260606170000', 'reposicao_fix_aplicar_promocoes', '20260606170000_reposicao_fix_aplicar_promocoes.sql'),
+  ('20260606170100', 'fornecedores_classificacao_rpcs', '20260606170100_fornecedores_classificacao_rpcs.sql'),
   ('20260606180000', 'reposicao_aplicar_promocoes_hardening', '20260606180000_reposicao_aplicar_promocoes_hardening.sql'),
   ('20260606180000', 'reposicao_preco_pedido_cmc', '20260606180000_reposicao_preco_pedido_cmc.sql'),
   ('20260606190000', 'reposicao_preco_pedido_cmc_account', '20260606190000_reposicao_preco_pedido_cmc_account.sql'),
@@ -260,7 +261,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615160000', 'tint_promote_set_based', '20260615160000_tint_promote_set_based.sql'),
   ('20260615182814', 'vincular_tint_skus_omie_orfaos', '20260615182814_vincular_tint_skus_omie_orfaos.sql'),
   ('20260615190000', 'geocoding_cep_geo', '20260615190000_geocoding_cep_geo.sql'),
-  ('20260615210000', 'reposicao_auto_aprovacao_v2', '20260615210000_reposicao_auto_aprovacao_v2.sql')
+  ('20260615194500', 'fix_tarefas_matcher_enum', '20260615194500_fix_tarefas_matcher_enum.sql'),
+  ('20260615200000', 'tint_get_price_base', '20260615200000_tint_get_price_base.sql'),
+  ('20260615210000', 'reposicao_auto_aprovacao_v2', '20260615210000_reposicao_auto_aprovacao_v2.sql'),
+  ('20260615210000', 'tint_get_prices_batch', '20260615210000_tint_get_prices_batch.sql')
 )
 SELECT
   e.version,
@@ -974,6 +978,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fornecedores_classificacao_schema', 'table', 'public', 'cliente_classificacao', ''),
   ('fornecedores_classificacao_schema', 'table', 'public', 'fornecedor_excecao', ''),
   ('reposicao_fix_aplicar_promocoes', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
+  ('fornecedores_classificacao_rpcs', 'function', 'public', 'classificar_clientes_fornecedores', ''),
+  ('fornecedores_classificacao_rpcs', 'function', 'public', 'aplicar_exclusao_fornecedores', ''),
+  ('fornecedores_classificacao_rpcs', 'function', 'public', 'reverter_exclusao_fornecedor', ''),
+  ('fornecedores_classificacao_rpcs', 'function', 'public', 'cliente_classificacao_derive', ''),
+  ('fornecedores_classificacao_rpcs', 'trigger', 'public', 'trg_cliente_classificacao_derive', 'cliente_classificacao'),
   ('reposicao_aplicar_promocoes_hardening', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_preco_pedido_cmc', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_preco_pedido_cmc_account', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
@@ -1171,10 +1180,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('geocoding_cep_geo', 'function', 'public', 'radar_prospects_para_rota', ''),
   ('geocoding_cep_geo', 'rls_policy', 'public', 'cep_geo_sel', 'cep_geo'),
   ('geocoding_cep_geo', 'rls_policy', 'public', 'municipio_geo_sel', 'municipio_geo'),
+  ('fix_tarefas_matcher_enum', 'function', 'public', 'tarefas_matcher_tick', ''),
+  ('tint_get_price_base', 'function', 'public', 'get_tint_price', ''),
   ('reposicao_auto_aprovacao_v2', 'table', 'public', 'reposicao_auto_aprovacao_log', ''),
   ('reposicao_auto_aprovacao_v2', 'index', 'public', 'reposicao_auto_aprovacao_log_criado_em', 'reposicao_auto_aprovacao_log'),
   ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
-  ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', '')
+  ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
+  ('tint_get_prices_batch', 'function', 'public', 'get_tint_prices', '')
 )
 SELECT
   e.migration,

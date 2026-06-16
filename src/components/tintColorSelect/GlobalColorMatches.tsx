@@ -4,6 +4,7 @@ import { AlertTriangle, Package } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
+import { selectAltPrice, type TintPriceBreakdownLite } from '@/lib/tint/select-price';
 import type { AlternativePackaging } from './types';
 
 interface GlobalColorMatchesProps {
@@ -11,10 +12,14 @@ interface GlobalColorMatchesProps {
   matches: AlternativePackaging[];
   /** A cor existe no catálogo, mas sem embalagem vendável p/ esta base (vs. não existir de todo). */
   colorExists?: boolean;
+  /** Preço honesto (motor batch) por formulaId dos matches. */
+  precoMap?: Record<string, TintPriceBreakdownLite>;
+  /** Batch de preços ainda carregando (mostra "calculando", não "sem preço"). */
+  precoLoading?: boolean;
   onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, alternativeProduct?: Product) => void;
 }
 
-export function GlobalColorMatches({ product, matches, colorExists, onConfirm }: GlobalColorMatchesProps) {
+export function GlobalColorMatches({ product, matches, colorExists, precoMap, precoLoading, onConfirm }: GlobalColorMatchesProps) {
   if (matches.length === 0) {
     // Degradação honesta: distingue "existe mas não é vendável nesta base" de
     // "não existe". O sinal money-path nunca afirma ausência quando a cor está
@@ -58,21 +63,22 @@ export function GlobalColorMatches({ product, matches, colorExists, onConfirm }:
         </div>
         <div className="max-h-60 overflow-y-auto space-y-1.5">
           {matches.map((alt) => {
-            const altBasePrice = alt.precoFinalCsv && alt.precoFinalCsv > 0
-              ? alt.precoFinalCsv
-              : alt.product.valor_unitario;
+            // Preço honesto da base alternativa (motor batch): calc vs CSV; null = sem preço.
+            const altSel = selectAltPrice(alt.precoFinalCsv, precoMap?.[alt.formulaId] ?? null);
+            const altDisponivel = altSel.preco != null;
             return (
               <div key={alt.formulaId} className="rounded-md border border-border hover:border-primary/50 transition-all text-xs">
                 <button
-                  onClick={() => onConfirm(
+                  disabled={!altDisponivel}
+                  onClick={() => altDisponivel && onConfirm(
                     alt.formulaId,
                     alt.corId || '',
                     alt.nomeCor || '',
-                    altBasePrice,
-                    0,
+                    altSel.preco as number,
+                    altSel.custoCorantes,
                     alt.product,
                   )}
-                  className="w-full flex items-center justify-between gap-2 p-2.5 hover:bg-primary/5"
+                  className={`w-full flex items-center justify-between gap-2 p-2.5 ${altDisponivel ? 'hover:bg-primary/5' : 'opacity-60 cursor-not-allowed'}`}
                 >
                   <div className="flex-1 text-left min-w-0">
                     <p className="font-medium break-words whitespace-normal">
@@ -86,11 +92,22 @@ export function GlobalColorMatches({ product, matches, colorExists, onConfirm }:
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    <span className="font-bold text-primary">{fmt(altBasePrice)}</span>
-                    {alt.precoFinalCsv && alt.precoFinalCsv > 0 ? (
-                      <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">Tabela</Badge>
+                    {altDisponivel ? (
+                      <>
+                        <span className="font-bold text-primary">{fmt(altSel.preco as number)}</span>
+                        {altSel.fonte === 'tabela' ? (
+                          <Badge variant="secondary" className="text-[8px] px-1 py-0 ml-1">Tabela</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1">Calc.</Badge>
+                        )}
+                        {altSel.recalculado && (
+                          <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1 text-status-info border-status-info/40">recalc.</Badge>
+                        )}
+                      </>
+                    ) : precoLoading ? (
+                      <span className="text-[10px] text-muted-foreground">calculando…</span>
                     ) : (
-                      <Badge variant="outline" className="text-[8px] px-1 py-0 ml-1">Base</Badge>
+                      <span className="text-[10px] font-medium text-status-warning">sem preço</span>
                     )}
                   </div>
                 </button>
