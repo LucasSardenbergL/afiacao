@@ -85,22 +85,28 @@ left join profiles p on p.user_id = oc.user_id
 
 ## 6. Inadimplência — vocabulário Omie real (não use o legado)
 
-`fin_contas_receber.status_titulo` usa strings do Omie: **`'ATRASADO'`** (= vencido),
-`'A VENCER'`, `'VENCE HOJE'`. **NÃO** use `'ABERTO'`/`'VENCIDO'`/`'PARCIAL'` — esses só vivem
-em testes/helpers desatualizados e divergem da produção. Saldo em aberto =
-`valor_documento - coalesce(valor_recebido, 0)` (a coluna `saldo` é nullable; o serviço
-canônico calcula por subtração). Fallback puro-data robusto: `data_recebimento is null and
-data_vencimento::date < current_date`. Em contas a pagar, a baixa é `data_pagamento` (não
-`data_recebimento`) e o valor pago é `valor_pago`.
+`status_titulo` (Omie) — receber: **`'A VENCER'` · `'ATRASADO'`(=vencido) · `'VENCE HOJE'` ·
+`'RECEBIDO'` · `'CANCELADO'`**; pagar troca `'RECEBIDO'`→`'PAGO'`. **NÃO** use `'ABERTO'`/`'VENCIDO'`/
+`'PARCIAL'` — só vivem em testes/helpers e nas **views quebradas** (abaixo).
+
+⚠️ **"Em aberto" infere-se SÓ por status** (`status_titulo not in ('RECEBIDO','CANCELADO')` / `('PAGO',
+'CANCELADO')`). **`data_recebimento` e `data_pagamento` são NULL até em títulos RECEBIDO/PAGO**
+(40.884 e 14.696 títulos em jun/2026) — usar `data_*-null` como "em aberto" puxa milhares de pagos
+(foi o bug que inflou a inadimplência de R$196k real para R$1,2M num teste). Saldo =
+`valor_documento - coalesce(valor_recebido,0)` (col. `saldo` é nullable); pagar usa `valor_pago`.
+
+⚠️ **Views de aging QUEBRADAS em prod:** `fin_aging_receber`, `fin_aging_pagar`, `fin_fluxo_caixa_diario`
+filtram o vocabulário morto → voltam **vazias/zeradas**. NÃO as use; compute o aging do cru (#10a/#11a).
+O fix da view é DDL money-path → handoff via `lovable-db-operator` + `prove-sql-money-path`.
 
 ## 7. Margem — confiabilidade é rastreável e parcial
 
 `product_costs` tem `cost_confidence` (numérico) e `cost_source` (origem) por linha — então o
-dado diz o quanto confiar nele. É **esparso**: nem todo produto tem custo real (há `cmc` e
-`haircut_fallback_preco` em config sugerindo fallback estimado). **Sempre** que estimar margem
-por produto, rode junto a query de **cobertura de custo** (% da receita com custo conhecido) e
-exponha esse percentual. Para visão executiva, prefira `fin_dre_snapshots` (margem bruta
-consolidada, confiável). `margin_audit_log` é margem por **cliente** (farmer), não por pedido/SKU.
+dado diz o quanto confiar nele. **Observado: 98,3% da receita 30d tem custo conhecido** (jun/2026) —
+na prática **bem populado**, não esparso como se temia inicialmente. Ainda assim, **sempre** rode a
+query de **cobertura de custo** (#13c) p/ confirmar o % do período antes de precificar. Para visão
+executiva, prefira `fin_dre_snapshots` (margem bruta consolidada). `margin_audit_log` é margem por
+**cliente** (farmer), não por pedido/SKU.
 
 ## 8. Confiabilidade — gating opcional
 
