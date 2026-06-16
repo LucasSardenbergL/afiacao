@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 248
+-- Total de custom migrations: 253
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -254,6 +254,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615091839', 'retencao_cron_job_run_details', '20260615091839_retencao_cron_job_run_details.sql'),
   ('20260615095710', 'idx_data_health_freshness_cols', '20260615095710_idx_data_health_freshness_cols.sql'),
   ('20260615103111', 'idx_omie_products_codigo_text_account', '20260615103111_idx_omie_products_codigo_text_account.sql'),
+  ('20260615120000', 'cliente_grupos', '20260615120000_cliente_grupos.sql'),
   ('20260615130000', 'tint_vigia_cobertura_sentinela', '20260615130000_tint_vigia_cobertura_sentinela.sql'),
   ('20260615133000', 'tint_remapeia_skus_omie_desalinhadas', '20260615133000_tint_remapeia_skus_omie_desalinhadas.sql'),
   ('20260615140000', 'tint_promote_indices_timeout', '20260615140000_tint_promote_indices_timeout.sql'),
@@ -267,7 +268,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615210000', 'tint_get_prices_batch', '20260615210000_tint_get_prices_batch.sql'),
   ('20260616020000', 'fix_aging_views_status_vocab', '20260616020000_fix_aging_views_status_vocab.sql'),
   ('20260616120000', 'tint_price_gate_ativo', '20260616120000_tint_price_gate_ativo.sql'),
-  ('20260616120001', 'idx_tactical_plans_lookup', '20260616120001_idx_tactical_plans_lookup.sql')
+  ('20260616120000', 'v_grupo_contas_receber', '20260616120000_v_grupo_contas_receber.sql'),
+  ('20260616120001', 'idx_tactical_plans_lookup', '20260616120001_idx_tactical_plans_lookup.sql'),
+  ('20260616130000', 'v_grupo_contatos', '20260616130000_v_grupo_contatos.sql'),
+  ('20260616140000', 'v_grupo_comercial', '20260616140000_v_grupo_comercial.sql'),
+  ('20260616140941', 'fatia2_sinais_ligacao', '20260616140941_fatia2_sinais_ligacao.sql')
 )
 SELECT
   e.version,
@@ -1160,6 +1165,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_farmer_client_scores_calculated_at', 'farmer_client_scores'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_pedido_compra_sugerido_data_ciclo', 'pedido_compra_sugerido'),
   ('idx_omie_products_codigo_text_account', 'index', 'public', 'idx_omie_products_codigo_text_account', 'omie_products'),
+  ('cliente_grupos', 'table', 'public', 'cliente_grupos', ''),
+  ('cliente_grupos', 'table', 'public', 'cliente_grupo_membros', ''),
+  ('cliente_grupos', 'index', 'public', 'idx_cgm_grupo', 'cliente_grupo_membros'),
+  ('cliente_grupos', 'index', 'public', 'idx_cgm_documento', 'cliente_grupo_membros'),
+  ('cliente_grupos', 'function', 'public', 'cliente_grupos_set_updated_at', ''),
+  ('cliente_grupos', 'trigger', 'public', 'trg_cliente_grupos_updated_at', 'cliente_grupos'),
+  ('cliente_grupos', 'rls_policy', 'public', 'cliente_grupos_service', 'cliente_grupos'),
+  ('cliente_grupos', 'rls_policy', 'public', 'cliente_grupos_fin_access', 'cliente_grupos'),
+  ('cliente_grupos', 'rls_policy', 'public', 'cgm_service', 'cliente_grupo_membros'),
+  ('cliente_grupos', 'rls_policy', 'public', 'cgm_fin_access', 'cliente_grupo_membros'),
   ('tint_vigia_cobertura_sentinela', 'function', 'public', '_data_health_compute', ''),
   ('tint_vigia_cobertura_sentinela', 'function', 'public', 'data_health_watchdog', ''),
   ('tint_vigia_cobertura_sentinela', 'function', 'public', 'fin_sync_heartbeat', ''),
@@ -1192,7 +1207,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_get_prices_batch', 'function', 'public', 'get_tint_prices', ''),
   ('tint_price_gate_ativo', 'function', 'public', 'get_tint_price', ''),
   ('tint_price_gate_ativo', 'function', 'public', 'get_tint_prices', ''),
-  ('idx_tactical_plans_lookup', 'index', 'public', 'idx_tactical_plans_lookup', 'farmer_tactical_plans')
+  ('idx_tactical_plans_lookup', 'index', 'public', 'idx_tactical_plans_lookup', 'farmer_tactical_plans'),
+  ('fatia2_sinais_ligacao', 'table', 'public', 'sinal_classe_config', ''),
+  ('fatia2_sinais_ligacao', 'index', 'public', 'idx_farmer_calls_sinais_pendentes', 'farmer_calls'),
+  ('fatia2_sinais_ligacao', 'function', 'public', 'enqueue_score_recalc_from_sinais', ''),
+  ('fatia2_sinais_ligacao', 'trigger', 'public', 'trg_farmer_calls_enqueue_recalc_sinais', 'farmer_calls'),
+  ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_select_staff', 'sinal_classe_config'),
+  ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_master_all', 'sinal_classe_config'),
+  ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_service_all', 'sinal_classe_config')
 )
 SELECT
   e.migration,
