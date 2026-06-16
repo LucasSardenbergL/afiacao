@@ -247,6 +247,7 @@ export function useFarmerCopilot() {
     navigate,
     isStaff,
     isImpersonating,
+    userId: user?.id ?? null,
     copilot,
     selectedCustomer,
     setSelectedCustomer,

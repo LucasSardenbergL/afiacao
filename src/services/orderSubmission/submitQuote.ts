@@ -2,6 +2,7 @@ import type { SubmitQuoteParams, SubmitQuoteResult, SubmitErrorEntry } from './t
 import { logger } from '@/lib/logger';
 import { formatCustomerAddress, resolveCustomerPhone } from './helpers';
 import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
+import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
 
 /**
  * Saves cart as quotes (orcamento) — no Omie sync.
@@ -15,6 +16,13 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
 
   if (obenProductItems.length === 0 && colacorProductItems.length === 0) {
     return { success: false, results: [], errors: [{ step: 'validate', message: 'Carrinho vazio' }] };
+  }
+
+  // Guard money-path: orçamento com produto a preço ≤ 0 vira pedido depois — bloqueia
+  // igual ao submitOrder (fail-closed, antes de qualquer insert). Ver priceGuard.ts.
+  const invalidPriced = findInvalidPricedProductItems([...obenProductItems, ...colacorProductItems]);
+  if (invalidPriced.length > 0) {
+    return { success: false, results: [], errors: [{ step: 'validate_price', message: invalidPriceMessage(invalidPriced) }] };
   }
 
   // Preflight de vendabilidade (fail-closed) — mesma fronteira money-path do submitOrder:

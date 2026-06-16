@@ -153,4 +153,30 @@ describe('submitQuote', () => {
     expect(r.results).toEqual(['Orçamento Oben salvo']);
     expect(r.errors.some((e) => e.step === 'insert_colacor_quote')).toBe(true);
   });
+
+  it('produto com preço 0 → bloqueia (validate_price) sem nenhum insert', async () => {
+    const { client, insert } = makeSupabase();
+    const zerado = { ...obenItem(), unit_price: 0 } as ProductCartItem;
+    const r = await submitQuote(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [zerado], colacorProductItems: [] },
+      subtotals: { oben: 0, colacor: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_price');
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('preço inválido numa conta bloqueia o orçamento INTEIRO (não salva a outra conta válida)', async () => {
+    const { client, insert } = makeSupabase();
+    const zerado = { ...colacorItem(), unit_price: 0 } as ProductCartItem;
+    const r = await submitQuote(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [zerado] },
+      subtotals: { oben: 20, colacor: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_price');
+    expect(insert).not.toHaveBeenCalled();
+  });
 });
