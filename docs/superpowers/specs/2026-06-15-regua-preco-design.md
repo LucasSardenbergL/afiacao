@@ -253,7 +253,7 @@ Tela de leitura do cliente (`/admin/customers/:id/360`), **sem carrinho** → a 
 O 360 lista SKUs via `customer_preferred_items` (só `omie_codigo_produto`, **sem** uuid/preço/qty). Codex (consult): derivar isso no client ("opção 1b") **espalharia** regra de histórico/account/janela/qty-mediana/último-preço no frontend → **divergência silenciosa** com a RPC. Money-path: a evidência vem de **uma** fonte (SQL); a decisão fica no **helper TS**. Validação em prod (read-only): `order_items` tem `product_id` + `omie_codigo_produto` + preço + qty (a ponte existe — **não** há tabela `products`); dispersão de preço real e alta (mesmo SKU/qty: R$ 464–1731), com vendas **abaixo do piso de MC** — o motor tem o que sinalizar.
 
 ### 13.2 RPC `get_regua_preco_customer360(p_customer uuid, p_omie_codigos bigint[])`
-Fetcher **batch** (1 round-trip p/ os ~10 SKUs do 360). Por SKU: `omie_codigo`, `product_id` (resolvido via `order_items` do cliente), `preco_atual` + `preco_atual_at` (último preço do cliente, **explícito**, não inferido de array), `qty_ref`/`qty_ref_n`/`qty_ref_source`, o pacote bruto (`cmc`, `aliquota_venda`, `piso_mc`, `precos_cliente[]`, `comparaveis[]` na banda de `qty_ref`), e `hide_reason` (`sem_produto`/`sem_preco`/`sem_evidencia`). Gate staff + SECURITY DEFINER (igual `get_regua_preco`). **prove-sql-money-path** (PG17 + falsificação) antes do handoff `lovable-db-operator`.
+Fetcher **batch** (1 round-trip p/ os ~10 SKUs do 360). Por SKU: `omie_codigo`, `product_id` (resolvido via `order_items` do cliente, **determinístico**), `preco_atual` + `preco_atual_at` (último preço do cliente, **explícito**, não inferido de array), `qty_ref` (= **a quantidade da venda que gerou o `preco_atual`**, não mediana — banda apples-to-apples com o preço avaliado; achado #3 do Codex) + `qty_ref_source`, o pacote bruto (`cmc`, `aliquota_venda`, `piso_mc`, `precos_cliente[]`, `comparaveis[]` na banda de `qty_ref`), e `hide_reason` (`sem_produto`/`sem_preco`/`sem_quantidade`). Reusa `get_regua_preco(p_customer, product_id, qty_ref)` (única fonte de cmc/comparáveis; herda a alíquota calibrada). Gate staff + SECURITY DEFINER (igual `get_regua_preco`). **prove-sql-money-path** (PG17 + falsificação) antes do handoff `lovable-db-operator`.
 
 ### 13.3 UI
 - `ReguaPrecoSinal` ganha `mode?: 'carrinho' | 'readonly'` (default `carrinho`). `readonly`: **sem** botão Aplicar; copy do piso vira **"abaixo do piso comercial"** (não expõe "custo+imposto" numa tela mais exposta).
@@ -262,6 +262,16 @@ Fetcher **batch** (1 round-trip p/ os ~10 SKUs do 360). Por SKU: `omie_codigo`, 
 - Integração na `ActivityColumn` (lista de SKUs preferidos) — o hook `useCustomerPreferredItems` passa a selecionar `omie_codigo_produto`.
 - **Sem log no v1:** o 360 é read-only (sem ação/outcome) → não grava em `regua_preco_log` (não contamina o closed-loop do carrinho). Telemetria de visualização = futuro (exigiria coluna `contexto`).
 - **Flag própria** `regua_preco_360` (off). Release: PR3 valida em **sombra real** ANTES de expor o 360 pra operação.
+
+### 13.4 Revisão de implementação do Codex (2026-06-16) — 5 achados money-path aplicados
+Implementação (RPC + UI) provada (PG17 **35 asserts** + falsificação; typecheck/lint/**3657 testes**). Codex (review, gpt-5.5) achou 5 — todos aplicados (commit `e9f73668`):
+1. **Fail-closed no client:** `useReguaPreco360` retorna `Map` vazio quando `!enabled` — o cache do React Query mantinha o sinal após flag/role→off (quebra de rollback). Teste de toggle true→false.
+2. **Colisão de conta:** `ActivityColumn` renderiza a régua só p/ `account='oben'` — mesmo `omie_codigo` em outra conta colaria sinal no SKU errado.
+3. **Banda = qty da última venda** (não mediana all-time): apples-to-apples com o `preco_atual`; mediana distorceria SKU com preço por escala.
+4. **Determinismo:** "último" desempata por `created_at DESC, id DESC` (empate no mesmo dia era não-determinístico).
+5. **`sem_quantidade`:** qty da venda nula/≤0 → `hide_reason` (não fabrica banda `0..0`; ausente≠zero).
+
+**Calibração adiada (founder decide, NÃO trava o deploy dark):** (a) o badge "abaixo do piso" ainda revela o predicado `preco<custo/(1-alíq)` → lower bound do custo; opção de gatear piso a master/gestor numa tela compartilhável; (b) `preco_atual` >180d pode dar sinal velho; opção de `hide_reason='preco_antigo'` ou mostrar `preco_atual_at` no popover.
 
 ---
 
