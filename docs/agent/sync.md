@@ -38,6 +38,8 @@ Pra disparar MUITAS invocações da MESMA edge/conta Omie (ex.: backfill mês-a-
 - **`2xx` + órfã `running` antiga** → kill/`catch` não chamou `completeSync` (ou kill não passa pelo catch). É o sinal CONFIÁVEL de morte (≠ staleness por tempo).
 - **`2xx` + `complete` + efeito ausente** → sucesso técnico falso / bug semântico → investigar a lógica (`prove-sql-money-path`).
 - **cursor `fin_sync_cursor.next_page` parado >2h** → continuação travada.
+- **`job_run_details.status='failed'` + `return_message='job startup timeout'` em MASSA (vários crons, horas seguidas)** → o pg_cron não conseguiu lançar o worker (background workers da plataforma esgotados), **não** é a edge/código. Transitório → confirmar pela **evolução horária** (o sucesso volta sozinho — ex.: 2026-06-15, timeouts 00h–11h UTC, recuperou às 12h) ANTES de reescalonar horários. `net.http_post` manual (pg_net, não usa worker de cron) **ainda funciona** no meio do incidente — usar pra forçar o recompute/sync que o cron perdeu.
+- **`job_run_details.status='failed'` + `invalid input value for enum` num cron isolado, RECORRENTE** → a função usa um valor que **não existe no enum** (dessync repo×banco) e plpgsql é late-bound → aborta a cada tick, **silencioso por dias**. Ao mudar/renomear um enum, `grep` o código (SQL **e** frontend) pelos valores antigos. Caso: `tarefas_matcher_tick` usou `numero_errado` por 14 dias (enum era `numero_invalido`) → #877.
 
 ## Princípios de diagnóstico
 
