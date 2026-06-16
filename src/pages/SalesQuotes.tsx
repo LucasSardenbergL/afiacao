@@ -12,10 +12,12 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { Loader2, Trash2, Send, FileText, ChevronLeft } from 'lucide-react';
+import { Loader2, Trash2, Send, FileText, ChevronLeft, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { findInvalidPricedOmieItems, invalidOmieItemPriceMessage } from '@/services/orderSubmission/priceGuard';
+import { cn } from '@/lib/utils';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -35,6 +37,8 @@ const SalesQuotes = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [converting, setConverting] = useState<string | null>(null);
+  // Orçamento destacado por ter item de produto a preço ≤ 0 (guard money-path da conversão).
+  const [invalidQuoteId, setInvalidQuoteId] = useState<string | null>(null);
 
   const { data: quotes, isLoading } = useQuery({
     queryKey: ['sales-quotes'],
@@ -80,6 +84,21 @@ const SalesQuotes = () => {
   });
 
   const convertToOrder = async (quote: SalesOrder) => {
+    // ── Guard money-path (4ª via) ──
+    // A conversão orçamento→pedido NÃO passa por submitOrder/submitQuote — vai direto ao
+    // edge omie-vendas-sync (criar_pedido). Um orçamento com produto a preço ≤ 0 (criado
+    // antes do guard, ou por qualquer outra via) viraria um PV COBRADO no Omie. Bloqueia
+    // ANTES do update de status e da chamada ao edge (fail-closed). O edge também rejeita
+    // (defense-in-depth). Orçamento só tem produto (afiação tem fluxo próprio), então
+    // preço ≤ 0 / NaN / Infinity é sempre erro — mesmo predicado do guard do carrinho.
+    const quoteItems = (quote.items as unknown as QuoteItem[]) || [];
+    const invalidPriced = findInvalidPricedOmieItems(quoteItems);
+    if (invalidPriced.length > 0) {
+      setInvalidQuoteId(quote.id);
+      toast.error(invalidOmieItemPriceMessage(invalidPriced));
+      return;
+    }
+    setInvalidQuoteId(null);
     setConverting(quote.id);
     try {
       // Get omie_clientes mapping
@@ -175,7 +194,7 @@ const SalesQuotes = () => {
             const items = (q.items as unknown as QuoteItem[]) || [];
             const itemCount = items.length;
             return (
-              <Card key={q.id}>
+              <Card key={q.id} className={cn(invalidQuoteId === q.id && 'border-status-error ring-1 ring-status-error')}>
                 <CardContent className="py-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -198,6 +217,12 @@ const SalesQuotes = () => {
                         {items.length > 3 && <div className="text-muted-foreground/60">+{items.length - 3} mais...</div>}
                       </div>
                       <p className="text-sm font-semibold mt-2">{fmt(q.total)}</p>
+                      {invalidQuoteId === q.id && (
+                        <p className="mt-2 text-xs text-status-error flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3 shrink-0" />
+                          Item com preço R$ 0 ou inválido — edite o orçamento antes de enviar.
+                        </p>
+                      )}
                     </div>
                     <div className="flex flex-col gap-2 shrink-0">
                       <Button
