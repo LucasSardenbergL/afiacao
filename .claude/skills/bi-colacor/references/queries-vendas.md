@@ -54,7 +54,7 @@ order by valor_7d desc nulls last;
 ## #2 — Concentração de carteira (Pareto top 20), últimos 90 dias
 Confiabilidade: **alta**. Fonte: `venda_items_history`. Mostra quanto do faturamento vem dos
 maiores clientes (risco de dependência). Nome enriquecido por LEFT JOIN (opcional — remova as
-duas linhas de join e o `razao_social` se quiser só o código).
+duas linhas de join e o `nome_cliente` se quiser só o código).
 ```sql
 with vendas_cliente as (
   select v.empresa, v.cliente_codigo_omie,
@@ -74,7 +74,8 @@ ranked as (
   from vendas_cliente vc
 )
 select
-  r.empresa, r.rank_cliente, r.cliente_codigo_omie, r.cnpj_cpf, p.razao_social,
+  r.empresa, r.rank_cliente, r.cliente_codigo_omie, r.cnpj_cpf,
+  coalesce(p.razao_social, p.name, r.cnpj_cpf) as nome_cliente,
   round(r.faturamento_90d, 2)                                  as faturamento_90d,
   round(100.0 * r.faturamento_90d / nullif(r.total_empresa,0), 1) as pct_do_total,
   round(100.0 * r.acumulado      / nullif(r.total_empresa,0), 1) as pct_acumulado
@@ -92,7 +93,7 @@ Leitura: se `pct_acumulado` do top 10 já passa de ~60–70%, há concentração
 Confiabilidade: **alta**. Fonte: `customer_metrics_mv` (pré-agregado — barato e confiável).
 ```sql
 select
-  m.customer_user_id, p.razao_social, m.document,
+  m.customer_user_id, coalesce(p.razao_social, p.name, m.document) as nome_cliente, m.document,
   round(m.faturamento_prev_90d, 2)  as faturamento_90d_anterior,
   round(m.faturamento_90d, 2)       as faturamento_90d,
   round(100.0 * (m.faturamento_90d - m.faturamento_prev_90d) / nullif(m.faturamento_prev_90d, 0), 1) as variacao_pct,

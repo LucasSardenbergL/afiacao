@@ -28,15 +28,20 @@ coluna for `text` de fato (ex.: status), trate como texto.
   `customer_preferred_items`, e como `cliente_codigo_omie` em `venda_items_history`,
   `fin_contas_receber`.
 - **Ponte:** `omie_clientes` (`user_id` ↔ `omie_codigo_cliente`). Para cruzar faturamento
-  fiscal (Omie) com scores/pedidos (user_id), passe por ela. `omie_clientes` não tem nome —
-  o nome legível (`razao_social`) está em `profiles`. Fallback de match: `profiles.cnpj` /
+  fiscal (Omie) com scores/pedidos (user_id), passe por ela. Fallback de match: `profiles.cnpj` /
   `profiles.document` ↔ `venda_items_history.cliente_cnpj_cpf` / `fin_contas_receber.cnpj_cpf`.
+- **Nome do cliente — NÃO use `razao_social` sozinho.** `profiles.razao_social` é nullable e
+  frequentemente **vazio** (no teste real veio NULL p/ todos). O padrão do app (`useRouteContactList`,
+  `usePropostaPreview`, `AgendaTodayList`) é **`razao_social || name`** — e `profiles.name` é
+  **NOT NULL** (sempre tem valor). Logo, para nome legível use sempre:
+  `coalesce(p.razao_social, p.name, <documento/cnpj>) as nome_cliente`. (`omie_clientes` também
+  tem `razao_social`/`nome_fantasia`, ambos nullable — úteis como fonte alternativa.)
 
 Enriquecer um resultado com nome do cliente (padrão LEFT JOIN, não derruba linhas):
 ```sql
 left join omie_clientes oc on oc.omie_codigo_cliente = <tabela>.cliente_codigo_omie
 left join profiles p on p.user_id = oc.user_id
--- ...select p.razao_social
+-- ...select coalesce(p.razao_social, p.name, <documento>) as nome_cliente  -- razao_social é esparso; name é NOT NULL
 ```
 
 ## 3. SKU/produto — `sku_codigo_omie` com tipo inconsistente
