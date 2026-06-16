@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Building2, Plus, Trash2, Wallet, Users, Loader2 } from 'lucide-react';
+import { ArrowLeft, Building2, Plus, Trash2, Wallet, Users, Loader2, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -12,6 +12,7 @@ import {
 } from '@/queries/useClienteGrupos';
 import { AddDocumentoDialog } from '@/components/grupos/AddDocumentoDialog';
 import { GrupoFinanceiroTab } from '@/components/grupos/GrupoFinanceiroTab';
+import { GrupoComercialTab } from '@/components/grupos/GrupoComercialTab';
 import { GrupoContatosTab } from '@/components/grupos/GrupoContatosTab';
 import { formatDoc } from '@/lib/grupos/format';
 
@@ -108,13 +109,18 @@ export default function GrupoCliente360() {
 
       {/* Rollups consolidados */}
       <Tabs defaultValue="financeiro" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 sm:w-auto sm:inline-flex">
+        <TabsList className="grid w-full grid-cols-3 sm:w-auto sm:inline-flex">
           <TabsTrigger value="financeiro" className="gap-1.5"><Wallet className="h-4 w-4" /> Financeiro</TabsTrigger>
+          <TabsTrigger value="comercial" className="gap-1.5"><BarChart3 className="h-4 w-4" /> Comercial</TabsTrigger>
           <TabsTrigger value="contatos" className="gap-1.5"><Users className="h-4 w-4" /> Contatos</TabsTrigger>
         </TabsList>
 
         <TabsContent value="financeiro" className="m-0">
           <GrupoFinanceiroTab grupoId={grupo.id} />
+        </TabsContent>
+
+        <TabsContent value="comercial" className="m-0">
+          <GrupoComercialTab grupoId={grupo.id} />
         </TabsContent>
 
         <TabsContent value="contatos" className="m-0">
