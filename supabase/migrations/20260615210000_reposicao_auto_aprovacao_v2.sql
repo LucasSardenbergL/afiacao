@@ -209,6 +209,10 @@ BEGIN
   -- mas agora a mediana de VÁRIOS eventos, não o último solto (ruidoso: normal teve R$1031 e
   -- R$7377). MÍNIMO 3 eventos (Codex: percentile_cont com 2 valores interpola a média = falsa
   -- mediana; com [1000,16000] daria 8500).
+  -- ⚠️ Codex P2.2 (teórico, sem caminho atual): a referência soma valor_total do CABEÇALHO dos
+  -- históricos; o candidato (v_valor) usa a soma dos ITENS. Nos disparados o cabeçalho = itens (a
+  -- geração seta valor_total = SUM dos itens e o disparo não muda). Se um dia divergirem (cabeçalho
+  -- inflado), o teto poderia subir. Monitorado no piloto; fix futuro = somar itens nos históricos.
   WITH eventos AS (
     SELECT r.data_ciclo, SUM(r.valor_total) AS valor
     FROM public.pedido_compra_sugerido r

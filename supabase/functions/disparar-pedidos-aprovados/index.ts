@@ -1382,7 +1382,10 @@ Deno.serve(async (req: Request) => {
         .lt("data_ciclo", dataCiclo)            // < hoje (não <=): o lote do dia já foi pego acima
         .gte("aprovado_em", cutoff72h)          // 72h cobre fim de semana / falha de cron/deploy
         .like("aprovado_por", "auto:sayerlack%") // só a automação Sayerlack; humano segue pelo lote
-        .is("cancelado_em", null);
+        .eq("status_envio_portal", "nao_aplicavel") // Codex P2.1: SÓ órfão que NUNCA tocou o portal.
+        .is("cancelado_em", null);                  // erro_nao_retentavel etc. têm o retry-órfãos
+        // próprio — sem o filtro, o pré-claim rebaixaria 'erro_nao_retentavel'→'pendente' (retry
+        // indevido de estado terminal). status_envio_portal nunca é NULL (default 'nao_aplicavel').
       if (backErr) throw new Error(`Backlog auto: ${backErr.message}`);
       const seen = new Set(aprovados.map((p) => p.id));
       for (const p of (backlogRaw ?? []) as PedidoRow[]) {
