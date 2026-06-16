@@ -1,27 +1,36 @@
 # Queries canônicas — Financeiro & Margem
 
-Read-only. Financeiro usa coluna `company`. As views de aging já vêm bucketizadas por empresa.
-Vocabulário de inadimplência é Omie: `'ATRASADO'` = vencido (ver schema-conventions §6).
+Read-only. Financeiro usa coluna `company`. Vocabulário de status é Omie:
+`'A VENCER'`/`'ATRASADO'`/`'VENCE HOJE'`/`'RECEBIDO'`/`'PAGO'`/`'CANCELADO'` (ver schema-conventions §6).
+⚠️ **As views `fin_aging_receber`/`fin_aging_pagar`/`fin_fluxo_caixa_diario` estão QUEBRADAS em prod**
+(filtram o vocabulário morto `ABERTO`/`VENCIDO`/`PARCIAL` → voltam vazias/zeradas — confirmado jun/2026).
+Por isso #10a/#11a computam o aging direto do cru. **`data_recebimento`/`data_pagamento` são NULL até
+em títulos RECEBIDO/PAGO** → "em aberto" só se infere por `status_titulo`, nunca por `data_*-null`.
 
 ---
 
-## #10a — Inadimplência: aging de recebíveis por empresa (resumo pronto)
-Confiabilidade: **alta**. Fonte: view `fin_aging_receber` (já bucketizada).
+## #10a — Inadimplência: aging de recebíveis por empresa
+Confiabilidade: **alta**. Fonte: `fin_contas_receber` cru (a view `fin_aging_receber` está quebrada
+— ver topo). Aging por **data de vencimento**, em aberto por **status** (`saldo = valor_documento −
+valor_recebido`, pois a coluna `saldo` é nullable).
 ```sql
 select
   company as empresa,
-  round(a_vencer_valor, 2)        as a_vencer,
-  round(vencido_1_30_valor, 2)    as venc_1_30,
-  round(vencido_31_60_valor, 2)   as venc_31_60,
-  round(vencido_61_90_valor, 2)   as venc_61_90,
-  round(vencido_90_plus_valor, 2) as venc_90_mais,
-  round(vencido_1_30_valor + vencido_31_60_valor + vencido_61_90_valor + vencido_90_plus_valor, 2) as total_vencido
-from fin_aging_receber
-order by total_vencido desc nulls last;
+  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where data_vencimento::date >= current_date), 0), 2)                       as a_vencer,
+  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where current_date - data_vencimento::date between 1 and 30), 0), 2)        as venc_1_30,
+  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where current_date - data_vencimento::date between 31 and 60), 0), 2)       as venc_31_60,
+  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where current_date - data_vencimento::date between 61 and 90), 0), 2)       as venc_61_90,
+  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where current_date - data_vencimento::date > 90), 0), 2)                    as venc_90_mais
+from fin_contas_receber
+where status_titulo not in ('RECEBIDO','CANCELADO')   -- "aberto" por status; data_recebimento é NULL até em recebidos
+group by company
+order by venc_90_mais desc nulls last;
 ```
 
 ## #10b — Top títulos vencidos (detalhe para cobrança)
 Confiabilidade: **alta**. Fonte: `fin_contas_receber`. Nome do cliente via LEFT JOIN (opcional).
+Vencidos = `status_titulo in ('ATRASADO','VENCE HOJE')` — NÃO use `data_recebimento is null` (é NULL
+até em títulos recebidos → puxaria milhares de pagos).
 ```sql
 select
   cr.company as empresa, cr.omie_codigo_cliente, cr.cnpj_cpf,
@@ -33,8 +42,7 @@ select
 from fin_contas_receber cr
 left join omie_clientes oc on oc.omie_codigo_cliente = cr.omie_codigo_cliente
 left join profiles p       on p.user_id = oc.user_id
-where cr.status_titulo = 'ATRASADO'
-   or (cr.data_recebimento is null and cr.data_vencimento::date < current_date)
+where cr.status_titulo in ('ATRASADO','VENCE HOJE')
 order by saldo_aberto desc nulls last
 limit 30;
 ```
@@ -42,28 +50,32 @@ limit 30;
 ---
 
 ## #11a — Aging de contas a pagar por empresa
-Confiabilidade: **alta**. Fonte: view `fin_aging_pagar`.
+Confiabilidade: **alta**. Fonte: `fin_contas_pagar` cru (a view `fin_aging_pagar` está quebrada — ver
+topo). `saldo = valor_documento − valor_pago`.
 ```sql
 select
   company as empresa,
-  round(a_vencer_valor, 2)        as a_vencer,
-  round(vencido_1_30_valor, 2)    as venc_1_30,
-  round(vencido_31_60_valor, 2)   as venc_31_60,
-  round(vencido_61_90_valor, 2)   as venc_61_90,
-  round(vencido_90_plus_valor, 2) as venc_90_mais
-from fin_aging_pagar
+  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where data_vencimento::date >= current_date), 0), 2)                    as a_vencer,
+  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where current_date - data_vencimento::date between 1 and 30), 0), 2)     as venc_1_30,
+  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where current_date - data_vencimento::date between 31 and 60), 0), 2)    as venc_31_60,
+  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where current_date - data_vencimento::date between 61 and 90), 0), 2)    as venc_61_90,
+  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where current_date - data_vencimento::date > 90), 0), 2)                 as venc_90_mais
+from fin_contas_pagar
+where status_titulo not in ('PAGO','CANCELADO')
+group by company
 order by company;
 ```
 
 ## #11b — Contas a pagar vencendo nos próximos 7 dias
-Confiabilidade: **alta**. Fonte: `fin_contas_pagar` (baixa = `data_pagamento`).
+Confiabilidade: **alta**. Fonte: `fin_contas_pagar`. Em aberto por **status** (`data_pagamento` é NULL
+até em títulos PAGO — não usar como filtro).
 ```sql
 select
   company as empresa, nome_fornecedor, data_vencimento,
   round(valor_documento, 2)                                 as valor_documento,
   round(valor_documento - coalesce(valor_pago,0), 2)        as saldo_a_pagar
 from fin_contas_pagar
-where data_pagamento is null
+where status_titulo not in ('PAGO','CANCELADO')
   and data_vencimento::date between current_date and current_date + interval '7 days'
 order by data_vencimento asc, saldo_a_pagar desc
 limit 50;
@@ -72,7 +84,10 @@ limit 50;
 ---
 
 ## #12 — Fluxo de caixa: próximos 30 dias (previsto vs realizado)
-Confiabilidade: **média**. Fonte: view `fin_fluxo_caixa_diario`.
+Confiabilidade: **⚠️ QUEBRADA hoje**. Fonte: view `fin_fluxo_caixa_diario` — que filtra o vocabulário
+de status morto (`ABERTO`/`PARCIAL`/`VENCIDO` + `RECEBIDO`/`LIQUIDADO`/`PAGO`) → retorna a grade
+data×empresa mas com **tudo 0,00**. Até a view ser corrigida em prod, o fluxo NÃO é confiável; use
+#10a (entradas a vencer) e #11a (saídas a vencer) como proxy. A query abaixo só vale após o fix.
 ```sql
 select
   data,
@@ -109,9 +124,9 @@ Se vier vazio, o mês ainda não foi snapshotado — troque para o mês anterior
 (`mes = extract(month from current_date - interval '1 month')::int` e ajuste `ano`).
 
 ## #13b — Margem por produto (ESTIMADA), últimos 30 dias
-Confiabilidade: **BAIXA/PARCIAL** ⚠️. Depende de `product_costs` preenchido. Rode SEMPRE junto
-com #13c para saber qual % da receita tem custo. NÃO use para precificar sem checar cobertura.
-Fontes: `order_items` × `sales_orders` (empresa) × `product_costs` (via `omie_products`).
+Confiabilidade: **acompanha a cobertura (#13c)** — observado **98,3%** em jun/2026, ou seja **alta**
+na prática (revisado: o custo NÃO é esparso como se temia). Ainda assim rode #13c junto p/ confirmar a
+cobertura do período antes de precificar. Fontes: `order_items` × `sales_orders` (empresa) × `product_costs`.
 ```sql
 with itens as (
   select
