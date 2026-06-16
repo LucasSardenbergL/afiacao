@@ -1,6 +1,7 @@
 -- Fase 1 — Fornecedores fora da carteira: RPCs (classificar + reverter) + trigger de derivação.
 -- Espelha o helper TS src/lib/fornecedores/classificacao.ts (regra de tag → exclusão).
--- Regra (case/acento-insensível, lower(trim)): tag ∈ {fornecedor,transportadora} = não-cliente.
+-- Régua A (founder, 2026-06-15): excluir = tem tag {fornecedor,transportadora} (case/acento-insensível,
+--   lower(trim)) E NÃO tem venda real (pedido válido) E NÃO é exceção curada. "Tem pedido = cliente, fica."
 -- Reversibilidade (P1 Codex): reverter re-enfileira AMBOS os recalcs (visit + score) → os 2 scores voltam.
 -- ⚠️ Correção vs. plano: a fila é a TABELA visit_score_recalc_queue (visit_score_recalc_pending é VIEW,
 --    security_invoker, não-inserível) + a TABELA score_recalc_queue; ambas têm `reason` NOT NULL e
@@ -34,6 +35,12 @@ BEGIN
       EXISTS (
         SELECT 1 FROM unnest(cc.tags_omie) t
         WHERE lower(trim(t)) = ANY (ARRAY['fornecedor','transportadora'])
+      )
+      -- Régua A (founder, 2026-06-15): só sai quem NÃO tem venda real. "Tem pedido = cliente, fica."
+      AND NOT EXISTS (
+        SELECT 1 FROM public.sales_orders so
+        WHERE so.customer_user_id = cc.user_id
+          AND so.status NOT IN ('cancelado','rascunho','pendente')
       )
       AND NOT EXISTS (SELECT 1 FROM public.fornecedor_excecao e WHERE e.user_id = cc.user_id)
     ),
@@ -90,10 +97,11 @@ END $$;
 REVOKE ALL ON FUNCTION public.reverter_exclusao_fornecedor(uuid, text) FROM anon;
 
 -- ============================================================
--- Trigger de derivação: cadastro novo (NF de devolução futura) / mudança de tag nasce já classificado.
--- BEFORE INSERT OR UPDATE OF tags_omie → re-deriva is_fornecedor/excluir_da_carteira.
--- (tem_venda_real NÃO entra aqui — exige varrer sales_orders; fica na RPC batch.)
--- Como a RPC classificar() NÃO altera tags_omie no SET, o trigger não interfere nela.
+-- Trigger de derivação: mudança de tag / cadastro novo mantém is_fornecedor fresco.
+-- BEFORE INSERT OR UPDATE OF tags_omie → deriva SÓ is_fornecedor (das tags).
+-- excluir_da_carteira depende de venda real (régua A) → responsabilidade EXCLUSIVA da RPC
+-- classificar_clientes_fornecedores(). FAIL-SAFE: cadastro novo nasce excluir=false (default) e só
+-- é excluído quando a RPC roda com a venda — nunca remove um cliente-fornecedor por engano.
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.cliente_classificacao_derive()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -102,8 +110,6 @@ BEGIN
     SELECT 1 FROM unnest(NEW.tags_omie) t
     WHERE lower(trim(t)) = ANY (ARRAY['fornecedor','transportadora'])
   );
-  NEW.excluir_da_carteira := NEW.is_fornecedor
-    AND NOT EXISTS (SELECT 1 FROM public.fornecedor_excecao e WHERE e.user_id = NEW.user_id);
   RETURN NEW;
 END $$;
 
