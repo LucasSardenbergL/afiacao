@@ -152,7 +152,7 @@ export function useSalesOrderEdit() {
     toast.success(`"${product.descricao}" adicionado`);
   };
 
-  const handleTintConfirm = (_formulaId: string, corId: string, nomeCor: string, precoFinal: number, _custoCorantes: number, alternativeProduct?: Product) => {
+  const handleTintConfirm = (formulaId: string, corId: string, nomeCor: string, precoFinal: number, _custoCorantes: number, alternativeProduct?: Product) => {
     const product = alternativeProduct
       ? catalogProducts.find(p => p.id === alternativeProduct.id) || tintPendingProduct!
       : tintPendingProduct!;
@@ -167,6 +167,8 @@ export function useSalesOrderEdit() {
       valor_total: precoFinal,
       tint_cor_id: corId,
       tint_nome_cor: nomeCor,
+      // espelha o balcão (submitOrder.ts): grava a fórmula p/ auditoria e re-precificação.
+      tint_formula_id: formulaId,
     };
     setItems(prev => [...prev, newItem]);
     setTintPendingProduct(null);
