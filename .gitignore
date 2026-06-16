@@ -35,3 +35,6 @@ deno.lock
 .serena/
 .superpowers/
 .context/codex-session-id
+
+# skill-creator eval workspace (scratch/benchmark artifacts — not part of the skill)
+.claude/skills/*-workspace/

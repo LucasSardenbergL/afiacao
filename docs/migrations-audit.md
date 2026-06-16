@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **242** custom migrations totais
-- **897** objetos esperados (criados por estas migrations)
+- **254** custom migrations totais
+- **922** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 251
-  - `rls_policy`: 210
-  - `index`: 178
+  - `function`: 263
+  - `rls_policy`: 214
+  - `index`: 182
+  - `table`: 106
   - `cron_job`: 106
-  - `table`: 103
-  - `trigger`: 45
+  - `trigger`: 47
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -1616,6 +1616,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.aplicar_promocoes_no_ciclo` | — |
 
+### `20260606170100_fornecedores_classificacao_rpcs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.classificar_clientes_fornecedores` | — |
+| `function` | `public.aplicar_exclusao_fornecedores` | — |
+| `function` | `public.reverter_exclusao_fornecedor` | — |
+| `function` | `public.cliente_classificacao_derive` | — |
+| `trigger` | `public.trg_cliente_classificacao_derive` | `cliente_classificacao` |
+
 ### `20260606180000_reposicao_aplicar_promocoes_hardening.sql`
 
 | Tipo | Objeto | Parent |
@@ -2043,6 +2053,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `index` | `public.idx_omie_products_codigo_text_account` | `omie_products` |
 
+### `20260615120000_cliente_grupos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.cliente_grupos` | — |
+| `table` | `public.cliente_grupo_membros` | — |
+| `index` | `public.idx_cgm_grupo` | `cliente_grupo_membros` |
+| `index` | `public.idx_cgm_documento` | `cliente_grupo_membros` |
+| `function` | `public.cliente_grupos_set_updated_at` | — |
+| `trigger` | `public.trg_cliente_grupos_updated_at` | `cliente_grupos` |
+| `rls_policy` | `public.cliente_grupos_service` | `cliente_grupos` |
+| `rls_policy` | `public.cliente_grupos_fin_access` | `cliente_grupos` |
+| `rls_policy` | `public.cgm_service` | `cliente_grupo_membros` |
+| `rls_policy` | `public.cgm_fin_access` | `cliente_grupo_membros` |
+
 ### `20260615130000_tint_vigia_cobertura_sentinela.sql`
 
 | Tipo | Objeto | Parent |
@@ -2099,6 +2124,37 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.cep_geo_sel` | `cep_geo` |
 | `rls_policy` | `public.municipio_geo_sel` | `municipio_geo` |
 
+### `20260615194500_fix_tarefas_matcher_enum.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_matcher_tick` | — |
+
+### `20260615200000_tint_get_price_base.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_price` | — |
+
+### `20260615210000_reposicao_auto_aprovacao_v2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_auto_aprovacao_log` | — |
+| `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
+| `function` | `public.reposicao_pedido_auto_aprovavel` | — |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+
+### `20260615210000_tint_get_prices_batch.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_prices` | — |
+
+### `20260616020000_fix_aging_views_status_vocab.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260616120000_regua_preco.sql`
 
 | Tipo | Objeto | Parent |
@@ -2108,11 +2164,36 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.get_regua_preco` | — |
 | `rls_policy` | `public.regua_preco_log_staff_all` | `regua_preco_log` |
 
+### `20260616120000_tint_price_gate_ativo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_price` | — |
+| `function` | `public.get_tint_prices` | — |
+
+### `20260616120000_v_grupo_contas_receber.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260616120001_idx_tactical_plans_lookup.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_tactical_plans_lookup` | `farmer_tactical_plans` |
+
 ### `20260616120001_regua_preco_customer360.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_regua_preco_customer360` | — |
+
+### `20260616130000_v_grupo_contatos.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260616140000_v_grupo_comercial.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos quando algo der `❌`
 

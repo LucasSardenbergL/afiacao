@@ -4,6 +4,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { fetchAll } from "../_shared/paginate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -137,26 +138,35 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // 1) Lista de SKUs alvo: aqueles cujo fornecedor está habilitado para essa empresa
-    const { data: fornecedoresHab, error: fhErr } = await supabase
-      .from("fornecedor_habilitado_reposicao")
-      .select("fornecedor_nome")
-      .eq("empresa", empresa)
-      .eq("habilitado", true);
-    if (fhErr) throw fhErr;
-    const fornecNomes = (fornecedoresHab ?? []).map((r) => r.fornecedor_nome);
+    // 1) Lista de SKUs alvo: aqueles cujo fornecedor está habilitado para essa empresa.
+    // Leituras paginadas (.range() + .order estável): o PostgREST capa em 1000 linhas
+    // silencioso e estes conjuntos crescem com o catálogo de reposição. Ver _shared/paginate.ts.
+    const fornecedoresHab = await fetchAll<{ fornecedor_nome: string }>(
+      (f, t) =>
+        supabase
+          .from("fornecedor_habilitado_reposicao")
+          .select("fornecedor_nome")
+          .eq("empresa", empresa)
+          .eq("habilitado", true)
+          .order("fornecedor_nome", { ascending: true })
+          .range(f, t),
+      "fornecedor_habilitado_reposicao",
+    );
+    const fornecNomes = fornecedoresHab.map((r) => r.fornecedor_nome);
 
-    let skusQuery = supabase
-      .from("sku_parametros")
-      .select("sku_codigo_omie, sku_descricao, fornecedor_nome")
-      .eq("empresa", empresa);
-    if (fornecNomes.length > 0) {
-      skusQuery = skusQuery.in("fornecedor_nome", fornecNomes);
-    }
-    const { data: skus, error: skuErr } = await skusQuery;
-    if (skuErr) throw skuErr;
+    const skus = await fetchAll<{ sku_codigo_omie: string | number }>(
+      (f, t) => {
+        let q = supabase
+          .from("sku_parametros")
+          .select("sku_codigo_omie, sku_descricao, fornecedor_nome")
+          .eq("empresa", empresa);
+        if (fornecNomes.length > 0) q = q.in("fornecedor_nome", fornecNomes);
+        return q.order("sku_codigo_omie", { ascending: true }).range(f, t);
+      },
+      "sku_parametros",
+    );
 
-    const alvoSet = new Set<string>((skus ?? []).map((s) => String(s.sku_codigo_omie)));
+    const alvoSet = new Set<string>(skus.map((s) => String(s.sku_codigo_omie)));
     const totalAlvo = alvoSet.size;
 
     if (totalAlvo === 0) {
@@ -193,7 +203,7 @@ Deno.serve(async (req) => {
         filtrar_apenas_omiepdv: "N",
       });
 
-      totalPages = resp?.total_de_paginas ?? 1;
+      totalPages = (resp?.total_de_paginas as number) ?? 1;
       const produtos: OmieProduto[] = (resp as { produto_servico_cadastro?: OmieProduto[] })?.produto_servico_cadastro ?? [];
 
       for (const p of produtos) {
@@ -260,18 +270,26 @@ Deno.serve(async (req) => {
     // então mantemos os dois em sincronia para evitar SKUs inativos entrando em pedidos.
     try {
       const account = empresa.toLowerCase();
-      const { data: encontradosStatus } = await supabase
-        .from("sku_status_omie")
-        .select("sku_codigo_omie, ativo_no_omie")
-        .eq("empresa", empresa)
-        .in("fonte_sincronizacao", ["ListarProdutos"])
-        .not("ativo_no_omie", "is", null);
+      // Paginado: este espelho governa o gate de `ativo` no catálogo de venda. Truncar em
+      // 1000 deixaria a cauda stale nos DOIS sentidos (inativo→vendável / reativado→bloqueado).
+      const encontradosStatus = await fetchAll<{ sku_codigo_omie: string | number; ativo_no_omie: boolean | null }>(
+        (f, t) =>
+          supabase
+            .from("sku_status_omie")
+            .select("sku_codigo_omie, ativo_no_omie")
+            .eq("empresa", empresa)
+            .in("fonte_sincronizacao", ["ListarProdutos"])
+            .not("ativo_no_omie", "is", null)
+            .order("sku_codigo_omie", { ascending: true })
+            .range(f, t),
+        "sku_status_omie:espelho",
+      );
 
-      const inativos = (encontradosStatus ?? [])
+      const inativos = encontradosStatus
         .filter((r) => r.ativo_no_omie === false)
         .map((r) => Number(r.sku_codigo_omie))
         .filter((n) => Number.isFinite(n));
-      const ativos = (encontradosStatus ?? [])
+      const ativos = encontradosStatus
         .filter((r) => r.ativo_no_omie === true)
         .map((r) => Number(r.sku_codigo_omie))
         .filter((n) => Number.isFinite(n));
@@ -336,25 +354,37 @@ Deno.serve(async (req) => {
     // marca como 'resolvido_auto' qualquer evento_outlier pendente de tipo 'sku_inativado_omie'.
     let alertasResolvidosAuto = 0;
     try {
-      const { data: ativosAtuais } = await supabase
-        .from("sku_status_omie")
-        .select("sku_codigo_omie")
-        .eq("empresa", empresa)
-        .eq("ativo_no_omie", true);
+      const ativosAtuais = await fetchAll<{ sku_codigo_omie: string | number }>(
+        (f, t) =>
+          supabase
+            .from("sku_status_omie")
+            .select("sku_codigo_omie")
+            .eq("empresa", empresa)
+            .eq("ativo_no_omie", true)
+            .order("sku_codigo_omie", { ascending: true })
+            .range(f, t),
+        "sku_status_omie:ativos",
+      );
 
       const ativosSet = new Set(
-        (ativosAtuais ?? []).map((r) => String(r.sku_codigo_omie)),
+        ativosAtuais.map((r) => String(r.sku_codigo_omie)),
       );
 
       if (ativosSet.size > 0) {
-        const { data: pendentes } = await supabase
-          .from("eventos_outlier")
-          .select("id, sku_codigo_omie")
-          .eq("empresa", empresa)
-          .eq("tipo", "sku_inativado_omie")
-          .eq("status", "pendente");
+        const pendentes = await fetchAll<{ id: string; sku_codigo_omie: string | number }>(
+          (f, t) =>
+            supabase
+              .from("eventos_outlier")
+              .select("id, sku_codigo_omie")
+              .eq("empresa", empresa)
+              .eq("tipo", "sku_inativado_omie")
+              .eq("status", "pendente")
+              .order("id", { ascending: true })
+              .range(f, t),
+          "eventos_outlier:pendentes",
+        );
 
-        const idsParaFechar = (pendentes ?? [])
+        const idsParaFechar = pendentes
           .filter((e) => ativosSet.has(String(e.sku_codigo_omie)))
           .map((e) => e.id);
 

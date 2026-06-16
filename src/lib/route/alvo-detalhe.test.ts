@@ -43,7 +43,7 @@ const prospectRow = (over: Partial<ProspectRow> = {}): ProspectRow => ({
   logradouro: 'Rua A', numero: '10', complemento: 'Sala 2', bairro: 'Centro',
   municipio_nome: 'DIVINOPOLIS', uf: 'MG', cep: '35500-000',
   telefone1: '37999990000', telefone2: '3733331111',
-  prospeccao_status: 'a_contatar', lat: null, lng: null, geocode_status: null,
+  prospeccao_status: 'a_contatar', lat: null, lng: null, geocode_status: null, precision: null,
   ...over,
 });
 

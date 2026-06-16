@@ -1,0 +1,121 @@
+{
+  "_meta": {
+    "descricao": "Amostra REAL anonimizada do resultado da query 'Carteira por cidade' (references/queries-sql.md, seção 2), rodada contra a base de produção. Nomes de clientes trocados por fictícios; cidades, famílias de produto, tiers e padrões de compra preservados do dado real. Uma linha por cliente (consolidado por CNPJ). 'hoje' = 2026-06-15. Cobre os 5 dias de rota + cidade órfã (Nova Serrana→quarta) para exercitar o agrupamento por dia.",
+    "fonte": "produção (anonimizado) — carteira pesada em acabamento Sayerlack + cintas de lixa + cola, típica de marcenaria/vidraçaria do Centro-Oeste de MG",
+    "colunas": ["cliente","cidade","uf","qtd_pedidos","ultima_compra","dias_desde_ultima","intervalo_medio_dias","gasto_60d","media_mensal_6m","gasto_total","tier_queda","produtos_comprados"]
+  },
+  "carteira": [
+    {
+      "cliente": "Marcenaria Boa Vista", "cidade": "Formiga", "uf": "MG",
+      "qtd_pedidos": 6, "ultima_compra": "2026-03-07", "dias_desde_ultima": 100,
+      "intervalo_medio_dias": 24, "gasto_60d": 0.00, "media_mensal_6m": 480.00, "gasto_total": 6120.00,
+      "tier_queda": "critico",
+      "produtos_comprados": "Folha de Lixa CA331 P180 [Folhas de Lixa Seco]  |  Seladora NLO.9525.00LT [Seladora Nitrocelulose]  |  Thinner DR.4403LT [Thinner de Limpeza Sayerlack]"
+    },
+    {
+      "cliente": "Vidraçaria Arte & Cor", "cidade": "Pimenta", "uf": "MG",
+      "qtd_pedidos": 5, "ultima_compra": "2026-03-04", "dias_desde_ultima": 103,
+      "intervalo_medio_dias": 62, "gasto_60d": 0.00, "media_mensal_6m": 6.60, "gasto_total": 2331.65,
+      "tier_queda": "critico",
+      "produtos_comprados": "Base p/Vidro Branc WFOB.6863GL [Bases MixMachine]  |  Catalisador FC.7074QT [Catalisadores PU]  |  Diluente PU DFA.4128QT [Diluente PU]  |  Disco de Fibra F425 180MM P120 [Disco de Fibra]"
+    },
+    {
+      "cliente": "Madeireira Três Pinheiros", "cidade": "Piumhi", "uf": "MG",
+      "qtd_pedidos": 2, "ultima_compra": "2026-01-19", "dias_desde_ultima": 148,
+      "intervalo_medio_dias": 40, "gasto_60d": 0.00, "media_mensal_6m": 46.67, "gasto_total": 830.00,
+      "tier_queda": "critico",
+      "produtos_comprados": "Seladora NLO.9525.00LT [Seladora Nitrocelulose]  |  Thinner DR.4403LT [Thinner de Limpeza Sayerlack]"
+    },
+    {
+      "cliente": "Marcenaria do Alberto", "cidade": "Capitolio", "uf": "MG",
+      "qtd_pedidos": 5, "ultima_compra": "2026-06-15", "dias_desde_ultima": 1,
+      "intervalo_medio_dias": 95, "gasto_60d": 720.00, "media_mensal_6m": 642.37, "gasto_total": 4554.20,
+      "tier_queda": "alerta",
+      "produtos_comprados": "Cola Amarela Secagem Rapida 5KG [Cola Branca]  |  Disco de Fibra F425 180MM P60 [Disco de Fibra]  |  Folha de Lixa CA331 P180 [Folhas de Lixa Seco]  |  Seladora NLO.9525.00LT [Seladora Nitrocelulose]  |  Thinner DR.4403LT [Thinner de Limpeza Sayerlack]"
+    },
+    {
+      "cliente": "Madeireira Silva", "cidade": "Formiga", "uf": "MG",
+      "qtd_pedidos": 3, "ultima_compra": "2026-04-12", "dias_desde_ultima": 64,
+      "intervalo_medio_dias": 1080, "gasto_60d": 0.00, "media_mensal_6m": 75.00, "gasto_total": 1130.00,
+      "tier_queda": "alerta",
+      "produtos_comprados": "Akfix 702 125G [Adesivo Cianoacrilato]  |  Cinta 2909 120X6300MM P36 [Cintas Estreitas]  |  Cinta XZ677 120X6300MM P60 [Cintas Estreitas]"
+    },
+    {
+      "cliente": "Acabamentos Box Sul", "cidade": "Piumhi", "uf": "MG",
+      "qtd_pedidos": 58, "ultima_compra": "2026-06-15", "dias_desde_ultima": 1,
+      "intervalo_medio_dias": 39, "gasto_60d": 29135.80, "media_mensal_6m": 18399.30, "gasto_total": 227262.01,
+      "tier_queda": "em_dia",
+      "produtos_comprados": "Base p/Vidro Transp WFOT.6863GL [Bases MixMachine]  |  Catalisador FC.7074LT [Catalisadores PU]  |  Diluente PU DF.4068LT [Diluente PU]  |  Verniz PU Fosco FO20.6717.00 [Vernizes PU]  |  Seladora NLO.9525.00LT [Seladora Nitrocelulose]  |  Disco de Fibra F425 180MM P120 [Disco de Fibra]  |  Protetor Autoclear SJ-5302 [EPI]  |  Thinner Nitro DN.4242LT [Thinner Nitrocelulose]"
+    },
+    {
+      "cliente": "Móveis Arte Nova", "cidade": "Formiga", "uf": "MG",
+      "qtd_pedidos": 48, "ultima_compra": "2026-06-11", "dias_desde_ultima": 4,
+      "intervalo_medio_dias": 20, "gasto_60d": 11543.90, "media_mensal_6m": 3303.93, "gasto_total": 38503.54,
+      "tier_queda": "em_dia",
+      "produtos_comprados": "Base Fundo Acab PU Branc WFOB.6529GL [Bases MixMachine]  |  Catalisador FC.7090QT [Catalisadores PU]  |  Cola Amarela Secagem Rapida 50KG [Cola Branca]  |  Disco de Lixa Tatá 125MM P120 [Discos de Lixa]  |  Primer PU FL.6269.02BD [Primer PU]  |  Verniz PU Fosco FO20.6717.00BH [Vernizes PU]  |  Seladora NLO.9525.00QT [Seladora Nitrocelulose]"
+    },
+    {
+      "cliente": "Esquadrias Itaúna Alumínio", "cidade": "Itauna", "uf": "MG",
+      "qtd_pedidos": 9, "ultima_compra": "2026-05-08", "dias_desde_ultima": 38,
+      "intervalo_medio_dias": 24, "gasto_60d": 410.00, "media_mensal_6m": 980.00, "gasto_total": 8600.00,
+      "tier_queda": "alerta",
+      "produtos_comprados": "Cinta ATX170 120X8200MM P50 [Cintas Estreitas]  |  Cola Amarela Secagem Rapida 5KG [Cola Branca]  |  Thinner DR.4403LT [Thinner de Limpeza Sayerlack]"
+    },
+    {
+      "cliente": "Metalúrgica Bom Despacho", "cidade": "Bom Despacho", "uf": "MG",
+      "qtd_pedidos": 11, "ultima_compra": "2026-03-12", "dias_desde_ultima": 95,
+      "intervalo_medio_dias": 22, "gasto_60d": 0.00, "media_mensal_6m": 2100.00, "gasto_total": 26500.00,
+      "tier_queda": "critico",
+      "produtos_comprados": "Disco de Fibra F425 180MM P36 [Disco de Fibra]  |  Disco de Fibra F425 180MM P60 [Disco de Fibra]  |  Folha de Lixa Ferro 221T P120 [Folha de Lixa Ferro]"
+    },
+    {
+      "cliente": "Marcenaria Nova Serrana", "cidade": "Nova Serrana", "uf": "MG",
+      "qtd_pedidos": 14, "ultima_compra": "2026-06-09", "dias_desde_ultima": 6,
+      "intervalo_medio_dias": 18, "gasto_60d": 1380.00, "media_mensal_6m": 1120.00, "gasto_total": 17400.00,
+      "tier_queda": "em_dia",
+      "produtos_comprados": "Base Acril Mult Met Fosco Branc WJOB.766 [Bases MixMachine]  |  Catalisador FC.6975LT [Catalisadores PU]  |  Cinta 2909 100X610MM P80 [Cintas Estreitas]  |  Cola Branca PVA Extra 50KG [Cola Branca]  |  Thinner DR.4403LT [Thinner de Limpeza Sayerlack]"
+    },
+    {
+      "cliente": "Móveis São João", "cidade": "Sao Joao Del Rei", "uf": "MG",
+      "qtd_pedidos": 4, "ultima_compra": "2026-02-04", "dias_desde_ultima": 131,
+      "intervalo_medio_dias": 30, "gasto_60d": 0.00, "media_mensal_6m": 280.00, "gasto_total": 3100.00,
+      "tier_queda": "critico",
+      "produtos_comprados": "Cinta 2909 100X610MM P100 [Cintas Estreitas]  |  Cola Branca PVA Extra 50KG [Cola Branca]"
+    },
+    {
+      "cliente": "Indústria de Móveis Divinópolis", "cidade": "Divinopolis", "uf": "MG",
+      "qtd_pedidos": 72, "ultima_compra": "2026-06-13", "dias_desde_ultima": 2,
+      "intervalo_medio_dias": 7, "gasto_60d": 14200.00, "media_mensal_6m": 9800.00, "gasto_total": 184000.00,
+      "tier_queda": "em_dia",
+      "produtos_comprados": "Base Fundo Acab PU Inter WFOI.6529GL [Bases MixMachine]  |  Catalisador FC.7074L5 [Catalisadores PU]  |  Cola de Contato 14KG [Adesivo de Contato]  |  Disco de Lixa CA331 125MM P120 [Disco de Lixa Ind]  |  Verniz PU Fosco FO20.6717.00LT [Vernizes PU]  |  Máscara PFF2 com Válvula [EPI]"
+    },
+    {
+      "cliente": "José Campos Marcenaria", "cidade": "Piumhi", "uf": "MG",
+      "qtd_pedidos": 5, "ultima_compra": "2020-06-08", "dias_desde_ultima": 2199,
+      "intervalo_medio_dias": 14, "gasto_60d": 0.00, "media_mensal_6m": 0.00, "gasto_total": 7284.57,
+      "tier_queda": "dormente",
+      "produtos_comprados": "Base Acril Mult Met Fosco Branc WJOB.766 [Bases MixMachine]  |  Catalisador FC.7090QT [Catalisadores PU]  |  Disco de Fibra F425 180MM P120 [Disco de Fibra]  |  Thinner DR.4403LT [Thinner de Limpeza]"
+    },
+    {
+      "cliente": "Vidros Capitólio ME", "cidade": "Capitolio", "uf": "MG",
+      "qtd_pedidos": 1, "ultima_compra": "2020-05-21", "dias_desde_ultima": 2217,
+      "intervalo_medio_dias": null, "gasto_60d": 0.00, "media_mensal_6m": 0.00, "gasto_total": 222.79,
+      "tier_queda": "dormente",
+      "produtos_comprados": "Cinta 2820 150X6500MM P50 [Cintas Estreitas]"
+    },
+    {
+      "cliente": "Oficina do Marcelo", "cidade": "Pimenta", "uf": "MG",
+      "qtd_pedidos": 2, "ultima_compra": "2023-11-14", "dias_desde_ultima": 945,
+      "intervalo_medio_dias": 15, "gasto_60d": 0.00, "media_mensal_6m": 0.00, "gasto_total": 4392.08,
+      "tier_queda": "dormente",
+      "produtos_comprados": "Catalisador FC.6975LT [Catalisadores PU]  |  Primer PU FL.6269.02BD [Primer PU]"
+    },
+    {
+      "cliente": "Marcenaria Tiradentes", "cidade": "Tiradentes", "uf": "MG",
+      "qtd_pedidos": 0, "ultima_compra": null, "dias_desde_ultima": null,
+      "intervalo_medio_dias": null, "gasto_60d": 0.00, "media_mensal_6m": 0.00, "gasto_total": 0.00,
+      "tier_queda": "nunca_comprou",
+      "produtos_comprados": null
+    }
+  ]
+}

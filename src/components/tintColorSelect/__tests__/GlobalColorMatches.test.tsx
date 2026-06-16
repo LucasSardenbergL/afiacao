@@ -46,17 +46,41 @@ describe('GlobalColorMatches', () => {
     expect(screen.getByText('Base Branca 3.6L')).toBeTruthy();
   });
 
-  it('confirma com preço CSV quando presente', () => {
+  it('CSV presente mas sem cálculo no mapa (batch não respondeu) → sem preço, não confirma (fail-closed)', () => {
     const onConfirm = vi.fn();
     render(<GlobalColorMatches product={product} matches={[alt({ precoFinalCsv: 200 })]} onConfirm={onConfirm} />);
+    expect(screen.getByText(/sem pre[çc]o/i)).toBeTruthy();
     fireEvent.click(screen.getByText('Base Branca 3.6L'));
-    expect(onConfirm).toHaveBeenCalledWith('f1', 'RAL9010', 'Branco', 200, 0, expect.objectContaining({ id: 'op1' }));
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it('usa valor_unitario da base quando não há preço CSV', () => {
+  it('batch carregando (precoLoading) → mostra "calculando", não "sem preço"', () => {
+    render(<GlobalColorMatches product={product} matches={[alt({ precoFinalCsv: 200 })]} precoLoading onConfirm={() => {}} />);
+    expect(screen.getByText(/calculando/i)).toBeTruthy();
+    expect(screen.queryByText(/sem pre[çc]o/i)).toBeNull();
+  });
+
+  it('usa o preço calculado do mapa quando disponível (base + corantes)', () => {
+    const onConfirm = vi.fn();
+    const precoMap = { f1: { custoBase: 152.1, baseDisponivel: true, custoCorantes: 18.06, corantesCompletos: true, precoFinal: 170.16 } };
+    render(<GlobalColorMatches product={product} matches={[alt({ precoFinalCsv: 13.7 })]} precoMap={precoMap} onConfirm={onConfirm} />);
+    fireEvent.click(screen.getByText('Base Branca 3.6L'));
+    expect(onConfirm).toHaveBeenCalledWith('f1', 'RAL9010', 'Branco', 170.2, 18.06, expect.objectContaining({ id: 'op1' }));
+  });
+
+  it('sem CSV e sem cálculo → "sem preço", não confirma (não vende a valor_unitario nu)', () => {
     const onConfirm = vi.fn();
     render(<GlobalColorMatches product={product} matches={[alt({ precoFinalCsv: null })]} onConfirm={onConfirm} />);
+    expect(screen.getByText(/sem pre[çc]o/i)).toBeTruthy();
     fireEvent.click(screen.getByText('Base Branca 3.6L'));
-    expect(onConfirm).toHaveBeenCalledWith('f1', 'RAL9010', 'Branco', 180, 0, expect.objectContaining({ id: 'op1' }));
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('base sem preço no mapa (PRD03657) → "sem preço", não confirma mesmo com CSV', () => {
+    const onConfirm = vi.fn();
+    const precoMap = { f1: { custoBase: null, baseDisponivel: false, custoCorantes: 0, corantesCompletos: true, precoFinal: null } };
+    render(<GlobalColorMatches product={product} matches={[alt({ precoFinalCsv: 101.7 })]} precoMap={precoMap} onConfirm={onConfirm} />);
+    fireEvent.click(screen.getByText('Base Branca 3.6L'));
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 });

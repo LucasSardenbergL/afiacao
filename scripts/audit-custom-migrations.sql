@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 242
+-- Total de custom migrations: 254
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -202,6 +202,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260606150000', 'reposicao_qtde_inteira', '20260606150000_reposicao_qtde_inteira.sql'),
   ('20260606170000', 'fornecedores_classificacao_schema', '20260606170000_fornecedores_classificacao_schema.sql'),
   ('20260606170000', 'reposicao_fix_aplicar_promocoes', '20260606170000_reposicao_fix_aplicar_promocoes.sql'),
+  ('20260606170100', 'fornecedores_classificacao_rpcs', '20260606170100_fornecedores_classificacao_rpcs.sql'),
   ('20260606180000', 'reposicao_aplicar_promocoes_hardening', '20260606180000_reposicao_aplicar_promocoes_hardening.sql'),
   ('20260606180000', 'reposicao_preco_pedido_cmc', '20260606180000_reposicao_preco_pedido_cmc.sql'),
   ('20260606190000', 'reposicao_preco_pedido_cmc_account', '20260606190000_reposicao_preco_pedido_cmc_account.sql'),
@@ -253,6 +254,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615091839', 'retencao_cron_job_run_details', '20260615091839_retencao_cron_job_run_details.sql'),
   ('20260615095710', 'idx_data_health_freshness_cols', '20260615095710_idx_data_health_freshness_cols.sql'),
   ('20260615103111', 'idx_omie_products_codigo_text_account', '20260615103111_idx_omie_products_codigo_text_account.sql'),
+  ('20260615120000', 'cliente_grupos', '20260615120000_cliente_grupos.sql'),
   ('20260615130000', 'tint_vigia_cobertura_sentinela', '20260615130000_tint_vigia_cobertura_sentinela.sql'),
   ('20260615133000', 'tint_remapeia_skus_omie_desalinhadas', '20260615133000_tint_remapeia_skus_omie_desalinhadas.sql'),
   ('20260615140000', 'tint_promote_indices_timeout', '20260615140000_tint_promote_indices_timeout.sql'),
@@ -260,8 +262,18 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615160000', 'tint_promote_set_based', '20260615160000_tint_promote_set_based.sql'),
   ('20260615182814', 'vincular_tint_skus_omie_orfaos', '20260615182814_vincular_tint_skus_omie_orfaos.sql'),
   ('20260615190000', 'geocoding_cep_geo', '20260615190000_geocoding_cep_geo.sql'),
+  ('20260615194500', 'fix_tarefas_matcher_enum', '20260615194500_fix_tarefas_matcher_enum.sql'),
+  ('20260615200000', 'tint_get_price_base', '20260615200000_tint_get_price_base.sql'),
+  ('20260615210000', 'reposicao_auto_aprovacao_v2', '20260615210000_reposicao_auto_aprovacao_v2.sql'),
+  ('20260615210000', 'tint_get_prices_batch', '20260615210000_tint_get_prices_batch.sql'),
+  ('20260616020000', 'fix_aging_views_status_vocab', '20260616020000_fix_aging_views_status_vocab.sql'),
   ('20260616120000', 'regua_preco', '20260616120000_regua_preco.sql'),
-  ('20260616120001', 'regua_preco_customer360', '20260616120001_regua_preco_customer360.sql')
+  ('20260616120000', 'tint_price_gate_ativo', '20260616120000_tint_price_gate_ativo.sql'),
+  ('20260616120000', 'v_grupo_contas_receber', '20260616120000_v_grupo_contas_receber.sql'),
+  ('20260616120001', 'idx_tactical_plans_lookup', '20260616120001_idx_tactical_plans_lookup.sql'),
+  ('20260616120001', 'regua_preco_customer360', '20260616120001_regua_preco_customer360.sql'),
+  ('20260616130000', 'v_grupo_contatos', '20260616130000_v_grupo_contatos.sql'),
+  ('20260616140000', 'v_grupo_comercial', '20260616140000_v_grupo_comercial.sql')
 )
 SELECT
   e.version,
@@ -975,6 +987,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fornecedores_classificacao_schema', 'table', 'public', 'cliente_classificacao', ''),
   ('fornecedores_classificacao_schema', 'table', 'public', 'fornecedor_excecao', ''),
   ('reposicao_fix_aplicar_promocoes', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
+  ('fornecedores_classificacao_rpcs', 'function', 'public', 'classificar_clientes_fornecedores', ''),
+  ('fornecedores_classificacao_rpcs', 'function', 'public', 'aplicar_exclusao_fornecedores', ''),
+  ('fornecedores_classificacao_rpcs', 'function', 'public', 'reverter_exclusao_fornecedor', ''),
+  ('fornecedores_classificacao_rpcs', 'function', 'public', 'cliente_classificacao_derive', ''),
+  ('fornecedores_classificacao_rpcs', 'trigger', 'public', 'trg_cliente_classificacao_derive', 'cliente_classificacao'),
   ('reposicao_aplicar_promocoes_hardening', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_preco_pedido_cmc', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_preco_pedido_cmc_account', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
@@ -1149,6 +1166,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_farmer_client_scores_calculated_at', 'farmer_client_scores'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_pedido_compra_sugerido_data_ciclo', 'pedido_compra_sugerido'),
   ('idx_omie_products_codigo_text_account', 'index', 'public', 'idx_omie_products_codigo_text_account', 'omie_products'),
+  ('cliente_grupos', 'table', 'public', 'cliente_grupos', ''),
+  ('cliente_grupos', 'table', 'public', 'cliente_grupo_membros', ''),
+  ('cliente_grupos', 'index', 'public', 'idx_cgm_grupo', 'cliente_grupo_membros'),
+  ('cliente_grupos', 'index', 'public', 'idx_cgm_documento', 'cliente_grupo_membros'),
+  ('cliente_grupos', 'function', 'public', 'cliente_grupos_set_updated_at', ''),
+  ('cliente_grupos', 'trigger', 'public', 'trg_cliente_grupos_updated_at', 'cliente_grupos'),
+  ('cliente_grupos', 'rls_policy', 'public', 'cliente_grupos_service', 'cliente_grupos'),
+  ('cliente_grupos', 'rls_policy', 'public', 'cliente_grupos_fin_access', 'cliente_grupos'),
+  ('cliente_grupos', 'rls_policy', 'public', 'cgm_service', 'cliente_grupo_membros'),
+  ('cliente_grupos', 'rls_policy', 'public', 'cgm_fin_access', 'cliente_grupo_membros'),
   ('tint_vigia_cobertura_sentinela', 'function', 'public', '_data_health_compute', ''),
   ('tint_vigia_cobertura_sentinela', 'function', 'public', 'data_health_watchdog', ''),
   ('tint_vigia_cobertura_sentinela', 'function', 'public', 'fin_sync_heartbeat', ''),
@@ -1172,10 +1199,20 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('geocoding_cep_geo', 'function', 'public', 'radar_prospects_para_rota', ''),
   ('geocoding_cep_geo', 'rls_policy', 'public', 'cep_geo_sel', 'cep_geo'),
   ('geocoding_cep_geo', 'rls_policy', 'public', 'municipio_geo_sel', 'municipio_geo'),
+  ('fix_tarefas_matcher_enum', 'function', 'public', 'tarefas_matcher_tick', ''),
+  ('tint_get_price_base', 'function', 'public', 'get_tint_price', ''),
+  ('reposicao_auto_aprovacao_v2', 'table', 'public', 'reposicao_auto_aprovacao_log', ''),
+  ('reposicao_auto_aprovacao_v2', 'index', 'public', 'reposicao_auto_aprovacao_log_criado_em', 'reposicao_auto_aprovacao_log'),
+  ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
+  ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
+  ('tint_get_prices_batch', 'function', 'public', 'get_tint_prices', ''),
   ('regua_preco', 'table', 'public', 'regua_preco_log', ''),
   ('regua_preco', 'index', 'public', 'idx_regua_preco_log_cliente_sku', 'regua_preco_log'),
   ('regua_preco', 'function', 'public', 'get_regua_preco', ''),
   ('regua_preco', 'rls_policy', 'public', 'regua_preco_log_staff_all', 'regua_preco_log'),
+  ('tint_price_gate_ativo', 'function', 'public', 'get_tint_price', ''),
+  ('tint_price_gate_ativo', 'function', 'public', 'get_tint_prices', ''),
+  ('idx_tactical_plans_lookup', 'index', 'public', 'idx_tactical_plans_lookup', 'farmer_tactical_plans'),
   ('regua_preco_customer360', 'function', 'public', 'get_regua_preco_customer360', '')
 )
 SELECT

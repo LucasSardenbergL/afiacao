@@ -25,6 +25,8 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     loadingLastPrice,
     alternatives,
     loadingAlternatives,
+    altPriceMap,
+    altPriceLoading,
     discountPct,
     setDiscountPct,
     altDiscounts,
@@ -34,9 +36,16 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     priceSource,
     setPriceSourceOverride,
     precoCsv,
+    precoCalc,
+    precoCliente,
     custoCorantes,
     precoSemDesconto,
     precoFinal,
+    disponivel,
+    precoCarregando,
+    recalculado,
+    precoImportadoAnterior,
+    motivoSemPreco,
   } = useTintColorSelect({ product, open, customerUserId, initialSearch });
 
   return (
@@ -79,6 +88,8 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                 product={product}
                 matches={globalColorMatches ?? []}
                 colorExists={globalColorExists}
+                precoMap={altPriceMap}
+                precoLoading={altPriceLoading}
                 onConfirm={onConfirm}
               />
             )}
@@ -92,14 +103,23 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                 precoCsv={precoCsv}
                 priceSource={priceSource}
                 setPriceSourceOverride={setPriceSourceOverride}
+                precoCalc={precoCalc}
+                precoCliente={precoCliente}
                 precoFinal={precoFinal}
                 precoSemDesconto={precoSemDesconto}
+                disponivel={disponivel}
+                precoCarregando={precoCarregando}
+                recalculado={recalculado}
+                precoImportadoAnterior={precoImportadoAnterior}
+                motivoSemPreco={motivoSemPreco}
                 discountPct={discountPct}
                 setDiscountPct={setDiscountPct}
                 syncDiscount={syncDiscount}
                 setSyncDiscount={setSyncDiscount}
                 alternatives={alternatives}
                 loadingAlternatives={loadingAlternatives}
+                altPriceMap={altPriceMap}
+                altPriceLoading={altPriceLoading}
                 altDiscounts={altDiscounts}
                 setAltDiscounts={setAltDiscounts}
                 custoCorantes={custoCorantes}

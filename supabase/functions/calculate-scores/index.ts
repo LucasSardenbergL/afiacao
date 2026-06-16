@@ -283,11 +283,30 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Fornecedores fora da carteira: não semeia score de cliente marcado p/ exclusão.
+      // ⚠️ ERRO ao ler os flaggeds → não semeia NADA neste run (evita ressuscitar fornecedor já
+      // limpo pelo cleanup); o seed é idempotente e roda de novo no próximo ciclo.
+      let flaggedsOk = true;
+      const flaggeds = new Set<string>();
+      for (let fp = 0; ; fp++) {
+        const { data: fPage, error: fErr } = await supabase
+          .from('cliente_classificacao')
+          .select('user_id')
+          .eq('excluir_da_carteira', true)
+          .range(fp * 1000, fp * 1000 + 999);
+        if (fErr) { console.error('[calculate-scores] erro ao ler flaggeds:', fErr.message); flaggedsOk = false; break; }
+        const fRows = (fPage ?? []) as Array<{ user_id: string }>;
+        for (const r of fRows) flaggeds.add(r.user_id);
+        if (fRows.length < 1000) break;
+      }
+
       // Build seed records in batches
       const seedRecords: FarmerClientScoreSeed[] = [];
       const now = new Date();
 
       for (const client of allClients) {
+        if (!flaggedsOk) break;
+        if (flaggeds.has(client.user_id)) continue;
         const orderData = orderDataMap.get(client.user_id);
         const daysSinceLastPurchase = orderData?.last_purchase 
           ? Math.floor((now.getTime() - new Date(orderData.last_purchase).getTime()) / (1000 * 60 * 60 * 24))

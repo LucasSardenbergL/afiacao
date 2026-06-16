@@ -15,6 +15,7 @@ import {
   type FormasPagamentoResponse,
   type OmieProduct,
 } from './types';
+import { invalidPricedOrderItemIndices, invalidOrderPriceMessage } from './priceGuard';
 
 export function useSalesOrderEdit() {
   const { id } = useParams<{ id: string }>();
@@ -152,7 +153,7 @@ export function useSalesOrderEdit() {
     toast.success(`"${product.descricao}" adicionado`);
   };
 
-  const handleTintConfirm = (_formulaId: string, corId: string, nomeCor: string, precoFinal: number, _custoCorantes: number, alternativeProduct?: Product) => {
+  const handleTintConfirm = (formulaId: string, corId: string, nomeCor: string, precoFinal: number, _custoCorantes: number, alternativeProduct?: Product) => {
     const product = alternativeProduct
       ? catalogProducts.find(p => p.id === alternativeProduct.id) || tintPendingProduct!
       : tintPendingProduct!;
@@ -167,6 +168,8 @@ export function useSalesOrderEdit() {
       valor_total: precoFinal,
       tint_cor_id: corId,
       tint_nome_cor: nomeCor,
+      // espelha o balcão (submitOrder.ts): grava a fórmula p/ auditoria e re-precificação.
+      tint_formula_id: formulaId,
     };
     setItems(prev => [...prev, newItem]);
     setTintPendingProduct(null);
@@ -199,11 +202,21 @@ export function useSalesOrderEdit() {
   }, [productSearch, catalogProducts]);
 
   const subtotal = items.reduce((s, i) => s + i.valor_total, 0);
+  // Índices dos itens com preço inválido (≤ 0 / NaN) — MESMA fonte para o bloqueio no
+  // save e para o destaque na UI (aria-invalid + botão travado).
+  const invalidPriceItemIndices = useMemo(() => invalidPricedOrderItemIndices(items), [items]);
 
   const handleSave = async () => {
     if (!order) return;
     if (items.length === 0) {
       toast.error('O pedido precisa ter pelo menos 1 item');
+      return;
+    }
+    // Guard money-path: nenhum item de produto pode ser salvo com preço ≤ 0 (esvaziar o
+    // campo vira Number("")||0 = 0). Bloqueia ANTES de qualquer update local ou sync ao
+    // Omie, nos dois caminhos (com e sem omie_pedido_id) — fail-closed imperativo, não só UI.
+    if (invalidPriceItemIndices.length > 0) {
+      toast.error(invalidOrderPriceMessage(invalidPriceItemIndices.map((i) => items[i])));
       return;
     }
     setSaving(true);
@@ -320,6 +333,7 @@ export function useSalesOrderEdit() {
     tintProductAsProduct,
     filteredProducts,
     subtotal,
+    invalidPriceItemIndices,
     handleSave,
     isBlocked,
   };

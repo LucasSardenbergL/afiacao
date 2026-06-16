@@ -16,6 +16,7 @@
 | Brainstorm | `brainstorming` (superpowers) | |
 | Task Supabase (DB/Auth/Edge/RLS) | `supabase` (oficial) — SQL/RLS idiomático | |
 | Mudança de banco sob Lovable | **`lovable-db-operator`** — migration + bloco SQL Editor + validação + audit | design com `supabase`, entrega com este |
+| BI executivo / número de negócio via Lovable (brief da semana, vendas/estoque/inadimplência/margem) | **`bi-colacor`** (proprietária) — SQL read-only versionado p/ colar no Lovable→SQL Editor → interpreta → decisão; conhece as 4 grafias de empresa + confiabilidade do dado | leitura (≠ `lovable-db-operator`, que escreve); não `data:*`/`finance:*` (text-to-SQL sem nosso schema) |
 | Otimizar query/schema PG | `supabase-postgres-best-practices` | |
 | Provar SQL money-path | **`prove-sql-money-path`** (PG17 falsificável) | |
 | Diagnosticar sync/cron | **`diagnose-supabase-sync`** (8 passos + queries `psql-ro`) | |

@@ -18,6 +18,7 @@ import { useReguaPreco } from '@/hooks/useReguaPreco';
 import { ReguaPrecoSinal } from '@/components/regua-preco/ReguaPrecoSinal';
 import type { ReguaCartItem } from '@/lib/regua-preco/regua-preco-ui';
 import { useReguaPrecoLog } from '@/hooks/useReguaPrecoLog';
+import { isInvalidProductPrice } from '@/services/orderSubmission/priceGuard';
 
 interface CartItemListProps {
   cart: { length: number };
@@ -105,6 +106,7 @@ export function CartItemList({
         // Só suprime o vermelho FORTE do cockpit quando a Régua tem piso CONFIÁVEL (com
         // botão). Piso por CMC proxy (precoReferencia null) NÃO esconde o cockpit (Codex P1/P2).
         const cockpitSuprimido = reguaVermelho && regua?.precoReferencia != null && health?.faixa === 'vermelho';
+        const invalidPrice = isInvalidProductPrice(item.unit_price);
         return (
           <div key={`${item.product.id}-${item.tint_formula_id || 'base'}`} className="space-y-1.5 mb-2">
             <div className="flex items-start justify-between gap-1.5">
@@ -178,7 +180,7 @@ export function CartItemList({
               </div>
               <div className="flex items-center gap-0.5 flex-1">
                 <span className="text-[10px] text-muted-foreground">R$</span>
-                <Input type="text" inputMode="decimal" pattern="[0-9]*\.?[0-9]*" value={item.unit_price} onFocus={e => e.target.select()} onChange={e => onUpdateProductPrice(cartIdx, parseFloat(e.target.value) || 0)} className="h-6 text-xs" />
+                <Input type="text" inputMode="decimal" pattern="[0-9]*\.?[0-9]*" value={item.unit_price} aria-invalid={invalidPrice} onFocus={e => e.target.select()} onChange={e => onUpdateProductPrice(cartIdx, parseFloat(e.target.value) || 0)} className={cn('h-6 text-xs', invalidPrice && 'border-status-error focus-visible:ring-status-error')} />
               </div>
               <span className="text-xs font-semibold shrink-0">{fmt(item.quantity * item.unit_price)}</span>
             </div>

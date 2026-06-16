@@ -3,17 +3,20 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Trash2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { type OrderItem } from './types';
 
 interface OrderItemCardProps {
   item: OrderItem;
   index: number;
   isBlocked: boolean;
+  /** Marca o preço como inválido (≤ 0): destaca o input e mostra aviso. Calculado pelo hook. */
+  isPriceInvalid?: boolean;
   onUpdate: (index: number, field: 'quantidade' | 'valor_unitario', value: number) => void;
   onRemove: (index: number) => void;
 }
 
-export function OrderItemCard({ item, index, isBlocked, onUpdate, onRemove }: OrderItemCardProps) {
+export function OrderItemCard({ item, index, isBlocked, isPriceInvalid = false, onUpdate, onRemove }: OrderItemCardProps) {
   return (
     <div className="border rounded-lg p-3 space-y-2">
       <div className="flex items-start justify-between gap-2">
@@ -65,8 +68,12 @@ export function OrderItemCard({ item, index, isBlocked, onUpdate, onRemove }: Or
             onFocus={(e) => e.target.select()}
             onChange={(e) => onUpdate(index, 'valor_unitario', Number(e.target.value) || 0)}
             disabled={isBlocked}
-            className="h-8 text-sm"
+            aria-invalid={isPriceInvalid || undefined}
+            className={cn('h-8 text-sm', isPriceInvalid && 'border-status-error focus-visible:ring-status-error')}
           />
+          {isPriceInvalid && (
+            <p className="text-xs text-status-error mt-1">Defina um valor maior que zero.</p>
+          )}
         </div>
         <div>
           <label className="text-xs text-muted-foreground">Total</label>
