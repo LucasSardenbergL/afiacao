@@ -72,4 +72,9 @@ describe('ReguaPrecoSinal', () => {
     abrir();
     expect(screen.getByText(/Aplicar piso/)).toBeInTheDocument();
   });
+  it('readonly + desde → popover mostra a data do último preço (calibração b)', () => {
+    render(<ReguaPrecoSinal result={piso} precoAtual={90} contexto={{ ...ctx, desde: '06/06/2026' }} mode="readonly" />);
+    abrir();
+    expect(screen.getByText(/Último preço: 06\/06\/2026/)).toBeInTheDocument();
+  });
 });

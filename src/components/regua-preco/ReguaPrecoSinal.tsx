@@ -8,7 +8,7 @@ import type { ReguaPrecoResult } from '@/lib/regua-preco/types';
 interface ReguaPrecoSinalProps {
   result: ReguaPrecoResult;
   precoAtual: number;
-  contexto: { produto: string; cliente: string | null; qty: number };
+  contexto: { produto: string; cliente: string | null; qty: number; desde?: string | null };
   /**
    * 'carrinho' (default): mostra o valor do piso + botão Aplicar (vendedor interno age na hora).
    * 'readonly' (360): sem botão; o sinal de PISO NÃO expõe valor/custo (tela mais exposta) —
@@ -62,6 +62,9 @@ export function ReguaPrecoSinal({
         <p className="font-medium leading-tight">
           {contexto.produto}{contexto.cliente ? ` · ${contexto.cliente}` : ''} · {contexto.qty}un
         </p>
+        {contexto.desde && (
+          <p className="text-[10px] text-muted-foreground/80 leading-snug">Último preço: {contexto.desde}</p>
+        )}
 
         {pisoOculto ? (
           // 360: não expõe o piso/custo — só sinaliza o risco + o preço atual do cliente.

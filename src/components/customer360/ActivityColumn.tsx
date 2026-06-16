@@ -78,6 +78,7 @@ export function ActivityColumn({
                             produto: it.product_descricao ?? `Produto ${it.product_codigo}`,
                             cliente: customer.name ?? null,
                             qty: regua.qtyRef,
+                            desde: regua.precoAtualAt ? formatDateOrDash(regua.precoAtualAt) : null,
                           }}
                         />
                       )}
