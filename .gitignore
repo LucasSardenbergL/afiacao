@@ -31,3 +31,6 @@ AGENTS.md
 
 # Serena MCP local project cache
 .serena/
+
+# skill-creator eval workspace (scratch/benchmark artifacts — not part of the skill)
+.claude/skills/*-workspace/
