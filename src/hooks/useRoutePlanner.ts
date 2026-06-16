@@ -44,6 +44,7 @@ import {
 import { carteiraRowToStop, type CarteiraRow } from '@/lib/route/carteira-stop';
 import { montarDetalheAlvo, type AlvoDetalhe } from '@/lib/route/alvo-detalhe';
 import { ordenarFilaGeocode, ordenarFilaGeocodeCep } from '@/lib/route/geocode-fila';
+import { interpretarResolver } from '@/lib/route/cep-resolver';
 import { normalizarCep } from '@/lib/route/cep';
 
 // Teto de prospects por cidade pedido à RPC (a RPC capa em 2000 no SQL).
@@ -1001,7 +1002,7 @@ export function useRoutePlanner() {
   const geocodingAbort = useRef<AbortController | null>(null);
   const geocodeFalhados = useRef<Set<string>>(new Set());
   // Geocoding por CEP (campo): coord por CEP distinto + CEPs que falharam na sessão.
-  const geocodedCepCoords = useRef<Map<string, { lat: number; lng: number }>>(new Map());
+  const geocodedCepCoords = useRef<Map<string, { lat: number; lng: number; precisao: string }>>(new Map());
   const cepFalhados = useRef<Set<string>>(new Set());
   // Modo atual num ref p/ o worker escolher a estratégia (CEP vs endereço) sem stale.
   const planningModeRef = useRef(planningMode);
@@ -1017,18 +1018,19 @@ export function useRoutePlanner() {
   useEffect(() => {
     const enriched = allStops.map(s => {
       const cepCoord = geocodedCepCoords.current.get(normalizarCep(s.address.zip_code) ?? '');
-      if (cepCoord) return { ...s, lat: cepCoord.lat, lng: cepCoord.lng, precisao: 'postcode_centroid' };
+      if (cepCoord) return { ...s, lat: cepCoord.lat, lng: cepCoord.lng, precisao: cepCoord.precisao };
       const cached = geocodedCoords.current.get(s.id);
       return cached ? { ...s, lat: cached.lat, lng: cached.lng } : s;
     });
     setGeocodedAllStops(enriched);
   }, [allStops]);
 
-  // Geocoding progressivo ~1/s, marcados-na-rota primeiro. CAMPO (prospeccao):
-  // geocodifica o CEP DISTINTO → cep_geo_upsert → pinta TODOS os alvos do CEP de uma
-  // vez (1234 empresas ≈ 574 CEPs). EQUIPE: legado por endereço/stop. Re-deriva a
-  // fila a cada ciclo → marcar um alvo re-prioriza o próximo pick; resolvidos/
-  // falhados saem da fila → o loop termina.
+  // Geocoding progressivo, marcados-na-rota primeiro. CAMPO (prospeccao): resolve o
+  // CEP DISTINTO via edge `cep-geo-resolver` (cache cep_geo → CEP Aberto, token
+  // server-side; a edge já persiste no cep_geo/SoT) → pinta TODOS os alvos do CEP de
+  // uma vez (1234 empresas ≈ 574 CEPs). EQUIPE: legado por endereço/stop via Nominatim.
+  // Re-deriva a fila a cada ciclo → marcar um alvo re-prioriza o próximo pick;
+  // resolvidos/falhados saem da fila → o loop termina.
   useEffect(() => {
     geocodingAbort.current?.abort();
     const controller = new AbortController();
@@ -1056,22 +1058,21 @@ export function useRoutePlanner() {
           if (fila.length === 0) break;
           const { cep, cidade, uf } = fila[0];
           try {
-            const coords = await nominatim(`${cep}, ${cidade}, ${uf}, Brazil`);
+            // A edge guarda o token, faz cache + CEP Aberto e já persiste no cep_geo (SoT).
+            const { data, error } = await supabase.functions.invoke('cep-geo-resolver', {
+              body: { cep, cidade, uf },
+            });
+            if (controller.signal.aborted) break;
+            const coords = error ? null : interpretarResolver(data);
             if (coords) {
-              geocodedCepCoords.current.set(cep, coords);
+              geocodedCepCoords.current.set(cep, { lat: coords.lat, lng: coords.lng, precisao: coords.precisao });
               setGeocodedAllStops(prev => prev.map(s =>
                 normalizarCep(s.address.zip_code) === cep
-                  ? { ...s, lat: coords.lat, lng: coords.lng, precisao: 'postcode_centroid' }
+                  ? { ...s, lat: coords.lat, lng: coords.lng, precisao: coords.precisao }
                   : s,
               ));
-              // Persiste: postcode_centroid; anti-downgrade no SQL. Gate = gestor/master
-              // (o contexto campo já exige). Compartilhado por todos os alvos do CEP.
-              void supabase.rpc('cep_geo_upsert' as never, {
-                p_cep: cep, p_lat: coords.lat, p_lng: coords.lng,
-                p_source: 'nominatim', p_precision: 'postcode_centroid',
-              } as never);
             } else {
-              cepFalhados.current.add(cep); // sem resultado → não recicla o mesmo CEP
+              cepFalhados.current.add(cep); // miss / edge indisponível → não recicla o CEP nesta sessão
             }
           } catch (e) {
             if ((e as { name?: string })?.name === 'AbortError') break;
@@ -1104,8 +1105,9 @@ export function useRoutePlanner() {
             geocodeFalhados.current.add(stop.id);
           }
         }
-        // Nominatim rate limit: máx 1 req/s
-        if (!controller.signal.aborted) await new Promise(r => setTimeout(r, 1100));
+        // Pacing: CEP Aberto rate-limita < ~1,6s/req (campo); Nominatim ~1/s (equipe).
+        const espera = planningModeRef.current === 'prospeccao' ? 1600 : 1100;
+        if (!controller.signal.aborted) await new Promise(r => setTimeout(r, espera));
       }
       if (!controller.signal.aborted) setGeocodingPendentes(0);
     })();
