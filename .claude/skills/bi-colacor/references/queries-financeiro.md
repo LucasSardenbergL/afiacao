@@ -24,7 +24,8 @@ order by total_vencido desc nulls last;
 Confiabilidade: **alta**. Fonte: `fin_contas_receber`. Nome do cliente via LEFT JOIN (opcional).
 ```sql
 select
-  cr.company as empresa, cr.omie_codigo_cliente, cr.cnpj_cpf, p.razao_social,
+  cr.company as empresa, cr.omie_codigo_cliente, cr.cnpj_cpf,
+  coalesce(p.razao_social, p.name, cr.cnpj_cpf) as nome_cliente,
   cr.numero_pedido, cr.data_vencimento,
   round(cr.valor_documento, 2)                                  as valor_documento,
   round(cr.valor_documento - coalesce(cr.valor_recebido,0), 2)  as saldo_aberto,
