@@ -44,21 +44,6 @@ export type Database = {
         }
         Relationships: []
       }
-      _tmp_backfill_pedidos_cursor: {
-        Row: {
-          id: number
-          next_page: number
-        }
-        Insert: {
-          id: number
-          next_page: number
-        }
-        Update: {
-          id?: number
-          next_page?: number
-        }
-        Relationships: []
-      }
       abc_xyz_classification: {
         Row: {
           classe_abc: Database["public"]["Enums"]["classe_abc"] | null
@@ -625,6 +610,45 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      cep_geo: {
+        Row: {
+          cep: string
+          confidence: number | null
+          lat: number
+          lng: number
+          municipio_codigo: string | null
+          precision: string
+          raw: Json | null
+          source: string
+          uf: string | null
+          updated_at: string
+        }
+        Insert: {
+          cep: string
+          confidence?: number | null
+          lat: number
+          lng: number
+          municipio_codigo?: string | null
+          precision: string
+          raw?: Json | null
+          source: string
+          uf?: string | null
+          updated_at?: string
+        }
+        Update: {
+          cep?: string
+          confidence?: number | null
+          lat?: number
+          lng?: number
+          municipio_codigo?: string | null
+          precision?: string
+          raw?: Json | null
+          source?: string
+          uf?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       cliente_classificacao: {
         Row: {
@@ -6600,6 +6624,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      municipio_geo: {
+        Row: {
+          lat: number
+          lng: number
+          municipio_codigo: string
+          nome: string | null
+          source: string
+          uf: string | null
+        }
+        Insert: {
+          lat: number
+          lng: number
+          municipio_codigo: string
+          nome?: string | null
+          source?: string
+          uf?: string | null
+        }
+        Update: {
+          lat?: number
+          lng?: number
+          municipio_codigo?: string
+          nome?: string | null
+          source?: string
+          uf?: string | null
+        }
+        Relationships: []
       }
       nfe_efetivacao_tentativas: {
         Row: {
@@ -15161,7 +15212,6 @@ export type Database = {
         Returns: undefined
       }
       _tint_preflight: { Args: never; Returns: Json }
-      _tmp_backfill_pedidos_oben_tick: { Args: never; Returns: undefined }
       _vendas_familia_ausente_lista_email: {
         Args: { p_limit?: number }
         Returns: string
@@ -15171,6 +15221,7 @@ export type Database = {
         Returns: Json
       }
       afiacao_os_sync_kick: { Args: never; Returns: Json }
+      aplicar_exclusao_fornecedores: { Args: never; Returns: Json }
       aplicar_parametros_automatico_diario: {
         Args: { p_empresa: string }
         Returns: string
@@ -15277,10 +15328,13 @@ export type Database = {
           city: string
           complement: string
           dias_desde_visita: number
+          lat: number
+          lng: number
           name: string
           neighborhood: string
           number: string
           phone: string
+          precision: string
           state: string
           street: string
           ultima_visita: string
@@ -15291,6 +15345,20 @@ export type Database = {
       carteira_visivel_para: {
         Args: { _customer_user_id: string; _uid: string }
         Returns: boolean
+      }
+      cep_geo_upsert: {
+        Args: {
+          p_cep: string
+          p_confidence?: number
+          p_lat: number
+          p_lng: number
+          p_municipio_codigo?: string
+          p_precision: string
+          p_raw?: Json
+          p_source: string
+          p_uf?: string
+        }
+        Returns: undefined
       }
       ciclo_oportunidade_do_dia: {
         Args: { p_data_ciclo?: string; p_empresa?: string }
@@ -15306,6 +15374,7 @@ export type Database = {
         Args: { p_account: string; p_at: string; p_run_id: number }
         Returns: boolean
       }
+      classificar_clientes_fornecedores: { Args: never; Returns: Json }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
       concluir_com_comprovacao: {
         Args: { p_leitura?: number; p_tarefa_id: string; p_url?: string }
@@ -15658,6 +15727,7 @@ export type Database = {
         }
       }
       get_tint_price: { Args: { p_formula_id: string }; Returns: Json }
+      get_tint_prices: { Args: { p_formula_ids: string[] }; Returns: Json }
       get_user_access_profile_for: { Args: { p_target: string }; Returns: Json }
       get_user_role: {
         Args: { _user_id: string }
@@ -15752,6 +15822,7 @@ export type Database = {
         }[]
       }
       norm_cidade: { Args: { t: string }; Returns: string }
+      normalizar_cep: { Args: { p: string }; Returns: string }
       pedido_compra_split: {
         Args: { p_chunk_size?: number; p_pedido_id: number }
         Returns: {
@@ -15836,6 +15907,7 @@ export type Database = {
           municipio_nome: string
           nome_fantasia: string
           numero: string
+          precision: string
           prospeccao_status: string
           razao_social: string
           telefone1: string
@@ -15861,6 +15933,7 @@ export type Database = {
         }
         Returns: Json
       }
+      rank_precisao: { Args: { p: string }; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
       refresh_customer_metrics: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
@@ -15969,6 +16042,10 @@ export type Database = {
       }
       resolver_sku_por_codigo_fornecedor: {
         Args: { p_codigo_fornecedor: string; p_empresa: string }
+        Returns: Json
+      }
+      reverter_exclusao_fornecedor: {
+        Args: { p_motivo?: string; p_user_id: string }
         Returns: Json
       }
       reverter_parametro_auto: { Args: { p_log_id: string }; Returns: string }

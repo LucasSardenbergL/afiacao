@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **238** custom migrations totais
-- **882** objetos esperados (criados por estas migrations)
+- **241** custom migrations totais
+- **896** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 244
-  - `rls_policy`: 207
-  - `index`: 177
-  - `cron_job`: 105
-  - `table`: 100
+  - `function`: 251
+  - `rls_policy`: 209
+  - `index`: 178
+  - `cron_job`: 106
+  - `table`: 103
   - `trigger`: 45
   - `enum_value`: 4
 
@@ -1654,6 +1654,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260606240000_cron_sync_inventory_full.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sync-inventory-full-vendas-daily` | — |
+
 ### `20260608120000_tool_spec_custom_option.sql`
 
 | Tipo | Objeto | Parent |
@@ -2078,6 +2084,29 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260615182814_vincular_tint_skus_omie_orfaos.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260615190000_geocoding_cep_geo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.cep_geo` | — |
+| `table` | `public.municipio_geo` | — |
+| `function` | `public.normalizar_cep` | — |
+| `function` | `public.rank_precisao` | — |
+| `function` | `public.cep_geo_upsert` | — |
+| `function` | `public.carteira_por_municipio` | — |
+| `function` | `public.radar_prospects_para_rota` | — |
+| `rls_policy` | `public.cep_geo_sel` | `cep_geo` |
+| `rls_policy` | `public.municipio_geo_sel` | `municipio_geo` |
+
+### `20260615210000_reposicao_auto_aprovacao_v2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_auto_aprovacao_log` | — |
+| `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
+| `function` | `public.reposicao_pedido_auto_aprovavel` | — |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
 
 ## Próximos passos quando algo der `❌`
 

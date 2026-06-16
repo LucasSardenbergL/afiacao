@@ -28,7 +28,7 @@ import type { Tables } from '@/integrations/supabase/types';
 import { visitasAgendadasTable } from '@/integrations/supabase/visitasAgendadas';
 import type { VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas';
 import { agendaToRouteStop } from '@/lib/visitas/agenda-to-stop';
-import { prospectRowToStopDraft, buildGeocodeQuery } from '@/lib/route/prospect-stop';
+import { prospectRowToStopDraft } from '@/lib/route/prospect-stop';
 import type { ProspectRow } from '@/lib/route/prospect-stop';
 import {
   defaultContextForRole,
@@ -43,7 +43,8 @@ import {
 } from '@/lib/route/field-targets';
 import { carteiraRowToStop, type CarteiraRow } from '@/lib/route/carteira-stop';
 import { montarDetalheAlvo, type AlvoDetalhe } from '@/lib/route/alvo-detalhe';
-import { ordenarFilaGeocode } from '@/lib/route/geocode-fila';
+import { ordenarFilaGeocode, ordenarFilaGeocodeCep } from '@/lib/route/geocode-fila';
+import { normalizarCep } from '@/lib/route/cep';
 
 // Teto de prospects por cidade pedido à RPC (a RPC capa em 2000 no SQL).
 // Divinópolis (600) cabe inteira; metrópole mostra os 1000 mais quentes.
@@ -846,6 +847,7 @@ export function useRoutePlanner() {
           radarCnpj: draft.radarCnpj,
           geocodeFailed: draft.geocodeFailed,
           prospeccaoStatus: draft.prospeccaoStatus,
+          precisao: draft.precisao,
         };
         return enrichWithPriority(base);
       });
@@ -896,6 +898,9 @@ export function useRoutePlanner() {
             businessHoursClose: draft.businessHoursClose,
             status: 'carteira',
             diasDesdeVisita: draft.diasDesdeVisita,
+            lat: draft.lat,
+            lng: draft.lng,
+            precisao: draft.precisao,
           };
           stops.push(enrichWithPriority(base));
         }
@@ -925,6 +930,8 @@ export function useRoutePlanner() {
     setFiltros(FILTROS_ALVO_INICIAL);
     setRemovidos(new Set());
     geocodeFalhados.current.clear(); // nova cidade → permite re-tentar geocodes que falharam
+    cepFalhados.current.clear();
+    geocodedCepCoords.current.clear();
   }, [selectedCities]);
 
   // Merge stops based on planning mode
@@ -993,76 +1000,108 @@ export function useRoutePlanner() {
   const geocodedCoords = useRef<Map<string, { lat: number; lng: number }>>(new Map());
   const geocodingAbort = useRef<AbortController | null>(null);
   const geocodeFalhados = useRef<Set<string>>(new Set());
+  // Geocoding por CEP (campo): coord por CEP distinto + CEPs que falharam na sessão.
+  const geocodedCepCoords = useRef<Map<string, { lat: number; lng: number }>>(new Map());
+  const cepFalhados = useRef<Set<string>>(new Set());
+  // Modo atual num ref p/ o worker escolher a estratégia (CEP vs endereço) sem stale.
+  const planningModeRef = useRef(planningMode);
+  planningModeRef.current = planningMode;
   // Espelha a seleção num ref p/ o worker priorizar marcados sem re-disparar a fila.
   const selectedIdsRef = useRef<Set<string>>(new Set());
   selectedIdsRef.current = selectedTargetIds;
 
   const [geocodedAllStops, setGeocodedAllStops] = useState<RouteStop[]>([]);
 
-  // Immediately show stops without waiting for geocoding
+  // Mostra os stops já com a coord da RPC; reaplica os upgrades por CEP feitos
+  // nesta sessão (o CEP vence — é o refino postcode sobre o centróide do município).
   useEffect(() => {
     const enriched = allStops.map(s => {
+      const cepCoord = geocodedCepCoords.current.get(normalizarCep(s.address.zip_code) ?? '');
+      if (cepCoord) return { ...s, lat: cepCoord.lat, lng: cepCoord.lng, precisao: 'postcode_centroid' };
       const cached = geocodedCoords.current.get(s.id);
       return cached ? { ...s, lat: cached.lat, lng: cached.lng } : s;
     });
     setGeocodedAllStops(enriched);
   }, [allStops]);
 
-  // Geocoding progressivo (G): fila CONTÍNUA ~1/s, marcados-na-rota primeiro.
-  // Re-deriva a fila a cada ciclo (via ordenarFilaGeocode) → marcar um alvo no meio
-  // re-prioriza o PRÓXIMO pick; resolvidos/falhados saem da fila → o loop termina.
+  // Geocoding progressivo ~1/s, marcados-na-rota primeiro. CAMPO (prospeccao):
+  // geocodifica o CEP DISTINTO → cep_geo_upsert → pinta TODOS os alvos do CEP de uma
+  // vez (1234 empresas ≈ 574 CEPs). EQUIPE: legado por endereço/stop. Re-deriva a
+  // fila a cada ciclo → marcar um alvo re-prioriza o próximo pick; resolvidos/
+  // falhados saem da fila → o loop termina.
   useEffect(() => {
     geocodingAbort.current?.abort();
     const controller = new AbortController();
     geocodingAbort.current = controller;
 
+    const nominatim = async (query: string) => {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`,
+        { signal: controller.signal },
+      );
+      const data = await res.json();
+      return data?.[0] ? { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) } : null;
+    };
+
     (async () => {
       while (!controller.signal.aborted) {
-        const fila = ordenarFilaGeocode(allStops, {
-          resolvidos: new Set(geocodedCoords.current.keys()),
-          falhados: geocodeFalhados.current,
-          marcados: selectedIdsRef.current,
-        });
-        setGeocodingPendentes(fila.length);
-        if (fila.length === 0) break;
-        const stop = fila[0];
-        try {
-          const query = stop.stopType === 'prospect_visit'
-            ? buildGeocodeQuery(stop.address)
-            : `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}, Brazil`;
-          const res = await fetch(
-            `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`,
-            { signal: controller.signal }
-          );
-          const data = await res.json();
-          if (data?.[0]) {
-            const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-            geocodedCoords.current.set(stop.id, coords);
-            setGeocodedAllStops(prev => prev.map(s =>
-              s.id === stop.id ? { ...s, lat: coords.lat, lng: coords.lng } : s
-            ));
-            if (stop.stopType === 'prospect_visit' && stop.radarCnpj) {
-              void supabase.rpc('radar_salvar_geocode' as never, {
-                p_cnpj: stop.radarCnpj, p_lat: coords.lat, p_lng: coords.lng, p_status: 'ok',
+        if (planningModeRef.current === 'prospeccao') {
+          // ---- Campo: por CEP distinto, persiste no cep_geo (SoT) ----
+          const fila = ordenarFilaGeocodeCep(allStops, {
+            resolvidos: new Set(geocodedCepCoords.current.keys()),
+            falhados: cepFalhados.current,
+            marcados: selectedIdsRef.current,
+          });
+          setGeocodingPendentes(fila.length);
+          if (fila.length === 0) break;
+          const { cep, cidade, uf } = fila[0];
+          try {
+            const coords = await nominatim(`${cep}, ${cidade}, ${uf}, Brazil`);
+            if (coords) {
+              geocodedCepCoords.current.set(cep, coords);
+              setGeocodedAllStops(prev => prev.map(s =>
+                normalizarCep(s.address.zip_code) === cep
+                  ? { ...s, lat: coords.lat, lng: coords.lng, precisao: 'postcode_centroid' }
+                  : s,
+              ));
+              // Persiste: postcode_centroid; anti-downgrade no SQL. Gate = gestor/master
+              // (o contexto campo já exige). Compartilhado por todos os alvos do CEP.
+              void supabase.rpc('cep_geo_upsert' as never, {
+                p_cep: cep, p_lat: coords.lat, p_lng: coords.lng,
+                p_source: 'nominatim', p_precision: 'postcode_centroid',
               } as never);
+            } else {
+              cepFalhados.current.add(cep); // sem resultado → não recicla o mesmo CEP
             }
-          } else {
-            // sem resultado = falha; senão a fila reciclaria o mesmo stop pra sempre
-            geocodeFalhados.current.add(stop.id);
-            if (stop.stopType === 'prospect_visit' && stop.radarCnpj) {
-              void supabase.rpc('radar_salvar_geocode' as never, {
-                p_cnpj: stop.radarCnpj, p_lat: 0, p_lng: 0, p_status: 'falhou',
-              } as never);
-            }
+          } catch (e) {
+            if ((e as { name?: string })?.name === 'AbortError') break;
+            cepFalhados.current.add(cep);
           }
-        } catch (e) {
-          if ((e as { name?: string })?.name === 'AbortError') break;
-          console.warn('Geocode failed for', stop.address.street);
-          geocodeFalhados.current.add(stop.id);
-          if (stop.stopType === 'prospect_visit' && stop.radarCnpj) {
-            void supabase.rpc('radar_salvar_geocode' as never, {
-              p_cnpj: stop.radarCnpj, p_lat: 0, p_lng: 0, p_status: 'falhou',
-            } as never);
+        } else {
+          // ---- Equipe: legado por endereço, por stop (inalterado) ----
+          const fila = ordenarFilaGeocode(allStops, {
+            resolvidos: new Set(geocodedCoords.current.keys()),
+            falhados: geocodeFalhados.current,
+            marcados: selectedIdsRef.current,
+          });
+          setGeocodingPendentes(fila.length);
+          if (fila.length === 0) break;
+          const stop = fila[0];
+          try {
+            const coords = await nominatim(
+              `${stop.address.street}, ${stop.address.number}, ${stop.address.city}, ${stop.address.state}, Brazil`,
+            );
+            if (coords) {
+              geocodedCoords.current.set(stop.id, coords);
+              setGeocodedAllStops(prev => prev.map(s =>
+                s.id === stop.id ? { ...s, lat: coords.lat, lng: coords.lng } : s,
+              ));
+            } else {
+              geocodeFalhados.current.add(stop.id);
+            }
+          } catch (e) {
+            if ((e as { name?: string })?.name === 'AbortError') break;
+            geocodeFalhados.current.add(stop.id);
           }
         }
         // Nominatim rate limit: máx 1 req/s

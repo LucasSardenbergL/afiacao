@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 238
+-- Total de custom migrations: 241
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -209,6 +209,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260606200000', 'reposicao_promo_forward_buying_min', '20260606200000_reposicao_promo_forward_buying_min.sql'),
   ('20260606210000', 'order_feed_view', '20260606210000_order_feed_view.sql'),
   ('20260606230000', 'negociacao_paralela_v2_cleanup', '20260606230000_negociacao_paralela_v2_cleanup.sql'),
+  ('20260606240000', 'cron_sync_inventory_full', '20260606240000_cron_sync_inventory_full.sql'),
   ('20260608120000', 'tool_spec_custom_option', '20260608120000_tool_spec_custom_option.sql'),
   ('20260609085244', 'data_health_check_familia_ausente', '20260609085244_data_health_check_familia_ausente.sql'),
   ('20260609150000', 'reposicao_alerta_pedido_minimo', '20260609150000_reposicao_alerta_pedido_minimo.sql'),
@@ -257,7 +258,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615140000', 'tint_promote_indices_timeout', '20260615140000_tint_promote_indices_timeout.sql'),
   ('20260615150000', 'cockpit_preco_fixes', '20260615150000_cockpit_preco_fixes.sql'),
   ('20260615160000', 'tint_promote_set_based', '20260615160000_tint_promote_set_based.sql'),
-  ('20260615182814', 'vincular_tint_skus_omie_orfaos', '20260615182814_vincular_tint_skus_omie_orfaos.sql')
+  ('20260615182814', 'vincular_tint_skus_omie_orfaos', '20260615182814_vincular_tint_skus_omie_orfaos.sql'),
+  ('20260615190000', 'geocoding_cep_geo', '20260615190000_geocoding_cep_geo.sql'),
+  ('20260615210000', 'reposicao_auto_aprovacao_v2', '20260615210000_reposicao_auto_aprovacao_v2.sql')
 )
 SELECT
   e.version,
@@ -976,6 +979,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_preco_pedido_cmc_account', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_qtde_inteira_persist', 'function', 'public', 'reposicao_persistir_qtde_inteira', ''),
   ('reposicao_promo_forward_buying_min', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
+  ('cron_sync_inventory_full', 'cron_job', 'cron', 'sync-inventory-full-vendas-daily', ''),
   ('tool_spec_custom_option', 'function', 'public', 'adicionar_opcao_tool_spec', ''),
   ('data_health_check_familia_ausente', 'function', 'public', '_data_health_compute', ''),
   ('data_health_check_familia_ausente', 'function', 'public', 'data_health_watchdog', ''),
@@ -1157,7 +1161,20 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_promote_indices_timeout', 'index', 'public', 'idx_tsemb_run', 'tint_staging_embalagens'),
   ('cockpit_preco_fixes', 'function', 'public', 'get_preco_cockpit', ''),
   ('cockpit_preco_fixes', 'rls_policy', 'public', 'cmc_ledger_select_gestor', 'cmc_ledger'),
-  ('tint_promote_set_based', 'function', 'public', 'tint_promote_sync_run', '')
+  ('tint_promote_set_based', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('geocoding_cep_geo', 'table', 'public', 'cep_geo', ''),
+  ('geocoding_cep_geo', 'table', 'public', 'municipio_geo', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'normalizar_cep', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'rank_precisao', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'cep_geo_upsert', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'carteira_por_municipio', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'radar_prospects_para_rota', ''),
+  ('geocoding_cep_geo', 'rls_policy', 'public', 'cep_geo_sel', 'cep_geo'),
+  ('geocoding_cep_geo', 'rls_policy', 'public', 'municipio_geo_sel', 'municipio_geo'),
+  ('reposicao_auto_aprovacao_v2', 'table', 'public', 'reposicao_auto_aprovacao_log', ''),
+  ('reposicao_auto_aprovacao_v2', 'index', 'public', 'reposicao_auto_aprovacao_log_criado_em', 'reposicao_auto_aprovacao_log'),
+  ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
+  ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', '')
 )
 SELECT
   e.migration,
