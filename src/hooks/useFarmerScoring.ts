@@ -146,11 +146,19 @@ export const useFarmerScoring = (farmerId?: string) => {
       // Fornecedores fora da carteira: clientes marcados p/ exclusão saem do universo ANTES do cálculo.
       const flaggeds = new Set<string>();
       for (let fp = 0; ; fp++) {
-        const { data: fPage } = await supabase
+        const { data: fPage, error: fErr } = await supabase
           .from('cliente_classificacao')
           .select('user_id')
           .eq('excluir_da_carteira', true)
           .range(fp * 1000, fp * 1000 + 999);
+        // FAIL-CLOSED (Codex P1): money-path. Se a leitura dos fornecedores excluídos falhar,
+        // aborta o recálculo/upsert (não grava score de fornecedor); mantém o último estado bom.
+        if (fErr) {
+          console.warn('[useFarmerScoring] erro ao ler fornecedores excluídos, abortando:', fErr.message);
+          setCalculating(false);
+          setLoading(false);
+          return;
+        }
         if (!fPage || fPage.length === 0) break;
         for (const r of fPage) flaggeds.add(r.user_id);
         if (fPage.length < 1000) break;

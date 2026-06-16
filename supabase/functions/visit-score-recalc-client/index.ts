@@ -170,6 +170,9 @@ async function recalcOne(
     supabase.from('profiles').select('created_at, is_prospect').eq('user_id', customer_user_id).maybeSingle(),
   ]);
 
+  // FAIL-CLOSED (Codex P1): erro ao ler a flag → NÃO recalcula (não recria score de fornecedor
+  // por erro transitório). Re-enfileirado no próximo batch.
+  if (flagRes.error) return { ok: false, error: `cliente_classificacao: ${flagRes.error.message}` };
   if (flagRes.data) return { ok: true };
   if (scoresRes.error) return { ok: false, error: `farmer_client_scores: ${scoresRes.error.message}` };
 

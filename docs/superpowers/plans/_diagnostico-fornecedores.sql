@@ -20,7 +20,7 @@ WITH base AS (
     EXISTS (SELECT 1 FROM unnest(cc.tags_omie) t WHERE lower(trim(t)) IN ('fornecedor','transportadora')) AS is_forn,
     EXISTS (SELECT 1 FROM public.sales_orders so
               WHERE so.customer_user_id = cc.user_id
-                AND so.status NOT IN ('cancelado','rascunho','pendente')) AS tem_venda
+                AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')) AS tem_venda
   FROM public.cliente_classificacao cc
 )
 SELECT
@@ -47,7 +47,7 @@ WHERE EXISTS (SELECT 1 FROM unnest(cc.tags_omie) t WHERE lower(trim(t)) IN ('for
   AND EXISTS (SELECT 1 FROM unnest(cc.tags_omie) t WHERE lower(trim(t)) = 'cliente')
   AND NOT EXISTS (SELECT 1 FROM public.sales_orders so
                     WHERE so.customer_user_id = cc.user_id
-                      AND so.status NOT IN ('cancelado','rascunho','pendente'))
+                      AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento'))
 ORDER BY nome
 LIMIT 300;
 
@@ -67,29 +67,22 @@ LIMIT 300;
 --   classificar() seta excluir_da_carteira pela régua A. cleanup: eligible=false + apaga os
 --   scores dos excluídos (os filtros já deployados impedem que voltem).
 -- -----------------------------------------------------------------------------
-SELECT public.classificar_clientes_fornecedores();   -- → {classificados, excluidos}
-
-UPDATE public.carteira_assignments SET eligible = false, updated_at = now()
- WHERE customer_user_id IN (SELECT user_id FROM public.cliente_classificacao WHERE excluir_da_carteira);
-
-DELETE FROM public.customer_visit_scores
- WHERE customer_user_id IN (SELECT user_id FROM public.cliente_classificacao WHERE excluir_da_carteira);
-
-DELETE FROM public.farmer_client_scores
- WHERE customer_user_id IN (SELECT user_id FROM public.cliente_classificacao WHERE excluir_da_carteira);
+-- Uma RPC faz tudo: classificar (régua A) + eligible=false + apaga scores. É a mesma do cron.
+SELECT public.aplicar_exclusao_fornecedores();
+-- → {classificados, excluidos, eligible_off, visit_scores_apagados, farmer_scores_apagados}
 
 
 -- -----------------------------------------------------------------------------
--- PASSO 5 — Cron (ESCRITA): re-classifica nightly às 7:15 (antes do carteira-rebuild 7:30),
---   mantendo excluir_da_carteira fresco conforme novos fornecedores entram pelo sync.
---   SQL puro (sem net.http_post → sem o risco de timeout). Idempotente.
+-- PASSO 5 — Cron (ESCRITA): re-classifica + APLICA o corte nightly às 7:15 (antes do carteira-rebuild
+--   7:30) — mantém excluir_da_carteira fresco E apaga o score de fornecedor novo (Codex #3: cleanup
+--   recorrente). SQL puro (sem net.http_post → sem o risco de timeout). Idempotente.
 -- -----------------------------------------------------------------------------
 DO $$
 BEGIN
   PERFORM cron.unschedule('classificar-fornecedores-nightly')
    WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'classificar-fornecedores-nightly');
   PERFORM cron.schedule('classificar-fornecedores-nightly', '15 7 * * *',
-    $cron$ SELECT public.classificar_clientes_fornecedores(); $cron$);
+    $cron$ SELECT public.aplicar_exclusao_fornecedores(); $cron$);
 END $$;
 
 

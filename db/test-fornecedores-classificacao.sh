@@ -56,6 +56,10 @@ P -v ON_ERROR_STOP=1 -q <<'SQL'
 CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
   SELECT nullif(current_setting('test.current_uid', true), '')::uuid
 $$;
+-- stub: customer_canonical_alias (B-lite) NÃO está no schema-snapshot (stale); o reverter a referencia.
+CREATE TABLE IF NOT EXISTS public.customer_canonical_alias (
+  alias_user_id uuid, canonical_user_id uuid, status text
+);
 SQL
 
 echo "→ seed dos cenários (trigger deriva no INSERT)…"
@@ -71,7 +75,8 @@ INSERT INTO auth.users (id) VALUES
   ('00000000-0000-0000-0000-0000000000c3'),
   ('00000000-0000-0000-0000-0000000000c4'),
   ('00000000-0000-0000-0000-0000000000c5'),
-  ('00000000-0000-0000-0000-0000000000c6');
+  ('00000000-0000-0000-0000-0000000000c6'),
+  ('00000000-0000-0000-0000-0000000000c8'); -- fornecedor com SÓ orçamento (testa orcamento ∉ venda)
 
 INSERT INTO public.user_roles (user_id, role) VALUES
   ('00000000-0000-0000-0000-0000000000aa','master'),
@@ -93,7 +98,8 @@ INSERT INTO public.carteira_assignments (customer_user_id, owner_user_id, source
 -- vendas: c6 válida (enviado) → tem_venda_real=true; c1 só cancelada → false
 INSERT INTO public.sales_orders (customer_user_id, status, created_by) VALUES
   ('00000000-0000-0000-0000-0000000000c6','enviado',  '00000000-0000-0000-0000-0000000000f1'),
-  ('00000000-0000-0000-0000-0000000000c1','cancelado','00000000-0000-0000-0000-0000000000f1');
+  ('00000000-0000-0000-0000-0000000000c1','cancelado','00000000-0000-0000-0000-0000000000f1'),
+  ('00000000-0000-0000-0000-0000000000c8','orcamento','00000000-0000-0000-0000-0000000000f1');
 
 -- classificação (o trigger deriva SÓ is_fornecedor no INSERT; excluir vem da RPC, régua A)
 INSERT INTO public.cliente_classificacao (user_id, tags_omie) VALUES
@@ -102,7 +108,8 @@ INSERT INTO public.cliente_classificacao (user_id, tags_omie) VALUES
   ('00000000-0000-0000-0000-0000000000c3', ARRAY['Cliente VIP']),
   ('00000000-0000-0000-0000-0000000000c4', ARRAY['FORNECEDOR',' Transportadora ']),
   ('00000000-0000-0000-0000-0000000000c5', ARRAY['Transportadora']),
-  ('00000000-0000-0000-0000-0000000000c6', ARRAY['Fornecedor']);
+  ('00000000-0000-0000-0000-0000000000c6', ARRAY['Fornecedor']),
+  ('00000000-0000-0000-0000-0000000000c8', ARRAY['Fornecedor']);
 
 -- scores p/ testar o cleanup (c1 flagged → deletado; c3 comum → permanece)
 INSERT INTO public.customer_visit_scores (customer_user_id, farmer_id) VALUES
@@ -133,7 +140,7 @@ BEGIN
 
   -- classificar (RPC) deve restaurar tudo conforme a RÉGUA A
   SELECT classificar_clientes_fornecedores() INTO res;
-  IF (res->>'excluidos')::int <> 3 THEN RAISE EXCEPTION 'RPC excluidos=% (esperado 3: c1,c4,c5 — c6 tem venda, fica)', res->>'excluidos'; END IF;
+  IF (res->>'excluidos')::int <> 4 THEN RAISE EXCEPTION 'RPC excluidos=% (esperado 4: c1,c4,c5,c8 — c6 tem venda, fica)', res->>'excluidos'; END IF;
   RAISE NOTICE 'OK RPC classificar → %', res;
 
   -- A1: c1 fornecedor SEM venda (só cancelada) → exclui
@@ -160,6 +167,11 @@ BEGIN
   SELECT tem_venda_real AS tvr INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c1';
   IF r.tvr THEN RAISE EXCEPTION 'A8 FALHOU: c1 só tem venda cancelada → tem_venda_real=false'; END IF;
   RAISE NOTICE 'OK A8 (régua A) — fornecedor COM venda (c6) fica; cancelada (c1) não conta';
+  -- A8b (Codex #5): c8 fornecedor com SÓ orçamento → orcamento ∉ venda → exclui
+  SELECT tem_venda_real AS tvr, excluir_da_carteira AS exc INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c8';
+  IF r.tvr THEN RAISE EXCEPTION 'A8b FALHOU: c8 só tem orçamento → tem_venda_real=false (orcamento não é venda)'; END IF;
+  IF NOT r.exc THEN RAISE EXCEPTION 'A8b FALHOU (Codex #5): c8 fornecedor com só orçamento DEVE sair'; END IF;
+  RAISE NOTICE 'OK A8b (#5) — orçamento não conta como venda; fornecedor-só-orçamento sai';
 END $$;
 SQL
 
@@ -181,12 +193,9 @@ END $$;
 SQL
 
 echo ""
-echo "→ A5/A6 cleanup (T9 Step 3 — eligible=false + DELETE scores p/ flaggeds):"
+echo "→ A5/A6 cleanup via aplicar_exclusao_fornecedores() (Codex #3 — cleanup recorrente):"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
-UPDATE carteira_assignments SET eligible=false, updated_at=now()
-  WHERE customer_user_id IN (SELECT user_id FROM cliente_classificacao WHERE excluir_da_carteira);
-DELETE FROM customer_visit_scores WHERE customer_user_id IN (SELECT user_id FROM cliente_classificacao WHERE excluir_da_carteira);
-DELETE FROM farmer_client_scores  WHERE customer_user_id IN (SELECT user_id FROM cliente_classificacao WHERE excluir_da_carteira);
+SELECT public.aplicar_exclusao_fornecedores();
 DO $$
 DECLARE n int;
 BEGIN

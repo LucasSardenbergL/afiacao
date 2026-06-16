@@ -239,6 +239,9 @@ async function recalcOne(
       .limit(200),
   ]);
 
+  // FAIL-CLOSED (Codex P1): erro ao ler a flag → NÃO recalcula (senão um erro transitório
+  // de leitura recriaria score de fornecedor). O cliente é re-enfileirado no próximo batch.
+  if (flagRes.error) return { ok: false, error: `cliente_classificacao: ${flagRes.error.message}` };
   if (flagRes.data) return { ok: true };
   const { data: calls, error: cErr } = callsRes;
   if (cErr) return { ok: false, error: `farmer_calls: ${cErr.message}` };
