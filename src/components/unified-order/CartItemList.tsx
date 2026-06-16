@@ -13,6 +13,7 @@ import { fmt, getToolName } from '@/hooks/useUnifiedOrder';
 import { usePrecoCockpit, chaveCockpit, type ItemCockpitInput, type LinhaCockpit } from '@/hooks/usePrecoCockpit';
 import { FAIXA_UI } from '@/lib/preco/faixa-ui';
 import { cn } from '@/lib/utils';
+import { isInvalidProductPrice } from '@/services/orderSubmission/priceGuard';
 
 interface CartItemListProps {
   cart: { length: number };
@@ -71,6 +72,7 @@ export function CartItemList({
       {items.map(item => {
         const cartIdx = getCartIndex(item);
         const health = cockpitByKey.get(chaveCockpit(item.product.account ?? '', item.product.omie_codigo_produto, item.tint_formula_id));
+        const invalidPrice = isInvalidProductPrice(item.unit_price);
         return (
           <div key={`${item.product.id}-${item.tint_formula_id || 'base'}`} className="space-y-1.5 mb-2">
             <div className="flex items-start justify-between gap-1.5">
@@ -129,7 +131,7 @@ export function CartItemList({
               </div>
               <div className="flex items-center gap-0.5 flex-1">
                 <span className="text-[10px] text-muted-foreground">R$</span>
-                <Input type="text" inputMode="decimal" pattern="[0-9]*\.?[0-9]*" value={item.unit_price} onFocus={e => e.target.select()} onChange={e => onUpdateProductPrice(cartIdx, parseFloat(e.target.value) || 0)} className="h-6 text-xs" />
+                <Input type="text" inputMode="decimal" pattern="[0-9]*\.?[0-9]*" value={item.unit_price} aria-invalid={invalidPrice} onFocus={e => e.target.select()} onChange={e => onUpdateProductPrice(cartIdx, parseFloat(e.target.value) || 0)} className={cn('h-6 text-xs', invalidPrice && 'border-status-error focus-visible:ring-status-error')} />
               </div>
               <span className="text-xs font-semibold shrink-0">{fmt(item.quantity * item.unit_price)}</span>
             </div>

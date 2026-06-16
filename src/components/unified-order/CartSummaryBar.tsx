@@ -15,6 +15,7 @@ import { ptBR } from 'date-fns/locale';
 import type {
   ProductCartItem, ServiceCartItem, FormaPagamento,
 } from '@/hooks/useUnifiedOrder';
+import { findInvalidPricedProductItems } from '@/services/orderSubmission/priceGuard';
 
 interface CartSummaryBarProps {
   cart: { length: number };
@@ -155,7 +156,14 @@ export function CartSummaryBar({
   onSubmit, onSubmitQuote, offline = false,
 }: CartSummaryBarProps) {
   const hasOnlyProducts = (obenProductItems.length > 0 || colacorProductItems.length > 0) && serviceItems.length === 0;
-  const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0;
+  // Guard money-path (espelha submitOrder/submitQuote): produto a preço ≤ 0 barra o envio
+  // na UI antes do clique — defense-in-depth + feedback imediato (o item fica destacado no
+  // carrinho). Serviço de afiação não entra (preço 0 = "a orçar" legítimo).
+  const hasInvalidPrice = useMemo(
+    () => findInvalidPricedProductItems([...obenProductItems, ...colacorProductItems]).length > 0,
+    [obenProductItems, colacorProductItems],
+  );
+  const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0 || hasInvalidPrice;
 
   // Generate weekdays (Mon-Fri) for current week
   const weekDays = useMemo(() => {
@@ -235,6 +243,12 @@ export function CartSummaryBar({
               Selecione o serviço para cada ferramenta na aba Afiação.
             </p>
           )}
+          {hasInvalidPrice && (
+            <p className="text-xs text-status-error">
+              <AlertCircle className="w-3 h-3 inline mr-1" />
+              Defina um preço maior que zero para os itens destacados antes de enviar.
+            </p>
+          )}
           <Button className="w-full gap-2" onClick={onSubmit} disabled={disableSubmit}>
             {submitting ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -250,7 +264,7 @@ export function CartSummaryBar({
             })()}
           </Button>
           {hasOnlyProducts && onSubmitQuote && (
-            <Button variant="outline" className="w-full gap-2" onClick={onSubmitQuote} disabled={submitting}>
+            <Button variant="outline" className="w-full gap-2" onClick={onSubmitQuote} disabled={submitting || hasInvalidPrice}>
               {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
               Salvar como Orçamento
             </Button>

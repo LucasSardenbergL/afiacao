@@ -304,4 +304,45 @@ describe('submitOrder', () => {
     expect(body.codigo_cliente).toBe(200);   // colacor, não 100 (oben)
     expect(body.codigo_vendedor).toBe(6);    // colacor, não 5 (oben)
   });
+
+  it('produto com preço 0 → bloqueia (validate_price) ANTES de qualquer insert/Omie', async () => {
+    const { client, insert, invoke } = makeSupabase();
+    const zerado = { ...obenItem(), unit_price: 0 } as ProductCartItem;
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [zerado], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 0, colacor: 0, service: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_price');
+    // Invariante money-path: nada é inserido nem enviado ao Omie com valor zerado.
+    expect(insert).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('preço negativo numa conta bloqueia o pedido INTEIRO (fail-closed, não envia a metade)', async () => {
+    const { client, insert, invoke } = makeSupabase();
+    const negativo = { ...colacorAcabado(), unit_price: -1 } as ProductCartItem;
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [negativo], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_price');
+    expect(insert).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('serviço de afiação a R$0 ("a orçar") NÃO é bloqueado pelo guard de preço', async () => {
+    const { client } = makeSupabase();
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      customer: customerSintetico,
+      isCustomerMode: true,                  // só itens de afiação, preço de serviço é legítimo a 0
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      subtotals: { oben: 0, colacor: 0, service: 0 },
+    }));
+    expect(r.errors.some((e) => e.step === 'validate_price')).toBe(false);
+  });
 });
