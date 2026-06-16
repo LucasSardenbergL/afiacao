@@ -86,47 +86,69 @@ limit 80;
 Leia: `fones_distintos = 1` **e** `cidades_distintas = 1` junto com nome igual → ALTA confiança.
 Vários telefones/cidades → trate como candidato a revisar, não fusão.
 
-### Detector de SUCESSÃO comportamental (nome muda — o de nome não pega)
+### ⚠️ Lição empírica (rodado contra produção, 2026-06-15): sucessão NÃO é auto-detectável
 
-Sucessão troca nome/telefone/raiz. Pegue pelo comportamento: um CNPJ **parou** e outro
-**começou logo depois**, mesma cidade (+ telefone/nome/mix parecido). Diagnóstico:
+Testei "mesma cidade + A parou + B começou ≤180d depois" contra a base real → **ruído quase
+total**. A região é cheia de marcenaria pequena com rotatividade alta, então qualquer CNPJ novo
+casa com dezenas de CNPJs que ficaram quietos (ex.: "APARECIDA MÓVEIS" pareou com 7 empresas
+diferentes de Cláudio). E `customer_phone` vem NULL nos registros antigos (2020), então o sinal
+forte some. **Conclusões:**
+1. **Cidade + tempo sozinhos = inútil.** Nunca proponha fusão só com isso.
+2. **Exija uma ÂNCORA de identidade**: mesmo **telefone** OU mesmo **endereço físico** (rua+número).
+   A versão abaixo já filtra por isso — e tende a voltar pouquíssima coisa, o que é a resposta
+   honesta (sucessão raramente deixa rastro detectável aqui).
+3. **O mecanismo real é OWNER-ASSERTED**: o dono conhece as sucessões ("Fulano fechou a X e abriu
+   a Y"). O fluxo robusto é **o dono afirmar o par → a skill validar** (timing/cidade plausíveis? o
+   antigo parou mesmo? o novo está ativo?) **→ aplicar**. Não "detector propõe"; "dono afirma,
+   skill valida". Multi-CNPJ ativo idem.
+
+### Detector de SUCESSÃO (só com âncora: telefone OU endereço) — fila de revisão
+
+Pegue um CNPJ que **parou** e outro que **começou logo depois** SÓ quando dividem **telefone ou
+endereço** (mesma oficina, CNPJ novo). Sem a âncora, é ruído (ver lição acima). Diagnóstico:
 
 ```sql
--- FILA DE REVISÃO (não fusão): pares (A parou, B começou ≤180d depois) na mesma cidade.
--- Cada linha traz a evidência (nomes, telefones, datas, gap, flag de telefone igual) pro dono
--- JULGAR caso a caso. Nada aqui funde nada — é só uma lista pra ele confirmar.
+-- FILA DE REVISÃO (não fusão): A parou, B começou ≤365d depois, E dividem TELEFONE ou ENDEREÇO.
+-- A âncora (telefone/endereço) é o que separa sucessão real de "duas marcenarias diferentes na
+-- mesma cidade". Sem ela o resultado é ruído (ver lição acima). Nada aqui funde — é lista pra revisar.
 with ped as (
   select regexp_replace(coalesce(p.cnpj,p.document,''),'\D','','g') as doc,
-         lower(trim(regexp_replace(a.city,'\s*\([^)]*\)\s*$',''))) as cidade,
          so.created_at::date as data,
          coalesce(p.razao_social, p.name) as nome,
-         regexp_replace(coalesce(so.customer_phone,''),'\D','','g') as tel
+         regexp_replace(coalesce(so.customer_phone,''),'\D','','g') as tel,
+         lower(trim(regexp_replace(a.city,'\s*\([^)]*\)\s*$',''))) as cidade,
+         lower(trim(coalesce(a.street,'')||' '||coalesce(a.number,''))) as endereco
   from sales_orders so
   join profiles p on p.user_id = so.customer_user_id
   left join addresses a on a.user_id = so.customer_user_id and a.is_default = true
   where so.status in ('faturado','importado','separacao','enviado') and so.deleted_at is null
     and length(regexp_replace(coalesce(p.cnpj,p.document,''),'\D','','g')) >= 11
 ),
-attr as (   -- por CNPJ: cidade, janela de compra, nome e telefone mais recentes (evidência)
+attr as (   -- por CNPJ: janela de compra + âncoras (telefone, endereço) + nome, mais recentes
   select doc,
-         (array_agg(cidade order by data desc) filter (where cidade is not null))[1] as cidade,
-         min(data) as primeiro, max(data) as ultimo,
-         (array_agg(nome order by data desc))[1] as nome,
-         (array_agg(nullif(tel,'') order by data desc) filter (where nullif(tel,'') is not null))[1] as tel
+         (array_agg(cidade   order by data desc) filter (where cidade is not null))[1] as cidade,
+         (array_agg(nullif(endereco,'') order by data desc) filter (where nullif(endereco,'') is not null))[1] as endereco,
+         (array_agg(nullif(tel,'')      order by data desc) filter (where nullif(tel,'') is not null))[1] as tel,
+         (array_agg(nome     order by data desc))[1] as nome,
+         min(data) as primeiro, max(data) as ultimo
   from ped group by doc
 )
 select a.cidade,
-       a.nome as nome_antigo, a.doc as cnpj_antigo, a.ultimo  as parou_em,  a.tel as tel_antigo,
-       b.nome as nome_novo,   b.doc as cnpj_novo,   b.primeiro as comecou_em, b.tel as tel_novo,
+       a.nome as nome_antigo, a.doc as cnpj_antigo, a.ultimo  as parou_em,
+       b.nome as nome_novo,   b.doc as cnpj_novo,   b.primeiro as comecou_em,
        (b.primeiro - a.ultimo) as gap_dias,
-       (a.tel is not null and a.tel = b.tel) as mesmo_telefone   -- evidência forte de sucessão
+       (a.tel is not null and a.tel = b.tel) as mesmo_telefone,
+       (a.endereco is not null and a.endereco = b.endereco) as mesmo_endereco,
+       a.tel as tel_antigo, b.tel as tel_novo, a.endereco as endereco
 from attr a join attr b
-  on a.cidade = b.cidade and a.doc <> b.doc
- and a.ultimo < b.primeiro                         -- A morre antes de B nascer (sem sobreposição)
- and (b.primeiro - a.ultimo) between 0 and 180     -- B começou logo depois
- and b.ultimo > current_date - 180                 -- B está ativo agora
- and a.ultimo < current_date - 180                 -- A parou de vez
-order by mesmo_telefone desc, a.cidade, gap_dias   -- candidatos com telefone igual no topo
+  on a.doc <> b.doc
+ and a.ultimo < b.primeiro                          -- A morre antes de B nascer
+ and (b.primeiro - a.ultimo) between 0 and 365      -- B começou em até 1 ano
+ and b.ultimo > current_date - 180                  -- B está ativo agora
+ and a.ultimo < current_date - 180                  -- A parou de vez
+ and ( (a.tel is not null and a.tel = b.tel)        -- ÂNCORA: mesmo telefone, OU
+       or (a.endereco is not null and length(a.endereco) > 6 and a.endereco = b.endereco) )  -- mesmo endereço
+order by mesmo_telefone desc, mesmo_endereco desc, gap_dias
 limit 80;
 ```
 
