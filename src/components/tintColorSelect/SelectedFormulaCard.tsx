@@ -23,6 +23,7 @@ const MOTIVO_SEM_PRECO: Record<SemPrecoMotivo, string> = {
   base: 'A base não tem preço cadastrado no Omie. Ajuste o produto no Omie para vender esta cor.',
   corante: 'Falta o custo de um corante no Omie. Avise o tintométrico para vincular o corante.',
   receita: 'A receita desta cor está incompleta. Avise o tintométrico.',
+  indisponivel: 'Não foi possível calcular o preço agora (motor de preço indisponível). Tente de novo; se persistir, avise o suporte.',
 };
 
 interface SelectedFormulaCardProps {
@@ -223,7 +224,7 @@ export function SelectedFormulaCard({
             <AlertTriangle className="w-5 h-5 text-status-warning shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-semibold text-status-warning-foreground">Sem preço para esta cor</p>
-              <p className="text-xs text-status-warning mt-1">{MOTIVO_SEM_PRECO[motivoSemPreco ?? 'receita']}</p>
+              <p className="text-xs text-status-warning mt-1">{MOTIVO_SEM_PRECO[motivoSemPreco ?? 'indisponivel']}</p>
             </div>
           </div>
         )}

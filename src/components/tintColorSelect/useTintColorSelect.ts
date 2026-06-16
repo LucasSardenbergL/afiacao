@@ -202,7 +202,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   const globalColorExists = globalColorData?.colorExists ?? false;
 
   // Pricing breakdown for selected formula (motor honesto get_tint_price)
-  const { data: pricing, isLoading: pricingLoading } = useTintPricing(selectedFormula?.id || null);
+  const { data: pricing, isLoading: pricingLoading, isError: pricingError } = useTintPricing(selectedFormula?.id || null);
 
   // Last practiced price for this color+base for the customer
   const { data: lastPracticedPrice, isLoading: loadingLastPrice } = useQuery({
@@ -341,10 +341,17 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // antes de saber. A UI mostra "calculando" e segura o "Adicionar".
   const precoCarregando = !!selectedFormula && (pricingLoading || loadingLastPrice);
 
+  // A RPC de preço pode FALHAR (erro/permissão/runtime) e o hook devolve pricing null igual a
+  // "carregando". Sem distinguir, a seleção cairia no CSV legado/preço-cliente e venderia base/
+  // corante inativo que a RPC barra. Fail-closed: fórmula selecionada + parou de carregar + a RPC
+  // não confirmou breakdown (erro ou sem dado) ⇒ motor falhou ⇒ sem preço (regra 0 de select-price).
+  const motorFalhou = !!selectedFormula && !pricingLoading && (pricingError || pricing == null);
+
   const selection = selectTintPrice({
     lastPracticedPrice: lastPracticedPrice?.price ?? null,
     precoCsv: rawCsv,
     pricing: pricing ?? null,
+    motorFalhou,
   });
 
   // Qualquer "sem preço confiável" (base ausente/zero ex. PRD03657, corante sem custo, receita

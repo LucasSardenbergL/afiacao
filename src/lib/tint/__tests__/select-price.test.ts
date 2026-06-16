@@ -137,6 +137,20 @@ describe('selectTintPrice — seleção honesta da fonte de preço (Passo 2, mon
     expect(r.source).toBeNull();
     expect(r.precoSemDesconto).toBeNull();
   });
+
+  it('motor falhou (RPC erro, ≠ carregando) → sem preço, ignora CSV E cliente (fail-closed, regra 0)', () => {
+    // A RPC pode estar barrando base/corante inativo justamente quando falha → não cair no importado.
+    const r = selectTintPrice({ lastPracticedPrice: 200, precoCsv: 180, pricing: null, motorFalhou: true });
+    expect(r.source).toBeNull();
+    expect(r.precoSemDesconto).toBeNull();
+    expect(r.motivoSemPreco).toBe('indisponivel');
+  });
+
+  it('motorFalhou=false com pricing null + CSV → ainda usa o CSV (loading ≠ falha, não regride o Passo 2)', () => {
+    const r = selectTintPrice({ lastPracticedPrice: null, precoCsv: 180, pricing: null, motorFalhou: false });
+    expect(r.source).toBe('tabela');
+    expect(r.precoSemDesconto).toBe(180);
+  });
 });
 
 describe('selectAltPrice — preço de embalagem alternativa (1b)', () => {

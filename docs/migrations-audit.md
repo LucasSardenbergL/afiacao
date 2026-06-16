@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **246** custom migrations totais
-- **904** objetos esperados (criados por estas migrations)
+- **247** custom migrations totais
+- **906** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 258
+  - `function`: 260
   - `rls_policy`: 209
   - `index`: 178
   - `cron_job`: 106
@@ -2139,6 +2139,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260616020000_fix_aging_views_status_vocab.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260616120000_tint_price_gate_ativo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_price` | — |
+| `function` | `public.get_tint_prices` | — |
 
 ## Próximos passos quando algo der `❌`
 
