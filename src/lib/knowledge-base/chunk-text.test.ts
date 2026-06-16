@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chunkText, type Chunk } from './chunk-text';
+import { chunkText } from './chunk-text';
 
 describe('chunkText', () => {
   it('texto vazio retorna array vazio', () => {

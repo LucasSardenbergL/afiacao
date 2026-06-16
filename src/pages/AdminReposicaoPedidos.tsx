@@ -1,22 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { AlertTriangle, Ban, CheckCircle2, Clock, ExternalLink, Eye, Loader2, PlayCircle, RefreshCw, Trash2, XCircle, RotateCw, Zap } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,1262 +17,47 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Eye, Loader2, RefreshCw, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { logger } from '@/lib/logger';
-import { cn } from '@/lib/utils';
+import { PedidoSugerido } from '@/components/reposicao/pedidos/types';
+import { EMPRESA, formatBRL, interpretarRespostaDisparo, particionarCicloHoje, pedidosVisiveis, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
+import { CycleIndicator } from '@/components/reposicao/pedidos/CycleIndicator';
+import { PedidoRow } from '@/components/reposicao/pedidos/PedidoRow';
+import { StatusComMotivo, PortalBadge } from '@/components/reposicao/pedidos/badges';
+import { DetalhesModal } from '@/components/reposicao/pedidos/DetalhesModal';
+import { CancelarModal } from '@/components/reposicao/pedidos/CancelarModal';
+import { PortalDrawer } from '@/components/reposicao/pedidos/PortalDrawer';
+import { CiclosAnteriores } from '@/components/reposicao/pedidos/CiclosAnteriores';
+import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMinimoButton';
+import { ehGateMinimoFaturamento } from '@/components/reposicao/pedidos/shared';
+import { useAuth } from '@/contexts/AuthContext';
 
-type Status =
-  | 'pendente_aprovacao'
-  | 'aprovado_aguardando_disparo'
-  | 'bloqueado_guardrail'
-  | 'disparado'
-  | 'cancelado'
-  | 'cancelado_humano'
-  | 'expirado_sem_aprovacao'
-  | string;
-
-type StatusEnvioPortal =
-  | 'nao_aplicavel'
-  | 'pendente_envio_portal'
-  | 'enviando_portal'
-  | 'enviado_portal'
-  | 'sucesso_portal'
-  | 'aceito_portal_sem_protocolo'
-  | 'indeterminado_requer_conciliacao'
-  | 'erro_retentavel'
-  | 'erro_nao_retentavel'
-  | 'falha_envio_portal';
-
-interface PedidoSugerido {
-  id: number;
-  empresa: string;
-  fornecedor_nome: string;
-  grupo_codigo: string | null;
-  data_ciclo: string;
-  horario_geracao: string | null;
-  horario_corte_planejado: string | null;
-  horario_disparo_real: string | null;
-  valor_total: number;
-  num_skus: number;
-  pedido_anterior_valor: number | null;
-  delta_vs_anterior_perc: number | null;
-  status: Status;
-  mensagem_bloqueio: string | null;
-  omie_pedido_compra_numero: string | null;
-  aprovado_em: string | null;
-  aprovado_por: string | null;
-  condicao_pagamento_codigo: string | null;
-  condicao_pagamento_descricao: string | null;
-  num_parcelas: number | null;
-  dias_parcelas: string | null;
-  condicao_origem: string | null;
-  // Tracking de envio ao portal B2B
-  status_envio_portal: StatusEnvioPortal | null;
-  enviado_portal_em: string | null;
-  portal_protocolo: string | null;
-  portal_resposta: unknown;
-  portal_screenshot_url: string | null;
-  portal_tentativas: number | null;
-  portal_proximo_retry_em: string | null;
-  portal_erro: string | null;
-  criado_em?: string | null;
-  cancelado_em?: string | null;
-  cancelado_por?: string | null;
-  justificativa_cancelamento?: string | null;
-  omie_registrado_em?: string | null;
-  // PR5: split de pedidos grandes Sayerlack. Pai tem split_total preenchido
-  // e status='split_em_filhos'. Filhos têm split_parent_id+split_lote+split_total
-  // e status normal (aprovado_aguardando_disparo / disparado / etc).
-  split_parent_id?: number | null;
-  split_lote?: number | null;
-  split_total?: number | null;
-}
-
-interface CondicaoPagamento {
-  codigo: string;
-  descricao: string;
-  num_parcelas: number | null;
-  dias_parcelas: string | null;
-}
-
-interface PedidoItem {
-  id: number;
-  pedido_id: number;
+type SkuSemFornecedor = {
   sku_codigo_omie: string;
   sku_descricao: string | null;
-  estoque_atual: number | null;
-  estoque_minimo: number | null;
+  estoque_efetivo: number | null;
   ponto_pedido: number | null;
-  estoque_maximo: number | null;
-  qtde_sugerida: number;
-  qtde_final: number | null;
-  preco_unitario: number | null;
-  valor_linha: number | null;
-  primeira_compra: boolean | null;
-  ajustado_humano: boolean | null;
-}
-
-function getEstoqueZoneClass(estoque: number, minimo: number, pp: number): string {
-  if (estoque < minimo) return 'text-status-error font-semibold';
-  if (estoque <= pp) return 'text-status-warning font-semibold';
-  return 'text-status-success';
-}
-
-const EMPRESA = 'OBEN';
-
-const statusMeta: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline'; className?: string }> = {
-  pendente_aprovacao: { label: 'Pendente', variant: 'secondary', className: 'bg-status-warning/15 text-status-warning border-status-warning/30' },
-  aprovado_aguardando_disparo: { label: 'Aprovado', variant: 'secondary', className: 'bg-status-info/15 text-status-info border-status-info/30' },
-  bloqueado_guardrail: { label: 'Bloqueado', variant: 'destructive' },
-  disparado: { label: 'Disparado', variant: 'secondary', className: 'bg-status-success/15 text-status-success border-status-success/30' },
-  cancelado: { label: 'Cancelado', variant: 'outline' },
-  cancelado_humano: { label: 'Cancelado (vazio)', variant: 'outline' },
-  expirado_sem_aprovacao: { label: 'Expirado sem aprovação', variant: 'secondary', className: 'bg-muted text-muted-foreground border-border' },
-  // PR5: pedido pai de um split — não tem mais itens próprios, foi dividido em filhos.
-  split_em_filhos: { label: 'Dividido', variant: 'secondary', className: 'bg-status-purple-bg text-status-purple-foreground border-status-purple/30' },
 };
-
-function formatBRL(v: number | null | undefined) {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v ?? 0));
-}
-
-function formatTime(iso: string | null) {
-  if (!iso) return '—';
-  try {
-    return format(new Date(iso), 'HH:mm');
-  } catch {
-    return '—';
-  }
-}
-
-function StatusBadge({ status }: { status: Status }) {
-  const meta = statusMeta[status] ?? { label: status, variant: 'outline' as const };
-  return (
-    <Badge variant={meta.variant} className={meta.className}>
-      {meta.label}
-    </Badge>
-  );
-}
-
-// PR5: indica visualmente o split. Renderiza algo só quando o pedido
-// participa de um split (pai ou filho); senão é null e não polui a UI.
-function SplitInfo({ pedido }: { pedido: PedidoSugerido }) {
-  // Pai (status_em_filhos): mostra "em N partes"
-  if (pedido.status === 'split_em_filhos' && pedido.split_total) {
-    return (
-      <Badge variant="outline" className="bg-status-purple-bg text-status-purple border-status-purple/30 ml-1">
-        em {pedido.split_total} partes
-      </Badge>
-    );
-  }
-  // Filho (split_parent_id preenchido): mostra "Lote X/N"
-  if (pedido.split_parent_id && pedido.split_lote && pedido.split_total) {
-    return (
-      <Badge
-        variant="outline"
-        className="bg-status-purple-bg text-status-purple border-status-purple/30 ml-1"
-        title={`Filho do pedido #${pedido.split_parent_id}`}
-      >
-        Lote {pedido.split_lote}/{pedido.split_total}
-      </Badge>
-    );
-  }
-  return null;
-}
-
-/* ─── Portal B2B Badge + Drawer ─── */
-const portalStatusMeta: Record<StatusEnvioPortal, { label: string; className: string }> = {
-  nao_aplicavel: { label: '—', className: 'bg-muted text-muted-foreground border-border' },
-  pendente_envio_portal: { label: 'Aguardando envio', className: 'bg-status-info/15 text-status-info border-status-info/30' },
-  enviando_portal: { label: 'Enviando…', className: 'bg-status-info/20 text-status-info border-status-info/40 animate-pulse' },
-  erro_retentavel: { label: 'Retentável', className: 'bg-status-info/15 text-status-info border-status-info/30' },
-  enviado_portal: { label: '✓ Enviado', className: 'bg-status-success/15 text-status-success border-status-success/30' },
-  sucesso_portal: { label: '✓ Enviado', className: 'bg-status-success/15 text-status-success border-status-success/30' },
-  aceito_portal_sem_protocolo: { label: 'Sem protocolo', className: 'bg-status-warning/15 text-status-warning border-status-warning/30' },
-  indeterminado_requer_conciliacao: { label: 'Requer conciliação', className: 'bg-status-warning/15 text-status-warning border-status-warning/30' },
-  falha_envio_portal: { label: 'Falha', className: 'bg-destructive/15 text-destructive border-destructive/30' },
-  erro_nao_retentavel: { label: 'Falha definitiva', className: 'bg-destructive/15 text-destructive border-destructive/30' },
-};
-
-function PortalBadge({
-  pedido,
-  onClick,
-}: {
-  pedido: PedidoSugerido;
-  onClick: () => void;
-}) {
-  const status = (pedido.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal;
-  const meta = portalStatusMeta[status] ?? portalStatusMeta.nao_aplicavel;
-
-  const tooltipText =
-    (status === 'enviado_portal' || status === 'sucesso_portal') && pedido.portal_protocolo
-      ? `Protocolo: ${pedido.portal_protocolo}`
-      : (status === 'falha_envio_portal' || status === 'erro_nao_retentavel') && pedido.portal_erro
-        ? pedido.portal_erro
-        : (status === 'aceito_portal_sem_protocolo' || status === 'indeterminado_requer_conciliacao')
-          ? 'Portal pode ter recebido — verifique e concilie manualmente'
-          : status === 'erro_retentavel' && pedido.portal_erro
-            ? `Retentável: ${pedido.portal_erro}`
-            : null;
-
-  const badge = (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={status === 'nao_aplicavel'}
-      className={cn(
-        'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors',
-        meta.className,
-        status === 'nao_aplicavel' ? 'cursor-default' : 'cursor-pointer hover:opacity-80',
-      )}
-    >
-      {meta.label}
-    </button>
-  );
-
-  if (!tooltipText) return badge;
-
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>{badge}</TooltipTrigger>
-        <TooltipContent className="max-w-xs whitespace-pre-wrap break-words">{tooltipText}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
-
-function PortalDrawer({
-  pedido,
-  open,
-  onOpenChange,
-}: {
-  pedido: PedidoSugerido | null;
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-}) {
-  const queryClient = useQueryClient();
-  const { isAdmin } = useAuth();
-  const [confirmReenvio, setConfirmReenvio] = useState(false);
-
-  const reenviarMutation = useMutation({
-    mutationFn: async () => {
-      if (!pedido) return;
-      const { error } = await supabase
-        .from('pedido_compra_sugerido')
-        .update({
-          status_envio_portal: 'pendente_envio_portal',
-          portal_tentativas: 0,
-          portal_proximo_retry_em: null,
-          portal_erro: null,
-        })
-        .eq('id', pedido.id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      toast.success('Pedido marcado para reenvio. O cron / disparo manual fará o envio.');
-      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
-      setConfirmReenvio(false);
-      onOpenChange(false);
-    },
-    onError: (e: Error) => toast.error(`Erro ao marcar reenvio: ${e.message}`),
-  });
-
-  if (!pedido) return null;
-  const status = (pedido.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal;
-  const tentativas = pedido.portal_tentativas ?? 0;
-  const tentativasColor =
-    tentativas <= 1 ? 'text-status-success' : tentativas === 2 ? 'text-status-warning' : 'text-destructive';
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle>Detalhes do envio ao portal</SheetTitle>
-          <SheetDescription>
-            Pedido #{pedido.id} — {pedido.fornecedor_nome}
-          </SheetDescription>
-        </SheetHeader>
-
-        <div className="space-y-5 py-4">
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <div className="text-muted-foreground text-xs">Status</div>
-              <div className="mt-1">
-                <Badge className={portalStatusMeta[status].className} variant="outline">
-                  {portalStatusMeta[status].label}
-                </Badge>
-              </div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Protocolo do portal</div>
-              <div className="font-mono font-medium">{pedido.portal_protocolo ?? '—'}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Enviado em</div>
-              <div className="font-medium">
-                {pedido.enviado_portal_em ? format(new Date(pedido.enviado_portal_em), 'dd/MM/yyyy HH:mm') : '—'}
-              </div>
-            </div>
-            <div>
-              <div className="text-muted-foreground text-xs">Tentativas</div>
-              <div className={`font-bold tabular-nums ${tentativasColor}`}>{tentativas}</div>
-            </div>
-            <div className="col-span-2">
-              <div className="text-muted-foreground text-xs">Próximo retry</div>
-              <div className="font-medium">
-                {pedido.portal_proximo_retry_em
-                  ? `próximo retry ${formatDistanceToNow(new Date(pedido.portal_proximo_retry_em), { addSuffix: true, locale: ptBR })}`
-                  : '—'}
-              </div>
-            </div>
-          </div>
-
-          {pedido.portal_screenshot_url && (
-            <div>
-              <div className="text-muted-foreground text-xs mb-1">Screenshot do portal</div>
-              <a href={pedido.portal_screenshot_url} target="_blank" rel="noreferrer">
-                <img
-                  src={pedido.portal_screenshot_url}
-                  alt="Confirmação do portal"
-                  className="rounded border max-h-72 w-auto"
-                />
-              </a>
-            </div>
-          )}
-
-          {pedido.portal_erro && (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Erro mais recente</AlertTitle>
-              <AlertDescription className="whitespace-pre-wrap break-words">{pedido.portal_erro}</AlertDescription>
-            </Alert>
-          )}
-
-          {pedido.portal_resposta != null && (
-            <details className="rounded border bg-muted/30 p-3 text-xs">
-              <summary className="cursor-pointer font-medium">Payload bruto da última tentativa</summary>
-              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[11px] leading-snug">
-                {JSON.stringify(pedido.portal_resposta, null, 2)}
-              </pre>
-            </details>
-          )}
-        </div>
-
-        <SheetFooter className="gap-2 flex-col sm:flex-row">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Fechar</Button>
-          {isAdmin && status !== 'nao_aplicavel' && (
-            <Button
-              variant="secondary"
-              onClick={() => setConfirmReenvio(true)}
-              disabled={reenviarMutation.isPending}
-            >
-              <RotateCw className="w-4 h-4 mr-1" />
-              Forçar reenvio ao portal
-            </Button>
-          )}
-        </SheetFooter>
-
-        <AlertDialog open={confirmReenvio} onOpenChange={setConfirmReenvio}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Forçar reenvio ao portal?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Isso vai reenviar o pedido #{pedido.id} ao portal Sayerlack. Use apenas se você confirmou que o envio anterior não chegou. Confirmar?
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={reenviarMutation.isPending}>Cancelar</AlertDialogCancel>
-              <AlertDialogAction
-                disabled={reenviarMutation.isPending}
-                onClick={() => reenviarMutation.mutate()}
-              >
-                {reenviarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-                Confirmar reenvio
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-function CycleIndicator({ now }: { now: Date }) {
-  const minutes = now.getHours() * 60 + now.getMinutes();
-  const overrideUntil = 9 * 60 + 30; // 09:30
-  const cutoff = 10 * 60; // 10:00
-
-  if (minutes < overrideUntil) {
-    return (
-      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-status-success/15 text-status-success border border-status-success/30 text-sm">
-        <Clock className="w-4 h-4" />
-        Janela de override aberta até 09:30
-      </div>
-    );
-  }
-  if (minutes < cutoff) {
-    return (
-      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-status-warning/15 text-status-warning border border-status-warning/30 text-sm">
-        <PlayCircle className="w-4 h-4" />
-        Disparando em breve
-      </div>
-    );
-  }
-  return (
-    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-muted text-muted-foreground border text-sm">
-      <CheckCircle2 className="w-4 h-4" />
-      Ciclo finalizado
-    </div>
-  );
-}
-
-/* ─── Painel: Status de envio ao portal ─── */
-function PortalStatusPanel({ pedido }: { pedido: PedidoSugerido | null }) {
-  if (!pedido) return null;
-  const status = (pedido.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal;
-  const meta = portalStatusMeta[status] ?? portalStatusMeta.nao_aplicavel;
-  const tentativas = pedido.portal_tentativas ?? 0;
-  const fmt = (iso: string | null | undefined) => {
-    if (!iso) return '—';
-    try { return format(new Date(iso), "dd/MM/yyyy HH:mm", { locale: ptBR }); } catch { return '—'; }
-  };
-  return (
-    <div className="rounded-md border bg-muted/20 p-3 space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-medium">Status de envio ao portal</div>
-        <span className={cn(
-          'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold',
-          meta.className,
-        )}>{meta.label}</span>
-      </div>
-      <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
-        <dt className="text-muted-foreground">Enviado em</dt>
-        <dd className="text-right tabular-nums">{fmt(pedido.enviado_portal_em)}</dd>
-        <dt className="text-muted-foreground">Protocolo</dt>
-        <dd className="text-right font-mono">{pedido.portal_protocolo ?? '—'}</dd>
-        <dt className="text-muted-foreground">Tentativas</dt>
-        <dd className="text-right tabular-nums">{tentativas}</dd>
-        <dt className="text-muted-foreground">Próx. retry</dt>
-        <dd className="text-right tabular-nums">{fmt(pedido.portal_proximo_retry_em)}</dd>
-      </dl>
-      {pedido.portal_erro && (
-        <div className="text-xs text-destructive whitespace-pre-wrap break-words border-t pt-2">
-          {pedido.portal_erro}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ─── Painel: Histórico de ações ─── */
-function HistoricoAcoesPanel({ pedido }: { pedido: PedidoSugerido | null }) {
-  if (!pedido) return null;
-  type Evt = { ts: string; label: string; by?: string | null; detail?: string | null; tone: 'default' | 'success' | 'warn' | 'danger' };
-  const evts: Evt[] = [];
-  if (pedido.criado_em) evts.push({ ts: pedido.criado_em, label: 'Pedido gerado', tone: 'default' });
-  if (pedido.aprovado_em) evts.push({ ts: pedido.aprovado_em, label: 'Aprovado', by: pedido.aprovado_por, tone: 'success' });
-  if (pedido.enviado_portal_em) {
-    evts.push({
-      ts: pedido.enviado_portal_em,
-      label: 'Enviado ao portal',
-      detail: pedido.portal_protocolo ? `Protocolo ${pedido.portal_protocolo}` : null,
-      tone: pedido.status_envio_portal === 'falha_envio_portal' ? 'danger' : 'success',
-    });
-  }
-  if (pedido.horario_disparo_real) evts.push({ ts: pedido.horario_disparo_real, label: 'Disparado', tone: 'success' });
-  if (pedido.omie_registrado_em) evts.push({
-    ts: pedido.omie_registrado_em,
-    label: 'Registrado no Omie',
-    detail: pedido.omie_pedido_compra_numero ? `Nº ${pedido.omie_pedido_compra_numero}` : null,
-    tone: 'success',
-  });
-  if (pedido.cancelado_em) evts.push({
-    ts: pedido.cancelado_em,
-    label: 'Cancelado',
-    by: pedido.cancelado_por,
-    detail: pedido.justificativa_cancelamento,
-    tone: 'danger',
-  });
-  evts.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-
-  const fmt = (iso: string) => {
-    try { return format(new Date(iso), "dd/MM/yyyy HH:mm", { locale: ptBR }); } catch { return iso; }
-  };
-  const dotCls: Record<Evt['tone'], string> = {
-    default: 'bg-muted-foreground',
-    success: 'bg-status-success',
-    warn: 'bg-status-warning',
-    danger: 'bg-destructive',
-  };
-  return (
-    <div className="rounded-md border bg-muted/20 p-3">
-      <div className="text-sm font-medium mb-2">Histórico de ações</div>
-      {evts.length === 0 ? (
-        <div className="text-xs text-muted-foreground py-2">Sem eventos registrados.</div>
-      ) : (
-        <ol className="space-y-2.5">
-          {evts.map((e, i) => (
-            <li key={i} className="flex gap-2.5 text-xs">
-              <div className="flex flex-col items-center pt-0.5">
-                <span className={cn('h-2 w-2 rounded-full', dotCls[e.tone])} />
-                {i < evts.length - 1 && <span className="flex-1 w-px bg-border mt-1" />}
-              </div>
-              <div className="flex-1 pb-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{e.label}</span>
-                  <span className="tabular-nums text-muted-foreground">{fmt(e.ts)}</span>
-                </div>
-                {(e.by || e.detail) && (
-                  <div className="text-muted-foreground mt-0.5 break-words">
-                    {e.by && <span>por {e.by}</span>}
-                    {e.by && e.detail && <span> · </span>}
-                    {e.detail && <span>{e.detail}</span>}
-                  </div>
-                )}
-              </div>
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
-  );
-}
-
-/* ─── Detalhes Modal ─── */
-function DetalhesModal({
-  pedido,
-  open,
-  onOpenChange,
-  onApproved,
-}: {
-  pedido: PedidoSugerido | null;
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  onApproved: () => void;
-}) {
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
-  const [edits, setEdits] = useState<Record<number, number>>({});
-  const [obs, setObs] = useState('');
-  const [condicaoCodigo, setCondicaoCodigo] = useState<string>('');
-  const [removerItem, setRemoverItem] = useState<PedidoItem | null>(null);
-  const [descontinuarItem, setDescontinuarItem] = useState<PedidoItem | null>(null);
-
-  // Catálogo de condições de pagamento Omie (carregado uma vez)
-  const { data: condicoes = [] } = useQuery({
-    queryKey: ['condicoes-pagamento', pedido?.empresa],
-    queryFn: async () => {
-      if (!pedido) return [] as CondicaoPagamento[];
-      const { data, error } = await supabase
-        .from('omie_condicao_pagamento_catalogo')
-        .select('codigo, descricao, num_parcelas, dias_parcelas')
-        .eq('empresa', pedido.empresa)
-        .eq('ativo', true)
-        .order('descricao');
-      if (error) throw error;
-      return (data ?? []) as CondicaoPagamento[];
-    },
-    enabled: !!pedido && open,
-  });
-
-  const { data: itens, isLoading } = useQuery({
-    queryKey: ['pedido-itens', pedido?.id],
-    queryFn: async () => {
-      if (!pedido) return [] as PedidoItem[];
-      const { data, error } = await supabase
-        .from('pedido_compra_item')
-        .select('*')
-        .eq('pedido_id', pedido.id)
-        .order('id', { ascending: true });
-      if (error) throw error;
-      const baseItens = data ?? [];
-      if (baseItens.length === 0) return [] as PedidoItem[];
-
-      // Buscar estoque_minimo de sku_parametros (JOIN manual)
-      const skuCodigos = baseItens.map((it) => Number(it.sku_codigo_omie)).filter((n) => !isNaN(n));
-      const { data: params } = await supabase
-        .from('sku_parametros')
-        .select('sku_codigo_omie, estoque_minimo')
-        .eq('empresa', pedido.empresa)
-        .in('sku_codigo_omie', skuCodigos);
-      const minMap = new Map<string, number>();
-      (params ?? []).forEach((p) => {
-        minMap.set(String(p.sku_codigo_omie), Number(p.estoque_minimo ?? 0));
-      });
-
-      return baseItens.map((it) => ({
-        ...it,
-        estoque_minimo: minMap.get(String(it.sku_codigo_omie)) ?? 0,
-      })) as PedidoItem[];
-    },
-    enabled: !!pedido && open,
-  });
-
-  useEffect(() => {
-    if (!open) {
-      setEdits({});
-      setObs('');
-      setCondicaoCodigo('');
-    } else if (pedido) {
-      setCondicaoCodigo(pedido.condicao_pagamento_codigo ?? '');
-    }
-  }, [open, pedido]);
-
-  const linhas = useMemo(() => {
-    return (itens ?? []).map((it) => {
-      const qtd = edits[it.id] ?? Number(it.qtde_final ?? it.qtde_sugerida);
-      const preco = Number(it.preco_unitario ?? 0);
-      return { ...it, _qtd: qtd, _valor: qtd * preco };
-    });
-  }, [itens, edits]);
-
-  const totalAtual = useMemo(
-    () => linhas.reduce((acc, l) => acc + l._valor, 0),
-    [linhas],
-  );
-
-  const salvarMutation = useMutation({
-    mutationFn: async () => {
-      if (!pedido) return;
-      const updates = Object.entries(edits);
-      for (const [itemId, qtd] of updates) {
-        const item = (itens ?? []).find((i) => i.id === Number(itemId));
-        const preco = Number(item?.preco_unitario ?? 0);
-        const { error } = await supabase
-          .from('pedido_compra_item')
-          .update({
-            qtde_final: qtd,
-            valor_linha: qtd * preco,
-            ajustado_humano: true,
-          })
-          .eq('id', Number(itemId));
-        if (error) throw error;
-      }
-      const novoTotal = linhas.reduce((acc, l) => acc + l._valor, 0);
-      const { error: errPed } = await supabase
-        .from('pedido_compra_sugerido')
-        .update({ valor_total: novoTotal, atualizado_em: new Date().toISOString() })
-        .eq('id', pedido.id);
-      if (errPed) throw errPed;
-    },
-    onSuccess: () => {
-      toast.success('Ajustes salvos');
-      queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
-      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
-      setEdits({});
-    },
-    onError: (e: Error) => {
-      logger.error('Erro ao salvar ajustes', { error: e });
-      toast.error(`Erro ao salvar: ${e.message}`);
-    },
-  });
-
-  const condicaoSelecionada = useMemo(
-    () => condicoes.find((c) => c.codigo === condicaoCodigo) ?? null,
-    [condicoes, condicaoCodigo],
-  );
-
-  const condicaoMudou = condicaoCodigo !== (pedido?.condicao_pagamento_codigo ?? '');
-
-  const salvarCondicaoMutation = useMutation({
-    mutationFn: async () => {
-      if (!pedido || !condicaoSelecionada) return;
-      const { error } = await supabase
-        .from('pedido_compra_sugerido')
-        .update({
-          condicao_pagamento_codigo: condicaoSelecionada.codigo,
-          condicao_pagamento_descricao: condicaoSelecionada.descricao,
-          num_parcelas: condicaoSelecionada.num_parcelas,
-          condicao_origem: 'manual_humano',
-          atualizado_em: new Date().toISOString(),
-        })
-        .eq('id', pedido.id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      toast.success('Condição de pagamento salva');
-      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
-    },
-    onError: (e: Error) => {
-      logger.error('Erro ao salvar condição', { error: e });
-      toast.error(`Erro ao salvar condição: ${e.message}`);
-    },
-  });
-
-  const aprovarMutation = useMutation({
-    mutationFn: async () => {
-      if (!pedido) return;
-      if (!condicaoSelecionada) {
-        throw new Error('Selecione uma condição de pagamento antes de aprovar');
-      }
-      // salvar ajustes primeiro se houver
-      if (Object.keys(edits).length > 0) {
-        await salvarMutation.mutateAsync();
-      }
-      // salvar condição se mudou ou se ainda não havia
-      if (condicaoMudou) {
-        await salvarCondicaoMutation.mutateAsync();
-      }
-      const { data, error } = await supabase.rpc('aprovar_pedido_sugerido', {
-        p_pedido_id: pedido.id,
-        p_usuario: user?.email ?? 'sistema',
-      });
-      if (error) throw error;
-      return data;
-    },
-    onSuccess: () => {
-      const horario = pedido?.horario_corte_planejado ? formatTime(pedido.horario_corte_planejado) : 'horário planejado';
-      toast.success(`Pedido aprovado. Será disparado às ${horario}.`);
-      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
-      onApproved();
-      onOpenChange(false);
-    },
-    onError: (e: Error) => {
-      logger.error('Erro ao aprovar pedido', { error: e });
-      toast.error(`Erro ao aprovar: ${e.message}`);
-    },
-  });
-
-  // Recalcula valor total e status do pedido após remoção de item
-  const recalcularPedido = async () => {
-    if (!pedido) return;
-    const { data: restantes, error } = await supabase
-      .from('pedido_compra_item')
-      .select('id, qtde_final, qtde_sugerida, preco_unitario')
-      .eq('pedido_id', pedido.id);
-    if (error) throw error;
-
-    const itensRest = restantes ?? [];
-    const novoTotal = itensRest.reduce((acc, it) => {
-      const q = Number(it.qtde_final ?? it.qtde_sugerida ?? 0);
-      const p = Number(it.preco_unitario ?? 0);
-      return acc + q * p;
-    }, 0);
-
-    const updates: Record<string, unknown> = {
-      valor_total: novoTotal,
-      num_skus: itensRest.length,
-      atualizado_em: new Date().toISOString(),
-    };
-    if (itensRest.length === 0) {
-      updates.status = 'cancelado_humano';
-      updates.cancelado_por = user?.email ?? 'sistema';
-      updates.cancelado_em = new Date().toISOString();
-      updates.justificativa_cancelamento = 'Todos os itens foram removidos manualmente';
-    }
-    const { error: errPed } = await supabase
-      .from('pedido_compra_sugerido')
-      .update(updates)
-      .eq('id', pedido.id);
-    if (errPed) throw errPed;
-    return { vazio: itensRest.length === 0 };
-  };
-
-  const removerItemMutation = useMutation({
-    mutationFn: async (itemId: number) => {
-      const { error } = await supabase.from('pedido_compra_item').delete().eq('id', itemId);
-      if (error) throw error;
-      return await recalcularPedido();
-    },
-    onSuccess: (res) => {
-      toast.success(res?.vazio ? 'Item removido. Pedido cancelado (sem itens restantes).' : 'Item removido');
-      queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
-      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
-      setRemoverItem(null);
-      if (res?.vazio) onOpenChange(false);
-    },
-    onError: (e: Error) => {
-      toast.error(`Erro ao remover item: ${e.message}`);
-    },
-  });
-
-  const descontinuarMutation = useMutation({
-    mutationFn: async (item: PedidoItem) => {
-      // 1. descontinua o SKU
-      const { error: errSku } = await supabase
-        .from('sku_parametros')
-        .update({
-          tipo_reposicao: 'descontinuado',
-          habilitado_reposicao_automatica: false,
-        })
-        .eq('empresa', pedido!.empresa)
-        .eq('sku_codigo_omie', Number(item.sku_codigo_omie));
-      if (errSku) throw errSku;
-      // 2. remove a linha
-      const { error: errDel } = await supabase.from('pedido_compra_item').delete().eq('id', item.id);
-      if (errDel) throw errDel;
-      return await recalcularPedido();
-    },
-    onSuccess: (res) => {
-      toast.success(
-        res?.vazio
-          ? 'SKU descontinuado e item removido. Pedido cancelado (sem itens restantes).'
-          : 'SKU descontinuado. Não será mais incluído em ciclos futuros.'
-      );
-      queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
-      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
-      setDescontinuarItem(null);
-      if (res?.vazio) onOpenChange(false);
-    },
-    onError: (e: Error) => {
-      toast.error(`Erro ao descontinuar SKU: ${e.message}`);
-    },
-  });
-
-  if (!pedido) return null;
-  const podeEditar = pedido.status === 'pendente_aprovacao' || pedido.status === 'bloqueado_guardrail';
-  const podeEditarCondicao = podeEditar || pedido.status === 'aprovado_aguardando_disparo';
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-7xl xl:max-w-screen-2xl w-[95vw] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-3 flex-wrap">
-            Pedido #{pedido.id} — {pedido.fornecedor_nome}
-            <StatusBadge status={pedido.status} />
-            <SplitInfo pedido={pedido} />
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-          <div><div className="text-muted-foreground">Grupo</div><div className="font-medium">{pedido.grupo_codigo ?? '—'}</div></div>
-          <div><div className="text-muted-foreground">Nº SKUs</div><div className="font-medium">{pedido.num_skus}</div></div>
-          <div><div className="text-muted-foreground">Valor total</div><div className="font-medium">{formatBRL(totalAtual || pedido.valor_total)}</div></div>
-          <div><div className="text-muted-foreground">Horário corte</div><div className="font-medium">{formatTime(pedido.horario_corte_planejado)}</div></div>
-        </div>
-
-        {/* Condição de pagamento Omie (obrigatório p/ disparo) */}
-        <div className="rounded-md border bg-muted/30 p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-sm font-medium">
-              Condição de pagamento Omie
-              {!condicaoSelecionada && <span className="text-destructive ml-1">*</span>}
-            </label>
-            {pedido.condicao_origem && (
-              <Badge variant="outline" className="text-[10px] h-4">
-                origem: {pedido.condicao_origem}
-              </Badge>
-            )}
-          </div>
-          {podeEditarCondicao ? (
-            <div className="flex gap-2">
-              <Select value={condicaoCodigo || undefined} onValueChange={setCondicaoCodigo}>
-                <SelectTrigger className="flex-1">
-                  <SelectValue placeholder="Selecione a condição (obrigatório p/ disparar ao Omie)" />
-                </SelectTrigger>
-                <SelectContent className="max-h-[300px]">
-                  {condicoes.map((c) => (
-                    <SelectItem key={c.codigo} value={c.codigo}>
-                      <span className="font-mono text-xs mr-2">{c.codigo}</span>
-                      {c.descricao}
-                      {c.num_parcelas ? <span className="text-muted-foreground ml-2">({c.num_parcelas}x)</span> : null}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {pedido.status === 'aprovado_aguardando_disparo' && condicaoMudou && condicaoSelecionada && (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={salvarCondicaoMutation.isPending}
-                  onClick={() => salvarCondicaoMutation.mutate()}
-                >
-                  {salvarCondicaoMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-                  Salvar
-                </Button>
-              )}
-            </div>
-          ) : (
-            <div className="text-sm">
-              {pedido.condicao_pagamento_codigo
-                ? <><span className="font-mono text-xs mr-2">{pedido.condicao_pagamento_codigo}</span>{pedido.condicao_pagamento_descricao}</>
-                : <span className="text-muted-foreground italic">não definida</span>}
-            </div>
-          )}
-          {!condicaoSelecionada && podeEditarCondicao && (
-            <p className="text-xs text-destructive">
-              Sem condição selecionada o disparo ao Omie falhará.
-            </p>
-          )}
-        </div>
-
-        {pedido.status === 'bloqueado_guardrail' && pedido.mensagem_bloqueio && (
-          <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Bloqueado por guardrail</AlertTitle>
-            <AlertDescription>Motivo: {pedido.mensagem_bloqueio}</AlertDescription>
-          </Alert>
-        )}
-
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[34%] min-w-[300px]">SKU / Descrição</TableHead>
-                <TableHead className="text-right">Estoque atual</TableHead>
-                <TableHead className="text-right">EM</TableHead>
-                <TableHead className="text-right">PP</TableHead>
-                <TableHead className="text-right">Emax</TableHead>
-                <TableHead className="text-right">Qtde sugerida</TableHead>
-                <TableHead className="text-right">Qtde final</TableHead>
-                <TableHead className="text-right">Preço</TableHead>
-                <TableHead className="text-right">Valor linha</TableHead>
-                {podeEditar && <TableHead className="text-right">Ações</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {linhas.map((l) => {
-                const estoque = Number(l.estoque_atual ?? 0);
-                const minimo = Number(l.estoque_minimo ?? 0);
-                const pp = Number(l.ponto_pedido ?? 0);
-                const zoneClass = getEstoqueZoneClass(estoque, minimo, pp);
-                const sugerida = Number(l.qtde_sugerida ?? 0);
-                return (
-                <TableRow key={l.id}>
-                  <TableCell className="align-top whitespace-normal">
-                    <div className="font-mono text-xs text-muted-foreground">{l.sku_codigo_omie}</div>
-                    <div className="text-sm font-medium whitespace-normal break-words leading-snug">
-                      {l.sku_descricao ?? '—'}
-                    </div>
-                    <div className="flex gap-1 mt-1">
-                      {l.primeira_compra && (
-                        <Badge variant="destructive" className="text-[10px] h-4">primeira compra</Badge>
-                      )}
-                      {l.ajustado_humano && (
-                        <Badge variant="outline" className="text-[10px] h-4">ajustado</Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className={`text-right tabular-nums ${zoneClass}`}>{estoque.toFixed(0)}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{minimo.toFixed(0)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{pp.toFixed(0)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{Number(l.estoque_maximo ?? 0).toFixed(0)}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{sugerida.toFixed(0)}</TableCell>
-                  <TableCell className="text-right">
-                    {podeEditar ? (
-                      <Input
-                        type="number"
-                        min={0}
-                        step="1"
-                        className="h-8 w-24 ml-auto text-right tabular-nums"
-                        value={l._qtd}
-                        onChange={(e) => {
-                          const v = Number(e.target.value);
-                          setEdits((prev) => ({ ...prev, [l.id]: isNaN(v) ? 0 : v }));
-                        }}
-                      />
-                    ) : (
-                      <span className={cn(
-                        "tabular-nums",
-                        l._qtd !== sugerida && "font-semibold text-status-warning",
-                      )}>{l._qtd.toFixed(0)}</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">{formatBRL(l.preco_unitario)}</TableCell>
-                  <TableCell className="text-right tabular-nums font-medium">{formatBRL(l._valor)}</TableCell>
-                  {podeEditar && (
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          title="Remover linha deste pedido"
-                          onClick={() => setRemoverItem(l)}
-                          disabled={removerItemMutation.isPending || descontinuarMutation.isPending}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          title="Remover linha + descontinuar SKU"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => setDescontinuarItem(l)}
-                          disabled={removerItemMutation.isPending || descontinuarMutation.isPending}
-                        >
-                          <Ban className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  )}
-                </TableRow>
-                );
-              })}
-              <TableRow>
-                <TableCell colSpan={8} className="text-right font-medium">Total</TableCell>
-                <TableCell className="text-right font-bold tabular-nums">{formatBRL(totalAtual)}</TableCell>
-                {podeEditar && <TableCell />}
-              </TableRow>
-            </TableBody>
-          </Table>
-        )}
-
-        {/* Status de envio ao portal + Histórico de ações */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <PortalStatusPanel pedido={pedido} />
-          <HistoricoAcoesPanel pedido={pedido} />
-        </div>
-
-
-        {podeEditar && (
-          <div>
-            <label className="text-sm text-muted-foreground mb-1 block">Observações internas (opcional)</label>
-            <Textarea value={obs} onChange={(e) => setObs(e.target.value)} placeholder="Notas sobre os ajustes..." />
-          </div>
-        )}
-
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Fechar</Button>
-          {podeEditar && (
-            <>
-              <Button
-                variant="secondary"
-                disabled={Object.keys(edits).length === 0 || salvarMutation.isPending}
-                onClick={() => salvarMutation.mutate()}
-              >
-                {salvarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-                Salvar ajustes
-              </Button>
-              <Button
-                disabled={aprovarMutation.isPending || !condicaoSelecionada}
-                onClick={() => aprovarMutation.mutate()}
-                title={!condicaoSelecionada ? 'Selecione a condição de pagamento antes de aprovar' : ''}
-              >
-                {aprovarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-                ✓ Aprovar pedido completo
-              </Button>
-            </>
-          )}
-        </DialogFooter>
-      </DialogContent>
-
-      {/* Confirmação: remover linha */}
-      <AlertDialog open={!!removerItem} onOpenChange={(v) => !v && setRemoverItem(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remover este item do pedido?</AlertDialogTitle>
-            <AlertDialogDescription>
-              SKU <span className="font-mono">{removerItem?.sku_codigo_omie}</span> — {removerItem?.sku_descricao ?? '—'}.
-              <br />O valor total do pedido será recalculado. Se for o último item, o pedido será cancelado automaticamente.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={removerItemMutation.isPending}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={removerItemMutation.isPending}
-              onClick={() => removerItem && removerItemMutation.mutate(removerItem.id)}
-            >
-              {removerItemMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-              Remover
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Confirmação: remover + descontinuar */}
-      <AlertDialog open={!!descontinuarItem} onOpenChange={(v) => !v && setDescontinuarItem(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Descontinuar SKU permanentemente?</AlertDialogTitle>
-            <AlertDialogDescription>
-              SKU <span className="font-mono">{descontinuarItem?.sku_codigo_omie}</span> — {descontinuarItem?.sku_descricao ?? '—'}.
-              <br />
-              <strong className="text-destructive">Tem certeza?</strong> Este SKU não será mais incluído em ciclos futuros de reposição automática.
-              A linha também será removida deste pedido.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={descontinuarMutation.isPending}>Voltar</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={descontinuarMutation.isPending}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => descontinuarItem && descontinuarMutation.mutate(descontinuarItem)}
-            >
-              {descontinuarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-              Descontinuar e remover
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </Dialog>
-  );
-}
-
-/* ─── Cancelar Modal ─── */
-function CancelarModal({
-  pedido,
-  open,
-  onOpenChange,
-}: {
-  pedido: PedidoSugerido | null;
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-}) {
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
-  const [justificativa, setJustificativa] = useState('');
-
-  useEffect(() => {
-    if (!open) setJustificativa('');
-  }, [open]);
-
-  const cancelarMutation = useMutation({
-    mutationFn: async () => {
-      if (!pedido) return;
-      const { error } = await supabase.rpc('cancelar_pedido_sugerido', {
-        p_pedido_id: pedido.id,
-        p_usuario: user?.email ?? 'sistema',
-        p_justificativa: justificativa.trim(),
-      });
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      toast.success('Pedido cancelado');
-      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
-      onOpenChange(false);
-    },
-    onError: (e: Error) => {
-      toast.error(`Erro ao cancelar: ${e.message}`);
-    },
-  });
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Cancelar pedido #{pedido?.id}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Justificativa <span className="text-destructive">*</span></label>
-          <Textarea
-            value={justificativa}
-            onChange={(e) => setJustificativa(e.target.value)}
-            placeholder="Explique o motivo do cancelamento..."
-            rows={4}
-          />
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Voltar</Button>
-          <Button
-            variant="destructive"
-            disabled={!justificativa.trim() || cancelarMutation.isPending}
-            onClick={() => cancelarMutation.mutate()}
-          >
-            {cancelarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-            Confirmar cancelamento
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/* ─── Linha do pedido ─── */
-function PedidoRow({
-  p,
-  onVerDetalhes,
-  onCancelar,
-  onVerPortal,
-  onDisparar,
-  disparando,
-}: {
-  p: PedidoSugerido;
-  onVerDetalhes: () => void;
-  onCancelar: () => void;
-  onVerPortal: () => void;
-  onDisparar: () => void;
-  disparando: boolean;
-}) {
-  const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
-  const podeCancelar = ['pendente_aprovacao', 'bloqueado_guardrail', 'aprovado_aguardando_disparo'].includes(p.status);
-  const podeDisparar = p.status === 'aprovado_aguardando_disparo';
-
-  const showAprovacao = p.status === 'aprovado_aguardando_disparo' || p.status === 'disparado';
-
-  return (
-    <TableRow className={p.status === 'bloqueado_guardrail' ? 'bg-destructive/5' : ''}>
-      <TableCell>
-        <div className="flex flex-wrap items-center gap-1">
-          <StatusBadge status={p.status} />
-          <SplitInfo pedido={p} />
-        </div>
-      </TableCell>
-      <TableCell>
-        <div className="font-medium">{p.fornecedor_nome}</div>
-        <div className="text-xs text-muted-foreground">{p.grupo_codigo ?? '—'}</div>
-      </TableCell>
-      <TableCell className="text-right tabular-nums">{p.num_skus}</TableCell>
-      <TableCell className="text-right tabular-nums font-medium">{formatBRL(p.valor_total)}</TableCell>
-      <TableCell className="text-right tabular-nums">
-        {p.delta_vs_anterior_perc !== null ? (
-          <span className={Number(p.delta_vs_anterior_perc) >= 0 ? 'text-status-success' : 'text-destructive'}>
-            {Number(p.delta_vs_anterior_perc) >= 0 ? '+' : ''}{Number(p.delta_vs_anterior_perc).toFixed(1)}%
-          </span>
-        ) : <span className="text-muted-foreground">—</span>}
-      </TableCell>
-      <TableCell className="text-right">{formatTime(p.horario_corte_planejado)}</TableCell>
-      <TableCell>
-        <PortalBadge pedido={p} onClick={onVerPortal} />
-      </TableCell>
-      <TableCell className="text-xs">
-        {showAprovacao && p.aprovado_em ? (
-          <div>
-            <div className="font-medium tabular-nums">{format(new Date(p.aprovado_em), 'dd/MM HH:mm')}</div>
-            <div className="text-muted-foreground line-clamp-1">{p.aprovado_por ?? '—'}</div>
-          </div>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-      </TableCell>
-      <TableCell>
-        <div className="flex justify-end gap-1">
-          <Button size="sm" variant="ghost" onClick={onVerDetalhes}>
-            <Eye className="w-4 h-4 mr-1" />Detalhes
-          </Button>
-          {podeAprovar && (
-            <Button size="sm" variant="default" onClick={onVerDetalhes}>Aprovar</Button>
-          )}
-          {podeDisparar && (
-            <Button size="sm" variant="default" onClick={onDisparar} disabled={disparando}>
-              {disparando ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
-              Disparar
-            </Button>
-          )}
-          {podeCancelar && (
-            <Button size="sm" variant="outline" onClick={onCancelar}>
-              <XCircle className="w-4 h-4" />
-            </Button>
-          )}
-          {p.status === 'disparado' && p.omie_pedido_compra_numero && (
-            <Button size="sm" variant="ghost" asChild>
-              <a href={`https://app.omie.com.br/`} target="_blank" rel="noreferrer">
-                <ExternalLink className="w-4 h-4 mr-1" />Omie
-              </a>
-            </Button>
-          )}
-        </div>
-      </TableCell>
-    </TableRow>
-  );
-}
 
 /* ─── Página principal ─── */
 export default function AdminReposicaoPedidos() {
   const queryClient = useQueryClient();
+  // Override do mínimo de faturamento é privilegiado: só gestor comercial/master. A tela é
+  // RequireStaff (employee|master), então gateamos o botão aqui (o edge reforça no servidor).
+  const { isMaster, isGestorComercial } = useAuth();
+  const podeOverride = isMaster || isGestorComercial;
   const [searchParams, setSearchParams] = useSearchParams();
   const [now, setNow] = useState(new Date());
   const [detalhesPedido, setDetalhesPedido] = useState<PedidoSugerido | null>(null);
   const [cancelarPedido, setCancelarPedido] = useState<PedidoSugerido | null>(null);
   const [portalPedido, setPortalPedido] = useState<PedidoSugerido | null>(null);
   const [historicoData, setHistoricoData] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
+  const [mostrarAtencao, setMostrarAtencao] = useState(false);
+  const [histAberto, setHistAberto] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60_000);
@@ -1305,33 +81,123 @@ export default function AdminReposicaoPedidos() {
     refetchInterval: 30_000,
   });
 
-  // Deep link: abrir modal automaticamente quando ?id= estiver presente
-  useEffect(() => {
-    const idParam = searchParams.get('id');
-    if (!idParam || !pedidos) return;
-    const idNum = Number(idParam);
-    if (Number.isNaN(idNum)) return;
-    if (detalhesPedido?.id === idNum) return;
-    const found = pedidos.find((p) => p.id === idNum);
-    if (found) {
-      setDetalhesPedido(found);
-    } else {
-      toast.error(`Pedido #${idNum} não encontrado no ciclo de hoje`);
-      // limpa o param inválido
+  // Fila CROSS-CICLO de "precisa de atenção": pedidos que exigem ação humana em
+  // QUALQUER ciclo (a lista de hoje não pega travado de ciclo passado). Critério
+  // espelha pedidoPrecisaAtencao() de shared.ts. Os valores do .or() são literais
+  // estáticos (sem interpolação) → seguro e lint-clean. Filtramos cancelados, que
+  // por construção não precisam mais de ação.
+  // Key sob o prefixo 'pedidos-ciclo' de propósito: todo mutation da tela invalida
+  // ['pedidos-ciclo'] (disparo/conciliação/aprovação) e o React Query casa por prefixo
+  // → a fila de atenção se atualiza junto, sem precisar editar cada componente filho.
+  const { data: atencao } = useQuery({
+    queryKey: ['pedidos-ciclo', 'atencao', EMPRESA],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('pedido_compra_sugerido')
+        .select('*')
+        .eq('empresa', EMPRESA)
+        .or(
+          'status.eq.falha_envio,status_envio_portal.in.(aceito_portal_sem_protocolo,indeterminado_requer_conciliacao,falha_envio_portal,erro_nao_retentavel)',
+        )
+        .order('data_ciclo', { ascending: false })
+        .order('fornecedor_nome', { ascending: true });
+      if (error) throw error;
+      // Defesa em profundidade: re-filtra cancelados (caso um caia num estado de
+      // portal de atenção residual depois de cancelado).
+      return (data ?? []).filter(
+        (p) => p.status !== 'cancelado' && p.status !== 'cancelado_humano',
+      ) as PedidoSugerido[];
+    },
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+
+  // Lista "ciclo de hoje" exibida: esconde os pais de split (status='split_em_filhos').
+  // O pai não tem ação útil e seu valor_total é a SOMA dos filhos → exibi-lo junto dos
+  // filhos dobraria o "valor do ciclo". Os filhos (status normal) seguem visíveis.
+  // Usar essa lista derivada tanto no render quanto no contador (consistente).
+  const pedidosCiclo = pedidosVisiveis(pedidos ?? []);
+
+  // Separa os pedidos do dia em ativos (lista principal) e terminais (Histórico de hoje,
+  // recolhido). Os terminais — cancelado/cancelado_humano/expirado_sem_aprovacao — são o
+  // "lixo do dia" que a geração não varre; tirá-los da lista principal limpa a poluição
+  // sem apagar nada do banco.
+  const { ativos, historico } = particionarCicloHoje(pedidosCiclo);
+
+  // A fila de atenção é cross-ciclo; o pai split (status='split_em_filhos') por
+  // construção nunca entra (pedidoPrecisaAtencao só dispara em falha_envio/portal),
+  // mas filtramos por defesa em profundidade — coerente com o render do ciclo.
+  const atencaoVisivel = pedidosVisiveis(atencao ?? []);
+  const atencaoCount = atencaoVisivel.length;
+
+  // Deep link cross-ciclo: aceita ?id=N (ou ?pedido=N como alias usado por links do
+  // portal). Se o pedido não está na lista de hoje, busca o pedido único por id.
+  const idParamRaw = searchParams.get('id') ?? searchParams.get('pedido');
+  const idNum = idParamRaw !== null && idParamRaw !== '' ? Number(idParamRaw) : NaN;
+  const deepLinkId = Number.isInteger(idNum) && idNum > 0 ? idNum : null;
+
+  const limparDeepLink = () => {
+    if (searchParams.has('id') || searchParams.has('pedido')) {
       const next = new URLSearchParams(searchParams);
       next.delete('id');
+      next.delete('pedido');
       setSearchParams(next, { replace: true });
     }
-  }, [searchParams, pedidos, detalhesPedido?.id, setSearchParams]);
+  };
+
+  // O pedido do deep-link pode já estar carregado (lista de hoje ou fila de atenção).
+  const pedidoLocalDoLink =
+    deepLinkId !== null
+      ? (pedidos ?? []).find((p) => p.id === deepLinkId) ??
+        (atencao ?? []).find((p) => p.id === deepLinkId) ??
+        null
+      : null;
+
+  // Fallback: busca o pedido único por id (empresa-scoped) quando não está local.
+  // Só dispara quando o id é válido, ainda não está aberto e não foi achado local.
+  const precisaBuscarPorId =
+    deepLinkId !== null && detalhesPedido?.id !== deepLinkId && !pedidoLocalDoLink;
+
+  const { data: pedidoPorId, isLoading: carregandoPedidoPorId } = useQuery({
+    queryKey: ['pedido-por-id', deepLinkId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('pedido_compra_sugerido')
+        .select('*')
+        .eq('empresa', EMPRESA)
+        .eq('id', deepLinkId!)
+        .maybeSingle();
+      if (error) throw error;
+      return (data as PedidoSugerido | null) ?? null;
+    },
+    enabled: precisaBuscarPorId,
+    staleTime: 15_000,
+  });
+
+  useEffect(() => {
+    if (deepLinkId === null) return;
+    if (detalhesPedido?.id === deepLinkId) return;
+    // 1) já carregado localmente → abre na hora
+    if (pedidoLocalDoLink) {
+      setDetalhesPedido(pedidoLocalDoLink);
+      return;
+    }
+    // 2) buscando por id → espera resolver
+    if (carregandoPedidoPorId) return;
+    if (pedidoPorId) {
+      setDetalhesPedido(pedidoPorId);
+    } else {
+      // id válido mas inexistente nessa empresa → limpa o param
+      toast.error(`Pedido #${deepLinkId} não encontrado`);
+      limparDeepLink();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkId, pedidoLocalDoLink, pedidoPorId, carregandoPedidoPorId, detalhesPedido?.id]);
 
   const handleCloseDetalhes = (open: boolean) => {
     if (!open) {
       setDetalhesPedido(null);
-      if (searchParams.has('id')) {
-        const next = new URLSearchParams(searchParams);
-        next.delete('id');
-        setSearchParams(next, { replace: true });
-      }
+      limparDeepLink();
     }
   };
 
@@ -1363,13 +229,10 @@ export default function AdminReposicaoPedidos() {
       return data;
     },
     onSuccess: (data, pedidoId) => {
-      const ok = data?.disparados ?? 0;
-      const fail = data?.falhas ?? 0;
-      const aguardandoPortal = data?.aguardando_portal_sayerlack ?? 0;
-      if (ok > 0) toast.success(`Pedido #${pedidoId} disparado e registrado no Omie`);
-      else if (aguardandoPortal > 0) toast.success(`Pedido #${pedidoId}: envio ao portal Sayerlack iniciado em segundo plano`);
-      else if (fail > 0) toast.error(`Pedido #${pedidoId}: falha ao disparar`);
-      else toast.info(`Pedido #${pedidoId}: nada a disparar (${JSON.stringify(data)})`);
+      const { tone, message } = interpretarRespostaDisparo(data as RespostaDisparo, pedidoId);
+      if (tone === 'error') toast.error(message);
+      else if (tone === 'info') toast.info(message);
+      else toast.success(message);
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
     },
     onError: (e: Error) => {
@@ -1377,7 +240,54 @@ export default function AdminReposicaoPedidos() {
     },
   });
 
+  // Override do gate de mínimo de faturamento (gestor/master). Mesma edge, com ignorar_minimo.
+  // Separada da dispararMutation pra não confundir o estado de loading por linha; o edge
+  // reforça gestor/master no servidor (403 se não autorizado → cai no onError).
+  const dispararOverrideMutation = useMutation({
+    mutationFn: async (pedidoId: number) => {
+      const { data, error } = await supabase.functions.invoke('disparar-pedidos-aprovados', {
+        body: { empresa: EMPRESA, pedido_id: pedidoId, ignorar_minimo: true },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data, pedidoId) => {
+      const { tone, message } = interpretarRespostaDisparo(data as RespostaDisparo, pedidoId);
+      if (tone === 'error') toast.error(message);
+      else if (tone === 'info') toast.info(message);
+      else toast.success(message);
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+    },
+    onError: (e: Error) => {
+      toast.error(`Erro ao disparar: ${e.message}`);
+    },
+  });
+
+  // Estado de disparo por linha cobre AMBAS as mutações (normal + override) — o botão da
+  // linha trava enquanto qualquer disparo daquele pedido está em voo.
+  const disparandoLinha = (pedidoId: number) =>
+    (dispararMutation.isPending && dispararMutation.variables === pedidoId) ||
+    (dispararOverrideMutation.isPending && dispararOverrideMutation.variables === pedidoId);
+
   const bloqueados = (pedidos ?? []).filter((p) => p.status === 'bloqueado_guardrail');
+
+  // SKUs abaixo do ponto que NÃO geram pedido por falta de fornecedor cadastrado.
+  // A RPC (20260604170000) passou a exigir fornecedor — esses ficavam como
+  // cabeçalho-fantasma na fila; agora aparecem aqui, pra não sumirem em silêncio.
+  const { data: semFornecedor } = useQuery({
+    queryKey: ['reposicao-sku-sem-fornecedor', EMPRESA],
+    queryFn: async (): Promise<SkuSemFornecedor[]> => {
+      const { data, error } = await supabase
+        .from('v_reposicao_sku_sem_fornecedor' as never)
+        .select('sku_codigo_omie, sku_descricao, estoque_efetivo, ponto_pedido')
+        .eq('empresa', EMPRESA)
+        .order('sku_descricao', { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as unknown as SkuSemFornecedor[];
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
 
   return (
     <div className="container mx-auto py-6 space-y-6 max-w-7xl">
@@ -1388,14 +298,47 @@ export default function AdminReposicaoPedidos() {
           </h1>
           <div className="mt-2"><CycleIndicator now={now} /></div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {atencaoCount > 0 ? (
+            <Button
+              variant="outline"
+              onClick={() => setMostrarAtencao((v) => !v)}
+              aria-pressed={mostrarAtencao}
+              className="border-status-warning/40 bg-status-warning/10 text-status-warning hover:bg-status-warning/20 hover:text-status-warning"
+            >
+              <AlertTriangle className="w-4 h-4 mr-1" />
+              {atencaoCount} precisa{atencaoCount > 1 ? 'm' : ''} de atenção
+            </Button>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-xs text-status-success">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Tudo em dia
+            </span>
+          )}
           <Button variant="outline" onClick={() => refetch()} disabled={isLoading}>
-            <RefreshCw className={`w-4 h-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />Atualizar
+            <RefreshCw className={`w-4 h-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />Atualizar lista
           </Button>
-          <Button onClick={() => gerarMutation.mutate()} disabled={gerarMutation.isPending}>
-            {gerarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-            Rodar geração manual
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" disabled={gerarMutation.isPending}>
+                {gerarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+                Recalcular sugestões
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Recalcular sugestões de hoje?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Recalcula as sugestões de compra a partir do estoque atual. Não altera pedidos
+                  já aprovados, disparados ou cancelados. O sistema já faz isso sozinho 1×/dia —
+                  use só se você mudou um parâmetro (ponto de pedido, mínimo forçado etc.).
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Voltar</AlertDialogCancel>
+                <AlertDialogAction onClick={() => gerarMutation.mutate()}>Recalcular</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
 
@@ -1409,6 +352,119 @@ export default function AdminReposicaoPedidos() {
         </Alert>
       )}
 
+      {semFornecedor && semFornecedor.length > 0 && (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>
+            {semFornecedor.length} SKU{semFornecedor.length > 1 ? 's' : ''} abaixo do ponto sem fornecedor — não entra{semFornecedor.length > 1 ? 'm' : ''} em compra
+          </AlertTitle>
+          <AlertDescription>
+            <p className="mb-2">
+              Estão habilitados na reposição e abaixo do ponto de pedido, mas sem fornecedor cadastrado —
+              então não geram pedido. Cadastre o fornecedor (Cadastros → Cadeia Logística) para incluí-los:
+            </p>
+            <ul className="list-disc pl-5 space-y-0.5 text-sm">
+              {semFornecedor.slice(0, 10).map((s) => (
+                <li key={s.sku_codigo_omie}>
+                  {s.sku_descricao ?? s.sku_codigo_omie}
+                  <span className="text-muted-foreground font-mono text-xs"> · {s.sku_codigo_omie}</span>
+                </li>
+              ))}
+            </ul>
+            {semFornecedor.length > 10 && (
+              <p className="mt-1 text-xs text-muted-foreground">+{semFornecedor.length - 10} outro(s)</p>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {mostrarAtencao && atencaoCount > 0 && (
+        <Card className="border-status-warning/40">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-status-warning" />
+              Precisam de atenção ({atencaoCount}) — todos os ciclos
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Pedidos travados que exigem ação humana (falha no Omie, conciliação do portal ou
+              falha definitiva), de qualquer ciclo. Abra os detalhes para resolver — a conciliação
+              do portal está em "Ver portal".
+            </p>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Ciclo</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Fornecedor / Grupo</TableHead>
+                  <TableHead className="text-right">Nº SKUs</TableHead>
+                  <TableHead className="text-right">Valor</TableHead>
+                  <TableHead>Portal</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {atencaoVisivel.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell className="text-xs tabular-nums whitespace-nowrap">
+                      {format(new Date(p.data_ciclo + 'T12:00:00'), 'dd/MM/yyyy')}
+                    </TableCell>
+                    <TableCell>
+                      <StatusComMotivo pedido={p} />
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium">{p.fornecedor_nome}</div>
+                      <div className="text-xs text-muted-foreground">{p.grupo_codigo ?? '—'}</div>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{p.num_skus}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">{formatBRL(p.valor_total)}</TableCell>
+                    <TableCell>
+                      <PortalBadge pedido={p} onClick={() => setPortalPedido(p)} />
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => setDetalhesPedido(p)}>
+                          <Eye className="w-4 h-4 mr-1" />Detalhes
+                        </Button>
+                        {podeOverride && ehGateMinimoFaturamento(p) ? (
+                          // Preso pelo gate de mínimo de faturamento → "Disparar mesmo assim"
+                          // no lugar do "Re-disparar" (que só re-bateria no gate).
+                          <OverrideMinimoButton
+                            fornecedorNome={p.fornecedor_nome}
+                            valorTotal={p.valor_total}
+                            onConfirm={() => dispararOverrideMutation.mutate(p.id)}
+                            disabled={disparandoLinha(p.id) || p.status_envio_portal === 'enviando_portal'}
+                          />
+                        ) : (p.status === 'aprovado_aguardando_disparo' || p.status === 'falha_envio') ? (
+                          <Button
+                            size="sm"
+                            variant={p.status === 'falha_envio' ? 'outline' : 'default'}
+                            onClick={() => dispararMutation.mutate(p.id)}
+                            disabled={
+                              disparandoLinha(p.id) ||
+                              p.status_envio_portal === 'enviando_portal'
+                            }
+                          >
+                            {disparandoLinha(p.id) ||
+                            p.status_envio_portal === 'enviando_portal' ? (
+                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                            ) : (
+                              <Zap className="w-4 h-4 mr-1" />
+                            )}
+                            {p.status === 'falha_envio' ? 'Re-disparar' : 'Disparar'}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
       <Tabs defaultValue="hoje">
         <TabsList>
           <TabsTrigger value="hoje">Ciclo de hoje</TabsTrigger>
@@ -1418,16 +474,18 @@ export default function AdminReposicaoPedidos() {
         <TabsContent value="hoje">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Pedidos do dia ({pedidos?.length ?? 0})</CardTitle>
+              <CardTitle className="text-base">Pedidos do dia ({ativos.length})</CardTitle>
             </CardHeader>
             <CardContent>
               {isLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                 </div>
-              ) : (pedidos ?? []).length === 0 ? (
+              ) : ativos.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
-                  Nenhum pedido gerado para o ciclo de hoje. Use "Rodar geração manual" para criar.
+                  {historico.length > 0
+                    ? 'Nenhum pedido ativo hoje — veja o Histórico de hoje abaixo.'
+                    : 'Nenhum pedido gerado para o ciclo de hoje. Use "Recalcular sugestões" para criar.'}
                 </div>
               ) : (
                 <Table>
@@ -1437,15 +495,13 @@ export default function AdminReposicaoPedidos() {
                       <TableHead>Fornecedor / Grupo</TableHead>
                       <TableHead className="text-right">Nº SKUs</TableHead>
                       <TableHead className="text-right">Valor</TableHead>
-                      <TableHead className="text-right">Δ vs anterior</TableHead>
-                      <TableHead className="text-right">Corte</TableHead>
                       <TableHead>Portal</TableHead>
-                      <TableHead>Aprovado em / Por</TableHead>
+                      <TableHead>Aprovado em</TableHead>
                       <TableHead className="text-right">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pedidos!.map((p) => (
+                    {ativos.map((p) => (
                       <PedidoRow
                         key={p.id}
                         p={p}
@@ -1453,11 +509,58 @@ export default function AdminReposicaoPedidos() {
                         onCancelar={() => setCancelarPedido(p)}
                         onVerPortal={() => setPortalPedido(p)}
                         onDisparar={() => dispararMutation.mutate(p.id)}
-                        disparando={dispararMutation.isPending && dispararMutation.variables === p.id}
+                        onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
+                        disparando={disparandoLinha(p.id)}
                       />
                     ))}
                   </TableBody>
                 </Table>
+              )}
+
+              {!isLoading && historico.length > 0 && (
+                <Collapsible open={histAberto} onOpenChange={setHistAberto} className="mt-4 border-t pt-2">
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-between py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <span className="font-medium">Histórico de hoje ({historico.length})</span>
+                      {histAberto ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <p className="text-xs text-muted-foreground pb-2">
+                      Pedidos cancelados ou expirados de hoje. Ficam aqui só pra registro — não saem do banco.
+                    </p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Fornecedor / Grupo</TableHead>
+                          <TableHead className="text-right">Nº SKUs</TableHead>
+                          <TableHead className="text-right">Valor</TableHead>
+                          <TableHead>Portal</TableHead>
+                          <TableHead>Aprovado em</TableHead>
+                          <TableHead className="text-right">Ações</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {historico.map((p) => (
+                          <PedidoRow
+                            key={p.id}
+                            p={p}
+                            onVerDetalhes={() => setDetalhesPedido(p)}
+                            onCancelar={() => setCancelarPedido(p)}
+                            onVerPortal={() => setPortalPedido(p)}
+                            onDisparar={() => dispararMutation.mutate(p.id)}
+                            onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
+                            disparando={disparandoLinha(p.id)}
+                          />
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CollapsibleContent>
+                </Collapsible>
               )}
             </CardContent>
           </Card>
@@ -1485,87 +588,5 @@ export default function AdminReposicaoPedidos() {
         onOpenChange={(v) => !v && setPortalPedido(null)}
       />
     </div>
-  );
-}
-
-/* ─── Ciclos anteriores ─── */
-function CiclosAnteriores({ data, onChange }: { data: string; onChange: (v: string) => void }) {
-  const { data: historico, isLoading } = useQuery({
-    queryKey: ['historico-ciclos', data],
-    queryFn: async () => {
-      // últimos 30 dias agregados
-      const desde = new Date();
-      desde.setDate(desde.getDate() - 30);
-      const { data: rows, error } = await supabase
-        .from('pedido_compra_sugerido')
-        .select('data_ciclo,fornecedor_nome,status,valor_total')
-        .eq('empresa', EMPRESA)
-        .gte('data_ciclo', format(desde, 'yyyy-MM-dd'))
-        .order('data_ciclo', { ascending: false });
-      if (error) throw error;
-      // agrupa por dia
-      const grupos = new Map<string, { fornecedores: Set<string>; pedidos: number; valor: number; disparados: number; cancelados: number }>();
-      for (const r of rows ?? []) {
-        const k = r.data_ciclo as string;
-        if (!grupos.has(k)) grupos.set(k, { fornecedores: new Set(), pedidos: 0, valor: 0, disparados: 0, cancelados: 0 });
-        const g = grupos.get(k)!;
-        g.fornecedores.add(r.fornecedor_nome);
-        g.pedidos += 1;
-        g.valor += Number(r.valor_total ?? 0);
-        if (r.status === 'disparado') g.disparados += 1;
-        if (r.status === 'cancelado') g.cancelados += 1;
-      }
-      return Array.from(grupos.entries()).map(([dia, g]) => ({
-        dia,
-        fornecedores: g.fornecedores.size,
-        pedidos: g.pedidos,
-        valor: g.valor,
-        disparados: g.disparados,
-        cancelados: g.cancelados,
-      }));
-    },
-  });
-
-  return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between">
-        <CardTitle className="text-base">Últimos 30 dias</CardTitle>
-        <Input type="date" value={data} onChange={(e) => onChange(e.target.value)} className="w-44" />
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : (historico ?? []).length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">Sem ciclos no período.</div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Data</TableHead>
-                <TableHead className="text-right">Fornecedores</TableHead>
-                <TableHead className="text-right">Pedidos</TableHead>
-                <TableHead className="text-right">Valor total</TableHead>
-                <TableHead className="text-right">Disparados</TableHead>
-                <TableHead className="text-right">Cancelados</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {historico!.map((h) => (
-                <TableRow key={h.dia}>
-                  <TableCell className="font-medium">{format(new Date(h.dia + 'T12:00:00'), 'dd/MM/yyyy')}</TableCell>
-                  <TableCell className="text-right tabular-nums">{h.fornecedores}</TableCell>
-                  <TableCell className="text-right tabular-nums">{h.pedidos}</TableCell>
-                  <TableCell className="text-right tabular-nums">{formatBRL(h.valor)}</TableCell>
-                  <TableCell className="text-right tabular-nums text-status-success">{h.disparados}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{h.cancelados}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
   );
 }

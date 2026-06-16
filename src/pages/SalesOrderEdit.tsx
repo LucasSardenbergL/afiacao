@@ -1,408 +1,43 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
 import { TintColorSelectDialog } from '@/components/TintColorSelectDialog';
-import type { Product } from '@/hooks/useUnifiedOrder';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { supabase } from '@/integrations/supabase/client';
-import type { Tables, Json } from '@/integrations/supabase/types';
-import { useAuth } from '@/contexts/AuthContext';
-import { Loader2, Save, Trash2, Plus, AlertCircle, Search, X, ChevronsUpDown, Check } from 'lucide-react';
-import { toast } from 'sonner';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
-import { cn } from '@/lib/utils';
-
-interface OrderItem {
-  product_id?: string;
-  omie_codigo_produto: number;
-  codigo?: string;
-  descricao: string;
-  unidade?: string;
-  quantidade: number;
-  valor_unitario: number;
-  valor_total: number;
-  tint_cor_id?: string;
-  tint_nome_cor?: string;
-}
-
-interface OmiePayload {
-  cabecalho?: {
-    codigo_parcela?: string;
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
-}
-
-interface SalesOrder {
-  id: string;
-  customer_user_id: string;
-  items: OrderItem[];
-  subtotal: number;
-  total: number;
-  status: string;
-  notes: string | null;
-  account: string;
-  omie_pedido_id: number | null;
-  omie_numero_pedido: string | null;
-  omie_payload: OmiePayload | null;
-  created_at: string;
-}
-
-interface FormasPagamentoResponse {
-  formas?: Array<{ codigo: string; descricao: string }>;
-}
-
-interface OmieProduct {
-  id: string;
-  omie_codigo_produto: number;
-  codigo: string;
-  descricao: string;
-  unidade: string;
-  valor_unitario: number;
-  estoque: number;
-  ativo: boolean;
-  account?: string;
-  is_tintometric?: boolean;
-  tint_type?: string;
-}
-
-const BLOCKED_STATUSES = ['cancelado', 'entregue', 'faturado'];
-
-function PaymentComboboxEdit({
-  formas,
-  selected,
-  onSelect,
-  disabled,
-}: {
-  formas: Array<{ codigo: string; descricao: string }>;
-  selected: string;
-  onSelect: (v: string) => void;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const selectedLabel = formas.find(f => f.codigo === selected)?.descricao || '';
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          disabled={disabled}
-          className="w-full justify-between text-sm h-9 font-normal"
-        >
-          <span className="truncate">{selected ? selectedLabel : 'Selecionar parcela'}</span>
-          <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-        <Command>
-          <CommandInput placeholder="Buscar... ex: 30, 60, vista" className="h-8 text-sm" />
-          <CommandList>
-            <CommandEmpty className="py-2 text-center text-xs text-muted-foreground">Nenhuma condição encontrada.</CommandEmpty>
-            <CommandGroup>
-              {formas.map(f => (
-                <CommandItem
-                  key={f.codigo}
-                  value={f.descricao}
-                  onSelect={() => { onSelect(f.codigo); setOpen(false); }}
-                  className="text-sm"
-                >
-                  <Check className={cn('mr-2 h-3.5 w-3.5', selected === f.codigo ? 'opacity-100' : 'opacity-0')} />
-                  {f.descricao}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
-}
+import { Loader2, Save, Plus, AlertCircle, X } from 'lucide-react';
+import { useSalesOrderEdit } from '@/components/salesOrderEdit/useSalesOrderEdit';
+import { PaymentComboboxEdit } from '@/components/salesOrderEdit/PaymentComboboxEdit';
+import { AddProductSearch } from '@/components/salesOrderEdit/AddProductSearch';
+import { OrderItemCard } from '@/components/salesOrderEdit/OrderItemCard';
 
 const SalesOrderEdit = () => {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  useAuth(); // mantém o hook montado pra refresh de token; isStaff não é usado
-
-  const [order, setOrder] = useState<SalesOrder | null>(null);
-  const [customerName, setCustomerName] = useState('');
-  const [items, setItems] = useState<OrderItem[]>([]);
-  const [notes, setNotes] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [formas, setFormas] = useState<Array<{ codigo: string; descricao: string }>>([]);
-  const [selectedParcela, setSelectedParcela] = useState('');
-
-  // Add product state
-  const [showAddProduct, setShowAddProduct] = useState(false);
-  const [productSearch, setProductSearch] = useState('');
-  const [catalogProducts, setCatalogProducts] = useState<OmieProduct[]>([]);
-  // Tint color dialog
-  const [tintPendingProduct, setTintPendingProduct] = useState<OmieProduct | null>(null);
-  const [customerUserId, setCustomerUserId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (id) loadOrder();
-  }, [id]);
-
-  const loadOrder = async () => {
-    if (!id) return;
-    try {
-      const { data, error } = await supabase
-        .from('sales_orders')
-        .select('*')
-        .eq('id', id)
-        .single();
-      if (error) throw error;
-      const row = data as Tables<'sales_orders'>;
-      const o: SalesOrder = {
-        id: row.id,
-        customer_user_id: row.customer_user_id,
-        items: (row.items as unknown as OrderItem[]) || [],
-        subtotal: row.subtotal,
-        total: row.total,
-        status: row.status,
-        notes: row.notes,
-        account: row.account,
-        omie_pedido_id: row.omie_pedido_id,
-        omie_numero_pedido: row.omie_numero_pedido,
-        omie_payload: (row.omie_payload as unknown as OmiePayload | null) ?? null,
-        created_at: row.created_at,
-      };
-      setOrder(o);
-      setItems(o.items || []);
-      setNotes(o.notes || '');
-      const parcela = o.omie_payload?.cabecalho?.codigo_parcela;
-      if (parcela) setSelectedParcela(parcela);
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('name')
-        .eq('user_id', o.customer_user_id)
-        .single();
-      if (profile) setCustomerName(profile.name || '');
-      setCustomerUserId(o.customer_user_id);
-
-      const account = o.account === 'colacor' ? 'colacor' : 'oben';
-      
-      // Load formas + products in parallel
-      const [formasRes, productsRes] = await Promise.all([
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'listar_formas_pagamento', account },
-        }),
-        supabase.from('omie_products')
-          .select('id, omie_codigo_produto, codigo, descricao, unidade, valor_unitario, estoque, ativo, account, is_tintometric, tint_type')
-          .eq('account', account === 'colacor' ? 'colacor_vendas' : 'oben')
-          .eq('ativo', true)
-          .order('descricao')
-          .limit(1000),
-      ]);
-
-      const formasData = formasRes.data as FormasPagamentoResponse | null;
-      if (formasData?.formas) setFormas(formasData.formas);
-      if (productsRes.data) setCatalogProducts(productsRes.data as unknown as OmieProduct[]);
-    } catch (e) {
-      console.error(e);
-      toast.error('Erro ao carregar pedido');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const updateItem = (index: number, field: 'quantidade' | 'valor_unitario', value: number) => {
-    setItems(prev => prev.map((item, i) => {
-      if (i !== index) return item;
-      const updated = { ...item, [field]: value };
-      updated.valor_total = updated.quantidade * updated.valor_unitario;
-      return updated;
-    }));
-  };
-
-  const removeItem = (index: number) => {
-    if (items.length <= 1) {
-      toast.error('O pedido precisa ter pelo menos 1 item');
-      return;
-    }
-    setItems(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const addProduct = (product: OmieProduct) => {
-    // If tintometric base, open color dialog
-    if (product.is_tintometric && product.tint_type === 'base') {
-      setTintPendingProduct(product);
-      setShowAddProduct(false);
-      setProductSearch('');
-      return;
-    }
-    const exists = items.some(i => i.omie_codigo_produto === product.omie_codigo_produto && !i.tint_cor_id);
-    if (exists) {
-      toast.error('Este produto já está no pedido');
-      return;
-    }
-    const newItem: OrderItem = {
-      product_id: product.id,
-      omie_codigo_produto: product.omie_codigo_produto,
-      codigo: product.codigo,
-      descricao: product.descricao,
-      unidade: product.unidade || 'UN',
-      quantidade: 1,
-      valor_unitario: product.valor_unitario || 0,
-      valor_total: product.valor_unitario || 0,
-    };
-    setItems(prev => [...prev, newItem]);
-    setShowAddProduct(false);
-    setProductSearch('');
-    toast.success(`"${product.descricao}" adicionado`);
-  };
-
-  const handleTintConfirm = (_formulaId: string, corId: string, nomeCor: string, precoFinal: number, _custoCorantes: number, alternativeProduct?: Product) => {
-    const product = alternativeProduct
-      ? catalogProducts.find(p => p.id === alternativeProduct.id) || tintPendingProduct!
-      : tintPendingProduct!;
-    const newItem: OrderItem = {
-      product_id: product.id,
-      omie_codigo_produto: product.omie_codigo_produto,
-      codigo: product.codigo,
-      descricao: product.descricao,
-      unidade: product.unidade || 'UN',
-      quantidade: 1,
-      valor_unitario: precoFinal,
-      valor_total: precoFinal,
-      tint_cor_id: corId,
-      tint_nome_cor: nomeCor,
-    };
-    setItems(prev => [...prev, newItem]);
-    setTintPendingProduct(null);
-    toast.success(`"${product.descricao}" com cor ${corId} adicionado`);
-  };
-
-  const tintProductAsProduct = useMemo((): Product | null => {
-    if (!tintPendingProduct) return null;
-    return {
-      id: tintPendingProduct.id,
-      codigo: tintPendingProduct.codigo,
-      descricao: tintPendingProduct.descricao,
-      unidade: tintPendingProduct.unidade,
-      valor_unitario: tintPendingProduct.valor_unitario,
-      estoque: tintPendingProduct.estoque ?? 0,
-      ativo: tintPendingProduct.ativo ?? true,
-      omie_codigo_produto: tintPendingProduct.omie_codigo_produto,
-      account: tintPendingProduct.account,
-      is_tintometric: tintPendingProduct.is_tintometric,
-      tint_type: tintPendingProduct.tint_type,
-    };
-  }, [tintPendingProduct]);
-
-  const filteredProducts = useMemo(() => {
-    if (!productSearch || productSearch.length < 2) return [];
-    const q = productSearch.toLowerCase();
-    return catalogProducts.filter(p =>
-      p.descricao?.toLowerCase().includes(q) || p.codigo?.toLowerCase().includes(q)
-    ).slice(0, 20);
-  }, [productSearch, catalogProducts]);
-
-  const subtotal = items.reduce((s, i) => s + i.valor_total, 0);
-
-  const handleSave = async () => {
-    if (!order) return;
-    if (items.length === 0) {
-      toast.error('O pedido precisa ter pelo menos 1 item');
-      return;
-    }
-    setSaving(true);
-    try {
-      const account = order.account === 'colacor' ? 'colacor' : 'oben';
-
-      if (order.omie_pedido_id) {
-        // Save locally first
-        const updatedPayload = {
-          ...(order.omie_payload || {}),
-          cabecalho: {
-            ...(order.omie_payload?.cabecalho || {}),
-            ...(selectedParcela ? { codigo_parcela: selectedParcela } : {}),
-          },
-        };
-        const { error: localErr } = await supabase
-          .from('sales_orders')
-          .update({
-            items: items as unknown as Json,
-            subtotal,
-            total: subtotal,
-            notes: notes || null,
-            omie_payload: updatedPayload as unknown as Json,
-          })
-          .eq('id', order.id);
-        if (localErr) throw localErr;
-
-        // Navigate immediately and sync in background
-        toast.info('Pedido salvo! Sincronizando com o Omie em segundo plano...');
-        navigate('/sales');
-
-        // Fire-and-forget sync
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: {
-            action: 'alterar_pedido',
-            account,
-            sales_order_id: order.id,
-            items: items.map(i => ({
-              product_id: i.product_id,
-              omie_codigo_produto: i.omie_codigo_produto,
-              codigo: i.codigo,
-              descricao: i.descricao,
-              unidade: i.unidade,
-              quantidade: i.quantidade,
-              valor_unitario: i.valor_unitario,
-              ...(i.tint_cor_id ? { tint_cor_id: i.tint_cor_id, tint_nome_cor: i.tint_nome_cor } : {}),
-            })),
-            observacao: notes,
-            codigo_parcela: selectedParcela || undefined,
-          },
-        }).then(({ error }) => {
-          if (error) {
-            toast.error('Erro ao sincronizar com Omie: ' + (error.message || 'Erro desconhecido'));
-          } else {
-            toast.success('Pedido sincronizado com o Omie com sucesso!');
-          }
-        }).catch((err) => {
-          toast.error('Erro ao sincronizar com Omie: ' + (err.message || 'Erro desconhecido'));
-        });
-      } else {
-        const updatedPayloadLocal = {
-          ...(order.omie_payload || {}),
-          cabecalho: {
-            ...(order.omie_payload?.cabecalho || {}),
-            ...(selectedParcela ? { codigo_parcela: selectedParcela } : {}),
-          },
-        };
-        const { error } = await supabase
-          .from('sales_orders')
-          .update({
-            items: items as unknown as Json,
-            subtotal,
-            total: subtotal,
-            notes: notes || null,
-            omie_payload: updatedPayloadLocal as unknown as Json,
-          })
-          .eq('id', order.id);
-        if (error) throw error;
-        toast.success('Pedido atualizado localmente');
-        navigate('/sales');
-      }
-    } catch (e) {
-      console.error(e);
-      const message = e instanceof Error ? e.message : 'Erro ao salvar pedido';
-      toast.error(message);
-      setSaving(false);
-    }
-  };
-
-  const isBlocked = order ? BLOCKED_STATUSES.includes(order.status) : false;
+  const {
+    order,
+    customerName,
+    items,
+    notes,
+    setNotes,
+    loading,
+    saving,
+    formas,
+    selectedParcela,
+    setSelectedParcela,
+    showAddProduct,
+    setShowAddProduct,
+    productSearch,
+    setProductSearch,
+    tintPendingProduct,
+    setTintPendingProduct,
+    customerUserId,
+    updateItem,
+    removeItem,
+    addProduct,
+    handleTintConfirm,
+    tintProductAsProduct,
+    filteredProducts,
+    subtotal,
+    handleSave,
+    isBlocked,
+  } = useSalesOrderEdit();
 
   if (loading) {
     return (
@@ -474,107 +109,23 @@ const SalesOrderEdit = () => {
           <CardContent className="space-y-3">
             {/* Add product search */}
             {showAddProduct && !isBlocked && (
-              <div className="border rounded-lg p-3 bg-muted/30 space-y-2">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Buscar produto por nome ou código..."
-                    value={productSearch}
-                    onChange={(e) => setProductSearch(e.target.value)}
-                    className="pl-8 h-8 text-sm"
-                    autoFocus
-                  />
-                </div>
-                {filteredProducts.length > 0 && (
-                  <div className="max-h-48 overflow-y-auto space-y-1">
-                    {filteredProducts.map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() => addProduct(p)}
-                        className="w-full text-left px-2 py-1.5 rounded hover:bg-accent text-sm flex items-center justify-between gap-2"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="font-medium text-wrap break-words">{p.descricao}</p>
-                          <p className="text-xs text-muted-foreground">{p.codigo} • {p.unidade} • Estoque: <span className={p.estoque > 0 ? 'text-green-600 font-medium' : 'text-red-500 font-medium'}>{p.estoque ?? 0}</span></p>
-                        </div>
-                        <span className="text-xs font-medium shrink-0">
-                          R$ {(p.valor_unitario || 0).toFixed(2)}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {productSearch.length >= 2 && filteredProducts.length === 0 && (
-                  <p className="text-xs text-muted-foreground text-center py-2">Nenhum produto encontrado</p>
-                )}
-                {productSearch.length < 2 && (
-                  <p className="text-xs text-muted-foreground text-center py-1">Digite pelo menos 2 caracteres</p>
-                )}
-              </div>
+              <AddProductSearch
+                productSearch={productSearch}
+                setProductSearch={setProductSearch}
+                filteredProducts={filteredProducts}
+                onAddProduct={addProduct}
+              />
             )}
 
             {items.map((item, index) => (
-              <div key={index} className="border rounded-lg p-3 space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{item.descricao}</p>
-                    {item.codigo && <p className="text-xs text-muted-foreground">Cód: {item.codigo}</p>}
-                    {item.tint_nome_cor && (
-                      <p className="text-xs text-muted-foreground">
-                        🎨 {item.tint_cor_id} - {item.tint_nome_cor}
-                      </p>
-                    )}
-                  </div>
-                  {!isBlocked && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-destructive"
-                      onClick={() => removeItem(index)}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="text-xs text-muted-foreground">Qtd</label>
-                    <Input
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      min={1}
-                      value={item.quantidade}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => updateItem(index, 'quantidade', Number(e.target.value) || 1)}
-                      disabled={isBlocked}
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">Valor Unit.</label>
-                    <Input
-                      type="text"
-                      inputMode="decimal"
-                      pattern="[0-9]*\.?[0-9]*"
-                      step="0.01"
-                      min={0}
-                      value={item.valor_unitario}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => updateItem(index, 'valor_unitario', Number(e.target.value) || 0)}
-                      disabled={isBlocked}
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">Total</label>
-                    <p className="h-8 flex items-center text-sm font-medium">
-                      R$ {item.valor_total.toFixed(2)}
-                    </p>
-                  </div>
-                </div>
-              </div>
+              <OrderItemCard
+                key={index}
+                item={item}
+                index={index}
+                isBlocked={isBlocked}
+                onUpdate={updateItem}
+                onRemove={removeItem}
+              />
             ))}
           </CardContent>
         </Card>
@@ -652,4 +203,3 @@ const SalesOrderEdit = () => {
 };
 
 export default SalesOrderEdit;
-

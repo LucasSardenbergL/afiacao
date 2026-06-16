@@ -75,6 +75,13 @@ interface FarmerClientScoreSeed {
 
 interface ScoreUpdate {
   id: string;
+  // customer_user_id + farmer_id são NOT NULL em farmer_client_scores. O upsert
+  // onConflict:'id' gera INSERT...ON CONFLICT, e o INSERT valida NOT NULL ANTES de
+  // detectar o conflito → sem estas colunas o batch inteiro estoura (erro só logado,
+  // não lançado) e nada persiste, mesmo a função retornando 200. Por isso o
+  // calculated_at ficava congelado. (incidente 2026-05-27)
+  customer_user_id: string;
+  farmer_id: string;
   health_score: number;
   health_class: string;
   churn_risk: number;
@@ -118,6 +125,9 @@ Deno.serve(async (req) => {
   if (!auth.ok) return auth.response;
 
   try {
+    // ANTI-DRIFT (carteira-Omie Opção A): farmer_id do score = carteira_assignments.owner_user_id.
+    // NUNCA seedar/atribuir score por atividade (farmer_calls/route_visits).
+
     // ── Service client for privileged operations ──
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -209,6 +219,19 @@ Deno.serve(async (req) => {
 
       console.log(`[calculate-scores] Found ${allClients.length} omie clients to seed`);
 
+      // Opção A (carteira-Omie): o dono do score = dono da carteira (carteira_assignments),
+      // NÃO defaultFarmerId. ANTI-DRIFT: score nunca deriva de atividade (farmer_calls).
+      const ownerMap = new Map<string, string>();
+      for (let cp = 0; ; cp++) {
+        const { data: aPage } = await supabase
+          .from('carteira_assignments')
+          .select('customer_user_id, owner_user_id')
+          .range(cp * 1000, cp * 1000 + 999);
+        const aRows = (aPage ?? []) as Array<{ customer_user_id: string; owner_user_id: string }>;
+        for (const r of aRows) ownerMap.set(r.customer_user_id, r.owner_user_id);
+        if (aRows.length < 1000) break;
+      }
+
       if (allClients.length === 0) {
         return new Response(JSON.stringify({ 
           message: 'No omie clients found. Run client sync first.',
@@ -272,7 +295,7 @@ Deno.serve(async (req) => {
 
         seedRecords.push({
           customer_user_id: client.user_id,
-          farmer_id: defaultFarmerId,
+          farmer_id: ownerMap.get(client.user_id) ?? defaultFarmerId,
           health_score: 0,
           health_class: 'novo',
           churn_risk: 0,
@@ -300,7 +323,7 @@ Deno.serve(async (req) => {
         const batch = seedRecords.slice(i, i + 200);
         const { error: insertErr } = await supabase
           .from('farmer_client_scores')
-          .upsert(batch, { onConflict: 'customer_user_id,farmer_id' })
+          .upsert(batch, { onConflict: 'customer_user_id' })
           .select('id');
 
         if (insertErr) {
@@ -309,7 +332,7 @@ Deno.serve(async (req) => {
           for (const record of batch) {
             const { error: singleErr } = await supabase
               .from('farmer_client_scores')
-              .upsert(record, { onConflict: 'customer_user_id,farmer_id' });
+              .upsert(record, { onConflict: 'customer_user_id' });
             if (!singleErr) seeded++;
           }
         } else {
@@ -423,6 +446,9 @@ Deno.serve(async (req) => {
 
       updates.push({
         id: client.id,
+        // NOT NULL — obrigatórias no INSERT do upsert onConflict:'id' (ver ScoreUpdate)
+        customer_user_id: client.customer_user_id,
+        farmer_id: client.farmer_id,
         health_score: healthScore,
         health_class: healthClass,
         churn_risk: churnRisk,

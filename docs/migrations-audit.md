@@ -21,14 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **40** custom migrations totais
-- **274** objetos esperados (criados por estas migrations)
+- **240** custom migrations totais
+- **892** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `rls_policy`: 98
-  - `index`: 80
-  - `table`: 43
-  - `trigger`: 29
-  - `function`: 20
+  - `function`: 249
+  - `rls_policy`: 209
+  - `index`: 177
+  - `cron_job`: 106
+  - `table`: 102
+  - `trigger`: 45
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -496,12 +497,1607 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260519020000_fin_onda1_ncg.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_estoque_valor` | — |
+| `index` | `public.fin_estoque_valor_company_data_idx` | `fin_estoque_valor` |
+| `function` | `public.fin_period_lock_trigger` | — |
+| `function` | `public.fin_estimar_estoque_omie` | — |
+| `trigger` | `public.trg_audit` | `fin_estoque_valor` |
+| `trigger` | `public.trg_period_lock` | `fin_estoque_valor` |
+| `rls_policy` | `public.fin_estoque_valor_select_staff` | `fin_estoque_valor` |
+| `rls_policy` | `public.fin_estoque_valor_write_master` | `fin_estoque_valor` |
+
 ### `20260520010000_scoring_visit_p1_fixes.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.enqueue_visit_score_recalc_from_visit` | — |
 | `function` | `public.enqueue_visit_score_recalc_from_client_score` | — |
+
+### `20260523120000_call_log.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.call_log` | — |
+| `index` | `public.uq_call_log_provider_call_id` | `call_log` |
+| `index` | `public.uq_call_log_sip_call_id` | `call_log` |
+| `index` | `public.idx_call_log_farmer_started` | `call_log` |
+| `index` | `public.idx_call_log_missed_unack` | `call_log` |
+| `cron_job` | `cron.call-log-missed-backstop` | — |
+
+### `20260523210000_drop_audit_trigger_fin_config_cashflow.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260523230000_fin_a2_valor_inputs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_valor_inputs` | — |
+| `rls_policy` | `public.fin_valor_inputs_select_master` | `fin_valor_inputs` |
+| `rls_policy` | `public.fin_valor_inputs_write_master` | `fin_valor_inputs` |
+
+### `20260523230835_sync_sla_view_stack.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260523233000_restaura_guardas_sla_view_stack.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260524000000_fin_a3_cockpit_config.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260524095612_crons_scoring_visit_lendo_cron_secret_do_vault.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.scoring-recalc-batch-nightly` | — |
+| `cron_job` | `cron.visit-score-recalc-batch-nightly` | — |
+
+### `20260524100500_cron_financeiro_e_fix_sayerlack.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.fin-omie-sync-2x-diario` | — |
+| `cron_job` | `cron.sayerlack-portal-watchdog` | — |
+
+### `20260524102500_fix_fin_triggers_json_field_access.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_audit_trigger` | — |
+| `function` | `public.fin_period_lock_trigger` | — |
+
+### `20260524120000_carteira_omie_fase1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.omie_vendedor_map` | — |
+| `table` | `public.carteira_assignments` | — |
+| `table` | `public.carteira_coverage` | — |
+| `index` | `public.idx_omie_vendedor_map_codigo` | `omie_vendedor_map` |
+| `index` | `public.idx_carteira_owner` | `carteira_assignments` |
+| `index` | `public.idx_carteira_owner_eligible` | `carteira_assignments` |
+| `index` | `public.idx_coverage_covering_active` | `carteira_coverage` |
+| `function` | `public.carteira_visivel_para` | — |
+| `function` | `public.minha_carteira` | — |
+
+### `20260524120000_fin_regime_inputs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_regime_inputs` | — |
+| `rls_policy` | `public.fin_regime_inputs_select_master` | `fin_regime_inputs` |
+| `rls_policy` | `public.fin_regime_inputs_write_master` | `fin_regime_inputs` |
+
+### `20260524121531_restore_sla_guards.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260524170000_scores_unique_por_cliente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_fcs_customer` | `farmer_client_scores` |
+| `index` | `public.idx_cvs_customer` | `customer_visit_scores` |
+
+### `20260524180000_carteira_scores_owner_e_filas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.uniq_score_recalc_queue_pending` | `score_recalc_queue` |
+| `index` | `public.uniq_visit_score_queue_pending` | `visit_score_recalc_queue` |
+| `function` | `public.enqueue_score_recalc_from_call` | — |
+| `function` | `public.enqueue_visit_score_recalc_from_visit` | — |
+| `function` | `public.enqueue_visit_score_recalc_from_client_score` | — |
+
+### `20260524202410_tuning_crons_estoque_freq_e_timeouts.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.omie-sync-estoque-diario` | — |
+| `cron_job` | `cron.sync-orders-vendas-2h` | — |
+| `cron_job` | `cron.sync-products-customers-daily` | — |
+| `cron_job` | `cron.sync-inventory-vendas-30m` | — |
+| `cron_job` | `cron.sync-omie-services-hourly` | — |
+
+### `20260524203000_rpc_staff_guard_permite_cron_backend.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sugerir_negociacao_paralela_hoje` | — |
+| `function` | `public.refresh_sku_ranking_negociacao` | — |
+
+### `20260525000000_fin_crons_por_entidade.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.fin-sync-base-diario` | — |
+| `cron_job` | `cron.fin-sync-cp-2x` | — |
+| `cron_job` | `cron.fin-sync-cr-2x` | — |
+| `cron_job` | `cron.fin-sync-mov-2x` | — |
+
+### `20260525010000_fin_audit_skip_service_role.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_audit_trigger` | — |
+
+### `20260525020000_fin_sync_cursor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_sync_cursor` | — |
+| `index` | `public.idx_fin_sync_cursor_pendentes` | `fin_sync_cursor` |
+| `cron_job` | `cron.fin-sync-continuacao-10min` | — |
+| `rls_policy` | `public.fin_sync_cursor_select_staff` | `fin_sync_cursor` |
+| `rls_policy` | `public.fin_sync_cursor_service_all` | `fin_sync_cursor` |
+
+### `20260525020001_fin_rpc_gate_auth_p1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_calcular_confiabilidade` | — |
+| `function` | `public.fin_categorias_sem_mapping` | — |
+| `function` | `public.fin_consolidado_intercompany` | — |
+| `function` | `public.fin_estimar_estoque_omie` | — |
+
+### `20260525120000_positivacao_kpis.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.carteira_positivacao_snapshot` | — |
+| `index` | `public.idx_sales_orders_kpi_date` | `sales_orders` |
+| `function` | `public.get_minha_positivacao` | — |
+
+### `20260525130000_fin_analise_dimensoes_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_analise_cr_dimensoes_rpc` | — |
+| `function` | `public.fin_analise_cp_dimensoes_rpc` | — |
+
+### `20260525140000_fin_refresh_analise_dimensoes_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.fin-refresh-analise-dimensoes` | — |
+
+### `20260525140000_v_otimizador_compras_insumos.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260525160000_carteira_saude_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_carteira_saude` | — |
+
+### `20260525190000_mixgap_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_meu_mixgap` | — |
+
+### `20260525200000_fin_sync_watchdog.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_check` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+| `cron_job` | `cron.fin-sync-watchdog` | — |
+| `cron_job` | `cron.fin-sync-heartbeat` | — |
+
+### `20260525210000_viewas_rpcs_for.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._carteira_mixgap_for_owner` | — |
+| `function` | `public.get_meu_mixgap` | — |
+| `function` | `public.get_meu_mixgap_for` | — |
+| `function` | `public._carteira_positivacao_for_owner` | — |
+| `function` | `public.get_minha_positivacao` | — |
+| `function` | `public.get_minha_positivacao_for` | — |
+
+### `20260525220000_viewas_access_targets.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_user_access_profile_for` | — |
+| `function` | `public.list_impersonation_targets` | — |
+
+### `20260525230000_impersonation_audit.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.impersonation_audit` | — |
+| `function` | `public.log_impersonation_start` | — |
+| `function` | `public.end_impersonation` | — |
+
+### `20260526020000_rls_score_carteira_hardening.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pode_ver_carteira_completa` | — |
+| `rls_policy` | `public.fcs_select_carteira` | `farmer_client_scores` |
+| `rls_policy` | `public.fcs_insert_own_or_gestor` | `farmer_client_scores` |
+| `rls_policy` | `public.fcs_update_own_or_gestor` | `farmer_client_scores` |
+| `rls_policy` | `public.fcs_delete_own_or_gestor` | `farmer_client_scores` |
+| `rls_policy` | `public.cvs_select_carteira` | `customer_visit_scores` |
+| `rls_policy` | `public.cvs_insert_own_or_gestor` | `customer_visit_scores` |
+| `rls_policy` | `public.cvs_update_own_or_gestor` | `customer_visit_scores` |
+| `rls_policy` | `public.cvs_delete_own_or_gestor` | `customer_visit_scores` |
+
+### `20260526030000_fin_sync_watchdog_sweep_orphans.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_check` | — |
+
+### `20260526040000_rls_carteira_relacionamento_hardening.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pode_ver_carteira_completa` | — |
+| `rls_policy` | `public.frec_select_carteira` | `farmer_recommendations` |
+| `rls_policy` | `public.frec_insert_own_or_gestor` | `farmer_recommendations` |
+| `rls_policy` | `public.frec_update_own_or_gestor` | `farmer_recommendations` |
+| `rls_policy` | `public.frec_delete_own_or_gestor` | `farmer_recommendations` |
+| `rls_policy` | `public.fbrec_select_carteira` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fbrec_insert_own_or_gestor` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fbrec_update_own_or_gestor` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fbrec_delete_own_or_gestor` | `farmer_bundle_recommendations` |
+| `rls_policy` | `public.fcall_select_carteira` | `farmer_calls` |
+| `rls_policy` | `public.fcall_insert_own_or_gestor` | `farmer_calls` |
+| `rls_policy` | `public.fcall_update_own_or_gestor` | `farmer_calls` |
+| `rls_policy` | `public.fcall_delete_own_or_gestor` | `farmer_calls` |
+| `rls_policy` | `public.rvis_select_carteira` | `route_visits` |
+| `rls_policy` | `public.rvis_insert_own_or_gestor` | `route_visits` |
+| `rls_policy` | `public.rvis_update_own_or_gestor` | `route_visits` |
+| `rls_policy` | `public.rvis_delete_own_or_gestor` | `route_visits` |
+| `rls_policy` | `public.fcop_select_carteira` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.fcop_insert_own_or_gestor` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.fcop_update_own_or_gestor` | `farmer_copilot_sessions` |
+| `rls_policy` | `public.fcop_delete_own_or_gestor` | `farmer_copilot_sessions` |
+
+### `20260526060000_views_security_invoker_hardening.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260526080000_fix_sayerlack_cron_vault.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sayerlack-portal-watchdog` | — |
+
+### `20260526100000_fin_funding_inputs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_funding_inputs` | — |
+| `rls_policy` | `public.fin_funding_inputs_select_master` | `fin_funding_inputs` |
+| `rls_policy` | `public.fin_funding_inputs_write_master` | `fin_funding_inputs` |
+
+### `20260526160000_data_health_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_data_health` | — |
+
+### `20260526230000_mixgap_feedback.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.farmer_mixgap_feedback` | — |
+| `function` | `public.mark_mixgap_feedback` | — |
+| `function` | `public._carteira_mixgap_for_owner` | — |
+
+### `20260527010000_rls_copilot_sessions_select_own_only.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.fcop_select_carteira` | `farmer_copilot_sessions` |
+
+### `20260527120000_clientes_nao_vinculados.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.omie_clientes_nao_vinculados` | — |
+| `table` | `public.omie_nao_vinculados_state` | — |
+| `index` | `public.idx_nv_empresa_synced` | `omie_clientes_nao_vinculados` |
+| `function` | `public.finalize_nao_vinculados_snapshot` | — |
+| `rls_policy` | `public.nv_select` | `omie_clientes_nao_vinculados` |
+| `rls_policy` | `public.nv_state_select` | `omie_nao_vinculados_state` |
+
+### `20260527120000_data_health_rpc_fix.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_data_health` | — |
+
+### `20260527140000_revoke_carteira_internals_anon.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260527160000_cron_vendas_sync_pedidos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.vendas-sync-pedidos-oben-2h` | — |
+| `cron_job` | `cron.vendas-sync-pedidos-colacor-2h` | — |
+
+### `20260527160000_matview_ranking_negociacao_private.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.refresh_sku_ranking_negociacao` | — |
+| `function` | `public.get_sku_ranking_negociacao_paralela` | — |
+
+### `20260527170000_crons_timeout_fix.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.carteira-positivacao-snapshot-mensal` | — |
+| `cron_job` | `cron.carteira-rebuild-nightly` | — |
+| `cron_job` | `cron.compute-association-rules-daily` | — |
+| `cron_job` | `cron.compute-costs-daily` | — |
+| `cron_job` | `cron.monthly-tool-report` | — |
+| `cron_job` | `cron.omie-sync-metadados-daily` | — |
+| `cron_job` | `cron.omie-sync-status-produtos-diario` | — |
+| `cron_job` | `cron.process-recurring-orders-daily` | — |
+| `cron_job` | `cron.sayerlack-portal-watchdog` | — |
+| `cron_job` | `cron.sync-colacor-vendas-products` | — |
+| `cron_job` | `cron.sync-reprocess-operational` | — |
+| `cron_job` | `cron.sync-reprocess-strategic` | — |
+| `cron_job` | `cron.weekly-algorithm-a-audit` | — |
+
+### `20260527180000_data_health_add_vendas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_data_health` | — |
+
+### `20260527180000_get_tint_price_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_price` | — |
+
+### `20260527190000_drop_redundant_sync_orders_cron.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260527190000_drop_tint_formula_itens_public_select.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260527200000_data_health_add_estoque_reposicao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_data_health` | — |
+
+### `20260527210000_data_health_compute_internal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.get_data_health` | — |
+
+### `20260527220000_data_health_watchdog.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+| `cron_job` | `cron.data-health-watchdog` | — |
+
+### `20260527220001_fin_sync_cursor_backfill_desde.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260527230000_cron_baseline.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.afiacao_ciclo_oportunidade_diario` | — |
+| `cron_job` | `cron.afiacao_dispatch_notificacoes_diario` | — |
+| `cron_job` | `cron.afiacao_estados_eventos_diarios` | — |
+| `cron_job` | `cron.afiacao_limpeza_sugestoes_mensal` | — |
+| `cron_job` | `cron.afiacao_omie_oben_sku_items_history_daily` | — |
+| `cron_job` | `cron.afiacao_omie_oben_sync_incremental_2h` | — |
+| `cron_job` | `cron.afiacao_ranking_refresh_semanal` | — |
+| `cron_job` | `cron.afiacao_sugestoes_diarias` | — |
+| `cron_job` | `cron.call-log-missed-backstop` | — |
+| `cron_job` | `cron.carteira-positivacao-snapshot-mensal` | — |
+| `cron_job` | `cron.carteira-rebuild-nightly` | — |
+| `cron_job` | `cron.compute-association-rules-daily` | — |
+| `cron_job` | `cron.compute-costs-daily` | — |
+| `cron_job` | `cron.daily-calculate-scores` | — |
+| `cron_job` | `cron.data-health-watchdog` | — |
+| `cron_job` | `cron.detectar-outliers-diario` | — |
+| `cron_job` | `cron.disparar-pedidos-aprovados-oben` | — |
+| `cron_job` | `cron.fin-cashflow-snapshot-diario` | — |
+| `cron_job` | `cron.fin-ic-reconcile-daily` | — |
+| `cron_job` | `cron.fin-refresh-analise-dimensoes` | — |
+| `cron_job` | `cron.fin-sync-base-diario` | — |
+| `cron_job` | `cron.fin-sync-continuacao-10min` | — |
+| `cron_job` | `cron.fin-sync-cp-2x` | — |
+| `cron_job` | `cron.fin-sync-cr-2x` | — |
+| `cron_job` | `cron.fin-sync-heartbeat` | — |
+| `cron_job` | `cron.fin-sync-mov-2x` | — |
+| `cron_job` | `cron.fin-sync-watchdog` | — |
+| `cron_job` | `cron.gerar-pedidos-diario-oben` | — |
+| `cron_job` | `cron.monthly-tool-report` | — |
+| `cron_job` | `cron.omie-sync-estoque-diario` | — |
+| `cron_job` | `cron.omie-sync-metadados-daily` | — |
+| `cron_job` | `cron.omie-sync-status-produtos-diario` | — |
+| `cron_job` | `cron.process-recurring-orders-daily` | — |
+| `cron_job` | `cron.sayerlack-portal-watchdog` | — |
+| `cron_job` | `cron.scoring-recalc-batch-nightly` | — |
+| `cron_job` | `cron.sync-colacor-vendas-products` | — |
+| `cron_job` | `cron.sync-inventory-vendas-30m` | — |
+| `cron_job` | `cron.sync-omie-services-hourly` | — |
+| `cron_job` | `cron.sync-products-customers-daily` | — |
+| `cron_job` | `cron.sync-reprocess-operational` | — |
+| `cron_job` | `cron.sync-reprocess-strategic` | — |
+| `cron_job` | `cron.vendas-sync-pedidos-colacor-2h` | — |
+| `cron_job` | `cron.vendas-sync-pedidos-oben-2h` | — |
+| `cron_job` | `cron.visit-score-recalc-batch-nightly` | — |
+| `cron_job` | `cron.weekly-algorithm-a-audit` | — |
+
+### `20260527235000_dispatch_notifications_frequente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.afiacao_dispatch_notificacoes_30min` | — |
+
+### `20260527240000_data_health_alert_channel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260527250000_data_health_checks_high.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260527250000_nao_vinculados_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.nao-vinculados-refresh-diario` | — |
+
+### `20260527260000_data_health_vendas_cadastros_dado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20260528000000_fin_sync_watchdog_tail_failing.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_check` | — |
+
+### `20260528010000_cron_sync_customers_dedicated.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sync-customers-vendas-daily` | — |
+
+### `20260528020000_data_health_reposicao_acoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260528030000_cron_sayerlack_lote_retry.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sayerlack-portal-lote-retry` | — |
+
+### `20260528040000_sayerlack_retry_motor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sayerlack_retry_motor_log` | — |
+| `function` | `public.sayerlack_retry_orfaos` | — |
+| `cron_job` | `cron.sayerlack-retry-orfaos` | — |
+
+### `20260528120000_reposicao_custo_cmc_em_transito.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260528120001_v_titulo_baixas.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260528120002_v_capital_giro_prazos.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260528130000_fin_sync_heartbeat_tz_fix.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260528130000_tarefas_bloco_a.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.tarefas` | — |
+| `index` | `public.idx_tarefas_assigned_aberta` | `tarefas` |
+| `index` | `public.idx_tarefas_created_by` | `tarefas` |
+| `index` | `public.idx_tarefas_customer_aberta` | `tarefas` |
+| `index` | `public.idx_tarefas_aberta_auto` | `tarefas` |
+
+### `20260528131000_tarefas_bloco_b.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.tarefa_satisfacao_candidatos` | — |
+| `table` | `public.tarefa_eventos` | — |
+| `index` | `public.idx_candidato_tarefa_pending` | `tarefa_satisfacao_candidatos` |
+| `index` | `public.idx_evento_tarefa` | `tarefa_eventos` |
+
+### `20260528132000_tarefas_bloco_c.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.tarefas_select` | `tarefas` |
+| `rls_policy` | `public.tarefas_insert` | `tarefas` |
+| `rls_policy` | `public.tarefas_update` | `tarefas` |
+| `rls_policy` | `public.tcand_select` | `tarefa_satisfacao_candidatos` |
+| `rls_policy` | `public.tcand_update` | `tarefa_satisfacao_candidatos` |
+| `rls_policy` | `public.tevt_select` | `tarefa_eventos` |
+| `rls_policy` | `public.tevt_insert` | `tarefa_eventos` |
+
+### `20260528133000_tarefas_bloco_d.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_matcher_tick` | — |
+| `function` | `public.tarefas_escalonamento_tick` | — |
+| `cron_job` | `cron.tarefas-matcher-15min` | — |
+| `cron_job` | `cron.tarefas-escalonamento-diario` | — |
+
+### `20260528134000_tarefas_bloco_e.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260528135000_tarefas_matcher_created_at_floor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_matcher_tick` | — |
+
+### `20260528140000_data_health_compute_msg_tz.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20260528140000_whatsapp_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.whatsapp_webhook_events` | — |
+| `table` | `public.whatsapp_conversations` | — |
+| `table` | `public.whatsapp_messages` | — |
+| `index` | `public.idx_wa_conv_customer` | `whatsapp_conversations` |
+| `index` | `public.idx_wa_conv_operator` | `whatsapp_conversations` |
+| `index` | `public.idx_wa_conv_last_msg` | `whatsapp_conversations` |
+| `index` | `public.idx_wa_msg_conv` | `whatsapp_messages` |
+| `rls_policy` | `public.wa_events_staff_select` | `whatsapp_webhook_events` |
+| `rls_policy` | `public.wa_conv_staff_all` | `whatsapp_conversations` |
+| `rls_policy` | `public.wa_msg_staff_all` | `whatsapp_messages` |
+
+### `20260528150000_fin_estoque_omie_feed.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_estimar_estoque_omie` | — |
+| `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
+| `cron_job` | `cron.sync-inventory-servicos-1h` | — |
+
+### `20260528160000_route_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.route_schedule` | — |
+| `table` | `public.route_calendar_override` | — |
+| `table` | `public.route_disparo_config` | — |
+| `table` | `public.route_contact_log` | — |
+| `index` | `public.idx_route_schedule_weekday` | `route_schedule` |
+| `index` | `public.idx_route_contact_log_customer` | `route_contact_log` |
+| `index` | `public.idx_route_contact_log_data` | `route_contact_log` |
+| `rls_policy` | `public.route_sched_staff_read` | `route_schedule` |
+| `rls_policy` | `public.route_sched_master_write` | `route_schedule` |
+| `rls_policy` | `public.route_override_staff_read` | `route_calendar_override` |
+| `rls_policy` | `public.route_override_master_write` | `route_calendar_override` |
+| `rls_policy` | `public.route_config_staff_read` | `route_disparo_config` |
+| `rls_policy` | `public.route_config_master_write` | `route_disparo_config` |
+| `rls_policy` | `public.route_log_staff_read` | `route_contact_log` |
+
+### `20260528194751_data_health_consolida_last_error_e_reposicao_checks.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260530120000_visitas_agendadas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.visitas_agendadas` | — |
+| `index` | `public.uq_vag_pendente_cliente_vendedor_data` | `visitas_agendadas` |
+| `index` | `public.uq_vag_route_visit_id` | `visitas_agendadas` |
+| `index` | `public.idx_vag_scheduled_by_date` | `visitas_agendadas` |
+| `index` | `public.idx_vag_pending_by_seller` | `visitas_agendadas` |
+| `function` | `public.set_updated_at_visitas_agendadas` | — |
+| `function` | `public.reconcile_visita_agendada` | — |
+| `trigger` | `public.trg_vag_updated_at` | `visitas_agendadas` |
+| `trigger` | `public.trg_reconcile_visita_agendada` | `route_visits` |
+| `rls_policy` | `public.vag_select_own` | `visitas_agendadas` |
+| `rls_policy` | `public.vag_insert_own_carteira` | `visitas_agendadas` |
+| `rls_policy` | `public.vag_update_own_pending` | `visitas_agendadas` |
+| `rls_policy` | `public.vag_delete_gestor` | `visitas_agendadas` |
+
+### `20260530140000_fin_watchdog_sync_stale_grace_email.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_check` | — |
+
+### `20260530143818_reposicao_excluir_405ml.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260530160000_data_health_diagnostico_gate_status.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20260530170000_unschedule_sayerlack_lote_retry.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260530180000_fix_sku_fornecedor_externo_atualizado_em_trigger.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.set_atualizado_em_column` | — |
+| `trigger` | `public.sku_fornecedor_externo_set_atualizado_em` | `sku_fornecedor_externo` |
+
+### `20260530190000_data_health_portal_push.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260530190000_reposicao_preencher_parametros_faltantes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.preencher_parametros_faltantes_skus` | — |
+| `cron_job` | `cron.reposicao-preencher-parametros-faltantes` | — |
+
+### `20260530200000_data_health_checks_acionaveis.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20260530200000_reposicao_classificar_sayerlack_grupo_default.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.classificar_sayerlack_grupo_default` | — |
+| `cron_job` | `cron.reposicao-classificar-sayerlack-grupo` | — |
+
+### `20260530210000_data_health_restaura_portal_split.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260530210000_reposicao_candidatos_primeira_compra.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_vih_recorrencia_180d` | `venda_items_history` |
+| `function` | `public.promover_candidato_primeira_compra` | — |
+
+### `20260530210001_cancelar_pedido_limpa_portal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cancelar_pedido_sugerido` | — |
+
+### `20260530230000_fix_portal_lock_retry_blindspot.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.envio_portal_lock_candidatos` | — |
+
+### `20260531120000_reposicao_candidatos_inclui_habilitados.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.promover_candidato_primeira_compra` | — |
+
+### `20260531130000_data_health_check_sayerlack_fabricado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260531140000_reposicao_atualizar_params_nao_zera.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atualizar_parametros_numericos_skus` | — |
+
+### `20260531150000_reposicao_param_limbo_watchdog.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_param_limbo_log` | — |
+| `index` | `public.uq_reposicao_param_limbo_log_dia` | `reposicao_param_limbo_log` |
+| `function` | `public.reposicao_param_limbo_watchdog` | — |
+| `cron_job` | `cron.reposicao-param-limbo-watchdog` | — |
+
+### `20260531160000_reposicao_excluir_fabricado_04.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260531170000_data_health_check_sayerlack_mapeamento_gap.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260531170000_route_contact_log_escrita.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.registrar_contato_rota` | — |
+| `function` | `public.desfazer_contato_rota` | — |
+
+### `20260601000000_tarefas_escalonamento_titulo_mensagem.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_escalonamento_tick` | — |
+
+### `20260601100000_tarefas_fase2_bloco_a.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.tarefa_templates` | — |
+| `index` | `public.idx_tt_ativo_assigned` | `tarefa_templates` |
+
+### `20260601101000_tarefas_fase2_bloco_b.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.uq_tarefa_template_assignee_dia` | `tarefas` |
+
+### `20260601102000_tarefas_fase2_bloco_c.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.tt_select` | `tarefa_templates` |
+| `rls_policy` | `public.tt_insert` | `tarefa_templates` |
+| `rls_policy` | `public.tt_update` | `tarefa_templates` |
+| `rls_policy` | `public.tt_delete` | `tarefa_templates` |
+
+### `20260601103000_tarefas_fase2_bloco_d.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_guard_comprovacao` | — |
+| `function` | `public.concluir_com_comprovacao` | — |
+| `function` | `public.auditar_tarefa` | — |
+| `function` | `public.tarefas_materializar_recorrentes` | — |
+| `trigger` | `public.trg_tarefas_guard_comprovacao` | `tarefas` |
+| `cron_job` | `cron.tarefas-materializar-recorrentes` | — |
+
+### `20260601104000_tarefas_fase2_bloco_e.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `storage.tarefa_comprov_insert_own` | `objects` |
+| `rls_policy` | `storage.tarefa_comprov_select_own_ou_gestor` | `objects` |
+
+### `20260602101856_reposicao_refresh_descricao_sku_parametros.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atualizar_descricao_sku_parametros` | — |
+| `cron_job` | `cron.reposicao-refresh-descricao-diario` | — |
+
+### `20260604120000_loyalty_rls_hardening.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.resgatar_recompensa` | — |
+
+### `20260604120000_picking_bridge.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.uq_picking_tasks_sales_order` | `picking_tasks` |
+| `index` | `public.idx_sales_orders_account_kpi` | `sales_orders` |
+| `function` | `public.ensure_picking_task_for_sales_order` | — |
+| `function` | `public.recalcular_picking_task` | — |
+| `function` | `public.confirmar_item_picking` | — |
+| `function` | `public.listar_pedidos_a_separar` | — |
+
+### `20260604120000_route_queue_snapshot.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.route_queue_snapshot` | — |
+| `index` | `public.idx_rqs_data` | `route_queue_snapshot` |
+| `index` | `public.idx_rqs_farmer_data` | `route_queue_snapshot` |
+| `rls_policy` | `public.rqs_staff_read` | `route_queue_snapshot` |
+| `rls_policy` | `public.rqs_self_write` | `route_queue_snapshot` |
+
+### `20260604130000_omie_products_tipo_produto_coluna.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_omie_products_account_tipo_produto` | `omie_products` |
+| `function` | `public.preserve_tipo_produto` | — |
+| `trigger` | `public.trg_preserve_tipo_produto` | `omie_products` |
+
+### `20260604130000_whatsapp_sla.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.wa_is_stop_keyword` | — |
+| `function` | `public.whatsapp_minutos_uteis` | — |
+| `function` | `public.wa_owner_efetivo` | — |
+
+### `20260604140000_recebimento_efetivacao_ledger.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.nfe_efetivacao_tentativas` | — |
+| `index` | `public.idx_nfe_efetivacao_tentativas_receb` | `nfe_efetivacao_tentativas` |
+| `rls_policy` | `public.staff_select_nfe_efetivacao_tentativas` | `nfe_efetivacao_tentativas` |
+
+### `20260604140000_tipo_produto_consumidores.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260604140000_whatsapp_sla_digest.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.whatsapp_sla_digest_log` | — |
+| `function` | `public.whatsapp_sla_digest_tick` | — |
+| `cron_job` | `cron.whatsapp-sla-digest-diario` | — |
+
+### `20260604150000_envio_portal_claim_ids.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.envio_portal_claim_ids` | — |
+
+### `20260604150000_tipo_produto_vigia_cobertura.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260604160000_route_queue_snapshot_nome.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260604170000_posthog_error_webhook.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.posthog_error_webhook_log` | — |
+| `function` | `public.enfileirar_erro_app` | — |
+
+### `20260604170000_reposicao_blindar_sku_sem_fornecedor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260604170000_tint_catalog_rls_hardening.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260604180000_envio_portal_claim_ids_lista_positiva.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.envio_portal_claim_ids` | — |
+
+### `20260604180000_public_tool_history_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_public_tool_history` | — |
+
+### `20260604182408_embalagem_economica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sku_embalagem_equivalencia` | — |
+| `table` | `public.sku_preco_fornecedor_capturado` | — |
+| `index` | `public.uniq_sku_emb_equiv_ativo` | `sku_embalagem_equivalencia` |
+| `index` | `public.idx_sku_emb_equiv_grupo` | `sku_embalagem_equivalencia` |
+| `index` | `public.idx_sku_preco_cap_lookup` | `sku_preco_fornecedor_capturado` |
+| `rls_policy` | `public.staff_sku_emb_equiv_select` | `sku_embalagem_equivalencia` |
+| `rls_policy` | `public.staff_sku_emb_equiv_insert` | `sku_embalagem_equivalencia` |
+| `rls_policy` | `public.staff_sku_emb_equiv_update` | `sku_embalagem_equivalencia` |
+| `rls_policy` | `public.staff_sku_emb_equiv_delete` | `sku_embalagem_equivalencia` |
+| `rls_policy` | `public.staff_sku_preco_cap_select` | `sku_preco_fornecedor_capturado` |
+| `rls_policy` | `public.staff_sku_preco_cap_insert` | `sku_preco_fornecedor_capturado` |
+| `rls_policy` | `public.staff_sku_preco_cap_update` | `sku_preco_fornecedor_capturado` |
+| `rls_policy` | `public.staff_sku_preco_cap_delete` | `sku_preco_fornecedor_capturado` |
+
+### `20260604190000_reposicao_minimo_forcado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260605120000_param_auto_tabelas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_param_auto_run` | — |
+| `table` | `public.reposicao_param_auto_log` | — |
+| `table` | `public.reposicao_param_pin` | — |
+| `index` | `public.uq_param_auto_run_dia` | `reposicao_param_auto_run` |
+| `index` | `public.idx_param_auto_log_run` | `reposicao_param_auto_log` |
+| `index` | `public.idx_param_auto_log_sku` | `reposicao_param_auto_log` |
+| `rls_policy` | `public.param_auto_run_sel` | `reposicao_param_auto_run` |
+| `rls_policy` | `public.param_auto_log_sel` | `reposicao_param_auto_log` |
+| `rls_policy` | `public.param_auto_pin_sel` | `reposicao_param_pin` |
+
+### `20260605120000_tarefas_guard_old_requer.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_guard_comprovacao` | — |
+
+### `20260605130000_param_auto_core.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atualizar_parametros_numericos_skus` | — |
+
+### `20260605130000_tarefas_leitura_na_instancia.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tarefas_materializar_recorrentes` | — |
+
+### `20260605140000_afiacao_os_status_sync.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.afiacao_os_sync_fila` | — |
+| `index` | `public.idx_afiacao_os_sync_fila_retry` | `afiacao_os_sync_fila` |
+| `function` | `public.mapear_status_etapa` | — |
+| `function` | `public.afiacao_os_enqueue` | — |
+| `function` | `public.afiacao_os_sync_kick` | — |
+| `trigger` | `public.trg_afiacao_os_enqueue` | `orders` |
+| `cron_job` | `cron.afiacao-os-sync` | — |
+| `rls_policy` | `public.staff_le_afiacao_os_sync_fila` | `afiacao_os_sync_fila` |
+
+### `20260605140000_iniciar_envio_portal_pre_claim.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.iniciar_envio_portal_pre_claim` | — |
+
+### `20260605140000_param_auto_wrapper_revert_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_parametros_automatico_diario` | — |
+| `function` | `public.reverter_parametro_auto` | — |
+| `function` | `public.reverter_run_auto` | — |
+| `function` | `public.despinar_parametro` | — |
+| `function` | `public.reposicao_param_auto_resumo_tick` | — |
+| `cron_job` | `cron.reposicao-param-auto-resumo` | — |
+
+### `20260605150000_param_auto_fusivel_calibracao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atualizar_parametros_numericos_skus` | — |
+
+### `20260605152437_caca_views.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260606120000_reposicao_rpc_account_aware.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260606130000_detectar_skus_sem_grupo_exclui_04.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.detectar_skus_sem_grupo` | — |
+
+### `20260606140000_detectar_skus_sem_grupo_self_heal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.detectar_skus_sem_grupo` | — |
+
+### `20260606150000_a2_cmc_base_custo_view.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260606150000_reposicao_qtde_inteira.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260606170000_fornecedores_classificacao_schema.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.cliente_classificacao` | — |
+| `table` | `public.fornecedor_excecao` | — |
+
+### `20260606170000_reposicao_fix_aplicar_promocoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_promocoes_no_ciclo` | — |
+
+### `20260606180000_reposicao_aplicar_promocoes_hardening.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_promocoes_no_ciclo` | — |
+
+### `20260606180000_reposicao_preco_pedido_cmc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260606190000_reposicao_preco_pedido_cmc_account.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260606190000_reposicao_qtde_inteira_persist.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_persistir_qtde_inteira` | — |
+
+### `20260606200000_reposicao_promo_forward_buying_min.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_promocoes_no_ciclo` | — |
+
+### `20260606210000_order_feed_view.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260606230000_negociacao_paralela_v2_cleanup.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260606240000_cron_sync_inventory_full.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sync-inventory-full-vendas-daily` | — |
+
+### `20260608120000_tool_spec_custom_option.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.adicionar_opcao_tool_spec` | — |
+
+### `20260609085244_data_health_check_familia_ausente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260609150000_reposicao_alerta_pedido_minimo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_alerta_pedido_minimo` | — |
+| `index` | `public.reposicao_alerta_pedido_minimo_ativo` | `reposicao_alerta_pedido_minimo` |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+| `cron_job` | `cron.reposicao-alerta-pedido-minimo` | — |
+
+### `20260609150000_tint_sync_promote.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.tint_staging_precos_base` | — |
+| `table` | `public.tint_keys_snapshots` | — |
+| `index` | `public.idx_tsp_precos_chave` | `tint_staging_precos_base` |
+| `index` | `public.idx_tint_formulas_ativas` | `tint_formulas` |
+| `function` | `public.tint_promote_sync_run` | — |
+| `function` | `public.tint_ensure_corante_stub` | — |
+| `function` | `public.tint_calc_preco_final` | — |
+| `function` | `public.tint_recalc_preco_oficial` | — |
+| `function` | `public.tint_apply_keys_snapshot` | — |
+
+### `20260609160000_reposicao_ciclo_intraday.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `cron_job` | `cron.gerar-pedidos-intraday-oben` | — |
+| `cron_job` | `cron.omie-sync-estoque-intraday-oben` | — |
+| `cron_job` | `cron.omie-sync-estoque-diario` | — |
+
+### `20260610130000_melhorias_canal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.melhoria_itens` | — |
+| `table` | `public.melhoria_mensagens` | — |
+| `index` | `public.idx_melhoria_itens_status` | `melhoria_itens` |
+| `index` | `public.idx_melhoria_itens_autor` | `melhoria_itens` |
+| `index` | `public.idx_melhoria_mensagens_item` | `melhoria_mensagens` |
+| `function` | `public.melhoria_itens_touch_updated_at` | — |
+| `function` | `public.melhoria_clientes_por_produto` | — |
+| `function` | `public.melhoria_produtos_relacionados` | — |
+| `trigger` | `public.trg_melhoria_itens_touch` | `melhoria_itens` |
+| `rls_policy` | `public.melhoria_itens_select` | `melhoria_itens` |
+| `rls_policy` | `public.melhoria_itens_insert` | `melhoria_itens` |
+| `rls_policy` | `public.melhoria_itens_update` | `melhoria_itens` |
+| `rls_policy` | `public.melhoria_mensagens_select` | `melhoria_mensagens` |
+| `rls_policy` | `public.melhoria_mensagens_insert` | `melhoria_mensagens` |
+
+### `20260610150000_reposicao_auto_aprovacao_piloto.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.reposicao_auto_aprovacao_log` | — |
+| `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
+| `function` | `public.reposicao_pedido_auto_aprovavel` | — |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+
+### `20260610200000_push_vendedora.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.push_subscriptions` | — |
+| `index` | `public.idx_push_subscriptions_user` | `push_subscriptions` |
+| `function` | `public.upsert_push_subscription` | — |
+| `function` | `public.delete_push_subscription` | — |
+| `function` | `public._push_enviar` | — |
+| `function` | `public.push_whatsapp_inbound` | — |
+| `function` | `public.push_tarefa_nova` | — |
+| `function` | `public.push_sla_tick` | — |
+| `trigger` | `public.trg_push_whatsapp_inbound` | `whatsapp_messages` |
+| `trigger` | `public.trg_push_tarefa_nova` | `tarefas` |
+| `cron_job` | `cron.push-sla-tick` | — |
+| `rls_policy` | `public.push_subscriptions_own` | `push_subscriptions` |
+| `rls_policy` | `public.push_subscriptions_service` | `push_subscriptions` |
+
+### `20260610200000_radar_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.radar_empresas` | — |
+| `table` | `public.radar_contatos` | — |
+| `table` | `public.radar_municipios` | — |
+| `table` | `public.radar_ingest_state` | — |
+| `index` | `public.idx_radar_empresas_fila` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_local` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_cnae` | `radar_empresas` |
+| `index` | `public.idx_radar_contatos_cnpj` | `radar_contatos` |
+| `function` | `public.radar_recruzar_ja_cliente` | — |
+| `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
+| `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
+| `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
+| `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
+
+### `20260611120000_reposicao_fixes_codex_711.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_oportunidade_ciclo` | — |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+
+### `20260611140000_data_health_check_estoque_frescor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260611140000_kb_fundacao_casamento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.omie_product_spec_links` | — |
+| `index` | `public.omie_product_spec_links_one_confirmed` | `omie_product_spec_links` |
+| `index` | `public.omie_product_spec_links_unique_triple` | `omie_product_spec_links` |
+| `function` | `public.kb_specs_normalize` | — |
+| `function` | `public.buscar_skus_candidatos` | — |
+| `function` | `public.confirmar_vinculo_boletim` | — |
+| `function` | `public.rejeitar_sugestao` | — |
+| `trigger` | `public.trg_kb_specs_normalize` | `kb_product_specs` |
+| `rls_policy` | `public.omie_product_spec_links_select_staff` | `omie_product_spec_links` |
+
+### `20260611150000_route_city_norm.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_cvs_city_norm` | `customer_visit_scores` |
+| `function` | `public.route_city_norm` | — |
+
+### `20260611180000_familia_ausente_lista_email.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._vendas_familia_ausente_lista_email` | — |
+| `function` | `public.data_health_watchdog` | — |
+
+### `20260611190000_tint_sync_codex_fixes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+| `function` | `public.tint_calc_preco_final` | — |
+| `function` | `public.tint_recalc_preco_oficial` | — |
+| `function` | `public.tint_apply_keys_snapshot` | — |
+
+### `20260611195000_reposicao_aplicar_snapshot_pendente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_snapshot_pendente` | — |
+
+### `20260611200000_reposicao_motor_fonte_unica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260611210000_data_health_estoque_via_marcador.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260611220000_reposicao_claim_full_sync.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.claim_estoque_full_sync` | — |
+| `function` | `public.finalizar_estoque_full_sync` | — |
+
+### `20260612120000_auto_assign_role_omie_import_guard.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.auto_assign_user_role` | — |
+
+### `20260612130000_radar_rpcs_contato.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.registrar_contato_radar` | — |
+| `function` | `public.desfazer_contato_radar` | — |
+| `function` | `public.radar_kpis` | — |
+
+### `20260613120000_customer_canonical_alias.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.customer_canonical_alias` | — |
+| `index` | `public.idx_cca_canonical` | `customer_canonical_alias` |
+| `index` | `public.idx_cca_status_active` | `customer_canonical_alias` |
+| `rls_policy` | `public.cca_select_gestor_master` | `customer_canonical_alias` |
+
+### `20260613120000_kb_0c_aprovacao_master_only.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.confirmar_vinculo_boletim` | — |
+| `function` | `public.desvincular_boletim` | — |
+| `rls_policy` | `public.kb_product_specs_insert_master` | `kb_product_specs` |
+| `rls_policy` | `public.kb_product_specs_update_master` | `kb_product_specs` |
+
+### `20260613120000_onda1_fase0_sales_orders_identidade.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.sales_orders_checkout_account_uq` | `sales_orders` |
+| `index` | `public.idx_sales_orders_origem` | `sales_orders` |
+
+### `20260613130000_radar_rls_initplan_perf.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
+| `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
+| `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
+| `rls_policy` | `public.radar_ingest_state_select_gestor` | `radar_ingest_state` |
+
+### `20260613150000_kb_spec_versions_faseA.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.kb_product_spec_versions` | — |
+| `index` | `public.idx_kbv_identidade` | `kb_product_spec_versions` |
+| `index` | `public.idx_kbv_source_doc` | `kb_product_spec_versions` |
+| `function` | `public.kbv_block_mutation` | — |
+| `function` | `public.aprovar_versao_boletim` | — |
+| `trigger` | `public.trg_kbv_immutable` | `kb_product_spec_versions` |
+| `rls_policy` | `public.kbv_select_staff` | `kb_product_spec_versions` |
+
+### `20260613160000_kb_extraction_drafts.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.kb_extraction_drafts` | — |
+| `function` | `public.kb_extraction_draft_claim` | — |
+| `trigger` | `public.trg_kb_extraction_drafts_updated_at` | `kb_extraction_drafts` |
+| `rls_policy` | `public.kb_extraction_drafts_select_master` | `kb_extraction_drafts` |
+| `rls_policy` | `public.kb_extraction_drafts_delete_master` | `kb_extraction_drafts` |
+
+### `20260613170000_fix_auto_assign_master_escalation.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.auto_assign_user_role` | — |
+
+### `20260613180000_kb_hardening_codex.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.kbv_uma_viva` | `kb_product_spec_versions` |
+| `function` | `public.aprovar_versao_boletim` | — |
+| `function` | `public.kbv_block_mutation` | — |
+| `trigger` | `public.trg_kbv_immutable` | `kb_product_spec_versions` |
+
+### `20260613190000_radar_fatia3.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_contagem_por_municipio` | — |
+| `function` | `public.radar_atribuir_tarefa` | — |
+| `function` | `public.radar_registrar_cadastro_omie` | — |
+
+### `20260613210000_radar_perf_indices.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_radar_lista_novas` | `radar_empresas` |
+| `index` | `public.idx_radar_lista_estab` | `radar_empresas` |
+| `index` | `public.idx_radar_muni` | `radar_empresas` |
+
+### `20260613230000_roteirizador_prospects.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_salvar_geocode` | — |
+| `function` | `public.radar_prospects_para_rota` | — |
+
+### `20260614103251_onda1_fase1_farmer_calls_atendimento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_farmer_calls_atendimento_id` | `farmer_calls` |
+
+### `20260614140000_radar_contagem_perf.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_radar_muni_cover` | `radar_empresas` |
+| `function` | `public.radar_contagem_por_municipio` | — |
+
+### `20260614160000_roteirizador_campo_banco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.norm_cidade` | — |
+| `function` | `public.carteira_por_municipio` | — |
+| `function` | `public.radar_prospects_para_rota` | — |
+
+### `20260614170000_cmc_ledger.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.cmc_ledger` | — |
+| `index` | `public.idx_cmc_ledger_lookup` | `cmc_ledger` |
+| `function` | `public.cmc_ledger_capture` | — |
+| `trigger` | `public.trg_cmc_ledger_capture` | `inventory_position` |
+| `rls_policy` | `public.cmc_ledger_select_staff` | `cmc_ledger` |
+
+### `20260614170000_roteirizador_campo_carteira_sufixo_uf.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.carteira_por_municipio` | — |
+
+### `20260614180000_markup_policy.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.markup_policy` | — |
+| `index` | `public.uq_markup_policy_conta` | `markup_policy` |
+| `index` | `public.uq_markup_policy_fam` | `markup_policy` |
+| `index` | `public.uq_markup_policy_sku` | `markup_policy` |
+| `function` | `public.resolve_markup_policy` | — |
+| `rls_policy` | `public.markup_policy_select_staff` | `markup_policy` |
+| `rls_policy` | `public.markup_policy_write_master` | `markup_policy` |
+
+### `20260614190000_get_preco_cockpit.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_preco_cockpit` | — |
+
+### `20260614231801_reposicao_timeout_sync_inventory.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sync-inventory-vendas-30m` | — |
+| `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
+
+### `20260615091839_retencao_cron_job_run_details.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.purge-cron-job-run-details` | — |
+
+### `20260615095710_idx_data_health_freshness_cols.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_inventory_position_synced_at` | `inventory_position` |
+| `index` | `public.idx_omie_products_updated_at` | `omie_products` |
+| `index` | `public.idx_product_costs_updated_at` | `product_costs` |
+| `index` | `public.idx_fin_contas_receber_updated_at` | `fin_contas_receber` |
+| `index` | `public.idx_fin_contas_pagar_updated_at` | `fin_contas_pagar` |
+| `index` | `public.idx_farmer_client_scores_calculated_at` | `farmer_client_scores` |
+| `index` | `public.idx_pedido_compra_sugerido_data_ciclo` | `pedido_compra_sugerido` |
+
+### `20260615103111_idx_omie_products_codigo_text_account.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_omie_products_codigo_text_account` | `omie_products` |
+
+### `20260615130000_tint_vigia_cobertura_sentinela.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260615133000_tint_remapeia_skus_omie_desalinhadas.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260615140000_tint_promote_indices_timeout.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_tsfi_staging_formula_id` | `tint_staging_formula_itens` |
+| `index` | `public.idx_tsc_acct_corante` | `tint_staging_corantes` |
+| `index` | `public.idx_tsf_acct_par` | `tint_staging_formulas` |
+| `index` | `public.idx_tsf_run` | `tint_staging_formulas` |
+| `index` | `public.idx_tss_run` | `tint_staging_skus` |
+| `index` | `public.idx_tsprod_run` | `tint_staging_produtos` |
+| `index` | `public.idx_tsbase_run` | `tint_staging_bases` |
+| `index` | `public.idx_tsemb_run` | `tint_staging_embalagens` |
+
+### `20260615150000_cockpit_preco_fixes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_preco_cockpit` | — |
+| `rls_policy` | `public.cmc_ledger_select_gestor` | `cmc_ledger` |
+
+### `20260615160000_tint_promote_set_based.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
+### `20260615182814_vincular_tint_skus_omie_orfaos.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260615190000_geocoding_cep_geo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.cep_geo` | — |
+| `table` | `public.municipio_geo` | — |
+| `function` | `public.normalizar_cep` | — |
+| `function` | `public.rank_precisao` | — |
+| `function` | `public.cep_geo_upsert` | — |
+| `function` | `public.carteira_por_municipio` | — |
+| `function` | `public.radar_prospects_para_rota` | — |
+| `rls_policy` | `public.cep_geo_sel` | `cep_geo` |
+| `rls_policy` | `public.municipio_geo_sel` | `municipio_geo` |
 
 ## Próximos passos quando algo der `❌`
 

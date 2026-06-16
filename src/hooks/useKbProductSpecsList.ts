@@ -7,8 +7,7 @@ export function useKbProductSpecsList() {
     queryKey: ['kb-product-specs-list'],
     staleTime: 60_000,
     queryFn: async (): Promise<KbProductSpec[]> => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('kb_product_specs') as any)
+      const { data, error } = await supabase.from('kb_product_specs')
         .select('*')
         .not('approved_at', 'is', null)
         .order('product_name', { ascending: true })

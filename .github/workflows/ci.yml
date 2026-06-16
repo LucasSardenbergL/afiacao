@@ -6,12 +6,29 @@
 # garante que isso não repita.
 #
 # Decisões de bloqueio:
-# - typecheck (tsc --noEmit): blocking — qualquer regressão de tipos quebra o PR
+# - typecheck (tsc --noEmit -p tsconfig.app.json): blocking — qualquer regressão
+#   de tipos no src/ quebra o PR. ⚠️ Tem que ser `-p tsconfig.app.json`, NÃO o
+#   `tsc --noEmit` cru: o tsconfig.json root usa `"files": []` + `"references"`,
+#   e em modo não-build o tsc ignora as references e checa só o `files` (vazio)
+#   → no-op que não type-checava o src de jeito nenhum. Isso deixou passar 2
+#   TS2741 reais (#325 KpiCards.test.tsx, #345 FinanceiroFunding.tsx), só pegos
+#   pelo Lovable. `-p tsconfig.app.json` checa src+testes de verdade.
+#   ✅ CONVERGÊNCIA STRICT (2026-05-30): o `tsconfig.app.json` agora é `strict: true`
+#   (+ noImplicitAny/strictNullChecks/noUnusedLocals/noUnusedParameters/
+#   noFallthroughCasesInSwitch). O `tsconfig.strict.json` paralelo foi DELETADO e o
+#   2º passo de typecheck removido — este passo único agora é o gate strict de TODO
+#   o src + testes. A migração incremental (539→855 files) está concluída.
 # - test (vitest run): blocking — regressão de comportamento documentado
 # - build (vite build): blocking — pega Tailwind quebrado + import errors + PWA setup
-# - lint (eslint): informational — main hoje tem 1300 errors herdados (97%
-#   no-explicit-any). Bloqueá-lo pararia todo PR. Quando TypeScript strict mode
-#   roadmap zerar a dívida, virar blocking.
+# - lint (eslint): blocking em ERRORS — a dívida de `no-explicit-any` foi zerada
+#   (era ~1300 errors, hoje 0; ver CLAUDE.md §10/§13), então o lint virou gate
+#   real (2026-05-26). O que importa: a regra de segurança `no-restricted-syntax`
+#   (anti-injeção PostgREST `.or()`, nível error, escopo src/ — eslint.config.js)
+#   agora BLOQUEIA o PR de verdade; antes, com `continue-on-error`, um `.or()` cru
+#   reintroduzido passava silencioso. WARNINGS (hoje 82, todos
+#   react-hooks/exhaustive-deps) seguem NÃO-bloqueantes de propósito (eslint só
+#   falha em error) — evita fricção no repo multi-sessão. Ratchet de warnings
+#   (--max-warnings N) fica como follow-up se a contagem começar a crescer.
 
 name: CI
 
@@ -27,7 +44,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -38,11 +55,8 @@ jobs:
         run: bun install --frozen-lockfile
 
       # ─── Blocking checks ────────────────────────────────────────────
-      - name: Type check
-        run: bunx tsc --noEmit
-
-      - name: Type check (strict mode — files migrados, ver tsconfig.strict.json)
-        run: bun run typecheck:strict
+      - name: Type check (strict — todo o src + testes)
+        run: bunx tsc --noEmit -p tsconfig.app.json
 
       - name: Tests
         run: bun run test
@@ -54,7 +68,42 @@ jobs:
           # Se algum VITE_* for required no futuro, adicionar aqui.
           NODE_ENV: production
 
-      # ─── Informational (não bloqueia merge) ─────────────────────────
-      - name: Lint (informational)
+      # Bloqueia em errors (0 hoje); warnings não falham (eslint default).
+      - name: Lint
         run: bun lint
-        continue-on-error: true
+
+      # Anti-inchaço do CLAUDE.md (carregado em toda sessão+subagente). Teto
+      # apertado (20 KB / 2,6k palavras / linha ≤2000c) vs ~13 KB pós-refactor
+      # da frente 1 (2026-06-15). Estourar = mover a lição pra docs/agent/ e o
+      # histórico pra docs/historico/ (ver topo do CLAUDE.md). Ver scripts/check-claude-md-budget.sh.
+      - name: CLAUDE.md size budget
+        run: bun run claude:size
+
+  # ─── Job NÃO-bloqueante (informativo, sinal próprio) ────────────────
+  # Gate de regressão de COBERTURA money-path (≠ os checks do `validate`, que
+  # cobrem tipos/comportamento/build/lint). Roda os contratos scripts/mutcheck.d/*.mut
+  # via scripts/mutcheck.sh — mutation-check: um teste só vale se FALHA quando a
+  # invariante é violada (plantamos o bug, medimos se a suíte o mata).
+  # ⚠️ NÃO é required na branch protection POR ORA: os .mut casam TEXTO EXATO do
+  # helper, então um refactor legítimo pode dessincronizá-los (INVÁLIDO) e travaria
+  # PRs alheias num repo multi-sessão. Promova a required (igual ao lint) quando os
+  # .mut amadurecerem. `--selftest` valida a própria ferramenta. Ver CLAUDE.md §13.
+  mutation-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: mutcheck — selftest (mecânica da ferramenta, sem vitest)
+        run: bun run mutcheck:selftest
+
+      - name: mutcheck — contratos de cobertura money-path (.mut)
+        run: bun run mutcheck

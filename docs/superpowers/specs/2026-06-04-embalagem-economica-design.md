@@ -1,0 +1,268 @@
+# Decisão de Embalagem Econômica (QT/GL) — Spec de Design
+
+> **Data:** 2026-06-04 · **Status:** aprovado p/ implementação (v1) · **Money-path** (reposição/compras)
+> **Origem:** brainstorming com o founder + consult Codex (gpt-5.5). Surgiu durante a investigação do "item 2" (transposição de giro entre SKUs); o founder levantou um caso adjacente — comprar a embalagem mais barata — que tem **maior retorno recorrente** e foi priorizado.
+> **Fundação comum:** este projeto constrói a primitiva "vincular SKUs equivalentes com um fator de conversão". A **sucessão de giro** (o item 2 original) reusa essa base num projeto seguinte (§13).
+
+---
+
+## 1. Problema
+
+Alguns insumos da Sayerlack (concentrados linha **WP**, ~12 itens) existem em **duas embalagens** do mesmo conteúdo: **QT** e **GL**, com **1 GL = 4 QT** (fator fixo). O preço relativo das duas **vira sem aviso** — às vezes compensa comprar GL, às vezes QT, por unidade-equivalente. Hoje o founder **confere isso na mão**, toda compra, consultando o portal da Sayerlack.
+
+O sistema não tem nenhuma noção de equivalência entre SKUs: todo o motor de reposição é chaveado por `sku_codigo_omie` (demanda lida de `venda_items_history`, 90d → `v_sku_parametros_sugeridos` → `sku_parametros`, recálculo diário via `omie-cron-diario`). QT e GL aparecem como dois itens independentes, com giro partido entre eles.
+
+**Dor:** dinheiro perdido (ou atenção gasta) em toda compra de concentrado por não saber, no momento, qual embalagem está mais barata por unidade-equivalente.
+
+---
+
+## 2. Objetivo e não-objetivos (v1)
+
+**Objetivo:** para os pares QT/GL cadastrados, recomendar **qual embalagem comprar pelo menor custo por unidade-base** (QT-equivalente), no fluxo onde o founder revisa a sugestão de compra. O founder tolera "arredondar pra cima" (comprar 1 GL para uma necessidade de 1 QT) quando o custo por unidade-base compensa.
+
+**Não-objetivos da v1 (cortados por YAGNI / decisão do founder + Codex):**
+- **Não** reprojeta a demanda desses itens (ela é ruidosa — §3.1). A decisão é por **preço**, não por demanda nova.
+- **Não** consolida estoque QT+GL no motor de reposição nem regrava `estoque_minimo`/`ponto_pedido` por grupo (double-count, distorce ponto de pedido). Consolidação aparece só como **explicação** da opção, nunca gravada.
+- **Não** automatiza a captura de preço na v1 (scraping é Fase 2 — §4, §10).
+- **Não** cria tela nova: a recomendação aparece dentro do fluxo de compra existente.
+- **Sem** alerta proativo, histórico longo de preço, confiança numérica, limpeza de demanda de liquidação (Fases 2/3).
+
+---
+
+## 3. Restrições de realidade (confirmadas com o founder)
+
+**3.1 Demanda ruidosa.** Parte dos concentrados é **consumo interno** (tintometria — não aparece em `venda_items_history`); parte é **venda**, às vezes **venda-liquidação** (vende perto do custo + desconto em outro item, só pra desovar estoque). Logo, a demanda via venda é um sinal fraco para esses itens → v1 não a reprojeta.
+
+**3.2 Preço só via simulação de pedido.** O preço de compra **não existe** em catálogo/API/tabela exportável. Ele só aparece **simulando um pedido** no portal: inicia um rascunho, coloca o código + embalagem (QT e GL), o portal mostra o preço de cada (respeitando o fator), e o founder **não efetiva** — fecha/abandona. O portal auto-exclui rascunhos não-efetivados depois de um tempo.
+
+**3.3 Concentrados praticamente não vencem.** Validade longa — na prática escoam antes de vencer. → A v1 **não modela trava de validade**; o único freio do overbuy (comprar 4× ao escolher GL) é o **capital parado**.
+
+**3.4 Founder sem terminal.** Migrations custom são coladas manualmente no SQL Editor do Lovable; edge functions deployadas via chat do Lovable. Cada ida ao banco/edge é cara → minimizar idas (uma migration única).
+
+---
+
+## 4. Decisão central: faseamento
+
+O founder escolheu **captura automática (scraping via Browserless)** como alvo. O Codex e a análise convergiram em **desacoplar o valor do risco**, e o founder aprovou:
+
+- **v1 entrega a decisão de embalagem com preço MANUAL.** Sem tocar no portal. O founder digita os dois preços que já está vendo no portal; o sistema faz a conta certa e recomenda. Ganho rápido, risco ~zero.
+- **Scraping vira Fase 2, atrás de um spike obrigatório** (§10). Se o spike não provar que dá pra ler o preço **e** abandonar o rascunho sem nunca chegar perto do "finalizar" e sem nascer PO, o scraping não entra — e o manual já resolve.
+
+O scraping é money-path frágil: o portal Sayerlack roda via Browserless, é flaky (timeouts/408) e já causou um incidente de ~R$82k em pedidos órfãos/duplicados.
+
+---
+
+## 5. Arquitetura v1
+
+### 5.1 Modelo de dados — **uma** migration única (§3.4)
+
+**Tabela `sku_embalagem_equivalencia`** (os pares; cadastro manual):
+
+| coluna | tipo | nota |
+|---|---|---|
+| `id` | bigint PK | |
+| `empresa` | text | |
+| `grupo_id` | uuid | default `gen_random_uuid()`; agrupa as embalagens do mesmo conteúdo |
+| `sku_codigo_omie` | text | |
+| `unidade_base` | text | ex.: `QT` (uma só por grupo) |
+| `fator_para_base` | numeric | QT=1, GL=4 |
+| `fornecedor_nome` | text | `Sayerlack` |
+| `ativo` | boolean | default true |
+| `vigente_desde` / `vigente_ate` | date | `vigente_ate` nullable |
+| `criado_por` / `criado_em` | | |
+
+Constraints: um `grupo_id` tem **uma única** `unidade_base`; cada `(empresa, sku_codigo_omie)` ativo pertence a **no máximo um** grupo. RLS staff (padrão do módulo reposição).
+
+**Tabela `sku_preco_fornecedor_capturado`** (os preços; v1 alimentada manualmente, campos de captura já prontos pra Fase 2):
+
+| coluna | tipo | nota |
+|---|---|---|
+| `id` | bigint PK | |
+| `empresa` | text | |
+| `sku_codigo_omie` | text | |
+| `fornecedor_nome` | text | |
+| `preco` | numeric | |
+| `moeda` | text | `BRL` |
+| `preco_tipo` | text | `liquido` \| `bruto` (o que o número representa) |
+| `capturado_em` | timestamptz | |
+| `fonte` | text (enum) | `manual_usuario` \| `portal_capturado_ok` \| `portal_capturado_parcial` |
+| `status` | text (enum) | `ok` \| `stale` \| `falhou` (frescor) |
+| `run_id` | text nullable | **Fase 2** (rastreio da captura) |
+| `validade_operacional_ate` | timestamptz nullable | até quando o preço é considerado válido |
+| `observacao` | text nullable | |
+| `criado_por` / `criado_em` | | |
+
+Na v1: só `fonte='manual_usuario'`. O preço vigente é o registro mais recente por `(sku_codigo_omie, fonte)`. **A "confiança" do preço (recomendação do Codex) é expressa por `fonte` + `status` — ambos enums, sem número** (evita falsa precisão).
+
+**Kill-switch em `company_config`** (tabela já existente):
+- `embalagem_captura_automatica_habilitada` (default `false`)
+- `embalagem_preco_stale_horas` (default `24`)
+
+Na v1 a captura nem existe, mas o gate nasce pronto — o founder liga/desliga **sem deploy**.
+
+### 5.2 Helper puro novo — `src/lib/reposicao/embalagem-helpers.ts` (TDD, testes primeiro)
+
+Helper **novo** (não enfiar no `compras-otimizador-helpers.ts`, que decide "vale comprar mais?"). Espelha o estilo dos helpers money-path do projeto (puro, testado com vitest). Função núcleo `escolherEmbalagemEconomica`:
+
+**Input:** `necessidadeBase` (quantidade necessária em unidade-base, vinda da sugestão de compra do item, consolidada pelo fator); `opcoes[]` (`{ sku_codigo_omie, fator_para_base, preco, preco_status, preco_capturado_em, lote_minimo? }`); `params` (`{ custoCapitalAnual, limiarMinimoEconomiaRS, demandaBaseDiaria? }`).
+
+**Lógica:**
+1. Considerar opções com preço **informado**. **< 2 opções com preço → `indisponivel`** (pede preço; não recomenda). Preço `stale` (idade > `stale_horas`) **entra com flag `preco_desatualizado`** (aviso "confira/atualize"), não bloqueia — preço manual nunca "some" sozinho; só preço **ausente**/`falhou` bloqueia.
+2. Custo por unidade-base de cada opção = `preco / fator_para_base`.
+3. Pra atender `necessidadeBase`: `qtd_embalagens = ceil(necessidadeBase / fator)`, `unidades_compradas = qtd_embalagens * fator`, `excedente_base = unidades_compradas − necessidadeBase`.
+4. Custo direto = `qtd_embalagens * preco`.
+5. **Capital de carrego do excedente:** se `demandaBaseDiaria` disponível → `dias_escoa = excedente_base / demandaBaseDiaria`; `capital = (excedente_base * custo_unit_base) * custoCapitalAnual * (dias_escoa / 365)`. Se demanda ausente → `capital = null` (não estima; mostra excedente cru + flag `escoamento_nao_estimado`). **Sem trava de validade** (§3.3).
+6. Custo total ajustado = `custo_direto + (capital ?? 0)`.
+7. Recomenda a opção de **menor custo total ajustado** para a mesma `necessidadeBase`.
+8. **Guard de overbuy marginal:** se a vencedora gera excedente e a economia ajustada vs. a melhor opção **sem** overbuy é `< limiarMinimoEconomiaRS` → recomenda a sem-overbuy (ou marca `ganho_marginal`). Evita empurrar GL por centavos.
+9. **Degradação honesta:** preço **ausente**/`falhou` ou `fator` ausente → não recomenda. Preço `stale` → recomenda com aviso (ponto 1).
+
+**Output:** `{ recomendada | null, status: 'ok'|'indisponivel'|'marginal', custo_por_base_por_opcao[], excedente_base, capital_estimado | null, economia_vs_alternativa, precos_data[], flags[] }`.
+
+### 5.3 Integração na UI
+
+Na **revisão da sugestão de compra** (cockpit de pedidos — `AdminReposicaoSessaoPedidos` / card do item sugerido), para SKUs que pertencem a um grupo de equivalência: um bloco **"Embalagem"** com:
+- os dois preços atuais (valor + data + status/fonte);
+- a **recomendação** (qual comprar) + economia por unidade-base + excedente/capital estimado;
+- botão **"Atualizar preços"** → dialog pra digitar QT e GL (`fonte=manual_usuario`). *(Na Fase 2, esse mesmo botão também dispara a captura automática.)*
+- preço velho/ausente → "informe os preços pra ver a recomendação" (**não recomenda no escuro**).
+
+### 5.4 Kill-switch e degradação honesta
+
+- Captura automática (quando existir) só roda se `embalagem_captura_automatica_habilitada=true` — desligável sem deploy.
+- Preço além de `embalagem_preco_stale_horas` → `status='stale'`. Na v1 (manual) isso vira **aviso** na recomendação (não some — o founder reinforma quando for comprar). Na Fase 2 (capturado), `stale` **sai** da recomendação automática e cai no manual.
+- Nenhuma recomendação é emitida sem **dois preços informados** (preço ausente/`falhou` bloqueia).
+
+---
+
+## 6. Lógica de decisão — exemplos
+
+- **GL/4 < QT, necessidade grande (sem excedente):** recomenda GL. Economia direta.
+- **GL/4 < QT, necessidade pequena (1 QT):** GL gera 3 QT-equiv de excedente; o capital de carrego é descontado; só recomenda GL se a economia ajustada > limiar. Senão recomenda QT (ou `ganho_marginal`).
+- **QT mais barato por unidade-base:** recomenda QT, sem excedente.
+- **Sem demanda confiável:** recomenda pela comparação de preço/unidade-base, `capital=null`, flag `escoamento_nao_estimado` (decisão de overbuy fica com o founder, que tolera estocar).
+
+---
+
+## 7. Auditoria
+
+A recomendação carrega a **explicação estruturada**: "recomendei GL porque QT=R$x, GL=R$y → GL/4=R$z < R$x; excedente N QT-equiv; capital ~R$w; preços de DD/MM (fonte: manual)". Decisão errada nunca vira caixa-preta.
+
+---
+
+## 8. Testes (helper puro, espelhados, escritos primeiro)
+
+1. QT vence por preço.
+2. GL vence por preço, necessidade grande → recomenda GL.
+3. GL mais barato/unidade mas necessidade pequena → capital come a economia → recomenda QT.
+4. Economia abaixo do limiar → não empurra overbuy (`ganho_marginal`).
+5. Preço de uma embalagem **ausente** → `indisponivel`, não recomenda.
+6. Preço `stale` → recomenda com flag `preco_desatualizado` (não bloqueia).
+7. `fator` ausente → não recomenda.
+8. Demanda ausente → recomenda por preço/unidade-base, `capital=null`, flag `escoamento_nao_estimado`.
+
+---
+
+## 9. Achados do Codex incorporados
+
+Consult Codex (gpt-5.5) gerou os P1 que moldaram este desenho:
+- Faseamento (v1 manual / scraping Fase 2 atrás de spike) — §4, §10.
+- Captura nunca no clique crítico de compra; cron/botão explícito — §10.
+- Helper novo (não estender o marginal); modelo de preço rico (fornecedor/moeda/líquido-bruto/`fonte`+`status` enums, sem confiança numérica) — §5.1, §5.2.
+- Custo total ajustado (não preço/4); não consolidar estoque no motor — §5.2, §2.
+- Kill-switch visível + auditoria + política de estado-desconhecido — §5.4, §7, §10.
+
+---
+
+## 10. Roadmap das fases seguintes (fora do escopo deste spec da v1)
+
+- **Fase 1.5 — Spike (gate de viabilidade):** 1 item, execução manual, sem retry/cron/integração. **Sucesso =** lê preço QT/GL de forma inequívoca (qual campo é o preço — por lata, não por litro/subtotal), **não** alcança estado finalizável, **abandona e verifica** que nenhum PO nasceu. Se precisar chegar perto do "finalizar" ou não conseguir limpar/verificar o rascunho → **scraping sai do roadmap**, fica no manual.
+- **Fase 2 — Captura automática:** edge function **separada** do motor de envio (`enviar-pedido-portal-sayerlack`) — compartilha só o login, **nunca** o fluxo de pedido; credencial/perfil de cotação **sem permissão de finalizar** se o portal permitir. Cron diário pros 12 (não sob-demanda). **Lock** por fornecedor+grupo (1 job ativo), **circuit-breaker** (1 falha pós-login ou 408 no carrinho → desliga por X horas, força manual), **retry só antes de inserir item** (depois disso, falha = estado desconhecido → bloqueia novas cotações até cleanup/verificação), **run-log + evidência** (run_id, screenshot/HTML, estado, preço), **cleanup explícito** de rascunhos (não confiar no auto-expire), atrás do kill-switch, **desligada por default**.
+- **Fase 3 — refino:** lote mínimo por embalagem na decisão; badge "GL ficou mais barato desde DD/MM"; histórico de preço; eventual consolidação/limpeza da demanda dos concentrados.
+
+---
+
+## 11. Limitações conhecidas da v1
+
+- Preço é manual → tão fresco quanto a última digitação (mitigado: status/stale + pedir atualização).
+- Capital de carrego usa a demanda existente (ruidosa) como proxy de escoamento — degradação honesta quando ausente.
+- Lote mínimo por embalagem não entra na decisão v1 (Fase 3).
+- Impostos/descontos/frete condicionais do pedido real podem divergir do preço informado (`preco_tipo` documenta o que o número representa; refino na Fase 2/3).
+- Sem consolidação de estoque/demanda no motor (intencional — §2).
+
+---
+
+## 12. Pendências do founder / operação Lovable
+
+- **Migration manual** (uma só): colar no SQL Editor do Lovable (empacotar via skill `lovable-db-operator`) + query de validação.
+- **Cadastro dos ~12 pares** QT/GL (`sku_embalagem_equivalencia`) — manual.
+- **Parâmetros de decisão:** `custoCapitalAnual` (reusar `empresa_configuracao_custos`/cm_anual do otimizador) e `limiarMinimoEconomiaRS` (definir um piso).
+- Sem deploy de edge na v1 (helper + UI são front; só a migration toca o banco).
+
+---
+
+## 13. Relação com o item 2 original (sucessão de giro)
+
+A primitiva `sku_embalagem_equivalencia` (vínculo de SKUs + fator) é a mesma fundação que a **sucessão de giro** precisa (transpor o histórico de um SKU descontinuado para o sucessor — investigação do "item 1" provou que o "Transferir" atual só copia parâmetros, e o recálculo diário os sobrescreve). A sucessão é um projeto seguinte que reusa esta base, com a diferença de que lá o vínculo é **temporal** (antigo→sucessor, fator ~1) e a demanda **é** transposta. Não faz parte deste spec.
+
+---
+
+## 14. v1.1 — Crédito de reposição da sobra (fix de metodologia, 2026-06-10)
+
+**Caso real que expôs o problema (founder, WP01/WP87/WP04):** preços preenchidos manualmente; WP01 QT R$81,7068 × GL R$306,4977 → custo/QT-equiv **GL R$76,62 < QT R$81,71** (6,2% mais barato). Mesmo assim o pedido indicou QT. Com o spread de ~6%, o frame v1 só recomendava GL quando a necessidade caía num **múltiplo exato de 4** — a sobra do galão entrava como custo morto integral no `custo_direto`, e o "freio do capital parado" (§3.3) nunca era o decisor de fato (sobra escoa em ~9–13 dias → carrego de centavos vs R$143–225 de diferença de custo direto).
+
+**Bug de metodologia, não de código:** a implementação divergia da intenção da spec — §2 ("tolera arredondar pra cima quando o custo por unidade-base compensa"), §3.3 ("o único freio do overbuy é o capital parado") e §6 bullet 4 ("sem demanda confiável: recomenda pela comparação de preço/unidade-base") descrevem um modelo onde a sobra é **antecipação de estoque**, não desperdício. O `custo_total_ajustado = custo_direto + carrego` penalizava a sobra pelo valor integral hoje e nunca creditava que ela **evita a próxima compra**.
+
+**Modelo v1.1 (crédito de reposição):**
+
+```
+preco_reposicao_por_base = min(custo_por_base) entre as opções válidas do grupo
+credito_reposicao        = sobra_escoavel ? excedente_base × preco_reposicao_por_base : 0
+custo_total_ajustado     = custo_direto + (carrego ?? 0) − credito_reposicao
+```
+
+- `sobra_escoavel` = demanda do grupo disponível e > 0 (mesmo gate do carrego; o hook já só passa demanda quando o cm existe — codex P1 do #613 preservado). **Sem demanda/cm → crédito 0 = comportamento v1 (conservador) + flag `escoamento_nao_estimado`.**
+- O crédito valoriza a sobra ao **menor custo/base do grupo** (a próxima compra ótima seria feita a esse custo — é exatamente a compra que a sobra evita).
+- **Invariante (testado):** `custo_total ≥ necessidade × custo_por_base_da_opção ≥ 0` — o crédito nunca deixa custo negativo, pois `preco_reposicao ≤ custo_por_base` da própria opção.
+- **Freios preservados:** o carrego segue somando (escoamento lento → carrego come o crédito → conservadora volta a ganhar — autorregulável, sem teto arbitrário de dias); guard de **ganho marginal** (limiar R$5) intacto — WP01 com necessidade 1 QT: GL ganha por R$2,56 < R$5 → recomenda QT com aviso.
+- Campos novos: `AvaliacaoOpcao.credito_reposicao`; `DecisaoEmbalagem.dias_escoamento_sobra` (p/ UI explicar "sobra escoa em ~Xd"); flag `sobra_antecipa_compra`.
+
+**Efeito no WP01 (números reais, demanda do grupo 0,2244 QT-eq/dia, cm 30%):** nec 1 → QT (marginal R$2,56); nec 2 → **GL** (economia R$9,04); nec 3 → **GL** (R$14,96); nec 4 → **GL** (R$20,33). Antes: QT, QT, QT, GL.
+
+**Dois testes da v1 reescritos** (eram artefatos do frame míope): "capital come a economia" usava GL R$9 < QT R$10 absoluto — compra dominante (4 unidades por menos dinheiro) que o frame antigo rejeitava; refeito com escoamento genuinamente lento. "Marginal" usava o mesmo padrão; refeito com spread pequeno por base (GL 39,60 vs QT 10).
+
+**Limitação registrada:** grupo sem demanda registrada nenhuma (ex.: consumo 100% interno da tintometria, invisível em `venda_items_history` — §3.1) continua caindo no conservador. A solução real é dar fonte de demanda interna ao motor (fora deste escopo); a tela avulsa mostra o custo/base nos badges pro founder decidir no olho.
+
+**Escopo:** 100% frontend (helper puro + textos de UI nas 2 superfícies). Sem migration, sem edge. O painel é recomendação visual — **não** altera `qtde_final` nem o pedido automático.
+
+---
+
+## 14.1 — Revisão adversarial do Codex (gpt-5.5, xhigh, 2026-06-11)
+
+O adversarial retroativo (Caminho B na entrega original) rodou. Achados, triados contra o escopo da spec:
+
+**Corrigidos neste follow-up (PR de fixes):**
+- **P1 — guard marginal sumia com necessidade fracionária.** O guard usava `excedente_base === 0` pra achar a opção conservadora; com necessidade não-inteira **nenhuma** embalagem casa exato → o guard nunca disparava e o galão ganhava por centavos (contraexemplo do Codex: nec 2,5; QT R$10; GL R$39,99 → GL por R$0,0075, sem aviso). **Fix:** a conservadora passa a ser a opção de **menor** excedente (não a de excedente zero); pra necessidade inteira é a que casa exato → comportamento idêntico ao anterior (backward-compat verificado nos testes inteiros). Teste novo com o caso fracionário ínfimo.
+- **Honestidade do rótulo (P1.1/P1.6 do Codex).** Quando a recomendação **banca sobra**, a "economia" depende de consumir esse estoque ao preço de hoje (não é caixa garantido). A UI nas 2 superfícies passa a qualificar: "economia X **(ao preço de hoje, contando a sobra como estoque)**" quando `sobra_antecipa_compra`. O caso sem sobra (nec múltiplo do fator) segue "economia" pura (caixa real).
+
+**Limitações reconhecidas (documentadas, não corrigidas — fora do escopo v1 ou imateriais):**
+- **MOQ / `lote_minimo` ignorado (Codex P1.4).** Já era **não-objetivo explícito** (§2, §11; o campo `lote_minimo?` é marcado "v1: não usado, Fase 3"). **Sem risco vivo:** os hooks (`useEmbalagemPedido`/`useEmbalagemConsulta`) **não populam** `lote_minimo` → sempre `undefined`. Entra na Fase 3 com fonte de dados de MOQ por embalagem.
+- **Risco de preço futuro na sobra bancada (Codex P1.1/P1.6).** Se o preço por base **cair** abaixo de ~R$72,10 (5,9% sob o GL de hoje) **antes** de a sobra escoar, o galão bancado vale menos e há regressão vs a v1. É **risco de preço sobre estoque mantido** — a spec §3.3 deliberadamente modela só o custo de capital, não risco de preço (itens sem validade, giro contínuo). O founder decide a TODO preço de hoje; o rótulo "ao preço de hoje" agora deixa isso explícito. Refino (break-even/sensibilidade) = v2.
+- **Carrego linear cobra 33–100% a mais (Codex P1.2).** O carrego usa `excedente × custo_base × cm × dias/365` com `dias = excedente/demanda` (tempo até a ÚLTIMA unidade sair), mas a sobra escoa progressivamente → o tempo médio é ~metade. É **fórmula pré-existente da v1** (espelha `compras-otimizador`), **imaterial na margem da decisão** (WP01: carrego R$1,12 vs decisão de R$9). Refino do carrego = v2 (toca semântica compartilhada com o otimizador).
+- **`min()` do grupo viola independência com 3+ embalagens (Codex P1.5).** O crédito é valorado ao melhor custo/base **do grupo**; uma 3ª embalagem mais barata/base muda o crédito das demais. **Sem grupo de 3+ em produção** (todos os WP são QT/GL, 2 membros) → 2-membros é correto. Documentar a premissa quando surgir grupo de 3.
+
+⚠️ **Codex CLI não roda os testes neste ambiente** (sandbox read-only bloqueia o tmp do Vite) — o adversarial é de leitura/raciocínio; os números foram reconferidos por TDD local.
+
+---
+
+## 14.2 — Gate "sem demanda registrada" (decisão do founder, 2026-06-11)
+
+O Codex (#4) apontou que o gate "sem demanda → crédito 0 → recomenda conservador (QT)" contradizia a spec **original** (§6 bullet 4). Para um item que o founder **sabe** que gira mas tem demanda registrada zero (consumo interno da tintometria, invisível em vendas — §3.1), recomendar QT é o nudge errado.
+
+**Decisão (founder, AskUserQuestion):** sem demanda registrada, recomendar pela embalagem de **menor custo por unidade-base** (o galão, mais barato/litro) **com aviso** "sem giro registrado — confira se o item gira". Implementação:
+- A ordenação usa `custo_por_base` (não `custo_total_ajustado`) quando `demanda == null|≤0`.
+- O **guard de overbuy marginal é pulado** sem demanda (ele compara custo direto e desfaria a escolha pelo galão — exatamente o nudge que o founder quer).
+- **Não banca crédito** (sem escoamento estimável) → `economia_vs_alternativa = 0` (não inventa R$ economizado; o ganho real é por litro, visível nos badges).
+- Vale para os itens cuja demanda registrada é zero; itens **com** giro (WP01/87/04, 0,22/dia) seguem pelo custo total ajustado da v1.1.
+
+**Trade-off aceito:** sem demanda não há freio de capital, então isto pode sugerir levar o galão de um item que de fato não gira. Mitigado por: (a) é recomendação **visual**, não compra automática; (b) o aviso é explícito; (c) o founder tolera arredondar pra cima quando o custo/litro compensa (§2). Risco residual coberto pelo aviso.

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mixPrerollWithMic } from './audio-preroll';
 
 describe('mixPrerollWithMic', () => {
@@ -20,10 +20,15 @@ describe('mixPrerollWithMic', () => {
       })),
       decodeAudioData: vi.fn().mockResolvedValue({ duration: 5 }),
       destination: {},
+      resume: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined),
     };
-    (globalThis as any).AudioContext = vi.fn(() => audioContextMock);
-    (globalThis as any).fetch = vi.fn().mockResolvedValue({ arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+    vi.stubGlobal('AudioContext', vi.fn(() => audioContextMock));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('retorna MediaStream mixado e baixa o MP3 fornecido', async () => {
@@ -43,8 +48,10 @@ describe('mixPrerollWithMic', () => {
     // Antes de play(): source NÃO foi iniciado
     expect(source.start).not.toHaveBeenCalled();
 
-    // Após play(): source inicia
+    // Após play(): retoma o AudioContext (hardening iOS — pode ter suspendido entre
+    // o gesto e o 'established') e inicia o source.
     result.play();
+    expect(audioContextMock.resume).toHaveBeenCalledTimes(1);
     expect(source.start).toHaveBeenCalledTimes(1);
   });
 

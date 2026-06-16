@@ -1,184 +1,34 @@
 import { useState, useMemo } from 'react';
-import { addDays } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Calendar } from '@/components/ui/calendar';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
-import { Loader2, Printer, CalendarIcon, Sun, Sunset, ArrowLeft, Building2 } from 'lucide-react';
-import { format, startOfDay, endOfDay } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-import { cn } from '@/lib/utils';
-import { openPrintOrder, type PrintOrderData } from '@/components/OrderPrintLayout';
-
-type CompanyFilter = 'oben' | 'colacor' | 'afiacao';
-
-const COMPANY_LABELS: Record<CompanyFilter, string> = {
-  oben: 'Oben',
-  colacor: 'Colacor',
-  afiacao: 'Afiação',
-};
-
-const COMPANY_COLORS: Record<CompanyFilter, string> = {
-  oben: 'bg-blue-100 text-blue-800 border-blue-300',
-  colacor: 'bg-rose-100 text-rose-800 border-rose-300',
-  afiacao: 'bg-amber-100 text-amber-800 border-amber-300',
-};
-
-interface OrderItem {
-  codigo?: string;
-  omie_codigo?: string;
-  descricao?: string;
-  nome?: string;
-  quantidade?: number;
-  unidade?: string;
-  valor_unitario?: number;
-  valor_total?: number;
-  tint_cor_id?: string;
-  tint_nome_cor?: string;
-  [k: string]: unknown;
-}
-
-interface OmiePayload {
-  cabecalho?: {
-    codigo_parcela?: string;
-    codigo_cliente?: number;
-    [k: string]: unknown;
-  };
-  [k: string]: unknown;
-}
-
-interface SalesOrderRow {
-  id: string;
-  customer_user_id: string;
-  items: OrderItem[];
-  subtotal: number;
-  total: number;
-  desconto?: number;
-  frete?: number;
-  status: string;
-  omie_numero_pedido: string | null;
-  created_at: string;
-  notes: string | null;
-  account?: string;
-  customer_name?: string;
-  customer_document?: string;
-  customer_phone?: string;
-  customer_address?: string;
-  vendedor_name?: string;
-  cond_pagamento?: string;
-  user_id?: string;
-  omie_payload?: OmiePayload;
-}
-
-interface ProfileLite {
-  user_id: string;
-  name: string | null;
-  document: string | null;
-  phone: string | null;
-}
-
-interface AddressLite {
-  user_id: string;
-  street: string;
-  number: string;
-  complement: string | null;
-  neighborhood: string;
-  city: string;
-  state: string;
-  zip_code: string;
-  is_default: boolean | null;
-}
-
-interface FormaPagamento {
-  codigo: string;
-  descricao: string;
-}
-
-function getPeriod(dateStr: string): 'manha' | 'tarde' {
-  const h = new Date(dateStr).getHours();
-  return h < 12 ? 'manha' : 'tarde';
-}
-
-function buildPrintData(order: SalesOrderRow, company: CompanyFilter, logoUrls?: Record<string, string | null>): PrintOrderData {
-  const isOben = company === 'oben';
-  const companyMap: Record<CompanyFilter, { name: string; cnpj: string; phone: string; address: string }> = {
-    oben: {
-      name: 'OBEN COMÉRCIO LTDA',
-      cnpj: '51.027.034/0001-00',
-      phone: '(37) 9987-8190',
-      address: 'Av. Primeiro de Junho, 70 – Centro, Divinópolis/MG – CEP: 35.500-002',
-    },
-    colacor: {
-      name: 'COLACOR COMERCIAL LTDA',
-      cnpj: '15.422.799/0001-81',
-      phone: '(37) 3222-1035',
-      address: 'Av. Primeiro de Junho, 48 – Centro, Divinópolis/MG – CEP: 35.500-002',
-    },
-    afiacao: {
-      name: 'COLACOR S.C LTDA',
-      cnpj: '55.555.305/0001-51',
-      phone: '(37) 9987-8190',
-      address: 'Av. Primeiro de Junho, 50 – Centro, Divinópolis/MG – CEP: 35.500-002',
-    },
-  };
-
-  const c = companyMap[company];
-
-  // Extract parcelaCode from omie_payload
-  const payload = order.omie_payload;
-  const parcelaCode = payload?.cabecalho?.codigo_parcela || undefined;
-
-  return {
-    companyName: c.name,
-    companyCnpj: c.cnpj,
-    companyPhone: c.phone,
-    companyAddress: c.address,
-    companyLogoUrl: logoUrls?.[company] || undefined,
-    orderNumber: order.omie_numero_pedido?.replace(/^0+/, '') || order.id.slice(0, 8).toUpperCase(),
-    date: format(new Date(order.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR }),
-    customerName: order.customer_name || 'Cliente',
-    customerDocument: order.customer_document || '',
-    customerPhone: order.customer_phone,
-    customerAddress: order.customer_address,
-    vendedorName: order.vendedor_name,
-    condPagamento: order.cond_pagamento,
-    parcelaCode,
-    items: (order.items || []).map((it) => ({
-      codigo: it.codigo || it.omie_codigo || '-',
-      descricao: it.descricao || it.nome || '',
-      quantidade: it.quantidade || 1,
-      unidade: it.unidade || 'UN',
-      valorUnitario: it.valor_unitario || 0,
-      valorTotal: it.valor_total || 0,
-      tintCorId: it.tint_cor_id,
-      tintNomeCor: it.tint_nome_cor,
-    })),
-    subtotal: order.subtotal || 0,
-    desconto: order.desconto || 0,
-    frete: order.frete || 0,
-    total: order.total || 0,
-    observacoes: order.notes || undefined,
-    isOben: isOben,
-  };
-}
+import { Loader2, Printer, ArrowLeft } from 'lucide-react';
+import { format } from 'date-fns';
+import { janelaQueryDiaCivil, pedidoNoDiaCivil } from '@/lib/pedido/dia-civil';
+import { openPrintOrder } from '@/components/OrderPrintLayout';
+import {
+  COMPANY_LABELS, COMPANY_COLORS, getPeriod,
+  type CompanyFilter, type SalesOrderRow, type ProfileLite, type AddressLite,
+  type FormaPagamento, type EnrichedOrder,
+} from '@/components/sales/print/types';
+import { buildPrintData, buildSingleOrderHtml, buildPrintDocument } from '@/components/sales/print/buildPrintHtml';
+import { PrintFilters } from '@/components/sales/print/PrintFilters';
+import { OrderGroup } from '@/components/sales/print/OrderGroup';
 
 const SalesPrintDashboard = () => {
   const navigate = useNavigate();
-  const { isStaff } = useAuth();
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [selectedCompanies, setSelectedCompanies] = useState<CompanyFilter[]>(['oben', 'colacor', 'afiacao']);
   const [selectedPeriod, setSelectedPeriod] = useState<'all' | 'manha' | 'tarde'>('all');
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
 
-  const dayStart = startOfDay(selectedDate).toISOString();
-  const dayEnd = endOfDay(selectedDate).toISOString();
+  // Janela de query = união do dia local (pedidos do wizard) com o dia UTC (pedidos do
+  // sync Omie, created_at data-pura à meia-noite UTC). Mais larga que o dia exibido —
+  // o pertencimento real é re-decidido em filteredOrders via pedidoNoDiaCivil.
+  const { inicioIso: dayStart, fimIso: dayEnd } = janelaQueryDiaCivil(selectedDate);
 
   // Fetch company logos from Omie
   const { data: companyLogos = {} } = useQuery({
@@ -358,7 +208,7 @@ const SalesPrintDashboard = () => {
       const result: Record<string, string> = {};
       for (const userId of customersMissingAddress) {
         let codigoCliente = omieClienteMap.get(userId);
-        
+
         // If no codigo_cliente, try searching by document (CNPJ/CPF)
         if (!codigoCliente) {
           const profile = profileMap.get(userId);
@@ -418,6 +268,9 @@ const SalesPrintDashboard = () => {
   // Enriched and filtered orders
   const filteredOrders = useMemo(() => {
     return allOrdersRaw
+      // A janela de query é a união dos dois regimes (pega pedidos de dias vizinhos
+      // na borda) — aqui cada pedido é atribuído ao SEU dia civil, sem duplicação.
+      .filter(o => pedidoNoDiaCivil(o.created_at, selectedDate))
       .filter(o => selectedCompanies.includes(o._company))
       .filter(o => {
         if (selectedPeriod === 'all') return true;
@@ -445,7 +298,7 @@ const SalesPrintDashboard = () => {
           cond_pagamento: condPagamento,
         };
       });
-  }, [allOrdersRaw, selectedCompanies, selectedPeriod, profileMap, addressMap, formasMap]);
+  }, [allOrdersRaw, selectedDate, selectedCompanies, selectedPeriod, profileMap, addressMap, formasMap]);
 
   // Group by company then period
   const grouped = useMemo(() => {
@@ -494,39 +347,7 @@ const SalesPrintDashboard = () => {
       return buildSingleOrderHtml(printData);
     });
 
-    const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Impressão de Pedidos - ${format(selectedDate, 'dd/MM/yyyy')}</title>
-<style>
-  @media print {
-    @page { margin: 0; size: A4; }
-    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 1.5cm; }
-    .page-break { page-break-after: always; }
-  }
-  body { font-family: Helvetica, Arial, sans-serif; color: #1a1a1a; margin: 0; padding: 20px; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 1px solid #ccc; padding-bottom: 12px; }
-  .header-left { display: flex; align-items: center; gap: 12px; }
-  .company-logo { max-height: 50px; max-width: 120px; object-fit: contain; }
-  .company-name { font-size: 22px; font-weight: bold; }
-  .company-info { font-size: 10px; color: #666; margin-top: 2px; }
-  .order-box { background: #e91e63; color: white; border-radius: 4px; padding: 8px 20px; text-align: center; }
-  .order-box .label { font-size: 9px; }
-  .order-box .number { font-size: 18px; font-weight: bold; }
-  .order-box .date { font-size: 9px; }
-  .section-title { font-size: 11px; font-weight: bold; color: #e91e63; margin: 14px 0 6px; }
-  .customer-name { font-size: 14px; font-weight: bold; }
-  .customer-info { font-size: 11px; color: #333; margin-top: 2px; }
-  .right-info { font-size: 11px; color: #666; text-align: right; }
-  table { width: 100%; border-collapse: collapse; }
-  th { background: #2d2d2d; color: white; padding: 6px 4px; font-size: 10px; text-align: left; }
-  .totals { display: flex; flex-direction: column; align-items: flex-end; margin-top: 12px; }
-  .totals .row { display: flex; gap: 30px; font-size: 12px; padding: 3px 0; }
-  .totals .total-row { border-top: 2px solid #2d2d2d; font-size: 15px; font-weight: bold; padding-top: 6px; margin-top: 4px; }
-  .obs-box { background: #fafafa; border: 1px solid #ccc; border-radius: 2px; padding: 10px; font-size: 10px; white-space: pre-wrap; line-height: 1.5; }
-  .footer { text-align: center; font-size: 8px; color: #999; margin-top: 30px; }
-</style></head><body>
-${allPages.join('\n<div class="page-break"></div>\n')}
-<script>window.onload = function() { window.print(); }</script>
-</body></html>`;
+    const html = buildPrintDocument(allPages, format(selectedDate, 'dd/MM/yyyy'));
 
     const printWindow = window.open('', '_blank');
     if (printWindow) {
@@ -535,62 +356,11 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
     }
   };
 
-  const printSingle = (order: typeof filteredOrders[0]) => {
+  const printSingle = (order: EnrichedOrder) => {
     openPrintOrder(buildPrintData(order, order._company, companyLogos));
   };
 
   const isLoading = loadingSales || loadingAfiacao;
-
-  const renderOrderGroup = (company: CompanyFilter, period: 'manha' | 'tarde', orders: typeof filteredOrders) => {
-    if (orders.length === 0) return null;
-    const periodLabel = period === 'manha' ? 'Manhã' : 'Tarde';
-    const PeriodIcon = period === 'manha' ? Sun : Sunset;
-
-    return (
-      <div key={`${company}-${period}`} className="space-y-2">
-        <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-          <PeriodIcon className="h-4 w-4" />
-          <span>{periodLabel}</span>
-          <Badge variant="secondary" className="text-xs">{orders.length}</Badge>
-        </div>
-        <div className="space-y-1.5">
-          {orders.map(order => (
-            <div
-              key={order.id}
-              className="flex items-center gap-3 p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors cursor-pointer"
-              onClick={() => toggleOrder(order.id)}
-            >
-              <Checkbox
-                checked={selectedOrders.has(order.id)}
-                onCheckedChange={() => toggleOrder(order.id)}
-                onClick={e => e.stopPropagation()}
-              />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-sm font-medium">
-                    {order.omie_numero_pedido ? `#${order.omie_numero_pedido.replace(/^0+/, '')}` : order.id.slice(0, 8).toUpperCase()}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {format(new Date(order.created_at), 'HH:mm')}
-                  </span>
-                </div>
-                <div className="text-sm text-muted-foreground truncate">{order.customer_name}</div>
-              </div>
-              <div className="text-right">
-                <div className="text-sm font-medium">
-                  {order.total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                </div>
-                <div className="text-xs text-muted-foreground">{(order.items || []).length} itens</div>
-              </div>
-              <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={e => { e.stopPropagation(); printSingle(order); }}>
-                <Printer className="h-4 w-4" />
-              </Button>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-6">
@@ -607,58 +377,14 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
         </div>
 
         {/* Filters */}
-        <Card>
-          <CardContent className="pt-4 space-y-4">
-            {/* Date picker */}
-            <div className="flex items-center gap-3 flex-wrap">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" className={cn("w-[200px] justify-start text-left font-normal")}>
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {format(selectedDate, "dd 'de' MMMM, yyyy", { locale: ptBR })}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={selectedDate}
-                    onSelect={d => d && setSelectedDate(d)}
-                    initialFocus
-                    className="p-3 pointer-events-auto"
-                    locale={ptBR}
-                  />
-                </PopoverContent>
-              </Popover>
-
-              {/* Period filter */}
-              <Tabs value={selectedPeriod} onValueChange={v => setSelectedPeriod(v as 'all' | 'manha' | 'tarde')}>
-                <TabsList>
-                  <TabsTrigger value="all">Todos</TabsTrigger>
-                  <TabsTrigger value="manha" className="gap-1"><Sun className="h-3 w-3" />Manhã</TabsTrigger>
-                  <TabsTrigger value="tarde" className="gap-1"><Sunset className="h-3 w-3" />Tarde</TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </div>
-
-            {/* Company toggles */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <Building2 className="h-4 w-4 text-muted-foreground" />
-              {(['oben', 'colacor', 'afiacao'] as CompanyFilter[]).map(c => (
-                <Badge
-                  key={c}
-                  variant="outline"
-                  className={cn(
-                    'cursor-pointer transition-all',
-                    selectedCompanies.includes(c) ? COMPANY_COLORS[c] : 'opacity-40'
-                  )}
-                  onClick={() => toggleCompany(c)}
-                >
-                  {COMPANY_LABELS[c]}
-                </Badge>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        <PrintFilters
+          selectedDate={selectedDate}
+          setSelectedDate={setSelectedDate}
+          selectedPeriod={selectedPeriod}
+          setSelectedPeriod={setSelectedPeriod}
+          selectedCompanies={selectedCompanies}
+          toggleCompany={toggleCompany}
+        />
 
         {/* Actions bar */}
         <div className="flex items-center justify-between">
@@ -698,8 +424,8 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {renderOrderGroup(company, 'manha', grouped[company].manha)}
-                  {renderOrderGroup(company, 'tarde', grouped[company].tarde)}
+                  <OrderGroup company={company} period="manha" orders={grouped[company].manha} selectedOrders={selectedOrders} onToggleOrder={toggleOrder} onPrintSingle={printSingle} />
+                  <OrderGroup company={company} period="tarde" orders={grouped[company].tarde} selectedOrders={selectedOrders} onToggleOrder={toggleOrder} onPrintSingle={printSingle} />
                 </CardContent>
               </Card>
             );
@@ -709,119 +435,5 @@ ${allPages.join('\n<div class="page-break"></div>\n')}
     </div>
   );
 };
-
-function escapeHtml(s: string | undefined | null): string {
-  if (!s) return '';
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
-
-// Build HTML for a single order page (without <html>/<body> wrappers)
-function buildSingleOrderHtml(data: PrintOrderData): string {
-  const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
-  // Build installment dates
-  const parseParcelaDays = (codeOrDesc?: string): number[] => {
-    if (!codeOrDesc) return [];
-    const clean = codeOrDesc.trim();
-    if (clean === '000' || clean === '999' || /vista/i.test(clean)) return [];
-    // Extract all numeric groups — handles codes like "S37", "A28", "028/042", "28/42 DDL"
-    const matches = clean.match(/(\d{1,3})/g);
-    if (!matches) return [];
-    return matches.map(s => parseInt(s, 10)).filter(n => n > 0 && n <= 365);
-  };
-
-  let days = parseParcelaDays(data.condPagamento);
-  if (days.length === 0) days = parseParcelaDays(data.parcelaCode);
-  let installmentText = '';
-  if (days.length > 0) {
-    const today = new Date();
-    const parcValue = data.total && days.length > 0 ? data.total / days.length : 0;
-    installmentText = days.map((d, i) => {
-      const dueDate = addDays(today, d);
-      const dateStr = `${String(dueDate.getDate()).padStart(2, '0')}/${String(dueDate.getMonth() + 1).padStart(2, '0')}/${dueDate.getFullYear()}`;
-      const valStr = parcValue > 0 ? ` – ${fmt(parcValue)}` : '';
-      return `${i + 1}ª parcela: ${dateStr}${valStr}`;
-    }).join(' | ');
-  }
-
-  const itemsRows = data.items.map((item, i) => {
-    const descLines = [escapeHtml(item.descricao)];
-    if (item.tintCorId && item.tintNomeCor) {
-      const corParts = item.tintNomeCor.split(' - ');
-      const simplified = corParts.length > 2 ? corParts.slice(0, -1).join(' - ') : item.tintNomeCor;
-      const embMatch = item.descricao.match(/\b(QT|GL|LT|BD|BH|5L)\b/i);
-      const embalagem = embMatch ? embMatch[1].toUpperCase() : '';
-      descLines.push(`Cor: ${escapeHtml(item.tintCorId)} - ${escapeHtml(simplified)}${embalagem ? ' - ' + escapeHtml(embalagem) : ''}`);
-    }
-    return `<tr style="background:${i % 2 === 1 ? '#f5f5f5' : '#fff'}">
-      <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${i + 1}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${escapeHtml(item.codigo)}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;font-size:11px">${descLines.join('<br/>')}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${item.quantidade}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;text-align:center;font-size:11px">${escapeHtml(item.unidade)}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorUnitario)}</td>
-      <td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.valorTotal)}</td>
-    </tr>`;
-  }).join('');
-
-  const cnpjsComDesconto = ['03.422.099/0001-08', '07.311.465/0001-02', '24.521.946/0001-61'];
-  const showDesconto = data.desconto > 0 && cnpjsComDesconto.includes(data.customerDocument || '');
-
-  const obs = data.isOben
-    ? 'RECIBO DE ENTREGA DE VENDA NÃO PRESENCIAL E-PTA-RE Nº: 45.000035717-51 / OBEN COMÉRCIO LTDA. TRANSPORTADORA: Transporte próprio: Oben Comercio Declaro que recebi as mercadorias constantes dessa Nota Fiscal, e que as mercadorias se destinam a uso e consumo, e que estão em perfeito estado e conferem com pedido feito no âmbito do comércio de telemarketing ou eletrônico e que foram recebidas no local por mim no local indicado acima.\n\nCPF/CNPJ:___________________________________ DATA DA ENTREGA:___/___/____\n\nNome/ASSINATURA:_________________________________________________' + (data.observacoes ? '\n\n' + escapeHtml(data.observacoes) : '')
-    : escapeHtml(data.observacoes) || '';
-
-  return `<div>
-<div class="header">
-  <div class="header-left">
-    ${data.companyLogoUrl ? `<img src="${escapeHtml(data.companyLogoUrl)}" class="company-logo" crossorigin="anonymous" />` : ''}
-    <div>
-      <div class="company-name">${escapeHtml(data.companyName)}</div>
-      <div class="company-info">CNPJ: ${escapeHtml(data.companyCnpj)} • Tel: ${escapeHtml(data.companyPhone)}</div>
-      <div class="company-info">${escapeHtml(data.companyAddress)}</div>
-    </div>
-  </div>
-  <div class="order-box">
-    <div class="label">PEDIDO DE VENDA</div>
-    <div class="number">Nº ${escapeHtml(data.orderNumber)}</div>
-    <div class="date">${data.date}</div>
-  </div>
-</div>
-<div class="section-title">DADOS DO CLIENTE</div>
-<div style="display:flex;justify-content:space-between">
-  <div>
-    <div class="customer-name">${escapeHtml(data.customerName)}</div>
-    <div class="customer-info">CPF/CNPJ: ${escapeHtml(data.customerDocument) || 'N/A'}${data.customerPhone ? ' • Tel: ' + escapeHtml(data.customerPhone) : ''}</div>
-    ${data.customerAddress ? `<div class="customer-info" style="margin-top:4px"><strong>Endereço:</strong> ${escapeHtml(data.customerAddress)}</div>` : ''}
-  </div>
-  <div class="right-info">
-    ${data.vendedorName ? `Vendedor: ${escapeHtml(data.vendedorName)}` : ''}
-  </div>
-</div>
-<div class="section-title">ITENS DO PEDIDO</div>
-<table><thead><tr>
-  <th style="width:30px;text-align:center">#</th>
-  <th style="width:70px">Código</th>
-  <th>Descrição</th>
-  <th style="width:40px;text-align:center">Qtd</th>
-  <th style="width:35px;text-align:center">Un</th>
-  <th style="width:80px;text-align:right">Vlr Unit.</th>
-  <th style="width:80px;text-align:right">Vlr Total</th>
-</tr></thead><tbody>${itemsRows}</tbody></table>
-<div class="totals">
-  <div class="row"><span>Subtotal:</span><span>${fmt(data.subtotal)}</span></div>
-  ${showDesconto ? `<div class="row"><span>Desconto:</span><span>- ${fmt(data.desconto)}</span></div>` : ''}
-  
-  <div class="row total-row"><span>TOTAL:</span><span>${fmt(data.total)}</span></div>
-</div>
-${data.condPagamento || installmentText ? `
-<div class="section-title">CONDIÇÃO DE PAGAMENTO</div>
-<div style="font-size:11px;margin-bottom:4px">${data.condPagamento ? `<strong>Prazo:</strong> ${escapeHtml(data.condPagamento)}` : ''}</div>
-${installmentText ? `<div style="font-size:10px;color:#333;background:#f8f8f8;padding:6px 10px;border-radius:2px;border-left:3px solid #e91e63"><strong>Vencimentos:</strong><br/>${installmentText}</div>` : ''}
-` : ''}
-${obs ? `<div class="section-title">OBSERVAÇÕES</div><div class="obs-box">${obs.replace(/\n/g, '<br/>')}</div>` : ''}
-<div class="footer">Documento gerado automaticamente pelo sistema • ${data.date}</div>
-</div>`;
-}
 
 export default SalesPrintDashboard;

@@ -163,6 +163,7 @@ serve(async (req) => {
               clientDataJSON,
               signature,
             },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- shape exato do AuthenticationResponseJSON do @simplewebauthn varia por versão; cast no boundary da lib
           } as any,
           expectedChallenge: (c) => c === chalRec.challenge,
           expectedOrigin: allowedOrigins,

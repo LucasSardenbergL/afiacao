@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Loader2, BookOpen, CheckCircle2, XCircle, PlayCircle, Award, Sparkles, ArrowRight, Trophy, Target } from 'lucide-react';
+import { Loader2, BookOpen, CheckCircle2, XCircle, Award, Sparkles, ArrowRight, Trophy, Target } from 'lucide-react';
 
 interface QuizQuestion {
   question: string;
@@ -207,8 +207,8 @@ const Training = () => {
             <Card key={mod.id} className={completed ? 'border-emerald-200 bg-emerald-50/30' : isRecommended ? 'ring-1 ring-primary/20' : ''}>
               <CardContent className="p-4">
                 <div className="flex items-start gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${completed ? 'bg-emerald-100' : 'bg-primary/10'}`}>
-                    {completed ? <CheckCircle2 className="w-5 h-5 text-emerald-600" /> : <BookOpen className="w-5 h-5 text-primary" />}
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${completed ? 'bg-status-success-bg' : 'bg-primary/10'}`}>
+                    {completed ? <CheckCircle2 className="w-5 h-5 text-status-success" /> : <BookOpen className="w-5 h-5 text-primary" />}
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
@@ -332,7 +332,7 @@ const Training = () => {
                 return (
                   <>
                     {passed ? (
-                      <CheckCircle2 className="w-16 h-16 text-emerald-500 mx-auto" />
+                      <CheckCircle2 className="w-16 h-16 text-status-success mx-auto" />
                     ) : (
                       <XCircle className="w-16 h-16 text-destructive mx-auto" />
                     )}

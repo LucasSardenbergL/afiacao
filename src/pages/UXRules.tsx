@@ -4,9 +4,9 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import {
   Search, Filter, MousePointerClick, PanelRightOpen, AlertTriangle,
-  Target, Keyboard, Monitor, Smartphone, Tablet, Zap, RefreshCw,
-  ShoppingCart, Phone, MessageSquare, BarChart3, Headphones, GraduationCap,
-  ArrowRight, CheckCircle, XCircle, HelpCircle
+  Target, Keyboard, Monitor, Smartphone, Tablet, Zap,
+  ShoppingCart, Headphones, GraduationCap,
+  ArrowRight, CheckCircle, XCircle
 } from 'lucide-react';
 
 function Rule({ number, icon: Icon, title, children }: { number: number; icon: React.ElementType; title: string; children: React.ReactNode }) {

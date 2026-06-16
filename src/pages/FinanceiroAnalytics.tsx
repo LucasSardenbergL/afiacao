@@ -1,16 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Progress } from '@/components/ui/progress';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { getAnaliseDimensional, type Dimensao, type AnaliseDimensional } from '@/services/financeiroV2Service';
-import { downloadCSV, exportContasPagarCSV, exportContasReceberCSV } from '@/services/financeiroService';
+import { downloadCSV } from '@/services/financeiroService';
 import {
-  Loader2, Building2, BarChart3, PieChart, Download, Filter,
-  ArrowDownCircle, ArrowUpCircle, TrendingUp
+  Loader2, Building2, BarChart3, PieChart, Download,
+  ArrowDownCircle, ArrowUpCircle
 } from 'lucide-react';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -99,7 +98,7 @@ const FinanceiroAnalytics = () => {
       <Card>
         <CardContent className="p-4">
           <div className="flex flex-wrap items-center gap-3">
-            <Select value={tipo} onValueChange={v => setTipo(v as any)}>
+            <Select value={tipo} onValueChange={v => setTipo(v as 'cr' | 'cp')}>
               <SelectTrigger className="w-[140px]">
                 {tipo === 'cr' ? <ArrowDownCircle className="w-4 h-4 mr-2" /> : <ArrowUpCircle className="w-4 h-4 mr-2" />}
                 <SelectValue />
@@ -122,7 +121,7 @@ const FinanceiroAnalytics = () => {
               </SelectContent>
             </Select>
 
-            <Select value={company} onValueChange={v => setCompany(v as any)}>
+            <Select value={company} onValueChange={v => setCompany(v as Company | 'all')}>
               <SelectTrigger className="w-[150px]">
                 <Building2 className="w-4 h-4 mr-2" />
                 <SelectValue />

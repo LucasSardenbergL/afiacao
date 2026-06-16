@@ -1,14 +1,15 @@
 import { describe, it, expect } from "vitest";
 import {
+  deriveActiveStep,
   deriveCurrentStep,
   getStepLocks,
+  REPOSICAO_STEP_PATHS,
   type ReposicaoStatus,
 } from "@/hooks/useReposicaoSessao";
 
 const baseStatus: ReposicaoStatus = {
   current: 3,
   oportunidadesCount: 0,
-  parametrosPendentesCount: 0,
   pedidosTotal: 0,
   pedidosPendentes: 0,
   pedidosBloqueados: 0,
@@ -19,20 +20,19 @@ const baseStatus: ReposicaoStatus = {
 describe("deriveCurrentStep", () => {
   const m = {
     oportunidadesCount: 0,
-    parametrosPendentesCount: 0,
     pedidosPendentes: 0,
     pedidosAprovados: 0,
     pedidosDisparados: 0,
   };
 
   it("returns 1 when there are open opportunities (highest priority)", () => {
-    expect(
-      deriveCurrentStep({ ...m, oportunidadesCount: 5, parametrosPendentesCount: 9 }),
-    ).toBe(1);
+    expect(deriveCurrentStep({ ...m, oportunidadesCount: 5 })).toBe(1);
   });
 
-  it("returns 2 when params pending and no opportunities", () => {
-    expect(deriveCurrentStep({ ...m, parametrosPendentesCount: 3 })).toBe(2);
+  it("does NOT force step 2 — params are auto-managed (no approval gate)", () => {
+    // Pré-aposentadoria, params pendentes forçavam a etapa 2. Agora a etapa 2 é
+    // automática e nada de params afeta a derivação → cai no default 3.
+    expect(deriveCurrentStep({ ...m })).toBe(3);
   });
 
   it("returns 3 when pedidos pending and earlier steps clear", () => {
@@ -55,7 +55,6 @@ describe("deriveCurrentStep", () => {
     expect(
       deriveCurrentStep({
         oportunidadesCount: 1,
-        parametrosPendentesCount: 1,
         pedidosPendentes: 1,
         pedidosAprovados: 1,
         pedidosDisparados: 1,
@@ -120,5 +119,38 @@ describe("getStepLocks", () => {
       pedidosAprovados: 5,
     });
     expect(locks[4].locked).toBe(false);
+  });
+});
+
+describe("deriveActiveStep", () => {
+  it("returns the 1-based step index matching the current pathname", () => {
+    expect(deriveActiveStep("/admin/reposicao/sessao/mercado")).toBe(1);
+    expect(deriveActiveStep("/admin/reposicao/sessao/parametros")).toBe(2);
+    expect(deriveActiveStep("/admin/reposicao/sessao/pedidos")).toBe(3);
+    expect(deriveActiveStep("/admin/reposicao/sessao/aplicacao")).toBe(4);
+    expect(deriveActiveStep("/admin/reposicao/sessao/confirmacao")).toBe(5);
+  });
+
+  it("ignores query strings and trailing slashes", () => {
+    expect(deriveActiveStep("/admin/reposicao/sessao/pedidos?fornecedor=ACME")).toBe(3);
+    expect(deriveActiveStep("/admin/reposicao/sessao/pedidos/")).toBe(3);
+  });
+
+  it("returns 0 for the cockpit index (no step page)", () => {
+    expect(deriveActiveStep("/admin/reposicao/sessao")).toBe(0);
+  });
+
+  it("returns 0 for unrelated routes", () => {
+    expect(deriveActiveStep("/admin/customers")).toBe(0);
+  });
+
+  it("exposes the canonical step paths in order", () => {
+    expect(REPOSICAO_STEP_PATHS).toEqual([
+      "/admin/reposicao/sessao/mercado",
+      "/admin/reposicao/sessao/parametros",
+      "/admin/reposicao/sessao/pedidos",
+      "/admin/reposicao/sessao/aplicacao",
+      "/admin/reposicao/sessao/confirmacao",
+    ]);
   });
 });

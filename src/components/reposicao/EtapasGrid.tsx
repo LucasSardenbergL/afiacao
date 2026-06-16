@@ -14,9 +14,7 @@ function describe(step: number, s: ReposicaoStatus): string {
         ? `${s.oportunidadesCount} oportunidade(s) ativa(s)`
         : "Sem oportunidades pendentes";
     case 2:
-      return s.parametrosPendentesCount > 0
-        ? `${s.parametrosPendentesCount} parâmetro(s) pendente(s)`
-        : "Sem parâmetros pendentes";
+      return "Ajustados automaticamente";
     case 3:
       if (s.pedidosTotal === 0) return "Nenhum pedido gerado";
       return s.pedidosPendentes > 0

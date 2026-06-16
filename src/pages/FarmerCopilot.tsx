@@ -1,293 +1,48 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useScribe, CommitStrategy } from '@elevenlabs/react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Textarea } from '@/components/ui/textarea';
-import { useAuth } from '@/contexts/AuthContext';
-import {
-  useCopilotEngine,
-  type CopilotDirection,
-  type CopilotPhase,
-  type CopilotIntent,
-  type SuggestionType,
-  type CopilotContext,
-} from '@/hooks/useCopilotEngine';
-import { useTacticalPlan, getObjectiveLabel, type TacticalPlan } from '@/hooks/useTacticalPlan';
-import { supabase } from '@/integrations/supabase/client';
-import {
-  Mic, Radio, StopCircle, Lightbulb, Copy, Check,
-  MessageSquare, Brain, Target, Shield, TrendingUp, TrendingDown,
-  Minus, AlertTriangle, Loader2, FileText,
-  ChevronDown, ChevronUp, Type, Send,
-  type LucideIcon,
-} from 'lucide-react';
-import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
-
-// ─── Helpers ───────────────────────────────────────────────────────
-const directionConfig: Record<CopilotDirection, { color: string; bg: string; icon: LucideIcon; label: string }> = {
-  positivo: { color: 'text-status-success', bg: 'bg-status-success-bg border-status-success/30', icon: TrendingUp, label: 'Positivo' },
-  neutro: { color: 'text-status-warning', bg: 'bg-status-warning-bg border-status-warning/30', icon: Minus, label: 'Neutro' },
-  risco: { color: 'text-status-error', bg: 'bg-status-error-bg border-status-error/30', icon: TrendingDown, label: 'Em Risco' },
-};
-
-const phaseLabels: Record<CopilotPhase, string> = {
-  abertura: '🔵 Abertura',
-  diagnostico: '🔍 Diagnóstico',
-  exploracao: '🧭 Exploração',
-  proposta: '💼 Proposta',
-  fechamento: '🎯 Fechamento',
-};
-
-const intentLabels: Record<CopilotIntent, { label: string; color: string }> = {
-  interesse: { label: 'Interesse', color: 'bg-status-success-bg text-status-success-fg' },
-  objecao_preco: { label: 'Objeção Preço', color: 'bg-status-error-bg text-status-error-fg' },
-  objecao_tecnica: { label: 'Objeção Técnica', color: 'bg-orange-100 text-orange-800' },
-  falta_urgencia: { label: 'Falta Urgência', color: 'bg-status-warning-bg text-status-warning-fg' },
-  comparacao_concorrente: { label: 'Concorrente', color: 'bg-purple-100 text-purple-800' },
-  indiferenca: { label: 'Indiferença', color: 'bg-muted text-muted-foreground' },
-};
-
-const suggestionTypeIcons: Record<SuggestionType, LucideIcon> = {
-  pergunta_diagnostica: MessageSquare,
-  resposta_tecnica: Brain,
-  argumento_economico: Target,
-  alternativa_abordagem: Shield,
-};
-
-type InputMode = 'voice' | 'text';
+import { Type, StopCircle, Shield, Loader2 } from 'lucide-react';
+import { useFarmerCopilot } from '@/components/farmer/copilot/useFarmerCopilot';
+import { SessionStartCard } from '@/components/farmer/copilot/SessionStartCard';
+import { DirectionIndicator } from '@/components/farmer/copilot/DirectionIndicator';
+import { SuggestionCard } from '@/components/farmer/copilot/SuggestionCard';
+import { ActivePlanCard } from '@/components/farmer/copilot/ActivePlanCard';
+import { ManualTextInput } from '@/components/farmer/copilot/ManualTextInput';
+import { TranscriptCard } from '@/components/farmer/copilot/TranscriptCard';
+import { AnalysisHistoryCard } from '@/components/farmer/copilot/AnalysisHistoryCard';
 
 const FarmerCopilot = () => {
-  const navigate = useNavigate();
-  const { user, isStaff } = useAuth();
-  const copilot = useCopilotEngine();
-  const { getActivePlan } = useTacticalPlan();
-  const [selectedCustomer, setSelectedCustomer] = useState<string>('');
-  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [activePlan, setActivePlan] = useState<TacticalPlan | null>(null);
-  const [showPlan, setShowPlan] = useState(false);
-  const transcriptEndRef = useRef<HTMLDivElement>(null);
-
-  // Text mode state
-  const [inputMode, setInputMode] = useState<InputMode>('voice');
-  const [manualText, setManualText] = useState('');
-  const [isManualAnalyzing, setIsManualAnalyzing] = useState(false);
-  const [riskFlash, setRiskFlash] = useState(false);
-
-  // ElevenLabs realtime scribe
-  const scribe = useScribe({
-    modelId: 'scribe_v2_realtime',
-    commitStrategy: CommitStrategy.VAD,
-    onPartialTranscript: (data) => {
-      if (data.text) copilot.addTranscript(data.text, true);
-    },
-    onCommittedTranscript: (data) => {
-      if (data.text) copilot.addTranscript(data.text, false);
-    },
-  });
-
-  // Load customers
-  useEffect(() => {
-    if (!user?.id || !isStaff) return;
-    (async () => {
-      const { data: scores } = await supabase
-        .from('farmer_client_scores')
-        .select('customer_user_id')
-        .eq('farmer_id', user.id);
-      if (!scores?.length) return;
-      const ids = scores.map((s) => s.customer_user_id).filter((id): id is string => id !== null);
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('user_id, name')
-        .in('user_id', ids);
-      if (profiles) {
-        setCustomers(profiles.map((p) => ({ id: p.user_id, name: p.name ?? '' })));
-      }
-    })();
-  }, [user, isStaff]);
-
-  // Auto-scroll transcript
-  useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [copilot.transcript]);
-
-  // Flash risk highlight when direction changes to 'risco'
-  useEffect(() => {
-    if (copilot.currentAnalysis?.direction === 'risco') {
-      setRiskFlash(true);
-      const timer = setTimeout(() => setRiskFlash(false), 2500);
-      return () => clearTimeout(timer);
-    }
-  }, [copilot.currentAnalysis]);
-
-  // Shared session start logic (reused by both modes)
-  const prepareSessionContext = useCallback(async () => {
-    let customerContext: Record<string, unknown> | null = null;
-    let customerName = '';
-    let bundleContext: CopilotContext | undefined = undefined;
-
-    if (selectedCustomer) {
-      const { data: score } = await supabase
-        .from('farmer_client_scores')
-        .select('*')
-        .eq('customer_user_id', selectedCustomer)
-        .eq('farmer_id', user!.id)
-        .single();
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('name, customer_type, cnae')
-        .eq('user_id', selectedCustomer)
-        .single();
-
-      customerName = profile?.name || '';
-      customerContext = {
-        name: profile?.name,
-        cnae: profile?.cnae,
-        customerType: profile?.customer_type,
-        healthScore: score?.health_score,
-        avgMonthlySpend: score?.avg_monthly_spend_180d,
-        grossMarginPct: score?.gross_margin_pct,
-        categoryCount: score?.category_count,
-        daysSinceLastPurchase: score?.days_since_last_purchase,
-        churnRisk: score?.churn_risk,
-      };
-
-      const plan = await getActivePlan(selectedCustomer);
-      if (plan) {
-        setActivePlan(plan);
-        setShowPlan(true);
-        toast.success('PTPL carregado', { description: `Plano ${plan.planType} ativo para ${plan.customerName}` });
-        bundleContext = plan.topBundle;
-        if (customerContext) {
-          customerContext.activePlan = {
-            objective: plan.strategicObjective,
-            profile: plan.customerProfile,
-            approachStrategy: plan.approachStrategy,
-            diagnosticQuestions: plan.diagnosticQuestions,
-          };
-        }
-      } else {
-        setActivePlan(null);
-      }
-    }
-
-    return { customerContext, customerName, bundleContext };
-  }, [selectedCustomer, user, getActivePlan]);
-
-  // Start voice recording
-  const handleStartVoice = useCallback(async () => {
-    setIsConnecting(true);
-    try {
-      const { data: tokenData, error: tokenError } = await supabase.functions.invoke('elevenlabs-scribe-token');
-      if (tokenError || !tokenData?.token) throw new Error('Falha ao obter token de transcrição');
-
-      const { customerContext, customerName, bundleContext } = await prepareSessionContext();
-
-      await copilot.startSession({
-        customerId: selectedCustomer || undefined,
-        customerName: customerName || undefined,
-        customerContext: customerContext ?? undefined,
-        bundleContext,
-      });
-
-      await scribe.connect({
-        token: tokenData.token,
-        microphone: {
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
-
-      toast.success('Copiloto ativado', { description: 'Transcrição em tempo real iniciada' });
-    } catch (err) {
-      console.error('Start error:', err);
-      // Auto-fallback to text mode
-      setInputMode('text');
-      toast.error('Voz indisponível', {
-        description: 'Transcrição por voz falhou. Modo texto ativado automaticamente.',
-      });
-    } finally {
-      setIsConnecting(false);
-    }
-  }, [selectedCustomer, user, copilot, scribe, prepareSessionContext]);
-
-  // Start text mode session
-  const handleStartText = useCallback(async () => {
-    setIsConnecting(true);
-    try {
-      const { customerContext, customerName, bundleContext } = await prepareSessionContext();
-
-      await copilot.startSession({
-        customerId: selectedCustomer || undefined,
-        customerName: customerName || undefined,
-        customerContext: customerContext ?? undefined,
-        bundleContext,
-      });
-
-      toast.success('Copiloto ativado', { description: 'Modo texto — cole ou digite trechos da conversa' });
-    } catch (err) {
-      console.error('Start error:', err);
-      const message = err instanceof Error ? err.message : 'Falha ao iniciar copiloto';
-      toast.error('Erro', { description: message });
-    } finally {
-      setIsConnecting(false);
-    }
-  }, [selectedCustomer, copilot, prepareSessionContext]);
-
-  // Unified start handler
-  const handleStart = useCallback(async () => {
-    if (inputMode === 'voice') {
-      await handleStartVoice();
-    } else {
-      await handleStartText();
-    }
-  }, [inputMode, handleStartVoice, handleStartText]);
-
-  // Analyze manual text — reuses same pipeline
-  const handleAnalyzeManualText = useCallback(async () => {
-    if (!manualText.trim() || manualText.trim().length < 10) {
-      toast.error('Texto curto', { description: 'Digite pelo menos 10 caracteres para análise.' });
-      return;
-    }
-    setIsManualAnalyzing(true);
-    // Feed text into the same transcript pipeline
-    copilot.addTranscript(manualText.trim(), false);
-    // Trigger analysis using the existing engine
-    await copilot.triggerAnalysis();
-    setManualText('');
-    setIsManualAnalyzing(false);
-  }, [manualText, copilot]);
-
-  // Stop recording
-  const handleStop = useCallback(async () => {
-    if (inputMode === 'voice') {
-      scribe.disconnect();
-    }
-    await copilot.endSession();
-    toast.success('Sessão encerrada');
-  }, [scribe, copilot, inputMode]);
-
-  // Copy suggestion
-  const handleCopySuggestion = useCallback((text: string) => {
-    navigator.clipboard.writeText(text);
-    copilot.markSuggestionUsed(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [copilot]);
+  const {
+    navigate,
+    isStaff,
+    isImpersonating,
+    copilot,
+    selectedCustomer,
+    setSelectedCustomer,
+    customers,
+    isConnecting,
+    copied,
+    activePlan,
+    showPlan,
+    setShowPlan,
+    inputMode,
+    setInputMode,
+    manualText,
+    setManualText,
+    isManualAnalyzing,
+    riskFlash,
+    transcriptEndRef,
+    handleStart,
+    handleStop,
+    handleAnalyzeManualText,
+    handleCopySuggestion,
+    analysis,
+    dir,
+    DirIcon,
+    SugIcon,
+  } = useFarmerCopilot();
 
   if (!isStaff) { navigate('/', { replace: true }); return null; }
-
-  const analysis = copilot.currentAnalysis;
-  const dir = analysis ? directionConfig[analysis.direction] : null;
-  const DirIcon = dir?.icon || Minus;
-  const SugIcon = analysis ? (suggestionTypeIcons[analysis.suggestionType] || Lightbulb) : Lightbulb;
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -295,78 +50,16 @@ const FarmerCopilot = () => {
       <main className="px-4 py-4 space-y-3 max-w-lg mx-auto">
         {/* Session Controls */}
         {!copilot.isActive ? (
-          <Card className="border-primary/20">
-            <CardContent className="p-4 space-y-3">
-              <div className="flex items-center gap-2 mb-1">
-                <Radio className="w-5 h-5 text-primary" />
-                <h2 className="text-sm font-bold">Iniciar Copiloto</h2>
-              </div>
-              <p className="text-[10px] text-muted-foreground">
-                O copiloto analisa a conversa, detecta intenções e sugere a melhor ação em cada momento.
-              </p>
-
-              {/* Mode Toggle */}
-              <div className="flex rounded-lg border overflow-hidden">
-                <button
-                  onClick={() => setInputMode('voice')}
-                  className={cn(
-                    'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-colors',
-                    inputMode === 'voice'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted/50 text-muted-foreground hover:bg-muted'
-                  )}
-                >
-                  <Mic className="w-3.5 h-3.5" /> Voz
-                </button>
-                <button
-                  onClick={() => setInputMode('text')}
-                  className={cn(
-                    'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-colors',
-                    inputMode === 'text'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted/50 text-muted-foreground hover:bg-muted'
-                  )}
-                >
-                  <Type className="w-3.5 h-3.5" /> Texto
-                </button>
-              </div>
-
-              {inputMode === 'text' && (
-                <div className="flex items-start gap-1.5 p-2 rounded-md bg-status-warning-bg border border-status-warning/30">
-                  <AlertTriangle className="w-3.5 h-3.5 text-status-warning mt-0.5 shrink-0" />
-                  <p className="text-[9px] text-status-warning">
-                    No modo texto, cole ou digite trechos da conversa e clique em "Analisar" para receber sugestões.
-                  </p>
-                </div>
-              )}
-
-              <Select value={selectedCustomer} onValueChange={setSelectedCustomer}>
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="Selecionar cliente (opcional)" />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers.map(c => (
-                    <SelectItem key={c.id} value={c.id} className="text-xs">{c.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <Button
-                onClick={handleStart}
-                disabled={isConnecting}
-                className="w-full gap-2"
-              >
-                {isConnecting ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : inputMode === 'voice' ? (
-                  <Mic className="w-4 h-4" />
-                ) : (
-                  <Type className="w-4 h-4" />
-                )}
-                {isConnecting ? 'Conectando...' : inputMode === 'voice' ? 'Iniciar Transcrição' : 'Iniciar Modo Texto'}
-              </Button>
-            </CardContent>
-          </Card>
+          <SessionStartCard
+            inputMode={inputMode}
+            setInputMode={setInputMode}
+            selectedCustomer={selectedCustomer}
+            setSelectedCustomer={setSelectedCustomer}
+            customers={customers}
+            isConnecting={isConnecting}
+            onStart={handleStart}
+            disabled={isImpersonating}
+          />
         ) : (
           <>
             {/* Active Session Header */}
@@ -395,102 +88,29 @@ const FarmerCopilot = () => {
 
             {/* Direction Indicator */}
             {analysis && dir && (
-              <Card className={`border ${dir.bg}`}>
-                <CardContent className="p-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <DirIcon className={`w-5 h-5 ${dir.color}`} />
-                      <span className={`text-sm font-bold ${dir.color}`}>{dir.label}</span>
-                    </div>
-                    <div className="flex gap-1">
-                      <Badge className={intentLabels[analysis.intent]?.color || ''} variant="secondary">
-                        {intentLabels[analysis.intent]?.label || analysis.intent}
-                      </Badge>
-                      <Badge variant="outline" className="text-[9px]">
-                        {phaseLabels[analysis.phase] || analysis.phase}
-                      </Badge>
-                    </div>
-                  </div>
-                  {analysis.directionReasons.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {analysis.directionReasons.map((r, i) => (
-                        <span key={i} className="text-[9px] text-muted-foreground">• {r}</span>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+              <DirectionIndicator analysis={analysis} dir={dir} DirIcon={DirIcon} />
             )}
 
             {/* AI Suggestion */}
             {analysis?.suggestion && (
-              <Card className={cn(
-                'border-2 border-primary/30 bg-primary/5 transition-all duration-500',
-                riskFlash && analysis.direction === 'risco' && 'ring-2 ring-red-400 shadow-lg shadow-red-100'
-              )}>
-                <CardContent className="p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-start gap-2 flex-1">
-                      <SugIcon className="w-4 h-4 text-primary mt-0.5 shrink-0" />
-                      <div>
-                        <p className="text-[10px] font-semibold text-primary mb-0.5">
-                          {analysis.suggestionType === 'pergunta_diagnostica' ? 'Pergunta Sugerida' :
-                           analysis.suggestionType === 'resposta_tecnica' ? 'Resposta Técnica' :
-                           analysis.suggestionType === 'argumento_economico' ? 'Argumento Econômico' :
-                           'Abordagem Alternativa'}
-                        </p>
-                        <p className="text-xs leading-relaxed">{analysis.suggestion}</p>
-                      </div>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 w-7 p-0 shrink-0"
-                      onClick={() => handleCopySuggestion(analysis.suggestion)}
-                    >
-                      {copied ? <Check className="w-3 h-3 text-status-success" /> : <Copy className="w-3 h-3" />}
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-between mt-2">
-                    <span className="text-[9px] text-muted-foreground">
-                      Confiança: {analysis.confidence}%
-                    </span>
-                    <span className="text-[9px] text-muted-foreground">
-                      {copilot.suggestionsShown} sugestões • {copilot.suggestionsUsed} usadas
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
+              <SuggestionCard
+                analysis={analysis}
+                SugIcon={SugIcon}
+                riskFlash={riskFlash}
+                copied={copied}
+                onCopy={handleCopySuggestion}
+                suggestionsShown={copilot.suggestionsShown}
+                suggestionsUsed={copilot.suggestionsUsed}
+              />
             )}
 
             {/* Active PTPL */}
             {activePlan && (
-              <Card className="border-dashed border-primary/30">
-                <CardContent className="p-3">
-                  <div className="flex items-center justify-between" onClick={() => setShowPlan(!showPlan)} role="button">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-3.5 h-3.5 text-primary" />
-                      <span className="text-[10px] font-semibold">PTPL Ativo — {activePlan.planType === 'estrategico' ? 'Estratégico' : 'Essencial'}</span>
-                    </div>
-                    {showPlan ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                  </div>
-                  {showPlan && (
-                    <div className="mt-2 space-y-1.5 text-[9px]">
-                      <div className="flex gap-1.5">
-                        <Badge variant="outline" className="text-[7px]">{getObjectiveLabel(activePlan.strategicObjective)}</Badge>
-                        <Badge variant="outline" className="text-[7px]">HS: {Math.round(activePlan.healthScore)}</Badge>
-                        <Badge variant="outline" className="text-[7px]">Churn: {Math.round(activePlan.churnRisk)}%</Badge>
-                      </div>
-                      {activePlan.approachStrategy && (
-                        <p className="text-muted-foreground">{activePlan.approachStrategy}</p>
-                      )}
-                      {activePlan.diagnosticQuestions.slice(0, 2).map((q, i) => (
-                        <p key={i} className="text-muted-foreground">• {q.question}</p>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+              <ActivePlanCard
+                activePlan={activePlan}
+                showPlan={showPlan}
+                onToggle={() => setShowPlan(!showPlan)}
+              />
             )}
 
             {copilot.isAnalyzing && (
@@ -502,91 +122,24 @@ const FarmerCopilot = () => {
 
             {/* Manual Text Input (text mode) */}
             {inputMode === 'text' && (
-              <Card>
-                <CardContent className="p-3 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Type className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-[10px] font-semibold text-muted-foreground">Entrada de texto</span>
-                  </div>
-                  <Textarea
-                    value={manualText}
-                    onChange={(e) => setManualText(e.target.value)}
-                    placeholder="Cole ou digite trechos da conversa aqui..."
-                    className="text-xs min-h-[80px] resize-none"
-                  />
-                  <Button
-                    size="sm"
-                    className="w-full h-8 gap-1.5 text-xs"
-                    disabled={isManualAnalyzing || !manualText.trim()}
-                    onClick={handleAnalyzeManualText}
-                  >
-                    {isManualAnalyzing ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <Send className="w-3 h-3" />
-                    )}
-                    Analisar
-                  </Button>
-                </CardContent>
-              </Card>
+              <ManualTextInput
+                manualText={manualText}
+                setManualText={setManualText}
+                isManualAnalyzing={isManualAnalyzing}
+                onAnalyze={handleAnalyzeManualText}
+              />
             )}
 
             {/* Transcript */}
-            <Card>
-              <CardHeader className="p-3 pb-2">
-                <CardTitle className="text-xs flex items-center gap-2">
-                  <MessageSquare className="w-3 h-3" /> Transcrição
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                <ScrollArea className="h-48 px-3 pb-3">
-                  {copilot.transcript.length === 0 ? (
-                    <p className="text-[10px] text-muted-foreground text-center py-8">
-                      {inputMode === 'voice' ? 'Aguardando fala...' : 'Nenhum texto analisado ainda.'}
-                    </p>
-                  ) : (
-                    <div className="space-y-1">
-                      {copilot.transcript.map(entry => (
-                        <p
-                          key={entry.id}
-                          className={`text-xs leading-relaxed ${entry.isPartial ? 'text-muted-foreground italic' : ''}`}
-                        >
-                          {entry.text}
-                        </p>
-                      ))}
-                      <div ref={transcriptEndRef} />
-                    </div>
-                  )}
-                </ScrollArea>
-              </CardContent>
-            </Card>
+            <TranscriptCard
+              transcript={copilot.transcript}
+              inputMode={inputMode}
+              transcriptEndRef={transcriptEndRef}
+            />
 
             {/* Analysis History */}
             {copilot.analysisHistory.length > 1 && (
-              <Card>
-                <CardHeader className="p-3 pb-2">
-                  <CardTitle className="text-xs flex items-center gap-2">
-                    <Brain className="w-3 h-3" /> Histórico de Análises ({copilot.analysisHistory.length})
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-3 pt-0">
-                  <div className="space-y-1.5">
-                    {copilot.analysisHistory.slice(-5).reverse().map((a, i) => {
-                      return (
-                        <div key={i} className="flex items-center gap-2 text-[9px]">
-                          <div className={`w-2 h-2 rounded-full ${
-                            a.direction === 'positivo' ? 'bg-status-success' :
-                            a.direction === 'risco' ? 'bg-status-error' : 'bg-status-warning'
-                          }`} />
-                          <span className="font-medium">{intentLabels[a.intent]?.label}</span>
-                          <span className="text-muted-foreground">→</span>
-                          <span className="text-muted-foreground truncate flex-1">{a.suggestion.slice(0, 50)}...</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
+              <AnalysisHistoryCard analysisHistory={copilot.analysisHistory} />
             )}
           </>
         )}

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { expectRenderToThrow } from '@/test/render-throws';
 
 const { sipClientMock, invokeMock } = vi.hoisted(() => ({
   sipClientMock: {
@@ -22,10 +23,6 @@ vi.mock('@/lib/sip/sip-client', () => ({
 
 vi.mock('@/lib/invoke-function', () => ({
   invokeFunction: invokeMock,
-}));
-
-vi.mock('@/hooks/use-toast', () => ({
-  useToast: () => ({ toast: vi.fn() }),
 }));
 
 import { useWebRTCCall } from '../useWebRTCCall';
@@ -57,8 +54,10 @@ describe('useWebRTCCall (consumer of WebRTCCallContext)', () => {
   });
 
   it('lança erro quando usado fora do WebRTCCallProvider', () => {
-    expect(() => renderHook(() => useWebRTCCall())).toThrow(
-      /WebRTCCallProvider/i
-    );
+    const Probe = () => {
+      useWebRTCCall();
+      return null;
+    };
+    expectRenderToThrow(<Probe />, /WebRTCCallProvider/i);
   });
 });

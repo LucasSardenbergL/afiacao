@@ -1,16 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useCrossSellEngine, type CustomerRecommendations, type Recommendation } from '@/hooks/useCrossSellEngine';
+import { useCrossSellEngine } from '@/hooks/useCrossSellEngine';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import {
-  Loader2, RefreshCw, TrendingUp, ShoppingCart, ArrowUpRight,
+  Loader2, RefreshCw, ShoppingCart, ArrowUpRight,
   DollarSign, Target, Search, ChevronDown, ChevronUp, Filter,
-  Package, Sparkles, Plus,
+  Plus,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -27,14 +26,13 @@ const StockBadge = ({ estoque }: { estoque: number | null }) => {
 
 const FarmerRecommendations = () => {
   const navigate = useNavigate();
-  const { isStaff, isAdmin, loading: authLoading } = useAuth();
+  const { isStaff, loading: authLoading } = useAuth();
   const {
     recommendations, loading, calculating, calculateRecommendations,
   } = useCrossSellEngine();
   const [expandedClient, setExpandedClient] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'cross_sell' | 'up_sell'>('all');
-  const [activeTab, setActiveTab] = useState<'engine' | 'legacy'>('engine');
 
   useEffect(() => {
     if (!authLoading && isStaff) calculateRecommendations();

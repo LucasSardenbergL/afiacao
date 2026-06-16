@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { createWorker } from 'tesseract.js';
 import { Camera, X, Loader2, ScanLine, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -196,7 +196,7 @@ export default function LoteScannerOCR({ onLoteCapturado, onCancelar }: LoteScan
           onClick={capture}
           disabled={!cameraReady || processing}
           className="gap-2"
-          size="lg"
+          size="balcao"
         >
           <Camera className="h-5 w-5" />
           Capturar
@@ -264,10 +264,10 @@ export default function LoteScannerOCR({ onLoteCapturado, onCancelar }: LoteScan
 
       {/* Footer actions */}
       <div className="flex gap-3 px-4 py-4 bg-card border-t border-border">
-        <Button variant="outline" className="flex-1" onClick={onCancelar}>
+        <Button variant="outline" size="touch" className="flex-1" onClick={onCancelar}>
           Cancelar
         </Button>
-        <Button className="flex-1" disabled={!lote.trim()} onClick={handleConfirmar}>
+        <Button size="touch" className="flex-1" disabled={!lote.trim()} onClick={handleConfirmar}>
           Confirmar Lote
         </Button>
       </div>

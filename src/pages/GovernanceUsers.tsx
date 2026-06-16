@@ -1,15 +1,13 @@
-import React, { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole, CommercialRole } from '@/hooks/useCommercialRole';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Shield, Users, History, ShieldCheck } from 'lucide-react';
+import { Shield, Users, History } from 'lucide-react';
 
 const ROLE_LABELS: Record<string, string> = {
   operacional: 'Operacional',
@@ -99,7 +97,7 @@ export default function GovernanceUsers() {
       queryClient.invalidateQueries({ queryKey: ['governance-log'] });
       toast.success('Perfil comercial atualizado');
     },
-    onError: (e: any) => toast.error('Erro: ' + e.message),
+    onError: (e) => toast.error('Erro: ' + e.message),
   });
 
   if (!isAdmin && !isSuperAdmin) {

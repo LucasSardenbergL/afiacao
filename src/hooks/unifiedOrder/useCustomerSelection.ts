@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
+import { eqText, orFilter } from '@/lib/postgrest';
+import { deveCriarClienteNaConta } from './ensure-helpers';
 import type {
   OmieCustomer,
   AddressData,
@@ -40,10 +42,6 @@ interface ParcelaResponse {
   parcela_ranking?: ParcelaRankingItem[];
 }
 
-interface PrecosResponse {
-  precos?: Record<string, number>;
-}
-
 interface UseCustomerSelectionArgs {
   /** Called after a customer is selected and a local user id was resolved.
    *  The hook owner uses this to load tools, addresses, price history, etc. */
@@ -57,6 +55,27 @@ export function useCustomerSelection({
   reloadPriceHistory,
 }: UseCustomerSelectionArgs = {}) {
   const queryClient = useQueryClient();
+
+  /* Token de geração: descarta conclusões de uma seleção antiga quando o
+     usuário troca de cliente no meio (corrida A→B). Cada selectCustomer
+     incrementa o token; awaits que voltam com token vencido não setam estado. */
+  const selectionTokenRef = useRef(0);
+
+  /* Promise RETIDA do auto-cadastro em background (Etapa 3 do spec
+     preco-realtime): a seleção dispara o ensure SEM esperar (o spinner do
+     cliente não paga mais ~2-4s de WRITE no Omie) e o submit faz JOIN nela
+     via waitForAccountEnsure — recebendo o cliente PÓS-ensure (a closure de
+     selectedCustomer pode ser a cópia anterior aos códigos criados). O
+     preflight fail-closed do submit (Etapa 2a) segue como rede.
+     TOKEN-STAMP (revisão adversarial): a retenção carrega o token da seleção
+     que a criou — o join só devolve o cliente se ele ainda é a seleção
+     CORRENTE. Identidade por documento NÃO serve de guard aqui: existem
+     duplicatas mesmo-CNPJ em prod (plantadas pelo bug histórico de
+     auto-criação) e o AI-flow monta cliente com documento vazio. */
+  const ensureAccountsRef = useRef<{ token: number; promise: Promise<OmieCustomer | null> }>({
+    token: 0,
+    promise: Promise.resolve(null),
+  });
 
   /* ─── State ─── */
   const [customerSearch, setCustomerSearch] = useState('');
@@ -105,11 +124,13 @@ export function useCustomerSelection({
   }, [addresses, selectedAddress]);
 
   /* ─── Purchase history (react-query, 2min stale) ─────────────────────────
-     Faz merge de 3 fontes em paralelo (allSettled tolera falhas individuais):
+     Fase 1: SÓ fontes LOCAIS (rápidas, estáveis):
        a) sales_orders local (últimas 100 ordens) → códigos de produto
        b) sales_price_history local → product_id (formato `pid:<uuid>`)
-       c) Omie histórico de produtos (oben + colacor) → códigos Omie (`omie:<cod>`)
-     A key inclui os 3 códigos relevantes do cliente para reagir a auto-create. */
+     O histórico do Omie (`historico_produtos_cliente`, até 5 ListarPedidos/conta)
+     foi REMOVIDO daqui — era o maior gerador da colisão de rate-limit (~40s). A
+     completude do Omie volta na Fase 2 (chamada atômica account-aware).
+     A key inclui os códigos do cliente para reagir a auto-create. */
   const codigoOben = selectedCustomer?.codigo_cliente ?? null;
   const codigoColacor = selectedCustomer?.codigo_cliente_colacor ?? null;
   const { data: customerPurchaseHistory = {} } = useQuery<Record<string, string>>({
@@ -131,22 +152,10 @@ export function useCustomerSelection({
             .eq('customer_user_id', customerUserId)
             .order('created_at', { ascending: false })
         : Promise.resolve({ data: null });
-      const omiePromises: Promise<FunctionInvokeResult<{ history?: Record<string, string> }>>[] = [];
-      if (codigoOben) {
-        omiePromises.push(supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'historico_produtos_cliente', codigo_cliente: codigoOben, account: 'oben' },
-        }));
-      }
-      if (codigoColacor) {
-        omiePromises.push(supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'historico_produtos_cliente', codigo_cliente: codigoColacor, account: 'colacor' },
-        }));
-      }
 
-      const [ordersSettled, priceSettled, ...omieSettled] = await Promise.allSettled([
+      const [ordersSettled, priceSettled] = await Promise.allSettled([
         localOrdersPromise,
         localPricePromise,
-        ...omiePromises,
       ]);
 
       const history: Record<string, string> = {};
@@ -168,15 +177,6 @@ export function useCustomerSelection({
       if (priceSettled.status === 'fulfilled' && priceSettled.value?.data) {
         for (const row of priceSettled.value.data as unknown as SalesPriceHistoryRow[]) {
           if (!history[`pid:${row.product_id}`]) history[`pid:${row.product_id}`] = row.created_at;
-        }
-      }
-
-      for (const res of omieSettled) {
-        if (res.status === 'fulfilled' && res.value?.data?.history) {
-          const h = res.value.data.history as Record<string, string>;
-          for (const [omieCod, dateStr] of Object.entries(h)) {
-            if (!history[`omie:${omieCod}`]) history[`omie:${omieCod}`] = dateStr;
-          }
         }
       }
 
@@ -248,7 +248,7 @@ export function useCustomerSelection({
         const { data: profile } = await supabase
           .from('profiles')
           .select('user_id, requires_po')
-          .or(`document.eq.${docClean},document.eq.${cust.cnpj_cpf}`)
+          .or(orFilter(eqText('document', docClean), eqText('document', cust.cnpj_cpf)))
           .limit(1)
           .maybeSingle();
         if (profile?.user_id) localUserId = profile.user_id;
@@ -267,8 +267,14 @@ export function useCustomerSelection({
     return localUserId;
   }, []);
 
-  /** Auto-create customer in Colacor and Afiação if missing. Mutates `cust` in place. */
-  const autoCreateInMissingAccounts = useCallback(async (cust: OmieCustomer) => {
+  /** Auto-create customer in Colacor and Afiação if missing. Mutates `cust` in place.
+   *  Tri-state (deveCriarClienteNaConta): conta cujo LOOKUP falhou NÃO cria às
+   *  cegas — ausência não confirmada; criar em cima de erro de leitura
+   *  duplicaria no Omie um cliente que já existe. */
+  const autoCreateInMissingAccounts = useCallback(async (
+    cust: OmieCustomer,
+    lookupFailed: { colacor: boolean; afiacao: boolean },
+  ) => {
     const customerPayload = {
       document: cust.cnpj_cpf,
       razao_social: cust.razao_social,
@@ -285,7 +291,13 @@ export function useCustomerSelection({
 
     const promises: Promise<unknown>[] = [];
 
-    if (!cust.codigo_cliente_colacor && cust.cnpj_cpf) {
+    if (
+      deveCriarClienteNaConta({
+        codigoExistente: cust.codigo_cliente_colacor,
+        temDocumento: !!cust.cnpj_cpf,
+        lookupFalhou: lookupFailed.colacor,
+      })
+    ) {
       promises.push(
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'criar_cliente', account: 'colacor', ...customerPayload },
@@ -307,7 +319,13 @@ export function useCustomerSelection({
       );
     }
 
-    if (!cust.codigo_cliente_afiacao && cust.cnpj_cpf) {
+    if (
+      deveCriarClienteNaConta({
+        codigoExistente: cust.codigo_cliente_afiacao,
+        temDocumento: !!cust.cnpj_cpf,
+        lookupFalhou: lookupFailed.afiacao,
+      })
+    ) {
       promises.push(
         supabase.functions.invoke('omie-sync', {
           body: { action: 'criar_cliente_afiacao', ...customerPayload },
@@ -361,16 +379,37 @@ export function useCustomerSelection({
   /* ─── Public actions ─── */
 
   const selectCustomer = useCallback(async (cust: OmieCustomer) => {
+    // Token desta seleção. Se o usuário trocar de cliente no meio, conclusões
+    // atrasadas desta chamada são descartadas (não sobrescrevem o cliente novo).
+    const myToken = ++selectionTokenRef.current;
+    const isStale = () => selectionTokenRef.current !== myToken;
+
+    // Fecha a janela da seleção ANTERIOR: até esta seleção reter o próprio
+    // ensure (após os lookups, ~1-10s), o join do submit NÃO pode devolver o
+    // ensure do cliente antigo — devolve null e o submit usa o preflight
+    // fail-closed como rede.
+    ensureAccountsRef.current = { token: myToken, promise: Promise.resolve(null) };
+
     setLoadingCustomer(true);
     setCustomerSearch('');
     setCustomers([]);
     setVendedorDivergencias([]);
     setSelectedAddress('');
     setRequiresPo(false);
+    // Limpa estado do cliente ANTERIOR — não deve aparecer preço/parcela/vínculo
+    // do cliente antigo enquanto os dados do novo carregam.
+    setCustomerUserId(null);
+    setCustomerPricesOben({});
+    setCustomerPricesColacor({});
+    setSelectedParcelaOben('999');
+    setSelectedParcelaColacor('999');
+    setCustomerParcelaRankingOben([]);
+    setCustomerParcelaRankingColacor([]);
     try {
       setSelectedCustomer(cust);
 
       const localUserId = await resolveLocalUserId(cust);
+      if (isStale()) return;
 
       if (localUserId) {
         setCustomerUserId(localUserId);
@@ -379,13 +418,17 @@ export function useCustomerSelection({
         onLocalUserResolved?.(localUserId);
       }
 
+      // ── Fase 1: preço-cliente = ÚLTIMO PREÇO PRATICADO (fonte LOCAL) ──
+      // O `buscar_precos_cliente` (Omie ListarPedidos) foi REMOVIDO do caminho de
+      // seleção. Causava ~40s + preço pulando: o app disparava várias ListarPedidos
+      // CONCORRENTES na mesma conta (preço + parcela + histórico×5páginas), o Omie
+      // barrava com "Já existe uma requisição desse método" e o callOmieVendasApi
+      // re-tentava 5-15s×3 → empilhava. Agora o preço vem do `sales_price_history`
+      // local (rápido, estável; alimentado pelo app E pelo sync Omie de 2h). A
+      // completude/recência do Omie volta na Fase 2 (chamada atômica account-aware
+      // por data real). A `buscar_ultima_parcela` fica (1 ListarPedidos/conta, já
+      // sem colisão) p/ preservar a sugestão de prazo.
       const settledResults = await Promise.allSettled([
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente, account: 'oben' },
-        }),
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_precos_cliente', codigo_cliente: cust.codigo_cliente, account: 'colacor' },
-        }),
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente, account: 'oben' },
         }),
@@ -407,10 +450,9 @@ export function useCustomerSelection({
             })
           : Promise.resolve({ data: null }),
       ]);
+      if (isStale()) return;
 
       const labels = [
-        'preços Oben',
-        'preços Colacor',
         'última parcela Oben',
         'última parcela Colacor',
         'histórico de preço local',
@@ -418,6 +460,11 @@ export function useCustomerSelection({
         'cliente Afiação',
       ];
       const failedParts: string[] = [];
+      // Índices falhos registrados À PARTE dos labels: o tri-state do
+      // auto-cadastro deriva DAQUI (por posição no allSettled), não das
+      // strings de log — renomear um label não pode desarmar o guard
+      // anti-duplicação silenciosamente (revisão adversarial).
+      const failedIdxs = new Set<number>();
       const getResult = <T = unknown>(idx: number): FunctionInvokeResult<T> => {
         const r = settledResults[idx];
         if (r.status === 'fulfilled') {
@@ -431,6 +478,7 @@ export function useCustomerSelection({
               error: val.error,
             });
             failedParts.push(labels[idx]);
+            failedIdxs.add(idx);
             return { data: null };
           }
           return val ?? { data: null };
@@ -443,25 +491,31 @@ export function useCustomerSelection({
           error: r.reason,
         });
         failedParts.push(labels[idx]);
+        failedIdxs.add(idx);
         return { data: null };
       };
 
-      const priceOben = getResult<PrecosResponse>(0);
-      const priceColacor = getResult<PrecosResponse>(1);
-      const parcelaOben = getResult<ParcelaResponse>(2);
-      const parcelaColacor = getResult<ParcelaResponse>(3);
-      const localPriceResult = getResult<Array<{ product_id: string; unit_price: number; created_at: string }>>(4);
+      const parcelaOben = getResult<ParcelaResponse>(0);
+      const parcelaColacor = getResult<ParcelaResponse>(1);
+      const localPriceResult = getResult<Array<{ product_id: string; unit_price: number; created_at: string }>>(2);
       const colacorClientResult = getResult<{
         cliente?: { codigo_cliente?: number | null; codigo_vendedor?: number | null };
-      }>(5);
+      }>(3);
       const afiacaoClientResult = getResult<{
         codigo_cliente?: number | null;
         codigo_vendedor?: number | null;
-      }>(6);
+      }>(4);
 
-      if (failedParts.length > 0) {
-        toast.success('Alguns dados do cliente não foram carregados', {
-          description: `Falharam: ${failedParts.join(', ')}. Você pode continuar, mas preços/parcelas podem não refletir o contrato.`,
+      // Aviso SÓ pra falha que afeta o preço na tela agora. As falhas dos lookups de
+      // CÓDIGO por-conta ('cliente Colacor'/'cliente Afiação') NÃO alarmam na seleção:
+      //  • o preço-cliente vem do histórico LOCAL (não dessas chamadas);
+      //  • o submit fail-closed (Etapa 2a) bloqueia com mensagem PRECISA se você fechar
+      //    pedido NAQUELA conta sem a identidade resolvida (é onde o aviso é acionável).
+      // 'última parcela ...' também não alarma — a sugestão de prazo cai no padrão, e o
+      // vendedor confirma o prazo no fluxo do pedido. (Todas as falhas seguem logadas.)
+      if (failedParts.includes('histórico de preço local')) {
+        toast.warning('Histórico de preço não carregou', {
+          description: 'Usando o preço de tabela. Re-selecione o cliente para tentar de novo.',
         });
       }
 
@@ -474,11 +528,26 @@ export function useCustomerSelection({
         cust.codigo_vendedor_afiacao = afiacaoClientResult.data.codigo_vendedor || null;
       }
 
-      await autoCreateInMissingAccounts(cust);
+      // ── Publica preço (LOCAL) + parcela ANTES do auto-cadastro ──
+      // Fase 1: o preço-cliente = último preço praticado do `sales_price_history`
+      // (rápido, estável, determinístico). Sem overlay do Omie (removido p/ matar a
+      // colisão de rate-limit). O mesmo mapa local vai p/ as 2 contas — limitação
+      // pré-existente (produtos são account-aware); corrigida na Fase 2 account-aware.
+      const localPricesByOmie = await resolveLocalPricesByOmieCode(localPriceResult.data || null);
+      if (isStale()) return;
 
+      setCustomerPricesOben({ ...localPricesByOmie });
+      setCustomerPricesColacor({ ...localPricesByOmie });
+
+      if (parcelaOben.data?.ultima_parcela) setSelectedParcelaOben(parcelaOben.data.ultima_parcela);
+      if (parcelaOben.data?.parcela_ranking) setCustomerParcelaRankingOben(parcelaOben.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));
+      if (parcelaColacor.data?.ultima_parcela) setSelectedParcelaColacor(parcelaColacor.data.ultima_parcela);
+      if (parcelaColacor.data?.parcela_ranking) setCustomerParcelaRankingColacor(parcelaColacor.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));
+
+      // Reflete os códigos por-conta já resolvidos pelos lookups (preço já visível).
       setSelectedCustomer({ ...cust });
 
-      // Save customer segment/tags to DB in background
+      // Save customer segment/tags to DB in background (fire-and-forget)
       if (cust.codigo_cliente && (cust.tags?.length || cust.atividade)) {
         supabase.functions.invoke('omie-vendas-sync', {
           body: {
@@ -491,47 +560,54 @@ export function useCustomerSelection({
         }).catch(() => {});
       }
 
-      // Purchase history (local + Omie) é carregado pelo useQuery acima.
-      // Ao atualizar selectedCustomer com codigo_cliente_colacor preenchido pelo
-      // autoCreateInMissingAccounts, a query refaz o fetch automaticamente.
-
-
-      // Merge local "last-practiced" prices into Omie pricing maps
-      const localPricesByOmie = await resolveLocalPricesByOmieCode(localPriceResult.data || null);
-
-      const mergedOben: Record<number, number> = { ...localPricesByOmie };
-      if (priceOben.data?.precos) {
-        for (const [k, v] of Object.entries(priceOben.data.precos as Record<string, number>)) {
-          if (v && v > 0) mergedOben[Number(k)] = v;
-        }
-      }
-      setCustomerPricesOben(mergedOben);
-
-      const mergedColacor: Record<number, number> = { ...localPricesByOmie };
-      if (priceColacor.data?.precos) {
-        for (const [k, v] of Object.entries(priceColacor.data.precos as Record<string, number>)) {
-          if (v && v > 0) mergedColacor[Number(k)] = v;
-        }
-      }
-      setCustomerPricesColacor(mergedColacor);
-
-      if (parcelaOben.data?.ultima_parcela) setSelectedParcelaOben(parcelaOben.data.ultima_parcela);
-      if (parcelaOben.data?.parcela_ranking) setCustomerParcelaRankingOben(parcelaOben.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));
-      if (parcelaColacor.data?.ultima_parcela) setSelectedParcelaColacor(parcelaColacor.data.ultima_parcela);
-      if (parcelaColacor.data?.parcela_ranking) setCustomerParcelaRankingColacor(parcelaColacor.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));
+      // ── Etapa 3 (spec preco-realtime): auto-cadastro em BACKGROUND ──
+      // A promise fica retida em ensureAccountsRef e o submit faz join nela —
+      // a seleção não espera mais o WRITE no Omie (~2-4s no caminho do
+      // spinner). Tri-state: conta cujo lookup FALHOU não cria às cegas (o
+      // preflight fail-closed do submit bloqueia a conta, se usada).
+      // Índices 3/4 = posições dos lookups de cliente no Promise.allSettled acima.
+      const LOOKUP_IDX_CLIENTE_COLACOR = 3;
+      const LOOKUP_IDX_CLIENTE_AFIACAO = 4;
+      const lookupFailed = {
+        colacor: failedIdxs.has(LOOKUP_IDX_CLIENTE_COLACOR),
+        afiacao: failedIdxs.has(LOOKUP_IDX_CLIENTE_AFIACAO),
+      };
+      ensureAccountsRef.current = {
+        token: myToken,
+        promise: autoCreateInMissingAccounts(cust, lookupFailed)
+          .then(() => {
+            // Reflete códigos recém-criados (purchase-history reage à key);
+            // conclusão atrasada de cliente trocado não sobrescreve (guard).
+            if (!isStale()) setSelectedCustomer({ ...cust });
+            return cust;
+          })
+          .catch((e) => {
+            // autoCreate já isola falhas por conta; este catch é só pra ref
+            // nunca rejeitar sem handler (o join do submit trata null).
+            logger.warn('Ensure de cadastro em background falhou', {
+              stage: 'ensure_accounts_background',
+              customerCnpjCpf: maskDocument(cust.cnpj_cpf),
+              error: e,
+            });
+            return cust;
+          }),
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro desconhecido';
-      toast.error('Erro', { description: message });
+      if (!isStale()) toast.error('Erro', { description: message });
     } finally {
-      setLoadingCustomer(false);
+      // Só apaga o "Buscando…" se esta ainda é a seleção corrente.
+      if (!isStale()) setLoadingCustomer(false);
     }
 
+    if (isStale()) return;
     if (cust.cnpj_cpf) {
       setValidatingVendedor(true);
       try {
         const { data: validacao, error } = await supabase.functions.invoke('omie-cliente', {
           body: { action: 'validar_vendedor', cnpj_cpf: cust.cnpj_cpf },
         });
+        if (isStale()) return;
         if (!error && validacao && !validacao.consistente) {
           setVendedorDivergencias(validacao.divergencias || []);
         }
@@ -543,7 +619,7 @@ export function useCustomerSelection({
           error: err,
         });
       } finally {
-        setValidatingVendedor(false);
+        if (!isStale()) setValidatingVendedor(false);
       }
     }
   }, [
@@ -551,8 +627,25 @@ export function useCustomerSelection({
     onLocalUserResolved, reloadPriceHistory,
   ]);
 
+  /** Join da Etapa 3: o submit espera o ensure em background terminar e
+   *  recebe o cliente com os códigos por-conta atualizados — SÓ se a retenção
+   *  ainda é da seleção corrente (token-stamp); senão null (e o preflight
+   *  fail-closed do submit cobre). */
+  const waitForAccountEnsure = useCallback(async (): Promise<OmieCustomer | null> => {
+    const retained = ensureAccountsRef.current;
+    const cliente = await retained.promise;
+    return retained.token === selectionTokenRef.current ? cliente : null;
+  }, []);
+
   const clearCustomer = useCallback(() => {
+    // Invalida qualquer selectCustomer em voo: suas conclusões viram stale e não
+    // ressuscitam o cliente que estamos limpando. Como o finally da seleção pula
+    // o setLoadingCustomer(false) quando stale, zeramos os flags de loading aqui.
+    selectionTokenRef.current++;
+    ensureAccountsRef.current = { token: selectionTokenRef.current, promise: Promise.resolve(null) };
     setSelectedCustomer(null);
+    setLoadingCustomer(false);
+    setValidatingVendedor(false);
     setCustomerUserId(null);
     setCustomerPricesOben({});
     setCustomerPricesColacor({});
@@ -594,6 +687,6 @@ export function useCustomerSelection({
     // Vendedor
     vendedorDivergencias, validatingVendedor,
     // Actions
-    selectCustomer, clearCustomer,
+    selectCustomer, clearCustomer, waitForAccountEnsure,
   };
 }

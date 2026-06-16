@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -198,6 +199,12 @@ const PROFIT_PER_HOUR_THRESHOLD = 50; // R$/h configurable threshold
 
 export const useTacticalPlan = () => {
   const { user } = useAuth();
+  // Lente "Ver como": as leituras de EXIBIÇÃO (planos do vendedor, plano ativo do
+  // cliente, estatísticas de efetividade) seguem o id efetivo — o ALVO na lente, o
+  // próprio usuário fora. A GERAÇÃO de plano (checkEfficiency/generatePlan) e o registro
+  // de resultado seguem user.id (write identity = master real) e são bloqueados na lente
+  // pelo write-guard + botões disabled. Fora da lente effectiveUserId === user.id.
+  const { effectiveUserId } = useImpersonation();
   const [plans, setPlans] = useState<TacticalPlan[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState<string | null>(null);
@@ -261,13 +268,13 @@ export const useTacticalPlan = () => {
 
   // Load existing plans
   const loadPlans = useCallback(async () => {
-    if (!user?.id) return;
+    if (!effectiveUserId) return;
     setLoading(true);
     try {
       const { data } = (await supabase
         .from('farmer_tactical_plans')
         .select('*')
-        .eq('farmer_id', user.id)
+        .eq('farmer_id', effectiveUserId)
         .order('created_at', { ascending: false })
         .limit(50)) as unknown as { data: TacticalPlanRow[] | null };
 
@@ -290,7 +297,7 @@ export const useTacticalPlan = () => {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [effectiveUserId]);
 
   // Check efficiency before generating
   const checkEfficiency = useCallback(async (customerId: string): Promise<EfficiencyCheck> => {
@@ -472,12 +479,12 @@ export const useTacticalPlan = () => {
 
   // Get latest active plan for a customer (used by Copilot integration)
   const getActivePlan = useCallback(async (customerId: string): Promise<TacticalPlan | null> => {
-    if (!user?.id) return null;
+    if (!effectiveUserId) return null;
 
     const { data } = (await supabase
       .from('farmer_tactical_plans')
       .select('*')
-      .eq('farmer_id', user.id)
+      .eq('farmer_id', effectiveUserId)
       .eq('customer_user_id', customerId)
       .eq('status', 'gerado')
       .order('created_at', { ascending: false })
@@ -493,7 +500,7 @@ export const useTacticalPlan = () => {
 
     const profileMap = new Map<string, string>([[customerId, profile?.name || 'Cliente']]);
     return parsePlan(data[0], profileMap);
-  }, [user]);
+  }, [effectiveUserId]);
 
   // Record post-call results
   const recordResult = useCallback(async (planId: string, result: {
@@ -528,12 +535,12 @@ export const useTacticalPlan = () => {
 
   // Get effectiveness stats
   const getEffectivenessStats = useCallback(async () => {
-    if (!user?.id) return null;
+    if (!effectiveUserId) return null;
 
     const { data } = (await supabase
       .from('farmer_tactical_plans')
       .select('strategic_objective, plan_followed, actual_margin, call_duration_seconds, plan_type')
-      .eq('farmer_id', user.id)
+      .eq('farmer_id', effectiveUserId)
       .eq('status', 'concluido')) as unknown as { data: EffectivenessRow[] | null };
 
     if (!data?.length) return null;
@@ -567,7 +574,7 @@ export const useTacticalPlan = () => {
       }));
 
     return { byObjective: mapStats(byObjective), byType: mapStats(byType) };
-  }, [user]);
+  }, [effectiveUserId]);
 
   return {
     plans,

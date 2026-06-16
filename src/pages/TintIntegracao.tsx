@@ -1,24 +1,9 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Plug,
-  Loader2,
-  RefreshCw,
-  CheckCircle2,
-  AlertCircle,
-  Store,
-  Building2,
-} from "lucide-react";
+import { Plug, Loader2, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 
 const TintImport = lazy(() => import("./TintImport"));
@@ -34,11 +19,9 @@ const TabFallback = () => (
   </div>
 );
 
-function KpiCards({ empresa }: { empresa: string }) {
-  void empresa;
-
+function KpiCards() {
   const { data } = useQuery({
-    queryKey: ["tint-integracao-kpis", empresa],
+    queryKey: ["tint-integracao-kpis"],
     queryFn: async () => {
       const [total, completos, erros] = await Promise.all([
         supabase.from("tint_sync_runs").select("id", { count: "exact", head: true }),
@@ -51,12 +34,10 @@ function KpiCards({ empresa }: { empresa: string }) {
           .select("id", { count: "exact", head: true })
           .eq("status", "error"),
       ]);
-      // TODO: tabela tint_integrations nao existe ainda; lojas ativas zerada
       return {
         total: total.count ?? 0,
         completos: completos.count ?? 0,
         erros: erros.count ?? 0,
-        lojasAtivas: 0,
       };
     },
   });
@@ -65,11 +46,10 @@ function KpiCards({ empresa }: { empresa: string }) {
     { label: "Total Sync Runs", value: data?.total ?? 0, icon: RefreshCw },
     { label: "Completos", value: data?.completos ?? 0, icon: CheckCircle2 },
     { label: "Erros", value: data?.erros ?? 0, icon: AlertCircle },
-    { label: "Lojas Ativas", value: data?.lojasAtivas ?? 0, icon: Store },
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
       {cards.map((c) => (
         <Card key={c.label} className="border-border">
           <CardContent className="pt-4 flex items-center justify-between">
@@ -88,7 +68,6 @@ function KpiCards({ empresa }: { empresa: string }) {
 export default function TintIntegracao() {
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") ?? "importar";
-  const [empresa, setEmpresa] = useState("OBEN");
 
   const handleTab = (v: string) => {
     const next = new URLSearchParams(params);
@@ -108,21 +87,9 @@ export default function TintIntegracao() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Building2 className="h-4 w-4 text-muted-foreground" />
-          <Select value={empresa} onValueChange={setEmpresa}>
-            <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="Empresa" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="OBEN">OBEN</SelectItem>
-              <SelectItem value="COLACOR">COLACOR</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
       </header>
 
-      <KpiCards empresa={empresa} />
+      <KpiCards />
 
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
         <TabsList className="grid grid-cols-2 sm:grid-cols-5 w-full">

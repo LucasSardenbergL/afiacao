@@ -53,7 +53,36 @@ export default defineConfig(({ mode }) => ({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        // Precache ENXUTO: o SW baixava TODOS os ~250 chunks (~6.2MB) na 1ª
+        // instalação e revalidava a cada deploy — custo real no 4G da
+        // vendedora. Ficam FORA do precache só chunks de telas INERENTEMENTE
+        // online (IA/voz, mapa com tiles de rede, session replay, docs
+        // internas de dev) — offline nelas não funcionaria de qualquer jeito.
+        // Telas operacionais (picking/recebimento/pedido/Meu Dia/rota) e
+        // todos os vendors continuam precacheados (offline-first, §6.1).
+        // Quem sai do precache ganha cobertura PROGRESSIVA pelo runtime
+        // caching de /assets/ (CacheFirst) abaixo: visitou 1× online, fica.
+        globIgnores: [
+          "**/FarmerCopilot-*.js", // ~465KB — copilot de voz (ElevenLabs), exige rede
+          "**/AdminRoutePlanner-*.js", // ~188KB — Leaflet; tiles do mapa exigem rede
+          "**/AdminRoutePlanner-*.css", // CSS do Leaflet (único ignorado com CSS próprio)
+          "**/vendor-posthog-*.js", // ~186KB — posthog-js core (analytics; lazy via analytics.ts)
+          "**/TechnicalDocs-*.js", // ~74KB — documentação interna de dev
+          "**/DesignSystem-*.js", // docs internas de design
+          "**/DesignPreview-*.js",
+          // ⚠️ Case EXATO do chunk (UXRules.tsx): glob é case-insensitive no
+          // macOS (nocase default do darwin) mas case-SENSITIVE no Linux do
+          // builder de produção — grafia errada = ignore morto só em prod.
+          "**/UXRules-*.js",
+        ],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5MB
+        // Web Push da vendedora: handlers `push`/`notificationclick` vivem em
+        // public/push-sw.js e são injetados no SW gerado (generateSW não aceita
+        // handler custom inline; importScripts é o caminho oficial do Workbox).
+        // ⚠️ Se EDITAR o push-sw.js, RENOMEIE pra push-sw-v2.js (+ aqui): o
+        // importScripts passa pelo HTTP cache (updateViaCache default 'imports')
+        // e um max-age na hospedagem serviria bytes velhos do handler.
+        importScripts: ["push-sw.js"],
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
@@ -150,6 +179,24 @@ export default defineConfig(({ mode }) => ({
             urlPattern: /^https:\/\/.*\.supabase\.co\/(auth|realtime)/i,
             handler: "NetworkOnly",
           },
+          // ─── Chunks fora do precache: cache progressivo ─────────────
+          // Assets do Vite têm hash no nome (immutable) → CacheFirst é
+          // seguro por construção (conteúdo novo = URL nova). Cobre os
+          // chunks dos globIgnores acima (e qualquer futuro): a 1ª visita
+          // online grava no cache e a tela passa a abrir offline também.
+          // same-origin only (o pattern casa pathname em same-origin).
+          {
+            urlPattern: /\/assets\/.*\.(?:js|css)$/i,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "app-assets-progressive",
+              expiration: {
+                maxEntries: 100,
+                maxAgeSeconds: 30 * 24 * 60 * 60, // 30 dias
+                purgeOnQuotaError: true,
+              },
+            },
+          },
         ],
       },
       devOptions: {
@@ -165,48 +212,42 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
-        // Function-form pra agrupar lazy pages por módulo + manter vendors split.
-        // Antes: 119 chunks separados (1 por lazy page) → TTFB extra por navegação.
-        // Agora: peers de um mesmo módulo no mesmo chunk (ex: 22 pages de Reposição = 1 chunk).
-        // Vendors continuam separados (cacheable, raramente mudam).
+        // Só agrupa VENDORS (node_modules) em buckets cacheáveis. NÃO agrupar
+        // páginas por feature: o agrupamento anterior (feature-admin/financeiro/...)
+        // criava chunks com dependência circular (páginas se importam entre si),
+        // e o Rollup avisava "Circular chunk: feature-admin -> feature-financeiro".
+        // Em produção isso virava um TDZ em runtime ("Cannot access 'X' before
+        // initialization") que crashava o boot ANTES do React montar → tela
+        // travada. Deixar o Rollup auto-splitar as páginas (1 chunk por rota lazy)
+        // é circular-safe e era o comportamento que funcionava.
         manualChunks(id) {
-          // ─── Vendors ──────────────────────────────────────────────────
           if (id.includes('node_modules')) {
-            if (/[\\/](react|react-dom|react-router-dom|scheduler)[\\/]/.test(id)) return 'vendor-react';
+            // Utilitários de classe usados pelo cn() do shell. SEM esta regra o
+            // Rollup alocava o clsx DENTRO do vendor-charts (recharts depende
+            // dele) e o entry passava a importar recharts+d3 inteiros (~114KB
+            // gzip) só pra obter o clsx — medido no build de 2026-06-09.
+            if (/node_modules[\\/](clsx|tailwind-merge|class-variance-authority)[\\/]/.test(id)) return 'vendor-utils';
+            // Ancorado em node_modules: a regex antiga sem âncora casava
+            // QUALQUER segmento "react" no caminho — capturava @elevenlabs/react
+            // (SDK de voz, ~100KB gzip, usado só pelo FarmerCopilot lazy) pra
+            // dentro do vendor-react. react-router core + @remix-run/router
+            // entram explícitos (a família toda num chunk coeso e estável).
+            if (/node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler|@remix-run)[\\/]/.test(id)) return 'vendor-react';
             if (id.includes('@tanstack/react-query')) return 'vendor-query';
             if (id.includes('@supabase/supabase-js')) return 'vendor-supabase';
             if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts';
+            // Nome explícito: sem isto o chunk do posthog-js (dynamic import
+            // em analytics.ts) nasce como "module-<hash>.js" (basename do
+            // entry ESM do pacote) — nome genérico que o globIgnores do
+            // precache não consegue mirar com segurança.
+            if (id.includes('posthog-js')) return 'vendor-posthog';
             if (id.includes('framer-motion')) return 'vendor-motion';
             if (id.includes('@radix-ui/')) return 'vendor-ui';
             if (id.includes('lucide-react')) return 'vendor-icons';
             if (id.includes('date-fns')) return 'vendor-dates';
             return; // resto: deixar Rollup decidir
           }
-
-          // ─── Feature chunks (agrupa lazy pages do mesmo módulo) ──────
-          // ORDEM IMPORTA: AdminReposicao deve vir ANTES de Admin (catchall)
-          if (id.includes('/src/pages/')) {
-            if (id.includes('/AdminReposicao')) return 'feature-reposicao';
-            if (id.includes('/Farmer')) return 'feature-farmer';
-            if (id.includes('/Financeiro')) return 'feature-financeiro';
-            if (id.includes('/Tint') || id.includes('/AdminTint')) return 'feature-tintometrico';
-            if (id.includes('/Governance')) return 'feature-governance';
-            if (id.includes('/Sales')) return 'feature-sales';
-            if (id.includes('/Recebimento')) return 'feature-estoque';
-            if (id.includes('/picking/')) return 'feature-estoque';
-            // Docs internos: baixo uso, cabe num bundle único
-            if (
-              id.includes('/DesignSystem') ||
-              id.includes('/DesignPreview') ||
-              id.includes('/UXRules') ||
-              id.includes('/TechnicalDocs') ||
-              id.includes('/TintApiContract')
-            ) return 'feature-docs';
-            // Admin (catchall depois de AdminReposicao + AdminTint)
-            if (id.includes('/Admin')) return 'feature-admin';
-            // Restantes (~15 pages cliente: Orders, Tools, Profile, etc.) ficam
-            // no chunk principal pra navegação inicial rápida do customer
-          }
+          // App code: sem agrupamento manual → Rollup decide (circular-safe).
         },
       },
     },

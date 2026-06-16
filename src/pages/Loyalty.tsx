@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, Star, Gift, Trophy, TrendingUp, Loader2, BookOpen, Target, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Star, Gift, Trophy, TrendingUp, Loader2, BookOpen, Target } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,10 +27,10 @@ const TIERS = [
 ];
 
 const REWARDS = [
-  { name: '10% desconto no frete', points: 100, icon: '🚚' },
-  { name: 'Afiação grátis (1 ferramenta)', points: 300, icon: '🔧' },
-  { name: 'Kit de manutenção', points: 500, icon: '🧰' },
-  { name: 'Desconto 20% no próximo pedido', points: 750, icon: '💰' },
+  { key: 'frete_10', name: '10% desconto no frete', points: 100, icon: '🚚' },
+  { key: 'afiacao_gratis', name: 'Afiação grátis (1 ferramenta)', points: 300, icon: '🔧' },
+  { key: 'kit_manutencao', name: 'Kit de manutenção', points: 500, icon: '🧰' },
+  { key: 'desconto_20', name: 'Desconto 20% no próximo pedido', points: 750, icon: '💰' },
 ];
 
 export default function Loyalty() {
@@ -79,33 +79,19 @@ export default function Loyalty() {
 
     setRedeemingReward(reward.name);
     try {
-      // 1. Create redemption record
-      const { error: redemptionError } = await supabase
-        .from('loyalty_redemptions' as any)
-        .insert({
-          user_id: user.id,
-          reward_name: reward.name,
-          points_spent: reward.points,
-          status: 'pendente',
-        });
-      if (redemptionError) throw redemptionError;
-
-      // 2. Deduct points via negative entry
-      const { error: pointsError } = await supabase
-        .from('loyalty_points')
-        .insert({
-          user_id: user.id,
-          points: -reward.points,
-          type: 'resgate',
-          description: `Resgate: ${reward.name}`,
-        });
-      if (pointsError) throw pointsError;
+      // Resgate atômico server-side: a RPC SECURITY DEFINER valida saldo, cria o resgate e debita
+      // os pontos (o preço vem do catálogo no servidor, não do cliente). Substitui os 2 inserts
+      // diretos antigos — o de débito era bloqueado pela RLS (type='earn'-only) → saldo nunca caía.
+      const { error } = await supabase.rpc('resgatar_recompensa' as never, {
+        p_reward_key: reward.key,
+      } as never);
+      if (error) throw error;
 
       toast.success('Resgate realizado!', { description: `${reward.name} resgatado com sucesso. Aguarde processamento.` });
       await loadPoints();
-    } catch (err: any) {
+    } catch (err) {
       console.error('[Loyalty] Erro ao resgatar:', err);
-      toast.error('Erro no resgate', { description: err.message || 'Tente novamente.' });
+      toast.error('Erro no resgate', { description: err instanceof Error ? err.message : 'Tente novamente.' });
     } finally {
       setRedeemingReward(null);
     }

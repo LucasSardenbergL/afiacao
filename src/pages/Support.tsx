@@ -6,7 +6,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { cn } from '@/lib/utils';
 
 const WHATSAPP_NUMBER = '553732221035';
 

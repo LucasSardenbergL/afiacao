@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCashflowConfig, useUpdateCashflowConfig } from '@/hooks/useCashflowConfig';
+import { useEstoqueValor, useSalvarEstoque, estimarEstoqueOmie } from '@/hooks/useEstoqueValor';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,6 +21,13 @@ export function ConfigCashflowDialog({ open, onOpenChange }: Props) {
   const [thresholds, setThresholds] = useState(config?.thresholds);
   const [overrides, setOverrides] = useState(config?.overrides_cenario);
   const [adiantamentos, setAdiantamentos] = useState<string>('');
+
+  const { data: estoqueAtual } = useEstoqueValor(activeCompany);
+  const salvarEstoque = useSalvarEstoque(activeCompany);
+  const [estoqueValor, setEstoqueValor] = useState<string>('');
+  const [estoqueDataRef, setEstoqueDataRef] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [estoqueEstimando, setEstoqueEstimando] = useState(false);
+  const [estoqueEstimativa, setEstoqueEstimativa] = useState<{ cobertura_pct: number } | null>(null);
 
   useEffect(() => {
     if (config) {
@@ -56,6 +64,42 @@ export function ConfigCashflowDialog({ open, onOpenChange }: Props) {
       onOpenChange(false);
     } catch (err) {
       toast.error('Falha: ' + String((err as Error).message ?? err));
+    }
+  };
+
+  const fmtBRL = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+
+  const handleSalvarEstoque = async () => {
+    const valor = Number(estoqueValor);
+    if (!estoqueValor || Number.isNaN(valor) || !estoqueDataRef) {
+      toast.error('Informe valor e data de referência');
+      return;
+    }
+    try {
+      await salvarEstoque.mutateAsync(
+        estoqueEstimativa
+          ? { valor, data_ref: estoqueDataRef, fonte: 'omie_estimado', cobertura_pct: estoqueEstimativa.cobertura_pct }
+          : { valor, data_ref: estoqueDataRef }
+      );
+      toast.success('Valor de estoque salvo');
+      setEstoqueValor('');
+      setEstoqueEstimativa(null);
+    } catch (err) {
+      toast.error('Falha: ' + String((err as Error).message ?? err));
+    }
+  };
+
+  const handleEstimarOmie = async () => {
+    setEstoqueEstimando(true);
+    try {
+      const r = await estimarEstoqueOmie(activeCompany);
+      setEstoqueValor(String(r.valor_estimado));
+      setEstoqueEstimativa({ cobertura_pct: r.cobertura_pct });
+      toast.message(`Estimativa: ${fmtBRL(r.valor_estimado)} · cobertura ${r.cobertura_pct}% (${r.skus_com_custo}/${r.skus_total} SKUs com custo)`);
+    } catch (err) {
+      toast.error('Falha ao estimar: ' + String((err as Error).message ?? err));
+    } finally {
+      setEstoqueEstimando(false);
     }
   };
 
@@ -123,6 +167,42 @@ export function ConfigCashflowDialog({ open, onOpenChange }: Props) {
               <Label>Códigos separados por vírgula</Label>
               <Input placeholder="2.01.01, 2.01.02" value={adiantamentos} onChange={e => setAdiantamentos(e.target.value)} />
               <p className="text-xs text-muted-foreground mt-1">CPs com esses códigos serão tratados como ACO (adiantamentos) em vez de PCO.</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle className="text-sm">Valor de estoque (balancete)</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              {estoqueAtual ? (
+                <p className="text-xs text-muted-foreground">
+                  Atual: {fmtBRL(estoqueAtual.valor)} · ref {estoqueAtual.data_ref} · {estoqueAtual.fonte}
+                  {estoqueAtual.cobertura_pct != null ? ` · cobertura ${estoqueAtual.cobertura_pct}%` : ''}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">Nenhum valor de estoque registrado ainda.</p>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Valor (R$)</Label>
+                  <Input type="number" step="0.01" min="0" placeholder="120000" value={estoqueValor} onChange={e => { setEstoqueValor(e.target.value); setEstoqueEstimativa(null); }} />
+                </div>
+                <div>
+                  <Label>Data de referência</Label>
+                  <Input type="date" value={estoqueDataRef} onChange={e => setEstoqueDataRef(e.target.value)} />
+                </div>
+              </div>
+              {estoqueEstimativa && (
+                <p className="text-xs text-muted-foreground">Valor pré-preenchido pela estimativa do Omie (cobertura {estoqueEstimativa.cobertura_pct}%). Revise antes de salvar.</p>
+              )}
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={handleEstimarOmie} disabled={estoqueEstimando}>
+                  {estoqueEstimando ? 'Estimando…' : 'Estimar do Omie'}
+                </Button>
+                <Button onClick={handleSalvarEstoque} disabled={salvarEstoque.isPending}>
+                  {salvarEstoque.isPending ? 'Salvando…' : 'Salvar'}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">Alimenta o cálculo de NCG / capital de giro. A estimativa do Omie não salva automaticamente.</p>
             </CardContent>
           </Card>
         </div>

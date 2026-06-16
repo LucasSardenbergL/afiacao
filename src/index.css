@@ -298,6 +298,24 @@
     transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
+  /* ── WCAG 2.5.5 — alvo de toque 44px só em PONTEIRO GROSSO ──
+     Celular/handheld do separador e vendedor externo, e o kiosk touchscreen
+     do operador tintométrico reportam `pointer: coarse` → ganham 44px+.
+     Desktop com mouse/trackpad (conferente/comprador/gestão, e laptops
+     híbridos cujo ponteiro primário é fino) fica nos 32px densos — a
+     densidade alta ali é INTENCIONAL (Linear/Retool), 44px pioraria.
+     min-height em <a> inline é no-op (só afeta a display block/inline-block),
+     então links de texto não quebram; botões h-9 (36px) sobem pra max(36,44).
+     min-width só em <button> cobre os icon-buttons (36→44, alvo quadrado). */
+  @media (pointer: coarse) {
+    button, a, [role="button"] {
+      min-height: 44px;
+    }
+    button {
+      min-width: 44px;
+    }
+  }
+
   /* ── Tabelas shadcn: tabular-nums automático em todas as células
      (números alinham, valores R$ ficam comparáveis lendo verticalmente) ── */
   table {
@@ -365,16 +383,42 @@
      Bloqueia o gesto swipe-back do navegador (macOS trackpad / iOS) quando
      o usuário arrasta para a esquerda no início de um scroll horizontal.
      Sem isso, o navegador interpreta o gesto como "voltar página" e
-     recarrega a página anterior. Aplica em qualquer container de scroll
-     da app — tabelas (shadcn <Table>), wrappers .overflow-x-auto legados,
-     ScrollArea, etc. */
+     recarrega a página anterior. Aplica a qualquer elemento cuja CLASSE
+     contém overflow-* — tabelas (shadcn <Table>) e os wrappers
+     .overflow-x-auto legados. (O viewport do Radix ScrollArea NÃO tem
+     classe overflow-* → NÃO é coberto por este seletor; lacuna
+     preexistente, não objetivo deste fix.)
+
+     ⚠️ SÓ no eixo X (overscroll-behavior-X), NUNCA o shorthand
+     `overscroll-behavior: contain`. O shorthand contém também o eixo Y e
+     PRENDE o scroll vertical da página quando o cursor está sobre uma
+     tabela/scroll-container que não tem rolagem interna própria (a tabela
+     cresce até a altura toda → está sempre "no limite" em Y → a roda é
+     consumida e não propaga pra página → o usuário não consegue rolar a
+     página passando o mouse sobre a tabela). O swipe-back que esta regra
+     bloqueia é HORIZONTAL, então conter só X já protege os dois objetivos. */
   [class*="overflow-auto"],
   [class*="overflow-x-auto"],
   [class*="overflow-x-scroll"],
   [class*="overflow-y-auto"],
   [class*="overflow-y-scroll"],
   [class*="overflow-scroll"] {
-    overscroll-behavior: contain;
+    overscroll-behavior-x: contain;
+  }
+
+  /* ── Body scroll guarantee ──
+     Defesa contra scroll-lock vazado por overlays Radix (Dialog/Sheet/etc.)
+     que setam `body { overflow: hidden }` inline e às vezes não limpam ao
+     fechar — sintoma: usuário não consegue rolar a página em /admin/customers
+     ou similares depois de abrir/fechar um modal. Esta regra GARANTE que body
+     fica scrollável sempre que NÃO houver Dialog/AlertDialog aberto, sobrepondo
+     qualquer overflow:hidden residual inline.
+
+     Quando uma Dialog está aberta o seletor :has() casa, a regra NÃO se aplica,
+     e o lock de Radix continua válido (background não rola enquanto modal está
+     em cima). :has() suportado em Chrome 105 / Safari 15.4 / FF 121 (fim 2023). */
+  body:not(:has([data-state="open"][role="dialog"], [data-state="open"][role="alertdialog"])) {
+    overflow: auto !important;
   }
 
   /* ── Compact density ── */

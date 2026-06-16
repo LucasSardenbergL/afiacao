@@ -2,18 +2,14 @@ import { useState, useMemo } from 'react';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import {
   Target, MessageSquare, Brain, AlertTriangle, CheckCircle2,
   XCircle, HelpCircle, TrendingUp, Clock, Phone, ChevronDown,
-  ChevronUp, Lightbulb, Search, Filter, Star, BarChart3,
-  ArrowRight, Play, Mic, FileText, Zap, Award, Eye, EyeOff,
+  ChevronUp, Lightbulb, Search, Star, BarChart3, Award,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 

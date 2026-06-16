@@ -1,0 +1,22 @@
+-- Remove o cron redundante sync-orders-vendas-2h (omie-analytics-sync action sync_orders).
+--
+-- Contexto (incidente 2026-05-27): sync_orders (syncOrdersIncremental) só ENRIQUECE order_items
+-- + grava sales_price_history de pedidos JÁ existentes, com N+1 brutal sobre janela de data que
+-- parte do cursor sync_state.orders.last_cursor (default '2024-01-01' se null) sem cap de páginas
+-- → HTTP 546 WORKER_RESOURCE_LIMIT em loop (death spiral: nunca completa → cursor nunca avança →
+-- janela sempre larga).
+--
+-- Tornou-se REDUNDANTE: omie-vendas-sync action sync_pedidos (crons vendas-sync-pedidos-{oben,
+-- colacor}-2h, migration 20260527160000) já insere order_items E sales_price_history para os
+-- pedidos NOVOS que sincroniza, com preload de mapas (sem N+1) e paginação.
+--
+-- Decisão (vs refatorar): DEPRECAR o cron redundante — SQL-only, reversível, zero deploy de edge
+-- (e sem colidir com edição paralela do omie-analytics-sync). Não-coberto e ACEITO: re-enriquecimento
+-- de EDIÇÃO de pedido existente no Omie (qty/preço alterados após criação) — que JÁ não funcionava
+-- (sync_orders vinha 546ando; hash_payload = codigoPedido não muda em edição).
+--
+-- sync_all (cron sync-products-customers-daily) é MANTIDO: roda sync_customers+sync_products (úteis,
+-- commitam antes) e o 546 no passo de orders é inofensivo (inventory/costs/assoc têm crons próprios).
+--
+-- Idempotente: unschedule por jobid via subquery (0 linhas = no-op, não erra se já removido).
+SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname = 'sync-orders-vendas-2h';

@@ -1,18 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { renderHook, act } from "@testing-library/react";
-import { usePricingEngine } from "@/hooks/usePricingEngine";
 
-// We test calculatePrice logic by pre-loading defaultPrices via the hook's internal state.
-// Since loadDefaultPrices calls supabase, we bypass it and test the pure calculation logic.
-
-function setupHookWithPrices(prices: any[]) {
-  const { result } = renderHook(() => usePricingEngine());
-
-  // Manually set defaultPrices by calling calculatePrice after injecting state.
-  // We need to access the hook's calculatePrice which depends on defaultPrices.
-  // Since we can't set state directly, we'll test the logic extracted from the hook.
-  return result;
-}
+// We test calculatePrice logic by extracting the pure calculation from the hook.
+// loadDefaultPrices depends on supabase, so we replicate the pricing logic here and
+// exercise it directly with fixture data (no hook render needed).
 
 // Extract the pricing logic for unit testing
 function calculatePriceFromList(
@@ -82,7 +72,7 @@ describe("usePricingEngine – calculatePrice logic", () => {
 
   const CATEGORY_FACA = "cat-faca";
 
-  const mockPrices = [
+  const mockPrices: Array<{ id: string; tool_category_id: string; spec_filter: Record<string, string>; price: number; description: string | null }> = [
     {
       id: "1",
       tool_category_id: CATEGORY_TESOURA,

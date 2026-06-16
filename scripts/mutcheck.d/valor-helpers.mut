@@ -1,0 +1,18 @@
+# @src: src/lib/financeiro/valor-helpers.ts
+# @test: src/lib/financeiro/__tests__/valor-helpers.test.ts
+# Invariantes money-path do A2 (Retorno & Valor: ROIC / WACC / EVA / spread / NCG guard).
+# NOPAT = EBIT − imposto ABSOLUTO (presumido: IRPJ+CSLL; simples: 0 — NUNCA ×(1−t)); EBIT op PURO
+# (sem resultado financeiro); capital = NCG + ativo fixo − ajustes; "ausente ≠ R$0" no NCG; frescor.
+# Substituições aplicadas via `perl -i -pe` (mutcheck.sh) — escape estilo perl regex.
+PEGA | EBIT op puro: − recfin vira + recfin               | s/resultado_operacional_ttm - input\.receitas_financeiras_ttm/resultado_operacional_ttm + input.receitas_financeiras_ttm/
+PEGA | imposto NOPAT presumido irpj+csll (+ vira −)       | s/'presumido' \? input\.irpj_ttm \+ input\.csll_ttm/'presumido' ? input.irpj_ttm - input.csll_ttm/
+PEGA | NOPAT = EBIT − imposto absoluto (− vira +)         | s/const nopat = ebit - imposto_operacional_nopat/const nopat = ebit + imposto_operacional_nopat/
+PEGA | capital = giro + ativo − ajustes (− vira +)        | s/\+ ativo_fixo - ajustes/+ ativo_fixo + ajustes/
+PEGA | NCG ausente≠R$0: giro==null vira !=null            | s/const giro_indisponivel = input\.capital_giro == null/const giro_indisponivel = input.capital_giro != null/
+PEGA | roic null p/ capital ≤0 (<= vira <)                | s/input\.capital_investido <= 0/input.capital_investido < 0/
+PEGA | spread = roic − wacc (− vira +)                    | s/return input\.roic - input\.wacc/return input.roic + input.wacc/
+PEGA | eva = spread × capital (* vira \/)                 | s/return input\.spread \* input\.capital_investido/return input.spread \/ input.capital_investido/
+PEGA | wacc = we·Ke + wd·Kd (+ vira −)                    | s/peso_equity \* input\.ke \+ peso_divida \* kd/peso_equity * input.ke - peso_divida * kd/
+PEGA | roicIncremental gate Δcapital < limiar (< vira >)  | s/if \(delta_capital < limiar\)/if (delta_capital > limiar)/
+PEGA | frescor stale: dias > limiar (> vira <)            | s/stale: dias > limiarStaleDias/stale: dias < limiarStaleDias/
+PEGA | normalizar pró-labore real − mercado (− vira +)    | s/input\.prolabore_real_ttm - input\.prolabore_mercado_ttm/input.prolabore_real_ttm + input.prolabore_mercado_ttm/

@@ -1,6 +1,7 @@
 # Convenções de schema — leia antes de adaptar ou criar query
 
-Fonte de verdade: `src/integrations/supabase/types.ts` (Tables ~16–10978, Views ~10978–12075).
+Fonte de verdade: `src/integrations/supabase/types.ts` (ache as seções com `grep -n '    Tables: {'`
+e `'    Views: {'` — o arquivo cresce a cada migration; não confie em nº de linha fixo).
 Os tipos do Supabase tipam **todas** as datas como `string` — em SQL elas são `date`/`timestamptz`
 reais, então comparações com `current_date` / `date_trunc` funcionam normalmente. Quando uma
 coluna for `text` de fato (ex.: status), trate como texto.

@@ -44,9 +44,9 @@ serve(async (req) => {
           .select('*')
           .eq('inativo', false);
 
-        const orderItems = tools.map((tool: any) => {
+        const orderItems = tools.map((tool: { id: string; generated_name?: string | null; custom_name?: string | null; tool_categories?: { name?: string } | null }) => {
           const categoryName = tool.tool_categories?.name?.toLowerCase() || '';
-          const matchingService = (servicos || []).find((s: any) => 
+          const matchingService = (servicos || []).find((s: { descricao: string; omie_codigo_servico?: string }) => 
             s.descricao.toLowerCase().includes(categoryName)
           );
 

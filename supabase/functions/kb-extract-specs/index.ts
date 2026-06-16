@@ -1,6 +1,8 @@
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+// ⚠️ usar npm: (igual a tarefa-extrair-voz/melhoria-triagem/etc.). O esm.sh/@supabase/supabase-js
+// falhava em resolver no boot do edge runtime → RUNTIME_ERROR sem linha/stack (módulo não carrega).
+import { createClient } from "npm:@supabase/supabase-js@^2";
+import { authorizeMaster, corsHeaders } from "../_shared/auth.ts";
 
 const SYSTEM_PROMPT_EXTRACT_SPECS = `Você extrai specs técnicos estruturados de boletins técnicos de tintas industriais para a base de conhecimento da Colacor (distribuidora Sayerlack).
 
@@ -91,7 +93,7 @@ const EXTRACT_TOOL = {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-  const auth = await authorizeCronOrStaff(req);
+  const auth = await authorizeMaster(req);
   if (!auth.ok) return auth.response;
 
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
@@ -118,11 +120,14 @@ Deno.serve(async (req) => {
     });
   }
 
+  const documentId: string = body.documentId;
+  const force: boolean = body.force === true;
+
   try {
     const { data: doc, error } = await supabase
       .from("kb_documents")
       .select("id, title, product_code, supplier, content_extracted, status")
-      .eq("id", body.documentId)
+      .eq("id", documentId)
       .single();
 
     if (error || !doc) {
@@ -137,6 +142,42 @@ Deno.serve(async (req) => {
       });
     }
 
+    // CACHE-FIRST: se já existe rascunho ready e não é force → devolve sem chamar o Claude.
+    const { data: existing } = await supabase
+      .from("kb_extraction_drafts")
+      .select("status, spec")
+      .eq("document_id", documentId)
+      .maybeSingle();
+
+    if (!force && existing?.status === "ready" && existing.spec) {
+      return new Response(JSON.stringify({ specs: existing.spec, cached: true }), {
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // CLAIM atômico — apenas 1 worker por vez chama o Claude.
+    const claimToken = crypto.randomUUID();
+    const { data: gotClaim, error: claimErr } = await supabase
+      .rpc("kb_extraction_draft_claim", {
+        p_document_id: documentId,
+        p_claim_token: claimToken,
+      });
+
+    if (claimErr) {
+      return new Response(JSON.stringify({ error: `claim falhou: ${claimErr.message}` }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (gotClaim !== true) {
+      // outra aba está extraindo agora (claim fresco). É 200 — o front trata como "pulado".
+      return new Response(JSON.stringify({ status: "extracting" }), {
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // CHAMA O CLAUDE 1× — bloco preservado verbatim do original; apenas envolto em try/catch
+    // para capturar spec/usage e persistir antes de responder.
     const client = new Anthropic({ apiKey });
 
     const userMsg = `Extraia os specs estruturados deste boletim técnico:
@@ -151,35 +192,87 @@ ${doc.content_extracted.slice(0, 50_000)}
 
 Use a tool extract_product_specs.`;
 
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 4000,
-      system: [{
-        type: "text",
-        text: SYSTEM_PROMPT_EXTRACT_SPECS,
-        cache_control: { type: "ephemeral" },
-      }],
-      tools: [EXTRACT_TOOL],
-      tool_choice: { type: "tool", name: "extract_product_specs" },
-      messages: [{ role: "user", content: userMsg }],
-    });
+    let spec: unknown;
+    let usage: { inputTokens: number; outputTokens: number; cacheCreationTokens: number; cacheReadTokens: number };
 
-    const toolUse = response.content.find((b) => b.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") {
-      return new Response(JSON.stringify({ error: "No tool_use in response", raw: response }), {
-        status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    try {
+      const response = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 4000,
+        system: [{
+          type: "text",
+          text: SYSTEM_PROMPT_EXTRACT_SPECS,
+          cache_control: { type: "ephemeral" },
+        }],
+        tools: [EXTRACT_TOOL],
+        tool_choice: { type: "tool", name: "extract_product_specs" },
+        messages: [{ role: "user", content: userMsg }],
       });
-    }
 
-    return new Response(JSON.stringify({
-      specs: toolUse.input,
-      usage: {
+      const toolUse = response.content.find((b) => b.type === "tool_use");
+      if (!toolUse || toolUse.type !== "tool_use") {
+        // Marca failed e devolve 502 (erro real, não claim perdido).
+        await supabase
+          .from("kb_extraction_drafts")
+          .update({ status: "failed", last_error: "No tool_use in response" })
+          .eq("document_id", documentId)
+          .eq("claim_token", claimToken);
+        return new Response(JSON.stringify({ error: "No tool_use in response", raw: response }), {
+          status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      spec = toolUse.input;
+      usage = {
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
         cacheCreationTokens: response.usage.cache_creation_input_tokens ?? 0,
         cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
-      },
-    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      };
+    } catch (claudeErr) {
+      const msg = claudeErr instanceof Error ? claudeErr.message : String(claudeErr);
+      console.error("[kb-extract-specs] Claude error:", msg);
+      // Compare-and-set: só marca failed se o claim ainda é nosso.
+      await supabase
+        .from("kb_extraction_drafts")
+        .update({ status: "failed", last_error: msg })
+        .eq("document_id", documentId)
+        .eq("claim_token", claimToken);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // PERSIST-BEFORE-RESPONSE (compare-and-set por claim_token — não pisa claim de outra aba).
+    // Codex #802-P1.2: NÃO mascarar error/rowcount. Mas o princípio é anti-custo — o resultado
+    // já foi PAGO, então devolvemos a spec ao front de qualquer forma (+ flag `persisted` + log),
+    // em vez de 4xx/5xx que fariam o front re-extrair e re-pagar. rowcount 0 = claim perdido
+    // (outra aba reclamou após o lease); error = falha de DB. Ambos viram log, não silêncio.
+    const { data: persistRows, error: persistErr } = await supabase
+      .from("kb_extraction_drafts")
+      .update({
+        status: "ready",
+        spec,
+        extracted_at: new Date().toISOString(),
+        usage,
+        model: "claude-sonnet-4-6",
+        last_error: null,
+      })
+      .eq("document_id", documentId)
+      .eq("claim_token", claimToken)
+      .select("document_id");
+
+    const persisted = !persistErr && (persistRows?.length ?? 0) === 1;
+    if (persistErr) {
+      console.error("[kb-extract-specs] persist falhou (resultado pago devolvido sem salvar):", persistErr.message);
+    } else if ((persistRows?.length ?? 0) === 0) {
+      console.warn("[kb-extract-specs] claim perdido na persistência (outra aba reclamou após o lease); spec devolvida sem persistir");
+    }
+
+    return new Response(JSON.stringify({ specs: spec, usage, persisted }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown error";
     console.error("[kb-extract-specs]", msg);

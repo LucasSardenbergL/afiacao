@@ -3,6 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+    <!-- iOS/Safari auto-linka números de telefone em texto (vira <a href="tel:">),
+         inclusive o número dentro do botão "Ligar 37 9..." da Central de Telefonia →
+         o toque abria o app Telefone do SO em vez de chamar via NVOIP. Desliga só a
+         auto-detecção; links tel: explícitos (CallButton em celular) seguem ativos. -->
+    <meta name="format-detection" content="telephone=no" />
     <title>Colacor</title>
     <meta name="description" content="Colacor - Serviço profissional de afiação de ferramentas. Agende sua coleta!">
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -35,7 +40,74 @@
 </head>
 
   <body>
-    <div id="root"><div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#1a1a2e;"><div style="width:40px;height:40px;border:3px solid rgba(255,255,255,0.15);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite;"></div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style></div>
+    <div id="root"><div id="boot-spinner" style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#1a1a2e;"><div style="width:40px;height:40px;border:3px solid rgba(255,255,255,0.15);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite;"></div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style></div>
+    <script>
+      // Boot watchdog — roda FORA do bundle JS, então recupera mesmo quando o
+      // bundle/service-worker falha e o React nunca monta (spinner escuro infinito).
+      // Desenhado pra NÃO repetir o incidente do reload() antigo: só age após
+      // timeout, só se o app não montou, e no máximo 1× por sessão (anti-loop).
+      (function () {
+        try {
+          if (window.self !== window.top) return; // dentro de iframe (editor Lovable)
+          var host = location.hostname;
+          if (host.indexOf("id-preview--") !== -1 || host.indexOf("lovableproject.com") !== -1) return; // preview Lovable
+        } catch (e) { return; }
+
+        var BOOT_TIMEOUT_MS = 15000; // generoso: cobre rede lenta sem falso-positivo
+        var RECOVERY_KEY = "__boot_recovery_attempted__";
+
+        function booted() {
+          return window.__APP_BOOTED__ === true || !document.getElementById("boot-spinner");
+        }
+
+        function showFallback() {
+          var root = document.getElementById("root");
+          if (!root) return;
+          root.innerHTML =
+            '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#1a1a2e;color:#fff;font-family:system-ui,-apple-system,sans-serif;padding:24px;text-align:center;">' +
+              '<div style="max-width:360px;">' +
+                '<div style="font-size:18px;font-weight:600;margin-bottom:8px;">Não foi possível carregar o app</div>' +
+                '<div style="font-size:14px;opacity:0.7;margin-bottom:20px;">Verifique sua conexão e tente novamente.</div>' +
+                '<button onclick="location.reload()" style="background:#fff;color:#1a1a2e;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;">Recarregar</button>' +
+              '</div>' +
+            '</div>';
+        }
+
+        function recover() {
+          var done = false;
+          function go() { if (done) return; done = true; location.reload(); }
+          setTimeout(go, 2000); // teto caso unregister/caches.delete trave
+          try {
+            var tasks = [];
+            if ("serviceWorker" in navigator) {
+              tasks.push(navigator.serviceWorker.getRegistrations().then(function (rs) {
+                return Promise.all(rs.map(function (r) { return r.unregister(); }));
+              }));
+            }
+            if ("caches" in window) {
+              tasks.push(caches.keys().then(function (ks) {
+                return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+              }));
+            }
+            Promise.all(tasks).then(go).catch(go);
+          } catch (e) { go(); }
+        }
+
+        setTimeout(function () {
+          if (booted()) return;
+          var attempted;
+          try { attempted = sessionStorage.getItem(RECOVERY_KEY); } catch (e) { attempted = null; }
+          if (attempted) {
+            // Já limpou SW + recarregou 1× nesta sessão e SEGUE travado →
+            // não fica em loop; mostra mensagem acionável em vez do spinner eterno.
+            showFallback();
+            return;
+          }
+          try { sessionStorage.setItem(RECOVERY_KEY, "1"); } catch (e) {}
+          recover();
+        }, BOOT_TIMEOUT_MS);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

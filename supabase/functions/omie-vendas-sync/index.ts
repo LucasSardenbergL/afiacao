@@ -23,6 +23,12 @@ interface OmieProdutoCadastro {
   peso_liq?: number;
   cfop?: string;
   recomendacoes_fiscais?: { tipo_produto?: string };
+  // Tipo do item no Omie (00..99; '04' = Produto Acabado = fabricado internamente, nunca comprar).
+  // A doc do Omie usa `tipoItem`; o retorno do ListarProdutos pode vir snake_case (`tipo_item`)
+  // ou no genérico `tipo`. O batch NÃO traz `recomendacoes_fiscais.tipo_produto` (sempre null),
+  // por isso lemos as variações abaixo.
+  tipoItem?: string | number;
+  tipo_item?: string | number;
 }
 
 interface OmiePosEstoque {
@@ -71,6 +77,25 @@ interface OmieDetalheItem {
     cfop?: string;
   };
   imposto?: { cfop?: string };
+  // Observação/dados adicionais do item — o submit grava a cor da tinta aqui
+  // ("Cor: ..."). O sync de entrada extrai de volta (ver parseCorObs).
+  observacao?: { obs_item?: string };
+  inf_adic?: { dados_adicionais_item?: string };
+}
+
+/**
+ * Extrai a cor da tinta da observação do item do Omie. Espelho VERBATIM de
+ * `src/lib/tint/parse-cor-obs.ts` (Deno não importa de src/). Formato gravado
+ * pelo submit: "Cor: <label> - <embalagem>". Conservador: só prefixo "Cor:",
+ * remove embalagem conhecida no fim, não quebra nome com hífen, null sem cor.
+ */
+function parseCorObs(obs: string | null | undefined): { tint_nome_cor: string } | null {
+  if (!obs) return null;
+  const m = /^\s*cor:\s*(.+)$/i.exec(obs);
+  if (!m) return null;
+  const label = m[1].replace(/\s*-\s*(?:QT|GL|LT|\d+(?:[.,]\d+)?\s*ML)\s*$/i, '').trim();
+  if (!label) return null;
+  return { tint_nome_cor: label };
 }
 
 interface OmiePedidoCabecalho {
@@ -106,6 +131,8 @@ interface OrderItemPayload {
   quantidade: number;
   valor_unitario: number;
   desconto?: number;
+  tint_cor_id?: string;
+  tint_nome_cor?: string;
 }
 
 interface OrderBatchRow {
@@ -197,7 +224,13 @@ async function callOmieVendasApi(
   endpoint: string,
   call: string,
   params: Record<string, unknown>,
-  account: Account = "oben"
+  account: Account = "oben",
+  // throwOnTransient: erro transitório que ESGOTOU os retries vira THROW em
+  // vez de null. Sem isso, o null é AMBÍGUO ("não existe" × "Omie fora do
+  // ar") — e no caminho de criação de cliente a ambiguidade vira DUPLICATA
+  // no ERP (lookup falho lido como ausência → IncluirCliente). Usar nos
+  // lookups de identidade; syncs paginados continuam tratando null como fim.
+  opts?: { throwOnTransient?: boolean },
 ): Promise<OmieGenericResponse | null> {
   const { APP_KEY, APP_SECRET } = getCredentials(account);
 
@@ -239,6 +272,9 @@ async function callOmieVendasApi(
           console.log(`[Omie Vendas][${account}] ${isRateLimit ? 'Rate limit' : 'Transient error'}, waiting ${delay/1000}s (attempt ${attempt + 1}/${maxRetries})`);
           await new Promise(r => setTimeout(r, delay));
           continue;
+        }
+        if (opts?.throwOnTransient) {
+          throw new Error(`OMIE_TRANSIENT (${account}): ${isRateLimit ? 'rate limit' : 'erro transitório'} persistiu após ${maxRetries} tentativas — não dá pra afirmar ausência`);
         }
         console.log(`[Omie Vendas][${account}] ${isRateLimit ? 'Rate limit' : 'Transient error'} persists after ${maxRetries} retries, returning null`);
         return null;
@@ -290,7 +326,10 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
   let totalSynced = 0;
   let pagesProcessed = 0;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+  // `pagesProcessed === 0` força a 1ª iteração mesmo com startPage > 1: totalPaginas (init=1) só é
+  // aprendido DENTRO do loop, então `pagina <= totalPaginas` era falso de cara p/ startPage>1 →
+  // no-op silencioso (não paginava além da pág. 12; bug pego pelo founder 2026-05-31). startPage=1 inalterado.
+  while ((pagina <= totalPaginas || pagesProcessed === 0) && pagesProcessed < maxPages) {
     const result = await callOmieVendasApi(
       "geral/produtos/",
       "ListarProdutos",
@@ -342,7 +381,10 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
           peso_liq: prod.peso_liq,
           descricao_familia: prod.descricao_familia,
           cfop: prod.cfop,
-          tipo_produto: prod.recomendacoes_fiscais?.tipo_produto ?? null,
+          // tipo_produto saiu daqui (2026-06-04): virou COLUNA dedicada de omie_products,
+          // escrita SÓ pelo writer autoritativo omie-sync-metadados. Mantê-lo aqui criava
+          // dado vestigial divergente da coluna — e este sync nem cobre o catálogo inteiro
+          // (maxPages=12). Ver docs/superpowers/specs/2026-06-04-tipo-produto-coluna-dedicada-design.md
         },
         account,
         updated_at: new Date().toISOString(),
@@ -373,7 +415,8 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
   let totalUpdated = 0;
   let pagesProcessed = 0;
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+  // mesmo fix do syncProducts: força a 1ª iteração p/ startPage>1 funcionar (era no-op). startPage=1 inalterado.
+  while ((pagina <= totalPaginas || pagesProcessed === 0) && pagesProcessed < maxPages) {
     const result = await callOmieVendasApi(
       "estoque/consulta/",
       "ListarPosEstoque",
@@ -579,8 +622,15 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
   return results;
 }
 
-// Buscar cliente na empresa de vendas pelo CPF/CNPJ
-async function buscarClienteVendas(document: string, account: Account = "oben") {
+// Buscar cliente na empresa de vendas pelo CPF/CNPJ.
+// opts.throwOnTransient: falha transitória do Omie LANÇA em vez de retornar
+// null (null = ausência CONFIRMADA) — obrigatório nos caminhos de decisão de
+// criação (anti-duplicata); enriquecimentos best-effort ficam sem.
+async function buscarClienteVendas(
+  document: string,
+  account: Account = "oben",
+  opts?: { throwOnTransient?: boolean },
+) {
   const documentClean = document.replace(/\D/g, "");
 
   const result = await callOmieVendasApi(
@@ -591,7 +641,8 @@ async function buscarClienteVendas(document: string, account: Account = "oben") 
       registros_por_pagina: 1,
       clientesFiltro: { cnpj_cpf: documentClean },
     },
-    account
+    account,
+    opts
   );
 
   const clientesArr = result?.clientes_cadastro as OmieClienteCadastro[] | undefined;
@@ -739,6 +790,112 @@ async function buscarUltimaParcela(codigoCliente: number, account: Account = "ob
     console.error(`[Omie Vendas][${account}] Erro ao buscar última parcela:`, error);
     return { ultima_parcela: null, parcela_ranking: [] };
   }
+}
+
+// dInc do Omie é DD/MM/YYYY → ms UTC (0 se ausente/ilegível, p/ NÃO vencer o merge
+// por data no frontend). Usado p/ escolher, por produto/parcela, o pedido de maior data.
+function parseDIncMs(s: string): number {
+  const m = (s || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return 0;
+  const d = Number(m[1]), mo = Number(m[2]), y = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
+  return Date.UTC(y, mo - 1, d);
+}
+
+// Fase 2: CONTEXTO COMERCIAL do cliente numa ÚNICA passada de ListarPedidos.
+// Substitui buscar_precos_cliente + buscar_ultima_parcela + buscar_cliente (colacor) +
+// historico_produtos_cliente, que disparavam VÁRIAS ListarPedidos concorrentes na mesma
+// conta → rate-limit do Omie ("Já existe uma requisição desse método") → retries 5-15s×3
+// → ~40s. Aqui: 1 ListarPedidos/conta (ordenar_por DATA_INCLUSAO) devolve preço + dInc
+// por produto + parcela + ranking. Para colacor (sem código conhecido), resolve o código
+// por documento ANTES (ListarClientes → ListarPedidos, SERIAL → métodos diferentes, sem
+// colisão). dInc (inclusão) é a data de precedência — NÃO data_previsao.
+async function buscarContextoComercialCliente(
+  opts: { codigoCliente?: number | null; document?: string | null },
+  account: Account = "oben",
+) {
+  let codigoCliente = opts.codigoCliente ?? null;
+  let codigoVendedor: number | null = null;
+
+  if (!codigoCliente && opts.document) {
+    const cli = await buscarClienteVendas(opts.document, account);
+    if (cli?.codigo_cliente) {
+      codigoCliente = cli.codigo_cliente;
+      codigoVendedor = cli.codigo_vendedor ?? null;
+    }
+  }
+
+  const empty = {
+    codigo_cliente: codigoCliente,
+    codigo_vendedor: codigoVendedor,
+    precos: {} as Record<number, number>,
+    datas: {} as Record<number, string>,
+    ultima_parcela: null as string | null,
+    parcela_ranking: [] as Array<{ codigo: string; count: number }>,
+  };
+  if (!codigoCliente) return empty;
+
+  const result = await callOmieVendasApi(
+    "produtos/pedido/",
+    "ListarPedidos",
+    {
+      pagina: 1,
+      registros_por_pagina: 50,
+      filtrar_por_cliente: codigoCliente,
+      filtrar_apenas_inclusao: "N",
+      ordenar_por: "DATA_INCLUSAO",
+    },
+    account,
+  );
+
+  const pedidos: OmiePedidoVendaProduto[] =
+    (result?.pedido_venda_produto as OmiePedidoVendaProduto[] | undefined) || [];
+
+  const precos: Record<number, number> = {};
+  const datas: Record<number, string> = {};
+  const parcelaCount: Record<string, number> = {};
+  let ultimaParcela: string | null = null;
+
+  // Order-independent: por produto/parcela mantém o de MAIOR dInc (a ordem da lista do
+  // Omie NÃO é garantida). dInc = precedência; NÃO data_previsao (data futura de entrega
+  // venceria o merge indevidamente). Sem dInc → '' → o frontend trata como sem-data e o
+  // local datado vence (seguro).
+  const dIncMs: Record<number, number> = {};
+  let ultimaParcelaMs = -1;
+  for (const pedido of pedidos) {
+    const dataInc = pedido.infoCadastro?.dInc || "";
+    const incMs = parseDIncMs(dataInc);
+    const parcela = pedido.cabecalho?.codigo_parcela;
+    if (parcela) {
+      parcelaCount[parcela] = (parcelaCount[parcela] || 0) + 1;
+      if (ultimaParcela === null || incMs > ultimaParcelaMs) {
+        ultimaParcela = parcela;
+        ultimaParcelaMs = incMs;
+      }
+    }
+    for (const item of pedido.det || []) {
+      const cod = item.produto?.codigo_produto;
+      const val = item.produto?.valor_unitario;
+      if (cod && val && val > 0 && (precos[cod] === undefined || incMs > (dIncMs[cod] ?? -1))) {
+        precos[cod] = val;
+        datas[cod] = dataInc;
+        dIncMs[cod] = incMs;
+      }
+    }
+  }
+
+  const parcela_ranking = Object.entries(parcelaCount)
+    .sort((a, b) => b[1] - a[1])
+    .map(([codigo, count]) => ({ codigo, count }));
+
+  return {
+    codigo_cliente: codigoCliente,
+    codigo_vendedor: codigoVendedor,
+    precos,
+    datas,
+    ultima_parcela: ultimaParcela,
+    parcela_ranking,
+  };
 }
 
 // Sincronizar pedidos de venda do Omie para o banco local (OPTIMIZED)
@@ -918,7 +1075,9 @@ async function syncPedidos(
     return { address: '', phone: '' };
   }
 
-  while (pagina <= totalPaginas && pagesProcessed < maxPages) {
+  // mesmo fix (syncPedidos): força a 1ª iteração p/ startPage>1 funcionar (era no-op). startPage=1 inalterado —
+  // o fluxo do cron (start_page=1 + janela de data) NÃO muda; só destrava paginação manual além de maxPages.
+  while ((pagina <= totalPaginas || pagesProcessed === 0) && pagesProcessed < maxPages) {
     const listParams: Record<string, unknown> = { pagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" };
     if (dateFrom) listParams.filtrar_por_data_de = dateFrom;
     if (dateTo) listParams.filtrar_por_data_ate = dateTo;
@@ -991,12 +1150,17 @@ async function syncPedidos(
         const price = prod.valor_unitario || 0;
         const desc = prod.desconto || 0;
         subtotal += qty * price * (1 - desc / 100);
+        // Cor da tinta: preferimos obs_item (onde a cor sempre vai); o
+        // dados_adicionais_item pode conter ordem de compra (parseCorObs filtra
+        // por "Cor:", então não confunde). Sem cor → item comum.
+        const cor = parseCorObs(det.observacao?.obs_item ?? det.inf_adic?.dados_adicionais_item);
         itemsJson.push({
           omie_codigo_produto: prod.codigo_produto,
           descricao: prod.descricao || '',
           quantidade: qty,
           valor_unitario: price,
           desconto: desc,
+          ...(cor ? { tint_nome_cor: cor.tint_nome_cor } : {}),
         });
       }
 
@@ -1011,6 +1175,17 @@ async function syncPedidos(
       if (cab.data_previsao) {
         const parts = cab.data_previsao.split('/');
         if (parts.length === 3) createdAt = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString();
+      }
+
+      // order_date_kpi: data do PEDIDO (dInc = inclusão no Omie) p/ KPI de positivação.
+      // dInc > previsão de entrega (data_previsao) > hoje. Previsão de entrega ≠ data do pedido.
+      let orderDateKpi: string = createdAt.slice(0, 10);
+      const dIncParts = pedido.infoCadastro?.dInc?.split('/');
+      const dPrevParts = cab.data_previsao?.split('/');
+      if (dIncParts && dIncParts.length === 3) {
+        orderDateKpi = `${dIncParts[2]}-${dIncParts[1].padStart(2, '0')}-${dIncParts[0].padStart(2, '0')}`;
+      } else if (dPrevParts && dPrevParts.length === 3) {
+        orderDateKpi = `${dPrevParts[2]}-${dPrevParts[1].padStart(2, '0')}-${dPrevParts[0].padStart(2, '0')}`;
       }
 
       // Get cached address/phone for this client
@@ -1029,6 +1204,7 @@ async function syncPedidos(
         account,
         hash_payload: hashPayload,
         created_at: createdAt,
+        order_date_kpi: orderDateKpi,
         notes: cab.observacoes_pedido || null,
         customer_address: clientInfo.address || null,
         customer_phone: clientInfo.phone || null,
@@ -1235,7 +1411,14 @@ async function criarPedidoVenda(
   quantidadeVolumes?: number,
   ordemCompra?: string
 ) {
-  const cCodIntPed = `PV_${salesOrderId.substring(0, 8)}_${Date.now()}`;
+  // Determinístico (espelha src/lib/omie/pedido-integration-code.ts): re-enviar o mesmo
+  // sales_order_id gera a MESMA chave → o Omie rejeita a duplicata (idempotência).
+  const cCodIntPed = `PV_${salesOrderId}`;
+  // Espelha src/lib/omie/pedido-duplicate.ts (callOmieVendasApi LANÇA em fault).
+  const isOmieDuplicatePedido = (e: unknown): boolean => {
+    const m = (e instanceof Error ? e.message : typeof e === 'string' ? e : '').toLowerCase();
+    return !!m && (m.includes('já cadastrad') || m.includes('ja cadastrad') || (m.includes('integra') && m.includes('cadastrad')));
+  };
   const config = getAccountConfig(account);
 
   const det = items.map((item, index) => {
@@ -1325,35 +1508,122 @@ async function criarPedidoVenda(
 
   console.log(`[Omie Vendas][${account}] Payload PedidoVenda:`, JSON.stringify(payload, null, 2));
 
-  const result = await callOmieVendasApi(
-    "produtos/pedido/",
-    "IncluirPedido",
-    payload,
-    account
-  );
-
-  if (!result) {
-    throw new Error(
-      `Omie (${account}) não respondeu ao incluir pedido (provável rate limit 429 após retries). Tente novamente em alguns segundos.`
+  let omie_pedido_id: number | null;
+  let omie_numero_pedido: string | number;
+  let omie_response: unknown = null;
+  try {
+    const result = await callOmieVendasApi(
+      "produtos/pedido/",
+      "IncluirPedido",
+      payload,
+      account
     );
+    if (!result) {
+      throw new Error(
+        `Omie (${account}) não respondeu ao incluir pedido (provável rate limit 429 após retries). Tente novamente em alguns segundos.`
+      );
+    }
+    const codPed = result.codigo_pedido as number | undefined;
+    if (typeof codPed !== "number" || codPed <= 0) {
+      // P1-1: Omie respondeu "ok" mas SEM número → NÃO escrever 'enviado' (senão o retry
+      // acha omie_pedido_id=null, reusa e reenvia). Lançar → o retry tenta de novo
+      // (e a chave determinística + dedup do Omie reconciliam se o pedido já existir).
+      throw new Error(`Omie (${account}) retornou sucesso sem codigo_pedido válido (${JSON.stringify(result?.codigo_pedido)}).`);
+    }
+    omie_pedido_id = codPed;
+    omie_numero_pedido = (result.numero_pedido as string | number | undefined) || cCodIntPed;
+    omie_response = result;
+  } catch (e) {
+    // Reconciliação (idempotência): se a chave determinística já existe no Omie (tentativa
+    // anterior criou o pedido mas o write-back falhou), consultar e vincular em vez de falhar.
+    if (!isOmieDuplicatePedido(e)) throw e;
+    const consulta = await callOmieVendasApi(
+      "produtos/pedido/", "ConsultarPedido", { codigo_pedido_integracao: cCodIntPed }, account,
+    ) as {
+      pedido_venda_produto?: { cabecalho?: { codigo_pedido?: number; numero_pedido?: string | number } };
+      cabecalho?: { codigo_pedido?: number; numero_pedido?: string | number };
+    } | null;
+    const cab = consulta?.pedido_venda_produto?.cabecalho ?? consulta?.cabecalho;
+    if (!cab?.codigo_pedido) {
+      throw new Error(`Omie (${account}) reportou pedido duplicado mas ConsultarPedido(${cCodIntPed}) não retornou o pedido — reconciliação falhou.`);
+    }
+    omie_pedido_id = cab.codigo_pedido;
+    omie_numero_pedido = cab.numero_pedido ?? cab.codigo_pedido;
+    omie_response = { reconciled: true, consulta };
   }
 
-  const omie_pedido_id = (result.codigo_pedido as number | undefined) || null;
-  const omie_numero_pedido = (result.numero_pedido as string | number | undefined) || cCodIntPed;
-
-  // Atualizar sales_order com dados do Omie
-  await supabase
+  // Write-back COM erro checado E exigindo EXATAMENTE 1 linha (P1-2: o PostgREST devolve
+  // error:null mesmo atualizando 0 linhas → deixaria pedido órfão no Omie com "sucesso").
+  // Casa por id + account.
+  const { data: wbRows, error: wbError } = await supabase
     .from("sales_orders")
     .update({
       omie_pedido_id,
       omie_numero_pedido: String(omie_numero_pedido),
       omie_payload: payload,
-      omie_response: result,
+      omie_response,
       status: "enviado",
     })
-    .eq("id", salesOrderId);
+    .eq("id", salesOrderId)
+    .eq("account", account)
+    .select("id");
+  if (wbError) {
+    // Qualquer erro de DB no write-back DEPOIS do pedido existir no Omie = linha potencialmente
+    // órfã → surfaça (NÃO engolir). (Não há UNIQUE(account, omie_pedido_id): push+pull gravam o
+    // mesmo omie_pedido_id em linhas distintas por design — ver a migração 20260613120000.)
+    throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back em sales_orders falhou: ${wbError.message}.`);
+  }
+  if (!wbRows || wbRows.length !== 1) {
+    throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
+  }
 
   return { omie_pedido_id, omie_numero_pedido };
+}
+
+// ─── Observabilidade do sync em fin_sync_log (best-effort) ───
+// Só as actions de SYNC logam (não as interativas de PV). Com action LIKE 'sync_%'
+// + companies=[account], a varredura de órfãs (>30min) e o sinal sync_error do
+// watchdog (#330) passam a cobrir vendas SEM mudar o watchdog. BEST-EFFORT: uma
+// falha de log NUNCA pode derrubar o sync (indisponibilidade por observabilidade).
+async function logVendaSync(
+  db: SupabaseClient,
+  action: string,
+  companies: string[],
+  triggeredBy: string,
+): Promise<string> {
+  try {
+    const { data } = await db
+      .from("fin_sync_log")
+      .insert({ action, companies, status: "running", triggered_by: triggeredBy, started_at: new Date().toISOString() })
+      .select("id")
+      .single();
+    return (data as { id?: string } | null)?.id || "";
+  } catch (e) {
+    console.error("[Omie Vendas] logVendaSync falhou (segue sem log):", e);
+    return "";
+  }
+}
+
+async function completeVendaSync(
+  db: SupabaseClient,
+  logId: string,
+  results: unknown,
+  errorMsg?: string,
+): Promise<void> {
+  if (!logId) return;
+  try {
+    await db
+      .from("fin_sync_log")
+      .update({
+        status: errorMsg ? "error" : "complete",
+        results: (results as Record<string, unknown>) ?? {},
+        error_message: errorMsg ?? null,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", logId);
+  } catch (e) {
+    console.error("[Omie Vendas] completeVendaSync falhou (best-effort):", e);
+  }
 }
 
 serve(async (req) => {
@@ -1363,14 +1633,19 @@ serve(async (req) => {
   const __auth = await authorizeCronOrStaff(req);
   if (!__auth.ok) return __auth.response;
 
+  // Admin client (service_role, bypassa RLS) + estado do log órfão-safe içados
+  // pra fora do try: o catch precisa finalizar o log de sync como 'error' em vez
+  // de deixar 'running' (senão o watchdog veria órfã eterna).
+  const supabaseAdmin = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+  const SYNC_ACTIONS = ["sync_products", "sync_estoque", "sync_pedidos"];
+  let vendaLogId = "";
+  let vendaSyncFinalized = false;
+
   try {
     const authHeader = req.headers.get("Authorization");
-
-    // Admin client (bypasses RLS) for DB operations
-    const supabaseAdmin = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
 
     // Resolve userId quando vier JWT staff; cron/service_role passam sem user.
     let userId: string | null = null;
@@ -1388,6 +1663,16 @@ serve(async (req) => {
 
     const { action, account: rawAccount, ...params } = await req.json();
     const account: Account = (rawAccount === "colacor") ? "colacor" : "oben";
+
+    // Loga só as actions de SYNC (não as interativas de PV) — best-effort.
+    if (SYNC_ACTIONS.includes(action)) {
+      vendaLogId = await logVendaSync(
+        supabaseAdmin,
+        action,
+        [account],
+        __auth.via === "cron" ? "cron" : (userId || "staff"),
+      );
+    }
 
     let result: unknown;
 
@@ -1407,6 +1692,95 @@ serve(async (req) => {
         break;
       }
 
+      case "backfill_tint_cor": {
+        // Fase 2 — backfill da cor da tinta nos pedidos JÁ sincronizados: re-lê a
+        // observação do item no Omie (que o sync de entrada descartava) e popula
+        // tint_nome_cor no jsonb `sales_orders.items`.
+        //   dry_run=true  → PROBE: amostra o que o Omie devolve (obs crua + cor
+        //                   parseada), NÃO altera nada. Use p/ confirmar a fonte.
+        //   dry_run=false → atualiza SÓ registros sem cor (idempotente, não toca
+        //                   o registro do wizard que já tem cor; não-destrutivo).
+        // Cursor por `start_page`; retorna `next_page` p/ retomar. Rate-limit via callOmie.
+        const bfDryRun = params.dry_run === true;
+        const bfNumeroPedido = params.numero_pedido ? Number(params.numero_pedido) : undefined;
+        let bfPagina = Number(params.start_page) || 1;
+        const bfMaxPages = Number(params.max_pages) || 5;
+        let bfTotalPaginas = 1;
+        let bfPages = 0;
+        let bfPedidosComCor = 0;
+        let bfPedidosAtualizados = 0;
+        const bfAmostra: Array<Record<string, unknown>> = [];
+
+        while ((bfPagina <= bfTotalPaginas || bfPages === 0) && bfPages < bfMaxPages) {
+          const bfParams: Record<string, unknown> = { pagina: bfPagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" };
+          if (bfNumeroPedido) { bfParams.numero_pedido_de = bfNumeroPedido; bfParams.numero_pedido_ate = bfNumeroPedido; }
+          const bfRes = (await callOmieVendasApi("produtos/pedido/", "ListarPedidos", bfParams, account)) as OmieListarPedidosResponse | null;
+          if (!bfRes) break; // rate limit → retoma na próxima invocação
+          bfTotalPaginas = bfRes.total_de_paginas || 1;
+          const bfPedidos = bfRes.pedido_venda_produto || [];
+
+          for (const bfPedido of bfPedidos) {
+            const bfCab = bfPedido.cabecalho || {};
+            const bfCodigoPedido = bfCab.codigo_pedido;
+            if (!bfCodigoPedido) continue;
+            const bfDet: OmieDetalheItem[] = bfPedido.det || [];
+            let bfTemCor = false;
+            const bfItems: OrderItemPayload[] = bfDet.map((d) => {
+              const prod = d.produto || {};
+              const obsItem = d.observacao?.obs_item ?? d.inf_adic?.dados_adicionais_item;
+              const cor = parseCorObs(obsItem);
+              if (cor) bfTemCor = true;
+              // amostra do probe: só itens com observação preenchida (mostra a fonte crua).
+              if (bfDryRun && bfAmostra.length < 25 && obsItem) {
+                bfAmostra.push({
+                  numero_pedido: bfCab.numero_pedido,
+                  descricao: prod.descricao ?? null,
+                  obs_item: d.observacao?.obs_item ?? null,
+                  dados_adicionais_item: d.inf_adic?.dados_adicionais_item ?? null,
+                  cor_parseada: cor?.tint_nome_cor ?? null,
+                });
+              }
+              return {
+                omie_codigo_produto: prod.codigo_produto,
+                descricao: prod.descricao || '',
+                quantidade: prod.quantidade || 1,
+                valor_unitario: prod.valor_unitario || 0,
+                desconto: prod.desconto || 0,
+                ...(cor ? { tint_nome_cor: cor.tint_nome_cor } : {}),
+              };
+            });
+            if (bfTemCor) bfPedidosComCor++;
+            if (!bfDryRun && bfTemCor) {
+              // UPDATE só registros SEM cor (idempotente; não toca o do wizard que já tem).
+              const { data: bfRows } = await supabaseAdmin
+                .from('sales_orders')
+                .select('id, items')
+                .eq('account', account)
+                .eq('omie_pedido_id', bfCodigoPedido);
+              for (const bfRow of bfRows || []) {
+                const jaTemCor = JSON.stringify(bfRow.items ?? []).includes('tint_nome_cor');
+                if (!jaTemCor) {
+                  const { error: bfUpErr } = await supabaseAdmin.from('sales_orders').update({ items: bfItems }).eq('id', bfRow.id);
+                  if (!bfUpErr) bfPedidosAtualizados++;
+                }
+              }
+            }
+          }
+          bfPages++;
+          bfPagina++;
+        }
+        result = {
+          success: true,
+          dry_run: bfDryRun,
+          account,
+          pedidos_com_cor: bfPedidosComCor,
+          pedidos_atualizados: bfPedidosAtualizados,
+          next_page: bfPagina <= bfTotalPaginas ? bfPagina : null,
+          ...(bfDryRun ? { amostra: bfAmostra } : {}),
+        };
+        break;
+      }
+
       case "listar_clientes": {
         const { search } = params;
         if (!search || String(search).length < 2) throw new Error("Busca deve ter ao menos 2 caracteres");
@@ -1418,7 +1792,10 @@ serve(async (req) => {
       case "buscar_cliente": {
         const { document } = params;
         if (!document) throw new Error("Documento é obrigatório");
-        const cliente = await buscarClienteVendas(document, account);
+        // Estrito: transient esgotado vira ERRO da action (o invoke do client
+        // rejeita → o tri-state marca lookupFalhou e NÃO cria às cegas) em vez
+        // de 200 com null, que o client lia como "não existe".
+        const cliente = await buscarClienteVendas(document, account, { throwOnTransient: true });
         result = { success: true, cliente };
         break;
       }
@@ -1427,15 +1804,21 @@ serve(async (req) => {
         const { document: docCriar, razao_social, nome_fantasia, endereco, endereco_numero, bairro, cidade, estado, cep, telefone, contato } = params;
         if (!docCriar || !razao_social) throw new Error("Documento e razão social são obrigatórios");
         const docClean = String(docCriar).replace(/\D/g, "");
-        // First check if already exists
-        const existingCliente = await buscarClienteVendas(docCriar, account);
+        // Lookup anti-duplicação ESTRITO (retroativo Codex): com o null
+        // ambíguo, um flake do Omie pós-retries era lido como "não existe" e
+        // o IncluirCliente abaixo criava DUPLICATA no ERP. Transient → throw
+        // → a action falha honesta e o client não cria.
+        const existingCliente = await buscarClienteVendas(docCriar, account, { throwOnTransient: true });
         if (existingCliente) {
           result = { success: true, ...existingCliente, created: false };
           break;
         }
-        // Create the client
+        // Create the client. Chave de integração DETERMINÍSTICA por
+        // conta+documento (era Date.now()): se dois caminhos tentarem criar o
+        // mesmo cliente, o Omie rejeita a 2ª por integração duplicada
+        // ("já cadastrado") em vez de aceitar uma duplicata.
         const clienteParams: Record<string, unknown> = {
-          codigo_cliente_integracao: `APP_${docClean}_${Date.now()}`,
+          codigo_cliente_integracao: `APP_${account.toUpperCase()}_${docClean}`,
           razao_social,
           nome_fantasia: nome_fantasia || razao_social,
           cnpj_cpf: docClean,
@@ -1502,6 +1885,19 @@ serve(async (req) => {
         if (!codCli) throw new Error("Código do cliente é obrigatório");
         const parcelaData = await buscarUltimaParcela(codCli, account);
         result = { success: true, ...parcelaData };
+        break;
+      }
+
+      // Fase 2: 1 chamada consolidada (preço+dInc por produto + parcela + ranking +
+      // código resolvido p/ colacor). Substitui as ListarPedidos concorrentes que
+      // colidiam no rate-limit (~40s). codigo_cliente p/ oben; document p/ colacor.
+      case "buscar_contexto_comercial_cliente": {
+        const { codigo_cliente: ctxCod, document: ctxDoc } = params;
+        const ctx = await buscarContextoComercialCliente(
+          { codigoCliente: ctxCod ?? null, document: ctxDoc ?? null },
+          account,
+        );
+        result = { success: true, ...ctx };
         break;
       }
 
@@ -1923,7 +2319,10 @@ serve(async (req) => {
         for (const opItem of opItemsTyped) {
           // Create production order in Omie
           const opPayload = {
-            cCodIntOP: `OP_${opSalesId.substring(0, 8)}_${opItem.omie_codigo_produto}_${Date.now()}`,
+            // Determinística por (sales_order, produto) → o Omie dedup o re-fire da OP.
+            // Últimos 12 chars do UUID (não o inteiro): mantém a chave curta — o limite do
+            // cCodIntOP no Omie não é confirmado e a chave precisa caber com folga (~16+N chars).
+            cCodIntOP: `OP_${opSalesId.slice(-12)}_${opItem.omie_codigo_produto}`,
             nCodProd: opItem.omie_codigo_produto,
             nQtde: opItem.quantidade,
             dDtPrevisao: new Date().toISOString().split("T")[0].split("-").reverse().join("/"),
@@ -2017,11 +2416,27 @@ serve(async (req) => {
         throw new Error(`Ação desconhecida: ${action}`);
     }
 
+    if (vendaLogId && !vendaSyncFinalized) {
+      await completeVendaSync(supabaseAdmin, vendaLogId, result);
+      vendaSyncFinalized = true;
+    }
+
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
     console.error("[Omie Vendas] Erro:", error);
+    // Finaliza o log de sync órfão como 'error' (best-effort interno → não
+    // mascara nem altera a resposta 500 original).
+    if (vendaLogId && !vendaSyncFinalized) {
+      await completeVendaSync(
+        supabaseAdmin,
+        vendaLogId,
+        null,
+        error instanceof Error ? error.message : String(error),
+      );
+      vendaSyncFinalized = true;
+    }
     return new Response(
       JSON.stringify({
         error: error instanceof Error ? error.message : "Erro desconhecido",

@@ -155,7 +155,7 @@ export function usePushNotifications() {
       const overdue = tools.filter(t => new Date(t.next_sharpening_due!) < now);
       
       if (overdue.length > 0) {
-        const names = overdue.slice(0, 2).map(t => (t.tool_categories as any)?.name).filter(Boolean).join(', ');
+        const names = overdue.slice(0, 2).map(t => t.tool_categories?.name).filter(Boolean).join(', ');
         showNotification('Ferramentas precisam de afiação', {
           body: `${overdue.length} ferramenta(s) com afiação atrasada: ${names}${overdue.length > 2 ? '...' : ''}`,
           tag: 'sharpening-alert',

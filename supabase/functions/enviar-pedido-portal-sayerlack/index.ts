@@ -31,7 +31,7 @@ const MAX_TENTATIVAS = 3;
 // Ref: https://docs.browserless.io/rest-apis/function
 const BROWSERLESS_FUNCTION = `
 export default async ({ page, context }) => {
-  const { user, pass, portalUrl, clienteCodigo, items } = context;
+  const { user, pass, portalUrl, clienteCodigo, items, ltEsperado } = context;
   const trace = [];
   const t0 = Date.now();
   // Não usamos timeout interno menor que o Browserless: em 14/05, o pedido #116
@@ -41,6 +41,14 @@ export default async ({ page, context }) => {
   // preLoginScreenshot é referenciado em returns de erro; declarado aqui para
   // nunca lançar ReferenceError (que mascararia o envelope estruturado).
   let preLoginScreenshot = null;
+
+  // Flag de finalização (money-path). Setado IMEDIATAMENTE ANTES do clique em
+  // "Efetivar Pedido" (#btnSalvarNovoPedido) — o ÚNICO ponto que coloca o pedido
+  // na Sayerlack. Em closure (fora do runFlow) p/ sobreviver aos try/catch e ser
+  // lido pelo buildEnvelope. false EXPLÍCITO = prova de que nenhum pedido foi
+  // colocado → falha vira erro_retentavel; true/desconhecido → indeterminado.
+  // Ver src/lib/reposicao/sayerlack-classificacao.ts (espelho).
+  let efetivarAttempted = false;
 
   // === PR2: Budget management (deadline global) ===
   // O Browserless mata a função em ~60s. Em vez de esperar isso acontecer com
@@ -101,9 +109,10 @@ export default async ({ page, context }) => {
 
   // === PR1: Network Recorder ===
   // Listener global armado ANTES de qualquer navegação. Captura todo POST que
-  // bate em endpoints suspeitos de efetivação. É a fonte primária de evidência
-  // para classificação: se um POST saiu, o pedido NUNCA é tratado como
-  // retentável — vai para conciliação.
+  // bate em endpoints suspeitos de efetivação (campo requestSent). ATENCAO:
+  // requestSent hoje é só EVIDENCIA/log — NAO mais a regra de classificação. A
+  // regra usa efetivarAttempted (o clique do Efetivar); ver buildEnvelope +
+  // src/lib/reposicao/sayerlack-classificacao.ts.
   const installOrderNetworkRecorder = (pg) => {
     const SUSPECT_RE = /pedido|efetivar|salvar|criar|order|novo[-_]?pedido/i;
     const events = [];
@@ -291,14 +300,14 @@ export default async ({ page, context }) => {
 
   // === PR1: Envelope estruturado ===
   // Traduz o resultado bruto do runFlow (legado: { data: {...} }) + a evidência
-  // do recorder na máquina de estados. Regra de ouro: requestSent === true
-  // jamais resulta em estado retentável.
+  // do recorder na máquina de estados. Regra de ouro (efetivarAttempted): só
+  // relaxa pra retentável quando o clique do Efetivar NAO ocorreu
+  // (efetivarAttempted === false). Ver src/lib/reposicao/sayerlack-classificacao.ts.
   const buildEnvelope = (raw, evidence) => {
     const elapsedMs = Date.now() - t0;
     const data = (raw && raw.data) ? raw.data : {};
     const screenshot = raw ? (raw.screenshot || null) : null;
     const preLogin = raw ? (raw.preLoginScreenshot || null) : null;
-    const requestSent = !!(evidence && evidence.requestSent);
     let protocolo = data.protocolo || null;
 
     // PR1.5: se a runFlow não capturou protocolo, tenta extrair do recorder.
@@ -311,46 +320,51 @@ export default async ({ page, context }) => {
       }
     }
 
+    // ESPELHO VERBATIM de classifyEnvelopeStatus (src/lib/reposicao/sayerlack-classificacao.ts).
+    // Decisão de FALHA é PURA por efetivarAttempted (closure); requestSent NÃO entra
+    // (era proxy ruim: falso-perigo no rascunho + falso-seguro quando o recorder perde
+    // o POST de finalização). Manter as duas cópias em sincronia.
     let status;
     let ok;
     let safeToRetry;
     let needsReconciliation;
+
+    const tipo = data.erroTipo || 'UNKNOWN';
+    const erroLogicoPreSubmit =
+      tipo === 'LOGIN_FAILED' || tipo === 'CLIENTE_NOT_FOUND' || tipo === 'SKU_NOT_FOUND'
+      || tipo === 'GRUPO_LEADTIME_MISMATCH';
 
     if (data.success === true) {
       ok = true;
       status = protocolo ? 'sucesso_portal' : 'aceito_portal_sem_protocolo';
       safeToRetry = false;
       needsReconciliation = !protocolo;
-    } else if (protocoloAutoExtraido && requestSent) {
-      // PR1.5: recuperação automática. O script morreu (timeout do Browserless)
-      // mas o portal já respondeu OK ao POST e conseguimos extrair o protocolo
-      // do corpo. Trata como sucesso completo.
+    } else if (protocoloAutoExtraido && efetivarAttempted === true) {
+      // PR1.5: protocolo auto-extraído SÓ vira sucesso se o Efetivar foi REALMENTE
+      // clicado. Protocolo de resposta de rascunho é pré-clique (efetivarAttempted
+      // false) → este ramo é pulado → não vira falso-sucesso.
       ok = true;
       status = 'sucesso_portal';
       safeToRetry = false;
       needsReconciliation = false;
-    } else {
+    } else if (erroLogicoPreSubmit) {
+      // Erro lógico pré-submit (login/cliente/sku/grupo) — retentar não adianta.
       ok = false;
-      const tipo = data.erroTipo || 'UNKNOWN';
-      const erroLogicoPreSubmit =
-        tipo === 'LOGIN_FAILED' || tipo === 'CLIENTE_NOT_FOUND' || tipo === 'SKU_NOT_FOUND';
-      if (requestSent) {
-        // Houve POST: independente do tipo de erro, só conciliação resolve.
-        status = 'indeterminado_requer_conciliacao';
-        safeToRetry = false;
-        needsReconciliation = true;
-      } else if (erroLogicoPreSubmit) {
-        // Erro lógico antes de qualquer submit — retentar não adianta.
-        status = 'erro_nao_retentavel';
-        safeToRetry = false;
-        needsReconciliation = false;
-      } else {
-        // NAVIGATION_FAILED / INCLUIR_ITEM_NOT_FOUND / EXCEPTION (inclui o
-        // timeout do Browserless) / UNKNOWN, sem POST capturado.
-        status = 'erro_retentavel';
-        safeToRetry = true;
-        needsReconciliation = false;
-      }
+      status = 'erro_nao_retentavel';
+      safeToRetry = false;
+      needsReconciliation = false;
+    } else if (efetivarAttempted === false) {
+      // Clique de Efetivar NUNCA ocorreu → nenhum pedido colocado → seguro retentar.
+      ok = false;
+      status = 'erro_retentavel';
+      safeToRetry = true;
+      needsReconciliation = false;
+    } else {
+      // efetivarAttempted true (clicou → pode ter colocado) OU desconhecido.
+      ok = false;
+      status = 'indeterminado_requer_conciliacao';
+      safeToRetry = false;
+      needsReconciliation = true;
     }
 
     // Mantém a forma externa { data, type, screenshot, preLoginScreenshot } que
@@ -363,9 +377,13 @@ export default async ({ page, context }) => {
         status,
         protocolo,
         portal_data_entrega: data.portal_data_entrega || null,
+        // Totais capturados do #datatable_itens (custo). Propaga o que o runFlow
+        // anexou em raw.data.itens_capturados pro Deno casar com os itens.
+        itens_capturados: Array.isArray(data.itens_capturados) ? data.itens_capturados : [],
         safeToRetry,
         needsReconciliation,
         evidence: {
+          efetivarAttempted,
           requestSent: evidence ? evidence.requestSent : false,
           requestCount: evidence ? evidence.requestCount : 0,
           responseCount: evidence ? evidence.responseCount : 0,
@@ -941,6 +959,56 @@ export default async ({ page, context }) => {
     }, { timeout: budgetFor('validacao-pre-efetivar', 15_000), polling: 250 });
     trace.push({ step: 'validacao_data_entrega_ok_pre_efetivar', t: Date.now() - t0, remaining: remainingMs() });
 
+    // === Scrape #datatable_itens (custo + Prz Ent) — header/value matching, robusto a layout ===
+    const skusConhecidos = items.map(function(it){ return (it.sku_portal || '').trim().toUpperCase(); }).filter(Boolean);
+    const scrape = await page.evaluate(function(skus) {
+      function norm(s){ return (s || '').trim().toUpperCase(); }
+      var table = document.querySelector('#datatable_itens');
+      if (!table) return { ok: false, motivo: 'sem_tabela', headers: [], przIdx: -1, rows: [] };
+      var ths = Array.from(table.querySelectorAll('thead th')).map(function(th){ return (th.innerText || '').trim(); });
+      var przIdx = ths.findIndex(function(h){ return /prz|prazo/i.test(h); });
+      var rows = Array.from(table.querySelectorAll('tbody tr')).map(function(tr){
+        var tds = Array.from(tr.querySelectorAll('td'));
+        var texts = tds.map(function(td){ return (td.innerText || '').trim(); });
+        // código: SÓ identifica se EXATAMENTE 1 célula bate (igualdade) um sku conhecido — evita
+        // atribuir o sku errado a uma linha por colisão de célula; 0 ou >1 → sku vazio = naoCasado (seguro).
+        var cellsSku = texts.filter(function(t){ return skus.indexOf(norm(t)) !== -1; });
+        return {
+          sku_portal: cellsSku.length === 1 ? norm(cellsSku[0]) : '',
+          prz_ent_raw: (przIdx >= 0 && texts[przIdx] != null) ? texts[przIdx] : '',
+          total_raw: texts.length ? texts[texts.length - 1] : '',
+        };
+      });
+      return { ok: true, przIdx: przIdx, headers: ths, rows: rows };
+    }, skusConhecidos);
+    console.log('[DEBUG_SCRAPE_ITENS]', JSON.stringify({ ok: scrape.ok, przIdx: scrape.przIdx, headers: scrape.headers, n: (scrape.rows || []).length, amostra: (scrape.rows || []).slice(0, 3) }));
+    trace.push({ step: 'scrape_datatable', n: (scrape.rows || []).length, przIdx: scrape.przIdx, t: Date.now() - t0 });
+    var linhasPortal = scrape.rows || [];
+
+    // === Gate de grupo: Prz Ent (inteiro) === ltEsperado, EXATO. Fail-OPEN na incerteza (bug de seletor/sem config NÃO trava). ===
+    if (typeof ltEsperado === 'number' && Number.isInteger(ltEsperado) && scrape.ok && scrape.przIdx >= 0 && linhasPortal.length > 0) {
+      var mismatches = [];
+      var validados = 0;
+      for (var li = 0; li < linhasPortal.length; li++) {
+        var mm = (linhasPortal[li].prz_ent_raw || '').match(/-?\\d+/);
+        if (!mm) continue;
+        validados++;
+        var prz = Number(mm[0]);
+        if (prz !== ltEsperado) {
+          mismatches.push({ sku_portal: linhasPortal[li].sku_portal || ('linha ' + (li + 1)), prz_ent: prz, lt_esperado: ltEsperado });
+        }
+      }
+      if (mismatches.length > 0) {
+        var listaMm = mismatches.map(function(x){ return x.sku_portal + ' (Prz ' + x.prz_ent + ' != ' + x.lt_esperado + ')'; }).join('; ');
+        return {
+          data: { success: false, erro: 'Grupo errado (Prz Ent != lead time do grupo): ' + listaMm + '. Confira o de-para/grupo.', erroTipo: 'GRUPO_LEADTIME_MISMATCH', mismatches: mismatches, trace: trace },
+          type: 'application/json',
+        };
+      }
+      // validados < total = tabela parcialmente validada (linhas com Prz Ent ilegível foram puladas, fail-open).
+      trace.push({ step: 'gate_grupo_ok', validados: validados, total: linhasPortal.length, t: Date.now() - t0 });
+    }
+
     // PR13: scroll do botão "Efetivar Pedido" pra dentro da viewport ANTES do
     // click. O navbar sticky do portal Sayerlack cobre o topo da página; quando
     // há vários itens no formulário, a rolagem deixa o botão atrás do navbar
@@ -1029,6 +1097,11 @@ export default async ({ page, context }) => {
     const postSubmitBudget = budgetFor('submit-pedido', 60_000, { reserveSubmit: false, minMs: 2_000 });
     const signalPromise = waitForPositiveSubmitSignal(page, postSubmitBudget);
 
+    // Fronteira money-path: a partir DAQUI o pedido pode ter sido colocado na
+    // Sayerlack. Setar ANTES do click (não depois): se o próprio click pendurar
+    // ou lançar, efetivarAttempted já é true → classificação cai em indeterminado
+    // (conservador), nunca em retentável.
+    efetivarAttempted = true;
     await page.click('#btnSalvarNovoPedido');
     trace.push({ step: 'efetivar_clicked', t: Date.now() - t0, postSubmitBudget, remaining: remainingMs() });
 
@@ -1139,16 +1212,16 @@ export default async ({ page, context }) => {
     const screenshot = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: false, encoding: 'base64' }).catch(() => null);
 
     // Decisão final (alinhada com a cascata de classifySubmitResult do doc):
-    //  - Portal devolveu success:false explícito → falha; buildEnvelope vê
-    //    requestSent e classifica como indeterminado (operador concilia).
+    //  - Portal devolveu success:false explícito → falha; aqui o Efetivar JÁ foi
+    //    clicado (efetivarAttempted=true) → buildEnvelope classifica indeterminado.
     //  - Sinal positivo (network/banner/modal) OU protocolo extraído de
     //    qualquer fonte → success:true; buildEnvelope mapeia para
     //    sucesso_portal (com protocolo) ou aceito_portal_sem_protocolo.
     //  - firstSignal === 'url' (só URL change, sem nada mais) → success:false
     //    com erroTipo AMBIGUO_URL_ONLY → indeterminado.
     //  - firstSignal === 'none' → success:false com erroTipo NO_POSITIVE_SIGNAL
-    //    → buildEnvelope decide via requestSent (POST capturado → indeterminado;
-    //    sem POST → erro_retentavel).
+    //    → buildEnvelope decide via efetivarAttempted (aqui clicou=true →
+    //    indeterminado; NUNCA retentável após o clique do Efetivar).
     if (bodySuccessFalse) {
       return {
         data: {
@@ -1174,6 +1247,7 @@ export default async ({ page, context }) => {
           protocolo,
           protocoloSource,
           portal_data_entrega: portalDataEntrega,
+          itens_capturados: linhasPortal.map(function(l){ return { sku_portal: l.sku_portal, total_raw: l.total_raw, prz_ent_raw: l.prz_ent_raw }; }),
           firstSignal: { kind: firstSignal.kind },
           responseInfo,
           successText: protocolo ? ('Pedido ' + protocolo + ' criado com sucesso') : null,
@@ -1250,6 +1324,83 @@ export default async ({ page, context }) => {
 };
 `;
 
+// ============================================================================
+// Captura de custo do portal (Deno scope — NÃO roda dentro do Browserless).
+// ESPELHO VERBATIM de src/lib/reposicao/sayerlack-scraping-pedido.ts — manter
+// em sincronia. (parseDiasPrzEnt é dependência de casarLinhasComItens; o gate
+// de grupo roda no browser, então validarGrupoLeadtime fica fora daqui.)
+// ============================================================================
+function parseBRL(s: string): number | null {
+  if (typeof s !== 'string') return null;
+  const limpo = s.replace(/[^\d,.-]/g, '').trim();
+  if (!limpo) return null;
+  const normal = limpo.replace(/\./g, '').replace(',', '.'); // pt-BR: ponto=milhar, vírgula=decimal
+  const n = Number(normal);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseDiasPrzEnt(s: string): number | null {
+  if (typeof s !== 'string') return null;
+  const m = s.match(/-?\d+/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isInteger(n) ? n : null;
+}
+
+interface LinhaPortal { sku_portal: string; prz_ent_raw: string; total_raw: string; }
+interface ItemPedido {
+  item_id: number; sku_codigo_omie: string; sku_descricao: string | null;
+  sku_portal: string | null; qtde_final: number; preco_atual: number;
+}
+interface Casado { item: ItemPedido; prz_ent: number | null; total_linha: number | null; }
+interface ResultadoMatch { casados: Casado[]; naoCasados: ItemPedido[]; ambiguos: ItemPedido[]; }
+
+function normPortal(s: string | null): string { return (s ?? '').trim().toUpperCase(); }
+
+function casarLinhasComItens(linhas: LinhaPortal[], itens: ItemPedido[]): ResultadoMatch {
+  const casados: Casado[] = [];
+  const naoCasados: ItemPedido[] = [];
+  const ambiguos: ItemPedido[] = [];
+
+  const itensPorSku = new Map<string, ItemPedido[]>();
+  for (const it of itens) {
+    const k = normPortal(it.sku_portal);
+    if (!k) { naoCasados.push(it); continue; }
+    const arr = itensPorSku.get(k) ?? [];
+    arr.push(it); itensPorSku.set(k, arr);
+  }
+  const linhasPorSku = new Map<string, LinhaPortal[]>();
+  for (const ln of linhas) {
+    const k = normPortal(ln.sku_portal);
+    if (!k) continue;
+    const arr = linhasPorSku.get(k) ?? [];
+    arr.push(ln); linhasPorSku.set(k, arr);
+  }
+  for (const [k, its] of itensPorSku) {
+    const lns = linhasPorSku.get(k) ?? [];
+    if (its.length > 1 || lns.length > 1) { ambiguos.push(...its); continue; }
+    if (lns.length === 0) { naoCasados.push(its[0]); continue; }
+    casados.push({ item: its[0], prz_ent: parseDiasPrzEnt(lns[0].prz_ent_raw), total_linha: parseBRL(lns[0].total_raw) });
+  }
+  return { casados, naoCasados, ambiguos };
+}
+
+interface CustoUpdate { item_id: number; preco_unitario: number; valor_linha: number; }
+function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+function derivarCustos(res: ResultadoMatch): { updates: CustoUpdate[]; pulados: { sku_codigo_omie: string; motivo: string }[] } {
+  const updates: CustoUpdate[] = [];
+  const pulados: { sku_codigo_omie: string; motivo: string }[] = [];
+  for (const c of res.casados) {
+    const total = c.total_linha; const qtde = c.item.qtde_final;
+    if (total == null || !(total > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'total_invalido' }); continue; }
+    if (!(qtde > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'qtde_invalida' }); continue; }
+    if (round2(total) === round2(qtde * c.item.preco_atual)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'sem_mudanca' }); continue; }
+    updates.push({ item_id: c.item.item_id, preco_unitario: total / qtde, valor_linha: total }); // precisão cheia
+  }
+  return { updates, pulados };
+}
+
 interface PedidoCandidato {
   id: number;
   empresa: string;
@@ -1268,6 +1419,8 @@ interface ItemMapeado {
   unidade_portal: string | null;
   fator_conversao: number;
   mapeamento_ativo: boolean | null;
+  // preço unitário atual do item (base da tolerância na captura de custo do portal)
+  preco_atual?: number;
 }
 
 interface ProcessResult {
@@ -1598,6 +1751,41 @@ async function processarPedido(
     return result;
   }
 
+  // preco_unitario atual (base da tolerância de custo na captura). Independe da RPC trazer ou não.
+  {
+    const ids = itensList.map((i) => i.item_id);
+    if (ids.length > 0) {
+      const { data: precos } = await supabase.from("pedido_compra_item").select("id, preco_unitario").in("id", ids);
+      const pm = new Map<number, number>((precos ?? []).map((p) => [Number((p as { id: number }).id), Number((p as { preco_unitario: number | null }).preco_unitario ?? 0)]));
+      for (const it of itensList) (it as { preco_atual?: number }).preco_atual = pm.get(it.item_id) ?? 0;
+    }
+  }
+
+  // lead time esperado do grupo (validação de Prz Ent). Null = sem config → gate fica indisponível (fail-open).
+  // grupo_codigo não vem no PedidoCandidato (select enxuto) — buscamos a config direto por empresa+fornecedor+grupo.
+  let ltEsperado: number | null = null;
+  {
+    const { data: pedRow } = await supabase
+      .from("pedido_compra_sugerido")
+      .select("grupo_codigo")
+      .eq("id", pedido.id)
+      .maybeSingle();
+    const grupoCodigo = (pedRow as { grupo_codigo?: string | null } | null)?.grupo_codigo ?? null;
+    if (grupoCodigo) {
+      const { data: grp } = await supabase
+        .from("fornecedor_grupo_producao")
+        .select("lt_producao_dias, lt_producao_unidade")
+        .eq("empresa", pedido.empresa)
+        .eq("fornecedor_nome", pedido.fornecedor_nome)
+        .eq("grupo_codigo", grupoCodigo)
+        .maybeSingle();
+      if (grp && ((grp as { lt_producao_unidade?: string }).lt_producao_unidade ?? 'uteis') === 'uteis'
+          && Number.isInteger((grp as { lt_producao_dias?: number }).lt_producao_dias)) {
+        ltEsperado = (grp as { lt_producao_dias: number }).lt_producao_dias;
+      }
+    }
+  }
+
   // 3. Calcular qtde portal
   // Portal Sayerlack só aceita unidades inteiras: arredondar SEMPRE para cima.
   const itemsPortal = itensList.map((i) => ({
@@ -1638,6 +1826,7 @@ async function processarPedido(
             portalUrl: SAYERLACK_PORTAL_URL,
             clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO,
             items: itemsPortal,
+            ltEsperado,
           },
         }),
       },
@@ -1692,7 +1881,11 @@ async function processarPedido(
   const screenshotB64: string | null = bResp?.screenshot ?? null;
   const preLoginScreenshotB64: string | null = bResp?.preLoginScreenshot ?? null;
   const evidence: Record<string, unknown> = (envelope?.evidence ?? {}) as Record<string, unknown>;
-  const requestSent = evidence?.requestSent === true;
+  // Sinal money-path: o clique de "Efetivar Pedido" foi disparado? `false`
+  // EXPLÍCITO = prova de que nenhum pedido foi colocado; `undefined` (envelope
+  // velho/parcial) = desconhecido → fail-closed (indeterminado). Substitui o
+  // antigo `requestSent` (proxy ruim — ver sayerlack-classificacao.ts).
+  const efetivarAttempted = evidence?.efetivarAttempted as boolean | undefined;
 
   // Upload de screenshots (instrumentacao — comportamento inalterado)
   if (screenshotB64) {
@@ -1782,16 +1975,13 @@ async function processarPedido(
         erro: `Browserless sem resposta (ambiguo): ${erroMsg}`,
       });
     }
-    // Status HTTP de erro do Browserless (>=500 / 0 / 408): a camada HTTP
-    // respondeu erro, o script nao chegou a submeter. Retentavel.
-    const esgotado = novasTentativas >= MAX_TENTATIVAS;
-    return await aplicarTransicao(
-      esgotado ? "erro_nao_retentavel" : "erro_retentavel",
-      {
-        erro: erroMsg,
-        proximoRetryEm: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      },
-    );
+    // Status HTTP de erro do Browserless (>=500 / 0 / 408): SEM envelope
+    // estruturado, NAO da pra provar que o script nao clicou "Efetivar" antes do
+    // erro HTTP. Estado desconhecido → conciliacao (money-path: nunca retentar um
+    // pedido talvez-colocado; tempo decorrido nao prova ausencia de clique).
+    return await aplicarTransicao("indeterminado_requer_conciliacao", {
+      erro: `Browserless erro HTTP sem envelope (ambiguo): ${erroMsg}`,
+    });
   }
 
   // HTTP 200 mas sem envelope estruturado inteligivel — nao da pra descartar
@@ -1802,11 +1992,21 @@ async function processarPedido(
     });
   }
 
-  // Rede de seguranca: se o recorder viu um POST sair, o pedido NUNCA pode
-  // terminar em estado retentavel, ainda que o envelope diga o contrario.
+  // Rede de seguranca (efetivarAttempted-aware) — ESPELHO de decidirStatusDeno
+  // (src/lib/reposicao/sayerlack-classificacao.ts). So' ENDURECE, nunca afrouxa.
+  const STATUS_CONHECIDOS = [
+    "sucesso_portal", "aceito_portal_sem_protocolo", "indeterminado_requer_conciliacao",
+    "erro_nao_retentavel", "erro_retentavel",
+  ];
   let envStatus: string = envelope.status;
-  if (requestSent && envStatus === "erro_retentavel") {
-    console.warn(`[envio-portal] Pedido #${pedido.id}: requestSent=true mas envelope=erro_retentavel — forcando indeterminado`);
+  if (STATUS_CONHECIDOS.indexOf(envStatus) === -1) {
+    // Status desconhecido (envelope corrompido / formato futuro) → fail-closed.
+    console.warn(`[envio-portal] Pedido #${pedido.id}: envelope.status desconhecido ("${envStatus}") — forcando indeterminado`);
+    envStatus = "indeterminado_requer_conciliacao";
+  } else if (envStatus === "erro_retentavel" && efetivarAttempted !== false) {
+    // So' mantem retentavel com efetivarAttempted EXPLICITO false (prova de que o
+    // Efetivar nunca foi clicado). true/undefined → conciliacao (pode ter colocado).
+    console.warn(`[envio-portal] Pedido #${pedido.id}: erro_retentavel mas efetivarAttempted!==false (${String(efetivarAttempted)}) — forcando indeterminado`);
     envStatus = "indeterminado_requer_conciliacao";
   }
 
@@ -1817,6 +2017,35 @@ async function processarPedido(
       protocolo: envelope.protocolo ?? null,
       enviadoPortalEm: true,
     });
+    // Captura de custo do portal: itens_capturados [{sku_portal, total_raw}]. Idempotente (só antes do Omie existir). Best-effort.
+    // (envelope === bResp.data já é o envelope achatado do buildEnvelope; itens_capturados é top-level, não envelope.data.)
+    try {
+      const capturados = ((envelope?.itens_capturados ?? []) as Array<{ sku_portal: string; total_raw: string; prz_ent_raw?: string }>);
+      const jaTemOmie = !!(pedido as { omie_pedido_compra_numero?: string | null }).omie_pedido_compra_numero;
+      if (capturados.length > 0 && !jaTemOmie) {
+        const itensParaCusto: ItemPedido[] = itensList.map((i) => ({
+          item_id: i.item_id, sku_codigo_omie: i.sku_codigo_omie, sku_descricao: i.sku_descricao,
+          sku_portal: i.sku_portal, qtde_final: Number(i.qtde_final), preco_atual: Number((i as { preco_atual?: number }).preco_atual ?? 0),
+        }));
+        const linhas: LinhaPortal[] = capturados.map((c) => ({ sku_portal: c.sku_portal, prz_ent_raw: c.prz_ent_raw ?? '', total_raw: c.total_raw }));
+        const match = casarLinhasComItens(linhas, itensParaCusto);
+        const { updates, pulados } = derivarCustos(match);
+        for (const u of updates) {
+          await supabase.from("pedido_compra_item").update({ preco_unitario: u.preco_unitario, valor_linha: u.valor_linha }).eq("id", u.item_id);
+        }
+        if (updates.length > 0) {
+          // valor_total = Σ TODOS os itens (casados pelo total capturado; não-casados/ambíguos pelo valor atual)
+          // — não subconta itens que o scrape não casou (Codex P1).
+          const totalCasados = match.casados.reduce((s, c) => s + (c.total_linha ?? (c.item.qtde_final * c.item.preco_atual)), 0);
+          const totalOutros = [...match.naoCasados, ...match.ambiguos].reduce((s, it) => s + (it.qtde_final * it.preco_atual), 0);
+          const novoTotal = totalCasados + totalOutros;
+          await supabase.from("pedido_compra_sugerido").update({ valor_total: novoTotal }).eq("id", pedido.id);
+        }
+        console.log(`[envio-portal] Pedido #${pedido.id}: custo capturado — ${updates.length} atualizados, ${pulados.length} pulados`);
+      }
+    } catch (e) {
+      console.error(`[envio-portal] Pedido #${pedido.id}: falha best-effort na captura de custo:`, e instanceof Error ? e.message : String(e));
+    }
     await registrarPedidoOmieAposPortal(pedido);
     return r;
   }
@@ -1859,7 +2088,9 @@ async function processarPedido(
     return r;
   }
 
-  // erro_retentavel (default): POST comprovadamente nunca saiu, seguro retentar.
+  // erro_retentavel (default): só chega aqui com efetivarAttempted === false
+  // (Efetivar nunca clicado → nenhum pedido colocado), seguro retentar. Status
+  // desconhecido já foi endurecido pra indeterminado na rede de segurança acima.
   const erroMsg: string = evidence?.erro ?? "Falha do automador (retentavel)";
   const esgotado = novasTentativas >= MAX_TENTATIVAS;
   return await aplicarTransicao(
@@ -1923,7 +2154,14 @@ async function runWatchdog(supabase: SupabaseClient, minutos = 5) {
       status_envio_portal: "indeterminado_requer_conciliacao",
       portal_erro: erroMsg,
       portal_proximo_retry_em: null,
-    }).eq("id", p.id);
+      // Sobrescreve evidencia OBSOLETA: a tentativa ANTERIOR pode ter gravado
+      // efetivarAttempted=false; esta interrupcao e' de uma tentativa que talvez
+      // efetivou → marca desconhecido (null) pra nenhum leitor concluir "sem
+      // pedido" e re-enviar (duplicata).
+      portal_resposta: { phase: "watchdog", motivo: "travado_em_enviando_portal", efetivarAttempted: null },
+    })
+      .eq("id", p.id)
+      .eq("status_envio_portal", "enviando_portal"); // condicional: nao pisa conclusao concorrente
     await gravarTentativa(supabase, p.id, {
       iniciadoEm: agora,
       statusResultado: "indeterminado_requer_conciliacao",
@@ -2135,24 +2373,61 @@ Deno.serve(async (req) => {
   // ao timeout do edge function caller.
   const asyncMode = body?.async_mode === true || body?.async === true;
   if (asyncMode) {
-    // Marca todos os candidatos como enviando_portal IMEDIATAMENTE para a UI já
-    // refletir o estado correto antes do background pegar.
+    // CLAIM ATÔMICO: transiciona p/ enviando_portal SÓ os candidatos que NÃO estão
+    // já em voo. Um UPDATE ... RETURNING é atômico (lock de linha + re-avaliação do
+    // WHERE após o commit concorrente): se 2 requests competem pelo MESMO pedido
+    // (ex.: "aprovar e disparar" + cron de corte no mesmo instante), só um claима;
+    // o outro vê enviando_portal e é EXCLUÍDO do RETURNING. Fecha o duplo-envio ao
+    // portal (2ª sessão no Browserless → PO duplicado no fornecedor). O `is.null`
+    // cobre o pedido fresco (status_envio_portal NULL), que o `neq` sozinho perderia.
     const ids = candidatos.map((c) => c.id);
-    await supabase
-      .from("pedido_compra_sugerido")
-      .update({ status_envio_portal: "enviando_portal", portal_erro: null })
-      .in("id", ids);
+    // CLAIM via RPC SQL-puro (envio_portal_claim_ids): o .update().or().select() via PostgREST
+    // quebrava com 42703 "column pedido_compra_sugerido.status_envio_portal does not exist"
+    // (a tradução do .or() em UPDATE) → travava TODO disparo ao portal. A RPC roda o mesmo
+    // UPDATE ... WHERE ... RETURNING em SQL puro, atômico (row-lock + re-avaliação do predicado),
+    // preservando a proteção anti-duplo-envio.
+    const { data: claimedRows, error: claimErr } = await supabase
+      .rpc("envio_portal_claim_ids", { p_ids: ids });
+    if (claimErr) {
+      console.error("[envio-portal][async] Erro no claim atomico:", claimErr.message);
+      return new Response(
+        JSON.stringify({ error: `Falha ao reservar pedidos: ${claimErr.message}` }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
+      );
+    }
+    const claimedIds = new Set((claimedRows ?? []).map((r) => (r as { id: number }).id));
+    const candidatosClaimed = candidatos.filter((c) => claimedIds.has(c.id));
+    const jaEmVoo = candidatos.length - candidatosClaimed.length;
+    if (jaEmVoo > 0) {
+      console.log(`[envio-portal][async] ${jaEmVoo} pedido(s) ja em voo (enviando_portal) — pulados pelo claim atomico`);
+    }
+    if (candidatosClaimed.length === 0) {
+      return new Response(
+        JSON.stringify({
+          modo,
+          async: true,
+          accepted: true,
+          pedido_ids: [],
+          ja_em_voo: jaEmVoo,
+          candidatos_encontrados: candidatos.length,
+          duracao_total_ms: Date.now() - tStart,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 202 },
+      );
+    }
 
-    // Dispara em background. Erros vão para o log e o watchdog libera depois.
-    const bgTask = processCandidatos(supabase, candidatos)
+    // Dispara em background SÓ os reservados. Erros vão para o log e o watchdog libera depois.
+    const bgTask = processCandidatos(supabase, candidatosClaimed)
       .then((r) => {
         console.log(`[envio-portal][async] OK processados=${r.detalhes.length} sucesso=${r.sucesso} falhas=${r.falhasDef + r.falhasTmp} indeterminados=${r.indeterminados}`);
       })
       .catch((e) => {
         console.error("[envio-portal][async] Excecao geral:", e?.message ?? e);
       });
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- @ts-ignore intencional: EdgeRuntime é global do Deno/Supabase Edge (pode não estar tipado); @ts-expect-error quebraria o deploy se estivesse
     // @ts-ignore - EdgeRuntime existe no runtime do Supabase Edge
     if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- idem acima
       // @ts-ignore
       EdgeRuntime.waitUntil(bgTask);
     }
@@ -2162,7 +2437,8 @@ Deno.serve(async (req) => {
         modo,
         async: true,
         accepted: true,
-        pedido_ids: ids,
+        pedido_ids: candidatosClaimed.map((c) => c.id),
+        ja_em_voo: jaEmVoo,
         candidatos_encontrados: candidatos.length,
         duracao_total_ms: Date.now() - tStart,
       }),
@@ -2170,8 +2446,24 @@ Deno.serve(async (req) => {
     );
   }
 
-  // === MODO SÍNCRONO (legado, usado pelo cron disparar-pedidos-aprovados) ===
-  const { detalhes, sucesso, falhasDef, falhasTmp, indeterminados } = await processCandidatos(supabase, candidatos);
+  // === MODO SÍNCRONO (legado) ===
+  // Mesmo CLAIM ATÔMICO do async (ver acima). Hoje não-exercido (todos os callers
+  // reais — disparar-pedidos-aprovados e o botão — usam async_mode; o lote cron é
+  // no-op), mas fecha a rota: sem isso o processarPedido marcaria enviando_portal de
+  // forma incondicional → duplo-envio se 2 síncronos concorressem no mesmo pedido.
+  const idsSync = candidatos.map((c) => c.id);
+  // CLAIM via RPC SQL-puro (ver MODO ASYNC acima — o .update().or().select() quebrava no PostgREST).
+  const { data: claimedSync, error: claimErrSync } = await supabase
+    .rpc("envio_portal_claim_ids", { p_ids: idsSync });
+  if (claimErrSync) {
+    return new Response(
+      JSON.stringify({ error: `Falha ao reservar pedidos: ${claimErrSync.message}` }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
+    );
+  }
+  const claimedSyncIds = new Set((claimedSync ?? []).map((r) => (r as { id: number }).id));
+  const candidatosSync = candidatos.filter((c) => claimedSyncIds.has(c.id));
+  const { detalhes, sucesso, falhasDef, falhasTmp, indeterminados } = await processCandidatos(supabase, candidatosSync);
 
   // Se algum erro foi BROWSERLESS_TOKEN invalido, devolve 500
   const tokenInvalid = detalhes.find((d) => (d.erro ?? "").includes("BROWSERLESS_TOKEN invalido"));

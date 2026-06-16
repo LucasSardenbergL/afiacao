@@ -48,6 +48,8 @@ function KpiCards({ empresa }: { empresa: string }) {
     queryKey: ["vendas-ferramentas-kpis", empresa],
     queryFn: async () => {
       const today = new Date().toISOString().slice(0, 10);
+      // tabelas sales_quotes/farmer_bundles/farmer_bundle_rules/sales_print_jobs ainda não estão em Database
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const client = supabase as unknown as { from: (t: string) => any };
 
       const countOf = (table: string) =>

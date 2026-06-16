@@ -1,11 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
 import { Loader2, CheckCircle2, Clock, Package, Factory } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -39,7 +38,6 @@ const statusConfig: Record<string, { label: string; variant: 'default' | 'second
 };
 
 const ProductionOrders = () => {
-  const { user } = useAuth();
   const [orders, setOrders] = useState<ProductionOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -67,7 +65,7 @@ const ProductionOrders = () => {
   const handleFinalize = async (orderId: string) => {
     setFinalizingId(orderId);
     try {
-      const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+      const { error } = await supabase.functions.invoke('omie-vendas-sync', {
         body: { action: 'finalizar_ordem_producao', account: 'colacor', production_order_id: orderId },
       });
       if (error) throw error;
@@ -174,7 +172,7 @@ const ProductionOrders = () => {
                   )}
 
                   {order.completed_at && (
-                    <p className="text-xs text-green-600">
+                    <p className="text-xs text-status-success">
                       Finalizado: {format(new Date(order.completed_at), "dd/MM/yy HH:mm", { locale: ptBR })}
                     </p>
                   )}

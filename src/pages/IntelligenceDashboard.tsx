@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { supabase } from '@/integrations/supabase/client';
@@ -29,8 +29,8 @@ export default function IntelligenceDashboard() {
       const { error } = await supabase.functions.invoke('calculate-scores');
       if (error) throw error;
       toast.success('Scores recalculados com sucesso');
-    } catch (e: any) {
-      toast.error('Erro: ' + e.message);
+    } catch (e) {
+      toast.error('Erro: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setRunningScores(false);
     }

@@ -19,7 +19,6 @@ const AdminOrderDetail = () => {
     saving,
     syncingOmie,
     deleting,
-    isStaff,
     itemPrices,
     setItemPrices,
     selectedStatus,

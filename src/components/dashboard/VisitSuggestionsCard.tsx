@@ -18,6 +18,7 @@ import {
   MapPin,
   Route,
   Loader2,
+  Users,
 } from 'lucide-react';
 import { useMyVisitSuggestions } from '@/hooks/useMyVisitSuggestions';
 import type { MissionType } from '@/lib/visit-scoring/types';
@@ -55,7 +56,7 @@ export function VisitSuggestionsCard() {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-3 pb-3">
         <div>
-          <h2 className="text-base font-medium">Visitas sugeridas hoje</h2>
+          <h2 className="text-base font-medium">Visitas sugeridas — equipes de campo</h2>
           <p className="text-2xs text-muted-foreground">
             Top {suggestions.length} clientes em {selectedCity} — mix balanceado entre 4 missões
           </p>
@@ -110,6 +111,12 @@ export function VisitSuggestionsCard() {
                 <div className="text-sm font-medium truncate">{s.customer_name}</div>
                 <div className="text-2xs text-muted-foreground flex items-center gap-2 flex-wrap">
                   <Badge variant="outline" className={`${meta.color} text-2xs`}>{meta.label}</Badge>
+                  {s.coberto_de && (
+                    <Badge variant="outline" className="text-status-info text-2xs gap-1">
+                      <Users className="w-3 h-3" />
+                      Cobertura{s.coberto_de_nome ? ` — ${s.coberto_de_nome}` : ''}
+                    </Badge>
+                  )}
                   <span>score: {Math.round(s.visit_score)}</span>
                   {s.neighborhood && <span>{s.neighborhood}</span>}
                   <span>{visitLabel}</span>

@@ -150,7 +150,8 @@ async function processDadosCorantes(supabase: Supabase, rows: string[][], accoun
 
 // ─── Process dados_produto_base_embalagem ───
 async function processDadosProdutoBaseEmbalagem(supabase: Supabase, rows: string[][], account: string) {
-  let imported = 0, updated = 0, errors = 0;
+  let imported = 0, errors = 0;
+  const updated = 0;
   const errosDetalhe: Array<{ linha: number; motivo: string }> = [];
 
   for (let i = 0; i < rows.length; i++) {

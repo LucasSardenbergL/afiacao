@@ -15,13 +15,11 @@ import {
   Phone, 
   User, 
   Wrench,
-  ChevronRight,
   TrendingUp,
   ShoppingCart
 } from 'lucide-react';
-import { format, formatDistanceToNow } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
+import { whatsappLink } from '@/lib/phone';
 
 interface CustomerToolForecast {
   id: string;
@@ -37,6 +35,16 @@ interface CustomerToolForecast {
   daysUntilDue: number;
   isOverdue: boolean;
   isDueSoon: boolean;
+}
+
+interface UserToolQueryRow {
+  id: string;
+  user_id: string;
+  generated_name: string | null;
+  custom_name: string | null;
+  next_sharpening_due: string | null;
+  last_sharpened_at: string | null;
+  tool_categories: { name: string } | null;
 }
 
 interface GroupedByCustomer {
@@ -108,7 +116,7 @@ const AdminDemandForecast = () => {
       const now = new Date();
       const processedForecasts: CustomerToolForecast[] = toolsData
         .filter(tool => customerUserIds.has(tool.user_id))
-        .map((tool: any) => {
+        .map((tool: UserToolQueryRow) => {
           const profile = customerProfiles.find(p => p.user_id === tool.user_id);
           const nextDue = tool.next_sharpening_due ? new Date(tool.next_sharpening_due) : null;
           const daysUntilDue = nextDue 
@@ -355,13 +363,11 @@ const CustomerCard = ({ customer, onViewCustomer, onCreateOrder }: CustomerCardP
 
   const handleWhatsApp = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (customer.customerPhone) {
-      const phone = customer.customerPhone.replace(/\D/g, '');
-      const message = encodeURIComponent(
-        `Olá ${customer.customerName}! Notamos que suas ferramentas estão precisando de afiação. Gostaria de agendar o serviço?`
-      );
-      window.open(`https://wa.me/55${phone}?text=${message}`, '_blank');
-    }
+    const href = whatsappLink(
+      customer.customerPhone,
+      `Olá ${customer.customerName}! Notamos que suas ferramentas estão precisando de afiação. Gostaria de agendar o serviço?`,
+    );
+    if (href) window.open(href, '_blank');
   };
 
   return (

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { ilikeOr } from '@/lib/postgrest';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -105,10 +106,11 @@ export default function TintFormulas() {
           tint_embalagens!inner(descricao, volume_ml)
         `, { count: 'exact' })
         .eq('account', ACCOUNT)
+        .is('desativada_em', null)
         .order('cor_id')
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-      if (search) q = q.or(`cor_id.ilike.%${search}%,nome_cor.ilike.%${search}%`);
+      if (search) q = q.or(ilikeOr(['cor_id', 'nome_cor'], search));
       if (produtoFilter) q = q.eq('produto_id', produtoFilter);
       if (baseFilter) q = q.eq('base_id', baseFilter);
       if (onlyPersonalizada) q = q.eq('personalizada', true);

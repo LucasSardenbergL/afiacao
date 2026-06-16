@@ -75,7 +75,8 @@ vindas, mas a execução continua sendo query a query.
   esparso — sobretudo margem por produto). O usuário precisa saber o quanto confiar.
 - **Não chute nomes de coluna.** Use os nomes exatos das queries canônicas. Para pedidos
   fora do catálogo, leia `references/schema-conventions.md` e, se ainda houver dúvida,
-  `src/integrations/supabase/types.ts` (Tables nas linhas ~16–10978, Views ~10978–12075).
+  `src/integrations/supabase/types.ts` (localize as seções com `grep -n '    Tables: {'` e
+  `'    Views: {'` — o arquivo cresce a cada migration, não confie em nº de linha fixo).
   Schema errado = SQL que falha no Lovable e queima a confiança do usuário.
 - **PII / LGPD.** Resultados trazem CNPJ, razão social, dados de cliente. Trate na sessão,
   não exfiltre, não cole em lugar nenhum além da análise pedida.

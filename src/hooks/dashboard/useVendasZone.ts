@@ -6,6 +6,8 @@ import { useDashboardCompany } from '@/hooks/useDashboardCompany';
 import { useCockpitChannel } from '@/hooks/dashboard/useCockpitChannel';
 import { variantFromScore, type PriorityCandidate } from '@/lib/dashboard/priority-rules';
 import { formatCount } from '@/lib/dashboard/format';
+import { hojeSP, addDias } from '@/lib/dashboard/sp-date';
+import { agregarVendasDiaKpi, type PedidoVendasKpi } from '@/lib/dashboard/vendas-kpi-dia';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
 import type { TopListItem } from '@/components/dashboard/cockpit/CockpitTopList';
 
@@ -28,10 +30,9 @@ export function useVendasZone() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey,
     queryFn: async () => {
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-      const yesterdayStart = new Date(startOfDay);
-      yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+      const hoje = hojeSP();
+      const ontem = addDias(hoje, -1);
+      const amanha = addDias(hoje, 1);
 
       let faturadoHoje = 0;
       let faturadoOntem = 0;
@@ -39,26 +40,21 @@ export function useVendasZone() {
       let orcamentosAguardando = 0;
 
       try {
-        // sales_orders hoje
-        const { data: hoje } = await supabase
+        // Fonte do dia = order_date_kpi (date puro, 'YYYY-MM-DD') + filtro de validade,
+        // espelhando o dashboard Master (useTeamKpis): faturado conta só pedido válido
+        // (status ∉ {cancelado,rascunho}), exclui soft-deletados. order_date_kpi é
+        // imune a fuso por construção — pedidos do sync Omie deixam de cair no dia errado.
+        const { data: pedidos } = await supabase
           .from('sales_orders')
-          .select('total')
-          .gte('created_at', startOfDay.toISOString());
-        if (hoje) {
-          const rows = hoje as Array<{ total?: number | string | null }>;
-          pedidosHoje = rows.length;
-          faturadoHoje = rows.reduce((s, r) => s + Number(r.total ?? 0), 0);
-        }
-
-        // sales_orders ontem
-        const { data: ontem } = await supabase
-          .from('sales_orders')
-          .select('total')
-          .gte('created_at', yesterdayStart.toISOString())
-          .lt('created_at', startOfDay.toISOString());
-        if (ontem) {
-          const rows = ontem as Array<{ total?: number | string | null }>;
-          faturadoOntem = rows.reduce((s, r) => s + Number(r.total ?? 0), 0);
+          .select('total, status, order_date_kpi')
+          .is('deleted_at', null)
+          .gte('order_date_kpi', ontem)
+          .lt('order_date_kpi', amanha);
+        if (pedidos) {
+          const agg = agregarVendasDiaKpi(pedidos as PedidoVendasKpi[], hoje);
+          faturadoHoje = agg.faturadoHoje;
+          pedidosHoje = agg.pedidosHoje;
+          faturadoOntem = agg.faturadoOntem;
         }
       } catch { /* tabela ausente — devolve 0 */ }
 
@@ -74,9 +70,12 @@ export function useVendasZone() {
       const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       let topItems: TopListItem[] = [];
       try {
+        // NB: não dá pra embeddar profiles(name) — orders.user_id referencia
+        // auth.users, não public.profiles, então o PostgREST devolve 400. Busca
+        // os nomes num segundo lote por user_id (máx 3 ids, não é N+1).
         const { data: top } = await supabase
           .from('orders')
-          .select('id, total, status, created_at, profiles(name)')
+          .select('id, total, status, created_at, user_id')
           .eq('status', 'orcamento_enviado')
           .lt('created_at', cutoff)
           .order('total', { ascending: false })
@@ -84,12 +83,23 @@ export function useVendasZone() {
         const rows = (top ?? []) as Array<{
           id: string;
           total?: number | string | null;
-          profiles?: { name?: string | null } | null;
+          user_id?: string | null;
         }>;
+        const userIds = [...new Set(rows.map((o) => o.user_id).filter(Boolean))] as string[];
+        const nameMap = new Map<string, string>();
+        if (userIds.length > 0) {
+          const { data: profs } = await supabase
+            .from('profiles')
+            .select('user_id, name')
+            .in('user_id', userIds);
+          for (const p of (profs ?? []) as Array<{ user_id: string; name: string | null }>) {
+            if (p.name) nameMap.set(p.user_id, p.name);
+          }
+        }
         topItems = rows.map((o) => ({
           id: o.id,
           icon: FileText,
-          title: o.profiles?.name ?? 'Cliente',
+          title: (o.user_id && nameMap.get(o.user_id)) || 'Cliente',
           subtitle: `Orçamento ${fmtBRL(Number(o.total ?? 0))} aguardando >24h`,
           path: `/admin/orders/${o.id}`,
           itemType: 'orcamento_pending',

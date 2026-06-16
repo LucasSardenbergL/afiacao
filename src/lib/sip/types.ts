@@ -32,6 +32,8 @@ export interface IncomingCallInfo {
   displayName: string | null;
   /** Timestamp em que chegou */
   receivedAt: number;
+  /** SIP Call-ID (JsSIP session.id) — chave de dedup do call_log. */
+  sipCallId: string;
 }
 
 export interface SipClientEvents {
@@ -43,4 +45,6 @@ export interface SipClientEvents {
   error: (err: Error) => void;
   /** Chamada inbound chegou — vendedor decide accept/reject. PR-INBOUND-CALLS. */
   incomingCall: (info: IncomingCallInfo) => void;
+  /** Sessão inbound terminou — answered (ended) ou não (missed/cancel). */
+  incomingClosed: (info: { sipCallId: string; answered: boolean; durationSeconds: number }) => void;
 }

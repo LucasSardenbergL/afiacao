@@ -48,9 +48,16 @@ function KpiCards({ empresa }: { empresa: string }) {
   const { data } = useQuery({
     queryKey: ["gestao-governanca-kpis", empresa],
     queryFn: async () => {
-      const client = supabase as unknown as { from: (t: string) => any };
+      type HeadCountBuilder = PromiseLike<{ count: number | null }> & {
+        eq(column: string, value: string | number | boolean | undefined): HeadCountBuilder;
+      };
+      const client = supabase as unknown as {
+        from(table: string): {
+          select(columns: string, options: { count: "exact"; head: true }): HeadCountBuilder;
+        };
+      };
 
-      const countWhere = (table: string, col?: string, val?: any) =>
+      const countWhere = (table: string, col?: string, val?: string | number | boolean) =>
         safeQuery(async () => {
           let q = client.from(table).select("id", { count: "exact", head: true });
           if (col !== undefined) q = q.eq(col, val);
