@@ -92,39 +92,63 @@ O 🔴 (piso) tem trilha própria: confiança = qualidade do CMC (real vs proxy)
 
 ## 6. Copy e UI (tom acionável, honestidade a um clique)
 
-**Modo folga (💰):**
-```
-┌─ MARCENARIA SILVA · Verniz PU 3,5L · 2un ─────┐
-│ Você: R$ 106,00/un   ·   Referência: R$ 112    │
-│ 💰 +R$ 6,00/un (R$ 12 no item) de folga        │
-│    vs vendas comparáveis recentes              │
-│ [ Aplicar R$ 112,00 ]   Evidência: média · ⓘ   │
-└────────────────────────────────────────────────┘
-```
-**Modo piso (🔴):**
-```
-🔴 Abaixo do custo+imposto — você está perdendo margem
-CMC R$ 98 + imposto ≈ piso R$ 113,95 · seu preço R$ 106 (MC negativa)
-```
-**O "ⓘ por quê" expande:** p65, janela 90d, exclui este cliente, banda de quantidade, **"não estimamos aceite"**, **"não controlado por prazo/frete"**, fonte do custo.
+> **Princípio-guia (Codex, PR3):** a maior ameaça é a UI transformar evidência histórica fraca em **autoridade prescritiva** ("o sistema mandou subir"), e aí perder pedido sem provar causalidade. Trava central: **evidência visível ANTES da ação**, botão ausente em baixa confiança/proxy/discordância, e **um único vermelho** inequívoco para MC<0. Nunca usar "bom/ideal/recomendado".
 
-**Três travas anti-money-path:**
-1. **Não-destrutivo** — sugere, nunca altera o preço sozinho; "Aplicar" preenche o campo editável.
-2. **Recibos sempre** — nenhum número cego; em confiança baixa, recibo sem %.
-3. **Feature flag + modo sombra** — liga primeiro só pra founder/gestor conferir com clientes reais antes do balcão.
+### 6.1 Coexistência com o cockpit de markup (achado PR3)
+
+O carrinho **já** tem o `usePrecoCockpit` (badge 🔴🟡🟢 = markup **bruto** sobre CMC, **sem imposto**; `CartItemList.tsx:86-101`). A Régua **não** cria um segundo vermelho:
+
+- **A Régua é a autoridade do vermelho de margem.** Quando `abaixoPiso=true`, ela mostra o único alerta vermelho (`MC<0 · piso R$ X`) e o badge do cockpit naquela linha **recua a neutro** (markup% sem cor de alerta). Como `preço<CMC ⟹ preço<piso_MC`, **todo** vermelho do cockpit já é coberto pelo da Régua — sem perda de proteção, e a Régua ainda pega a **zona cega** do cockpit (`CMC ≤ preço < piso_MC`: markup bruto positivo mas MC negativa após imposto).
+- **Fallback (fail-safe):** se a Régua não tem dado (sem cliente / RPC falhou / flag off), o cockpit mantém o comportamento atual (vermelho "Abaixo do custo") — a proteção nunca some.
+- Sinais 💰 (auto-ref/benchmark) são da Régua, cor própria **não-vermelha**; o cockpit segue mostrando amarelo/verde (markup vs meta) como dado secundário.
+
+### 6.2 Anatomia (linha densa → evidência a um clique)
+
+Na linha (compacto, ao lado do preço — a linha é `text-[9px]`, sem espaço pra card inline):
+
+- 🔴 `MC<0 · piso R$ 113,95` — vermelho, **sempre** que `abaixoPiso` (proxy → sem número de ação)
+- 💰 `R$ 112 (+6%)` — folga, só evidência ≥ média
+- ⓘ discreto — confiança baixa: recibo, **sem** número nem botão
+- (nada) — `nenhum`/`oculto`/`discordancia`
+
+Clique no sinal → **popover** com recibos + disclaimers + ação (evidência antes da ação):
+
+```
+┌─ Verniz PU 3,5L · MARCENARIA SILVA · 2un ──────┐
+│ Você: R$ 106/un   ·   Referência: R$ 112/un     │
+│ 💰 folga +R$ 6/un (R$ 12 no item)               │
+│ Comparáveis recentes (mesmo porte), p65         │
+│ Base: 23 vendas · 9 clientes · 180d · exclui    │
+│       este cliente                              │
+│ ⓘ Não estimamos aceite · Não controla prazo/frete│
+│ [ Aplicar referência · R$ 112,00 ]              │
+└─────────────────────────────────────────────────┘
+```
+
+Modo piso (🔴): "Abaixo do piso MC (custo+imposto). CMC R$ 98 + imposto ≈ R$ 113,95; seu preço R$ 106 = MC negativa." Botão `Aplicar piso · R$ 113,95` só se CMC confiável; proxy → "Confira o custo real" **sem** botão. O ⓘ explica: *"Piso MC = CMC + imposto. O markup do cockpit é bruto."*
+
+### 6.3 Travas anti-money-path
+
+1. **Evidência antes da ação** — o número fica visível na linha, mas `Aplicar` só **dentro** do popover (2 cliques); nunca aplica cego em 1 clique.
+2. **Não-destrutivo** — `Aplicar referência` só preenche o campo editável (`onUpdateProductPrice`); o vendedor confirma. Nunca altera o preço sozinho.
+3. **Botão ausente** em confiança baixa/proxy/discordância — recibo sem número (o helper já degrada).
+4. **Copy neutra** — "referência", nunca "ideal/recomendado/bom"; o número é o **alvo capado**, não o teto observado.
+5. **Flag + sombra** — `regua_preco_carrinho` liga primeiro só pra founder/gestor conferir com clientes reais antes do balcão.
 
 ## 7. Arquitetura (unidades isoladas)
 
 | Unidade | Responsabilidade | Depende de |
 |---|---|---|
 | `src/lib/regua-preco/regua-preco-helpers.ts` (puro, **TDD**) | cap/gate/confiança/hierarquia/fórmulas — **oráculo** | nada (entradas numéricas) |
-| RPC SQL `get_regua_preco(p_customer, p_product, p_qty, p_account)` | comparáveis controlados, leave-one-out, p65, n_eff, piso_MC | `order_items`, `sales_orders`, `inventory_position`, DRE |
-| Tabela `regua_preco_log` + RPC de gravação | closed-loop (exposição + outcome) | auth.uid (vendedora) |
+| RPC SQL `get_regua_preco(p_customer, p_product, p_qty)` **[no banco ✅]** | FETCHER: cmc, aliquota, piso_MC, precos_cliente[], comparaveis[] (leave-one-out, banda qty, 180d, anonimizado). Account fixo `'oben'` interno. | `order_items`, `sales_orders`, `inventory_position`, `company_config` |
+| Tabela `regua_preco_log` **[no banco ✅]** | closed-loop. v1 grava via PostgREST direto (RLS staff; `salesperson_id`=`useAuth().user.id`). RPC `SECURITY DEFINER` que fixa `auth.uid()` server-side = **hardening pós-sombra** (não bloqueia v1). | auth.uid (vendedor) |
 | `src/hooks/useReguaPreco.ts` | consome a RPC, react-query | RPC |
 | `src/components/regua-preco/ReguaPrecoCard.tsx` | card (carrinho + 360) | hook |
 | Feature flag `regua_preco_carrinho` | rollout sombra→balcão | config |
 
 **Fontes:** `order_items` (quantity/discount/unit_price) + `sales_orders` (data/account) como verdade da venda; **não** `sales_price_history` (não tem quantidade). Custo via `inventory_position.cmc`.
+
+**Dados no carrinho (v1, decisão eu+Codex):** `useReguaPreco` chama a RPC single `get_regua_preco` **N× em paralelo** (react-query `useQueries`) — carrinho Oben é pequeno (1–8 itens) e a single já está no banco/serve o PR4 (360). Gates obrigatórios: só dispara com `customerUserId` + `productId` + `qty>0` + `unit_price>0`; **dedupe** por `(customer, product, qty)` (carrinho repete SKU); `queryKey` inclui o `user.id` **real** (anti-leak entre usuários, igual ao cockpit). Telemetria de latência (p95 por carrinho) registrada — se estourar, um PR futuro troca por `get_regua_preco_carrinho(p_customer, p_itens)` batch (1 round-trip). Sem essa métrica, o N+1 vira dívida invisível.
 
 ## 8. Closed-loop log (desde o v1)
 
@@ -139,6 +163,12 @@ preco_final, aplicou_bool, outcome_status, outcome_at,
 cmc_usado, cmc_confianca, aliquota_usada, evidence_version, reason_codes
 ```
 Granularidade = **linha de carrinho/cotação**, não pedido agregado. RLS: staff/Oben.
+
+**Quando gravar (decisão eu+Codex, PR3):** registrar **exibição qualificada**, não render bruto — senão o log mede clique, não conversão.
+- **Exibição:** 1 linha por `cartSessionId + product_id + sinal_exibido + preco_referencia` quando o sinal fica visível ~**800ms** (debounce, dedupe no cliente), `outcome_status='pendente'`. `cartSessionId` = uuid gerado no cliente ao montar o carrinho (`useRef`).
+- **Aplicar:** `UPDATE` da linha → `aplicou=true`, `outcome_status='aplicado'`, `preco_final`, `outcome_at` no clique de "Aplicar referência".
+- `reason_codes` **sempre** gravados (auditar quando o motor empurrou aumento — rastrear a "autoridade prescritiva" do Codex).
+- Denominador de adoção (viu × aplicou) sai daí; sem a exibição não dá pra saber se baixa adoção é "ninguém viu" ou "ninguém aplicou". `track('regua.exibida'/'regua.aplicada')` no PostHog é complemento analítico opcional (não-bloqueante).
 
 **Viés conhecido do log** (registrar, não esconder): a vendedora só aplica onde acha fácil; clientes difíceis ficam sub-representados; preço escolhido é endógeno. **Mitigação é v2** (randomização pequena e segura: sortear mostrar/não-mostrar, ou +2% vs +4% dentro de caps) — sem isso, win-rate futuro continua observacional.
 
