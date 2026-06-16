@@ -1,0 +1,47 @@
+{
+  "skill_name": "farmer-industrial",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Gera o plano semanal de ligação da farmer Joana. O resultado da query da carteira dela está no JSON anexado (uma linha por cliente: cidade, última compra, intervalo médio, gasto, tier_queda e produtos comprados com a família). Hoje é 15/06/2026 — monta o plano da próxima semana, organizado por dia conforme a rota das cidades.",
+      "expected_output": "Plano por dia da semana -> cidades da rota -> clientes. Queda crítica sinalizada. Dormentes de 2020/2023 numa lista de reativação separada (NÃO na call da semana). Ramo inferido pelo nome (cnae vazio). Mix ausente coerente com famílias reais (EPI ausente em quem lixa/pinta; completar sistema Sayerlack). Afiação só para quem corta (madeireira/metalúrgica). Roteiro de ligação + objeção + follow-up. Marcenaria Tiradentes como ativação. Rascunho explícito.",
+      "files": ["/Users/lucassardenberg/Projetos/afiacao/.claude/worktrees/keen-panini-e4e883/.claude/skills/farmer-industrial/assets/exemplo-carteira.json"],
+      "assertions": [
+        {"text": "Organiza o plano por dia da semana com as cidades certas da rota (Segunda=Formiga/Pimenta/Piumhi/Capitólio; Quarta inclui Bom Despacho e Nova Serrana; Quinta=São João del-Rei/Tiradentes; Sexta=Divinópolis)"},
+        {"text": "Marca como queda crítica (recuperação da semana) Marcenaria Boa Vista, Vidraçaria Arte & Cor, Madeireira Três Pinheiros, Metalúrgica Bom Despacho e Móveis São João"},
+        {"text": "Separa os dormentes (José Campos Marcenaria, Vidros Capitólio ME, Oficina do Marcelo — última compra em 2020/2023) numa lista de REATIVAÇÃO à parte, e NÃO os trata como ligação prioritária da semana"},
+        {"text": "Infere o ramo pelo NOME do cliente (cnae/customer_type ausentes) e não cruza ramos errados (não oferece afiação a vidraçaria/pintor)"},
+        {"text": "Aponta mix ausente coerente com as famílias reais: ex. oferecer EPI a quem lixa/pinta e não compra (Móveis Arte Nova), ou completar o sistema Sayerlack de quem leva seladora mas não verniz/base (Marcenaria do Alberto)"},
+        {"text": "Sugere afiação apenas para quem corta (Madeireira Três Pinheiros, Madeireira Silva, Metalúrgica Bom Despacho), não para vidraçaria/acabador"},
+        {"text": "Gera roteiro de LIGAÇÃO (abertura/diagnóstico/oferta), não de visita, ao menos para os clientes em queda"},
+        {"text": "Inclui ao menos uma objeção provável com resposta sugerida"},
+        {"text": "Trata Marcenaria Tiradentes como ativação/nunca comprou, não como queda"},
+        {"text": "Deixa explícito que é rascunho para a Farmer revisar e que nada é enviado automaticamente"}
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Da carteira da Joana (JSON anexado), me diz quais clientes estão sumindo / caindo de frequência e o que a vendedora deve falar com cada um pra recuperar. Hoje é 15/06/2026.",
+      "expected_output": "Lista os clientes em queda recente (crítico/alerta) com explicação humana do atraso e gancho coerente com o que compram. Separa explicitamente os dormentes de 2020/2023 (reativação à parte). Não inventa promoção.",
+      "files": ["/Users/lucassardenberg/Projetos/afiacao/.claude/worktrees/keen-panini-e4e883/.claude/skills/farmer-industrial/assets/exemplo-carteira.json"],
+      "assertions": [
+        {"text": "Identifica os clientes em queda crítica recente: Marcenaria Boa Vista, Vidraçaria Arte & Cor, Madeireira Três Pinheiros, Metalúrgica Bom Despacho, Móveis São João"},
+        {"text": "Separa/ressalva os dormentes (José Campos, Vidros Capitólio, Oficina do Marcelo — sumidos desde 2020/2023) como reativação à parte, não os mistura com a queda recente da semana"},
+        {"text": "Para cada cliente em queda, explica o atraso em linguagem humana citando dias desde a última compra vs. intervalo médio"},
+        {"text": "Dá um gancho de recuperação coerente com o que o cliente já compra (ex.: afiação/cinta para madeireira; completar acabamento para quem leva seladora)"},
+        {"text": "Não inventa promoção, desconto ou data comemorativa que não foi fornecida"}
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Monta o plano semanal de ligação da farmer Carla. Obs: rodei o pré-flight no Lovable e voltou pedidos_total = 0 e clientes_com_pedido = 0 (a Carla é nova e a carteira dela ainda não tem histórico de compra no sistema).",
+      "expected_output": "A skill NÃO deve fabricar um plano. Deve reconhecer que sem histórico de compra real o plano não tem valor (condição de valor), explicar de forma parceira e orientar o próximo passo (conseguir dados / verificar atribuição / cenários).",
+      "files": [],
+      "assertions": [
+        {"text": "NÃO gera um plano de carteira fabricado/genérico com clientes inventados"},
+        {"text": "Explica que sem histórico de compra real o plano viraria adivinhação e por isso não deve ser gerado"},
+        {"text": "Orienta um próximo passo concreto (conseguir histórico, verificar status/atribuição, cenários banco-vazio vs carteira-nova) em tom de parceria, não recusa seca"}
+      ]
+    }
+  ]
+}
