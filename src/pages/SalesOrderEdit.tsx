@@ -35,6 +35,7 @@ const SalesOrderEdit = () => {
     tintProductAsProduct,
     filteredProducts,
     subtotal,
+    invalidPriceItemIndices,
     handleSave,
     isBlocked,
   } = useSalesOrderEdit();
@@ -123,6 +124,7 @@ const SalesOrderEdit = () => {
                 item={item}
                 index={index}
                 isBlocked={isBlocked}
+                isPriceInvalid={invalidPriceItemIndices.includes(index)}
                 onUpdate={updateItem}
                 onRemove={removeItem}
               />
@@ -177,7 +179,7 @@ const SalesOrderEdit = () => {
         {!isBlocked && (
           <Button
             onClick={handleSave}
-            disabled={saving || items.length === 0}
+            disabled={saving || items.length === 0 || invalidPriceItemIndices.length > 0}
             className="w-full gap-2"
             size="lg"
           >
