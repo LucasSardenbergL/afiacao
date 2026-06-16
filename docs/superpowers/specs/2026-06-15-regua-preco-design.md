@@ -159,6 +159,21 @@ Granularidade = **linha de carrinho/cotação**, não pedido agregado. RLS: staf
 | SKU **concentrado** num cliente | `n_eff` gate oculta o benchmark |
 | Uso indevido ("o cliente aceita") | copy sem "aceite/chance"; não autopreenche; sem % em confiança baixa |
 
+## 10.1 Resultados da auditoria PR0 (read-only, executada 2026-06-16)
+
+Rodada via `psql-ro` **antes** do plano, pra blindar premissas. Confirmou e ajustou o design:
+
+| Pergunta | Resposta | Impacto |
+|---|---|---|
+| `unit_price` é líquido? | **Sim.** Desconto por item E por cabeçalho são **0% na Oben** (0 de 3.143 itens / 1.508 pedidos, 90d) | Confounder de desconto **eliminado**; `preço_líquido = unit_price` direto |
+| Cobertura do benchmark (`n≥15`, `≥5` clientes) | 90d: **55/337 SKUs (16%)** · 180d: **81/424 (19%)** | Janela do benchmark → **180d com decaimento de recência**; é o sinal de **menor** cobertura |
+| Cobertura auto-referência | **50%** dos pares (cliente, SKU) recompram em 365d (1.743/3.479) | Sinal 2 é o **cavalo de batalha** |
+| Cobertura piso de MC | **~78%** dos SKUs vendidos têm CMC (263/337) | Sinal 1 é o de **maior** cobertura — confirma a hierarquia |
+| Account de CMC | `inventory_position.account` ∈ {`oben`, `vendas`} cobrem quase os mesmos SKUs | **Questão aberta PR1:** definir o account canônico de CMC da Oben |
+| Alíquota efetiva | **`fin_kpi_tributario`** tem `aliquota_efetiva` + `icms/pis/cofins` por `company`/mês | Usar **(icms+pis+cofins)/receita** (impostos sobre venda, sem IRPJ/CSLL) do mês recente |
+
+**Ordem de cobertura confirmada:** piso de MC (~78%) > auto-referência (~50%) > benchmark (~19%). O plano prioriza nessa ordem.
+
 ## 11. Validação
 
 - **Helper puro:** vitest (TDD) — fórmulas, gates, hierarquia, degradação. Casos: amostra mínima, SKU concentrado (n_eff), custo ausente, MC negativa exata na fronteira, discount inválido.
