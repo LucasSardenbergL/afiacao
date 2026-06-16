@@ -5,7 +5,10 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist"] },
+  // worktrees git aninhados de outras sessões Claude (.claude/.claire são gitignored;
+  // o CI nunca os vê). Sem isto, `eslint .` local recorre neles e reporta erros-fantasma
+  // (no-explicit-any/prefer-const etc.) de código que não pertence a este checkout.
+  { ignores: ["dist", ".claude/**", ".claire/**"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],
