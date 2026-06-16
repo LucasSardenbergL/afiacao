@@ -7,6 +7,7 @@ import { SessionStartCard } from '@/components/farmer/copilot/SessionStartCard';
 import { DirectionIndicator } from '@/components/farmer/copilot/DirectionIndicator';
 import { SuggestionCard } from '@/components/farmer/copilot/SuggestionCard';
 import { ActivePlanCard } from '@/components/farmer/copilot/ActivePlanCard';
+import { OfertaCruaCard } from '@/components/farmer/copilot/OfertaCruaCard';
 import { ManualTextInput } from '@/components/farmer/copilot/ManualTextInput';
 import { TranscriptCard } from '@/components/farmer/copilot/TranscriptCard';
 import { AnalysisHistoryCard } from '@/components/farmer/copilot/AnalysisHistoryCard';
@@ -16,6 +17,7 @@ const FarmerCopilot = () => {
     navigate,
     isStaff,
     isImpersonating,
+    userId,
     copilot,
     selectedCustomer,
     setSelectedCustomer,
@@ -111,6 +113,11 @@ const FarmerCopilot = () => {
                 showPlan={showPlan}
                 onToggle={() => setShowPlan(!showPlan)}
               />
+            )}
+
+            {/* Fallback — cliente sem plano pré-gerado: exibe melhor bundle pendente */}
+            {!activePlan && selectedCustomer && userId && (
+              <OfertaCruaCard customerId={selectedCustomer} farmerId={userId} />
             )}
 
             {copilot.isAnalyzing && (
