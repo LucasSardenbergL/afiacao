@@ -194,6 +194,26 @@ Deno.serve(async (req) => {
     if (page.length < PAGE) break;
   }
 
+  // Fornecedores fora da carteira (cliente_classificacao.excluir_da_carteira): entram com
+  // eligible=false (combinado com o eligible-de-clone abaixo). FAIL-CLOSED: erro de leitura aborta
+  // ANTES de escrever — senão um run sem o filtro reverteria o cleanup (fornecedor voltaria à carteira).
+  const flaggeds = new Set<string>();
+  {
+    const FPAGE = 1000;
+    for (let from = 0; ; from += FPAGE) {
+      const { data, error } = await supabase
+        .from('cliente_classificacao')
+        .select('user_id')
+        .eq('excluir_da_carteira', true)
+        .order('user_id', { ascending: true })
+        .range(from, from + FPAGE - 1);
+      if (error) { console.error('[carteira-rebuild] load flaggeds error:', error.message); return fail(`flaggeds: ${error.message}`); }
+      const page = (data ?? []) as Array<{ user_id: string }>;
+      for (const r of page) flaggeds.add(r.user_id);
+      if (page.length < FPAGE) break;
+    }
+  }
+
   // 2. Computar (espelho), canonical-aware
   const { assignments, conflicts, orphanCount, chainViolations } = computeCarteira(clientes, vendedorMap, hunterUserId, aliasMap);
 
@@ -211,7 +231,8 @@ Deno.serve(async (req) => {
     owner_user_id: a.owner_user_id,
     source: a.source,
     omie_codigo_vendedor: a.omie_codigo_vendedor,
-    eligible: a.eligible,
+    // eligible = clone (a.eligible) E não-fornecedor. Fornecedor flaggeado → false (espelho reversível).
+    eligible: a.eligible && !flaggeds.has(a.customer_user_id),
     updated_at: now,
     last_synced_at: now,
   }));

@@ -155,4 +155,15 @@ Apontou: ressurreição por escritores de score; cleanup por flag (não "deixar 
 7. **Idempotência/staging** → **§4.1/§4.2**.
 8. **Rollout invertido** → filtros antes da flag → **§6**.
 9. **RLS aberta** da flag → tabela própria service_role → **§4.1/§8**.
-P2: rebuild last-write-wins em múltiplas linhas/user; vazamentos laterais (`nao_vinculados`, snapshots de positivação) → **§7**.
+P2: rebuild last-write-wins em múltiplas linhas/user; vazamentos laterais (`nao_vinculados`, snapshots de positivação) → **§7**. (Nota: o "múltiplas linhas/user" não se aplica — `carteira_assignments` é `UNIQUE(customer_user_id)`, descoberto no PG17.)
+
+### 11c. Régua A + Codex pós-implementação (2026-06-15)
+**Régua A (founder):** o volume real (627 fornecedores na carteira; 98 com venda — incl. cliente de 659 pedidos; 529 sem venda) tornou a curadoria pura inviável → regra final **`excluir = tag fornec/transp AND NOT venda real AND NOT exceção`** ("tem pedido = cliente, fica"). O trigger passou a derivar **só `is_fornecedor`** (excluir é da RPC — fail-safe). **Compõe** com a Consolidação B-lite (clones): `eligible = é_canônico && não_é_fornecedor`.
+
+**Codex adversarial pós-implementação (gpt-5, high) — 5 P1 + P2 corrigidos:**
+1. `recalc-client` (scoring+visit) ignoravam `flagRes.error` → **fail-closed** (erro de leitura não recria score de fornecedor).
+2. `useFarmerScoring` idem → aborta o upsert em erro de leitura.
+3. **Sem cleanup recorrente** (fornecedor classificado pós-rollout mantinha score velho; maioria dos leitores não filtra `eligible`) → nova RPC **`aplicar_exclusao_fornecedores()`** (classificar + `eligible=false` + apaga scores) no cron nightly.
+4. `reverter` setava `eligible=true` incondicional → respeita `customer_canonical_alias` (não ressuscita clone B-lite).
+5. Predicado de venda: **`orcamento` saiu de "venda"** (deny-list mantida = fail-safe p/ status novo desconhecido = mantém cliente).
+P2: `v_enfileirados` somava só a 2ª fila. Validação: **PG17 14 asserts** (`db/test-fornecedores-classificacao.sh`) + typecheck + lint + oráculo.

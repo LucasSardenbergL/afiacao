@@ -18,13 +18,16 @@ describe('temTagNaoCliente', () => {
 });
 
 describe('deveExcluirDaCarteira', () => {
-  it('fornecedor sem exceção → exclui', () => {
-    expect(deveExcluirDaCarteira({ tags: ['Fornecedor'], isExcecao: false })).toBe(true);
+  it('fornecedor sem venda, sem exceção → exclui', () => {
+    expect(deveExcluirDaCarteira({ tags: ['Fornecedor'], temVendaReal: false, isExcecao: false })).toBe(true);
   });
-  it('fornecedor COM exceção (cliente real) → mantém', () => {
-    expect(deveExcluirDaCarteira({ tags: ['Fornecedor'], isExcecao: true })).toBe(false);
+  it('fornecedor COM venda real → mantém (é cliente: regra A)', () => {
+    expect(deveExcluirDaCarteira({ tags: ['Fornecedor'], temVendaReal: true, isExcecao: false })).toBe(false);
   });
-  it('não-fornecedor → mantém (independe de exceção)', () => {
-    expect(deveExcluirDaCarteira({ tags: ['Cliente'], isExcecao: false })).toBe(false);
+  it('fornecedor COM exceção curada → mantém', () => {
+    expect(deveExcluirDaCarteira({ tags: ['Fornecedor'], temVendaReal: false, isExcecao: true })).toBe(false);
+  });
+  it('não-fornecedor → mantém (independe de venda/exceção)', () => {
+    expect(deveExcluirDaCarteira({ tags: ['Cliente'], temVendaReal: false, isExcecao: false })).toBe(false);
   });
 });

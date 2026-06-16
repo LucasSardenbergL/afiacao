@@ -63,6 +63,20 @@ Deno.serve(async (req) => {
     if (aRows.length < 1000) break;
   }
 
+  // Fornecedores fora da carteira: clientes marcados p/ exclusão não entram no decay
+  // (defesa em profundidade — o visit-score-recalc-client também pula; aqui evita o fan-out à toa).
+  const flaggeds = new Set<string>();
+  for (let fp = 0; ; fp++) {
+    const { data: fPage } = await supabase
+      .from('cliente_classificacao')
+      .select('user_id')
+      .eq('excluir_da_carteira', true)
+      .range(fp * 1000, fp * 1000 + 999);
+    const fRows = (fPage ?? []) as Array<{ user_id: string }>;
+    for (const r of fRows) flaggeds.add(r.user_id);
+    if (fRows.length < 1000) break;
+  }
+
   const [callsRes, visitsRes] = await Promise.all([
     supabase.from('farmer_calls')
       .select('customer_user_id, farmer_id')
@@ -77,12 +91,14 @@ Deno.serve(async (req) => {
   // Dedup por CLIENTE (1 score por cliente); farmer_id = dono (fallback: ator da atividade).
   const unique = new Map<string, { customer_user_id: string; farmer_id: string }>();
   for (const row of (callsRes.data ?? []) as Array<{ customer_user_id: string; farmer_id: string }>) {
+    if (flaggeds.has(row.customer_user_id)) continue;
     unique.set(row.customer_user_id, {
       customer_user_id: row.customer_user_id,
       farmer_id: ownerMap.get(row.customer_user_id) ?? row.farmer_id,
     });
   }
   for (const row of (visitsRes.data ?? []) as Array<{ customer_user_id: string; visited_by: string }>) {
+    if (flaggeds.has(row.customer_user_id)) continue;
     unique.set(row.customer_user_id, {
       customer_user_id: row.customer_user_id,
       farmer_id: ownerMap.get(row.customer_user_id) ?? row.visited_by,
