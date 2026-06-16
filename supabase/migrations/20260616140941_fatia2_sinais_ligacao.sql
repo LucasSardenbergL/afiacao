@@ -31,9 +31,9 @@ BEGIN
      AND (TG_OP = 'INSERT' OR NEW.sinais_ligacao IS DISTINCT FROM OLD.sinais_ligacao)
      AND NEW.customer_user_id IS NOT NULL
      AND NEW.farmer_id IS NOT NULL THEN
-    INSERT INTO public.score_recalc_queue (customer_user_id, farmer_id, reason, source_event_id)
+    INSERT INTO public.score_recalc_queue (customer_user_id, farmer_id, reason, source_call_id)
     VALUES (NEW.customer_user_id, NEW.farmer_id, 'sinais_extraidos', NEW.id)
-    ON CONFLICT DO NOTHING;
+    ON CONFLICT (customer_user_id) WHERE processed_at IS NULL DO NOTHING;
   END IF;
   RETURN NEW;
 END;
