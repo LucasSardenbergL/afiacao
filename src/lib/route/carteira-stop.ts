@@ -20,6 +20,10 @@ export interface CarteiraRow {
   business_hours_close: string | null;
   ultima_visita: string | null;
   dias_desde_visita: number | null;
+  // Geo resolvido pela RPC (Sub-PR 1): cep_geo por zip_code → centróide município.
+  lat: number | null;
+  lng: number | null;
+  precision: string | null;
 }
 
 export interface CarteiraStopDraft {
@@ -40,11 +44,17 @@ export interface CarteiraStopDraft {
   businessHoursOpen: string | null;
   businessHoursClose: string | null;
   diasDesdeVisita: number | null;
+  lat?: number;
+  lng?: number;
+  precisao?: string;
 }
 
 const s = (v: string | null | undefined): string => (v ?? '').trim();
 
 export function carteiraRowToStop(row: CarteiraRow, cityNome: string): CarteiraStopDraft {
+  // Coord já vem resolvida da RPC — a carteira NÃO geocodifica mais em memória.
+  // Adota só com ambos não-null (defensivo; a RPC COALESCE os dois da mesma fonte).
+  const temGeo = row.lat != null && row.lng != null;
   return {
     id: `carteira-cidade-${row.user_id}`,
     customerUserId: row.user_id,
@@ -63,5 +73,7 @@ export function carteiraRowToStop(row: CarteiraRow, cityNome: string): CarteiraS
     businessHoursOpen: s(row.business_hours_open) || null,
     businessHoursClose: s(row.business_hours_close) || null,
     diasDesdeVisita: row.dias_desde_visita,
+    ...(temGeo ? { lat: row.lat as number, lng: row.lng as number } : {}),
+    ...(row.precision ? { precisao: row.precision } : {}),
   };
 }

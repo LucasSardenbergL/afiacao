@@ -80,6 +80,10 @@ export interface RouteStop {
   // Recência da carteira (RPC carteira_por_municipio); null = nunca visitado.
   // Capturado no Sub-PR 2; consumido pelas cores do mapa no Sub-PR 4.
   diasDesdeVisita?: number | null;
+  // Precisão da coordenada resolvida pela RPC (cep_geo → centróide município).
+  // Geocoding por CEP (Sub-PR 2): dirige o pino aproximado e a fila. `string` (não
+  // o union Precisao) evita import circular com marker-visual; ver precisaoVisual.
+  precisao?: string;
 }
 
 /** Cidade retornada por radar_contagem_por_municipio, usada no CitySelector. */

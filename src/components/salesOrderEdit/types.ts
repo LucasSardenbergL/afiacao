@@ -12,6 +12,7 @@ export interface OrderItem {
   valor_total: number;
   tint_cor_id?: string;
   tint_nome_cor?: string;
+  tint_formula_id?: string;
 }
 
 export interface OmiePayload {

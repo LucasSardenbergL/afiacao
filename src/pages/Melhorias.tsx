@@ -10,6 +10,7 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { MelhoriaThread } from '@/components/melhorias/MelhoriaThread';
 import { MelhoriaDialog } from '@/components/melhorias/MelhoriaDialog';
+import { MelhoriaStatusBadge } from '@/components/melhorias/MelhoriaStatusBadge';
 import {
   useMeusMelhoriaItens,
   useMelhoriaThread,
@@ -18,24 +19,7 @@ import {
 import { podeReplicar } from '@/lib/melhorias/triagem-helpers';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import type { MelhoriaItem, MelhoriaStatus } from '@/lib/melhorias/types';
-import { cn } from '@/lib/utils';
-
-// ── Badge de status ──────────────────────────────────────────────────────────
-
-const STATUS_LABEL: Record<MelhoriaStatus, string> = {
-  aberto: 'Aberto',
-  em_andamento: 'Em andamento',
-  resolvido: 'Resolvido',
-  descartado: 'Descartado',
-};
-
-const STATUS_CLASSES: Record<MelhoriaStatus, string> = {
-  aberto: 'bg-status-info-bg text-status-info border-transparent',
-  em_andamento: 'bg-status-warning-bg text-status-warning border-transparent',
-  resolvido: 'bg-status-success-bg text-status-success border-transparent',
-  descartado: 'bg-muted text-muted-foreground border-transparent',
-};
+import type { MelhoriaItem } from '@/lib/melhorias/types';
 
 // ── Card expansível ──────────────────────────────────────────────────────────
 
@@ -72,14 +56,7 @@ function MelhoriaCard({ item, userId }: { item: MelhoriaItem; userId: string }) 
       >
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-1.5 mb-1">
-            <span
-              className={cn(
-                'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold',
-                STATUS_CLASSES[item.status],
-              )}
-            >
-              {STATUS_LABEL[item.status]}
-            </span>
+            <MelhoriaStatusBadge status={item.status} />
             {item.tipo && (
               <Badge variant="outline" className="text-xs capitalize">
                 {item.tipo}

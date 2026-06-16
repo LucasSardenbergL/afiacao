@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 238
+-- Total de custom migrations: 245
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -200,7 +200,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260606140000', 'detectar_skus_sem_grupo_self_heal', '20260606140000_detectar_skus_sem_grupo_self_heal.sql'),
   ('20260606150000', 'a2_cmc_base_custo_view', '20260606150000_a2_cmc_base_custo_view.sql'),
   ('20260606150000', 'reposicao_qtde_inteira', '20260606150000_reposicao_qtde_inteira.sql'),
+  ('20260606170000', 'fornecedores_classificacao_schema', '20260606170000_fornecedores_classificacao_schema.sql'),
   ('20260606170000', 'reposicao_fix_aplicar_promocoes', '20260606170000_reposicao_fix_aplicar_promocoes.sql'),
+  ('20260606170100', 'fornecedores_classificacao_rpcs', '20260606170100_fornecedores_classificacao_rpcs.sql'),
   ('20260606180000', 'reposicao_aplicar_promocoes_hardening', '20260606180000_reposicao_aplicar_promocoes_hardening.sql'),
   ('20260606180000', 'reposicao_preco_pedido_cmc', '20260606180000_reposicao_preco_pedido_cmc.sql'),
   ('20260606190000', 'reposicao_preco_pedido_cmc_account', '20260606190000_reposicao_preco_pedido_cmc_account.sql'),
@@ -208,6 +210,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260606200000', 'reposicao_promo_forward_buying_min', '20260606200000_reposicao_promo_forward_buying_min.sql'),
   ('20260606210000', 'order_feed_view', '20260606210000_order_feed_view.sql'),
   ('20260606230000', 'negociacao_paralela_v2_cleanup', '20260606230000_negociacao_paralela_v2_cleanup.sql'),
+  ('20260606240000', 'cron_sync_inventory_full', '20260606240000_cron_sync_inventory_full.sql'),
   ('20260608120000', 'tool_spec_custom_option', '20260608120000_tool_spec_custom_option.sql'),
   ('20260609085244', 'data_health_check_familia_ausente', '20260609085244_data_health_check_familia_ausente.sql'),
   ('20260609150000', 'reposicao_alerta_pedido_minimo', '20260609150000_reposicao_alerta_pedido_minimo.sql'),
@@ -256,7 +259,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615140000', 'tint_promote_indices_timeout', '20260615140000_tint_promote_indices_timeout.sql'),
   ('20260615150000', 'cockpit_preco_fixes', '20260615150000_cockpit_preco_fixes.sql'),
   ('20260615160000', 'tint_promote_set_based', '20260615160000_tint_promote_set_based.sql'),
+  ('20260615182814', 'vincular_tint_skus_omie_orfaos', '20260615182814_vincular_tint_skus_omie_orfaos.sql'),
+  ('20260615190000', 'geocoding_cep_geo', '20260615190000_geocoding_cep_geo.sql'),
+  ('20260615194500', 'fix_tarefas_matcher_enum', '20260615194500_fix_tarefas_matcher_enum.sql'),
   ('20260615200000', 'tint_get_price_base', '20260615200000_tint_get_price_base.sql'),
+  ('20260615210000', 'reposicao_auto_aprovacao_v2', '20260615210000_reposicao_auto_aprovacao_v2.sql'),
   ('20260615210000', 'tint_get_prices_batch', '20260615210000_tint_get_prices_batch.sql')
 )
 SELECT
@@ -968,12 +975,20 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('detectar_skus_sem_grupo_exclui_04', 'function', 'public', 'detectar_skus_sem_grupo', ''),
   ('detectar_skus_sem_grupo_self_heal', 'function', 'public', 'detectar_skus_sem_grupo', ''),
   ('reposicao_qtde_inteira', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('fornecedores_classificacao_schema', 'table', 'public', 'cliente_classificacao', ''),
+  ('fornecedores_classificacao_schema', 'table', 'public', 'fornecedor_excecao', ''),
   ('reposicao_fix_aplicar_promocoes', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
+  ('fornecedores_classificacao_rpcs', 'function', 'public', 'classificar_clientes_fornecedores', ''),
+  ('fornecedores_classificacao_rpcs', 'function', 'public', 'aplicar_exclusao_fornecedores', ''),
+  ('fornecedores_classificacao_rpcs', 'function', 'public', 'reverter_exclusao_fornecedor', ''),
+  ('fornecedores_classificacao_rpcs', 'function', 'public', 'cliente_classificacao_derive', ''),
+  ('fornecedores_classificacao_rpcs', 'trigger', 'public', 'trg_cliente_classificacao_derive', 'cliente_classificacao'),
   ('reposicao_aplicar_promocoes_hardening', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('reposicao_preco_pedido_cmc', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_preco_pedido_cmc_account', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_qtde_inteira_persist', 'function', 'public', 'reposicao_persistir_qtde_inteira', ''),
   ('reposicao_promo_forward_buying_min', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
+  ('cron_sync_inventory_full', 'cron_job', 'cron', 'sync-inventory-full-vendas-daily', ''),
   ('tool_spec_custom_option', 'function', 'public', 'adicionar_opcao_tool_spec', ''),
   ('data_health_check_familia_ausente', 'function', 'public', '_data_health_compute', ''),
   ('data_health_check_familia_ausente', 'function', 'public', 'data_health_watchdog', ''),
@@ -1156,7 +1171,21 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cockpit_preco_fixes', 'function', 'public', 'get_preco_cockpit', ''),
   ('cockpit_preco_fixes', 'rls_policy', 'public', 'cmc_ledger_select_gestor', 'cmc_ledger'),
   ('tint_promote_set_based', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('geocoding_cep_geo', 'table', 'public', 'cep_geo', ''),
+  ('geocoding_cep_geo', 'table', 'public', 'municipio_geo', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'normalizar_cep', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'rank_precisao', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'cep_geo_upsert', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'carteira_por_municipio', ''),
+  ('geocoding_cep_geo', 'function', 'public', 'radar_prospects_para_rota', ''),
+  ('geocoding_cep_geo', 'rls_policy', 'public', 'cep_geo_sel', 'cep_geo'),
+  ('geocoding_cep_geo', 'rls_policy', 'public', 'municipio_geo_sel', 'municipio_geo'),
+  ('fix_tarefas_matcher_enum', 'function', 'public', 'tarefas_matcher_tick', ''),
   ('tint_get_price_base', 'function', 'public', 'get_tint_price', ''),
+  ('reposicao_auto_aprovacao_v2', 'table', 'public', 'reposicao_auto_aprovacao_log', ''),
+  ('reposicao_auto_aprovacao_v2', 'index', 'public', 'reposicao_auto_aprovacao_log_criado_em', 'reposicao_auto_aprovacao_log'),
+  ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
+  ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
   ('tint_get_prices_batch', 'function', 'public', 'get_tint_prices', '')
 )
 SELECT

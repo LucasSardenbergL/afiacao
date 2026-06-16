@@ -33,4 +33,13 @@ describe('escapeHtml', () => {
     expect(escapeHtml('Rua das Flores, 123')).toBe('Rua das Flores, 123');
     expect(escapeHtml('')).toBe('');
   });
+
+  it('trata null/undefined como string vazia (canônico p/ os call-sites de print)', () => {
+    expect(escapeHtml(null)).toBe('');
+    expect(escapeHtml(undefined)).toBe('');
+  });
+
+  it('caso composto — paridade com os print-layouts consolidados', () => {
+    expect(escapeHtml('<b>"a" & \'b\'>')).toBe('&lt;b&gt;&quot;a&quot; &amp; &#39;b&#39;&gt;');
+  });
 });

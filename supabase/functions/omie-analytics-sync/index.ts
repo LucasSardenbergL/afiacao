@@ -65,6 +65,7 @@ interface OmieClienteCadastro {
   nome_fantasia?: string;
   cidade?: string;
   estado?: string;
+  tags?: Array<{ tag?: string } | string>;
 }
 
 interface OmieListarClientesResponse {
@@ -311,6 +312,7 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       omie_codigo_vendedor: number | null;
       updated_at: string;
     }>();
+    const tagsByUser = new Map<string, string[]>();
     let pagina = 1;
     let totalPaginas = 1;
 
@@ -336,6 +338,11 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
           omie_codigo_vendedor: c.codigo_vendedor || null,
           updated_at: new Date().toISOString(),
         });
+        // Captura tags do cadastro Omie para derivar is_fornecedor / excluir_da_carteira depois.
+        const tags = (c.tags || [])
+          .map((t) => (typeof t === "string" ? t : (t.tag ?? "")))
+          .filter((t) => t.length > 0);
+        tagsByUser.set(userId, tags);
       }
 
       console.log(`[Sync ${account}] Clientes página ${pagina}/${totalPaginas}`);
@@ -352,6 +359,23 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       if (upErr) throw new Error(`upsert omie_clientes: ${upErr.message}`);
       totalSynced += chunk.length;
     }
+
+    // Upsert das tags em cliente_classificacao (prova se o ListarClientes em lote retorna tags).
+    // Grava user_id + tags_omie + tags_synced_at; as colunas derivadas (is_fornecedor,
+    // excluir_da_carteira) ficam com o default da tabela e serão calculadas em outra tarefa.
+    const tagsNowIso = new Date().toISOString();
+    const tagRows = Array.from(tagsByUser.entries()).map(([user_id, tags_omie]) => ({
+      user_id,
+      tags_omie,
+      tags_synced_at: tagsNowIso,
+    }));
+    for (let i = 0; i < tagRows.length; i += 500) {
+      const { error: tagErr } = await db
+        .from("cliente_classificacao")
+        .upsert(tagRows.slice(i, i + 500), { onConflict: "user_id" });
+      if (tagErr) throw new Error(`upsert cliente_classificacao: ${tagErr.message}`);
+    }
+    console.log(`[Sync ${account}] tags gravadas em cliente_classificacao: ${tagRows.length} clientes`);
 
     await updateSyncState(db, "customers", account, {
       status: "complete",
@@ -842,6 +866,91 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
     return { totalSynced };
   } catch (error) {
     await updateSyncState(db, "inventory", account, { status: "error", error_message: String(error) });
+    throw error;
+  }
+}
+
+// ======== SYNC INVENTORY FULL (catálogo inteiro, p/ cobertura de CMC) ========
+// Diferente do syncInventory (30 min, só itens COM saldo): usa cExibeTodos:"S" pra trazer
+// o catálogo inteiro (inclusive saldo 0) e popular o cmc. Bulk (sem o N+1 do syncInventory)
+// + roda em background (waitUntil) por causa do volume (~5x). Foco: inventory_position.cmc
+// (fonte de custo do EOQ da Reposição). NÃO toca product_costs/omie_products (não-objetivo v1).
+async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
+  await updateSyncState(db, "inventory_full", account, { status: "running", error_message: null });
+  try {
+    // 1) Map omie_products: omie_codigo_produto -> id (bulk paginado, fura o cap de 1000 do PostgREST)
+    const idMap = new Map<number, string>();
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await db
+        .from("omie_products")
+        .select("id, omie_codigo_produto")
+        .range(from, from + 999);
+      if (error) throw error;
+      const rows = data ?? [];
+      for (const r of rows) idMap.set(Number(r.omie_codigo_produto), r.id as string);
+      if (rows.length < 1000) break;
+    }
+
+    // 2) Paginar ListarPosEstoque com cExibeTodos:"S" (callOmie já tem retry/backoff p/ falha transitória)
+    let pagina = 1;
+    let totalPaginas = 1;
+    let totalSynced = 0;
+    const invRows: Array<{
+      omie_codigo_produto: number;
+      product_id: string | null;
+      saldo: number;
+      cmc: number;
+      preco_medio: number;
+      account: string;
+      synced_at: string;
+    }> = [];
+    while (pagina <= totalPaginas) {
+      const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
+        nPagina: pagina,
+        nRegPorPagina: 100,
+        dDataPosicao: new Date().toLocaleDateString("pt-BR"),
+        cExibeTodos: "S",
+      })) as unknown as OmieListarPosEstoqueResponse;
+
+      totalPaginas = result.nTotPaginas || 1;
+      const now = new Date().toISOString();
+      for (const prod of result.produtos || []) {
+        const codProd = prod.nCodProd;
+        if (!codProd) continue;
+        invRows.push({
+          omie_codigo_produto: codProd,
+          product_id: idMap.get(codProd) ?? null,
+          saldo: prod.nSaldo ?? 0,
+          cmc: prod.nCMC ?? 0,
+          preco_medio: prod.nPrecoMedio ?? 0,
+          account,
+          synced_at: now,
+        });
+        totalSynced++;
+      }
+      console.log(`[Sync ${account}] inventory_full página ${pagina}/${totalPaginas} — ${totalSynced} itens acumulados`);
+      pagina++;
+    }
+
+    // 3) Upsert em lote (chunks de 500) — onConflict igual ao syncInventory
+    const CHUNK = 500;
+    for (let i = 0; i < invRows.length; i += CHUNK) {
+      const slice = invRows.slice(i, i + CHUNK);
+      const { error } = await db
+        .from("inventory_position")
+        .upsert(slice, { onConflict: "omie_codigo_produto,account" });
+      if (error) throw error;
+    }
+
+    await updateSyncState(db, "inventory_full", account, {
+      status: "complete",
+      total_synced: totalSynced,
+      last_sync_at: new Date().toISOString(),
+      last_page: totalPaginas,
+    });
+    return { totalSynced };
+  } catch (error) {
+    await updateSyncState(db, "inventory_full", account, { status: "error", error_message: String(error) });
     throw error;
   }
 }
@@ -1578,6 +1687,35 @@ serve(async (req) => {
       case "sync_inventory":
         result = await syncInventory(supabaseAdmin, account);
         break;
+      case "sync_inventory_full": {
+        // Guard de UX "já em andamento" (não duplica o trabalho de catálogo se um run ainda roda).
+        const { data: stFull } = await supabaseAdmin
+          .from("sync_state")
+          .select("status, last_sync_at, updated_at")
+          .eq("entity_type", "inventory_full")
+          .eq("account", account)
+          .maybeSingle();
+        const startedAt = stFull?.updated_at ? new Date(stFull.updated_at).getTime() : 0;
+        const running = stFull?.status === "running" && (Date.now() - startedAt) < 30 * 60 * 1000;
+        if (running) {
+          return new Response(JSON.stringify({ accepted: false, reason: "already_running" }), {
+            status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const bgTask = syncInventoryFull(supabaseAdmin, account as OmieAccount).catch((e) => {
+          console.error("[sync_inventory_full][bg]", e instanceof Error ? e.message : e);
+        });
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore - EdgeRuntime existe no runtime do Supabase Edge
+        if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore
+          EdgeRuntime.waitUntil(bgTask);
+        }
+        return new Response(JSON.stringify({ accepted: true, background: true }), {
+          status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       case "compute_costs":
         result = await computeCosts(supabaseAdmin);
         break;
