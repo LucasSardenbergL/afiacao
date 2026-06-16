@@ -11,9 +11,9 @@
 -- ============================================================
 -- classificar_clientes_fornecedores() — re-deriva a classificação de TODOS os cadastros.
 --   is_fornecedor       = tem tag {fornecedor,transportadora}
---   tem_venda_real      = tem pedido válido (informativo; NÃO decide exclusão na v1)
---   excluir_da_carteira = is_fornecedor AND NÃO há exceção curada (fornecedor_excecao)
--- Roda no SQL Editor após o sync (Task 4) + a curadoria (Task 9). REVOKE de anon/authenticated.
+--   tem_venda_real      = tem pedido válido (régua A: DECIDE a exclusão)
+--   excluir_da_carteira = is_fornecedor AND NÃO tem venda real AND NÃO há exceção curada
+-- Roda no SQL Editor após o sync + a curadoria. REVOKE de anon/authenticated.
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.classificar_clientes_fornecedores()
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -156,7 +156,7 @@ CREATE TRIGGER trg_cliente_classificacao_derive
   FOR EACH ROW EXECUTE FUNCTION public.cliente_classificacao_derive();
 
 -- ============================================================
--- Validação (cole no SQL Editor e confira: rpcs = 2, trigger_ok = 1)
+-- Validação (cole no SQL Editor e confira: rpcs = 3, trigger_ok = 1)
 -- ============================================================
 SELECT 'MIGRATION B OK' AS status,
   (SELECT count(*) FROM pg_proc
