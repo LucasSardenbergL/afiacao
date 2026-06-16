@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { markerVisual, recenciaFaixa, clusterStats } from './marker-visual';
+import { markerVisual, recenciaFaixa, clusterStats, precisaoVisual } from './marker-visual';
 import type { RouteStop } from '@/components/reposicao/routePlanner/types';
 
 const carteira = (over: Partial<RouteStop> = {}): RouteStop => ({
@@ -69,5 +69,24 @@ describe('clusterStats', () => {
     expect(st.total).toBe(0);
     expect(st.maiorUrgencia).toBe('neutral');
     expect(st.vermelhos).toBe(0);
+  });
+});
+
+describe('precisaoVisual', () => {
+  it('rooftop/street/postcode_centroid = bom → não aproximado, sem rótulo', () => {
+    expect(precisaoVisual('rooftop')).toEqual({ aproximado: false, rotulo: '' });
+    expect(precisaoVisual('street')).toEqual({ aproximado: false, rotulo: '' });
+    expect(precisaoVisual('postcode_centroid')).toEqual({ aproximado: false, rotulo: '' });
+  });
+
+  it('city_centroid/unknown/null/undefined → aproximado + "aprox."', () => {
+    expect(precisaoVisual('city_centroid')).toEqual({ aproximado: true, rotulo: 'aprox.' });
+    expect(precisaoVisual('unknown')).toEqual({ aproximado: true, rotulo: 'aprox.' });
+    expect(precisaoVisual(null)).toEqual({ aproximado: true, rotulo: 'aprox.' });
+    expect(precisaoVisual(undefined)).toEqual({ aproximado: true, rotulo: 'aprox.' });
+  });
+
+  it('valor inesperado da RPC → degrada honesto p/ aproximado', () => {
+    expect(precisaoVisual('xpto')).toEqual({ aproximado: true, rotulo: 'aprox.' });
   });
 });

@@ -86,3 +86,24 @@ export function clusterStats(
   const maiorUrgencia = URGENCIA_ORDEM.find((t) => porTone[t] > 0) ?? 'neutral';
   return { total: stops.length, porTone, maiorUrgencia, vermelhos: porTone.error };
 }
+
+// --- Precisão honesta da coordenada (Sub-PR 2 geocoding por CEP) ------------
+// Espelha o CHECK de cep_geo.precision. Aceito `string` (a RPC devolve text) p/
+// degradar valor inesperado sem quebrar — ausente ≠ fabricar precisão.
+export type Precisao = 'rooftop' | 'street' | 'postcode_centroid' | 'city_centroid' | 'unknown';
+
+// "Boa o bastante" pra rota de visita = nível-CEP ou melhor. city_centroid
+// (centróide de município) / desconhecido / null são APROXIMADOS: pino oco +
+// "aprox." E entram na fila de geocode por CEP (tenta upgrade). Único ponto de
+// verdade do que é "aproximado" — pino e fila leem daqui.
+const PRECISAO_BOA = new Set<string>(['rooftop', 'street', 'postcode_centroid']);
+
+export interface PrecisaoVisual {
+  aproximado: boolean;
+  rotulo: string;
+}
+
+export function precisaoVisual(precisao: string | null | undefined): PrecisaoVisual {
+  const aproximado = !PRECISAO_BOA.has(precisao ?? '');
+  return { aproximado, rotulo: aproximado ? 'aprox.' : '' };
+}
