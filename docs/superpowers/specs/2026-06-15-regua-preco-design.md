@@ -148,7 +148,7 @@ Modo piso (🔴): "Abaixo do piso MC (custo+imposto). CMC R$ 98 + imposto ≈ R$
 
 **Fontes:** `order_items` (quantity/discount/unit_price) + `sales_orders` (data/account) como verdade da venda; **não** `sales_price_history` (não tem quantidade). Custo via `inventory_position.cmc`.
 
-**Dados no carrinho (v1, decisão eu+Codex):** `useReguaPreco` chama a RPC single `get_regua_preco` **N× em paralelo** (react-query `useQueries`) — carrinho Oben é pequeno (1–8 itens) e a single já está no banco/serve o PR4 (360). Gates obrigatórios: só dispara com `customerUserId` + `productId` + `qty>0` + `unit_price>0`; **dedupe** por `(customer, product, qty)` (carrinho repete SKU); `queryKey` inclui o `user.id` **real** (anti-leak entre usuários, igual ao cockpit). Telemetria de latência (p95 por carrinho) registrada — se estourar, um PR futuro troca por `get_regua_preco_carrinho(p_customer, p_itens)` batch (1 round-trip). Sem essa métrica, o N+1 vira dívida invisível.
+**Dados no carrinho (v1, decisão eu+Codex):** `useReguaPreco` faz **1 `useQuery`** cuja `queryFn` dispara a RPC single `get_regua_preco` **N× em paralelo via `Promise.allSettled`** (não `useQueries` — sem precedente no projeto; este padrão é `useQuery` idiomático e dá o `Map` ao componente-pai, que precisa dele pra suprimir o vermelho do cockpit). Carrinho Oben é pequeno (1–8 itens) e a single já está no banco/serve o PR4 (360). Gates: só dispara com `customerUserId` + `productId` + `qty>0` + `unit_price>0`; **dedupe** do fetch por `(product, qty)` (carrinho repete SKU); `queryKey` inclui o `user.id` **real** (anti-leak, igual ao cockpit); a `queryFn` **não** depende do preço (fetcher) — a decisão (`avaliarReguaPreco`) roda client-side via `useMemo` a cada keystroke do preço, barata. `allSettled` isola item lento/falho. Se a latência p95 estourar, um PR futuro troca por `get_regua_preco_carrinho(p_customer, p_itens)` batch — sem métrica, o N+1 vira dívida invisível.
 
 ## 8. Closed-loop log (desde o v1)
 
@@ -213,6 +213,20 @@ O DRE não traz o ICMS (`deducoes`=0), então a alíquota efetiva foi montada po
 - **Ponderado:** `ICMS = 0,598×6% + 0,402×1,4% = 4,15%` → `+ 3,65% = 7,8%`.
 
 Gravado em `company_config['regua_preco_aliquota_venda_oben'] = 0.078`. **Calibrável** (recalcular se o mix ou o regime mudar). Refinamento v2: alíquota **por linha** (destino interno/interestadual via CFOP + origem nacional/importado via NCM) em vez de média ponderada.
+
+## 10.3 Revisão de implementação do PR3 (Codex, 2026-06-15)
+
+Revisão independente do diff da UI (rigor money-path — "Caminho B"). 5 findings; disposição:
+
+| # | Finding | Disposição |
+|---|---|---|
+| P1 | **Tinta**: a Régua busca só `product.id` da base; custo real inclui corantes → piso de MC subestimado | **Corrigido**: v1 exclui itens com `tint_formula_id` (gate); o cockpit formula-aware segue cobrindo tinta |
+| P1/P2 | **Supressão ampla**: `cockpitSuprimido` escondia o vermelho forte do cockpit mesmo com piso por CMC proxy | **Corrigido**: só suprime quando `regua.precoReferencia != null` (piso confiável, com botão) |
+| P1 | **Log do cliente errado**: dedupe/logId sem o cliente → troca de cliente sem desmontar atribui ao anterior | **Corrigido**: chave de dedupe e `logId` por `(cliente, item)` |
+| **P0** | **Preço 0 → pedido**: campo esvaziado vira 0; cockpit e Régua filtram `>0` e o submit não valida → pedido com valor zerado | **Separado** (não é da Régua — bug pré-existente do `submitOrder`): flagado como tarefa dedicada. A Régua não introduz nem piora |
+| P2 | **Debounce stale**: timer de exibição pode logar contexto velho se sinal/ref iguais dentro de 800ms | **Aceito como limitação** de telemetria (raro; sombra). O fix do P1 cobre o pior caso (cliente). Robustez fina = v2 |
+
+**Confirmações do Codex:** separação fetch (sem preço) × decisão (`useMemo` no preço) correta; `Promise.allSettled` preserva ordem (mapeamento índice→item certo); `onAplicar` usa o **alvo capado**, não o teto.
 
 ## 11. Validação
 
