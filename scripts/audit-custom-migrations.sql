@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 241
+-- Total de custom migrations: 242
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -260,7 +260,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615160000', 'tint_promote_set_based', '20260615160000_tint_promote_set_based.sql'),
   ('20260615182814', 'vincular_tint_skus_omie_orfaos', '20260615182814_vincular_tint_skus_omie_orfaos.sql'),
   ('20260615190000', 'geocoding_cep_geo', '20260615190000_geocoding_cep_geo.sql'),
-  ('20260616120000', 'regua_preco', '20260616120000_regua_preco.sql')
+  ('20260616120000', 'regua_preco', '20260616120000_regua_preco.sql'),
+  ('20260616120001', 'regua_preco_customer360', '20260616120001_regua_preco_customer360.sql')
 )
 SELECT
   e.version,
@@ -1174,7 +1175,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('regua_preco', 'table', 'public', 'regua_preco_log', ''),
   ('regua_preco', 'index', 'public', 'idx_regua_preco_log_cliente_sku', 'regua_preco_log'),
   ('regua_preco', 'function', 'public', 'get_regua_preco', ''),
-  ('regua_preco', 'rls_policy', 'public', 'regua_preco_log_staff_all', 'regua_preco_log')
+  ('regua_preco', 'rls_policy', 'public', 'regua_preco_log_staff_all', 'regua_preco_log'),
+  ('regua_preco_customer360', 'function', 'public', 'get_regua_preco_customer360', '')
 )
 SELECT
   e.migration,

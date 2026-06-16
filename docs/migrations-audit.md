@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **241** custom migrations totais
-- **896** objetos esperados (criados por estas migrations)
+- **242** custom migrations totais
+- **897** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 250
+  - `function`: 251
   - `rls_policy`: 210
   - `index`: 178
   - `cron_job`: 106
@@ -2107,6 +2107,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_regua_preco_log_cliente_sku` | `regua_preco_log` |
 | `function` | `public.get_regua_preco` | — |
 | `rls_policy` | `public.regua_preco_log_staff_all` | `regua_preco_log` |
+
+### `20260616120001_regua_preco_customer360.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_regua_preco_customer360` | — |
 
 ## Próximos passos quando algo der `❌`
 
