@@ -327,7 +327,7 @@ const FarmerCalls = () => {
       if (error) throw error;
 
       const rev = parseFloat(revenue) || 0;
-      const noContactResults = ['sem_resposta', 'ocupado', 'caixa_postal', 'numero_errado'];
+      const noContactResults = ['sem_resposta', 'ocupado', 'caixa_postal', 'numero_invalido'];
 
       if (noContactResults.includes(callResult)) {
         toast.success('Registrado — tente novamente', {
