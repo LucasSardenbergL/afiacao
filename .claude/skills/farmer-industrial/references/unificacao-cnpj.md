@@ -92,31 +92,42 @@ Sucessão troca nome/telefone/raiz. Pegue pelo comportamento: um CNPJ **parou** 
 **começou logo depois**, mesma cidade (+ telefone/nome/mix parecido). Diagnóstico:
 
 ```sql
--- pares (A parou, B começou ≤180d depois) na mesma cidade — candidatos a sucessão
+-- FILA DE REVISÃO (não fusão): pares (A parou, B começou ≤180d depois) na mesma cidade.
+-- Cada linha traz a evidência (nomes, telefones, datas, gap, flag de telefone igual) pro dono
+-- JULGAR caso a caso. Nada aqui funde nada — é só uma lista pra ele confirmar.
 with ped as (
   select regexp_replace(coalesce(p.cnpj,p.document,''),'\D','','g') as doc,
          lower(trim(regexp_replace(a.city,'\s*\([^)]*\)\s*$',''))) as cidade,
-         so.created_at::date as data
+         so.created_at::date as data,
+         coalesce(p.razao_social, p.name) as nome,
+         regexp_replace(coalesce(so.customer_phone,''),'\D','','g') as tel
   from sales_orders so
   join profiles p on p.user_id = so.customer_user_id
   left join addresses a on a.user_id = so.customer_user_id and a.is_default = true
   where so.status in ('faturado','importado','separacao','enviado') and so.deleted_at is null
     and length(regexp_replace(coalesce(p.cnpj,p.document,''),'\D','','g')) >= 11
 ),
-janela as (
-  select doc, cidade, min(data) as primeiro, max(data) as ultimo
-  from ped group by 1,2
+attr as (   -- por CNPJ: cidade, janela de compra, nome e telefone mais recentes (evidência)
+  select doc,
+         (array_agg(cidade order by data desc) filter (where cidade is not null))[1] as cidade,
+         min(data) as primeiro, max(data) as ultimo,
+         (array_agg(nome order by data desc))[1] as nome,
+         (array_agg(nullif(tel,'') order by data desc) filter (where nullif(tel,'') is not null))[1] as tel
+  from ped group by doc
 )
-select a.cidade, a.doc as cnpj_antigo, a.ultimo as parou_em,
-       b.doc as cnpj_novo, b.primeiro as comecou_em,
-       (b.primeiro - a.ultimo) as gap_dias
-from janela a join janela b
+select a.cidade,
+       a.nome as nome_antigo, a.doc as cnpj_antigo, a.ultimo  as parou_em,  a.tel as tel_antigo,
+       b.nome as nome_novo,   b.doc as cnpj_novo,   b.primeiro as comecou_em, b.tel as tel_novo,
+       (b.primeiro - a.ultimo) as gap_dias,
+       (a.tel is not null and a.tel = b.tel) as mesmo_telefone   -- evidência forte de sucessão
+from attr a join attr b
   on a.cidade = b.cidade and a.doc <> b.doc
  and a.ultimo < b.primeiro                         -- A morre antes de B nascer (sem sobreposição)
- and (b.primeiro - a.ultimo) between 0 and 180     -- começou logo depois
+ and (b.primeiro - a.ultimo) between 0 and 180     -- B começou logo depois
  and b.ultimo > current_date - 180                 -- B está ativo agora
  and a.ultimo < current_date - 180                 -- A parou de vez
-order by a.cidade, gap_dias limit 80;
+order by mesmo_telefone desc, a.cidade, gap_dias   -- candidatos com telefone igual no topo
+limit 80;
 ```
 
 Mostre ambos os diagnósticos ao dono; ele confirma quais são o mesmo cliente.
