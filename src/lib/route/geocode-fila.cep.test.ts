@@ -21,7 +21,7 @@ describe('ordenarFilaGeocodeCep', () => {
     const stops = [
       mk('a', '35500-001', 'city_centroid'),
       mk('b', '35500001', 'city_centroid'), // mesmo CEP normalizado que 'a'
-      mk('c', '35501-000', null),
+      mk('c', '35501-000', undefined), // precisão ausente (stop.precisao é string?, nunca null)
     ];
     const fila = ordenarFilaGeocodeCep(stops, vazio());
     expect(fila.map((f) => f.cep)).toEqual(['35500001', '35501000']);
