@@ -5,8 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2, BarChart3, Clock, Wrench, Star, TrendingUp, CheckCircle2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
-import { format, subDays, startOfDay, endOfDay, differenceInHours } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { format, subDays, differenceInHours } from 'date-fns';
 
 interface DailyStats {
   date: string;
@@ -22,7 +21,7 @@ const CHART_COLORS = [
 ];
 
 const AdminProductivity = () => {
-  const { user, isStaff } = useAuth();
+  const { isStaff } = useAuth();
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState('7');
 
@@ -58,7 +57,7 @@ const AdminProductivity = () => {
         .gte('created_at', startDate.toISOString());
 
       // Get reviews
-      const { data: reviews } = await (supabase as any)
+      const { data: reviews } = await supabase
         .from('order_reviews')
         .select('rating')
         .gte('created_at', startDate.toISOString());
@@ -155,7 +154,7 @@ const AdminProductivity = () => {
         <div className="grid grid-cols-2 gap-3 mb-6">
           <Card>
             <CardContent className="p-4 text-center">
-              <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-1" />
+              <CheckCircle2 className="w-6 h-6 text-status-success mx-auto mb-1" />
               <p className="text-2xl font-bold">{totalCompleted}</p>
               <p className="text-xs text-muted-foreground">Pedidos concluídos</p>
             </CardContent>

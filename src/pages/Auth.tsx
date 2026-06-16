@@ -26,7 +26,16 @@ const Auth = () => {
   useEffect(() => {
     const loadToolCategories = async () => {
       const { data } = await supabase.from('tool_categories').select('*').order('name');
-      if (data) setToolCategories(data);
+      if (data) {
+        setToolCategories(data.map((c) => ({
+          id: c.id,
+          name: c.name,
+          description: c.description ?? '',
+          icon: c.icon ?? '',
+          usage_type: c.usage_type,
+          suggested_interval_days: c.suggested_interval_days ?? 90,
+        })));
+      }
     };
     loadToolCategories();
   }, []);
@@ -173,7 +182,7 @@ const Auth = () => {
               <LoginForm formData={formData} onInputChange={handleInputChange} onSubmit={handleLogin} isLoading={isLoading} />
             ) : (
               <SignupForm formData={formData} onInputChange={handleInputChange} isLoading={isLoading}
-                onFinalSubmit={handleSignupSubmit} onSwitchToLogin={() => setMode('login')} toolCategories={toolCategories as any} />
+                onFinalSubmit={handleSignupSubmit} onSwitchToLogin={() => setMode('login')} toolCategories={toolCategories} />
             )}
           </div>
 

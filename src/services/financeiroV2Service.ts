@@ -1,6 +1,9 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Company } from "@/contexts/CompanyContext";
 import type { Json } from "@/integrations/supabase/types";
+import type { DimRowRaw } from "@/lib/financeiro/orcamento-drill-helpers";
+import { coletarTitulosEntidade, parseMesDataEmissao, type EntidadeRowRaw } from "@/lib/financeiro/orcamento-entidade-helpers";
+import { parseSnapshotSemanas, type SnapshotEmpresa } from "@/lib/financeiro/cockpit-consolida-helpers";
 import type {
   FinFechamentoRow,
   FinFechamentoInsert,
@@ -492,23 +495,28 @@ export async function getAnaliseDimensional(
     fornecedor: 'nome_fornecedor',
   };
 
+  // Matviews têm REVOKE SELECT de `authenticated`; lemos via RPC SECURITY DEFINER
+  // gated (fin_analise_c{r,p}_dimensoes_rpc), que retorna SETOF a matview (mesmo shape).
+  const rpcParams = {
+    p_company: company === 'all' ? null : company,
+    p_ano: ano ?? null,
+    p_mes: mes ?? null,
+  };
   let rows: DimRow[];
   if (tipo === 'cr') {
-    let q = supabase.from("fin_analise_cr_dimensoes").select("*");
-    if (company !== 'all') q = q.eq("company", company);
-    if (ano) q = q.eq("ano", ano);
-    if (mes) q = q.eq("mes", mes);
-    const { data, error } = await q;
+    const { data, error } = await supabase.rpc(
+      'fin_analise_cr_dimensoes_rpc' as never,
+      rpcParams as never,
+    );
     if (error) throw error;
-    rows = data ?? [];
+    rows = (data as unknown as FinAnaliseCrDimensoesView[]) ?? [];
   } else {
-    let q = supabase.from("fin_analise_cp_dimensoes").select("*");
-    if (company !== 'all') q = q.eq("company", company);
-    if (ano) q = q.eq("ano", ano);
-    if (mes) q = q.eq("mes", mes);
-    const { data, error } = await q;
+    const { data, error } = await supabase.rpc(
+      'fin_analise_cp_dimensoes_rpc' as never,
+      rpcParams as never,
+    );
     if (error) throw error;
-    rows = data ?? [];
+    rows = (data as unknown as FinAnaliseCpDimensoesView[]) ?? [];
   }
 
   const col = (tipo === 'cr' ? dimColCr[dimensao] : dimColCp[dimensao]) as keyof DimRow;
@@ -540,6 +548,141 @@ export async function getAnaliseDimensional(
   }
 
   return Array.from(map.values()).sort((a, b) => b.total_documento - a.total_documento);
+}
+
+/**
+ * Linhas CRUAS por (categoria_codigo, mês) em regime de COMPETÊNCIA (data_emissão) de
+ * um ano — fonte do drill de variância por categoria (`drillLinha`).
+ *
+ * Lê `fin_dre_competencia_base` (CR+CP por data_emissão, status≠CANCELADO, soma
+ * valor_documento) — a MESMA base que o `calcularDRE` competência usa para montar o
+ * `fin_dre_snapshots`. Por isso reconcilia: drillar contra a matview dimensional (que
+ * é por data_VENCIMENTO) acusaria resíduo falso por diferença de base temporal.
+ *
+ * Retorna linhas de AMBAS as origens (CR e CP): o `calcularDRE` classifica por CÓDIGO
+ * independentemente do razão, então o drill soma por código sobre os dois (o helper
+ * agrega). Filtra os meses fechados server-side e PAGINA (a view passa de 1000 linhas
+ * fácil: categorias × meses × 2 origens).
+ */
+export async function getCategoriasCompetenciaRaw(
+  company: Company,
+  ano: number,
+  meses: number[],
+): Promise<DimRowRaw[]> {
+  if (meses.length === 0) return [];
+  const PAGE = 1000;
+  const out: DimRowRaw[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('fin_dre_competencia_base')
+      .select('categoria_codigo, categoria_descricao, mes, valor_total')
+      .eq('company', company)
+      .eq('ano', ano)
+      .in('mes', meses)
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    const rows = data ?? [];
+    for (const r of rows) {
+      out.push({
+        categoria_codigo: r.categoria_codigo,
+        categoria_descricao: r.categoria_descricao,
+        mes: r.mes,
+        valor: r.valor_total ?? 0,
+      });
+    }
+    if (rows.length < PAGE) break;
+    from += PAGE;
+  }
+  return out;
+}
+
+/**
+ * Títulos CRUS (por entidade) de uma linha de DRE em COMPETÊNCIA — fonte do drill v2
+ * (concentração por fornecedor/cliente). Lê `fin_contas_pagar` (cp) / `fin_contas_receber`
+ * (cr) com os MESMOS filtros da `fin_dre_competencia_base` → reconcilia com o total-por-
+ * categoria do v1. Limita server-side ao horizonte FECHADO (senão o ano-1 buscaria 12
+ * meses e truncaria perdendo o YTD). Chunked `.in()` (URL) + paginação estável (`.order id`)
+ * + teto de coleta — toda a orquestração no helper testável `coletarTitulosEntidade`.
+ */
+export async function getTitulosEntidadeRaw(
+  fonte: 'cp' | 'cr',
+  company: Company,
+  ano: number,
+  meses: number[],
+  codigos: string[],
+): Promise<{ rows: EntidadeRowRaw[]; truncado: boolean }> {
+  if (codigos.length === 0 || meses.length === 0) return { rows: [], truncado: false };
+  const tabela = fonte === 'cp' ? 'fin_contas_pagar' : 'fin_contas_receber';
+  const nomeCol = fonte === 'cp' ? 'nome_fornecedor' : 'nome_cliente';
+  const maxMes = Math.max(...meses);
+  const fimExcl =
+    maxMes >= 12 ? `${ano + 1}-01-01` : `${ano}-${String(maxMes + 1).padStart(2, '0')}-01`;
+  return coletarTitulosEntidade({
+    codigos,
+    chunkCodigos: 100,
+    pageSize: 1000,
+    max: 20000,
+    fetchPagina: async (lote, offset, limit) => {
+      const { data, error } = await supabase
+        .from(tabela)
+        .select(`id, cnpj_cpf, ${nomeCol}, data_emissao, valor_documento`)
+        .eq('company', company)
+        .not('data_emissao', 'is', null)
+        .gte('data_emissao', `${ano}-01-01`)
+        .lt('data_emissao', fimExcl)
+        .neq('status_titulo', 'CANCELADO')
+        .in('categoria_codigo', lote)
+        .order('id', { ascending: true })
+        .range(offset, offset + limit - 1);
+      if (error) throw error;
+      const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+      return rows.map((row) => ({
+        entidade_id: (row.cnpj_cpf as string | null) ?? null,
+        entidade_nome: (row[nomeCol] as string | null) ?? null,
+        mes: parseMesDataEmissao((row.data_emissao as string | null) ?? null),
+        valor: (row.valor_documento as number | null) ?? 0,
+      }));
+    },
+  });
+}
+
+/**
+ * Último snapshot de projeção 13s (cenário `realista`) por empresa, de `fin_projecao_snapshots`
+ * (gravado pelo cron diário via fin-cashflow-engine). Fonte do Cockpit consolidado: a projeção
+ * e o NCG vêm da engine A1 calibrada (não da RPC ingênua). `dados` (Json) = semanas[] — valida
+ * `Array.isArray` e extrai {inicio,total_entradas,total_saidas,saldo_final}. Uma query por empresa.
+ */
+export async function getProjecaoSnapshotsCockpit(
+  companies: Company[],
+  cenario = 'realista',
+): Promise<SnapshotEmpresa[]> {
+  const results = await Promise.all(
+    companies.map(async (company): Promise<SnapshotEmpresa | null> => {
+      const { data, error } = await supabase
+        .from('fin_projecao_snapshots')
+        .select('company, snapshot_at, ncg, saldo_tesouraria, dados, id')
+        .eq('company', company)
+        .eq('cenario', cenario)
+        .order('snapshot_at', { ascending: false })
+        .order('id', { ascending: false }) // desempate determinístico (Codex P2)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return null;
+      // ausente ≠ zero: campo core inválido descarta a semana; saldo_inicial null/ausente → null
+      // (NÃO 0 — Number(null)===0 seria fabricação). Lógica no helper puro testável.
+      const semanas = parseSnapshotSemanas((data as { dados: unknown }).dados);
+      return {
+        company: (data.company as string) ?? company,
+        snapshot_at: data.snapshot_at as string,
+        ncg: (data.ncg as number | null) ?? null,
+        saldo_tesouraria: (data.saldo_tesouraria as number | null) ?? null,
+        semanas,
+      };
+    }),
+  );
+  return results.filter((r): r is SnapshotEmpresa => r !== null);
 }
 
 // ═══════════════ 6. PERMISSÕES ═══════════════

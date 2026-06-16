@@ -596,6 +596,144 @@ async function alterarOrdemServicoOmie(
   }
 }
 
+// Espelho VERBATIM de src/lib/afiacao/os-etapa.ts (e da SQL mapear_status_etapa).
+// 10 Aberta · 20 Em andamento · 30 Aguardando faturamento · null = mantém (não sincroniza).
+function mapearStatusEtapa(status: string): string | null {
+  switch (status) {
+    case "pedido_recebido":
+    case "aguardando_coleta":
+    case "orcamento_enviado":
+    case "aprovado":
+      return "10";
+    case "em_triagem":
+    case "em_afiacao":
+    case "controle_qualidade":
+      return "20";
+    case "pronto_entrega":
+    case "em_rota":
+      return "30";
+    default:
+      return null; // 'entregue' + desconhecido
+  }
+}
+
+/**
+ * AlterarOS status-only: troca SÓ a etapa da OS, sem reenviar serviços/preços do app
+ * (preserva ajustes manuais feitos na OS dentro do Omie). Envia apenas o Cabecalho
+ * (atualização parcial). NÃO reusa alterarOrdemServicoOmie (aquele remonta serviços).
+ */
+async function alterarEtapaOS(
+  nCodOS: number,
+  etapaAlvo: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await callOmieApi("servicos/os/", "AlterarOS", {
+      Cabecalho: { nCodOS: nCodOS, cEtapa: etapaAlvo },
+    });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "Erro AlterarOS" };
+  }
+}
+
+/**
+ * Processa 1 item da fila de sync de etapa. Recalcula a etapa do status ATUAL
+ * (não confia na fila velha), aplica idempotência e backoff. Devolve um resumo.
+ */
+async function processarItemFilaOsSync(
+  supabaseAdmin: SupabaseClient,
+  orderId: string,
+  tentativas: number
+): Promise<Record<string, unknown>> {
+  const removerDaFila = () =>
+    supabaseAdmin.from("afiacao_os_sync_fila").delete().eq("order_id", orderId);
+
+  // 1) status atual do pedido
+  const { data: ord, error: ordErr } = await supabaseAdmin
+    .from("orders").select("status").eq("id", orderId).maybeSingle();
+  if (ordErr) {
+    // erro transitório de DB/PostgREST → recuperável: backoff, NÃO apaga da fila
+    return await bumpRetryOsSync(supabaseAdmin, orderId, tentativas, `orders_read: ${ordErr.message}`);
+  }
+  if (!ord) {
+    // pedido realmente não existe (sem erro) → sai da fila
+    await removerDaFila();
+    return { order_id: orderId, skip: "pedido_inexistente" };
+  }
+  const etapaAtual = mapearStatusEtapa(ord.status as string);
+
+  // 2) etapa null (ex.: entregue) → noop, sai da fila
+  if (etapaAtual === null) {
+    await removerDaFila();
+    return { order_id: orderId, noop: "sem_etapa" };
+  }
+
+  // 3) acha a OS no Omie. order_id pode ter +1 linha (schema sem unique; sync_order faz insert cru) →
+  //    pega a mais recente; .limit(1) evita o 406 do .maybeSingle() com duplicata (poison-pill).
+  const { data: os, error: osErr } = await supabaseAdmin
+    .from("omie_ordens_servico")
+    .select("omie_codigo_os, last_etapa_sincronizada")
+    .eq("order_id", orderId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (osErr || !os?.omie_codigo_os) {
+    // erro transitório OU OS ainda sendo criada → recuperável (backoff), mantém na fila
+    return await bumpRetryOsSync(
+      supabaseAdmin, orderId, tentativas, osErr ? `os_read: ${osErr.message}` : "sem_os"
+    );
+  }
+
+  // 4) idempotência
+  if (etapaAtual === os.last_etapa_sincronizada) {
+    await removerDaFila();
+    return { order_id: orderId, noop: "ja_sincronizado" };
+  }
+
+  // 5) AlterarOS status-only
+  const r = await alterarEtapaOS(os.omie_codigo_os as number, etapaAtual);
+  if (r.success) {
+    await supabaseAdmin.from("omie_ordens_servico").update({
+      last_etapa_sincronizada: etapaAtual,
+      last_status_sincronizado: ord.status,
+      last_sync_at: new Date().toISOString(),
+      last_sync_error: null,
+      status: "atualizado",
+      updated_at: new Date().toISOString(),
+    }).eq("order_id", orderId);
+    await removerDaFila();
+    return { order_id: orderId, ok: etapaAtual };
+  }
+  return await bumpRetryOsSync(supabaseAdmin, orderId, tentativas, r.error || "erro_omie");
+}
+
+/** Backoff exponencial (teto 30min). 6 tentativas → desiste e marca erro persistente. */
+async function bumpRetryOsSync(
+  supabaseAdmin: SupabaseClient,
+  orderId: string,
+  tentativas: number,
+  erro: string
+): Promise<Record<string, unknown>> {
+  const novasTent = (tentativas ?? 0) + 1;
+  if (novasTent >= 6) {
+    await supabaseAdmin.from("afiacao_os_sync_fila").delete().eq("order_id", orderId);
+    await supabaseAdmin.from("omie_ordens_servico").update({
+      last_sync_error: erro, status: "erro_atualizacao", updated_at: new Date().toISOString(),
+    }).eq("order_id", orderId);
+    return { order_id: orderId, erro_persistente: erro };
+  }
+  const backoffMin = Math.min(Math.pow(2, novasTent), 30);
+  await supabaseAdmin.from("afiacao_os_sync_fila").update({
+    tentativas: novasTent,
+    next_retry_em: new Date(Date.now() + backoffMin * 60000).toISOString(),
+    atualizado_em: new Date().toISOString(),
+  }).eq("order_id", orderId);
+  await supabaseAdmin.from("omie_ordens_servico")
+    .update({ last_sync_error: erro }).eq("order_id", orderId);
+  return { order_id: orderId, retry: novasTent, em_min: backoffMin };
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -1017,6 +1155,37 @@ serve(async (req) => {
         );
 
         result = updateResult;
+        break;
+      }
+
+      case "sync_os_status": {
+        // Cron-only: drena a fila afiacao_os_sync_fila e sincroniza a etapa de cada OS.
+        if (auth.via !== "cron" && auth.via !== "service_role") {
+          return new Response(
+            JSON.stringify({ error: "Apenas cron pode sincronizar etapas de OS" }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        const { data: fila } = await supabaseAdmin
+          .from("afiacao_os_sync_fila")
+          .select("order_id, tentativas")
+          .lte("next_retry_em", new Date().toISOString())
+          .order("criado_em", { ascending: true })
+          .limit(25);
+
+        const detalhes: Record<string, unknown>[] = [];
+        for (const item of fila ?? []) {
+          detalhes.push(
+            await processarItemFilaOsSync(
+              supabaseAdmin,
+              item.order_id as string,
+              (item.tentativas as number) ?? 0
+            )
+          );
+        }
+
+        result = { processados: detalhes.length, detalhes };
         break;
       }
 

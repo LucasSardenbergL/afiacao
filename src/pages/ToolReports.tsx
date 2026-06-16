@@ -3,15 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  Loader2, Wrench, DollarSign, Calendar, TrendingUp,
+  Loader2, Wrench, DollarSign, TrendingUp,
   BarChart3, Clock, AlertTriangle, ShieldCheck, HelpCircle,
   ArrowRight, CheckCircle
 } from 'lucide-react';
-import { format, differenceInDays, formatDistanceToNow } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -40,7 +39,7 @@ interface ToolEvent {
   id: string;
   event_type: string;
   created_at: string;
-  metadata: Record<string, any> | null;
+  metadata: Record<string, unknown> | null;
   order_id: string | null;
 }
 
@@ -58,7 +57,7 @@ const CRIT_CONFIG: Record<Criticality, {
 }> = {
   critical: { label: 'Crítica', icon: AlertTriangle, badgeClass: 'border-destructive/40 bg-destructive/10 text-destructive', bgClass: 'bg-destructive/10' },
   attention: { label: 'Atenção', icon: Clock, badgeClass: 'border-status-warning/40 bg-status-warning-bg text-status-warning', bgClass: 'bg-status-warning-bg' },
-  healthy: { label: 'Saudável', icon: ShieldCheck, badgeClass: 'border-emerald-400/40 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300', bgClass: 'bg-emerald-50 dark:bg-emerald-900/20' },
+  healthy: { label: 'Saudável', icon: ShieldCheck, badgeClass: 'border-status-success/40 bg-status-success-bg text-status-success', bgClass: 'bg-status-success-bg' },
   unscheduled: { label: 'Não agendada', icon: HelpCircle, badgeClass: 'border-border bg-muted text-muted-foreground', bgClass: 'bg-muted' },
 };
 
@@ -85,12 +84,12 @@ function computeRecommendation(
     return { title: 'Afiar em breve', description: 'A próxima afiação está se aproximando — agende para evitar desgaste excessivo.', icon: Clock, color: 'text-status-warning' };
   }
   if (avgInterval && recommendedInterval && avgInterval < recommendedInterval * 0.7) {
-    return { title: 'Uso intenso detectado', description: 'O intervalo real está abaixo do recomendado. Considere revisar a carga de trabalho ou o intervalo de afiação.', icon: TrendingUp, color: 'text-amber-600' };
+    return { title: 'Uso intenso detectado', description: 'O intervalo real está abaixo do recomendado. Considere revisar a carga de trabalho ou o intervalo de afiação.', icon: TrendingUp, color: 'text-status-warning' };
   }
   if (anomalyCount >= 3) {
-    return { title: 'Revisar condição geral', description: 'Múltiplas anomalias registradas. Avalie se a ferramenta precisa de reparo ou substituição.', icon: AlertTriangle, color: 'text-amber-600' };
+    return { title: 'Revisar condição geral', description: 'Múltiplas anomalias registradas. Avalie se a ferramenta precisa de reparo ou substituição.', icon: AlertTriangle, color: 'text-status-warning' };
   }
-  return { title: 'Manter rotina atual', description: 'Ferramenta bem cuidada — continue seguindo o intervalo recomendado.', icon: CheckCircle, color: 'text-emerald-600 dark:text-emerald-400' };
+  return { title: 'Manter rotina atual', description: 'Ferramenta bem cuidada — continue seguindo o intervalo recomendado.', icon: CheckCircle, color: 'text-status-success' };
 }
 
 /* ─── Stat Row component ─── */

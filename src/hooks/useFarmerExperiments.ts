@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 
 export interface Experiment {
@@ -98,17 +99,22 @@ interface FarmerCallLite {
 
 export const useFarmerExperiments = () => {
   const { user } = useAuth();
+  // Lente "Ver como": a LISTA de experimentos exibida segue o id efetivo (o ALVO na
+  // lente, o próprio usuário fora). As mutações (criar/iniciar/medir/cancelar) usam
+  // user.id (write identity = master real) e são bloqueadas na lente pelo write-guard
+  // + botões disabled. Fora da lente effectiveUserId === user.id (byte-equivalente).
+  const { effectiveUserId } = useImpersonation();
   const [experiments, setExperiments] = useState<Experiment[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadExperiments = useCallback(async () => {
-    if (!user?.id) return;
+    if (!effectiveUserId) return;
     setLoading(true);
     try {
       const { data } = (await supabase
         .from('farmer_experiments')
         .select('*')
-        .eq('farmer_id', user.id)
+        .eq('farmer_id', effectiveUserId)
         .order('created_at', { ascending: false })) as unknown as { data: ExperimentRow[] | null };
 
       if (data) {
@@ -141,7 +147,7 @@ export const useFarmerExperiments = () => {
     } finally {
       setLoading(false);
     }
-  }, [user?.id]);
+  }, [effectiveUserId]);
 
   useEffect(() => { loadExperiments(); }, [loadExperiments]);
 

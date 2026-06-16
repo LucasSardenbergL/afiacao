@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useLinkCallToCustomer } from '@/hooks/useLinkCallToCustomer';
+import { ilikeOr } from '@/lib/postgrest';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -36,15 +37,18 @@ interface ProfileMatch {
 }
 
 export default function FarmerCallsPendingLink() {
-  const { user } = useAuth();
+  // Lente "Ver como": a lista de chamadas pendentes exibida segue o id efetivo (o ALVO
+  // na lente, o próprio usuário fora). O vínculo (mutation) é write — bloqueado na lente
+  // pelo write-guard + botão "Vincular cliente" disabled.
+  const { effectiveUserId, isImpersonating } = useImpersonation();
   const { data, refetch } = useQuery({
-    queryKey: ['farmer-pending-link', user?.id],
-    enabled: !!user,
+    queryKey: ['farmer-pending-link', effectiveUserId],
+    enabled: !!effectiveUserId,
     queryFn: async (): Promise<Pending[]> => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('farmer_calls') as any)
+
+      const { data, error } = await supabase.from('farmer_calls')
         .select('id, phone_dialed, started_at, duration_seconds')
-        .eq('farmer_id', user!.id)
+        .eq('farmer_id', effectiveUserId!)
         .is('customer_user_id', null)
         .not('transcript', 'is', null)
         .order('started_at', { ascending: false })
@@ -69,7 +73,7 @@ export default function FarmerCallsPendingLink() {
       ) : (
         <div className="space-y-2">
           {data.map((p) => (
-            <PendingRow key={p.id} pending={p} onLinked={refetch} />
+            <PendingRow key={p.id} pending={p} onLinked={refetch} disabled={isImpersonating} />
           ))}
         </div>
       )}
@@ -80,9 +84,11 @@ export default function FarmerCallsPendingLink() {
 function PendingRow({
   pending,
   onLinked,
+  disabled,
 }: {
   pending: Pending;
   onLinked: () => void;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -92,13 +98,10 @@ function PendingRow({
     queryKey: ['profiles-search', search],
     enabled: open && search.length >= 2,
     queryFn: async (): Promise<ProfileMatch[]> => {
-      // PostgREST .or() takes user-controlled `search`; escape commas and parens
-      // to avoid breaking the filter syntax.
-      const safe = search.replace(/[,()]/g, ' ');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data } = await (supabase.from('profiles') as any)
+      // `search` é input do usuário — ilikeOr sanitiza (anti-injeção PostgREST)
+      const { data } = await supabase.from('profiles')
         .select('user_id, name, phone')
-        .or(`name.ilike.%${safe}%,phone.ilike.%${safe}%`)
+        .or(ilikeOr(['name', 'phone'], search))
         .limit(10);
       return (data ?? []) as ProfileMatch[];
     },
@@ -121,7 +124,12 @@ function PendingRow({
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
-          <Button size="sm" variant="outline">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            title={disabled ? 'Indisponível em modo Ver como' : undefined}
+          >
             Vincular cliente
           </Button>
         </DialogTrigger>

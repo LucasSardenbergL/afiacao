@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { decodeHtmlEntities } from '@/lib/utils';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import {
   ArrowLeft, Truck, Plus, Loader2, ScanLine, Keyboard, Copy,
-  AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, X, Upload,
+  AlertTriangle, CheckCircle2, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -22,9 +22,9 @@ import {
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from '@/components/ui/sheet';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import LoteScannerOCR from '@/components/recebimento/LoteScannerOCR';
 import { useOfflineMutation } from '@/hooks/useOfflineMutation';
-import { registerOfflineHandler } from '@/hooks/useOfflineFlush';
 import { confirmUnit, type ConfirmUnitVars } from '@/services/recebimento-confirm';
 import { reportDivergencia, type ReportDivergenciaVars } from '@/services/recebimento-divergencia';
 import { addCte, type AddCteVars } from '@/services/recebimento-cte';
@@ -178,27 +178,8 @@ export default function RecebimentoConferencia() {
     mutationFn: addCte,
   });
 
-  // Registra handler pra processar items enfileirados quando reconectar
-  useEffect(() => {
-    return registerOfflineHandler<ConfirmUnitVars>('recebimento.confirm-unit', async (vars) => {
-      await confirmUnit(vars);
-      return true;
-    });
-  }, []);
-
-  useEffect(() => {
-    return registerOfflineHandler<ReportDivergenciaVars>('recebimento.report-divergencia', async (vars) => {
-      await reportDivergencia(vars);
-      return true;
-    });
-  }, []);
-
-  useEffect(() => {
-    return registerOfflineHandler<AddCteVars>('recebimento.add-cte', async (vars) => {
-      await addCte(vars);
-      return true;
-    });
-  }, []);
+  // Handlers de flush offline são registrados centralmente no boot (src/lib/offline-handlers.ts),
+  // não por página — assim reconectar em qualquer tela drena a fila (antes ficava preso ao sair daqui).
 
   // Group lotes by item
   const lotesPerItem = useMemo(() => {
@@ -423,17 +404,16 @@ export default function RecebimentoConferencia() {
   const toggleExpand = (itemId: string) => {
     setExpandedItems(prev => {
       const next = new Set(prev);
-      next.has(itemId) ? next.delete(itemId) : next.add(itemId);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
       return next;
     });
   };
 
   if (isLoading) {
-    return (
-      <div className="flex justify-center py-20">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    // PageSkeleton (não Loader2 full-page): o Suspense da rota já mostrou um
+    // skeleton — regredir pra spinner vazio fazia o layout sumir e voltar.
+    return <PageSkeleton variant="detail" />;
   }
 
   if (!nfe) {
@@ -499,7 +479,7 @@ export default function RecebimentoConferencia() {
                         CT-e {cte.numero_cte || cte.chave_acesso_cte?.slice(-8)}
                       </p>
                       <p className="text-xs text-muted-foreground truncate">
-                        {decodeHtmlEntities(cte.razao_social_transportadora) || 'Transportadora'} · {formatCurrency(cte.valor_frete)}
+                        {decodeHtmlEntities(cte.razao_social_transportadora) || 'Transportadora'} · {formatCurrency(cte.valor_frete ?? null)}
                       </p>
                     </div>
                     <Badge className={cn('text-xs', cte.status === 'efetivado' ? 'bg-muted text-muted-foreground' : 'bg-status-warning-bg text-status-warning-foreground')}>
@@ -551,7 +531,7 @@ export default function RecebimentoConferencia() {
                         </p>
                         {hasConversao && (
                           <p className="text-[10px] text-muted-foreground leading-tight">
-                            NF-e: {item.quantidade_nfe} {item.unidade_nfe} ÷ {(item.quantidade_nfe / item.quantidade_convertida).toFixed(3)}
+                            NF-e: {item.quantidade_nfe ?? 0} {item.unidade_nfe} ÷ {((item.quantidade_nfe ?? 0) / (item.quantidade_convertida ?? 1)).toFixed(3)}
                           </p>
                         )}
                       </div>

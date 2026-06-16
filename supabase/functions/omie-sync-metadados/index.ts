@@ -7,6 +7,17 @@ const PAGE_SIZE = 100;
 
 type OmieAccount = "vendas" | "colacor_vendas";
 
+// Espelho VERBATIM de src/lib/reposicao/tipo-produto.ts (Deno não importa de src/).
+// Normaliza o tipo fiscal do Omie (tipoItem/SPED) ao código canônico de 2 dígitos
+// ('04'=Produto Acabado/fabricado, '00'=Revenda) ou null. Rejeita 'K' (Kit) e ruído.
+// money-path: se mudar aqui, mudar lá. Ver spec 2026-06-04.
+function normalizeTipoProduto(raw: string | number | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim();
+  if (!/^\d{1,2}$/.test(s)) return null;
+  return s.padStart(2, "0");
+}
+
 function getCredentials(account: OmieAccount) {
   if (account === "vendas") {
     return {
@@ -44,7 +55,7 @@ async function callOmie(
 }
 
 async function syncMetadadosAccount(
-  db: any,
+  db: ReturnType<typeof createClient>,
   account: OmieAccount,
 ) {
   const acctValue = getCredentials(account).label;
@@ -52,6 +63,8 @@ async function syncMetadadosAccount(
   let totalPaginas = 1;
   let totalUpserted = 0;
   let totalInativos = 0;
+  let typedCount = 0;   // produtos com tipo_produto classificado (não-null)
+  let tipo04Count = 0;  // produtos classificados como Produto Acabado (04, fabricado)
   const t0 = Date.now();
 
   while (pagina <= totalPaginas) {
@@ -71,6 +84,16 @@ async function syncMetadadosAccount(
     const rows = produtos.map((p: Record<string, unknown> & { imagens?: Array<{ url_imagem?: string }> }) => {
       const inativoFlag = p.inativo === "S";
       if (inativoFlag) totalInativos++;
+      // tipo_produto = COLUNA dedicada (fora do metadata). Lê o tipoItem REAL do Omie
+      // (NÃO p.tipo, que é discriminador de Kit). null → não conta como classificado e
+      // o trigger anti-null-clobber preserva o valor anterior, se houver. Spec 2026-06-04.
+      const tp = normalizeTipoProduto(
+        (p.tipoItem ?? p.tipo_item) as string | number | null | undefined,
+      );
+      if (tp !== null) {
+        typedCount++;
+        if (tp === "04") tipo04Count++;
+      }
       return {
         omie_codigo_produto: p.codigo_produto,
         omie_codigo_produto_integracao: p.codigo_produto_integracao || null,
@@ -85,6 +108,7 @@ async function syncMetadadosAccount(
         imagem_url: p.imagens?.[0]?.url_imagem || null,
         familia: p.descricao_familia || null,
         subfamilia: p.descricao_subfamilia || null,
+        tipo_produto: tp,
         metadata: {
           marca: p.marca,
           modelo: p.modelo,
@@ -113,6 +137,10 @@ async function syncMetadadosAccount(
     pagina++;
   }
 
+  console.log(
+    `[metadados ${account}] COMPLETO: ${totalUpserted} upserts, ${typedCount} classificados (tipo_produto), ${tipo04Count} produto acabado (04), ${totalPaginas} páginas`,
+  );
+
   await db.from("sync_state").upsert(
     {
       entity_type: "products_metadados",
@@ -131,6 +159,8 @@ async function syncMetadadosAccount(
     paginas: totalPaginas,
     upserted: totalUpserted,
     inativos: totalInativos,
+    classificados: typedCount,
+    produto_acabado_04: tipo04Count,
     tempo_ms: Date.now() - t0,
   };
 }

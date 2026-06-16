@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Loader2, ChevronLeft, CheckCircle, Building2, Scissors } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Loader2, CheckCircle, Building2, Scissors, Wifi } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -13,9 +14,20 @@ import { useUnifiedOrder } from '@/hooks/useUnifiedOrder';
 import { useOrderDeepLink } from '@/hooks/useOrderDeepLink';
 import { useOrderDraft } from '@/hooks/useOrderDraft';
 import { useAuth } from '@/contexts/AuthContext';
+import { Button } from '@/components/ui/button';
+import { useNetworkStatus } from '@/hooks/useNetworkStatus';
+import { useOfflineSubmit } from '@/hooks/useOfflineSubmit';
 import { RestoreDraftDialog } from '@/components/unified-order/RestoreDraftDialog';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
+import { CoresDoClienteCard } from '@/components/unified-order/CoresDoClienteCard';
+import { useCoresDoCliente } from '@/hooks/unifiedOrder/useCoresDoCliente';
+import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
+import { termoBuscaCor } from '@/lib/tint/cores-do-cliente';
+import { montarPlanoReplicacao, type ItemTinta } from '@/lib/pedido/replicar-pedido';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 import { ProductItemForm } from '@/components/unified-order/ProductItemForm';
+import { useCurrentSpecsMap } from '@/hooks/useProductSpecLink';
 import { ServiceItemForm } from '@/components/unified-order/ServiceItemForm';
 import { CartItemList } from '@/components/unified-order/CartItemList';
 import { CartSummaryBar } from '@/components/unified-order/CartSummaryBar';
@@ -43,11 +55,122 @@ const UnifiedOrder = () => {
   const h = useUnifiedOrder();
   const { isCustomerMode } = h;
   const { user } = useAuth();
+  // Fichas técnicas (boletim↔SKU): mapa pequeno (só vínculos confirmados+aprovados), 1 query.
+  const { byKey: fichasByKey } = useCurrentSpecsMap();
   const [restoreOpen, setRestoreOpen] = useState(false);
+
+  // "Cores do cliente": histórico de cores + pré-preenchimento do dialog de tingir.
+  const coresDoCliente = useCoresDoCliente(h.customerUserId);
+  const [tintInitialSearch, setTintInitialSearch] = useState<string | null>(null);
+  const handleRepetirCor = (cor: CorDoCliente, oc: OcorrenciaCor) => {
+    const pool = oc.account === 'colacor' ? h.colacorProducts : h.obenProducts;
+    const product =
+      oc.omieCodigoProduto != null
+        ? pool.find((p) => p.omie_codigo_produto === oc.omieCodigoProduto)
+        : undefined;
+    if (product?.is_tintometric && product.tint_type === 'base') {
+      track('pedido.repetir_cor');
+      // Busca pelo CÓDIGO da cor, não pelo rótulo cru do histórico ("346J -
+      // PLATINA BIANCA 900ML") — o rótulo não casa com cor_id/nome_cor do catálogo.
+      setTintInitialSearch(termoBuscaCor(cor.nome));
+      h.setTintPendingProduct(product);
+      return;
+    }
+    // Degradação honesta: base fora do catálogo (inativa/outro painel) ou sem
+    // fluxo de cor → pré-preenche a busca de produtos pra ela seguir manualmente.
+    h.setProductSearch(oc.baseDescricao);
+    if (oc.account === 'oben' || oc.account === 'colacor') h.setActiveTab(oc.account);
+    toast.info('Base fora do fluxo automático de cor', {
+      description: 'Pré-preenchi a busca de produtos com a base daquele pedido — adicione manualmente.',
+    });
+  };
+
+  const [searchParams] = useSearchParams();
+  const preselectCustomerId = searchParams.get('customer');
+  const preselectedRef = useRef(false);
+
+  // returnTo da fila (G1 Fase 3): só path interno (guard anti-open-redirect, vem da URL).
+  const returnToRaw = searchParams.get('returnTo');
+  const returnTo = returnToRaw && returnToRaw.startsWith('/') && !returnToRaw.startsWith('//') ? returnToRaw : null;
+
+  /* ─── "Repetir pedido" (?repeat=<sales_order_id>) ───
+   * One-shot após cliente + catálogo prontos (padrão do deep-link): busca o
+   * pedido antigo, monta o plano (helper puro) e aplica — itens comuns entram
+   * direto (qtd antiga, PREÇO ATUAL do cliente); bases tintométricas entram
+   * numa fila que abre o dialog de cor um a um (humano confirma cada tinta). */
+  const repeatId = searchParams.get('repeat');
+  const repeatHandled = useRef(false);
+  const [tintQueue, setTintQueue] = useState<ItemTinta[]>([]);
+
+  useEffect(() => {
+    if (
+      preselectCustomerId &&
+      h.isStaff &&
+      !h.selectedCustomer &&
+      !preselectedRef.current
+    ) {
+      preselectedRef.current = true;
+      void h.selectCustomerByUserId(preselectCustomerId);
+    }
+  }, [preselectCustomerId, h.isStaff, h.selectedCustomer, h.selectCustomerByUserId]);
+
+  // Aplica a replicação quando tudo está pronto (cliente + catálogo da conta do pedido).
+  useEffect(() => {
+    if (!repeatId || repeatHandled.current || !h.isStaff || !h.selectedCustomer || !h.customerUserId) return;
+    // Catálogo ainda carregando → espera (senão todo item cairia em "fora do catálogo").
+    if (h.loadingObenProducts || h.loadingColacorProducts) return;
+    repeatHandled.current = true;
+    void (async () => {
+      const { data: pedido, error } = await supabase
+        .from('sales_orders')
+        .select('id, account, items, omie_numero_pedido, customer_user_id')
+        .eq('id', repeatId)
+        .maybeSingle();
+      if (error || !pedido) {
+        toast.error('Não consegui carregar o pedido pra repetir.');
+        return;
+      }
+      if (pedido.customer_user_id !== h.customerUserId) {
+        toast.error('O pedido a repetir é de outro cliente.');
+        return;
+      }
+      const catalogo = pedido.account === 'colacor' ? h.colacorProducts : h.obenProducts;
+      const plano = montarPlanoReplicacao(pedido.items, catalogo);
+      for (const d of plano.diretos) h.addProductToCart(d.product, d.quantidade);
+      if (plano.tintas.length > 0) setTintQueue(plano.tintas);
+      track('pedido.repetir_pedido');
+      const pv = (pedido.omie_numero_pedido ?? '').replace(/^0+/, '');
+      const partes = [
+        plano.diretos.length > 0 ? `${plano.diretos.length} no carrinho` : null,
+        plano.tintas.length > 0 ? `${plano.tintas.length} de tinta pra confirmar a cor` : null,
+        plano.foraDoCatalogo.length > 0 ? `${plano.foraDoCatalogo.length} fora do catálogo` : null,
+      ].filter(Boolean);
+      if (partes.length === 0) {
+        toast.info(`Pedido${pv ? ` ${pv}` : ''} sem itens replicáveis.`);
+      } else {
+        toast.success(`Pedido${pv ? ` ${pv}` : ''} replicado: ${partes.join(' · ')}`, {
+          description: plano.foraDoCatalogo.length > 0 ? `Fora do catálogo: ${plano.foraDoCatalogo.join('; ')}` : undefined,
+        });
+      }
+    })();
+    // h é objeto novo a cada render; deps nos campos usados.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repeatId, h.isStaff, h.selectedCustomer, h.customerUserId, h.obenProducts, h.colacorProducts, h.loadingObenProducts, h.loadingColacorProducts]);
+
+  // Fila de tintas da replicação: abre o dialog de cor um a um (o próximo
+  // entra quando o atual fecha — confirmado OU cancelado, que é "pular").
+  useEffect(() => {
+    if (h.tintPendingProduct || tintQueue.length === 0) return;
+    const [proxima, ...resto] = tintQueue;
+    setTintQueue(resto);
+    // Mesmo motivo do "Pedir de novo": pré-busca pelo código, não pelo rótulo cru.
+    setTintInitialSearch(proxima.nomeCor ? termoBuscaCor(proxima.nomeCor) : null);
+    h.setTintPendingProduct(proxima.product);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [h.tintPendingProduct, tintQueue]);
 
   useOrderDeepLink({
     selectedCustomer: h.selectedCustomer,
-    selectCustomer: h.selectCustomer,
     addProductToCart: h.addProductToCart,
     obenProducts: h.obenProducts,
     colacorProducts: h.colacorProducts,
@@ -75,6 +198,15 @@ const UnifiedOrder = () => {
     state: draftPayload,
     shouldSave: h.cart.length > 0,
     clearTrigger: h.orderSuccessOpen, // limpa quando o success dialog abrir = pedido enviado
+  });
+
+  // Gate offline-first do envio: offline salva rascunho (já auto-salvo acima) e expõe
+  // CTA de reconexão; nunca enfileira (submitOrder cria PV cobrado no Omie).
+  const net = useNetworkStatus();
+  const offlineSubmit = useOfflineSubmit({
+    submit: h.submitOrder,
+    online: net.online,
+    hasContent: h.cart.length > 0,
   });
 
   // Oferece restore se houver draft pendente E o cart atual estiver vazio (entrou novo na tela).
@@ -125,9 +257,6 @@ const UnifiedOrder = () => {
   return (
     <div className="max-w-5xl mx-auto space-y-4 pb-6">
       <div className="flex items-center gap-3">
-        <button onClick={() => h.navigate(-1)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ChevronLeft className="w-4 h-4" />
-        </button>
         <div>
           <h1 className="text-lg font-semibold">
             {isCustomerMode ? 'Nova Ordem de Serviço' : 'Novo Pedido'}
@@ -142,12 +271,24 @@ const UnifiedOrder = () => {
 
       <OrderStepper step={h.currentStep} isCustomerMode={isCustomerMode} />
 
+      {offlineSubmit.showReconnectCta && (
+        <div className="rounded-md border border-status-info-bold/30 bg-status-info-bg px-4 py-3 mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm text-status-info-bold">
+            <Wifi className="w-4 h-4 shrink-0" />
+            Conexão restabelecida. Seu pedido está salvo como rascunho.
+          </div>
+          <Button size="sm" onClick={offlineSubmit.onReconnectSubmit} disabled={h.submitting} className="shrink-0">
+            Enviar pedido agora
+          </Button>
+        </div>
+      )}
+
       <div className={cn('grid gap-4', showProductTabs ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1 lg:grid-cols-3')}>
         <div className={cn(showProductTabs ? 'lg:col-span-2' : 'lg:col-span-2', 'space-y-4')}>
           {/* AI Assistant — staff only */}
           {showAIAssistant && (
             <UnifiedAIAssistant
-              products={[...h.obenProducts, ...h.colacorProducts] as any}
+              products={[...h.obenProducts, ...h.colacorProducts] as unknown as { id: string; codigo: string; descricao: string; valor_unitario: number; estoque: number; account?: string }[]}
               userTools={h.userTools}
               onItemsIdentified={h.handleUnifiedAIResult}
               onCustomerIdentified={h.handleAICustomerSelect}
@@ -166,6 +307,18 @@ const UnifiedOrder = () => {
               loadingCustomer={h.loadingCustomer} validatingVendedor={h.validatingVendedor}
               vendedorDivergencias={h.vendedorDivergencias}
               onSelectCustomer={h.selectCustomer} onClearCustomer={h.clearCustomer}
+            />
+          )}
+
+          {/* Cores já pedidas pelo cliente — busca + re-pedido (staff) */}
+          {showCustomerSearch && customerReady && (
+            <CoresDoClienteCard
+              cores={coresDoCliente.cores}
+              coresFiltradas={coresDoCliente.coresFiltradas}
+              busca={coresDoCliente.busca}
+              onBuscaChange={coresDoCliente.setBusca}
+              isLoading={coresDoCliente.isLoading}
+              onRepetirCor={handleRepetirCor}
             />
           )}
 
@@ -193,13 +346,15 @@ const UnifiedOrder = () => {
                     <ProductItemForm title="Produtos Oben" products={h.filteredObenProducts} prices={h.customerPricesOben}
                       loading={h.loadingObenProducts} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
                       productItems={h.productItems} onAddProduct={h.addProductToCart}
-                      customerPurchaseHistory={h.customerPurchaseHistory} />
+                      customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer}
+                      specsByKey={fichasByKey} canSeeFicha={h.isStaff} />
                   </TabsContent>
                   <TabsContent value="colacor">
                     <ProductItemForm title="Produtos Colacor" products={h.filteredColacorProducts} prices={h.customerPricesColacor}
                       loading={h.loadingColacorProducts} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
                       productItems={h.productItems} onAddProduct={h.addProductToCart}
-                      customerPurchaseHistory={h.customerPurchaseHistory} />
+                      customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer}
+                      specsByKey={fichasByKey} canSeeFicha={h.isStaff} />
                   </TabsContent>
                   <TabsContent value="services">
                     <ServiceItemForm
@@ -277,8 +432,9 @@ const UnifiedOrder = () => {
               ordemCompra={h.ordemCompra} setOrdemCompra={h.setOrdemCompra}
               isOrdemCompraCustomer={h.isOrdemCompraCustomer}
               readyByDate={h.readyByDate} setReadyByDate={h.setReadyByDate}
-              onSubmit={h.submitOrder}
+              onSubmit={offlineSubmit.onSubmit}
               onSubmitQuote={h.submitQuote}
+              offline={offlineSubmit.offline}
             />
           )}
         </div>
@@ -311,6 +467,8 @@ const UnifiedOrder = () => {
               orderNumbers: h.lastOrderData!.orderNumbers,
             });
           }}
+          returnTo={returnTo}
+          onVoltarFila={() => { h.setOrderSuccessOpen(false); if (returnTo) h.navigate(returnTo); }}
         />
       )}
 
@@ -329,10 +487,12 @@ const UnifiedOrder = () => {
         <TintColorSelectDialog
           product={h.tintPendingProduct}
           open={!!h.tintPendingProduct}
-          onClose={() => h.setTintPendingProduct(null)}
+          onClose={() => { h.setTintPendingProduct(null); setTintInitialSearch(null); }}
           customerUserId={h.customerUserId}
+          initialSearch={tintInitialSearch}
           onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, alternativeProduct) => {
             h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes);
+            setTintInitialSearch(null);
           }}
         />
       )}

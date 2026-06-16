@@ -5,16 +5,18 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useFarmerScoring, type ClientScore, type AgendaItem } from '@/hooks/useFarmerScoring';
+import { useFarmerScoring, type ClientScore, type AlgorithmConfig } from '@/hooks/useFarmerScoring';
 import { useFarmerMetrics } from '@/hooks/useFarmerMetrics';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  Phone, TrendingUp, Users, Target, BarChart3, Brain,
-  RefreshCw, Zap, Activity, AlertTriangle, CheckCircle,
-  ChevronRight, Shield, Clock, Heart, Loader2,
+  Phone, Users, Target, BarChart3, Brain,
+  Zap, Activity,
+  Shield, Heart,
   Eye, ShoppingCart,
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { CallButton } from '@/components/call/CallButton';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 const healthColors: Record<string, { bg: string; text: string; border: string }> = {
@@ -41,16 +43,14 @@ const fmtDur = (s: number) => {
 const FarmerDashboard = () => {
   const navigate = useNavigate();
   const { isStaff, loading: authLoading } = useAuth();
-  const { clientScores, agenda, summary, loading, calculating, recalculate, config } = useFarmerScoring();
-  const { metrics, loading: metricsLoading } = useFarmerMetrics();
+  const { clientScores, agenda, summary, loading, config } = useFarmerScoring();
+  const { metrics } = useFarmerMetrics();
   const [selectedClient, setSelectedClient] = useState<ClientScore | null>(null);
 
   if (authLoading || loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    // PageSkeleton (não Loader2 full-page): o Suspense da rota já mostrou um
+    // skeleton — regredir pra spinner vazio fazia o layout sumir e voltar.
+    return <PageSkeleton variant="cockpit" />;
   }
 
   if (!isStaff) { navigate('/', { replace: true }); return null; }
@@ -157,14 +157,7 @@ const FarmerDashboard = () => {
                         </div>
                         <div className="flex items-center gap-0.5 shrink-0">
                           {phone ? (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" asChild>
-                                  <a href={`tel:${phone}`}><Phone className="w-3.5 h-3.5" /></a>
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent><p className="text-xs">Ligar</p></TooltipContent>
-                            </Tooltip>
+                            <CallButton phone={phone} customerName={item.customer_name} variant="icon" />
                           ) : (
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -367,7 +360,7 @@ const WeightBar = ({ label, value, color = 'bg-primary' }: { label: string; valu
   </div>
 );
 
-const ClientDetail = ({ client, onBack, config }: { client: ClientScore; onBack: () => void; config: any }) => {
+const ClientDetail = ({ client, onBack }: { client: ClientScore; onBack: () => void; config: AlgorithmConfig }) => {
   const hc = healthColors[client.healthClass] || healthColors.critico;
   return (
     <div className="space-y-3">

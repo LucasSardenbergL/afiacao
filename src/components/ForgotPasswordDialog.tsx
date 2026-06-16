@@ -54,10 +54,10 @@ export const ForgotPasswordDialog = ({ open, onOpenChange }: ForgotPasswordDialo
       toast.success('E-mail enviado!', {
         description: 'Verifique sua caixa de entrada',
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error sending reset email:', error);
       toast.error('Erro ao enviar e-mail', {
-        description: error.message || 'Tente novamente mais tarde',
+        description: error instanceof Error ? error.message : 'Tente novamente mais tarde',
       });
     } finally {
       setIsLoading(false);

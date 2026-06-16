@@ -76,7 +76,7 @@ export function useDirectTintImport() {
     for (const r of bases.data ?? []) baseCache.current.set(r.id_base_sayersystem, r.id);
     for (const r of embalagens.data ?? []) embalagemCache.current.set(r.id_embalagem_sayersystem, r.id);
     for (const r of corantes.data ?? []) coranteCache.current.set(r.id_corante_sayersystem, r.id);
-    for (const r of subcolecoes.data ?? []) subcolecaoCache.current.set(r.id_subcolecao_sayersystem, r.id);
+    for (const r of subcolecoes.data ?? []) { if (r.id_subcolecao_sayersystem) subcolecaoCache.current.set(r.id_subcolecao_sayersystem, r.id); }
     for (const r of skus.data ?? []) skuCache.current.set(`${r.produto_id}:${r.base_id}:${r.embalagem_id}`, r.id);
     logger.info('Tint import caches pre-warmed', {
       stage: 'pre_warm_caches',
@@ -90,7 +90,8 @@ export function useDirectTintImport() {
 
   // ─── Process dados_corantes ───
   const processDadosCorantes = async (rows: string[][]): Promise<{ imported: number; updated: number; errors: number }> => {
-    let imported = 0, updated = 0, errors = 0;
+    let imported = 0, errors = 0;
+    const updated = 0;
     const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
 
     for (let b = 0; b < totalBatches; b++) {
@@ -138,7 +139,8 @@ export function useDirectTintImport() {
 
   // ─── Process dados_produto_base_embalagem ───
   const processDadosPBE = async (rows: string[][]): Promise<{ imported: number; updated: number; errors: number }> => {
-    let imported = 0, updated = 0, errors = 0;
+    let imported = 0, errors = 0;
+    const updated = 0;
     const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
 
     for (let b = 0; b < totalBatches; b++) {
@@ -224,7 +226,8 @@ export function useDirectTintImport() {
 
   // ─── Process formulas ───
   const processFormulas = async (rows: string[][], personalizada: boolean, importacaoId: string): Promise<{ imported: number; updated: number; errors: number }> => {
-    let imported = 0, updated = 0, errors = 0;
+    let imported = 0, errors = 0;
+    let updated = 0;
     const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
     const offset = personalizada ? 0 : 2;
 
@@ -306,7 +309,7 @@ export function useDirectTintImport() {
           newSubs.map(([id, desc]) => ({ account: ACCOUNT, id_subcolecao_sayersystem: id, descricao: desc })),
           { onConflict: 'account,id_subcolecao_sayersystem' }
         ).select('id, id_subcolecao_sayersystem');
-        for (const r of data ?? []) subcolecaoCache.current.set(r.id_subcolecao_sayersystem, r.id);
+        for (const r of data ?? []) { if (r.id_subcolecao_sayersystem) subcolecaoCache.current.set(r.id_subcolecao_sayersystem, r.id); }
       }
 
       // Phase 3: Build SKUs
@@ -411,7 +414,7 @@ export function useDirectTintImport() {
             newFormulas.push({ row: formulaRow, items: coranteItems });
             imported++;
           }
-        } catch (e: any) {
+        } catch (e) {
           errors++;
           logger.warn('Tint formula row processing failed (skipping row)', {
             stage: 'upload_formulas',
@@ -475,8 +478,9 @@ export function useDirectTintImport() {
   };
 
   // ─── Process formulas via RPC (Postgres-native) ───
-  const processFormulasRPC = async (rows: string[][], personalizada: boolean, importacaoId: string): Promise<{ imported: number; updated: number; errors: number }> => {
-    let imported = 0, updated = 0, errors = 0;
+  const processFormulasRPC = async (rows: string[][], personalizada: boolean, _importacaoId: string): Promise<{ imported: number; updated: number; errors: number }> => {
+    let imported = 0, errors = 0;
+    let updated = 0;
     const offset = personalizada ? 0 : 2;
     const totalBatches = Math.ceil(rows.length / RPC_BATCH_SIZE);
 

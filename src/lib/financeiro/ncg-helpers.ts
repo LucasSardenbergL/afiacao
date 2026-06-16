@@ -23,6 +23,9 @@ export function classificarCP(
   if (cp.categoria_codigo && adiantamento_codigos.includes(cp.categoria_codigo)) {
     return 'aco_adiantamento';
   }
+  if (cp.categoria_codigo && cp.categoria_codigo.startsWith('3.99')) {
+    return 'pco_tributos';
+  }
   return 'pco_cp_fornecedor';
 }
 
@@ -64,19 +67,23 @@ export function calcularPCO(input: {
   cps: CP[];
   adiantamento_categorias_codigos: string[];
   folha_30d: number;
-  tributos_30d: number;
 }): PCO {
   let cp_fornecedor = 0;
+  let tributos_a_pagar = 0;
   for (const cp of input.cps) {
-    if (classificarCP(cp, input.adiantamento_categorias_codigos) === 'pco_cp_fornecedor') {
-      cp_fornecedor += cp.saldo;
-    }
+    const c = classificarCP(cp, input.adiantamento_categorias_codigos);
+    if (c === 'pco_cp_fornecedor') cp_fornecedor += cp.saldo;
+    else if (c === 'pco_tributos') tributos_a_pagar += cp.saldo;
   }
-  const total = cp_fornecedor + input.folha_30d + input.tributos_30d;
-  return {
-    cp_fornecedor,
-    folha_30d: input.folha_30d,
-    tributos_a_pagar: input.tributos_30d,
-    total,
-  };
+  const total = cp_fornecedor + input.folha_30d + tributos_a_pagar;
+  return { cp_fornecedor, folha_30d: input.folha_30d, tributos_a_pagar, total };
+}
+
+export function calcularPME(input: { estoque_valor: number; cmv_ttm: number }): number {
+  if (input.cmv_ttm <= 0) return 0;
+  return (input.estoque_valor / input.cmv_ttm) * 365;
+}
+
+export function calcularCCC(input: { pmr: number; pme: number; pmp: number }): number {
+  return input.pmr + input.pme - input.pmp;
 }

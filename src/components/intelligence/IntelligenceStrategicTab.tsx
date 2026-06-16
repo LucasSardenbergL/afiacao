@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -91,9 +91,6 @@ export function IntelligenceStrategicTab() {
     ? nonDiscountedItems.reduce((a, i) => a + Number(i.quantity), 0) / nonDiscountedItems.length : 0;
   const priceElasticity = avgNonDiscountQty > 0 ? ((avgDiscountQty - avgNonDiscountQty) / avgNonDiscountQty * 100) : 0;
 
-  const avgDiscount = salesOrders?.length
-    ? salesOrders.reduce((a, o) => a + Number(o.discount || 0), 0) / salesOrders.length
-    : 0;
   const ordersWithDiscount = salesOrders?.filter(o => Number(o.discount || 0) > 0).length || 0;
   const discountSensitivity = salesOrders?.length ? (ordersWithDiscount / salesOrders.length * 100) : 0;
 
@@ -112,8 +109,8 @@ export function IntelligenceStrategicTab() {
       const { error } = await supabase.functions.invoke('algorithm-a-audit');
       if (error) throw error;
       toast.success('Algoritmo A executado com sucesso');
-    } catch (e: any) {
-      toast.error('Erro: ' + e.message);
+    } catch (e) {
+      toast.error('Erro: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setRunningAlgoA(false);
     }

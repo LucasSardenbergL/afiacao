@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react';
 import type { KbDocumentStatus } from '@/lib/knowledge-base/types';
 
 const COLOR: Record<KbDocumentStatus, string> = {
-  processing: 'border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-300',
+  processing: 'border-status-info text-status-info',
   ready: 'border-status-success text-status-success',
   error: 'border-status-error text-status-error',
   draft: 'border-muted-foreground/30 text-muted-foreground',

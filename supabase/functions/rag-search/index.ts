@@ -78,9 +78,9 @@ Deno.serve(async (req) => {
 
     const sources = body.sources ?? ['customer_processes', 'standard_processes', 'kb_documents'];
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q = supabase
       .from('rag_chunks')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- filtros JSON-path (metadata->>x) não existem nos tipos gerados; cast no boundary do PostgREST
       .select('source_table, source_id, chunk_index, content, metadata, embedding') as any;
 
     q = q.in('source_table', sources);

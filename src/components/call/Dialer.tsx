@@ -1,6 +1,4 @@
 import { lazy, Suspense } from 'react';
-import { useFeatureFlag } from '@/hooks/useFeatureFlag';
-import { NvoipDialer, NvoipFloatingDialer } from '@/components/NvoipDialer';
 import type { CallDialerViewProps } from './CallDialerView';
 
 const WebRTCDialer = lazy(() =>
@@ -9,16 +7,15 @@ const WebRTCDialer = lazy(() =>
 
 type Props = Pick<CallDialerViewProps, 'phoneNumber' | 'customerName' | 'onCallEnd' | 'compact' | 'floating'>;
 
+/**
+ * Dialer in-app. WebRTC é o único backend ativo (o `floating` é repassado e
+ * tratado pelo WebRTCDialer/CallDialerView). O Nvoip click-to-call foi
+ * descontinuado da UI — ver useCallBackend.
+ */
 export function Dialer(props: Props) {
-  const [useWebRTC] = useFeatureFlag('useWebRTCCall', false);
-
-  if (useWebRTC) {
-    return (
-      <Suspense fallback={null}>
-        <WebRTCDialer {...props} />
-      </Suspense>
-    );
-  }
-  if (props.floating) return <NvoipFloatingDialer {...props} />;
-  return <NvoipDialer {...props} />;
+  return (
+    <Suspense fallback={null}>
+      <WebRTCDialer {...props} />
+    </Suspense>
+  );
 }

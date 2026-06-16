@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PosicaoAtualTab } from "@/components/des/PosicaoAtualTab";
 import { CheckinQualitativoTab } from "@/components/des/CheckinQualitativoTab";
 import { SimuladorTab } from "@/components/des/SimuladorTab";
 import { HistoricoTab } from "@/components/des/HistoricoTab";
+import { ConfiguracaoTab } from "@/components/des/ConfiguracaoTab";
 
 const EMPRESA = "OBEN";
 
@@ -17,8 +19,19 @@ function getCurrentQuarter(): { ano: number; trimestre: number } {
 }
 
 export default function AdminDesTrimestreAtual() {
-  const [tab, setTab] = useState("posicao");
+  const location = useLocation();
+  // A rota /admin/des/configuracao é um atalho que abre direto a aba Configuração.
+  const [tab, setTab] = useState(
+    location.pathname.includes("/configuracao") ? "config" : "posicao",
+  );
   const { ano, trimestre } = getCurrentQuarter();
+
+  // Sincroniza a aba com a rota nos dois sentidos, mesmo se o componente não
+  // remontar ao navegar entre /trimestre-atual e /configuracao (mesmo element).
+  // Trocar de aba manualmente não muda o pathname, então não dispara este efeito.
+  useEffect(() => {
+    setTab(location.pathname.includes("/configuracao") ? "config" : "posicao");
+  }, [location.pathname]);
 
   return (
     <div className="container mx-auto p-4 lg:p-6 space-y-6">
@@ -34,11 +47,12 @@ export default function AdminDesTrimestreAtual() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 max-w-2xl">
+        <TabsList className="grid w-full grid-cols-3 md:grid-cols-5 max-w-3xl">
           <TabsTrigger value="posicao">Posição atual</TabsTrigger>
           <TabsTrigger value="checkin">Checkin qualitativo</TabsTrigger>
           <TabsTrigger value="simulador">Simulador</TabsTrigger>
           <TabsTrigger value="historico">Histórico</TabsTrigger>
+          <TabsTrigger value="config">Configuração</TabsTrigger>
         </TabsList>
 
         <TabsContent value="posicao" className="space-y-6 mt-6">
@@ -55,6 +69,10 @@ export default function AdminDesTrimestreAtual() {
 
         <TabsContent value="historico" className="space-y-6 mt-6">
           <HistoricoTab empresa={EMPRESA} ano={ano} trimestre={trimestre} />
+        </TabsContent>
+
+        <TabsContent value="config" className="space-y-6 mt-6">
+          <ConfiguracaoTab empresa={EMPRESA} ano={ano} trimestre={trimestre} />
         </TabsContent>
       </Tabs>
     </div>

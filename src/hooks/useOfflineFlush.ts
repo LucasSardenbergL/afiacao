@@ -48,8 +48,23 @@ export function useOfflineFlush(): void {
       }
     };
 
+    // Guard de re-entrância: flush() chama writeQueue(), que re-emite pra fila.
+    // Sem isso, um item que FALHA persistentemente (ex. RLS) fica na fila → o re-emit
+    // re-dispara o flush → loop infinito martelando o backend. O guard garante que o
+    // re-emit disparado pelo próprio flush seja ignorado enquanto ele roda.
+    let flushing = false;
+    const runFlush = async () => {
+      if (flushing) return;
+      flushing = true;
+      try {
+        await flush(dispatcher);
+      } finally {
+        flushing = false;
+      }
+    };
+
     const onOnline = () => {
-      void flush(dispatcher);
+      void runFlush();
     };
 
     window.addEventListener('online', onOnline);
@@ -57,7 +72,7 @@ export function useOfflineFlush(): void {
     // Ao montar, se já tem itens E está online, tenta flush imediatamente.
     const unsub = subscribeToOfflineQueue((depth) => {
       if (depth > 0 && typeof navigator !== 'undefined' && navigator.onLine) {
-        void flush(dispatcher);
+        void runFlush();
       }
     });
 

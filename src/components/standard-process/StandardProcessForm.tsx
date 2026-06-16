@@ -24,6 +24,10 @@ const headerSchema = z.object({
   target_audience: z.string().optional(),
 });
 
+// z.input = shape do formulário (campos com .default() são opcionais na entrada);
+// z.infer (=z.output) = valores após parse/defaults (todos presentes). O resolver do
+// zod transforma input→output, então useForm recebe os 3 genéricos: <input, ctx, output>.
+type HeaderInput = z.input<typeof headerSchema>;
 type HeaderValues = z.infer<typeof headerSchema>;
 
 const emptyEtapa = (ordem: number): StandardProcessEtapa => ({
@@ -50,7 +54,7 @@ export function StandardProcessForm({ initial, onSaved }: Props) {
   const save = useSaveStandardProcess();
   const { data: specs } = useKbProductSpecsList();
 
-  const { register, handleSubmit, formState: { errors } } = useForm<HeaderValues>({
+  const { register, handleSubmit, formState: { errors } } = useForm<HeaderInput, unknown, HeaderValues>({
     resolver: zodResolver(headerSchema),
     defaultValues: {
       name: initial?.name ?? '',

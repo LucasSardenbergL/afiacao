@@ -7,7 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { MarkdownContent } from '@/components/help/MarkdownContent';
 import { helpModules, getHelpModule, defaultHelpModule } from '@/content/help';
-import { extractToc, slugify } from '@/lib/help-utils';
+import { extractToc } from '@/lib/help-utils';
 
 export default function AdminAjuda() {
   const [searchParams, setSearchParams] = useSearchParams();

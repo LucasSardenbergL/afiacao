@@ -61,7 +61,7 @@ export default function TintCorantes() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(corantes ?? []).map((c: any) => {
+            {(corantes ?? []).map((c) => {
               const linked = c.omie_product_id && omieMap ? omieMap.get(c.omie_product_id) : null;
               const custoMl = linked && c.volume_total_ml > 0 ? linked.valor_unitario / c.volume_total_ml : null;
               return (

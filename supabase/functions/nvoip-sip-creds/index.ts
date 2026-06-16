@@ -41,13 +41,17 @@ Deno.serve(async (req) => {
             },
           );
         }
+        // Caller-ID único de empresa: lê company_config; cai no valor por vendedor se ausente.
+        const { data: cfg } = await supabase
+          .from("company_config").select("value").eq("key", "nvoip_outbound_caller_id").maybeSingle();
+        const companyCallerId = cfg?.value ?? null;
         return new Response(
           JSON.stringify({
             wsUri,
             sipDomain,
             username: vendorCred.sip_user,
             password: vendorCred.sip_pass,
-            callerId: vendorCred.sip_caller_id ?? null,
+            callerId: companyCallerId ?? vendorCred.sip_caller_id ?? null,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );

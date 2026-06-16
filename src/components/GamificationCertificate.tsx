@@ -1,9 +1,10 @@
 import { useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Download, Award, Star, Trophy, Shield } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { escapeHtml } from '@/lib/escape-html';
 
 interface CertificateProps {
   userName: string;
@@ -12,14 +13,6 @@ interface CertificateProps {
   totalScore: number;
   date?: string;
 }
-
-const LEVEL_ICONS: Record<number, typeof Award> = {
-  1: Shield,
-  2: Shield,
-  3: Award,
-  4: Star,
-  5: Trophy,
-};
 
 export function GamificationCertificate({ userName, levelName, level, totalScore, date }: CertificateProps) {
   const certRef = useRef<HTMLDivElement>(null);
@@ -31,11 +24,6 @@ export function GamificationCertificate({ userName, levelName, level, totalScore
     if (!printWindow) return;
 
     const certDate = date || format(new Date(), "dd 'de' MMMM 'de' yyyy", { locale: ptBR });
-
-    function escapeHtml(s: string | undefined | null): string {
-      if (!s) return '';
-      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-    }
 
     printWindow.document.write(`
       <!DOCTYPE html>

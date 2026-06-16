@@ -62,9 +62,11 @@ Deno.serve(async (req) => {
     const numbersip = Deno.env.get("NVOIP_NUMBERSIP");
     const userToken = Deno.env.get("NVOIP_USER_TOKEN");
 
-    if (!napikey || !numbersip || !userToken) {
+    // NVOIP_OAUTH_BASIC (Basic client auth do OAuth) também é obrigatório — sem ele o
+    // header vira "Basic " vazio e a Nvoip devolve um 401 opaco no /oauth/token.
+    if (!napikey || !numbersip || !userToken || !NVOIP_OAUTH_BASIC_ENV) {
       return new Response(
-        JSON.stringify({ error: "Credenciais Nvoip não configuradas. Configure NVOIP_NAPIKEY, NVOIP_NUMBERSIP e NVOIP_USER_TOKEN." }),
+        JSON.stringify({ error: "Credenciais Nvoip não configuradas. Configure NVOIP_NAPIKEY, NVOIP_NUMBERSIP, NVOIP_USER_TOKEN e NVOIP_OAUTH_BASIC." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -143,7 +145,7 @@ Deno.serve(async (req) => {
       return data.access_token;
     }
 
-    async function saveTokens(sb: any, tokenResp: any) {
+    async function saveTokens(sb: ReturnType<typeof createClient>, tokenResp: { expires_in?: number; access_token: string; refresh_token?: string }) {
       const expiresAt = Date.now() + (tokenResp.expires_in || 86400) * 1000;
 
       const upsert = async (key: string, value: string) => {

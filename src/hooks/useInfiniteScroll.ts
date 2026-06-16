@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 
 /**
  * IntersectionObserver-based infinite scroll trigger.
@@ -11,28 +11,42 @@ import { useEffect, useRef } from 'react';
  *   ...
  *   <div ref={sentinelRef} />   // sentinela invisível no fim da lista
  *
- * O `rootMargin: '200px'` antecipa o load — o trigger dispara 200px ANTES da
- * sentinela entrar no viewport, fica fluido sem "barrar" o scroll.
+ * Retorna uma **callback ref**: o React a chama com o nó quando o sentinel
+ * monta/desmonta. Assim o observer sempre fica vinculado ao nó ATUAL — quando
+ * o sentinel é re-montado (ele alterna conteúdo entre spinner e "Carregar mais"
+ * conforme pagina), o gatilho não "solta" do alvo e o auto-load não trava.
+ *
+ * - `onLoadMore` vive numa ref → trocar o callback NÃO recria o observer.
+ * - o observer só é (re)criado quando `enabled` muda ou o nó troca.
+ * - `rootMargin: '200px'` antecipa o load 200px antes do sentinel aparecer.
  */
 export function useInfiniteScroll(
   onLoadMore: () => void,
   enabled: boolean,
-): React.RefObject<HTMLDivElement> {
-  const sentinelRef = useRef<HTMLDivElement>(null);
+): (node: HTMLDivElement | null) => void {
+  const cbRef = useRef(onLoadMore);
+  cbRef.current = onLoadMore;
 
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!enabled || !el) return;
+  const observerRef = useRef<IntersectionObserver | null>(null);
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) onLoadMore();
-      },
-      { rootMargin: '200px' },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [enabled, onLoadMore]);
+  return useCallback(
+    (node: HTMLDivElement | null) => {
+      // Desliga o observer anterior (nó desmontado, enabled mudou, ou re-mount).
+      observerRef.current?.disconnect();
+      observerRef.current = null;
 
-  return sentinelRef;
+      if (!node || !enabled) return;
+      if (typeof IntersectionObserver === 'undefined') return; // SSR / ambiente sem IO
+
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (entries[0]?.isIntersecting) cbRef.current();
+        },
+        { root: null, rootMargin: '200px', threshold: 0 },
+      );
+      observer.observe(node);
+      observerRef.current = observer;
+    },
+    [enabled],
+  );
 }

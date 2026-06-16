@@ -26,7 +26,7 @@ interface OrderWithProfile {
 
 const Admin = () => {
   const navigate = useNavigate();
-  const { user, isStaff, isAdmin, loading: authLoading } = useAuth();
+  const { user, isStaff, loading: authLoading } = useAuth();
 
   const [orders, setOrders] = useState<OrderWithProfile[]>([]);
   const [loading, setLoading] = useState(true);

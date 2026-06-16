@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     if (body?.empresa) empresa = String(body.empresa).toUpperCase();
     if (Array.isArray(body?.ids)) ids = body.ids.map((x: unknown) => Number(x)).filter(Boolean);
-  } catch (_) {}
+  } catch (_) { /* parse de body opcional */ }
 
   if (ids.length === 0) {
     return new Response(JSON.stringify({ error: "ids vazio" }), {

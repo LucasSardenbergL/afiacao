@@ -27,16 +27,6 @@ const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
   return btoa(binary);
 };
 
-// Helper to convert Base64 to ArrayBuffer
-const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
-};
-
 // Generate a random challenge
 const generateChallenge = (): ArrayBuffer => {
   const array = new Uint8Array(32);
@@ -171,15 +161,18 @@ export const useBiometricAuth = (): BiometricAuthHook => {
       });
 
       return true;
-    } catch (error: any) {
-      logger.error('Biometric registration failed', { stage: 'register', errorName: error?.name, error });
-      if (error.name === 'NotAllowedError') {
+    } catch (error) {
+      // WebAuthn rejeita com DOMException, que nem sempre é instanceof Error —
+      // leitura estrutural preserva name/message (ex: NotAllowedError) sem usar any.
+      const err = error as { name?: string; message?: string };
+      logger.error('Biometric registration failed', { stage: 'register', errorName: err?.name, error });
+      if (err?.name === 'NotAllowedError') {
         toast.error('Acesso negado', {
           description: 'Você precisa permitir o uso de biometria',
         });
       } else {
         toast.error('Erro ao registrar biometria', {
-          description: error.message || 'Tente novamente mais tarde',
+          description: err?.message || 'Tente novamente mais tarde',
         });
       }
       return false;
@@ -235,9 +228,10 @@ export const useBiometricAuth = (): BiometricAuthHook => {
       return {
         email: data.email,
       };
-    } catch (error: any) {
-      logger.warn('Biometric authentication failed', { stage: 'authenticate', errorName: error?.name, error });
-      if (error.name === 'NotAllowedError') {
+    } catch (error) {
+      const err = error as { name?: string; message?: string };
+      logger.warn('Biometric authentication failed', { stage: 'authenticate', errorName: err?.name, error });
+      if (err?.name === 'NotAllowedError') {
         toast.error('Acesso negado', {
           description: 'Autenticação biométrica cancelada',
         });

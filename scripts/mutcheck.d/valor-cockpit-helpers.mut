@@ -1,0 +1,12 @@
+# @src: src/lib/financeiro/valor-cockpit-helpers.ts
+# @test: src/lib/financeiro/__tests__/valor-cockpit-helpers.test.ts
+# Invariantes money-path do A3 (Cockpit de Valor: EVP por cliente/SKU + recomendação de preço/prazo).
+# Identidade contábil (Σcliente=Σsku=empresa), "ausente ≠ R$0" (hurdle/custo), direção das recomendações.
+PEGA | margemContribuicao receita − custo (- vira +)     | s/receita_liquida - input\.custo_unitario/receita_liquida + input.custo_unitario/
+PEGA | identidade evp = cm − encargo (- vira +)          | s/null : cm - encargo/null : cm + encargo/
+PEGA | encargo: hurdle k=null coage p/ 0 (ausente≠R$0)   | s/input\.k == null \? null :/input.k == null ? 0 :/
+PEGA | alocação AR por receita (denominador rc -> qs)    | s/c\.receita_liquida \/ rc/c.receita_liquida \/ qs/
+PEGA | resolverHurdle soma>0 vira >=0 (0% capital grátis)| s/soma > 0 \? soma/soma >= 0 ? soma/
+PEGA | recomendação "subir preço" direção (< vira >)     | s/cmPct < c\.margem_minima_pct/cmPct > c.margem_minima_pct/
+PEGA | recomendação "cortar desconto" direção (> vira <) | s/descontoPct > c\.desconto_max_pct/descontoPct < c.desconto_max_pct/
+PEGA | gate evpConhecivel (remove o ! da negação)        | s/= !input\.hurdle_indisponivel/= input.hurdle_indisponivel/

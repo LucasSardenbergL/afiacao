@@ -93,6 +93,9 @@ verify_jwt = false
 [functions.omie-sync-metadados]
 verify_jwt = false
 
+[functions.radar-ingest]
+verify_jwt = false
+
 [functions.sync-reprocess]
 verify_jwt = false
 
@@ -112,4 +115,25 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.omie-nfe-webhook]
+verify_jwt = false
+
+[functions.enviar-pedido-portal-sayerlack]
+verify_jwt = false
+
+[functions.whatsapp-inbound]
+verify_jwt = false
+
+[functions.whatsapp-send]
+verify_jwt = false
+
+[functions.fin-cashflow-engine]
+verify_jwt = false
+
+[functions.posthog-error-webhook]
+verify_jwt = false
+
+[functions.enviar-push]
+verify_jwt = false
+
+[functions.radar-ingest]
 verify_jwt = false

@@ -24,7 +24,7 @@ const LEVEL_CONFIG = [
 
 const PILLAR_CONFIG = [
   { key: 'consistency_score', label: 'Consistência', icon: Target, weight: '40%', description: 'Ferramentas mantidas dentro da janela ideal', hint: 'Cadastre e acompanhe suas ferramentas para melhorar', route: '/tools' },
-  { key: 'organization_score', label: 'Organização', icon: Shield, weight: '20%', description: 'Qualidade de envio das ferramentas', hint: 'Envie ferramentas limpas, identificadas e bem embaladas', route: '/orders/new' },
+  { key: 'organization_score', label: 'Organização', icon: Shield, weight: '20%', description: 'Qualidade de envio das ferramentas', hint: 'Envie ferramentas limpas, identificadas e bem embaladas', route: '/new-order' },
   { key: 'education_score', label: 'Educação', icon: BookOpen, weight: '15%', description: 'Treinamentos técnicos concluídos', hint: 'Complete treinamentos para ganhar pontos aqui', route: '/training' },
   { key: 'referral_score', label: 'Indicação', icon: Users, weight: '15%', description: 'Indicações convertidas', hint: 'Indique profissionais e ganhe pontos quando se tornarem clientes', route: '/support' },
   { key: 'efficiency_score', label: 'Eficiência', icon: Zap, weight: '10%', description: 'Gestão preventiva vs emergencial', hint: 'Planeje manutenções preventivas e evite emergências', route: '/tools' },
@@ -46,7 +46,7 @@ const PILLAR_ACTIONS: Record<string, { tip: string; cta: string; route: string }
   organization_score: {
     tip: 'Melhore a qualidade de envio: ferramentas limpas, identificadas, separadas por tipo e bem embaladas.',
     cta: 'Novo pedido',
-    route: '/orders/new',
+    route: '/new-order',
   },
   education_score: {
     tip: 'Complete treinamentos técnicos disponíveis para ganhar pontos nesse pilar.',
@@ -181,7 +181,7 @@ const Gamification = () => {
         {score && (() => {
           const pillars = PILLAR_CONFIG.map(p => ({
             ...p,
-            value: (score as any)[p.key] as number,
+            value: score[p.key as keyof typeof score] as number,
           }));
           const weakest = pillars.reduce((min, p) => p.value < min.value ? p : min, pillars[0]);
           const action = PILLAR_ACTIONS[weakest.key];
@@ -225,7 +225,7 @@ const Gamification = () => {
 
           <div className="space-y-3">
             {PILLAR_CONFIG.map(pillar => {
-              const value = score ? (score as any)[pillar.key] : 0;
+              const value = score ? (score[pillar.key as keyof typeof score] as number) : 0;
               const Icon = pillar.icon;
               return (
                 <Card key={pillar.key} className="cursor-pointer hover:ring-1 hover:ring-primary/20 transition-all" onClick={() => navigate(pillar.route)}>
@@ -258,7 +258,7 @@ const Gamification = () => {
         <div>
           <h3 className="font-display font-bold text-lg text-foreground mb-3">Jornada de Níveis</h3>
           <div className="space-y-2">
-            {LEVEL_CONFIG.map((lvl, idx) => {
+            {LEVEL_CONFIG.map((lvl) => {
               const isActive = (score?.level || 1) >= lvl.level;
               const isCurrent = (score?.level || 1) === lvl.level;
               const Icon = lvl.icon;

@@ -1,0 +1,14 @@
+-- Remove o cron sayerlack-portal-lote-retry (criado em 20260528030000, PR #453): descobriu-se
+-- depois que é NO-OP no fluxo portal-FIRST. O modo LOTE da edge enviar-pedido-portal-sayerlack
+-- busca status='disparado' AND status_envio_portal IN (pendente_envio_portal, erro_retentavel) —
+-- mas como o portal precisa SUCEDER (obter protocolo) ANTES de o pedido virar 'disparado', uma
+-- falha de portal deixa o pedido em status='aprovado_aguardando_disparo' (≠ 'disparado'), então o
+-- lote NUNCA acha candidato. A remediação real é o MOTOR sayerlack_retry_orfaos (cron
+-- sayerlack-retry-orfaos */15, migration 20260528040000), que re-dispara via
+-- disparar-pedidos-aprovados {pedido_id} só os órfãos retentáveis frescos.
+--
+-- Este cron morto rodava a cada 15min achando 0 candidatos — inofensivo (retorna rápido, e o claim
+-- atômico protegeria mesmo se achasse algo), mas é cruft confuso (dois */15 de retry Sayerlack, um
+-- dead). Removido pra deixar o estado limpo. cron.unschedule por jobid via FROM cron.job é
+-- idempotente (0 linhas se já não existir, sem erro).
+SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname = 'sayerlack-portal-lote-retry';

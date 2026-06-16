@@ -20,7 +20,7 @@ export function useUploadKbDocument() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Não autenticado');
 
-      const safeName = input.file.name.replace(/[^\w.\-]/g, '_');
+      const safeName = input.file.name.replace(/[^\w.-]/g, '_');
       const path = `${user.id}/${Date.now()}_${safeName}`;
 
       // 1. Upload pro Storage
@@ -30,8 +30,7 @@ export function useUploadKbDocument() {
       if (upErr) throw upErr;
 
       // 2. Insert document
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: doc, error: insErr } = await (supabase.from('kb_documents') as any)
+      const { data: doc, error: insErr } = await supabase.from('kb_documents')
         .insert({
           title: input.title,
           type: input.type,

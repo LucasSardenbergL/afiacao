@@ -223,15 +223,27 @@ async function recalcOne(
   // Safety cap: 200 calls in 30 days = ~7/day average. Beyond that, decay already
   // makes older calls negligible. Order by most-recent first so the cap drops
   // the lowest-weight calls.
-  const { data: calls, error: cErr } = await supabase
-    .from('farmer_calls')
-    .select('id, started_at, entities_extracted, analyses')
-    .eq('customer_user_id', customer_user_id)
-    .eq('farmer_id', farmer_id)
-    .gte('started_at', cutoff)
-    .order('started_at', { ascending: false })
-    .limit(200);
+  // Anti-ressurreição (fornecedores fora da carteira): cliente marcado p/ exclusão
+  // (cliente_classificacao.excluir_da_carteira) não recebe score. Checagem em paralelo
+  // com as calls → zero latência extra. Ausência de linha = não-fornecedor = segue (fail-safe).
+  const [flagRes, callsRes] = await Promise.all([
+    supabase.from('cliente_classificacao').select('user_id')
+      .eq('user_id', customer_user_id).eq('excluir_da_carteira', true).maybeSingle(),
+    supabase
+      .from('farmer_calls')
+      .select('id, started_at, entities_extracted, analyses')
+      .eq('customer_user_id', customer_user_id)
+      .eq('farmer_id', farmer_id)
+      .gte('started_at', cutoff)
+      .order('started_at', { ascending: false })
+      .limit(200),
+  ]);
 
+  // FAIL-CLOSED (Codex P1): erro ao ler a flag → NÃO recalcula (senão um erro transitório
+  // de leitura recriaria score de fornecedor). O cliente é re-enfileirado no próximo batch.
+  if (flagRes.error) return { ok: false, error: `cliente_classificacao: ${flagRes.error.message}` };
+  if (flagRes.data) return { ok: true };
+  const { data: calls, error: cErr } = callsRes;
   if (cErr) return { ok: false, error: `farmer_calls: ${cErr.message}` };
 
   const now = new Date();
@@ -273,13 +285,14 @@ async function recalcOne(
   // idempotente. As colunas-base continuam de propriedade do calculate-scores.
   // A prioridade efetiva (base + nudge dos sinais) é computada em read-time
   // (src/lib/scoring/agenda.ts → signalPriorityNudge / effectivePriority).
+  // Opção A (carteira-Omie): 1 linha por cliente, farmer_id = dono. onConflict por cliente.
   const { error: uErr } = await supabase.from('farmer_client_scores').upsert({
     customer_user_id,
     farmer_id,
     signal_modifiers: adjustment,
     last_signal_recalc_at: now.toISOString(),
     updated_at: now.toISOString(),
-  }, { onConflict: 'customer_user_id,farmer_id' });
+  }, { onConflict: 'customer_user_id' });
 
   if (uErr) return { ok: false, error: `upsert: ${uErr.message}` };
 
@@ -310,20 +323,29 @@ Deno.serve(async (req) => {
 
     if (pErr) return jsonError(`fila: ${pErr.message}`, 500);
 
-    const results = [];
-    for (const item of (pending ?? []) as Array<{ id: string; customer_user_id: string; farmer_id: string }>) {
-      let r: { ok: boolean; error?: string; adjustment?: ScoreAdjustment };
-      try {
-        r = await recalcOne(supabase, item.customer_user_id, item.farmer_id);
-      } catch (err) {
-        r = { ok: false, error: `uncaught: ${err instanceof Error ? err.message : String(err)}` };
-      }
-      // Always mark processed, even on uncaught throw — prevents poison-pill rows from being retried forever.
-      await supabase.from('score_recalc_queue').update({
-        processed_at: new Date().toISOString(),
-        error: r.error ?? null,
-      }).eq('id', item.id);
-      results.push({ id: item.id, ...r });
+    // Drain CONCORRENTE (codex 2026-05-24): o backfill da carteira passa pela fila,
+    // então o dreno precisa caber no timeout de 50s. Chunks de 10 (cada recalcOne = 1 query
+    // + 1 upsert). max_drain ~500 fica seguro.
+    const queue = (pending ?? []) as Array<{ id: string; customer_user_id: string; farmer_id: string }>;
+    const CONCURRENCY = 10;
+    const results: Array<{ id: string; ok: boolean; error?: string }> = [];
+    for (let i = 0; i < queue.length; i += CONCURRENCY) {
+      const chunk = queue.slice(i, i + CONCURRENCY);
+      const chunkResults = await Promise.all(chunk.map(async (item) => {
+        let r: { ok: boolean; error?: string; adjustment?: ScoreAdjustment };
+        try {
+          r = await recalcOne(supabase, item.customer_user_id, item.farmer_id);
+        } catch (err) {
+          r = { ok: false, error: `uncaught: ${err instanceof Error ? err.message : String(err)}` };
+        }
+        // Always mark processed, even on uncaught throw — prevents poison-pill rows from being retried forever.
+        await supabase.from('score_recalc_queue').update({
+          processed_at: new Date().toISOString(),
+          error: r.error ?? null,
+        }).eq('id', item.id);
+        return { id: item.id, ok: r.ok, error: r.error };
+      }));
+      results.push(...chunkResults);
     }
 
     return new Response(JSON.stringify({ drained: results.length, results }), {

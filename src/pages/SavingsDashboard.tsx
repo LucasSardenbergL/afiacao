@@ -4,7 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2, TrendingUp, DollarSign, Wrench, Leaf, PiggyBank } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, LineChart, Line } from 'recharts';
-import { format, subMonths, startOfMonth, endOfMonth } from 'date-fns';
+import { format, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 // Estimated average cost of buying a new tool (no real data available)
@@ -22,7 +22,7 @@ const SavingsDashboard = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
-  const [totalOrders, setTotalOrders] = useState(0);
+  const [, setTotalOrders] = useState(0);
   const [totalTools, setTotalTools] = useState(0);
   const [totalSpent, setTotalSpent] = useState(0);
 
@@ -54,16 +54,17 @@ const SavingsDashboard = () => {
       (orders || []).forEach(order => {
         const monthKey = format(new Date(order.created_at), 'yyyy-MM');
         const items = Array.isArray(order.items) ? order.items : [];
-        const toolCount = items.reduce((sum: number, item: any) => sum + (item.quantity || 1), 0);
+        const toolCount: number = (items as unknown as Array<{ quantity?: number }>).reduce((sum: number, item) => sum + (Number(item?.quantity) || 1), 0);
         
+        const orderTotal = Number(order.total) || 0;
         const existing = monthMap.get(monthKey) || { total: 0, toolCount: 0 };
         monthMap.set(monthKey, {
-          total: existing.total + (order.total || 0),
+          total: existing.total + orderTotal,
           toolCount: existing.toolCount + toolCount,
         });
 
         allToolsCount += toolCount;
-        allSpent += order.total || 0;
+        allSpent += orderTotal;
       });
 
       // Generate last 6 months data

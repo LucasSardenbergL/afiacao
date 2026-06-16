@@ -1,0 +1,11 @@
+# @src: src/lib/financeiro/next-best-action-helpers.ts
+# @test: src/lib/financeiro/__tests__/next-best-action-helpers.test.ts
+# Invariantes money-path do A4 (fila priorizada de alocação de capital que o CFO segue).
+# Inclui as invariantes dos furos corrigidos (Codex 2026-06): "ausente ≠ R$0" na ordenação,
+# crescer nunca-grátis, hurdle ≤0 implausível, confiança do candidato no rollup.
+PEGA | #6 crescer custo ≤0 deixa de cair em falta_dado | s/ \|\| input\.caixa_consumido <= 0//
+PEGA | #7 hurdle aceita ≤0 (> vira >=)                 | s/x > 0/x >= 0/
+PEGA | #7b hurdle de entrada aceita ≤0 (> vira >=)     | s/hurdleRaw > 0 \? hurdleRaw/hurdleRaw >= 0 ? hurdleRaw/
+PEGA | #2 custo null vira "grátis" (bucket 2 -> 0)     | s/\? 1 : 2\)/? 1 : 0)/
+PEGA | #3 EVA null vira ratio 0 (remove guard != null) | s/ && x\.impacto_eva != null//
+PEGA | #9 rollup ignora confiança do candidato         | s/fila\.some\(\(a\) => a\.confianca === 'baixa'\)/false/

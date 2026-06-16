@@ -26,8 +26,8 @@ const modeLabels: Record<IntegrationMode, string> = {
 };
 const modeColors: Record<IntegrationMode, string> = {
   csv_only: "bg-muted text-muted-foreground",
-  shadow_mode: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-  automatic_primary: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+  shadow_mode: "bg-status-warning-bg text-status-warning",
+  automatic_primary: "bg-status-success-bg text-status-success",
 };
 
 export default function TintIntegrations() {
@@ -144,10 +144,10 @@ export default function TintIntegrations() {
 
   function getHealthStatus(setting: IntegrationSetting) {
     if (!setting.sync_enabled) return { label: "Desabilitado", color: "text-muted-foreground" };
-    if (!setting.last_heartbeat_at) return { label: "Sem heartbeat", color: "text-yellow-500" };
+    if (!setting.last_heartbeat_at) return { label: "Sem heartbeat", color: "text-status-warning" };
     const diff = Date.now() - new Date(setting.last_heartbeat_at).getTime();
-    if (diff < 5 * 60 * 1000) return { label: "Online", color: "text-green-500" };
-    if (diff < 30 * 60 * 1000) return { label: "Lento", color: "text-yellow-500" };
+    if (diff < 5 * 60 * 1000) return { label: "Online", color: "text-status-success" };
+    if (diff < 30 * 60 * 1000) return { label: "Lento", color: "text-status-warning" };
     return { label: "Offline", color: "text-destructive" };
   }
 

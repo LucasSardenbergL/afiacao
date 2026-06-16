@@ -2,17 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-
-/**
- * Sanitiza input pra uso em `.or()` do PostgREST.
- * Além dos wildcards do ILIKE (% _), remove caracteres que quebram o parser
- * do PostgREST e permitem injetar cláusulas extras: vírgula (separador),
- * parênteses (agrupamento), barra invertida (escape), aspas duplas (delimitador).
- * Sem isso, input tipo `foo,role.eq.master` quebra de uma .ilike e injeta filtro.
- */
-function sanitizeForPostgrestOr(input: string): string {
-  return input.replace(/[%_,()\\"]/g, '');
-}
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { ilikeOr } from '@/lib/postgrest';
 
 /**
  * Busca global pra Cmd-K — pesquisa simultânea em 3 entidades:
@@ -53,15 +44,6 @@ function writeRecents(items: SearchResult[]): void {
   window.dispatchEvent(new StorageEvent('storage', { key: RECENTS_KEY }));
 }
 
-function useDebouncedValue<T>(value: T, delay = 200): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(id);
-  }, [value, delay]);
-  return debounced;
-}
-
 export function useGlobalSearch(query: string, enabled = true) {
   const { isStaff } = useAuth();
   const debouncedQuery = useDebouncedValue(query, 200);
@@ -76,12 +58,11 @@ export function useGlobalSearch(query: string, enabled = true) {
     enabled: isActive,
     staleTime: 30_000,
     queryFn: async () => {
-      // Busca por nome OU document OU email — sanitiza pra evitar injeção PostgREST
-      const q = sanitizeForPostgrestOr(trimmed);
+      // Busca por nome OU document OU email — ilikeOr sanitiza (anti-injeção)
       const { data } = await supabase
         .from('profiles')
         .select('user_id, name, document, email')
-        .or(`name.ilike.%${q}%,document.ilike.%${q}%,email.ilike.%${q}%`)
+        .or(ilikeOr(['name', 'document', 'email'], trimmed))
         .limit(5);
       return (data ?? []).map((p): SearchResult => ({
         kind: 'customer',
@@ -100,11 +81,11 @@ export function useGlobalSearch(query: string, enabled = true) {
     enabled: isActive,
     staleTime: 60_000,
     queryFn: async () => {
-      const q = sanitizeForPostgrestOr(trimmed);
       const { data } = await supabase
         .from('tint_formulas')
         .select('id, cor_id, nome_cor')
-        .or(`cor_id.ilike.%${q}%,nome_cor.ilike.%${q}%`)
+        .is('desativada_em', null)
+        .or(ilikeOr(['cor_id', 'nome_cor'], trimmed))
         .limit(5);
       return (data ?? []).map((f): SearchResult => ({
         kind: 'formula',

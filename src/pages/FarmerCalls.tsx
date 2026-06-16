@@ -1,197 +1,39 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Separator } from '@/components/ui/separator';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { supabase } from '@/integrations/supabase/client';
+import { eqText, orFilter } from '@/lib/postgrest';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { useFarmerScoring } from '@/hooks/useFarmerScoring';
-import { cn } from '@/lib/utils';
-import { Dialer } from '@/components/call/Dialer';
+import { useFarmerScoring, type AgendaItem } from '@/hooks/useFarmerScoring';
 import { TranscriptionPanel } from '@/components/call/TranscriptionPanel';
 import type { NvoipCallState } from '@/hooks/useNvoipCall';
 import { useCallBackend } from '@/hooks/useCallBackend';
 import { useWebRTCCall } from '@/hooks/useWebRTCCall';
-import {
-  Phone, PhoneOff, Play, Pause, Clock, Search,
-  Plus, Timer, CheckCircle, XCircle, Loader2,
-  ArrowUpRight, DollarSign, Filter, FileText,
-  Mic, ChevronRight,
-  PhoneCall, PhoneIncoming, AlertTriangle, TrendingUp, RotateCcw,
-} from 'lucide-react';
-import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-
-/* ─── Types ─── */
-interface Customer {
-  user_id: string;
-  name: string;
-  email: string | null;
-  phone: string | null;
-  /** Omie codigo_cliente (Oben). Used to resolve/create local user_id when saving. */
-  omie_codigo_cliente?: number | null;
-  /** Omie cnpj_cpf used to resolve local profile by document. */
-  document?: string | null;
-}
-
-interface CallLog {
-  id: string;
-  customer_user_id: string;
-  call_type: string;
-  call_result: string;
-  duration_seconds: number;
-  follow_up_duration_seconds: number;
-  attempt_number: number;
-  revenue_generated: number;
-  margin_generated: number;
-  notes: string | null;
-  created_at: string;
-  customer_name?: string;
-}
-
-const CALL_TYPES = [
-  { value: 'reativacao', label: 'Reativação', color: 'status-danger' },
-  { value: 'cross_sell', label: 'Cross-sell', color: 'status-progress' },
-  { value: 'up_sell', label: 'Up-sell', color: 'bg-purple-50 text-purple-700 border-purple-200' },
-  { value: 'follow_up', label: 'Follow-up', color: 'status-pending' },
-];
-
-const CALL_RESULTS = [
-  { value: 'contato_sucesso', label: 'Contato com Sucesso', icon: '✅' },
-  { value: 'sem_resposta', label: 'Sem Resposta', icon: '📵' },
-  { value: 'ocupado', label: 'Ocupado', icon: '🔴' },
-  { value: 'caixa_postal', label: 'Caixa Postal', icon: '📩' },
-  { value: 'numero_invalido', label: 'Número Inválido', icon: '❌' },
-  { value: 'reagendado', label: 'Reagendado', icon: '📅' },
-];
-
-const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
-/* ─── Call Detail Panel (Gong-inspired) ─── */
-function CallDetailPanel({ call }: { call: CallLog; onClose: () => void }) {
-  const typeInfo = CALL_TYPES.find(t => t.value === call.call_type);
-  const resultInfo = CALL_RESULTS.find(r => r.value === call.call_result);
-  
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-foreground">{call.customer_name}</h3>
-        <span className="text-xs text-muted-foreground">
-          {format(new Date(call.created_at), "dd/MM/yy 'às' HH:mm", { locale: ptBR })}
-        </span>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <Badge variant="outline" className={cn('text-[10px]', typeInfo?.color)}>
-          {typeInfo?.label}
-        </Badge>
-        <Badge variant="outline" className="text-[10px]">
-          {resultInfo?.icon} {resultInfo?.label}
-        </Badge>
-        {call.attempt_number > 1 && (
-          <Badge variant="secondary" className="text-[10px]">#{call.attempt_number}</Badge>
-        )}
-      </div>
-
-      {/* Timeline / Player area (Gong-style) */}
-      <Card className="bg-muted/30">
-        <CardContent className="p-4">
-          <div className="flex items-center justify-center gap-6">
-            <div className="text-center">
-              <p className="text-2xl font-mono font-bold">{formatTimer(call.duration_seconds)}</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">Duração da ligação</p>
-            </div>
-            {call.follow_up_duration_seconds > 0 && (
-              <>
-                <Separator orientation="vertical" className="h-10" />
-                <div className="text-center">
-                  <p className="text-2xl font-mono font-bold">{formatTimer(call.follow_up_duration_seconds)}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Follow-up</p>
-                </div>
-              </>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Metrics */}
-      {(call.revenue_generated > 0 || call.margin_generated > 0) && (
-        <div className="grid grid-cols-2 gap-3">
-          <Card>
-            <CardContent className="p-3 text-center">
-              <DollarSign className="w-4 h-4 mx-auto text-muted-foreground mb-1" />
-              <p className="text-sm font-bold">{fmt(call.revenue_generated)}</p>
-              <p className="text-[10px] text-muted-foreground">Receita gerada</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3 text-center">
-              <ArrowUpRight className="w-4 h-4 mx-auto text-muted-foreground mb-1" />
-              <p className="text-sm font-bold">{fmt(call.margin_generated)}</p>
-              <p className="text-[10px] text-muted-foreground">Margem gerada</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Transcript placeholder */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-            <FileText className="w-3.5 h-3.5" /> Transcrição
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {call.notes ? (
-            <p className="text-sm text-foreground whitespace-pre-wrap">{call.notes}</p>
-          ) : (
-            <div className="text-center py-6">
-              <Mic className="w-6 h-6 mx-auto mb-2 text-muted-foreground/40" />
-              <p className="text-xs text-muted-foreground">Nenhuma transcrição disponível</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">Use o Copilot para transcrever em tempo real.</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Next steps placeholder */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Próximos passos</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-xs text-muted-foreground">Nenhum próximo passo registrado.</p>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function formatTimer(secs: number) {
-  const m = Math.floor(secs / 60);
-  const s = secs % 60;
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
+import { Plus } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
+import { type Customer, type CallLog } from '@/components/farmer/calls/types';
+import { TodayStatsCards } from '@/components/farmer/calls/TodayStatsCards';
+import { AgendaQueueCard } from '@/components/farmer/calls/AgendaQueueCard';
+import { CallListPanel } from '@/components/farmer/calls/CallListPanel';
+import { NewCallDialog } from '@/components/farmer/calls/NewCallDialog';
+import { useMyPositivacao } from '@/hooks/useMyPositivacao';
+import { useMyCommercialRole } from '@/hooks/useMyCommercialRole';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { PositivacaoHero } from '@/components/farmer/PositivacaoHero';
+import { ClientesAPositivarCard } from '@/components/farmer/ClientesAPositivarCard';
+import { MixGapCard } from '@/components/farmer/MixGapCard';
 
 /* ─── Main Page ─── */
-const AGENDA_TYPE_META: Record<string, { label: string; icon: typeof AlertTriangle; color: string }> = {
-  risco: { label: 'Risco', icon: AlertTriangle, color: 'text-destructive bg-destructive/10 border-destructive/20' },
-  expansao: { label: 'Expansão', icon: TrendingUp, color: 'text-primary bg-primary/10 border-primary/20' },
-  follow_up: { label: 'Follow-up', icon: RotateCcw, color: 'text-amber-600 bg-amber-50 border-amber-200' },
-};
-
 const FarmerCalls = () => {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading } = useAuth();
   const { agenda, clientScores, loading: agendaLoading } = useFarmerScoring();
+  const { data: positivacao } = useMyPositivacao();
+  const { data: commercialRole } = useMyCommercialRole();
+  const isHunter = commercialRole === 'hunter';
+  const { isImpersonating, effectiveUserId } = useImpersonation();
 
   // Real Nvoip call integration for the dialog timer
   const {
@@ -246,7 +88,8 @@ const FarmerCalls = () => {
 
   useEffect(() => {
     if (isStaff) loadCallLogs();
-  }, [isStaff]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStaff, effectiveUserId]);
 
   useEffect(() => {
     return () => {
@@ -281,12 +124,13 @@ const FarmerCalls = () => {
   }, [nvoipState]);
 
   const loadCallLogs = async () => {
-    if (!user?.id) return;
+    // Lente "Ver como": lista as ligações do ALVO (effectiveUserId), não as do master.
+    if (!effectiveUserId) return;
     try {
       const { data } = await supabase
         .from('farmer_calls')
         .select('*')
-        .eq('farmer_id', user.id)
+        .eq('farmer_id', effectiveUserId)
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -308,15 +152,44 @@ const FarmerCalls = () => {
     }
   };
 
+  // Guard de corrida: a resposta de uma busca ANTIGA (o Omie leva 1-3s) não
+  // pode sobrescrever a lista da busca atual nem apagar o loading dela.
+  const searchSeqRef = useRef(0);
   const searchCustomers = useCallback(async (query: string) => {
-    if (query.length < 2) { setCustomers([]); return; }
+    if (query.length < 2) {
+      // Invalida QUALQUER busca em voo (senão a resposta atrasada do Omie
+      // passaria no guard e repovoaria a lista que o usuário acabou de limpar).
+      searchSeqRef.current++;
+      setCustomers([]);
+      setSearchLoading(false);
+      return;
+    }
+    const seq = ++searchSeqRef.current;
     setSearchLoading(true);
     try {
-      // 1) Same source as Sales: Omie ERP via edge function
-      const { data: omieData } = await supabase.functions.invoke('omie-vendas-sync', {
+      // Local e Omie em PARALELO. Antes a cadeia era serial (Omie → mapping →
+      // profiles): os perfis locais, instantâneos, ficavam presos atrás da
+      // roundtrip ao ERP — agora aparecem assim que chegam e o merge com o
+      // Omie completa depois.
+      const localPromise = supabase
+        .from('profiles')
+        .select('user_id, name, email, phone')
+        .ilike('name', `%${query}%`)
+        .limit(10);
+      const omiePromise = supabase.functions.invoke('omie-vendas-sync', {
         body: { action: 'listar_clientes', search: query },
       });
 
+      const { data: localProfiles } = await localPromise;
+      const local: Customer[] = (localProfiles || []).map(p => ({
+        user_id: p.user_id,
+        name: p.name,
+        email: p.email,
+        phone: p.phone,
+      }));
+      if (seq === searchSeqRef.current && local.length > 0) setCustomers(local);
+
+      const { data: omieData } = await omiePromise;
       const omieClientes = (omieData?.clientes || []) as Array<{
         codigo_cliente: number;
         razao_social?: string;
@@ -346,20 +219,6 @@ const FarmerCalls = () => {
         document: c.cnpj_cpf || null,
       }));
 
-      // 2) Local profiles (for clients without Omie mapping yet)
-      const { data: localProfiles } = await supabase
-        .from('profiles')
-        .select('user_id, name, email, phone')
-        .ilike('name', `%${query}%`)
-        .limit(10);
-
-      const local: Customer[] = (localProfiles || []).map(p => ({
-        user_id: p.user_id,
-        name: p.name,
-        email: p.email,
-        phone: p.phone,
-      }));
-
       // Merge dedupe: prefer Omie entries (richer), avoid duplicate user_ids
       const seenUserIds = new Set(omieMapped.filter(c => c.user_id).map(c => c.user_id));
       const merged = [
@@ -367,10 +226,12 @@ const FarmerCalls = () => {
         ...local.filter(p => !seenUserIds.has(p.user_id)),
       ];
 
-      setCustomers(merged);
+      if (seq === searchSeqRef.current) setCustomers(merged);
     } catch (error) {
       console.error('Customer search failed', error);
-    } finally { setSearchLoading(false); }
+    } finally {
+      if (seq === searchSeqRef.current) setSearchLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -432,7 +293,7 @@ const FarmerCalls = () => {
         const { data: profile } = await supabase
           .from('profiles')
           .select('user_id')
-          .or(`document.eq.${docClean},document.eq.${selectedCustomer.document}`)
+          .or(orFilter(eqText('document', docClean), eqText('document', selectedCustomer.document)))
           .limit(1)
           .maybeSingle();
         if (profile?.user_id) customerUserId = profile.user_id;
@@ -466,7 +327,7 @@ const FarmerCalls = () => {
       if (error) throw error;
 
       const rev = parseFloat(revenue) || 0;
-      const noContactResults = ['sem_resposta', 'ocupado', 'caixa_postal', 'numero_errado'];
+      const noContactResults = ['sem_resposta', 'ocupado', 'caixa_postal', 'numero_invalido'];
 
       if (noContactResults.includes(callResult)) {
         toast.success('Registrado — tente novamente', {
@@ -486,6 +347,39 @@ const FarmerCalls = () => {
     } finally { setSaving(false); }
   };
 
+  // Prefill the call form from an agenda item after a Dialer call ends
+  const handleAgendaCallEnd = (
+    item: AgendaItem,
+    phone: string,
+    data: { duration: number; state: string; audioLink: string | null },
+  ) => {
+    // Map Nvoip state to call_result
+    const resultMap: Record<string, string> = {
+      finished: 'contato_sucesso',
+      noanswer: 'sem_resposta',
+      busy: 'ocupado',
+      failed: 'sem_resposta',
+    };
+    // Pre-fill the call form with Nvoip data
+    const agendaCallType = item.agendaType === 'risco' ? 'reativacao' : item.agendaType === 'expansao' ? 'cross_sell' : 'follow_up';
+    resetForm();
+    setSelectedCustomer({ user_id: item.customer_user_id, name: item.customer_name, email: null, phone });
+    setCallType(agendaCallType);
+    setCallResult(resultMap[data.state] || 'contato_sucesso');
+    setCallSeconds(data.duration);
+    callStartRef.current = new Date(Date.now() - data.duration * 1000);
+    setShowNewCall(true);
+  };
+
+  // Open the call form for an agenda item ("Registrar" button)
+  const handleAgendaRegister = (item: AgendaItem, phone: string | null | undefined) => {
+    const agendaCallType = item.agendaType === 'risco' ? 'reativacao' : item.agendaType === 'expansao' ? 'cross_sell' : 'follow_up';
+    resetForm();
+    setSelectedCustomer({ user_id: item.customer_user_id, name: item.customer_name, email: null, phone: phone || null });
+    setCallType(agendaCallType);
+    setShowNewCall(true);
+  };
+
   // Stats
   const todayCalls = callLogs.filter(c => {
     const d = new Date(c.created_at);
@@ -498,7 +392,9 @@ const FarmerCalls = () => {
   const filteredLogs = filterType === 'all' ? callLogs : callLogs.filter(c => c.call_type === filterType);
 
   if (authLoading) {
-    return <div className="flex items-center justify-center py-32"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+    // PageSkeleton (não Loader2 full-page): o Suspense da rota já mostrou um
+    // skeleton — regredir pra spinner vazio fazia o layout sumir e voltar.
+    return <PageSkeleton variant="cockpit" />;
   }
 
   return (
@@ -510,327 +406,91 @@ const FarmerCalls = () => {
             <h1 className="text-xl font-semibold">Ligações</h1>
             <p className="text-sm text-muted-foreground">Registre e analise suas ligações</p>
           </div>
-          <Button className="gap-1.5" onClick={() => { resetForm(); setShowNewCall(true); }}>
+          <Button
+            className="gap-1.5"
+            onClick={() => { resetForm(); setShowNewCall(true); }}
+            disabled={isImpersonating}
+            title={isImpersonating ? 'Indisponível em modo Ver como' : undefined}
+          >
             <Plus className="w-4 h-4" /> Nova ligação
           </Button>
         </div>
 
-        {/* Today's stats */}
-        <div className="grid grid-cols-3 gap-3">
-          <Card><CardContent className="p-3 text-center">
-            <Phone className="w-4 h-4 mx-auto text-muted-foreground mb-1" />
-            <p className="text-lg font-bold">{todayCalls.length}</p>
-            <p className="text-[10px] text-muted-foreground">Ligações hoje</p>
-          </CardContent></Card>
-          <Card><CardContent className="p-3 text-center">
-            <DollarSign className="w-4 h-4 mx-auto text-muted-foreground mb-1" />
-            <p className="text-lg font-bold">{fmt(todayRevenue)}</p>
-            <p className="text-[10px] text-muted-foreground">Receita hoje</p>
-          </CardContent></Card>
-          <Card><CardContent className="p-3 text-center">
-            <Clock className="w-4 h-4 mx-auto text-muted-foreground mb-1" />
-            <p className="text-lg font-bold">{formatTimer(avgDuration)}</p>
-            <p className="text-[10px] text-muted-foreground">Duração média</p>
-          </CardContent></Card>
+        {/* ─── Positivação da carteira (hero principal) ─── */}
+        {positivacao && (
+          <div className="space-y-3">
+            <PositivacaoHero kpis={positivacao} isHunter={isHunter} />
+            <ClientesAPositivarCard clientes={positivacao.aPositivar} />
+            <MixGapCard />
+          </div>
+        )}
+
+        {/* Atividade de hoje (secundário) */}
+        <div className="space-y-1.5">
+          <h2 className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Atividade de hoje</h2>
+          <TodayStatsCards count={todayCalls.length} revenue={todayRevenue} avgDuration={avgDuration} />
         </div>
 
         {/* ─── Agenda Queue ─── */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <PhoneCall className="w-4 h-4 text-primary" />
-              Próximas ligações
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {agendaLoading ? (
-              <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
-            ) : agenda.length === 0 ? (
-              <div className="text-center py-6">
-                <CheckCircle className="w-6 h-6 mx-auto mb-2 text-primary/60" />
-                <p className="text-sm text-muted-foreground">Nenhuma ligação pendente na agenda. Bom trabalho!</p>
-              </div>
-            ) : (
-              agenda.slice(0, 5).map(item => {
-                const meta = AGENDA_TYPE_META[item.agendaType] || AGENDA_TYPE_META.follow_up;
-                const Icon = meta.icon;
-                const score = clientScores.find(c => c.customer_user_id === item.customer_user_id);
-                const phone = score?.customer_phone;
-
-                return (
-                  <div key={item.customer_user_id} className="flex items-center gap-3 rounded-lg border p-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <p className="text-sm font-medium truncate">{item.customer_name}</p>
-                        <Badge variant="outline" className={cn('text-[10px] shrink-0', meta.color)}>
-                          <Icon className="w-3 h-3 mr-0.5" /> {meta.label}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>Prioridade: {item.priorityScore.toFixed(1)}</span>
-                        {phone && (
-                          <>
-                            <span>·</span>
-                            <span>{phone}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {phone ? (
-                        <Dialer
-                          phoneNumber={phone}
-                          customerName={item.customer_name}
-                          compact
-                          onCallEnd={(data) => {
-                            // Map Nvoip state to call_result
-                            const resultMap: Record<string, string> = {
-                              finished: 'contato_sucesso',
-                              noanswer: 'sem_resposta',
-                              busy: 'ocupado',
-                              failed: 'sem_resposta',
-                            };
-                            // Pre-fill the call form with Nvoip data
-                            const agendaCallType = item.agendaType === 'risco' ? 'reativacao' : item.agendaType === 'expansao' ? 'cross_sell' : 'follow_up';
-                            resetForm();
-                            setSelectedCustomer({ user_id: item.customer_user_id, name: item.customer_name, email: null, phone });
-                            setCallType(agendaCallType);
-                            setCallResult(resultMap[data.state] || 'contato_sucesso');
-                            setCallSeconds(data.duration);
-                            callStartRef.current = new Date(Date.now() - data.duration * 1000);
-                            setShowNewCall(true);
-                          }}
-                        />
-                      ) : (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span><Button size="icon" variant="ghost" className="h-8 w-8" disabled><Phone className="w-4 h-4" /></Button></span>
-                          </TooltipTrigger>
-                          <TooltipContent><p className="text-xs">Sem telefone cadastrado</p></TooltipContent>
-                        </Tooltip>
-                      )}
-                      <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => {
-                        const agendaCallType = item.agendaType === 'risco' ? 'reativacao' : item.agendaType === 'expansao' ? 'cross_sell' : 'follow_up';
-                        resetForm();
-                        setSelectedCustomer({ user_id: item.customer_user_id, name: item.customer_name, email: null, phone: phone || null });
-                        setCallType(agendaCallType);
-                        setShowNewCall(true);
-                      }}>
-                        <FileText className="w-3 h-3" /> Registrar
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </CardContent>
-        </Card>
+        <AgendaQueueCard
+          agenda={agenda}
+          clientScores={clientScores}
+          agendaLoading={agendaLoading}
+          onCallEnd={handleAgendaCallEnd}
+          onRegister={handleAgendaRegister}
+        />
 
         {/* Call list + detail (Gong split) */}
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-          {/* Call List */}
-          <div className={cn('space-y-2', selectedCall ? 'lg:col-span-2' : 'lg:col-span-5')}>
-            {/* Filters */}
-            <div className="flex items-center gap-2">
-              <Select value={filterType} onValueChange={setFilterType}>
-                <SelectTrigger className="h-8 w-auto text-xs">
-                  <Filter className="w-3 h-3 mr-1" />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos os tipos</SelectItem>
-                  {CALL_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <span className="text-xs text-muted-foreground ml-auto">{filteredLogs.length} ligações</span>
-            </div>
-
-            {loadingLogs ? (
-              <div className="flex justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
-            ) : filteredLogs.length === 0 ? (
-              <Card><CardContent className="py-12 text-center">
-                <Phone className="w-8 h-8 mx-auto mb-2 text-muted-foreground/40" />
-                <p className="text-sm text-muted-foreground">Nenhuma ligação registrada</p>
-              </CardContent></Card>
-            ) : (
-              filteredLogs.map(log => {
-                const typeInfo = CALL_TYPES.find(t => t.value === log.call_type);
-                const resultInfo = CALL_RESULTS.find(r => r.value === log.call_result);
-                const isSelected = selectedCall?.id === log.id;
-
-                return (
-                  <Card key={log.id} className={cn('cursor-pointer transition-colors hover:border-primary/30', isSelected && 'border-primary ring-1 ring-primary/20')}
-                    onClick={() => setSelectedCall(isSelected ? null : log)}>
-                    <CardContent className="p-3">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <p className="text-sm font-medium truncate">{log.customer_name}</p>
-                            <Badge variant="outline" className={cn('text-[10px] shrink-0', typeInfo?.color)}>
-                              {typeInfo?.label}
-                            </Badge>
-                          </div>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span>{resultInfo?.icon} {resultInfo?.label}</span>
-                            <span>·</span>
-                            <span><Clock className="w-3 h-3 inline mr-0.5" />{formatTimer(log.duration_seconds)}</span>
-                          </div>
-                          {Number(log.revenue_generated) > 0 && (
-                            <p className="text-xs font-medium mt-1 status-success inline-block px-1.5 py-0.5 rounded">
-                              {fmt(Number(log.revenue_generated))}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <span className="text-xs text-muted-foreground">
-                            {format(new Date(log.created_at), 'dd/MM HH:mm', { locale: ptBR })}
-                          </span>
-                          <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })
-            )}
-          </div>
-
-          {/* Detail panel (Gong-style) */}
-          {selectedCall && (
-            <div className="lg:col-span-3">
-              <Card>
-                <CardContent className="p-4">
-                  <CallDetailPanel call={selectedCall} onClose={() => setSelectedCall(null)} />
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </div>
+        <CallListPanel
+          filterType={filterType}
+          setFilterType={setFilterType}
+          filteredLogs={filteredLogs}
+          loadingLogs={loadingLogs}
+          selectedCall={selectedCall}
+          setSelectedCall={setSelectedCall}
+        />
       </div>
 
       {/* New Call Dialog */}
-      <Dialog open={showNewCall} onOpenChange={setShowNewCall}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Phone className="w-5 h-5" /> Registrar ligação
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            {/* Customer Search */}
-            <div>
-              <label className="text-sm font-medium">Cliente</label>
-              {selectedCustomer ? (
-                <div className="flex items-center justify-between bg-muted/50 rounded-lg p-3 mt-1">
-                  <div>
-                    <p className="text-sm font-medium">{selectedCustomer.name}</p>
-                    <p className="text-xs text-muted-foreground">{selectedCustomer.phone || selectedCustomer.email}</p>
-                  </div>
-                  <Button size="sm" variant="ghost" onClick={() => setSelectedCustomer(null)}>
-                    <XCircle className="w-4 h-4" />
-                  </Button>
-                </div>
-              ) : (
-                <div className="mt-1">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input placeholder="Buscar cliente..." value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} className="pl-9 h-9" />
-                  </div>
-                  {searchLoading && <div className="flex justify-center py-2"><Loader2 className="w-4 h-4 animate-spin" /></div>}
-                  {customers.length > 0 && (
-                    <div className="border rounded-lg mt-1 max-h-60 overflow-y-auto">
-                      {customers.map((c, idx) => (
-                        <button key={`${c.user_id || c.omie_codigo_cliente || c.document}-${idx}`}
-                          onClick={() => { setSelectedCustomer(c); setCustomerSearch(''); setCustomers([]); }}
-                          className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm border-b last:border-b-0">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="font-medium truncate">{c.name}</p>
-                            {c.omie_codigo_cliente && (
-                              <Badge variant="outline" className="text-[10px] shrink-0">Omie</Badge>
-                            )}
-                          </div>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {[c.document, c.phone, c.email].filter(Boolean).join(' · ') || 'Sem contato'}
-                          </p>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <Select value={callType} onValueChange={setCallType}>
-              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-              <SelectContent>{CALL_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
-            </Select>
-
-            {/* Timers */}
-            <Card className="bg-muted/30">
-              <CardContent className="p-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="text-center">
-                    <p className="text-xs text-muted-foreground mb-1">Ligação</p>
-                    <p className="text-2xl font-mono font-bold">{formatTimer(callSeconds)}</p>
-                    {selectedCustomer?.phone ? (
-                      <Badge variant="outline" className="text-[10px] mt-1">
-                        {nvoipIsConnecting && <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Conectando...</>}
-                        {nvoipIsRinging && <><PhoneCall className="w-3 h-3 mr-1 animate-pulse" /> Tocando ramal/destino</>}
-                        {nvoipIsEstablished && <><PhoneIncoming className="w-3 h-3 mr-1 text-emerald-600" /> Em chamada</>}
-                        {!nvoipIsActive && !nvoipIsEstablished && (
-                          <>📞 Disca via {callBackend === 'webrtc' ? 'WebRTC' : 'Nvoip'} → {selectedCustomer.phone}</>
-                        )}
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-[10px] mt-1 text-amber-700">
-                        Sem telefone — cronômetro manual
-                      </Badge>
-                    )}
-                    <Button size="sm" variant={isCallActive ? 'destructive' : 'default'} className="mt-2 w-full h-8"
-                      onClick={isCallActive ? stopCallTimer : startCallTimer}
-                      disabled={nvoipIsConnecting}>
-                      {isCallActive ? <><PhoneOff className="w-3 h-3 mr-1" /> Parar</> : <><Play className="w-3 h-3 mr-1" /> Iniciar</>}
-                    </Button>
-                    {nvoipError && (
-                      <p className="text-[10px] text-destructive mt-1">{nvoipError}</p>
-                    )}
-                  </div>
-                  <div className="text-center">
-                    <p className="text-xs text-muted-foreground mb-1">Follow-up</p>
-                    <p className="text-2xl font-mono font-bold">{formatTimer(followUpSeconds)}</p>
-                    <Button size="sm" variant={isFollowUpActive ? 'destructive' : 'outline'} className="mt-2 w-full h-8"
-                      onClick={isFollowUpActive ? stopFollowUpTimer : startFollowUpTimer}>
-                      {isFollowUpActive ? <><Pause className="w-3 h-3 mr-1" /> Parar</> : <><Timer className="w-3 h-3 mr-1" /> Iniciar</>}
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Select value={callResult} onValueChange={setCallResult}>
-              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-              <SelectContent>{CALL_RESULTS.map(r => <SelectItem key={r.value} value={r.value}>{r.icon} {r.label}</SelectItem>)}</SelectContent>
-            </Select>
-
-            <Input type="number" min={1} value={attemptNumber} onChange={e => setAttemptNumber(parseInt(e.target.value) || 1)} className="h-9" placeholder="Nº da tentativa" />
-
-            {callResult === 'contato_sucesso' && (
-              <div className="grid grid-cols-2 gap-3">
-                <Input type="number" step="0.01" placeholder="Receita (R$)" value={revenue} onChange={e => setRevenue(e.target.value)} className="h-9" />
-                <Input type="number" step="0.01" placeholder="Margem (R$)" value={margin} onChange={e => setMargin(e.target.value)} className="h-9" />
-              </div>
-            )}
-
-            <Textarea placeholder="Observações da ligação..." value={notes} onChange={e => setNotes(e.target.value)} rows={2} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewCall(false)}>Cancelar</Button>
-            <Button onClick={handleSaveCall} disabled={!selectedCustomer || saving} className="gap-1.5">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Salvar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <NewCallDialog
+        open={showNewCall}
+        onOpenChange={setShowNewCall}
+        selectedCustomer={selectedCustomer}
+        setSelectedCustomer={setSelectedCustomer}
+        customerSearch={customerSearch}
+        setCustomerSearch={setCustomerSearch}
+        customers={customers}
+        setCustomers={setCustomers}
+        searchLoading={searchLoading}
+        callType={callType}
+        setCallType={setCallType}
+        callResult={callResult}
+        setCallResult={setCallResult}
+        attemptNumber={attemptNumber}
+        setAttemptNumber={setAttemptNumber}
+        notes={notes}
+        setNotes={setNotes}
+        revenue={revenue}
+        setRevenue={setRevenue}
+        margin={margin}
+        setMargin={setMargin}
+        callSeconds={callSeconds}
+        followUpSeconds={followUpSeconds}
+        isCallActive={isCallActive}
+        isFollowUpActive={isFollowUpActive}
+        nvoipIsConnecting={nvoipIsConnecting}
+        nvoipIsRinging={nvoipIsRinging}
+        nvoipIsEstablished={nvoipIsEstablished}
+        nvoipIsActive={nvoipIsActive}
+        nvoipError={nvoipError}
+        callBackend={callBackend}
+        saving={saving}
+        onStartCall={startCallTimer}
+        onStopCall={stopCallTimer}
+        onStartFollowUp={startFollowUpTimer}
+        onStopFollowUp={stopFollowUpTimer}
+        onSave={handleSaveCall}
+      />
 
       {/* Painel lateral de transcrição ao vivo — só renderiza em chamadas WebRTC ativas */}
       {callBackend === 'webrtc' && webrtc.callState === 'established' && (

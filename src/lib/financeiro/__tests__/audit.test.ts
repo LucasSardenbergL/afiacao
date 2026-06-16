@@ -35,7 +35,7 @@ describe('formatAuditValue', () => {
   it('formats numeric BRL', () => {
     const formatted = formatAuditValue(1234.5);
     // Intl may use non-breaking space between R$ and number depending on ICU version
-    expect(formatted.replace(/ /g, ' ')).toBe('R$ 1.234,50');
+    expect(formatted.replace(/\u00A0/g, ' ')).toBe('R$ 1.234,50');
   });
   it('formats null as em-dash', () => {
     expect(formatAuditValue(null)).toBe('—');

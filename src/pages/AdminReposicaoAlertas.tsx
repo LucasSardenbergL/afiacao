@@ -1,116 +1,20 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { ilikeOr } from "@/lib/postgrest";
 import { useAuth } from "@/contexts/AuthContext";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
+import { AlertTriangle } from "lucide-react";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogDescription,
-} from "@/components/ui/dialog";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { Search, AlertTriangle, CheckCircle2, XCircle, EyeOff, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  ScatterChart,
-  Scatter,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as ReTooltip,
-  ReferenceLine,
-  Cell,
-} from "recharts";
-
-const PAGE_SIZE = 25;
-
-type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "danger" | "purple" | "indigo";
-
-interface OutlierDetalhes {
-  fornecedor?: string;
-  mensagem?: string;
-  [k: string]: unknown;
-}
-
-type EventoOutlier = {
-  id: number;
-  empresa: string;
-  sku_codigo_omie: string;
-  sku_descricao: string | null;
-  tipo: string;
-  severidade: string;
-  data_evento: string;
-  valor_observado: number | null;
-  valor_esperado: number | null;
-  desvios_padrao: number | null;
-  detalhes: OutlierDetalhes | null;
-  status: string;
-  decidido_em: string | null;
-  decidido_por: string | null;
-  justificativa_decisao: string | null;
-  detectado_em: string | null;
-};
-
-const sevBadge = (sev: string) => {
-  const map: Record<string, { variant: BadgeVariant; label: string }> = {
-    critico: { variant: "destructive", label: "Crítico" },
-    atencao: { variant: "warning", label: "Atenção" },
-    info: { variant: "secondary", label: "Info" },
-  };
-  const cfg = map[sev] ?? { variant: "outline" as BadgeVariant, label: sev };
-  return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
-};
-
-const statusBadge = (status: string) => {
-  const map: Record<string, { variant: BadgeVariant; label: string }> = {
-    pendente: { variant: "warning", label: "Pendente" },
-    aceito: { variant: "success", label: "Aceito" },
-    excluido: { variant: "destructive", label: "Excluído" },
-    ignorado: { variant: "secondary", label: "Ignorado" },
-  };
-  const cfg = map[status] ?? { variant: "outline" as BadgeVariant, label: status };
-  return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
-};
-
-const tipoLabel = (tipo: string) =>
-  tipo === "venda_atipica"
-    ? "Venda atípica"
-    : tipo === "lt_atipico"
-    ? "LT atípico"
-    : tipo === "sku_sem_grupo"
-    ? "SKU sem grupo"
-    : tipo;
-
-const fmt = (n: number | null | undefined, dec = 2) =>
-  n === null || n === undefined ? "—" : Number(n).toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  PAGE_SIZE,
+  type EventoOutlier, type SkuInfo, type ImpactoData, type GrupoRow, type AcaoConfirm,
+} from "@/components/reposicao/alertas/types";
+import { StatsCards } from "@/components/reposicao/alertas/StatsCards";
+import { AlertasFiltros } from "@/components/reposicao/alertas/AlertasFiltros";
+import { AlertasTable } from "@/components/reposicao/alertas/AlertasTable";
+import { AlertaDrillSheet } from "@/components/reposicao/alertas/AlertaDrillSheet";
+import { ConfirmacaoDialog } from "@/components/reposicao/alertas/ConfirmacaoDialog";
 
 export default function AdminReposicaoAlertas() {
   const { user } = useAuth();
@@ -125,7 +29,7 @@ export default function AdminReposicaoAlertas() {
   const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
 
   const [drillEvento, setDrillEvento] = useState<EventoOutlier | null>(null);
-  const [acaoConfirm, setAcaoConfirm] = useState<{ tipo: "aceitar" | "excluir" | "ignorar"; lote: boolean } | null>(null);
+  const [acaoConfirm, setAcaoConfirm] = useState<AcaoConfirm | null>(null);
   const [justificativa, setJustificativa] = useState("");
 
   // Stats do cabeçalho
@@ -165,7 +69,7 @@ export default function AdminReposicaoAlertas() {
       if (filtroSev !== "__all__") q = q.eq("severidade", filtroSev);
       if (filtroStatus !== "__all__") q = q.eq("status", filtroStatus);
       if (busca.trim()) {
-        q = q.or(`sku_codigo_omie.ilike.%${busca.trim()}%,sku_descricao.ilike.%${busca.trim()}%`);
+        q = q.or(ilikeOr(["sku_codigo_omie", "sku_descricao"], busca.trim()));
       }
 
       const { data, error, count } = await q;
@@ -230,13 +134,6 @@ export default function AdminReposicaoAlertas() {
   });
 
   // Dados do SKU (drill seção 2)
-  type SkuInfo = {
-    classe_consolidada: string | null;
-    demanda_media_diaria: number | null;
-    demanda_sigma_diario: number | null;
-    lt_medio_dias_uteis: number | null;
-    preco_compra_real: number | null;
-  };
   const { data: skuInfo } = useQuery<SkuInfo | null>({
     enabled: !!drillEvento,
     queryKey: ["outlier-sku", drillEvento?.sku_codigo_omie, drillEvento?.empresa],
@@ -254,16 +151,6 @@ export default function AdminReposicaoAlertas() {
   });
 
   // Impacto previsto
-  type ImpactoData = {
-    error?: string;
-    media_atual?: number | null;
-    media_sem?: number | null;
-    sigma_atual?: number | null;
-    sigma_sem?: number | null;
-    em_atual?: number | null;
-    em_sem?: number | null;
-    delta_em?: number;
-  } | null;
   const { data: impacto } = useQuery<ImpactoData>({
     enabled: !!drillEvento && !isSemGrupo,
     queryKey: ["outlier-impacto", drillEvento?.id],
@@ -284,7 +171,6 @@ export default function AdminReposicaoAlertas() {
     queryFn: async () => {
       if (!drillEvento) return [];
       // NOTE: `codigo_grupo` no schema gerado é `grupo_codigo`; cast pra row local.
-      type GrupoRow = { id: number; codigo_grupo: string; descricao: string | null; lt_producao_dias: number };
       const { data, error } = await supabase
         .from("fornecedor_grupo_producao")
         .select("id, codigo_grupo, descricao, lt_producao_dias" as never)
@@ -320,7 +206,7 @@ export default function AdminReposicaoAlertas() {
         p_evento_id: drillEvento.id,
         p_decisao: "aceitar",
         p_justificativa: `Atribuído ao grupo ${grupo.codigo_grupo} — ${grupo.descricao}`,
-        p_usuario_email: user?.email || null,
+        p_usuario_email: user?.email || undefined,
       });
       if (resErr) throw resErr;
       // Recalcula parâmetros (LT mudou)
@@ -348,8 +234,8 @@ export default function AdminReposicaoAlertas() {
         const { data, error } = await supabase.rpc("resolver_outlier", {
           p_evento_id: id,
           p_decisao: decisao,
-          p_justificativa: just || null,
-          p_usuario_email: user?.email || null,
+          p_justificativa: just || undefined,
+          p_usuario_email: user?.email || undefined,
         });
         if (error) throw error;
         results.push(data);
@@ -417,429 +303,68 @@ export default function AdminReposicaoAlertas() {
       </div>
 
       {/* Estatísticas */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-xs text-muted-foreground">Total pendentes</div>
-            <div className="text-2xl font-bold">{stats?.pendentes ?? 0}</div>
-          </CardContent>
-        </Card>
-        <Card className="border-destructive/40">
-          <CardContent className="pt-4">
-            <div className="text-xs text-destructive">Críticos</div>
-            <div className="text-2xl font-bold text-destructive">{stats?.criticos ?? 0}</div>
-          </CardContent>
-        </Card>
-        <Card className="border-warning/40">
-          <CardContent className="pt-4">
-            <div className="text-xs text-warning">Atenção</div>
-            <div className="text-2xl font-bold text-warning">{stats?.atencao ?? 0}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-xs text-muted-foreground">Informativos</div>
-            <div className="text-2xl font-bold">{stats?.info ?? 0}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-xs text-success">Aceitos hoje</div>
-            <div className="text-2xl font-bold">{stats?.aceitosHoje ?? 0}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-xs text-destructive">Excluídos hoje</div>
-            <div className="text-2xl font-bold">{stats?.excluidosHoje ?? 0}</div>
-          </CardContent>
-        </Card>
-      </div>
+      <StatsCards stats={stats} />
 
       {/* Filtros */}
-      <Card>
-        <CardContent className="pt-4">
-          <div className="flex flex-wrap gap-3 items-end">
-            <div className="flex-1 min-w-[200px]">
-              <Label className="text-xs">Buscar SKU</Label>
-              <div className="relative">
-                <Search className="h-4 w-4 absolute left-2 top-2.5 text-muted-foreground" />
-                <Input
-                  placeholder="Código ou descrição"
-                  className="pl-8"
-                  value={busca}
-                  onChange={(e) => {
-                    setBusca(e.target.value);
-                    setPage(1);
-                  }}
-                />
-              </div>
-            </div>
-            <div className="w-[160px]">
-              <Label className="text-xs">Tipo</Label>
-              <Select value={filtroTipo} onValueChange={(v) => { setFiltroTipo(v); setPage(1); }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Todos</SelectItem>
-                  <SelectItem value="venda_atipica">Venda atípica</SelectItem>
-                  <SelectItem value="lt_atipico">LT atípico</SelectItem>
-                  <SelectItem value="sku_sem_grupo">SKU sem grupo</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="w-[140px]">
-              <Label className="text-xs">Severidade</Label>
-              <Select value={filtroSev} onValueChange={(v) => { setFiltroSev(v); setPage(1); }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Todas</SelectItem>
-                  <SelectItem value="critico">Crítico</SelectItem>
-                  <SelectItem value="atencao">Atenção</SelectItem>
-                  <SelectItem value="info">Info</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="w-[140px]">
-              <Label className="text-xs">Status</Label>
-              <Select value={filtroStatus} onValueChange={(v) => { setFiltroStatus(v); setPage(1); }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Todos</SelectItem>
-                  <SelectItem value="pendente">Pendente</SelectItem>
-                  <SelectItem value="aceito">Aceito</SelectItem>
-                  <SelectItem value="excluido">Excluído</SelectItem>
-                  <SelectItem value="ignorado">Ignorado</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {selecionados.size > 0 && (
-            <div className="mt-4 flex gap-2 items-center bg-muted/50 p-3 rounded-md">
-              <span className="text-sm font-medium">{selecionados.size} selecionado(s)</span>
-              <Button size="sm" variant="default" onClick={() => setAcaoConfirm({ tipo: "aceitar", lote: true })}>
-                <CheckCircle2 className="h-4 w-4 mr-1" /> Aceitar selecionados
-              </Button>
-              <Button size="sm" variant="destructive" onClick={() => setAcaoConfirm({ tipo: "excluir", lote: true })}>
-                <XCircle className="h-4 w-4 mr-1" /> Excluir selecionados
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setSelecionados(new Set())}>
-                Limpar seleção
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <AlertasFiltros
+        busca={busca}
+        setBusca={setBusca}
+        filtroTipo={filtroTipo}
+        setFiltroTipo={setFiltroTipo}
+        filtroSev={filtroSev}
+        setFiltroSev={setFiltroSev}
+        filtroStatus={filtroStatus}
+        setFiltroStatus={setFiltroStatus}
+        setPage={setPage}
+        selecionadosCount={selecionados.size}
+        onAceitarLote={() => setAcaoConfirm({ tipo: "aceitar", lote: true })}
+        onExcluirLote={() => setAcaoConfirm({ tipo: "excluir", lote: true })}
+        onLimparSelecao={() => setSelecionados(new Set())}
+      />
 
       {/* Lista */}
-      <Card>
-        <CardContent className="pt-4 overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-10">
-                  <Checkbox checked={todosMarcados} onCheckedChange={toggleAll} disabled={todosSelecionavel.length === 0} />
-                </TableHead>
-                <TableHead>Severidade</TableHead>
-                <TableHead>Data evento</TableHead>
-                <TableHead>SKU</TableHead>
-                <TableHead>Descrição</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead className="text-right">Observado</TableHead>
-                <TableHead className="text-right">Esperado</TableHead>
-                <TableHead className="text-right">σ</TableHead>
-                <TableHead>Mensagem</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading && (
-                <TableRow><TableCell colSpan={12} className="text-center py-8"><Loader2 className="h-5 w-5 animate-spin mx-auto" /></TableCell></TableRow>
-              )}
-              {!isLoading && (lista?.rows.length ?? 0) === 0 && (
-                <TableRow><TableCell colSpan={12} className="text-center py-8 text-muted-foreground">Nenhum alerta encontrado</TableCell></TableRow>
-              )}
-              {lista?.rows.map((r) => {
-                const podeSelecionar =
-                  r.status === "pendente" && r.severidade !== "critico" && r.tipo !== "sku_sem_grupo";
-                return (
-                  <TableRow key={r.id} className="hover:bg-muted/50">
-                    <TableCell>
-                      <Checkbox
-                        checked={selecionados.has(r.id)}
-                        onCheckedChange={() => toggleOne(r.id)}
-                        disabled={!podeSelecionar}
-                      />
-                    </TableCell>
-                    <TableCell>{sevBadge(r.severidade)}</TableCell>
-                    <TableCell className="text-sm">{new Date(r.data_evento).toLocaleDateString("pt-BR")}</TableCell>
-                    <TableCell className="font-mono text-xs whitespace-nowrap">{r.sku_codigo_omie}</TableCell>
-                    <TableCell className="text-sm min-w-[260px] max-w-[360px] whitespace-normal break-words" title={r.sku_descricao ?? undefined}>{r.sku_descricao ?? "—"}</TableCell>
-                    <TableCell><Badge variant="outline">{tipoLabel(r.tipo)}</Badge></TableCell>
-                    <TableCell className="text-right font-mono text-sm">{fmt(r.valor_observado, 0)}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{fmt(r.valor_esperado, 1)}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{fmt(r.desvios_padrao, 1)}</TableCell>
-                    <TableCell className="text-xs min-w-[280px] max-w-[420px] whitespace-normal break-words text-muted-foreground" title={r.detalhes?.mensagem ?? undefined}>{r.detalhes?.mensagem ?? "—"}</TableCell>
-                    <TableCell>{statusBadge(r.status)}</TableCell>
-                    <TableCell>
-                      <Button size="sm" variant="ghost" onClick={() => setDrillEvento(r)}>Detalhes</Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-
-          <div className="flex items-center justify-between mt-4">
-            <div className="text-sm text-muted-foreground">{lista?.total ?? 0} alerta(s)</div>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <span className="text-sm">{page} / {totalPages}</span>
-              <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <AlertasTable
+        lista={lista}
+        isLoading={isLoading}
+        selecionados={selecionados}
+        todosMarcados={todosMarcados}
+        selecionavelCount={todosSelecionavel.length}
+        toggleAll={toggleAll}
+        toggleOne={toggleOne}
+        onDrill={setDrillEvento}
+        page={page}
+        totalPages={totalPages}
+        setPage={setPage}
+      />
 
       {/* Drill-down */}
-      <Sheet open={!!drillEvento} onOpenChange={(o) => !o && setDrillEvento(null)}>
-        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
-          {drillEvento && (
-            <>
-              <SheetHeader>
-                <SheetTitle className="flex items-center gap-2">
-                  {sevBadge(drillEvento.severidade)}
-                  <span>{tipoLabel(drillEvento.tipo)} — SKU {drillEvento.sku_codigo_omie}</span>
-                </SheetTitle>
-              </SheetHeader>
-
-              <div className="space-y-5 mt-4">
-                {/* Seção 1 */}
-                <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm">1. Contexto</CardTitle></CardHeader>
-                  <CardContent className="space-y-1 text-sm">
-                    <div><span className="text-muted-foreground">Data:</span> {new Date(drillEvento.data_evento).toLocaleDateString("pt-BR")}</div>
-                    <div><span className="text-muted-foreground">Detectado:</span> {drillEvento.detectado_em ? new Date(drillEvento.detectado_em).toLocaleString("pt-BR") : "—"}</div>
-                    <div className="pt-2 p-2 bg-muted/50 rounded text-xs">{drillEvento.detalhes?.mensagem ?? "Sem mensagem"}</div>
-                  </CardContent>
-                </Card>
-
-                {/* Seção 2 */}
-                <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm">2. Dados do SKU</CardTitle></CardHeader>
-                  <CardContent className="space-y-1 text-sm">
-                    <div><span className="text-muted-foreground">Descrição:</span> {drillEvento.sku_descricao ?? "—"}</div>
-                    <div><span className="text-muted-foreground">Classe:</span> {skuInfo?.classe_consolidada ?? "—"}</div>
-                    <div><span className="text-muted-foreground">D (média/dia):</span> {fmt(skuInfo?.demanda_media_diaria, 2)}</div>
-                    <div><span className="text-muted-foreground">σ atual:</span> {fmt(skuInfo?.demanda_sigma_diario, 2)}</div>
-                    <div><span className="text-muted-foreground">LT médio:</span> {fmt(skuInfo?.lt_medio_dias_uteis, 1)} dias</div>
-                    <div><span className="text-muted-foreground">Preço compra:</span> R$ {fmt(skuInfo?.preco_compra_real, 2)}</div>
-                  </CardContent>
-                </Card>
-
-                {/* Seção 3 - Gráfico (não aplicável a sku_sem_grupo) */}
-                {!isSemGrupo && (
-                  <Card>
-                    <CardHeader className="pb-2"><CardTitle className="text-sm">3. Histórico</CardTitle></CardHeader>
-                    <CardContent>
-                      <div className="h-[220px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          {drillEvento.tipo === "venda_atipica" ? (
-                            <BarChart data={(historico as Array<{ dia: string; qtde: number; isOutlier: boolean }> | null) ?? []}>
-                              <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis dataKey="dia" tick={{ fontSize: 10 }} />
-                              <YAxis tick={{ fontSize: 10 }} />
-                              <ReTooltip />
-                              <Bar dataKey="qtde">
-                                {((historico as Array<{ isOutlier: boolean }> | null) ?? []).map((d, i) => (
-                                  <Cell key={i} fill={d.isOutlier ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
-                                ))}
-                              </Bar>
-                            </BarChart>
-                          ) : (
-                            <ScatterChart>
-                              <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis dataKey="idx" tick={{ fontSize: 10 }} name="#" />
-                              <YAxis dataKey="lt" tick={{ fontSize: 10 }} name="LT (dias)" />
-                              <ReTooltip />
-                              {impacto?.media_atual != null && (
-                                <ReferenceLine y={impacto.media_atual} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
-                              )}
-                              <Scatter data={(historico as Array<{ idx: number; lt: number; isOutlier: boolean }> | null) ?? []}>
-                                {((historico as Array<{ isOutlier: boolean }> | null) ?? []).map((d, i) => (
-                                  <Cell key={i} fill={d.isOutlier ? "hsl(var(--destructive))" : "hsl(var(--primary))"} />
-                                ))}
-                              </Scatter>
-                            </ScatterChart>
-                          )}
-                        </ResponsiveContainer>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* Seção 4 - Impacto (não aplicável a sku_sem_grupo) */}
-                {!isSemGrupo && (
-                  <Card>
-                    <CardHeader className="pb-2"><CardTitle className="text-sm">4. Impacto se excluir</CardTitle></CardHeader>
-                    <CardContent className="text-sm space-y-1">
-                      {impacto && !impacto.error ? (
-                        <>
-                          <div>σ atual: <span className="font-mono">{fmt(impacto.sigma_atual)}</span> → sem outlier: <span className="font-mono">{fmt(impacto.sigma_sem)}</span></div>
-                          <div>Média atual: <span className="font-mono">{fmt(impacto.media_atual)}</span> → sem: <span className="font-mono">{fmt(impacto.media_sem)}</span></div>
-                          {impacto.em_atual !== undefined && (
-                            <div className="pt-2 p-2 bg-muted/50 rounded">
-                              Estoque mínimo sugerido: <span className="font-mono">{impacto.em_atual}</span> → <span className="font-mono">{impacto.em_sem}</span>{" "}
-                              <Badge variant={impacto.delta_em < 0 ? "success" : "warning"}>
-                                {impacto.delta_em > 0 ? "+" : ""}{impacto.delta_em} un
-                              </Badge>
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <div className="text-muted-foreground">Calculando…</div>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* Seção 3 alternativa: atribuir grupo (sku_sem_grupo) */}
-                {isSemGrupo && drillEvento.status === "pendente" && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">3. Atribuir grupo de produção</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="text-sm">
-                        <span className="text-muted-foreground">Fornecedor:</span>{" "}
-                        <span className="font-medium">{drillEvento.detalhes?.fornecedor ?? "—"}</span>
-                      </div>
-                      <div>
-                        <Label className="text-xs">Grupo de produção</Label>
-                        <Select value={grupoEscolhido} onValueChange={setGrupoEscolhido}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione o grupo" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {(gruposFornecedor ?? []).map((g) => (
-                              // SelectItem espera string, mas a lógica original passava o number — preservar via cast
-                              <SelectItem key={g.id} value={g.id as unknown as string}>
-                                {g.codigo_grupo} — {g.descricao} (LT {g.lt_producao_dias}d)
-                              </SelectItem>
-                            ))}
-                            {(gruposFornecedor ?? []).length === 0 && (
-                              <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                                Nenhum grupo cadastrado para este fornecedor
-                              </div>
-                            )}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <Button
-                        className="w-full"
-                        disabled={!grupoEscolhido || atribuirGrupoMut.isPending}
-                        onClick={() => atribuirGrupoMut.mutate()}
-                      >
-                        {atribuirGrupoMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
-                        <CheckCircle2 className="h-4 w-4 mr-1" /> Atribuir e marcar como aceito
-                      </Button>
-                      <p className="text-xs text-muted-foreground">
-                        Ao atribuir, o SKU é classificado, o alerta é fechado e os parâmetros de reposição
-                        são recalculados com o novo LT de produção.
-                      </p>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* Seção 5 - Decisão padrão (oculta para sku_sem_grupo) */}
-                {!isSemGrupo && drillEvento.status === "pendente" && (
-                  <Card>
-                    <CardHeader className="pb-2"><CardTitle className="text-sm">5. Decisão</CardTitle></CardHeader>
-                    <CardContent className="space-y-3">
-                      <div>
-                        <Label className="text-xs">Justificativa (opcional)</Label>
-                        <Textarea
-                          rows={2}
-                          value={justificativa}
-                          onChange={(e) => setJustificativa(e.target.value)}
-                          placeholder="Ex: pedido excepcional cliente X, não se repete"
-                        />
-                      </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <Button variant="default" className="bg-success hover:bg-success/90 text-success-foreground" onClick={() => setAcaoConfirm({ tipo: "aceitar", lote: false })}>
-                          <CheckCircle2 className="h-4 w-4 mr-1" /> Aceitar
-                        </Button>
-                        <Button variant="destructive" onClick={() => setAcaoConfirm({ tipo: "excluir", lote: false })}>
-                          <XCircle className="h-4 w-4 mr-1" /> Excluir
-                        </Button>
-                        <Button variant="secondary" onClick={() => setAcaoConfirm({ tipo: "ignorar", lote: false })}>
-                          <EyeOff className="h-4 w-4 mr-1" /> Ignorar
-                        </Button>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        <strong>Aceitar:</strong> evento real, mantém no cálculo. <strong>Excluir:</strong> one-off, remove da estatística. <strong>Ignorar:</strong> não mexe no dado.
-                      </p>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {drillEvento.status !== "pendente" && (
-                  <Card>
-                    <CardContent className="pt-4 text-sm space-y-1">
-                      <div>Status: {statusBadge(drillEvento.status)}</div>
-                      <div className="text-muted-foreground">Por: {drillEvento.decidido_por ?? "—"} em {drillEvento.decidido_em ? new Date(drillEvento.decidido_em).toLocaleString("pt-BR") : "—"}</div>
-                      {drillEvento.justificativa_decisao && (
-                        <div className="p-2 bg-muted/50 rounded text-xs">{drillEvento.justificativa_decisao}</div>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-            </>
-          )}
-        </SheetContent>
-      </Sheet>
+      <AlertaDrillSheet
+        drillEvento={drillEvento}
+        onClose={() => setDrillEvento(null)}
+        isSemGrupo={!!isSemGrupo}
+        skuInfo={skuInfo}
+        historico={historico}
+        impacto={impacto}
+        gruposFornecedor={gruposFornecedor}
+        grupoEscolhido={grupoEscolhido}
+        setGrupoEscolhido={setGrupoEscolhido}
+        atribuirGrupoPending={atribuirGrupoMut.isPending}
+        onAtribuirGrupo={() => atribuirGrupoMut.mutate()}
+        justificativa={justificativa}
+        setJustificativa={setJustificativa}
+        onAcao={(tipo) => setAcaoConfirm({ tipo, lote: false })}
+      />
 
       {/* Confirmação */}
-      <Dialog open={!!acaoConfirm} onOpenChange={(o) => !o && setAcaoConfirm(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              Confirmar {acaoConfirm?.tipo === "aceitar" ? "aceitação" : acaoConfirm?.tipo === "excluir" ? "exclusão" : "ignorar"}
-            </DialogTitle>
-            <DialogDescription>
-              {acaoConfirm?.lote
-                ? `Aplicar a ${selecionados.size} alerta(s). Críticos não estão incluídos.`
-                : `Aplicar ao alerta selecionado.`}
-              {acaoConfirm?.tipo === "excluir" && (
-                <div className="mt-2 text-warning">⚠ Esta ação remove os eventos do cálculo estatístico e dispara recálculo automático dos parâmetros.</div>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          {acaoConfirm?.lote && (
-            <div>
-              <Label className="text-xs">Justificativa em lote (opcional)</Label>
-              <Textarea rows={2} value={justificativa} onChange={(e) => setJustificativa(e.target.value)} />
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setAcaoConfirm(null)}>Cancelar</Button>
-            <Button
-              variant={acaoConfirm?.tipo === "excluir" ? "destructive" : "default"}
-              onClick={executarAcao}
-              disabled={resolverMut.isPending}
-            >
-              {resolverMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
-              Confirmar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmacaoDialog
+        acaoConfirm={acaoConfirm}
+        onClose={() => setAcaoConfirm(null)}
+        selecionadosCount={selecionados.size}
+        justificativa={justificativa}
+        setJustificativa={setJustificativa}
+        onConfirm={executarAcao}
+        isPending={resolverMut.isPending}
+      />
     </div>
   );
 }

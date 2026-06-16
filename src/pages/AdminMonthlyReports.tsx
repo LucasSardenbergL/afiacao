@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { 
-  Loader2, Send, MessageCircle, Mail, Users, 
-  AlertTriangle, CheckCircle, Wrench, Eye, ExternalLink 
+  Loader2, Send, MessageCircle, Mail, Users,
+  AlertTriangle, CheckCircle, Wrench, Eye
 } from 'lucide-react';
 
 interface ToolSummary {
@@ -71,10 +71,10 @@ const AdminMonthlyReports = () => {
           description: `Relatórios enviados para ${data.reports_count} cliente(s)`,
         });
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error:', error);
       toast.error('Erro', {
-        description: error.message || 'Falha ao gerar relatórios',
+        description: error instanceof Error ? error.message : 'Falha ao gerar relatórios',
       });
     } finally {
       setLoading(false);

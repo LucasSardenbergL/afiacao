@@ -5,17 +5,17 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
 import {
-  Loader2, Wrench, Calendar, QrCode, Printer,
+  Loader2, Wrench, QrCode, Printer,
   AlertTriangle, CheckCircle, FileText, Settings,
   Clock, Hash, BarChart3, ShieldCheck, HelpCircle,
   ArrowRight, TrendingUp
 } from 'lucide-react';
-import { format, formatDistanceToNow, differenceInDays } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
+import { escapeHtml } from '@/lib/escape-html';
 
 /* ─── Types ─── */
 
@@ -41,7 +41,7 @@ interface ToolEvent {
   id: string;
   event_type: string;
   description: string | null;
-  metadata: Record<string, any> | null;
+  metadata: Record<string, unknown> | null;
   order_id: string | null;
   created_at: string;
 }
@@ -126,7 +126,6 @@ const RECOMMENDATION_STYLES: Record<string, { border: string; bg: string; icon: 
 const ToolHistory = () => {
   const { toolId } = useParams<{ toolId: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
   const [tool, setTool] = useState<ToolData | null>(null);
   const [events, setEvents] = useState<ToolEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -154,11 +153,6 @@ const ToolHistory = () => {
     }
   };
 
-function escapeHtml(s: string | undefined | null): string {
-  if (!s) return '';
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
-
   const handlePrintQR = () => {
     if (!qrRef.current || !tool) return;
     const printWindow = window.open('', '_blank');
@@ -176,7 +170,6 @@ function escapeHtml(s: string | undefined | null): string {
 
   /* ─── Derived data ─── */
   const sharpeningEvents = useMemo(() => events.filter(e => e.event_type === 'sharpening'), [events]);
-  const anomalyCount = useMemo(() => events.filter(e => e.event_type === 'anomaly').length, [events]);
 
   const healthMetrics = useMemo(() => {
     if (!tool) return null;

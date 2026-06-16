@@ -3,23 +3,21 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import {
-  Settings, Sliders, Shield, Users, Link2, Brain,
+  Sliders, Shield, Users, Link2, Brain,
   Save, RotateCcw, AlertTriangle, CheckCircle2, Info,
-  Lock, Eye, EyeOff, Zap, Target, TrendingUp, BarChart3,
+  Eye, EyeOff, Zap, Target, TrendingUp, BarChart3,
   Package, Phone, Award, Database, Webhook,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useAuth } from '@/contexts/AuthContext';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
-import { Sparkles, Undo2 } from 'lucide-react';
+import { Sparkles, Undo2, PanelRight } from 'lucide-react';
+import { CoveragePanel } from '@/components/carteira/CoveragePanel';
 
 /* ─── Types ─── */
 interface WeightConfig {
@@ -85,12 +83,11 @@ const permissions: PermissionConfig[] = [
 
 /* ─── Main Component ─── */
 const SettingsConfig = () => {
-  const { isAdmin } = useAuth();
   const [weights, setWeights] = useState(defaultWeights);
   const [activeTab, setActiveTab] = useState('recommendations');
   const [hasChanges, setHasChanges] = useState(false);
   const [newVisualEnabled, toggleNewVisual] = useFeatureFlag('newVisual', true);
-  const [useWebRTCEnabled, toggleWebRTC] = useFeatureFlag('useWebRTCCall', false);
+  const [filaPanelEnabled, toggleFilaPanel] = useFeatureFlag('filaContextPanel', false);
 
   const updateWeight = (key: string, value: number) => {
     setWeights(prev => prev.map(w => w.key === key ? { ...w, value } : w));
@@ -138,38 +135,36 @@ const SettingsConfig = () => {
           </CardContent>
         </Card>
 
-        {/* WebRTC dialer feature flag — opt-in beta */}
+        {/* G1 Fase 3 — painel de contexto na fila (experimental; manter OFF durante o piloto) */}
         <Card>
           <CardContent className="p-4 flex items-center justify-between gap-3">
             <div className="flex items-start gap-3 min-w-0">
               <div className={cn(
                 'p-2 rounded-md shrink-0',
-                useWebRTCEnabled ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
+                filaPanelEnabled ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
               )}>
-                <Phone className="w-4 h-4" />
+                <PanelRight className="w-4 h-4" />
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-medium">
-                  Chamadas WebRTC {useWebRTCEnabled ? 'ativadas' : 'desativadas'}
-                  <Badge variant="outline" className="ml-2 text-2xs">beta</Badge>
+                  Painel de contexto na fila
+                  <Badge variant="outline" className="ml-2 text-2xs">{filaPanelEnabled ? 'on' : 'off'}</Badge>
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {useWebRTCEnabled
-                    ? 'Ligar direto pelo navegador via SIP, sem aceitar no painel Nvoip. Requer permissão de microfone.'
-                    : 'Usa o click-to-call atual (vendedor atende ramal no painel Nvoip). Ative para ligar direto.'}
+                  No Meu Dia, clicar num item da fila abre um painel lateral com o contexto e o "Continuar pedido" (G1 Fase 3, experimental). Mantenha desligado durante o piloto da fila.
                 </p>
               </div>
             </div>
-            <Switch checked={useWebRTCEnabled} onCheckedChange={toggleWebRTC} />
+            <Switch checked={filaPanelEnabled} onCheckedChange={toggleFilaPanel} />
           </CardContent>
         </Card>
 
         {/* Prototype Warning */}
-        <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+        <div className="flex items-center gap-3 rounded-lg border border-status-warning/30 bg-status-warning-bg p-3">
+          <AlertTriangle className="w-5 h-5 text-status-warning shrink-0" />
           <div>
-            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Tela prototípica — alterações não são salvas</p>
-            <p className="text-xs text-amber-600/80 dark:text-amber-400/70">
+            <p className="text-sm font-medium text-status-warning">Tela prototípica — alterações não são salvas</p>
+            <p className="text-xs text-status-warning/80">
               Os controles abaixo são simulações visuais para validação de UX. Para ajustar parâmetros reais, use{' '}
               <span className="font-medium">Governança → Parâmetros</span>.
             </p>
@@ -439,6 +434,8 @@ const SettingsConfig = () => {
                 </div>
               </CardContent>
             </Card>
+
+            <CoveragePanel />
           </TabsContent>
 
           {/* ─── INTEGRATIONS ─── */}

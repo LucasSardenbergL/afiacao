@@ -95,10 +95,10 @@ const ResetPassword = () => {
       setTimeout(() => {
         navigate('/', { replace: true });
       }, 2000);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error resetting password:', error);
       toast.error('Erro ao redefinir senha', {
-        description: error.message || 'Tente novamente mais tarde',
+        description: error instanceof Error ? error.message : 'Tente novamente mais tarde',
       });
     } finally {
       setIsLoading(false);

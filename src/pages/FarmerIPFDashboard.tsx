@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -7,8 +7,8 @@ import { Progress } from '@/components/ui/progress';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerPerformance } from '@/hooks/useFarmerPerformance';
 import {
-  Loader2, TrendingUp, DollarSign, BarChart3, Users, ShieldCheck,
-  RefreshCw, Layers, Target
+  Loader2, TrendingUp, DollarSign, BarChart3, ShieldCheck,
+  RefreshCw, Layers, Target, type LucideIcon
 } from 'lucide-react';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -166,7 +166,7 @@ const FarmerIPFDashboard = () => {
   );
 };
 
-const IPFMetric = ({ label, value, weight, icon: Icon }: { label: string; value: number; weight: number; icon: any }) => (
+const IPFMetric = ({ label, value, weight, icon: Icon }: { label: string; value: number; weight: number; icon: LucideIcon }) => (
   <div>
     <div className="flex items-center justify-between mb-1">
       <div className="flex items-center gap-1.5">

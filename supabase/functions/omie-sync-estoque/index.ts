@@ -6,8 +6,8 @@
 //  - Cron diário 06:00 BRT (09:00 UTC) — agendado via pg_cron
 //  - Manual: POST { empresa: "OBEN" }
 
-import { createClient } from "npm:@supabase/supabase-js@2";
-import { authorizeCron, corsHeaders as sharedCors } from "../_shared/auth.ts";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCronOrStaff, corsHeaders as sharedCors } from "../_shared/auth.ts";
 
 const corsHeaders = {
   ...sharedCors,
@@ -134,12 +134,215 @@ function getOmieCredentials(empresa: Empresa) {
   };
 }
 
+// ===========================================================================================
+// "A caminho" (estoque_pendente_entrada) via PEDIDOS DE COMPRA — OBEN
+// ===========================================================================================
+// Substitui o ListarSaldoPendente, que é CEGO à previsão FUTURA de PO aprovada (incidente
+// 2026-06-11: PO 1054 aprovada, entrega 19/06, FUNDO PU 3un — o motor re-sugeria comprar).
+// Lê os pedidos de compra ABERTOS (PesquisarPedCompra), soma (nQtde - nQtdeRec) por SKU sobre os
+// APROVADOS (etapa "15" na OBEN), e DE-DUPA contra o que o em_transito da RPC já conta (pedido do
+// app disparado/aprovado <7d) — senão a unidade contaria 2× (over-count → sub-compra).
+const OMIE_ENDPOINT_PEDIDOS = "https://app.omie.com.br/api/v1/produtos/pedidocompra/";
+const PEDIDOS_JANELA_DIAS = 180; // janela de criação; PO aberta mais velha que isso é rara (→ pior caso: double-buy)
+const ETAPAS_APROVADO_ABERTO = new Set<string>(["15"]); // OBEN: 15=Aprovado (confirmado 2026-06-11)
+const ETAPAS_CONHECIDAS = new Set<string>(["15", "10"]); // 10=Em Aprovação; loga qualquer outra p/ pegar surpresa
+
+interface OmiePedItem { nCodProd?: number | string; nQtde?: number; nQtdeRec?: number; [k: string]: unknown; }
+interface OmiePedCab { nCodPed?: number | string; cNumero?: string; cCodIntPed?: string; cEtapa?: string; [k: string]: unknown; }
+interface OmiePedConsulta { cabecalho_consulta?: OmiePedCab; cabecalho?: OmiePedCab; produtos_consulta?: OmiePedItem[]; [k: string]: unknown; }
+interface OmiePedResponse { pedidos_pesquisa?: OmiePedConsulta[]; nTotalPaginas?: number; faultstring?: string; faultcode?: string; [k: string]: unknown; }
+
+// ── Helper puro (espelho VERBATIM de src/lib/reposicao/pendente-entrada-po.ts; 18 testes vitest) ──
+interface PoItemOmie { sku: string; poNumero: string; etapa: string; qtde: number; recebido: number; }
+function saldoAReceber(qtde: number, recebido: number): number {
+  const q = Number.isFinite(qtde) ? qtde : 0;
+  const r = Number.isFinite(recebido) ? recebido : 0;
+  return Math.max(0, q - r);
+}
+function itemContaComoPendente(
+  item: PoItemOmie,
+  opts: { etapasAbertas: ReadonlySet<string>; poNumerosEmTransito: ReadonlySet<string> },
+): boolean {
+  if (!opts.etapasAbertas.has(item.etapa)) return false;
+  if (opts.poNumerosEmTransito.has(item.poNumero)) return false;
+  return saldoAReceber(item.qtde, item.recebido) > 0;
+}
+function computePendenteEntradaPorSku(
+  items: readonly PoItemOmie[],
+  opts: { etapasAbertas: ReadonlySet<string>; poNumerosEmTransito: ReadonlySet<string> },
+): Map<string, number> {
+  const porSku = new Map<string, number>();
+  for (const item of items) {
+    if (!itemContaComoPendente(item, opts)) continue;
+    const add = saldoAReceber(item.qtde, item.recebido);
+    porSku.set(item.sku, (porSku.get(item.sku) ?? 0) + add);
+  }
+  return porSku;
+}
+
+function ddmmyyyyPed(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+
+async function callOmiePedidos(
+  appKey: string, appSecret: string, pagina: number, dataDe: string, dataAte: string,
+): Promise<OmiePedResponse> {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch(OMIE_ENDPOINT_PEDIDOS, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        call: "PesquisarPedCompra",
+        app_key: appKey,
+        app_secret: appSecret,
+        // Inclui todos os estados potencialmente ABERTOS; exclui o que claramente fechou.
+        // (o filtro fino de aprovado/saldo é em memória, robusto à incerteza do nome do flag).
+        param: [{
+          nPagina: pagina,
+          nRegsPorPagina: 50,
+          lApenasImportadoApi: "F",
+          lExibirPedidosPendentes: "T",
+          lExibirPedidosFaturados: "T",
+          lExibirPedidosRecParciais: "T",
+          lExibirPedidosFatParciais: "T",
+          lExibirPedidosRecebidos: "F",
+          lExibirPedidosCancelados: "F",
+          lExibirPedidosEncerrados: "F",
+          dDataInicial: dataDe,
+          dDataFinal: dataAte,
+        }],
+      }),
+    });
+    const text = await res.text();
+    let json: OmiePedResponse;
+    try { json = JSON.parse(text) as OmiePedResponse; } catch { json = {} as OmiePedResponse; }
+    if (res.status === 429 || (json?.faultstring && /rate limit/i.test(json.faultstring))) {
+      console.warn(`[omie-sync-estoque] PesquisarPedCompra 429 (tentativa ${attempt}/${MAX_RETRIES}), aguardando 5s`);
+      await new Promise((r) => setTimeout(r, 5000));
+      continue;
+    }
+    if (!res.ok) throw new Error(`PesquisarPedCompra HTTP ${res.status}: ${text.slice(0, 300)}`);
+    return json;
+  }
+  throw new Error("PesquisarPedCompra: rate limit excedido");
+}
+
+// Chaves do em_transito da RPC (anti double-count): pedido_compra_sugerido OBEN disparado/aprovado <7d.
+// O mesmo predicado da CTE em_transito (1º ramo). De-dup por cNumero (=omie_pedido_compra_numero) E por
+// cCodIntPed=AFI-<id> (carimbo do disparo, robusto caso o numero não tenha voltado do Omie).
+async function fetchEmTransitoKeys(
+  supabase: SupabaseClient,
+): Promise<{ numeros: Set<string>; codInts: Set<string> }> {
+  const numeros = new Set<string>();
+  const codInts = new Set<string>();
+  const corte = new Date();
+  corte.setDate(corte.getDate() - 7);
+  const { data, error } = await supabase
+    .from("pedido_compra_sugerido")
+    .select("id, omie_pedido_compra_numero")
+    .eq("empresa", "OBEN")
+    .in("status", ["aprovado_aguardando_disparo", "disparado", "concluido_recebido"])
+    .gte("data_ciclo", corte.toISOString().slice(0, 10));
+  if (error) throw new Error(`em_transito query: ${error.message}`);
+  for (const r of (data ?? []) as Array<{ id: string; omie_pedido_compra_numero: string | null }>) {
+    if (r.omie_pedido_compra_numero) numeros.add(String(r.omie_pedido_compra_numero).trim());
+    codInts.add(`AFI-${r.id}`);
+  }
+  return { numeros, codInts };
+}
+
+async function computePendenteViaPedidosCompra(
+  appKey: string, appSecret: string,
+  habilitadoMap: Map<string, string | null>,
+  supabase: SupabaseClient,
+): Promise<Map<string, number>> {
+  const { numeros: emTransitoNumeros, codInts: emTransitoCodInts } = await fetchEmTransitoKeys(supabase);
+
+  const hoje = new Date();
+  const inicio = new Date();
+  inicio.setDate(hoje.getDate() - PEDIDOS_JANELA_DIAS);
+  const dataDe = ddmmyyyyPed(inicio);
+  const dataAte = ddmmyyyyPed(hoje);
+
+  const items: PoItemOmie[] = [];
+  const etapasInesperadas = new Set<string>();
+  let pagina = 1, totalPaginas = 1, pedidosVistos = 0, pedidosApp = 0;
+
+  do {
+    const resp = await callOmiePedidos(appKey, appSecret, pagina, dataDe, dataAte);
+    if (resp?.faultstring) {
+      if (/not\s*found|sem\s*registros|n[ãa]o\s*encontrado/i.test(resp.faultstring)) break;
+      throw new Error(`PesquisarPedCompra fault: ${resp.faultstring}`);
+    }
+    totalPaginas = resp?.nTotalPaginas ?? 1;
+    const pedidos = resp?.pedidos_pesquisa ?? [];
+    for (const ped of pedidos) {
+      pedidosVistos++;
+      const cab = ped?.cabecalho_consulta ?? ped?.cabecalho ?? {};
+      const etapa = String(cab?.cEtapa ?? "").trim();
+      const cNumero = String(cab?.cNumero ?? "").trim();
+      const cCodIntPed = String(cab?.cCodIntPed ?? "").trim();
+      if (etapa && !ETAPAS_CONHECIDAS.has(etapa)) etapasInesperadas.add(etapa);
+      // De-dup: PO do app (já contada pelo em_transito) → pula (anti double-count).
+      if ((cNumero && emTransitoNumeros.has(cNumero)) || (cCodIntPed && emTransitoCodInts.has(cCodIntPed))) {
+        pedidosApp++;
+        continue;
+      }
+      for (const it of ped?.produtos_consulta ?? []) {
+        const sku = String(it.nCodProd ?? "").trim();
+        if (!sku || !habilitadoMap.has(sku)) continue;
+        items.push({
+          sku, poNumero: cNumero, etapa,
+          qtde: Number(it.nQtde ?? 0), recebido: Number(it.nQtdeRec ?? 0),
+        });
+      }
+    }
+    pagina++;
+    if (pagina <= totalPaginas) await new Promise((r) => setTimeout(r, 1100));
+  } while (pagina <= totalPaginas);
+
+  const pendente = computePendenteEntradaPorSku(items, {
+    etapasAbertas: ETAPAS_APROVADO_ABERTO,
+    poNumerosEmTransito: emTransitoNumeros,
+  });
+  console.log(
+    `[omie-sync-estoque] PesquisarPedCompra: ${pedidosVistos} pedidos abertos (${pedidosApp} do app de-dup), ` +
+    `${items.length} itens habilitados, ${pendente.size} SKUs com a caminho.` +
+    (etapasInesperadas.size ? ` ⚠️ etapas fora de {15,10}: ${[...etapasInesperadas].join(",")} (revisar whitelist)` : ""),
+  );
+  return pendente;
+}
+
+async function computePendenteViaSaldoPendente(
+  appKey: string, appSecret: string, habilitadoMap: Map<string, string | null>,
+): Promise<Map<string, number>> {
+  const pendente = new Map<string, number>();
+  let pPag = 1, pTot = 1;
+  do {
+    const resp = await callOmie<OmieSaldoPendenteResponse>(
+      appKey, appSecret, "ListarSaldoPendente",
+      { pagina: pPag, registros_por_pagina: PAGE_SIZE, tipo: "ENTRADA" },
+    );
+    pTot = resp.total_de_paginas ?? 1;
+    for (const item of resp.saldo_pendente_lista ?? []) {
+      const codigo = String(item.id_prod ?? "").trim();
+      if (!codigo || !habilitadoMap.has(codigo)) continue;
+      pendente.set(codigo, (pendente.get(codigo) ?? 0) + Number(item.qtde_entrada ?? 0));
+    }
+    pPag++;
+  } while (pPag <= pTot);
+  console.log(`[omie-sync-estoque] ListarSaldoPendente: ${pendente.size} SKUs com entrada pendente.`);
+  return pendente;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const auth = authorizeCron(req);
+  const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
   const startedAt = new Date();
@@ -243,27 +446,22 @@ Deno.serve(async (req) => {
       `[omie-sync-estoque] varredura concluída: ${totalRegistros} no Omie, ${encontrados.size}/${totalEsperado} habilitados encontrados.`,
     );
 
-    // 3.b) Saldo pendente de ENTRADA (pedidos de compra) — não-fatal
-    const pendenteEntrada = new Map<string, number>();
-    try {
-      let pPag = 1, pTot = 1;
-      do {
-        const resp = await callOmie<OmieSaldoPendenteResponse>(
-          appKey, appSecret, "ListarSaldoPendente",
-          { pagina: pPag, registros_por_pagina: PAGE_SIZE, tipo: "ENTRADA" },
-        );
-        pTot = resp.total_de_paginas ?? 1;
-        for (const item of resp.saldo_pendente_lista ?? []) {
-          const codigo = String(item.id_prod ?? "").trim();
-          if (!codigo || !habilitadoMap.has(codigo)) continue;
-          pendenteEntrada.set(codigo, (pendenteEntrada.get(codigo) ?? 0) + Number(item.qtde_entrada ?? 0));
-        }
-        pPag++;
-      } while (pPag <= pTot);
-      console.log(`[omie-sync-estoque] ListarSaldoPendente: ${pendenteEntrada.size} SKUs com entrada pendente.`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[omie-sync-estoque] ListarSaldoPendente falhou (não-fatal): ${msg}`);
+    // 3.b) "A caminho" (estoque_pendente_entrada) — pedidos de compra ABERTOS do Omie.
+    // OBEN: via PesquisarPedCompra (pega previsão FUTURA de PO aprovada que o ListarSaldoPendente
+    //   perdia — incidente 2026-06-11, FUNDO PU/1054). FATAL de propósito: pending de entrada é
+    //   money-path; a falha SILENCIOSA (=0) foi o que causou o re-sugerir. Se falhar, a sync inteira
+    //   falha → sku_estoque_atual não atualiza → o Sentinela (check estoque_reposicao) pega o congelado.
+    // COLACOR: mantém ListarSaldoPendente, não-fatal (reposição é OBEN; etapa-map do COLACOR não confirmada).
+    let pendenteEntrada = new Map<string, number>();
+    if (empresa === "OBEN") {
+      pendenteEntrada = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, supabase);
+    } else {
+      try {
+        pendenteEntrada = await computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[omie-sync-estoque] COLACOR ListarSaldoPendente falhou (não-fatal): ${msg}`);
+      }
     }
 
     // 4) UPSERT em sku_estoque_atual (valores já agregados por SKU)

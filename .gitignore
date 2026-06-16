@@ -27,10 +27,14 @@ dist-ssr
 # Agent tooling artifacts (per-developer, never commit)
 .codex/
 AGENTS.md
+.context/
+deno.lock
 
 
 # Serena MCP local project cache
 .serena/
+.superpowers/
+.context/codex-session-id
 
 # skill-creator eval workspace (scratch/benchmark artifacts — not part of the skill)
 .claude/skills/*-workspace/

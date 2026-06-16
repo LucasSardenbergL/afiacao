@@ -45,8 +45,37 @@ Deno.serve(async (req) => {
   });
   const drained = await drainResp.json().catch(() => ({}));
 
-  // 2. Full refresh — pairs from 3 sources últimos 30d
+  // 2. Decay diário: só clientes COM atividade (call/visita) nos últimos 30d, mapeados
+  //    pro DONO da carteira (Opção A; codex 2026-05-24). O backfill completo da carteira
+  //    (~6908) NÃO passa por aqui — vem pela fila no rollout (fan-out de 6908 estoura 50s).
+  //    ANTI-DRIFT: o dono vem de carteira_assignments, nunca do farmer_id/visited_by.
   const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+
+  // ownerMap: customer_user_id → owner_user_id (carteira_assignments, paginado)
+  const ownerMap = new Map<string, string>();
+  for (let cp = 0; ; cp++) {
+    const { data: aPage } = await supabase
+      .from('carteira_assignments')
+      .select('customer_user_id, owner_user_id')
+      .range(cp * 1000, cp * 1000 + 999);
+    const aRows = (aPage ?? []) as Array<{ customer_user_id: string; owner_user_id: string }>;
+    for (const a of aRows) ownerMap.set(a.customer_user_id, a.owner_user_id);
+    if (aRows.length < 1000) break;
+  }
+
+  // Fornecedores fora da carteira: clientes marcados p/ exclusão não entram no decay
+  // (defesa em profundidade — o visit-score-recalc-client também pula; aqui evita o fan-out à toa).
+  const flaggeds = new Set<string>();
+  for (let fp = 0; ; fp++) {
+    const { data: fPage } = await supabase
+      .from('cliente_classificacao')
+      .select('user_id')
+      .eq('excluir_da_carteira', true)
+      .range(fp * 1000, fp * 1000 + 999);
+    const fRows = (fPage ?? []) as Array<{ user_id: string }>;
+    for (const r of fRows) flaggeds.add(r.user_id);
+    if (fRows.length < 1000) break;
+  }
 
   const [callsRes, visitsRes] = await Promise.all([
     supabase.from('farmer_calls')
@@ -59,14 +88,20 @@ Deno.serve(async (req) => {
       .not('customer_user_id', 'is', null),
   ]);
 
+  // Dedup por CLIENTE (1 score por cliente); farmer_id = dono (fallback: ator da atividade).
   const unique = new Map<string, { customer_user_id: string; farmer_id: string }>();
   for (const row of (callsRes.data ?? []) as Array<{ customer_user_id: string; farmer_id: string }>) {
-    unique.set(`${row.customer_user_id}::${row.farmer_id}`, row);
+    if (flaggeds.has(row.customer_user_id)) continue;
+    unique.set(row.customer_user_id, {
+      customer_user_id: row.customer_user_id,
+      farmer_id: ownerMap.get(row.customer_user_id) ?? row.farmer_id,
+    });
   }
   for (const row of (visitsRes.data ?? []) as Array<{ customer_user_id: string; visited_by: string }>) {
-    unique.set(`${row.customer_user_id}::${row.visited_by}`, {
+    if (flaggeds.has(row.customer_user_id)) continue;
+    unique.set(row.customer_user_id, {
       customer_user_id: row.customer_user_id,
-      farmer_id: row.visited_by,
+      farmer_id: ownerMap.get(row.customer_user_id) ?? row.visited_by,
     });
   }
 

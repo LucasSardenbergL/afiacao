@@ -3,206 +3,57 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import {
-  Sparkles,
-  Package,
-  Zap,
-  TrendingUp,
-  Loader2,
-  RefreshCw,
-  PlayCircle,
-  ChevronRight,
-  MoreVertical,
-  ExternalLink,
-  EyeOff,
-  ArrowRight,
-  Handshake,
-  X,
-} from "lucide-react";
+import { Sparkles, RefreshCw, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-  TooltipProvider,
-} from "@/components/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
-  DropdownMenuCheckboxItem,
-} from "@/components/ui/dropdown-menu";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 
-const EMPRESA = "OBEN";
-const ALL = "__all__";
+import { Cenario, Oportunidade, OportunidadeComDecisao, OrdemKey } from "@/components/reposicao/oportunidades/types";
+import { EMPRESA, ALL, CENARIOS, formatBRL, diasEntre } from "@/components/reposicao/oportunidades/shared";
+import { avaliarComprarMais, type InsumoSku } from "@/lib/reposicao/compras-otimizador-helpers";
+import { DrawerConteudo } from "@/components/reposicao/oportunidades/components";
+import { KpiCards } from "@/components/reposicao/oportunidades/KpiCards";
+import { NegociacaoBanner } from "@/components/reposicao/oportunidades/NegociacaoBanner";
+import { OportunidadesFiltros } from "@/components/reposicao/oportunidades/OportunidadesFiltros";
+import { OportunidadesTable } from "@/components/reposicao/oportunidades/OportunidadesTable";
+import { GerarCicloDialog } from "@/components/reposicao/oportunidades/GerarCicloDialog";
 
-type Cenario = "promo_flat" | "promo_volume" | "promo_e_aumento" | "aumento_apenas";
-
-const CENARIOS: Array<{ value: Cenario; label: string }> = [
-  { value: "promo_flat", label: "Promoção flat" },
-  { value: "promo_volume", label: "Promoção volume" },
-  { value: "promo_e_aumento", label: "Promo + aumento" },
-  { value: "aumento_apenas", label: "Aumento apenas" },
-];
-
-type AumentoRef = {
-  aumento_id: number;
-  aumento_nome?: string;
-  data_vigencia?: string;
-  categoria?: string;
-  aumento_perc?: number;
-};
-
-type Oportunidade = {
-  empresa: string;
-  sku_codigo_omie: number;
-  sku_descricao: string | null;
-  fornecedor_nome: string | null;
-  cenario: Cenario;
-  desconto_total_perc: number | null;
-  desconto_promo_perc: number | null;
-  aumento_evitado_perc: number | null;
-  tem_negociacao_extra: boolean | null;
-  campanha_id: number | null;
-  campanha_nome: string | null;
-  promo_item_id: number | null;
-  modo_promo: string | null;
-  promo_data_corte_pedido: string | null;
-  promo_data_corte_faturamento: string | null;
-  proxima_vigencia_aumento: string | null;
-  aumentos_json: AumentoRef[] | null;
-  data_limite_acao: string | null;
-  dias_ate_limite: number | null;
-  demanda_diaria: number | null;
-  qtde_base: number | null;
-  qtde_oportunidade: number | null;
-  preco_item_eoq: number | null;
-  economia_bruta_estimada: number | null;
-  custo_capital_efetivo_perc: number | null;
-};
-
-type OrdemKey = "economia" | "data_limite" | "desconto" | "sku";
-
-function formatBRL(v: number | null | undefined): string {
-  if (v === null || v === undefined) return "—";
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(Number(v));
-}
-
-function formatNumber(v: number | null | undefined, digits = 2): string {
-  if (v === null || v === undefined) return "—";
-  return Number(v).toLocaleString("pt-BR", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
-}
-
-function formatDate(d: string | null | undefined): string {
-  if (!d) return "—";
-  const [y, m, day] = d.split("-");
-  return `${day}/${m}/${y}`;
-}
-
-function formatDateLong(d: string | null | undefined): string {
-  if (!d) return "—";
-  const [, m, day] = d.split("-");
-  const meses = [
-    "janeiro",
-    "fevereiro",
-    "março",
-    "abril",
-    "maio",
-    "junho",
-    "julho",
-    "agosto",
-    "setembro",
-    "outubro",
-    "novembro",
-    "dezembro",
-  ];
-  return `${parseInt(day, 10)} de ${meses[parseInt(m, 10) - 1]}`;
-}
-
-function diasEntre(dateStr: string | null | undefined): number | null {
-  if (!dateStr) return null;
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const target = new Date(y, m - 1, d).getTime();
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  return Math.round((target - now.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-function cenarioIcon(cenario: Cenario) {
-  switch (cenario) {
-    case "promo_flat":
-      return <Sparkles className="h-4 w-4 text-status-warning" />;
-    case "promo_volume":
-      return <Package className="h-4 w-4 text-status-info" />;
-    case "promo_e_aumento":
-      return <Zap className="h-4 w-4 text-status-purple" />;
-    case "aumento_apenas":
-      return <TrendingUp className="h-4 w-4 text-status-error" />;
-  }
-}
-
-function cenarioLabel(cenario: Cenario): string {
-  return CENARIOS.find((c) => c.value === cenario)?.label ?? cenario;
-}
-
-function descontoBadgeClass(p: number | null | undefined): string {
-  const v = Number(p ?? 0);
-  if (v >= 15) return "bg-status-success/15 text-status-success border-status-success/30";
-  if (v >= 7) return "bg-status-info/15 text-status-info border-status-info/30";
-  if (v > 0) return "bg-status-warning/15 text-status-warning border-status-warning/30";
-  return "bg-muted text-muted-foreground border-border";
-}
-
-function diasBadge(dias: number | null | undefined) {
-  const d = dias ?? 999;
-  if (d < 3) return "bg-destructive/15 text-destructive border-destructive/30";
-  if (d < 7) return "bg-status-warning/15 text-status-warning border-status-warning/30";
-  return "bg-muted text-muted-foreground border-border";
+// Monta o InsumoSku consumido pelo helper de decisão net-R$ a partir da linha da view.
+function montarInsumo(o: Oportunidade): InsumoSku {
+  const qtdeOportunidade = Number(o.qtde_oportunidade ?? 0);
+  const descPromo = Number(o.desconto_promo_perc ?? 0);
+  // curva fase 1: 1 faixa — o desconto promocional vale a partir de qtde_oportunidade (qtd que o
+  // sistema já sugere pra capturar a oportunidade). Sem desconto/qtd → curva vazia.
+  const curva =
+    descPromo > 0 && qtdeOportunidade > 0
+      ? [{ volume_minimo: qtdeOportunidade, desconto_promo_perc: descPromo }]
+      : [];
+  return {
+    empresa: o.empresa,
+    sku: String(o.sku_codigo_omie),
+    fornecedor: o.fornecedor_nome ?? "—",
+    preco_unit: Number(o.preco_item_eoq ?? 0),
+    demanda_diaria: o.demanda_diaria != null ? Number(o.demanda_diaria) : null,
+    qtde_base: o.qtde_base != null ? Number(o.qtde_base) : null,
+    lote_minimo_fornecedor:
+      o.lote_minimo_fornecedor != null ? Number(o.lote_minimo_fornecedor) : null,
+    minimo_forcado_manual:
+      o.minimo_forcado_manual != null ? Number(o.minimo_forcado_manual) : null, // Frente B — fonte: sku_parametros via view
+    cm_anual: Number(o.custo_capital_efetivo_perc ?? 0) / 100, // view expõe em %/ano → fração
+    prazo_padrao_perc: o.prazo_padrao_perc != null ? Number(o.prazo_padrao_perc) : null,
+    frete_perc_valor: o.frete_perc_valor != null ? Number(o.frete_perc_valor) : null,
+    frete_fixo: o.frete_fixo != null ? Number(o.frete_fixo) : null,
+    frete_taxa_pedido: o.frete_taxa_pedido != null ? Number(o.frete_taxa_pedido) : null,
+    aumento_evitado_perc:
+      o.aumento_evitado_perc != null ? Number(o.aumento_evitado_perc) : null,
+    dias_ate_aumento: diasEntre(o.proxima_vigencia_aumento), // helper de shared.tsx (pode ser null)
+    ruptura_valor_estimado: null,
+    ruptura_dias: null,
+    curva_desconto: curva,
+    qtd_oportunidade: o.qtde_oportunidade != null ? Number(o.qtde_oportunidade) : null,
+    escopo: "sku", // fase 1
+  };
 }
 
 export default function AdminReposicaoOportunidades() {
@@ -213,10 +64,10 @@ export default function AdminReposicaoOportunidades() {
     new Set(CENARIOS.map((c) => c.value)),
   );
   const [filtroFornecedor, setFiltroFornecedor] = useState<string>(ALL);
-  const [ordenacao, setOrdenacao] = useState<OrdemKey>("economia");
+  const [ordenacao, setOrdenacao] = useState<OrdemKey>("net");
   const [apenasComEconomia, setApenasComEconomia] = useState(true);
   const [ignoradosLocal, setIgnoradosLocal] = useState<Set<number>>(new Set());
-  const [drawerSku, setDrawerSku] = useState<Oportunidade | null>(null);
+  const [drawerSku, setDrawerSku] = useState<OportunidadeComDecisao | null>(null);
   const [confirmCicloOpen, setConfirmCicloOpen] = useState(false);
   const [executandoCiclo, setExecutandoCiclo] = useState(false);
   const [bannerNegociacaoFechado, setBannerNegociacaoFechado] = useState(
@@ -242,11 +93,16 @@ export default function AdminReposicaoOportunidades() {
     queryKey: ["oportunidades-hoje", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_oportunidade_economica_hoje" as never)
+        .from("v_otimizador_compras_insumos" as never)
         .select("*")
         .eq("empresa", EMPRESA);
       if (error) throw error;
-      return ((data || []) as unknown) as Oportunidade[];
+      const base = ((data || []) as unknown) as Oportunidade[];
+      // Decisão net-R$ marginal por SKU via helper puro (compras-otimizador-helpers).
+      return base.map((o): OportunidadeComDecisao => ({
+        ...o,
+        decisao: avaliarComprarMais(montarInsumo(o)),
+      }));
     },
   });
 
@@ -327,6 +183,8 @@ export default function AdminReposicaoOportunidades() {
     }
     arr.sort((a, b) => {
       switch (ordenacao) {
+        case "net":
+          return b.decisao.beneficio_liquido_rs - a.decisao.beneficio_liquido_rs;
         case "economia":
           return Number(b.economia_bruta_estimada ?? 0) - Number(a.economia_bruta_estimada ?? 0);
         case "data_limite":
@@ -345,6 +203,19 @@ export default function AdminReposicaoOportunidades() {
     () =>
       oportunidades.reduce(
         (acc, o) => acc + Number(o.economia_bruta_estimada ?? 0),
+        0,
+      ),
+    [oportunidades],
+  );
+
+  // Ganho líquido potencial = soma do net-R$ apenas dos SKUs com recomendação "comprar_mais".
+  const ganhoLiquidoPotencial = useMemo(
+    () =>
+      oportunidades.reduce(
+        (acc, o) =>
+          o.decisao.recomendacao === "comprar_mais"
+            ? acc + o.decisao.beneficio_liquido_rs
+            : acc,
         0,
       ),
     [oportunidades],
@@ -445,36 +316,14 @@ export default function AdminReposicaoOportunidades() {
         </header>
 
         {!bannerNegociacaoFechado && negociacaoNovasCount > 0 && (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-status-info/30 bg-status-info/10 px-4 py-3 text-sm">
-            <div className="flex items-center gap-2 flex-1">
-              <Handshake className="h-4 w-4 text-status-info dark:text-status-info shrink-0" />
-              <span>
-                <strong>{negociacaoNovasCount}</strong> SKU{negociacaoNovasCount === 1 ? '' : 's'}{' '}
-                {negociacaoNovasCount === 1 ? 'foi sugerido' : 'foram sugeridos'} para negociação paralela.
-              </span>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => navigate('/admin/reposicao/negociacao-paralela')}
-              >
-                Ver sugestões
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7"
-                onClick={() => {
-                  sessionStorage.setItem('banner-negociacao-fechado', '1');
-                  setBannerNegociacaoFechado(true);
-                }}
-                aria-label="Fechar"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
+          <NegociacaoBanner
+            count={negociacaoNovasCount}
+            onVerSugestoes={() => navigate('/admin/reposicao/negociacao-paralela')}
+            onFechar={() => {
+              sessionStorage.setItem('banner-negociacao-fechado', '1');
+              setBannerNegociacaoFechado(true);
+            }}
+          />
         )}
 
         {historicoPromocoes && historicoPromocoes.campanhas > 0 && (
@@ -494,105 +343,16 @@ export default function AdminReposicaoOportunidades() {
         )}
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground">
-                Economia total potencial hoje
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-status-success tabular-nums">
-                {formatBRL(totalEconomia)}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                considerando promoções e aumentos vigentes
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground">
-                SKUs com oportunidade
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold tabular-nums">
-                {oportunidades.length}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                de {totalSkusAtivos} SKUs ativos
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground">
-                Data limite mais próxima
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {dataLimiteMaisProxima ? (
-                <>
-                  <div className="text-lg font-bold tabular-nums">
-                    {formatDateLong(dataLimiteMaisProxima)}
-                  </div>
-                  <div className="mt-1">
-                    <Badge variant="outline" className={diasBadge(diasAteLimite)}>
-                      em {diasAteLimite} {diasAteLimite === 1 ? "dia" : "dias"}
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Próxima janela crítica
-                  </p>
-                </>
-              ) : (
-                <>
-                  <div className="text-lg font-bold text-muted-foreground">—</div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Sem janelas ativas
-                  </p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground">
-                Ciclo oportunidade do dia
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {cicloHoje > 0 ? (
-                <>
-                  <Badge
-                    className="bg-status-success/15 text-status-success border-status-success/30 cursor-pointer hover:bg-status-success/25"
-                    variant="outline"
-                    onClick={() => setConfirmCicloOpen(true)}
-                  >
-                    <PlayCircle className="h-3 w-3 mr-1" />
-                    Gerar ciclo oportunidade
-                  </Badge>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    {cicloHoje} {cicloHoje === 1 ? "evento" : "eventos"} encerra(m) hoje
-                  </p>
-                </>
-              ) : (
-                <>
-                  <Badge variant="outline" className="text-muted-foreground">
-                    Sem ciclo hoje
-                  </Badge>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Próxima janela crítica ainda não chegou
-                  </p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+        <KpiCards
+          totalEconomia={totalEconomia}
+          ganhoLiquidoPotencial={ganhoLiquidoPotencial}
+          oportunidadesCount={oportunidades.length}
+          totalSkusAtivos={totalSkusAtivos}
+          dataLimiteMaisProxima={dataLimiteMaisProxima}
+          diasAteLimite={diasAteLimite}
+          cicloHoje={cicloHoje}
+          onGerarCiclo={() => setConfirmCicloOpen(true)}
+        />
 
         {/* Filtros + Tabela */}
         <Card>
@@ -600,226 +360,27 @@ export default function AdminReposicaoOportunidades() {
             <CardTitle className="text-base">Oportunidades ativas</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="justify-between">
-                    {cenariosLabel}
-                    <ChevronRight className="h-4 w-4 rotate-90 opacity-50" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-56" align="start">
-                  {CENARIOS.map((c) => (
-                    <DropdownMenuCheckboxItem
-                      key={c.value}
-                      checked={cenariosSelecionados.has(c.value)}
-                      onCheckedChange={(checked) => toggleCenario(c.value, !!checked)}
-                      onSelect={(e) => e.preventDefault()}
-                    >
-                      <span className="flex items-center gap-2">
-                        {cenarioIcon(c.value)}
-                        {c.label}
-                      </span>
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+            <OportunidadesFiltros
+              cenariosSelecionados={cenariosSelecionados}
+              cenariosLabel={cenariosLabel}
+              toggleCenario={toggleCenario}
+              filtroFornecedor={filtroFornecedor}
+              setFiltroFornecedor={setFiltroFornecedor}
+              fornecedoresUnicos={fornecedoresUnicos}
+              ordenacao={ordenacao}
+              setOrdenacao={setOrdenacao}
+              apenasComEconomia={apenasComEconomia}
+              setApenasComEconomia={setApenasComEconomia}
+            />
 
-              <Select value={filtroFornecedor} onValueChange={setFiltroFornecedor}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Fornecedor" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>Todos os fornecedores</SelectItem>
-                  {fornecedoresUnicos.map((f) => (
-                    <SelectItem key={f} value={f}>
-                      {f}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <Select value={ordenacao} onValueChange={(v) => setOrdenacao(v as OrdemKey)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="economia">Maior economia</SelectItem>
-                  <SelectItem value="data_limite">Data limite mais próxima</SelectItem>
-                  <SelectItem value="desconto">Maior % desconto</SelectItem>
-                  <SelectItem value="sku">SKU alfabético</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <div className="flex items-center justify-end gap-2 px-2">
-                <Switch
-                  id="apenas-economia"
-                  checked={apenasComEconomia}
-                  onCheckedChange={setApenasComEconomia}
-                />
-                <Label htmlFor="apenas-economia" className="text-sm cursor-pointer">
-                  Apenas com economia &gt; 0
-                </Label>
-              </div>
-            </div>
-
-            {/* Tabela */}
-            {isLoading ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground py-12 justify-center">
-                <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
-              </div>
-            ) : oportunidades.length === 0 ? (
-              <EstadoVazio navigate={navigate} />
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-10"></TableHead>
-                      <TableHead>SKU / Descrição</TableHead>
-                      <TableHead>Fornecedor</TableHead>
-                      <TableHead className="text-right">Desconto total</TableHead>
-                      <TableHead className="text-right">Qtde sugerida</TableHead>
-                      <TableHead>Data limite</TableHead>
-                      <TableHead className="text-right">Economia bruta</TableHead>
-                      <TableHead className="w-20 text-right">Ações</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {oportunidadesFiltradas.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={8} className="text-center text-muted-foreground py-12">
-                          Nenhum SKU bate os filtros atuais.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    {oportunidadesFiltradas.map((o) => (
-                      <TableRow key={`${o.sku_codigo_omie}-${o.cenario}`}>
-                        <TableCell>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex">{cenarioIcon(o.cenario)}</span>
-                            </TooltipTrigger>
-                            <TooltipContent>{cenarioLabel(o.cenario)}</TooltipContent>
-                          </Tooltip>
-                        </TableCell>
-                        <TableCell>
-                          <div className="font-medium tabular-nums text-xs text-muted-foreground">
-                            {o.sku_codigo_omie}
-                          </div>
-                          <div className="text-sm">{o.sku_descricao ?? "—"}</div>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {o.fornecedor_nome ?? "—"}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Badge
-                                variant="outline"
-                                className={descontoBadgeClass(o.desconto_total_perc)}
-                              >
-                                {formatNumber(o.desconto_total_perc, 1)}%
-                              </Badge>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              <div className="space-y-1 text-xs">
-                                <div>
-                                  Base promo: {formatNumber(o.desconto_promo_perc, 2)}%
-                                </div>
-                                {o.tem_negociacao_extra && (
-                                  <div>+ Extra negociado</div>
-                                )}
-                                {o.aumento_evitado_perc !== null &&
-                                  Number(o.aumento_evitado_perc) > 0 && (
-                                    <div>
-                                      + Aumento evitado:{" "}
-                                      {formatNumber(o.aumento_evitado_perc, 2)}%
-                                    </div>
-                                  )}
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="font-medium">
-                                {formatNumber(o.qtde_oportunidade, 0)}
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <div className="text-xs space-y-1">
-                                <div>
-                                  Demanda diária: {formatNumber(o.demanda_diaria, 2)}
-                                </div>
-                                <div>
-                                  Quantidade base EOQ: {formatNumber(o.qtde_base, 0)}
-                                </div>
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          <div className="tabular-nums">{formatDate(o.data_limite_acao)}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {o.dias_ate_limite !== null
-                              ? `em ${o.dias_ate_limite} ${o.dias_ate_limite === 1 ? "dia" : "dias"}`
-                              : ""}
-                          </div>
-                        </TableCell>
-                        <TableCell
-                          className={`text-right tabular-nums font-medium ${
-                            Number(o.economia_bruta_estimada ?? 0) > 0
-                              ? "text-status-success"
-                              : "text-muted-foreground"
-                          }`}
-                        >
-                          {formatBRL(o.economia_bruta_estimada)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-8 w-8"
-                              onClick={() => setDrawerSku(o)}
-                            >
-                              <ChevronRight className="h-4 w-4" />
-                            </Button>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button size="icon" variant="ghost" className="h-8 w-8">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem
-                                  onClick={() =>
-                                    navigate(
-                                      `/admin/reposicao/skus/${o.sku_codigo_omie}`,
-                                    )
-                                  }
-                                >
-                                  <ArrowRight className="h-4 w-4 mr-2" />
-                                  Ir para SKU em reposição
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => handleIgnorar(o.sku_codigo_omie)}
-                                >
-                                  <EyeOff className="h-4 w-4 mr-2" />
-                                  Ignorar hoje
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
+            <OportunidadesTable
+              isLoading={isLoading}
+              totalCount={oportunidades.length}
+              rows={oportunidadesFiltradas}
+              navigate={navigate}
+              onOpenDrawer={setDrawerSku}
+              onIgnorar={handleIgnorar}
+            />
           </CardContent>
         </Card>
 
@@ -831,263 +392,15 @@ export default function AdminReposicaoOportunidades() {
         </Sheet>
 
         {/* Confirmação ciclo */}
-        <AlertDialog open={confirmCicloOpen} onOpenChange={setConfirmCicloOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Gerar ciclo de oportunidade do dia</AlertDialogTitle>
-              <AlertDialogDescription>
-                Vai gerar pedidos de oportunidade para{" "}
-                <strong>{oportunidades.length} SKUs</strong>, com economia total
-                estimada de{" "}
-                <strong className="text-status-success">
-                  {formatBRL(totalEconomia)}
-                </strong>
-                . Continuar?
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={executandoCiclo}>
-                Cancelar
-              </AlertDialogCancel>
-              <AlertDialogAction
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleGerarCiclo();
-                }}
-                disabled={executandoCiclo}
-              >
-                {executandoCiclo && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                Confirmar e gerar
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <GerarCicloDialog
+          open={confirmCicloOpen}
+          onOpenChange={setConfirmCicloOpen}
+          oportunidadesCount={oportunidades.length}
+          totalEconomia={totalEconomia}
+          executando={executandoCiclo}
+          onConfirm={handleGerarCiclo}
+        />
       </div>
     </TooltipProvider>
-  );
-}
-
-// ============ SUBCOMPONENTES ============
-
-function EstadoVazio({ navigate }: { navigate: ReturnType<typeof useNavigate> }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <TrendingUp className="h-16 w-16 text-muted-foreground/40 mb-4" />
-      <h3 className="text-xl font-semibold">Nenhuma oportunidade ativa</h3>
-      <p className="text-sm text-muted-foreground mt-2 max-w-md">
-        Não há promoções ou aumentos ativos que afetem seus SKUs no momento.
-        Cadastre promoções ou aumentos para começar.
-      </p>
-      <div className="flex gap-2 mt-6">
-        <Button
-          variant="outline"
-          onClick={() => navigate("/admin/reposicao/promocoes")}
-        >
-          Ver promoções
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate("/admin/reposicao/aumentos")}
-        >
-          Ver aumentos
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function DrawerConteudo({
-  o,
-  navigate,
-}: {
-  o: Oportunidade;
-  navigate: ReturnType<typeof useNavigate>;
-}) {
-  const incluiPromo = o.cenario.startsWith("promo");
-  const incluiAumento =
-    o.cenario === "aumento_apenas" || o.cenario === "promo_e_aumento";
-  const aumentos = (o.aumentos_json ?? []) as AumentoRef[];
-
-  return (
-    <>
-      <SheetHeader>
-        <div className="flex items-center gap-2">
-          {cenarioIcon(o.cenario)}
-          <Badge variant="outline">{cenarioLabel(o.cenario)}</Badge>
-        </div>
-        <SheetTitle className="text-left">
-          {o.sku_descricao ?? "Sem descrição"}
-        </SheetTitle>
-        <SheetDescription className="text-left tabular-nums">
-          SKU {o.sku_codigo_omie} · {o.fornecedor_nome ?? "—"}
-        </SheetDescription>
-      </SheetHeader>
-
-      <div className="mt-6 space-y-5">
-        {/* Parâmetros */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Parâmetros operacionais</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <Linha label="Demanda diária" value={formatNumber(o.demanda_diaria, 2)} />
-            <Linha label="Preço EOQ" value={formatBRL(o.preco_item_eoq)} />
-            <Linha
-              label="Custo de capital"
-              value={`${formatNumber(o.custo_capital_efetivo_perc, 2)}%`}
-            />
-            <Linha label="Quantidade base (EOQ)" value={formatNumber(o.qtde_base, 0)} />
-            <Linha
-              label="Quantidade sugerida"
-              value={formatNumber(o.qtde_oportunidade, 0)}
-              highlight
-            />
-          </CardContent>
-        </Card>
-
-        {/* Promoção */}
-        {incluiPromo && o.campanha_id && (
-          <Card className="border-status-warning/30 bg-status-warning/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-status-warning" />
-                Promoção ativa
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <div className="font-medium">{o.campanha_nome}</div>
-              <Linha
-                label="Modo"
-                value={o.modo_promo === "volume" ? "Volume" : "Flat"}
-              />
-              <Linha
-                label="Desconto base"
-                value={`${formatNumber(o.desconto_promo_perc, 2)}%`}
-              />
-              {o.tem_negociacao_extra && (
-                <Linha label="Negociação extra" value="Sim" />
-              )}
-              <Linha
-                label="Corte do pedido"
-                value={formatDate(o.promo_data_corte_pedido)}
-              />
-              <Linha
-                label="Corte do faturamento"
-                value={formatDate(o.promo_data_corte_faturamento)}
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full mt-2"
-                onClick={() => navigate(`/admin/reposicao/promocoes/${o.campanha_id}`)}
-              >
-                <ExternalLink className="h-3 w-3 mr-2" />
-                Ver campanha
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Aumentos */}
-        {incluiAumento && aumentos.length > 0 && (
-          <Card className="border-status-error/30 bg-status-error/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-status-error" />
-                {aumentos.length === 1
-                  ? "Aumento afetando este SKU"
-                  : `${aumentos.length} aumentos afetando este SKU`}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {aumentos.map((a, i) => (
-                <div
-                  key={`${a.aumento_id}-${i}`}
-                  className="space-y-1.5 pb-3 border-b last:border-0 last:pb-0 text-sm"
-                >
-                  <div className="font-medium">{a.aumento_nome ?? "Aumento"}</div>
-                  {a.categoria && (
-                    <div className="text-xs text-muted-foreground">
-                      Categoria: {a.categoria}
-                    </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Vigência</span>
-                    <span className="tabular-nums">{formatDate(a.data_vigencia)}</span>
-                  </div>
-                  {typeof a.aumento_perc === "number" && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">% aumento</span>
-                      <span className="font-medium tabular-nums text-status-error">
-                        +{formatNumber(a.aumento_perc, 2)}%
-                      </span>
-                    </div>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full mt-1"
-                    onClick={() => navigate(`/admin/reposicao/aumentos/${a.aumento_id}`)}
-                  >
-                    <ExternalLink className="h-3 w-3 mr-2" />
-                    Ver aumento
-                  </Button>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Cálculo */}
-        <Card className="border-status-success/30 bg-status-success/5">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Cálculo da economia</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm leading-relaxed">
-            Comprando{" "}
-            <strong>{formatNumber(o.qtde_oportunidade, 0)} unidades</strong> nos
-            próximos{" "}
-            <strong>
-              {o.dias_ate_limite ?? "—"}{" "}
-              {o.dias_ate_limite === 1 ? "dia" : "dias"}
-            </strong>{" "}
-            você captura{" "}
-            <strong>{formatNumber(o.desconto_total_perc, 2)}%</strong> de
-            benefício total, economizando{" "}
-            <strong className="text-status-success">
-              {formatBRL(o.economia_bruta_estimada)}
-            </strong>{" "}
-            bruto.
-          </CardContent>
-        </Card>
-
-        <Button
-          className="w-full"
-          onClick={() => navigate(`/admin/reposicao/skus/${o.sku_codigo_omie}`)}
-        >
-          <ArrowRight className="h-4 w-4 mr-2" />
-          Ir para SKU em reposição
-        </Button>
-      </div>
-    </>
-  );
-}
-
-function Linha({
-  label,
-  value,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div className="flex justify-between">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={`tabular-nums ${highlight ? "font-semibold" : ""}`}>
-        {value}
-      </span>
-    </div>
   );
 }

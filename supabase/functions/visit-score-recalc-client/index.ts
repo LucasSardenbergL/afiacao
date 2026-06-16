@@ -158,14 +158,22 @@ async function recalcOne(
   customer_user_id: string,
   farmer_id: string,
 ): Promise<{ ok: boolean; error?: string; visit_score?: number; primary_mission?: MissionType }> {
-  const [scoresRes, visitsRes, ordersRes, addressRes, profileRes] = await Promise.all([
-    supabase.from('farmer_client_scores').select('churn_risk, expansion_score, health_score, recover_score, revenue_potential, avg_monthly_spend_180d, days_since_last_purchase, signal_modifiers').eq('customer_user_id', customer_user_id).eq('farmer_id', farmer_id).maybeSingle(),
+  const [flagRes, scoresRes, visitsRes, ordersRes, addressRes, profileRes] = await Promise.all([
+    // Anti-ressurreição (fornecedores fora da carteira): cliente marcado p/ exclusão não recebe
+    // visit score. Checagem na mesma rodada paralela → zero latência extra. Ausência = segue.
+    supabase.from('cliente_classificacao').select('user_id').eq('user_id', customer_user_id).eq('excluir_da_carteira', true).maybeSingle(),
+    // Opção A (carteira-Omie): 1 linha de score por cliente → lê por customer_user_id só.
+    supabase.from('farmer_client_scores').select('churn_risk, expansion_score, health_score, recover_score, revenue_potential, avg_monthly_spend_180d, days_since_last_purchase, signal_modifiers').eq('customer_user_id', customer_user_id).maybeSingle(),
     supabase.from('route_visits').select('check_in_at').eq('customer_user_id', customer_user_id).order('check_in_at', { ascending: false }).limit(1),
     supabase.from('sales_orders').select('id').eq('customer_user_id', customer_user_id),
     supabase.from('addresses').select('city, neighborhood, state').eq('user_id', customer_user_id).eq('is_default', true).maybeSingle(),
     supabase.from('profiles').select('created_at, is_prospect').eq('user_id', customer_user_id).maybeSingle(),
   ]);
 
+  // FAIL-CLOSED (Codex P1): erro ao ler a flag → NÃO recalcula (não recria score de fornecedor
+  // por erro transitório). Re-enfileirado no próximo batch.
+  if (flagRes.error) return { ok: false, error: `cliente_classificacao: ${flagRes.error.message}` };
+  if (flagRes.data) return { ok: true };
   if (scoresRes.error) return { ok: false, error: `farmer_client_scores: ${scoresRes.error.message}` };
 
   const scores = (scoresRes.data ?? {}) as Record<string, unknown>;
@@ -235,7 +243,7 @@ async function recalcOne(
     score_breakdown,
     calculated_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }, { onConflict: 'customer_user_id,farmer_id' });
+  }, { onConflict: 'customer_user_id' });
 
   if (upsertErr) return { ok: false, error: `upsert: ${upsertErr.message}` };
 
@@ -266,20 +274,29 @@ Deno.serve(async (req) => {
       .limit(body.max_drain ?? 50);
     if (error) return jsonError(`pending: ${error.message}`, 500);
 
-    const results: unknown[] = [];
-    for (const item of (pending ?? []) as Array<{ id: string; customer_user_id: string; farmer_id: string }>) {
-      let r: { ok: boolean; error?: string; visit_score?: number; primary_mission?: MissionType };
-      try {
-        r = await recalcOne(supabase, item.customer_user_id, item.farmer_id);
-      } catch (err) {
-        r = { ok: false, error: `uncaught: ${err instanceof Error ? err.message : String(err)}` };
-      }
-      // Always mark processed (even on uncaught error) — avoids poison-pill
-      await supabase.from('visit_score_recalc_queue').update({
-        processed_at: new Date().toISOString(),
-        error: r.error ?? null,
-      }).eq('id', item.id);
-      results.push({ id: item.id, ...r });
+    // Drain CONCORRENTE (codex 2026-05-24): o backfill da carteira inteira passa pela fila.
+    // recalcOne faz 5 queries/cliente, então o dreno sequencial estouraria 50s em lotes grandes.
+    // Chunks de 10 → ~50 queries em voo; max_drain ~500 cabe no timeout.
+    const queue = (pending ?? []) as Array<{ id: string; customer_user_id: string; farmer_id: string }>;
+    const CONCURRENCY = 10;
+    const results: Array<{ id: string; ok: boolean; error?: string; visit_score?: number; primary_mission?: MissionType }> = [];
+    for (let i = 0; i < queue.length; i += CONCURRENCY) {
+      const chunk = queue.slice(i, i + CONCURRENCY);
+      const chunkResults = await Promise.all(chunk.map(async (item) => {
+        let r: { ok: boolean; error?: string; visit_score?: number; primary_mission?: MissionType };
+        try {
+          r = await recalcOne(supabase, item.customer_user_id, item.farmer_id);
+        } catch (err) {
+          r = { ok: false, error: `uncaught: ${err instanceof Error ? err.message : String(err)}` };
+        }
+        // Always mark processed (even on uncaught error) — avoids poison-pill
+        await supabase.from('visit_score_recalc_queue').update({
+          processed_at: new Date().toISOString(),
+          error: r.error ?? null,
+        }).eq('id', item.id);
+        return { id: item.id, ...r };
+      }));
+      results.push(...chunkResults);
     }
 
     return new Response(JSON.stringify({ drained: results.length, results }), {

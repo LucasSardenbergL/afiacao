@@ -1,12 +1,25 @@
+import { Link } from 'react-router-dom';
+import { Target, ChevronRight } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-import { Construction, BarChart3, Users, Briefcase } from 'lucide-react';
-import { KpisToday } from './KpisToday';
-import { VisitSuggestionsCard } from './VisitSuggestionsCard';
+import { TeamKpiTiles } from './TeamKpiTiles';
+import { RankingVendedoresCard } from './RankingVendedoresCard';
+import { GestorExcecoes } from './GestorExcecoes';
+import { ClosersMtdHero } from './ClosersMtdHero';
+import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
+import { ViewAsPicker } from '@/components/impersonation/ViewAsPicker';
+import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
+import { AtivarNotificacoesCard } from '@/components/push/AtivarNotificacoesCard';
 
 /**
- * Dashboard Master (CEO) — visão consolidada do time + KPIs próprios (você
- * também é Closer). Placeholder rico até PR-MULTIVENDOR-V2 implementar ranking
- * de vendedores + métricas agregadas.
+ * Dashboard Master (CEO) — lidera com a VISÃO DE TIME e a GESTÃO POR EXCEÇÃO (o
+ * trabalho diário do founder), depois ranking (decomposição do placar), a
+ * ferramenta "Ver como", e por fim a operação PRÓPRIA do master-como-closer.
+ *
+ * Ordem validada com Codex (docs/superpowers/specs/2026-06-13-kpis-master-meu-dia-design.md):
+ * "estamos ganhando? → o que exige ação? → quem/onde explica? → minha operação".
+ * O VisitSuggestionsCard (sugestão de visita) saiu — é trabalho de closer, não
+ * gestão. O KpisToday saiu de "como Closer" (mede LIGAÇÕES): "Minha operação" usa
+ * ClosersMtdHero (visitas MTD), coerente com o papel.
  */
 export function MasterDashboard() {
   return (
@@ -14,50 +27,51 @@ export function MasterDashboard() {
       <div>
         <h1 className="text-xl font-semibold">Dashboard Master (CEO)</h1>
         <p className="text-xs text-muted-foreground">
-          Visão consolidada do time. KPIs agregados, ranking de vendedores, alertas estratégicos.
+          Visão consolidada do time, gestão por exceção e ranking. O escopo segue a empresa do seletor.
         </p>
       </div>
 
-      {/* Sugestões de visita — PR-VISIT-INTELLIGENCE Sub-PR A */}
-      <VisitSuggestionsCard />
+      {/* Receita/positivação vêm de sales_orders, hoje parcial (backfill pendente) → aviso honesto */}
+      <DadosVendaParciaisBanner />
 
-      <Card className="p-4 border-dashed border-2 border-status-warning/30 bg-status-warning-bg/20">
-        <div className="flex items-center gap-2 mb-2">
-          <Construction className="w-4 h-4 text-status-warning" />
-          <span className="text-sm font-medium">Em construção — PR-MULTIVENDOR-V2</span>
-        </div>
-        <p className="text-2xs text-muted-foreground">Próximas features:</p>
-        <ul className="text-2xs text-muted-foreground space-y-1 mt-2 ml-4 list-disc">
-          <li>Ranking de vendedores (chamadas/dia, R$ gerado, ticket médio, NRR)</li>
-          <li>Carteira agregada por vendedor (health médio, churn risk médio)</li>
-          <li>Alertas estratégicos (cliente VIP esfriou, vendedor caiu produção)</li>
-          <li>Toggle &quot;ver como Farmer/Hunter/Closer&quot; pra entrar na visão de cada um</li>
-        </ul>
-      </Card>
+      {/* "Estamos ganhando?" — placar de time (receita MTD + trend, ativos) */}
+      <TeamKpiTiles />
 
-      {/* KPIs do próprio Master (também é Closer) */}
+      {/* "O que exige ação?" — gestão por exceção (Buddy v2). Lidera por dependência com
+          Dados quebrados, que invalidam o placar acima. */}
+      <GestorExcecoes />
+
+      {/* "Quem/onde explica?" — ranking de vendedores do mês (decomposição do placar) */}
+      <RankingVendedoresCard />
+
+      {/* Ferramenta de investigação: master entra na visão de um vendedor (somente leitura) */}
+      <ViewAsPicker />
+
+      {/* Tarefas do vendedor sendo visto via "Ver como" (somente leitura; some sem impersonação) */}
+      <MinhasTarefasCard />
+
+      {/* "Minha operação" — o master também é Closer (suas visitas do mês) */}
       <div className="space-y-2">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground">Meus KPIs (como Closer)</div>
-        <KpisToday />
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">Minha operação</div>
+        <ClosersMtdHero />
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <Card className="p-3 text-center text-xs text-muted-foreground">
-          <Users className="w-5 h-5 mx-auto mb-1 opacity-40" />
-          Vendedores ativos
-          <div className="text-base font-medium text-foreground mt-1">—</div>
+      {/* Atalho discreto pra fila de caça (Frente B) — master acessa sem trocar de papel */}
+      <Link to="/caca" className="block">
+        <Card className="p-3 flex items-center gap-3 hover:bg-muted/30 transition-colors">
+          <Target className="w-4 h-4 text-status-info shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium">Caça</div>
+            <div className="text-2xs text-muted-foreground">
+              Clientes parecidos com seus melhores que ainda não compram
+            </div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
         </Card>
-        <Card className="p-3 text-center text-xs text-muted-foreground">
-          <Briefcase className="w-5 h-5 mx-auto mb-1 opacity-40" />
-          Receita time hoje
-          <div className="text-base font-medium text-foreground mt-1">—</div>
-        </Card>
-        <Card className="p-3 text-center text-xs text-muted-foreground">
-          <BarChart3 className="w-5 h-5 mx-auto mb-1 opacity-40" />
-          Pipeline total
-          <div className="text-base font-medium text-foreground mt-1">—</div>
-        </Card>
-      </div>
+      </Link>
+
+      {/* Opt-in de Web Push (config) — some quando ativo/negado/sem suporte/dispensado */}
+      <AtivarNotificacoesCard />
     </div>
   );
 }

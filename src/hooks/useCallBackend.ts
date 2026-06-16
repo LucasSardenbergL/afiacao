@@ -1,32 +1,21 @@
-import { useFeatureFlag } from '@/hooks/useFeatureFlag';
-import { useNvoipCall } from '@/hooks/useNvoipCall';
 import { useWebRTCCall } from '@/hooks/useWebRTCCall';
 
 /**
- * Dispatcher único pra escolha do backend de telefonia.
- * Substitui o uso direto de useNvoipCall e useWebRTCCall em consumers
- * (modal "Nova ligação", dialers, etc.), garantindo que a feature flag
- * `useWebRTCCall` é o ponto único de verdade.
+ * Dispatcher do backend de telefonia.
  *
- * Returns a união das APIs (campos comuns + extras). O backend ativo é
- * identificado em `backend` ('nvoip' | 'webrtc').
+ * WebRTC in-browser é o ÚNICO caminho ativo: o vendedor liga direto pelo navegador
+ * (grava + copiloto/transcrição ao vivo, funciona no celular). O click-to-call da
+ * Nvoip foi DESCONTINUADO da interface — `useNvoipCall`/`NvoipDialer` viram código
+ * dormente (mantidos por ora p/ revert fácil; remoção futura como faxina).
  *
- * IMPORTANTE: Ambos os hooks são chamados em TODO render — React requer
- * que hooks sejam chamados em ordem fixa. O custo é negligível
- * (useNvoipCall é estado local; useWebRTCCall é consumer de Context).
+ * Mantém o campo `backend` no retorno por compatibilidade com os consumidores
+ * (CallDialerView, FarmerCalls) que checam 'webrtc' | 'nvoip'.
  *
- * IMPORTANTE 2: Quando webrtc está on, useWebRTCCall lança se a árvore
- * não estiver dentro de <WebRTCCallProvider>. Por isso esse hook deve
- * ser consumido apenas em rotas envolvidas pelo ConditionalWebRTCProvider
- * (todas as rotas autenticadas via AppShellLayout).
+ * IMPORTANTE: `useWebRTCCall` lança se a árvore não estiver dentro de
+ * <WebRTCCallProvider>. Por isso este hook só pode ser consumido em rotas
+ * envolvidas pelo ConditionalWebRTCProvider (rotas autenticadas via AppShellLayout).
  */
 export function useCallBackend() {
-  const [useWebRTC] = useFeatureFlag('useWebRTCCall', false);
-  const nvoip = useNvoipCall();
   const webrtc = useWebRTCCall();
-
-  if (useWebRTC) {
-    return { ...webrtc, backend: 'webrtc' as const };
-  }
-  return { ...nvoip, backend: 'nvoip' as const };
+  return { ...webrtc, backend: 'webrtc' as const };
 }

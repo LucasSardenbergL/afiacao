@@ -1,0 +1,108 @@
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { SalesOrderDetailSheet } from '../SalesOrderDetailSheet';
+import type { SalesOrder } from '../types';
+
+function order(p: Partial<SalesOrder> = {}): SalesOrder {
+  return {
+    id: 'o1',
+    customer_user_id: 'u1',
+    items: [
+      // Base com tinta + valor_total zerado (caso do rascunho da foto)
+      { descricao: 'BASE PU ACRI FOSCO', quantidade: 2, valor_unitario: 50, valor_total: 0, tint_cor_id: '1247', tint_nome_cor: 'AZUL RAL 5010' },
+      { descricao: 'CATALISADOR FC', quantidade: 2, valor_unitario: 40, valor_total: 80 },
+    ],
+    subtotal: 180,
+    total: 180,
+    status: 'rascunho',
+    omie_numero_pedido: '0011326',
+    omie_pedido_id: null,
+    created_at: '2026-06-02T21:00:00Z',
+    notes: null,
+    account: 'oben',
+    _source: 'sales',
+    ...p,
+  } as SalesOrder;
+}
+
+function setup(o: SalesOrder | null, extra: { open?: boolean; loading?: boolean } = {}) {
+  render(
+    <SalesOrderDetailSheet
+      open={extra.open ?? !!o}
+      loading={extra.loading}
+      order={o}
+      customerName="DELTA INTERIORES"
+      onClose={vi.fn()}
+      onPrint={vi.fn()}
+      onShare={vi.fn()}
+      onEdit={vi.fn()}
+    />,
+  );
+}
+
+describe('SalesOrderDetailSheet', () => {
+  it('mostra a cor da base (código - nome) quando o item tem tinta', () => {
+    setup(order());
+    expect(screen.getByText(/🎨\s*1247\s*-\s*AZUL RAL 5010/)).toBeTruthy();
+  });
+
+  it('cor sem cor_id (vinda do sync do Omie) mostra só o nome, sem hífen órfão', () => {
+    setup(order({ items: [{ descricao: 'BASE BRILH BRANC PU', quantidade: 1, valor_unitario: 86, valor_total: 86, tint_nome_cor: 'AZUL RAL 5010' }] }));
+    expect(screen.getByText('🎨 AZUL RAL 5010')).toBeTruthy();
+  });
+
+  it('item sem tinta não mostra linha de cor', () => {
+    setup(order({ items: [{ descricao: 'CATALISADOR', quantidade: 1, valor_unitario: 40, valor_total: 40 }] }));
+    expect(screen.queryByText(/🎨/)).toBeNull();
+  });
+
+  it('exibe o total do item calculado (qtd × unit) quando valor_total vem 0', () => {
+    setup(order());
+    // base 2 × R$ 50 → total R$ 100,00 (não R$ 0,00)
+    expect(screen.getByText(/R\$\s*100,00/)).toBeTruthy();
+  });
+
+  it('order null não renderiza conteúdo (painel fechado)', () => {
+    setup(null);
+    expect(screen.queryByText('DELTA INTERIORES')).toBeNull();
+  });
+
+  it('aberto + carregando (detalhe em voo) mostra spinner, sem conteúdo', () => {
+    setup(null, { open: true, loading: true });
+    expect(screen.queryByText('DELTA INTERIORES')).toBeNull();
+    expect(document.querySelector('.animate-spin')).toBeTruthy();
+  });
+
+  it('aberto + falha do detalhe mostra mensagem honesta', () => {
+    setup(null, { open: true, loading: false });
+    expect(screen.getByText('Não foi possível carregar o pedido.')).toBeTruthy();
+  });
+
+  it('botão Repetir aparece pra pedido comercial e dispara onRepeat', () => {
+    const onRepeat = vi.fn();
+    render(
+      <SalesOrderDetailSheet
+        open
+        order={order()}
+        customerName="DELTA INTERIORES"
+        onClose={vi.fn()} onPrint={vi.fn()} onShare={vi.fn()} onEdit={vi.fn()}
+        onRepeat={onRepeat}
+      />,
+    );
+    screen.getByText('Repetir').click();
+    expect(onRepeat).toHaveBeenCalledTimes(1);
+  });
+
+  it('botão Repetir NÃO aparece pra pedido de afiação (formato de item diferente)', () => {
+    render(
+      <SalesOrderDetailSheet
+        open
+        order={order({ _source: 'afiacao' })}
+        customerName="DELTA INTERIORES"
+        onClose={vi.fn()} onPrint={vi.fn()} onShare={vi.fn()} onEdit={vi.fn()}
+        onRepeat={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText('Repetir')).toBeNull();
+  });
+});

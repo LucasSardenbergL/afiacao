@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { slugify } from '@/lib/standard-process/types';
 import { useReindexRag } from './useReindexRag';
 import type { StandardProcess, StandardProcessEtapa, StandardProcessStatus } from '@/lib/standard-process/types';
+import type { Json } from '@/integrations/supabase/types';
 
 interface SaveInput {
   id?: string;  // se passar, UPDATE; senão INSERT
@@ -34,7 +35,7 @@ export function useSaveStandardProcess() {
         segmento: input.segmento,
         porte_alvo: input.porte_alvo,
         tags: input.tags,
-        etapas: input.etapas,
+        etapas: input.etapas as unknown as Json,
         expected_outcomes: input.expected_outcomes,
         target_audience: input.target_audience ?? null,
         prerequisites: input.prerequisites,
@@ -42,17 +43,17 @@ export function useSaveStandardProcess() {
       };
 
       if (input.id) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data, error } = await (supabase as any).from('standard_processes')
+         
+        const { data, error } = await supabase.from('standard_processes')
           .update(payload).eq('id', input.id).select().single();
         if (error) throw error;
-        return data as StandardProcess;
+        return data as unknown as StandardProcess;
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase as any).from('standard_processes')
+       
+      const { data, error } = await supabase.from('standard_processes')
         .insert({ ...payload, created_by: user.id }).select().single();
       if (error) throw error;
-      return data as StandardProcess;
+      return data as unknown as StandardProcess;
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['standard-processes'] });

@@ -49,8 +49,13 @@ const AdminApprovals = () => {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, user_id, name, email, phone, document, customer_type, created_at')
+        .select('id, user_id, name, email, phone, document, customer_type, created_at, prospect_source')
         .eq('is_approved', false)
+        // Clientes-fantasma importados do Omie (prospect_source='omie_import') nunca pediram conta:
+        // exclui-los NO SERVIDOR (antes do cap de 1000 do PostgREST) é obrigatório — com 1.633 imports,
+        // filtrar só no cliente truncaria as pendências REAIS fora da janela
+        // (ver docs/superpowers/specs/2026-06-12-clientes-cadastro-backfill-design.md).
+        .or('prospect_source.is.null,prospect_source.neq.omie_import')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -72,7 +77,7 @@ const AdminApprovals = () => {
     }
   };
 
-  const tryLinkOmie = async (profileUserId: string, document: string | null, name: string): Promise<'linked' | 'no_data' | 'already_linked' | 'not_found' | 'error'> => {
+  const tryLinkOmie = async (profileUserId: string, document: string | null, _name: string): Promise<'linked' | 'no_data' | 'already_linked' | 'not_found' | 'error'> => {
     if (!document) return 'no_data';
 
     const normalizedDoc = document.replace(/\D/g, '');

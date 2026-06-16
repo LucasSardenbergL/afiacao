@@ -1,6 +1,8 @@
-import { useState, useMemo, Fragment } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useState, useMemo, Fragment, useEffect } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useIsTouchDevice } from "@/hooks/useIsTouchDevice";
+import { shouldRedirectToMobile, getForceFullPref, setForceFull } from "@/lib/picking/view-pref";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Boxes,
@@ -13,6 +15,9 @@ import {
   ChevronDown,
   ChevronRight,
   Search,
+  Smartphone,
+  Send,
+  PackagePlus,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -36,6 +41,9 @@ import {
 } from "@/components/ui/table";
 import { toast } from "sonner";
 import { ScanBar } from "@/components/picking/ScanBar";
+import { EmptyState } from "@/components/EmptyState";
+import { usePedidosASeparar } from "@/queries/usePedidosASeparar";
+import { useEnviarParaSeparacao } from "@/queries/useEnviarParaSeparacao";
 
 const truncate = (s: string | null | undefined, n = 8) =>
   s ? s.slice(0, n) : "—";
@@ -71,7 +79,7 @@ function KpiCards({ account }: { account: string }) {
       const { count } = await supabase
         .from("picking_tasks")
         .select("*", { count: "exact", head: true })
-        .eq("account", account)
+        .eq("account", account.toLowerCase())
         .in("status", ["pendente", "em_andamento"]);
       return count ?? 0;
     },
@@ -84,7 +92,7 @@ function KpiCards({ account }: { account: string }) {
       const { count } = await supabase
         .from("picking_tasks")
         .select("*", { count: "exact", head: true })
-        .eq("account", account)
+        .eq("account", account.toLowerCase())
         .eq("status", "pendente");
       return count ?? 0;
     },
@@ -110,7 +118,7 @@ function KpiCards({ account }: { account: string }) {
       const { data: tasks } = await supabase
         .from("picking_tasks")
         .select("id")
-        .eq("account", account);
+        .eq("account", account.toLowerCase());
       const ids = (tasks ?? []).map((t) => t.id);
       if (!ids.length) return { pct: 0, total: 0, ok: 0 };
       const { data: items } = await supabase
@@ -189,6 +197,109 @@ function KpiCards({ account }: { account: string }) {
   );
 }
 
+/* ─── Pedidos a separar tab ─── */
+function PedidosASepararTab({ account }: { account: string }) {
+  const isOben = account.toLowerCase() === "oben";
+  const { data, isLoading } = usePedidosASeparar(account, isOben);
+  const enviar = useEnviarParaSeparacao();
+  const [sendingId, setSendingId] = useState<string | null>(null);
+
+  const handleEnviar = (id: string) => {
+    setSendingId(id);
+    enviar.mutate(id, {
+      onSuccess: (r) =>
+        toast.success(r.created ? "Pedido enviado para separação" : "Pedido já estava em separação"),
+      onError: (e: Error) => toast.error(`Falha ao enviar: ${e.message}`),
+      onSettled: () => setSendingId(null),
+    });
+  };
+
+  // v1 é Oben-only (a RPC ensure rejeita não-Oben) → não mostrar lista acionável p/ outra empresa.
+  if (!isOben)
+    return (
+      <EmptyState
+        icon={PackagePlus}
+        tone="operational"
+        title="Separação manual disponível só para Oben"
+        description="Selecione OBEN no seletor de empresa para enviar pedidos à separação."
+      />
+    );
+
+  if (isLoading)
+    return (
+      <div className="flex justify-center py-12 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando...
+      </div>
+    );
+
+  const pedidos = data ?? [];
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-warning flex items-center gap-1.5">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        O status vem do Omie e pode estar desatualizado — confira o pedido antes de enviar.
+      </p>
+      <Card>
+        <CardContent className="p-0">
+          {pedidos.length === 0 ? (
+            <EmptyState
+              icon={PackagePlus}
+              tone="operational"
+              title="Nenhum pedido aguardando separação"
+              description="Pedidos recentes da Oben sem task de separação aparecem aqui."
+            />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Cliente</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead>Status (Omie)</TableHead>
+                  <TableHead>Data</TableHead>
+                  <TableHead className="text-right">Itens</TableHead>
+                  <TableHead className="text-right">Ação</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pedidos.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell className="text-sm">{p.customerName}</TableCell>
+                    <TableCell className="text-right text-xs">{fmtBRL(p.total)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{p.status}</TableCell>
+                    <TableCell className="text-xs font-tabular">
+                      {p.data ? p.data.split("-").reverse().join("/") : "—"}
+                    </TableCell>
+                    <TableCell className="text-right text-xs">
+                      {p.itemCount}
+                      {p.hasFractional && (
+                        <Badge variant="outline" className="ml-1 bg-warning/15 text-warning border-warning/40">
+                          frac
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={enviar.isPending}
+                        onClick={() => handleEnviar(p.id)}
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        {enviar.isPending && sendingId === p.id ? "Enviando..." : "Enviar para separação"}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 /* ─── Picking tab ─── */
 function PickingTab({ account }: { account: string }) {
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -200,7 +311,7 @@ function PickingTab({ account }: { account: string }) {
       const { data } = await supabase
         .from("picking_tasks")
         .select("id, sales_order_id, status, assigned_to, created_at")
-        .eq("account", account)
+        .eq("account", account.toLowerCase())
         .order("created_at", { ascending: false })
         .limit(200);
       return data ?? [];
@@ -216,7 +327,7 @@ function PickingTab({ account }: { account: string }) {
         .select(
           "id, product_descricao, quantidade, quantidade_separada, status, lote_fefo, lote_separado",
         )
-        .eq("picking_task_id", expanded);
+        .eq("picking_task_id", expanded ?? "");
       return data ?? [];
     },
   });
@@ -503,7 +614,7 @@ function AuditoriaTab({ account }: { account: string }) {
       const { data: tasks } = await supabase
         .from("picking_tasks")
         .select("id, sales_order_id, completed_at, notes")
-        .eq("account", account)
+        .eq("account", account.toLowerCase())
         .eq("status", "concluido")
         .order("completed_at", { ascending: false })
         .limit(200);
@@ -581,8 +692,17 @@ function AuditoriaTab({ account }: { account: string }) {
 
 export default function AdminEstoquePicking() {
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") ?? "picking";
+  const navigate = useNavigate();
+  const isTouch = useIsTouchDevice();
+  const tab = params.get("tab") ?? "a-separar";
   const [account, setAccount] = useState("OBEN");
+
+  // Separador touch cai direto na visão de chão (salvo override "ver versão completa").
+  useEffect(() => {
+    if (shouldRedirectToMobile({ isTouch, forceFull: getForceFullPref() })) {
+      navigate('/admin/estoque/picking/mobile', { replace: true });
+    }
+  }, [isTouch, navigate]);
 
   const handleTab = (v: string) => {
     const next = new URLSearchParams(params);
@@ -603,6 +723,15 @@ export default function AdminEstoquePicking() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1.5 text-muted-foreground"
+            onClick={() => { setForceFull(false); navigate('/admin/estoque/picking/mobile'); }}
+          >
+            <Smartphone className="h-4 w-4" />
+            <span className="hidden sm:inline">Versão de chão</span>
+          </Button>
           <Building2 className="h-4 w-4 text-muted-foreground" />
           <Select value={account} onValueChange={setAccount}>
             <SelectTrigger className="w-[140px]">
@@ -619,13 +748,17 @@ export default function AdminEstoquePicking() {
       <KpiCards account={account} />
 
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
-        <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
+        <TabsList className="grid grid-cols-3 sm:grid-cols-5 w-full">
+          <TabsTrigger value="a-separar">A separar</TabsTrigger>
           <TabsTrigger value="picking">Picking</TabsTrigger>
           <TabsTrigger value="estoque">Estoque</TabsTrigger>
           <TabsTrigger value="movimentacoes">Movimentações</TabsTrigger>
           <TabsTrigger value="auditoria">Auditoria</TabsTrigger>
         </TabsList>
 
+        <TabsContent value="a-separar" className="m-0">
+          <PedidosASepararTab account={account} />
+        </TabsContent>
         <TabsContent value="picking" className="m-0">
           <PickingTab account={account} />
         </TabsContent>

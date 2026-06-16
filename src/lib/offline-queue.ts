@@ -82,6 +82,11 @@ export async function getOfflineQueueDepth(): Promise<number> {
   return readQueue().length;
 }
 
+/** Retorna as mutações enfileiradas de um determinado kind (na ordem de enfileiramento). */
+export function getQueuedByKind<TVars = unknown>(kind: string): QueuedMutation<TVars>[] {
+  return readQueue().filter((m): m is QueuedMutation<TVars> => m.kind === kind);
+}
+
 /**
  * Tenta processar todas as mutações da fila usando o handler fornecido.
  * Handler retorna `true` em sucesso (item é removido da fila) ou `false` (mantém com attempts++).
