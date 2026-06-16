@@ -4,7 +4,7 @@
 
 **Goal:** Tirar fornecedores/transportadoras (tag do Omie) da carteira comercial — eles deixam de aparecer em sugestão de visita, lista de ligação, positivação e KPIs — de forma reversível e curada pelo founder.
 
-**Architecture:** Captura a tag do cadastro Omie (`c.tags`) → tabela `cliente_classificacao` (por `user_id`). Uma RPC deriva `excluir_da_carteira = tem tag {Fornecedor,Transportadora} AND NOT exceção curada`. O corte usa `carteira_assignments.eligible=false` (já respeitado pela positivação, reversível) + DELETE dos scores; todos os escritores de score que não partem da carteira ganham o filtro. Rollout manual no Lovable, filtros no ar **antes** de marcar.
+**Architecture:** Captura a tag do cadastro Omie (`c.tags`) → tabela `cliente_classificacao` (por `user_id`). Uma RPC deriva `excluir_da_carteira = tem tag {Fornecedor,Transportadora} AND NOT venda real AND NOT exceção curada` (**régua A**, founder 15/06: *"tem pedido = cliente, fica"*; o trigger deriva só `is_fornecedor`, o `excluir` é da RPC — fail-safe). O corte usa `carteira_assignments.eligible=false` (já respeitado pela positivação, reversível) + DELETE dos scores; todos os escritores de score ganham o filtro. **Compõe** com a Consolidação B-lite (clones): `eligible = é_gêmeo_canônico && não_é_fornecedor`. Volume real (Oben, 15/06): 627 fornecedores na carteira → 529 saem, 98 com venda ficam. Rollout manual no Lovable, filtros no ar **antes** de marcar.
 
 **Tech Stack:** Supabase (Postgres + RLS + RPC `plpgsql` + Edge Deno), React + TanStack Query, vitest (helpers puros), validação SQL local em PostgreSQL 17 (`db/test-*.sh`).
 
