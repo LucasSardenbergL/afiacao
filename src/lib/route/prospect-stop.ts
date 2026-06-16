@@ -3,9 +3,10 @@
 // os campos de priority (o client aplica enrichWithPriority) e sem acoplar ao tipo
 // RouteStop estendido (que muda no sub-PR B). Também monta a query do Nominatim.
 //
-// Regra de geo: a RPC só devolve lat/lng quando geocode_status='ok'. O draft só
-// adota lat/lng se status='ok' E ambos não-null (defensivo); 'falhou' vira a flag
-// geocodeFailed (o client pula o re-geocode); status NULL = nunca tentado (geocodifica).
+// Regra de geo (Sub-PR 2): a RPC já resolve lat/lng (cep_geo → re.lat legado →
+// centróide do município) + precision. O draft adota lat/lng sempre que ambos
+// não-null (defensivo) e a precision. O geocodeFailed legado não é mais setado —
+// a fila por CEP usa a precision (city_centroid/null = aproximado → tenta upgrade).
 
 export interface ProspectRow {
   cnpj: string;
@@ -24,6 +25,7 @@ export interface ProspectRow {
   lat: number | null;
   lng: number | null;
   geocode_status: string | null;
+  precision: string | null;
 }
 
 export interface ProspectAddress {
@@ -47,6 +49,7 @@ export interface ProspectStopDraft {
   lat?: number;
   lng?: number;
   geocodeFailed?: boolean;
+  precisao?: string;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -64,8 +67,8 @@ const s = (v: string | null | undefined): string => (v ?? '').trim();
 export function prospectRowToStopDraft(row: ProspectRow): ProspectStopDraft {
   const nome = s(row.nome_fantasia) || s(row.razao_social) || row.cnpj;
   const phone = s(row.telefone1) || s(row.telefone2) || null;
-  const temGeo = row.geocode_status === 'ok' && row.lat != null && row.lng != null;
-  const falhou = row.geocode_status === 'falhou';
+  // RPC já resolveu (cep_geo → re.lat → centróide município) — adota ambos não-null.
+  const temGeo = row.lat != null && row.lng != null;
   const reasonSuffix =
     row.prospeccao_status === 'a_contatar' ? '' : ` · ${labelProspeccaoStatus(row.prospeccao_status)}`;
   return {
@@ -85,18 +88,6 @@ export function prospectRowToStopDraft(row: ProspectRow): ProspectStopDraft {
     visitReason: `Prospecção${reasonSuffix}`,
     prospeccaoStatus: row.prospeccao_status,
     ...(temGeo ? { lat: row.lat as number, lng: row.lng as number } : {}),
-    ...(falhou ? { geocodeFailed: true } : {}),
+    ...(row.precision ? { precisao: row.precision } : {}),
   };
-}
-
-// Query do Nominatim a partir do endereço (filtra partes vazias; sempre termina em
-// "Brazil"). Extraída do inline do useRoutePlanner para o sub-PR B reusar e testar.
-export function buildGeocodeQuery(a: {
-  street?: string;
-  number?: string;
-  city?: string;
-  state?: string;
-}): string {
-  const parts = [s(a.street), s(a.number), s(a.city), s(a.state)].filter(Boolean);
-  return [...parts, 'Brazil'].join(', ');
 }

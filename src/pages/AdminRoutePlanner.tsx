@@ -27,7 +27,7 @@ import { escapeHtml } from '@/lib/escape-html';
 import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-import { markerVisual, clusterStats, TONE_CSS, type MarkerTone, type MarkerShape } from '@/lib/route/marker-visual';
+import { markerVisual, clusterStats, precisaoVisual, TONE_CSS, type MarkerTone, type MarkerShape } from '@/lib/route/marker-visual';
 import { MapLegend } from '@/components/reposicao/routePlanner/MapLegend';
 
 // Fix default marker icons for Leaflet + bundlers
@@ -42,18 +42,22 @@ L.Icon.Default.mergeOptions({
 // error ganha borda dupla (reforço p/ daltonismo — não depender só da matiz).
 type StopMarker = L.Marker & { __stop?: RouteStop };
 
-function divIconAlvo(tone: MarkerTone, shape: MarkerShape, numero?: number): L.DivIcon {
+function divIconAlvo(tone: MarkerTone, shape: MarkerShape, numero?: number, aproximado = false): L.DivIcon {
   const cor = TONE_CSS[tone];
-  const borda = tone === 'error' ? '3px double #fff' : '2px solid #fff';
   const raio = shape === 'circle' ? '50%' : '3px';
   const rot = shape === 'diamond' ? 'rotate(45deg)' : 'none';
+  // Aproximado (centróide de município): pino OCO + borda tracejada na cor da
+  // urgência — precisão honesta, não finge rooftop. Preciso: preenchido, borda branca.
+  const fundo = aproximado ? 'hsl(var(--background))' : cor;
+  const borda = aproximado ? `2px dashed ${cor}` : tone === 'error' ? '3px double #fff' : '2px solid #fff';
+  const corConteudo = aproximado ? cor : '#fff';
   // número (posição na rota) num filho contra-rotacionado p/ não deitar no losango
   const conteudo = numero != null
-    ? `<span style="transform:${shape === 'diamond' ? 'rotate(-45deg)' : 'none'};color:#fff;font-weight:700;font-size:12px">${numero}</span>`
+    ? `<span style="transform:${shape === 'diamond' ? 'rotate(-45deg)' : 'none'};color:${corConteudo};font-weight:700;font-size:12px">${numero}</span>`
     : '';
   return L.divIcon({
     className: 'custom-marker',
-    html: `<div style="background:${cor};width:26px;height:26px;border-radius:${raio};transform:${rot};border:${borda};box-shadow:0 2px 6px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center">${conteudo}</div>`,
+    html: `<div style="background:${fundo};width:26px;height:26px;border-radius:${raio};transform:${rot};border:${borda};box-shadow:0 2px 6px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center">${conteudo}</div>`,
     iconSize: [26, 26], iconAnchor: [13, 13],
   });
 }
@@ -195,11 +199,13 @@ const AdminRoutePlanner = () => {
 
     fonteComCoords.forEach((stop) => {
       const numero = ordemRota.get(stop.id);
+      // Precisão honesta (campo): pino oco/tracejado + nota no popup p/ aproximado.
+      const aproximado = noModoCampo && precisaoVisual(stop.precisao).aproximado;
       let icon: L.DivIcon;
       if (noModoCampo) {
         // Campo: cor = urgência (mesmo marcado), forma = tipo; número se está na rota.
         const { tone, shape } = markerVisual(stop);
-        icon = divIconAlvo(tone, shape, numero);
+        icon = divIconAlvo(tone, shape, numero, aproximado);
       } else {
         // Equipe: comportamento antigo (cor do tipo, círculo numerado).
         const cor = STOP_CONFIG[stop.stopType].markerColor;
@@ -226,7 +232,7 @@ const AdminRoutePlanner = () => {
           ${escapeHtml(stop.address.street)}, ${escapeHtml(stop.address.number)}<br/>
           ${escapeHtml(stop.address.neighborhood)} - ${escapeHtml(stop.address.city)}<br/>
           <em>${escapeHtml(stop.visitReason)}</em><br/>
-          <em>Horário: ${hoursLabel}</em>
+          <em>Horário: ${hoursLabel}</em>${aproximado ? '<br/><em>📍 local aproximado (CEP)</em>' : ''}
         `);
       grupo.addLayer(m);
     });
@@ -344,7 +350,7 @@ const AdminRoutePlanner = () => {
           {geocodingPendentes > 0 && (
             <div className="pointer-events-none absolute right-3 top-3 z-[400] flex items-center gap-1.5 rounded-full bg-background/90 px-2.5 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
               <Loader2 className="h-3 w-3 animate-spin" />
-              localizando {geocodingPendentes}…
+              localizando {geocodingPendentes}{planningContext === 'campo' ? ` CEP${geocodingPendentes > 1 ? 's' : ''}` : ''}…
             </div>
           )}
           <MapLegend />
