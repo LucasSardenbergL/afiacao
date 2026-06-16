@@ -1391,6 +1391,32 @@ function getAccountConfig(account: Account) {
   };
 }
 
+// ── Guard money-path (espelha src/services/orderSubmission/priceGuard.ts —
+// `isInvalidProductPrice`; Deno não importa de src/). Item de PRODUTO a preço ≤ 0 / NaN /
+// Infinity NUNCA pode virar PV no Omie: valor zerado = pedido cobrado errado / prejuízo, e
+// fica invisível ao cockpit de markup / Régua de Preço (que filtram preco > 0). Esta é a
+// fronteira definitiva — cobre TODAS as vias num só ponto: envio do unified-order
+// (submitOrder), conversão de orçamento (SalesQuotes) e edição de pedido (useSalesOrderEdit).
+// Só trafegam produtos aqui (afiação tem fluxo próprio), logo não há R$0 legítimo.
+// `typeof === "number"` endurece a borda: o payload é JSON cru, não confiável. ──
+function isInvalidOmieItemPrice(valor: unknown): boolean {
+  return !(typeof valor === "number" && Number.isFinite(valor) && valor > 0);
+}
+
+function assertOmieItemPricesValid(
+  items: Array<{ valor_unitario?: number; descricao?: string; omie_codigo_produto?: number | string }>,
+): void {
+  const invalidos = items.filter((it) => isInvalidOmieItemPrice(it.valor_unitario));
+  if (invalidos.length > 0) {
+    const nomes = invalidos
+      .map((it) => it.descricao || (it.omie_codigo_produto != null ? String(it.omie_codigo_produto) : "item sem nome"))
+      .join(", ");
+    throw new Error(
+      `Pedido rejeitado (preço inválido): item(ns) de produto com preço R$ 0 ou negativo: ${nomes}. Corrija o preço antes de enviar ao Omie.`,
+    );
+  }
+}
+
 // Criar pedido de venda no Omie
 async function criarPedidoVenda(
   supabase: SupabaseClient,
@@ -1858,6 +1884,8 @@ serve(async (req) => {
         if (!sales_order_id || !codigo_cliente || !items?.length) {
           throw new Error("Dados insuficientes para criar pedido de venda");
         }
+        // Guard money-path: rejeita ANTES de montar o payload Omie (ver assertOmieItemPricesValid).
+        assertOmieItemPricesValid(items);
         const pedido = await criarPedidoVenda(
           supabaseAdmin,
           sales_order_id,
@@ -1911,6 +1939,8 @@ serve(async (req) => {
           ordem_compra: editOrdemCompra,
         } = params;
         if (!editSoId || !editItems?.length) throw new Error("Dados insuficientes para alterar pedido");
+        // Guard money-path: rejeita ANTES de consultar/excluir itens no Omie (passo destrutivo).
+        assertOmieItemPricesValid(editItems);
 
         // Load existing order
         const { data: existingOrder } = await supabaseAdmin
