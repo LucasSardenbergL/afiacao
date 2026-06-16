@@ -169,6 +169,59 @@ Notas:
 
 ---
 
+## 3. Unir CNPJs do mesmo cliente (opcional — multi-empresa / sucessão)
+
+Às vezes o mesmo cliente real tem **CNPJs diferentes** — dono com mais de uma empresa, ou que
+encerrou uma e abriu outra (o histórico deve seguir pro novo). O default consolida por CNPJ
+(seguro); unir CNPJs distintos é **confirm-first**: nunca una automaticamente (fundir empresas
+não-relacionadas estraga o histórico). Fluxo: (a) rode o diagnóstico, (b) o dono confirma quais
+grupos são o mesmo cliente, (c) liste-os no CTE `aliases` da query da carteira.
+
+**Diagnóstico — candidatos a "mesmo cliente, CNPJs diferentes"** (heurística: mesma razão social
+normalizada em mais de um CNPJ). Read-only:
+
+```sql
+with base as (
+  select distinct
+         regexp_replace(coalesce(p.cnpj, p.document, ''), '\D','','g') as doc,
+         coalesce(p.razao_social, p.name) as nome,
+         lower(translate(trim(coalesce(p.razao_social, p.name)),
+               'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ',
+               'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC')) as nome_norm
+  from profiles p
+  where length(regexp_replace(coalesce(p.cnpj, p.document, ''), '\D','','g')) >= 11
+)
+select nome_norm, count(distinct doc) as qtd_cnpjs,
+       string_agg(distinct nome, ' / ') as nomes,
+       string_agg(distinct doc, ', ')  as cnpjs
+from base group by nome_norm
+having count(distinct doc) > 1
+order by qtd_cnpjs desc, nome_norm limit 50;
+```
+
+> Heurística por nome pega o caso comum (mesma razão social), mas erra nos dois sentidos —
+> mostre os candidatos ao dono e **só una os confirmados**. (Outros sinais possíveis: mesmo
+> telefone em `sales_orders.customer_phone`, mesmo endereço.) Sucessão (empresa nova herdando o
+> histórico) **só o dono sabe** — não dá pra inferir com segurança.
+
+**Aplicar na carteira (opt-in):** na query da seção 2, adicione um CTE `aliases` com os grupos
+confirmados e troque o `cliente_key`:
+
+```sql
+-- adicione no início, junto dos outros CTEs:
+aliases(doc, grupo) as (
+  values ('11111111000199','grupo-fulano'),   -- ⚙️ CNPJs (só dígitos) confirmados como o MESMO cliente
+         ('22222222000188','grupo-fulano')     -- mesmo grupo → histórico some junto
+),
+-- no CTE 'cli', troque o cálculo de cliente_key por:
+--   coalesce( (select al.grupo from aliases al
+--               where al.doc = regexp_replace(coalesce(p.cnpj,p.document,''),'\D','','g')),
+--             nullif(regexp_replace(coalesce(p.cnpj,p.document,''),'\D','','g'),''),
+--             ped.customer_user_id::text ) as cliente_key
+```
+
+Sem o CTE preenchido, a query roda igual ao default (1 CNPJ = 1 cliente).
+
 ## Como consumir o resultado
 
 1. **`tier_queda`** já vem calculado (critico/alerta/em_dia/nunca_comprou) — é o sinal de queda.

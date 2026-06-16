@@ -85,6 +85,9 @@ cidades** no `in (...)` pelas cidades da Farmer (ou de um dia de rota). Use as c
 normalizadas (minúsculas, sem acento, hífen→espaço). O usuário roda no Lovable e cola o
 resultado. Você recebe, por cliente (consolidado por CNPJ): cidade, última compra, intervalo
 médio, gasto recente vs. histórico, `tier_queda` já calculado e os produtos comprados.
+- **CNPJs do mesmo cliente** (dono com várias empresas, ou sucessão empresa-nova-herda-histórico):
+  é opcional e **confirm-first** — seção 3 de `queries-sql.md` traz o diagnóstico de candidatos e
+  o CTE `aliases`. Nunca una CNPJs sem o dono confirmar (fundir empresas distintas estraga o histórico).
 
 ### Passo 3 — Mapear cidade → dia de rota
 Para cada cliente, ache o **dia da semana** pela cidade dele, usando o calendário de

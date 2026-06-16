@@ -25,7 +25,7 @@ schema). Quando o dono ajustar as cidades, edite **este arquivo**.
 | **Segunda** | Formiga · Pimenta · Piumhi · Capitólio |
 | **Terça** | Cláudio · Itaguara · Itaúna · Mateus Leme · Pará de Minas |
 | **Quarta** | Bom Despacho · **Nova Serrana** · Pitangui · Martinho Campos · Abaeté · Pompéu · Luz |
-| **Quinta** | Oliveira · Morro do Ferro · Ritápolis · São João del-Rei · Santa Cruz de Minas · Tiradentes · Prados |
+| **Quinta** | Oliveira (inclui Morro do Ferro) · Ritápolis · São João del-Rei · Santa Cruz de Minas · Tiradentes · Prados |
 | **Sexta** | Divinópolis · Carmo do Cajuru |
 
 > **Nova Serrana** (291 clientes — 2ª maior cidade da base) entra na **quarta**, no dia do Bom
@@ -41,15 +41,17 @@ schema). Quando o dono ajustar as cidades, edite **este arquivo**.
 - "Matheus Leime" → **Mateus Leme** (município MG). ✅ confirmado.
 - "Martim Campos" → **Martinho Campos** (município MG). ✅ confirmado.
 - "Cajuru" → **Carmo do Cajuru** (MG, ao lado de Divinópolis). ✅ confirmado.
-- "Morro do Ferro" → **não é município**; é localidade rural (região Oliveira/Arcos). ⏳ Pendente:
-  o dono vai confirmar se no cadastro os clientes de lá têm cidade própria "Morro do Ferro" ou
-  cidade = Oliveira. Até lá, mapeado na **QUINTA, junto de Oliveira**.
+- "Morro do Ferro" → **= Oliveira** (confirmado pelo dono em 2026-06-15). Não é município; é
+  localidade rural. Trate qualquer cliente "Morro do Ferro" como **Oliveira** (quinta) — na
+  normalização, mapeie a chave `morro do ferro` → `oliveira`.
 
-## Cidades órfãs — encaixe sugerido (dados reais da base, 2026-05-23)
+## Cidades órfãs — encaixe por proximidade (dono confirmou que existem, 2026-06-15)
 
-Cidades com bastante cliente que **não** estão no calendário oficial. Números = clientes na base
-(`addresses`). São **sugestões de encaixe por proximidade da rota** — marque "a confirmar",
-nunca como regra fechada. (Pendência do dono: confirmar e mover pro calendário oficial.)
+Cidades com cliente que **não** estavam no calendário oficial. O dono confirmou que essas órfãs
+existem e **delegou o encaixe por proximidade** — então trate os encaixes abaixo como **válidos**
+(não mais "a confirmar"), corrigindo pontualmente se alguma estiver no dia errado. Números =
+clientes na base (`addresses`). Duas ainda em aberto: **Passos** (longe — confirmar se é rota de
+entrega) e o **bolsão sul** (sem âncora — definir dia ou 6º agrupamento).
 
 - **SEGUNDA (eixo Formiga/Pimenta/Piumhi/Capitólio — SO):** Bambuí (31), Arcos (28), Pains (10),
   Alpinópolis (9). ⚠️ **Passos (192)** é grande mas fica longe (~75 km de Piumhi) — confirmar se
