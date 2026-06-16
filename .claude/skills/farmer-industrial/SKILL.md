@@ -85,9 +85,10 @@ cidades** no `in (...)` pelas cidades da Farmer (ou de um dia de rota). Use as c
 normalizadas (minúsculas, sem acento, hífen→espaço). O usuário roda no Lovable e cola o
 resultado. Você recebe, por cliente (consolidado por CNPJ): cidade, última compra, intervalo
 médio, gasto recente vs. histórico, `tier_queda` já calculado e os produtos comprados.
-- **CNPJs do mesmo cliente** (dono com várias empresas, ou sucessão empresa-nova-herda-histórico):
-  é opcional e **confirm-first** — seção 3 de `queries-sql.md` traz o diagnóstico de candidatos e
-  o CTE `aliases`. Nunca una CNPJs sem o dono confirmar (fundir empresas distintas estraga o histórico).
+- **CNPJs do mesmo cliente** (sucessão: encerrou um e abriu outro; ou multi-CNPJ ativo: fatura por
+  vários ao mesmo tempo): opcional e **confirm-first**. Tem armadilha de métrica séria (juntar
+  pedidos de CNPJs paralelos esconde queda) — **leia `references/unificacao-cnpj.md`** antes de
+  unir. Nunca una sem o dono confirmar. Até lá, o default por-CNPJ é o que roda (seguro).
 
 ### Passo 3 — Mapear cidade → dia de rota
 Para cada cliente, ache o **dia da semana** pela cidade dele, usando o calendário de
@@ -170,6 +171,9 @@ gigante. Personalize cada cliente com o dado real dele (atraso, mix), não com f
   mix), com o modelo de dados e por que a carteira é por cidade. **Leia nos passos 1, 2 e 4.**
 - `references/contexto-industrial.md` — abrasivos / moveleiro / tintométrico / afiação: mix
   esperado por ramo de cliente, critérios de queda, glossário. **Leia no passo 4.**
+- `references/unificacao-cnpj.md` — design (revisado com Codex) de unir CNPJs do mesmo cliente
+  (sucessão / multi-CNPJ ativo): detecção, confirmação, e a armadilha de métrica. **Leia antes
+  de unir qualquer CNPJ.**
 - `references/roteiros.md` — estrutura de roteiro de ligação (Farmer), rascunho de WhatsApp,
   catálogo de objeções + respostas, e o modo Hunter (visita). **Leia no passo 6.**
 - `assets/exemplo-carteira.json` — exemplo do formato de dados que as queries retornam (útil

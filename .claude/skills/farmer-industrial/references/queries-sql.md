@@ -169,66 +169,25 @@ Notas:
 
 ---
 
-## 3. Unir CNPJs do mesmo cliente (opcional — multi-empresa / sucessão)
+## 3. Unir CNPJs do mesmo cliente (sucessão / multi-empresa) → ver `unificacao-cnpj.md`
 
-Às vezes o mesmo cliente real tem **CNPJs diferentes** — dono com mais de uma empresa, ou que
-encerrou uma e abriu outra (o histórico deve seguir pro novo). O default consolida por CNPJ
-(seguro); unir CNPJs distintos é **confirm-first**: nunca una automaticamente (fundir empresas
-não-relacionadas estraga o histórico). Fluxo: (a) rode o diagnóstico, (b) o dono confirma quais
-grupos são o mesmo cliente, (c) liste-os no CTE `aliases` da query da carteira.
-
-**Diagnóstico — candidatos a "mesmo cliente, CNPJs diferentes"** (heurística: mesma razão social
-normalizada em mais de um CNPJ). Read-only:
-
-```sql
-with base as (
-  select distinct
-         regexp_replace(coalesce(p.cnpj, p.document, ''), '\D','','g') as doc,
-         coalesce(p.razao_social, p.name) as nome,
-         lower(translate(trim(coalesce(p.razao_social, p.name)),
-               'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ',
-               'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC')) as nome_norm
-  from profiles p
-  where length(regexp_replace(coalesce(p.cnpj, p.document, ''), '\D','','g')) >= 11
-)
-select nome_norm, count(distinct doc) as qtd_cnpjs,
-       string_agg(distinct nome, ' / ') as nomes,
-       string_agg(distinct doc, ', ')  as cnpjs
-from base group by nome_norm
-having count(distinct doc) > 1
-order by qtd_cnpjs desc, nome_norm limit 50;
-```
-
-> Heurística por nome pega o caso comum (mesma razão social), mas erra nos dois sentidos —
-> mostre os candidatos ao dono e **só una os confirmados**. (Outros sinais possíveis: mesmo
-> telefone em `sales_orders.customer_phone`, mesmo endereço.) Sucessão (empresa nova herdando o
-> histórico) **só o dono sabe** — não dá pra inferir com segurança.
-
-**Aplicar na carteira (opt-in):** na query da seção 2, adicione um CTE `aliases` com os grupos
-confirmados e troque o `cliente_key`:
-
-```sql
--- adicione no início, junto dos outros CTEs:
-aliases(doc, grupo) as (
-  values ('11111111000199','grupo-fulano'),   -- ⚙️ CNPJs (só dígitos) confirmados como o MESMO cliente
-         ('22222222000188','grupo-fulano')     -- mesmo grupo → histórico some junto
-),
--- no CTE 'cli', troque o cálculo de cliente_key por:
---   coalesce( (select al.grupo from aliases al
---               where al.doc = regexp_replace(coalesce(p.cnpj,p.document,''),'\D','','g')),
---             nullif(regexp_replace(coalesce(p.cnpj,p.document,''),'\D','','g'),''),
---             ped.customer_user_id::text ) as cliente_key
-```
-
-Sem o CTE preenchido, a query roda igual ao default (1 CNPJ = 1 cliente).
+O mesmo cliente real às vezes tem **CNPJs diferentes**: encerrou um e abriu outro (**sucessão** —
+o histórico tem que seguir) ou fatura por vários ao mesmo tempo (**multi-CNPJ ativo** — não ligar
+duas vezes, somar mix/faturamento). É **confirm-first** e tem armadilha séria de métrica (juntar
+pedidos de CNPJs paralelos encolhe o intervalo e esconde queda). O design completo — diagnósticos
+de detecção (multi-sinal + sucessão comportamental), distinção sucessão×ativo por sobreposição de
+tempo, CTE `aliases` com `relation_type`+auto-validação, e quais métricas podem/não podem ser
+pooled — está em **`references/unificacao-cnpj.md`**. **Leia esse arquivo antes de unir qualquer
+CNPJ.** Até o dono confirmar grupos, o **default por-CNPJ** (1 CNPJ = 1 cliente) é o que roda — é
+seguro porque não funde nada.
 
 ## Como consumir o resultado
 
 1. **`tier_queda`** já vem calculado (critico/alerta/em_dia/nunca_comprou) — é o sinal de queda.
-2. **`produtos_comprados`** é uma string `codigo:descrição  |  codigo:descrição`. Classifique
-   cada item numa categoria com o mapa de palavras-chave em `contexto-industrial.md` (lixa,
-   disco de corte, flap, rebolo, cola, fita de borda, verniz/seladora, ferragem, afiação...).
-   O **mix ausente** = categorias esperadas do ramo (`customer_type`/`cnae`) que NÃO aparecem.
+2. **`produtos_comprados`** é uma string `Descrição [Família]  |  Descrição [Família]`. Use a
+   **família** pra classificar a categoria (mapa em `contexto-industrial.md`). O **mix ausente** =
+   categorias esperadas do **ramo** (inferido pelo NOME do cliente — `cnae`/`customer_type` vêm
+   vazios) que NÃO aparecem no que ele compra.
 3. **Cidade** → dia de rota via `rotas-cidades.md` (e qual Farmer atende aquela cidade).
 4. Ordene por cotas dentro de cada dia (≈50% recuperação / 30% expansão / 20% follow-up) e gere
    o plano com os roteiros de `roteiros.md`.

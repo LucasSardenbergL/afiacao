@@ -50,12 +50,14 @@ schema). Quando o dono ajustar as cidades, edite **este arquivo**.
 Cidades com cliente que **não** estavam no calendário oficial. O dono confirmou que essas órfãs
 existem e **delegou o encaixe por proximidade** — então trate os encaixes abaixo como **válidos**
 (não mais "a confirmar"), corrigindo pontualmente se alguma estiver no dia errado. Números =
-clientes na base (`addresses`). Duas ainda em aberto: **Passos** (longe — confirmar se é rota de
-entrega) e o **bolsão sul** (sem âncora — definir dia ou 6º agrupamento).
+clientes na base (`addresses`). **Passos e o bolsão sul são rotas OCASIONAIS** (confirmado pelo
+dono em 2026-06-15): a equipe vai "às vezes", normalmente encaixando na **segunda**. Trate-os
+como segunda **ocasional** — entram no plano de segunda quando houver entrega marcada pra lá;
+não force toda semana.
 
 - **SEGUNDA (eixo Formiga/Pimenta/Piumhi/Capitólio — SO):** Bambuí (31), Arcos (28), Pains (10),
-  Alpinópolis (9). ⚠️ **Passos (192)** é grande mas fica longe (~75 km de Piumhi) — confirmar se
-  é rota de entrega mesmo ou cliente de transportadora; pode merecer dia próprio.
+  Alpinópolis (9). **Passos (192)** = rota **ocasional** (vai às vezes); quando rodar, encaixa na
+  segunda (eixo SO). É volume grande — quando for, vale priorizar bem a lista.
 - **TERÇA (eixo Cláudio/Itaúna/Mateus Leme/Pará de Minas — L/NE):** São Gonçalo do Pará (19),
   Juatuba (16), Carmo da Mata (15), Itatiaiuçu (9).
 - **QUARTA (eixo Bom Despacho/Nova Serrana/Pompéu/Luz — N/NO):** Lagoa da Prata (78),
@@ -65,9 +67,10 @@ entrega) e o **bolsão sul** (sem âncora — definir dia ou 6º agrupamento).
   (33), Lagoa Dourada (29), Barbacena (11), Barroso (10), Resende Costa (8), São Tiago (8).
 - **SEXTA (hub Divinópolis/Carmo do Cajuru):** Itapecerica (33), São Sebastião do Oeste.
 
-**🟣 Bolsão SUL sem âncora na rota (~90 clientes):** Campo Belo (33), Perdões (23), Alfenas (14),
-Lavras (10), Santo Antônio do Amparo (10). Não têm cidade da rota perto — **decisão do dono**:
-6º agrupamento próprio, ou encaixar na quinta (Oliveira é o mais perto). Hoje pode ser ponto cego.
+**🟣 Bolsão SUL (~90 clientes) — segunda OCASIONAL:** Campo Belo (33), Perdões (23), Alfenas (14),
+Lavras (10), Santo Antônio do Amparo (10). A equipe vai "às vezes", normalmente na **segunda**
+(confirmado pelo dono em 2026-06-15). Entram no plano de segunda quando houver rota marcada pra
+lá — não toda semana.
 
 **⚪ Fora do raio de rota (~150 clientes — NÃO entram na rota de ligação por dia):** São Paulo (38),
 Belo Horizonte (38), Araxá (19), Guarulhos (13), Araguari (12), Cajamar (10), Caxias do Sul (10),

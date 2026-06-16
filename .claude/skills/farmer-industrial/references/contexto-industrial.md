@@ -151,6 +151,7 @@ ausente** = categorias esperadas do ramo que **não** aparecem no que ele compra
 - **Carteira**: conjunto de clientes das **cidades que uma Farmer atende** (cada Farmer é dona de
   certas cidades). Os compradores reais vêm de `sales_orders`, consolidados por CNPJ. (A
   atribuição por vendedor do Omie existe no banco mas está desconectada das vendas — não usar.)
-- **Cliente unificado**: o mesmo cliente real pode ter mais de um CNPJ (várias empresas, ou
-  sucessão — encerrou uma, abriu outra). Consolidar esses CNPJs num só histórico é **opcional e
-  confirmado pelo dono** (ver `queries-sql.md` §3) — nunca automático.
+- **Cliente unificado**: o mesmo cliente real pode ter mais de um CNPJ — **sucessão** (encerrou
+  uma empresa, abriu outra) ou **multi-CNPJ ativo** (fatura por várias ao mesmo tempo). Unir é
+  **opcional, confirmado pelo dono, e com semântica de métrica diferente por caso** (ver
+  `unificacao-cnpj.md`) — nunca automático.
