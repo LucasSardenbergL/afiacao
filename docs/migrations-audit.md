@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **248** custom migrations totais
-- **907** objetos esperados (criados por estas migrations)
+- **254** custom migrations totais
+- **922** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 260
-  - `rls_policy`: 209
-  - `index`: 179
+  - `function`: 263
+  - `rls_policy`: 214
+  - `index`: 182
+  - `table`: 106
   - `cron_job`: 106
-  - `table`: 103
-  - `trigger`: 46
+  - `trigger`: 47
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2053,6 +2053,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `index` | `public.idx_omie_products_codigo_text_account` | `omie_products` |
 
+### `20260615120000_cliente_grupos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.cliente_grupos` | — |
+| `table` | `public.cliente_grupo_membros` | — |
+| `index` | `public.idx_cgm_grupo` | `cliente_grupo_membros` |
+| `index` | `public.idx_cgm_documento` | `cliente_grupo_membros` |
+| `function` | `public.cliente_grupos_set_updated_at` | — |
+| `trigger` | `public.trg_cliente_grupos_updated_at` | `cliente_grupos` |
+| `rls_policy` | `public.cliente_grupos_service` | `cliente_grupos` |
+| `rls_policy` | `public.cliente_grupos_fin_access` | `cliente_grupos` |
+| `rls_policy` | `public.cgm_service` | `cliente_grupo_membros` |
+| `rls_policy` | `public.cgm_fin_access` | `cliente_grupo_membros` |
+
 ### `20260615130000_tint_vigia_cobertura_sentinela.sql`
 
 | Tipo | Objeto | Parent |
@@ -2140,6 +2155,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260616120000_regua_preco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.regua_preco_log` | — |
+| `index` | `public.idx_regua_preco_log_cliente_sku` | `regua_preco_log` |
+| `function` | `public.get_regua_preco` | — |
+| `rls_policy` | `public.regua_preco_log_staff_all` | `regua_preco_log` |
+
 ### `20260616120000_tint_price_gate_ativo.sql`
 
 | Tipo | Objeto | Parent |
@@ -2147,11 +2171,29 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.get_tint_price` | — |
 | `function` | `public.get_tint_prices` | — |
 
+### `20260616120000_v_grupo_contas_receber.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260616120001_idx_tactical_plans_lookup.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `index` | `public.idx_tactical_plans_lookup` | `farmer_tactical_plans` |
+
+### `20260616120001_regua_preco_customer360.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_regua_preco_customer360` | — |
+
+### `20260616130000_v_grupo_contatos.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260616140000_v_grupo_comercial.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos quando algo der `❌`
 

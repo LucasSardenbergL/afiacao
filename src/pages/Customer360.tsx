@@ -11,6 +11,8 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { useCustomerContacts } from '@/hooks/useCustomerContacts';
 import { useSalespeople } from '@/hooks/useCoverage';
+import { useFeatureFlag } from '@/hooks/useFeatureFlag';
+import { useReguaPreco360 } from '@/hooks/useReguaPreco360';
 import {
   useCustomerCore,
   useCustomerAddress,
@@ -29,7 +31,7 @@ import { VozTarefaDialog } from '@/components/tarefas/VozTarefaDialog';
 export default function Customer360() {
   const { customerId } = useParams<{ customerId: string }>();
   const navigate = useNavigate();
-  const { user, isMaster, isGestorComercial } = useAuth();
+  const { user, isMaster, isGestorComercial, isStaff } = useAuth();
   const [abrirVozTarefa, setAbrirVozTarefa] = useState(false);
 
   const core = useCustomerCore(customerId);
@@ -39,6 +41,15 @@ export default function Customer360() {
   const preferred = useCustomerPreferredItems(customerId);
   const orders = useCustomerOrders(customerId);
   const interactions = useCustomerInteractions(customerId);
+
+  // Régua de Preço (readonly) nos itens preferidos — só Oben, só staff, atrás de flag (off).
+  const [regua360Flag] = useFeatureFlag('regua_preco_360');
+  const omieCodigosRegua = useMemo(
+    () => (preferred.data ?? []).filter((it) => it.account === 'oben').map((it) => it.omie_codigo_produto),
+    [preferred.data],
+  );
+  const { reguaByOmie } = useReguaPreco360(customerId, omieCodigosRegua, regua360Flag && isStaff);
+
   // Contatos extras (PR-CONTACTS): múltiplos contatos por cliente (dono, gerente,
   // comprador, etc). Edição completa fica em /admin/customers detail tab — aqui
   // mostro só leitura compacta pra contexto operacional.
@@ -136,6 +147,7 @@ export default function Customer360() {
             interactions={interactions}
             orders={orders}
             customer={customer}
+            reguaByOmie={reguaByOmie}
           />
         </div>
       </div>
