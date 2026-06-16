@@ -2,6 +2,10 @@
 
 > Sessão nova começando? **Leia este arquivo antes de tocar em qualquer coisa.** Ele existe pra a gente não perder o objetivo principal nem re-descobrir o que já foi decidido.
 
+## ▶️ Frase pra abrir a sessão nova (copie isto)
+
+> *"Lê o handoff da Fase 2 em `docs/superpowers/plans/2026-06-15-fase2-LEIA-PRIMEIRO-handoff.md`. Implementa a **Fatia 1** seguindo o plano — mas o objetivo principal é o **loop (Fatia 2)**: depois de entregar a Fatia 1, me leva direto pro brainstorming/spec da Fatia 2, que é onde o comercial passa a se retroalimentar de verdade."*
+
 ---
 
 ## ⭐ OBJETIVO PRINCIPAL (não perca isto de vista)
@@ -38,7 +42,7 @@ Construir a **rotina comercial que se retroalimenta**: a IA capta o sinal de **c
 
 ## Como retomar
 
-- **Implementar a Fatia 1:** seguir o plano task-por-task (Task 1 = helper puro TDD → … → Task 6 = rollout). Branch atual: **`claude/fase2-oferta-ligacao`** (já contém spec+plano).
+- **Implementar a Fatia 1:** seguir o plano task-por-task (Task 1 = helper puro TDD → … → Task 6 = rollout). Os docs (spec+plano+handoff) já estão na **`main`** — crie um worktree novo a partir da main atualizada (`bun run wt claude/fase2-fatia1`) e implemente lá. **Não** reaproveite `claude/fase2-oferta-ligacao` (já foi mergeado via este PR).
 - **Depois da Fatia 1:** brainstorming → spec da **Fatia 2** (o loop). É o que fecha o objetivo principal.
 
 ## Contexto técnico-chave (pra não re-descobrir)
