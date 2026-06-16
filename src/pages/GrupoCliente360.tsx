@@ -4,7 +4,6 @@ import { toast } from 'sonner';
 import { ArrowLeft, Building2, Plus, Trash2, Wallet, Users, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   useClienteGrupos,
@@ -13,6 +12,7 @@ import {
 } from '@/queries/useClienteGrupos';
 import { AddDocumentoDialog } from '@/components/grupos/AddDocumentoDialog';
 import { GrupoFinanceiroTab } from '@/components/grupos/GrupoFinanceiroTab';
+import { GrupoContatosTab } from '@/components/grupos/GrupoContatosTab';
 import { formatDoc } from '@/lib/grupos/format';
 
 const RELATION_BADGE: Record<RelationType, string> = {
@@ -20,19 +20,6 @@ const RELATION_BADGE: Record<RelationType, string> = {
   multi_ativo: 'multi-CNPJ',
   incerto: 'incerto',
 };
-
-/** Estado "aguardando a view de consolidação" (Financeiro/Contatos chegam na Task 3). */
-function PendingRollup({ icon: Icon, titulo, descricao }: { icon: typeof Wallet; titulo: string; descricao: string }) {
-  return (
-    <Card>
-      <CardContent className="flex flex-col items-center gap-2 py-10 text-center">
-        <Icon className="h-7 w-7 text-muted-foreground" />
-        <p className="font-medium">{titulo}</p>
-        <p className="max-w-md text-sm text-muted-foreground">{descricao}</p>
-      </CardContent>
-    </Card>
-  );
-}
 
 export default function GrupoCliente360() {
   const { grupoId } = useParams<{ grupoId: string }>();
@@ -131,11 +118,7 @@ export default function GrupoCliente360() {
         </TabsContent>
 
         <TabsContent value="contatos" className="m-0">
-          <PendingRollup
-            icon={Users}
-            titulo="Contatos consolidados (em implementação)"
-            descricao="Telefones, endereços e vendedor dos documentos do grupo, num lugar só — chega com a view de contatos (próximo passo da Fase 1)."
-          />
+          <GrupoContatosTab grupoId={grupo.id} />
         </TabsContent>
       </Tabs>
 
