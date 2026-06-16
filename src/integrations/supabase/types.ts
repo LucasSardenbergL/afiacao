@@ -15959,6 +15959,10 @@ export type Database = {
         Args: { p_customer: string; p_product: string; p_qty: number }
         Returns: Json
       }
+      get_regua_preco_customer360: {
+        Args: { p_customer: string; p_omie_codigos: number[] }
+        Returns: Json
+      }
       get_sku_ranking_negociacao_paralela: {
         Args: { p_empresa?: string }
         Returns: unknown[]
