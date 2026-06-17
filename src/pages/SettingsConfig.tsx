@@ -88,6 +88,8 @@ const SettingsConfig = () => {
   const [hasChanges, setHasChanges] = useState(false);
   const [newVisualEnabled, toggleNewVisual] = useFeatureFlag('newVisual', true);
   const [filaPanelEnabled, toggleFilaPanel] = useFeatureFlag('filaContextPanel', false);
+  const [reguaCarrinhoEnabled, toggleReguaCarrinho] = useFeatureFlag('regua_preco_carrinho', false);
+  const [regua360Enabled, toggleRegua360] = useFeatureFlag('regua_preco_360', false);
 
   const updateWeight = (key: string, value: number) => {
     setWeights(prev => prev.map(w => w.key === key ? { ...w, value } : w));
@@ -156,6 +158,54 @@ const SettingsConfig = () => {
               </div>
             </div>
             <Switch checked={filaPanelEnabled} onCheckedChange={toggleFilaPanel} />
+          </CardContent>
+        </Card>
+
+        {/* Régua de Preço no carrinho — flag REAL (localStorage); liga só neste navegador (sombra) */}
+        <Card>
+          <CardContent className="p-4 flex items-center justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className={cn(
+                'p-2 rounded-md shrink-0',
+                reguaCarrinhoEnabled ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
+              )}>
+                <Target className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">
+                  Régua de Preço no carrinho
+                  <Badge variant="outline" className="ml-2 text-2xs">{reguaCarrinhoEnabled ? 'on' : 'off'}</Badge>
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  No carrinho (Oben), mostra o piso de margem e o benchmark de preço da carteira como recibo — sem prometer aceitação. Liga só <span className="font-medium">neste navegador</span> (teste em sombra; nenhum outro vendedor vê). Rollout pra todos é no código.
+                </p>
+              </div>
+            </div>
+            <Switch checked={reguaCarrinhoEnabled} onCheckedChange={toggleReguaCarrinho} />
+          </CardContent>
+        </Card>
+
+        {/* Régua de Preço no Customer 360 — flag REAL (localStorage); liga só neste navegador (sombra) */}
+        <Card>
+          <CardContent className="p-4 flex items-center justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className={cn(
+                'p-2 rounded-md shrink-0',
+                regua360Enabled ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
+              )}>
+                <TrendingUp className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">
+                  Régua de Preço no Customer 360
+                  <Badge variant="outline" className="ml-2 text-2xs">{regua360Enabled ? 'on' : 'off'}</Badge>
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Nos itens preferidos do cliente (Oben), sinaliza quem está abaixo do piso ou com folga vs carteira — insight pré-visita, só leitura. Liga só <span className="font-medium">neste navegador</span> (teste em sombra).
+                </p>
+              </div>
+            </div>
+            <Switch checked={regua360Enabled} onCheckedChange={toggleRegua360} />
           </CardContent>
         </Card>
 
