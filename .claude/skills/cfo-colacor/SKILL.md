@@ -197,9 +197,11 @@ Pergunta: "o resultado gerencial do mês é confiável o suficiente pra eu usar?
 
 ### 5. Categorias sem mapeamento — `assets/sql/05-categorias-sem-mapeamento.sql`
 Pergunta: "o que está caindo no balde errado do DRE?".
-Use a RPC pronta `fin_categorias_sem_mapping(p_company, p_start, p_end)` — retorna código,
-nome e valor no período das categorias Omie sem linha explícita em `fin_categoria_dre_mapping`
-(que então caem em heurística por palavra-chave, sujeita a erro).
+A query (a) do template lê **direto** as categorias Omie com movimento no período sem linha
+explícita em `fin_categoria_dre_mapping` (que então caem em heurística por palavra-chave, sujeita
+a erro). ⚠️ **Não use a RPC `fin_categorias_sem_mapping`** no SQL Editor: ela tem gate "requer
+perfil financeiro" e devolve `42501: Acesso negado` na sessão do Lovable — a query direta é a
+mesma lógica (CR+CP por `data_emissao`, fallback `_default`), sem gate.
 - Toda categoria com valor relevante sem mapeamento vira: (a) uma recomendação de classificar
   em `/financeiro/mapping`, e (b) uma candidata a **pergunta pro contador** ("a categoria X é
   custo (CMV) ou despesa operacional?").
