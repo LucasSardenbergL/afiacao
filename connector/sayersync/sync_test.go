@@ -2417,6 +2417,59 @@ func TestRunCycle_returnsFalseOnConnectFailure(t *testing.T) {
 	}
 }
 
+// TestRunCycle_autoUpdatePersistsDespitePGFailure prova o REQUISITO de auto-cura:
+// o auto-update roda CEDO no ciclo (antes do early-return de falha de conexão com
+// o PG) e seu estado é persistido FORA do SaveState do fim do ciclo — que esse
+// early-return pula. Sem isso, o throttle "1×/dia" e o crash-loop guard não
+// sobreviveriam a ciclos com o PG local fora (re-tentaria o update a cada ciclo).
+// Falsificação: mover a chamada para depois do early-return, ou tirar o save
+// dedicado, deixa este teste vermelho.
+func TestRunCycle_autoUpdatePersistsDespitePGFailure(t *testing.T) {
+	// state.json isolado num diretório temporário (seam stateDir).
+	dir := t.TempDir()
+	prev := stateDir
+	stateDir = func() string { return dir }
+	defer func() { stateDir = prev }()
+
+	// Manifesto responde 404 → update falha (silenciosamente) → UpdateFailCount++.
+	manifestSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer manifestSrv.Close()
+
+	// Heartbeat best-effort responde 200 na hora (evita o backoff de retry).
+	hbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(AgentResponse{OK: true})
+	}))
+	defer hbSrv.Close()
+
+	cfg := &Config{
+		AppURL:            hbSrv.URL,
+		StoreCode:         "loja",
+		TokenPlainDev:     "tok",
+		PGConn:            "postgres://nouser:nopass@127.0.0.1:1/nodb?connect_timeout=1", // Connect falha → early-return
+		UpdateManifestURL: manifestSrv.URL,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if RunCycle(ctx, cfg) {
+		t.Error("RunCycle deveria retornar false quando não conecta ao PG")
+	}
+
+	// O auto-update precisa ter rodado e persistido o estado APESAR do early-return.
+	st, err := LoadState()
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if st.LastUpdateAttempt == "" {
+		t.Error("LastUpdateAttempt deveria ter sido persistido apesar do early-return do RunCycle")
+	}
+	if st.UpdateFailCount != 1 {
+		t.Errorf("UpdateFailCount esperado 1 (manifesto 404), got %d", st.UpdateFailCount)
+	}
+}
+
 // ─────────────────────────────────────────────────────────────
 // composeCorPadrao — sufixo " - BS" (Base Solvente) das cores padrão
 // ─────────────────────────────────────────────────────────────

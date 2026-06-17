@@ -30,18 +30,26 @@ type State struct {
 	// UPDATEs na origem que não toquem data_atualizacao.
 	LastFullRescan string `json:"last_full_rescan,omitempty"`
 
-	// UpdateFailCount conta falhas consecutivas do auto-update (crash-loop guard).
-	// Ao atingir 3 falhas em 10 min, o conector faz rollback para o binário anterior.
+	// UpdateFailCount conta falhas do auto-update para o crash-loop guard.
+	// Ao atingir 3 falhas (a tentativa é 1×/dia → ~3 dias) com a última tentativa
+	// dentro da janela de 24h, o conector restaura o binário anterior (.prev) e
+	// pausa as tentativas até a janela expirar. Zera ao primeiro update sem falha.
 	UpdateFailCount int `json:"update_fail_count,omitempty"`
 
-	// LastUpdateAttempt é o ISO 8601 da última tentativa de auto-update.
-	// Usado para resetar UpdateFailCount após a janela de 10 min.
+	// LastUpdateAttempt é o ISO 8601 (UTC) da última tentativa de auto-update.
+	// Throttle: no máximo uma verificação por dia. Também define a janela de 24h
+	// do crash-loop guard (acima).
 	LastUpdateAttempt string `json:"last_update_attempt,omitempty"`
 }
 
+// stateDir retorna o diretório onde state.json é lido/gravado. É uma variável
+// (e não chamada direta a exeDir) para permitir override em testes; em produção
+// aponta para o diretório do executável.
+var stateDir = exeDir
+
 // statePath retorna o caminho do state.json ao lado do executável.
 func statePath() string {
-	return filepath.Join(exeDir(), "state.json")
+	return filepath.Join(stateDir(), "state.json")
 }
 
 // LoadState carrega o state.json. Se o arquivo não existir, retorna um State
