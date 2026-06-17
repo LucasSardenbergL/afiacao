@@ -96,7 +96,15 @@ func verifyServiceRecoveryPlatform(exePath string) (bool, error) {
 		return false, nil
 	}
 	acts := unsafe.Slice(fa.Actions, fa.ActionsCount)
-	if acts[2].Type != windows.SC_ACTION_RUN_COMMAND {
+	// Valida TODA a sequência, não só a 3ª ação: sem os 2 restarts antes, o binário
+	// ruim não é relançado e a ação run_command nunca é alcançada; e o ResetPeriod
+	// errado pode zerar o contador antes da 3ª falha (ou acumular falsos). (Codex P1)
+	if acts[0].Type != windows.SC_ACTION_RESTART ||
+		acts[1].Type != windows.SC_ACTION_RESTART ||
+		acts[2].Type != windows.SC_ACTION_RUN_COMMAND {
+		return false, nil
+	}
+	if fa.ResetPeriod != recoveryResetPeriodSec {
 		return false, nil
 	}
 	gotCmd := ""

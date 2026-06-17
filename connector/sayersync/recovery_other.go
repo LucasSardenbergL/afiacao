@@ -9,8 +9,9 @@ package main
 import "errors"
 
 // configureServiceRecoveryPlatform configuraria SERVICE_FAILURE_ACTIONS no SCM.
-// No-op fora do Windows.
-func configureServiceRecoveryPlatform(exePath string) error { return nil }
+// Fora do Windows não há SCM, mas a recovery-copy é cross-platform — criá-la mantém
+// o gate F5 (que exige a recovery-copy) coerente em dev/teste.
+func configureServiceRecoveryPlatform(exePath string) error { return ensureRecoveryCopy(exePath) }
 
 // verifyServiceRecoveryPlatform confirmaria a config de recovery via
 // QueryServiceConfig2. Fora do Windows não há serviço a gatear → reporta "ok" para

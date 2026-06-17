@@ -20,7 +20,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -94,8 +93,10 @@ func restorePrevTo(targetExe string) error {
 
 	// 3. Coloca o .prev no lugar do target.
 	if err := renameWithRetry(prevPath, targetExe); err != nil {
-		// Reverte: devolve o .bad ao target para não deixar o serviço sem binário.
-		if rbErr := renameFile(badPath, targetExe); rbErr != nil {
+		// Reverte com o MESMO retry (a mesma sharing violation transitória que travou
+		// o passo acima pode travar este). Devolve o .bad ao target para não deixar o
+		// serviço sem binário. (Codex P1)
+		if rbErr := renameWithRetry(badPath, targetExe); rbErr != nil {
 			return fmt.Errorf("restore: mover .prev para target: %w; ROLLBACK FALHOU — exe ficou em %s: %v", err, badPath, rbErr)
 		}
 		return fmt.Errorf("restore: mover .prev para target (revertido ao binário atual): %w", err)
@@ -134,20 +135,36 @@ func recoveryExePath(exePath string) string {
 	return filepath.Join(filepath.Dir(exePath), recoveryExeName)
 }
 
-// ensureRecoveryCopy grava/atualiza a recovery-copy (cópia estável do exe usada
-// como ator do rollback). Idempotente: não reescreve se já idêntica. O auto-update
-// NUNCA chama esta função — a recovery-copy precisa ficar numa versão boa e estável.
+// recoveryCopyHealthy reporta se a recovery-copy (o ATOR do rollback) existe e é
+// não-vazia. O gate F5 exige isto além das failure actions: um lpCommand correto
+// apontando para um ator ausente (deletado/truncado por AV) faria o SCM rodar nada
+// no crash-loop, e o rollback nunca aconteceria.
+func recoveryCopyHealthy(exePath string) bool {
+	info, err := os.Stat(recoveryExePath(exePath))
+	return err == nil && info.Size() > 0
+}
+
+// ensureRecoveryCopy grava a recovery-copy (cópia estável do exe usada como ator do
+// rollback) quando ela está AUSENTE ou vazia. PRESERVA uma recovery-copy existente e
+// não-vazia: ela é o ator conhecido-bom, e um repair (ex.: no service start, já com um
+// binário novo rodando) não pode trocá-la por algo não comprovado. O write é atômico
+// (tmp + rename) para que um write parcial não destrua o único ator externo. (Codex P2)
 func ensureRecoveryCopy(exePath string) error {
+	if recoveryCopyHealthy(exePath) {
+		return nil
+	}
 	dst := recoveryExePath(exePath)
 	data, err := os.ReadFile(exePath)
 	if err != nil {
 		return fmt.Errorf("recovery-copy: ler exe atual: %w", err)
 	}
-	if existing, err := os.ReadFile(dst); err == nil && bytes.Equal(existing, data) {
-		return nil // já idêntica — evita I/O e churn de mtime
+	tmp := dst + ".tmp"
+	if err := os.WriteFile(tmp, data, 0755); err != nil { //nolint:gosec
+		return fmt.Errorf("recovery-copy: gravar tmp: %w", err)
 	}
-	if err := os.WriteFile(dst, data, 0755); err != nil { //nolint:gosec
-		return fmt.Errorf("recovery-copy: gravar %s: %w", dst, err)
+	if err := renameFile(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("recovery-copy: rename atômico para %s: %w", dst, err)
 	}
 	return nil
 }
@@ -162,14 +179,20 @@ func ensureRecoveryConfigured() error {
 	if err != nil {
 		return fmt.Errorf("recovery: caminho do exe: %w", err)
 	}
-	ok, vErr := verifyServiceRecovery(exePath)
-	if ok {
+	actionsOK, vErr := verifyServiceRecovery(exePath)
+	// O ator do rollback (recovery-copy) precisa EXISTIR, não só o lpCommand apontá-lo:
+	// um ator deletado/truncado por AV faria o SCM rodar nada no crash-loop. (Codex P1)
+	if actionsOK && recoveryCopyHealthy(exePath) {
 		return nil
 	}
 	if cErr := configureServiceRecovery(exePath); cErr != nil {
-		return fmt.Errorf("rede de recuperação ausente e reparo falhou (verify=%v): %w", vErr, cErr)
+		return fmt.Errorf("rede de recuperação incompleta e reparo falhou (actions_ok=%v verify_err=%v): %w", actionsOK, vErr, cErr)
 	}
-	logger.Infof("recovery: ações de recovery do serviço (re)configuradas antes do update")
+	// Pós-reparo, o ator do rollback PRECISA existir — senão o update fica sem rede.
+	if !recoveryCopyHealthy(exePath) {
+		return fmt.Errorf("recovery-copy ausente mesmo após reparo (%s)", recoveryExePath(exePath))
+	}
+	logger.Infof("recovery: rede de recuperação (re)configurada antes do update")
 	return nil
 }
 
@@ -195,34 +218,32 @@ var (
 //  2. quarentena a versão ruim (lida de PendingUpdateVersion) e reseta o guard;
 //  3. reinicia o serviço (o SCM não reinicia após run_command).
 func doRollback(targetExe string) error {
-	st, err := LoadState()
-	if err != nil {
-		return fmt.Errorf("rollback: carregar state: %w", err)
-	}
-
-	// A versão que estava sendo ativada é a candidata a quarentena (capturada
-	// antes de limpar PendingUpdateVersion).
-	bad := st.PendingUpdateVersion
-
-	// 1. Restaura o binário anterior (last-known-good).
+	// 1. PRIMARY: restaura o binário anterior (last-known-good). NÃO depende do state
+	//    — um state.json corrompido não pode impedir a recuperação do crash-loop. (Codex P1)
 	if err := restorePrevTo(targetExe); err != nil {
 		return fmt.Errorf("rollback: %w", err)
 	}
 
-	// 2. Quarentena a versão ruim para o auto-update NÃO reinstalá-la amanhã
-	//    (brick diário). Reseta o crash-loop guard do updater — o rollback resolveu.
-	if bad != "" {
-		st.QuarantinedVersion = bad
-		logger.Warnf("rollback: versão %q quarentenada após crash-loop de boot", bad)
-	}
-	st.PendingUpdateVersion = ""
-	st.UpdateFailCount = 0
-	st.LastUpdateFailure = ""
-	if err := SaveState(st); err != nil {
-		return fmt.Errorf("rollback: persistir state: %w", err)
+	// 2. Best-effort: quarentena a versão ruim (para o updater não reinstalá-la amanhã,
+	//    brick diário) e reseta o guard. Falha aqui NÃO bloqueia o restart — recuperar
+	//    agora vale mais que evitar repetir amanhã. (Codex P1)
+	if st, err := LoadState(); err != nil {
+		logger.Errorf("rollback: state ilegível, pulando quarentena (best-effort): %v", err)
+	} else {
+		if bad := st.PendingUpdateVersion; bad != "" {
+			st.QuarantinedVersion = bad
+			logger.Warnf("rollback: versão %q quarentenada após crash-loop de boot", bad)
+		}
+		st.PendingUpdateVersion = ""
+		st.UpdateFailCount = 0
+		st.LastUpdateFailure = ""
+		if err := SaveState(st); err != nil {
+			logger.Errorf("rollback: falha ao persistir quarentena (best-effort): %v", err)
+		}
 	}
 
-	// 3. Reinicia o serviço com o binário restaurado.
+	// 3. PRIMARY: reinicia o serviço com o binário restaurado (o run_command do SCM
+	//    não reinicia sozinho).
 	if err := startRecoveredService(); err != nil {
 		return fmt.Errorf("rollback: reiniciar serviço: %w", err)
 	}

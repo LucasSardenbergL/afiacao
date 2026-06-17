@@ -288,6 +288,41 @@ func TestDoRollback_restoresQuarantinesAndRestarts(t *testing.T) {
 	}
 }
 
+// Codex P1: restaurar o binário e reiniciar são PRIMARY; a quarentena é best-effort.
+// Um state.json corrompido não pode bloquear a recuperação de um crash-loop.
+func TestDoRollback_corruptStateStillRestoresAndRestarts(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "sayersync.exe")
+	if err := os.WriteFile(exe, []byte("BAD"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exe+".prev", []byte("GOOD"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origStateDir := stateDir
+	stateDir = func() string { return dir }
+	defer func() { stateDir = origStateDir }()
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte("{not valid json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	started := false
+	origStart := startRecoveredService
+	startRecoveredService = func() error { started = true; return nil }
+	defer func() { startRecoveredService = origStart }()
+
+	if err := doRollback(exe); err != nil {
+		t.Fatalf("doRollback não deveria falhar por state corrompido: %v", err)
+	}
+	if got, _ := os.ReadFile(exe); string(got) != "GOOD" {
+		t.Errorf("restore deveria acontecer apesar do state corrompido: got %q", got)
+	}
+	if !started {
+		t.Error("serviço deveria reiniciar apesar do state corrompido")
+	}
+}
+
 // ─────────────────────────────────────────────────────────────
 // buildRollbackCommand — lpCommand do SC_ACTION_RUN_COMMAND (F2)
 // ─────────────────────────────────────────────────────────────
@@ -338,6 +373,47 @@ func TestEnsureRecoveryCopy_createsStableCopy(t *testing.T) {
 	}
 	if string(got) != "BINARY-V2" {
 		t.Errorf("recovery-copy = %q, want BINARY-V2", got)
+	}
+}
+
+func TestRecoveryCopyHealthy(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "sayersync.exe")
+	if recoveryCopyHealthy(exe) {
+		t.Error("sem recovery-copy deveria ser unhealthy")
+	}
+	if err := os.WriteFile(recoveryExePath(exe), []byte("actor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if !recoveryCopyHealthy(exe) {
+		t.Error("recovery-copy não-vazia deveria ser healthy")
+	}
+	if err := os.WriteFile(recoveryExePath(exe), nil, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if recoveryCopyHealthy(exe) {
+		t.Error("recovery-copy vazia deveria ser unhealthy")
+	}
+}
+
+// Codex P2: a recovery-copy é o ATOR estável; um repair (ex.: no service start, já
+// com um binário novo rodando) NÃO pode sobrescrevê-la com um binário não-comprovado.
+func TestEnsureRecoveryCopy_preservesExistingActor(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "sayersync.exe")
+	if err := os.WriteFile(exe, []byte("NEW-UNPROVEN-BINARY"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	rec := recoveryExePath(exe)
+	if err := os.WriteFile(rec, []byte("OLD-GOOD-ACTOR"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureRecoveryCopy(exe); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(rec); string(got) != "OLD-GOOD-ACTOR" {
+		t.Errorf("ensureRecoveryCopy sobrescreveu o ator estável: got %q", got)
 	}
 }
 
