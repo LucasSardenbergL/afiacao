@@ -5,6 +5,7 @@ import {
   invalidPriceMessage,
   findInvalidPricedOmieItems,
   invalidOmieItemPriceMessage,
+  invalidPricedValorUnitarioIndices,
 } from '../priceGuard';
 import type { ProductCartItem } from '@/hooks/unifiedOrder/types';
 
@@ -98,6 +99,34 @@ describe('findInvalidPricedOmieItems', () => {
       { omie_codigo_produto: 'C', quantidade: 1, valor_unitario: '10' as unknown as number, descricao: 'string' },
     ];
     expect(findInvalidPricedOmieItems(itens)).toEqual(itens);
+  });
+});
+
+// ── Primitiva de seleção por ÍNDICE sobre o shape persistido (valor_unitario). É o
+// lar ÚNICO da iteração money-path: findInvalidPricedOmieItems (retorna itens) e o
+// guard da EDIÇÃO (invalidPricedOrderItemIndices em salesOrderEdit) derivam daqui. ──
+describe('invalidPricedValorUnitarioIndices', () => {
+  it('retorna vazio quando todos os preços são positivos', () => {
+    expect(invalidPricedValorUnitarioIndices([omieItem(10), omieItem(50)])).toEqual([]);
+  });
+  it('retorna os índices dos inválidos (zero/negativo/NaN/Infinity), preservando a ordem', () => {
+    const itens = [
+      omieItem(10, 'Ok'), omieItem(0, 'Zero'), omieItem(10, 'Ok2'),
+      omieItem(-1, 'Neg'), omieItem(Number.NaN, 'NaN'), omieItem(Number.POSITIVE_INFINITY, 'Inf'),
+    ];
+    expect(invalidPricedValorUnitarioIndices(itens)).toEqual([1, 3, 4, 5]);
+  });
+  it('lista vazia → vazio', () => {
+    expect(invalidPricedValorUnitarioIndices([])).toEqual([]);
+  });
+  it('trata valor_unitario ausente/null/string (JSONB legado) como inválido (não coage)', () => {
+    const itens = [
+      { valor_unitario: undefined as unknown as number },
+      { valor_unitario: null as unknown as number },
+      { valor_unitario: '10' as unknown as number },
+      { valor_unitario: 10 },
+    ];
+    expect(invalidPricedValorUnitarioIndices(itens)).toEqual([0, 1, 2]);
   });
 });
 
