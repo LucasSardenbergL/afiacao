@@ -104,6 +104,13 @@ func verifyServiceRecoveryPlatform(exePath string) (bool, error) {
 		acts[2].Type != windows.SC_ACTION_RUN_COMMAND {
 		return false, nil
 	}
+	// Também os delays e o ResetPeriod: uma config com a sequência certa mas delays
+	// enormes passaria e deixaria a recuperação inutilizavelmente lenta. (Codex P2)
+	if acts[0].Delay != recoveryRestartDelayMs1 ||
+		acts[1].Delay != recoveryRestartDelayMs2 ||
+		acts[2].Delay != recoveryRunCmdDelayMs {
+		return false, nil
+	}
 	if fa.ResetPeriod != recoveryResetPeriodSec {
 		return false, nil
 	}

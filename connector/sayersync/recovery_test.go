@@ -321,6 +321,11 @@ func TestDoRollback_corruptStateStillRestoresAndRestarts(t *testing.T) {
 	if !started {
 		t.Error("serviço deveria reiniciar apesar do state corrompido")
 	}
+	// Auto-cura: o state.json corrompido deve ter sido resetado para o conector se
+	// recuperar nos próximos ciclos (LoadState volta a funcionar). (Codex P2)
+	if _, err := LoadState(); err != nil {
+		t.Errorf("state.json deveria ter sido resetado, mas LoadState ainda falha: %v", err)
+	}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -414,6 +419,27 @@ func TestEnsureRecoveryCopy_preservesExistingActor(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(rec); string(got) != "OLD-GOOD-ACTOR" {
 		t.Errorf("ensureRecoveryCopy sobrescreveu o ator estável: got %q", got)
+	}
+}
+
+// Codex P1: o `install` deliberado DEVE refrescar o ator — um balcão com uma
+// recovery-copy velha/bugada precisa poder atualizá-la re-rodando install.
+func TestRefreshRecoveryCopy_overwritesExistingActor(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "sayersync.exe")
+	if err := os.WriteFile(exe, []byte("NEW-FIXED-BINARY"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	rec := recoveryExePath(exe)
+	if err := os.WriteFile(rec, []byte("OLD-BUGGY-ACTOR"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := refreshRecoveryCopy(exe); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(rec); string(got) != "NEW-FIXED-BINARY" {
+		t.Errorf("refreshRecoveryCopy não atualizou o ator: got %q", got)
 	}
 }
 

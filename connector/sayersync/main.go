@@ -234,9 +234,17 @@ func cmdInstall() {
 	// auto-update não tem rollback automático. (Codex F2/F5)
 	if exePath, exeErr := executablePath(); exeErr != nil {
 		fmt.Fprintf(os.Stderr, "AVISO: não resolvi o caminho do exe para configurar recovery: %v\n", exeErr)
-	} else if recErr := configureServiceRecovery(exePath); recErr != nil {
-		fmt.Fprintf(os.Stderr, "AVISO: não configurei as ações de recovery do serviço: %v\n", recErr)
-		fmt.Fprintln(os.Stderr, "       O auto-update fica SEM rollback automático até isso ser corrigido (re-rodar install).")
+	} else {
+		// install é deliberado: FORÇA o refresh do ator do rollback (mesmo se já
+		// existe) para um balcão com recovery-copy velha/bugada poder atualizá-la
+		// re-rodando install. O repair automático (start/pre-update) preserva. (Codex P1)
+		if refErr := refreshRecoveryCopy(exePath); refErr != nil {
+			fmt.Fprintf(os.Stderr, "AVISO: não atualizei a recovery-copy: %v\n", refErr)
+		}
+		if recErr := configureServiceRecovery(exePath); recErr != nil {
+			fmt.Fprintf(os.Stderr, "AVISO: não configurei as ações de recovery do serviço: %v\n", recErr)
+			fmt.Fprintln(os.Stderr, "       O auto-update fica SEM rollback automático até isso ser corrigido (re-rodar install).")
+		}
 	}
 
 	if err := s.Start(); err != nil {
@@ -298,17 +306,11 @@ func cmdRun() {
 		os.Exit(1)
 	}
 
-	// Self-heal (Codex F5): instalações antigas ou edições manuais do serviço podem
-	// não ter as ações de recovery. Verifica e repara no start, antes de subir — o
-	// auto-update mais tarde dependerá delas para se recuperar de um binário ruim.
-	if exePath, exeErr := executablePath(); exeErr == nil {
-		if ok, _ := verifyServiceRecovery(exePath); !ok {
-			if recErr := configureServiceRecovery(exePath); recErr != nil {
-				logger.Warnf("recovery: não (re)configurei as ações de recovery no start: %v", recErr)
-			} else {
-				logger.Infof("recovery: ações de recovery do serviço reparadas no start")
-			}
-		}
+	// Self-heal (Codex F5): instalações antigas ou edições manuais podem não ter as
+	// ações de recovery OU a recovery-copy. ensureRecoveryConfigured checa AMBOS
+	// (actions + ator do rollback) e repara; loga sem bloquear o start.
+	if err := ensureRecoveryConfigured(); err != nil {
+		logger.Warnf("recovery: rede de recuperação incompleta no start: %v", err)
 	}
 
 	if err := s.Run(); err != nil {

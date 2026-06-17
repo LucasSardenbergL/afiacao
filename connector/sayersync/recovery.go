@@ -144,15 +144,12 @@ func recoveryCopyHealthy(exePath string) bool {
 	return err == nil && info.Size() > 0
 }
 
-// ensureRecoveryCopy grava a recovery-copy (cópia estável do exe usada como ator do
-// rollback) quando ela está AUSENTE ou vazia. PRESERVA uma recovery-copy existente e
-// não-vazia: ela é o ator conhecido-bom, e um repair (ex.: no service start, já com um
-// binário novo rodando) não pode trocá-la por algo não comprovado. O write é atômico
-// (tmp + rename) para que um write parcial não destrua o único ator externo. (Codex P2)
-func ensureRecoveryCopy(exePath string) error {
-	if recoveryCopyHealthy(exePath) {
-		return nil
-	}
+// refreshRecoveryCopy escreve a recovery-copy a partir do exe atual SEMPRE (force),
+// de forma atômica (tmp + rename — REPLACE_EXISTING no Windows). É o caminho do
+// `install` deliberado: um balcão com um ator velho/bugado precisa poder atualizá-lo
+// re-rodando o install (o que o README promete). Um write parcial não destrói o ator
+// porque o destino só é trocado pelo rename atômico. (Codex P1)
+func refreshRecoveryCopy(exePath string) error {
 	dst := recoveryExePath(exePath)
 	data, err := os.ReadFile(exePath)
 	if err != nil {
@@ -167,6 +164,18 @@ func ensureRecoveryCopy(exePath string) error {
 		return fmt.Errorf("recovery-copy: rename atômico para %s: %w", dst, err)
 	}
 	return nil
+}
+
+// ensureRecoveryCopy garante que a recovery-copy existe, PRESERVANDO uma existente e
+// não-vazia (o ator conhecido-bom): um repair automático (service start ou pre-update,
+// já com um binário novo rodando) não pode trocá-la por algo não comprovado. Só
+// (re)cria quando ausente ou vazia (ex.: removida/truncada por AV). O refresh
+// deliberado é só no `install` (refreshRecoveryCopy). (Codex P1/P2)
+func ensureRecoveryCopy(exePath string) error {
+	if recoveryCopyHealthy(exePath) {
+		return nil
+	}
+	return refreshRecoveryCopy(exePath)
 }
 
 // ensureRecoveryConfigured garante que o serviço tem a rede de recuperação (as
@@ -228,7 +237,15 @@ func doRollback(targetExe string) error {
 	//    brick diário) e reseta o guard. Falha aqui NÃO bloqueia o restart — recuperar
 	//    agora vale mais que evitar repetir amanhã. (Codex P1)
 	if st, err := LoadState(); err != nil {
-		logger.Errorf("rollback: state ilegível, pulando quarentena (best-effort): %v", err)
+		// State ilegível: não há como saber qual versão quarentenar. Reseta o
+		// state.json (atômico) para o conector se recuperar nos próximos ciclos — o
+		// próximo doUpdate volta a gravar PendingUpdateVersion, então um eventual
+		// re-loop se auto-quarentena. Os HWMs já estavam perdidos (state ilegível); o
+		// full re-scan semanal é a rede de segurança. (Codex P2)
+		logger.Errorf("rollback: state ilegível (%v) — resetando state.json", err)
+		if sErr := SaveState(&State{HWM: map[string]string{}}); sErr != nil {
+			logger.Errorf("rollback: falha ao resetar state.json: %v", sErr)
+		}
 	} else {
 		if bad := st.PendingUpdateVersion; bad != "" {
 			st.QuarantinedVersion = bad
