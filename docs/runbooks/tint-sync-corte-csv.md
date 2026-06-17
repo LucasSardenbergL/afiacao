@@ -116,6 +116,15 @@ WHERE store_code = 'M01' AND integration_mode = 'shadow_mode';
 COMMIT;
 ```
 
+> 🚧 **INCIDENTE 17/06 — o re-envio em massa abaixo TRAVOU a promoção (lock timeout, SQLSTATE 55P03).**
+> Causa provável: ao truncar+re-enviar, a promoção de `catalogs` vê os 220 skus como "novos" e
+> re-expande TODAS as ~481k fórmulas de uma vez (§6.2.2) → estoura o timeout do gateway → a conexão
+> PostgREST fica **idle-in-transaction segurando o advisory lock** (`idle_in_transaction_session_timeout=0`,
+> nunca morre) → as próximas promoções morrem esperando o lock. Oficial ficou **INTACTO** (rollback).
+> Revertido p/ `shadow_mode` + `pg_terminate_backend` na sessão presa. **NÃO repetir este re-envio em
+> massa até corrigir a CARGA da promoção** (fix pendente — ver §6). O conserto do PREÇO (Bloco C) é
+> ortogonal e está OK; o bloqueador do flip agora é a carga/lock, não o preço.
+
 **B.2 — Forçar o re-envio** (⚠️ CRÍTICO — sem isto o flip não promove NADA). Com o hash, o conector
 já enviou tudo e manda ~0/ciclo; a promoção processa só as chaves DO RUN (`WHERE sync_run_id=...`),
 então sem dado novo ela não promove. Force um re-envio em `automatic_primary` — no balcão (Prompt Admin):
