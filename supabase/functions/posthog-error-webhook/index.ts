@@ -35,6 +35,10 @@ function buildDedupeKey(p: { projectId?: string | null; issueId?: string | null;
 function buildRollupKey(nowIso: string): string {
   return `rollup:${Math.floor(new Date(nowIso).getTime() / (30 * 60 * 1000))}`;
 }
+function buildListaUrl(issueUrl: string | null | undefined): string {
+  if (!issueUrl) return 'https://us.posthog.com';
+  return issueUrl.replace(/\/error_tracking\/.*/, '/error_tracking');
+}
 interface IssueInfo {
   issueId: string | null; name: string | null; message: string | null; issueUrl: string | null;
   firstSeen: string | null; action: string | null; projectId: string | null; rota?: string | null;
@@ -94,8 +98,8 @@ Deno.serve(async (req) => {
   const dedupeKey = buildDedupeKey({ projectId: info.projectId, issueId: info.issueId, action: info.action });
   const rollupKey = buildRollupKey(nowIso);
   const { titulo, mensagem, metadata } = buildErroAppAlerta(info);
-  // lista de issues do PostHog p/ o rollup (deriva da issueUrl ou usa o host)
-  const listaUrl = info.issueUrl ? info.issueUrl.replace(/\/issues?\/.*/i, '/error_tracking') : 'https://us.posthog.com';
+  // lista de issues do PostHog p/ o rollup (deriva da issueUrl cortando /{uuid}, ou usa o host)
+  const listaUrl = buildListaUrl(info.issueUrl);
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
   const { data, error } = await supabase.rpc('enfileirar_erro_app', {
