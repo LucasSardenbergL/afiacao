@@ -12,5 +12,6 @@ Registro consultável de **PRs/bugs/programas/auditorias já entregues** — a n
 | [estoque-picking-recebimento.md](estoque-picking-recebimento.md) | offline-first + closed-loop (Picking Bridge Oben, Recebimento honesto) |
 | [tintometrico.md](tintometrico.md) | vínculo `tint_skus`↔Omie (resgate de 62 cores que somem do seletor) + lições de matching de catálogo |
 | [geocoding-cep.md](geocoding-cep.md) | geocoding por CEP do Roteirizador-campo (`cep_geo` SoT, gate CEP Aberto 91,5%, edge-proxy `cep-geo-resolver`, import da carteira) |
+| [reposicao-caixa-skill.md](reposicao-caixa-skill.md) | skill `reposicao-caixa` (decisão de compra ↔ caixa/NCG da Oben; custo marginal do caixa, gate de caixa como veto, antecipar aumento/promoção); lições do teste real: `custo_capital_efetivo_perc` é % a.a. (erro de 12×) + RPC de caixa gated a staff |
 
 > **As 3 camadas do refactor:** lição durável reutilizável → `docs/agent/<dominio>.md` (carregada sob demanda); **narrativa histórica** → aqui; detalhe profundo (spec/plano) → `docs/superpowers/{specs,plans}/`. Plano: `docs/superpowers/plans/2026-06-14-refactor-claude-md.md`.
