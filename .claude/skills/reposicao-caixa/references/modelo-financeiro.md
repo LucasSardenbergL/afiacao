@@ -30,6 +30,15 @@ custo_capital_R$ = valor_da_compra_extra × custo_capital%
 `dias_carregando` ≈ tempo médio que o estoque extra fica parado. Para `N` dias extras sobre uma
 cobertura normal `C`, use a aproximação `H = C + N/2` (vende ao longo do tempo, não tudo no fim).
 
+> **⚠️ UNIDADE — não misture % a.a. com % a.m. (erro de 12×, money-path).** As faixas acima
+> (`r_mês` 1,0 / 2,2 / 4,5) são **% AO MÊS**. Mas a coluna `custo_capital_efetivo_perc` que o
+> sistema traz na Query 1/3/5 está em **% AO ANO** (ex.: real de produção: THINNER = 25,75 = 25,75% a.a.).
+> Se você jogar 25,75 na fórmula como se fosse mensal, erra o custo de carregar por ~12×.
+> **Converta antes de usar**: `r_mês ≈ (1 + r_ano)^(1/12) − 1` (ou aproxime `r_ano / 12`).
+> Ex.: 25,75% a.a. → ~1,93%/mês (cai entre CDI e antecipação — coerente). No memo, **sempre diga
+> a unidade** do número que usou. O número do sistema é uma referência; a faixa contextual
+> (CDI/antecipação/conta garantida) é a que decide.
+
 ---
 
 ## Caso B — Vale antecipar antes do aumento?

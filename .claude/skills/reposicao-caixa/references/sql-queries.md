@@ -78,6 +78,11 @@ Retorna 13 linhas (`semana_inicio`, `semana_fim`, `semana_label`, `entradas_prev
 É só CR/CP em aberto (não inclui estoque/folha). A compra à vista entra como saída nova na
 semana do pagamento — recalcule o piso subtraindo o valor da compra.
 
+> **Esta RPC é gated a staff autenticado** — só roda no 🟣 Lovable (founder logado). Confirmado
+> contra produção: o role de leitura/diagnóstico recebe `permission denied for function`. Logo a
+> folga de caixa **depende do founder colar o resultado** — o assistente não consegue rodá-la por
+> fora. (As demais queries deste arquivo são SELECTs em tabelas/views legíveis.)
+
 ---
 
 ## Query 3 — Oportunidades de hoje (aumentos + promoções unificados)
