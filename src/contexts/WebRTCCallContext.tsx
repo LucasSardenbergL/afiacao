@@ -73,9 +73,18 @@ async function persistCallSession(opts: {
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await supabase.from('farmer_calls').insert(payload as any);
-    if (error) {
+    const { data: inserted, error } = await supabase.from('farmer_calls').insert(payload as any).select('id').single();
+    if (error || !inserted) {
       console.error('[WebRTCCallContext] persistCallSession insert failed:', error);
+      return;
+    }
+
+    // Extração pós-call dos 4 sinais (não bloqueia o término da ligação). Só dispara
+    // quando há call + cliente resolvido + farmer; se falhar, a varredura cron reprocessa.
+    if (customerUserId && user.id) {
+      void supabase.functions.invoke('extrair-sinais-ligacao', {
+        body: { callId: inserted.id, transcript: payload.transcript, customerUserId, farmerId: user.id },
+      }).catch((e) => console.error('[WebRTCCallContext] dispatch extração falhou (varredura pega depois):', e));
     }
   } catch (err) {
     console.error('[WebRTCCallContext] persistCallSession error:', err);
