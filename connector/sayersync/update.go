@@ -4,9 +4,11 @@
 //  1. Busca o manifesto JSON em Config.UpdateManifestURL (bucket público do Supabase Storage)
 //  2. Compara a versão do manifesto com a versão atual (semver, anti-downgrade)
 //  3. Baixa o novo binário e verifica o sha256
-//  4. Faz backup do binário atual para <exe>.prev
-//  5. Substitui o binário atual pelo novo (o serviço continuará rodando até o próximo restart)
-//  6. Guarda um crash-loop guard: se ≥3 falhas de update em 24h → restaura o .prev e para de tentar
+//  4. Instala Windows-safe: MOVE o exe em execução para <exe>.prev (backup) e MOVE
+//     o <exe>.new para <exe> — nessa ordem, porque a imagem em uso no Windows pode
+//     ser renomeada mas não sobrescrita (ver installBinary)
+//  5. Reinicia o serviço (os.Exit → SCM OnFailure=restart) para ativar o novo binário
+//  6. Guarda um crash-loop guard: se ≥3 falhas de update em 24h → restaura o .prev e pausa
 //
 // Chamado uma vez por RunCycle quando a data mudou desde a última verificação.
 //
@@ -14,7 +16,8 @@
 //   - UpdateManifestURL fica num bucket PÚBLICO read-only do Supabase; escrita = service_role apenas.
 //   - sha256 verificado antes de instalar (falha → descarta o download, conta como falha).
 //   - Anti-downgrade: só atualiza se manifest.version > current (semver estrito).
-//   - Crash-loop guard: 3 falhas em 24h → restaura .prev + desativa tentativas por 24h.
+//   - Crash-loop guard: 3 falhas em 24h → restaura .prev + pausa tentativas; a janela
+//     ancora na última FALHA (LastUpdateFailure) e expira 24h depois (NÃO trava para sempre).
 //
 // Spec: docs/superpowers/specs/2026-06-09-tint-sync-sayersystem-design.md §6.4
 package main
@@ -47,6 +50,28 @@ const crashLoopWindow = 24 * time.Hour
 // crashLoopThreshold é o número máximo de falhas antes de restaurar o .prev.
 const crashLoopThreshold = 3
 
+// exitCodeUpdateRestart é o código de saída após instalar um novo binário. O
+// processo encerra com FALHA de propósito: o SCM do Windows (OnFailure=restart,
+// ver svcConfig em main.go) relança o serviço a partir do exePath — agora o
+// binário novo. Sem o relançamento o serviço continuaria executando a imagem
+// antiga (movida para .prev) e a PRÓXIMA atualização falharia ao tentar
+// substituir o .prev em uso.
+const exitCodeUpdateRestart = 90
+
+// restartService reinicia o serviço para ativar o binário recém-instalado.
+// É uma variável para permitir override em testes; em produção NÃO retorna
+// (os.Exit → SCM relança). Verificação ponta-a-ponta exige um balcão Windows real.
+var restartService = func() {
+	logger.Infof("update: reiniciando o serviço para ativar o novo binário (exit %d → SCM OnFailure=restart)", exitCodeUpdateRestart)
+	os.Exit(exitCodeUpdateRestart)
+}
+
+// autoUpdateEnabled controla se o auto-update roda neste processo. Default true
+// (modo serviço). O subcomando `once` (debug/manual) o desliga: um run de debug
+// NÃO deve trocar o binário em produção nem os.Exit(90) fora do modelo de recovery
+// do SCM — e evita corrida de arquivos com o serviço rodando em paralelo. (Codex F6/F7)
+var autoUpdateEnabled = true
+
 // ─────────────────────────────────────────────────────────────
 // CheckAndApplyUpdate — ponto de entrada
 // ─────────────────────────────────────────────────────────────
@@ -56,6 +81,9 @@ const crashLoopThreshold = 3
 // Retorna nil se não há atualização necessária ou se a atualização foi bem-sucedida.
 // Erros são logados mas não propagam para não interromper o ciclo de sync.
 func CheckAndApplyUpdate(ctx context.Context, cfg *Config, st *State) {
+	if !autoUpdateEnabled {
+		return // desligado neste processo (ex.: subcomando `once`)
+	}
 	if cfg.UpdateManifestURL == "" {
 		return // auto-update desativado
 	}
@@ -74,9 +102,12 @@ func CheckAndApplyUpdate(ctx context.Context, cfg *Config, st *State) {
 		return
 	}
 
-	if err := doUpdate(ctx, cfg, st); err != nil {
+	installed, err := doUpdate(ctx, cfg, st)
+	if err != nil {
 		logger.Errorf("update: falha na atualização: %v", err)
 		st.UpdateFailCount++
+		// Âncora da janela do crash-loop guard na FALHA real (não no throttle).
+		st.LastUpdateFailure = time.Now().UTC().Format(time.RFC3339)
 
 		// Crash-loop guard: 3 falhas → restaura .prev.
 		if st.UpdateFailCount >= crashLoopThreshold {
@@ -87,9 +118,27 @@ func CheckAndApplyUpdate(ctx context.Context, cfg *Config, st *State) {
 				logger.Infof("update: .prev restaurado com sucesso")
 			}
 		}
-	} else {
-		// Sucesso: reseta o contador de falhas.
-		st.UpdateFailCount = 0
+		return
+	}
+
+	// Sucesso: reseta o contador de falhas e a âncora da janela.
+	st.UpdateFailCount = 0
+	st.LastUpdateFailure = ""
+
+	// Se um binário novo foi instalado, reinicia para ativá-lo. O processo atual
+	// ainda executa a imagem antiga (movida para .prev), então só o relançamento
+	// ativa o novo binário; além disso, sem ele a próxima atualização falharia ao
+	// tentar substituir o .prev em uso. Em produção restartService não retorna.
+	if installed {
+		// Persiste ANTES de reiniciar: o os.Exit pula o SaveState gated do RunCycle.
+		// Sem isso, após o restart o throttle ainda apontaria para ontem e um binário
+		// publicado com versão errada (ex.: build sem ldflag → "dev") viraria loop
+		// install→restart. Persistido, shouldCheckUpdate=false no mesmo dia → no
+		// máximo 1 tentativa/dia. (Codex F1)
+		if saveErr := SaveState(st); saveErr != nil {
+			logger.Errorf("update: falha ao persistir state antes do restart: %v", saveErr)
+		}
+		restartService()
 	}
 }
 
@@ -111,58 +160,74 @@ func shouldCheckUpdate(st *State) bool {
 }
 
 // isCrashLoopGuardActive retorna true se o guard de crash-loop está ativo.
-// O guard ativa quando UpdateFailCount >= crashLoopThreshold E a última tentativa
+// O guard ativa quando UpdateFailCount >= crashLoopThreshold E a última FALHA
 // foi dentro da janela de 24h.
+//
+// A janela ancora em LastUpdateFailure (não LastUpdateAttempt): o throttle diário
+// renova LastUpdateAttempt para "agora" em TODA passagem — inclusive quando o guard
+// pula a tentativa — então usá-lo como âncora fazia a janela nunca envelhecer e o
+// guard travar para sempre (P2). Ancorando na última falha real, a janela expira
+// 24h após a 3ª falha e uma nova tentativa volta a rodar.
 func isCrashLoopGuardActive(st *State) bool {
 	if st.UpdateFailCount < crashLoopThreshold {
 		return false
 	}
-	if st.LastUpdateAttempt == "" {
+	if st.LastUpdateFailure == "" {
 		return false
 	}
-	last, err := time.Parse(time.RFC3339, st.LastUpdateAttempt)
+	last, err := time.Parse(time.RFC3339, st.LastUpdateFailure)
 	if err != nil {
 		return false
 	}
-	return time.Since(last) < crashLoopWindow
+	elapsed := time.Since(last)
+	if elapsed < 0 {
+		// Timestamp no futuro (clock skew / state corrompido): time.Since negativo
+		// manteria o guard ativo até "futuro + 24h", pausando updates por tempo
+		// indefinido. Fail-open — não confiar na âncora corrompida. (Codex F8)
+		return false
+	}
+	return elapsed < crashLoopWindow
 }
 
 // ─────────────────────────────────────────────────────────────
 // doUpdate — baixa e instala a nova versão
 // ─────────────────────────────────────────────────────────────
 
-func doUpdate(ctx context.Context, cfg *Config, st *State) error {
+// doUpdate retorna (installed, err): installed=true só quando um binário novo foi
+// de fato colocado no lugar (dispara o restart em CheckAndApplyUpdate). "Já é a
+// versão mais recente" retorna (false, nil).
+func doUpdate(ctx context.Context, cfg *Config, st *State) (bool, error) {
 	// 1. Busca o manifesto.
 	manifest, err := fetchManifest(ctx, cfg.UpdateManifestURL)
 	if err != nil {
-		return fmt.Errorf("doUpdate: buscar manifesto: %w", err)
+		return false, fmt.Errorf("doUpdate: buscar manifesto: %w", err)
 	}
 
 	// 2. Compara versões (anti-downgrade: só atualiza se manifest.version > current).
 	if !isNewerVersion(manifest.Version, Version) {
 		logger.Infof("update: versão atual %q já é a mais recente (manifesto: %q)", Version, manifest.Version)
-		return nil
+		return false, nil
 	}
 	logger.Infof("update: nova versão disponível %q (atual: %q) — baixando", manifest.Version, Version)
 
 	// 3. Baixa o binário.
 	binData, err := downloadBinary(ctx, manifest.URL)
 	if err != nil {
-		return fmt.Errorf("doUpdate: baixar binário: %w", err)
+		return false, fmt.Errorf("doUpdate: baixar binário: %w", err)
 	}
 
 	// 4. Verifica sha256.
 	if err := verifySHA256(binData, manifest.SHA256); err != nil {
-		return fmt.Errorf("doUpdate: sha256 inválido: %w", err)
+		return false, fmt.Errorf("doUpdate: sha256 inválido: %w", err)
 	}
 
-	// 5. Instala (backup + substituição atômica).
+	// 5. Instala (move-aside-then-place Windows-safe).
 	if err := installBinary(binData); err != nil {
-		return fmt.Errorf("doUpdate: instalar binário: %w", err)
+		return false, fmt.Errorf("doUpdate: instalar binário: %w", err)
 	}
 
-	logger.Infof("update: versão %q instalada — reiniciar o serviço para ativar", manifest.Version)
-	return nil
+	logger.Infof("update: versão %q instalada — reiniciando o serviço para ativar", manifest.Version)
+	return true, nil
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -248,48 +313,68 @@ func verifySHA256(data []byte, expectedHex string) error {
 // installBinary
 // ─────────────────────────────────────────────────────────────
 
-// installBinary instala o novo binário de forma atômica:
-//  1. Grava o novo binário em <exe>.new
-//  2. Faz backup do atual para <exe>.prev
-//  3. Move o .new para <exe>
-//
-// Em caso de falha em qualquer passo, o binário original é preservado.
-func installBinary(data []byte) error {
-	exePath, err := os.Executable()
+// executablePath resolve o caminho real (symlinks resolvidos) do executável em
+// execução. É uma variável para permitir override em testes (mesmo padrão de
+// `var stateDir` em state.go), já que installBinary/restorePrev operam sobre ele.
+var executablePath = func() (string, error) {
+	exe, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("determinar caminho do executável: %w", err)
+		return "", fmt.Errorf("determinar caminho do executável: %w", err)
 	}
-	// Resolve symlinks para obter o caminho real.
-	exePath, err = filepath.EvalSymlinks(exePath)
+	exe, err = filepath.EvalSymlinks(exe)
 	if err != nil {
-		return fmt.Errorf("resolver symlinks do executável: %w", err)
+		return "", fmt.Errorf("resolver symlinks do executável: %w", err)
+	}
+	return exe, nil
+}
+
+// renameFile é os.Rename isolado em variável para permitir simular falha do passo
+// de "colocar o novo binário" em testes (cobertura do rollback).
+var renameFile = os.Rename
+
+// installBinary instala o novo binário de forma Windows-safe:
+//  1. Grava o novo binário em <exe>.new
+//  2. MOVE (rename) o exe atual em execução para <exe>.prev
+//  3. MOVE (rename) o <exe>.new para <exe>
+//
+// Por que mover o exe em uso ANTES de colocar o novo (e não sobrescrevê-lo):
+// no Windows a imagem em execução fica travada — não pode ser SOBRESCRITA nem
+// APAGADA — mas PODE ser renomeada/movida. Movendo-a para .prev primeiro, o
+// destino (exePath) deixa de existir e o passo 3 não esbarra em sharing violation.
+// O processo continua executando a imagem antiga (agora em .prev) até reiniciar;
+// o restart pós-install (ver CheckAndApplyUpdate) é o que ativa o novo binário.
+//
+// Se o passo 3 falhar depois do passo 2, faz rollback (devolve o exe original ao
+// lugar) para nunca deixar o serviço sem binário no exePath.
+func installBinary(data []byte) error {
+	exePath, err := executablePath()
+	if err != nil {
+		return err
 	}
 
 	newPath := exePath + ".new"
 	prevPath := exePath + ".prev"
 
-	// Grava o novo binário.
+	// 1. Grava o novo binário ao lado.
 	if err := os.WriteFile(newPath, data, 0755); err != nil { //nolint:gosec
 		return fmt.Errorf("gravar binário .new: %w", err)
 	}
 
-	// Backup do atual para .prev (sobrescreve prev anterior se existir).
-	curData, err := os.ReadFile(exePath)
-	if err != nil {
+	// 2. Move o exe ATUAL (em execução) para .prev — backup É o move, não cópia.
+	//    Substitui um .prev anterior se existir (os.Rename é REPLACE_EXISTING).
+	if err := renameFile(exePath, prevPath); err != nil {
 		_ = os.Remove(newPath)
-		return fmt.Errorf("ler binário atual para backup: %w", err)
-	}
-	if err := os.WriteFile(prevPath, curData, 0755); err != nil { //nolint:gosec
-		_ = os.Remove(newPath)
-		return fmt.Errorf("gravar .prev: %w", err)
+		return fmt.Errorf("mover exe atual para .prev: %w", err)
 	}
 
-	// Substitui o executável atual (em Windows, o arquivo em uso não pode ser renomeado
-	// enquanto o processo está em execução; o serviço usará o novo binário no próximo restart).
-	if err := os.Rename(newPath, exePath); err != nil {
-		// Tenta desfazer o .new se falhou.
+	// 3. Coloca o novo binário no lugar do exe (destino já não existe).
+	if err := renameFile(newPath, exePath); err != nil {
+		// Rollback: devolve o exe original ao lugar para não deixar o serviço sem binário.
+		if rbErr := renameFile(prevPath, exePath); rbErr != nil {
+			return fmt.Errorf("colocar .new no exe: %w; ROLLBACK FALHOU — exe ficou em %s: %v", err, prevPath, rbErr)
+		}
 		_ = os.Remove(newPath)
-		return fmt.Errorf("renomear .new para exe: %w", err)
+		return fmt.Errorf("colocar .new no exe (rollback ok): %w", err)
 	}
 
 	return nil
@@ -301,13 +386,9 @@ func installBinary(data []byte) error {
 
 // restorePrev restaura o binário anterior a partir de <exe>.prev.
 func restorePrev() error {
-	exePath, err := os.Executable()
+	exePath, err := executablePath()
 	if err != nil {
-		return fmt.Errorf("determinar caminho do executável: %w", err)
-	}
-	exePath, err = filepath.EvalSymlinks(exePath)
-	if err != nil {
-		return fmt.Errorf("resolver symlinks: %w", err)
+		return err
 	}
 	prevPath := exePath + ".prev"
 
