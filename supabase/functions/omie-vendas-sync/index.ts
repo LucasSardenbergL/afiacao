@@ -1391,6 +1391,80 @@ function getAccountConfig(account: Account) {
   };
 }
 
+// ── Guard money-path (espelha src/services/orderSubmission/priceGuard.ts —
+// `isInvalidProductPrice`; Deno não importa de src/). Item de PRODUTO a preço ≤ 0 / NaN /
+// Infinity NUNCA pode virar PV no Omie: valor zerado = pedido cobrado errado / prejuízo, e
+// fica invisível ao cockpit de markup / Régua de Preço (que filtram preco > 0). Esta é a
+// fronteira definitiva — cobre TODAS as vias num só ponto: envio do unified-order
+// (submitOrder), conversão de orçamento (SalesQuotes) e edição de pedido (useSalesOrderEdit).
+// Só trafegam produtos aqui (afiação tem fluxo próprio), logo não há R$0 legítimo.
+// `typeof === "number"` endurece a borda: o payload é JSON cru, não confiável. ──
+function isInvalidOmieItemPrice(valor: unknown): boolean {
+  return !(typeof valor === "number" && Number.isFinite(valor) && valor > 0);
+}
+
+function assertOmieItemPricesValid(
+  items: Array<{ valor_unitario?: number; descricao?: string; omie_codigo_produto?: number | string }>,
+): void {
+  const invalidos = items.filter((it) => isInvalidOmieItemPrice(it.valor_unitario));
+  if (invalidos.length > 0) {
+    const nomes = invalidos
+      .map((it) => it.descricao || (it.omie_codigo_produto != null ? String(it.omie_codigo_produto) : "item sem nome"))
+      .join(", ");
+    throw new Error(
+      `Pedido rejeitado (preço inválido): item(ns) de produto com preço R$ 0 ou negativo: ${nomes}. Corrija o preço antes de enviar ao Omie.`,
+    );
+  }
+}
+
+// ── Guard money-path (ATIVO) — par do assertOmieItemPricesValid acima. Produto desativado no
+// Omie (omie_products.ativo=false) NUNCA pode virar/alterar PV: orçamento antigo carrega produto
+// depois desativado, e ~50–75% do espelho está inativo. Espelha a semântica do gate de ativo do
+// tint (#894): SÓ ativo===false bloqueia (coluna default true; ausente do espelho = desatualizado,
+// NÃO desativação → libera, pra não travar venda legítima). Cobre conversão de orçamento + edição
+// (vias que furam o preflight de ativo do #897, só no wizard); valida por omie_codigo_produto +
+// account (a conversão só tem o código). Oráculo puro em src/services/orderSubmission/ativoGate.ts. ──
+async function assertOmieItemsAtivos(
+  supabase: SupabaseClient,
+  items: Array<{ omie_codigo_produto?: number | string; descricao?: string }>,
+  account: Account,
+): Promise<void> {
+  const codigos = Array.from(
+    new Set((items ?? []).map((it) => Number(it?.omie_codigo_produto)).filter((c) => Number.isFinite(c))),
+  );
+  if (codigos.length === 0) return;
+  const { data, error } = await supabase
+    .from("omie_products")
+    .select("omie_codigo_produto, ativo")
+    .eq("account", account)
+    .in("omie_codigo_produto", codigos);
+  // Fail-closed: sem confirmar o status no espelho, não cria/altera PV (venda atrasada é recuperável;
+  // PV de produto desativado, não).
+  if (error) {
+    throw new Error(`Pedido rejeitado: falha ao validar produtos ativos no Omie (${error.message}). Tente novamente.`);
+  }
+  const inativos = new Set<number>();
+  for (const r of (data ?? []) as Array<{ omie_codigo_produto: number | string; ativo: boolean | null }>) {
+    if (r.ativo === false) {
+      const c = Number(r.omie_codigo_produto);
+      if (Number.isFinite(c)) inativos.add(c);
+    }
+  }
+  const vistos = new Set<number>();
+  const bloqueados: string[] = [];
+  for (const it of items) {
+    const cod = Number(it?.omie_codigo_produto);
+    if (!Number.isFinite(cod) || vistos.has(cod) || !inativos.has(cod)) continue;
+    vistos.add(cod);
+    bloqueados.push(it.descricao || String(cod));
+  }
+  if (bloqueados.length > 0) {
+    throw new Error(
+      `Pedido rejeitado (produto desativado no Omie): ${bloqueados.join(", ")}. Reative o produto no Omie ou remova-o do pedido.`,
+    );
+  }
+}
+
 // Criar pedido de venda no Omie
 async function criarPedidoVenda(
   supabase: SupabaseClient,
@@ -1858,6 +1932,9 @@ serve(async (req) => {
         if (!sales_order_id || !codigo_cliente || !items?.length) {
           throw new Error("Dados insuficientes para criar pedido de venda");
         }
+        // Guard money-path: rejeita ANTES de montar o payload Omie (ver assertOmieItemPricesValid).
+        assertOmieItemPricesValid(items);
+        await assertOmieItemsAtivos(supabaseAdmin, items, account);
         const pedido = await criarPedidoVenda(
           supabaseAdmin,
           sales_order_id,
@@ -1911,6 +1988,8 @@ serve(async (req) => {
           ordem_compra: editOrdemCompra,
         } = params;
         if (!editSoId || !editItems?.length) throw new Error("Dados insuficientes para alterar pedido");
+        // Guard money-path: rejeita ANTES de consultar/excluir itens no Omie (passo destrutivo).
+        assertOmieItemPricesValid(editItems);
 
         // Load existing order
         const { data: existingOrder } = await supabaseAdmin
@@ -1923,6 +2002,11 @@ serve(async (req) => {
 
         const editAccount: Account = (existingOrder.account === "colacor") ? "colacor" : "oben";
         const editConfig = getAccountConfig(editAccount);
+
+        // Guard money-path (ativo): aqui, após resolver editAccount e ANTES de consultar/excluir
+        // itens no Omie (passo destrutivo). O caminho de edição re-envia itens pré-existentes sem
+        // revalidar — é onde um produto desativado depois da criação do PV passaria batido.
+        await assertOmieItemsAtivos(supabaseAdmin, editItems, editAccount);
 
         // Build updated items payload for local DB
         const editItemsTyped: EditItemInput[] = editItems;

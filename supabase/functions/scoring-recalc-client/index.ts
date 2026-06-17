@@ -44,6 +44,54 @@ interface ModifierMeta {
   daysSince: number;
 }
 
+// --- Inline: src/lib/sinais/schema.ts (réplica fiel — Deno não importa de src/) ---
+// FONTE DA VERDADE: src/lib/sinais/{schema,converter}.ts (vitest 10/10). Os números abaixo
+// (PROB_MIN, deltas) DEVEM bater com o oráculo. Não inventar.
+const PROB_MIN = 0.6;
+const DELTA_PRECO_CONCORRENTE = 20; // concorrente mais barato = risco de churn
+const DELTA_MARCA_CONCORRENTE = 15; // espelha competitor_mentioned do scoring legado
+const DELTA_DEMANDA_NOVA = 10; // sinal de expansão
+
+interface SinaisPreco {
+  tipo: 'cliente_paga' | 'concorrente_cobra';
+  produto: string | null;
+  valor: number | null;
+  moeda: string | null;
+  unidade_base: string | null;
+  concorrente: string | null;
+  speaker_is_customer: boolean;
+  confianca: number;
+  evidencia: string;
+}
+interface SinaisMarcaEmUso {
+  marca: string;
+  produto: string | null;
+  e_concorrente: boolean | null;
+  speaker_is_customer: boolean;
+  confianca: number;
+  evidencia: string;
+}
+interface SinaisDemandaNova {
+  descricao: string;
+  contexto: string | null;
+  urgencia: string | null;
+  recorrente: boolean | null;
+  confianca: number;
+  evidencia: string;
+}
+interface SinaisLigacao {
+  precos: SinaisPreco[];
+  marcas_em_uso: SinaisMarcaEmUso[];
+  produtos_gap: unknown[]; // produto-gap NÃO pontua (Fatia 3) — fora do conversor
+  demandas_novas: SinaisDemandaNova[];
+  houve_sinal: boolean;
+}
+// Envelope persistido por extrair-sinais-ligacao (1 writer). status='extraido' (sem acento).
+interface SinaisEnvelope {
+  status?: string;
+  sinais?: SinaisLigacao;
+}
+
 interface SignalModifier {
   dimension: 'churn' | 'expansion' | 'health' | 'eff';
   kind: string;
@@ -54,6 +102,10 @@ interface SignalModifier {
   sourceCallId: string;
   capturedAt: string;
   daysSince: number;
+  // FA4 (shadow-mode): toda modifier carimba a classe de sinal para o filtro uniforme da Fase C.
+  // 'preco'|'marca'|'demanda' vêm do oráculo (sinais pós-call); o legado é mapeado para a classe
+  // coerente em modifiersFromEntity/Analysis (competitor→marca, timeline/risk/outcome→demanda, upsell→preco).
+  class?: 'preco' | 'marca' | 'demanda';
 }
 
 // --- Inline: modulators.ts ---
@@ -71,6 +123,7 @@ function modifiersFromEntity(entity: ExtractedEntity, meta: ModifierMeta): Signa
         sourceCallId: meta.sourceCallId,
         capturedAt: meta.capturedAt,
         daysSince: meta.daysSince,
+        class: 'marca', // FA4: concorrente mencionado ≈ sinal de marca
       }];
     case 'timeline':
       return [{
@@ -83,6 +136,7 @@ function modifiersFromEntity(entity: ExtractedEntity, meta: ModifierMeta): Signa
         sourceCallId: meta.sourceCallId,
         capturedAt: meta.capturedAt,
         daysSince: meta.daysSince,
+        class: 'demanda', // FA4: prazo/desired_outcome ≈ sinal de demanda
       }];
     case 'price':
     case 'volume':
@@ -108,6 +162,7 @@ function modifiersFromAnalysis(analysis: AnalysisSnapshot, meta: ModifierMeta): 
         sourceCallId: meta.sourceCallId,
         capturedAt: meta.capturedAt,
         daysSince: meta.daysSince,
+        class: 'demanda', // FA4: risco alto (legado) — classe coerente p/ filtro uniforme
       });
     }
   }
@@ -125,6 +180,7 @@ function modifiersFromAnalysis(analysis: AnalysisSnapshot, meta: ModifierMeta): 
         sourceCallId: meta.sourceCallId,
         capturedAt: meta.capturedAt,
         daysSince: meta.daysSince,
+        class: 'preco', // FA4: upsell/cross-sell (legado) — classe coerente p/ filtro uniforme
       });
     }
   }
@@ -141,6 +197,79 @@ function modifiersFromAnalysis(analysis: AnalysisSnapshot, meta: ModifierMeta): 
       daysSince: meta.daysSince,
     });
   }
+  return out;
+}
+
+// --- Inline: src/lib/sinais/converter.ts (réplica fiel — vitest 10/10 é o oráculo) ---
+// Converte os sinais pós-call (envelope.sinais) em SignalModifier[] com a MESMA lógica de
+// sinaisParaModifiers: precisão > recall, ausente ≠ zero, nunca fabrica. weight=confianca;
+// decayedWeight inicia = weight (o decay temporal é aplicado depois em aggregateModifiers).
+function modifiersFromSinais(envelope: SinaisEnvelope | null | undefined, meta: ModifierMeta): SignalModifier[] {
+  if (envelope?.status !== 'extraido') return [];
+  const s = envelope.sinais;
+  if (!s || !s.houve_sinal) return []; // houve_sinal=false → [] (não fabrica)
+  const out: SignalModifier[] = [];
+
+  // PREÇO — contrato estrito: só concorrente mais barato, dito pelo CLIENTE, unidade comparável, confiante.
+  for (const p of s.precos ?? []) {
+    const comparavel =
+      p.tipo === 'concorrente_cobra' &&
+      p.speaker_is_customer &&
+      p.produto != null &&
+      p.valor != null &&
+      p.moeda != null &&
+      p.unidade_base != null &&
+      p.confianca >= PROB_MIN;
+    if (!comparavel) continue;
+    out.push({
+      dimension: 'churn',
+      kind: 'preco_concorrente_menor',
+      delta: DELTA_PRECO_CONCORRENTE,
+      weight: p.confianca,
+      decayedWeight: p.confianca,
+      reason: `Concorrente ${p.concorrente ?? '?'} cobra ${p.valor} ${p.moeda}/${p.unidade_base} em ${p.produto}`,
+      sourceCallId: meta.sourceCallId,
+      capturedAt: meta.capturedAt,
+      daysSince: meta.daysSince,
+      class: 'preco',
+    });
+  }
+
+  // MARCA — concorrente em uso, dito pelo cliente.
+  for (const m of s.marcas_em_uso ?? []) {
+    if (!(m.e_concorrente && m.speaker_is_customer && m.confianca >= PROB_MIN)) continue;
+    out.push({
+      dimension: 'churn',
+      kind: 'marca_concorrente_em_uso',
+      delta: DELTA_MARCA_CONCORRENTE,
+      weight: m.confianca,
+      decayedWeight: m.confianca,
+      reason: `Cliente usa ${m.marca}`,
+      sourceCallId: meta.sourceCallId,
+      capturedAt: meta.capturedAt,
+      daysSince: meta.daysSince,
+      class: 'marca',
+    });
+  }
+
+  // DEMANDA NOVA — expansão.
+  for (const d of s.demandas_novas ?? []) {
+    if (d.confianca < PROB_MIN) continue;
+    out.push({
+      dimension: 'expansion',
+      kind: 'demanda_nova',
+      delta: DELTA_DEMANDA_NOVA,
+      weight: d.confianca,
+      decayedWeight: d.confianca,
+      reason: `Demanda: ${d.descricao}`,
+      sourceCallId: meta.sourceCallId,
+      capturedAt: meta.capturedAt,
+      daysSince: meta.daysSince,
+      class: 'demanda',
+    });
+  }
+
+  // PRODUTO-GAP — não pontua (consumo = Fatia 3). Persistido no envelope, fora daqui.
   return out;
 }
 
@@ -231,7 +360,7 @@ async function recalcOne(
       .eq('user_id', customer_user_id).eq('excluir_da_carteira', true).maybeSingle(),
     supabase
       .from('farmer_calls')
-      .select('id, started_at, entities_extracted, analyses')
+      .select('id, started_at, entities_extracted, analyses, sinais_ligacao')
       .eq('customer_user_id', customer_user_id)
       .eq('farmer_id', farmer_id)
       .gte('started_at', cutoff)
@@ -254,12 +383,23 @@ async function recalcOne(
     started_at: string;
     entities_extracted: ExtractedEntity[] | null;
     analyses: AnalysisSnapshot[] | null;
+    sinais_ligacao: SinaisEnvelope | null;
   }>) {
     const meta: ModifierMeta = {
       sourceCallId: call.id,
       capturedAt: call.started_at,
       daysSince: daysBetween(new Date(call.started_at), now),
     };
+
+    // FA4 — anti-dupla-contagem: a pós-call (sinais_ligacao, status='extraido') é a FONTE DA VERDADE.
+    // Quando ela existe, ela SUBSTITUI os conversores legados (entities_extracted/analyses) desta call,
+    // senão somaríamos o mesmo sinal duas vezes (ex.: concorrente vira tanto competitor_mentioned quanto
+    // marca_concorrente_em_uso). Calls antigas sem extração caem no caminho legado (com class carimbada).
+    if (call.sinais_ligacao?.status === 'extraido') {
+      allMods.push(...modifiersFromSinais(call.sinais_ligacao, meta));
+      continue;
+    }
+
     for (const e of call.entities_extracted ?? []) {
       allMods.push(...modifiersFromEntity(e, meta));
     }

@@ -37,6 +37,10 @@ interface SignalModifier {
   dimension: string;
   delta: number;
   decayedWeight: number;
+  // FA4 (shadow-mode): a Task 4 carimba a classe de sinal em TODA modifier
+  // ('preco'|'marca'|'demanda'). O visit-score só aplica modifiers de classe ATIVADA
+  // (sinal_classe_config.ativado=true). Modifier sem class ou de classe off → excluído.
+  class?: 'preco' | 'marca' | 'demanda';
 }
 
 interface ScoreAdjustment {
@@ -73,19 +77,33 @@ interface CustomerScoreInputs {
 // =====================================================
 // --- Inline missions ---
 // =====================================================
-function scoreRecuperacao(c: CustomerScoreInputs): number {
+
+// FA4 (shadow-mode — salvaguarda money-path): filtra os modifiers de um breakdown[dim]
+// mantendo SÓ os de classe ATIVADA (sinal_classe_config.ativado=true). Modifier sem class
+// (legado não-carimbado) OU de classe desligada → excluído.
+// INVARIANTE: com a config tudo OFF (estado inicial), `classesAtivas` é vazio → `aplicaveis`
+// retorna sempre [] → todo signalsBoost vira 0 → o visit_score fica IDÊNTICO ao de hoje.
+// É isso que torna o deploy da Fatia 2 seguro (nada muda na oferta até a Fase C ligar uma classe).
+function aplicaveis(
+  mods: SignalModifier[] | undefined,
+  classesAtivas: Set<string>,
+): SignalModifier[] {
+  return (mods ?? []).filter((m) => m.class != null && classesAtivas.has(m.class));
+}
+
+function scoreRecuperacao(c: CustomerScoreInputs, classesAtivas: Set<string>): number {
   const churnBoost = c.churn_risk * 0.5;
   const recoverBoost = c.recover_score * 0.3;
   const recencyPenalty = Math.max(0, 100 - c.days_since_last_purchase) * -0.1;
-  const signalsBoost = (c.signal_modifiers?.breakdown?.churn ?? [])
+  const signalsBoost = aplicaveis(c.signal_modifiers?.breakdown?.churn, classesAtivas)
     .reduce((s, m) => s + m.delta * m.decayedWeight, 0) * 0.1;
   return clamp(churnBoost + recoverBoost + recencyPenalty + signalsBoost, 0, 100);
 }
 
-function scoreExpansao(c: CustomerScoreInputs): number {
+function scoreExpansao(c: CustomerScoreInputs, classesAtivas: Set<string>): number {
   const expansionBase = c.expansion_score * 0.6;
   const revenueBoost = normalizeRevenue(c.revenue_potential) * 20;
-  const signalsBoost = (c.signal_modifiers?.breakdown?.expansion ?? [])
+  const signalsBoost = aplicaveis(c.signal_modifiers?.breakdown?.expansion, classesAtivas)
     .reduce((s, m) => s + m.delta * m.decayedWeight, 0) * 0.2;
   return clamp(expansionBase + revenueBoost + signalsBoost, 0, 100);
 }
@@ -101,25 +119,33 @@ function scoreRelacionamento(c: CustomerScoreInputs): number {
   return clamp(healthBoost + revenueBoost + daysSinceVisitBoost - riskPenalty, 0, 100);
 }
 
-function scoreProspeccao(c: CustomerScoreInputs): number {
+function scoreProspeccao(c: CustomerScoreInputs, classesAtivas: Set<string>): number {
   const isProspectCandidate = c.sales_orders_count === 0 || c.is_prospect === true;
   if (!isProspectCandidate) return 0;
   const baseProspect = 70;
   const recencyOfSignup = c.days_since_signup < 30 ? 20 : 0;
-  const signalsQuality = (c.signal_modifiers?.source_call_count ?? 0) > 0 ? 10 : 0;
+  // Shadow-safe: a qualidade só sobe com sinal de classe ATIVADA (não com source_call_count
+  // cru, que a Fatia 2 passa a alimentar via sinais_ligacao). Em shadow total → 0, idêntico a hoje.
+  const bd = c.signal_modifiers?.breakdown;
+  const temSinalAplicavel =
+    aplicaveis(bd?.churn, classesAtivas).length > 0 ||
+    aplicaveis(bd?.expansion, classesAtivas).length > 0 ||
+    aplicaveis(bd?.health, classesAtivas).length > 0 ||
+    aplicaveis(bd?.eff, classesAtivas).length > 0;
+  const signalsQuality = temSinalAplicavel ? 10 : 0;
   return clamp(baseProspect + recencyOfSignup + signalsQuality, 0, 100);
 }
 
-function computeVisitScore(c: CustomerScoreInputs): {
+function computeVisitScore(c: CustomerScoreInputs, classesAtivas: Set<string>): {
   scores: Record<MissionType, number>;
   visit_score: number;
   primary_mission: MissionType;
 } {
   const scores: Record<MissionType, number> = {
-    recuperacao: scoreRecuperacao(c),
-    expansao: scoreExpansao(c),
+    recuperacao: scoreRecuperacao(c, classesAtivas),
+    expansao: scoreExpansao(c, classesAtivas),
     relacionamento: scoreRelacionamento(c),
-    prospeccao: scoreProspeccao(c),
+    prospeccao: scoreProspeccao(c, classesAtivas),
   };
   const ORDER: MissionType[] = ['expansao', 'recuperacao', 'relacionamento', 'prospeccao'];
   let primary_mission: MissionType = 'prospeccao';
@@ -158,7 +184,7 @@ async function recalcOne(
   customer_user_id: string,
   farmer_id: string,
 ): Promise<{ ok: boolean; error?: string; visit_score?: number; primary_mission?: MissionType }> {
-  const [flagRes, scoresRes, visitsRes, ordersRes, addressRes, profileRes] = await Promise.all([
+  const [flagRes, scoresRes, visitsRes, ordersRes, addressRes, profileRes, classCfgRes] = await Promise.all([
     // Anti-ressurreição (fornecedores fora da carteira): cliente marcado p/ exclusão não recebe
     // visit score. Checagem na mesma rodada paralela → zero latência extra. Ausência = segue.
     supabase.from('cliente_classificacao').select('user_id').eq('user_id', customer_user_id).eq('excluir_da_carteira', true).maybeSingle(),
@@ -168,6 +194,10 @@ async function recalcOne(
     supabase.from('sales_orders').select('id').eq('customer_user_id', customer_user_id),
     supabase.from('addresses').select('city, neighborhood, state').eq('user_id', customer_user_id).eq('is_default', true).maybeSingle(),
     supabase.from('profiles').select('created_at, is_prospect').eq('user_id', customer_user_id).maybeSingle(),
+    // FA4 (shadow-mode): classes de sinal ATIVADAS. Leitura na mesma rodada paralela (1 query,
+    // não N+1 — a tabela tem só 3 linhas; ler por cliente é trivial e mantém recalcOne autossuficiente).
+    // Estado inicial: tudo ativado=false → nenhuma linha aqui → classesAtivas vazio (invariante = boost 0).
+    supabase.from('sinal_classe_config').select('classe').eq('ativado', true),
   ]);
 
   // FAIL-CLOSED (Codex P1): erro ao ler a flag → NÃO recalcula (não recria score de fornecedor
@@ -175,6 +205,15 @@ async function recalcOne(
   if (flagRes.error) return { ok: false, error: `cliente_classificacao: ${flagRes.error.message}` };
   if (flagRes.data) return { ok: true };
   if (scoresRes.error) return { ok: false, error: `farmer_client_scores: ${scoresRes.error.message}` };
+
+  // FA4 (shadow-mode): classes ATIVADAS. Fail-SAFE no sentido do shadow — erro na leitura da config
+  // degrada para conjunto VAZIO (jamais sobre-aplica sinal: o pior caso vira "idêntico a hoje").
+  // Com tudo ativado=false (estado inicial) classesAtivas já é vazio por construção.
+  const classesAtivas = new Set<string>(
+    classCfgRes.error
+      ? []
+      : ((classCfgRes.data ?? []) as Array<{ classe: string }>).map((r) => r.classe),
+  );
 
   const scores = (scoresRes.data ?? {}) as Record<string, unknown>;
   const lastVisitAt = (visitsRes.data ?? [])[0]?.check_in_at ?? null;
@@ -203,7 +242,7 @@ async function recalcOne(
     state: (address.state as string) ?? null,
   };
 
-  const result = computeVisitScore(inputs);
+  const result = computeVisitScore(inputs, classesAtivas);
 
   const score_breakdown = {
     inputs: {

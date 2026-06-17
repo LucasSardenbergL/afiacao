@@ -99,21 +99,45 @@ go test ./... -v -count=1 -timeout 120s
 
 ---
 
-## Manifesto de auto-update
+## Auto-update — publicar uma nova versão
 
-Para publicar uma nova versão, faça upload do `.exe` para o bucket público do Supabase
-e atualize o arquivo `manifest.json`:
+O conector verifica o manifesto **uma vez por dia** e se atualiza sozinho
+(anti-downgrade: só aplica se `manifest.version > current`, semver estrito; sha256
+verificado antes de instalar; crash-loop guard restaura o `.prev` após 3 falhas em
+24h). A chamada vive **cedo** no `RunCycle` (`sync.go`), então o conector consegue
+se auto-curar mesmo quando o sync está quebrado (PG local fora / schema divergente)
+— justamente quando um fix precisa chegar.
 
-```json
-{
-  "version": "0.2.0",
-  "sha256": "<hex do sha256 do .exe>",
-  "url": "https://<project>.supabase.co/storage/v1/object/public/releases/sayersync/sayersync.exe"
-}
+### 1. Gerar os artefatos
+
+```bash
+cd connector/sayersync
+go test ./... -count=1        # nunca publique com teste vermelho
+./release.sh 0.2.0            # cross-compila, calcula sha256, gera dist/manifest.json
 ```
 
-O conector verifica o manifesto uma vez por dia e aplica a atualização automaticamente
-(anti-downgrade: só atualiza se `manifest.version > current`).
+Saída em `dist/`: `sayersync-0.2.0.exe` (binário **imutável e versionado** — evita
+cache stale do CDN do Storage) + `manifest.json` apontando para ele.
+
+### 2. Publicar (Supabase Storage → bucket `releases`, pasta `sayersync/`)
+
+Upload **nesta ordem** — o `.exe` ANTES do manifest (senão o conector baixa um alvo
+inexistente, falha o sha256 e conta como falha de update):
+
+1. `dist/sayersync-0.2.0.exe`
+2. `dist/manifest.json` (sobrescreve o ponteiro)
+
+### 3. Ativar (uma vez)
+
+- **Bucket** (global, uma vez): criar o bucket **público read-only** `releases` no
+  Supabase Storage — leitura `anon`, escrita só `service_role`.
+- **config.json** (em cada balcão): preencher `"update_manifest_url":
+  "https://fzvklzpomgnyikkfkzai.supabase.co/storage/v1/object/public/releases/sayersync/manifest.json"`.
+  Vazio = auto-update desativado (default seguro).
+
+> A primeira ativação ainda exige um redeploy manual do `.exe` no balcão: o
+> auto-update só passa a valer a partir de uma versão que já contenha a chamada no
+> ciclo.
 
 ---
 

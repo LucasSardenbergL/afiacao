@@ -236,9 +236,11 @@ func (hc *HashCache) Dirty() bool { return hc.dirty }
 // clearDirty zera o flag dirty (chamado após save bem-sucedido).
 func (hc *HashCache) clearDirty() { hc.dirty = false }
 
-// hashCachePath retorna o caminho do hashes.json ao lado do executável.
+// hashCachePath retorna o caminho do hashes.json ao lado do executável. Usa o seam
+// stateDir (= exeDir em produção; introduzido pelo #919) para que testes que isolam
+// stateDir também isolem o hashes.json, em paridade com statePath().
 func hashCachePath() string {
-	return filepath.Join(exeDir(), "hashes.json")
+	return filepath.Join(stateDir(), "hashes.json")
 }
 
 // LoadHashCache carrega o hashes.json ao lado do executável.

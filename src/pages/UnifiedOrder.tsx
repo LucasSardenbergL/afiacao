@@ -413,6 +413,8 @@ const UnifiedOrder = () => {
             onUpdateQuantity={h.updateQuantity} onUpdateProductPrice={h.updateProductPrice}
             onRemoveFromCart={h.removeFromCart} getServicePrice={h.getServicePrice}
             getCartIndex={(item) => h.cart.indexOf(item)}
+            customerUserId={h.customerUserId}
+            customerName={h.selectedCustomer?.razao_social ?? null}
           />
 
           {h.cart.length > 0 && h.selectedCustomer && (

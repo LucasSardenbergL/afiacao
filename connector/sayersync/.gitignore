@@ -1,6 +1,8 @@
 # binários compilados (macOS e Windows)
 sayersync
 sayersync.exe
+# artefatos de release gerados por release.sh (binário versionado + manifest.json)
+dist/
 # arquivos de estado e configuração locais
 config.json
 config.json.tmp

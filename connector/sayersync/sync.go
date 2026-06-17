@@ -542,6 +542,20 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 		st = &State{HWM: make(map[string]string)}
 	}
 
+	// Auto-update cedo no ciclo: o conector precisa conseguir se auto-curar mesmo
+	// quando o sync está quebrado (PG fora / schema divergente) — justamente quando
+	// um fix precisa chegar. CheckAndApplyUpdate muta `st` (LastUpdateAttempt,
+	// UpdateFailCount) e NÃO persiste; os early-returns de falha abaixo pulam o
+	// SaveState do fim do ciclo, então persistimos aqui (só quando houve tentativa)
+	// para o throttle diário e o crash-loop guard sobreviverem entre reinícios.
+	prevUpdateAttempt := st.LastUpdateAttempt
+	CheckAndApplyUpdate(ctx, cfg, st)
+	if st.LastUpdateAttempt != prevUpdateAttempt {
+		if saveErr := SaveState(st); saveErr != nil {
+			logger.Errorf("RunCycle: falha ao salvar state pós auto-update: %v", saveErr)
+		}
+	}
+
 	// Carrega o cache de hashes de conteúdo das fórmulas (mata o loop de re-envio:
 	// a FORMULA tem data NULL → HWM travado → sem isto re-enviava 485k/ciclo).
 	hc, hcErr := LoadHashCache()
