@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 255
+-- Total de custom migrations: 256
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -274,7 +274,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260616120001', 'regua_preco_customer360', '20260616120001_regua_preco_customer360.sql'),
   ('20260616130000', 'v_grupo_contatos', '20260616130000_v_grupo_contatos.sql'),
   ('20260616140000', 'v_grupo_comercial', '20260616140000_v_grupo_comercial.sql'),
-  ('20260616140941', 'fatia2_sinais_ligacao', '20260616140941_fatia2_sinais_ligacao.sql')
+  ('20260616140941', 'fatia2_sinais_ligacao', '20260616140941_fatia2_sinais_ligacao.sql'),
+  ('20260617091500', 'sinal_classe_config_check_classe', '20260617091500_sinal_classe_config_check_classe.sql')
 )
 SELECT
   e.version,

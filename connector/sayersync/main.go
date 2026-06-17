@@ -294,6 +294,10 @@ func cmdRun() {
 // ──────────────────────────────────────────────
 
 func cmdOnce() {
+	// `once` é debug/manual: NÃO deve auto-atualizar (trocaria o binário de produção
+	// e os.Exit(90) fora do recovery do SCM; evita corrida com o serviço). (Codex F6/F7)
+	autoUpdateEnabled = false
+
 	cfg, err := LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Falha ao carregar config.json: %v\n", err)

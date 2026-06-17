@@ -37,9 +37,17 @@ type State struct {
 	UpdateFailCount int `json:"update_fail_count,omitempty"`
 
 	// LastUpdateAttempt é o ISO 8601 (UTC) da última tentativa de auto-update.
-	// Throttle: no máximo uma verificação por dia. Também define a janela de 24h
-	// do crash-loop guard (acima).
+	// Throttle: no máximo uma verificação por dia. É renovado a cada passagem
+	// diária (inclusive quando o guard pula a tentativa), então NÃO serve de
+	// âncora para a janela do crash-loop guard — ver LastUpdateFailure.
 	LastUpdateAttempt string `json:"last_update_attempt,omitempty"`
+
+	// LastUpdateFailure é o ISO 8601 (UTC) da última FALHA de auto-update.
+	// Âncora da janela de 24h do crash-loop guard: a janela envelhece a partir
+	// daqui (não de LastUpdateAttempt, que o throttle renova todo dia). Sem este
+	// campo a janela nunca expirava → brick permanente após 3 falhas. Zera junto
+	// com UpdateFailCount ao primeiro update sem falha.
+	LastUpdateFailure string `json:"last_update_failure,omitempty"`
 }
 
 // stateDir retorna o diretório onde state.json é lido/gravado. É uma variável
