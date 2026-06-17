@@ -4,6 +4,33 @@ Narrativa das entregas do módulo tintométrico (`/tintometrico/*`, account `obe
 
 ---
 
+## Conector `sayersync` em loop — re-envio de 485k fórmulas/ciclo → detecção por hash de conteúdo (2026-06-16, [PR #914](https://github.com/LucasSardenbergL/afiacao/pull/914))
+
+### Problema
+O conector Go (`connector/sayersync/`, binário no balcão, FORA do Lovable) re-enviava TODAS as ~485k fórmulas a cada ciclo: 398+ runs/hora, `tint_staging_formulas` com 3,3M+ linhas, escalando 1.227→6.195 runs/dia.
+
+### Diagnóstico (código + dados de prod via psql-ro)
+A tabela FORMULA do SayerSystem tem `data_atualizacao` SEMPRE NULL. A query delta (`pg.go ExtractDelta`) é `WHERE da > $1 OR da IS NULL` → o `OR IS NULL` traz tudo; `advanceHWM` (`sync.go`) faz `if maxDA.IsZero() { return }` → HWM nunca avança → full-scan + full-resend a cada ciclo. Confirmado nos dados: runs `formulas` a cada ~7s sempre com 1000 inserts; `catalogs` (entidades pequenas) com `total_records=0` → **as pequenas têm data preenchida e seguem com delta por timestamp; só FORMULA precisa de outro mecanismo.** A fórmula só tem campos de conteúdo (sem timestamp/versão), então a detecção tem de ser por CONTEÚDO.
+
+### Fix (TDD + Codex)
+`connector/sayersync/hashcache.go` (novo): hash estável do payload canônico que `mapFormula` produz (cor/base/embalagem/produto/volume + itens ORDENADOS), encoding **length-prefixed (injetivo)**, floats **quantizados a 4 casas** (absorve ruído float32 — `qtd_ml 5.159999847412109` visto no staging), presença ≠ ausência de campo opcional. Cache em `hashes.json` ao lado do exe (atômico, no-op quando nada muda, backup `.corrupt`). `syncFormulas` envia só hash novo/alterado; cacheia o lote **só se a edge aceitou TODOS os itens** (lote com erro não cacheia e **não avança o HWM** — re-tenta); poda chaves removidas no full-scan (inclusive extração vazia), namespaced por `personalizada`. Deleção inalterada (keys-snapshot diário). Cross-compila `GOOS=windows` sem CGO (v0.2.0).
+
+### Verificação
+- 28 testes Go novos cobrindo: hash estável/ordem-invariante/quantização/injetividade; persistência + corrupção; integração (não-reenvia/só-mudada/lote-com-erro-não-cacheia-nem-avança-HWM-e-falha/poda inclusive vazia/delta-com-HWM-não-filtra/sem-ok:true-não-cacheia). Falsificação (sabotar → exigir vermelho) confirmou que pegam os bugs-alvo.
+- Codex review do diff (1 consult no design + 6 passadas no diff): **6 P1 + 4 P2** achados e corrigidos, cada um com teste TDD — `Index` ausente=0 mal-interpretado, `Errors` sem `ErrorCount`, erro de item silencioso (agora falha o ciclo), delete+recreate em fonte com HWM (hash-filter só em full-scan), durabilidade poda↔snapshot (persiste o cache antes de deletar no servidor), cachear sem `ok:true`; injetividade (hash e chave via length-prefix), poda em extração vazia, HWM avançando após erro.
+- Pós-deploy (pendente): 1 full sync inicial popula `hashes.json`; depois deltas ~0; queda de runs/hora em `tint_sync_runs`.
+
+### Lições (reutilizáveis)
+1. **Delta por timestamp morre quando a fonte não preenche a data** — `advanceHWM` com `maxDA` zero nunca progride → full-resend silencioso. Fonte sem timestamp/versão ⇒ detecção por HASH DE CONTEÚDO.
+2. **Hash money-path-adjacent: precisão > recall = zero falso-negativo.** Encoding length-prefixed (separador é forjável: bytes de controle no texto), quantização de float documentada como invariante de domínio, presença ≠ ausência, e **nunca cachear o que a edge não confirmou** (Index pode vir ausente=0 → falhar fechado no lote inteiro + não avançar o HWM).
+3. **2xx da edge = "staged", não "promovido".** O cache espelha o staging → **purgar o staging exige apagar o `hashes.json` no balcão** (senão o re-scan acha que já enviou tudo).
+4. **Conector é binário Go fora do Lovable** — recompila/redeploya à parte (reinstalação manual no balcão). Achado: o auto-update (`update.go`) está sem call-site em `RunCycle` e o bucket de releases retorna 404 (dívida separada).
+
+### Coordenação
+Nenhum outro worktree/PR tocava `connector/sayersync/`. Promoção `tint_promote_sync_run` e reconciliação intocadas (fase seguinte: purge do staging → re-scan limpo → reconciliação → flip `shadow_mode`→`automatic_primary`).
+
+---
+
 ## Vínculo `tint_skus` ↔ Omie — resgate de 62 cores que somem do seletor (2026-06-15, [PR #870](https://github.com/LucasSardenbergL/afiacao/pull/870))
 
 ### Problema
