@@ -117,6 +117,9 @@ func main() {
 	case "discovery":
 		cmdDiscovery()
 
+	case "rollback":
+		cmdRollback()
+
 	default:
 		fmt.Fprintf(os.Stderr, "Subcomando desconhecido: %q\n\n", cmd)
 		printUsage()
@@ -135,6 +138,7 @@ Comandos:
   run        Entry-point do serviço (chamado pelo Windows SCM)
   once       Executar 1 ciclo de sync no console (teste/debug)
   discovery  Despejar o schema do SayerSystem em sayersystem-schema.txt
+  rollback   Restaurar o binário anterior (uso interno: SCM run_command de recovery)
   version    Mostrar a versão do binário
 `, Version)
 }
@@ -224,6 +228,25 @@ func cmdInstall() {
 		fmt.Fprintf(os.Stderr, "ERRO ao instalar serviço: %v\n", instErr)
 		os.Exit(1)
 	}
+
+	// Configura a rede de recuperação de crash-loop de BOOT: recovery-copy estável +
+	// failure actions [restart, restart, run_command → rollback]. Sem isso o
+	// auto-update não tem rollback automático. (Codex F2/F5)
+	if exePath, exeErr := executablePath(); exeErr != nil {
+		fmt.Fprintf(os.Stderr, "AVISO: não resolvi o caminho do exe para configurar recovery: %v\n", exeErr)
+	} else {
+		// install é deliberado: FORÇA o refresh do ator do rollback (mesmo se já
+		// existe) para um balcão com recovery-copy velha/bugada poder atualizá-la
+		// re-rodando install. O repair automático (start/pre-update) preserva. (Codex P1)
+		if refErr := refreshRecoveryCopy(exePath); refErr != nil {
+			fmt.Fprintf(os.Stderr, "AVISO: não atualizei a recovery-copy: %v\n", refErr)
+		}
+		if recErr := configureServiceRecovery(exePath); recErr != nil {
+			fmt.Fprintf(os.Stderr, "AVISO: não configurei as ações de recovery do serviço: %v\n", recErr)
+			fmt.Fprintln(os.Stderr, "       O auto-update fica SEM rollback automático até isso ser corrigido (re-rodar install).")
+		}
+	}
+
 	if err := s.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "AVISO: serviço instalado mas não iniciou: %v\n", err)
 		fmt.Fprintln(os.Stderr, "       Rode 'sayersync.exe once' para ver o erro no console.")
@@ -281,6 +304,13 @@ func cmdRun() {
 	if err != nil {
 		logger.Errorf("Falha ao criar serviço: %v", err)
 		os.Exit(1)
+	}
+
+	// Self-heal (Codex F5): instalações antigas ou edições manuais podem não ter as
+	// ações de recovery OU a recovery-copy. ensureRecoveryConfigured checa AMBOS
+	// (actions + ator do rollback) e repara; loga sem bloquear o start.
+	if err := ensureRecoveryConfigured(); err != nil {
+		logger.Warnf("recovery: rede de recuperação incompleta no start: %v", err)
 	}
 
 	if err := s.Run(); err != nil {
@@ -348,12 +378,34 @@ func cmdDiscovery() {
 }
 
 // ──────────────────────────────────────────────
+// rollback (ATOR EXTERNO de recovery — via SCM run_command)
+// ──────────────────────────────────────────────
+
+// cmdRollback é o ator externo do recovery de crash-loop de BOOT: o SCM o dispara
+// (SC_ACTION_RUN_COMMAND) a partir da recovery-copy estável quando o binário novo
+// crash-loopa no boot. Restaura o .prev, quarentena a versão ruim e reinicia o
+// serviço. Recebe o exe-alvo via --target — a recovery-copy roda de OUTRO caminho,
+// então NÃO pode derivar o alvo de os.Executable. (Codex F2)
+func cmdRollback() {
+	target := parseTargetFlag(os.Args)
+	if target == "" {
+		fmt.Fprintln(os.Stderr, "ERRO: rollback requer --target <caminho absoluto do sayersync.exe>")
+		os.Exit(1)
+	}
+	if err := doRollback(target); err != nil {
+		logger.Errorf("rollback falhou: %v", err)
+		os.Exit(1)
+	}
+	fmt.Println("Rollback concluído.")
+}
+
+// ──────────────────────────────────────────────
 // svcConfig — configuração do serviço Windows
 // ──────────────────────────────────────────────
 
 func svcConfig(_ *Config) *service.Config {
 	return &service.Config{
-		Name:        "SayerSync",
+		Name:        serviceName, // = "SayerSync"; casa com as syscalls de recovery
 		DisplayName: "SayerSync — Colacor Tintométrico",
 		Description: "Sincroniza formulas e precos do SayerSystem com o app Colacor.",
 		// O SCM do Windows executa o binário com ESTES argumentos. Sem o "run",

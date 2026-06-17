@@ -48,6 +48,20 @@ type State struct {
 	// campo a janela nunca expirava → brick permanente após 3 falhas. Zera junto
 	// com UpdateFailCount ao primeiro update sem falha.
 	LastUpdateFailure string `json:"last_update_failure,omitempty"`
+
+	// PendingUpdateVersion é a versão que o auto-update acabou de instalar e vai
+	// ativar via restart (gravada ANTES do os.Exit 90). Se o binário novo entra
+	// em crash-loop de BOOT, o rollback externo (sayersync-recovery.exe) lê este
+	// campo para saber QUAL versão quarentenar. Sobrescrita a cada install; só é
+	// lida no rollback. (Codex F2)
+	PendingUpdateVersion string `json:"pending_update_version,omitempty"`
+
+	// QuarantinedVersion é a versão que causou um rollback (binário ruim). doUpdate
+	// PULA esta versão no manifesto até o manifesto publicar OUTRA — senão, após o
+	// rollback, o binário restaurado reinstalaria o mesmo manifesto ruim no dia
+	// seguinte (brick DIÁRIO em vez de permanente). Limpa quando uma versão
+	// diferente é instalada. (Codex F2)
+	QuarantinedVersion string `json:"quarantined_version,omitempty"`
 }
 
 // stateDir retorna o diretório onde state.json é lido/gravado. É uma variável
