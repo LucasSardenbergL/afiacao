@@ -16,7 +16,8 @@
 | Brainstorm | `brainstorming` (superpowers) | |
 | Task Supabase (DB/Auth/Edge/RLS) | `supabase` (oficial) — SQL/RLS idiomático | |
 | Mudança de banco sob Lovable | **`lovable-db-operator`** — migration + bloco SQL Editor + validação + audit | design com `supabase`, entrega com este |
-| BI executivo / número de negócio via Lovable (brief da semana, vendas/estoque/inadimplência/margem) | **`bi-colacor`** (proprietária) — SQL read-only versionado p/ colar no Lovable→SQL Editor → interpreta → decisão; conhece as 4 grafias de empresa + confiabilidade do dado | leitura (≠ `lovable-db-operator`, que escreve); não `data:*`/`finance:*` (text-to-SQL sem nosso schema) |
+| BI executivo / número de negócio via Lovable (brief da semana, vendas/estoque/inadimplência/margem) | **`bi-colacor`** (proprietária) — SQL read-only versionado p/ colar no Lovable→SQL Editor → interpreta → decisão; conhece as 4 grafias de empresa + confiabilidade do dado | leitura (≠ `lovable-db-operator`, que escreve); não `data:*`/`finance:*` (text-to-SQL sem nosso schema). Fechamento profundo (NCG/DRE-regime/tributário/contador) → `cfo-colacor` |
+| Ritual de fechamento financeiro mensal / controladoria (NCG, DRE caixa-vs-competência, carga tributária por regime, projeção 13 semanas, perguntas pro contador) | **`cfo-colacor`** (proprietária) — SQL read-only p/ Lovable, ritual de 9 levas + relatório mensal + perguntas pro contador; **NÃO** apura imposto nem substitui contador | sobrepõe `bi-colacor` em inadimplência/caixa: número rápido/brief semanal → `bi-colacor`; fechamento profundo → esta. **Schema financeiro canônico mora na `bi-colacor`** (esta referencia, não duplica) |
 | Otimizar query/schema PG | `supabase-postgres-best-practices` | |
 | Provar SQL money-path | **`prove-sql-money-path`** (PG17 falsificável) | |
 | Diagnosticar sync/cron | **`diagnose-supabase-sync`** (8 passos + queries `psql-ro`) | |
