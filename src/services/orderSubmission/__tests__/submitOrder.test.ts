@@ -33,6 +33,10 @@ interface MakeSupabaseOpts {
   insertError?: unknown;
   insertId?: string;
   invokeImpl?: (body: { action?: string }) => { data?: unknown; error?: unknown };
+  /** Ids de omie_products que o preflight de vendabilidade deve ver como inativos. */
+  produtosInativos?: string[];
+  /** Força erro na query do preflight de vendabilidade (fail-closed). */
+  preflightError?: unknown;
 }
 function makeSupabase(opts: MakeSupabaseOpts = {}) {
   // ── caminho do INSERT: .from('sales_orders').insert().select('id').single() ──
@@ -52,7 +56,24 @@ function makeSupabase(opts: MakeSupabaseOpts = {}) {
   // .select() é polimórfico: com args (lookup) usa a cadeia .eq().eq().maybeSingle();
   // após .insert() (sem args, ou só 'id') usa .single(). Diferenciamos pelo callsite:
   // o lookup chama from().select(...) direto; o insert chama from().insert().select().single().
-  const from = vi.fn().mockReturnValue({ insert, select: lookupSelect });
+  // ── caminho do PREFLIGHT de vendabilidade: .from('omie_products')
+  //    .select('id, ativo').in('id', ids). Default: todos os ids do carrinho ATIVOS
+  //    (preflight passa) — só `produtosInativos` marca inativo. ──
+  const inativosSet = new Set(opts.produtosInativos ?? []);
+  const from = vi.fn().mockImplementation((table: string) => {
+    if (table === 'omie_products') {
+      return {
+        select: () => ({
+          in: (_col: string, ids: string[]) =>
+            Promise.resolve({
+              data: opts.preflightError ? null : ids.map((id) => ({ id, ativo: !inativosSet.has(id) })),
+              error: opts.preflightError ?? null,
+            }),
+        }),
+      };
+    }
+    return { insert, select: lookupSelect };
+  });
   const invoke = vi.fn().mockImplementation(async (_name: string, arg: { body: { action?: string } }) =>
     opts.invokeImpl ? opts.invokeImpl(arg.body) : { data: { omie_numero_pedido: '999' }, error: null },
   );
@@ -150,6 +171,21 @@ describe('submitOrder', () => {
     expect(r.errors[0].step).toBe('validate_identity');
     expect(r.errors[0].message).toContain('Colacor');
     // Invariante: não insere NADA (nem o Oben válido) nem chama o Omie — não enviar pela metade.
+    expect(insert).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('produto INATIVO no carrinho → bloqueia (validate_vendabilidade) antes de qualquer insert/Omie', async () => {
+    const { client, insert, invoke } = makeSupabase({ produtosInativos: ['p1'] });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] }, // obenItem → id 'p1'
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_vendabilidade');
+    expect(r.errors[0].message).toContain('C1'); // código do obenItem aparece na mensagem
+    // Invariante money-path: não registra NADA local nem cria PV no ERP.
     expect(insert).not.toHaveBeenCalled();
     expect(invoke).not.toHaveBeenCalled();
   });
@@ -303,5 +339,46 @@ describe('submitOrder', () => {
     const body = (colacorPedido![1] as { body: { codigo_cliente?: number; codigo_vendedor?: number } }).body;
     expect(body.codigo_cliente).toBe(200);   // colacor, não 100 (oben)
     expect(body.codigo_vendedor).toBe(6);    // colacor, não 5 (oben)
+  });
+
+  it('produto com preço 0 → bloqueia (validate_price) ANTES de qualquer insert/Omie', async () => {
+    const { client, insert, invoke } = makeSupabase();
+    const zerado = { ...obenItem(), unit_price: 0 } as ProductCartItem;
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [zerado], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 0, colacor: 0, service: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_price');
+    // Invariante money-path: nada é inserido nem enviado ao Omie com valor zerado.
+    expect(insert).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('preço negativo numa conta bloqueia o pedido INTEIRO (fail-closed, não envia a metade)', async () => {
+    const { client, insert, invoke } = makeSupabase();
+    const negativo = { ...colacorAcabado(), unit_price: -1 } as ProductCartItem;
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [negativo], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_price');
+    expect(insert).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('serviço de afiação a R$0 ("a orçar") NÃO é bloqueado pelo guard de preço', async () => {
+    const { client } = makeSupabase();
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      customer: customerSintetico,
+      isCustomerMode: true,                  // só itens de afiação, preço de serviço é legítimo a 0
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      subtotals: { oben: 0, colacor: 0, service: 0 },
+    }));
+    expect(r.errors.some((e) => e.step === 'validate_price')).toBe(false);
   });
 });

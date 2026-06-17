@@ -17,6 +17,8 @@ import {
 } from './helpers';
 import { buildPrintData } from './buildPrintData';
 import { ensureSalesOrderRow } from './idempotency';
+import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
+import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
 
 /**
  * Pure submitOrder function. Orchestrates:
@@ -44,6 +46,23 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       printDataList: [],
       lastOrderData: null,
       errors: [{ step: 'validate', message: 'Carrinho vazio' }],
+      allConfirmed: false,
+    };
+  }
+
+  // ── Guard money-path: nenhum item de PRODUTO pode ter preço ≤ 0 ──
+  // O input do carrinho vira 0 ao esvaziar (parseFloat||0) e o cockpit/Régua filtram
+  // preco>0, então um produto zerado fica invisível e enviaria um PV com valor zerado
+  // (prejuízo / pedido inválido no Omie). Bloqueia o pedido INTEIRO (fail-closed) antes
+  // de qualquer insert ou chamada ao ERP. Serviço de afiação fica de fora (preço 0 = "a orçar").
+  const invalidPriced = findInvalidPricedProductItems([...obenProductItems, ...colacorProductItems]);
+  if (invalidPriced.length > 0) {
+    return {
+      success: false,
+      results: [],
+      printDataList: [],
+      lastOrderData: null,
+      errors: [{ step: 'validate_price', message: invalidPriceMessage(invalidPriced) }],
       allConfirmed: false,
     };
   }
@@ -79,6 +98,25 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         allConfirmed: false,
       };
     }
+  }
+
+  // ── Preflight de vendabilidade (fail-closed) — fronteira money-path ──
+  // O filtro de catálogo (wizard/tint) é UX; a GARANTIA de não vender inativo é aqui.
+  // Rascunho restaurado e o cache de 10min do catálogo podem trazer um produto que
+  // ficou inativo no Omie DEPOIS da seleção (useCart aceita qualquer Product) →
+  // revalida `ativo` no banco antes de criar qualquer sales_order/PV. Serviços de
+  // afiação não passam (não são omie_products vendáveis).
+  const vend = await validarVendabilidade(supabase, [...obenProductItems, ...colacorProductItems]);
+  const bloqueioVend = bloqueioVendabilidade(vend);
+  if (bloqueioVend) {
+    return {
+      success: false,
+      results: [],
+      printDataList: [],
+      lastOrderData: null,
+      errors: [{ step: 'validate_vendabilidade', message: bloqueioVend }],
+      allConfirmed: false,
+    };
   }
 
   const storedAddress = formatCustomerAddress(delivery.selectedAddress, customer);

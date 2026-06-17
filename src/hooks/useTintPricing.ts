@@ -23,8 +23,11 @@ export function useTintPricing(formulaId: string | null) {
       const { data, error } = await supabase
         .rpc('get_tint_price' as never, { p_formula_id: formulaId } as never);
 
-      if (error || !data) return null;
-      return data as unknown as TintPriceBreakdown;
+      // Erro real (rede/permissão/runtime) → PROPAGA (throw): react-query expõe isError e o balcão
+      // fail-closa (sem preço) em vez de mascarar como null e cair no CSV legado — o que venderia
+      // base/corante inativo que a RPC barra. A RPC sempre devolve objeto p/ fórmula válida.
+      if (error) throw error;
+      return (data ?? null) as unknown as TintPriceBreakdown | null;
     },
   });
 }

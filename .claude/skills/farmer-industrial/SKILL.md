@@ -86,9 +86,11 @@ normalizadas (minúsculas, sem acento, hífen→espaço). O usuário roda no Lov
 resultado. Você recebe, por cliente (consolidado por CNPJ): cidade, última compra, intervalo
 médio, gasto recente vs. histórico, `tier_queda` já calculado e os produtos comprados.
 - **CNPJs do mesmo cliente** (sucessão: encerrou um e abriu outro; ou multi-CNPJ ativo: fatura por
-  vários ao mesmo tempo): opcional e **confirm-first**. Tem armadilha de métrica séria (juntar
-  pedidos de CNPJs paralelos esconde queda) — **leia `references/unificacao-cnpj.md`** antes de
-  unir. Nunca una sem o dono confirmar. Até lá, o default por-CNPJ é o que roda (seguro).
+  vários ao mesmo tempo): o dono confirma os grupos na tela **Gestão → Grupos de Cliente**
+  (`cliente_grupos`), e a query da carteira (§2) **já consolida por grupo** no `cliente_key` — o
+  dono com vários CNPJs vira **1 entrada** (a Farmer não liga 2x). Atenção à armadilha de métrica
+  (intervalo pooled esconde um CNPJ parado num grupo ativo) — **leia `references/unificacao-cnpj.md`**;
+  pra grupo, olhe a recência **por documento** também. Sem grupo confirmado, consolida por CNPJ (seguro).
 
 ### Passo 3 — Mapear cidade → dia de rota
 Para cada cliente, ache o **dia da semana** pela cidade dele, usando o calendário de

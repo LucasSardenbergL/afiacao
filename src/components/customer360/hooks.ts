@@ -90,7 +90,7 @@ export function useCustomerPreferredItems(customerId: string | undefined) {
       if (!link?.omie_codigo_cliente) return [];
       const { data } = await supabase
         .from('customer_preferred_items')
-        .select('product_codigo, product_descricao, familia, order_count, last_ordered_at, account')
+        .select('product_codigo, product_descricao, familia, order_count, last_ordered_at, account, omie_codigo_produto')
         .eq('omie_codigo_cliente', link.omie_codigo_cliente)
         .order('last_ordered_at', { ascending: false, nullsFirst: false })
         .limit(10);

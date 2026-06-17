@@ -153,7 +153,7 @@ const SalesProducts = () => {
           </button>
           <div>
             <h1 className="text-lg font-semibold">Catálogo</h1>
-            <p className="text-xs text-muted-foreground">Produtos disponíveis para venda</p>
+            <p className="text-xs text-muted-foreground">Catálogo de produtos (inclui inativos)</p>
           </div>
         </div>
         <div className="flex gap-1">

@@ -45,17 +45,21 @@ interface UseProductCatalogOptions {
 }
 
 /**
- * Helper: busca produtos de uma conta com os filtros de família já aplicados.
+ * Helper: busca produtos VENDÁVEIS de uma conta (ativo=true + filtros de família).
  */
 async function fetchProductsForAccount(account: ProductAccount): Promise<Product[]> {
   // Pagina o catálogo inteiro: sem isto o PostgREST devolve só as 1000 primeiras
   // descrições (cap default) e ~65% do catálogo OBEN fica invisível pra venda.
   // `error` é propagado (não engolido) para nunca publicar catálogo parcial.
   return paginateAll(async (from, to) => {
+    // `.eq('ativo', true)`: produto desativado no Omie NÃO é vendável (money-path).
+    // `ativo` é NOT NULL DEFAULT true → filtro seguro (sem NULL-blindness). Combina
+    // com o `.or(familia…)` por AND: account=X AND ativo=true AND (familia…).
     const baseQuery = supabase
       .from('omie_products')
       .select(PRODUCT_COLUMNS)
-      .eq('account', account);
+      .eq('account', account)
+      .eq('ativo', true);
     const { data, error } = await buildExclusionQuery(baseQuery)
       .order('descricao')
       .order('id')
@@ -70,6 +74,11 @@ async function fetchProductsForAccount(account: ProductAccount): Promise<Product
  * via edge function e re-busca (1ª vez numa instalação nova). Vazio PÓS-sync
  * LANÇA — não cachear catálogo vazio como sucesso (a query fica em erro e o
  * próximo mount re-tenta, como a versão useState fazia por remount).
+ *
+ * Nota (filtro ativo): com `.eq('ativo', true)`, "zero vendáveis" e "catálogo local
+ * vazio" ficam indistinguíveis aqui — uma conta com produtos mas ZERO ativos
+ * dispararia o sync à toa. Aceitável: em produção toda conta tem ativos (OBEN ~878,
+ * Colacor ~1689). Distinguir (count sem filtro) é follow-up se isso mudar.
  */
 async function loadCatalogWithColdStart(account: ProductAccount): Promise<Product[]> {
   let products = await fetchProductsForAccount(account);

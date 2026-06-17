@@ -680,6 +680,90 @@ export type Database = {
         }
         Relationships: []
       }
+      cliente_grupo_membros: {
+        Row: {
+          confirmed_at: string | null
+          confirmed_by: string | null
+          created_at: string
+          documento: string
+          grupo_id: string
+          id: string
+          note: string | null
+          relation_type: string
+          valid_from: string | null
+          valid_to: string | null
+        }
+        Insert: {
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          created_at?: string
+          documento: string
+          grupo_id: string
+          id?: string
+          note?: string | null
+          relation_type?: string
+          valid_from?: string | null
+          valid_to?: string | null
+        }
+        Update: {
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          created_at?: string
+          documento?: string
+          grupo_id?: string
+          id?: string
+          note?: string | null
+          relation_type?: string
+          valid_from?: string | null
+          valid_to?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cliente_grupo_membros_grupo_id_fkey"
+            columns: ["grupo_id"]
+            isOneToOne: false
+            referencedRelation: "cliente_grupos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cliente_grupo_membros_grupo_id_fkey"
+            columns: ["grupo_id"]
+            isOneToOne: false
+            referencedRelation: "v_grupo_contas_receber"
+            referencedColumns: ["grupo_id"]
+          },
+        ]
+      }
+      cliente_grupos: {
+        Row: {
+          ativo: boolean
+          created_at: string
+          created_by: string | null
+          id: string
+          nome: string
+          notas: string | null
+          updated_at: string
+        }
+        Insert: {
+          ativo?: boolean
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          nome: string
+          notas?: string | null
+          updated_at?: string
+        }
+        Update: {
+          ativo?: boolean
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          nome?: string
+          notas?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       cmc_ledger: {
         Row: {
           account: string
@@ -9357,6 +9441,90 @@ export type Database = {
         }
         Relationships: []
       }
+      regua_preco_log: {
+        Row: {
+          account: string
+          aliquota_usada: number | null
+          aplicou: boolean | null
+          cap_limitou: boolean | null
+          cmc_confianca: string | null
+          cmc_usado: number | null
+          confianca: string
+          created_at: string
+          customer_user_id: string
+          evidence_version: string
+          id: string
+          observed_gap_pct: number | null
+          outcome_at: string | null
+          outcome_status: string | null
+          piso_mc: number | null
+          preco_atual: number
+          preco_final: number | null
+          preco_referencia: number | null
+          product_id: string
+          quantity: number | null
+          reason_codes: string[] | null
+          sales_order_id: string | null
+          salesperson_id: string | null
+          sinal_exibido: string
+          suggested_gap_pct: number | null
+        }
+        Insert: {
+          account: string
+          aliquota_usada?: number | null
+          aplicou?: boolean | null
+          cap_limitou?: boolean | null
+          cmc_confianca?: string | null
+          cmc_usado?: number | null
+          confianca: string
+          created_at?: string
+          customer_user_id: string
+          evidence_version?: string
+          id?: string
+          observed_gap_pct?: number | null
+          outcome_at?: string | null
+          outcome_status?: string | null
+          piso_mc?: number | null
+          preco_atual: number
+          preco_final?: number | null
+          preco_referencia?: number | null
+          product_id: string
+          quantity?: number | null
+          reason_codes?: string[] | null
+          sales_order_id?: string | null
+          salesperson_id?: string | null
+          sinal_exibido: string
+          suggested_gap_pct?: number | null
+        }
+        Update: {
+          account?: string
+          aliquota_usada?: number | null
+          aplicou?: boolean | null
+          cap_limitou?: boolean | null
+          cmc_confianca?: string | null
+          cmc_usado?: number | null
+          confianca?: string
+          created_at?: string
+          customer_user_id?: string
+          evidence_version?: string
+          id?: string
+          observed_gap_pct?: number | null
+          outcome_at?: string | null
+          outcome_status?: string | null
+          piso_mc?: number | null
+          preco_atual?: number
+          preco_final?: number | null
+          preco_referencia?: number | null
+          product_id?: string
+          quantity?: number | null
+          reason_codes?: string[] | null
+          sales_order_id?: string | null
+          salesperson_id?: string | null
+          sinal_exibido?: string
+          suggested_gap_pct?: number | null
+        }
+        Relationships: []
+      }
       reposicao_alerta_pedido_minimo: {
         Row: {
           alertado_em: string
@@ -14310,6 +14478,106 @@ export type Database = {
         }
         Relationships: []
       }
+      v_grupo_comercial: {
+        Row: {
+          dias_desde_ultima: number | null
+          documentos_com_compra: number | null
+          fat_90d: number | null
+          fat_90d_anterior: number | null
+          faturamento_total: number | null
+          grupo_id: string | null
+          media_mensal_6m: number | null
+          qtd_pedidos: number | null
+          ultima_compra: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cliente_grupo_membros_grupo_id_fkey"
+            columns: ["grupo_id"]
+            isOneToOne: false
+            referencedRelation: "cliente_grupos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cliente_grupo_membros_grupo_id_fkey"
+            columns: ["grupo_id"]
+            isOneToOne: false
+            referencedRelation: "v_grupo_contas_receber"
+            referencedColumns: ["grupo_id"]
+          },
+        ]
+      }
+      v_grupo_contas_receber: {
+        Row: {
+          a_vencer: number | null
+          documentos_com_titulo: number | null
+          grupo_id: string | null
+          nome: string | null
+          total_aberto: number | null
+          venc_1_30: number | null
+          venc_31_60: number | null
+          venc_61_90: number | null
+          venc_90_mais: number | null
+        }
+        Relationships: []
+      }
+      v_grupo_contas_receber_por_doc: {
+        Row: {
+          company: string | null
+          documento: string | null
+          grupo_id: string | null
+          nome_cliente: string | null
+          total_aberto: number | null
+          vencido: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cliente_grupo_membros_grupo_id_fkey"
+            columns: ["grupo_id"]
+            isOneToOne: false
+            referencedRelation: "cliente_grupos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cliente_grupo_membros_grupo_id_fkey"
+            columns: ["grupo_id"]
+            isOneToOne: false
+            referencedRelation: "v_grupo_contas_receber"
+            referencedColumns: ["grupo_id"]
+          },
+        ]
+      }
+      v_grupo_contatos: {
+        Row: {
+          cidade: string | null
+          documento: string | null
+          email: string | null
+          empresa_omie: string | null
+          endereco: string | null
+          grupo_id: string | null
+          nome: string | null
+          omie_codigo_vendedor: number | null
+          phone: string | null
+          uf: string | null
+          user_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cliente_grupo_membros_grupo_id_fkey"
+            columns: ["grupo_id"]
+            isOneToOne: false
+            referencedRelation: "cliente_grupos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cliente_grupo_membros_grupo_id_fkey"
+            columns: ["grupo_id"]
+            isOneToOne: false
+            referencedRelation: "v_grupo_contas_receber"
+            referencedColumns: ["grupo_id"]
+          },
+        ]
+      }
       v_leadtime_por_grupo: {
         Row: {
           empresa: Database["public"]["Enums"]["empresa_reposicao"] | null
@@ -15716,6 +15984,14 @@ export type Database = {
       get_minha_positivacao: { Args: never; Returns: Json }
       get_minha_positivacao_for: { Args: { p_target: string }; Returns: Json }
       get_preco_cockpit: { Args: { p_itens: Json }; Returns: Json }
+      get_regua_preco: {
+        Args: { p_customer: string; p_product: string; p_qty: number }
+        Returns: Json
+      }
+      get_regua_preco_customer360: {
+        Args: { p_customer: string; p_omie_codigos: number[] }
+        Returns: Json
+      }
       get_sku_ranking_negociacao_paralela: {
         Args: { p_empresa?: string }
         Returns: unknown[]

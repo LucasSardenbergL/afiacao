@@ -95,8 +95,15 @@ with pedidos as (
 cli as (   -- enriquece cada pedido com CNPJ (chave do cliente) + cidade do comprador
   select ped.*,
          p.name, p.customer_type, p.cnae,
-         coalesce(nullif(regexp_replace(coalesce(p.cnpj, p.document, ''), '\D','','g'),''),
-                  ped.customer_user_id::text) as cliente_key,
+         -- cliente_key consolida por GRUPO quando o documento está num cliente_grupo_membros
+         -- (dono com vários CNPJs = 1 entrada, não liga 2x); senão por CNPJ; senão por user_id.
+         -- Requer as tabelas do Grupo 360 (cliente_grupos/_membros). ⚙️ se não existirem, remova o 1º coalesce.
+         coalesce(
+           (select 'grupo:'||cgm.grupo_id::text from cliente_grupo_membros cgm
+             where cgm.documento = nullif(regexp_replace(coalesce(p.cnpj, p.document, ''),'\D','','g'),'')),
+           nullif(regexp_replace(coalesce(p.cnpj, p.document, ''), '\D','','g'),''),
+           ped.customer_user_id::text
+         ) as cliente_key,
          initcap(trim(regexp_replace(a.city, '\s*\([^)]*\)\s*$',''))) as cidade,
          upper(trim(a.state)) as uf,
          lower(translate(regexp_replace(trim(a.city), '\s*\([^)]*\)\s*$',''),
@@ -162,8 +169,16 @@ order by case tier_queda when 'critico' then 0 when 'alerta' then 1 when 'em_dia
 Notas:
 - Rode **um dia de rota por vez** (4–6 cidades no `in`) ou a semana inteira da Farmer. Se ficar
   lento, é aceitável — são ~6 mil pedidos.
-- **Consolidação por CNPJ** (`cliente_key`): junta os perfis Colacor+Oben do mesmo cliente, então
-  o `produtos_comprados` reflete o mix REAL entre as linhas (é onde mora o cross-sell).
+- **Consolidação por GRUPO e CNPJ** (`cliente_key`): se o documento está num grupo
+  (`cliente_grupo_membros`, criado na tela Grupos de Cliente), todos os CNPJs do dono colapsam
+  numa entrada só (`grupo:<uuid>`) — a Farmer **não liga 2x pro mesmo dono**, e o
+  `produtos_comprados` soma o mix de TODOS os documentos do grupo. Sem grupo, consolida por CNPJ.
+- ⚠️ **Cuidado de métrica em grupo (regra Codex):** o `intervalo_medio_dias` é pooled (junta os
+  pedidos do grupo) → pode encolher e **esconder um CNPJ do grupo que parou** se outro continua
+  comprando. Por isso, para clientes que são grupo (`cliente_key` começa com `grupo:`), **olhe
+  também a recência por documento** (um CNPJ sumido num grupo ativo é oportunidade de recuperação
+  que o `dias_desde_ultima` do grupo mascara). O corte absoluto `> 90d` e o `tier_queda` do grupo
+  pegam o grupo inteiro dormente; o drop por-documento dentro de grupo ativo é o caso a vigiar.
 - Clientes **sem CNPJ** caem no fallback `user_id` (não consolidam, mas aparecem). Clientes **sem
   cidade** não entram no `in (...)` — trate-os à parte (bucket "completar cadastro").
 
