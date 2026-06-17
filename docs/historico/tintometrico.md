@@ -4,6 +4,36 @@ Narrativa das entregas do módulo tintométrico (`/tintometrico/*`, account `obe
 
 ---
 
+## Conector `sayersync` — auto-update Windows-safe + crash-loop guard que expira (2026-06-17, [PR #921](https://github.com/LucasSardenbergL/afiacao/pull/921))
+
+### Problema
+O #919 ligou o auto-update do conector (`CheckAndApplyUpdate` cedo em `RunCycle`), mas **dormente** (liga só com `update_manifest_url` + bucket `releases`). Review do Codex achou 2 defeitos reais em `update.go` que os testes existentes não cobriam e que o tornariam quebrado/perigoso ao ativar.
+
+### Diagnóstico
+**P1:** `installBinary` fazia `os.Rename(.new, exe)` por cima do `.exe` em EXECUÇÃO → no Windows a imagem em uso não pode ser sobrescrita (sharing violation) → **todo update válido falhava** e só incrementava `UpdateFailCount`. **P2:** o crash-loop guard media a janela de 24h por `LastUpdateAttempt`, renovado pelo throttle diário a CADA passagem (inclusive nos dias em que o guard pula) e persistido pelo save gated `sync.go:552` (o amplificador que o Codex apontou) → `time.Since(last)` resetava pra ~0 todo dia → a janela **nunca envelhecia** → 3 falhas transitórias = updates desligados PARA SEMPRE até editar `state.json` à mão.
+
+### Fix (TDD + Codex)
+**P1:** move-aside-then-place — grava `.new`, **RENOMEIA** o exe em uso → `.prev` (Windows permite mover/renomear a imagem em uso, só não sobrescrever/apagar), move `.new` → exe; + **rollback** se o place falhar (nunca deixa o serviço sem binário no caminho). Pós-install **reinicia** (`os.Exit(90)` → SCM `OnFailure=restart`) pra ativar o novo binário — sem isso o serviço seguiria na imagem antiga e a PRÓXIMA atualização falharia ao tentar substituir o `.prev` em uso. **P2:** campo dedicado `State.LastUpdateFailure` (gravado só na falha real) ancora a janela; `LastUpdateAttempt` segue renovando só pro throttle (sem log spam). Seams `executablePath`/`renameFile`/`restartService`/`stateDir` pra testar de verdade num tmpdir.
+Hardening do **Codex challenge** (9 findings): **F1** persiste state antes do `os.Exit` (release mal-versionado — ex.: build sem ldflag → `"dev"` — não loopa mais que 1×/dia); **F8** fail-open em timestamp futuro (clock skew não pausa updates indefinido); **F6/F7** `autoUpdateEnabled` desliga update no subcomando `once` (debug não troca binário de produção nem `os.Exit` fora do SCM).
+
+### Verificação
+20 testes de update (TDD RED→GREEN), **cada invariante novo falsificado por sabotagem cirúrgica** (re-ancorar o guard em `LastUpdateAttempt` derruba o P2 unit **e** e2e; remover só o rollback derruba **só** o teste de rollback). Suíte completa `ok`, `go vet`/`gofmt` limpos, **cross-compile Windows OK** — antes e depois do rebase sobre #914. Codex challenge + consult → decisão conjunta **Path B**.
+
+### Lições (reutilizáveis)
+1. **Windows não deixa SOBRESCREVER/APAGAR a imagem do `.exe` em execução, mas deixa RENOMEAR/mover.** Self-replace de binário é sempre move-aside-then-place, nunca rename-por-cima. No teste, `os.SameFile` distingue MOVE de cópia (o estado final no disco é igual no Unix — só a identidade do arquivo prova a sequência).
+2. **Sinal de "janela de tempo" não pode ancorar num timestamp que outro mecanismo renova** (aqui o throttle diário) — senão a janela nunca envelhece. Campo dedicado, 1 writer, ancorado no EVENTO real (a falha), não na tentativa.
+3. **Serviço que se auto-atualiza:** `os.Exit(non-zero)` + recovery `OnFailure=restart` do SCM é o caminho pro relançamento — mas o crash-loop guard do *updater* NÃO pega binário que instala (sha ok) e quebra no BOOT. Rollback de boot-crash exige ator EXTERNO ao binário (recovery do SCM com ação de rollback, ou launcher). **Handshake in-binary é falsa confiança** (o código de rollback não roda se o crash for antes dele — init/main/LoadConfig).
+4. **`os.Exit` pula `defer`/SaveState** → persistir o state ANTES de sair (senão o throttle volta pra ontem e um mis-version vira loop install→restart).
+5. **Debug (`once`) não deve auto-atualizar produção** (troca de binário + `os.Exit` fora do SCM + corrida de arquivos com o serviço).
+
+### Limite conhecido / pendência (gate de ativação)
+**F2** (binário sha-válido que quebra no boot → loop do SCM sem rollback) documentado no `connector/README.md` como gate. Fix robusto deferido p/ esforço dedicado de Windows: recovery do SCM com rollback **ou** launcher externo + `restorePrev` rename-based (F3) + verificar `OnFailure=restart` antes de atualizar (F5). F4 (power-loss entre os 2 renames) e F9 (assinar releases) anotados como limites menores. **Ativação (só founder, em Windows):** bucket `releases` + `update_manifest_url` + **testar um release deliberadamente quebrado** antes de confiar.
+
+### Coordenação
+Rebaseado sobre #914 (hashcache) — arquivos disjuntos, zero conflito; **não toca** `hashcache.go` nem `sync.go`. Fecha a dívida que a Lição #4 do #914 apontou (auto-update sem call-site): o call-site entrou no #919, este PR conserta o install/guard.
+
+---
+
 ## Conector `sayersync` em loop — re-envio de 485k fórmulas/ciclo → detecção por hash de conteúdo (2026-06-16, [PR #914](https://github.com/LucasSardenbergL/afiacao/pull/914))
 
 ### Problema
