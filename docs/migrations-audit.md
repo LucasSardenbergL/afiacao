@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **255** custom migrations totais
+- **256** custom migrations totais
 - **929** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 264
@@ -2206,6 +2206,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.sinal_classe_config_select_staff` | `sinal_classe_config` |
 | `rls_policy` | `public.sinal_classe_config_master_all` | `sinal_classe_config` |
 | `rls_policy` | `public.sinal_classe_config_service_all` | `sinal_classe_config` |
+
+### `20260617091500_sinal_classe_config_check_classe.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos quando algo der `❌`
 
