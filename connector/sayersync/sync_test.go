@@ -810,7 +810,7 @@ func TestSyncFormulas_flat_personalizada_false(t *testing.T) {
 		maxDA: map[string]time.Time{"formula": maxDA},
 	}
 
-	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups())
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups(), newHashCache())
 	if err != nil {
 		t.Fatalf("syncFormulas flat falhou: %v", err)
 	}
@@ -871,7 +871,7 @@ func TestSyncFormulas_flat_personalizada_true(t *testing.T) {
 		maxDA: map[string]time.Time{"formulaperson": maxDA},
 	}
 
-	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, true, newLookups())
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, true, newLookups(), newHashCache())
 	if err != nil {
 		t.Fatalf("syncFormulas personalizada falhou: %v", err)
 	}
@@ -898,7 +898,7 @@ func TestSyncFormulas_entityNotInMapping(t *testing.T) {
 	rm := newFakeMapping([]string{"produto"}, FormulaShapeFlat)
 
 	ex := newFakeExtractor()
-	_ = syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups())
+	_ = syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups(), newHashCache())
 	if postCount.Load() != 0 {
 		t.Error("entidade ausente não deve fazer POST")
 	}
@@ -962,7 +962,7 @@ func TestSyncFormulas_child_joinsItemsByFormulaPK(t *testing.T) {
 		},
 	}
 
-	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups()); err != nil {
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups(), newHashCache()); err != nil {
 		t.Fatalf("syncFormulas child falhou: %v", err)
 	}
 
@@ -1031,7 +1031,7 @@ func TestSyncFormulas_child_emptyItemsWhenPKHasNoChildren(t *testing.T) {
 		childItems: map[string][]map[string]any{ /* nenhum item para F500 */ },
 	}
 
-	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups()); err != nil {
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups(), newHashCache()); err != nil {
 		t.Fatalf("syncFormulas child falhou: %v", err)
 	}
 	list := srv.requests[0].Body["formulas"].([]any)
@@ -1786,7 +1786,7 @@ func TestSyncFormulas_formulaContainsNomCorAndVolume(t *testing.T) {
 	lk.CorPadrao["COR001"] = corInfo{CorID: "COR001", Nome: "Branco Neve"}
 	lk.EmbVolumeML["E01"] = 900.0
 
-	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, lk)
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, lk, newHashCache())
 	if err != nil {
 		t.Fatalf("syncFormulas falhou: %v", err)
 	}
@@ -1836,7 +1836,7 @@ func TestSyncFormulas_missingIdBaseDropped(t *testing.T) {
 		maxDA: map[string]time.Time{"formula": maxDA},
 	}
 
-	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups())
+	err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups(), newHashCache())
 	if err != nil {
 		t.Fatalf("syncFormulas falhou: %v", err)
 	}
@@ -1885,7 +1885,7 @@ func TestSyncFormulas_traduzIdCoranteDosItens(t *testing.T) {
 		maxDA: map[string]time.Time{"formula": time.Now()},
 	}
 
-	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, lk); err != nil {
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, lk, newHashCache()); err != nil {
 		t.Fatalf("syncFormulas falhou: %v", err)
 	}
 	item := srv.requests[0].Body["formulas"].([]any)[0].(map[string]any)
@@ -1926,7 +1926,7 @@ func TestSyncFormulas_liberadoFalseNaoEnviaEContaBloqueada(t *testing.T) {
 		maxDA: map[string]time.Time{"formula": time.Now()},
 	}
 
-	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups()); err != nil {
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups(), newHashCache()); err != nil {
 		t.Fatalf("syncFormulas falhou: %v", err)
 	}
 	list := srv.requests[0].Body["formulas"].([]any)
@@ -1962,7 +1962,7 @@ func TestSyncFormulas_semLookupUsaCruENaoDropa(t *testing.T) {
 		maxDA: map[string]time.Time{"formula": time.Now()},
 	}
 
-	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups()); err != nil {
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups(), newHashCache()); err != nil {
 		t.Fatalf("syncFormulas falhou: %v", err)
 	}
 	list := srv.requests[0].Body["formulas"].([]any)
@@ -2008,10 +2008,10 @@ func TestSyncFormulas_subcolecaoViaLookupSoPadrao(t *testing.T) {
 		maxDA: map[string]time.Time{"formula": time.Now(), "formulaperson": time.Now()},
 	}
 
-	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, lk); err != nil {
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, lk, newHashCache()); err != nil {
 		t.Fatalf("syncFormulas padrão falhou: %v", err)
 	}
-	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, true, lk); err != nil {
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, true, lk, newHashCache()); err != nil {
 		t.Fatalf("syncFormulas personalizada falhou: %v", err)
 	}
 
@@ -2179,7 +2179,7 @@ func TestRunEntityCycles_happyPath(t *testing.T) {
 		},
 	}
 
-	counts, failed, _, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
+	counts, failed, _, err := runEntityCycles(context.Background(), cfg, ex, rm, st, newHashCache())
 	if err != nil {
 		t.Fatalf("runEntityCycles falhou: %v", err)
 	}
@@ -2238,7 +2238,7 @@ func TestRunEntityCycles_noToken(t *testing.T) {
 	rm := newFakeMapping([]string{"produto"}, FormulaShapeFlat)
 	ex := newFakeExtractor()
 
-	_, _, _, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
+	_, _, _, err := runEntityCycles(context.Background(), cfg, ex, rm, st, newHashCache())
 	if err == nil {
 		t.Error("sem token deve retornar erro")
 	}
@@ -2262,7 +2262,7 @@ func TestRunEntityCycles_lookupsFalham_eFatal(t *testing.T) {
 	ex.rows["produto"] = []map[string]any{{"id_produto": "P1", "descricao": "Tinta"}}
 	ex.lookupsErr = errTest("pg caiu no meio")
 
-	_, _, lk, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
+	_, _, lk, err := runEntityCycles(context.Background(), cfg, ex, rm, st, newHashCache())
 	if err == nil {
 		t.Fatal("falha nos lookups deve ser erro FATAL do ciclo")
 	}
@@ -2307,7 +2307,7 @@ func TestRunEntityCycles_aggregatesPartialFailures(t *testing.T) {
 		},
 	}
 
-	counts, failed, _, err := runEntityCycles(context.Background(), cfg, ex, rm, st)
+	counts, failed, _, err := runEntityCycles(context.Background(), cfg, ex, rm, st, newHashCache())
 	if err != nil {
 		t.Fatalf("erro fatal inesperado: %v", err)
 	}

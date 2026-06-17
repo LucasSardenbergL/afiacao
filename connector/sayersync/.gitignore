@@ -6,4 +6,7 @@ config.json
 config.json.tmp
 state.json
 state.json.tmp
+hashes.json
+hashes.json.tmp
+hashes.json.corrupt
 sayersystem-schema.txt

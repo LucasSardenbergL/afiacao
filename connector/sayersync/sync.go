@@ -542,6 +542,14 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 		st = &State{HWM: make(map[string]string)}
 	}
 
+	// Carrega o cache de hashes de conteúdo das fórmulas (mata o loop de re-envio:
+	// a FORMULA tem data NULL → HWM travado → sem isto re-enviava 485k/ciclo).
+	hc, hcErr := LoadHashCache()
+	if hcErr != nil {
+		logger.Errorf("RunCycle: falha ao carregar hash-cache: %v — seguindo com cache vazio (full resend)", hcErr)
+		hc = newHashCache()
+	}
+
 	// Conecta ao PG.
 	db, err := Connect(ctx, cfg.PGConn)
 	if err != nil {
@@ -600,16 +608,34 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 
 	// Executa ciclo de sync por entidade. `failed` lista as entidades que erraram (F7).
 	// lk são os lookups de identidade carregados 1× pelo ciclo (nil em falha fatal).
-	counts, failed, lk, fatalErr := runEntityCycles(ctx, cfg, ex, rm, st)
+	counts, failed, lk, fatalErr := runEntityCycles(ctx, cfg, ex, rm, st, hc)
 	if fatalErr != nil {
 		// Erro fatal (ex: sem token, lookups indisponíveis) — não dá pra sincronizar nada.
 		logger.Errorf("RunCycle: erro fatal no ciclo de entidades: %v", fatalErr)
 		failed = append(failed, "fatal")
 	}
 
+	// Persiste o hash-cache ANTES do keys-snapshot (Codex review 5ª passada): a poda
+	// das chaves sumidas tem que estar DURÁVEL em disco antes de o servidor deletar
+	// essas fórmulas (via snapshot). Senão um crash entre o snapshot e o save deixaria
+	// um hash órfão no hashes.json que pularia a fórmula se ela voltasse idêntica —
+	// catálogo stale. Se o save falha, NÃO envia o snapshot (não deleta no servidor
+	// com o cache dessincronizado). No-op quando nada mudou.
+	hashCacheSaved := true
+	if hcSaveErr := SaveHashCache(hc); hcSaveErr != nil {
+		logger.Errorf("RunCycle: falha ao salvar hash-cache: %v", hcSaveErr)
+		failed = append(failed, "hash_cache")
+		hashCacheSaved = false
+	}
+
 	// Keys-snapshot diário. Falha aqui também conta como falha de ciclo (F7).
 	if shouldKeysSnapshot(st, originNow) {
-		if lk == nil {
+		if !hashCacheSaved {
+			// Cache não persistiu → não deletar no servidor (a poda pode estar só em
+			// memória; re-tenta no próximo ciclo, LastKeysSnapshot não avança).
+			logger.Warnf("RunCycle: keys-snapshot PULADO — hash-cache não persistiu (evita deletar com cache órfão)")
+			failed = append(failed, "keys_snapshot")
+		} else if lk == nil {
 			// Sem lookups não dá pra montar a identidade das chaves — pular (re-tenta
 			// no próximo ciclo; LastKeysSnapshot não avança).
 			logger.Warnf("RunCycle: keys-snapshot pulado — lookups de identidade indisponíveis")
@@ -635,7 +661,7 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 		}
 	}
 
-	// Persiste estado.
+	// Persiste estado. (O hash-cache já foi persistido acima, antes do keys-snapshot.)
 	if saveErr := SaveState(st); saveErr != nil {
 		logger.Errorf("RunCycle: falha ao salvar state: %v", saveErr)
 		success = false
@@ -670,6 +696,7 @@ func runEntityCycles(
 	ex Extractor,
 	rm *ResolvedMapping,
 	st *State,
+	hc *HashCache,
 ) (counts map[string]int, failed []string, lk *Lookups, err error) {
 	token, tErr := cfg.Token()
 	if tErr != nil || token == "" {
@@ -732,9 +759,9 @@ func runEntityCycles(
 	// Ordem do spec §5.3: ..., subcolecao, formula, personcor, formulaperson
 	// ──────────────────────────────────────────────────────────────
 
-	record("formula", syncFormulas(ctx, ex, cli, st, counts, rm, false, lk))
+	record("formula", syncFormulas(ctx, ex, cli, st, counts, rm, false, lk, hc))
 	record("personcor", syncSimpleEntity(ctx, ex, cli, st, counts, rm, "personcor", "personcores", mapPersoncor))
-	record("formulaperson", syncFormulas(ctx, ex, cli, st, counts, rm, true, lk))
+	record("formulaperson", syncFormulas(ctx, ex, cli, st, counts, rm, true, lk, hc))
 
 	return counts, failed, lk, nil
 }
@@ -1029,6 +1056,7 @@ func syncFormulas(
 	rm *ResolvedMapping,
 	personalizada bool,
 	lk *Lookups,
+	hc *HashCache,
 ) error {
 	entity := "formula"
 	if personalizada {
@@ -1041,11 +1069,22 @@ func syncFormulas(
 	}
 
 	hwm := hwmFromState(st, entity)
+	// O hash-cache substitui o HWM SÓ quando ele está travado em zero (a FORMULA, com
+	// data NULL). Com HWM funcional, o delta por timestamp já é a verdade e o
+	// hash-filter/poda são bypassados — senão um delete+recreate de conteúdo idêntico
+	// seria pulado e ficaria ausente no servidor (Codex review 4ª passada).
+	applyHashFilter := hwm.IsZero()
 	rows, maxDA, err := ex.Extract(ctx, entity, hwm)
 	if err != nil {
 		return fmt.Errorf("syncFormulas %s: extract: %w", entity, err)
 	}
 	if len(rows) == 0 {
+		// Full-scan que voltou VAZIO (entidade esvaziou na origem) ainda precisa
+		// PODAR: as chaves órfãs têm que sair do cache, senão fórmulas recriadas com
+		// o mesmo conteúdo seriam puladas pelo hash antigo (Codex review P2).
+		if applyHashFilter {
+			pruneFormulaHashes(hc, map[string]struct{}{}, personalizada)
+		}
 		return nil
 	}
 
@@ -1067,12 +1106,16 @@ func syncFormulas(
 		}
 	}
 
-	// Mapeia linhas para o contrato do servidor.
+	// Mapeia cada linha para o payload do servidor, computa o hash de CONTEÚDO e
+	// envia SÓ as fórmulas com hash novo/alterado. É isto que mata o loop de 485k:
+	// a FORMULA tem data_atualizacao NULL → o HWM nunca avança → a extração traz
+	// tudo sempre, mas o hash-cache corta o re-envio do que não mudou.
 	// bloqueadas (liberado=false) são contadas À PARTE de dropped (campo faltante) —
 	// bloqueio é estado normal do catálogo, drop é dado quebrado.
 	dropped := 0
 	bloqueadas := 0
-	mapped := make([]map[string]any, 0, len(rows))
+	liveKeys := make(map[string]struct{}, len(rows)) // chaves vistas nesta extração (p/ poda)
+	changed := make([]formulaToSend, 0, len(rows))
 	for _, row := range rows {
 		if formulaBloqueada(row) {
 			bloqueadas++
@@ -1102,7 +1145,18 @@ func syncFormulas(
 		if itens, ok := m["itens"].([]map[string]any); ok {
 			m["itens"] = traduzItensCorante(itens, lk)
 		}
-		mapped = append(mapped, m)
+
+		// Hash sobre o payload FINAL (após tradução dos itens) — é o que de fato é
+		// POSTado e o que muda o catálogo (Codex #2).
+		key := formulaCacheKey(m)
+		liveKeys[key] = struct{}{}
+		hash := formulaContentHash(m)
+		if applyHashFilter {
+			if old, ok := hc.Get(key); ok && old == hash {
+				continue // full-scan: conteúdo inalterado → não re-envia
+			}
+		}
+		changed = append(changed, formulaToSend{payload: m, key: key, hash: hash})
 	}
 	if bloqueadas > 0 {
 		logger.Infof("syncFormulas %s: %d fórmula(s) bloqueada(s) (liberado=false) não enviada(s)", entity, bloqueadas)
@@ -1110,17 +1164,116 @@ func syncFormulas(
 	if dropped > 0 {
 		logger.Warnf("syncFormulas %s: %d linha(s) descartada(s) por campos obrigatórios ausentes (cor_id/cod_produto/id_base/id_embalagem)", entity, dropped)
 	}
-	if len(mapped) == 0 {
+
+	// Poda (Codex #7/#8): só em full-scan (hwm zero — SEMPRE o caso da FORMULA, cuja
+	// data é NULL). Remove do cache as chaves DESTA entidade (mesmo `personalizada`)
+	// ausentes da extração: fórmulas removidas da origem e bloqueadas saem do cache
+	// (recriar/desbloquear força re-envio). Não podar em delta parcial removeria
+	// chaves vivas, por isso o gate applyHashFilter (== hwm.IsZero()).
+	if applyHashFilter {
+		pruneFormulaHashes(hc, liveKeys, personalizada)
+	}
+
+	if len(changed) == 0 {
 		advanceHWM(st, entity, maxDA)
 		return nil
 	}
 
-	if err := sendInBatches(ctx, cli, "/formulas", "formulas", mapped, entity, st, maxDA); err != nil {
+	if err := sendFormulasInBatches(ctx, cli, changed, entity, st, maxDA, hc); err != nil {
 		return err
 	}
 
-	counts[entity] += len(mapped)
+	counts[entity] += len(changed)
 	return nil
+}
+
+// formulaToSend acopla o payload de uma fórmula ao seu (key, hash) — o hash só é
+// gravado no cache APÓS o servidor aceitar o item.
+type formulaToSend struct {
+	payload map[string]any
+	key     string
+	hash    string
+}
+
+// sendFormulasInBatches envia as fórmulas mudadas em lotes ≤batchSize e grava no
+// cache o hash de cada item ACEITO. Itens rejeitados pela edge (Errors[].Index) NÃO
+// são cacheados → re-tentam no próximo ciclo (Codex #5: senão um item permanentemente
+// quebrado nunca convergiria e o lote inteiro re-enviaria pra sempre).
+//
+// O cache é gravado por LOTE aceito (incremental, não tudo-ou-nada como o HWM): na
+// primeira execução são ~485 lotes; se um falhar no meio, os já aceitos ficam
+// cacheados e o próximo ciclo retoma de onde parou.
+func sendFormulasInBatches(
+	ctx context.Context,
+	cli *Client,
+	items []formulaToSend,
+	entity string,
+	st *State,
+	maxDA time.Time,
+	hc *HashCache,
+) error {
+	total := len(items)
+	allAccepted := true
+	notCached := 0
+	for start := 0; start < total; start += batchSize {
+		end := start + batchSize
+		if end > total {
+			end = total
+		}
+		batch := items[start:end]
+
+		payload := make([]map[string]any, len(batch))
+		for i, it := range batch {
+			payload[i] = it.payload
+		}
+		idempKey := uuid.New().String()
+
+		ar, err := cli.Post(ctx, "/formulas", map[string]any{"formulas": payload}, idempKey)
+		if err != nil {
+			return fmt.Errorf("sendFormulasInBatches %s lote %d-%d: %w", entity, start, end, err)
+		}
+
+		// Só cacheia o lote se a edge CONFIRMOU explicitamente: ok:true E sem erro de
+		// item. Falha FECHADA também em ok:false / corpo vazio-ou-malformado (o Client
+		// desserializa para um ar zerado, OK=false) e em Errors não-vazio mesmo com
+		// ErrorCount=0 — precisão > recall: nunca marcar como enviado sem confirmação
+		// (Codex review). O servidor não diz de forma confiável QUAIS itens falharam
+		// (Index pode vir ausente=0), então o lote inteiro re-tenta. Erro é raro:
+		// mapFormula já dropa campo obrigatório ausente antes do envio.
+		if ar == nil || !ar.OK || ar.ErrorCount > 0 || len(ar.Errors) > 0 {
+			allAccepted = false
+			notCached += len(batch)
+			okv := ar != nil && ar.OK
+			nerr := 0
+			if ar != nil {
+				if nerr = ar.ErrorCount; nerr == 0 {
+					nerr = len(ar.Errors)
+				}
+			}
+			logger.Warnf("sendFormulasInBatches %s: lote %d-%d NÃO cacheado (ok=%v, %d erro(s) de item) — re-tenta no próximo ciclo", entity, start, end, okv, nerr)
+			continue
+		}
+		for _, it := range batch {
+			hc.Set(it.key, it.hash)
+		}
+	}
+
+	// Só avança o HWM se TODOS os lotes foram aceitos (Codex review P2). Com erro,
+	// não avançar deixa o delta re-trazer as linhas no próximo ciclo (o hash-cache
+	// filtra as já enviadas; só as não-cacheadas re-enviam). Para a FORMULA, maxDA é
+	// zero (data NULL) e advanceHWM já é no-op — isto blinda formulaperson/fontes com
+	// data, onde um HWM avançado pularia as linhas rejeitadas até o full rescan.
+	if allAccepted {
+		advanceHWM(st, entity, maxDA)
+		return nil
+	}
+
+	// Visibilidade (Codex review P1): item rejeitado vira FALHA de ciclo — a entidade
+	// entra em LastCycleErrors do heartbeat e bloqueia o LastFullRescan, em vez de
+	// re-tentar em silêncio para sempre. Os lotes aceitos já foram cacheados; os com
+	// erro re-tentam. Erro de item é raro (mapFormula filtra os de campo obrigatório
+	// ausente antes do envio), então isto sinaliza um problema real a investigar.
+	return fmt.Errorf("sendFormulasInBatches %s: %d fórmula(s) não confirmada(s) pela edge — não cacheada(s), re-tenta no próximo ciclo", entity, notCached)
 }
 
 // traduzItensCorante traduz o id_corante CRU (id numérico da origem) de cada item
