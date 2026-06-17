@@ -7,6 +7,8 @@ import type { Tables, Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import type { Product } from '@/hooks/useUnifiedOrder';
+import { paginateAll } from '@/hooks/unifiedOrder/catalog-helpers';
+import { buildExclusionQuery } from '@/hooks/unifiedOrder/types';
 import {
   BLOCKED_STATUSES,
   type OrderItem,
@@ -83,22 +85,35 @@ export function useSalesOrderEdit() {
 
       const account = o.account === 'colacor' ? 'colacor' : 'oben';
 
-      // Load formas + products in parallel
-      const [formasRes, productsRes] = await Promise.all([
+      // Load formas + products in parallel.
+      const [formasRes, products] = await Promise.all([
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'listar_formas_pagamento', account },
         }),
-        supabase.from('omie_products')
-          .select('id, omie_codigo_produto, codigo, descricao, unidade, valor_unitario, estoque, ativo, account, is_tintometric, tint_type')
-          .eq('account', account === 'colacor' ? 'colacor_vendas' : 'oben')
-          .eq('ativo', true)
-          .order('descricao')
-          .limit(1000),
+        // Catálogo vendável PAGINADO (.range): o PostgREST capa em 1000 linhas/request
+        // e a busca "Adicionar produto" é client-side sobre `catalogProducts` — um único
+        // .limit(1000) deixaria ~1140 produtos colacor (2140 ativos) invisíveis pra venda.
+        // `account` já é a conta NORMALIZADA ('colacor'|'oben'), a MESMA que
+        // omie_products.account armazena (analytics-sync grava 'colacor'/'oben'; NÃO
+        // re-mapear p/ 'colacor_vendas' — não existe nesta coluna → 0 vendáveis). Espelha
+        // o catálogo de criação (useProductCatalog: paginateAll + buildExclusionQuery).
+        paginateAll<OmieProduct>(async (from, to) => {
+          const base = supabase.from('omie_products')
+            .select('id, omie_codigo_produto, codigo, descricao, unidade, valor_unitario, estoque, ativo, account, is_tintometric, tint_type')
+            .eq('account', account)
+            .eq('ativo', true);
+          const { data, error } = await buildExclusionQuery(base)
+            .order('descricao')
+            .order('id')
+            .range(from, to);
+          if (error) throw error;
+          return (data ?? []) as unknown as OmieProduct[];
+        }),
       ]);
 
       const formasData = formasRes.data as FormasPagamentoResponse | null;
       if (formasData?.formas) setFormas(formasData.formas);
-      if (productsRes.data) setCatalogProducts(productsRes.data as unknown as OmieProduct[]);
+      setCatalogProducts(products);
     } catch (e) {
       console.error(e);
       toast.error('Erro ao carregar pedido');

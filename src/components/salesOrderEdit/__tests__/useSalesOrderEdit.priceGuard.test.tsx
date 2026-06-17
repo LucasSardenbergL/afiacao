@@ -23,6 +23,20 @@ import { useSalesOrderEdit } from '../useSalesOrderEdit';
 const mockedFrom = vi.mocked(supabase.from);
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
 
+/** Builder auto-retornante até `.range()` — o catálogo de edição agora é PAGINADO
+ *  (select → eq → eq → or[exclusão] → order → order → range). Catálogo vazio basta:
+ *  estes testes exercitam o guard de preço no save, não o catálogo. */
+interface PgBuilder {
+  select: () => PgBuilder; eq: () => PgBuilder; or: () => PgBuilder; order: () => PgBuilder;
+  range: () => Promise<{ data: unknown[]; error: null }>;
+}
+function emptyProductsBuilder(): PgBuilder {
+  const b = {} as PgBuilder;
+  b.select = () => b; b.eq = () => b; b.or = () => b; b.order = () => b;
+  b.range = () => Promise.resolve({ data: [], error: null });
+  return b;
+}
+
 const salesOrderRow = {
   id: 'ord-1',
   customer_user_id: 'cust-1',
@@ -56,18 +70,8 @@ function chainFor(table: string) {
       }),
     };
   }
-  // omie_products
-  return {
-    select: vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          order: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-          }),
-        }),
-      }),
-    }),
-  };
+  // omie_products — catálogo paginado (builder auto-retornante até `.range()`)
+  return emptyProductsBuilder();
 }
 
 beforeEach(() => {
