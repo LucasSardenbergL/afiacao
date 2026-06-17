@@ -4,6 +4,39 @@ Narrativa das entregas do módulo tintométrico (`/tintometrico/*`, account `obe
 
 ---
 
+## Catálogo automático (tint) — fase de reconciliação: dry-run global + auditoria das 252 cores fantasma (2026-06-17, análise; flip pendente)
+
+Preparação para flipar `integration_mode` `shadow_mode`→`automatic_primary` (store `M01`, account `oben`). Análise 100% read-only (psql-ro) + 2ª opinião do Codex (consult); a execução (escrita) é via SQL Editor.
+
+### Estado medido
+- Oficial `tint_formulas`: 481.721 linhas, todas ativas, 4 embalagens → ~120.529 fórmulas-FONTE (CSV-import histórico). Staging (full sync do v0.2.0): 121.467 linhas = 121.130 fontes (~1 embalagem/fonte). **A diferença 481k vs 121k é a EXPANSÃO fonte→embalagem (4×), não fórmulas faltando.** `tint_staging_precos_base`=0 (preço vem do Omie, NÃO do sync — promover fórmula com preço NULL é inofensivo).
+- Staging gravado como ~141 runs de fórmulas + 20 de catálogo (1 `sync_run_id` por batch de 1000).
+
+### Mecanismos (lidos no código)
+- `tint_promote_sync_run(run_id)`: **SEM gate de auth** (roda no SQL Editor). Aditivo — upsert latest-por-chave restrito às chaves do run; EXPANDE fonte→embalagem via `tint_skus`+`tint_embalagens` do CATÁLOGO (NÃO a embalagem do staging — por isso 121k fontes recriam as 481k linhas, não colapsam); reativa (`desativada_em=NULL`); **não desativa**. Roda por-batch automático só em `automatic_primary`.
+- `tint_apply_keys_snapshot(snapshot_id)`: ÚNICA via de desativação. Só dispara pela edge em `automatic_primary` com snapshot completo. Compara por chave-FONTE (4 partes, sem embalagem). Guards: aborta se snapshot <50% do oficial OU desativaria >20%.
+- `tint_run_reconciliation(run_id)`: por-run (1000 linhas), gate de staff; `only_csv` é **código MORTO** (nunca incrementado) → NÃO serve como gate global de desativação. A tela carrega só 500 itens/run.
+
+### Dry-run global (read-only, espelhando as funções)
+- Identidade conector↔oficial **CASA: 96,8%** (116.699 das 120.529 fontes batem). Identidade quebrada desativaria ~120k.
+- Desativaria: **3.830 fontes = 252 cores distintas**, todas `personalizada=false`, **0 ainda existem no SayerSystem** (sumiram de vez, não erro de grafia) → remoções LEGÍTIMAS (cores descontinuadas tipo `TABACO NEUART`; 401 são lixo `DUPLICADA`/`TESTE`). 3,2% < guard de 20%.
+- Novas a promover: 4.431.
+
+### Decisão (Claude + Codex consult)
+Recall-first ("sumir cor real é pior que cor a mais") → **promover ANTES de desativar**; o guard de 20% é rede de último recurso (~24k cores), não controle de qualidade. Sequência segura:
+1. Promoção manual em `shadow_mode` (SQL Editor; **catalogs antes de fórmulas** — a expansão depende de `tint_skus` já populado).
+2. Spot-check do oficial.
+3. Desativação controlada (`tint_apply_keys_snapshot` manual) das 252 auditadas.
+4. Flip → `automatic_primary` (steady-state).
+
+### Lições (reutilizáveis)
+1. **Divergência "linhas oficiais vs staging" pode ser só a EXPANSÃO** (1 fonte → N embalagens via `tint_skus`); compare por FONTE, não por linha, antes de entrar em pânico.
+2. **`only_csv` da reconciliação é código morto** — a função NÃO detecta o que seria desativado; auditar candidatos a desativação exige SQL espelhando `tint_apply_keys_snapshot` (`_oficial_ativas` vs `_snap_keys`), não a tela.
+3. **Blast-radius guard ≠ controle de qualidade**: <20% ainda deixa ~24k cores sumirem; defina lista auditada+aprovada antes de aplicar.
+4. **Promoção é aditiva e disparável manual** (sem gate de auth) → atualiza o oficial em shadow sem ligar a desativação automática (que só roda em `automatic_primary`).
+
+---
+
 ## Conector `sayersync` — auto-update Windows-safe + crash-loop guard que expira (2026-06-17, [PR #921](https://github.com/LucasSardenbergL/afiacao/pull/921))
 
 ### Problema
