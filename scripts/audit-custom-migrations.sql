@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 254
+-- Total de custom migrations: 255
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -273,7 +273,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260616120001', 'idx_tactical_plans_lookup', '20260616120001_idx_tactical_plans_lookup.sql'),
   ('20260616120001', 'regua_preco_customer360', '20260616120001_regua_preco_customer360.sql'),
   ('20260616130000', 'v_grupo_contatos', '20260616130000_v_grupo_contatos.sql'),
-  ('20260616140000', 'v_grupo_comercial', '20260616140000_v_grupo_comercial.sql')
+  ('20260616140000', 'v_grupo_comercial', '20260616140000_v_grupo_comercial.sql'),
+  ('20260616140941', 'fatia2_sinais_ligacao', '20260616140941_fatia2_sinais_ligacao.sql')
 )
 SELECT
   e.version,
@@ -1213,7 +1214,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_price_gate_ativo', 'function', 'public', 'get_tint_price', ''),
   ('tint_price_gate_ativo', 'function', 'public', 'get_tint_prices', ''),
   ('idx_tactical_plans_lookup', 'index', 'public', 'idx_tactical_plans_lookup', 'farmer_tactical_plans'),
-  ('regua_preco_customer360', 'function', 'public', 'get_regua_preco_customer360', '')
+  ('regua_preco_customer360', 'function', 'public', 'get_regua_preco_customer360', ''),
+  ('fatia2_sinais_ligacao', 'table', 'public', 'sinal_classe_config', ''),
+  ('fatia2_sinais_ligacao', 'index', 'public', 'idx_farmer_calls_sinais_pendentes', 'farmer_calls'),
+  ('fatia2_sinais_ligacao', 'function', 'public', 'enqueue_score_recalc_from_sinais', ''),
+  ('fatia2_sinais_ligacao', 'trigger', 'public', 'trg_farmer_calls_enqueue_recalc_sinais', 'farmer_calls'),
+  ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_select_staff', 'sinal_classe_config'),
+  ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_master_all', 'sinal_classe_config'),
+  ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_service_all', 'sinal_classe_config')
 )
 SELECT
   e.migration,

@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **254** custom migrations totais
-- **922** objetos esperados (criados por estas migrations)
+- **255** custom migrations totais
+- **929** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 263
-  - `rls_policy`: 214
-  - `index`: 182
-  - `table`: 106
+  - `function`: 264
+  - `rls_policy`: 217
+  - `index`: 183
+  - `table`: 107
   - `cron_job`: 106
-  - `trigger`: 47
+  - `trigger`: 48
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2194,6 +2194,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260616140000_v_grupo_comercial.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260616140941_fatia2_sinais_ligacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sinal_classe_config` | — |
+| `index` | `public.idx_farmer_calls_sinais_pendentes` | `farmer_calls` |
+| `function` | `public.enqueue_score_recalc_from_sinais` | — |
+| `trigger` | `public.trg_farmer_calls_enqueue_recalc_sinais` | `farmer_calls` |
+| `rls_policy` | `public.sinal_classe_config_select_staff` | `sinal_classe_config` |
+| `rls_policy` | `public.sinal_classe_config_master_all` | `sinal_classe_config` |
+| `rls_policy` | `public.sinal_classe_config_service_all` | `sinal_classe_config` |
 
 ## Próximos passos quando algo der `❌`
 
