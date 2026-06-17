@@ -67,6 +67,11 @@ export interface SignalModifier {
   sourceCallId: string;
   capturedAt: string; // ISO timestamp do farmer_calls.started_at
   daysSince: number;
+  // FA4 (Fatia 2 — shadow-mode): classe do sinal carimbada na extração (sinais_ligacao).
+  // O visit-score só aplica modifiers de classe ATIVADA (sinal_classe_config.ativado=true), via
+  // aplicaveis() em visit-scoring/missions.ts; modifier sem `class` (legado) ou de classe OFF é
+  // excluído. Espelha o tipo inline do edge supabase/functions/visit-score-recalc-client/index.ts.
+  class?: 'preco' | 'marca' | 'demanda';
 }
 
 /**
