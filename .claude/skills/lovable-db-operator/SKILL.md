@@ -139,6 +139,20 @@ Para **adicionar coluna**, **índice**, **função SQL**, **trigger**, **enum va
 
 **Backfill / seed de dados** (popular catálogo, preencher coluna nova em linhas antigas): mesmo ritual, com duas diferenças. (1) O SQL é `INSERT … ON CONFLICT DO NOTHING` ou `UPDATE … WHERE <coluna> IS NULL` — sempre idempotente e re-rodável, pra colar de novo sem duplicar/estragar. (2) A validação não é `EXISTS` (a linha pode já existir), e sim **contagem ou amostra**: `SELECT count(*) FROM … WHERE <condição do backfill>` deve bater com o esperado, ou um `SELECT … LIMIT 5` mostrando os dados certos. Isso prova que o backfill pegou. Backfill só entra nesta skill quando vira migration versionada (`.sql` commitado); `UPDATE` ad-hoc de uma vez não é tarefa desta skill.
 
+### Passo 2.5 — Pré-voo de colisão multi-sessão (`wt:preflight`)
+
+Com ~30 worktrees paralelas, duas migrations podem recriar o **mesmo objeto** (função/view/trigger/policy). No apply manual do SQL Editor "a última a rodar vence" sobrescreve a outra **silenciosamente** (database.md §2). Antes de empacotar o handoff, rode contra o arquivo do Passo 2:
+
+```bash
+bun run wt:preflight supabase/migrations/<arquivo>.sql          # worktrees locais (rápido)
+bun run wt:preflight supabase/migrations/<arquivo>.sql --full   # + origin/main
+```
+
+- 🟢 / 🟡 → siga pro Passo 3. (🟡 = objeto aditivo `IF NOT EXISTS`, ou evolução serial de algo **já commitado** — inócuo, só confira a ordem.)
+- 🔴 → **PARE**: outra worktree recria o mesmo objeto **sem ter commitado** — concorrência real. Coordene ANTES de entregar o handoff: a sua roda por último no SQL Editor, ou consolide as duas. Entregar o bloco sem isso = uma das mudanças some no apply.
+
+(O hook `migration-collision-guard` dispara o mesmo check já ao **escrever** a migration; este passo é a rede no **apply** — pega qualquer caminho de criação, inclusive os que o hook não vê.)
+
 ### Passo 3 — Empacotar o bloco de handoff
 
 Este é o artefato central: o que o usuário copia e cola. Entregue **exatamente** neste formato, porque ele já está rotulado com o caminho do Lovable (§5 manda sempre rotular `🟣 Lovable → SQL Editor → cola → Run`):

@@ -22,6 +22,7 @@
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { extractObjects, type ExtractedObject, type ObjectKind } from './lib/migration-objects';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATIONS_DIR = join(REPO_ROOT, 'supabase', 'migrations');
@@ -30,16 +31,6 @@ const MD_OUT = join(REPO_ROOT, 'docs', 'migrations-audit.md');
 
 const UUID_PATTERN = /_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.sql$/;
 const TIMESTAMP_PATTERN = /^(\d{14})_(.+)\.sql$/;
-
-type ObjectKind = 'table' | 'index' | 'function' | 'trigger' | 'cron_job' | 'enum_value' | 'rls_policy' | 'rpc';
-
-interface ExtractedObject {
-  kind: ObjectKind;
-  schema: string;
-  name: string;
-  /** for enum_value: the enum type name. for trigger: the table. for rls_policy: the table. */
-  parent?: string;
-}
 
 interface MigrationAudit {
   filename: string;
@@ -51,68 +42,6 @@ interface MigrationAudit {
 
 function isCustom(filename: string): boolean {
   return !UUID_PATTERN.test(filename);
-}
-
-/**
- * Extrai objetos criados por uma migration via regex.
- * Não é parser SQL completo — heurístico mas suficiente pro audit.
- * Cobre os patterns que aparecem nas migrations do projeto.
- */
-function extractObjects(sql: string): ExtractedObject[] {
-  const objects: ExtractedObject[] = [];
-  // Strip line comments (-- ...) para evitar falsos positivos em exemplos comentados
-  const stripped = sql.replace(/--.*$/gm, '');
-
-  // CREATE TABLE [IF NOT EXISTS] [schema.]name (...)
-  const tableRe = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(\w+)\.)?(\w+)\s*\(/gi;
-  for (const m of stripped.matchAll(tableRe)) {
-    objects.push({ kind: 'table', schema: m[1] || 'public', name: m[2] });
-  }
-
-  // CREATE [UNIQUE] INDEX [CONCURRENTLY] [IF NOT EXISTS] name ON [schema.]table
-  const indexRe = /CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s+ON\s+(?:(\w+)\.)?(\w+)/gi;
-  for (const m of stripped.matchAll(indexRe)) {
-    objects.push({ kind: 'index', schema: m[2] || 'public', name: m[1], parent: m[3] });
-  }
-
-  // CREATE [OR REPLACE] FUNCTION [schema.]name(
-  const fnRe = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:(\w+)\.)?(\w+)\s*\(/gi;
-  for (const m of stripped.matchAll(fnRe)) {
-    objects.push({ kind: 'function', schema: m[1] || 'public', name: m[2] });
-  }
-
-  // CREATE TRIGGER name ... ON [schema.]table
-  const trigRe = /CREATE\s+TRIGGER\s+(\w+)[\s\S]*?ON\s+(?:(\w+)\.)?(\w+)/gi;
-  for (const m of stripped.matchAll(trigRe)) {
-    objects.push({ kind: 'trigger', schema: m[2] || 'public', name: m[1], parent: m[3] });
-  }
-
-  // SELECT cron.schedule('jobname', ...)
-  const cronRe = /cron\.schedule\s*\(\s*'([^']+)'/gi;
-  for (const m of stripped.matchAll(cronRe)) {
-    objects.push({ kind: 'cron_job', schema: 'cron', name: m[1] });
-  }
-
-  // ALTER TYPE schema.enum ADD VALUE 'value'  (idempotência via DO block ou IF NOT EXISTS)
-  const enumRe = /ALTER\s+TYPE\s+(?:(\w+)\.)?(\w+)\s+ADD\s+VALUE\s+(?:IF\s+NOT\s+EXISTS\s+)?'([^']+)'/gi;
-  for (const m of stripped.matchAll(enumRe)) {
-    objects.push({ kind: 'enum_value', schema: m[1] || 'public', name: m[3], parent: m[2] });
-  }
-
-  // CREATE POLICY name ON [schema.]table
-  const policyRe = /CREATE\s+POLICY\s+"?([^\s"]+)"?\s+ON\s+(?:(\w+)\.)?(\w+)/gi;
-  for (const m of stripped.matchAll(policyRe)) {
-    objects.push({ kind: 'rls_policy', schema: m[2] || 'public', name: m[1], parent: m[3] });
-  }
-
-  // Dedupe — IF NOT EXISTS pode aparecer múltiplas vezes pro mesmo objeto
-  const seen = new Set<string>();
-  return objects.filter((o) => {
-    const key = `${o.kind}:${o.schema}.${o.name}:${o.parent || ''}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 function loadMigrations(): MigrationAudit[] {
@@ -217,6 +146,10 @@ function emitSql(audits: MigrationAudit[]): string {
     lines.push("    WHEN e.kind = 'table' AND EXISTS (");
     lines.push('      SELECT 1 FROM information_schema.tables t');
     lines.push('      WHERE t.table_schema = e.schema_name AND t.table_name = e.object_name');
+    lines.push("    ) THEN '✅'");
+    lines.push("    WHEN e.kind = 'view' AND EXISTS (");
+    lines.push('      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace');
+    lines.push("      WHERE n.nspname = e.schema_name AND c.relname = e.object_name AND c.relkind IN ('v', 'm')");
     lines.push("    ) THEN '✅'");
     lines.push("    WHEN e.kind = 'index' AND EXISTS (");
     lines.push('      SELECT 1 FROM pg_indexes i');
