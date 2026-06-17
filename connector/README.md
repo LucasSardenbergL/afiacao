@@ -92,6 +92,7 @@ go test ./... -v -count=1 -timeout 120s
 | `sync.go` | Orquestrador `RunCycle`; mapeadores de entidade; lógica de batch |
 | `api.go` | Cliente HTTP com retry exponencial (1s/4s/16s); Heartbeat |
 | `update.go` | Auto-update diário: manifesto → semver → sha256 → install + crash-loop guard |
+| `recovery.go` · `recovery_windows.go` · `recovery_other.go` | Recuperação de crash-loop de BOOT: recovery-copy estável, failure actions do SCM, rollback rename-based, quarentena de versão |
 | `mapping.go` | Carregamento do schema de mapeamento tintométrico |
 | `discovery.go` | Descoberta de entidades no schema |
 | `dpapi_windows.go` | DPAPI (CryptProtectData) para Windows |
@@ -116,9 +117,25 @@ para `<exe>.prev` e coloca o novo no lugar; em seguida o serviço **reinicia soz
 seguiria rodando a imagem antiga e a próxima atualização falharia ao tentar substituir
 o `.prev` em uso.
 
-**Crash-loop guard:** 3 falhas de update em 24h → restaura o `.prev` e **pausa** as
-tentativas. A janela de 24h ancora na última **falha** (não no throttle diário), então
-ela **expira** e o conector volta a tentar — nunca trava permanentemente.
+**Crash-loop guard (do updater):** 3 falhas de update em 24h → restaura o `.prev` e
+**pausa** as tentativas. A janela de 24h ancora na última **falha** (não no throttle
+diário), então ela **expira** e o conector volta a tentar — nunca trava permanentemente.
+
+**Recuperação de crash-loop de BOOT (rede externa ao binário):** o guard acima cobre
+falhas do *updater*. Um binário que passa no sha256 mas **panica no boot**
+(`init`/`main`/`LoadConfig`/`cmdRun`) seria relançado para sempre pelo SCM — e o código
+de restauração, por viver no mesmo binário que não boota, nunca rodaria. Por isso o
+recovery é **externo ao binário que quebra**: o `install` grava uma cópia estável
+`sayersync-recovery.exe` (que o auto-update **nunca** toca) e estende as failure actions
+do serviço para `[restart, restart, run_command]` (`dwResetPeriod` de 1h). Após 2
+restarts falhos consecutivos, o SCM roda `sayersync-recovery.exe rollback --target <exe>`
+num processo **fresco e bom**, que restaura o `.prev` (rename-based, Windows-safe) e
+reinicia o serviço (o `run_command` do SCM não reinicia sozinho). A versão ruim é
+**quarentenada** (`quarantined_version` no `state.json`): o auto-update a pula até o
+manifesto publicar **outra** — senão o binário restaurado reinstalaria o mesmo manifesto
+ruim no dia seguinte (brick *diário* em vez de permanente). E antes de cada troca de
+binário o updater **verifica/repara** essas failure actions; se não conseguir, **pula** o
+update (não ativa versão nova sem rede de rollback).
 
 ### 1. Gerar os artefatos
 
@@ -147,25 +164,29 @@ inexistente, falha o sha256 e conta como falha de update):
   "https://fzvklzpomgnyikkfkzai.supabase.co/storage/v1/object/public/releases/sayersync/manifest.json"`.
   Vazio = auto-update desativado (default seguro).
 
-> A primeira ativação ainda exige um redeploy manual do `.exe` no balcão: o
-> auto-update só passa a valer a partir de uma versão que já contenha a chamada no
-> ciclo.
+> **Rollout em 2 passos (importante):** o recovery externo só existe a partir de uma
+> versão que já o contenha. Num balcão que rodou `install` de uma versão antiga:
+> **(1)** faça um redeploy manual desta versão (rollback-capable) e rode
+> `sayersync.exe install` de novo — idempotente: recria a recovery-copy e as failure
+> actions `[restart, restart, run_command]`; **(2)** só então preencha o
+> `update_manifest_url`. Ativar o manifesto antes disso deixaria o primeiro auto-update
+> sem rede de recuperação. (O updater também verifica/repara as failure actions e pula
+> o update se faltarem — mas não conte com isso para o bootstrap.)
 >
-> O restart automático depende do recovery `OnFailure=restart` do serviço Windows,
-> que o `install` já configura (`svcConfig` em `main.go`). Em um balcão que rodou
-> `install` de uma versão antiga, rode `sayersync.exe install` de novo (idempotente)
-> para garantir o recovery — sem ele, o `os.Exit` pós-update encerra o serviço e o
-> SCM **não** o relança. **Verifique ponta-a-ponta em um balcão Windows real** antes
-> de confiar: instalação do `.exe`, troca pelo `.prev` e relançamento pelo SCM só são
-> observáveis no Windows (os testes provam a sequência/lógica, não o SCM).
+> **Verificação ponta-a-ponta EXIGE um balcão Windows real.** Os testes provam a
+> *lógica* (restore rename-based, quarentena, gate de recovery, montagem do
+> `lpCommand`), mas a semântica do SCM — contagem de falhas, `dwResetPeriod`, execução
+> do `run_command` — só é observável no Windows. Antes de confiar, publique um release
+> **deliberadamente quebrado** (compila, passa sha256, mas **panica no boot**) e confirme
+> que o SCM dispara o `rollback`, o `.prev` é restaurado, o serviço **volta a sincronizar**
+> e a versão ruim fica **quarentenada**.
 >
-> ⚠️ **Limite conhecido (testar com release quebrado):** o crash-loop guard conta
-> falhas do *updater* (manifesto/download/sha256/install), **não** crashes do
-> *serviço*. Um binário que passa no sha256 mas quebra no boot (panic em `init`/`main`/
-> `LoadConfig`/`cmdRun`) reinicia em loop pelo SCM sem o guard pegar e sem restaurar o
-> `.prev`. Antes de ativar em produção, teste publicar um release deliberadamente
-> quebrado e confirme o comportamento — ou adote um handshake de boot (binário novo só
-> é "promovido" após 1 ciclo/heartbeat OK) antes de confiar no auto-restart.
+> **Limites ainda abertos (degradação aceita, não resolvida):** **(F4)** queda de energia
+> *entre* os dois renames do restore pode deixar o `exe` ausente por um instante — limite
+> inerente do self-replace; só um launcher/watchdog dedicado resolveria. **(F9)** o sha256
+> garante **integridade**, não **autenticidade** — assinar os releases (chave pinada /
+> Authenticode) fica para o roadmap. Nenhum bloqueia a ativação; ambos devem entrar no
+> backlog do conector.
 
 ---
 
@@ -175,7 +196,8 @@ inexistente, falha o sha256 e conta como falha de update):
 - Serviço roda como `LocalService` (menor privilégio: só localhost + HTTPS outbound)
 - `UpdateManifestURL` aponta para bucket read-only público; escrita = `service_role` apenas
 - sha256 verificado antes de instalar o binário baixado
-- Crash-loop guard: 3 falhas de update em 24h → restaura `.prev` e para de tentar
+- Crash-loop guard (updater): 3 falhas em 24h → restaura `.prev`; a janela ancora na última falha e **expira** (não trava permanentemente)
+- Recuperação de crash-loop de **boot**: ator externo (recovery-copy) restaura o `.prev` via SCM `run_command` e **quarentena** a versão ruim; o auto-update é gateado pela verificação dessa rede de recuperação
 
 ---
 

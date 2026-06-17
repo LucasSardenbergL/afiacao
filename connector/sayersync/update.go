@@ -208,6 +208,21 @@ func doUpdate(ctx context.Context, cfg *Config, st *State) (bool, error) {
 		logger.Infof("update: versão atual %q já é a mais recente (manifesto: %q)", Version, manifest.Version)
 		return false, nil
 	}
+	// Quarentena (Codex F2): se esta versão já causou um rollback, NÃO reinstala —
+	// senão o binário restaurado reinstalaria o mesmo manifesto ruim no dia seguinte
+	// (brick diário). Só desbloqueia quando o manifesto publicar uma versão diferente.
+	if isQuarantined(manifest.Version, st) {
+		logger.Warnf("update: versão %q quarentenada (causou rollback anterior) — pulando até o manifesto publicar outra", manifest.Version)
+		return false, nil
+	}
+
+	// Gate F5 (Codex): não ativa um update sem a rede de recuperação no lugar.
+	// Verifica/repara as failure actions do serviço ANTES de baixar; se não der,
+	// pula — melhor ficar na versão atual do que ativar uma sem rollback automático.
+	if err := ensureRecoveryConfigured(); err != nil {
+		return false, fmt.Errorf("doUpdate: %w", err)
+	}
+
 	logger.Infof("update: nova versão disponível %q (atual: %q) — baixando", manifest.Version, Version)
 
 	// 3. Baixa o binário.
@@ -225,6 +240,12 @@ func doUpdate(ctx context.Context, cfg *Config, st *State) (bool, error) {
 	if err := installBinary(binData); err != nil {
 		return false, fmt.Errorf("doUpdate: instalar binário: %w", err)
 	}
+
+	// Registra a versão recém-instalada para o rollback externo saber QUAL versão
+	// quarentenar se ela quebrar no boot; e limpa qualquer quarentena anterior —
+	// esta versão a supera. Persistido antes do restart por CheckAndApplyUpdate. (Codex F2)
+	st.PendingUpdateVersion = manifest.Version
+	st.QuarantinedVersion = ""
 
 	logger.Infof("update: versão %q instalada — reiniciando o serviço para ativar", manifest.Version)
 	return true, nil
@@ -384,22 +405,16 @@ func installBinary(data []byte) error {
 // restorePrev — crash-loop guard
 // ─────────────────────────────────────────────────────────────
 
-// restorePrev restaura o binário anterior a partir de <exe>.prev.
+// restorePrev restaura o binário anterior a partir de <exe>.prev sobre o exe em
+// execução. Delega a restorePrevTo (rename-based, Windows-safe): a versão antiga
+// os.WriteFile(exePath, ...) falhava no Windows porque exePath é a imagem em uso
+// — mesma classe do P1 corrigido em installBinary. (Codex F3)
 func restorePrev() error {
 	exePath, err := executablePath()
 	if err != nil {
 		return err
 	}
-	prevPath := exePath + ".prev"
-
-	prevData, err := os.ReadFile(prevPath)
-	if err != nil {
-		return fmt.Errorf("ler .prev: %w", err)
-	}
-	if err := os.WriteFile(exePath, prevData, 0755); err != nil { //nolint:gosec
-		return fmt.Errorf("restaurar .prev para exe: %w", err)
-	}
-	return nil
+	return restorePrevTo(exePath)
 }
 
 // ─────────────────────────────────────────────────────────────
