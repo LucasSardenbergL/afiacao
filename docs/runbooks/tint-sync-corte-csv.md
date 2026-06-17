@@ -180,3 +180,30 @@ UPDATE tint_integration_settings SET integration_mode='shadow_mode', updated_at=
 ## 5. Critério de pronto (spec §8.6)
 
 Founder altera um preço no **Omie** → o balcão reflete (sync de produtos Omie ~2h). E altera uma **fórmula** no SayerSystem → o app reflete em ≤ ~15 min, **sem ação humana, sem CSV**.
+
+## 6. Fix pendente — carga da promoção no re-envio (BLOQUEADOR do flip, dx incidente 17/06)
+
+**Diagnóstico (confirmado na lógica da promoção, `pg_get_functiondef`):** a promoção monta os pares a
+re-expandir como **fórmulas tocadas no run ∪ TODOS os skus tocados** (`_tp_sku`):
+```sql
+CREATE TEMP TABLE _pares ... AS
+  SELECT ... FROM tint_staging_formulas WHERE sync_run_id = p_sync_run_id ...
+  UNION
+  SELECT cod_produto, id_base FROM _tp_sku;   -- ← TODOS os skus do run, não só os novos
+```
+No re-envio, o run de `catalogs` traz os 220 skus = **todos os pares** → `_formulas_latest` (restrita aos
+pares) = **TODAS as ~121k fórmulas** → E2/E3 re-expande tudo num único run → > gateway timeout →
+conexão idle-in-transaction segura o advisory lock → as demais promoções morrem (55P03).
+
+**Fix proposto (cirúrgico — money-path, exige `prove-sql-money-path` + `/codex` + re-flip):**
+re-expandir só os pares de skus **REALMENTE NOVOS** (embalagem nova p/ o par), não os re-enviados.
+1. Antes do upsert de skus (E1/loop), capturar `_skus_novos` = pares de `_tp_sku` que **NÃO existem**
+   ainda em `tint_skus` (join produto/base/embalagem por identidade).
+2. Na montagem de `_pares`, trocar `UNION ... FROM _tp_sku` por `UNION ... FROM _skus_novos`.
+
+Efeito: re-envio → run de `catalogs` (skus já existem) re-expande **0**; runs de `formulas` re-expandem só
+suas ~1000 (carga distribuída, leve por run); embalagem **nova** → re-expande só aquele par (§11 P1-C preservado).
+
+**Provar (PG17):** (a) sku re-enviado existente → `_pares` de catalogs vazio, 0 re-expansão; (b) sku NOVO →
+re-expande o par; (c) fórmula tocada → promove normal. **Falsificar:** voltar p/ `_tp_sku` → o teste (a) fica vermelho.
+**Depois:** re-flip (Bloco B) — o re-envio agora distribui a carga por lote, sem travar.
