@@ -186,7 +186,11 @@ estoque no ACO/NCG (mas o engine não lê — usa 0). Pega o `valor` mais recent
 ## RPCs e views úteis
 - **`fin_categorias_sem_mapping(p_company text, p_start date, p_end date)`** → `(omie_codigo,
   categoria_nome, valor_periodo)` de categorias com valor sem linha em `fin_categoria_dre_mapping`.
-  Filtra por `data_emissao`. **Use isto pro bloco 5.**
+  Filtra por `data_emissao`. ⚠️ **NÃO usar no SQL Editor** — é SECURITY DEFINER com gate de perfil
+  (`auth.role()='service_role' OR fin_user_can_access(company)`; senão `RAISE 'Acesso negado: requer
+  perfil financeiro'`, SQLSTATE **42501**), e a sessão do SQL Editor do Lovable não tem perfil. O
+  **bloco 5 usa a query DIRETA equivalente** nas tabelas (CR+CP por `data_emissao` + categoria sem
+  `dre_linha` no mapping, com fallback `_default`), não a RPC.
 - `fin_calcular_confiabilidade(p_company, p_ano, p_mes)` — popula `fin_confiabilidade` (write —
   **não chamar**; só ler a tabela).
 - `fin_projecao_13_semanas(p_company, p_saldo_inicial)` — projeção SQL simples (sem
