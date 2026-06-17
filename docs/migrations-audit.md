@@ -22,7 +22,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **256** custom migrations totais
-- **929** objetos esperados (criados por estas migrations)
+- **974** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 264
   - `rls_policy`: 217
@@ -30,6 +30,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
   - `table`: 107
   - `cron_job`: 106
   - `trigger`: 48
+  - `view`: 45
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -40,6 +41,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `view` | `public.fin_aging_receber` | — |
+| `view` | `public.fin_aging_pagar` | — |
+| `view` | `public.fin_fluxo_caixa_diario` | — |
 | `table` | `public.fin_categorias` | — |
 | `table` | `public.fin_contas_correntes` | — |
 | `table` | `public.fin_contas_pagar` | — |
@@ -88,7 +92,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260328200300_fix_fluxo_caixa_dre_regime.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.fin_fluxo_caixa_diario` | — |
 
 ### `20260328200400_fix_cron_sync.sql`
 
@@ -101,6 +107,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.fin_refresh_analise_dimensoes` | — |
+| `function` | `public.fin_user_can_access` | — |
+| `view` | `public.fin_analise_cr_dimensoes` | — |
+| `view` | `public.fin_analise_cp_dimensoes` | — |
 | `table` | `public.fin_fechamentos` | — |
 | `table` | `public.fin_fechamento_log` | — |
 | `table` | `public.fin_conciliacao` | — |
@@ -121,8 +131,6 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_fin_analise_cr_unique` | `fin_analise_cr_dimensoes` |
 | `index` | `public.idx_fin_analise_cp_unique` | `fin_analise_cp_dimensoes` |
 | `index` | `public.idx_fin_kpi_trib_periodo` | `fin_kpi_tributario` |
-| `function` | `public.fin_refresh_analise_dimensoes` | — |
-| `function` | `public.fin_user_can_access` | — |
 | `rls_policy` | `public.fin_fechamentos_service` | `fin_fechamentos` |
 | `rls_policy` | `public.fin_fechamento_log_service` | `fin_fechamento_log` |
 | `rls_policy` | `public.fin_conciliacao_service` | `fin_conciliacao` |
@@ -150,12 +158,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.fin_sync_checkpoint` | — |
-| `table` | `public.fin_confiabilidade` | — |
-| `index` | `public.idx_fin_conf_periodo` | `fin_confiabilidade` |
 | `function` | `public.fin_calcular_confiabilidade` | — |
 | `function` | `public.fin_projecao_13_semanas` | — |
 | `function` | `public.fin_consolidado_intercompany` | — |
+| `view` | `public.fin_dre_competencia_base` | — |
+| `table` | `public.fin_sync_checkpoint` | — |
+| `table` | `public.fin_confiabilidade` | — |
+| `index` | `public.idx_fin_conf_periodo` | `fin_confiabilidade` |
 | `rls_policy` | `public.fin_sync_ckpt_service` | `fin_sync_checkpoint` |
 | `rls_policy` | `public.fin_sync_ckpt_user` | `fin_sync_checkpoint` |
 | `rls_policy` | `public.fin_conf_service` | `fin_confiabilidade` |
@@ -165,9 +174,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.update_vendor_sip_credentials_updated_at` | — |
 | `table` | `public.vendor_sip_credentials` | — |
 | `index` | `public.idx_vendor_sip_credentials_user_id` | `vendor_sip_credentials` |
-| `function` | `public.update_vendor_sip_credentials_updated_at` | — |
 | `trigger` | `public.vendor_sip_credentials_updated_at_trigger` | `vendor_sip_credentials` |
 
 ### `20260517100000_enable_realtime_dashboard_v3.sql`
@@ -206,12 +215,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.kb_documents_set_updated_at` | — |
 | `table` | `public.kb_documents` | — |
 | `table` | `public.kb_chunks` | — |
 | `index` | `public.idx_kb_chunks_embedding` | `kb_chunks` |
 | `index` | `public.idx_kb_documents_status_type` | `kb_documents` |
 | `index` | `public.idx_kb_chunks_document` | `kb_chunks` |
-| `function` | `public.kb_documents_set_updated_at` | — |
 | `trigger` | `public.trg_kb_documents_updated_at` | `kb_documents` |
 | `rls_policy` | `public.kb_documents_select_staff` | `kb_documents` |
 | `rls_policy` | `public.kb_documents_insert_staff` | `kb_documents` |
@@ -226,6 +235,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.kb_documents_set_updated_at` | — |
 | `table` | `public.kb_product_specs` | — |
 | `table` | `public.kb_competitors` | — |
 | `table` | `public.kb_competitor_products` | — |
@@ -233,7 +243,6 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_kb_product_specs_supplier_line` | `kb_product_specs` |
 | `index` | `public.idx_kb_competitor_products_competitor` | `kb_competitor_products` |
 | `index` | `public.idx_kb_competitor_products_equivalent` | `kb_competitor_products` |
-| `function` | `public.kb_documents_set_updated_at` | — |
 | `trigger` | `public.trg_kb_product_specs_updated_at` | `kb_product_specs` |
 | `trigger` | `public.trg_kb_competitors_updated_at` | `kb_competitors` |
 | `trigger` | `public.trg_kb_competitor_products_updated_at` | `kb_competitor_products` |
@@ -428,24 +437,26 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.enqueue_score_recalc_from_call` | — |
+| `view` | `public.score_recalc_pending` | — |
 | `table` | `public.score_recalc_queue` | — |
 | `index` | `public.idx_score_recalc_queue_pending` | `score_recalc_queue` |
 | `index` | `public.uniq_score_recalc_queue_pending` | `score_recalc_queue` |
-| `function` | `public.enqueue_score_recalc_from_call` | — |
 | `trigger` | `public.trg_farmer_calls_enqueue_recalc` | `farmer_calls` |
 
 ### `20260518120000_visit_intelligence_v1.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.enqueue_visit_score_recalc_from_visit` | — |
+| `function` | `public.enqueue_visit_score_recalc_from_client_score` | — |
+| `view` | `public.visit_score_recalc_pending` | — |
 | `table` | `public.customer_visit_scores` | — |
 | `table` | `public.visit_score_recalc_queue` | — |
 | `index` | `public.idx_visit_scores_farmer_priority` | `customer_visit_scores` |
 | `index` | `public.idx_visit_scores_farmer_city` | `customer_visit_scores` |
 | `index` | `public.idx_visit_score_queue_pending` | `visit_score_recalc_queue` |
 | `index` | `public.uniq_visit_score_queue_pending` | `visit_score_recalc_queue` |
-| `function` | `public.enqueue_visit_score_recalc_from_visit` | — |
-| `function` | `public.enqueue_visit_score_recalc_from_client_score` | — |
 | `trigger` | `public.trg_route_visits_enqueue_visit_recalc` | `route_visits` |
 | `trigger` | `public.trg_farmer_client_scores_enqueue_visit_recalc` | `farmer_client_scores` |
 
@@ -501,10 +512,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.fin_estoque_valor` | — |
-| `index` | `public.fin_estoque_valor_company_data_idx` | `fin_estoque_valor` |
 | `function` | `public.fin_period_lock_trigger` | — |
 | `function` | `public.fin_estimar_estoque_omie` | — |
+| `table` | `public.fin_estoque_valor` | — |
+| `index` | `public.fin_estoque_valor_company_data_idx` | `fin_estoque_valor` |
 | `trigger` | `public.trg_audit` | `fin_estoque_valor` |
 | `trigger` | `public.trg_period_lock` | `fin_estoque_valor` |
 | `rls_policy` | `public.fin_estoque_valor_select_staff` | `fin_estoque_valor` |
@@ -542,11 +553,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260523230835_sync_sla_view_stack.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_fornecedor_lt_logistica_total` | — |
+| `view` | `public.v_sku_lt_teorico` | — |
+| `view` | `public.v_sku_sla_compliance` | — |
+| `view` | `public.v_fornecedor_sla_compliance` | — |
 
 ### `20260523233000_restaura_guardas_sla_view_stack.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_lt_teorico` | — |
+| `view` | `public.v_sku_sla_compliance` | — |
+| `view` | `public.v_fornecedor_sla_compliance` | — |
 
 ### `20260524000000_fin_a3_cockpit_config.sql`
 
@@ -577,6 +597,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.carteira_visivel_para` | — |
+| `function` | `public.minha_carteira` | — |
 | `table` | `public.omie_vendedor_map` | — |
 | `table` | `public.carteira_assignments` | — |
 | `table` | `public.carteira_coverage` | — |
@@ -584,8 +606,6 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_carteira_owner` | `carteira_assignments` |
 | `index` | `public.idx_carteira_owner_eligible` | `carteira_assignments` |
 | `index` | `public.idx_coverage_covering_active` | `carteira_coverage` |
-| `function` | `public.carteira_visivel_para` | — |
-| `function` | `public.minha_carteira` | — |
 
 ### `20260524120000_fin_regime_inputs.sql`
 
@@ -597,7 +617,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260524121531_restore_sla_guards.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_lt_teorico` | — |
+| `view` | `public.v_sku_sla_compliance` | — |
 
 ### `20260524170000_scores_unique_por_cliente.sql`
 
@@ -610,11 +633,11 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `index` | `public.uniq_score_recalc_queue_pending` | `score_recalc_queue` |
-| `index` | `public.uniq_visit_score_queue_pending` | `visit_score_recalc_queue` |
 | `function` | `public.enqueue_score_recalc_from_call` | — |
 | `function` | `public.enqueue_visit_score_recalc_from_visit` | — |
 | `function` | `public.enqueue_visit_score_recalc_from_client_score` | — |
+| `index` | `public.uniq_score_recalc_queue_pending` | `score_recalc_queue` |
+| `index` | `public.uniq_visit_score_queue_pending` | `visit_score_recalc_queue` |
 
 ### `20260524202410_tuning_crons_estoque_freq_e_timeouts.sql`
 
@@ -671,9 +694,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.get_minha_positivacao` | — |
 | `table` | `public.carteira_positivacao_snapshot` | — |
 | `index` | `public.idx_sales_orders_kpi_date` | `sales_orders` |
-| `function` | `public.get_minha_positivacao` | — |
 
 ### `20260525130000_fin_analise_dimensoes_rpc.sql`
 
@@ -690,7 +713,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260525140000_v_otimizador_compras_insumos.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_otimizador_compras_insumos` | — |
 
 ### `20260525160000_carteira_saude_rpc.sql`
 
@@ -735,9 +760,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.impersonation_audit` | — |
 | `function` | `public.log_impersonation_start` | — |
 | `function` | `public.end_impersonation` | — |
+| `table` | `public.impersonation_audit` | — |
 
 ### `20260526020000_rls_score_carteira_hardening.sql`
 
@@ -813,9 +838,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.farmer_mixgap_feedback` | — |
 | `function` | `public.mark_mixgap_feedback` | — |
 | `function` | `public._carteira_mixgap_for_owner` | — |
+| `table` | `public.farmer_mixgap_feedback` | — |
 
 ### `20260527010000_rls_copilot_sessions_select_own_only.sql`
 
@@ -827,10 +852,11 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.finalize_nao_vinculados_snapshot` | — |
+| `view` | `public.v_clientes_nao_vinculados_atual` | — |
 | `table` | `public.omie_clientes_nao_vinculados` | — |
 | `table` | `public.omie_nao_vinculados_state` | — |
 | `index` | `public.idx_nv_empresa_synced` | `omie_clientes_nao_vinculados` |
-| `function` | `public.finalize_nao_vinculados_snapshot` | — |
 | `rls_policy` | `public.nv_select` | `omie_clientes_nao_vinculados` |
 | `rls_policy` | `public.nv_state_select` | `omie_nao_vinculados_state` |
 
@@ -1033,8 +1059,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.sayerlack_retry_motor_log` | — |
 | `function` | `public.sayerlack_retry_orfaos` | — |
+| `table` | `public.sayerlack_retry_motor_log` | — |
 | `cron_job` | `cron.sayerlack-retry-orfaos` | — |
 
 ### `20260528120000_reposicao_custo_cmc_em_transito.sql`
@@ -1045,11 +1071,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260528120001_v_titulo_baixas.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_titulo_baixas` | — |
 
 ### `20260528120002_v_capital_giro_prazos.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_capital_giro_prazos` | — |
 
 ### `20260528130000_fin_sync_heartbeat_tz_fix.sql`
 
@@ -1080,6 +1110,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `view` | `public.v_tarefas_estado` | — |
 | `rls_policy` | `public.tarefas_select` | `tarefas` |
 | `rls_policy` | `public.tarefas_insert` | `tarefas` |
 | `rls_policy` | `public.tarefas_update` | `tarefas` |
@@ -1166,13 +1197,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.set_updated_at_visitas_agendadas` | — |
+| `function` | `public.reconcile_visita_agendada` | — |
 | `table` | `public.visitas_agendadas` | — |
 | `index` | `public.uq_vag_pendente_cliente_vendedor_data` | `visitas_agendadas` |
 | `index` | `public.uq_vag_route_visit_id` | `visitas_agendadas` |
 | `index` | `public.idx_vag_scheduled_by_date` | `visitas_agendadas` |
 | `index` | `public.idx_vag_pending_by_seller` | `visitas_agendadas` |
-| `function` | `public.set_updated_at_visitas_agendadas` | — |
-| `function` | `public.reconcile_visita_agendada` | — |
 | `trigger` | `public.trg_vag_updated_at` | `visitas_agendadas` |
 | `trigger` | `public.trg_reconcile_visita_agendada` | `route_visits` |
 | `rls_policy` | `public.vag_select_own` | `visitas_agendadas` |
@@ -1191,6 +1222,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `view` | `public.v_otimizador_compras_insumos` | — |
 
 ### `20260530160000_data_health_diagnostico_gate_status.sql`
 
@@ -1249,8 +1281,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `index` | `public.idx_vih_recorrencia_180d` | `venda_items_history` |
 | `function` | `public.promover_candidato_primeira_compra` | — |
+| `view` | `public.v_sku_candidatos_primeira_compra` | — |
+| `index` | `public.idx_vih_recorrencia_180d` | `venda_items_history` |
 
 ### `20260530210001_cancelar_pedido_limpa_portal.sql`
 
@@ -1269,6 +1302,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.promover_candidato_primeira_compra` | — |
+| `view` | `public.v_sku_candidatos_primeira_compra` | — |
 
 ### `20260531130000_data_health_check_sayerlack_fabricado.sql`
 
@@ -1288,9 +1322,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.reposicao_param_limbo_watchdog` | — |
 | `table` | `public.reposicao_param_limbo_log` | — |
 | `index` | `public.uq_reposicao_param_limbo_log_dia` | `reposicao_param_limbo_log` |
-| `function` | `public.reposicao_param_limbo_watchdog` | — |
 | `cron_job` | `cron.reposicao-param-limbo-watchdog` | — |
 
 ### `20260531160000_reposicao_excluir_fabricado_04.sql`
@@ -1298,6 +1332,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `view` | `public.v_sku_candidatos_primeira_compra` | — |
 
 ### `20260531170000_data_health_check_sayerlack_mapeamento_gap.sql`
 
@@ -1306,6 +1341,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public._data_health_compute` | — |
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
+| `view` | `public.v_sayerlack_mapeamento_gap` | — |
 
 ### `20260531170000_route_contact_log_escrita.sql`
 
@@ -1337,6 +1373,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `view` | `public.v_tarefas_estado` | — |
 | `rls_policy` | `public.tt_select` | `tarefa_templates` |
 | `rls_policy` | `public.tt_insert` | `tarefa_templates` |
 | `rls_policy` | `public.tt_update` | `tarefa_templates` |
@@ -1377,12 +1414,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `index` | `public.uq_picking_tasks_sales_order` | `picking_tasks` |
-| `index` | `public.idx_sales_orders_account_kpi` | `sales_orders` |
 | `function` | `public.ensure_picking_task_for_sales_order` | — |
 | `function` | `public.recalcular_picking_task` | — |
 | `function` | `public.confirmar_item_picking` | — |
 | `function` | `public.listar_pedidos_a_separar` | — |
+| `index` | `public.uq_picking_tasks_sales_order` | `picking_tasks` |
+| `index` | `public.idx_sales_orders_account_kpi` | `sales_orders` |
 
 ### `20260604120000_route_queue_snapshot.sql`
 
@@ -1398,8 +1435,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `index` | `public.idx_omie_products_account_tipo_produto` | `omie_products` |
 | `function` | `public.preserve_tipo_produto` | — |
+| `index` | `public.idx_omie_products_account_tipo_produto` | `omie_products` |
 | `trigger` | `public.trg_preserve_tipo_produto` | `omie_products` |
 
 ### `20260604130000_whatsapp_sla.sql`
@@ -1409,6 +1446,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.wa_is_stop_keyword` | — |
 | `function` | `public.whatsapp_minutos_uteis` | — |
 | `function` | `public.wa_owner_efetivo` | — |
+| `view` | `public.v_whatsapp_sla` | — |
 
 ### `20260604140000_recebimento_efetivacao_ledger.sql`
 
@@ -1423,13 +1461,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `view` | `public.v_sku_candidatos_primeira_compra` | — |
 
 ### `20260604140000_whatsapp_sla_digest.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.whatsapp_sla_digest_log` | — |
 | `function` | `public.whatsapp_sla_digest_tick` | — |
+| `table` | `public.whatsapp_sla_digest_log` | — |
 | `cron_job` | `cron.whatsapp-sla-digest-diario` | — |
 
 ### `20260604150000_envio_portal_claim_ids.sql`
@@ -1454,14 +1493,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.posthog_error_webhook_log` | — |
 | `function` | `public.enfileirar_erro_app` | — |
+| `table` | `public.posthog_error_webhook_log` | — |
 
 ### `20260604170000_reposicao_blindar_sku_sem_fornecedor.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `view` | `public.v_reposicao_sku_sem_fornecedor` | — |
 
 ### `20260604170000_tint_catalog_rls_hardening.sql`
 
@@ -1502,6 +1542,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `view` | `public.v_otimizador_compras_insumos` | — |
 
 ### `20260605120000_param_auto_tabelas.sql`
 
@@ -1534,16 +1575,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.tarefas_materializar_recorrentes` | — |
+| `view` | `public.v_tarefas_estado` | — |
 
 ### `20260605140000_afiacao_os_status_sync.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.afiacao_os_sync_fila` | — |
-| `index` | `public.idx_afiacao_os_sync_fila_retry` | `afiacao_os_sync_fila` |
 | `function` | `public.mapear_status_etapa` | — |
 | `function` | `public.afiacao_os_enqueue` | — |
 | `function` | `public.afiacao_os_sync_kick` | — |
+| `table` | `public.afiacao_os_sync_fila` | — |
+| `index` | `public.idx_afiacao_os_sync_fila_retry` | `afiacao_os_sync_fila` |
 | `trigger` | `public.trg_afiacao_os_enqueue` | `orders` |
 | `cron_job` | `cron.afiacao-os-sync` | — |
 | `rls_policy` | `public.staff_le_afiacao_os_sync_fila` | `afiacao_os_sync_fila` |
@@ -1573,7 +1615,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260605152437_caca_views.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_caca_compradores` | — |
+| `view` | `public.v_caca_candidatos` | — |
 
 ### `20260606120000_reposicao_rpc_account_aware.sql`
 
@@ -1595,7 +1640,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260606150000_a2_cmc_base_custo_view.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_sku_parametros_sugeridos` | — |
 
 ### `20260606150000_reposicao_qtde_inteira.sql`
 
@@ -1658,7 +1705,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260606210000_order_feed_view.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.order_feed` | — |
 
 ### `20260606230000_negociacao_paralela_v2_cleanup.sql`
 
@@ -1688,24 +1737,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
 | `table` | `public.reposicao_alerta_pedido_minimo` | — |
 | `index` | `public.reposicao_alerta_pedido_minimo_ativo` | `reposicao_alerta_pedido_minimo` |
-| `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
 | `cron_job` | `cron.reposicao-alerta-pedido-minimo` | — |
 
 ### `20260609150000_tint_sync_promote.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.tint_staging_precos_base` | — |
-| `table` | `public.tint_keys_snapshots` | — |
-| `index` | `public.idx_tsp_precos_chave` | `tint_staging_precos_base` |
-| `index` | `public.idx_tint_formulas_ativas` | `tint_formulas` |
 | `function` | `public.tint_promote_sync_run` | — |
 | `function` | `public.tint_ensure_corante_stub` | — |
 | `function` | `public.tint_calc_preco_final` | — |
 | `function` | `public.tint_recalc_preco_oficial` | — |
 | `function` | `public.tint_apply_keys_snapshot` | — |
+| `table` | `public.tint_staging_precos_base` | — |
+| `table` | `public.tint_keys_snapshots` | — |
+| `index` | `public.idx_tsp_precos_chave` | `tint_staging_precos_base` |
+| `index` | `public.idx_tint_formulas_ativas` | `tint_formulas` |
 
 ### `20260609160000_reposicao_ciclo_intraday.sql`
 
@@ -1720,14 +1769,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.melhoria_itens_touch_updated_at` | — |
+| `function` | `public.melhoria_clientes_por_produto` | — |
+| `function` | `public.melhoria_produtos_relacionados` | — |
 | `table` | `public.melhoria_itens` | — |
 | `table` | `public.melhoria_mensagens` | — |
 | `index` | `public.idx_melhoria_itens_status` | `melhoria_itens` |
 | `index` | `public.idx_melhoria_itens_autor` | `melhoria_itens` |
 | `index` | `public.idx_melhoria_mensagens_item` | `melhoria_mensagens` |
-| `function` | `public.melhoria_itens_touch_updated_at` | — |
-| `function` | `public.melhoria_clientes_por_produto` | — |
-| `function` | `public.melhoria_produtos_relacionados` | — |
 | `trigger` | `public.trg_melhoria_itens_touch` | `melhoria_itens` |
 | `rls_policy` | `public.melhoria_itens_select` | `melhoria_itens` |
 | `rls_policy` | `public.melhoria_itens_insert` | `melhoria_itens` |
@@ -1739,23 +1788,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.reposicao_auto_aprovacao_log` | — |
-| `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
 | `function` | `public.reposicao_pedido_auto_aprovavel` | — |
 | `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+| `table` | `public.reposicao_auto_aprovacao_log` | — |
+| `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
 
 ### `20260610200000_push_vendedora.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.push_subscriptions` | — |
-| `index` | `public.idx_push_subscriptions_user` | `push_subscriptions` |
 | `function` | `public.upsert_push_subscription` | — |
 | `function` | `public.delete_push_subscription` | — |
 | `function` | `public._push_enviar` | — |
 | `function` | `public.push_whatsapp_inbound` | — |
 | `function` | `public.push_tarefa_nova` | — |
 | `function` | `public.push_sla_tick` | — |
+| `table` | `public.push_subscriptions` | — |
+| `index` | `public.idx_push_subscriptions_user` | `push_subscriptions` |
 | `trigger` | `public.trg_push_whatsapp_inbound` | `whatsapp_messages` |
 | `trigger` | `public.trg_push_tarefa_nova` | `tarefas` |
 | `cron_job` | `cron.push-sla-tick` | — |
@@ -1766,6 +1815,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.radar_recruzar_ja_cliente` | — |
 | `table` | `public.radar_empresas` | — |
 | `table` | `public.radar_contatos` | — |
 | `table` | `public.radar_municipios` | — |
@@ -1774,7 +1824,6 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_radar_empresas_local` | `radar_empresas` |
 | `index` | `public.idx_radar_empresas_cnae` | `radar_empresas` |
 | `index` | `public.idx_radar_contatos_cnpj` | `radar_contatos` |
-| `function` | `public.radar_recruzar_ja_cliente` | — |
 | `rls_policy` | `public.radar_empresas_select_gestor` | `radar_empresas` |
 | `rls_policy` | `public.radar_contatos_select_gestor` | `radar_contatos` |
 | `rls_policy` | `public.radar_municipios_select_gestor` | `radar_municipios` |
@@ -1799,13 +1848,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.omie_product_spec_links` | — |
-| `index` | `public.omie_product_spec_links_one_confirmed` | `omie_product_spec_links` |
-| `index` | `public.omie_product_spec_links_unique_triple` | `omie_product_spec_links` |
 | `function` | `public.kb_specs_normalize` | — |
 | `function` | `public.buscar_skus_candidatos` | — |
 | `function` | `public.confirmar_vinculo_boletim` | — |
 | `function` | `public.rejeitar_sugestao` | — |
+| `view` | `public.v_omie_product_current_spec` | — |
+| `table` | `public.omie_product_spec_links` | — |
+| `index` | `public.omie_product_spec_links_one_confirmed` | `omie_product_spec_links` |
+| `index` | `public.omie_product_spec_links_unique_triple` | `omie_product_spec_links` |
 | `trigger` | `public.trg_kb_specs_normalize` | `kb_product_specs` |
 | `rls_policy` | `public.omie_product_spec_links_select_staff` | `omie_product_spec_links` |
 
@@ -1813,8 +1863,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `index` | `public.idx_cvs_city_norm` | `customer_visit_scores` |
 | `function` | `public.route_city_norm` | — |
+| `index` | `public.idx_cvs_city_norm` | `customer_visit_scores` |
 
 ### `20260611180000_familia_ausente_lista_email.sql`
 
@@ -1911,11 +1961,11 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.kbv_block_mutation` | — |
+| `function` | `public.aprovar_versao_boletim` | — |
 | `table` | `public.kb_product_spec_versions` | — |
 | `index` | `public.idx_kbv_identidade` | `kb_product_spec_versions` |
 | `index` | `public.idx_kbv_source_doc` | `kb_product_spec_versions` |
-| `function` | `public.kbv_block_mutation` | — |
-| `function` | `public.aprovar_versao_boletim` | — |
 | `trigger` | `public.trg_kbv_immutable` | `kb_product_spec_versions` |
 | `rls_policy` | `public.kbv_select_staff` | `kb_product_spec_versions` |
 
@@ -1923,8 +1973,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.kb_extraction_drafts` | — |
 | `function` | `public.kb_extraction_draft_claim` | — |
+| `table` | `public.kb_extraction_drafts` | — |
 | `trigger` | `public.trg_kb_extraction_drafts_updated_at` | `kb_extraction_drafts` |
 | `rls_policy` | `public.kb_extraction_drafts_select_master` | `kb_extraction_drafts` |
 | `rls_policy` | `public.kb_extraction_drafts_delete_master` | `kb_extraction_drafts` |
@@ -1939,9 +1989,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `index` | `public.kbv_uma_viva` | `kb_product_spec_versions` |
 | `function` | `public.aprovar_versao_boletim` | — |
 | `function` | `public.kbv_block_mutation` | — |
+| `index` | `public.kbv_uma_viva` | `kb_product_spec_versions` |
 | `trigger` | `public.trg_kbv_immutable` | `kb_product_spec_versions` |
 
 ### `20260613190000_radar_fatia3.sql`
@@ -1977,8 +2027,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `index` | `public.idx_radar_muni_cover` | `radar_empresas` |
 | `function` | `public.radar_contagem_por_municipio` | — |
+| `index` | `public.idx_radar_muni_cover` | `radar_empresas` |
 
 ### `20260614160000_roteirizador_campo_banco.sql`
 
@@ -1992,9 +2042,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.cmc_ledger_capture` | — |
 | `table` | `public.cmc_ledger` | — |
 | `index` | `public.idx_cmc_ledger_lookup` | `cmc_ledger` |
-| `function` | `public.cmc_ledger_capture` | — |
 | `trigger` | `public.trg_cmc_ledger_capture` | `inventory_position` |
 | `rls_policy` | `public.cmc_ledger_select_staff` | `cmc_ledger` |
 
@@ -2008,11 +2058,11 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.resolve_markup_policy` | — |
 | `table` | `public.markup_policy` | — |
 | `index` | `public.uq_markup_policy_conta` | `markup_policy` |
 | `index` | `public.uq_markup_policy_fam` | `markup_policy` |
 | `index` | `public.uq_markup_policy_sku` | `markup_policy` |
-| `function` | `public.resolve_markup_policy` | — |
 | `rls_policy` | `public.markup_policy_select_staff` | `markup_policy` |
 | `rls_policy` | `public.markup_policy_write_master` | `markup_policy` |
 
@@ -2057,11 +2107,11 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.cliente_grupos_set_updated_at` | — |
 | `table` | `public.cliente_grupos` | — |
 | `table` | `public.cliente_grupo_membros` | — |
 | `index` | `public.idx_cgm_grupo` | `cliente_grupo_membros` |
 | `index` | `public.idx_cgm_documento` | `cliente_grupo_membros` |
-| `function` | `public.cliente_grupos_set_updated_at` | — |
 | `trigger` | `public.trg_cliente_grupos_updated_at` | `cliente_grupos` |
 | `rls_policy` | `public.cliente_grupos_service` | `cliente_grupos` |
 | `rls_policy` | `public.cliente_grupos_fin_access` | `cliente_grupos` |
@@ -2114,13 +2164,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.cep_geo` | — |
-| `table` | `public.municipio_geo` | — |
 | `function` | `public.normalizar_cep` | — |
 | `function` | `public.rank_precisao` | — |
 | `function` | `public.cep_geo_upsert` | — |
 | `function` | `public.carteira_por_municipio` | — |
 | `function` | `public.radar_prospects_para_rota` | — |
+| `table` | `public.cep_geo` | — |
+| `table` | `public.municipio_geo` | — |
 | `rls_policy` | `public.cep_geo_sel` | `cep_geo` |
 | `rls_policy` | `public.municipio_geo_sel` | `municipio_geo` |
 
@@ -2140,10 +2190,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `table` | `public.reposicao_auto_aprovacao_log` | — |
-| `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
 | `function` | `public.reposicao_pedido_auto_aprovavel` | — |
 | `function` | `public.reposicao_alerta_pedido_minimo_tick` | — |
+| `table` | `public.reposicao_auto_aprovacao_log` | — |
+| `index` | `public.reposicao_auto_aprovacao_log_criado_em` | `reposicao_auto_aprovacao_log` |
 
 ### `20260615210000_tint_get_prices_batch.sql`
 
@@ -2153,15 +2203,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260616020000_fix_aging_views_status_vocab.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.fin_aging_receber` | — |
+| `view` | `public.fin_aging_pagar` | — |
 
 ### `20260616120000_regua_preco.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.get_regua_preco` | — |
 | `table` | `public.regua_preco_log` | — |
 | `index` | `public.idx_regua_preco_log_cliente_sku` | `regua_preco_log` |
-| `function` | `public.get_regua_preco` | — |
 | `rls_policy` | `public.regua_preco_log_staff_all` | `regua_preco_log` |
 
 ### `20260616120000_tint_price_gate_ativo.sql`
@@ -2173,7 +2226,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260616120000_v_grupo_contas_receber.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_grupo_contas_receber` | — |
+| `view` | `public.v_grupo_contas_receber_por_doc` | — |
 
 ### `20260616120001_idx_tactical_plans_lookup.sql`
 
@@ -2189,19 +2245,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20260616130000_v_grupo_contatos.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_grupo_contatos` | — |
 
 ### `20260616140000_v_grupo_comercial.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_grupo_comercial` | — |
 
 ### `20260616140941_fatia2_sinais_ligacao.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.enqueue_score_recalc_from_sinais` | — |
 | `table` | `public.sinal_classe_config` | — |
 | `index` | `public.idx_farmer_calls_sinais_pendentes` | `farmer_calls` |
-| `function` | `public.enqueue_score_recalc_from_sinais` | — |
 | `trigger` | `public.trg_farmer_calls_enqueue_recalc_sinais` | `farmer_calls` |
 | `rls_policy` | `public.sinal_classe_config_select_staff` | `sinal_classe_config` |
 | `rls_policy` | `public.sinal_classe_config_master_all` | `sinal_classe_config` |

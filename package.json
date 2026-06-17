@@ -21,6 +21,7 @@
     "wt:prune": "bash scripts/wt-prune.sh",
     "wt:map": "bash scripts/wt-map.sh",
     "wt:label": "bash scripts/wt-map.sh label",
+    "wt:preflight": "bun scripts/wt-preflight-migration.ts",
     "claude:size": "bash scripts/check-claude-md-budget.sh"
   },
   "dependencies": {
