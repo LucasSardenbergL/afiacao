@@ -119,12 +119,20 @@ function scoreRelacionamento(c: CustomerScoreInputs): number {
   return clamp(healthBoost + revenueBoost + daysSinceVisitBoost - riskPenalty, 0, 100);
 }
 
-function scoreProspeccao(c: CustomerScoreInputs): number {
+function scoreProspeccao(c: CustomerScoreInputs, classesAtivas: Set<string>): number {
   const isProspectCandidate = c.sales_orders_count === 0 || c.is_prospect === true;
   if (!isProspectCandidate) return 0;
   const baseProspect = 70;
   const recencyOfSignup = c.days_since_signup < 30 ? 20 : 0;
-  const signalsQuality = (c.signal_modifiers?.source_call_count ?? 0) > 0 ? 10 : 0;
+  // Shadow-safe: a qualidade só sobe com sinal de classe ATIVADA (não com source_call_count
+  // cru, que a Fatia 2 passa a alimentar via sinais_ligacao). Em shadow total → 0, idêntico a hoje.
+  const bd = c.signal_modifiers?.breakdown;
+  const temSinalAplicavel =
+    aplicaveis(bd?.churn, classesAtivas).length > 0 ||
+    aplicaveis(bd?.expansion, classesAtivas).length > 0 ||
+    aplicaveis(bd?.health, classesAtivas).length > 0 ||
+    aplicaveis(bd?.eff, classesAtivas).length > 0;
+  const signalsQuality = temSinalAplicavel ? 10 : 0;
   return clamp(baseProspect + recencyOfSignup + signalsQuality, 0, 100);
 }
 
@@ -137,7 +145,7 @@ function computeVisitScore(c: CustomerScoreInputs, classesAtivas: Set<string>): 
     recuperacao: scoreRecuperacao(c, classesAtivas),
     expansao: scoreExpansao(c, classesAtivas),
     relacionamento: scoreRelacionamento(c),
-    prospeccao: scoreProspeccao(c),
+    prospeccao: scoreProspeccao(c, classesAtivas),
   };
   const ORDER: MissionType[] = ['expansao', 'recuperacao', 'relacionamento', 'prospeccao'];
   let primary_mission: MissionType = 'prospeccao';
