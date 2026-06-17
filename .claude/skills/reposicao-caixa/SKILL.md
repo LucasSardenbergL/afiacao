@@ -1,18 +1,24 @@
 ---
 name: reposicao-caixa
 description: >-
-  Decisão de COMPRA de reposição olhando o impacto no CAIXA / capital de giro da Oben
-  (distribuidora do grupo Colacor). Produz um MEMORANDO de decisão: comprar agora,
-  segurar, parcelar, negociar prazo, reduzir lote, antecipar (por aumento anunciado),
-  comprar mais (promoção) ou priorizar por classe A/B/C. Use SEMPRE que o usuário
-  estiver decidindo uma compra de fornecedor, perguntar "vale a pena comprar isso",
-  "compro agora ou seguro", "vale antecipar antes do aumento", "vale pegar a promoção",
-  "quanto comprar", "isso aperta meu caixa", "tenho fôlego pra essa compra",
-  "parcelo ou pago à vista", ou mencionar reposição, ponto de pedido, EOQ, lote de
-  compra, estoque parado, NCG, capital de giro, fornecedor aumentou preço, ou um
-  SKU/fornecedor específico da Oben — mesmo que não use a palavra "memorando".
-  Não decide sozinha: sempre mostra premissas, confiabilidade dos dados e o que mudaria
-  a recomendação. É read-only (puxa dados via Lovable SQL Editor; nunca escreve no banco).
+  Decisão de COMPRA/reposição de fornecedor ponderada pelo IMPACTO NO CAIXA / capital de
+  giro da Oben (distribuidora do grupo Colacor). Produz um MEMORANDO de decisão: comprar
+  agora, segurar, parcelar, pagar à vista, negociar prazo, reduzir lote, antecipar (por
+  aumento anunciado), comprar mais (promoção) ou priorizar por classe A/B/C. Use SEMPRE que
+  o usuário estiver decidindo SE / QUANTO / QUANDO comprar de um fornecedor — mesmo sem
+  dizer "memorando", e mesmo que o caixa/NCG entrem só como restrição da compra: "vale a
+  pena comprar isso agora ou seguro", "quanto comprar do SKU X esse ciclo", "o fornecedor
+  vai aumentar, antecipo a compra?", "tem promoção, pego mais?", "esse pedido de R$ X aperta
+  meu caixa?", "parcelo ou pago à vista pra pegar o desconto?", "o que comprar hoje sem furar
+  o caixa?", "vale estocar antes do reajuste?". Read-only: gera SQL pro Lovable (founder
+  cola/roda/cola de volta), nunca escreve no banco; sempre mostra premissas, confiabilidade
+  dos dados e o que mudaria a recomendação. NÃO use (cada uma é OUTRA skill): puxar
+  números/relatório de negócio, "como estão as vendas", NCG/aging/fluxo de caixa/margem, ou
+  consultar estoque/giro de um SKU SEM uma decisão de compra em jogo → bi-colacor;
+  criar/alterar tabela, coluna, RPC, índice ou view de reposição → lovable-db-operator; "o
+  sync / os dados da reposição estão velhos ou pararam" → diagnose-supabase-sync; provar ou
+  escrever função/RPC SQL de compra → prove-sql-money-path; plano de rota/visita ou cross-sell
+  de VENDA → farmer.
 ---
 
 # Reposição & Caixa — Memorando de Decisão de Compra (Oben)
