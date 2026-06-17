@@ -17,6 +17,7 @@ import {
 } from './helpers';
 import { buildPrintData } from './buildPrintData';
 import { ensureSalesOrderRow } from './idempotency';
+import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
 import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
 
 /**
@@ -97,6 +98,25 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         allConfirmed: false,
       };
     }
+  }
+
+  // ── Preflight de vendabilidade (fail-closed) — fronteira money-path ──
+  // O filtro de catálogo (wizard/tint) é UX; a GARANTIA de não vender inativo é aqui.
+  // Rascunho restaurado e o cache de 10min do catálogo podem trazer um produto que
+  // ficou inativo no Omie DEPOIS da seleção (useCart aceita qualquer Product) →
+  // revalida `ativo` no banco antes de criar qualquer sales_order/PV. Serviços de
+  // afiação não passam (não são omie_products vendáveis).
+  const vend = await validarVendabilidade(supabase, [...obenProductItems, ...colacorProductItems]);
+  const bloqueioVend = bloqueioVendabilidade(vend);
+  if (bloqueioVend) {
+    return {
+      success: false,
+      results: [],
+      printDataList: [],
+      lastOrderData: null,
+      errors: [{ step: 'validate_vendabilidade', message: bloqueioVend }],
+      allConfirmed: false,
+    };
   }
 
   const storedAddress = formatCustomerAddress(delivery.selectedAddress, customer);

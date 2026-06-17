@@ -1,0 +1,22 @@
+[
+  { "query": "roda o fechamento financeiro de abril das tres empresas", "should_trigger": true },
+  { "query": "como ta o caixa da Colacor pros proximos meses? consigo pagar a folha sem aperto?", "should_trigger": true },
+  { "query": "me mostra a inadimplencia, quem ta me devendo e ha quanto tempo, ordenado por valor", "should_trigger": true },
+  { "query": "preciso da projecao de caixa de 13 semanas antes da reuniao com o gerente do banco amanha de manha", "should_trigger": true },
+  { "query": "quanto a Oben ta pagando de imposto proporcionalmente? isso ta normal pra lucro presumido de distribuidora?", "should_trigger": true },
+  { "query": "qual capital de giro eu to precisando? sinto que a NCG ta comendo meu caixa", "should_trigger": true },
+  { "query": "monta a lista de perguntas pro contador desse mes com base no que ta estranho no DRE", "should_trigger": true },
+  { "query": "o DRE da Colacor SC ta confiavel? tem muita categoria caindo em despesa operacional sem eu saber o que e", "should_trigger": true },
+  { "query": "faz um diagnostico financeiro geral do grupo, tipo um controller olhando recebiveis, pagaveis e resultado", "should_trigger": true },
+  { "query": "a Colacor SC cresceu bastante esse ano, sera que to perto de estourar o teto do Simples Nacional?", "should_trigger": true },
+  { "query": "adiciona uma coluna de margem de lucro nesse xlsx que minha contadora mandou, revenue na C e custo na D", "should_trigger": false },
+  { "query": "o FinanceiroDashboard.tsx ta com 1242 linhas, quebra ele em subcomponentes menores", "should_trigger": false },
+  { "query": "cria uma migration pra adicionar a coluna deleted_at na tabela sales_orders pra soft delete", "should_trigger": false },
+  { "query": "por que o sync do Omie de contas a receber ta falhando com erro 500 desde ontem?", "should_trigger": false },
+  { "query": "escreve um cold email pros leads de marcenaria que pediram orcamento e nao responderam", "should_trigger": false },
+  { "query": "qual a comissao que o vendedor externo ganha nesse pedido de R$ 12 mil da Oben?", "should_trigger": false },
+  { "query": "faz um grafico de barras das vendas por mes de 2026 pra eu colar na apresentacao do conselho", "should_trigger": false },
+  { "query": "preciso revisar o contrato de fornecimento da Oben com aquele distribuidor antes de assinar", "should_trigger": false },
+  { "query": "configura o cron fin-cashflow-snapshot-diario no SQL Editor do Lovable pra rodar todo dia", "should_trigger": false },
+  { "query": "quanto gastei de Google Ads esse mes e qual foi o ROAS das campanhas de abrasivo?", "should_trigger": false }
+]

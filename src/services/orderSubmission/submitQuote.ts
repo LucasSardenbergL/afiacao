@@ -1,6 +1,7 @@
 import type { SubmitQuoteParams, SubmitQuoteResult, SubmitErrorEntry } from './types';
 import { logger } from '@/lib/logger';
 import { formatCustomerAddress, resolveCustomerPhone } from './helpers';
+import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
 import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
 
 /**
@@ -22,6 +23,14 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
   const invalidPriced = findInvalidPricedProductItems([...obenProductItems, ...colacorProductItems]);
   if (invalidPriced.length > 0) {
     return { success: false, results: [], errors: [{ step: 'validate_price', message: invalidPriceMessage(invalidPriced) }] };
+  }
+
+  // Preflight de vendabilidade (fail-closed) — mesma fronteira money-path do submitOrder:
+  // não salvar orçamento de produto que ficou inativo no Omie (rascunho/cache podem trazê-lo).
+  const vend = await validarVendabilidade(supabase, [...obenProductItems, ...colacorProductItems]);
+  const bloqueioVend = bloqueioVendabilidade(vend);
+  if (bloqueioVend) {
+    return { success: false, results: [], errors: [{ step: 'validate_vendabilidade', message: bloqueioVend }] };
   }
 
   const storedAddress = formatCustomerAddress(delivery.selectedAddress, customer);

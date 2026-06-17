@@ -14478,6 +14478,35 @@ export type Database = {
         }
         Relationships: []
       }
+      v_grupo_comercial: {
+        Row: {
+          dias_desde_ultima: number | null
+          documentos_com_compra: number | null
+          fat_90d: number | null
+          fat_90d_anterior: number | null
+          faturamento_total: number | null
+          grupo_id: string | null
+          media_mensal_6m: number | null
+          qtd_pedidos: number | null
+          ultima_compra: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cliente_grupo_membros_grupo_id_fkey"
+            columns: ["grupo_id"]
+            isOneToOne: false
+            referencedRelation: "cliente_grupos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cliente_grupo_membros_grupo_id_fkey"
+            columns: ["grupo_id"]
+            isOneToOne: false
+            referencedRelation: "v_grupo_contas_receber"
+            referencedColumns: ["grupo_id"]
+          },
+        ]
+      }
       v_grupo_contas_receber: {
         Row: {
           a_vencer: number | null
@@ -15957,6 +15986,10 @@ export type Database = {
       get_preco_cockpit: { Args: { p_itens: Json }; Returns: Json }
       get_regua_preco: {
         Args: { p_customer: string; p_product: string; p_qty: number }
+        Returns: Json
+      }
+      get_regua_preco_customer360: {
+        Args: { p_customer: string; p_omie_codigos: number[] }
         Returns: Json
       }
       get_sku_ranking_negociacao_paralela: {

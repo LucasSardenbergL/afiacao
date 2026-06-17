@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **253** custom migrations totais
-- **924** objetos esperados (criados por estas migrations)
+- **255** custom migrations totais
+- **929** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 262
-  - `rls_policy`: 216
-  - `index`: 182
-  - `table`: 106
+  - `function`: 264
+  - `rls_policy`: 217
+  - `index`: 183
+  - `table`: 107
   - `cron_job`: 106
   - `trigger`: 48
   - `enum_value`: 4
@@ -2155,6 +2155,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260616120000_regua_preco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.regua_preco_log` | — |
+| `index` | `public.idx_regua_preco_log_cliente_sku` | `regua_preco_log` |
+| `function` | `public.get_regua_preco` | — |
+| `rls_policy` | `public.regua_preco_log_staff_all` | `regua_preco_log` |
+
 ### `20260616120000_tint_price_gate_ativo.sql`
 
 | Tipo | Objeto | Parent |
@@ -2171,6 +2180,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `index` | `public.idx_tactical_plans_lookup` | `farmer_tactical_plans` |
+
+### `20260616120001_regua_preco_customer360.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_regua_preco_customer360` | — |
 
 ### `20260616130000_v_grupo_contatos.sql`
 

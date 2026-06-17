@@ -13,6 +13,11 @@ import { fmt, getToolName } from '@/hooks/useUnifiedOrder';
 import { usePrecoCockpit, chaveCockpit, type ItemCockpitInput, type LinhaCockpit } from '@/hooks/usePrecoCockpit';
 import { FAIXA_UI } from '@/lib/preco/faixa-ui';
 import { cn } from '@/lib/utils';
+import { useFeatureFlag } from '@/hooks/useFeatureFlag';
+import { useReguaPreco } from '@/hooks/useReguaPreco';
+import { ReguaPrecoSinal } from '@/components/regua-preco/ReguaPrecoSinal';
+import type { ReguaCartItem } from '@/lib/regua-preco/regua-preco-ui';
+import { useReguaPrecoLog } from '@/hooks/useReguaPrecoLog';
 import { isInvalidProductPrice } from '@/services/orderSubmission/priceGuard';
 
 interface CartItemListProps {
@@ -31,6 +36,8 @@ interface CartItemListProps {
   onRemoveFromCart: (idx: number) => void;
   getServicePrice: (item: ServiceCartItem) => number | null;
   getCartIndex: (item: ProductCartItem | ServiceCartItem) => number;
+  customerUserId: string | null;
+  customerName: string | null;
 }
 
 export function CartItemList({
@@ -39,6 +46,7 @@ export function CartItemList({
   deliveryOption, selectedTimeSlot,
   onUpdateQuantity, onUpdateProductPrice, onRemoveFromCart,
   getServicePrice, getCartIndex,
+  customerUserId, customerName,
 }: CartItemListProps) {
   // #6 (B): faixa do cockpit na linha do carrinho — aqui o tint_formula_id existe,
   // então a linha tinta recebe o custo REAL (base+corantes); item normal usa o preço
@@ -64,6 +72,26 @@ export function CartItemList({
     return m;
   }, [cockpitItens, cockpitList]);
 
+  // Régua de Preço (v1 só Oben): sinal de mercado/piso-MC por linha. A Régua é a
+  // autoridade do vermelho de margem — quando abaixoPiso, o badge do cockpit recua a neutro.
+  const [reguaFlag] = useFeatureFlag('regua_preco_carrinho');
+  const reguaItens = useMemo<ReguaCartItem[]>(() =>
+    obenProductItems
+      // Tinta tem custo formula-aware (base + corantes); a RPC da Régua só conhece o
+      // product.id da BASE → piso de MC subestimado (Codex P1). v1 exclui tinta — o
+      // cockpit, que é formula-aware, segue cobrindo. Incluir quando a RPC somar corantes.
+      .filter((it) => !it.tint_formula_id)
+      .map((it) => ({
+        chave: chaveCockpit(it.product.account ?? '', it.product.omie_codigo_produto, it.tint_formula_id),
+        productId: it.product.id,
+        qty: it.quantity,
+        precoAtual: it.unit_price,
+      })),
+    [obenProductItems],
+  );
+  const { reguaByKey } = useReguaPreco(reguaItens, customerUserId, reguaFlag);
+  const { marcarExibido, marcarAplicado } = useReguaPrecoLog();
+
   const renderProductGroup = (items: ProductCartItem[], label: string, icon: React.ReactNode) => (
     <div>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
@@ -71,7 +99,13 @@ export function CartItemList({
       </p>
       {items.map(item => {
         const cartIdx = getCartIndex(item);
-        const health = cockpitByKey.get(chaveCockpit(item.product.account ?? '', item.product.omie_codigo_produto, item.tint_formula_id));
+        const chave = chaveCockpit(item.product.account ?? '', item.product.omie_codigo_produto, item.tint_formula_id);
+        const health = cockpitByKey.get(chave);
+        const regua = reguaByKey.get(chave);
+        const reguaVermelho = regua?.sinal === 'piso'; // Régua = autoridade do vermelho de margem
+        // Só suprime o vermelho FORTE do cockpit quando a Régua tem piso CONFIÁVEL (com
+        // botão). Piso por CMC proxy (precoReferencia null) NÃO esconde o cockpit (Codex P1/P2).
+        const cockpitSuprimido = reguaVermelho && regua?.precoReferencia != null && health?.faixa === 'vermelho';
         const invalidPrice = isInvalidProductPrice(item.unit_price);
         return (
           <div key={`${item.product.id}-${item.tint_formula_id || 'base'}`} className="space-y-1.5 mb-2">
@@ -85,20 +119,35 @@ export function CartItemList({
                     </Badge>
                   </div>
                 )}
-                {health && health.faixa !== 'neutro' && FAIXA_UI[health.faixa] && (
-                  <div className="mt-0.5">
-                    <Badge
-                      variant="outline"
-                      className={cn('text-[9px] px-1 py-0', FAIXA_UI[health.faixa].cls)}
-                      title={health.cmc != null ? 'Markup bruto sobre o custo (CMC) — não inclui imposto/comissão/frete/prazo' : undefined}
-                    >
-                      {FAIXA_UI[health.faixa].label}
-                      {health.cmc != null && health.markup_perc != null && (
-                        <span className="ml-1 font-mono">
-                          {Math.round(health.markup_perc)}%{health.folga_reais != null ? ` · ${fmt(health.folga_reais)}` : ''}
-                        </span>
-                      )}
-                    </Badge>
+                {((health && health.faixa !== 'neutro' && FAIXA_UI[health.faixa]) || regua) && (
+                  <div className="mt-0.5 flex items-center gap-1 flex-wrap">
+                    {health && health.faixa !== 'neutro' && FAIXA_UI[health.faixa] && (
+                      <Badge
+                        variant="outline"
+                        className={cn('text-[9px] px-1 py-0', cockpitSuprimido ? 'text-muted-foreground border-border' : FAIXA_UI[health.faixa].cls)}
+                        title={health.cmc != null ? 'Markup bruto sobre o custo (CMC) — não inclui imposto/comissão/frete/prazo' : undefined}
+                      >
+                        {cockpitSuprimido ? '' : FAIXA_UI[health.faixa].label}
+                        {health.cmc != null && health.markup_perc != null && (
+                          <span className={cn('font-mono', !cockpitSuprimido && 'ml-1')}>
+                            {Math.round(health.markup_perc)}%{health.folga_reais != null ? ` · ${fmt(health.folga_reais)}` : ''}
+                          </span>
+                        )}
+                      </Badge>
+                    )}
+                    {regua && (
+                      <ReguaPrecoSinal
+                        result={regua}
+                        precoAtual={item.unit_price}
+                        contexto={{ produto: item.product.descricao, cliente: customerName, qty: item.quantity }}
+                        onExibido={(r) => marcarExibido(chave, {
+                          account: 'oben', customerUserId: customerUserId!, productId: item.product.id,
+                          quantity: item.quantity, precoAtual: item.unit_price,
+                          cmcUsado: health?.cmc ?? null, result: r,
+                        })}
+                        onAplicar={(preco) => { onUpdateProductPrice(cartIdx, preco); marcarAplicado(chave, customerUserId!, preco); }}
+                      />
+                    )}
                   </div>
                 )}
               </div>

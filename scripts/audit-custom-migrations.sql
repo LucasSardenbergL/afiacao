@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 253
+-- Total de custom migrations: 255
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -267,9 +267,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260615210000', 'reposicao_auto_aprovacao_v2', '20260615210000_reposicao_auto_aprovacao_v2.sql'),
   ('20260615210000', 'tint_get_prices_batch', '20260615210000_tint_get_prices_batch.sql'),
   ('20260616020000', 'fix_aging_views_status_vocab', '20260616020000_fix_aging_views_status_vocab.sql'),
+  ('20260616120000', 'regua_preco', '20260616120000_regua_preco.sql'),
   ('20260616120000', 'tint_price_gate_ativo', '20260616120000_tint_price_gate_ativo.sql'),
   ('20260616120000', 'v_grupo_contas_receber', '20260616120000_v_grupo_contas_receber.sql'),
   ('20260616120001', 'idx_tactical_plans_lookup', '20260616120001_idx_tactical_plans_lookup.sql'),
+  ('20260616120001', 'regua_preco_customer360', '20260616120001_regua_preco_customer360.sql'),
   ('20260616130000', 'v_grupo_contatos', '20260616130000_v_grupo_contatos.sql'),
   ('20260616140000', 'v_grupo_comercial', '20260616140000_v_grupo_comercial.sql'),
   ('20260616140941', 'fatia2_sinais_ligacao', '20260616140941_fatia2_sinais_ligacao.sql')
@@ -1205,9 +1207,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
   ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
   ('tint_get_prices_batch', 'function', 'public', 'get_tint_prices', ''),
+  ('regua_preco', 'table', 'public', 'regua_preco_log', ''),
+  ('regua_preco', 'index', 'public', 'idx_regua_preco_log_cliente_sku', 'regua_preco_log'),
+  ('regua_preco', 'function', 'public', 'get_regua_preco', ''),
+  ('regua_preco', 'rls_policy', 'public', 'regua_preco_log_staff_all', 'regua_preco_log'),
   ('tint_price_gate_ativo', 'function', 'public', 'get_tint_price', ''),
   ('tint_price_gate_ativo', 'function', 'public', 'get_tint_prices', ''),
   ('idx_tactical_plans_lookup', 'index', 'public', 'idx_tactical_plans_lookup', 'farmer_tactical_plans'),
+  ('regua_preco_customer360', 'function', 'public', 'get_regua_preco_customer360', ''),
   ('fatia2_sinais_ligacao', 'table', 'public', 'sinal_classe_config', ''),
   ('fatia2_sinais_ligacao', 'index', 'public', 'idx_farmer_calls_sinais_pendentes', 'farmer_calls'),
   ('fatia2_sinais_ligacao', 'function', 'public', 'enqueue_score_recalc_from_sinais', ''),

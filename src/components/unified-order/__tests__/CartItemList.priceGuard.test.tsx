@@ -11,6 +11,13 @@ vi.mock('@/hooks/usePrecoCockpit', () => ({
   usePrecoCockpit: () => ({ data: undefined }),
   chaveCockpit: (e: string, c: number, t: string | null) => `${e}|${c}|${t ?? ''}`,
 }));
+// Régua (PR3) puxa useAuth/useQuery — mock vazio (como flag off) isola este teste do guard de preço.
+vi.mock('@/hooks/useReguaPreco', () => ({
+  useReguaPreco: () => ({ reguaByKey: new Map(), isLoading: false }),
+}));
+vi.mock('@/hooks/useReguaPrecoLog', () => ({
+  useReguaPrecoLog: () => ({ marcarExibido: vi.fn(), marcarAplicado: vi.fn() }),
+}));
 
 import { CartItemList } from '../CartItemList';
 import type { ProductCartItem } from '@/hooks/unifiedOrder/types';
@@ -39,6 +46,8 @@ function makeProps(obenProductItems: ProductCartItem[]) {
     onRemoveFromCart: vi.fn(),
     getServicePrice: () => null,
     getCartIndex: () => 0,
+    customerUserId: null,
+    customerName: null,
   };
 }
 
