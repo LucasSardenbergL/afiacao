@@ -257,13 +257,13 @@ serve(async (req: Request) => {
     // FILTRO OBEN obrigatório: um pedido do app mistura itens das 3 empresas (Oben/Colacor/Colacor SC),
     // enviados separadamente. Sem o filtro por produto, o cockpit da Oben fica contaminado.
     type Prod = { id: string; omie_codigo_produto: number; account: string };
-    const prods = await fetchAll<Prod>((f, t) => db.from("omie_products").select("id, omie_codigo_produto, account").eq("account", COMPANY).range(f, t), "omie_products");
+    const prods = await fetchAll<Prod>((f, t) => db.from("omie_products").select("id, omie_codigo_produto, account").eq("account", COMPANY).order("id", { ascending: true }).range(f, t), "omie_products");
     const obenProductIds = new Set(prods.map((p) => p.id));
     const obenSkus = new Set(prods.map((p) => String(p.omie_codigo_produto)));
 
     // Linhas de venda no TTM (order_items tem created_at próprio → sem .in gigante de pedidos).
     type Item = { customer_user_id: string; product_id: string | null; omie_codigo_produto: number | null; quantity: number; unit_price: number; discount: number | null; sales_order_id: string };
-    const itemsAll = await fetchAll<Item>((f, t) => db.from("order_items").select("customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, created_at, sales_order_id").gte("created_at", ttm_inicio).range(f, t), "order_items");
+    const itemsAll = await fetchAll<Item>((f, t) => db.from("order_items").select("customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, created_at, sales_order_id").gte("created_at", ttm_inicio).order("id", { ascending: true }).range(f, t), "order_items");
     // Faturabilidade: exclui pedido cancelado/rascunho/soft-deletado (alinhado a v_caca). Carrega TODOS
     // os pedidos (id,status,deleted_at) — ~7k linhas, barato — e materializa o Set de ids faturáveis pela
     // régua espelhada. SEM filtro de account: a exclusão vale p/ qualquer conta (produto Oben em pedido
@@ -275,11 +275,11 @@ serve(async (req: Request) => {
     if (linhas.length === 0) return jsonResponse({ company: COMPANY, vazio: true, motivo: "Sem linhas de venda da Oben no TTM." }, 200);
 
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
-    const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_clientes").select("user_id, omie_codigo_cliente").range(f, t), "omie_clientes");
+    const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_clientes").select("user_id, omie_codigo_cliente").order("id", { ascending: true }).range(f, t), "omie_clientes");
     const userToOmie = new Map(clientesAll.map((c) => [c.user_id, String(c.omie_codigo_cliente)]));
-    const custosAll = await fetchAll<{ product_id: string; cost_price: number }>((f, t) => db.from("product_costs").select("product_id, cost_price").range(f, t), "product_costs");
+    const custosAll = await fetchAll<{ product_id: string; cost_price: number }>((f, t) => db.from("product_costs").select("product_id, cost_price").order("id", { ascending: true }).range(f, t), "product_costs");
     const custoPorProduto = new Map(custosAll.map((c) => [c.product_id, c.cost_price]));
-    const estoqueAll = await fetchAll<{ omie_codigo_produto: number; saldo: number; cmc: number }>((f, t) => db.from("inventory_position").select("omie_codigo_produto, saldo, cmc").range(f, t), "inventory_position");
+    const estoqueAll = await fetchAll<{ omie_codigo_produto: number; saldo: number; cmc: number }>((f, t) => db.from("inventory_position").select("omie_codigo_produto, saldo, cmc").order("id", { ascending: true }).range(f, t), "inventory_position");
     const estoquePorSKU = new Map(estoqueAll.filter((e) => obenSkus.has(String(e.omie_codigo_produto))).map((e) => [String(e.omie_codigo_produto), { saldo: e.saldo, cmc: e.cmc }]));
 
     // Combos cliente×SKU — cliente não-mapeado vira 'app:<uuid>' (NÃO funde clientes distintos).
@@ -297,10 +297,10 @@ serve(async (req: Request) => {
 
     // AR da Oben relevante à janela (emitido na janela OU ainda em aberto) — serve p/ AR por cliente e cobertura.
     type CR = { omie_codigo_cliente: number | null; omie_codigo_lancamento: number | null; valor_documento: number; saldo: number; valor_recebido: number; data_emissao: string | null; data_vencimento: string | null; status_titulo: string };
-    const crsAll = await fetchAll<CR>((f, t) => db.from("fin_contas_receber").select("omie_codigo_cliente, omie_codigo_lancamento, valor_documento, saldo, valor_recebido, data_emissao, data_vencimento, status_titulo").eq("company", COMPANY).or(`data_recebimento.is.null,data_recebimento.gte.${ttm_inicio},data_emissao.gte.${ttm_inicio}`).range(f, t), "fin_contas_receber");
+    const crsAll = await fetchAll<CR>((f, t) => db.from("fin_contas_receber").select("omie_codigo_cliente, omie_codigo_lancamento, valor_documento, saldo, valor_recebido, data_emissao, data_vencimento, status_titulo").eq("company", COMPANY).or(`data_recebimento.is.null,data_recebimento.gte.${ttm_inicio},data_emissao.gte.${ttm_inicio}`).order("id", { ascending: true }).range(f, t), "fin_contas_receber");
     // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) por omie_codigo_lancamento.
     type Baixa = { omie_codigo_lancamento: number | null; data_baixa_final: string | null };
-    const baixasAll = await fetchAll<Baixa>((f, t) => db.from("v_titulo_baixas").select("omie_codigo_lancamento, data_baixa_final").eq("company", COMPANY).eq("tipo", "CR").range(f, t), "v_titulo_baixas");
+    const baixasAll = await fetchAll<Baixa>((f, t) => db.from("v_titulo_baixas").select("omie_codigo_lancamento, data_baixa_final").eq("company", COMPANY).eq("tipo", "CR").order("omie_codigo_lancamento", { ascending: true }).range(f, t), "v_titulo_baixas");
     const baixaPorCod = new Map<number, string>();
     for (const b of baixasAll) { if (b.omie_codigo_lancamento != null && b.data_baixa_final) baixaPorCod.set(Number(b.omie_codigo_lancamento), b.data_baixa_final); }
     const titulosPorCliente = new Map<string, TituloAR[]>();
