@@ -4,6 +4,16 @@
 > Gerado em 2026-06-16 (sessão `reverent-snyder`). Spec: `docs/superpowers/specs/2026-06-09-tint-sync-sayersystem-design.md` (§13–14).
 > ⚠️ **money-path:** o **flip** (§Bloco B) é a operação de RISCO (precisão > recall). Só flipe após a reconciliação provar divergência ~zero (§3). Se o sync falhar silencioso em `automatic_primary`, o balcão mostra fórmula errada/faltando.
 
+## ✅ DESFECHO (18/06 17:57 UTC) — catálogo automático NO AR, CSV aposentado
+
+Após **3 incidentes resolvidos** (loop de re-envio → hash v0.2.0; lock timeout na re-expansão em massa → `_skus_novos`; lock timeout no recálculo por corante → E4 `custo IS NOT NULL`), o flip definitivo **completou sem travar**. Verificação money-path em prod:
+- `integration_mode = automatic_primary`; conector v0.2.0 manda ~0 (loop morto); advisory lock limpo.
+- **482.665 fórmulas · 8.502 cores** (vs 8.388 do gabarito 12/06 = +114 cores novas).
+- **Preço:** 944 sem `preco_final_sayersystem` = **todas cores NOVAS** (criadas hoje); **0 existentes perderam preço** (COALESCE provado em prod). Cores novas têm preço via Omie (§14).
+- **0 desativadas** (nada removido indevidamente). Migrations em prod: `20260617130000` + `20260617150000` + `20260618130000`.
+
+**Follow-ups (Codex, não-urgentes — custo/precos_base não existem hoje):** (a) E4/precos_base usam loop-por-fórmula → migrar p/ set-based se algum dia vier custo em massa; (b) E1 atualiza `tint_corantes.volume_total_ml` mas preserva `preco_litro` (incoerência se algo ler direto); (c) defesa de infra `idle_in_transaction_session_timeout` no role (mata conexão presa antes que trave o lock); (d) higiene: `DROP TABLE tint_formulas_backup_preflip` (103 MB) após estabilizar.
+
 ## 0. Estado de produção (diagnóstico 16/06 23:33 Brasília, via `psql-ro` read-only)
 
 - `integration_mode = shadow_mode` — **seguro** (a promoção não roda; o balcão lê do oficial + preço via Omie).
