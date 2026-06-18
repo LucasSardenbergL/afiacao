@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit, resolverHurdleCockpit } from '../valor-cockpit-helpers';
+import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit, resolverHurdleCockpit, pedidoContaNoFaturamento } from '../valor-cockpit-helpers';
 
 // helper de fixture: TituloAR completo com defaults (reduz ruído nos casos)
 function tit(p: Partial<Parameters<typeof arMedioTTM>[0]['titulos'][number]>) {
@@ -309,5 +309,32 @@ describe('recomendarAcaoComercial — hurdle_indisponivel', () => {
     expect(r.some((x) => x.acao === 'Configurar hurdle')).toBe(false);
     const corte = r.find((x) => x.acao === 'Cortar desconto')!;
     expect(corte.motivo.toLowerCase()).toContain('não gera valor');
+  });
+});
+
+// Régua de faturabilidade do pedido pai, espelhada VERBATIM de v_caca_candidatos/v_caca_compradores
+// (positivação/comissão): WHERE deleted_at IS NULL AND status <> ALL(ARRAY['cancelado','rascunho']).
+// É o guard do bug do cockpit de valor (contava cancelado como faturamento → R$615M de inflação).
+describe('pedidoContaNoFaturamento (espelha a régua de v_caca)', () => {
+  it('pedido vivo e faturado → conta', () => {
+    expect(pedidoContaNoFaturamento('faturado', null)).toBe(true);
+  });
+  it('cancelado → NÃO conta (cerne do bug: pedido cancelado não é faturamento)', () => {
+    expect(pedidoContaNoFaturamento('cancelado', null)).toBe(false);
+  });
+  it('rascunho → NÃO conta (pedido não-firme; alinhado a v_caca)', () => {
+    expect(pedidoContaNoFaturamento('rascunho', null)).toBe(false);
+  });
+  it('status NOVO desconhecido (ex.: "entregue") → CONTA por default (blocklist semântica — NÃO subconta silenciosamente; Codex 2026-06-18)', () => {
+    expect(pedidoContaNoFaturamento('entregue', null)).toBe(true);
+  });
+  it('soft-deletado (deleted_at preenchido) → NÃO conta, mesmo com status faturado', () => {
+    expect(pedidoContaNoFaturamento('faturado', '2026-02-10T00:00:00Z')).toBe(false);
+  });
+  it('status NULL → NÃO conta (espelha o NULL <> ALL do WHERE de v_caca, que não passa em NULL)', () => {
+    expect(pedidoContaNoFaturamento(null, null)).toBe(false);
+  });
+  it('status undefined → NÃO conta', () => {
+    expect(pedidoContaNoFaturamento(undefined, null)).toBe(false);
   });
 });

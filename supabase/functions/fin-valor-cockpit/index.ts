@@ -69,6 +69,14 @@ const STATUS_LIQUIDADO_AR = ['RECEBIDO', 'LIQUIDADO', 'PAGO'];
 function statusLiquidadoAR(status: string | null | undefined): boolean {
   return !!status && STATUS_LIQUIDADO_AR.includes(status);
 }
+// Faturabilidade do pedido pai — espelha v_caca (deleted_at IS NULL AND status <> ALL(['cancelado','rascunho'])).
+// Blocklist semântica: status conhecido novo CONTA por default; cancelado/rascunho/soft-deletado/NULL não.
+const STATUS_NAO_FATURAVEL = ['cancelado', 'rascunho'];
+function pedidoContaNoFaturamento(status: string | null | undefined, deletedAt: string | null | undefined): boolean {
+  if (deletedAt != null) return false;
+  if (status == null) return false;
+  return !STATUS_NAO_FATURAVEL.includes(status);
+}
 type TituloAR = {
   valor_documento: number; saldo: number; valor_recebido: number;
   data_emissao: string | null; data_vencimento: string | null;
@@ -246,9 +254,16 @@ serve(async (req: Request) => {
     const obenSkus = new Set(prods.map((p) => String(p.omie_codigo_produto)));
 
     // Linhas de venda no TTM (order_items tem created_at próprio → sem .in gigante de pedidos).
-    type Item = { customer_user_id: string; product_id: string | null; omie_codigo_produto: number | null; quantity: number; unit_price: number; discount: number | null };
-    const itemsAll = await fetchAll<Item>((f, t) => db.from("order_items").select("customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, created_at").gte("created_at", ttm_inicio).range(f, t), "order_items");
-    const linhas = itemsAll.filter((l) => l.product_id != null && obenProductIds.has(l.product_id)); // só produtos Oben
+    type Item = { customer_user_id: string; product_id: string | null; omie_codigo_produto: number | null; quantity: number; unit_price: number; discount: number | null; sales_order_id: string };
+    const itemsAll = await fetchAll<Item>((f, t) => db.from("order_items").select("customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, created_at, sales_order_id").gte("created_at", ttm_inicio).range(f, t), "order_items");
+    // Faturabilidade: exclui pedido cancelado/rascunho/soft-deletado (alinhado a v_caca). Carrega TODOS
+    // os pedidos (id,status,deleted_at) — ~7k linhas, barato — e materializa o Set de ids faturáveis pela
+    // régua espelhada. SEM filtro de account: a exclusão vale p/ qualquer conta (produto Oben em pedido
+    // cancelado de outra conta também não é faturamento); o recorte Oben já vem por product_id.
+    type SalesOrderRow = { id: string; status: string | null; deleted_at: string | null };
+    const salesOrdersAll = await fetchAll<SalesOrderRow>((f, t) => db.from("sales_orders").select("id, status, deleted_at").order("id", { ascending: true }).range(f, t), "sales_orders");
+    const pedidosFaturaveis = new Set(salesOrdersAll.filter((so) => pedidoContaNoFaturamento(so.status, so.deleted_at)).map((so) => so.id));
+    const linhas = itemsAll.filter((l) => l.product_id != null && obenProductIds.has(l.product_id) && pedidosFaturaveis.has(l.sales_order_id)); // produtos Oben de pedidos faturáveis (exclui cancelado/rascunho/deletado)
     if (linhas.length === 0) return jsonResponse({ company: COMPANY, vazio: true, motivo: "Sem linhas de venda da Oben no TTM." }, 200);
 
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
