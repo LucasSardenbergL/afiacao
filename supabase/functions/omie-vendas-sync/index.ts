@@ -880,6 +880,7 @@ async function syncPedidos(
   let pagesProcessed = 0;
   let skippedNoClient = 0;
   let skippedExisting = 0;
+  let totalFailed = 0;
 
   // ── Pre-load document -> user_id mapping from profiles ──
   const docToUserMap = new Map<string, string>();
@@ -1199,7 +1200,10 @@ async function syncPedidos(
     if (pedidosRpc.length > 0) {
       const { data: rpcRes, error: rpcErr } = await supabase.rpc('criar_pedidos_com_itens', { p_pedidos: pedidosRpc });
       if (rpcErr) {
-        console.error(`[sync_pedidos][${account}] RPC criar_pedidos_com_itens falhou pág ${pagina}:`, rpcErr.message);
+        // Money-path: a RPC é o ÚNICO caminho de escrita agora. Se ela falha (migration não
+        // aplicada, grant, schema, conexão), LANÇAR — senão o sync fica verde sem gravar nada e
+        // o fin_sync_log marca 'complete' mascarando perda total (achado /codex challenge).
+        throw new Error(`[sync_pedidos][${account}] RPC criar_pedidos_com_itens falhou pág ${pagina}: ${rpcErr.message}`);
       } else if (rpcRes) {
         const r = rpcRes as { inserted?: number; repaired?: number; items?: number; skipped_complete?: number; skipped_no_items?: number; divergence?: unknown[]; failed?: unknown[] };
         totalSynced += (r.inserted || 0) + (r.repaired || 0);
@@ -1207,6 +1211,7 @@ async function syncPedidos(
         skippedExisting += r.skipped_complete || 0;
         const divs = r.divergence || [];
         const fails = r.failed || [];
+        totalFailed += fails.length;
         if (divs.length > 0) console.warn(`[sync_pedidos][${account}] ${divs.length} pedido(s) com cabeçalho divergente (Fase 2, NÃO reconciliado):`, JSON.stringify(divs.slice(0, 5)));
         if (fails.length > 0) console.error(`[sync_pedidos][${account}] ${fails.length} pedido(s) FALHARAM na RPC pág ${pagina}:`, JSON.stringify(fails.slice(0, 5)));
         console.log(`[sync_pedidos][${account}] RPC pág ${pagina}: inserted=${r.inserted || 0} repaired=${r.repaired || 0} items=${r.items || 0} skip_completo=${r.skipped_complete || 0} skip_sem_item=${r.skipped_no_items || 0} divergencia=${divs.length} falhas=${fails.length}`);
@@ -1219,7 +1224,7 @@ async function syncPedidos(
   }
 
   const complete = pagina > totalPaginas;
-  return { totalSynced, totalItems, skippedNoClient, skippedExisting, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
+  return { totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
 }
 
 // ── Reparo dos órfãos PRESOS (pai sem itens, fora da janela do cron) ──────────────────
@@ -1252,15 +1257,17 @@ async function repararOrfaosItens(
     }
   }
 
-  // Busca os pais órfãos em lote (só reparamos o que já existe como pai)
-  const paiByPedido = new Map<number, { customer_user_id: string; created_by: string; hash_payload: string; order_date_kpi: string | null }>();
+  // Busca os pais por hash_payload determinístico (omie_<account>_<pid>), NÃO por omie_pedido_id:
+  // (account, omie_pedido_id) é duplicado por design (push×pull, ver onda1_fase0) → buscar por id
+  // pegaria a linha errada (ex.: a do push com hash_payload NULL). O hash é único (índice parcial).
+  const paiByHash = new Map<string, { customer_user_id: string; created_by: string; hash_payload: string; order_date_kpi: string | null }>();
   for (let i = 0; i < pedidoIds.length; i += 300) {
+    const hashes = pedidoIds.slice(i, i + 300).map((pid) => `omie_${account}_${pid}`);
     const { data: pais } = await supabase
       .from('sales_orders')
-      .select('omie_pedido_id, customer_user_id, created_by, hash_payload, order_date_kpi')
-      .eq('account', account)
-      .in('omie_pedido_id', pedidoIds.slice(i, i + 300));
-    for (const p of (pais || [])) paiByPedido.set(p.omie_pedido_id, p);
+      .select('customer_user_id, created_by, hash_payload, order_date_kpi')
+      .in('hash_payload', hashes);
+    for (const p of (pais || [])) paiByHash.set(p.hash_payload, p);
   }
 
   const LOTE = 20;
@@ -1269,8 +1276,8 @@ async function repararOrfaosItens(
     const pedidosRpc: Array<Record<string, unknown>> = [];
 
     for (const pid of lote) {
-      const pai = paiByPedido.get(pid);
-      if (!pai) { semDados++; continue; } // sem pai órfão p/ esse id
+      const pai = paiByHash.get(`omie_${account}_${pid}`);
+      if (!pai) { semDados++; continue; } // sem pai (com hash omie) p/ esse id
 
       const consulta = await callOmieVendasApi(
         "produtos/pedido/", "ConsultarPedido", { codigo_pedido: pid }, account,

@@ -113,7 +113,12 @@ INSERT INTO public.sales_orders(customer_user_id,created_by,account,hash_payload
   ('$c1','$sys','oben','omie_oben_555',50,'faturado','2023-01-15','2023-01-15T00:00:00Z',555),
   ('$c1','$sys','oben','omie_oben_556',50,'faturado','2023-01-15','2023-01-15T00:00:00Z',556),
   ('$c1','$sys','oben','omie_oben_778',50,'faturado','2023-03-03','2023-03-03T00:00:00Z',778),
-  ('$c1','$sys','oben','omie_oben_889',100,'faturado','2024-02-02','2024-02-02T00:00:00Z',889);
+  ('$c1','$sys','oben','omie_oben_889',100,'faturado','2024-02-02','2024-02-02T00:00:00Z',889),
+  ('$c1','$sys','oben','omie_oben_780',50,'separacao','2024-03-03','2024-03-03T00:00:00Z',780),
+  ('$c1','$sys','oben','omie_oben_781',50,'faturado','2024-04-04','2024-04-04T00:00:00Z',781);
+-- price pré-existente p/ o 781 (Codex P2: reparo não pode duplicar histórico de preço)
+INSERT INTO public.sales_price_history(customer_user_id, product_id, unit_price, sales_order_id)
+  SELECT '$c1','$p1',50, id FROM public.sales_orders WHERE hash_payload='omie_oben_781';
 SQL
 
 # helper: chama a RPC 1x e popula INS REP SKC SKN DIV FAIL
@@ -205,6 +210,27 @@ EOF
 rpc "$J"
 eq "A6 skipped_complete=1" "$SKC" "1"
 eq "A6 itens inalterados (1, não 2)" "$(cnt omie_oben_999)" "1"
+
+# A5b — STATUS evoluiu não bloqueia reparo (Codex P1#2): órfão 'separacao' total=50,
+# payload 'faturado' total=50 (MESMO total) → repara (status fora do guard)
+J=$(cat <<EOF
+[{"account":"oben","hash_payload":"omie_oben_780","customer_user_id":"$c1","created_by":"$sys","total":50,"status":"faturado","order_date_kpi":"2024-03-03","itens":[{"omie_codigo_produto":1001,"product_id":"$p1","quantity":1,"unit_price":50}]}]
+EOF
+)
+rpc "$J"
+eq "A5b status evoluiu (separacao→faturado) NÃO bloqueia (P1#2)" "$REP" "1"
+eq "A5b sem divergência espúria" "$DIV" "0"
+eq "A5b 780 reparado (1 item)" "$(cnt omie_oben_780)" "1"
+
+# A7b — price idempotente no reparo (Codex P2): órfão 781 já tem 1 price → reparo não duplica
+J=$(cat <<EOF
+[{"account":"oben","hash_payload":"omie_oben_781","customer_user_id":"$c1","created_by":"$sys","total":50,"status":"faturado","order_date_kpi":"2024-04-04","itens":[{"omie_codigo_produto":1001,"product_id":"$p1","quantity":1,"unit_price":50}],"precos":[{"product_id":"$p1","unit_price":50}]}]
+EOF
+)
+rpc "$J"
+eq "A7b 781 reparado (1 item)" "$(cnt omie_oben_781)" "1"
+PH781=$(Pq -c "SELECT count(*) FROM public.sales_price_history sph JOIN public.sales_orders so ON so.id=sph.sales_order_id WHERE so.hash_payload='omie_oben_781';")
+eq "A7b reparo NÃO duplica price (1, não 2)" "$PH781" "1"
 
 # A8 — GRANT (G1): authenticated NÃO executa; service_role executa
 R=$(P -tA 2>&1 <<'SQL'

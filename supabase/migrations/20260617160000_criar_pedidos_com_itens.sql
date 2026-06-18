@@ -39,8 +39,8 @@ DECLARE
   v_skipped_no_items int := 0;
   v_divergence jsonb := '[]'::jsonb;
   v_failed     jsonb := '[]'::jsonb;
-  v_db_total numeric; v_db_status text; v_db_customer uuid; v_db_kpi date;
-  v_pl_total numeric; v_pl_status text; v_pl_customer uuid; v_pl_kpi date;
+  v_db_total numeric; v_db_customer uuid;
+  v_pl_total numeric; v_pl_customer uuid;
 BEGIN
   IF p_pedidos IS NULL OR jsonb_typeof(p_pedidos) <> 'array' THEN
     RAISE EXCEPTION 'p_pedidos deve ser array jsonb (veio %)', jsonb_typeof(p_pedidos)
@@ -92,8 +92,8 @@ BEGIN
         v_do_items := true;                       -- pai novo → grava filhos
       ELSE
         -- não inseriu: ou G7 filtrou (pai novo sem item válido), ou conflito (já existe)
-        SELECT id, created_at, total, status, customer_user_id, order_date_kpi
-          INTO v_existing, v_created_at, v_db_total, v_db_status, v_db_customer, v_db_kpi
+        SELECT id, created_at, total, customer_user_id
+          INTO v_existing, v_created_at, v_db_total, v_db_customer
           FROM public.sales_orders
          WHERE account = v_account AND hash_payload = v_hash
          FOR UPDATE;                              -- G3: trava o pai (fecha corrida sem lease)
@@ -108,15 +108,16 @@ BEGIN
             v_skipped_no_items := v_skipped_no_items + 1;    -- L2: órfão e payload sem item
           ELSE
             -- ── G5: guard de divergência (reparo ≠ reconciliação) ──
+            -- Divergência = sinal de que os ITENS mudaram, não o cabeçalho. NÃO comparamos
+            -- status (evolui naturalmente: separacao→faturado→...) nem a data — só travariam
+            -- reparos legítimos, escondendo positivação. total = soma dos itens (mesma fórmula
+            -- na criação e no reparo) → proxy de mudança de item/valor; tolerância de arredondamento.
+            -- customer = reatribuição do pedido a outro cliente (vira outro pedido).
             v_pl_total    := coalesce((v_pedido->>'total')::numeric, 0);
-            v_pl_status   := coalesce(v_pedido->>'status', 'importado');
             v_pl_customer := (v_pedido->>'customer_user_id')::uuid;
-            v_pl_kpi      := (v_pedido->>'order_date_kpi')::date;
-            v_diverge := (v_db_total    IS DISTINCT FROM v_pl_total
-                       OR v_db_status   IS DISTINCT FROM v_pl_status
-                       OR v_db_customer IS DISTINCT FROM v_pl_customer
-                       OR v_db_kpi      IS DISTINCT FROM v_pl_kpi);
-            IF v_diverge THEN   -- G5: cabeçalho mudou no Omie → não repara (Fase 2)
+            v_diverge := (abs(coalesce(v_db_total, 0) - v_pl_total) > 0.01
+                       OR v_db_customer IS DISTINCT FROM v_pl_customer);
+            IF v_diverge THEN   -- G5: itens/cliente divergem do pai → não repara (Fase 2)
               v_divergence := v_divergence || jsonb_build_object(
                 'codigo_pedido', v_pedido->'omie_pedido_id',
                 'hash', v_hash, 'motivo', 'cabecalho diverge do payload');
@@ -149,18 +150,22 @@ BEGIN
         GET DIAGNOSTICS v_n = ROW_COUNT;
         v_items := v_items + v_n;
 
-        -- ── G10: sales_price_history na MESMA transação, created_at coerente ──
-        INSERT INTO public.sales_price_history (
-          customer_user_id, product_id, unit_price, sales_order_id, created_at
-        )
-        SELECT coalesce((pr->>'customer_user_id')::uuid, (v_pedido->>'customer_user_id')::uuid),
-               (pr->>'product_id')::uuid,
-               (pr->>'unit_price')::numeric,
-               v_order_id,
-               v_created_at  -- G6
-        FROM jsonb_array_elements(coalesce(v_pedido->'precos', '[]'::jsonb)) AS pr
-        WHERE (pr->>'product_id') IS NOT NULL
-          AND coalesce((pr->>'unit_price')::numeric, 0) > 0;
+        -- ── G10: sales_price_history na MESMA transação (created_at coerente). Só se ainda NÃO
+        -- houver preço para este pedido — idempotente no reparo (evita duplicar histórico se o
+        -- fluxo antigo já gravou preço mas perdeu os itens). ──
+        IF NOT EXISTS (SELECT 1 FROM public.sales_price_history WHERE sales_order_id = v_order_id) THEN
+          INSERT INTO public.sales_price_history (
+            customer_user_id, product_id, unit_price, sales_order_id, created_at
+          )
+          SELECT coalesce((pr->>'customer_user_id')::uuid, (v_pedido->>'customer_user_id')::uuid),
+                 (pr->>'product_id')::uuid,
+                 (pr->>'unit_price')::numeric,
+                 v_order_id,
+                 v_created_at  -- G6
+          FROM jsonb_array_elements(coalesce(v_pedido->'precos', '[]'::jsonb)) AS pr
+          WHERE (pr->>'product_id') IS NOT NULL
+            AND coalesce((pr->>'unit_price')::numeric, 0) > 0;
+        END IF;
       END IF;
 
     EXCEPTION WHEN OTHERS THEN
