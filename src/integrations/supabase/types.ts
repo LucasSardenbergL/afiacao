@@ -15737,6 +15737,7 @@ export type Database = {
         }
         Returns: number
       }
+      criar_pedidos_com_itens: { Args: { p_pedidos: Json }; Returns: Json }
       data_health_watchdog: { Args: never; Returns: undefined }
       delete_push_subscription: {
         Args: { p_endpoint: string }
