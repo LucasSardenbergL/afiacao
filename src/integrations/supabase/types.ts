@@ -2162,6 +2162,7 @@ export type Database = {
           notes: string | null
           phone_dialed: string | null
           revenue_generated: number | null
+          sinais_ligacao: Json | null
           started_at: string
           transcript: Json | null
           whatsapp_replied: boolean | null
@@ -2187,6 +2188,7 @@ export type Database = {
           notes?: string | null
           phone_dialed?: string | null
           revenue_generated?: number | null
+          sinais_ligacao?: Json | null
           started_at?: string
           transcript?: Json | null
           whatsapp_replied?: boolean | null
@@ -2212,6 +2214,7 @@ export type Database = {
           notes?: string | null
           phone_dialed?: string | null
           revenue_generated?: number | null
+          sinais_ligacao?: Json | null
           started_at?: string
           transcript?: Json | null
           whatsapp_replied?: boolean | null
@@ -10491,6 +10494,27 @@ export type Database = {
         }
         Relationships: []
       }
+      sinal_classe_config: {
+        Row: {
+          ativado: boolean
+          ativado_em: string | null
+          classe: string
+          updated_at: string
+        }
+        Insert: {
+          ativado?: boolean
+          ativado_em?: string | null
+          classe: string
+          updated_at?: string
+        }
+        Update: {
+          ativado?: boolean
+          ativado_em?: string | null
+          classe?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       sku_embalagem_equivalencia: {
         Row: {
           ativo: boolean
@@ -13642,6 +13666,42 @@ export type Database = {
         }
         Relationships: []
       }
+      vendas_sync_cursor: {
+        Row: {
+          account: string
+          completed_at: string | null
+          date_from: string
+          date_to: string
+          heartbeat_at: string | null
+          last_error_kind: string | null
+          next_page: number | null
+          running_since: string | null
+          updated_at: string
+        }
+        Insert: {
+          account: string
+          completed_at?: string | null
+          date_from: string
+          date_to: string
+          heartbeat_at?: string | null
+          last_error_kind?: string | null
+          next_page?: number | null
+          running_since?: string | null
+          updated_at?: string
+        }
+        Update: {
+          account?: string
+          completed_at?: string | null
+          date_from?: string
+          date_to?: string
+          heartbeat_at?: string | null
+          last_error_kind?: string | null
+          next_page?: number | null
+          running_since?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       vendor_sip_credentials: {
         Row: {
           created_at: string
@@ -16433,6 +16493,39 @@ export type Database = {
       validar_sku_para_aplicacao: {
         Args: { p_empresa: string; p_sku: string }
         Returns: Json
+      }
+      vendas_sync_finish: {
+        Args: {
+          p_account: string
+          p_complete: boolean
+          p_date_from: string
+          p_date_to: string
+          p_last_error_kind: string
+          p_next_page: number
+        }
+        Returns: undefined
+      }
+      vendas_sync_heartbeat: {
+        Args: {
+          p_account: string
+          p_date_from: string
+          p_date_to: string
+          p_page: number
+        }
+        Returns: undefined
+      }
+      vendas_sync_lease_acquire: {
+        Args: { p_account: string; p_date_from: string; p_date_to: string }
+        Returns: number
+      }
+      vendas_sync_release: {
+        Args: {
+          p_account: string
+          p_date_from: string
+          p_date_to: string
+          p_last_error_kind: string
+        }
+        Returns: undefined
       }
       wa_is_stop_keyword: { Args: { p_body: string }; Returns: boolean }
       wa_owner_efetivo: { Args: { p_customer: string }; Returns: string }
