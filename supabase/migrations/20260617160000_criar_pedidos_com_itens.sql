@@ -33,6 +33,8 @@ DECLARE
   v_diverge    boolean;
   v_inserted   int := 0;
   v_repaired   int := 0;
+  v_items      int := 0;   -- itens de fato inseridos (impacto do reparo)
+  v_n          int;
   v_skipped_complete int := 0;
   v_skipped_no_items int := 0;
   v_divergence jsonb := '[]'::jsonb;
@@ -144,6 +146,8 @@ BEGIN
                v_created_at  -- G6
         FROM jsonb_array_elements(coalesce(v_pedido->'itens', '[]'::jsonb)) AS it
         WHERE (it->>'omie_codigo_produto') IS NOT NULL;
+        GET DIAGNOSTICS v_n = ROW_COUNT;
+        v_items := v_items + v_n;
 
         -- ── G10: sales_price_history na MESMA transação, created_at coerente ──
         INSERT INTO public.sales_price_history (
@@ -169,7 +173,7 @@ BEGIN
   END LOOP;
 
   RETURN jsonb_build_object(
-    'inserted', v_inserted, 'repaired', v_repaired,
+    'inserted', v_inserted, 'repaired', v_repaired, 'items', v_items,
     'skipped_complete', v_skipped_complete, 'skipped_no_items', v_skipped_no_items,
     'divergence', v_divergence, 'failed', v_failed);
 END;

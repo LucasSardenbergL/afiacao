@@ -49,7 +49,6 @@ c2="22222222-2222-2222-2222-222222222222"
 sys="33333333-3333-3333-3333-333333333333"
 p1="aaaaaaaa-0000-0000-0000-000000000001"
 p2="aaaaaaaa-0000-0000-0000-000000000002"
-HOJE="$(date '+%Y-%m-%d')"
 
 # ── ZONA 1 — pré-requisitos de schema (fiel ao prod: NOT NULL/defaults/FK CASCADE) ──
 P -q <<'SQL'
@@ -121,9 +120,9 @@ SQL
 rpc() {
   local row
   row=$(Pq -c "WITH r AS (SELECT public.criar_pedidos_com_itens('$1'::jsonb) AS j)
-    SELECT j->>'inserted',j->>'repaired',j->>'skipped_complete',j->>'skipped_no_items',
+    SELECT j->>'inserted',j->>'repaired',j->>'items',j->>'skipped_complete',j->>'skipped_no_items',
            jsonb_array_length(j->'divergence'),jsonb_array_length(j->'failed') FROM r;")
-  IFS='|' read -r INS REP SKC SKN DIV FAILED <<< "$row"   # FAILED (não FAIL — colidiria com o contador)
+  IFS='|' read -r INS REP ITEMS SKC SKN DIV FAILED <<< "$row"   # FAILED (não FAIL — colidiria com o contador)
 }
 cnt() { Pq -c "SELECT count(*) FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id WHERE so.hash_payload='$1';"; }
 paiexiste() { Pq -c "SELECT count(*) FROM public.sales_orders WHERE hash_payload='$1';"; }
@@ -137,6 +136,7 @@ EOF
 )
 rpc "$J"
 eq "A0 inserted=1" "$INS" "1"
+eq "A0 items=2 (contador da RPC)" "$ITEMS" "2"
 eq "A0 2 order_items" "$(cnt omie_oben_100)" "2"
 PH=$(Pq -c "SELECT count(*) FROM public.sales_price_history WHERE sales_order_id=(SELECT id FROM public.sales_orders WHERE hash_payload='omie_oben_100');")
 eq "A0 2 sales_price_history (G10)" "$PH" "2"
@@ -180,6 +180,7 @@ EOF
 )
 rpc "$J"
 eq "A4 repaired=1" "$REP" "1"
+eq "A4 items=2 (restaurados)" "$ITEMS" "2"
 eq "A4 órfão reparado (2 itens)" "$(cnt omie_oben_777)" "2"
 SAME4=$(Pq -c "SELECT bool_and(oi.created_at = so.created_at) FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id WHERE so.hash_payload='omie_oben_777';")
 eq "A4 item reparado usa created_at do PAI (2023, não hoje — G6)" "$SAME4" "t"
