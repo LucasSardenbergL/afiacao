@@ -43,6 +43,19 @@ export function statusLiquidadoAR(status: string | null | undefined): boolean {
   return !!status && STATUS_LIQUIDADO_AR.includes(status);
 }
 
+// Faturabilidade do pedido pai — espelha VERBATIM a régua de v_caca_candidatos/v_caca_compradores
+// (positivação/comissão): WHERE deleted_at IS NULL AND status <> ALL(ARRAY['cancelado','rascunho']).
+// Blocklist semântica: status conhecido NOVO (ex.: 'entregue') CONTA por default — não subconta
+// silenciosamente (Codex 2026-06-18); cancelado/rascunho, soft-deletado (deleted_at) ou status NULL
+// NÃO contam. Sem este guard, o cockpit de valor somava pedidos cancelados como faturamento (um
+// outlier de R$615M inflava o TTM da Oben de ~R$5M para ~R$621M).
+const STATUS_NAO_FATURAVEL = ['cancelado', 'rascunho'];
+export function pedidoContaNoFaturamento(status: string | null | undefined, deletedAt: string | null | undefined): boolean {
+  if (deletedAt != null) return false;            // soft-deletado nunca conta
+  if (status == null) return false;               // espelha o NULL <> ALL do v_caca (NULL não passa o WHERE)
+  return !STATUS_NAO_FATURAVEL.includes(status);  // default-inclui status conhecido novo
+}
+
 export type TituloAR = {
   valor_documento: number; saldo: number; valor_recebido: number;
   data_emissao: string | null;
