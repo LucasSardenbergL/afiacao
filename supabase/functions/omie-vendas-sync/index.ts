@@ -135,42 +135,8 @@ interface OrderItemPayload {
   tint_nome_cor?: string;
 }
 
-interface OrderBatchRow {
-  customer_user_id: string;
-  created_by: string;
-  items: OrderItemPayload[];
-  subtotal: number;
-  discount: number;
-  total: number;
-  status: string;
-  omie_pedido_id: number;
-  omie_numero_pedido: string;
-  account: Account;
-  hash_payload: string;
-  created_at: string;
-  notes: string | null;
-  customer_address: string | null;
-  customer_phone: string | null;
-}
-
-interface OrderItemBatchRow {
-  sales_order_id: string;
-  customer_user_id: string;
-  product_id: string | null;
-  omie_codigo_produto: number | null;
-  quantity: number;
-  unit_price: number;
-  discount: number;
-  hash_payload: string;
-}
-
-interface PriceHistoryBatchRow {
-  customer_user_id: string;
-  product_id: string;
-  unit_price: number;
-  sales_order_id: string;
-  created_at: string;
-}
+// (OrderBatchRow/OrderItemBatchRow/PriceHistoryBatchRow removidos: o sync agora monta o payload
+//  da RPC criar_pedidos_com_itens — pai+itens+preços atômicos — em vez de 3 inserts soltos.)
 
 interface EditItemInput {
   product_id?: string | null;
@@ -940,25 +906,12 @@ async function syncPedidos(
   }
   console.log(`[sync_pedidos][${account}] Document map: ${docToUserMap.size} profiles`);
 
-  // ── Pre-load ALL existing hash_payloads for this account (skip duplicates in bulk) ──
-  const existingHashes = new Set<string>();
-  let hPage = 0;
-  hasMore = true;
-  while (hasMore) {
-    const { data: batch } = await supabase
-      .from('sales_orders')
-      .select('hash_payload')
-      .eq('account', account)
-      .not('hash_payload', 'is', null)
-      .range(hPage * pgSize, (hPage + 1) * pgSize - 1);
-    if (!batch || batch.length === 0) { hasMore = false; }
-    else {
-      for (const row of batch) if (row.hash_payload) existingHashes.add(row.hash_payload);
-      if (batch.length < pgSize) hasMore = false;
-      hPage++;
-    }
-  }
-  console.log(`[sync_pedidos][${account}] Existing hashes: ${existingHashes.size}`);
+  // Dedupe DENTRO da run (evita mandar o mesmo pedido 2x na mesma chamada). NÃO pré-carregamos
+  // hashes do banco: todos os pedidos válidos da janela vão para a RPC criar_pedidos_com_itens,
+  // que decide insert/skip-completo/reparo atomicamente (ON CONFLICT parcial + SELECT FOR UPDATE
+  // + NOT EXISTS). Assim um órfão (pai sem itens) que reaparece na janela é AUTO-REPARADO — antes
+  // era pulado pelo hash do pai e os itens nunca eram restaurados.
+  const seenHashes = new Set<string>();
 
   // ── Pre-load omie_clientes mapping (codigo_cliente -> user_id) to AVOID API calls ──
   const clientCache = new Map<number, string | null>();
@@ -1120,9 +1073,8 @@ async function syncPedidos(
       }
     }
 
-    // ── Prepare batch arrays ──
-    const orderBatch: OrderBatchRow[] = [];
-    const orderMeta: Array<{ hashPayload: string; detalhes: OmieDetalheItem[]; customerUserId: string; createdAt: string }> = [];
+    // ── Monta o array de pedidos (pai + itens + preços) para a RPC transacional ──
+    const pedidosRpc: Array<Record<string, unknown>> = [];
 
     for (const pedido of pedidos) {
       const cab = pedido.cabecalho || {};
@@ -1136,9 +1088,9 @@ async function syncPedidos(
 
       const hashPayload = `omie_${account}_${codigoPedido}`;
 
-      // Skip if already synced (in-memory check, no DB call)
-      if (existingHashes.has(hashPayload)) { skippedExisting++; continue; }
-      existingHashes.add(hashPayload); // prevent duplicates within same run
+      // Dedupe dentro da run (a RPC decide skip-completo/reparo no banco — não pulamos por hash aqui).
+      if (seenHashes.has(hashPayload)) continue;
+      seenHashes.add(hashPayload);
 
       const detalhes: OmieDetalheItem[] = pedido.det || [];
       const itemsJson: OrderItemPayload[] = [];
@@ -1191,7 +1143,34 @@ async function syncPedidos(
       // Get cached address/phone for this client
       const clientInfo = clientAddressCache.get(codigoCliente) || { address: '', phone: '' };
 
-      orderBatch.push({
+      // Itens (order_items) e preços (sales_price_history) deste pedido — entram na MESMA
+      // transação da RPC (atômico com o pai). Mantém o filtro por codigo_produto e a regra
+      // de preço (>0 + produto mapeado) do comportamento anterior.
+      const itensRpc: Array<Record<string, unknown>> = [];
+      const precosRpc: Array<Record<string, unknown>> = [];
+      for (const det of detalhes) {
+        const prod = det.produto || {};
+        if (!prod.codigo_produto) continue;
+        const productId = productMap.get(prod.codigo_produto) || null;
+        itensRpc.push({
+          customer_user_id: customerUserId,
+          product_id: productId,
+          omie_codigo_produto: prod.codigo_produto,
+          quantity: prod.quantidade || 1,
+          unit_price: prod.valor_unitario || 0,
+          discount: prod.desconto || 0,
+          hash_payload: `${hashPayload}_${prod.codigo_produto}`,
+        });
+        if (productId && (prod.valor_unitario || 0) > 0) {
+          precosRpc.push({
+            customer_user_id: customerUserId,
+            product_id: productId,
+            unit_price: prod.valor_unitario,
+          });
+        }
+      }
+
+      pedidosRpc.push({
         customer_user_id: customerUserId,
         created_by: systemUserId,
         items: itemsJson,
@@ -1208,115 +1187,152 @@ async function syncPedidos(
         notes: cab.observacoes_pedido || null,
         customer_address: clientInfo.address || null,
         customer_phone: clientInfo.phone || null,
+        itens: itensRpc,
+        precos: precosRpc,
       });
-      orderMeta.push({ hashPayload, detalhes, customerUserId, createdAt });
     }
 
-    // ── Batch insert orders ──
-    if (orderBatch.length > 0) {
-      const { data: insertedOrders, error: orderErr } = await supabase
-        .from('sales_orders')
-        .insert(orderBatch)
-        .select('id, hash_payload');
-
-      if (orderErr) {
-        console.error(`[sync_pedidos][${account}] Batch insert error pág ${pagina}:`, orderErr.message);
-        // Fallback: try one-by-one
-        for (let idx = 0; idx < orderBatch.length; idx++) {
-          const { data: single, error: singleErr } = await supabase
-            .from('sales_orders')
-            .insert(orderBatch[idx])
-            .select('id')
-            .single();
-          if (!singleErr && single) {
-            totalSynced++;
-            // Insert items + prices for this order
-            const meta = orderMeta[idx];
-            const itemRows = meta.detalhes.map((det) => {
-              const prod = det.produto || {};
-              return {
-                sales_order_id: single.id,
-                customer_user_id: meta.customerUserId,
-                product_id: (prod.codigo_produto ? productMap.get(prod.codigo_produto) : null) || null,
-                omie_codigo_produto: prod.codigo_produto || null,
-                quantity: prod.quantidade || 1,
-                unit_price: prod.valor_unitario || 0,
-                discount: prod.desconto || 0,
-                hash_payload: `${meta.hashPayload}_${prod.codigo_produto}`,
-              };
-            }).filter((i) => i.omie_codigo_produto);
-            if (itemRows.length > 0) {
-              await supabase.from('order_items').insert(itemRows);
-              totalItems += itemRows.length;
-            }
-          }
-        }
-      } else if (insertedOrders) {
-        totalSynced += insertedOrders.length;
-
-        // Build hash -> id map for inserted orders
-        const hashToId = new Map<string, string>();
-        for (const o of insertedOrders) if (o.hash_payload) hashToId.set(o.hash_payload, o.id);
-
-        // ── Batch insert order_items ──
-        const allItemRows: OrderItemBatchRow[] = [];
-        const allPriceRows: PriceHistoryBatchRow[] = [];
-
-        for (const meta of orderMeta) {
-          const orderId = hashToId.get(meta.hashPayload);
-          if (!orderId) continue;
-
-          for (const det of meta.detalhes) {
-            const prod = det.produto || {};
-            if (!prod.codigo_produto) continue;
-
-            allItemRows.push({
-              sales_order_id: orderId,
-              customer_user_id: meta.customerUserId,
-              product_id: productMap.get(prod.codigo_produto) || null,
-              omie_codigo_produto: prod.codigo_produto,
-              quantity: prod.quantidade || 1,
-              unit_price: prod.valor_unitario || 0,
-              discount: prod.desconto || 0,
-              hash_payload: `${meta.hashPayload}_${prod.codigo_produto}`,
-            });
-
-            const productId = productMap.get(prod.codigo_produto);
-            if (productId && prod.valor_unitario > 0) {
-              allPriceRows.push({
-                customer_user_id: meta.customerUserId,
-                product_id: productId,
-                unit_price: prod.valor_unitario,
-                sales_order_id: orderId,
-                created_at: meta.createdAt,
-              });
-            }
-          }
-        }
-
-        // Insert items in batches of 200
-        for (let i = 0; i < allItemRows.length; i += 200) {
-          const batch = allItemRows.slice(i, i + 200);
-          const { error: itemsErr } = await supabase.from('order_items').insert(batch);
-          if (itemsErr) console.error(`[sync_pedidos][${account}] Items batch error:`, itemsErr.message);
-          else totalItems += batch.length;
-        }
-
-        // Insert prices in batches of 200
-        for (let i = 0; i < allPriceRows.length; i += 200) {
-          const batch = allPriceRows.slice(i, i + 200);
-          await supabase.from('sales_price_history').insert(batch);
-        }
+    // ── Escrita ATÔMICA pai+filhos via RPC (substitui os 2 inserts PostgREST não-transacionais
+    // que deixavam pedidos órfãos sem itens). A RPC decide por pedido: insert (novo) / repair
+    // (órfão de cabeçalho compatível) / skip (completo ou divergente). Ver migration
+    // 20260617160000_criar_pedidos_com_itens.sql + prove em db/test-criar-pedidos-com-itens.sh.
+    if (pedidosRpc.length > 0) {
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('criar_pedidos_com_itens', { p_pedidos: pedidosRpc });
+      if (rpcErr) {
+        console.error(`[sync_pedidos][${account}] RPC criar_pedidos_com_itens falhou pág ${pagina}:`, rpcErr.message);
+      } else if (rpcRes) {
+        const r = rpcRes as { inserted?: number; repaired?: number; items?: number; skipped_complete?: number; skipped_no_items?: number; divergence?: unknown[]; failed?: unknown[] };
+        totalSynced += (r.inserted || 0) + (r.repaired || 0);
+        totalItems += r.items || 0;
+        skippedExisting += r.skipped_complete || 0;
+        const divs = r.divergence || [];
+        const fails = r.failed || [];
+        if (divs.length > 0) console.warn(`[sync_pedidos][${account}] ${divs.length} pedido(s) com cabeçalho divergente (Fase 2, NÃO reconciliado):`, JSON.stringify(divs.slice(0, 5)));
+        if (fails.length > 0) console.error(`[sync_pedidos][${account}] ${fails.length} pedido(s) FALHARAM na RPC pág ${pagina}:`, JSON.stringify(fails.slice(0, 5)));
+        console.log(`[sync_pedidos][${account}] RPC pág ${pagina}: inserted=${r.inserted || 0} repaired=${r.repaired || 0} items=${r.items || 0} skip_completo=${r.skipped_complete || 0} skip_sem_item=${r.skipped_no_items || 0} divergencia=${divs.length} falhas=${fails.length}`);
       }
     }
 
-    console.log(`[sync_pedidos][${account}] Página ${pagina}/${totalPaginas} — ${orderBatch.length} novos, ${skippedExisting} existentes`);
+    console.log(`[sync_pedidos][${account}] Página ${pagina}/${totalPaginas} — ${pedidosRpc.length} processados, ${skippedNoClient} sem cliente`);
     pagina++;
     pagesProcessed++;
   }
 
   const complete = pagina > totalPaginas;
   return { totalSynced, totalItems, skippedNoClient, skippedExisting, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
+}
+
+// ── Reparo dos órfãos PRESOS (pai sem itens, fora da janela do cron) ──────────────────
+// Recebe a lista de omie_pedido_id a reparar (calculada via psql-ro). Para cada um:
+// ConsultarPedido no Omie → monta itens → chama a MESMA RPC criar_pedidos_com_itens, que só
+// repara se o cabeçalho local for compatível (guard de divergência). customer_user_id/created_by/
+// order_date_kpi vêm do PAI existente; total/status vêm do Omie ATUAL, para a RPC detectar pedido
+// alterado (→ relatório, não reconcilia). Idempotente: reprocessar é seguro (RPC faz NOT EXISTS).
+async function repararOrfaosItens(
+  supabase: SupabaseClient,
+  account: Account,
+  pedidoIds: number[],
+) {
+  let reparados = 0, itens = 0, divergencias = 0, falhas = 0, semDados = 0, jaCompletos = 0;
+  const divergenciaAmostra: unknown[] = [];
+  if (!Array.isArray(pedidoIds) || pedidoIds.length === 0) {
+    return { reparados, itens, divergencias, falhas, semDados, jaCompletos, total: 0, divergenciaAmostra };
+  }
+
+  // Pre-load product map (codigo_produto -> product_id)
+  const productMap = new Map<number, string>();
+  {
+    let page = 0; const sz = 1000; let more = true;
+    while (more) {
+      const { data: batch } = await supabase
+        .from('omie_products').select('id, omie_codigo_produto')
+        .eq('account', account).range(page * sz, (page + 1) * sz - 1);
+      if (!batch || batch.length === 0) { more = false; }
+      else { for (const p of batch) productMap.set(p.omie_codigo_produto, p.id); if (batch.length < sz) more = false; page++; }
+    }
+  }
+
+  // Busca os pais órfãos em lote (só reparamos o que já existe como pai)
+  const paiByPedido = new Map<number, { customer_user_id: string; created_by: string; hash_payload: string; order_date_kpi: string | null }>();
+  for (let i = 0; i < pedidoIds.length; i += 300) {
+    const { data: pais } = await supabase
+      .from('sales_orders')
+      .select('omie_pedido_id, customer_user_id, created_by, hash_payload, order_date_kpi')
+      .eq('account', account)
+      .in('omie_pedido_id', pedidoIds.slice(i, i + 300));
+    for (const p of (pais || [])) paiByPedido.set(p.omie_pedido_id, p);
+  }
+
+  const LOTE = 20;
+  for (let i = 0; i < pedidoIds.length; i += LOTE) {
+    const lote = pedidoIds.slice(i, i + LOTE);
+    const pedidosRpc: Array<Record<string, unknown>> = [];
+
+    for (const pid of lote) {
+      const pai = paiByPedido.get(pid);
+      if (!pai) { semDados++; continue; } // sem pai órfão p/ esse id
+
+      const consulta = await callOmieVendasApi(
+        "produtos/pedido/", "ConsultarPedido", { codigo_pedido: pid }, account,
+      ) as { pedido_venda_produto?: OmiePedidoVendaProduto } | OmiePedidoVendaProduto | null;
+      if (!consulta) { semDados++; continue; }
+      const pv = ((consulta as { pedido_venda_produto?: OmiePedidoVendaProduto }).pedido_venda_produto ?? consulta) as OmiePedidoVendaProduto;
+      const det: OmieDetalheItem[] = pv.det || [];
+      const cab = pv.cabecalho || {};
+
+      const itensRpc: Array<Record<string, unknown>> = [];
+      const precosRpc: Array<Record<string, unknown>> = [];
+      let subtotal = 0;
+      for (const d of det) {
+        const prod = d.produto || {};
+        if (!prod.codigo_produto) continue;
+        const qty = prod.quantidade || 1, price = prod.valor_unitario || 0, desc = prod.desconto || 0;
+        subtotal += qty * price * (1 - desc / 100);
+        const productId = productMap.get(prod.codigo_produto) || null;
+        itensRpc.push({
+          customer_user_id: pai.customer_user_id, product_id: productId,
+          omie_codigo_produto: prod.codigo_produto,
+          quantity: qty, unit_price: price, discount: desc,
+          hash_payload: `${pai.hash_payload}_${prod.codigo_produto}`,
+        });
+        if (productId && price > 0) precosRpc.push({ customer_user_id: pai.customer_user_id, product_id: productId, unit_price: price });
+      }
+      if (itensRpc.length === 0) { semDados++; continue; } // Omie tb não tem item válido (limite L2)
+
+      let status = 'importado';
+      const etapa = cab.etapa || '';
+      if (etapa === '60' || etapa === '70') status = 'faturado';
+      else if (etapa === '50') status = 'separacao';
+      else if (etapa === '20') status = 'enviado';
+      else if (etapa === '80') status = 'cancelado';
+
+      pedidosRpc.push({
+        account, hash_payload: pai.hash_payload, omie_pedido_id: pid,
+        customer_user_id: pai.customer_user_id, created_by: pai.created_by,
+        total: Math.round(subtotal * 100) / 100, status, order_date_kpi: pai.order_date_kpi,
+        itens: itensRpc, precos: precosRpc,
+      });
+    }
+
+    if (pedidosRpc.length > 0) {
+      const { data: r, error } = await supabase.rpc('criar_pedidos_com_itens', { p_pedidos: pedidosRpc });
+      if (error) {
+        falhas += pedidosRpc.length;
+        console.error(`[reparar_orfaos][${account}] RPC falhou no lote ${i}:`, error.message);
+      } else if (r) {
+        const rr = r as { repaired?: number; items?: number; skipped_complete?: number; divergence?: unknown[]; failed?: unknown[] };
+        reparados += rr.repaired || 0;
+        itens += rr.items || 0;
+        jaCompletos += rr.skipped_complete || 0;
+        divergencias += (rr.divergence || []).length;
+        falhas += (rr.failed || []).length;
+        for (const d of (rr.divergence || [])) if (divergenciaAmostra.length < 20) divergenciaAmostra.push(d);
+      }
+    }
+    console.log(`[reparar_orfaos][${account}] lote ${Math.floor(i / LOTE) + 1}: reparados=${reparados} itens=${itens} divergencias=${divergencias} falhas=${falhas} semDados=${semDados}`);
+  }
+
+  return { reparados, itens, divergencias, falhas, semDados, jaCompletos, total: pedidoIds.length, divergenciaAmostra };
 }
 
 // Buscar transportadora pelo nome (razão social) no Omie
@@ -2283,6 +2299,16 @@ serve(async (req) => {
         break;
       }
 
+      case "reparar_orfaos_itens": {
+        // Reparo dos órfãos PRESOS (pai sem itens, fora da janela do cron). A lista de
+        // omie_pedido_id é calculada via psql-ro (read-only) e passada em pedido_ids.
+        const pedidoIdsReparo = Array.isArray(params.pedido_ids) ? (params.pedido_ids as number[]) : [];
+        if (pedidoIdsReparo.length === 0) throw new Error("reparar_orfaos_itens requer pedido_ids: number[] (omie_pedido_id dos órfãos)");
+        const reparoResult = await repararOrfaosItens(supabaseAdmin, account, pedidoIdsReparo);
+        result = { success: true, ...reparoResult };
+        break;
+      }
+
       case "historico_produtos_cliente": {
         const { codigo_cliente: codCliHist } = params;
         if (!codCliHist) throw new Error("Código do cliente é obrigatório");
@@ -2301,7 +2327,7 @@ serve(async (req) => {
               },
               account
             );
-            const lista = pedidos?.pedido_venda_produto || [];
+            const lista = ((pedidos as { pedido_venda_produto?: OmiePedidoVendaProduto[] } | null)?.pedido_venda_produto) || [];
             for (const pedido of lista) {
               const dataPedido = pedido?.cabecalho?.data_previsao || pedido?.infoCadastro?.dInc || '';
               const itens = pedido?.det || [];
@@ -2312,7 +2338,7 @@ serve(async (req) => {
                 }
               }
             }
-            const totalPages = pedidos?.total_de_paginas || 1;
+            const totalPages = ((pedidos as { total_de_paginas?: number } | null)?.total_de_paginas) || 1;
             if (page >= totalPages) break;
           }
         } catch (e) {
