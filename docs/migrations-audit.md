@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **260** custom migrations totais
+- **261** custom migrations totais
 - **986** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 270
@@ -2296,6 +2296,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.criar_pedidos_com_itens` | — |
+
+### `20260618130000_recencia_colacor_created_at.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20260618180000_get_customer_sales_summary.sql`
 
