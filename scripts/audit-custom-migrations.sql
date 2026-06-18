@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 259
+-- Total de custom migrations: 260
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -278,7 +278,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260617091500', 'sinal_classe_config_check_classe', '20260617091500_sinal_classe_config_check_classe.sql'),
   ('20260617133633', 'vendas_sync_cursor', '20260617133633_vendas_sync_cursor.sql'),
   ('20260617133634', 'sales_orders_omie_hash_unique', '20260617133634_sales_orders_omie_hash_unique.sql'),
-  ('20260617160000', 'criar_pedidos_com_itens', '20260617160000_criar_pedidos_com_itens.sql')
+  ('20260617160000', 'criar_pedidos_com_itens', '20260617160000_criar_pedidos_com_itens.sql'),
+  ('20260618180000', 'get_customer_sales_summary', '20260618180000_get_customer_sales_summary.sql')
 )
 SELECT
   e.version,
@@ -1281,7 +1282,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('vendas_sync_cursor', 'rls_policy', 'public', 'vendas_sync_cursor_select_staff', 'vendas_sync_cursor'),
   ('vendas_sync_cursor', 'rls_policy', 'public', 'vendas_sync_cursor_service_all', 'vendas_sync_cursor'),
   ('sales_orders_omie_hash_unique', 'index', 'public', 'uniq_sales_orders_omie_hash', 'sales_orders'),
-  ('criar_pedidos_com_itens', 'function', 'public', 'criar_pedidos_com_itens', '')
+  ('criar_pedidos_com_itens', 'function', 'public', 'criar_pedidos_com_itens', ''),
+  ('get_customer_sales_summary', 'function', 'public', 'get_customer_sales_summary', '')
 )
 SELECT
   e.migration,

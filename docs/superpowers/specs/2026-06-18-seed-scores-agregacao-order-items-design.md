@@ -3,6 +3,24 @@
 > **Status:** design aprovado (founder, 2026-06-18) · **Money-path** (scores guiam priorização do farmer) · sub-projeto 2 (recência vendas Omie)
 > **Edge:** `supabase/functions/calculate-scores/index.ts` (deployado em prod como função `n`)
 
+## Changelog v1 → v2 → v3 (pós-Codex 2 rodadas + escopo completo)
+
+O founder aplicou a **v1** no SQL Editor (denylist, `last_purchase=max(created_at)`, sem GRANT). A **v3** (contrato final na migration `20260618180000`) a substitui via `DROP+CREATE`.
+
+**v2 (Codex r1 + medição):**
+- **3 bugs, não 1.** Além do truncamento: (2) recência com `created_at` divergente de `order_date_kpi` em **~102 dias** médios (oben não corrigido pelo sub-projeto 2); (3) `avg_monthly_spend_180d = total_revenue_alltime/6` infla **88%** dos clientes. Founder escolheu **corrigir os 3**.
+- **Allowlist** `status IN ('faturado','importado','separacao','enviado')` (era denylist) — precisão>recall; equivalente hoje, robusto a status futuro.
+- **`GRANT EXECUTE TO service_role`** explícito + `REVOKE ALL` (padrão `criar_pedidos_com_itens`).
+- **Erro da RPC:** `supabase-js` retorna `{error}`, **não lança** → `if (error) throw error`.
+
+**v3 (Codex r2 — date handling, tudo no SQL; veredito "acceptable"):**
+- **Recência calculada no SQL:** `days_since_last_purchase = GREATEST(0, HOJE_SP − max(COALESCE(order_date_kpi, created_at::date)))::int`, HOJE_SP = data civil de São Paulo. Fecha 3 fragilidades de uma vez: (a) `order_date_kpi` NULL não vira cliente "morto" (fallback p/ created_at); (b) data FUTURA não vira recência negativa (GREATEST clampa a 0); (c) sem off-by-one de timezone (não calcula no JS a partir de date-string UTC). Edge passa a usar `days_since_last_purchase` direto (sem `new Date`).
+- **`revenue_180d` com janela FECHADA** `[HOJE_SP−180, HOJE_SP]` → futuro excluído do spend, incluído no `total_revenue` (all-time).
+- **Guard `Number.isFinite`** no edge antes do upsert (NaN money-path).
+- Medido na prod: `order_date_kpi` null=**0**, futuro=**0** → mudanças de date são **defensivas** (não alteram números de hoje; blindam o futuro).
+- **Prova:** `db/test-get-customer-sales-summary.sh` — **30 asserts + 6 falsificações** verde (incl. kpi-null→COALESCE, futuro→clamp+exclusão, allowlist vs denylist, grant/revoke).
+- **Residuais aceitos (Codex, não-blockers):** futuro=`days 0` é policy; fallback `created_at::date` em data-pura do Omie é intencional; migration-antes-do-edge obrigatória.
+
 ## Problema
 
 O branch de **auto-seed** do edge (roda só quando `farmer_client_scores` está vazio — reset/primeiro seed) lê `order_items` com `.limit(10000)` **sem `.order()`** (linhas 263-266):
@@ -39,61 +57,41 @@ O seed atual **não filtra status de pedido**. Há um pedido `cancelado` lixo do
 
 ## Design
 
-### RPC `get_customer_sales_summary()` (migration `20260618180000`)
+### RPC `get_customer_sales_summary()` v2 (migration `20260618180000`)
 
-```sql
-CREATE OR REPLACE FUNCTION public.get_customer_sales_summary()
-RETURNS TABLE (
-  customer_user_id uuid,
-  last_purchase    timestamptz,
-  total_revenue    numeric,
-  item_count       bigint,
-  category_count   bigint
-)
-LANGUAGE sql
-STABLE
-SECURITY INVOKER          -- chamada só pelo edge (service_role já bypassa RLS)
-SET search_path = public
-AS $$
-  SELECT
-    oi.customer_user_id,
-    max(oi.created_at)                                                 AS last_purchase,
-    sum(COALESCE(oi.unit_price,0) * COALESCE(NULLIF(oi.quantity,0),1)) AS total_revenue,
-    count(*)                                                           AS item_count,
-    count(DISTINCT oi.product_id)                                      AS category_count
-  FROM public.order_items oi
-  JOIN public.sales_orders so ON so.id = oi.sales_order_id
-  WHERE so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
-    AND so.deleted_at IS NULL
-    AND oi.customer_user_id IS NOT NULL
-  GROUP BY oi.customer_user_id;
-$$;
+**Fonte de verdade:** `supabase/migrations/20260618180000_get_customer_sales_summary.sql`. Assinatura final (v3):
 
-REVOKE EXECUTE ON FUNCTION public.get_customer_sales_summary() FROM PUBLIC, anon, authenticated;
+```
+RETURNS TABLE (customer_user_id uuid, days_since_last_purchase int, total_revenue numeric,
+               revenue_180d numeric, item_count bigint, category_count bigint)
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
 ```
 
-**Paridade com o JS atual (preservada de propósito):**
-- `total_revenue`: `(unit_price||0)*(quantity||1)` em JS ≡ `COALESCE(unit_price,0)*COALESCE(NULLIF(quantity,0),1)` (quantity 0 ou null → conta como 1 unidade). Herdado; não "corrigir" aqui.
-- `category_count`: JS soma `product_ids` distintos não-nulos ≡ `count(DISTINCT product_id)` (ignora null). Nome enganoso (é produto, não categoria) — mantido.
-- `last_purchase`: `max(created_at)`. `created_at` é confiável pós-fix do sync (`= created_at do pai`, migration `20260617160000`).
+- `days_since_last_purchase = GREATEST(0, HOJE_SP − max(COALESCE(order_date_kpi, created_at::date)))::int`, `HOJE_SP = (now() AT TIME ZONE 'America/Sao_Paulo')::date`.
+- `total_revenue` = `COALESCE(sum(COALESCE(unit_price,0)*COALESCE(NULLIF(quantity,0),1)),0)` (all-time válido; ignora discount — paridade JS).
+- `revenue_180d` = mesma soma com `FILTER (WHERE COALESCE(order_date_kpi,created_at::date) BETWEEN HOJE_SP−180 AND HOJE_SP)` (janela fechada → exclui futuro).
+- `category_count` = `count(DISTINCT product_id)` (ignora null; nome herdado, é produto).
+- `WHERE status IN ('faturado','importado','separacao','enviado') AND deleted_at IS NULL AND customer_user_id IS NOT NULL`.
+- `DROP+CREATE` (muda tipo de retorno vs v1) · `REVOKE ALL FROM PUBLIC,anon,authenticated` + `GRANT EXECUTE TO service_role`.
 
 ### Edge (`calculate-scores/index.ts`)
 
-1. **Remover** linhas 261-284 (o `orderDataMap` + a leitura crua `.limit(10000)`).
-2. **Conectar** o `salesMap` (já construído da RPC): o seed lê `salesMap.get(client.user_id)` → `last_purchase`, `total_revenue`, `category_count`.
-3. **Fail-closed**: o `catch` da RPC (hoje engole o erro) passa a **re-lançar** — a RPC é a fonte única; sem ela, abortar o seed.
-4. Ajustar a interface `CustomerSalesSummaryRow` para os campos tipados retornados.
+1. **Remover** o `orderDataMap` + a leitura crua `.limit(10000)` e a interface `OrderAggAccumulator` (morta).
+2. **Erro da RPC fail-closed**: `const { data, error } = await supabase.rpc('get_customer_sales_summary'); if (error) throw error;` (`supabase-js` não lança em erro de RPC).
+3. **Wire `salesMap`** no loop do seed: `days_since_last_purchase` vem **pronto do SQL** (`Number(sales.days_since_last_purchase ?? 999)`, sem `new Date`); `avg_monthly_spend_180d = Number.isFinite(r) ? round(r/6) : 0` com `r = Number(revenue_180d ?? 0)`; `category_count` idem com guard.
+4. **Tipar** `CustomerSalesSummaryRow` (days_since_last_purchase, total_revenue, revenue_180d, item_count, category_count).
 
 ## Prova (money-path — `prove-sql-money-path`, PG17 + falsificação)
 
 Asserts (positivos E negativos, com SQLSTATE + re-raise; depois **sabotar** para exigir vermelho):
-- **Cobertura 100%:** `sum(item_count)` da RPC = `count(*)` de itens com status válido + `deleted_at IS NULL`.
-- **Paridade revenue:** `total_revenue` por cliente = soma manual com a fórmula (incl. caso `quantity=0`→1, `quantity=null`→1, `unit_price=null`→0).
-- **`last_purchase`** = `max(created_at)` por cliente.
+- **Cobertura 100%:** `sum(item_count)` da RPC = `count(*)` de itens com status válido (allowlist) + `deleted_at IS NULL`.
+- **Paridade revenue:** `total_revenue` por cliente = soma manual (incl. `quantity=0/null`→1, `unit_price=null`→0).
+- **`revenue_180d`:** só soma itens com `order_date_kpi >= current_date - 180`; item fora da janela não entra; sem compra em 180d → 0 (não null).
+- **`last_purchase`** = `max(order_date_kpi)` por cliente (não `created_at`).
 - **`category_count`** = `count(distinct product_id)` ignorando null.
-- **Filtro de status:** item de pedido `cancelado`/`rascunho`/`pendente`/`orcamento` ou `deleted_at` não-nulo **não** entra (semear um cancelado gigante → não infla nenhum cliente).
-- **REVOKE efetivo:** `SET ROLE anon`/`authenticated` → `EXECUTE` nega (`42501`/sem privilégio); re-raise de qualquer outra SQLSTATE.
-- **Falsificação:** reintroduzir `.limit`/remover o filtro de status → assert de cobertura/anti-inflação fica **vermelho**.
+- **Allowlist:** item de pedido fora de `{faturado,importado,separacao,enviado}` (ex.: `cancelado` gigante, ou status NOVO inesperado) **não** entra → não infla nenhum cliente.
+- **GRANT/REVOKE:** `SET ROLE service_role` executa; `SET ROLE anon`/`authenticated` → nega (`42501`); re-raise de qualquer outra SQLSTATE.
+- **Falsificação:** trocar allowlist por denylist-amnésica / remover o `FILTER` de 180d / reintroduzir `.limit` → assert correspondente fica **vermelho**.
 
 ## Deploy (3 camadas — Lovable não auto-aplica)
 
