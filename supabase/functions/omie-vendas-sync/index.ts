@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { omieDateToIso, classifyOmieTransient, classifyPedidosPage } from "./pagination.ts";
 
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string; codigo_status?: number | string; descricao_status?: string };
 
@@ -872,6 +873,9 @@ async function syncPedidos(
   account: Account = "oben",
   dateFrom?: string, // DD/MM/YYYY
   dateTo?: string,   // DD/MM/YYYY
+  // Modo cursor (backfill): presença ⟹ heartbeat do lease por página + completude
+  // null-discriminada (vendas_sync_cursor). df/dt são as datas ISO (PK do cursor).
+  cursor?: { df: string; dt: string },
 ) {
   let pagina = startPage;
   let totalPaginas = 1;
@@ -881,6 +885,8 @@ async function syncPedidos(
   let skippedNoClient = 0;
   let skippedExisting = 0;
   let totalFailed = 0;
+  let reachedEnd = false;            // true SÓ no fim real do Omie (null = "Não existem registros", ou página vazia)
+  let lastErrorKind: 'rate_limit' | 'transient' | 'http' | null = null;
 
   // ── Pre-load document -> user_id mapping from profiles ──
   const docToUserMap = new Map<string, string>();
@@ -969,13 +975,18 @@ async function syncPedidos(
   // Helper: resolve codigo_cliente -> user_id (cache-first, API fallback only for unknown)
   async function resolveClientUserId(codigoCliente: number): Promise<string | null> {
     if (clientCache.has(codigoCliente)) return clientCache.get(codigoCliente) || null;
-    // Fallback: call Omie API only for clients NOT in omie_clientes table
+    // Fallback: call Omie API only for clients NOT in omie_clientes table.
+    // Modo cursor (backfill): throwOnTransient — um rate-limit/transitório aqui NÃO pode
+    // virar "cliente ausente" cacheado (#4 Codex): isso pularia o pedido (skippedNoClient)
+    // e a janela poderia COMPLETAR sem ele → perda permanente. Re-lançamos o transitório
+    // p/ o loop PAUSAR a janela e retomar depois (o cliente genuinamente sem doc segue null).
     try {
       const result = (await callOmieVendasApi(
         "geral/clientes/",
         "ConsultarCliente",
         { codigo_cliente_omie: codigoCliente },
-        account
+        account,
+        cursor ? { throwOnTransient: true } : undefined,
       )) as OmieClienteCadastro | null;
       if (!result) {
         clientCache.set(codigoCliente, null);
@@ -993,6 +1004,11 @@ async function syncPedidos(
         return userId;
       }
     } catch (e) {
+      // Backfill (#A Codex): QUALQUER erro de lookup (transitório, HTTP, rede, fault
+      // não-classificado) re-lança → o loop PAUSA a janela, não cacheia ausência FALSA.
+      // Só o caminho SEM erro cacheia null: `if (!result)` (Omie diz que não existe) e
+      // doc<11 (cliente existe, sem doc usável) — esses são skip LEGÍTIMO, não erro.
+      if (cursor) throw e;
       console.warn(`[sync_pedidos][${account}] ConsultarCliente ${codigoCliente} falhou:`, (e as Error).message);
     }
     clientCache.set(codigoCliente, null);
@@ -1029,27 +1045,67 @@ async function syncPedidos(
     return { address: '', phone: '' };
   }
 
-  // mesmo fix (syncPedidos): força a 1ª iteração p/ startPage>1 funcionar (era no-op). startPage=1 inalterado —
-  // o fluxo do cron (start_page=1 + janela de data) NÃO muda; só destrava paginação manual além de maxPages.
-  while ((pagina <= totalPaginas || pagesProcessed === 0) && pagesProcessed < maxPages) {
+  // Loop de paginação. A COMPLETUDE vem do FIM REAL do Omie — `null` ("Não existem
+  // registros", desambiguado por throwOnTransient) ou página vazia — NUNCA de
+  // total_de_paginas (que mente; CLAUDE.md: "paginar até página vazia + guard").
+  // maxPages limita a invocação; no modo cursor a próxima retoma do next_page.
+  // throwOnTransient distingue rate-limit/transitório (throw → PAUSA, não completa)
+  // de fim real (null) — conserta o defeito #1 do spec (null ambíguo).
+  while (pagesProcessed < maxPages) {
+    // Modo cursor: renova o lease + persiste progresso (next_page := pagina em curso)
+    // ANTES da página longa (~40s/pág + lookups). Crash → retoma daqui, não do run-start.
+    if (cursor) await heartbeatVendasCursor(supabase, account, cursor.df, cursor.dt, pagina);
+
     const listParams: Record<string, unknown> = { pagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" };
     if (dateFrom) listParams.filtrar_por_data_de = dateFrom;
     if (dateTo) listParams.filtrar_por_data_ate = dateTo;
 
-    const result = await callOmieVendasApi(
-      "produtos/pedido/",
-      "ListarPedidos",
-      listParams,
-      account
-    );
+    let result: OmieGenericResponse | null = null;
+    try {
+      result = await callOmieVendasApi(
+        "produtos/pedido/",
+        "ListarPedidos",
+        listParams,
+        account,
+        { throwOnTransient: true },
+      );
+    } catch (e) {
+      const msg = (e as Error).message || '';
+      if (msg.startsWith('OMIE_TRANSIENT')) {
+        // rate-limit/transitório esgotado → PAUSA (nextPage retoma, NÃO marca completo).
+        lastErrorKind = classifyOmieTransient(msg);
+        console.log(`[sync_pedidos][${account}] transitório (${lastErrorKind}) na pág ${pagina} — pausa, não marca completo`);
+        break;
+      }
+      if (cursor) {
+        // Erro Omie não-transitório no backfill: pausa graciosa (kind fica visível no
+        // cursor p/ o relatório §4.4), sem derrubar o edge nem marcar completo.
+        lastErrorKind = 'http';
+        console.error(`[sync_pedidos][${account}] erro Omie não-transitório na pág ${pagina} (cursor pausa):`, msg);
+        break;
+      }
+      throw e; // incremental: propaga (comportamento de hoje → 500 + fin_sync_log error)
+    }
 
-    if (!result) {
-      console.log(`[sync_pedidos][${account}] Pedidos sync interrupted by rate limit at page ${pagina}`);
+    const pageClass = classifyPedidosPage(result, pagina);
+    if (pageClass === 'end') {
+      // FIM REAL: result null ("Não existem registros") OU página vazia que não
+      // contradiz total_de_paginas. throwOnTransient garante que NÃO é rate-limit.
+      // Só ISTO completa a janela (nunca total_de_paginas como autoridade de fim).
+      reachedEnd = true;
+      console.log(`[sync_pedidos][${account}] fim real na pág ${pagina} (sem registros)`);
+      break;
+    }
+    if (pageClass === 'anomaly') {
+      // Página vazia CONTRADIZENDO total_de_paginas → suspeito → PAUSA, não completa
+      // (precisão > recall: janela presa visível no cursor > falsa completude silenciosa).
+      lastErrorKind = 'http';
+      console.error(`[sync_pedidos][${account}] ANOMALIA pág ${pagina} vazia mas total_de_paginas diz que há mais — pausa, NÃO completa`);
       break;
     }
 
-    totalPaginas = (result.total_de_paginas as number) || 1;
-    const pedidos: OmiePedidoVendaProduto[] = (result.pedido_venda_produto as OmiePedidoVendaProduto[] | undefined) || [];
+    totalPaginas = (result!.total_de_paginas as number) || 1; // só p/ log/ETA — NÃO decide completude
+    const pedidos: OmiePedidoVendaProduto[] = (result!.pedido_venda_produto as OmiePedidoVendaProduto[] | undefined) || [];
 
     // Resolve only unknown client codes (most should be in cache from omie_clientes)
     const uniqueClientCodes = [...new Set(pedidos.map((p) => p.cabecalho?.codigo_cliente).filter((c): c is number => Boolean(c)))];
@@ -1059,8 +1115,20 @@ async function syncPedidos(
       // Antes: for of await (serial). Agora: chunks de 5 em paralelo pra acelerar
       // sem floodar API Omie (rate limits Omie não documentados; 5 é conservador).
       const CHUNK = 5;
-      for (let i = 0; i < unknownCodes.length; i += CHUNK) {
-        await Promise.all(unknownCodes.slice(i, i + CHUNK).map(c => resolveClientUserId(c)));
+      try {
+        for (let i = 0; i < unknownCodes.length; i += CHUNK) {
+          await Promise.all(unknownCodes.slice(i, i + CHUNK).map(c => resolveClientUserId(c)));
+        }
+      } catch (e) {
+        // #4/#A: no backfill, QUALQUER erro ao resolver cliente PAUSA a janela (não
+        // cacheia ausência falsa nem completa sem o pedido). `break` sai do while.
+        const msg = (e as Error).message || '';
+        if (cursor) {
+          lastErrorKind = msg.startsWith('OMIE_TRANSIENT') ? classifyOmieTransient(msg) : 'http';
+          console.log(`[sync_pedidos][${account}] erro (${lastErrorKind}) ao resolver cliente na pág ${pagina} — pausa, não marca completo`);
+          break;
+        }
+        throw e; // incremental: propaga (comportamento de hoje)
       }
     }
 
@@ -1223,8 +1291,10 @@ async function syncPedidos(
     pagesProcessed++;
   }
 
-  const complete = pagina > totalPaginas;
-  return { totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
+  // Completude = FIM REAL alcançado (null/página vazia), NUNCA pagina>totalPaginas.
+  // Pausa (transitório/erro) ou budget de página esgotado ⟹ complete=false, retoma do `pagina`.
+  const complete = reachedEnd;
+  return { totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete, lastErrorKind };
 }
 
 // ── Reparo dos órfãos PRESOS (pai sem itens, fora da janela do cron) ──────────────────
@@ -1721,6 +1791,66 @@ async function completeVendaSync(
   } catch (e) {
     console.error("[Omie Vendas] completeVendaSync falhou (best-effort):", e);
   }
+}
+
+// ─── Cursor + lease do BACKFILL de pedidos (tabela vendas_sync_cursor) ───
+// Espelha o state-machine SQL da migration 20260617133633 (lease_acquire/heartbeat/
+// finish — SECURITY DEFINER gated a service_role). `omieDateToIso` (DD/MM/YYYY → ISO,
+// PK date) vem de ./pagination.ts (puro/testado).
+// O lease atômico tem que ser RPC: `.or()` em UPDATE do PostgREST quebra (42703, CLAUDE.md).
+
+// Tenta tomar o lease ATOMICAMENTE. Retorna a página de retomada, ou null se NÃO
+// conseguiu (outra invocação viva / janela completa / inexistente / RPC ausente)
+// ⟹ o caller sai no-op. Degradação segura: sem a migration aplicada, é sempre no-op.
+async function acquireVendasLease(
+  db: SupabaseClient, account: Account, dfIso: string, dtIso: string,
+): Promise<number | null> {
+  const { data, error } = await db.rpc('vendas_sync_lease_acquire', {
+    p_account: account, p_date_from: dfIso, p_date_to: dtIso,
+  });
+  if (error) {
+    console.error(`[sync_pedidos][${account}] lease_acquire falhou (no-op):`, error.message);
+    return null;
+  }
+  return typeof data === 'number' ? data : null;
+}
+
+// Renova o lease por página (best-effort: uma falha de heartbeat não derruba o sync).
+// supabase-js .rpc() NÃO lança em erro de RPC — resolve {error} (Codex). Por isso
+// checamos `error` (try/catch não pegaria), pra ao menos LOGAR um heartbeat negado.
+// Renova o lease E persiste o progresso: next_page := a página EM CURSO (`page`).
+// Assim um crash retoma da página em curso (re-faz ≤1 página, idempotente), nunca o run.
+async function heartbeatVendasCursor(
+  db: SupabaseClient, account: Account, dfIso: string, dtIso: string, page: number,
+): Promise<void> {
+  const { error } = await db.rpc('vendas_sync_heartbeat', { p_account: account, p_date_from: dfIso, p_date_to: dtIso, p_page: page });
+  if (error) console.warn(`[sync_pedidos][${account}] heartbeat falhou (segue):`, error.message);
+}
+
+// Encerra e LIBERA o lease. complete=true ⟹ fecha completed_at (fim real); false ⟹
+// pausa (retoma do nextPage, grava last_error_kind). A RPC zera running_since sempre.
+async function finishVendasCursor(
+  db: SupabaseClient, account: Account, dfIso: string, dtIso: string,
+  complete: boolean, nextPage: number | null, lastErrorKind: string | null,
+): Promise<void> {
+  const { error } = await db.rpc('vendas_sync_finish', {
+    p_account: account, p_date_from: dfIso, p_date_to: dtIso,
+    p_complete: complete,
+    p_next_page: complete ? null : nextPage,
+    p_last_error_kind: complete ? null : lastErrorKind,
+  });
+  if (error) console.error(`[sync_pedidos][${account}] finish falhou:`, error.message);
+}
+
+// LIBERA o lease preservando o next_page (o progresso que o heartbeat persistiu). Para
+// o erro INESPERADO escapado do syncPedidos: solta o lease + grava o kind sem rebobinar.
+async function releaseVendasCursor(
+  db: SupabaseClient, account: Account, dfIso: string, dtIso: string, lastErrorKind: string,
+): Promise<void> {
+  const { error } = await db.rpc('vendas_sync_release', {
+    p_account: account, p_date_from: dfIso, p_date_to: dtIso, p_last_error_kind: lastErrorKind,
+  });
+  if (error) console.error(`[sync_pedidos][${account}] release falhou:`, error.message);
 }
 
 serve(async (req) => {
@@ -2297,10 +2427,41 @@ serve(async (req) => {
       }
 
       case "sync_pedidos": {
-        const startPagePedidos = params.start_page || 1;
-        const maxPagesPedidos = params.max_pages || 10;
+        const maxPagesPedidos = Number(params.max_pages) || 10;
         const dateFrom = params.date_from || undefined; // DD/MM/YYYY
         const dateTo = params.date_to || undefined;     // DD/MM/YYYY
+
+        // Modo BACKFILL (cursor + lease) — o cron de continuação */6 passa use_cursor:true.
+        if (params.use_cursor === true) {
+          if (!dateFrom || !dateTo) throw new Error("use_cursor exige date_from e date_to");
+          const dfIso = omieDateToIso(dateFrom);
+          const dtIso = omieDateToIso(dateTo);
+          if (!dfIso || !dtIso) throw new Error(`Datas inválidas (esperado DD/MM/YYYY): ${dateFrom}..${dateTo}`);
+
+          // Lease atômico: serialização REAL (não intervalo de cron). 0 linhas = outra
+          // invocação viva / janela já completa → sai no-op (não processa).
+          const resumePage = await acquireVendasLease(supabaseAdmin, account, dfIso, dtIso);
+          if (resumePage == null) {
+            result = { success: true, skipped: "lease_nao_adquirido", account, date_from: dateFrom, date_to: dateTo };
+            break;
+          }
+          try {
+            const r = await syncPedidos(supabaseAdmin, resumePage, maxPagesPedidos, account, dateFrom, dateTo, { df: dfIso, dt: dtIso });
+            // Fecha o cursor: completo (fim real) OU pausa (budget/transitório/erro Omie).
+            await finishVendasCursor(supabaseAdmin, account, dfIso, dtIso, r.complete, r.nextPage, r.lastErrorKind);
+            result = { success: true, use_cursor: true, resume_page: resumePage, ...r };
+          } catch (e) {
+            // Erro inesperado (DB/bug) escapou do syncPedidos: LIBERA o lease preservando
+            // o next_page que o heartbeat persistiu (retoma da página EM CURSO, re-faz ≤1
+            // página idempotente — NÃO o run inteiro, achado Codex). Propaga p/ visibilidade.
+            await releaseVendasCursor(supabaseAdmin, account, dfIso, dtIso, "error");
+            throw e;
+          }
+          break;
+        }
+
+        // Modo INCREMENTAL (rolante, sem cursor) — inalterado: cron 2h, start_page=1, janela today-5..today.
+        const startPagePedidos = params.start_page || 1;
         const syncPedidosResult = await syncPedidos(supabaseAdmin, startPagePedidos, maxPagesPedidos, account, dateFrom, dateTo);
         result = { success: true, ...syncPedidosResult };
         break;

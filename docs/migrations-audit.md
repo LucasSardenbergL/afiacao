@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **257** custom migrations totais
-- **976** objetos esperados (criados por estas migrations)
+- **259** custom migrations totais
+- **985** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 265
-  - `rls_policy`: 217
-  - `index`: 184
-  - `table`: 107
-  - `cron_job`: 106
+  - `function`: 269
+  - `rls_policy`: 219
+  - `index`: 185
+  - `table`: 108
+  - `cron_job`: 107
   - `trigger`: 48
   - `view`: 45
   - `enum_value`: 4
@@ -2271,12 +2271,31 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260617133633_vendas_sync_cursor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.vendas_sync_lease_acquire` | — |
+| `function` | `public.vendas_sync_heartbeat` | — |
+| `function` | `public.vendas_sync_release` | — |
+| `function` | `public.vendas_sync_finish` | — |
+| `table` | `public.vendas_sync_cursor` | — |
+| `index` | `public.idx_vendas_sync_cursor_pendentes` | `vendas_sync_cursor` |
+| `cron_job` | `cron.vendas-sync-continuacao-6min` | — |
+| `rls_policy` | `public.vendas_sync_cursor_select_staff` | `vendas_sync_cursor` |
+| `rls_policy` | `public.vendas_sync_cursor_service_all` | `vendas_sync_cursor` |
+
+### `20260617133634_sales_orders_omie_hash_unique.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.uniq_sales_orders_omie_hash` | `sales_orders` |
+
 ### `20260617160000_criar_pedidos_com_itens.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.criar_pedidos_com_itens` | — |
-| `index` | `public.uniq_sales_orders_omie_hash` | `sales_orders` |
 
 ## Próximos passos quando algo der `❌`
 
