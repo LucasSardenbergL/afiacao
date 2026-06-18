@@ -1,0 +1,25 @@
+[
+  { "name": "só-frontend (página lazy)", "files": ["src/pages/Sales.tsx"],
+    "expect": { "frontend": "SIM", "edge": "não", "migration": "não" } },
+
+  { "name": "só-edge", "files": ["supabase/functions/omie-sync/index.ts"],
+    "expect": { "frontend": "não", "edge": "SIM", "migration": "não" } },
+
+  { "name": "só-migration", "files": ["supabase/migrations/20260618120000_add_col.sql"],
+    "expect": { "frontend": "não", "edge": "não", "migration": "SIM" } },
+
+  { "name": "misto (3 camadas)", "files": ["src/App.tsx", "supabase/functions/x/index.ts", "supabase/migrations/y.sql"],
+    "expect": { "frontend": "SIM", "edge": "SIM", "migration": "SIM" } },
+
+  { "name": "só-doc (NÃO precisa deploy)", "files": ["docs/historico/x.md", "CLAUDE.md", ".claude/skills/y/SKILL.md"],
+    "expect": { "frontend": "não", "edge": "não", "migration": "não" } },
+
+  { "name": "build na raiz (regressão: vite.config muda o bundle)", "files": ["vite.config.ts"],
+    "expect": { "frontend": "SIM", "edge": "não", "migration": "não" } },
+
+  { "name": "dep nova (package.json muda o bundle)", "files": ["package.json", "bun.lockb"],
+    "expect": { "frontend": "SIM", "edge": "não", "migration": "não" } },
+
+  { "name": "frontend + edge", "files": ["src/hooks/useX.ts", "supabase/functions/y/index.ts"],
+    "expect": { "frontend": "SIM", "edge": "SIM", "migration": "não" } }
+]

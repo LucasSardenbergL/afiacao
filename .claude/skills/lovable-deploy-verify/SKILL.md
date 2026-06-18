@@ -18,11 +18,11 @@ description: >-
 
 # Lovable Deploy & Verify
 
-> ⚠️ **ESTE É UM ESBOÇO v0 (2026-06-14).** A lógica está fundamentada na §"Deploy do FRONTEND" e
-> §"Edge functions — caminho oficial Lovable" do CLAUDE.md, mas os comandos de verificação por bytes
-> ainda **não foram exercidos por esta skill ponta-a-ponta** (foram exercidos manualmente em #608 e
-> documentados na §5). Os pontos marcados `TODO(validar na 1ª execução)` precisam de uma rodada real
-> antes de promover pra v1. Irmã da `lovable-db-operator` (que cobre o lado do banco).
+> **v1 — verificação por bytes validada contra produção (2026-06-18).** A mecânica foi exercida em
+> `steu.lovable.app`: a enumeração de chunks estava quebrada (o método ingênuo dava **0** — corrigido no
+> Passo 4) e a classificação de diff ganhou eval executável ([`evals/`](evals/): 8 casos + mutation-check).
+> **Pendência única:** o *smoke* ponta-a-ponta — publicar uma mudança conhecida e ver o ALVO surgir nos
+> chunks — só fecha num Publish real. Irmã da `lovable-db-operator` (lado do banco).
 
 ## Por que esta skill existe (leia antes de qualquer coisa)
 
@@ -47,7 +47,7 @@ As **três** coisas são deploy manual e **independente**, e NENHUMA acontece so
 1. **Você nunca diz "está no ar" sem prova.** Mergear na main **não publica nada**. Frontend só está no ar quando os **bytes do bundle** confirmam (hash novo do index + a string-alvo presente nos chunks). Edge só está no ar quando o Lovable reporta `Active` **e** o comportamento bate. Até lá: "mergeado na main; **falta Publish/deploy** pra ir ao ar".
 2. **As 3 camadas são independentes — sempre diga QUAIS se aplicam.** Um diff só-frontend não precisa de deploy de edge; um diff de edge precisa de deploy via chat *e* (se mexeu em UI) Publish. Liste só o que o diff realmente toca.
 3. **Edge deploy SÓ DEPOIS do merge, e VERBATIM.** Deployar "da main" antes do merge faz o Lovable ler a main **velha** (já mordeu em #383/#252 — a action nova não existia no binário → `400 "Ação desconhecida"`). E o Lovable tende a "melhorar" o código — o prompt deve mandar **não modificar/reinterpretar**, ler de `supabase/functions/<nome>/index.ts` e deployar idêntico.
-4. **Verificação de frontend varre TODOS os chunks.** O Vite agrupa por content-hash e pode jogar um hook/módulo num chunk de nome **inesperado** (visto: um hook do unified-order caiu no `TintColorSelectDialog-*.js`). Grepar só os chunks de nome "óbvio" dá **falso-negativo** — varra todos os referenciados.
+4. **Verificar frontend varre TODOS os chunks — e enumerá-los é mapDeps-aware.** O Vite joga módulos em chunks de nome **inesperado** (visto: um hook do unified-order caiu no `TintColorSelectDialog-*.js`) e lista os chunks lazy via `__vite__mapDeps(["assets/x.js"])` — sem barra, entre aspas. Grep de literais `/assets/...` no entry retorna **0** (falso-negativo total, medido em 2026-06-18). Enumere de `index.html`+entry com regex sem barra; se a contagem vier **0/1**, a enumeração quebrou — conserte antes de concluir qualquer coisa.
 
 ## O ritual — 5 passos
 
@@ -63,17 +63,14 @@ Crie estes todos (TodoWrite) ao fechar uma entrega que pode precisar de deploy:
 
 ### Passo 1 — Classificar o diff
 
+Quais das 3 camadas o PR toca? A lógica canônica — ampliada para pegar **arquivos de build na raiz**
+(`vite.config`, `package.json`, …), não só `src/` — vive em [`evals/classify.sh`](evals/classify.sh) e é
+coberta por [`evals/run.sh`](evals/run.sh) (8 casos + mutation-check):
+
 ```bash
-# o que o PR/branch tocou, por camada
-git diff --name-only origin/main...HEAD | sort | awk '
-  /^src\// {fe=1}
-  /^supabase\/functions\// {ef=1}
-  /^supabase\/migrations\// {mg=1}
-  END {
-    print "frontend (Publish): " (fe?"SIM":"não")
-    print "edge (chat Lovable): " (ef?"SIM":"não")
-    print "migration (SQL Editor → lovable-db-operator): " (mg?"SIM":"não")
-  }'
+git diff --name-only origin/main...HEAD \
+  | .claude/skills/lovable-deploy-verify/evals/classify.sh
+# -> frontend=SIM|não · edge=SIM|não · migration=SIM|não
 ```
 
 ### Passo 2 — Checklist de pendências do founder
@@ -81,7 +78,7 @@ git diff --name-only origin/main...HEAD | sort | awk '
 Entregar SÓ as linhas que se aplicam (do passo 1):
 
 > ⚠️ **Pra ir ao ar, falta (manual no Lovable):**
-> - [ ] **Publish** do frontend no editor do Lovable *(se tocou `src/`)*
+> - [ ] **Publish** do frontend no editor do Lovable *(se o passo 1 deu frontend=SIM)*
 > - [ ] **Deploy** das edges X, Y via chat do Lovable, verbatim da main *(se tocou `supabase/functions/`)*
 > - [ ] **Migration** Z no SQL Editor *(se tocou `supabase/migrations/` — ver bloco da `lovable-db-operator`)*
 
@@ -97,6 +94,10 @@ Montar pro founder colar no chat do Lovable (um por edge tocada):
 
 ### Passo 4 — Verificar o frontend pelos bytes (após Publish)
 
+> **Validado contra produção (2026-06-18): 260 chunks.** O método ingênuo — grep de literais
+> `/assets/...js` no entry — retorna **0**: o Vite lista os chunks lazy via
+> `__vite__mapDeps(["assets/X.js", …])` (sem barra, entre aspas). Enumere **mapDeps-aware**.
+
 ```bash
 APP=https://steu.lovable.app
 ALVO='COLE_AQUI_UMA_STRING_LITERAL_UNICA_DO_COMMIT'   # ex.: um .select() novo, texto de UI, rota nova
@@ -105,24 +106,26 @@ ALVO='COLE_AQUI_UMA_STRING_LITERAL_UNICA_DO_COMMIT'   # ex.: um .select() novo, 
 ENTRY=$(curl -s "$APP/" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1)
 echo "entry: $ENTRY"
 
-# 2) enumerar TODOS os chunks referenciados pelo entry (Lei de Ferro #4 — varrer tudo, não só o óbvio)
-curl -s "$APP$ENTRY" \
-  | grep -oE '/assets/[A-Za-z0-9_-]+-[A-Za-z0-9_-]+\.js' | sort -u > /tmp/chunks.txt
-echo "chunks referenciados: $(wc -l < /tmp/chunks.txt)"
+# 2) enumerar TODOS os chunks: do index.html (eager: entry+vendors) E do entry (lazy via
+#    __vite__mapDeps). Um regex SEM barra casa os dois formatos ('/assets/x.js' e
+#    '"assets/x.js"'); normaliza com a barra e dedup.
+{ curl -s "$APP/"; curl -s "$APP$ENTRY"; } \
+  | grep -oE 'assets/[A-Za-z0-9_-]+\.js' | sed 's|^|/|' | sort -u > /tmp/chunks.txt
+N=$(wc -l < /tmp/chunks.txt); echo "chunks referenciados: $N"
+
+# >>> GUARD: o método antigo dava 0. Se vier 0 ou 1, a enumeração QUEBROU (o bundler mudou
+#     de formato) — NÃO conclua "não está no ar"; conserte a enumeração antes de seguir.
+[ "$N" -ge 2 ] || echo "❌ enumeração suspeita ($N chunks) — abortar, não concluir nada"
 
 # 3) grep da string-alvo em TODOS os chunks
 while read -r c; do
   curl -s "$APP$c" | grep -q -- "$ALVO" && echo "✅ ALVO encontrado em $c"
 done < /tmp/chunks.txt
-echo "(se nada acima, o commit NÃO está no build publicado)"
+echo "(nada acima COM contagem alta = o commit NÃO está no build publicado)"
 ```
 
-`TODO(validar na 1ª execução)`: confirmar que o regex de enumeração de chunks pega o conjunto completo
-(o entry pode usar `__vite__mapDeps` com os caminhos numa array — se o grep acima vier curto, extrair a
-array de deps do entry em vez dos literais `/assets/...`). A §5 cita "~233 chunks" — comparar a contagem.
-
 ⚠️ O `/browse` do gstack (headless E headed) **NÃO renderiza esta SPA** (React não monta) — a verificação
-de Uq fica no Chrome real do founder; a verificação de **maior sinal sem o founder é esta, pelos bytes**.
+visual fica no Chrome real do founder; o **maior sinal sem o founder é este, pelos bytes**.
 
 ### Passo 5 — Confirmar honestamente
 
@@ -138,7 +141,9 @@ de Uq fica no Chrome real do founder; a verificação de **maior sinal sem o fou
 - CLAUDE.md §5 lições #383/#252 (deployar edge só após merge), #608 (verificação por bytes usada com sucesso)
 - Skill irmã `lovable-db-operator` (camada de banco)
 
-## TODO antes de promover a v1
-- [ ] Exercer o passo 4 ponta-a-ponta numa entrega real e confirmar a enumeração de chunks (regex vs `__vite__mapDeps`).
-- [ ] Adicionar `evals/` (espelhar o formato do `lovable-db-operator/evals`) com casos: diff só-frontend, diff só-edge, diff misto, diff só-doc (não precisa deploy).
-- [ ] Confirmar o domínio publicado canônico (`steu.lovable.app`) e se há ambiente de preview distinto a checar.
+## Estado / pendências
+- [x] Enumeração de chunks **mapDeps-aware** (literais davam 0 → corrigido; 260 chunks em prod, 2026-06-18).
+- [x] `evals/` com classificação de diff (8 casos + runner + mutation-check; espelha `lovable-db-operator/evals`).
+- [x] Domínio canônico `steu.lovable.app` confirmado (HTTP 200).
+- [ ] **Smoke ponta-a-ponta:** num próximo Publish real, rodar o Passo 4 com um ALVO conhecido e ver aparecer nos chunks (fecha o último elo — não dá com build local).
+- [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
