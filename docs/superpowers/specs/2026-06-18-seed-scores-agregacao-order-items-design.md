@@ -21,6 +21,12 @@ O founder aplicou a **v1** no SQL Editor (denylist, `last_purchase=max(created_a
 - **Prova:** `db/test-get-customer-sales-summary.sh` — **30 asserts + 6 falsificações** verde (incl. kpi-null→COALESCE, futuro→clamp+exclusão, allowlist vs denylist, grant/revoke).
 - **Residuais aceitos (Codex, não-blockers):** futuro=`days 0` é policy; fallback `created_at::date` em data-pura do Omie é intencional; migration-antes-do-edge obrigatória.
 
+**v4 (blocklist — alinha princípio com o #935; migration `20260618190000`):**
+- O PR #935 (fin-valor-cockpit, mergeado no mesmo dia) adotou **blocklist semântica** com a lição *"blocklist > allowlist (anti-subcontagem)"*. A allowlist da v3 perderia silenciosamente um status de venda **novo** que o Omie venha a criar. A v4 troca para **blocklist** `status NOT IN ('cancelado','rascunho','pendente','orcamento')` via `CREATE OR REPLACE` (mesma assinatura → sem DROP; preserva grants).
+- **Conjunto de 4** (régua `fornecedores_classificacao`), não os 2 do v_caca/#935: scoring exclui orçamento/pendente porque **não são receita realizada** (inflariam a prioridade). Faturamento não pode subcontar; scoring não pode inflar com não-vendas — divergência consciente de conjunto, mesma **mecânica** (blocklist) do #935.
+- **Mesmos números hoje** (medido: não há status fora dos 7 conhecidos → blocklist(4) ≡ allowlist(4) = 14.409 itens/672 clientes); mudança puramente defensiva p/ status futuro. **Edge NÃO muda** (o filtro vive 100% na RPC; o edge `n` já deployado consome o resultado).
+- **Caminho B** (sem gastar Codex — allowlist↔blocklist já coberto por 2 sessões: r1 minha + a do #935): harness PG17 atualizado p/ a v4 — **31 checagens incl. 7 falsificações** (F1 invertido: allowlist sabotada perde 'devolvido' status-novo; **F7 novo**: orçamento sabotado entra → A7 quebra). Aplica v3→v4 (simula a ordem real de prod).
+
 ## Problema
 
 O branch de **auto-seed** do edge (roda só quando `farmer_client_scores` está vazio — reset/primeiro seed) lê `order_items` com `.limit(10000)` **sem `.order()`** (linhas 263-266):
