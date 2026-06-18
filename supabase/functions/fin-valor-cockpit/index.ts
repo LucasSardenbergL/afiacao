@@ -77,6 +77,14 @@ function pedidoContaNoFaturamento(status: string | null | undefined, deletedAt: 
   if (status == null) return false;
   return !STATUS_NAO_FATURAVEL.includes(status);
 }
+// Faturabilidade do TÍTULO de AR (denominador de cobertura_receita) — contraparte de
+// pedidoContaNoFaturamento. Exclui só status_titulo='CANCELADO' (2,66% do arTotal Oben; estorno/dup/
+// outra-conta = 0 no AR, psql-ro 2026-06-18). NÃO filtra por status do PEDIDO (vínculo título→pedido
+// parcial e desacoplado). NULL → CONTA (assimétrico vs o numerador): conservador é NÃO superestimar a cobertura.
+const STATUS_TITULO_NAO_FATURAVEL = ['CANCELADO'];
+function tituloFaturavelAR(statusTitulo: string | null | undefined): boolean {
+  return statusTitulo == null ? true : !STATUS_TITULO_NAO_FATURAVEL.includes(statusTitulo);
+}
 type TituloAR = {
   valor_documento: number; saldo: number; valor_recebido: number;
   data_emissao: string | null; data_vencimento: string | null;
@@ -350,8 +358,15 @@ serve(async (req: Request) => {
     const custo_ausente_pct = res.celulas.filter((c) => c.cm == null).length / total;
     const ar_indisponivel_pct = res.celulas.filter((c) => c.ar_indisponivel).length / total;
     const estoque_ausente_pct = res.celulas.filter((c) => c.estoque_indisponivel).length / total;
-    // cobertura: receita Oben do cockpit ÷ AR Oben emitido no TTM (mesmo conjunto crsAll).
-    const arTotal = crsAll.filter((cr) => cr.data_emissao != null && cr.data_emissao >= ttm_inicio).reduce((s, cr) => s + (cr.valor_documento || 0), 0);
+    // cobertura_receita: receita Oben do cockpit ÷ AR Oben FATURÁVEL emitido no TTM (mesmo crsAll).
+    // PROXY DIRECIONAL de confiança, NÃO reconciliação contábil: numerador = receita comercial de
+    // itens (unit_price·qty−desc, data do PEDIDO); denominador = valor_documento de títulos AR
+    // (impostos/frete/parcelas, data de EMISSÃO), fonte independente (Omie financeiro, sem FK a
+    // sales_orders). Nem toda venda vira AR (à vista) e vice-versa → numerador pode exceder o
+    // denominador (Oben ~R$5,1M vs ~R$4,2M em 2026-06-18) e a cobertura satura em 1,0 (Math.min);
+    // a métrica só detecta "AR sem venda no app", não o inverso. Daí os thresholds largos. Exclui
+    // CANCELADO (tituloFaturavelAR) p/ simetria com o numerador (pedidoContaNoFaturamento).
+    const arTotal = crsAll.filter((cr) => cr.data_emissao != null && cr.data_emissao >= ttm_inicio && tituloFaturavelAR(cr.status_titulo)).reduce((s, cr) => s + (cr.valor_documento || 0), 0);
     const cobertura_receita = arTotal > 0 ? Math.min(1, res.empresa.receita / arTotal) : 1;
     const confianca = scoreConfiancaCockpit({ cobertura_receita, custo_ausente_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel });
 

@@ -56,6 +56,17 @@ export function pedidoContaNoFaturamento(status: string | null | undefined, dele
   return !STATUS_NAO_FATURAVEL.includes(status);  // default-inclui status conhecido novo
 }
 
+// Faturabilidade do TÍTULO de AR (denominador de cobertura_receita) — contraparte de
+// pedidoContaNoFaturamento (numerador). Exclui só status_titulo='CANCELADO' (medido = 2,66% do
+// arTotal Oben, psql-ro 2026-06-18; estorno/duplicata/outra-conta = 0 no AR). NÃO filtra por status
+// do PEDIDO: o vínculo título→pedido é parcial (37% sem numero_pedido) e desacoplado (título
+// CANCELADO coexiste com pedido vivo). NULL → CONTA (assimétrico vs o numerador, que exclui NULL):
+// nos dois lados a escolha conservadora é NÃO superestimar a cobertura — excluir do denominador a infla.
+const STATUS_TITULO_NAO_FATURAVEL = ['CANCELADO'];
+export function tituloFaturavelAR(statusTitulo: string | null | undefined): boolean {
+  return statusTitulo == null ? true : !STATUS_TITULO_NAO_FATURAVEL.includes(statusTitulo);
+}
+
 export type TituloAR = {
   valor_documento: number; saldo: number; valor_recebido: number;
   data_emissao: string | null;
