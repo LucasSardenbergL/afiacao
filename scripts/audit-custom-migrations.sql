@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 262
+-- Total de custom migrations: 266
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -276,11 +276,15 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260616140000', 'v_grupo_comercial', '20260616140000_v_grupo_comercial.sql'),
   ('20260616140941', 'fatia2_sinais_ligacao', '20260616140941_fatia2_sinais_ligacao.sql'),
   ('20260617091500', 'sinal_classe_config_check_classe', '20260617091500_sinal_classe_config_check_classe.sql'),
+  ('20260617130000', 'tint_promote_preserva_preco', '20260617130000_tint_promote_preserva_preco.sql'),
   ('20260617133633', 'vendas_sync_cursor', '20260617133633_vendas_sync_cursor.sql'),
   ('20260617133634', 'sales_orders_omie_hash_unique', '20260617133634_sales_orders_omie_hash_unique.sql'),
+  ('20260617150000', 'tint_promote_reexpand_skus_novos', '20260617150000_tint_promote_reexpand_skus_novos.sql'),
   ('20260617160000', 'criar_pedidos_com_itens', '20260617160000_criar_pedidos_com_itens.sql'),
   ('20260618130000', 'recencia_colacor_created_at', '20260618130000_recencia_colacor_created_at.sql'),
+  ('20260618130000', 'tint_promote_e4_so_com_custo', '20260618130000_tint_promote_e4_so_com_custo.sql'),
   ('20260618180000', 'get_customer_sales_summary', '20260618180000_get_customer_sales_summary.sql'),
+  ('20260618190000', 'b_cleanup_dups_oben', '20260618190000_b_cleanup_dups_oben.sql'),
   ('20260618190000', 'get_customer_sales_summary_blocklist', '20260618190000_get_customer_sales_summary_blocklist.sql')
 )
 SELECT
@@ -1274,6 +1278,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_select_staff', 'sinal_classe_config'),
   ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_master_all', 'sinal_classe_config'),
   ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_service_all', 'sinal_classe_config'),
+  ('tint_promote_preserva_preco', 'function', 'public', 'tint_promote_sync_run', ''),
   ('vendas_sync_cursor', 'function', 'public', 'vendas_sync_lease_acquire', ''),
   ('vendas_sync_cursor', 'function', 'public', 'vendas_sync_heartbeat', ''),
   ('vendas_sync_cursor', 'function', 'public', 'vendas_sync_release', ''),
@@ -1284,8 +1289,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('vendas_sync_cursor', 'rls_policy', 'public', 'vendas_sync_cursor_select_staff', 'vendas_sync_cursor'),
   ('vendas_sync_cursor', 'rls_policy', 'public', 'vendas_sync_cursor_service_all', 'vendas_sync_cursor'),
   ('sales_orders_omie_hash_unique', 'index', 'public', 'uniq_sales_orders_omie_hash', 'sales_orders'),
+  ('tint_promote_reexpand_skus_novos', 'function', 'public', 'tint_promote_sync_run', ''),
   ('criar_pedidos_com_itens', 'function', 'public', 'criar_pedidos_com_itens', ''),
+  ('tint_promote_e4_so_com_custo', 'function', 'public', 'tint_promote_sync_run', ''),
   ('get_customer_sales_summary', 'function', 'public', 'get_customer_sales_summary', ''),
+  ('b_cleanup_dups_oben', 'index', 'public', 'uniq_sales_orders_omie_pedido_id', 'sales_orders'),
   ('get_customer_sales_summary_blocklist', 'function', 'public', 'get_customer_sales_summary', '')
 )
 SELECT
