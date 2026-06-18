@@ -16023,6 +16023,17 @@ export type Database = {
           ultima_compra_data: string
         }[]
       }
+      get_customer_sales_summary: {
+        Args: never
+        Returns: {
+          category_count: number
+          customer_user_id: string
+          days_since_last_purchase: number
+          item_count: number
+          revenue_180d: number
+          total_revenue: number
+        }[]
+      }
       get_data_health: {
         Args: never
         Returns: {
