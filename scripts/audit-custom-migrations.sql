@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 256
+-- Total de custom migrations: 257
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -275,7 +275,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260616130000', 'v_grupo_contatos', '20260616130000_v_grupo_contatos.sql'),
   ('20260616140000', 'v_grupo_comercial', '20260616140000_v_grupo_comercial.sql'),
   ('20260616140941', 'fatia2_sinais_ligacao', '20260616140941_fatia2_sinais_ligacao.sql'),
-  ('20260617091500', 'sinal_classe_config_check_classe', '20260617091500_sinal_classe_config_check_classe.sql')
+  ('20260617091500', 'sinal_classe_config_check_classe', '20260617091500_sinal_classe_config_check_classe.sql'),
+  ('20260617160000', 'criar_pedidos_com_itens', '20260617160000_criar_pedidos_com_itens.sql')
 )
 SELECT
   e.version,
@@ -1267,7 +1268,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fatia2_sinais_ligacao', 'trigger', 'public', 'trg_farmer_calls_enqueue_recalc_sinais', 'farmer_calls'),
   ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_select_staff', 'sinal_classe_config'),
   ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_master_all', 'sinal_classe_config'),
-  ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_service_all', 'sinal_classe_config')
+  ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_service_all', 'sinal_classe_config'),
+  ('criar_pedidos_com_itens', 'function', 'public', 'criar_pedidos_com_itens', ''),
+  ('criar_pedidos_com_itens', 'index', 'public', 'uniq_sales_orders_omie_hash', 'sales_orders')
 )
 SELECT
   e.migration,
