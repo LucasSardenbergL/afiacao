@@ -218,20 +218,12 @@ não fura o piso."}
 7. **Classe manda no apetite de risco** (decisão do dono): confie na ABC/XYZ do sistema; A nunca
    pode faltar, C é o primeiro candidato a segurar caixa.
 
-## Detalhes técnicos do schema (validados contra produção em 2026-06-17)
+## Schema — gotchas que quebram a query ou o número
 
-- Empresa é **`'OBEN'` (maiúsculo)** nas tabelas de reposição (`sku_parametros`,
-  `sku_estoque_atual`, `v_oportunidade_economica_hoje`, ...) e **`'oben'` (minúsculo)** nas
-  financeiras (`fin_contas_correntes`, RPC `fin_projecao_13_semanas`).
-- `sku_codigo_omie` é **bigint/number** em `sku_parametros`/views de parâmetro e **text/string**
-  em `sku_estoque_atual` e `eventos_outlier` → **faça cast** (`::text`) nos joins.
-- **`custo_capital_efetivo_perc` (Query 1/3/5) está em % AO ANO**, não ao mês (ex. real: 25,75 =
-  25,75% a.a. ≈ 1,93%/mês). As faixas da skill (1/2,2/4,5) são **% ao mês** — **converta antes de
-  comparar** (erro de 12× se misturar; ver `references/modelo-financeiro.md`).
-- `fin_projecao_13_semanas('oben', saldo_inicial)` é uma **RPC gated a staff autenticado** —
-  retorna 13 linhas, mas só roda no **Lovable** (founder logado). Acesso read-only de diagnóstico
-  (`claude_ro`) recebe `permission denied for function` — ou seja, a folga de caixa **vem do
-  founder colando o resultado**, não de o assistente rodar a RPC. `saldo_inicial` = soma do
-  `saldo_atual` das contas ativas.
-- `sku_estoque_atual.ultima_sincronizacao` diz **quão fresco** é o estoque — use como sinal de
-  confiança (estoque velho = confiança baixa).
+Antes de adaptar qualquer query, confira (detalhe, exemplos e proveniência em `references/sql-queries.md` + `references/modelo-financeiro.md`):
+- **Grafia da empresa:** `'OBEN'` (maiúsc.) na reposição vs `'oben'` (minúsc.) no financeiro.
+- **`sku_codigo_omie`:** bigint num lado, text no outro → `::text` no join.
+- **`custo_capital_efetivo_perc`:** está em **% AO ANO**, não ao mês — as faixas da skill são % ao mês (**erro de 12× se misturar**).
+- **`fin_projecao_13_semanas`:** RPC gated a staff — só roda no Lovable; `claude_ro` recebe `permission denied` (a folga vem do founder colando).
+- **`ultima_sincronizacao`:** frescor do estoque = sinal de confiança (estoque velho → confiança baixa).
+

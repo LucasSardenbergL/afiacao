@@ -1,7 +1,7 @@
 ---
 name: lovable-deploy-verify
 description: >-
-  RASCUNHO v0 — Ritual de "está REALMENTE no ar?" para QUALQUER entrega neste repo (Afiação/Colacor),
+  Ritual de "está REALMENTE no ar?" para QUALQUER entrega neste repo (Afiação/Colacor),
   que roda em Lovable Cloud. Use SEMPRE que terminar de mergear um PR e precisar saber o que falta pra
   a mudança ir a produção, ou quando o usuário perguntar "já está no ar?", "deu pra ver no app?",
   "publiquei?", "preciso dar Publish?", "tem que deployar a edge?". Vale mesmo quando o usuário não
