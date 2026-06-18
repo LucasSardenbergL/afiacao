@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **262** custom migrations totais
-- **987** objetos esperados (criados por estas migrations)
+- **266** custom migrations totais
+- **991** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 271
+  - `function`: 274
   - `rls_policy`: 219
-  - `index`: 185
+  - `index`: 186
   - `table`: 108
   - `cron_job`: 107
   - `trigger`: 48
@@ -2271,6 +2271,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260617130000_tint_promote_preserva_preco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
 ### `20260617133633_vendas_sync_cursor.sql`
 
 | Tipo | Objeto | Parent |
@@ -2291,6 +2297,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `index` | `public.uniq_sales_orders_omie_hash` | `sales_orders` |
 
+### `20260617150000_tint_promote_reexpand_skus_novos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
 ### `20260617160000_criar_pedidos_com_itens.sql`
 
 | Tipo | Objeto | Parent |
@@ -2301,11 +2313,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260618130000_tint_promote_e4_so_com_custo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
 ### `20260618180000_get_customer_sales_summary.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_customer_sales_summary` | — |
+
+### `20260618190000_b_cleanup_dups_oben.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.uniq_sales_orders_omie_pedido_id` | `sales_orders` |
 
 ### `20260618190000_get_customer_sales_summary_blocklist.sql`
 
