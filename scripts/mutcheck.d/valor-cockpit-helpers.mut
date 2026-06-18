@@ -10,3 +10,8 @@ PEGA | resolverHurdle soma>0 vira >=0 (0% capital grátis)| s/soma > 0 \? soma/s
 PEGA | recomendação "subir preço" direção (< vira >)     | s/cmPct < c\.margem_minima_pct/cmPct > c.margem_minima_pct/
 PEGA | recomendação "cortar desconto" direção (> vira <) | s/descontoPct > c\.desconto_max_pct/descontoPct < c.desconto_max_pct/
 PEGA | gate evpConhecivel (remove o ! da negação)        | s/= !input\.hurdle_indisponivel/= input.hurdle_indisponivel/
+# Faturabilidade do pedido pai (guard do bug do cancelado; espelha v_caca). Institucionaliza as 2
+# falsificações provadas à mão: "conta tudo" (guards invertidos) e "allowlist" (remove a negação).
+PEGA | pedidoContaNoFaturamento: guard soft-delete (!=->==)  | s/if \(deletedAt != null\) return false/if (deletedAt == null) return false/
+PEGA | pedidoContaNoFaturamento: status NULL exclui (==->!=) | s/if \(status == null\) return false/if (status != null) return false/
+PEGA | pedidoContaNoFaturamento: blocklist→allowlist (tira !)| s/return !STATUS_NAO_FATURAVEL\.includes/return STATUS_NAO_FATURAVEL.includes/
