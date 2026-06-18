@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║  PROVA PG17 — get_customer_sales_summary() v3 (seed de farmer_client_scores)   ║
+# ║  PROVA PG17 — get_customer_sales_summary() v4 (seed de farmer_client_scores)   ║
 # ║  Money-path: alimenta recência/receita/diversidade do auto-seed. Substitui a   ║
 # ║  leitura crua order_items .limit(10000) sem .order() (truncava ~30%).          ║
-# ║  Cobre Codex r2: COALESCE kpi-null, clamp data futura, janela 180d fechada.    ║
+# ║  v4: BLOCKLIST (alinha princípio c/ #935 — status novo ENTRA, anti-subcontagem;║
+# ║  não-vendas cancelado/rascunho/pendente/orcamento FICAM FORA). Aplica v3→v4    ║
+# ║  (simula a ordem de prod: CREATE OR REPLACE sobre a v3 allowlist).             ║
 # ║  Lei de Ferro: migration REAL · assert negativo c/ SQLSTATE · falsificação.    ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
@@ -44,7 +46,7 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], 
 
 echo "═══ setup pronto (PG17 :$PORT) ═══"
 
-# ══ ZONA 1 — pré-requisitos: order_items + sales_orders (colunas que a RPC v3 toca) ══
+# ══ ZONA 1 — pré-requisitos: order_items + sales_orders (colunas que a RPC toca) ══
 P -q <<'SQL'
 CREATE TABLE public.sales_orders (
   id             uuid PRIMARY KEY,
@@ -64,14 +66,15 @@ CREATE TABLE public.order_items (
 );
 SQL
 
-# ══ ZONA 2 — aplica a migration REAL ══
-MIG="$REPO_ROOT/supabase/migrations/20260618180000_get_customer_sales_summary.sql"
-P -q -f "$MIG"
-echo "migration aplicada: $(basename "$MIG")"
+# ══ ZONA 2 — aplica as migrations REAIS na ORDEM de prod: v3 (allowlist) → v4 (blocklist) ══
+MIG3="$REPO_ROOT/supabase/migrations/20260618180000_get_customer_sales_summary.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260618190000_get_customer_sales_summary_blocklist.sql"
+P -q -f "$MIG3"   # estado v3 (allowlist) — como está em prod hoje
+P -q -f "$MIG"    # v4 CREATE OR REPLACE sobre a v3 (blocklist) — a transição que vai pra prod
+echo "migrations aplicadas: v3 → $(basename "$MIG")"
 
-# ══ ZONA 3 — seed (cenário cobre todos os invariantes + edge cases do Codex r2) ══
+# ══ ZONA 3 — seed (cobre invariantes + edge cases Codex r2 + a inversão allowlist→blocklist) ══
 # oi.created_at = '2020-01-01' em TODOS (munição p/ F3: provar que NÃO se usa created_at do item).
-# so.created_at = coerente com kpi (relevante só no cliente H, onde kpi IS NULL → COALESCE usa ele).
 P -q <<'SQL'
 INSERT INTO public.sales_orders (id, status, deleted_at, order_date_kpi, created_at) VALUES
   ('50000000-0000-0000-0000-000000000001','faturado',  NULL,  current_date-10, (current_date-10)::timestamptz),  -- A dentro 180d
@@ -81,12 +84,13 @@ INSERT INTO public.sales_orders (id, status, deleted_at, order_date_kpi, created
   ('50000000-0000-0000-0000-000000000005','faturado',  NULL,  current_date-1,  (current_date-1)::timestamptz),   -- C
   ('50000000-0000-0000-0000-000000000006','faturado',  NULL,  current_date-3,  (current_date-3)::timestamptz),   -- D customer NULL EXCLUÍDO
   ('50000000-0000-0000-0000-000000000007','enviado',   NULL,  current_date-300,(current_date-300)::timestamptz), -- E FORA 180d
-  ('50000000-0000-0000-0000-000000000008','devolvido', NULL,  current_date-2,  (current_date-2)::timestamptz),   -- F status NOVO → allowlist EXCLUI
+  ('50000000-0000-0000-0000-000000000008','devolvido', NULL,  current_date-2,  (current_date-2)::timestamptz),   -- F status NOVO → blocklist INCLUI
   ('50000000-0000-0000-0000-000000000009','faturado',  NULL,  current_date-4,  (current_date-4)::timestamptz),   -- F
   ('50000000-0000-0000-0000-000000000010','faturado',  now(), current_date-1,  (current_date-1)::timestamptz),   -- G deleted EXCLUÍDO
   ('50000000-0000-0000-0000-000000000011','faturado',  NULL,  current_date-6,  (current_date-6)::timestamptz),   -- G
   ('50000000-0000-0000-0000-000000000012','faturado',  NULL,  NULL,            (current_date-5)::timestamptz),   -- H kpi NULL → COALESCE p/ created_at
-  ('50000000-0000-0000-0000-000000000013','faturado',  NULL,  current_date+30, (current_date+30)::timestamptz);  -- I data FUTURA
+  ('50000000-0000-0000-0000-000000000013','faturado',  NULL,  current_date+30, (current_date+30)::timestamptz),  -- I data FUTURA
+  ('50000000-0000-0000-0000-000000000014','orcamento', NULL,  current_date-1,  (current_date-1)::timestamptz);   -- B orçamento (não-venda) EXCLUÍDO
 
 INSERT INTO public.order_items (id, sales_order_id, customer_user_id, product_id, unit_price, quantity, created_at) VALUES
   ('70000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000001','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','60000000-0000-0000-0000-000000000001',100,2,   '2020-01-01'), -- A 200
@@ -98,12 +102,13 @@ INSERT INTO public.order_items (id, sales_order_id, customer_user_id, product_id
   ('70000000-0000-0000-0000-000000000007','50000000-0000-0000-0000-000000000005','cccccccc-cccc-cccc-cccc-cccccccccccc',NULL,80,0,'2020-01-01'),                                  -- C 80 (qty 0→1, prod null)
   ('70000000-0000-0000-0000-000000000008','50000000-0000-0000-0000-000000000006',NULL,'60000000-0000-0000-0000-000000000001',999,1,'2020-01-01'),                                 -- D customer NULL
   ('70000000-0000-0000-0000-000000000009','50000000-0000-0000-0000-000000000007','eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee','60000000-0000-0000-0000-000000000005',500,1,'2020-01-01'),  -- E 500 (fora 180d)
-  ('70000000-0000-0000-0000-000000000010','50000000-0000-0000-0000-000000000008','ffffffff-ffff-ffff-ffff-ffffffffffff','60000000-0000-0000-0000-000000000006',777,1,'2020-01-01'),  -- F 777 DEVOLVIDO
+  ('70000000-0000-0000-0000-000000000010','50000000-0000-0000-0000-000000000008','ffffffff-ffff-ffff-ffff-ffffffffffff','60000000-0000-0000-0000-000000000006',777,1,'2020-01-01'),  -- F 777 DEVOLVIDO (status novo)
   ('70000000-0000-0000-0000-000000000011','50000000-0000-0000-0000-000000000009','ffffffff-ffff-ffff-ffff-ffffffffffff','60000000-0000-0000-0000-000000000006',10,1,'2020-01-01'),   -- F 10
   ('70000000-0000-0000-0000-000000000012','50000000-0000-0000-0000-000000000010','99999999-9999-9999-9999-999999999999','60000000-0000-0000-0000-000000000007',888,1,'2020-01-01'),  -- G 888 DELETED
   ('70000000-0000-0000-0000-000000000013','50000000-0000-0000-0000-000000000011','99999999-9999-9999-9999-999999999999','60000000-0000-0000-0000-000000000007',20,1,'2020-01-01'),   -- G 20
   ('70000000-0000-0000-0000-000000000014','50000000-0000-0000-0000-000000000012','88888888-8888-8888-8888-888888888888','60000000-0000-0000-0000-000000000008',40,1,'2020-01-01'),   -- H 40 (kpi null)
-  ('70000000-0000-0000-0000-000000000015','50000000-0000-0000-0000-000000000013','12121212-1212-1212-1212-121212121212','60000000-0000-0000-0000-000000000009',60,1,'2020-01-01');   -- I 60 (futuro)
+  ('70000000-0000-0000-0000-000000000015','50000000-0000-0000-0000-000000000013','12121212-1212-1212-1212-121212121212','60000000-0000-0000-0000-000000000009',60,1,'2020-01-01'),   -- I 60 (futuro)
+  ('70000000-0000-0000-0000-000000000016','50000000-0000-0000-0000-000000000014','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','60000000-0000-0000-0000-00000000000a',5000,1,'2020-01-01');-- B 5000 ORÇAMENTO
 
 GRANT SELECT ON public.order_items, public.sales_orders TO service_role, anon, authenticated;
 SQL
@@ -118,13 +123,13 @@ H='88888888-8888-8888-8888-888888888888'
 I='12121212-1212-1212-1212-121212121212'
 val() { Pq -c "SELECT $1 FROM public.get_customer_sales_summary() WHERE customer_user_id='$2';"; }
 
-echo "── asserts positivos / money-path ──"
+echo "── asserts positivos / money-path (v4 blocklist) ──"
 # Cobertura 100% (anti-truncamento): a RPC agrega TODOS os itens válidos
-eq "A0 itens crus semeados" "$(Pq -c "SELECT count(*) FROM public.order_items;")" "15"
+eq "A0 itens crus semeados" "$(Pq -c "SELECT count(*) FROM public.order_items;")" "16"
 COB=$(Pq -c "SELECT sum(item_count) FROM public.get_customer_sales_summary();")
-DIRECT=$(Pq -c "SELECT count(*) FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id WHERE so.status IN ('faturado','importado','separacao','enviado') AND so.deleted_at IS NULL AND oi.customer_user_id IS NOT NULL;")
+DIRECT=$(Pq -c "SELECT count(*) FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id WHERE so.status NOT IN ('cancelado','rascunho','pendente','orcamento') AND so.deleted_at IS NULL AND oi.customer_user_id IS NOT NULL;")
 eq "A1 cobertura sum(item_count)=count direto" "$COB" "$DIRECT"
-eq "A1b cobertura = 11 válidos (4 excluídos)" "$COB" "11"
+eq "A1b cobertura = 12 válidos (4 excluídos: cancelado/null/deleted/orçamento)" "$COB" "12"
 eq "A2 clientes na RPC = 8" "$(Pq -c "SELECT count(*) FROM public.get_customer_sales_summary();")" "8"
 
 # Paridade revenue + janela 180d + recência (SQL) + diversidade
@@ -132,12 +137,13 @@ eq "A3 total_revenue A = 1250"                       "$(val "(total_revenue=1250
 eq "A4 revenue_180d A = 250 (item -200d fora)"       "$(val "(revenue_180d=250)" "$A")" "t"
 eq "A5 days A ∈ [9,11] (reflete -10, não -200)"      "$(val "(days_since_last_purchase BETWEEN 9 AND 11)" "$A")" "t"
 eq "A6 category_count A = 2"                         "$(val "(category_count=2)" "$A")" "t"
-eq "A7 total_revenue B = 300 (cancelado 615M FORA)"  "$(val "(total_revenue=300)" "$B")" "t"
+eq "A7 total_revenue B = 300 (cancelado 615M E orçamento 5000 FORA)" "$(val "(total_revenue=300)" "$B")" "t"
 eq "A8 total_revenue C = 80 (price null→0, qty 0→1)" "$(val "(total_revenue=80)" "$C")" "t"
 eq "A9 category_count C = 1 (product NULL ignorado)" "$(val "(category_count=1)" "$C")" "t"
 eq "A10 revenue_180d E = 0 (sem compra 180d, !null)" "$(val "(revenue_180d=0 AND revenue_180d IS NOT NULL)" "$E")" "t"
 eq "A11 customer-null fora da RPC"                   "$(Pq -c "SELECT count(*) FROM public.get_customer_sales_summary() WHERE customer_user_id IS NULL;")" "0"
-eq "A12 total_revenue F = 10 ('devolvido' FORA)"     "$(val "(total_revenue=10)" "$F")" "t"
+# A INVERSÃO da v4: status NOVO ('devolvido') ENTRA na blocklist (anti-subcontagem #935)
+eq "A12 total_revenue F = 787 ('devolvido' status-novo ENTRA: 777+10)" "$(val "(total_revenue=787)" "$F")" "t"
 eq "A13 total_revenue G = 20 (deleted FORA)"         "$(val "(total_revenue=20)" "$G")" "t"
 # Codex r2: COALESCE kpi-null → cliente não vira "morto"
 eq "A14a days H ∈ [4,6] (kpi NULL → COALESCE created_at, não 999)" "$(val "(days_since_last_purchase BETWEEN 4 AND 6)" "$H")" "t"
@@ -170,8 +176,8 @@ SQL
 )
 case "$R" in *AUTH_NEGADO_OK*) ok "A18 authenticated negado (42501)";; *) bad "A18 authenticated — veio: $R";; esac
 
-echo "── falsificação (sabota → exige VERMELHO → restaura) ──"
-# F1: allowlist → denylist amnésica → 'devolvido' (status novo) entra → F vira 787.
+echo "── falsificação (sabota → exige VERMELHO → restaura v4) ──"
+# F1 (INVERSÃO v4): blocklist → allowlist amnésica → 'devolvido' (status novo) SAI → F vira 10.
 P -q <<'SQL'
 CREATE OR REPLACE FUNCTION public.get_customer_sales_summary()
 RETURNS TABLE(customer_user_id uuid, days_since_last_purchase int, total_revenue numeric, revenue_180d numeric, item_count bigint, category_count bigint)
@@ -182,13 +188,13 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public AS $fn$
     COALESCE(sum(COALESCE(oi.unit_price,0)*COALESCE(NULLIF(oi.quantity,0),1)) FILTER (WHERE COALESCE(so.order_date_kpi,so.created_at::date) BETWEEN (now() AT TIME ZONE 'America/Sao_Paulo')::date-180 AND (now() AT TIME ZONE 'America/Sao_Paulo')::date),0),
     count(*), count(DISTINCT oi.product_id)
   FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id
-  WHERE so.status NOT IN ('cancelado','rascunho','pendente','orcamento')   -- SABOTADO: denylist
+  WHERE so.status IN ('faturado','importado','separacao','enviado')   -- SABOTADO: allowlist amnésica
     AND so.deleted_at IS NULL AND oi.customer_user_id IS NOT NULL
   GROUP BY oi.customer_user_id;
 $fn$;
 SQL
 RAWF=$(val "total_revenue" "$F")
-if [ "$(val "(total_revenue=10)" "$F")" = "f" ]; then ok "F1 allowlist tem dente (denylist deixou 'devolvido' entrar: F=$RAWF, A12 quebraria)"; else bad "F1 sabotei allowlist→denylist e A12 NÃO mudou"; fi
+if [ "$(val "(total_revenue=787)" "$F")" = "f" ]; then ok "F1 blocklist tem dente (allowlist excluiu 'devolvido' status-novo: F=$RAWF, A12 quebraria)"; else bad "F1 sabotei blocklist→allowlist e A12 NÃO mudou"; fi
 P -q -f "$MIG"
 
 # F2: remove FILTER de 180d → revenue_180d = total all-time → A revenue_180d vira 1250.
@@ -202,7 +208,7 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public AS $fn$
     COALESCE(sum(COALESCE(oi.unit_price,0)*COALESCE(NULLIF(oi.quantity,0),1)),0),  -- SABOTADO: sem FILTER 180d
     count(*), count(DISTINCT oi.product_id)
   FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id
-  WHERE so.status IN ('faturado','importado','separacao','enviado')
+  WHERE so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
     AND so.deleted_at IS NULL AND oi.customer_user_id IS NOT NULL
   GROUP BY oi.customer_user_id;
 $fn$;
@@ -221,7 +227,7 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public AS $fn$
     COALESCE(sum(COALESCE(oi.unit_price,0)*COALESCE(NULLIF(oi.quantity,0),1)) FILTER (WHERE COALESCE(so.order_date_kpi,so.created_at::date) BETWEEN (now() AT TIME ZONE 'America/Sao_Paulo')::date-180 AND (now() AT TIME ZONE 'America/Sao_Paulo')::date),0),
     count(*), count(DISTINCT oi.product_id)
   FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id
-  WHERE so.status IN ('faturado','importado','separacao','enviado')
+  WHERE so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
     AND so.deleted_at IS NULL AND oi.customer_user_id IS NOT NULL
   GROUP BY oi.customer_user_id;
 $fn$;
@@ -240,7 +246,7 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public AS $fn$
     COALESCE(sum(COALESCE(oi.unit_price,0)*COALESCE(NULLIF(oi.quantity,0),1)) FILTER (WHERE COALESCE(so.order_date_kpi,so.created_at::date) BETWEEN (now() AT TIME ZONE 'America/Sao_Paulo')::date-180 AND (now() AT TIME ZONE 'America/Sao_Paulo')::date),0),
     count(*), count(DISTINCT oi.product_id)
   FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id
-  WHERE so.status IN ('faturado','importado','separacao','enviado')
+  WHERE so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
     AND so.deleted_at IS NULL AND oi.customer_user_id IS NOT NULL
   GROUP BY oi.customer_user_id;
 $fn$;
@@ -259,7 +265,7 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public AS $fn$
     COALESCE(sum(COALESCE(oi.unit_price,0)*COALESCE(NULLIF(oi.quantity,0),1)) FILTER (WHERE COALESCE(so.order_date_kpi,so.created_at::date) >= (now() AT TIME ZONE 'America/Sao_Paulo')::date-180),0),  -- SABOTADO: sem upper bound
     count(*), count(DISTINCT oi.product_id)
   FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id
-  WHERE so.status IN ('faturado','importado','separacao','enviado')
+  WHERE so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
     AND so.deleted_at IS NULL AND oi.customer_user_id IS NOT NULL
   GROUP BY oi.customer_user_id;
 $fn$;
@@ -281,8 +287,28 @@ SQL
 case "$R" in *SR_NEGADO*) ok "F6 GRANT tem dente (sem grant, service_role negado → A16 quebraria)";; *) bad "F6 revoguei o grant e service_role AINDA executa: $R";; esac
 P -q -f "$MIG"
 
+# F7 (anti-subcontagem v4): provar que a blocklist NÃO deixa orçamento (não-venda) entrar.
+# Sabota o WHERE para incluir orçamento → B vira 5300 → A7 (B=300) quebraria.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.get_customer_sales_summary()
+RETURNS TABLE(customer_user_id uuid, days_since_last_purchase int, total_revenue numeric, revenue_180d numeric, item_count bigint, category_count bigint)
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public AS $fn$
+  SELECT oi.customer_user_id,
+    GREATEST(0,(now() AT TIME ZONE 'America/Sao_Paulo')::date - max(COALESCE(so.order_date_kpi,so.created_at::date)))::int,
+    COALESCE(sum(COALESCE(oi.unit_price,0)*COALESCE(NULLIF(oi.quantity,0),1)),0),
+    COALESCE(sum(COALESCE(oi.unit_price,0)*COALESCE(NULLIF(oi.quantity,0),1)) FILTER (WHERE COALESCE(so.order_date_kpi,so.created_at::date) BETWEEN (now() AT TIME ZONE 'America/Sao_Paulo')::date-180 AND (now() AT TIME ZONE 'America/Sao_Paulo')::date),0),
+    count(*), count(DISTINCT oi.product_id)
+  FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id
+  WHERE so.status NOT IN ('cancelado','rascunho','pendente')   -- SABOTADO: deixou 'orcamento' entrar
+    AND so.deleted_at IS NULL AND oi.customer_user_id IS NOT NULL
+  GROUP BY oi.customer_user_id;
+$fn$;
+SQL
+if [ "$(val "(total_revenue=300)" "$B")" = "f" ]; then ok "F7 blocklist exclui orçamento (deixei entrar: B=$(val total_revenue "$B"), A7 quebraria)"; else bad "F7 deixei 'orcamento' entrar e A7 NÃO mudou"; fi
+P -q -f "$MIG"
+
 # pós-restauração: confirma verde de novo (migration idempotente, asserts voltam)
-eq "A19 pós-restauração: allowlist de volta (F=10)" "$(val "(total_revenue=10)" "$F")" "t"
+eq "A19 pós-restauração: blocklist de volta (F=787)" "$(val "(total_revenue=787)" "$F")" "t"
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
