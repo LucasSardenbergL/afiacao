@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 256
+-- Total de custom migrations: 258
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -275,7 +275,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260616130000', 'v_grupo_contatos', '20260616130000_v_grupo_contatos.sql'),
   ('20260616140000', 'v_grupo_comercial', '20260616140000_v_grupo_comercial.sql'),
   ('20260616140941', 'fatia2_sinais_ligacao', '20260616140941_fatia2_sinais_ligacao.sql'),
-  ('20260617091500', 'sinal_classe_config_check_classe', '20260617091500_sinal_classe_config_check_classe.sql')
+  ('20260617091500', 'sinal_classe_config_check_classe', '20260617091500_sinal_classe_config_check_classe.sql'),
+  ('20260617133633', 'vendas_sync_cursor', '20260617133633_vendas_sync_cursor.sql'),
+  ('20260617133634', 'sales_orders_omie_hash_unique', '20260617133634_sales_orders_omie_hash_unique.sql')
 )
 SELECT
   e.version,
@@ -1267,7 +1269,17 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fatia2_sinais_ligacao', 'trigger', 'public', 'trg_farmer_calls_enqueue_recalc_sinais', 'farmer_calls'),
   ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_select_staff', 'sinal_classe_config'),
   ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_master_all', 'sinal_classe_config'),
-  ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_service_all', 'sinal_classe_config')
+  ('fatia2_sinais_ligacao', 'rls_policy', 'public', 'sinal_classe_config_service_all', 'sinal_classe_config'),
+  ('vendas_sync_cursor', 'function', 'public', 'vendas_sync_lease_acquire', ''),
+  ('vendas_sync_cursor', 'function', 'public', 'vendas_sync_heartbeat', ''),
+  ('vendas_sync_cursor', 'function', 'public', 'vendas_sync_release', ''),
+  ('vendas_sync_cursor', 'function', 'public', 'vendas_sync_finish', ''),
+  ('vendas_sync_cursor', 'table', 'public', 'vendas_sync_cursor', ''),
+  ('vendas_sync_cursor', 'index', 'public', 'idx_vendas_sync_cursor_pendentes', 'vendas_sync_cursor'),
+  ('vendas_sync_cursor', 'cron_job', 'cron', 'vendas-sync-continuacao-6min', ''),
+  ('vendas_sync_cursor', 'rls_policy', 'public', 'vendas_sync_cursor_select_staff', 'vendas_sync_cursor'),
+  ('vendas_sync_cursor', 'rls_policy', 'public', 'vendas_sync_cursor_service_all', 'vendas_sync_cursor'),
+  ('sales_orders_omie_hash_unique', 'index', 'public', 'uniq_sales_orders_omie_hash', 'sales_orders')
 )
 SELECT
   e.migration,
