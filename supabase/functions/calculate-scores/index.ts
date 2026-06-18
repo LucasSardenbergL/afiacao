@@ -40,14 +40,11 @@ interface OmieClienteRow {
 
 interface CustomerSalesSummaryRow {
   customer_user_id: string;
-  [key: string]: unknown;
-}
-
-interface OrderAggAccumulator {
-  total_revenue: number;
-  item_count: number;
-  last_purchase: string | null;
-  product_ids: Set<string>;
+  days_since_last_purchase: number | null;  // calculado no SQL (data civil SP, COALESCE kpi null, clamp ≥0)
+  total_revenue: number | null;             // all-time (válidos)
+  revenue_180d: number | null;              // últimos 180d → avg_monthly_spend_180d = revenue_180d/6
+  item_count: number | null;
+  category_count: number | null;
 }
 
 interface FarmerClientScoreSeed {
@@ -241,45 +238,18 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Get sales data per customer if available
-      let salesAgg: CustomerSalesSummaryRow[] | null = null;
-      try {
-        const { data } = await supabase.rpc('get_customer_sales_summary');
-        salesAgg = (data ?? null) as unknown as CustomerSalesSummaryRow[] | null;
-      } catch (_e) {
-        // RPC may not exist yet, skip
-        salesAgg = null;
-      }
-
+      // Sinais de venda por cliente, agregados NO BANCO (RPC get_customer_sales_summary):
+      // cobre 100% dos itens VÁLIDOS (allowlist de status), sem o truncamento do antigo
+      // order_items.limit(10000) sem .order() (descartava ~30% sobre ordem indefinida).
+      // FAIL-CLOSED: a RPC é a fonte ÚNICA do seed; se falhar, abortar (o seed é idempotente
+      // e roda de novo) em vez de semear todo cliente com days=999/spend=0 — fabricar zero
+      // viola "ausente ≠ zero" (money-path). supabase-js NÃO lança em erro de RPC → checar `error`.
       const salesMap = new Map<string, CustomerSalesSummaryRow>();
-      if (salesAgg && Array.isArray(salesAgg)) {
-        for (const s of salesAgg) {
+      {
+        const { data, error } = await supabase.rpc('get_customer_sales_summary');
+        if (error) throw error;
+        for (const s of (data ?? []) as unknown as CustomerSalesSummaryRow[]) {
           salesMap.set(s.customer_user_id, s);
-        }
-      }
-
-      // Also try to get data from order_items
-      const orderDataMap = new Map<string, OrderAggAccumulator>();
-      const { data: orderAgg } = await supabase
-        .from('order_items')
-        .select('customer_user_id, unit_price, quantity, created_at, product_id')
-        .limit(10000);
-
-      if (orderAgg && orderAgg.length > 0) {
-        for (const item of orderAgg) {
-          const existing = orderDataMap.get(item.customer_user_id) || {
-            total_revenue: 0,
-            item_count: 0,
-            last_purchase: null,
-            product_ids: new Set(),
-          };
-          existing.total_revenue += (item.unit_price || 0) * (item.quantity || 1);
-          existing.item_count += 1;
-          if (item.created_at && (!existing.last_purchase || item.created_at > existing.last_purchase)) {
-            existing.last_purchase = item.created_at;
-          }
-          if (item.product_id) existing.product_ids.add(item.product_id);
-          orderDataMap.set(item.customer_user_id, existing);
         }
       }
 
@@ -302,15 +272,19 @@ Deno.serve(async (req) => {
 
       // Build seed records in batches
       const seedRecords: FarmerClientScoreSeed[] = [];
-      const now = new Date();
 
       for (const client of allClients) {
         if (!flaggedsOk) break;
         if (flaggeds.has(client.user_id)) continue;
-        const orderData = orderDataMap.get(client.user_id);
-        const daysSinceLastPurchase = orderData?.last_purchase 
-          ? Math.floor((now.getTime() - new Date(orderData.last_purchase).getTime()) / (1000 * 60 * 60 * 24))
-          : 999;
+        // Sinais do cliente: recência já vem calculada no SQL (data civil de SP, COALESCE p/
+        // order_date_kpi null, clamp ≥0). Cliente sem compra válida não está no map → 999/0.
+        // Number.isFinite: guard money-path contra NaN antes do upsert (numeric vem como string).
+        const sales = salesMap.get(client.user_id);
+        const daysRaw = sales ? Number(sales.days_since_last_purchase ?? 999) : 999;
+        const daysSinceLastPurchase = Number.isFinite(daysRaw) ? daysRaw : 999;
+        const revenue180 = Number(sales?.revenue_180d ?? 0);
+        const avgMonthlySpend = Number.isFinite(revenue180) ? Math.round(revenue180 / 6) : 0;
+        const categoryCountSeed = Number(sales?.category_count ?? 0);
 
         seedRecords.push({
           customer_user_id: client.user_id,
@@ -320,8 +294,8 @@ Deno.serve(async (req) => {
           churn_risk: 0,
           priority_score: 0,
           days_since_last_purchase: daysSinceLastPurchase,
-          avg_monthly_spend_180d: orderData ? Math.round(orderData.total_revenue / 6) : 0,
-          category_count: orderData ? orderData.product_ids.size : 0,
+          avg_monthly_spend_180d: avgMonthlySpend,
+          category_count: Number.isFinite(categoryCountSeed) ? categoryCountSeed : 0,
           gross_margin_pct: 0,
           avg_repurchase_interval: 0,
           expansion_score: 0,
