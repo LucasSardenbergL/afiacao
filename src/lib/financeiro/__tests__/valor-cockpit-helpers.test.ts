@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit, resolverHurdleCockpit, pedidoContaNoFaturamento } from '../valor-cockpit-helpers';
+import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit, resolverHurdleCockpit, pedidoContaNoFaturamento, tituloFaturavelAR } from '../valor-cockpit-helpers';
 
 // helper de fixture: TituloAR completo com defaults (reduz ruído nos casos)
 function tit(p: Partial<Parameters<typeof arMedioTTM>[0]['titulos'][number]>) {
@@ -29,6 +29,22 @@ describe('statusLiquidadoAR', () => {
     expect(statusLiquidadoAR('A VENCER')).toBe(false);
     expect(statusLiquidadoAR('ATRASADO')).toBe(false);
     expect(statusLiquidadoAR(null)).toBe(false);
+  });
+});
+
+describe('tituloFaturavelAR (denominador de cobertura — simetria do AR)', () => {
+  it('RECEBIDO/A VENCER/ATRASADO/VENCE HOJE → conta', () => {
+    for (const s of ['RECEBIDO', 'A VENCER', 'ATRASADO', 'VENCE HOJE']) expect(tituloFaturavelAR(s)).toBe(true);
+  });
+  it('CANCELADO → NÃO conta (simetria com pedido cancelado no numerador)', () => {
+    expect(tituloFaturavelAR('CANCELADO')).toBe(false);
+  });
+  it('status novo/desconhecido → conta por default (blocklist semântica, não subconta)', () => {
+    expect(tituloFaturavelAR('PROTESTADO')).toBe(true);
+  });
+  it('NULL/undefined → CONTA (não infla a cobertura; AR sempre tem status no Omie)', () => {
+    expect(tituloFaturavelAR(null)).toBe(true);
+    expect(tituloFaturavelAR(undefined)).toBe(true);
   });
 });
 
