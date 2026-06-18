@@ -79,6 +79,10 @@ CREATE TABLE public.sales_price_history (
 ALTER TABLE public.sales_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sales_price_history ENABLE ROW LEVEL SECURITY;
+-- Índice canônico (em prod vem da migration 20260617133634 #929) — PRÉ-REQUISITO da RPC.
+-- Predicado 'omie\_%' (underscore LITERAL); a RPC usa o MESMO no ON CONFLICT (match exato exigido).
+CREATE UNIQUE INDEX uniq_sales_orders_omie_hash
+  ON public.sales_orders (account, hash_payload) WHERE hash_payload LIKE 'omie\_%';
 SQL
 
 # ── ZONA 2 — aplica a migration REAL (Lei #1) ──
@@ -86,9 +90,9 @@ MIG="$REPO_ROOT/supabase/migrations/20260617160000_criar_pedidos_com_itens.sql"
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
-# índice unique foi criado?
+# índice canônico (pré-req da 133634) presente — a RPC só casa o ON CONFLICT se o predicado bater
 HASIDX=$(Pq -c "SELECT count(*) FROM pg_indexes WHERE indexname='uniq_sales_orders_omie_hash';")
-eq "M0 índice unique criado" "$HASIDX" "1"
+eq "M0 índice canônico presente (pré-req; A0/A2 provam o ON CONFLICT casa omie\\_%)" "$HASIDX" "1"
 
 # ── ZONA 3 — seed (como postgres: superuser, sem RLS) ──
 P -q <<SQL

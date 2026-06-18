@@ -5,15 +5,14 @@
 --
 -- Provado em PG17 local (db/test-criar-pedidos-com-itens.sh) com falsificação.
 -- ⚠️ MIGRATION MANUAL — Lovable NÃO auto-aplica nome custom. Colar no SQL Editor → Run.
--- Idempotente (CREATE INDEX IF NOT EXISTS + CREATE OR REPLACE FUNCTION); re-colar é seguro.
+-- Idempotente (CREATE OR REPLACE FUNCTION); re-colar é seguro.
+--
+-- O índice uniq_sales_orders_omie_hash (account, hash_payload) WHERE hash_payload LIKE 'omie\_%'
+-- vem da migration 20260617133634 (#929) — aplicar ANTES desta. O ON CONFLICT abaixo usa o MESMO
+-- predicado 'omie\_%' (o ON CONFLICT exige match EXATO do predicado do índice parcial: 'omie_%'
+-- com underscore-wildcard NÃO casa 'omie\_%' com underscore-literal → 42P10; testado em PG17).
 
--- ── 1. Índice unique parcial do pai (habilita o ON CONFLICT da RPC; G2) ──
--- 0 duplicatas de (account, hash_payload) em prod (2026-06-17) → criável limpo.
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_sales_orders_omie_hash
-  ON public.sales_orders (account, hash_payload)
-  WHERE hash_payload LIKE 'omie_%';
-
--- ── 2. RPC transacional pai+filho (fronteira única; substitui 2 inserts PostgREST) ──
+-- ── RPC transacional pai+filho (fronteira única; substitui 2 inserts PostgREST) ──
 CREATE OR REPLACE FUNCTION public.criar_pedidos_com_itens(p_pedidos jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -83,7 +82,7 @@ BEGIN
         (v_pedido->>'order_date_kpi')::date,
         v_pedido->>'notes', v_pedido->>'customer_address', v_pedido->>'customer_phone'
       WHERE v_item_count > 0
-      ON CONFLICT (account, hash_payload) WHERE hash_payload LIKE 'omie_%'
+      ON CONFLICT (account, hash_payload) WHERE hash_payload LIKE 'omie\_%'
       DO NOTHING
       RETURNING id, created_at INTO v_order_id, v_created_at;
 
