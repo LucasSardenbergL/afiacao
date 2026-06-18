@@ -199,6 +199,9 @@ function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente
 
 // ===== Orquestração =====
 const COMPANY = "oben";
+// Ponte de contas de estoque da Oben (paridade com get_preco_cockpit): inventory_position guarda o mesmo
+// SKU em 'vendas' (conta Omie crua) e 'oben' (empresa); elegemos entre as duas a linha mais fresca com cmc>0.
+const ESTOQUE_ACCOUNTS = ["vendas", "oben"];
 const CONFIG_DEFAULT: CockpitConfig = { margem_minima_pct: 0.15, desconto_max_pct: 0.10, prazo_alvo_dias: 30, dias_estoque_max: 120, sample_min_receita: 5000 };
 
 serve(async (req: Request) => {
@@ -279,8 +282,30 @@ serve(async (req: Request) => {
     const userToOmie = new Map(clientesAll.map((c) => [c.user_id, String(c.omie_codigo_cliente)]));
     const custosAll = await fetchAll<{ product_id: string; cost_price: number }>((f, t) => db.from("product_costs").select("product_id, cost_price").order("id", { ascending: true }).range(f, t), "product_costs");
     const custoPorProduto = new Map(custosAll.map((c) => [c.product_id, c.cost_price]));
-    const estoqueAll = await fetchAll<{ omie_codigo_produto: number; saldo: number; cmc: number }>((f, t) => db.from("inventory_position").select("omie_codigo_produto, saldo, cmc").order("id", { ascending: true }).range(f, t), "inventory_position");
-    const estoquePorSKU = new Map(estoqueAll.filter((e) => obenSkus.has(String(e.omie_codigo_produto))).map((e) => [String(e.omie_codigo_produto), { saldo: e.saldo, cmc: e.cmc }]));
+    // Estoque com PONTE DE CONTAS (paridade com get_preco_cockpit / cockpit_preco_fixes): inventory_position
+    // guarda o MESMO SKU em 'vendas' (conta Omie crua, omie-analytics-sync) e 'oben' (empresa, sync-reprocess)
+    // — mesma fonte Omie, divergindo pelo timing do sync. Busca AS DUAS e elege por SKU a linha com cmc>0 mais
+    // FRESCA por SYNCED_AT (frescor da FONTE — NÃO updated_at, que trigger/reprocess tocam; NULLS LAST), igual
+    // o cockpit de preço. Resolve a colisão do Map (antes pegava linha arbitrária) e cobre SKU só-em-'vendas'.
+    // saldo/cmc são NULLABLE: cmc ausente/≤0/NaN OU saldo ausente/<0 → estoque_valor null (não R$0/negativo —
+    // money-path: ausente≠zero; saldo<0 inflaria o EVP). ⚠️ débito pré-existente (Codex): montarCelulasComboEVP
+    // trata estoque null como i_cs=0 (encargo subestimado → EVP superestimado p/ SKU sem estoque) — fora do escopo.
+    type EstoqueRow = { omie_codigo_produto: number; saldo: number | null; cmc: number | null; synced_at: string | null };
+    const estoqueAll = await fetchAll<EstoqueRow>((f, t) => db.from("inventory_position").select("omie_codigo_produto, saldo, cmc, synced_at").in("account", ESTOQUE_ACCOUNTS).order("id", { ascending: true }).range(f, t), "inventory_position");
+    const estoqueValorPorSKU = new Map<string, number | null>(); // estoque_valor da linha eleita (null = sem custo/saldo confiável)
+    const estoqueFrescPorSKU = new Map<string, number>();
+    for (const e of estoqueAll) {
+      const sku = String(e.omie_codigo_produto);
+      if (!obenSkus.has(sku)) continue;
+      if (!(typeof e.cmc === "number" && Number.isFinite(e.cmc) && e.cmc > 0)) continue; // espelha cmc>0 (e <> NaN) do get_preco_cockpit
+      const tsRaw = e.synced_at ? Date.parse(e.synced_at) : NaN;
+      const fresc = Number.isFinite(tsRaw) ? tsRaw : -Infinity; // synced_at ausente/inválido = menos preferido (NULLS LAST)
+      const prev = estoqueFrescPorSKU.get(sku);
+      if (prev !== undefined && fresc <= prev) continue; // mantém a mais fresca; empate → 1ª por ordem de id (estável)
+      estoqueFrescPorSKU.set(sku, fresc);
+      const saldo = typeof e.saldo === "number" && Number.isFinite(e.saldo) && e.saldo >= 0 ? e.saldo : null;
+      estoqueValorPorSKU.set(sku, saldo !== null ? saldo * e.cmc : null); // saldo inválido (null/<0/NaN) → null, não 0/negativo
+    }
 
     // Combos cliente×SKU — cliente não-mapeado vira 'app:<uuid>' (NÃO funde clientes distintos).
     const comboMap = new Map<string, { cliente: string; sku: string; receita: number; qtd: number; desconto: number; product_id: string | null }>();
@@ -338,10 +363,9 @@ serve(async (req: Request) => {
       cliente,
       ar_medio: arConfiavel && arPorClienteRaw.has(cliente) ? arPorClienteRaw.get(cliente)! : null,
     }));
-    const capitalSKUs: CapitalSKU[] = [...new Set(combos.map((c) => c.sku))].map((sku) => {
-      const e = estoquePorSKU.get(sku);
-      return { sku, estoque_valor: e ? e.saldo * e.cmc : null };
-    });
+    const capitalSKUs: CapitalSKU[] = [...new Set(combos.map((c) => c.sku))].map((sku) => ({
+      sku, estoque_valor: estoqueValorPorSKU.get(sku) ?? null, // 0 legítimo (saldo 0) preservado; ausente/inválido → null
+    }));
 
     const res = montarCelulasComboEVP({ combos, capitalClientes, capitalSKUs, k });
 
