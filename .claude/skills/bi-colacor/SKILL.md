@@ -14,7 +14,8 @@ description: >-
   banco, em modo leitura. NÃO use para: escrever ou alterar dados (esta skill é estritamente
   read-only); construir telas, dashboards ou gráficos dentro do app (isso é frontend/código);
   escrever ou otimizar código de query, hooks react-query, índices ou migrations/DDL/RLS (use
-  a skill `supabase`); nem análise de produto/uso via PostHog.
+  a skill `supabase`); para fechamento mensal, NCG/capital de giro, projeção de caixa 13 semanas, DRE
+  por regime tributário ou "perguntas pro contador" use a skill `cfo-colacor`; nem análise de produto/uso via PostHog.
 ---
 
 # BI Colacor — BI executivo operacional via Lovable SQL

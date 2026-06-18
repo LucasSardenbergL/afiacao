@@ -41,7 +41,7 @@ Diário de PR/entregas: `docs/historico/` (`bugs-resolvidos.md`, `programas-vend
 - **Money-path: ausente ≠ zero** (`Number(null)===0` é fabricação) → degradar para `null`/baixa-confiança, **nunca** fabricar número. Sinal money-path **nunca** em coluna jsonb multi-writer (upsert destrutivo) → coluna dedicada + 1 writer. → `money-path.md`
 - **Omie:** não confiar em `total_de_paginas` (paginar até página vazia + guard); enumeração pesada (~10k+) → bulk + `waitUntil` + retry, nunca N+1; após corrigir a FONTE, re-invocar o recompute (snapshots derivados não se regeneram). → `reposicao.md`/`sync.md`
 - **Lente "Ver como":** `useAuth()` é SEMPRE real (escrita/identidade/RLS); só LEITURA usa `display*`/`effectiveUserId`. WebRTC fura o write-guard → gatear na fonte. → `impersonation.md`
-- **Multi-sessão:** antes de tocar arquivo/função QUENTE, conferir `origin/main` + `gh pr list` + migrations paralelas (timestamp colidido é o aviso). → `worktrees.md`
+- **Multi-sessão (worktrees paralelas):** coordene antes de tocar arquivo/função QUENTE — o "como" e o isolamento ficam na §Multi-sessão ao fim. → `worktrees.md`
 - **Teste SQL negativo** com `WHEN OTHERS THEN 'OK'` é teatro → capturar a SQLSTATE esperada + re-lançar o resto + **falsificar** (sabotar a migration e exigir vermelho); RLS prova-se sob `SET ROLE authenticated` + GUC (psql é superuser, bypassaria). → `money-path.md`
 - **Shell:** `cmd | tail` **ENGOLE o exit code** → `> log 2>&1; echo $?` quando o exit importa. Comandos pesados (test/build/typecheck/vitest) → prefixar **`heavy`** (semáforo de RAM da M2 8GB). → `worktrees.md`
 
@@ -91,10 +91,10 @@ Tokens em `src/index.css` (paleta quase-neutra low-fatigue; `--status-*` dessatu
 
 Pages PascalCase; hooks `useX` camelCase; rotas **e** código em **pt-BR** (`/recebimento`, `agruparPorMes`); imports absolutos `@/`; tabelas Supabase `snake_case` PT. **LLM em edge:** código novo → Anthropic direto (`ANTHROPIC_API_KEY` + `claude-sonnet-4-6` + prompt caching + forced tool-use + gate `authorizeCronOrStaff`); legado usa o gateway Lovable/Gemini. Roteamento de skills (qual usar por tarefa): `docs/agent/skills.md`.
 
-## gstack (REQUIRED — global install)
+## gstack (REQUIRED)
 
-Antes de QUALQUER trabalho: `test -d ~/.claude/skills/gstack/bin && echo GSTACK_OK || echo GSTACK_MISSING`. Se faltar, **STOP** e instrua o founder a instalar (`git clone --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack && cd ~/.claude/skills/gstack && ./setup --team` → reiniciar). Use `/browse` para todo web browsing. Não contornar gstack ausente.
+Obrigatório para o trabalho assistido. O hook [`check-gstack.sh`](.claude/hooks/check-gstack.sh) **bloqueia o uso de skills** se faltar — com as instruções de instalação no próprio bloqueio. Não contornar. Web browsing → sempre `/browse`.
 
 ## Multi-sessão (regra — detalhe em `docs/agent/worktrees.md`)
 
-**Uma sessão Claude por working tree.** NUNCA 2 sessões no diretório principal (`/Users/lucassardenberg/Projetos/afiacao`) — o branch-flip vaza entre elas (risco de perda). Worktrees isolam (`bun run wt <branch>`). Higiene de RAM/Node na M2 8GB: `wt:status`/`wt:clean`/`wt:reap`/`wt:prune` (numa sessão Claude EU rodo `bun install` ao detectar `node_modules` limpo). MCPs enxutas via `.claude/settings.json` (Serena off por padrão — religar pontual).
+**Uma sessão Claude por working tree.** NUNCA 2 sessões no diretório principal (`/Users/lucassardenberg/Projetos/afiacao`) — o branch-flip vaza entre elas (risco de perda). Worktrees isolam (`bun run wt <branch>`). **Antes de tocar arquivo/função QUENTE:** conferir `origin/main` + `gh pr list` + migrations paralelas (timestamp colidido é o aviso). Higiene de RAM/Node na M2 8GB: `wt:status`/`wt:clean`/`wt:reap`/`wt:prune` (numa sessão Claude EU rodo `bun install` ao detectar `node_modules` limpo). MCPs enxutas via `.claude/settings.json` (Serena off por padrão — religar pontual).

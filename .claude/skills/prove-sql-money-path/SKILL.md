@@ -27,7 +27,7 @@ description: >-
 
 Duas verdades deste repo se combinam num risco silencioso:
 
-1. **plpgsql é *late-bound*.** Uma função/RPC/trigger com SQL inválido (coluna ambígua, JOIN que referencia a tabela-alvo, `SUM` que colide com coluna OUT do `RETURNS TABLE`) **passa no `CREATE OR REPLACE`** — o Postgres só resolve os nomes ao **EXECUTAR**. Se essa função roda atrás de um cron ou de um `try/catch` best-effort, ela falha **silenciosamente por tempo indefinido**. Já aconteceu aqui ≥3 vezes (`aplicar_promocoes_no_ciclo` quebrada em prod por um JOIN inválido; `gerar_pedidos_oportunidade_ciclo` por `SUM` ambíguo; ambas atrás de chamador silencioso — o §10 do CLAUDE.md tem o histórico).
+1. **plpgsql é *late-bound*** (regra-base no CLAUDE.md; aqui mora o *porquê* de provar EXECUTANDO). SQL inválido — coluna ambígua, JOIN que referencia a tabela-alvo, `SUM` que colide com coluna OUT do `RETURNS TABLE` — **passa no `CREATE OR REPLACE`** e só falha ao **EXECUTAR**; atrás de cron/`try-catch` best-effort, **silenciosamente por tempo indefinido**. Já aconteceu ≥3× aqui (`aplicar_promocoes_no_ciclo` por JOIN inválido; `gerar_pedidos_oportunidade_ciclo` por `SUM` ambíguo — histórico no §10 do CLAUDE.md).
 
 2. **O founder não tem terminal pro backend.** Ele aplica SQL colando no SQL Editor do Lovable. Não há staging. O **único** teste possível **antes** de o SQL tocar produção é o que **eu** rodo num PostgreSQL 17 local descartável.
 

@@ -87,14 +87,7 @@ Trabalhe em **lotes**: entregue as queries de uma etapa, espere os resultados, i
 e só então passe pra próxima. Não despeje 8 queries de uma vez — o usuário roda uma de cada
 vez no Lovable.
 
-**Primeira query sempre é a de sanidade** (`assets/sql/00-sanity-status.sql`): valida os
-valores reais de `status_titulo` e a data do último sync. **Duas armadilhas validadas em
-produção** (1º fechamento, 2026-06-16): (1) **o `saldo` NÃO zera quando o título é baixado** —
-só o `status_titulo` muda; então filtre "aberto" por `status_titulo`, **NUNCA por `saldo > 0`**
-(senão conta quitado como aberto e infla tudo — o CR da Colacor pulou de R$129k pra R$17,7M). (2) Os
-status reais vêm **com espaço**: receber = `'A VENCER'`/`'ATRASADO'`/`'VENCE HOJE'`/`'RECEBIDO'`/`'CANCELADO'`;
-pagar = `'A VENCER'`/`'ATRASADO'`/`'PAGO'`/`'CANCELADO'`. Confirme antes de confiar em qualquer
-filtro. Detalhes e as 8 armadilhas em `references/schema-financeiro.md`.
+**Primeira query sempre é a de sanidade** (`assets/sql/00-sanity-status.sql`): valida os valores reais de `status_titulo` e a data do último sync. **Armadilha-mãe (money-path):** o `saldo` **NÃO zera na baixa** — só o `status_titulo` muda; filtre "aberto" por `status_titulo`, **NUNCA por `saldo > 0`** (senão conta quitado como aberto e infla tudo). Os status vêm **com espaço**. Os valores exatos de status, as 8 armadilhas e o caso real (CR da Colacor: R$129k que aparecia como R$17,7M) em `references/schema-financeiro.md` — **leia antes do fechamento**.
 
 ## O ritual
 
