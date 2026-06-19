@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import type { Tables, TablesInsert } from '@/integrations/supabase/types';
+import type { Tables } from '@/integrations/supabase/types';
 
 type AlgorithmConfigRow = Pick<Tables<'farmer_algorithm_config'>, 'key' | 'value'>;
 type ProductCostRow = Pick<Tables<'product_costs'>, 'product_id' | 'cost_price'>;
@@ -96,7 +96,7 @@ function percentile(arr: number[], p: number): number {
 // ─── Main Hook ───────────────────────────────────────────────────────
 export const useFarmerScoring = (farmerId?: string) => {
   // Lente "Ver como": id efetivo = ALVO na lente (lê/exibe a agenda dele), próprio usuário fora.
-  const { isImpersonating, effectiveUserId } = useImpersonation();
+  const { effectiveUserId } = useImpersonation();
   const targetFarmerId = farmerId || effectiveUserId;
 
   const [config, setConfig] = useState<AlgorithmConfig>(DEFAULT_CONFIG);
@@ -437,35 +437,13 @@ export const useFarmerScoring = (farmerId?: string) => {
 
       setAgenda(agendaItems);
 
-      // 9. Persist scores to DB — pulado na lente "Ver como" (somente leitura: o master
-      // inspeciona a agenda do alvo sem recalcular/persistir a carteira dele).
-      if (!isImpersonating) for (const s of scores) {
-        const scoreUpsert: TablesInsert<'farmer_client_scores'> = {
-          customer_user_id: s.customer_user_id,
-          farmer_id: targetFarmerId,
-          rf_score: s.rf, m_score: s.m, g_score: s.g, x_score: s.x, s_score: s.s,
-          health_score: s.healthScore,
-          health_class: s.healthClass,
-          churn_risk: s.churnRisk,
-          recover_score: s.recoverScore,
-          expansion_score: s.expansionScore,
-          eff_score: s.effScore,
-          priority_score: s.priorityScore,
-          days_since_last_purchase: s.daysSinceLastPurchase,
-          avg_repurchase_interval: s.avgRepurchaseInterval,
-          avg_monthly_spend_180d: s.avgMonthlySpend180d,
-          gross_margin_pct: s.grossMarginPct,
-          category_count: s.categoryCount,
-          answer_rate_60d: s.answerRate60d,
-          whatsapp_reply_rate_60d: s.whatsappReplyRate60d,
-          revenue_potential: s.revenuePotential,
-          calculated_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        await supabase
-          .from('farmer_client_scores')
-          .upsert(scoreUpsert, { onConflict: 'customer_user_id,farmer_id' });
-      }
+      // 9. Persistência: NENHUMA escrita client-side — este hook é DISPLAY-ONLY by design.
+      // Writer autoritativo de farmer_client_scores = edge `calculate-scores` (cron diário
+      // `daily-calculate-scores`, service_role): resolve farmer_id = dono via carteira_assignments
+      // (Opção A, migration 20260524170000) e NÃO reconcilia farmer_id no UPDATE (migration 20260524180000).
+      // ⚠️ NÃO reintroduzir upsert aqui: o universo é company-wide (sales_orders, sem filtro de dono) e
+      // gravaria farmer_id = targetFarmerId; sob RLS um gestor/master (pode_ver_carteira_completa) flipa a
+      // posse de TODA a base e o cron não desfaz. Detalhe: docs/historico/bugs-resolvidos.md.
 
     } catch (error) {
       console.error('Error calculating scores:', error);
@@ -473,7 +451,7 @@ export const useFarmerScoring = (farmerId?: string) => {
       setCalculating(false);
       setLoading(false);
     }
-  }, [targetFarmerId, config, isImpersonating]);
+  }, [targetFarmerId, config]);
 
   useEffect(() => {
     if (targetFarmerId) calculateScores();

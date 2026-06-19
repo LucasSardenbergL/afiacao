@@ -45,7 +45,7 @@ As **três** coisas são deploy manual e **independente**, e NENHUMA acontece so
 
 ## A Lei de Ferro (guardrail inegociável)
 
-1. **Você nunca diz "está no ar" sem prova.** Mergear na main **não publica nada**. Frontend só está no ar quando os **bytes do bundle** confirmam (hash novo do index + a string-alvo presente nos chunks). Edge só está no ar quando o Lovable reporta `Active` **e** o comportamento bate. Até lá: "mergeado na main; **falta Publish/deploy** pra ir ao ar".
+1. **Você nunca diz "está no ar" sem prova.** Mergear na main **não publica nada**. Frontend: os **bytes do bundle** confirmam (string-alvo nos chunks — Passo 4). Edge **não serve seu código**, logo não há prova por bytes — a prova é a **escada** existência (`verify-edge.sh`) → versão (Management API/painel) → comportamento (probe); `Active` sozinho prova existência, **não** que a versão nova subiu. Até lá: "mergeado na main; **falta Publish/deploy** pra ir ao ar".
 2. **As 3 camadas são independentes — sempre diga QUAIS se aplicam.** Um diff só-frontend não precisa de deploy de edge; um diff de edge precisa de deploy via chat *e* (se mexeu em UI) Publish. Liste só o que o diff realmente toca.
 3. **Edge deploy SÓ DEPOIS do merge, e VERBATIM.** Deployar "da main" antes do merge faz o Lovable ler a main **velha** (já mordeu em #383/#252 — a action nova não existia no binário → `400 "Ação desconhecida"`). E o Lovable tende a "melhorar" o código — o prompt deve mandar **não modificar/reinterpretar**, ler de `supabase/functions/<nome>/index.ts` e deployar idêntico.
 4. **Verificar frontend varre TODOS os chunks, e enumerá-los é a UNIÃO de duas fontes.** Nenhuma sozinha é completa (validado em prod 2026-06-18 + Codex): (a) o **fechamento transitivo** do grafo lazy do Vite — o entry lista só o 1º nível via `__vite__mapDeps(["assets/x.js"])` (sem barra, aspas), e um lazy-dentro-de-página guarda o mapDeps no chunk DELE (entry=260, closure=274); (b) o **precache do Workbox** (`/sw.js`), que omite chunks grandes (globIgnores/maxFileSize — faltavam 6). Use a UNIÃO. Grep de literais `/assets/...` dá 0 (o bug original). Contagem 0/1 = enumeração quebrada — conserte antes de concluir.
@@ -57,7 +57,7 @@ Crie estes todos (TodoWrite) ao fechar uma entrega que pode precisar de deploy:
 1. **Classificar o diff** — quais das 3 camadas o PR toca (frontend / edge / migration)?
 2. **Pendências do founder** — montar o checklist do que ele precisa fazer manualmente
 3. **Prompt de edge** (se houver edge) — montar o handoff "ler do repo, verbatim, não melhorar"
-4. **Verificar frontend** (após o founder dar Publish) — provar pelos bytes
+4. **Verificar o deploy** — frontend pelos bytes; edge pela escada existência→versão→comportamento
 5. **Confirmar honestamente** — só então dizer "no ar", com a evidência
 
 ---
@@ -112,13 +112,44 @@ NÃO conclua "não está no ar"; conserte o script primeiro. O `/browse` do gsta
 SPA (React não monta) — a verificação visual fica no Chrome real do founder; o maior sinal sem o
 founder é este, pelos bytes.
 
+**Edge — a escada (o código da edge NÃO é servido em produção, logo não há prova por bytes):**
+
+```bash
+.claude/skills/lovable-deploy-verify/scripts/verify-edge.sh <nome> [<nome2> ...]
+# N1 existência (sem auth): OPTIONS -> servida (200) vs AUSENTE (404); exit 1 se alguma 404.
+# N2 versão  (prova real):  SUPABASE_PAT=sbp_xxx ...  -> version/updated_at via Management API.
+```
+
+- **N1 existência** — automático e barato, mas só prova que a função está servida, **não** que é a versão nova.
+- **N2 versão** (canônico) — `version` sobe e `updated_at` fica recente a cada deploy. Precisa de PAT (handoff) ou o founder confere "Active + updated agora" no Lovable.
+- **N3 comportamento** — chamar com a assinatura da mudança (gated → founder logado / cron secret). A única prova de que o COMPORTAMENTO novo está no ar.
+
 ### Passo 5 — Confirmar honestamente
 
 - Frontend: "✅ no ar — `ALVO` presente em `<chunk>`, entry hash `<novo>`" **ou** "❌ ainda o build velho (hash inalterado / alvo ausente) — Publish pendente".
-- Edge: "✅ Active no Lovable + comportamento confere (`<probe>`)" **ou** "deploy pendente".
+- Edge: nunca "Active = no ar" (Active só prova existência). Diga o NÍVEL provado: "✅ N2 — version subiu + updated agora" / "✅ N3 — probe `<assinatura>` confere" **ou** "só N1 (existe); versão não confirmada — falta PAT/founder".
 - Nunca um "pronto!" genérico sem uma dessas evidências por camada tocada.
 
 ---
+
+## Smoke E2E autônomo (carimbo de SHA + monitor)
+
+O build **carimba o commit no bundle** (`vite.config` → `define __COMMIT_SHA__`; `main.tsx` →
+`window.__BUILD_SHA__`). Com isso o monitor responde "**o ar == `origin/main`?**" sem adivinhar um ALVO:
+
+```bash
+.claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh [url] [sentinela]
+# exit 0 = sincronizado · 3 = ATRASADO (Publish pendente) · 4 = deploy novo, versão indeterminada
+```
+
+- **Determinístico** quando o ar tem `__BUILD_SHA__="<sha>"` — compara com `origin/main`.
+- **Fallback**: se vier `"dev"` (Lovable sem `.git` no build) ou ausente (build pré-carimbo), passe uma
+  `sentinela` (string de UI única do HEAD) → o monitor cai pro `verify-frontend.sh`.
+- **Agendar** (cron de sistema, sem gastar Claude): `*/30 * * * * cd <repo> && bash .../monitor-deploy.sh
+  >> ~/.config/afiacao/deploy-monitor.log 2>&1` (exit 3/4 = avisar; combine com `osascript`/email).
+
+⚠️ O carimbo só vale a partir do **1º Publish que inclua o `vite.config` novo** — e depende de o build do
+Lovable ter `.git` (senão o SHA vira `"dev"` e o monitor usa a sentinela). Provado local; o ar confirma no 1º Publish.
 
 ## Referências
 - CLAUDE.md §"Deploy do FRONTEND (app) — Publish MANUAL no Lovable" (a técnica dos bytes; armadilha do chunk de nome inesperado)
@@ -130,5 +161,6 @@ founder é este, pelos bytes.
 - [x] Enumeração = **UNIÃO** (fechamento transitivo do Vite ∪ precache do Workbox) — nenhuma fonte sozinha é completa (closure 274 ⊃ precache 268; precache omite 6). Validado em prod + Codex; empacotado em `scripts/verify-frontend.sh`.
 - [x] `evals/` com classificação de diff (8 casos + runner + mutation-check; espelha `lovable-db-operator/evals`).
 - [x] Domínio canônico `steu.lovable.app` confirmado (HTTP 200).
-- [ ] **Smoke ponta-a-ponta:** num próximo Publish real, rodar `verify-frontend.sh` com um ALVO conhecido e ver exit 0 (fecha o último elo — não dá com build local).
+- [x] **Edge:** verificação por escada — N1 existência (`verify-edge.sh`, OPTIONS, automático) · N2 versão (Management API, handoff de PAT) · N3 comportamento (probe gated). Fecha a assimetria com o frontend.
+- [x] **Smoke E2E autônomo:** carimbo de SHA no build (`__BUILD_SHA__`) + `monitor-deploy.sh` (cron) compara o ar vs `origin/main`. Provado local; **falta o 1º Publish ativar o carimbo no ar** (e confirmar que o Lovable tem `.git` no build — senão cai pra sentinela).
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
