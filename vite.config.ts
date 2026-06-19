@@ -3,11 +3,34 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 import { VitePWA } from "vite-plugin-pwa";
+import { execSync } from "node:child_process";
 
 const isLovablePreview = process.env.LOVABLE_PREVIEW === "true";
 
+// Carimbo de commit no bundle (lido pela verificação de deploy / cron de smoke E2E).
+// Ordem: env explícita (CI) → git local (funciona se o build tiver `.git`; INCERTO no
+// Lovable, confirmado só no 1º Publish) → "dev". Nunca quebra o build (try/catch).
+function resolveCommitSha(): string {
+  const env =
+    process.env.VITE_COMMIT_SHA || process.env.COMMIT_SHA || process.env.GITHUB_SHA;
+  if (env) return env.slice(0, 8);
+  try {
+    return execSync("git rev-parse --short=8 HEAD", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "dev";
+  }
+}
+const commitSha = resolveCommitSha();
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  define: {
+    // Substituído LITERALMENTE nos bytes do bundle → grepável na verificação de deploy.
+    __COMMIT_SHA__: JSON.stringify(commitSha),
+  },
   server: {
     host: "::",
     port: 8080,

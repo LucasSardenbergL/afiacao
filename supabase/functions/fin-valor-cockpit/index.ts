@@ -85,6 +85,17 @@ const STATUS_TITULO_NAO_FATURAVEL = ['CANCELADO'];
 function tituloFaturavelAR(statusTitulo: string | null | undefined): boolean {
   return statusTitulo == null ? true : !STATUS_TITULO_NAO_FATURAVEL.includes(statusTitulo);
 }
+// Dois sinais de cobertura (proxy direcional). ar_por_app = cobertura_receita histórica; app_por_ar
+// = venda do app com AR faturável. Entrada não-finita, receita negativa OU AR ausente (≤0) → {1,1}
+// (indisponível não fabrica penalidade; AR=0 pode ser fonte vazia — Codex 2026-06-18). Espelho de src.
+function coberturaBidirecional(input: { receita: number; arFaturavel: number }): { ar_por_app: number; app_por_ar: number } {
+  const r = input.receita, a = input.arFaturavel;
+  if (!Number.isFinite(r) || !Number.isFinite(a) || r < 0 || a <= 0) return { ar_por_app: 1, app_por_ar: 1 };
+  return {
+    ar_por_app: Math.min(1, r / a),
+    app_por_ar: r > 0 ? Math.min(1, a / r) : 1,
+  };
+}
 type TituloAR = {
   valor_documento: number; saldo: number; valor_recebido: number;
   data_emissao: string | null; data_vencimento: string | null;
@@ -183,12 +194,13 @@ function recomendarAcaoComercial(input: { evp: number | null; receita_liquida: n
   // aviso de hurdle ausente vive na confiança + banner da UI (NÃO por cliente — vazaria pro A4).
   return r;
 }
-function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean; hurdle_indisponivel?: boolean }) {
+function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean; hurdle_indisponivel?: boolean; cobertura_app_por_ar?: number }) {
   const motivos: string[] = []; let nivel = 3;
   const rebaixar = (para: number, m: string) => { if (para < nivel) nivel = para; motivos.push(m); };
   if (input.hurdle_indisponivel) rebaixar(1, "Sem Ke/hurdle configurado — lucro econômico (EVP) indisponível; configure em /financeiro/valor.");
   if (input.cobertura_receita < 0.6) rebaixar(1, `Cobertura de receita ${(input.cobertura_receita * 100).toFixed(0)}% — muita venda fora do app; cockpit parcial.`);
   else if (input.cobertura_receita < 0.85) rebaixar(2, `Cobertura de receita ${(input.cobertura_receita * 100).toFixed(0)}% (ideal ≥85%).`);
+  if (input.cobertura_app_por_ar != null && input.cobertura_app_por_ar < 0.5) rebaixar(2, `${((1 - input.cobertura_app_por_ar) * 100).toFixed(0)}% da venda do app sem AR faturável — encargo de cliente subestimado; possível divergência app↔financeiro.`);
   if (input.custo_ausente_pct > 0.4) rebaixar(1, `${(input.custo_ausente_pct * 100).toFixed(0)}% das células sem custo — margem indisponível em boa parte.`);
   else if (input.custo_ausente_pct > 0.15) rebaixar(2, `${(input.custo_ausente_pct * 100).toFixed(0)}% sem custo cadastrado.`);
   if (input.ar_indisponivel_pct > 0.3) rebaixar(2, `${(input.ar_indisponivel_pct * 100).toFixed(0)}% das vendas sem AR vinculável — encargo de cliente subestimado.`);
@@ -230,10 +242,15 @@ serve(async (req: Request) => {
   const now = new Date();
   const ttm_fim = now.toISOString().slice(0, 10);
   const ttm_inicio = new Date(now.getTime() - 365 * 86400000).toISOString().slice(0, 10);
+  // Prefiltro de BUSCA do order_items (created_at = data de CARGA) com 90d de folga antes do ttm_inicio.
+  // A janela REAL do cockpit é por order_date_kpi (Bug C, mais abaixo); created_at só LIMITA o fetch.
+  // Provado (psql-ro 2026-06-18) que todo item com order_date_kpi na janela tem created_at >= order_date_kpi
+  // (0 falso-negativo hoje); a folga de 90d blinda contra pedido pós-datado futuro (created_at < data pedido).
+  const ttm_prefetch = new Date(now.getTime() - (365 + 90) * 86400000).toISOString().slice(0, 10);
   // Guard de formato p/ as datas que entram em .or()/.gte() (defesa anti-injeção: só ISO
   // YYYY-MM-DD; aqui vêm de toISOString, mas o guard documenta e blinda contra regressão).
   const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-  if (!ISO_DATE.test(ttm_inicio) || !ISO_DATE.test(ttm_fim)) {
+  if (!ISO_DATE.test(ttm_inicio) || !ISO_DATE.test(ttm_fim) || !ISO_DATE.test(ttm_prefetch)) {
     return jsonResponse({ error: "janela TTM inválida" }, 500);
   }
 
@@ -263,25 +280,63 @@ serve(async (req: Request) => {
     const prods = await fetchAll<Prod>((f, t) => db.from("omie_products").select("id, omie_codigo_produto, account").eq("account", COMPANY).order("id", { ascending: true }).range(f, t), "omie_products");
     const obenProductIds = new Set(prods.map((p) => p.id));
     const obenSkus = new Set(prods.map((p) => String(p.omie_codigo_produto)));
+    // Bug D: SKU→product_id da Oben p/ recuperar linhas com product_id NULL (gap de FK histórico — 2026-03,
+    // app-orders; SKU é oben-exclusivo e ÚNICO: 3660/3660, provado psql-ro). Atribui o produto Oben certo E
+    // resolve o custo da recuperada (mesmo product_id da linkada → combo cliente×SKU nunca mistura custo).
+    const obenSkuToProductId = new Map(prods.map((p) => [String(p.omie_codigo_produto), p.id]));
 
-    // Linhas de venda no TTM (order_items tem created_at próprio → sem .in gigante de pedidos).
+    // Linhas candidatas: busca por created_at (prefiltro com folga, ttm_prefetch); a janela REAL é por
+    // order_date_kpi do pedido pai (Bug C), aplicada via pedidosNaJanela abaixo.
     type Item = { customer_user_id: string; product_id: string | null; omie_codigo_produto: number | null; quantity: number; unit_price: number; discount: number | null; sales_order_id: string };
-    const itemsAll = await fetchAll<Item>((f, t) => db.from("order_items").select("customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, created_at, sales_order_id").gte("created_at", ttm_inicio).order("id", { ascending: true }).range(f, t), "order_items");
-    // Faturabilidade: exclui pedido cancelado/rascunho/soft-deletado (alinhado a v_caca). Carrega TODOS
-    // os pedidos (id,status,deleted_at) — ~7k linhas, barato — e materializa o Set de ids faturáveis pela
-    // régua espelhada. SEM filtro de account: a exclusão vale p/ qualquer conta (produto Oben em pedido
-    // cancelado de outra conta também não é faturamento); o recorte Oben já vem por product_id.
-    type SalesOrderRow = { id: string; status: string | null; deleted_at: string | null };
-    const salesOrdersAll = await fetchAll<SalesOrderRow>((f, t) => db.from("sales_orders").select("id, status, deleted_at").order("id", { ascending: true }).range(f, t), "sales_orders");
-    const pedidosFaturaveis = new Set(salesOrdersAll.filter((so) => pedidoContaNoFaturamento(so.status, so.deleted_at)).map((so) => so.id));
-    const linhas = itemsAll.filter((l) => l.product_id != null && obenProductIds.has(l.product_id) && pedidosFaturaveis.has(l.sales_order_id)); // produtos Oben de pedidos faturáveis (exclui cancelado/rascunho/deletado)
+    const itemsAll = await fetchAll<Item>((f, t) => db.from("order_items").select("customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, created_at, sales_order_id").gte("created_at", ttm_prefetch).order("id", { ascending: true }).range(f, t), "order_items");
+    // Faturabilidade + JANELA: carrega TODOS os pedidos (id,status,deleted_at,order_date_kpi) — ~7k linhas,
+    // barato. pedidosNaJanela = faturável (exclui cancelado/rascunho/soft-deletado, régua v_caca) E
+    // order_date_kpi ∈ [ttm_inicio, ttm_fim] (Bug C: janela pela DATA DO PEDIDO, não pela carga). SEM filtro
+    // de account na faturabilidade (vale p/ qualquer conta); o recorte Oben vem por product_id/SKU abaixo.
+    type SalesOrderRow = { id: string; status: string | null; deleted_at: string | null; order_date_kpi: string | null; account: string | null };
+    const salesOrdersAll = await fetchAll<SalesOrderRow>((f, t) => db.from("sales_orders").select("id, status, deleted_at, order_date_kpi, account").order("id", { ascending: true }).range(f, t), "sales_orders");
+    // order_date_kpi é DATE → comparação de string 'YYYY-MM-DD' é cronológica (mesmo padrão de
+    // carteira-positivacao-snapshot). Reúsa a régua UTC que o cockpit já aplica ao AR (ttm_inicio/ttm_fim).
+    const pedidosNaJanela = new Set(
+      salesOrdersAll
+        .filter((so) => pedidoContaNoFaturamento(so.status, so.deleted_at)
+          && so.order_date_kpi != null && so.order_date_kpi >= ttm_inicio && so.order_date_kpi <= ttm_fim)
+        .map((so) => so.id),
+    );
+    // Guard de conta p/ a recuperação por SKU (Bug D): só recupera linha cujo pedido-pai é account='oben'
+    // — o SKU resolve a produto Oben E o pedido é da Oben. Blinda contra colisão futura de SKU entre contas
+    // (Codex P2; hoje 120/120 recuperadas são oben, provado psql-ro). Linha LINKADA não usa isto (product_id já é Oben).
+    const pedidosOben = new Set(salesOrdersAll.filter((so) => so.account === COMPANY).map((so) => so.id));
+    // Oben por product_id OU (FK ausente → SKU resolve a produto Oben, Bug D). Normaliza ao product_id efetivo
+    // (recuperada ganha o id Oben → custo resolve). Pedido fora da janela/não-faturável é descartado aqui.
+    const linhas = itemsAll.flatMap((l) => {
+      const pid = l.product_id != null
+        ? (obenProductIds.has(l.product_id) ? l.product_id : null)
+        : (l.omie_codigo_produto != null && pedidosOben.has(l.sales_order_id) ? (obenSkuToProductId.get(String(l.omie_codigo_produto)) ?? null) : null);
+      return pid != null && pedidosNaJanela.has(l.sales_order_id) ? [{ ...l, product_id: pid }] : [];
+    });
     if (linhas.length === 0) return jsonResponse({ company: COMPANY, vazio: true, motivo: "Sem linhas de venda da Oben no TTM." }, 200);
 
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
     const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_clientes").select("user_id, omie_codigo_cliente").order("id", { ascending: true }).range(f, t), "omie_clientes");
     const userToOmie = new Map(clientesAll.map((c) => [c.user_id, String(c.omie_codigo_cliente)]));
-    const custosAll = await fetchAll<{ product_id: string; cost_price: number }>((f, t) => db.from("product_costs").select("product_id, cost_price").order("id", { ascending: true }).range(f, t), "product_costs");
-    const custoPorProduto = new Map(custosAll.map((c) => [c.product_id, c.cost_price]));
+    // Custo canônico = cost_final (saída do motor de custo, MESMA fonte que o recommend usa p/ margem). Fallback
+    // p/ cost_price (legado) quando cost_final é ausente OU inválido (<=0/NaN) — preserva cobertura (14 SKUs Oben
+    // têm cost_final inválido mas cost_price real >0, psql-ro 2026-06-18). ausente≠zero: nunca usa 0 como custo
+    // real; <=0/null nos DOIS → SKU sem custo (cm null no combo). Codex P2: o fallback em cost_final INVÁLIDO (não
+    // só ausente) é INTENCIONAL (cost_price é custo real legado, dropar esconderia margem real) mas OBSERVÁVEL via
+    // warn — não-silencioso. cost_source/cost_confidence (degradar confiança por custo-proxy) ficam p/ v2 (helper
+    // espelhado + UI).
+    const custosAll = await fetchAll<{ product_id: string; cost_final: number | null; cost_price: number | null }>((f, t) => db.from("product_costs").select("product_id, cost_final, cost_price").order("id", { ascending: true }).range(f, t), "product_costs");
+    const custoValido = (x: number | null): number | null => (typeof x === "number" && Number.isFinite(x) && x > 0 ? x : null);
+    const custoPorProduto = new Map<string, number>();
+    let custoLegadoFallback = 0;
+    for (const c of custosAll) {
+      const canonico = custoValido(c.cost_final);
+      const custo = canonico ?? custoValido(c.cost_price);
+      if (custo != null) { custoPorProduto.set(c.product_id, custo); if (canonico == null) custoLegadoFallback++; }
+    }
+    if (custoLegadoFallback > 0) console.warn(`[ValorCockpit][${COMPANY}] ${custoLegadoFallback} SKUs com cost_final ausente/inválido → fallback p/ cost_price legado`);
     // Estoque com PONTE DE CONTAS (paridade com get_preco_cockpit / cockpit_preco_fixes): inventory_position
     // guarda o MESMO SKU em 'vendas' (conta Omie crua, omie-analytics-sync) e 'oben' (empresa, sync-reprocess)
     // — mesma fonte Omie, divergindo pelo timing do sync. Busca AS DUAS e elege por SKU a linha com cmc>0 mais
@@ -391,13 +446,14 @@ serve(async (req: Request) => {
     // a métrica só detecta "AR sem venda no app", não o inverso. Daí os thresholds largos. Exclui
     // CANCELADO (tituloFaturavelAR) p/ simetria com o numerador (pedidoContaNoFaturamento).
     const arTotal = crsAll.filter((cr) => cr.data_emissao != null && cr.data_emissao >= ttm_inicio && tituloFaturavelAR(cr.status_titulo)).reduce((s, cr) => s + (cr.valor_documento || 0), 0);
-    const cobertura_receita = arTotal > 0 ? Math.min(1, res.empresa.receita / arTotal) : 1;
-    const confianca = scoreConfiancaCockpit({ cobertura_receita, custo_ausente_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel });
+    const { ar_por_app, app_por_ar } = coberturaBidirecional({ receita: res.empresa.receita, arFaturavel: arTotal });
+    const cobertura_receita = ar_por_app; // retrocompat: mesmo valor de antes
+    const confianca = scoreConfiancaCockpit({ cobertura_receita, cobertura_app_por_ar: app_por_ar, custo_ausente_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel });
 
     return jsonResponse({
       company: COMPANY, k, hurdle_indisponivel, ttm: { inicio: ttm_inicio, fim: ttm_fim },
       porCliente: res.porCliente, porSKU: res.porSKU, empresa: res.empresa,
-      recomendacoesCliente, confianca, cobertura_receita,
+      recomendacoesCliente, confianca, cobertura_receita, cobertura_app_por_ar: app_por_ar,
       cobertura_baixa_ar: coberturaBaixaAR, // Fase 3: fração da AR liquidada com baixa derivada REAL (vs vencimento-proxy)
       config,
     }, 200);
