@@ -427,13 +427,15 @@ export default function GovernanceAudit() {
                         {marginLog?.map(row => (
                           <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50">
                             <td className="py-2">{resolveName(row.customer_user_id)}</td>
-                            <td className="text-center py-2">R$ {Number(row.margin_real).toLocaleString('pt-BR')}</td>
-                            <td className="text-center py-2">R$ {Number(row.margin_potential).toLocaleString('pt-BR')}</td>
+                            <td className="text-center py-2">{row.margin_real == null ? '—' : `R$ ${Number(row.margin_real).toLocaleString('pt-BR')}`}</td>
+                            <td className="text-center py-2">{row.margin_potential == null ? '—' : `R$ ${Number(row.margin_potential).toLocaleString('pt-BR')}`}</td>
                             <td className="text-center py-2 text-destructive font-medium">R$ {Number(row.margin_gap).toLocaleString('pt-BR')}</td>
                             <td className="text-center py-2">
-                              <Badge variant={Number(row.gap_pct) > 20 ? 'destructive' : 'secondary'} className="text-2xs">
-                                {Number(row.gap_pct).toFixed(1)}%
-                              </Badge>
+                              {row.gap_pct == null ? <span className="text-muted-foreground">—</span> : (
+                                <Badge variant={Number(row.gap_pct) > 20 ? 'destructive' : 'secondary'} className="text-2xs">
+                                  {Number(row.gap_pct).toFixed(1)}%
+                                </Badge>
+                              )}
                             </td>
                             <td className="text-right py-2 text-muted-foreground">{formatDateShort(row.calculated_at)}</td>
                           </tr>

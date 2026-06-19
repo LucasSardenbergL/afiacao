@@ -181,10 +181,10 @@ export function IntelligenceStrategicTab() {
                   {marginAudit.slice(0, 20).map(row => (
                     <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50">
                       <td className="py-2 font-mono">{clientNameMap[row.customer_user_id] ?? `${row.customer_user_id.slice(0, 8)}...`}</td>
-                      <td className="text-center py-2">R$ {Number(row.margin_real).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</td>
-                      <td className="text-center py-2">R$ {Number(row.margin_potential).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</td>
+                      <td className="text-center py-2">{row.margin_real == null ? '—' : `R$ ${Number(row.margin_real).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`}</td>
+                      <td className="text-center py-2">{row.margin_potential == null ? '—' : `R$ ${Number(row.margin_potential).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`}</td>
                       <td className="text-center py-2 text-destructive">R$ {Number(row.margin_gap).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</td>
-                      <td className="text-center py-2">{Number(row.gap_pct).toFixed(1)}%</td>
+                      <td className="text-center py-2">{row.gap_pct == null ? '—' : `${Number(row.gap_pct).toFixed(1)}%`}</td>
                       <td className="text-right py-2 text-muted-foreground">{new Date(row.calculated_at).toLocaleDateString('pt-BR')}</td>
                     </tr>
                   ))}
