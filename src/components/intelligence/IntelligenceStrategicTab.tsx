@@ -62,10 +62,12 @@ export function IntelligenceStrategicTab() {
     return acc;
   }, {} as Record<string, string>);
 
+  // margin_real/potential agora são null sob baixa cobertura de custo → somas são PARCIAIS (covered-only).
   const totalMarginReal = marginAudit?.reduce((a, r) => a + Number(r.margin_real || 0), 0) || 0;
   const totalMarginPotential = marginAudit?.reduce((a, r) => a + Number(r.margin_potential || 0), 0) || 0;
-  const totalGap = totalMarginPotential - totalMarginReal;
-  const gapPct = totalMarginPotential > 0 ? ((totalGap / totalMarginPotential) * 100) : 0;
+  // Gap headline = Σ margin_gap (cost-free, presente em TODA linha). NÃO derivar de potential−real:
+  // linhas de baixa cobertura têm margens null→0 mas margin_gap real, e o gap sumiria (Codex challenge).
+  const totalGap = marginAudit?.reduce((a, r) => a + Number(r.margin_gap || 0), 0) || 0;
 
   const avgSpend = allScores?.length
     ? allScores.reduce((a, c) => a + Number(c.avg_monthly_spend_180d || 0), 0) / allScores.length
@@ -137,7 +139,7 @@ export function IntelligenceStrategicTab() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KpiCard title="Margem Real" value={`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} />
           <KpiCard title="Margem Potencial" value={`R$ ${totalMarginPotential.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={TrendingUp} />
-          <KpiCard title="Gap de Margem" value={`R$ ${totalGap.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={TrendingDown} trend="down" trendValue={`${gapPct.toFixed(1)}%`} />
+          <KpiCard title="Gap de Margem" value={`R$ ${totalGap.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={TrendingDown} subtitle="vazamento de preço (todas as linhas)" />
           <KpiCard title="Registros" value={String(marginAudit?.length || 0)} icon={Eye} />
         </div>
       </div>
