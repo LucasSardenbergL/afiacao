@@ -337,7 +337,7 @@ function jsonError(msg: string, status: number) {
 // --- Request types ---
 interface RecalcRequest {
   customer_user_id?: string;
-  farmer_id?: string;
+  farmer_id?: string;   // aceito mas IGNORADO (B2c): o batch ainda envia no body; recalcOne não usa mais
   drain_queue?: boolean;
   max_drain?: number;
 }
@@ -346,7 +346,6 @@ interface RecalcRequest {
 async function recalcOne(
   supabase: ReturnType<typeof createClient>,
   customer_user_id: string,
-  farmer_id: string,
 ): Promise<{ ok: boolean; error?: string; adjustment?: ScoreAdjustment; skipped?: boolean }> {
   const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
   // Safety cap: 200 calls in 30 days = ~7/day average. Beyond that, decay already
@@ -358,11 +357,13 @@ async function recalcOne(
   const [flagRes, callsRes] = await Promise.all([
     supabase.from('cliente_classificacao').select('user_id')
       .eq('user_id', customer_user_id).eq('excluir_da_carteira', true).maybeSingle(),
+    // P1 (Opção A): os sinais são do CLIENTE — contam independentemente de QUEM ligou.
+    // Filtrar por farmer_id descartava SILENCIOSAMENTE calls de não-donos (cobertura/gestor),
+    // subcontando o score do cliente. Escopo é o cliente (farmer_calls não tem company_id).
     supabase
       .from('farmer_calls')
       .select('id, started_at, entities_extracted, analyses, sinais_ligacao')
       .eq('customer_user_id', customer_user_id)
-      .eq('farmer_id', farmer_id)
       .gte('started_at', cutoff)
       .order('started_at', { ascending: false })
       .limit(200),
@@ -425,7 +426,12 @@ async function recalcOne(
   // idempotente. As colunas-base continuam de propriedade do calculate-scores.
   // A prioridade efetiva (base + nudge dos sinais) é computada em read-time
   // (src/lib/scoring/agenda.ts → signalPriorityNudge / effectivePriority).
-  // Opção A (carteira-Omie): 1 linha por cliente, farmer_id = dono.
+  // Opção A (carteira-Omie): 1 linha por cliente. B2c: recalcOne NÃO grava mais farmer_id.
+  // A posse é do trigger trg_carteira_reconcile_score_owner (reatribuição), do seed do
+  // calculate-scores e do reconcile one-time. Antes, gravar o farmer_id do payload da fila
+  // podia RE-STALAR um cliente reatribuído (a fila carrega o dono resolvido no ENQUEUE,
+  // anterior à troca; drenada depois, re-escrevia o dono antigo). recalcOne localiza a linha
+  // por customer_user_id e só atualiza os signal_modifiers (sua propriedade).
   // F1 (reset-path robusto): UPDATE-only, NÃO upsert. Antes o upsert criava uma linha
   // ESPARSA (só signal_modifiers; campos-base no DEFAULT → days_since_last_purchase=0 →
   // recência=100 fabricada) quando o cliente ainda não fora semeado — e bastava 1 dessas
@@ -436,7 +442,6 @@ async function recalcOne(
   const { data: updated, error: uErr } = await supabase
     .from('farmer_client_scores')
     .update({
-      farmer_id,
       signal_modifiers: adjustment,
       last_signal_recalc_at: now.toISOString(),
       updated_at: now.toISOString(),
@@ -469,7 +474,7 @@ Deno.serve(async (req) => {
     const max = body.max_drain ?? 50;
     const { data: pending, error: pErr } = await supabase
       .from('score_recalc_pending')
-      .select('id, customer_user_id, farmer_id')
+      .select('id, customer_user_id')
       .limit(max);
 
     if (pErr) return jsonError(`fila: ${pErr.message}`, 500);
@@ -477,7 +482,7 @@ Deno.serve(async (req) => {
     // Drain CONCORRENTE (codex 2026-05-24): o backfill da carteira passa pela fila,
     // então o dreno precisa caber no timeout de 50s. Chunks de 10 (cada recalcOne = 1 query
     // + 1 upsert). max_drain ~500 fica seguro.
-    const queue = (pending ?? []) as Array<{ id: string; customer_user_id: string; farmer_id: string }>;
+    const queue = (pending ?? []) as Array<{ id: string; customer_user_id: string }>;
     const CONCURRENCY = 10;
     const results: Array<{ id: string; ok: boolean; error?: string }> = [];
     for (let i = 0; i < queue.length; i += CONCURRENCY) {
@@ -485,7 +490,7 @@ Deno.serve(async (req) => {
       const chunkResults = await Promise.all(chunk.map(async (item) => {
         let r: { ok: boolean; error?: string; adjustment?: ScoreAdjustment };
         try {
-          r = await recalcOne(supabase, item.customer_user_id, item.farmer_id);
+          r = await recalcOne(supabase, item.customer_user_id);
         } catch (err) {
           r = { ok: false, error: `uncaught: ${err instanceof Error ? err.message : String(err)}` };
         }
@@ -504,12 +509,12 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Mode A: single pair
-  if (!body.customer_user_id || !body.farmer_id) {
-    return jsonError('customer_user_id e farmer_id obrigatorios (ou drain_queue=true)', 400);
+  // Mode A: single client (B2c: farmer_id não é mais necessário — recalcOne não grava posse)
+  if (!body.customer_user_id) {
+    return jsonError('customer_user_id obrigatorio (ou drain_queue=true)', 400);
   }
 
-  const r = await recalcOne(supabase, body.customer_user_id, body.farmer_id);
+  const r = await recalcOne(supabase, body.customer_user_id);
   return new Response(JSON.stringify(r), {
     status: r.error ? 500 : 200,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
