@@ -20,6 +20,10 @@ describe('margemContribuicao', () => {
   it('margem negativa é honesta (vende abaixo do custo)', () => {
     expect(margemContribuicao({ receita_liquida: 500, custo_unitario: 6, quantidade: 100 })).toBe(-100);
   });
+  it('receita ou quantidade não-finita → null (cm NaN é fabricação)', () => {
+    expect(margemContribuicao({ receita_liquida: NaN, custo_unitario: 6, quantidade: 100 })).toBeNull();
+    expect(margemContribuicao({ receita_liquida: 1000, custo_unitario: 6, quantidade: Infinity })).toBeNull();
+  });
 });
 
 describe('statusLiquidadoAR', () => {

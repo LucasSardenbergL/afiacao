@@ -3,7 +3,9 @@
 
 export function margemContribuicao(input: { receita_liquida: number; custo_unitario: number | null; quantidade: number }): number | null {
   if (input.custo_unitario == null || !Number.isFinite(input.custo_unitario)) return null;
-  return input.receita_liquida - input.custo_unitario * input.quantidade;
+  if (!Number.isFinite(input.receita_liquida) || !Number.isFinite(input.quantidade)) return null;
+  const m = input.receita_liquida - input.custo_unitario * input.quantidade;
+  return Number.isFinite(m) ? m : null;
 }
 
 function numOrNull(x: unknown): number | null {
