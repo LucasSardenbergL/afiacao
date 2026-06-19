@@ -8,6 +8,30 @@ export function margemContribuicao(input: { receita_liquida: number; custo_unita
   return Number.isFinite(m) ? m : null;
 }
 
+// Fonte do custo unitário do cockpit (Codex P2 cost-final-ignorado — v2 do #953). O motor (omie-analytics-sync
+// reprocessRecommendationCosts) grava cost_final (VIVO) + cost_source (proveniência): PRODUCT_COST/CMC = custo
+// REAL; FAMILY_MARGIN_PROXY/DEFAULT_PROXY/UNKNOWN = INVENTADO. Contrato money-path:
+//   • custo entra na margem MESMO quando proxy — preserva a cobertura que o #953 estabeleceu (proxy→null
+//     esconderia margem de 20% dos clientes); cost_final vivo preferido, fallback cost_price legado (paridade
+//     #953); <=0/NaN nos dois → custo ausente (cm null). "ausente ≠ R$0": nunca fabrica 0 como custo.
+//   • `real` marca a PROVENIÊNCIA: proxy/UNKNOWN/sem-source → false. Custo-chute alimenta a margem mas NÃO vira
+//     certeza — degrada "Crescer" p/ "a confirmar" + rebaixa a confiança (ausente ≠ fabricar CERTEZA). É o eixo
+//     irmão do evp_parcial/cm_incompleto do #961: o sinal aparece, mas marcado como otimista/incerto.
+export type CostRowCockpit = { cost_price: number | null; cost_final: number | null; cost_source: string | null };
+const COST_SOURCES_REAIS = new Set(['PRODUCT_COST', 'CMC']);
+function finitePositive(x: number | null | undefined): x is number {
+  return typeof x === 'number' && Number.isFinite(x) && x > 0;
+}
+export type CustoResolvido = { custo: number | null; real: boolean };
+export function resolverCustoCockpit(row: CostRowCockpit | null | undefined): CustoResolvido {
+  const source = row?.cost_source?.trim().toUpperCase() ?? null;        // normaliza espaço/caixa de backfill
+  const real = source != null && COST_SOURCES_REAIS.has(source);        // proxy/unknown/null/fonte nova → não-real
+  const custo = finitePositive(row?.cost_final) ? row!.cost_final       // vivo, preferido
+    : finitePositive(row?.cost_price) ? row!.cost_price                 // fallback legado (preserva cobertura — paridade #953)
+    : null;                                                             // sem custo válido → ausente (≠ R$0)
+  return { custo, real };
+}
+
 function numOrNull(x: unknown): number | null {
   if (x == null || typeof x === 'boolean' || Array.isArray(x)) return null;
   if (typeof x !== 'number' && typeof x !== 'string') return null;
@@ -135,7 +159,7 @@ export function arMedioTTM(input: { titulos: TituloAR[]; ttm_inicio: string; ttm
   return { ar_medio: soma / janelaDias, v_real, v_proxy, v_sem_fecho };
 }
 
-export type ComboInput = { cliente: string; sku: string; receita_liquida: number; quantidade: number; custo_unitario: number | null };
+export type ComboInput = { cliente: string; sku: string; receita_liquida: number; quantidade: number; custo_unitario: number | null; custo_real?: boolean };
 export type CapitalCliente = { cliente: string; ar_medio: number | null };
 export type CapitalSKU = { sku: string; estoque_valor: number | null };
 export type CelulaEVP = {
@@ -144,20 +168,25 @@ export type CelulaEVP = {
   ar_indisponivel: boolean; estoque_indisponivel: boolean;
   // EVP existe mas alguma perna de capital indisponível → encargo é piso → evp é TETO (upper bound). Codex 2026-06-18.
   evp_parcial: boolean;
+  // tem margem (cm≠null) mas o custo veio de PROXY/sem-proveniência (não PRODUCT_COST/CMC) → margem é chute. Codex P2.
+  custo_proxy: boolean;
 };
 // `encargo` = encargo de capital SÓ das células com cm conhecido (mantém a identidade evp = cm − encargo).
 // `encargo_total` = encargo de TODAS as células (inclui as de margem desconhecida) — transparência.
 // encargo/encargo_total = null quando o hurdle (k) está indisponível (ausente ≠ R$0).
 // evp_parcial = algum EVP contribuinte do grupo é teto; cm_incompleto = grupo tem célula sem custo (excluída do EVP).
-export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_parcial: boolean; cm_incompleto: boolean };
-export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_parcial: boolean; cm_incompleto: boolean };
+// custo_proxy = grupo tem célula com margem de custo PROXY (estimado, não PRODUCT_COST/CMC) — margem otimista/incerta.
+export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_parcial: boolean; cm_incompleto: boolean; custo_proxy: boolean };
+export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_parcial: boolean; cm_incompleto: boolean; custo_proxy: boolean };
 export type ComboEVPResult = {
   celulas: CelulaEVP[];
   porCliente: RollupCliente[];
   porSKU: RollupSKU[];
-  empresa: { receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_parcial: boolean; cm_incompleto: boolean };
+  empresa: { receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_parcial: boolean; cm_incompleto: boolean; custo_proxy: boolean };
   // [0,1] fração da receita-com-EVP cujo EVP é teto (capital não medido). Ponderado por receita, não contagem (Codex).
   evp_teto_receita_pct: number;
+  // [0,1] fração da receita-COM-MARGEM cujo custo é PROXY (estimado). Irmão do evp_teto: ponderado por receita.
+  custo_proxy_receita_pct: number;
 };
 
 export function montarCelulasComboEVP(input: {
@@ -199,17 +228,20 @@ export function montarCelulasComboEVP(input: {
     const evp = cm == null || encargo == null ? null : cm - encargo;
     // EVP existe mas alguma perna de capital indisponível → encargo é piso → evp é teto (upper bound).
     const evp_parcial = evp != null && (ar_indisponivel || estoque_indisponivel);
-    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp, ar_indisponivel, estoque_indisponivel, evp_parcial };
+    // Tem margem, mas o custo é PROXY (estimado, custo_real===false) → margem incerta. Omitir a flag = real (retrocompat).
+    const custo_proxy = cm != null && c.custo_real === false;
+    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp, ar_indisponivel, estoque_indisponivel, evp_parcial, custo_proxy };
   });
 
   const rollup = (keyFn: (c: CelulaEVP) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpParcial: boolean; cmIncompleto: boolean }>();
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpParcial: boolean; cmIncompleto: boolean; custoProxy: boolean }>();
     for (const cel of celulas) {
       const key = keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpParcial: false, cmIncompleto: false };
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpParcial: false, cmIncompleto: false, custoProxy: false };
       acc.receita += cel.receita_liquida;
       acc.quantidade += cel.quantidade;
       if (cel.cm == null) acc.cmIncompleto = true; // grupo tem célula sem margem (excluída do EVP)
+      if (cel.custo_proxy) acc.custoProxy = true;  // grupo tem célula com margem de custo proxy (estimado)
       if (cel.encargo != null) { acc.encargoTotal += cel.encargo; acc.encargoTotalNull = false; } // todas as células (null-aware)
       if (cel.cm != null) {
         acc.cm += cel.cm; acc.cmNull = false;
@@ -223,17 +255,21 @@ export function montarCelulasComboEVP(input: {
 
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente: RollupCliente[] = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_parcial: a.evpParcial, cm_incompleto: a.cmIncompleto }));
-  const porSKU: RollupSKU[] = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_parcial: a.evpParcial, cm_incompleto: a.cmIncompleto }));
+  const porCliente: RollupCliente[] = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_parcial: a.evpParcial, cm_incompleto: a.cmIncompleto, custo_proxy: a.custoProxy }));
+  const porSKU: RollupSKU[] = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_parcial: a.evpParcial, cm_incompleto: a.cmIncompleto, custo_proxy: a.custoProxy }));
 
   let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, evpEmp = 0, evpNull = true, recEmp = 0;
-  let evpParcialEmp = false, cmIncompletoEmp = false;
-  let recTeto = 0, recComEvp = 0; // ponderação por receita do evp_teto_receita_pct (Codex: contagem é fraca)
+  let evpParcialEmp = false, cmIncompletoEmp = false, custoProxyEmp = false;
+  let recTeto = 0, recComEvp = 0, recProxy = 0, recComCm = 0; // ponderação por receita (Codex: contagem é fraca)
   for (const cel of celulas) {
     recEmp += cel.receita_liquida;
     if (cel.cm == null) cmIncompletoEmp = true;
     if (cel.encargo != null) { encTotalEmp += cel.encargo; encTotalNull = false; }
-    if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; if (cel.encargo != null) { encEmp += cel.encargo; encNull = false; } }
+    if (cel.cm != null) {
+      cmEmp += cel.cm; cmNull = false; recComCm += cel.receita_liquida;
+      if (cel.custo_proxy) { custoProxyEmp = true; recProxy += cel.receita_liquida; }
+      if (cel.encargo != null) { encEmp += cel.encargo; encNull = false; }
+    }
     if (cel.evp != null) {
       evpEmp += cel.evp; evpNull = false;
       recComEvp += cel.receita_liquida;
@@ -241,7 +277,8 @@ export function montarCelulasComboEVP(input: {
     }
   }
   const evp_teto_receita_pct = recComEvp > 0 ? recTeto / recComEvp : 0;
-  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp: evpNull ? null : evpEmp, evp_parcial: evpParcialEmp, cm_incompleto: cmIncompletoEmp }, evp_teto_receita_pct };
+  const custo_proxy_receita_pct = recComCm > 0 ? Math.max(0, Math.min(1, recProxy / recComCm)) : 0; // [0,1]: célula de receita negativa (devolução/desconto) não vira % absurda (Codex P2)
+  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp: evpNull ? null : evpEmp, evp_parcial: evpParcialEmp, cm_incompleto: cmIncompletoEmp, custo_proxy: custoProxyEmp }, evp_teto_receita_pct, custo_proxy_receita_pct };
 }
 
 export type CockpitConfig = {
@@ -264,6 +301,7 @@ export function recomendarAcaoComercial(input: {
   hurdle_indisponivel?: boolean;   // sem Ke → EVP não calculável globalmente; gateia as regras de valor
   evp_parcial?: boolean;           // EVP é teto (capital de cliente/SKU não medido) → não afirma valor positivo
   cm_incompleto?: boolean;         // grupo tem células sem custo (margem desconhecida em parte)
+  custo_proxy?: boolean;           // grupo tem margem com custo PROXY (estimado) → não afirma "Crescer" limpo
 }): Recomendacao[] {
   const r: Recomendacao[] = [];
   const c = input.config;
@@ -274,6 +312,7 @@ export function recomendarAcaoComercial(input: {
   const evpConhecivel = !input.hurdle_indisponivel;
   const evpTeto = !!input.evp_parcial;        // teto>0 NÃO é evidência de valor positivo (real ≤ teto)
   const cmIncompleto = !!input.cm_incompleto;
+  const custoProxy = !!input.custo_proxy;     // margem de custo estimado (proxy) → "Crescer" só a confirmar
   const evpNegConhecido = input.evp != null && input.evp < 0; // teto<0 ⟹ real<0 → alerta robusto
 
   // cortar desconto: desconto acima do máx e (sem hurdle OU valor não justifica OU teto não confirma)
@@ -298,14 +337,15 @@ export function recomendarAcaoComercial(input: {
   if (evpConhecivel && input.dias_estoque > c.dias_estoque_max && evpNegConhecido) {
     r.push({ acao: 'Despriorizar / liquidar estoque', motivo: `${input.dias_estoque.toFixed(0)} dias de estoque > limite ${c.dias_estoque_max}d e o item não gera valor.`, impacto_rs: null });
   }
-  // crescer: EVP positivo e nada disparou. SEM ressalva só se confiável (não-teto E cobertura de cm completa).
+  // crescer: EVP positivo e nada disparou. SEM ressalva só se confiável (não-teto E custo completo E não-proxy).
   if (r.length === 0 && input.evp != null && input.evp > 0) {
-    if (!evpTeto && !cmIncompleto) {
+    if (!evpTeto && !cmIncompleto && !custoProxy) {
       r.push({ acao: 'Crescer / proteger', motivo: 'Gera valor econômico positivo e sem alertas.', impacto_rs: null });
     } else {
       const ressalvas: string[] = [];
       if (evpTeto) ressalvas.push('capital não medido em parte da carteira (EVP é teto) — confirmar');
       if (cmIncompleto) ressalvas.push('margem desconhecida em parte (custo ausente)');
+      if (custoProxy) ressalvas.push('custo estimado (proxy) em parte da carteira — confirmar');
       r.push({ acao: 'Crescer / proteger', motivo: `Provável valor econômico positivo, a confirmar: ${ressalvas.join('; ')}.`, impacto_rs: null });
     }
   }
@@ -323,6 +363,7 @@ export function scoreConfiancaCockpit(input: {
   imposto_estimado: boolean;
   hurdle_indisponivel?: boolean; // sem Ke → EVP não calculável → confiança baixa
   evp_teto_receita_pct?: number; // [0,1] fração da receita-com-EVP cujo EVP é teto (capital não medido)
+  custo_proxy_receita_pct?: number; // [0,1] fração da receita-com-margem cujo custo é proxy (estimado) → rebaixa
   cobertura_app_por_ar?: number; // [0,1] venda app com AR faturável; <0,5 → divergência → rebaixa
 }): ConfiancaCockpit {
   const motivos: string[] = [];
@@ -336,6 +377,11 @@ export function scoreConfiancaCockpit(input: {
 
   if (input.custo_ausente_pct > 0.4) rebaixar(1, `${(input.custo_ausente_pct * 100).toFixed(0)}% das células sem custo — margem indisponível em boa parte.`);
   else if (input.custo_ausente_pct > 0.15) rebaixar(2, `${(input.custo_ausente_pct * 100).toFixed(0)}% sem custo cadastrado.`);
+  // Custo PROXY (estimado, ≠ ausente): a margem existe mas é chute. Motivo SEMPRE que >0 (nunca verde mudo);
+  // rebaixa quando material (>15% da receita-com-margem). Ponderado por receita, não contagem (irmão do teto).
+  const proxyPct = input.custo_proxy_receita_pct ?? 0;
+  if (proxyPct > 0.15) rebaixar(2, `${(proxyPct * 100).toFixed(0)}% da margem (por receita) usa custo estimado (proxy) — lucro otimista/incerto nessa fatia.`);
+  else if (proxyPct > 0) motivos.push(`${(proxyPct * 100).toFixed(0)}% da margem (por receita) usa custo estimado (proxy).`);
 
   if (input.ar_indisponivel_pct > 0.3) rebaixar(2, `${(input.ar_indisponivel_pct * 100).toFixed(0)}% das vendas sem AR vinculável — encargo de cliente subestimado.`);
   if (input.estoque_ausente_pct > 0.3) rebaixar(2, `${(input.estoque_ausente_pct * 100).toFixed(0)}% dos SKUs sem estoque — encargo de SKU subestimado.`);

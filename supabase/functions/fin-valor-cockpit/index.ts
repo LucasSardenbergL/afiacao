@@ -44,6 +44,23 @@ function margemContribuicao(input: { receita_liquida: number; custo_unitario: nu
   const m = input.receita_liquida - input.custo_unitario * input.quantidade;
   return Number.isFinite(m) ? m : null;
 }
+// Fonte do custo unitário (Codex P2 cost-final-ignorado, v2 do #953). Espelho VERBATIM de src. PRODUCT_COST/
+// CMC = custo REAL; PROXY/UNKNOWN/sem-source = não-real. custo entra na margem mesmo proxy (preserva cobertura
+// #953; cost_final vivo, fallback cost_price legado); `real` marca proveniência → proxy degrada "Crescer"+confiança.
+type CostRowCockpit = { cost_price: number | null; cost_final: number | null; cost_source: string | null };
+const COST_SOURCES_REAIS = new Set(["PRODUCT_COST", "CMC"]);
+function finitePositive(x: number | null | undefined): x is number {
+  return typeof x === "number" && Number.isFinite(x) && x > 0;
+}
+type CustoResolvido = { custo: number | null; real: boolean };
+function resolverCustoCockpit(row: CostRowCockpit | null | undefined): CustoResolvido {
+  const source = row?.cost_source?.trim().toUpperCase() ?? null;
+  const real = source != null && COST_SOURCES_REAIS.has(source);
+  const custo = finitePositive(row?.cost_final) ? row!.cost_final
+    : finitePositive(row?.cost_price) ? row!.cost_price
+    : null;
+  return { custo, real };
+}
 function numOrNull(x: unknown): number | null {
   if (x == null || typeof x === "boolean" || Array.isArray(x)) return null;
   if (typeof x !== "number" && typeof x !== "string") return null;
@@ -132,7 +149,7 @@ function arMedioTTM(input: { titulos: TituloAR[]; ttm_inicio: string; ttm_fim: s
   }
   return { ar_medio: soma / janelaDias, v_real, v_proxy, v_sem_fecho };
 }
-type ComboInput = { cliente: string; sku: string; receita_liquida: number; quantidade: number; custo_unitario: number | null };
+type ComboInput = { cliente: string; sku: string; receita_liquida: number; quantidade: number; custo_unitario: number | null; custo_real?: boolean };
 type CapitalCliente = { cliente: string; ar_medio: number | null };
 type CapitalSKU = { sku: string; estoque_valor: number | null };
 function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: CapitalCliente[]; capitalSKUs: CapitalSKU[]; k: number | null }) {
@@ -160,16 +177,18 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
     const encargo: number | null = k == null ? null : k * (a_cs + i_cs);
     const evp = cm == null || encargo == null ? null : cm - encargo;
     const evp_parcial = evp != null && (ar_indisponivel || estoque_indisponivel); // teto: encargo é piso
-    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp, ar_indisponivel, estoque_indisponivel, evp_parcial };
+    const custo_proxy = cm != null && c.custo_real === false; // margem com custo proxy (estimado); omitir flag = real
+    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp, ar_indisponivel, estoque_indisponivel, evp_parcial, custo_proxy };
   });
   type Cel = typeof celulas[number];
   const rollup = (keyFn: (c: Cel) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpParcial: boolean; cmIncompleto: boolean }>();
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpParcial: boolean; cmIncompleto: boolean; custoProxy: boolean }>();
     for (const cel of celulas) {
       const key = keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpParcial: false, cmIncompleto: false };
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpParcial: false, cmIncompleto: false, custoProxy: false };
       acc.receita += cel.receita_liquida; acc.quantidade += cel.quantidade;
       if (cel.cm == null) acc.cmIncompleto = true;
+      if (cel.custo_proxy) acc.custoProxy = true;
       if (cel.encargo != null) { acc.encargoTotal += cel.encargo; acc.encargoTotalNull = false; }
       if (cel.cm != null) { acc.cm += cel.cm; acc.cmNull = false; if (cel.encargo != null) { acc.encargo += cel.encargo; acc.encargoNull = false; } }
       if (cel.evp != null) { acc.evp += cel.evp; acc.evpNull = false; if (cel.evp_parcial) acc.evpParcial = true; }
@@ -179,17 +198,18 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
   };
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_parcial: a.evpParcial, cm_incompleto: a.cmIncompleto }));
-  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_parcial: a.evpParcial, cm_incompleto: a.cmIncompleto }));
+  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_parcial: a.evpParcial, cm_incompleto: a.cmIncompleto, custo_proxy: a.custoProxy }));
+  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_parcial: a.evpParcial, cm_incompleto: a.cmIncompleto, custo_proxy: a.custoProxy }));
   let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, evpEmp = 0, evpNull = true, recEmp = 0;
-  let evpParcialEmp = false, cmIncompletoEmp = false, recTeto = 0, recComEvp = 0;
-  for (const cel of celulas) { recEmp += cel.receita_liquida; if (cel.cm == null) cmIncompletoEmp = true; if (cel.encargo != null) { encTotalEmp += cel.encargo; encTotalNull = false; } if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; if (cel.encargo != null) { encEmp += cel.encargo; encNull = false; } } if (cel.evp != null) { evpEmp += cel.evp; evpNull = false; recComEvp += cel.receita_liquida; if (cel.evp_parcial) { evpParcialEmp = true; recTeto += cel.receita_liquida; } } }
+  let evpParcialEmp = false, cmIncompletoEmp = false, custoProxyEmp = false, recTeto = 0, recComEvp = 0, recProxy = 0, recComCm = 0;
+  for (const cel of celulas) { recEmp += cel.receita_liquida; if (cel.cm == null) cmIncompletoEmp = true; if (cel.encargo != null) { encTotalEmp += cel.encargo; encTotalNull = false; } if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; recComCm += cel.receita_liquida; if (cel.custo_proxy) { custoProxyEmp = true; recProxy += cel.receita_liquida; } if (cel.encargo != null) { encEmp += cel.encargo; encNull = false; } } if (cel.evp != null) { evpEmp += cel.evp; evpNull = false; recComEvp += cel.receita_liquida; if (cel.evp_parcial) { evpParcialEmp = true; recTeto += cel.receita_liquida; } } }
   const evp_teto_receita_pct = recComEvp > 0 ? recTeto / recComEvp : 0;
-  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp: evpNull ? null : evpEmp, evp_parcial: evpParcialEmp, cm_incompleto: cmIncompletoEmp }, evp_teto_receita_pct };
+  const custo_proxy_receita_pct = recComCm > 0 ? Math.max(0, Math.min(1, recProxy / recComCm)) : 0; // [0,1]: célula de receita negativa não vira % absurda (Codex P2)
+  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp: evpNull ? null : evpEmp, evp_parcial: evpParcialEmp, cm_incompleto: cmIncompletoEmp, custo_proxy: custoProxyEmp }, evp_teto_receita_pct, custo_proxy_receita_pct };
 }
 type CockpitConfig = { margem_minima_pct: number; desconto_max_pct: number; prazo_alvo_dias: number; dias_estoque_max: number; sample_min_receita: number };
 type Recomendacao = { acao: string; motivo: string; impacto_rs: number | null };
-function recomendarAcaoComercial(input: { evp: number | null; receita_liquida: number; cm: number | null; desconto_total: number; prazo_medio_dias: number; dias_estoque: number; config: CockpitConfig; hurdle_indisponivel?: boolean; evp_parcial?: boolean; cm_incompleto?: boolean }): Recomendacao[] {
+function recomendarAcaoComercial(input: { evp: number | null; receita_liquida: number; cm: number | null; desconto_total: number; prazo_medio_dias: number; dias_estoque: number; config: CockpitConfig; hurdle_indisponivel?: boolean; evp_parcial?: boolean; cm_incompleto?: boolean; custo_proxy?: boolean }): Recomendacao[] {
   const r: Recomendacao[] = []; const c = input.config;
   const receitaBruta = input.receita_liquida + input.desconto_total;
   const descontoPct = receitaBruta > 0 ? input.desconto_total / receitaBruta : 0;
@@ -197,6 +217,7 @@ function recomendarAcaoComercial(input: { evp: number | null; receita_liquida: n
   const evpConhecivel = !input.hurdle_indisponivel;
   const evpTeto = !!input.evp_parcial;
   const cmIncompleto = !!input.cm_incompleto;
+  const custoProxy = !!input.custo_proxy;
   const evpNegConhecido = input.evp != null && input.evp < 0;
   if (descontoPct > c.desconto_max_pct && (!evpConhecivel || input.evp == null || input.evp <= 0 || evpTeto)) {
     const motivo = !evpConhecivel
@@ -210,13 +231,13 @@ function recomendarAcaoComercial(input: { evp: number | null; receita_liquida: n
   if (cmPct != null && cmPct < c.margem_minima_pct) r.push({ acao: "Subir preço", motivo: `Margem ${(cmPct * 100).toFixed(0)}% < mínima ${(c.margem_minima_pct * 100).toFixed(0)}%.`, impacto_rs: Math.max(0, c.margem_minima_pct * input.receita_liquida - (input.cm as number)) });
   if (evpConhecivel && input.dias_estoque > c.dias_estoque_max && evpNegConhecido) r.push({ acao: "Despriorizar / liquidar estoque", motivo: `${input.dias_estoque.toFixed(0)} dias de estoque > limite ${c.dias_estoque_max}d e o item não gera valor.`, impacto_rs: null });
   if (r.length === 0 && input.evp != null && input.evp > 0) {
-    if (!evpTeto && !cmIncompleto) r.push({ acao: "Crescer / proteger", motivo: "Gera valor econômico positivo e sem alertas.", impacto_rs: null });
-    else { const ressalvas: string[] = []; if (evpTeto) ressalvas.push("capital não medido em parte da carteira (EVP é teto) — confirmar"); if (cmIncompleto) ressalvas.push("margem desconhecida em parte (custo ausente)"); r.push({ acao: "Crescer / proteger", motivo: `Provável valor econômico positivo, a confirmar: ${ressalvas.join("; ")}.`, impacto_rs: null }); }
+    if (!evpTeto && !cmIncompleto && !custoProxy) r.push({ acao: "Crescer / proteger", motivo: "Gera valor econômico positivo e sem alertas.", impacto_rs: null });
+    else { const ressalvas: string[] = []; if (evpTeto) ressalvas.push("capital não medido em parte da carteira (EVP é teto) — confirmar"); if (cmIncompleto) ressalvas.push("margem desconhecida em parte (custo ausente)"); if (custoProxy) ressalvas.push("custo estimado (proxy) em parte da carteira — confirmar"); r.push({ acao: "Crescer / proteger", motivo: `Provável valor econômico positivo, a confirmar: ${ressalvas.join("; ")}.`, impacto_rs: null }); }
   }
   // aviso de hurdle ausente vive na confiança + banner da UI (NÃO por cliente — vazaria pro A4).
   return r;
 }
-function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean; hurdle_indisponivel?: boolean; evp_teto_receita_pct?: number; cobertura_app_por_ar?: number }) {
+function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean; hurdle_indisponivel?: boolean; evp_teto_receita_pct?: number; custo_proxy_receita_pct?: number; cobertura_app_por_ar?: number }) {
   const motivos: string[] = []; let nivel = 3;
   const rebaixar = (para: number, m: string) => { if (para < nivel) nivel = para; motivos.push(m); };
   if (input.hurdle_indisponivel) rebaixar(1, "Sem Ke/hurdle configurado — lucro econômico (EVP) indisponível; configure em /financeiro/valor.");
@@ -225,6 +246,9 @@ function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente
   if (input.cobertura_app_por_ar != null && input.cobertura_app_por_ar < 0.5) rebaixar(2, `${((1 - input.cobertura_app_por_ar) * 100).toFixed(0)}% da venda do app sem AR faturável — encargo de cliente subestimado; possível divergência app↔financeiro.`);
   if (input.custo_ausente_pct > 0.4) rebaixar(1, `${(input.custo_ausente_pct * 100).toFixed(0)}% das células sem custo — margem indisponível em boa parte.`);
   else if (input.custo_ausente_pct > 0.15) rebaixar(2, `${(input.custo_ausente_pct * 100).toFixed(0)}% sem custo cadastrado.`);
+  const proxyPct = input.custo_proxy_receita_pct ?? 0;
+  if (proxyPct > 0.15) rebaixar(2, `${(proxyPct * 100).toFixed(0)}% da margem (por receita) usa custo estimado (proxy) — lucro otimista/incerto nessa fatia.`);
+  else if (proxyPct > 0) motivos.push(`${(proxyPct * 100).toFixed(0)}% da margem (por receita) usa custo estimado (proxy).`);
   if (input.ar_indisponivel_pct > 0.3) rebaixar(2, `${(input.ar_indisponivel_pct * 100).toFixed(0)}% das vendas sem AR vinculável — encargo de cliente subestimado.`);
   if (input.estoque_ausente_pct > 0.3) rebaixar(2, `${(input.estoque_ausente_pct * 100).toFixed(0)}% dos SKUs sem estoque — encargo de SKU subestimado.`);
   const tetoPct = input.evp_teto_receita_pct ?? 0;
@@ -345,22 +369,19 @@ serve(async (req: Request) => {
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
     const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_clientes").select("user_id, omie_codigo_cliente").order("id", { ascending: true }).range(f, t), "omie_clientes");
     const userToOmie = new Map(clientesAll.map((c) => [c.user_id, String(c.omie_codigo_cliente)]));
-    // Custo canônico = cost_final (saída do motor de custo, MESMA fonte que o recommend usa p/ margem). Fallback
-    // p/ cost_price (legado) quando cost_final é ausente OU inválido (<=0/NaN) — preserva cobertura (14 SKUs Oben
-    // têm cost_final inválido mas cost_price real >0, psql-ro 2026-06-18). ausente≠zero: nunca usa 0 como custo
-    // real; <=0/null nos DOIS → SKU sem custo (cm null no combo). Codex P2: o fallback em cost_final INVÁLIDO (não
-    // só ausente) é INTENCIONAL (cost_price é custo real legado, dropar esconderia margem real) mas OBSERVÁVEL via
-    // warn — não-silencioso. cost_source/cost_confidence (degradar confiança por custo-proxy) ficam p/ v2 (helper
-    // espelhado + UI).
-    const custosAll = await fetchAll<{ product_id: string; cost_final: number | null; cost_price: number | null }>((f, t) => db.from("product_costs").select("product_id, cost_final, cost_price").order("id", { ascending: true }).range(f, t), "product_costs");
-    const custoValido = (x: number | null): number | null => (typeof x === "number" && Number.isFinite(x) && x > 0 ? x : null);
-    const custoPorProduto = new Map<string, number>();
-    let custoLegadoFallback = 0;
-    for (const c of custosAll) {
-      const canonico = custoValido(c.cost_final);
-      const custo = canonico ?? custoValido(c.cost_price);
-      if (custo != null) { custoPorProduto.set(c.product_id, custo); if (canonico == null) custoLegadoFallback++; }
-    }
+    // Custo do EVP via resolverCustoCockpit (v2 do #953): cost_final vivo, fallback cost_price legado; PROXY
+    // (FAMILY_MARGIN_PROXY/DEFAULT_PROXY) MANTÉM o custo na margem (preserva cobertura — paridade #953) mas marca
+    // custo_real=false → degrada "Crescer"→a-confirmar + rebaixa a confiança (NÃO esconde o SKU). ausente≠R$0:
+    // <=0/null nos dois → custo ausente (cm null). Observabilidade não-silenciosa (Codex): fonte nova não-mapeada
+    // → não-real (fail-closed); nº de SKUs no fallback legado logado.
+    const custosAll = await fetchAll<{ product_id: string } & CostRowCockpit>((f, t) => db.from("product_costs").select("product_id, cost_final, cost_price, cost_source").order("id", { ascending: true }).range(f, t), "product_costs");
+    const custoRowPorProduto = new Map(custosAll.map((c) => [c.product_id, c]));
+    const SOURCES_CONHECIDAS = new Set(["PRODUCT_COST", "CMC", "FAMILY_MARGIN_PROXY", "DEFAULT_PROXY", "UNKNOWN"]);
+    // Normaliza igual ao resolver (trim/upper) antes de checar — senão "cmc " logaria como desconhecido enquanto
+    // o resolver o trata como real (warn mentiria; Codex P2). Mantém o valor CRU no log p/ o operador ver o banco.
+    const sourcesDesconhecidas = [...new Set(custosAll.map((c) => c.cost_source).filter((s): s is string => s != null && !SOURCES_CONHECIDAS.has(s.trim().toUpperCase())))];
+    if (sourcesDesconhecidas.length > 0) console.warn(`[ValorCockpit][${COMPANY}] cost_source desconhecido(s) tratado(s) como custo não-real: ${sourcesDesconhecidas.join(", ")}`);
+    const custoLegadoFallback = custosAll.filter((c) => !finitePositive(c.cost_final) && finitePositive(c.cost_price)).length;
     if (custoLegadoFallback > 0) console.warn(`[ValorCockpit][${COMPANY}] ${custoLegadoFallback} SKUs com cost_final ausente/inválido → fallback p/ cost_price legado`);
     // Estoque com PONTE DE CONTAS (paridade com get_preco_cockpit / cockpit_preco_fixes): inventory_position
     // guarda o MESMO SKU em 'vendas' (conta Omie crua, omie-analytics-sync) e 'oben' (empresa, sync-reprocess)
@@ -398,7 +419,10 @@ serve(async (req: Request) => {
       acc.receita += receita; acc.qtd += l.quantity; acc.desconto += (l.discount ?? 0);
       comboMap.set(key, acc);
     }
-    const combos: ComboInput[] = [...comboMap.values()].map((c) => ({ cliente: c.cliente, sku: c.sku, receita_liquida: c.receita, quantidade: c.qtd, custo_unitario: c.product_id ? (custoPorProduto.get(c.product_id) ?? null) : null }));
+    const combos: ComboInput[] = [...comboMap.values()].map((c) => {
+      const resolved = c.product_id ? resolverCustoCockpit(custoRowPorProduto.get(c.product_id) ?? null) : { custo: null, real: false };
+      return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita, quantidade: c.qtd, custo_unitario: resolved.custo, custo_real: resolved.real };
+    });
 
     // AR da Oben relevante à janela (emitido na janela OU ainda em aberto) — serve p/ AR por cliente e cobertura.
     type CR = { omie_codigo_cliente: number | null; omie_codigo_lancamento: number | null; valor_documento: number; saldo: number; valor_recebido: number; data_emissao: string | null; data_vencimento: string | null; status_titulo: string };
@@ -455,7 +479,7 @@ serve(async (req: Request) => {
     for (const c of [...comboMap.values()]) descontoPorCliente.set(c.cliente, (descontoPorCliente.get(c.cliente) ?? 0) + c.desconto);
     const recomendacoesCliente = res.porCliente.map((rc) => ({
       cliente: rc.cliente,
-      recomendacoes: recomendarAcaoComercial({ evp: rc.evp, receita_liquida: rc.receita, cm: rc.cm, desconto_total: descontoPorCliente.get(rc.cliente) ?? 0, prazo_medio_dias: 0, dias_estoque: 0, config, hurdle_indisponivel, evp_parcial: rc.evp_parcial, cm_incompleto: rc.cm_incompleto }),
+      recomendacoes: recomendarAcaoComercial({ evp: rc.evp, receita_liquida: rc.receita, cm: rc.cm, desconto_total: descontoPorCliente.get(rc.cliente) ?? 0, prazo_medio_dias: 0, dias_estoque: 0, config, hurdle_indisponivel, evp_parcial: rc.evp_parcial, cm_incompleto: rc.cm_incompleto, custo_proxy: rc.custo_proxy }),
     }));
 
     const total = res.celulas.length || 1;
@@ -473,7 +497,7 @@ serve(async (req: Request) => {
     const arTotal = crsAll.filter((cr) => cr.data_emissao != null && cr.data_emissao >= ttm_inicio && tituloFaturavelAR(cr.status_titulo)).reduce((s, cr) => s + (cr.valor_documento || 0), 0);
     const { ar_por_app, app_por_ar } = coberturaBidirecional({ receita: res.empresa.receita, arFaturavel: arTotal });
     const cobertura_receita = ar_por_app; // retrocompat: mesmo valor de antes
-    const confianca = scoreConfiancaCockpit({ cobertura_receita, cobertura_app_por_ar: app_por_ar, custo_ausente_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel, evp_teto_receita_pct: res.evp_teto_receita_pct });
+    const confianca = scoreConfiancaCockpit({ cobertura_receita, cobertura_app_por_ar: app_por_ar, custo_ausente_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel, evp_teto_receita_pct: res.evp_teto_receita_pct, custo_proxy_receita_pct: res.custo_proxy_receita_pct });
 
     return jsonResponse({
       company: COMPANY, k, hurdle_indisponivel, ttm: { inicio: ttm_inicio, fim: ttm_fim },
@@ -481,6 +505,7 @@ serve(async (req: Request) => {
       recomendacoesCliente, confianca, cobertura_receita, cobertura_app_por_ar: app_por_ar,
       cobertura_baixa_ar: coberturaBaixaAR, // Fase 3: fração da AR liquidada com baixa derivada REAL (vs vencimento-proxy)
       evp_teto_receita_pct: res.evp_teto_receita_pct, // fração da receita-com-EVP cujo EVP é teto (UI entrega 2)
+      custo_proxy_receita_pct: res.custo_proxy_receita_pct, // fração da margem (por receita) com custo proxy (estimado)
       config,
     }, 200);
   } catch (e) {

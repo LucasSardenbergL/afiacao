@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit, resolverHurdleCockpit, pedidoContaNoFaturamento, tituloFaturavelAR, coberturaBidirecional } from '../valor-cockpit-helpers';
+import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit, resolverHurdleCockpit, pedidoContaNoFaturamento, tituloFaturavelAR, coberturaBidirecional, resolverCustoCockpit } from '../valor-cockpit-helpers';
 
 // helper de fixture: TituloAR completo com defaults (reduz ruído nos casos)
 function tit(p: Partial<Parameters<typeof arMedioTTM>[0]['titulos'][number]>) {
@@ -537,5 +537,146 @@ describe('scoreConfiancaCockpit — evp_teto_receita_pct', () => {
     const r = scoreConfiancaCockpit({ ...okBase, evp_teto_receita_pct: 0 });
     expect(r.nivel).toBe('alta');
     expect(r.motivos.some((m) => m.toLowerCase().includes('teto'))).toBe(false);
+  });
+});
+
+// ===== v2 do #953 (Codex P2 cost-final-ignorado): proveniência do custo + eixo custo_proxy =====
+describe('resolverCustoCockpit (contrato de custo — v2 do #953)', () => {
+  it('PRODUCT_COST com cost_final>0 → custo vivo, real=true', () => {
+    expect(resolverCustoCockpit({ cost_source: 'PRODUCT_COST', cost_final: 12.5, cost_price: 99 })).toEqual({ custo: 12.5, real: true });
+  });
+  it('CMC com cost_final>0 → cost_final, real=true', () => {
+    expect(resolverCustoCockpit({ cost_source: 'CMC', cost_final: 8, cost_price: 20 })).toEqual({ custo: 8, real: true });
+  });
+  it('PROXY (FAMILY_MARGIN_PROXY) com cost_final>0 → MANTÉM o custo na margem mas real=FALSE (não esconde, marca chute)', () => {
+    // caso real medido: FAMILY 81,90(price) vs 401,91(final) — proxy ~5× o custo legado
+    expect(resolverCustoCockpit({ cost_source: 'FAMILY_MARGIN_PROXY', cost_final: 401.91, cost_price: 81.9 })).toEqual({ custo: 401.91, real: false });
+  });
+  it('DEFAULT_PROXY → custo presente, real=false', () => {
+    expect(resolverCustoCockpit({ cost_source: 'DEFAULT_PROXY', cost_final: 5, cost_price: null })).toEqual({ custo: 5, real: false });
+  });
+  it('UNKNOWN / fonte nova / sem source → não-real (fail-closed); custo segue se válido', () => {
+    expect(resolverCustoCockpit({ cost_source: 'UNKNOWN', cost_final: 5, cost_price: null }).real).toBe(false);
+    expect(resolverCustoCockpit({ cost_source: 'FONTE_NOVA', cost_final: 5, cost_price: null }).real).toBe(false);
+    expect(resolverCustoCockpit({ cost_source: null, cost_final: 5, cost_price: null }).real).toBe(false);
+  });
+  it('normaliza espaço/caixa do cost_source (backfill) — "cmc " e " Product_Cost" → real', () => {
+    expect(resolverCustoCockpit({ cost_source: 'cmc ', cost_final: 8, cost_price: null }).real).toBe(true);
+    expect(resolverCustoCockpit({ cost_source: ' Product_Cost', cost_final: 8, cost_price: null }).real).toBe(true);
+  });
+  it('fallback amplo (paridade #953): cost_final inválido → cost_price; `real` é pela SOURCE, não pelo campo', () => {
+    expect(resolverCustoCockpit({ cost_source: 'CMC', cost_final: 0, cost_price: 7 })).toEqual({ custo: 7, real: true });    // os 14 SKUs CMC legado
+    expect(resolverCustoCockpit({ cost_source: 'CMC', cost_final: null, cost_price: 7 })).toEqual({ custo: 7, real: true });
+    expect(resolverCustoCockpit({ cost_source: 'DEFAULT_PROXY', cost_final: 0, cost_price: 9 })).toEqual({ custo: 9, real: false }); // proxy cai no fallback mas segue chute
+  });
+  it('FALSIFICAÇÃO: cost_final ≤0/NaN/Inf rejeitado (não vira custo 0/sujo); sem cost_price → null', () => {
+    for (const bad of [0, -5, NaN, Infinity]) {
+      expect(resolverCustoCockpit({ cost_source: 'PRODUCT_COST', cost_final: bad, cost_price: null }).custo).toBeNull();
+    }
+  });
+  it('custo ausente nos dois campos → custo null (ausente ≠ R$0); row null → {null,false}', () => {
+    expect(resolverCustoCockpit({ cost_source: 'PRODUCT_COST', cost_final: null, cost_price: null }).custo).toBeNull();
+    expect(resolverCustoCockpit(null)).toEqual({ custo: null, real: false });
+    expect(resolverCustoCockpit(undefined)).toEqual({ custo: null, real: false });
+  });
+});
+
+describe('montarCelulasComboEVP — custo_proxy (margem com custo estimado, eixo irmão do cm_incompleto)', () => {
+  const capCli = [{ cliente: 'C1', ar_medio: 600 }];
+  const capSku = [{ sku: 'S1', estoque_valor: 800 }, { sku: 'S2', estoque_valor: 400 }];
+  it('combo custo_real=false → célula custo_proxy=true, MAS margem preservada (não vira null)', () => {
+    const r = montarCelulasComboEVP({ combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6, custo_real: false }], capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    expect(r.celulas[0].cm).toBe(400);            // cobertura preservada — paridade #953
+    expect(r.celulas[0].custo_proxy).toBe(true);
+  });
+  it('combo custo_real=true → custo_proxy=false; omitir a flag também → false (retrocompat)', () => {
+    const real = montarCelulasComboEVP({ combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6, custo_real: true }], capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    const semFlag = montarCelulasComboEVP({ combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 }], capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    expect(real.celulas[0].custo_proxy).toBe(false);
+    expect(semFlag.celulas[0].custo_proxy).toBe(false);
+  });
+  it('custo ausente (cm null) NÃO é proxy — é cm_incompleto (eixos distintos)', () => {
+    const r = montarCelulasComboEVP({ combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: null, custo_real: false }], capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    expect(r.celulas[0].custo_proxy).toBe(false);
+    expect(r.empresa.cm_incompleto).toBe(true);
+    expect(r.empresa.custo_proxy).toBe(false);
+  });
+  it('rollup/empresa marcam custo_proxy se QUALQUER célula é proxy', () => {
+    const r = montarCelulasComboEVP({ combos: [
+      { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6, custo_real: true },
+      { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 50, custo_unitario: 10, custo_real: false },
+    ], capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    expect(r.porCliente[0].custo_proxy).toBe(true);
+    expect(r.empresa.custo_proxy).toBe(true);
+  });
+  it('custo_proxy_receita_pct ponderado por receita-COM-MARGEM (proxy 1000 de 2000) = 0,5', () => {
+    const r = montarCelulasComboEVP({ combos: [
+      { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6, custo_real: true },
+      { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 50, custo_unitario: 10, custo_real: false },
+    ], capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    expect(r.custo_proxy_receita_pct).toBeCloseTo(0.5, 6);
+  });
+  it('célula sem custo NÃO entra no denominador (recComCm) — proxy_pct ignora a fatia ausente', () => {
+    // real 1000 + proxy 1000 + sem-custo 500 → 1000/(1000+1000)=0,5 (não /2500)
+    const r = montarCelulasComboEVP({ combos: [
+      { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6, custo_real: true },
+      { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 50, custo_unitario: 10, custo_real: false },
+      { cliente: 'C1', sku: 'S3', receita_liquida: 500, quantidade: 10, custo_unitario: null, custo_real: false },
+    ], capitalClientes: capCli, capitalSKUs: [{ sku: 'S1', estoque_valor: 800 }, { sku: 'S2', estoque_valor: 400 }, { sku: 'S3', estoque_valor: 100 }], k: 0.2 });
+    expect(r.custo_proxy_receita_pct).toBeCloseTo(0.5, 6);
+  });
+  it('sem proxy → custo_proxy_receita_pct=0 e empresa.custo_proxy=false', () => {
+    const r = montarCelulasComboEVP({ combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6, custo_real: true }], capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    expect(r.custo_proxy_receita_pct).toBe(0);
+    expect(r.empresa.custo_proxy).toBe(false);
+  });
+  it('clamp [0,1]: receita negativa (devolução/desconto) não estoura a fração — Codex P2', () => {
+    // proxy +1000 + real −600 (devolução) → recComCm=400, recProxy=1000 → 2,5 SEM clamp; clampado = 1
+    const acima = montarCelulasComboEVP({ combos: [
+      { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6, custo_real: false },
+      { cliente: 'C1', sku: 'S2', receita_liquida: -600, quantidade: 1, custo_unitario: 10, custo_real: true },
+    ], capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    expect(acima.custo_proxy_receita_pct).toBe(1);
+    // real +1000 + proxy −300 (devolução de proxy) → recComCm=700, recProxy=−300 → negativo SEM clamp; clampado = 0
+    const abaixo = montarCelulasComboEVP({ combos: [
+      { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6, custo_real: true },
+      { cliente: 'C1', sku: 'S2', receita_liquida: -300, quantidade: 1, custo_unitario: 10, custo_real: false },
+    ], capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    expect(abaixo.custo_proxy_receita_pct).toBe(0);
+  });
+});
+
+describe('recomendarAcaoComercial — custo_proxy (margem estimada)', () => {
+  const config = { margem_minima_pct: 0.15, desconto_max_pct: 0.10, prazo_alvo_dias: 30, dias_estoque_max: 120, sample_min_receita: 5000 };
+  it('evp>0 mas custo_proxy → "Crescer / proteger" QUALIFICADO (custo estimado a confirmar)', () => {
+    const r = recomendarAcaoComercial({ evp: 300, receita_liquida: 1000, cm: 400, desconto_total: 0, prazo_medio_dias: 0, dias_estoque: 0, config, custo_proxy: true });
+    const cresc = r.find((x) => x.acao === 'Crescer / proteger')!;
+    expect(cresc).toBeTruthy();
+    expect(cresc.motivo.toLowerCase()).toContain('proxy');
+    expect(cresc.motivo.toLowerCase()).toContain('confirmar');
+  });
+  it('evp>0 não-proxy → "Crescer / proteger" puro (sem ressalva de proxy)', () => {
+    const r = recomendarAcaoComercial({ evp: 300, receita_liquida: 1000, cm: 400, desconto_total: 0, prazo_medio_dias: 0, dias_estoque: 0, config, custo_proxy: false });
+    const cresc = r.find((x) => x.acao === 'Crescer / proteger')!;
+    expect(cresc.motivo).not.toMatch(/proxy|confirmar/i);
+  });
+});
+
+describe('scoreConfiancaCockpit — custo_proxy_receita_pct', () => {
+  const okBase = { cobertura_receita: 1, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false };
+  it('proxy por receita > 15% → rebaixa para média + motivo (caso Oben ~16%)', () => {
+    const r = scoreConfiancaCockpit({ ...okBase, custo_proxy_receita_pct: 0.164 });
+    expect(r.nivel).toBe('media');
+    expect(r.motivos.some((m) => m.toLowerCase().includes('proxy'))).toBe(true);
+  });
+  it('0 < proxy ≤ 15% → só motivo, não rebaixa nível', () => {
+    const r = scoreConfiancaCockpit({ ...okBase, custo_proxy_receita_pct: 0.10 });
+    expect(r.nivel).toBe('alta');
+    expect(r.motivos.some((m) => m.toLowerCase().includes('proxy'))).toBe(true);
+  });
+  it('proxy = 0 → sem motivo de proxy, alta', () => {
+    const r = scoreConfiancaCockpit({ ...okBase, custo_proxy_receita_pct: 0 });
+    expect(r.nivel).toBe('alta');
+    expect(r.motivos.some((m) => m.toLowerCase().includes('proxy'))).toBe(false);
   });
 });

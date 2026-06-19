@@ -20,3 +20,18 @@ PEGA | pedidoContaNoFaturamento: blocklist→allowlist (tira !)| s/return !STATU
 PEGA | evp_parcial: OU-de-pernas-ausentes vira E          | s/ar_indisponivel \|\| estoque_indisponivel/ar_indisponivel && estoque_indisponivel/
 PEGA | guard anti-piso: capital negativo entra como num   | s/Number\.isFinite\(estSraw\) && estSraw >= 0/Number.isFinite(estSraw)/
 PEGA | confianca: limiar teto-por-receita 5% afrouxa p/15%| s/tetoPct > 0\.05/tetoPct > 0.15/
+# Contrato de custo (Codex P2 cost-final-ignorado — v2 do #953): proveniência (PRODUCT_COST/CMC=real, proxy=não-real);
+# o custo PROXY MANTÉM a margem (preserva cobertura) mas degrada "Crescer"→a-confirmar + rebaixa a confiança (eixo
+# irmão do cm_incompleto/evp_teto do #961). custo_proxy_receita_pct ponderado por receita. Cada mutação deve dar VERMELHO.
+PEGA | resolverCusto: toda fonte vira real (tira a checagem de source)      | s/ && COST_SOURCES_REAIS\.has\(source\)//
+PEGA | finitePositive aceita <=0/NaN (custo 0/sujo entra na margem)         | s/Number\.isFinite\(x\) && x > 0/Number.isFinite(x)/
+PEGA | célula: custo_proxy inverte real↔proxy (=== false vira !== false)    | s/c\.custo_real === false/c.custo_real !== false/
+PEGA | célula: custo_proxy marca proxy mesmo sem margem (tira cm!=null)     | s/cm != null && c\.custo_real === false/c.custo_real === false/
+PEGA | rollup: custoProxy não acumula (grupo nunca marca proxy)             | s/if \(cel\.custo_proxy\) acc\.custoProxy = true;//
+PEGA | empresa: recProxy não acumula (numerador do proxy_pct zera)          | s/custoProxyEmp = true; recProxy \+= cel\.receita_liquida;/custoProxyEmp = true;/
+PEGA | empresa: recComCm não acumula (denominador do proxy_pct zera)        | s/cmNull = false; recComCm \+= cel\.receita_liquida;/cmNull = false;/
+PEGA | gate "Crescer" ignora custo_proxy (proxy vira "sem alertas")         | s/ && !custoProxy//
+PEGA | "Crescer": ressalva de proxy nunca adicionada                        | s/if \(custoProxy\) ressalvas\.push/if (false) ressalvas.push/
+PEGA | confiança: proxy material não rebaixa (threshold impossível)         | s/proxyPct > 0\.15/proxyPct > 1/
+PEGA | confiança: proxy ausente fabrica 100% (?? 0 vira ?? 1)               | s/input\.custo_proxy_receita_pct \?\? 0/input.custo_proxy_receita_pct ?? 1/
+PEGA | proxy_pct sem clamp [0,1] (receita negativa estoura — Codex P2)       | s/Math\.max\(0, Math\.min\(1, recProxy \/ recComCm\)\)/recProxy \/ recComCm/
