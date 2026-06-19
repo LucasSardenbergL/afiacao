@@ -62,7 +62,8 @@ serve(async (req) => {
       }
 
       const [{ data: score }, { data: profile }, { data: bundles }, { data: allScores }, { data: objEvents }] = await Promise.all([
-        admin.from('farmer_client_scores').select('*').eq('customer_user_id', customerId).eq('farmer_id', farmerId).maybeSingle(),
+        // Opção A: 1 linha por cliente (customer_user_id único); sem farmer_id (admin/service_role). On-demand de cliente de outro dono não cai mais em "sem_score".
+        admin.from('farmer_client_scores').select('*').eq('customer_user_id', customerId).maybeSingle(),
         admin.from('profiles').select('name, customer_type, cnae').eq('user_id', customerId).maybeSingle(),
         admin.from('farmer_bundle_recommendations').select('*').eq('customer_user_id', customerId).eq('farmer_id', farmerId).eq('status', 'pendente').order('lie_bundle', { ascending: false }).limit(2),
         admin.from('farmer_client_scores').select('gross_margin_pct').eq('farmer_id', farmerId),

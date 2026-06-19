@@ -89,11 +89,12 @@ export function useFarmerCopilot() {
     let bundleContext: CopilotContext | undefined = undefined;
 
     if (selectedCustomer) {
+      // Opção A: 1 linha por cliente; sem filtro de farmer_id — o dropdown segue effectiveUserId,
+      // mas o score é único por cliente, e filtrar por user.id quebrava sob a lente. RLS gateia.
       const { data: score } = await supabase
         .from('farmer_client_scores')
         .select('*')
         .eq('customer_user_id', selectedCustomer)
-        .eq('farmer_id', user!.id)
         .single();
 
       const { data: profile } = await supabase
@@ -135,7 +136,7 @@ export function useFarmerCopilot() {
     }
 
     return { customerContext, customerName, bundleContext };
-  }, [selectedCustomer, user, getActivePlan]);
+  }, [selectedCustomer, getActivePlan]);
 
   // Start voice recording
   const handleStartVoice = useCallback(async () => {
@@ -172,7 +173,7 @@ export function useFarmerCopilot() {
     } finally {
       setIsConnecting(false);
     }
-  }, [selectedCustomer, user, copilot, scribe, prepareSessionContext]);
+  }, [selectedCustomer, copilot, scribe, prepareSessionContext]);
 
   // Start text mode session
   const handleStartText = useCallback(async () => {
