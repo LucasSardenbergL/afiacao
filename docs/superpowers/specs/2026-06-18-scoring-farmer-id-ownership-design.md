@@ -94,8 +94,12 @@ Asserts de cascata (visit-queue não cresce com mudança só de `farmer_id`; tri
 ## Deploy (lovable-db-operator → SQL Editor; founder cola)
 Migration custom não auto-aplica no Lovable. Gerar arquivo + bloco pro SQL Editor + query de validação pós-apply (`pg_get_functiondef` confirma `COALESCE`; fila reconciliada). Sem mudança de frontend/edge neste hotfix.
 
+## Status
+- ✅ **Hotfix P0a+P0c shipado** — [PR #960](https://github.com/LucasSardenbergL/afiacao/pull/960) (não-draft, auto-merge no CI verde). Migration `20260618230000`. Harness `db/test-fix-enqueue-sinais-owner.sh` (PG17 9/9 + falsificação). **Falta o founder colar o SQL no Lovable SQL Editor** (não está no banco até o Run + validação `✅|✅`).
+
 ## Registry das frentes diferidas
-- [ ] B1 reconcile 1425 — **aguarda confirmação do reimport de carteira**
-- [ ] B2 calculate-scores reconciliar farmer_id no update (raiz durável) — design próprio
-- [ ] P1 calls filter customer-only — PR testado
-- [ ] Leitores (generate-tactical-plan edge + 4 hooks) — frente separada
+- [ ] **B1** reconcile dos 1425 — **GATE: confirmar o reimport de carteira de 2026-06-18 07:30** (real desbloqueio dos 22% visíveis).
+- [ ] **B2b** (DECIDIDO: trigger invariante no banco, recomendado vs B2a/edge e B2c/batch — alinha o "invariant no banco" do Codex; SQL PG17-provável; instantâneo). Trigger `AFTER INSERT OR UPDATE OF owner_user_id ON carteira_assignments` → reconcilia `farmer_client_scores.farmer_id` da linha afetada (`WHEN owner mudou`). **Deploy split:** o trigger é ungated (governa só reassigns futuros, não toca o estado suspeito atual); o reconcile one-time (= B1) fica gated na confirmação do reimport. Também corrigir `farmer_id` stale em `health_score_history`/`priority_score_log` (carimbados de `client.farmer_id` em calculate-scores:459/472). **Resume:** /codex focado no B2b → PG17 + falsificação → migration (trigger + reconcile gated). Cuidado: trigger per-row dispara N× num reimport (aceitável, op única).
+- [ ] **P1** calls filter customer-only (`recalcOne` remove `.eq('farmer_id',…)`) — latente (0 impacto hoje), PR testado à parte.
+- [ ] **Leitores** (`generate-tactical-plan` edge + `useTacticalPlan`/`useFarmerCopilot`/`useFarmerTacticalPlan`/`useFarmerExperiments`) filtram score por `farmer_id=user.id` → vazio pra cliente de outro dono. Money-path-adjacente (Codex), frente separada.
+- [ ] **P2 boundary guard no recalcOne — DESCARTADO** (Codex: defesa falsa sozinho; B2b cobre).
