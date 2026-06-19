@@ -85,6 +85,16 @@ const STATUS_TITULO_NAO_FATURAVEL = ['CANCELADO'];
 function tituloFaturavelAR(statusTitulo: string | null | undefined): boolean {
   return statusTitulo == null ? true : !STATUS_TITULO_NAO_FATURAVEL.includes(statusTitulo);
 }
+// Dois sinais de cobertura (proxy direcional). ar_por_app = cobertura_receita histórica; app_por_ar
+// = venda do app com AR faturável. Divisor 0 / não-finito → 1 (não fabrica penalidade). Espelho de src.
+function coberturaBidirecional(input: { receita: number; arFaturavel: number }): { ar_por_app: number; app_por_ar: number } {
+  const r = input.receita, a = input.arFaturavel;
+  if (!Number.isFinite(r) || !Number.isFinite(a)) return { ar_por_app: 1, app_por_ar: 1 };
+  return {
+    ar_por_app: a > 0 ? Math.min(1, r / a) : 1,
+    app_por_ar: r > 0 ? Math.min(1, a / r) : 1,
+  };
+}
 type TituloAR = {
   valor_documento: number; saldo: number; valor_recebido: number;
   data_emissao: string | null; data_vencimento: string | null;
@@ -183,12 +193,13 @@ function recomendarAcaoComercial(input: { evp: number | null; receita_liquida: n
   // aviso de hurdle ausente vive na confiança + banner da UI (NÃO por cliente — vazaria pro A4).
   return r;
 }
-function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean; hurdle_indisponivel?: boolean }) {
+function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean; hurdle_indisponivel?: boolean; cobertura_app_por_ar?: number }) {
   const motivos: string[] = []; let nivel = 3;
   const rebaixar = (para: number, m: string) => { if (para < nivel) nivel = para; motivos.push(m); };
   if (input.hurdle_indisponivel) rebaixar(1, "Sem Ke/hurdle configurado — lucro econômico (EVP) indisponível; configure em /financeiro/valor.");
   if (input.cobertura_receita < 0.6) rebaixar(1, `Cobertura de receita ${(input.cobertura_receita * 100).toFixed(0)}% — muita venda fora do app; cockpit parcial.`);
   else if (input.cobertura_receita < 0.85) rebaixar(2, `Cobertura de receita ${(input.cobertura_receita * 100).toFixed(0)}% (ideal ≥85%).`);
+  if (input.cobertura_app_por_ar != null && input.cobertura_app_por_ar < 0.5) rebaixar(2, `${((1 - input.cobertura_app_por_ar) * 100).toFixed(0)}% da venda do app sem AR faturável — encargo de cliente subestimado; possível divergência app↔financeiro.`);
   if (input.custo_ausente_pct > 0.4) rebaixar(1, `${(input.custo_ausente_pct * 100).toFixed(0)}% das células sem custo — margem indisponível em boa parte.`);
   else if (input.custo_ausente_pct > 0.15) rebaixar(2, `${(input.custo_ausente_pct * 100).toFixed(0)}% sem custo cadastrado.`);
   if (input.ar_indisponivel_pct > 0.3) rebaixar(2, `${(input.ar_indisponivel_pct * 100).toFixed(0)}% das vendas sem AR vinculável — encargo de cliente subestimado.`);
@@ -391,13 +402,14 @@ serve(async (req: Request) => {
     // a métrica só detecta "AR sem venda no app", não o inverso. Daí os thresholds largos. Exclui
     // CANCELADO (tituloFaturavelAR) p/ simetria com o numerador (pedidoContaNoFaturamento).
     const arTotal = crsAll.filter((cr) => cr.data_emissao != null && cr.data_emissao >= ttm_inicio && tituloFaturavelAR(cr.status_titulo)).reduce((s, cr) => s + (cr.valor_documento || 0), 0);
-    const cobertura_receita = arTotal > 0 ? Math.min(1, res.empresa.receita / arTotal) : 1;
-    const confianca = scoreConfiancaCockpit({ cobertura_receita, custo_ausente_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel });
+    const { ar_por_app, app_por_ar } = coberturaBidirecional({ receita: res.empresa.receita, arFaturavel: arTotal });
+    const cobertura_receita = ar_por_app; // retrocompat: mesmo valor de antes
+    const confianca = scoreConfiancaCockpit({ cobertura_receita, cobertura_app_por_ar: app_por_ar, custo_ausente_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel });
 
     return jsonResponse({
       company: COMPANY, k, hurdle_indisponivel, ttm: { inicio: ttm_inicio, fim: ttm_fim },
       porCliente: res.porCliente, porSKU: res.porSKU, empresa: res.empresa,
-      recomendacoesCliente, confianca, cobertura_receita,
+      recomendacoesCliente, confianca, cobertura_receita, cobertura_app_por_ar: app_por_ar,
       cobertura_baixa_ar: coberturaBaixaAR, // Fase 3: fração da AR liquidada com baixa derivada REAL (vs vencimento-proxy)
       config,
     }, 200);
