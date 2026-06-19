@@ -86,6 +86,10 @@ interface ScoreUpdate {
   rf_score: number;
   m_score: number;
   g_score: number;
+  // RECÊNCIA-VIVA: o compute agora REESCREVE a base de vendas (antes só lia → congelava no seed).
+  days_since_last_purchase: number;
+  avg_monthly_spend_180d: number;
+  category_count: number;
   calculated_at: string;
   updated_at: string;
 }
@@ -111,6 +115,20 @@ interface PriorityLogRecord {
   churn_risk_component: number;
   repurchase_component: number;
   goal_proximity_component: number;
+}
+
+// Recência-viva: espelho inline de src/lib/scoring/salesBase.ts (vitest 8/8; Deno não importa de
+// src/). Degradação honesta: ausente → 999/0/0 ("ausente ≠ zero"); Number.isFinite guarda NaN.
+function deriveSalesBase(sales: CustomerSalesSummaryRow | null | undefined): {
+  days_since_last_purchase: number; avg_monthly_spend_180d: number; category_count: number;
+} {
+  const daysRaw = sales ? Number(sales.days_since_last_purchase ?? 999) : 999;
+  const days = Number.isFinite(daysRaw) ? daysRaw : 999;
+  const revenue180 = Number(sales?.revenue_180d ?? 0);
+  const spend = Number.isFinite(revenue180) ? Math.round(revenue180 / 6) : 0;
+  const catRaw = Number(sales?.category_count ?? 0);
+  const category = Number.isFinite(catRaw) ? catRaw : 0;
+  return { days_since_last_purchase: days, avg_monthly_spend_180d: spend, category_count: category };
 }
 
 Deno.serve(async (req) => {
@@ -177,11 +195,35 @@ Deno.serve(async (req) => {
         }
       }
     }
+
+    // === RECÊNCIA-VIVA: snapshot de vendas (RPC) carregado TODO run ===
+    // É a FONTE do refresh de recência/gasto/diversidade de TODA linha (antes só rodava no seed).
+    // `salesRefreshFatal` é flag SOFT run-wide: RPC falha → a recência fica CONGELADA este run
+    // (degrada honesto, NÃO starva o compute) e é surfaceada (500) DEPOIS do compute. supabase-js
+    // NÃO lança em erro de RPC → checar `error`.
+    let salesRefreshFatal: Error | null = null;
+    const salesMap = new Map<string, CustomerSalesSummaryRow>();
+    try {
+      const { data, error } = await supabase.rpc('get_customer_sales_summary');
+      if (error) {
+        salesRefreshFatal = new Error(`get_customer_sales_summary retornou erro — recência congelada este run: ${error.message}`);
+        console.error('[calculate-scores]', salesRefreshFatal.message);
+      } else {
+        for (const s of (data ?? []) as unknown as CustomerSalesSummaryRow[]) salesMap.set(s.customer_user_id, s);
+      }
+    } catch (e) {
+      // supabase-js normalmente RETORNA {error}, mas rejeição de fetch/rede LANÇA — capturar aqui
+      // também (senão o try/catch EXTERNO daria 500 ANTES do compute, quebrando o contrato
+      // "RPC falha → degrada pra congelado, compute roda" — achado Codex).
+      salesRefreshFatal = e instanceof Error ? e : new Error(String(e));
+      console.error('[calculate-scores] get_customer_sales_summary lançou — recência congelada este run:', salesRefreshFatal.message);
+    }
+
     // === AUTO-SEED v2 (F1 — reset-path robusto): completa clientes FALTANTES ===
     // Antes só rodava com a tabela VAZIA (gate length===0) — frágil: 1 linha esparsa do
     // scoring-recalc-client (agora UPDATE-only) ou qualquer reset parcial suprimia o seed.
-    // Agora: detecta FALTANTES e só carrega flaggeds/ownerMap/salesMap QUANDO há o que semear
-    // (senão a RPC do seed viraria dependência DURA do recompute noturno — achado Codex).
+    // Agora: detecta FALTANTES e só carrega flaggeds/ownerMap QUANDO há o que semear. (A RPC de
+    // vendas roda TODO run — recência-viva, acima — e o seed reusa o salesMap do topo.)
     // seedErrors é coletado aqui mas LANÇADO depois do COMPUTE (não starvar o recompute dos
     // existentes por 1 linha-veneno no seed — achado Codex). Espelha src/lib/scoring/seedTargets.ts.
     const seedErrors: string[] = [];
@@ -248,6 +290,10 @@ Deno.serve(async (req) => {
 
         if (missing.length === 0) {
           console.log(`[calculate-scores] ${missingRaw.length} faltantes, todos flaggeds. Nada a semear.`);
+        } else if (salesRefreshFatal) {
+          // RPC de vendas falhou → NÃO semear os faltantes (deriveSalesBase daria 999/0 p/ TODOS =
+          // fabricar zero; #936 "ausente≠zero"). Entram quando a RPC voltar (idempotente).
+          console.warn(`[calculate-scores] RPC de vendas falhou — pulando seed de ${missing.length} faltantes este run.`);
         } else {
           console.log(`[calculate-scores] semeando ${missing.length} faltantes (de ${missingRaw.length}; ${flaggeds.size} flaggeds; ${clients.length} já em fcs).`);
 
@@ -273,29 +319,12 @@ Deno.serve(async (req) => {
             if (aRows.length < 1000) break;
           }
 
-          // Sinais de venda agregados NO BANCO (RPC). FAIL-CLOSED: supabase-js NÃO lança em
-          // erro de RPC → checar (senão semearia days=999/spend=0, fabricando zero —
-          // "ausente ≠ zero"). Carregada SÓ aqui (quando há o que semear), não todo run.
-          const salesMap = new Map<string, CustomerSalesSummaryRow>();
-          {
-            const { data, error } = await supabase.rpc('get_customer_sales_summary');
-            if (error) throw error;
-            for (const s of (data ?? []) as unknown as CustomerSalesSummaryRow[]) {
-              salesMap.set(s.customer_user_id, s);
-            }
-          }
-
-          // Registros de seed só dos FALTANTES (mapeamento inalterado: recência do SQL;
-          // ausente → 999/0 honesto; Number.isFinite guarda NaN do numeric).
+          // Registros de seed só dos FALTANTES, da base de vendas (salesMap do TOPO) via
+          // deriveSalesBase — mesma degradação honesta do compute (vitest 8/8). Aqui já é garantido
+          // que !salesRefreshFatal (o ramo acima pula o seed se a RPC falhou).
           const seedRecords: FarmerClientScoreSeed[] = [];
           for (const client of missing) {
-            const sales = salesMap.get(client.user_id);
-            const daysRaw = sales ? Number(sales.days_since_last_purchase ?? 999) : 999;
-            const daysSinceLastPurchase = Number.isFinite(daysRaw) ? daysRaw : 999;
-            const revenue180 = Number(sales?.revenue_180d ?? 0);
-            const avgMonthlySpend = Number.isFinite(revenue180) ? Math.round(revenue180 / 6) : 0;
-            const categoryCountSeed = Number(sales?.category_count ?? 0);
-
+            const base = deriveSalesBase(salesMap.get(client.user_id));
             seedRecords.push({
               customer_user_id: client.user_id,
               farmer_id: ownerMap.get(client.user_id) ?? defaultFarmerId,
@@ -303,9 +332,9 @@ Deno.serve(async (req) => {
               health_class: 'novo',
               churn_risk: 0,
               priority_score: 0,
-              days_since_last_purchase: daysSinceLastPurchase,
-              avg_monthly_spend_180d: avgMonthlySpend,
-              category_count: Number.isFinite(categoryCountSeed) ? categoryCountSeed : 0,
+              days_since_last_purchase: base.days_since_last_purchase,
+              avg_monthly_spend_180d: base.avg_monthly_spend_180d,
+              category_count: base.category_count,
               gross_margin_pct: 0,
               avg_repurchase_interval: 0,
               expansion_score: 0,
@@ -380,6 +409,7 @@ Deno.serve(async (req) => {
     // como "Sem clientes" silencioso — achado Codex). Com linhas existentes, segue p/ o compute.
     if (!clients || clients.length === 0) {
       if (seedFatal) throw seedFatal;
+      if (salesRefreshFatal) throw salesRefreshFatal;
       if (seedErrors.length > 0) {
         throw new Error(`seed falhou em ${seedErrors.length} cliente(s) numa fcs vazia: ${seedErrors.slice(0, 3).join(' | ')}`);
       }
@@ -389,6 +419,21 @@ Deno.serve(async (req) => {
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // === RECÊNCIA-VIVA: overlay dos valores FRESCOS (salesMap) nos clients em memória ANTES do compute ===
+    // Assim os maxes (maxDaysSince/maxSpend/maxCategories) E o loop leem fresco — e o ScoreUpdate
+    // persiste days/spend/category (que NUNCA eram reescritos → recência congelava no dia do seed).
+    // RPC falhou (salesRefreshFatal) → NÃO faz overlay → compute roda nos days CONGELADOS (degrada
+    // honesto, stale-mas-não-pior; a falha é surfaceada depois do compute). Cobre existentes E
+    // recém-semeados (re-fetchados acima). Só toca os 3 campos da RPC; os demais base ficam.
+    if (!salesRefreshFatal) {
+      for (const c of clients) {
+        const b = deriveSalesBase(salesMap.get(c.customer_user_id));
+        c.days_since_last_purchase = b.days_since_last_purchase;
+        c.avg_monthly_spend_180d = b.avg_monthly_spend_180d;
+        c.category_count = b.category_count;
+      }
     }
 
     // Compute normalization ranges
@@ -474,6 +519,10 @@ Deno.serve(async (req) => {
         rf_score: Math.round(recencyScore),
         m_score: Math.round(marginScore),
         g_score: Math.round(diversityScore),
+        // RECÊNCIA-VIVA: persiste a base de vendas FRESCA (pós-overlay) — antes congelava no seed.
+        days_since_last_purchase: client.days_since_last_purchase ?? 999,
+        avg_monthly_spend_180d: client.avg_monthly_spend_180d ?? 0,
+        category_count: client.category_count ?? 0,
         calculated_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
@@ -525,6 +574,10 @@ Deno.serve(async (req) => {
     // não pode mascarar seed/descoberta falho. Idempotente: o próximo run recomputa a diferença
     // e completa o resto. Antes do history p/ não duplicar a série temporal em run persistente.
     if (seedFatal) throw seedFatal;
+    // RECÊNCIA-VIVA: RPC falhou → o compute rodou nos days CONGELADOS (degradou, não starvou) e os
+    // 3 campos foram reescritos com o valor antigo (no-op). Surface 500 (idempotente: o próximo run
+    // com a RPC OK refresca a recência). Antes do history.
+    if (salesRefreshFatal) throw salesRefreshFatal;
     if (seedErrors.length > 0) {
       throw new Error(`seed falhou em ${seedErrors.length} cliente(s): ${seedErrors.slice(0, 3).join(' | ')}${seedErrors.length > 3 ? ` (+${seedErrors.length - 3})` : ''}`);
     }
