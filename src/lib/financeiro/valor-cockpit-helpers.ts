@@ -286,6 +286,7 @@ export function scoreConfiancaCockpit(input: {
   estoque_ausente_pct: number;   // [0,1] SKUs sem estoque/cmc
   imposto_estimado: boolean;
   hurdle_indisponivel?: boolean; // sem Ke → EVP não calculável → confiança baixa
+  cobertura_app_por_ar?: number; // [0,1] venda app com AR faturável; <0,5 → divergência → rebaixa
 }): ConfiancaCockpit {
   const motivos: string[] = [];
   let nivel = 3; // 3 alta, 2 media, 1 baixa
@@ -294,6 +295,7 @@ export function scoreConfiancaCockpit(input: {
   if (input.hurdle_indisponivel) rebaixar(1, 'Sem Ke/hurdle configurado — lucro econômico (EVP) indisponível; configure em /financeiro/valor.');
   if (input.cobertura_receita < 0.6) rebaixar(1, `Cobertura de receita ${(input.cobertura_receita * 100).toFixed(0)}% — muita venda fora do app; cockpit parcial.`);
   else if (input.cobertura_receita < 0.85) rebaixar(2, `Cobertura de receita ${(input.cobertura_receita * 100).toFixed(0)}% (ideal ≥85%).`);
+  if (input.cobertura_app_por_ar != null && input.cobertura_app_por_ar < 0.5) rebaixar(2, `${((1 - input.cobertura_app_por_ar) * 100).toFixed(0)}% da venda do app sem AR faturável — encargo de cliente subestimado; possível divergência app↔financeiro.`);
 
   if (input.custo_ausente_pct > 0.4) rebaixar(1, `${(input.custo_ausente_pct * 100).toFixed(0)}% das células sem custo — margem indisponível em boa parte.`);
   else if (input.custo_ausente_pct > 0.15) rebaixar(2, `${(input.custo_ausente_pct * 100).toFixed(0)}% sem custo cadastrado.`);

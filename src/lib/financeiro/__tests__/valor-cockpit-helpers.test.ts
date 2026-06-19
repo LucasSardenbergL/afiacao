@@ -233,6 +233,15 @@ describe('scoreConfiancaCockpit', () => {
     const r = scoreConfiancaCockpit({ cobertura_receita: 0.95, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false });
     expect(r.nivel).toBe('alta');
   });
+  it('app_por_ar < 0,5 → rebaixa para média com motivo de divergência', () => {
+    const r = scoreConfiancaCockpit({ cobertura_receita: 1, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false, cobertura_app_por_ar: 0.4 });
+    expect(r.nivel).toBe('media');
+    expect(r.motivos.some((m) => m.toLowerCase().includes('sem ar faturável'))).toBe(true);
+  });
+  it('app_por_ar 0,80 (Oben hoje) → NÃO penaliza', () => {
+    const r = scoreConfiancaCockpit({ cobertura_receita: 1, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false, cobertura_app_por_ar: 0.8 });
+    expect(r.nivel).toBe('alta');
+  });
   it('cobertura de receita baixa → rebaixa + motivo', () => {
     const r = scoreConfiancaCockpit({ cobertura_receita: 0.4, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false });
     expect(r.nivel).not.toBe('alta');
