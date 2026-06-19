@@ -67,6 +67,20 @@ export function tituloFaturavelAR(statusTitulo: string | null | undefined): bool
   return statusTitulo == null ? true : !STATUS_TITULO_NAO_FATURAVEL.includes(statusTitulo);
 }
 
+// Dois sinais de cobertura (proxy DIRECIONAL, não reconciliação). ar_por_app = quanto do AR é
+// explicado por venda no app (= cobertura_receita histórica); app_por_ar = quanto da venda no app
+// tem AR faturável (detecta venda sem AR — ex.: à vista/divergência). Entrada não-finita, receita
+// negativa, OU AR faturável ausente (≤0) → {1,1}: indisponível NÃO fabrica penalidade nem %
+// absurda (money-path; AR=0 pode ser fonte vazia/quebrada, não "100% sem AR" — Codex 2026-06-18).
+export function coberturaBidirecional(input: { receita: number; arFaturavel: number }): { ar_por_app: number; app_por_ar: number } {
+  const r = input.receita, a = input.arFaturavel;
+  if (!Number.isFinite(r) || !Number.isFinite(a) || r < 0 || a <= 0) return { ar_por_app: 1, app_por_ar: 1 };
+  return {
+    ar_por_app: Math.min(1, r / a),
+    app_por_ar: r > 0 ? Math.min(1, a / r) : 1,
+  };
+}
+
 export type TituloAR = {
   valor_documento: number; saldo: number; valor_recebido: number;
   data_emissao: string | null;
@@ -273,6 +287,7 @@ export function scoreConfiancaCockpit(input: {
   estoque_ausente_pct: number;   // [0,1] SKUs sem estoque/cmc
   imposto_estimado: boolean;
   hurdle_indisponivel?: boolean; // sem Ke → EVP não calculável → confiança baixa
+  cobertura_app_por_ar?: number; // [0,1] venda app com AR faturável; <0,5 → divergência → rebaixa
 }): ConfiancaCockpit {
   const motivos: string[] = [];
   let nivel = 3; // 3 alta, 2 media, 1 baixa
@@ -281,6 +296,7 @@ export function scoreConfiancaCockpit(input: {
   if (input.hurdle_indisponivel) rebaixar(1, 'Sem Ke/hurdle configurado — lucro econômico (EVP) indisponível; configure em /financeiro/valor.');
   if (input.cobertura_receita < 0.6) rebaixar(1, `Cobertura de receita ${(input.cobertura_receita * 100).toFixed(0)}% — muita venda fora do app; cockpit parcial.`);
   else if (input.cobertura_receita < 0.85) rebaixar(2, `Cobertura de receita ${(input.cobertura_receita * 100).toFixed(0)}% (ideal ≥85%).`);
+  if (input.cobertura_app_por_ar != null && input.cobertura_app_por_ar < 0.5) rebaixar(2, `${((1 - input.cobertura_app_por_ar) * 100).toFixed(0)}% da venda do app sem AR faturável — encargo de cliente subestimado; possível divergência app↔financeiro.`);
 
   if (input.custo_ausente_pct > 0.4) rebaixar(1, `${(input.custo_ausente_pct * 100).toFixed(0)}% das células sem custo — margem indisponível em boa parte.`);
   else if (input.custo_ausente_pct > 0.15) rebaixar(2, `${(input.custo_ausente_pct * 100).toFixed(0)}% sem custo cadastrado.`);

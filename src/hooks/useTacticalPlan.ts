@@ -306,8 +306,9 @@ export const useTacticalPlan = () => {
     const { data: score } = (await supabase
       .from('farmer_client_scores')
       .select('revenue_potential, avg_monthly_spend_180d, gross_margin_pct')
+      // Opção A: 1 linha por cliente (customer_user_id único). NÃO filtrar por farmer_id —
+      // quebrava sob a lente / cliente de outro dono → "sem score" falso; RLS gateia a visibilidade.
       .eq('customer_user_id', customerId)
-      .eq('farmer_id', user.id)
       .single()) as unknown as { data: Pick<ClientScoreFull, 'revenue_potential' | 'avg_monthly_spend_180d' | 'gross_margin_pct'> | null };
 
     const revPotential = Number(score?.revenue_potential || 0);
@@ -335,7 +336,8 @@ export const useTacticalPlan = () => {
         { data: profile },
         { data: bundles },
       ] = await Promise.all([
-        supabase.from('farmer_client_scores').select('*').eq('customer_user_id', customerId).eq('farmer_id', user.id).single() as unknown as Promise<{ data: ClientScoreFull | null }>,
+        // Opção A: lookup por customer_user_id (único); sem farmer_id (RLS gateia). Ver checkEfficiency.
+        supabase.from('farmer_client_scores').select('*').eq('customer_user_id', customerId).single() as unknown as Promise<{ data: ClientScoreFull | null }>,
         supabase.from('profiles').select('name, customer_type, cnae').eq('user_id', customerId).single() as unknown as Promise<{ data: ProfileLite | null }>,
         supabase.from('farmer_bundle_recommendations').select('*').eq('customer_user_id', customerId).eq('farmer_id', user.id).eq('status', 'pendente').order('lie_bundle', { ascending: false }).limit(2) as unknown as Promise<{ data: BundleRow[] | null }>,
       ]);

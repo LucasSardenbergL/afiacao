@@ -169,7 +169,7 @@ export default function FinanceiroValorCockpit() {
           {data.confianca.motivos.length > 0 && (
             <details className="text-xs text-muted-foreground mt-3">
               <summary>
-                Confiança ({(data.cobertura_receita * 100).toFixed(0)}% de cobertura de receita)
+                Confiança ({(data.cobertura_receita * 100).toFixed(0)}% do AR explicado{data.cobertura_app_por_ar != null ? ` · ${(data.cobertura_app_por_ar * 100).toFixed(0)}% das vendas com AR` : ''})
               </summary>
               <ul className="list-disc pl-4 mt-1">
                 {data.confianca.motivos.map((m, i) => (

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 267
+-- Total de custom migrations: 268
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -286,6 +286,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260618180000', 'get_customer_sales_summary', '20260618180000_get_customer_sales_summary.sql'),
   ('20260618190000', 'b_cleanup_dups_oben', '20260618190000_b_cleanup_dups_oben.sql'),
   ('20260618190000', 'get_customer_sales_summary_blocklist', '20260618190000_get_customer_sales_summary_blocklist.sql'),
+  ('20260618210000', 'b_renamespace_orfaos', '20260618210000_b_renamespace_orfaos.sql'),
   ('20260618230000', 'fix_enqueue_sinais_owner_e_reconcile_fila', '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql')
 )
 SELECT
