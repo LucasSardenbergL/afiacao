@@ -50,8 +50,8 @@ const ALLOWED = new Set([
   // FarmerCalls: effectiveUserId SÓ na leitura da lista de ligações (loadCallLogs); a escrita
   // (handleSaveCall, farmer_id=user.id) é write-identity e o botão "Nova ligação" é disabled na lente.
   'src/pages/FarmerCalls.tsx',
-  // useFarmerScoring: effectiveUserId na leitura/cálculo da agenda do alvo; o upsert de scores
-  // é PULADO na lente (skip por isImpersonating) — o master não recalcula a carteira do alvo.
+  // useFarmerScoring: effectiveUserId SÓ na leitura/cálculo da agenda do alvo. Hook DISPLAY-ONLY:
+  // não persiste scores (writer autoritativo = edge calculate-scores). Nenhuma mutation no hook.
   'src/hooks/useFarmerScoring.ts',
   // useCrossSellEngine: effectiveUserId escopa a LEITURA/recálculo das recomendações ao
   // alvo na lente (lê os scores DELE pra inspeção) e NÃO cai no fallback super-admin
