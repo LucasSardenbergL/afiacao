@@ -288,6 +288,7 @@ export function scoreConfiancaCockpit(input: {
   imposto_estimado: boolean;
   hurdle_indisponivel?: boolean; // sem Ke → EVP não calculável → confiança baixa
   cobertura_app_por_ar?: number; // [0,1] venda app com AR faturável; <0,5 → divergência → rebaixa
+  custo_baixa_confianca_pct?: number; // [0,1] células com custo proxy(<0,7)/legado-fallback (cm EXISTE, base estimada)
 }): ConfiancaCockpit {
   const motivos: string[] = [];
   let nivel = 3; // 3 alta, 2 media, 1 baixa
@@ -300,6 +301,14 @@ export function scoreConfiancaCockpit(input: {
 
   if (input.custo_ausente_pct > 0.4) rebaixar(1, `${(input.custo_ausente_pct * 100).toFixed(0)}% das células sem custo — margem indisponível em boa parte.`);
   else if (input.custo_ausente_pct > 0.15) rebaixar(2, `${(input.custo_ausente_pct * 100).toFixed(0)}% sem custo cadastrado.`);
+
+  // Custo de BAIXA CONFIANÇA (proxy do motor <0,7 OU fallback legado cost_price) — distinto de "sem custo": o
+  // cm/EVP EXISTE, mas a base é estimada. Mais brando que custo_ausente (não nullifica): ≥0,2 rebaixa p/ média
+  // (impede "alta" com ~1/5 das células estimadas), 0,05–0,2 só informa, e NUNCA derruba abaixo de média sozinho
+  // (codex). Mutuamente exclusivo de custo_ausente (classificado APÓS resolver o custo usado).
+  const cbc = input.custo_baixa_confianca_pct ?? 0;
+  if (cbc >= 0.2) rebaixar(2, `${(cbc * 100).toFixed(0)}% das células com custo estimado (proxy do motor ou fallback legado)${cbc > 0.4 ? ' — boa parte da margem é indicativa' : ''} — confiança da margem reduzida.`);
+  else if (cbc >= 0.05) motivos.push(`${(cbc * 100).toFixed(0)}% das células com custo proxy/legado (informativo).`);
 
   if (input.ar_indisponivel_pct > 0.3) rebaixar(2, `${(input.ar_indisponivel_pct * 100).toFixed(0)}% das vendas sem AR vinculável — encargo de cliente subestimado.`);
   if (input.estoque_ausente_pct > 0.3) rebaixar(2, `${(input.estoque_ausente_pct * 100).toFixed(0)}% dos SKUs sem estoque — encargo de SKU subestimado.`);
