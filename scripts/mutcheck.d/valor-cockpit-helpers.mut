@@ -4,7 +4,7 @@
 # Identidade contábil (Σcliente=Σsku=empresa), "ausente ≠ R$0" (hurdle/custo), direção das recomendações.
 PEGA | margemContribuicao receita − custo (- vira +)     | s/receita_liquida - input\.custo_unitario/receita_liquida + input.custo_unitario/
 PEGA | identidade evp = cm − encargo (- vira +)          | s/null : cm - encargo/null : cm + encargo/
-PEGA | encargo: hurdle k=null coage p/ 0 (ausente≠R$0)   | s/input\.k == null \? null :/input.k == null ? 0 :/
+PEGA | encargo: hurdle k=null coage p/ 0 (ausente≠R$0)   | s/k == null \? null :/k == null ? 0 :/
 PEGA | alocação AR por receita (denominador rc -> qs)    | s/c\.receita_liquida \/ rc/c.receita_liquida \/ qs/
 PEGA | resolverHurdle soma>0 vira >=0 (0% capital grátis)| s/soma > 0 \? soma/soma >= 0 ? soma/
 PEGA | recomendação "subir preço" direção (< vira >)     | s/cmPct < c\.margem_minima_pct/cmPct > c.margem_minima_pct/
@@ -15,3 +15,8 @@ PEGA | gate evpConhecivel (remove o ! da negação)        | s/= !input\.hurdle_
 PEGA | pedidoContaNoFaturamento: guard soft-delete (!=->==)  | s/if \(deletedAt != null\) return false/if (deletedAt == null) return false/
 PEGA | pedidoContaNoFaturamento: status NULL exclui (==->!=) | s/if \(status == null\) return false/if (status != null) return false/
 PEGA | pedidoContaNoFaturamento: blocklist→allowlist (tira !)| s/return !STATUS_NAO_FATURAVEL\.includes/return STATUS_NAO_FATURAVEL.includes/
+# EVP-teto marcado (#961): capital ausente vira teto DECLARADO, não R$0. Institucionaliza as 3
+# falsificações provadas à mão (guard de sinal anti-piso, evp_parcial, limiar de confiança ponderado).
+PEGA | evp_parcial: OU-de-pernas-ausentes vira E          | s/ar_indisponivel \|\| estoque_indisponivel/ar_indisponivel && estoque_indisponivel/
+PEGA | guard anti-piso: capital negativo entra como num   | s/Number\.isFinite\(estSraw\) && estSraw >= 0/Number.isFinite(estSraw)/
+PEGA | confianca: limiar teto-por-receita 5% afrouxa p/15%| s/tetoPct > 0\.05/tetoPct > 0.15/
