@@ -1,6 +1,16 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
+import {
+  omieEtapaToStatus,
+  etapaConhecida,
+  statusEhOmie,
+  subtotalPedidoComDesconto,
+  construirItemsJson,
+  diffOrderItens,
+  type ItemDesejado,
+  type ItemLocal,
+} from "../_shared/omie-pedido.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
@@ -10,11 +20,15 @@ type Account = "oben" | "colacor";
 interface OmieProdutoItem {
   quantidade?: number;
   valor_unitario?: number;
+  desconto?: number;
+  descricao?: string;
   codigo_produto?: number | string;
 }
 
 interface OmiePedidoItem {
   produto?: OmieProdutoItem;
+  observacao?: { obs_item?: string };
+  inf_adic?: { dados_adicionais_item?: string };
 }
 
 interface OmiePedidoCabecalho {
@@ -103,18 +117,6 @@ async function callOmie(account: Account, endpoint: string, call: string, params
   return result;
 }
 
-// Simple hash for change detection
-function hashObject(obj: unknown): string {
-  const str = JSON.stringify(obj, Object.keys(obj as Record<string, unknown>).sort());
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return hash.toString(36);
-}
-
 function formatOmieDate(d: Date): string {
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 }
@@ -190,8 +192,27 @@ async function reprocessOrders(
   let upserts = 0;
   let divergences = 0;
   let corrections = 0;
+  let falhas = 0;      // pedidos com erro de escrita (não engole — surfaça no log)
+  let skuRepetido = 0; // pedidos com SKU repetido (reconcile de itens pulado por ambiguidade)
 
   try {
+    // Preload codigo_produto -> product_id (1x por run; evita N+1 por item, igual ao repararOrfaos).
+    const productMap = new Map<number, string>();
+    {
+      let page = 0; const sz = 1000; let more = true;
+      while (more) {
+        const { data: batch } = await db
+          .from("omie_products").select("id, omie_codigo_produto")
+          .eq("account", account).range(page * sz, (page + 1) * sz - 1);
+        if (!batch || batch.length === 0) { more = false; }
+        else {
+          for (const p of batch) productMap.set(Number(p.omie_codigo_produto), p.id as string);
+          if (batch.length < sz) more = false;
+          page++;
+        }
+      }
+    }
+
     let pagina = 1;
     let totalPaginas = 1;
 
@@ -209,112 +230,130 @@ async function reprocessOrders(
 
       for (const pedido of pedidos) {
         const cab = pedido.cabecalho || {};
-        const codigoCliente = cab.codigo_cliente;
+        const codigoPedido = cab.codigo_pedido;
+        if (!codigoPedido) continue;
         const itens = pedido.det || [];
-        const omieNumPedido = String(cab.numero_pedido || cab.codigo_pedido);
-        const pedidoHash = hashObject({ cab, itens });
+        const hashPayload = `omie_${account}_${codigoPedido}`;
 
-        // Find customer
-        const { data: mapping } = await db
-          .from("omie_clientes")
-          .select("user_id")
-          .eq("omie_codigo_cliente", codigoCliente)
-          .maybeSingle();
+        // [A4] guard de leitura vazia/malformada: sem item VÁLIDO (codigo_produto) NÃO reconcilia
+        //      (mirror do G7 da RPC) — evita zerar total/apagar itens de um pedido real por um
+        //      ListarPedidos degenerado.
+        const itensValidos = itens.filter((it) => it.produto?.codigo_produto != null);
+        if (itensValidos.length === 0) continue;
 
-        if (!mapping) continue;
-
-        // Check existing order
-        const { data: existingOrder } = await db
+        // Identidade IMUTÁVEL: acha o pai pelo hash_payload determinístico (único pelo índice
+        // parcial uniq_sales_orders_omie_hash). NUNCA por omie_numero_pedido — pegaria a linha
+        // errada (push/de-namespaced). Se não existe, quem INSERE é o omie-vendas-sync; o
+        // reprocess só RECONCILIA o que já existe (a RPC não reconcilia pedido alterado — Fase 2).
+        const { data: order } = await db
           .from("sales_orders")
-          .select("id, hash_payload")
-          .eq("omie_numero_pedido", omieNumPedido)
+          .select("id, status, total, customer_user_id")
           .eq("account", account)
+          .eq("hash_payload", hashPayload)
           .maybeSingle();
+        if (!order) continue;
 
-        if (existingOrder) {
-          // Change detection via hash
-          if (existingOrder.hash_payload === pedidoHash) continue;
+        // [A1] total/itemsJson pelo canon compartilhado (|| igual ao sync). [A4] status só
+        //      reconcilia com etapa CONHECIDA e status local gerido pelo Omie — não rebaixa p/
+        //      'importado' em leitura malformada nem clobbera status app-avançado (confirmado/entregue).
+        const novoSubtotal = subtotalPedidoComDesconto(itens);
+        const itemsJson = construirItemsJson(itens);
+        const statusReconcilia = etapaConhecida(cab.etapa) && statusEhOmie(order.status);
+        const novoStatus = statusReconcilia ? omieEtapaToStatus(cab.etapa) : (order.status as string);
+        const statusMudou = order.status !== novoStatus;
+        const totalMudou = Math.abs(Number(order.total ?? 0) - novoSubtotal) > 0.01;
 
-          divergences++;
+        // ── Itens PRIMEIRO (sem transação: se um write de item falhar, NÃO gravo o cabeçalho com
+        //    total/itemsJson que não batem — o próximo ciclo reconcilia, idempotente). [A7] SKU
+        //    repetido no pedido é ambíguo (a identidade é por codigo) → pula o reconcile de itens
+        //    (não arrisca deletar linha legítima); o cabeçalho ainda reconcilia (total/itemsJson
+        //    somam TODAS as linhas, igual ao sync). NUNCA toca hash_payload do pai (causa-raiz #B);
+        //    o hash de identidade do ITEM `omie_<acc>_<pid>_<codigo>` é gravado no insert/update. ──
+        const codigosValidos = itensValidos.map((it) => Number(it.produto!.codigo_produto));
+        const temSkuRepetido = codigosValidos.length !== new Set(codigosValidos).size;
+        let itemErro = false;
+        let itensMudaram = false;
 
-          // Update sales_order status/data
-          const etapa = cab.etapa || "10";
-          const statusMap: Record<string, string> = {
-            "10": "rascunho", "20": "enviado", "50": "faturado", "60": "cancelado",
-          };
+        if (temSkuRepetido) {
+          skuRepetido++;
+          console.warn(`[Reprocess][${account}] pedido ${codigoPedido} com SKU repetido — itens não reconciliados`);
+        } else {
+          const { data: locaisRaw } = await db
+            .from("order_items")
+            .select("id, omie_codigo_produto, quantity, unit_price, discount, product_id")
+            .eq("sales_order_id", order.id);
+          const locais: ItemLocal[] = (locaisRaw || []).map((r) => ({
+            id: r.id as string,
+            omie_codigo_produto: Number(r.omie_codigo_produto),
+            quantity: Number(r.quantity ?? 0),
+            unit_price: Number(r.unit_price ?? 0),
+            discount: Number(r.discount ?? 0),
+            product_id: (r.product_id as string | null) ?? null,
+          }));
 
-          const totalPedido = itens.reduce((sum: number, i: OmiePedidoItem) => {
-            const prod = i.produto || {};
-            return sum + (prod.quantidade || 1) * (prod.valor_unitario || 0);
-          }, 0);
+          const desejados: ItemDesejado[] = itensValidos.map((it) => {
+            const prod = it.produto!;
+            const cod = Number(prod.codigo_produto);
+            return {
+              omie_codigo_produto: cod,
+              quantity: prod.quantidade || 1,
+              unit_price: prod.valor_unitario || 0,
+              discount: prod.desconto || 0,
+              product_id: productMap.get(cod) ?? null,
+              hash_payload: `${hashPayload}_${cod}`,
+            };
+          });
+          const diff = diffOrderItens(locais, desejados);
 
-          await db.from("sales_orders").update({
-            status: statusMap[etapa] || "enviado",
-            total: totalPedido,
-            subtotal: totalPedido,
-            hash_payload: pedidoHash,
-            updated_at: new Date().toISOString(),
-          }).eq("id", existingOrder.id);
-
-          // Reprocess order items
-          for (const item of itens) {
-            const prod = item.produto || {};
-            const codigoProduto = prod.codigo_produto;
-            const quantidade = prod.quantidade || 1;
-            const valorUnit = prod.valor_unitario || 0;
-            const itemHash = hashObject(prod);
-
-            const { data: product } = await db
-              .from("omie_products")
-              .select("id")
-              .eq("omie_codigo_produto", codigoProduto)
-              .eq("account", account)
-              .maybeSingle();
-
-            // Check existing item
-            const { data: existingItem } = await db
-              .from("order_items")
-              .select("id, hash_payload")
-              .eq("sales_order_id", existingOrder.id)
-              .eq("omie_codigo_produto", codigoProduto)
-              .maybeSingle();
-
-            if (existingItem) {
-              if (existingItem.hash_payload !== itemHash) {
-                await db.from("order_items").update({
-                  quantity: quantidade,
-                  unit_price: valorUnit,
-                  product_id: product?.id || null,
-                  hash_payload: itemHash,
-                }).eq("id", existingItem.id);
-                corrections++;
-              }
-            } else {
-              await db.from("order_items").insert({
-                sales_order_id: existingOrder.id,
-                customer_user_id: mapping.user_id,
-                product_id: product?.id || null,
-                omie_codigo_produto: codigoProduto,
-                quantity: quantidade,
-                unit_price: valorUnit,
-                hash_payload: itemHash,
-              });
-              corrections++;
-            }
-
-            // Update price history
-            if (product?.id && valorUnit > 0) {
-              await db.from("sales_price_history").upsert({
-                customer_user_id: mapping.user_id,
-                product_id: product.id,
-                unit_price: valorUnit,
-                sales_order_id: existingOrder.id,
-              }, { ignoreDuplicates: true });
-            }
+          for (const ins of diff.inserir) {
+            const { error } = await db.from("order_items").insert({
+              sales_order_id: order.id,
+              customer_user_id: order.customer_user_id,
+              product_id: ins.product_id,
+              omie_codigo_produto: ins.omie_codigo_produto,
+              quantity: ins.quantity,
+              unit_price: ins.unit_price,
+              discount: ins.discount,
+              hash_payload: ins.hash_payload,
+            });
+            if (error) { itemErro = true; console.error(`[Reprocess][${account}] insert item ${ins.omie_codigo_produto} ped ${codigoPedido}: ${error.message}`); }
+            else { corrections++; itensMudaram = true; }
           }
-
-          upserts++;
+          for (const upd of diff.atualizar) {
+            const { error } = await db.from("order_items").update({
+              quantity: upd.quantity,
+              unit_price: upd.unit_price,
+              discount: upd.discount,
+              product_id: upd.product_id,
+              hash_payload: upd.hash_payload,
+            }).eq("id", upd.id);
+            if (error) { itemErro = true; console.error(`[Reprocess][${account}] update item ${upd.id} ped ${codigoPedido}: ${error.message}`); }
+            else { corrections++; itensMudaram = true; }
+          }
+          if (diff.deletar.length > 0) {
+            const { error } = await db.from("order_items").delete().in("id", diff.deletar);
+            if (error) { itemErro = true; console.error(`[Reprocess][${account}] delete itens ped ${codigoPedido}: ${error.message}`); }
+            else { corrections += diff.deletar.length; itensMudaram = true; }
+          }
         }
+
+        // ── Cabeçalho DEPOIS: status/total/itemsJson do Omie ATUAL. Só grava se algo mudou e os
+        //    itens não falharam (consistência sem transação). sales_price_history fica a cargo do
+        //    sync (writer único, write-once por pedido) — reprocess não grava preço. ──
+        if (!itemErro && (statusMudou || totalMudou || itensMudaram)) {
+          const { error } = await db.from("sales_orders").update({
+            status: novoStatus,
+            total: novoSubtotal,
+            subtotal: novoSubtotal,
+            items: itemsJson,
+            updated_at: new Date().toISOString(),
+          }).eq("id", order.id);
+          if (error) { itemErro = true; console.error(`[Reprocess][${account}] update pedido ${codigoPedido}: ${error.message}`); }
+          else if (statusMudou || totalMudou) divergences++;
+        }
+
+        if (itemErro) falhas++;
+        else if (statusMudou || totalMudou || itensMudaram) upserts++;
       }
 
       console.log(`[Reprocess][${account}] Orders page ${pagina}/${totalPaginas}`);
@@ -326,10 +365,21 @@ async function reprocessOrders(
       divergences_found: divergences,
       corrections_applied: corrections,
       duration_ms: Date.now() - startTime,
-      metadata: { pages: totalPaginas, window_days: windowDays },
+      metadata: { pages: totalPaginas, window_days: windowDays, falhas, sku_repetido: skuRepetido },
+      // Reconcile parcial (erro de escrita) ou SKU repetido (order_items não reconciliado, pode
+      // divergir do cabeçalho) NÃO derruba a run (idempotente: próximo ciclo reconcilia), mas NÃO
+      // mente 'complete' limpo — surfaça em error_message p/ o watchdog/health (achado Codex).
+      ...((falhas > 0 || skuRepetido > 0)
+        ? {
+          error_message: [
+            falhas > 0 ? `${falhas} pedido(s) com erro de escrita (reconcile parcial)` : null,
+            skuRepetido > 0 ? `${skuRepetido} pedido(s) com SKU repetido (order_items pode divergir do cabeçalho)` : null,
+          ].filter(Boolean).join("; "),
+        }
+        : {}),
     });
 
-    return { upserts, divergences, corrections, duration_ms: Date.now() - startTime };
+    return { upserts, divergences, corrections, falhas, sku_repetido: skuRepetido, duration_ms: Date.now() - startTime };
   } catch (error) {
     await completeReprocessLog(db, logId, {
       upserts_count: upserts,
@@ -381,14 +431,6 @@ async function reprocessProducts(
         if (EXCLUDED_FAMILIES.some(ex => familia.includes(ex)) || familia.startsWith('jumbo')) continue;
         const descLower = (prod.descricao || '').toLowerCase();
         if (descLower.includes('810ml') || descLower.includes('810 ml')) continue;
-
-        const newHash = hashObject({
-          codigo: prod.codigo,
-          descricao: prod.descricao,
-          valor_unitario: prod.valor_unitario,
-          unidade: prod.unidade,
-          familia: prod.descricao_familia,
-        });
 
         // Check existing
         const { data: existing } = await db
