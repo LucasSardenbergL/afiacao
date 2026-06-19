@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Mmifr0ebMfQH6xtRdrBiXi2dSHbUaJRfeUKX6XDsxHgeFSafukZhhmDCHIupkAC
+\restrict rgDpiIOdBCwqGQSNgHMMNPhi5bHUgj6TCZY72Pd9Jcp4bgnxOtBM06gL7Pq43ky
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.9
@@ -213,6 +213,943 @@ CREATE TYPE public.visit_mission AS ENUM (
 
 
 --
+-- Name: _carteira_mixgap_for_owner(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._carteira_mixgap_for_owner(p_owner uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  uid uuid := p_owner;
+  result jsonb;
+BEGIN
+  IF uid IS NULL THEN RETURN NULL; END IF;
+  WITH eleg AS (
+    SELECT customer_user_id FROM public.carteira_assignments
+    WHERE owner_user_id = uid AND eligible = true
+  ),
+  compras AS (
+    SELECT DISTINCT oi.customer_user_id, op.id::text AS pid, op.familia
+    FROM public.order_items oi
+    JOIN eleg e ON e.customer_user_id = oi.customer_user_id
+    JOIN public.omie_products op
+      ON (oi.product_id = op.id
+          OR (oi.product_id IS NULL AND oi.omie_codigo_produto = op.omie_codigo_produto))
+    WHERE oi.created_at >= now() - interval '12 months'
+      AND op.familia IS NOT NULL
+  ),
+  cliente_produtos AS (
+    SELECT customer_user_id, array_agg(DISTINCT pid) AS prods FROM compras GROUP BY customer_user_id
+  ),
+  cliente_familias AS (
+    SELECT customer_user_id, array_agg(DISTINCT familia) AS fams FROM compras GROUP BY customer_user_id
+  ),
+  regras AS (
+    SELECT antecedent_product_ids, consequent_product_ids, confidence, lift
+    FROM public.farmer_association_rules
+    WHERE confidence >= 0.15 AND lift >= 1.5 AND sample_size >= 30
+  ),
+  matches AS (
+    SELECT cp.customer_user_id, r.consequent_product_ids, r.confidence, r.lift
+    FROM cliente_produtos cp JOIN regras r ON r.antecedent_product_ids <@ cp.prods
+  ),
+  gaps AS (
+    SELECT m.customer_user_id, op.familia AS familia_faltante, m.confidence, m.lift
+    FROM matches m
+    CROSS JOIN LATERAL unnest(m.consequent_product_ids) AS cons(pid)
+    JOIN public.omie_products op ON op.id::text = cons.pid
+    JOIN cliente_familias cf ON cf.customer_user_id = m.customer_user_id
+    WHERE op.familia IS NOT NULL AND NOT (op.familia = ANY (cf.fams))
+  ),
+  feedback AS (
+    SELECT customer_user_id, familia, status, updated_at
+    FROM public.farmer_mixgap_feedback
+    WHERE seller_user_id = uid
+  ),
+  gap_agg AS (
+    SELECT customer_user_id, familia_faltante,
+           max(confidence) AS confidence, max(lift) AS lift, count(*) AS evidence_count
+    FROM gaps GROUP BY customer_user_id, familia_faltante
+  ),
+  gap_visivel AS (
+    SELECT ga.* FROM gap_agg ga
+    WHERE NOT EXISTS (
+      SELECT 1 FROM feedback f
+      WHERE f.customer_user_id = ga.customer_user_id AND f.familia = ga.familia_faltante
+        AND (f.status = 'convertido' OR (f.status = 'recusado' AND f.updated_at > now() - interval '90 days'))
+    )
+  ),
+  top1 AS (
+    SELECT DISTINCT ON (customer_user_id)
+      customer_user_id, familia_faltante, confidence, lift, evidence_count
+    FROM gap_visivel ORDER BY customer_user_id, (confidence * lift) DESC, evidence_count DESC
+  )
+  SELECT jsonb_build_object(
+    'total_com_gap', (SELECT count(*) FROM top1),
+    'lista', COALESCE((
+      SELECT jsonb_agg(jsonb_build_object(
+        'customer_user_id', t.customer_user_id,
+        'nome', COALESCE(p.razao_social, p.name),
+        'familia_faltante', t.familia_faltante,
+        'confidence', t.confidence, 'lift', t.lift, 'evidence_count', t.evidence_count,
+        'feedback_status', (SELECT f.status FROM feedback f
+                            WHERE f.customer_user_id = t.customer_user_id AND f.familia = t.familia_faltante)
+      ) ORDER BY (t.confidence * t.lift) DESC, t.evidence_count DESC)
+      FROM (SELECT * FROM top1 ORDER BY (confidence * lift) DESC, evidence_count DESC LIMIT 100) t
+      LEFT JOIN public.profiles p ON p.user_id = t.customer_user_id
+    ), '[]'::jsonb)
+  ) INTO result;
+  RETURN result;
+END;
+$$;
+
+
+--
+-- Name: _carteira_positivacao_for_owner(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._carteira_positivacao_for_owner(p_owner uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  uid uuid := p_owner;
+  mes_inicio date := date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))::date;
+  mes_fim date := (date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo')) + interval '1 month')::date;
+  result jsonb;
+BEGIN
+  IF uid IS NULL THEN RETURN NULL; END IF;
+
+  WITH eleg AS (
+    SELECT ca.customer_user_id
+    FROM public.carteira_assignments ca
+    WHERE ca.owner_user_id = uid AND ca.eligible = true
+  ),
+  pedidos_validos AS (
+    SELECT so.customer_user_id,
+           COALESCE(so.order_date_kpi, so.created_at::date) AS d,
+           so.total
+    FROM public.sales_orders so
+    WHERE so.status NOT IN ('cancelado','rascunho','pendente')
+  ),
+  pedidos_mes AS (
+    SELECT pv.customer_user_id, sum(pv.total) AS receita
+    FROM pedidos_validos pv
+    JOIN eleg e ON e.customer_user_id = pv.customer_user_id
+    WHERE pv.d >= mes_inicio AND pv.d < mes_fim
+    GROUP BY pv.customer_user_id
+  ),
+  primeiro_pedido AS (
+    SELECT pv.customer_user_id, min(pv.d) AS primeira
+    FROM pedidos_validos pv
+    JOIN eleg e ON e.customer_user_id = pv.customer_user_id
+    GROUP BY pv.customer_user_id
+  ),
+  contato_mes AS (
+    SELECT DISTINCT u.customer_user_id
+    FROM (
+      SELECT fc.customer_user_id FROM public.farmer_calls fc
+        WHERE fc.farmer_id = uid AND fc.started_at >= mes_inicio AND fc.started_at < mes_fim
+          AND fc.customer_user_id IS NOT NULL
+      UNION
+      SELECT rv.customer_user_id FROM public.route_visits rv
+        WHERE rv.visited_by = uid AND rv.visit_date >= mes_inicio AND rv.visit_date < mes_fim
+          AND rv.customer_user_id IS NOT NULL
+    ) u
+    JOIN eleg e ON e.customer_user_id = u.customer_user_id
+  ),
+  scores AS (
+    SELECT fcs.customer_user_id, fcs.revenue_potential, fcs.churn_risk,
+           fcs.recover_score, fcs.days_since_last_purchase, fcs.priority_score,
+           fcs.avg_repurchase_interval
+    FROM public.farmer_client_scores fcs
+    JOIN eleg e ON e.customer_user_id = fcs.customer_user_id
+  ),
+  a_positivar AS (
+    SELECT s.customer_user_id,
+           COALESCE(p.razao_social, p.name) AS nome,
+           s.revenue_potential, s.churn_risk, s.recover_score,
+           s.days_since_last_purchase, s.priority_score
+    FROM scores s
+    LEFT JOIN public.profiles p ON p.user_id = s.customer_user_id
+    WHERE s.customer_user_id NOT IN (SELECT customer_user_id FROM pedidos_mes)
+    ORDER BY s.priority_score DESC NULLS LAST, s.revenue_potential DESC NULLS LAST
+    LIMIT 200
+  )
+  SELECT jsonb_build_object(
+    'mes', to_char(mes_inicio, 'YYYY-MM-DD'),
+    'total_eligible', (SELECT count(*) FROM eleg),
+    'positivados', (SELECT count(*) FROM pedidos_mes),
+    'compradores_mtd', (SELECT count(*) FROM pedidos_mes),
+    'receita_mtd', COALESCE((SELECT sum(receita) FROM pedidos_mes), 0),
+    'contatados_mtd', (SELECT count(*) FROM contato_mes),
+    'recencia_critica', (
+      SELECT count(*) FROM scores s
+      WHERE COALESCE(s.churn_risk,0) >= 60
+         OR (COALESCE(s.avg_repurchase_interval,0) > 0
+             AND COALESCE(s.days_since_last_purchase,0) > s.avg_repurchase_interval * 1.5)
+    ),
+    'novos_clientes_positivados', (
+      SELECT count(*) FROM primeiro_pedido pp
+      WHERE pp.primeira >= mes_inicio AND pp.primeira < mes_fim
+    ),
+    'a_positivar', COALESCE((SELECT jsonb_agg(a_positivar) FROM a_positivar), '[]'::jsonb)
+  ) INTO result;
+
+  RETURN result;
+END;
+$$;
+
+
+--
+-- Name: _data_health_compute(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain text, status text, age_seconds bigint, expected_max_age_seconds bigint, freshness_basis text, message text, last_error text, probable_cause text, how_to_fix text, severity text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  WITH checks AS (
+    SELECT 'saldo_bancario'::text AS source, 'financeiro'::text AS domain,
+      CASE WHEN max(cc.saldo_data) IS NULL THEN 'broken'
+           WHEN now() - max(cc.saldo_data)::timestamptz > interval '36 hours' THEN 'stale' ELSE 'ok' END AS status,
+      EXTRACT(EPOCH FROM now() - max(cc.saldo_data)::timestamptz)::bigint AS age_seconds,
+      (36*3600)::bigint AS expected_max_age_seconds, 'max_saldo_data'::text AS freshness_basis,
+      CASE WHEN max(cc.saldo_data) IS NULL THEN 'Saldo bancário nunca sincronizou'
+           ELSE 'Saldo bancário: último sync ' || to_char(max(cc.saldo_data), 'DD/MM') END AS message,
+      NULL::text AS last_error,
+      CASE WHEN max(cc.saldo_data) IS NULL THEN 'ListarExtrato falhando ou nunca rodou' ELSE NULL END AS probable_cause,
+      'Rode sync_contas_correntes no chat do Lovable e cheque os logs do omie-financeiro'::text AS how_to_fix,
+      'critical'::text AS severity
+    FROM public.fin_contas_correntes cc WHERE cc.ativo = true
+    UNION ALL
+    SELECT 'contas_receber', 'financeiro',
+      CASE WHEN max(cr.updated_at) IS NULL THEN 'broken'
+           WHEN now() - max(cr.updated_at) > interval '26 hours' THEN 'stale' ELSE 'ok' END,
+      EXTRACT(EPOCH FROM now() - max(cr.updated_at))::bigint, (26*3600)::bigint, 'max_updated_at',
+      'Contas a receber: atualizado ' || COALESCE(to_char(max(cr.updated_at) AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca'),
+      NULL, CASE WHEN max(cr.updated_at) IS NULL THEN 'Sync CR nunca completou' ELSE NULL END,
+      'Rode sync_contas_receber no Lovable', 'warning'
+    FROM public.fin_contas_receber cr
+    UNION ALL
+    SELECT 'contas_pagar', 'financeiro',
+      CASE WHEN max(cp.updated_at) IS NULL THEN 'broken'
+           WHEN now() - max(cp.updated_at) > interval '26 hours' THEN 'stale' ELSE 'ok' END,
+      EXTRACT(EPOCH FROM now() - max(cp.updated_at))::bigint, (26*3600)::bigint, 'max_updated_at',
+      'Contas a pagar: atualizado ' || COALESCE(to_char(max(cp.updated_at) AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca'),
+      NULL, CASE WHEN max(cp.updated_at) IS NULL THEN 'Sync CP nunca completou' ELSE NULL END,
+      'Rode sync_contas_pagar no Lovable', 'warning'
+    FROM public.fin_contas_pagar cp
+    UNION ALL
+    SELECT 'omie_sync_financeiro'::text, 'omie_sync'::text,
+      COALESCE((SELECT CASE WHEN l.status='error' THEN 'broken' ELSE 'ok' END FROM public.fin_sync_log l
+                WHERE l.completed_at IS NOT NULL ORDER BY l.completed_at DESC LIMIT 1), 'unknown'),
+      (SELECT EXTRACT(EPOCH FROM now() - l.completed_at)::bigint FROM public.fin_sync_log l
+                WHERE l.completed_at IS NOT NULL ORDER BY l.completed_at DESC LIMIT 1),
+      NULL::bigint, 'fin_sync_log'::text,
+      'Último sync financeiro: ' || COALESCE((SELECT l.status FROM public.fin_sync_log l
+        WHERE l.completed_at IS NOT NULL ORDER BY l.completed_at DESC LIMIT 1), 'sem registro'),
+      (SELECT l.error_message FROM public.fin_sync_log l WHERE l.status='error' AND l.completed_at IS NOT NULL ORDER BY l.completed_at DESC LIMIT 1),
+      CASE WHEN (SELECT l.status FROM public.fin_sync_log l WHERE l.completed_at IS NOT NULL ORDER BY l.completed_at DESC LIMIT 1)='error'
+           THEN 'A última action de sync financeiro falhou' ELSE NULL END,
+      'Cheque fin_sync_log e re-rode a action que falhou'::text, 'critical'::text
+    UNION ALL
+    SELECT 'vendas_pedidos'::text, 'vendas'::text,
+      CASE WHEN v.oben_last IS NULL OR v.colacor_last IS NULL THEN 'broken'
+           WHEN now() - LEAST(v.oben_last, v.colacor_last) > interval '6 hours' THEN 'stale' ELSE 'ok' END,
+      EXTRACT(EPOCH FROM now() - LEAST(v.oben_last, v.colacor_last))::bigint,
+      (6*3600)::bigint, 'fin_sync_log.sync_pedidos'::text,
+      'Sync de pedidos: oben ' || COALESCE(to_char(v.oben_last AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca')
+        || ' · colacor ' || COALESCE(to_char(v.colacor_last AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca'),
+      v.last_err,
+      CASE WHEN v.oben_last IS NULL OR v.colacor_last IS NULL
+           THEN 'Cron vendas-sync-pedidos não rodou/completou para alguma conta' ELSE NULL END,
+      'Cheque os crons vendas-sync-pedidos-{oben,colacor}-2h e fin_sync_log (action sync_pedidos)'::text, 'critical'::text
+    FROM (
+      SELECT
+        (SELECT max(l.completed_at) FROM public.fin_sync_log l WHERE l.action='sync_pedidos' AND l.status='complete' AND 'oben' = ANY(l.companies)) AS oben_last,
+        (SELECT max(l.completed_at) FROM public.fin_sync_log l WHERE l.action='sync_pedidos' AND l.status='complete' AND 'colacor' = ANY(l.companies)) AS colacor_last,
+        (SELECT l.error_message FROM public.fin_sync_log l WHERE l.action='sync_pedidos' AND l.status='error' ORDER BY l.started_at DESC LIMIT 1) AS last_err
+    ) v
+    UNION ALL
+    SELECT 'estoque_inventario'::text, 'estoque'::text,
+      CASE WHEN max(ip.synced_at) IS NULL THEN 'broken'
+           WHEN now() - max(ip.synced_at) > interval '3 hours' THEN 'stale' ELSE 'ok' END,
+      EXTRACT(EPOCH FROM now() - max(ip.synced_at))::bigint, (3*3600)::bigint, 'inventory_position.synced_at',
+      'Inventário: sincronizado ' || COALESCE(to_char(max(ip.synced_at) AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca'),
+      NULL, CASE WHEN max(ip.synced_at) IS NULL THEN 'sync_inventory nunca rodou' ELSE NULL END,
+      'Cheque o cron sync-inventory-vendas-30m (omie-analytics-sync sync_inventory)', 'warning'
+    FROM public.inventory_position ip
+    UNION ALL
+    SELECT 'reposicao_sugestoes'::text, 'estoque'::text,
+      CASE WHEN max(pcs.data_ciclo) IS NULL THEN 'broken'
+           WHEN current_date - max(pcs.data_ciclo) > 3 THEN 'stale' ELSE 'ok' END,
+      CASE WHEN max(pcs.data_ciclo) IS NULL THEN NULL
+           ELSE (current_date - max(pcs.data_ciclo))::bigint * 86400 END,
+      (3*86400)::bigint, 'pedido_compra_sugerido.data_ciclo',
+      'Sugestão de compra: último ciclo ' || COALESCE(to_char(max(pcs.data_ciclo),'DD/MM/YYYY'),'nunca'),
+      NULL, CASE WHEN max(pcs.data_ciclo) IS NULL THEN 'gerar-pedidos nunca gerou sugestão' ELSE NULL END,
+      'Cheque o cron gerar-pedidos-diario-oben'::text, 'warning'
+    FROM public.pedido_compra_sugerido pcs
+    UNION ALL
+    SELECT 'carteira_scores'::text, 'carteira'::text,
+      CASE WHEN max(fcs.calculated_at) IS NULL THEN 'broken'
+           WHEN now() - max(fcs.calculated_at) > interval '36 hours' THEN 'stale' ELSE 'ok' END,
+      EXTRACT(EPOCH FROM now() - max(fcs.calculated_at))::bigint, (36*3600)::bigint, 'calculated_at',
+      'Scoring de carteira: recalculado ' || COALESCE(to_char(max(fcs.calculated_at) AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca'),
+      NULL, CASE WHEN max(fcs.calculated_at) IS NULL THEN 'calculate-scores nunca rodou' ELSE NULL END,
+      'Re-rode calculate-scores / scoring-recalc-batch no Lovable', 'warning'
+    FROM public.farmer_client_scores fcs
+    UNION ALL
+    SELECT 'custos_produtos'::text, 'estoque'::text,
+      CASE WHEN max(pc.updated_at) IS NULL THEN 'broken'
+           WHEN now() - max(pc.updated_at) > interval '30 hours' THEN 'stale' ELSE 'ok' END,
+      EXTRACT(EPOCH FROM now() - max(pc.updated_at))::bigint, (30*3600)::bigint, 'product_costs.updated_at'::text,
+      'Custos de produto: recalculado ' || COALESCE(to_char(max(pc.updated_at) AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca'),
+      NULL, CASE WHEN max(pc.updated_at) IS NULL THEN 'compute_costs nunca rodou' ELSE NULL END,
+      'Cheque o cron compute-costs-daily (omie-analytics-sync compute_costs)'::text, 'warning'::text
+    FROM public.product_costs pc
+    UNION ALL
+    SELECT 'vendas_cadastros'::text, 'vendas'::text,
+      CASE WHEN vc.max_clientes IS NULL OR vc.max_produtos IS NULL THEN 'broken'
+           WHEN now() - LEAST(vc.max_clientes, vc.max_produtos) > interval '30 hours' THEN 'stale' ELSE 'ok' END,
+      EXTRACT(EPOCH FROM now() - LEAST(vc.max_clientes, vc.max_produtos))::bigint, (30*3600)::bigint,
+      'max(updated_at) de omie_clientes/omie_products'::text,
+      'Cadastros Omie: clientes ' || COALESCE(to_char(vc.max_clientes AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca')
+        || ' · produtos ' || COALESCE(to_char(vc.max_produtos AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca'),
+      NULL,
+      CASE WHEN vc.max_clientes IS NULL OR vc.max_produtos IS NULL THEN 'omie_clientes/omie_products vazio (sync nunca populou)'
+           ELSE 'Nenhum cron atualizou clientes/produtos há mais de 30h' END,
+      'Cheque os crons de cadastro (sync-customers-vendas-daily / omie-cron-diario / sync-colacor-vendas-products)'::text,
+      'warning'::text
+    FROM (
+      SELECT (SELECT max(updated_at) FROM public.omie_clientes) AS max_clientes,
+             (SELECT max(updated_at) FROM public.omie_products) AS max_produtos
+    ) vc
+    UNION ALL
+    -- Track A (ação): pedidos APROVADOS não despachados ao fornecedor. O cron disparar-pedidos-aprovados
+    -- (0 13) só processa data_ciclo=hoje → aprovação não-disparada no dia fica órfã. >2d=stale / >7d=broken.
+    SELECT 'reposicao_disparo'::text, 'estoque'::text,
+      CASE WHEN rd.aguardando = 0 THEN 'ok'
+           WHEN rd.mais_antigo_h > 168 THEN 'broken'
+           WHEN rd.mais_antigo_h > 48 THEN 'stale' ELSE 'ok' END,
+      (rd.mais_antigo_h * 3600)::bigint, (48*3600)::bigint,
+      'pedido_compra_sugerido.aprovado_em (status=aprovado_aguardando_disparo)'::text,
+      CASE WHEN rd.aguardando = 0 THEN 'Disparo de compra: nenhum pedido aprovado pendente'
+           ELSE 'Disparo de compra: ' || rd.aguardando::text || ' pedido(s) aprovado(s) aguardando disparo (mais antigo ' || COALESCE(rd.mais_antigo_txt,'?') || ')' END,
+      NULL,
+      CASE WHEN rd.mais_antigo_h > 48 THEN 'Pedido aprovado não foi disparado ao fornecedor (o cron disparar-pedidos-aprovados só processa o ciclo do dia → aprovações antigas ficam órfãs)' ELSE NULL END,
+      'Em /admin/reposicao: dispare (re-rode disparar-pedidos-aprovados com o pedido_id) ou cancele/expire os pedidos presos em aprovado_aguardando_disparo'::text,
+      'warning'::text
+    FROM (
+      SELECT
+        (count(*) FILTER (WHERE status='aprovado_aguardando_disparo'))::int AS aguardando,
+        COALESCE(round(EXTRACT(EPOCH FROM now() - min(aprovado_em) FILTER (WHERE status='aprovado_aguardando_disparo'))/3600)::int, 0) AS mais_antigo_h,
+        to_char((min(aprovado_em) FILTER (WHERE status='aprovado_aguardando_disparo')) AT TIME ZONE 'America/Sao_Paulo','DD/MM') AS mais_antigo_txt
+      FROM public.pedido_compra_sugerido
+    ) rd
+    UNION ALL
+    -- Track A (ação) — PIPELINE travado: estados que o automático DEVERIA drenar e não drenou. O motor
+    -- sayerlack-retry-orfaos (*/15) re-dispara pendente_envio_portal/erro_retentavel frescos (tentativas<3,
+    -- <3d, retry não-futuro); o watchdog sayerlack-portal-watchdog (*/5) destrava enviando_portal preso.
+    -- Se um desses fica >1h, o automático parou. >1h=stale / >6h=broken.
+    SELECT 'reposicao_portal_pipeline'::text, 'estoque'::text,
+      CASE WHEN pl.pendentes = 0 THEN 'ok'
+           WHEN now() - pl.mais_antigo > interval '6 hours' THEN 'broken'
+           WHEN now() - pl.mais_antigo > interval '1 hour' THEN 'stale' ELSE 'ok' END,
+      EXTRACT(EPOCH FROM now() - pl.mais_antigo)::bigint, (3600)::bigint,
+      'pedido_compra_sugerido.status_envio_portal (pipeline: pendente/erro_retentavel fresco/enviando)'::text,
+      CASE WHEN pl.pendentes = 0 THEN 'Portal Sayerlack (pipeline): nada travado'
+           ELSE 'Portal Sayerlack (pipeline): ' || pl.pendentes::text || ' pedido(s) sem progredir (mais antigo ' || COALESCE(pl.mais_antigo_txt,'?') || ')' END,
+      NULL,
+      CASE WHEN now() - pl.mais_antigo > interval '1 hour' THEN 'O automático parou de drenar a fila do portal (motor sayerlack-retry-orfaos */15 ou watchdog sayerlack-portal-watchdog */5)' ELSE NULL END,
+      'Cheque os crons sayerlack-retry-orfaos e sayerlack-portal-watchdog + a edge enviar-pedido-portal-sayerlack (logs no Lovable)'::text,
+      'warning'::text
+    FROM (
+      SELECT
+        count(*)::int AS pendentes,
+        min(atualizado_em) AS mais_antigo,
+        to_char(min(atualizado_em) AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS mais_antigo_txt
+      FROM public.pedido_compra_sugerido
+      WHERE (
+        status_envio_portal IN ('pendente_envio_portal','erro_retentavel')
+        AND (portal_proximo_retry_em IS NULL OR portal_proximo_retry_em < now())
+        AND COALESCE(portal_tentativas, 0) < 3
+        AND atualizado_em >= now() - interval '3 days'
+      )
+      OR status_envio_portal = 'enviando_portal'
+    ) pl
+    UNION ALL
+    -- Track A (ação) — precisa HUMANO: estados que NÃO drenam sozinhos. indeterminado_requer_conciliacao
+    -- (PO talvez no fornecedor sem Omie — o motor NÃO toca, re-disparo duplicaria) = risco de dinheiro;
+    -- erro_nao_retentavel (SKU sem mapeamento) = compra bloqueada; aceito_portal_sem_protocolo/falha_envio_portal
+    -- = conciliação; erro_retentavel esgotado (tentativas>=3 ou >3d) = motor desistiu. >2h=stale / >24h=broken.
+    SELECT 'reposicao_portal_humano'::text, 'estoque'::text,
+      CASE WHEN hu.pendentes = 0 THEN 'ok'
+           WHEN now() - hu.mais_antigo > interval '24 hours' THEN 'broken'
+           WHEN now() - hu.mais_antigo > interval '2 hours' THEN 'stale' ELSE 'ok' END,
+      EXTRACT(EPOCH FROM now() - hu.mais_antigo)::bigint, (2*3600)::bigint,
+      'pedido_compra_sugerido.status_envio_portal (humano: indeterminado/erro_nao_retentavel/aceito_sem_protocolo/falha/erro_retentavel esgotado)'::text,
+      CASE WHEN hu.pendentes = 0 THEN 'Portal Sayerlack (ação humana): nada pendente'
+           ELSE 'Portal Sayerlack (ação humana): ' || hu.pendentes::text || ' pedido(s) precisando intervenção (mais antigo ' || COALESCE(hu.mais_antigo_txt,'?') || ')' END,
+      NULL,
+      CASE WHEN now() - hu.mais_antigo > interval '2 hours' THEN 'Pedido(s) que o automático não resolve: conciliar indeterminado (NÃO re-disparar — duplica PO), mapear SKU (erro_nao_retentavel), ou conferir protocolo' ELSE NULL END,
+      'Em /admin/reposicao: concilie os indeterminado_requer_conciliacao (cheque o fornecedor ANTES — NÃO re-dispare), faça o de-para dos erro_nao_retentavel, e confira aceito_portal_sem_protocolo'::text,
+      'warning'::text
+    FROM (
+      SELECT
+        count(*)::int AS pendentes,
+        min(atualizado_em) AS mais_antigo,
+        to_char(min(atualizado_em) AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS mais_antigo_txt
+      FROM public.pedido_compra_sugerido
+      WHERE status_envio_portal IN ('indeterminado_requer_conciliacao','erro_nao_retentavel','aceito_portal_sem_protocolo','falha_envio_portal')
+         OR (status_envio_portal = 'erro_retentavel' AND (COALESCE(portal_tentativas, 0) >= 3 OR atualizado_em < now() - interval '3 days'))
+    ) hu
+    UNION ALL
+    -- Vigia (eu+codex 2026-05-31): tingidor FABRICADO internamente (omie_products.tipo_produto='04' =
+    -- Produto Acabado) que voltou ao motor de compra Sayerlack com tipo_reposicao='automatica' → o motor
+    -- o sugeriria COMPRAR no portal (é fabricado, não comprado). Fix = marcar tipo_reposicao='produto_acabado'
+    -- (motor e tela de de-para já excluem != 'automatica'). É count (não frescor) → age NULL; n>0 = stale/warning.
+    -- Join filtra account (há linha oben e vendas por SKU; o tipo_produto vem do sync da conta oben).
+    SELECT 'reposicao_sayerlack_fabricado'::text, 'estoque'::text,
+      CASE WHEN sf.n = 0 THEN 'ok' ELSE 'stale' END,
+      NULL::bigint, NULL::bigint,
+      'count_sku_parametros_produto_acabado_no_motor_sayerlack'::text,
+      CASE WHEN sf.n = 0 THEN 'Tingidor fabricado no motor: nenhum produto acabado (04) sendo comprado da Sayerlack'
+           ELSE 'Tingidor fabricado no motor: ' || sf.n::text || ' produto(s) acabado(s) (04) no motor de compra Sayerlack — deveriam ser produto_acabado' END,
+      NULL,
+      CASE WHEN sf.n > 0 THEN 'Produto fabricado internamente (tipo_produto=04 no Omie) entrou no motor com tipo_reposicao=automatica — o motor sugeriria comprá-lo no portal' ELSE NULL END,
+      'Marcar tipo_reposicao=produto_acabado nesses tingidores 04 (re-rodar o backfill: UPDATE em public.sku_parametros, Sayerlack OBEN + tipo_produto 04) no SQL Editor'::text,
+      CASE WHEN sf.n = 0 THEN 'info' ELSE 'warning' END
+    FROM (
+      SELECT count(*)::int AS n
+      FROM public.sku_parametros sp
+      WHERE sp.empresa = 'OBEN'
+        AND sp.fornecedor_nome ILIKE '%SAYERLACK%'
+        AND COALESCE(sp.ativo, false)
+        AND COALESCE(sp.habilitado_reposicao_automatica, false)
+        AND COALESCE(sp.tipo_reposicao, 'automatica') = 'automatica'
+        AND EXISTS (
+          SELECT 1 FROM public.omie_products o
+          WHERE o.omie_codigo_produto::text = sp.sku_codigo_omie::text
+            AND lower(o.account) = lower(sp.empresa)
+            AND COALESCE(o.tipo_produto, o.metadata->>'tipo_produto') IN ('04','4')
+        )
+    ) sf
+    UNION ALL
+    -- [cobertura do sinal 2026-06-04] saúde do PRÓPRIO tipo_produto no OBEN. O check
+    -- reposicao_sayerlack_fabricado é cego se o sinal SOME (procura '04'; sem sinal → 0 → verde).
+    -- Aqui: broken se OBEN tem produtos mas 0 classificados (sinal morto = incidente de 2026-06-04),
+    -- ou 0 com '04' (fabricados sumiram). freshness por max(updated_at). Baseline fino vs histórico = v2.
+    SELECT 'omie_tipo_produto_oben'::text, 'estoque'::text,
+      CASE WHEN tp.total = 0 THEN 'unknown'
+           WHEN tp.typed = 0 OR tp.tipo04 = 0 THEN 'broken'
+           WHEN now() - tp.ultimo > interval '48 hours' THEN 'stale' ELSE 'ok' END,
+      EXTRACT(EPOCH FROM now() - tp.ultimo)::bigint, (48*3600)::bigint, 'omie_products.tipo_produto (OBEN)'::text,
+      CASE WHEN tp.typed = 0 THEN 'Sinal tipo_produto MORTO no OBEN (0 de '||tp.total||' classificados) — guarda de "não comprar fabricado" cega'
+           WHEN tp.tipo04 = 0 THEN 'Nenhum Produto Acabado (04) classificado no OBEN — sinal de fabricado sumiu'
+           ELSE 'Sinal tipo_produto OBEN: '||tp.typed||'/'||tp.total||' classificados, '||tp.tipo04||' fabricados (04)' END,
+      NULL,
+      CASE WHEN tp.typed = 0 OR tp.tipo04 = 0 THEN 'omie-sync-metadados parou de gravar tipo_produto (ou foi sobrescrito por outro sync). Rode o full sync do omie-sync-metadados (OBEN) e cheque o payload tipoItem' ELSE NULL END,
+      'Rode o omie-sync-metadados (full, OBEN) no Lovable e confira a coluna omie_products.tipo_produto'::text,
+      'critical'::text
+    FROM (
+      SELECT count(*) AS total,
+        count(*) FILTER (WHERE tipo_produto IS NOT NULL) AS typed,
+        count(*) FILTER (WHERE tipo_produto = '04') AS tipo04,
+        max(updated_at) AS ultimo
+      FROM public.omie_products WHERE account = 'oben'
+    ) tp
+    UNION ALL
+    -- [família ausente 2026-06-09, follow-up do PR #702] produto ATIVO de venda sem família
+    -- cadastrada (familia NULL ou string vazia/só-espaços). Pós-#702 (que parou de escondê-los do wizard
+    -- via o footgun NOT ILIKE+NULL), família-ausente = produto APARECE, mas o filtro de exclusão de família
+    -- NÃO o categoriza → um item que DEVERIA ser excluído (imobilizado/uso-consumo/jumbo/tingimix) cadastrado
+    -- sem família passa INDEVIDAMENTE pro catálogo. Escopo = as 2 contas do wizard (oben+colacor;
+    -- colacor_sc é serviço, fora). count → age NULL; n>0 = stale/warning (founder classifica no Omie).
+    SELECT 'vendas_familia_ausente'::text, 'vendas'::text,
+      CASE WHEN fa.n = 0 THEN 'ok' ELSE 'stale' END,
+      NULL::bigint, NULL::bigint,
+      'count_omie_products_ativo_familia_vazia (oben+colacor)'::text,
+      CASE WHEN fa.n = 0 THEN 'Catálogo de venda: todo produto ativo tem família cadastrada'
+           ELSE 'Catálogo de venda: ' || fa.n::text || ' produto(s) ativo(s) sem família (oben ' || fa.n_oben::text || ' · colacor ' || fa.n_colacor::text || ') — classifique no Omie' END,
+      NULL,
+      CASE WHEN fa.n > 0 THEN 'Produto ativo sem família no Omie: aparece no wizard de venda, mas o filtro de exclusão de família não o categoriza (um item que deveria ser excluído passaria indevidamente)' ELSE NULL END,
+      'No Omie, preencha a família desses produtos (aparecem no wizard, mas sem categorização). Liste por: omie_products com família vazia + ativo, nas contas oben/colacor.'::text,
+      CASE WHEN fa.n = 0 THEN 'info' ELSE 'warning' END
+    FROM (
+      SELECT count(*)::int AS n,
+        count(*) FILTER (WHERE account = 'oben')::int AS n_oben,
+        count(*) FILTER (WHERE account = 'colacor')::int AS n_colacor
+      FROM public.omie_products
+      WHERE NULLIF(btrim(familia), '') IS NULL AND COALESCE(ativo, false) AND account IN ('oben','colacor')
+    ) fa
+    UNION ALL
+    -- [estoque frescor 2026-06-11, incidente do 503] frescor do sku_estoque_atual — a tabela que o
+    -- MOTOR DE COMPRA (gerar_pedidos_sugeridos_ciclo) lê (estoque_fisico/estoque_pendente_entrada). A
+    -- edge omie-sync-estoque ficou em 503 ~20h: o cron marcou "succeeded" (só enfileira) mas a função
+    -- não subia => estoque congelado => o motor sugeriu comprar o que já havia. Ponto cego antigo do
+    -- Sentinela (vigiava inventory_position, NÃO sku_estoque_atual). OBEN (único na esteira de cron).
+    -- Janela comercial BRT 08:00-18:00 (sync a cada ~2h) => >4h morto; fora dela tolera o vão noturno
+    -- (~13h) => só >16h; >30h ou nunca = broken. critical (money-path).
+    SELECT 'estoque_reposicao'::text, 'estoque'::text,
+      -- [FONTE-ÚNICA passo 5 / P1-A] frescor via MARCADOR sync_state dos DOIS markers que a edge omie-sync-estoque
+      -- grava: reposicao_estoque_full (físico) E reposicao_pendente_po (a-caminho, gravado pela RPC). Worst-of: o
+      -- mais velho decide. [P1-A] o full marker passou a ter ESTADO 'syncing' durante a janela de escrita (entre o
+      -- físico e o a-caminho do mesmo run) — TOLERA 'syncing' RECENTE (<30min = sync em andamento; o motor já está
+      -- bloqueado pela barreira 4b) mas ALERTA 'syncing' STALE (>30min = sync travou/falhou no meio). Marker ausente,
+      -- 'error', ou 'syncing' stale => NÃO saudável => broken. Pega o sync PARCIAL (que o max(ultima_sincronizacao)
+      -- deixava passar verde) E o RPC-falha-com-físico-ok. Mesma janela comercial p/ a staleness do 'complete'.
+      CASE WHEN m.faltando > 0 THEN 'broken'
+           WHEN m.idade_max > interval '30 hours' THEN 'broken'
+           WHEN m.idade_max > interval '16 hours' THEN 'stale'
+           WHEN (now() AT TIME ZONE 'America/Sao_Paulo')::time >= time '08:00'
+            AND (now() AT TIME ZONE 'America/Sao_Paulo')::time <  time '18:00'
+            AND m.idade_max > interval '4 hours' THEN 'stale'
+           ELSE 'ok' END,
+      EXTRACT(EPOCH FROM m.idade_max)::bigint, (4*3600)::bigint,
+      'sync_state reposicao_estoque_full + reposicao_pendente_po (OBEN; complete, ou full=syncing<30min em andamento)'::text,
+      CASE WHEN m.faltando > 0 THEN 'Estoque de reposição: ' || m.faltando::text || ' marcador(es) de sync ausente(s)/incompleto(s)/preso(s) em syncing (físico e/ou a-caminho)'
+           ELSE 'Estoque de reposição (motor de compra): físico+a-caminho sincronizados, mais antigo ' || to_char(m.mais_antigo AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') END,
+      NULL,
+      CASE WHEN m.faltando > 0 OR m.idade_max > interval '4 hours'
+           THEN 'A edge omie-sync-estoque parou de atualizar o snapshot de estoque/a-caminho (marcador sync_state). Um marcador preso em "syncing" >30min = o sync travou/falhou no meio (físico ou a-caminho). ARMADILHA: o cron marca "succeeded" mesmo quando a função dá 503/erro — a verdade está em net._http_response, NÃO em job_run_details. Estoque/a-caminho congelado faz o motor abortar (barreira) ou sugerir comprar o que já tem.'
+           ELSE NULL END,
+      'Cheque a edge omie-sync-estoque (logs no Lovable) + o net._http_response dos crons omie-sync-estoque-{intraday,diario}-oben. Se for LOAD_FUNCTION_ERROR, faça redeploy verbatim de supabase/functions/omie-sync-estoque/index.ts.'::text,
+      'critical'::text
+    FROM (
+      SELECT max(idade) AS idade_max, min(last_sync_at) AS mais_antigo,
+             count(*) FILTER (WHERE NOT saudavel) AS faltando
+      FROM (
+        SELECT ss.last_sync_at,
+               -- [P1-A] SAUDÁVEL = 'complete' OU 'syncing' RECENTE (<30min). 'syncing' STALE / 'error' / ausente =
+               -- NÃO saudável (COALESCE p/ false: marker ausente tem status NULL). 'syncing' fresco conta idade=0
+               -- (não trip a staleness — o sync está em andamento e o motor já está bloqueado pela barreira).
+               COALESCE(ss.status = 'complete'
+                        OR (ss.status = 'syncing' AND ss.last_sync_at > now() - interval '30 minutes'), false) AS saudavel,
+               CASE
+                 WHEN ss.status = 'complete' THEN now() - ss.last_sync_at
+                 WHEN ss.status = 'syncing' AND ss.last_sync_at > now() - interval '30 minutes' THEN interval '0'
+                 ELSE NULL
+               END AS idade
+        FROM (VALUES ('reposicao_estoque_full'::text), ('reposicao_pendente_po'::text)) AS req(et)
+        LEFT JOIN public.sync_state ss
+          ON ss.entity_type = req.et AND ss.account = 'oben'
+      ) x
+    ) m
+    UNION ALL
+    -- [VIGIA tint COBERTURA 2026-06-15 · Check A · PUSH] base/concentrado MixMachine ATIVO (oben) cuja
+    -- classificação tint diverge da família HÁ +30h. O cron tint-marcar-bases-diario (jobid 132) corrige
+    -- 1×/dia (08:00 BRT); a tolerância de 30h (1 ciclo + folga) evita falso-positivo de produto recém-
+    -- importado (catálogo sincroniza ~2h; watchdog */30; heartbeat às 08:00 junto do cron). created_at é o
+    -- relógio (o sync NÃO o toca em upsert; updated_at esconderia drift permanente). Sem is_tintometric →
+    -- some do mapeamento; tint_type errado → aba trocada. n>0 só após o cron ter tido a janela ⇒ stale/warning.
+    SELECT 'tint_cobertura_bases'::text, 'estoque'::text,
+      CASE WHEN t.n = 0 THEN 'ok' ELSE 'stale' END,
+      EXTRACT(EPOCH FROM t.idade_max)::bigint, (30*3600)::bigint,
+      'omie_products oben ativo familia MixMachine sem is_tintometric/tint_type correto ha >30h (created_at)'::text,
+      CASE WHEN t.n = 0 THEN 'Cobertura tint: toda base/concentrado MixMachine ativo está classificado corretamente'
+           ELSE 'Cobertura tint: '||t.n||' base(s)/concentrado(s) MixMachine ativo(s) com classificação divergente há +30h (sem is_tintometric some do mapeamento; ou tint_type na aba errada)' END,
+      NULL,
+      CASE WHEN t.n > 0 THEN 'O cron tint-marcar-bases-diario (jobid 132) não rodou/foi revertido, ou houve reclassificação manual — bases elegíveis há +30h seguem sem a marca tint correta' ELSE NULL END,
+      'Rode select public.tint_marcar_bases_mixmachine(); no SQL Editor (idempotente, só aditivo) e confira o cron tint-marcar-bases-diario via net._http_response'::text,
+      CASE WHEN t.n = 0 THEN 'info' ELSE 'warning' END
+    FROM (
+      SELECT count(*)::bigint AS n,
+             max(now() - op.created_at) AS idade_max
+      FROM public.omie_products op
+      WHERE op.account = 'oben' AND op.ativo = true
+        AND lower(btrim(op.familia)) IN ('bases mixmachine','concentrados mixmachine')
+        AND op.created_at < now() - interval '30 hours'
+        AND ( op.is_tintometric IS NOT TRUE
+           OR op.tint_type IS DISTINCT FROM CASE lower(btrim(op.familia))
+                WHEN 'bases mixmachine' THEN 'base'
+                WHEN 'concentrados mixmachine' THEN 'concentrado' END )
+    ) t
+    UNION ALL
+    -- [VIGIA tint VÍNCULO 2026-06-15 · Check B · DASHBOARD-ONLY] validade do vínculo de venda (tint_skus):
+    -- SKU ativa (oben) apontando p/ produto Omie inativo OU de account divergente (vínculo p/ produto morto),
+    -- + produto Omie em >1 SKU ativa (useTintColorSelect lê reverso com .limit(1) ⇒ base arbitrária). FK garante
+    -- que omie_product_id existe ⇒ INNER JOIN. Ortogonal ao A (mede tint_skus, não o catálogo). FORA dos IN-lists
+    -- do watchdog/heartbeat (dashboard-only na v1: backlog não medido; promove a push em 2ª migration pós-zero).
+    SELECT 'tint_vinculo_omie'::text, 'estoque'::text,
+      CASE WHEN v.morto + v.ambiguo = 0 THEN 'ok' ELSE 'stale' END,
+      NULL::bigint, NULL::bigint, 'tint_skus ativa->omie inativo/divergente + omie em >1 sku ativa'::text,
+      CASE WHEN v.morto + v.ambiguo = 0 THEN 'Vínculo tint↔Omie: íntegro'
+           ELSE 'Vínculo tint↔Omie: '||v.morto||' SKU(s) ativa(s) apontando p/ produto Omie inativo/divergente, '||v.ambiguo||' produto(s) Omie em >1 SKU ativa (re-mapeamento pega base arbitrária)' END,
+      NULL,
+      CASE WHEN v.morto + v.ambiguo > 0 THEN 'SKU de venda aponta p/ produto descontinuado no Omie (some do dropdown), ou o mesmo produto Omie está vinculado a 2+ bases (vínculo ambíguo)' ELSE NULL END,
+      'Em /tintometrico/catalogo → Mapeamento: re-mapeie as SKUs apontando p/ produto inativo e desfaça os vínculos duplicados'::text,
+      CASE WHEN v.morto + v.ambiguo = 0 THEN 'info' ELSE 'warning' END
+    FROM (
+      SELECT
+        (SELECT count(*)::bigint FROM public.tint_skus ts
+           JOIN public.omie_products op ON op.id = ts.omie_product_id
+          WHERE ts.account = 'oben' AND ts.ativo IS NOT FALSE
+            AND (op.ativo IS NOT TRUE OR op.account IS DISTINCT FROM ts.account)) AS morto,
+        (SELECT count(*)::bigint FROM (
+           SELECT ts.omie_product_id FROM public.tint_skus ts
+            WHERE ts.account = 'oben' AND ts.ativo IS NOT FALSE AND ts.omie_product_id IS NOT NULL
+            GROUP BY ts.omie_product_id HAVING count(*) > 1) d) AS ambiguo
+    ) v
+    UNION ALL
+    SELECT 'alert_channel'::text, 'alertas'::text,
+      CASE WHEN ac.stuck_pendentes > 0 OR ac.falhas_24h >= 5 THEN 'broken'
+           WHEN ac.falhas_24h > 0 THEN 'stale' ELSE 'ok' END,
+      ac.oldest_pendente_age_seconds, (2*3600)::bigint, 'fornecedor_alerta.pendente_notificacao'::text,
+      CASE WHEN ac.stuck_pendentes > 0
+             THEN 'Canal de alerta: ' || ac.stuck_pendentes::text || ' email(s) presos há mais de 2h — dispatch parou de drenar'
+           WHEN ac.falhas_24h >= 5
+             THEN 'Canal de alerta: ' || ac.falhas_24h::text || ' falhas de envio nas últimas 24h (falha sistêmica)'
+           WHEN ac.falhas_24h > 0
+             THEN 'Canal de alerta: ' || ac.falhas_24h::text || ' falha(s) de envio nas últimas 24h'
+           ELSE 'Canal de alerta: drenando normalmente (' || ac.pendentes_total::text || ' na fila)' END,
+      ac.ultimo_erro,
+      CASE WHEN ac.stuck_pendentes > 0 THEN 'Cron afiacao_dispatch_notificacoes_30min não rodou ou a edge dispatch-notifications falhou (token Gmail revogado?)'
+           WHEN ac.falhas_24h > 0 THEN 'Envio de email falhando (Gmail / token / destinatário)' ELSE NULL END,
+      'Cheque a edge dispatch-notifications (logs no Lovable), o refresh token do Gmail e o net._http_response do cron afiacao_dispatch_notificacoes_30min'::text,
+      'critical'::text
+    FROM (
+      SELECT
+        (count(*) FILTER (WHERE fa.status='pendente_notificacao' AND fa.criado_em < now() - interval '2 hours'))::bigint AS stuck_pendentes,
+        (count(*) FILTER (WHERE fa.status='pendente_notificacao'))::bigint AS pendentes_total,
+        (count(*) FILTER (WHERE fa.status='falha_notificacao' AND fa.criado_em > now() - interval '24 hours'))::bigint AS falhas_24h,
+        EXTRACT(EPOCH FROM now() - min(fa.criado_em) FILTER (WHERE fa.status='pendente_notificacao' AND fa.criado_em < now() - interval '2 hours'))::bigint AS oldest_pendente_age_seconds,
+        (SELECT f2.erro_notificacao FROM public.fornecedor_alerta f2
+          WHERE f2.status='falha_notificacao' AND f2.erro_notificacao IS NOT NULL
+          ORDER BY f2.criado_em DESC LIMIT 1) AS ultimo_erro
+      FROM public.fornecedor_alerta fa
+    ) ac
+  )
+  -- P1: campos de "problema" (erro técnico, causa provável, remédio) só saem quando
+  -- o check NÃO está ok. Check verde = nada a reportar.
+  SELECT c.source, c.domain, COALESCE(NULLIF(c.status, ''), 'unknown') AS status,
+    c.age_seconds, c.expected_max_age_seconds, c.freshness_basis, c.message,
+    CASE WHEN COALESCE(NULLIF(c.status,''),'unknown') = 'ok' THEN NULL ELSE c.last_error END AS last_error,
+    CASE WHEN COALESCE(NULLIF(c.status,''),'unknown') = 'ok' THEN NULL ELSE c.probable_cause END AS probable_cause,
+    CASE WHEN COALESCE(NULLIF(c.status,''),'unknown') = 'ok' THEN NULL ELSE c.how_to_fix END AS how_to_fix,
+    c.severity
+  FROM checks c;
+$$;
+
+
+--
+-- Name: _push_enviar(uuid[], text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._push_enviar(p_user_ids uuid[], p_titulo text, p_corpo text, p_url text, p_tag text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_secret text;
+BEGIN
+  IF p_user_ids IS NULL OR array_length(p_user_ids, 1) IS NULL THEN
+    RETURN;
+  END IF;
+
+  SELECT decrypted_secret INTO v_secret
+  FROM vault.decrypted_secrets WHERE name = 'CRON_SECRET' LIMIT 1;
+  IF v_secret IS NULL THEN
+    RAISE WARNING '[push] CRON_SECRET ausente no Vault — push não enviado';
+    RETURN;
+  END IF;
+
+  PERFORM net.http_post(
+    url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/enviar-push',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-cron-secret', v_secret
+    ),
+    body := jsonb_build_object(
+      'user_ids', to_jsonb(p_user_ids),
+      'titulo', p_titulo,
+      'corpo', p_corpo,
+      'url', p_url,
+      'tag', p_tag
+    ),
+    timeout_milliseconds := 10000
+  );
+END;
+$$;
+
+
+--
+-- Name: _tint_preflight(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._tint_preflight() RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE rid uuid; nf int; t0 timestamptz; v_ms numeric; v_res jsonb;
+BEGIN
+  SELECT sync_run_id, count(*) INTO rid, nf
+  FROM tint_staging_formulas WHERE account='oben'
+  GROUP BY sync_run_id ORDER BY count(*) DESC LIMIT 1;
+  t0 := clock_timestamp();
+  BEGIN
+    v_res := tint_promote_sync_run(rid);
+    v_ms  := round(extract(epoch from (clock_timestamp()-t0))*1000, 1);
+    RAISE EXCEPTION 'rollback_preflight';        -- desfaz as escritas da promoção (não grava nada)
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM <> 'rollback_preflight' THEN
+      RETURN jsonb_build_object('ok', false, 'tempo_ms',
+        round(extract(epoch from (clock_timestamp()-t0))*1000,1), 'erro', SQLERRM, 'run', rid);
+    END IF;
+  END;
+  RETURN jsonb_build_object('ok', true, 'tempo_ms', v_ms, 'staging_formulas', nf,
+    'promovidas', v_res->'promovidas', 'erros', v_res->'erros', 'run', rid);
+END $$;
+
+
+--
+-- Name: _vendas_familia_ausente_lista_email(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._vendas_familia_ausente_lista_email(p_limit integer DEFAULT 50) RETURNS text
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  WITH itens AS (
+    SELECT account, codigo, descricao,
+           row_number() OVER (ORDER BY account, descricao, codigo) AS rn
+    FROM public.omie_products
+    WHERE NULLIF(btrim(familia), '') IS NULL
+      AND COALESCE(ativo, false)
+      AND account IN ('oben','colacor')
+  ),
+  agg AS (
+    SELECT
+      count(*)::int AS n_total,
+      count(*) FILTER (WHERE rn <= GREATEST(p_limit, 0))::int AS n_mostrados,
+      string_agg(
+        CASE WHEN rn <= GREATEST(p_limit, 0)
+             THEN '• [' || account || '] ' || descricao || ' (cód. ' || codigo || ')'
+             ELSE NULL END,
+        E'\n' ORDER BY rn) AS corpo
+    FROM itens
+  )
+  SELECT CASE
+    WHEN n_total = 0 THEN NULL
+    ELSE 'Produtos sem família (classifique no Omie):' || E'\n' || corpo
+         || CASE WHEN n_total > n_mostrados
+                 THEN E'\n… e mais ' || (n_total - n_mostrados)::text
+                      || ' produto(s) — veja no painel Saúde de Dados ou filtre no Omie por família vazia.'
+                 ELSE '' END
+  END
+  FROM agg;
+$$;
+
+
+--
+-- Name: adicionar_opcao_tool_spec(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.adicionar_opcao_tool_spec(p_spec_id uuid, p_valor text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_norm       text;
+  v_options    jsonb;
+  v_spec_type  text;
+  v_allow      boolean;
+  v_existente  text;
+BEGIN
+  IF NOT (public.has_role(auth.uid(), 'master'::public.app_role)
+          OR public.has_role(auth.uid(), 'employee'::public.app_role)) THEN
+    RAISE EXCEPTION 'não autorizado' USING errcode = '42501';
+  END IF;
+
+  IF p_valor IS NULL THEN
+    RAISE EXCEPTION 'valor obrigatório' USING errcode = '22004';
+  END IF;
+
+  v_norm := regexp_replace(normalize(p_valor, NFC), '[[:cntrl:]]', '', 'g');
+  v_norm := regexp_replace(
+    v_norm,
+    '[' || chr(160) || chr(5760) || chr(8192) || '-' || chr(8202)
+        || chr(8232) || chr(8233) || chr(8239) || chr(8287) || chr(12288) || chr(65279) || ']',
+    ' ', 'g'
+  );
+  v_norm := btrim(regexp_replace(v_norm, '\s+', ' ', 'g'));
+
+  IF v_norm = '' THEN
+    RAISE EXCEPTION 'valor vazio' USING errcode = '22023';
+  END IF;
+  IF length(v_norm) > 60 THEN
+    RAISE EXCEPTION 'valor muito longo (máx 60)' USING errcode = '22001';
+  END IF;
+  IF upper(v_norm) = '__OUTROS__' THEN
+    RAISE EXCEPTION 'valor reservado' USING errcode = '22023';
+  END IF;
+
+  SELECT options, spec_type, allow_custom_option
+    INTO v_options, v_spec_type, v_allow
+    FROM public.tool_specifications
+   WHERE id = p_spec_id
+   FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'especificação inexistente' USING errcode = 'P0002';
+  END IF;
+  IF v_spec_type <> 'select' THEN
+    RAISE EXCEPTION 'este campo não é uma lista' USING errcode = '22023';
+  END IF;
+  IF v_allow IS NOT TRUE THEN
+    RAISE EXCEPTION 'este campo não aceita medida nova' USING errcode = '22023';
+  END IF;
+
+  v_options := COALESCE(v_options, '[]'::jsonb);
+
+  IF jsonb_array_length(v_options) >= 200 THEN
+    RAISE EXCEPTION 'limite de opções atingido' USING errcode = '54000';
+  END IF;
+
+  SELECT e INTO v_existente
+    FROM jsonb_array_elements_text(v_options) e
+   WHERE lower(e) = lower(v_norm)
+   LIMIT 1;
+  IF v_existente IS NOT NULL THEN
+    RETURN jsonb_build_object('options', v_options, 'valor_canonico', v_existente);
+  END IF;
+
+  UPDATE public.tool_specifications
+     SET options = v_options || jsonb_build_array(v_norm)
+   WHERE id = p_spec_id
+   RETURNING options INTO v_options;
+
+  RETURN jsonb_build_object('options', v_options, 'valor_canonico', v_norm);
+END;
+$$;
+
+
+--
+-- Name: afiacao_os_enqueue(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.afiacao_os_enqueue() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_etapa_nova  text := public.mapear_status_etapa(NEW.status);
+  v_etapa_velha text := public.mapear_status_etapa(OLD.status);
+BEGIN
+  IF v_etapa_nova IS NOT NULL AND v_etapa_nova IS DISTINCT FROM v_etapa_velha THEN
+    INSERT INTO public.afiacao_os_sync_fila
+      (order_id, etapa_alvo, status_app, tentativas, next_retry_em, criado_em, atualizado_em)
+    VALUES (NEW.id, v_etapa_nova, NEW.status, 0, now(), now(), now())
+    ON CONFLICT (order_id) DO UPDATE SET
+      etapa_alvo    = EXCLUDED.etapa_alvo,
+      status_app    = EXCLUDED.status_app,
+      tentativas    = 0,
+      next_retry_em = now(),
+      atualizado_em = now();
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: afiacao_os_sync_kick(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.afiacao_os_sync_kick() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_cron_secret text;
+  v_request_id  bigint;
+  v_pendentes   int;
+  v_url constant text := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-sync';
+BEGIN
+  SELECT count(*) INTO v_pendentes
+  FROM public.afiacao_os_sync_fila
+  WHERE next_retry_em <= now();
+
+  IF v_pendentes = 0 THEN
+    RETURN jsonb_build_object('pendentes', 0);
+  END IF;
+
+  SELECT decrypted_secret INTO v_cron_secret
+  FROM vault.decrypted_secrets WHERE name = 'CRON_SECRET' LIMIT 1;
+
+  SELECT net.http_post(
+    url := v_url,
+    headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', v_cron_secret),
+    body := jsonb_build_object('action', 'sync_os_status'),
+    timeout_milliseconds := 60000
+  ) INTO v_request_id;
+
+  RETURN jsonb_build_object('pendentes', v_pendentes, 'request_id', v_request_id);
+END;
+$$;
+
+
+--
+-- Name: aplicar_exclusao_fornecedores(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.aplicar_exclusao_fornecedores() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE v_class jsonb; v_elig int; v_cvs int; v_fcs int;
+BEGIN
+  v_class := public.classificar_clientes_fornecedores();
+  UPDATE public.carteira_assignments SET eligible = false, updated_at = now()
+   WHERE eligible
+     AND customer_user_id IN (SELECT user_id FROM public.cliente_classificacao WHERE excluir_da_carteira);
+  GET DIAGNOSTICS v_elig = ROW_COUNT;
+  DELETE FROM public.customer_visit_scores
+   WHERE customer_user_id IN (SELECT user_id FROM public.cliente_classificacao WHERE excluir_da_carteira);
+  GET DIAGNOSTICS v_cvs = ROW_COUNT;
+  DELETE FROM public.farmer_client_scores
+   WHERE customer_user_id IN (SELECT user_id FROM public.cliente_classificacao WHERE excluir_da_carteira);
+  GET DIAGNOSTICS v_fcs = ROW_COUNT;
+  RETURN v_class || jsonb_build_object('eligible_off', v_elig, 'visit_scores_apagados', v_cvs, 'farmer_scores_apagados', v_fcs);
+END $$;
+
+
+--
+-- Name: aplicar_parametros_automatico_diario(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.aplicar_parametros_automatico_diario(p_empresa text) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_run uuid;
+  v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('param_auto_'||p_empresa));
+  IF EXISTS (SELECT 1 FROM public.reposicao_param_auto_run
+             WHERE empresa=p_empresa AND data_negocio_brt=v_hoje AND status='completo') THEN
+    RETURN NULL;
+  END IF;
+  INSERT INTO public.reposicao_param_auto_run (empresa, data_negocio_brt, status)
+    VALUES (p_empresa, v_hoje, 'rodando') RETURNING id INTO v_run;
+  PERFORM public.atualizar_parametros_numericos_skus(p_empresa, v_run);
+  UPDATE public.reposicao_param_auto_run SET
+    status='completo', concluido_em=now(),
+    total_avaliados = (SELECT count(*) FROM public.reposicao_param_auto_log WHERE run_id=v_run),
+    total_aplicados = (SELECT count(*) FROM public.reposicao_param_auto_log WHERE run_id=v_run AND status='aplicado'),
+    total_segurados = (SELECT count(*) FROM public.reposicao_param_auto_log WHERE run_id=v_run AND status='segurado'),
+    total_pinados   = (SELECT count(*) FROM public.reposicao_param_auto_log WHERE run_id=v_run AND status='pinado'),
+    impacto_total_rs = (SELECT sum(impacto_rs) FROM public.reposicao_param_auto_log WHERE run_id=v_run AND impacto_rs IS NOT NULL),
+    impacto_desconhecido_n = (SELECT count(*) FROM public.reposicao_param_auto_log WHERE run_id=v_run AND status='aplicado' AND impacto_rs IS NULL)
+  WHERE id=v_run;
+  RETURN v_run;
+END;
+$$;
+
+
+--
 -- Name: aplicar_promocoes_no_ciclo(text, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -230,118 +1167,125 @@ BEGIN
   -- ========== MODO FLAT: desconto no preço, quantidade inalterada ==========
   WITH aplicados_flat AS (
     UPDATE pedido_compra_item pci
-    SET 
-      preco_sem_desconto = pci.preco_unitario,
-      preco_unitario = pci.preco_unitario * (1 - av.desconto_perc / 100),
-      valor_linha = pci.qtde_final * (pci.preco_unitario * (1 - av.desconto_perc / 100)),
-      modo_promocao = 'flat',
-      promocao_item_id = av.item_id,
-      desconto_perc_aplicado = av.desconto_perc,
-      economia_estimada_valor = pci.qtde_final * pci.preco_unitario * av.desconto_perc / 100
-    FROM v_promocao_avaliacao_hoje av
-    JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
-    WHERE av.modo_aplicacao = 'flat'
+    SET preco_sem_desconto = pci.preco_unitario,
+        preco_unitario = pci.preco_unitario * (1 - av.desconto_perc / 100),
+        valor_linha = pci.qtde_final * (pci.preco_unitario * (1 - av.desconto_perc / 100)),
+        modo_promocao = 'flat',
+        promocao_item_id = av.item_id,
+        desconto_perc_aplicado = av.desconto_perc,
+        economia_estimada_valor = pci.qtde_final * pci.preco_unitario * av.desconto_perc / 100
+    FROM v_promocao_avaliacao_hoje av, pedido_compra_sugerido pcs, promocao_campanha pc
+    WHERE pcs.id = pci.pedido_id
+      AND pc.id = av.campanha_id                                       -- [H2]
+      AND pcs.data_ciclo BETWEEN pc.data_inicio AND pc.data_fim        -- [H2] vigência na data do pedido
+      AND av.modo_aplicacao = 'flat'
       AND av.empresa = p_empresa
       AND pcs.empresa = p_empresa
       AND pcs.data_ciclo = p_data_ciclo
       AND pcs.status = 'pendente_aprovacao'
-      AND pci.sku_codigo_omie::bigint = av.sku_codigo_omie
-      AND pci.modo_promocao IS NULL  -- idempotência
+      AND pcs.tipo_ciclo = 'normal'                                    -- [H5]
+      AND pcs.fornecedor_nome = av.fornecedor_nome                     -- [H1]
+      AND pci.sku_codigo_omie = av.sku_codigo_omie::text               -- [H3]
+      AND pci.ajustado_humano IS NOT TRUE                              -- [H4]
+      AND pci.qtde_final > 0 AND pci.qtde_final < 'Infinity'::numeric   -- [H7b]
+      AND pci.modo_promocao IS NULL                                    -- idempotência
     RETURNING pci.id, pci.pedido_id, pci.economia_estimada_valor
   )
   SELECT COUNT(*) INTO v_flat FROM aplicados_flat;
 
-  -- ========== MODO FORWARD BUYING: infla quantidade ==========
+  -- ========== MODO FORWARD BUYING: infla quantidade (nunca rebaixa) ==========
   WITH aplicados_fb AS (
     UPDATE pedido_compra_item pci
-    SET 
-      qtde_sem_promocao = pci.qtde_sugerida,
-      qtde_final = av.qtde_com_desconto,
-      -- Preço fica o mesmo; valor_linha cresce pela quantidade
-      valor_linha = av.qtde_com_desconto * pci.preco_unitario * (1 - av.desconto_perc / 100),
-      preco_sem_desconto = pci.preco_unitario,
-      preco_unitario = pci.preco_unitario * (1 - av.desconto_perc / 100),
-      modo_promocao = 'forward_buying',
-      promocao_item_id = av.item_id,
-      desconto_perc_aplicado = av.desconto_perc,
-      economia_estimada_valor = av.economia_bruta_valor
-    FROM v_promocao_avaliacao_hoje av
-    JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
-    WHERE av.modo_aplicacao = 'forward_buying'
+    SET qtde_sem_promocao = pci.qtde_final,                            -- [H6] baseline real
+        qtde_final = GREATEST(av.qtde_com_desconto, pci.qtde_final),   -- [H6] nunca rebaixa o mínimo/ajuste
+        valor_linha = GREATEST(av.qtde_com_desconto, pci.qtde_final) * pci.preco_unitario * (1 - av.desconto_perc / 100),
+        preco_sem_desconto = pci.preco_unitario,
+        preco_unitario = pci.preco_unitario * (1 - av.desconto_perc / 100),
+        modo_promocao = 'forward_buying',
+        promocao_item_id = av.item_id,
+        desconto_perc_aplicado = av.desconto_perc,
+        economia_estimada_valor = GREATEST(av.qtde_com_desconto, pci.qtde_final) * pci.preco_unitario * av.desconto_perc / 100  -- [H6]
+    FROM v_promocao_avaliacao_hoje av, pedido_compra_sugerido pcs, promocao_campanha pc
+    WHERE pcs.id = pci.pedido_id
+      AND pc.id = av.campanha_id                                       -- [H2]
+      AND pcs.data_ciclo BETWEEN pc.data_inicio AND pc.data_fim        -- [H2]
+      AND av.modo_aplicacao = 'forward_buying'
       AND av.empresa = p_empresa
       AND pcs.empresa = p_empresa
       AND pcs.data_ciclo = p_data_ciclo
       AND pcs.status = 'pendente_aprovacao'
-      AND pci.sku_codigo_omie::bigint = av.sku_codigo_omie
+      AND pcs.tipo_ciclo = 'normal'                                    -- [H5]
+      AND pcs.fornecedor_nome = av.fornecedor_nome                     -- [H1]
+      AND pci.sku_codigo_omie = av.sku_codigo_omie::text               -- [H3]
+      AND pci.ajustado_humano IS NOT TRUE                              -- [H4]
       AND pci.modo_promocao IS NULL
+      AND av.qtde_com_desconto > 0 AND av.qtde_com_desconto < 'Infinity'::numeric  -- [H7]
+      AND pci.qtde_final > 0 AND pci.qtde_final < 'Infinity'::numeric   -- [H7b]
+      AND pci.qtde_final >= COALESCE(av.qtde_base, 0)                  -- [H7]
     RETURNING pci.id, pci.pedido_id, pci.economia_estimada_valor
   )
   SELECT COUNT(*) INTO v_fb FROM aplicados_fb;
 
-  -- Conta pedidos afetados e soma economia
-  SELECT 
-    COUNT(DISTINCT pedido_id),
-    COALESCE(SUM(economia_estimada_valor), 0)
+  -- Conta pedidos afetados e soma economia (estado do ciclo)
+  SELECT COUNT(DISTINCT pedido_id), COALESCE(SUM(economia_estimada_valor), 0)
   INTO v_pedidos, v_economia
   FROM pedido_compra_item
   WHERE pedido_id IN (
-    SELECT id FROM pedido_compra_sugerido 
-    WHERE empresa = p_empresa AND data_ciclo = p_data_ciclo
-  )
-  AND modo_promocao IS NOT NULL;
+      SELECT id FROM pedido_compra_sugerido
+      WHERE empresa = p_empresa AND data_ciclo = p_data_ciclo AND tipo_ciclo = 'normal'  -- [H5]
+    )
+    AND modo_promocao IS NOT NULL;
 
   -- Recalcula valor_total dos pedidos afetados
   UPDATE pedido_compra_sugerido pcs
   SET valor_total = (
-    SELECT COALESCE(SUM(valor_linha), 0) FROM pedido_compra_item WHERE pedido_id = pcs.id
-  )
+      SELECT COALESCE(SUM(valor_linha), 0)
+      FROM pedido_compra_item
+      WHERE pedido_id = pcs.id
+    )
   WHERE pcs.empresa = p_empresa
     AND pcs.data_ciclo = p_data_ciclo
     AND pcs.status = 'pendente_aprovacao'
+    AND pcs.tipo_ciclo = 'normal'                                      -- [H5]
     AND EXISTS (
-      SELECT 1 FROM pedido_compra_item pci 
+      SELECT 1 FROM pedido_compra_item pci
       WHERE pci.pedido_id = pcs.id AND pci.modo_promocao IS NOT NULL
     );
 
   -- Reavalia guardrail de delta — só para pedidos inflados por forward_buying
-  -- (promoção flat reduz valor, então não dispara guardrail de alta)
   WITH reavaliacao AS (
     UPDATE pedido_compra_sugerido pcs
-    SET 
-      delta_vs_anterior_perc = CASE
-        WHEN pcs.pedido_anterior_valor > 0
-        THEN ROUND(((pcs.valor_total - pcs.pedido_anterior_valor) / pcs.pedido_anterior_valor * 100)::numeric, 1)
-        ELSE NULL
-      END,
-      status = CASE
-        WHEN pcs.pedido_anterior_valor > 0
-          AND pcs.valor_total / NULLIF(pcs.pedido_anterior_valor, 0) > 1 + (
-            (SELECT fh.delta_max_perc FROM fornecedor_habilitado_reposicao fh
-             WHERE fh.empresa = pcs.empresa AND fh.fornecedor_nome = pcs.fornecedor_nome) / 100.0
-          )
-        THEN 'bloqueado_guardrail'
-        ELSE pcs.status
-      END,
-      mensagem_bloqueio = CASE
-        WHEN pcs.pedido_anterior_valor > 0
-          AND pcs.valor_total / NULLIF(pcs.pedido_anterior_valor, 0) > 1 + (
-            (SELECT fh.delta_max_perc FROM fornecedor_habilitado_reposicao fh
-             WHERE fh.empresa = pcs.empresa AND fh.fornecedor_nome = pcs.fornecedor_nome) / 100.0
-          )
-        THEN 'Variação acima do delta máximo — forward buying promocional inflou pedido, revisar'
-        ELSE pcs.mensagem_bloqueio
-      END
+    SET delta_vs_anterior_perc = CASE
+          WHEN pcs.pedido_anterior_valor > 0
+          THEN ROUND(((pcs.valor_total - pcs.pedido_anterior_valor) / pcs.pedido_anterior_valor * 100)::numeric, 1)
+          ELSE NULL END,
+        status = CASE
+          WHEN pcs.pedido_anterior_valor > 0
+            AND pcs.valor_total / NULLIF(pcs.pedido_anterior_valor, 0) > 1 + (
+              (SELECT fh.delta_max_perc FROM fornecedor_habilitado_reposicao fh
+               WHERE fh.empresa = pcs.empresa AND fh.fornecedor_nome = pcs.fornecedor_nome) / 100.0
+            )
+          THEN 'bloqueado_guardrail'
+          ELSE pcs.status END,
+        mensagem_bloqueio = CASE
+          WHEN pcs.pedido_anterior_valor > 0
+            AND pcs.valor_total / NULLIF(pcs.pedido_anterior_valor, 0) > 1 + (
+              (SELECT fh.delta_max_perc FROM fornecedor_habilitado_reposicao fh
+               WHERE fh.empresa = pcs.empresa AND fh.fornecedor_nome = pcs.fornecedor_nome) / 100.0
+            )
+          THEN 'Variação acima do delta máximo — forward buying promocional inflou pedido, revisar'
+          ELSE pcs.mensagem_bloqueio END
     WHERE pcs.empresa = p_empresa
       AND pcs.data_ciclo = p_data_ciclo
       AND pcs.status IN ('pendente_aprovacao', 'bloqueado_guardrail')
+      AND pcs.tipo_ciclo = 'normal'                                    -- [H5]
       AND EXISTS (
-        SELECT 1 FROM pedido_compra_item pci 
+        SELECT 1 FROM pedido_compra_item pci
         WHERE pci.pedido_id = pcs.id AND pci.modo_promocao = 'forward_buying'
       )
     RETURNING id, status
   )
-  SELECT COUNT(*) FILTER (WHERE status = 'bloqueado_guardrail') 
-  INTO v_bloqueados FROM reavaliacao;
+  SELECT COUNT(*) FILTER (WHERE status = 'bloqueado_guardrail') INTO v_bloqueados FROM reavaliacao;
 
   RETURN QUERY SELECT v_flat, v_fb, v_pedidos, v_economia, v_bloqueados;
 END;
@@ -353,6 +1297,140 @@ $$;
 --
 
 COMMENT ON FUNCTION public.aplicar_promocoes_no_ciclo(p_empresa text, p_data_ciclo date) IS 'Pós-processa pedidos pendentes aplicando promoções ativas. Modo flat: desconto no preço, sem mudar quantidade. Modo forward_buying: infla quantidade pra atingir volume mínimo SE desconto paga custo de capital. Idempotente. Reavalia guardrail de delta após inflação.';
+
+
+--
+-- Name: aplicar_snapshot_pendente(text, jsonb, text[], text[], bigint, timestamp with time zone, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.aplicar_snapshot_pendente(p_empresa text, p_pendente jsonb, p_codints_aprovados text[], p_codints_em_aprovacao text[], p_run_id bigint, p_observed_at timestamp with time zone, p_meta jsonb DEFAULT '{}'::jsonb) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_empresa        text := upper(btrim(coalesce(p_empresa, '')));
+  v_account        text;
+  v_ultimo_run     bigint;
+  v_skus_setados   int := 0;
+  v_skus_zerados   int := 0;
+  v_skus_sem_linha int := 0;
+  v_codints        text[];
+  v_codints_emaprov text[];
+  v_n_pendente     int;
+BEGIN
+  -- Gate: service_role (uid NULL) passa; usuário autenticado precisa ser staff.
+  IF auth.uid() IS NOT NULL
+     AND NOT (public.has_role(auth.uid(), 'employee'::app_role)
+              OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+
+  IF v_empresa = '' THEN
+    RAISE EXCEPTION 'empresa obrigatória' USING ERRCODE = '22023';
+  END IF;
+  IF p_run_id IS NULL THEN
+    RAISE EXCEPTION 'run_id obrigatório' USING ERRCODE = '22023';
+  END IF;
+  IF p_pendente IS NULL OR jsonb_typeof(p_pendente) <> 'object' THEN
+    RAISE EXCEPTION 'p_pendente deve ser objeto jsonb (recebido: %)', jsonb_typeof(p_pendente) USING ERRCODE = '22023';
+  END IF;
+
+  -- GUARD de completude: substituição absoluta só com varredura COMPLETA confirmada pela edge.
+  IF coalesce(p_meta->>'empty_page_reached', '') <> 'true' THEN
+    RAISE EXCEPTION 'snapshot recusado: meta.empty_page_reached <> true (varredura incompleta — recusado p/ não zerar o a-caminho)'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- GUARD de saldo: nenhum valor do payload pode ser não-numérico ou <= 0.
+  IF EXISTS (
+    SELECT 1 FROM jsonb_each(p_pendente) j
+    WHERE jsonb_typeof(j.value) <> 'number' OR (j.value #>> '{}')::numeric <= 0
+  ) THEN
+    RAISE EXCEPTION 'snapshot recusado: saldo inválido no payload (não-numérico ou <= 0)' USING ERRCODE = '22023';
+  END IF;
+
+  v_account := lower(v_empresa);
+
+  PERFORM pg_advisory_xact_lock(hashtext('aplicar_snapshot_pendente:' || v_empresa));
+
+  SELECT COALESCE((metadata->>'run_id')::bigint, 0) INTO v_ultimo_run
+  FROM public.sync_state
+  WHERE entity_type = 'reposicao_pendente_po' AND account = v_account;
+  v_ultimo_run := COALESCE(v_ultimo_run, 0);
+
+  IF p_run_id < v_ultimo_run THEN
+    RETURN jsonb_build_object(
+      'applied', false, 'skipped_reason', 'stale_run',
+      'run_id', p_run_id, 'ultimo_run', v_ultimo_run
+    );
+  END IF;
+
+  WITH zerados AS (
+    UPDATE public.sku_estoque_atual sea
+       SET estoque_pendente_entrada = 0
+     WHERE sea.empresa = v_empresa
+       AND COALESCE(sea.estoque_pendente_entrada, 0) <> 0
+       AND NOT (p_pendente ? sea.sku_codigo_omie)
+    RETURNING 1
+  )
+  SELECT count(*) INTO v_skus_zerados FROM zerados;
+
+  WITH up AS (
+    INSERT INTO public.sku_estoque_atual
+      (empresa, sku_codigo_omie, estoque_fisico, estoque_pendente_entrada, ultima_sincronizacao, fonte_sync)
+    SELECT v_empresa, j.key, 0, (j.value #>> '{}')::numeric, NULL, 'snapshot_pendente_sem_fisico'
+    FROM jsonb_each(p_pendente) j
+    ON CONFLICT (empresa, sku_codigo_omie) DO UPDATE
+      SET estoque_pendente_entrada = EXCLUDED.estoque_pendente_entrada
+    RETURNING (xmax = 0) AS inserted
+  )
+  SELECT count(*)::int, count(*) FILTER (WHERE inserted)::int INTO v_skus_setados, v_skus_sem_linha FROM up;
+
+  v_codints := COALESCE(
+    (SELECT array_agg(DISTINCT c) FROM unnest(coalesce(p_codints_aprovados, ARRAY[]::text[])) c
+      WHERE c IS NOT NULL AND btrim(c) <> ''),
+    ARRAY[]::text[]
+  );
+  v_codints_emaprov := COALESCE(
+    (SELECT array_agg(DISTINCT c) FROM unnest(coalesce(p_codints_em_aprovacao, ARRAY[]::text[])) c
+      WHERE c IS NOT NULL AND btrim(c) <> ''),
+    ARRAY[]::text[]
+  );
+  v_n_pendente := (SELECT count(*)::int FROM jsonb_object_keys(p_pendente));
+
+  INSERT INTO public.sync_state (entity_type, account, status, last_sync_at, total_synced, metadata, updated_at)
+  VALUES (
+    'reposicao_pendente_po', v_account, 'complete', p_observed_at, v_n_pendente,
+    COALESCE(p_meta, '{}'::jsonb) || jsonb_build_object(
+      'run_id',                 p_run_id,
+      'observed_at',            p_observed_at,
+      'codints_aprovados',      to_jsonb(v_codints),
+      'codints_em_aprovacao',   to_jsonb(v_codints_emaprov),
+      'skus_com_pendente',      v_n_pendente,
+      'skus_zerados',           v_skus_zerados,
+      'skus_sem_linha_criados', v_skus_sem_linha
+    ),
+    now()
+  )
+  ON CONFLICT (entity_type, account) DO UPDATE SET
+    status       = 'complete',
+    last_sync_at = EXCLUDED.last_sync_at,
+    total_synced = EXCLUDED.total_synced,
+    metadata     = EXCLUDED.metadata,
+    updated_at   = now();
+
+  RETURN jsonb_build_object(
+    'applied',                true,
+    'run_id',                 p_run_id,
+    'account',                v_account,
+    'skus_com_pendente',      v_n_pendente,
+    'skus_setados',           v_skus_setados,
+    'skus_zerados',           v_skus_zerados,
+    'skus_sem_linha_criados', v_skus_sem_linha,
+    'codints_aprovados',      COALESCE(array_length(v_codints, 1), 0)
+  );
+END;
+$$;
 
 
 --
@@ -381,6 +1459,154 @@ BEGIN
   WHERE id = p_pedido_id;
   RETURN jsonb_build_object('status', 'ok', 'pedido_id', p_pedido_id,
                              'sera_disparado_em', v_pedido.horario_corte_planejado);
+END;
+$$;
+
+
+--
+-- Name: aprovar_versao_boletim(jsonb, uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.aprovar_versao_boletim(p_payload jsonb, p_document_id uuid, p_change_type text, p_change_note text DEFAULT NULL::text) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid     uuid    := auth.uid();
+  v_supplier text   := lower(btrim(coalesce(p_payload->>'supplier', 'sayerlack')));
+  v_code    text    := coalesce(p_payload->>'product_code', '');
+  v_norm    text    := btrim(regexp_replace(upper(normalize(v_code, NFKC)), '\s+', '', 'g'));
+  v_next    int;
+  v_spec_id uuid;
+  v_version_id uuid;
+BEGIN
+  IF NOT public.has_role(v_uid, 'master'::app_role) THEN
+    RAISE EXCEPTION 'forbidden: somente master pode aprovar versões de boletim';
+  END IF;
+
+  IF v_norm = '' THEN
+    RAISE EXCEPTION 'product_code obrigatório no payload';
+  END IF;
+  IF p_change_type NOT IN ('initial', 'bulletin_revision', 'correction', 'data_completion') THEN
+    RAISE EXCEPTION 'change_type inválido: %. Valores aceitos: initial, bulletin_revision, correction, data_completion', p_change_type;
+  END IF;
+  IF p_change_type IN ('correction', 'data_completion') AND coalesce(btrim(p_change_note), '') = '' THEN
+    RAISE EXCEPTION 'change_note é obrigatória quando change_type = %', p_change_type;
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtext(v_supplier || '|' || v_norm));
+
+  INSERT INTO public.kb_product_specs AS s (
+    document_id, product_code, product_name, supplier, product_line, product_category,
+    densidade_g_cm3, solidos_pct, viscosidade_aplicacao_s, viscosidade_copo, brilho_ub, dureza,
+    rendimento_m2_por_litro, demaos_recomendadas, gramatura_g_m2_min, gramatura_g_m2_max, pot_life_horas,
+    temp_aplicacao_c_min, temp_aplicacao_c_max, umidade_aplicacao_pct_min, umidade_aplicacao_pct_max,
+    catalisador_codigo, catalisador_proporcao_pct, diluente_codigo, equipamentos_aplicacao, lixa_recomendada,
+    substrato, secagem_manuseio_h, secagem_empilhamento_h, secagem_total_h, validade_dias,
+    temp_armazenamento_c_min, temp_armazenamento_c_max, certificacoes_aplicaveis, isento_metais_pesados,
+    isento_substancias, diferenciais_chave, uso_recomendado, publico_alvo, extraction_confidence,
+    extraction_gaps, extracted_by, approved_by, approved_at
+  )
+  SELECT
+    p_document_id, r.product_code, r.product_name, lower(btrim(coalesce(r.supplier, 'sayerlack'))),
+    r.product_line, r.product_category, r.densidade_g_cm3, r.solidos_pct, r.viscosidade_aplicacao_s,
+    r.viscosidade_copo, r.brilho_ub, r.dureza, r.rendimento_m2_por_litro, r.demaos_recomendadas,
+    r.gramatura_g_m2_min, r.gramatura_g_m2_max, r.pot_life_horas, r.temp_aplicacao_c_min, r.temp_aplicacao_c_max,
+    r.umidade_aplicacao_pct_min, r.umidade_aplicacao_pct_max, r.catalisador_codigo, r.catalisador_proporcao_pct,
+    r.diluente_codigo, r.equipamentos_aplicacao, r.lixa_recomendada, r.substrato, r.secagem_manuseio_h,
+    r.secagem_empilhamento_h, r.secagem_total_h, r.validade_dias, r.temp_armazenamento_c_min,
+    r.temp_armazenamento_c_max, r.certificacoes_aplicaveis, r.isento_metais_pesados, r.isento_substancias,
+    r.diferenciais_chave, r.uso_recomendado, r.publico_alvo, r.extraction_confidence, r.extraction_gaps,
+    v_uid, v_uid, now()
+  FROM jsonb_populate_record(null::public.kb_product_specs, p_payload) r
+  ON CONFLICT (supplier, product_code_normalized) DO UPDATE SET
+    product_code             = excluded.product_code,
+    document_id              = excluded.document_id,
+    product_name             = excluded.product_name,
+    supplier                 = excluded.supplier,
+    product_line             = excluded.product_line,
+    product_category         = excluded.product_category,
+    densidade_g_cm3          = excluded.densidade_g_cm3,
+    solidos_pct              = excluded.solidos_pct,
+    viscosidade_aplicacao_s  = excluded.viscosidade_aplicacao_s,
+    viscosidade_copo         = excluded.viscosidade_copo,
+    brilho_ub                = excluded.brilho_ub,
+    dureza                   = excluded.dureza,
+    rendimento_m2_por_litro  = excluded.rendimento_m2_por_litro,
+    demaos_recomendadas      = excluded.demaos_recomendadas,
+    gramatura_g_m2_min       = excluded.gramatura_g_m2_min,
+    gramatura_g_m2_max       = excluded.gramatura_g_m2_max,
+    pot_life_horas           = excluded.pot_life_horas,
+    temp_aplicacao_c_min     = excluded.temp_aplicacao_c_min,
+    temp_aplicacao_c_max     = excluded.temp_aplicacao_c_max,
+    umidade_aplicacao_pct_min = excluded.umidade_aplicacao_pct_min,
+    umidade_aplicacao_pct_max = excluded.umidade_aplicacao_pct_max,
+    catalisador_codigo       = excluded.catalisador_codigo,
+    catalisador_proporcao_pct = excluded.catalisador_proporcao_pct,
+    diluente_codigo          = excluded.diluente_codigo,
+    equipamentos_aplicacao   = excluded.equipamentos_aplicacao,
+    lixa_recomendada         = excluded.lixa_recomendada,
+    substrato                = excluded.substrato,
+    secagem_manuseio_h       = excluded.secagem_manuseio_h,
+    secagem_empilhamento_h   = excluded.secagem_empilhamento_h,
+    secagem_total_h          = excluded.secagem_total_h,
+    validade_dias            = excluded.validade_dias,
+    temp_armazenamento_c_min = excluded.temp_armazenamento_c_min,
+    temp_armazenamento_c_max = excluded.temp_armazenamento_c_max,
+    certificacoes_aplicaveis = excluded.certificacoes_aplicaveis,
+    isento_metais_pesados    = excluded.isento_metais_pesados,
+    isento_substancias       = excluded.isento_substancias,
+    diferenciais_chave       = excluded.diferenciais_chave,
+    uso_recomendado          = excluded.uso_recomendado,
+    publico_alvo             = excluded.publico_alvo,
+    extraction_confidence    = excluded.extraction_confidence,
+    extraction_gaps          = excluded.extraction_gaps,
+    approved_by              = v_uid,
+    approved_at              = now(),
+    updated_at               = now()
+  RETURNING s.id INTO v_spec_id;
+
+  SELECT coalesce(max(version_number), 0) + 1
+    INTO v_next
+    FROM public.kb_product_spec_versions
+   WHERE supplier = v_supplier AND product_code_normalized = v_norm;
+
+  UPDATE public.kb_product_spec_versions
+     SET superseded_at = now()
+   WHERE supplier              = v_supplier
+     AND product_code_normalized = v_norm
+     AND superseded_at IS NULL;
+
+  INSERT INTO public.kb_product_spec_versions (
+    supplier, product_code_normalized, product_code, kb_product_spec_id, version_number,
+    source_document_id, change_type, change_note,
+    product_name, product_line, product_category, densidade_g_cm3, solidos_pct, viscosidade_aplicacao_s,
+    viscosidade_copo, brilho_ub, dureza, rendimento_m2_por_litro, demaos_recomendadas, gramatura_g_m2_min,
+    gramatura_g_m2_max, pot_life_horas, temp_aplicacao_c_min, temp_aplicacao_c_max, umidade_aplicacao_pct_min,
+    umidade_aplicacao_pct_max, catalisador_codigo, catalisador_proporcao_pct, diluente_codigo,
+    equipamentos_aplicacao, lixa_recomendada, substrato, secagem_manuseio_h, secagem_empilhamento_h,
+    secagem_total_h, validade_dias, temp_armazenamento_c_min, temp_armazenamento_c_max, certificacoes_aplicaveis,
+    isento_metais_pesados, isento_substancias, diferenciais_chave, uso_recomendado, publico_alvo,
+    extraction_confidence, extraction_gaps, approved_by, approved_at
+  )
+  SELECT
+    v_supplier, v_norm, r.product_code, v_spec_id, v_next, p_document_id, p_change_type, p_change_note,
+    r.product_name, r.product_line, r.product_category, r.densidade_g_cm3, r.solidos_pct,
+    r.viscosidade_aplicacao_s, r.viscosidade_copo, r.brilho_ub, r.dureza, r.rendimento_m2_por_litro,
+    r.demaos_recomendadas, r.gramatura_g_m2_min, r.gramatura_g_m2_max, r.pot_life_horas, r.temp_aplicacao_c_min,
+    r.temp_aplicacao_c_max, r.umidade_aplicacao_pct_min, r.umidade_aplicacao_pct_max, r.catalisador_codigo,
+    r.catalisador_proporcao_pct, r.diluente_codigo, r.equipamentos_aplicacao, r.lixa_recomendada, r.substrato,
+    r.secagem_manuseio_h, r.secagem_empilhamento_h, r.secagem_total_h, r.validade_dias, r.temp_armazenamento_c_min,
+    r.temp_armazenamento_c_max, r.certificacoes_aplicaveis, r.isento_metais_pesados, r.isento_substancias,
+    r.diferenciais_chave, r.uso_recomendado, r.publico_alvo, r.extraction_confidence, r.extraction_gaps,
+    v_uid, now()
+  FROM jsonb_populate_record(null::public.kb_product_spec_versions, p_payload) r
+  RETURNING id INTO v_version_id;
+
+  DELETE FROM public.kb_extraction_drafts
+   WHERE document_id = p_document_id;
+
+  RETURN v_version_id;
 END;
 $$;
 
@@ -546,6 +1772,33 @@ $$;
 
 
 --
+-- Name: atualizar_descricao_sku_parametros(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.atualizar_descricao_sku_parametros(p_empresa text) RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_atualizados int := 0;
+BEGIN
+  UPDATE sku_parametros sp
+  SET sku_descricao = trim(op.descricao)
+  FROM omie_products op
+  WHERE op.omie_codigo_produto::text = sp.sku_codigo_omie::text
+    AND op.account = lower(sp.empresa)
+    AND op.ativo = true
+    AND op.descricao IS NOT NULL
+    AND length(trim(op.descricao)) > 0
+    AND trim(op.descricao) IS DISTINCT FROM sp.sku_descricao
+    AND sp.empresa = p_empresa;
+  GET DIAGNOSTICS v_atualizados = ROW_COUNT;
+  RETURN v_atualizados;
+END;
+$$;
+
+
+--
 -- Name: atualizar_estados_eventos_comerciais(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -583,48 +1836,183 @@ $$;
 
 
 --
--- Name: atualizar_parametros_numericos_skus(text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: atualizar_parametros_numericos_skus(text, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.atualizar_parametros_numericos_skus(p_empresa text) RETURNS integer
+CREATE FUNCTION public.atualizar_parametros_numericos_skus(p_empresa text, p_run_id uuid DEFAULT NULL::uuid) RETURNS integer
     LANGUAGE plpgsql
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
   atualizados int := 0;
+  v_mult numeric := COALESCE((SELECT value::numeric FROM public.company_config WHERE key='param_auto_fusivel_mult'), 3);
 BEGIN
-  UPDATE sku_parametros sp
-  SET 
-    sku_descricao = COALESCE(v.sku_descricao, sp.sku_descricao),
-    fornecedor_nome = COALESCE(v.fornecedor_nome, sp.fornecedor_nome),
-    demanda_media_diaria = v.demanda_media_diaria,
-    -- [BUG #2b FIX] desvio diário (usado na fórmula), não desvio por ordem
-    demanda_desvio_padrao = v.demanda_sigma_diario,
-    demanda_coef_variacao = v.coef_variacao_ordem,
-    demanda_dias_com_movimento = v.num_ordens,
-    valor_vendido_90d = v.valor_total_90d,
-    lt_medio_dias_uteis = v.lead_time_medio,
-    lt_desvio_padrao_dias = v.lead_time_desvio,
-    lt_p95_dias = v.lt_p95_dias,
-    fonte_leadtime = v.fonte_leadtime,
-    -- [BUG #2c FIX] persiste Z pra auditoria
-    z_score = v.z_aplicado,
-    -- [BUG #2a FIX] agora recebe SS puro, separado do minimo
-    estoque_seguranca = v.estoque_seguranca_sugerido,
-    ponto_pedido = v.ponto_pedido_sugerido,
-    estoque_minimo = v.estoque_minimo_sugerido,
-    cobertura_alvo_dias = v.cobertura_alvo_dias,
-    estoque_maximo = v.estoque_maximo_sugerido,
+  PERFORM set_config('app.param_auto', CASE WHEN p_run_id IS NULL THEN 'manual' ELSE 'auto' END, true);
+
+  DROP TABLE IF EXISTS tmp_param_decidido;
+  CREATE TEMP TABLE tmp_param_decidido ON COMMIT DROP AS
+  WITH base AS (
+    SELECT sp.id, sp.empresa, sp.sku_codigo_omie,
+           sp.ponto_pedido AS pp_antes, sp.estoque_minimo AS min_antes, sp.estoque_maximo AS max_antes,
+           sp.estoque_seguranca AS ss_antes, sp.cobertura_alvo_dias AS cob_antes,
+           sp.habilitado_reposicao_automatica AS habilitado,
+           COALESCE(sp.tipo_reposicao,'automatica') AS tipo,
+           v.sku_descricao, v.fornecedor_nome,
+           v.estoque_minimo_sugerido AS min_sug, v.ponto_pedido_sugerido AS pp_sug,
+           v.estoque_maximo_sugerido AS max_sug, v.estoque_seguranca_sugerido AS ss_sug,
+           v.cobertura_alvo_dias AS cob_sug,
+           v.demanda_media_diaria, v.demanda_sigma_diario, v.coef_variacao_ordem, v.num_ordens,
+           v.valor_total_90d, v.lead_time_medio, v.lead_time_desvio, v.lt_p95_dias, v.fonte_leadtime,
+           v.z_aplicado, v.classe_consolidada,
+           pin.ponto_pedido_rejeitado, pin.estoque_maximo_rejeitado
+    FROM public.sku_parametros sp
+    JOIN public.v_sku_parametros_sugeridos v
+      ON v.empresa = sp.empresa AND v.sku_codigo_omie = sp.sku_codigo_omie
+    LEFT JOIN public.reposicao_param_pin pin
+      ON pin.empresa = sp.empresa AND pin.sku_codigo_omie = sp.sku_codigo_omie::text
+    WHERE sp.empresa = p_empresa
+  )
+  SELECT b.*,
+    CASE
+      WHEN b.pp_sug IS NULL OR b.max_sug IS NULL OR b.min_sug IS NULL
+           OR b.ss_sug IS NULL OR b.cob_sug IS NULL THEN 'sem_mudanca'
+      WHEN b.pp_sug = 'NaN'::numeric OR b.max_sug = 'NaN'::numeric OR b.min_sug = 'NaN'::numeric
+           OR b.ss_sug = 'NaN'::numeric OR b.cob_sug = 'NaN'::numeric
+           OR b.min_sug < 0 OR b.pp_sug < 0 OR b.max_sug < 0 OR b.ss_sug < 0
+           OR b.max_sug < b.pp_sug OR b.pp_sug < b.min_sug OR b.cob_sug <= 0 THEN 'bloqueado_validacao'
+      WHEN b.max_antes IS NULL OR b.max_antes <= 0 THEN 'bloqueado_validacao'
+      WHEN b.ponto_pedido_rejeitado IS NOT NULL
+           AND round(b.pp_sug) = round(b.ponto_pedido_rejeitado)
+           AND round(b.max_sug) = round(b.estoque_maximo_rejeitado) THEN 'pinado'
+      WHEN round(b.pp_sug) = round(b.pp_antes) AND round(b.max_sug) = round(b.max_antes) THEN 'sem_mudanca'
+      WHEN b.max_antes > 0 AND round(b.max_sug) > v_mult * round(b.max_antes) THEN 'segurado'
+      ELSE 'aplicado'
+    END AS status
+  FROM base b;
+
+  UPDATE public.sku_parametros sp SET
+    sku_descricao = COALESCE(d.sku_descricao, sp.sku_descricao),
+    fornecedor_nome = COALESCE(d.fornecedor_nome, sp.fornecedor_nome),
+    demanda_media_diaria = d.demanda_media_diaria,
+    demanda_desvio_padrao = d.demanda_sigma_diario,
+    demanda_coef_variacao = d.coef_variacao_ordem,
+    demanda_dias_com_movimento = d.num_ordens,
+    valor_vendido_90d = d.valor_total_90d,
+    lt_medio_dias_uteis = d.lead_time_medio,
+    lt_desvio_padrao_dias = d.lead_time_desvio,
+    lt_p95_dias = d.lt_p95_dias,
+    fonte_leadtime = d.fonte_leadtime,
+    z_score = d.z_aplicado,
+    estoque_seguranca   = CASE WHEN d.status='aplicado' THEN d.ss_sug  ELSE sp.estoque_seguranca END,
+    ponto_pedido        = CASE WHEN d.status='aplicado' THEN d.pp_sug  ELSE sp.ponto_pedido END,
+    estoque_minimo      = CASE WHEN d.status='aplicado' THEN d.min_sug ELSE sp.estoque_minimo END,
+    cobertura_alvo_dias = CASE WHEN d.status='aplicado' THEN d.cob_sug ELSE sp.cobertura_alvo_dias END,
+    estoque_maximo      = CASE WHEN d.status='aplicado' THEN d.max_sug ELSE sp.estoque_maximo END,
     ultima_atualizacao_calculo = NOW()
-  FROM v_sku_parametros_sugeridos v
-  WHERE sp.empresa = v.empresa
-    AND sp.sku_codigo_omie = v.sku_codigo_omie
-    AND sp.empresa = p_empresa;
-  
-  GET DIAGNOSTICS atualizados = ROW_COUNT;
+  FROM tmp_param_decidido d WHERE sp.id = d.id;
+
+  SELECT count(*) FILTER (WHERE status='aplicado') INTO atualizados FROM tmp_param_decidido;
+
+  DELETE FROM public.reposicao_param_pin p
+  USING tmp_param_decidido d
+  WHERE p.empresa = d.empresa AND p.sku_codigo_omie = d.sku_codigo_omie::text
+    AND d.status = 'aplicado' AND d.ponto_pedido_rejeitado IS NOT NULL;
+
+  IF p_run_id IS NOT NULL THEN
+    INSERT INTO public.reposicao_param_auto_log (
+      run_id, empresa, sku_codigo_omie, sku_descricao, status,
+      ponto_pedido_antes, ponto_pedido_depois, estoque_minimo_antes, estoque_minimo_depois,
+      estoque_maximo_antes, estoque_maximo_depois, estoque_seguranca_antes, estoque_seguranca_depois,
+      cobertura_antes, cobertura_depois,
+      demanda_media_diaria, lt_medio_dias_uteis, classe_consolidada, z_score
+    )
+    SELECT p_run_id, d.empresa, d.sku_codigo_omie::text, d.sku_descricao, d.status,
+      d.pp_antes,  CASE WHEN d.status='aplicado' THEN d.pp_sug  ELSE d.pp_antes END,
+      d.min_antes, CASE WHEN d.status='aplicado' THEN d.min_sug ELSE d.min_antes END,
+      d.max_antes, CASE WHEN d.status='aplicado' THEN d.max_sug ELSE d.max_antes END,
+      d.ss_antes,  CASE WHEN d.status='aplicado' THEN d.ss_sug  ELSE d.ss_antes END,
+      d.cob_antes, CASE WHEN d.status='aplicado' THEN d.cob_sug ELSE d.cob_antes END,
+      d.demanda_media_diaria, d.lead_time_medio, d.classe_consolidada, d.z_aplicado
+    FROM tmp_param_decidido d
+    WHERE d.status IN ('aplicado','segurado','pinado','bloqueado_validacao')
+      AND d.habilitado = true AND d.tipo = 'automatica';
+
+    WITH em_transito AS (
+      SELECT pcs2.empresa, pci.sku_codigo_omie::text AS sku_codigo_omie, SUM(pci.qtde_final) AS qtde
+      FROM public.pedido_compra_item pci
+      JOIN public.pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
+      WHERE pcs2.empresa = p_empresa
+        AND pcs2.status IN ('aprovado_aguardando_disparo','disparado','concluido_recebido')
+        AND pcs2.data_ciclo >= (CURRENT_DATE - INTERVAL '7 days')
+      GROUP BY pcs2.empresa, pci.sku_codigo_omie
+    ),
+    posicao AS (
+      SELECT l.id AS log_id,
+             (COALESCE(sea.estoque_fisico,0) + COALESCE(sea.estoque_pendente_entrada,0)
+                + COALESCE(et.qtde,0)) AS pos,
+             ip.custo, ip.custo_fonte
+      FROM public.reposicao_param_auto_log l
+      LEFT JOIN public.sku_estoque_atual sea
+        ON sea.empresa = l.empresa AND sea.sku_codigo_omie = l.sku_codigo_omie
+      LEFT JOIN em_transito et
+        ON et.empresa = l.empresa AND et.sku_codigo_omie = l.sku_codigo_omie
+      LEFT JOIN LATERAL (
+        SELECT CASE WHEN ip0.cmc > 0 THEN ip0.cmc
+                    WHEN ip0.preco_medio > 0 THEN ip0.preco_medio
+                    ELSE NULL END AS custo,
+               CASE WHEN ip0.cmc > 0 THEN 'cmc'
+                    WHEN ip0.preco_medio > 0 THEN 'preco_medio'
+                    ELSE NULL END AS custo_fonte
+        FROM public.inventory_position ip0
+        WHERE ip0.omie_codigo_produto::text = l.sku_codigo_omie
+          AND ip0.account = lower(p_empresa)
+        LIMIT 1
+      ) ip ON true
+      WHERE l.run_id = p_run_id
+        AND l.status IN ('aplicado','segurado')
+    )
+    UPDATE public.reposicao_param_auto_log l SET
+      custo_unitario   = p.custo,
+      custo_fonte      = p.custo_fonte,
+      qtde_compra_antes  = CASE WHEN p.pos <= l.ponto_pedido_antes  THEN GREATEST(0, l.estoque_maximo_antes  - p.pos) ELSE 0 END,
+      qtde_compra_depois = CASE WHEN p.pos <= l.ponto_pedido_depois THEN GREATEST(0, l.estoque_maximo_depois - p.pos) ELSE 0 END,
+      impacto_rs = CASE WHEN p.custo IS NULL THEN NULL ELSE
+        ( (CASE WHEN p.pos <= l.ponto_pedido_depois THEN GREATEST(0, l.estoque_maximo_depois - p.pos) ELSE 0 END)
+        - (CASE WHEN p.pos <= l.ponto_pedido_antes  THEN GREATEST(0, l.estoque_maximo_antes  - p.pos) ELSE 0 END)
+        ) * p.custo END
+    FROM posicao p
+    WHERE l.id = p.log_id;
+  END IF;
+
   RETURN atualizados;
 END;
 $$;
+
+
+--
+-- Name: auditar_tarefa(uuid, boolean, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.auditar_tarefa(p_tarefa_id uuid, p_aprovar boolean, p_motivo text DEFAULT NULL::text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare v_uid uuid := auth.uid();
+begin
+  if not public.pode_ver_carteira_completa(v_uid) then raise exception 'Só gestor/master audita'; end if;
+  if p_aprovar then
+    update public.tarefas set auditoria_status='aprovada', auditada_por=v_uid, auditada_em=now(), updated_at=now()
+      where id=p_tarefa_id and auditoria_status='pendente';
+    insert into public.tarefa_eventos (tarefa_id,tipo_evento,ator,payload)
+    values (p_tarefa_id,'auditoria_aprovada',v_uid,'{}'::jsonb);
+  else
+    update public.tarefas set auditoria_status='reprovada', auditada_por=v_uid, auditada_em=now(),
+      status='aberta', comprovacao_em=null, escalado_em=null, auditoria_motivo=p_motivo, updated_at=now()
+      where id=p_tarefa_id and auditoria_status='pendente';
+    insert into public.tarefa_eventos (tarefa_id,tipo_evento,ator,payload)
+    values (p_tarefa_id,'auditoria_reprovada',v_uid,jsonb_build_object('motivo',p_motivo));
+  end if;
+end $$;
 
 
 --
@@ -670,22 +2058,26 @@ CREATE FUNCTION public.auto_assign_user_role() RETURNS trigger
     SET search_path TO 'public'
     AS $$
 DECLARE
-  master_cnpj_value TEXT;
-  profile_doc TEXT;
   existing_role app_role;
 BEGIN
   IF TG_OP = 'UPDATE' THEN RETURN NEW; END IF;
   SELECT role INTO existing_role FROM public.user_roles WHERE user_id = NEW.user_id LIMIT 1;
   IF existing_role IS NOT NULL THEN RETURN NEW; END IF;
-  SELECT value INTO master_cnpj_value FROM public.company_config WHERE key = 'master_cnpj';
-  profile_doc := REGEXP_REPLACE(NEW.document, '\D', '', 'g');
-  IF profile_doc = master_cnpj_value THEN
-    INSERT INTO public.user_roles (user_id, role) VALUES (NEW.user_id, 'master') ON CONFLICT (user_id, role) DO NOTHING;
-  ELSIF NEW.is_employee = true THEN
-    INSERT INTO public.user_roles (user_id, role) VALUES (NEW.user_id, 'employee') ON CONFLICT (user_id, role) DO NOTHING;
+
+  -- ⛔ REMOVIDO o ramo que concedia 'master' por NEW.document == master_cnpj.
+  --    Era privilege escalation: o usuário controla NEW.document (policy de self-insert).
+  --    Master agora é manual: INSERT INTO public.user_roles(user_id, role) VALUES (<uid>, 'master');
+
+  IF NEW.is_employee = true THEN
+    INSERT INTO public.user_roles (user_id, role)
+    VALUES (NEW.user_id, 'employee')
+    ON CONFLICT (user_id, role) DO NOTHING;
   ELSE
-    INSERT INTO public.user_roles (user_id, role) VALUES (NEW.user_id, 'customer') ON CONFLICT (user_id, role) DO NOTHING;
+    INSERT INTO public.user_roles (user_id, role)
+    VALUES (NEW.user_id, 'customer')
+    ON CONFLICT (user_id, role) DO NOTHING;
   END IF;
+
   RETURN NEW;
 END;
 $$;
@@ -711,6 +2103,37 @@ BEGIN
     );
   END IF;
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: buscar_skus_candidatos(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.buscar_skus_candidatos(p_termos text[]) RETURNS TABLE(account text, omie_codigo_produto bigint, codigo text, descricao text)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NOT (public.has_role(auth.uid(), 'employee'::app_role)
+       OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'forbidden';
+  END IF;
+  IF p_termos IS NULL OR array_length(p_termos, 1) IS NULL THEN
+    RETURN;
+  END IF;
+  RETURN QUERY
+  SELECT op.account, op.omie_codigo_produto, op.codigo, op.descricao
+  FROM public.omie_products op
+  WHERE op.ativo IS NOT FALSE
+    AND EXISTS (
+      SELECT 1 FROM unnest(p_termos) t
+      WHERE upper(op.descricao) LIKE
+        '%' || replace(replace(replace(upper(t), '\', '\\'), '%', '\%'), '_', '\_') || '%' ESCAPE '\'
+    )
+  ORDER BY op.account, op.descricao
+  LIMIT 100;
 END;
 $$;
 
@@ -859,11 +2282,78 @@ BEGIN
       cancelado_por = p_usuario,
       cancelado_em = NOW(),
       justificativa_cancelamento = p_justificativa,
+      status_envio_portal = 'nao_aplicavel',
+      portal_proximo_retry_em = NULL,
       atualizado_em = NOW()
   WHERE id = p_pedido_id;
   RETURN jsonb_build_object('status', 'ok', 'pedido_id', p_pedido_id);
 END;
 $$;
+
+
+--
+-- Name: carteira_por_municipio(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.carteira_por_municipio(p_municipio_codigo text) RETURNS TABLE(user_id uuid, name text, phone text, street text, number text, neighborhood text, city text, state text, zip_code text, complement text, business_hours_open text, business_hours_close text, ultima_visita timestamp with time zone, dias_desde_visita integer, lat double precision, lng double precision, "precision" text)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+#variable_conflict use_column
+DECLARE
+  v_nome text;
+  v_uf   text;
+BEGIN
+  IF NOT COALESCE(public.pode_ver_carteira_completa((SELECT auth.uid())), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only';
+  END IF;
+  IF p_municipio_codigo IS NULL OR btrim(p_municipio_codigo) = '' THEN
+    RAISE EXCEPTION 'municipio_codigo obrigatório';
+  END IF;
+
+  SELECT re.municipio_nome, re.uf INTO v_nome, v_uf
+    FROM public.radar_empresas re
+   WHERE re.municipio_codigo = p_municipio_codigo
+   LIMIT 1;
+  IF v_nome IS NULL THEN RETURN; END IF;
+
+  RETURN QUERY
+  WITH alvo AS (
+    SELECT a.user_id, a.street, a.number, a.neighborhood, a.city, a.state,
+           a.zip_code, a.complement, a.is_default
+      FROM public.addresses a
+     WHERE public.norm_cidade(regexp_replace(a.city, '\s*\([^)]*\)\s*$', '')) = public.norm_cidade(v_nome)
+       AND upper(btrim(a.state)) = upper(btrim(v_uf))
+  ),
+  ende AS (
+    SELECT DISTINCT ON (user_id)
+           user_id, street, number, neighborhood, city, state, zip_code, complement
+      FROM alvo
+     ORDER BY user_id, is_default DESC NULLS LAST
+  ),
+  ult AS (
+    SELECT rv.customer_user_id, max(rv.check_in_at) AS ultima
+      FROM public.route_visits rv
+     WHERE rv.customer_user_id IN (SELECT e.user_id FROM ende e)
+       AND rv.check_in_at IS NOT NULL
+     GROUP BY rv.customer_user_id
+  )
+  SELECT e.user_id, p.name, p.phone,
+         e.street, e.number, e.neighborhood, e.city, e.state, e.zip_code, e.complement,
+         p.business_hours_open, p.business_hours_close,
+         u.ultima,
+         CASE WHEN u.ultima IS NULL THEN NULL
+              ELSE floor(extract(epoch FROM (now() - u.ultima)) / 86400)::int END,
+         COALESCE(cg.lat, mg.lat),
+         COALESCE(cg.lng, mg.lng),
+         COALESCE(cg.precision, CASE WHEN mg.lat IS NOT NULL THEN 'city_centroid' END)
+    FROM ende e
+    JOIN public.profiles p ON p.user_id = e.user_id
+    LEFT JOIN ult u ON u.customer_user_id = e.user_id
+    LEFT JOIN cep_geo cg ON cg.cep = public.normalizar_cep(e.zip_code)
+    LEFT JOIN municipio_geo mg ON mg.municipio_codigo = p_municipio_codigo
+   WHERE COALESCE(p.is_employee, false) = false;
+END $_$;
 
 
 --
@@ -889,6 +2379,30 @@ CREATE FUNCTION public.carteira_visivel_para(_customer_user_id uuid, _uid uuid) 
         AND (c.valid_until IS NULL OR c.valid_until > now())
     );
 $$;
+
+
+--
+-- Name: cep_geo_upsert(text, double precision, double precision, text, text, numeric, text, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cep_geo_upsert(p_cep text, p_lat double precision, p_lng double precision, p_source text, p_precision text, p_confidence numeric DEFAULT NULL::numeric, p_municipio_codigo text DEFAULT NULL::text, p_uf text DEFAULT NULL::text, p_raw jsonb DEFAULT NULL::jsonb) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+DECLARE v_cep text := normalizar_cep(p_cep);
+BEGIN
+  IF NOT COALESCE(public.pode_ver_carteira_completa((SELECT auth.uid())), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only';
+  END IF;
+  IF v_cep IS NULL OR v_cep !~ '^[0-9]{8}$' THEN RETURN; END IF;
+  INSERT INTO cep_geo AS c (cep,lat,lng,source,precision,confidence,municipio_codigo,uf,raw,updated_at)
+  VALUES (v_cep,p_lat,p_lng,p_source,p_precision,p_confidence,p_municipio_codigo,p_uf,p_raw, now())
+  ON CONFLICT (cep) DO UPDATE
+    SET lat=EXCLUDED.lat, lng=EXCLUDED.lng, source=EXCLUDED.source, precision=EXCLUDED.precision,
+        confidence=EXCLUDED.confidence, municipio_codigo=EXCLUDED.municipio_codigo,
+        uf=EXCLUDED.uf, raw=EXCLUDED.raw, updated_at=now()
+    WHERE rank_precisao(EXCLUDED.precision) >= rank_precisao(c.precision);
+END $_$;
 
 
 --
@@ -952,6 +2466,297 @@ $_$;
 
 
 --
+-- Name: claim_estoque_full_sync(text, bigint, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.claim_estoque_full_sync(p_account text, p_run_id bigint, p_at timestamp with time zone) RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_claimed boolean := false;
+BEGIN
+  -- claim atômico: reivindica 'syncing' SE livre (não-'syncing', ou 'syncing' velho >15min).
+  INSERT INTO public.sync_state (entity_type, account, status, last_sync_at, total_synced, metadata, updated_at)
+  VALUES ('reposicao_estoque_full', p_account, 'syncing', p_at, 0,
+          jsonb_build_object('run_id', p_run_id, 'fase', 'inicio'), p_at)
+  ON CONFLICT (entity_type, account) DO UPDATE
+    SET status = 'syncing', last_sync_at = p_at, total_synced = 0,
+        metadata = jsonb_build_object('run_id', p_run_id, 'fase', 'inicio'), updated_at = p_at
+    WHERE sync_state.status IS DISTINCT FROM 'syncing'
+       OR sync_state.last_sync_at IS NULL
+       OR sync_state.last_sync_at < now() - interval '15 minutes'
+  RETURNING true INTO v_claimed;
+  RETURN COALESCE(v_claimed, false);
+END $$;
+
+
+--
+-- Name: classificar_clientes_fornecedores(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.classificar_clientes_fornecedores() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_classificados int;
+  v_excluidos     int;
+BEGIN
+  UPDATE public.cliente_classificacao cc SET
+    is_fornecedor = EXISTS (
+      SELECT 1 FROM unnest(cc.tags_omie) t
+      WHERE lower(trim(t)) = ANY (ARRAY['fornecedor','transportadora'])
+    ),
+    tem_venda_real = EXISTS (
+      SELECT 1 FROM public.sales_orders so
+      WHERE so.customer_user_id = cc.user_id
+        AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+    ),
+    excluir_da_carteira = (
+      EXISTS (
+        SELECT 1 FROM unnest(cc.tags_omie) t
+        WHERE lower(trim(t)) = ANY (ARRAY['fornecedor','transportadora'])
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM public.sales_orders so
+        WHERE so.customer_user_id = cc.user_id
+          AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+      )
+      AND NOT EXISTS (SELECT 1 FROM public.fornecedor_excecao e WHERE e.user_id = cc.user_id)
+    ),
+    updated_at = now();
+  GET DIAGNOSTICS v_classificados = ROW_COUNT;
+  SELECT count(*) INTO v_excluidos FROM public.cliente_classificacao WHERE excluir_da_carteira;
+  RETURN jsonb_build_object('classificados', v_classificados, 'excluidos', v_excluidos);
+END $$;
+
+
+--
+-- Name: classificar_sayerlack_grupo_default(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.classificar_sayerlack_grupo_default() RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_inseridos int := 0;
+BEGIN
+  INSERT INTO sku_grupo_producao (empresa, sku_codigo_omie, grupo_codigo, atualizado_por, atualizado_em)
+  SELECT 'OBEN', sp.sku_codigo_omie::text, 'sayerlack_normal', 'auto_default_sayerlack', now()
+  FROM sku_parametros sp
+  WHERE sp.empresa = 'OBEN'
+    AND sp.fornecedor_nome ILIKE '%SAYERLACK%'
+    AND sp.habilitado_reposicao_automatica = true
+    AND COALESCE(sp.sku_descricao, '') NOT ILIKE '%450ML'
+    AND COALESCE(sp.sku_descricao, '') NOT ILIKE '%405ML'
+    AND NOT EXISTS (
+      SELECT 1 FROM sku_grupo_producao sg
+      WHERE sg.empresa = sp.empresa AND sg.sku_codigo_omie = sp.sku_codigo_omie::text
+    );
+  GET DIAGNOSTICS v_inseridos = ROW_COUNT;
+  RETURN v_inseridos;
+END;
+$$;
+
+
+--
+-- Name: cliente_classificacao_derive(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cliente_classificacao_derive() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  NEW.is_fornecedor := EXISTS (
+    SELECT 1 FROM unnest(NEW.tags_omie) t
+    WHERE lower(trim(t)) = ANY (ARRAY['fornecedor','transportadora'])
+  );
+  RETURN NEW;
+END $$;
+
+
+--
+-- Name: cliente_grupos_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cliente_grupos_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+
+--
+-- Name: cmc_ledger_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cmc_ledger_capture() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NEW.cmc IS NOT NULL
+     AND NEW.cmc > 0
+     AND (TG_OP = 'INSERT' OR NEW.cmc IS DISTINCT FROM OLD.cmc) THEN
+    INSERT INTO public.cmc_ledger (account, omie_codigo_produto, cmc_anterior, cmc_novo, saldo, synced_at)
+    VALUES (
+      NEW.account,
+      NEW.omie_codigo_produto,
+      CASE WHEN TG_OP = 'UPDATE' THEN OLD.cmc ELSE NULL END,
+      NEW.cmc,
+      NEW.saldo,
+      NEW.synced_at
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: concluir_com_comprovacao(uuid, text, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.concluir_com_comprovacao(p_tarefa_id uuid, p_url text DEFAULT NULL::text, p_leitura numeric DEFAULT NULL::numeric) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare t record; tt record; v_uid uuid := auth.uid(); v_audit text := 'nao_requer'; v_reinc int;
+begin
+  select * into t from public.tarefas where id = p_tarefa_id for update;
+  if not found then raise exception 'Tarefa não encontrada'; end if;
+  if not ( t.assigned_to = v_uid
+           or public.pode_ver_carteira_completa(v_uid)
+           or exists (select 1 from public.carteira_coverage cc where cc.covered_user_id=t.assigned_to
+                      and cc.covering_user_id=v_uid and cc.active and now()>=cc.valid_from
+                      and (cc.valid_until is null or now()<=cc.valid_until)) ) then
+    raise exception 'Sem permissão para concluir esta tarefa';
+  end if;
+  if t.status <> 'aberta' then raise exception 'Tarefa não está aberta (status=%)', t.status; end if;
+
+  if coalesce(t.requer_comprovacao,false) then
+    select * into tt from public.tarefa_templates where id = t.template_id;
+    if t.tipo_comprovacao in ('foto','foto_e_leitura') and (p_url is null or btrim(p_url)='') then
+      raise exception 'Foto de comprovação obrigatória';
+    end if;
+    if t.tipo_comprovacao in ('leitura','foto_e_leitura') then
+      if p_leitura is null then raise exception 'Leitura obrigatória'; end if;
+      if (tt.leitura_min is not null and p_leitura < tt.leitura_min)
+         or (tt.leitura_max is not null and p_leitura > tt.leitura_max) then
+        raise exception 'Leitura % fora da faixa [%, %]', p_leitura, tt.leitura_min, tt.leitura_max;
+      end if;
+    end if;
+    if p_url is not null and position((v_uid::text || '/' || p_tarefa_id::text) in p_url) = 0 then
+      raise exception 'URL de comprovação não corresponde ao path da tarefa/usuário';
+    end if;
+    select count(*) into v_reinc from public.tarefas x
+      where x.template_id = t.template_id and x.assigned_to = t.assigned_to and x.id <> t.id
+        and x.created_at > now() - interval '30 days'
+        and (x.auditoria_status = 'reprovada' or x.status = 'aberta');
+    if coalesce(tt.alto_risco,false)
+       or v_reinc >= coalesce(tt.reincidente_limite, 3)
+       or (random()*100) < coalesce(tt.amostra_auditoria_pct, 10)
+    then v_audit := 'pendente'; else v_audit := 'dispensada'; end if;
+  end if;
+
+  update public.tarefas set
+    status='concluida', conclusao_origem='comprovacao',
+    comprovacao_url = coalesce(p_url, comprovacao_url),
+    comprovacao_leitura = coalesce(p_leitura, comprovacao_leitura),
+    comprovacao_em = now(), concluida_em = now(), concluida_por = v_uid,
+    auditoria_status = v_audit, updated_at = now()
+  where id = p_tarefa_id;
+  insert into public.tarefa_eventos (tarefa_id, tipo_evento, ator, payload)
+  values (p_tarefa_id, 'concluida_comprovacao', v_uid, jsonb_build_object('auditoria', v_audit, 'leitura', p_leitura));
+end $$;
+
+
+--
+-- Name: confirmar_item_picking(uuid, uuid, uuid, integer, text, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.confirmar_item_picking(p_event_id uuid, p_task_id uuid, p_item_id uuid, p_quantidade_separada integer, p_lote_informado text, p_justificativa text, p_confirmed_at timestamp with time zone) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid uuid := auth.uid(); v_item record; v_div boolean; v_etype text; v_item_status text; v_parent text;
+BEGIN
+  IF NOT (has_role(v_uid,'employee'::app_role) OR has_role(v_uid,'master'::app_role)) THEN
+    RAISE EXCEPTION 'forbidden: staff only';
+  END IF;
+  IF p_quantidade_separada IS NULL OR p_quantidade_separada < 0 THEN
+    RAISE EXCEPTION 'quantidade separada inválida';
+  END IF;
+  SELECT quantidade, lote_fefo INTO v_item FROM picking_task_items WHERE id = p_item_id AND picking_task_id = p_task_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'item inexistente'; END IF;
+  v_div := (p_lote_informado IS NOT NULL AND v_item.lote_fefo IS NOT NULL AND p_lote_informado <> v_item.lote_fefo);
+  v_etype := CASE WHEN v_div THEN 'lote_divergente' ELSE 'item_confirmado' END;
+  INSERT INTO picking_events (id, picking_task_id, picking_task_item_id, event_type, lote_esperado, lote_informado, justificativa, user_id)
+  VALUES (p_event_id, p_task_id, p_item_id, v_etype, v_item.lote_fefo, p_lote_informado, p_justificativa, v_uid)
+  ON CONFLICT (id) DO NOTHING;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', true, 'replayed', true);
+  END IF;
+  v_item_status := CASE WHEN p_quantidade_separada >= v_item.quantidade THEN 'concluido' ELSE 'em_andamento' END;
+  UPDATE picking_task_items SET
+    quantidade_separada = p_quantidade_separada, status = v_item_status,
+    lote_separado = p_lote_informado, justificativa_substituicao = p_justificativa, separado_at = p_confirmed_at
+  WHERE id = p_item_id;
+  v_parent := (public.recalcular_picking_task(p_task_id))->>'status';
+  RETURN jsonb_build_object('ok', true, 'parent_status', v_parent);
+END $$;
+
+
+--
+-- Name: confirmar_vinculo_boletim(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.confirmar_vinculo_boletim(p_kb_product_spec_id uuid, p_skus jsonb) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_item jsonb; v_account text; v_cod bigint; v_count integer := 0; v_dono uuid; v_ins integer;
+BEGIN
+  IF NOT public.has_role(v_uid, 'master'::app_role) THEN
+    RAISE EXCEPTION 'forbidden: somente master';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.kb_product_specs WHERE id = p_kb_product_spec_id) THEN
+    RAISE EXCEPTION 'spec inexistente';
+  END IF;
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_skus) LOOP
+    v_account := v_item->>'account';
+    v_cod := (v_item->>'omie_codigo_produto')::bigint;
+    IF NOT EXISTS (SELECT 1 FROM public.omie_products
+                    WHERE omie_codigo_produto = v_cod AND account = v_account) THEN
+      RAISE EXCEPTION 'SKU %/% inexistente em omie_products', v_account, v_cod;
+    END IF;
+    SELECT kb_product_spec_id INTO v_dono FROM public.omie_product_spec_links
+      WHERE account = v_account AND omie_codigo_produto = v_cod AND status = 'confirmed';
+    IF v_dono IS NOT NULL AND v_dono <> p_kb_product_spec_id THEN
+      RAISE EXCEPTION 'SKU %/% já vinculado a outro boletim', v_account, v_cod;
+    END IF;
+    INSERT INTO public.omie_product_spec_links
+      (account, omie_codigo_produto, kb_product_spec_id, status, confirmed_by)
+    VALUES (v_account, v_cod, p_kb_product_spec_id, 'confirmed', v_uid)
+    ON CONFLICT (account, omie_codigo_produto, kb_product_spec_id, status) DO NOTHING;
+    GET DIAGNOSTICS v_ins = ROW_COUNT;
+    v_count := v_count + v_ins;
+  END LOOP;
+  RETURN v_count;
+END;
+$$;
+
+
+--
 -- Name: converter_sugestao_em_campanha_flat(bigint, numeric, numeric, text, date, text, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1001,6 +2806,254 @@ $$;
 
 
 --
+-- Name: criar_pedidos_com_itens(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.criar_pedidos_com_itens(p_pedidos jsonb) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_pedido     jsonb;
+  v_account    text;
+  v_hash       text;
+  v_order_id   uuid;
+  v_existing   uuid;
+  v_created_at timestamptz;
+  v_item_count int;
+  v_has_items  boolean;
+  v_do_items   boolean;
+  v_diverge    boolean;
+  v_inserted   int := 0;
+  v_repaired   int := 0;
+  v_items      int := 0;   -- itens de fato inseridos (impacto do reparo)
+  v_n          int;
+  v_skipped_complete int := 0;
+  v_skipped_no_items int := 0;
+  v_divergence jsonb := '[]'::jsonb;
+  v_failed     jsonb := '[]'::jsonb;
+  v_db_total numeric; v_db_customer uuid;
+  v_pl_total numeric; v_pl_customer uuid;
+BEGIN
+  IF p_pedidos IS NULL OR jsonb_typeof(p_pedidos) <> 'array' THEN
+    RAISE EXCEPTION 'p_pedidos deve ser array jsonb (veio %)', jsonb_typeof(p_pedidos)
+      USING ERRCODE = '22023';
+  END IF;
+
+  FOR v_pedido IN SELECT * FROM jsonb_array_elements(p_pedidos)
+  LOOP
+    v_order_id := NULL; v_existing := NULL; v_do_items := false;
+    BEGIN  -- ── G9: subtransação por pedido (1 ruim não derruba os outros) ──
+      v_account := v_pedido->>'account';
+      v_hash    := v_pedido->>'hash_payload';
+      IF v_account IS NULL OR v_hash IS NULL THEN
+        RAISE EXCEPTION 'pedido sem account/hash_payload' USING ERRCODE = '22023';
+      END IF;
+
+      -- conta itens VÁLIDOS (com codigo_produto) — base do G7
+      SELECT count(*) INTO v_item_count
+      FROM jsonb_array_elements(coalesce(v_pedido->'itens', '[]'::jsonb)) AS it
+      WHERE (it->>'omie_codigo_produto') IS NOT NULL;
+
+      -- ── tenta inserir o pai: só com item válido (G7); ON CONFLICT parcial (G2) ──
+      INSERT INTO public.sales_orders (
+        customer_user_id, created_by, items, subtotal, discount, total, status,
+        omie_pedido_id, omie_numero_pedido, account, hash_payload, created_at,
+        order_date_kpi, notes, customer_address, customer_phone
+      )
+      SELECT
+        (v_pedido->>'customer_user_id')::uuid,
+        (v_pedido->>'created_by')::uuid,
+        coalesce(v_pedido->'items', '[]'::jsonb),
+        coalesce((v_pedido->>'subtotal')::numeric, 0),
+        coalesce((v_pedido->>'discount')::numeric, 0),
+        coalesce((v_pedido->>'total')::numeric, 0),
+        coalesce(v_pedido->>'status', 'importado'),
+        (v_pedido->>'omie_pedido_id')::bigint,
+        v_pedido->>'omie_numero_pedido',
+        v_account, v_hash,
+        coalesce((v_pedido->>'created_at')::timestamptz, now()),
+        (v_pedido->>'order_date_kpi')::date,
+        v_pedido->>'notes', v_pedido->>'customer_address', v_pedido->>'customer_phone'
+      WHERE v_item_count > 0
+      ON CONFLICT (account, hash_payload) WHERE hash_payload LIKE 'omie\_%'
+      DO NOTHING
+      RETURNING id, created_at INTO v_order_id, v_created_at;
+
+      IF v_order_id IS NOT NULL THEN
+        v_inserted := v_inserted + 1;
+        v_do_items := true;                       -- pai novo → grava filhos
+      ELSE
+        -- não inseriu: ou G7 filtrou (pai novo sem item válido), ou conflito (já existe)
+        SELECT id, created_at, total, customer_user_id
+          INTO v_existing, v_created_at, v_db_total, v_db_customer
+          FROM public.sales_orders
+         WHERE account = v_account AND hash_payload = v_hash
+         FOR UPDATE;                              -- G3: trava o pai (fecha corrida sem lease)
+
+        IF v_existing IS NULL THEN
+          v_skipped_no_items := v_skipped_no_items + 1;     -- G7: pai novo sem item válido
+        ELSE
+          v_has_items := EXISTS(SELECT 1 FROM public.order_items WHERE sales_order_id = v_existing);
+          IF v_has_items THEN
+            v_skipped_complete := v_skipped_complete + 1;   -- G4: já completo, no-op
+          ELSIF v_item_count = 0 THEN
+            v_skipped_no_items := v_skipped_no_items + 1;    -- L2: órfão e payload sem item
+          ELSE
+            -- ── G5: guard de divergência (reparo ≠ reconciliação) ──
+            -- Divergência = sinal de que os ITENS mudaram, não o cabeçalho. NÃO comparamos
+            -- status (evolui naturalmente: separacao→faturado→...) nem a data — só travariam
+            -- reparos legítimos, escondendo positivação. total = soma dos itens (mesma fórmula
+            -- na criação e no reparo) → proxy de mudança de item/valor; tolerância de arredondamento.
+            -- customer = reatribuição do pedido a outro cliente (vira outro pedido).
+            v_pl_total    := coalesce((v_pedido->>'total')::numeric, 0);
+            v_pl_customer := (v_pedido->>'customer_user_id')::uuid;
+            v_diverge := (abs(coalesce(v_db_total, 0) - v_pl_total) > 0.01
+                       OR v_db_customer IS DISTINCT FROM v_pl_customer);
+            IF v_diverge THEN   -- G5: itens/cliente divergem do pai → não repara (Fase 2)
+              v_divergence := v_divergence || jsonb_build_object(
+                'codigo_pedido', v_pedido->'omie_pedido_id',
+                'hash', v_hash, 'motivo', 'cabecalho diverge do payload');
+            ELSE
+              v_order_id := v_existing;            -- reparo
+              v_repaired := v_repaired + 1;
+              v_do_items := true;
+            END IF;
+          END IF;
+        END IF;
+      END IF;
+
+      IF v_do_items THEN
+        -- ── G6: order_items.created_at = created_at do PAI (nunca now()) ──
+        INSERT INTO public.order_items (
+          sales_order_id, customer_user_id, product_id, omie_codigo_produto,
+          quantity, unit_price, discount, hash_payload, created_at
+        )
+        SELECT v_order_id,
+               coalesce((it->>'customer_user_id')::uuid, (v_pedido->>'customer_user_id')::uuid),
+               (it->>'product_id')::uuid,
+               (it->>'omie_codigo_produto')::bigint,
+               coalesce((it->>'quantity')::numeric, 1),
+               coalesce((it->>'unit_price')::numeric, 0),
+               coalesce((it->>'discount')::numeric, 0),
+               it->>'hash_payload',
+               v_created_at  -- G6
+        FROM jsonb_array_elements(coalesce(v_pedido->'itens', '[]'::jsonb)) AS it
+        WHERE (it->>'omie_codigo_produto') IS NOT NULL;
+        GET DIAGNOSTICS v_n = ROW_COUNT;
+        v_items := v_items + v_n;
+
+        -- ── G10: sales_price_history na MESMA transação (created_at coerente). Só se ainda NÃO
+        -- houver preço para este pedido — idempotente no reparo (evita duplicar histórico se o
+        -- fluxo antigo já gravou preço mas perdeu os itens). ──
+        IF NOT EXISTS (SELECT 1 FROM public.sales_price_history WHERE sales_order_id = v_order_id) THEN
+          INSERT INTO public.sales_price_history (
+            customer_user_id, product_id, unit_price, sales_order_id, created_at
+          )
+          SELECT coalesce((pr->>'customer_user_id')::uuid, (v_pedido->>'customer_user_id')::uuid),
+                 (pr->>'product_id')::uuid,
+                 (pr->>'unit_price')::numeric,
+                 v_order_id,
+                 v_created_at  -- G6
+          FROM jsonb_array_elements(coalesce(v_pedido->'precos', '[]'::jsonb)) AS pr
+          WHERE (pr->>'product_id') IS NOT NULL
+            AND coalesce((pr->>'unit_price')::numeric, 0) > 0;
+        END IF;
+      END IF;
+
+    EXCEPTION WHEN OTHERS THEN
+      -- G8: registra a falha do pedido (SQLSTATE + msg), não engole como sucesso invisível
+      v_failed := v_failed || jsonb_build_object(
+        'codigo_pedido', v_pedido->'omie_pedido_id',
+        'hash', v_pedido->>'hash_payload',
+        'sqlstate', SQLSTATE, 'erro', SQLERRM);
+    END;
+  END LOOP;
+
+  RETURN jsonb_build_object(
+    'inserted', v_inserted, 'repaired', v_repaired, 'items', v_items,
+    'skipped_complete', v_skipped_complete, 'skipped_no_items', v_skipped_no_items,
+    'divergence', v_divergence, 'failed', v_failed);
+END;
+$$;
+
+
+--
+-- Name: FUNCTION criar_pedidos_com_itens(p_pedidos jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.criar_pedidos_com_itens(p_pedidos jsonb) IS 'Sync Omie: insere pai+filhos atômico (subtransação/pedido). ON CONFLICT parcial (account,hash_payload). Repara órfão (pai sem itens) só se cabeçalho compatível (G5) — não reconcilia pedido alterado (Fase 2). created_at dos filhos = created_at do pai. Retorna {inserted,repaired,skipped_complete,skipped_no_items,divergence[],failed[]}.';
+
+
+--
+-- Name: data_health_watchdog(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.data_health_watchdog() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  r record;
+  v_sev_fin text;
+  v_sev_forn text;
+BEGIN
+  FOR r IN
+    SELECT * FROM public._data_health_compute()
+    -- ⚠️ estoque_reposicao: 18º check, adicionado DIRETO EM PROD (migration fora do repo, drift §5),
+    --    promovido ao push (watchdog+heartbeat) lá. Descoberto no apply (total_checks=18 vs 17 do teste;
+    --    o heartbeat, não-tocado, ainda o tinha). PRESERVADO aqui pra não revertê-lo do e-mail.
+    WHERE source IN ('vendas_pedidos','estoque_inventario','estoque_reposicao','reposicao_sugestoes','carteira_scores',
+                     'custos_produtos','vendas_cadastros',
+                     'reposicao_disparo','reposicao_portal_pipeline','reposicao_portal_humano',
+                     'reposicao_sayerlack_fabricado','omie_tipo_produto_oben','vendas_familia_ausente',
+                     'tint_cobertura_bases')  -- [VIGIA tint 2026-06-15] só o Check A faz push; tint_vinculo_omie é dashboard-only
+  LOOP
+    v_sev_fin  := CASE WHEN r.severity = 'critical' THEN 'critico' ELSE 'aviso' END;
+    v_sev_forn := CASE WHEN r.severity = 'critical' THEN 'urgente' ELSE 'atencao' END;
+    IF r.status <> 'ok' THEN
+      INSERT INTO fin_alertas (company, tipo, severidade, mensagem, contexto)
+      VALUES ('oben', 'data_health_' || r.source, v_sev_fin, r.message,
+              jsonb_build_object('source', r.source, 'domain', r.domain, 'status', r.status,
+                                 'age_seconds', r.age_seconds, 'freshness_basis', r.freshness_basis))
+      ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
+      IF FOUND THEN
+        -- DELTA: só o source de família-ausente anexa a lista dos produtos ao corpo do e-mail.
+        -- COALESCE p/ não anexar nada se a lista vier NULL (defensivo; o branch só roda com n>0).
+        INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+        VALUES ('oben', 'outro', v_sev_forn, '[Saúde de dados] ' || r.source,
+                CASE WHEN r.source = 'vendas_familia_ausente'
+                     THEN r.message || COALESCE(E'\n\n' || public._vendas_familia_ausente_lista_email(50), '')
+                     ELSE r.message END,
+                'pendente_notificacao');
+      END IF;
+    ELSE
+      UPDATE fin_alertas SET dismissed_at = now()
+      WHERE company = 'oben' AND tipo = 'data_health_' || r.source AND dismissed_at IS NULL;
+    END IF;
+  END LOOP;
+END;
+$$;
+
+
+--
+-- Name: delete_push_subscription(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.delete_push_subscription(p_endpoint text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'apenas usuários autenticados';
+  END IF;
+  DELETE FROM public.push_subscriptions WHERE endpoint = p_endpoint;
+END;
+$$;
+
+
+--
 -- Name: des_data_faturamento_prevista(date, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1040,6 +3093,82 @@ CREATE FUNCTION public.des_determinar_faixa(p_valor numeric, p_versao text DEFAU
     AND p_valor >= fq.volume_min
     AND (fq.volume_max IS NULL OR p_valor <= fq.volume_max)
   LIMIT 1;
+$$;
+
+
+--
+-- Name: desfazer_contato_radar(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.desfazer_contato_radar(p_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_cnpj text;
+  v_acao text;
+  v_anterior text;
+  v_status_atual text;
+BEGIN
+  SELECT cnpj, acao, status_anterior INTO v_cnpj, v_acao, v_anterior
+    FROM public.radar_contatos
+   WHERE id = p_id AND criado_por = v_uid AND created_at > now() - interval '5 minutes';
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('deleted', false);
+  END IF;
+
+  SELECT prospeccao_status INTO v_status_atual
+    FROM public.radar_empresas WHERE cnpj = v_cnpj FOR UPDATE;
+  IF v_status_atual = v_acao THEN
+    UPDATE public.radar_empresas SET
+      prospeccao_status = COALESCE(v_anterior, 'a_contatar'),
+      prospeccao_atualizado_em = now(), updated_at = now()
+    WHERE cnpj = v_cnpj;
+  END IF;
+
+  DELETE FROM public.radar_contatos WHERE id = p_id;
+  RETURN jsonb_build_object('deleted', true);
+END $$;
+
+
+--
+-- Name: despinar_parametro(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.despinar_parametro(p_empresa text, p_sku text) RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  IF NOT public.pode_ver_carteira_completa(auth.uid()) THEN RAISE EXCEPTION 'sem permissão'; END IF;
+  DELETE FROM public.reposicao_param_pin WHERE empresa=p_empresa AND sku_codigo_omie=p_sku;
+  RETURN FOUND;
+END;
+$$;
+
+
+--
+-- Name: desvincular_boletim(text, bigint, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.desvincular_boletim(p_account text, p_omie_codigo_produto bigint, p_expected_kb_product_spec_id uuid) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE v_deleted integer;
+BEGIN
+  IF NOT public.has_role(auth.uid(), 'master'::app_role) THEN
+    RAISE EXCEPTION 'forbidden: somente master';
+  END IF;
+  DELETE FROM public.omie_product_spec_links
+   WHERE account = p_account
+     AND omie_codigo_produto = p_omie_codigo_produto
+     AND status = 'confirmed'
+     AND kb_product_spec_id = p_expected_kb_product_spec_id;
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+  RETURN v_deleted;
+END;
 $$;
 
 
@@ -1228,46 +3357,35 @@ CREATE FUNCTION public.detectar_skus_sem_grupo(p_empresa text DEFAULT 'OBEN'::te
 DECLARE
   v_inseridos integer := 0;
 BEGIN
+  UPDATE eventos_outlier eo
+  SET status='excluido', decidido_em=now(),
+      decidido_por='sistema (auto-resolve sku_sem_grupo)',
+      justificativa_decisao='SKU já tem grupo ou é Produto Acabado (04) fabricado — não precisa de grupo.'
+  WHERE eo.tipo='sku_sem_grupo' AND eo.status='pendente' AND eo.empresa=p_empresa
+    AND (
+      EXISTS (SELECT 1 FROM sku_grupo_producao sg WHERE sg.empresa=eo.empresa AND sg.sku_codigo_omie=eo.sku_codigo_omie)
+      OR COALESCE((SELECT COALESCE(op.tipo_produto, op.metadata->>'tipo_produto') FROM omie_products op
+                   WHERE op.omie_codigo_produto::text=eo.sku_codigo_omie AND op.account=lower(eo.empresa) LIMIT 1),'')='04'
+    );
+
   WITH fornecedores_com_grupos AS (
-    SELECT DISTINCT fornecedor_nome
-    FROM fornecedor_grupo_producao
-    WHERE empresa = p_empresa
+    SELECT DISTINCT fornecedor_nome FROM fornecedor_grupo_producao WHERE empresa=p_empresa
   ),
   inseridos AS (
-    INSERT INTO eventos_outlier (
-      empresa, sku_codigo_omie, sku_descricao,
-      tipo, severidade, data_evento, detalhes
-    )
-    SELECT
-      sp.empresa,
-      sp.sku_codigo_omie::text,
-      sp.sku_descricao,
-      'sku_sem_grupo',
-      'atencao',
-      CURRENT_DATE,
-      jsonb_build_object(
-        'fornecedor', sp.fornecedor_nome,
-        'mensagem', 'SKU novo detectado. Classifique em um grupo de produção antes do próximo ciclo de reposição.'
-      )
+    INSERT INTO eventos_outlier (empresa, sku_codigo_omie, sku_descricao, tipo, severidade, data_evento, detalhes)
+    SELECT sp.empresa, sp.sku_codigo_omie::text, sp.sku_descricao, 'sku_sem_grupo', 'atencao', CURRENT_DATE,
+      jsonb_build_object('fornecedor', sp.fornecedor_nome,
+        'mensagem', 'SKU novo detectado. Classifique em um grupo de produção antes do próximo ciclo de reposição.')
     FROM sku_parametros sp
-    JOIN fornecedores_com_grupos fcg ON fcg.fornecedor_nome = sp.fornecedor_nome
-    WHERE sp.empresa = p_empresa
-      AND NOT EXISTS (
-        SELECT 1 FROM sku_grupo_producao sg
-        WHERE sg.empresa = sp.empresa
-          AND sg.sku_codigo_omie = sp.sku_codigo_omie::text
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM eventos_outlier eo
-        WHERE eo.empresa = sp.empresa
-          AND eo.sku_codigo_omie = sp.sku_codigo_omie::text
-          AND eo.tipo = 'sku_sem_grupo'
-          AND eo.status = 'pendente'
-      )
+    JOIN fornecedores_com_grupos fcg ON fcg.fornecedor_nome=sp.fornecedor_nome
+    WHERE sp.empresa=p_empresa
+      AND NOT EXISTS (SELECT 1 FROM sku_grupo_producao sg WHERE sg.empresa=sp.empresa AND sg.sku_codigo_omie=sp.sku_codigo_omie::text)
+      AND NOT EXISTS (SELECT 1 FROM eventos_outlier eo WHERE eo.empresa=sp.empresa AND eo.sku_codigo_omie=sp.sku_codigo_omie::text AND eo.tipo='sku_sem_grupo' AND eo.status='pendente')
+      AND COALESCE((SELECT COALESCE(op04.tipo_produto, op04.metadata->>'tipo_produto') FROM omie_products op04
+                    WHERE op04.omie_codigo_produto::text=sp.sku_codigo_omie::text AND op04.account=lower(p_empresa) LIMIT 1),'') <> '04'
     RETURNING 1
   )
   SELECT COUNT(*) INTO v_inseridos FROM inseridos;
-
   RETURN v_inseridos;
 END;
 $$;
@@ -1316,6 +3434,76 @@ COMMENT ON FUNCTION public.dias_uteis_entre(inicio timestamp with time zone, fim
 
 
 --
+-- Name: end_impersonation(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.end_impersonation(p_audit_id uuid) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  UPDATE public.impersonation_audit
+  SET ended_at = now()
+  WHERE id = p_audit_id AND actor_user_id = auth.uid() AND ended_at IS NULL;
+END; $$;
+
+
+--
+-- Name: enfileirar_erro_app(text, text, text, text, text, text, jsonb, text, text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enfileirar_erro_app(p_dedupe_key text, p_issue_id text, p_action text, p_payload_raw text, p_titulo text, p_mensagem text, p_metadata jsonb, p_rollup_key text, p_lista_url text, p_cap integer DEFAULT 10) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare
+  v_log_id    bigint;
+  v_rollup_id bigint;
+  v_count     int;
+  v_alerta_id bigint;
+begin
+  insert into public.posthog_error_webhook_log(dedupe_key, issue_id, action, payload_raw)
+    values (p_dedupe_key, p_issue_id, p_action, left(coalesce(p_payload_raw,''), 8000))
+    on conflict (dedupe_key) do nothing
+    returning id into v_log_id;
+  if v_log_id is null then
+    return jsonb_build_object('status','deduped');
+  end if;
+
+  select count(*) into v_count from public.fornecedor_alerta
+    where tipo = 'erro_app'
+      and coalesce(metadata->>'kind','') <> 'rollup'
+      and criado_em > now() - interval '30 minutes';
+
+  if v_count >= p_cap then
+    insert into public.posthog_error_webhook_log(dedupe_key, action)
+      values (p_rollup_key, 'rollup')
+      on conflict (dedupe_key) do nothing
+      returning id into v_rollup_id;
+    if v_rollup_id is null then
+      return jsonb_build_object('status','rollup_suprimido');
+    end if;
+    insert into public.fornecedor_alerta(tipo, empresa, severidade, status, titulo, mensagem, metadata)
+      values ('erro_app','oben','atencao','pendente_notificacao',
+              'Tempestade de erros no app',
+              'Muitos erros novos em 30 min. Veja a lista no PostHog: ' || coalesce(p_lista_url,'(sem link)'),
+              jsonb_build_object('kind','rollup'))
+      returning id into v_alerta_id;
+    update public.posthog_error_webhook_log set alerta_id = v_alerta_id where id = v_rollup_id;
+    return jsonb_build_object('status','rollup','alerta_id',v_alerta_id);
+  end if;
+
+  insert into public.fornecedor_alerta(tipo, empresa, severidade, status, titulo, mensagem, metadata)
+    values ('erro_app','oben','atencao','pendente_notificacao',
+            p_titulo, p_mensagem, coalesce(p_metadata,'{}'::jsonb))
+    returning id into v_alerta_id;
+  update public.posthog_error_webhook_log set alerta_id = v_alerta_id where id = v_log_id;
+  return jsonb_build_object('status','enfileirado','alerta_id',v_alerta_id);
+end;
+$$;
+
+
+--
 -- Name: enqueue_score_recalc_from_call(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1323,16 +3511,42 @@ CREATE FUNCTION public.enqueue_score_recalc_from_call() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
+DECLARE v_owner uuid;
 BEGIN
   IF NEW.customer_user_id IS NOT NULL
      AND NEW.entities_extracted IS NOT NULL
      AND jsonb_typeof(NEW.entities_extracted) = 'array'
      AND jsonb_array_length(NEW.entities_extracted) > 0 THEN
+    SELECT owner_user_id INTO v_owner
+      FROM public.carteira_assignments WHERE customer_user_id = NEW.customer_user_id;
     INSERT INTO public.score_recalc_queue
       (customer_user_id, farmer_id, reason, source_call_id)
     VALUES
-      (NEW.customer_user_id, NEW.farmer_id, 'call_inserted', NEW.id)
-    ON CONFLICT (customer_user_id, farmer_id) WHERE processed_at IS NULL DO NOTHING;
+      (NEW.customer_user_id, COALESCE(v_owner, NEW.farmer_id), 'call_inserted', NEW.id)
+    ON CONFLICT (customer_user_id) WHERE processed_at IS NULL DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enqueue_score_recalc_from_sinais(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enqueue_score_recalc_from_sinais() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NEW.sinais_ligacao IS NOT NULL
+     AND (NEW.sinais_ligacao->>'status') = 'extraido'
+     AND (TG_OP = 'INSERT' OR NEW.sinais_ligacao IS DISTINCT FROM OLD.sinais_ligacao)
+     AND NEW.customer_user_id IS NOT NULL
+     AND NEW.farmer_id IS NOT NULL THEN
+    INSERT INTO public.score_recalc_queue (customer_user_id, farmer_id, reason, source_call_id)
+    VALUES (NEW.customer_user_id, NEW.farmer_id, 'sinais_extraidos', NEW.id)
+    ON CONFLICT (customer_user_id) WHERE processed_at IS NULL DO NOTHING;
   END IF;
   RETURN NEW;
 END;
@@ -1358,7 +3572,7 @@ BEGIN
       (customer_user_id, farmer_id, reason)
     VALUES
       (NEW.customer_user_id, NEW.farmer_id, 'score_changed')
-    ON CONFLICT (customer_user_id, farmer_id) WHERE processed_at IS NULL DO NOTHING;
+    ON CONFLICT (customer_user_id) WHERE processed_at IS NULL DO NOTHING;
   END IF;
   RETURN NEW;
 END;
@@ -1373,15 +3587,102 @@ CREATE FUNCTION public.enqueue_visit_score_recalc_from_visit() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
+DECLARE v_owner uuid;
 BEGIN
   IF NEW.customer_user_id IS NOT NULL AND NEW.visited_by IS NOT NULL THEN
+    SELECT owner_user_id INTO v_owner
+      FROM public.carteira_assignments WHERE customer_user_id = NEW.customer_user_id;
     INSERT INTO public.visit_score_recalc_queue
       (customer_user_id, farmer_id, reason, source_event_id)
     VALUES
-      (NEW.customer_user_id, NEW.visited_by, 'visit_completed', NEW.id)
-    ON CONFLICT (customer_user_id, farmer_id) WHERE processed_at IS NULL DO NOTHING;
+      (NEW.customer_user_id, COALESCE(v_owner, NEW.visited_by), 'visit_completed', NEW.id)
+    ON CONFLICT (customer_user_id) WHERE processed_at IS NULL DO NOTHING;
   END IF;
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: ensure_picking_task_for_sales_order(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.ensure_picking_task_for_sales_order(p_sales_order_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+DECLARE
+  v_uid uuid := auth.uid(); v_so record; v_task uuid; v_items jsonb; elem jsonb;
+  v_qraw text; v_qnum numeric; v_qtd integer; v_cod bigint;
+  v_count integer := 0; v_bad integer := 0; v_notes text := '';
+BEGIN
+  IF NOT (has_role(v_uid,'employee'::app_role) OR has_role(v_uid,'master'::app_role)) THEN
+    RAISE EXCEPTION 'forbidden: staff only';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('picking_ensure:'||p_sales_order_id::text, 0));
+  SELECT id, account, status, deleted_at, items INTO v_so FROM sales_orders WHERE id = p_sales_order_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'pedido inexistente'; END IF;
+  IF v_so.deleted_at IS NOT NULL OR v_so.status IN ('cancelado','rascunho','orcamento') THEN
+    RAISE EXCEPTION 'pedido inelegível (cancelado/rascunho/orçamento/excluído)';
+  END IF;
+  IF lower(coalesce(v_so.account,'')) <> 'oben' THEN
+    RAISE EXCEPTION 'picking v1 somente Oben';
+  END IF;
+  SELECT id INTO v_task FROM picking_tasks WHERE sales_order_id = p_sales_order_id;
+  IF v_task IS NOT NULL THEN RETURN jsonb_build_object('task_id', v_task, 'created', false); END IF;
+  INSERT INTO picking_tasks (sales_order_id, account, status)
+  VALUES (p_sales_order_id, lower(v_so.account), 'pendente')
+  ON CONFLICT (sales_order_id) WHERE sales_order_id IS NOT NULL DO NOTHING
+  RETURNING id INTO v_task;
+  IF v_task IS NULL THEN
+    SELECT id INTO v_task FROM picking_tasks WHERE sales_order_id = p_sales_order_id;
+    RETURN jsonb_build_object('task_id', v_task, 'created', false);
+  END IF;
+  v_items := CASE WHEN jsonb_typeof(v_so.items) = 'array' THEN v_so.items ELSE '[]'::jsonb END;
+  FOR elem IN SELECT * FROM jsonb_array_elements(v_items) LOOP
+    v_qraw := elem->>'quantidade';
+    IF v_qraw IS NULL OR v_qraw !~ '^\s*[+-]?(\d+(\.\d+)?|\.\d+)\s*$' THEN v_bad := v_bad + 1; CONTINUE; END IF;
+    v_qnum := v_qraw::numeric; v_qtd := ceil(v_qnum)::integer;
+    IF v_qtd <= 0 THEN CONTINUE; END IF;
+    v_cod := CASE WHEN (elem->>'omie_codigo_produto') ~ '^\d+$' AND (elem->>'omie_codigo_produto')::bigint > 0
+                  THEN (elem->>'omie_codigo_produto')::bigint ELSE NULL END;
+    INSERT INTO picking_task_items (picking_task_id, omie_codigo_produto, product_descricao, quantidade, status)
+    VALUES (v_task, v_cod, coalesce(elem->>'descricao',''), v_qtd, 'pendente');
+    v_count := v_count + 1;
+    IF v_qnum <> v_qtd THEN
+      v_notes := v_notes || format('SKU %s: %s → %s; ', coalesce(elem->>'omie_codigo_produto','—'), v_qnum, v_qtd);
+    END IF;
+  END LOOP;
+  IF v_count = 0 THEN RAISE EXCEPTION 'pedido sem itens válidos para separação'; END IF;
+  IF v_notes <> '' THEN UPDATE picking_tasks SET notes = 'Qtd fracionária arredondada: '||v_notes WHERE id = v_task; END IF;
+  RETURN jsonb_build_object('task_id', v_task, 'created', true, 'item_count', v_count, 'bad_count', v_bad);
+END $_$;
+
+
+--
+-- Name: envio_portal_claim_ids(bigint[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.envio_portal_claim_ids(p_ids bigint[]) RETURNS TABLE(id bigint)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF auth.uid() IS NOT NULL
+     AND NOT (public.has_role(auth.uid(), 'employee'::app_role)
+              OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  UPDATE public.pedido_compra_sugerido p
+     SET status_envio_portal = 'enviando_portal',
+         portal_erro = NULL
+   WHERE p.id = ANY(p_ids)
+     AND p.empresa = 'OBEN'
+     AND p.fornecedor_nome ILIKE '%SAYERLACK%'
+     AND p.status_envio_portal IN ('pendente_envio_portal', 'erro_retentavel')
+  RETURNING p.id;
 END;
 $$;
 
@@ -1395,24 +3696,25 @@ CREATE FUNCTION public.envio_portal_lock_candidatos(p_max integer DEFAULT 5) RET
     SET search_path TO 'public'
     AS $$
 BEGIN
-  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+  IF auth.uid() IS NOT NULL
+     AND NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
     RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
   END IF;
   RETURN QUERY
   WITH candidatos AS (
     SELECT p.id, p.status_envio_portal AS status_anterior
     FROM public.pedido_compra_sugerido p
-    WHERE p.status = 'disparado'
+    WHERE p.fornecedor_nome ILIKE '%SAYERLACK%' AND p.empresa = 'OBEN'
+      AND p.status IN ('aprovado_aguardando_disparo','disparado')
       AND p.status_envio_portal IN ('pendente_envio_portal','erro_retentavel')
       AND COALESCE(p.portal_tentativas, 0) < 3
-      AND p.fornecedor_nome ILIKE '%SAYERLACK%' AND p.empresa = 'OBEN'
       AND (p.portal_proximo_retry_em IS NULL OR p.portal_proximo_retry_em <= now())
     ORDER BY p.aprovado_em ASC NULLS LAST, p.id ASC
     LIMIT p_max FOR UPDATE SKIP LOCKED
   ),
   travados AS (
     UPDATE public.pedido_compra_sugerido p
-    SET status_envio_portal = 'enviando_portal'
+    SET status_envio_portal = 'enviando_portal', atualizado_em = now()
     FROM candidatos c WHERE p.id = c.id
     RETURNING p.id, p.empresa, p.fornecedor_nome, c.status_anterior AS status_envio_portal,
               COALESCE(p.portal_tentativas, 0) AS portal_tentativas, p.portal_protocolo
@@ -1772,6 +4074,199 @@ END;
 $$;
 
 
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: fin_contas_pagar; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_contas_pagar (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    omie_codigo_lancamento bigint NOT NULL,
+    omie_codigo_cliente_fornecedor bigint,
+    nome_fornecedor text,
+    cnpj_cpf text,
+    numero_documento text,
+    numero_documento_fiscal text,
+    data_emissao date,
+    data_vencimento date,
+    data_pagamento date,
+    data_previsao date,
+    valor_documento numeric(15,2) DEFAULT 0 NOT NULL,
+    valor_pago numeric(15,2) DEFAULT 0,
+    valor_desconto numeric(15,2) DEFAULT 0,
+    valor_juros numeric(15,2) DEFAULT 0,
+    valor_multa numeric(15,2) DEFAULT 0,
+    saldo numeric(15,2) GENERATED ALWAYS AS ((valor_documento - COALESCE(valor_pago, (0)::numeric))) STORED,
+    status_titulo text DEFAULT 'ABERTO'::text,
+    categoria_codigo text,
+    categoria_descricao text,
+    departamento text,
+    centro_custo text,
+    observacao text,
+    omie_ncodcc bigint,
+    codigo_barras text,
+    tipo_documento text,
+    id_origem text,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_contas_pagar_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text])))
+);
+
+
+--
+-- Name: fin_analise_cp_dimensoes; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+--
+
+CREATE MATERIALIZED VIEW public.fin_analise_cp_dimensoes AS
+ SELECT company,
+    (EXTRACT(year FROM data_vencimento))::integer AS ano,
+    (EXTRACT(month FROM data_vencimento))::integer AS mes,
+    categoria_codigo,
+    categoria_descricao,
+    departamento,
+    centro_custo,
+    nome_fornecedor,
+    cnpj_cpf,
+    tipo_documento,
+    status_titulo,
+    count(*) AS qtd_titulos,
+    sum(valor_documento) AS total_documento,
+    sum(valor_pago) AS total_pago,
+    sum(saldo) AS total_saldo
+   FROM public.fin_contas_pagar
+  WHERE (data_vencimento IS NOT NULL)
+  GROUP BY company, (EXTRACT(year FROM data_vencimento)), (EXTRACT(month FROM data_vencimento)), categoria_codigo, categoria_descricao, departamento, centro_custo, nome_fornecedor, cnpj_cpf, tipo_documento, status_titulo
+  WITH NO DATA;
+
+
+--
+-- Name: fin_analise_cp_dimensoes_rpc(text, integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_analise_cp_dimensoes_rpc(p_company text DEFAULT NULL::text, p_ano integer DEFAULT NULL::integer, p_mes integer DEFAULT NULL::integer) RETURNS SETOF public.fin_analise_cp_dimensoes
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  IF NOT (
+    COALESCE(auth.role() = 'service_role', false)
+    OR COALESCE(public.has_role(auth.uid(), 'employee'::public.app_role), false)
+    OR COALESCE(public.has_role(auth.uid(), 'master'::public.app_role), false)
+    OR (p_company IS NOT NULL AND COALESCE(public.fin_user_can_access(p_company), false))
+  ) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil financeiro' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT *
+    FROM public.fin_analise_cp_dimensoes v
+   WHERE (p_company IS NULL OR v.company = p_company)
+     AND (p_ano IS NULL OR v.ano = p_ano)
+     AND (p_mes IS NULL OR v.mes = p_mes);
+END;
+$$;
+
+
+--
+-- Name: fin_contas_receber; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_contas_receber (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    omie_codigo_lancamento bigint NOT NULL,
+    omie_codigo_cliente bigint,
+    nome_cliente text,
+    cnpj_cpf text,
+    numero_documento text,
+    numero_documento_fiscal text,
+    numero_pedido text,
+    data_emissao date,
+    data_vencimento date,
+    data_recebimento date,
+    data_previsao date,
+    valor_documento numeric(15,2) DEFAULT 0 NOT NULL,
+    valor_recebido numeric(15,2) DEFAULT 0,
+    valor_desconto numeric(15,2) DEFAULT 0,
+    valor_juros numeric(15,2) DEFAULT 0,
+    valor_multa numeric(15,2) DEFAULT 0,
+    saldo numeric(15,2) GENERATED ALWAYS AS ((valor_documento - COALESCE(valor_recebido, (0)::numeric))) STORED,
+    status_titulo text DEFAULT 'ABERTO'::text,
+    categoria_codigo text,
+    categoria_descricao text,
+    departamento text,
+    centro_custo text,
+    observacao text,
+    omie_ncodcc bigint,
+    vendedor_id bigint,
+    tipo_documento text,
+    id_origem text,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT fin_contas_receber_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text])))
+);
+
+
+--
+-- Name: fin_analise_cr_dimensoes; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+--
+
+CREATE MATERIALIZED VIEW public.fin_analise_cr_dimensoes AS
+ SELECT company,
+    (EXTRACT(year FROM data_vencimento))::integer AS ano,
+    (EXTRACT(month FROM data_vencimento))::integer AS mes,
+    categoria_codigo,
+    categoria_descricao,
+    departamento,
+    centro_custo,
+    vendedor_id,
+    nome_cliente,
+    cnpj_cpf,
+    status_titulo,
+    count(*) AS qtd_titulos,
+    sum(valor_documento) AS total_documento,
+    sum(valor_recebido) AS total_recebido,
+    sum(saldo) AS total_saldo
+   FROM public.fin_contas_receber
+  WHERE (data_vencimento IS NOT NULL)
+  GROUP BY company, (EXTRACT(year FROM data_vencimento)), (EXTRACT(month FROM data_vencimento)), categoria_codigo, categoria_descricao, departamento, centro_custo, vendedor_id, nome_cliente, cnpj_cpf, status_titulo
+  WITH NO DATA;
+
+
+--
+-- Name: fin_analise_cr_dimensoes_rpc(text, integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_analise_cr_dimensoes_rpc(p_company text DEFAULT NULL::text, p_ano integer DEFAULT NULL::integer, p_mes integer DEFAULT NULL::integer) RETURNS SETOF public.fin_analise_cr_dimensoes
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  IF NOT (
+    COALESCE(auth.role() = 'service_role', false)
+    OR COALESCE(public.has_role(auth.uid(), 'employee'::public.app_role), false)
+    OR COALESCE(public.has_role(auth.uid(), 'master'::public.app_role), false)
+    OR (p_company IS NOT NULL AND COALESCE(public.fin_user_can_access(p_company), false))
+  ) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil financeiro' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT *
+    FROM public.fin_analise_cr_dimensoes v
+   WHERE (p_company IS NULL OR v.company = p_company)
+     AND (p_ano IS NULL OR v.ano = p_ano)
+     AND (p_mes IS NULL OR v.mes = p_mes);
+END;
+$$;
+
+
 --
 -- Name: fin_audit_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
@@ -1782,12 +4277,18 @@ CREATE FUNCTION public.fin_audit_trigger() RETURNS trigger
     AS $$
 DECLARE
   v_changed jsonb := '{}'::jsonb;
-  v_origem  text  := COALESCE(current_setting('fin.origem', true), 'manual');
-  v_justif  text  := current_setting('fin.override_justificativa', true);
+  v_origem  text := COALESCE(current_setting('fin.origem', true), 'manual');
+  v_justif  text := current_setting('fin.override_justificativa', true);
   v_period  date;
   v_row_id  text;
   v_company text;
+  v_rec     jsonb := CASE TG_OP WHEN 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
 BEGIN
+  -- Sync do ERP (service_role) é mirror de alto volume: não auditar.
+  IF auth.role() = 'service_role' THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+
   IF TG_OP = 'UPDATE' THEN
     SELECT jsonb_object_agg(key, jsonb_build_object('before', o_val, 'after', n_val))
       INTO v_changed
@@ -1797,40 +4298,33 @@ BEGIN
           JOIN jsonb_each(to_jsonb(NEW)) n USING (key)
          WHERE o.value IS DISTINCT FROM n.value
       ) diffs;
-    IF v_changed IS NULL THEN
-      RETURN NEW;
-    END IF;
+    IF v_changed IS NULL THEN RETURN NEW; END IF;
   ELSIF TG_OP = 'INSERT' THEN
     v_changed := to_jsonb(NEW);
   ELSE
     v_changed := to_jsonb(OLD);
   END IF;
 
-  v_row_id := COALESCE(
-    (CASE TG_OP WHEN 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END)->>'id',
-    'unknown'
-  );
-
-  v_company := COALESCE(
-    (CASE TG_OP WHEN 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END)->>'company',
-    (CASE TG_OP WHEN 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END)->>'empresa_origem'
-  );
+  v_row_id  := COALESCE(v_rec->>'id', 'unknown');
+  v_company := COALESCE(v_rec->>'company', v_rec->>'empresa_origem');
 
   v_period := CASE TG_TABLE_NAME
-    WHEN 'fin_contas_receber'           THEN COALESCE((NEW).data_emissao, (OLD).data_emissao)
-    WHEN 'fin_contas_pagar'             THEN COALESCE((NEW).data_emissao, (OLD).data_emissao)
-    WHEN 'fin_movimentacoes'            THEN COALESCE((NEW).data_movimento, (OLD).data_movimento)
+    WHEN 'fin_contas_receber'           THEN (v_rec->>'data_emissao')::date
+    WHEN 'fin_contas_pagar'             THEN (v_rec->>'data_emissao')::date
+    WHEN 'fin_movimentacoes'            THEN (v_rec->>'data_movimento')::date
     WHEN 'fin_categoria_dre_mapping'    THEN current_date
-    WHEN 'fin_orcamento'                THEN make_date(COALESCE((NEW).ano,(OLD).ano), COALESCE((NEW).mes,(OLD).mes), 1)
-    WHEN 'fin_fechamentos'              THEN make_date(COALESCE((NEW).ano,(OLD).ano), COALESCE((NEW).mes,(OLD).mes), 1)
+    WHEN 'fin_orcamento'                THEN make_date((v_rec->>'ano')::int, (v_rec->>'mes')::int, 1)
+    WHEN 'fin_fechamentos'              THEN make_date((v_rec->>'ano')::int, (v_rec->>'mes')::int, 1)
     WHEN 'fin_eliminacoes_intercompany' THEN current_date
     ELSE current_date
   END;
 
   INSERT INTO fin_audit_log (
-    table_name, row_id, op, changed_fields, changed_by, company, origem, period_ref, override_justificativa
+    table_name, row_id, op, changed_fields,
+    changed_by, company, origem, period_ref, override_justificativa
   ) VALUES (
-    TG_TABLE_NAME, v_row_id, TG_OP, v_changed, auth.uid(), v_company, v_origem, v_period, v_justif
+    TG_TABLE_NAME, v_row_id, TG_OP, v_changed,
+    auth.uid(), v_company, v_origem, v_period, v_justif
   );
 
   RETURN COALESCE(NEW, OLD);
@@ -1864,10 +4358,17 @@ DECLARE
   v_fech_versao integer;
   v_ultimo_sync timestamptz;
 BEGIN
+  IF NOT (
+    COALESCE(auth.role() = 'service_role', false)
+    OR COALESCE(public.has_role(auth.uid(), 'employee'::public.app_role), false)
+    OR COALESCE(public.has_role(auth.uid(), 'master'::public.app_role), false)
+  ) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+
   v_inicio := make_date(p_ano, p_mes, 1);
   v_fim := v_inicio + interval '1 month';
 
-  -- Contagens
   SELECT COUNT(*) INTO v_total_cr FROM fin_contas_receber
     WHERE company = p_company AND data_vencimento >= v_inicio AND data_vencimento < v_fim;
   SELECT COUNT(*) INTO v_total_cp FROM fin_contas_pagar
@@ -1875,7 +4376,6 @@ BEGIN
   SELECT COUNT(*) INTO v_total_mov FROM fin_movimentacoes
     WHERE company = p_company AND data_movimento >= v_inicio AND data_movimento < v_fim;
 
-  -- Sem categoria
   SELECT COUNT(*) INTO v_cr_sem_cat FROM fin_contas_receber
     WHERE company = p_company AND data_vencimento >= v_inicio AND data_vencimento < v_fim
     AND (categoria_codigo IS NULL OR categoria_codigo = '');
@@ -1883,7 +4383,6 @@ BEGIN
     WHERE company = p_company AND data_vencimento >= v_inicio AND data_vencimento < v_fim
     AND (categoria_codigo IS NULL OR categoria_codigo = '');
 
-  -- Conciliação
   SELECT COALESCE(
     100.0 * COUNT(*) FILTER (WHERE conciliado) / NULLIF(COUNT(*), 0), 0
   ) INTO v_pct_conciliado FROM fin_movimentacoes
@@ -1893,7 +4392,6 @@ BEGIN
     WHERE company = p_company AND data_movimento >= v_inicio AND data_movimento < v_fim
     AND omie_codigo_lancamento IS NULL;
 
-  -- DRE mapping coverage
   SELECT
     COUNT(*) FILTER (WHERE m.id IS NOT NULL),
     COUNT(*) FILTER (WHERE m.id IS NULL),
@@ -1909,7 +4407,6 @@ BEGIN
   LEFT JOIN fin_categoria_dre_mapping m
     ON (m.company = p_company OR m.company = '_default') AND m.omie_codigo = cats.categoria_codigo;
 
-  -- Valor mapeado vs total
   WITH vals AS (
     SELECT categoria_codigo, SUM(valor_documento) AS val FROM fin_contas_receber
       WHERE company = p_company AND data_vencimento >= v_inicio AND data_vencimento < v_fim GROUP BY 1
@@ -1924,17 +4421,14 @@ BEGIN
   LEFT JOIN fin_categoria_dre_mapping m
     ON (m.company = p_company OR m.company = '_default') AND m.omie_codigo = v.categoria_codigo;
 
-  -- Fechamento
   SELECT status, versao INTO v_fech_status, v_fech_versao
   FROM fin_fechamentos
   WHERE company = p_company AND ano = p_ano AND mes = p_mes
   ORDER BY versao DESC LIMIT 1;
 
-  -- Último sync
   SELECT MAX(completed_at) INTO v_ultimo_sync FROM fin_sync_log
   WHERE p_company = ANY(companies) AND status = 'complete';
 
-  -- Upsert
   INSERT INTO fin_confiabilidade (
     company, ano, mes,
     total_cr, total_cp, total_mov,
@@ -1988,9 +4482,19 @@ $$;
 --
 
 CREATE FUNCTION public.fin_categorias_sem_mapping(p_company text, p_start date, p_end date) RETURNS TABLE(omie_codigo text, categoria_nome text, valor_periodo numeric)
-    LANGUAGE sql STABLE SECURITY DEFINER
-    SET search_path TO 'public'
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
     AS $$
+#variable_conflict use_column
+BEGIN
+  IF NOT (
+    COALESCE(auth.role() = 'service_role', false)
+    OR COALESCE(public.fin_user_can_access(p_company), false)
+  ) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil financeiro' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
   WITH cat AS (
     SELECT categoria_codigo AS omie_codigo,
            categoria_descricao AS categoria_nome,
@@ -2017,6 +4521,7 @@ CREATE FUNCTION public.fin_categorias_sem_mapping(p_company text, p_start date, 
    WHERE m.id IS NULL
      AND a.valor_periodo > 0
    ORDER BY a.valor_periodo DESC;
+END;
 $$;
 
 
@@ -2082,9 +4587,20 @@ END $$;
 --
 
 CREATE FUNCTION public.fin_consolidado_intercompany(p_ano integer, p_mes integer) RETURNS TABLE(conta text, total_bruto numeric, eliminacoes numeric, total_consolidado numeric)
-    LANGUAGE sql STABLE SECURITY DEFINER
-    SET search_path TO 'public'
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
     AS $$
+#variable_conflict use_column
+BEGIN
+  IF NOT (
+    COALESCE(auth.role() = 'service_role', false)
+    OR COALESCE(public.has_role(auth.uid(), 'employee'::public.app_role), false)
+    OR COALESCE(public.has_role(auth.uid(), 'master'::public.app_role), false)
+  ) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
   WITH dre_all AS (
     SELECT 'receita_bruta'::text AS conta, COALESCE(SUM(receita_bruta), 0) AS total
       FROM fin_dre_snapshots
@@ -2123,6 +4639,7 @@ CREATE FUNCTION public.fin_consolidado_intercompany(p_ano integer, p_mes integer
       ELSE 0
     END AS total_consolidado
   FROM dre_all d;
+END;
 $$;
 
 
@@ -2131,23 +4648,29 @@ $$;
 --
 
 CREATE FUNCTION public.fin_estimar_estoque_omie(p_company text) RETURNS TABLE(valor_estimado numeric, cobertura_pct numeric, skus_total integer, skus_com_custo integer)
-    LANGUAGE sql STABLE SECURITY DEFINER
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-  WITH est AS (
-    SELECT s.sku_codigo_omie, s.estoque_fisico,
-           pc.cost_price AS custo
-      FROM sku_estoque_atual s
-      LEFT JOIN product_costs pc ON pc.product_id::text = s.sku_codigo_omie
-     WHERE s.empresa = p_company AND COALESCE(s.estoque_fisico,0) > 0
-  )
-  SELECT
-    COALESCE(SUM(CASE WHEN custo > 0 THEN estoque_fisico * custo ELSE 0 END), 0) AS valor_estimado,
-    CASE WHEN COUNT(*) = 0 THEN 0
-         ELSE ROUND(100.0 * COUNT(*) FILTER (WHERE custo > 0) / COUNT(*), 2) END AS cobertura_pct,
-    COUNT(*)::int AS skus_total,
-    COUNT(*) FILTER (WHERE custo > 0)::int AS skus_com_custo
-  FROM est;
+DECLARE v_account text;
+BEGIN
+  v_account := CASE lower(trim(p_company))
+                 WHEN 'oben' THEN 'vendas' WHEN 'colacor' THEN 'colacor_vendas' WHEN 'colacor_sc' THEN 'servicos'
+               END;
+  IF v_account IS NULL THEN
+    RAISE EXCEPTION 'fin_estimar_estoque_omie: empresa invalida %', p_company USING ERRCODE = 'P0001';
+  END IF;
+  RETURN QUERY
+    WITH canon AS (
+      SELECT ip.saldo, ip.cmc FROM public.inventory_position ip
+       WHERE ip.account = v_account AND ip.saldo > 0
+    )
+    SELECT
+      COALESCE(SUM(CASE WHEN cmc > 0 THEN saldo * cmc ELSE 0 END), 0)::numeric,
+      CASE WHEN COUNT(*) = 0 THEN 0::numeric
+           ELSE ROUND(100.0 * COUNT(*) FILTER (WHERE cmc > 0) / COUNT(*), 2) END,
+      COUNT(*)::int, COUNT(*) FILTER (WHERE cmc > 0)::int
+    FROM canon;
+END;
 $$;
 
 
@@ -2167,42 +4690,61 @@ DECLARE
   v_last_closed_date date;
   v_has_override boolean;
   v_bypass text := current_setting('fin.bypass_lock', true);
+  v_rec jsonb := CASE TG_OP WHEN 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
 BEGIN
   IF v_bypass = 'true' THEN RETURN COALESCE(NEW, OLD); END IF;
-  v_target_company := COALESCE(
-    (CASE TG_OP WHEN 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END)->>'company'
-  );
+  IF auth.role() = 'service_role' THEN RETURN COALESCE(NEW, OLD); END IF;
+
+  v_target_company := v_rec->>'company';
+
   v_target_date := CASE TG_TABLE_NAME
-    WHEN 'fin_contas_receber'        THEN COALESCE((NEW).data_emissao, (OLD).data_emissao)
-    WHEN 'fin_contas_pagar'          THEN COALESCE((NEW).data_emissao, (OLD).data_emissao)
-    WHEN 'fin_movimentacoes'         THEN COALESCE((NEW).data_movimento, (OLD).data_movimento)
+    WHEN 'fin_contas_receber'        THEN (v_rec->>'data_emissao')::date
+    WHEN 'fin_contas_pagar'          THEN (v_rec->>'data_emissao')::date
+    WHEN 'fin_movimentacoes'         THEN (v_rec->>'data_movimento')::date
     WHEN 'fin_categoria_dre_mapping' THEN current_date
-    WHEN 'fin_orcamento'             THEN make_date(COALESCE((NEW).ano,(OLD).ano), COALESCE((NEW).mes,(OLD).mes), 1)
-    WHEN 'fin_eventos_recorrentes'   THEN COALESCE((NEW).inicio, (OLD).inicio)
-    WHEN 'fin_eventos_eventuais'     THEN COALESCE((NEW).data_prevista, (OLD).data_prevista)
-    WHEN 'fin_estoque_valor'         THEN COALESCE((NEW).data_ref, (OLD).data_ref)
+    WHEN 'fin_orcamento'             THEN make_date((v_rec->>'ano')::int, (v_rec->>'mes')::int, 1)
+    WHEN 'fin_eventos_recorrentes'   THEN (v_rec->>'inicio')::date
+    WHEN 'fin_eventos_eventuais'     THEN (v_rec->>'data_prevista')::date
+    WHEN 'fin_estoque_valor'         THEN (v_rec->>'data_ref')::date
   END;
+
   IF TG_OP = 'INSERT' AND TG_TABLE_NAME IN (
     'fin_categoria_dre_mapping','fin_eventos_recorrentes','fin_eventos_eventuais','fin_estoque_valor'
   ) THEN RETURN NEW; END IF;
+
   IF v_target_date IS NULL OR v_target_company IS NULL THEN RETURN COALESCE(NEW, OLD); END IF;
-  SELECT ano, mes INTO v_last_closed_year, v_last_closed_month
-    FROM fin_fechamentos WHERE company = v_target_company AND status='fechado' AND aprovado_em IS NOT NULL
-    ORDER BY ano DESC, mes DESC LIMIT 1;
+
+  SELECT ano, mes
+    INTO v_last_closed_year, v_last_closed_month
+    FROM fin_fechamentos
+   WHERE company = v_target_company AND status = 'fechado' AND aprovado_em IS NOT NULL
+   ORDER BY ano DESC, mes DESC
+   LIMIT 1;
+
   IF v_last_closed_year IS NULL THEN RETURN COALESCE(NEW, OLD); END IF;
-  v_last_closed_date := (make_date(v_last_closed_year, v_last_closed_month, 1) + interval '1 month - 1 day')::date;
+
+  v_last_closed_date := (make_date(v_last_closed_year, v_last_closed_month, 1)
+                         + interval '1 month - 1 day')::date;
+
   IF v_target_date > v_last_closed_date THEN RETURN COALESCE(NEW, OLD); END IF;
+
   SELECT EXISTS(
     SELECT 1 FROM fin_period_overrides
      WHERE company = v_target_company
        AND ano = EXTRACT(YEAR FROM v_target_date)::int
        AND mes = EXTRACT(MONTH FROM v_target_date)::int
-       AND expires_at > now() AND closed_at IS NULL AND opened_by = auth.uid()
+       AND expires_at > now()
+       AND closed_at IS NULL
+       AND opened_by = auth.uid()
   ) INTO v_has_override;
+
   IF v_has_override THEN RETURN COALESCE(NEW, OLD); END IF;
+
   RAISE EXCEPTION 'PERIOD_LOCKED: Período %/% da empresa % está fechado em %. Use override de emergência.',
     LPAD(EXTRACT(MONTH FROM v_target_date)::text, 2, '0'),
-    EXTRACT(YEAR FROM v_target_date), v_target_company, v_last_closed_date
+    EXTRACT(YEAR FROM v_target_date),
+    v_target_company,
+    v_last_closed_date
     USING ERRCODE = 'P0001';
 END $$;
 
@@ -2278,6 +4820,202 @@ $$;
 
 
 --
+-- Name: fin_sync_heartbeat(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_sync_heartbeat() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_resumo text;
+  v_ativos int;
+  v_lista_ativos text;
+  v_dh_ativos int;
+  v_dh_resumo text;
+  v_titulo text;
+BEGIN
+  SELECT count(*) INTO v_ativos
+  FROM fin_alertas WHERE tipo LIKE 'sync_%' AND dismissed_at IS NULL;
+
+  SELECT string_agg(
+           format('%s/%s (desde %s)', company, tipo,
+                  to_char(criado_em AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI')),
+           E'\n' ORDER BY company, tipo)
+    INTO v_lista_ativos
+  FROM fin_alertas WHERE tipo LIKE 'sync_%' AND dismissed_at IS NULL;
+
+  SELECT string_agg(linha, E'\n' ORDER BY linha) INTO v_resumo
+  FROM (
+    SELECT format('%s/%s: %s', co, re,
+                  COALESCE(to_char(m.mx AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI'), 'NUNCA')) AS linha
+    FROM unnest(ARRAY['oben','colacor','colacor_sc']) AS co
+    CROSS JOIN unnest(ARRAY['contas_pagar','contas_receber','movimentacoes']) AS re
+    CROSS JOIN LATERAL (
+      SELECT max(l.completed_at) AS mx FROM fin_sync_log l
+      WHERE l.status='complete' AND l.action='sync_'||re AND co = ANY(l.companies)
+    ) m
+  ) s;
+
+  SELECT count(*) INTO v_dh_ativos
+  FROM fin_alertas WHERE tipo LIKE 'data_health_%' AND dismissed_at IS NULL;
+
+  SELECT string_agg(format('%s: %s', source, status), E'\n' ORDER BY source) INTO v_dh_resumo
+  FROM public._data_health_compute()
+  WHERE source IN ('estoque_reposicao','vendas_pedidos','estoque_inventario','reposicao_sugestoes','carteira_scores',
+                   'custos_produtos','vendas_cadastros','reposicao_disparo',
+                   'reposicao_portal_pipeline','reposicao_portal_humano',
+                   'reposicao_sayerlack_fabricado','omie_tipo_produto_oben',
+                   'vendas_familia_ausente','tint_cobertura_bases','alert_channel');  -- [VIGIA tint 2026-06-15] +A no resumo (B fica fora)
+
+  v_titulo := '[Watchdog'
+              || CASE WHEN (v_ativos + v_dh_ativos) > 0
+                   THEN ': '||(v_ativos + v_dh_ativos)||' alerta(s) ativo(s)'
+                   ELSE ' OK' END
+              || '] '||to_char(now() AT TIME ZONE 'America/Sao_Paulo', 'DD/MM');
+
+  INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+  VALUES ('oben', 'outro', 'info',
+          v_titulo,
+          'Watchdog do sync rodou. Alertas de sync ativos: '||v_ativos||'.'||
+          CASE WHEN v_ativos > 0 THEN E'\n'||COALESCE(v_lista_ativos,'') ELSE '' END||
+          E'\n\nÚltimo sync OK por empresa/recurso (horário de Brasília):\n'||COALESCE(v_resumo,'(sem dados)')||
+          E'\n\nSaúde de dados — alertas ativos: '||v_dh_ativos||
+          E'.\nChecks de saúde de dados:\n'||COALESCE(v_dh_resumo,'(sem dados)'),
+          'pendente_notificacao');
+END;
+$$;
+
+
+--
+-- Name: fin_sync_watchdog_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_sync_watchdog_check() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_companies text[] := ARRAY['oben','colacor','colacor_sc'];
+  v_resources text[] := ARRAY['contas_pagar','contas_receber','movimentacoes'];
+  v_stale_hours  int := 18;
+  v_error_hours  int := 6;
+  v_cursor_hours int := 2;
+  v_grace_mins   int := 40;
+  c text;
+  v_stale text[];
+  v_errs  text[];
+  v_stuck text[];
+  v_msg text;
+BEGIN
+  UPDATE fin_sync_log
+  SET status        = 'error',
+      error_message = 'orphaned_running_timeout',
+      completed_at  = CASE WHEN started_at > now() - make_interval(hours => v_error_hours)
+                           THEN now() ELSE started_at END
+  WHERE status = 'running'
+    AND action LIKE 'sync_%'
+    AND started_at < now() - interval '30 minutes';
+
+  FOREACH c IN ARRAY v_companies LOOP
+    SELECT array_agg(r ORDER BY r) INTO v_stale
+    FROM unnest(v_resources) AS r
+    WHERE EXISTS (
+      SELECT 1 FROM fin_sync_log l
+      WHERE l.status='complete' AND l.action='sync_'||r AND c = ANY(l.companies)
+        AND l.completed_at > now() - interval '7 days')
+      AND NOT EXISTS (
+      SELECT 1 FROM fin_sync_log l
+      WHERE l.status='complete' AND l.action='sync_'||r AND c = ANY(l.companies)
+        AND l.completed_at > now() - make_interval(hours => v_stale_hours));
+    IF v_stale IS NOT NULL THEN
+      v_msg := 'Sync sem conclusão há >'||v_stale_hours||'h: '||array_to_string(v_stale, ', ');
+      INSERT INTO fin_alertas (company, tipo, severidade, mensagem, contexto)
+      VALUES (c, 'sync_stale', 'critico', v_msg,
+              jsonb_build_object('recursos', v_stale, 'janela_horas', v_stale_hours))
+      ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
+      UPDATE fin_alertas
+      SET email_enfileirado_em = now()
+      WHERE company = c AND tipo = 'sync_stale'
+        AND dismissed_at IS NULL
+        AND email_enfileirado_em IS NULL
+        AND criado_em <= now() - make_interval(mins => v_grace_mins);
+      IF FOUND THEN
+        INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+        VALUES (c, 'outro', 'urgente', '[Sync parado] '||upper(c), v_msg, 'pendente_notificacao');
+      END IF;
+    ELSE
+      UPDATE fin_alertas SET dismissed_at = now()
+      WHERE company = c AND tipo = 'sync_stale' AND dismissed_at IS NULL;
+    END IF;
+
+    WITH terminal AS (
+      SELECT l.action, l.status, l.started_at
+      FROM fin_sync_log l
+      WHERE l.action LIKE 'sync_%'
+        AND c = ANY(l.companies)
+        AND l.status IN ('complete','error')
+        AND l.started_at > now() - interval '24 hours'
+    ),
+    latest AS (
+      SELECT DISTINCT ON (action) action, status, started_at
+      FROM terminal
+      ORDER BY action, started_at DESC
+    )
+    SELECT array_agg(lt.action ORDER BY lt.action) INTO v_errs
+    FROM latest lt
+    WHERE lt.status = 'error'
+      AND lt.started_at > now() - interval '3 hours'
+      AND (
+        SELECT count(*) FROM terminal t
+        WHERE t.action = lt.action
+          AND t.status = 'error'
+          AND t.started_at <= lt.started_at
+          AND NOT EXISTS (
+            SELECT 1 FROM terminal cpl
+            WHERE cpl.action = lt.action
+              AND cpl.status = 'complete'
+              AND cpl.started_at > t.started_at
+              AND cpl.started_at <= lt.started_at
+          )
+      ) >= 2;
+    IF v_errs IS NOT NULL THEN
+      v_msg := 'Sync falhando agora (run mais recente em erro, >=2 consecutivos): '||array_to_string(v_errs, ', ');
+      INSERT INTO fin_alertas (company, tipo, severidade, mensagem, contexto)
+      VALUES (c, 'sync_error', 'critico', v_msg, jsonb_build_object('actions', v_errs))
+      ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
+      IF FOUND THEN
+        INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+        VALUES (c, 'outro', 'urgente', '[Sync erro] '||upper(c), v_msg, 'pendente_notificacao');
+      END IF;
+    ELSE
+      UPDATE fin_alertas SET dismissed_at = now()
+      WHERE company = c AND tipo = 'sync_error' AND dismissed_at IS NULL;
+    END IF;
+
+    SELECT array_agg(resource ORDER BY resource) INTO v_stuck
+    FROM fin_sync_cursor
+    WHERE company = c AND next_page IS NOT NULL
+      AND updated_at < now() - make_interval(hours => v_cursor_hours);
+    IF v_stuck IS NOT NULL THEN
+      v_msg := 'Cursor de continuação travado há >'||v_cursor_hours||'h: '||array_to_string(v_stuck, ', ');
+      INSERT INTO fin_alertas (company, tipo, severidade, mensagem, contexto)
+      VALUES (c, 'sync_cursor_stuck', 'aviso', v_msg, jsonb_build_object('recursos', v_stuck))
+      ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
+      IF FOUND THEN
+        INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+        VALUES (c, 'outro', 'atencao', '[Sync cursor] '||upper(c), v_msg, 'pendente_notificacao');
+      END IF;
+    ELSE
+      UPDATE fin_alertas SET dismissed_at = now()
+      WHERE company = c AND tipo = 'sync_cursor_stuck' AND dismissed_at IS NULL;
+    END IF;
+  END LOOP;
+END;
+$$;
+
+
+--
 -- Name: fin_user_can_access(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2294,6 +5032,61 @@ BEGIN
   IF v_perm IS NULL THEN RETURN false; END IF;
   IF check_company IS NULL THEN RETURN true; END IF;
   RETURN v_perm.pode_ver_todas_empresas OR check_company = ANY(v_perm.empresas);
+END;
+$$;
+
+
+--
+-- Name: finalizar_estoque_full_sync(text, bigint, text, timestamp with time zone, integer, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finalizar_estoque_full_sync(p_account text, p_run_id bigint, p_status text, p_at timestamp with time zone, p_total_synced integer, p_error_message text, p_meta jsonb) RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_done boolean := false;
+BEGIN
+  UPDATE public.sync_state
+     SET status = p_status, last_sync_at = p_at, total_synced = p_total_synced,
+         error_message = p_error_message,
+         metadata = jsonb_build_object('run_id', p_run_id) || COALESCE(p_meta, '{}'::jsonb),
+         updated_at = p_at
+   WHERE entity_type = 'reposicao_estoque_full'
+     AND account = p_account
+     AND status = 'syncing'
+     AND (metadata->>'run_id') = p_run_id::text
+  RETURNING true INTO v_done;
+  RETURN COALESCE(v_done, false);
+END $$;
+
+
+--
+-- Name: finalize_nao_vinculados_snapshot(text, timestamp with time zone, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finalize_nao_vinculados_snapshot(p_empresa text, p_run_ts timestamp with time zone, p_total integer) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  DELETE FROM public.omie_clientes_nao_vinculados
+   WHERE empresa = p_empresa
+     AND synced_at IS DISTINCT FROM p_run_ts;
+
+  UPDATE public.omie_nao_vinculados_state
+     SET status = 'complete',
+         last_complete_synced_at = p_run_ts,
+         total = p_total,
+         error_message = NULL,
+         updated_at = now()
+   WHERE empresa = p_empresa;
+
+  IF NOT FOUND THEN
+    INSERT INTO public.omie_nao_vinculados_state
+      (empresa, status, last_complete_synced_at, total, updated_at)
+    VALUES (p_empresa, 'complete', p_run_ts, p_total, now());
+  END IF;
 END;
 $$;
 
@@ -2441,7 +5234,7 @@ BEGIN
   -- Identifica cenários presentes
   SELECT array_agg(DISTINCT cenario) INTO v_cenarios_encontrados
   FROM v_oportunidade_economica_hoje
-  WHERE empresa = p_empresa 
+  WHERE empresa = p_empresa
     AND cenario = ANY(p_cenarios)
     AND economia_bruta_estimada > 0;
 
@@ -2449,26 +5242,38 @@ BEGIN
   -- cenário_tipo: 'promo' (inclui flat, volume, promo_e_aumento) ou 'aumento'
   WITH oportunidades AS (
     SELECT *,
-      CASE 
-        WHEN cenario IN ('promo_flat', 'promo_volume', 'promo_e_aumento') 
+      CASE
+        WHEN cenario IN ('promo_flat', 'promo_volume', 'promo_e_aumento')
           THEN 'oportunidade_promo'
         ELSE 'oportunidade_aumento'
       END AS tipo_ciclo_dest,
-      CASE 
-        WHEN cenario IN ('promo_flat', 'promo_volume', 'promo_e_aumento') 
+      CASE
+        WHEN cenario IN ('promo_flat', 'promo_volume', 'promo_e_aumento')
           THEN campanha_id
         ELSE NULL
       END AS evento_promo_id,
-      CASE 
-        WHEN cenario = 'aumento_apenas' 
+      CASE
+        WHEN cenario = 'aumento_apenas'
           THEN (aumentos_json -> 0 -> 0 ->> 'aumento_id')::bigint
         ELSE NULL
       END AS evento_aumento_id
-    FROM v_oportunidade_economica_hoje
-    WHERE empresa = p_empresa
-      AND cenario = ANY(p_cenarios)
-      AND economia_bruta_estimada > 0
-      AND qtde_oportunidade > 0
+    FROM v_oportunidade_economica_hoje voeh
+    WHERE voeh.empresa = p_empresa
+      AND voeh.cenario = ANY(p_cenarios)
+      AND voeh.economia_bruta_estimada > 0
+      AND voeh.qtde_oportunidade > 0
+      -- [SIMETRIA-NORMAL] não oferecer SKU que JÁ está em pedido NORMAL economicamente ativo
+      -- (espelha o NOT EXISTS 4/4 da RPC normal, na direção inversa — anti compra dupla).
+      AND NOT EXISTS (
+            SELECT 1
+            FROM pedido_compra_item pcin
+            JOIN pedido_compra_sugerido pcsn ON pcsn.id = pcin.pedido_id
+            WHERE pcsn.empresa = p_empresa
+              AND COALESCE(pcsn.tipo_ciclo, 'normal') = 'normal'
+              AND pcsn.status IN ('pendente_aprovacao','bloqueado_guardrail','aprovado_aguardando_disparo','falha_envio','disparado','concluido_recebido')
+              AND pcsn.data_ciclo >= (p_data_ciclo - INTERVAL '7 days')
+              AND pcin.sku_codigo_omie = voeh.sku_codigo_omie::text
+          )
   ),
   pedidos_criados AS (
     INSERT INTO pedido_compra_sugerido (
@@ -2476,8 +5281,8 @@ BEGIN
       horario_corte_planejado, valor_total, num_skus, status,
       tipo_ciclo, origem_evento_id, origem_evento_tipo
     )
-    SELECT 
-      o.empresa, 
+    SELECT
+      o.empresa,
       o.fornecedor_nome,
       NULL,  -- oportunidade não respeita grupo; é um pedido único por fornecedor
       p_data_ciclo,
@@ -2499,17 +5304,17 @@ BEGIN
     modo_promocao, promocao_item_id, preco_sem_desconto, desconto_perc_aplicado,
     economia_estimada_valor
   )
-  SELECT 
+  SELECT
     pc.id,
-    o.sku_codigo_omie, 
+    o.sku_codigo_omie,
     o.sku_descricao,
     NULL, NULL, NULL,  -- não aplicável em oportunidade
-    o.qtde_oportunidade, 
+    o.qtde_oportunidade,
     o.qtde_oportunidade,
     o.preco_item_eoq * (1 - o.desconto_total_perc / 100),
     o.qtde_oportunidade * o.preco_item_eoq * (1 - o.desconto_total_perc / 100),
     false,
-    CASE 
+    CASE
       WHEN o.cenario IN ('promo_flat') THEN 'flat'
       WHEN o.cenario IN ('promo_volume', 'promo_e_aumento') THEN 'forward_buying'
       ELSE NULL
@@ -2521,8 +5326,8 @@ BEGIN
   FROM v_oportunidade_economica_hoje o
   JOIN pedidos_criados pc ON (
     pc.fornecedor_nome = o.fornecedor_nome
-    AND pc.tipo_ciclo = CASE 
-      WHEN o.cenario IN ('promo_flat', 'promo_volume', 'promo_e_aumento') 
+    AND pc.tipo_ciclo = CASE
+      WHEN o.cenario IN ('promo_flat', 'promo_volume', 'promo_e_aumento')
         THEN 'oportunidade_promo'
       ELSE 'oportunidade_aumento'
     END
@@ -2530,25 +5335,44 @@ BEGIN
   WHERE o.empresa = p_empresa
     AND o.cenario = ANY(p_cenarios)
     AND o.economia_bruta_estimada > 0
-    AND o.qtde_oportunidade > 0;
+    AND o.qtde_oportunidade > 0
+    -- [SIMETRIA-NORMAL] mesmo filtro do CTE — o INSERT de itens re-lê a view; sem o espelho,
+    -- um SKU excluído do header entraria como item de pedido criado por outros SKUs.
+    AND NOT EXISTS (
+          SELECT 1
+          FROM pedido_compra_item pcin
+          JOIN pedido_compra_sugerido pcsn ON pcsn.id = pcin.pedido_id
+          WHERE pcsn.empresa = p_empresa
+            AND COALESCE(pcsn.tipo_ciclo, 'normal') = 'normal'
+            AND pcsn.status IN ('pendente_aprovacao','bloqueado_guardrail','aprovado_aguardando_disparo','falha_envio','disparado','concluido_recebido')
+            AND pcsn.data_ciclo >= (p_data_ciclo - INTERVAL '7 days')
+            AND pcin.sku_codigo_omie = o.sku_codigo_omie::text
+        );
 
   -- Agrega retorno
-  SELECT 
+  -- [FIX-AMBIGUIDADE] o corpo do snapshot fazia SUM(valor_total) sem qualificar — colide com a
+  -- coluna OUT homônima do RETURNS TABLE → "column reference valor_total is ambiguous" em
+  -- RUNTIME (late-bound; o CREATE passa). Como o wrapper ciclo_oportunidade_do_dia só chama
+  -- esta função em dia de corte de campanha/véspera de aumento, a falha era SILENCIOSA e
+  -- ocorria exatamente nos dias com evento (rollback no cron — pedido de oportunidade nunca
+  -- nascia). Mesmo modo-de-falha do incidente aplicar_promocoes (§10). Pego pelo PG17 que
+  -- EXECUTA a função, não só a cria.
+  SELECT
     COUNT(*),
-    COALESCE(SUM(num_skus), 0),
-    COALESCE(SUM(valor_total), 0)
+    COALESCE(SUM(pcs0.num_skus), 0),
+    COALESCE(SUM(pcs0.valor_total), 0)
   INTO v_pedidos, v_skus, v_valor
-  FROM pedido_compra_sugerido
-  WHERE empresa = p_empresa 
-    AND data_ciclo = p_data_ciclo
-    AND tipo_ciclo LIKE 'oportunidade_%'
-    AND status = 'pendente_aprovacao';
+  FROM pedido_compra_sugerido pcs0
+  WHERE pcs0.empresa = p_empresa
+    AND pcs0.data_ciclo = p_data_ciclo
+    AND pcs0.tipo_ciclo LIKE 'oportunidade_%'
+    AND pcs0.status = 'pendente_aprovacao';
 
   SELECT COALESCE(SUM(economia_estimada_valor), 0)
   INTO v_economia
   FROM pedido_compra_item pci
   JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
-  WHERE pcs.empresa = p_empresa 
+  WHERE pcs.empresa = p_empresa
     AND pcs.data_ciclo = p_data_ciclo
     AND pcs.tipo_ciclo LIKE 'oportunidade_%'
     AND pcs.status = 'pendente_aprovacao';
@@ -2573,18 +5397,37 @@ DECLARE
   v_valor NUMERIC := 0;
   v_bloqueados INT := 0;
 BEGIN
-  DELETE FROM pedido_compra_sugerido
+  -- [INTRADAY 1/4] serializa execuções concorrentes (cron 2/2h × botão "Recalcular" × retry).
+  PERFORM pg_advisory_xact_lock(hashtext('gerar_pedidos_sugeridos_ciclo:' || lower(p_empresa)));
+
+  IF (SELECT count(*) FILTER (WHERE tipo_produto IS NOT NULL) FROM public.omie_products WHERE account = lower(p_empresa)) = 0 THEN
+    RAISE EXCEPTION 'tipo_produto_unhealthy: sinal de classificação ausente em omie_products(account=%) — recusando gerar compras p/ não tratar Produto Acabado como comprável', lower(p_empresa);
+  END IF;
+
+  -- [INTRADAY 2/4] expira pendentes NORMAIS de ciclos anteriores (zumbis pós-corte).
+  UPDATE pedido_compra_sugerido
+  SET status = 'expirado_sem_aprovacao', atualizado_em = now()
   WHERE empresa = p_empresa
-    AND data_ciclo = p_data_ciclo
-    AND status = 'pendente_aprovacao';
+    AND data_ciclo < p_data_ciclo
+    AND status = 'pendente_aprovacao'
+    AND COALESCE(tipo_ciclo, 'normal') = 'normal';
+
+  -- [INTRADAY 3/4] limpeza do dia: só ciclo NORMAL (preserva oportunidade/promoção pendentes) e
+  -- INCLUI bloqueado_guardrail do dia (re-avaliado a cada rodada; anti compra dupla).
+  DELETE FROM pedido_compra_sugerido
+  WHERE empresa = p_empresa AND data_ciclo = p_data_ciclo
+    AND status IN ('pendente_aprovacao', 'bloqueado_guardrail')
+    AND COALESCE(tipo_ciclo, 'normal') = 'normal';
 
   WITH em_transito AS (
     SELECT pcs2.empresa, pci.sku_codigo_omie::text AS sku_codigo_omie, SUM(pci.qtde_final) AS qtde
     FROM pedido_compra_item pci
     JOIN pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
     WHERE pcs2.empresa = p_empresa
-      AND pcs2.status IN ('aprovado_aguardando_disparo','disparado','concluido_recebido')
-      AND pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days')
+      AND (
+        (pcs2.status IN ('aprovado_aguardando_disparo','disparado','concluido_recebido') AND pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days'))
+        OR (pcs2.status_envio_portal IN ('sucesso_portal','enviado_portal') AND pcs2.portal_protocolo IS NOT NULL AND pcs2.omie_pedido_compra_numero IS NULL AND pcs2.status NOT IN ('cancelado','expirado_sem_aprovacao'))
+      )
     GROUP BY pcs2.empresa, pci.sku_codigo_omie
   ),
   preco_medio AS (
@@ -2595,65 +5438,99 @@ BEGIN
     GROUP BY slh.empresa, slh.sku_codigo_omie
   ),
   skus_necessitando AS (
-    SELECT sp.empresa, sp.sku_codigo_omie::text AS sku_codigo_omie, sp.sku_descricao,
-      sp.fornecedor_nome, sg.grupo_codigo, sp.ponto_pedido, sp.estoque_maximo,
-      COALESCE(sea.estoque_fisico, 0) AS estoque_fisico,
-      COALESCE(sea.estoque_pendente_entrada, 0) AS estoque_pendente,
-      COALESCE(et.qtde, 0) AS qtde_em_transito_recente,
-      (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) AS estoque_efetivo,
-      (sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0))) AS qtde_sugerida,
-      COALESCE(pm.preco_unitario, 0) AS preco_unitario,
-      (pm.n IS NULL) AS primeira_compra,
-      fh.horario_corte_pedido, fh.valor_maximo_mensal, fh.delta_max_perc
+    SELECT sp.empresa, sp.sku_codigo_omie::text AS sku_codigo_omie, sp.sku_descricao, sp.fornecedor_nome,
+           sg.grupo_codigo, sp.ponto_pedido, sp.estoque_maximo,
+           COALESCE(sea.estoque_fisico, 0) AS estoque_fisico,
+           COALESCE(sea.estoque_pendente_entrada, 0) AS estoque_pendente,
+           COALESCE(et.qtde, 0) AS qtde_em_transito_recente,
+           (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) AS estoque_efetivo,
+           ceil(sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0))) AS qtde_sugerida,
+           CASE WHEN sp.minimo_forcado_manual IS NOT NULL AND sp.minimo_forcado_manual > 0
+                THEN ceil(GREATEST(
+                       (sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0))),
+                       sp.minimo_forcado_manual))
+                ELSE ceil(sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)))
+           END AS qtde_final,
+           COALESCE(
+             ( SELECT ipc.cmc FROM inventory_position ipc
+               WHERE ipc.omie_codigo_produto::text = sp.sku_codigo_omie::text
+                 AND ipc.account = ANY (CASE lower(p_empresa)
+                       WHEN 'oben' THEN ARRAY['vendas'::text,'oben'::text]
+                       WHEN 'colacor' THEN ARRAY['colacor_vendas'::text,'colacor'::text]
+                       WHEN 'colacor_sc' THEN ARRAY['servicos'::text,'colacor_sc'::text]
+                       ELSE ARRAY[lower(p_empresa)] END)
+                 AND ipc.cmc > 0
+               ORDER BY ipc.synced_at DESC NULLS LAST
+               LIMIT 1 ),
+             pm.preco_unitario, 0) AS preco_unitario,
+           (pm.n IS NULL) AS primeira_compra,
+           fh.horario_corte_pedido, fh.valor_maximo_mensal, fh.delta_max_perc
     FROM sku_parametros sp
     LEFT JOIN sku_grupo_producao sg ON sg.empresa = sp.empresa AND sg.sku_codigo_omie = sp.sku_codigo_omie::text
     LEFT JOIN sku_estoque_atual sea ON sea.empresa = sp.empresa AND sea.sku_codigo_omie = sp.sku_codigo_omie::text
     LEFT JOIN fornecedor_habilitado_reposicao fh ON fh.empresa = sp.empresa AND fh.fornecedor_nome = sp.fornecedor_nome
-    LEFT JOIN omie_products op ON op.omie_codigo_produto::text = sp.sku_codigo_omie::text
+    LEFT JOIN omie_products op ON op.omie_codigo_produto::text = sp.sku_codigo_omie::text AND op.account = lower(p_empresa)
     LEFT JOIN familia_nao_comprada fnc ON fnc.empresa = sp.empresa AND fnc.familia = op.familia
     LEFT JOIN em_transito et ON et.empresa = sp.empresa AND et.sku_codigo_omie = sp.sku_codigo_omie::text
     LEFT JOIN preco_medio pm ON pm.empresa = sp.empresa AND pm.sku_codigo_omie = sp.sku_codigo_omie::text
+    LEFT JOIN inventory_position ip ON ip.omie_codigo_produto::text = sp.sku_codigo_omie::text AND ip.account = lower(p_empresa)
     LEFT JOIN sku_status_omie sso ON sso.empresa = sp.empresa AND sso.sku_codigo_omie = sp.sku_codigo_omie::text
     WHERE sp.empresa = p_empresa
       AND sp.habilitado_reposicao_automatica = TRUE
       AND COALESCE(sp.tipo_reposicao, 'automatica') = 'automatica'
+      AND sp.fornecedor_nome IS NOT NULL
+      AND btrim(sp.fornecedor_nome) <> ''
       AND fnc.id IS NULL
       AND COALESCE(op.ativo, true) = true
       AND COALESCE(sso.ativo_no_omie, true) = true
       AND COALESCE(op.descricao, '') NOT ILIKE '%450ML'
+      AND COALESCE(op.descricao, '') NOT ILIKE '%405ML'
+      AND COALESCE((
+            SELECT COALESCE(op04.tipo_produto, op04.metadata->>'tipo_produto')
+            FROM omie_products op04
+            WHERE op04.omie_codigo_produto::text = sp.sku_codigo_omie::text
+              AND op04.account = lower(p_empresa)
+            LIMIT 1
+          ), '') <> '04'
+      -- [INTRADAY 4/4] não re-sugerir SKU presente em pedido pendente/bloqueado de oportunidade.
+      AND NOT EXISTS (
+            SELECT 1
+            FROM pedido_compra_item pci9
+            JOIN pedido_compra_sugerido pcs9 ON pcs9.id = pci9.pedido_id
+            WHERE pcs9.empresa = p_empresa
+              AND pcs9.status IN ('pendente_aprovacao', 'bloqueado_guardrail')
+              AND COALESCE(pcs9.tipo_ciclo, 'normal') <> 'normal'
+              AND pci9.sku_codigo_omie = sp.sku_codigo_omie::text
+          )
       AND sp.ponto_pedido IS NOT NULL
       AND sp.estoque_maximo IS NOT NULL
       AND (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) <= sp.ponto_pedido
   ),
   pedidos_por_fornecedor_grupo AS (
     INSERT INTO pedido_compra_sugerido (
-      empresa, fornecedor_nome, grupo_codigo, data_ciclo,
-      horario_corte_planejado, valor_total, num_skus, status,
-      condicao_pagamento_codigo, condicao_pagamento_descricao,
+      empresa, fornecedor_nome, grupo_codigo, data_ciclo, horario_corte_planejado,
+      valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao,
       num_parcelas, dias_parcelas, condicao_origem
     )
     SELECT sn.empresa, sn.fornecedor_nome, sn.grupo_codigo, p_data_ciclo,
-      (p_data_ciclo + MAX(sn.horario_corte_pedido))::timestamptz,
-      SUM(sn.qtde_sugerida * sn.preco_unitario), COUNT(*),
-      'pendente_aprovacao', '000', 'À Vista', 1, NULL, 'default_a_vista'
+           (p_data_ciclo + MAX(sn.horario_corte_pedido))::timestamptz,
+           SUM(sn.qtde_final * sn.preco_unitario), COUNT(*),
+           'pendente_aprovacao', '000', 'À Vista', 1, NULL, 'default_a_vista'
     FROM skus_necessitando sn
     WHERE sn.qtde_sugerida > 0
     GROUP BY sn.empresa, sn.fornecedor_nome, sn.grupo_codigo
     RETURNING id, fornecedor_nome, grupo_codigo
   )
   INSERT INTO pedido_compra_item (
-    pedido_id, sku_codigo_omie, sku_descricao,
-    estoque_atual, ponto_pedido, estoque_maximo,
+    pedido_id, sku_codigo_omie, sku_descricao, estoque_atual, ponto_pedido, estoque_maximo,
     qtde_sugerida, qtde_final, preco_unitario, valor_linha, primeira_compra
   )
-  SELECT pfg.id, sn.sku_codigo_omie, sn.sku_descricao,
-    sn.estoque_efetivo, sn.ponto_pedido, sn.estoque_maximo,
-    sn.qtde_sugerida, sn.qtde_sugerida, sn.preco_unitario,
-    sn.qtde_sugerida * sn.preco_unitario, sn.primeira_compra
+  SELECT pfg.id, sn.sku_codigo_omie, sn.sku_descricao, sn.estoque_efetivo, sn.ponto_pedido, sn.estoque_maximo,
+         sn.qtde_sugerida, sn.qtde_final, sn.preco_unitario, sn.qtde_final * sn.preco_unitario, sn.primeira_compra
   FROM skus_necessitando sn
   JOIN pedidos_por_fornecedor_grupo pfg
-    ON pfg.fornecedor_nome = sn.fornecedor_nome
-   AND COALESCE(pfg.grupo_codigo,'') = COALESCE(sn.grupo_codigo,'');
+    ON pfg.fornecedor_nome = sn.fornecedor_nome AND COALESCE(pfg.grupo_codigo,'') = COALESCE(sn.grupo_codigo,'')
+  WHERE sn.qtde_sugerida > 0;
 
   SELECT COUNT(*), COALESCE(SUM(num_skus),0), COALESCE(SUM(valor_total),0)
   INTO v_pedidos, v_skus, v_valor
@@ -2661,6 +5538,77 @@ BEGIN
   WHERE empresa = p_empresa AND data_ciclo = p_data_ciclo AND status = 'pendente_aprovacao';
 
   RETURN QUERY SELECT v_pedidos, v_skus, v_valor, v_bloqueados;
+END;
+$$;
+
+
+--
+-- Name: get_carteira_saude(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_carteira_saude() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  uid uuid := auth.uid();
+  result jsonb;
+BEGIN
+  IF uid IS NULL THEN RETURN NULL; END IF;
+  IF NOT (has_role(uid, 'master'::app_role) OR has_role(uid, 'employee'::app_role)) THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT jsonb_build_object(
+    'crons', COALESCE((
+      SELECT jsonb_agg(jsonb_build_object(
+        'jobname', j.jobname,
+        'last_status', r.status,
+        'last_run_at', r.start_time,
+        'age_hours', CASE WHEN r.start_time IS NULL THEN NULL
+                          ELSE round(extract(epoch FROM (now() - r.start_time)) / 3600.0, 1) END,
+        'last_error', CASE WHEN lower(coalesce(r.status, '')) IN ('failed','failure','error')
+                           THEN r.return_message ELSE NULL END
+      ) ORDER BY j.jobname)
+      FROM cron.job j
+      LEFT JOIN LATERAL (
+        SELECT d.status, d.start_time, d.return_message
+        FROM cron.job_run_details d
+        WHERE d.jobid = j.jobid
+        ORDER BY d.start_time DESC NULLS LAST
+        LIMIT 1
+      ) r ON true
+      WHERE j.jobname IN (
+        'carteira-rebuild-nightly',
+        'scoring-recalc-batch-nightly',
+        'visit-score-recalc-batch-nightly',
+        'carteira-positivacao-snapshot-mensal'
+      )
+    ), '[]'::jsonb),
+    'sync', (
+      SELECT jsonb_build_object(
+        'max_last_synced_at', max(last_synced_at),
+        'age_hours', CASE WHEN max(last_synced_at) IS NULL THEN NULL
+                          ELSE round(extract(epoch FROM (now() - max(last_synced_at))) / 3600.0, 1) END,
+        'stale_count', count(*) FILTER (
+          WHERE last_synced_at IS NULL OR last_synced_at < now() - interval '48 hours')
+      )
+      FROM public.carteira_assignments
+    ),
+    'score_coverage', jsonb_build_object(
+      'carteira', (SELECT count(*) FROM public.carteira_assignments),
+      'fcs_clientes', (
+        SELECT count(*) FROM public.carteira_assignments ca
+        WHERE EXISTS (SELECT 1 FROM public.farmer_client_scores f WHERE f.customer_user_id = ca.customer_user_id)
+      ),
+      'cvs_clientes', (
+        SELECT count(*) FROM public.carteira_assignments ca
+        WHERE EXISTS (SELECT 1 FROM public.customer_visit_scores c WHERE c.customer_user_id = ca.customer_user_id)
+      )
+    )
+  ) INTO result;
+
+  RETURN result;
 END;
 $$;
 
@@ -2693,6 +5641,63 @@ $$;
 
 
 --
+-- Name: get_customer_sales_summary(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_customer_sales_summary() RETURNS TABLE(customer_user_id uuid, days_since_last_purchase integer, total_revenue numeric, revenue_180d numeric, item_count bigint, category_count bigint)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+  SELECT
+    oi.customer_user_id,
+    GREATEST(
+      0,
+      (now() AT TIME ZONE 'America/Sao_Paulo')::date
+        - max(COALESCE(so.order_date_kpi, so.created_at::date))
+    )::int                                                                       AS days_since_last_purchase,
+    COALESCE(sum(COALESCE(oi.unit_price,0) * COALESCE(NULLIF(oi.quantity,0),1)),0) AS total_revenue,
+    COALESCE(sum(COALESCE(oi.unit_price,0) * COALESCE(NULLIF(oi.quantity,0),1))
+             FILTER (WHERE COALESCE(so.order_date_kpi, so.created_at::date)
+                          BETWEEN (now() AT TIME ZONE 'America/Sao_Paulo')::date - 180
+                              AND (now() AT TIME ZONE 'America/Sao_Paulo')::date), 0) AS revenue_180d,
+    count(*)                                                                     AS item_count,
+    count(DISTINCT oi.product_id)                                                AS category_count
+  FROM public.order_items oi
+  JOIN public.sales_orders so ON so.id = oi.sales_order_id
+  WHERE so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+    AND so.deleted_at IS NULL
+    AND oi.customer_user_id IS NOT NULL
+  GROUP BY oi.customer_user_id;
+$$;
+
+
+--
+-- Name: get_data_health(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_data_health() RETURNS TABLE(source text, domain text, status text, age_seconds bigint, expected_max_age_seconds bigint, freshness_basis text, message text, last_error text, probable_cause text, how_to_fix text, severity text)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE v_full boolean;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Acesso negado: não autenticado' USING ERRCODE = '42501';
+  END IF;
+  v_full := COALESCE(public.pode_ver_carteira_completa(auth.uid()), false);
+  RETURN QUERY
+  SELECT c.source, c.domain, c.status,
+    c.age_seconds, c.expected_max_age_seconds, c.freshness_basis, c.message,
+    CASE WHEN v_full THEN c.last_error ELSE NULL END,
+    CASE WHEN v_full THEN c.probable_cause ELSE NULL END,
+    CASE WHEN v_full THEN c.how_to_fix ELSE NULL END,
+    c.severity
+  FROM public._data_health_compute() c;
+END;
+$$;
+
+
+--
 -- Name: get_default_production_assignee(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2701,6 +5706,817 @@ CREATE FUNCTION public.get_default_production_assignee() RETURNS text
     SET search_path TO 'public'
     AS $$
   SELECT value FROM public.company_config WHERE key = 'default_production_assignee_id' LIMIT 1;
+$$;
+
+
+--
+-- Name: get_meu_mixgap(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_meu_mixgap() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE uid uuid := auth.uid();
+BEGIN
+  IF uid IS NULL THEN RETURN NULL; END IF;
+  IF NOT (has_role(uid,'master'::app_role) OR has_role(uid,'employee'::app_role)) THEN RETURN NULL; END IF;
+  RETURN public._carteira_mixgap_for_owner(uid);
+END; $$;
+
+
+--
+-- Name: get_meu_mixgap_for(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_meu_mixgap_for(p_target uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NOT has_role(auth.uid(),'master'::app_role) THEN RAISE EXCEPTION 'forbidden: master only'; END IF;
+  IF p_target IS NULL THEN RAISE EXCEPTION 'target required'; END IF;
+  RETURN public._carteira_mixgap_for_owner(p_target);
+END; $$;
+
+
+--
+-- Name: get_minha_positivacao(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_minha_positivacao() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE uid uuid := auth.uid();
+BEGIN
+  IF uid IS NULL THEN RETURN NULL; END IF;
+  IF NOT (has_role(uid,'master'::app_role) OR has_role(uid,'employee'::app_role)) THEN RETURN NULL; END IF;
+  RETURN public._carteira_positivacao_for_owner(uid);
+END; $$;
+
+
+--
+-- Name: get_minha_positivacao_for(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_minha_positivacao_for(p_target uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NOT has_role(auth.uid(),'master'::app_role) THEN RAISE EXCEPTION 'forbidden: master only'; END IF;
+  IF p_target IS NULL THEN RAISE EXCEPTION 'target required'; END IF;
+  RETURN public._carteira_positivacao_for_owner(p_target);
+END; $$;
+
+
+--
+-- Name: get_preco_cockpit(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_preco_cockpit(p_itens jsonb) RETURNS jsonb
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_pode_num boolean;
+  v_out jsonb := '[]'::jsonb;
+  v_item jsonb;
+  v_empresa text; v_codigo bigint; v_preco numeric; v_formula uuid;
+  v_cmc numeric; v_prov text; v_fresc timestamptz; v_familia text;
+  v_piso numeric; v_meta numeric; v_tem_pol boolean;
+  v_faixa text; v_motivo text; v_markup numeric; v_folga numeric;
+  v_accounts text[];
+  v_preco_ok boolean;
+  v_cmc_ok boolean;
+BEGIN
+  IF NOT (auth.uid() IS NOT NULL
+    AND (has_role(auth.uid(),'employee'::app_role) OR has_role(auth.uid(),'master'::app_role))) THEN
+    RAISE EXCEPTION 'forbidden' USING errcode = '42501';
+  END IF;
+  IF jsonb_array_length(p_itens) > 200 THEN
+    RAISE EXCEPTION 'too many items (max 200)' USING errcode = '22023';
+  END IF;
+  v_pode_num := pode_ver_carteira_completa(auth.uid());
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_itens)
+  LOOP
+    v_cmc := NULL; v_prov := NULL; v_fresc := NULL; v_familia := NULL;
+    v_piso := NULL; v_meta := NULL;
+
+    v_empresa := lower(v_item->>'empresa');
+    v_codigo  := (v_item->>'codigo')::bigint;
+    v_preco   := (v_item->>'preco')::numeric;
+    v_formula := NULLIF(v_item->>'tint_formula_id','')::uuid;
+    v_preco_ok := v_preco IS NOT NULL AND v_preco <> 'NaN'::numeric;
+
+    v_accounts := CASE v_empresa
+            WHEN 'oben'       THEN ARRAY['vendas','oben']
+            WHEN 'colacor'    THEN ARRAY['colacor_vendas','colacor']
+            WHEN 'colacor_sc' THEN ARRAY['servicos','colacor_sc']
+            ELSE ARRAY[v_empresa] END;
+
+    IF v_formula IS NOT NULL THEN
+      DECLARE
+        v_base_cmc numeric;
+        v_base_synced timestamptz;
+        v_cor_total numeric;
+        v_cor_faltando int;
+        v_n_itens int;
+        v_cor_min_synced timestamptz;
+      BEGIN
+        SELECT ip.cmc, ip.synced_at INTO v_base_cmc, v_base_synced
+        FROM tint_formulas tf
+        JOIN tint_skus ts
+          ON ts.id = tf.sku_id
+          OR (tf.sku_id IS NULL AND ts.account = tf.account
+              AND ts.produto_id = tf.produto_id AND ts.base_id = tf.base_id
+              AND ts.embalagem_id = tf.embalagem_id)
+        JOIN omie_products opb ON opb.id = ts.omie_product_id
+        JOIN inventory_position ip ON ip.omie_codigo_produto = opb.omie_codigo_produto
+              AND ip.account = ANY(v_accounts)
+        WHERE tf.id = v_formula
+          AND tf.account = v_empresa
+          AND ip.cmc > 0 AND ip.cmc <> 'NaN'::numeric
+        ORDER BY ip.synced_at DESC NULLS LAST LIMIT 1;
+
+        SELECT
+          count(*),
+          count(*) FILTER (
+            WHERE ipc.cmc IS NULL OR ipc.cmc <= 0 OR ipc.cmc = 'NaN'::numeric
+               OR c.volume_total_ml IS NULL OR c.volume_total_ml <= 0
+               OR fi.qtd_ml IS NULL OR fi.qtd_ml <= 0 OR fi.qtd_ml = 'NaN'::numeric),
+          COALESCE(SUM(fi.qtd_ml * ipc.cmc / NULLIF(c.volume_total_ml,0)), 0),
+          min(ipc.synced_at)
+        INTO v_n_itens, v_cor_faltando, v_cor_total, v_cor_min_synced
+        FROM tint_formula_itens fi
+        JOIN tint_corantes c       ON c.id = fi.corante_id
+        LEFT JOIN omie_products opc ON opc.id = c.omie_product_id
+        LEFT JOIN LATERAL (
+          SELECT ip.cmc, ip.synced_at FROM inventory_position ip
+          WHERE ip.omie_codigo_produto = opc.omie_codigo_produto AND ip.cmc > 0 AND ip.cmc <> 'NaN'::numeric
+            AND ip.account = ANY(v_accounts)
+          ORDER BY ip.synced_at DESC NULLS LAST LIMIT 1
+        ) ipc ON true
+        WHERE fi.formula_id = v_formula;
+
+        IF v_base_cmc IS NULL OR v_base_cmc <= 0 OR v_base_cmc = 'NaN'::numeric
+           OR v_n_itens = 0 OR v_cor_faltando > 0 THEN
+          v_cmc := NULL; v_prov := 'tint(custo incompleto)'; v_fresc := NULL;
+        ELSE
+          v_cmc := v_base_cmc + v_cor_total;
+          v_prov := 'tint(CMC base+corantes)';
+          v_fresc := LEAST(v_base_synced, v_cor_min_synced);
+        END IF;
+      END;
+    ELSE
+      SELECT ip.cmc, 'inventory_position('||ip.account||')', ip.synced_at
+        INTO v_cmc, v_prov, v_fresc
+      FROM inventory_position ip
+      WHERE ip.omie_codigo_produto = v_codigo
+        AND ip.cmc > 0 AND ip.cmc <> 'NaN'::numeric
+        AND ip.account = ANY(v_accounts)
+      ORDER BY ip.synced_at DESC NULLS LAST
+      LIMIT 1;
+    END IF;
+
+    v_cmc_ok := v_cmc IS NOT NULL AND v_cmc > 0 AND v_cmc <> 'NaN'::numeric;
+
+    SELECT op.familia INTO v_familia
+    FROM omie_products op
+    WHERE op.omie_codigo_produto = v_codigo AND op.account = v_empresa
+    LIMIT 1;
+
+    SELECT rp.piso_markup, rp.meta_markup INTO v_piso, v_meta
+    FROM resolve_markup_policy(v_empresa, v_codigo, v_familia) rp;
+    v_tem_pol := v_piso IS NOT NULL AND v_meta IS NOT NULL
+                 AND v_piso <> 'NaN'::numeric AND v_meta <> 'NaN'::numeric;
+
+    IF NOT v_cmc_ok OR NOT v_preco_ok THEN
+      v_faixa := 'neutro'; v_motivo := 'sem_custo';
+    ELSIF v_preco < v_cmc THEN
+      v_faixa := 'vermelho'; v_motivo := 'abaixo_do_custo';
+    ELSIF NOT v_tem_pol THEN
+      v_faixa := 'neutro'; v_motivo := 'sem_politica';
+    ELSIF v_preco < v_cmc * (1 + v_piso/100) THEN
+      v_faixa := 'amarelo'; v_motivo := 'abaixo_do_piso';
+    ELSIF v_preco < v_cmc * (1 + v_meta/100) THEN
+      v_faixa := 'verde'; v_motivo := 'abaixo_da_meta';
+    ELSE
+      v_faixa := 'verde'; v_motivo := 'saudavel';
+    END IF;
+
+    IF v_cmc_ok AND v_preco_ok THEN
+      v_markup := (v_preco - v_cmc) / v_cmc * 100;
+      v_folga  := v_preco - v_cmc;
+    ELSE
+      v_markup := NULL; v_folga := NULL;
+    END IF;
+
+    v_out := v_out || jsonb_build_array(jsonb_build_object(
+      'codigo', v_codigo, 'empresa', v_empresa,
+      'faixa', v_faixa, 'motivo', v_motivo,
+      'tem_custo', v_cmc_ok,
+      'tem_politica', v_tem_pol,
+      'calculated_at', now(),
+      'cmc',          CASE WHEN v_pode_num THEN to_jsonb(v_cmc)    ELSE 'null'::jsonb END,
+      'markup_perc',  CASE WHEN v_pode_num THEN to_jsonb(v_markup) ELSE 'null'::jsonb END,
+      'folga_reais',  CASE WHEN v_pode_num THEN to_jsonb(v_folga)  ELSE 'null'::jsonb END,
+      'piso_markup',  CASE WHEN v_pode_num THEN to_jsonb(v_piso)   ELSE 'null'::jsonb END,
+      'meta_markup',  CASE WHEN v_pode_num THEN to_jsonb(v_meta)   ELSE 'null'::jsonb END,
+      'proveniencia', CASE WHEN v_pode_num THEN to_jsonb(v_prov)   ELSE 'null'::jsonb END,
+      'frescor',      CASE WHEN v_pode_num THEN to_jsonb(v_fresc)  ELSE 'null'::jsonb END
+    ));
+  END LOOP;
+
+  RETURN v_out;
+END;
+$$;
+
+
+--
+-- Name: get_regua_preco(uuid, uuid, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_regua_preco(p_customer uuid, p_product uuid, p_qty numeric) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_account text := 'oben'; v_cmc numeric; v_aliquota numeric;
+  v_precos_cli numeric[]; v_comparaveis jsonb;
+  v_qty_lo numeric := COALESCE(p_qty, 0) * 0.5;
+  v_qty_hi numeric := COALESCE(p_qty, 0) * 2;
+BEGIN
+  IF NOT (public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')) THEN
+    RAISE EXCEPTION 'forbidden: regua_preco exige staff' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT ip.cmc INTO v_cmc FROM public.inventory_position ip
+   WHERE ip.product_id = p_product AND ip.account IN ('oben', 'vendas')
+     AND ip.cmc IS NOT NULL AND ip.cmc > 0
+   ORDER BY (ip.account = 'oben') DESC LIMIT 1;
+
+  SELECT COALESCE(
+           (SELECT cc.value::numeric FROM public.company_config cc
+             WHERE cc.key = 'regua_preco_aliquota_venda_oben'), 0.15) INTO v_aliquota;
+
+  SELECT array_agg(oi.unit_price ORDER BY so.order_date_kpi DESC) INTO v_precos_cli
+    FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id
+   WHERE so.account = v_account AND so.deleted_at IS NULL
+     AND oi.product_id = p_product AND oi.customer_user_id = p_customer
+     AND oi.unit_price > 0 AND so.order_date_kpi >= current_date - interval '180 days';
+
+  WITH base AS (
+    SELECT oi.unit_price, dense_rank() OVER (ORDER BY oi.customer_user_id) AS c_ord
+      FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id
+     WHERE so.account = v_account AND so.deleted_at IS NULL
+       AND oi.product_id = p_product AND oi.customer_user_id <> p_customer
+       AND oi.unit_price > 0 AND oi.quantity BETWEEN v_qty_lo AND v_qty_hi
+       AND so.order_date_kpi >= current_date - interval '180 days'
+  )
+  SELECT jsonb_agg(jsonb_build_object('preco', unit_price, 'c', c_ord)) INTO v_comparaveis FROM base;
+
+  RETURN jsonb_build_object(
+    'cmc', v_cmc, 'cmc_confiavel', v_cmc IS NOT NULL, 'aliquota_venda', v_aliquota,
+    'piso_mc', CASE WHEN v_cmc IS NOT NULL AND v_aliquota >= 0 AND v_aliquota < 1
+                    THEN round(v_cmc / (1 - v_aliquota), 4) ELSE NULL END,
+    'precos_cliente', COALESCE(to_jsonb(v_precos_cli), '[]'::jsonb),
+    'comparaveis', COALESCE(v_comparaveis, '[]'::jsonb)
+  );
+END;
+$$;
+
+
+--
+-- Name: get_regua_preco_customer360(uuid, bigint[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_regua_preco_customer360(p_customer uuid, p_omie_codigos bigint[]) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_account        text := 'oben';
+  v_codigos        bigint[];
+  v_codigo         bigint;
+  v_product_id     uuid;
+  v_preco_atual    numeric;
+  v_preco_atual_at date;
+  v_qty_preco      numeric;
+  v_pacote         jsonb;
+  v_out            jsonb := '[]'::jsonb;
+BEGIN
+  IF NOT (public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')) THEN
+    RAISE EXCEPTION 'forbidden: regua_preco exige staff' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT array_agg(DISTINCT x) INTO v_codigos
+    FROM unnest(COALESCE(p_omie_codigos, ARRAY[]::bigint[])) x
+   WHERE x IS NOT NULL;
+
+  IF v_codigos IS NULL THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  FOREACH v_codigo IN ARRAY v_codigos LOOP
+    v_product_id := NULL; v_preco_atual := NULL; v_preco_atual_at := NULL;
+    v_qty_preco := NULL; v_pacote := NULL;
+
+    SELECT oi.product_id INTO v_product_id
+      FROM public.order_items oi
+      JOIN public.sales_orders so ON so.id = oi.sales_order_id
+     WHERE so.account = v_account
+       AND so.deleted_at IS NULL
+       AND oi.customer_user_id = p_customer
+       AND oi.omie_codigo_produto = v_codigo
+       AND oi.product_id IS NOT NULL
+     ORDER BY so.order_date_kpi DESC NULLS LAST, so.created_at DESC NULLS LAST, oi.id DESC
+     LIMIT 1;
+
+    IF v_product_id IS NULL THEN
+      v_out := v_out || jsonb_build_array(jsonb_build_object(
+        'omie_codigo', v_codigo, 'hide_reason', 'sem_produto'));
+      CONTINUE;
+    END IF;
+
+    SELECT oi.unit_price, so.order_date_kpi, oi.quantity
+      INTO v_preco_atual, v_preco_atual_at, v_qty_preco
+      FROM public.order_items oi
+      JOIN public.sales_orders so ON so.id = oi.sales_order_id
+     WHERE so.account = v_account
+       AND so.deleted_at IS NULL
+       AND oi.customer_user_id = p_customer
+       AND oi.product_id = v_product_id
+       AND oi.unit_price > 0
+     ORDER BY so.order_date_kpi DESC NULLS LAST, so.created_at DESC NULLS LAST, oi.id DESC
+     LIMIT 1;
+
+    IF v_preco_atual IS NULL THEN
+      v_out := v_out || jsonb_build_array(jsonb_build_object(
+        'omie_codigo', v_codigo, 'product_id', v_product_id, 'hide_reason', 'sem_preco'));
+      CONTINUE;
+    END IF;
+
+    IF v_qty_preco IS NULL OR v_qty_preco <= 0 THEN
+      v_out := v_out || jsonb_build_array(jsonb_build_object(
+        'omie_codigo', v_codigo, 'product_id', v_product_id,
+        'preco_atual', v_preco_atual, 'preco_atual_at', v_preco_atual_at,
+        'hide_reason', 'sem_quantidade'));
+      CONTINUE;
+    END IF;
+
+    v_pacote := public.get_regua_preco(p_customer, v_product_id, v_qty_preco);
+
+    v_out := v_out || jsonb_build_array(
+      jsonb_build_object(
+        'omie_codigo', v_codigo, 'product_id', v_product_id,
+        'preco_atual', v_preco_atual, 'preco_atual_at', v_preco_atual_at,
+        'qty_ref', v_qty_preco, 'qty_ref_source', 'ultima_venda',
+        'hide_reason', NULL
+      ) || COALESCE(v_pacote, '{}'::jsonb)
+    );
+  END LOOP;
+
+  RETURN v_out;
+END;
+$$;
+
+
+--
+-- Name: promocao_campanha; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.promocao_campanha (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    nome text NOT NULL,
+    tipo_origem text NOT NULL,
+    data_inicio date NOT NULL,
+    data_fim date NOT NULL,
+    estado text DEFAULT 'rascunho'::text NOT NULL,
+    origem_arquivo_url text,
+    origem_arquivo_tipo text,
+    origem_email_assunto text,
+    origem_email_remetente text,
+    origem_email_data timestamp with time zone,
+    extracao_confianca numeric,
+    extracao_observacoes text,
+    extraido_em timestamp with time zone,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    criado_por text,
+    atualizado_em timestamp with time zone DEFAULT now(),
+    atualizado_por text,
+    data_corte_pedido date,
+    data_corte_faturamento date,
+    permite_pedido_oportunidade boolean DEFAULT true,
+    responsavel_oferta_nome text,
+    responsavel_oferta_email text,
+    canal_oferta text,
+    data_oferta date,
+    volume_minimo_condicional numeric,
+    volume_minimo_unidade text,
+    status_aceite text DEFAULT 'pendente'::text,
+    observacoes_negociacao text,
+    CONSTRAINT ck_periodo_coerente CHECK ((data_fim >= data_inicio)),
+    CONSTRAINT promocao_campanha_canal_oferta_check CHECK (((canal_oferta IS NULL) OR (canal_oferta = ANY (ARRAY['email'::text, 'whatsapp'::text, 'ligacao'::text, 'visita_presencial'::text, 'outro'::text])))),
+    CONSTRAINT promocao_campanha_estado_check CHECK ((estado = ANY (ARRAY['rascunho'::text, 'negociando'::text, 'ativa'::text, 'encerrada'::text, 'cancelada'::text]))),
+    CONSTRAINT promocao_campanha_status_aceite_check CHECK ((status_aceite = ANY (ARRAY['pendente'::text, 'aceita'::text, 'recusada'::text, 'cumprida'::text, 'expirada'::text]))),
+    CONSTRAINT promocao_campanha_tipo_origem_check CHECK ((tipo_origem = ANY (ARRAY['fornecedor_impoe'::text, 'oficial_mensal'::text, 'negociacao_cliente'::text, 'desconto_flat_condicional'::text, 'outro'::text]))),
+    CONSTRAINT promocao_campanha_volume_minimo_unidade_check CHECK (((volume_minimo_unidade IS NULL) OR (volume_minimo_unidade = ANY (ARRAY['unidades'::text, 'reais'::text, 'kg'::text, 'litros'::text]))))
+);
+
+
+--
+-- Name: TABLE promocao_campanha; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.promocao_campanha IS 'Uma campanha promocional. Pode ser imposta pelo fornecedor (PDF/imagem mensal) ou resultado de negociação pontual. Agrupa N itens sob mesmas datas de vigência.';
+
+
+--
+-- Name: COLUMN promocao_campanha.data_corte_pedido; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.promocao_campanha.data_corte_pedido IS 'Último dia útil em que a Sayerlack aceita pedido dessa campanha. Tipicamente último dia útil do mês. Ciclo de oportunidade roda neste dia.';
+
+
+--
+-- Name: COLUMN promocao_campanha.data_corte_faturamento; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.promocao_campanha.data_corte_faturamento IS 'Último dia em que a NF da promoção deve sair. Pode cair no mês seguinte ao fim da promoção se pedido foi colocado dentro do corte.';
+
+
+--
+-- Name: COLUMN promocao_campanha.permite_pedido_oportunidade; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.promocao_campanha.permite_pedido_oportunidade IS 'Se FALSE, campanha não gera ciclo de oportunidade. Útil para promoções retroativas históricas (os 12 meses) ou campanhas já encerradas.';
+
+
+--
+-- Name: promocao_item; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.promocao_item (
+    id bigint NOT NULL,
+    campanha_id bigint NOT NULL,
+    sku_codigo_fornecedor text NOT NULL,
+    descricao_produto_fornecedor text,
+    sku_codigo_omie bigint,
+    mapeamento_qualidade text,
+    mapeamento_candidatos jsonb,
+    desconto_perc numeric NOT NULL,
+    volume_minimo numeric,
+    confirmado boolean DEFAULT false NOT NULL,
+    ativo boolean DEFAULT true NOT NULL,
+    observacoes text,
+    criado_em timestamp with time zone DEFAULT now(),
+    atualizado_em timestamp with time zone DEFAULT now(),
+    desconto_extra_perc numeric,
+    desconto_extra_observacoes text,
+    desconto_extra_negociado_por text,
+    desconto_extra_negociado_em timestamp with time zone,
+    desconto_extra_email_referencia text,
+    CONSTRAINT promocao_item_desconto_extra_perc_check CHECK (((desconto_extra_perc IS NULL) OR ((desconto_extra_perc > (0)::numeric) AND (desconto_extra_perc <= (50)::numeric)))),
+    CONSTRAINT promocao_item_desconto_perc_check CHECK (((desconto_perc > (0)::numeric) AND (desconto_perc <= (100)::numeric))),
+    CONSTRAINT promocao_item_mapeamento_qualidade_check CHECK ((mapeamento_qualidade = ANY (ARRAY['unico'::text, 'unico_por_similaridade'::text, 'ambiguo'::text, 'nao_encontrado'::text, 'manual_confirmado'::text, 'expandido_automatico'::text, 'expandido_por_similaridade'::text, 'expandido_origem'::text, NULL::text])))
+);
+
+
+--
+-- Name: TABLE promocao_item; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.promocao_item IS 'Item específico dentro de uma campanha. volume_minimo NULL indica promoção flat; volume_minimo preenchido indica condição de volume (imposta ou negociada).';
+
+
+--
+-- Name: sku_leadtime_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sku_leadtime_history (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    tracking_id uuid NOT NULL,
+    empresa public.empresa_reposicao NOT NULL,
+    sku_codigo_omie bigint NOT NULL,
+    sku_codigo text,
+    sku_descricao text,
+    sku_unidade text,
+    sku_ncm text,
+    fornecedor_codigo_omie bigint,
+    fornecedor_nome text,
+    grupo_leadtime text,
+    quantidade_pedida numeric(15,4),
+    quantidade_recebida numeric(15,4),
+    valor_unitario numeric(15,4),
+    valor_total numeric(15,2),
+    t1_data_pedido timestamp with time zone NOT NULL,
+    t2_data_faturamento timestamp with time zone,
+    t3_data_cte timestamp with time zone,
+    t4_data_recebimento timestamp with time zone,
+    lt_bruto_dias_uteis integer,
+    lt_faturamento_dias_uteis integer,
+    lt_logistica_dias_uteis integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    origem_compra text DEFAULT 'normal'::text NOT NULL,
+    CONSTRAINT sku_leadtime_history_origem_compra_check CHECK ((origem_compra = ANY (ARRAY['normal'::text, 'oportunidade_promo'::text, 'oportunidade_aumento'::text, 'manual'::text, 'desconhecida'::text])))
+);
+
+
+--
+-- Name: TABLE sku_leadtime_history; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sku_leadtime_history IS 'Histórico granular SKU x recebimento. Base estatística para média, desvio padrão e percentis de lead time.';
+
+
+--
+-- Name: COLUMN sku_leadtime_history.origem_compra; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sku_leadtime_history.origem_compra IS 'Categoriza como a compra foi iniciada. Apenas origem_compra = normal alimenta as estatísticas de lead time (views como v_sku_leadtime_estatisticas).';
+
+
+--
+-- Name: sku_parametros; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sku_parametros (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    empresa text NOT NULL,
+    sku_codigo_omie bigint NOT NULL,
+    sku_descricao text,
+    fornecedor_codigo_omie bigint,
+    fornecedor_nome text,
+    classe_abc character(1),
+    classe_xyz character(1),
+    classe_consolidada text GENERATED ALWAYS AS (((classe_abc)::text || (classe_xyz)::text)) STORED,
+    classe_forcada text,
+    motivo_classe_forcada text,
+    classe_proposta_pendente text,
+    meses_consecutivos_nova_classe integer DEFAULT 0,
+    data_ultima_mudanca_classe date,
+    demanda_media_diaria numeric,
+    demanda_desvio_padrao numeric,
+    demanda_coef_variacao numeric,
+    demanda_dias_com_movimento integer,
+    demanda_total_90d numeric,
+    valor_vendido_90d numeric,
+    lt_medio_dias_uteis numeric,
+    lt_desvio_padrao_dias numeric,
+    lt_p95_dias numeric,
+    lt_n_observacoes integer,
+    fonte_leadtime text,
+    z_score numeric,
+    estoque_seguranca numeric,
+    ponto_pedido numeric,
+    estoque_minimo numeric,
+    cobertura_alvo_dias integer,
+    estoque_maximo numeric,
+    lote_minimo_fornecedor numeric DEFAULT 1,
+    ativo boolean DEFAULT true,
+    aplicar_no_omie boolean DEFAULT false,
+    ultima_aplicacao_omie timestamp with time zone,
+    ultima_atualizacao_calculo timestamp with time zone,
+    estoque_minimo_omie numeric,
+    ponto_pedido_omie numeric,
+    estoque_maximo_omie numeric,
+    omie_ultima_sincronizacao timestamp with time zone,
+    aprovado_em timestamp with time zone,
+    aprovado_por text,
+    justificativa_aprovacao text,
+    demanda_multiplicador_override numeric DEFAULT 1.0,
+    motivo_override text,
+    override_validade_ate date,
+    override_criado_em timestamp with time zone,
+    override_criado_por text,
+    habilitado_reposicao_automatica boolean DEFAULT false,
+    tipo_reposicao text DEFAULT 'automatica'::text,
+    minimo_forcado_manual numeric,
+    CONSTRAINT sku_parametros_minimo_forcado_valido CHECK (((minimo_forcado_manual IS NULL) OR ((minimo_forcado_manual > (0)::numeric) AND (minimo_forcado_manual < 'Infinity'::numeric))))
+);
+
+
+--
+-- Name: COLUMN sku_parametros.tipo_reposicao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sku_parametros.tipo_reposicao IS 'automatica = compra automática via PP/Emax; produto_acabado = fabricado internamente OBEN, nunca comprar; sob_encomenda = só compra quando cliente pede';
+
+
+--
+-- Name: COLUMN sku_parametros.minimo_forcado_manual; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sku_parametros.minimo_forcado_manual IS 'Mínimo de compra forçado por SKU (a "R"). Quando >0, a RPC gerar_pedidos_sugeridos_ciclo eleva qtde_final ao máximo entre a sugestão natural e este valor — só para item que JÁ precisa repor (qtde_natural>0). NULL = sem piso (padrão). CHECK rejeita <=0/NaN/Infinity.';
+
+
+--
+-- Name: get_sku_ranking_negociacao_paralela(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_sku_ranking_negociacao_paralela(p_empresa text DEFAULT 'OBEN'::text) RETURNS SETOF private.mv_sku_ranking_negociacao_paralela
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'private'
+    AS $$
+BEGIN
+  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(),'employee'::app_role) OR public.has_role(auth.uid(),'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE='42501';
+  END IF;
+  RETURN QUERY SELECT * FROM private.mv_sku_ranking_negociacao_paralela WHERE empresa=p_empresa ORDER BY score_final DESC;
+END; $$;
+
+
+--
+-- Name: get_tint_price(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_tint_price(p_formula_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_is_staff boolean;
+  v_base_preco numeric;
+  v_base_ativo boolean;
+  v_base_disponivel boolean;
+  v_custo_base numeric;
+  v_custo_corantes numeric;
+  v_corantes_completos boolean;
+  v_preco_final numeric;
+  v_itens jsonb;
+BEGIN
+  v_is_staff := auth.uid() IS NOT NULL
+    AND (public.has_role(auth.uid(),'employee'::app_role) OR public.has_role(auth.uid(),'master'::app_role));
+
+  -- Base: preço E status do produto Omie vinculado ao SKU da fórmula.
+  SELECT op.valor_unitario, op.ativo INTO v_base_preco, v_base_ativo
+  FROM tint_formulas f
+  LEFT JOIN tint_skus s ON s.id = f.sku_id
+  LEFT JOIN omie_products op ON op.id = s.omie_product_id
+  WHERE f.id = p_formula_id;
+
+  -- Money-path: base inativa no Omie NÃO é vendável (produto descontinuado), mesmo
+  -- com valor_unitario congelado > 0. COALESCE(...,false) = paridade VERBATIM com o batch
+  -- e robustez se `ativo` virar nullable; produto ausente => v_base_preco NULL já barra
+  -- (false AND <qualquer> = false na lógica de 3 valores).
+  v_base_disponivel := v_base_preco IS NOT NULL AND v_base_preco > 0 AND COALESCE(v_base_ativo, false);
+  v_custo_base := CASE WHEN v_base_disponivel THEN v_base_preco ELSE NULL END;
+
+  -- Corantes: custo só quando o produto Omie do corante tem preço > 0, está ATIVO e
+  -- o volume é válido. COALESCE(op.ativo,false): corante sem produto Omie (op NULL via
+  -- LEFT JOIN) => indisponível (já barrado por valor=0, mas explícito).
+  WITH calc AS (
+    SELECT
+      fi.ordem,
+      COALESCE(c.descricao, '?') AS corante_descricao,
+      fi.qtd_ml,
+      (COALESCE(op.valor_unitario, 0) > 0 AND COALESCE(op.ativo, false) AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml > 0) AS custo_disponivel,
+      CASE WHEN COALESCE(op.valor_unitario, 0) > 0 AND COALESCE(op.ativo, false) AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml > 0
+           THEN op.valor_unitario / c.volume_total_ml ELSE 0 END AS custo_por_ml,
+      CASE WHEN COALESCE(op.valor_unitario, 0) > 0 AND COALESCE(op.ativo, false) AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml > 0
+           THEN fi.qtd_ml * (op.valor_unitario / c.volume_total_ml) ELSE 0 END AS custo_item
+    FROM tint_formula_itens fi
+    LEFT JOIN tint_corantes c  ON c.id = fi.corante_id
+    LEFT JOIN omie_products op ON op.id = c.omie_product_id
+    WHERE fi.formula_id = p_formula_id
+  )
+  SELECT
+    COALESCE(SUM(custo_item), 0),
+    COALESCE(bool_and(custo_disponivel), false),  -- fórmula sem itens => receita faltando (fail closed), não base pura
+    COALESCE(jsonb_agg(jsonb_build_object(
+      'coranteDescricao', corante_descricao, 'qtdMl', qtd_ml, 'custoPorMl', custo_por_ml,
+      'custoItem', custo_item, 'custoDisponivel', custo_disponivel
+    ) ORDER BY ordem), '[]'::jsonb)
+  INTO v_custo_corantes, v_corantes_completos, v_itens
+  FROM calc;
+
+  -- Money-path: só há preço quando a base existe E todos os corantes têm custo.
+  v_preco_final := CASE WHEN v_base_disponivel AND v_corantes_completos
+                        THEN v_custo_base + v_custo_corantes ELSE NULL END;
+
+  RETURN jsonb_build_object(
+    'custoBase', v_custo_base,
+    'baseDisponivel', v_base_disponivel,
+    'custoCorantes', v_custo_corantes,
+    'corantesCompletos', v_corantes_completos,
+    'precoFinal', v_preco_final,
+    'itensCorantes', CASE WHEN v_is_staff THEN v_itens ELSE '[]'::jsonb END
+  );
+END; $$;
+
+
+--
+-- Name: get_tint_prices(uuid[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_tint_prices(p_formula_ids uuid[]) RETURNS jsonb
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  WITH bases AS (
+    SELECT f.id AS formula_id,
+           op.valor_unitario AS base_preco,
+           (op.valor_unitario IS NOT NULL AND op.valor_unitario > 0 AND COALESCE(op.ativo, false)) AS base_disponivel
+    FROM tint_formulas f
+    LEFT JOIN tint_skus s ON s.id = f.sku_id
+    LEFT JOIN omie_products op ON op.id = s.omie_product_id
+    WHERE f.id = ANY(p_formula_ids)
+  ),
+  corantes AS (
+    SELECT fi.formula_id,
+           COALESCE(SUM(CASE WHEN COALESCE(op.valor_unitario,0) > 0 AND COALESCE(op.ativo, false) AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml > 0
+                             THEN fi.qtd_ml * op.valor_unitario / c.volume_total_ml ELSE 0 END), 0) AS custo_corantes,
+           COALESCE(bool_and(COALESCE(op.valor_unitario,0) > 0 AND COALESCE(op.ativo, false) AND c.volume_total_ml IS NOT NULL AND c.volume_total_ml > 0), false) AS corantes_completos
+    FROM tint_formula_itens fi
+    LEFT JOIN tint_corantes c  ON c.id = fi.corante_id
+    LEFT JOIN omie_products op ON op.id = c.omie_product_id
+    WHERE fi.formula_id = ANY(p_formula_ids)
+    GROUP BY fi.formula_id
+  )
+  SELECT COALESCE(jsonb_object_agg(b.formula_id, jsonb_build_object(
+    'custoBase', CASE WHEN b.base_disponivel THEN b.base_preco ELSE NULL END,
+    'baseDisponivel', b.base_disponivel,
+    'custoCorantes', COALESCE(co.custo_corantes, 0),
+    'corantesCompletos', COALESCE(co.corantes_completos, false),
+    'precoFinal', CASE WHEN b.base_disponivel AND COALESCE(co.corantes_completos, false)
+                       THEN b.base_preco + COALESCE(co.custo_corantes, 0) ELSE NULL END
+  )), '{}'::jsonb)
+  FROM bases b
+  LEFT JOIN corantes co ON co.formula_id = b.formula_id;
+$$;
+
+
+--
+-- Name: get_user_access_profile_for(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_user_access_profile_for(p_target uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  result         jsonb;
+  target_doc     text;
+  sales_only_raw text;
+  sales_only_arr text[];
+  is_so          boolean := false;
+BEGIN
+  IF NOT has_role(auth.uid(), 'master'::app_role) THEN
+    RAISE EXCEPTION 'forbidden: master only';
+  END IF;
+  IF p_target IS NULL THEN
+    RAISE EXCEPTION 'target required';
+  END IF;
+
+  SELECT regexp_replace(COALESCE(document, ''), '\D', '', 'g')
+    INTO target_doc
+    FROM public.profiles
+   WHERE user_id = p_target;
+
+  SELECT value
+    INTO sales_only_raw
+    FROM public.company_config
+   WHERE key = 'sales_only_cpfs'
+   LIMIT 1;
+
+  IF target_doc IS NOT NULL AND target_doc <> '' AND sales_only_raw IS NOT NULL THEN
+    SELECT COALESCE(
+      array_agg(regexp_replace(elem, '\D', '', 'g')),
+      ARRAY[]::text[]
+    )
+      INTO sales_only_arr
+      FROM jsonb_array_elements_text(sales_only_raw::jsonb) AS elem;
+
+    is_so := target_doc = ANY(sales_only_arr);
+  END IF;
+
+  SELECT jsonb_build_object(
+    'app_role',        (SELECT role::text
+                          FROM public.user_roles
+                         WHERE user_id = p_target
+                         ORDER BY role
+                         LIMIT 1),
+    'commercial_role', (SELECT commercial_role::text
+                          FROM public.commercial_roles
+                         WHERE user_id = p_target
+                         LIMIT 1),
+    'department',      (SELECT department::text
+                          FROM public.user_departments
+                         WHERE user_id = p_target
+                           AND primary_dept = true
+                         LIMIT 1),
+    'is_sales_only',   is_so
+  ) INTO result;
+
+  RETURN result;
+END;
 $$;
 
 
@@ -2857,6 +6673,29 @@ $$;
 
 
 --
+-- Name: iniciar_envio_portal_pre_claim(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.iniciar_envio_portal_pre_claim(p_pedido_id bigint) RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_claimed boolean;
+BEGIN
+  UPDATE public.pedido_compra_sugerido
+     SET status_envio_portal = 'pendente_envio_portal',
+         portal_erro = NULL,
+         portal_proximo_retry_em = now() + interval '15 minutes'
+   WHERE id = p_pedido_id
+     AND COALESCE(status_envio_portal, 'nao_aplicavel') <> 'enviando_portal'
+  RETURNING true INTO v_claimed;
+  RETURN COALESCE(v_claimed, false);
+END;
+$$;
+
+
+--
 -- Name: is_super_admin(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2882,6 +6721,71 @@ CREATE FUNCTION public.kb_documents_set_updated_at() RETURNS trigger
     AS $$
 BEGIN
   NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: kb_extraction_draft_claim(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.kb_extraction_draft_claim(p_document_id uuid, p_claim_token uuid) RETURNS boolean
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_claimed uuid;
+BEGIN
+  INSERT INTO public.kb_extraction_drafts (document_id, status, claim_token, started_at, updated_at)
+  VALUES (p_document_id, 'extracting', p_claim_token, now(), now())
+  ON CONFLICT (document_id) DO UPDATE
+    SET status      = 'extracting',
+        claim_token = p_claim_token,
+        started_at  = now(),
+        last_error  = NULL,
+        updated_at  = now()
+    WHERE kb_extraction_drafts.status <> 'extracting'
+       OR kb_extraction_drafts.started_at < now() - interval '5 minutes'
+  RETURNING claim_token INTO v_claimed;
+  RETURN v_claimed IS NOT DISTINCT FROM p_claim_token;
+END;
+$$;
+
+
+--
+-- Name: kb_specs_normalize(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.kb_specs_normalize() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.product_code_normalized :=
+    btrim(regexp_replace(upper(normalize(coalesce(NEW.product_code, ''), NFKC)), '\s+', '', 'g'));
+  NEW.supplier := lower(btrim(coalesce(NEW.supplier, 'sayerlack')));
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: kbv_block_mutation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.kbv_block_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'kb_product_spec_versions é append-only: DELETE proibido (versão %)', OLD.id;
+  END IF;
+  IF (to_jsonb(NEW) - 'superseded_at') IS DISTINCT FROM (to_jsonb(OLD) - 'superseded_at') THEN
+    RAISE EXCEPTION 'kb_product_spec_versions é append-only: só superseded_at pode mudar (versão %)', OLD.id;
+  END IF;
+  IF OLD.superseded_at IS NOT NULL AND NEW.superseded_at IS NULL THEN
+    RAISE EXCEPTION 'kb_product_spec_versions: não é permitido reviver versão supersedida (versão %)', OLD.id;
+  END IF;
   RETURN NEW;
 END;
 $$;
@@ -2929,6 +6833,58 @@ COMMENT ON FUNCTION public.limpar_sugestoes_antigas() IS 'Manutenção mensal: e
 
 
 --
+-- Name: list_impersonation_targets(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.list_impersonation_targets() RETURNS TABLE(user_id uuid, nome text, commercial_role text)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NOT has_role(auth.uid(), 'master'::app_role) THEN
+    RAISE EXCEPTION 'forbidden: master only';
+  END IF;
+
+  RETURN QUERY
+  SELECT DISTINCT ON (ca.owner_user_id)
+         ca.owner_user_id                                              AS user_id,
+         COALESCE(p.name, p.razao_social, ca.owner_user_id::text)     AS nome,
+         cr.commercial_role::text                                      AS commercial_role
+    FROM public.carteira_assignments ca
+    LEFT JOIN public.profiles p        ON p.user_id  = ca.owner_user_id
+    LEFT JOIN public.commercial_roles cr ON cr.user_id = ca.owner_user_id
+   ORDER BY ca.owner_user_id, nome;
+END;
+$$;
+
+
+--
+-- Name: listar_pedidos_a_separar(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.listar_pedidos_a_separar(p_account text) RETURNS TABLE(id uuid, customer_user_id uuid, total numeric, status text, data date, items jsonb)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NOT (has_role(auth.uid(),'employee'::app_role) OR has_role(auth.uid(),'master'::app_role)) THEN
+    RAISE EXCEPTION 'forbidden: staff only';
+  END IF;
+  RETURN QUERY
+    SELECT so.id, so.customer_user_id, so.total, so.status,
+           COALESCE(so.order_date_kpi, so.created_at::date) AS data, so.items
+    FROM sales_orders so
+    WHERE lower(so.account) = lower(p_account)
+      AND so.deleted_at IS NULL
+      AND so.status NOT IN ('cancelado','rascunho','orcamento')
+      AND COALESCE(so.order_date_kpi, so.created_at::date) >= current_date - 60
+      AND NOT EXISTS (SELECT 1 FROM picking_tasks pt WHERE pt.sales_order_id = so.id)
+    ORDER BY COALESCE(so.order_date_kpi, so.created_at::date) DESC
+    LIMIT 100;
+END $$;
+
+
+--
 -- Name: listar_skus_por_codigo_fornecedor(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2959,6 +6915,47 @@ COMMENT ON FUNCTION public.listar_skus_por_codigo_fornecedor(p_empresa text, p_c
 
 
 --
+-- Name: log_impersonation_start(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.log_impersonation_start(p_target uuid, p_reason text DEFAULT NULL::text) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE new_id uuid;
+BEGIN
+  IF NOT has_role(auth.uid(),'master'::app_role) THEN RAISE EXCEPTION 'forbidden: master only'; END IF;
+  IF p_target IS NULL THEN RAISE EXCEPTION 'target required'; END IF;
+  INSERT INTO public.impersonation_audit (actor_user_id, target_user_id, reason)
+  VALUES (auth.uid(), p_target, p_reason)
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END; $$;
+
+
+--
+-- Name: mapear_status_etapa(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mapear_status_etapa(p_status text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT CASE p_status
+    WHEN 'pedido_recebido'    THEN '10'
+    WHEN 'aguardando_coleta'  THEN '10'
+    WHEN 'orcamento_enviado'  THEN '10'
+    WHEN 'aprovado'           THEN '10'
+    WHEN 'em_triagem'         THEN '20'
+    WHEN 'em_afiacao'         THEN '20'
+    WHEN 'controle_qualidade' THEN '20'
+    WHEN 'pronto_entrega'     THEN '30'
+    WHEN 'em_rota'            THEN '30'
+    ELSE NULL  -- 'entregue' + desconhecido → mantém a OS como está
+  END;
+$$;
+
+
+--
 -- Name: marcar_alerta_notificado(bigint, boolean, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2980,6 +6977,174 @@ $$;
 
 
 --
+-- Name: mark_mixgap_feedback(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mark_mixgap_feedback(p_customer uuid, p_familia text, p_status text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NOT (has_role(auth.uid(),'master'::app_role) OR has_role(auth.uid(),'employee'::app_role)) THEN
+    RAISE EXCEPTION 'forbidden';
+  END IF;
+  IF p_status NOT IN ('ofertado','convertido','recusado') THEN
+    RAISE EXCEPTION 'invalid status';
+  END IF;
+  IF p_customer IS NULL OR p_familia IS NULL THEN RAISE EXCEPTION 'customer e familia required'; END IF;
+  INSERT INTO public.farmer_mixgap_feedback (seller_user_id, customer_user_id, familia, status)
+  VALUES (auth.uid(), p_customer, p_familia, p_status)
+  ON CONFLICT (seller_user_id, customer_user_id, familia)
+  DO UPDATE SET status = EXCLUDED.status, updated_at = now();
+END; $$;
+
+
+--
+-- Name: melhoria_clientes_por_produto(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.melhoria_clientes_por_produto(p_termo text) RETURNS jsonb
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare
+  v_uid uuid := auth.uid();
+  v_full boolean;
+  v_result jsonb;
+begin
+  if v_uid is null or not (has_role(v_uid,'employee'::app_role) or has_role(v_uid,'master'::app_role)) then
+    raise exception 'Apenas staff pode consultar';
+  end if;
+  if length(trim(coalesce(p_termo,''))) < 3 then
+    raise exception 'Termo de busca muito curto (mínimo 3 caracteres)';
+  end if;
+  v_full := pode_ver_carteira_completa(v_uid);
+
+  with prods as (
+    select id, descricao, codigo, account
+    from omie_products
+    where coalesce(ativo, true) = true
+      and (descricao ilike '%' || trim(p_termo) || '%' or codigo ilike '%' || trim(p_termo) || '%')
+    order by descricao
+    limit 5
+  ),
+  compras as (
+    select oi.customer_user_id,
+           count(distinct oi.sales_order_id) as n_pedidos,
+           max(coalesce(so.order_date_kpi, so.created_at::date)) as ultima_compra,
+           sum(oi.quantity * oi.unit_price) as valor_12m
+    from order_items oi
+    join sales_orders so on so.id = oi.sales_order_id
+    join prods p on p.id = oi.product_id
+    where so.status not in ('cancelado','rascunho','pendente')
+      and so.deleted_at is null
+      and coalesce(so.order_date_kpi, so.created_at::date) >= current_date - interval '12 months'
+    group by oi.customer_user_id
+  ),
+  visiveis as (
+    select c.* from compras c
+    where v_full or carteira_visivel_para(c.customer_user_id, v_uid)
+  ),
+  top50 as (
+    select * from visiveis order by valor_12m desc limit 50
+  )
+  select jsonb_build_object(
+    'produtos_casados', (select coalesce(jsonb_agg(jsonb_build_object(
+        'descricao', descricao, 'codigo', codigo, 'account', account)), '[]'::jsonb) from prods),
+    'clientes', (select coalesce(jsonb_agg(jsonb_build_object(
+        'cliente', coalesce(pr.razao_social, pr.name),
+        'n_pedidos', t.n_pedidos,
+        'ultima_compra', t.ultima_compra,
+        'valor_12m', round(t.valor_12m::numeric, 2)
+      ) order by t.valor_12m desc), '[]'::jsonb)
+      from top50 t join profiles pr on pr.user_id = t.customer_user_id),
+    'total_clientes_visiveis', (select count(*) from visiveis),
+    'escopo', case when v_full then 'todos' else 'minha_carteira' end
+  ) into v_result;
+
+  return v_result;
+end $$;
+
+
+--
+-- Name: melhoria_itens_touch_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.melhoria_itens_touch_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+begin
+  new.updated_at := now();
+  return new;
+end $$;
+
+
+--
+-- Name: melhoria_produtos_relacionados(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.melhoria_produtos_relacionados(p_termo text) RETURNS jsonb
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare
+  v_uid uuid := auth.uid();
+  v_result jsonb;
+begin
+  if v_uid is null or not (has_role(v_uid,'employee'::app_role) or has_role(v_uid,'master'::app_role)) then
+    raise exception 'Apenas staff pode consultar';
+  end if;
+  if length(trim(coalesce(p_termo,''))) < 3 then
+    raise exception 'Termo de busca muito curto (mínimo 3 caracteres)';
+  end if;
+
+  with alvo as (
+    select id, descricao, codigo, familia, account
+    from omie_products
+    where coalesce(ativo, true) = true
+      and (descricao ilike '%' || trim(p_termo) || '%' or codigo ilike '%' || trim(p_termo) || '%')
+    order by descricao
+    limit 5
+  ),
+  mesma_familia as (
+    select distinct op.descricao, op.codigo, op.familia
+    from omie_products op
+    join alvo a on a.familia is not null and op.familia = a.familia and op.account = a.account
+    where coalesce(op.ativo, true) = true
+      and op.id not in (select id from alvo)
+    limit 10
+  ),
+  regras as (
+    select cons_id, max(r.confidence) as confidence, max(r.lift) as lift
+    from farmer_association_rules r
+    cross join lateral unnest(r.consequent_product_ids::text[]) as cons_id
+    where exists (select 1 from alvo a where a.id::text = any(r.antecedent_product_ids::text[]))
+    group by cons_id
+    order by max(r.lift) desc
+    limit 10
+  ),
+  comprados_juntos as (
+    select op.descricao, op.codigo, round(r.confidence::numeric, 3) as confidence, round(r.lift::numeric, 2) as lift
+    from regras r
+    join omie_products op on op.id::text = r.cons_id
+    where coalesce(op.ativo, true) = true
+      and op.id not in (select id from alvo)
+  )
+  select jsonb_build_object(
+    'produtos_casados', (select coalesce(jsonb_agg(jsonb_build_object(
+        'descricao', descricao, 'codigo', codigo, 'account', account)), '[]'::jsonb) from alvo),
+    'mesma_familia', (select coalesce(jsonb_agg(jsonb_build_object(
+        'descricao', descricao, 'codigo', codigo, 'familia', familia)), '[]'::jsonb) from mesma_familia),
+    'comprados_juntos', (select coalesce(jsonb_agg(jsonb_build_object(
+        'descricao', descricao, 'codigo', codigo, 'confidence', confidence, 'lift', lift)), '[]'::jsonb) from comprados_juntos)
+  ) into v_result;
+
+  return v_result;
+end $$;
+
+
+--
 -- Name: minha_carteira(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2997,6 +7162,32 @@ CREATE FUNCTION public.minha_carteira() RETURNS TABLE(customer_user_id uuid, own
   WHERE c.covering_user_id = auth.uid()
     AND c.active
     AND (c.valid_until IS NULL OR c.valid_until > now());
+$$;
+
+
+--
+-- Name: norm_cidade(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.norm_cidade(t text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT lower(btrim(translate(
+    COALESCE(t,''),
+    'ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑáàâãäéèêëíìîïóòôõöúùûüçñ',
+    'AAAAAEEEEIIIIOOOOOUUUUCNaaaaaeeeeiiiiooooouuuucn'
+  )));
+$$;
+
+
+--
+-- Name: normalizar_cep(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.normalizar_cep(p text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT NULLIF(regexp_replace(COALESCE(p, ''), '\D', '', 'g'), '')
 $$;
 
 
@@ -3115,6 +7306,83 @@ $$;
 
 
 --
+-- Name: pode_ver_carteira_completa(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pode_ver_carteira_completa(_uid uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT
+    has_role(_uid, 'master'::app_role)
+    OR (
+      has_role(_uid, 'employee'::app_role)
+      AND get_commercial_role(_uid) IN (
+        'gerencial'::commercial_role,
+        'estrategico'::commercial_role,
+        'super_admin'::commercial_role
+      )
+    );
+$$;
+
+
+--
+-- Name: preencher_parametros_faltantes_skus(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preencher_parametros_faltantes_skus(p_empresa text) RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  atualizados int := 0;
+BEGIN
+  UPDATE sku_parametros sp
+  SET
+    demanda_media_diaria       = v.demanda_media_diaria,
+    demanda_desvio_padrao      = v.demanda_sigma_diario,
+    demanda_coef_variacao      = v.coef_variacao_ordem,
+    demanda_dias_com_movimento = v.num_ordens,
+    valor_vendido_90d          = v.valor_total_90d,
+    lt_medio_dias_uteis        = v.lead_time_medio,
+    lt_desvio_padrao_dias      = v.lead_time_desvio,
+    lt_p95_dias                = v.lt_p95_dias,
+    fonte_leadtime             = v.fonte_leadtime,
+    z_score                    = v.z_aplicado,
+    estoque_seguranca   = COALESCE(sp.estoque_seguranca, v.estoque_seguranca_sugerido),
+    ponto_pedido        = COALESCE(sp.ponto_pedido, v.ponto_pedido_sugerido),
+    estoque_minimo      = COALESCE(sp.estoque_minimo, v.estoque_minimo_sugerido),
+    cobertura_alvo_dias = COALESCE(sp.cobertura_alvo_dias, v.cobertura_alvo_dias),
+    estoque_maximo      = COALESCE(sp.estoque_maximo, v.estoque_maximo_sugerido),
+    ultima_atualizacao_calculo = NOW()
+  FROM v_sku_parametros_sugeridos v
+  WHERE sp.empresa = v.empresa
+    AND sp.sku_codigo_omie = v.sku_codigo_omie
+    AND sp.empresa = p_empresa
+    AND (sp.ponto_pedido IS NULL OR sp.estoque_maximo IS NULL);
+  GET DIAGNOSTICS atualizados = ROW_COUNT;
+  RETURN atualizados;
+END;
+$$;
+
+
+--
+-- Name: preserve_tipo_produto(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_tipo_produto() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.tipo_produto IS NULL AND OLD.tipo_produto IS NOT NULL THEN
+    NEW.tipo_produto := OLD.tipo_produto;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: processar_alertas_pendentes_notificacao(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3212,6 +7480,61 @@ $$;
 --
 
 COMMENT ON FUNCTION public.processar_alertas_pendentes_notificacao(p_empresa text) IS 'Retorna alertas pendentes de notificação com payload pronto. A edge function de notificação itera sobre o resultado, chama Resend (email) e MCP Calendar para cada linha, e depois marca cada alerta como notificado via marcar_alerta_notificado.';
+
+
+--
+-- Name: promover_candidato_primeira_compra(text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.promover_candidato_primeira_compra(p_empresa text, p_sku bigint) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_atualizados int := 0;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.user_roles
+    WHERE user_id = auth.uid() AND role IN ('master', 'employee')
+  ) THEN
+    RAISE EXCEPTION 'forbidden';
+  END IF;
+
+  UPDATE public.sku_parametros sp
+  SET
+    demanda_media_diaria       = c.demanda_media_diaria,
+    demanda_desvio_padrao      = c.demanda_sigma_diario,
+    demanda_coef_variacao      = c.coef_variacao_ordem,
+    demanda_dias_com_movimento = c.dias_com_movimento,
+    valor_vendido_90d          = c.valor_total_90d,
+    lt_medio_dias_uteis        = c.lead_time_medio,
+    lt_desvio_padrao_dias      = c.lead_time_desvio,
+    lt_p95_dias                = c.lt_p95_dias,
+    fonte_leadtime             = c.fonte_leadtime,
+    z_score                    = c.z_aplicado,
+    estoque_seguranca          = 0,
+    ponto_pedido               = c.primeira_compra_ponto_pedido,
+    estoque_maximo             = c.primeira_compra_estoque_maximo,
+    cobertura_alvo_dias        = c.primeira_compra_cap_dias,
+    habilitado_reposicao_automatica = TRUE,
+    tipo_reposicao             = 'automatica',
+    aprovado_em                = now(),
+    aprovado_por               = COALESCE((SELECT email FROM public.profiles WHERE user_id = auth.uid()),
+                                          'primeira_compra:' || COALESCE(auth.uid()::text, 'sistema')),
+    justificativa_aprovacao    = 'Primeira compra (cold-start): qtde-teste capada, promovida pra reposição',
+    ultima_atualizacao_calculo = now()
+  FROM public.v_sku_candidatos_primeira_compra c
+  WHERE sp.empresa = c.empresa
+    AND sp.sku_codigo_omie = c.sku_codigo_omie
+    AND sp.empresa = p_empresa
+    AND sp.sku_codigo_omie = p_sku
+    AND sp.ponto_pedido IS NULL
+    AND sp.estoque_maximo IS NULL;
+
+  GET DIAGNOSTICS v_atualizados = ROW_COUNT;
+  RETURN v_atualizados;
+END;
+$$;
 
 
 --
@@ -3334,6 +7657,553 @@ $$;
 
 
 --
+-- Name: push_sla_tick(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.push_sla_tick() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_limiar int;
+  v_agora_sp timestamp;
+  v_ini time;
+  v_fim time;
+  v_dias int[];
+  r record;
+BEGIN
+  SELECT
+    COALESCE((SELECT value::int  FROM public.company_config WHERE key='whatsapp_sla_atrasado_min'), 30),
+    COALESCE((SELECT value::time FROM public.company_config WHERE key='whatsapp_sla_hora_inicio'), '07:30'),
+    COALESCE((SELECT value::time FROM public.company_config WHERE key='whatsapp_sla_hora_fim'),    '17:30'),
+    COALESCE((SELECT string_to_array(value, ',')::int[] FROM public.company_config WHERE key='whatsapp_sla_dias'),
+             ARRAY[1,2,3,4,5])
+    INTO v_limiar, v_ini, v_fim, v_dias;
+
+  v_agora_sp := now() AT TIME ZONE 'America/Sao_Paulo';
+  IF NOT (EXTRACT(isodow FROM v_agora_sp)::int = ANY(v_dias)
+          AND v_agora_sp::time >= v_ini AND v_agora_sp::time < v_fim) THEN
+    RETURN;
+  END IF;
+
+  FOR r IN
+    SELECT s.owner_user_id,
+           count(*) AS qtd,
+           string_agg(COALESCE(NULLIF(trim(s.contact_name), ''), s.phone_e164), ', '
+                      ORDER BY s.minutos_uteis_aguardando DESC) AS nomes
+    FROM public.v_whatsapp_sla s
+    WHERE s.nivel = 'vermelho'
+      AND s.owner_user_id IS NOT NULL
+      AND s.minutos_uteis_aguardando >= v_limiar
+      AND s.minutos_uteis_aguardando <  v_limiar + 20
+    GROUP BY s.owner_user_id
+  LOOP
+    BEGIN
+      PERFORM public._push_enviar(
+        ARRAY[r.owner_user_id],
+        'Cliente aguardando resposta',
+        CASE WHEN r.qtd = 1
+          THEN left(r.nomes, 160) || ' está sem resposta há ' || v_limiar || '+ min'
+          ELSE r.qtd || ' clientes sem resposta há ' || v_limiar || '+ min: ' || left(r.nomes, 140)
+        END,
+        '/whatsapp',
+        'sla'
+      );
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING '[push] falha no push de SLA pra dona %: %', r.owner_user_id, SQLERRM;
+    END;
+  END LOOP;
+END;
+$$;
+
+
+--
+-- Name: push_tarefa_nova(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.push_tarefa_nova() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_cliente text;
+BEGIN
+  IF NEW.assigned_to = NEW.created_by THEN
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.tarefas t
+    WHERE t.assigned_to = NEW.assigned_to
+      AND t.id <> NEW.id
+      AND t.created_at > now() - interval '2 minutes'
+  ) THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT COALESCE(NULLIF(trim(p.razao_social), ''), p.name)
+    INTO v_cliente
+  FROM public.profiles p
+  WHERE p.user_id = NEW.customer_user_id
+  LIMIT 1;
+
+  PERFORM public._push_enviar(
+    ARRAY[NEW.assigned_to],
+    'Nova tarefa pra você',
+    initcap(NEW.categoria) || COALESCE(' — ' || v_cliente, ''),
+    '/meu-dia',
+    'tarefa-' || NEW.id::text
+  );
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING '[push] falha no push de tarefa nova (%): %', NEW.id, SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: push_whatsapp_inbound(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.push_whatsapp_inbound() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_conv record;
+  v_dona uuid;
+  v_nome text;
+BEGIN
+  IF public.wa_is_stop_keyword(NEW.body) THEN
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.whatsapp_messages m
+    WHERE m.conversation_id = NEW.conversation_id
+      AND m.direction = 'in'
+      AND m.id <> NEW.id
+      AND m.created_at > now() - interval '10 minutes'
+  ) THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT c.customer_user_id, c.contact_name, c.phone_e164
+    INTO v_conv
+  FROM public.whatsapp_conversations c
+  WHERE c.id = NEW.conversation_id;
+
+  IF v_conv IS NULL OR v_conv.customer_user_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  v_dona := public.wa_owner_efetivo(v_conv.customer_user_id);
+  IF v_dona IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  v_nome := COALESCE(NULLIF(trim(v_conv.contact_name), ''), v_conv.phone_e164, 'Cliente');
+
+  PERFORM public._push_enviar(
+    ARRAY[v_dona],
+    'Nova mensagem no WhatsApp',
+    v_nome || ' respondeu — toque para abrir a conversa',
+    '/whatsapp',
+    'wa-' || NEW.conversation_id::text
+  );
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING '[push] falha no push de whatsapp inbound (msg %): %', NEW.id, SQLERRM;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: radar_atribuir_tarefa(text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.radar_atribuir_tarefa(p_cnpj text, p_dias_retomada integer DEFAULT 7) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_razao text; v_fantasia text; v_municipio text; v_uf text; v_tel text;
+  v_existing uuid; v_id uuid; v_desc text;
+  v_dias integer := GREATEST(1, LEAST(COALESCE(p_dias_retomada, 7), 90));
+BEGIN
+  IF NOT COALESCE(public.pode_ver_carteira_completa(v_uid), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only';
+  END IF;
+  IF p_cnpj IS NULL OR p_cnpj !~ '^[0-9]{14}$' THEN RAISE EXCEPTION 'cnpj inválido'; END IF;
+
+  SELECT razao_social, nome_fantasia, municipio_nome, uf, telefone1
+    INTO v_razao, v_fantasia, v_municipio, v_uf, v_tel
+    FROM public.radar_empresas WHERE cnpj = p_cnpj;
+  IF NOT FOUND THEN RAISE EXCEPTION 'empresa não encontrada: %', p_cnpj; END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtextextended(v_uid::text||':'||p_cnpj||':tarefa:radar', 0));
+  SELECT id INTO v_existing FROM public.tarefas
+   WHERE created_by = v_uid AND empresa = 'oben' AND customer_user_id IS NULL
+     AND status = 'aberta' AND descricao LIKE '%CNPJ '||p_cnpj||'%'
+     AND created_at > now() - interval '2 minutes'
+   ORDER BY created_at DESC LIMIT 1;
+  IF v_existing IS NOT NULL THEN
+    RETURN jsonb_build_object('id', v_existing, 'deduped', true);
+  END IF;
+
+  v_desc := 'Prospecção: ' || COALESCE(NULLIF(v_fantasia,''), NULLIF(v_razao,''), p_cnpj)
+            || ' · ' || COALESCE(v_municipio,'?') || '/' || COALESCE(v_uf,'?')
+            || COALESCE(' · tel ' || NULLIF(v_tel,''), '')
+            || ' · CNPJ ' || p_cnpj;
+
+  INSERT INTO public.tarefas (
+    descricao, categoria, customer_user_id, assigned_to, created_by, empresa,
+    modo, due_date, interacao_tipo, auto_satisfy_mode, status
+  ) VALUES (
+    v_desc, 'ligar', NULL, v_uid, v_uid, 'oben',
+    'data', (current_date + v_dias), NULL, 'off', 'aberta'
+  ) RETURNING id INTO v_id;
+
+  RETURN jsonb_build_object('id', v_id, 'deduped', false);
+END $_$;
+
+
+--
+-- Name: radar_contagem_por_municipio(text, text, text, text, boolean, date, date, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.radar_contagem_por_municipio(p_uf text DEFAULT NULL::text, p_cnae_prefix text DEFAULT NULL::text, p_cnae_exato text DEFAULT NULL::text, p_status text DEFAULT NULL::text, p_incluir_ja_clientes boolean DEFAULT false, p_data_abertura_min date DEFAULT NULL::date, p_data_abertura_max date DEFAULT NULL::date, p_limit integer DEFAULT 500) RETURNS TABLE(municipio_codigo text, municipio_nome text, uf text, lat double precision, lng double precision, total bigint, com_telefone bigint, a_contatar bigint)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+BEGIN
+  IF NOT COALESCE(public.pode_ver_carteira_completa((SELECT auth.uid())), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only';
+  END IF;
+  IF p_cnae_prefix IS NOT NULL AND p_cnae_prefix !~ '^[0-9]{1,7}$' THEN RAISE EXCEPTION 'cnae_prefix inválido'; END IF;
+  IF p_cnae_exato  IS NOT NULL AND p_cnae_exato  !~ '^[0-9]{7}$'   THEN RAISE EXCEPTION 'cnae_exato inválido';  END IF;
+
+  -- FAST PATH: caso DEFAULT (todos os params no default) — o caso quente.
+  -- Predicados literais → casa o índice parcial covering → index-only scan.
+  IF p_uf IS NULL AND p_cnae_prefix IS NULL AND p_cnae_exato IS NULL
+     AND p_status IS NULL AND p_incluir_ja_clientes = false
+     AND p_data_abertura_min IS NULL AND p_data_abertura_max IS NULL THEN
+    RETURN QUERY
+    WITH agg AS MATERIALIZED (
+      SELECT re.municipio_codigo AS mc, re.uf AS u, re.municipio_nome AS mn,
+             count(*)::bigint AS t,
+             count(*) FILTER (WHERE re.telefone1 IS NOT NULL OR re.telefone2 IS NOT NULL)::bigint AS ct,
+             count(*) FILTER (WHERE re.prospeccao_status = 'a_contatar')::bigint AS ac
+        FROM public.radar_empresas re
+       WHERE re.ja_cliente = false AND re.prospeccao_status <> 'descartado'
+       GROUP BY re.municipio_codigo, re.uf, re.municipio_nome
+    )
+    SELECT a.mc, COALESCE(m.nome, a.mn), a.u, m.lat, m.lng,
+           sum(a.t)::bigint, sum(a.ct)::bigint, sum(a.ac)::bigint
+      FROM agg a
+      LEFT JOIN public.radar_municipios m ON m.codigo = a.mc
+     GROUP BY a.mc, COALESCE(m.nome, a.mn), a.u, m.lat, m.lng
+     ORDER BY sum(a.t) DESC, a.mc
+     LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 500), 2000));
+    RETURN;
+  END IF;
+
+  -- SLOW PATH: com filtros (subset menor, já aceitável) — VERBATIM do original.
+  RETURN QUERY
+  SELECT re.municipio_codigo,
+         COALESCE(m.nome, re.municipio_nome) AS municipio_nome,
+         re.uf,
+         m.lat, m.lng,
+         count(*)::bigint AS total,
+         count(*) FILTER (WHERE re.telefone1 IS NOT NULL OR re.telefone2 IS NOT NULL)::bigint AS com_telefone,
+         count(*) FILTER (WHERE re.prospeccao_status = 'a_contatar')::bigint AS a_contatar
+    FROM public.radar_empresas re
+    LEFT JOIN public.radar_municipios m ON m.codigo = re.municipio_codigo
+   WHERE (p_uf IS NULL OR re.uf = p_uf)
+     AND (p_cnae_exato  IS NULL OR re.cnae_principal = p_cnae_exato)
+     AND (p_cnae_prefix IS NULL OR re.cnae_principal LIKE p_cnae_prefix || '%')
+     AND ((p_status IS NOT NULL AND re.prospeccao_status = p_status)
+          OR (p_status IS NULL AND re.prospeccao_status <> 'descartado'))
+     AND (p_incluir_ja_clientes OR re.ja_cliente = false)
+     AND (p_data_abertura_min IS NULL OR re.data_abertura >= p_data_abertura_min)
+     AND (p_data_abertura_max IS NULL OR re.data_abertura <= p_data_abertura_max)
+   GROUP BY re.municipio_codigo, COALESCE(m.nome, re.municipio_nome), re.uf, m.lat, m.lng
+   ORDER BY total DESC
+   LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 500), 2000));
+END $_$;
+
+
+--
+-- Name: radar_kpis(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.radar_kpis() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_lote text;
+  v_novos integer;
+  v_a_contatar integer;
+  v_em_conversa integer;
+  v_virou_mes integer;
+BEGIN
+  IF NOT COALESCE(public.pode_ver_carteira_completa(v_uid), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only';
+  END IF;
+
+  SELECT mes_referencia, COALESCE(novos, 0) INTO v_lote, v_novos
+    FROM public.radar_ingest_state
+   WHERE status = 'complete'
+   ORDER BY mes_referencia DESC LIMIT 1;
+
+  SELECT count(*) INTO v_a_contatar FROM public.radar_empresas
+   WHERE prospeccao_status = 'a_contatar' AND ja_cliente = false
+     AND (v_lote IS NULL OR ultimo_lote = v_lote);
+  SELECT count(*) INTO v_em_conversa FROM public.radar_empresas
+   WHERE prospeccao_status = 'em_conversa';
+  SELECT count(*) INTO v_virou_mes FROM public.radar_empresas
+   WHERE prospeccao_status = 'virou_cliente'
+     AND prospeccao_atualizado_em >= date_trunc('month', now());
+
+  RETURN jsonb_build_object(
+    'lote', v_lote, 'novos', COALESCE(v_novos, 0),
+    'a_contatar', v_a_contatar, 'em_conversa', v_em_conversa,
+    'virou_cliente_mes', v_virou_mes);
+END $$;
+
+
+--
+-- Name: radar_prospects_para_rota(text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.radar_prospects_para_rota(p_municipio_codigo text, p_limit integer DEFAULT 30) RETURNS TABLE(cnpj text, razao_social text, nome_fantasia text, logradouro text, numero text, complemento text, bairro text, municipio_nome text, uf text, cep text, telefone1 text, telefone2 text, prospeccao_status text, lat double precision, lng double precision, geocode_status text, "precision" text)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NOT COALESCE(public.pode_ver_carteira_completa((SELECT auth.uid())), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only';
+  END IF;
+  IF p_municipio_codigo IS NULL OR btrim(p_municipio_codigo) = '' THEN
+    RAISE EXCEPTION 'municipio_codigo obrigatório';
+  END IF;
+
+  RETURN QUERY
+  SELECT re.cnpj, re.razao_social, re.nome_fantasia,
+         re.logradouro, re.numero, re.complemento, re.bairro,
+         re.municipio_nome, re.uf, re.cep,
+         re.telefone1, re.telefone2,
+         re.prospeccao_status,
+         COALESCE(cg.lat, re.lat, mg.lat),
+         COALESCE(cg.lng, re.lng, mg.lng),
+         re.geocode_status,
+         CASE WHEN cg.cep IS NOT NULL THEN cg.precision
+              WHEN re.lat IS NOT NULL THEN 'street'
+              WHEN mg.lat IS NOT NULL THEN 'city_centroid' END
+    FROM public.radar_empresas re
+    LEFT JOIN cep_geo cg ON cg.cep = public.normalizar_cep(re.cep)
+    LEFT JOIN municipio_geo mg ON mg.municipio_codigo = re.municipio_codigo
+   WHERE re.municipio_codigo = p_municipio_codigo
+     AND re.ja_cliente = false
+     AND re.prospeccao_status IN ('a_contatar','contatado_sem_resposta','em_conversa')
+   ORDER BY (re.prospeccao_status = 'a_contatar') DESC,
+            re.data_abertura DESC NULLS LAST,
+            re.cnpj
+   LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 30), 2000));
+END $$;
+
+
+--
+-- Name: radar_recruzar_ja_cliente(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.radar_recruzar_ja_cliente() RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_marcados integer;
+BEGIN
+  DROP TABLE IF EXISTS tmp_docs_clientes;
+  CREATE TEMP TABLE tmp_docs_clientes ON COMMIT DROP AS
+    SELECT DISTINCT regexp_replace(document, '[^0-9]', '', 'g') AS doc
+    FROM public.profiles
+    WHERE document IS NOT NULL
+      AND length(regexp_replace(document, '[^0-9]', '', 'g')) = 14
+    UNION
+    SELECT DISTINCT regexp_replace(cnpj_cpf, '[^0-9]', '', 'g') AS doc
+    FROM public.omie_clientes_nao_vinculados
+    WHERE cnpj_cpf IS NOT NULL
+      AND length(regexp_replace(cnpj_cpf, '[^0-9]', '', 'g')) = 14;
+
+  UPDATE public.radar_empresas re
+  SET ja_cliente = true, updated_at = now()
+  WHERE re.ja_cliente = false
+    AND EXISTS (SELECT 1 FROM tmp_docs_clientes d WHERE d.doc = re.cnpj);
+
+  GET DIAGNOSTICS v_marcados = ROW_COUNT;
+  RETURN v_marcados;
+END;
+$$;
+
+
+--
+-- Name: radar_registrar_cadastro_omie(text, text, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.radar_registrar_cadastro_omie(p_cnpj text, p_codigo_cliente text, p_ja_existia boolean DEFAULT false) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_status_atual text;
+BEGIN
+  IF NOT COALESCE(public.pode_ver_carteira_completa(v_uid), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only';
+  END IF;
+  IF p_cnpj IS NULL OR p_cnpj !~ '^[0-9]{14}$' THEN RAISE EXCEPTION 'cnpj inválido'; END IF;
+
+  SELECT prospeccao_status INTO v_status_atual
+    FROM public.radar_empresas WHERE cnpj = p_cnpj FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'empresa não encontrada: %', p_cnpj; END IF;
+
+  UPDATE public.radar_empresas SET
+    omie_codigo_cliente = COALESCE(NULLIF(p_codigo_cliente,''), omie_codigo_cliente),
+    omie_cadastrado_em = now(),
+    prospeccao_status = 'virou_cliente',
+    prospeccao_atualizado_em = now(),
+    ja_cliente = true,
+    updated_at = now()
+  WHERE cnpj = p_cnpj;
+
+  INSERT INTO public.radar_contatos (cnpj, acao, nota, criado_por, status_anterior)
+  VALUES (p_cnpj, 'virou_cliente',
+    CASE WHEN p_ja_existia
+      THEN 'Já cadastrado no Omie/Oben (cód. ' || COALESCE(NULLIF(p_codigo_cliente,''),'?') || ')'
+      ELSE 'Cadastrado no Omie/Oben (cód. ' || COALESCE(NULLIF(p_codigo_cliente,''),'?') || ')' END,
+    v_uid, v_status_atual);
+
+  RETURN jsonb_build_object('ok', true);
+END $_$;
+
+
+--
+-- Name: radar_salvar_geocode(text, double precision, double precision, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.radar_salvar_geocode(p_cnpj text, p_lat double precision DEFAULT NULL::double precision, p_lng double precision DEFAULT NULL::double precision, p_status text DEFAULT 'ok'::text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+BEGIN
+  IF NOT COALESCE(public.pode_ver_carteira_completa(v_uid), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only';
+  END IF;
+  IF p_cnpj IS NULL OR p_cnpj !~ '^[0-9]{14}$' THEN RAISE EXCEPTION 'cnpj inválido'; END IF;
+  IF p_status IS NULL OR p_status NOT IN ('ok','falhou') THEN RAISE EXCEPTION 'status inválido'; END IF;
+  IF p_status = 'ok' THEN
+    IF p_lat IS NULL OR p_lng IS NULL
+       OR p_lat < -90 OR p_lat > 90 OR p_lng < -180 OR p_lng > 180 THEN
+      RAISE EXCEPTION 'lat/lng inválidos para status ok';
+    END IF;
+  END IF;
+  UPDATE public.radar_empresas SET
+    lat            = CASE WHEN p_status = 'ok' THEN p_lat ELSE NULL END,
+    lng            = CASE WHEN p_status = 'ok' THEN p_lng ELSE NULL END,
+    geocoded_em    = now(),
+    geocode_status = p_status,
+    updated_at     = now()
+  WHERE cnpj = p_cnpj;
+  IF NOT FOUND THEN RAISE EXCEPTION 'empresa não encontrada: %', p_cnpj; END IF;
+  RETURN jsonb_build_object('ok', true, 'status', p_status);
+END $_$;
+
+
+--
+-- Name: rank_precisao(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.rank_precisao(p text) RETURNS integer
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT CASE p
+    WHEN 'rooftop'           THEN 4
+    WHEN 'street'            THEN 3
+    WHEN 'postcode_centroid' THEN 2
+    WHEN 'city_centroid'     THEN 1
+    ELSE 0 END
+$$;
+
+
+--
+-- Name: recalcular_picking_task(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.recalcular_picking_task(p_task_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE v_uid uuid := auth.uid(); v_total numeric; v_done numeric; v_status text;
+BEGIN
+  IF NOT (has_role(v_uid,'employee'::app_role) OR has_role(v_uid,'master'::app_role)) THEN
+    RAISE EXCEPTION 'forbidden: staff only';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('picking_task:'||p_task_id::text, 0));
+  SELECT COALESCE(sum(quantidade),0), COALESCE(sum(quantidade_separada),0)
+    INTO v_total, v_done FROM picking_task_items WHERE picking_task_id = p_task_id;
+  IF v_done <= 0 THEN v_status := 'pendente';
+  ELSIF v_total > 0 AND v_done >= v_total THEN v_status := 'concluido';
+  ELSE v_status := 'em_andamento'; END IF;
+  UPDATE picking_tasks SET status = v_status,
+    started_at = COALESCE(started_at, CASE WHEN v_status <> 'pendente' THEN now() END),
+    completed_at = CASE WHEN v_status = 'concluido' THEN COALESCE(completed_at, now()) ELSE NULL END
+  WHERE id = p_task_id;
+  RETURN jsonb_build_object('status', v_status);
+END $$;
+
+
+--
+-- Name: reconcile_visita_agendada(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reconcile_visita_agendada() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  UPDATE public.visitas_agendadas va
+  SET status = 'realizada',
+      route_visit_id = NEW.id,
+      updated_at = now()
+  WHERE va.id = (
+    SELECT v.id FROM public.visitas_agendadas v
+    WHERE v.customer_user_id = NEW.customer_user_id
+      AND v.scheduled_by    = NEW.visited_by
+      AND v.status = 'pendente'
+      AND v.route_visit_id IS NULL
+      AND v.scheduled_date <= NEW.visit_date
+    ORDER BY v.scheduled_date ASC
+    LIMIT 1
+  )
+  AND va.status = 'pendente'
+  AND va.route_visit_id IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM public.visitas_agendadas v2 WHERE v2.route_visit_id = NEW.id
+  );
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: refresh_customer_metrics(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3356,16 +8226,15 @@ $$;
 
 CREATE FUNCTION public.refresh_sku_ranking_negociacao() RETURNS TABLE(skus_ranqueados integer, atualizado_em timestamp with time zone)
     LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public'
+    SET search_path TO 'public', 'private'
     AS $$
 BEGIN
-  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
-    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(),'employee'::app_role) OR public.has_role(auth.uid(),'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE='42501';
   END IF;
-  REFRESH MATERIALIZED VIEW CONCURRENTLY public.mv_sku_ranking_negociacao_paralela;
-  RETURN QUERY SELECT COUNT(*)::int, now() FROM public.mv_sku_ranking_negociacao_paralela;
-END;
-$$;
+  REFRESH MATERIALIZED VIEW CONCURRENTLY private.mv_sku_ranking_negociacao_paralela;
+  RETURN QUERY SELECT COUNT(*)::int, now() FROM private.mv_sku_ranking_negociacao_paralela;
+END; $$;
 
 
 --
@@ -3416,6 +8285,58 @@ BEGIN
   RETURN v_aumento_id;
 END;
 $$;
+
+
+--
+-- Name: registrar_contato_radar(text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.registrar_contato_radar(p_cnpj text, p_acao text, p_nota text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_status_atual text;
+  v_existing uuid;
+  v_id uuid;
+BEGIN
+  IF NOT COALESCE(public.pode_ver_carteira_completa(v_uid), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only';
+  END IF;
+  IF p_cnpj IS NULL OR p_cnpj !~ '^[0-9]{14}$' THEN
+    RAISE EXCEPTION 'cnpj inválido';
+  END IF;
+  IF p_acao NOT IN ('a_contatar','contatado_sem_resposta','em_conversa','descartado','virou_cliente') THEN
+    RAISE EXCEPTION 'ação inválida: %', p_acao;
+  END IF;
+
+  SELECT prospeccao_status INTO v_status_atual
+    FROM public.radar_empresas WHERE cnpj = p_cnpj FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'empresa não encontrada: %', p_cnpj; END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtextextended(v_uid::text||':'||p_cnpj||':'||p_acao||':radar', 0));
+  SELECT id INTO v_existing FROM public.radar_contatos
+   WHERE criado_por = v_uid AND cnpj = p_cnpj AND acao = p_acao
+     AND created_at > now() - interval '2 minutes'
+   ORDER BY created_at DESC LIMIT 1;
+  IF v_existing IS NOT NULL THEN
+    RETURN jsonb_build_object('id', v_existing, 'deduped', true);
+  END IF;
+
+  INSERT INTO public.radar_contatos (cnpj, acao, nota, criado_por, status_anterior)
+  VALUES (p_cnpj, p_acao, p_nota, v_uid, v_status_atual)
+  RETURNING id INTO v_id;
+
+  UPDATE public.radar_empresas SET
+    prospeccao_status = p_acao,
+    prospeccao_atualizado_em = now(),
+    descarte_motivo = CASE WHEN p_acao = 'descartado' THEN p_nota ELSE NULL END,
+    updated_at = now()
+  WHERE cnpj = p_cnpj;
+
+  RETURN jsonb_build_object('id', v_id, 'deduped', false);
+END $_$;
 
 
 --
@@ -3570,6 +8491,534 @@ BEGIN
     'status', 'ok',
     'mensagem', 'Substituição registrada. Código antigo desativado da fila, código novo atualizado.'
   );
+END;
+$$;
+
+
+--
+-- Name: rejeitar_sugestao(uuid, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.rejeitar_sugestao(p_kb_product_spec_id uuid, p_account text, p_omie_codigo_produto bigint) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NOT public.has_role(auth.uid(), 'master'::app_role) THEN
+    RAISE EXCEPTION 'forbidden: somente master';
+  END IF;
+  INSERT INTO public.omie_product_spec_links
+    (account, omie_codigo_produto, kb_product_spec_id, status, confirmed_by)
+  VALUES (p_account, p_omie_codigo_produto, p_kb_product_spec_id, 'rejected', auth.uid())
+  ON CONFLICT (account, omie_codigo_produto, kb_product_spec_id, status) DO NOTHING;
+END;
+$$;
+
+
+--
+-- Name: reposicao_alerta_pedido_minimo_tick(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_alerta_pedido_minimo_tick() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $_$
+DECLARE
+  v_threshold numeric;
+  v_fornecedor text;
+  r RECORD;
+  -- [AUTO 1/4] estado do braço de auto-aprovação (v2: SEM janela de horário)
+  v_txt text;
+  v_auto_on boolean := false;
+  v_delta_max numeric;
+  v_cooldown numeric;
+  v_suspenso boolean := false;
+  v_elig jsonb;
+  v_auto_ok boolean;
+  v_valor_auto numeric;  -- [AUTO] valor REAL (soma dos itens) do pedido auto-aprovado
+BEGIN
+  -- [AUTO 1/4] Codex P2.9: serializa execuções do tick (cron */30 + hook pós-geração).
+  -- Sem isto, dois ticks concorrentes não duplicam compra/log (o claim condicional cobre),
+  -- mas o perdedor pode re-inserir estado ativo e mandar CTA "pronto pra aprovar" pra um
+  -- pedido que o vencedor já auto-aprovou. xact-lock libera no COMMIT. Benigno pro alerta.
+  PERFORM pg_advisory_xact_lock(hashtext('reposicao_alerta_pedido_minimo_tick'));
+
+  SELECT value::numeric INTO v_threshold
+  FROM public.company_config WHERE key = 'reposicao_alerta_pedido_valor_minimo';
+  SELECT value INTO v_fornecedor
+  FROM public.company_config WHERE key = 'reposicao_alerta_pedido_fornecedor_ilike';
+
+  -- Config ausente/inválida = alerta DESLIGADO (régua comercial, não segurança). Sem alerta
+  -- fabricado com régua 0.
+  IF v_threshold IS NULL OR v_threshold <= 0
+     OR v_fornecedor IS NULL OR btrim(v_fornecedor) = '' THEN
+    RETURN;
+  END IF;
+
+  -- [AUTO 1/4] configs do braço de auto-aprovação. Config quebrada → braço OFF
+  -- (fail-safe: o alerta call-to-action continua; nunca aprova com parâmetro inválido).
+  SELECT value INTO v_txt FROM public.company_config WHERE key = 'reposicao_auto_aprovacao_ativa';
+  v_auto_on := (v_txt = 'true');
+  IF v_auto_on THEN
+    SELECT value INTO v_txt FROM public.company_config WHERE key = 'reposicao_auto_aprovacao_delta_max';
+    IF v_txt ~ '^[0-9]+(\.[0-9]+)?$' THEN v_delta_max := v_txt::numeric; END IF;
+    SELECT value INTO v_txt FROM public.company_config WHERE key = 'reposicao_auto_aprovacao_cooldown_falha_horas';
+    IF v_txt ~ '^[0-9]+(\.[0-9]+)?$' THEN v_cooldown := v_txt::numeric; END IF;
+    -- Codex P1.5: CLAMP de faixa segura. delta_max fora de (0, 0.30] ou cooldown < 1 → braço
+    -- OFF (um typo '30'=3000% ou '0' não liga a automação). v2: corte_utc NÃO é mais lido —
+    -- sem janela de horário; a config fica órfã no banco, inócua.
+    IF v_delta_max IS NULL OR v_delta_max <= 0 OR v_delta_max > 0.30
+       OR v_cooldown IS NULL OR v_cooldown < 1 THEN
+      v_auto_on := false;
+    END IF;
+  END IF;
+
+  IF v_auto_on THEN
+    -- Auto-suspensão: autonomia NÃO roda com o vigia acusando problema no domínio
+    -- (spec §4.5). O tipo 'reposicao_pedido_minimo' (este próprio fluxo) NÃO suspende.
+    v_suspenso := EXISTS (
+      SELECT 1 FROM public.fin_alertas fa
+      WHERE fa.dismissed_at IS NULL
+        AND fa.tipo IN ('data_health_reposicao_disparo',
+                        'data_health_reposicao_portal_pipeline',
+                        'data_health_reposicao_portal_humano',
+                        'data_health_reposicao_sugestoes')
+    );
+    -- v2: SEM janela de horário. Auto-aprova a qualquer hora que cruzar a régua; a compra
+    -- dispara no próximo corte (a edge disparar-pedidos-aprovados pega o backlog de
+    -- auto-aprovados de data_ciclo anterior — ver nota DISPARO no fim da migration).
+  END IF;
+
+  -- 1) NOVOS: pedido pendente ≥ régua do fornecedor configurado, sem alerta ativo → grava
+  -- estado + enfileira e-mail (só na transição). Agrupo por (empresa, fornecedor, grupo)
+  -- por defesa (a identidade pode ter 2 linhas transitórias: zumbi de ontem + hoje, pré-PR2).
+  FOR r IN
+    SELECT pcs.empresa, pcs.fornecedor_nome,
+           COALESCE(pcs.grupo_codigo, '') AS grupo_codigo,
+           MAX(pcs.valor_total) AS valor,
+           SUM(COALESCE(pcs.num_skus, 0)) AS num_skus,
+           MAX(pcs.id) AS pedido_id,
+           COUNT(*) AS qtd_pendentes  -- [AUTO 2/4] >1 = estado anômalo (zumbi) → humano
+    FROM public.pedido_compra_sugerido pcs
+    WHERE pcs.status = 'pendente_aprovacao'
+      AND pcs.fornecedor_nome ILIKE v_fornecedor
+      AND pcs.valor_total >= v_threshold
+    GROUP BY 1, 2, 3
+  LOOP
+    -- [AUTO 3/4] tenta a auto-aprovação ANTES de decidir qual e-mail sai. Claim
+    -- condicional: corrida com aprovação humana → quem chegar primeiro vence; o
+    -- perdedor não loga nem manda e-mail duplicado (FOUND = false).
+    v_auto_ok := false;
+    v_valor_auto := NULL;
+    IF v_auto_on AND NOT v_suspenso AND r.qtd_pendentes = 1 THEN   -- v2: sem v_dentro_janela
+      -- passa a régua (threshold) — a função valida a soma dos ITENS contra ela (P1.2).
+      v_elig := public.reposicao_pedido_auto_aprovavel(r.pedido_id, v_threshold, v_delta_max, v_cooldown);
+      IF COALESCE((v_elig->>'elegivel')::boolean, false) THEN
+        UPDATE public.pedido_compra_sugerido
+        SET aprovado_em = now(),
+            aprovado_por = 'auto:sayerlack-v2',
+            status = 'aprovado_aguardando_disparo'
+        WHERE id = r.pedido_id
+          AND status = 'pendente_aprovacao'
+          AND aprovado_em IS NULL
+          AND cancelado_em IS NULL;
+        IF FOUND THEN
+          v_auto_ok := true;
+          -- valor REAL = soma dos itens (P1.2), não o cabeçalho r.valor que pode divergir.
+          v_valor_auto := COALESCE((v_elig->>'valor_itens')::numeric, r.valor);
+          INSERT INTO public.reposicao_auto_aprovacao_log
+            (pedido_id, empresa, fornecedor_nome, grupo_codigo, valor_total,
+             valor_anterior, delta_pct, regua)
+          VALUES
+            (r.pedido_id, r.empresa, r.fornecedor_nome, r.grupo_codigo, v_valor_auto,
+             (v_elig->>'valor_anterior')::numeric, (v_elig->>'delta_pct')::numeric, v_threshold);
+        END IF;
+      END IF;
+    END IF;
+
+    INSERT INTO public.reposicao_alerta_pedido_minimo
+      (empresa, fornecedor_nome, grupo_codigo, pedido_id, valor_alertado, valor_ultimo)
+    VALUES (r.empresa, r.fornecedor_nome, r.grupo_codigo, r.pedido_id, r.valor, r.valor)
+    ON CONFLICT (empresa, fornecedor_nome, grupo_codigo) WHERE resolvido_em IS NULL
+    DO NOTHING;
+
+    IF FOUND THEN
+      -- [AUTO 4/4] transição: informativo (máquina aprovou) OU call-to-action (fluxo atual).
+      IF v_auto_ok THEN
+        INSERT INTO public.fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+        VALUES (
+          lower(r.empresa),
+          'reposicao_pedido_minimo',
+          'atencao',
+          '[Compras] Auto-aprovado: pedido ' || r.fornecedor_nome || ' de R$ ' || round(COALESCE(v_valor_auto, r.valor))::text,
+          'O pedido sugerido de ' || r.fornecedor_nome
+            || CASE WHEN r.grupo_codigo <> '' THEN ' (grupo ' || r.grupo_codigo || ')' ELSE '' END
+            || ' atingiu R$ ' || round(COALESCE(v_valor_auto, r.valor))::text
+            || ' (' || r.num_skus::text || ' SKUs) e foi APROVADO AUTOMATICAMENTE — piloto: delta '
+            || COALESCE((v_elig->>'delta_pct')::text, '?') || '% vs último disparo do grupo (R$ '
+            || COALESCE(round((v_elig->>'valor_anterior')::numeric)::text, '?')
+            || '), dentro do limite. Dispara no próximo corte automático. Para VETAR, cancele em '
+            || 'Reposição → Pedidos (https://steu.lovable.app/admin/reposicao/pedidos) antes do corte. '
+            || 'Fusível: company_config → reposicao_auto_aprovacao_ativa = false desliga o piloto.',
+          'pendente_notificacao'
+        );
+      ELSE
+        -- Transição: 1 e-mail. Link GENÉRICO pra tela (deep-link ?id= morreria na regeneração).
+        INSERT INTO public.fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+        VALUES (
+          lower(r.empresa),
+          'reposicao_pedido_minimo',
+          'atencao',
+          '[Compras] Pedido ' || r.fornecedor_nome || ' atingiu R$ ' || round(r.valor)::text
+            || ' — pronto pra aprovar',
+          'O pedido sugerido de ' || r.fornecedor_nome
+            || CASE WHEN r.grupo_codigo <> '' THEN ' (grupo ' || r.grupo_codigo || ')' ELSE '' END
+            || ' acumulou R$ ' || round(r.valor)::text
+            || ' (' || r.num_skus::text || ' SKUs) — acima do mínimo de faturamento (R$ '
+            || round(v_threshold)::text || '). Aprovar dispara na hora: '
+            || 'Reposição → Pedidos (https://steu.lovable.app/admin/reposicao/pedidos). '
+            || 'Quando você aprovar (ou o pedido sair da régua), este aviso re-arma sozinho.',
+          'pendente_notificacao'
+        );
+      END IF;
+    ELSE
+      IF v_auto_ok THEN
+        -- [AUTO 4/4] alerta call-to-action já estava ativo e a máquina aprovou AGORA
+        -- (ex.: fusível ligado depois do alerta) → informativo é transição real.
+        INSERT INTO public.fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+        VALUES (
+          lower(r.empresa),
+          'reposicao_pedido_minimo',
+          'atencao',
+          '[Compras] Auto-aprovado: pedido ' || r.fornecedor_nome || ' de R$ ' || round(COALESCE(v_valor_auto, r.valor))::text,
+          'O pedido sugerido de ' || r.fornecedor_nome
+            || CASE WHEN r.grupo_codigo <> '' THEN ' (grupo ' || r.grupo_codigo || ')' ELSE '' END
+            || ' (R$ ' || round(COALESCE(v_valor_auto, r.valor))::text || ', ' || r.num_skus::text
+            || ' SKUs) foi APROVADO AUTOMATICAMENTE — piloto: delta '
+            || COALESCE((v_elig->>'delta_pct')::text, '?') || '% vs último disparo do grupo (R$ '
+            || COALESCE(round((v_elig->>'valor_anterior')::numeric)::text, '?')
+            || '). Dispara no próximo corte automático. Para VETAR, cancele em '
+            || 'Reposição → Pedidos (https://steu.lovable.app/admin/reposicao/pedidos) antes do corte. '
+            || 'Fusível: company_config → reposicao_auto_aprovacao_ativa = false desliga o piloto.',
+          'pendente_notificacao'
+        );
+      ELSE
+        -- Alerta já ativo: só atualiza o último valor visto (3.2k→10k NÃO re-spamma; o valor
+        -- vivo está no cockpit).
+        UPDATE public.reposicao_alerta_pedido_minimo a
+        SET valor_ultimo = r.valor, pedido_id = r.pedido_id
+        WHERE a.empresa = r.empresa AND a.fornecedor_nome = r.fornecedor_nome
+          AND a.grupo_codigo = r.grupo_codigo AND a.resolvido_em IS NULL;
+      END IF;
+    END IF;
+  END LOOP;
+
+  -- 2) RESOLVE (re-arma): alerta ativo sem pedido pendente ≥ régua correspondente — o founder
+  -- aprovou/cancelou, o corte expirou, ou o valor caiu. O próximo pedido do grupo que cruzar a
+  -- régua gera e-mail NOVO. (Sem filtro de fornecedor aqui de propósito: se o pattern da config
+  -- mudar, alertas órfãos do pattern antigo resolvem sozinhos.)
+  -- [AUTO] nota: pedido auto-aprovado sai de pendente NESTA execução → o estado da identidade
+  -- resolve aqui embaixo no mesmo tick (vida curta, consistente; o informativo já saiu acima).
+  UPDATE public.reposicao_alerta_pedido_minimo a
+  SET resolvido_em = now()
+  WHERE a.resolvido_em IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM public.pedido_compra_sugerido pcs
+      WHERE pcs.empresa = a.empresa
+        AND pcs.fornecedor_nome = a.fornecedor_nome
+        AND COALESCE(pcs.grupo_codigo, '') = a.grupo_codigo
+        AND pcs.status = 'pendente_aprovacao'
+        AND pcs.valor_total >= v_threshold
+    );
+END;
+$_$;
+
+
+--
+-- Name: reposicao_param_auto_resumo_tick(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_param_auto_resumo_tick() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $_$
+DECLARE r record; v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date; v_corpo text; v_top text;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('param_auto_resumo'));
+  SELECT * INTO r FROM public.reposicao_param_auto_run
+    WHERE data_negocio_brt=v_hoje AND status='completo' AND resumo_enviado_em IS NULL
+    ORDER BY concluido_em DESC LIMIT 1;
+  IF NOT FOUND THEN RETURN; END IF;
+  IF COALESCE(r.total_aplicados,0)=0 AND COALESCE(r.total_segurados,0)=0 THEN
+    UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=now() WHERE id=r.id;
+    RETURN;
+  END IF;
+  SELECT string_agg(format('• %s: PP %s→%s, máx %s→%s%s', sku_codigo_omie,
+            coalesce(ponto_pedido_antes::text,'—'), coalesce(ponto_pedido_depois::text,'—'),
+            coalesce(estoque_maximo_antes::text,'—'), coalesce(estoque_maximo_depois::text,'—'),
+            CASE WHEN impacto_rs IS NULL THEN ' (R$ ?)' ELSE ' (R$ '||round(impacto_rs)::text||')' END), E'\n')
+    INTO v_top FROM (
+      SELECT * FROM public.reposicao_param_auto_log WHERE run_id=r.id AND status='aplicado'
+      ORDER BY impacto_rs DESC NULLS LAST LIMIT 10) t;
+  v_corpo := format(E'%s parâmetros mudaram hoje (OBEN).\nImpacto estimado total: R$ %s%s\n\nMaiores mudanças:\n%s\n\nSegurados pelo fusível (confira): %s\n\nVeja e reverta em: /admin/reposicao/mudancas-automaticas',
+    r.total_aplicados, round(COALESCE(r.impacto_total_rs,0)),
+    CASE WHEN COALESCE(r.impacto_desconhecido_n,0)>0 THEN ' (+'||r.impacto_desconhecido_n||' sem custo)' ELSE '' END,
+    COALESCE(v_top,'—'), COALESCE(r.total_segurados,0));
+  INSERT INTO public.fornecedor_alerta (tipo, titulo, mensagem, empresa, severidade, status)
+    VALUES ('param_auto_resumo', 'Parâmetros de reposição — resumo do dia', v_corpo, r.empresa, 'info', 'pendente_notificacao');
+  UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=now() WHERE id=r.id;
+END;
+$_$;
+
+
+--
+-- Name: reposicao_param_limbo_watchdog(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_param_limbo_watchdog() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_limiar   int := 30;
+  v_atual    int;
+  v_anterior int;
+  v_msg      text;
+BEGIN
+  SELECT count(*) INTO v_atual
+  FROM sku_parametros
+  WHERE empresa = 'OBEN' AND habilitado_reposicao_automatica = true
+    AND (ponto_pedido IS NULL OR estoque_maximo IS NULL);
+
+  SELECT limbo_count INTO v_anterior
+  FROM reposicao_param_limbo_log
+  WHERE empresa = 'OBEN' AND medido_em < CURRENT_DATE
+  ORDER BY medido_em DESC
+  LIMIT 1;
+
+  IF v_anterior IS NOT NULL AND (v_atual - v_anterior) > v_limiar THEN
+    v_msg := 'SKUs habilitados SEM parâmetro saltaram de ' || v_anterior || ' para ' || v_atual ||
+             ' (+' || (v_atual - v_anterior) || ') em 1 dia — possível regressão: o cron voltou a ZERAR ' ||
+             'config (verificar se atualizar_parametros_numericos_skus ainda usa COALESCE — fix #521).';
+    INSERT INTO fin_alertas (company, tipo, severidade, mensagem, valor, threshold, contexto)
+    VALUES ('oben', 'reposicao_param_limbo_salto', 'critico', v_msg, v_atual, (v_anterior + v_limiar),
+            jsonb_build_object('atual', v_atual, 'anterior', v_anterior, 'delta', (v_atual - v_anterior), 'limiar', v_limiar))
+    ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
+    IF FOUND THEN
+      INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+      VALUES ('OBEN', 'outro', 'urgente', '[Reposição] Salto de SKUs sem parâmetro', v_msg, 'pendente_notificacao');
+    END IF;
+  ELSE
+    UPDATE fin_alertas SET dismissed_at = now()
+    WHERE company = 'oben' AND tipo = 'reposicao_param_limbo_salto' AND dismissed_at IS NULL;
+  END IF;
+
+  INSERT INTO reposicao_param_limbo_log (empresa, medido_em, limbo_count)
+  VALUES ('OBEN', CURRENT_DATE, v_atual)
+  ON CONFLICT (empresa, medido_em) DO UPDATE SET limbo_count = EXCLUDED.limbo_count, criado_em = now();
+END;
+$$;
+
+
+--
+-- Name: reposicao_pedido_auto_aprovavel(bigint, numeric, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_pedido_auto_aprovavel(p_pedido_id bigint, p_threshold numeric, p_delta_max numeric, p_cooldown_horas numeric) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $_$
+DECLARE
+  p RECORD;
+  v_grupo text;
+  v_valor numeric;     -- valor REAL (soma dos itens) — fonte de verdade do disparo
+  v_ref numeric;       -- v2: MEDIANA dos últimos N eventos de compra do grupo
+  v_n int;             -- v2: nº de eventos de referência (mínimo 3)
+BEGIN
+  -- P1.2: trava a linha. Qualquer promo/regeneração/aprovação concorrente espera este
+  -- lock; o claim do tick (mesma transação) vê o estado que esta função validou.
+  SELECT * INTO p FROM public.pedido_compra_sugerido WHERE id = p_pedido_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'pedido inexistente');
+  END IF;
+
+  -- P1.1: piloto é OBEN-only (spec §1). Sayerlack de outra empresa fica humano.
+  IF p.empresa <> 'OBEN' THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'fora do escopo do piloto (só OBEN)');
+  END IF;
+
+  IF p.status <> 'pendente_aprovacao' OR p.aprovado_em IS NOT NULL OR p.cancelado_em IS NOT NULL THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'não está pendente');
+  END IF;
+
+  IF COALESCE(p.tipo_ciclo, 'normal') <> 'normal' THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'ciclo não-normal (oportunidade/promoção é decisão humana)');
+  END IF;
+
+  IF p.split_parent_id IS NOT NULL THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'pedido-filho de split');
+  END IF;
+
+  IF COALESCE(p.num_skus, 0) <= 0 THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'sem SKUs');
+  END IF;
+
+  v_grupo := COALESCE(p.grupo_codigo, '');
+
+  -- v2 (Codex): veta só 'forward_buying' (infla qtde = aposta de estoque adiantada, decisão
+  -- humana; tem o próprio guardrail de delta na geração). LIBERA 'flat' (só desconto de preço,
+  -- qtde inalterada — benigno; era a causa de parte da inatividade da v1, que vetava qualquer
+  -- modo_promocao). O delta assimétrico abaixo já protege o VALOR final.
+  IF EXISTS (
+    SELECT 1 FROM public.pedido_compra_item i
+    WHERE i.pedido_id = p.id AND i.modo_promocao = 'forward_buying'
+  ) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'item em forward_buying (aposta de estoque — decisão humana)');
+  END IF;
+
+  -- P2.11: guard de item que o disparo (#422/#433) barraria. Forma POSITIVA (> 0 AND <
+  -- Infinity) p/ rejeitar também NaN/Infinity — "preco<=0" é FALSE p/ NaN e não pegaria.
+  IF EXISTS (
+    SELECT 1 FROM public.pedido_compra_item i
+    WHERE i.pedido_id = p.id
+      AND NOT (i.preco_unitario > 0 AND i.preco_unitario < 'Infinity'::numeric
+               AND i.qtde_final > 0 AND i.qtde_final < 'Infinity'::numeric)
+  ) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'item com preço/qtde inválido');
+  END IF;
+
+  -- P1.2: o VALOR que importa é o que será comprado = soma dos itens, NÃO o cabeçalho
+  -- (valor_total pode divergir; o disparo manda os itens). A régua vale sobre ele.
+  SELECT SUM(i.qtde_final * i.preco_unitario) INTO v_valor
+  FROM public.pedido_compra_item i WHERE i.pedido_id = p.id;
+  IF v_valor IS NULL OR NOT (v_valor > 0 AND v_valor < 'Infinity'::numeric) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'sem itens válidos para somar');
+  END IF;
+  IF v_valor < p_threshold THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'abaixo da régua (soma dos itens)');
+  END IF;
+
+  -- Humano já mexeu → a decisão é dele (trade-off "ajustou → aprova" do #711).
+  IF EXISTS (
+    SELECT 1 FROM public.pedido_compra_item i
+    WHERE i.pedido_id = p.id AND i.ajustado_humano IS TRUE
+  ) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'itens ajustados por humano');
+  END IF;
+
+  -- P2.7: cooldown enxerga falha de DISPARO (status='falha_envio') E de PORTAL
+  -- (status_envio_portal terminal/ambíguo — SKU sem de-para vira 'erro_nao_retentavel'
+  -- sem mexer no status principal). Auto-aprovado do fornecedor que falhou há pouco →
+  -- exceção humana resolve antes de a automação voltar ao fornecedor.
+  IF EXISTS (
+    SELECT 1 FROM public.pedido_compra_sugerido f
+    WHERE f.empresa = p.empresa
+      AND f.fornecedor_nome = p.fornecedor_nome
+      AND f.aprovado_por LIKE 'auto:%'
+      AND (f.status = 'falha_envio'
+           OR f.status_envio_portal IN ('erro_nao_retentavel', 'falha_envio_portal', 'indeterminado_requer_conciliacao'))
+      AND f.atualizado_em > now() - (p_cooldown_horas * interval '1 hour')
+  ) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'cooldown: auto-aprovação recente do fornecedor falhou (disparo/portal)');
+  END IF;
+
+  -- P1.6: raio cumulativo — no MÁXIMO 1 auto-aprovado não-disparado por grupo. Sem isto,
+  -- N pedidos de SKUs novos do grupo passam cada um contra a mesma referência antiga e a
+  -- exposição antes do corte vira ilimitada. O 2º espera o 1º disparar (e virar referência).
+  IF EXISTS (
+    SELECT 1 FROM public.pedido_compra_sugerido q
+    WHERE q.empresa = p.empresa
+      AND q.fornecedor_nome = p.fornecedor_nome
+      AND COALESCE(q.grupo_codigo, '') = v_grupo
+      AND q.aprovado_por LIKE 'auto:%'
+      AND q.status = 'aprovado_aguardando_disparo'
+      AND q.id <> p.id
+  ) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'já há auto-aprovado do grupo aguardando disparo');
+  END IF;
+
+  -- v2: referência = MEDIANA dos últimos 5 EVENTOS de compra do grupo. Cada evento = SUM por
+  -- data_ciclo (<90d, compra real) — colapsa o pré-split (pai → filhos na mesma data) como na v1,
+  -- mas agora a mediana de VÁRIOS eventos, não o último solto (ruidoso: normal teve R$1031 e
+  -- R$7377). MÍNIMO 3 eventos (Codex: percentile_cont com 2 valores interpola a média = falsa
+  -- mediana; com [1000,16000] daria 8500).
+  -- ⚠️ Codex P2.2 (teórico, sem caminho atual): a referência soma valor_total do CABEÇALHO dos
+  -- históricos; o candidato (v_valor) usa a soma dos ITENS. Nos disparados o cabeçalho = itens (a
+  -- geração seta valor_total = SUM dos itens e o disparo não muda). Se um dia divergirem (cabeçalho
+  -- inflado), o teto poderia subir. Monitorado no piloto; fix futuro = somar itens nos históricos.
+  WITH eventos AS (
+    SELECT r.data_ciclo, SUM(r.valor_total) AS valor
+    FROM public.pedido_compra_sugerido r
+    WHERE r.empresa = p.empresa
+      AND r.fornecedor_nome = p.fornecedor_nome
+      AND COALESCE(r.grupo_codigo, '') = v_grupo
+      AND r.id <> p.id
+      AND r.criado_em > now() - interval '90 days'
+      AND (r.omie_pedido_compra_numero IS NOT NULL OR r.status IN ('disparado', 'concluido_recebido'))
+    GROUP BY r.data_ciclo
+    ORDER BY r.data_ciclo DESC
+    LIMIT 5
+  )
+  SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY valor), count(*)
+    INTO v_ref, v_n FROM eventos;
+
+  IF v_n < 3 THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'menos de 3 compras de referência do grupo em 90d');
+  END IF;
+  IF v_ref IS NULL OR NOT (v_ref > 0 AND v_ref < 'Infinity'::numeric) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'mediana de referência inválida');
+  END IF;
+
+  -- v2: delta ASSIMÉTRICO — só trava comprar MAIS que mediana×(1+delta_max). Comprar <= mediana
+  -- SEMPRE passa (conservador: menos capital; a régua R$3k já é o piso). O risco money-path da
+  -- auto-aprovação é comprar DEMAIS; pedido muito menor que o típico é seguro (Codex: humano
+  -- semeia a mediana, a automação alcança depois). delta_pct negativo = comprou menos (ok).
+  IF v_valor > v_ref * (1 + p_delta_max) THEN
+    RETURN jsonb_build_object('elegivel', false,
+      'motivo', 'acima do típico: ' || round(v_valor)::text || ' > mediana ' || round(v_ref)::text
+        || ' × ' || round((1 + p_delta_max), 2)::text,
+      'valor_anterior', v_ref,
+      'delta_pct', round(100.0 * (v_valor - v_ref) / v_ref, 1));
+  END IF;
+
+  RETURN jsonb_build_object('elegivel', true,
+    'valor_anterior', v_ref,
+    'delta_pct', round(100.0 * (v_valor - v_ref) / v_ref, 1),
+    'valor_itens', v_valor);
+END;
+$_$;
+
+
+--
+-- Name: reposicao_persistir_qtde_inteira(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_persistir_qtde_inteira(p_pedido_id bigint) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_ajustados integer;
+BEGIN
+  UPDATE pedido_compra_item
+    SET qtde_sugerida = ceil(qtde_sugerida),
+        qtde_final    = ceil(qtde_final),
+        valor_linha   = ceil(qtde_final) * preco_unitario
+  WHERE pedido_id = p_pedido_id
+    AND (qtde_final    IS DISTINCT FROM ceil(qtde_final)
+      OR qtde_sugerida IS DISTINCT FROM ceil(qtde_sugerida));
+  GET DIAGNOSTICS v_ajustados = ROW_COUNT;
+
+  IF v_ajustados > 0 THEN
+    UPDATE pedido_compra_sugerido
+      SET valor_total = (
+        SELECT COALESCE(sum(valor_linha), 0)
+        FROM pedido_compra_item WHERE pedido_id = p_pedido_id
+      )
+    WHERE id = p_pedido_id;
+  END IF;
+
+  RETURN v_ajustados;
 END;
 $$;
 
@@ -3766,6 +9215,59 @@ $$;
 
 
 --
+-- Name: resgatar_recompensa(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.resgatar_recompensa(p_reward_key text) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_points integer; v_name text; v_saldo bigint; v_redemption_id uuid;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'nao autenticado'; END IF;
+  CASE p_reward_key
+    WHEN 'frete_10'       THEN v_points := 100; v_name := '10% desconto no frete';
+    WHEN 'afiacao_gratis' THEN v_points := 300; v_name := 'Afiação grátis (1 ferramenta)';
+    WHEN 'kit_manutencao' THEN v_points := 500; v_name := 'Kit de manutenção';
+    WHEN 'desconto_20'    THEN v_points := 750; v_name := 'Desconto 20% no próximo pedido';
+    ELSE RAISE EXCEPTION 'recompensa desconhecida: %', p_reward_key;
+  END CASE;
+  PERFORM pg_advisory_xact_lock(hashtextextended('loyalty_resgate:' || v_uid::text, 0));
+  SELECT COALESCE(SUM(points), 0) INTO v_saldo FROM public.loyalty_points WHERE user_id = v_uid;
+  IF v_saldo < v_points THEN RAISE EXCEPTION 'saldo insuficiente: % < %', v_saldo, v_points; END IF;
+  INSERT INTO public.loyalty_redemptions (user_id, reward_name, points_spent, status)
+  VALUES (v_uid, v_name, v_points, 'pendente') RETURNING id INTO v_redemption_id;
+  INSERT INTO public.loyalty_points (user_id, points, type, description)
+  VALUES (v_uid, -v_points, 'resgate', 'Resgate: ' || v_name);
+  RETURN v_redemption_id;
+END;
+$$;
+
+
+--
+-- Name: resolve_markup_policy(text, bigint, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.resolve_markup_policy(p_empresa text, p_codigo bigint, p_familia text) RETURNS TABLE(piso_markup numeric, meta_markup numeric)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+  SELECT piso_markup, meta_markup
+  FROM public.markup_policy
+  WHERE account = lower(p_empresa)
+    AND (
+      (escopo='sku'     AND sku_codigo = p_codigo) OR
+      (escopo='familia' AND p_familia IS NOT NULL AND familia = p_familia) OR
+      (escopo='conta')
+    )
+  ORDER BY CASE escopo WHEN 'sku' THEN 1 WHEN 'familia' THEN 2 ELSE 3 END
+  LIMIT 1;
+$$;
+
+
+--
 -- Name: resolver_outlier(bigint, text, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3901,6 +9403,103 @@ COMMENT ON FUNCTION public.resolver_sku_por_codigo_fornecedor(p_empresa text, p_
 
 
 --
+-- Name: reverter_exclusao_fornecedor(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reverter_exclusao_fornecedor(p_user_id uuid, p_motivo text DEFAULT 'reversão manual'::text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE v_enfileirados int; v_tmp int;
+BEGIN
+  IF NOT public.has_role(auth.uid(), 'master'::public.app_role) THEN
+    RAISE EXCEPTION 'apenas master pode reverter exclusão de fornecedor';
+  END IF;
+  INSERT INTO public.fornecedor_excecao (user_id, motivo, criado_por)
+  VALUES (p_user_id, p_motivo, auth.uid()) ON CONFLICT (user_id) DO NOTHING;
+  UPDATE public.cliente_classificacao SET excluir_da_carteira = false, updated_at = now() WHERE user_id = p_user_id;
+  UPDATE public.carteira_assignments
+     SET eligible = NOT EXISTS (
+           SELECT 1 FROM public.customer_canonical_alias cca
+           WHERE cca.alias_user_id = p_user_id AND cca.status = 'active'),
+         updated_at = now()
+   WHERE customer_user_id = p_user_id;
+  INSERT INTO public.visit_score_recalc_queue (customer_user_id, farmer_id, reason)
+  SELECT ca.customer_user_id, ca.owner_user_id, 'reversao_fornecedor'
+    FROM public.carteira_assignments ca WHERE ca.customer_user_id = p_user_id
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_enfileirados = ROW_COUNT;
+  INSERT INTO public.score_recalc_queue (customer_user_id, farmer_id, reason)
+  SELECT ca.customer_user_id, ca.owner_user_id, 'reversao_fornecedor'
+    FROM public.carteira_assignments ca WHERE ca.customer_user_id = p_user_id
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_tmp = ROW_COUNT;
+  v_enfileirados := v_enfileirados + v_tmp;
+  RETURN jsonb_build_object('revertido', p_user_id, 'recalc_enfileirado', v_enfileirados);
+END $$;
+
+
+--
+-- Name: reverter_parametro_auto(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reverter_parametro_auto(p_log_id uuid) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE r record; v_uid uuid := auth.uid();
+BEGIN
+  IF NOT public.pode_ver_carteira_completa(v_uid) THEN RAISE EXCEPTION 'sem permissão'; END IF;
+  SELECT * INTO r FROM public.reposicao_param_auto_log
+    WHERE id=p_log_id AND status='aplicado' AND revertido_em IS NULL;
+  IF NOT FOUND THEN RETURN 'nao_encontrado'; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.sku_parametros sp
+    WHERE sp.empresa=r.empresa AND sp.sku_codigo_omie::text=r.sku_codigo_omie
+      AND round(COALESCE(sp.ponto_pedido,-1))      = round(COALESCE(r.ponto_pedido_depois,-1))
+      AND round(COALESCE(sp.estoque_maximo,-1))    = round(COALESCE(r.estoque_maximo_depois,-1))
+      AND round(COALESCE(sp.estoque_minimo,-1))    = round(COALESCE(r.estoque_minimo_depois,-1))
+      AND round(COALESCE(sp.estoque_seguranca,-1)) = round(COALESCE(r.estoque_seguranca_depois,-1))
+      AND round(COALESCE(sp.cobertura_alvo_dias,-1))= round(COALESCE(r.cobertura_depois,-1))
+  ) THEN RETURN 'conflito'; END IF;
+  UPDATE public.sku_parametros sp SET
+    ponto_pedido=r.ponto_pedido_antes, estoque_minimo=r.estoque_minimo_antes,
+    estoque_maximo=r.estoque_maximo_antes, estoque_seguranca=r.estoque_seguranca_antes,
+    cobertura_alvo_dias=r.cobertura_antes, ultima_atualizacao_calculo=now()
+  WHERE sp.empresa=r.empresa AND sp.sku_codigo_omie::text=r.sku_codigo_omie;
+  INSERT INTO public.reposicao_param_pin (empresa, sku_codigo_omie, ponto_pedido_rejeitado, estoque_maximo_rejeitado, pinado_por)
+    VALUES (r.empresa, r.sku_codigo_omie, round(r.ponto_pedido_depois), round(r.estoque_maximo_depois), v_uid)
+    ON CONFLICT (empresa, sku_codigo_omie) DO UPDATE
+      SET ponto_pedido_rejeitado=excluded.ponto_pedido_rejeitado,
+          estoque_maximo_rejeitado=excluded.estoque_maximo_rejeitado, pinado_em=now(), pinado_por=v_uid;
+  UPDATE public.reposicao_param_auto_log SET revertido_em=now(), revertido_por=v_uid WHERE id=p_log_id;
+  RETURN 'revertido';
+END;
+$$;
+
+
+--
+-- Name: reverter_run_auto(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reverter_run_auto(p_run_id uuid) RETURNS TABLE(revertidos integer, conflitos integer)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE r record; v_rev int := 0; v_conf int := 0; res text;
+BEGIN
+  IF NOT public.pode_ver_carteira_completa(auth.uid()) THEN RAISE EXCEPTION 'sem permissão'; END IF;
+  FOR r IN SELECT id FROM public.reposicao_param_auto_log
+           WHERE run_id=p_run_id AND status='aplicado' AND revertido_em IS NULL LOOP
+    res := public.reverter_parametro_auto(r.id);
+    IF res='revertido' THEN v_rev := v_rev+1; ELSIF res='conflito' THEN v_conf := v_conf+1; END IF;
+  END LOOP;
+  revertidos := v_rev; conflitos := v_conf; RETURN NEXT;
+END;
+$$;
+
+
+--
 -- Name: rodar_bateria_simulacao(text, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3935,6 +9534,113 @@ BEGIN
 
   RETURN QUERY SELECT v_skus, 5, v_sims, ROUND(v_valor, 2),
     ROUND(EXTRACT(EPOCH FROM (CLOCK_TIMESTAMP() - v_inicio))::numeric, 2);
+END;
+$$;
+
+
+--
+-- Name: route_city_norm(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.route_city_norm(raw text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE
+    SET search_path TO ''
+    AS $_$
+DECLARE
+  s text;
+BEGIN
+  IF raw IS NULL THEN
+    RETURN NULL;
+  END IF;
+  -- Espacos unicode que o \s do JS reconhece (e o [[:space:]] POSIX nao) ->
+  -- espaco ASCII, pra paridade com o split/replace(\s) do TS (route-city.ts).
+  -- Os \uXXXX sao interpretados pelo motor de regex ARE do Postgres.
+  s := regexp_replace(raw, '[\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]', ' ', 'g');
+  -- stripAccents (NFD + remove combining marks U+0300..U+036F) -> UPPER ->
+  -- trim (ordem identica ao TS).
+  s := btrim(upper(regexp_replace(normalize(s, NFD), '[\u0300-\u036F]', '', 'g')));
+  IF s = '' THEN
+    RETURN NULL;
+  END IF;
+  -- Extracao de UF (mesma precedencia do TS) -- descartada: city_norm e so a cidade.
+  IF s ~ '\([A-Z]{2}\)\s*$' THEN
+    s := btrim(regexp_replace(s, '\([A-Z]{2}\)\s*$', ''));
+  ELSIF s ~ '/\s*[A-Z]{2}\s*$' THEN
+    s := btrim(regexp_replace(s, '/\s*[A-Z]{2}\s*$', ''));
+  ELSIF s ~ '\s[A-Z]{2}$' THEN
+    s := btrim(regexp_replace(s, '\s+[A-Z]{2}$', ''));
+  END IF;
+  s := btrim(regexp_replace(s, '\s+', ' ', 'g'));
+  RETURN nullif(s, '');
+END
+$_$;
+
+
+--
+-- Name: sayerlack_retry_orfaos(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sayerlack_retry_orfaos() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_pedido record;
+  v_cron_secret text;
+  v_request_id bigint;
+  v_url constant text := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/disparar-pedidos-aprovados';
+BEGIN
+  IF NOT pg_try_advisory_xact_lock(hashtext('sayerlack_retry_orfaos')) THEN
+    RETURN jsonb_build_object('skipped', 'lock_indisponivel');
+  END IF;
+
+  SELECT id, COALESCE(portal_tentativas, 0) AS tent, status_envio_portal, aprovado_em
+    INTO v_pedido
+  FROM public.pedido_compra_sugerido
+  WHERE empresa = 'OBEN'
+    AND fornecedor_nome ILIKE '%SAYERLACK%'
+    AND status IN ('aprovado_aguardando_disparo', 'falha_envio')
+    AND status_envio_portal IN ('pendente_envio_portal', 'erro_retentavel')
+    AND COALESCE(portal_tentativas, 0) < 3
+    AND (portal_proximo_retry_em IS NULL OR portal_proximo_retry_em <= now())
+    AND aprovado_em >= now() - INTERVAL '3 days'
+  ORDER BY aprovado_em ASC
+  LIMIT 1;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('candidatos', 0);
+  END IF;
+
+  SELECT decrypted_secret INTO v_cron_secret
+  FROM vault.decrypted_secrets WHERE name = 'CRON_SECRET' LIMIT 1;
+
+  SELECT net.http_post(
+    url := v_url,
+    headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', v_cron_secret),
+    body := jsonb_build_object('empresa', 'OBEN', 'pedido_id', v_pedido.id),
+    timeout_milliseconds := 60000
+  ) INTO v_request_id;
+
+  INSERT INTO public.sayerlack_retry_motor_log
+    (pedido_id, tentativa_no_disparo, status_envio_portal_no_disparo, aprovado_em, request_id)
+  VALUES (v_pedido.id, v_pedido.tent, v_pedido.status_envio_portal, v_pedido.aprovado_em, v_request_id);
+
+  RETURN jsonb_build_object('disparado', v_pedido.id, 'tentativa', v_pedido.tent, 'request_id', v_request_id);
+END;
+$$;
+
+
+--
+-- Name: set_atualizado_em_column(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_atualizado_em_column() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  NEW.atualizado_em = now();
+  RETURN NEW;
 END;
 $$;
 
@@ -3993,6 +9699,17 @@ BEGIN
   NEW.updated_at = now();
   RETURN NEW;
 END;
+$$;
+
+
+--
+-- Name: set_updated_at_visitas_agendadas(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_updated_at_visitas_agendadas() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN NEW.updated_at = now(); RETURN NEW; END;
 $$;
 
 
@@ -4517,91 +10234,1210 @@ $$;
 
 CREATE FUNCTION public.sugerir_negociacao_paralela_hoje(p_empresa text DEFAULT 'OBEN'::text, p_limite integer DEFAULT 10) RETURNS TABLE(out_sugestao_id bigint, out_sku_codigo_omie text, out_sku_descricao text, out_motivo text, out_score_final numeric, out_volume_financeiro_12m numeric, out_preco_medio_unitario numeric, out_categoria text, out_motivo_legivel text)
     LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public'
+    SET search_path TO 'public', 'private'
     AS $$
 DECLARE
   v_dia_mes int;
   v_eh_fim_mes boolean;
 BEGIN
-  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+  IF NOT (
+    public.has_role(auth.uid(), 'employee'::app_role)
+    OR public.has_role(auth.uid(), 'master'::app_role)
+    OR nullif(current_setting('request.jwt.claims', true), '') IS NULL
+  ) THEN
     RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
   END IF;
+
   v_dia_mes := EXTRACT(DAY FROM CURRENT_DATE)::int;
   v_eh_fim_mes := v_dia_mes >= 20;
+
   UPDATE sugestao_negociacao_paralela
-  SET status = 'ignorada'
-  WHERE empresa = p_empresa AND status IN ('nova', 'visualizada') AND valido_ate < CURRENT_DATE;
+     SET status = 'ignorada'
+   WHERE empresa = p_empresa
+     AND status IN ('nova', 'visualizada')
+     AND valido_ate < CURRENT_DATE;
+
   RETURN QUERY
   WITH candidatos AS (
-    SELECT 
-      r.sku_codigo_omie AS sku_cod, r.sku_descricao AS sku_desc,
-      r.score_final AS score_val, r.volume_financeiro_12m AS vol_12m,
-      r.preco_medio_unitario AS preco_med, r.promocoes_12m AS promo_12m,
-      r.perc_meses_com_promo AS perc_promo, r.categoria AS cat,
-      CASE 
-        WHEN r.categoria IN ('prioritario', 'forte') AND r.perc_meses_com_promo < 30 AND v_eh_fim_mes
-          THEN 'combinacao_heuristica'
-        WHEN r.categoria IN ('prioritario', 'forte') AND r.perc_meses_com_promo < 30 
-          THEN 'candidato_forte_sem_promo_recente'
-        WHEN v_eh_fim_mes AND r.categoria IN ('prioritario', 'forte', 'moderado')
-          THEN 'consumo_abaixo_tipico_fim_de_mes'
-        ELSE 'score_alto_ciclo_semanal'
-      END AS motivo_comp
-    FROM mv_sku_ranking_negociacao_paralela r
-    WHERE r.empresa = p_empresa
-      AND r.categoria IN ('prioritario', 'forte', 'moderado')
-      AND NOT EXISTS (
-        SELECT 1 FROM promocao_item pi
-        JOIN promocao_campanha pc ON pc.id = pi.campanha_id
-        WHERE pc.empresa = r.empresa
-          AND pc.tipo_origem = 'desconto_flat_condicional'
-          AND pc.estado IN ('ativa', 'negociando')
-          AND pi.sku_codigo_omie::text = r.sku_codigo_omie AND pi.ativo = true
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM sugestao_negociacao_paralela sng
-        WHERE sng.empresa = r.empresa AND sng.sku_codigo_omie = r.sku_codigo_omie
-          AND sng.status IN ('nova', 'visualizada', 'acao_tomada')
-          AND sng.valido_ate >= CURRENT_DATE
-      )
-    ORDER BY r.score_final DESC LIMIT p_limite
+    SELECT r.sku_codigo_omie AS sku_cod,
+           r.sku_descricao AS sku_desc,
+           r.score_final AS score_val,
+           r.volume_financeiro_12m AS vol_12m,
+           r.preco_medio_unitario AS preco_med,
+           r.promocoes_12m AS promo_12m,
+           r.perc_meses_com_promo AS perc_promo,
+           r.categoria AS cat,
+           CASE
+             WHEN r.categoria IN ('prioritario', 'forte') AND r.perc_meses_com_promo < 30 AND v_eh_fim_mes THEN 'combinacao_heuristica'
+             WHEN r.categoria IN ('prioritario', 'forte') AND r.perc_meses_com_promo < 30 THEN 'candidato_forte_sem_promo_recente'
+             WHEN v_eh_fim_mes AND r.categoria IN ('prioritario', 'forte', 'moderado') THEN 'consumo_abaixo_tipico_fim_de_mes'
+             ELSE 'score_alto_ciclo_semanal'
+           END AS motivo_comp
+      FROM mv_sku_ranking_negociacao_paralela r
+     WHERE r.empresa = p_empresa
+       AND r.categoria IN ('prioritario', 'forte', 'moderado')
+       AND NOT EXISTS (
+         SELECT 1 FROM promocao_item pi
+           JOIN promocao_campanha pc ON pc.id = pi.campanha_id
+          WHERE pc.empresa = r.empresa
+            AND pc.tipo_origem = 'desconto_flat_condicional'
+            AND pc.estado IN ('ativa', 'negociando')
+            AND pi.sku_codigo_omie::text = r.sku_codigo_omie
+            AND pi.ativo = true
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM sugestao_negociacao_paralela sng
+          WHERE sng.empresa = r.empresa
+            AND sng.sku_codigo_omie = r.sku_codigo_omie
+            AND sng.status IN ('nova', 'visualizada', 'acao_tomada')
+            AND sng.valido_ate >= CURRENT_DATE
+       )
+     ORDER BY r.score_final DESC
+     LIMIT p_limite
   ),
   inserted AS (
     INSERT INTO sugestao_negociacao_paralela (
-      empresa, sku_codigo_omie, sku_descricao, motivo, motivo_detalhes, 
+      empresa, sku_codigo_omie, sku_descricao, motivo, motivo_detalhes,
       score_final, volume_financeiro_12m, preco_medio_unitario,
       promocoes_12m, perc_meses_com_promo, valido_ate
     )
-    SELECT 
-      p_empresa, c.sku_cod, c.sku_desc, c.motivo_comp,
-      jsonb_build_object('dia_mes', v_dia_mes, 'eh_fim_mes', v_eh_fim_mes,
-        'categoria_ranking', c.cat, 'heuristica_disparou', c.motivo_comp),
-      c.score_val, c.vol_12m, c.preco_med, c.promo_12m, c.perc_promo,
-      CURRENT_DATE + interval '14 days'
-    FROM candidatos c
-    RETURNING id, sku_codigo_omie, sku_descricao, motivo, score_final, 
-              volume_financeiro_12m, preco_medio_unitario
+    SELECT p_empresa, c.sku_cod, c.sku_desc, c.motivo_comp,
+           jsonb_build_object('dia_mes', v_dia_mes, 'eh_fim_mes', v_eh_fim_mes, 'categoria_ranking', c.cat, 'heuristica_disparou', c.motivo_comp),
+           c.score_val, c.vol_12m, c.preco_med, c.promo_12m, c.perc_promo,
+           CURRENT_DATE + interval '14 days'
+      FROM candidatos c
+    RETURNING id, sku_codigo_omie, sku_descricao, motivo, score_final, volume_financeiro_12m, preco_medio_unitario
   )
-  SELECT 
-    ins.id, ins.sku_codigo_omie, ins.sku_descricao, ins.motivo, ins.score_final,
-    ins.volume_financeiro_12m, ins.preco_medio_unitario, c.cat,
-    CASE ins.motivo
-      WHEN 'combinacao_heuristica' 
-        THEN format('Candidato %s (score %s) sem promoção nos últimos %s%% dos meses, estamos em fim de mês (dia %s). Momento ótimo para negociar.',
-          c.cat, ins.score_final, ROUND(c.perc_promo, 0), v_dia_mes)
-      WHEN 'candidato_forte_sem_promo_recente' 
-        THEN format('Candidato %s (score %s) que raramente entra em promoção (%s%% dos últimos 12 meses). Provavelmente aceita desconto paralelo.',
-          c.cat, ins.score_final, ROUND(c.perc_promo, 0))
-      WHEN 'consumo_abaixo_tipico_fim_de_mes' 
-        THEN format('Dia %s. SKU categoria %s, consumo recorrente, vale completar volume do mês negociando desconto condicional.',
-          v_dia_mes, c.cat)
-      ELSE format('Top candidato do ranking (score %s, categoria %s). Vale avaliar para negociação.',
-        ins.score_final, c.cat)
-    END
-  FROM inserted ins
-  JOIN candidatos c ON c.sku_cod = ins.sku_codigo_omie;
+  SELECT ins.id, ins.sku_codigo_omie, ins.sku_descricao, ins.motivo, ins.score_final, ins.volume_financeiro_12m, ins.preco_medio_unitario,
+         c.cat,
+         CASE ins.motivo
+           WHEN 'combinacao_heuristica' THEN format('Candidato %s (score %s) sem promoção nos últimos %s%% dos meses, estamos em fim de mês (dia %s). Momento ótimo para negociar.', c.cat, ins.score_final, ROUND(c.perc_promo, 0), v_dia_mes)
+           WHEN 'candidato_forte_sem_promo_recente' THEN format('Candidato %s (score %s) que raramente entra em promoção (%s%% dos últimos 12 meses). Provavelmente aceita desconto paralelo.', c.cat, ins.score_final, ROUND(c.perc_promo, 0))
+           WHEN 'consumo_abaixo_tipico_fim_de_mes' THEN format('Dia %s. SKU categoria %s, consumo recorrente, vale completar volume do mês negociando desconto condicional.', v_dia_mes, c.cat)
+           ELSE format('Top candidato do ranking (score %s, categoria %s). Vale avaliar para negociação.', ins.score_final, c.cat)
+         END
+    FROM inserted ins
+    JOIN candidatos c ON c.sku_cod = ins.sku_codigo_omie;
 END;
 $$;
+
+
+--
+-- Name: tarefas_escalonamento_tick(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tarefas_escalonamento_tick() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare
+  r record;
+  v_nome text;
+  v_titulo text;
+  v_msg text;
+begin
+  for r in
+    select v.responsavel_efetivo, v.empresa,
+           array_agg(v.id) as ids,
+           count(*) as n,
+           string_agg(
+             case when not v.tem_sugestao_pendente then
+               format('- %s (%s, venceu %s)%s', v.descricao, v.categoria, v.effective_due,
+                      case when v.motivo_adiamento is not null and btrim(v.motivo_adiamento) <> ''
+                           then ' · adiada: '||v.motivo_adiamento else '' end)
+             end, E'\n' order by v.effective_due
+           ) as linhas_sem_sinal,
+           string_agg(
+             case when v.tem_sugestao_pendente then
+               format('- %s (%s, venceu %s)', v.descricao, v.categoria, v.effective_due)
+             end, E'\n' order by v.effective_due
+           ) as linhas_detectado
+    from public.v_tarefas_estado v
+    where v.escalavel
+    group by v.responsavel_efetivo, v.empresa
+  loop
+    select name into v_nome from public.profiles where user_id = r.responsavel_efetivo;
+    v_nome := coalesce(nullif(btrim(v_nome), ''), 'A vendedora');
+
+    v_titulo := format('%s tarefa(s) atrasada(s) — %s', r.n, v_nome);
+
+    v_msg := format('%s tem %s tarefa(s) atrasada(s) (vencidas além da tolerância).', v_nome, r.n);
+    if r.linhas_sem_sinal is not null then
+      v_msg := v_msg || E'\n\nNão tocou (nenhum sinal detectado):\n' || r.linhas_sem_sinal;
+    end if;
+    if r.linhas_detectado is not null then
+      v_msg := v_msg
+        || E'\n\nPossível cumprimento NÃO confirmado (o app detectou menção numa interação, mas a vendedora não confirmou — verifique):\n'
+        || r.linhas_detectado;
+    end if;
+
+    insert into public.fornecedor_alerta (tipo, empresa, severidade, status, titulo, mensagem)
+    values ('tarefa_atrasada', r.empresa, 'atencao', 'pendente_notificacao', v_titulo, v_msg);
+
+    insert into public.tarefa_eventos (tarefa_id, tipo_evento, ator, payload)
+    select unnest(r.ids), 'escalada', null, jsonb_build_object('responsavel', r.responsavel_efetivo);
+
+    update public.tarefas set escalado_em = now(), updated_at = now()
+    where id = any(r.ids) and escalado_em is null;
+  end loop;
+end $$;
+
+
+--
+-- Name: tarefas_guard_comprovacao(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tarefas_guard_comprovacao() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  if coalesce(new.requer_comprovacao, false) or coalesce(old.requer_comprovacao, false) then
+    if new.status = 'concluida' and old.status is distinct from 'concluida'
+       and current_user not in ('postgres','service_role','supabase_admin') then
+      raise exception 'Tarefa com comprovação só conclui via concluir_com_comprovacao()';
+    end if;
+    if current_user not in ('postgres','service_role','supabase_admin') and (
+         new.comprovacao_url       is distinct from old.comprovacao_url
+      or new.comprovacao_leitura   is distinct from old.comprovacao_leitura
+      or new.comprovacao_em        is distinct from old.comprovacao_em
+      or new.auditoria_status      is distinct from old.auditoria_status
+      or new.auditada_por          is distinct from old.auditada_por
+      or new.requer_comprovacao    is distinct from old.requer_comprovacao
+    ) then
+      raise exception 'Campos de comprovação/auditoria só mudam via RPC';
+    end if;
+  end if;
+  return new;
+end $$;
+
+
+--
+-- Name: tarefas_matcher_tick(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tarefas_matcher_tick() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+begin
+  with fechadas as (
+    update public.tarefas t
+    set status='concluida', concluida_em=now(), conclusao_origem='auto_interacao', updated_at=now()
+    from public.farmer_calls fc
+    where t.status='aberta' and t.auto_satisfy_mode='interacao' and t.interacao_tipo='ligacao'
+      and fc.customer_user_id = t.customer_user_id
+      and fc.created_at > t.created_at
+      and fc.created_at > now() - interval '1 day'
+      and fc.call_result is not null
+      and fc.call_result not in ('sem_resposta','ocupado','caixa_postal','numero_invalido')
+      and ( fc.farmer_id = t.assigned_to
+            or exists (select 1 from public.carteira_coverage cc
+                       where cc.covered_user_id=t.assigned_to and cc.covering_user_id=fc.farmer_id
+                         and cc.active and now()>=cc.valid_from and (cc.valid_until is null or now()<=cc.valid_until)) )
+    returning t.id, t.assigned_to, fc.id as fonte, fc.farmer_id as fechou
+  )
+  insert into public.tarefa_eventos (tarefa_id, tipo_evento, ator, payload)
+  select id, 'concluida_auto', fechou,
+         jsonb_build_object('via','ligacao','source_id',fonte,'responsavel_efetivo',fechou,'assigned_to',assigned_to)
+  from fechadas;
+
+  with fechadas_v as (
+    update public.tarefas t
+    set status='concluida', concluida_em=now(), conclusao_origem='auto_interacao', updated_at=now()
+    from public.route_visits rv
+    where t.status='aberta' and t.auto_satisfy_mode='interacao' and t.interacao_tipo in ('visita','entrega')
+      and rv.customer_user_id = t.customer_user_id
+      and rv.check_in_at > t.created_at
+      and rv.check_in_at > now() - interval '1 day'
+      and ( (t.interacao_tipo='visita' and rv.visit_type='comercial')
+            or (t.interacao_tipo='entrega' and rv.visit_type='entrega') )
+      and ( rv.visited_by = t.assigned_to
+            or exists (select 1 from public.carteira_coverage cc
+                       where cc.covered_user_id=t.assigned_to and cc.covering_user_id=rv.visited_by
+                         and cc.active and now()>=cc.valid_from and (cc.valid_until is null or now()<=cc.valid_until)) )
+    returning t.id, t.assigned_to, rv.id as fonte, rv.visited_by as fechou
+  )
+  insert into public.tarefa_eventos (tarefa_id, tipo_evento, ator, payload)
+  select id, 'concluida_auto', fechou,
+         jsonb_build_object('via','visita_entrega','source_id',fonte,'responsavel_efetivo',fechou,'assigned_to',assigned_to)
+  from fechadas_v;
+
+  with novos as (
+    insert into public.tarefa_satisfacao_candidatos
+      (tarefa_id, source_type, source_id, mode, confidence, motivo, matched_payload, status)
+    select t.id, 'farmer_call', fc.id, 'conteudo',
+           coalesce(m.confidence, 0.0),
+           case when m.value is not null then 'Mencionou na ligação: '||m.value
+                else 'Ligação aconteceu — confirmar se ofereceu' end,
+           case when m.value is not null
+                then jsonb_build_object('entity_type', m.etype, 'value', m.value, 'context', m.context)
+                else null end,
+           'pending'
+    from public.tarefas t
+    join public.farmer_calls fc
+      on fc.customer_user_id = t.customer_user_id
+     and fc.created_at > t.created_at
+     and fc.created_at > now() - interval '1 day'
+     and ( fc.farmer_id = t.assigned_to
+           or exists (select 1 from public.carteira_coverage cc
+                      where cc.covered_user_id=t.assigned_to and cc.covering_user_id=fc.farmer_id
+                        and cc.active and now()>=cc.valid_from and (cc.valid_until is null or now()<=cc.valid_until)) )
+    left join lateral (
+      select e->>'value' as value, e->>'type' as etype, e->>'context' as context,
+             (e->>'confidence')::numeric as confidence
+      from jsonb_array_elements(coalesce(fc.entities_extracted, '[]'::jsonb)) e
+      where e->>'type' in ('product','price')
+        and t.target_texto is not null
+        and e->>'value' ilike '%'||t.target_texto||'%'
+      order by (e->>'confidence')::numeric desc nulls last
+      limit 1
+    ) m on true
+    where t.status='aberta' and t.auto_satisfy_mode='conteudo' and t.interacao_tipo='ligacao'
+    on conflict (tarefa_id, source_type, source_id) do nothing
+    returning tarefa_id, id
+  )
+  insert into public.tarefa_eventos (tarefa_id, tipo_evento, ator, payload)
+  select tarefa_id, 'sugestao_criada', null, jsonb_build_object('candidato_id', id) from novos;
+
+  update public.tarefa_satisfacao_candidatos
+  set status='expired', resolved_at=now()
+  where status='pending' and created_at < now() - interval '14 days';
+end $$;
+
+
+--
+-- Name: tarefas_materializar_recorrentes(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tarefas_materializar_recorrentes() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare tpl record; d date; hoje date := (now() at time zone 'America/Sao_Paulo')::date; dispara boolean;
+begin
+  for tpl in select * from public.tarefa_templates where ativo loop
+    if not exists (select 1 from public.profiles p where p.user_id = tpl.assigned_to) then
+      insert into public.tarefa_eventos (tarefa_id, tipo_evento, ator, payload)
+      values (null, 'materializacao_pulada', null, jsonb_build_object('template_id', tpl.id, 'motivo', 'assignee_sem_perfil'));
+      continue;
+    end if;
+    d := hoje - 6;
+    while d <= hoje loop
+      dispara := case tpl.cadencia
+        when 'diaria' then true
+        when 'dias_uteis' then (extract(dow from d) between 1 and 5)
+                               and not exists (select 1 from public.calendario_feriados f where f.data = d)
+        when 'semanal' then extract(dow from d)::int = any(tpl.dias_semana)
+        when 'dias_especificos' then extract(dow from d)::int = any(tpl.dias_semana)
+        else false end;
+      if dispara then
+        insert into public.tarefas
+          (descricao, categoria, customer_user_id, assigned_to, created_by, empresa, modo, due_date,
+           backstop_days, tolerancia_dias, auto_satisfy_mode, status, template_id,
+           requer_comprovacao, tipo_comprovacao, janela_fim, supervisor_user_id, auditoria_status,
+           leitura_min, leitura_max, leitura_unidade)
+        select tpl.descricao, tpl.categoria, tpl.customer_user_id, tpl.assigned_to, tpl.created_by, tpl.empresa,
+           'data', d, 7, tpl.tolerancia_dias, 'off', 'aberta', tpl.id,
+           tpl.requer_comprovacao, tpl.tipo_comprovacao, tpl.janela_fim, tpl.supervisor_user_id,
+           case when tpl.requer_comprovacao then 'dispensada' else 'nao_requer' end,
+           tpl.leitura_min, tpl.leitura_max, tpl.leitura_unidade
+        where not exists (select 1 from public.tarefas t
+                          where t.template_id = tpl.id and t.assigned_to = tpl.assigned_to and t.due_date = d);
+      end if;
+      d := d + 1;
+    end loop;
+  end loop;
+end $$;
+
+
+--
+-- Name: tint_apply_keys_snapshot(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_apply_keys_snapshot(p_snapshot_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_meta        record;
+  v_chunks_recv int;
+  v_account     text;
+  v_store       text;
+  v_setting_id  uuid;
+  v_generated   timestamptz;
+  v_total_chunks int;
+  v_last_applied timestamptz;
+  v_total_ativas int;
+  v_chaves_snap  int;
+  v_desativariam int;
+  v_run_id       uuid;
+BEGIN
+  -- Metadados do snapshot (entity 'formulas' v1).
+  SELECT account, store_code, setting_id, generated_at, total_chunks
+    INTO v_account, v_store, v_setting_id, v_generated, v_total_chunks
+  FROM tint_keys_snapshots
+  WHERE snapshot_id = p_snapshot_id AND entity = 'formulas'
+  ORDER BY created_at DESC, id DESC
+  LIMIT 1;
+  IF v_account IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'snapshot inexistente');
+  END IF;
+
+  -- S1 (codex P1-7): serializa com a promoção do mesmo (account+store) — a desativação lê o oficial
+  -- ATIVO e a promoção o reescreve. Mesma chave de lock que tint_promote_sync_run.
+  PERFORM pg_advisory_xact_lock(hashtext('tint_sync:' || v_account || ':' || v_store));
+
+  -- Para registrar erros precisamos de um sync_run (sync_run_id é NOT NULL em tint_sync_errors).
+  INSERT INTO tint_sync_runs (setting_id, account, store_code, sync_type, status, source)
+  VALUES (v_setting_id, v_account, v_store, 'keys_snapshot', 'running', 'agent')
+  RETURNING id INTO v_run_id;
+
+  -- 1) Snapshot COMPLETO? (count distinct chunk_index == total_chunks)
+  SELECT count(DISTINCT chunk_index) INTO v_chunks_recv
+  FROM tint_keys_snapshots WHERE snapshot_id = p_snapshot_id AND entity = 'formulas';
+  IF v_chunks_recv <> v_total_chunks THEN
+    INSERT INTO tint_sync_errors (sync_run_id, entity_type, entity_id, error_message, error_details)
+    VALUES (v_run_id, 'keys_snapshot', p_snapshot_id::text, 'chunks incompletos',
+            jsonb_build_object('recebidos', v_chunks_recv, 'esperados', v_total_chunks));
+    UPDATE tint_sync_runs SET status='error', completed_at=now() WHERE id=v_run_id;
+    RETURN jsonb_build_object('ok', false, 'error', 'chunks incompletos', 'recebidos', v_chunks_recv, 'esperados', v_total_chunks);
+  END IF;
+
+  -- 2) Fora de ordem? (generated_at <= último aplicado)
+  SELECT last_keys_snapshot_at INTO v_last_applied FROM tint_integration_settings WHERE id = v_setting_id;
+  IF v_last_applied IS NOT NULL AND v_generated <= v_last_applied THEN
+    UPDATE tint_sync_runs SET status='complete', completed_at=now(),
+      metadata = jsonb_build_object('skipped', 'fora de ordem') WHERE id=v_run_id;
+    RETURN jsonb_build_object('ok', true, 'skipped', 'snapshot fora de ordem', 'generated_at', v_generated);
+  END IF;
+
+  -- Conjunto de chaves do snapshot (montado de todos os chunks).
+  CREATE TEMP TABLE _snap_keys ON COMMIT DROP AS
+  SELECT DISTINCT chave
+  FROM tint_keys_snapshots, jsonb_array_elements_text(keys) AS chave
+  WHERE snapshot_id = p_snapshot_id AND entity = 'formulas';
+
+  -- S4: chave-fonte de 4 PARTES = cor_id|cod_produto|id_base|personalizada (SEM embalagem; ids SAYER,
+  -- via joins). O conector v0.1.1 manda 1 chave por fórmula-FONTE; o servidor expande a fonte em N
+  -- embalagens vendáveis → a chave por-embalagem nunca casaria (deleção abortava por blast radius).
+  -- Uma fórmula-fonte oficial aparece N vezes (1 por embalagem) com a MESMA chave; mantemos f.id por
+  -- linha (p/ a desativação marcar TODAS as expansões), mas os counts são sobre chaves DISTINTAS.
+  CREATE TEMP TABLE _oficial_ativas ON COMMIT DROP AS
+  SELECT f.id,
+         (f.cor_id || '|' || p.cod_produto || '|' || b.id_base_sayersystem || '|'
+          || (CASE WHEN f.personalizada THEN 'true' ELSE 'false' END)) AS chave
+  FROM tint_formulas f
+  JOIN tint_produtos   p ON p.id = f.produto_id
+  JOIN tint_bases      b ON b.id = f.base_id
+  WHERE f.account = v_account AND f.desativada_em IS NULL;
+
+  -- Blast radius sobre chaves DISTINTAS (1 fonte = 1 chave, não N embalagens).
+  SELECT count(DISTINCT chave) INTO v_total_ativas FROM _oficial_ativas;
+  SELECT count(*)              INTO v_chaves_snap  FROM _snap_keys;
+  SELECT count(DISTINCT o.chave) INTO v_desativariam FROM _oficial_ativas o
+    WHERE NOT EXISTS (SELECT 1 FROM _snap_keys s WHERE s.chave = o.chave);
+
+  -- 3) Blast radius (espelho validarSnapshotKeys). Oficial vazio = primeira carga → ok.
+  IF v_total_ativas > 0 THEN
+    IF v_chaves_snap < v_total_ativas * 0.5 THEN
+      INSERT INTO tint_sync_errors (sync_run_id, entity_type, entity_id, error_message, error_details)
+      VALUES (v_run_id, 'keys_snapshot', p_snapshot_id::text,
+              'blast radius: snapshot menor que 50% do oficial ativo (provável chunk perdido)',
+              jsonb_build_object('chaves_snapshot', v_chaves_snap, 'oficial_ativas', v_total_ativas));
+      UPDATE tint_sync_runs SET status='error', completed_at=now() WHERE id=v_run_id;
+      RETURN jsonb_build_object('ok', false, 'error', 'blast radius: snapshot < 50% do oficial ativo',
+        'chaves_snapshot', v_chaves_snap, 'oficial_ativas', v_total_ativas);
+    END IF;
+    IF v_desativariam > v_total_ativas * 0.2 THEN
+      INSERT INTO tint_sync_errors (sync_run_id, entity_type, entity_id, error_message, error_details)
+      VALUES (v_run_id, 'keys_snapshot', p_snapshot_id::text,
+              'blast radius: desativaria >20% das fórmulas ativas',
+              jsonb_build_object('desativariam', v_desativariam, 'oficial_ativas', v_total_ativas));
+      UPDATE tint_sync_runs SET status='error', completed_at=now() WHERE id=v_run_id;
+      RETURN jsonb_build_object('ok', false, 'error', 'blast radius: desativaria >20% das fórmulas ativas',
+        'desativariam', v_desativariam, 'oficial_ativas', v_total_ativas);
+    END IF;
+  END IF;
+
+  -- 4) Desativa (soft) TODAS as expansões cuja CHAVE-FONTE está fora do snapshot.
+  --    (Reativação é responsabilidade da promoção.)
+  UPDATE tint_formulas SET desativada_em = now(), updated_at = now()
+  WHERE id IN (
+    SELECT o.id FROM _oficial_ativas o
+    WHERE NOT EXISTS (SELECT 1 FROM _snap_keys s WHERE s.chave = o.chave)
+  );
+
+  -- 5) Avança o marcador de ordem + fecha o run. deletes/desativadas = chaves DISTINTAS desativadas.
+  UPDATE tint_integration_settings SET last_keys_snapshot_at = v_generated, updated_at = now()
+  WHERE id = v_setting_id;
+  UPDATE tint_sync_runs
+    SET status='complete', completed_at=now(), deletes = v_desativariam,
+        metadata = jsonb_build_object('desativadas', v_desativariam, 'oficial_ativas', v_total_ativas, 'chaves_snapshot', v_chaves_snap)
+  WHERE id = v_run_id;
+
+  RETURN jsonb_build_object('ok', true, 'desativadas', v_desativariam,
+    'oficial_ativas', v_total_ativas, 'chaves_snapshot', v_chaves_snap);
+END $$;
+
+
+--
+-- Name: tint_calc_preco_final(text, text, text, text, text, uuid, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_calc_preco_final(p_account text, p_store_code text, p_cod_produto text, p_id_base text, p_id_embalagem text, p_staging_formula_id uuid, p_fator numeric) RETURNS numeric
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_base       record;
+  v_preco_base numeric;
+  v_soma       numeric := 0;
+  it           record;
+  v_cor        record;
+BEGIN
+  -- Insumo da base p/ ESTA embalagem de destino (latest staging precos_base COM custo).
+  -- S2: AND store_code = p_store_code. S3: AND custo IS NOT NULL.
+  SELECT custo, imposto_pct, margem_pct INTO v_base
+  FROM tint_staging_precos_base
+  WHERE account = p_account AND store_code = p_store_code
+    AND cod_produto = p_cod_produto AND id_base = p_id_base AND id_embalagem = p_id_embalagem
+    AND custo IS NOT NULL
+  ORDER BY created_at DESC, id DESC
+  LIMIT 1;
+
+  -- base ausente OU custo não-finito → NULL (espelho: base==null || !isFinite(custo)).
+  IF v_base IS NULL OR v_base.custo IS NULL OR NOT (v_base.custo > '-Infinity'::numeric AND v_base.custo < 'Infinity'::numeric) THEN
+    RETURN NULL;
+  END IF;
+  v_preco_base := v_base.custo
+                  * (1 + COALESCE(v_base.imposto_pct, 0) / 100)
+                  * (1 + COALESCE(v_base.margem_pct, 0) / 100);
+
+  -- Σ corantes: itens da formulação × fator; cada corante precisa de custo finito + volume>0.
+  FOR it IN
+    SELECT id_corante, (qtd_ml * p_fator) AS qtd_exp
+    FROM tint_staging_formula_itens
+    WHERE staging_formula_id = p_staging_formula_id
+      AND id_corante IS NOT NULL AND id_corante <> '' AND COALESCE(qtd_ml, 0) > 0
+  LOOP
+    -- S2: AND store_code = p_store_code. S3: AND custo IS NOT NULL AND volume_ml IS NOT NULL.
+    SELECT custo, volume_ml INTO v_cor
+    FROM tint_staging_corantes
+    WHERE account = p_account AND store_code = p_store_code AND id_corante_sayersystem = it.id_corante
+      AND custo IS NOT NULL AND volume_ml IS NOT NULL
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1;
+    IF v_cor IS NULL OR v_cor.custo IS NULL
+       OR NOT (v_cor.custo > '-Infinity'::numeric AND v_cor.custo < 'Infinity'::numeric)
+       OR v_cor.volume_ml IS NULL OR v_cor.volume_ml <= 0 THEN
+      RETURN NULL;
+    END IF;
+    v_soma := v_soma + (v_cor.custo / v_cor.volume_ml) * it.qtd_exp;
+  END LOOP;
+
+  RETURN round((v_preco_base + v_soma)::numeric, 2);
+END $$;
+
+
+--
+-- Name: tint_ensure_corante_stub(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_ensure_corante_stub(p_account text, p_id_corante text) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE v_id uuid;
+BEGIN
+  SELECT id INTO v_id FROM tint_corantes WHERE account = p_account AND id_corante_sayersystem = p_id_corante;
+  IF v_id IS NOT NULL THEN RETURN v_id; END IF;
+  INSERT INTO tint_corantes (account, id_corante_sayersystem, descricao, volume_total_ml)
+  VALUES (p_account, p_id_corante, p_id_corante, 1000)
+  ON CONFLICT (account, id_corante_sayersystem) DO UPDATE SET descricao = tint_corantes.descricao
+  RETURNING id INTO v_id;
+  RETURN v_id;
+END $$;
+
+
+--
+-- Name: tint_marcar_bases_mixmachine(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_marcar_bases_mixmachine() RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare
+  v_count integer;
+begin
+  with alvo as (
+    select op.id,
+      case lower(btrim(op.familia))
+        when 'bases mixmachine' then 'base'
+        when 'concentrados mixmachine' then 'concentrado'
+      end as tipo_esperado
+    from public.omie_products op
+    where op.account = 'oben'
+      and op.ativo = true
+      and lower(btrim(op.familia)) in ('bases mixmachine', 'concentrados mixmachine')
+  )
+  update public.omie_products op
+  set is_tintometric = true,
+      tint_type = alvo.tipo_esperado,
+      updated_at = now()
+  from alvo
+  where op.id = alvo.id
+    and (op.is_tintometric is not true or op.tint_type is distinct from alvo.tipo_esperado);
+  get diagnostics v_count = row_count;
+  return coalesce(v_count, 0);
+end;
+$$;
+
+
+--
+-- Name: tint_promote_sync_run(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_promote_sync_run(p_sync_run_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    SET statement_timeout TO '300s'
+    AS $_$
+DECLARE
+  v_run            record;
+  v_account        text;
+  v_store          text;
+  v_importacao_id  uuid;
+  v_promovidas     int := 0;
+  v_erros          int := 0;
+  v_recalc         int := 0;
+  v_tmp            int := 0;
+  v_zero_uuid      constant uuid := '00000000-0000-0000-0000-000000000000';
+  r                record;
+  v_produto_id     uuid;
+  v_base_id        uuid;
+  v_subcolecao_id  uuid;
+  v_sku_id         uuid;
+  v_emb_id         uuid;
+  v_formula_id     uuid;
+  v_fator          numeric;
+  v_preco          numeric;
+  v_qtd_vendaveis  int;
+BEGIN
+  SELECT * INTO v_run FROM tint_sync_runs WHERE id = p_sync_run_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'run não encontrado');
+  END IF;
+  v_account := v_run.account;
+  v_store   := v_run.store_code;
+
+  -- S1 (codex P1-7): serializa promoções concorrentes do mesmo (account+store). Sem isto, dois
+  -- runs simultâneos do mesmo par leem o latest-staging e escrevem o oficial interleavados (o mais
+  -- VELHO podia vencer). Lock de transação → libera automaticamente no commit/rollback.
+  PERFORM pg_advisory_xact_lock(hashtext('tint_sync:' || v_account || ':' || v_store));
+
+  -- Cria/reusa o registro de importação (reusa a tela de histórico). arquivo_hash = run_id
+  -- colide com UNIQUE(account, arquivo_hash) em re-execução → ON CONFLICT reusa a linha (idempotente).
+  INSERT INTO tint_importacoes (account, tipo, arquivo_nome, arquivo_hash, status)
+  VALUES (v_account, 'sync_agent', 'sync:' || p_sync_run_id::text, p_sync_run_id::text, 'processando')
+  ON CONFLICT (account, arquivo_hash) DO UPDATE
+    SET status = 'processando', registros_importados = 0, registros_erro = 0
+  RETURNING id INTO v_importacao_id;
+
+  -- ──────────────────────────────────────────────────────────────────────────
+  -- LATEST-STAGING-POR-CHAVE: views temporárias com a linha mais recente por chave
+  -- natural (across TODOS os runs do mesmo account+store), restritas às chaves
+  -- tocadas POR ESTE run (§11 P1-C). DISTINCT ON (chave) ORDER BY created_at DESC, id DESC.
+  -- ──────────────────────────────────────────────────────────────────────────
+
+  -- Produtos tocados pelo run → latest (descrição mais recente; stub se ausente).
+  CREATE TEMP TABLE _tp_prod ON COMMIT DROP AS
+  WITH chaves AS (
+    SELECT DISTINCT cod_produto FROM tint_staging_produtos
+    WHERE sync_run_id = p_sync_run_id AND cod_produto IS NOT NULL
+  ),
+  latest AS (
+    SELECT DISTINCT ON (s.cod_produto) s.cod_produto, s.descricao
+    FROM tint_staging_produtos s
+    JOIN chaves c ON c.cod_produto = s.cod_produto
+    WHERE s.account = v_account AND s.store_code = v_store
+    ORDER BY s.cod_produto, s.created_at DESC, s.id DESC
+  )
+  SELECT cod_produto, descricao FROM latest;
+
+  CREATE TEMP TABLE _tp_base ON COMMIT DROP AS
+  WITH chaves AS (
+    SELECT DISTINCT id_base_sayersystem FROM tint_staging_bases
+    WHERE sync_run_id = p_sync_run_id AND id_base_sayersystem IS NOT NULL
+  ),
+  latest AS (
+    SELECT DISTINCT ON (s.id_base_sayersystem) s.id_base_sayersystem, s.descricao
+    FROM tint_staging_bases s
+    JOIN chaves c ON c.id_base_sayersystem = s.id_base_sayersystem
+    WHERE s.account = v_account AND s.store_code = v_store
+    ORDER BY s.id_base_sayersystem, s.created_at DESC, s.id DESC
+  )
+  SELECT id_base_sayersystem, descricao FROM latest;
+
+  CREATE TEMP TABLE _tp_emb ON COMMIT DROP AS
+  WITH chaves AS (
+    SELECT DISTINCT id_embalagem_sayersystem FROM tint_staging_embalagens
+    WHERE sync_run_id = p_sync_run_id AND id_embalagem_sayersystem IS NOT NULL
+  ),
+  latest AS (
+    SELECT DISTINCT ON (s.id_embalagem_sayersystem) s.id_embalagem_sayersystem, s.descricao, s.volume_ml
+    FROM tint_staging_embalagens s
+    JOIN chaves c ON c.id_embalagem_sayersystem = s.id_embalagem_sayersystem
+    WHERE s.account = v_account AND s.store_code = v_store
+    ORDER BY s.id_embalagem_sayersystem, s.created_at DESC, s.id DESC
+  )
+  SELECT id_embalagem_sayersystem, descricao, volume_ml FROM latest;
+
+  -- Corantes tocados → latest (descricao + preco_litro + custo/volume p/ preço).
+  CREATE TEMP TABLE _tp_cor ON COMMIT DROP AS
+  WITH chaves AS (
+    SELECT DISTINCT id_corante_sayersystem FROM tint_staging_corantes
+    WHERE sync_run_id = p_sync_run_id AND id_corante_sayersystem IS NOT NULL
+  ),
+  latest AS (
+    SELECT DISTINCT ON (s.id_corante_sayersystem)
+           s.id_corante_sayersystem, s.descricao, s.preco_litro, s.custo, s.volume_ml
+    FROM tint_staging_corantes s
+    JOIN chaves c ON c.id_corante_sayersystem = s.id_corante_sayersystem
+    WHERE s.account = v_account AND s.store_code = v_store
+    ORDER BY s.id_corante_sayersystem, s.created_at DESC, s.id DESC
+  )
+  SELECT id_corante_sayersystem, descricao, preco_litro, custo, volume_ml FROM latest;
+
+  -- Skus tocados → latest por (cod_produto,id_base,id_embalagem).
+  CREATE TEMP TABLE _tp_sku ON COMMIT DROP AS
+  WITH chaves AS (
+    SELECT DISTINCT cod_produto, id_base, id_embalagem FROM tint_staging_skus
+    WHERE sync_run_id = p_sync_run_id
+      AND cod_produto IS NOT NULL AND id_base IS NOT NULL AND id_embalagem IS NOT NULL
+  ),
+  latest AS (
+    SELECT DISTINCT ON (s.cod_produto, s.id_base, s.id_embalagem)
+           s.cod_produto, s.id_base, s.id_embalagem
+    FROM tint_staging_skus s
+    JOIN chaves c ON c.cod_produto = s.cod_produto AND c.id_base = s.id_base AND c.id_embalagem = s.id_embalagem
+    WHERE s.account = v_account AND s.store_code = v_store
+    ORDER BY s.cod_produto, s.id_base, s.id_embalagem, s.created_at DESC, s.id DESC
+  )
+  SELECT cod_produto, id_base, id_embalagem FROM latest;
+
+  -- 20260617 (fix CARGA): pares de skus REALMENTE NOVOS (ainda não existem no oficial). SÓ esses
+  -- precisam re-expandir (embalagem nova p/ o par). Capturado ANTES do upsert de skus (E1/loop) —
+  -- depois eles já existiriam. Sem isto, um run de catalogs com TODOS os skus re-expandiria TODAS as
+  -- fórmulas de uma vez → gateway timeout → advisory lock preso → lock timeout (incidente 17/06).
+  CREATE TEMP TABLE _skus_novos ON COMMIT DROP AS
+  SELECT DISTINCT t.cod_produto, t.id_base
+  FROM _tp_sku t
+  WHERE NOT EXISTS (
+    SELECT 1 FROM tint_skus sk
+    JOIN tint_produtos   p ON p.id = sk.produto_id  AND p.account = v_account AND p.cod_produto             = t.cod_produto
+    JOIN tint_bases      b ON b.id = sk.base_id      AND b.account = v_account AND b.id_base_sayersystem     = t.id_base
+    JOIN tint_embalagens e ON e.id = sk.embalagem_id AND e.account = v_account AND e.id_embalagem_sayersystem = t.id_embalagem
+  );
+
+  -- ──────────────────────────────────────────────────────────────────────────
+  -- E1) Catálogo: upsert oficial a partir do latest-staging (espelha onConflict do tint-import).
+  -- ──────────────────────────────────────────────────────────────────────────
+  INSERT INTO tint_produtos (account, cod_produto, descricao)
+  SELECT v_account, cod_produto, COALESCE(descricao, cod_produto) FROM _tp_prod
+  ON CONFLICT (account, cod_produto) DO UPDATE SET descricao = EXCLUDED.descricao;
+
+  INSERT INTO tint_bases (account, id_base_sayersystem, descricao)
+  SELECT v_account, id_base_sayersystem, COALESCE(descricao, id_base_sayersystem) FROM _tp_base
+  ON CONFLICT (account, id_base_sayersystem) DO UPDATE SET descricao = EXCLUDED.descricao;
+
+  -- volume_ml NULL/0 do staging NUNCA rebaixa o volume oficial existente (espelha o
+  -- COALESCE/NULLIF do corante): senão a expansão (guard volume_ml>0) dropa as fórmulas
+  -- da embalagem silenciosamente. INSERT de embalagem nova com volume NULL → stub 0 (não
+  -- vendável, não satisfaz o guard de expansão). descricao idem (NULL não apaga a oficial).
+  INSERT INTO tint_embalagens (account, id_embalagem_sayersystem, descricao, volume_ml)
+  SELECT v_account, id_embalagem_sayersystem, COALESCE(descricao, id_embalagem_sayersystem), COALESCE(volume_ml, 0) FROM _tp_emb
+  ON CONFLICT (account, id_embalagem_sayersystem) DO UPDATE
+    SET descricao = COALESCE(EXCLUDED.descricao, tint_embalagens.descricao),
+        volume_ml = COALESCE(NULLIF(EXCLUDED.volume_ml, 0), tint_embalagens.volume_ml);
+
+  -- Corantes: volume_total_ml é NOT NULL no oficial → preferir staging volume_ml, senão preservar
+  -- o existente, senão 1000 (default do CSV-import p/ stub). preco_litro derivado de custo/volume
+  -- (R$/L) quando os dois presentes; senão preserva o staging.preco_litro.
+  INSERT INTO tint_corantes (account, id_corante_sayersystem, descricao, volume_total_ml, preco_litro)
+  SELECT
+    v_account,
+    c.id_corante_sayersystem,
+    COALESCE(c.descricao, c.id_corante_sayersystem),
+    COALESCE(c.volume_ml, ex.volume_total_ml, 1000),
+    CASE
+      WHEN c.custo IS NOT NULL AND c.volume_ml IS NOT NULL AND c.volume_ml > 0
+        THEN round((c.custo / c.volume_ml * 1000)::numeric, 2)
+      ELSE c.preco_litro
+    END
+  FROM _tp_cor c
+  LEFT JOIN tint_corantes ex ON ex.account = v_account AND ex.id_corante_sayersystem = c.id_corante_sayersystem
+  ON CONFLICT (account, id_corante_sayersystem) DO UPDATE
+    SET descricao        = EXCLUDED.descricao,
+        volume_total_ml  = EXCLUDED.volume_total_ml,
+        preco_litro      = COALESCE(EXCLUDED.preco_litro, tint_corantes.preco_litro);
+
+  -- Skus de produto_base_embalagem: resolve FKs (cria stub de produto/base/embalagem se a
+  -- linha do sku referenciar id ainda não-visto no run — espelha ensure* do CSV).
+  FOR r IN SELECT cod_produto, id_base, id_embalagem FROM _tp_sku LOOP
+    INSERT INTO tint_produtos (account, cod_produto, descricao)
+    VALUES (v_account, r.cod_produto, r.cod_produto)
+    ON CONFLICT (account, cod_produto) DO NOTHING;
+    INSERT INTO tint_bases (account, id_base_sayersystem, descricao)
+    VALUES (v_account, r.id_base, r.id_base)
+    ON CONFLICT (account, id_base_sayersystem) DO NOTHING;
+    INSERT INTO tint_embalagens (account, id_embalagem_sayersystem, descricao, volume_ml)
+    VALUES (v_account, r.id_embalagem, r.id_embalagem, 0)
+    ON CONFLICT (account, id_embalagem_sayersystem) DO NOTHING;
+
+    SELECT id INTO v_produto_id FROM tint_produtos WHERE account = v_account AND cod_produto = r.cod_produto;
+    SELECT id INTO v_base_id    FROM tint_bases    WHERE account = v_account AND id_base_sayersystem = r.id_base;
+    SELECT id INTO v_emb_id     FROM tint_embalagens WHERE account = v_account AND id_embalagem_sayersystem = r.id_embalagem;
+
+    INSERT INTO tint_skus (account, produto_id, base_id, embalagem_id)
+    VALUES (v_account, v_produto_id, v_base_id, v_emb_id)
+    ON CONFLICT (account, produto_id, base_id, embalagem_id) DO NOTHING;
+  END LOOP;
+
+  -- ══════════════════════════════════════════════════════════════════════════
+  -- E2/E3) Fórmulas — SET-BASED (substitui o FOR LOOP aninhado procedural).
+  --   Mesma regra de negócio do loop, em massa. Pares afetados + latest-staging por chave de
+  --   fórmula são VERBATIM do loop; o que muda é a expansão/preço/upsert/itens (INSERT...SELECT).
+  -- ══════════════════════════════════════════════════════════════════════════
+
+  -- Pares (cod_produto, id_base) afetados = pares com fórmula tocada NESTE run ∪ pares de sku
+  -- NOVO (§11 P1-C: embalagem nova ⇒ re-expandir). 20260617 (fix CARGA): _skus_novos no lugar de
+  -- _tp_sku — sku re-enviado (já existente) NÃO dispara re-expansão; senão um run de catalogs com
+  -- todos os skus re-expandiria TODAS as fórmulas de uma vez (lock timeout, incidente 17/06).
+  CREATE TEMP TABLE _pares ON COMMIT DROP AS
+  SELECT DISTINCT cod_produto, id_base FROM (
+    SELECT cod_produto, id_base FROM tint_staging_formulas
+      WHERE sync_run_id = p_sync_run_id AND cod_produto IS NOT NULL AND id_base IS NOT NULL
+    UNION
+    SELECT cod_produto, id_base FROM _skus_novos
+  ) u;
+
+  -- Latest staging de fórmula por (cor_id, cod_produto, id_base, sub_norm, personalizada),
+  -- restrita aos pares afetados — across TODOS os runs.
+  CREATE TEMP TABLE _formulas_latest ON COMMIT DROP AS
+  WITH alvo AS (
+    SELECT s.*
+    FROM tint_staging_formulas s
+    JOIN _pares p ON p.cod_produto = s.cod_produto AND p.id_base = s.id_base
+    WHERE s.account = v_account AND s.store_code = v_store
+      AND s.cor_id IS NOT NULL AND s.cod_produto IS NOT NULL AND s.id_base IS NOT NULL
+  )
+  SELECT DISTINCT ON (cor_id, cod_produto, id_base, COALESCE(subcolecao, ''), personalizada)
+         id AS staging_formula_id, cor_id, nome_cor, cod_produto, id_base, id_embalagem,
+         subcolecao, volume_final_ml, personalizada
+  FROM alvo
+  ORDER BY cor_id, cod_produto, id_base, COALESCE(subcolecao, ''), personalizada,
+           created_at DESC, id DESC;
+
+  -- Resolve FK produto/base por JOIN (não SELECT por linha). LEFT JOIN p/ separar os não-resolvidos.
+  CREATE TEMP TABLE _fl_resolved ON COMMIT DROP AS
+  SELECT fl.*, p.id AS produto_id, b.id AS base_id
+  FROM _formulas_latest fl
+  LEFT JOIN tint_produtos p ON p.account = v_account AND p.cod_produto = fl.cod_produto
+  LEFT JOIN tint_bases    b ON b.account = v_account AND b.id_base_sayersystem = fl.id_base;
+
+  -- Guard 1 — produto/base não resolvido (catálogo incompleto). Espelha o 1º CONTINUE do loop.
+  INSERT INTO tint_sync_errors (sync_run_id, entity_type, entity_id, error_message, error_details)
+  SELECT p_sync_run_id, 'formula_promote', fl.cor_id,
+         'produto/base não resolvido (catálogo incompleto)',
+         jsonb_build_object('cod_produto', fl.cod_produto, 'id_base', fl.id_base)
+  FROM _fl_resolved fl
+  WHERE fl.produto_id IS NULL OR fl.base_id IS NULL;
+  GET DIAGNOSTICS v_tmp = ROW_COUNT; v_erros := v_erros + v_tmp;
+
+  -- Subcoleções: ensure p/ fórmulas com produto/base resolvido e subcoleção não-vazia (o loop
+  -- ensura DEPOIS do guard de produto/base, ANTES dos guards de volume/vendável). id = texto CRU.
+  INSERT INTO tint_subcolecoes (account, id_subcolecao_sayersystem, descricao)
+  SELECT DISTINCT v_account, fl.subcolecao, fl.subcolecao
+  FROM _fl_resolved fl
+  WHERE fl.produto_id IS NOT NULL AND fl.base_id IS NOT NULL
+    AND fl.subcolecao IS NOT NULL AND btrim(fl.subcolecao) <> ''
+  ON CONFLICT (account, id_subcolecao_sayersystem) DO NOTHING;
+
+  -- Guard 2 — volume de formulação <= 0/nulo (entre os resolvidos). Espelha o 2º CONTINUE.
+  INSERT INTO tint_sync_errors (sync_run_id, entity_type, entity_id, error_message, error_details)
+  SELECT p_sync_run_id, 'formula_promote', fl.cor_id,
+         'volume de formulação <= 0 ou nulo',
+         jsonb_build_object('volume_final_ml', fl.volume_final_ml)
+  FROM _fl_resolved fl
+  WHERE fl.produto_id IS NOT NULL AND fl.base_id IS NOT NULL
+    AND (fl.volume_final_ml IS NULL OR fl.volume_final_ml <= 0);
+  GET DIAGNOSTICS v_tmp = ROW_COUNT; v_erros := v_erros + v_tmp;
+
+  -- Guard 3 — zero embalagens vendáveis para o par (entre resolvidos com volume OK). 3º CONTINUE.
+  INSERT INTO tint_sync_errors (sync_run_id, entity_type, entity_id, error_message, error_details)
+  SELECT p_sync_run_id, 'formula_promote', fl.cor_id,
+         'zero embalagens vendáveis para o par (produto,base)',
+         jsonb_build_object('cod_produto', fl.cod_produto, 'id_base', fl.id_base)
+  FROM _fl_resolved fl
+  WHERE fl.produto_id IS NOT NULL AND fl.base_id IS NOT NULL
+    AND fl.volume_final_ml IS NOT NULL AND fl.volume_final_ml > 0
+    AND NOT EXISTS (
+      SELECT 1 FROM tint_skus sk
+      JOIN tint_embalagens e ON e.id = sk.embalagem_id
+      WHERE sk.account = v_account AND sk.produto_id = fl.produto_id AND sk.base_id = fl.base_id
+        AND e.volume_ml IS NOT NULL AND e.volume_ml > 0
+    );
+  GET DIAGNOSTICS v_tmp = ROW_COUNT; v_erros := v_erros + v_tmp;
+
+  -- Expansão (regra de 3): 1 linha por (fórmula que passou TODOS os guards × embalagem vendável).
+  -- fator = vol_destino / vol_formulacao (espelho expandirFormula). subcolecao_id resolvido por
+  -- LEFT JOIN (NULL quando vazio). eid = chave surrogate p/ casar o preço.
+  CREATE TEMP TABLE _expand ON COMMIT DROP AS
+  SELECT
+    row_number() OVER () AS eid,
+    fl.staging_formula_id, fl.cor_id, fl.nome_cor, fl.cod_produto, fl.id_base, fl.personalizada,
+    fl.subcolecao,  -- texto CRU (p/ o desempate espelhar a ordem do loop; ver _expand_uniq)
+    fl.produto_id, fl.base_id,
+    sub.id AS subcolecao_id,
+    sk.id  AS sku_id,
+    sk.embalagem_id AS emb_id,
+    e.id_embalagem_sayersystem AS id_emb,
+    e.volume_ml AS vol_destino,
+    (e.volume_ml / fl.volume_final_ml) AS fator
+  FROM _fl_resolved fl
+  JOIN tint_skus sk ON sk.account = v_account AND sk.produto_id = fl.produto_id AND sk.base_id = fl.base_id
+  JOIN tint_embalagens e ON e.id = sk.embalagem_id
+  LEFT JOIN tint_subcolecoes sub
+    ON sub.account = v_account
+   AND fl.subcolecao IS NOT NULL AND btrim(fl.subcolecao) <> ''
+   AND sub.id_subcolecao_sayersystem = fl.subcolecao
+  WHERE fl.produto_id IS NOT NULL AND fl.base_id IS NOT NULL
+    AND fl.volume_final_ml IS NOT NULL AND fl.volume_final_ml > 0
+    AND e.volume_ml IS NOT NULL AND e.volume_ml > 0;
+
+  -- v_promovidas = nº de expansões (= incrementos do loop interno, inclui colisão personalizada).
+  SELECT count(*) INTO v_promovidas FROM _expand;
+
+  -- Preço pág 9 por expansão — SET-BASED, NULL-honesto (espelho precoFinalSayer + S2 store + S3
+  -- latest não-nulo). base ausente OU qualquer corante sem custo/volume(>0)/finito → preço NULL.
+  CREATE TEMP TABLE _preco ON COMMIT DROP AS
+  WITH base_latest AS (   -- S2: store_code; S3: custo IS NOT NULL. Latest por chave de base.
+    SELECT DISTINCT ON (cod_produto, id_base, id_embalagem)
+           cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct
+    FROM tint_staging_precos_base
+    WHERE account = v_account AND store_code = v_store AND custo IS NOT NULL
+    ORDER BY cod_produto, id_base, id_embalagem, created_at DESC, id DESC
+  ),
+  cor_latest AS (         -- S2: store_code; S3: custo+volume NÃO-NULOS. Latest por corante.
+    SELECT DISTINCT ON (id_corante_sayersystem)
+           id_corante_sayersystem, custo, volume_ml
+    FROM tint_staging_corantes
+    WHERE account = v_account AND store_code = v_store
+      AND custo IS NOT NULL AND volume_ml IS NOT NULL
+    ORDER BY id_corante_sayersystem, created_at DESC, id DESC
+  ),
+  itens AS (              -- Σ corantes por expansão; flag de corante faltante (NULL-honesto).
+    SELECT ex.eid,
+           bool_or(
+             cl.id_corante_sayersystem IS NULL
+             OR cl.volume_ml IS NULL OR cl.volume_ml <= 0
+             OR NOT (cl.custo > '-Infinity'::numeric AND cl.custo < 'Infinity'::numeric)
+           ) AS faltante,
+           sum(CASE WHEN cl.volume_ml > 0 THEN (cl.custo / cl.volume_ml) * (si.qtd_ml * ex.fator) ELSE 0 END) AS soma
+    FROM _expand ex
+    JOIN tint_staging_formula_itens si ON si.staging_formula_id = ex.staging_formula_id
+    LEFT JOIN cor_latest cl ON cl.id_corante_sayersystem = si.id_corante
+    WHERE si.id_corante IS NOT NULL AND si.id_corante <> '' AND COALESCE(si.qtd_ml, 0) > 0
+    GROUP BY ex.eid
+  )
+  SELECT
+    ex.eid,
+    CASE
+      WHEN bl.custo IS NULL THEN NULL                                                   -- base ausente
+      WHEN NOT (bl.custo > '-Infinity'::numeric AND bl.custo < 'Infinity'::numeric) THEN NULL  -- custo não-finito
+      WHEN COALESCE(it.faltante, false) THEN NULL                                       -- corante sem preço
+      ELSE round(
+        ( bl.custo * (1 + COALESCE(bl.imposto_pct, 0) / 100) * (1 + COALESCE(bl.margem_pct, 0) / 100) )
+        + COALESCE(it.soma, 0)
+      , 2)
+    END AS preco
+  FROM _expand ex
+  LEFT JOIN base_latest bl
+    ON bl.cod_produto = ex.cod_produto AND bl.id_base = ex.id_base AND bl.id_embalagem = ex.id_emb
+  LEFT JOIN itens it ON it.eid = ex.eid;
+
+  -- Dedup pela CHAVE OFICIAL (uq_tint_formulas_chave — SEM personalizada): INSERT...SELECT não pode
+  -- ter a mesma chave 2× no mesmo comando (cardinality violation). O loop processa _formulas_latest
+  -- em ORDER BY ... COALESCE(subcolecao,'') ASC, personalizada ASC e o ÚLTIMO vence o upsert. A chave
+  -- oficial COLAPSA subcoleções que resolvem ao MESMO subcolecao_id (NULL e whitespace-only viram
+  -- NULL → btrim vazio), então a colisão pode ser entre linhas com COALESCE(subcolecao,'') DIFERENTE
+  -- (não só personalizada). Para escolher o MESMO vencedor do loop, desempata por COALESCE(subcolecao,
+  -- '') DESC PRIMEIRO, depois personalizada DESC (= o último que o loop processaria), eid DESC final.
+  CREATE TEMP TABLE _expand_uniq ON COMMIT DROP AS
+  SELECT DISTINCT ON (ex.cor_id, ex.produto_id, ex.base_id, COALESCE(ex.subcolecao_id, v_zero_uuid), ex.emb_id)
+         ex.staging_formula_id, ex.cor_id, ex.nome_cor, ex.personalizada,
+         ex.produto_id, ex.base_id, ex.subcolecao_id, ex.sku_id, ex.emb_id, ex.vol_destino, ex.fator,
+         pr.preco
+  FROM _expand ex
+  JOIN _preco pr ON pr.eid = ex.eid
+  ORDER BY ex.cor_id, ex.produto_id, ex.base_id, COALESCE(ex.subcolecao_id, v_zero_uuid), ex.emb_id,
+           COALESCE(ex.subcolecao, '') DESC, ex.personalizada DESC, ex.eid DESC;
+
+  -- Corante stubs em massa ANTES dos itens (espelha tint_ensure_corante_stub: volume 1000).
+  -- A partir de _expand (todas as expansões, inclui colisão) p/ casar o side-effect do loop.
+  INSERT INTO tint_corantes (account, id_corante_sayersystem, descricao, volume_total_ml)
+  SELECT DISTINCT v_account, si.id_corante, si.id_corante, 1000
+  FROM tint_staging_formula_itens si
+  WHERE si.staging_formula_id IN (SELECT DISTINCT staging_formula_id FROM _expand)
+    AND si.id_corante IS NOT NULL AND si.id_corante <> '' AND COALESCE(si.qtd_ml, 0) > 0
+  ON CONFLICT (account, id_corante_sayersystem) DO NOTHING;
+
+  -- Upsert oficial em massa por uq_tint_formulas_chave; desativada_em = NULL (reativa). Captura
+  -- formula_id ↔ (staging_formula_id, fator) p/ os itens (RETURNING casado de volta ao _expand_uniq).
+  CREATE TEMP TABLE _promoted ON COMMIT DROP AS
+  WITH ups AS (
+    INSERT INTO tint_formulas (
+      account, cor_id, nome_cor, produto_id, base_id, embalagem_id, subcolecao_id, sku_id,
+      volume_final_ml, preco_final_sayersystem, personalizada, importacao_id, updated_at, desativada_em
+    )
+    SELECT
+      v_account, eu.cor_id, eu.nome_cor, eu.produto_id, eu.base_id, eu.emb_id, eu.subcolecao_id, eu.sku_id,
+      eu.vol_destino, eu.preco, eu.personalizada, v_importacao_id, now(), NULL
+    FROM _expand_uniq eu
+    ON CONFLICT (account, cor_id, produto_id, base_id, COALESCE(subcolecao_id, '00000000-0000-0000-0000-000000000000'::uuid), embalagem_id)
+    DO UPDATE SET
+      nome_cor                = EXCLUDED.nome_cor,
+      sku_id                  = EXCLUDED.sku_id,
+      volume_final_ml         = EXCLUDED.volume_final_ml,
+      -- 20260617: PRESERVA o preço existente quando o novo é NULL (precos_base vazio → eu.preco NULL).
+      -- Sem isto o flip zeraria o piso de ~19k cores (calc<CSV). Espelha o COALESCE de preco_litro acima.
+      preco_final_sayersystem = COALESCE(EXCLUDED.preco_final_sayersystem, tint_formulas.preco_final_sayersystem),
+      personalizada           = EXCLUDED.personalizada,
+      importacao_id           = EXCLUDED.importacao_id,
+      updated_at              = now(),
+      desativada_em           = NULL
+    RETURNING id, cor_id, produto_id, base_id, subcolecao_id, embalagem_id
+  )
+  SELECT u.id AS formula_id, eu.staging_formula_id, eu.fator
+  FROM ups u
+  JOIN _expand_uniq eu
+    ON eu.cor_id = u.cor_id AND eu.produto_id = u.produto_id AND eu.base_id = u.base_id
+   AND COALESCE(eu.subcolecao_id, v_zero_uuid) = COALESCE(u.subcolecao_id, v_zero_uuid)
+   AND eu.emb_id = u.embalagem_id;
+
+  -- Itens em massa: limpa + reinsere (espelha o delete+insert por fórmula do loop). qtd expandida
+  -- = qtd_formulacao × fator, arredondada a 6 casas (sub-µL — elimina artefato de escala da divisão
+  -- numeric sem mudar o valor prático). Corante já garantido (stub acima) → JOIN resolve o id.
+  DELETE FROM tint_formula_itens fi USING _promoted pr WHERE fi.formula_id = pr.formula_id;
+
+  INSERT INTO tint_formula_itens (formula_id, corante_id, ordem, qtd_ml)
+  SELECT pr.formula_id, co.id, si.ordem, round((si.qtd_ml * pr.fator)::numeric, 6)
+  FROM _promoted pr
+  JOIN tint_staging_formula_itens si ON si.staging_formula_id = pr.staging_formula_id
+  JOIN tint_corantes co ON co.account = v_account AND co.id_corante_sayersystem = si.id_corante
+  WHERE si.id_corante IS NOT NULL AND si.id_corante <> '' AND COALESCE(si.qtd_ml, 0) > 0;
+
+  -- ──────────────────────────────────────────────────────────────────────────
+  -- E4) Recálculo de preço por mudança de INSUMO (§11 P1-A — caso de uso PRINCIPAL).
+  --   Run tocou precos_base/corantes → recalcula preco_final_sayersystem das fórmulas
+  --   oficiais ATIVAS afetadas, SEM re-expandir itens. NÃO mexe nas fórmulas que E2 já
+  --   tocou (importacao_id = v_importacao_id) — essas já saíram com o preço novo.
+  -- ──────────────────────────────────────────────────────────────────────────
+  -- Pares (produto,base,embalagem oficial) afetados por precos_base deste run.
+  FOR r IN
+    SELECT DISTINCT f.id AS formula_id, f.cor_id, p.cod_produto, b.id_base_sayersystem AS id_base, e.id_embalagem_sayersystem AS id_emb
+    FROM tint_staging_precos_base sp
+    JOIN tint_produtos   p ON p.account = v_account AND p.cod_produto = sp.cod_produto
+    JOIN tint_bases      b ON b.account = v_account AND b.id_base_sayersystem = sp.id_base
+    JOIN tint_embalagens e ON e.account = v_account AND e.id_embalagem_sayersystem = sp.id_embalagem
+    JOIN tint_formulas   f ON f.account = v_account AND f.produto_id = p.id AND f.base_id = b.id AND f.embalagem_id = e.id
+    WHERE sp.sync_run_id = p_sync_run_id
+      AND f.desativada_em IS NULL
+      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)
+  LOOP
+    -- S2: +v_store.
+    v_preco := tint_recalc_preco_oficial(v_account, v_store, r.formula_id, r.cod_produto, r.id_base, r.id_emb);
+    -- 20260617: só baixa/sobe se o recálculo deu valor; NULL (sem precos_base) PRESERVA o piso atual.
+    UPDATE tint_formulas SET preco_final_sayersystem = COALESCE(v_preco, preco_final_sayersystem), updated_at = now() WHERE id = r.formula_id;
+    v_recalc := v_recalc + 1;
+  END LOOP;
+
+  -- Fórmulas que usam um corante cujo CUSTO mudou neste run (volume sem custo → preço NULL: inútil).
+  FOR r IN
+    SELECT DISTINCT f.id AS formula_id, f.cor_id, pr.cod_produto, ba.id_base_sayersystem AS id_base, em.id_embalagem_sayersystem AS id_emb
+    FROM tint_staging_corantes sc
+    JOIN tint_corantes      co ON co.account = v_account AND co.id_corante_sayersystem = sc.id_corante_sayersystem
+    JOIN tint_formula_itens fi ON fi.corante_id = co.id
+    JOIN tint_formulas      f  ON f.id = fi.formula_id
+    JOIN tint_produtos      pr ON pr.id = f.produto_id
+    JOIN tint_bases         ba ON ba.id = f.base_id
+    JOIN tint_embalagens    em ON em.id = f.embalagem_id
+    WHERE sc.sync_run_id = p_sync_run_id
+      -- 20260618 (fix CARGA E4): SÓ recalcula quando há CUSTO. O SayerSystem não manda custo (preço vem
+      -- do Omie, §14) → sem isto o re-envio (volume_ml sempre presente) recalculava ~481k fórmulas por
+      -- corante, uma a uma, num único run → gateway timeout → advisory lock preso → cascata (incidente
+      -- 18/06). Sem custo o recálculo dá NULL e o COALESCE preserva o piso — ou seja, seria carga inútil.
+      AND sc.custo IS NOT NULL
+      AND f.account = v_account
+      AND f.desativada_em IS NULL
+      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)
+  LOOP
+    -- S2: +v_store.
+    v_preco := tint_recalc_preco_oficial(v_account, v_store, r.formula_id, r.cod_produto, r.id_base, r.id_emb);
+    -- 20260617: só baixa/sobe se o recálculo deu valor; NULL (sem precos_base) PRESERVA o piso atual.
+    UPDATE tint_formulas SET preco_final_sayersystem = COALESCE(v_preco, preco_final_sayersystem), updated_at = now() WHERE id = r.formula_id;
+    v_recalc := v_recalc + 1;
+  END LOOP;
+
+  -- ──────────────────────────────────────────────────────────────────────────
+  -- E5) Contadores + purge staging SUPERSEDED >30d (preserva latest-per-key) +
+  --     runs órfãos >30min → error.
+  -- ──────────────────────────────────────────────────────────────────────────
+  UPDATE tint_importacoes
+    SET status = 'concluido', registros_importados = v_promovidas, registros_erro = v_erros
+  WHERE id = v_importacao_id;
+
+  UPDATE tint_sync_runs
+    SET inserts = v_promovidas, errors = v_erros, metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('recalculadas', v_recalc)
+  WHERE id = p_sync_run_id;
+
+  -- PURGE: NUNCA apaga a linha MAIS RECENTE por chave natural (account+store) — a promoção
+  -- lê latest-staging-por-chave PRA SEMPRE (recalc por insumo + re-expansão por sku novo
+  -- dependem dela mesmo que o insumo não mude por >30d → nunca é re-enviado). Só remove
+  -- linhas SUPERSEDED (>30d E com uma linha mais nova da MESMA chave). §11 P2-1.
+  -- Ordem de chave: (created_at, id) — idêntica ao DISTINCT ON da promoção.
+  DELETE FROM tint_staging_produtos s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_produtos n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.cod_produto = s.cod_produto
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  DELETE FROM tint_staging_bases s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_bases n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.id_base_sayersystem = s.id_base_sayersystem
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  DELETE FROM tint_staging_embalagens s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_embalagens n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.id_embalagem_sayersystem = s.id_embalagem_sayersystem
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  DELETE FROM tint_staging_corantes s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_corantes n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.id_corante_sayersystem = s.id_corante_sayersystem
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  DELETE FROM tint_staging_skus s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_skus n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.cod_produto = s.cod_produto AND n.id_base = s.id_base AND n.id_embalagem = s.id_embalagem
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  -- Fórmulas: chave = (cod_produto,id_base,cor_id,COALESCE(subcolecao,''),personalizada),
+  -- idêntica ao DISTINCT ON de _formulas_latest. Itens cascateiam pela formula-pai apagada.
+  DELETE FROM tint_staging_formula_itens si
+  WHERE si.staging_formula_id IN (
+    SELECT s.id FROM tint_staging_formulas s
+    WHERE s.created_at < now() - interval '30 days'
+      AND EXISTS (SELECT 1 FROM tint_staging_formulas n
+        WHERE n.account = s.account AND n.store_code = s.store_code
+          AND n.cor_id = s.cor_id AND n.cod_produto = s.cod_produto AND n.id_base = s.id_base
+          AND COALESCE(n.subcolecao, '') = COALESCE(s.subcolecao, '')
+          AND n.personalizada = s.personalizada
+          AND (n.created_at, n.id) > (s.created_at, s.id)));
+
+  DELETE FROM tint_staging_formulas s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_formulas n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.cor_id = s.cor_id AND n.cod_produto = s.cod_produto AND n.id_base = s.id_base
+        AND COALESCE(n.subcolecao, '') = COALESCE(s.subcolecao, '')
+        AND n.personalizada = s.personalizada
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  DELETE FROM tint_staging_precos_base s
+  WHERE s.created_at < now() - interval '30 days'
+    AND EXISTS (SELECT 1 FROM tint_staging_precos_base n
+      WHERE n.account = s.account AND n.store_code = s.store_code
+        AND n.cod_produto = s.cod_produto AND n.id_base = s.id_base AND n.id_embalagem = s.id_embalagem
+        AND (n.created_at, n.id) > (s.created_at, s.id));
+
+  -- keys-snapshot: point-in-time (não latest-per-key) → purge por tempo é correto.
+  DELETE FROM tint_keys_snapshots          WHERE created_at < now() - interval '30 days';
+
+  UPDATE tint_sync_runs
+    SET status = 'error', completed_at = COALESCE(completed_at, now())
+  WHERE status = 'running' AND started_at < now() - interval '30 minutes';
+
+  RETURN jsonb_build_object(
+    'ok', true, 'promovidas', v_promovidas, 'recalculadas', v_recalc,
+    'erros', v_erros, 'importacao_id', v_importacao_id);
+END $_$;
+
+
+--
+-- Name: tint_recalc_preco_oficial(text, text, uuid, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_recalc_preco_oficial(p_account text, p_store_code text, p_formula_id uuid, p_cod_produto text, p_id_base text, p_id_embalagem text) RETURNS numeric
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_base       record;
+  v_preco_base numeric;
+  v_soma       numeric := 0;
+  it           record;
+  v_cor        record;
+BEGIN
+  -- S2: AND store_code = p_store_code. S3: AND custo IS NOT NULL.
+  SELECT custo, imposto_pct, margem_pct INTO v_base
+  FROM tint_staging_precos_base
+  WHERE account = p_account AND store_code = p_store_code
+    AND cod_produto = p_cod_produto AND id_base = p_id_base AND id_embalagem = p_id_embalagem
+    AND custo IS NOT NULL
+  ORDER BY created_at DESC, id DESC
+  LIMIT 1;
+
+  IF v_base IS NULL OR v_base.custo IS NULL OR NOT (v_base.custo > '-Infinity'::numeric AND v_base.custo < 'Infinity'::numeric) THEN
+    RETURN NULL;
+  END IF;
+  v_preco_base := v_base.custo
+                  * (1 + COALESCE(v_base.imposto_pct, 0) / 100)
+                  * (1 + COALESCE(v_base.margem_pct, 0) / 100);
+
+  FOR it IN
+    SELECT co.id_corante_sayersystem AS id_corante, fi.qtd_ml AS qtd_exp
+    FROM tint_formula_itens fi
+    JOIN tint_corantes co ON co.id = fi.corante_id
+    WHERE fi.formula_id = p_formula_id AND COALESCE(fi.qtd_ml, 0) > 0
+  LOOP
+    -- S2: AND store_code = p_store_code. S3: AND custo IS NOT NULL AND volume_ml IS NOT NULL.
+    SELECT custo, volume_ml INTO v_cor
+    FROM tint_staging_corantes
+    WHERE account = p_account AND store_code = p_store_code AND id_corante_sayersystem = it.id_corante
+      AND custo IS NOT NULL AND volume_ml IS NOT NULL
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1;
+    IF v_cor IS NULL OR v_cor.custo IS NULL
+       OR NOT (v_cor.custo > '-Infinity'::numeric AND v_cor.custo < 'Infinity'::numeric)
+       OR v_cor.volume_ml IS NULL OR v_cor.volume_ml <= 0 THEN
+      RETURN NULL;
+    END IF;
+    v_soma := v_soma + (v_cor.custo / v_cor.volume_ml) * it.qtd_exp;
+  END LOOP;
+
+  RETURN round((v_preco_base + v_soma)::numeric, 2);
+END $$;
 
 
 --
@@ -4969,6 +11805,31 @@ $$;
 
 
 --
+-- Name: upsert_push_subscription(text, jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.upsert_push_subscription(p_endpoint text, p_subscription jsonb, p_user_agent text DEFAULT NULL::text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'apenas usuários autenticados';
+  END IF;
+  IF p_endpoint IS NULL OR length(trim(p_endpoint)) < 16 THEN
+    RAISE EXCEPTION 'endpoint inválido';
+  END IF;
+  INSERT INTO public.push_subscriptions (user_id, endpoint, subscription, user_agent)
+  VALUES (auth.uid(), p_endpoint, p_subscription, left(p_user_agent, 256))
+  ON CONFLICT (endpoint) DO UPDATE
+    SET user_id = auth.uid(),
+        subscription = EXCLUDED.subscription,
+        user_agent = EXCLUDED.user_agent;
+END;
+$$;
+
+
+--
 -- Name: validar_sku_para_aplicacao(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5043,9 +11904,190 @@ END;
 $$;
 
 
-SET default_tablespace = '';
+--
+-- Name: vendas_sync_finish(text, date, date, boolean, integer, text); Type: FUNCTION; Schema: public; Owner: -
+--
 
-SET default_table_access_method = heap;
+CREATE FUNCTION public.vendas_sync_finish(p_account text, p_date_from date, p_date_to date, p_complete boolean, p_next_page integer, p_last_error_kind text) RETURNS void
+    LANGUAGE sql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  UPDATE public.vendas_sync_cursor
+     SET next_page       = CASE WHEN p_complete THEN NULL ELSE p_next_page END,
+         completed_at     = CASE WHEN p_complete THEN now() ELSE completed_at END,
+         last_error_kind  = CASE WHEN p_complete THEN NULL ELSE p_last_error_kind END,
+         running_since    = NULL,
+         heartbeat_at     = now(),
+         updated_at       = now()
+   WHERE account = p_account AND date_from = p_date_from AND date_to = p_date_to;
+$$;
+
+
+--
+-- Name: vendas_sync_heartbeat(text, date, date, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.vendas_sync_heartbeat(p_account text, p_date_from date, p_date_to date, p_page integer) RETURNS void
+    LANGUAGE sql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  UPDATE public.vendas_sync_cursor
+     SET heartbeat_at = now(), next_page = p_page, updated_at = now()
+   WHERE account = p_account AND date_from = p_date_from AND date_to = p_date_to
+     AND running_since IS NOT NULL;
+$$;
+
+
+--
+-- Name: vendas_sync_lease_acquire(text, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.vendas_sync_lease_acquire(p_account text, p_date_from date, p_date_to date) RETURNS integer
+    LANGUAGE sql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  UPDATE public.vendas_sync_cursor
+     SET running_since = now(), heartbeat_at = now(), updated_at = now()
+   WHERE account = p_account AND date_from = p_date_from AND date_to = p_date_to
+     AND completed_at IS NULL
+     AND (running_since IS NULL OR heartbeat_at < now() - interval '3 minutes')
+  RETURNING COALESCE(next_page, 1);
+$$;
+
+
+--
+-- Name: vendas_sync_release(text, date, date, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.vendas_sync_release(p_account text, p_date_from date, p_date_to date, p_last_error_kind text) RETURNS void
+    LANGUAGE sql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  UPDATE public.vendas_sync_cursor
+     SET running_since = NULL, last_error_kind = p_last_error_kind,
+         heartbeat_at = now(), updated_at = now()
+   WHERE account = p_account AND date_from = p_date_from AND date_to = p_date_to;
+$$;
+
+
+--
+-- Name: wa_is_stop_keyword(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.wa_is_stop_keyword(p_body text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select case
+    when p_body is null then false
+    else trim(upper(regexp_replace(
+           translate(p_body,
+             'àáâãäåèéêëìíîïòóôõöùúûüçñÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÇÑ',
+             'aaaaaaeeeeiiiiooooouuuucnAAAAAAEEEEIIIIOOOOOUUUUCN'),
+           '[^A-Za-z ]', '', 'g')))
+         in ('PARAR','SAIR','STOP','CANCELAR','DESCADASTRAR')
+  end;
+$$;
+
+
+--
+-- Name: wa_owner_efetivo(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.wa_owner_efetivo(p_customer uuid) RETURNS uuid
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  select coalesce(
+    (select cc.covering_user_id from public.carteira_coverage cc
+      where cc.covered_user_id = ca.owner_user_id and cc.active
+        and now() >= cc.valid_from and (cc.valid_until is null or now() <= cc.valid_until)
+      order by cc.valid_from desc limit 1),
+    ca.owner_user_id)
+  from public.carteira_assignments ca
+  where ca.customer_user_id = p_customer and ca.eligible
+  order by ca.valid_from desc limit 1;
+$$;
+
+
+--
+-- Name: whatsapp_minutos_uteis(timestamp with time zone, timestamp with time zone, time without time zone, time without time zone, integer[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.whatsapp_minutos_uteis(p_desde timestamp with time zone, p_ate timestamp with time zone, p_h_inicio time without time zone DEFAULT '07:30:00'::time without time zone, p_h_fim time without time zone DEFAULT '17:30:00'::time without time zone, p_dias integer[] DEFAULT ARRAY[1, 2, 3, 4, 5]) RETURNS integer
+    LANGUAGE plpgsql STABLE
+    AS $$
+declare
+  v_total interval := interval '0'; v_dia date; v_dia_fim date;
+  v_jan_ini timestamptz; v_jan_fim timestamptz; v_ov_ini timestamptz; v_ov_fim timestamptz; v_guard int := 0;
+begin
+  if p_desde is null or p_ate is null or p_desde >= p_ate then return 0; end if;
+  v_dia := (p_desde at time zone 'America/Sao_Paulo')::date;
+  v_dia_fim := (p_ate at time zone 'America/Sao_Paulo')::date;
+  while v_dia <= v_dia_fim loop
+    v_guard := v_guard + 1; exit when v_guard > 400;
+    if extract(isodow from v_dia)::int = any(p_dias) then
+      v_jan_ini := (v_dia + p_h_inicio) at time zone 'America/Sao_Paulo';
+      v_jan_fim := (v_dia + p_h_fim) at time zone 'America/Sao_Paulo';
+      v_ov_ini := greatest(p_desde, v_jan_ini); v_ov_fim := least(p_ate, v_jan_fim);
+      if v_ov_fim > v_ov_ini then v_total := v_total + (v_ov_fim - v_ov_ini); end if;
+    end if;
+    v_dia := v_dia + 1;
+  end loop;
+  return floor(extract(epoch from v_total) / 60)::int;
+end; $$;
+
+
+--
+-- Name: whatsapp_sla_digest_tick(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.whatsapp_sla_digest_tick() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare
+  v_hoje date := (now() at time zone 'America/Sao_Paulo')::date;
+  v_habil text; v_vermelhos int; v_titulo text; v_msg text;
+begin
+  select value into v_habil from public.company_config where key='whatsapp_sla_digest_habilitado';
+  if coalesce(v_habil,'true') <> 'true' then return; end if;
+  insert into public.whatsapp_sla_digest_log(data_local) values (v_hoje) on conflict do nothing;
+  if not found then return; end if;
+  select count(*) into v_vermelhos from public.v_whatsapp_sla where nivel='vermelho';
+  if v_vermelhos = 0 then return; end if;
+  select string_agg(linha, E'\n' order by ord) into v_msg from (
+    select
+      coalesce(p.name, '⚠️ Sem dono (cliente sem carteira)') || ': '
+        || count(*) || ' esperando, '
+        || count(*) filter (where s.nivel='vermelho') || ' atrasado(s), pior '
+        || max(s.minutos_uteis_aguardando) || ' min' as linha,
+      (case when s.owner_user_id is null then 1 else 0 end) * 1000000
+        - count(*) filter (where s.nivel='vermelho') as ord
+    from public.v_whatsapp_sla s
+    left join public.profiles p on p.user_id = s.owner_user_id
+    group by s.owner_user_id, p.name
+  ) t;
+  v_titulo := 'WhatsApp: ' || v_vermelhos || ' cliente(s) atrasado(s) hoje';
+  insert into public.fornecedor_alerta(tipo, empresa, severidade, status, titulo, mensagem)
+  values ('whatsapp_sla', 'oben', 'atencao', 'pendente_notificacao', v_titulo, v_msg);
+end;
+$$;
+
+
+--
+-- Name: _preflight_tint; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public._preflight_tint (
+    ts timestamp with time zone DEFAULT now(),
+    run_id uuid,
+    staging_formulas integer,
+    tempo_ms numeric,
+    ok boolean,
+    resultado jsonb,
+    erro text
+);
+
 
 --
 -- Name: abc_xyz_classification; Type: TABLE; Schema: public; Owner: -
@@ -5101,6 +12143,21 @@ CREATE TABLE public.addresses (
     is_default boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     is_from_omie boolean DEFAULT false NOT NULL
+);
+
+
+--
+-- Name: afiacao_os_sync_fila; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.afiacao_os_sync_fila (
+    order_id uuid NOT NULL,
+    etapa_alvo text NOT NULL,
+    status_app text NOT NULL,
+    tentativas integer DEFAULT 0 NOT NULL,
+    next_retry_em timestamp with time zone DEFAULT now() NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    atualizado_em timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -5241,6 +12298,27 @@ CREATE TABLE public.carteira_coverage (
 
 
 --
+-- Name: carteira_positivacao_snapshot; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.carteira_positivacao_snapshot (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    mes date NOT NULL,
+    customer_user_id uuid NOT NULL,
+    owner_user_id uuid NOT NULL,
+    eligible boolean NOT NULL,
+    had_order_in_month boolean NOT NULL,
+    first_order_date_in_month date,
+    revenue_month numeric,
+    contacted_in_month boolean DEFAULT false NOT NULL,
+    visited_in_month boolean DEFAULT false NOT NULL,
+    days_since_last_purchase_at_month_start integer,
+    churn_risk_at_month_start numeric,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: categoria_aumento_familia_mapeamento; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5287,6 +12365,92 @@ CREATE TABLE public.category_mappings (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     order_category text NOT NULL,
     tool_category_id uuid
+);
+
+
+--
+-- Name: cep_geo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cep_geo (
+    cep text NOT NULL,
+    lat double precision NOT NULL,
+    lng double precision NOT NULL,
+    source text NOT NULL,
+    "precision" text NOT NULL,
+    confidence numeric,
+    municipio_codigo text,
+    uf text,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    raw jsonb,
+    CONSTRAINT cep_geo_cep_check CHECK ((cep ~ '^[0-9]{8}$'::text)),
+    CONSTRAINT cep_geo_precision_check CHECK (("precision" = ANY (ARRAY['rooftop'::text, 'street'::text, 'postcode_centroid'::text, 'city_centroid'::text, 'unknown'::text])))
+);
+
+
+--
+-- Name: cliente_classificacao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cliente_classificacao (
+    user_id uuid NOT NULL,
+    tags_omie text[] DEFAULT '{}'::text[] NOT NULL,
+    is_fornecedor boolean DEFAULT false NOT NULL,
+    excluir_da_carteira boolean DEFAULT false NOT NULL,
+    tem_venda_real boolean DEFAULT false NOT NULL,
+    tags_synced_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: cliente_grupo_membros; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cliente_grupo_membros (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    grupo_id uuid NOT NULL,
+    documento text NOT NULL,
+    relation_type text DEFAULT 'incerto'::text NOT NULL,
+    valid_from date,
+    valid_to date,
+    confirmed_by uuid,
+    confirmed_at timestamp with time zone DEFAULT now(),
+    note text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cliente_grupo_membros_documento_digits CHECK (((documento ~ '^[0-9]+$'::text) AND (char_length(documento) = ANY (ARRAY[11, 14])))),
+    CONSTRAINT cliente_grupo_membros_relation_type_check CHECK ((relation_type = ANY (ARRAY['sucessao'::text, 'multi_ativo'::text, 'incerto'::text])))
+);
+
+
+--
+-- Name: cliente_grupos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cliente_grupos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    nome text NOT NULL,
+    notas text,
+    ativo boolean DEFAULT true NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: cmc_ledger; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cmc_ledger (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text NOT NULL,
+    omie_codigo_produto bigint NOT NULL,
+    cmc_anterior numeric,
+    cmc_novo numeric NOT NULL,
+    saldo numeric,
+    observed_at timestamp with time zone DEFAULT now() NOT NULL,
+    synced_at timestamp with time zone
 );
 
 
@@ -5400,6 +12564,28 @@ CREATE TABLE public.cte_associados (
 
 
 --
+-- Name: customer_canonical_alias; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_canonical_alias (
+    alias_user_id uuid NOT NULL,
+    canonical_user_id uuid NOT NULL,
+    documento text,
+    alias_omie_codigo bigint,
+    alias_conta text,
+    canonical_omie_codigo bigint,
+    canonical_conta text,
+    status text DEFAULT 'inactive'::text NOT NULL,
+    reason text,
+    batch_id text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cca_no_self CHECK ((alias_user_id <> canonical_user_id)),
+    CONSTRAINT customer_canonical_alias_status_check CHECK ((status = ANY (ARRAY['active'::text, 'inactive'::text, 'conflict'::text])))
+);
+
+
+--
 -- Name: customer_contacts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5483,7 +12669,11 @@ CREATE TABLE public.sales_orders (
     customer_address text,
     customer_phone text,
     ready_by_date date,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    order_date_kpi date,
+    checkout_id uuid,
+    origem text,
+    atendimento_id uuid
 );
 
 
@@ -5642,7 +12832,8 @@ CREATE TABLE public.customer_visit_scores (
     days_since_last_visit integer,
     score_breakdown jsonb DEFAULT '{}'::jsonb,
     calculated_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    city_norm text GENERATED ALWAYS AS (public.route_city_norm(city)) STORED
 );
 
 
@@ -6298,6 +13489,8 @@ CREATE TABLE public.farmer_calls (
     entities_extracted jsonb,
     call_backend text,
     phone_dialed text,
+    atendimento_id uuid,
+    sinais_ligacao jsonb,
     CONSTRAINT farmer_calls_call_backend_check CHECK (((call_backend IS NULL) OR (call_backend = ANY (ARRAY['nvoip'::text, 'webrtc'::text, 'manual'::text]))))
 );
 
@@ -6335,6 +13528,13 @@ COMMENT ON COLUMN public.farmer_calls.call_backend IS 'Qual backend foi usado: n
 --
 
 COMMENT ON COLUMN public.farmer_calls.phone_dialed IS 'Telefone normalizado (dígitos apenas) que foi discado. Útil quando customer_user_id ainda é NULL.';
+
+
+--
+-- Name: COLUMN farmer_calls.sinais_ligacao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_calls.sinais_ligacao IS 'Envelope pós-call (1 writer = edge extrair-sinais-ligacao): { schema_version, extractor_model, prompt_version, source_transcript_hash, extracted_at, status, error, sinais: { precos[], marcas_em_uso[], produtos_gap[], demandas_novas[], houve_sinal } }';
 
 
 --
@@ -6588,6 +13788,22 @@ CREATE TABLE public.farmer_learning_weights (
 
 
 --
+-- Name: farmer_mixgap_feedback; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.farmer_mixgap_feedback (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    seller_user_id uuid NOT NULL,
+    customer_user_id uuid NOT NULL,
+    familia text NOT NULL,
+    status text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT farmer_mixgap_feedback_status_check CHECK ((status = ANY (ARRAY['ofertado'::text, 'convertido'::text, 'recusado'::text])))
+);
+
+
+--
 -- Name: farmer_performance_scores; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -6696,50 +13912,10 @@ CREATE TABLE public.farmer_tactical_plans (
 
 
 --
--- Name: fin_contas_pagar; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.fin_contas_pagar (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    company text NOT NULL,
-    omie_codigo_lancamento bigint NOT NULL,
-    omie_codigo_cliente_fornecedor bigint,
-    nome_fornecedor text,
-    cnpj_cpf text,
-    numero_documento text,
-    numero_documento_fiscal text,
-    data_emissao date,
-    data_vencimento date,
-    data_pagamento date,
-    data_previsao date,
-    valor_documento numeric(15,2) DEFAULT 0 NOT NULL,
-    valor_pago numeric(15,2) DEFAULT 0,
-    valor_desconto numeric(15,2) DEFAULT 0,
-    valor_juros numeric(15,2) DEFAULT 0,
-    valor_multa numeric(15,2) DEFAULT 0,
-    saldo numeric(15,2) GENERATED ALWAYS AS ((valor_documento - COALESCE(valor_pago, (0)::numeric))) STORED,
-    status_titulo text DEFAULT 'ABERTO'::text,
-    categoria_codigo text,
-    categoria_descricao text,
-    departamento text,
-    centro_custo text,
-    observacao text,
-    omie_ncodcc bigint,
-    codigo_barras text,
-    tipo_documento text,
-    id_origem text,
-    metadata jsonb DEFAULT '{}'::jsonb,
-    created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone DEFAULT now(),
-    CONSTRAINT fin_contas_pagar_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text])))
-);
-
-
---
 -- Name: fin_aging_pagar; Type: VIEW; Schema: public; Owner: -
 --
 
-CREATE VIEW public.fin_aging_pagar WITH (security_invoker='on') AS
+CREATE VIEW public.fin_aging_pagar AS
  SELECT company,
     count(*) FILTER (WHERE (data_vencimento >= CURRENT_DATE)) AS a_vencer_qtd,
     COALESCE(sum(saldo) FILTER (WHERE (data_vencimento >= CURRENT_DATE)), (0)::numeric) AS a_vencer_valor,
@@ -6752,56 +13928,15 @@ CREATE VIEW public.fin_aging_pagar WITH (security_invoker='on') AS
     count(*) FILTER (WHERE ((CURRENT_DATE - data_vencimento) > 90)) AS vencido_90_plus_qtd,
     COALESCE(sum(saldo) FILTER (WHERE ((CURRENT_DATE - data_vencimento) > 90)), (0)::numeric) AS vencido_90_plus_valor
    FROM public.fin_contas_pagar
-  WHERE (status_titulo = ANY (ARRAY['ABERTO'::text, 'VENCIDO'::text, 'PARCIAL'::text]))
+  WHERE (status_titulo <> ALL (ARRAY['PAGO'::text, 'CANCELADO'::text]))
   GROUP BY company;
-
-
---
--- Name: fin_contas_receber; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.fin_contas_receber (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    company text NOT NULL,
-    omie_codigo_lancamento bigint NOT NULL,
-    omie_codigo_cliente bigint,
-    nome_cliente text,
-    cnpj_cpf text,
-    numero_documento text,
-    numero_documento_fiscal text,
-    numero_pedido text,
-    data_emissao date,
-    data_vencimento date,
-    data_recebimento date,
-    data_previsao date,
-    valor_documento numeric(15,2) DEFAULT 0 NOT NULL,
-    valor_recebido numeric(15,2) DEFAULT 0,
-    valor_desconto numeric(15,2) DEFAULT 0,
-    valor_juros numeric(15,2) DEFAULT 0,
-    valor_multa numeric(15,2) DEFAULT 0,
-    saldo numeric(15,2) GENERATED ALWAYS AS ((valor_documento - COALESCE(valor_recebido, (0)::numeric))) STORED,
-    status_titulo text DEFAULT 'ABERTO'::text,
-    categoria_codigo text,
-    categoria_descricao text,
-    departamento text,
-    centro_custo text,
-    observacao text,
-    omie_ncodcc bigint,
-    vendedor_id bigint,
-    tipo_documento text,
-    id_origem text,
-    metadata jsonb DEFAULT '{}'::jsonb,
-    created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone DEFAULT now(),
-    CONSTRAINT fin_contas_receber_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text])))
-);
 
 
 --
 -- Name: fin_aging_receber; Type: VIEW; Schema: public; Owner: -
 --
 
-CREATE VIEW public.fin_aging_receber WITH (security_invoker='on') AS
+CREATE VIEW public.fin_aging_receber AS
  SELECT company,
     count(*) FILTER (WHERE (data_vencimento >= CURRENT_DATE)) AS a_vencer_qtd,
     COALESCE(sum(saldo) FILTER (WHERE (data_vencimento >= CURRENT_DATE)), (0)::numeric) AS a_vencer_valor,
@@ -6814,7 +13949,7 @@ CREATE VIEW public.fin_aging_receber WITH (security_invoker='on') AS
     count(*) FILTER (WHERE ((CURRENT_DATE - data_vencimento) > 90)) AS vencido_90_plus_qtd,
     COALESCE(sum(saldo) FILTER (WHERE ((CURRENT_DATE - data_vencimento) > 90)), (0)::numeric) AS vencido_90_plus_valor
    FROM public.fin_contas_receber
-  WHERE (status_titulo = ANY (ARRAY['ABERTO'::text, 'VENCIDO'::text, 'PARCIAL'::text]))
+  WHERE (status_titulo <> ALL (ARRAY['RECEBIDO'::text, 'CANCELADO'::text]))
   GROUP BY company;
 
 
@@ -6835,6 +13970,7 @@ CREATE TABLE public.fin_alertas (
     dismissed_at timestamp with time zone,
     dismissed_by uuid,
     dismissed_until timestamp with time zone,
+    email_enfileirado_em timestamp with time zone,
     CONSTRAINT fin_alertas_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
     CONSTRAINT fin_alertas_severidade_check CHECK ((severidade = ANY (ARRAY['info'::text, 'aviso'::text, 'critico'::text])))
 );
@@ -6848,55 +13984,10 @@ COMMENT ON TABLE public.fin_alertas IS 'Alertas avaliados pela engine. UNIQUE em
 
 
 --
--- Name: fin_analise_cp_dimensoes; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+-- Name: COLUMN fin_alertas.email_enfileirado_em; Type: COMMENT; Schema: public; Owner: -
 --
 
-CREATE MATERIALIZED VIEW public.fin_analise_cp_dimensoes AS
- SELECT company,
-    (EXTRACT(year FROM data_vencimento))::integer AS ano,
-    (EXTRACT(month FROM data_vencimento))::integer AS mes,
-    categoria_codigo,
-    categoria_descricao,
-    departamento,
-    centro_custo,
-    nome_fornecedor,
-    cnpj_cpf,
-    tipo_documento,
-    status_titulo,
-    count(*) AS qtd_titulos,
-    sum(valor_documento) AS total_documento,
-    sum(valor_pago) AS total_pago,
-    sum(saldo) AS total_saldo
-   FROM public.fin_contas_pagar
-  WHERE (data_vencimento IS NOT NULL)
-  GROUP BY company, (EXTRACT(year FROM data_vencimento)), (EXTRACT(month FROM data_vencimento)), categoria_codigo, categoria_descricao, departamento, centro_custo, nome_fornecedor, cnpj_cpf, tipo_documento, status_titulo
-  WITH NO DATA;
-
-
---
--- Name: fin_analise_cr_dimensoes; Type: MATERIALIZED VIEW; Schema: public; Owner: -
---
-
-CREATE MATERIALIZED VIEW public.fin_analise_cr_dimensoes AS
- SELECT company,
-    (EXTRACT(year FROM data_vencimento))::integer AS ano,
-    (EXTRACT(month FROM data_vencimento))::integer AS mes,
-    categoria_codigo,
-    categoria_descricao,
-    departamento,
-    centro_custo,
-    vendedor_id,
-    nome_cliente,
-    cnpj_cpf,
-    status_titulo,
-    count(*) AS qtd_titulos,
-    sum(valor_documento) AS total_documento,
-    sum(valor_recebido) AS total_recebido,
-    sum(saldo) AS total_saldo
-   FROM public.fin_contas_receber
-  WHERE (data_vencimento IS NOT NULL)
-  GROUP BY company, (EXTRACT(year FROM data_vencimento)), (EXTRACT(month FROM data_vencimento)), categoria_codigo, categoria_descricao, departamento, centro_custo, vendedor_id, nome_cliente, cnpj_cpf, status_titulo
-  WITH NO DATA;
+COMMENT ON COLUMN public.fin_alertas.email_enfileirado_em IS 'Quando o e-mail deste episódio de alerta foi enfileirado em fornecedor_alerta (gate "uma vez por episódio" + janela de graça do sync_stale). NULL = ainda não notificado. Recriado NULL a cada novo episódio (após dismiss + novo INSERT).';
 
 
 --
@@ -7448,6 +14539,25 @@ CREATE TABLE public.fin_forecast (
 
 
 --
+-- Name: fin_funding_inputs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_funding_inputs (
+    company text NOT NULL,
+    funding_inputs jsonb DEFAULT '{}'::jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by uuid
+);
+
+
+--
+-- Name: COLUMN fin_funding_inputs.funding_inputs; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_funding_inputs.funding_inputs IS 'Funding: { fontes: { antecipacao: {taxa_desconto_mensal_perc, tarifa_fixa, tipo: desconto|factoring, coobrigacao, ativo}, capital_giro: {cet_anual_perc, ativo}, cheque_especial: {cet_anual_perc, ativo} }, reserva_dias_min, gap_estrutural_semanas_min }';
+
+
+--
 -- Name: fin_ic_matches; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7639,6 +14749,25 @@ COMMENT ON TABLE public.fin_projecao_snapshots IS 'Snapshot diário (via cron) d
 
 
 --
+-- Name: fin_regime_inputs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_regime_inputs (
+    company text NOT NULL,
+    regime_inputs jsonb DEFAULT '{}'::jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by uuid
+);
+
+
+--
+-- Name: COLUMN fin_regime_inputs.regime_inputs; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_regime_inputs.regime_inputs IS 'Regime: { folha_cpp_anual, massa_fator_r_anual, encargo_patronal_pct, presuncao_irpj, presuncao_csll, credito_pis_cofins_estimado, receita_tributavel_pis_cofins_pct, anexo_simples }';
+
+
+--
 -- Name: fin_sync_checkpoint; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7659,6 +14788,20 @@ CREATE TABLE public.fin_sync_checkpoint (
     completed_at timestamp with time zone,
     updated_at timestamp with time zone DEFAULT now(),
     CONSTRAINT fin_sync_checkpoint_status_check CHECK ((status = ANY (ARRAY['idle'::text, 'running'::text, 'complete'::text, 'error'::text, 'stale'::text])))
+);
+
+
+--
+-- Name: fin_sync_cursor; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_sync_cursor (
+    company text NOT NULL,
+    resource text NOT NULL,
+    next_page integer,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    backfill_desde date,
+    CONSTRAINT fin_sync_cursor_resource_check CHECK ((resource = ANY (ARRAY['contas_pagar'::text, 'contas_receber'::text, 'movimentacoes'::text])))
 );
 
 
@@ -7739,7 +14882,7 @@ CREATE TABLE public.fornecedor_alerta (
     metadata jsonb,
     CONSTRAINT fornecedor_alerta_severidade_check CHECK ((severidade = ANY (ARRAY['info'::text, 'atencao'::text, 'urgente'::text]))),
     CONSTRAINT fornecedor_alerta_status_check CHECK ((status = ANY (ARRAY['pendente_notificacao'::text, 'notificado'::text, 'falha_notificacao'::text, 'ignorado'::text]))),
-    CONSTRAINT fornecedor_alerta_tipo_check CHECK ((tipo = ANY (ARRAY['promocao_suspensa'::text, 'aumento_anunciado'::text, 'promocao_nova'::text, 'polling_erro'::text, 'mapeamento_pendente'::text, 'oportunidade_calculada'::text, 'outro'::text])))
+    CONSTRAINT fornecedor_alerta_tipo_check CHECK ((tipo = ANY (ARRAY['promocao_suspensa'::text, 'aumento_anunciado'::text, 'promocao_nova'::text, 'polling_erro'::text, 'mapeamento_pendente'::text, 'oportunidade_calculada'::text, 'tarefa_atrasada'::text, 'whatsapp_sla'::text, 'erro_app'::text, 'outro'::text, 'param_auto_resumo'::text, 'reposicao_pedido_minimo'::text])))
 );
 
 
@@ -8143,6 +15286,18 @@ ALTER SEQUENCE public.fornecedor_email_polling_log_id_seq OWNED BY public.fornec
 
 
 --
+-- Name: fornecedor_excecao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fornecedor_excecao (
+    user_id uuid NOT NULL,
+    motivo text,
+    criado_por uuid,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: fornecedor_grupo_producao; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8448,6 +15603,21 @@ CREATE TABLE public.health_score_history (
 
 
 --
+-- Name: impersonation_audit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.impersonation_audit (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    actor_user_id uuid NOT NULL,
+    target_user_id uuid NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    ended_at timestamp with time zone,
+    reason text,
+    source text DEFAULT 'master_dashboard'::text NOT NULL
+);
+
+
+--
 -- Name: inventory_position; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8575,6 +15745,91 @@ COMMENT ON TABLE public.kb_documents IS 'Knowledge base: boletins técnicos, cas
 
 
 --
+-- Name: kb_extraction_drafts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.kb_extraction_drafts (
+    document_id uuid NOT NULL,
+    status text DEFAULT 'extracting'::text NOT NULL,
+    spec jsonb,
+    claim_token uuid,
+    started_at timestamp with time zone,
+    extracted_at timestamp with time zone,
+    last_error text,
+    model text,
+    usage jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT kb_extraction_drafts_status_check CHECK ((status = ANY (ARRAY['extracting'::text, 'ready'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: kb_product_spec_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.kb_product_spec_versions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    supplier text NOT NULL,
+    product_code_normalized text NOT NULL,
+    product_code text NOT NULL,
+    kb_product_spec_id uuid,
+    version_number integer NOT NULL,
+    source_document_id uuid,
+    change_type text NOT NULL,
+    change_note text,
+    product_name text,
+    product_line text,
+    product_category text,
+    densidade_g_cm3 numeric,
+    solidos_pct numeric,
+    viscosidade_aplicacao_s numeric,
+    viscosidade_copo text,
+    brilho_ub numeric,
+    dureza text,
+    rendimento_m2_por_litro numeric,
+    demaos_recomendadas integer,
+    gramatura_g_m2_min integer,
+    gramatura_g_m2_max integer,
+    pot_life_horas numeric,
+    temp_aplicacao_c_min numeric,
+    temp_aplicacao_c_max numeric,
+    umidade_aplicacao_pct_min numeric,
+    umidade_aplicacao_pct_max numeric,
+    catalisador_codigo text,
+    catalisador_proporcao_pct numeric,
+    diluente_codigo text,
+    equipamentos_aplicacao text[],
+    lixa_recomendada text,
+    substrato text[],
+    secagem_manuseio_h numeric,
+    secagem_empilhamento_h numeric,
+    secagem_total_h numeric,
+    validade_dias integer,
+    temp_armazenamento_c_min integer,
+    temp_armazenamento_c_max integer,
+    certificacoes_aplicaveis text[],
+    isento_metais_pesados text[],
+    isento_substancias text[],
+    diferenciais_chave text[],
+    uso_recomendado text,
+    publico_alvo text,
+    extraction_confidence numeric,
+    extraction_gaps text[],
+    approved_by uuid,
+    approved_at timestamp with time zone DEFAULT now() NOT NULL,
+    superseded_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT kb_product_spec_versions_change_type_check CHECK ((change_type = ANY (ARRAY['initial'::text, 'bulletin_revision'::text, 'correction'::text, 'data_completion'::text]))),
+    CONSTRAINT kbv_catalisador_pct_nonneg CHECK (((catalisador_proporcao_pct IS NULL) OR (catalisador_proporcao_pct >= (0)::numeric))),
+    CONSTRAINT kbv_demaos_nonneg CHECK (((demaos_recomendadas IS NULL) OR (demaos_recomendadas >= 0))),
+    CONSTRAINT kbv_potlife_nonneg CHECK (((pot_life_horas IS NULL) OR (pot_life_horas >= (0)::numeric))),
+    CONSTRAINT kbv_rendimento_nonneg CHECK (((rendimento_m2_por_litro IS NULL) OR (rendimento_m2_por_litro >= (0)::numeric))),
+    CONSTRAINT kbv_validade_nonneg CHECK (((validade_dias IS NULL) OR (validade_dias >= 0)))
+);
+
+
+--
 -- Name: kb_product_specs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8625,7 +15880,13 @@ CREATE TABLE public.kb_product_specs (
     approved_by uuid,
     approved_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    product_code_normalized text,
+    CONSTRAINT kb_spec_catalisador_pct_nonneg CHECK (((catalisador_proporcao_pct IS NULL) OR (catalisador_proporcao_pct >= (0)::numeric))),
+    CONSTRAINT kb_spec_demaos_nonneg CHECK (((demaos_recomendadas IS NULL) OR (demaos_recomendadas >= 0))),
+    CONSTRAINT kb_spec_potlife_nonneg CHECK (((pot_life_horas IS NULL) OR (pot_life_horas >= (0)::numeric))),
+    CONSTRAINT kb_spec_rendimento_nonneg CHECK (((rendimento_m2_por_litro IS NULL) OR (rendimento_m2_por_litro >= (0)::numeric))),
+    CONSTRAINT kb_spec_validade_nonneg CHECK (((validade_dias IS NULL) OR (validade_dias >= 0)))
 );
 
 
@@ -8679,324 +15940,102 @@ CREATE TABLE public.margin_audit_log (
 
 
 --
--- Name: promocao_campanha; Type: TABLE; Schema: public; Owner: -
+-- Name: markup_policy; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.promocao_campanha (
-    id bigint NOT NULL,
+CREATE TABLE public.markup_policy (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text NOT NULL,
+    escopo text NOT NULL,
+    familia text,
+    sku_codigo bigint,
+    piso_markup numeric NOT NULL,
+    meta_markup numeric NOT NULL,
+    updated_by uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT markup_policy_check CHECK ((meta_markup >= piso_markup)),
+    CONSTRAINT markup_policy_check1 CHECK ((((escopo = 'conta'::text) AND (familia IS NULL) AND (sku_codigo IS NULL)) OR ((escopo = 'familia'::text) AND (familia IS NOT NULL) AND (sku_codigo IS NULL)) OR ((escopo = 'sku'::text) AND (sku_codigo IS NOT NULL)))),
+    CONSTRAINT markup_policy_escopo_check CHECK ((escopo = ANY (ARRAY['conta'::text, 'familia'::text, 'sku'::text]))),
+    CONSTRAINT markup_policy_finite CHECK (((piso_markup <> 'NaN'::numeric) AND (meta_markup <> 'NaN'::numeric) AND (piso_markup < 'Infinity'::numeric) AND (meta_markup < 'Infinity'::numeric))),
+    CONSTRAINT markup_policy_meta_markup_check CHECK ((meta_markup >= (0)::numeric)),
+    CONSTRAINT markup_policy_piso_markup_check CHECK ((piso_markup >= (0)::numeric))
+);
+
+
+--
+-- Name: melhoria_itens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.melhoria_itens (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    autor_user_id uuid NOT NULL,
     empresa text NOT NULL,
-    fornecedor_nome text NOT NULL,
-    nome text NOT NULL,
-    tipo_origem text NOT NULL,
-    data_inicio date NOT NULL,
-    data_fim date NOT NULL,
-    estado text DEFAULT 'rascunho'::text NOT NULL,
-    origem_arquivo_url text,
-    origem_arquivo_tipo text,
-    origem_email_assunto text,
-    origem_email_remetente text,
-    origem_email_data timestamp with time zone,
-    extracao_confianca numeric,
-    extracao_observacoes text,
-    extraido_em timestamp with time zone,
-    observacoes text,
-    criado_em timestamp with time zone DEFAULT now(),
-    criado_por text,
-    atualizado_em timestamp with time zone DEFAULT now(),
-    atualizado_por text,
-    data_corte_pedido date,
-    data_corte_faturamento date,
-    permite_pedido_oportunidade boolean DEFAULT true,
-    responsavel_oferta_nome text,
-    responsavel_oferta_email text,
-    canal_oferta text,
-    data_oferta date,
-    volume_minimo_condicional numeric,
-    volume_minimo_unidade text,
-    status_aceite text DEFAULT 'pendente'::text,
-    observacoes_negociacao text,
-    CONSTRAINT ck_periodo_coerente CHECK ((data_fim >= data_inicio)),
-    CONSTRAINT promocao_campanha_canal_oferta_check CHECK (((canal_oferta IS NULL) OR (canal_oferta = ANY (ARRAY['email'::text, 'whatsapp'::text, 'ligacao'::text, 'visita_presencial'::text, 'outro'::text])))),
-    CONSTRAINT promocao_campanha_estado_check CHECK ((estado = ANY (ARRAY['rascunho'::text, 'negociando'::text, 'ativa'::text, 'encerrada'::text, 'cancelada'::text]))),
-    CONSTRAINT promocao_campanha_status_aceite_check CHECK ((status_aceite = ANY (ARRAY['pendente'::text, 'aceita'::text, 'recusada'::text, 'cumprida'::text, 'expirada'::text]))),
-    CONSTRAINT promocao_campanha_tipo_origem_check CHECK ((tipo_origem = ANY (ARRAY['fornecedor_impoe'::text, 'oficial_mensal'::text, 'negociacao_cliente'::text, 'desconto_flat_condicional'::text, 'outro'::text]))),
-    CONSTRAINT promocao_campanha_volume_minimo_unidade_check CHECK (((volume_minimo_unidade IS NULL) OR (volume_minimo_unidade = ANY (ARRAY['unidades'::text, 'reais'::text, 'kg'::text, 'litros'::text]))))
-);
-
-
---
--- Name: TABLE promocao_campanha; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.promocao_campanha IS 'Uma campanha promocional. Pode ser imposta pelo fornecedor (PDF/imagem mensal) ou resultado de negociação pontual. Agrupa N itens sob mesmas datas de vigência.';
-
-
---
--- Name: COLUMN promocao_campanha.data_corte_pedido; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.promocao_campanha.data_corte_pedido IS 'Último dia útil em que a Sayerlack aceita pedido dessa campanha. Tipicamente último dia útil do mês. Ciclo de oportunidade roda neste dia.';
-
-
---
--- Name: COLUMN promocao_campanha.data_corte_faturamento; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.promocao_campanha.data_corte_faturamento IS 'Último dia em que a NF da promoção deve sair. Pode cair no mês seguinte ao fim da promoção se pedido foi colocado dentro do corte.';
-
-
---
--- Name: COLUMN promocao_campanha.permite_pedido_oportunidade; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.promocao_campanha.permite_pedido_oportunidade IS 'Se FALSE, campanha não gera ciclo de oportunidade. Útil para promoções retroativas históricas (os 12 meses) ou campanhas já encerradas.';
-
-
---
--- Name: promocao_item; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.promocao_item (
-    id bigint NOT NULL,
-    campanha_id bigint NOT NULL,
-    sku_codigo_fornecedor text NOT NULL,
-    descricao_produto_fornecedor text,
-    sku_codigo_omie bigint,
-    mapeamento_qualidade text,
-    mapeamento_candidatos jsonb,
-    desconto_perc numeric NOT NULL,
-    volume_minimo numeric,
-    confirmado boolean DEFAULT false NOT NULL,
-    ativo boolean DEFAULT true NOT NULL,
-    observacoes text,
-    criado_em timestamp with time zone DEFAULT now(),
-    atualizado_em timestamp with time zone DEFAULT now(),
-    desconto_extra_perc numeric,
-    desconto_extra_observacoes text,
-    desconto_extra_negociado_por text,
-    desconto_extra_negociado_em timestamp with time zone,
-    desconto_extra_email_referencia text,
-    CONSTRAINT promocao_item_desconto_extra_perc_check CHECK (((desconto_extra_perc IS NULL) OR ((desconto_extra_perc > (0)::numeric) AND (desconto_extra_perc <= (50)::numeric)))),
-    CONSTRAINT promocao_item_desconto_perc_check CHECK (((desconto_perc > (0)::numeric) AND (desconto_perc <= (100)::numeric))),
-    CONSTRAINT promocao_item_mapeamento_qualidade_check CHECK ((mapeamento_qualidade = ANY (ARRAY['unico'::text, 'unico_por_similaridade'::text, 'ambiguo'::text, 'nao_encontrado'::text, 'manual_confirmado'::text, 'expandido_automatico'::text, 'expandido_por_similaridade'::text, 'expandido_origem'::text, NULL::text])))
-);
-
-
---
--- Name: TABLE promocao_item; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.promocao_item IS 'Item específico dentro de uma campanha. volume_minimo NULL indica promoção flat; volume_minimo preenchido indica condição de volume (imposta ou negociada).';
-
-
---
--- Name: sku_leadtime_history; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.sku_leadtime_history (
-    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
-    tracking_id uuid NOT NULL,
-    empresa public.empresa_reposicao NOT NULL,
-    sku_codigo_omie bigint NOT NULL,
-    sku_codigo text,
-    sku_descricao text,
-    sku_unidade text,
-    sku_ncm text,
-    fornecedor_codigo_omie bigint,
-    fornecedor_nome text,
-    grupo_leadtime text,
-    quantidade_pedida numeric(15,4),
-    quantidade_recebida numeric(15,4),
-    valor_unitario numeric(15,4),
-    valor_total numeric(15,2),
-    t1_data_pedido timestamp with time zone NOT NULL,
-    t2_data_faturamento timestamp with time zone,
-    t3_data_cte timestamp with time zone,
-    t4_data_recebimento timestamp with time zone,
-    lt_bruto_dias_uteis integer,
-    lt_faturamento_dias_uteis integer,
-    lt_logistica_dias_uteis integer,
+    rota_origem text,
+    tipo text,
+    urgencia text,
+    modulo text,
+    titulo text,
+    status text DEFAULT 'aberto'::text NOT NULL,
+    triagem_status text DEFAULT 'pendente'::text NOT NULL,
+    avaliacao_founder text,
+    resposta_founder text,
+    resolvido_em timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    origem_compra text DEFAULT 'normal'::text NOT NULL,
-    CONSTRAINT sku_leadtime_history_origem_compra_check CHECK ((origem_compra = ANY (ARRAY['normal'::text, 'oportunidade_promo'::text, 'oportunidade_aumento'::text, 'manual'::text, 'desconhecida'::text])))
+    CONSTRAINT melhoria_itens_empresa_check CHECK ((empresa = ANY (ARRAY['colacor'::text, 'oben'::text, 'colacor_sc'::text]))),
+    CONSTRAINT melhoria_itens_status_check CHECK ((status = ANY (ARRAY['aberto'::text, 'em_andamento'::text, 'resolvido'::text, 'descartado'::text]))),
+    CONSTRAINT melhoria_itens_tipo_check CHECK ((tipo = ANY (ARRAY['problema'::text, 'sugestao'::text, 'pergunta'::text]))),
+    CONSTRAINT melhoria_itens_triagem_status_check CHECK ((triagem_status = ANY (ARRAY['pendente'::text, 'ok'::text, 'erro'::text]))),
+    CONSTRAINT melhoria_itens_urgencia_check CHECK ((urgencia = ANY (ARRAY['baixa'::text, 'media'::text, 'alta'::text])))
 );
 
 
 --
--- Name: TABLE sku_leadtime_history; Type: COMMENT; Schema: public; Owner: -
+-- Name: melhoria_mensagens; Type: TABLE; Schema: public; Owner: -
 --
 
-COMMENT ON TABLE public.sku_leadtime_history IS 'Histórico granular SKU x recebimento. Base estatística para média, desvio padrão e percentis de lead time.';
-
-
---
--- Name: COLUMN sku_leadtime_history.origem_compra; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.sku_leadtime_history.origem_compra IS 'Categoriza como a compra foi iniciada. Apenas origem_compra = normal alimenta as estatísticas de lead time (views como v_sku_leadtime_estatisticas).';
-
-
---
--- Name: sku_parametros; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.sku_parametros (
+CREATE TABLE public.melhoria_mensagens (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    empresa text NOT NULL,
-    sku_codigo_omie bigint NOT NULL,
-    sku_descricao text,
-    fornecedor_codigo_omie bigint,
-    fornecedor_nome text,
-    classe_abc character(1),
-    classe_xyz character(1),
-    classe_consolidada text GENERATED ALWAYS AS (((classe_abc)::text || (classe_xyz)::text)) STORED,
-    classe_forcada text,
-    motivo_classe_forcada text,
-    classe_proposta_pendente text,
-    meses_consecutivos_nova_classe integer DEFAULT 0,
-    data_ultima_mudanca_classe date,
-    demanda_media_diaria numeric,
-    demanda_desvio_padrao numeric,
-    demanda_coef_variacao numeric,
-    demanda_dias_com_movimento integer,
-    demanda_total_90d numeric,
-    valor_vendido_90d numeric,
-    lt_medio_dias_uteis numeric,
-    lt_desvio_padrao_dias numeric,
-    lt_p95_dias numeric,
-    lt_n_observacoes integer,
-    fonte_leadtime text,
-    z_score numeric,
-    estoque_seguranca numeric,
-    ponto_pedido numeric,
-    estoque_minimo numeric,
-    cobertura_alvo_dias integer,
-    estoque_maximo numeric,
-    lote_minimo_fornecedor numeric DEFAULT 1,
-    ativo boolean DEFAULT true,
-    aplicar_no_omie boolean DEFAULT false,
-    ultima_aplicacao_omie timestamp with time zone,
-    ultima_atualizacao_calculo timestamp with time zone,
-    estoque_minimo_omie numeric,
-    ponto_pedido_omie numeric,
-    estoque_maximo_omie numeric,
-    omie_ultima_sincronizacao timestamp with time zone,
-    aprovado_em timestamp with time zone,
-    aprovado_por text,
-    justificativa_aprovacao text,
-    demanda_multiplicador_override numeric DEFAULT 1.0,
-    motivo_override text,
-    override_validade_ate date,
-    override_criado_em timestamp with time zone,
-    override_criado_por text,
-    habilitado_reposicao_automatica boolean DEFAULT false,
-    tipo_reposicao text DEFAULT 'automatica'::text
+    item_id uuid NOT NULL,
+    autor_user_id uuid,
+    papel text NOT NULL,
+    conteudo text NOT NULL,
+    dados jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT melhoria_mensagens_conteudo_check CHECK ((length(TRIM(BOTH FROM conteudo)) > 0)),
+    CONSTRAINT melhoria_mensagens_papel_check CHECK ((papel = ANY (ARRAY['funcionario'::text, 'ia'::text, 'founder'::text])))
 );
 
 
 --
--- Name: COLUMN sku_parametros.tipo_reposicao; Type: COMMENT; Schema: public; Owner: -
+-- Name: municipio_geo; Type: TABLE; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.sku_parametros.tipo_reposicao IS 'automatica = compra automática via PP/Emax; produto_acabado = fabricado internamente OBEN, nunca comprar; sob_encomenda = só compra quando cliente pede';
+CREATE TABLE public.municipio_geo (
+    municipio_codigo text NOT NULL,
+    lat double precision NOT NULL,
+    lng double precision NOT NULL,
+    uf text,
+    nome text,
+    source text DEFAULT 'ibge'::text NOT NULL
+);
 
 
 --
--- Name: mv_sku_ranking_negociacao_paralela; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+-- Name: nfe_efetivacao_tentativas; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE MATERIALIZED VIEW public.mv_sku_ranking_negociacao_paralela AS
- WITH params AS (
-         SELECT (CURRENT_DATE - '365 days'::interval) AS janela_analise_inicio,
-            (CURRENT_DATE - '90 days'::interval) AS recente_inicio,
-            1.0 AS peso_volume_financeiro,
-            0.8 AS peso_consistencia,
-            0.6 AS peso_preco_unitario,
-            0.4 AS peso_ausencia_promo
-        ), compras_janela AS (
-         SELECT (slh.empresa)::text AS empresa,
-            (slh.sku_codigo_omie)::text AS sku_codigo_omie,
-            sp.sku_descricao,
-            sp.fornecedor_nome,
-            sum(slh.valor_total) AS volume_financeiro_12m,
-            count(*) AS num_compras_12m,
-            (sum(slh.valor_total) / NULLIF(sum(slh.quantidade_recebida), (0)::numeric)) AS preco_medio_unitario,
-            (stddev(slh.valor_total) / NULLIF(avg(slh.valor_total), (0)::numeric)) AS coef_variacao,
-            max(slh.t1_data_pedido) AS ultima_compra,
-            count(DISTINCT date_trunc('month'::text, slh.t1_data_pedido)) AS meses_com_compra
-           FROM ((public.sku_leadtime_history slh
-             JOIN public.sku_parametros sp ON (((sp.empresa = (slh.empresa)::text) AND ((sp.sku_codigo_omie)::text = (slh.sku_codigo_omie)::text))))
-             CROSS JOIN params p)
-          WHERE ((slh.t1_data_pedido >= p.janela_analise_inicio) AND (slh.fornecedor_nome = 'RENNER SAYERLACK S/A'::text) AND ((slh.origem_compra = 'normal'::text) OR (slh.origem_compra IS NULL)) AND (sp.ativo = true) AND (slh.valor_total > (0)::numeric))
-          GROUP BY slh.empresa, slh.sku_codigo_omie, sp.sku_descricao, sp.fornecedor_nome
-         HAVING (count(*) >= 1)
-        ), frequencia_promo AS (
-         SELECT (pi.sku_codigo_omie)::text AS sku_codigo_omie,
-            count(DISTINCT pc.id) AS promocoes_12m,
-            ((count(DISTINCT date_trunc('month'::text, (pc.data_inicio)::timestamp with time zone)))::numeric / 12.0) AS perc_meses_com_promo
-           FROM ((public.promocao_item pi
-             JOIN public.promocao_campanha pc ON ((pc.id = pi.campanha_id)))
-             CROSS JOIN params p)
-          WHERE ((pc.estado = ANY (ARRAY['ativa'::text, 'encerrada'::text])) AND (pc.fornecedor_nome = 'RENNER SAYERLACK S/A'::text) AND (pc.data_inicio >= p.janela_analise_inicio) AND (pi.ativo = true) AND (pi.sku_codigo_omie IS NOT NULL))
-          GROUP BY pi.sku_codigo_omie
-        ), ranking_base AS (
-         SELECT cj.empresa,
-            cj.sku_codigo_omie,
-            cj.sku_descricao,
-            cj.fornecedor_nome,
-            cj.volume_financeiro_12m,
-            cj.num_compras_12m,
-            cj.preco_medio_unitario,
-            cj.coef_variacao,
-            cj.ultima_compra,
-            cj.meses_com_compra,
-            COALESCE(fp.promocoes_12m, (0)::bigint) AS promocoes_12m,
-            COALESCE(fp.perc_meses_com_promo, (0)::numeric) AS perc_meses_com_promo,
-            ((percent_rank() OVER (PARTITION BY cj.empresa ORDER BY cj.volume_financeiro_12m) * (100)::double precision))::numeric AS score_volume,
-            ((((1)::double precision - percent_rank() OVER (PARTITION BY cj.empresa ORDER BY COALESCE(cj.coef_variacao, (999)::numeric))) * (100)::double precision))::numeric AS score_consistencia,
-            ((percent_rank() OVER (PARTITION BY cj.empresa ORDER BY cj.preco_medio_unitario) * (100)::double precision))::numeric AS score_preco,
-            GREATEST((0)::numeric, ((100)::numeric - (COALESCE(fp.perc_meses_com_promo, (0)::numeric) * (200)::numeric))) AS score_ausencia_promo
-           FROM (compras_janela cj
-             LEFT JOIN frequencia_promo fp ON ((fp.sku_codigo_omie = cj.sku_codigo_omie)))
-        )
- SELECT empresa,
-    sku_codigo_omie,
-    sku_descricao,
-    fornecedor_nome,
-    volume_financeiro_12m,
-    num_compras_12m,
-    meses_com_compra,
-    preco_medio_unitario,
-    COALESCE(coef_variacao, (999)::numeric) AS coef_variacao,
-    ultima_compra,
-    promocoes_12m,
-    round((perc_meses_com_promo * (100)::numeric), 1) AS perc_meses_com_promo,
-    round(score_volume, 1) AS score_volume,
-    round(score_consistencia, 1) AS score_consistencia,
-    round(score_preco, 1) AS score_preco,
-    round(score_ausencia_promo, 1) AS score_ausencia_promo,
-    round((((((score_volume * ( SELECT params.peso_volume_financeiro
-           FROM params)) + (score_consistencia * ( SELECT params.peso_consistencia
-           FROM params))) + (score_preco * ( SELECT params.peso_preco_unitario
-           FROM params))) + (score_ausencia_promo * ( SELECT params.peso_ausencia_promo
-           FROM params))) / ( SELECT (((params.peso_volume_financeiro + params.peso_consistencia) + params.peso_preco_unitario) + params.peso_ausencia_promo)
-           FROM params)), 1) AS score_final,
-        CASE
-            WHEN ((((((score_volume * 1.0) + (score_consistencia * 0.8)) + (score_preco * 0.6)) + (score_ausencia_promo * 0.4)) / 2.8) >= (80)::numeric) THEN 'prioritario'::text
-            WHEN ((((((score_volume * 1.0) + (score_consistencia * 0.8)) + (score_preco * 0.6)) + (score_ausencia_promo * 0.4)) / 2.8) >= (60)::numeric) THEN 'forte'::text
-            WHEN ((((((score_volume * 1.0) + (score_consistencia * 0.8)) + (score_preco * 0.6)) + (score_ausencia_promo * 0.4)) / 2.8) >= (40)::numeric) THEN 'moderado'::text
-            ELSE 'fraco'::text
-        END AS categoria,
-    now() AS atualizado_em
-   FROM ranking_base
-  ORDER BY empresa, (round((((((score_volume * ( SELECT params.peso_volume_financeiro
-           FROM params)) + (score_consistencia * ( SELECT params.peso_consistencia
-           FROM params))) + (score_preco * ( SELECT params.peso_preco_unitario
-           FROM params))) + (score_ausencia_promo * ( SELECT params.peso_ausencia_promo
-           FROM params))) / ( SELECT (((params.peso_volume_financeiro + params.peso_consistencia) + params.peso_preco_unitario) + params.peso_ausencia_promo)
-           FROM params)), 1)) DESC
-  WITH NO DATA;
+CREATE TABLE public.nfe_efetivacao_tentativas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    nfe_recebimento_id uuid NOT NULL,
+    tentativa integer DEFAULT 1 NOT NULL,
+    operacao text NOT NULL,
+    item_id uuid,
+    sucesso boolean NOT NULL,
+    erro text,
+    omie_status text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
 
 
 --
@@ -9038,7 +16077,10 @@ CREATE TABLE public.nfe_recebimento_itens (
     status_item character varying(20) DEFAULT 'pendente'::character varying NOT NULL,
     observacao_divergencia text,
     produto_omie_id bigint,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    ajuste_estoque_ok boolean DEFAULT false NOT NULL,
+    ajuste_estoque_omie_id text,
+    ajuste_estoque_at timestamp with time zone
 );
 
 
@@ -9065,7 +16107,14 @@ CREATE TABLE public.nfe_recebimentos (
     efetivado_at timestamp with time zone,
     observacoes text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    alterar_recebimento_ok boolean DEFAULT false NOT NULL,
+    alterar_etapa_ok boolean DEFAULT false NOT NULL,
+    concluir_recebimento_ok boolean DEFAULT false NOT NULL,
+    cte_ok boolean DEFAULT false NOT NULL,
+    efetivacao_erro text,
+    efetivacao_tentativas integer DEFAULT 0 NOT NULL,
+    efetivacao_lock_at timestamp with time zone
 );
 
 
@@ -9125,6 +16174,25 @@ CREATE TABLE public.omie_clientes (
 
 
 --
+-- Name: omie_clientes_nao_vinculados; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.omie_clientes_nao_vinculados (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    empresa text NOT NULL,
+    omie_codigo_cliente bigint NOT NULL,
+    cnpj_cpf text,
+    razao_social text,
+    nome_fantasia text,
+    cidade text,
+    uf text,
+    codigo_vendedor bigint,
+    synced_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: omie_condicao_pagamento_catalogo; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9136,6 +16204,22 @@ CREATE TABLE public.omie_condicao_pagamento_catalogo (
     dias_parcelas text,
     ativo boolean DEFAULT true,
     ultima_sincronizacao timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: omie_nao_vinculados_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.omie_nao_vinculados_state (
+    empresa text NOT NULL,
+    status text DEFAULT 'idle'::text NOT NULL,
+    current_run_ts timestamp with time zone,
+    last_complete_synced_at timestamp with time zone,
+    total integer,
+    started_at timestamp with time zone,
+    error_message text,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -9152,7 +16236,29 @@ CREATE TABLE public.omie_ordens_servico (
     payload_enviado jsonb,
     resposta_omie jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_etapa_sincronizada text,
+    last_status_sincronizado text,
+    last_sync_at timestamp with time zone,
+    last_sync_error text
+);
+
+
+--
+-- Name: omie_product_spec_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.omie_product_spec_links (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text NOT NULL,
+    omie_codigo_produto bigint NOT NULL,
+    kb_product_spec_id uuid NOT NULL,
+    status text DEFAULT 'confirmed'::text NOT NULL,
+    confirmed_by uuid,
+    confirmed_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT omie_product_spec_links_status_check CHECK ((status = ANY (ARRAY['confirmed'::text, 'rejected'::text])))
 );
 
 
@@ -9179,8 +16285,16 @@ CREATE TABLE public.omie_products (
     subfamilia text,
     account text DEFAULT 'oben'::text NOT NULL,
     is_tintometric boolean DEFAULT false,
-    tint_type text
+    tint_type text,
+    tipo_produto text
 );
+
+
+--
+-- Name: COLUMN omie_products.tipo_produto; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.omie_products.tipo_produto IS 'Tipo fiscal do item no Omie (tipoItem/SPED): 04=Produto Acabado (FABRICADO, nunca comprar), 00=Revenda (comprável), NULL=desconhecido/comprável. Coluna dedicada — só o omie-sync-metadados escreve. NÃO usar metadata->>tipo_produto (legado, sujeito a sobrescrita por syncs concorrentes). Spec 2026-06-04.';
 
 
 --
@@ -9247,6 +16361,111 @@ COMMENT ON COLUMN public.omie_webhook_events.event_id IS 'ID único do evento fo
 
 
 --
+-- Name: orders; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.orders (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    status text DEFAULT 'pedido_recebido'::text NOT NULL,
+    items jsonb DEFAULT '[]'::jsonb NOT NULL,
+    service_type text NOT NULL,
+    delivery_option text NOT NULL,
+    address jsonb,
+    time_slot text,
+    subtotal numeric(10,2) DEFAULT 0 NOT NULL,
+    delivery_fee numeric(10,2) DEFAULT 0 NOT NULL,
+    total numeric(10,2) DEFAULT 0 NOT NULL,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: order_feed; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.order_feed WITH (security_invoker='true') AS
+ WITH feed AS (
+         SELECT 'sales'::text AS origin,
+            so.id,
+            so.created_at,
+            so.account,
+            so.omie_numero_pedido AS order_number,
+            so.omie_pedido_id,
+            so.customer_user_id,
+                CASE
+                    WHEN (jsonb_typeof(so.items) = 'array'::text) THEN COALESCE(( SELECT array_agg(NULLIF((t.elem ->> 'descricao'::text), ''::text) ORDER BY t.ord) FILTER (WHERE (NULLIF((t.elem ->> 'descricao'::text), ''::text) IS NOT NULL)) AS array_agg
+                       FROM jsonb_array_elements(so.items) WITH ORDINALITY t(elem, ord)), '{}'::text[])
+                    ELSE '{}'::text[]
+                END AS item_names,
+                CASE
+                    WHEN (jsonb_typeof(so.items) = 'array'::text) THEN COALESCE(( SELECT sum(
+                            CASE
+                                WHEN ((elem.value ->> 'quantidade'::text) ~ '^-?[0-9]+(\.[0-9]+)?$'::text) THEN ((elem.value ->> 'quantidade'::text))::numeric
+                                ELSE (0)::numeric
+                            END) AS sum
+                       FROM jsonb_array_elements(so.items) elem(value)), (0)::numeric)
+                    ELSE (0)::numeric
+                END AS item_quantity,
+            so.status,
+            so.subtotal,
+            so.total
+           FROM public.sales_orders so
+          WHERE (so.deleted_at IS NULL)
+        UNION ALL
+         SELECT 'afiacao'::text AS origin,
+            o.id,
+            o.created_at,
+            'colacor_sc'::text AS account,
+            NULL::text AS order_number,
+            NULL::bigint AS omie_pedido_id,
+            o.user_id AS customer_user_id,
+                CASE
+                    WHEN (jsonb_typeof(o.items) = 'array'::text) THEN COALESCE(( SELECT array_agg(COALESCE(NULLIF((t.elem ->> 'category'::text), ''::text), NULLIF((t.elem ->> 'name'::text), ''::text), 'Afiação'::text) ORDER BY t.ord) AS array_agg
+                       FROM jsonb_array_elements(o.items) WITH ORDINALITY t(elem, ord)), '{}'::text[])
+                    ELSE '{}'::text[]
+                END AS item_names,
+                CASE
+                    WHEN (jsonb_typeof(o.items) = 'array'::text) THEN COALESCE(( SELECT sum(
+                            CASE
+                                WHEN ((elem.value ->> 'quantity'::text) ~ '^-?[0-9]+(\.[0-9]+)?$'::text) THEN ((elem.value ->> 'quantity'::text))::numeric
+                                ELSE (1)::numeric
+                            END) AS sum
+                       FROM jsonb_array_elements(o.items) elem(value)), (0)::numeric)
+                    ELSE (0)::numeric
+                END AS item_quantity,
+            o.status,
+            (o.subtotal)::numeric AS subtotal,
+            (o.total)::numeric AS total
+           FROM public.orders o
+        )
+ SELECT f.origin,
+    f.id,
+    f.created_at,
+    f.account,
+    f.order_number,
+    f.omie_pedido_id,
+    f.customer_user_id,
+    p.name AS customer_name,
+    f.item_names,
+    f.item_quantity,
+    f.status,
+    f.subtotal,
+    f.total
+   FROM (feed f
+     LEFT JOIN public.profiles p ON ((p.user_id = f.customer_user_id)));
+
+
+--
+-- Name: VIEW order_feed; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.order_feed IS 'Read model da listagem de pedidos (/sales): UNION de sales_orders + orders (afiação) com nome do cliente. Enxuto — detalhe busca por (origin,id). security_invoker.';
+
+
+--
 -- Name: order_items; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9305,28 +16524,6 @@ CREATE TABLE public.order_reviews (
     comment text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT order_reviews_rating_check CHECK (((rating >= 1) AND (rating <= 5)))
-);
-
-
---
--- Name: orders; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.orders (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    user_id uuid NOT NULL,
-    status text DEFAULT 'pedido_recebido'::text NOT NULL,
-    items jsonb DEFAULT '[]'::jsonb NOT NULL,
-    service_type text NOT NULL,
-    delivery_option text NOT NULL,
-    address jsonb,
-    time_slot text,
-    subtotal numeric(10,2) DEFAULT 0 NOT NULL,
-    delivery_fee numeric(10,2) DEFAULT 0 NOT NULL,
-    total numeric(10,2) DEFAULT 0 NOT NULL,
-    notes text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -9590,6 +16787,35 @@ CREATE TABLE public.picking_tasks (
 
 
 --
+-- Name: posthog_error_webhook_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.posthog_error_webhook_log (
+    id bigint NOT NULL,
+    dedupe_key text NOT NULL,
+    issue_id text,
+    action text,
+    payload_raw text,
+    alerta_id bigint,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: posthog_error_webhook_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.posthog_error_webhook_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.posthog_error_webhook_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: priority_score_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9820,6 +17046,114 @@ COMMENT ON COLUMN public.purchase_orders_tracking.t4_data_recebimento IS 'T4: da
 
 
 --
+-- Name: push_subscriptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.push_subscriptions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    endpoint text NOT NULL,
+    subscription jsonb NOT NULL,
+    user_agent text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: radar_contatos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.radar_contatos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    cnpj text NOT NULL,
+    acao text NOT NULL,
+    nota text,
+    criado_por uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    status_anterior text,
+    CONSTRAINT radar_contatos_acao_check CHECK ((acao = ANY (ARRAY['contatado_sem_resposta'::text, 'em_conversa'::text, 'descartado'::text, 'virou_cliente'::text, 'a_contatar'::text])))
+);
+
+
+--
+-- Name: radar_empresas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.radar_empresas (
+    cnpj text NOT NULL,
+    razao_social text,
+    nome_fantasia text,
+    cnae_principal text NOT NULL,
+    cnae_descricao text,
+    cnaes_secundarios text[] DEFAULT '{}'::text[] NOT NULL,
+    data_abertura date,
+    porte text,
+    capital_social numeric,
+    logradouro text,
+    numero text,
+    complemento text,
+    bairro text,
+    municipio_codigo text,
+    municipio_nome text,
+    uf text,
+    cep text,
+    telefone1 text,
+    telefone2 text,
+    email text,
+    socios_nomes text,
+    primeira_vista_em timestamp with time zone DEFAULT now() NOT NULL,
+    ultimo_lote text NOT NULL,
+    ja_cliente boolean DEFAULT false NOT NULL,
+    prospeccao_status text DEFAULT 'a_contatar'::text NOT NULL,
+    prospeccao_atualizado_em timestamp with time zone,
+    descarte_motivo text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    omie_codigo_cliente text,
+    omie_cadastrado_em timestamp with time zone,
+    lat double precision,
+    lng double precision,
+    geocoded_em timestamp with time zone,
+    geocode_status text,
+    CONSTRAINT radar_empresas_cnae_principal_check CHECK ((cnae_principal ~ '^[0-9]{7}$'::text)),
+    CONSTRAINT radar_empresas_cnpj_check CHECK ((cnpj ~ '^[0-9]{14}$'::text)),
+    CONSTRAINT radar_empresas_geocode_status_chk CHECK (((geocode_status IS NULL) OR (geocode_status = ANY (ARRAY['ok'::text, 'falhou'::text])))),
+    CONSTRAINT radar_empresas_prospeccao_status_check CHECK ((prospeccao_status = ANY (ARRAY['a_contatar'::text, 'contatado_sem_resposta'::text, 'em_conversa'::text, 'descartado'::text, 'virou_cliente'::text]))),
+    CONSTRAINT radar_empresas_ultimo_lote_check CHECK ((ultimo_lote ~ '^[0-9]{4}-[0-9]{2}$'::text))
+);
+
+
+--
+-- Name: radar_ingest_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.radar_ingest_state (
+    mes_referencia text NOT NULL,
+    status text DEFAULT 'running'::text NOT NULL,
+    total_recebido integer DEFAULT 0 NOT NULL,
+    novos integer,
+    iniciado_em timestamp with time zone DEFAULT now() NOT NULL,
+    finalizado_em timestamp with time zone,
+    erro text,
+    CONSTRAINT radar_ingest_state_mes_referencia_check CHECK ((mes_referencia ~ '^[0-9]{4}-[0-9]{2}$'::text)),
+    CONSTRAINT radar_ingest_state_status_check CHECK ((status = ANY (ARRAY['running'::text, 'complete'::text, 'error'::text])))
+);
+
+
+--
+-- Name: radar_municipios; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.radar_municipios (
+    codigo text NOT NULL,
+    nome text NOT NULL,
+    uf text NOT NULL,
+    lat double precision,
+    lng double precision
+);
+
+
+--
 -- Name: rag_chunks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9935,6 +17269,202 @@ CREATE VIEW public.referrals_for_referrer WITH (security_invoker='true') AS
 
 
 --
+-- Name: regua_preco_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regua_preco_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    account text NOT NULL,
+    customer_user_id uuid NOT NULL,
+    product_id uuid NOT NULL,
+    salesperson_id uuid,
+    sales_order_id uuid,
+    quantity numeric,
+    preco_atual numeric NOT NULL,
+    sinal_exibido text NOT NULL,
+    confianca text NOT NULL,
+    preco_referencia numeric,
+    observed_gap_pct numeric,
+    suggested_gap_pct numeric,
+    piso_mc numeric,
+    cap_limitou boolean DEFAULT false,
+    cmc_usado numeric,
+    cmc_confianca text,
+    aliquota_usada numeric,
+    reason_codes text[],
+    preco_final numeric,
+    aplicou boolean,
+    outcome_status text,
+    outcome_at timestamp with time zone,
+    evidence_version text DEFAULT 'v1'::text NOT NULL
+);
+
+
+--
+-- Name: reposicao_alerta_pedido_minimo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_alerta_pedido_minimo (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    grupo_codigo text DEFAULT ''::text NOT NULL,
+    pedido_id bigint,
+    valor_alertado numeric NOT NULL,
+    valor_ultimo numeric NOT NULL,
+    alertado_em timestamp with time zone DEFAULT now() NOT NULL,
+    resolvido_em timestamp with time zone
+);
+
+
+--
+-- Name: reposicao_alerta_pedido_minimo_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_alerta_pedido_minimo ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.reposicao_alerta_pedido_minimo_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: reposicao_auto_aprovacao_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_auto_aprovacao_log (
+    id bigint NOT NULL,
+    pedido_id bigint NOT NULL,
+    empresa text NOT NULL,
+    fornecedor_nome text NOT NULL,
+    grupo_codigo text DEFAULT ''::text NOT NULL,
+    valor_total numeric NOT NULL,
+    valor_anterior numeric,
+    delta_pct numeric,
+    regua numeric NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: reposicao_auto_aprovacao_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_auto_aprovacao_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.reposicao_auto_aprovacao_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: reposicao_param_auto_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_param_auto_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    run_id uuid NOT NULL,
+    empresa text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    sku_descricao text,
+    status text NOT NULL,
+    ponto_pedido_antes numeric,
+    ponto_pedido_depois numeric,
+    estoque_minimo_antes numeric,
+    estoque_minimo_depois numeric,
+    estoque_maximo_antes numeric,
+    estoque_maximo_depois numeric,
+    estoque_seguranca_antes numeric,
+    estoque_seguranca_depois numeric,
+    cobertura_antes numeric,
+    cobertura_depois numeric,
+    impacto_rs numeric,
+    qtde_compra_antes numeric,
+    qtde_compra_depois numeric,
+    custo_unitario numeric,
+    custo_fonte text,
+    demanda_media_diaria numeric,
+    lt_medio_dias_uteis numeric,
+    classe_consolidada text,
+    z_score numeric,
+    revertido_em timestamp with time zone,
+    revertido_por uuid,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT reposicao_param_auto_log_status_check CHECK ((status = ANY (ARRAY['aplicado'::text, 'segurado'::text, 'pinado'::text, 'bloqueado_validacao'::text])))
+);
+
+
+--
+-- Name: reposicao_param_auto_run; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_param_auto_run (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    empresa text NOT NULL,
+    data_negocio_brt date NOT NULL,
+    status text DEFAULT 'rodando'::text NOT NULL,
+    total_avaliados integer,
+    total_aplicados integer,
+    total_segurados integer,
+    total_pinados integer,
+    impacto_total_rs numeric,
+    impacto_desconhecido_n integer,
+    resumo_enviado_em timestamp with time zone,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    concluido_em timestamp with time zone,
+    CONSTRAINT reposicao_param_auto_run_status_check CHECK ((status = ANY (ARRAY['rodando'::text, 'completo'::text, 'erro'::text])))
+);
+
+
+--
+-- Name: reposicao_param_limbo_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_param_limbo_log (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    medido_em date DEFAULT CURRENT_DATE NOT NULL,
+    limbo_count integer NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: reposicao_param_limbo_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_param_limbo_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.reposicao_param_limbo_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: reposicao_param_pin; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_param_pin (
+    empresa text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    ponto_pedido_rejeitado numeric NOT NULL,
+    estoque_maximo_rejeitado numeric NOT NULL,
+    pinado_em timestamp with time zone DEFAULT now() NOT NULL,
+    pinado_por uuid
+);
+
+
+--
 -- Name: reposition_parameters; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10006,6 +17536,90 @@ COMMENT ON TABLE public.roadmap_state IS 'Estado do dashboard de tracking do Mó
 
 
 --
+-- Name: route_calendar_override; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_calendar_override (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    data date NOT NULL,
+    cancela_rota boolean DEFAULT false NOT NULL,
+    motivo text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: route_contact_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_contact_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    data_rota date NOT NULL,
+    customer_user_id uuid,
+    farmer_id uuid,
+    canal text NOT NULL,
+    valor_da_ligacao numeric,
+    bucket text,
+    status text,
+    pedido_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT route_contact_log_canal_check CHECK ((canal = ANY (ARRAY['whatsapp'::text, 'ligacao'::text])))
+);
+
+
+--
+-- Name: route_disparo_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_disparo_config (
+    id boolean DEFAULT true NOT NULL,
+    disparo_inicio time without time zone DEFAULT '07:30:00'::time without time zone NOT NULL,
+    disparo_corte time without time zone DEFAULT '15:30:00'::time without time zone NOT NULL,
+    meta_tier_cap integer DEFAULT 1000 NOT NULL,
+    win_back_reserva_pct numeric DEFAULT 0.20 NOT NULL,
+    cold_start_piso_dia integer DEFAULT 3 NOT NULL,
+    capacidade_ligacoes_dia integer DEFAULT 40 NOT NULL,
+    cadencia_min_dias integer DEFAULT 3 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT route_disparo_config_id_check CHECK (id)
+);
+
+
+--
+-- Name: route_queue_snapshot; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_queue_snapshot (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    data_rota date NOT NULL,
+    farmer_id uuid NOT NULL,
+    customer_user_id uuid NOT NULL,
+    cidade text,
+    bucket text,
+    valor_da_ligacao numeric,
+    rank integer,
+    snapshot_at timestamp with time zone DEFAULT now() NOT NULL,
+    cliente_nome text
+);
+
+
+--
+-- Name: route_schedule; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_schedule (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    weekday smallint NOT NULL,
+    city text NOT NULL,
+    uf text DEFAULT 'MG'::text NOT NULL,
+    is_daily boolean DEFAULT false NOT NULL,
+    ativo boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT route_schedule_weekday_check CHECK (((weekday >= 0) AND (weekday <= 6)))
+);
+
+
+--
 -- Name: route_visits; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10042,6 +17656,35 @@ CREATE TABLE public.sales_price_history (
 
 
 --
+-- Name: sayerlack_retry_motor_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sayerlack_retry_motor_log (
+    id bigint NOT NULL,
+    pedido_id bigint NOT NULL,
+    tentativa_no_disparo integer,
+    status_envio_portal_no_disparo text,
+    aprovado_em timestamp with time zone,
+    request_id bigint,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: sayerlack_retry_motor_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sayerlack_retry_motor_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.sayerlack_retry_motor_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: score_recalc_queue; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10061,7 +17704,7 @@ CREATE TABLE public.score_recalc_queue (
 -- Name: score_recalc_pending; Type: VIEW; Schema: public; Owner: -
 --
 
-CREATE VIEW public.score_recalc_pending AS
+CREATE VIEW public.score_recalc_pending WITH (security_invoker='on') AS
  SELECT id,
     customer_user_id,
     farmer_id,
@@ -10147,6 +17790,54 @@ ALTER SEQUENCE public.simulacao_estoque_resultados_id_seq OWNED BY public.simula
 
 
 --
+-- Name: sinal_classe_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sinal_classe_config (
+    classe text NOT NULL,
+    ativado boolean DEFAULT false NOT NULL,
+    ativado_em timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sinal_classe_config_classe_check CHECK ((classe = ANY (ARRAY['preco'::text, 'marca'::text, 'demanda'::text])))
+);
+
+
+--
+-- Name: sku_embalagem_equivalencia; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sku_embalagem_equivalencia (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    grupo_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    unidade_base text NOT NULL,
+    fator_para_base numeric NOT NULL,
+    fornecedor_nome text,
+    ativo boolean DEFAULT true NOT NULL,
+    vigente_desde date DEFAULT CURRENT_DATE NOT NULL,
+    vigente_ate date,
+    criado_por text,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sku_embalagem_equivalencia_fator_para_base_check CHECK ((fator_para_base > (0)::numeric))
+);
+
+
+--
+-- Name: sku_embalagem_equivalencia_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sku_embalagem_equivalencia ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.sku_embalagem_equivalencia_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: sku_estoque_atual; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10227,6 +17918,47 @@ CREATE TABLE public.sku_parametros_historico (
     estoque_seguranca numeric,
     ponto_pedido numeric,
     trigger text
+);
+
+
+--
+-- Name: sku_preco_fornecedor_capturado; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sku_preco_fornecedor_capturado (
+    id bigint NOT NULL,
+    empresa text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    fornecedor_nome text,
+    preco numeric NOT NULL,
+    moeda text DEFAULT 'BRL'::text NOT NULL,
+    preco_tipo text DEFAULT 'liquido'::text NOT NULL,
+    capturado_em timestamp with time zone DEFAULT now() NOT NULL,
+    fonte text NOT NULL,
+    status text DEFAULT 'ok'::text NOT NULL,
+    run_id text,
+    validade_operacional_ate timestamp with time zone,
+    observacao text,
+    criado_por text,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sku_preco_fornecedor_capturado_fonte_check CHECK ((fonte = ANY (ARRAY['manual_usuario'::text, 'portal_capturado_ok'::text, 'portal_capturado_parcial'::text]))),
+    CONSTRAINT sku_preco_fornecedor_capturado_preco_check CHECK ((preco > (0)::numeric)),
+    CONSTRAINT sku_preco_fornecedor_capturado_preco_tipo_check CHECK ((preco_tipo = ANY (ARRAY['liquido'::text, 'bruto'::text]))),
+    CONSTRAINT sku_preco_fornecedor_capturado_status_check CHECK ((status = ANY (ARRAY['ok'::text, 'stale'::text, 'falhou'::text])))
+);
+
+
+--
+-- Name: sku_preco_fornecedor_capturado_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sku_preco_fornecedor_capturado ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.sku_preco_fornecedor_capturado_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
 );
 
 
@@ -10421,6 +18153,141 @@ CREATE TABLE public.sync_state (
 
 
 --
+-- Name: tarefa_eventos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tarefa_eventos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tarefa_id uuid,
+    tipo_evento text NOT NULL,
+    ator uuid,
+    payload jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tarefa_satisfacao_candidatos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tarefa_satisfacao_candidatos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tarefa_id uuid NOT NULL,
+    source_type text NOT NULL,
+    source_id uuid,
+    mode text NOT NULL,
+    confidence numeric,
+    motivo text,
+    matched_payload jsonb,
+    status text DEFAULT 'pending'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    resolved_at timestamp with time zone,
+    resolved_by uuid,
+    CONSTRAINT tarefa_satisfacao_candidatos_mode_check CHECK ((mode = ANY (ARRAY['interacao'::text, 'conteudo'::text]))),
+    CONSTRAINT tarefa_satisfacao_candidatos_source_type_check CHECK ((source_type = ANY (ARRAY['farmer_call'::text, 'route_visit'::text, 'whatsapp'::text, 'quote'::text]))),
+    CONSTRAINT tarefa_satisfacao_candidatos_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'accepted'::text, 'rejected'::text, 'expired'::text])))
+);
+
+
+--
+-- Name: tarefa_templates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tarefa_templates (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    descricao text NOT NULL,
+    categoria text NOT NULL,
+    area text NOT NULL,
+    empresa text NOT NULL,
+    assigned_to uuid NOT NULL,
+    customer_user_id uuid,
+    cadencia text NOT NULL,
+    dias_semana integer[],
+    janela_inicio time without time zone,
+    janela_fim time without time zone,
+    tolerancia_dias integer DEFAULT 0 NOT NULL,
+    requer_comprovacao boolean DEFAULT false NOT NULL,
+    tipo_comprovacao text DEFAULT 'nenhuma'::text NOT NULL,
+    leitura_min numeric,
+    leitura_max numeric,
+    leitura_unidade text,
+    alto_risco boolean DEFAULT false NOT NULL,
+    amostra_auditoria_pct integer DEFAULT 10 NOT NULL,
+    reincidente_limite integer DEFAULT 3 NOT NULL,
+    supervisor_user_id uuid,
+    ativo boolean DEFAULT true NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT tarefa_templates_amostra_auditoria_pct_check CHECK (((amostra_auditoria_pct >= 0) AND (amostra_auditoria_pct <= 100))),
+    CONSTRAINT tarefa_templates_cadencia_check CHECK ((cadencia = ANY (ARRAY['diaria'::text, 'dias_uteis'::text, 'semanal'::text, 'dias_especificos'::text]))),
+    CONSTRAINT tarefa_templates_categoria_check CHECK ((categoria = ANY (ARRAY['ligar'::text, 'oferecer'::text, 'preco'::text, 'whatsapp'::text, 'outro'::text]))),
+    CONSTRAINT tarefa_templates_tipo_comprovacao_check CHECK ((tipo_comprovacao = ANY (ARRAY['nenhuma'::text, 'foto'::text, 'leitura'::text, 'foto_e_leitura'::text]))),
+    CONSTRAINT tt_altorisco_foto_chk CHECK (((NOT alto_risco) OR (tipo_comprovacao = 'foto_e_leitura'::text) OR (NOT requer_comprovacao))),
+    CONSTRAINT tt_dias_chk CHECK (((cadencia <> ALL (ARRAY['semanal'::text, 'dias_especificos'::text])) OR ((dias_semana IS NOT NULL) AND (array_length(dias_semana, 1) > 0)))),
+    CONSTRAINT tt_janela_chk CHECK (((janela_inicio IS NULL) OR (janela_fim IS NULL) OR (janela_inicio < janela_fim)))
+);
+
+
+--
+-- Name: tarefas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tarefas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    descricao text NOT NULL,
+    categoria text NOT NULL,
+    customer_user_id uuid,
+    assigned_to uuid NOT NULL,
+    created_by uuid NOT NULL,
+    empresa text NOT NULL,
+    modo text NOT NULL,
+    due_date date,
+    interacao_tipo text,
+    backstop_days integer DEFAULT 7 NOT NULL,
+    tolerancia_dias integer DEFAULT 1 NOT NULL,
+    adiada_para timestamp with time zone,
+    motivo_adiamento text,
+    auto_satisfy_mode text DEFAULT 'off'::text NOT NULL,
+    target_produto_id uuid,
+    target_texto text,
+    target_preco_centavos bigint,
+    target_tags jsonb,
+    status text DEFAULT 'aberta'::text NOT NULL,
+    concluida_em timestamp with time zone,
+    concluida_por uuid,
+    conclusao_origem text,
+    nota_conclusao text,
+    escalado_em timestamp with time zone,
+    template_id uuid,
+    requer_comprovacao boolean DEFAULT false NOT NULL,
+    comprovacao_url text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    tipo_comprovacao text,
+    comprovacao_leitura numeric,
+    comprovacao_em timestamp with time zone,
+    janela_fim time without time zone,
+    auditoria_status text DEFAULT 'nao_requer'::text NOT NULL,
+    auditoria_motivo text,
+    auditada_por uuid,
+    auditada_em timestamp with time zone,
+    supervisor_user_id uuid,
+    leitura_min numeric,
+    leitura_max numeric,
+    leitura_unidade text,
+    CONSTRAINT tarefas_auditoria_status_check CHECK ((auditoria_status = ANY (ARRAY['nao_requer'::text, 'dispensada'::text, 'pendente'::text, 'aprovada'::text, 'reprovada'::text]))),
+    CONSTRAINT tarefas_auto_satisfy_mode_check CHECK ((auto_satisfy_mode = ANY (ARRAY['off'::text, 'interacao'::text, 'conteudo'::text]))),
+    CONSTRAINT tarefas_categoria_check CHECK ((categoria = ANY (ARRAY['ligar'::text, 'oferecer'::text, 'preco'::text, 'whatsapp'::text, 'outro'::text]))),
+    CONSTRAINT tarefas_conclusao_origem_check CHECK (((conclusao_origem IS NULL) OR (conclusao_origem = ANY (ARRAY['manual'::text, 'auto_interacao'::text, 'sugestao_confirmada'::text, 'whatsapp'::text, 'comprovacao'::text])))),
+    CONSTRAINT tarefas_interacao_tipo_check CHECK ((interacao_tipo = ANY (ARRAY['ligacao'::text, 'visita'::text, 'entrega'::text]))),
+    CONSTRAINT tarefas_modo_check CHECK ((modo = ANY (ARRAY['data'::text, 'interacao'::text]))),
+    CONSTRAINT tarefas_modo_coerencia_chk CHECK ((((modo = 'data'::text) AND (due_date IS NOT NULL) AND (interacao_tipo IS NULL)) OR ((modo = 'interacao'::text) AND (interacao_tipo IS NOT NULL) AND (due_date IS NULL)))),
+    CONSTRAINT tarefas_status_check CHECK ((status = ANY (ARRAY['aberta'::text, 'concluida'::text, 'cancelada'::text])))
+);
+
+
+--
 -- Name: tint_bases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10514,7 +18381,34 @@ CREATE TABLE public.tint_formulas (
     personalizada boolean DEFAULT false,
     importacao_id uuid,
     created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone DEFAULT now()
+    updated_at timestamp with time zone DEFAULT now(),
+    desativada_em timestamp with time zone
+);
+
+
+--
+-- Name: tint_formulas_backup_preflip; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_formulas_backup_preflip (
+    id uuid,
+    account text,
+    id_seq integer,
+    cor_id text,
+    nome_cor text,
+    produto_id uuid,
+    base_id uuid,
+    embalagem_id uuid,
+    subcolecao_id uuid,
+    sku_id uuid,
+    volume_final_ml numeric,
+    preco_final_sayersystem numeric,
+    data_geracao timestamp with time zone,
+    personalizada boolean,
+    importacao_id uuid,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    desativada_em timestamp with time zone
 );
 
 
@@ -10555,7 +18449,29 @@ CREATE TABLE public.tint_integration_settings (
     agent_version text,
     agent_hostname text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_keys_snapshot_at timestamp with time zone,
+    schema_fingerprint text,
+    schema_mismatch jsonb
+);
+
+
+--
+-- Name: tint_keys_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_keys_snapshots (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    setting_id uuid NOT NULL,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    snapshot_id uuid NOT NULL,
+    entity text NOT NULL,
+    generated_at timestamp with time zone NOT NULL,
+    total_chunks integer NOT NULL,
+    chunk_index integer NOT NULL,
+    keys jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now()
 );
 
 
@@ -10667,7 +18583,9 @@ CREATE TABLE public.tint_staging_corantes (
     raw_data jsonb,
     staging_status text DEFAULT 'pending'::text NOT NULL,
     matched_id uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    custo numeric,
+    volume_ml numeric
 );
 
 
@@ -10764,6 +18682,27 @@ CREATE TABLE public.tint_staging_formulas (
     staging_status text DEFAULT 'pending'::text NOT NULL,
     matched_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tint_staging_precos_base; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_staging_precos_base (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sync_run_id uuid,
+    account text NOT NULL,
+    store_code text NOT NULL,
+    cod_produto text NOT NULL,
+    id_base text NOT NULL,
+    id_embalagem text NOT NULL,
+    custo numeric,
+    imposto_pct numeric,
+    margem_pct numeric,
+    raw_data jsonb,
+    staging_status text DEFAULT 'pending'::text,
+    created_at timestamp with time zone DEFAULT now()
 );
 
 
@@ -10979,7 +18918,8 @@ CREATE TABLE public.tool_specifications (
     options jsonb,
     is_required boolean DEFAULT true,
     display_order integer DEFAULT 0,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    allow_custom_option boolean DEFAULT true NOT NULL
 );
 
 
@@ -11060,6 +19000,383 @@ CREATE TABLE public.user_tools (
     generated_name text,
     internal_code text
 );
+
+
+--
+-- Name: whatsapp_conversations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.whatsapp_conversations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    phone_key text NOT NULL,
+    phone_e164 text,
+    contact_name text,
+    customer_user_id uuid,
+    assigned_operator_id uuid,
+    status text DEFAULT 'aberta'::text NOT NULL,
+    opt_in_status text DEFAULT 'unknown'::text NOT NULL,
+    last_inbound_at timestamp with time zone,
+    last_message_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT whatsapp_conversations_status_check CHECK ((status = ANY (ARRAY['aberta'::text, 'aguardando_cliente'::text, 'fechada'::text])))
+);
+
+
+--
+-- Name: v_caca_candidatos; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_caca_candidatos WITH (security_invoker='on') AS
+ WITH cli AS (
+         SELECT p.user_id,
+            p.name,
+            p.phone,
+            p.cnae,
+                CASE
+                    WHEN (length(regexp_replace(COALESCE(p.document, ''::text), '\D'::text, ''::text, 'g'::text)) = ANY (ARRAY[11, 14])) THEN regexp_replace(COALESCE(p.document, ''::text), '\D'::text, ''::text, 'g'::text)
+                    WHEN (length(regexp_replace(COALESCE(p.cnpj, ''::text), '\D'::text, ''::text, 'g'::text)) = ANY (ARRAY[11, 14])) THEN regexp_replace(COALESCE(p.cnpj, ''::text), '\D'::text, ''::text, 'g'::text)
+                    ELSE NULL::text
+                END AS documento
+           FROM public.profiles p
+          WHERE (COALESCE(p.is_employee, false) = false)
+        ), cli_valid AS (
+         SELECT DISTINCT ON (cli.user_id) cli.user_id,
+            cli.documento,
+            cli.name,
+            cli.phone,
+            cli.cnae
+           FROM cli
+          WHERE (cli.documento IS NOT NULL)
+          ORDER BY cli.user_id, cli.documento
+        ), cli_doc AS (
+         SELECT DISTINCT ON (cli_valid.documento) cli_valid.documento,
+            cli_valid.user_id,
+            cli_valid.name,
+            cli_valid.phone,
+            cli_valid.cnae
+           FROM cli_valid
+          ORDER BY cli_valid.documento, cli_valid.user_id
+        ), so_ok AS (
+         SELECT so.id,
+            so.account,
+            so.total,
+            COALESCE(so.order_date_kpi, (so.created_at)::date) AS dt,
+            cv.documento
+           FROM (public.sales_orders so
+             JOIN cli_valid cv ON ((cv.user_id = so.customer_user_id)))
+          WHERE ((so.deleted_at IS NULL) AND (so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text])) AND (so.account = ANY (ARRAY['oben'::text, 'colacor'::text])))
+        ), ativ AS (
+         SELECT so_ok.documento,
+            so_ok.account,
+            (max(so_ok.dt) >= ((now() - '6 mons'::interval))::date) AS ativo_6m
+           FROM so_ok
+          GROUP BY so_ok.documento, so_ok.account
+        ), grupo AS (
+         SELECT so_ok.documento,
+            max(so_ok.dt) AS ultima_grupo,
+            sum(so_ok.total) AS volume_grupo,
+            count(*) AS pedidos_grupo
+           FROM so_ok
+          GROUP BY so_ok.documento
+        ), oi_dedup AS (
+         SELECT DISTINCT ON (oi.sales_order_id, oi.omie_codigo_produto) oi.sales_order_id,
+            oi.product_id
+           FROM public.order_items oi
+          ORDER BY oi.sales_order_id, oi.omie_codigo_produto, oi.id
+        ), fam_grupo AS (
+         SELECT s.documento,
+            array_agg(DISTINCT op.familia) FILTER (WHERE ((op.familia IS NOT NULL) AND (op.familia <> ''::text))) AS familias
+           FROM ((so_ok s
+             JOIN oi_dedup d ON ((d.sales_order_id = s.id)))
+             JOIN public.omie_products op ON (((op.id = d.product_id) AND (op.account = s.account))))
+          GROUP BY s.documento
+        ), cid AS (
+         SELECT DISTINCT ON (addresses.user_id) addresses.user_id,
+            ((addresses.city || '-'::text) || addresses.state) AS cidade_uf
+           FROM public.addresses
+          WHERE ((COALESCE(addresses.city, ''::text) <> ''::text) AND (COALESCE(addresses.state, ''::text) <> ''::text))
+          ORDER BY addresses.user_id, addresses.is_default DESC NULLS LAST, addresses.created_at DESC NULLS LAST
+        ), optout_doc AS (
+         SELECT DISTINCT cv.documento
+           FROM (public.whatsapp_conversations wc
+             JOIN cli_valid cv ON ((cv.user_id = wc.customer_user_id)))
+          WHERE (wc.opt_in_status = 'opt_out'::text)
+        UNION
+         SELECT DISTINCT cv.documento
+           FROM (public.whatsapp_conversations wc
+             JOIN cli_valid cv ON (("right"(regexp_replace(COALESCE(cv.phone, ''::text), '\D'::text, ''::text, 'g'::text), 11) = "right"(regexp_replace(COALESCE(wc.phone_e164, wc.phone_key, ''::text), '\D'::text, ''::text, 'g'::text), 11))))
+          WHERE ((wc.opt_in_status = 'opt_out'::text) AND (length(regexp_replace(COALESCE(cv.phone, ''::text), '\D'::text, ''::text, 'g'::text)) >= 10))
+        ), alvos AS (
+         SELECT unnest(ARRAY['oben'::text, 'colacor'::text]) AS empresa_alvo
+        ), cand AS (
+         SELECT cd.documento,
+            a.empresa_alvo,
+            cd.user_id,
+            cd.name,
+            cd.phone,
+            cd.cnae
+           FROM (cli_doc cd
+             CROSS JOIN alvos a)
+          WHERE ((NOT (EXISTS ( SELECT 1
+                   FROM ativ av
+                  WHERE ((av.documento = cd.documento) AND (av.account = a.empresa_alvo) AND av.ativo_6m)))) AND (NOT (EXISTS ( SELECT 1
+                   FROM optout_doc oo
+                  WHERE (oo.documento = cd.documento)))))
+        )
+ SELECT cand.documento,
+    cand.empresa_alvo,
+    cid.cidade_uf,
+    cand.cnae AS ramo,
+        CASE
+            WHEN (g.pedidos_grupo > 0) THEN round((g.volume_grupo / (g.pedidos_grupo)::numeric), 2)
+            ELSE NULL::numeric
+        END AS ticket_faixa,
+    COALESCE(fg.familias, ARRAY[]::text[]) AS familias,
+    (EXISTS ( SELECT 1
+           FROM ativ av2
+          WHERE ((av2.documento = cand.documento) AND (av2.account <> cand.empresa_alvo) AND av2.ativo_6m))) AS compra_em_outra_empresa,
+        CASE
+            WHEN (g.ultima_grupo IS NOT NULL) THEN ((now())::date - g.ultima_grupo)
+            ELSE NULL::integer
+        END AS ultima_compra_grupo_dias,
+    cand.name AS nome,
+    cand.phone AS telefone,
+    cand.user_id AS cliente_user_id
+   FROM (((cand
+     LEFT JOIN grupo g ON ((g.documento = cand.documento)))
+     LEFT JOIN fam_grupo fg ON ((fg.documento = cand.documento)))
+     LEFT JOIN cid ON ((cid.user_id = cand.user_id)));
+
+
+--
+-- Name: v_caca_compradores; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_caca_compradores WITH (security_invoker='on') AS
+ WITH cli AS (
+         SELECT p.user_id,
+            p.name,
+            p.phone,
+            p.cnae,
+                CASE
+                    WHEN (length(regexp_replace(COALESCE(p.document, ''::text), '\D'::text, ''::text, 'g'::text)) = ANY (ARRAY[11, 14])) THEN regexp_replace(COALESCE(p.document, ''::text), '\D'::text, ''::text, 'g'::text)
+                    WHEN (length(regexp_replace(COALESCE(p.cnpj, ''::text), '\D'::text, ''::text, 'g'::text)) = ANY (ARRAY[11, 14])) THEN regexp_replace(COALESCE(p.cnpj, ''::text), '\D'::text, ''::text, 'g'::text)
+                    ELSE NULL::text
+                END AS documento
+           FROM public.profiles p
+          WHERE (COALESCE(p.is_employee, false) = false)
+        ), cli_valid AS (
+         SELECT DISTINCT ON (cli.user_id) cli.user_id,
+            cli.documento,
+            cli.name,
+            cli.phone,
+            cli.cnae
+           FROM cli
+          WHERE (cli.documento IS NOT NULL)
+          ORDER BY cli.user_id, cli.documento
+        ), cli_doc AS (
+         SELECT DISTINCT ON (cli_valid.documento) cli_valid.documento,
+            cli_valid.user_id,
+            cli_valid.name,
+            cli_valid.phone,
+            cli_valid.cnae
+           FROM cli_valid
+          ORDER BY cli_valid.documento, cli_valid.user_id
+        ), so_ok AS (
+         SELECT so.id,
+            so.account,
+            so.total,
+            COALESCE(so.order_date_kpi, (so.created_at)::date) AS dt,
+            cv.documento
+           FROM (public.sales_orders so
+             JOIN cli_valid cv ON ((cv.user_id = so.customer_user_id)))
+          WHERE ((so.deleted_at IS NULL) AND (so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text])) AND (so.account = ANY (ARRAY['oben'::text, 'colacor'::text])))
+        ), compras AS (
+         SELECT so_ok.documento,
+            so_ok.account,
+            count(*) AS n_pedidos,
+            sum(so_ok.total) AS volume,
+            max(so_ok.dt) AS ultima
+           FROM so_ok
+          GROUP BY so_ok.documento, so_ok.account
+        ), oi_dedup AS (
+         SELECT DISTINCT ON (oi.sales_order_id, oi.omie_codigo_produto) oi.sales_order_id,
+            oi.product_id,
+            oi.quantity,
+            oi.unit_price
+           FROM public.order_items oi
+          ORDER BY oi.sales_order_id, oi.omie_codigo_produto, oi.id
+        ), itens AS (
+         SELECT s.documento,
+            s.account,
+            d.quantity,
+            d.unit_price,
+            op.familia,
+            pc.cmc
+           FROM (((so_ok s
+             JOIN oi_dedup d ON ((d.sales_order_id = s.id)))
+             JOIN public.omie_products op ON (((op.id = d.product_id) AND (op.account = s.account))))
+             LEFT JOIN public.product_costs pc ON ((pc.product_id = op.id)))
+        ), fam AS (
+         SELECT itens.documento,
+            itens.account,
+            array_agg(DISTINCT itens.familia) FILTER (WHERE ((itens.familia IS NOT NULL) AND (itens.familia <> ''::text))) AS familias
+           FROM itens
+          GROUP BY itens.documento, itens.account
+        ), luc AS (
+         SELECT itens.documento,
+            itens.account,
+            sum(((itens.quantity * itens.unit_price) - (itens.quantity * itens.cmc))) FILTER (WHERE (itens.cmc > (0)::numeric)) AS lucro_com_custo,
+            sum((itens.quantity * itens.unit_price)) AS receita,
+            sum((itens.quantity * itens.unit_price)) FILTER (WHERE (itens.cmc > (0)::numeric)) AS receita_com_custo
+           FROM itens
+          GROUP BY itens.documento, itens.account
+        ), cid AS (
+         SELECT DISTINCT ON (addresses.user_id) addresses.user_id,
+            ((addresses.city || '-'::text) || addresses.state) AS cidade_uf
+           FROM public.addresses
+          WHERE ((COALESCE(addresses.city, ''::text) <> ''::text) AND (COALESCE(addresses.state, ''::text) <> ''::text))
+          ORDER BY addresses.user_id, addresses.is_default DESC NULLS LAST, addresses.created_at DESC NULLS LAST
+        )
+ SELECT c.documento,
+    c.account AS empresa,
+    cid.cidade_uf,
+    cd.cnae AS ramo,
+        CASE
+            WHEN (c.n_pedidos > 0) THEN round((c.volume / (c.n_pedidos)::numeric), 2)
+            ELSE NULL::numeric
+        END AS ticket_faixa,
+    COALESCE(f.familias, ARRAY[]::text[]) AS familias,
+    c.volume,
+    c.n_pedidos,
+    ((now())::date - c.ultima) AS recencia_dias,
+        CASE
+            WHEN (l.lucro_com_custo IS NOT NULL) THEN round(l.lucro_com_custo, 2)
+            ELSE NULL::numeric
+        END AS lucro_proxy,
+        CASE
+            WHEN (COALESCE(l.receita, (0)::numeric) > (0)::numeric) THEN round((COALESCE(l.receita_com_custo, (0)::numeric) / l.receita), 2)
+            ELSE (0)::numeric
+        END AS lucro_cobertura
+   FROM ((((compras c
+     JOIN cli_doc cd ON ((cd.documento = c.documento)))
+     LEFT JOIN fam f ON (((f.documento = c.documento) AND (f.account = c.account))))
+     LEFT JOIN luc l ON (((l.documento = c.documento) AND (l.account = c.account))))
+     LEFT JOIN cid ON ((cid.user_id = cd.user_id)));
+
+
+--
+-- Name: v_titulo_baixas; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_titulo_baixas WITH (security_invoker='on') AS
+ WITH mov AS (
+         SELECT fin_movimentacoes.company,
+            fin_movimentacoes.omie_codigo_lancamento AS cod,
+            fin_movimentacoes.tipo,
+            fin_movimentacoes.data_movimento,
+            fin_movimentacoes.valor
+           FROM public.fin_movimentacoes
+          WHERE ((fin_movimentacoes.omie_codigo_lancamento IS NOT NULL) AND (fin_movimentacoes.data_movimento IS NOT NULL) AND (fin_movimentacoes.tipo = ANY (ARRAY['E'::text, 'S'::text])) AND (fin_movimentacoes.valor > (0)::numeric))
+        )
+ SELECT cr.company,
+    cr.omie_codigo_lancamento,
+    'CR'::text AS tipo,
+    max(m.data_movimento) AS data_baixa_final,
+    sum(m.valor) AS valor_baixado,
+    (count(*))::integer AS n_movimentos,
+        CASE
+            WHEN ((cr.data_emissao IS NOT NULL) AND (sum(m.valor) > (0)::numeric)) THEN round((sum((m.valor * ((m.data_movimento - cr.data_emissao))::numeric)) / sum(m.valor)))
+            ELSE NULL::numeric
+        END AS prazo_ponderado_dias
+   FROM (public.fin_contas_receber cr
+     JOIN mov m ON (((m.company = cr.company) AND (m.cod = cr.omie_codigo_lancamento) AND (m.tipo = 'E'::text))))
+  WHERE ((cr.omie_codigo_lancamento IS NOT NULL) AND (cr.status_titulo = ANY (ARRAY['RECEBIDO'::text, 'LIQUIDADO'::text])))
+  GROUP BY cr.company, cr.omie_codigo_lancamento, cr.data_emissao
+UNION ALL
+ SELECT cp.company,
+    cp.omie_codigo_lancamento,
+    'CP'::text AS tipo,
+    max(m.data_movimento) AS data_baixa_final,
+    sum(m.valor) AS valor_baixado,
+    (count(*))::integer AS n_movimentos,
+        CASE
+            WHEN ((cp.data_emissao IS NOT NULL) AND (sum(m.valor) > (0)::numeric)) THEN round((sum((m.valor * ((m.data_movimento - cp.data_emissao))::numeric)) / sum(m.valor)))
+            ELSE NULL::numeric
+        END AS prazo_ponderado_dias
+   FROM (public.fin_contas_pagar cp
+     JOIN mov m ON (((m.company = cp.company) AND (m.cod = cp.omie_codigo_lancamento) AND (m.tipo = 'S'::text))))
+  WHERE ((cp.omie_codigo_lancamento IS NOT NULL) AND (cp.status_titulo = ANY (ARRAY['PAGO'::text, 'LIQUIDADO'::text])))
+  GROUP BY cp.company, cp.omie_codigo_lancamento, cp.data_emissao;
+
+
+--
+-- Name: v_capital_giro_prazos; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_capital_giro_prazos WITH (security_invoker='on') AS
+ WITH companies AS (
+         SELECT DISTINCT fin_contas_receber.company
+           FROM public.fin_contas_receber
+        UNION
+         SELECT DISTINCT fin_contas_pagar.company
+           FROM public.fin_contas_pagar
+        ), cr_baixa AS (
+         SELECT v_titulo_baixas.company,
+            round((sum((v_titulo_baixas.prazo_ponderado_dias * v_titulo_baixas.valor_baixado)) / NULLIF(sum(v_titulo_baixas.valor_baixado), (0)::numeric))) AS pmr,
+            count(*) AS n
+           FROM public.v_titulo_baixas
+          WHERE ((v_titulo_baixas.tipo = 'CR'::text) AND (v_titulo_baixas.prazo_ponderado_dias IS NOT NULL))
+          GROUP BY v_titulo_baixas.company
+        ), cp_baixa AS (
+         SELECT v_titulo_baixas.company,
+            round((sum((v_titulo_baixas.prazo_ponderado_dias * v_titulo_baixas.valor_baixado)) / NULLIF(sum(v_titulo_baixas.valor_baixado), (0)::numeric))) AS pmp,
+            count(*) AS n
+           FROM public.v_titulo_baixas
+          WHERE ((v_titulo_baixas.tipo = 'CP'::text) AND (v_titulo_baixas.prazo_ponderado_dias IS NOT NULL))
+          GROUP BY v_titulo_baixas.company
+        ), cr_set AS (
+         SELECT fin_contas_receber.company,
+            count(*) AS n
+           FROM public.fin_contas_receber
+          WHERE (fin_contas_receber.status_titulo = ANY (ARRAY['RECEBIDO'::text, 'LIQUIDADO'::text]))
+          GROUP BY fin_contas_receber.company
+        ), cp_set AS (
+         SELECT fin_contas_pagar.company,
+            count(*) AS n
+           FROM public.fin_contas_pagar
+          WHERE (fin_contas_pagar.status_titulo = ANY (ARRAY['PAGO'::text, 'LIQUIDADO'::text]))
+          GROUP BY fin_contas_pagar.company
+        )
+ SELECT c.company,
+    crb.pmr,
+    cpb.pmp,
+    round(((COALESCE(crb.n, (0)::bigint))::numeric / (NULLIF(crs.n, 0))::numeric), 3) AS pmr_cobertura,
+    round(((COALESCE(cpb.n, (0)::bigint))::numeric / (NULLIF(cps.n, 0))::numeric), 3) AS pmp_cobertura
+   FROM ((((companies c
+     LEFT JOIN cr_baixa crb ON ((crb.company = c.company)))
+     LEFT JOIN cp_baixa cpb ON ((cpb.company = c.company)))
+     LEFT JOIN cr_set crs ON ((crs.company = c.company)))
+     LEFT JOIN cp_set cps ON ((cps.company = c.company)));
+
+
+--
+-- Name: v_clientes_nao_vinculados_atual; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_clientes_nao_vinculados_atual WITH (security_invoker='on') AS
+ SELECT nv.id,
+    nv.empresa,
+    nv.omie_codigo_cliente,
+    nv.cnpj_cpf,
+    nv.razao_social,
+    nv.nome_fantasia,
+    nv.cidade,
+    nv.uf,
+    nv.codigo_vendedor,
+    nv.synced_at
+   FROM (public.omie_clientes_nao_vinculados nv
+     JOIN public.omie_nao_vinculados_state st ON (((st.empresa = nv.empresa) AND (st.last_complete_synced_at = nv.synced_at))));
 
 
 --
@@ -11652,6 +19969,109 @@ CREATE VIEW public.v_fornecedor_sla_compliance WITH (security_invoker='on') AS
 
 
 --
+-- Name: v_grupo_comercial; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_grupo_comercial WITH (security_invoker='true') AS
+ WITH ped AS (
+         SELECT regexp_replace(COALESCE(p.cnpj, p.document, ''::text), '\D'::text, ''::text, 'g'::text) AS doc,
+            (so.created_at)::date AS data,
+            COALESCE(so.total, ( SELECT sum((((it.value ->> 'quantity'::text))::numeric * ((it.value ->> 'unit_price'::text))::numeric)) AS sum
+                   FROM jsonb_array_elements(so.items) it(value))) AS valor
+           FROM (public.sales_orders so
+             JOIN public.profiles p ON ((p.user_id = so.customer_user_id)))
+          WHERE ((so.status = ANY (ARRAY['faturado'::text, 'importado'::text, 'separacao'::text, 'enviado'::text])) AND (so.deleted_at IS NULL))
+        )
+ SELECT m.grupo_id,
+    count(DISTINCT ped.doc) FILTER (WHERE (ped.doc IS NOT NULL)) AS documentos_com_compra,
+    count(ped.data) AS qtd_pedidos,
+    max(ped.data) AS ultima_compra,
+    (CURRENT_DATE - max(ped.data)) AS dias_desde_ultima,
+    COALESCE(sum(ped.valor), (0)::numeric) AS faturamento_total,
+    COALESCE(sum(ped.valor) FILTER (WHERE (ped.data > (CURRENT_DATE - 90))), (0)::numeric) AS fat_90d,
+    COALESCE(sum(ped.valor) FILTER (WHERE ((ped.data <= (CURRENT_DATE - 90)) AND (ped.data > (CURRENT_DATE - 180)))), (0)::numeric) AS fat_90d_anterior,
+    round((COALESCE(sum(ped.valor) FILTER (WHERE (ped.data > (CURRENT_DATE - 180))), (0)::numeric) / 6.0), 2) AS media_mensal_6m
+   FROM (public.cliente_grupo_membros m
+     LEFT JOIN ped ON ((ped.doc = m.documento)))
+  GROUP BY m.grupo_id;
+
+
+--
+-- Name: v_grupo_contas_receber; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_grupo_contas_receber WITH (security_invoker='true') AS
+ WITH tit AS (
+         SELECT regexp_replace(fcr.cnpj_cpf, '\D'::text, ''::text, 'g'::text) AS doc,
+            fcr.saldo,
+            fcr.data_vencimento
+           FROM public.fin_contas_receber fcr
+          WHERE (fcr.status_titulo <> ALL (ARRAY['RECEBIDO'::text, 'CANCELADO'::text]))
+        )
+ SELECT g.id AS grupo_id,
+    g.nome,
+    count(DISTINCT m.documento) FILTER (WHERE (t.doc IS NOT NULL)) AS documentos_com_titulo,
+    COALESCE(sum(t.saldo), (0)::numeric) AS total_aberto,
+    COALESCE(sum(t.saldo) FILTER (WHERE (t.data_vencimento >= CURRENT_DATE)), (0)::numeric) AS a_vencer,
+    COALESCE(sum(t.saldo) FILTER (WHERE (((CURRENT_DATE - t.data_vencimento) >= 1) AND ((CURRENT_DATE - t.data_vencimento) <= 30))), (0)::numeric) AS venc_1_30,
+    COALESCE(sum(t.saldo) FILTER (WHERE (((CURRENT_DATE - t.data_vencimento) >= 31) AND ((CURRENT_DATE - t.data_vencimento) <= 60))), (0)::numeric) AS venc_31_60,
+    COALESCE(sum(t.saldo) FILTER (WHERE (((CURRENT_DATE - t.data_vencimento) >= 61) AND ((CURRENT_DATE - t.data_vencimento) <= 90))), (0)::numeric) AS venc_61_90,
+    COALESCE(sum(t.saldo) FILTER (WHERE ((CURRENT_DATE - t.data_vencimento) > 90)), (0)::numeric) AS venc_90_mais
+   FROM ((public.cliente_grupos g
+     JOIN public.cliente_grupo_membros m ON ((m.grupo_id = g.id)))
+     LEFT JOIN tit t ON ((t.doc = m.documento)))
+  WHERE (g.ativo = true)
+  GROUP BY g.id, g.nome;
+
+
+--
+-- Name: v_grupo_contas_receber_por_doc; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_grupo_contas_receber_por_doc WITH (security_invoker='true') AS
+ WITH tit AS (
+         SELECT regexp_replace(fcr.cnpj_cpf, '\D'::text, ''::text, 'g'::text) AS doc,
+            fcr.company,
+            fcr.nome_cliente,
+            fcr.saldo,
+            fcr.data_vencimento
+           FROM public.fin_contas_receber fcr
+          WHERE (fcr.status_titulo <> ALL (ARRAY['RECEBIDO'::text, 'CANCELADO'::text]))
+        )
+ SELECT m.grupo_id,
+    m.documento,
+    t.company,
+    max(t.nome_cliente) AS nome_cliente,
+    COALESCE(sum(t.saldo), (0)::numeric) AS total_aberto,
+    COALESCE(sum(t.saldo) FILTER (WHERE ((CURRENT_DATE - t.data_vencimento) > 0)), (0)::numeric) AS vencido
+   FROM (public.cliente_grupo_membros m
+     LEFT JOIN tit t ON ((t.doc = m.documento)))
+  GROUP BY m.grupo_id, m.documento, t.company;
+
+
+--
+-- Name: v_grupo_contatos; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_grupo_contatos WITH (security_invoker='true') AS
+ SELECT m.grupo_id,
+    m.documento,
+    p.user_id,
+    COALESCE(p.razao_social, p.name) AS nome,
+    p.phone,
+    p.email,
+    a.city AS cidade,
+    a.state AS uf,
+    NULLIF(TRIM(BOTH FROM ((COALESCE(a.street, ''::text) || ' '::text) || COALESCE(a.number, ''::text))), ''::text) AS endereco,
+    oc.omie_codigo_vendedor,
+    oc.empresa_omie
+   FROM (((public.cliente_grupo_membros m
+     JOIN public.profiles p ON ((regexp_replace(COALESCE(p.cnpj, p.document, ''::text), '\D'::text, ''::text, 'g'::text) = m.documento)))
+     LEFT JOIN public.addresses a ON (((a.user_id = p.user_id) AND (a.is_default = true))))
+     LEFT JOIN public.omie_clientes oc ON ((oc.user_id = p.user_id)));
+
+
+--
 -- Name: v_leadtime_por_grupo; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -11691,6 +20111,34 @@ CREATE VIEW public.v_notificacoes_status WITH (security_invoker='on') AS
   WHERE (criado_em >= (now() - '30 days'::interval))
   GROUP BY ((date_trunc('day'::text, criado_em))::date), status
   ORDER BY ((date_trunc('day'::text, criado_em))::date) DESC, status;
+
+
+--
+-- Name: v_omie_product_current_spec; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_omie_product_current_spec WITH (security_invoker='on') AS
+ SELECT l.account,
+    l.omie_codigo_produto,
+    l.kb_product_spec_id,
+    s.product_code,
+    s.product_name,
+    s.supplier,
+    s.product_category,
+    s.rendimento_m2_por_litro,
+    s.demaos_recomendadas,
+    s.pot_life_horas,
+    s.validade_dias,
+    s.catalisador_codigo,
+    s.catalisador_proporcao_pct,
+    s.diluente_codigo,
+    s.substrato,
+    s.equipamentos_aplicacao,
+    s.diferenciais_chave,
+    s.uso_recomendado
+   FROM (public.omie_product_spec_links l
+     JOIN public.kb_product_specs s ON ((s.id = l.kb_product_spec_id)))
+  WHERE ((l.status = 'confirmed'::text) AND (s.approved_at IS NOT NULL));
 
 
 --
@@ -12130,6 +20578,24 @@ CREATE VIEW public.v_sku_parametros_sugeridos WITH (security_invoker='on') AS
            FROM public.venda_items_history
           WHERE ((venda_items_history.data_emissao >= (CURRENT_DATE - '180 days'::interval)) AND (venda_items_history.quantidade > (0)::numeric))
           GROUP BY venda_items_history.empresa, (venda_items_history.sku_codigo_omie)::text
+        ), precos_cmc AS (
+         SELECT DISTINCT ON (m.empresa, m.sku_codigo_omie) m.empresa,
+            m.sku_codigo_omie,
+            m.cmc
+           FROM ( SELECT
+                        CASE
+                            WHEN (ip.account = ANY (ARRAY['vendas'::text, 'oben'::text])) THEN 'OBEN'::text
+                            WHEN (ip.account = ANY (ARRAY['colacor_vendas'::text, 'colacor'::text])) THEN 'COLACOR'::text
+                            WHEN (ip.account = ANY (ARRAY['servicos'::text, 'colacor_sc'::text])) THEN 'COLACOR_SC'::text
+                            ELSE NULL::text
+                        END AS empresa,
+                    (ip.omie_codigo_produto)::text AS sku_codigo_omie,
+                    ip.cmc,
+                    ip.synced_at
+                   FROM public.inventory_position ip
+                  WHERE (ip.cmc > (0)::numeric)) m
+          WHERE (m.empresa IS NOT NULL)
+          ORDER BY m.empresa, m.sku_codigo_omie, (m.cmc > (0)::numeric) DESC, m.synced_at DESC NULLS LAST
         ), base AS (
          SELECT c.empresa,
             c.sku_codigo_omie,
@@ -12175,8 +20641,13 @@ CREATE VIEW public.v_sku_parametros_sugeridos WITH (security_invoker='on') AS
             pv.preco_venda_medio,
             pc.preco_compra_real,
             pc.n_compras,
-            COALESCE(pc.preco_compra_real, (pv.preco_venda_medio * 0.55)) AS preco_item_eoq,
+            COALESCE(NULLIF(( SELECT pcc.cmc
+                   FROM precos_cmc pcc
+                  WHERE ((pcc.empresa = c.empresa) AND (pcc.sku_codigo_omie = (c.sku_codigo_omie)::text))), (0)::numeric), pc.preco_compra_real, (pv.preco_venda_medio * 0.55)) AS preco_item_eoq,
                 CASE
+                    WHEN (NULLIF(( SELECT pcc.cmc
+                       FROM precos_cmc pcc
+                      WHERE ((pcc.empresa = c.empresa) AND (pcc.sku_codigo_omie = (c.sku_codigo_omie)::text))), (0)::numeric) IS NOT NULL) THEN 'cmc'::text
                     WHEN (pc.preco_compra_real IS NOT NULL) THEN 'compra_real'::text
                     WHEN (pv.preco_venda_medio IS NOT NULL) THEN 'venda_estimado'::text
                     ELSE 'sem_preco'::text
@@ -12403,7 +20874,7 @@ CREATE VIEW public.v_sku_parametros_sugeridos WITH (security_invoker='on') AS
 -- Name: v_oportunidade_economica_hoje; Type: VIEW; Schema: public; Owner: -
 --
 
-CREATE VIEW public.v_oportunidade_economica_hoje AS
+CREATE VIEW public.v_oportunidade_economica_hoje WITH (security_invoker='on') AS
  WITH promo_por_sku AS (
          SELECT pc.empresa,
             pc.id AS campanha_id,
@@ -12580,6 +21051,68 @@ CREATE VIEW public.v_oportunidade_economica_hoje AS
 --
 
 COMMENT ON VIEW public.v_oportunidade_economica_hoje IS 'Visão unificada de oportunidades por SKU: combina promoção ativa + aumento anunciado. Cada linha representa uma decisão possível com economia estimada. Ordenado por economia descendente.';
+
+
+--
+-- Name: v_otimizador_compras_insumos; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_otimizador_compras_insumos WITH (security_invoker='on') AS
+ WITH frete AS (
+         SELECT cac.empresa,
+            cac.fornecedor_nome,
+            max(cac.valor) FILTER (WHERE (cac.tipo = 'frete_perc_valor'::text)) AS frete_perc_valor,
+            max(cac.valor) FILTER (WHERE (cac.tipo = 'frete_fixo'::text)) AS frete_fixo,
+            max(cac.valor) FILTER (WHERE (cac.tipo = 'taxa_pedido'::text)) AS frete_taxa_pedido
+           FROM public.fornecedor_custo_adicional_config cac
+          WHERE (cac.ativo = true)
+          GROUP BY cac.empresa, cac.fornecedor_nome
+        ), prazo AS (
+         SELECT ppc.empresa,
+            ppc.fornecedor_nome,
+            max(ppc.desconto_ou_encargo_perc) AS prazo_padrao_perc
+           FROM public.fornecedor_prazo_pagamento_config ppc
+          WHERE ((ppc.padrao = true) AND (ppc.ativo = true))
+          GROUP BY ppc.empresa, ppc.fornecedor_nome
+        )
+ SELECT o.empresa,
+    o.sku_codigo_omie,
+    o.sku_descricao,
+    o.fornecedor_nome,
+    o.cenario,
+    o.desconto_total_perc,
+    o.desconto_promo_perc,
+    o.aumento_evitado_perc,
+    o.tem_negociacao_extra,
+    o.campanha_id,
+    o.campanha_nome,
+    o.promo_item_id,
+    o.modo_promo,
+    o.promo_data_corte_pedido,
+    o.promo_data_corte_faturamento,
+    o.proxima_vigencia_aumento,
+    o.aumentos_json,
+    o.data_limite_acao,
+    o.dias_ate_limite,
+    o.demanda_diaria,
+    o.qtde_base,
+    o.qtde_oportunidade,
+    o.preco_item_eoq,
+    o.economia_bruta_estimada,
+    o.custo_capital_efetivo_perc,
+    sp.lote_minimo_fornecedor,
+    sp.fornecedor_codigo_omie,
+    p.prazo_padrao_perc,
+    f.frete_perc_valor,
+    f.frete_fixo,
+    f.frete_taxa_pedido,
+    sp.minimo_forcado_manual
+   FROM ((((public.v_oportunidade_economica_hoje o
+     LEFT JOIN public.sku_parametros sp ON (((sp.empresa = o.empresa) AND (sp.sku_codigo_omie = o.sku_codigo_omie))))
+     LEFT JOIN prazo p ON (((p.empresa = o.empresa) AND (p.fornecedor_nome = o.fornecedor_nome))))
+     LEFT JOIN frete f ON (((f.empresa = o.empresa) AND (f.fornecedor_nome = o.fornecedor_nome))))
+     LEFT JOIN public.omie_products op ON ((((op.omie_codigo_produto)::text = (o.sku_codigo_omie)::text) AND (op.account = lower(o.empresa)))))
+  WHERE ((COALESCE(op.descricao, ''::text) !~~* '%405ML'::text) AND (COALESCE(op.descricao, ''::text) !~~* '%450ML'::text));
 
 
 --
@@ -12782,6 +21315,28 @@ CREATE VIEW public.v_promocao_avaliacao_hoje WITH (security_invoker='on') AS
 
 
 --
+-- Name: v_reposicao_sku_sem_fornecedor; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_reposicao_sku_sem_fornecedor WITH (security_invoker='on') AS
+ SELECT sp.empresa,
+    (sp.sku_codigo_omie)::text AS sku_codigo_omie,
+    sp.sku_descricao,
+    sp.ponto_pedido,
+    sp.estoque_maximo,
+    COALESCE(sea.estoque_fisico, (0)::numeric) AS estoque_fisico,
+    COALESCE(sea.estoque_pendente_entrada, (0)::numeric) AS estoque_pendente,
+    (COALESCE(sea.estoque_fisico, (0)::numeric) + COALESCE(sea.estoque_pendente_entrada, (0)::numeric)) AS estoque_efetivo,
+    op.descricao AS omie_descricao
+   FROM ((((public.sku_parametros sp
+     LEFT JOIN public.sku_estoque_atual sea ON (((sea.empresa = sp.empresa) AND (sea.sku_codigo_omie = (sp.sku_codigo_omie)::text))))
+     LEFT JOIN public.omie_products op ON ((((op.omie_codigo_produto)::text = (sp.sku_codigo_omie)::text) AND (op.account = lower(sp.empresa)))))
+     LEFT JOIN public.sku_status_omie sso ON (((sso.empresa = sp.empresa) AND (sso.sku_codigo_omie = (sp.sku_codigo_omie)::text))))
+     LEFT JOIN public.familia_nao_comprada fnc ON (((fnc.empresa = sp.empresa) AND (fnc.familia = op.familia))))
+  WHERE ((sp.habilitado_reposicao_automatica = true) AND (COALESCE(sp.tipo_reposicao, 'automatica'::text) = 'automatica'::text) AND ((sp.fornecedor_nome IS NULL) OR (btrim(sp.fornecedor_nome) = ''::text)) AND (fnc.id IS NULL) AND (COALESCE(op.ativo, true) = true) AND (COALESCE(sso.ativo_no_omie, true) = true) AND (COALESCE(op.descricao, ''::text) !~~* '%450ML'::text) AND (COALESCE(op.descricao, ''::text) !~~* '%405ML'::text) AND (COALESCE(op.tipo_produto, (op.metadata ->> 'tipo_produto'::text), ''::text) <> '04'::text) AND (sp.ponto_pedido IS NOT NULL) AND (sp.estoque_maximo IS NOT NULL) AND ((COALESCE(sea.estoque_fisico, (0)::numeric) + COALESCE(sea.estoque_pendente_entrada, (0)::numeric)) <= sp.ponto_pedido));
+
+
+--
 -- Name: v_simulacao_comparativa; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -12885,6 +21440,145 @@ CREATE VIEW public.v_simulacao_ranking_global WITH (security_invoker='on') AS
 
 
 --
+-- Name: v_sku_candidatos_primeira_compra; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_candidatos_primeira_compra WITH (security_invoker='on') AS
+ WITH recorrencia_180d AS (
+         SELECT vih.empresa,
+            vih.sku_codigo_omie,
+            count(DISTINCT vih.nfe_chave_acesso) AS nfs_180d,
+            count(DISTINCT to_char((vih.data_emissao)::timestamp with time zone, 'YYYY-MM'::text)) AS meses_180d,
+            count(DISTINCT vih.cliente_cnpj_cpf) AS clientes_180d,
+            (CURRENT_DATE - max(vih.data_emissao)) AS dias_desde_ultima
+           FROM public.venda_items_history vih
+          WHERE ((vih.data_emissao >= (CURRENT_DATE - '180 days'::interval)) AND (vih.quantidade > (0)::numeric))
+          GROUP BY vih.empresa, vih.sku_codigo_omie
+        ), elegiveis AS (
+         SELECT v.empresa,
+            v.sku_codigo_omie,
+            v.sku_descricao,
+            v.fornecedor_nome,
+            v.fornecedor_habilitado,
+            sp.habilitado_reposicao_automatica AS ja_habilitado,
+            v.classe_abc_proposta,
+            v.classe_xyz_proposta,
+            v.classe_consolidada,
+            v.demanda_media_diaria AS d,
+            v.lead_time_medio AS lt,
+            v.lt_total_teorico_dias_uteis,
+            v.demanda_sigma_diario,
+            v.coef_variacao_ordem,
+            v.dias_com_movimento,
+            v.lead_time_desvio,
+            v.lt_p95_dias,
+            v.fonte_leadtime,
+            v.z_aplicado,
+            v.preco_item_eoq,
+            v.preco_compra_real,
+            v.preco_venda_medio,
+            v.fonte_preco,
+            v.custo_pedido_aplicado,
+            v.custo_capital_efetivo_perc,
+            v.valor_total_90d,
+            v.valor_total_180d,
+            v.calculado_em,
+            r.nfs_180d,
+            r.meses_180d,
+            r.clientes_180d,
+            r.dias_desde_ultima,
+                CASE v.classe_abc_proposta
+                    WHEN 'A'::text THEN 30
+                    WHEN 'B'::text THEN 21
+                    ELSE 14
+                END AS cap_dias,
+                CASE
+                    WHEN ((v.preco_item_eoq > (0)::numeric) AND (v.custo_capital_efetivo_perc > (0)::numeric) AND (v.demanda_media_diaria > (0)::numeric)) THEN ceil(sqrt((((2.0 * (v.demanda_media_diaria * (252)::numeric)) * v.custo_pedido_aplicado) / ((v.custo_capital_efetivo_perc / 100.0) * v.preco_item_eoq))))
+                    ELSE (1)::numeric
+                END AS qc_eoq
+           FROM (((public.v_sku_parametros_sugeridos v
+             JOIN recorrencia_180d r ON (((r.empresa = v.empresa) AND (r.sku_codigo_omie = v.sku_codigo_omie))))
+             JOIN public.sku_parametros sp ON (((sp.empresa = v.empresa) AND (sp.sku_codigo_omie = v.sku_codigo_omie))))
+             LEFT JOIN public.omie_products op ON ((((op.omie_codigo_produto)::text = (v.sku_codigo_omie)::text) AND (op.account = lower(v.empresa)))))
+          WHERE ((v.status_sugestao = 'AGUARDANDO_SEGUNDA_ORDEM'::text) AND (v.demanda_media_diaria > (0)::numeric) AND (v.lead_time_medio IS NOT NULL) AND (v.fornecedor_nome IS NOT NULL) AND (v.fornecedor_habilitado IS TRUE) AND (v.preco_item_eoq > (0)::numeric) AND (v.classe_abc_proposta IS NOT NULL) AND ((v.grupo_codigo IS NOT NULL) OR (v.fornecedor_nome <> 'RENNER SAYERLACK S/A'::text)) AND (r.meses_180d >= 2) AND (r.nfs_180d >= 2) AND (r.dias_desde_ultima <= 60) AND (sp.ponto_pedido IS NULL) AND (sp.estoque_maximo IS NULL) AND (COALESCE(op.tipo_produto, (op.metadata ->> 'tipo_produto'::text), ''::text) <> '04'::text))
+        ), calc AS (
+         SELECT elegiveis.empresa,
+            elegiveis.sku_codigo_omie,
+            elegiveis.sku_descricao,
+            elegiveis.fornecedor_nome,
+            elegiveis.fornecedor_habilitado,
+            elegiveis.ja_habilitado,
+            elegiveis.classe_abc_proposta,
+            elegiveis.classe_xyz_proposta,
+            elegiveis.classe_consolidada,
+            elegiveis.d,
+            elegiveis.lt,
+            elegiveis.lt_total_teorico_dias_uteis,
+            elegiveis.demanda_sigma_diario,
+            elegiveis.coef_variacao_ordem,
+            elegiveis.dias_com_movimento,
+            elegiveis.lead_time_desvio,
+            elegiveis.lt_p95_dias,
+            elegiveis.fonte_leadtime,
+            elegiveis.z_aplicado,
+            elegiveis.preco_item_eoq,
+            elegiveis.preco_compra_real,
+            elegiveis.preco_venda_medio,
+            elegiveis.fonte_preco,
+            elegiveis.custo_pedido_aplicado,
+            elegiveis.custo_capital_efetivo_perc,
+            elegiveis.valor_total_90d,
+            elegiveis.valor_total_180d,
+            elegiveis.calculado_em,
+            elegiveis.nfs_180d,
+            elegiveis.meses_180d,
+            elegiveis.clientes_180d,
+            elegiveis.dias_desde_ultima,
+            elegiveis.cap_dias,
+            elegiveis.qc_eoq,
+            ceil((elegiveis.d * (elegiveis.cap_dias)::numeric)) AS cap_cobertura,
+            ceil((elegiveis.d * elegiveis.lt)) AS dem_lt
+           FROM elegiveis
+        )
+ SELECT empresa,
+    sku_codigo_omie,
+    sku_descricao,
+    fornecedor_nome,
+    fornecedor_habilitado,
+    classe_abc_proposta,
+    classe_xyz_proposta,
+    classe_consolidada,
+    d AS demanda_media_diaria,
+    lt AS lead_time_medio,
+    lt_total_teorico_dias_uteis,
+    demanda_sigma_diario,
+    coef_variacao_ordem,
+    dias_com_movimento,
+    lead_time_desvio,
+    lt_p95_dias,
+    fonte_leadtime,
+    z_aplicado,
+    preco_item_eoq,
+    preco_compra_real,
+    preco_venda_medio,
+    fonte_preco,
+    valor_total_90d,
+    valor_total_180d,
+    calculado_em,
+    'CANDIDATO_PRIMEIRA_COMPRA'::text AS status_sugestao,
+    nfs_180d AS recorrencia_nfs_180d,
+    meses_180d AS recorrencia_meses_180d,
+    clientes_180d AS recorrencia_clientes_180d,
+    dias_desde_ultima AS dias_desde_ultima_venda,
+    cap_dias AS primeira_compra_cap_dias,
+    GREATEST((1)::numeric, LEAST(GREATEST(qc_eoq, (1)::numeric), cap_cobertura)) AS primeira_compra_qtde,
+    GREATEST((1)::numeric, LEAST(dem_lt, cap_cobertura)) AS primeira_compra_ponto_pedido,
+    (GREATEST((1)::numeric, LEAST(dem_lt, cap_cobertura)) + GREATEST((1)::numeric, LEAST(GREATEST(qc_eoq, (1)::numeric), cap_cobertura))) AS primeira_compra_estoque_maximo,
+    ja_habilitado
+   FROM calc;
+
+
+--
 -- Name: v_sugestao_negociacao_ativa; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -12911,10 +21605,243 @@ CREATE VIEW public.v_sugestao_negociacao_ativa WITH (security_invoker='on') AS
     sp.estoque_maximo,
     (COALESCE(sea.estoque_fisico, (0)::numeric) + COALESCE(sea.estoque_pendente_entrada, (0)::numeric)) AS estoque_efetivo
    FROM (((public.sugestao_negociacao_paralela sng
-     LEFT JOIN public.mv_sku_ranking_negociacao_paralela mv ON (((mv.empresa = sng.empresa) AND (mv.sku_codigo_omie = sng.sku_codigo_omie))))
+     LEFT JOIN private.mv_sku_ranking_negociacao_paralela mv ON (((mv.empresa = sng.empresa) AND (mv.sku_codigo_omie = sng.sku_codigo_omie))))
      LEFT JOIN public.sku_parametros sp ON (((sp.empresa = sng.empresa) AND ((sp.sku_codigo_omie)::text = sng.sku_codigo_omie))))
      LEFT JOIN public.sku_estoque_atual sea ON (((sea.empresa = sng.empresa) AND (sea.sku_codigo_omie = sng.sku_codigo_omie))))
   WHERE ((sng.status = ANY (ARRAY['nova'::text, 'visualizada'::text, 'acao_tomada'::text])) AND (sng.valido_ate >= (CURRENT_DATE - '7 days'::interval)));
+
+
+--
+-- Name: v_tarefas_estado; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_tarefas_estado WITH (security_invoker='on') AS
+ WITH base AS (
+         SELECT t.id,
+            t.descricao,
+            t.categoria,
+            t.customer_user_id,
+            t.assigned_to,
+            t.created_by,
+            t.empresa,
+            t.modo,
+            t.due_date,
+            t.interacao_tipo,
+            t.backstop_days,
+            t.tolerancia_dias,
+            t.adiada_para,
+            t.motivo_adiamento,
+            t.auto_satisfy_mode,
+            t.target_produto_id,
+            t.target_texto,
+            t.target_preco_centavos,
+            t.target_tags,
+            t.status,
+            t.concluida_em,
+            t.concluida_por,
+            t.conclusao_origem,
+            t.nota_conclusao,
+            t.escalado_em,
+            t.template_id,
+            t.requer_comprovacao,
+            t.comprovacao_url,
+            t.created_at,
+            t.updated_at,
+            t.tipo_comprovacao,
+            t.comprovacao_leitura,
+            t.comprovacao_em,
+            t.janela_fim,
+            t.auditoria_status,
+            t.auditoria_motivo,
+            t.auditada_por,
+            t.auditada_em,
+            t.supervisor_user_id,
+            t.leitura_min,
+            t.leitura_max,
+            t.leitura_unidade,
+            COALESCE(((t.adiada_para AT TIME ZONE 'America/Sao_Paulo'::text))::date, t.due_date, (((t.created_at AT TIME ZONE 'America/Sao_Paulo'::text))::date + t.backstop_days)) AS effective_due,
+            COALESCE(( SELECT cc.covering_user_id
+                   FROM public.carteira_coverage cc
+                  WHERE ((cc.covered_user_id = t.assigned_to) AND cc.active AND (now() >= cc.valid_from) AND ((cc.valid_until IS NULL) OR (now() <= cc.valid_until)))
+                  ORDER BY cc.valid_from DESC
+                 LIMIT 1), t.assigned_to) AS responsavel_efetivo
+           FROM public.tarefas t
+        ), nowsp AS (
+         SELECT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date AS dia,
+            ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::time without time zone AS hora
+        )
+ SELECT b.id,
+    b.descricao,
+    b.categoria,
+    b.customer_user_id,
+    b.assigned_to,
+    b.created_by,
+    b.empresa,
+    b.modo,
+    b.due_date,
+    b.interacao_tipo,
+    b.backstop_days,
+    b.tolerancia_dias,
+    b.adiada_para,
+    b.motivo_adiamento,
+    b.auto_satisfy_mode,
+    b.target_produto_id,
+    b.target_texto,
+    b.target_preco_centavos,
+    b.target_tags,
+    b.status,
+    b.concluida_em,
+    b.concluida_por,
+    b.conclusao_origem,
+    b.nota_conclusao,
+    b.escalado_em,
+    b.template_id,
+    b.requer_comprovacao,
+    b.comprovacao_url,
+    b.created_at,
+    b.updated_at,
+    b.tipo_comprovacao,
+    b.comprovacao_leitura,
+    b.comprovacao_em,
+    b.janela_fim,
+    b.auditoria_status,
+    b.auditoria_motivo,
+    b.auditada_por,
+    b.auditada_em,
+    b.supervisor_user_id,
+    b.leitura_min,
+    b.leitura_max,
+    b.leitura_unidade,
+    b.effective_due,
+    b.responsavel_efetivo,
+    ((b.status = 'aberta'::text) AND ((n.dia > b.effective_due) OR ((n.dia = b.effective_due) AND (b.janela_fim IS NOT NULL) AND (n.hora > b.janela_fim)))) AS atrasada,
+    ((b.status = 'aberta'::text) AND (b.escalado_em IS NULL) AND ((n.dia > (b.effective_due + b.tolerancia_dias)) OR ((b.tolerancia_dias = 0) AND (n.dia = b.effective_due) AND (b.janela_fim IS NOT NULL) AND (n.hora > b.janela_fim)))) AS escalavel,
+    (EXISTS ( SELECT 1
+           FROM public.tarefa_satisfacao_candidatos c
+          WHERE ((c.tarefa_id = b.id) AND (c.status = 'pending'::text)))) AS tem_sugestao_pendente,
+    (b.auditoria_status = 'pendente'::text) AS requer_auditoria
+   FROM (base b
+     CROSS JOIN nowsp n);
+
+
+--
+-- Name: whatsapp_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.whatsapp_messages (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    conversation_id uuid NOT NULL,
+    wa_message_id text,
+    direction text NOT NULL,
+    type text DEFAULT 'text'::text NOT NULL,
+    body text,
+    media_id text,
+    media_url text,
+    transcript text,
+    status text,
+    sender_user_id uuid,
+    wa_timestamp timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT whatsapp_messages_direction_check CHECK ((direction = ANY (ARRAY['in'::text, 'out'::text]))),
+    CONSTRAINT whatsapp_messages_type_check CHECK ((type = ANY (ARRAY['text'::text, 'audio'::text, 'image'::text, 'template'::text, 'system'::text])))
+);
+
+
+--
+-- Name: v_whatsapp_sla; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_whatsapp_sla WITH (security_invoker='on') AS
+ WITH cfg AS (
+         SELECT (COALESCE(( SELECT company_config.value
+                   FROM public.company_config
+                  WHERE (company_config.key = 'whatsapp_sla_hora_inicio'::text)), '07:30'::text))::time without time zone AS h_inicio,
+            (COALESCE(( SELECT company_config.value
+                   FROM public.company_config
+                  WHERE (company_config.key = 'whatsapp_sla_hora_fim'::text)), '17:30'::text))::time without time zone AS h_fim,
+            COALESCE(( SELECT (string_to_array(company_config.value, ','::text))::integer[] AS string_to_array
+                   FROM public.company_config
+                  WHERE (company_config.key = 'whatsapp_sla_dias'::text)), ARRAY[1, 2, 3, 4, 5]) AS dias,
+            COALESCE(( SELECT (company_config.value)::integer AS value
+                   FROM public.company_config
+                  WHERE (company_config.key = 'whatsapp_sla_atencao_min'::text)), 15) AS atencao_min,
+            COALESCE(( SELECT (company_config.value)::integer AS value
+                   FROM public.company_config
+                  WHERE (company_config.key = 'whatsapp_sla_atrasado_min'::text)), 30) AS atrasado_min
+        ), msgs AS (
+         SELECT whatsapp_messages.conversation_id,
+            whatsapp_messages.direction,
+            whatsapp_messages.body,
+            whatsapp_messages.sender_user_id,
+            whatsapp_messages.id,
+            whatsapp_messages.created_at,
+                CASE
+                    WHEN ((whatsapp_messages.wa_timestamp IS NOT NULL) AND (whatsapp_messages.wa_timestamp <= now())) THEN whatsapp_messages.wa_timestamp
+                    ELSE whatsapp_messages.created_at
+                END AS anchor
+           FROM public.whatsapp_messages
+        ), last_out AS (
+         SELECT DISTINCT ON (msgs.conversation_id) msgs.conversation_id,
+            msgs.anchor,
+            msgs.created_at,
+            msgs.id
+           FROM msgs
+          WHERE ((msgs.direction = 'out'::text) AND (msgs.sender_user_id IS NOT NULL))
+          ORDER BY msgs.conversation_id, msgs.anchor DESC, msgs.created_at DESC, msgs.id DESC
+        ), aguardando AS (
+         SELECT DISTINCT ON (i.conversation_id) i.conversation_id,
+            i.anchor AS aguardando_desde
+           FROM (msgs i
+             LEFT JOIN last_out lo ON ((lo.conversation_id = i.conversation_id)))
+          WHERE ((i.direction = 'in'::text) AND (NOT public.wa_is_stop_keyword(i.body)) AND ((lo.conversation_id IS NULL) OR (ROW(i.anchor, i.created_at, i.id) > ROW(lo.anchor, lo.created_at, lo.id))))
+          ORDER BY i.conversation_id, i.anchor, i.created_at, i.id
+        ), owner AS (
+         SELECT c.id AS conversation_id,
+            public.wa_owner_efetivo(c.customer_user_id) AS owner_user_id
+           FROM public.whatsapp_conversations c
+        ), calc AS (
+         SELECT a.conversation_id,
+            a.aguardando_desde,
+            public.whatsapp_minutos_uteis(a.aguardando_desde, now(), cfg_1.h_inicio, cfg_1.h_fim, cfg_1.dias) AS minutos
+           FROM (aguardando a
+             CROSS JOIN cfg cfg_1)
+        )
+ SELECT calc.conversation_id,
+    conv.customer_user_id,
+    conv.phone_e164,
+    conv.contact_name,
+    o.owner_user_id,
+    calc.aguardando_desde,
+    calc.minutos AS minutos_uteis_aguardando,
+        CASE
+            WHEN (calc.minutos >= cfg.atrasado_min) THEN 'vermelho'::text
+            WHEN (calc.minutos >= cfg.atencao_min) THEN 'amarelo'::text
+            ELSE 'verde'::text
+        END AS nivel
+   FROM (((calc
+     JOIN public.whatsapp_conversations conv ON ((conv.id = calc.conversation_id)))
+     JOIN owner o ON ((o.conversation_id = calc.conversation_id)))
+     CROSS JOIN cfg)
+  WHERE (conv.status <> 'fechada'::text);
+
+
+--
+-- Name: vendas_sync_cursor; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.vendas_sync_cursor (
+    account text NOT NULL,
+    date_from date NOT NULL,
+    date_to date NOT NULL,
+    next_page integer,
+    completed_at timestamp with time zone,
+    last_error_kind text,
+    running_since timestamp with time zone,
+    heartbeat_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT vendas_sync_cursor_account_check CHECK ((account = ANY (ARRAY['oben'::text, 'colacor'::text]))),
+    CONSTRAINT vendas_sync_cursor_last_error_kind_check CHECK (((last_error_kind IS NULL) OR (last_error_kind = ANY (ARRAY['rate_limit'::text, 'transient'::text, 'http'::text, 'error'::text]))))
+);
 
 
 --
@@ -12967,7 +21894,7 @@ CREATE TABLE public.visit_score_recalc_queue (
 -- Name: visit_score_recalc_pending; Type: VIEW; Schema: public; Owner: -
 --
 
-CREATE VIEW public.visit_score_recalc_pending AS
+CREATE VIEW public.visit_score_recalc_pending WITH (security_invoker='on') AS
  SELECT id,
     customer_user_id,
     farmer_id,
@@ -12979,6 +21906,32 @@ CREATE VIEW public.visit_score_recalc_pending AS
    FROM public.visit_score_recalc_queue q
   WHERE (processed_at IS NULL)
   ORDER BY enqueued_at;
+
+
+--
+-- Name: visitas_agendadas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.visitas_agendadas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    customer_user_id uuid NOT NULL,
+    scheduled_by uuid NOT NULL,
+    scheduled_date date NOT NULL,
+    status text DEFAULT 'pendente'::text NOT NULL,
+    visit_type text DEFAULT 'comercial'::text NOT NULL,
+    notes text,
+    route_visit_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT visitas_agendadas_status_check CHECK ((status = ANY (ARRAY['pendente'::text, 'realizada'::text, 'cancelada'::text])))
+);
+
+
+--
+-- Name: TABLE visitas_agendadas; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.visitas_agendadas IS 'Visitas agendadas pelo vendedor para clientes da carteira (pendente/realizada/cancelada).';
 
 
 --
@@ -13022,6 +21975,28 @@ CREATE TABLE public.webauthn_credentials (
     device_name text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     last_used_at timestamp with time zone
+);
+
+
+--
+-- Name: whatsapp_sla_digest_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.whatsapp_sla_digest_log (
+    data_local date NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: whatsapp_webhook_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.whatsapp_webhook_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    payload jsonb NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    processed_at timestamp with time zone
 );
 
 
@@ -13308,6 +22283,14 @@ ALTER TABLE ONLY public.addresses
 
 
 --
+-- Name: afiacao_os_sync_fila afiacao_os_sync_fila_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.afiacao_os_sync_fila
+    ADD CONSTRAINT afiacao_os_sync_fila_pkey PRIMARY KEY (order_id);
+
+
+--
 -- Name: ai_decision_audit_log ai_decision_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13380,6 +22363,22 @@ ALTER TABLE ONLY public.carteira_coverage
 
 
 --
+-- Name: carteira_positivacao_snapshot carteira_positivacao_snapshot_mes_customer_user_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.carteira_positivacao_snapshot
+    ADD CONSTRAINT carteira_positivacao_snapshot_mes_customer_user_id_key UNIQUE (mes, customer_user_id);
+
+
+--
+-- Name: carteira_positivacao_snapshot carteira_positivacao_snapshot_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.carteira_positivacao_snapshot
+    ADD CONSTRAINT carteira_positivacao_snapshot_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: categoria_aumento_familia_mapeamento categoria_aumento_familia_mapeamento_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13401,6 +22400,54 @@ ALTER TABLE ONLY public.category_mappings
 
 ALTER TABLE ONLY public.category_mappings
     ADD CONSTRAINT category_mappings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cep_geo cep_geo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cep_geo
+    ADD CONSTRAINT cep_geo_pkey PRIMARY KEY (cep);
+
+
+--
+-- Name: cliente_classificacao cliente_classificacao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cliente_classificacao
+    ADD CONSTRAINT cliente_classificacao_pkey PRIMARY KEY (user_id);
+
+
+--
+-- Name: cliente_grupo_membros cliente_grupo_membros_documento_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cliente_grupo_membros
+    ADD CONSTRAINT cliente_grupo_membros_documento_key UNIQUE (documento);
+
+
+--
+-- Name: cliente_grupo_membros cliente_grupo_membros_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cliente_grupo_membros
+    ADD CONSTRAINT cliente_grupo_membros_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cliente_grupos cliente_grupos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cliente_grupos
+    ADD CONSTRAINT cliente_grupos_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cmc_ledger cmc_ledger_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cmc_ledger
+    ADD CONSTRAINT cmc_ledger_pkey PRIMARY KEY (id);
 
 
 --
@@ -13492,6 +22539,14 @@ ALTER TABLE ONLY public.cte_associados
 
 
 --
+-- Name: customer_canonical_alias customer_canonical_alias_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_canonical_alias
+    ADD CONSTRAINT customer_canonical_alias_pkey PRIMARY KEY (alias_user_id);
+
+
+--
 -- Name: customer_contacts customer_contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13540,11 +22595,11 @@ ALTER TABLE ONLY public.customer_segments
 
 
 --
--- Name: customer_visit_scores customer_visit_scores_customer_user_id_farmer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: customer_visit_scores customer_visit_scores_customer_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_visit_scores
-    ADD CONSTRAINT customer_visit_scores_customer_user_id_farmer_id_key UNIQUE (customer_user_id, farmer_id);
+    ADD CONSTRAINT customer_visit_scores_customer_unique UNIQUE (customer_user_id);
 
 
 --
@@ -13748,11 +22803,11 @@ ALTER TABLE ONLY public.farmer_category_conversion
 
 
 --
--- Name: farmer_client_scores farmer_client_scores_customer_user_id_farmer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: farmer_client_scores farmer_client_scores_customer_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.farmer_client_scores
-    ADD CONSTRAINT farmer_client_scores_customer_user_id_farmer_id_key UNIQUE (customer_user_id, farmer_id);
+    ADD CONSTRAINT farmer_client_scores_customer_unique UNIQUE (customer_user_id);
 
 
 --
@@ -13849,6 +22904,22 @@ ALTER TABLE ONLY public.farmer_learning_weights
 
 ALTER TABLE ONLY public.farmer_learning_weights
     ADD CONSTRAINT farmer_learning_weights_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_mixgap_feedback farmer_mixgap_feedback_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_mixgap_feedback
+    ADD CONSTRAINT farmer_mixgap_feedback_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: farmer_mixgap_feedback farmer_mixgap_feedback_seller_user_id_customer_user_id_fami_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.farmer_mixgap_feedback
+    ADD CONSTRAINT farmer_mixgap_feedback_seller_user_id_customer_user_id_fami_key UNIQUE (seller_user_id, customer_user_id, familia);
 
 
 --
@@ -14092,6 +23163,14 @@ ALTER TABLE ONLY public.fin_forecast
 
 
 --
+-- Name: fin_funding_inputs fin_funding_inputs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_funding_inputs
+    ADD CONSTRAINT fin_funding_inputs_pkey PRIMARY KEY (company);
+
+
+--
 -- Name: fin_ic_matches fin_ic_matches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14180,6 +23259,14 @@ ALTER TABLE ONLY public.fin_projecao_snapshots
 
 
 --
+-- Name: fin_regime_inputs fin_regime_inputs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_regime_inputs
+    ADD CONSTRAINT fin_regime_inputs_pkey PRIMARY KEY (company);
+
+
+--
 -- Name: fin_sync_checkpoint fin_sync_checkpoint_company_entidade_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14193,6 +23280,14 @@ ALTER TABLE ONLY public.fin_sync_checkpoint
 
 ALTER TABLE ONLY public.fin_sync_checkpoint
     ADD CONSTRAINT fin_sync_checkpoint_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_sync_cursor fin_sync_cursor_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_sync_cursor
+    ADD CONSTRAINT fin_sync_cursor_pkey PRIMARY KEY (company, resource);
 
 
 --
@@ -14308,6 +23403,14 @@ ALTER TABLE ONLY public.fornecedor_email_polling
 
 
 --
+-- Name: fornecedor_excecao fornecedor_excecao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_excecao
+    ADD CONSTRAINT fornecedor_excecao_pkey PRIMARY KEY (user_id);
+
+
+--
 -- Name: fornecedor_grupo_producao fornecedor_grupo_producao_empresa_fornecedor_nome_grupo_cod_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14412,6 +23515,14 @@ ALTER TABLE ONLY public.health_score_history
 
 
 --
+-- Name: impersonation_audit impersonation_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.impersonation_audit
+    ADD CONSTRAINT impersonation_audit_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: inventory_position inventory_position_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14468,6 +23579,22 @@ ALTER TABLE ONLY public.kb_documents
 
 
 --
+-- Name: kb_extraction_drafts kb_extraction_drafts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_extraction_drafts
+    ADD CONSTRAINT kb_extraction_drafts_pkey PRIMARY KEY (document_id);
+
+
+--
+-- Name: kb_product_spec_versions kb_product_spec_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_product_spec_versions
+    ADD CONSTRAINT kb_product_spec_versions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: kb_product_specs kb_product_specs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14481,6 +23608,22 @@ ALTER TABLE ONLY public.kb_product_specs
 
 ALTER TABLE ONLY public.kb_product_specs
     ADD CONSTRAINT kb_product_specs_product_code_key UNIQUE (product_code);
+
+
+--
+-- Name: kb_product_specs kb_product_specs_supplier_code_norm_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_product_specs
+    ADD CONSTRAINT kb_product_specs_supplier_code_norm_key UNIQUE (supplier, product_code_normalized);
+
+
+--
+-- Name: kb_product_spec_versions kb_spec_versions_seq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_product_spec_versions
+    ADD CONSTRAINT kb_spec_versions_seq UNIQUE (supplier, product_code_normalized, version_number);
 
 
 --
@@ -14505,6 +23648,46 @@ ALTER TABLE ONLY public.loyalty_redemptions
 
 ALTER TABLE ONLY public.margin_audit_log
     ADD CONSTRAINT margin_audit_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: markup_policy markup_policy_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.markup_policy
+    ADD CONSTRAINT markup_policy_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: melhoria_itens melhoria_itens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.melhoria_itens
+    ADD CONSTRAINT melhoria_itens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: melhoria_mensagens melhoria_mensagens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.melhoria_mensagens
+    ADD CONSTRAINT melhoria_mensagens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: municipio_geo municipio_geo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.municipio_geo
+    ADD CONSTRAINT municipio_geo_pkey PRIMARY KEY (municipio_codigo);
+
+
+--
+-- Name: nfe_efetivacao_tentativas nfe_efetivacao_tentativas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nfe_efetivacao_tentativas
+    ADD CONSTRAINT nfe_efetivacao_tentativas_pkey PRIMARY KEY (id);
 
 
 --
@@ -14556,6 +23739,14 @@ ALTER TABLE ONLY public.observacoes_excluidas
 
 
 --
+-- Name: omie_clientes_nao_vinculados omie_clientes_nao_vinculados_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_clientes_nao_vinculados
+    ADD CONSTRAINT omie_clientes_nao_vinculados_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: omie_clientes omie_clientes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14572,11 +23763,27 @@ ALTER TABLE ONLY public.omie_condicao_pagamento_catalogo
 
 
 --
+-- Name: omie_nao_vinculados_state omie_nao_vinculados_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_nao_vinculados_state
+    ADD CONSTRAINT omie_nao_vinculados_state_pkey PRIMARY KEY (empresa);
+
+
+--
 -- Name: omie_ordens_servico omie_ordens_servico_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.omie_ordens_servico
     ADD CONSTRAINT omie_ordens_servico_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: omie_product_spec_links omie_product_spec_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_product_spec_links
+    ADD CONSTRAINT omie_product_spec_links_pkey PRIMARY KEY (id);
 
 
 --
@@ -14732,6 +23939,22 @@ ALTER TABLE ONLY public.picking_tasks
 
 
 --
+-- Name: posthog_error_webhook_log posthog_error_webhook_log_dedupe_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.posthog_error_webhook_log
+    ADD CONSTRAINT posthog_error_webhook_log_dedupe_key_key UNIQUE (dedupe_key);
+
+
+--
+-- Name: posthog_error_webhook_log posthog_error_webhook_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.posthog_error_webhook_log
+    ADD CONSTRAINT posthog_error_webhook_log_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: priority_score_log priority_score_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14812,6 +24035,54 @@ ALTER TABLE ONLY public.purchase_orders_tracking
 
 
 --
+-- Name: push_subscriptions push_subscriptions_endpoint_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.push_subscriptions
+    ADD CONSTRAINT push_subscriptions_endpoint_key UNIQUE (endpoint);
+
+
+--
+-- Name: push_subscriptions push_subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.push_subscriptions
+    ADD CONSTRAINT push_subscriptions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: radar_contatos radar_contatos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.radar_contatos
+    ADD CONSTRAINT radar_contatos_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: radar_empresas radar_empresas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.radar_empresas
+    ADD CONSTRAINT radar_empresas_pkey PRIMARY KEY (cnpj);
+
+
+--
+-- Name: radar_ingest_state radar_ingest_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.radar_ingest_state
+    ADD CONSTRAINT radar_ingest_state_pkey PRIMARY KEY (mes_referencia);
+
+
+--
+-- Name: radar_municipios radar_municipios_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.radar_municipios
+    ADD CONSTRAINT radar_municipios_pkey PRIMARY KEY (codigo);
+
+
+--
 -- Name: rag_chunks rag_chunks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14868,6 +24139,62 @@ ALTER TABLE ONLY public.referrals
 
 
 --
+-- Name: regua_preco_log regua_preco_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regua_preco_log
+    ADD CONSTRAINT regua_preco_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: reposicao_alerta_pedido_minimo reposicao_alerta_pedido_minimo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_alerta_pedido_minimo
+    ADD CONSTRAINT reposicao_alerta_pedido_minimo_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: reposicao_auto_aprovacao_log reposicao_auto_aprovacao_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_auto_aprovacao_log
+    ADD CONSTRAINT reposicao_auto_aprovacao_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: reposicao_param_auto_log reposicao_param_auto_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_param_auto_log
+    ADD CONSTRAINT reposicao_param_auto_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: reposicao_param_auto_run reposicao_param_auto_run_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_param_auto_run
+    ADD CONSTRAINT reposicao_param_auto_run_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: reposicao_param_limbo_log reposicao_param_limbo_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_param_limbo_log
+    ADD CONSTRAINT reposicao_param_limbo_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: reposicao_param_pin reposicao_param_pin_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_param_pin
+    ADD CONSTRAINT reposicao_param_pin_pkey PRIMARY KEY (empresa, sku_codigo_omie);
+
+
+--
 -- Name: reposition_parameters reposition_parameters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14881,6 +24208,62 @@ ALTER TABLE ONLY public.reposition_parameters
 
 ALTER TABLE ONLY public.roadmap_state
     ADD CONSTRAINT roadmap_state_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: route_calendar_override route_calendar_override_data_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_calendar_override
+    ADD CONSTRAINT route_calendar_override_data_key UNIQUE (data);
+
+
+--
+-- Name: route_calendar_override route_calendar_override_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_calendar_override
+    ADD CONSTRAINT route_calendar_override_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: route_contact_log route_contact_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_contact_log
+    ADD CONSTRAINT route_contact_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: route_disparo_config route_disparo_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_disparo_config
+    ADD CONSTRAINT route_disparo_config_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: route_queue_snapshot route_queue_snapshot_data_rota_farmer_id_customer_user_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_queue_snapshot
+    ADD CONSTRAINT route_queue_snapshot_data_rota_farmer_id_customer_user_id_key UNIQUE (data_rota, farmer_id, customer_user_id);
+
+
+--
+-- Name: route_queue_snapshot route_queue_snapshot_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_queue_snapshot
+    ADD CONSTRAINT route_queue_snapshot_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: route_schedule route_schedule_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_schedule
+    ADD CONSTRAINT route_schedule_pkey PRIMARY KEY (id);
 
 
 --
@@ -14908,6 +24291,14 @@ ALTER TABLE ONLY public.sales_price_history
 
 
 --
+-- Name: sayerlack_retry_motor_log sayerlack_retry_motor_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sayerlack_retry_motor_log
+    ADD CONSTRAINT sayerlack_retry_motor_log_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: score_recalc_queue score_recalc_queue_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14929,6 +24320,22 @@ ALTER TABLE ONLY public.sending_quality_logs
 
 ALTER TABLE ONLY public.simulacao_estoque_resultados
     ADD CONSTRAINT simulacao_estoque_resultados_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sinal_classe_config sinal_classe_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sinal_classe_config
+    ADD CONSTRAINT sinal_classe_config_pkey PRIMARY KEY (classe);
+
+
+--
+-- Name: sku_embalagem_equivalencia sku_embalagem_equivalencia_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_embalagem_equivalencia
+    ADD CONSTRAINT sku_embalagem_equivalencia_pkey PRIMARY KEY (id);
 
 
 --
@@ -14993,6 +24400,14 @@ ALTER TABLE ONLY public.sku_parametros_historico
 
 ALTER TABLE ONLY public.sku_parametros
     ADD CONSTRAINT sku_parametros_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sku_preco_fornecedor_capturado sku_preco_fornecedor_capturado_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sku_preco_fornecedor_capturado
+    ADD CONSTRAINT sku_preco_fornecedor_capturado_pkey PRIMARY KEY (id);
 
 
 --
@@ -15073,6 +24488,46 @@ ALTER TABLE ONLY public.sync_reprocess_log
 
 ALTER TABLE ONLY public.sync_state
     ADD CONSTRAINT sync_state_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tarefa_satisfacao_candidatos tarefa_candidato_fonte_unq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tarefa_satisfacao_candidatos
+    ADD CONSTRAINT tarefa_candidato_fonte_unq UNIQUE (tarefa_id, source_type, source_id);
+
+
+--
+-- Name: tarefa_eventos tarefa_eventos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tarefa_eventos
+    ADD CONSTRAINT tarefa_eventos_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tarefa_satisfacao_candidatos tarefa_satisfacao_candidatos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tarefa_satisfacao_candidatos
+    ADD CONSTRAINT tarefa_satisfacao_candidatos_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tarefa_templates tarefa_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tarefa_templates
+    ADD CONSTRAINT tarefa_templates_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tarefas tarefas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tarefas
+    ADD CONSTRAINT tarefas_pkey PRIMARY KEY (id);
 
 
 --
@@ -15188,6 +24643,22 @@ ALTER TABLE ONLY public.tint_integration_settings
 
 
 --
+-- Name: tint_keys_snapshots tint_keys_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_keys_snapshots
+    ADD CONSTRAINT tint_keys_snapshots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_keys_snapshots tint_keys_snapshots_snapshot_id_entity_chunk_index_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_keys_snapshots
+    ADD CONSTRAINT tint_keys_snapshots_snapshot_id_entity_chunk_index_key UNIQUE (snapshot_id, entity, chunk_index);
+
+
+--
 -- Name: tint_produtos tint_produtos_account_cod_produto_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15289,6 +24760,14 @@ ALTER TABLE ONLY public.tint_staging_formula_itens
 
 ALTER TABLE ONLY public.tint_staging_formulas
     ADD CONSTRAINT tint_staging_formulas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tint_staging_precos_base tint_staging_precos_base_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_precos_base
+    ADD CONSTRAINT tint_staging_precos_base_pkey PRIMARY KEY (id);
 
 
 --
@@ -15500,6 +24979,14 @@ ALTER TABLE ONLY public.des_meta_empresa
 
 
 --
+-- Name: omie_clientes_nao_vinculados uq_nv_run; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_clientes_nao_vinculados
+    ADD CONSTRAINT uq_nv_run UNIQUE (empresa, omie_codigo_cliente, synced_at);
+
+
+--
 -- Name: omie_webhook_events uq_omie_event; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15644,6 +25131,14 @@ ALTER TABLE ONLY public.venda_items_history
 
 
 --
+-- Name: vendas_sync_cursor vendas_sync_cursor_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vendas_sync_cursor
+    ADD CONSTRAINT vendas_sync_cursor_pkey PRIMARY KEY (account, date_from, date_to);
+
+
+--
 -- Name: vendor_sip_credentials vendor_sip_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15665,6 +25160,14 @@ ALTER TABLE ONLY public.vendor_sip_credentials
 
 ALTER TABLE ONLY public.visit_score_recalc_queue
     ADD CONSTRAINT visit_score_recalc_queue_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: visitas_agendadas visitas_agendadas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.visitas_agendadas
+    ADD CONSTRAINT visitas_agendadas_pkey PRIMARY KEY (id);
 
 
 --
@@ -15705,6 +25208,54 @@ ALTER TABLE ONLY public.webauthn_credentials
 
 ALTER TABLE ONLY public.webauthn_credentials
     ADD CONSTRAINT webauthn_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: whatsapp_conversations whatsapp_conversations_phone_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_conversations
+    ADD CONSTRAINT whatsapp_conversations_phone_key_key UNIQUE (phone_key);
+
+
+--
+-- Name: whatsapp_conversations whatsapp_conversations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_conversations
+    ADD CONSTRAINT whatsapp_conversations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: whatsapp_messages whatsapp_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_messages
+    ADD CONSTRAINT whatsapp_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: whatsapp_messages whatsapp_messages_wa_message_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_messages
+    ADD CONSTRAINT whatsapp_messages_wa_message_id_key UNIQUE (wa_message_id);
+
+
+--
+-- Name: whatsapp_sla_digest_log whatsapp_sla_digest_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_sla_digest_log
+    ADD CONSTRAINT whatsapp_sla_digest_log_pkey PRIMARY KEY (data_local);
+
+
+--
+-- Name: whatsapp_webhook_events whatsapp_webhook_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_webhook_events
+    ADD CONSTRAINT whatsapp_webhook_events_pkey PRIMARY KEY (id);
 
 
 --
@@ -15862,6 +25413,13 @@ CREATE INDEX idx_abcxyz_mes ON public.abc_xyz_classification USING btree (empres
 
 
 --
+-- Name: idx_afiacao_os_sync_fila_retry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_afiacao_os_sync_fila_retry ON public.afiacao_os_sync_fila USING btree (next_retry_em);
+
+
+--
 -- Name: idx_ai_decisions_customer; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -15960,6 +25518,13 @@ CREATE INDEX idx_call_log_missed_unack ON public.call_log USING btree (farmer_id
 
 
 --
+-- Name: idx_candidato_tarefa_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_candidato_tarefa_pending ON public.tarefa_satisfacao_candidatos USING btree (tarefa_id) WHERE (status = 'pending'::text);
+
+
+--
 -- Name: idx_carteira_owner; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -15974,10 +25539,45 @@ CREATE INDEX idx_carteira_owner_eligible ON public.carteira_assignments USING bt
 
 
 --
+-- Name: idx_cca_canonical; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cca_canonical ON public.customer_canonical_alias USING btree (canonical_user_id);
+
+
+--
+-- Name: idx_cca_status_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cca_status_active ON public.customer_canonical_alias USING btree (status) WHERE (status = 'active'::text);
+
+
+--
+-- Name: idx_cgm_documento; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cgm_documento ON public.cliente_grupo_membros USING btree (documento);
+
+
+--
+-- Name: idx_cgm_grupo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cgm_grupo ON public.cliente_grupo_membros USING btree (grupo_id);
+
+
+--
 -- Name: idx_checkin_trimestre; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_checkin_trimestre ON public.des_checkin_qualitativo USING btree (empresa, ano, trimestre, data_avaliacao DESC);
+
+
+--
+-- Name: idx_cmc_ledger_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cmc_ledger_lookup ON public.cmc_ledger USING btree (account, omie_codigo_produto, observed_at DESC);
 
 
 --
@@ -16065,6 +25665,20 @@ CREATE INDEX idx_customer_processes_segmento ON public.customer_processes USING 
 
 
 --
+-- Name: idx_cvs_city_norm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cvs_city_norm ON public.customer_visit_scores USING btree (city_norm) WHERE (city_norm IS NOT NULL);
+
+
+--
+-- Name: idx_cvs_customer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cvs_customer ON public.customer_visit_scores USING btree (customer_user_id);
+
+
+--
 -- Name: idx_dashboard_visits_user_recent; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16076,6 +25690,13 @@ CREATE INDEX idx_dashboard_visits_user_recent ON public.dashboard_visits USING b
 --
 
 CREATE INDEX idx_estoque_sync ON public.sku_estoque_atual USING btree (ultima_sincronizacao);
+
+
+--
+-- Name: idx_evento_tarefa; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_evento_tarefa ON public.tarefa_eventos USING btree (tarefa_id, created_at DESC);
 
 
 --
@@ -16093,6 +25714,13 @@ CREATE INDEX idx_excl_tipo_data ON public.observacoes_excluidas USING btree (tip
 
 
 --
+-- Name: idx_farmer_calls_atendimento_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_farmer_calls_atendimento_id ON public.farmer_calls USING btree (atendimento_id) WHERE (atendimento_id IS NOT NULL);
+
+
+--
 -- Name: idx_farmer_calls_has_transcript; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16100,10 +25728,31 @@ CREATE INDEX idx_farmer_calls_has_transcript ON public.farmer_calls USING btree 
 
 
 --
+-- Name: idx_farmer_calls_sinais_pendentes; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_farmer_calls_sinais_pendentes ON public.farmer_calls USING btree (started_at) WHERE (sinais_ligacao IS NULL);
+
+
+--
 -- Name: idx_farmer_category_conversion_category; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE UNIQUE INDEX idx_farmer_category_conversion_category ON public.farmer_category_conversion USING btree (category_id);
+
+
+--
+-- Name: idx_farmer_client_scores_calculated_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_farmer_client_scores_calculated_at ON public.farmer_client_scores USING btree (calculated_at);
+
+
+--
+-- Name: idx_fcs_customer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fcs_customer ON public.farmer_client_scores USING btree (customer_user_id);
 
 
 --
@@ -16174,6 +25823,20 @@ CREATE INDEX idx_fin_conc_status ON public.fin_conciliacao USING btree (status);
 --
 
 CREATE INDEX idx_fin_conf_periodo ON public.fin_confiabilidade USING btree (company, ano, mes);
+
+
+--
+-- Name: idx_fin_contas_pagar_updated_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_contas_pagar_updated_at ON public.fin_contas_pagar USING btree (updated_at);
+
+
+--
+-- Name: idx_fin_contas_receber_updated_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_contas_receber_updated_at ON public.fin_contas_receber USING btree (updated_at);
 
 
 --
@@ -16324,6 +25987,13 @@ CREATE INDEX idx_fin_orc_periodo ON public.fin_orcamento USING btree (company, a
 
 
 --
+-- Name: idx_fin_sync_cursor_pendentes; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fin_sync_cursor_pendentes ON public.fin_sync_cursor USING btree (resource, company) WHERE (next_page IS NOT NULL);
+
+
+--
 -- Name: idx_fin_sync_log_started; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16387,6 +26057,13 @@ CREATE UNIQUE INDEX idx_inventory_omie_account ON public.inventory_position USIN
 
 
 --
+-- Name: idx_inventory_position_synced_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_inventory_position_synced_at ON public.inventory_position USING btree (synced_at);
+
+
+--
 -- Name: idx_kb_chunks_document; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16436,6 +26113,20 @@ CREATE INDEX idx_kb_product_specs_supplier_line ON public.kb_product_specs USING
 
 
 --
+-- Name: idx_kbv_identidade; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_kbv_identidade ON public.kb_product_spec_versions USING btree (supplier, product_code_normalized, version_number DESC);
+
+
+--
+-- Name: idx_kbv_source_doc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_kbv_source_doc ON public.kb_product_spec_versions USING btree (source_document_id);
+
+
+--
 -- Name: idx_mapeamento_familia; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16443,17 +26134,31 @@ CREATE INDEX idx_mapeamento_familia ON public.categoria_aumento_familia_mapeamen
 
 
 --
--- Name: idx_mv_ranking_categoria; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_melhoria_itens_autor; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_mv_ranking_categoria ON public.mv_sku_ranking_negociacao_paralela USING btree (empresa, categoria, score_final DESC);
+CREATE INDEX idx_melhoria_itens_autor ON public.melhoria_itens USING btree (autor_user_id, created_at DESC);
 
 
 --
--- Name: idx_mv_ranking_pk; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_melhoria_itens_status; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_mv_ranking_pk ON public.mv_sku_ranking_negociacao_paralela USING btree (empresa, sku_codigo_omie);
+CREATE INDEX idx_melhoria_itens_status ON public.melhoria_itens USING btree (status, created_at DESC);
+
+
+--
+-- Name: idx_melhoria_mensagens_item; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_melhoria_mensagens_item ON public.melhoria_mensagens USING btree (item_id, created_at);
+
+
+--
+-- Name: idx_nfe_efetivacao_tentativas_receb; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_nfe_efetivacao_tentativas_receb ON public.nfe_efetivacao_tentativas USING btree (nfe_recebimento_id, created_at DESC);
 
 
 --
@@ -16506,6 +26211,13 @@ CREATE INDEX idx_nfe_recebimentos_warehouse ON public.nfe_recebimentos USING btr
 
 
 --
+-- Name: idx_nv_empresa_synced; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_nv_empresa_synced ON public.omie_clientes_nao_vinculados USING btree (empresa, synced_at);
+
+
+--
 -- Name: idx_omie_clientes_codigo_empresa; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16517,6 +26229,27 @@ CREATE UNIQUE INDEX idx_omie_clientes_codigo_empresa ON public.omie_clientes USI
 --
 
 CREATE UNIQUE INDEX idx_omie_clientes_user_empresa ON public.omie_clientes USING btree (user_id, empresa_omie);
+
+
+--
+-- Name: idx_omie_products_account_tipo_produto; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_omie_products_account_tipo_produto ON public.omie_products USING btree (account, tipo_produto) WHERE (tipo_produto IS NOT NULL);
+
+
+--
+-- Name: idx_omie_products_codigo_text_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_omie_products_codigo_text_account ON public.omie_products USING btree (((omie_codigo_produto)::text), lower(account));
+
+
+--
+-- Name: idx_omie_products_updated_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_omie_products_updated_at ON public.omie_products USING btree (updated_at);
 
 
 --
@@ -16576,6 +26309,20 @@ CREATE INDEX idx_outlier_tipo_sev ON public.eventos_outlier USING btree (tipo, s
 
 
 --
+-- Name: idx_param_auto_log_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_param_auto_log_run ON public.reposicao_param_auto_log USING btree (run_id);
+
+
+--
+-- Name: idx_param_auto_log_sku; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_param_auto_log_sku ON public.reposicao_param_auto_log USING btree (empresa, sku_codigo_omie);
+
+
+--
 -- Name: idx_pedido_compra_item_pedido; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16594,6 +26341,13 @@ CREATE INDEX idx_pedido_compra_item_sku ON public.pedido_compra_item USING btree
 --
 
 CREATE INDEX idx_pedido_compra_split_parent ON public.pedido_compra_sugerido USING btree (split_parent_id) WHERE (split_parent_id IS NOT NULL);
+
+
+--
+-- Name: idx_pedido_compra_sugerido_data_ciclo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedido_compra_sugerido_data_ciclo ON public.pedido_compra_sugerido USING btree (data_ciclo);
 
 
 --
@@ -16758,6 +26512,13 @@ CREATE INDEX idx_priority_log_farmer_date ON public.priority_score_log USING btr
 
 
 --
+-- Name: idx_product_costs_updated_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_product_costs_updated_at ON public.product_costs USING btree (updated_at);
+
+
+--
 -- Name: idx_production_orders_account; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16835,6 +26596,69 @@ CREATE INDEX idx_promocao_item_sku_omie ON public.promocao_item USING btree (sku
 
 
 --
+-- Name: idx_push_subscriptions_user; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_push_subscriptions_user ON public.push_subscriptions USING btree (user_id);
+
+
+--
+-- Name: idx_radar_contatos_cnpj; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_radar_contatos_cnpj ON public.radar_contatos USING btree (cnpj, created_at DESC);
+
+
+--
+-- Name: idx_radar_empresas_cnae; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_radar_empresas_cnae ON public.radar_empresas USING btree (cnae_principal);
+
+
+--
+-- Name: idx_radar_empresas_fila; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_radar_empresas_fila ON public.radar_empresas USING btree (ultimo_lote, prospeccao_status, data_abertura DESC);
+
+
+--
+-- Name: idx_radar_empresas_local; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_radar_empresas_local ON public.radar_empresas USING btree (uf, municipio_nome);
+
+
+--
+-- Name: idx_radar_lista_estab; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_radar_lista_estab ON public.radar_empresas USING btree (capital_social DESC, cnpj) WHERE ((ja_cliente = false) AND (prospeccao_status <> 'descartado'::text));
+
+
+--
+-- Name: idx_radar_lista_novas; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_radar_lista_novas ON public.radar_empresas USING btree (data_abertura DESC, cnpj) WHERE ((ja_cliente = false) AND (prospeccao_status <> 'descartado'::text));
+
+
+--
+-- Name: idx_radar_muni; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_radar_muni ON public.radar_empresas USING btree (municipio_codigo) WHERE ((ja_cliente = false) AND (prospeccao_status <> 'descartado'::text));
+
+
+--
+-- Name: idx_radar_muni_cover; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_radar_muni_cover ON public.radar_empresas USING btree (municipio_codigo, uf) INCLUDE (prospeccao_status, telefone1, telefone2, municipio_nome) WHERE ((ja_cliente = false) AND (prospeccao_status <> 'descartado'::text));
+
+
+--
 -- Name: idx_rag_chunks_embedding; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16884,6 +26708,13 @@ CREATE INDEX idx_rec_log_product ON public.recommendation_log USING btree (produ
 
 
 --
+-- Name: idx_regua_preco_log_cliente_sku; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_regua_preco_log_cliente_sku ON public.regua_preco_log USING btree (customer_user_id, product_id, created_at DESC);
+
+
+--
 -- Name: idx_repos_classe; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16912,10 +26743,66 @@ CREATE INDEX idx_repos_status ON public.reposition_parameters USING btree (empre
 
 
 --
+-- Name: idx_route_contact_log_customer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_route_contact_log_customer ON public.route_contact_log USING btree (customer_user_id, created_at DESC);
+
+
+--
+-- Name: idx_route_contact_log_data; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_route_contact_log_data ON public.route_contact_log USING btree (data_rota);
+
+
+--
+-- Name: idx_route_schedule_weekday; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_route_schedule_weekday ON public.route_schedule USING btree (weekday) WHERE ativo;
+
+
+--
+-- Name: idx_rqs_data; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_rqs_data ON public.route_queue_snapshot USING btree (data_rota);
+
+
+--
+-- Name: idx_rqs_farmer_data; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_rqs_farmer_data ON public.route_queue_snapshot USING btree (farmer_id, data_rota);
+
+
+--
+-- Name: idx_sales_orders_account_kpi; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sales_orders_account_kpi ON public.sales_orders USING btree (account, order_date_kpi) WHERE (deleted_at IS NULL);
+
+
+--
 -- Name: idx_sales_orders_active; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_sales_orders_active ON public.sales_orders USING btree (created_at DESC) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: idx_sales_orders_kpi_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sales_orders_kpi_date ON public.sales_orders USING btree (order_date_kpi);
+
+
+--
+-- Name: idx_sales_orders_origem; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sales_orders_origem ON public.sales_orders USING btree (origem) WHERE (origem IS NOT NULL);
 
 
 --
@@ -16951,6 +26838,13 @@ CREATE INDEX idx_sim_empresa_candidato ON public.simulacao_estoque_resultados US
 --
 
 CREATE INDEX idx_sim_empresa_sku ON public.simulacao_estoque_resultados USING btree (empresa, sku_codigo_omie);
+
+
+--
+-- Name: idx_sku_emb_equiv_grupo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sku_emb_equiv_grupo ON public.sku_embalagem_equivalencia USING btree (empresa, grupo_id) WHERE ativo;
 
 
 --
@@ -17017,6 +26911,13 @@ CREATE INDEX idx_sku_param_empresa ON public.sku_parametros USING btree (empresa
 
 
 --
+-- Name: idx_sku_preco_cap_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sku_preco_cap_lookup ON public.sku_preco_fornecedor_capturado USING btree (empresa, sku_codigo_omie, capturado_em DESC);
+
+
+--
 -- Name: idx_snapshot_recentes; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -17077,6 +26978,41 @@ CREATE INDEX idx_sync_reprocess_log_entity ON public.sync_reprocess_log USING bt
 --
 
 CREATE UNIQUE INDEX idx_sync_state_entity_account ON public.sync_state USING btree (entity_type, account);
+
+
+--
+-- Name: idx_tarefas_aberta_auto; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tarefas_aberta_auto ON public.tarefas USING btree (auto_satisfy_mode) WHERE (status = 'aberta'::text);
+
+
+--
+-- Name: idx_tarefas_assigned_aberta; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tarefas_assigned_aberta ON public.tarefas USING btree (assigned_to) WHERE (status = 'aberta'::text);
+
+
+--
+-- Name: idx_tarefas_created_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tarefas_created_by ON public.tarefas USING btree (created_by);
+
+
+--
+-- Name: idx_tarefas_customer_aberta; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tarefas_customer_aberta ON public.tarefas USING btree (customer_user_id) WHERE (status = 'aberta'::text);
+
+
+--
+-- Name: idx_tint_formulas_ativas; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tint_formulas_ativas ON public.tint_formulas USING btree (account) WHERE (desativada_em IS NULL);
 
 
 --
@@ -17150,6 +27086,76 @@ CREATE INDEX idx_tint_sync_runs_status ON public.tint_sync_runs USING btree (sta
 
 
 --
+-- Name: idx_tsbase_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tsbase_run ON public.tint_staging_bases USING btree (sync_run_id);
+
+
+--
+-- Name: idx_tsc_acct_corante; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tsc_acct_corante ON public.tint_staging_corantes USING btree (account, id_corante_sayersystem);
+
+
+--
+-- Name: idx_tsemb_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tsemb_run ON public.tint_staging_embalagens USING btree (sync_run_id);
+
+
+--
+-- Name: idx_tsf_acct_par; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tsf_acct_par ON public.tint_staging_formulas USING btree (account, cod_produto, id_base);
+
+
+--
+-- Name: idx_tsf_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tsf_run ON public.tint_staging_formulas USING btree (sync_run_id);
+
+
+--
+-- Name: idx_tsfi_staging_formula_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tsfi_staging_formula_id ON public.tint_staging_formula_itens USING btree (staging_formula_id);
+
+
+--
+-- Name: idx_tsp_precos_chave; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tsp_precos_chave ON public.tint_staging_precos_base USING btree (account, cod_produto, id_base, id_embalagem, created_at DESC);
+
+
+--
+-- Name: idx_tsprod_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tsprod_run ON public.tint_staging_produtos USING btree (sync_run_id);
+
+
+--
+-- Name: idx_tss_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tss_run ON public.tint_staging_skus USING btree (sync_run_id);
+
+
+--
+-- Name: idx_tt_ativo_assigned; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tt_ativo_assigned ON public.tarefa_templates USING btree (assigned_to) WHERE ativo;
+
+
+--
 -- Name: idx_user_departments_dept; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -17178,6 +27184,20 @@ CREATE INDEX idx_user_tools_user_id ON public.user_tools USING btree (user_id);
 
 
 --
+-- Name: idx_vag_pending_by_seller; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vag_pending_by_seller ON public.visitas_agendadas USING btree (scheduled_by, scheduled_date) WHERE (status = 'pendente'::text);
+
+
+--
+-- Name: idx_vag_scheduled_by_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vag_scheduled_by_date ON public.visitas_agendadas USING btree (scheduled_by, scheduled_date);
+
+
+--
 -- Name: idx_venda_cliente; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -17199,10 +27219,24 @@ CREATE INDEX idx_venda_sku_data ON public.venda_items_history USING btree (empre
 
 
 --
+-- Name: idx_vendas_sync_cursor_pendentes; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vendas_sync_cursor_pendentes ON public.vendas_sync_cursor USING btree (account, date_from) WHERE ((next_page IS NOT NULL) OR (completed_at IS NULL));
+
+
+--
 -- Name: idx_vendor_sip_credentials_user_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_vendor_sip_credentials_user_id ON public.vendor_sip_credentials USING btree (user_id);
+
+
+--
+-- Name: idx_vih_recorrencia_180d; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vih_recorrencia_180d ON public.venda_items_history USING btree (empresa, sku_codigo_omie, data_emissao) WHERE (quantidade > (0)::numeric);
 
 
 --
@@ -17224,6 +27258,34 @@ CREATE INDEX idx_visit_scores_farmer_city ON public.customer_visit_scores USING 
 --
 
 CREATE INDEX idx_visit_scores_farmer_priority ON public.customer_visit_scores USING btree (farmer_id, visit_score DESC);
+
+
+--
+-- Name: idx_wa_conv_customer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_wa_conv_customer ON public.whatsapp_conversations USING btree (customer_user_id);
+
+
+--
+-- Name: idx_wa_conv_last_msg; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_wa_conv_last_msg ON public.whatsapp_conversations USING btree (last_message_at DESC);
+
+
+--
+-- Name: idx_wa_conv_operator; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_wa_conv_operator ON public.whatsapp_conversations USING btree (assigned_operator_id);
+
+
+--
+-- Name: idx_wa_msg_conv; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_wa_msg_conv ON public.whatsapp_messages USING btree (conversation_id, created_at);
 
 
 --
@@ -17269,10 +27331,52 @@ CREATE UNIQUE INDEX inventory_position_produto_account_uq ON public.inventory_po
 
 
 --
+-- Name: kbv_uma_viva; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX kbv_uma_viva ON public.kb_product_spec_versions USING btree (supplier, product_code_normalized) WHERE (superseded_at IS NULL);
+
+
+--
+-- Name: omie_product_spec_links_one_confirmed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX omie_product_spec_links_one_confirmed ON public.omie_product_spec_links USING btree (account, omie_codigo_produto) WHERE (status = 'confirmed'::text);
+
+
+--
+-- Name: omie_product_spec_links_unique_triple; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX omie_product_spec_links_unique_triple ON public.omie_product_spec_links USING btree (account, omie_codigo_produto, kb_product_spec_id, status);
+
+
+--
 -- Name: omie_products_omie_codigo_produto_account_key; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE UNIQUE INDEX omie_products_omie_codigo_produto_account_key ON public.omie_products USING btree (omie_codigo_produto, account);
+
+
+--
+-- Name: reposicao_alerta_pedido_minimo_ativo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX reposicao_alerta_pedido_minimo_ativo ON public.reposicao_alerta_pedido_minimo USING btree (empresa, fornecedor_nome, grupo_codigo) WHERE (resolvido_em IS NULL);
+
+
+--
+-- Name: reposicao_auto_aprovacao_log_criado_em; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX reposicao_auto_aprovacao_log_criado_em ON public.reposicao_auto_aprovacao_log USING btree (criado_em DESC);
+
+
+--
+-- Name: sales_orders_checkout_account_uq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX sales_orders_checkout_account_uq ON public.sales_orders USING btree (checkout_id, account) WHERE (checkout_id IS NOT NULL);
 
 
 --
@@ -17283,17 +27387,38 @@ CREATE UNIQUE INDEX sync_state_entity_account_uq ON public.sync_state USING btre
 
 
 --
+-- Name: uniq_sales_orders_omie_hash; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uniq_sales_orders_omie_hash ON public.sales_orders USING btree (account, hash_payload) WHERE (hash_payload ~~ 'omie\_%'::text);
+
+
+--
+-- Name: uniq_sales_orders_omie_pedido_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uniq_sales_orders_omie_pedido_id ON public.sales_orders USING btree (account, omie_pedido_id) WHERE ((hash_payload IS NOT NULL) AND (omie_pedido_id IS NOT NULL));
+
+
+--
 -- Name: uniq_score_recalc_queue_pending; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX uniq_score_recalc_queue_pending ON public.score_recalc_queue USING btree (customer_user_id, farmer_id) WHERE (processed_at IS NULL);
+CREATE UNIQUE INDEX uniq_score_recalc_queue_pending ON public.score_recalc_queue USING btree (customer_user_id) WHERE (processed_at IS NULL);
+
+
+--
+-- Name: uniq_sku_emb_equiv_ativo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uniq_sku_emb_equiv_ativo ON public.sku_embalagem_equivalencia USING btree (empresa, sku_codigo_omie) WHERE ativo;
 
 
 --
 -- Name: uniq_visit_score_queue_pending; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX uniq_visit_score_queue_pending ON public.visit_score_recalc_queue USING btree (customer_user_id, farmer_id) WHERE (processed_at IS NULL);
+CREATE UNIQUE INDEX uniq_visit_score_queue_pending ON public.visit_score_recalc_queue USING btree (customer_user_id) WHERE (processed_at IS NULL);
 
 
 --
@@ -17311,10 +27436,73 @@ CREATE UNIQUE INDEX uq_call_log_sip_call_id ON public.call_log USING btree (prov
 
 
 --
+-- Name: uq_markup_policy_conta; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_markup_policy_conta ON public.markup_policy USING btree (account) WHERE (escopo = 'conta'::text);
+
+
+--
+-- Name: uq_markup_policy_fam; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_markup_policy_fam ON public.markup_policy USING btree (account, familia) WHERE (escopo = 'familia'::text);
+
+
+--
+-- Name: uq_markup_policy_sku; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_markup_policy_sku ON public.markup_policy USING btree (account, sku_codigo) WHERE (escopo = 'sku'::text);
+
+
+--
+-- Name: uq_param_auto_run_dia; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_param_auto_run_dia ON public.reposicao_param_auto_run USING btree (empresa, data_negocio_brt) WHERE (status = 'completo'::text);
+
+
+--
+-- Name: uq_picking_tasks_sales_order; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_picking_tasks_sales_order ON public.picking_tasks USING btree (sales_order_id) WHERE (sales_order_id IS NOT NULL);
+
+
+--
+-- Name: uq_reposicao_param_limbo_log_dia; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_reposicao_param_limbo_log_dia ON public.reposicao_param_limbo_log USING btree (empresa, medido_em);
+
+
+--
+-- Name: uq_tarefa_template_assignee_dia; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_tarefa_template_assignee_dia ON public.tarefas USING btree (template_id, assigned_to, due_date) WHERE (template_id IS NOT NULL);
+
+
+--
 -- Name: uq_tint_formulas_chave; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE UNIQUE INDEX uq_tint_formulas_chave ON public.tint_formulas USING btree (account, cor_id, produto_id, base_id, COALESCE(subcolecao_id, '00000000-0000-0000-0000-000000000000'::uuid), embalagem_id);
+
+
+--
+-- Name: uq_vag_pendente_cliente_vendedor_data; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_vag_pendente_cliente_vendedor_data ON public.visitas_agendadas USING btree (customer_user_id, scheduled_by, scheduled_date) WHERE (status = 'pendente'::text);
+
+
+--
+-- Name: uq_vag_route_visit_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_vag_route_visit_id ON public.visitas_agendadas USING btree (route_visit_id) WHERE (route_visit_id IS NOT NULL);
 
 
 --
@@ -17342,7 +27530,7 @@ CREATE TRIGGER protect_master_config_trigger BEFORE INSERT OR DELETE OR UPDATE O
 -- Name: sku_fornecedor_externo sku_fornecedor_externo_set_atualizado_em; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER sku_fornecedor_externo_set_atualizado_em BEFORE UPDATE ON public.sku_fornecedor_externo FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+CREATE TRIGGER sku_fornecedor_externo_set_atualizado_em BEFORE UPDATE ON public.sku_fornecedor_externo FOR EACH ROW EXECUTE FUNCTION public.set_atualizado_em_column();
 
 
 --
@@ -17357,6 +27545,13 @@ CREATE TRIGGER tr_propagar_habilitacao_fornecedor AFTER INSERT OR UPDATE ON publ
 --
 
 CREATE TRIGGER tr_sincronizar_ativo_omie AFTER UPDATE OF ativo ON public.omie_products FOR EACH ROW WHEN ((old.ativo IS DISTINCT FROM new.ativo)) EXECUTE FUNCTION public.sincronizar_ativo_omie_para_reposicao();
+
+
+--
+-- Name: orders trg_afiacao_os_enqueue; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_afiacao_os_enqueue AFTER UPDATE OF status ON public.orders FOR EACH ROW WHEN ((old.status IS DISTINCT FROM new.status)) EXECUTE FUNCTION public.afiacao_os_enqueue();
 
 
 --
@@ -17451,6 +27646,27 @@ CREATE TRIGGER trg_campanha_alerta AFTER INSERT OR UPDATE OF estado ON public.pr
 
 
 --
+-- Name: cliente_classificacao trg_cliente_classificacao_derive; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_cliente_classificacao_derive BEFORE INSERT OR UPDATE OF tags_omie ON public.cliente_classificacao FOR EACH ROW EXECUTE FUNCTION public.cliente_classificacao_derive();
+
+
+--
+-- Name: cliente_grupos trg_cliente_grupos_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_cliente_grupos_updated_at BEFORE UPDATE ON public.cliente_grupos FOR EACH ROW EXECUTE FUNCTION public.cliente_grupos_set_updated_at();
+
+
+--
+-- Name: inventory_position trg_cmc_ledger_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_cmc_ledger_capture AFTER INSERT OR UPDATE OF cmc ON public.inventory_position FOR EACH ROW EXECUTE FUNCTION public.cmc_ledger_capture();
+
+
+--
 -- Name: customer_contacts trg_customer_contacts_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17469,6 +27685,13 @@ CREATE TRIGGER trg_customer_processes_updated_at BEFORE UPDATE ON public.custome
 --
 
 CREATE TRIGGER trg_farmer_calls_enqueue_recalc AFTER INSERT OR UPDATE OF entities_extracted ON public.farmer_calls FOR EACH ROW EXECUTE FUNCTION public.enqueue_score_recalc_from_call();
+
+
+--
+-- Name: farmer_calls trg_farmer_calls_enqueue_recalc_sinais; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_farmer_calls_enqueue_recalc_sinais AFTER INSERT OR UPDATE OF sinais_ligacao ON public.farmer_calls FOR EACH ROW EXECUTE FUNCTION public.enqueue_score_recalc_from_sinais();
 
 
 --
@@ -17514,6 +27737,13 @@ CREATE TRIGGER trg_kb_documents_updated_at BEFORE UPDATE ON public.kb_documents 
 
 
 --
+-- Name: kb_extraction_drafts trg_kb_extraction_drafts_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_kb_extraction_drafts_updated_at BEFORE UPDATE ON public.kb_extraction_drafts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
 -- Name: kb_product_specs trg_kb_product_specs_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17521,10 +27751,31 @@ CREATE TRIGGER trg_kb_product_specs_updated_at BEFORE UPDATE ON public.kb_produc
 
 
 --
+-- Name: kb_product_specs trg_kb_specs_normalize; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_kb_specs_normalize BEFORE INSERT OR UPDATE OF product_code, supplier ON public.kb_product_specs FOR EACH ROW EXECUTE FUNCTION public.kb_specs_normalize();
+
+
+--
+-- Name: kb_product_spec_versions trg_kbv_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_kbv_immutable BEFORE DELETE OR UPDATE ON public.kb_product_spec_versions FOR EACH ROW EXECUTE FUNCTION public.kbv_block_mutation();
+
+
+--
 -- Name: fin_fechamentos trg_mapping_gate; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_mapping_gate BEFORE UPDATE ON public.fin_fechamentos FOR EACH ROW EXECUTE FUNCTION public.fin_check_mapping_complete_trigger();
+
+
+--
+-- Name: melhoria_itens trg_melhoria_itens_touch; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_melhoria_itens_touch BEFORE UPDATE ON public.melhoria_itens FOR EACH ROW EXECUTE FUNCTION public.melhoria_itens_touch_updated_at();
 
 
 --
@@ -17591,6 +27842,34 @@ CREATE TRIGGER trg_po_updated BEFORE UPDATE ON public.purchase_orders_tracking F
 
 
 --
+-- Name: omie_products trg_preserve_tipo_produto; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_preserve_tipo_produto BEFORE UPDATE ON public.omie_products FOR EACH ROW EXECUTE FUNCTION public.preserve_tipo_produto();
+
+
+--
+-- Name: tarefas trg_push_tarefa_nova; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_push_tarefa_nova AFTER INSERT ON public.tarefas FOR EACH ROW EXECUTE FUNCTION public.push_tarefa_nova();
+
+
+--
+-- Name: whatsapp_messages trg_push_whatsapp_inbound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_push_whatsapp_inbound AFTER INSERT ON public.whatsapp_messages FOR EACH ROW WHEN (((new.direction = 'in'::text) AND (new.sender_user_id IS NULL))) EXECUTE FUNCTION public.push_whatsapp_inbound();
+
+
+--
+-- Name: route_visits trg_reconcile_visita_agendada; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_reconcile_visita_agendada AFTER INSERT OR UPDATE OF check_in_at ON public.route_visits FOR EACH ROW WHEN ((new.check_in_at IS NOT NULL)) EXECUTE FUNCTION public.reconcile_visita_agendada();
+
+
+--
 -- Name: reposition_parameters trg_repos_updated; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17630,6 +27909,13 @@ CREATE TRIGGER trg_sku_hist_updated BEFORE UPDATE ON public.sku_leadtime_history
 --
 
 CREATE TRIGGER trg_standard_processes_updated_at BEFORE UPDATE ON public.standard_processes FOR EACH ROW EXECUTE FUNCTION public.kb_documents_set_updated_at();
+
+
+--
+-- Name: tarefas trg_tarefas_guard_comprovacao; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_tarefas_guard_comprovacao BEFORE UPDATE ON public.tarefas FOR EACH ROW EXECUTE FUNCTION public.tarefas_guard_comprovacao();
 
 
 --
@@ -17686,6 +27972,13 @@ CREATE TRIGGER trg_touch_promocao_item BEFORE UPDATE ON public.promocao_item FOR
 --
 
 CREATE TRIGGER trg_touch_sugestao BEFORE UPDATE ON public.sugestao_negociacao_paralela FOR EACH ROW EXECUTE FUNCTION public.touch_sugestao_updated_at();
+
+
+--
+-- Name: visitas_agendadas trg_vag_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_vag_updated_at BEFORE UPDATE ON public.visitas_agendadas FOR EACH ROW EXECUTE FUNCTION public.set_updated_at_visitas_agendadas();
 
 
 --
@@ -17895,6 +28188,38 @@ ALTER TABLE ONLY public.categoria_aumento_familia_mapeamento
 
 ALTER TABLE ONLY public.category_mappings
     ADD CONSTRAINT category_mappings_tool_category_id_fkey FOREIGN KEY (tool_category_id) REFERENCES public.tool_categories(id);
+
+
+--
+-- Name: cliente_classificacao cliente_classificacao_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cliente_classificacao
+    ADD CONSTRAINT cliente_classificacao_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: cliente_grupo_membros cliente_grupo_membros_confirmed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cliente_grupo_membros
+    ADD CONSTRAINT cliente_grupo_membros_confirmed_by_fkey FOREIGN KEY (confirmed_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: cliente_grupo_membros cliente_grupo_membros_grupo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cliente_grupo_membros
+    ADD CONSTRAINT cliente_grupo_membros_grupo_id_fkey FOREIGN KEY (grupo_id) REFERENCES public.cliente_grupos(id) ON DELETE CASCADE;
+
+
+--
+-- Name: cliente_grupos cliente_grupos_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cliente_grupos
+    ADD CONSTRAINT cliente_grupos_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id);
 
 
 --
@@ -18274,6 +28599,14 @@ ALTER TABLE ONLY public.fornecedor_email_polling_log
 
 
 --
+-- Name: fornecedor_excecao fornecedor_excecao_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fornecedor_excecao
+    ADD CONSTRAINT fornecedor_excecao_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: inventory_position inventory_position_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18330,6 +28663,30 @@ ALTER TABLE ONLY public.kb_documents
 
 
 --
+-- Name: kb_extraction_drafts kb_extraction_drafts_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_extraction_drafts
+    ADD CONSTRAINT kb_extraction_drafts_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.kb_documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: kb_product_spec_versions kb_product_spec_versions_approved_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_product_spec_versions
+    ADD CONSTRAINT kb_product_spec_versions_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: kb_product_spec_versions kb_product_spec_versions_source_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.kb_product_spec_versions
+    ADD CONSTRAINT kb_product_spec_versions_source_document_id_fkey FOREIGN KEY (source_document_id) REFERENCES public.kb_documents(id);
+
+
+--
 -- Name: kb_product_specs kb_product_specs_approved_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18362,6 +28719,30 @@ ALTER TABLE ONLY public.loyalty_points
 
 
 --
+-- Name: melhoria_mensagens melhoria_mensagens_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.melhoria_mensagens
+    ADD CONSTRAINT melhoria_mensagens_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.melhoria_itens(id) ON DELETE CASCADE;
+
+
+--
+-- Name: nfe_efetivacao_tentativas nfe_efetivacao_tentativas_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nfe_efetivacao_tentativas
+    ADD CONSTRAINT nfe_efetivacao_tentativas_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.nfe_recebimento_itens(id) ON DELETE SET NULL;
+
+
+--
+-- Name: nfe_efetivacao_tentativas nfe_efetivacao_tentativas_nfe_recebimento_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nfe_efetivacao_tentativas
+    ADD CONSTRAINT nfe_efetivacao_tentativas_nfe_recebimento_id_fkey FOREIGN KEY (nfe_recebimento_id) REFERENCES public.nfe_recebimentos(id) ON DELETE CASCADE;
+
+
+--
 -- Name: nfe_lotes_escaneados nfe_lotes_escaneados_nfe_recebimento_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18391,6 +28772,22 @@ ALTER TABLE ONLY public.nfe_recebimentos
 
 ALTER TABLE ONLY public.observacoes_excluidas
     ADD CONSTRAINT observacoes_excluidas_evento_outlier_id_fkey FOREIGN KEY (evento_outlier_id) REFERENCES public.eventos_outlier(id);
+
+
+--
+-- Name: omie_product_spec_links omie_product_spec_links_confirmed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_product_spec_links
+    ADD CONSTRAINT omie_product_spec_links_confirmed_by_fkey FOREIGN KEY (confirmed_by) REFERENCES auth.users(id);
+
+
+--
+-- Name: omie_product_spec_links omie_product_spec_links_kb_product_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_product_spec_links
+    ADD CONSTRAINT omie_product_spec_links_kb_product_spec_id_fkey FOREIGN KEY (kb_product_spec_id) REFERENCES public.kb_product_specs(id) ON DELETE CASCADE;
 
 
 --
@@ -18578,6 +28975,22 @@ ALTER TABLE ONLY public.promocao_negociacao_evento
 
 
 --
+-- Name: push_subscriptions push_subscriptions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.push_subscriptions
+    ADD CONSTRAINT push_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: radar_contatos radar_contatos_cnpj_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.radar_contatos
+    ADD CONSTRAINT radar_contatos_cnpj_fkey FOREIGN KEY (cnpj) REFERENCES public.radar_empresas(cnpj) ON DELETE CASCADE;
+
+
+--
 -- Name: recommendation_log recommendation_log_product_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18599,6 +29012,14 @@ ALTER TABLE ONLY public.recommendation_log
 
 ALTER TABLE ONLY public.recurring_schedules
     ADD CONSTRAINT recurring_schedules_address_id_fkey FOREIGN KEY (address_id) REFERENCES public.addresses(id);
+
+
+--
+-- Name: reposicao_param_auto_log reposicao_param_auto_log_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_param_auto_log
+    ADD CONSTRAINT reposicao_param_auto_log_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.reposicao_param_auto_run(id);
 
 
 --
@@ -18679,6 +29100,22 @@ ALTER TABLE ONLY public.standard_processes
 
 ALTER TABLE ONLY public.sugestao_negociacao_paralela
     ADD CONSTRAINT sugestao_negociacao_paralela_campanha_id_gerada_fkey FOREIGN KEY (campanha_id_gerada) REFERENCES public.promocao_campanha(id);
+
+
+--
+-- Name: tarefa_eventos tarefa_eventos_tarefa_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tarefa_eventos
+    ADD CONSTRAINT tarefa_eventos_tarefa_id_fkey FOREIGN KEY (tarefa_id) REFERENCES public.tarefas(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tarefa_satisfacao_candidatos tarefa_satisfacao_candidatos_tarefa_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tarefa_satisfacao_candidatos
+    ADD CONSTRAINT tarefa_satisfacao_candidatos_tarefa_id_fkey FOREIGN KEY (tarefa_id) REFERENCES public.tarefas(id) ON DELETE CASCADE;
 
 
 --
@@ -18866,6 +29303,14 @@ ALTER TABLE ONLY public.tint_staging_formulas
 
 
 --
+-- Name: tint_staging_precos_base tint_staging_precos_base_sync_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_staging_precos_base
+    ADD CONSTRAINT tint_staging_precos_base_sync_run_id_fkey FOREIGN KEY (sync_run_id) REFERENCES public.tint_sync_runs(id);
+
+
+--
 -- Name: tint_staging_preparacao_itens tint_staging_preparacao_itens_staging_preparacao_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19023,6 +29468,22 @@ ALTER TABLE ONLY public.user_tools
 
 ALTER TABLE ONLY public.vendor_sip_credentials
     ADD CONSTRAINT vendor_sip_credentials_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: visitas_agendadas visitas_agendadas_route_visit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.visitas_agendadas
+    ADD CONSTRAINT visitas_agendadas_route_visit_id_fkey FOREIGN KEY (route_visit_id) REFERENCES public.route_visits(id);
+
+
+--
+-- Name: whatsapp_messages whatsapp_messages_conversation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_messages
+    ADD CONSTRAINT whatsapp_messages_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES public.whatsapp_conversations(id) ON DELETE CASCADE;
 
 
 --
@@ -19327,31 +29788,10 @@ CREATE POLICY "Authenticated can view tint_embalagens" ON public.tint_embalagens
 
 
 --
--- Name: tint_formula_itens Authenticated can view tint_formula_itens; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Authenticated can view tint_formula_itens" ON public.tint_formula_itens FOR SELECT TO authenticated USING (true);
-
-
---
--- Name: tint_formulas Authenticated can view tint_formulas; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Authenticated can view tint_formulas" ON public.tint_formulas FOR SELECT TO authenticated USING (true);
-
-
---
 -- Name: tint_produtos Authenticated can view tint_produtos; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Authenticated can view tint_produtos" ON public.tint_produtos FOR SELECT TO authenticated USING (true);
-
-
---
--- Name: tint_skus Authenticated can view tint_skus; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Authenticated can view tint_skus" ON public.tint_skus FOR SELECT TO authenticated USING (true);
 
 
 --
@@ -19443,13 +29883,6 @@ CREATE POLICY "Employees can view all profiles" ON public.profiles FOR SELECT US
 --
 
 CREATE POLICY "Employees can view all user tools" ON public.user_tools FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
--- Name: farmer_calls Farmers can view their own calls; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Farmers can view their own calls" ON public.farmer_calls FOR SELECT USING ((auth.uid() = farmer_id));
 
 
 --
@@ -19556,13 +29989,6 @@ CREATE POLICY "Only admins can manage default prices" ON public.default_prices U
 --
 
 CREATE POLICY "Only admins can manage roles" ON public.user_roles USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
-
-
---
--- Name: tool_specifications Only admins can manage specifications; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Only admins can manage specifications" ON public.tool_specifications USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
 
 
 --
@@ -19757,13 +30183,6 @@ CREATE POLICY "Staff can manage audit log" ON public.farmer_audit_log USING ((pu
 
 
 --
--- Name: farmer_bundle_recommendations Staff can manage bundle recommendations; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage bundle recommendations" ON public.farmer_bundle_recommendations USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
 -- Name: farmer_category_conversion Staff can manage category conversion; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -19771,24 +30190,10 @@ CREATE POLICY "Staff can manage category conversion" ON public.farmer_category_c
 
 
 --
--- Name: farmer_client_scores Staff can manage client scores; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage client scores" ON public.farmer_client_scores USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
 -- Name: farmer_copilot_events Staff can manage copilot events; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY "Staff can manage copilot events" ON public.farmer_copilot_events USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
--- Name: farmer_copilot_sessions Staff can manage copilot sessions; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage copilot sessions" ON public.farmer_copilot_sessions USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 
 --
@@ -19810,13 +30215,6 @@ CREATE POLICY "Staff can manage experiment clients" ON public.farmer_experiment_
 --
 
 CREATE POLICY "Staff can manage experiments" ON public.farmer_experiments USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
--- Name: farmer_calls Staff can manage farmer calls; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage farmer calls" ON public.farmer_calls USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 
 --
@@ -19934,13 +30332,6 @@ CREATE POLICY "Staff can manage recommendation log" ON public.recommendation_log
 
 
 --
--- Name: farmer_recommendations Staff can manage recommendations; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage recommendations" ON public.farmer_recommendations USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
 -- Name: sync_reprocess_config Staff can manage reprocess config; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -19952,13 +30343,6 @@ CREATE POLICY "Staff can manage reprocess config" ON public.sync_reprocess_confi
 --
 
 CREATE POLICY "Staff can manage reprocess logs" ON public.sync_reprocess_log USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
--- Name: route_visits Staff can manage route visits; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage route visits" ON public.route_visits TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 
 --
@@ -19996,13 +30380,6 @@ CREATE POLICY "Staff can manage sync state" ON public.sync_state USING ((public.
 --
 
 CREATE POLICY "Staff can manage tactical plans" ON public.farmer_tactical_plans USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
--- Name: customer_visit_scores Staff can manage their visit scores; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage their visit scores" ON public.customer_visit_scores USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR (public.has_role(auth.uid(), 'employee'::public.app_role) AND (farmer_id = auth.uid())))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR (public.has_role(auth.uid(), 'employee'::public.app_role) AND (farmer_id = auth.uid()))));
 
 
 --
@@ -20408,10 +30785,17 @@ CREATE POLICY "Staff can view their own scores" ON public.farmer_performance_sco
 
 
 --
--- Name: customer_visit_scores Staff can view their visit scores; Type: POLICY; Schema: public; Owner: -
+-- Name: tint_keys_snapshots Staff can view tint_keys_snapshots; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Staff can view their visit scores" ON public.customer_visit_scores FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR (public.has_role(auth.uid(), 'employee'::public.app_role) AND (farmer_id = auth.uid()))));
+CREATE POLICY "Staff can view tint_keys_snapshots" ON public.tint_keys_snapshots FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: tint_staging_precos_base Staff can view tint_staging_precos_base; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff can view tint_staging_precos_base" ON public.tint_staging_precos_base FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
 
 
 --
@@ -20433,6 +30817,15 @@ CREATE POLICY "Staff can view tint_sync_runs" ON public.tint_sync_runs FOR SELEC
 --
 
 CREATE POLICY "Staff can view visit recalc queue" ON public.visit_score_recalc_queue FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: reposicao_alerta_pedido_minimo Staff lê alertas de pedido mínimo; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê alertas de pedido mínimo" ON public.reposicao_alerta_pedido_minimo FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
 
 
 --
@@ -20555,6 +30948,15 @@ CREATE POLICY "Staff lê gmail_webhook_log" ON public.gmail_webhook_log FOR SELE
 
 
 --
+-- Name: reposicao_auto_aprovacao_log Staff lê log de auto-aprovação; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff lê log de auto-aprovação" ON public.reposicao_auto_aprovacao_log FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
 -- Name: sugestao_negociacao_paralela Staff lê sugestões; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -20618,6 +31020,13 @@ CREATE POLICY "Staff vê negociacao" ON public.promocao_negociacao_evento FOR SE
 
 
 --
+-- Name: carteira_positivacao_snapshot Staff vê snapshot positivação; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Staff vê snapshot positivação" ON public.carteira_positivacao_snapshot FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
 -- Name: margin_audit_log Strategic+ can view margin audit; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -20678,13 +31087,6 @@ CREATE POLICY "Users can create their own orders" ON public.orders FOR INSERT WI
 
 
 --
--- Name: loyalty_redemptions Users can create their own redemptions; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can create their own redemptions" ON public.loyalty_redemptions FOR INSERT TO authenticated WITH CHECK ((auth.uid() = user_id));
-
-
---
 -- Name: referrals Users can create their own referrals; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -20731,13 +31133,6 @@ CREATE POLICY "Users can delete their own schedules" ON public.recurring_schedul
 --
 
 CREATE POLICY "Users can delete their own tools" ON public.user_tools FOR DELETE USING ((auth.uid() = user_id));
-
-
---
--- Name: loyalty_points Users can earn points; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can earn points" ON public.loyalty_points FOR INSERT WITH CHECK (((auth.uid() = user_id) AND (type = 'earn'::text)));
 
 
 --
@@ -21003,6 +31398,12 @@ CREATE POLICY admin_roadmap_state_all ON public.roadmap_state TO authenticated U
 
 
 --
+-- Name: afiacao_os_sync_fila; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.afiacao_os_sync_fila ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: ai_decision_audit_log; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -21075,6 +31476,12 @@ ALTER TABLE public.carteira_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.carteira_coverage ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: carteira_positivacao_snapshot; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.carteira_positivacao_snapshot ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: categoria_aumento_familia_mapeamento; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -21085,6 +31492,85 @@ ALTER TABLE public.categoria_aumento_familia_mapeamento ENABLE ROW LEVEL SECURIT
 --
 
 ALTER TABLE public.category_mappings ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: customer_canonical_alias cca_select_gestor_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cca_select_gestor_master ON public.customer_canonical_alias FOR SELECT TO authenticated USING (( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa));
+
+
+--
+-- Name: cep_geo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cep_geo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: cep_geo cep_geo_sel; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cep_geo_sel ON public.cep_geo FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: cliente_grupo_membros cgm_fin_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cgm_fin_access ON public.cliente_grupo_membros USING (public.fin_user_can_access()) WITH CHECK (public.fin_user_can_access());
+
+
+--
+-- Name: cliente_grupo_membros cgm_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cgm_service ON public.cliente_grupo_membros USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: cliente_classificacao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cliente_classificacao ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: cliente_grupo_membros; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cliente_grupo_membros ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: cliente_grupos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cliente_grupos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: cliente_grupos cliente_grupos_fin_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cliente_grupos_fin_access ON public.cliente_grupos USING (public.fin_user_can_access()) WITH CHECK (public.fin_user_can_access());
+
+
+--
+-- Name: cliente_grupos cliente_grupos_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cliente_grupos_service ON public.cliente_grupos USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: cmc_ledger; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cmc_ledger ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: cmc_ledger cmc_ledger_select_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cmc_ledger_select_gestor ON public.cmc_ledger FOR SELECT TO authenticated USING (public.pode_ver_carteira_completa(auth.uid()));
+
 
 --
 -- Name: cockpit_audit_log; Type: ROW SECURITY; Schema: public; Owner: -
@@ -21152,6 +31638,12 @@ ALTER TABLE public.conversao_unidades ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.cte_associados ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: customer_canonical_alias; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.customer_canonical_alias ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: customer_contacts; Type: ROW SECURITY; Schema: public; Owner: -
@@ -21238,6 +31730,34 @@ ALTER TABLE public.customer_segments ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.customer_visit_scores ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: customer_visit_scores cvs_delete_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cvs_delete_own_or_gestor ON public.customer_visit_scores FOR DELETE USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: customer_visit_scores cvs_insert_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cvs_insert_own_or_gestor ON public.customer_visit_scores FOR INSERT WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: customer_visit_scores cvs_select_carteira; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cvs_select_carteira ON public.customer_visit_scores FOR SELECT USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR public.carteira_visivel_para(customer_user_id, ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: customer_visit_scores cvs_update_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cvs_update_own_or_gestor ON public.customer_visit_scores FOR UPDATE USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid)))) WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
 
 --
 -- Name: dashboard_visits; Type: ROW SECURITY; Schema: public; Owner: -
@@ -21444,6 +31964,12 @@ ALTER TABLE public.farmer_governance_proposals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.farmer_learning_weights ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: farmer_mixgap_feedback; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.farmer_mixgap_feedback ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: farmer_performance_scores; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -21460,6 +31986,118 @@ ALTER TABLE public.farmer_recommendations ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.farmer_tactical_plans ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: farmer_bundle_recommendations fbrec_delete_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fbrec_delete_own_or_gestor ON public.farmer_bundle_recommendations FOR DELETE TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_bundle_recommendations fbrec_insert_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fbrec_insert_own_or_gestor ON public.farmer_bundle_recommendations FOR INSERT TO authenticated WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_bundle_recommendations fbrec_select_carteira; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fbrec_select_carteira ON public.farmer_bundle_recommendations FOR SELECT TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid)) OR public.carteira_visivel_para(customer_user_id, ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_bundle_recommendations fbrec_update_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fbrec_update_own_or_gestor ON public.farmer_bundle_recommendations FOR UPDATE TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid)))) WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_calls fcall_delete_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fcall_delete_own_or_gestor ON public.farmer_calls FOR DELETE TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_calls fcall_insert_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fcall_insert_own_or_gestor ON public.farmer_calls FOR INSERT TO authenticated WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_calls fcall_select_carteira; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fcall_select_carteira ON public.farmer_calls FOR SELECT TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid)) OR public.carteira_visivel_para(customer_user_id, ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_calls fcall_update_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fcall_update_own_or_gestor ON public.farmer_calls FOR UPDATE TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid)))) WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_copilot_sessions fcop_delete_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fcop_delete_own_or_gestor ON public.farmer_copilot_sessions FOR DELETE TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_copilot_sessions fcop_insert_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fcop_insert_own_or_gestor ON public.farmer_copilot_sessions FOR INSERT TO authenticated WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_copilot_sessions fcop_select_carteira; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fcop_select_carteira ON public.farmer_copilot_sessions FOR SELECT TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_copilot_sessions fcop_update_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fcop_update_own_or_gestor ON public.farmer_copilot_sessions FOR UPDATE TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid)))) WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_client_scores fcs_delete_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fcs_delete_own_or_gestor ON public.farmer_client_scores FOR DELETE USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_client_scores fcs_insert_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fcs_insert_own_or_gestor ON public.farmer_client_scores FOR INSERT WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_client_scores fcs_select_carteira; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fcs_select_carteira ON public.farmer_client_scores FOR SELECT USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR public.carteira_visivel_para(customer_user_id, ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_client_scores fcs_update_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fcs_update_own_or_gestor ON public.farmer_client_scores FOR UPDATE USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid)))) WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
 
 --
 -- Name: fin_alertas; Type: ROW SECURITY; Schema: public; Owner: -
@@ -21909,6 +32547,32 @@ CREATE POLICY fin_forecast_user ON public.fin_forecast FOR SELECT USING (public.
 
 
 --
+-- Name: fin_funding_inputs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_funding_inputs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_funding_inputs fin_funding_inputs_select_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_funding_inputs_select_master ON public.fin_funding_inputs FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: fin_funding_inputs fin_funding_inputs_write_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_funding_inputs_write_master ON public.fin_funding_inputs USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
 -- Name: fin_ic_matches; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -22068,6 +32732,32 @@ CREATE POLICY fin_proj_select_staff ON public.fin_projecao_snapshots FOR SELECT 
 ALTER TABLE public.fin_projecao_snapshots ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: fin_regime_inputs; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_regime_inputs ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_regime_inputs fin_regime_inputs_select_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_regime_inputs_select_master ON public.fin_regime_inputs FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: fin_regime_inputs fin_regime_inputs_write_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_regime_inputs_write_master ON public.fin_regime_inputs USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
 -- Name: fin_sync_checkpoint; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -22085,6 +32775,28 @@ CREATE POLICY fin_sync_ckpt_service ON public.fin_sync_checkpoint USING ((auth.r
 --
 
 CREATE POLICY fin_sync_ckpt_user ON public.fin_sync_checkpoint FOR SELECT USING (public.fin_user_can_access(company));
+
+
+--
+-- Name: fin_sync_cursor; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fin_sync_cursor ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: fin_sync_cursor fin_sync_cursor_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_sync_cursor_select_staff ON public.fin_sync_cursor FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: fin_sync_cursor fin_sync_cursor_service_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY fin_sync_cursor_service_all ON public.fin_sync_cursor USING ((auth.role() = 'service_role'::text)) WITH CHECK ((auth.role() = 'service_role'::text));
 
 
 --
@@ -22196,6 +32908,12 @@ ALTER TABLE public.fornecedor_email_polling ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.fornecedor_email_polling_log ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: fornecedor_excecao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.fornecedor_excecao ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: fornecedor_grupo_producao; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -22232,6 +32950,34 @@ ALTER TABLE public.fornecedor_prazo_pagamento_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.fornecedor_promocao ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: farmer_recommendations frec_delete_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY frec_delete_own_or_gestor ON public.farmer_recommendations FOR DELETE TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_recommendations frec_insert_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY frec_insert_own_or_gestor ON public.farmer_recommendations FOR INSERT TO authenticated WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_recommendations frec_select_carteira; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY frec_select_carteira ON public.farmer_recommendations FOR SELECT TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid)) OR public.carteira_visivel_para(customer_user_id, ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: farmer_recommendations frec_update_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY frec_update_own_or_gestor ON public.farmer_recommendations FOR UPDATE TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid)))) WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (farmer_id = ( SELECT auth.uid() AS uid))));
+
+
+--
 -- Name: gamification_scores; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -22248,6 +32994,12 @@ ALTER TABLE public.gmail_webhook_log ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.health_score_history ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: impersonation_audit; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.impersonation_audit ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: inventory_position; Type: ROW SECURITY; Schema: public; Owner: -
@@ -22371,6 +33123,32 @@ CREATE POLICY kb_documents_update_master ON public.kb_documents FOR UPDATE USING
 
 
 --
+-- Name: kb_extraction_drafts; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.kb_extraction_drafts ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: kb_extraction_drafts kb_extraction_drafts_delete_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_extraction_drafts_delete_master ON public.kb_extraction_drafts FOR DELETE TO authenticated USING (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: kb_extraction_drafts kb_extraction_drafts_select_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kb_extraction_drafts_select_master ON public.kb_extraction_drafts FOR SELECT TO authenticated USING (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: kb_product_spec_versions; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.kb_product_spec_versions ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: kb_product_specs; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -22384,10 +33162,10 @@ CREATE POLICY kb_product_specs_delete_master ON public.kb_product_specs FOR DELE
 
 
 --
--- Name: kb_product_specs kb_product_specs_insert_staff; Type: POLICY; Schema: public; Owner: -
+-- Name: kb_product_specs kb_product_specs_insert_master; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY kb_product_specs_insert_staff ON public.kb_product_specs FOR INSERT WITH CHECK ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+CREATE POLICY kb_product_specs_insert_master ON public.kb_product_specs FOR INSERT WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
 
 
 --
@@ -22401,7 +33179,14 @@ CREATE POLICY kb_product_specs_select_staff ON public.kb_product_specs FOR SELEC
 -- Name: kb_product_specs kb_product_specs_update_master; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY kb_product_specs_update_master ON public.kb_product_specs FOR UPDATE USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR (extracted_by = auth.uid())));
+CREATE POLICY kb_product_specs_update_master ON public.kb_product_specs FOR UPDATE USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: kb_product_spec_versions kbv_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY kbv_select_staff ON public.kb_product_spec_versions FOR SELECT USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
 
 
 --
@@ -22423,6 +33208,124 @@ ALTER TABLE public.loyalty_redemptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.margin_audit_log ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: markup_policy; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.markup_policy ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: markup_policy markup_policy_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY markup_policy_select_staff ON public.markup_policy FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: markup_policy markup_policy_write_master; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY markup_policy_write_master ON public.markup_policy TO authenticated USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: fornecedor_excecao master manage excecao; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "master manage excecao" ON public.fornecedor_excecao TO authenticated USING (public.has_role(auth.uid(), 'master'::public.app_role)) WITH CHECK (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: impersonation_audit master vê audit de impersonação; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "master vê audit de impersonação" ON public.impersonation_audit FOR SELECT USING (public.has_role(auth.uid(), 'master'::public.app_role));
+
+
+--
+-- Name: melhoria_itens; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.melhoria_itens ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: melhoria_itens melhoria_itens_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY melhoria_itens_insert ON public.melhoria_itens FOR INSERT TO authenticated WITH CHECK (((autor_user_id = ( SELECT auth.uid() AS uid)) AND (public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role)) AND (status = 'aberto'::text) AND (triagem_status = 'pendente'::text) AND (avaliacao_founder IS NULL) AND (resposta_founder IS NULL) AND (resolvido_em IS NULL)));
+
+
+--
+-- Name: melhoria_itens melhoria_itens_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY melhoria_itens_select ON public.melhoria_itens FOR SELECT TO authenticated USING (((autor_user_id = ( SELECT auth.uid() AS uid)) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role)));
+
+
+--
+-- Name: melhoria_itens melhoria_itens_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY melhoria_itens_update ON public.melhoria_itens FOR UPDATE TO authenticated USING (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role)) WITH CHECK (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role));
+
+
+--
+-- Name: melhoria_mensagens; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.melhoria_mensagens ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: melhoria_mensagens melhoria_mensagens_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY melhoria_mensagens_insert ON public.melhoria_mensagens FOR INSERT TO authenticated WITH CHECK (((autor_user_id = ( SELECT auth.uid() AS uid)) AND (dados IS NULL) AND (((papel = 'funcionario'::text) AND (EXISTS ( SELECT 1
+   FROM public.melhoria_itens i
+  WHERE ((i.id = melhoria_mensagens.item_id) AND (i.autor_user_id = ( SELECT auth.uid() AS uid)) AND (i.status = ANY (ARRAY['aberto'::text, 'em_andamento'::text])))))) OR ((papel = 'founder'::text) AND public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role)))));
+
+
+--
+-- Name: melhoria_mensagens melhoria_mensagens_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY melhoria_mensagens_select ON public.melhoria_mensagens FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.melhoria_itens i
+  WHERE ((i.id = melhoria_mensagens.item_id) AND ((i.autor_user_id = ( SELECT auth.uid() AS uid)) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role))))));
+
+
+--
+-- Name: farmer_mixgap_feedback mixgap feedback iud; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "mixgap feedback iud" ON public.farmer_mixgap_feedback USING ((seller_user_id = auth.uid())) WITH CHECK ((seller_user_id = auth.uid()));
+
+
+--
+-- Name: farmer_mixgap_feedback mixgap feedback select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "mixgap feedback select" ON public.farmer_mixgap_feedback FOR SELECT USING (((seller_user_id = auth.uid()) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: municipio_geo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.municipio_geo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: municipio_geo municipio_geo_sel; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY municipio_geo_sel ON public.municipio_geo FOR SELECT TO authenticated USING (true);
+
+
+--
+-- Name: nfe_efetivacao_tentativas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.nfe_efetivacao_tentativas ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: nfe_lotes_escaneados; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -22441,6 +33344,20 @@ ALTER TABLE public.nfe_recebimento_itens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.nfe_recebimentos ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: omie_clientes_nao_vinculados nv_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY nv_select ON public.omie_clientes_nao_vinculados FOR SELECT TO authenticated USING (( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa));
+
+
+--
+-- Name: omie_nao_vinculados_state nv_state_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY nv_state_select ON public.omie_nao_vinculados_state FOR SELECT TO authenticated USING (( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa));
+
+
+--
 -- Name: observacoes_excluidas; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -22453,16 +33370,41 @@ ALTER TABLE public.observacoes_excluidas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.omie_clientes ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: omie_clientes_nao_vinculados; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.omie_clientes_nao_vinculados ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: omie_condicao_pagamento_catalogo; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.omie_condicao_pagamento_catalogo ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: omie_nao_vinculados_state; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.omie_nao_vinculados_state ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: omie_ordens_servico; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.omie_ordens_servico ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: omie_product_spec_links; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.omie_product_spec_links ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: omie_product_spec_links omie_product_spec_links_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY omie_product_spec_links_select_staff ON public.omie_product_spec_links FOR SELECT USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
 
 --
 -- Name: omie_products; Type: ROW SECURITY; Schema: public; Owner: -
@@ -22517,6 +33459,27 @@ ALTER TABLE public.order_reviews ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: reposicao_param_auto_log param_auto_log_sel; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY param_auto_log_sel ON public.reposicao_param_auto_log FOR SELECT TO authenticated USING (public.pode_ver_carteira_completa(auth.uid()));
+
+
+--
+-- Name: reposicao_param_pin param_auto_pin_sel; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY param_auto_pin_sel ON public.reposicao_param_pin FOR SELECT TO authenticated USING (public.pode_ver_carteira_completa(auth.uid()));
+
+
+--
+-- Name: reposicao_param_auto_run param_auto_run_sel; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY param_auto_run_sel ON public.reposicao_param_auto_run FOR SELECT TO authenticated USING (public.pode_ver_carteira_completa(auth.uid()));
+
 
 --
 -- Name: pedido_compra_item; Type: ROW SECURITY; Schema: public; Owner: -
@@ -22574,6 +33537,12 @@ ALTER TABLE public.picking_task_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.picking_tasks ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: posthog_error_webhook_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.posthog_error_webhook_log ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: priority_score_log; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -22622,6 +33591,78 @@ ALTER TABLE public.promocao_negociacao_evento ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.purchase_orders_tracking ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: push_subscriptions; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: push_subscriptions push_subscriptions_own; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY push_subscriptions_own ON public.push_subscriptions TO authenticated USING ((user_id = ( SELECT auth.uid() AS uid))) WITH CHECK ((user_id = ( SELECT auth.uid() AS uid)));
+
+
+--
+-- Name: push_subscriptions push_subscriptions_service; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY push_subscriptions_service ON public.push_subscriptions USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: radar_contatos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.radar_contatos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: radar_contatos radar_contatos_select_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY radar_contatos_select_gestor ON public.radar_contatos FOR SELECT TO authenticated USING (( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa));
+
+
+--
+-- Name: radar_empresas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.radar_empresas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: radar_empresas radar_empresas_select_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY radar_empresas_select_gestor ON public.radar_empresas FOR SELECT TO authenticated USING (( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa));
+
+
+--
+-- Name: radar_ingest_state; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.radar_ingest_state ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: radar_ingest_state radar_ingest_state_select_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY radar_ingest_state_select_gestor ON public.radar_ingest_state FOR SELECT TO authenticated USING (( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa));
+
+
+--
+-- Name: radar_municipios; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.radar_municipios ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: radar_municipios radar_municipios_select_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY radar_municipios_select_gestor ON public.radar_municipios FOR SELECT TO authenticated USING (( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa));
+
+
+--
 -- Name: rag_chunks; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -22659,6 +33700,49 @@ ALTER TABLE public.recurring_schedules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.referrals ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: regua_preco_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.regua_preco_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: regua_preco_log regua_preco_log_staff_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY regua_preco_log_staff_all ON public.regua_preco_log TO authenticated USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: reposicao_alerta_pedido_minimo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_alerta_pedido_minimo ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: reposicao_auto_aprovacao_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_auto_aprovacao_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: reposicao_param_auto_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_param_auto_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: reposicao_param_auto_run; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_param_auto_run ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: reposicao_param_pin; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_param_pin ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: reposition_parameters; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -22671,10 +33755,155 @@ ALTER TABLE public.reposition_parameters ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.roadmap_state ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: route_calendar_override; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.route_calendar_override ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: route_disparo_config route_config_master_write; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY route_config_master_write ON public.route_disparo_config TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = 'master'::public.app_role))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: route_disparo_config route_config_staff_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY route_config_staff_read ON public.route_disparo_config FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: route_contact_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.route_contact_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: route_disparo_config; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.route_disparo_config ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: route_contact_log route_log_staff_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY route_log_staff_read ON public.route_contact_log FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: route_calendar_override route_override_master_write; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY route_override_master_write ON public.route_calendar_override TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = 'master'::public.app_role))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: route_calendar_override route_override_staff_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY route_override_staff_read ON public.route_calendar_override FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: route_queue_snapshot; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.route_queue_snapshot ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: route_schedule route_sched_master_write; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY route_sched_master_write ON public.route_schedule TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = 'master'::public.app_role))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: route_schedule route_sched_staff_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY route_sched_staff_read ON public.route_schedule FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: route_schedule; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.route_schedule ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: route_visits; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.route_visits ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: route_queue_snapshot rqs_self_write; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY rqs_self_write ON public.route_queue_snapshot FOR INSERT TO authenticated WITH CHECK (((farmer_id = ( SELECT auth.uid() AS uid)) OR (EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = 'master'::public.app_role))))));
+
+
+--
+-- Name: route_queue_snapshot rqs_staff_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY rqs_staff_read ON public.route_queue_snapshot FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: route_visits rvis_delete_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY rvis_delete_own_or_gestor ON public.route_visits FOR DELETE TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (visited_by = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: route_visits rvis_insert_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY rvis_insert_own_or_gestor ON public.route_visits FOR INSERT TO authenticated WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (visited_by = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: route_visits rvis_select_carteira; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY rvis_select_carteira ON public.route_visits FOR SELECT TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (visited_by = ( SELECT auth.uid() AS uid)) OR public.carteira_visivel_para(customer_user_id, ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: route_visits rvis_update_own_or_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY rvis_update_own_or_gestor ON public.route_visits FOR UPDATE TO authenticated USING ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (visited_by = ( SELECT auth.uid() AS uid)))) WITH CHECK ((( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa) OR (visited_by = ( SELECT auth.uid() AS uid))));
+
 
 --
 -- Name: sales_orders; Type: ROW SECURITY; Schema: public; Owner: -
@@ -22687,6 +33916,12 @@ ALTER TABLE public.sales_orders ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.sales_price_history ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sayerlack_retry_motor_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sayerlack_retry_motor_log ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: score_recalc_queue; Type: ROW SECURITY; Schema: public; Owner: -
@@ -22743,10 +33978,63 @@ CREATE POLICY service_all_sku_leadtime_history ON public.sku_leadtime_history TO
 
 
 --
+-- Name: cliente_classificacao service_role manage classificacao; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "service_role manage classificacao" ON public.cliente_classificacao TO service_role USING (true) WITH CHECK (true);
+
+
+--
+-- Name: fornecedor_excecao service_role manage excecao; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "service_role manage excecao" ON public.fornecedor_excecao TO service_role USING (true) WITH CHECK (true);
+
+
+--
 -- Name: simulacao_estoque_resultados; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.simulacao_estoque_resultados ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sinal_classe_config; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sinal_classe_config ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: sinal_classe_config sinal_classe_config_master_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY sinal_classe_config_master_all ON public.sinal_classe_config USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = 'master'::public.app_role)))));
+
+
+--
+-- Name: sinal_classe_config sinal_classe_config_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY sinal_classe_config_select_staff ON public.sinal_classe_config FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: sinal_classe_config sinal_classe_config_service_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY sinal_classe_config_service_all ON public.sinal_classe_config USING ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: sku_embalagem_equivalencia; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sku_embalagem_equivalencia ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: sku_estoque_atual; Type: ROW SECURITY; Schema: public; Owner: -
@@ -22785,6 +34073,12 @@ ALTER TABLE public.sku_parametros ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sku_parametros_historico ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: sku_preco_fornecedor_capturado; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sku_preco_fornecedor_capturado ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: sku_status_omie; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -22805,6 +34099,20 @@ CREATE POLICY "staff can update sku_parametros" ON public.sku_parametros FOR UPD
   WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'employee'::public.app_role, 'master'::public.app_role])))))) WITH CHECK ((EXISTS ( SELECT 1
    FROM public.user_roles
   WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['master'::public.app_role, 'employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: cliente_classificacao staff read classificacao; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "staff read classificacao" ON public.cliente_classificacao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: fornecedor_excecao staff read excecao; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "staff read excecao" ON public.fornecedor_excecao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 
 --
@@ -23074,6 +34382,13 @@ CREATE POLICY staff_inventory_position_select ON public.inventory_position FOR S
 
 
 --
+-- Name: afiacao_os_sync_fila staff_le_afiacao_os_sync_fila; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_le_afiacao_os_sync_fila ON public.afiacao_os_sync_fila FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
 -- Name: omie_condicao_pagamento_catalogo staff_omie_condicao_pagamento_catalogo_delete; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -23221,6 +34536,13 @@ CREATE POLICY staff_reposition_parameters_all ON public.reposition_parameters TO
 
 
 --
+-- Name: nfe_efetivacao_tentativas staff_select_nfe_efetivacao_tentativas; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_select_nfe_efetivacao_tentativas ON public.nfe_efetivacao_tentativas FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
 -- Name: simulacao_estoque_resultados staff_simulacao_estoque_resultados_delete; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -23246,6 +34568,34 @@ CREATE POLICY staff_simulacao_estoque_resultados_select ON public.simulacao_esto
 --
 
 CREATE POLICY staff_simulacao_estoque_resultados_update ON public.simulacao_estoque_resultados FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_embalagem_equivalencia staff_sku_emb_equiv_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_emb_equiv_delete ON public.sku_embalagem_equivalencia FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_embalagem_equivalencia staff_sku_emb_equiv_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_emb_equiv_insert ON public.sku_embalagem_equivalencia FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_embalagem_equivalencia staff_sku_emb_equiv_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_emb_equiv_select ON public.sku_embalagem_equivalencia FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_embalagem_equivalencia staff_sku_emb_equiv_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_emb_equiv_update ON public.sku_embalagem_equivalencia FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 
 --
@@ -23323,6 +34673,34 @@ CREATE POLICY staff_sku_parametros_historico_select ON public.sku_parametros_his
 --
 
 CREATE POLICY staff_sku_parametros_select ON public.sku_parametros FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: sku_preco_fornecedor_capturado staff_sku_preco_cap_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_preco_cap_delete ON public.sku_preco_fornecedor_capturado FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_preco_fornecedor_capturado staff_sku_preco_cap_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_preco_cap_insert ON public.sku_preco_fornecedor_capturado FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_preco_fornecedor_capturado staff_sku_preco_cap_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_preco_cap_select ON public.sku_preco_fornecedor_capturado FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
+-- Name: sku_preco_fornecedor_capturado staff_sku_preco_cap_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_sku_preco_cap_update ON public.sku_preco_fornecedor_capturado FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 
 --
@@ -23461,6 +34839,99 @@ ALTER TABLE public.sync_reprocess_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sync_state ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: tarefa_eventos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tarefa_eventos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tarefa_satisfacao_candidatos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tarefa_satisfacao_candidatos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tarefa_templates; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tarefa_templates ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tarefas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tarefas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tarefas tarefas_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tarefas_insert ON public.tarefas FOR INSERT TO authenticated WITH CHECK (((created_by = ( SELECT auth.uid() AS uid)) AND public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: tarefas tarefas_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tarefas_select ON public.tarefas FOR SELECT TO authenticated USING ((public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) OR (assigned_to = ( SELECT auth.uid() AS uid)) OR (EXISTS ( SELECT 1
+   FROM public.carteira_coverage cc
+  WHERE ((cc.covered_user_id = tarefas.assigned_to) AND (cc.covering_user_id = ( SELECT auth.uid() AS uid)) AND cc.active AND (now() >= cc.valid_from) AND ((cc.valid_until IS NULL) OR (now() <= cc.valid_until)))))));
+
+
+--
+-- Name: tarefas tarefas_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tarefas_update ON public.tarefas FOR UPDATE TO authenticated USING ((public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) OR (assigned_to = ( SELECT auth.uid() AS uid)) OR (EXISTS ( SELECT 1
+   FROM public.carteira_coverage cc
+  WHERE ((cc.covered_user_id = tarefas.assigned_to) AND (cc.covering_user_id = ( SELECT auth.uid() AS uid)) AND cc.active AND (now() >= cc.valid_from) AND ((cc.valid_until IS NULL) OR (now() <= cc.valid_until)))))));
+
+
+--
+-- Name: tarefa_satisfacao_candidatos tcand_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tcand_select ON public.tarefa_satisfacao_candidatos FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.tarefas t
+  WHERE ((t.id = tarefa_satisfacao_candidatos.tarefa_id) AND (public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) OR (t.assigned_to = ( SELECT auth.uid() AS uid)) OR (EXISTS ( SELECT 1
+           FROM public.carteira_coverage cc
+          WHERE ((cc.covered_user_id = t.assigned_to) AND (cc.covering_user_id = ( SELECT auth.uid() AS uid)) AND cc.active AND (now() >= cc.valid_from) AND ((cc.valid_until IS NULL) OR (now() <= cc.valid_until))))))))));
+
+
+--
+-- Name: tarefa_satisfacao_candidatos tcand_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tcand_update ON public.tarefa_satisfacao_candidatos FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.tarefas t
+  WHERE ((t.id = tarefa_satisfacao_candidatos.tarefa_id) AND (public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) OR (t.assigned_to = ( SELECT auth.uid() AS uid)) OR (EXISTS ( SELECT 1
+           FROM public.carteira_coverage cc
+          WHERE ((cc.covered_user_id = t.assigned_to) AND (cc.covering_user_id = ( SELECT auth.uid() AS uid)) AND cc.active AND (now() >= cc.valid_from) AND ((cc.valid_until IS NULL) OR (now() <= cc.valid_until))))))))));
+
+
+--
+-- Name: tarefa_eventos tevt_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tevt_insert ON public.tarefa_eventos FOR INSERT TO authenticated WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.tarefas t
+  WHERE ((t.id = tarefa_eventos.tarefa_id) AND (public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) OR (t.assigned_to = ( SELECT auth.uid() AS uid)) OR (EXISTS ( SELECT 1
+           FROM public.carteira_coverage cc
+          WHERE ((cc.covered_user_id = t.assigned_to) AND (cc.covering_user_id = ( SELECT auth.uid() AS uid)) AND cc.active AND (now() >= cc.valid_from) AND ((cc.valid_until IS NULL) OR (now() <= cc.valid_until))))))))));
+
+
+--
+-- Name: tarefa_eventos tevt_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tevt_select ON public.tarefa_eventos FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.tarefas t
+  WHERE ((t.id = tarefa_eventos.tarefa_id) AND (public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) OR (t.assigned_to = ( SELECT auth.uid() AS uid)) OR (EXISTS ( SELECT 1
+           FROM public.carteira_coverage cc
+          WHERE ((cc.covered_user_id = t.assigned_to) AND (cc.covering_user_id = ( SELECT auth.uid() AS uid)) AND cc.active AND (now() >= cc.valid_from) AND ((cc.valid_until IS NULL) OR (now() <= cc.valid_until))))))))));
+
+
+--
 -- Name: tint_bases; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -23507,6 +34978,12 @@ ALTER TABLE public.tint_importacoes ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.tint_integration_settings ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_keys_snapshots; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_keys_snapshots ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: tint_produtos; Type: ROW SECURITY; Schema: public; Owner: -
@@ -23573,6 +35050,12 @@ ALTER TABLE public.tint_staging_formula_itens ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.tint_staging_formulas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: tint_staging_precos_base; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_staging_precos_base ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: tint_staging_preparacao_itens; Type: ROW SECURITY; Schema: public; Owner: -
@@ -23659,6 +35142,34 @@ ALTER TABLE public.training_completions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.training_modules ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: tarefa_templates tt_delete; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tt_delete ON public.tarefa_templates FOR DELETE TO authenticated USING (public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)));
+
+
+--
+-- Name: tarefa_templates tt_insert; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tt_insert ON public.tarefa_templates FOR INSERT TO authenticated WITH CHECK ((public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AND (created_by = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: tarefa_templates tt_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tt_select ON public.tarefa_templates FOR SELECT TO authenticated USING ((public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) OR (assigned_to = ( SELECT auth.uid() AS uid))));
+
+
+--
+-- Name: tarefa_templates tt_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tt_update ON public.tarefa_templates FOR UPDATE TO authenticated USING (public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)));
+
+
+--
 -- Name: user_departments; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -23702,10 +35213,60 @@ ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_tools ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: visitas_agendadas vag_delete_gestor; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY vag_delete_gestor ON public.visitas_agendadas FOR DELETE TO authenticated USING (( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa));
+
+
+--
+-- Name: visitas_agendadas vag_insert_own_carteira; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY vag_insert_own_carteira ON public.visitas_agendadas FOR INSERT TO authenticated WITH CHECK (((scheduled_by = ( SELECT auth.uid() AS uid)) AND public.carteira_visivel_para(customer_user_id, ( SELECT auth.uid() AS uid)) AND (status = 'pendente'::text) AND (route_visit_id IS NULL)));
+
+
+--
+-- Name: visitas_agendadas vag_select_own; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY vag_select_own ON public.visitas_agendadas FOR SELECT TO authenticated USING (((scheduled_by = ( SELECT auth.uid() AS uid)) OR ( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa)));
+
+
+--
+-- Name: visitas_agendadas vag_update_own_pending; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY vag_update_own_pending ON public.visitas_agendadas FOR UPDATE TO authenticated USING (((scheduled_by = ( SELECT auth.uid() AS uid)) AND (status = 'pendente'::text))) WITH CHECK (((scheduled_by = ( SELECT auth.uid() AS uid)) AND (status = ANY (ARRAY['pendente'::text, 'cancelada'::text])) AND (route_visit_id IS NULL)));
+
+
+--
 -- Name: venda_items_history; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.venda_items_history ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: vendas_sync_cursor; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.vendas_sync_cursor ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: vendas_sync_cursor vendas_sync_cursor_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY vendas_sync_cursor_select_staff ON public.vendas_sync_cursor FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: vendas_sync_cursor vendas_sync_cursor_service_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY vendas_sync_cursor_service_all ON public.vendas_sync_cursor USING ((auth.role() = 'service_role'::text)) WITH CHECK ((auth.role() = 'service_role'::text));
+
 
 --
 -- Name: vendor_sip_credentials; Type: ROW SECURITY; Schema: public; Owner: -
@@ -23718,6 +35279,43 @@ ALTER TABLE public.vendor_sip_credentials ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.visit_score_recalc_queue ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: visitas_agendadas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.visitas_agendadas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: whatsapp_conversations wa_conv_staff_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY wa_conv_staff_all ON public.whatsapp_conversations TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role])))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: whatsapp_webhook_events wa_events_staff_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY wa_events_staff_select ON public.whatsapp_webhook_events FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: whatsapp_messages wa_msg_staff_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY wa_msg_staff_all ON public.whatsapp_messages TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role])))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = ( SELECT auth.uid() AS uid)) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
 
 --
 -- Name: warehouses; Type: ROW SECURITY; Schema: public; Owner: -
@@ -23738,8 +35336,32 @@ ALTER TABLE public.webauthn_challenges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.webauthn_credentials ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: whatsapp_conversations; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.whatsapp_conversations ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: whatsapp_messages; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.whatsapp_messages ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: whatsapp_sla_digest_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.whatsapp_sla_digest_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: whatsapp_webhook_events; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.whatsapp_webhook_events ENABLE ROW LEVEL SECURITY;
+
+--
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Mmifr0ebMfQH6xtRdrBiXi2dSHbUaJRfeUKX6XDsxHgeFSafukZhhmDCHIupkAC
+\unrestrict rgDpiIOdBCwqGQSNgHMMNPhi5bHUgj6TCZY72Pd9Jcp4bgnxOtBM06gL7Pq43ky
 
