@@ -293,7 +293,9 @@ async function recommend(
     cost_source: c.cost_source,
     margin: c.margin,
     probability: c.probability,
-    eip: c.eip,
+    // EIP é money (R$ lucro esperado): null quando o custo não é confiável (margin null) — só
+    // score_eip (acima) segue numérico, é o SCORE de ranking, não uma afirmação de lucro firme.
+    eip: c.margin != null ? c.eip : null,
     event_type: "impression",
     mode: mode === 0 ? "profit" : "ltv",
     weights: { wA, wP, wS, wC },
@@ -307,7 +309,7 @@ async function recommend(
     recommendations: topCandidates.map((c) => ({
       product_id: c.product_id, codigo: c.codigo, descricao: c.descricao,
       price: c.price, margin: c.margin, probability: c.probability,
-      eip: c.eip, score_final: c.score_final,
+      eip: c.margin != null ? c.eip : null, score_final: c.score_final,
       recommendation_type: c.recommendation_type,
       explanation_text: c.explanation_text, explanation_key: c.explanation_key,
       estoque: c.estoque,
@@ -316,7 +318,7 @@ async function recommend(
         cost_confidence: c.cost_confidence, estimated_cost_for_ranking: c.cost_ranking,
         assoc_score: c.assoc_score,
         sim_score: c.sim_score, ctx_score: c.ctx_score,
-        penalties: c.penalties, familia: c.familia, eiltv: c.eiltv,
+        penalties: c.penalties, familia: c.familia, eiltv: c.margin != null ? c.eiltv : null,
       },
     })),
     meta: {
@@ -343,6 +345,10 @@ async function logEvent(
     customer_user_id: customerId,
     product_id: productId,
     event_type: eventType,
+    // Evento (accept/reject) não carrega custo/margem (a impressão carregou) → null EXPLÍCITO,
+    // senão o DEFAULT 0 do schema fabrica R$0 (Codex challenge). ...extras nunca traz unit_cost/margin.
+    unit_cost: null,
+    margin: null,
     ...extras,
   });
   return { logged: true };

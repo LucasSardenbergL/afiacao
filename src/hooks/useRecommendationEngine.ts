@@ -9,7 +9,7 @@ export interface RecommendationItem {
   price: number;
   margin: number | null;
   probability: number;
-  eip: number;
+  eip: number | null;
   score_final: number;
   recommendation_type: string;
   explanation_text: string;
@@ -25,7 +25,7 @@ export interface RecommendationItem {
     ctx_score: number;
     penalties: number;
     familia: string | null;
-    eiltv: number;
+    eiltv: number | null;
   };
 }
 
