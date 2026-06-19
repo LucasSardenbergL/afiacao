@@ -18,11 +18,12 @@ description: >-
 
 # Lovable Deploy & Verify
 
-> **v1 — verificação por bytes validada contra produção (2026-06-18).** A mecânica foi exercida em
-> `steu.lovable.app`: a enumeração de chunks estava quebrada (o método ingênuo dava **0** — corrigido no
-> Passo 4) e a classificação de diff ganhou eval executável ([`evals/`](evals/): 8 casos + mutation-check).
-> **Pendência única:** o *smoke* ponta-a-ponta — publicar uma mudança conhecida e ver o ALVO surgir nos
-> chunks — só fecha num Publish real. Irmã da `lovable-db-operator` (lado do banco).
+> **v1.2 — método de enumeração validado em produção + 2ª opinião do Codex (2026-06-18).** A
+> verificação por bytes (Passo 4) enumera os chunks pela **UNIÃO** de duas fontes que sozinhas têm
+> furos: o fechamento transitivo do grafo lazy do Vite (o entry sozinho perdia o 2º nível — 260 vs
+> 274) e o precache do Workbox (`/sw.js`, que omite ~6 chunks grandes via globIgnores/maxFileSize).
+> Empacotado em [`scripts/verify-frontend.sh`](scripts/verify-frontend.sh). **Pendência única:** o
+> *smoke* ponta-a-ponta num Publish real. Irmã da `lovable-db-operator` (lado do banco).
 
 ## Por que esta skill existe (leia antes de qualquer coisa)
 
@@ -47,7 +48,7 @@ As **três** coisas são deploy manual e **independente**, e NENHUMA acontece so
 1. **Você nunca diz "está no ar" sem prova.** Mergear na main **não publica nada**. Frontend só está no ar quando os **bytes do bundle** confirmam (hash novo do index + a string-alvo presente nos chunks). Edge só está no ar quando o Lovable reporta `Active` **e** o comportamento bate. Até lá: "mergeado na main; **falta Publish/deploy** pra ir ao ar".
 2. **As 3 camadas são independentes — sempre diga QUAIS se aplicam.** Um diff só-frontend não precisa de deploy de edge; um diff de edge precisa de deploy via chat *e* (se mexeu em UI) Publish. Liste só o que o diff realmente toca.
 3. **Edge deploy SÓ DEPOIS do merge, e VERBATIM.** Deployar "da main" antes do merge faz o Lovable ler a main **velha** (já mordeu em #383/#252 — a action nova não existia no binário → `400 "Ação desconhecida"`). E o Lovable tende a "melhorar" o código — o prompt deve mandar **não modificar/reinterpretar**, ler de `supabase/functions/<nome>/index.ts` e deployar idêntico.
-4. **Verificar frontend varre TODOS os chunks — e enumerá-los é mapDeps-aware.** O Vite joga módulos em chunks de nome **inesperado** (visto: um hook do unified-order caiu no `TintColorSelectDialog-*.js`) e lista os chunks lazy via `__vite__mapDeps(["assets/x.js"])` — sem barra, entre aspas. Grep de literais `/assets/...` no entry retorna **0** (falso-negativo total, medido em 2026-06-18). Enumere de `index.html`+entry com regex sem barra; se a contagem vier **0/1**, a enumeração quebrou — conserte antes de concluir qualquer coisa.
+4. **Verificar frontend varre TODOS os chunks, e enumerá-los é a UNIÃO de duas fontes.** Nenhuma sozinha é completa (validado em prod 2026-06-18 + Codex): (a) o **fechamento transitivo** do grafo lazy do Vite — o entry lista só o 1º nível via `__vite__mapDeps(["assets/x.js"])` (sem barra, aspas), e um lazy-dentro-de-página guarda o mapDeps no chunk DELE (entry=260, closure=274); (b) o **precache do Workbox** (`/sw.js`), que omite chunks grandes (globIgnores/maxFileSize — faltavam 6). Use a UNIÃO. Grep de literais `/assets/...` dá 0 (o bug original). Contagem 0/1 = enumeração quebrada — conserte antes de concluir.
 
 ## O ritual — 5 passos
 
@@ -94,38 +95,22 @@ Montar pro founder colar no chat do Lovable (um por edge tocada):
 
 ### Passo 4 — Verificar o frontend pelos bytes (após Publish)
 
-> **Validado contra produção (2026-06-18): 260 chunks.** O método ingênuo — grep de literais
-> `/assets/...js` no entry — retorna **0**: o Vite lista os chunks lazy via
-> `__vite__mapDeps(["assets/X.js", …])` (sem barra, entre aspas). Enumere **mapDeps-aware**.
+> **Validado em produção (2026-06-18) + 2ª opinião do Codex.** Enumerar os chunks tem furos sutis:
+> o entry sozinho perde o 2º nível (lazy-dentro-de-lazy, 260 vs 274); o precache do Workbox omite
+> chunks grandes (globIgnores/maxFileSize, faltavam 6). Por isso a enumeração é a **UNIÃO** de (A)
+> fechamento transitivo do grafo Vite + (B) precache do `/sw.js`. Tudo empacotado no script:
 
 ```bash
-APP=https://steu.lovable.app
-ALVO='COLE_AQUI_UMA_STRING_LITERAL_UNICA_DO_COMMIT'   # ex.: um .select() novo, texto de UI, rota nova
-
-# 1) hash do entry — muda quando sobe build novo (mesmo hash = não publicou/propagou)
-ENTRY=$(curl -s "$APP/" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1)
-echo "entry: $ENTRY"
-
-# 2) enumerar TODOS os chunks: do index.html (eager: entry+vendors) E do entry (lazy via
-#    __vite__mapDeps). Um regex SEM barra casa os dois formatos ('/assets/x.js' e
-#    '"assets/x.js"'); normaliza com a barra e dedup.
-{ curl -s "$APP/"; curl -s "$APP$ENTRY"; } \
-  | grep -oE 'assets/[A-Za-z0-9_-]+\.js' | sed 's|^|/|' | sort -u > /tmp/chunks.txt
-N=$(wc -l < /tmp/chunks.txt); echo "chunks referenciados: $N"
-
-# >>> GUARD: o método antigo dava 0. Se vier 0 ou 1, a enumeração QUEBROU (o bundler mudou
-#     de formato) — NÃO conclua "não está no ar"; conserte a enumeração antes de seguir.
-[ "$N" -ge 2 ] || echo "❌ enumeração suspeita ($N chunks) — abortar, não concluir nada"
-
-# 3) grep da string-alvo em TODOS os chunks
-while read -r c; do
-  curl -s "$APP$c" | grep -q -- "$ALVO" && echo "✅ ALVO encontrado em $c"
-done < /tmp/chunks.txt
-echo "(nada acima COM contagem alta = o commit NÃO está no build publicado)"
+.claude/skills/lovable-deploy-verify/scripts/verify-frontend.sh \
+  'COLE_UMA_STRING_LITERAL_UNICA_DO_COMMIT'   # 2º arg opcional: a URL (default steu.lovable.app)
+# saída: "chunks (closure ∪ precache): N" + "✅ ALVO em <chunk>"
+# exit 0 = no ar · 1 = ausente (Publish pendente / alvo não-literal) · 2 = enumeração quebrada
 ```
 
-⚠️ O `/browse` do gstack (headless E headed) **NÃO renderiza esta SPA** (React não monta) — a verificação
-visual fica no Chrome real do founder; o **maior sinal sem o founder é este, pelos bytes**.
+⚠️ Guard embutido (exit 2): contagem 0/1 = enumeração quebrada (formato do bundler/Workbox mudou) —
+NÃO conclua "não está no ar"; conserte o script primeiro. O `/browse` do gstack NÃO renderiza esta
+SPA (React não monta) — a verificação visual fica no Chrome real do founder; o maior sinal sem o
+founder é este, pelos bytes.
 
 ### Passo 5 — Confirmar honestamente
 
@@ -142,8 +127,8 @@ visual fica no Chrome real do founder; o **maior sinal sem o founder é este, pe
 - Skill irmã `lovable-db-operator` (camada de banco)
 
 ## Estado / pendências
-- [x] Enumeração de chunks **mapDeps-aware** (literais davam 0 → corrigido; 260 chunks em prod, 2026-06-18).
+- [x] Enumeração = **UNIÃO** (fechamento transitivo do Vite ∪ precache do Workbox) — nenhuma fonte sozinha é completa (closure 274 ⊃ precache 268; precache omite 6). Validado em prod + Codex; empacotado em `scripts/verify-frontend.sh`.
 - [x] `evals/` com classificação de diff (8 casos + runner + mutation-check; espelha `lovable-db-operator/evals`).
 - [x] Domínio canônico `steu.lovable.app` confirmado (HTTP 200).
-- [ ] **Smoke ponta-a-ponta:** num próximo Publish real, rodar o Passo 4 com um ALVO conhecido e ver aparecer nos chunks (fecha o último elo — não dá com build local).
+- [ ] **Smoke ponta-a-ponta:** num próximo Publish real, rodar `verify-frontend.sh` com um ALVO conhecido e ver exit 0 (fecha o último elo — não dá com build local).
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
