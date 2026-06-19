@@ -26,6 +26,45 @@ function minMaxNorm(values: number[]): number[] {
   return values.map((v) => (v - min) / (max - min));
 }
 
+// ======== COST CONTRACT (espelho VERBATIM de src/lib/custos/cost-source.ts — manter idêntico) ========
+type CostRow = { cost_price: number | null; cost_final: number | null; cost_source: string | null; cost_confidence: number | null };
+const COST_SOURCES_REAIS = new Set(["PRODUCT_COST", "CMC"]);
+const COST_SOURCES_PROXY = new Set(["FAMILY_MARGIN_PROXY", "DEFAULT_PROXY"]);
+function finitePositive(x: number | null | undefined): x is number {
+  return typeof x === "number" && Number.isFinite(x) && x > 0;
+}
+function normalizarSource(source: string | null | undefined): string | null {
+  const s = source?.trim().toUpperCase();
+  return s ? s : null;
+}
+function resolverCustoConfiavel(row: CostRow | null | undefined): number | null {
+  const source = normalizarSource(row?.cost_source);
+  if (row == null || source == null || !COST_SOURCES_REAIS.has(source)) return null;
+  if (finitePositive(row.cost_final)) return row.cost_final;
+  if (source === "CMC" && finitePositive(row.cost_price)) return row.cost_price;
+  return null;
+}
+function estimarCustoParaRanking(row: CostRow | null | undefined, price: number): number | null {
+  const real = resolverCustoConfiavel(row);
+  if (real != null) return real;
+  const source = normalizarSource(row?.cost_source);
+  const cf = row?.cost_final ?? null;
+  if (source != null && COST_SOURCES_PROXY.has(source) && finitePositive(cf) && cf < price) return cf;
+  return null;
+}
+type MargensCandidato = { custoConfiavel: number | null; custoRanking: number | null; margemExibida: number | null; margemRanking: number | null };
+function derivarMargensCandidato(row: CostRow | null | undefined, price: number): MargensCandidato {
+  const custoConfiavel = resolverCustoConfiavel(row);
+  const custoRanking = estimarCustoParaRanking(row, price);
+  return {
+    custoConfiavel,
+    custoRanking,
+    margemExibida: custoConfiavel != null ? price - custoConfiavel : null,
+    margemRanking: custoRanking != null ? price - custoRanking : null,
+  };
+}
+// ======== /COST CONTRACT ========
+
 // ======== RECOMMENDATION ENGINE ========
 
 interface Candidate {
@@ -34,12 +73,13 @@ interface Candidate {
   descricao: string;
   codigo: string;
   price: number;
-  cost_final: number;
+  cost_final: number | null;
   cost_source: string;
   cost_confidence: number;
+  cost_ranking: number | null;
   familia: string | null;
   estoque: number;
-  margin: number;
+  margin: number | null;
   assoc_score: number;
   sim_score: number;
   ctx_score: number;
@@ -71,7 +111,7 @@ async function recommend(
     db.from("recommendation_config").select("key, value"),
     db.from("order_items").select("product_id, quantity, unit_price").eq("customer_user_id", customerId),
     db.from("omie_products").select("id, omie_codigo_produto, descricao, codigo, valor_unitario, estoque, familia, subfamilia").eq("ativo", true),
-    db.from("product_costs").select("product_id, cost_final, cost_source, cost_confidence"),
+    db.from("product_costs").select("product_id, cost_price, cost_final, cost_source, cost_confidence"),
     db.from("farmer_association_rules").select("*").gte("lift", 1.2).gte("support", 0.01),
     db.from("farmer_client_scores").select("health_class, category_count").eq("customer_user_id", customerId).maybeSingle(),
   ]);
@@ -100,7 +140,7 @@ async function recommend(
   }
 
   // Cost map
-  const costMap: Record<string, { cost_final: number; cost_source: string; cost_confidence: number }> = {};
+  const costMap: Record<string, CostRow> = {};
   for (const c of costs || []) costMap[c.product_id] = c;
 
   // Association scores
@@ -151,11 +191,11 @@ async function recommend(
     if ((p.estoque || 0) <= 0) continue;
 
     const cost = costMap[p.id];
-    const costFinal = cost?.cost_final || 0;
     const price = p.valor_unitario || 0;
     if (price <= 0) continue;
 
-    const margin = price - costFinal;
+    const { custoConfiavel, custoRanking, margemExibida, margemRanking } = derivarMargensCandidato(cost ?? null, price);
+    const margemRank = margemRanking ?? 0; // EIP neutro (0, não máximo) quando custo de ranking ausente
     const assoc = assocScores[p.id] || 0;
     const simCustomers = clusterProductCounts[p.id]?.size || 0;
     const sim = simCustomers / clusterSize;
@@ -171,9 +211,9 @@ async function recommend(
     const ctxNorm = Math.min(ctx, 1);
 
     const probability = sigmoid(-1.5 + 2.0 * assocNorm + 1.5 * simNorm + 1.0 * ctxNorm);
-    const eip = probability * margin;
+    const eip = probability * margemRank;
     const recurrenceScore = Math.min(purchaseCount / 5, 1);
-    const eiltv = probability * (margin + kappa * recurrenceScore * margin);
+    const eiltv = probability * (margemRank + kappa * recurrenceScore * margemRank);
 
     let penalties = 0;
     const familia = p.familia || "other";
@@ -192,9 +232,9 @@ async function recommend(
     } else if (sim > 0.2) {
       explanationKey = "cluster";
       explanationText = `${Math.round(sim * 100)}% dos clientes similares compram ${p.descricao}`;
-    } else if (margin > 50) {
+    } else if (margemExibida != null && margemExibida > 50) {
       explanationKey = "margin";
-      explanationText = `${p.descricao} tem alto potencial de margem (R$ ${margin.toFixed(2)})`;
+      explanationText = `${p.descricao} tem alto potencial de margem (R$ ${margemExibida.toFixed(2)})`;
     } else if (ctx > 0.2) {
       explanationKey = "context";
       explanationText = `Baseado no histórico de compras, ${p.descricao} complementa bem o mix`;
@@ -205,9 +245,9 @@ async function recommend(
     candidates.push({
       product_id: p.id, omie_codigo_produto: p.omie_codigo_produto,
       descricao: p.descricao, codigo: p.codigo, price,
-      cost_final: costFinal, cost_source: cost?.cost_source || "UNKNOWN",
-      cost_confidence: cost?.cost_confidence || 0, familia: p.familia,
-      estoque: p.estoque || 0, margin, assoc_score: assoc, sim_score: sim,
+      cost_final: custoConfiavel, cost_source: cost?.cost_source || "UNKNOWN",
+      cost_confidence: cost?.cost_confidence || 0, cost_ranking: custoRanking, familia: p.familia,
+      estoque: p.estoque || 0, margin: margemExibida, assoc_score: assoc, sim_score: sim,
       ctx_score: ctx, probability, eip, eiltv, score_final: 0,
       explanation_text: explanationText, explanation_key: explanationKey,
       recommendation_type: recType, penalties,
@@ -273,7 +313,8 @@ async function recommend(
       estoque: c.estoque,
       _admin: {
         cost_final: c.cost_final, cost_source: c.cost_source,
-        cost_confidence: c.cost_confidence, assoc_score: c.assoc_score,
+        cost_confidence: c.cost_confidence, estimated_cost_for_ranking: c.cost_ranking,
+        assoc_score: c.assoc_score,
         sim_score: c.sim_score, ctx_score: c.ctx_score,
         penalties: c.penalties, familia: c.familia, eiltv: c.eiltv,
       },
