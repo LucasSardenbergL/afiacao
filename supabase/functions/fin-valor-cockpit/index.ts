@@ -308,8 +308,23 @@ serve(async (req: Request) => {
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
     const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_clientes").select("user_id, omie_codigo_cliente").order("id", { ascending: true }).range(f, t), "omie_clientes");
     const userToOmie = new Map(clientesAll.map((c) => [c.user_id, String(c.omie_codigo_cliente)]));
-    const custosAll = await fetchAll<{ product_id: string; cost_price: number }>((f, t) => db.from("product_costs").select("product_id, cost_price").order("id", { ascending: true }).range(f, t), "product_costs");
-    const custoPorProduto = new Map(custosAll.map((c) => [c.product_id, c.cost_price]));
+    // Custo canônico = cost_final (saída do motor de custo, MESMA fonte que o recommend usa p/ margem). Fallback
+    // p/ cost_price (legado) quando cost_final é ausente OU inválido (<=0/NaN) — preserva cobertura (14 SKUs Oben
+    // têm cost_final inválido mas cost_price real >0, psql-ro 2026-06-18). ausente≠zero: nunca usa 0 como custo
+    // real; <=0/null nos DOIS → SKU sem custo (cm null no combo). Codex P2: o fallback em cost_final INVÁLIDO (não
+    // só ausente) é INTENCIONAL (cost_price é custo real legado, dropar esconderia margem real) mas OBSERVÁVEL via
+    // warn — não-silencioso. cost_source/cost_confidence (degradar confiança por custo-proxy) ficam p/ v2 (helper
+    // espelhado + UI).
+    const custosAll = await fetchAll<{ product_id: string; cost_final: number | null; cost_price: number | null }>((f, t) => db.from("product_costs").select("product_id, cost_final, cost_price").order("id", { ascending: true }).range(f, t), "product_costs");
+    const custoValido = (x: number | null): number | null => (typeof x === "number" && Number.isFinite(x) && x > 0 ? x : null);
+    const custoPorProduto = new Map<string, number>();
+    let custoLegadoFallback = 0;
+    for (const c of custosAll) {
+      const canonico = custoValido(c.cost_final);
+      const custo = canonico ?? custoValido(c.cost_price);
+      if (custo != null) { custoPorProduto.set(c.product_id, custo); if (canonico == null) custoLegadoFallback++; }
+    }
+    if (custoLegadoFallback > 0) console.warn(`[ValorCockpit][${COMPANY}] ${custoLegadoFallback} SKUs com cost_final ausente/inválido → fallback p/ cost_price legado`);
     // Estoque com PONTE DE CONTAS (paridade com get_preco_cockpit / cockpit_preco_fixes): inventory_position
     // guarda o MESMO SKU em 'vendas' (conta Omie crua, omie-analytics-sync) e 'oben' (empresa, sync-reprocess)
     // — mesma fonte Omie, divergindo pelo timing do sync. Busca AS DUAS e elege por SKU a linha com cmc>0 mais
