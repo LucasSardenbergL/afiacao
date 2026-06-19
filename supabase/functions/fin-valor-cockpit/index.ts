@@ -230,10 +230,15 @@ serve(async (req: Request) => {
   const now = new Date();
   const ttm_fim = now.toISOString().slice(0, 10);
   const ttm_inicio = new Date(now.getTime() - 365 * 86400000).toISOString().slice(0, 10);
+  // Prefiltro de BUSCA do order_items (created_at = data de CARGA) com 90d de folga antes do ttm_inicio.
+  // A janela REAL do cockpit é por order_date_kpi (Bug C, mais abaixo); created_at só LIMITA o fetch.
+  // Provado (psql-ro 2026-06-18) que todo item com order_date_kpi na janela tem created_at >= order_date_kpi
+  // (0 falso-negativo hoje); a folga de 90d blinda contra pedido pós-datado futuro (created_at < data pedido).
+  const ttm_prefetch = new Date(now.getTime() - (365 + 90) * 86400000).toISOString().slice(0, 10);
   // Guard de formato p/ as datas que entram em .or()/.gte() (defesa anti-injeção: só ISO
   // YYYY-MM-DD; aqui vêm de toISOString, mas o guard documenta e blinda contra regressão).
   const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-  if (!ISO_DATE.test(ttm_inicio) || !ISO_DATE.test(ttm_fim)) {
+  if (!ISO_DATE.test(ttm_inicio) || !ISO_DATE.test(ttm_fim) || !ISO_DATE.test(ttm_prefetch)) {
     return jsonResponse({ error: "janela TTM inválida" }, 500);
   }
 
@@ -263,18 +268,41 @@ serve(async (req: Request) => {
     const prods = await fetchAll<Prod>((f, t) => db.from("omie_products").select("id, omie_codigo_produto, account").eq("account", COMPANY).order("id", { ascending: true }).range(f, t), "omie_products");
     const obenProductIds = new Set(prods.map((p) => p.id));
     const obenSkus = new Set(prods.map((p) => String(p.omie_codigo_produto)));
+    // Bug D: SKU→product_id da Oben p/ recuperar linhas com product_id NULL (gap de FK histórico — 2026-03,
+    // app-orders; SKU é oben-exclusivo e ÚNICO: 3660/3660, provado psql-ro). Atribui o produto Oben certo E
+    // resolve o custo da recuperada (mesmo product_id da linkada → combo cliente×SKU nunca mistura custo).
+    const obenSkuToProductId = new Map(prods.map((p) => [String(p.omie_codigo_produto), p.id]));
 
-    // Linhas de venda no TTM (order_items tem created_at próprio → sem .in gigante de pedidos).
+    // Linhas candidatas: busca por created_at (prefiltro com folga, ttm_prefetch); a janela REAL é por
+    // order_date_kpi do pedido pai (Bug C), aplicada via pedidosNaJanela abaixo.
     type Item = { customer_user_id: string; product_id: string | null; omie_codigo_produto: number | null; quantity: number; unit_price: number; discount: number | null; sales_order_id: string };
-    const itemsAll = await fetchAll<Item>((f, t) => db.from("order_items").select("customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, created_at, sales_order_id").gte("created_at", ttm_inicio).order("id", { ascending: true }).range(f, t), "order_items");
-    // Faturabilidade: exclui pedido cancelado/rascunho/soft-deletado (alinhado a v_caca). Carrega TODOS
-    // os pedidos (id,status,deleted_at) — ~7k linhas, barato — e materializa o Set de ids faturáveis pela
-    // régua espelhada. SEM filtro de account: a exclusão vale p/ qualquer conta (produto Oben em pedido
-    // cancelado de outra conta também não é faturamento); o recorte Oben já vem por product_id.
-    type SalesOrderRow = { id: string; status: string | null; deleted_at: string | null };
-    const salesOrdersAll = await fetchAll<SalesOrderRow>((f, t) => db.from("sales_orders").select("id, status, deleted_at").order("id", { ascending: true }).range(f, t), "sales_orders");
-    const pedidosFaturaveis = new Set(salesOrdersAll.filter((so) => pedidoContaNoFaturamento(so.status, so.deleted_at)).map((so) => so.id));
-    const linhas = itemsAll.filter((l) => l.product_id != null && obenProductIds.has(l.product_id) && pedidosFaturaveis.has(l.sales_order_id)); // produtos Oben de pedidos faturáveis (exclui cancelado/rascunho/deletado)
+    const itemsAll = await fetchAll<Item>((f, t) => db.from("order_items").select("customer_user_id, product_id, omie_codigo_produto, quantity, unit_price, discount, created_at, sales_order_id").gte("created_at", ttm_prefetch).order("id", { ascending: true }).range(f, t), "order_items");
+    // Faturabilidade + JANELA: carrega TODOS os pedidos (id,status,deleted_at,order_date_kpi) — ~7k linhas,
+    // barato. pedidosNaJanela = faturável (exclui cancelado/rascunho/soft-deletado, régua v_caca) E
+    // order_date_kpi ∈ [ttm_inicio, ttm_fim] (Bug C: janela pela DATA DO PEDIDO, não pela carga). SEM filtro
+    // de account na faturabilidade (vale p/ qualquer conta); o recorte Oben vem por product_id/SKU abaixo.
+    type SalesOrderRow = { id: string; status: string | null; deleted_at: string | null; order_date_kpi: string | null; account: string | null };
+    const salesOrdersAll = await fetchAll<SalesOrderRow>((f, t) => db.from("sales_orders").select("id, status, deleted_at, order_date_kpi, account").order("id", { ascending: true }).range(f, t), "sales_orders");
+    // order_date_kpi é DATE → comparação de string 'YYYY-MM-DD' é cronológica (mesmo padrão de
+    // carteira-positivacao-snapshot). Reúsa a régua UTC que o cockpit já aplica ao AR (ttm_inicio/ttm_fim).
+    const pedidosNaJanela = new Set(
+      salesOrdersAll
+        .filter((so) => pedidoContaNoFaturamento(so.status, so.deleted_at)
+          && so.order_date_kpi != null && so.order_date_kpi >= ttm_inicio && so.order_date_kpi <= ttm_fim)
+        .map((so) => so.id),
+    );
+    // Guard de conta p/ a recuperação por SKU (Bug D): só recupera linha cujo pedido-pai é account='oben'
+    // — o SKU resolve a produto Oben E o pedido é da Oben. Blinda contra colisão futura de SKU entre contas
+    // (Codex P2; hoje 120/120 recuperadas são oben, provado psql-ro). Linha LINKADA não usa isto (product_id já é Oben).
+    const pedidosOben = new Set(salesOrdersAll.filter((so) => so.account === COMPANY).map((so) => so.id));
+    // Oben por product_id OU (FK ausente → SKU resolve a produto Oben, Bug D). Normaliza ao product_id efetivo
+    // (recuperada ganha o id Oben → custo resolve). Pedido fora da janela/não-faturável é descartado aqui.
+    const linhas = itemsAll.flatMap((l) => {
+      const pid = l.product_id != null
+        ? (obenProductIds.has(l.product_id) ? l.product_id : null)
+        : (l.omie_codigo_produto != null && pedidosOben.has(l.sales_order_id) ? (obenSkuToProductId.get(String(l.omie_codigo_produto)) ?? null) : null);
+      return pid != null && pedidosNaJanela.has(l.sales_order_id) ? [{ ...l, product_id: pid }] : [];
+    });
     if (linhas.length === 0) return jsonResponse({ company: COMPANY, vazio: true, motivo: "Sem linhas de venda da Oben no TTM." }, 200);
 
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
