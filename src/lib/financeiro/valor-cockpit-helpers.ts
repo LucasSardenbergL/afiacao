@@ -67,6 +67,19 @@ export function tituloFaturavelAR(statusTitulo: string | null | undefined): bool
   return statusTitulo == null ? true : !STATUS_TITULO_NAO_FATURAVEL.includes(statusTitulo);
 }
 
+// Dois sinais de cobertura (proxy DIRECIONAL, não reconciliação). ar_por_app = quanto do AR é
+// explicado por venda no app (= cobertura_receita histórica); app_por_ar = quanto da venda no app
+// tem AR faturável (detecta venda sem AR — ex.: à vista/divergência). Divisor 0 ou entrada não-finita
+// → 1 (indisponível NÃO fabrica penalidade — money-path).
+export function coberturaBidirecional(input: { receita: number; arFaturavel: number }): { ar_por_app: number; app_por_ar: number } {
+  const r = input.receita, a = input.arFaturavel;
+  if (!Number.isFinite(r) || !Number.isFinite(a)) return { ar_por_app: 1, app_por_ar: 1 };
+  return {
+    ar_por_app: a > 0 ? Math.min(1, r / a) : 1,
+    app_por_ar: r > 0 ? Math.min(1, a / r) : 1,
+  };
+}
+
 export type TituloAR = {
   valor_documento: number; saldo: number; valor_recebido: number;
   data_emissao: string | null;

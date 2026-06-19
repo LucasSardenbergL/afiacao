@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit, resolverHurdleCockpit, pedidoContaNoFaturamento, tituloFaturavelAR } from '../valor-cockpit-helpers';
+import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit, resolverHurdleCockpit, pedidoContaNoFaturamento, tituloFaturavelAR, coberturaBidirecional } from '../valor-cockpit-helpers';
 
 // helper de fixture: TituloAR completo com defaults (reduz ruído nos casos)
 function tit(p: Partial<Parameters<typeof arMedioTTM>[0]['titulos'][number]>) {
@@ -45,6 +45,31 @@ describe('tituloFaturavelAR (denominador de cobertura — simetria do AR)', () =
   it('NULL/undefined → CONTA (não infla a cobertura; AR sempre tem status no Omie)', () => {
     expect(tituloFaturavelAR(null)).toBe(true);
     expect(tituloFaturavelAR(undefined)).toBe(true);
+  });
+});
+
+describe('coberturaBidirecional (dois sinais)', () => {
+  it('receita > AR: ar_por_app satura em 1, app_por_ar < 1', () => {
+    expect(coberturaBidirecional({ receita: 5_059_623, arFaturavel: 4_054_820 })).toEqual({
+      ar_por_app: 1,
+      app_por_ar: Math.min(1, 4_054_820 / 5_059_623),
+    });
+  });
+  it('AR > receita: inverso', () => {
+    const r = coberturaBidirecional({ receita: 4, arFaturavel: 5 });
+    expect(r.ar_por_app).toBeCloseTo(0.8, 6);
+    expect(r.app_por_ar).toBe(1);
+  });
+  it('iguais → ambos 1', () => {
+    expect(coberturaBidirecional({ receita: 5, arFaturavel: 5 })).toEqual({ ar_por_app: 1, app_por_ar: 1 });
+  });
+  it('divisor 0 não penaliza (arFaturavel=0 → ar_por_app=1; receita=0 → app_por_ar=1)', () => {
+    expect(coberturaBidirecional({ receita: 5, arFaturavel: 0 }).ar_por_app).toBe(1);
+    expect(coberturaBidirecional({ receita: 0, arFaturavel: 5 }).app_por_ar).toBe(1);
+  });
+  it('entrada não-finita → {1,1} (não fabrica penalidade)', () => {
+    expect(coberturaBidirecional({ receita: NaN, arFaturavel: 5 })).toEqual({ ar_por_app: 1, app_por_ar: 1 });
+    expect(coberturaBidirecional({ receita: 5, arFaturavel: Infinity })).toEqual({ ar_por_app: 1, app_por_ar: 1 });
   });
 });
 
