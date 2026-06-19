@@ -7,7 +7,7 @@ export interface RecommendationItem {
   codigo: string;
   descricao: string;
   price: number;
-  margin: number;
+  margin: number | null;
   probability: number;
   eip: number;
   score_final: number;
@@ -16,7 +16,8 @@ export interface RecommendationItem {
   explanation_key: string;
   estoque: number;
   _admin?: {
-    cost_final: number;
+    cost_final: number | null;
+    estimated_cost_for_ranking: number | null;
     cost_source: string;
     cost_confidence: number;
     assoc_score: number;
