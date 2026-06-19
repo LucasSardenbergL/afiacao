@@ -347,7 +347,7 @@ async function recalcOne(
   supabase: ReturnType<typeof createClient>,
   customer_user_id: string,
   farmer_id: string,
-): Promise<{ ok: boolean; error?: string; adjustment?: ScoreAdjustment }> {
+): Promise<{ ok: boolean; error?: string; adjustment?: ScoreAdjustment; skipped?: boolean }> {
   const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
   // Safety cap: 200 calls in 30 days = ~7/day average. Beyond that, decay already
   // makes older calls negligible. Order by most-recent first so the cap drops
@@ -425,16 +425,27 @@ async function recalcOne(
   // idempotente. As colunas-base continuam de propriedade do calculate-scores.
   // A prioridade efetiva (base + nudge dos sinais) é computada em read-time
   // (src/lib/scoring/agenda.ts → signalPriorityNudge / effectivePriority).
-  // Opção A (carteira-Omie): 1 linha por cliente, farmer_id = dono. onConflict por cliente.
-  const { error: uErr } = await supabase.from('farmer_client_scores').upsert({
-    customer_user_id,
-    farmer_id,
-    signal_modifiers: adjustment,
-    last_signal_recalc_at: now.toISOString(),
-    updated_at: now.toISOString(),
-  }, { onConflict: 'customer_user_id' });
+  // Opção A (carteira-Omie): 1 linha por cliente, farmer_id = dono.
+  // F1 (reset-path robusto): UPDATE-only, NÃO upsert. Antes o upsert criava uma linha
+  // ESPARSA (só signal_modifiers; campos-base no DEFAULT → days_since_last_purchase=0 →
+  // recência=100 fabricada) quando o cliente ainda não fora semeado — e bastava 1 dessas
+  // linhas p/ suprimir o seed inteiro do calculate-scores num reset (gate length===0).
+  // Agora: 0 linhas afetadas = cliente ainda não semeado → PULA (não fabrica). O
+  // calculate-scores semeia o faltante (≤24h, dado real) e o batch noturno
+  // (scoring-recalc-batch re-recalcula todos os 30d-ativos) reaplica os signal_modifiers.
+  const { data: updated, error: uErr } = await supabase
+    .from('farmer_client_scores')
+    .update({
+      farmer_id,
+      signal_modifiers: adjustment,
+      last_signal_recalc_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    })
+    .eq('customer_user_id', customer_user_id)
+    .select('id');
 
-  if (uErr) return { ok: false, error: `upsert: ${uErr.message}` };
+  if (uErr) return { ok: false, error: `update: ${uErr.message}` };
+  if (!updated || updated.length === 0) return { ok: true, skipped: true };
 
   return { ok: true, adjustment };
 }
