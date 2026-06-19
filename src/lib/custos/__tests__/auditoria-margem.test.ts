@@ -75,3 +75,50 @@ describe('calcularAuditoriaMargemCliente — degenerados', () => {
     expect(r.margin_real).toBe(50); // (70-20)*1
   });
 });
+
+describe('calcularAuditoriaMargemCliente — robustez de qualidade-de-dado (Codex challenge)', () => {
+  const bestOf = (m: Record<string, number | null>) => (id: string): number | null => m[id] ?? null;
+  it('bestPrice ≤ 0 (dado ruim) → fallback actualPrice → leak 0 (não poisona gap)', () => {
+    const r = calcularAuditoriaMargemCliente({
+      orders: [{ product_id: 'A', unit_price: 80, discount: 0, quantity: 1 }],
+      custoPorProduto: () => realRow(10),
+      bestPrice: bestOf({ A: 0 }), // best price zerado/inválido — NÃO virar (0-80)*1 = -80
+    });
+    expect(r.margin_gap).toBe(0);
+    expect(r.gap_pct).toBe(0);
+    expect(r.margin_real).toBe(70);
+  });
+  it('bestPrice negativo → fallback actualPrice → leak 0', () => {
+    const r = calcularAuditoriaMargemCliente({
+      orders: [{ product_id: 'A', unit_price: 80, discount: 0, quantity: 1 }],
+      custoPorProduto: () => realRow(10),
+      bestPrice: bestOf({ A: -5 }),
+    });
+    expect(r.margin_gap).toBe(0);
+  });
+  it('devolução (qty negativa) é ignorada — não distorce gap nem cobertura', () => {
+    const r = calcularAuditoriaMargemCliente({
+      orders: [
+        { product_id: 'A', unit_price: 80, discount: 0, quantity: 2 },  // venda: leak (100-80)*2=40
+        { product_id: 'A', unit_price: 80, discount: 0, quantity: -1 }, // devolução: ignorada
+      ],
+      custoPorProduto: () => realRow(10),
+      bestPrice: bestOf({ A: 100 }),
+    });
+    expect(r.margin_gap).toBe(40);
+    expect(r.cobertura_custo).toBe(1);
+  });
+  it('discount>100 (actualPrice negativo) é ignorado; cobertura fica em [0,1]', () => {
+    const r = calcularAuditoriaMargemCliente({
+      orders: [
+        { product_id: 'A', unit_price: 100, discount: 0, quantity: 1 },   // válida, com custo
+        { product_id: 'B', unit_price: 100, discount: 150, quantity: 1 }, // actualPrice -50 → ignorada
+      ],
+      custoPorProduto: (id) => id === 'A' ? realRow(40) : null,
+      bestPrice: bestOf({ A: 120, B: 120 }),
+    });
+    expect(r.cobertura_custo).toBe(1);          // só a linha A válida, e tem custo
+    expect(r.cobertura_custo).toBeLessThanOrEqual(1);
+    expect(r.margin_real).toBe(60);             // (100-40)*1
+  });
+});
