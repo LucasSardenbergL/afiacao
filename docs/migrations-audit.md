@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **266** custom migrations totais
+- **267** custom migrations totais
 - **991** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 274
@@ -2336,6 +2336,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_customer_sales_summary` | — |
+
+### `20260618210000_b_renamespace_orfaos.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos quando algo der `❌`
 

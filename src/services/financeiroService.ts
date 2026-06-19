@@ -1020,6 +1020,7 @@ export interface ValorCockpitResult {
   recomendacoesCliente: Array<{ cliente: string; recomendacoes: CockpitRecomendacao[] }>;
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
   cobertura_receita: number;
+  cobertura_app_por_ar?: number;
   config: CockpitConfig;
 }
 

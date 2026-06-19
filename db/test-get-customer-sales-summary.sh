@@ -50,7 +50,7 @@ echo "═══ setup pronto (PG17 :$PORT) ═══"
 P -q <<'SQL'
 CREATE TABLE public.sales_orders (
   id             uuid PRIMARY KEY,
-  status         text,
+  status         text NOT NULL,  -- espelha prod (status é NOT NULL → NOT IN não é NULL-blind aqui)
   deleted_at     timestamptz,
   order_date_kpi date,
   created_at     timestamptz          -- fallback do COALESCE quando order_date_kpi IS NULL
@@ -84,7 +84,7 @@ INSERT INTO public.sales_orders (id, status, deleted_at, order_date_kpi, created
   ('50000000-0000-0000-0000-000000000005','faturado',  NULL,  current_date-1,  (current_date-1)::timestamptz),   -- C
   ('50000000-0000-0000-0000-000000000006','faturado',  NULL,  current_date-3,  (current_date-3)::timestamptz),   -- D customer NULL EXCLUÍDO
   ('50000000-0000-0000-0000-000000000007','enviado',   NULL,  current_date-300,(current_date-300)::timestamptz), -- E FORA 180d
-  ('50000000-0000-0000-0000-000000000008','devolvido', NULL,  current_date-2,  (current_date-2)::timestamptz),   -- F status NOVO → blocklist INCLUI
+  ('50000000-0000-0000-0000-000000000008','entregue', NULL,  current_date-2,  (current_date-2)::timestamptz),   -- F status NOVO → blocklist INCLUI
   ('50000000-0000-0000-0000-000000000009','faturado',  NULL,  current_date-4,  (current_date-4)::timestamptz),   -- F
   ('50000000-0000-0000-0000-000000000010','faturado',  now(), current_date-1,  (current_date-1)::timestamptz),   -- G deleted EXCLUÍDO
   ('50000000-0000-0000-0000-000000000011','faturado',  NULL,  current_date-6,  (current_date-6)::timestamptz),   -- G
@@ -142,8 +142,10 @@ eq "A8 total_revenue C = 80 (price null→0, qty 0→1)" "$(val "(total_revenue=
 eq "A9 category_count C = 1 (product NULL ignorado)" "$(val "(category_count=1)" "$C")" "t"
 eq "A10 revenue_180d E = 0 (sem compra 180d, !null)" "$(val "(revenue_180d=0 AND revenue_180d IS NOT NULL)" "$E")" "t"
 eq "A11 customer-null fora da RPC"                   "$(Pq -c "SELECT count(*) FROM public.get_customer_sales_summary() WHERE customer_user_id IS NULL;")" "0"
-# A INVERSÃO da v4: status NOVO ('devolvido') ENTRA na blocklist (anti-subcontagem #935)
-eq "A12 total_revenue F = 787 ('devolvido' status-novo ENTRA: 777+10)" "$(val "(total_revenue=787)" "$F")" "t"
+# A INVERSÃO da v4: status NOVO de venda ('entregue') ENTRA na blocklist (anti-subcontagem #935).
+# Trade-off aceito: um status NOVO de NÃO-venda (ex.: 'estornado') também entraria — é o preço
+# da blocklist vs allowlist, decidido a favor de não subcontar venda real (ver #935 + spec v4).
+eq "A12 total_revenue F = 787 ('entregue' status-novo ENTRA: 777+10)" "$(val "(total_revenue=787)" "$F")" "t"
 eq "A13 total_revenue G = 20 (deleted FORA)"         "$(val "(total_revenue=20)" "$G")" "t"
 # Codex r2: COALESCE kpi-null → cliente não vira "morto"
 eq "A14a days H ∈ [4,6] (kpi NULL → COALESCE created_at, não 999)" "$(val "(days_since_last_purchase BETWEEN 4 AND 6)" "$H")" "t"
@@ -177,7 +179,7 @@ SQL
 case "$R" in *AUTH_NEGADO_OK*) ok "A18 authenticated negado (42501)";; *) bad "A18 authenticated — veio: $R";; esac
 
 echo "── falsificação (sabota → exige VERMELHO → restaura v4) ──"
-# F1 (INVERSÃO v4): blocklist → allowlist amnésica → 'devolvido' (status novo) SAI → F vira 10.
+# F1 (INVERSÃO v4): blocklist → allowlist amnésica → 'entregue' (status novo) SAI → F vira 10.
 P -q <<'SQL'
 CREATE OR REPLACE FUNCTION public.get_customer_sales_summary()
 RETURNS TABLE(customer_user_id uuid, days_since_last_purchase int, total_revenue numeric, revenue_180d numeric, item_count bigint, category_count bigint)
@@ -194,7 +196,7 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public AS $fn$
 $fn$;
 SQL
 RAWF=$(val "total_revenue" "$F")
-if [ "$(val "(total_revenue=787)" "$F")" = "f" ]; then ok "F1 blocklist tem dente (allowlist excluiu 'devolvido' status-novo: F=$RAWF, A12 quebraria)"; else bad "F1 sabotei blocklist→allowlist e A12 NÃO mudou"; fi
+if [ "$(val "(total_revenue=787)" "$F")" = "f" ]; then ok "F1 blocklist tem dente (allowlist excluiu 'entregue' status-novo: F=$RAWF, A12 quebraria)"; else bad "F1 sabotei blocklist→allowlist e A12 NÃO mudou"; fi
 P -q -f "$MIG"
 
 # F2: remove FILTER de 180d → revenue_180d = total all-time → A revenue_180d vira 1250.
