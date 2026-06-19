@@ -63,9 +63,15 @@ describe('coberturaBidirecional (dois sinais)', () => {
   it('iguais → ambos 1', () => {
     expect(coberturaBidirecional({ receita: 5, arFaturavel: 5 })).toEqual({ ar_por_app: 1, app_por_ar: 1 });
   });
-  it('divisor 0 não penaliza (arFaturavel=0 → ar_por_app=1; receita=0 → app_por_ar=1)', () => {
-    expect(coberturaBidirecional({ receita: 5, arFaturavel: 0 }).ar_por_app).toBe(1);
+  it('AR ausente (arFaturavel ≤ 0) → ambos 1 (não fabrica penalidade de ausência — Codex)', () => {
+    expect(coberturaBidirecional({ receita: 5, arFaturavel: 0 })).toEqual({ ar_por_app: 1, app_por_ar: 1 });
+  });
+  it('receita 0 (sem venda) → app_por_ar=1', () => {
     expect(coberturaBidirecional({ receita: 0, arFaturavel: 5 }).app_por_ar).toBe(1);
+  });
+  it('entrada negativa → {1,1} (dado inválido não vira % absurda — Codex)', () => {
+    expect(coberturaBidirecional({ receita: -100, arFaturavel: 1000 })).toEqual({ ar_por_app: 1, app_por_ar: 1 });
+    expect(coberturaBidirecional({ receita: 1000, arFaturavel: -100 })).toEqual({ ar_por_app: 1, app_por_ar: 1 });
   });
   it('entrada não-finita → {1,1} (não fabrica penalidade)', () => {
     expect(coberturaBidirecional({ receita: NaN, arFaturavel: 5 })).toEqual({ ar_por_app: 1, app_por_ar: 1 });
@@ -237,6 +243,10 @@ describe('scoreConfiancaCockpit', () => {
     const r = scoreConfiancaCockpit({ cobertura_receita: 1, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false, cobertura_app_por_ar: 0.4 });
     expect(r.nivel).toBe('media');
     expect(r.motivos.some((m) => m.toLowerCase().includes('sem ar faturável'))).toBe(true);
+  });
+  it('app_por_ar exatamente 0,5 → NÃO penaliza (fronteira estrita < 0,5)', () => {
+    const r = scoreConfiancaCockpit({ cobertura_receita: 1, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false, cobertura_app_por_ar: 0.5 });
+    expect(r.nivel).toBe('alta');
   });
   it('app_por_ar 0,80 (Oben hoje) → NÃO penaliza', () => {
     const r = scoreConfiancaCockpit({ cobertura_receita: 1, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false, cobertura_app_por_ar: 0.8 });

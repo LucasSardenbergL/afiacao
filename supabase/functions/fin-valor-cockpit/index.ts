@@ -86,12 +86,13 @@ function tituloFaturavelAR(statusTitulo: string | null | undefined): boolean {
   return statusTitulo == null ? true : !STATUS_TITULO_NAO_FATURAVEL.includes(statusTitulo);
 }
 // Dois sinais de cobertura (proxy direcional). ar_por_app = cobertura_receita histórica; app_por_ar
-// = venda do app com AR faturável. Divisor 0 / não-finito → 1 (não fabrica penalidade). Espelho de src.
+// = venda do app com AR faturável. Entrada não-finita, receita negativa OU AR ausente (≤0) → {1,1}
+// (indisponível não fabrica penalidade; AR=0 pode ser fonte vazia — Codex 2026-06-18). Espelho de src.
 function coberturaBidirecional(input: { receita: number; arFaturavel: number }): { ar_por_app: number; app_por_ar: number } {
   const r = input.receita, a = input.arFaturavel;
-  if (!Number.isFinite(r) || !Number.isFinite(a)) return { ar_por_app: 1, app_por_ar: 1 };
+  if (!Number.isFinite(r) || !Number.isFinite(a) || r < 0 || a <= 0) return { ar_por_app: 1, app_por_ar: 1 };
   return {
-    ar_por_app: a > 0 ? Math.min(1, r / a) : 1,
+    ar_por_app: Math.min(1, r / a),
     app_por_ar: r > 0 ? Math.min(1, a / r) : 1,
   };
 }
