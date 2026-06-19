@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 266
+-- Total de custom migrations: 267
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -285,7 +285,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260618130000', 'tint_promote_e4_so_com_custo', '20260618130000_tint_promote_e4_so_com_custo.sql'),
   ('20260618180000', 'get_customer_sales_summary', '20260618180000_get_customer_sales_summary.sql'),
   ('20260618190000', 'b_cleanup_dups_oben', '20260618190000_b_cleanup_dups_oben.sql'),
-  ('20260618190000', 'get_customer_sales_summary_blocklist', '20260618190000_get_customer_sales_summary_blocklist.sql')
+  ('20260618190000', 'get_customer_sales_summary_blocklist', '20260618190000_get_customer_sales_summary_blocklist.sql'),
+  ('20260618230000', 'fix_enqueue_sinais_owner_e_reconcile_fila', '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql')
 )
 SELECT
   e.version,
@@ -1294,7 +1295,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_promote_e4_so_com_custo', 'function', 'public', 'tint_promote_sync_run', ''),
   ('get_customer_sales_summary', 'function', 'public', 'get_customer_sales_summary', ''),
   ('b_cleanup_dups_oben', 'index', 'public', 'uniq_sales_orders_omie_pedido_id', 'sales_orders'),
-  ('get_customer_sales_summary_blocklist', 'function', 'public', 'get_customer_sales_summary', '')
+  ('get_customer_sales_summary_blocklist', 'function', 'public', 'get_customer_sales_summary', ''),
+  ('fix_enqueue_sinais_owner_e_reconcile_fila', 'function', 'public', 'enqueue_score_recalc_from_sinais', '')
 )
 SELECT
   e.migration,

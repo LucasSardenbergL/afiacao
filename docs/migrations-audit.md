@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **266** custom migrations totais
-- **991** objetos esperados (criados por estas migrations)
+- **267** custom migrations totais
+- **992** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 274
+  - `function`: 275
   - `rls_policy`: 219
   - `index`: 186
   - `table`: 108
@@ -2336,6 +2336,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_customer_sales_summary` | — |
+
+### `20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.enqueue_score_recalc_from_sinais` | — |
 
 ## Próximos passos quando algo der `❌`
 
