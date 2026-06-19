@@ -2,12 +2,22 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 
+/** Carimbo de build: o Vite (`define`) substitui por uma string literal com o short SHA
+ *  do commit, ou "dev" se o build não tiver git. O cron/verify-frontend.sh grepa o SHA
+ *  da main nos bytes servidos → responde "o ar == origin/main?" sem adivinhar um ALVO. */
+declare const __COMMIT_SHA__: string;
+
 declare global {
   interface Window {
     /** Setado após o React montar; lido pelo watchdog de boot no index.html. */
     __APP_BOOTED__?: boolean;
+    /** Short SHA do commit deste build (carimbo). Lido pela verificação de deploy. */
+    __BUILD_SHA__?: string;
   }
 }
+
+// Carimba o SHA deste build no window logo no boot (side-effect — não é tree-shaken).
+window.__BUILD_SHA__ = __COMMIT_SHA__;
 
 const isInLovablePreview =
   window.location.hostname.includes("id-preview--") ||

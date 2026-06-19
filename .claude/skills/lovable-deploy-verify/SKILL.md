@@ -132,6 +132,25 @@ founder é este, pelos bytes.
 
 ---
 
+## Smoke E2E autônomo (carimbo de SHA + monitor)
+
+O build **carimba o commit no bundle** (`vite.config` → `define __COMMIT_SHA__`; `main.tsx` →
+`window.__BUILD_SHA__`). Com isso o monitor responde "**o ar == `origin/main`?**" sem adivinhar um ALVO:
+
+```bash
+.claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh [url] [sentinela]
+# exit 0 = sincronizado · 3 = ATRASADO (Publish pendente) · 4 = deploy novo, versão indeterminada
+```
+
+- **Determinístico** quando o ar tem `__BUILD_SHA__="<sha>"` — compara com `origin/main`.
+- **Fallback**: se vier `"dev"` (Lovable sem `.git` no build) ou ausente (build pré-carimbo), passe uma
+  `sentinela` (string de UI única do HEAD) → o monitor cai pro `verify-frontend.sh`.
+- **Agendar** (cron de sistema, sem gastar Claude): `*/30 * * * * cd <repo> && bash .../monitor-deploy.sh
+  >> ~/.config/afiacao/deploy-monitor.log 2>&1` (exit 3/4 = avisar; combine com `osascript`/email).
+
+⚠️ O carimbo só vale a partir do **1º Publish que inclua o `vite.config` novo** — e depende de o build do
+Lovable ter `.git` (senão o SHA vira `"dev"` e o monitor usa a sentinela). Provado local; o ar confirma no 1º Publish.
+
 ## Referências
 - CLAUDE.md §"Deploy do FRONTEND (app) — Publish MANUAL no Lovable" (a técnica dos bytes; armadilha do chunk de nome inesperado)
 - CLAUDE.md §"Edge functions — caminho oficial Lovable" (deploy via chat, ler do repo, verbatim)
@@ -143,5 +162,5 @@ founder é este, pelos bytes.
 - [x] `evals/` com classificação de diff (8 casos + runner + mutation-check; espelha `lovable-db-operator/evals`).
 - [x] Domínio canônico `steu.lovable.app` confirmado (HTTP 200).
 - [x] **Edge:** verificação por escada — N1 existência (`verify-edge.sh`, OPTIONS, automático) · N2 versão (Management API, handoff de PAT) · N3 comportamento (probe gated). Fecha a assimetria com o frontend.
-- [ ] **Smoke ponta-a-ponta:** num próximo Publish real, rodar `verify-frontend.sh` com um ALVO conhecido e ver exit 0 (fecha o último elo — não dá com build local).
+- [x] **Smoke E2E autônomo:** carimbo de SHA no build (`__BUILD_SHA__`) + `monitor-deploy.sh` (cron) compara o ar vs `origin/main`. Provado local; **falta o 1º Publish ativar o carimbo no ar** (e confirmar que o Lovable tem `.git` no build — senão cai pra sentinela).
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
