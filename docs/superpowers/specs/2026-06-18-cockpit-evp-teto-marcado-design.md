@@ -1,8 +1,8 @@
 # Cockpit de Valor (Oben) — EVP-teto marcado: degradação honesta do capital ausente
 
 - **Data:** 2026-06-18
-- **Status:** design aprovado pelo founder; Codex adversarial pendente
-- **Escopo desta entrega:** MOTOR (helper TS puro + edge Deno verbatim + contrato + recomendações + confiança + testes vitest). A camada de UI ("EVP ≤ X" + badge "estoque/AR não medido" + tooltip) é a **entrega seguinte** (founder: "1 depois 2"), naturalmente acoplada ao dia em que o Ke for ligado.
+- **Status:** design aprovado pelo founder; **Codex challenge `xhigh` incorporado** (60.249 tokens, 2026-06-18)
+- **Escopo desta entrega:** MOTOR (helper TS puro + edge Deno verbatim + contrato + recomendações + confiança + testes vitest). A camada de UI ("EVP ≤ X" + badge "estoque/AR não medido" + tooltip) é a **entrega seguinte** (founder: "1 depois 2"), acoplada ao dia em que o Ke for ligado.
 - **Arquivos:** `src/lib/financeiro/valor-cockpit-helpers.ts` (+ `__tests__/valor-cockpit-helpers.test.ts`), `supabase/functions/fin-valor-cockpit/index.ts` (espelho verbatim).
 
 ## Problema (achado Codex, 2026-06-18)
@@ -16,87 +16,98 @@ const encargo = input.k == null ? null : input.k * (a_cs + i_cs);
 const evp = cm == null || encargo == null ? null : cm - encargo;
 ```
 
-Quando o AR do cliente **ou** o estoque do SKU está ausente, a perna respectiva entra como 0 → **encargo subestimado → EVP superestimado** (o combo parece gerar mais valor econômico do que gera). Viola o princípio money-path #2 ("ausente ≠ zero — nunca fabricar número"). A mitigação atual (flags `ar_indisponivel`/`estoque_indisponivel` por célula + `scoreConfiancaCockpit`) **não corrige o número** e só rebaixa a confiança acima de 30% de ausência — abaixo disso fica "verde" com EVP otimista.
+Perna de capital ausente entra como 0 → **encargo subestimado → EVP superestimado** (otimista). Viola money-path #2 ("ausente ≠ zero"). Mitigação atual (flags + `scoreConfiancaCockpit`) **não corrige o número** e tem ponto cego abaixo de 30%.
 
 ## Medição (psql-ro read-only, TTM Oben, 2026-06-18)
 
-- **Dano HOJE = R$0.** `fin_valor_inputs.ke.base` da Oben está vazio → `k=null` → `encargo=null` → **EVP é `null` em 100% das células**. O bug é **LATENTE**: só ganha dentes quando o founder configurar o Ke em `/financeiro/valor`. A medição abaixo é da **exposição estrutural** (o que nasce inflado quando o hurdle entrar).
-- **Recorte fiel:** a query SQL reproduz o recorte da edge (Oben via `omie_products.account`, TTM 365d, pedidos faturáveis) e bate ao real — `receita_total = R$5.059.623` = `empresa.receita` do #939.
-- **Exposição** (3.783 células = combos cliente×SKU):
-  - **19,9%** têm ≥1 perna de capital ausente → EVP seria teto. Concentração: **estoque 19,2%** vs **AR 0,8%**.
-  - Das **3.471 com `cm`** (únicas com EVP quando o Ke ligar): **442 expostas (12,7%)**, valendo **~R$250k / 4,95% da receita**.
-  - **206 de 558 SKUs (37%) sem linha em `inventory_position`** — e é **binário**: 0 casos de "saldo sem cmc". Ou completo, ou ausente.
-  - **Ordem de grandeza em R$:** encargo de estoque faltante ≈ `k × Σ(estoque_valor ausente)`. Imputando o `estoque_valor` mediano dos presentes (R$379) aos 206 ausentes → Σ ≈ R$78k; pela média (R$927) → ~R$191k. Com Ke hipotético 0,20 → **~R$16k–38k de encargo não cobrado** → EVP-empresa superestimado nessa ordem. Pequeno no agregado-empresa; **relevante por-SKU** (206 SKUs com EVP sistematicamente otimista alimentando "crescer/proteger").
-  - **Ponto cego confirmado:** `estoque_ausente_pct = 19,2% < 30%` → `scoreConfiancaCockpit` **não rebaixa** hoje.
-- **Assimetria das pernas:** AR ausente (0,8%) = cliente sem títulos AR → plausivelmente **compra à vista** (AR real ≈ 0). Estoque ausente (19,2%) = SKU sem posição → para distribuidora, mais provavelmente **não-syncado / sob encomenda** do que estoque real zero.
+- **Dano HOJE = R$0.** `fin_valor_inputs.ke.base` da Oben vazio → `k=null` → EVP `null` em 100% das células. Bug **LATENTE**; nasce quando o Ke for configurado em `/financeiro/valor`.
+- **Recorte fiel:** `receita_total = R$5.059.623` = `empresa.receita` do #939.
+- **Exposição** (3.783 células): **19,9%** com ≥1 perna ausente (estoque 19,2% vs AR 0,8%). Das 3.471 com `cm`: **442 expostas (12,7%)**, valendo **~R$250k / 4,95% da receita**. **206/558 SKUs (37%) sem `inventory_position`** — binário (0 casos saldo-sem-cmc). Ordem de grandeza do encargo de estoque faltante: ~R$16k–38k a um Ke 0,20.
+- **Ponto cego confirmado:** `estoque_ausente_pct = 19,2% < 30%` → `scoreConfiancaCockpit` não rebaixa hoje.
+- **Assimetria:** AR ausente (0,8%) ≈ cliente à vista; estoque ausente (19,2%) ≈ não-syncado/sob encomenda.
 
-## Decisão (founder, 2026-06-18)
+## Decisões
 
-**EVP-teto marcado** (opção c): mantém o número, mas declara que é **teto** (otimista) quando o capital está incompleto. Sub-decisões:
-
-- **AR tratado IGUAL ao estoque.** Qualquer perna ausente marca teto. A defesa "AR à vista = 0 real" é uma aposta não-verificável; "ausente≠zero" estrito vale para as duas pernas e uma regra só tem menos superfície de erro. As flags `ar_indisponivel`/`estoque_indisponivel` por célula já distinguem a perna para a UI futura.
-- **Limiar de rebaixamento da confiança = 15%.**
+- **Semântica (founder):** EVP-teto marcado — mantém o número, declara-o **teto** (upper bound) quando capital incompleto.
+- **AR = estoque (founder):** qualquer perna ausente marca teto. "AR à vista = 0 real" é aposta não-verificável; uma regra só, menos superfície.
+- **D1 "Crescer/proteger" parcial (founder):** **qualificar** (emite com ressalva), não suprimir.
+- **D2 furo cm=null (delegado a Claude+Codex):** **tratar agora via qualificação** — mesmo mecanismo do D1, sob o conceito único "EVP confiável".
 
 ## Design (motor)
 
-### Princípio
-Capital incompleto ⟹ `encargo` é um **piso** (falta somar a perna ausente) ⟹ `evp = cm − encargo` é um **teto** (upper bound). O número segue exibido, declarando-se teto.
+### Princípio + invariante de robustez
+Capital incompleto ⟹ `encargo` é **piso** ⟹ `evp = cm − encargo` é **teto**. A afirmação "teto" **só vale se** `k>0` finito e cada perna de capital `≥0` finita (Codex [P1]: capital negativo/NaN transforma teto em piso). Logo o motor **impõe esses invariantes na fronteira** — capital inválido vira *indisponível* (teto), nunca número sujo.
+
+### Robustez / guards na fronteira (Codex [P1]×4 — MUST-FIX)
+1. **`k` inválido → tratado como `null`** (encargo indisponível) dentro de `montarCelulasComboEVP`: `if (k != null && (!Number.isFinite(k) || k <= 0)) k := null`. Defense-in-depth sobre `resolverHurdleCockpit`.
+2. **Capital negativo/não-finito → indisponível:** `ar_indisponivel = arC == null || !Number.isFinite(arC) || arC < 0 || rc <= 0` (idem `estoque_indisponivel` com `estS`). A perna inválida não entra como número; marca teto. Fecha o contraexemplo (`teto<0 ⟹ real<0` sob dado negativo).
+3. **`margemContribuicao` finita:** `const m = receita − custo*qtd; return Number.isFinite(m) ? m : null` (cm NaN → null; receita/qtd não-finitos → null).
+4. **Guard na edge:** `estoque_valor = e && Number.isFinite(e.saldo) && Number.isFinite(e.cmc) ? e.saldo*e.cmc : null` (fecha `saldo*null=0`); `ar_medio` propagado só se finito. Fecha o `COALESCE→0` residual (Codex [P1]).
 
 ### Contrato
-`CelulaEVP` ganha **`evp_parcial: boolean`**, derivado:
+**Célula** (`CelulaEVP`) ganha `evp_parcial: boolean = evp != null && (ar_indisponivel || estoque_indisponivel)`.
+- `evp` numérico inalterado → identidade `Σ porCliente.evp = Σ porSKU.evp = empresa.evp` intacta (com guards, sem NaN → não quebra).
+- Zero-conhecido (SKU presente saldo 0; `ar_medio=0` conhecido) **não** é parcial.
 
+**Rollup** (`RollupCliente`/`RollupSKU`/`empresa`) ganham:
+- `evp_parcial: boolean` = OR das células contribuintes-teto (`evp != null && evp_parcial`).
+- `cm_incompleto: boolean` = grupo tem ≥1 célula com `cm == null` (excluída do EVP — Codex [P1] do `cm=null`).
+
+**Topo (retorno)** ganha `evp_teto_receita_pct: number` = `Σ receita {evp!=null && evp_parcial} / Σ receita {evp!=null}`; `0` se denominador 0. **Ponderado por receita, não contagem** (Codex [P1]: célula parcial pode carregar 80% do EVP em 1% das células).
+
+### Recomendações — `recomendarAcaoComercial`
+Novos inputs opcionais `evp_parcial?: boolean`, `cm_incompleto?: boolean` (do rollup-cliente). Conceito único:
 ```
-evp_parcial = evp != null && (ar_indisponivel || estoque_indisponivel)
+evp_confiavel = evp != null && evp > 0 && !evp_parcial && !cm_incompleto
 ```
-
-- O `evp` **numérico não muda** → a identidade contábil `Σ porCliente.evp = Σ porSKU.evp = empresa.evp` (travada em teste) **permanece intacta**.
-- `evp_parcial` só pode ser `true` quando `evp != null` (logo `cm != null` e `encargo != null`/`k != null`). Sem hurdle (hoje) → `evp` null → `evp_parcial` sempre `false` (não há teto a marcar).
-- **Zero-conhecido ≠ ausente:** `estoque_valor = 0` com SKU presente (saldo 0), ou cliente com `ar_medio = 0` conhecido, **não** marca parcial — as flags testam `== null`/denominador `<= 0`, nunca `== 0`.
-
-`RollupCliente`, `RollupSKU` e `empresa` ganham **`evp_parcial: boolean`** = OR das células contribuintes ao EVP do grupo (`evp != null && evp_parcial`). Uma célula-teto contamina o agregado.
-
-O retorno (nível topo, consumido pela edge) expõe **`evp_teto_pct: number`** = `(#células com evp!=null && evp_parcial) / (#células com evp!=null)`; `0` quando o denominador é 0.
-
-### Recomendações — `recomendarAcaoComercial` (a assimetria)
-Novo input opcional **`evp_parcial?: boolean`** (vem do rollup-cliente).
-
-- **Sinal POSITIVO** ("Crescer / proteger", hoje `r.length===0 && evp!=null && evp>0`): passa a exigir **`&& !evp_parcial`**. EVP-teto>0 não garante real>0 → **suprime** a recomendação (sem ação inventada — não cria item que vaze para o A4/`fin-next-best-action`, igual ao tratamento do hurdle ausente).
-- **Sinal NEGATIVO** ("Encurtar prazo", "Despriorizar / liquidar"): **inalterado**. `teto < 0 ⟹ real ≤ teto < 0` → robusto; o teto negativo reforça o alerta.
-- **"Cortar desconto"** (hoje dispara com `!evpConhecivel || evp==null || evp<=0`): EVP-teto>0-parcial deixa de blindar contra o corte → condição vira `(!evpConhecivel || evp==null || evp<=0 || evp_parcial)`.
-- **"Subir preço"** (margem%): ortogonal ao capital, **intacta**.
+- **Positivo confiável** (`evp_confiavel`): "Crescer / proteger" (motivo atual).
+- **Positivo não-confiável** (`evp>0 && (evp_parcial || cm_incompleto)`): "Crescer / proteger" **qualificado** — motivo compõe "capital parcial — confirmar" e/ou "margem parcial (parte sem custo)". (D1+D2: qualifica, não suprime; responde Codex [P1]×2 e o [P2] do OR grosseiro.)
+- **Negativo** ("Encurtar prazo", "Despriorizar / liquidar"): dispara só com **`evp != null && evp < 0`** (era `evp == null || evp < 0` → fabricava ação em EVP desconhecido; Codex [P1] MUST-FIX). `teto<0 ⟹ real<0` → robusto.
+- **Cortar desconto:** `(!evpConhecivel || evp==null || evp<=0 || evp_parcial)` — teto>0 deixa de blindar contra o corte.
+- **Subir preço** (margem%): ortogonal, intacta.
 
 ### Confiança — `scoreConfiancaCockpit`
-Novo input **`evp_teto_pct: number`**:
-
-- `> 0` → **sempre** adiciona motivo: "X% do EVP é teto — encargo de capital (estoque/AR) não medido em parte da carteira."
-- `> 0.15` → **rebaixa para média** (nível 2).
-- Limiares existentes de `ar_indisponivel_pct`/`estoque_ausente_pct` (sobre todas as células — sinal de qualidade-de-dado geral) **inalterados**.
+Novo input **`evp_teto_receita_pct: number`** (substitui a ideia de contagem):
+- `> 0` → **sempre** motivo: "X% do EVP (por receita) é teto — encargo de capital não medido."
+- `> 0.05` → **rebaixa para média**. Calibrado para o caso real: Oben ≈ R$250k/R$4,79M = **5,2% > 5% → rebaixa** (o limiar de 15%-por-contagem que eu propus deixava 12,7% passar verde — Codex [P1], corrigido).
+- Limiares de `ar_indisponivel_pct`/`estoque_ausente_pct` (qualidade-de-dado geral) inalterados.
 
 ### Espelhamento
-Tudo verbatim TS↔edge. A edge calcula `evp_teto_pct` no orquestrador a partir de `res.celulas` e o passa tanto para `scoreConfiancaCockpit` quanto para o payload de resposta; passa `evp_parcial` do rollup-cliente para `recomendarAcaoComercial`.
+Verbatim TS↔edge. A edge calcula `evp_teto_receita_pct` no orquestrador (de `res.celulas`), aplica o guard de `estoque_valor`/`ar_medio`, e passa `evp_parcial`+`cm_incompleto` do rollup-cliente para `recomendarAcaoComercial`.
+
+## Rastreabilidade da revisão Codex (xhigh, 2026-06-18)
+| Achado | Severidade | Tratamento |
+|---|---|---|
+| `k` cru (k<0 vira piso, NaN vira EVP) | P1 | Guard 1 |
+| capital/`a_cs`/`i_cs` negativo/NaN | P1 | Guard 2 |
+| `rc<=0`/`qs<=0` mascarado | P1 | Guard 2 (marca indisponível→teto) |
+| `cm=NaN` | P1 | Guard 3 |
+| ponto cego 30% não fecha (15% > 12,7%) | P1 | métrica por receita + limiar 5% |
+| métrica por contagem fraca | P1 | `evp_teto_receita_pct` |
+| alertas com `evp==null` | P1 | `evp != null && evp < 0` |
+| suprimir "Crescer" = falso negativo | P1 | D1 qualificar |
+| rollup `cm=null` dispara "Crescer" | P1 | D2 `cm_incompleto` no gate |
+| `COALESCE→0` upstream | P1 | Guard 4 (edge) |
+| AR=estoque falso parcial (0,8%) | P2 | aceito (baixo impacto) |
+| OR no rollup grosseiro | P2 | qualifica (leve) + confiança ponderada |
 
 ## Testes (vitest, TDD + falsificação)
-1. Estoque ausente + cm + k → `evp` numérico (teto) **e** `evp_parcial=true`.
-2. AR ausente + cm + k → `evp_parcial=true`.
-3. Célula limpa (AR+estoque ok) → `evp_parcial=false`.
-4. `estoque_valor=0` **conhecido** (presente) → `evp_parcial=false` (zero-conhecido ≠ ausente).
-5. `k=null` → `evp=null`, `evp_parcial=false` (sem teto a marcar).
-6. Rollup: cliente com 1 célula-teto + 1 limpa → `rollup.evp_parcial=true`; `evp` soma normal; identidade preservada.
-7. `empresa.evp_parcial` e `evp_teto_pct` corretos (inclui caso denominador 0 → 0).
-8. Recomendações: EVP-teto>0 parcial → **não** "Crescer / proteger"; EVP-teto<0 parcial → "Encurtar prazo"/"Despriorizar" disparam; desconto>max + teto>0-parcial → "Cortar desconto" aparece.
-9. Confiança: `evp_teto_pct>0` → motivo presente; `>0.15` → rebaixa para média; `≤0.15` → só motivo.
-10. **FALSIFICAÇÃO:** sabotar (forçar `evp_parcial=false` sempre, ou tratar AR como conhecido) → o teste 1/2 fica vermelho. Confirma que os asserts têm dente.
+1. Estoque ausente + cm + k → `evp` numérico **e** `evp_parcial=true`. 2. AR ausente → `evp_parcial=true`. 3. Limpa → `false`. 4. `estoque_valor=0` conhecido → `false`.
+5. **Robustez:** `k<0`/`k=NaN`/`k=0` → `encargo=null`, `evp=null`; `ar_medio<0`/`estoque_valor` não-finito → indisponível (não número sujo); `cm` NaN → `null`.
+6. `k=null` → `evp=null`, `evp_parcial=false`.
+7. Rollup: 1 célula-teto + 1 limpa → `evp_parcial=true`, soma normal, identidade preservada; grupo com 1 célula `cm=null` → `cm_incompleto=true`.
+8. `evp_teto_receita_pct` ponderado correto (inclui denominador 0 → 0).
+9. Recomendações: confiável evp>0 → "Crescer" puro; teto>0 OU cm_incompleto → "Crescer" **qualificado** (motivo certo); `evp<0` conhecido → alertas disparam; `evp==null` → alertas **não** disparam.
+10. Confiança: `evp_teto_receita_pct>0` → motivo; `>0.05` → média; caso Oben (5,2%) rebaixa.
+11. **FALSIFICAÇÃO:** sabotar (`evp_parcial=false` sempre / remover guard de sinal / limiar de volta a 15%) → teste 1/5/10 vermelho.
 
-Atualizar o teste existente "AR do cliente null → a_cs 0 + flag ar_indisponivel" (linhas 164-172): `a_cs` segue 0, mas agora `evp_parcial=true` (era implicitamente não-testado).
-
-## Codex (money-path)
-`/codex challenge` reasoning `xhigh` na metodologia/design: validar a assimetria teto+/teto−, a propagação do `evp_parcial` pelos rollups, o fechamento do ponto cego dos 30%, e a decisão AR=estoque. Caminho B (auto-challenge + `REVISÃO INDEPENDENTE PENDENTE`) se a cota esgotar.
+Atualizar o teste "AR do cliente null → a_cs 0 + flag ar_indisponivel" (linhas 164-172): agora também `evp_parcial=true`.
 
 ## Deploy
-- **Edge:** deploy **MANUAL** pós-merge pelo chat do Lovable, lendo o `index.ts` da `main` **verbatim** (merge ≠ produção; nunca colar `.ts` no SQL Editor).
-- **Frontend:** nada nesta entrega (sem mudança de UI). Publish só na entrega 2 (UI).
+- **Edge:** deploy **MANUAL** pós-merge pelo chat do Lovable, lendo o `index.ts` da `main` **verbatim** (merge ≠ produção; nunca SQL Editor).
+- **Frontend:** nada nesta entrega (UI é entrega 2).
 
 ## Fora de escopo (follow-up)
-- **UI (entrega 2):** exibir `evp` como "≤ X" + badge "estoque/AR não medido" + tooltip; consumir `evp_parcial` + `ar_indisponivel`/`estoque_indisponivel` por célula.
-- **A4 (`fin-next-best-action`):** confirmar que a supressão do "Crescer / proteger" parcial não abre lacuna indesejada no mapeamento de candidatos.
-- **`inventory_position` sem filtro de `account`** (#937 follow-up: 9 SKUs oben/vendas divergentes) — ortogonal a esta entrega.
+- **UI (entrega 2):** "EVP ≤ X" + badge + tooltip; consumir `evp_parcial`/`ar_indisponivel`/`estoque_indisponivel`/`cm_incompleto`.
+- **A4 (`fin-next-best-action`):** confirmar consumo do "Crescer qualificado" (não vira N candidatos espúrios).
+- **`inventory_position` sem filtro de `account`** (#937: 9 SKUs oben/vendas divergentes) — ortogonal.
