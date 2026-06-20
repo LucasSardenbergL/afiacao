@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 269
+-- Total de custom migrations: 270
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -288,7 +288,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260618190000', 'get_customer_sales_summary_blocklist', '20260618190000_get_customer_sales_summary_blocklist.sql'),
   ('20260618210000', 'b_renamespace_orfaos', '20260618210000_b_renamespace_orfaos.sql'),
   ('20260618230000', 'fix_enqueue_sinais_owner_e_reconcile_fila', '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql'),
-  ('20260619120000', 'param_auto_resumo_descricao', '20260619120000_param_auto_resumo_descricao.sql')
+  ('20260619120000', 'param_auto_resumo_descricao', '20260619120000_param_auto_resumo_descricao.sql'),
+  ('20260619120000', 'trigger_reconcile_score_owner_carteira', '20260619120000_trigger_reconcile_score_owner_carteira.sql')
 )
 SELECT
   e.version,
@@ -1299,7 +1300,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('b_cleanup_dups_oben', 'index', 'public', 'uniq_sales_orders_omie_pedido_id', 'sales_orders'),
   ('get_customer_sales_summary_blocklist', 'function', 'public', 'get_customer_sales_summary', ''),
   ('fix_enqueue_sinais_owner_e_reconcile_fila', 'function', 'public', 'enqueue_score_recalc_from_sinais', ''),
-  ('param_auto_resumo_descricao', 'function', 'public', 'reposicao_param_auto_resumo_tick', '')
+  ('param_auto_resumo_descricao', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
+  ('trigger_reconcile_score_owner_carteira', 'function', 'public', 'reconcile_score_owner_from_carteira', ''),
+  ('trigger_reconcile_score_owner_carteira', 'trigger', 'public', 'trg_carteira_reconcile_score_owner', 'carteira_assignments')
 )
 SELECT
   e.migration,

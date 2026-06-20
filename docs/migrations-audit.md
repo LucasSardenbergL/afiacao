@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **269** custom migrations totais
-- **993** objetos esperados (criados por estas migrations)
+- **270** custom migrations totais
+- **995** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 276
+  - `function`: 277
   - `rls_policy`: 219
   - `index`: 186
   - `table`: 108
   - `cron_job`: 107
-  - `trigger`: 48
+  - `trigger`: 49
   - `view`: 45
   - `enum_value`: 4
 
@@ -2352,6 +2352,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.reposicao_param_auto_resumo_tick` | — |
+
+### `20260619120000_trigger_reconcile_score_owner_carteira.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reconcile_score_owner_from_carteira` | — |
+| `trigger` | `public.trg_carteira_reconcile_score_owner` | `carteira_assignments` |
 
 ## Próximos passos quando algo der `❌`
 

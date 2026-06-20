@@ -40,14 +40,6 @@ sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.
 echo "→ stubs + prelude + snapshot…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/stubs-supabase.sql"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql"
-# O snapshot é dump public-only; funções public referenciam private.mv_sku_ranking_negociacao_paralela
-# (negociação paralela), mas o schema 'private' não vem no dump → stub mínimo p/ o replay compilar.
-P -v ON_ERROR_STOP=1 -q <<'SQL'
-CREATE SCHEMA IF NOT EXISTS private;
-CREATE TABLE IF NOT EXISTS private.mv_sku_ranking_negociacao_paralela (
-  empresa text, sku_codigo_omie text, categoria text, score_final numeric
-);
-SQL
 P --single-transaction -v ON_ERROR_STOP=1 -q -f "$RR"
 rm -f "$RR"
 

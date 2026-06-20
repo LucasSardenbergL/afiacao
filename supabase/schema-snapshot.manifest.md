@@ -8,11 +8,11 @@
 | Fonte | produção (Supabase Lovable, `fzvklzpomgnyikkfkzai`) — regen via chat do Lovable; conteúdo **cross-validado** por um `pg_dump` independente via `~/.config/afiacao/psql-ro` (idêntico objeto-por-objeto, só difere no header/token) |
 | Versão do banco | PostgreSQL 17.6 |
 | pg_dump | 17.9 |
-| Flags | `--schema-only --schema=public --no-owner --no-privileges` |
-| Linhas do arquivo | 35.367 |
+| Flags | `--schema-only --schema=public --schema=private --no-owner --no-privileges` |
+| Linhas do arquivo | 35.485 (geração +`private`; a public-only inicial de 2026-06-19 tinha 35.367) |
 | Tamanho | ~1,3 MB |
 
-> **Geração anterior (2026-05-24, pg_dump 17.9, 23.745 linhas) estava gravemente stale:** faltavam ~60 tabelas, ~124 funções, ~105 policies, ~75 índices criados por migrations posteriores (inclui o drift da Opção A: `farmer_client_scores`/`customer_visit_scores` → `UNIQUE(customer_user_id)` + `idx_fcs_customer`/`idx_cvs_customer`). As ~16 policies + 1 matview que "sumiram" são **remoções reais** em prod (hardening de RLS substituiu as policies amplas `"Staff can manage …"` pelas granulares por carteira; matview `mv_sku_ranking_negociacao_paralela` dropada) — confirmado via psql-ro.
+> **Geração anterior (2026-05-24, pg_dump 17.9, 23.745 linhas) estava gravemente stale:** faltavam ~60 tabelas, ~124 funções, ~105 policies, ~75 índices criados por migrations posteriores (inclui o drift da Opção A: `farmer_client_scores`/`customer_visit_scores` → `UNIQUE(customer_user_id)` + `idx_fcs_customer`/`idx_cvs_customer`). As ~16 policies + 1 matview que "sumiram" são **remoções reais** em prod (hardening de RLS substituiu as policies amplas `"Staff can manage …"` pelas granulares por carteira; matview `mv_sku_ranking_negociacao_paralela` **movida para o schema `private`** — NÃO dropada; ver §"Schema `private`" abaixo) — confirmado via psql-ro.
 
 ## Contagens por tipo (schema `public`)
 
@@ -27,6 +27,12 @@
 | `CREATE POLICY` | 579 |
 | `ENABLE ROW LEVEL SECURITY` | 269 |
 | views com `security_invoker` | 52 |
+
+## ✅ Schema `private` incluído + replay VALIDADO (2026-06-19)
+
+A geração **+`private`** (35.485 linhas) dumpa o schema `private`: `CREATE SCHEMA private` + o matview `private.mv_sku_ranking_negociacao_paralela` + 2 índices (`idx_mv_ranking_pk`, `idx_mv_ranking_categoria`). Isso **fecha o gap** da 1ª geração de 2026-06-19 (public-only), em que 3 objetos do `public` (`get_sku_ranking_negociacao_paralela` / `refresh_sku_ranking_negociacao` + view `v_sugestao_negociacao_ativa`) referenciavam o matview sem ele ser dumpado → o restore quebrava com `schema "private" does not exist`. O matview foi movido `public`→`private` pela migration `20260527160000` (segurança — tirar o ranking cru do PostgREST, deixá-lo atrás de RPCs SECURITY DEFINER).
+
+> **Replay VALIDADO em 2026-06-19** (`db/verify-snapshot-replay.sh`, PG17 descartável + prelude + stubs, transação única `ON_ERROR_STOP`): restore **limpo** + contagens públicas batem (272/53/3/210/91/14/579) + **enforcement RLS amostrado OK** (own-scope=1 / staff-gate=2 / anon-deny=0). **Limitação:** prova ordem/dependência/sintaxe + RLS amostrada do `public`; **não** o runtime Supabase completo ("Gold" pede projeto vazio/docker).
 
 ## Extensions referenciadas pelo `public` (ver `schema-extensions-prelude.sql`)
 
