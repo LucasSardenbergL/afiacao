@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **267** custom migrations totais
-- **991** objetos esperados (criados por estas migrations)
+- **268** custom migrations totais
+- **992** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 274
+  - `function`: 275
   - `rls_policy`: 219
   - `index`: 186
   - `table`: 108
@@ -2336,6 +2336,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_customer_sales_summary` | — |
+
+### `20260618200000_apply_score_updates_anti_ressurreicao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.apply_score_updates` | — |
 
 ### `20260618210000_b_renamespace_orfaos.sql`
 

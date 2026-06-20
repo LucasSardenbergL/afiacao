@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 267
+-- Total de custom migrations: 268
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -286,6 +286,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260618180000', 'get_customer_sales_summary', '20260618180000_get_customer_sales_summary.sql'),
   ('20260618190000', 'b_cleanup_dups_oben', '20260618190000_b_cleanup_dups_oben.sql'),
   ('20260618190000', 'get_customer_sales_summary_blocklist', '20260618190000_get_customer_sales_summary_blocklist.sql'),
+  ('20260618200000', 'apply_score_updates_anti_ressurreicao', '20260618200000_apply_score_updates_anti_ressurreicao.sql'),
   ('20260618210000', 'b_renamespace_orfaos', '20260618210000_b_renamespace_orfaos.sql')
 )
 SELECT
@@ -1295,7 +1296,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_promote_e4_so_com_custo', 'function', 'public', 'tint_promote_sync_run', ''),
   ('get_customer_sales_summary', 'function', 'public', 'get_customer_sales_summary', ''),
   ('b_cleanup_dups_oben', 'index', 'public', 'uniq_sales_orders_omie_pedido_id', 'sales_orders'),
-  ('get_customer_sales_summary_blocklist', 'function', 'public', 'get_customer_sales_summary', '')
+  ('get_customer_sales_summary_blocklist', 'function', 'public', 'get_customer_sales_summary', ''),
+  ('apply_score_updates_anti_ressurreicao', 'function', 'public', 'apply_score_updates', '')
 )
 SELECT
   e.migration,

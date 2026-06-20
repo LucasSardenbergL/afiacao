@@ -464,7 +464,8 @@ Deno.serve(async (req) => {
 
       updates.push({
         id: client.id,
-        // NOT NULL — obrigatórias no INSERT do upsert onConflict:'id' (ver ScoreUpdate)
+        // customer_user_id/farmer_id: enviados por compat (ScoreUpdate), mas apply_score_updates
+        // os IGNORA — UPDATE-only por id (ver bloco de persist). Mantidos p/ não mexer no shape.
         customer_user_id: client.customer_user_id,
         farmer_id: client.farmer_id,
         health_score: healthScore,
@@ -502,22 +503,30 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Batch update scores using upsert (much faster than individual updates).
-    // F2 (FAIL-CLOSED): coleta os erros e LANÇA antes dos inserts de history/log — um recompute
-    // parcial NÃO pode passar como 200 OK (idempotente → retry converge; falha visível em
-    // net._http_response). [chip: trocar upsert(onConflict:id) por RPC update-only anti-
-    // ressurreição — pré-existente, ortogonal, prove-sql próprio.]
-    console.log(`[calculate-scores] Updating ${updates.length} client scores in batches...`);
+    // Batch update scores via RPC apply_score_updates — UPDATE-only, anti-ressurreição (fecha o chip).
+    // Se aplicar_exclusao_fornecedores() (migration 20260606170100) DELETAR uma linha mid-run, o `id`
+    // stale NÃO casa (WHERE f.id=u.id → 0 linhas): a RPC NÃO re-insere (mata a ressurreição) e jamais
+    // tenta INSERT → nunca 23505. (O upsert(onConflict:'id') anterior ressuscitava/colidia.) Provado em
+    // PG17 + falsificação: db/test-apply-score-updates.sh. O payload ainda traz customer_user_id/farmer_id
+    // (ScoreUpdate), que a RPC IGNORA (recordset só id + 9 campos) — inofensivo.
+    // F2 (FAIL-CLOSED) mantido: erro de RPC coleta-e-LANÇA (recompute parcial não pode passar como 200 OK;
+    // idempotente → retry converge; visível em net._http_response). Chunk de 500 = 1 statement/batch,
+    // limita payload/blast-radius (Codex P2). NÃO lança em affected<enviados: é o sinal ESPERADO de linha
+    // excluída mid-run (a RPC corretamente não a ressuscita) → loga como drift, não 500 (Codex P2).
+    console.log(`[calculate-scores] Updating ${updates.length} client scores via apply_score_updates...`);
     const updateErrors: string[] = [];
-    for (let i = 0; i < updates.length; i += 200) {
-      const batch = updates.slice(i, i + 200);
-      const { error: uErr } = await supabase
-        .from('farmer_client_scores')
-        .upsert(batch, { onConflict: 'id' });
-      if (uErr) { console.error(`[calculate-scores] Batch update error at ${i}:`, uErr.message); updateErrors.push(`@${i}: ${uErr.message}`); }
+    let scoresAffected = 0;
+    for (let i = 0; i < updates.length; i += 500) {
+      const batch = updates.slice(i, i + 500);
+      const { data: affected, error: uErr } = await supabase.rpc('apply_score_updates', { p_updates: batch });
+      if (uErr) { console.error(`[calculate-scores] Batch RPC error at ${i}:`, uErr.message); updateErrors.push(`@${i}: ${uErr.message}`); }
+      else { scoresAffected += Number(affected ?? 0); }
     }
     if (updateErrors.length > 0) {
       throw new Error(`recompute falhou em ${updateErrors.length} batch(es): ${updateErrors.slice(0, 3).join(' | ')}`);
+    }
+    if (scoresAffected < updates.length) {
+      console.log(`[calculate-scores] apply_score_updates afetou ${scoresAffected}/${updates.length} linhas — diferença = fornecedor(es) excluído(s) mid-run pelo cleanup (esperado, NÃO ressuscitado).`);
     }
 
     // F2 (achados Codex #5 + reorder): o COMPUTE dos existentes já persistiu (NÃO foi starvado
