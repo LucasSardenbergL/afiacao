@@ -90,6 +90,8 @@ echo "→ migration C (wrapper + revert/pin + cron)…"
 P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260605140000_param_auto_wrapper_revert_cron.sql"
 echo "→ migration D (recalibra fusível: dropa cobertura, no-op antes do fusível, guard de base)…"
 P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260605150000_param_auto_fusivel_calibracao.sql"
+echo "→ migration E (resumo 18h: rótulo = descrição do produto, fallback p/ código)…"
+P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260619120000_param_auto_resumo_descricao.sql"
 
 echo "→ seed dos cenários (view controlada + sku_parametros + pins + estoque/custo)…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/seed-param-auto.sql"
@@ -310,7 +312,7 @@ echo ""
 echo "→ RESUMO 18h (enfileira fornecedor_alerta + idempotência) …"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $$
-DECLARE n int; r record;
+DECLARE n int; r record; v_msg text;
 BEGIN
   PERFORM public.reposicao_param_auto_resumo_tick();
   SELECT count(*) INTO n FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
@@ -321,11 +323,101 @@ BEGIN
   PERFORM public.reposicao_param_auto_resumo_tick();
   SELECT count(*) INTO n FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
   ASSERT n=1, format('RESUMO idempotência FALHOU: % alertas (esperado 1)', n);
-  RAISE NOTICE 'OK resumo: 1 fornecedor_alerta (info/pendente) + idempotente';
+
+  -- ── P1/P2 (migration E): cada item é rotulado pela DESCRIÇÃO, não pelo código cru ──
+  SELECT mensagem INTO v_msg FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
+  -- P1 (positivo): as descrições dos 3 aplicados (A/F/L) aparecem no corpo
+  ASSERT position('SKU-A normal' IN v_msg) > 0,         'P1 FALHOU: descrição de A ausente no e-mail';
+  ASSERT position('SKU-F pin diferente' IN v_msg) > 0,  'P1 FALHOU: descrição de F ausente no e-mail';
+  ASSERT position('SKU-L queda do máximo' IN v_msg) > 0,'P1 FALHOU: descrição de L ausente no e-mail';
+  -- P2 (positivo): o código deixou de ser o RÓTULO do item ("<código>: PP")
+  ASSERT position('1001: PP' IN v_msg) = 0, 'P2 FALHOU: A ainda rotulado pelo código (1001) em vez da descrição';
+  ASSERT position('1006: PP' IN v_msg) = 0, 'P2 FALHOU: F ainda rotulado pelo código (1006)';
+  ASSERT position('1012: PP' IN v_msg) = 0, 'P2 FALHOU: L ainda rotulado pelo código (1012)';
+  RAISE NOTICE 'OK resumo: 1 alerta (info/pendente) + idempotente + rótulo=descrição (P1) + código não é rótulo (P2)';
 END $$;
 
 -- cron registrado
 SELECT 'cron' AS k, count(*) AS n FROM cron.job WHERE jobname='reposicao-param-auto-resumo';
+SQL
+
+echo ""
+echo "→ FALSIFICAÇÃO (sabota a migration E → o e-mail volta ao código; prova o dente de P1)…"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Versão FURADA: rótulo = sku_codigo_omie cru (como era ANTES da migration E).
+CREATE OR REPLACE FUNCTION public.reposicao_param_auto_resumo_tick()
+  RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public','pg_temp'
+  AS $fur$
+DECLARE r record; v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date; v_corpo text; v_top text;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('param_auto_resumo'));
+  SELECT * INTO r FROM public.reposicao_param_auto_run
+    WHERE data_negocio_brt=v_hoje AND status='completo' AND resumo_enviado_em IS NULL
+    ORDER BY concluido_em DESC LIMIT 1;
+  IF NOT FOUND THEN RETURN; END IF;
+  IF COALESCE(r.total_aplicados,0)=0 AND COALESCE(r.total_segurados,0)=0 THEN
+    UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=now() WHERE id=r.id; RETURN;
+  END IF;
+  SELECT string_agg(format('• %s: PP %s→%s, máx %s→%s%s', sku_codigo_omie,
+            coalesce(ponto_pedido_antes::text,'—'), coalesce(ponto_pedido_depois::text,'—'),
+            coalesce(estoque_maximo_antes::text,'—'), coalesce(estoque_maximo_depois::text,'—'),
+            CASE WHEN impacto_rs IS NULL THEN ' (R$ ?)' ELSE ' (R$ '||round(impacto_rs)::text||')' END), E'\n')
+    INTO v_top FROM (
+      SELECT * FROM public.reposicao_param_auto_log WHERE run_id=r.id AND status='aplicado'
+      ORDER BY impacto_rs DESC NULLS LAST LIMIT 10) t;
+  v_corpo := format(E'%s parâmetros mudaram hoje (OBEN).\nImpacto estimado total: R$ %s%s\n\nMaiores mudanças:\n%s\n\nSegurados pelo fusível (confira): %s\n\nVeja e reverta em: /admin/reposicao/mudancas-automaticas',
+    r.total_aplicados, round(COALESCE(r.impacto_total_rs,0)),
+    CASE WHEN COALESCE(r.impacto_desconhecido_n,0)>0 THEN ' (+'||r.impacto_desconhecido_n||' sem custo)' ELSE '' END,
+    COALESCE(v_top,'—'), COALESCE(r.total_segurados,0));
+  INSERT INTO public.fornecedor_alerta (tipo, titulo, mensagem, empresa, severidade, status)
+    VALUES ('param_auto_resumo', 'Parâmetros de reposição — resumo do dia', v_corpo, r.empresa, 'info', 'pendente_notificacao');
+  UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=now() WHERE id=r.id;
+END;
+$fur$;
+
+DELETE FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
+UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=NULL
+  WHERE status='completo' AND data_negocio_brt=(now() AT TIME ZONE 'America/Sao_Paulo')::date;
+
+DO $$
+DECLARE v_msg text;
+BEGIN
+  PERFORM public.reposicao_param_auto_resumo_tick();
+  SELECT mensagem INTO v_msg FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
+  -- Sentinela ASCII que SÓ a versão verdadeira emite (a descrição). Com a furada deve SUMIR:
+  ASSERT position('SKU-A normal' IN v_msg) = 0,
+    'FALSIFICAÇÃO FRACA: P1 ficaria verde mesmo sem a migration E (rótulo=código) → assert sem dente';
+  -- e o código volta a ser o rótulo (confirma que a sabotagem rodou de fato):
+  ASSERT position('1001: PP' IN v_msg) > 0,
+    'FALSIFICAÇÃO INCONCLUSIVA: nem o código apareceu — a versão furada não rodou como esperado';
+  RAISE NOTICE 'OK falsificação: sem a migration E o e-mail volta ao código cru (P1 ficaria VERMELHO)';
+END $$;
+SQL
+
+echo "→ restaura a migration E verdadeira…"
+P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260619120000_param_auto_resumo_descricao.sql"
+
+echo ""
+echo "→ P3 FALLBACK (descrição NULL/só-espaços → cai no código, nunca rótulo vazio)…"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+UPDATE public.reposicao_param_auto_log SET sku_descricao=NULL  WHERE sku_codigo_omie='1001';  -- A: NULL
+UPDATE public.reposicao_param_auto_log SET sku_descricao='   ' WHERE sku_codigo_omie='1012';  -- L: só-espaços
+DELETE FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
+UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=NULL
+  WHERE status='completo' AND data_negocio_brt=(now() AT TIME ZONE 'America/Sao_Paulo')::date;
+
+DO $$
+DECLARE v_msg text;
+BEGIN
+  PERFORM public.reposicao_param_auto_resumo_tick();
+  SELECT mensagem INTO v_msg FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
+  ASSERT position('1001: PP' IN v_msg) > 0,          'P3 FALHOU: descrição NULL (A) não caiu no código';
+  ASSERT position('SKU-A normal' IN v_msg) = 0,      'P3 FALHOU: A ainda mostra a descrição apagada';
+  ASSERT position('1012: PP' IN v_msg) > 0,          'P3 FALHOU: descrição só-espaços (L) não caiu no código (nullif/btrim)';
+  ASSERT position('SKU-F pin diferente' IN v_msg) > 0,'P3 FALHOU: F (com descrição) deveria manter o texto';
+  ASSERT position('• : PP' IN v_msg) = 0,            'P3 FALHOU: rótulo vazio no e-mail (money-path: ausente≠vazio)';
+  RAISE NOTICE 'OK fallback: NULL e só-espaços caem no código; com descrição mantém; sem rótulo vazio';
+END $$;
 SQL
 
 echo ""

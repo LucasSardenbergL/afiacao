@@ -289,6 +289,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260618200000', 'apply_score_updates_anti_ressurreicao', '20260618200000_apply_score_updates_anti_ressurreicao.sql'),
   ('20260618210000', 'b_renamespace_orfaos', '20260618210000_b_renamespace_orfaos.sql'),
   ('20260618230000', 'fix_enqueue_sinais_owner_e_reconcile_fila', '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql'),
+  ('20260619120000', 'param_auto_resumo_descricao', '20260619120000_param_auto_resumo_descricao.sql'),
   ('20260619120000', 'trigger_reconcile_score_owner_carteira', '20260619120000_trigger_reconcile_score_owner_carteira.sql')
 )
 SELECT
@@ -1301,6 +1302,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('get_customer_sales_summary_blocklist', 'function', 'public', 'get_customer_sales_summary', ''),
   ('apply_score_updates_anti_ressurreicao', 'function', 'public', 'apply_score_updates', ''),
   ('fix_enqueue_sinais_owner_e_reconcile_fila', 'function', 'public', 'enqueue_score_recalc_from_sinais', ''),
+  ('param_auto_resumo_descricao', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
   ('trigger_reconcile_score_owner_carteira', 'function', 'public', 'reconcile_score_owner_from_carteira', ''),
   ('trigger_reconcile_score_owner_carteira', 'trigger', 'public', 'trg_carteira_reconcile_score_owner', 'carteira_assignments')
 )

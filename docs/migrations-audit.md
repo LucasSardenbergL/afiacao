@@ -2353,6 +2353,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.enqueue_score_recalc_from_sinais` | — |
 
+### `20260619120000_param_auto_resumo_descricao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_param_auto_resumo_tick` | — |
+
 ### `20260619120000_trigger_reconcile_score_owner_carteira.sql`
 
 | Tipo | Objeto | Parent |
