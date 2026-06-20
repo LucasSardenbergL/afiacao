@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeCostLadder,
+  cmcPreferido,
   type CostLadderConfig,
   type CostLadderInput,
 } from '@/lib/custo/costLadder';
@@ -110,5 +111,25 @@ describe('computeCostLadder — guard money-path (price degenerado)', () => {
       expect(r.costConfidence).toBe(0);
       expect(r.costPriceToPersist).toBeNull();
     }
+  });
+});
+
+describe('cmcPreferido — preserva CMC real persistido (Codex review P1)', () => {
+  it('usa o CMC atual quando > 0', () => {
+    expect(cmcPreferido(50, 30)).toBe(50);
+  });
+  it('cai para o persistido quando o atual é 0/null/undefined (0 = posição sem custo, não custo zero)', () => {
+    expect(cmcPreferido(0, 30)).toBe(30);
+    expect(cmcPreferido(null, 30)).toBe(30);
+    expect(cmcPreferido(undefined, 30)).toBe(30);
+  });
+  it('null quando ambos ausentes/zerados (sem custo real → escada degrada honestamente)', () => {
+    expect(cmcPreferido(0, 0)).toBeNull();
+    expect(cmcPreferido(null, null)).toBeNull();
+    expect(cmcPreferido(undefined, undefined)).toBeNull();
+  });
+  it('ignora valores negativos (custo inválido)', () => {
+    expect(cmcPreferido(-5, 30)).toBe(30);
+    expect(cmcPreferido(-5, -2)).toBeNull();
   });
 });

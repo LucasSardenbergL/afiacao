@@ -85,3 +85,16 @@ export function computeCostLadder(input: CostLadderInput): CostLadderResult {
     costPriceToPersist: null,
   };
 }
+
+// CMC a usar: o atual do inventory se > 0; senão o último persistido se > 0; senão null.
+// 0 do inventory significa "esta linha de posição não traz custo", NÃO "o custo é zero" —
+// tratar 0 como ausente preserva o CMC real persistido em vez de rebaixar custo real a proxy
+// (regressão que `inv?.cmc ?? existing?.cmc` introduzia: 0 ?? x === 0). Pego no Codex review.
+export function cmcPreferido(
+  atual: number | null | undefined,
+  persistido: number | null | undefined,
+): number | null {
+  if (typeof atual === 'number' && atual > 0) return atual;
+  if (typeof persistido === 'number' && persistido > 0) return persistido;
+  return null;
+}

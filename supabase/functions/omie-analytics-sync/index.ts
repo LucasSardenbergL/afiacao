@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
-import { computeCostLadder } from "../_shared/cost-ladder.ts";
+import { computeCostLadder, cmcPreferido } from "../_shared/cost-ladder.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1015,9 +1015,10 @@ async function computeCosts(db: SupabaseClient) {
 
     const existing = costMap[product.id];
     const inv = invMap[product.id];
-    // CMC atual do inventory; cai para o último CMC conhecido (existing.cmc) quando a posição
-    // sumiu desta run. 0/ausente = sem custo real → a escada degrada para proxy honesto.
-    const cmc = inv?.cmc ?? existing?.cmc ?? null;
+    // CMC a usar: atual do inventory se >0; senão o último persistido (existing.cmc). 0 do
+    // inventory = "esta linha de posição não traz custo", não "custo é zero" — preservar o CMC
+    // real persistido (não rebaixar custo real a proxy). Ver cmcPreferido (Codex review P1).
+    const cmc = cmcPreferido(inv?.cmc, existing?.cmc);
 
     const fam = product.familia || "default";
     const famData = familyMargins[fam];

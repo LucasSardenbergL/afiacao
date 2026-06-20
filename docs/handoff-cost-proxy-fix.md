@@ -61,23 +61,25 @@ ativos lavados são corrigidos automaticamente).
 **6. Reset dos INATIVOS lavados** (o recompute só toca ativos; estes ~54 ficam de fora)
 
 ```sql
--- A) PRODUCT_COST inativos (ficção) → honesto
+-- Reset dos inativos lavados, honesto e num passo só:
+--   cmc>0  → CMC real (cost_price=cmc, source=CMC, conf 0.7) — promove inclusive proxy com CMC
+--            real (senão a sentinela passaria mas mascararia um CMC real como proxy — Codex P2);
+--   cmc<=0 → sem custo real: cost_price=NULL; PRODUCT_COST (ficção) vira UNKNOWN; proxy fica proxy.
 UPDATE product_costs pc
 SET cost_price      = CASE WHEN pc.cmc > 0 THEN pc.cmc ELSE NULL END,
-    cost_source     = CASE WHEN pc.cmc > 0 THEN 'CMC' ELSE 'UNKNOWN' END,
+    cost_source     = CASE WHEN pc.cmc > 0 THEN 'CMC'
+                           WHEN pc.cost_source = 'PRODUCT_COST' THEN 'UNKNOWN'
+                           ELSE pc.cost_source END,
     cost_final      = CASE WHEN pc.cmc > 0 THEN pc.cmc ELSE pc.cost_final END,
-    cost_confidence = CASE WHEN pc.cmc > 0 THEN 0.7 ELSE 0 END,
+    cost_confidence = CASE WHEN pc.cmc > 0 THEN 0.7
+                           WHEN pc.cost_source = 'PRODUCT_COST' THEN 0
+                           ELSE pc.cost_confidence END,
     updated_at      = now()
 FROM omie_products op
-WHERE op.id = pc.product_id AND op.ativo = false AND pc.cost_source = 'PRODUCT_COST';
-
--- B) proxies inativos com cost_price-proxy semeado → limpar a semente (mantém cost_source proxy)
-UPDATE product_costs pc
-SET cost_price = NULL, updated_at = now()
-FROM omie_products op
-WHERE op.id = pc.product_id AND op.ativo = false
-  AND pc.cost_source IN ('FAMILY_MARGIN_PROXY','DEFAULT_PROXY')
-  AND pc.cost_price IS NOT NULL;
+WHERE op.id = pc.product_id
+  AND op.ativo = false
+  AND pc.cost_source <> 'CMC'
+  AND (pc.cost_source = 'PRODUCT_COST' OR pc.cost_price IS NOT NULL OR pc.cmc > 0);
 ```
 
 **7. Sentinela** (eu rodo via psql-ro, ou cola no SQL Editor) — tudo deve dar **0**:
