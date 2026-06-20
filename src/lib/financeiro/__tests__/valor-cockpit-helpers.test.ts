@@ -20,6 +20,10 @@ describe('margemContribuicao', () => {
   it('margem negativa é honesta (vende abaixo do custo)', () => {
     expect(margemContribuicao({ receita_liquida: 500, custo_unitario: 6, quantidade: 100 })).toBe(-100);
   });
+  it('receita ou quantidade não-finita → null (cm NaN é fabricação)', () => {
+    expect(margemContribuicao({ receita_liquida: NaN, custo_unitario: 6, quantidade: 100 })).toBeNull();
+    expect(margemContribuicao({ receita_liquida: 1000, custo_unitario: 6, quantidade: Infinity })).toBeNull();
+  });
 });
 
 describe('statusLiquidadoAR', () => {
@@ -200,6 +204,52 @@ describe('montarCelulasComboEVP', () => {
     const c1 = r.celulas.find((c) => c.cliente === 'C1')!;
     expect(c1.a_cs).toBe(0);
     expect(c1.ar_indisponivel).toBe(true);
+    expect(c1.evp_parcial).toBe(true); // AR ausente → célula é teto
+  });
+});
+
+describe('montarCelulasComboEVP — guards + evp_parcial (teto)', () => {
+  const base = {
+    combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 }], // cm 400
+    capitalClientes: [{ cliente: 'C1', ar_medio: 600 }],
+    capitalSKUs: [{ sku: 'S1', estoque_valor: 800 }],
+    k: 0.2,
+  };
+  it('estoque ausente + cm + k → evp numérico (teto) E evp_parcial=true', () => {
+    const r = montarCelulasComboEVP({ ...base, capitalSKUs: [{ sku: 'S1', estoque_valor: null }] });
+    const c = r.celulas[0];
+    expect(c.evp).not.toBeNull();
+    expect(c.evp_parcial).toBe(true);
+    expect(c.estoque_indisponivel).toBe(true);
+  });
+  it('AR ausente → evp_parcial=true', () => {
+    const r = montarCelulasComboEVP({ ...base, capitalClientes: [{ cliente: 'C1', ar_medio: null }] });
+    expect(r.celulas[0].evp_parcial).toBe(true);
+  });
+  it('célula limpa (AR+estoque ok) → evp_parcial=false', () => {
+    expect(montarCelulasComboEVP(base).celulas[0].evp_parcial).toBe(false);
+  });
+  it('estoque_valor=0 CONHECIDO → evp_parcial=false (zero conhecido ≠ ausente)', () => {
+    const r = montarCelulasComboEVP({ ...base, capitalSKUs: [{ sku: 'S1', estoque_valor: 0 }] });
+    expect(r.celulas[0].estoque_indisponivel).toBe(false);
+    expect(r.celulas[0].evp_parcial).toBe(false);
+  });
+  it('k inválido (k<0 / NaN / 0) → encargo e evp null (não fabrica piso)', () => {
+    for (const k of [-0.1, NaN, 0]) {
+      const r = montarCelulasComboEVP({ ...base, k });
+      expect(r.celulas[0].encargo).toBeNull();
+      expect(r.celulas[0].evp).toBeNull();
+      expect(r.celulas[0].evp_parcial).toBe(false); // sem evp não há teto
+    }
+  });
+  it('capital negativo ou não-finito → indisponível (não número sujo; teto não vira piso)', () => {
+    const neg = montarCelulasComboEVP({ ...base, capitalSKUs: [{ sku: 'S1', estoque_valor: -500 }] });
+    expect(neg.celulas[0].estoque_indisponivel).toBe(true);
+    expect(neg.celulas[0].i_cs).toBe(0);
+    expect(neg.celulas[0].evp_parcial).toBe(true);
+    const nan = montarCelulasComboEVP({ ...base, capitalClientes: [{ cliente: 'C1', ar_medio: NaN }] });
+    expect(nan.celulas[0].ar_indisponivel).toBe(true);
+    expect(nan.celulas[0].a_cs).toBe(0);
   });
 });
 
@@ -396,5 +446,96 @@ describe('pedidoContaNoFaturamento (espelha a régua de v_caca)', () => {
   });
   it('status undefined → NÃO conta', () => {
     expect(pedidoContaNoFaturamento(undefined, null)).toBe(false);
+  });
+});
+
+describe('montarCelulasComboEVP — rollup parcial + evp_teto_receita_pct', () => {
+  const combos = [
+    { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 }, // limpa, cm 400
+    { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 50, custo_unitario: 10 },  // S2 sem estoque → teto
+  ];
+  const capCli = [{ cliente: 'C1', ar_medio: 600 }];
+  const capSku = [{ sku: 'S1', estoque_valor: 800 }]; // S2 ausente
+  it('rollup do cliente marca evp_parcial=true se QUALQUER célula é teto; soma normal', () => {
+    const r = montarCelulasComboEVP({ combos, capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    const rc = r.porCliente.find((x) => x.cliente === 'C1')!;
+    expect(rc.evp_parcial).toBe(true);
+    expect(rc.evp).toBeCloseTo((r.celulas[0].evp ?? 0) + (r.celulas[1].evp ?? 0), 6); // identidade preservada
+    expect(rc.cm_incompleto).toBe(false);
+  });
+  it('cm_incompleto=true quando o grupo tem célula sem custo', () => {
+    const r = montarCelulasComboEVP({
+      combos: [...combos, { cliente: 'C1', sku: 'S3', receita_liquida: 500, quantidade: 10, custo_unitario: null }],
+      capitalClientes: capCli, capitalSKUs: [{ sku: 'S1', estoque_valor: 800 }, { sku: 'S2', estoque_valor: 400 }, { sku: 'S3', estoque_valor: 100 }], k: 0.2,
+    });
+    expect(r.porCliente[0].cm_incompleto).toBe(true);
+  });
+  it('evp_teto_receita_pct ponderado por receita (S2 teto = 1000 de 2000) = 0.5', () => {
+    const r = montarCelulasComboEVP({ combos, capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    expect(r.evp_teto_receita_pct).toBeCloseTo(0.5, 6);
+  });
+  it('sem EVP (k=null) → evp_teto_receita_pct = 0 (denominador 0)', () => {
+    const r = montarCelulasComboEVP({ combos, capitalClientes: capCli, capitalSKUs: capSku, k: null });
+    expect(r.evp_teto_receita_pct).toBe(0);
+    expect(r.empresa.evp_parcial).toBe(false);
+  });
+  it('empresa.evp_parcial e cm_incompleto agregam o global', () => {
+    const r = montarCelulasComboEVP({ combos, capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    expect(r.empresa.evp_parcial).toBe(true);
+    expect(r.empresa.cm_incompleto).toBe(false);
+  });
+});
+
+describe('recomendarAcaoComercial — assimetria teto± e cm_incompleto', () => {
+  const config = { margem_minima_pct: 0.15, desconto_max_pct: 0.10, prazo_alvo_dias: 30, dias_estoque_max: 120, sample_min_receita: 5000 };
+  it('evp>0 confiável (não-teto, cobertura completa) → "Crescer / proteger" puro', () => {
+    const r = recomendarAcaoComercial({ evp: 300, receita_liquida: 1000, cm: 400, desconto_total: 0, prazo_medio_dias: 0, dias_estoque: 0, config });
+    const cresc = r.find((x) => x.acao === 'Crescer / proteger')!;
+    expect(cresc).toBeTruthy();
+    expect(cresc.motivo).not.toMatch(/confirmar|teto|parcial/i);
+  });
+  it('evp>0 mas evp_parcial → "Crescer / proteger" QUALIFICADO (não silencia, não afirma)', () => {
+    const r = recomendarAcaoComercial({ evp: 300, receita_liquida: 1000, cm: 400, desconto_total: 0, prazo_medio_dias: 0, dias_estoque: 0, config, evp_parcial: true });
+    const cresc = r.find((x) => x.acao === 'Crescer / proteger')!;
+    expect(cresc).toBeTruthy();
+    expect(cresc.motivo.toLowerCase()).toContain('capital');
+    expect(cresc.motivo.toLowerCase()).toContain('confirmar');
+  });
+  it('evp>0 mas cm_incompleto → "Crescer / proteger" qualificado (margem parcial)', () => {
+    const r = recomendarAcaoComercial({ evp: 300, receita_liquida: 1000, cm: 400, desconto_total: 0, prazo_medio_dias: 0, dias_estoque: 0, config, cm_incompleto: true });
+    const cresc = r.find((x) => x.acao === 'Crescer / proteger')!;
+    expect(cresc.motivo.toLowerCase()).toContain('margem');
+  });
+  it('alerta negativo dispara só com evp<0 CONHECIDO, não evp==null', () => {
+    const comNull = recomendarAcaoComercial({ evp: null, receita_liquida: 1000, cm: 400, desconto_total: 0, prazo_medio_dias: 90, dias_estoque: 200, config });
+    expect(comNull.some((x) => x.acao.includes('prazo') || x.acao.includes('Despriorizar'))).toBe(false);
+    const comNeg = recomendarAcaoComercial({ evp: -10, receita_liquida: 1000, cm: 400, desconto_total: 0, prazo_medio_dias: 90, dias_estoque: 200, config });
+    expect(comNeg.some((x) => x.acao.includes('prazo'))).toBe(true);
+    expect(comNeg.some((x) => x.acao.includes('Despriorizar'))).toBe(true);
+  });
+  it('desconto>max + evp-teto>0 → "Cortar desconto" (teto não blinda) com motivo "não confirmado"', () => {
+    const r = recomendarAcaoComercial({ evp: 50, receita_liquida: 800, cm: 500, desconto_total: 200, prazo_medio_dias: 0, dias_estoque: 0, config, evp_parcial: true });
+    const corte = r.find((x) => x.acao === 'Cortar desconto')!;
+    expect(corte).toBeTruthy();
+    expect(corte.motivo.toLowerCase()).toContain('não confirmado');
+  });
+});
+
+describe('scoreConfiancaCockpit — evp_teto_receita_pct', () => {
+  const okBase = { cobertura_receita: 1, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false };
+  it('teto por receita > 5% → rebaixa para média + motivo', () => {
+    const r = scoreConfiancaCockpit({ ...okBase, evp_teto_receita_pct: 0.052 }); // caso Oben
+    expect(r.nivel).toBe('media');
+    expect(r.motivos.some((m) => m.toLowerCase().includes('teto'))).toBe(true);
+  });
+  it('0 < teto <= 5% → só motivo, não rebaixa nível', () => {
+    const r = scoreConfiancaCockpit({ ...okBase, evp_teto_receita_pct: 0.03 });
+    expect(r.nivel).toBe('alta');
+    expect(r.motivos.some((m) => m.toLowerCase().includes('teto'))).toBe(true);
+  });
+  it('teto = 0 → sem motivo de teto, alta', () => {
+    const r = scoreConfiancaCockpit({ ...okBase, evp_teto_receita_pct: 0 });
+    expect(r.nivel).toBe('alta');
+    expect(r.motivos.some((m) => m.toLowerCase().includes('teto'))).toBe(false);
   });
 });

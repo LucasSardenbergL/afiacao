@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **268** custom migrations totais
-- **992** objetos esperados (criados por estas migrations)
+- **269** custom migrations totais
+- **994** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 275
+  - `function`: 276
   - `rls_policy`: 219
   - `index`: 186
   - `table`: 108
   - `cron_job`: 107
-  - `trigger`: 48
+  - `trigger`: 49
   - `view`: 45
   - `enum_value`: 4
 
@@ -2337,15 +2337,22 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.get_customer_sales_summary` | — |
 
-### `20260618200000_apply_score_updates_anti_ressurreicao.sql`
-
-| Tipo | Objeto | Parent |
-| --- | --- | --- |
-| `function` | `public.apply_score_updates` | — |
-
 ### `20260618210000_b_renamespace_orfaos.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.enqueue_score_recalc_from_sinais` | — |
+
+### `20260619120000_trigger_reconcile_score_owner_carteira.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reconcile_score_owner_from_carteira` | — |
+| `trigger` | `public.trg_carteira_reconcile_score_owner` | `carteira_assignments` |
 
 ## Próximos passos quando algo der `❌`
 
