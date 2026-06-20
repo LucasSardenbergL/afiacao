@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { computeCostLadder } from "../_shared/cost-ladder.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -825,6 +826,10 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
     // 5) product_costs — só onde há product_id E cmc>0. Preserva a semântica anterior:
     //    já existe → atualiza SÓ cmc+updated_at (não toca cost_price/source/confidence);
     //    novo → insere linha completa (cost_source='CMC', cost_confidence=0.7).
+    //    NB: este writer NUNCA promove proveniência para cima. A autoridade do cost_source é
+    //    computeCosts — ele recomputa cost_price=cmc/cost_source=CMC quando há CMC. Uma linha
+    //    proxy que ganha cmc aqui fica proxy HONESTO até o próximo recompute (sync_all roda o
+    //    compute logo após; o cron intra-day cobre os syncs standalone). Nunca mente para cima.
     const costCandidatos = codProds
       .map((cod) => ({ id: idByCod.get(cod), cmc: posicoes.get(cod)!.cmc }))
       .filter((x): x is { id: string; cmc: number } => !!x.id && x.cmc > 0);
@@ -966,7 +971,6 @@ async function computeCosts(db: SupabaseClient) {
   const margemDefault = cfg.margem_default_global ?? 0.35;
   const margemMin = cfg.margem_minima ?? 0.05;
   const margemMax = cfg.margem_maxima ?? 0.85;
-  const divergenceThreshold = cfg.divergence_threshold ?? 0.20;
 
   // Get all products with their costs and inventory
   const { data: products } = await db.from("omie_products").select("id, valor_unitario, familia").eq("ativo", true);
@@ -984,13 +988,16 @@ async function computeCosts(db: SupabaseClient) {
   const invMap: Record<string, InventoryPositionRow> = {};
   for (const i of inventory) if (i.product_id) invMap[i.product_id] = i;
 
-  // Compute family average margins
+  // Margem média por família — calculada SÓ de custos REAIS (CMC). Usar cost_price aqui
+  // reinjetava proxy lavado na média e tornava o motor autorreferencial (proxy gerava
+  // proxy). Achado Codex 2026-06-19.
   const familyMargins: Record<string, { totalMargin: number; count: number }> = {};
   for (const p of products) {
+    if (!(p.valor_unitario > 0)) continue;
     const fam = p.familia || "default";
-    const c = costMap[p.id];
-    if (c?.cost_price > 0 && p.valor_unitario > 0) {
-      const margin = 1 - c.cost_price / p.valor_unitario;
+    const cmcReal = invMap[p.id]?.cmc ?? 0;
+    if (cmcReal > 0) {
+      const margin = 1 - cmcReal / p.valor_unitario;
       if (margin > margemMin && margin < margemMax) {
         if (!familyMargins[fam]) familyMargins[fam] = { totalMargin: 0, count: 0 };
         familyMargins[fam].totalMargin += margin;
@@ -1000,6 +1007,7 @@ async function computeCosts(db: SupabaseClient) {
   }
 
   let updated = 0;
+  const cfgMargens = { margemDefault, margemMin, margemMax };
 
   for (const product of products) {
     const price = product.valor_unitario;
@@ -1007,65 +1015,28 @@ async function computeCosts(db: SupabaseClient) {
 
     const existing = costMap[product.id];
     const inv = invMap[product.id];
-    const costProduto = existing?.cost_price || 0;
-    const cmc = inv?.cmc || existing?.cmc || 0;
+    // CMC atual do inventory; cai para o último CMC conhecido (existing.cmc) quando a posição
+    // sumiu desta run. 0/ausente = sem custo real → a escada degrada para proxy honesto.
+    const cmc = inv?.cmc ?? existing?.cmc ?? null;
 
-    const sanityCheck = (c: number) =>
-      c > 0 && c < price * (1 - margemMin) && c > price * (1 - margemMax);
+    const fam = product.familia || "default";
+    const famData = familyMargins[fam];
+    const familyTargetMargin =
+      famData && famData.count >= 3 ? famData.totalMargin / famData.count : null;
 
-    let costFinal = 0;
-    let costSource = "UNKNOWN";
-    let costConfidence = 0;
+    const { costFinal, costSource, costConfidence, costPriceToPersist } = computeCostLadder({
+      price,
+      cmc,
+      familyTargetMargin,
+      cfg: cfgMargens,
+    });
 
-    // Priority 1: Product cost
-    if (costProduto > 0 && sanityCheck(costProduto)) {
-      costFinal = costProduto;
-      costSource = "PRODUCT_COST";
-      costConfidence = 0.95;
-
-      // Check divergence with CMC
-      if (cmc > 0 && sanityCheck(cmc)) {
-        const divergence = Math.abs(costProduto - cmc) / Math.max(costProduto, cmc);
-        if (divergence > divergenceThreshold) {
-          // Heuristic: prefer CMC if has stock/recent movement
-          if (inv?.saldo > 0) {
-            costFinal = cmc;
-            costSource = "CMC";
-            costConfidence = 0.85;
-          }
-          // Otherwise keep product cost
-        }
-      }
-    }
-    // Priority 2: CMC
-    else if (cmc > 0 && sanityCheck(cmc)) {
-      costFinal = cmc;
-      costSource = "CMC";
-      costConfidence = 0.80;
-    }
-    // Priority 3: Family margin proxy
-    else {
-      const fam = product.familia || "default";
-      const famData = familyMargins[fam];
-      let targetMargin = margemDefault;
-
-      if (famData && famData.count >= 3) {
-        targetMargin = famData.totalMargin / famData.count;
-        costSource = "FAMILY_MARGIN_PROXY";
-        costConfidence = 0.50;
-      } else {
-        costSource = "DEFAULT_PROXY";
-        costConfidence = 0.25;
-      }
-
-      costFinal = price * (1 - targetMargin);
-    }
-
-    // Upsert product_costs
+    // cost_price guarda SÓ custo real: o CMC quando há, senão null (NUNCA proxy — era a
+    // causa da lavagem de proveniência). PRODUCT_COST saiu da escada; o motor não o emite.
     const upsertData: Record<string, unknown> = {
       product_id: product.id,
-      cost_price: existing?.cost_price || costFinal,
-      cmc: cmc || 0,
+      cost_price: costPriceToPersist,
+      cmc: cmc ?? 0,
       cost_final: costFinal,
       cost_source: costSource,
       cost_confidence: costConfidence,

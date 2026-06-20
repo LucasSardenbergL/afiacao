@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { custoCanonico } from '@/lib/custo/custoCanonico';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface Recommendation {
@@ -50,6 +51,7 @@ interface ProductRow {
 
 interface ProductCostRow {
   product_id: string;
+  cost_final: number | string | null;
   cost_price: number | string | null;
 }
 
@@ -159,10 +161,15 @@ export const useCrossSellEngine = () => {
 
       const { data: productCosts } = (await supabase
         .from('product_costs')
-        .select('product_id, cost_price')) as unknown as { data: ProductCostRow[] | null };
+        .select('product_id, cost_final, cost_price')) as unknown as { data: ProductCostRow[] | null };
 
       const costMap = new Map<string, number>();
-      (productCosts || []).forEach((pc) => costMap.set(pc.product_id, Number(pc.cost_price)));
+      // Custo canônico = cost_final (proxy-aware); cost_price agora é nullable (só custo real).
+      // Number(null)===0 inflava a margem (ausente≠zero) — excluir SKU sem custo, não fabricar 0.
+      (productCosts || []).forEach((pc) => {
+        const c = custoCanonico(pc);
+        if (c != null) costMap.set(pc.product_id, c);
+      });
 
       // 3. Load ALL sales history (avoid huge .in() URL with 3598 IDs)
       const fetchAllSalesOrders = async (): Promise<SalesOrderRow[]> => {

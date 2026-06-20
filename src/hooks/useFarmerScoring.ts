@@ -2,9 +2,10 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { Tables } from '@/integrations/supabase/types';
+import { custoCanonico } from '@/lib/custo/custoCanonico';
 
 type AlgorithmConfigRow = Pick<Tables<'farmer_algorithm_config'>, 'key' | 'value'>;
-type ProductCostRow = Pick<Tables<'product_costs'>, 'product_id' | 'cost_price'>;
+type ProductCostRow = Pick<Tables<'product_costs'>, 'product_id' | 'cost_price' | 'cost_final'>;
 type FarmerCallRow = Pick<
   Tables<'farmer_calls'>,
   'customer_user_id' | 'call_result' | 'is_whatsapp' | 'whatsapp_replied' | 'created_at'
@@ -167,10 +168,15 @@ export const useFarmerScoring = (farmerId?: string) => {
       // 2. Load product costs for margin calculation
       const { data: productCostsData } = await supabase
         .from('product_costs')
-        .select('product_id, cost_price');
+        .select('product_id, cost_final, cost_price');
       const productCosts = (productCostsData ?? []) as ProductCostRow[];
       const costMap = new Map<string, number>();
-      productCosts.forEach((pc) => costMap.set(pc.product_id, Number(pc.cost_price)));
+      // Custo canônico = cost_final (proxy-aware); cost_price agora é nullable (só custo real).
+      // Number(null)===0 inflava a margem (ausente≠zero) — excluir SKU sem custo, não fabricar 0.
+      productCosts.forEach((pc) => {
+        const c = custoCanonico(pc);
+        if (c != null) costMap.set(pc.product_id, c);
+      });
 
       // 3. Load farmer calls for contact rates
       const { data: callsData } = await supabase
