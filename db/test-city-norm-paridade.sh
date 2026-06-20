@@ -36,7 +36,7 @@ cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2
 mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
 cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 
-cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")" "$WORK"; }
+cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")" "$WORK"; rm -f "${RR:-}"; }
 trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=en_US.UTF-8 >/dev/null
@@ -44,7 +44,7 @@ trap cleanup EXIT
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres citynorm_verify
 P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d citynorm_verify "$@"; }
 
-RR="$(mktemp /tmp/snap-citynorm.XXXXXX.sql)"
+RR="$(mktemp "${TMPDIR:-/tmp}/snap-citynorm.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
   | grep -vE '^\\(un)?restrict ' > "$RR"
 
