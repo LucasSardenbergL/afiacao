@@ -345,11 +345,12 @@ async function logEvent(
     customer_user_id: customerId,
     product_id: productId,
     event_type: eventType,
-    // Evento (accept/reject) não carrega custo/margem (a impressão carregou) → null EXPLÍCITO,
-    // senão o DEFAULT 0 do schema fabrica R$0 (Codex challenge). ...extras nunca traz unit_cost/margin.
+    ...extras,
+    // Evento (accept/reject) não carrega custo/margem (a impressão carregou) → null EXPLÍCITO e
+    // DEPOIS de ...extras (autoritativo, não clobberável), senão o DEFAULT 0 do schema fabrica R$0
+    // (Codex #4 fabricação + #6 ordem do spread).
     unit_cost: null,
     margin: null,
-    ...extras,
   });
   return { logged: true };
 }

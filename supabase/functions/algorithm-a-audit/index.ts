@@ -39,8 +39,9 @@ function calcularAuditoriaMargemCliente(input: {
     const up = Number(o.unit_price);
     if (!Number.isFinite(qty) || !Number.isFinite(up)) continue;
     const actualPrice = up * (1 - Number(o.discount || 0) / 100);
-    // Só venda válida (qty>0, preço líquido>0): devolução/discount>100/garbage não distorce gap/cobertura.
-    if (!(qty > 0) || !(actualPrice > 0)) continue;
+    // Só venda válida (qty>0, preço líquido>=0): devolução(qty<0)/discount>100(preço<0) saem; item
+    // grátis (0) FICA (leakage real). Excluir só o inválido evita quebrar cobertura/gap (Codex #3,#7).
+    if (!(qty > 0) || actualPrice < 0) continue;
     const bp = input.bestPrice(o.product_id);
     // bestPrice>0 obrigatório: 0/negativo/NaN é dado ruim → fallback actualPrice (não poisona gap).
     const bestPrice = typeof bp === "number" && Number.isFinite(bp) && bp > 0 ? bp : actualPrice;

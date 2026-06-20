@@ -117,8 +117,8 @@ Agregado:
 - **2 cópias TS da régua** (este módulo + `resolverCustoCockpit` do #959) até a convergência pós-merge. Lógica byte-idêntica; risco de divergência mitigado por vitest nos dois lados. Resíduo rastreado.
 - **`gap_pct` muda de semântica** no painel de governança (margem%→vazamento%) — decidido pelo founder (2026-06-19). Sem migration; sem coluna nova.
 - **EIP neutro (0) p/ custo desconhecido** pode sub-rankear um produto legítimo sem custo cadastrado. Aceito (precisão>recall: melhor não promover por margem-fantasma; o produto ainda surge por assoc/sim/ctx). O fix de fundo é cadastrar custo.
-- **EIP exibido (card linha 85) pode ser baseado em estimativa** (proxy) quando `margemExibida` é null — é grandeza ESPERADA de ranking, não margem firme; o `cost_source`/`estimated_cost_for_ranking` no `_admin` sinalizam a proveniência. O número que muda de firme→"—" é o `margin`, que era a mentira real.
-- **Soma de `margin_real` no Strategic/Governance** vira total parcial quando há clientes null. Aceito (KPI grosseiro; a tabela por-linha mostra "—").
+- **EIP/EILTV exibidos/logados degradam p/ null quando `margemExibida` é null** (Codex challenge #1 — resolvido) — eram R$ (lucro esperado) derivado de custo proxy. Só `score_eip` (score de ranking) e o `c.eip` interno (alimenta o min-max do `score_final`) seguem numéricos → **ranking inalterado**.
+- **Somas `margin_real`/`potential` no Strategic são covered-only** (parcial sob baixa cobertura) — os cards disclosam "N/M clientes c/ custo" (Codex #8). O headline "Gap de Margem" = Σ`margin_gap` (cost-free; NÃO deriva de potential−real, senão sumiria em baixa cobertura — Codex #5). Tabela por-linha mostra "—".
 
 ## Fora de escopo
 
@@ -137,3 +137,19 @@ Agregado:
 - **`/codex challenge`** no diff final (adversarial money-path).
 - `bun run typecheck` + `bun run lint` + `bun run test`.
 - **Deploy MANUAL das 2 edges no chat do Lovable após merge** (merge ≠ produção; `recommend` + `algorithm-a-audit`). Frontend via Publish. Sem migration.
+
+## Codex challenge — veredito (2 passes adversários, gpt-5.5 reasoning high, 8 achados, todos resolvidos)
+
+**Pass 1** (diff inicial, 834k tok) → 5 achados, **todos REAIS** (testes não pegavam edge-cases de dado):
+- **#1** `eip`/`eiltv` exibidos/logados eram R$ derivado de custo proxy → gateados p/ `null` qd `margin` null (`score_eip` + `c.eip` interno seguem numéricos; ranking intacto).
+- **#2** `bestPrice ≤ 0` poisonava o gap (perdi o guard `|| actualPrice` ao trocar p/ `?? null`) → guard `bp>0` (fallback `actualPrice`).
+- **#3** gate de cobertura instável com receita **sinalizada** (devolução/`discount>100` faziam cobertura passar de 1) → só linha de venda válida entra.
+- **#4** `log_accept/reject` omitiam `unit_cost/margin` → DEFAULT 0 do schema fabricava R$0 → `null` explícito.
+- **#5** KPI Strategic derivava gap de `potential−real` (sumia em baixa cobertura) → `Σ margin_gap` (cost-free).
+
+**Pass 2** (confirmação, 232k tok) → os 5 **VERIFICADOS** + 3 refinamentos:
+- **#6** ordem do `...extras` no `logEvent` (clobber teórico do null) → spread **antes** dos nulls (autoritativo).
+- **#7** item **GRÁTIS** (`actualPrice 0`, qty>0) era dropado pelo `actualPrice>0` — é o **MAIOR** leakage (deu o best price inteiro) → guard exclui só preço **negativo** (`< 0`).
+- **#8** cards Margem Real/Potencial/Global sem disclosure do parcial → subtitle "N/M clientes c/ custo".
+
+**Falsificação:** cada fix de helper (#2/#3/#7) entrou por teste **vermelho→verde** (vitest 27/27). Sem Caminho B — Codex respondeu nos 2 passes (cota OK).

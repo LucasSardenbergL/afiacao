@@ -108,6 +108,19 @@ describe('calcularAuditoriaMargemCliente — robustez de qualidade-de-dado (Code
     expect(r.margin_gap).toBe(40);
     expect(r.cobertura_custo).toBe(1);
   });
+  it('item GRÁTIS (discount 100 → actualPrice 0, qty>0) CONTA — é o maior leakage (Codex #7)', () => {
+    const r = calcularAuditoriaMargemCliente({
+      orders: [
+        { product_id: 'A', unit_price: 100, discount: 0, quantity: 1 },   // venda normal: leak 0
+        { product_id: 'B', unit_price: 100, discount: 100, quantity: 1 }, // GRÁTIS: actualPrice 0, leak (100-0)*1=100
+      ],
+      custoPorProduto: () => realRow(30),
+      bestPrice: bestOf({ A: 100, B: 100 }),
+    });
+    expect(r.margin_gap).toBe(100);                             // o grátis NÃO some (seria 0 se dropado)
+    expect(r.top_gap_products).toEqual([{ product_id: 'B', gap: 100 }]);
+    expect(r.cobertura_custo).toBe(1);                          // receita 100 estável, ambas com custo
+  });
   it('discount>100 (actualPrice negativo) é ignorado; cobertura fica em [0,1]', () => {
     const r = calcularAuditoriaMargemCliente({
       orders: [

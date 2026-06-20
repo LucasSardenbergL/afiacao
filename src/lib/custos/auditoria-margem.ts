@@ -44,10 +44,11 @@ export function calcularAuditoriaMargemCliente(input: {
     const up = Number(o.unit_price);
     if (!Number.isFinite(qty) || !Number.isFinite(up)) continue;
     const actualPrice = up * (1 - Number(o.discount || 0) / 100);
-    // Só audita VENDA válida: qty>0 e preço líquido>0. Devolução (qty<0), discount>100 (preço
-    // negativo) ou linha-garbage não é venda a auditar — excluir de TODAS as métricas, senão a
-    // receita SINALIZADA quebra a cobertura (>1 ou <0) e o gap (Codex challenge).
-    if (!(qty > 0) || !(actualPrice > 0)) continue;
+    // Só audita VENDA válida: qty>0 e preço líquido >= 0. Devolução (qty<0) e discount>100 (preço
+    // NEGATIVO = garbage) saem; item GRÁTIS (actualPrice 0, qty>0) FICA — é leakage real (deu o best
+    // price inteiro). Excluir só o inválido evita a receita SINALIZADA quebrar a cobertura (>1 ou <0)
+    // e o gap (Codex challenge #3 instabilidade de sinal, #7 não sub-reportar item grátis).
+    if (!(qty > 0) || actualPrice < 0) continue;
     const bp = input.bestPrice(o.product_id);
     // bestPrice precisa ser positivo; 0/negativo/NaN é dado ruim → fallback actualPrice (leak 0),
     // nunca virar numerador/denominador do gap (Codex challenge: best price inválido poisona gap_pct).
