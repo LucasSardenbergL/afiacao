@@ -15576,6 +15576,7 @@ export type Database = {
         }
         Returns: Json
       }
+      apply_score_updates: { Args: { p_updates: Json }; Returns: number }
       aprovar_pedido_sugerido: {
         Args: { p_pedido_id: number; p_usuario: string }
         Returns: Json
