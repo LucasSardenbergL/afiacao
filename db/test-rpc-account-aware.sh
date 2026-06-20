@@ -24,7 +24,7 @@ cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2
 mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
 cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 
-cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
+cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
 trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
@@ -32,7 +32,7 @@ trap cleanup EXIT
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres acctaware_verify
 P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d acctaware_verify "$@"; }
 
-RR="$(mktemp /tmp/snap-acctaware.XXXXXX.sql)"
+RR="$(mktemp "${TMPDIR:-/tmp}/snap-acctaware.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
   | grep -vE '^\\(un)?restrict ' > "$RR"
 
