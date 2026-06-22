@@ -11,7 +11,9 @@ export type CostRow = {
   cost_confidence: number | null;
 };
 
-const COST_SOURCES_REAIS = new Set(['PRODUCT_COST', 'CMC']);
+// CMC_MARGEM_ATIPICA é CMC REAL fora da banda de margem comercial (prejuízo/baixa/alta) — custo real
+// de confiança rebaixada. É REAL (propaga como custo): a margem ruim fica VISÍVEL, nunca mascarada por proxy.
+const COST_SOURCES_REAIS = new Set(['PRODUCT_COST', 'CMC', 'CMC_MARGEM_ATIPICA']);
 const COST_SOURCES_PROXY = new Set(['FAMILY_MARGIN_PROXY', 'DEFAULT_PROXY']);
 
 function finitePositive(x: number | null | undefined): x is number {
@@ -24,14 +26,14 @@ function normalizarSource(source: string | null | undefined): string | null {
 }
 
 // Custo de MARGEM (exibido/logado). Ausente → null (NÃO fabrica margem).
-//   1. source∈REAIS e finitePositive(cost_final) → cost_final (vivo, preferido)
-//   2. source=CMC e finitePositive(cost_price)   → cost_price (fallback dos 14 do syncInventory)
-//   3. resto (PROXY/UNKNOWN/null/fonte nova)      → null
+//   1. source∈REAIS e finitePositive(cost_final)         → cost_final (vivo, preferido)
+//   2. source∈{CMC,CMC_MARGEM_ATIPICA} e finitePositive(cost_price) → cost_price (fallback CMC-derivado)
+//   3. resto (PROXY/UNKNOWN/null/fonte nova)              → null
 export function resolverCustoConfiavel(row: CostRow | null | undefined): number | null {
   const source = normalizarSource(row?.cost_source);
   if (row == null || source == null || !COST_SOURCES_REAIS.has(source)) return null;
   if (finitePositive(row.cost_final)) return row.cost_final;
-  if (source === 'CMC' && finitePositive(row.cost_price)) return row.cost_price;
+  if ((source === 'CMC' || source === 'CMC_MARGEM_ATIPICA') && finitePositive(row.cost_price)) return row.cost_price;
   return null;
 }
 

@@ -7,8 +7,9 @@ import {
 import type { CostLadderConfig } from '@/lib/custo/costLadder';
 
 // Config canônica (defaults de recommendation_config em prod: 0.35 / 0.05 / 0.85).
-// Com price=100 a faixa de sanidade do CMC é (price*0.15, price*0.95) = (15, 95).
-const cfg: CostLadderConfig = { margemDefault: 0.35, margemMin: 0.05, margemMax: 0.85 };
+// Banda de margem (price=100) = custo ∈ (15, 95): classifica CMC normal vs atípico.
+// Anti-lixo absoluto cmc/price ∈ [0.01, 5]: rejeita só erro de dado (quase-zero/absurdo).
+const cfg: CostLadderConfig = { margemDefault: 0.35, margemMin: 0.05, margemMax: 0.85, cmcRatioMin: 0.01, cmcRatioMax: 5 };
 const NOW = '2026-06-21T00:00:00.000Z';
 
 const byId = (rows: UpsertCusto[], id: string): UpsertCusto => {

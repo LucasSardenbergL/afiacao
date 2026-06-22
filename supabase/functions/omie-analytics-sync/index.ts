@@ -965,6 +965,12 @@ async function computeCosts(db: SupabaseClient) {
   const margemDefault = cfg.margem_default_global ?? 0.35;
   const margemMin = cfg.margem_minima ?? 0.05;
   const margemMax = cfg.margem_maxima ?? 0.85;
+  // Guard anti-lixo do CMC (faixa absoluta cmc/price): rejeita só erro de dado (quase-zero/desproporcional).
+  // Um CMC fora da banda de margem mas DENTRO desta faixa vira CMC_MARGEM_ATIPICA (custo real preservado,
+  // prejuízo/margem-baixa/alta observável) em vez de ser mascarado por proxy. Defaults aqui; ajustáveis via
+  // recommendation_config (margem_cmc_ratio_min/max) sem deploy. kMax=5 cobre o gap empírico real 4.97×→14.39×.
+  const cmcRatioMin = cfg.margem_cmc_ratio_min ?? 0.01;
+  const cmcRatioMax = cfg.margem_cmc_ratio_max ?? 5;
 
   // Catálogo ATIVO inteiro — PAGINADO: o PostgREST capa o .select() em 1000 linhas em
   // SILÊNCIO (docs/agent/database.md §5). Sem isto, ~2/3 dos ~3k produtos ativos nunca
@@ -1009,7 +1015,7 @@ async function computeCosts(db: SupabaseClient) {
     products,
     costMap,
     invMap as unknown as Record<string, { cmc?: number | null }>,
-    { margemDefault, margemMin, margemMax },
+    { margemDefault, margemMin, margemMax, cmcRatioMin, cmcRatioMax },
     nowIso,
   );
 

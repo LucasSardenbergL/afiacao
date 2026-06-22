@@ -74,3 +74,25 @@ describe('derivarMargensCandidato', () => {
       .toEqual({ custoConfiavel: null, custoRanking: null, margemExibida: null, margemRanking: null });
   });
 });
+
+// CMC_MARGEM_ATIPICA é CMC REAL (margem fora da banda comercial: prejuízo/baixa/alta), de confiança
+// rebaixada, mas custo REAL — entra em COST_SOURCES_REAIS e PROPAGA como real (decisão do founder:
+// "propagar como real"). O ponto: a margem negativa fica VISÍVEL (não mascarada por proxy).
+describe('CMC_MARGEM_ATIPICA — custo real atípico propaga como real (margem negativa observável)', () => {
+  it('resolverCustoConfiavel retorna o cost_final real (não null como proxy)', () => {
+    expect(resolverCustoConfiavel(row({ cost_source: 'CMC_MARGEM_ATIPICA', cost_final: 120 }))).toBe(120);
+  });
+  it('fallback p/ cost_price quando cost_final inválido (real CMC-derivado carrega cost_price)', () => {
+    expect(resolverCustoConfiavel(row({ cost_source: 'CMC_MARGEM_ATIPICA', cost_final: 0, cost_price: 120 }))).toBe(120);
+  });
+  it('estimarCustoParaRanking usa o custo real (o SKU ranqueia pela margem real, inclusive ruim)', () => {
+    expect(estimarCustoParaRanking(row({ cost_source: 'CMC_MARGEM_ATIPICA', cost_final: 120 }), 100)).toBe(120);
+  });
+  it('derivarMargensCandidato EXPÕE a margem negativa real (não a esconde atrás de um proxy)', () => {
+    expect(derivarMargensCandidato(row({ cost_source: 'CMC_MARGEM_ATIPICA', cost_final: 120 }), 100))
+      .toEqual({ custoConfiavel: 120, custoRanking: 120, margemExibida: -20, margemRanking: -20 });
+  });
+  it('falsificação: cost_final E cost_price inválidos → null (não fabrica custo)', () => {
+    expect(resolverCustoConfiavel(row({ cost_source: 'CMC_MARGEM_ATIPICA', cost_final: 0, cost_price: 0 }))).toBeNull();
+  });
+});

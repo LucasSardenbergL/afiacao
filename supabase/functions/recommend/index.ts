@@ -28,7 +28,8 @@ function minMaxNorm(values: number[]): number[] {
 
 // ======== COST CONTRACT (espelho VERBATIM de src/lib/custos/cost-source.ts — manter idêntico) ========
 type CostRow = { cost_price: number | null; cost_final: number | null; cost_source: string | null; cost_confidence: number | null };
-const COST_SOURCES_REAIS = new Set(["PRODUCT_COST", "CMC"]);
+// CMC_MARGEM_ATIPICA = CMC real fora da banda de margem (prejuízo/baixa/alta) — REAL, propaga como custo.
+const COST_SOURCES_REAIS = new Set(["PRODUCT_COST", "CMC", "CMC_MARGEM_ATIPICA"]);
 const COST_SOURCES_PROXY = new Set(["FAMILY_MARGIN_PROXY", "DEFAULT_PROXY"]);
 function finitePositive(x: number | null | undefined): x is number {
   return typeof x === "number" && Number.isFinite(x) && x > 0;
@@ -41,7 +42,7 @@ function resolverCustoConfiavel(row: CostRow | null | undefined): number | null 
   const source = normalizarSource(row?.cost_source);
   if (row == null || source == null || !COST_SOURCES_REAIS.has(source)) return null;
   if (finitePositive(row.cost_final)) return row.cost_final;
-  if (source === "CMC" && finitePositive(row.cost_price)) return row.cost_price;
+  if ((source === "CMC" || source === "CMC_MARGEM_ATIPICA") && finitePositive(row.cost_price)) return row.cost_price;
   return null;
 }
 function estimarCustoParaRanking(row: CostRow | null | undefined, price: number): number | null {
