@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 272
+-- Total de custom migrations: 274
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -291,7 +291,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260618230000', 'fix_enqueue_sinais_owner_e_reconcile_fila', '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql'),
   ('20260619120000', 'param_auto_resumo_descricao', '20260619120000_param_auto_resumo_descricao.sql'),
   ('20260619120000', 'trigger_reconcile_score_owner_carteira', '20260619120000_trigger_reconcile_score_owner_carteira.sql'),
-  ('20260620130000', 'cost_price_nullable', '20260620130000_cost_price_nullable.sql')
+  ('20260620130000', 'cost_price_nullable', '20260620130000_cost_price_nullable.sql'),
+  ('20260621120000', 'seed_targets_faltantes_rpc', '20260621120000_seed_targets_faltantes_rpc.sql'),
+  ('20260621130000', 'fcs_guard_flagged_insert', '20260621130000_fcs_guard_flagged_insert.sql')
 )
 SELECT
   e.version,
@@ -1305,7 +1307,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fix_enqueue_sinais_owner_e_reconcile_fila', 'function', 'public', 'enqueue_score_recalc_from_sinais', ''),
   ('param_auto_resumo_descricao', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
   ('trigger_reconcile_score_owner_carteira', 'function', 'public', 'reconcile_score_owner_from_carteira', ''),
-  ('trigger_reconcile_score_owner_carteira', 'trigger', 'public', 'trg_carteira_reconcile_score_owner', 'carteira_assignments')
+  ('trigger_reconcile_score_owner_carteira', 'trigger', 'public', 'trg_carteira_reconcile_score_owner', 'carteira_assignments'),
+  ('seed_targets_faltantes_rpc', 'function', 'public', 'seed_targets_faltantes', ''),
+  ('fcs_guard_flagged_insert', 'function', 'public', 'fcs_block_flagged_insert', ''),
+  ('fcs_guard_flagged_insert', 'trigger', 'public', 'trg_fcs_block_flagged_insert', 'farmer_client_scores')
 )
 SELECT
   e.migration,

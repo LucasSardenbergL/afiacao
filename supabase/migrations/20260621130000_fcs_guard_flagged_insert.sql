@@ -25,7 +25,9 @@
 --   • Só BEFORE INSERT: a reversão (reverter_exclusao_fornecedor zera o flag ANTES de reprovisionar) e o
 --     recompute (apply_score_updates, UPDATE-only) seguem livres. O cleanup (DELETE) não é tocado.
 --
--- Idempotente: CREATE OR REPLACE FUNCTION + DROP TRIGGER IF EXISTS antes do CREATE TRIGGER.
+-- Idempotente SEM janela: CREATE OR REPLACE FUNCTION + CREATE OR REPLACE TRIGGER (sem DROP → um
+-- re-run no SQL Editor, que auto-commita cada statement, NUNCA deixa a tabela sem guard nem por um
+-- instante; DROP+CREATE abriria essa janela — achado /codex P2 2026-06-21). PG14+ (prod é 17.6).
 -- Provado em PG17 com falsificação + RLS (SET ROLE): db/test-fcs-guard-flagged.sh.
 -- ============================================================================
 
@@ -47,8 +49,8 @@ END $$;
 
 REVOKE ALL ON FUNCTION public.fcs_block_flagged_insert() FROM PUBLIC, anon, authenticated;
 
-DROP TRIGGER IF EXISTS trg_fcs_block_flagged_insert ON public.farmer_client_scores;
-CREATE TRIGGER trg_fcs_block_flagged_insert
+-- CREATE OR REPLACE (não DROP+CREATE): substituição ATÔMICA, sem janela sem-guard no re-run.
+CREATE OR REPLACE TRIGGER trg_fcs_block_flagged_insert
   BEFORE INSERT ON public.farmer_client_scores
   FOR EACH ROW
   EXECUTE FUNCTION public.fcs_block_flagged_insert();

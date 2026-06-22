@@ -343,21 +343,25 @@ Deno.serve(async (req) => {
           let seeded = 0;
           for (let i = 0; i < seedRecords.length; i += 200) {
             const batch = seedRecords.slice(i, i + 200);
-            const { error: insertErr } = await supabase
+            const { data: inserted, error: insertErr } = await supabase
               .from('farmer_client_scores')
               .upsert(batch, { onConflict: 'customer_user_id' })
               .select('id');
             if (insertErr) {
               console.error(`[calculate-scores] Batch insert error at ${i}:`, insertErr.message);
               for (const record of batch) {
-                const { error: singleErr } = await supabase
+                const { data: one, error: singleErr } = await supabase
                   .from('farmer_client_scores')
-                  .upsert(record, { onConflict: 'customer_user_id' });
+                  .upsert(record, { onConflict: 'customer_user_id' })
+                  .select('id');
                 if (singleErr) seedErrors.push(`${record.customer_user_id}: ${singleErr.message}`);
-                else seeded++;
+                else seeded += (one?.length ?? 0);
               }
             } else {
-              seeded += batch.length;
+              // Conta as linhas REALMENTE persistidas: o trigger fcs_block_flagged_insert pula o
+              // fornecedor flagged (RETURN NULL) → ele não volta no .select('id') → o log não infla
+              // "Seeded N" mascarando quantos foram bloqueados mid-run (achado /codex P2 2026-06-21).
+              seeded += (inserted?.length ?? 0);
             }
           }
           console.log(`[calculate-scores] Seeded ${seeded}/${missing.length} client scores`);
