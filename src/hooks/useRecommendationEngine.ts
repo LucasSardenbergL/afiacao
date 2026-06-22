@@ -7,16 +7,17 @@ export interface RecommendationItem {
   codigo: string;
   descricao: string;
   price: number;
-  margin: number;
+  margin: number | null;
   probability: number;
-  eip: number;
+  eip: number | null;
   score_final: number;
   recommendation_type: string;
   explanation_text: string;
   explanation_key: string;
   estoque: number;
   _admin?: {
-    cost_final: number;
+    cost_final: number | null;
+    estimated_cost_for_ranking: number | null;
     cost_source: string;
     cost_confidence: number;
     assoc_score: number;
@@ -24,7 +25,7 @@ export interface RecommendationItem {
     ctx_score: number;
     penalties: number;
     familia: string | null;
-    eiltv: number;
+    eiltv: number | null;
   };
 }
 

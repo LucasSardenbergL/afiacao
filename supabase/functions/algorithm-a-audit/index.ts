@@ -1,6 +1,76 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
+// ======== COST CONTRACT (espelho VERBATIM de src/lib/custos/cost-source.ts — manter idêntico) ========
+type CostRow = { cost_price: number | null; cost_final: number | null; cost_source: string | null; cost_confidence: number | null };
+const COST_SOURCES_REAIS = new Set(["PRODUCT_COST", "CMC"]);
+function finitePositive(x: number | null | undefined): x is number {
+  return typeof x === "number" && Number.isFinite(x) && x > 0;
+}
+function normalizarSource(source: string | null | undefined): string | null {
+  const s = source?.trim().toUpperCase();
+  return s ? s : null;
+}
+function resolverCustoConfiavel(row: CostRow | null | undefined): number | null {
+  const source = normalizarSource(row?.cost_source);
+  if (row == null || source == null || !COST_SOURCES_REAIS.has(source)) return null;
+  if (finitePositive(row.cost_final)) return row.cost_final;
+  if (source === "CMC" && finitePositive(row.cost_price)) return row.cost_price;
+  return null;
+}
+// ======== AUDIT CORE (espelho VERBATIM de src/lib/custos/auditoria-margem.ts — manter idêntico) ========
+type AuditOrderLine = { product_id: string | null; unit_price: number | null; discount: number | null; quantity: number | null };
+type AuditoriaCliente = {
+  margin_real: number | null; margin_potential: number | null; margin_gap: number;
+  gap_pct: number | null; top_gap_products: { product_id: string; gap: number }[]; cobertura_custo: number;
+};
+const COBERTURA_CUSTO_MIN = 0.85;
+const round2 = (x: number) => Math.round(x * 100) / 100;
+function calcularAuditoriaMargemCliente(input: {
+  orders: AuditOrderLine[];
+  custoPorProduto: (productId: string) => CostRow | null | undefined;
+  bestPrice: (productId: string) => number | null | undefined;
+}): AuditoriaCliente {
+  let marginGap = 0, bestRevenue = 0, receita = 0, marginRealKnown = 0, marginPotentialKnown = 0, receitaComCusto = 0;
+  const topGap: { product_id: string; gap: number }[] = [];
+  for (const o of input.orders) {
+    if (!o.product_id) continue;
+    const qty = Number(o.quantity);
+    const up = Number(o.unit_price);
+    if (!Number.isFinite(qty) || !Number.isFinite(up)) continue;
+    const actualPrice = up * (1 - Number(o.discount || 0) / 100);
+    // Só venda válida (qty>0, preço líquido>=0): devolução(qty<0)/discount>100(preço<0) saem; item
+    // grátis (0) FICA (leakage real). Excluir só o inválido evita quebrar cobertura/gap (Codex #3,#7).
+    if (!(qty > 0) || actualPrice < 0) continue;
+    const bp = input.bestPrice(o.product_id);
+    // bestPrice>0 obrigatório: 0/negativo/NaN é dado ruim → fallback actualPrice (não poisona gap).
+    const bestPrice = typeof bp === "number" && Number.isFinite(bp) && bp > 0 ? bp : actualPrice;
+    const leak = (bestPrice - actualPrice) * qty;
+    marginGap += leak;
+    bestRevenue += bestPrice * qty;
+    receita += actualPrice * qty;
+    if (leak > 0) topGap.push({ product_id: o.product_id, gap: leak });
+    const custo = resolverCustoConfiavel(input.custoPorProduto(o.product_id));
+    if (custo != null) {
+      marginRealKnown += (actualPrice - custo) * qty;
+      marginPotentialKnown += (bestPrice - custo) * qty;
+      receitaComCusto += actualPrice * qty;
+    }
+  }
+  topGap.sort((a, b) => b.gap - a.gap);
+  const cobertura_custo = receita > 0 ? receitaComCusto / receita : 0;
+  const temCobertura = cobertura_custo >= COBERTURA_CUSTO_MIN;
+  return {
+    margin_real: temCobertura ? round2(marginRealKnown) : null,
+    margin_potential: temCobertura ? round2(marginPotentialKnown) : null,
+    margin_gap: round2(marginGap),
+    gap_pct: bestRevenue > 0 ? round2((marginGap / bestRevenue) * 100) : null,
+    top_gap_products: topGap.slice(0, 5),
+    cobertura_custo,
+  };
+}
+// ======== /AUDIT CORE ========
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -16,7 +86,10 @@ interface ClientScoreRow {
 
 interface ProductCostRow {
   product_id: string;
+  cost_price: number | null;
   cost_final: number | null;
+  cost_source: string | null;
+  cost_confidence: number | null;
   family_category: string | null;
 }
 
@@ -38,10 +111,10 @@ interface AuditRecord {
   farmer_id: string | null;
   period_start: string;
   period_end: string;
-  margin_real: number;
-  margin_potential: number;
+  margin_real: number | null;
+  margin_potential: number | null;
   margin_gap: number;
-  gap_pct: number;
+  gap_pct: number | null;
   top_gap_products: { product_id: string; gap: number }[];
 }
 
@@ -100,7 +173,7 @@ Deno.serve(async (req) => {
     console.log(`[algorithm-a-audit] Found ${clients.length} clients`);
 
     // Get product costs (paginated)
-    const productCosts = await fetchAllPaginated<ProductCostRow>(supabase, 'product_costs', 'product_id, cost_final, family_category');
+    const productCosts = await fetchAllPaginated<ProductCostRow>(supabase, 'product_costs', 'product_id, cost_price, cost_final, cost_source, cost_confidence, family_category');
     console.log(`[algorithm-a-audit] Found ${productCosts.length} product costs`);
 
     // Get order items for each client (last 365 days) - paginated
@@ -126,11 +199,9 @@ Deno.serve(async (req) => {
       }
     });
 
-    // Build cost map
-    const costMap: Record<string, number> = {};
-    productCosts.forEach(pc => {
-      costMap[pc.product_id] = Number(pc.cost_final || 0);
-    });
+    // Build cost map (linha inteira — a régua resolverCustoConfiavel decide o custo confiável)
+    const costMap: Record<string, ProductCostRow> = {};
+    productCosts.forEach(pc => { costMap[pc.product_id] = pc; });
 
     // Group orders by customer
     const customerOrders: Record<string, typeof recentOrders> = {};
@@ -149,44 +220,22 @@ Deno.serve(async (req) => {
       const orders = customerOrders[client.customer_user_id] || [];
       if (orders.length === 0) continue;
 
-      let marginReal = 0;
-      let marginPotential = 0;
-      const topGapProducts: { product_id: string; gap: number }[] = [];
-
-      for (const order of orders) {
-        if (!order.product_id) continue;
-        const cost = costMap[order.product_id] || 0;
-        const actualPrice = Number(order.unit_price) * (1 - Number(order.discount || 0) / 100);
-        const bestPrice = bestPriceMap[order.product_id] || actualPrice;
-        const qty = Number(order.quantity);
-
-        const realMargin = (actualPrice - cost) * qty;
-        const potentialMargin = (bestPrice - cost) * qty;
-
-        marginReal += realMargin;
-        marginPotential += potentialMargin;
-
-        const gap = potentialMargin - realMargin;
-        if (gap > 0) {
-          topGapProducts.push({ product_id: order.product_id, gap });
-        }
-      }
-
-      const marginGap = marginPotential - marginReal;
-      const gapPct = marginPotential > 0 ? (marginGap / marginPotential) * 100 : 0;
-
-      topGapProducts.sort((a, b) => b.gap - a.gap);
+      const aud = calcularAuditoriaMargemCliente({
+        orders,
+        custoPorProduto: (id) => costMap[id] ?? null,
+        bestPrice: (id) => bestPriceMap[id] ?? null,
+      });
 
       auditRecords.push({
         customer_user_id: client.customer_user_id,
         farmer_id: client.farmer_id,
         period_start: periodStart,
         period_end: periodEnd,
-        margin_real: Math.round(marginReal * 100) / 100,
-        margin_potential: Math.round(marginPotential * 100) / 100,
-        margin_gap: Math.round(marginGap * 100) / 100,
-        gap_pct: Math.round(gapPct * 100) / 100,
-        top_gap_products: topGapProducts.slice(0, 5),
+        margin_real: aud.margin_real,
+        margin_potential: aud.margin_potential,
+        margin_gap: aud.margin_gap,
+        gap_pct: aud.gap_pct,
+        top_gap_products: aud.top_gap_products,
       });
     }
 

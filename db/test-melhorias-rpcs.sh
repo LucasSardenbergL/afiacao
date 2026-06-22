@@ -22,7 +22,7 @@ cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2
 mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
 cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 
-cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
+cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
 trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
@@ -31,7 +31,7 @@ trap cleanup EXIT
 P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d melhorias_verify "$@"; }
 
 # Snapshot restore-ready: remove meta-comandos psql e o CREATE SCHEMA public.
-RR="$(mktemp /tmp/snap-melhorias.XXXXXX.sql)"
+RR="$(mktemp "${TMPDIR:-/tmp}/snap-melhorias.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
   | grep -vE '^\\(un)?restrict ' > "$RR"
 

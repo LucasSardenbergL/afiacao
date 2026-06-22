@@ -18,7 +18,7 @@ cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2
 mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
 cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 
-cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
+cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${BUGGY:-}"; }
 trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
@@ -103,7 +103,7 @@ eq "A3 numero_invalido NAO fecha a tarefa" "$VB" "aberta"
 
 # ── ZONA 5 — falsificação: a versão com 'numero_errado' DEVE abortar (era o bug real) ──
 echo "── falsificação ──"
-BUGGY=$(mktemp /tmp/buggy-matcher.XXXXXX.sql)
+BUGGY=$(mktemp "${TMPDIR:-/tmp}/buggy-matcher.XXXXXX")
 sed 's/numero_invalido/numero_errado/g' "$MIG" > "$BUGGY"
 P -q -f "$BUGGY" >/dev/null 2>&1 || true   # CREATE passa (late-bound); valida só ao executar
 if P -q -c "SELECT public.tarefas_matcher_tick();" >/dev/null 2>&1; then

@@ -126,6 +126,29 @@ function deriveSalesBase(sales: CustomerSalesSummaryRow | null | undefined): {
   return { days_since_last_purchase: days, avg_monthly_spend_180d: spend, category_count: category };
 }
 
+// Recência (cap linear) — espelho inline de src/lib/scoring/recency.ts (vitest 13/13 + falsificação;
+// Deno não importa de src/). Substitui a normalização ÷maxDaysSince, que comprimia (90d→96) e dava ~55
+// ao sentinela 999 (o max real era venda REAL de ~2235d, não o sentinela). Guardrail [30,999]: T>999
+// ressuscitaria o sentinela. Money-path: days ausente/null/NaN → recência 0 (NUNCA 100). Paridade:
+// mudou aqui → mude lá.
+const DEFAULT_CAP_DAYS = 180;
+const MIN_CAP_DAYS = 30;
+const MAX_CAP_DAYS = 999;
+function clampRecencyCapDays(raw: unknown): number {
+  if (raw == null) return DEFAULT_CAP_DAYS; // null/undefined → default (Number(null)===0 fabricaria 30)
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_CAP_DAYS;
+  return Math.min(MAX_CAP_DAYS, Math.max(MIN_CAP_DAYS, Math.round(n)));
+}
+
+function computeRecencyScore(daysSinceLastPurchase: number | null | undefined, capDays: number): number {
+  const cap = clampRecencyCapDays(capDays); // re-clampa (idempotente; nunca 0 → sem div/0)
+  const days = (daysSinceLastPurchase != null && Number.isFinite(daysSinceLastPurchase))
+    ? Math.max(0, daysSinceLastPurchase)
+    : cap; // null/undefined/NaN/Infinity → "no teto" → recência 0 (ausente ≠ comprou-hoje)
+  return Math.max(0, 100 - (Math.min(days, cap) / cap) * 100);
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -169,6 +192,10 @@ Deno.serve(async (req) => {
       repurchase: (config['ps_weight_repurchase'] ?? 20) / 100,
       goal_proximity: (config['ps_weight_goal_proximity'] ?? 15) / 100,
     };
+
+    // Recência: teto (dias até zerar) configurável, guardrail [30,999] (achado /codex: T>999
+    // ressuscitaria o sentinela 999). Default 180. Ajustável sem redeploy via farmer_algorithm_config.
+    const recencyCapDays = clampRecencyCapDays(config['hs_recency_cap_days']);
 
     // Get all client scores with pagination
     let clients: FarmerClientScoreRow[] = [];
@@ -383,7 +410,7 @@ Deno.serve(async (req) => {
     }
 
     // === RECÊNCIA-VIVA: overlay dos valores FRESCOS (salesMap) nos clients em memória ANTES do compute ===
-    // Assim os maxes (maxDaysSince/maxSpend/maxCategories) E o loop leem fresco — e o ScoreUpdate
+    // Assim os maxes (maxSpend/maxCategories) E o loop (recência via cap) leem fresco — e o ScoreUpdate
     // persiste days/spend/category (que NUNCA eram reescritos → recência congelava no dia do seed).
     // RPC falhou (salesRefreshFatal) → NÃO faz overlay → compute roda nos days CONGELADOS (degrada
     // honesto, stale-mas-não-pior; a falha é surfaceada depois do compute). Cobre existentes E
@@ -397,8 +424,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Compute normalization ranges
-    const maxDaysSince = Math.max(...clients.map(c => Number(c.days_since_last_purchase || 0)), 1);
+    // Compute normalization ranges (recência NÃO usa min-max — cap configurável via computeRecencyScore)
     const maxInterval = Math.max(...clients.map(c => Number(c.avg_repurchase_interval || 0)), 1);
     const maxSpend = Math.max(...clients.map(c => Number(c.avg_monthly_spend_180d || 0)), 1);
     const maxMarginPct = Math.max(...clients.map(c => Number(c.gross_margin_pct || 0)), 1);
@@ -411,7 +437,10 @@ Deno.serve(async (req) => {
 
     for (const client of clients) {
       // --- Health Score ---
-      const recencyScore = Math.max(0, 100 - (Number(client.days_since_last_purchase || 0) / maxDaysSince) * 100);
+      // Recência: cap linear (computeRecencyScore), NÃO ÷maxDaysSince. Passa o days CRU (helper trata
+      // null→recência 0, sem o `|| 0` que fabricaria 100). rf_score=0 empata 180/999/2235 → "quão morto"
+      // se lê de days_since_last_purchase, não de rf_score (achado /codex).
+      const recencyScore = computeRecencyScore(client.days_since_last_purchase, recencyCapDays);
       
       const freqScore = maxInterval > 0
         ? Math.max(0, 100 - (Number(client.avg_repurchase_interval || maxInterval) / maxInterval) * 100)
