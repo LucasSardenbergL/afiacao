@@ -1,84 +1,119 @@
-# `sales_history_status`: degradação honesta do health para UI/agenda/plano — design
+# `sales_history_status`: degradação honesta do health para UI/agenda/plano — design (v2)
 
-> Frente **money-path** (scoring que alimenta a agenda e os planos do farmer). Follow-up dedicado do **cap de recência** (`claude/agitated-panini-9870dd`, spec `2026-06-20-recencia-cap-design.md` §Follow-ups), que delegou explicitamente: _"`score_confidence`/`sales_history_status` (o 'mínimo honesto' do codex para a UI distinguir 'esfriou' de 'nunca comprou') → follow-up dedicado (migration + UI + prove-sql próprios; minimiza colisão com a recência-viva)"_. Decisões do founder (2026-06-20): **forma = `sales_history_status` categórico**; **profundidade = verdade visual + reclassificar agenda**; **limiar = config próprio**; **churn fabricado = medir antes de decidir**.
+> Frente **money-path** (scoring que alimenta agenda e planos do farmer). Follow-up dedicado do **cap de recência** (`claude/agitated-panini-9870dd`, spec `2026-06-20-recencia-cap-design.md` §Follow-ups), que delegou: _"`score_confidence`/`sales_history_status` → follow-up dedicado, minimiza colisão com a recência-viva"_.
+>
+> **Decisões do founder (2026-06-20/21):** forma = `sales_history_status` categórico; profundidade = verdade visual + reclassificar agenda; limiar = config próprio; churn fabricado = medir antes de decidir; **escopo = fatia única coerente** (core + UI + agenda + plano + dashboards, depois do /codex challenge).
+>
+> **v2** incorpora o `/codex challenge` (gpt-5, high, 2026-06-21) — rastreabilidade na última seção.
 
 ## Problema
 
-Sob o cap de recência (T=180) + recência-viva, o `health_score`/`health_class` de `farmer_client_scores` colapsa quase toda a base em `critico`. Isso é **degradação honesta** para quem esfriou — mas **mente** sobre quem **nunca comprou**: o farmer vê uma parede de "críticos" idênticos e não distingue "cliente que esfriou" (recuperação) de "cliente que nunca comprou" (prospecção/ativação). Money-path: _ausente ≠ zero_ aplicado ao **output** — health baixo de quem nunca foi cliente não é "saúde ruim", é "ausência de histórico".
+Sob o cap de recência (T=180) + recência-viva, `health_score`/`health_class` colapsa quase toda a base em `critico`. Degradação honesta para quem esfriou — mas **mente** sobre quem **nunca registrou compra**: o farmer vê uma parede de "críticos" idênticos e não distingue quem esfriou (recuperação) de quem nunca comprou (prospecção). Money-path: _ausente ≠ zero_ no **output**.
 
-### Medição em prod (psql-ro, 2026-06-20; RPC `get_customer_sales_summary` replicada inline — `claude_ro` não tem EXECUTE)
+### Medição em prod (psql-ro, 2026-06-20; RPC `get_customer_sales_summary` replicada inline — `claude_ro` sem EXECUTE)
 
-`fcs` = 6400 linhas, `calculated_at` fresco (13:34Z), `apply_score_updates(jsonb)` já em prod.
+`fcs`=6400, `calculated_at` fresco, `apply_score_updates(jsonb)` já em prod.
 
-| status | n | % | churn_méd | prio_méd | health_méd | no top-10/farmer |
+| status | n | % | churn_méd | prio_méd (base) | health_méd | top-10/farmer (por prio **base**) |
 |---|---|---|---|---|---|---|
 | **sem_historico** | 5606 | 87,6% | 86,0 | 26,0 | 14,0 | **0** |
-| **stale** | 421 | 6,6% | 78,5 | 23,9 | 21,5 | 4 |
-| **ativo** | 373 | 5,8% | 67,3 | 25,4 | 32,7 | 26 |
+| stale | 421 | 6,6% | 78,5 | 23,9 | 21,5 | 4 |
+| ativo | 373 | 5,8% | 67,3 | 25,4 | 32,7 | 26 |
 
-Soma fecha: 373 + 421 = 794 com venda válida all-time; 6400 − 794 = 5606 sem histórico. **`ativo` é confiável**: todos os 373 têm `order_date_kpi` real ≤180d (`ativo_so_por_created_at = 0`; nenhum cliente com venda sem `order_date_kpi`) — sem ruído do `created_at` de importação (bug oben #936). _Nota: a divergência com o "~4 com venda ≤180d" do spec do cap é de método — aquele mediu `days` persistido/congelado em `fcs`; a fonte fresca (RPC) dá 373._
+794 com venda válida all-time (373+421); 6400−794=5606. `ativo` confiável: todos por `order_date_kpi` real ≤180d (sem ruído de `created_at` de importação). _Divergência com o "~4" do spec do cap = método: aquele mediu `days` persistido/congelado; a fonte fresca dá 373._
 
-### Achado que define o escopo: o churn fabricado **não** polui o ranking
+### Por que NÃO mexer no churn/priority persistidos (e por que a prova precisa de um guard)
 
-Hipótese inicial: `churn_risk = 100 − health_score` daria churn alto ao `sem_historico` → `priority_score` alto → topo da agenda. **Refutada pela medição**: apesar de churn médio 86, **0 dos 5606 `sem_historico` chegam ao top-10 de qualquer farmer**. Razão: `priority_score` pondera churn em só 30%; `margin_potential`/`repurchase`/`goal_proximity` (70%) são ~0 para quem nunca comprou → afundam a linha. O top-10 já é `ativo`+`stale`.
+Hipótese inicial: `churn_risk=100−health` daria churn alto a `sem_historico` → topo da agenda. A medição mostra **0 sem_historico no top-10 por farmer** — `priority_score` pondera churn em só 30%, e `margin_potential`/`repurchase`/`goal_proximity` (70%) são ~0 para quem nunca comprou.
 
-**Consequência:** esta fatia **NÃO** toca `churn_risk`/`priority_score`/fórmula de health. O ranking não está poluído; mexer nele seria risco money-path sem retorno. O valor está na **segmentação da base** (telas de lista/perfil) e no **plano** — não no top-10 da agenda diária.
+**Mas essa prova é de snapshot e de prioridade _base_ (Codex P1.1).** A agenda real ordena por prioridade **efetiva** = base + nudge de `signal_modifiers` (read-time, `agenda.ts:60-63,114`). Um prospect com sinal de call recente pode furar o top; e a distribuição muda com carteira prospect-pesada, farmer novo, poucos farmers, importação de carteira ou mudança de pesos. **Não tratamos "0 no top-10" como invariante.** A robustez vem de uma **defesa estrutural read-time**, não do snapshot:
+
+> **Guard (§5):** `sem_historico` **nunca ocupa slot de risco/recuperação** na agenda — independentemente da prioridade efetiva. Assim, mesmo que o nudge o empurre, ele não desloca um `stale`/`ativo` real. Isso resolve P1.1 sem tocar a fórmula persistida.
+
+Validação (psql-ro, 2026-06-21): **nenhum** cliente em `fcs` tem `signal_modifiers ≠ '{}'` (com_sinais=0 nos 3 status) → nudge **0 universal** hoje → prioridade **efetiva = base** → o "0 no top-10" vale também para a efetiva no estado atual. O guard cobre o futuro (quando `signal_modifiers` voltar a popular via calls do `scoring-recalc-client`).
 
 ## Decisão / desenho
 
 ### 1. Dado — coluna nova
-`farmer_client_scores.sales_history_status text NULL` + `CHECK (sales_history_status IS NULL OR sales_history_status IN ('sem_historico','stale','ativo'))`. Espelha `health_class` (também `text NULL`, sem enum nativo). `NULL` = "ainda não computado" (transitório entre a migration e o 1º recompute); a UI o trata como neutro/indeterminado. **Sem default fabricado** (não assumir 'sem_historico' antes de derivar).
+`farmer_client_scores.sales_history_status text NULL` + `CHECK (sales_history_status IS NULL OR sales_history_status IN ('sem_historico','stale','ativo'))`. Espelha `health_class` (`text NULL`, sem enum). **`NULL` = "ainda não computado" → a UI se comporta como hoje** (mostra `health_class` normal; NÃO esconde o health nem assume `sem_historico`). Sem default fabricado. Alarme pós-deploy: `count(*) FILTER (WHERE sales_history_status IS NULL)` deve cair a ~0 (Codex P1.3/P3.3).
 
 ### 2. Derivação — helper puro espelhado no edge
-`src/lib/scoring/salesHistoryStatus.ts` (vitest + falsificação), espelhado **verbatim** no edge `calculate-scores/index.ts` (padrão `deriveSalesBase`/`recency.ts` — Deno não importa de `src/`):
+`src/lib/scoring/salesHistoryStatus.ts` (vitest + falsificação), espelhado **verbatim** no edge (padrão `deriveSalesBase`/`recency.ts`):
 
 ```
 deriveSalesHistoryStatus(sales, activeThresholdDays):
-  cap = clampActiveDays(activeThresholdDays)    // clamp LOCAL: Number.isFinite? [30,999] round; senão 180
-  sem sales OU total_revenue ≤ 0     → 'sem_historico'   // sem venda VÁLIDA all-time
-  days_since_last_purchase ≤ cap     → 'ativo'
-  senão                              → 'stale'           // tem histórico, esfriou
+  cap = clampActiveDays(activeThresholdDays)    // clamp LOCAL deste helper: Number.isFinite? [30,999] round; senão 180
+  se !sales OU !(total_revenue > 0)             → 'sem_historico'
+  se days_since_last_purchase == null           → 'stale'   // ANÓMALO (revenue>0 sem data): explícito, contável — Codex P2.2
+  se days_since_last_purchase ≤ cap             → 'ativo'
+  senão                                         → 'stale'
 ```
 
-O `clampActiveDays` é **próprio deste helper** — não importa de `src/lib/scoring/recency.ts` (que vive na branch do cap `agitated-panini`, ainda **não** na `main`; depender dele acoplaria as duas frentes). Lógica idêntica em espírito, código independente.
+`clampActiveDays` é **próprio deste helper** — não importa de `recency.ts` (branch do cap, ainda fora da `main`; importar acoplaria as frentes). Fonte: `salesMap` (RPC `get_customer_sales_summary`) tem `total_revenue` (all-time) + `days_since_last_purchase`. Limiar `config['sales_active_threshold_days'] ?? 180` — **config próprio** em `farmer_algorithm_config`, desacoplado de `hs_recency_cap_days`.
 
-Fonte já carregada todo run: `salesMap` (RPC `get_customer_sales_summary`) tem `total_revenue` (all-time válido) + `days_since_last_purchase`. **Ausência no `salesMap` = `sem_historico`** (limpo). Limiar `activeThresholdDays = config['sales_active_threshold_days'] ?? 180` — **config próprio** em `farmer_algorithm_config`, desacoplado de `hs_recency_cap_days` (forma da curva de health) — "quando o cliente deixa de ser ativo" é definição de negócio, não de curva.
+**Semântica honesta (Codex P2.1):** `sem_historico` = _"sem venda válida monetizada no resumo"_, NÃO "nunca comprou". A RPC agrega por `order_items` com `customer_user_id IS NOT NULL` + blocklist de status (`NOT IN cancelado/rascunho/pendente/orcamento`) + `deleted_at IS NULL`. Pedido sem item, item com receita ≤0, devolução, ou status novo não-contemplado caem em `sem_historico`. Label da UI: **"Sem histórico"** (não "Nunca comprou"). Documentar a definição exata no helper.
 
-### 3. Persistência — estende `apply_score_updates` (money-path)
-A RPC #971 é UPDATE-only, recordset fixo, **contrato full-update** (campo ausente vira NULL). Adicionar `sales_history_status text` ao recordset e ao `SET`. Mantém `SECURITY INVOKER` + `REVOKE PUBLIC/anon/authenticated` + `GRANT service_role`. **Pré-flight `pg_get_functiondef` da prod** (psql-ro) antes do apply — a última recriação vence; o cap **não** toca a RPC → sem colisão. `prove-sql-money-path` com falsificação (sabotar paridade → vermelho).
+### 3. Persistência — RPC `apply_score_updates` estendida com COALESCE (deploy bidirecional-seguro)
++1 campo no recordset (`sales_history_status text`) e no `SET` — **mas com COALESCE** (Codex P1.2):
 
-No edge: `FarmerClientScoreRow`, `FarmerClientScoreSeed`, `ScoreUpdate` ganham `sales_history_status`; o `updates.push` envia o status derivado (full-update). **Seed** deriva o status do `salesMap` (recém-semeado no `salesMap` → ativo/stale; senão sem_historico).
+```sql
+sales_history_status = COALESCE(u.sales_history_status, f.sales_history_status)
+```
 
-**Degradação RPC-falha** (`salesRefreshFatal`): **não** recomputa o status — reenvia o valor **atual** da linha (vem no `SELECT *` inicial), espelhando o "congela days" da recência-viva e respeitando o contrato full-update. Nunca fabrica 'sem_historico' por RPC ausente.
+Isso torna o deploy **seguro nos dois sentidos**, eliminando a dependência de ordem manual perfeita:
+- edge **antigo** (não envia o campo → NULL no recordset) + RPC **nova** → COALESCE **preserva** o valor atual (não apaga em massa).
+- edge **novo** + RPC **antiga** → campo ignorado (sem erro); status fica NULL até a RPC subir (não-destrutivo).
+- edge **novo** + RPC **nova** → atualiza.
 
-### 4. Propagação — UI (verdade visual)
-- **Semáforo** (`src/components/customer360/format.ts` `healthTone`; `src/components/adminCustomers/config.ts` `HEALTH_CLASSES`): quando `sales_history_status === 'sem_historico'`, render **neutro** ("Sem histórico", cinza) — nunca o vermelho de `critico`. (Nota de drift pré-existente, **fora de escopo**: `atencao`↔`alerta` divergem entre `format.ts` e `config.ts`; `estavel`/`novo` não mapeados — registrar, não corrigir aqui.)
-- **Lista** (`src/components/adminCustomers/CustomerListView.tsx`): expor `sales_history_status` como **coluna/badge** e **filtro** (`useUrlState`) — é onde o ROI está (segmentar 5606 prospecção vs 421 recuperação vs 373 ativo, hoje indistintos).
-- **Perfil** (`CustomerHero.tsx` / `Customer360View.tsx`): badge de status ao lado do health.
+Os 9 campos core mantêm o contrato full-update (recompute inteiro); **só `sales_history_status` é COALESCE** (preserva-se-ausente). Documentar essa exceção no SQL. Mantém `SECURITY INVOKER` + `REVOKE PUBLIC/anon/authenticated` + `GRANT service_role`. **Pré-flight `pg_get_functiondef` da prod** antes do apply (a última recriação vence; o cap não toca a RPC → sem colisão). `prove-sql-money-path` com falsificação (omitir o campo → preserva, NÃO NULL; sabotar COALESCE → vermelho; grant a authenticated → vermelho).
 
-### 5. Propagação — agenda + plano (hooks)
-- **`src/lib/scoring/agenda.ts` `buildAgendaItems`**: `CarteiraRow` ganha `sales_history_status`; `sem_historico` **deixa de ser `'risco'`** (não há churn de quem nunca foi cliente). `AgendaItem` expõe o status. _Impacto prático hoje: baixo (medição: 0 sem_historico no top-10), mas correção semântica e à-prova-de-futuro (carteira de prospecção não vira agenda de "risco" falso)._ **`priority_score`/`churn` intocados.**
-- **`useMyCarteiraScores`/`useFarmerScoring`/`useTacticalPlan`**: propagar `sales_history_status` no shape (SELECT já é `*`/colunas; adicionar ao tipo + ao map).
-- **`useTacticalPlan.selectObjective`** (linha 190): `sem_historico` → objetivo de **ativação/1ª compra**, não "recuperação"/"reativação". (Não reabrir a inconsistência limite-90 do `selectObjective` — é follow-up do cap.)
+No edge: `FarmerClientScoreRow`/`FarmerClientScoreSeed`/`ScoreUpdate` ganham `sales_history_status`; o `updates.push` envia o status derivado. **Seed** deriva do `salesMap`. **Degradação RPC-falha** (`salesRefreshFatal`): o edge envia **NULL** (não tem dado fresco) → o COALESCE da RPC **preserva** o valor atual. Simplifica o edge (não precisa reler/reenviar o status atual) e nunca fabrica status por RPC ausente.
 
-## O que esta fatia NÃO faz (registrado de propósito)
-- **Não** altera `churn_risk`, `priority_score`, nem a fórmula de `health_score` (medição refutou a necessidade; é o maior risco money-path).
-- **Não** adiciona `score_confidence` numérico (YAGNI; o categórico cobre a necessidade da UI).
-- **Não** corrige o drift `atencao`↔`alerta` nem o limite-90 do `selectObjective` (follow-ups próprios).
+### 4. UI — verdade visual coerente (lista + perfil + semáforo + dashboards)
+- **Semáforo** (`src/components/customer360/format.ts healthTone`; `src/components/adminCustomers/config.ts HEALTH_CLASSES`): `sales_history_status==='sem_historico'` → estado **neutro** ("Sem histórico", cinza), nunca o vermelho de `critico`. `NULL` → comportamento atual.
+- **Corrigir o drift `atencao`↔`alerta` (Codex P3.2):** ao tocar `config.ts`/`CustomerListView` para o badge, alinhar o vocabulário ao que o engine grava (`saudavel`/`estavel`/`atencao`/`critico`) — não deixar `alerta` órfão ao lado do código novo.
+- **Lista** (`CustomerListView.tsx`): `sales_history_status` como **coluna/badge** e **filtro** (`useUrlState`) — segmentar 5.606 prospecção vs 421 recuperação vs 373 ativo.
+- **Perfil** (`CustomerHero.tsx`/`Customer360View.tsx`): badge de status.
+- **Dashboards de Inteligência (Codex P3.1):** `IntelligenceOperationalTab.tsx:~89` e `IntelligenceManagerialTab.tsx:~90` contam "em risco" por `health_class ∈ {critico,atencao}` — passar a **excluir `sem_historico`** da contagem de risco. Sem isso, os KPIs gerenciais seguem dizendo "~6.400 em risco" enquanto a lista diz a verdade.
+
+### 5. Agenda + plano (guard read-time, não só rótulo)
+- **`src/lib/scoring/agenda.ts buildAgendaItems`** (Codex P2.3): `CarteiraRow` ganha `sales_history_status`. Dois efeitos: (a) `sem_historico` **deixa de ser `agenda_type='risco'`**; (b) **guard de slot** — `sem_historico` não compete pelo slot de risco/recuperação (filtro/quota; forma exata decidida no plano, com medição). `AgendaItem` expõe o status. **`priority_score`/`churn` persistidos intocados** — o guard é read-time, reversível.
+- **Plano** (`useTacticalPlan.ts`): `ClientScoreFull` ganha `sales_history_status` (o `select('*')` já o traz pós-migration); `selectObjective` (linha ~190) → `sem_historico` vira objetivo de **ativação/1ª compra**; **e o contexto enviado à LLM** (Codex P2.4) passa a incluir `salesHistoryStatus` com instrução de tratar `sem_historico` como ativação — senão a IA gera "recupere" sobre `churnRisk`/`healthScore` fabricados.
+- **Demais hooks**: `useFarmerScoring`/`useMyCarteiraScores` propagam o campo no shape.
+
+### 6. O que esta fatia NÃO faz (registrado)
+- **Não** altera `churn_risk`/`priority_score`/fórmula de `health_score` **persistidos**. O guard da agenda é read-time. (Se o mix de carteiras mudar e a prioridade efetiva passar a empurrar `sem_historico`, o guard já protege; re-medir antes de qualquer mudança de fórmula.)
+- **Não** adiciona `score_confidence` numérico nem coluna `*_calculated_at` dedicada (o `calculated_at` geral + alarme `count(null)` cobrem) — YAGNI.
+- **Não** reabre o limite-90 do `selectObjective` (follow-up do cap).
 
 ## Prova & medição (money-path)
-1. **vitest + falsificação** em `salesHistoryStatus.ts`: tabela (sem sales / total_revenue 0 / ≤180d / >180d / NaN); clamp do limiar; falsificação (sabotar a fronteira → vermelho exato). Paridade helper↔edge (espelho verbatim; `deno check`).
-2. **`prove-sql-money-path`** na `apply_score_updates` estendida: PG17 local, aplica a migration real, assert da paridade do novo campo, falsificação (omitir o campo → NULL detectado; grant a `authenticated` → vermelho).
-3. **typecheck strict** + **lint** + **knip**.
-4. **Medição psql-ro before/after**: a distribuição (5606/421/373) já está medida; pós-deploy, confirmar que `fcs.sales_history_status` bate com a derivação fresca e que o top-10 por farmer **não** mudou (prova de que churn/priority ficaram intactos).
-5. **`/codex`**: challenge no design (este doc) e no diff (money-path).
+1. **vitest + falsificação** em `salesHistoryStatus.ts`: tabela (sem sales / revenue≤0 / ≤cap / >cap / **days-null+revenue>0** / NaN); clamp do limiar; falsificação (sabotar a fronteira → vermelho). Paridade helper↔edge (`deno check`).
+2. **vitest** em `agenda.test.ts`: `sem_historico` não vira `risco` E não ocupa slot de risco/recuperação mesmo com prioridade efetiva alta (sinais).
+3. **`prove-sql-money-path`** na RPC: PG17 local, aplica a migration real; assert COALESCE (campo ausente → **preserva**, não NULL); falsificação (sabotar COALESCE → apaga; grant a authenticated → vermelho).
+4. **typecheck strict + lint + knip**.
+5. **psql-ro before/after**: distribuição + sinais medidos (2026-06-21: `signal_modifiers` vazio em 100% da base → nudge=0 → efetiva=base); pós-deploy, `count(null)≈0` e top-10 inalterado.
+6. **`/codex`**: challenge no design (incorporado, v2) e no diff.
 
 ## Coordenação & deploy
-- **Base na `main`**; edição do edge **localizada** (longe da linha 453 do `recencyScore`, que o cap toca) → rebase trivial quando o cap (`fccc7a96`, sem PR aberto ainda) mergear. Colisão real só no edge e em regiões distintas; a RPC e a coluna são exclusivas desta frente.
-- **3 deploys MANUAIS** (Lovable, CLAUDE.md): (a) migration da coluna + RPC no SQL Editor; (b) redeploy do edge `n` (=`calculate-scores`) verbatim da main; (c) Publish do frontend. Ordem: migration **antes** do edge (o edge envia o novo campo full-update → a RPC precisa aceitá-lo). Merge ≠ produção.
+- Base na `main`; edição do edge **localizada** (longe da linha 453 do `recencyScore`, que o cap toca) → rebase trivial quando o cap (`fccc7a96`, sem PR) mergear. RPC e coluna são exclusivas desta frente.
+- **Deploy (Lovable, manual):** (a) migration coluna + config + RPC-COALESCE no SQL Editor; (b) redeploy do edge `n` (=`calculate-scores`) verbatim; (c) **gate de cobertura** — validar via psql-ro `count(null)≈0` após o 1º run do edge; (d) só então **Publish** do frontend. O COALESCE tira o risco de ordem, mas o gate (c) evita publicar UI sobre base indeterminada (Codex P1.3). Merge ≠ produção.
 
 ## Riscos & follow-ups
-- **R1 — contrato full-update**: se o edge enviar o campo mas a RPC em prod ainda for a antiga (deploy fora de ordem), o campo é ignorado (sem erro) e o status nunca persiste. Mitiga: ordem de deploy + validação psql-ro pós-apply.
-- **R2 — `ativo` por `order_date_kpi`**: confiável hoje (medido), mas depende da régua de status válido da RPC (blocklist v4). Se a régua mudar, o status muda junto — esperado/acoplado por design.
-- **Follow-up**: revisitar `churn_risk` fabricado **se** o mix de carteiras mudar (um farmer com carteira majoritária de prospecção poderia ver o churn fabricado subir no ranking — hoje não ocorre). Re-medir antes de agir.
-- **Follow-up**: `score_confidence` numérico, se a UI pedir gradação além do categórico.
+- **R1 (resolvido por design):** deploy fora de ordem — COALESCE preserva; gate de cobertura antes do Publish.
+- **R2:** `ativo`/`sem_historico` dependem da régua de pedido válido (blocklist v4) da RPC. Se a régua mudar, o status muda junto (acoplado por design).
+- **Follow-up:** se o mix de carteiras evoluir (prospect-pesado), revisitar prioridade efetiva — re-medir antes de agir.
+- **Follow-up:** `score_confidence` numérico, se a UI pedir gradação.
+
+## Revisão Codex (challenge, gpt-5 high, 2026-06-21) — rastreabilidade
+| # | Achado | Tratamento |
+|---|---|---|
+| **P1.1** | prova "não tocar churn" frágil (prio base ≠ efetiva; snapshot) | **guard read-time** (§5) como defesa estrutural; linguagem rebaixada; validação efetiva **confirmada** (signal_modifiers vazio em 100% da base → efetiva=base, 2026-06-21) |
+| **P1.2** | deploy não bidirecional (NULL em massa / ignora silencioso) | **COALESCE na RPC** (§3) — preserva-se-ausente |
+| **P1.3** | 1º run pós-migration NULL-total se RPC vendas falhar | **gate de cobertura** antes do Publish + alarme `count(null)` (§Deploy, §1) |
+| **P2.1** | `sem_historico` ≠ "nunca comprou" | semântica "sem venda válida"; label "Sem histórico" (§2) |
+| **P2.2** | `revenue>0 + days null` → stale por comparação falsa | branch explícito + contável no helper (§2) |
+| **P2.3** | reclassificar resolve só o rótulo, não o ranqueamento | **guard de slot** read-time (§5) |
+| **P2.4** | plano incoerente (LLM context fabricado) | propagar status ao tipo + **contexto LLM** (§5) |
+| **P3.1** | dashboards gerenciais contam risco por `health_class` | **excluir `sem_historico`** da contagem (§4) |
+| **P3.2** | drift `atencao`↔`alerta` na área tocada | **corrigir o drift** junto (§4) |
+| **P3.3** | `NULL` ambíguo | alarme `count(null)`; sem coluna extra (YAGNI) (§1, §6) |
