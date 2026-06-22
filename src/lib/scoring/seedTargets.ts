@@ -9,12 +9,19 @@
  * flaggeds (fornecedor fora da carteira) e ainda NÃO têm linha em
  * `farmer_client_scores`.
  *
- * Função PURA e testável (vitest). É espelhada inline no edge `calculate-scores`
- * (Deno não importa de `src/`) — a fonte da verdade é este arquivo; o espelho é
- * trivial (diferença de conjunto) e carimbado com comentário no edge.
+ * Função PURA e testável (vitest) — a SPEC TS da invariante do seed.
  *
- * Money-path: precisão > recall. Nunca semeia flaggeds (anti-ressurreição de
- * fornecedor); nunca re-semeia quem já tem linha (o seed não é dono dos campos
+ * ⚠️ Impl de PRODUÇÃO (desde 2026-06-21): o edge `calculate-scores` NÃO espelha mais
+ * esta lógica inline — chama a RPC SQL `seed_targets_faltantes()` (migration
+ * 20260621120000), que computa a MESMA diferença de conjunto num ÚNICO snapshot
+ * atômico. Motivo: as 3 leituras PostgREST separadas (omie/fcs/flaggeds) + filtro em
+ * memória podiam ficar INCONSISTENTES entre si (flaggeds vazio/incompleto → quirk do
+ * `.eq`, lag de réplica) e RESSUSCITAR fornecedores excluídos — FAIL-OPEN (smoke
+ * 2026-06-20: semeou os 509 flagged). A RPC é provada em
+ * `db/test-seed-targets-faltantes.sh`; este helper fica como oráculo TS da invariante.
+ *
+ * Money-path: precisão > recall. Nunca inclui flaggeds (anti-ressurreição de
+ * fornecedor); nunca re-inclui quem já tem linha (o seed não é dono dos campos
  * computados, só cria o que falta); deduplica a entrada por garantia.
  */
 

@@ -33,11 +33,6 @@ interface FarmerClientScoreRow {
   eff_score: number | null;
 }
 
-interface OmieClienteRow {
-  user_id: string;
-  omie_codigo_vendedor: string | null;
-}
-
 interface CustomerSalesSummaryRow {
   customer_user_id: string;
   days_since_last_purchase: number | null;  // calculado no SQL (data civil SP, COALESCE kpi null, clamp ≥0)
@@ -249,80 +244,46 @@ Deno.serve(async (req) => {
     // === AUTO-SEED v2 (F1 — reset-path robusto): completa clientes FALTANTES ===
     // Antes só rodava com a tabela VAZIA (gate length===0) — frágil: 1 linha esparsa do
     // scoring-recalc-client (agora UPDATE-only) ou qualquer reset parcial suprimia o seed.
-    // Agora: detecta FALTANTES e só carrega flaggeds/ownerMap QUANDO há o que semear. (A RPC de
-    // vendas roda TODO run — recência-viva, acima — e o seed reusa o salesMap do topo.)
+    // Agora: detecta FALTANTES via RPC ATÔMICA (seed_targets_faltantes: omie − fcs − flaggeds num
+    // só snapshot) e só carrega ownerMap QUANDO há o que semear. (A RPC de vendas roda TODO run —
+    // recência-viva, acima — e o seed reusa o salesMap do topo.)
     // seedErrors é coletado aqui mas LANÇADO depois do COMPUTE (não starvar o recompute dos
     // existentes por 1 linha-veneno no seed — achado Codex). Espelha src/lib/scoring/seedTargets.ts.
     const seedErrors: string[] = [];
     let seedFatal: Error | null = null;
-    // O seed/descoberta roda em TRY: QUALQUER falha (omie/flaggeds/ownerMap/RPC/insert) é
+    // O seed/descoberta roda em TRY: QUALQUER falha (RPC seed_targets/ownerMap/insert) é
     // CAPTURADA e adiada — o COMPUTE dos existentes NUNCA é starvado por falha de seed
     // (achado Codex). A falha é surfaceada DEPOIS do compute, ou no empty-guard (fail-closed).
     try {
-      // Elegíveis: omie_clientes paginado (bypass do limite 1000). user_id é NOT NULL/unique.
-      const allClients: OmieClienteRow[] = [];
-      {
-        let page = 0;
-        const pageSize = 1000;
-        let hasMore = true;
-        while (hasMore) {
-          const { data: batch, error: bErr } = await supabase
-            .from('omie_clientes')
-            .select('user_id, omie_codigo_vendedor')
-            .range(page * pageSize, (page + 1) * pageSize - 1);
-          if (bErr) throw bErr;
-          if (!batch || batch.length === 0) { hasMore = false; }
-          else {
-            allClients.push(...(batch as unknown as OmieClienteRow[]));
-            if (batch.length < pageSize) hasMore = false;
-            page++;
-          }
-        }
+      // FALTANTES filtrados ATOMICAMENTE no banco via RPC seed_targets_faltantes (migration
+      // 20260621120000): omie_clientes − farmer_client_scores − flaggeds num ÚNICO snapshot.
+      // Substitui as 3 leituras PostgREST SEPARADAS + filtro em memória (computeSeedTargets), cuja
+      // inconsistência ENTRE snapshots (flaggeds vindo vazio/incompleto — quirk do .eq, lag de
+      // réplica) fazia `missing = missingRaw` e RESSUSCITAVA os fornecedores excluídos no seed
+      // (FAIL-OPEN, exposto pelo smoke 2026-06-20: semeou os 509 flagged). A RPC lê as 3 tabelas no
+      // MESMO snapshot e só retorna quem é SEGURO semear (fail-closed por construção). FAIL-CLOSED:
+      // erro → lança (não semeia às cegas; idempotente, o próximo run converge). Paginada com .range
+      // (ORDER BY user_id estável na RPC — §5 do CLAUDE.md). Espelha src/lib/scoring/seedTargets.ts.
+      const missing: Array<{ user_id: string }> = [];
+      for (let sp = 0; ; sp++) {
+        const { data: sPage, error: sErr } = await supabase
+          .rpc('seed_targets_faltantes')
+          .range(sp * 1000, sp * 1000 + 999);
+        if (sErr) throw new Error(`seed_targets_faltantes falhou — não dá p/ semear sem a lista atômica de elegíveis: ${sErr.message}`);
+        const sRows = (sPage ?? []) as Array<{ user_id: string }>;
+        for (const r of sRows) missing.push(r);
+        if (sRows.length < 1000) break;
       }
 
-      // FALTANTES sem flaggeds primeiro (espelho de computeSeedTargets: !user_id, !existing,
-      // dedup). Se nada falta, NÃO lê flaggeds/ownerMap/salesMap (evita dependência dura do
-      // recompute em steady-state — achado Codex #2).
-      const existingIds = new Set(clients.map((c) => c.customer_user_id));
-      const seenRaw = new Set<string>();
-      const missingRaw: OmieClienteRow[] = [];
-      for (const c of allClients) {
-        if (!c.user_id) continue;
-        if (existingIds.has(c.user_id)) continue;
-        if (seenRaw.has(c.user_id)) continue;
-        seenRaw.add(c.user_id);
-        missingRaw.push(c);
-      }
-
-      if (missingRaw.length === 0) {
-        console.log(`[calculate-scores] 0 clientes faltantes (${clients.length} em fcs). Pula seed.`);
+      if (missing.length === 0) {
+        console.log(`[calculate-scores] 0 faltantes a semear (${clients.length} em fcs). Pula seed.`);
       } else {
-        // Há faltantes → lê flaggeds. FAIL-CLOSED: sem a lista de exclusão não dá p/ semear
-        // sem risco de ressuscitar fornecedor (achado Codex #4) → lança.
-        const flaggeds = new Set<string>();
-        for (let fp = 0; ; fp++) {
-          const { data: fPage, error: fErr } = await supabase
-            .from('cliente_classificacao')
-            .select('user_id')
-            .eq('excluir_da_carteira', true)
-            .range(fp * 1000, fp * 1000 + 999);
-          if (fErr) throw new Error(`flaggeds (cliente_classificacao) falhou com ${missingRaw.length} faltantes — não dá p/ semear sem a lista de exclusão: ${fErr.message}`);
-          const fRows = (fPage ?? []) as Array<{ user_id: string }>;
-          for (const r of fRows) flaggeds.add(r.user_id);
-          if (fRows.length < 1000) break;
-        }
-
-        // missing = missingRaw − flaggeds (não semeia fornecedor fora da carteira)
-        const missing = missingRaw.filter((c) => !flaggeds.has(c.user_id));
-
-        if (missing.length === 0) {
-          console.log(`[calculate-scores] ${missingRaw.length} faltantes, todos flaggeds. Nada a semear.`);
-        } else if (salesRefreshFatal) {
+        if (salesRefreshFatal) {
           // RPC de vendas falhou → NÃO semear os faltantes (deriveSalesBase daria 999/0 p/ TODOS =
           // fabricar zero; #936 "ausente≠zero"). Entram quando a RPC voltar (idempotente).
           console.warn(`[calculate-scores] RPC de vendas falhou — pulando seed de ${missing.length} faltantes este run.`);
         } else {
-          console.log(`[calculate-scores] semeando ${missing.length} faltantes (de ${missingRaw.length}; ${flaggeds.size} flaggeds; ${clients.length} já em fcs).`);
+          console.log(`[calculate-scores] semeando ${missing.length} faltantes (${clients.length} já em fcs).`);
 
           // Farmer default (1º employee/master) — fallback do ownerMap.
           const { data: employees } = await supabase
@@ -382,21 +343,25 @@ Deno.serve(async (req) => {
           let seeded = 0;
           for (let i = 0; i < seedRecords.length; i += 200) {
             const batch = seedRecords.slice(i, i + 200);
-            const { error: insertErr } = await supabase
+            const { data: inserted, error: insertErr } = await supabase
               .from('farmer_client_scores')
               .upsert(batch, { onConflict: 'customer_user_id' })
               .select('id');
             if (insertErr) {
               console.error(`[calculate-scores] Batch insert error at ${i}:`, insertErr.message);
               for (const record of batch) {
-                const { error: singleErr } = await supabase
+                const { data: one, error: singleErr } = await supabase
                   .from('farmer_client_scores')
-                  .upsert(record, { onConflict: 'customer_user_id' });
+                  .upsert(record, { onConflict: 'customer_user_id' })
+                  .select('id');
                 if (singleErr) seedErrors.push(`${record.customer_user_id}: ${singleErr.message}`);
-                else seeded++;
+                else seeded += (one?.length ?? 0);
               }
             } else {
-              seeded += batch.length;
+              // Conta as linhas REALMENTE persistidas: o trigger fcs_block_flagged_insert pula o
+              // fornecedor flagged (RETURN NULL) → ele não volta no .select('id') → o log não infla
+              // "Seeded N" mascarando quantos foram bloqueados mid-run (achado /codex P2 2026-06-21).
+              seeded += (inserted?.length ?? 0);
             }
           }
           console.log(`[calculate-scores] Seeded ${seeded}/${missing.length} client scores`);
@@ -586,7 +551,9 @@ Deno.serve(async (req) => {
     // stale NÃO casa (WHERE f.id=u.id → 0 linhas): a RPC NÃO re-insere (mata a ressurreição) e jamais
     // tenta INSERT → nunca 23505. (O upsert(onConflict:'id') anterior ressuscitava/colidia.) Provado em
     // PG17 + falsificação: db/test-apply-score-updates.sh. O payload ainda traz customer_user_id/farmer_id
-    // (ScoreUpdate), que a RPC IGNORA (recordset só id + 9 campos) — inofensivo.
+    // (ScoreUpdate), que a RPC IGNORA (recordset = id + 12 campos: os 9 de score + 3 de base de vendas
+    // [days/spend/category, persistidos desde a migration 20260622140000]; customer_user_id/farmer_id NÃO
+    // entram) — inofensivo.
     // F2 (FAIL-CLOSED) mantido: erro de RPC coleta-e-LANÇA (recompute parcial não pode passar como 200 OK;
     // idempotente → retry converge; visível em net._http_response). Chunk de 500 = 1 statement/batch,
     // limita payload/blast-radius (Codex P2). NÃO lança em affected<enviados: é o sinal ESPERADO de linha

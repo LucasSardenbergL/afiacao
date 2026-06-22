@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **273** custom migrations totais
-- **998** objetos esperados (criados por estas migrations)
+- **276** custom migrations totais
+- **1002** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 279
+  - `function`: 282
   - `rls_policy`: 219
   - `index`: 186
   - `table`: 108
   - `cron_job`: 107
-  - `trigger`: 50
+  - `trigger`: 51
   - `view`: 45
   - `enum_value`: 4
 
@@ -2370,12 +2370,31 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260621120000_seed_targets_faltantes_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.seed_targets_faltantes` | — |
+
+### `20260621130000_fcs_guard_flagged_insert.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fcs_block_flagged_insert` | — |
+| `trigger` | `public.trg_fcs_block_flagged_insert` | `farmer_client_scores` |
+
 ### `20260622120000_trigger_cleanup_orphan_score_on_carteira_delete.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.cleanup_orphan_score_on_carteira_delete` | — |
 | `trigger` | `public.trg_carteira_cleanup_orphan_score` | `carteira_assignments` |
+
+### `20260622140000_apply_score_updates_persiste_base_vendas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.apply_score_updates` | — |
 
 ## Próximos passos quando algo der `❌`
 
