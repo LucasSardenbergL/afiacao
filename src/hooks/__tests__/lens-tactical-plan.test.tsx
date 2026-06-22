@@ -35,7 +35,7 @@ vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => impM
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'master-id' }, isStaff: true }) }));
 
 // Cobertura controlada (evita useQuery/QueryClientProvider no teste do hook).
-const coverageMock = vi.fn<[], { data: Array<{ covered_user_id: string }> }>(() => ({ data: [] }));
+const coverageMock = vi.fn((): { data: Array<{ covered_user_id: string }> } => ({ data: [] }));
 vi.mock('@/hooks/useCoverage', () => ({ useMyActiveCoverage: () => coverageMock() }));
 
 import { useTacticalPlan } from '../useTacticalPlan';
