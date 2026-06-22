@@ -971,6 +971,12 @@ async function computeCosts(db: SupabaseClient) {
   const margemDefault = cfg.margem_default_global ?? 0.35;
   const margemMin = cfg.margem_minima ?? 0.05;
   const margemMax = cfg.margem_maxima ?? 0.85;
+  // Guard anti-lixo do CMC (faixa absoluta cmc/price): rejeita só erro de dado (quase-zero/desproporcional).
+  // Um CMC fora da banda de margem mas DENTRO desta faixa vira CMC_MARGEM_ATIPICA (custo real preservado,
+  // prejuízo/margem-baixa/alta observável) em vez de ser mascarado por proxy. Defaults aqui; ajustáveis via
+  // recommendation_config (margem_cmc_ratio_min/max) sem deploy. kMax=5 cobre o gap empírico real 4.97×→14.39×.
+  const cmcRatioMin = cfg.margem_cmc_ratio_min ?? 0.01;
+  const cmcRatioMax = cfg.margem_cmc_ratio_max ?? 5;
 
   // Get all products with their costs and inventory
   const { data: products } = await db.from("omie_products").select("id, valor_unitario, familia").eq("ativo", true);
@@ -1007,7 +1013,7 @@ async function computeCosts(db: SupabaseClient) {
   }
 
   let updated = 0;
-  const cfgMargens = { margemDefault, margemMin, margemMax };
+  const cfgMargens = { margemDefault, margemMin, margemMax, cmcRatioMin, cmcRatioMax };
 
   for (const product of products) {
     const price = product.valor_unitario;

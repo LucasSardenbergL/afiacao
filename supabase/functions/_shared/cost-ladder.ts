@@ -10,9 +10,15 @@
 // semeado com proxy, um custo inventado virava "real" após ~2 reprocessamentos
 // (lavagem de proveniência). CMC é a única fonte de custo REAL hoje. PRODUCT_COST
 // fica reservado para o dia em que existir um writer real auditável.
+//
+// CMC_MARGEM_ATIPICA: um CMC REAL fora da banda de margem plausível (prejuízo / margem
+// baixa / margem alta) NÃO é mascarado por um proxy "bonito" (era a pendência (b) do #977,
+// que ESCONDIA o prejuízo real). A banda de margem só CLASSIFICA (CMC normal vs atípico);
+// a única REJEIÇÃO é o anti-lixo absoluto (custo quase-zero ou desproporcional = erro de dado).
 
 export type CostSource =
   | 'CMC'
+  | 'CMC_MARGEM_ATIPICA'
   | 'FAMILY_MARGIN_PROXY'
   | 'DEFAULT_PROXY'
   | 'PRODUCT_COST'
@@ -22,6 +28,10 @@ export interface CostLadderConfig {
   margemDefault: number;
   margemMin: number;
   margemMax: number;
+  /** Razão cmc/price MÍNIMA aceita como custo real (anti-lixo: abaixo disso é custo quase-zero / erro de dado). */
+  cmcRatioMin: number;
+  /** Razão cmc/price MÁXIMA aceita como custo real (anti-lixo: acima disso é custo desproporcional / erro de dado). */
+  cmcRatioMax: number;
 }
 
 export interface CostLadderInput {
@@ -38,36 +48,39 @@ export interface CostLadderResult {
   costFinal: number;
   costSource: CostSource;
   costConfidence: number;
-  /** Valor a gravar em product_costs.cost_price. CMC real → o CMC; proxy → null (NUNCA semeia proxy). */
+  /** Valor a gravar em product_costs.cost_price. CMC/CMC_MARGEM_ATIPICA real → o CMC; proxy → null (NUNCA semeia proxy). */
   costPriceToPersist: number | null;
 }
 
 export function computeCostLadder(input: CostLadderInput): CostLadderResult {
   const { price, cmc, familyTargetMargin, cfg } = input;
-  const { margemDefault, margemMin, margemMax } = cfg;
+  const { margemDefault, margemMin, margemMax, cmcRatioMin, cmcRatioMax } = cfg;
 
   // Guard money-path na fronteira: preço inválido nunca fabrica custo.
   if (!(Number.isFinite(price) && price > 0)) {
     return { costFinal: 0, costSource: 'UNKNOWN', costConfidence: 0, costPriceToPersist: null };
   }
 
-  // Sanidade do custo real: dentro da faixa de margem plausível (estrito nas bordas).
-  // PENDÊNCIA conhecida: um CMC fora desta faixa (ex.: margem negativa real / venda no
-  // prejuízo) é rejeitado e degrada para proxy — isso ESCONDE a margem ruim real. Tratar
-  // numa entrega futura (tornar observável em vez de mascarar). Não regredir aqui.
-  const sane = (c: number | null): c is number =>
-    c != null &&
-    Number.isFinite(c) &&
-    c > 0 &&
-    c < price * (1 - margemMin) &&
-    c > price * (1 - margemMax);
+  // CMC real e utilizável? O guard rejeita SÓ lixo de dado: custo quase-zero ou desproporcional
+  // ao preço (faixa anti-lixo ABSOLUTA e larga: price*cmcRatioMin..price*cmcRatioMax, inclusiva).
+  // Um CMC que implica margem ruim REAL (prejuízo/baixa/alta) NÃO é lixo — é sinal de negócio.
+  const cmcReal =
+    cmc != null && Number.isFinite(cmc) && cmc > 0 &&
+    cmc >= price * cmcRatioMin && cmc <= price * cmcRatioMax;
 
-  // Priority 1: CMC — ÚNICA fonte de custo REAL. Semeia cost_price com o CMC.
-  if (sane(cmc)) {
-    return { costFinal: cmc, costSource: 'CMC', costConfidence: 0.85, costPriceToPersist: cmc };
+  if (cmcReal) {
+    // Banda de margem plausível (estrito nas bordas) → CMC normal, alta confiança.
+    // Fora da banda mas dentro do anti-lixo → CMC real de margem ATÍPICA (prejuízo/baixa/alta):
+    // preserva o custo real (cost_final = cost_price = cmc) com confiança rebaixada e proveniência
+    // distinta — observável e auditável, NUNCA trocado por um proxy "bonito" (fecha a pendência (b)).
+    const dentroBanda = cmc < price * (1 - margemMin) && cmc > price * (1 - margemMax);
+    return dentroBanda
+      ? { costFinal: cmc, costSource: 'CMC', costConfidence: 0.85, costPriceToPersist: cmc }
+      : { costFinal: cmc, costSource: 'CMC_MARGEM_ATIPICA', costConfidence: 0.6, costPriceToPersist: cmc };
   }
 
-  // Priority 2: proxy de família. Proxy NUNCA semeia cost_price.
+  // Sem CMC real (ausente / zero / lixo absoluto) → proxy honesto. Proxy NUNCA semeia cost_price.
+  // Priority 2: proxy de família.
   if (familyTargetMargin != null && familyTargetMargin > margemMin && familyTargetMargin < margemMax) {
     return {
       costFinal: price * (1 - familyTargetMargin),
