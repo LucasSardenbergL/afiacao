@@ -321,7 +321,9 @@ BEGIN
          -- CorPerson não resolveu) → a constraint NOT NULL de tint_formulas.nome_cor derrubava o RUN
          -- INTEIRO (23502). Fallback p/ cor_id (stub, espelha o corante stub). Nunca abortar a promoção
          -- por um campo de DISPLAY ausente; o nome real entra no próximo upsert quando o conector resolver.
-         COALESCE(NULLIF(btrim(nome_cor), ''), cor_id) AS nome_cor,
+         -- Codex 22/06: CASE (não COALESCE+btrim) p/ NÃO trimar nome legítimo com espaço — só
+         -- substitui quando NULL/vazio, preservando o nome_cor original VERBATIM.
+         CASE WHEN nome_cor IS NULL OR btrim(nome_cor) = '' THEN cor_id ELSE nome_cor END AS nome_cor,
          cod_produto, id_base, id_embalagem,
          subcolecao, volume_final_ml, personalizada
   FROM alvo
