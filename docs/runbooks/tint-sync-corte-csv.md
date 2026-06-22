@@ -14,6 +14,8 @@ Após **3 incidentes resolvidos** (loop de re-envio → hash v0.2.0; lock timeou
 
 **Follow-ups (Codex, não-urgentes — custo/precos_base não existem hoje):** (a) E4/precos_base usam loop-por-fórmula → migrar p/ set-based se algum dia vier custo em massa; (b) E1 atualiza `tint_corantes.volume_total_ml` mas preserva `preco_litro` (incoerência se algo ler direto); (c) defesa de infra `idle_in_transaction_session_timeout` no role (mata conexão presa antes que trave o lock); (d) higiene: `DROP TABLE tint_formulas_backup_preflip` (103 MB) após estabilizar.
 
+**🐛 BUG ABERTO (22/06, revelado pela prova de tempo-real — cor `TESTE CLAUDE`, conta `oben`, personalizada):** cor PERSONALIZADA nova (`formulaperson`) chega no staging com `nome_cor` NULL → a promoção (`_formulas_latest`, ~linha 300) não trata e o INSERT em `tint_formulas` viola a constraint `NOT NULL` de `nome_cor` (SQLSTATE 23502) → run da personalizada dá `error` (oficial INTACTO, rollback; padrão promovem normal). **Fix:** (1) promoção tolera nome vazio — `COALESCE(nome_cor, cor_id)` no `_formulas_latest`/INSERT (band-aid robusto, espelha o stub de corante); (2) conector mapear o nome real das personalizadas (`personcor` → `nome_cor`; hoje vem NULL e o `cor_id` veio numérico `4602073`, suspeito de mapeamento de identidade tb). Money-path → PG17 + Codex. **Impacto limitado:** só personalizadas NOVAS via sync; as 756 antigas (CSV) e todas as padrão OK.
+
 ## 0. Estado de produção (diagnóstico 16/06 23:33 Brasília, via `psql-ro` read-only)
 
 - `integration_mode = shadow_mode` — **seguro** (a promoção não roda; o balcão lê do oficial + preço via Omie).
