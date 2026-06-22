@@ -586,7 +586,9 @@ Deno.serve(async (req) => {
     // stale NÃO casa (WHERE f.id=u.id → 0 linhas): a RPC NÃO re-insere (mata a ressurreição) e jamais
     // tenta INSERT → nunca 23505. (O upsert(onConflict:'id') anterior ressuscitava/colidia.) Provado em
     // PG17 + falsificação: db/test-apply-score-updates.sh. O payload ainda traz customer_user_id/farmer_id
-    // (ScoreUpdate), que a RPC IGNORA (recordset só id + 9 campos) — inofensivo.
+    // (ScoreUpdate), que a RPC IGNORA (recordset = id + 12 campos: os 9 de score + 3 de base de vendas
+    // [days/spend/category, persistidos desde a migration 20260622140000]; customer_user_id/farmer_id NÃO
+    // entram) — inofensivo.
     // F2 (FAIL-CLOSED) mantido: erro de RPC coleta-e-LANÇA (recompute parcial não pode passar como 200 OK;
     // idempotente → retry converge; visível em net._http_response). Chunk de 500 = 1 statement/batch,
     // limita payload/blast-radius (Codex P2). NÃO lança em affected<enviados: é o sinal ESPERADO de linha

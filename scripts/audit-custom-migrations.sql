@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 273
+-- Total de custom migrations: 274
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -292,7 +292,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260619120000', 'param_auto_resumo_descricao', '20260619120000_param_auto_resumo_descricao.sql'),
   ('20260619120000', 'trigger_reconcile_score_owner_carteira', '20260619120000_trigger_reconcile_score_owner_carteira.sql'),
   ('20260620130000', 'cost_price_nullable', '20260620130000_cost_price_nullable.sql'),
-  ('20260622120000', 'trigger_cleanup_orphan_score_on_carteira_delete', '20260622120000_trigger_cleanup_orphan_score_on_carteira_delete.sql')
+  ('20260622120000', 'trigger_cleanup_orphan_score_on_carteira_delete', '20260622120000_trigger_cleanup_orphan_score_on_carteira_delete.sql'),
+  ('20260622140000', 'apply_score_updates_persiste_base_vendas', '20260622140000_apply_score_updates_persiste_base_vendas.sql')
 )
 SELECT
   e.version,
@@ -1308,7 +1309,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('trigger_reconcile_score_owner_carteira', 'function', 'public', 'reconcile_score_owner_from_carteira', ''),
   ('trigger_reconcile_score_owner_carteira', 'trigger', 'public', 'trg_carteira_reconcile_score_owner', 'carteira_assignments'),
   ('trigger_cleanup_orphan_score_on_carteira_delete', 'function', 'public', 'cleanup_orphan_score_on_carteira_delete', ''),
-  ('trigger_cleanup_orphan_score_on_carteira_delete', 'trigger', 'public', 'trg_carteira_cleanup_orphan_score', 'carteira_assignments')
+  ('trigger_cleanup_orphan_score_on_carteira_delete', 'trigger', 'public', 'trg_carteira_cleanup_orphan_score', 'carteira_assignments'),
+  ('apply_score_updates_persiste_base_vendas', 'function', 'public', 'apply_score_updates', '')
 )
 SELECT
   e.migration,
