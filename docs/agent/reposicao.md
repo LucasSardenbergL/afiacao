@@ -13,6 +13,8 @@
 
 - **`cmc` (Custo Médio Contábil do Omie)** é a base de custo **de ponta a ponta**, inclusive na primeira compra. cmc ausente → `null`, **nunca** R$0 (money-path: ausente ≠ zero).
 - ⚠️ Após corrigir a FONTE do cmc, **os snapshots derivados NÃO se regeneram sozinhos** — re-invocar o recompute.
+- **Escada de proveniência (`cost_source`, [#977]):** CMC é a **única** fonte de custo REAL. `PRODUCT_COST` foi **REMOVIDO** da escada operacional (era ficção — nenhum writer importa custo real ≠ CMC). Proxy (família/default) **NUNCA** semeia `cost_price` (grava `null`) — senão a run seguinte relê o proxy como `PRODUCT_COST` conf 0.95 e o custo inventado vira "real" (**lavagem de proveniência**). Escada no helper puro `src/lib/custo/costLadder.ts`, **espelhado verbatim** no edge `supabase/functions/_shared/cost-ladder.ts` (paridade byte-a-byte testada); consumidores leem `cost_final` via `custoCanonico` (`ausente≠zero`). `cost_price` é nullable; invariante: **só `CMC` carrega `cost_price`, e sempre `= cmc`**.
+- ⚠️ **`computeCosts` (recompute) só visita produtos do FLUXO** (~770 com posição/venda), **NÃO todos os ativos** — remediação de dado de custo tem de cobrir o universo completo (**ativos + inativos via SQL**), não confiar no recompute pra limpar o passivo histórico ([#977]).
 
 ## Mínimo forçado + auto-aprovação
 

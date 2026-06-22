@@ -1,5 +1,15 @@
 # Handoff — Correção da lavagem de proveniência de custo (`cost_source`)
 
+> ## ✅ CONCLUÍDO E VERIFICADO EM PROD — 2026-06-22
+> Migration + edge + Publish + recompute aplicados; **reset cobriu ativos+inativos** (1.309 linhas,
+> não só os ~54 inativos do plano abaixo — o recompute só visita ~770 produtos do FLUXO, não todos os
+> ativos, então o passivo lavado real era 1.277). **Sentinela 3×0** (`PRODUCT_COST=0`,
+> `proxy_com_cost_price=0`, `cost_price≠cmc=0`). Crons nunca foram pausados (todos `active`); estado
+> final consistente. O SQL de reset **definitivo** (ativos+inativos, preserva CMC legítima) está
+> registrado em `docs/historico/bugs-resolvidos.md` e diverge do passo 6 abaixo (que mirava só inativos).
+> Detalhe da entrega: `docs/historico/bugs-resolvidos.md`. O passo-a-passo abaixo fica como registro.
+
+
 > Bug money-path achado via Codex challenge (2026-06-19). O motor de custo promovia um custo
 > PROXY (inventado) a `PRODUCT_COST` conf 0.95 após ~2 reprocessamentos. Medição em prod:
 > **≥510 SKUs** com custo inventado mascarado de real. Abordagem escolhida: **radical** (Codex)
