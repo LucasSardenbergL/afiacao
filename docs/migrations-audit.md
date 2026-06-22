@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **274** custom migrations totais
-- **999** objetos esperados (criados por estas migrations)
+- **275** custom migrations totais
+- **1001** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 280
+  - `function`: 281
   - `rls_policy`: 219
   - `index`: 186
   - `table`: 108
   - `cron_job`: 107
-  - `trigger`: 50
+  - `trigger`: 51
   - `view`: 45
   - `enum_value`: 4
 
@@ -2382,6 +2382,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.fcs_block_flagged_insert` | — |
 | `trigger` | `public.trg_fcs_block_flagged_insert` | `farmer_client_scores` |
+
+### `20260622120000_trigger_cleanup_orphan_score_on_carteira_delete.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cleanup_orphan_score_on_carteira_delete` | — |
+| `trigger` | `public.trg_carteira_cleanup_orphan_score` | `carteira_assignments` |
 
 ## Próximos passos quando algo der `❌`
 

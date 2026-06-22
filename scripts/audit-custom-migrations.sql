@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 274
+-- Total de custom migrations: 275
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -293,7 +293,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260619120000', 'trigger_reconcile_score_owner_carteira', '20260619120000_trigger_reconcile_score_owner_carteira.sql'),
   ('20260620130000', 'cost_price_nullable', '20260620130000_cost_price_nullable.sql'),
   ('20260621120000', 'seed_targets_faltantes_rpc', '20260621120000_seed_targets_faltantes_rpc.sql'),
-  ('20260621130000', 'fcs_guard_flagged_insert', '20260621130000_fcs_guard_flagged_insert.sql')
+  ('20260621130000', 'fcs_guard_flagged_insert', '20260621130000_fcs_guard_flagged_insert.sql'),
+  ('20260622120000', 'trigger_cleanup_orphan_score_on_carteira_delete', '20260622120000_trigger_cleanup_orphan_score_on_carteira_delete.sql')
 )
 SELECT
   e.version,
@@ -1310,7 +1311,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('trigger_reconcile_score_owner_carteira', 'trigger', 'public', 'trg_carteira_reconcile_score_owner', 'carteira_assignments'),
   ('seed_targets_faltantes_rpc', 'function', 'public', 'seed_targets_faltantes', ''),
   ('fcs_guard_flagged_insert', 'function', 'public', 'fcs_block_flagged_insert', ''),
-  ('fcs_guard_flagged_insert', 'trigger', 'public', 'trg_fcs_block_flagged_insert', 'farmer_client_scores')
+  ('fcs_guard_flagged_insert', 'trigger', 'public', 'trg_fcs_block_flagged_insert', 'farmer_client_scores'),
+  ('trigger_cleanup_orphan_score_on_carteira_delete', 'function', 'public', 'cleanup_orphan_score_on_carteira_delete', ''),
+  ('trigger_cleanup_orphan_score_on_carteira_delete', 'trigger', 'public', 'trg_carteira_cleanup_orphan_score', 'carteira_assignments')
 )
 SELECT
   e.migration,
