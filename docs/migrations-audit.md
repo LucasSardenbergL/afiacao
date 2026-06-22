@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **272** custom migrations totais
-- **996** objetos esperados (criados por estas migrations)
+- **273** custom migrations totais
+- **998** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 278
+  - `function`: 279
   - `rls_policy`: 219
   - `index`: 186
   - `table`: 108
   - `cron_job`: 107
-  - `trigger`: 49
+  - `trigger`: 50
   - `view`: 45
   - `enum_value`: 4
 
@@ -2369,6 +2369,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260620130000_cost_price_nullable.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260622120000_trigger_cleanup_orphan_score_on_carteira_delete.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cleanup_orphan_score_on_carteira_delete` | — |
+| `trigger` | `public.trg_carteira_cleanup_orphan_score` | `carteira_assignments` |
 
 ## Próximos passos quando algo der `❌`
 
