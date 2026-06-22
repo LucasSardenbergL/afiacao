@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ════════════════════════════════════════════════════════════════════════════════
-# PROVA — apply_score_updates(jsonb): recompute UPDATE-only, anti-ressurreição + recência-viva
-# Migration (v2): supabase/migrations/20260622140000_apply_score_updates_persiste_base_vendas.sql
+# PROVA — apply_score_updates(jsonb): UPDATE-only, anti-ressurreição + recência-viva + guard de contrato
+# Migration (v3): supabase/migrations/20260622160000_apply_score_updates_guard_full_update.sql
 # Roda:  bash db/test-apply-score-updates.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #
 # Invariantes:
@@ -10,6 +10,9 @@
 #   P13-15 (recência-viva, #970): days_since_last_purchase / avg_monthly_spend_180d / category_count
 #       são PERSISTIDOS frescos (o #971 os congelava — regressão fechada aqui). Falsificação F4:
 #       sabota recriando a RPC de 9 campos (#971) → EXIGE a base CONGELADA (vermelho).
+#   G1 (guard de contrato full-update, v3): payload PARCIAL (chave ausente/null) → RAISE check_violation
+#       ANTES do UPDATE, linha INTOCADA (NÃO grava NULL). Falsificação F5: recria a RPC SEM o guard
+#       → EXIGE que o payload parcial volte a gravar NULL (vermelho). Captura a CONDIÇÃO, não o texto.
 #
 # Nota: interpolação de uuid é feita pelo SHELL ('$VAR'); psql -c não expande :'var'.
 # Heredocs com $$/$fn$ ficam aspados <<'SQL' (não usam ids).
@@ -102,7 +105,7 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 2 — APLICAR A MIGRATION REAL (Lei #1)
 # ══════════════════════════════════════════════════════════════════════════════
-MIG="$REPO_ROOT/supabase/migrations/20260622140000_apply_score_updates_persiste_base_vendas.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260622160000_apply_score_updates_guard_full_update.sql"
 P -q -f "$MIG" >/dev/null
 echo "migration aplicada: $(basename "$MIG")"
 
@@ -206,20 +209,30 @@ SQL
 case "$R" in *REVOKE_OK*) ok "N3b anon BARRADO (REVOKE)";; *) bad "N3b — veio: $R";; esac
 eq "N3c service_role EXECUTA (0 linhas, vazio)" "$(Pq -c "SET ROLE service_role; SELECT public.apply_score_updates('[]'::jsonb);" | tail -n1)" "0"
 
-echo "── N4: CONTRATO full-update (chave de base AUSENTE no JSON → coluna vira NULL) ──"
-# Documenta o gume do contrato que o header da migration avisa (achado /codex P2#3): jsonb_to_recordset
-# NÃO faz COALESCE → chave ausente vira SQL NULL e sobrescreve. O edge SEMPRE manda as 12 (?? sentinel),
-# então isto NUNCA dispara em prod; o teste prova o que acontece SE um caller driftar (= a classe de bug
-# do #971). NÃO há falsificação: N4 documenta um hazard, não protege um invariante.
-P -q -c "DELETE FROM public.farmer_client_scores WHERE id='$B_ID'; INSERT INTO public.farmer_client_scores (id, customer_user_id, farmer_id, days_since_last_purchase, avg_monthly_spend_180d, category_count) VALUES ('$B_ID','$B_CUST','$FARMER', 42, 111, 9);"
-# payload OMITE days_since_last_purchase (manda só spend+category dos 3 de base)
-P -q <<SQL
-SELECT public.apply_score_updates(jsonb_build_array(jsonb_build_object(
-  'id','$B_ID','health_score',88,'health_class','saudavel','churn_risk',12,'priority_score',77,'rf_score',90,'m_score',80,'g_score',70,'avg_monthly_spend_180d',2500,'category_count',4,'calculated_at','2026-06-18T20:00:00Z','updated_at','2026-06-18T20:00:00Z'
-)));
+echo "── G1: GUARD DE CONTRATO full-update (payload parcial → RAISE check_violation, linha INTOCADA) ──"
+# O #987 documentava o gume "chave ausente → NULL" (era N4, doc-only). O guard (v3, achado /codex P1,
+# deferido no #987, implementado pós-challenge) o FECHA: rejeita o LOTE com RAISE ANTES do UPDATE.
+# jsonb_to_recordset funde "ausente" e "null explícito" no mesmo SQL NULL → o guard pega os dois.
+# Captura a CONDIÇÃO check_violation (não o texto da msg — anti-teatro). Falsificado em F5.
+P -q -c "DELETE FROM public.farmer_client_scores WHERE id='$B_ID'; INSERT INTO public.farmer_client_scores (id, customer_user_id, farmer_id, health_score, days_since_last_purchase, avg_monthly_spend_180d, category_count) VALUES ('$B_ID','$B_CUST','$FARMER', 10, 42, 111, 9);"
+# payload OMITE days_since_last_purchase (1 das 13 chaves) → deve ser REJEITADO antes do UPDATE
+R=$(P -tA 2>&1 <<SQL
+SET ROLE service_role;
+DO \$\$
+BEGIN
+  PERFORM public.apply_score_updates(jsonb_build_array(jsonb_build_object(
+    'id','$B_ID','health_score',88,'health_class','saudavel','churn_risk',12,'priority_score',77,'rf_score',90,'m_score',80,'g_score',70,'avg_monthly_spend_180d',2500,'category_count',4,'calculated_at','2026-06-18T20:00:00Z','updated_at','2026-06-18T20:00:00Z'
+  )));
+  RAISE NOTICE 'SEM_GUARD_PASSOU';  -- sem RAISE EXCEPTION: o caminho sem-guard COMMITA o NULL (G1b/c ganham dente)
+EXCEPTION
+  WHEN check_violation THEN RAISE NOTICE 'GUARD_OK';
+  WHEN OTHERS THEN RAISE;
+END \$\$;
 SQL
-eq "N4a chave ausente → days_since_last_purchase vira NULL (contrato: caller DEVE mandar as 12)" "$(Pq -c "SELECT days_since_last_purchase IS NULL FROM public.farmer_client_scores WHERE id='$B_ID';")" "t"
-eq "N4b campos presentes ainda aplicam (spend=2500)"                                             "$(Pq -c "SELECT avg_monthly_spend_180d FROM public.farmer_client_scores WHERE id='$B_ID';")" "2500"
+) || true
+case "$R" in *GUARD_OK*) ok "G1a payload parcial REJEITADO (check_violation, antes do UPDATE)";; *) bad "G1a — esperava check_violation, veio: $R";; esac
+eq "G1b linha INTOCADA: days continua 42 (NÃO virou NULL)"           "$(Pq -c "SELECT days_since_last_purchase FROM public.farmer_client_scores WHERE id='$B_ID';")" "42"
+eq "G1c linha INTOCADA: health_score continua 10 (UPDATE não rodou)" "$(Pq -c "SELECT health_score FROM public.farmer_client_scores WHERE id='$B_ID';")" "10"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (Lei #3: sabota → exige VERMELHO → restaura)
@@ -327,6 +340,38 @@ case "$(Pq -c "SELECT days_since_last_purchase||'/'||avg_monthly_spend_180d||'/'
   *)        bad "F4 omiti os 3 campos de base e eles mudaram mesmo assim → P13-15 fraco";;
 esac
 P -q -f "$MIG" >/dev/null                                              # restaura a RPC verdadeira (12 campos)
+
+# F5 — dente do GUARD (G1): recria a RPC SEM o guard (= v2 #987 pura, só o UPDATE). EXIGE que o
+# payload PARCIAL volte a GRAVAR NULL (corrompe) → prova que o guard é o que barra, não o teste.
+# Anti-teatro: comparo o EFEITO (days vira NULL), não a presença do RAISE no código.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.apply_score_updates(p_updates jsonb)
+RETURNS integer LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $fn$
+DECLARE v_count int;
+BEGIN
+  UPDATE public.farmer_client_scores f SET                 -- SEM guard (= v2 #987 pura)
+    health_score = u.health_score, health_class = u.health_class, churn_risk = u.churn_risk,
+    priority_score = u.priority_score, rf_score = u.rf_score, m_score = u.m_score, g_score = u.g_score,
+    days_since_last_purchase = u.days_since_last_purchase, avg_monthly_spend_180d = u.avg_monthly_spend_180d,
+    category_count = u.category_count, calculated_at = u.calculated_at, updated_at = u.updated_at
+  FROM jsonb_to_recordset(p_updates) AS u(id uuid, health_score numeric, health_class text, churn_risk numeric, priority_score numeric, rf_score numeric, m_score numeric, g_score numeric, days_since_last_purchase integer, avg_monthly_spend_180d numeric, category_count integer, calculated_at timestamptz, updated_at timestamptz)
+  WHERE f.id = u.id;
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END $fn$;
+SQL
+P -q -c "DELETE FROM public.farmer_client_scores WHERE id='$B_ID'; INSERT INTO public.farmer_client_scores (id, customer_user_id, farmer_id, days_since_last_purchase, avg_monthly_spend_180d, category_count) VALUES ('$B_ID','$B_CUST','$FARMER', 42, 111, 9);"
+# payload PARCIAL (omite days_since_last_purchase) — SEM guard, deve gravar NULL
+P -q <<SQL
+SELECT public.apply_score_updates(jsonb_build_array(jsonb_build_object(
+  'id','$B_ID','health_score',88,'health_class','saudavel','churn_risk',12,'priority_score',77,'rf_score',90,'m_score',80,'g_score',70,'avg_monthly_spend_180d',2500,'category_count',4,'calculated_at','2026-06-18T20:00:00Z','updated_at','2026-06-18T20:00:00Z'
+)));
+SQL
+case "$(Pq -c "SELECT days_since_last_purchase IS NULL FROM public.farmer_client_scores WHERE id='$B_ID';")" in
+  t) ok "F5 sem guard, payload parcial GRAVA NULL → G1 tem dente (o guard é o que barra)";;
+  *) bad "F5 removi o guard e o payload parcial NÃO corrompeu → G1 é teatro/fraco";;
+esac
+P -q -f "$MIG" >/dev/null                                              # restaura a RPC verdadeira (com guard)
 
 # ── veredito ──
 echo "──────────────────────────────"

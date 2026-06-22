@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **276** custom migrations totais
-- **1002** objetos esperados (criados por estas migrations)
+- **277** custom migrations totais
+- **1003** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 282
+  - `function`: 283
   - `rls_policy`: 219
   - `index`: 186
   - `table`: 108
@@ -2391,6 +2391,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_carteira_cleanup_orphan_score` | `carteira_assignments` |
 
 ### `20260622140000_apply_score_updates_persiste_base_vendas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.apply_score_updates` | — |
+
+### `20260622160000_apply_score_updates_guard_full_update.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
