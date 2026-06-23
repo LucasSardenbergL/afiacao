@@ -4,7 +4,7 @@
 // Cobre a discriminação money-path do spec (defeito #1: null ambíguo): a página do
 // loop de sync_pedidos deve distinguir FIM REAL (null/vazio → completa) de TRANSITÓRIO
 // (throw → pausa, não completa), e converter as datas do cursor sem ambiguidade.
-import { omieDateToIso, classifyOmieTransient, classifyPedidosPage } from "./pagination.ts";
+import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -17,6 +17,25 @@ Deno.test("omieDateToIso: converte DD/MM/YYYY → YYYY-MM-DD", () => {
   assertEquals(omieDateToIso("17/06/2026"), "2026-06-17");
   assertEquals(omieDateToIso("01/01/2025"), "2025-01-01");
   assertEquals(omieDateToIso("31/12/2024"), "2024-12-31");
+});
+
+// ── gerarJanelasMensais: janelas mensais p/ a sonda de counts (Fase 2b colacor) ──
+Deno.test("gerarJanelasMensais: meses inclusive, DD/MM/YYYY, último dia certo (bissexto)", () => {
+  const j = gerarJanelasMensais("2024-01-15", "2024-03-01");
+  assertEquals(j.map((x) => x.mes), ["2024-01", "2024-02", "2024-03"]);
+  assertEquals(j[0], { mes: "2024-01", de: "01/01/2024", ate: "31/01/2024" });
+  assertEquals(j[1].ate, "29/02/2024", "fev 2024 bissexto");
+  assertEquals(j[2], { mes: "2024-03", de: "01/03/2024", ate: "31/03/2024" });
+});
+
+Deno.test("gerarJanelasMensais: vira o ano + fev não-bissexto", () => {
+  const j = gerarJanelasMensais("2024-11-01", "2025-02-28");
+  assertEquals(j.map((x) => x.mes), ["2024-11", "2024-12", "2025-01", "2025-02"]);
+  assertEquals(j[3].ate, "28/02/2025", "fev 2025 não-bissexto");
+});
+
+Deno.test("gerarJanelasMensais: janela invertida → vazio (guard)", () => {
+  assertEquals(gerarJanelasMensais("2025-06-01", "2024-01-01"), []);
 });
 
 Deno.test("omieDateToIso: tolera espaços nas bordas", () => {
