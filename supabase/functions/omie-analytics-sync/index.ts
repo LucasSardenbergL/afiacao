@@ -153,8 +153,9 @@ interface OmieApiResponseBase {
 
 interface InventoryPositionRow {
   product_id: string | null;
-  cmc?: number;
-  saldo?: number;
+  cmc?: number | null;
+  saldo?: number | null;
+  synced_at?: string | null;
 }
 
 function getCredentials(account: OmieAccount) {
@@ -1001,11 +1002,46 @@ async function computeCosts(db: SupabaseClient) {
   const costMap: Record<string, { cmc?: number | null }> = {};
   for (const c of costsRaw) costMap[c.product_id] = c;
 
-  // Get inventory for CMC
-  const { data: inventoryRaw } = await db.from("inventory_position").select("product_id, cmc, saldo");
-  const inventory = (inventoryRaw ?? []) as unknown as InventoryPositionRow[];
+  // inventory_position inteiro — PAGINADO pelos MESMOS motivos das duas leituras acima: o
+  // PostgREST capa o .select() em 1000 linhas em SILÊNCIO (docs/agent/database.md §5) e a
+  // tabela tem ~3k linhas (4 convenções de account). Sem paginar (#985 paginou omie_products
+  // e product_costs mas DEIXOU esta de fora), ~2/3 do catálogo perdia o cmc FRESCO do
+  // inventory — syncInventoryFull atualiza inventory_position.cmc do catálogo inteiro mas NÃO
+  // product_costs, então computeCosts é a ÚNICA ponte; truncada, cmcPreferido rebaixava p/ o
+  // product_costs.cmc STALE E a margem média por família saía de amostra truncada.
+  // .order("id") = PK estável exigida pelo .range() (ver _shared/paginate.ts).
+  const inventory = await fetchAll<InventoryPositionRow>(
+    (from, to) =>
+      db
+        .from("inventory_position")
+        .select("product_id, cmc, saldo, synced_at")
+        .order("id", { ascending: true })
+        .range(from, to),
+    "inventory_position",
+  );
+  // Colapso por product_id ELEGENDO a melhor linha (não last-wins por id). inventory_position
+  // é UNIQUE por (omie_codigo_produto, account) e há 2 convenções de account p/ a MESMA empresa
+  // (omie-analytics grava vendas/colacor_vendas/servicos; sync-reprocess grava oben/colacor) →
+  // o MESMO product_id aparece em >1 linha. Eleger por `id` (UUID aleatório) deixaria uma linha
+  // cmc=0/stale esconder a positiva/fresca e gravar custo stale em product_costs (achado Codex
+  // [P1]). Critério money-path = cmc>0 vence ausente/0 e, entre positivas, synced_at mais recente —
+  // mesmo padrão de eleição cross-account do get_preco_cockpit/fin-valor-cockpit. (Prova em prod:
+  // muda 0 outcomes hoje — é guard de borda contra a fragilidade, não regressão.)
   const invMap: Record<string, InventoryPositionRow> = {};
-  for (const i of inventory) if (i.product_id) invMap[i.product_id] = i;
+  for (const i of inventory) {
+    if (!i.product_id) continue;
+    const prev = invMap[i.product_id];
+    if (!prev) {
+      invMap[i.product_id] = i;
+      continue;
+    }
+    const iPos = (i.cmc ?? 0) > 0;
+    const prevPos = (prev.cmc ?? 0) > 0;
+    // cmc positivo vence cmc ausente/0; empate de positividade → synced_at mais recente vence
+    // (null synced_at perde por ordenar como string vazia).
+    const melhor = iPos !== prevPos ? iPos : (i.synced_at ?? "") > (prev.synced_at ?? "");
+    if (melhor) invMap[i.product_id] = i;
+  }
 
   // Montagem PURA dos upserts (testada em src/lib/custo/costCompute.test.ts; espelho
   // verbatim em _shared/cost-compute.ts). Recebe o catálogo COMPLETO (paginado acima) —
