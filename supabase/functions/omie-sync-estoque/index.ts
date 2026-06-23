@@ -218,7 +218,7 @@ async function callOmiePedidos(
         // (o filtro fino de aprovado/saldo é em memória, robusto à incerteza do nome do flag).
         param: [{
           nPagina: pagina,
-          nRegsPorPagina: 200, // 50→200: menos páginas → menos sleep de rate-limit → folga grande no wall-clock do edge
+          nRegsPorPagina: 100, // MÁXIMO do PesquisarPedCompra — o Omie rejeita >100 (HTTP 500 "valor máximo de registros por página é [100]"); 100 > 50 da edge antiga → ainda corta as páginas pela metade
           lApenasImportadoApi: "F",
           lExibirPedidosPendentes: "T",
           lExibirPedidosFaturados: "T",
