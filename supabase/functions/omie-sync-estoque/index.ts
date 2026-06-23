@@ -240,6 +240,11 @@ async function callOmiePedidos(
       await new Promise((r) => setTimeout(r, 5000));
       continue;
     }
+    // [fix 2026-06-23] O Omie sinaliza FIM DE PÁGINAS com HTTP 500 + faultstring "Não existem registros para a
+    // página [N]" (faultcode 5113), NÃO com 200+lista-vazia. Sem isto, o throw em !res.ok matava a paginação-até-
+    // vazia na 1ª página-além-do-fim → sync abortava (fail-closed, mas nunca completava). Devolve o json p/ o loop
+    // tratar como fim via FIM_SEM_REGISTROS (conservadora — só o "fim" casa; erro real do Omie ainda lança abaixo).
+    if (!res.ok && json?.faultstring && FIM_SEM_REGISTROS.test(json.faultstring)) return json;
     if (!res.ok) throw new Error(`PesquisarPedCompra HTTP ${res.status}: ${text.slice(0, 300)}`);
     return json;
   }
