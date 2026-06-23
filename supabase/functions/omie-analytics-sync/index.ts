@@ -995,9 +995,20 @@ async function computeCosts(db: SupabaseClient) {
   const costMap: Record<string, { cmc?: number | null }> = {};
   for (const c of costsRaw) costMap[c.product_id] = c;
 
-  // Get inventory for CMC
-  const { data: inventoryRaw } = await db.from("inventory_position").select("product_id, cmc, saldo");
-  const inventory = (inventoryRaw ?? []) as unknown as InventoryPositionRow[];
+  // Inventário p/ o CMC — PAGINADO (igual a products/product_costs acima): o .select() cru
+  // capa em 1000 silencioso (PostgREST) e há ~3x isso → a cauda da escada virava proxy/zero
+  // (ausente ≠ zero). .order pela UNIQUE (omie_codigo_produto, account) é o cursor estável —
+  // product_id NÃO serve (repete por conta-alias e admite null). 3ª leitura da função; o #985
+  // paginou as duas primeiras e deixou esta. Link cross-vocabulário (vendas→oben / colacor_vendas
+  // →colacor) é correto — invMap é 1:1 por product_id; divergência de valor provada 0 (psql-ro).
+  const inventory = await fetchAll<InventoryPositionRow>(
+    (from, to) =>
+      db.from("inventory_position").select("product_id, cmc, saldo")
+        .order("omie_codigo_produto", { ascending: true })
+        .order("account", { ascending: true })
+        .range(from, to),
+    "inventory_position",
+  );
   const invMap: Record<string, InventoryPositionRow> = {};
   for (const i of inventory) if (i.product_id) invMap[i.product_id] = i;
 
