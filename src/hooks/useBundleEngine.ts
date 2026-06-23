@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
+import { custoCanonico } from '@/lib/custo/custoCanonico';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface AssociationRule {
@@ -77,6 +78,7 @@ interface ProductRow {
 
 interface ProductCostRow {
   product_id: string;
+  cost_final: number | string | null;
   cost_price: number | string | null;
 }
 
@@ -188,7 +190,7 @@ export const useBundleEngine = () => {
         { data: conversionData },
       ] = await Promise.all([
         supabase.from('omie_products').select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto').eq('ativo', true) as unknown as Promise<{ data: ProductRow[] | null }>,
-        supabase.from('product_costs').select('product_id, cost_price') as unknown as Promise<{ data: ProductCostRow[] | null }>,
+        supabase.from('product_costs').select('product_id, cost_final, cost_price') as unknown as Promise<{ data: ProductCostRow[] | null }>,
         supabase.from('profiles').select('user_id, name, customer_type, cnae') as unknown as Promise<{ data: ProfileRow[] | null }>,
         supabase.from('farmer_category_conversion').select('*') as unknown as Promise<{ data: ConversionRow[] | null }>,
       ]);
@@ -216,7 +218,12 @@ export const useBundleEngine = () => {
 
       // Build maps
       const costMap = new Map<string, number>();
-      (productCosts || []).forEach((pc) => costMap.set(pc.product_id, Number(pc.cost_price)));
+      // Custo canônico = cost_final (proxy-aware); cost_price agora é nullable (só custo real).
+      // Number(null)===0 inflava a margem (ausente≠zero) — excluir SKU sem custo, não fabricar 0.
+      (productCosts || []).forEach((pc) => {
+        const c = custoCanonico(pc);
+        if (c != null) costMap.set(pc.product_id, c);
+      });
       const productMap = new Map<string, ProductRow>();
       (products || []).forEach((p) => productMap.set(p.id, p));
       const omieToProductId = new Map<number, string>();

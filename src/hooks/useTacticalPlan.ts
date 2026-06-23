@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
+import { selectObjective, clampRecencyCapDays } from '@/lib/scoring/objective';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
@@ -187,14 +188,6 @@ export const classifyProfile = (healthScore: number, avgSpend: number, marginPct
   return 'misto';
 };
 
-const selectObjective = (churnRisk: number, mixGap: number, marginPct: number, clusterMargin: number, daysSince: number): string => {
-  if (daysSince > 90) return 'reativacao';
-  if (churnRisk > 60) return 'recuperacao';
-  if (mixGap > 3) return 'expansao_mix';
-  if (marginPct < clusterMargin * 0.8) return 'consolidacao_margem';
-  return 'upsell_premium';
-};
-
 const PROFIT_PER_HOUR_THRESHOLD = 50; // R$/h configurable threshold
 
 export const useTacticalPlan = () => {
@@ -335,11 +328,16 @@ export const useTacticalPlan = () => {
         { data: score },
         { data: profile },
         { data: bundles },
+        { data: recencyCapRow },
       ] = await Promise.all([
         // Opção A: lookup por customer_user_id (único); sem farmer_id (RLS gateia). Ver checkEfficiency.
         supabase.from('farmer_client_scores').select('*').eq('customer_user_id', customerId).single() as unknown as Promise<{ data: ClientScoreFull | null }>,
         supabase.from('profiles').select('name, customer_type, cnae').eq('user_id', customerId).single() as unknown as Promise<{ data: ProfileLite | null }>,
         supabase.from('farmer_bundle_recommendations').select('*').eq('customer_user_id', customerId).eq('farmer_id', user.id).eq('status', 'pendente').order('lie_bundle', { ascending: false }).limit(2) as unknown as Promise<{ data: BundleRow[] | null }>,
+        // Teto de recência (hs_recency_cap_days) — fronteira reativacao/recuperacao em selectObjective
+        // ACOMPANHA o teto do modelo (não hardcode). Ausente → clampRecencyCapDays default 180. limit(1)
+        // pra maybeSingle nunca lançar em chave duplicada (não quebrar a geração por quirk de config).
+        supabase.from('farmer_algorithm_config').select('value').eq('key', 'hs_recency_cap_days').limit(1).maybeSingle() as unknown as Promise<{ data: { value: number | string | null } | null }>,
       ]);
 
       if (!score) {
@@ -367,7 +365,8 @@ export const useTacticalPlan = () => {
 
       const mixGap = Math.max(0, 8 - categoryCount);
       const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, categoryCount);
-      const strategicObjective = selectObjective(churnRisk, mixGap, marginPct, clusterMargin, daysSince);
+      const recencyCapDays = clampRecencyCapDays(recencyCapRow?.value);
+      const strategicObjective = selectObjective(churnRisk, mixGap, marginPct, clusterMargin, daysSince, recencyCapDays);
 
       const topBundle = bundles?.[0] || null;
       const secondBundle = bundles?.[1] || null;

@@ -8,12 +8,20 @@ import { execSync } from "node:child_process";
 const isLovablePreview = process.env.LOVABLE_PREVIEW === "true";
 
 // Carimbo de commit no bundle (lido pela verificação de deploy / cron de smoke E2E).
-// Ordem: env explícita (CI) → git local (funciona se o build tiver `.git`; INCERTO no
-// Lovable, confirmado só no 1º Publish) → "dev". Nunca quebra o build (try/catch).
+// Confirmado em 2026-06-19: o build do Lovable NÃO tem `.git` (git rev-parse → "dev").
+// Por isso varremos env de SHA de várias PLATAFORMAS (uma pode ser a do Lovable); só
+// aceitamos valor que PARECE um SHA. Sem nenhuma → git local → "dev". Nunca quebra.
 function resolveCommitSha(): string {
-  const env =
-    process.env.VITE_COMMIT_SHA || process.env.COMMIT_SHA || process.env.GITHUB_SHA;
-  if (env) return env.slice(0, 8);
+  const candidates = [
+    "VITE_COMMIT_SHA", "COMMIT_SHA", "GITHUB_SHA", "VERCEL_GIT_COMMIT_SHA",
+    "CF_PAGES_COMMIT_SHA", "COMMIT_REF", "CACHED_COMMIT_REF", "RENDER_GIT_COMMIT",
+    "RAILWAY_GIT_COMMIT_SHA", "SOURCE_VERSION", "LOVABLE_COMMIT_SHA",
+    "LOVABLE_GIT_SHA", "LOVABLE_GIT_COMMIT", "LOVABLE_BUILD_SHA",
+  ];
+  for (const k of candidates) {
+    const v = (process.env[k] || "").trim();
+    if (/^[0-9a-f]{7,40}$/i.test(v)) return v.slice(0, 8);
+  }
   try {
     return execSync("git rev-parse --short=8 HEAD", {
       encoding: "utf8",
@@ -23,13 +31,27 @@ function resolveCommitSha(): string {
     return "dev";
   }
 }
+
+// PROBE (temporário, removível): quais CHAVES de env de build existem que possam conter
+// o commit. Só NOMES (nunca valores), filtrado pra fora de segredos. No 1º Publish revela
+// o nome real da env do Lovable se nenhum candidato acima pegou (→ adicioná-lo à lista).
+function buildEnvProbe(): string {
+  return Object.keys(process.env)
+    .filter((k) => /(^|_)(GIT|SHA|COMMIT|REF|REV|BRANCH|DEPLOY|VERCEL|LOVABLE|CF|PAGES|RENDER|RAILWAY|SOURCE|BUILD|CI|HEAD)(_|$)/i.test(k))
+    .filter((k) => !/(SECRET|KEY|TOKEN|PASSWORD|PRIVATE|AUTH|CREDENTIAL)/i.test(k))
+    .sort()
+    .join(",");
+}
 const commitSha = resolveCommitSha();
+const buildEnvKeys = buildEnvProbe();
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   define: {
     // Substituído LITERALMENTE nos bytes do bundle → grepável na verificação de deploy.
     __COMMIT_SHA__: JSON.stringify(commitSha),
+    // PROBE temporário — remover quando a env de SHA do Lovable for identificada.
+    __BUILD_ENV_KEYS__: JSON.stringify(buildEnvKeys),
   },
   server: {
     host: "::",

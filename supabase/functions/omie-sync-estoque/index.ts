@@ -154,6 +154,23 @@ interface OmiePedResponse { pedidos_pesquisa?: OmiePedConsulta[]; nTotalPaginas?
 
 // ── Helper puro (espelho VERBATIM de src/lib/reposicao/pendente-entrada-po.ts; 18 testes vitest) ──
 interface PoItemOmie { sku: string; poNumero: string; etapa: string; qtde: number; recebido: number; }
+// [Codex P1 2026-06-20] Parse ESTRITO de quantidade (espelho de pendente-entrada-po.ts). Number() mascara dado
+// torto: ""/" "/null/false/[]→0, "0x10"→16, "1e3"→1000 — e um nQtdeRec mascarado como 0 conta saldo CHEIO = RUPTURA.
+function parseQtd(v: unknown): number {
+  if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+  if (typeof v !== "string") return NaN;
+  const s = v.trim();
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(s)) return NaN;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+}
+// nQtdeRec AUSENTE (undefined) = nada recebido → 0 (Omie omite); null/""/inválido → NaN (fail-closed, não 0=saldo cheio).
+function parseRecebido(v: unknown): number {
+  return v === undefined ? 0 : parseQtd(v);
+}
+function quantidadesValidas(qtde: number, recebido: number): boolean {
+  return Number.isFinite(qtde) && Number.isFinite(recebido) && qtde >= 0 && recebido >= 0;
+}
 function saldoAReceber(qtde: number, recebido: number): number {
   const q = Number.isFinite(qtde) ? qtde : 0;
   const r = Number.isFinite(recebido) ? recebido : 0;
@@ -201,7 +218,7 @@ async function callOmiePedidos(
         // (o filtro fino de aprovado/saldo é em memória, robusto à incerteza do nome do flag).
         param: [{
           nPagina: pagina,
-          nRegsPorPagina: 50,
+          nRegsPorPagina: 200, // 50→200: menos páginas → menos sleep de rate-limit → folga grande no wall-clock do edge
           lApenasImportadoApi: "F",
           lExibirPedidosPendentes: "T",
           lExibirPedidosFaturados: "T",
@@ -253,11 +270,30 @@ async function fetchEmTransitoKeys(
   return { numeros, codInts };
 }
 
+// ── Paginação ATÉ PÁGINA VAZIA (espelho das primitivas testadas do helper) ───────────────────────
+// O nTotalPaginas do Omie SUB-REPORTA em listas grandes (bug conhecido, já mordeu CR/CP no financeiro):
+// confiar nele lê só a 1ª página → POs aprovadas além dela somem → estoque_pendente_entrada subestimado
+// → o motor re-sugere comprar = DOUBLE-BUY. Paginar até a página vazia + fingerprint anti-loop + de-dup
+// de PO por nCodPed entre páginas + teto técnico fatal (espelho de pendente-entrada-po.ts, 9 rounds Codex).
+const MAX_PAGINAS_PED = 200; // teto técnico FATAL anti-loop (a janela de 180d cabe MUITO abaixo disso)
+// fault do Omie que significa "fim legítimo" (sem registros), NÃO erro. Conservadora: exige "registro(s)"
+// ADJACENTE a uma negação de EXISTÊNCIA (a fault canônica é "Não existem registros para a página informada").
+// Espelho VERBATIM de pendente-entrada-po.ts:FIM_SEM_REGISTROS (endurecido por Codex P1.7/P1-D/P2-D).
+const FIM_SEM_REGISTROS =
+  /(\bsem\s+registros?\b|\bnenhum\s+registros?\b|n[ãa]o\s+(existem?|h[áa])\s+registros?\b|n[ãa]o\s+foram\s+encontrad\w*\s+registros?\b|\bregistros?\s+n[ãa]o\s+(existem?|foram\s+encontrad\w*|encontrad\w*)\b)/i;
+// fingerprint barato de página (anti-loop): mesma página não-vazia repetida = Omie em loop → abort FATAL.
+function fingerprintPagina(pedidos: readonly OmiePedConsulta[]): string {
+  if (!pedidos || pedidos.length === 0) return "";
+  const prim = pedidos[0]?.cabecalho_consulta ?? pedidos[0]?.cabecalho ?? {};
+  const ult = pedidos[pedidos.length - 1]?.cabecalho_consulta ?? pedidos[pedidos.length - 1]?.cabecalho ?? {};
+  return `${pedidos.length}:${String(prim?.cNumero ?? "").trim()}:${String(ult?.cNumero ?? "").trim()}`;
+}
+
 async function computePendenteViaPedidosCompra(
   appKey: string, appSecret: string,
   habilitadoMap: Map<string, string | null>,
   supabase: SupabaseClient,
-): Promise<Map<string, number>> {
+): Promise<{ pendente: Map<string, number>; confiavel: boolean; problemas: string[] }> {
   const { numeros: emTransitoNumeros, codInts: emTransitoCodInts } = await fetchEmTransitoKeys(supabase);
 
   const hoje = new Date();
@@ -268,51 +304,119 @@ async function computePendenteViaPedidosCompra(
 
   const items: PoItemOmie[] = [];
   const etapasInesperadas = new Set<string>();
-  let pagina = 1, totalPaginas = 1, pedidosVistos = 0, pedidosApp = 0;
+  // [fix double-buy 2026-06-20] PAGINA ATÉ A PÁGINA VAZIA — não confiar em nTotalPaginas (Omie SUB-REPORTA →
+  // lia só a 1ª página → POs aprovadas além dela sumiam → pendente subestimado → motor re-sugeria = double-buy).
+  const fpsVistos = new Set<string>();     // anti-loop: página inteira repetida (Omie em loop)
+  const posComoApp = new Set<string>();    // POs vistas como app (no em_transito) — de-dup + detectar divergência app↔manual
+  const posComoManual = new Set<string>(); // POs contadas como manual (pendente Omie) — de-dup + detectar divergência app↔manual
+  const problemas: string[] = [];          // [Codex P1] fail-closed: dado torto → NÃO grava pendente (preserva anterior)
+  let pedidosVistos = 0, pedidosApp = 0, paginasLidas = 0, fim = false;
 
-  do {
+  for (let pagina = 1; pagina <= MAX_PAGINAS_PED; pagina++) {
     const resp = await callOmiePedidos(appKey, appSecret, pagina, dataDe, dataAte);
     if (resp?.faultstring) {
-      if (/not\s*found|sem\s*registros|n[ãa]o\s*encontrado/i.test(resp.faultstring)) break;
+      if (FIM_SEM_REGISTROS.test(resp.faultstring)) { fim = true; break; }
       throw new Error(`PesquisarPedCompra fault: ${resp.faultstring}`);
     }
-    totalPaginas = resp?.nTotalPaginas ?? 1;
     const pedidos = resp?.pedidos_pesquisa ?? [];
+    if (pedidos.length === 0) { fim = true; break; }   // página vazia = FIM real (não nTotalPaginas)
+    const fp = fingerprintPagina(pedidos);
+    if (fp && fpsVistos.has(fp)) {
+      throw new Error(`PesquisarPedCompra REPETIÇÃO de página (pág ${pagina}) — abort anti-overcount/double-buy`);
+    }
+    fpsVistos.add(fp);
+    paginasLidas++;
     for (const ped of pedidos) {
       pedidosVistos++;
       const cab = ped?.cabecalho_consulta ?? ped?.cabecalho ?? {};
       const etapa = String(cab?.cEtapa ?? "").trim();
       const cNumero = String(cab?.cNumero ?? "").trim();
       const cCodIntPed = String(cab?.cCodIntPed ?? "").trim();
+      const nCodPed = String(cab?.nCodPed ?? "").trim();
+      const ehApp = (cNumero && emTransitoNumeros.has(cNumero)) || (cCodIntPed && emTransitoCodInts.has(cCodIntPed));
       if (etapa && !ETAPAS_CONHECIDAS.has(etapa)) etapasInesperadas.add(etapa);
-      // De-dup: PO do app (já contada pelo em_transito) → pula (anti double-count).
-      if ((cNumero && emTransitoNumeros.has(cNumero)) || (cCodIntPed && emTransitoCodInts.has(cCodIntPed))) {
+      // [Codex round5] aliases de identidade da PO (prefixadas, não-vazias) p/ correlacionar a MESMA PO entre páginas
+      // mesmo quando o Omie omite campos DIFERENTES em cada aparição (nCodPed numa, cNumero noutra). O cross-check
+      // app↔manual bate em QUALQUER alias compartilhada. Resíduo só no caso de identidades 100% DISJUNTAS entre
+      // páginas (sem nenhuma chave em comum) — inerente/irresolvível no client (sem correlação possível).
+      const aliases: string[] = [];
+      if (nCodPed) aliases.push(`id:${nCodPed}`);
+      if (cNumero) aliases.push(`num:${cNumero}`);
+      if (cCodIntPed) aliases.push(`cod:${cCodIntPed}`);
+      // De-dup vs em_transito: PO do app já é contada pelo em_transito da RPC → NÃO entra no pendente Omie. Pula CEDO
+      // (não exige nCodPed: uma PO app não pode congelar o snapshot — [Codex P2 round3]). Registra TODAS as aliases
+      // como app; se a MESMA PO já foi contada como manual (qualquer alias) → app+manual = double-count → fail-closed.
+      if (ehApp) {
         pedidosApp++;
+        if (aliases.some((a) => posComoManual.has(a))) {
+          problemas.push(`PO app↔manual divergente entre páginas (${aliases.join(",")}) — double-count`);
+        }
+        for (const a of aliases) posComoApp.add(a);
         continue;
       }
+      // Só etapa APROVADA-ABERTA (15) contribui pro pendente. Em-aprovação (10)/desconhecida não conta → ignora
+      // sem exigir nCodPed nem de-dup (uma PO irrelevante não pode congelar o snapshot — [Codex P2 round3]).
+      if (!ETAPAS_APROVADO_ABERTO.has(etapa)) continue;
+      // [Codex P1.a] PO MANUAL etapa-aprovada que CONTA → exige nCodPed canônico (sempre presente → chave comum entre
+      // páginas garantida p/ o de-dup manual-manual). Sem ele a MESMA PO somaria 2× → overcount → ruptura. Fail-closed.
+      if (!nCodPed) {
+        problemas.push(`PO etapa-aprovada sem nCodPed (cNumero=${cNumero || "—"}) — sem chave de de-dup`);
+        continue;
+      }
+      // [Codex round4/5] mesma PO já vista como APP (em_transito) reaparece como manual (qualquer alias) → double-count.
+      if (aliases.some((a) => posComoApp.has(a))) {
+        problemas.push(`PO app↔manual divergente entre páginas (${aliases.join(",")}) — double-count`);
+        continue;
+      }
+      // de-dup manual-manual: MESMA PO já contada (qualquer alias) reaparecendo (shift de paginação) → não soma 2×.
+      if (aliases.some((a) => posComoManual.has(a))) continue;
+      for (const a of aliases) posComoManual.add(a);
+      // [Codex P1-novo] fail-closed contra resposta truncada no NÍVEL DO ITEM (espelho do helper coletarDaPagina):
+      // item sem nCodProd COM saldo>0/qtde inválida, ou PO aprovada SEM nenhum item com SKU = resposta anômala →
+      // o saldo se perderia (subcontagem → double-buy). Marca problema (etapa aqui já CONTA: é etapa-15).
+      let itensComSku = 0;
       for (const it of ped?.produtos_consulta ?? []) {
         const sku = String(it.nCodProd ?? "").trim();
-        if (!sku || !habilitadoMap.has(sku)) continue;
-        items.push({
-          sku, poNumero: cNumero, etapa,
-          qtde: Number(it.nQtde ?? 0), recebido: Number(it.nQtdeRec ?? 0),
-        });
+        // [Codex P1.c] parsing ESTRITO: Number(nQtdeRec="" / null)=0 contaria saldo CHEIO numa PO parcialmente
+        // recebida = supercontagem → ruptura. parseQtd/parseRecebido → NaN em dado torto → fail-closed (problema).
+        const qtde = parseQtd(it.nQtde), recebido = parseRecebido(it.nQtdeRec);
+        if (!sku) {
+          if (!quantidadesValidas(qtde, recebido) || saldoAReceber(qtde, recebido) > 0) {
+            problemas.push(`PO ${cNumero || nCodPed} (etapa ${etapa}) item SEM nCodProd com saldo/qtde suspeita`);
+          }
+          continue;
+        }
+        itensComSku++;
+        if (!habilitadoMap.has(sku)) continue;
+        if (!quantidadesValidas(qtde, recebido)) {
+          problemas.push(`item inválido (sku=${sku} po=${cNumero} nQtde=${it.nQtde} nQtdeRec=${it.nQtdeRec})`);
+          continue;
+        }
+        items.push({ sku, poNumero: cNumero, etapa, qtde, recebido });
+      }
+      if (itensComSku === 0) {
+        problemas.push(`PO aprovada sem item com SKU (po=${cNumero || nCodPed} etapa=${etapa})`);
       }
     }
-    pagina++;
-    if (pagina <= totalPaginas) await new Promise((r) => setTimeout(r, 1100));
-  } while (pagina <= totalPaginas);
-
-  const pendente = computePendenteEntradaPorSku(items, {
-    etapasAbertas: ETAPAS_APROVADO_ABERTO,
-    poNumerosEmTransito: emTransitoNumeros,
-  });
+    await new Promise((r) => setTimeout(r, 1100));   // rate-limit Omie entre páginas
+  }
+  if (!fim) {
+    throw new Error(`PesquisarPedCompra excedeu ${MAX_PAGINAS_PED} páginas sem ver fim — abort anti-truncamento`);
+  }
+  // [Codex P1] CONFIABILIDADE do snapshot (fail-closed que PRESERVA): dado torto (problemas) ou varredura totalmente
+  // vazia (0 pedidos — a OBEN sempre tem PO aberta) ⇒ pendente NÃO confiável → o caller NÃO grava a coluna (preserva
+  // o último valor bom); o FÍSICO segue atualizando (não derruba o sync de estoque por 1 PO suja de fornecedor).
+  const confiavel = problemas.length === 0 && pedidosVistos > 0;
+  const pendente = confiavel
+    ? computePendenteEntradaPorSku(items, { etapasAbertas: ETAPAS_APROVADO_ABERTO, poNumerosEmTransito: emTransitoNumeros })
+    : new Map<string, number>();
   console.log(
-    `[omie-sync-estoque] PesquisarPedCompra: ${pedidosVistos} pedidos abertos (${pedidosApp} do app de-dup), ` +
-    `${items.length} itens habilitados, ${pendente.size} SKUs com a caminho.` +
-    (etapasInesperadas.size ? ` ⚠️ etapas fora de {15,10}: ${[...etapasInesperadas].join(",")} (revisar whitelist)` : ""),
+    `[omie-sync-estoque] PesquisarPedCompra: ${paginasLidas} págs até vazia, ${pedidosVistos} pedidos abertos (${pedidosApp} do app de-dup), ` +
+    `${items.length} itens habilitados, ${pendente.size} SKUs com a caminho, confiavel=${confiavel}.` +
+    (problemas.length ? ` ⚠️ ${problemas.length} problema(s) → pendente PRESERVADO: ${problemas.slice(0, 3).join(" | ")}` : "") +
+    (etapasInesperadas.size ? ` ⚠️ etapas fora de {15,10}: ${[...etapasInesperadas].join(",")}` : ""),
   );
-  return pendente;
+  return { pendente, confiavel, problemas };
 }
 
 async function computePendenteViaSaldoPendente(
@@ -447,14 +551,19 @@ Deno.serve(async (req) => {
     );
 
     // 3.b) "A caminho" (estoque_pendente_entrada) — pedidos de compra ABERTOS do Omie.
-    // OBEN: via PesquisarPedCompra (pega previsão FUTURA de PO aprovada que o ListarSaldoPendente
-    //   perdia — incidente 2026-06-11, FUNDO PU/1054). FATAL de propósito: pending de entrada é
-    //   money-path; a falha SILENCIOSA (=0) foi o que causou o re-sugerir. Se falhar, a sync inteira
-    //   falha → sku_estoque_atual não atualiza → o Sentinela (check estoque_reposicao) pega o congelado.
+    // OBEN: via PesquisarPedCompra (pega previsão FUTURA de PO aprovada que o ListarSaldoPendente perdia —
+    //   incidente 2026-06-11, FUNDO PU/1054). Erro de VARREDURA (rede/fault/loop/truncamento) é FATAL (throw →
+    //   sync falha → Sentinela pega o congelado). Já dado torto/varredura vazia NÃO derruba o sync: o pendente
+    //   vira NÃO confiável e a coluna é PRESERVADA no upsert (o físico segue fresco). [Codex P1 2026-06-20]
     // COLACOR: mantém ListarSaldoPendente, não-fatal (reposição é OBEN; etapa-map do COLACOR não confirmada).
     let pendenteEntrada = new Map<string, number>();
+    let pendenteConfiavel = true; // COLACOR (ListarSaldoPendente) sempre aplica; OBEN é gated pela confiabilidade
+    let pendenteProblemas: string[] = [];
     if (empresa === "OBEN") {
-      pendenteEntrada = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, supabase);
+      const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, supabase);
+      pendenteEntrada = r.pendente;
+      pendenteConfiavel = r.confiavel;
+      pendenteProblemas = r.problemas;
     } else {
       try {
         pendenteEntrada = await computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap);
@@ -463,18 +572,29 @@ Deno.serve(async (req) => {
         console.warn(`[omie-sync-estoque] COLACOR ListarSaldoPendente falhou (não-fatal): ${msg}`);
       }
     }
+    // [Codex P1 round3] pendente OBEN não confiável → PRESERVADO (físico segue fresco, evita double-buy/ruptura por
+    // número errado/zerado). console.error + flag no summary = sinal nos logs; o alerta PROATIVO (Sentinela enxergar
+    // o pendente congelado, que o frescor do físico mascara) depende do marcador sync_state — follow-up (#809 passo 5).
+    if (empresa === "OBEN" && !pendenteConfiavel) {
+      console.error(
+        `[omie-sync-estoque] ⚠️ pendente OBEN NÃO confiável → PRESERVADO. ${pendenteProblemas.length} problema(s): ${pendenteProblemas.slice(0, 5).join(" | ")}`,
+      );
+    }
 
     // 4) UPSERT em sku_estoque_atual (valores já agregados por SKU)
+    // [Codex P1] estoque_pendente_entrada só é gravado quando o snapshot é CONFIÁVEL; senão a coluna é OMITIDA
+    // (no UPDATE o PostgREST não toca colunas ausentes → preserva o último valor bom) e o físico segue fresco.
     const upsertRows = Array.from(encontrados.entries()).map(([codigo, agg]) => {
-      return {
+      const row: Record<string, unknown> = {
         empresa,
         sku_codigo_omie: codigo,
         estoque_fisico: agg.fisico,
         estoque_disponivel: agg.fisico - agg.reservado,
-        estoque_pendente_entrada: pendenteEntrada.get(codigo) ?? 0,
         ultima_sincronizacao: new Date().toISOString(),
         fonte_sync: agg.locais > 1 ? `ListarPosEstoque(${agg.locais} locais)` : "ListarPosEstoque",
       };
+      if (pendenteConfiavel) row.estoque_pendente_entrada = pendenteEntrada.get(codigo) ?? 0;
+      return row;
     });
 
     let sincronizados = 0;
@@ -496,7 +616,7 @@ Deno.serve(async (req) => {
             .from("sku_estoque_atual")
             .upsert(row, { onConflict: "empresa,sku_codigo_omie" });
           if (e2) {
-            errosUpsert.push({ sku: row.sku_codigo_omie, erro: e2.message });
+            errosUpsert.push({ sku: String(row.sku_codigo_omie), erro: e2.message });
           } else {
             sincronizados++;
           }
@@ -612,6 +732,8 @@ Deno.serve(async (req) => {
       nao_encontrados: naoEncontrados.length,
       erros_upsert: errosUpsert.length,
       alertas_novos: alertasNovos,
+      pendente_confiavel: pendenteConfiavel,
+      pendente_problemas: pendenteProblemas.length,
       paginas_omie: totalPaginas,
       total_produtos_omie: totalRegistros,
       lista_nao_encontrados: naoEncontrados,

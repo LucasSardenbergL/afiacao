@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { fetchAll } from "../_shared/paginate.ts";
+import { montarUpsertsDeCusto } from "../_shared/cost-compute.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -149,17 +151,11 @@ interface OmieApiResponseBase {
   faultcode?: string;
 }
 
-interface ProductCostRow {
-  id: string;
-  product_id: string;
-  cost_price?: number;
-  cmc?: number;
-}
-
 interface InventoryPositionRow {
   product_id: string | null;
-  cmc?: number;
-  saldo?: number;
+  cmc?: number | null;
+  saldo?: number | null;
+  synced_at?: string | null;
 }
 
 function getCredentials(account: OmieAccount) {
@@ -825,6 +821,10 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
     // 5) product_costs — só onde há product_id E cmc>0. Preserva a semântica anterior:
     //    já existe → atualiza SÓ cmc+updated_at (não toca cost_price/source/confidence);
     //    novo → insere linha completa (cost_source='CMC', cost_confidence=0.7).
+    //    NB: este writer NUNCA promove proveniência para cima. A autoridade do cost_source é
+    //    computeCosts — ele recomputa cost_price=cmc/cost_source=CMC quando há CMC. Uma linha
+    //    proxy que ganha cmc aqui fica proxy HONESTO até o próximo recompute (sync_all roda o
+    //    compute logo após; o cron intra-day cobre os syncs standalone). Nunca mente para cima.
     const costCandidatos = codProds
       .map((cod) => ({ id: idByCod.get(cod), cmc: posicoes.get(cod)!.cmc }))
       .filter((x): x is { id: string; cmc: number } => !!x.id && x.cmc > 0);
@@ -966,115 +966,117 @@ async function computeCosts(db: SupabaseClient) {
   const margemDefault = cfg.margem_default_global ?? 0.35;
   const margemMin = cfg.margem_minima ?? 0.05;
   const margemMax = cfg.margem_maxima ?? 0.85;
-  const divergenceThreshold = cfg.divergence_threshold ?? 0.20;
+  // Guard anti-lixo do CMC (faixa absoluta cmc/price): rejeita só erro de dado (quase-zero/desproporcional).
+  // Um CMC fora da banda de margem mas DENTRO desta faixa vira CMC_MARGEM_ATIPICA (custo real preservado,
+  // prejuízo/margem-baixa/alta observável) em vez de ser mascarado por proxy. Defaults aqui; ajustáveis via
+  // recommendation_config (margem_cmc_ratio_min/max) sem deploy. kMax=5 cobre o gap empírico real 4.97×→14.39×.
+  const cmcRatioMin = cfg.margem_cmc_ratio_min ?? 0.01;
+  const cmcRatioMax = cfg.margem_cmc_ratio_max ?? 5;
 
-  // Get all products with their costs and inventory
-  const { data: products } = await db.from("omie_products").select("id, valor_unitario, familia").eq("ativo", true);
-  if (!products?.length) return { updated: 0 };
+  // Catálogo ATIVO inteiro — PAGINADO: o PostgREST capa o .select() em 1000 linhas em
+  // SILÊNCIO (docs/agent/database.md §5). Sem isto, ~2/3 dos ~3k produtos ativos nunca
+  // eram recalculados. .order("id") = coluna estável exigida pelo .range() entre páginas.
+  const products = await fetchAll<{ id: string; valor_unitario: number; familia: string | null; unidade: string | null; descricao: string | null }>(
+    (from, to) =>
+      db
+        .from("omie_products")
+        .select("id, valor_unitario, familia, unidade, descricao")
+        .eq("ativo", true)
+        .order("id", { ascending: true })
+        .range(from, to),
+    "omie_products(ativos)",
+  );
+  if (!products.length) return { updated: 0 };
 
-  // Get all product costs
-  const { data: costsRaw } = await db.from("product_costs").select("*");
-  const costs = (costsRaw ?? []) as unknown as ProductCostRow[];
-  const costMap: Record<string, ProductCostRow> = {};
-  for (const c of costs) costMap[c.product_id] = c;
+  // product_costs inteiro — PAGINADO pelo mesmo motivo: um costMap truncado perdia o CMC
+  // persistido da cauda e cmcPreferido rebaixava custo real a proxy. Só `cmc` é lido aqui.
+  const costsRaw = await fetchAll<{ product_id: string; cmc: number | null }>(
+    (from, to) =>
+      db
+        .from("product_costs")
+        .select("product_id, cmc")
+        .order("product_id", { ascending: true })
+        .range(from, to),
+    "product_costs",
+  );
+  const costMap: Record<string, { cmc?: number | null }> = {};
+  for (const c of costsRaw) costMap[c.product_id] = c;
 
-  // Get inventory for CMC
-  const { data: inventoryRaw } = await db.from("inventory_position").select("product_id, cmc, saldo");
-  const inventory = (inventoryRaw ?? []) as unknown as InventoryPositionRow[];
+  // inventory_position inteiro — PAGINADO pelos MESMOS motivos das duas leituras acima: o
+  // PostgREST capa o .select() em 1000 linhas em SILÊNCIO (docs/agent/database.md §5) e a
+  // tabela tem ~3k linhas (4 convenções de account). Sem paginar (#985 paginou omie_products
+  // e product_costs mas DEIXOU esta de fora), ~2/3 do catálogo perdia o cmc FRESCO do
+  // inventory — syncInventoryFull atualiza inventory_position.cmc do catálogo inteiro mas NÃO
+  // product_costs, então computeCosts é a ÚNICA ponte; truncada, cmcPreferido rebaixava p/ o
+  // product_costs.cmc STALE E a margem média por família saía de amostra truncada.
+  // .order("id") = PK estável exigida pelo .range() (ver _shared/paginate.ts).
+  const inventory = await fetchAll<InventoryPositionRow>(
+    (from, to) =>
+      db
+        .from("inventory_position")
+        .select("product_id, cmc, saldo, synced_at")
+        .order("id", { ascending: true })
+        .range(from, to),
+    "inventory_position",
+  );
+  // Colapso por product_id ELEGENDO a melhor linha (não last-wins por id). inventory_position
+  // é UNIQUE por (omie_codigo_produto, account) e há 2 convenções de account p/ a MESMA empresa
+  // (omie-analytics grava vendas/colacor_vendas/servicos; sync-reprocess grava oben/colacor) →
+  // o MESMO product_id aparece em >1 linha. Eleger por `id` (UUID aleatório) deixaria uma linha
+  // cmc=0/stale esconder a positiva/fresca e gravar custo stale em product_costs (achado Codex
+  // [P1]). Critério money-path = cmc>0 vence ausente/0 e, entre positivas, synced_at mais recente —
+  // mesmo padrão de eleição cross-account do get_preco_cockpit/fin-valor-cockpit. (Prova em prod:
+  // muda 0 outcomes hoje — é guard de borda contra a fragilidade, não regressão.)
   const invMap: Record<string, InventoryPositionRow> = {};
-  for (const i of inventory) if (i.product_id) invMap[i.product_id] = i;
-
-  // Compute family average margins
-  const familyMargins: Record<string, { totalMargin: number; count: number }> = {};
-  for (const p of products) {
-    const fam = p.familia || "default";
-    const c = costMap[p.id];
-    if (c?.cost_price > 0 && p.valor_unitario > 0) {
-      const margin = 1 - c.cost_price / p.valor_unitario;
-      if (margin > margemMin && margin < margemMax) {
-        if (!familyMargins[fam]) familyMargins[fam] = { totalMargin: 0, count: 0 };
-        familyMargins[fam].totalMargin += margin;
-        familyMargins[fam].count++;
-      }
+  for (const i of inventory) {
+    if (!i.product_id) continue;
+    const prev = invMap[i.product_id];
+    if (!prev) {
+      invMap[i.product_id] = i;
+      continue;
     }
+    const iPos = (i.cmc ?? 0) > 0;
+    const prevPos = (prev.cmc ?? 0) > 0;
+    // cmc positivo vence cmc ausente/0; empate de positividade → synced_at mais recente vence
+    // (null synced_at perde por ordenar como string vazia).
+    const melhor = iPos !== prevPos ? iPos : (i.synced_at ?? "") > (prev.synced_at ?? "");
+    if (melhor) invMap[i.product_id] = i;
   }
 
+  // Montagem PURA dos upserts (testada em src/lib/custo/costCompute.test.ts; espelho
+  // verbatim em _shared/cost-compute.ts). Recebe o catálogo COMPLETO (paginado acima) —
+  // a cauda > 1000 deixa de virar proxy e o CMC real é preservado (ausente ≠ zero).
+  const nowIso = new Date().toISOString();
+  const { rows } = montarUpsertsDeCusto(
+    products,
+    costMap,
+    invMap as unknown as Record<string, { cmc?: number | null }>,
+    { margemDefault, margemMin, margemMax, cmcRatioMin, cmcRatioMax },
+    nowIso,
+  );
+
+  // Upsert em LOTE (chunks de 500). Antes: N+1 (1 upsert por produto DENTRO do loop) —
+  // com o catálogo destruncado (~3k) isso estouraria o tempo do edge.
+  // Money-path (Codex P1): um lote que falha derruba 500 linhas ATOMICAMENTE — não
+  // reportar sucesso falso. Conta só o que PERSISTIU e LANÇA se algum lote falhou (o
+  // caller vira status=error; o data_health não marca "fresco" sobre gravação parcial).
+  const lotes = chunked(rows, 500);
   let updated = 0;
-
-  for (const product of products) {
-    const price = product.valor_unitario;
-    if (!price || price <= 0) continue;
-
-    const existing = costMap[product.id];
-    const inv = invMap[product.id];
-    const costProduto = existing?.cost_price || 0;
-    const cmc = inv?.cmc || existing?.cmc || 0;
-
-    const sanityCheck = (c: number) =>
-      c > 0 && c < price * (1 - margemMin) && c > price * (1 - margemMax);
-
-    let costFinal = 0;
-    let costSource = "UNKNOWN";
-    let costConfidence = 0;
-
-    // Priority 1: Product cost
-    if (costProduto > 0 && sanityCheck(costProduto)) {
-      costFinal = costProduto;
-      costSource = "PRODUCT_COST";
-      costConfidence = 0.95;
-
-      // Check divergence with CMC
-      if (cmc > 0 && sanityCheck(cmc)) {
-        const divergence = Math.abs(costProduto - cmc) / Math.max(costProduto, cmc);
-        if (divergence > divergenceThreshold) {
-          // Heuristic: prefer CMC if has stock/recent movement
-          if (inv?.saldo > 0) {
-            costFinal = cmc;
-            costSource = "CMC";
-            costConfidence = 0.85;
-          }
-          // Otherwise keep product cost
-        }
-      }
+  const errosUpsert: string[] = [];
+  for (const chunk of lotes) {
+    const { error } = await db.from("product_costs").upsert(chunk, { onConflict: "product_id" });
+    if (error) {
+      errosUpsert.push(error.message);
+      console.error("[computeCosts] upsert product_costs (lote):", error);
+    } else {
+      updated += chunk.length;
     }
-    // Priority 2: CMC
-    else if (cmc > 0 && sanityCheck(cmc)) {
-      costFinal = cmc;
-      costSource = "CMC";
-      costConfidence = 0.80;
-    }
-    // Priority 3: Family margin proxy
-    else {
-      const fam = product.familia || "default";
-      const famData = familyMargins[fam];
-      let targetMargin = margemDefault;
-
-      if (famData && famData.count >= 3) {
-        targetMargin = famData.totalMargin / famData.count;
-        costSource = "FAMILY_MARGIN_PROXY";
-        costConfidence = 0.50;
-      } else {
-        costSource = "DEFAULT_PROXY";
-        costConfidence = 0.25;
-      }
-
-      costFinal = price * (1 - targetMargin);
-    }
-
-    // Upsert product_costs
-    const upsertData: Record<string, unknown> = {
-      product_id: product.id,
-      cost_price: existing?.cost_price || costFinal,
-      cmc: cmc || 0,
-      cost_final: costFinal,
-      cost_source: costSource,
-      cost_confidence: costConfidence,
-      family_category: product.familia || null,
-      updated_at: new Date().toISOString(),
-    };
-
-    await db.from("product_costs").upsert(upsertData, { onConflict: "product_id" });
-    updated++;
+  }
+  if (errosUpsert.length) {
+    throw new Error(
+      `computeCosts: ${errosUpsert.length}/${lotes.length} lotes de upsert falharam ` +
+        `(${updated}/${rows.length} persistidos). 1º erro: ${errosUpsert[0]}`,
+    );
   }
 
   return { updated };

@@ -1,4 +1,6 @@
 import { useState, useCallback } from 'react';
+import { useSearchParams, Link } from 'react-router-dom';
+import { AlertTriangle } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { invokeFunction } from '@/lib/invoke-function';
 import { toast } from 'sonner';
@@ -27,6 +29,11 @@ export default function TintImport() {
   const { data: history, isLoading: histLoading } = useImportHistory();
   const { data: tintCounts } = useTintProductCounts();
   const { runDirectImport, running: directRunning, progress: directProgress, cancel: cancelDirect } = useDirectTintImport();
+  const [searchParams] = useSearchParams();
+  // Break-glass: importação manual por CSV APOSENTADA (o catálogo agora é automático via
+  // sync do Sayersystem). O ImportCard + histórico só aparecem com ?csv=emergencia.
+  // Prazo de remoção: 2026-07-13 (deadline test no CI dispara). Ver docs/runbooks/tint-sync-corte-csv.md.
+  const csvEmergencia = searchParams.get('csv') === 'emergencia';
 
   const handleFiles = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files;
@@ -354,34 +361,65 @@ export default function TintImport() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Tintométrico — Importação</h1>
+      <h1 className="text-2xl font-bold">Tintométrico — Produtos &amp; Sincronização</h1>
 
       <SyncCard syncing={syncing} onSync={handleSync} tintCounts={tintCounts} />
 
-      <ImportCard
-        tipo={tipo}
-        setTipo={setTipo}
-        importMode={importMode}
-        setImportMode={setImportMode}
-        files={files}
-        onFiles={handleFiles}
-        importing={importing}
-        directRunning={directRunning}
-        directProgress={directProgress}
-        chunkProgress={chunkProgress}
-        progressPct={progressPct}
-        results={results}
-        onImport={handleImportWithMode}
-        onCancelDirect={cancelDirect}
-      />
+      {csvEmergencia ? (
+        <div className="space-y-6">
+          <div className="flex items-start gap-3 rounded-lg border border-status-warning/40 bg-status-warning/5 p-4">
+            <AlertTriangle className="h-5 w-5 text-status-warning shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-medium text-status-warning">Importação CSV em modo emergência</p>
+              <p className="text-muted-foreground mt-1">
+                O catálogo tintométrico agora é <strong>automático</strong> (sync do Sayersystem em tempo real).
+                Use a importação manual abaixo <strong>somente</strong> se o sync estiver fora do ar — importar um
+                CSV desatualizado <strong>sobrescreve</strong> o catálogo automático.
+              </p>
+            </div>
+          </div>
 
-      <HistoryTable
-        history={(history ?? []) as TintImportacaoRow[]}
-        histLoading={histLoading}
-        importing={importing}
-        resumingId={resumingId}
-        onResume={handleResume}
-      />
+          <ImportCard
+            tipo={tipo}
+            setTipo={setTipo}
+            importMode={importMode}
+            setImportMode={setImportMode}
+            files={files}
+            onFiles={handleFiles}
+            importing={importing}
+            directRunning={directRunning}
+            directProgress={directProgress}
+            chunkProgress={chunkProgress}
+            progressPct={progressPct}
+            results={results}
+            onImport={handleImportWithMode}
+            onCancelDirect={cancelDirect}
+          />
+
+          <HistoryTable
+            history={(history ?? []) as TintImportacaoRow[]}
+            histLoading={histLoading}
+            importing={importing}
+            resumingId={resumingId}
+            onResume={handleResume}
+          />
+        </div>
+      ) : (
+        <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-4">
+          <AlertTriangle className="h-5 w-5 text-muted-foreground shrink-0 mt-0.5" />
+          <div className="text-sm">
+            <p className="font-medium">Importação manual por CSV aposentada</p>
+            <p className="text-muted-foreground mt-1">
+              O catálogo tintométrico agora é alimentado <strong>automaticamente</strong> pelo sync do Sayersystem
+              (tempo real). A importação manual por CSV foi descontinuada.{' '}
+              <Link to="?tab=importar&amp;csv=emergencia" className="text-primary underline underline-offset-2">
+                Abrir importação de emergência
+              </Link>{' '}
+              — use só se o sync estiver fora do ar.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

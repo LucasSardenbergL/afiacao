@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict rgDpiIOdBCwqGQSNgHMMNPhi5bHUgj6TCZY72Pd9Jcp4bgnxOtBM06gL7Pq43ky
+\restrict dsh0tosauqhwbrHSivW3kGqwtB1XzrA165GNxAWJVTtd7U4f7TEnefit4dDXkdl
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.9
@@ -19,6 +19,13 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET escape_string_warning = off;
 SET row_security = off;
+
+--
+-- Name: private; Type: SCHEMA; Schema: -; Owner: -
+--
+
+CREATE SCHEMA private;
+
 
 --
 -- Name: public; Type: SCHEMA; Schema: -; Owner: -
@@ -6315,6 +6322,103 @@ COMMENT ON COLUMN public.sku_parametros.tipo_reposicao IS 'automatica = compra a
 --
 
 COMMENT ON COLUMN public.sku_parametros.minimo_forcado_manual IS 'Mínimo de compra forçado por SKU (a "R"). Quando >0, a RPC gerar_pedidos_sugeridos_ciclo eleva qtde_final ao máximo entre a sugestão natural e este valor — só para item que JÁ precisa repor (qtde_natural>0). NULL = sem piso (padrão). CHECK rejeita <=0/NaN/Infinity.';
+
+
+--
+-- Name: mv_sku_ranking_negociacao_paralela; Type: MATERIALIZED VIEW; Schema: private; Owner: -
+--
+
+CREATE MATERIALIZED VIEW private.mv_sku_ranking_negociacao_paralela AS
+ WITH params AS (
+         SELECT (CURRENT_DATE - '365 days'::interval) AS janela_analise_inicio,
+            (CURRENT_DATE - '90 days'::interval) AS recente_inicio,
+            1.0 AS peso_volume_financeiro,
+            0.8 AS peso_consistencia,
+            0.6 AS peso_preco_unitario,
+            0.4 AS peso_ausencia_promo
+        ), compras_janela AS (
+         SELECT (slh.empresa)::text AS empresa,
+            (slh.sku_codigo_omie)::text AS sku_codigo_omie,
+            sp.sku_descricao,
+            sp.fornecedor_nome,
+            sum(slh.valor_total) AS volume_financeiro_12m,
+            count(*) AS num_compras_12m,
+            (sum(slh.valor_total) / NULLIF(sum(slh.quantidade_recebida), (0)::numeric)) AS preco_medio_unitario,
+            (stddev(slh.valor_total) / NULLIF(avg(slh.valor_total), (0)::numeric)) AS coef_variacao,
+            max(slh.t1_data_pedido) AS ultima_compra,
+            count(DISTINCT date_trunc('month'::text, slh.t1_data_pedido)) AS meses_com_compra
+           FROM ((public.sku_leadtime_history slh
+             JOIN public.sku_parametros sp ON (((sp.empresa = (slh.empresa)::text) AND ((sp.sku_codigo_omie)::text = (slh.sku_codigo_omie)::text))))
+             CROSS JOIN params p)
+          WHERE ((slh.t1_data_pedido >= p.janela_analise_inicio) AND (slh.fornecedor_nome = 'RENNER SAYERLACK S/A'::text) AND ((slh.origem_compra = 'normal'::text) OR (slh.origem_compra IS NULL)) AND (sp.ativo = true) AND (slh.valor_total > (0)::numeric))
+          GROUP BY slh.empresa, slh.sku_codigo_omie, sp.sku_descricao, sp.fornecedor_nome
+         HAVING (count(*) >= 1)
+        ), frequencia_promo AS (
+         SELECT (pi.sku_codigo_omie)::text AS sku_codigo_omie,
+            count(DISTINCT pc.id) AS promocoes_12m,
+            ((count(DISTINCT date_trunc('month'::text, (pc.data_inicio)::timestamp with time zone)))::numeric / 12.0) AS perc_meses_com_promo
+           FROM ((public.promocao_item pi
+             JOIN public.promocao_campanha pc ON ((pc.id = pi.campanha_id)))
+             CROSS JOIN params p)
+          WHERE ((pc.estado = ANY (ARRAY['ativa'::text, 'encerrada'::text])) AND (pc.fornecedor_nome = 'RENNER SAYERLACK S/A'::text) AND (pc.data_inicio >= p.janela_analise_inicio) AND (pi.ativo = true) AND (pi.sku_codigo_omie IS NOT NULL))
+          GROUP BY pi.sku_codigo_omie
+        ), ranking_base AS (
+         SELECT cj.empresa,
+            cj.sku_codigo_omie,
+            cj.sku_descricao,
+            cj.fornecedor_nome,
+            cj.volume_financeiro_12m,
+            cj.num_compras_12m,
+            cj.preco_medio_unitario,
+            cj.coef_variacao,
+            cj.ultima_compra,
+            cj.meses_com_compra,
+            COALESCE(fp.promocoes_12m, (0)::bigint) AS promocoes_12m,
+            COALESCE(fp.perc_meses_com_promo, (0)::numeric) AS perc_meses_com_promo,
+            ((percent_rank() OVER (PARTITION BY cj.empresa ORDER BY cj.volume_financeiro_12m) * (100)::double precision))::numeric AS score_volume,
+            ((((1)::double precision - percent_rank() OVER (PARTITION BY cj.empresa ORDER BY COALESCE(cj.coef_variacao, (999)::numeric))) * (100)::double precision))::numeric AS score_consistencia,
+            ((percent_rank() OVER (PARTITION BY cj.empresa ORDER BY cj.preco_medio_unitario) * (100)::double precision))::numeric AS score_preco,
+            GREATEST((0)::numeric, ((100)::numeric - (COALESCE(fp.perc_meses_com_promo, (0)::numeric) * (200)::numeric))) AS score_ausencia_promo
+           FROM (compras_janela cj
+             LEFT JOIN frequencia_promo fp ON ((fp.sku_codigo_omie = cj.sku_codigo_omie)))
+        )
+ SELECT empresa,
+    sku_codigo_omie,
+    sku_descricao,
+    fornecedor_nome,
+    volume_financeiro_12m,
+    num_compras_12m,
+    meses_com_compra,
+    preco_medio_unitario,
+    COALESCE(coef_variacao, (999)::numeric) AS coef_variacao,
+    ultima_compra,
+    promocoes_12m,
+    round((perc_meses_com_promo * (100)::numeric), 1) AS perc_meses_com_promo,
+    round(score_volume, 1) AS score_volume,
+    round(score_consistencia, 1) AS score_consistencia,
+    round(score_preco, 1) AS score_preco,
+    round(score_ausencia_promo, 1) AS score_ausencia_promo,
+    round((((((score_volume * ( SELECT params.peso_volume_financeiro
+           FROM params)) + (score_consistencia * ( SELECT params.peso_consistencia
+           FROM params))) + (score_preco * ( SELECT params.peso_preco_unitario
+           FROM params))) + (score_ausencia_promo * ( SELECT params.peso_ausencia_promo
+           FROM params))) / ( SELECT (((params.peso_volume_financeiro + params.peso_consistencia) + params.peso_preco_unitario) + params.peso_ausencia_promo)
+           FROM params)), 1) AS score_final,
+        CASE
+            WHEN ((((((score_volume * 1.0) + (score_consistencia * 0.8)) + (score_preco * 0.6)) + (score_ausencia_promo * 0.4)) / 2.8) >= (80)::numeric) THEN 'prioritario'::text
+            WHEN ((((((score_volume * 1.0) + (score_consistencia * 0.8)) + (score_preco * 0.6)) + (score_ausencia_promo * 0.4)) / 2.8) >= (60)::numeric) THEN 'forte'::text
+            WHEN ((((((score_volume * 1.0) + (score_consistencia * 0.8)) + (score_preco * 0.6)) + (score_ausencia_promo * 0.4)) / 2.8) >= (40)::numeric) THEN 'moderado'::text
+            ELSE 'fraco'::text
+        END AS categoria,
+    now() AS atualizado_em
+   FROM ranking_base
+  ORDER BY empresa, (round((((((score_volume * ( SELECT params.peso_volume_financeiro
+           FROM params)) + (score_consistencia * ( SELECT params.peso_consistencia
+           FROM params))) + (score_preco * ( SELECT params.peso_preco_unitario
+           FROM params))) + (score_ausencia_promo * ( SELECT params.peso_ausencia_promo
+           FROM params))) / ( SELECT (((params.peso_volume_financeiro + params.peso_consistencia) + params.peso_preco_unitario) + params.peso_ausencia_promo)
+           FROM params)), 1)) DESC
+  WITH NO DATA;
 
 
 --
@@ -25259,6 +25363,20 @@ ALTER TABLE ONLY public.whatsapp_webhook_events
 
 
 --
+-- Name: idx_mv_ranking_categoria; Type: INDEX; Schema: private; Owner: -
+--
+
+CREATE INDEX idx_mv_ranking_categoria ON private.mv_sku_ranking_negociacao_paralela USING btree (empresa, categoria, score_final DESC);
+
+
+--
+-- Name: idx_mv_ranking_pk; Type: INDEX; Schema: private; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_mv_ranking_pk ON private.mv_sku_ranking_negociacao_paralela USING btree (empresa, sku_codigo_omie);
+
+
+--
 -- Name: company_cnpjs_normalized_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35363,5 +35481,5 @@ ALTER TABLE public.whatsapp_webhook_events ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict rgDpiIOdBCwqGQSNgHMMNPhi5bHUgj6TCZY72Pd9Jcp4bgnxOtBM06gL7Pq43ky
+\unrestrict dsh0tosauqhwbrHSivW3kGqwtB1XzrA165GNxAWJVTtd7U4f7TEnefit4dDXkdl
 

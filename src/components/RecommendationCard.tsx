@@ -7,7 +7,7 @@ import { Plus, TrendingUp, Package, ArrowUpRight, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 
-const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmt = (v: number | null | undefined) => v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtPct = (v: number) => `${(v * 100).toFixed(0)}%`;
 
 const EXPLANATION_ICONS: Record<string, typeof Sparkles> = {
