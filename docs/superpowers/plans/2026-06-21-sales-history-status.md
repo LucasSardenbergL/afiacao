@@ -17,6 +17,19 @@
 
 ---
 
+## ⚠️ ATUALIZAÇÃO PÓS-REBASE (origin/main mergeado em 2026-06-22, durante a execução)
+
+A worktree estava com base **atrás de origin/main**; o merge trouxe a frente do **cap de recência (#982) — agora EM MAIN** (não mais "frente paralela viva" como o spec assumia). Correções ao plano (conteúdo do código inalterado, salvo onde indicado):
+- **Migration coluna (T2):** renomeada `20260621120000 → 20260622165000_sales_history_status_coluna.sql` (colisão de timestamp com `..._seed_targets_faltantes_rpc` de main). RPC v4 (T3) = `20260622170000` recria **após** a guard `20260622160000` (provada, 16/16 + falsificação).
+- **T1 fica** (`clampActiveDays` próprio): `recency.ts`/`objective.ts` agora existem em main com `clampRecencyCapDays` idêntico, mas `sales_active_threshold_days` é config **semanticamente distinto** de `hs_recency_cap_days` (desacoplamento que o spec quis). A própria main mantém o clamp duplicado temporariamente (`objective.ts` ↔ `recency.ts`).
+- **T4 (edge):** linhas shifted — `ScoreUpdate:68`, `FarmerClientScoreSeed:45`, `config['hs_recency_cap_days']:198` (add `sales_active_threshold_days` perto), seed push:316, compute `updates.push:504`, `deriveSalesBase:117`/`clampRecencyCapDays:137` (add helpers perto). O edge já tem `clampRecencyCapDays` inline → `clampActiveDays` é duplicata semântica (aceitável, documentar).
+- **T9 (plano): `selectObjective` foi EXTRAÍDO para `src/lib/scoring/objective.ts:25`** (não está mais em useTacticalPlan) e mudou a regra para `daysSince >= recencyCapDays`. Logo T9 edita **objective.ts** (add precedência `sem_historico → 'ativacao'` + param) e **estende `objective.test.ts`** (não quebrar os 9 testes de main); useTacticalPlan só adiciona `ativacao` ao `objectiveLabels:174`, passa o status ao `selectObjective:369`, lê `score.sales_history_status` e o inclui no `customerContext:408` + `ClientScoreFull`.
+- **T14 (edge generate-tactical-plan):** `selectObjective` espelhado em `:88` usa `daysSince > 90` (dívida pré-existente da frente do cap — **não corrigir** nesta fatia); só add precedência `sem_historico → 'ativacao'` + `salesHistoryStatus` no customerContext + `ativacao` nos prompts (`:121`/`:144`).
+
+Os prompts dos subagentes carregam os trechos verbatim ATUAIS (lidos pós-merge), então o detalhe exato vem de lá; esta nota mantém o plano honesto.
+
+---
+
 ## FASE A — Núcleo (dado · derivação · persistência)
 
 ### Task 1: Helper puro `salesHistoryStatus.ts` (+ vitest + falsificação)
