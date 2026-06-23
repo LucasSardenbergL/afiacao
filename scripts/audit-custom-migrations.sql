@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 268
+-- Total de custom migrations: 277
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -286,8 +286,17 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260618180000', 'get_customer_sales_summary', '20260618180000_get_customer_sales_summary.sql'),
   ('20260618190000', 'b_cleanup_dups_oben', '20260618190000_b_cleanup_dups_oben.sql'),
   ('20260618190000', 'get_customer_sales_summary_blocklist', '20260618190000_get_customer_sales_summary_blocklist.sql'),
+  ('20260618200000', 'apply_score_updates_anti_ressurreicao', '20260618200000_apply_score_updates_anti_ressurreicao.sql'),
   ('20260618210000', 'b_renamespace_orfaos', '20260618210000_b_renamespace_orfaos.sql'),
-  ('20260618230000', 'fix_enqueue_sinais_owner_e_reconcile_fila', '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql')
+  ('20260618230000', 'fix_enqueue_sinais_owner_e_reconcile_fila', '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql'),
+  ('20260619120000', 'param_auto_resumo_descricao', '20260619120000_param_auto_resumo_descricao.sql'),
+  ('20260619120000', 'trigger_reconcile_score_owner_carteira', '20260619120000_trigger_reconcile_score_owner_carteira.sql'),
+  ('20260620130000', 'cost_price_nullable', '20260620130000_cost_price_nullable.sql'),
+  ('20260621120000', 'seed_targets_faltantes_rpc', '20260621120000_seed_targets_faltantes_rpc.sql'),
+  ('20260621130000', 'fcs_guard_flagged_insert', '20260621130000_fcs_guard_flagged_insert.sql'),
+  ('20260622120000', 'trigger_cleanup_orphan_score_on_carteira_delete', '20260622120000_trigger_cleanup_orphan_score_on_carteira_delete.sql'),
+  ('20260622140000', 'apply_score_updates_persiste_base_vendas', '20260622140000_apply_score_updates_persiste_base_vendas.sql'),
+  ('20260622160000', 'apply_score_updates_guard_full_update', '20260622160000_apply_score_updates_guard_full_update.sql')
 )
 SELECT
   e.version,
@@ -1297,7 +1306,18 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('get_customer_sales_summary', 'function', 'public', 'get_customer_sales_summary', ''),
   ('b_cleanup_dups_oben', 'index', 'public', 'uniq_sales_orders_omie_pedido_id', 'sales_orders'),
   ('get_customer_sales_summary_blocklist', 'function', 'public', 'get_customer_sales_summary', ''),
-  ('fix_enqueue_sinais_owner_e_reconcile_fila', 'function', 'public', 'enqueue_score_recalc_from_sinais', '')
+  ('apply_score_updates_anti_ressurreicao', 'function', 'public', 'apply_score_updates', ''),
+  ('fix_enqueue_sinais_owner_e_reconcile_fila', 'function', 'public', 'enqueue_score_recalc_from_sinais', ''),
+  ('param_auto_resumo_descricao', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
+  ('trigger_reconcile_score_owner_carteira', 'function', 'public', 'reconcile_score_owner_from_carteira', ''),
+  ('trigger_reconcile_score_owner_carteira', 'trigger', 'public', 'trg_carteira_reconcile_score_owner', 'carteira_assignments'),
+  ('seed_targets_faltantes_rpc', 'function', 'public', 'seed_targets_faltantes', ''),
+  ('fcs_guard_flagged_insert', 'function', 'public', 'fcs_block_flagged_insert', ''),
+  ('fcs_guard_flagged_insert', 'trigger', 'public', 'trg_fcs_block_flagged_insert', 'farmer_client_scores'),
+  ('trigger_cleanup_orphan_score_on_carteira_delete', 'function', 'public', 'cleanup_orphan_score_on_carteira_delete', ''),
+  ('trigger_cleanup_orphan_score_on_carteira_delete', 'trigger', 'public', 'trg_carteira_cleanup_orphan_score', 'carteira_assignments'),
+  ('apply_score_updates_persiste_base_vendas', 'function', 'public', 'apply_score_updates', ''),
+  ('apply_score_updates_guard_full_update', 'function', 'public', 'apply_score_updates', '')
 )
 SELECT
   e.migration,

@@ -1,6 +1,6 @@
 # Snapshot de schema — `schema-snapshot.sql`
 
-> Gerado em **2026-05-24** a partir do banco de produção (Supabase do Lovable, projeto `fzvklzpomgnyikkfkzai`, PostgreSQL 17.6) via `pg_dump --schema-only --schema=public --no-owner --no-privileges`.
+> Gerado em **2026-06-19** (anterior: 2026-05-24) a partir do banco de produção (Supabase do Lovable, projeto `fzvklzpomgnyikkfkzai`, PostgreSQL 17.6) via `pg_dump --schema-only --schema=public --schema=private --no-owner --no-privileges`. ✅ Inclui os schemas `public` **e** `private` (35.485 linhas); **replay-validado em 2026-06-19** (ver §"Status do replay").
 
 ## O que é
 
@@ -44,14 +44,15 @@ Um `supabase db reset` a partir das migrations **quebra** (ex: `20260510235956` 
 - O dump tem **`CREATE SCHEMA public;`** sem `IF NOT EXISTS` (linha ~27). Num projeto novo o schema `public` já existe → o statement falha. **Remova essa linha** (caminho preferido); só tolere o erro se rodar **sem** `ON_ERROR_STOP` (com `ON_ERROR_STOP` o restore aborta aí).
 - O dump é do **pg_dump 17** e usa os meta-comandos `\restrict` / `\unrestrict` (primeira/última linha), reconhecidos pelo `psql`. O SQL Editor do Lovable pode não reconhecê-los — remova-os se restaurar por lá.
 - O prelude deixa **`pg_cron` comentado** de propósito (habilitá-lo pode abortar o restore sob `ON_ERROR_STOP`). Habilite-o antes pelo dashboard do Supabase se quiser as views `v_cron_jobs_status` / `v_cron_jobs_falhas`; senão elas falham no replay e devem ser puladas.
+- **Schema `private` (desde 2026-05-27, migration `20260527160000`)** — **incluído no dump** desde 2026-06-19 (`--schema=private`): o matview `private.mv_sku_ranking_negociacao_paralela` (referenciado por 3 objetos do `public`) é dumpado junto, então restaura normalmente. ⚠️ Só ao restaurar um snapshot **public-only antigo** (até a 1ª geração de 2026-06-19): crie `private` antes (rode `20260527160000`), senão o restore aborta com `schema "private" does not exist`.
 
-> **Status: restore validado por replay local (2026-05-24).** `db/verify-snapshot-replay.sh` roda prelude + stubs (`db/stubs-supabase.sql`) + snapshot num Postgres 17 descartável (transação única, `ON_ERROR_STOP`) → replay limpo e contagens batem 1:1 com produção (212/37/4/86/76/14/474). **Limitação:** prova ordem/dependência/sintaxe do `public`, **não** o comportamento runtime do Supabase (RLS/`auth` reais) — esse nível ("Gold") ainda pede projeto Supabase vazio ou docker (ver `schema-rebuild-runbook.md` §Verificação).
+> **Status: replay VALIDADO em 2026-06-19** (geração +`private`, 35.485 linhas). `db/verify-snapshot-replay.sh` roda prelude + stubs (`db/stubs-supabase.sql`) + snapshot num Postgres 17 descartável (transação única, `ON_ERROR_STOP`) → restore **limpo**, contagens públicas batem (272/53/3/210/91/14/579) e **enforcement RLS amostrado OK** (own-scope / staff-gate / anon-deny filtram em runtime). _(A 1ª geração de 2026-06-19, public-only, falhava com `schema "private" does not exist`; resolvido incluindo `--schema=private`.)_ **Limitação:** prova ordem/dependência/sintaxe + RLS amostrada do `public`; **não** o runtime Supabase real completo (RLS/`auth`) — o "Gold" pede projeto Supabase vazio ou docker (ver `schema-rebuild-runbook.md` §Verificação).
 
 ## Como re-gerar
 
 Cole no **chat do Lovable** (não no SQL Editor):
 
-> Gere um dump SQL literal do schema public deste banco Supabase usando pg_dump, com flags equivalentes a `pg_dump --schema-only --schema=public --no-owner --no-privileges`. Não inclua dados nem os schemas auth/storage/realtime/vault/extensions/cron/graphql/pgsodium/supabase_functions. Não resuma nem trunque. Entregue o conteúdo INTEGRAL como arquivo `supabase/schema-snapshot.sql` e faça commit. Confirme o número de linhas.
+> Gere um dump SQL literal dos schemas `public` e `private` deste banco Supabase usando pg_dump, com flags equivalentes a `pg_dump --schema-only --schema=public --schema=private --no-owner --no-privileges`. Não inclua dados nem os schemas auth/storage/realtime/vault/extensions/cron/graphql/pgsodium/supabase_functions. Não resuma nem trunque. Entregue o conteúdo INTEGRAL como arquivo `supabase/schema-snapshot.sql` e faça commit. Confirme o número de linhas.
 
 Depois atualize **`schema-snapshot.manifest.md`** com as novas contagens — o diff do git é a revisão do drift.
 

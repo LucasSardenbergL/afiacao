@@ -33,11 +33,6 @@ interface FarmerClientScoreRow {
   eff_score: number | null;
 }
 
-interface OmieClienteRow {
-  user_id: string;
-  omie_codigo_vendedor: string | null;
-}
-
 interface CustomerSalesSummaryRow {
   customer_user_id: string;
   days_since_last_purchase: number | null;  // calculado no SQL (data civil SP, COALESCE kpi null, clamp ≥0)
@@ -86,6 +81,10 @@ interface ScoreUpdate {
   rf_score: number;
   m_score: number;
   g_score: number;
+  // RECÊNCIA-VIVA: o compute agora REESCREVE a base de vendas (antes só lia → congelava no seed).
+  days_since_last_purchase: number;
+  avg_monthly_spend_180d: number;
+  category_count: number;
   calculated_at: string;
   updated_at: string;
 }
@@ -111,6 +110,43 @@ interface PriorityLogRecord {
   churn_risk_component: number;
   repurchase_component: number;
   goal_proximity_component: number;
+}
+
+// Recência-viva: espelho inline de src/lib/scoring/salesBase.ts (vitest 8/8; Deno não importa de
+// src/). Degradação honesta: ausente → 999/0/0 ("ausente ≠ zero"); Number.isFinite guarda NaN.
+function deriveSalesBase(sales: CustomerSalesSummaryRow | null | undefined): {
+  days_since_last_purchase: number; avg_monthly_spend_180d: number; category_count: number;
+} {
+  const daysRaw = sales ? Number(sales.days_since_last_purchase ?? 999) : 999;
+  const days = Number.isFinite(daysRaw) ? daysRaw : 999;
+  const revenue180 = Number(sales?.revenue_180d ?? 0);
+  const spend = Number.isFinite(revenue180) ? Math.round(revenue180 / 6) : 0;
+  const catRaw = Number(sales?.category_count ?? 0);
+  const category = Number.isFinite(catRaw) ? catRaw : 0;
+  return { days_since_last_purchase: days, avg_monthly_spend_180d: spend, category_count: category };
+}
+
+// Recência (cap linear) — espelho inline de src/lib/scoring/recency.ts (vitest 13/13 + falsificação;
+// Deno não importa de src/). Substitui a normalização ÷maxDaysSince, que comprimia (90d→96) e dava ~55
+// ao sentinela 999 (o max real era venda REAL de ~2235d, não o sentinela). Guardrail [30,999]: T>999
+// ressuscitaria o sentinela. Money-path: days ausente/null/NaN → recência 0 (NUNCA 100). Paridade:
+// mudou aqui → mude lá.
+const DEFAULT_CAP_DAYS = 180;
+const MIN_CAP_DAYS = 30;
+const MAX_CAP_DAYS = 999;
+function clampRecencyCapDays(raw: unknown): number {
+  if (raw == null) return DEFAULT_CAP_DAYS; // null/undefined → default (Number(null)===0 fabricaria 30)
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_CAP_DAYS;
+  return Math.min(MAX_CAP_DAYS, Math.max(MIN_CAP_DAYS, Math.round(n)));
+}
+
+function computeRecencyScore(daysSinceLastPurchase: number | null | undefined, capDays: number): number {
+  const cap = clampRecencyCapDays(capDays); // re-clampa (idempotente; nunca 0 → sem div/0)
+  const days = (daysSinceLastPurchase != null && Number.isFinite(daysSinceLastPurchase))
+    ? Math.max(0, daysSinceLastPurchase)
+    : cap; // null/undefined/NaN/Infinity → "no teto" → recência 0 (ausente ≠ comprou-hoje)
+  return Math.max(0, 100 - (Math.min(days, cap) / cap) * 100);
 }
 
 Deno.serve(async (req) => {
@@ -157,6 +193,10 @@ Deno.serve(async (req) => {
       goal_proximity: (config['ps_weight_goal_proximity'] ?? 15) / 100,
     };
 
+    // Recência: teto (dias até zerar) configurável, guardrail [30,999] (achado /codex: T>999
+    // ressuscitaria o sentinela 999). Default 180. Ajustável sem redeploy via farmer_algorithm_config.
+    const recencyCapDays = clampRecencyCapDays(config['hs_recency_cap_days']);
+
     // Get all client scores with pagination
     let clients: FarmerClientScoreRow[] = [];
     {
@@ -177,79 +217,73 @@ Deno.serve(async (req) => {
         }
       }
     }
+
+    // === RECÊNCIA-VIVA: snapshot de vendas (RPC) carregado TODO run ===
+    // É a FONTE do refresh de recência/gasto/diversidade de TODA linha (antes só rodava no seed).
+    // `salesRefreshFatal` é flag SOFT run-wide: RPC falha → a recência fica CONGELADA este run
+    // (degrada honesto, NÃO starva o compute) e é surfaceada (500) DEPOIS do compute. supabase-js
+    // NÃO lança em erro de RPC → checar `error`.
+    let salesRefreshFatal: Error | null = null;
+    const salesMap = new Map<string, CustomerSalesSummaryRow>();
+    try {
+      const { data, error } = await supabase.rpc('get_customer_sales_summary');
+      if (error) {
+        salesRefreshFatal = new Error(`get_customer_sales_summary retornou erro — recência congelada este run: ${error.message}`);
+        console.error('[calculate-scores]', salesRefreshFatal.message);
+      } else {
+        for (const s of (data ?? []) as unknown as CustomerSalesSummaryRow[]) salesMap.set(s.customer_user_id, s);
+      }
+    } catch (e) {
+      // supabase-js normalmente RETORNA {error}, mas rejeição de fetch/rede LANÇA — capturar aqui
+      // também (senão o try/catch EXTERNO daria 500 ANTES do compute, quebrando o contrato
+      // "RPC falha → degrada pra congelado, compute roda" — achado Codex).
+      salesRefreshFatal = e instanceof Error ? e : new Error(String(e));
+      console.error('[calculate-scores] get_customer_sales_summary lançou — recência congelada este run:', salesRefreshFatal.message);
+    }
+
     // === AUTO-SEED v2 (F1 — reset-path robusto): completa clientes FALTANTES ===
     // Antes só rodava com a tabela VAZIA (gate length===0) — frágil: 1 linha esparsa do
     // scoring-recalc-client (agora UPDATE-only) ou qualquer reset parcial suprimia o seed.
-    // Agora: detecta FALTANTES e só carrega flaggeds/ownerMap/salesMap QUANDO há o que semear
-    // (senão a RPC do seed viraria dependência DURA do recompute noturno — achado Codex).
+    // Agora: detecta FALTANTES via RPC ATÔMICA (seed_targets_faltantes: omie − fcs − flaggeds num
+    // só snapshot) e só carrega ownerMap QUANDO há o que semear. (A RPC de vendas roda TODO run —
+    // recência-viva, acima — e o seed reusa o salesMap do topo.)
     // seedErrors é coletado aqui mas LANÇADO depois do COMPUTE (não starvar o recompute dos
     // existentes por 1 linha-veneno no seed — achado Codex). Espelha src/lib/scoring/seedTargets.ts.
     const seedErrors: string[] = [];
     let seedFatal: Error | null = null;
-    // O seed/descoberta roda em TRY: QUALQUER falha (omie/flaggeds/ownerMap/RPC/insert) é
+    // O seed/descoberta roda em TRY: QUALQUER falha (RPC seed_targets/ownerMap/insert) é
     // CAPTURADA e adiada — o COMPUTE dos existentes NUNCA é starvado por falha de seed
     // (achado Codex). A falha é surfaceada DEPOIS do compute, ou no empty-guard (fail-closed).
     try {
-      // Elegíveis: omie_clientes paginado (bypass do limite 1000). user_id é NOT NULL/unique.
-      const allClients: OmieClienteRow[] = [];
-      {
-        let page = 0;
-        const pageSize = 1000;
-        let hasMore = true;
-        while (hasMore) {
-          const { data: batch, error: bErr } = await supabase
-            .from('omie_clientes')
-            .select('user_id, omie_codigo_vendedor')
-            .range(page * pageSize, (page + 1) * pageSize - 1);
-          if (bErr) throw bErr;
-          if (!batch || batch.length === 0) { hasMore = false; }
-          else {
-            allClients.push(...(batch as unknown as OmieClienteRow[]));
-            if (batch.length < pageSize) hasMore = false;
-            page++;
-          }
-        }
+      // FALTANTES filtrados ATOMICAMENTE no banco via RPC seed_targets_faltantes (migration
+      // 20260621120000): omie_clientes − farmer_client_scores − flaggeds num ÚNICO snapshot.
+      // Substitui as 3 leituras PostgREST SEPARADAS + filtro em memória (computeSeedTargets), cuja
+      // inconsistência ENTRE snapshots (flaggeds vindo vazio/incompleto — quirk do .eq, lag de
+      // réplica) fazia `missing = missingRaw` e RESSUSCITAVA os fornecedores excluídos no seed
+      // (FAIL-OPEN, exposto pelo smoke 2026-06-20: semeou os 509 flagged). A RPC lê as 3 tabelas no
+      // MESMO snapshot e só retorna quem é SEGURO semear (fail-closed por construção). FAIL-CLOSED:
+      // erro → lança (não semeia às cegas; idempotente, o próximo run converge). Paginada com .range
+      // (ORDER BY user_id estável na RPC — §5 do CLAUDE.md). Espelha src/lib/scoring/seedTargets.ts.
+      const missing: Array<{ user_id: string }> = [];
+      for (let sp = 0; ; sp++) {
+        const { data: sPage, error: sErr } = await supabase
+          .rpc('seed_targets_faltantes')
+          .range(sp * 1000, sp * 1000 + 999);
+        if (sErr) throw new Error(`seed_targets_faltantes falhou — não dá p/ semear sem a lista atômica de elegíveis: ${sErr.message}`);
+        const sRows = (sPage ?? []) as Array<{ user_id: string }>;
+        for (const r of sRows) missing.push(r);
+        if (sRows.length < 1000) break;
       }
 
-      // FALTANTES sem flaggeds primeiro (espelho de computeSeedTargets: !user_id, !existing,
-      // dedup). Se nada falta, NÃO lê flaggeds/ownerMap/salesMap (evita dependência dura do
-      // recompute em steady-state — achado Codex #2).
-      const existingIds = new Set(clients.map((c) => c.customer_user_id));
-      const seenRaw = new Set<string>();
-      const missingRaw: OmieClienteRow[] = [];
-      for (const c of allClients) {
-        if (!c.user_id) continue;
-        if (existingIds.has(c.user_id)) continue;
-        if (seenRaw.has(c.user_id)) continue;
-        seenRaw.add(c.user_id);
-        missingRaw.push(c);
-      }
-
-      if (missingRaw.length === 0) {
-        console.log(`[calculate-scores] 0 clientes faltantes (${clients.length} em fcs). Pula seed.`);
+      if (missing.length === 0) {
+        console.log(`[calculate-scores] 0 faltantes a semear (${clients.length} em fcs). Pula seed.`);
       } else {
-        // Há faltantes → lê flaggeds. FAIL-CLOSED: sem a lista de exclusão não dá p/ semear
-        // sem risco de ressuscitar fornecedor (achado Codex #4) → lança.
-        const flaggeds = new Set<string>();
-        for (let fp = 0; ; fp++) {
-          const { data: fPage, error: fErr } = await supabase
-            .from('cliente_classificacao')
-            .select('user_id')
-            .eq('excluir_da_carteira', true)
-            .range(fp * 1000, fp * 1000 + 999);
-          if (fErr) throw new Error(`flaggeds (cliente_classificacao) falhou com ${missingRaw.length} faltantes — não dá p/ semear sem a lista de exclusão: ${fErr.message}`);
-          const fRows = (fPage ?? []) as Array<{ user_id: string }>;
-          for (const r of fRows) flaggeds.add(r.user_id);
-          if (fRows.length < 1000) break;
-        }
-
-        // missing = missingRaw − flaggeds (não semeia fornecedor fora da carteira)
-        const missing = missingRaw.filter((c) => !flaggeds.has(c.user_id));
-
-        if (missing.length === 0) {
-          console.log(`[calculate-scores] ${missingRaw.length} faltantes, todos flaggeds. Nada a semear.`);
+        if (salesRefreshFatal) {
+          // RPC de vendas falhou → NÃO semear os faltantes (deriveSalesBase daria 999/0 p/ TODOS =
+          // fabricar zero; #936 "ausente≠zero"). Entram quando a RPC voltar (idempotente).
+          console.warn(`[calculate-scores] RPC de vendas falhou — pulando seed de ${missing.length} faltantes este run.`);
         } else {
-          console.log(`[calculate-scores] semeando ${missing.length} faltantes (de ${missingRaw.length}; ${flaggeds.size} flaggeds; ${clients.length} já em fcs).`);
+          console.log(`[calculate-scores] semeando ${missing.length} faltantes (${clients.length} já em fcs).`);
 
           // Farmer default (1º employee/master) — fallback do ownerMap.
           const { data: employees } = await supabase
@@ -273,29 +307,12 @@ Deno.serve(async (req) => {
             if (aRows.length < 1000) break;
           }
 
-          // Sinais de venda agregados NO BANCO (RPC). FAIL-CLOSED: supabase-js NÃO lança em
-          // erro de RPC → checar (senão semearia days=999/spend=0, fabricando zero —
-          // "ausente ≠ zero"). Carregada SÓ aqui (quando há o que semear), não todo run.
-          const salesMap = new Map<string, CustomerSalesSummaryRow>();
-          {
-            const { data, error } = await supabase.rpc('get_customer_sales_summary');
-            if (error) throw error;
-            for (const s of (data ?? []) as unknown as CustomerSalesSummaryRow[]) {
-              salesMap.set(s.customer_user_id, s);
-            }
-          }
-
-          // Registros de seed só dos FALTANTES (mapeamento inalterado: recência do SQL;
-          // ausente → 999/0 honesto; Number.isFinite guarda NaN do numeric).
+          // Registros de seed só dos FALTANTES, da base de vendas (salesMap do TOPO) via
+          // deriveSalesBase — mesma degradação honesta do compute (vitest 8/8). Aqui já é garantido
+          // que !salesRefreshFatal (o ramo acima pula o seed se a RPC falhou).
           const seedRecords: FarmerClientScoreSeed[] = [];
           for (const client of missing) {
-            const sales = salesMap.get(client.user_id);
-            const daysRaw = sales ? Number(sales.days_since_last_purchase ?? 999) : 999;
-            const daysSinceLastPurchase = Number.isFinite(daysRaw) ? daysRaw : 999;
-            const revenue180 = Number(sales?.revenue_180d ?? 0);
-            const avgMonthlySpend = Number.isFinite(revenue180) ? Math.round(revenue180 / 6) : 0;
-            const categoryCountSeed = Number(sales?.category_count ?? 0);
-
+            const base = deriveSalesBase(salesMap.get(client.user_id));
             seedRecords.push({
               customer_user_id: client.user_id,
               farmer_id: ownerMap.get(client.user_id) ?? defaultFarmerId,
@@ -303,9 +320,9 @@ Deno.serve(async (req) => {
               health_class: 'novo',
               churn_risk: 0,
               priority_score: 0,
-              days_since_last_purchase: daysSinceLastPurchase,
-              avg_monthly_spend_180d: avgMonthlySpend,
-              category_count: Number.isFinite(categoryCountSeed) ? categoryCountSeed : 0,
+              days_since_last_purchase: base.days_since_last_purchase,
+              avg_monthly_spend_180d: base.avg_monthly_spend_180d,
+              category_count: base.category_count,
               gross_margin_pct: 0,
               avg_repurchase_interval: 0,
               expansion_score: 0,
@@ -326,21 +343,25 @@ Deno.serve(async (req) => {
           let seeded = 0;
           for (let i = 0; i < seedRecords.length; i += 200) {
             const batch = seedRecords.slice(i, i + 200);
-            const { error: insertErr } = await supabase
+            const { data: inserted, error: insertErr } = await supabase
               .from('farmer_client_scores')
               .upsert(batch, { onConflict: 'customer_user_id' })
               .select('id');
             if (insertErr) {
               console.error(`[calculate-scores] Batch insert error at ${i}:`, insertErr.message);
               for (const record of batch) {
-                const { error: singleErr } = await supabase
+                const { data: one, error: singleErr } = await supabase
                   .from('farmer_client_scores')
-                  .upsert(record, { onConflict: 'customer_user_id' });
+                  .upsert(record, { onConflict: 'customer_user_id' })
+                  .select('id');
                 if (singleErr) seedErrors.push(`${record.customer_user_id}: ${singleErr.message}`);
-                else seeded++;
+                else seeded += (one?.length ?? 0);
               }
             } else {
-              seeded += batch.length;
+              // Conta as linhas REALMENTE persistidas: o trigger fcs_block_flagged_insert pula o
+              // fornecedor flagged (RETURN NULL) → ele não volta no .select('id') → o log não infla
+              // "Seeded N" mascarando quantos foram bloqueados mid-run (achado /codex P2 2026-06-21).
+              seeded += (inserted?.length ?? 0);
             }
           }
           console.log(`[calculate-scores] Seeded ${seeded}/${missing.length} client scores`);
@@ -380,6 +401,7 @@ Deno.serve(async (req) => {
     // como "Sem clientes" silencioso — achado Codex). Com linhas existentes, segue p/ o compute.
     if (!clients || clients.length === 0) {
       if (seedFatal) throw seedFatal;
+      if (salesRefreshFatal) throw salesRefreshFatal;
       if (seedErrors.length > 0) {
         throw new Error(`seed falhou em ${seedErrors.length} cliente(s) numa fcs vazia: ${seedErrors.slice(0, 3).join(' | ')}`);
       }
@@ -391,8 +413,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Compute normalization ranges
-    const maxDaysSince = Math.max(...clients.map(c => Number(c.days_since_last_purchase || 0)), 1);
+    // === RECÊNCIA-VIVA: overlay dos valores FRESCOS (salesMap) nos clients em memória ANTES do compute ===
+    // Assim os maxes (maxSpend/maxCategories) E o loop (recência via cap) leem fresco — e o ScoreUpdate
+    // persiste days/spend/category (que NUNCA eram reescritos → recência congelava no dia do seed).
+    // RPC falhou (salesRefreshFatal) → NÃO faz overlay → compute roda nos days CONGELADOS (degrada
+    // honesto, stale-mas-não-pior; a falha é surfaceada depois do compute). Cobre existentes E
+    // recém-semeados (re-fetchados acima). Só toca os 3 campos da RPC; os demais base ficam.
+    if (!salesRefreshFatal) {
+      for (const c of clients) {
+        const b = deriveSalesBase(salesMap.get(c.customer_user_id));
+        c.days_since_last_purchase = b.days_since_last_purchase;
+        c.avg_monthly_spend_180d = b.avg_monthly_spend_180d;
+        c.category_count = b.category_count;
+      }
+    }
+
+    // Compute normalization ranges (recência NÃO usa min-max — cap configurável via computeRecencyScore)
     const maxInterval = Math.max(...clients.map(c => Number(c.avg_repurchase_interval || 0)), 1);
     const maxSpend = Math.max(...clients.map(c => Number(c.avg_monthly_spend_180d || 0)), 1);
     const maxMarginPct = Math.max(...clients.map(c => Number(c.gross_margin_pct || 0)), 1);
@@ -405,7 +441,10 @@ Deno.serve(async (req) => {
 
     for (const client of clients) {
       // --- Health Score ---
-      const recencyScore = Math.max(0, 100 - (Number(client.days_since_last_purchase || 0) / maxDaysSince) * 100);
+      // Recência: cap linear (computeRecencyScore), NÃO ÷maxDaysSince. Passa o days CRU (helper trata
+      // null→recência 0, sem o `|| 0` que fabricaria 100). rf_score=0 empata 180/999/2235 → "quão morto"
+      // se lê de days_since_last_purchase, não de rf_score (achado /codex).
+      const recencyScore = computeRecencyScore(client.days_since_last_purchase, recencyCapDays);
       
       const freqScore = maxInterval > 0
         ? Math.max(0, 100 - (Number(client.avg_repurchase_interval || maxInterval) / maxInterval) * 100)
@@ -464,7 +503,8 @@ Deno.serve(async (req) => {
 
       updates.push({
         id: client.id,
-        // NOT NULL — obrigatórias no INSERT do upsert onConflict:'id' (ver ScoreUpdate)
+        // customer_user_id/farmer_id: enviados por compat (ScoreUpdate), mas apply_score_updates
+        // os IGNORA — UPDATE-only por id (ver bloco de persist). Mantidos p/ não mexer no shape.
         customer_user_id: client.customer_user_id,
         farmer_id: client.farmer_id,
         health_score: healthScore,
@@ -474,6 +514,10 @@ Deno.serve(async (req) => {
         rf_score: Math.round(recencyScore),
         m_score: Math.round(marginScore),
         g_score: Math.round(diversityScore),
+        // RECÊNCIA-VIVA: persiste a base de vendas FRESCA (pós-overlay) — antes congelava no seed.
+        days_since_last_purchase: client.days_since_last_purchase ?? 999,
+        avg_monthly_spend_180d: client.avg_monthly_spend_180d ?? 0,
+        category_count: client.category_count ?? 0,
         calculated_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
@@ -502,22 +546,32 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Batch update scores using upsert (much faster than individual updates).
-    // F2 (FAIL-CLOSED): coleta os erros e LANÇA antes dos inserts de history/log — um recompute
-    // parcial NÃO pode passar como 200 OK (idempotente → retry converge; falha visível em
-    // net._http_response). [chip: trocar upsert(onConflict:id) por RPC update-only anti-
-    // ressurreição — pré-existente, ortogonal, prove-sql próprio.]
-    console.log(`[calculate-scores] Updating ${updates.length} client scores in batches...`);
+    // Batch update scores via RPC apply_score_updates — UPDATE-only, anti-ressurreição (fecha o chip).
+    // Se aplicar_exclusao_fornecedores() (migration 20260606170100) DELETAR uma linha mid-run, o `id`
+    // stale NÃO casa (WHERE f.id=u.id → 0 linhas): a RPC NÃO re-insere (mata a ressurreição) e jamais
+    // tenta INSERT → nunca 23505. (O upsert(onConflict:'id') anterior ressuscitava/colidia.) Provado em
+    // PG17 + falsificação: db/test-apply-score-updates.sh. O payload ainda traz customer_user_id/farmer_id
+    // (ScoreUpdate), que a RPC IGNORA (recordset = id + 12 campos: os 9 de score + 3 de base de vendas
+    // [days/spend/category, persistidos desde a migration 20260622140000]; customer_user_id/farmer_id NÃO
+    // entram) — inofensivo.
+    // F2 (FAIL-CLOSED) mantido: erro de RPC coleta-e-LANÇA (recompute parcial não pode passar como 200 OK;
+    // idempotente → retry converge; visível em net._http_response). Chunk de 500 = 1 statement/batch,
+    // limita payload/blast-radius (Codex P2). NÃO lança em affected<enviados: é o sinal ESPERADO de linha
+    // excluída mid-run (a RPC corretamente não a ressuscita) → loga como drift, não 500 (Codex P2).
+    console.log(`[calculate-scores] Updating ${updates.length} client scores via apply_score_updates...`);
     const updateErrors: string[] = [];
-    for (let i = 0; i < updates.length; i += 200) {
-      const batch = updates.slice(i, i + 200);
-      const { error: uErr } = await supabase
-        .from('farmer_client_scores')
-        .upsert(batch, { onConflict: 'id' });
-      if (uErr) { console.error(`[calculate-scores] Batch update error at ${i}:`, uErr.message); updateErrors.push(`@${i}: ${uErr.message}`); }
+    let scoresAffected = 0;
+    for (let i = 0; i < updates.length; i += 500) {
+      const batch = updates.slice(i, i + 500);
+      const { data: affected, error: uErr } = await supabase.rpc('apply_score_updates', { p_updates: batch });
+      if (uErr) { console.error(`[calculate-scores] Batch RPC error at ${i}:`, uErr.message); updateErrors.push(`@${i}: ${uErr.message}`); }
+      else { scoresAffected += Number(affected ?? 0); }
     }
     if (updateErrors.length > 0) {
       throw new Error(`recompute falhou em ${updateErrors.length} batch(es): ${updateErrors.slice(0, 3).join(' | ')}`);
+    }
+    if (scoresAffected < updates.length) {
+      console.log(`[calculate-scores] apply_score_updates afetou ${scoresAffected}/${updates.length} linhas — diferença = fornecedor(es) excluído(s) mid-run pelo cleanup (esperado, NÃO ressuscitado).`);
     }
 
     // F2 (achados Codex #5 + reorder): o COMPUTE dos existentes já persistiu (NÃO foi starvado
@@ -525,6 +579,10 @@ Deno.serve(async (req) => {
     // não pode mascarar seed/descoberta falho. Idempotente: o próximo run recomputa a diferença
     // e completa o resto. Antes do history p/ não duplicar a série temporal em run persistente.
     if (seedFatal) throw seedFatal;
+    // RECÊNCIA-VIVA: RPC falhou → o compute rodou nos days CONGELADOS (degradou, não starvou) e os
+    // 3 campos foram reescritos com o valor antigo (no-op). Surface 500 (idempotente: o próximo run
+    // com a RPC OK refresca a recência). Antes do history.
+    if (salesRefreshFatal) throw salesRefreshFatal;
     if (seedErrors.length > 0) {
       throw new Error(`seed falhou em ${seedErrors.length} cliente(s): ${seedErrors.slice(0, 3).join(' | ')}${seedErrors.length > 3 ? ` (+${seedErrors.length - 3})` : ''}`);
     }

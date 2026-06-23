@@ -32,16 +32,16 @@ export function CostEngineCard({
       </CardHeader>
       <CardContent>
         <p className="text-xs text-muted-foreground mb-3">
-          Hierarquia: Custo Produto → CMC (Estoque) → Proxy Família → Proxy Default.
+          Hierarquia: Custo Produto → CMC (Estoque) → CMC Margem Atípica → Proxy Família → Proxy Default.
           Divergência {">"} {((recConfigs?.find(c => c.key === "divergence_threshold")?.value || 0.2) * 100).toFixed(0)}%
           aplica heurística estoque vs encomenda.
         </p>
-        <div className="grid grid-cols-4 gap-3 text-center text-xs">
-          {["PRODUCT_COST", "CMC", "FAMILY_MARGIN_PROXY", "DEFAULT_PROXY"].map((source) => (
+        <div className="grid grid-cols-5 gap-3 text-center text-xs">
+          {["PRODUCT_COST", "CMC", "CMC_MARGEM_ATIPICA", "FAMILY_MARGIN_PROXY", "DEFAULT_PROXY"].map((source) => (
             <div key={source} className="p-2 rounded bg-muted">
               <div className="font-medium">{source.replace(/_/g, " ")}</div>
               <div className="text-muted-foreground mt-1">
-                Confiança: {source === "PRODUCT_COST" ? "95%" : source === "CMC" ? "80%" : source === "FAMILY_MARGIN_PROXY" ? "50%" : "25%"}
+                Confiança: {source === "PRODUCT_COST" ? "95%" : source === "CMC" ? "80%" : source === "CMC_MARGEM_ATIPICA" ? "60%" : source === "FAMILY_MARGIN_PROXY" ? "50%" : "25%"}
               </div>
             </div>
           ))}

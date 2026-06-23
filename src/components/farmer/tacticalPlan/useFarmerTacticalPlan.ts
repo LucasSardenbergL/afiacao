@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { useMyActiveCoverage } from '@/hooks/useCoverage';
 import { useTacticalPlan, type PlanType } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
 import type { FarmerClientScoreRow, ProfileRow, CustomerLite } from './types';
@@ -13,7 +14,13 @@ export function useFarmerTacticalPlan() {
   // Lente "Ver como": o dropdown de clientes da carteira segue o id efetivo (o ALVO na
   // lente, o próprio usuário fora). A geração de plano (botões em GerarPlanoCard) é write
   // — bloqueada na lente pelo write-guard + disabled. Fora da lente effectiveUserId === user.id.
-  const { effectiveUserId } = useImpersonation();
+  const { effectiveUserId, isImpersonating } = useImpersonation();
+  // Cobertura: o dropdown inclui também os clientes que EU cubro agora (paridade com
+  // useMyCarteiraScores). Fora da lente: [eu, ...cobertos]; na lente: só o alvo.
+  const { data: coverage } = useMyActiveCoverage();
+  const coveredIds = (coverage ?? []).map((c) => c.covered_user_id);
+  const coveredKey = coveredIds.join(',');
+  const ownerIds = isImpersonating && effectiveUserId ? [effectiveUserId] : (user ? [user.id, ...coveredIds] : []);
   const { plans, loading, generating, loadPlans, generatePlan, checkEfficiency, recordResult } = useTacticalPlan();
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [expandedPlan, setExpandedPlan] = useState<string | null>(null);
@@ -26,16 +33,17 @@ export function useFarmerTacticalPlan() {
       loadPlans();
       loadCustomers();
     }
-    // effectiveUserId na dep: ao entrar/sair da lente, recarrega planos + dropdown do alvo.
+    // effectiveUserId/coveredKey na dep: ao entrar/sair da lente OU mudar a cobertura,
+    // recarrega planos + dropdown (que passa a incluir os clientes cobertos).
 
-  }, [user, isStaff, effectiveUserId]);
+  }, [user, isStaff, effectiveUserId, coveredKey]);
 
   const loadCustomers = async () => {
-    if (!effectiveUserId) return;
+    if (!ownerIds.length) return;
     const { data: scoresData } = await supabase
       .from('farmer_client_scores')
       .select('customer_user_id, health_score, churn_risk')
-      .eq('farmer_id', effectiveUserId)
+      .in('farmer_id', ownerIds)
       .order('priority_score', { ascending: false });
     const scores = (scoresData ?? []) as FarmerClientScoreRow[];
     if (!scores.length) return;

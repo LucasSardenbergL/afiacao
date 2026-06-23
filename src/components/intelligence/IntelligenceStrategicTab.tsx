@@ -62,10 +62,16 @@ export function IntelligenceStrategicTab() {
     return acc;
   }, {} as Record<string, string>);
 
+  // margin_real/potential agora são null sob baixa cobertura de custo → somas são PARCIAIS (covered-only).
   const totalMarginReal = marginAudit?.reduce((a, r) => a + Number(r.margin_real || 0), 0) || 0;
   const totalMarginPotential = marginAudit?.reduce((a, r) => a + Number(r.margin_potential || 0), 0) || 0;
-  const totalGap = totalMarginPotential - totalMarginReal;
-  const gapPct = totalMarginPotential > 0 ? ((totalGap / totalMarginPotential) * 100) : 0;
+  // Gap headline = Σ margin_gap (cost-free, presente em TODA linha). NÃO derivar de potential−real:
+  // linhas de baixa cobertura têm margens null→0 mas margin_gap real, e o gap sumiria (Codex challenge).
+  const totalGap = marginAudit?.reduce((a, r) => a + Number(r.margin_gap || 0), 0) || 0;
+  // Quantos clientes têm margem absoluta computável (custo real ≥85% da receita) — disclosure de que
+  // Margem Real/Potencial/Global são PARCIAIS sob baixa cobertura (Codex #8: não esconder o parcial).
+  const auditComCusto = marginAudit?.filter(r => r.margin_real != null).length || 0;
+  const auditTotal = marginAudit?.length || 0;
 
   const avgSpend = allScores?.length
     ? allScores.reduce((a, c) => a + Number(c.avg_monthly_spend_180d || 0), 0) / allScores.length
@@ -135,9 +141,9 @@ export function IntelligenceStrategicTab() {
           </Button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <KpiCard title="Margem Real" value={`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} />
-          <KpiCard title="Margem Potencial" value={`R$ ${totalMarginPotential.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={TrendingUp} />
-          <KpiCard title="Gap de Margem" value={`R$ ${totalGap.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={TrendingDown} trend="down" trendValue={`${gapPct.toFixed(1)}%`} />
+          <KpiCard title="Margem Real" value={`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle={`parcial — ${auditComCusto}/${auditTotal} clientes c/ custo`} />
+          <KpiCard title="Margem Potencial" value={`R$ ${totalMarginPotential.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={TrendingUp} subtitle={`parcial — ${auditComCusto}/${auditTotal} clientes c/ custo`} />
+          <KpiCard title="Gap de Margem" value={`R$ ${totalGap.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={TrendingDown} subtitle="vazamento de preço (todas as linhas)" />
           <KpiCard title="Registros" value={String(marginAudit?.length || 0)} icon={Eye} />
         </div>
       </div>
@@ -154,7 +160,7 @@ export function IntelligenceStrategicTab() {
         <KpiCard title="Elasticidade de Preço" value={`${priceElasticity.toFixed(1)}%`} icon={TrendingUp} subtitle="Δ qty c/ desconto" />
         <KpiCard title="Sensibilidade a Desconto" value={`${discountSensitivity.toFixed(1)}%`} icon={Percent} subtitle={`${ordersWithDiscount} de ${salesOrders?.length || 0} pedidos`} />
         <KpiCard title="Market Share Est." value={`${marketSharePct.toFixed(1)}%`} icon={Target} subtitle={`${uniqueCustomers} de ~${estimatedMarket} clientes`} />
-        <KpiCard title="Margem Global" value={`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle="Período auditado" />
+        <KpiCard title="Margem Global" value={`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} subtitle={`parcial — ${auditComCusto}/${auditTotal} c/ custo`} />
       </div>
 
       {/* Margin Audit Table */}
@@ -181,10 +187,10 @@ export function IntelligenceStrategicTab() {
                   {marginAudit.slice(0, 20).map(row => (
                     <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50">
                       <td className="py-2 font-mono">{clientNameMap[row.customer_user_id] ?? `${row.customer_user_id.slice(0, 8)}...`}</td>
-                      <td className="text-center py-2">R$ {Number(row.margin_real).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</td>
-                      <td className="text-center py-2">R$ {Number(row.margin_potential).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</td>
+                      <td className="text-center py-2">{row.margin_real == null ? '—' : `R$ ${Number(row.margin_real).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`}</td>
+                      <td className="text-center py-2">{row.margin_potential == null ? '—' : `R$ ${Number(row.margin_potential).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`}</td>
                       <td className="text-center py-2 text-destructive">R$ {Number(row.margin_gap).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</td>
-                      <td className="text-center py-2">{Number(row.gap_pct).toFixed(1)}%</td>
+                      <td className="text-center py-2">{row.gap_pct == null ? '—' : `${Number(row.gap_pct).toFixed(1)}%`}</td>
                       <td className="text-right py-2 text-muted-foreground">{new Date(row.calculated_at).toLocaleDateString('pt-BR')}</td>
                     </tr>
                   ))}
