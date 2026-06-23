@@ -976,11 +976,11 @@ async function computeCosts(db: SupabaseClient) {
   // Catálogo ATIVO inteiro — PAGINADO: o PostgREST capa o .select() em 1000 linhas em
   // SILÊNCIO (docs/agent/database.md §5). Sem isto, ~2/3 dos ~3k produtos ativos nunca
   // eram recalculados. .order("id") = coluna estável exigida pelo .range() entre páginas.
-  const products = await fetchAll<{ id: string; valor_unitario: number; familia: string | null }>(
+  const products = await fetchAll<{ id: string; valor_unitario: number; familia: string | null; unidade: string | null; descricao: string | null }>(
     (from, to) =>
       db
         .from("omie_products")
-        .select("id, valor_unitario, familia")
+        .select("id, valor_unitario, familia, unidade, descricao")
         .eq("ativo", true)
         .order("id", { ascending: true })
         .range(from, to),

@@ -30,7 +30,9 @@ function minMaxNorm(values: number[]): number[] {
 type CostRow = { cost_price: number | null; cost_final: number | null; cost_source: string | null; cost_confidence: number | null };
 // CMC_MARGEM_ATIPICA = CMC real fora da banda de margem (prejuízo/baixa/alta) — REAL, propaga como custo.
 const COST_SOURCES_REAIS = new Set(["PRODUCT_COST", "CMC", "CMC_MARGEM_ATIPICA"]);
-const COST_SOURCES_PROXY = new Set(["FAMILY_MARGIN_PROXY", "DEFAULT_PROXY"]);
+// CMC_UNIDADE_SUSPEITA é descasamento de unidade (cmc por m²/m vs price noutra unidade): o cost_final é
+// proxy de família, NÃO custo real — fica fora de REAIS (sem margem exibida) mas conta como PROXY p/ ranking.
+const COST_SOURCES_PROXY = new Set(["FAMILY_MARGIN_PROXY", "DEFAULT_PROXY", "CMC_UNIDADE_SUSPEITA"]);
 function finitePositive(x: number | null | undefined): x is number {
   return typeof x === "number" && Number.isFinite(x) && x > 0;
 }

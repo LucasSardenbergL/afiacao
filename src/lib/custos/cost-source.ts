@@ -14,7 +14,9 @@ export type CostRow = {
 // CMC_MARGEM_ATIPICA é CMC REAL fora da banda de margem comercial (prejuízo/baixa/alta) — custo real
 // de confiança rebaixada. É REAL (propaga como custo): a margem ruim fica VISÍVEL, nunca mascarada por proxy.
 const COST_SOURCES_REAIS = new Set(['PRODUCT_COST', 'CMC', 'CMC_MARGEM_ATIPICA']);
-const COST_SOURCES_PROXY = new Set(['FAMILY_MARGIN_PROXY', 'DEFAULT_PROXY']);
+// CMC_UNIDADE_SUSPEITA é descasamento de unidade (cmc por m²/m vs price noutra unidade): o cost_final é
+// proxy de família, NÃO custo real — fica fora de REAIS (sem margem exibida) mas conta como PROXY p/ ranking.
+const COST_SOURCES_PROXY = new Set(['FAMILY_MARGIN_PROXY', 'DEFAULT_PROXY', 'CMC_UNIDADE_SUSPEITA']);
 
 function finitePositive(x: number | null | undefined): x is number {
   return typeof x === 'number' && Number.isFinite(x) && x > 0;
