@@ -24,7 +24,7 @@ export interface TacticalPlan {
   churnRisk: number;
   mixGap: number;
   currentMarginPct: number;
-  clusterAvgMarginPct: number;
+  clusterAvgMarginPct: number | null;
   expansionPotential: number;
 
   // Strategy
@@ -105,6 +105,7 @@ interface TacticalPlanRow {
 }
 
 interface ClientScoreFull {
+  farmer_id: string | null; // dono da carteira-Omie (Opção A) — escopa o cluster de margem
   health_score: number | string | null;
   churn_risk: number | string | null;
   avg_monthly_spend_180d: number | string | null;
@@ -220,7 +221,7 @@ export const useTacticalPlan = () => {
       churnRisk: Number(d.churn_risk || 0),
       mixGap: Number(d.mix_gap || 0),
       currentMarginPct: Number(d.current_margin_pct || 0),
-      clusterAvgMarginPct: Number(d.cluster_avg_margin_pct || 0),
+      clusterAvgMarginPct: d.cluster_avg_margin_pct == null ? null : Number(d.cluster_avg_margin_pct),
       expansionPotential: Number(d.expansion_potential || 0),
       strategicObjective: d.strategic_objective,
       customerProfile: d.customer_profile,
@@ -354,14 +355,29 @@ export const useTacticalPlan = () => {
       const expansionPotential = Number(score.expansion_score || 0);
       const revenuePotential = Number(score.revenue_potential || 0);
 
-      const { data: allScores } = (await supabase
-        .from('farmer_client_scores')
-        .select('gross_margin_pct')
-        .eq('farmer_id', user.id)) as unknown as { data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null };
-
-      const clusterMargin = allScores?.length
-        ? allScores.reduce((s, r) => s + Number(r.gross_margin_pct || 0), 0) / allScores.length
-        : 25;
+      // [GUARD money-path] Cluster = média de margem dos PARES da carteira do DONO do score,
+      // não de quem está logado. Sob cobertura (#980) o viewer gera plano de cliente de OUTRO
+      // dono; benchmarkar por user.id daria cluster errado e, p/ gestor sem carteira, fabricava
+      // 25 (margem<20 forçando consolidacao a esmo). score.farmer_id é o dono real (Opção A); a
+      // RLS fcs_select_carteira deixa o cobridor ler a carteira do coberto (carteira_visivel_para
+      // via carteira_coverage). farmer_id null = corrupção → cluster AUSENTE (NÃO cair pra
+      // user.id, que reintroduz o viés do viewer). Exclui o próprio cliente (peer benchmark) e
+      // exige ≥1 par com margem finita; sem par → null (selectObjective trata; nada de 25).
+      let clusterMargin: number | null = null;
+      if (score.farmer_id) {
+        const { data: peers } = (await supabase
+          .from('farmer_client_scores')
+          .select('gross_margin_pct')
+          .eq('farmer_id', score.farmer_id)
+          .neq('customer_user_id', customerId)) as unknown as { data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null };
+        const peerMargins = (peers ?? [])
+          .filter((r) => r.gross_margin_pct != null)
+          .map((r) => Number(r.gross_margin_pct))
+          .filter((m) => Number.isFinite(m));
+        if (peerMargins.length >= 1) {
+          clusterMargin = peerMargins.reduce((s, m) => s + m, 0) / peerMargins.length;
+        }
+      }
 
       const mixGap = Math.max(0, 8 - categoryCount);
       const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, categoryCount);

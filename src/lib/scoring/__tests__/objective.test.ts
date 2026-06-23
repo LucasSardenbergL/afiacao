@@ -63,3 +63,19 @@ describe('selectObjective — fronteira recuperacao/reativacao ancorada no teto 
     expect(selectObjective(70, 0, 30, 30, 179, clampRecencyCapDays(undefined))).toBe('recuperacao');
   });
 });
+
+describe('selectObjective — cluster AUSENTE (null) degrada honesto (money-path: ausente ≠ fabricado)', () => {
+  const cap = 180;
+
+  it('cluster null NÃO dispara consolidacao_margem — nem com margem negativa (null não coage a 0)', () => {
+    // Antes o caller passava 25 mágico p/ carteira vazia; agora passa null quando o cluster do
+    // dono não existe. A margem negativa é o discriminador: sem o guard, `-5 < null*0.8 (=0)`
+    // viraria consolidacao a esmo.
+    expect(selectObjective(0, 0, 10, null, 0, cap)).toBe('upsell_premium');
+    expect(selectObjective(0, 0, -5, null, 0, cap)).toBe('upsell_premium');
+  });
+
+  it('cluster presente baixo ainda dispara consolidacao quando margem < cluster*0.8', () => {
+    expect(selectObjective(0, 0, 10, 25, 0, cap)).toBe('consolidacao_margem'); // 10 < 20
+  });
+});
