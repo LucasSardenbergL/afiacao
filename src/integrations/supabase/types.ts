@@ -8394,6 +8394,10 @@ export type Database = {
           cost_final: number | null
           cost_price: number | null
           cost_source: string | null
+          custo_producao: number | null
+          custo_producao_computed_at: string | null
+          custo_producao_source: string | null
+          custo_producao_status: string | null
           family_category: string | null
           id: string
           product_id: string
@@ -8405,6 +8409,10 @@ export type Database = {
           cost_final?: number | null
           cost_price?: number | null
           cost_source?: string | null
+          custo_producao?: number | null
+          custo_producao_computed_at?: string | null
+          custo_producao_source?: string | null
+          custo_producao_status?: string | null
           family_category?: string | null
           id?: string
           product_id: string
@@ -8416,6 +8424,10 @@ export type Database = {
           cost_final?: number | null
           cost_price?: number | null
           cost_source?: string | null
+          custo_producao?: number | null
+          custo_producao_computed_at?: string | null
+          custo_producao_source?: string | null
+          custo_producao_status?: string | null
           family_category?: string | null
           id?: string
           product_id?: string
