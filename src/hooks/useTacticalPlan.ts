@@ -113,6 +113,7 @@ interface ClientScoreFull {
   days_since_last_purchase: number | string | null;
   expansion_score: number | string | null;
   revenue_potential: number | string | null;
+  sales_history_status: string | null;
 }
 
 interface ProfileLite {
@@ -176,6 +177,7 @@ const objectiveLabels: Record<string, string> = {
   expansao_mix: '🟢 Expansão de Mix',
   upsell_premium: '🔵 Up-sell Premium',
   reativacao: '🟡 Reativação',
+  ativacao: '🆕 Ativação (1ª compra)',
   consolidacao_margem: '🟠 Consolidação de Margem',
 };
 
@@ -353,6 +355,7 @@ export const useTacticalPlan = () => {
       const daysSince = Number(score.days_since_last_purchase || 0);
       const expansionPotential = Number(score.expansion_score || 0);
       const revenuePotential = Number(score.revenue_potential || 0);
+      const salesHistoryStatus = score.sales_history_status ?? null;
 
       const { data: allScores } = (await supabase
         .from('farmer_client_scores')
@@ -366,7 +369,7 @@ export const useTacticalPlan = () => {
       const mixGap = Math.max(0, 8 - categoryCount);
       const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, categoryCount);
       const recencyCapDays = clampRecencyCapDays(recencyCapRow?.value);
-      const strategicObjective = selectObjective(churnRisk, mixGap, marginPct, clusterMargin, daysSince, recencyCapDays);
+      const strategicObjective = selectObjective(churnRisk, mixGap, marginPct, clusterMargin, daysSince, recencyCapDays, salesHistoryStatus);
 
       const topBundle = bundles?.[0] || null;
       const secondBundle = bundles?.[1] || null;
@@ -420,6 +423,7 @@ export const useTacticalPlan = () => {
             clusterAvgMargin: clusterMargin,
             expansionPotential,
             revenuePotential,
+            salesHistoryStatus,
           },
           bundleContext: bundleCtx,
           diagnosticData,
