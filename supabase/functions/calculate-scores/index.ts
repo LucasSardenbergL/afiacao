@@ -63,6 +63,7 @@ interface FarmerClientScoreSeed {
   s_score: number;
   x_score: number;
   eff_score: number;
+  sales_history_status: 'sem_historico' | 'stale' | 'ativo';
 }
 
 interface ScoreUpdate {
@@ -85,6 +86,8 @@ interface ScoreUpdate {
   days_since_last_purchase: number;
   avg_monthly_spend_180d: number;
   category_count: number;
+  // OPCIONAL na RPC (COALESCE, fora do guard das 13): null quando salesRefreshFatal → preserva o atual.
+  sales_history_status: 'sem_historico' | 'stale' | 'ativo' | null;
   calculated_at: string;
   updated_at: string;
 }
@@ -149,6 +152,29 @@ function computeRecencyScore(daysSinceLastPurchase: number | null | undefined, c
   return Math.max(0, 100 - (Math.min(days, cap) / cap) * 100);
 }
 
+// sales_history_status — espelho inline de src/lib/scoring/salesHistoryStatus.ts (vitest 10/10 +
+// falsificação; Deno não importa de src/). Money-path: "ausente ≠ zero" no OUTPUT. sem_historico =
+// sem venda válida monetizada no resumo. clampActiveDays é PRÓPRIO (sales_active_threshold_days ≠
+// hs_recency_cap_days — semânticas distintas, desacopladas de propósito). Paridade: mudou aqui → mude lá.
+function clampActiveDays(raw: number | null | undefined): number {
+  if (raw == null) return 180; // Number(null)===0 é finito → guard ANTES do clamp
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 180;
+  return Math.min(999, Math.max(30, Math.round(n)));
+}
+function deriveSalesHistoryStatus(
+  sales: CustomerSalesSummaryRow | null | undefined,
+  activeThresholdDays: number,
+): 'sem_historico' | 'stale' | 'ativo' {
+  const cap = clampActiveDays(activeThresholdDays);
+  const revenue = sales ? Number(sales.total_revenue ?? 0) : 0;
+  if (!Number.isFinite(revenue) || revenue <= 0) return 'sem_historico';
+  const daysRaw = sales ? sales.days_since_last_purchase : null;
+  const days = Number(daysRaw);
+  if (daysRaw == null || !Number.isFinite(days)) return 'stale';
+  return days <= cap ? 'ativo' : 'stale';
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -196,6 +222,9 @@ Deno.serve(async (req) => {
     // Recência: teto (dias até zerar) configurável, guardrail [30,999] (achado /codex: T>999
     // ressuscitaria o sentinela 999). Default 180. Ajustável sem redeploy via farmer_algorithm_config.
     const recencyCapDays = clampRecencyCapDays(config['hs_recency_cap_days']);
+
+    // sales_history_status: limiar (dias) ativo vs stale — config próprio, desacoplado do cap de recência.
+    const salesActiveDays = config['sales_active_threshold_days'] ?? 180;
 
     // Get all client scores with pagination
     let clients: FarmerClientScoreRow[] = [];
@@ -334,6 +363,7 @@ Deno.serve(async (req) => {
               s_score: 0,
               x_score: 0,
               eff_score: 0,
+              sales_history_status: deriveSalesHistoryStatus(salesMap.get(client.user_id), salesActiveDays),
             });
           }
 
@@ -518,6 +548,8 @@ Deno.serve(async (req) => {
         days_since_last_purchase: client.days_since_last_purchase ?? 999,
         avg_monthly_spend_180d: client.avg_monthly_spend_180d ?? 0,
         category_count: client.category_count ?? 0,
+        // salesRefreshFatal → null → a RPC (COALESCE) preserva o valor atual (não fabrica por RPC ausente).
+        sales_history_status: salesRefreshFatal ? null : deriveSalesHistoryStatus(salesMap.get(client.customer_user_id), salesActiveDays),
         calculated_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
