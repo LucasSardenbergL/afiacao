@@ -149,3 +149,61 @@ describe('montarUpsertsDeCusto — catálogo INTEIRO (a montagem não impõe cap
     expect(rows.filter((r) => r.cost_source === 'CMC')).toHaveLength(N - 1000); // 500
   });
 });
+
+describe('montarUpsertsDeCusto — CMC_UNIDADE_SUSPEITA (descasamento de unidade, decorator pós-escada)', () => {
+  // Jumbo M2: cmc é por m2 (31), price (218) está noutra unidade → a escada vê "margem 86%"
+  // (CMC_MARGEM_ATIPICA), mas é DESCASAMENTO DE UNIDADE, não prejuízo real. Com unidade
+  // geométrica (H1) + dimensão LxC na descrição (H3), o decorator re-rotula: cost_final
+  // degrada ao proxy de família, cost_price=null (cmc não comparável ao price), cmc cru preservado.
+  it('jumbo M2 com dimensão na descrição → CMC_UNIDADE_SUSPEITA (cost_final=proxy família, cost_price=null, cmc cru)', () => {
+    const produtos: ProdutoCusto[] = [
+      { id: 'a1', valor_unitario: 100, familia: 'A' },
+      { id: 'a2', valor_unitario: 100, familia: 'A' },
+      { id: 'a3', valor_unitario: 100, familia: 'A' }, // 3 CMCs reais (margem 0.4) → proxy de família
+      { id: 'jumbo', valor_unitario: 218, familia: 'A', unidade: 'M2', descricao: 'JUMBO KA169 1410X50000MM P80' },
+    ];
+    const invMap = { a1: { cmc: 60 }, a2: { cmc: 60 }, a3: { cmc: 60 }, jumbo: { cmc: 31 } };
+    const r = byId(montarUpsertsDeCusto(produtos, {}, invMap, cfg, NOW).rows, 'jumbo');
+    expect(r.cost_source).toBe('CMC_UNIDADE_SUSPEITA');
+    expect(r.cost_price).toBeNull(); // cmc não comparável ao price → não semeia cost_price
+    expect(r.cmc).toBe(31); // cmc cru preservado (auditoria)
+    expect(r.cost_final).toBeCloseTo(218 * (1 - 0.4), 6); // proxy de família (margem média 0.4)
+    expect(r.cost_confidence).toBe(0.5); // herda do FAMILY_MARGIN_PROXY
+  });
+
+  // O CORAÇÃO money-path: o gatilho é ESTREITO. Marcar um prejuízo real como unidade-suspeita e
+  // rebaixá-lo a proxy reintroduziria o bug do #988 (esconder prejuízo) por outra porta.
+  it('M2 SEM dimensão na descrição (H3 ausente) → NÃO re-mascara: continua CMC_MARGEM_ATIPICA', () => {
+    // ROLO BTT: unidade M2 mas descrição sem medida LxC. cmc 38 vs price 8.50 = prejuízo real visível.
+    const produtos: ProdutoCusto[] = [
+      { id: 'btt', valor_unitario: 8.5, familia: 'B', unidade: 'M2', descricao: 'ROLO BTT VERDE' },
+    ];
+    const r = byId(montarUpsertsDeCusto(produtos, {}, { btt: { cmc: 38 } }, cfg, NOW).rows, 'btt');
+    expect(r.cost_source).toBe('CMC_MARGEM_ATIPICA');
+    expect(r.cost_price).toBe(38); // prejuízo real preservado, NÃO mascarado
+  });
+
+  it('unidade UN (discreta) com margem atípica + dimensão na descrição → continua CMC_MARGEM_ATIPICA (H1 falha)', () => {
+    const produtos: ProdutoCusto[] = [
+      { id: 'un', valor_unitario: 100, familia: 'C', unidade: 'UN', descricao: 'CHAPA 100X200MM' },
+    ];
+    const r = byId(montarUpsertsDeCusto(produtos, {}, { un: { cmc: 96 } }, cfg, NOW).rows, 'un');
+    expect(r.cost_source).toBe('CMC_MARGEM_ATIPICA'); // margem 4% real, visível
+  });
+
+  it('M2 + dimensão mas margem NORMAL (dentro da banda) → CMC normal (decorator só atua sobre atípico)', () => {
+    const produtos: ProdutoCusto[] = [
+      { id: 'm2', valor_unitario: 100, familia: 'D', unidade: 'M2', descricao: 'LIXA 300X50000MM' },
+    ];
+    const r = byId(montarUpsertsDeCusto(produtos, {}, { m2: { cmc: 60 } }, cfg, NOW).rows, 'm2');
+    expect(r.cost_source).toBe('CMC'); // margem 0.4, dentro da banda — intocado
+  });
+
+  it('unidade L (líquido) fora da 1a versão → NÃO marca, mesmo com dimensão (falso-positivo do litro evitado)', () => {
+    const produtos: ProdutoCusto[] = [
+      { id: 'liq', valor_unitario: 100, familia: 'E', unidade: 'L', descricao: 'VERNIZ 10X10MM' },
+    ];
+    const r = byId(montarUpsertsDeCusto(produtos, {}, { liq: { cmc: 8 } }, cfg, NOW).rows, 'liq');
+    expect(r.cost_source).toBe('CMC_MARGEM_ATIPICA'); // margem 92% real fica visível, não mascarada
+  });
+});
