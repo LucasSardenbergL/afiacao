@@ -350,13 +350,20 @@ serve(async (req: Request) => {
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
     const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_clientes").select("user_id, omie_codigo_cliente").order("id", { ascending: true }).range(f, t), "omie_clientes");
     const userToOmie = new Map(clientesAll.map((c) => [c.user_id, String(c.omie_codigo_cliente)]));
-    // Custo canônico = cost_final (saída do motor de custo, MESMA fonte que o recommend usa p/ margem). Fallback
-    // p/ cost_price (legado) quando cost_final é ausente OU inválido (<=0/NaN) — preserva cobertura (14 SKUs Oben
-    // têm cost_final inválido mas cost_price real >0, psql-ro 2026-06-18). ausente≠zero: nunca usa 0 como custo
-    // real; <=0/null nos DOIS → SKU sem custo (cm null no combo). Codex P2: o fallback em cost_final INVÁLIDO (não
-    // só ausente) é INTENCIONAL (cost_price é custo real legado, dropar esconderia margem real) mas OBSERVÁVEL via
-    // warn — não-silencioso. v2: cost_confidence classifica o custo USADO em BAIXA CONFIANÇA (fallback legado OU
-    // cost_final com confiança <0,7 = proxy do motor) → custo_baixa_confianca_pct (exclusivo de custo_ausente).
+    // Custo canônico = cost_final (saída do motor de custo). SOURCE-BLIND de propósito: usa cost_final>0 de
+    // QUALQUER cost_source (inclusive proxy) — NÃO é a régua resolverCustoConfiavel do recommend/audit
+    // (src/lib/custos/cost-source.ts), que gateia source∈REAIS e nulifica proxy. Coincidem nas linhas reais
+    // (PRODUCT_COST/CMC), DIVERGEM em proxy: split INTENCIONAL — aqui computa e REBAIXA a confiança (v2, abaixo);
+    // lá nulifica. NÃO unificar (reverteria o #1003). Fallback p/ cost_price (legado) quando cost_final é ausente
+    // OU inválido (<=0/NaN) — preserva cobertura (14 SKUs Oben têm cost_final inválido mas cost_price real >0,
+    // psql-ro 2026-06-18). ausente≠zero: nunca usa 0 como custo real; <=0/null nos DOIS → SKU sem custo (cm null
+    // no combo). Codex P2: o fallback em cost_final INVÁLIDO (não só ausente) é INTENCIONAL (cost_price é custo
+    // real legado, dropar esconderia margem real) mas OBSERVÁVEL via warn — não-silencioso. v2: cost_confidence
+    // classifica o custo USADO em BAIXA CONFIANÇA (fallback legado OU cost_final com confiança <0,7 = proxy do
+    // motor) → custo_baixa_confianca_pct (exclusivo de custo_ausente). INVARIANTE que mantém o split honesto:
+    // TODA linha proxy tem confiança <0,7 (0 de 1489 com ≥0,7, psql-ro 2026-06-23) → o rebaixamento cobre 100%
+    // dos proxies que entram aqui; se o motor um dia carimbar proxy com ≥0,7, o cockpit o exibiria como margem
+    // FIRME sem rebaixar (dívida rastreada — a defesa robusta seria gatear por source, como o resolverCustoConfiavel).
     const custosAll = await fetchAll<{ product_id: string; cost_final: number | null; cost_price: number | null; cost_confidence: number | null }>((f, t) => db.from("product_costs").select("product_id, cost_final, cost_price, cost_confidence").order("id", { ascending: true }).range(f, t), "product_costs");
     const custoValido = (x: number | null): number | null => (typeof x === "number" && Number.isFinite(x) && x > 0 ? x : null);
     const custoPorProduto = new Map<string, number>();
