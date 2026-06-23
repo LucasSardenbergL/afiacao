@@ -37,7 +37,21 @@ PG17 `db/test-tint-promote-dedup-itens.sh` — **11/11 verde**: promove sem abor
 4. **`data_atualizacao` sempre-NULL ⇒ hash-filter sempre ativo** (formula E formulaperson) → re-envio nunca é delta-timestamp. **Staging append + latest-per-key + purge-30d** → crescimento da staging (121k→406k) é re-staging acumulado, **auto-limitado** (sintoma, não dano).
 
 ### Pendência do founder
-Deploy money-path: **migration no SQL Editor** (pré-flight `pg_get_functiondef` confirmou prod==repo, sem drift). Após aplicar + próximo sync: o re-loop cessa (`status='error'` some) e o item das 4 cores segue maior-ordem (inalterado). **Decisão de domínio separada** (não bloqueia o fix): avaliar com o balcão se as 2 dosagens distintas (344M corante 1 = 40.05+1.54; 997M corante 3 = 0.385+14.09) deveriam **somar** — se sim, é outra mudança money-path (mudaria a cor ativa).
+Deploy money-path: **migration no SQL Editor** (pré-flight `pg_get_functiondef` confirmou prod==repo, sem drift). Após aplicar + próximo sync: o re-loop cessa (`status='error'` some) e o item das 4 cores segue maior-ordem (inalterado).
+
+### Decisão de domínio (FECHADA — Claude + Codex, unânime: A = manter max-ordem)
+A 344M usa **1.54ml de corante 1** (ordem 3) em vez de 40.05 (ordem 1) ou 41.59 (soma) — possível subdosagem se as 2 dosagens forem reais. **Decisão: MANTER max-ordem** (= o que o fix já faz; NÃO somar). Razão: está em 1.54 desde o CSV-import **sem reclamação**, `tint_staging_preparacoes` está **vazia** (zero sinal de uso), e mudar **27×** uma cor ativa sem falha observada é pior governança que manter o status quo suspeito-mas-não-contestado (Codex: *"a bigger governance error"*). Auditoria confirma a **344M como ÚNICO caso** no catálogo (descartada/mantida ≥ 5 → razão 26×; 629N/638S = duplicação idêntica, 997M descartou a menor). Se o balcão um dia contestar a cor, é `UPDATE` pontual de 1 linha. Safeguard periódico (sugestão do Codex):
+```sql
+WITH r AS (SELECT si.staging_formula_id, si.id_corante, si.qtd_ml,
+  row_number() OVER (PARTITION BY si.staging_formula_id, si.id_corante ORDER BY si.ordem DESC, si.qtd_ml DESC, si.id DESC) rn
+  FROM tint_staging_formula_itens si JOIN tint_staging_formulas s ON s.id=si.staging_formula_id
+  WHERE s.account='oben' AND s.store_code='M01' AND s.personalizada=false),
+agg AS (SELECT staging_formula_id, id_corante, max(qtd_ml) FILTER (WHERE rn=1) kept,
+  max(qtd_ml) FILTER (WHERE rn>1) maior_descartada FROM r GROUP BY 1,2 HAVING count(*)>1)
+SELECT s.cor_id, a.id_corante, a.kept, a.maior_descartada, round((a.maior_descartada/nullif(a.kept,0))::numeric,1) razao
+FROM agg a JOIN tint_staging_formulas s ON s.id=a.staging_formula_id
+WHERE a.maior_descartada/nullif(a.kept,0) >= 5 ORDER BY razao DESC;  -- hoje: só 344M (26x)
+```
 
 ---
 
