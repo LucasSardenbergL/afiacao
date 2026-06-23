@@ -105,8 +105,9 @@ export interface SalesStatusInput {
 
 const DEFAULT_ACTIVE_DAYS = 180;
 
-/** Clamp do limiar de "ativo" (dias). NaN/ausente → 180; piso 30, teto 999; arredonda. */
+/** Clamp do limiar de "ativo" (dias). null/undefined/NaN → 180; piso 30, teto 999; arredonda. */
 export function clampActiveDays(raw: number | null | undefined): number {
+  if (raw == null) return DEFAULT_ACTIVE_DAYS;   // Number(null)===0 é finito → guard ANTES do clamp
   const n = Number(raw);
   if (!Number.isFinite(n)) return DEFAULT_ACTIVE_DAYS;
   return Math.min(999, Math.max(30, Math.round(n)));
@@ -358,6 +359,7 @@ git commit -m "feat(db): apply_score_updates v2 — sales_history_status com COA
 // Espelho inline de src/lib/scoring/salesHistoryStatus.ts (vitest; Deno não importa de src/).
 // Money-path: "ausente ≠ zero" no OUTPUT. sem_historico = sem venda válida monetizada no resumo.
 function clampActiveDays(raw: number | null | undefined): number {
+  if (raw == null) return 180;   // Number(null)===0 é finito → guard ANTES do clamp
   const n = Number(raw);
   if (!Number.isFinite(n)) return 180;
   return Math.min(999, Math.max(30, Math.round(n)));
