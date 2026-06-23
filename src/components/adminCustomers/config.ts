@@ -5,8 +5,16 @@ export const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency',
 
 export const HEALTH_CLASSES: Record<string, { label: string; className: string }> = {
   saudavel: { label: 'Saudável', className: 'status-success' },
-  alerta: { label: 'Alerta', className: 'status-pending' },
+  estavel: { label: 'Estável', className: 'status-progress' },
+  atencao: { label: 'Atenção', className: 'status-pending' },
   critico: { label: 'Crítico', className: 'status-danger' },
+  novo: { label: 'Novo', className: 'text-muted-foreground' },
+};
+
+export const SALES_HISTORY_LABELS: Record<string, { label: string; className: string }> = {
+  sem_historico: { label: 'Sem histórico', className: 'text-muted-foreground' },
+  stale: { label: 'Inativo', className: 'status-pending' },
+  ativo: { label: 'Ativo', className: 'status-success' },
 };
 
 export function formatDocument(doc: string | null) {

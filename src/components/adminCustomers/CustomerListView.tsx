@@ -230,7 +230,8 @@ export function CustomerListView({
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => setFilterHealth('all')}>Todos</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setFilterHealth('saudavel')}>🟢 Saudável</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setFilterHealth('alerta')}>🟡 Alerta</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setFilterHealth('estavel')}>🔵 Estável</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setFilterHealth('atencao')}>🟡 Atenção</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setFilterHealth('critico')}>🔴 Crítico</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -255,6 +256,7 @@ export function CustomerListView({
               {filtered.map((customer) => {
                 const score = scores.get(customer.user_id);
                 const healthInfo = score ? HEALTH_CLASSES[score.health_class] : undefined;
+                const isSemHistorico = score?.sales_history_status === 'sem_historico';
 
                 return (
                   <tr
@@ -288,9 +290,13 @@ export function CustomerListView({
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-center">
-                      <Badge variant="outline" className={cn('text-[10px]', healthInfo?.className)}>
-                        {healthInfo?.label || 'N/A'}
-                      </Badge>
+                      {isSemHistorico ? (
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground">Sem histórico</Badge>
+                      ) : (
+                        <Badge variant="outline" className={cn('text-[10px]', healthInfo?.className)}>
+                          {healthInfo?.label || 'N/A'}
+                        </Badge>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-right hidden lg:table-cell">
                       <span className="text-xs font-medium tabular-nums">
