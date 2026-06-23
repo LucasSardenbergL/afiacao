@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **277** custom migrations totais
-- **1003** objetos esperados (criados por estas migrations)
+- **280** custom migrations totais
+- **1006** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 283
+  - `function`: 284
   - `rls_policy`: 219
   - `index`: 186
   - `table`: 108
-  - `cron_job`: 107
+  - `cron_job`: 108
   - `trigger`: 51
-  - `view`: 45
+  - `view`: 46
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2390,6 +2390,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.cleanup_orphan_score_on_carteira_delete` | — |
 | `trigger` | `public.trg_carteira_cleanup_orphan_score` | `carteira_assignments` |
 
+### `20260622130000_tint_promote_nome_cor_fallback.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
 ### `20260622140000_apply_score_updates_persiste_base_vendas.sql`
 
 | Tipo | Objeto | Parent |
@@ -2401,6 +2407,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.apply_score_updates` | — |
+
+### `20260623120000_caca_custo_producao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_caca_compradores` | — |
+
+### `20260623130000_caca_custo_producao_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.caca-custo-producao-colacor-daily` | — |
 
 ## Próximos passos quando algo der `❌`
 

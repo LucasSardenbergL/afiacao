@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 277
+-- Total de custom migrations: 280
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -295,8 +295,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260621120000', 'seed_targets_faltantes_rpc', '20260621120000_seed_targets_faltantes_rpc.sql'),
   ('20260621130000', 'fcs_guard_flagged_insert', '20260621130000_fcs_guard_flagged_insert.sql'),
   ('20260622120000', 'trigger_cleanup_orphan_score_on_carteira_delete', '20260622120000_trigger_cleanup_orphan_score_on_carteira_delete.sql'),
+  ('20260622130000', 'tint_promote_nome_cor_fallback', '20260622130000_tint_promote_nome_cor_fallback.sql'),
   ('20260622140000', 'apply_score_updates_persiste_base_vendas', '20260622140000_apply_score_updates_persiste_base_vendas.sql'),
-  ('20260622160000', 'apply_score_updates_guard_full_update', '20260622160000_apply_score_updates_guard_full_update.sql')
+  ('20260622160000', 'apply_score_updates_guard_full_update', '20260622160000_apply_score_updates_guard_full_update.sql'),
+  ('20260623120000', 'caca_custo_producao', '20260623120000_caca_custo_producao.sql'),
+  ('20260623130000', 'caca_custo_producao_cron', '20260623130000_caca_custo_producao_cron.sql')
 )
 SELECT
   e.version,
@@ -1316,8 +1319,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fcs_guard_flagged_insert', 'trigger', 'public', 'trg_fcs_block_flagged_insert', 'farmer_client_scores'),
   ('trigger_cleanup_orphan_score_on_carteira_delete', 'function', 'public', 'cleanup_orphan_score_on_carteira_delete', ''),
   ('trigger_cleanup_orphan_score_on_carteira_delete', 'trigger', 'public', 'trg_carteira_cleanup_orphan_score', 'carteira_assignments'),
+  ('tint_promote_nome_cor_fallback', 'function', 'public', 'tint_promote_sync_run', ''),
   ('apply_score_updates_persiste_base_vendas', 'function', 'public', 'apply_score_updates', ''),
-  ('apply_score_updates_guard_full_update', 'function', 'public', 'apply_score_updates', '')
+  ('apply_score_updates_guard_full_update', 'function', 'public', 'apply_score_updates', ''),
+  ('caca_custo_producao', 'view', 'public', 'v_caca_compradores', ''),
+  ('caca_custo_producao_cron', 'cron_job', 'cron', 'caca-custo-producao-colacor-daily', '')
 )
 SELECT
   e.migration,
