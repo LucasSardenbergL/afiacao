@@ -14,6 +14,90 @@ export type Database = {
   }
   public: {
     Tables: {
+      _backup_cost_lavados_20260620: {
+        Row: {
+          _backup_at: string | null
+          _op_ativo: boolean | null
+          cmc: number | null
+          cost_confidence: number | null
+          cost_final: number | null
+          cost_price: number | null
+          cost_source: string | null
+          family_category: string | null
+          id: string | null
+          product_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          _backup_at?: string | null
+          _op_ativo?: boolean | null
+          cmc?: number | null
+          cost_confidence?: number | null
+          cost_final?: number | null
+          cost_price?: number | null
+          cost_source?: string | null
+          family_category?: string | null
+          id?: string | null
+          product_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          _backup_at?: string | null
+          _op_ativo?: boolean | null
+          cmc?: number | null
+          cost_confidence?: number | null
+          cost_final?: number | null
+          cost_price?: number | null
+          cost_source?: string | null
+          family_category?: string | null
+          id?: string | null
+          product_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      _backup_cost_reset_20260622: {
+        Row: {
+          _backup_at: string | null
+          _op_ativo: boolean | null
+          cmc: number | null
+          cost_confidence: number | null
+          cost_final: number | null
+          cost_price: number | null
+          cost_source: string | null
+          family_category: string | null
+          id: string | null
+          product_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          _backup_at?: string | null
+          _op_ativo?: boolean | null
+          cmc?: number | null
+          cost_confidence?: number | null
+          cost_final?: number | null
+          cost_price?: number | null
+          cost_source?: string | null
+          family_category?: string | null
+          id?: string | null
+          product_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          _backup_at?: string | null
+          _op_ativo?: boolean | null
+          cmc?: number | null
+          cost_confidence?: number | null
+          cost_final?: number | null
+          cost_price?: number | null
+          cost_source?: string | null
+          family_category?: string | null
+          id?: string | null
+          product_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       _preflight_tint: {
         Row: {
           erro: string | null
@@ -8308,7 +8392,7 @@ export type Database = {
           cmc: number | null
           cost_confidence: number | null
           cost_final: number | null
-          cost_price: number
+          cost_price: number | null
           cost_source: string | null
           family_category: string | null
           id: string
@@ -8319,7 +8403,7 @@ export type Database = {
           cmc?: number | null
           cost_confidence?: number | null
           cost_final?: number | null
-          cost_price?: number
+          cost_price?: number | null
           cost_source?: string | null
           family_category?: string | null
           id?: string
@@ -8330,7 +8414,7 @@ export type Database = {
           cmc?: number | null
           cost_confidence?: number | null
           cost_final?: number | null
-          cost_price?: number
+          cost_price?: number | null
           cost_source?: string | null
           family_category?: string | null
           id?: string
@@ -16417,6 +16501,12 @@ export type Database = {
       }
       route_city_norm: { Args: { raw: string }; Returns: string }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
+      seed_targets_faltantes: {
+        Args: never
+        Returns: {
+          user_id: string
+        }[]
+      }
       set_config: {
         Args: { is_local?: boolean; parameter: string; value: string }
         Returns: string

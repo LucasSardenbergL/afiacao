@@ -6,6 +6,7 @@ import "./index.css";
  *  do commit, ou "dev" se o build não tiver git. O cron/verify-frontend.sh grepa o SHA
  *  da main nos bytes servidos → responde "o ar == origin/main?" sem adivinhar um ALVO. */
 declare const __COMMIT_SHA__: string;
+declare const __BUILD_ENV_KEYS__: string;
 
 declare global {
   interface Window {
@@ -13,11 +14,14 @@ declare global {
     __APP_BOOTED__?: boolean;
     /** Short SHA do commit deste build (carimbo). Lido pela verificação de deploy. */
     __BUILD_SHA__?: string;
+    /** PROBE temporário: nomes (sem valores) de env de build p/ achar a env de SHA do Lovable. */
+    __BUILD_ENV_KEYS__?: string;
   }
 }
 
 // Carimba o SHA deste build no window logo no boot (side-effect — não é tree-shaken).
 window.__BUILD_SHA__ = __COMMIT_SHA__;
+window.__BUILD_ENV_KEYS__ = __BUILD_ENV_KEYS__;
 
 const isInLovablePreview =
   window.location.hostname.includes("id-preview--") ||

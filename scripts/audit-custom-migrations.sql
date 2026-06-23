@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 270
+-- Total de custom migrations: 279
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -290,7 +290,15 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260618210000', 'b_renamespace_orfaos', '20260618210000_b_renamespace_orfaos.sql'),
   ('20260618230000', 'fix_enqueue_sinais_owner_e_reconcile_fila', '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql'),
   ('20260619120000', 'param_auto_resumo_descricao', '20260619120000_param_auto_resumo_descricao.sql'),
-  ('20260619120000', 'trigger_reconcile_score_owner_carteira', '20260619120000_trigger_reconcile_score_owner_carteira.sql')
+  ('20260619120000', 'trigger_reconcile_score_owner_carteira', '20260619120000_trigger_reconcile_score_owner_carteira.sql'),
+  ('20260620130000', 'cost_price_nullable', '20260620130000_cost_price_nullable.sql'),
+  ('20260621120000', 'seed_targets_faltantes_rpc', '20260621120000_seed_targets_faltantes_rpc.sql'),
+  ('20260621130000', 'fcs_guard_flagged_insert', '20260621130000_fcs_guard_flagged_insert.sql'),
+  ('20260622120000', 'trigger_cleanup_orphan_score_on_carteira_delete', '20260622120000_trigger_cleanup_orphan_score_on_carteira_delete.sql'),
+  ('20260622130000', 'tint_promote_nome_cor_fallback', '20260622130000_tint_promote_nome_cor_fallback.sql'),
+  ('20260622140000', 'apply_score_updates_persiste_base_vendas', '20260622140000_apply_score_updates_persiste_base_vendas.sql'),
+  ('20260622160000', 'apply_score_updates_guard_full_update', '20260622160000_apply_score_updates_guard_full_update.sql'),
+  ('20260622210000', 'tint_promote_dedup_itens_corante', '20260622210000_tint_promote_dedup_itens_corante.sql')
 )
 SELECT
   e.version,
@@ -1304,7 +1312,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fix_enqueue_sinais_owner_e_reconcile_fila', 'function', 'public', 'enqueue_score_recalc_from_sinais', ''),
   ('param_auto_resumo_descricao', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
   ('trigger_reconcile_score_owner_carteira', 'function', 'public', 'reconcile_score_owner_from_carteira', ''),
-  ('trigger_reconcile_score_owner_carteira', 'trigger', 'public', 'trg_carteira_reconcile_score_owner', 'carteira_assignments')
+  ('trigger_reconcile_score_owner_carteira', 'trigger', 'public', 'trg_carteira_reconcile_score_owner', 'carteira_assignments'),
+  ('seed_targets_faltantes_rpc', 'function', 'public', 'seed_targets_faltantes', ''),
+  ('fcs_guard_flagged_insert', 'function', 'public', 'fcs_block_flagged_insert', ''),
+  ('fcs_guard_flagged_insert', 'trigger', 'public', 'trg_fcs_block_flagged_insert', 'farmer_client_scores'),
+  ('trigger_cleanup_orphan_score_on_carteira_delete', 'function', 'public', 'cleanup_orphan_score_on_carteira_delete', ''),
+  ('trigger_cleanup_orphan_score_on_carteira_delete', 'trigger', 'public', 'trg_carteira_cleanup_orphan_score', 'carteira_assignments'),
+  ('tint_promote_nome_cor_fallback', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('apply_score_updates_persiste_base_vendas', 'function', 'public', 'apply_score_updates', ''),
+  ('apply_score_updates_guard_full_update', 'function', 'public', 'apply_score_updates', ''),
+  ('tint_promote_dedup_itens_corante', 'function', 'public', 'tint_promote_sync_run', '')
 )
 SELECT
   e.migration,

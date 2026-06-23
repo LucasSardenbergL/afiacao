@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useScribe, CommitStrategy } from '@elevenlabs/react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { useMyActiveCoverage } from '@/hooks/useCoverage';
 import { useCopilotEngine, type CopilotContext } from '@/hooks/useCopilotEngine';
 import { useTacticalPlan, type TacticalPlan } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
@@ -20,6 +21,11 @@ export function useFarmerCopilot() {
   // lente, o próprio usuário fora). Iniciar a sessão (startSession persiste + invoca
   // edge) é write — bloqueado na lente pelo write-guard + botão "Iniciar" disabled.
   const { effectiveUserId, isImpersonating } = useImpersonation();
+  // Cobertura: dropdown inclui clientes que EU cubro agora (paridade com useMyCarteiraScores).
+  const { data: coverage } = useMyActiveCoverage();
+  const coveredIds = (coverage ?? []).map((c) => c.covered_user_id);
+  const coveredKey = coveredIds.join(',');
+  const ownerIds = isImpersonating && effectiveUserId ? [effectiveUserId] : (user ? [user.id, ...coveredIds] : []);
   const copilot = useCopilotEngine();
   const { getActivePlan } = useTacticalPlan();
   const [selectedCustomer, setSelectedCustomer] = useState<string>('');
@@ -50,12 +56,12 @@ export function useFarmerCopilot() {
 
   // Load customers (dropdown da carteira — segue o id efetivo na lente)
   useEffect(() => {
-    if (!effectiveUserId || !isStaff) return;
+    if (!ownerIds.length || !isStaff) return;
     (async () => {
       const { data: scores } = await supabase
         .from('farmer_client_scores')
         .select('customer_user_id')
-        .eq('farmer_id', effectiveUserId);
+        .in('farmer_id', ownerIds);
       if (!scores?.length) return;
       const ids = scores.map((s) => s.customer_user_id).filter((id): id is string => id !== null);
       const { data: profiles } = await supabase
@@ -66,7 +72,7 @@ export function useFarmerCopilot() {
         setCustomers(profiles.map((p) => ({ id: p.user_id, name: p.name ?? '' })));
       }
     })();
-  }, [effectiveUserId, isStaff]);
+  }, [effectiveUserId, isStaff, coveredKey]);
 
   // Auto-scroll transcript
   useEffect(() => {

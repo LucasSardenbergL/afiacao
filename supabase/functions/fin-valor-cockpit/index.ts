@@ -216,7 +216,7 @@ function recomendarAcaoComercial(input: { evp: number | null; receita_liquida: n
   // aviso de hurdle ausente vive na confiança + banner da UI (NÃO por cliente — vazaria pro A4).
   return r;
 }
-function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean; hurdle_indisponivel?: boolean; evp_teto_receita_pct?: number; cobertura_app_por_ar?: number }) {
+function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean; hurdle_indisponivel?: boolean; evp_teto_receita_pct?: number; cobertura_app_por_ar?: number; custo_baixa_confianca_pct?: number }) {
   const motivos: string[] = []; let nivel = 3;
   const rebaixar = (para: number, m: string) => { if (para < nivel) nivel = para; motivos.push(m); };
   if (input.hurdle_indisponivel) rebaixar(1, "Sem Ke/hurdle configurado — lucro econômico (EVP) indisponível; configure em /financeiro/valor.");
@@ -225,6 +225,11 @@ function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente
   if (input.cobertura_app_por_ar != null && input.cobertura_app_por_ar < 0.5) rebaixar(2, `${((1 - input.cobertura_app_por_ar) * 100).toFixed(0)}% da venda do app sem AR faturável — encargo de cliente subestimado; possível divergência app↔financeiro.`);
   if (input.custo_ausente_pct > 0.4) rebaixar(1, `${(input.custo_ausente_pct * 100).toFixed(0)}% das células sem custo — margem indisponível em boa parte.`);
   else if (input.custo_ausente_pct > 0.15) rebaixar(2, `${(input.custo_ausente_pct * 100).toFixed(0)}% sem custo cadastrado.`);
+  // v2: custo de baixa confiança (proxy do motor <0,7 OU fallback legado) — cm EXISTE mas estimado; mais brando que
+  // ausente (≥0,2 média, 0,05–0,2 só informa, nunca <média sozinho — codex). Exclusivo de custo_ausente.
+  const cbc = input.custo_baixa_confianca_pct ?? 0;
+  if (cbc >= 0.2) rebaixar(2, `${(cbc * 100).toFixed(0)}% das células com custo estimado (proxy do motor ou fallback legado)${cbc > 0.4 ? " — boa parte da margem é indicativa" : ""} — confiança da margem reduzida.`);
+  else if (cbc >= 0.05) motivos.push(`${(cbc * 100).toFixed(0)}% das células com custo proxy/legado (informativo).`);
   if (input.ar_indisponivel_pct > 0.3) rebaixar(2, `${(input.ar_indisponivel_pct * 100).toFixed(0)}% das vendas sem AR vinculável — encargo de cliente subestimado.`);
   if (input.estoque_ausente_pct > 0.3) rebaixar(2, `${(input.estoque_ausente_pct * 100).toFixed(0)}% dos SKUs sem estoque — encargo de SKU subestimado.`);
   const tetoPct = input.evp_teto_receita_pct ?? 0;
@@ -350,16 +355,25 @@ serve(async (req: Request) => {
     // têm cost_final inválido mas cost_price real >0, psql-ro 2026-06-18). ausente≠zero: nunca usa 0 como custo
     // real; <=0/null nos DOIS → SKU sem custo (cm null no combo). Codex P2: o fallback em cost_final INVÁLIDO (não
     // só ausente) é INTENCIONAL (cost_price é custo real legado, dropar esconderia margem real) mas OBSERVÁVEL via
-    // warn — não-silencioso. cost_source/cost_confidence (degradar confiança por custo-proxy) ficam p/ v2 (helper
-    // espelhado + UI).
-    const custosAll = await fetchAll<{ product_id: string; cost_final: number | null; cost_price: number | null }>((f, t) => db.from("product_costs").select("product_id, cost_final, cost_price").order("id", { ascending: true }).range(f, t), "product_costs");
+    // warn — não-silencioso. v2: cost_confidence classifica o custo USADO em BAIXA CONFIANÇA (fallback legado OU
+    // cost_final com confiança <0,7 = proxy do motor) → custo_baixa_confianca_pct (exclusivo de custo_ausente).
+    const custosAll = await fetchAll<{ product_id: string; cost_final: number | null; cost_price: number | null; cost_confidence: number | null }>((f, t) => db.from("product_costs").select("product_id, cost_final, cost_price, cost_confidence").order("id", { ascending: true }).range(f, t), "product_costs");
     const custoValido = (x: number | null): number | null => (typeof x === "number" && Number.isFinite(x) && x > 0 ? x : null);
     const custoPorProduto = new Map<string, number>();
+    const custoBaixaConfianca = new Set<string>(); // product_id cujo custo USADO é proxy(<0,7) ou fallback legado (v2)
     let custoLegadoFallback = 0;
     for (const c of custosAll) {
       const canonico = custoValido(c.cost_final);
       const custo = canonico ?? custoValido(c.cost_price);
-      if (custo != null) { custoPorProduto.set(c.product_id, custo); if (canonico == null) custoLegadoFallback++; }
+      if (custo == null) continue;
+      custoPorProduto.set(c.product_id, custo);
+      if (canonico == null) custoLegadoFallback++;
+      // baixa = fallback legado OU cost_final com confiança <0,7. cost_confidence null/não-numérico em custo VÁLIDO
+      // (0 casos hoje, psql-ro) → tratado como baixa por POLÍTICA conservadora (não vouchamos custo sem score). O
+      // add/delete acompanha o overwrite do custoPorProduto: linha posterior do MESMO product_id com custo confiável
+      // DESMARCA — a flag segue o custo efetivamente usado (Codex P2; product_id é único hoje, 3331/3331).
+      const baixa = canonico == null || !(typeof c.cost_confidence === "number" && c.cost_confidence >= 0.7);
+      if (baixa) custoBaixaConfianca.add(c.product_id); else custoBaixaConfianca.delete(c.product_id);
     }
     if (custoLegadoFallback > 0) console.warn(`[ValorCockpit][${COMPANY}] ${custoLegadoFallback} SKUs com cost_final ausente/inválido → fallback p/ cost_price legado`);
     // Estoque com PONTE DE CONTAS (paridade com get_preco_cockpit / cockpit_preco_fixes): inventory_position
@@ -398,7 +412,8 @@ serve(async (req: Request) => {
       acc.receita += receita; acc.qtd += l.quantity; acc.desconto += (l.discount ?? 0);
       comboMap.set(key, acc);
     }
-    const combos: ComboInput[] = [...comboMap.values()].map((c) => ({ cliente: c.cliente, sku: c.sku, receita_liquida: c.receita, quantidade: c.qtd, custo_unitario: c.product_id ? (custoPorProduto.get(c.product_id) ?? null) : null }));
+    const comboVals = [...comboMap.values()];
+    const combos: ComboInput[] = comboVals.map((c) => ({ cliente: c.cliente, sku: c.sku, receita_liquida: c.receita, quantidade: c.qtd, custo_unitario: c.product_id ? (custoPorProduto.get(c.product_id) ?? null) : null }));
 
     // AR da Oben relevante à janela (emitido na janela OU ainda em aberto) — serve p/ AR por cliente e cobertura.
     type CR = { omie_codigo_cliente: number | null; omie_codigo_lancamento: number | null; valor_documento: number; saldo: number; valor_recebido: number; data_emissao: string | null; data_vencimento: string | null; status_titulo: string };
@@ -460,6 +475,9 @@ serve(async (req: Request) => {
 
     const total = res.celulas.length || 1;
     const custo_ausente_pct = res.celulas.filter((c) => c.cm == null).length / total;
+    // v2: células cujo custo USADO é de baixa confiança (proxy<0,7 / fallback legado) — cm EXISTE mas estimado.
+    // Exclusivo de custo_ausente (célula sem custo não entra). Denominador = total de células (igual aos outros _pct).
+    const custo_baixa_confianca_pct = comboVals.filter((c) => c.product_id != null && custoBaixaConfianca.has(c.product_id)).length / total;
     const ar_indisponivel_pct = res.celulas.filter((c) => c.ar_indisponivel).length / total;
     const estoque_ausente_pct = res.celulas.filter((c) => c.estoque_indisponivel).length / total;
     // cobertura_receita: receita Oben do cockpit ÷ AR Oben FATURÁVEL emitido no TTM (mesmo crsAll).
@@ -473,7 +491,7 @@ serve(async (req: Request) => {
     const arTotal = crsAll.filter((cr) => cr.data_emissao != null && cr.data_emissao >= ttm_inicio && tituloFaturavelAR(cr.status_titulo)).reduce((s, cr) => s + (cr.valor_documento || 0), 0);
     const { ar_por_app, app_por_ar } = coberturaBidirecional({ receita: res.empresa.receita, arFaturavel: arTotal });
     const cobertura_receita = ar_por_app; // retrocompat: mesmo valor de antes
-    const confianca = scoreConfiancaCockpit({ cobertura_receita, cobertura_app_por_ar: app_por_ar, custo_ausente_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel, evp_teto_receita_pct: res.evp_teto_receita_pct });
+    const confianca = scoreConfiancaCockpit({ cobertura_receita, cobertura_app_por_ar: app_por_ar, custo_ausente_pct, custo_baixa_confianca_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel, evp_teto_receita_pct: res.evp_teto_receita_pct });
 
     return jsonResponse({
       company: COMPANY, k, hurdle_indisponivel, ttm: { inicio: ttm_inicio, fim: ttm_fim },

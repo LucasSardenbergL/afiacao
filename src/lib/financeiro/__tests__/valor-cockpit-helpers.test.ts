@@ -320,6 +320,24 @@ describe('scoreConfiancaCockpit', () => {
     expect(r.nivel).toBe('baixa');
     expect(r.motivos.some((m) => m.toLowerCase().includes('hurdle'))).toBe(true);
   });
+  it('custo de baixa confiança ≥20% → rebaixa p/ média + motivo (não baixa sozinho)', () => {
+    const r = scoreConfiancaCockpit({ cobertura_receita: 0.95, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false, custo_baixa_confianca_pct: 0.22 });
+    expect(r.nivel).toBe('media');
+    expect(r.motivos.some((m) => m.toLowerCase().includes('proxy') || m.toLowerCase().includes('estimado'))).toBe(true);
+  });
+  it('baixa confiança nunca derruba sozinha abaixo de média (>40% ainda média)', () => {
+    const r = scoreConfiancaCockpit({ cobertura_receita: 0.95, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false, custo_baixa_confianca_pct: 0.6 });
+    expect(r.nivel).toBe('media');
+  });
+  it('baixa confiança 5–20% → só motivo informativo, mantém alta', () => {
+    const r = scoreConfiancaCockpit({ cobertura_receita: 0.95, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false, custo_baixa_confianca_pct: 0.1 });
+    expect(r.nivel).toBe('alta');
+    expect(r.motivos.some((m) => m.toLowerCase().includes('informativo'))).toBe(true);
+  });
+  it('custo_baixa_confianca_pct ausente (default 0) → não afeta (retrocompat)', () => {
+    const r = scoreConfiancaCockpit({ cobertura_receita: 0.95, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false });
+    expect(r.nivel).toBe('alta');
+  });
 });
 
 describe('resolverHurdleCockpit', () => {
