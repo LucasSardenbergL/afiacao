@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **⚠️ Atualização 2026-06-23:** o follow-up "convergir `resolverCustoCockpit` → `cost-source.ts` pós-merge #959" está **CANCELADO** — #959 fechado SEM merge, `resolverCustoCockpit` nunca existiu em código, e o split cockpit×recommend é **intencional** (cockpit é source-blind + rebaixa confiança via #1003; ver cabeçalho de `src/lib/custos/cost-source.ts`). Os blocos de código abaixo são **snapshot histórico** de 2026-06-19 (a régua já evoluiu na `main`: +`CMC_MARGEM_ATIPICA`/`CMC_UNIDADE_SUSPEITA`).
+
 **Goal:** Eliminar a fabricação de custo R$0 nos dois edges (`recommend`, `algorithm-a-audit`) — custo ausente vira `null`/indisponível respeitando `cost_source`, sem distorcer ranking nem auditoria.
 
 **Architecture:** Régua de custo confiável num helper puro novo (`src/lib/custos/cost-source.ts`, vitest), espelhada **verbatim** nos edges Deno. `recommend` separa custo de margem (exibido/logado → `null` quando não confiável) de custo de ranking (`estimated_cost_for_ranking`, estimativa rotulada). `algorithm-a-audit` calcula gap/gap% cost-free (já cost-invariante) e níveis absolutos só sob cobertura de custo ≥85% (helper puro `auditoria-margem.ts`). Frontend torna `fmt` null-safe e mostra "—".
