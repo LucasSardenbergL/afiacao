@@ -4,6 +4,43 @@ Narrativa das entregas do módulo tintométrico (`/tintometrico/*`, account `obe
 
 ---
 
+## Re-envio residual de fórmulas — promoção aborta por corante repetido (duplicate key) → re-loop (2026-06-22, migration `20260622210000`, prova PG17 + Codex)
+
+### Sintoma
+Pós-#914 (loop de 485k morto), re-envios residuais em batches CHEIOS (`total_records=1000`) em dias esparsos (06-18=113k, 06-22=75k); `tint_staging_formulas` 121k→406k. ~1000× menor que o loop original, sem dano visível — mas ATIVO (~10 runs `error`/h, 5-10k regs/h re-staged à toa).
+
+### Diagnóstico (read-only psql-ro + código)
+- O conector (`syncFormulas`) só cacheia o lote se a edge confirma `ok:true`. Em `automatic_primary` a edge (`tint-sync-agent`) promove **por batch** e devolve **500 se a promoção falha** → o conector **não cacheia o lote** → **re-envia o batch CHEIO no ciclo seguinte** (re-loop). Confirmado: 22/06 = 116 runs `formulas` status=`error` (75.082 regs) vs 16 `complete`; **1000 chaves re-staged 41×** (1 batch refém).
+- Erros (`tint_sync_errors` entity_type='promotion'): `nome_cor NULL` (80 — **resolvido pelo #992**, parou 20:22, fix 20:45), `duplicate key tint_formula_itens_formula_id_corante_id_key` (15), `lock timeout` 55P03 (34, **colateral** da contention do re-loop).
+- **Causa do duplicate key:** 4 cores PADRÃO ATIVAS (`344M/629N/638S/997M - BS`) têm fórmula com o **mesmo corante em 2 slots/ordens** (dosagem em 2 etapas; ex. 997M corante 3 = 0.385[ord2] + 14.09[ord5]). `aggregateFlatFormulaItems` (pg.go) envia 2 itens; o INSERT de `tint_formula_itens` **não deduplica** → viola o unique `(formula_id, corante_id)` → **rollback do batch**. A promoção monta `_formulas_latest` por **latest-per-key restrito aos PARES tocados** → essas 4 cores envenenam TODO batch que toca seus pares (18 produtos/51 bases ≈ 1000 fórmulas reféns).
+- Por que "erros baixos" enganava: a coluna `errors` do run conta erro de ITEM no staging (=0, o staging aceita tudo); o abort é na PROMOÇÃO (marca status='error', não toca `errors`).
+
+### Respostas (perguntas da investigação)
+1. Mesmas chaves a cada evento? **SIM** (re-loop do mesmo batch). 2. Personalizadas? **NÃO** (99,86% padrão; nome_cor era problema separado, resolvido #992). 3. Re-scan de domingo? **NÃO** (qui/sex/seg; é promoção falhando). 4. Hash não-determinístico? **NÃO** — o hash está correto; o bug é na promoção SQL.
+
+### Decisão de semântica (founder delegou "você e codex decidirem")
+O oficial (CSV-import histórico) grava **1 item por corante = o de MAIOR ORDEM** — validado em prod no caso que distingue: 344M corante 1 = ordem3=**1.54** (NÃO maior-valor 40.05, NÃO soma 41.59); 997M = ordem5=14.09; 638S idênticos. Fix replica isso: `DISTINCT ON (formula_id, corante_id) ORDER BY ordem DESC` → **idempotente, ZERO mudança de dosagem de cor ativa** (precisão > recall). **NÃO somar** (mudaria preço/dosagem de cor ativa + erra os casos de duplicação 629N/638S idênticos).
+
+### Fix
+Migration `20260622210000_tint_promote_dedup_itens_corante.sql` (CREATE OR REPLACE, 6ª da cadeia — herda nome_cor + E4 + reexpand + preço VERBATIM). Muda só o INSERT de `tint_formula_itens`. Resolve o duplicate key → o batch promove → cessa o re-loop → some o lock timeout colateral. **NÃO toca o conector** (sem redeploy no balcão).
+
+### Verificação
+PG17 `db/test-tint-promote-dedup-itens.sh` — **11/11 verde**: promove sem abortar · dedup 1 item/corante · maior-ordem (1.5, não soma/maior-valor) · idênticos→0.77 · corante normal intacto · idempotente · preço usa max-ordem (A8). **Falsificação com dente:** sem o `DISTINCT ON`, o INSERT estoura **23505** (= o re-loop real). **Idempotência catalog-wide provada** (read-only vs prod): as **4 cores/192 fórmulas** têm fração-normalizada staging-max-ordem == oficial (15/15 corantes batem) → no-op de dosagem. **Codex consult (medium):** validou max-ordem como o hotfix certo (não somar, não corrigir a 344M agora) e levantou 3 achados, **todos incorporados** — [P1] dedup do `_preco` p/ alinhar item↔preço (era 2 BOMs: item=max-ordem, preço=Σ-todos; dead-code hoje pois `precos_base` vazio, mas bomba latente); [P1] a prova de idempotência catalog-wide acima; [P2] tie-break determinístico (`ordem DESC, qtd_ml DESC, id DESC`) no DISTINCT ON.
+
+### Achado lateral (decisão de domínio, fora do escopo do fix)
+"Maior ordem" faz a **344M usar 1.54 ml de corante 1** em vez de 40.05 (ordem 1) ou 41.59 (soma) — provável **subdosagem** se as 2 dosagens forem reais. O oficial já é assim (não-regressão; ninguém reclamou). Avaliar com o balcão/SayerSystem se aquelas 2 dosagens distintas (344M, 997M) deveriam **somar** — se sim, é OUTRA mudança money-path (mudaria a cor ativa).
+
+### Lições (reutilizáveis)
+1. **Edge promove por-batch e devolve 500 → conector não cacheia → re-loop de batch CHEIO.** "batches cheios re-enviando" ⇒ olhar `tint_sync_runs.status='error'` + `tint_sync_errors entity_type='promotion'`, NÃO a coluna `errors` (conta só erro de item no staging; a promoção falha DEPOIS).
+2. **`INSERT...SELECT` em tabela com unique deve deduplicar a chave.** Corante repetido na fórmula é dado REAL do SayerSystem (2 dosagens do mesmo pigmento); via latest-per-key, 1 fórmula venenosa derruba o BATCH inteiro de 1000.
+3. **Identidade > "correto teórico" no money-path:** o oficial usa maior-ordem (talvez subdosando); o fix replica (idempotente) em vez de "consertar" somando — corrigir dosagem de cor ativa é decisão de domínio, não efeito colateral de um fix de re-loop.
+4. **`data_atualizacao` sempre-NULL ⇒ hash-filter sempre ativo** (formula E formulaperson) → re-envio nunca é delta-timestamp. **Staging append + latest-per-key + purge-30d** → crescimento da staging (121k→406k) é re-staging acumulado, **auto-limitado** (sintoma, não dano).
+
+### Pendência do founder
+Deploy money-path: **migration no SQL Editor** (pré-flight `pg_get_functiondef` confirmou prod==repo, sem drift). Após aplicar + próximo sync: o re-loop cessa (`status='error'` some) e o item das 4 cores segue maior-ordem (inalterado). **Decisão de domínio separada** (não bloqueia o fix): avaliar com o balcão se as 2 dosagens distintas (344M corante 1 = 40.05+1.54; 997M corante 3 = 0.385+14.09) deveriam **somar** — se sim, é outra mudança money-path (mudaria a cor ativa).
+
+---
+
 ## Catálogo automático (tint) — fase de reconciliação: dry-run global + auditoria das 252 cores fantasma (2026-06-17, análise; flip pendente)
 
 Preparação para flipar `integration_mode` `shadow_mode`→`automatic_primary` (store `M01`, account `oben`). Análise 100% read-only (psql-ro) + 2ª opinião do Codex (consult); a execução (escrita) é via SQL Editor.

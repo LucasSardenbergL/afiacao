@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **277** custom migrations totais
-- **1003** objetos esperados (criados por estas migrations)
+- **279** custom migrations totais
+- **1005** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 283
+  - `function`: 285
   - `rls_policy`: 219
   - `index`: 186
   - `table`: 108
@@ -2390,6 +2390,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.cleanup_orphan_score_on_carteira_delete` | — |
 | `trigger` | `public.trg_carteira_cleanup_orphan_score` | `carteira_assignments` |
 
+### `20260622130000_tint_promote_nome_cor_fallback.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
+
 ### `20260622140000_apply_score_updates_persiste_base_vendas.sql`
 
 | Tipo | Objeto | Parent |
@@ -2401,6 +2407,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.apply_score_updates` | — |
+
+### `20260622210000_tint_promote_dedup_itens_corante.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
 
 ## Próximos passos quando algo der `❌`
 
