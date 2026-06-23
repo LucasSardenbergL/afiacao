@@ -2378,6 +2378,7 @@ export type Database = {
           revenue_potential: number | null
           rf_score: number | null
           s_score: number | null
+          sales_history_status: string | null
           signal_modifiers: Json | null
           updated_at: string | null
           whatsapp_reply_rate_60d: number | null
@@ -2408,6 +2409,7 @@ export type Database = {
           revenue_potential?: number | null
           rf_score?: number | null
           s_score?: number | null
+          sales_history_status?: string | null
           signal_modifiers?: Json | null
           updated_at?: string | null
           whatsapp_reply_rate_60d?: number | null
@@ -2438,6 +2440,7 @@ export type Database = {
           revenue_potential?: number | null
           rf_score?: number | null
           s_score?: number | null
+          sales_history_status?: string | null
           signal_modifiers?: Json | null
           updated_at?: string | null
           whatsapp_reply_rate_60d?: number | null

@@ -25,6 +25,7 @@ export interface CarteiraRow {
   expansion_score: number | null;
   health_class: string | null;
   signal_modifiers: ScoreAdjustment | null;
+  sales_history_status: string | null;
 }
 
 export interface AgendaItem {
@@ -34,7 +35,7 @@ export interface AgendaItem {
   /** prioridade base do calculate-scores, sem sinais */
   base_priority_score: number;
   health_class: string | null;
-  agenda_type: 'risco' | 'expansao' | 'follow_up';
+  agenda_type: 'risco' | 'expansao' | 'ativacao' | 'follow_up';
   topModifier: SignalModifier | null;
   signalsCount: number;
 }
@@ -93,9 +94,11 @@ export function signalsCount(mods: ScoreAdjustment | null | undefined): number {
 /**
  * Top-N clientes da carteira por prioridade EFETIVA (base + nudge dos sinais),
  * com tipo de ação derivado dos scores (escala 0..100):
+ * - 'ativacao' se sales_history_status === 'sem_historico' (nunca comprou — PRECEDE tudo)
  * - 'risco' se churn_risk > 50 ou health_class crítico/atenção
  * - 'expansao' se expansion_score > 50
  * - 'follow_up' default
+ * Guard de slot: em empate de prioridade, ativação nunca rouba a vaga de um item COM histórico.
  */
 export function buildAgendaItems(rows: CarteiraRow[], limit = 10): AgendaItem[] {
   return rows
@@ -104,7 +107,9 @@ export function buildAgendaItems(rows: CarteiraRow[], limit = 10): AgendaItem[] 
       const churn = s.churn_risk ?? 0;
       const expansion = s.expansion_score ?? 0;
       let agenda_type: AgendaItem['agenda_type'] = 'follow_up';
-      if (churn > 50 || s.health_class === 'critico' || s.health_class === 'atencao') {
+      if (s.sales_history_status === 'sem_historico') {
+        agenda_type = 'ativacao';
+      } else if (churn > 50 || s.health_class === 'critico' || s.health_class === 'atencao') {
         agenda_type = 'risco';
       } else if (expansion > 50) {
         agenda_type = 'expansao';
@@ -119,6 +124,12 @@ export function buildAgendaItems(rows: CarteiraRow[], limit = 10): AgendaItem[] 
         signalsCount: signalsCount(s.signal_modifiers),
       };
     })
-    .sort((a, b) => b.priority_score - a.priority_score)
+    .sort((a, b) => {
+      const pd = b.priority_score - a.priority_score;
+      if (pd !== 0) return pd;
+      // guard de slot: ativação (sem_historico) nunca rouba a vaga de um item COM histórico em empate
+      const rank = (t: AgendaItem['agenda_type']) => (t === 'ativacao' ? 1 : 0);
+      return rank(a.agenda_type) - rank(b.agenda_type);
+    })
     .slice(0, limit);
 }

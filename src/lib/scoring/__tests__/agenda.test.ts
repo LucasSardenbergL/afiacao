@@ -28,6 +28,7 @@ function mkRow(overrides: Partial<CarteiraRow> = {}): CarteiraRow {
     expansion_score: 0,
     health_class: 'estavel',
     signal_modifiers: null,
+    sales_history_status: 'ativo',
     ...overrides,
   };
 }
@@ -98,5 +99,24 @@ describe('buildAgendaItems', () => {
   it('respeita o limit', () => {
     const rows = Array.from({ length: 20 }, (_, i) => mkRow({ customer_user_id: `c${i}`, priority_score: i }));
     expect(buildAgendaItems(rows, 5)).toHaveLength(5);
+  });
+
+  it('sem_historico NÃO vira risco mesmo com churn alto/health crítico → "ativacao"', () => {
+    const item = buildAgendaItems([mkRow({ churn_risk: 95, health_class: 'critico', sales_history_status: 'sem_historico' })])[0];
+    expect(item.agenda_type).toBe('ativacao');
+  });
+
+  it('guard de slot: em prioridade igual, risco (recuperação) vem ANTES de ativação', () => {
+    const items = buildAgendaItems([
+      mkRow({ customer_user_id: 'novo', priority_score: 50, health_class: 'novo', sales_history_status: 'sem_historico' }),
+      mkRow({ customer_user_id: 'risco', priority_score: 50, churn_risk: 80, health_class: 'critico', sales_history_status: 'stale' }),
+    ], 1);
+    expect(items[0].customer_user_id).toBe('risco');
+    expect(items[0].agenda_type).toBe('risco');
+  });
+
+  it('ativo/stale mantêm a classificação atual (risco)', () => {
+    const item = buildAgendaItems([mkRow({ churn_risk: 70, health_class: 'estavel', sales_history_status: 'ativo' })])[0];
+    expect(item.agenda_type).toBe('risco');
   });
 });
