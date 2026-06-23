@@ -18,10 +18,30 @@ import {
   type CostSource,
 } from './cost-ladder.ts';
 
+/** cost_source da escada + a fonte do decorator de unidade-suspeita (mantém costLadder.ts intacto). */
+export type CostSourceComUnidade = CostSource | 'CMC_UNIDADE_SUSPEITA';
+
+// Decorator de unidade-suspeita — unidades geométricas (área/comprimento) cujo custo (cmc) é por
+// sub-unidade enquanto o price está noutra unidade. KG/L/G/ML ficam de FORA da 1a versão (falso-
+// positivo: líquido custeado E vendido por litro com margem real alta). Spec 2026-06-22.
+const UNIDADES_GEOMETRICAS = new Set(['M2', 'M', 'MT', 'CM', 'CM2']);
+const DIMENSAO_RE = /([0-9]+) *[Xx] *([0-9]+) *MM/;
+
+/** H1 (unidade geométrica) ∧ H3 (dimensão LxC MM na descrição). Gatilho do decorator (junto de H4). */
+function unidadeSuspeita(unidade?: string | null, descricao?: string | null): boolean {
+  const u = unidade?.trim().toUpperCase();
+  if (!u || !UNIDADES_GEOMETRICAS.has(u)) return false;
+  return descricao != null && DIMENSAO_RE.test(descricao);
+}
+
 export interface ProdutoCusto {
   id: string;
   valor_unitario: number;
   familia: string | null;
+  /** Unidade de medida do Omie (M2/M/UN/KG/L...). Sinal H1 do decorator de unidade-suspeita. */
+  unidade?: string | null;
+  /** Descrição do produto — fonte do sinal H3 (dimensão LxC MM) do decorator de unidade-suspeita. */
+  descricao?: string | null;
 }
 
 /** Só `cmc` importa do product_costs persistido (pós-#977 o cost_price legado não é mais lido). */
@@ -39,7 +59,7 @@ export interface UpsertCusto {
   cost_price: number | null;
   cmc: number;
   cost_final: number;
-  cost_source: CostSource;
+  cost_source: CostSourceComUnidade;
   cost_confidence: number;
   family_category: string | null;
   updated_at: string;
@@ -87,12 +107,24 @@ export function montarUpsertsDeCusto(
     const familyTargetMargin =
       famData && famData.count >= 3 ? famData.totalMargin / famData.count : null;
 
-    const { costFinal, costSource, costConfidence, costPriceToPersist } = computeCostLadder({
-      price,
-      cmc,
-      familyTargetMargin,
-      cfg,
-    });
+    const base = computeCostLadder({ price, cmc, familyTargetMargin, cfg });
+    let costFinal = base.costFinal;
+    let costConfidence = base.costConfidence;
+    let costPriceToPersist = base.costPriceToPersist;
+    let costSource: CostSourceComUnidade = base.costSource;
+
+    // Decorator de unidade-suspeita (money-path): um CMC_MARGEM_ATIPICA cujo "atipismo" vem de
+    // DESCASAMENTO DE UNIDADE (cmc por m²/m vs price noutra unidade), não de prejuízo real. Re-chama
+    // a escada com cmc=null para herdar o proxy honesto (família/default) e re-rotula a proveniência:
+    // cost_final=proxy, cost_price=null (cmc não comparável ao price), confiança do proxy. O cmc cru
+    // segue preservado no campo cmc (auditoria). costLadder.ts permanece intacto (decisão do spec).
+    if (base.costSource === 'CMC_MARGEM_ATIPICA' && unidadeSuspeita(product.unidade, product.descricao)) {
+      const proxy = computeCostLadder({ price, cmc: null, familyTargetMargin, cfg });
+      costFinal = proxy.costFinal;
+      costConfidence = proxy.costConfidence;
+      costPriceToPersist = null;
+      costSource = 'CMC_UNIDADE_SUSPEITA';
+    }
 
     // cost_price guarda SÓ custo real: o CMC quando há, senão null (NUNCA proxy — era a
     // causa da lavagem de proveniência). PRODUCT_COST saiu da escada; o motor não o emite.
