@@ -135,10 +135,11 @@ export default function FinanceiroValorCockpit() {
                   aba === 'cliente'
                     ? (row as CockpitRollupCliente).cliente
                     : (row as CockpitRollupSKU).sku;
+                const label = aba === 'sku' ? ((row as CockpitRollupSKU).descricao || id) : id;
                 const recs = aba === 'cliente' ? (recPorCliente.get(id) ?? []) : [];
                 return (
                   <tr key={id} className="border-t border-border">
-                    <td className="py-1 font-tabular">{id}</td>
+                    <td className={`py-1 ${aba === 'sku' ? '' : 'font-tabular'}`} title={aba === 'sku' ? id : undefined}>{label}</td>
                     <td className="text-right">{brl(row.receita)}</td>
                     <td className="text-right">{brl(row.cm)}</td>
                     <td className="text-right text-muted-foreground">{brl(row.encargo)}</td>

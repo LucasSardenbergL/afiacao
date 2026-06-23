@@ -306,8 +306,8 @@ serve(async (req: Request) => {
 
     // FILTRO OBEN obrigatório: um pedido do app mistura itens das 3 empresas (Oben/Colacor/Colacor SC),
     // enviados separadamente. Sem o filtro por produto, o cockpit da Oben fica contaminado.
-    type Prod = { id: string; omie_codigo_produto: number; account: string };
-    const prods = await fetchAll<Prod>((f, t) => db.from("omie_products").select("id, omie_codigo_produto, account").eq("account", COMPANY).order("id", { ascending: true }).range(f, t), "omie_products");
+    type Prod = { id: string; omie_codigo_produto: number; account: string; descricao: string | null };
+    const prods = await fetchAll<Prod>((f, t) => db.from("omie_products").select("id, omie_codigo_produto, account, descricao").eq("account", COMPANY).order("id", { ascending: true }).range(f, t), "omie_products");
     const obenProductIds = new Set(prods.map((p) => p.id));
     const obenSkus = new Set(prods.map((p) => String(p.omie_codigo_produto)));
     // Bug D: SKU→product_id da Oben p/ recuperar linhas com product_id NULL (gap de FK histórico — 2026-03,
@@ -500,9 +500,12 @@ serve(async (req: Request) => {
     const cobertura_receita = ar_por_app; // retrocompat: mesmo valor de antes
     const confianca = scoreConfiancaCockpit({ cobertura_receita, cobertura_app_por_ar: app_por_ar, custo_ausente_pct, custo_baixa_confianca_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel, evp_teto_receita_pct: res.evp_teto_receita_pct });
 
+    // Descrição do produto (omie_products) p/ a UI exibir o nome em vez do código na visão Por SKU.
+    const descricaoPorSKU = new Map(prods.map((p) => [String(p.omie_codigo_produto), p.descricao]));
+    const porSKUcomDescricao = res.porSKU.map((s) => ({ ...s, descricao: descricaoPorSKU.get(s.sku) ?? null }));
     return jsonResponse({
       company: COMPANY, k, hurdle_indisponivel, ttm: { inicio: ttm_inicio, fim: ttm_fim },
-      porCliente: res.porCliente, porSKU: res.porSKU, empresa: res.empresa,
+      porCliente: res.porCliente, porSKU: porSKUcomDescricao, empresa: res.empresa,
       recomendacoesCliente, confianca, cobertura_receita, cobertura_app_por_ar: app_por_ar,
       cobertura_baixa_ar: coberturaBaixaAR, // Fase 3: fração da AR liquidada com baixa derivada REAL (vs vencimento-proxy)
       evp_teto_receita_pct: res.evp_teto_receita_pct, // fração da receita-com-EVP cujo EVP é teto (UI entrega 2)
