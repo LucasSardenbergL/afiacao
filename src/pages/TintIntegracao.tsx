@@ -67,7 +67,7 @@ function KpiCards() {
 
 export default function TintIntegracao() {
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") ?? "importar";
+  const tab = params.get("tab") ?? "integracoes";
 
   const handleTab = (v: string) => {
     const next = new URLSearchParams(params);
@@ -83,7 +83,7 @@ export default function TintIntegracao() {
           <div>
             <h1 className="text-2xl font-bold">Integração e Sync</h1>
             <p className="text-sm text-muted-foreground">
-              Importação, integrações de loja, execuções de sincronização e reconciliação tintométrica.
+              Integrações de loja, execuções de sincronização e reconciliação tintométrica.
             </p>
           </div>
         </div>
@@ -93,7 +93,7 @@ export default function TintIntegracao() {
 
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
         <TabsList className="grid grid-cols-2 sm:grid-cols-5 w-full">
-          <TabsTrigger value="importar">Importar</TabsTrigger>
+          <TabsTrigger value="importar">Produtos Omie</TabsTrigger>
           <TabsTrigger value="integracoes">Integrações</TabsTrigger>
           <TabsTrigger value="sync-runs">Sync Runs</TabsTrigger>
           <TabsTrigger value="reconciliacao">Reconciliação</TabsTrigger>

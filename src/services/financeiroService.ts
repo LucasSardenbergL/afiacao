@@ -1006,6 +1006,7 @@ export interface CockpitRollupSKU {
   encargo: number | null;
   encargo_total: number | null;
   evp: number | null;
+  descricao?: string | null;  // descrição do produto (omie_products) — UI mostra no lugar do código SKU
 }
 export interface ValorCockpitResult {
   company: string;

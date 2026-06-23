@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **280** custom migrations totais
-- **1006** objetos esperados (criados por estas migrations)
+- **282** custom migrations totais
+- **1007** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 284
+  - `function`: 285
   - `rls_policy`: 219
   - `index`: 186
   - `table`: 108
@@ -2407,6 +2407,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.apply_score_updates` | — |
+
+### `20260622163000_compute_costs_recompute_2h.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260622210000_tint_promote_dedup_itens_corante.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_promote_sync_run` | — |
 
 ### `20260623120000_caca_custo_producao.sql`
 

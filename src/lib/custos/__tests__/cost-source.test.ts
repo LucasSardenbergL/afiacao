@@ -96,3 +96,23 @@ describe('CMC_MARGEM_ATIPICA — custo real atípico propaga como real (margem n
     expect(resolverCustoConfiavel(row({ cost_source: 'CMC_MARGEM_ATIPICA', cost_final: 0, cost_price: 0 }))).toBeNull();
   });
 });
+
+// CMC_UNIDADE_SUSPEITA é DESCASAMENTO DE UNIDADE (cmc por m² vs price noutra unidade). O cost_final é
+// PROXY de família — NÃO é custo real comparável: fica FORA de COST_SOURCES_REAIS (margem exibida null),
+// mas ENTRA como proxy p/ ranking (decisão D3 + achado do Codex: estimarCustoParaRanking retornava null
+// p/ a fonte nova). Diferente do CMC_MARGEM_ATIPICA, que é real e propaga.
+describe('CMC_UNIDADE_SUSPEITA — descasamento de unidade: proxy p/ ranking, nunca margem exibida', () => {
+  it('resolverCustoConfiavel → null (cmc não comparável ao price; não é custo real de margem)', () => {
+    expect(resolverCustoConfiavel(row({ cost_source: 'CMC_UNIDADE_SUSPEITA', cost_final: 60 }))).toBeNull();
+  });
+  it('estimarCustoParaRanking usa o cost_final proxy (<price) p/ ranking', () => {
+    expect(estimarCustoParaRanking(row({ cost_source: 'CMC_UNIDADE_SUSPEITA', cost_final: 60 }), 100)).toBe(60);
+  });
+  it('derivarMargensCandidato: margem exibida null (não fabrica), ranking via proxy', () => {
+    expect(derivarMargensCandidato(row({ cost_source: 'CMC_UNIDADE_SUSPEITA', cost_final: 60 }), 100))
+      .toEqual({ custoConfiavel: null, custoRanking: 60, margemExibida: null, margemRanking: 40 });
+  });
+  it('proxy ≥ price (margem estimada ≤0) → ranking null (sanity bound do proxy vale aqui também)', () => {
+    expect(estimarCustoParaRanking(row({ cost_source: 'CMC_UNIDADE_SUSPEITA', cost_final: 120 }), 100)).toBeNull();
+  });
+});

@@ -1,8 +1,14 @@
 // Contrato de custo dos motores de recomendação/auditoria (Codex P2 cost-final-ignorado; follow-up da
-// spec do cockpit). Régua IDÊNTICA a resolverCustoCockpit (src/lib/financeiro/valor-cockpit-helpers.ts):
-// ausente ≠ R$0; proxy não é custo de margem confiável. Módulo puro — espelhado VERBATIM nas edges Deno
-// recommend/index.ts e algorithm-a-audit/index.ts (Deno não importa de src/).
-// Resíduo: convergir resolverCustoCockpit → este módulo pós-merge do #959 (fonte única).
+// spec do cockpit). FONTE ÚNICA da régua de custo de MARGEM FIRME (recommend + algorithm-a-audit):
+// ausente ≠ R$0; proxy NÃO é custo de margem confiável → null. Módulo puro — espelhado VERBATIM nas
+// edges Deno recommend/index.ts e algorithm-a-audit/index.ts (Deno não importa de src/).
+//
+// NÃO é a régua do cockpit de valor (edge fin-valor-cockpit/index.ts): aquele é SOURCE-BLIND (usa
+// cost_final>0 de QUALQUER source, inclusive proxy) e COMPENSA rebaixando a confiança via
+// custo_baixa_confianca_pct (#1003) — filosofia "computa-mas-degrada". Aqui é o oposto (precisão>recall):
+// proxy → null, margem firme só com source REAL. Split INTENCIONAL — NÃO convergir (unificar reverteria o
+// #1003 → mais cm/EVP null no cockpit). O antigo resíduo "convergir resolverCustoCockpit pós-merge #959"
+// MORREU: #959 fechado SEM merge (núcleo absorvido pelo #1003); resolverCustoCockpit nunca existiu em código.
 
 export type CostRow = {
   cost_price: number | null;
@@ -14,7 +20,9 @@ export type CostRow = {
 // CMC_MARGEM_ATIPICA é CMC REAL fora da banda de margem comercial (prejuízo/baixa/alta) — custo real
 // de confiança rebaixada. É REAL (propaga como custo): a margem ruim fica VISÍVEL, nunca mascarada por proxy.
 const COST_SOURCES_REAIS = new Set(['PRODUCT_COST', 'CMC', 'CMC_MARGEM_ATIPICA']);
-const COST_SOURCES_PROXY = new Set(['FAMILY_MARGIN_PROXY', 'DEFAULT_PROXY']);
+// CMC_UNIDADE_SUSPEITA é descasamento de unidade (cmc por m²/m vs price noutra unidade): o cost_final é
+// proxy de família, NÃO custo real — fica fora de REAIS (sem margem exibida) mas conta como PROXY p/ ranking.
+const COST_SOURCES_PROXY = new Set(['FAMILY_MARGIN_PROXY', 'DEFAULT_PROXY', 'CMC_UNIDADE_SUSPEITA']);
 
 function finitePositive(x: number | null | undefined): x is number {
   return typeof x === 'number' && Number.isFinite(x) && x > 0;

@@ -590,6 +590,14 @@ Deno.serve(async (req) => {
     // Insert history in batches of 500. FORA da fronteira fail-closed: history/priority-log são
     // audit append-only (time-series), NÃO estado money-path (a fonte é farmer_client_scores).
     // Se um insert falhar, LOGA warning e segue — não vira 500 (evitaria retry duplicando a série).
+    // [auditoria 2026-06-18, follow-up Codex/#954] Estes records vêm do SNAPSHOT lido no início do
+    // run — NÃO filtrados pelos ids que sobreviveram ao UPDATE — então uma linha de fornecedor
+    // excluído mid-run (cron aplicar_exclusao_fornecedores) pode vazar p/ a série. TOLERADO de
+    // propósito: a varredura (frontend src/ + pg_proc/pg_views/pg_matviews em PROD + crons) não
+    // achou NENHUM leitor money-path destas tabelas — são série-temporal de display/tendência. SE
+    // algum dia surgir um leitor que decida algo FIRME (priorização/comissão/agenda) lendo daqui
+    // direto: filtrar estes inserts pelos ids efetivamente atualizados (ex.: a RPC update-only
+    // anti-ressurreição retornar os ids afetados) ou re-checar excluir_da_carteira. Precisão > recall.
     for (let i = 0; i < healthHistoryRecords.length; i += 500) {
       const { error: hErr } = await supabase.from('health_score_history').insert(healthHistoryRecords.slice(i, i + 500));
       if (hErr) console.warn(`[calculate-scores] health_score_history insert warn @${i}: ${hErr.message}`);

@@ -4,6 +4,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { montarUpsertsDeCusto } from "../_shared/cost-compute.ts";
 import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
+import { buildProductIdMap } from "./product-idmap.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,6 +39,10 @@ function accountToEmpresa(account: OmieAccount): Empresa {
       return "colacor";
     case "servicos":
       return "colacor_sc";
+    default:
+      // fail-closed: account fora do enum (input inválido no boundary JSON) NÃO pode virar
+      // .eq("account", undefined) — aborta em vez de resolver product_id contra a empresa errada.
+      throw new Error(`accountToEmpresa: OmieAccount inválido: ${String(account)}`);
   }
 }
 
@@ -154,8 +159,9 @@ interface OmieApiResponseBase {
 
 interface InventoryPositionRow {
   product_id: string | null;
-  cmc?: number;
-  saldo?: number;
+  cmc?: number | null;
+  saldo?: number | null;
+  synced_at?: string | null;
 }
 
 function getCredentials(account: OmieAccount) {
@@ -743,8 +749,8 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       const produtos = result.produtos || [];
 
       for (const prod of produtos) {
-        const codProd = prod.nCodProd;
-        if (!codProd) continue;
+        const codProd = Number(prod.nCodProd); // normaliza: a API Omie pode devolver string; a chave do idMap é number
+        if (!Number.isSafeInteger(codProd) || codProd <= 0) continue;
         posicoes.set(codProd, {
           saldo: prod.nSaldo ?? 0,
           cmc: prod.nCMC ?? 0,
@@ -769,22 +775,31 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       return { totalSynced: 0 };
     }
 
-    // 2) RESOLVE product_id em LOTE. Preserva a semântica do .maybeSingle() anterior:
-    //    exatamente 1 match → id; 0 ou 2+ (ambíguo — omie_products é UNIQUE por (código,account)) → null.
-    const idByCod = new Map<number, string | null>();
+    // 2) RESOLVE product_id em LOTE, ESCOPADO À EMPRESA da account (accountToEmpresa).
+    //    omie_products é UNIQUE(omie_codigo_produto, account=EMPRESA): sem o filtro, a resolução
+    //    account-blind poderia mapear o código para o product_id de OUTRA empresa (mesmo número em
+    //    empresas distintas, OU código que só existe na empresa errada) → CMC/saldo no produto
+    //    errado. Com .eq("account", empresa), dentro da empresa o código é único.
+    //    buildProductIdMap nulifica qualquer ambíguo residual (defense-in-depth: se o filtro/UNIQUE
+    //    falhar, degrada p/ null em vez de gravar no errado — esperado 0 com o filtro).
+    const empresa = accountToEmpresa(account);
+    const prodRows: Array<{ id: string | null; omie_codigo_produto: number | string | null }> = [];
     for (const chunk of chunked(codProds, 300)) {
       const { data, error } = await db
         .from("omie_products")
         .select("id, omie_codigo_produto")
+        .eq("account", empresa)
         .in("omie_codigo_produto", chunk);
       if (error) {
         console.error(`[Sync ${account}] resolve product_id:`, error);
         continue;
       }
-      for (const r of data || []) {
-        const cod = r.omie_codigo_produto as number;
-        idByCod.set(cod, idByCod.has(cod) ? null : (r.id as string)); // 2+ ocorrências → null (ambíguo)
-      }
+      prodRows.push(...(data ?? []));
+    }
+    const idByCod = buildProductIdMap(prodRows);
+    const ambiguos = [...idByCod.values()].filter((v) => v === null).length;
+    if (ambiguos > 0) {
+      console.warn(`[Sync ${account}] ${ambiguos} código(s) ambíguo(s) em omie_products(${empresa}) — product_id nulificado (esperado 0 com filtro account-aware)`);
     }
 
     // 3) inventory_position — upsert em LOTE (onConflict (omie_codigo_produto, account)).
@@ -878,17 +893,31 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
 async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "inventory_full", account, { status: "running", error_message: null });
   try {
-    // 1) Map omie_products: omie_codigo_produto -> id (bulk paginado, fura o cap de 1000 do PostgREST)
-    const idMap = new Map<number, string>();
+    // 1) Map omie_products: omie_codigo_produto -> id, ESCOPADO À EMPRESA da account
+    //    (accountToEmpresa). omie_products é UNIQUE(omie_codigo_produto, account=EMPRESA); sem o
+    //    filtro, a resolução account-blind gravaria CMC/saldo no product_id de OUTRA empresa
+    //    (mesmo número em empresas distintas, OU código que só existe na empresa errada — caso do
+    //    `servicos`, que não tem catálogo colacor_sc em omie_products). Bulk paginado fura o cap de
+    //    1000 do PostgREST; .order("id") = paginação estável exigida pelo .range() (mesmo padrão de
+    //    computeCosts). buildProductIdMap nulifica ambíguo residual (defense-in-depth).
+    const empresa = accountToEmpresa(account);
+    const allProdRows: Array<{ id: string | null; omie_codigo_produto: number | string | null }> = [];
     for (let from = 0; ; from += 1000) {
       const { data, error } = await db
         .from("omie_products")
         .select("id, omie_codigo_produto")
+        .eq("account", empresa)
+        .order("id", { ascending: true })
         .range(from, from + 999);
       if (error) throw error;
       const rows = data ?? [];
-      for (const r of rows) idMap.set(Number(r.omie_codigo_produto), r.id as string);
+      allProdRows.push(...rows);
       if (rows.length < 1000) break;
+    }
+    const idMap = buildProductIdMap(allProdRows);
+    const ambiguos = [...idMap.values()].filter((v) => v === null).length;
+    if (ambiguos > 0) {
+      console.warn(`[Sync ${account}] ${ambiguos} código(s) ambíguo(s) em omie_products(${empresa}) — product_id nulificado (esperado 0 com filtro account-aware)`);
     }
 
     // 2) Paginar ListarPosEstoque com cExibeTodos:"S" (callOmie já tem retry/backoff p/ falha transitória)
@@ -915,8 +944,8 @@ async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
       totalPaginas = result.nTotPaginas || 1;
       const now = new Date().toISOString();
       for (const prod of result.produtos || []) {
-        const codProd = prod.nCodProd;
-        if (!codProd) continue;
+        const codProd = Number(prod.nCodProd); // normaliza: a API Omie pode devolver string; a chave do idMap é number
+        if (!Number.isSafeInteger(codProd) || codProd <= 0) continue;
         invRows.push({
           omie_codigo_produto: codProd,
           product_id: idMap.get(codProd) ?? null,
@@ -976,11 +1005,11 @@ async function computeCosts(db: SupabaseClient) {
   // Catálogo ATIVO inteiro — PAGINADO: o PostgREST capa o .select() em 1000 linhas em
   // SILÊNCIO (docs/agent/database.md §5). Sem isto, ~2/3 dos ~3k produtos ativos nunca
   // eram recalculados. .order("id") = coluna estável exigida pelo .range() entre páginas.
-  const products = await fetchAll<{ id: string; valor_unitario: number; familia: string | null }>(
+  const products = await fetchAll<{ id: string; valor_unitario: number; familia: string | null; unidade: string | null; descricao: string | null }>(
     (from, to) =>
       db
         .from("omie_products")
-        .select("id, valor_unitario, familia")
+        .select("id, valor_unitario, familia, unidade, descricao")
         .eq("ativo", true)
         .order("id", { ascending: true })
         .range(from, to),
@@ -1002,11 +1031,46 @@ async function computeCosts(db: SupabaseClient) {
   const costMap: Record<string, { cmc?: number | null }> = {};
   for (const c of costsRaw) costMap[c.product_id] = c;
 
-  // Get inventory for CMC
-  const { data: inventoryRaw } = await db.from("inventory_position").select("product_id, cmc, saldo");
-  const inventory = (inventoryRaw ?? []) as unknown as InventoryPositionRow[];
+  // inventory_position inteiro — PAGINADO pelos MESMOS motivos das duas leituras acima: o
+  // PostgREST capa o .select() em 1000 linhas em SILÊNCIO (docs/agent/database.md §5) e a
+  // tabela tem ~3k linhas (4 convenções de account). Sem paginar (#985 paginou omie_products
+  // e product_costs mas DEIXOU esta de fora), ~2/3 do catálogo perdia o cmc FRESCO do
+  // inventory — syncInventoryFull atualiza inventory_position.cmc do catálogo inteiro mas NÃO
+  // product_costs, então computeCosts é a ÚNICA ponte; truncada, cmcPreferido rebaixava p/ o
+  // product_costs.cmc STALE E a margem média por família saía de amostra truncada.
+  // .order("id") = PK estável exigida pelo .range() (ver _shared/paginate.ts).
+  const inventory = await fetchAll<InventoryPositionRow>(
+    (from, to) =>
+      db
+        .from("inventory_position")
+        .select("product_id, cmc, saldo, synced_at")
+        .order("id", { ascending: true })
+        .range(from, to),
+    "inventory_position",
+  );
+  // Colapso por product_id ELEGENDO a melhor linha (não last-wins por id). inventory_position
+  // é UNIQUE por (omie_codigo_produto, account) e há 2 convenções de account p/ a MESMA empresa
+  // (omie-analytics grava vendas/colacor_vendas/servicos; sync-reprocess grava oben/colacor) →
+  // o MESMO product_id aparece em >1 linha. Eleger por `id` (UUID aleatório) deixaria uma linha
+  // cmc=0/stale esconder a positiva/fresca e gravar custo stale em product_costs (achado Codex
+  // [P1]). Critério money-path = cmc>0 vence ausente/0 e, entre positivas, synced_at mais recente —
+  // mesmo padrão de eleição cross-account do get_preco_cockpit/fin-valor-cockpit. (Prova em prod:
+  // muda 0 outcomes hoje — é guard de borda contra a fragilidade, não regressão.)
   const invMap: Record<string, InventoryPositionRow> = {};
-  for (const i of inventory) if (i.product_id) invMap[i.product_id] = i;
+  for (const i of inventory) {
+    if (!i.product_id) continue;
+    const prev = invMap[i.product_id];
+    if (!prev) {
+      invMap[i.product_id] = i;
+      continue;
+    }
+    const iPos = (i.cmc ?? 0) > 0;
+    const prevPos = (prev.cmc ?? 0) > 0;
+    // cmc positivo vence cmc ausente/0; empate de positividade → synced_at mais recente vence
+    // (null synced_at perde por ordenar como string vazia).
+    const melhor = iPos !== prevPos ? iPos : (i.synced_at ?? "") > (prev.synced_at ?? "");
+    if (melhor) invMap[i.product_id] = i;
+  }
 
   // Montagem PURA dos upserts (testada em src/lib/custo/costCompute.test.ts; espelho
   // verbatim em _shared/cost-compute.ts). Recebe o catálogo COMPLETO (paginado acima) —

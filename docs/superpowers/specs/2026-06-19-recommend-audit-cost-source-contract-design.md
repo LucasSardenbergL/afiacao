@@ -2,6 +2,8 @@
 
 > Spec/design. Money-path (ranking de recomendação + auditoria de margem). Follow-up sancionado da spec do cockpit (`2026-06-18-valor-cockpit-cost-final-contract-design.md` §"Fora de escopo").
 > 2ª opinião: `/codex challenge` no diff final (adversarial money-path) — pendente.
+>
+> **⚠️ Atualização 2026-06-23 (pós-fato):** o resíduo prometido neste doc — "convergir `resolverCustoCockpit` → `cost-source.ts` pós-merge do #959" (§Decisão, §Riscos residuais aceitos, §Fora de escopo) — está **CANCELADO**. O **#959 foi fechado SEM merge** (núcleo absorvido pelo #1003); `resolverCustoCockpit` **nunca chegou a existir em código**. A régua que de fato roda no cockpit é **source-blind** (edge `fin-valor-cockpit`: usa `cost_final` de qualquer source + rebaixa confiança via #1003) e DIVERGE desta **de propósito** — split **intencional**, não convergir. Verdade viva no cabeçalho de `src/lib/custos/cost-source.ts`. Os snippets de código abaixo são snapshot de 2026-06-19 (a régua já evoluiu na `main`: +`CMC_MARGEM_ATIPICA`/`CMC_UNIDADE_SUSPEITA`).
 
 ## Problema
 
