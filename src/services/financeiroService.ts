@@ -990,6 +990,8 @@ export interface CockpitRecomendacao {
   motivo: string;
   impacto_rs: number | null;
 }
+// evp = número AFIRMÁVEL (real + teto≤0 mantido; exclui teto>0 omitido). evp_teto = upper bound (todos os
+// tetos). evp_incompleto = grupo tem fatia de EVP omitida por capital parcial (otimista) → o evp pode ser maior.
 export interface CockpitRollupCliente {
   cliente: string;
   receita: number;
@@ -997,17 +999,39 @@ export interface CockpitRollupCliente {
   encargo: number | null;
   encargo_total: number | null;
   evp: number | null;
+  evp_teto: number | null;
+  evp_incompleto: boolean;
+  perda_garantida: boolean;
+  cm_incompleto: boolean;
   nome?: string | null;  // nome do cliente (profiles via customer_user_id) — UI mostra no lugar do código
 }
 export interface CockpitRollupSKU {
   sku: string;
-  receita: number;
   quantidade: number;
+  receita: number;
   cm: number | null;
   encargo: number | null;
   encargo_total: number | null;
   evp: number | null;
+  evp_teto: number | null;
+  evp_incompleto: boolean;
+  perda_garantida: boolean;
+  cm_incompleto: boolean;
   descricao?: string | null;  // descrição do produto (omie_products) — UI mostra no lugar do código SKU
+}
+// Empresa DECOMPOSTA (capital parcial → um único evp seria mentira contábil; Codex 2026-06-23).
+export interface CockpitEmpresaEVP {
+  receita: number;
+  cm: number | null;
+  encargo: number | null;
+  encargo_total: number | null;
+  evp_conhecido: number | null;       // só capital completo (afirmável)
+  evp_teto_total: number | null;      // upper bound de todas as células
+  evp_perda_garantida: number | null; // Σ tetos ≤0 (piso de perda da fatia parcial-negativa)
+  evp: number | null;                 // null se há qualquer fatia omitida/indisponível (não finge total)
+  evp_incompleto: boolean;
+  perda_garantida: boolean;
+  cm_incompleto: boolean;
 }
 export interface ValorCockpitResult {
   company: string;
@@ -1018,11 +1042,16 @@ export interface ValorCockpitResult {
   motivo?: string;
   porCliente: CockpitRollupCliente[];
   porSKU: CockpitRollupSKU[];
-  empresa: { receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null };
+  empresa: CockpitEmpresaEVP;
   recomendacoesCliente: Array<{ cliente: string; recomendacoes: CockpitRecomendacao[] }>;
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
   cobertura_receita: number;
   cobertura_app_por_ar?: number;
+  // pcts [0,1] por receita total elegível (transparência da omissão honesta do EVP otimista).
+  evp_conhecido_receita_pct?: number;
+  evp_omitido_otimista_receita_pct?: number;
+  evp_perda_garantida_receita_pct?: number;
+  sem_cm_receita_pct?: number;
   config: CockpitConfig;
 }
 

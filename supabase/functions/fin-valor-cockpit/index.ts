@@ -135,6 +135,8 @@ function arMedioTTM(input: { titulos: TituloAR[]; ttm_inicio: string; ttm_fim: s
 type ComboInput = { cliente: string; sku: string; receita_liquida: number; quantidade: number; custo_unitario: number | null };
 type CapitalCliente = { cliente: string; ar_medio: number | null };
 type CapitalSKU = { sku: string; estoque_valor: number | null };
+// Status do EVP afirmável (espelho VERBATIM de src/lib/financeiro/valor-cockpit-helpers.ts).
+type EvpStatus = 'real' | 'teto_nao_positivo' | 'omitido_teto_positivo' | 'indisponivel_cm' | 'indisponivel_hurdle';
 function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: CapitalCliente[]; capitalSKUs: CapitalSKU[]; k: number | null }) {
   const arPorCliente = new Map(input.capitalClientes.map((c) => [c.cliente, c.ar_medio]));
   const estoquePorSKU = new Map(input.capitalSKUs.map((s) => [s.sku, s.estoque_valor]));
@@ -155,68 +157,106 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
     const qs = qtdPorSKU.get(c.sku) ?? 0;
     const ar_indisponivel = arC == null || rc <= 0;
     const estoque_indisponivel = estS == null || qs <= 0;
+    const capital_parcial = ar_indisponivel || estoque_indisponivel;
     const a_cs = arC != null && rc > 0 ? arC * (c.receita_liquida / rc) : 0;
     const i_cs = estS != null && qs > 0 ? estS * (c.quantidade / qs) : 0;
     const encargo: number | null = k == null ? null : k * (a_cs + i_cs);
-    const evp = cm == null || encargo == null ? null : cm - encargo;
-    const evp_parcial = evp != null && (ar_indisponivel || estoque_indisponivel); // teto: encargo é piso
-    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp, ar_indisponivel, estoque_indisponivel, evp_parcial };
+    const evp_teto = cm == null || encargo == null || !Number.isFinite(cm - encargo) ? null : cm - encargo;
+    // Assimetria (espelho de src): teto>0 omitido (otimista, não afirma); teto≤0 mantido SE a perna AUSENTE
+    // alocaria ≥0 (estoque→quantidade≥0; AR→receita≥0) — senão o teto≤0 pode ser falso (não é piso) → omitir.
+    let evp: number | null; let evp_status: EvpStatus;
+    if (cm == null) { evp = null; evp_status = 'indisponivel_cm'; }
+    else if (encargo == null) { evp = null; evp_status = 'indisponivel_hurdle'; }
+    else if (evp_teto == null) { evp = null; evp_status = 'indisponivel_cm'; }
+    else if (!capital_parcial) { evp = evp_teto; evp_status = 'real'; }
+    else {
+      // teto≤0 só é upper bound se a perna AUSENTE alocaria ≥0: numerador (receita/qtd≥0) E denominador (rc/qs>0).
+      // rc/qs ≤0 (devolução/offset) inverte a fração → 0 não é piso → omitir, não fabricar perda (espelho /codex).
+      const estoqueAlocOk = !estoque_indisponivel || (qs > 0 && Number.isFinite(c.quantidade) && c.quantidade >= 0);
+      const arAlocOk = !ar_indisponivel || (rc > 0 && Number.isFinite(c.receita_liquida) && c.receita_liquida >= 0);
+      if (evp_teto <= 0 && estoqueAlocOk && arAlocOk) { evp = evp_teto; evp_status = 'teto_nao_positivo'; }
+      else { evp = null; evp_status = 'omitido_teto_positivo'; }
+    }
+    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp_teto, evp, ar_indisponivel, estoque_indisponivel, capital_parcial, evp_status };
   });
   type Cel = typeof celulas[number];
   const rollup = (keyFn: (c: Cel) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpParcial: boolean; cmIncompleto: boolean }>();
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpTeto: number; evpTetoNull: boolean; evpIncompleto: boolean; perdaGarantida: boolean; cmIncompleto: boolean }>();
     for (const cel of celulas) {
       const key = keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpParcial: false, cmIncompleto: false };
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpTeto: 0, evpTetoNull: true, evpIncompleto: false, perdaGarantida: false, cmIncompleto: false };
       acc.receita += cel.receita_liquida; acc.quantidade += cel.quantidade;
       if (cel.cm == null) acc.cmIncompleto = true;
       if (cel.encargo != null) { acc.encargoTotal += cel.encargo; acc.encargoTotalNull = false; }
       if (cel.cm != null) { acc.cm += cel.cm; acc.cmNull = false; if (cel.encargo != null) { acc.encargo += cel.encargo; acc.encargoNull = false; } }
-      if (cel.evp != null) { acc.evp += cel.evp; acc.evpNull = false; if (cel.evp_parcial) acc.evpParcial = true; }
+      if (cel.evp_teto != null) { acc.evpTeto += cel.evp_teto; acc.evpTetoNull = false; }
+      if (cel.evp != null) { acc.evp += cel.evp; acc.evpNull = false; }
+      if (cel.evp_status === 'omitido_teto_positivo') acc.evpIncompleto = true;
+      if (cel.evp_status === 'teto_nao_positivo') acc.perdaGarantida = true;
       m.set(key, acc);
     }
     return m;
   };
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_parcial: a.evpParcial, cm_incompleto: a.cmIncompleto }));
-  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_parcial: a.evpParcial, cm_incompleto: a.cmIncompleto }));
-  let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, evpEmp = 0, evpNull = true, recEmp = 0;
-  let evpParcialEmp = false, cmIncompletoEmp = false, recTeto = 0, recComEvp = 0;
-  for (const cel of celulas) { recEmp += cel.receita_liquida; if (cel.cm == null) cmIncompletoEmp = true; if (cel.encargo != null) { encTotalEmp += cel.encargo; encTotalNull = false; } if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; if (cel.encargo != null) { encEmp += cel.encargo; encNull = false; } } if (cel.evp != null) { evpEmp += cel.evp; evpNull = false; recComEvp += cel.receita_liquida; if (cel.evp_parcial) { evpParcialEmp = true; recTeto += cel.receita_liquida; } } }
-  const evp_teto_receita_pct = recComEvp > 0 ? recTeto / recComEvp : 0;
-  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp: evpNull ? null : evpEmp, evp_parcial: evpParcialEmp, cm_incompleto: cmIncompletoEmp }, evp_teto_receita_pct };
+  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto }));
+  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto }));
+  let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, recEmp = 0;
+  let conhecido = 0, conhecidoNull = true, tetoTotal = 0, tetoTotalNull = true, perda = 0, perdaNull = true;
+  let evpIncompletoEmp = false, cmIncompletoEmp = false, recConhecido = 0, recOmitido = 0, recPerda = 0, recSemCm = 0;
+  for (const cel of celulas) {
+    recEmp += cel.receita_liquida;
+    if (cel.cm == null) { cmIncompletoEmp = true; recSemCm += cel.receita_liquida; }
+    if (cel.encargo != null) { encTotalEmp += cel.encargo; encTotalNull = false; }
+    if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; if (cel.encargo != null) { encEmp += cel.encargo; encNull = false; } }
+    if (cel.evp_teto != null) { tetoTotal += cel.evp_teto; tetoTotalNull = false; }
+    if (cel.evp_status === 'real') { conhecido += cel.evp as number; conhecidoNull = false; recConhecido += cel.receita_liquida; }
+    else if (cel.evp_status === 'teto_nao_positivo') { perda += cel.evp as number; perdaNull = false; recPerda += cel.receita_liquida; }
+    else if (cel.evp_status === 'omitido_teto_positivo') { evpIncompletoEmp = true; recOmitido += cel.receita_liquida; }
+  }
+  const empresaCompleta = !evpIncompletoEmp && !cmIncompletoEmp && k != null; // evp único só se nada omitido/indisponível (Codex)
+  const empresa = { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp_conhecido: conhecidoNull ? null : conhecido, evp_teto_total: tetoTotalNull ? null : tetoTotal, evp_perda_garantida: perdaNull ? null : perda, evp: empresaCompleta && !conhecidoNull ? conhecido : null, evp_incompleto: evpIncompletoEmp, cm_incompleto: cmIncompletoEmp };
+  const pct = (x: number) => (recEmp > 0 ? x / recEmp : 0);
+  return { celulas, porCliente, porSKU, empresa, evp_conhecido_receita_pct: pct(recConhecido), evp_omitido_otimista_receita_pct: pct(recOmitido), evp_perda_garantida_receita_pct: pct(recPerda), sem_cm_receita_pct: pct(recSemCm) };
 }
 type CockpitConfig = { margem_minima_pct: number; desconto_max_pct: number; prazo_alvo_dias: number; dias_estoque_max: number; sample_min_receita: number };
 type Recomendacao = { acao: string; motivo: string; impacto_rs: number | null };
-function recomendarAcaoComercial(input: { evp: number | null; receita_liquida: number; cm: number | null; desconto_total: number; prazo_medio_dias: number; dias_estoque: number; config: CockpitConfig; hurdle_indisponivel?: boolean; evp_parcial?: boolean; cm_incompleto?: boolean }): Recomendacao[] {
+function recomendarAcaoComercial(input: { evp: number | null; receita_liquida: number; cm: number | null; desconto_total: number; prazo_medio_dias: number; dias_estoque: number; config: CockpitConfig; hurdle_indisponivel?: boolean; evp_incompleto?: boolean; cm_incompleto?: boolean }): Recomendacao[] {
   const r: Recomendacao[] = []; const c = input.config;
   const receitaBruta = input.receita_liquida + input.desconto_total;
   const descontoPct = receitaBruta > 0 ? input.desconto_total / receitaBruta : 0;
   const cmPct = input.cm != null && input.receita_liquida > 0 ? input.cm / input.receita_liquida : null;
   const evpConhecivel = !input.hurdle_indisponivel;
-  const evpTeto = !!input.evp_parcial;
+  const evpIncompleto = !!input.evp_incompleto;  // fatia otimista omitida (capital não medido) — sucede evp_parcial
   const cmIncompleto = !!input.cm_incompleto;
-  const evpNegConhecido = input.evp != null && input.evp < 0;
-  if (descontoPct > c.desconto_max_pct && (!evpConhecivel || input.evp == null || input.evp <= 0 || evpTeto)) {
+  const evpNegConhecido = input.evp != null && input.evp < 0; // inclui perda garantida (teto≤0 mantido)
+  if (descontoPct > c.desconto_max_pct && (!evpConhecivel || input.evp == null || input.evp <= 0 || evpIncompleto)) {
+    const pre = `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}%`;
+    // NÃO dizer "não gera valor" quando o EVP foi OMITIDO por otimismo — seria falso (Codex 2026-06-23).
     const motivo = !evpConhecivel
-      ? `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}% — lucro econômico indisponível (configure o hurdle p/ confirmar).`
-      : (evpTeto && input.evp != null && input.evp > 0)
-        ? `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}% — valor econômico não confirmado (capital não medido em parte).`
-        : `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}% e o combo não gera valor.`;
+      ? `${pre} — lucro econômico indisponível (configure o hurdle p/ confirmar).`
+      : (evpNegConhecido && evpIncompleto)
+        ? `${pre} — parte do valor não medida (capital ausente); a parte medida não gera valor.`
+        : evpNegConhecido
+          ? `${pre} e o combo não gera valor.`
+          : evpIncompleto
+            ? `${pre} — valor econômico NÃO medido em parte (capital ausente) — não confirmável.`
+            : input.cm == null
+              ? `${pre} — margem indisponível (custo ausente).`
+              : `${pre} e o combo não gera valor.`;
     r.push({ acao: "Cortar desconto", motivo, impacto_rs: Math.max(0, input.desconto_total - receitaBruta * c.desconto_max_pct) });
   }
   if (evpConhecivel && input.prazo_medio_dias > c.prazo_alvo_dias && evpNegConhecido) r.push({ acao: "Encurtar prazo / exigir antecipado", motivo: `Prazo médio ${input.prazo_medio_dias.toFixed(0)}d > alvo ${c.prazo_alvo_dias}d puxa o custo de capital de giro.`, impacto_rs: null });
   if (cmPct != null && cmPct < c.margem_minima_pct) r.push({ acao: "Subir preço", motivo: `Margem ${(cmPct * 100).toFixed(0)}% < mínima ${(c.margem_minima_pct * 100).toFixed(0)}%.`, impacto_rs: Math.max(0, c.margem_minima_pct * input.receita_liquida - (input.cm as number)) });
   if (evpConhecivel && input.dias_estoque > c.dias_estoque_max && evpNegConhecido) r.push({ acao: "Despriorizar / liquidar estoque", motivo: `${input.dias_estoque.toFixed(0)} dias de estoque > limite ${c.dias_estoque_max}d e o item não gera valor.`, impacto_rs: null });
   if (r.length === 0 && input.evp != null && input.evp > 0) {
-    if (!evpTeto && !cmIncompleto) r.push({ acao: "Crescer / proteger", motivo: "Gera valor econômico positivo e sem alertas.", impacto_rs: null });
-    else { const ressalvas: string[] = []; if (evpTeto) ressalvas.push("capital não medido em parte da carteira (EVP é teto) — confirmar"); if (cmIncompleto) ressalvas.push("margem desconhecida em parte (custo ausente)"); r.push({ acao: "Crescer / proteger", motivo: `Provável valor econômico positivo, a confirmar: ${ressalvas.join("; ")}.`, impacto_rs: null }); }
+    if (!evpIncompleto && !cmIncompleto) r.push({ acao: "Crescer / proteger", motivo: "Gera valor econômico positivo e sem alertas.", impacto_rs: null });
+    else { const ressalvas: string[] = []; if (evpIncompleto) ressalvas.push("capital não medido em parte da carteira (EVP parcial omitido) — confirmar"); if (cmIncompleto) ressalvas.push("margem desconhecida em parte (custo ausente)"); r.push({ acao: "Crescer / proteger", motivo: `Provável valor econômico positivo, a confirmar: ${ressalvas.join("; ")}.`, impacto_rs: null }); }
   }
   // aviso de hurdle ausente vive na confiança + banner da UI (NÃO por cliente — vazaria pro A4).
   return r;
 }
-function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean; hurdle_indisponivel?: boolean; evp_teto_receita_pct?: number; cobertura_app_por_ar?: number; custo_baixa_confianca_pct?: number }) {
+function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente_pct: number; ar_indisponivel_pct: number; estoque_ausente_pct: number; imposto_estimado: boolean; hurdle_indisponivel?: boolean; evp_omitido_otimista_receita_pct?: number; cobertura_app_por_ar?: number; custo_baixa_confianca_pct?: number }) {
   const motivos: string[] = []; let nivel = 3;
   const rebaixar = (para: number, m: string) => { if (para < nivel) nivel = para; motivos.push(m); };
   if (input.hurdle_indisponivel) rebaixar(1, "Sem Ke/hurdle configurado — lucro econômico (EVP) indisponível; configure em /financeiro/valor.");
@@ -232,9 +272,9 @@ function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente
   else if (cbc >= 0.05) motivos.push(`${(cbc * 100).toFixed(0)}% das células com custo proxy/legado (informativo).`);
   if (input.ar_indisponivel_pct > 0.3) rebaixar(2, `${(input.ar_indisponivel_pct * 100).toFixed(0)}% das vendas sem AR vinculável — encargo de cliente subestimado.`);
   if (input.estoque_ausente_pct > 0.3) rebaixar(2, `${(input.estoque_ausente_pct * 100).toFixed(0)}% dos SKUs sem estoque — encargo de SKU subestimado.`);
-  const tetoPct = input.evp_teto_receita_pct ?? 0;
-  if (tetoPct > 0.05) rebaixar(2, `${(tetoPct * 100).toFixed(0)}% do EVP (por receita) é teto — encargo de capital não medido; lucro econômico otimista nessa fatia.`);
-  else if (tetoPct > 0) motivos.push(`${(tetoPct * 100).toFixed(1)}% do EVP (por receita) é teto — encargo de capital não medido em parte.`);
+  const omitidoPct = input.evp_omitido_otimista_receita_pct ?? 0;
+  if (omitidoPct > 0.05) rebaixar(2, `${(omitidoPct * 100).toFixed(0)}% da receita com EVP omitido — encargo de capital não medido; lucro econômico não afirmado nessa fatia.`);
+  else if (omitidoPct > 0) motivos.push(`${(omitidoPct * 100).toFixed(1)}% da receita com EVP omitido (capital não medido em parte).`);
   if (input.imposto_estimado) motivos.push("Imposto alocado nível-empresa (estimado), não por linha.");
   return { nivel: (nivel === 3 ? "alta" : nivel === 2 ? "media" : "baixa") as "alta" | "media" | "baixa", motivos };
 }
@@ -503,7 +543,7 @@ serve(async (req: Request) => {
     for (const c of [...comboMap.values()]) descontoPorCliente.set(c.cliente, (descontoPorCliente.get(c.cliente) ?? 0) + c.desconto);
     const recomendacoesCliente = res.porCliente.map((rc) => ({
       cliente: rc.cliente,
-      recomendacoes: recomendarAcaoComercial({ evp: rc.evp, receita_liquida: rc.receita, cm: rc.cm, desconto_total: descontoPorCliente.get(rc.cliente) ?? 0, prazo_medio_dias: 0, dias_estoque: 0, config, hurdle_indisponivel, evp_parcial: rc.evp_parcial, cm_incompleto: rc.cm_incompleto }),
+      recomendacoes: recomendarAcaoComercial({ evp: rc.evp, receita_liquida: rc.receita, cm: rc.cm, desconto_total: descontoPorCliente.get(rc.cliente) ?? 0, prazo_medio_dias: 0, dias_estoque: 0, config, hurdle_indisponivel, evp_incompleto: rc.evp_incompleto, cm_incompleto: rc.cm_incompleto }),
     }));
 
     const total = res.celulas.length || 1;
@@ -524,7 +564,7 @@ serve(async (req: Request) => {
     const arTotal = crsAll.filter((cr) => cr.data_emissao != null && cr.data_emissao >= ttm_inicio && tituloFaturavelAR(cr.status_titulo)).reduce((s, cr) => s + (cr.valor_documento || 0), 0);
     const { ar_por_app, app_por_ar } = coberturaBidirecional({ receita: res.empresa.receita, arFaturavel: arTotal });
     const cobertura_receita = ar_por_app; // retrocompat: mesmo valor de antes
-    const confianca = scoreConfiancaCockpit({ cobertura_receita, cobertura_app_por_ar: app_por_ar, custo_ausente_pct, custo_baixa_confianca_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel, evp_teto_receita_pct: res.evp_teto_receita_pct });
+    const confianca = scoreConfiancaCockpit({ cobertura_receita, cobertura_app_por_ar: app_por_ar, custo_ausente_pct, custo_baixa_confianca_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel, evp_omitido_otimista_receita_pct: res.evp_omitido_otimista_receita_pct });
 
     // Descrição do produto (omie_products) p/ a UI exibir o nome em vez do código na visão Por SKU.
     const descricaoPorSKU = new Map(prods.map((p) => [String(p.omie_codigo_produto), p.descricao]));
@@ -535,7 +575,11 @@ serve(async (req: Request) => {
       porCliente: porClienteComNome, porSKU: porSKUcomDescricao, empresa: res.empresa,
       recomendacoesCliente, confianca, cobertura_receita, cobertura_app_por_ar: app_por_ar,
       cobertura_baixa_ar: coberturaBaixaAR, // Fase 3: fração da AR liquidada com baixa derivada REAL (vs vencimento-proxy)
-      evp_teto_receita_pct: res.evp_teto_receita_pct, // fração da receita-com-EVP cujo EVP é teto (UI entrega 2)
+      // transparência por receita (omissão honesta do EVP otimista — sucede evp_teto_receita_pct):
+      evp_conhecido_receita_pct: res.evp_conhecido_receita_pct,
+      evp_omitido_otimista_receita_pct: res.evp_omitido_otimista_receita_pct,
+      evp_perda_garantida_receita_pct: res.evp_perda_garantida_receita_pct,
+      sem_cm_receita_pct: res.sem_cm_receita_pct,
       config,
     }, 200);
   } catch (e) {
