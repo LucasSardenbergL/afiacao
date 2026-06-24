@@ -103,6 +103,21 @@ describe('calculateScores — guard de cobertura (dívida D1 latente)', () => {
     expect(insertedScore()).toBeFalsy();
   });
 
+  it('COBERTURA active mas EXPIRADA (valid_until no passado) → persiste (cobertura efetiva = active E não-expirada, igual ao resto do repo)', async () => {
+    covCoveredRows = [{ id: 'cov-exp', valid_until: '2020-01-01T00:00:00Z' }];
+    const { result: r } = renderHook(() => useFarmerPerformance());
+    await act(async () => { await r.current.calculateScores(FARMER); });
+    expect(insertedScore()).toBeTruthy();
+    expect(toast.warning).not.toHaveBeenCalled();
+  });
+
+  it('COBERTURA active SEM prazo (valid_until null) → NÃO persiste (vigente perpétua)', async () => {
+    covCoveringRows = [{ id: 'cov-perp', valid_until: null }];
+    const { result: r } = renderHook(() => useFarmerPerformance());
+    await act(async () => { await r.current.calculateScores(FARMER); });
+    expect(insertedScore()).toBeFalsy();
+  });
+
   it('master calculando p/ terceiro SEM cobertura → persiste (master enxerga a cobertura via RLS)', async () => {
     authState = { user: { id: 'master-x' }, role: 'master' };
     const { result: r } = renderHook(() => useFarmerPerformance());

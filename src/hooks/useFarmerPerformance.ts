@@ -171,11 +171,15 @@ export const useFarmerPerformance = () => {
       let suspenderPorCobertura = calculandoParaTerceiro && role !== 'master';
       if (!suspenderPorCobertura) {
         const [cov1, cov2] = await Promise.all([
-          supabase.from('carteira_coverage').select('id').eq('active', true).eq('covered_user_id', farmerId).limit(1),
-          supabase.from('carteira_coverage').select('id').eq('active', true).eq('covering_user_id', farmerId).limit(1),
+          supabase.from('carteira_coverage').select('id, valid_until').eq('active', true).eq('covered_user_id', farmerId),
+          supabase.from('carteira_coverage').select('id, valid_until').eq('active', true).eq('covering_user_id', farmerId),
         ]);
-        suspenderPorCobertura = !!cov1.error || !!cov2.error
-          || (cov1.data?.length ?? 0) > 0 || (cov2.data?.length ?? 0) > 0;
+        // Cobertura EFETIVA = active E não-expirada — mesma definição de useCoverage/escopo-clientes
+        // (active sem flip pós-prazo não pode fail-close pra sempre). nowIso no client, como o repo.
+        const nowIso = new Date().toISOString();
+        const vigente = (rows: { valid_until: string | null }[] | null) =>
+          (rows ?? []).some((c) => !c.valid_until || c.valid_until > nowIso);
+        suspenderPorCobertura = !!cov1.error || !!cov2.error || vigente(cov1.data) || vigente(cov2.data);
       }
       if (suspenderPorCobertura) {
         toast.warning('Índices de performance indisponíveis sob cobertura de carteira', {
