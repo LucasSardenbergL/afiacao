@@ -212,7 +212,8 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
       const transient = msg.includes("broken response") || msg.includes("soap-error") ||
         msg.includes("timeout") || msg.includes("timed out") || msg.includes("network") ||
         msg.includes("connection") || msg.includes("fetch failed") ||
-        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500");
+        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500") ||
+        msg.includes("429") || msg.includes("too many") || msg.includes("rate limit");
       if (transient && attempt < maxAttempts) {
         await new Promise((r) => setTimeout(r, 800 * Math.pow(2, attempt - 1)));
         continue;
@@ -1181,100 +1182,123 @@ async function syncCustoProducao(db: SupabaseClient, account: OmieAccount) {
     // 3) Fabricados (tipo_produto '04' = produto acabado). Para cada: ConsultarEstrutura → recompor.
     const fabricados = produtos.filter((p) => p.tipo_produto === "04");
     const nowIso = new Date().toISOString();
-    const upserts: Array<Record<string, unknown>> = [];
     const tally: Record<string, number> = {};
     const bump = (k: string) => {
       tally[k] = (tally[k] ?? 0) + 1;
     };
     let logouAmostra = false;
 
-    for (const fab of fabricados) {
-      const cod = Number(fab.omie_codigo_produto);
-      // só grava em linha que JÁ existe (computeCosts cria) → evita INSERT com cost_final=0 default.
-      if (!temLinhaCusto.has(fab.id)) {
-        bump("sem_linha_product_costs");
-        continue;
-      }
+    // só grava em linha que JÁ existe (computeCosts cria) → evita INSERT com cost_final=0 default.
+    const alvos = fabricados.filter((fab) => {
+      if (temLinhaCusto.has(fab.id)) return true;
+      bump("sem_linha_product_costs");
+      return false;
+    });
 
-      let resp: OmieConsultarEstruturaResponse;
-      try {
-        resp = (await callOmie(account, "geral/malha/", "ConsultarEstrutura", {
-          idProduto: cod,
-        })) as unknown as OmieConsultarEstruturaResponse;
-      } catch (e) {
-        // API falhou (após o retry do callOmie) → degrada HONESTO: zera + status='erro_api' (não deixa
-        // o custo_producao velho passar por atual na view = stale money-path; achado P1 do Codex).
-        bump("erro_api");
-        console.error(
-          `[custo_producao ${account}] ConsultarEstrutura idProduto=${cod}: ${e instanceof Error ? e.message : e}`,
-        );
-        upserts.push({
-          product_id: fab.id,
-          custo_producao: null,
-          custo_producao_source: "ESTRUTURA_OMIE",
-          custo_producao_status: "erro_api",
-          custo_producao_computed_at: nowIso,
-        });
-        continue;
-      }
-
-      // 1ª resposta crua no log → confirma os nomes de campo na 1ª execução real (auto-validação).
-      if (!logouAmostra) {
-        console.log(
-          `[custo_producao ${account}] amostra idProduto=${cod}: ${JSON.stringify(resp).slice(0, 1000)}`,
-        );
-        logouAmostra = true;
-      }
-
-      const componentes = (resp.itens ?? []).map((it) => ({
-        codigo: Number(it.idProdMalha),
-        quantidade: Number(it.quantProdMalha ?? 0),
-        percPerda: Number(it.percPerdaProdMalha ?? 0),
-      }));
-      const { custo, status, faltantes } = recomporCustoProducao({
-        componentes,
-        vMOD: Number(resp.custoProducao?.vMOD ?? 0),
-        vGGF: Number(resp.custoProducao?.vGGF ?? 0),
-        cmcPorCodigo,
-        precoVenda: precoPorCodigo.get(cod) ?? null,
-      });
-      bump(status);
-      if (status === "missing_component_cost" && faltantes.length) {
-        console.log(`[custo_producao ${account}] cod=${cod} sem cmc dos insumos: ${faltantes.join(",")}`);
-      }
-
-      upserts.push({
-        product_id: fab.id,
-        custo_producao: custo, // NULL quando degradado (honesto — ausente ≠ zero)
-        custo_producao_source: "ESTRUTURA_OMIE",
-        custo_producao_status: status,
-        custo_producao_computed_at: nowIso,
-      });
-    }
-
-    // 4) Upsert em lote (chunks 500). onConflict product_id → UPDATE só das colunas custo_producao*
-    //    (linha garantida por temLinhaCusto). Money-path: conta só o que persistiu, lança se falhou.
-    const CHUNK = 500;
+    // Processa em LOTES PARALELOS com FLUSH incremental. A 1ª versão fazia N+1 SEQUENCIAL (~260
+    // ConsultarEstrutura) e estourava WORKER_RESOURCE_LIMIT antes do upsert final → preso em 'running',
+    // 0 gravado (provado em prod 2026-06-24). Agora: Promise.all em lotes (corta o wall-clock ~LOTE×) +
+    // flush a cada FLUSH itens (grava o progresso parcial: se o worker morrer, não perde o já feito) +
+    // total_synced parcial no sync_state (monitorável). É o padrão "bulk + waitUntil" do CLAUDE.md.
+    const LOTE = 8; // ConsultarEstrutura concorrentes por vez (suave no rate limit do Omie)
+    const FLUSH = 80; // tamanho do buffer antes de gravar
     let updated = 0;
     const erros: string[] = [];
-    for (let i = 0; i < upserts.length; i += CHUNK) {
-      const slice = upserts.slice(i, i + CHUNK);
+    let buffer: Array<Record<string, unknown>> = [];
+    const flush = async () => {
+      if (buffer.length === 0) return;
+      const slice = buffer;
+      buffer = [];
       const { error } = await db.from("product_costs").upsert(slice, { onConflict: "product_id" });
       if (error) {
         erros.push(error.message);
         console.error("[custo_producao] upsert lote:", error);
       } else {
         updated += slice.length;
+        await updateSyncState(db, "custo_producao", account, { status: "running", total_synced: updated });
+      }
+    };
+
+    for (let i = 0; i < alvos.length; i += LOTE) {
+      const resultados = await Promise.all(
+        alvos.slice(i, i + LOTE).map(async (fab) => {
+          const cod = Number(fab.omie_codigo_produto);
+          try {
+            const resp = (await callOmie(account, "geral/malha/", "ConsultarEstrutura", {
+              idProduto: cod,
+            })) as unknown as OmieConsultarEstruturaResponse;
+            return { fab, cod, resp };
+          } catch (e) {
+            console.error(
+              `[custo_producao ${account}] ConsultarEstrutura idProduto=${cod}: ${e instanceof Error ? e.message : e}`,
+            );
+            return { fab, cod, resp: null as OmieConsultarEstruturaResponse | null };
+          }
+        }),
+      );
+
+      for (const r of resultados) {
+        if (!r.resp) {
+          // API falhou (após o retry do callOmie) → degrada HONESTO: zera + status='erro_api' (não deixa
+          // o custo_producao velho passar por atual na view = stale money-path; achado P1 do Codex).
+          bump("erro_api");
+          buffer.push({
+            product_id: r.fab.id,
+            custo_producao: null,
+            custo_producao_source: "ESTRUTURA_OMIE",
+            custo_producao_status: "erro_api",
+            custo_producao_computed_at: nowIso,
+          });
+          continue;
+        }
+        // 1ª resposta crua no log → confirma os nomes de campo na 1ª execução real (auto-validação).
+        if (!logouAmostra) {
+          console.log(
+            `[custo_producao ${account}] amostra idProduto=${r.cod}: ${JSON.stringify(r.resp).slice(0, 1000)}`,
+          );
+          logouAmostra = true;
+        }
+        const componentes = (r.resp.itens ?? []).map((it) => ({
+          codigo: Number(it.idProdMalha),
+          quantidade: Number(it.quantProdMalha ?? 0),
+          percPerda: Number(it.percPerdaProdMalha ?? 0),
+        }));
+        const { custo, status, faltantes } = recomporCustoProducao({
+          componentes,
+          vMOD: Number(r.resp.custoProducao?.vMOD ?? 0),
+          vGGF: Number(r.resp.custoProducao?.vGGF ?? 0),
+          cmcPorCodigo,
+          precoVenda: precoPorCodigo.get(r.cod) ?? null,
+        });
+        bump(status);
+        if (status === "missing_component_cost" && faltantes.length) {
+          console.log(`[custo_producao ${account}] cod=${r.cod} sem cmc dos insumos: ${faltantes.join(",")}`);
+        }
+        buffer.push({
+          product_id: r.fab.id,
+          custo_producao: custo, // NULL quando degradado (honesto — ausente ≠ zero)
+          custo_producao_source: "ESTRUTURA_OMIE",
+          custo_producao_status: status,
+          custo_producao_computed_at: nowIso,
+        });
+      }
+
+      if (buffer.length >= FLUSH) await flush();
+      if ((i / LOTE) % 5 === 0) {
+        console.log(
+          `[custo_producao ${account}] progresso ${Math.min(i + LOTE, alvos.length)}/${alvos.length} (gravados ${updated})`,
+        );
       }
     }
+    await flush(); // resto do buffer
+
+    // Money-path: conta só o que PERSISTIU; lança se algum lote de upsert falhou (caller vira error).
     if (erros.length) {
-      throw new Error(
-        `custo_producao: ${erros.length} lotes falharam (${updated}/${upserts.length}). 1º: ${erros[0]}`,
-      );
+      throw new Error(`custo_producao: ${erros.length} lotes de upsert falharam (${updated} gravados). 1º: ${erros[0]}`);
     }
 
     console.log(
-      `[custo_producao ${account}] fabricados=${fabricados.length} gravados=${updated} tally=${JSON.stringify(tally)}`,
+      `[custo_producao ${account}] fabricados=${fabricados.length} alvos=${alvos.length} gravados=${updated} tally=${JSON.stringify(tally)}`,
     );
     await updateSyncState(db, "custo_producao", account, {
       status: "complete",
