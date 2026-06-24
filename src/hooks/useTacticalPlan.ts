@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import type { Json } from '@/integrations/supabase/types';
 import { selectObjective, clampRecencyCapDays } from '@/lib/scoring/objective';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
@@ -493,42 +492,43 @@ export const useTacticalPlan = () => {
 
       if (aiError) throw aiError;
 
-      const planData = {
-        farmer_id: ownerId,
-        customer_user_id: customerId,
-        bundle_recommendation_id: topBundle?.id || null,
-        health_score: healthScore,
-        churn_risk: churnRisk,
-        mix_gap: mixGap,
-        current_margin_pct: marginPct,
-        cluster_avg_margin_pct: clusterMargin,
-        expansion_potential: expansionPotential,
-        strategic_objective: aiPlan?.strategic_objective || strategicObjective,
-        customer_profile: customerProfile,
-        plan_type: planType,
-        top_bundle: (topBundle ? topBundle.bundle_products : {}) as Json,
-        second_bundle: (secondBundle ? secondBundle.bundle_products : {}) as Json,
-        bundle_lie: topBundle ? Number(topBundle.lie_bundle) : 0,
-        bundle_probability: topBundle ? Number(topBundle.p_bundle) : 0,
-        bundle_incremental_margin: topBundle ? Number(topBundle.m_bundle) : 0,
-        best_individual_lie: 0,
-        diagnostic_questions: (aiPlan?.diagnostic_questions || []) as unknown as Json,
-        implication_question: aiPlan?.implication_question || '',
-        offer_transition: aiPlan?.offer_transition || '',
-        probable_objections: (aiPlan?.probable_objections || []) as unknown as Json,
-        approach_strategy: aiPlan?.approach_strategy || '',
-        approach_strategy_b: aiPlan?.approach_strategy_b || '',
-        ltv_projection: (aiPlan?.ltv_projection || null) as unknown as Json,
-        expected_result: (aiPlan?.expected_result || null) as unknown as Json,
-        operational_risks: aiPlan?.operational_risks || [],
-        status: 'gerado',
-      };
-
-      await supabase
-        .from('farmer_tactical_plans')
-        .insert(planData)
-        .select('id')
-        .single();
+      // Escrita via RPC-fronteira (#1037 + split de RLS): a posse (farmer_id) é re-resolvida
+      // server-side de carteira_assignments e a RLS pós-split NEGA insert direto do client.
+      // _expected_owner=ownerId faz a RPC ABORTAR se a carteira foi reatribuída durante a
+      // geração da IA (race) em vez de gravar o dono stale; farmer_id/customer_user_id/status
+      // são autoritativos do servidor (o client não controla mais a posse).
+      const { error: rpcError } = await supabase.rpc('criar_plano_tatico' as never, {
+        _customer_user_id: customerId,
+        _expected_owner: ownerId,
+        _payload: {
+          bundle_recommendation_id: topBundle?.id || null,
+          health_score: healthScore,
+          churn_risk: churnRisk,
+          mix_gap: mixGap,
+          current_margin_pct: marginPct,
+          cluster_avg_margin_pct: clusterMargin,
+          expansion_potential: expansionPotential,
+          strategic_objective: aiPlan?.strategic_objective || strategicObjective,
+          customer_profile: customerProfile,
+          plan_type: planType,
+          top_bundle: topBundle ? topBundle.bundle_products : {},
+          second_bundle: secondBundle ? secondBundle.bundle_products : {},
+          bundle_lie: topBundle ? Number(topBundle.lie_bundle) : 0,
+          bundle_probability: topBundle ? Number(topBundle.p_bundle) : 0,
+          bundle_incremental_margin: topBundle ? Number(topBundle.m_bundle) : 0,
+          best_individual_lie: 0,
+          diagnostic_questions: aiPlan?.diagnostic_questions || [],
+          implication_question: aiPlan?.implication_question || '',
+          offer_transition: aiPlan?.offer_transition || '',
+          probable_objections: aiPlan?.probable_objections || [],
+          approach_strategy: aiPlan?.approach_strategy || '',
+          approach_strategy_b: aiPlan?.approach_strategy_b || '',
+          ltv_projection: aiPlan?.ltv_projection || null,
+          expected_result: aiPlan?.expected_result || null,
+          operational_risks: aiPlan?.operational_risks || [],
+        },
+      } as never);
+      if (rpcError) throw rpcError;
 
       toast.success(`Plano ${planType === 'estrategico' ? 'estratégico' : 'essencial'} gerado com sucesso`);
       await loadPlans();
@@ -577,24 +577,26 @@ export const useTacticalPlan = () => {
     notes?: string;
   }) => {
     try {
-      await supabase
-        .from('farmer_tactical_plans')
-        .update({
-          plan_followed: result.planFollowed,
-          call_result: result.callResult,
-          actual_margin: result.actualMargin,
-          call_duration_seconds: result.callDurationSeconds,
-          objection_type: result.objectionType || null,
-          notes: result.notes || null,
-          status: 'concluido',
-          completed_at: new Date().toISOString(),
-        })
-        .eq('id', planId);
+      // Via RPC-fronteira (#1037 + split de RLS): gateia carteira_visivel_para(cliente do plano)
+      // e a RLS pós-split nega UPDATE direto — fecha o #1 (qualquer staff com o UUID concluía
+      // plano de carteira que não enxerga). completed_at/status são server-side.
+      const { error } = await supabase.rpc('registrar_resultado_plano' as never, {
+        _plan_id: planId,
+        _plan_followed: result.planFollowed,
+        _call_result: result.callResult,
+        _actual_margin: result.actualMargin,
+        _call_duration_seconds: result.callDurationSeconds,
+        _objection_type: result.objectionType || null,
+        _notes: result.notes || null,
+      } as never);
+      if (error) throw error;
 
       toast.success('Resultado registrado');
       await loadPlans();
     } catch (err) {
       console.error('Error recording result:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('Erro ao registrar resultado', { description: message });
     }
   }, [loadPlans]);
 
