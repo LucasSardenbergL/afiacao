@@ -1,10 +1,22 @@
 // Edge Function: omie-sync-status-produtos
 // Sincroniza status (ativo/inativo) e parâmetros atuais de estoque do Omie
 // para a tabela sku_status_omie. Usa ListarProdutos paginado (500 por página).
+// Aceita empresa OBEN, COLACOR ou ALL (processa todas as suportadas, em série).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
+import { resolverEmpresas, type Empresa } from "../_shared/empresas.ts";
+
+// Captura o tipo do client pela INFERÊNCIA da chamada (createClient(url,key) infere
+// <any,"public",any>); `ReturnType<typeof createClient>` cru daria os defaults <unknown,never>.
+function makeClient() {
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+}
+type DB = ReturnType<typeof makeClient>;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -29,6 +41,20 @@ interface OmieProduto {
     estoque_minimo?: number;
     estoque_maximo?: number;
   };
+}
+
+interface SyncSummary {
+  empresa: string;
+  total_alvo: number;
+  encontrados_na_listagem?: number;
+  nao_encontrados?: number;
+  sucessos?: number;
+  falhas?: number;
+  alertas_resolvidos_auto?: number;
+  paginas_processadas?: number;
+  duration_ms: number;
+  mensagem?: string;
+  error?: string;
 }
 
 async function omieCall(
@@ -74,36 +100,11 @@ async function omieCall(
   }
 }
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-
-  const auth = await authorizeCronOrStaff(req);
-  if (!auth.ok) return auth.response;
-
+// Sincroniza UMA empresa. Cria seu próprio log em sync_reprocess_log (granularidade por
+// empresa) e devolve um SyncSummary — nunca lança: erros viram { ...error } para não
+// abortar as demais empresas num run "ALL".
+async function sincronizarEmpresa(supabase: DB, empresa: Empresa): Promise<SyncSummary> {
   const startedAt = Date.now();
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-  );
-
-  let empresa = "OBEN";
-  try {
-    const url = new URL(req.url);
-    const qEmp = url.searchParams.get("empresa");
-    if (qEmp) empresa = qEmp.toUpperCase();
-    if (req.method === "POST") {
-      const body = await req.json().catch(() => ({}));
-      if (body?.empresa) empresa = String(body.empresa).toUpperCase();
-    }
-  } catch (_) { /* parse de body opcional */ }
-
-  const empresasPermitidas = new Set(["OBEN", "COLACOR"]);
-  if (!empresasPermitidas.has(empresa)) {
-    return new Response(JSON.stringify({ error: `Empresa inválida: ${empresa}` }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
 
   // Inicia log
   const { data: logRow } = await supabase
@@ -131,10 +132,7 @@ Deno.serve(async (req) => {
         .update({ status: "failed", error_message: msg, duration_ms: Date.now() - startedAt })
         .eq("id", logId);
     }
-    return new Response(JSON.stringify({ error: msg }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return { empresa, total_alvo: 0, duration_ms: Date.now() - startedAt, error: msg };
   }
 
   try {
@@ -180,10 +178,12 @@ Deno.serve(async (req) => {
           })
           .eq("id", logId);
       }
-      return new Response(
-        JSON.stringify({ ok: true, empresa, total: 0, mensagem: "Nenhum SKU alvo" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return {
+        empresa,
+        total_alvo: 0,
+        duration_ms: Date.now() - startedAt,
+        mensagem: "Nenhum SKU alvo",
+      };
     }
 
     // 2) Paginação Omie ListarProdutos
@@ -416,7 +416,7 @@ Deno.serve(async (req) => {
     }
 
     const duration = Date.now() - startedAt;
-    const summary = {
+    const summary: SyncSummary = {
       empresa,
       total_alvo: totalAlvo,
       encontrados_na_listagem: encontradosNaListagem,
@@ -443,12 +443,10 @@ Deno.serve(async (req) => {
         .eq("id", logId);
     }
 
-    return new Response(JSON.stringify({ ok: true, ...summary }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return summary;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("omie-sync-status-produtos falhou:", msg);
+    console.error(`omie-sync-status-produtos (${empresa}) falhou:`, msg);
     if (logId) {
       await supabase
         .from("sync_reprocess_log")
@@ -459,9 +457,47 @@ Deno.serve(async (req) => {
         })
         .eq("id", logId);
     }
-    return new Response(JSON.stringify({ error: msg }), {
-      status: msg.startsWith("AUTH_ERROR") ? 401 : 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return { empresa, total_alvo: 0, duration_ms: Date.now() - startedAt, error: msg };
   }
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  const auth = await authorizeCronOrStaff(req);
+  if (!auth.ok) return auth.response;
+
+  const supabase = makeClient();
+
+  // Resolve o parâmetro `empresa` (query ou body). Aceita OBEN, COLACOR ou ALL.
+  let empresaInput: string | null = null;
+  try {
+    const url = new URL(req.url);
+    empresaInput = url.searchParams.get("empresa");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      if (body?.empresa) empresaInput = String(body.empresa);
+    }
+  } catch (_) { /* parse de body opcional */ }
+
+  const empresas = resolverEmpresas(empresaInput);
+  if (!empresas) {
+    return new Response(
+      JSON.stringify({ error: `Empresa inválida: ${empresaInput}. Use OBEN, COLACOR ou ALL.` }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  // Em série: cada empresa leva ~100s e dispara o Omie; rodar em paralelo concorreria
+  // no rate limit do Omie. Hoje só OBEN tem alvos (COLACOR sai no early-return).
+  const resultados: SyncSummary[] = [];
+  for (const emp of empresas) {
+    resultados.push(await sincronizarEmpresa(supabase, emp));
+  }
+
+  const okGeral = resultados.every((r) => !r.error);
+  return new Response(JSON.stringify({ ok: okGeral, empresas, resultados }), {
+    status: okGeral ? 200 : 500,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 });
