@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 282
+-- Total de custom migrations: 283
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -301,7 +301,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260622163000', 'compute_costs_recompute_2h', '20260622163000_compute_costs_recompute_2h.sql'),
   ('20260622210000', 'tint_promote_dedup_itens_corante', '20260622210000_tint_promote_dedup_itens_corante.sql'),
   ('20260623120000', 'caca_custo_producao', '20260623120000_caca_custo_producao.sql'),
-  ('20260623130000', 'caca_custo_producao_cron', '20260623130000_caca_custo_producao_cron.sql')
+  ('20260623130000', 'caca_custo_producao_cron', '20260623130000_caca_custo_producao_cron.sql'),
+  ('20260623160000', 'data_health_custos_proveniencia', '20260623160000_data_health_custos_proveniencia.sql')
 )
 SELECT
   e.version,
@@ -1326,7 +1327,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('apply_score_updates_guard_full_update', 'function', 'public', 'apply_score_updates', ''),
   ('tint_promote_dedup_itens_corante', 'function', 'public', 'tint_promote_sync_run', ''),
   ('caca_custo_producao', 'view', 'public', 'v_caca_compradores', ''),
-  ('caca_custo_producao_cron', 'cron_job', 'cron', 'caca-custo-producao-colacor-daily', '')
+  ('caca_custo_producao_cron', 'cron_job', 'cron', 'caca-custo-producao-colacor-daily', ''),
+  ('data_health_custos_proveniencia', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_custos_proveniencia', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_custos_proveniencia', 'function', 'public', 'fin_sync_heartbeat', '')
 )
 SELECT
   e.migration,
