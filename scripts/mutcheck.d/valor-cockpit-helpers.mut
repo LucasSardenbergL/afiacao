@@ -17,6 +17,6 @@ PEGA | pedidoContaNoFaturamento: status NULL exclui (==->!=) | s/if \(status == 
 PEGA | pedidoContaNoFaturamento: blocklist→allowlist (tira !)| s/return !STATUS_NAO_FATURAVEL\.includes/return STATUS_NAO_FATURAVEL.includes/
 # EVP-teto marcado (#961): capital ausente vira teto DECLARADO, não R$0. Institucionaliza as 3
 # falsificações provadas à mão (guard de sinal anti-piso, evp_parcial, limiar de confiança ponderado).
-PEGA | evp_parcial: OU-de-pernas-ausentes vira E          | s/ar_indisponivel \|\| estoque_indisponivel/ar_indisponivel && estoque_indisponivel/
+PEGA | capital_parcial: OU-perna-ausente vira E          | s/capital_parcial = ar_indisponivel \|\| estoque_indisponivel/capital_parcial = ar_indisponivel && estoque_indisponivel/
 PEGA | guard anti-piso: capital negativo entra como num   | s/Number\.isFinite\(estSraw\) && estSraw >= 0/Number.isFinite(estSraw)/
-PEGA | confianca: limiar teto-por-receita 5% afrouxa p/15%| s/tetoPct > 0\.05/tetoPct > 0.15/
+PEGA | confianca: limiar EVP-omitido 5% afrouxa p/15%     | s/omitidoPct > 0\.05/omitidoPct > 0.15/
