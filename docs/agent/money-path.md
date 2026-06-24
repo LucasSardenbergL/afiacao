@@ -4,7 +4,7 @@
 
 ## Os princípios
 
-1. **Precisão > recall.** Na ambiguidade, NÃO agir / NÃO mostrar — melhor uma ficha a menos que uma errada. Ex.: matching boletim↔SKU só com confirmação humana; a venda mostra ficha só pela view confirmada+aprovada, zero fuzzy em runtime.
+1. **Precisão > recall.** Na ambiguidade, NÃO agir / NÃO mostrar — melhor uma ficha a menos que uma errada. Ex.: matching boletim↔SKU só com confirmação humana; a venda mostra ficha só pela view confirmada+aprovada, zero fuzzy em runtime. Vale no **review** também: finding sem prova (trigger+linha+efeito) rebaixa, não bloqueia — barra em `docs/agent/review.md`.
 2. **Degradação honesta — ausente ≠ zero.** `Number(null)` é `0`; `cmc` ausente vira `null`, não R$0; NCG/hurdle/capital ausente → `null` + confiança baixa, **nunca** um número fabricado. O usuário vê "—" ou "falta dado", jamais uma recomendação inventada. (Frente inteira de consolidação financeira foi sobre isto: NCG/A2, hurdle/A3, caixa do snapshot.)
 3. **Nunca fabricar número no money-path.** LLM não inventa SKU/preço (pricing determinístico do Omie). A IA conversa/sugere; o número firme passa por gate determinístico/humano. Prosa do LLM é descartável; a evidência é o produto.
 4. **Gate humano na escrita.** O founder no loop pra escrita money-path (migration via SQL Editor; aprovação de compra). Exceção atual: a auto-aprovação Sayerlack (N3, piloto medido por taxa de veto — ver `docs/agent/reposicao.md`).
@@ -14,6 +14,7 @@
 
 - **Função/RPC/trigger/policy money-path → `prove-sql-money-path`** (PG17 local com falsificação) ANTES de entregar a migration. plpgsql é late-bound: `CREATE` passa com SQL inválido, só falha ao EXECUTAR. O teste aplica a migração REAL, semeia, faz asserts positivos E negativos (SQLSTATE + re-raise), prova RLS (`SET ROLE` + GUC), e **se sabota de propósito pra provar que os asserts têm dente**.
 - **Assert negativo** captura a `SQLSTATE`/condição ESPERADA e re-lança o resto. `WHEN OTHERS THEN 'OK'` é teatro (engole o erro real). Sentinela do teste nunca contém o texto que o código emite (anti-teatro de ILIKE).
+- **Engine nova que emite número de decisão → escreva o threat-model** (`docs/agent/threat-model-template.md`): o que prova / não prova / default fail-closed, com **um assert pra cada default declarado** (doc×código não podem divergir — achado aura: THREAT_MODEL diz reject, código faz DEFAULT_ALLOW).
 
 ## Segunda opinião adversária (Codex)
 
