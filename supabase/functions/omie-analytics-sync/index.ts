@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { montarUpsertsDeCusto } from "../_shared/cost-compute.ts";
+import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
 import { buildProductIdMap } from "./product-idmap.ts";
 
 const corsHeaders = {
@@ -211,7 +212,8 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
       const transient = msg.includes("broken response") || msg.includes("soap-error") ||
         msg.includes("timeout") || msg.includes("timed out") || msg.includes("network") ||
         msg.includes("connection") || msg.includes("fetch failed") ||
-        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500");
+        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500") ||
+        msg.includes("429") || msg.includes("too many") || msg.includes("rate limit");
       if (transient && attempt < maxAttempts) {
         await new Promise((r) => setTimeout(r, 800 * Math.pow(2, attempt - 1)));
         continue;
@@ -1110,6 +1112,206 @@ async function computeCosts(db: SupabaseClient) {
   return { updated };
 }
 
+// ======== CUSTO DE PRODUÇÃO (fabricados via Estrutura/malha do Omie) ========
+// Recompõe custo_producao = Σ(quantProdMalha × (1+perda%) × cmc_insumo) + vMOD + vGGF por fabricado
+// (tipo_produto '04'), na coluna DEDICADA product_costs.custo_producao. Writer ÚNICO desta coluna —
+// NÃO toca cmc/cost_final (sem race com computeCosts/syncInventory). A v_caca_compradores usa
+// COALESCE(custo_producao, NULLIF(cmc,0)). Degradação honesta via status (ausente ≠ zero). Lógica
+// pura provada em src/lib/custo/recomporCustoProducao.test.ts (espelho _shared, parity test).
+// ⚠️ ORDEM (cron): rodar DEPOIS de sync_inventory + compute_costs — cmc dos insumos fresco e linhas
+//    de product_costs já criadas (senão margem híbrida / INSERT com cost_final=0 default).
+interface OmieEstruturaItem {
+  idProdMalha?: number;
+  quantProdMalha?: number;
+  percPerdaProdMalha?: number;
+}
+interface OmieConsultarEstruturaResponse {
+  itens?: OmieEstruturaItem[];
+  custoProducao?: { vMOD?: number; vGGF?: number };
+}
+
+async function syncCustoProducao(db: SupabaseClient, account: OmieAccount) {
+  await updateSyncState(db, "custo_producao", account, { status: "running", error_message: null });
+  try {
+    const empresa = accountToEmpresa(account);
+
+    // 1) Catálogo ATIVO da empresa (paginado — fura o cap de 1000 do PostgREST).
+    const produtos = await fetchAll<{
+      id: string;
+      omie_codigo_produto: number;
+      valor_unitario: number | null;
+      tipo_produto: string | null;
+    }>(
+      (from, to) =>
+        db
+          .from("omie_products")
+          .select("id, omie_codigo_produto, valor_unitario, tipo_produto")
+          .eq("account", empresa)
+          // SEM filtro ativo: insumo inativo pode seguir em malha válida; fabricado inativo ainda
+          // aparece em pedidos históricos que a Caça rankeia (achado P2 do Codex 2026-06-23).
+          .order("id", { ascending: true })
+          .range(from, to),
+      "omie_products(custo_producao)",
+    );
+
+    // 2) cmc por nCodProduto (insumos): product_costs.cmc → product_id → omie_codigo_produto.
+    const costsRaw = await fetchAll<{ product_id: string; cmc: number | null }>(
+      (from, to) =>
+        db
+          .from("product_costs")
+          .select("product_id, cmc")
+          .order("product_id", { ascending: true })
+          .range(from, to),
+      "product_costs(custo_producao)",
+    );
+    const cmcPorProductId = new Map<string, number | null>();
+    for (const c of costsRaw) cmcPorProductId.set(c.product_id, c.cmc);
+    const temLinhaCusto = new Set(costsRaw.map((c) => c.product_id));
+
+    const cmcPorCodigo = new Map<number, number | null | undefined>();
+    const precoPorCodigo = new Map<number, number | null>();
+    for (const p of produtos) {
+      const cod = Number(p.omie_codigo_produto);
+      precoPorCodigo.set(cod, p.valor_unitario);
+      // cmc de INSUMO só: exclui fabricados (tipo 04) do mapa → um componente que é ele mesmo
+      // fabricado NÃO resolve por cmc espúrio; vira missing_component_cost (degrada honesto).
+      // Recomposição recursiva de BOM aninhada = fase 2 (achado P2 do Codex 2026-06-23).
+      if (p.tipo_produto !== "04") cmcPorCodigo.set(cod, cmcPorProductId.get(p.id) ?? null);
+    }
+
+    // 3) Fabricados (tipo_produto '04' = produto acabado). Para cada: ConsultarEstrutura → recompor.
+    const fabricados = produtos.filter((p) => p.tipo_produto === "04");
+    const nowIso = new Date().toISOString();
+    const tally: Record<string, number> = {};
+    const bump = (k: string) => {
+      tally[k] = (tally[k] ?? 0) + 1;
+    };
+    let logouAmostra = false;
+
+    // só grava em linha que JÁ existe (computeCosts cria) → evita INSERT com cost_final=0 default.
+    const alvos = fabricados.filter((fab) => {
+      if (temLinhaCusto.has(fab.id)) return true;
+      bump("sem_linha_product_costs");
+      return false;
+    });
+
+    // Processa em LOTES PARALELOS com FLUSH incremental. A 1ª versão fazia N+1 SEQUENCIAL (~260
+    // ConsultarEstrutura) e estourava WORKER_RESOURCE_LIMIT antes do upsert final → preso em 'running',
+    // 0 gravado (provado em prod 2026-06-24). Agora: Promise.all em lotes (corta o wall-clock ~LOTE×) +
+    // flush a cada FLUSH itens (grava o progresso parcial: se o worker morrer, não perde o já feito) +
+    // total_synced parcial no sync_state (monitorável). É o padrão "bulk + waitUntil" do CLAUDE.md.
+    const LOTE = 8; // ConsultarEstrutura concorrentes por vez (suave no rate limit do Omie)
+    const FLUSH = 80; // tamanho do buffer antes de gravar
+    let updated = 0;
+    const erros: string[] = [];
+    let buffer: Array<Record<string, unknown>> = [];
+    const flush = async () => {
+      if (buffer.length === 0) return;
+      const slice = buffer;
+      buffer = [];
+      const { error } = await db.from("product_costs").upsert(slice, { onConflict: "product_id" });
+      if (error) {
+        erros.push(error.message);
+        console.error("[custo_producao] upsert lote:", error);
+      } else {
+        updated += slice.length;
+        await updateSyncState(db, "custo_producao", account, { status: "running", total_synced: updated });
+      }
+    };
+
+    for (let i = 0; i < alvos.length; i += LOTE) {
+      const resultados = await Promise.all(
+        alvos.slice(i, i + LOTE).map(async (fab) => {
+          const cod = Number(fab.omie_codigo_produto);
+          try {
+            const resp = (await callOmie(account, "geral/malha/", "ConsultarEstrutura", {
+              idProduto: cod,
+            })) as unknown as OmieConsultarEstruturaResponse;
+            return { fab, cod, resp };
+          } catch (e) {
+            console.error(
+              `[custo_producao ${account}] ConsultarEstrutura idProduto=${cod}: ${e instanceof Error ? e.message : e}`,
+            );
+            return { fab, cod, resp: null as OmieConsultarEstruturaResponse | null };
+          }
+        }),
+      );
+
+      for (const r of resultados) {
+        if (!r.resp) {
+          // API falhou (após o retry do callOmie) → degrada HONESTO: zera + status='erro_api' (não deixa
+          // o custo_producao velho passar por atual na view = stale money-path; achado P1 do Codex).
+          bump("erro_api");
+          buffer.push({
+            product_id: r.fab.id,
+            custo_producao: null,
+            custo_producao_source: "ESTRUTURA_OMIE",
+            custo_producao_status: "erro_api",
+            custo_producao_computed_at: nowIso,
+          });
+          continue;
+        }
+        // 1ª resposta crua no log → confirma os nomes de campo na 1ª execução real (auto-validação).
+        if (!logouAmostra) {
+          console.log(
+            `[custo_producao ${account}] amostra idProduto=${r.cod}: ${JSON.stringify(r.resp).slice(0, 1000)}`,
+          );
+          logouAmostra = true;
+        }
+        const componentes = (r.resp.itens ?? []).map((it) => ({
+          codigo: Number(it.idProdMalha),
+          quantidade: Number(it.quantProdMalha ?? 0),
+          percPerda: Number(it.percPerdaProdMalha ?? 0),
+        }));
+        const { custo, status, faltantes } = recomporCustoProducao({
+          componentes,
+          vMOD: Number(r.resp.custoProducao?.vMOD ?? 0),
+          vGGF: Number(r.resp.custoProducao?.vGGF ?? 0),
+          cmcPorCodigo,
+          precoVenda: precoPorCodigo.get(r.cod) ?? null,
+        });
+        bump(status);
+        if (status === "missing_component_cost" && faltantes.length) {
+          console.log(`[custo_producao ${account}] cod=${r.cod} sem cmc dos insumos: ${faltantes.join(",")}`);
+        }
+        buffer.push({
+          product_id: r.fab.id,
+          custo_producao: custo, // NULL quando degradado (honesto — ausente ≠ zero)
+          custo_producao_source: "ESTRUTURA_OMIE",
+          custo_producao_status: status,
+          custo_producao_computed_at: nowIso,
+        });
+      }
+
+      if (buffer.length >= FLUSH) await flush();
+      if ((i / LOTE) % 5 === 0) {
+        console.log(
+          `[custo_producao ${account}] progresso ${Math.min(i + LOTE, alvos.length)}/${alvos.length} (gravados ${updated})`,
+        );
+      }
+    }
+    await flush(); // resto do buffer
+
+    // Money-path: conta só o que PERSISTIU; lança se algum lote de upsert falhou (caller vira error).
+    if (erros.length) {
+      throw new Error(`custo_producao: ${erros.length} lotes de upsert falharam (${updated} gravados). 1º: ${erros[0]}`);
+    }
+
+    console.log(
+      `[custo_producao ${account}] fabricados=${fabricados.length} alvos=${alvos.length} gravados=${updated} tally=${JSON.stringify(tally)}`,
+    );
+    await updateSyncState(db, "custo_producao", account, {
+      status: "complete",
+      total_synced: updated,
+      last_sync_at: new Date().toISOString(),
+    });
+    return { fabricados: fabricados.length, gravados: updated, tally };
+  } catch (error) {
+    await updateSyncState(db, "custo_producao", account, { status: "error", error_message: String(error) });
+    throw error;
+  }
+}
+
 // ======== COMPUTE ASSOCIATION RULES (Apriori-like) ========
 
 async function computeAssociationRules(db: SupabaseClient) {
@@ -1741,6 +1943,34 @@ serve(async (req) => {
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-ignore
           EdgeRuntime.waitUntil(bgTask);
+        }
+        return new Response(JSON.stringify({ accepted: true, background: true }), {
+          status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      case "sync_custo_producao": {
+        // N≈260 ConsultarEstrutura → background (waitUntil) + guard already_running (como inventory_full).
+        const { data: stCp } = await supabaseAdmin
+          .from("sync_state")
+          .select("status, updated_at")
+          .eq("entity_type", "custo_producao")
+          .eq("account", account)
+          .maybeSingle();
+        const startedCp = stCp?.updated_at ? new Date(stCp.updated_at).getTime() : 0;
+        if (stCp?.status === "running" && (Date.now() - startedCp) < 30 * 60 * 1000) {
+          return new Response(JSON.stringify({ accepted: false, reason: "already_running" }), {
+            status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const bgCp = syncCustoProducao(supabaseAdmin, account as OmieAccount).catch((e) => {
+          console.error("[sync_custo_producao][bg]", e instanceof Error ? e.message : e);
+        });
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore - EdgeRuntime existe no runtime do Supabase Edge
+        if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore
+          EdgeRuntime.waitUntil(bgCp);
         }
         return new Response(JSON.stringify({ accepted: true, background: true }), {
           status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },

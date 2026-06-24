@@ -27,6 +27,29 @@ export function omieDateToIso(ddmmyyyy: string): string | null {
   return iso;
 }
 
+// Gera janelas MENSAIS [de..ate] em DD/MM/YYYY entre duas datas ISO (YYYY-MM-DD), o mês de `ate`
+// INCLUSIVE — p/ a sonda de counts (action probe_count_pedidos, Fase 2b colacor): 1 ListarPedidos
+// por mês p/ achar janelas sub-sincronizadas SEM semear às cegas (veto do Codex ao buraco de ~5
+// anos). Último dia do mês via Date.UTC (calendário/bissexto correto, sem timezone local). Guard
+// anti-loop (600 meses ~50 anos) p/ input invertido/absurdo.
+export function gerarJanelasMensais(fromIso: string, toIso: string): Array<{ mes: string; de: string; ate: string }> {
+  const f = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fromIso.trim());
+  const t = /^(\d{4})-(\d{2})-(\d{2})$/.exec(toIso.trim());
+  if (!f || !t) throw new Error(`gerarJanelasMensais: datas ISO inválidas: ${fromIso}..${toIso}`);
+  let y = Number(f[1]), m = Number(f[2]);
+  const ty = Number(t[1]), tm = Number(t[2]);
+  const out: Array<{ mes: string; de: string; ate: string }> = [];
+  let guard = 0;
+  while ((y < ty || (y === ty && m <= tm)) && guard++ < 600) {
+    const mm = String(m).padStart(2, "0");
+    const ultimo = String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0");
+    out.push({ mes: `${y}-${mm}`, de: `01/${mm}/${y}`, ate: `${ultimo}/${mm}/${y}` });
+    m++;
+    if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+
 // Classifica o erro transitório do Omie a partir da mensagem do OMIE_TRANSIENT
 // (lançado por callOmieVendasApi quando throwOnTransient e os retries esgotaram).
 // Vira o `last_error_kind` gravado no cursor (rate_limit | transient).

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 279
+-- Total de custom migrations: 283
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -298,7 +298,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260622130000', 'tint_promote_nome_cor_fallback', '20260622130000_tint_promote_nome_cor_fallback.sql'),
   ('20260622140000', 'apply_score_updates_persiste_base_vendas', '20260622140000_apply_score_updates_persiste_base_vendas.sql'),
   ('20260622160000', 'apply_score_updates_guard_full_update', '20260622160000_apply_score_updates_guard_full_update.sql'),
-  ('20260622210000', 'tint_promote_dedup_itens_corante', '20260622210000_tint_promote_dedup_itens_corante.sql')
+  ('20260622163000', 'compute_costs_recompute_2h', '20260622163000_compute_costs_recompute_2h.sql'),
+  ('20260622210000', 'tint_promote_dedup_itens_corante', '20260622210000_tint_promote_dedup_itens_corante.sql'),
+  ('20260623120000', 'caca_custo_producao', '20260623120000_caca_custo_producao.sql'),
+  ('20260623130000', 'caca_custo_producao_cron', '20260623130000_caca_custo_producao_cron.sql'),
+  ('20260623140000', 'recencia_mv_order_date_kpi', '20260623140000_recencia_mv_order_date_kpi.sql')
 )
 SELECT
   e.version,
@@ -1321,7 +1325,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_promote_nome_cor_fallback', 'function', 'public', 'tint_promote_sync_run', ''),
   ('apply_score_updates_persiste_base_vendas', 'function', 'public', 'apply_score_updates', ''),
   ('apply_score_updates_guard_full_update', 'function', 'public', 'apply_score_updates', ''),
-  ('tint_promote_dedup_itens_corante', 'function', 'public', 'tint_promote_sync_run', '')
+  ('tint_promote_dedup_itens_corante', 'function', 'public', 'tint_promote_sync_run', ''),
+  ('caca_custo_producao', 'view', 'public', 'v_caca_compradores', ''),
+  ('caca_custo_producao_cron', 'cron_job', 'cron', 'caca-custo-producao-colacor-daily', ''),
+  ('recencia_mv_order_date_kpi', 'view', 'public', 'customer_metrics_mv', ''),
+  ('recencia_mv_order_date_kpi', 'index', 'public', 'idx_customer_metrics_mv_uid', 'customer_metrics_mv')
 )
 SELECT
   e.migration,

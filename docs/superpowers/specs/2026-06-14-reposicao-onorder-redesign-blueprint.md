@@ -60,3 +60,22 @@ Usar **`ConsultarPedCompra(cCodIntPed)`** pra atualizar SÓ a PO recém-criada (
 
 ## Estado das limitações do #752 (a versão revertida, em prod)
 O #752 É bom-conhecido mas tem furos próprios: varredura para no `nTotalPaginas` (que SUB-REPORTA em listas grandes → pode PERDER POs além do total → subestima → compra dupla, o mesmo risco), janela de 180 dias (mesma ambiguidade de semântica de data) e de-dup dual-source frágil (em_transito × on-order). O redesign resolve os três.
+
+> ⚠️ **DESATUALIZADO em parte** — o furo do `nTotalPaginas` foi CORRIGIDO em prod (paginar-até-página-vazia + fail-closed) por **#979/#1004/#1009** (verificado, #1011). Restam só os furos #2 (janela 180d) e #3 (de-dup dual-source). Ver a conclusão abaixo.
+
+## Conclusão da investigação 2026-06-23 — **C ADIADO (ROI baixo agora)**
+Investigação que destrava (ou não) o redesign. Resultado: **não construir o C agora.**
+
+**1. Runtime do stack (GATE da arquitetura) — opção 1 (worker longo) está MORTA.** Doc oficial Supabase confirmada: Edge Functions têm **wall-clock máx 400s (pago) / 150s (free), NÃO-configurável**; CPU 2s/request; memória 256MB; **background `EdgeRuntime.waitUntil` TAMBÉM é morto ao bater os 400s** (não escapa). Não há worker HTTP longo nativo (pg_cron roda SQL, não HTTP longo; queues precisam de consumer, que é edge → mesmo teto). → Da "Ordem de preferência" acima, a (1) cai; o C só pode ser **(2)/(3): réplica-por-PO + particionamento por data** (caro: staging + cursor estável + lease/fencing).
+
+**2. Semântica de data — INFERIDA = emissão/inclusão (NÃO precisa sondar o Omie para MANTER a janela 180d).** Prova: o Caminho A (#979) está em prod cobrindo o **FUNDO PU/1054 (entrega FUTURA 19/06)**; se `dDataInicial` filtrasse por *previsão de entrega*, essa PO estaria fora de `[hoje−180d, hoje]` e o FUNDO PU não estaria coberto — mas está. Logo a janela filtra por **emissão/inclusão**, e é segura para POs de entrega futura. Risco do furo #2 = só **PO com emissão >180d ainda aberta** (medido **0 no app** em 2026-06-23; folga ~126d; raro no geral). ⚠️ A confirmação ESCRITA do Omie (protocolo acima) só é necessária se for **CORTAR** a janela (<180d) ou **particionar** — para manter 180d, a inferência basta.
+
+**3. Decisão = ADIAR.** Justificativa: o double-buy **já está resolvido** pelo Caminho A (em prod, 20→39 SKUs com pendente); os furos que o C mataria são de **baixo risco** (#2 com folga 126d; #3 raro, direção ruptura ≠ double-buy); o C é **caro (semanas)** e a janela 180d **funciona**. ROI baixo.
+
+**Gatilhos que REABREM o C** (vigiar):
+- PO OBEN aberta se aproximando de **180d de emissão** (furo #2 deixa de ter folga) — hoje a mais antiga é ~54d.
+- `paginasLidas`/`duracao_ms` da `omie-sync-estoque` (#979) crescer perto dos 400s (volume de POs abertas estourando a janela).
+- Surgir runtime >400s no stack (Supabase) → reabre a opção 1 (worker longo, bem mais simples).
+- Incidente de ruptura atribuível ao furo #3 (de-dup dual-source Ramo 2: portal-confirmado sem nº Omie).
+
+**Pronto para reusar quando priorizado:** branch `claude/infallible-bouman-4ddb61` — single-source COMPLETO, validado 11 rounds Codex (só faltou a performance, que é o particionamento desta blueprint).

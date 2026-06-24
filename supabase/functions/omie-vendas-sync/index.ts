@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
-import { omieDateToIso, classifyOmieTransient, classifyPedidosPage } from "./pagination.ts";
+import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string; codigo_status?: number | string; descricao_status?: string };
 
@@ -2474,6 +2474,33 @@ serve(async (req) => {
         if (pedidoIdsReparo.length === 0) throw new Error("reparar_orfaos_itens requer pedido_ids: number[] (omie_pedido_id dos órfãos)");
         const reparoResult = await repararOrfaosItens(supabaseAdmin, account, pedidoIdsReparo);
         result = { success: true, ...reparoResult };
+        break;
+      }
+
+      case "probe_count_pedidos": {
+        // SONDA read-only (Fase 2b): contagem APROXIMADA de pedidos/mês no Omie p/ achar janelas
+        // sub-sincronizadas SEM semear às cegas (achado Codex — o buraco do colacor é ~5 anos).
+        // NÃO escreve nada. registros_por_pagina:1 → total_de_paginas ≈ nº de pedidos (subreporta,
+        // mas serve de SCREEN: 0 vs tem-dado + ordem de grandeza); a contagem EXATA vem do backfill
+        // (paginar-até-vazio). Chunk por ~2-3 anos se a janela grande estourar o timeout (150s).
+        const pdFrom = String(params.date_from || "");
+        const pdTo = String(params.date_to || "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(pdFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(pdTo)) {
+          throw new Error("probe_count_pedidos requer date_from/date_to ISO 'YYYY-MM-DD'");
+        }
+        const janelasProbe = gerarJanelasMensais(pdFrom, pdTo);
+        const probe: Array<{ mes: string; omie_aprox: number; tem_dado: boolean }> = [];
+        for (const w of janelasProbe) {
+          const rp = (await callOmieVendasApi(
+            "produtos/pedido/",
+            "ListarPedidos",
+            { pagina: 1, registros_por_pagina: 1, filtrar_apenas_inclusao: "N", filtrar_por_data_de: w.de, filtrar_por_data_ate: w.ate },
+            account,
+          )) as { total_de_paginas?: number; pedido_venda_produto?: unknown[] } | null;
+          const lista = Array.isArray(rp?.pedido_venda_produto) ? (rp!.pedido_venda_produto as unknown[]) : [];
+          probe.push({ mes: w.mes, omie_aprox: Number(rp?.total_de_paginas ?? 0), tem_dado: lista.length > 0 });
+        }
+        result = { success: true, account, meses: probe.length, probe };
         break;
       }
 

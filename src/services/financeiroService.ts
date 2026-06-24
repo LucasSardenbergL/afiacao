@@ -1003,6 +1003,7 @@ export interface CockpitRollupCliente {
   evp_incompleto: boolean;
   perda_garantida: boolean;
   cm_incompleto: boolean;
+  nome?: string | null;  // nome do cliente (profiles via customer_user_id) — UI mostra no lugar do código
 }
 export interface CockpitRollupSKU {
   sku: string;
@@ -1016,6 +1017,7 @@ export interface CockpitRollupSKU {
   evp_incompleto: boolean;
   perda_garantida: boolean;
   cm_incompleto: boolean;
+  descricao?: string | null;  // descrição do produto (omie_products) — UI mostra no lugar do código SKU
 }
 // Empresa DECOMPOSTA (capital parcial → um único evp seria mentira contábil; Codex 2026-06-23).
 export interface CockpitEmpresaEVP {

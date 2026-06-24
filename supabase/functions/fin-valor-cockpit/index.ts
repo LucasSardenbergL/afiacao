@@ -279,6 +279,34 @@ function scoreConfiancaCockpit(input: { cobertura_receita: number; custo_ausente
   return { nivel: (nivel === 3 ? "alta" : nivel === 2 ? "media" : "baixa") as "alta" | "media" | "baixa", motivos };
 }
 
+// ===== Custo: régua do cockpit, espelhada VERBATIM de src/lib/custos/cost-source.ts (Deno não importa de src/) =====
+// Régua do COCKPIT (computa-e-degrada #1003): exibe a margem mesmo de proxy e marca baixaConfianca p/ rebaixar a
+// confiança — DISTINTA de resolverCustoConfiavel (recommend/audit, que NULIFICA proxy). Mudou? Mude lá e rode
+// src/lib/custos/__tests__/cost-source.test.ts (a régua é provada por comportamento + falsificação).
+type CostRow = { cost_price: number | null; cost_final: number | null; cost_source: string | null; cost_confidence: number | null };
+const COST_SOURCES_REAIS = new Set(['PRODUCT_COST', 'CMC', 'CMC_MARGEM_ATIPICA']);
+function finitePositive(x: number | null | undefined): x is number {
+  return typeof x === 'number' && Number.isFinite(x) && x > 0;
+}
+function normalizarSource(source: string | null | undefined): string | null {
+  const s = source?.trim().toUpperCase();
+  return s ? s : null;
+}
+type CustoCockpit = { custo: number | null; baixaConfianca: boolean; legadoFallback: boolean };
+function resolverCustoCockpit(row: CostRow | null | undefined): CustoCockpit {
+  const cf = row?.cost_final ?? null;
+  const cp = row?.cost_price ?? null;
+  const canonico = finitePositive(cf) ? cf : null;
+  const custo = canonico ?? (finitePositive(cp) ? cp : null);
+  if (custo == null) return { custo: null, baixaConfianca: false, legadoFallback: false };
+  const legadoFallback = canonico == null;
+  const source = normalizarSource(row?.cost_source);
+  const sourceReal = source != null && COST_SOURCES_REAIS.has(source); // espelha o gate de resolverCustoConfiavel
+  const conf = row?.cost_confidence ?? null;
+  const confAlta = typeof conf === 'number' && conf >= 0.7;
+  return { custo, baixaConfianca: legadoFallback || !sourceReal || !confAlta, legadoFallback };
+}
+
 // ===== Orquestração =====
 const COMPANY = "oben";
 // Ponte de contas de estoque da Oben (paridade com get_preco_cockpit): inventory_position guarda o mesmo
@@ -346,8 +374,8 @@ serve(async (req: Request) => {
 
     // FILTRO OBEN obrigatório: um pedido do app mistura itens das 3 empresas (Oben/Colacor/Colacor SC),
     // enviados separadamente. Sem o filtro por produto, o cockpit da Oben fica contaminado.
-    type Prod = { id: string; omie_codigo_produto: number; account: string };
-    const prods = await fetchAll<Prod>((f, t) => db.from("omie_products").select("id, omie_codigo_produto, account").eq("account", COMPANY).order("id", { ascending: true }).range(f, t), "omie_products");
+    type Prod = { id: string; omie_codigo_produto: number; account: string; descricao: string | null };
+    const prods = await fetchAll<Prod>((f, t) => db.from("omie_products").select("id, omie_codigo_produto, account, descricao").eq("account", COMPANY).order("id", { ascending: true }).range(f, t), "omie_products");
     const obenProductIds = new Set(prods.map((p) => p.id));
     const obenSkus = new Set(prods.map((p) => String(p.omie_codigo_produto)));
     // Bug D: SKU→product_id da Oben p/ recuperar linhas com product_id NULL (gap de FK histórico — 2026-03,
@@ -390,30 +418,32 @@ serve(async (req: Request) => {
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
     const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_clientes").select("user_id, omie_codigo_cliente").order("id", { ascending: true }).range(f, t), "omie_clientes");
     const userToOmie = new Map(clientesAll.map((c) => [c.user_id, String(c.omie_codigo_cliente)]));
-    // Custo canônico = cost_final (saída do motor de custo, MESMA fonte que o recommend usa p/ margem). Fallback
-    // p/ cost_price (legado) quando cost_final é ausente OU inválido (<=0/NaN) — preserva cobertura (14 SKUs Oben
-    // têm cost_final inválido mas cost_price real >0, psql-ro 2026-06-18). ausente≠zero: nunca usa 0 como custo
-    // real; <=0/null nos DOIS → SKU sem custo (cm null no combo). Codex P2: o fallback em cost_final INVÁLIDO (não
-    // só ausente) é INTENCIONAL (cost_price é custo real legado, dropar esconderia margem real) mas OBSERVÁVEL via
-    // warn — não-silencioso. v2: cost_confidence classifica o custo USADO em BAIXA CONFIANÇA (fallback legado OU
-    // cost_final com confiança <0,7 = proxy do motor) → custo_baixa_confianca_pct (exclusivo de custo_ausente).
-    const custosAll = await fetchAll<{ product_id: string; cost_final: number | null; cost_price: number | null; cost_confidence: number | null }>((f, t) => db.from("product_costs").select("product_id, cost_final, cost_price, cost_confidence").order("id", { ascending: true }).range(f, t), "product_costs");
-    const custoValido = (x: number | null): number | null => (typeof x === "number" && Number.isFinite(x) && x > 0 ? x : null);
+    // Nome do cliente: profiles.user_id = order_items.customer_user_id (~98% cobertura na Oben; psql-ro
+    // 2026-06-23). razao_social tem prioridade, senão name. service_role bypassa a RLS de profiles.
+    const profilesAll = await fetchAll<{ user_id: string | null; razao_social: string | null; name: string | null }>((f, t) => db.from("profiles").select("user_id, razao_social, name").order("id", { ascending: true }).range(f, t), "profiles");
+    const userParaNome = new Map<string, string>();
+    for (const p of profilesAll) {
+      const nome = (p.razao_social?.trim() || p.name?.trim() || "");
+      if (p.user_id && nome) userParaNome.set(p.user_id, nome);
+    }
+    // Custo do cockpit via resolverCustoCockpit (espelho de cost-source.ts). cost_final>0 (canônico) ?? cost_price>0
+    // (fallback legado — preserva cobertura: 14 SKUs Oben têm cost_final inválido mas cost_price real >0, psql-ro
+    // 2026-06-18). ausente≠zero: <=0/null nos DOIS → SKU sem custo (cm null no combo). baixaConfianca classifica o
+    // custo USADO em BAIXA CONFIANÇA — fallback legado OU source NÃO-real (proxy/desconhecida) OU cost_confidence<0,7
+    // → custo_baixa_confianca_pct (exclusivo de custo_ausente). A cláusula de SOURCE blinda o invariante latente: um
+    // proxy carimbado com conf>=0,7 pelo motor NÃO vira margem firme silenciosa (recommend/audit já nulificam proxy).
+    const custosAll = await fetchAll<{ product_id: string } & CostRow>((f, t) => db.from("product_costs").select("product_id, cost_final, cost_price, cost_source, cost_confidence").order("id", { ascending: true }).range(f, t), "product_costs");
     const custoPorProduto = new Map<string, number>();
-    const custoBaixaConfianca = new Set<string>(); // product_id cujo custo USADO é proxy(<0,7) ou fallback legado (v2)
+    const custoBaixaConfianca = new Set<string>(); // product_id cujo custo USADO é proxy/desconhecida/legado/conf<0,7 (v2)
     let custoLegadoFallback = 0;
     for (const c of custosAll) {
-      const canonico = custoValido(c.cost_final);
-      const custo = canonico ?? custoValido(c.cost_price);
-      if (custo == null) continue;
-      custoPorProduto.set(c.product_id, custo);
-      if (canonico == null) custoLegadoFallback++;
-      // baixa = fallback legado OU cost_final com confiança <0,7. cost_confidence null/não-numérico em custo VÁLIDO
-      // (0 casos hoje, psql-ro) → tratado como baixa por POLÍTICA conservadora (não vouchamos custo sem score). O
-      // add/delete acompanha o overwrite do custoPorProduto: linha posterior do MESMO product_id com custo confiável
-      // DESMARCA — a flag segue o custo efetivamente usado (Codex P2; product_id é único hoje, 3331/3331).
-      const baixa = canonico == null || !(typeof c.cost_confidence === "number" && c.cost_confidence >= 0.7);
-      if (baixa) custoBaixaConfianca.add(c.product_id); else custoBaixaConfianca.delete(c.product_id);
+      const r = resolverCustoCockpit(c);
+      if (r.custo == null) continue;
+      custoPorProduto.set(c.product_id, r.custo);
+      if (r.legadoFallback) custoLegadoFallback++;
+      // add/delete acompanha o overwrite: linha posterior do MESMO product_id com custo confiável DESMARCA — a flag
+      // segue o custo efetivamente usado (Codex P2; product_id é único hoje, 3578/3578, psql-ro 2026-06-23).
+      if (r.baixaConfianca) custoBaixaConfianca.add(c.product_id); else custoBaixaConfianca.delete(c.product_id);
     }
     if (custoLegadoFallback > 0) console.warn(`[ValorCockpit][${COMPANY}] ${custoLegadoFallback} SKUs com cost_final ausente/inválido → fallback p/ cost_price legado`);
     // Estoque com PONTE DE CONTAS (paridade com get_preco_cockpit / cockpit_preco_fixes): inventory_position
@@ -443,8 +473,11 @@ serve(async (req: Request) => {
 
     // Combos cliente×SKU — cliente não-mapeado vira 'app:<uuid>' (NÃO funde clientes distintos).
     const comboMap = new Map<string, { cliente: string; sku: string; receita: number; qtd: number; desconto: number; product_id: string | null }>();
+    const clienteParaNome = new Map<string, string>(); // cliente (omie/app) → nome do profile (1º encontrado)
     for (const l of linhas) {
       const cliente = userToOmie.get(l.customer_user_id) ?? `app:${l.customer_user_id}`;
+      const nomeCli = userParaNome.get(l.customer_user_id);
+      if (nomeCli && !clienteParaNome.has(cliente)) clienteParaNome.set(cliente, nomeCli);
       const sku = l.omie_codigo_produto != null ? String(l.omie_codigo_produto) : "sem_sku";
       const key = `${cliente}|${sku}`;
       const receita = l.unit_price * l.quantity - (l.discount ?? 0);
@@ -533,9 +566,13 @@ serve(async (req: Request) => {
     const cobertura_receita = ar_por_app; // retrocompat: mesmo valor de antes
     const confianca = scoreConfiancaCockpit({ cobertura_receita, cobertura_app_por_ar: app_por_ar, custo_ausente_pct, custo_baixa_confianca_pct, ar_indisponivel_pct, estoque_ausente_pct, imposto_estimado: true, hurdle_indisponivel, evp_omitido_otimista_receita_pct: res.evp_omitido_otimista_receita_pct });
 
+    // Descrição do produto (omie_products) p/ a UI exibir o nome em vez do código na visão Por SKU.
+    const descricaoPorSKU = new Map(prods.map((p) => [String(p.omie_codigo_produto), p.descricao]));
+    const porSKUcomDescricao = res.porSKU.map((s) => ({ ...s, descricao: descricaoPorSKU.get(s.sku) ?? null }));
+    const porClienteComNome = res.porCliente.map((c) => ({ ...c, nome: clienteParaNome.get(c.cliente) ?? null }));
     return jsonResponse({
       company: COMPANY, k, hurdle_indisponivel, ttm: { inicio: ttm_inicio, fim: ttm_fim },
-      porCliente: res.porCliente, porSKU: res.porSKU, empresa: res.empresa,
+      porCliente: porClienteComNome, porSKU: porSKUcomDescricao, empresa: res.empresa,
       recomendacoesCliente, confianca, cobertura_receita, cobertura_app_por_ar: app_por_ar,
       cobertura_baixa_ar: coberturaBaixaAR, // Fase 3: fração da AR liquidada com baixa derivada REAL (vs vencimento-proxy)
       // transparência por receita (omissão honesta do EVP otimista — sucede evp_teto_receita_pct):

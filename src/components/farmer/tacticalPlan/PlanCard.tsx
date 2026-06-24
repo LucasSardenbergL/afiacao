@@ -78,7 +78,7 @@ export const PlanCard = ({
             {/* Diagnosis */}
             <Section title="Diagnóstico Resumido" icon={Heart}>
               <MetricRow label="Margem atual" value={`${plan.currentMarginPct.toFixed(1)}%`} />
-              <MetricRow label="Média cluster" value={`${plan.clusterAvgMarginPct.toFixed(1)}%`} />
+              <MetricRow label="Média cluster" value={plan.clusterAvgMarginPct == null ? '—' : `${plan.clusterAvgMarginPct.toFixed(1)}%`} />
               <MetricRow label="Potencial expansão" value={`${plan.expansionPotential.toFixed(0)}%`} />
               <MetricRow label="Perfil" value={profileLabels[plan.customerProfile] || plan.customerProfile} />
             </Section>
