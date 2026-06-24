@@ -157,13 +157,19 @@ export type CelulaEVP = {
   ar_indisponivel: boolean; estoque_indisponivel: boolean;
   capital_parcial: boolean;  // ar_indisponivel || estoque_indisponivel (desacoplado do sinal do evp — sucede evp_parcial)
   evp_status: EvpStatus;
+  // Sensibilidade ao hurdle (bônus 2026-06-24): SÓ p/ célula 'real' (capital completo). O agregado é robusto
+  // e mascara os frágeis → mede-se POR COMBO (Codex). Parciais ficam fora (a classificação muda com k).
+  capital_cs: number;               // a_cs + i_cs (capital alocado total da célula)
+  hurdle_break_even: number | null; // o k onde evp=0 (= cm/capital_cs); null se não-real / capital_cs=0 / cm null
+  sensivel_hurdle: boolean;         // break-even ∈ [k−δ, k+δ] → "fio da navalha" (recomendação frágil ao hurdle)
+  folga_hurdle_pp: number | null;   // break_even − k (em pontos; >0 = folga acima do hurdle, <0 = já abaixo)
 };
 // Rollup: `evp` = Σ células AFIRMÁVEIS (real + teto≤0 mantido) — NÃO inclui omitidas; `evp_teto` = Σ tetos
 // (upper bound do grupo, preserva #961); `evp_incompleto` = ∃ célula omitida por otimismo (o `evp` do grupo
 // exclui essa fatia → pode ser maior). `encargo` (só células com cm) / `encargo_total` (todas) mantidos.
 // perda_garantida = ∃ célula 'teto_nao_positivo' no grupo (o evp inclui um teto≤0 → o prejuízo REAL pode ser maior).
-export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean };
-export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean };
+export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean; qtd_combos_sensiveis: number };
+export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean; qtd_combos_sensiveis: number };
 // Empresa DECOMPOSTA (Codex: somar {reais + tetos≤0} excluindo os teto>0 não é teto nem piso → mentira contábil).
 // evp_conhecido = só capital completo; evp_teto_total = upper bound legado; evp_perda_garantida = piso da fatia
 // parcial-negativa; evp = null se há QUALQUER fatia não-afirmável (não finge um total).
@@ -171,6 +177,8 @@ export type EmpresaEVP = {
   receita: number; cm: number | null; encargo: number | null; encargo_total: number | null;
   evp_conhecido: number | null; evp_teto_total: number | null; evp_perda_garantida: number | null;
   evp: number | null; evp_incompleto: boolean; cm_incompleto: boolean;
+  qtd_combos_sensiveis: number;       // combos REAIS no fio da navalha (a granularidade que o agregado robusto esconde)
+  capital_conhecido: number | null;   // Σ capital_cs das células 'real' → UI deriva evp_conhecido(k') = evp_conhecido + (k − k')·capital_conhecido
 };
 export type ComboEVPResult = {
   celulas: CelulaEVP[];
@@ -183,6 +191,8 @@ export type ComboEVPResult = {
   evp_omitido_otimista_receita_pct: number;
   evp_perda_garantida_receita_pct: number;
   sem_cm_receita_pct: number;
+  // banda do hurdle p/ a sensibilidade (k ± δ; null se k indisponível). A UI rotula 25/30/35% (30 = principal).
+  hurdle_banda: { base: number; lo: number; hi: number } | null;
 };
 
 export function montarCelulasComboEVP(input: {
@@ -190,10 +200,16 @@ export function montarCelulasComboEVP(input: {
   capitalClientes: CapitalCliente[];
   capitalSKUs: CapitalSKU[];
   k: number | null;   // hurdle; null → encargo/EVP indisponíveis (não fabricados)
+  banda_hurdle?: number; // δ p/ a sensibilidade (default 0,05 → 25/35% a k=0,30)
 }): ComboEVPResult {
   // Guard de hurdle: k inválido (não-finito ou <=0) → indisponível (NÃO fabrica encargo). 0% = capital
   // grátis; resolverHurdleCockpit já barra — isto é defense-in-depth na fronteira (Codex 2026-06-18).
   const k = input.k != null && Number.isFinite(input.k) && input.k > 0 ? input.k : null;
+  // Banda do hurdle p/ a sensibilidade (combos no fio da navalha). kLo/kHi só são usados quando k != null.
+  const banda = input.banda_hurdle != null && Number.isFinite(input.banda_hurdle) && input.banda_hurdle > 0 ? input.banda_hurdle : 0.05;
+  const round4 = (x: number) => Math.round(x * 1e4) / 1e4; // evita lixo de float (0,30−0,10=0,19999…) no contrato/UI
+  const kLo = k != null ? round4(Math.max(0, k - banda)) : 0;
+  const kHi = k != null ? round4(k + banda) : 0;
   const arPorCliente = new Map(input.capitalClientes.map((c) => [c.cliente, c.ar_medio]));
   const estoquePorSKU = new Map(input.capitalSKUs.map((s) => [s.sku, s.estoque_valor]));
   // totais pra alocação
@@ -243,14 +259,22 @@ export function montarCelulasComboEVP(input: {
       if (evp_teto <= 0 && estoqueAlocOk && arAlocOk) { evp = evp_teto; evp_status = 'teto_nao_positivo'; }
       else { evp = null; evp_status = 'omitido_teto_positivo'; }                       // teto>0 OU alocação inválida
     }
-    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp_teto, evp, ar_indisponivel, estoque_indisponivel, capital_parcial, evp_status };
+    // Sensibilidade ao hurdle: break-even = cm/capital_cs (o k onde evp=0), SÓ p/ célula 'real' (capital
+    // completo, cm conhecido). capital_cs=0 → EVP plano (= cm), insensível. Parcial/indisponível → null
+    // (a sensibilidade do TETO de parciais fica fora desta entrega — a classificação muda com k, Codex).
+    const capital_cs = a_cs + i_cs;
+    const hurdle_break_even = evp_status === 'real' && capital_cs > 0 && cm != null && Number.isFinite(cm / capital_cs)
+      ? cm / capital_cs : null;
+    const sensivel_hurdle = k != null && hurdle_break_even != null && hurdle_break_even >= kLo && hurdle_break_even <= kHi;
+    const folga_hurdle_pp = hurdle_break_even != null && k != null ? hurdle_break_even - k : null;
+    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp_teto, evp, ar_indisponivel, estoque_indisponivel, capital_parcial, evp_status, capital_cs, hurdle_break_even, sensivel_hurdle, folga_hurdle_pp };
   });
 
   const rollup = (keyFn: (c: CelulaEVP) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpTeto: number; evpTetoNull: boolean; evpIncompleto: boolean; perdaGarantida: boolean; cmIncompleto: boolean }>();
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpTeto: number; evpTetoNull: boolean; evpIncompleto: boolean; perdaGarantida: boolean; cmIncompleto: boolean; qtdSensiveis: number }>();
     for (const cel of celulas) {
       const key = keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpTeto: 0, evpTetoNull: true, evpIncompleto: false, perdaGarantida: false, cmIncompleto: false };
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpTeto: 0, evpTetoNull: true, evpIncompleto: false, perdaGarantida: false, cmIncompleto: false, qtdSensiveis: 0 };
       acc.receita += cel.receita_liquida;
       acc.quantidade += cel.quantidade;
       if (cel.cm == null) acc.cmIncompleto = true; // grupo tem célula sem margem (excluída do EVP)
@@ -263,6 +287,7 @@ export function montarCelulasComboEVP(input: {
       if (cel.evp != null) { acc.evp += cel.evp; acc.evpNull = false; }                         // só afirmável (real + teto≤0 mantido)
       if (cel.evp_status === 'omitido_teto_positivo') acc.evpIncompleto = true;                 // fatia otimista fora do evp
       if (cel.evp_status === 'teto_nao_positivo') acc.perdaGarantida = true;                     // evp inclui um teto≤0 → real pode ser pior
+      if (cel.sensivel_hurdle) acc.qtdSensiveis++;                                                // combo real no fio da navalha
       m.set(key, acc);
     }
     return m;
@@ -270,23 +295,25 @@ export function montarCelulasComboEVP(input: {
 
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente: RollupCliente[] = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto }));
-  const porSKU: RollupSKU[] = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto }));
+  const porCliente: RollupCliente[] = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto, qtd_combos_sensiveis: a.qtdSensiveis }));
+  const porSKU: RollupSKU[] = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto, qtd_combos_sensiveis: a.qtdSensiveis }));
 
   // Empresa decomposta + pcts por receita total elegível.
   let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, recEmp = 0;
   let conhecido = 0, conhecidoNull = true, tetoTotal = 0, tetoTotalNull = true, perda = 0, perdaNull = true;
   let evpIncompletoEmp = false, cmIncompletoEmp = false;
   let recConhecido = 0, recOmitido = 0, recPerda = 0, recSemCm = 0;
+  let qtdSensiveisEmp = 0, capitalConhecido = 0;
   for (const cel of celulas) {
     recEmp += cel.receita_liquida;
     if (cel.cm == null) { cmIncompletoEmp = true; recSemCm += cel.receita_liquida; }
     if (cel.encargo != null) { encTotalEmp += cel.encargo; encTotalNull = false; }
     if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; if (cel.encargo != null) { encEmp += cel.encargo; encNull = false; } }
     if (cel.evp_teto != null) { tetoTotal += cel.evp_teto; tetoTotalNull = false; }
-    if (cel.evp_status === 'real') { conhecido += cel.evp as number; conhecidoNull = false; recConhecido += cel.receita_liquida; }
+    if (cel.evp_status === 'real') { conhecido += cel.evp as number; conhecidoNull = false; recConhecido += cel.receita_liquida; capitalConhecido += cel.capital_cs; }
     else if (cel.evp_status === 'teto_nao_positivo') { perda += cel.evp as number; perdaNull = false; recPerda += cel.receita_liquida; }
     else if (cel.evp_status === 'omitido_teto_positivo') { evpIncompletoEmp = true; recOmitido += cel.receita_liquida; }
+    if (cel.sensivel_hurdle) qtdSensiveisEmp++;
   }
   // empresa.evp só é um total honesto se NADA foi omitido/indisponível; senão null (Codex: não fingir total).
   const empresaCompleta = !evpIncompletoEmp && !cmIncompletoEmp && k != null;
@@ -297,6 +324,7 @@ export function montarCelulasComboEVP(input: {
     evp_perda_garantida: perdaNull ? null : perda,
     evp: empresaCompleta && !conhecidoNull ? conhecido : null,
     evp_incompleto: evpIncompletoEmp, cm_incompleto: cmIncompletoEmp,
+    qtd_combos_sensiveis: qtdSensiveisEmp, capital_conhecido: conhecidoNull ? null : capitalConhecido,
   };
   const pct = (x: number) => (recEmp > 0 ? x / recEmp : 0);
   return {
@@ -305,6 +333,7 @@ export function montarCelulasComboEVP(input: {
     evp_omitido_otimista_receita_pct: pct(recOmitido),
     evp_perda_garantida_receita_pct: pct(recPerda),
     sem_cm_receita_pct: pct(recSemCm),
+    hurdle_banda: k != null ? { base: k, lo: kLo, hi: kHi } : null,
   };
 }
 
