@@ -168,7 +168,7 @@ export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string,
   const rows = await coletarEmLotes(ids, LOTE_IN, async (lote) => {
     const { data, error } = await supabase
       .from('farmer_client_scores')
-      .select('customer_user_id, health_score, health_class, churn_risk, expansion_score, priority_score, avg_monthly_spend_180d, days_since_last_purchase, category_count, gross_margin_pct, avg_repurchase_interval')
+      .select('customer_user_id, health_score, health_class, churn_risk, expansion_score, priority_score, avg_monthly_spend_180d, days_since_last_purchase, category_count, gross_margin_pct, avg_repurchase_interval, sales_history_status')
       .in('customer_user_id', lote);
     if (error) throw error;
     return data ?? [];
@@ -185,6 +185,7 @@ export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string,
       days_since_last_purchase: s.days_since_last_purchase ?? 0,
       category_count: s.category_count ?? 0,
       gross_margin_pct: s.gross_margin_pct ?? 0,
+      sales_history_status: s.sales_history_status ?? null,
     });
   }
   return map;

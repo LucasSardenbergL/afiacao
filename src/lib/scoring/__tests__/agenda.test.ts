@@ -28,6 +28,7 @@ function mkRow(overrides: Partial<CarteiraRow> = {}): CarteiraRow {
     expansion_score: 0,
     health_class: 'estavel',
     signal_modifiers: null,
+    sales_history_status: 'ativo',
     ...overrides,
   };
 }
@@ -98,5 +99,34 @@ describe('buildAgendaItems', () => {
   it('respeita o limit', () => {
     const rows = Array.from({ length: 20 }, (_, i) => mkRow({ customer_user_id: `c${i}`, priority_score: i }));
     expect(buildAgendaItems(rows, 5)).toHaveLength(5);
+  });
+
+  it('sem_historico NÃO vira risco mesmo com churn alto/health crítico → "ativacao"', () => {
+    const item = buildAgendaItems([mkRow({ churn_risk: 95, health_class: 'critico', sales_history_status: 'sem_historico' })])[0];
+    expect(item.agenda_type).toBe('ativacao');
+  });
+
+  it('guard de slot ESTRUTURAL: ativação NÃO desloca recuperação mesmo com prioridade MAIOR', () => {
+    const items = buildAgendaItems([
+      mkRow({ customer_user_id: 'prospect', priority_score: 100, health_class: 'novo', sales_history_status: 'sem_historico' }),
+      mkRow({ customer_user_id: 'risco', priority_score: 99, churn_risk: 80, health_class: 'critico', sales_history_status: 'stale' }),
+    ], 1);
+    // risco (99) ocupa o único slot, apesar de a ativação (100) ter prioridade efetiva MAIOR
+    expect(items[0].customer_user_id).toBe('risco');
+    expect(items[0].agenda_type).toBe('risco');
+  });
+
+  it('carteira só-prospect: ativação preenche a agenda (não há recuperação a fazer)', () => {
+    const items = buildAgendaItems([
+      mkRow({ customer_user_id: 'p1', priority_score: 30, sales_history_status: 'sem_historico' }),
+      mkRow({ customer_user_id: 'p2', priority_score: 40, sales_history_status: 'sem_historico' }),
+    ], 5);
+    expect(items.map((i) => i.agenda_type)).toEqual(['ativacao', 'ativacao']);
+    expect(items[0].customer_user_id).toBe('p2'); // ordenado por prioridade DENTRO do bucket
+  });
+
+  it('ativo/stale mantêm a classificação atual (risco)', () => {
+    const item = buildAgendaItems([mkRow({ churn_risk: 70, health_class: 'estavel', sales_history_status: 'ativo' })])[0];
+    expect(item.agenda_type).toBe('risco');
   });
 });

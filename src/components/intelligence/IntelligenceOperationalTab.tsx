@@ -86,7 +86,10 @@ export function IntelligenceOperationalTab({ farmerId }: OperationalTabProps) {
     ? (totalRevenue / recentCalls.filter(c => Number(c.revenue_generated) > 0).length)
     : 0;
 
-  const atRiskClients = clientScores?.filter(c => (c.health_class === 'critico' || c.health_class === 'atencao')).length || 0;
+  const isRealRisk = (c: { health_class?: string | null; sales_history_status?: string | null }) =>
+    (c.health_class === 'critico' || c.health_class === 'atencao') && c.sales_history_status !== 'sem_historico';
+
+  const atRiskClients = clientScores?.filter(isRealRisk).length || 0;
 
   const healthDistribution = clientScores ? [
     { name: 'Saudável', value: clientScores.filter(c => c.health_class === 'saudavel').length, color: '#10b981' },
@@ -150,7 +153,7 @@ export function IntelligenceOperationalTab({ farmerId }: OperationalTabProps) {
             <div className="text-3xl font-bold mb-2">{atRiskClients}</div>
             <p className="text-xs text-muted-foreground mb-3">Classificados como Atenção ou Crítico</p>
             <div className="space-y-2">
-              {clientScores?.filter(c => c.health_class === 'critico' || c.health_class === 'atencao')
+              {clientScores?.filter(isRealRisk)
                 .slice(0, 5)
                 .map(c => (
                   <div key={c.id} className="flex items-center justify-between text-xs">

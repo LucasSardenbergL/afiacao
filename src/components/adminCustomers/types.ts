@@ -42,6 +42,7 @@ export interface ClientScore {
   category_count: number;
   gross_margin_pct: number;
   avg_repurchase_interval?: number | null;
+  sales_history_status: string | null;
 }
 
 export interface SalesOrder {
