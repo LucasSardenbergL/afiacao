@@ -130,3 +130,29 @@ onde `custo_unitário(componente_i)` é o **CMC do insumo** — que **já temos*
 3. **Cron** (SQL Editor, SÓ depois da edge no ar): cola `20260623130000_caca_custo_producao_cron.sql` → Run. Validação: `SELECT jobname,schedule,active FROM cron.job WHERE jobname='caca-custo-producao-colacor-daily'`.
 4. **Frontend:** NÃO precisa Publish — a Caça lê a view (campos de saída inalterados); nenhum `.tsx` mudou.
 5. **1ª execução = validação empírica real:** dispara `{"action":"sync_custo_producao","account":"colacor_vendas"}` (ou espera o cron). Nos logs: a **amostra crua** da 1ª `ConsultarEstrutura` (confirma os nomes de campo) + o `tally` de status. Depois: `SELECT custo_producao_status,count(*) FROM product_costs WHERE custo_producao_status IS NOT NULL GROUP BY 1` e a cobertura da Caça Colacor subindo de ~0,58.
+
+## 13.1 Resultado do deploy (2026-06-23/24) — EM PRODUÇÃO
+
+3 PRs mergeados e deployados (verificado via psql-ro):
+- [#1014](https://github.com/LucasSardenbergL/afiacao/pull/1014) (migration+helper+edge+cron) · [#1020](https://github.com/LucasSardenbergL/afiacao/pull/1020) (fix trava: N+1 sequencial estourava WORKER_RESOURCE_LIMIT → lotes paralelos + flush incremental) · [#1025](https://github.com/LucasSardenbergL/afiacao/pull/1025) (fix view: fallback pro cmc legítimo).
+- Migration coluna+view+cron aplicadas; edge deployada; 1ª execução rodou (1308 fabricados tipo 04: **342 ok**, 899 erro_api [maioria sem malha cadastrada no Omie], 64 missing_component_cost, demais marginais).
+- **Validação dupla:** `custo_producao` recomposto BATE com o `cmc` do Omie (razão mediana **1,00**) → o cmc do fabricado É o custo de produção via OP (premissa do §3 retificada). A view final usa `COALESCE(custo_producao quando status='ok', NULLIF(cmc,0))`.
+- **Ganho ESTÁVEL da recomposição:** +6 a +12pp de cobertura (os fabricados sem cmc mas com estrutura; o `custo_producao` não oscila).
+- ⚠️ A cobertura ABSOLUTA da Caça é DOMINADA pela race do `cmc` (§14), não pela entrega.
+
+## 14. Bloqueador restante: race do `cmc` (próximo alvo — NÃO resolvido aqui)
+
+Descoberto ao verificar a entrega em prod (2026-06-24): a cobertura da Caça é dominada pela **volatilidade do `product_costs.cmc`**. Medições psql-ro (Colacor, ~40min): cobertura só-cmc **60% → 40% → 32%** (queda contínua). O custo de fabricado é estável e agrega sobre o cmc — mas o cmc base oscila e domina o KPI.
+
+**Causa — race multi-writer do `product_costs.cmc`** (o problema #1 da tarefa original, adiado no pivot):
+- `computeCosts` (cron `compute-costs-daily`, `45 */2`) — cmc derivado do snapshot (catálogo inteiro).
+- `syncInventory` (`*/30`, só saldo>0) + `sync-reprocess` (oben) — cmc autoritativo do Omie.
+- `product_costs` Colacor reescrito em massa a cada ~15-30min (`updated_at`: 00:45 computeCosts, 01:15 sync 1380 linhas). Última escrita vence → computeCosts pode gravar snapshot velho por cima do cmc novo.
+
+**Impacto money-path (Codex 2026-06-24):** o `cmc` alimenta **Reposição/EOQ (compras), preço e margem**, não só a Caça. "Auto-corrige em 24h" ≠ inofensivo (24h de valor errado → decisão errada).
+
+**Regra esperada (money-path.md):** sinal money-path NUNCA em coluna multi-writer → 1 writer canônico OU precedência explícita (cmc autoritativo do Omie vence o derivado) + idempotência.
+
+**⚠️ Coordenação — domínio QUENTE:** branches em voo (`sync-cmc-cobertura-catalogo`, `cockpit-cost-final`, `cmc-unidade-suspeita-impl`, `registro-custo-lavagem`) + [#1005](https://github.com/LucasSardenbergL/afiacao/pull/1005) (account-aware do syncInventory). Atacar a race EXIGE coordenar (não duplicar/colidir) — por isso NÃO foi atacada nesta sessão. Decisão (fechar fabricado + separar a race) validada pelo Codex 2026-06-24.
+
+**Próximo passo:** spec próprio (eleição do writer canônico do cmc / precedência) → `prove-sql-money-path` → coordenação com as branches acima → PR. Em sessão limpa.
