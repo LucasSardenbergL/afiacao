@@ -94,11 +94,14 @@ export function initials(name: string): string {
     .join('') || '?';
 }
 
-export function healthTone(healthClass: string | null): {
+export function healthTone(healthClass: string | null, salesHistoryStatus?: string | null): {
   label: string;
   className: string;
   dot: string;
 } {
+  if (salesHistoryStatus === 'sem_historico') {
+    return { label: 'Sem histórico', className: 'text-muted-foreground', dot: 'bg-muted-foreground' };
+  }
   switch (healthClass) {
     case 'saudavel':
       return { label: 'Saudável', className: 'text-status-success-bold', dot: 'bg-status-success' };
