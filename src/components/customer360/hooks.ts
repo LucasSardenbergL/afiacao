@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { canalToKind, canalToLabel, canalToTone, type CanalInteracao } from '@/lib/carteira/interacoes';
 
 export function useCustomerCore(customerId: string | undefined) {
   return useQuery({
@@ -117,66 +118,35 @@ export function useCustomerOrders(customerId: string | undefined) {
   });
 }
 
-/** Timeline de contato: calls + mensagens, unificado e ordenado. */
+/** Timeline de contato unificada (ligações, WhatsApp, visitas, tarefas e mensagens de
+ *  pedido) via a view canônica v_cliente_interacoes — o gate de carteira é aplicado no
+ *  banco (security_invoker + carteira_visivel_para). 1 query no lugar de N. */
 export function useCustomerInteractions(customerId: string | undefined) {
   return useQuery({
     queryKey: ['c360-interactions', customerId],
     enabled: !!customerId,
     staleTime: 30_000,
     queryFn: async () => {
-      const [calls, messages] = await Promise.all([
-        supabase
-          .from('farmer_calls')
-          .select('id, started_at, call_type, call_result, is_whatsapp, notes, duration_seconds, revenue_generated, linked_sales_order_id, farmer_id')
-          .eq('customer_user_id', customerId!)
-          .order('started_at', { ascending: false })
-          .limit(15),
-        supabase
-          .from('order_messages')
-          .select('id, created_at, message, is_staff, sender_id, order_id')
-          .in(
-            'order_id',
-            // janela pequena: últimas 10 ordens deste cliente
-            (await supabase
-              .from('orders')
-              .select('id')
-              .eq('user_id', customerId!)
-              .order('created_at', { ascending: false })
-              .limit(10)).data?.map((o) => o.id) ?? [],
-          )
-          .order('created_at', { ascending: false })
-          .limit(15),
-      ]);
-
-      type Item =
-        | { kind: 'call'; at: string; title: string; subtitle: string; tone: string; revenue?: number | null }
-        | { kind: 'message'; at: string; title: string; subtitle: string; tone: string };
-
-      const items: Item[] = [];
-      (calls.data ?? []).forEach((c) => {
-        items.push({
-          kind: 'call',
-          at: c.started_at,
-          title: c.is_whatsapp ? 'WhatsApp enviado' : 'Ligação',
-          subtitle: [c.call_result, c.notes].filter(Boolean).join(' · ').slice(0, 140) || c.call_type,
-          tone: c.call_result === 'contato_sucesso'
-            ? 'text-status-success-bold'
-            : c.call_result === 'sem_resposta'
-              ? 'text-muted-foreground'
-              : 'text-foreground',
-          revenue: c.revenue_generated,
-        });
-      });
-      (messages.data ?? []).forEach((m) => {
-        items.push({
-          kind: 'message',
-          at: m.created_at,
-          title: m.is_staff ? 'Mensagem da equipe' : 'Mensagem do cliente',
-          subtitle: m.message?.slice(0, 140) ?? '',
-          tone: m.is_staff ? 'text-foreground' : 'text-status-info-bold',
-        });
-      });
-      return items.sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 20);
+      // v_cliente_interacoes ainda não consta nos tipos gerados do Supabase → cast pontual
+      // + .returns(). TODO(tipos): remover o `as never` após regenerar types.ts.
+      const { data, error } = await supabase
+        .from('v_cliente_interacoes' as never)
+        .select('at, canal, titulo, resumo, revenue')
+        .eq('customer_user_id', customerId!)
+        .order('at', { ascending: false })
+        .limit(30)
+        .returns<
+          { at: string; canal: CanalInteracao; titulo: string | null; resumo: string | null; revenue: number | null }[]
+        >();
+      if (error) throw error;
+      return (data ?? []).map((r) => ({
+        kind: canalToKind(r.canal),
+        at: r.at,
+        title: r.titulo ?? canalToLabel(r.canal),
+        subtitle: (r.resumo ?? '').slice(0, 140),
+        tone: canalToTone(r.canal),
+        revenue: r.revenue,
+      }));
     },
   });
 }
