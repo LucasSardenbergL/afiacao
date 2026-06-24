@@ -25,6 +25,7 @@ export interface CarteiraRow {
   expansion_score: number | null;
   health_class: string | null;
   signal_modifiers: ScoreAdjustment | null;
+  sales_history_status: string | null;
 }
 
 export interface AgendaItem {
@@ -34,7 +35,7 @@ export interface AgendaItem {
   /** prioridade base do calculate-scores, sem sinais */
   base_priority_score: number;
   health_class: string | null;
-  agenda_type: 'risco' | 'expansao' | 'follow_up';
+  agenda_type: 'risco' | 'expansao' | 'ativacao' | 'follow_up';
   topModifier: SignalModifier | null;
   signalsCount: number;
 }
@@ -93,32 +94,43 @@ export function signalsCount(mods: ScoreAdjustment | null | undefined): number {
 /**
  * Top-N clientes da carteira por prioridade EFETIVA (base + nudge dos sinais),
  * com tipo de ação derivado dos scores (escala 0..100):
+ * - 'ativacao' se sales_history_status === 'sem_historico' (sem venda válida registrada — PRECEDE tudo)
  * - 'risco' se churn_risk > 50 ou health_class crítico/atenção
  * - 'expansao' se expansion_score > 50
  * - 'follow_up' default
+ * Guard de slot ESTRUTURAL: itens COM histórico preenchem os slots primeiro; ativação só completa
+ * as vagas restantes (nunca desloca uma recuperação/risco real, mesmo com prioridade efetiva maior).
  */
 export function buildAgendaItems(rows: CarteiraRow[], limit = 10): AgendaItem[] {
-  return rows
-    .map((s): AgendaItem => {
-      const base = s.priority_score ?? 0;
-      const churn = s.churn_risk ?? 0;
-      const expansion = s.expansion_score ?? 0;
-      let agenda_type: AgendaItem['agenda_type'] = 'follow_up';
-      if (churn > 50 || s.health_class === 'critico' || s.health_class === 'atencao') {
-        agenda_type = 'risco';
-      } else if (expansion > 50) {
-        agenda_type = 'expansao';
-      }
-      return {
-        customer_user_id: s.customer_user_id,
-        priority_score: effectivePriority(base, s.signal_modifiers),
-        base_priority_score: base,
-        health_class: s.health_class,
-        agenda_type,
-        topModifier: pickTopModifier(s.signal_modifiers),
-        signalsCount: signalsCount(s.signal_modifiers),
-      };
-    })
-    .sort((a, b) => b.priority_score - a.priority_score)
-    .slice(0, limit);
+  const items = rows.map((s): AgendaItem => {
+    const base = s.priority_score ?? 0;
+    const churn = s.churn_risk ?? 0;
+    const expansion = s.expansion_score ?? 0;
+    let agenda_type: AgendaItem['agenda_type'] = 'follow_up';
+    if (s.sales_history_status === 'sem_historico') {
+      agenda_type = 'ativacao';
+    } else if (churn > 50 || s.health_class === 'critico' || s.health_class === 'atencao') {
+      agenda_type = 'risco';
+    } else if (expansion > 50) {
+      agenda_type = 'expansao';
+    }
+    return {
+      customer_user_id: s.customer_user_id,
+      priority_score: effectivePriority(base, s.signal_modifiers),
+      base_priority_score: base,
+      health_class: s.health_class,
+      agenda_type,
+      topModifier: pickTopModifier(s.signal_modifiers),
+      signalsCount: signalsCount(s.signal_modifiers),
+    };
+  });
+  // Guard de slot ESTRUTURAL (não só tie-break — achado /codex no diff): clientes COM histórico
+  // (risco/expansao/follow_up) preenchem os slots primeiro, por prioridade efetiva; 'ativacao'
+  // (sem_historico) só completa as vagas restantes — nunca desloca recuperação/risco real, mesmo
+  // com prioridade efetiva maior. Itens com status NULL contam como "com histórico" (= comportam-se
+  // como hoje). Carteira só-prospect → top-N de ativação (não há recuperação a fazer).
+  const byPriority = (a: AgendaItem, b: AgendaItem) => b.priority_score - a.priority_score;
+  const comHistorico = items.filter((i) => i.agenda_type !== 'ativacao').sort(byPriority);
+  const ativacao = items.filter((i) => i.agenda_type === 'ativacao').sort(byPriority);
+  return [...comHistorico, ...ativacao].slice(0, limit);
 }

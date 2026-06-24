@@ -13,7 +13,7 @@ type FarmerCallRow = Pick<
 type ProfileRow = Pick<Tables<'profiles'>, 'user_id' | 'name' | 'phone'>;
 type SalesOrderRow = Pick<
   Tables<'sales_orders'>,
-  'id' | 'customer_user_id' | 'items' | 'total' | 'created_at' | 'status'
+  'id' | 'customer_user_id' | 'items' | 'total' | 'created_at' | 'order_date_kpi' | 'status'
 >;
 
 interface SalesOrderItem {
@@ -132,7 +132,7 @@ export const useFarmerScoring = (farmerId?: string) => {
       // 1. Load all customers with sales orders
       const { data: salesOrdersData } = await supabase
         .from('sales_orders')
-        .select('id, customer_user_id, items, total, created_at, status')
+        .select('id, customer_user_id, items, total, created_at, order_date_kpi, status')
         .in('status', ['confirmado', 'faturado', 'entregue']);
       const salesOrders = (salesOrdersData ?? []) as SalesOrderRow[];
 
@@ -229,7 +229,9 @@ export const useFarmerScoring = (farmerId?: string) => {
           });
         }
         const cd = customerMap.get(cid)!;
-        const orderTime = new Date(order.created_at).getTime();
+        // Recência pela DATA DO PEDIDO (order_date_kpi = dInc), não created_at (= previsão/now do sync).
+        // Espelha get_customer_sales_summary + customer_metrics_mv (COALESCE order_date_kpi → created_at).
+        const orderTime = new Date(order.order_date_kpi ?? order.created_at).getTime();
         cd.orderDates.push(orderTime);
         cd.totalSpend += Number(order.total || 0);
         if (orderTime >= sixMonthsAgo) cd.spend180d += Number(order.total || 0);

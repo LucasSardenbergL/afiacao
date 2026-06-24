@@ -2378,6 +2378,7 @@ export type Database = {
           revenue_potential: number | null
           rf_score: number | null
           s_score: number | null
+          sales_history_status: string | null
           signal_modifiers: Json | null
           updated_at: string | null
           whatsapp_reply_rate_60d: number | null
@@ -2408,6 +2409,7 @@ export type Database = {
           revenue_potential?: number | null
           rf_score?: number | null
           s_score?: number | null
+          sales_history_status?: string | null
           signal_modifiers?: Json | null
           updated_at?: string | null
           whatsapp_reply_rate_60d?: number | null
@@ -2438,6 +2440,7 @@ export type Database = {
           revenue_potential?: number | null
           rf_score?: number | null
           s_score?: number | null
+          sales_history_status?: string | null
           signal_modifiers?: Json | null
           updated_at?: string | null
           whatsapp_reply_rate_60d?: number | null
@@ -8394,6 +8397,10 @@ export type Database = {
           cost_final: number | null
           cost_price: number | null
           cost_source: string | null
+          custo_producao: number | null
+          custo_producao_computed_at: string | null
+          custo_producao_source: string | null
+          custo_producao_status: string | null
           family_category: string | null
           id: string
           product_id: string
@@ -8405,6 +8412,10 @@ export type Database = {
           cost_final?: number | null
           cost_price?: number | null
           cost_source?: string | null
+          custo_producao?: number | null
+          custo_producao_computed_at?: string | null
+          custo_producao_source?: string | null
+          custo_producao_status?: string | null
           family_category?: string | null
           id?: string
           product_id: string
@@ -8416,6 +8427,10 @@ export type Database = {
           cost_final?: number | null
           cost_price?: number | null
           cost_source?: string | null
+          custo_producao?: number | null
+          custo_producao_computed_at?: string | null
+          custo_producao_source?: string | null
+          custo_producao_status?: string | null
           family_category?: string | null
           id?: string
           product_id?: string

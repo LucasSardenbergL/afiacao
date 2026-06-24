@@ -18,6 +18,7 @@ export interface CarteiraScoreRow {
   avg_monthly_spend_180d: number | null;
   signal_modifiers: ScoreAdjustment | null;
   last_signal_recalc_at: string | null;
+  sales_history_status: string | null;
   /** dono original quando o cliente vem de cobertura (farmer_id ≠ eu); null se for meu. */
   coberto_de: string | null;
 }
@@ -48,7 +49,7 @@ export function useMyCarteiraScores() {
       if (!user) return [];
 
       const { data, error } = await supabase.from('farmer_client_scores')
-        .select('customer_user_id, farmer_id, health_score, health_class, priority_score, churn_risk, expansion_score, recover_score, revenue_potential, days_since_last_purchase, avg_monthly_spend_180d, signal_modifiers, last_signal_recalc_at')
+        .select('customer_user_id, farmer_id, health_score, health_class, priority_score, churn_risk, expansion_score, recover_score, revenue_potential, days_since_last_purchase, avg_monthly_spend_180d, signal_modifiers, sales_history_status, last_signal_recalc_at')
         .in('farmer_id', ownerIds)
         .order('priority_score', { ascending: false })
         .limit(200);

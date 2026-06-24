@@ -997,6 +997,7 @@ export interface CockpitRollupCliente {
   encargo: number | null;
   encargo_total: number | null;
   evp: number | null;
+  nome?: string | null;  // nome do cliente (profiles via customer_user_id) — UI mostra no lugar do código
 }
 export interface CockpitRollupSKU {
   sku: string;

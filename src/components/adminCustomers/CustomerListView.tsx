@@ -91,6 +91,10 @@ export function CustomerListView({
     if (filterHealth !== 'all') {
       result = result.filter(c => {
         const score = scores.get(c.user_id);
+        // sem_historico tem filtro próprio; nos filtros de SAÚDE ele NÃO entra (o badge dele é
+        // "Sem histórico", não uma classe de saúde) — senão o filtro "Crítico" mentiria (achado /codex).
+        if (filterHealth === 'sem_historico') return score?.sales_history_status === 'sem_historico';
+        if (score?.sales_history_status === 'sem_historico') return false;
         return score?.health_class === filterHealth;
       });
     }
@@ -222,7 +226,7 @@ export function CustomerListView({
               Saúde
               {filterHealth !== 'all' && (
                 <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">
-                  {HEALTH_CLASSES[filterHealth]?.label}
+                  {filterHealth === 'sem_historico' ? 'Sem histórico' : HEALTH_CLASSES[filterHealth]?.label}
                 </Badge>
               )}
             </Button>
@@ -230,8 +234,10 @@ export function CustomerListView({
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => setFilterHealth('all')}>Todos</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setFilterHealth('saudavel')}>🟢 Saudável</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setFilterHealth('alerta')}>🟡 Alerta</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setFilterHealth('estavel')}>🔵 Estável</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setFilterHealth('atencao')}>🟡 Atenção</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setFilterHealth('critico')}>🔴 Crítico</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setFilterHealth('sem_historico')}>⚪ Sem histórico</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -255,6 +261,7 @@ export function CustomerListView({
               {filtered.map((customer) => {
                 const score = scores.get(customer.user_id);
                 const healthInfo = score ? HEALTH_CLASSES[score.health_class] : undefined;
+                const isSemHistorico = score?.sales_history_status === 'sem_historico';
 
                 return (
                   <tr
@@ -288,9 +295,13 @@ export function CustomerListView({
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-center">
-                      <Badge variant="outline" className={cn('text-[10px]', healthInfo?.className)}>
-                        {healthInfo?.label || 'N/A'}
-                      </Badge>
+                      {isSemHistorico ? (
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground">Sem histórico</Badge>
+                      ) : (
+                        <Badge variant="outline" className={cn('text-[10px]', healthInfo?.className)}>
+                          {healthInfo?.label || 'N/A'}
+                        </Badge>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-right hidden lg:table-cell">
                       <span className="text-xs font-medium tabular-nums">

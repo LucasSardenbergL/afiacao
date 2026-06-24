@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# HARNESS PG17 — prova v_caca_compradores com custo efetivo tipo_produto-aware + status-aware.
-# Migration: supabase/migrations/20260623120000_caca_custo_producao.sql
+# HARNESS PG17 — v_caca_compradores: custo efetivo = COALESCE(custo_producao quando status='ok', NULLIF(cmc,0)).
+# Migrations: 20260623120000 (coluna+view inicial) → 20260624010000 (fallback pro cmc legítimo).
 # Rode:  bash db/test-caca-custo-producao.sh > /tmp/t.log 2>&1; echo "exit=$?"
 set -euo pipefail
 
@@ -37,175 +37,102 @@ echo "═══ setup PG17 :$PORT ═══"
 
 # ── ZONA 1 — pré-requisitos: tabelas que a view LÊ + product_costs pré-ALTER (só product_id, cmc) ──
 P -q <<'SQL'
-CREATE TABLE public.profiles (
-  user_id uuid PRIMARY KEY, name text, phone text, cnae text,
-  document text, cnpj text, is_employee boolean
-);
-CREATE TABLE public.sales_orders (
-  id uuid PRIMARY KEY, account text, total numeric,
-  order_date_kpi date, created_at timestamptz, deleted_at timestamptz,
-  status text, customer_user_id uuid
-);
-CREATE TABLE public.order_items (
-  id uuid PRIMARY KEY, sales_order_id uuid, omie_codigo_produto text,
-  product_id uuid, quantity numeric, unit_price numeric
-);
-CREATE TABLE public.omie_products (
-  id uuid PRIMARY KEY, account text, familia text, tipo_produto text
-);
-CREATE TABLE public.product_costs (
-  id uuid DEFAULT gen_random_uuid(), product_id uuid UNIQUE, cmc numeric DEFAULT 0
-);
-CREATE TABLE public.addresses (
-  user_id uuid, city text, state text, is_default boolean, created_at timestamptz
-);
+CREATE TABLE public.profiles (user_id uuid PRIMARY KEY, name text, phone text, cnae text, document text, cnpj text, is_employee boolean);
+CREATE TABLE public.sales_orders (id uuid PRIMARY KEY, account text, total numeric, order_date_kpi date, created_at timestamptz, deleted_at timestamptz, status text, customer_user_id uuid);
+CREATE TABLE public.order_items (id uuid PRIMARY KEY, sales_order_id uuid, omie_codigo_produto text, product_id uuid, quantity numeric, unit_price numeric);
+CREATE TABLE public.omie_products (id uuid PRIMARY KEY, account text, familia text, tipo_produto text);
+CREATE TABLE public.product_costs (id uuid DEFAULT gen_random_uuid(), product_id uuid UNIQUE, cmc numeric DEFAULT 0);
+CREATE TABLE public.addresses (user_id uuid, city text, state text, is_default boolean, created_at timestamptz);
 SQL
 echo "stubs criados"
 
-# ── ZONA 2 — APLICAR A MIGRATION REAL (Lei #1) ──
-MIG="$REPO_ROOT/supabase/migrations/20260623120000_caca_custo_producao.sql"
-P -q -f "$MIG"
-echo "migration aplicada: $(basename "$MIG")"
+# ── ZONA 2 — APLICAR AS MIGRATIONS REAIS, na ordem de prod (Lei #1) ──
+MIG1="$REPO_ROOT/supabase/migrations/20260623120000_caca_custo_producao.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20260624010000_caca_custo_efetivo_fallback.sql"
+P -q -f "$MIG1"
+P -q -f "$MIG2"
+echo "migrations aplicadas: $(basename "$MIG1") + $(basename "$MIG2")"
 
 # ── ZONA 3 — SEED ──
-# 1 cliente + 1 pedido colacor. 5 produtos:
-#   A=fabricado(04) custo_producao=10 status=ok cmc=0           → custo_efetivo 10  (entra via custo_producao)
-#   B=comprado(00)  cmc=5                                        → custo_efetivo 5   (entra via cmc)
-#   C=comprado(00)  cmc=0                                        → custo_efetivo NULL (degrada)
-#   D=fabricado(04) custo_producao=NULL status=missing cmc=0     → custo_efetivo NULL (degrada)
-#   E=fabricado(04) custo_producao=NULL status=erro_api cmc=99   → custo_efetivo NULL (NÃO usa o cmc 99 espúrio!)
+# custo efetivo = COALESCE(custo_producao se status='ok', NULLIF(cmc,0)). 6 produtos:
+#   A=fabricado(04) custo_producao=10 status=ok cmc=0      → 10  (recomposto vence)
+#   B=comprado(00)  cmc=5                                   → 5   (comprado via cmc)
+#   C=comprado(00)  cmc=0                                   → NULL (degrada: sem custo)
+#   D=fabricado(04) status=missing custo_producao=NULL cmc=0 → NULL (degrada: sem recomp E sem cmc)
+#   E=fabricado(04) status=erro_api custo_producao=NULL cmc=8 → 8 (FALLBACK pro cmc legítimo da OP!)
+#   F=fabricado(04) status=suspeito custo_producao=999 cmc=7 → 7 (GATE: ignora o 999 stale, cai pro cmc)
 P -q <<'SQL'
 INSERT INTO public.profiles(user_id, name, is_employee, document) VALUES
   ('11111111-1111-1111-1111-111111111111','Cliente Teste', false, '12345678000199');
 INSERT INTO public.addresses(user_id, city, state, is_default, created_at) VALUES
   ('11111111-1111-1111-1111-111111111111','Curitiba','PR', true, now());
 INSERT INTO public.sales_orders(id, account, total, order_date_kpi, created_at, deleted_at, status, customer_user_id) VALUES
-  ('aaaaaaaa-0000-0000-0000-000000000001','colacor', 430, current_date, now(), NULL, 'faturado','11111111-1111-1111-1111-111111111111');
+  ('aaaaaaaa-0000-0000-0000-000000000001','colacor', 440, current_date, now(), NULL, 'faturado','11111111-1111-1111-1111-111111111111');
 INSERT INTO public.omie_products(id, account, familia, tipo_produto) VALUES
   ('dddddddd-0000-0000-0000-000000000001','colacor','Cintas Estreitas','04'),
   ('dddddddd-0000-0000-0000-000000000002','colacor','Jumbo','00'),
   ('dddddddd-0000-0000-0000-000000000003','colacor','Jumbo','00'),
   ('dddddddd-0000-0000-0000-000000000004','colacor','Cintas Estreitas','04'),
-  ('dddddddd-0000-0000-0000-000000000005','colacor','Cintas Estreitas','04');
+  ('dddddddd-0000-0000-0000-000000000005','colacor','Cintas Estreitas','04'),
+  ('dddddddd-0000-0000-0000-000000000006','colacor','Cintas Estreitas','04');
 INSERT INTO public.product_costs(product_id, cmc, custo_producao, custo_producao_status) VALUES
-  ('dddddddd-0000-0000-0000-000000000001', 0,  10,   'ok'),
-  ('dddddddd-0000-0000-0000-000000000002', 5,  NULL, NULL),
-  ('dddddddd-0000-0000-0000-000000000003', 0,  NULL, NULL),
-  ('dddddddd-0000-0000-0000-000000000004', 0,  NULL, 'missing_component_cost'),
-  ('dddddddd-0000-0000-0000-000000000005', 99, NULL, 'erro_api');
+  ('dddddddd-0000-0000-0000-000000000001', 0, 10,  'ok'),
+  ('dddddddd-0000-0000-0000-000000000002', 5, NULL, NULL),
+  ('dddddddd-0000-0000-0000-000000000003', 0, NULL, NULL),
+  ('dddddddd-0000-0000-0000-000000000004', 0, NULL, 'missing_component_cost'),
+  ('dddddddd-0000-0000-0000-000000000005', 8, NULL, 'erro_api'),
+  ('dddddddd-0000-0000-0000-000000000006', 7, 999, 'suspeito_unidade');
 INSERT INTO public.order_items(id, sales_order_id, omie_codigo_produto, product_id, quantity, unit_price) VALUES
   ('11111111-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','A','dddddddd-0000-0000-0000-000000000001', 2, 30),
   ('11111111-0000-0000-0000-000000000002','aaaaaaaa-0000-0000-0000-000000000001','B','dddddddd-0000-0000-0000-000000000002', 1, 20),
   ('11111111-0000-0000-0000-000000000003','aaaaaaaa-0000-0000-0000-000000000001','C','dddddddd-0000-0000-0000-000000000003', 1, 100),
   ('11111111-0000-0000-0000-000000000004','aaaaaaaa-0000-0000-0000-000000000001','D','dddddddd-0000-0000-0000-000000000004', 1, 50),
-  ('11111111-0000-0000-0000-000000000005','aaaaaaaa-0000-0000-0000-000000000001','E','dddddddd-0000-0000-0000-000000000005', 1, 200);
+  ('11111111-0000-0000-0000-000000000005','aaaaaaaa-0000-0000-0000-000000000001','E','dddddddd-0000-0000-0000-000000000005', 1, 200),
+  ('11111111-0000-0000-0000-000000000006','aaaaaaaa-0000-0000-0000-000000000001','F','dddddddd-0000-0000-0000-000000000006', 1, 10);
 SQL
 echo "seed pronto"
 
 # ── ZONA 4 — ASSERTS ──
-# Esperado: A entra (10 via custo_producao), B entra (5 via cmc), C/D/E degradam.
-#   lucro_com_custo = (2*30-2*10) + (1*20-1*5) = 40 + 15 = 55
-#   receita         = 60 + 20 + 100 + 50 + 200 = 430
-#   receita_c_custo = 60 + 20 = 80  → cobertura = round(80/430,2) = 0.19
+# A=10(recomp) B=5(cmc) E=8(fallback cmc) F=7(gate→cmc); C,D degradam.
+#   lucro = (2*30-2*10)+(1*20-1*5)+(1*200-1*8)+(1*10-1*7) = 40+15+192+3 = 250
+#   receita = 60+20+100+50+200+10 = 440 ; receita_c_custo = 60+20+200+10 = 290 → cobertura 0.66
 echo "── asserts ──"
 LP=$(Pq -c "SELECT lucro_proxy FROM public.v_caca_compradores LIMIT 1;")
 COBV=$(Pq -c "SELECT lucro_cobertura FROM public.v_caca_compradores LIMIT 1;")
 echo "    lucro_proxy=$LP  lucro_cobertura=$COBV"
 
-A1=$(Pq -c "SELECT (lucro_proxy = 55.00) FROM public.v_caca_compradores LIMIT 1;")
-eq "P1+P2 fabricado(custo_producao,status=ok) + comprado(cmc) = 55" "$A1" "t"
+A1=$(Pq -c "SELECT (lucro_proxy = 250.00) FROM public.v_caca_compradores LIMIT 1;")
+eq "P1 recomposto(A=10)+comprado(B=5)+fallback(E=8)+gate(F=7) = 250" "$A1" "t"
 
-A2=$(Pq -c "SELECT (lucro_cobertura = 0.19) FROM public.v_caca_compradores LIMIT 1;")
-eq "N C/D/E degradam → cobertura 80/430 = 0.19" "$A2" "t"
+A2=$(Pq -c "SELECT (lucro_cobertura = 0.66) FROM public.v_caca_compradores LIMIT 1;")
+eq "cobertura 290/440 = 0.66 (C/D degradam; E/F recuperados via cmc)" "$A2" "t"
 
-# P1#2 (Codex): E é fabricado degradado COM cmc=99 espúrio. Se a view caísse para cmc, E entraria
-# (lucro subiria p/ 156). lucro=55 prova que fabricado degradado NÃO usa o cmc.
-A3=$(Pq -c "SELECT (lucro_proxy < 100) FROM public.v_caca_compradores LIMIT 1;")
-eq "P1#2 fabricado degradado (cmc=99 espúrio) NÃO cai pra cmc (lucro<100)" "$A3" "t"
+# Fallback (corrige a regressão do #1014): E é fabricado erro_api com cmc=8 legítimo → entra via cmc.
+# Se E degradasse (view #1014), lucro cairia p/ 58. lucro=250 prova que E (e F) entraram.
+A3=$(Pq -c "SELECT (lucro_proxy > 60) FROM public.v_caca_compradores LIMIT 1;")
+eq "FALLBACK fabricado sem recompor mas com cmc legítimo entra (lucro>60, não 58)" "$A3" "t"
 
-# Gate de status: muda A p/ status≠ok → A degrada → lucro cai p/ só B (15). Prova que custo_producao
-# só conta quando status='ok' (cobre o caso erro_api/stale).
-P -q -c "UPDATE public.product_costs SET custo_producao_status='suspeito_unidade' WHERE product_id='dddddddd-0000-0000-0000-000000000001';" >/dev/null
-A4=$(Pq -c "SELECT (lucro_proxy = 15.00) FROM public.v_caca_compradores LIMIT 1;")
-eq "P1#1 status≠ok degrada o fabricado (custo_producao válido mas status suspeito → fora; lucro 15)" "$A4" "t"
-P -q -c "UPDATE public.product_costs SET custo_producao_status='ok' WHERE product_id='dddddddd-0000-0000-0000-000000000001';" >/dev/null
+# Gate de status (P1#1): F tem custo_producao=999 mas status=suspeito → IGNORA o 999, usa cmc=7.
+# Se usasse o 999, F daria lucro 10-999=-989 → lucro_proxy despencaria. lucro=250 prova o gate.
+A4=$(Pq -c "SELECT (lucro_proxy = 250.00) FROM public.v_caca_compradores LIMIT 1;")
+eq "GATE status≠ok ignora custo_producao stale (F usa cmc=7, não o 999)" "$A4" "t"
 
-# Comprado NÃO regride: B sempre entra via cmc (independe de custo_producao/status).
-REGB=$(Pq -c "SELECT (lucro_proxy = 55.00) FROM public.v_caca_compradores LIMIT 1;")
-eq "P3 comprado intacto após restaurar A (lucro volta a 55)" "$REGB" "t"
-
-# ── ZONA 5 — FALSIFICAÇÃO (Lei #3): a view GENÉRICA (sem tipo/status) deixa o cmc espúrio vazar ──
+# ── ZONA 5 — FALSIFICAÇÃO (Lei #3): a view do #1014 (CASE tipo_produto, sem fallback) regride ──
 echo "── falsificação ──"
-# sabota: custo_efetivo = COALESCE(custo_producao, NULLIF(cmc,0)) [genérico, sem CASE tipo/status].
-# Com isso E (custo_producao NULL, cmc 99) → 99 entra → lucro sobe p/ 156. A1 (=55) DEVE ficar vermelho.
-P -q <<'SQL'
-CREATE OR REPLACE VIEW public.v_caca_compradores AS
- WITH cli AS (
-         SELECT p.user_id, p.name, p.phone, p.cnae,
-                CASE
-                    WHEN length(regexp_replace(COALESCE(p.document, ''::text), '\D'::text, ''::text, 'g'::text)) = ANY (ARRAY[11, 14]) THEN regexp_replace(COALESCE(p.document, ''::text), '\D'::text, ''::text, 'g'::text)
-                    WHEN length(regexp_replace(COALESCE(p.cnpj, ''::text), '\D'::text, ''::text, 'g'::text)) = ANY (ARRAY[11, 14]) THEN regexp_replace(COALESCE(p.cnpj, ''::text), '\D'::text, ''::text, 'g'::text)
-                    ELSE NULL::text
-                END AS documento
-           FROM profiles p WHERE COALESCE(p.is_employee, false) = false
-        ), cli_valid AS (
-         SELECT DISTINCT ON (cli.user_id) cli.user_id, cli.documento, cli.name, cli.phone, cli.cnae
-           FROM cli WHERE cli.documento IS NOT NULL ORDER BY cli.user_id, cli.documento
-        ), cli_doc AS (
-         SELECT DISTINCT ON (cli_valid.documento) cli_valid.documento, cli_valid.user_id, cli_valid.name, cli_valid.phone, cli_valid.cnae
-           FROM cli_valid ORDER BY cli_valid.documento, cli_valid.user_id
-        ), so_ok AS (
-         SELECT so.id, so.account, so.total, COALESCE(so.order_date_kpi, so.created_at::date) AS dt, cv.documento
-           FROM sales_orders so JOIN cli_valid cv ON cv.user_id = so.customer_user_id
-          WHERE so.deleted_at IS NULL AND (so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text])) AND (so.account = ANY (ARRAY['oben'::text, 'colacor'::text]))
-        ), compras AS (
-         SELECT so_ok.documento, so_ok.account, count(*) AS n_pedidos, sum(so_ok.total) AS volume, max(so_ok.dt) AS ultima
-           FROM so_ok GROUP BY so_ok.documento, so_ok.account
-        ), oi_dedup AS (
-         SELECT DISTINCT ON (oi.sales_order_id, oi.omie_codigo_produto) oi.sales_order_id, oi.product_id, oi.quantity, oi.unit_price
-           FROM order_items oi ORDER BY oi.sales_order_id, oi.omie_codigo_produto, oi.id
-        ), itens AS (
-         SELECT s.documento, s.account, d.quantity, d.unit_price, op.familia,
-            COALESCE(pc.custo_producao, NULLIF(pc.cmc, 0::numeric)) AS custo_efetivo   -- GENÉRICO (bug): ignora tipo/status
-           FROM so_ok s
-             JOIN oi_dedup d ON d.sales_order_id = s.id
-             JOIN omie_products op ON op.id = d.product_id AND op.account = s.account
-             LEFT JOIN product_costs pc ON pc.product_id = op.id
-        ), fam AS (
-         SELECT itens.documento, itens.account, array_agg(DISTINCT itens.familia) FILTER (WHERE itens.familia IS NOT NULL AND itens.familia <> ''::text) AS familias
-           FROM itens GROUP BY itens.documento, itens.account
-        ), luc AS (
-         SELECT itens.documento, itens.account,
-            sum(itens.quantity * itens.unit_price - itens.quantity * itens.custo_efetivo) FILTER (WHERE itens.custo_efetivo > 0::numeric) AS lucro_com_custo,
-            sum(itens.quantity * itens.unit_price) AS receita,
-            sum(itens.quantity * itens.unit_price) FILTER (WHERE itens.custo_efetivo > 0::numeric) AS receita_com_custo
-           FROM itens GROUP BY itens.documento, itens.account
-        ), cid AS (
-         SELECT DISTINCT ON (addresses.user_id) addresses.user_id, (addresses.city || '-'::text) || addresses.state AS cidade_uf
-           FROM addresses WHERE COALESCE(addresses.city, ''::text) <> ''::text AND COALESCE(addresses.state, ''::text) <> ''::text
-          ORDER BY addresses.user_id, addresses.is_default DESC NULLS LAST, addresses.created_at DESC NULLS LAST
-        )
- SELECT c.documento, c.account AS empresa, cid.cidade_uf, cd.cnae AS ramo,
-        CASE WHEN c.n_pedidos > 0 THEN round(c.volume / c.n_pedidos::numeric, 2) ELSE NULL::numeric END AS ticket_faixa,
-    COALESCE(f.familias, ARRAY[]::text[]) AS familias, c.volume, c.n_pedidos, now()::date - c.ultima AS recencia_dias,
-        CASE WHEN l.lucro_com_custo IS NOT NULL THEN round(l.lucro_com_custo, 2) ELSE NULL::numeric END AS lucro_proxy,
-        CASE WHEN COALESCE(l.receita, 0::numeric) > 0::numeric THEN round(COALESCE(l.receita_com_custo, 0::numeric) / l.receita, 2) ELSE 0::numeric END AS lucro_cobertura
-   FROM compras c
-     JOIN cli_doc cd ON cd.documento = c.documento
-     LEFT JOIN fam f ON f.documento = c.documento AND f.account = c.account
-     LEFT JOIN luc l ON l.documento = c.documento AND l.account = c.account
-     LEFT JOIN cid ON cid.user_id = cd.user_id;
-SQL
+# re-aplica a MIG1 (view com CASE tipo_produto → fabricado degradado NÃO cai pro cmc):
+# E (erro_api) e F (suspeito) perdem o cmc → degradam → lucro cai p/ 55. A1 (=250) DEVE ficar vermelho.
+P -q -f "$MIG1"
 FBUGVAL=$(Pq -c "SELECT lucro_proxy FROM public.v_caca_compradores LIMIT 1;")
-FBUG=$(Pq -c "SELECT (lucro_proxy = 55.00) FROM public.v_caca_compradores LIMIT 1;")
+FBUG=$(Pq -c "SELECT (lucro_proxy = 250.00) FROM public.v_caca_compradores LIMIT 1;")
 case "$FBUG" in
-  f) ok "F1 view genérica deixa cmc=99 espúrio do fabricado E vazar → lucro $FBUGVAL≠55 (tipo/status tem dente)" ;;
-  *) bad "F1 sabotei p/ genérico e A1 NÃO mudou (veio $FBUGVAL) → assert fraco" ;;
+  f) ok "F1 view #1014 (sem fallback) descarta cmc de E/F → lucro $FBUGVAL≠250 (fallback tem dente)" ;;
+  *) bad "F1 voltei p/ a view #1014 e A1 NÃO mudou (veio $FBUGVAL) → assert fraco" ;;
 esac
 
-P -q -f "$MIG" >/dev/null
-FRES=$(Pq -c "SELECT (lucro_proxy = 55.00) FROM public.v_caca_compradores LIMIT 1;")
-eq "F1b view correta restaurada volta a 55" "$FRES" "t"
+# restaura a view corrigida (MIG2)
+P -q -f "$MIG2"
+FRES=$(Pq -c "SELECT (lucro_proxy = 250.00) FROM public.v_caca_compradores LIMIT 1;")
+eq "F1b view corrigida restaurada volta a 250" "$FRES" "t"
 
 # ── veredito ──
 echo "──────────────────────────────"

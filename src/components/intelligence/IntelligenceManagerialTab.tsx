@@ -66,7 +66,7 @@ function IntelligenceManagerialTabImpl() {
 
   const farmerMetrics = Object.entries(farmerGroups).map(([farmerId, clients]) => {
     const avgHealth = clients.reduce((a, c) => a + Number(c.health_score || 0), 0) / clients.length;
-    const atRisk = clients.filter(c => c.health_class === 'critico' || c.health_class === 'atencao').length;
+    const atRisk = clients.filter(c => (c.health_class === 'critico' || c.health_class === 'atencao') && c.sales_history_status !== 'sem_historico').length;
     const avgMargin = clients.reduce((a, c) => a + Number(c.gross_margin_pct || 0), 0) / clients.length;
     const avgCategories = clients.reduce((a, c) => a + Number(c.category_count || 0), 0) / clients.length;
     const adoption = recoAdoption[farmerId];
@@ -87,7 +87,7 @@ function IntelligenceManagerialTabImpl() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard title="Vendedores Ativos" value={String(farmerMetrics.length)} icon={Users} />
         <KpiCard title="Total Clientes" value={String(allScores?.length || 0)} icon={Users} />
-        <KpiCard title="Clientes em Risco" value={String(allScores?.filter(c => c.health_class === 'critico' || c.health_class === 'atencao').length || 0)} icon={AlertTriangle} trend="down" />
+        <KpiCard title="Clientes em Risco" value={String(allScores?.filter(c => (c.health_class === 'critico' || c.health_class === 'atencao') && c.sales_history_status !== 'sem_historico').length || 0)} icon={AlertTriangle} trend="down" />
         <KpiCard title="Mix Médio" value={globalAvgCategories.toFixed(1)} icon={Layers} subtitle="categorias/cliente" />
       </div>
 

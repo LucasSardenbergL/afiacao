@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolverCustoConfiavel, estimarCustoParaRanking, derivarMargensCandidato, type CostRow } from '../cost-source';
+import { resolverCustoConfiavel, estimarCustoParaRanking, derivarMargensCandidato, resolverCustoCockpit, type CostRow } from '../cost-source';
 
 const row = (o: Partial<CostRow>): CostRow => ({ cost_price: null, cost_final: null, cost_source: null, cost_confidence: null, ...o });
 
@@ -114,5 +114,67 @@ describe('CMC_UNIDADE_SUSPEITA — descasamento de unidade: proxy p/ ranking, nu
   });
   it('proxy ≥ price (margem estimada ≤0) → ranking null (sanity bound do proxy vale aqui também)', () => {
     expect(estimarCustoParaRanking(row({ cost_source: 'CMC_UNIDADE_SUSPEITA', cost_final: 120 }), 100)).toBeNull();
+  });
+});
+
+// resolverCustoCockpit é a régua do COCKPIT de valor (A3), DIFERENTE de resolverCustoConfiavel: o cockpit
+// COMPUTA-E-DEGRADA (#1003) — exibe a margem mesmo de proxy, mas marca baixaConfianca p/ rebaixar o nível de
+// confiança (custo_baixa_confianca_pct); recommend/audit NULIFICAM proxy. Split intencional, NÃO unificar.
+// baixaConfianca = fallback legado (cost_price) OU source não-real OU cost_confidence<0.7. A cláusula de SOURCE
+// blinda o invariante latente: um proxy carimbado com conf>=0.7 pelo motor NÃO vira margem firme silenciosa.
+describe('resolverCustoCockpit — régua do cockpit (computa-e-degrada, NÃO nulifica proxy)', () => {
+  it('CMC conf alta + cost_final>0 → custo firme (não baixa)', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'CMC', cost_final: 8, cost_confidence: 0.85 })))
+      .toEqual({ custo: 8, baixaConfianca: false, legadoFallback: false });
+  });
+  it('conf no limite 0.7 → firme (>=)', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'CMC', cost_final: 8, cost_confidence: 0.7 })).baixaConfianca).toBe(false);
+  });
+  it('proxy conf 0.5 → custo EXIBIDO mas baixa confiança (não nulifica como recommend)', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'FAMILY_MARGIN_PROXY', cost_final: 50, cost_confidence: 0.5 })))
+      .toEqual({ custo: 50, baixaConfianca: true, legadoFallback: false });
+  });
+  // O CORAÇÃO da B-mínima — o invariante latente. SEM a cláusula de source, isto seria baixaConfianca:false (BUG).
+  it('INVARIANTE: proxy com conf>=0.7 (motor carimbou errado) → AINDA baixa confiança (cláusula de source)', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'FAMILY_MARGIN_PROXY', cost_final: 50, cost_confidence: 0.9 })))
+      .toEqual({ custo: 50, baixaConfianca: true, legadoFallback: false });
+  });
+  it('source desconhecida com conf alta → baixa (fonte nova não vira firme sem se declarar real)', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'XYZ_NOVA', cost_final: 50, cost_confidence: 0.95 })).baixaConfianca).toBe(true);
+  });
+  it('CMC_MARGEM_ATIPICA (real) conf 0.6 → custo real exibido, mas baixa por conf<0.7', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'CMC_MARGEM_ATIPICA', cost_final: 120, cost_confidence: 0.6 })))
+      .toEqual({ custo: 120, baixaConfianca: true, legadoFallback: false });
+  });
+  it('CMC_MARGEM_ATIPICA real com conf alta → firme (source-aware NÃO rebaixa custo real)', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'CMC_MARGEM_ATIPICA', cost_final: 120, cost_confidence: 0.9 })).baixaConfianca).toBe(false);
+  });
+  it('fallback legado cost_price (cost_final inválido) → SEMPRE baixa, mesmo source real + conf alta', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'CMC', cost_final: 0, cost_price: 9.9, cost_confidence: 0.85 })))
+      .toEqual({ custo: 9.9, baixaConfianca: true, legadoFallback: true });
+  });
+  it('PRODUCT_COST conf alta → firme (invariante-IRMÃO: B-mínima confia em PRODUCT_COST; cobertura fica no motor/sentinela)', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'PRODUCT_COST', cost_final: 30, cost_confidence: 0.95 })).baixaConfianca).toBe(false);
+  });
+  it('cost_confidence null em source real válido → baixa (política conservadora: sem score, não vouchar)', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'CMC', cost_final: 8, cost_confidence: null })).baixaConfianca).toBe(true);
+  });
+  it('sem custo: cost_final e cost_price inválidos → custo null (cm null no combo)', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'CMC', cost_final: 0, cost_price: 0, cost_confidence: 0.85 })))
+      .toEqual({ custo: null, baixaConfianca: false, legadoFallback: false });
+  });
+  it('falsificação: cost_final NaN → fallback p/ cost_price; cost_final Infinity + cost_price inválido → null', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'CMC', cost_final: NaN, cost_price: 7, cost_confidence: 0.8 })).custo).toBe(7);
+    expect(resolverCustoCockpit(row({ cost_source: 'CMC', cost_final: Infinity, cost_price: -1, cost_confidence: 0.8 })).custo).toBeNull();
+  });
+  it('normaliza espaço/caixa do source (proxy disfarçado não escapa da cláusula)', () => {
+    expect(resolverCustoCockpit(row({ cost_source: '  family_margin_proxy  ', cost_final: 50, cost_confidence: 0.9 })).baixaConfianca).toBe(true);
+  });
+  it('source REAL normalizado (espaço nas pontas/caixa) com conf alta → firme (simetria com o proxy disfarçado)', () => {
+    expect(resolverCustoCockpit(row({ cost_source: '  cmc  ', cost_final: 8, cost_confidence: 0.85 })).baixaConfianca).toBe(false);
+    expect(resolverCustoCockpit(row({ cost_source: 'Cmc_Margem_Atipica', cost_final: 120, cost_confidence: 0.9 })).baixaConfianca).toBe(false);
+  });
+  it('source com espaço INTERNO (malformado, enum-like ASCII) → baixa (trim não conserta; não-real, conservador)', () => {
+    expect(resolverCustoCockpit(row({ cost_source: 'C M C', cost_final: 8, cost_confidence: 0.9 })).baixaConfianca).toBe(true);
   });
 });

@@ -24,7 +24,7 @@ export function CustomerHero({
   isPj: boolean;
   onBack: () => void;
 }) {
-  const health = healthTone(s?.health_class ?? null);
+  const health = healthTone(s?.health_class ?? null, s?.sales_history_status ?? null);
   const churn = churnTone(s?.churn_risk ?? null);
   const waHref = whatsappLink(customer.phone);
 
@@ -108,13 +108,15 @@ export function CustomerHero({
               <span
                 className={cn(
                   'inline-flex items-center gap-1.5 px-2 py-1 rounded-md border',
-                  s?.health_class === 'critico' || s?.health_class === 'risco'
-                    ? 'bg-status-error-bg text-status-error-bold border-status-error/20'
-                    : s?.health_class === 'atencao'
-                      ? 'bg-status-warning-bg text-status-warning-bold border-status-warning/20'
-                      : s?.health_class === 'saudavel'
-                        ? 'bg-status-success-bg text-status-success-bold border-status-success/20'
-                        : 'bg-muted text-muted-foreground border-border',
+                  s?.sales_history_status === 'sem_historico'
+                    ? 'bg-muted text-muted-foreground border-border'
+                    : s?.health_class === 'critico' || s?.health_class === 'risco'
+                      ? 'bg-status-error-bg text-status-error-bold border-status-error/20'
+                      : s?.health_class === 'atencao'
+                        ? 'bg-status-warning-bg text-status-warning-bold border-status-warning/20'
+                        : s?.health_class === 'saudavel'
+                          ? 'bg-status-success-bg text-status-success-bold border-status-success/20'
+                          : 'bg-muted text-muted-foreground border-border',
                 )}
               >
                 <span className={cn('inline-block w-1.5 h-1.5 rounded-full', health.dot)} />
