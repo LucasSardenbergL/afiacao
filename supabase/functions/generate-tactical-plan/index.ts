@@ -78,6 +78,7 @@ serve(async (req) => {
       const num = (v: unknown) => Number(v ?? 0);
       const healthScore = num(score.health_score), churnRisk = num(score.churn_risk), avgSpend = num(score.avg_monthly_spend_180d);
       const marginPct = num(score.gross_margin_pct), categoryCount = num(score.category_count), daysSince = num(score.days_since_last_purchase);
+      const salesHistoryStatus = (score.sales_history_status ?? null) as string | null;
       const clusterMargin = allScores?.length ? allScores.reduce((s: number, r: { gross_margin_pct: unknown }) => s + num(r.gross_margin_pct), 0) / allScores.length : 25;
       const mixGap = Math.max(0, 8 - categoryCount);
 
@@ -85,7 +86,8 @@ serve(async (req) => {
       const customerProfile = avgSpend < 500 && marginPct < 20 ? 'sensivel_preco'
         : marginPct > 35 && categoryCount <= 3 ? 'orientado_qualidade'
         : avgSpend > 2000 && categoryCount >= 4 && healthScore > 60 ? 'orientado_produtividade' : 'misto';
-      const strategicObjective = daysSince > 90 ? 'reativacao' : churnRisk > 60 ? 'recuperacao'
+      const strategicObjective = salesHistoryStatus === 'sem_historico' ? 'ativacao'
+        : daysSince > 90 ? 'reativacao' : churnRisk > 60 ? 'recuperacao'
         : mixGap > 3 ? 'expansao_mix' : marginPct < clusterMargin * 0.8 ? 'consolidacao_margem' : 'upsell_premium';
 
       topBundleRow = bundles?.[0] ?? null;
@@ -94,7 +96,7 @@ serve(async (req) => {
         .map((e: { event_data: { intent?: unknown } | null }) => (e.event_data as { intent?: unknown } | null)?.intent)
         .filter((i: unknown): i is string => typeof i === 'string' && i.startsWith('objecao')).slice(0, 5);
 
-      customerContext = { name: profile?.name, cnae: profile?.cnae, customerType: profile?.customer_type, profile: customerProfile, healthScore, churnRisk, avgMonthlySpend: avgSpend, grossMarginPct: marginPct, categoryCount, daysSinceLastPurchase: daysSince, mixGap, clusterAvgMargin: clusterMargin, expansionPotential: num(score.expansion_score), revenuePotential: num(score.revenue_potential) };
+      customerContext = { name: profile?.name, cnae: profile?.cnae, customerType: profile?.customer_type, profile: customerProfile, healthScore, churnRisk, avgMonthlySpend: avgSpend, grossMarginPct: marginPct, categoryCount, daysSinceLastPurchase: daysSince, mixGap, clusterAvgMargin: clusterMargin, expansionPotential: num(score.expansion_score), revenuePotential: num(score.revenue_potential), salesHistoryStatus };
       bundleContext = topBundleRow ? { products: topBundleRow.bundle_products, lie: topBundleRow.lie_bundle, probability: topBundleRow.p_bundle, margin: topBundleRow.m_bundle } : null;
       diagnosticData = { strategicObjective };
       // Paridade com o front: no modo estratégico, inclui o 2º bundle p/ comparação.
@@ -118,7 +120,7 @@ Gere um Plano Tático ESSENCIAL (rápido) para o vendedor (Farmer).
 
 Retorne um JSON com:
 
-1. "strategic_objective": Exatamente um de: "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem"
+1. "strategic_objective": Exatamente um de: "ativacao", "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem". IMPORTANTE: se "salesHistoryStatus" do cliente for "sem_historico", o cliente NUNCA comprou — o objetivo é "ativacao" (1ª compra); NÃO trate health/churn como recuperação (não há histórico para recuperar); foque em descoberta de necessidade e primeira oferta.
 
 2. "approach_strategy": Texto curto (1-2 frases) descrevendo a abordagem ideal
 
@@ -141,7 +143,7 @@ Gere um Plano Tático ESTRATÉGICO COMPLETO para o vendedor (Farmer).
 
 Retorne um JSON com:
 
-1. "strategic_objective": Exatamente um de: "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem"
+1. "strategic_objective": Exatamente um de: "ativacao", "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem". IMPORTANTE: se "salesHistoryStatus" do cliente for "sem_historico", o cliente NUNCA comprou — o objetivo é "ativacao" (1ª compra); NÃO trate health/churn como recuperação (não há histórico para recuperar); foque em descoberta de necessidade e primeira oferta.
 
 2. "approach_strategy": Texto detalhado (3-4 frases) da abordagem ideal
 
