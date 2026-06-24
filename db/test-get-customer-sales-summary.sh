@@ -4,8 +4,10 @@
 # ║  Money-path: alimenta recência/receita/diversidade do auto-seed. Substitui a   ║
 # ║  leitura crua order_items .limit(10000) sem .order() (truncava ~30%).          ║
 # ║  v4: BLOCKLIST (alinha princípio c/ #935 — status novo ENTRA, anti-subcontagem;║
-# ║  não-vendas cancelado/rascunho/pendente/orcamento FICAM FORA). Aplica v3→v4    ║
-# ║  (simula a ordem de prod: CREATE OR REPLACE sobre a v3 allowlist).             ║
+# ║  não-vendas cancelado/rascunho/pendente/orcamento FICAM FORA).                 ║
+# ║  v5: blinda o FALLBACK created_at::date com AT TIME ZONE 'America/Sao_Paulo'    ║
+# ║  (recência TZ-determinística; follow-up #4 do design da MV, espelha #1023).     ║
+# ║  Aplica v3→v4→v5 (simula a ordem de prod: CREATE OR REPLACE encadeado).         ║
 # ║  Lei de Ferro: migration REAL · assert negativo c/ SQLSTATE · falsificação.    ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
@@ -66,12 +68,14 @@ CREATE TABLE public.order_items (
 );
 SQL
 
-# ══ ZONA 2 — aplica as migrations REAIS na ORDEM de prod: v3 (allowlist) → v4 (blocklist) ══
+# ══ ZONA 2 — aplica as migrations REAIS na ORDEM de prod: v3 (allowlist) → v4 (blocklist) → v5 (tz) ══
 MIG3="$REPO_ROOT/supabase/migrations/20260618180000_get_customer_sales_summary.sql"
-MIG="$REPO_ROOT/supabase/migrations/20260618190000_get_customer_sales_summary_blocklist.sql"
-P -q -f "$MIG3"   # estado v3 (allowlist) — como está em prod hoje
-P -q -f "$MIG"    # v4 CREATE OR REPLACE sobre a v3 (blocklist) — a transição que vai pra prod
-echo "migrations aplicadas: v3 → $(basename "$MIG")"
+MIG4="$REPO_ROOT/supabase/migrations/20260618190000_get_customer_sales_summary_blocklist.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260623150000_get_customer_sales_summary_tz_fallback.sql"  # v5 = verdade atual; restaurações apontam aqui
+P -q -f "$MIG3"   # estado v3 (allowlist) — histórico
+P -q -f "$MIG4"   # v4 CREATE OR REPLACE (blocklist) — histórico
+P -q -f "$MIG"    # v5 CREATE OR REPLACE (blocklist + fallback TZ-determinístico) — a transição que vai pra prod
+echo "migrations aplicadas: v3 → v4 → $(basename "$MIG")"
 
 # ══ ZONA 3 — seed (cobre invariantes + edge cases Codex r2 + a inversão allowlist→blocklist) ══
 # oi.created_at = '2020-01-01' em TODOS (munição p/ F3: provar que NÃO se usa created_at do item).
@@ -90,7 +94,11 @@ INSERT INTO public.sales_orders (id, status, deleted_at, order_date_kpi, created
   ('50000000-0000-0000-0000-000000000011','faturado',  NULL,  current_date-6,  (current_date-6)::timestamptz),   -- G
   ('50000000-0000-0000-0000-000000000012','faturado',  NULL,  NULL,            (current_date-5)::timestamptz),   -- H kpi NULL → COALESCE p/ created_at
   ('50000000-0000-0000-0000-000000000013','faturado',  NULL,  current_date+30, (current_date+30)::timestamptz),  -- I data FUTURA
-  ('50000000-0000-0000-0000-000000000014','orcamento', NULL,  current_date-1,  (current_date-1)::timestamptz);   -- B orçamento (não-venda) EXCLUÍDO
+  ('50000000-0000-0000-0000-000000000014','orcamento', NULL,  current_date-1,  (current_date-1)::timestamptz),   -- B orçamento (não-venda) EXCLUÍDO
+  -- Bordas TZ (follow-up #4): order_date_kpi NULL → cai no FALLBACK created_at. Ancoradas em today_sp
+  -- (= (now() AT TIME ZONE SP)::date, absoluto) p/ que o caso de borda independa de QUANDO o teste roda.
+  ('50000000-0000-0000-0000-000000000015','faturado', NULL, NULL, (((now() AT TIME ZONE 'America/Sao_Paulo')::date)::timestamp + time '02:30') AT TIME ZONE 'UTC'),         -- TZR: hoje 02:30 UTC = ontem 23:30 SP (1ª ocorrência: recência)
+  ('50000000-0000-0000-0000-000000000016','faturado', NULL, NULL, ((((now() AT TIME ZONE 'America/Sao_Paulo')::date)+1)::timestamp + time '01:00') AT TIME ZONE 'UTC');     -- TZW: (hoje+1) 01:00 UTC = hoje 22:00 SP (2ª ocorrência: janela 180d)
 
 INSERT INTO public.order_items (id, sales_order_id, customer_user_id, product_id, unit_price, quantity, created_at) VALUES
   ('70000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000001','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','60000000-0000-0000-0000-000000000001',100,2,   '2020-01-01'), -- A 200
@@ -108,7 +116,9 @@ INSERT INTO public.order_items (id, sales_order_id, customer_user_id, product_id
   ('70000000-0000-0000-0000-000000000013','50000000-0000-0000-0000-000000000011','99999999-9999-9999-9999-999999999999','60000000-0000-0000-0000-000000000007',20,1,'2020-01-01'),   -- G 20
   ('70000000-0000-0000-0000-000000000014','50000000-0000-0000-0000-000000000012','88888888-8888-8888-8888-888888888888','60000000-0000-0000-0000-000000000008',40,1,'2020-01-01'),   -- H 40 (kpi null)
   ('70000000-0000-0000-0000-000000000015','50000000-0000-0000-0000-000000000013','12121212-1212-1212-1212-121212121212','60000000-0000-0000-0000-000000000009',60,1,'2020-01-01'),   -- I 60 (futuro)
-  ('70000000-0000-0000-0000-000000000016','50000000-0000-0000-0000-000000000014','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','60000000-0000-0000-0000-00000000000a',5000,1,'2020-01-01');-- B 5000 ORÇAMENTO
+  ('70000000-0000-0000-0000-000000000016','50000000-0000-0000-0000-000000000014','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','60000000-0000-0000-0000-00000000000a',5000,1,'2020-01-01'),-- B 5000 ORÇAMENTO
+  ('70000000-0000-0000-0000-000000000017','50000000-0000-0000-0000-000000000015','d1d1d1d1-d1d1-d1d1-d1d1-d1d1d1d1d1d1','60000000-0000-0000-0000-00000000000b',30,1,'2020-01-01'),  -- TZR 30 (kpi-null borda recência)
+  ('70000000-0000-0000-0000-000000000018','50000000-0000-0000-0000-000000000016','d2d2d2d2-d2d2-d2d2-d2d2-d2d2d2d2d2d2','60000000-0000-0000-0000-00000000000c',140,1,'2020-01-01');-- TZW 140 (kpi-null borda janela 180d)
 
 GRANT SELECT ON public.order_items, public.sales_orders TO service_role, anon, authenticated;
 SQL
@@ -121,16 +131,18 @@ F='ffffffff-ffff-ffff-ffff-ffffffffffff'
 G='99999999-9999-9999-9999-999999999999'
 H='88888888-8888-8888-8888-888888888888'
 I='12121212-1212-1212-1212-121212121212'
+TZR='d1d1d1d1-d1d1-d1d1-d1d1-d1d1d1d1d1d1'  # kpi-null, created_at=hoje 02:30 UTC (=ontem 23:30 SP) → borda da recência (1ª ocorrência)
+TZW='d2d2d2d2-d2d2-d2d2-d2d2-d2d2d2d2d2d2'  # kpi-null, created_at=(hoje+1) 01:00 UTC (=hoje 22:00 SP) → borda do teto da janela 180d (2ª ocorrência)
 val() { Pq -c "SELECT $1 FROM public.get_customer_sales_summary() WHERE customer_user_id='$2';"; }
 
 echo "── asserts positivos / money-path (v4 blocklist) ──"
 # Cobertura 100% (anti-truncamento): a RPC agrega TODOS os itens válidos
-eq "A0 itens crus semeados" "$(Pq -c "SELECT count(*) FROM public.order_items;")" "16"
+eq "A0 itens crus semeados" "$(Pq -c "SELECT count(*) FROM public.order_items;")" "18"
 COB=$(Pq -c "SELECT sum(item_count) FROM public.get_customer_sales_summary();")
 DIRECT=$(Pq -c "SELECT count(*) FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id WHERE so.status NOT IN ('cancelado','rascunho','pendente','orcamento') AND so.deleted_at IS NULL AND oi.customer_user_id IS NOT NULL;")
 eq "A1 cobertura sum(item_count)=count direto" "$COB" "$DIRECT"
-eq "A1b cobertura = 12 válidos (4 excluídos: cancelado/null/deleted/orçamento)" "$COB" "12"
-eq "A2 clientes na RPC = 8" "$(Pq -c "SELECT count(*) FROM public.get_customer_sales_summary();")" "8"
+eq "A1b cobertura = 14 válidos (4 excluídos: cancelado/null/deleted/orçamento; +2 bordas TZ)" "$COB" "14"
+eq "A2 clientes na RPC = 10 (8 + TZR + TZW)" "$(Pq -c "SELECT count(*) FROM public.get_customer_sales_summary();")" "10"
 
 # Paridade revenue + janela 180d + recência (SQL) + diversidade
 eq "A3 total_revenue A = 1250"                       "$(val "(total_revenue=1250)" "$A")" "t"
@@ -156,7 +168,7 @@ eq "A15b revenue_180d I = 0 (futuro fora janela)"     "$(val "(revenue_180d=0)" 
 eq "A15c total_revenue I = 60 (all-time inclui)"      "$(val "(total_revenue=60)" "$I")" "t"
 
 echo "── asserts de GRANT/REVOKE (SQLSTATE 42501 + re-raise) ──"
-eq "A16 service_role executa" "$(Pq -c "SET ROLE service_role; SELECT count(*) FROM public.get_customer_sales_summary();" | tail -1)" "8"
+eq "A16 service_role executa" "$(Pq -c "SET ROLE service_role; SELECT count(*) FROM public.get_customer_sales_summary();" | tail -1)" "10"
 R=$(P -tA 2>&1 <<'SQL'
 SET ROLE anon;
 DO $$ BEGIN
@@ -178,7 +190,23 @@ SQL
 )
 case "$R" in *AUTH_NEGADO_OK*) ok "A18 authenticated negado (42501)";; *) bad "A18 authenticated — veio: $R";; esac
 
-echo "── falsificação (sabota → exige VERMELHO → restaura v4) ──"
+echo "── anti-timezone (follow-up #4): RPC sob UTC vs SP → IDÊNTICO nas 2 ocorrências do fallback ──"
+# `now()` e o teto today_sp já são TZ-absolutos; o ÚNICO ponto TZ-sensível é o fallback created_at::date.
+# TZR/TZW têm order_date_kpi NULL → exercitam o fallback. `| tail -1` descarta a tag 'SET' (padrão do harness da MV).
+# TZR (created_at hoje 02:30 UTC = ontem 23:30 SP): 1ª ocorrência (recência max). A data civil correta é SP → days=1.
+DR_UTC=$(Pq -c "SET TIME ZONE 'UTC';               SELECT days_since_last_purchase FROM public.get_customer_sales_summary() WHERE customer_user_id='$TZR';" | tail -1)
+DR_SP=$( Pq -c "SET TIME ZONE 'America/Sao_Paulo'; SELECT days_since_last_purchase FROM public.get_customer_sales_summary() WHERE customer_user_id='$TZR';" | tail -1)
+eq "TZ1 days(TZR) idêntico UTC×SP (recência determinística)"  "$DR_UTC" "$DR_SP"
+eq "TZ1b days(TZR)=1 (data civil SP de ontem, não a UTC de hoje)" "$DR_SP" "1"
+# TZW (created_at (hoje+1) 01:00 UTC = hoje 22:00 SP): 2ª ocorrência (FILTER da janela). Em SP a data é HOJE,
+# dentro do teto today_sp → 140. created_at::date cru sob UTC daria amanhã (> teto) → 0.
+RW_UTC=$(Pq -c "SET TIME ZONE 'UTC';               SELECT revenue_180d FROM public.get_customer_sales_summary() WHERE customer_user_id='$TZW';" | tail -1)
+RW_SP=$( Pq -c "SET TIME ZONE 'America/Sao_Paulo'; SELECT revenue_180d FROM public.get_customer_sales_summary() WHERE customer_user_id='$TZW';" | tail -1)
+eq "TZ2 revenue_180d(TZW) idêntico UTC×SP (janela determinística)"   "$RW_UTC" "$RW_SP"
+eq "TZ2b revenue_180d(TZW)=140 (data civil SP=hoje, dentro do teto)" "$RW_SP" "140"
+P -q -c "SET TIME ZONE 'America/Sao_Paulo';"   # volta ao default canônico p/ as falsificações abaixo
+
+echo "── falsificação (sabota → exige VERMELHO → restaura v5) ──"
 # F1 (INVERSÃO v4): blocklist → allowlist amnésica → 'entregue' (status novo) SAI → F vira 10.
 P -q <<'SQL'
 CREATE OR REPLACE FUNCTION public.get_customer_sales_summary()
@@ -309,8 +337,35 @@ SQL
 if [ "$(val "(total_revenue=300)" "$B")" = "f" ]; then ok "F7 blocklist exclui orçamento (deixei entrar: B=$(val total_revenue "$B"), A7 quebraria)"; else bad "F7 deixei 'orcamento' entrar e A7 NÃO mudou"; fi
 P -q -f "$MIG"
 
+# FTZ (follow-up #4): reverte o fallback p/ created_at::date CRU nas DUAS ocorrências → sob sessão UTC a
+# data civil vira a UTC (não a de SP) → TZ1/TZ2 divergem. Prova que o AT TIME ZONE SP do v5 tem dente.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.get_customer_sales_summary()
+RETURNS TABLE(customer_user_id uuid, days_since_last_purchase int, total_revenue numeric, revenue_180d numeric, item_count bigint, category_count bigint)
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path=public AS $fn$
+  SELECT oi.customer_user_id,
+    GREATEST(0,(now() AT TIME ZONE 'America/Sao_Paulo')::date - max(COALESCE(so.order_date_kpi,so.created_at::date)))::int,  -- SABOTADO: ::date cru (1ª)
+    COALESCE(sum(COALESCE(oi.unit_price,0)*COALESCE(NULLIF(oi.quantity,0),1)),0),
+    COALESCE(sum(COALESCE(oi.unit_price,0)*COALESCE(NULLIF(oi.quantity,0),1)) FILTER (WHERE COALESCE(so.order_date_kpi,so.created_at::date) BETWEEN (now() AT TIME ZONE 'America/Sao_Paulo')::date-180 AND (now() AT TIME ZONE 'America/Sao_Paulo')::date),0),  -- SABOTADO: ::date cru (2ª)
+    count(*), count(DISTINCT oi.product_id)
+  FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id
+  WHERE so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+    AND so.deleted_at IS NULL AND oi.customer_user_id IS NOT NULL
+  GROUP BY oi.customer_user_id;
+$fn$;
+SQL
+FDR_UTC=$(Pq -c "SET TIME ZONE 'UTC';               SELECT days_since_last_purchase FROM public.get_customer_sales_summary() WHERE customer_user_id='$TZR';" | tail -1)
+FDR_SP=$( Pq -c "SET TIME ZONE 'America/Sao_Paulo'; SELECT days_since_last_purchase FROM public.get_customer_sales_summary() WHERE customer_user_id='$TZR';" | tail -1)
+if [ "$FDR_UTC" != "$FDR_SP" ]; then ok "FTZ-a recência tem dente (::date cru: days UTC=$FDR_UTC ≠ SP=$FDR_SP, TZ1 quebraria)"; else bad "FTZ-a reverti p/ ::date cru e days UTC==SP ($FDR_UTC)"; fi
+FRW_UTC=$(Pq -c "SET TIME ZONE 'UTC';               SELECT revenue_180d FROM public.get_customer_sales_summary() WHERE customer_user_id='$TZW';" | tail -1)
+FRW_SP=$( Pq -c "SET TIME ZONE 'America/Sao_Paulo'; SELECT revenue_180d FROM public.get_customer_sales_summary() WHERE customer_user_id='$TZW';" | tail -1)
+if [ "$FRW_UTC" != "$FRW_SP" ]; then ok "FTZ-b janela tem dente (::date cru: revenue_180d UTC=$FRW_UTC ≠ SP=$FRW_SP, TZ2 quebraria)"; else bad "FTZ-b reverti p/ ::date cru e revenue_180d UTC==SP ($FRW_UTC)"; fi
+P -q -c "SET TIME ZONE 'America/Sao_Paulo';"
+P -q -f "$MIG"   # restaura a v5 REAL
+
 # pós-restauração: confirma verde de novo (migration idempotente, asserts voltam)
 eq "A19 pós-restauração: blocklist de volta (F=787)" "$(val "(total_revenue=787)" "$F")" "t"
+eq "A20 pós-restauração: anti-TZ de volta (days TZR=1 sob UTC)" "$(Pq -c "SET TIME ZONE 'UTC'; SELECT days_since_last_purchase FROM public.get_customer_sales_summary() WHERE customer_user_id='$TZR';" | tail -1)" "1"
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"

@@ -96,6 +96,21 @@ export default function FinanceiroValorCockpit() {
         </span>
       </div>
 
+      {data.k != null && (
+        <p className="text-xs text-muted-foreground">
+          EVP conhecido (capital medido): <span className="font-tabular text-foreground">{brl(data.empresa.evp_conhecido)}</span>
+          {data.empresa.evp_teto_total != null && (
+            <> · teto ≤ <span className="font-tabular">{brl(data.empresa.evp_teto_total)}</span></>
+          )}
+          {data.empresa.evp_perda_garantida != null && data.empresa.evp_perda_garantida < 0 && (
+            <> · perda garantida <span className="font-tabular text-status-error">{brl(data.empresa.evp_perda_garantida)}</span></>
+          )}
+          {data.evp_omitido_otimista_receita_pct != null && data.evp_omitido_otimista_receita_pct > 0 && (
+            <> · <span className="text-status-warning">{(data.evp_omitido_otimista_receita_pct * 100).toFixed(0)}% da receita com EVP omitido (capital não medido)</span></>
+          )}
+        </p>
+      )}
+
       <div className="flex gap-2">
         <Button
           variant={aba === 'cliente' ? 'default' : 'outline'}
@@ -147,16 +162,25 @@ export default function FinanceiroValorCockpit() {
                     <td className="text-right">{brl(row.receita)}</td>
                     <td className="text-right">{brl(row.cm)}</td>
                     <td className="text-right text-muted-foreground">{brl(row.encargo)}</td>
-                    <td
-                      className={`text-right kpi-value ${
-                        row.evp == null
-                          ? 'text-muted-foreground'
-                          : row.evp < 0
-                          ? 'text-status-error'
-                          : 'text-status-success'
-                      }`}
-                    >
-                      {brl(row.evp)}
+                    <td className="text-right">
+                      <div
+                        className={`kpi-value ${
+                          row.evp == null
+                            ? 'text-muted-foreground'
+                            : row.evp < 0
+                            ? 'text-status-error'
+                            : 'text-status-success'
+                        }`}
+                      >
+                        {brl(row.evp)}
+                      </div>
+                      {(row.evp_incompleto || row.perda_garantida) && (
+                        <div className="text-[10px] leading-tight text-muted-foreground">
+                          {row.evp_incompleto
+                            ? `${row.evp == null ? 'capital não medido' : 'parcial'}${row.evp_teto != null ? ` · teto ≤ ${brl(row.evp_teto)}` : ''}`
+                            : 'prejuízo real pode ser maior (teto)'}
+                        </div>
+                      )}
                     </td>
                     <td className="pl-3 text-xs">
                       {recs.map((r, i) => (
