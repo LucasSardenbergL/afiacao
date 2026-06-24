@@ -52,6 +52,7 @@ Pra disparar MUITAS invocações da MESMA edge/conta Omie (ex.: backfill mês-a-
 
 - `data_health_watchdog` (cron `*/30`, SQL local) + `fin_sync_watchdog_check` (`*/30`) + `fin_sync_heartbeat` (dead-man-switch) computam saúde e fazem **push** na transição ok→degradado (grava `fin_alertas` + enfileira `fornecedor_alerta` → `dispatch-notifications`). Fonte única: `_data_health_compute()`.
 - ⚠️ `_data_health_compute` é arquivo QUENTE multi-sessão. Ao recriá-lo, **parta da migration de MAIOR timestamp** (nunca de um corpo antigo) e **recrie `data_health_watchdog` + `fin_sync_heartbeat` JUNTO** (os IN-lists referenciam os `source` names; mudar o conjunto de checks sem atualizar os dois desincroniza o push). Pré-flight `pg_get_functiondef` é obrigatório — prod pode ter checks que o repo não tem (drift).
+- ⚠️ **Duas classes de violação no MESMO source ficam silenciadas** pelo `ON CONFLICT (company,tipo) DO NOTHING` do watchdog (a 2ª não emite e-mail enquanto a 1ª está ativa) → **separe em sources distintos** quando invariante/remédio diferem (lição #1030: proveniência de custo virou `custos_proxy_conf_alta` + `custos_product_cost_revivido`, não 1 combinado). Ao normalizar `cost_source`/texto p/ casar o `.trim()` do consumo TS, use `regexp_replace(x,'^\s+|\s+$','','g')` (não `btrim`, que só tira espaço — `E'\tPRODUCT_COST\n'` escaparia).
 
 ## Incidente em aberto (2026-06-14)
 
