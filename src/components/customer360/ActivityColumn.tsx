@@ -1,7 +1,7 @@
 // Coluna de atividade (Itens preferidos, Últimos contatos, Pedidos recentes) do Customer 360.
 // Extraída de src/pages/Customer360.tsx (god-component split).
 import { Link } from 'react-router-dom';
-import { Package, PhoneCall, MessageSquare, ShoppingBag, Inbox } from 'lucide-react';
+import { Package, PhoneCall, MessageSquare, MapPin, CheckSquare, ShoppingBag, Inbox } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -134,6 +134,10 @@ export function ActivityColumn({
                   >
                     {it.kind === 'call' ? (
                       <PhoneCall className="w-3 h-3" />
+                    ) : it.kind === 'visit' ? (
+                      <MapPin className="w-3 h-3" />
+                    ) : it.kind === 'task' ? (
+                      <CheckSquare className="w-3 h-3" />
                     ) : (
                       <MessageSquare className="w-3 h-3" />
                     )}
@@ -145,7 +149,7 @@ export function ActivityColumn({
                       <span className="text-xs text-muted-foreground">
                         {formatRelative(it.at)}
                       </span>
-                      {it.kind === 'call' && it.revenue != null && it.revenue > 0 && (
+                      {it.revenue != null && it.revenue > 0 && (
                         <Badge className="text-[9px] uppercase bg-status-success-bg text-status-success-bold hover:bg-status-success-bg">
                           +{formatBRL(it.revenue)}
                         </Badge>

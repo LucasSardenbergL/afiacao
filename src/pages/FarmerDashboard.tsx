@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +17,7 @@ import {
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CallButton } from '@/components/call/CallButton';
+import { SlaVencidoCard } from '@/components/farmer/SlaVencidoCard';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 const healthColors: Record<string, { bg: string; text: string; border: string }> = {
@@ -46,6 +47,11 @@ const FarmerDashboard = () => {
   const { clientScores, agenda, summary, loading, config } = useFarmerScoring();
   const { metrics } = useFarmerMetrics();
   const [selectedClient, setSelectedClient] = useState<ClientScore | null>(null);
+  // Nome por cliente (do scoring) para a fila de SLA exibir nome em vez de UUID — evita query extra.
+  const nomePorCliente = useMemo(
+    () => new Map(clientScores.map((c) => [c.customer_user_id, c.customer_name] as const)),
+    [clientScores],
+  );
 
   if (authLoading || loading) {
     // PageSkeleton (não Loader2 full-page): o Suspense da rota já mostrou um
@@ -78,6 +84,12 @@ const FarmerDashboard = () => {
             <span className="text-[10px]">LOCC</span>
           </Button>
         </div>
+
+        {/* Fila de SLA de contato vencido — fecha o loop scoring → ação */}
+        <SlaVencidoCard
+          nomePorCliente={nomePorCliente}
+          onClienteClick={(id) => navigate(`/admin/customers/${id}/360`)}
+        />
 
         {/* Health Summary */}
         <Card>
