@@ -11,12 +11,6 @@ export const HEALTH_CLASSES: Record<string, { label: string; className: string }
   novo: { label: 'Novo', className: 'text-muted-foreground' },
 };
 
-export const SALES_HISTORY_LABELS: Record<string, { label: string; className: string }> = {
-  sem_historico: { label: 'Sem histórico', className: 'text-muted-foreground' },
-  stale: { label: 'Inativo', className: 'status-pending' },
-  ativo: { label: 'Ativo', className: 'status-success' },
-};
-
 export function formatDocument(doc: string | null) {
   if (!doc) return '-';
   if (doc.length === 11) return doc.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
