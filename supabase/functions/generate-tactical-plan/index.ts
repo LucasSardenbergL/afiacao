@@ -254,30 +254,42 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
     // Add plan_type to response
     plan.plan_type = mode;
 
-    // Modo self-contained (cron): grava o plano e devolve o id (colunas espelham o
-    // INSERT do front em useTacticalPlan.ts:432-461 — validado).
+    // Modo self-contained (cron): grava o plano via RPC-fronteira criar_plano_tatico.
+    // A posse (farmer_id) é re-resolvida server-side de carteira_assignments — não confiamos
+    // no body.farmerId resolvido no início do batch (pode estar stale se a carteira foi
+    // reatribuída durante a geração da IA). _expected_owner=body.farmerId faz a RPC ABORTAR no
+    // race em vez de gravar dono stale (precisão>recall). farmer_id/customer/status são do servidor.
     if (selfContained) {
       const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
       const d = (body as { _derived: Record<string, number | string> })._derived;
-      const { data: ins } = await admin.from('farmer_tactical_plans').insert({
-        farmer_id: body.farmerId, customer_user_id: body.customerId,
-        bundle_recommendation_id: (topBundleRow as { id?: string } | null)?.id ?? null,
-        health_score: d.healthScore, churn_risk: d.churnRisk, mix_gap: d.mixGap,
-        current_margin_pct: d.marginPct, cluster_avg_margin_pct: d.clusterMargin, expansion_potential: d.expansionPotential,
-        strategic_objective: plan.strategic_objective || d.strategicObjective, customer_profile: d.customerProfile, plan_type: mode,
-        top_bundle: (topBundleRow ? topBundleRow.bundle_products : {}),
-        second_bundle: (secondBundleRow ? (secondBundleRow as { bundle_products: unknown }).bundle_products : {}),
-        bundle_lie: Number((topBundleRow as { lie_bundle?: unknown } | null)?.lie_bundle ?? 0),
-        bundle_probability: Number((topBundleRow as { p_bundle?: unknown } | null)?.p_bundle ?? 0),
-        bundle_incremental_margin: Number((topBundleRow as { m_bundle?: unknown } | null)?.m_bundle ?? 0),
-        best_individual_lie: 0,
-        diagnostic_questions: plan.diagnostic_questions ?? [], implication_question: plan.implication_question ?? '',
-        offer_transition: plan.offer_transition ?? '', probable_objections: plan.probable_objections ?? [],
-        approach_strategy: plan.approach_strategy ?? '', approach_strategy_b: plan.approach_strategy_b ?? '',
-        ltv_projection: plan.ltv_projection ?? null, expected_result: plan.expected_result ?? null,
-        operational_risks: plan.operational_risks ?? [], status: 'gerado',
-      }).select('id').single();
-      return new Response(JSON.stringify({ id: ins?.id, generated: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const { data: newId, error: rpcErr } = await admin.rpc('criar_plano_tatico', {
+        _customer_user_id: body.customerId,
+        _expected_owner: body.farmerId,
+        _payload: {
+          bundle_recommendation_id: (topBundleRow as { id?: string } | null)?.id ?? null,
+          health_score: d.healthScore, churn_risk: d.churnRisk, mix_gap: d.mixGap,
+          current_margin_pct: d.marginPct, cluster_avg_margin_pct: d.clusterMargin, expansion_potential: d.expansionPotential,
+          strategic_objective: plan.strategic_objective || d.strategicObjective, customer_profile: d.customerProfile, plan_type: mode,
+          top_bundle: (topBundleRow ? topBundleRow.bundle_products : {}),
+          second_bundle: (secondBundleRow ? (secondBundleRow as { bundle_products: unknown }).bundle_products : {}),
+          bundle_lie: Number((topBundleRow as { lie_bundle?: unknown } | null)?.lie_bundle ?? 0),
+          bundle_probability: Number((topBundleRow as { p_bundle?: unknown } | null)?.p_bundle ?? 0),
+          bundle_incremental_margin: Number((topBundleRow as { m_bundle?: unknown } | null)?.m_bundle ?? 0),
+          best_individual_lie: 0,
+          diagnostic_questions: plan.diagnostic_questions ?? [], implication_question: plan.implication_question ?? '',
+          offer_transition: plan.offer_transition ?? '', probable_objections: plan.probable_objections ?? [],
+          approach_strategy: plan.approach_strategy ?? '', approach_strategy_b: plan.approach_strategy_b ?? '',
+          ltv_projection: plan.ltv_projection ?? null, expected_result: plan.expected_result ?? null,
+          operational_risks: plan.operational_risks ?? [],
+        },
+      });
+      if (rpcErr) {
+        // Race de reatribuição / cliente sem dono → pula este alvo (idempotente; o próximo ciclo
+        // re-lista farmer_client_scores já reconciliado e gera sob o dono certo). Não derruba o batch.
+        console.error('criar_plano_tatico falhou', body.customerId, rpcErr.message);
+        return new Response(JSON.stringify({ skipped: 'rpc_error', detail: rpcErr.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ id: newId, generated: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     return new Response(

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 283
+-- Total de custom migrations: 284
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -302,7 +302,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260622210000', 'tint_promote_dedup_itens_corante', '20260622210000_tint_promote_dedup_itens_corante.sql'),
   ('20260623120000', 'caca_custo_producao', '20260623120000_caca_custo_producao.sql'),
   ('20260623130000', 'caca_custo_producao_cron', '20260623130000_caca_custo_producao_cron.sql'),
-  ('20260623140000', 'recencia_mv_order_date_kpi', '20260623140000_recencia_mv_order_date_kpi.sql')
+  ('20260623140000', 'recencia_mv_order_date_kpi', '20260623140000_recencia_mv_order_date_kpi.sql'),
+  ('20260623180000', 'rpc_tactical_plan_posse_segura', '20260623180000_rpc_tactical_plan_posse_segura.sql')
 )
 SELECT
   e.version,
@@ -1329,7 +1330,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('caca_custo_producao', 'view', 'public', 'v_caca_compradores', ''),
   ('caca_custo_producao_cron', 'cron_job', 'cron', 'caca-custo-producao-colacor-daily', ''),
   ('recencia_mv_order_date_kpi', 'view', 'public', 'customer_metrics_mv', ''),
-  ('recencia_mv_order_date_kpi', 'index', 'public', 'idx_customer_metrics_mv_uid', 'customer_metrics_mv')
+  ('recencia_mv_order_date_kpi', 'index', 'public', 'idx_customer_metrics_mv_uid', 'customer_metrics_mv'),
+  ('rpc_tactical_plan_posse_segura', 'function', 'public', 'criar_plano_tatico', ''),
+  ('rpc_tactical_plan_posse_segura', 'function', 'public', 'registrar_resultado_plano', '')
 )
 SELECT
   e.migration,
