@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 288
+-- Total de custom migrations: 289
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -307,6 +307,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260623140000', 'recencia_mv_order_date_kpi', '20260623140000_recencia_mv_order_date_kpi.sql'),
   ('20260623150000', 'get_customer_sales_summary_tz_fallback', '20260623150000_get_customer_sales_summary_tz_fallback.sql'),
   ('20260623160000', 'data_health_custos_proveniencia', '20260623160000_data_health_custos_proveniencia.sql'),
+  ('20260623180000', 'rpc_tactical_plan_posse_segura', '20260623180000_rpc_tactical_plan_posse_segura.sql'),
   ('20260624010000', 'caca_custo_efetivo_fallback', '20260624010000_caca_custo_efetivo_fallback.sql')
 )
 SELECT
@@ -1340,6 +1341,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_custos_proveniencia', 'function', 'public', '_data_health_compute', ''),
   ('data_health_custos_proveniencia', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_custos_proveniencia', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('rpc_tactical_plan_posse_segura', 'function', 'public', 'criar_plano_tatico', ''),
+  ('rpc_tactical_plan_posse_segura', 'function', 'public', 'registrar_resultado_plano', ''),
   ('caca_custo_efetivo_fallback', 'view', 'public', 'v_caca_compradores', '')
 )
 SELECT
