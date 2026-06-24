@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 282
+-- Total de custom migrations: 283
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -301,7 +301,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260622163000', 'compute_costs_recompute_2h', '20260622163000_compute_costs_recompute_2h.sql'),
   ('20260622210000', 'tint_promote_dedup_itens_corante', '20260622210000_tint_promote_dedup_itens_corante.sql'),
   ('20260623120000', 'caca_custo_producao', '20260623120000_caca_custo_producao.sql'),
-  ('20260623130000', 'caca_custo_producao_cron', '20260623130000_caca_custo_producao_cron.sql')
+  ('20260623130000', 'caca_custo_producao_cron', '20260623130000_caca_custo_producao_cron.sql'),
+  ('20260623224637', 'crm_views_cliente_interacoes_e_carteira_sla', '20260623224637_crm_views_cliente_interacoes_e_carteira_sla.sql')
 )
 SELECT
   e.version,
@@ -1326,7 +1327,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('apply_score_updates_guard_full_update', 'function', 'public', 'apply_score_updates', ''),
   ('tint_promote_dedup_itens_corante', 'function', 'public', 'tint_promote_sync_run', ''),
   ('caca_custo_producao', 'view', 'public', 'v_caca_compradores', ''),
-  ('caca_custo_producao_cron', 'cron_job', 'cron', 'caca-custo-producao-colacor-daily', '')
+  ('caca_custo_producao_cron', 'cron_job', 'cron', 'caca-custo-producao-colacor-daily', ''),
+  ('crm_views_cliente_interacoes_e_carteira_sla', 'view', 'public', 'v_cliente_interacoes', ''),
+  ('crm_views_cliente_interacoes_e_carteira_sla', 'view', 'public', 'v_carteira_sla', '')
 )
 SELECT
   e.migration,
