@@ -59,14 +59,14 @@ export function useCustomerScore(customerId: string | undefined, farmerId: strin
       // Tenta o score do farmer atual primeiro; cai pra qualquer score se não existir
       const { data: own } = await supabase
         .from('farmer_client_scores')
-        .select('health_score, health_class, churn_risk, expansion_score, priority_score, gross_margin_pct, avg_monthly_spend_180d, days_since_last_purchase, category_count, avg_repurchase_interval, revenue_potential')
+        .select('health_score, health_class, churn_risk, expansion_score, priority_score, gross_margin_pct, avg_monthly_spend_180d, days_since_last_purchase, category_count, avg_repurchase_interval, revenue_potential, sales_history_status')
         .eq('customer_user_id', customerId!)
         .eq('farmer_id', farmerId!)
         .maybeSingle();
       if (own) return own;
       const { data: fallback } = await supabase
         .from('farmer_client_scores')
-        .select('health_score, health_class, churn_risk, expansion_score, priority_score, gross_margin_pct, avg_monthly_spend_180d, days_since_last_purchase, category_count, avg_repurchase_interval, revenue_potential')
+        .select('health_score, health_class, churn_risk, expansion_score, priority_score, gross_margin_pct, avg_monthly_spend_180d, days_since_last_purchase, category_count, avg_repurchase_interval, revenue_potential, sales_history_status')
         .eq('customer_user_id', customerId!)
         .limit(1)
         .maybeSingle();

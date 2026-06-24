@@ -38,6 +38,7 @@ const score: ClientScore = {
   days_since_last_purchase: 10,
   category_count: 3,
   gross_margin_pct: 0.3,
+  sales_history_status: 'ativo',
 };
 
 function setup(overrides: Partial<React.ComponentProps<typeof CustomerListView>> = {}) {

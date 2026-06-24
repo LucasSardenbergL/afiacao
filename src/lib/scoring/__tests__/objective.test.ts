@@ -51,6 +51,13 @@ describe('selectObjective — fronteira recuperacao/reativacao ancorada no teto 
     expect(selectObjective(70, 0, 30, 30, 180, 365)).toBe('recuperacao');
   });
 
+  it('sem_historico → ativacao, PRECEDE tudo (mesmo days>=cap e churn alto)', () => {
+    expect(selectObjective(95, 5, 10, 30, 999, cap, 'sem_historico')).toBe('ativacao');
+    // ativo/stale/null não disparam ativacao → a regra de recência segue valendo
+    expect(selectObjective(70, 0, 30, 30, 180, cap, 'ativo')).toBe('reativacao');
+    expect(selectObjective(70, 0, 30, 30, 180, cap, null)).toBe('reativacao');
+  });
+
   it('preserva as demais regras na ordem (churn > mixGap > margem > upsell)', () => {
     expect(selectObjective(70, 5, 30, 30, 10, cap)).toBe('recuperacao');        // churn>60 vence mixGap
     expect(selectObjective(50, 5, 30, 30, 10, cap)).toBe('expansao_mix');       // mixGap>3

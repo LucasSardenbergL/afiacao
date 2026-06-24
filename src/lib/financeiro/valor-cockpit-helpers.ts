@@ -138,26 +138,51 @@ export function arMedioTTM(input: { titulos: TituloAR[]; ttm_inicio: string; ttm
 export type ComboInput = { cliente: string; sku: string; receita_liquida: number; quantidade: number; custo_unitario: number | null };
 export type CapitalCliente = { cliente: string; ar_medio: number | null };
 export type CapitalSKU = { sku: string; estoque_valor: number | null };
+
+// Status do EVP AFIRMÁVEL da célula (o número que vai ao painel). `evp_teto` é sempre o upper bound bruto.
+// Sucede o `evp_parcial` de #961: lá o teto era exibido/somado mesmo positivo (otimista, money-path #2).
+// Aqui, com o Ke vivo (k=0,30), teto>0 NÃO é afirmável (omitido); teto≤0 com perna ausente válida é
+// não-positivo-garantido (real ≤ teto ≤ 0) e é mantido (não esconder prejuízo). Decisão Claude+Codex 2026-06-23.
+export type EvpStatus =
+  | 'real'                  // capital completo: evp = cm − encargo (afirmável)
+  | 'teto_nao_positivo'     // parcial, teto≤0, perna AUSENTE alocaria ≥0: evp = teto (mantido)
+  | 'omitido_teto_positivo' // parcial, teto>0 OU teto não-confiável (perna ausente alocaria <0): evp = null
+  | 'indisponivel_cm'       // custo ausente (cm null): evp/evp_teto null
+  | 'indisponivel_hurdle';  // k null (encargo indisponível): evp/evp_teto null
 export type CelulaEVP = {
   cliente: string; sku: string; receita_liquida: number; quantidade: number;
-  cm: number | null; a_cs: number; i_cs: number; encargo: number | null; evp: number | null;
+  cm: number | null; a_cs: number; i_cs: number; encargo: number | null;
+  evp_teto: number | null;   // cm − encargo (upper bound bruto; preserva o "evp" de #961). null se cm/encargo ausentes/não-finitos.
+  evp: number | null;        // número AFIRMÁVEL (ver evp_status); null quando otimista/indisponível.
   ar_indisponivel: boolean; estoque_indisponivel: boolean;
-  // EVP existe mas alguma perna de capital indisponível → encargo é piso → evp é TETO (upper bound). Codex 2026-06-18.
-  evp_parcial: boolean;
+  capital_parcial: boolean;  // ar_indisponivel || estoque_indisponivel (desacoplado do sinal do evp — sucede evp_parcial)
+  evp_status: EvpStatus;
 };
-// `encargo` = encargo de capital SÓ das células com cm conhecido (mantém a identidade evp = cm − encargo).
-// `encargo_total` = encargo de TODAS as células (inclui as de margem desconhecida) — transparência.
-// encargo/encargo_total = null quando o hurdle (k) está indisponível (ausente ≠ R$0).
-// evp_parcial = algum EVP contribuinte do grupo é teto; cm_incompleto = grupo tem célula sem custo (excluída do EVP).
-export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_parcial: boolean; cm_incompleto: boolean };
-export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_parcial: boolean; cm_incompleto: boolean };
+// Rollup: `evp` = Σ células AFIRMÁVEIS (real + teto≤0 mantido) — NÃO inclui omitidas; `evp_teto` = Σ tetos
+// (upper bound do grupo, preserva #961); `evp_incompleto` = ∃ célula omitida por otimismo (o `evp` do grupo
+// exclui essa fatia → pode ser maior). `encargo` (só células com cm) / `encargo_total` (todas) mantidos.
+// perda_garantida = ∃ célula 'teto_nao_positivo' no grupo (o evp inclui um teto≤0 → o prejuízo REAL pode ser maior).
+export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean };
+export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean };
+// Empresa DECOMPOSTA (Codex: somar {reais + tetos≤0} excluindo os teto>0 não é teto nem piso → mentira contábil).
+// evp_conhecido = só capital completo; evp_teto_total = upper bound legado; evp_perda_garantida = piso da fatia
+// parcial-negativa; evp = null se há QUALQUER fatia não-afirmável (não finge um total).
+export type EmpresaEVP = {
+  receita: number; cm: number | null; encargo: number | null; encargo_total: number | null;
+  evp_conhecido: number | null; evp_teto_total: number | null; evp_perda_garantida: number | null;
+  evp: number | null; evp_incompleto: boolean; cm_incompleto: boolean;
+};
 export type ComboEVPResult = {
   celulas: CelulaEVP[];
   porCliente: RollupCliente[];
   porSKU: RollupSKU[];
-  empresa: { receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_parcial: boolean; cm_incompleto: boolean };
-  // [0,1] fração da receita-com-EVP cujo EVP é teto (capital não medido). Ponderado por receita, não contagem (Codex).
-  evp_teto_receita_pct: number;
+  empresa: EmpresaEVP;
+  // pcts [0,1] por RECEITA (denominador = receita total elegível — NÃO "receita-com-evp", que esconderia a
+  // fatia omitida). Alimentam scoreConfiancaCockpit + UI. Sucedem evp_teto_receita_pct.
+  evp_conhecido_receita_pct: number;
+  evp_omitido_otimista_receita_pct: number;
+  evp_perda_garantida_receita_pct: number;
+  sem_cm_receita_pct: number;
 };
 
 export function montarCelulasComboEVP(input: {
@@ -192,21 +217,40 @@ export function montarCelulasComboEVP(input: {
     // Indisponível se não há base OU se o denominador da alocação é ≤ 0 (não dá pra alocar honestamente).
     const ar_indisponivel = arC == null || rc <= 0;
     const estoque_indisponivel = estS == null || qs <= 0;
+    const capital_parcial = ar_indisponivel || estoque_indisponivel;
     const a_cs = arC != null && rc > 0 ? arC * (c.receita_liquida / rc) : 0;
     const i_cs = estS != null && qs > 0 ? estS * (c.quantidade / qs) : 0;
-    // Hurdle ausente (k null) → encargo indisponível (ausente ≠ R$0); EVP só existe com cm E encargo.
+    // Hurdle ausente (k null) → encargo indisponível (ausente ≠ R$0); o teto só existe com cm E encargo.
     const encargo = k == null ? null : k * (a_cs + i_cs);
-    const evp = cm == null || encargo == null ? null : cm - encargo;
-    // EVP existe mas alguma perna de capital indisponível → encargo é piso → evp é teto (upper bound).
-    const evp_parcial = evp != null && (ar_indisponivel || estoque_indisponivel);
-    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp, ar_indisponivel, estoque_indisponivel, evp_parcial };
+    const evp_teto = cm == null || encargo == null || !Number.isFinite(cm - encargo) ? null : cm - encargo;
+
+    // Número AFIRMÁVEL + status. O teto (cm − encargo_parcial) só é upper bound REAL do EVP se a perna
+    // AUSENTE alocaria capital ≥0 (a perna presente é a real nos dois lados; seu sinal não afeta a
+    // monotonicidade — Codex 2026-06-23): estoque ausente exige quantidade≥0; AR ausente exige
+    // receita_liquida≥0. Senão o "teto≤0" pode ser falso (não é piso) → omitir, não afirmar.
+    let evp: number | null;
+    let evp_status: EvpStatus;
+    if (cm == null) { evp = null; evp_status = 'indisponivel_cm'; }
+    else if (encargo == null) { evp = null; evp_status = 'indisponivel_hurdle'; }     // k null
+    else if (evp_teto == null) { evp = null; evp_status = 'indisponivel_cm'; }         // cm−encargo não-finito (defesa)
+    else if (!capital_parcial) { evp = evp_teto; evp_status = 'real'; }
+    else {
+      // o teto≤0 só é upper bound real se a perna AUSENTE alocaria capital ≥0. Além do NUMERADOR (receita/qtd
+      // da célula ≥0), o DENOMINADOR de alocação tem de ser >0: rc/qs ≤0 (devolução/offset no cliente ou SKU)
+      // inverte o sinal da fração → 0 não é piso → omitir, NÃO fabricar "perda garantida" (/codex challenge 2026-06-23).
+      const estoqueAlocOk = !estoque_indisponivel || (qs > 0 && Number.isFinite(c.quantidade) && c.quantidade >= 0);
+      const arAlocOk = !ar_indisponivel || (rc > 0 && Number.isFinite(c.receita_liquida) && c.receita_liquida >= 0);
+      if (evp_teto <= 0 && estoqueAlocOk && arAlocOk) { evp = evp_teto; evp_status = 'teto_nao_positivo'; }
+      else { evp = null; evp_status = 'omitido_teto_positivo'; }                       // teto>0 OU alocação inválida
+    }
+    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp_teto, evp, ar_indisponivel, estoque_indisponivel, capital_parcial, evp_status };
   });
 
   const rollup = (keyFn: (c: CelulaEVP) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpParcial: boolean; cmIncompleto: boolean }>();
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpTeto: number; evpTetoNull: boolean; evpIncompleto: boolean; perdaGarantida: boolean; cmIncompleto: boolean }>();
     for (const cel of celulas) {
       const key = keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpParcial: false, cmIncompleto: false };
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpTeto: 0, evpTetoNull: true, evpIncompleto: false, perdaGarantida: false, cmIncompleto: false };
       acc.receita += cel.receita_liquida;
       acc.quantidade += cel.quantidade;
       if (cel.cm == null) acc.cmIncompleto = true; // grupo tem célula sem margem (excluída do EVP)
@@ -215,7 +259,10 @@ export function montarCelulasComboEVP(input: {
         acc.cm += cel.cm; acc.cmNull = false;
         if (cel.encargo != null) { acc.encargo += cel.encargo; acc.encargoNull = false; } // encargo relevante ao EVP (só células com cm)
       }
-      if (cel.evp != null) { acc.evp += cel.evp; acc.evpNull = false; if (cel.evp_parcial) acc.evpParcial = true; }
+      if (cel.evp_teto != null) { acc.evpTeto += cel.evp_teto; acc.evpTetoNull = false; }      // upper bound do grupo (todos os tetos)
+      if (cel.evp != null) { acc.evp += cel.evp; acc.evpNull = false; }                         // só afirmável (real + teto≤0 mantido)
+      if (cel.evp_status === 'omitido_teto_positivo') acc.evpIncompleto = true;                 // fatia otimista fora do evp
+      if (cel.evp_status === 'teto_nao_positivo') acc.perdaGarantida = true;                     // evp inclui um teto≤0 → real pode ser pior
       m.set(key, acc);
     }
     return m;
@@ -223,25 +270,42 @@ export function montarCelulasComboEVP(input: {
 
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente: RollupCliente[] = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_parcial: a.evpParcial, cm_incompleto: a.cmIncompleto }));
-  const porSKU: RollupSKU[] = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_parcial: a.evpParcial, cm_incompleto: a.cmIncompleto }));
+  const porCliente: RollupCliente[] = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto }));
+  const porSKU: RollupSKU[] = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto }));
 
-  let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, evpEmp = 0, evpNull = true, recEmp = 0;
-  let evpParcialEmp = false, cmIncompletoEmp = false;
-  let recTeto = 0, recComEvp = 0; // ponderação por receita do evp_teto_receita_pct (Codex: contagem é fraca)
+  // Empresa decomposta + pcts por receita total elegível.
+  let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, recEmp = 0;
+  let conhecido = 0, conhecidoNull = true, tetoTotal = 0, tetoTotalNull = true, perda = 0, perdaNull = true;
+  let evpIncompletoEmp = false, cmIncompletoEmp = false;
+  let recConhecido = 0, recOmitido = 0, recPerda = 0, recSemCm = 0;
   for (const cel of celulas) {
     recEmp += cel.receita_liquida;
-    if (cel.cm == null) cmIncompletoEmp = true;
+    if (cel.cm == null) { cmIncompletoEmp = true; recSemCm += cel.receita_liquida; }
     if (cel.encargo != null) { encTotalEmp += cel.encargo; encTotalNull = false; }
     if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; if (cel.encargo != null) { encEmp += cel.encargo; encNull = false; } }
-    if (cel.evp != null) {
-      evpEmp += cel.evp; evpNull = false;
-      recComEvp += cel.receita_liquida;
-      if (cel.evp_parcial) { evpParcialEmp = true; recTeto += cel.receita_liquida; }
-    }
+    if (cel.evp_teto != null) { tetoTotal += cel.evp_teto; tetoTotalNull = false; }
+    if (cel.evp_status === 'real') { conhecido += cel.evp as number; conhecidoNull = false; recConhecido += cel.receita_liquida; }
+    else if (cel.evp_status === 'teto_nao_positivo') { perda += cel.evp as number; perdaNull = false; recPerda += cel.receita_liquida; }
+    else if (cel.evp_status === 'omitido_teto_positivo') { evpIncompletoEmp = true; recOmitido += cel.receita_liquida; }
   }
-  const evp_teto_receita_pct = recComEvp > 0 ? recTeto / recComEvp : 0;
-  return { celulas, porCliente, porSKU, empresa: { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp: evpNull ? null : evpEmp, evp_parcial: evpParcialEmp, cm_incompleto: cmIncompletoEmp }, evp_teto_receita_pct };
+  // empresa.evp só é um total honesto se NADA foi omitido/indisponível; senão null (Codex: não fingir total).
+  const empresaCompleta = !evpIncompletoEmp && !cmIncompletoEmp && k != null;
+  const empresa: EmpresaEVP = {
+    receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp,
+    evp_conhecido: conhecidoNull ? null : conhecido,
+    evp_teto_total: tetoTotalNull ? null : tetoTotal,
+    evp_perda_garantida: perdaNull ? null : perda,
+    evp: empresaCompleta && !conhecidoNull ? conhecido : null,
+    evp_incompleto: evpIncompletoEmp, cm_incompleto: cmIncompletoEmp,
+  };
+  const pct = (x: number) => (recEmp > 0 ? x / recEmp : 0);
+  return {
+    celulas, porCliente, porSKU, empresa,
+    evp_conhecido_receita_pct: pct(recConhecido),
+    evp_omitido_otimista_receita_pct: pct(recOmitido),
+    evp_perda_garantida_receita_pct: pct(recPerda),
+    sem_cm_receita_pct: pct(recSemCm),
+  };
 }
 
 export type CockpitConfig = {
@@ -262,7 +326,7 @@ export function recomendarAcaoComercial(input: {
   dias_estoque: number;
   config: CockpitConfig;
   hurdle_indisponivel?: boolean;   // sem Ke → EVP não calculável globalmente; gateia as regras de valor
-  evp_parcial?: boolean;           // EVP é teto (capital de cliente/SKU não medido) → não afirma valor positivo
+  evp_incompleto?: boolean;        // grupo tem fatia de EVP OMITIDA por capital parcial (teto>0 otimista) — sucede evp_parcial; não afirma valor
   cm_incompleto?: boolean;         // grupo tem células sem custo (margem desconhecida em parte)
 }): Recomendacao[] {
   const r: Recomendacao[] = [];
@@ -272,17 +336,26 @@ export function recomendarAcaoComercial(input: {
   const cmPct = input.cm != null && input.receita_liquida > 0 ? input.cm / input.receita_liquida : null;
   // Com hurdle ausente, evp=null significa "não calculável" (NÃO "destrói valor"): não tratar null como sinal.
   const evpConhecivel = !input.hurdle_indisponivel;
-  const evpTeto = !!input.evp_parcial;        // teto>0 NÃO é evidência de valor positivo (real ≤ teto)
+  const evpIncompleto = !!input.evp_incompleto;  // fatia otimista omitida (capital não medido) → não afirma valor
   const cmIncompleto = !!input.cm_incompleto;
-  const evpNegConhecido = input.evp != null && input.evp < 0; // teto<0 ⟹ real<0 → alerta robusto
+  const evpNegConhecido = input.evp != null && input.evp < 0; // inclui perda garantida (teto≤0 mantido) → alerta robusto
 
-  // cortar desconto: desconto acima do máx e (sem hurdle OU valor não justifica OU teto não confirma)
-  if (descontoPct > c.desconto_max_pct && (!evpConhecivel || input.evp == null || input.evp <= 0 || evpTeto)) {
+  // cortar desconto: desconto acima do máx e (sem hurdle OU valor não-positivo conhecido OU não medido/indisponível)
+  if (descontoPct > c.desconto_max_pct && (!evpConhecivel || input.evp == null || input.evp <= 0 || evpIncompleto)) {
     const recupera = input.desconto_total - receitaBruta * c.desconto_max_pct;
+    const pre = `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}%`;
+    // ordem de precedência: hurdle ausente > prejuízo conhecido > não-medido (otimista omitido) > margem ausente.
+    // NÃO dizer "não gera valor" quando o EVP foi OMITIDO por otimismo — seria falso (Codex 2026-06-23).
+    // precedência: hurdle ausente > (prejuízo medido E fatia omitida) > prejuízo conhecido > não-medido > margem.
+    // com fatia omitida + parte medida negativa, NÃO afirmar "não gera valor" sobre o TOTAL (a parte omitida
+    // pode ser positiva) — dizer as duas coisas (/codex challenge 2026-06-23).
     let motivo: string;
-    if (!evpConhecivel) motivo = `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}% — lucro econômico indisponível (configure o hurdle p/ confirmar).`;
-    else if (evpTeto && input.evp != null && input.evp > 0) motivo = `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}% — valor econômico não confirmado (capital não medido em parte).`;
-    else motivo = `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}% e o combo não gera valor.`;
+    if (!evpConhecivel) motivo = `${pre} — lucro econômico indisponível (configure o hurdle p/ confirmar).`;
+    else if (evpNegConhecido && evpIncompleto) motivo = `${pre} — parte do valor não medida (capital ausente); a parte medida não gera valor.`;
+    else if (evpNegConhecido) motivo = `${pre} e o combo não gera valor.`;
+    else if (evpIncompleto) motivo = `${pre} — valor econômico NÃO medido em parte (capital ausente) — não confirmável.`;
+    else if (input.cm == null) motivo = `${pre} — margem indisponível (custo ausente).`;
+    else motivo = `${pre} e o combo não gera valor.`;
     r.push({ acao: 'Cortar desconto', motivo, impacto_rs: Math.max(0, recupera) });
   }
   // encurtar prazo: prazo acima do alvo e EVP negativo CONHECIDO (evp==null não fabrica ação — Codex)
@@ -298,13 +371,13 @@ export function recomendarAcaoComercial(input: {
   if (evpConhecivel && input.dias_estoque > c.dias_estoque_max && evpNegConhecido) {
     r.push({ acao: 'Despriorizar / liquidar estoque', motivo: `${input.dias_estoque.toFixed(0)} dias de estoque > limite ${c.dias_estoque_max}d e o item não gera valor.`, impacto_rs: null });
   }
-  // crescer: EVP positivo e nada disparou. SEM ressalva só se confiável (não-teto E cobertura de cm completa).
+  // crescer: EVP positivo AFIRMÁVEL e nada disparou. SEM ressalva só se completo (não-omitido E cm completa).
   if (r.length === 0 && input.evp != null && input.evp > 0) {
-    if (!evpTeto && !cmIncompleto) {
+    if (!evpIncompleto && !cmIncompleto) {
       r.push({ acao: 'Crescer / proteger', motivo: 'Gera valor econômico positivo e sem alertas.', impacto_rs: null });
     } else {
       const ressalvas: string[] = [];
-      if (evpTeto) ressalvas.push('capital não medido em parte da carteira (EVP é teto) — confirmar');
+      if (evpIncompleto) ressalvas.push('capital não medido em parte da carteira (EVP parcial omitido) — confirmar');
       if (cmIncompleto) ressalvas.push('margem desconhecida em parte (custo ausente)');
       r.push({ acao: 'Crescer / proteger', motivo: `Provável valor econômico positivo, a confirmar: ${ressalvas.join('; ')}.`, impacto_rs: null });
     }
@@ -322,7 +395,7 @@ export function scoreConfiancaCockpit(input: {
   estoque_ausente_pct: number;   // [0,1] SKUs sem estoque/cmc
   imposto_estimado: boolean;
   hurdle_indisponivel?: boolean; // sem Ke → EVP não calculável → confiança baixa
-  evp_teto_receita_pct?: number; // [0,1] fração da receita-com-EVP cujo EVP é teto (capital não medido)
+  evp_omitido_otimista_receita_pct?: number; // [0,1] fração da receita cujo EVP foi OMITIDO (teto>0, capital ausente) — sucede evp_teto_receita_pct
   cobertura_app_por_ar?: number; // [0,1] venda app com AR faturável; <0,5 → divergência → rebaixa
   custo_baixa_confianca_pct?: number; // [0,1] células com custo proxy(<0,7)/legado-fallback (cm EXISTE, base estimada)
 }): ConfiancaCockpit {
@@ -348,11 +421,11 @@ export function scoreConfiancaCockpit(input: {
 
   if (input.ar_indisponivel_pct > 0.3) rebaixar(2, `${(input.ar_indisponivel_pct * 100).toFixed(0)}% das vendas sem AR vinculável — encargo de cliente subestimado.`);
   if (input.estoque_ausente_pct > 0.3) rebaixar(2, `${(input.estoque_ausente_pct * 100).toFixed(0)}% dos SKUs sem estoque — encargo de SKU subestimado.`);
-  // EVP-teto (capital não medido): motivo SEMPRE que >0 (fecha o ponto cego — nunca verde mudo);
-  // rebaixa a média quando material (>5% da receita-com-EVP). Ponderado por receita, não contagem (Codex).
-  const tetoPct = input.evp_teto_receita_pct ?? 0;
-  if (tetoPct > 0.05) rebaixar(2, `${(tetoPct * 100).toFixed(0)}% do EVP (por receita) é teto — encargo de capital não medido; lucro econômico otimista nessa fatia.`);
-  else if (tetoPct > 0) motivos.push(`${(tetoPct * 100).toFixed(1)}% do EVP (por receita) é teto — encargo de capital não medido em parte.`);
+  // EVP OMITIDO (capital ausente → teto>0 não afirmado): motivo SEMPRE que >0 (fecha o ponto cego — nunca
+  // verde mudo); rebaixa a média quando material (>5% da receita). Por receita, não contagem (Codex 2026-06-23).
+  const omitidoPct = input.evp_omitido_otimista_receita_pct ?? 0;
+  if (omitidoPct > 0.05) rebaixar(2, `${(omitidoPct * 100).toFixed(0)}% da receita com EVP omitido — encargo de capital não medido; lucro econômico não afirmado nessa fatia.`);
+  else if (omitidoPct > 0) motivos.push(`${(omitidoPct * 100).toFixed(1)}% da receita com EVP omitido (capital não medido em parte).`);
   if (input.imposto_estimado) motivos.push('Imposto alocado nível-empresa (estimado), não por linha.');
 
   return { nivel: nivel === 3 ? 'alta' : nivel === 2 ? 'media' : 'baixa', motivos };
