@@ -265,7 +265,7 @@ export function montarCelulasComboEVP(input: {
     const capital_cs = a_cs + i_cs;
     const hurdle_break_even = evp_status === 'real' && capital_cs > 0 && cm != null && Number.isFinite(cm / capital_cs)
       ? cm / capital_cs : null;
-    const sensivel_hurdle = k != null && hurdle_break_even != null && hurdle_break_even >= kLo && hurdle_break_even <= kHi;
+    const sensivel_hurdle = k != null && hurdle_break_even != null && hurdle_break_even >= kLo - 1e-9 && hurdle_break_even <= kHi + 1e-9; // epsilon: borda inclusiva apesar do float (/codex)
     const folga_hurdle_pp = hurdle_break_even != null && k != null ? hurdle_break_even - k : null;
     return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp_teto, evp, ar_indisponivel, estoque_indisponivel, capital_parcial, evp_status, capital_cs, hurdle_break_even, sensivel_hurdle, folga_hurdle_pp };
   });

@@ -853,6 +853,22 @@ describe('montarCelulasComboEVP — sensibilidade ao hurdle (célula real)', () 
     expect(r.hurdle_banda).toEqual({ base: 0.30, lo: 0.20, hi: 0.40 });
     expect(r.celulas[0].sensivel_hurdle).toBe(false); // 0,50 ainda fora de [0,20;0,40]
   });
+  it('BORDA: break_even exatamente em kLo (0,25) e kHi (0,35) → sensível (inclusivo, epsilon contra float)', () => {
+    // break_even 0,25: cm=250 (1000−7,5·100), capital=1000 → na borda lo
+    const lo = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7.5 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    }).celulas[0];
+    expect(lo.hurdle_break_even).toBeCloseTo(0.25, 9);
+    expect(lo.sensivel_hurdle).toBe(true);
+    // break_even 0,35: cm=350 (1000−6,5·100), capital=1000 → na borda hi
+    const hi = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.5 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    }).celulas[0];
+    expect(hi.hurdle_break_even).toBeCloseTo(0.35, 9);
+    expect(hi.sensivel_hurdle).toBe(true);
+  });
 });
 
 describe('montarCelulasComboEVP — qtd_combos_sensiveis (granularidade, não agregado)', () => {
