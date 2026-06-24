@@ -156,17 +156,20 @@ describe('montarCelulasComboEVP', () => {
     expect(c1s1.evp).toBeCloseTo(260, 6);
   });
 
-  it('INVARIANTE: Σ porCliente.evp = Σ porSKU.evp = empresa.evp', () => {
-    const r = montarCelulasComboEVP(base);
-    const somaCli = r.porCliente.reduce((s, x) => s + (x.evp ?? 0), 0);
-    const somaSku = r.porSKU.reduce((s, x) => s + (x.evp ?? 0), 0);
-    expect(somaCli).toBeCloseTo(r.empresa.evp!, 6);
-    expect(somaSku).toBeCloseTo(r.empresa.evp!, 6);
+  it('INVARIANTE de soma: Σ porCliente.evp_teto = Σ porSKU.evp_teto = empresa.evp_teto_total (teto é aditivo)', () => {
+    const r = montarCelulasComboEVP(base); // base toda completa → evp afirmável == teto == conhecido
+    const somaCli = r.porCliente.reduce((s, x) => s + (x.evp_teto ?? 0), 0);
+    const somaSku = r.porSKU.reduce((s, x) => s + (x.evp_teto ?? 0), 0);
+    expect(somaCli).toBeCloseTo(r.empresa.evp_teto_total!, 6);
+    expect(somaSku).toBeCloseTo(r.empresa.evp_teto_total!, 6);
     expect(somaCli).toBeCloseTo(somaSku, 6);
+    // sem omissão → o evp afirmável agregado fecha com evp_conhecido e empresa.evp
+    expect(r.porCliente.reduce((s, x) => s + (x.evp ?? 0), 0)).toBeCloseTo(r.empresa.evp_conhecido!, 6);
+    expect(r.empresa.evp).toBeCloseTo(r.empresa.evp_conhecido!, 6);
   });
 
-  it('IDENTIDADE CONTÁBIL: empresa.evp = empresa.cm − empresa.encargo, mesmo com célula de custo nulo', () => {
-    // Um combo SEM custo (cm null) não pode quebrar a identidade: seu encargo entra só em encargo_total.
+  it('IDENTIDADE CONTÁBIL: empresa.evp_teto_total = empresa.cm − empresa.encargo, mesmo com célula de custo nulo', () => {
+    // Um combo SEM custo (cm null) não quebra a identidade do TETO (aditivo): seu encargo entra só em encargo_total.
     const r = montarCelulasComboEVP({
       ...base,
       combos: [
@@ -175,13 +178,12 @@ describe('montarCelulasComboEVP', () => {
       ],
     });
     expect(r.empresa.cm).not.toBeNull();
-    expect(r.empresa.evp).not.toBeNull();
-    // identidade fecha usando o encargo relevante-ao-EVP (não o total):
-    // (k é número neste teste → encargo non-null; `!` consistente com evp!/cm! das mesmas linhas)
-    expect(r.empresa.evp!).toBeCloseTo(r.empresa.cm! - r.empresa.encargo!, 6);
-    // e por rollup:
-    for (const c of r.porCliente) if (c.cm != null && c.evp != null) expect(c.evp).toBeCloseTo(c.cm - c.encargo!, 6);
-    for (const s of r.porSKU) if (s.cm != null && s.evp != null) expect(s.evp).toBeCloseTo(s.cm - s.encargo!, 6);
+    expect(r.empresa.evp).toBeNull();            // cm_incompleto → não finge total (Codex 2026-06-23)
+    expect(r.empresa.evp_teto_total).not.toBeNull();
+    // identidade do teto fecha usando o encargo relevante-ao-EVP (só células com cm):
+    expect(r.empresa.evp_teto_total!).toBeCloseTo(r.empresa.cm! - r.empresa.encargo!, 6);
+    for (const c of r.porCliente) if (c.cm != null && c.evp_teto != null) expect(c.evp_teto).toBeCloseTo(c.cm - c.encargo!, 6);
+    for (const s of r.porSKU) if (s.cm != null && s.evp_teto != null) expect(s.evp_teto).toBeCloseTo(s.cm - s.encargo!, 6);
     // encargo_total inclui a célula sem custo → ≥ encargo relevante-ao-EVP:
     expect(r.empresa.encargo_total!).toBeGreaterThanOrEqual(r.empresa.encargo! - 1e-9);
   });
@@ -196,7 +198,7 @@ describe('montarCelulasComboEVP', () => {
     expect(r.empresa.cm).toBeNull(); // nenhum cm válido
   });
 
-  it('AR do cliente null → a_cs 0 + flag ar_indisponivel', () => {
+  it('AR do cliente null → a_cs 0 + ar_indisponivel + capital_parcial; teto>0 (só estoque) → omitido', () => {
     const r = montarCelulasComboEVP({
       ...base,
       capitalClientes: [{ cliente: 'C1', ar_medio: null }, { cliente: 'C2', ar_medio: 1000 }],
@@ -204,52 +206,60 @@ describe('montarCelulasComboEVP', () => {
     const c1 = r.celulas.find((c) => c.cliente === 'C1')!;
     expect(c1.a_cs).toBe(0);
     expect(c1.ar_indisponivel).toBe(true);
-    expect(c1.evp_parcial).toBe(true); // AR ausente → célula é teto
+    expect(c1.capital_parcial).toBe(true);
+    expect(c1.evp_status).toBe('omitido_teto_positivo'); // só encargo de estoque → teto>0 → não afirma
+    expect(c1.evp).toBeNull();
   });
 });
 
-describe('montarCelulasComboEVP — guards + evp_parcial (teto)', () => {
+describe('montarCelulasComboEVP — guards + status (teto)', () => {
   const base = {
     combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 }], // cm 400
     capitalClientes: [{ cliente: 'C1', ar_medio: 600 }],
     capitalSKUs: [{ sku: 'S1', estoque_valor: 800 }],
     k: 0.2,
   };
-  it('estoque ausente + cm + k → evp numérico (teto) E evp_parcial=true', () => {
-    const r = montarCelulasComboEVP({ ...base, capitalSKUs: [{ sku: 'S1', estoque_valor: null }] });
-    const c = r.celulas[0];
-    expect(c.evp).not.toBeNull();
-    expect(c.evp_parcial).toBe(true);
+  it('estoque ausente + cm + k → evp_teto numérico, evp omitido (teto>0), capital_parcial', () => {
+    const c = montarCelulasComboEVP({ ...base, capitalSKUs: [{ sku: 'S1', estoque_valor: null }] }).celulas[0];
+    expect(c.evp_teto).not.toBeNull();
+    expect(c.evp).toBeNull();
+    expect(c.evp_status).toBe('omitido_teto_positivo');
+    expect(c.capital_parcial).toBe(true);
     expect(c.estoque_indisponivel).toBe(true);
   });
-  it('AR ausente → evp_parcial=true', () => {
-    const r = montarCelulasComboEVP({ ...base, capitalClientes: [{ cliente: 'C1', ar_medio: null }] });
-    expect(r.celulas[0].evp_parcial).toBe(true);
+  it('AR ausente → capital_parcial=true (teto>0 → omitido)', () => {
+    const c = montarCelulasComboEVP({ ...base, capitalClientes: [{ cliente: 'C1', ar_medio: null }] }).celulas[0];
+    expect(c.capital_parcial).toBe(true);
+    expect(c.evp_status).toBe('omitido_teto_positivo');
   });
-  it('célula limpa (AR+estoque ok) → evp_parcial=false', () => {
-    expect(montarCelulasComboEVP(base).celulas[0].evp_parcial).toBe(false);
+  it('célula limpa (AR+estoque ok) → capital_parcial=false, status real', () => {
+    const c = montarCelulasComboEVP(base).celulas[0];
+    expect(c.capital_parcial).toBe(false);
+    expect(c.evp_status).toBe('real');
   });
-  it('estoque_valor=0 CONHECIDO → evp_parcial=false (zero conhecido ≠ ausente)', () => {
-    const r = montarCelulasComboEVP({ ...base, capitalSKUs: [{ sku: 'S1', estoque_valor: 0 }] });
-    expect(r.celulas[0].estoque_indisponivel).toBe(false);
-    expect(r.celulas[0].evp_parcial).toBe(false);
+  it('estoque_valor=0 CONHECIDO → capital_parcial=false (zero conhecido ≠ ausente), status real', () => {
+    const c = montarCelulasComboEVP({ ...base, capitalSKUs: [{ sku: 'S1', estoque_valor: 0 }] }).celulas[0];
+    expect(c.estoque_indisponivel).toBe(false);
+    expect(c.capital_parcial).toBe(false);
+    expect(c.evp_status).toBe('real');
   });
-  it('k inválido (k<0 / NaN / 0) → encargo e evp null (não fabrica piso)', () => {
+  it('k inválido (k<0 / NaN / 0) → encargo, evp e evp_teto null; status indisponivel_hurdle', () => {
     for (const k of [-0.1, NaN, 0]) {
-      const r = montarCelulasComboEVP({ ...base, k });
-      expect(r.celulas[0].encargo).toBeNull();
-      expect(r.celulas[0].evp).toBeNull();
-      expect(r.celulas[0].evp_parcial).toBe(false); // sem evp não há teto
+      const c = montarCelulasComboEVP({ ...base, k }).celulas[0];
+      expect(c.encargo).toBeNull();
+      expect(c.evp).toBeNull();
+      expect(c.evp_teto).toBeNull();
+      expect(c.evp_status).toBe('indisponivel_hurdle');
     }
   });
-  it('capital negativo ou não-finito → indisponível (não número sujo; teto não vira piso)', () => {
-    const neg = montarCelulasComboEVP({ ...base, capitalSKUs: [{ sku: 'S1', estoque_valor: -500 }] });
-    expect(neg.celulas[0].estoque_indisponivel).toBe(true);
-    expect(neg.celulas[0].i_cs).toBe(0);
-    expect(neg.celulas[0].evp_parcial).toBe(true);
-    const nan = montarCelulasComboEVP({ ...base, capitalClientes: [{ cliente: 'C1', ar_medio: NaN }] });
-    expect(nan.celulas[0].ar_indisponivel).toBe(true);
-    expect(nan.celulas[0].a_cs).toBe(0);
+  it('capital negativo ou não-finito → indisponível (não número sujo); teto não vira piso', () => {
+    const neg = montarCelulasComboEVP({ ...base, capitalSKUs: [{ sku: 'S1', estoque_valor: -500 }] }).celulas[0];
+    expect(neg.estoque_indisponivel).toBe(true);
+    expect(neg.i_cs).toBe(0);
+    expect(neg.capital_parcial).toBe(true);
+    const nan = montarCelulasComboEVP({ ...base, capitalClientes: [{ cliente: 'C1', ar_medio: NaN }] }).celulas[0];
+    expect(nan.ar_indisponivel).toBe(true);
+    expect(nan.a_cs).toBe(0);
   });
 });
 
@@ -431,12 +441,13 @@ describe('recomendarAcaoComercial — hurdle_indisponivel', () => {
     expect(r.some((x) => x.acao === 'Crescer / proteger')).toBe(true);
     expect(r.some((x) => x.acao === 'Configurar hurdle')).toBe(false);
   });
-  it('REGRESSÃO: hurdle PRESENTE + evp null por CUSTO ausente + desconto>max → "Cortar desconto" AINDA aparece (motivo original)', () => {
+  it('REGRESSÃO: hurdle PRESENTE + evp null por CUSTO ausente + desconto>max → "Cortar desconto" AINDA aparece (motivo honesto: margem ausente, NÃO "não gera valor")', () => {
     const r = recomendarAcaoComercial({ evp: null, cm: null, receita_liquida: 800, desconto_total: 200, prazo_medio_dias: 0, dias_estoque: 0, config });
     expect(r.some((x) => x.acao === 'Cortar desconto')).toBe(true);
     expect(r.some((x) => x.acao === 'Configurar hurdle')).toBe(false);
     const corte = r.find((x) => x.acao === 'Cortar desconto')!;
-    expect(corte.motivo.toLowerCase()).toContain('não gera valor');
+    // cm ausente ≠ "não gera valor" (margem desconhecida) — motivo preciso (Codex 2026-06-23)
+    expect(corte.motivo.toLowerCase()).toContain('margem indisponível');
   });
 });
 
@@ -467,18 +478,22 @@ describe('pedidoContaNoFaturamento (espelha a régua de v_caca)', () => {
   });
 });
 
-describe('montarCelulasComboEVP — rollup parcial + evp_teto_receita_pct', () => {
+describe('montarCelulasComboEVP — rollup decomposto + pcts por receita', () => {
   const combos = [
-    { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 }, // limpa, cm 400
-    { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 50, custo_unitario: 10 },  // S2 sem estoque → teto
+    { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 }, // completa, cm 400
+    { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 50, custo_unitario: 10 },  // S2 sem estoque → teto>0 omitido
   ];
   const capCli = [{ cliente: 'C1', ar_medio: 600 }];
   const capSku = [{ sku: 'S1', estoque_valor: 800 }]; // S2 ausente
-  it('rollup do cliente marca evp_parcial=true se QUALQUER célula é teto; soma normal', () => {
+  it('rollup: evp_incompleto se ∃ célula omitida; evp afirmável EXCLUI a omitida; evp_teto inclui todas', () => {
     const r = montarCelulasComboEVP({ combos, capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
     const rc = r.porCliente.find((x) => x.cliente === 'C1')!;
-    expect(rc.evp_parcial).toBe(true);
-    expect(rc.evp).toBeCloseTo((r.celulas[0].evp ?? 0) + (r.celulas[1].evp ?? 0), 6); // identidade preservada
+    const s1 = r.celulas.find((c) => c.sku === 'S1')!;
+    const s2 = r.celulas.find((c) => c.sku === 'S2')!;
+    expect(s2.evp_status).toBe('omitido_teto_positivo');
+    expect(rc.evp_incompleto).toBe(true);
+    expect(rc.evp).toBeCloseTo(s1.evp!, 6);                       // só a afirmável (S2 omitida fora)
+    expect(rc.evp_teto).toBeCloseTo(s1.evp_teto! + s2.evp_teto!, 6);
     expect(rc.cm_incompleto).toBe(false);
   });
   it('cm_incompleto=true quando o grupo tem célula sem custo', () => {
@@ -488,32 +503,35 @@ describe('montarCelulasComboEVP — rollup parcial + evp_teto_receita_pct', () =
     });
     expect(r.porCliente[0].cm_incompleto).toBe(true);
   });
-  it('evp_teto_receita_pct ponderado por receita (S2 teto = 1000 de 2000) = 0.5', () => {
+  it('pcts por receita: omitido (S2 = 1000 de 2000) = 0.5; conhecido (S1) = 0.5', () => {
     const r = montarCelulasComboEVP({ combos, capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
-    expect(r.evp_teto_receita_pct).toBeCloseTo(0.5, 6);
+    expect(r.evp_omitido_otimista_receita_pct).toBeCloseTo(0.5, 6);
+    expect(r.evp_conhecido_receita_pct).toBeCloseTo(0.5, 6);
+    expect(r.evp_perda_garantida_receita_pct).toBeCloseTo(0, 6);
   });
-  it('sem EVP (k=null) → evp_teto_receita_pct = 0 (denominador 0)', () => {
+  it('sem hurdle (k=null) → pct omitido = 0 (status indisponivel_hurdle, não omitido); empresa.evp_incompleto=false', () => {
     const r = montarCelulasComboEVP({ combos, capitalClientes: capCli, capitalSKUs: capSku, k: null });
-    expect(r.evp_teto_receita_pct).toBe(0);
-    expect(r.empresa.evp_parcial).toBe(false);
+    expect(r.evp_omitido_otimista_receita_pct).toBe(0);
+    expect(r.empresa.evp_incompleto).toBe(false);
   });
-  it('empresa.evp_parcial e cm_incompleto agregam o global', () => {
+  it('empresa.evp_incompleto agrega o global; cm_incompleto=false aqui; evp=null por omissão', () => {
     const r = montarCelulasComboEVP({ combos, capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
-    expect(r.empresa.evp_parcial).toBe(true);
+    expect(r.empresa.evp_incompleto).toBe(true);
     expect(r.empresa.cm_incompleto).toBe(false);
+    expect(r.empresa.evp).toBeNull();
   });
 });
 
-describe('recomendarAcaoComercial — assimetria teto± e cm_incompleto', () => {
+describe('recomendarAcaoComercial — assimetria (evp_incompleto) e cm_incompleto', () => {
   const config = { margem_minima_pct: 0.15, desconto_max_pct: 0.10, prazo_alvo_dias: 30, dias_estoque_max: 120, sample_min_receita: 5000 };
-  it('evp>0 confiável (não-teto, cobertura completa) → "Crescer / proteger" puro', () => {
+  it('evp>0 completo (não-incompleto, cm completa) → "Crescer / proteger" puro', () => {
     const r = recomendarAcaoComercial({ evp: 300, receita_liquida: 1000, cm: 400, desconto_total: 0, prazo_medio_dias: 0, dias_estoque: 0, config });
     const cresc = r.find((x) => x.acao === 'Crescer / proteger')!;
     expect(cresc).toBeTruthy();
-    expect(cresc.motivo).not.toMatch(/confirmar|teto|parcial/i);
+    expect(cresc.motivo).not.toMatch(/confirmar|omitido|parcial/i);
   });
-  it('evp>0 mas evp_parcial → "Crescer / proteger" QUALIFICADO (não silencia, não afirma)', () => {
-    const r = recomendarAcaoComercial({ evp: 300, receita_liquida: 1000, cm: 400, desconto_total: 0, prazo_medio_dias: 0, dias_estoque: 0, config, evp_parcial: true });
+  it('evp>0 mas evp_incompleto → "Crescer / proteger" QUALIFICADO (não silencia, não afirma)', () => {
+    const r = recomendarAcaoComercial({ evp: 300, receita_liquida: 1000, cm: 400, desconto_total: 0, prazo_medio_dias: 0, dias_estoque: 0, config, evp_incompleto: true });
     const cresc = r.find((x) => x.acao === 'Crescer / proteger')!;
     expect(cresc).toBeTruthy();
     expect(cresc.motivo.toLowerCase()).toContain('capital');
@@ -524,36 +542,173 @@ describe('recomendarAcaoComercial — assimetria teto± e cm_incompleto', () => 
     const cresc = r.find((x) => x.acao === 'Crescer / proteger')!;
     expect(cresc.motivo.toLowerCase()).toContain('margem');
   });
-  it('alerta negativo dispara só com evp<0 CONHECIDO, não evp==null', () => {
+  it('alerta negativo dispara só com evp<0 CONHECIDO (inclui perda garantida), não evp==null', () => {
     const comNull = recomendarAcaoComercial({ evp: null, receita_liquida: 1000, cm: 400, desconto_total: 0, prazo_medio_dias: 90, dias_estoque: 200, config });
     expect(comNull.some((x) => x.acao.includes('prazo') || x.acao.includes('Despriorizar'))).toBe(false);
     const comNeg = recomendarAcaoComercial({ evp: -10, receita_liquida: 1000, cm: 400, desconto_total: 0, prazo_medio_dias: 90, dias_estoque: 200, config });
     expect(comNeg.some((x) => x.acao.includes('prazo'))).toBe(true);
     expect(comNeg.some((x) => x.acao.includes('Despriorizar'))).toBe(true);
   });
-  it('desconto>max + evp-teto>0 → "Cortar desconto" (teto não blinda) com motivo "não confirmado"', () => {
-    const r = recomendarAcaoComercial({ evp: 50, receita_liquida: 800, cm: 500, desconto_total: 200, prazo_medio_dias: 0, dias_estoque: 0, config, evp_parcial: true });
+  it('desconto>max + evp>0 mas evp_incompleto → "Cortar desconto" (otimismo não blinda) com motivo "não medido", NÃO "não gera valor"', () => {
+    const r = recomendarAcaoComercial({ evp: 50, receita_liquida: 800, cm: 500, desconto_total: 200, prazo_medio_dias: 0, dias_estoque: 0, config, evp_incompleto: true });
     const corte = r.find((x) => x.acao === 'Cortar desconto')!;
     expect(corte).toBeTruthy();
-    expect(corte.motivo.toLowerCase()).toContain('não confirmado');
+    expect(corte.motivo.toLowerCase()).toContain('não medido');
+    expect(corte.motivo.toLowerCase()).not.toContain('não gera valor'); // seria FALSO (Codex 2026-06-23)
   });
 });
 
-describe('scoreConfiancaCockpit — evp_teto_receita_pct', () => {
+describe('scoreConfiancaCockpit — evp_omitido_otimista_receita_pct', () => {
   const okBase = { cobertura_receita: 1, custo_ausente_pct: 0, ar_indisponivel_pct: 0, estoque_ausente_pct: 0, imposto_estimado: false };
-  it('teto por receita > 5% → rebaixa para média + motivo', () => {
-    const r = scoreConfiancaCockpit({ ...okBase, evp_teto_receita_pct: 0.052 }); // caso Oben
+  it('omitido por receita > 5% → rebaixa para média + motivo', () => {
+    const r = scoreConfiancaCockpit({ ...okBase, evp_omitido_otimista_receita_pct: 0.094 }); // caso Oben (~9,5%)
     expect(r.nivel).toBe('media');
-    expect(r.motivos.some((m) => m.toLowerCase().includes('teto'))).toBe(true);
+    expect(r.motivos.some((m) => m.toLowerCase().includes('omitido'))).toBe(true);
   });
-  it('0 < teto <= 5% → só motivo, não rebaixa nível', () => {
-    const r = scoreConfiancaCockpit({ ...okBase, evp_teto_receita_pct: 0.03 });
+  it('0 < omitido <= 5% → só motivo, não rebaixa nível', () => {
+    const r = scoreConfiancaCockpit({ ...okBase, evp_omitido_otimista_receita_pct: 0.03 });
     expect(r.nivel).toBe('alta');
-    expect(r.motivos.some((m) => m.toLowerCase().includes('teto'))).toBe(true);
+    expect(r.motivos.some((m) => m.toLowerCase().includes('omitido'))).toBe(true);
   });
-  it('teto = 0 → sem motivo de teto, alta', () => {
-    const r = scoreConfiancaCockpit({ ...okBase, evp_teto_receita_pct: 0 });
+  it('omitido = 0 → sem motivo de omissão, alta', () => {
+    const r = scoreConfiancaCockpit({ ...okBase, evp_omitido_otimista_receita_pct: 0 });
     expect(r.nivel).toBe('alta');
-    expect(r.motivos.some((m) => m.toLowerCase().includes('teto'))).toBe(false);
+    expect(r.motivos.some((m) => m.toLowerCase().includes('omitido'))).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-06-23 — Omissão honesta do EVP otimista (capital parcial). Ke da Oben VIVO
+// (k=0,30). Sucede #961: assimetria no NÚMERO (teto>0 omitido; teto≤0 mantido) +
+// agregado decomposto + guard de alocação não-negativa da perna AUSENTE (Codex).
+// ═══════════════════════════════════════════════════════════════════════════
+describe('montarCelulasComboEVP — célula: assimetria teto± + status', () => {
+  const base = {
+    combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 }], // cm 400
+    capitalClientes: [{ cliente: 'C1', ar_medio: 600 }],
+    capitalSKUs: [{ sku: 'S1', estoque_valor: 800 }],
+    k: 0.2,
+  };
+  it('célula COMPLETA → evp = evp_teto (real), status "real", capital_parcial=false', () => {
+    const c = montarCelulasComboEVP(base).celulas[0];
+    // a_cs=600, i_cs=800, encargo=0.2·1400=280, teto=400−280=120
+    expect(c.evp_teto).toBeCloseTo(120, 6);
+    expect(c.evp).toBeCloseTo(120, 6);
+    expect(c.evp_status).toBe('real');
+    expect(c.capital_parcial).toBe(false);
+  });
+  it('PARCIAL com teto>0 (estoque ausente) → evp NULL, status "omitido_teto_positivo", evp_teto PRESERVADO', () => {
+    const c = montarCelulasComboEVP({ ...base, capitalSKUs: [{ sku: 'S1', estoque_valor: null }] }).celulas[0];
+    // i_cs=0, encargo=0.2·600=120, teto=400−120=280 (>0)
+    expect(c.evp_teto).toBeCloseTo(280, 6);
+    expect(c.evp).toBeNull();                       // otimista → NÃO afirma
+    expect(c.evp_status).toBe('omitido_teto_positivo');
+    expect(c.capital_parcial).toBe(true);
+    expect(c.estoque_indisponivel).toBe(true);
+  });
+  it('PARCIAL com teto≤0 (AR alto, estoque ausente) → evp MANTIDO, status "teto_nao_positivo" (perda garantida)', () => {
+    const c = montarCelulasComboEVP({
+      ...base, capitalClientes: [{ cliente: 'C1', ar_medio: 2500 }], capitalSKUs: [{ sku: 'S1', estoque_valor: null }],
+    }).celulas[0];
+    // a_cs=2500, i_cs=0, encargo=0.2·2500=500, teto=400−500=−100 (≤0) → real ≤ −100
+    expect(c.evp_teto).toBeCloseTo(-100, 6);
+    expect(c.evp).toBeCloseTo(-100, 6);             // prejuízo garantido NÃO se esconde
+    expect(c.evp_status).toBe('teto_nao_positivo');
+    expect(c.capital_parcial).toBe(true);
+  });
+  it('GUARD alocação: estoque ausente + quantidade<0 + teto≤0 → evp NULL (NÃO mantido), pois 0 não é piso do i_cs real', () => {
+    // cm=10−6·(−10)=70 ; a_cs=2000, encargo=400, teto=70−400=−330 (≤0) mas qtd<0 invalida o teto
+    const c = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 10, quantidade: -10, custo_unitario: 6 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 2000 }], capitalSKUs: [{ sku: 'S1', estoque_valor: null }], k: 0.2,
+    }).celulas[0];
+    expect(c.evp_teto).toBeCloseTo(-330, 6);        // teto bruto existe…
+    expect(c.evp).toBeNull();                       // …mas NÃO é upper bound confiável → omitido
+    expect(c.evp_status).toBe('omitido_teto_positivo');
+  });
+  it('GUARD preciso (não conservador): perna PRESENTE negativa NÃO invalida — perna AUSENTE ok → teto≤0 MANTIDO', () => {
+    // 2 combos C1: A normal (rc>0); B devolução (receita<0) com estoque ausente. a_cs_B fica negativo,
+    // mas a perna AUSENTE é estoque e qtd_B>0 → i_cs real ≥0 → teto AINDA é upper bound → mantém.
+    const r = montarCelulasComboEVP({
+      combos: [
+        { cliente: 'C1', sku: 'SA', receita_liquida: 5000, quantidade: 100, custo_unitario: 6 },   // cm 4400
+        { cliente: 'C1', sku: 'SB', receita_liquida: -1000, quantidade: 10, custo_unitario: 6 },   // cm −1060, estoque ausente
+      ],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 2000 }],
+      capitalSKUs: [{ sku: 'SA', estoque_valor: 800 }], // SB ausente
+      k: 0.2,
+    });
+    const b = r.celulas.find((c) => c.sku === 'SB')!;
+    // rc=4000; a_cs_B=2000·(−1000/4000)=−500; encargo_B=0.2·(−500)=−100; teto_B=−1060−(−100)=−960 (≤0)
+    expect(b.evp_teto).toBeCloseTo(-960, 6);
+    expect(b.evp).toBeCloseTo(-960, 6);             // qtd_B≥0 → estoque-perna válida → mantém
+    expect(b.evp_status).toBe('teto_nao_positivo');
+  });
+  it('k=null → status "indisponivel_hurdle", evp e evp_teto null, capital_parcial reflete a fonte', () => {
+    const c = montarCelulasComboEVP({ ...base, capitalSKUs: [{ sku: 'S1', estoque_valor: null }], k: null }).celulas[0];
+    expect(c.evp).toBeNull();
+    expect(c.evp_teto).toBeNull();
+    expect(c.evp_status).toBe('indisponivel_hurdle');
+  });
+  it('custo ausente → status "indisponivel_cm", evp/evp_teto null', () => {
+    const c = montarCelulasComboEVP({ ...base, combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: null }] }).celulas[0];
+    expect(c.cm).toBeNull();
+    expect(c.evp).toBeNull();
+    expect(c.evp_teto).toBeNull();
+    expect(c.evp_status).toBe('indisponivel_cm');
+  });
+});
+
+describe('montarCelulasComboEVP — rollup/empresa decompostos', () => {
+  // C1: S1 limpa (cm400, teto+ real) ; S2 estoque ausente teto+ (omitido) ; S3 AR-alto teto≤0 (perda garantida)
+  const combos = [
+    { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 },  // completa
+    { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 50, custo_unitario: 10 },   // estoque ausente
+  ];
+  const capCli = [{ cliente: 'C1', ar_medio: 600 }];
+  const capSku = [{ sku: 'S1', estoque_valor: 800 }]; // S2 ausente
+  it('rollup.evp EXCLUI célula omitida (teto>0); evp_teto INCLUI todas; evp_incompleto=true', () => {
+    const r = montarCelulasComboEVP({ combos, capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    const s1 = r.celulas.find((c) => c.sku === 'S1')!;
+    const s2 = r.celulas.find((c) => c.sku === 'S2')!;
+    expect(s2.evp_status).toBe('omitido_teto_positivo'); // S2 teto>0 omitido
+    const rc = r.porCliente.find((x) => x.cliente === 'C1')!;
+    expect(rc.evp).toBeCloseTo(s1.evp!, 6);            // só a real entra (S2 omitida)
+    expect(rc.evp_teto).toBeCloseTo(s1.evp_teto! + s2.evp_teto!, 6); // teto soma todas
+    expect(rc.evp_incompleto).toBe(true);
+  });
+  it('empresa: evp=null (há omissão); evp_conhecido só reais; evp_teto_total todas; evp_perda_garantida só teto≤0', () => {
+    // adiciona S3 perda garantida (AR alto p/ C2, estoque ausente)
+    const r = montarCelulasComboEVP({
+      combos: [...combos, { cliente: 'C2', sku: 'S3', receita_liquida: 500, quantidade: 10, custo_unitario: 60 }], // cm 500−600=−100
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }, { cliente: 'C2', ar_medio: 4000 }],
+      capitalSKUs: capSku, // S2 e S3 ausentes
+      k: 0.2,
+    });
+    const s1 = r.celulas.find((c) => c.sku === 'S1')!;
+    const s3 = r.celulas.find((c) => c.sku === 'S3')!;
+    expect(s3.evp_status).toBe('teto_nao_positivo'); // C2 ar=4000 alto → teto≤0
+    expect(r.empresa.evp).toBeNull();                                    // há fatia omitida → não finge total
+    expect(r.empresa.evp_conhecido).toBeCloseTo(s1.evp!, 6);            // só S1 real
+    expect(r.empresa.evp_teto_total).toBeCloseTo(r.celulas.reduce((s, c) => s + (c.evp_teto ?? 0), 0), 6);
+    expect(r.empresa.evp_perda_garantida).toBeCloseTo(s3.evp!, 6);      // só S3
+    expect(r.empresa.evp_incompleto).toBe(true);
+  });
+  it('empresa SEM omissão (tudo completo) → evp = evp_conhecido (não null)', () => {
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 800 }], k: 0.2,
+    });
+    expect(r.empresa.evp_incompleto).toBe(false);
+    expect(r.empresa.evp).toBeCloseTo(r.empresa.evp_conhecido!, 6);
+    expect(r.empresa.evp).toBeCloseTo(120, 6);
+  });
+  it('pcts por RECEITA (denominador = receita total): omitido/conhecido/perda/sem-cm somam coerente', () => {
+    const r = montarCelulasComboEVP({ combos, capitalClientes: capCli, capitalSKUs: capSku, k: 0.2 });
+    // receita total 2000; S1 real (1000) conhecido; S2 omitido (1000)
+    expect(r.evp_conhecido_receita_pct).toBeCloseTo(0.5, 6);
+    expect(r.evp_omitido_otimista_receita_pct).toBeCloseTo(0.5, 6);
+    expect(r.evp_perda_garantida_receita_pct).toBeCloseTo(0, 6);
+    expect(r.sem_cm_receita_pct).toBeCloseTo(0, 6);
   });
 });
