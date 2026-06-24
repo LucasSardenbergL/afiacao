@@ -712,3 +712,61 @@ describe('montarCelulasComboEVP — rollup/empresa decompostos', () => {
     expect(r.sem_cm_receita_pct).toBeCloseTo(0, 6);
   });
 });
+
+// Follow-up /codex challenge 2026-06-23 (3 achados incorporados):
+describe('montarCelulasComboEVP — guard de DENOMINADOR de alocação (P1 Codex)', () => {
+  it('perna ausente por rc<=0 (devolução no cliente) + teto≤0 → OMITE (não fabrica perda garantida)', () => {
+    // C1: A (+1000, sku SA com estoque alto) e B (devolução -2000). rc=-1000 → AR de A "ausente" por rc<=0.
+    // teto_A = cm 400 − 0.2·i_cs(2500) = −100 ≤0. SEM o guard de denominador isso viraria 'teto_nao_positivo'
+    // FALSO: a alocação real de AR (receita_A/rc = 1000/−1000) seria negativa → encargo real < teto → real > teto.
+    const r = montarCelulasComboEVP({
+      combos: [
+        { cliente: 'C1', sku: 'SA', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 }, // cm 400
+        { cliente: 'C1', sku: 'SB', receita_liquida: -2000, quantidade: 50, custo_unitario: 0 },  // devolução → rc=-1000
+      ],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }],
+      capitalSKUs: [{ sku: 'SA', estoque_valor: 2500 }], // SB ausente
+      k: 0.2,
+    });
+    const a = r.celulas.find((c) => c.sku === 'SA')!;
+    expect(a.ar_indisponivel).toBe(true);   // rc<=0 torna a perna AR indisponível
+    expect(a.evp_teto).toBeCloseTo(-100, 6);
+    expect(a.evp).toBeNull();               // denominador inválido → omite, NÃO mantém
+    expect(a.evp_status).toBe('omitido_teto_positivo');
+  });
+});
+
+describe('recomendarAcaoComercial — motivo combinado evp<0 + evp_incompleto (P1 Codex)', () => {
+  const config = { margem_minima_pct: 0.15, desconto_max_pct: 0.10, prazo_alvo_dias: 30, dias_estoque_max: 120, sample_min_receita: 5000 };
+  it('desconto>max + evp<0 E evp_incompleto → motivo reconhece a fatia NÃO MEDIDA (não afirma só "não gera valor")', () => {
+    const r = recomendarAcaoComercial({ evp: -50, receita_liquida: 800, cm: 100, desconto_total: 200, prazo_medio_dias: 0, dias_estoque: 0, config, evp_incompleto: true });
+    const corte = r.find((x) => x.acao === 'Cortar desconto')!;
+    expect(corte).toBeTruthy();
+    expect(corte.motivo.toLowerCase()).toContain('não medida'); // a parte omitida pode ser positiva → não confirmável
+  });
+  it('evp<0 SEM evp_incompleto → "não gera valor" puro (sem fatia omitida, afirmação válida)', () => {
+    const r = recomendarAcaoComercial({ evp: -50, receita_liquida: 800, cm: 100, desconto_total: 200, prazo_medio_dias: 0, dias_estoque: 0, config });
+    const corte = r.find((x) => x.acao === 'Cortar desconto')!;
+    expect(corte.motivo.toLowerCase()).toContain('não gera valor');
+    expect(corte.motivo.toLowerCase()).not.toContain('não medida');
+  });
+});
+
+describe('montarCelulasComboEVP — rollup.perda_garantida (P2 Codex: UI sinaliza teto≤0)', () => {
+  it('grupo só com teto≤0 mantido → perda_garantida=true, evp_incompleto=false (evp é teto; real pode ser pior)', () => {
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 }], // cm 400
+      capitalClientes: [{ cliente: 'C1', ar_medio: 2500 }], capitalSKUs: [{ sku: 'S1', estoque_valor: null }], k: 0.2,
+    });
+    expect(r.celulas[0].evp_status).toBe('teto_nao_positivo'); // teto = 400 − 0.2·2500 = −100
+    expect(r.porCliente[0].perda_garantida).toBe(true);
+    expect(r.porCliente[0].evp_incompleto).toBe(false);
+  });
+  it('grupo limpo (real) → perda_garantida=false', () => {
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 800 }], k: 0.2,
+    });
+    expect(r.porCliente[0].perda_garantida).toBe(false);
+  });
+});

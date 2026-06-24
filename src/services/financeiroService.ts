@@ -1001,6 +1001,7 @@ export interface CockpitRollupCliente {
   evp: number | null;
   evp_teto: number | null;
   evp_incompleto: boolean;
+  perda_garantida: boolean;
   cm_incompleto: boolean;
 }
 export interface CockpitRollupSKU {
@@ -1013,6 +1014,7 @@ export interface CockpitRollupSKU {
   evp: number | null;
   evp_teto: number | null;
   evp_incompleto: boolean;
+  perda_garantida: boolean;
   cm_incompleto: boolean;
 }
 // Empresa DECOMPOSTA (capital parcial → um único evp seria mentira contábil; Codex 2026-06-23).
@@ -1026,6 +1028,7 @@ export interface CockpitEmpresaEVP {
   evp_perda_garantida: number | null; // Σ tetos ≤0 (piso de perda da fatia parcial-negativa)
   evp: number | null;                 // null se há qualquer fatia omitida/indisponível (não finge total)
   evp_incompleto: boolean;
+  perda_garantida: boolean;
   cm_incompleto: boolean;
 }
 export interface ValorCockpitResult {

@@ -161,8 +161,9 @@ export type CelulaEVP = {
 // Rollup: `evp` = Σ células AFIRMÁVEIS (real + teto≤0 mantido) — NÃO inclui omitidas; `evp_teto` = Σ tetos
 // (upper bound do grupo, preserva #961); `evp_incompleto` = ∃ célula omitida por otimismo (o `evp` do grupo
 // exclui essa fatia → pode ser maior). `encargo` (só células com cm) / `encargo_total` (todas) mantidos.
-export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; cm_incompleto: boolean };
-export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; cm_incompleto: boolean };
+// perda_garantida = ∃ célula 'teto_nao_positivo' no grupo (o evp inclui um teto≤0 → o prejuízo REAL pode ser maior).
+export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean };
+export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean };
 // Empresa DECOMPOSTA (Codex: somar {reais + tetos≤0} excluindo os teto>0 não é teto nem piso → mentira contábil).
 // evp_conhecido = só capital completo; evp_teto_total = upper bound legado; evp_perda_garantida = piso da fatia
 // parcial-negativa; evp = null se há QUALQUER fatia não-afirmável (não finge um total).
@@ -234,8 +235,11 @@ export function montarCelulasComboEVP(input: {
     else if (evp_teto == null) { evp = null; evp_status = 'indisponivel_cm'; }         // cm−encargo não-finito (defesa)
     else if (!capital_parcial) { evp = evp_teto; evp_status = 'real'; }
     else {
-      const estoqueAlocOk = !estoque_indisponivel || (Number.isFinite(c.quantidade) && c.quantidade >= 0);
-      const arAlocOk = !ar_indisponivel || (Number.isFinite(c.receita_liquida) && c.receita_liquida >= 0);
+      // o teto≤0 só é upper bound real se a perna AUSENTE alocaria capital ≥0. Além do NUMERADOR (receita/qtd
+      // da célula ≥0), o DENOMINADOR de alocação tem de ser >0: rc/qs ≤0 (devolução/offset no cliente ou SKU)
+      // inverte o sinal da fração → 0 não é piso → omitir, NÃO fabricar "perda garantida" (/codex challenge 2026-06-23).
+      const estoqueAlocOk = !estoque_indisponivel || (qs > 0 && Number.isFinite(c.quantidade) && c.quantidade >= 0);
+      const arAlocOk = !ar_indisponivel || (rc > 0 && Number.isFinite(c.receita_liquida) && c.receita_liquida >= 0);
       if (evp_teto <= 0 && estoqueAlocOk && arAlocOk) { evp = evp_teto; evp_status = 'teto_nao_positivo'; }
       else { evp = null; evp_status = 'omitido_teto_positivo'; }                       // teto>0 OU alocação inválida
     }
@@ -243,10 +247,10 @@ export function montarCelulasComboEVP(input: {
   });
 
   const rollup = (keyFn: (c: CelulaEVP) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpTeto: number; evpTetoNull: boolean; evpIncompleto: boolean; cmIncompleto: boolean }>();
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpTeto: number; evpTetoNull: boolean; evpIncompleto: boolean; perdaGarantida: boolean; cmIncompleto: boolean }>();
     for (const cel of celulas) {
       const key = keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpTeto: 0, evpTetoNull: true, evpIncompleto: false, cmIncompleto: false };
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpTeto: 0, evpTetoNull: true, evpIncompleto: false, perdaGarantida: false, cmIncompleto: false };
       acc.receita += cel.receita_liquida;
       acc.quantidade += cel.quantidade;
       if (cel.cm == null) acc.cmIncompleto = true; // grupo tem célula sem margem (excluída do EVP)
@@ -258,6 +262,7 @@ export function montarCelulasComboEVP(input: {
       if (cel.evp_teto != null) { acc.evpTeto += cel.evp_teto; acc.evpTetoNull = false; }      // upper bound do grupo (todos os tetos)
       if (cel.evp != null) { acc.evp += cel.evp; acc.evpNull = false; }                         // só afirmável (real + teto≤0 mantido)
       if (cel.evp_status === 'omitido_teto_positivo') acc.evpIncompleto = true;                 // fatia otimista fora do evp
+      if (cel.evp_status === 'teto_nao_positivo') acc.perdaGarantida = true;                     // evp inclui um teto≤0 → real pode ser pior
       m.set(key, acc);
     }
     return m;
@@ -265,8 +270,8 @@ export function montarCelulasComboEVP(input: {
 
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente: RollupCliente[] = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, cm_incompleto: a.cmIncompleto }));
-  const porSKU: RollupSKU[] = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, cm_incompleto: a.cmIncompleto }));
+  const porCliente: RollupCliente[] = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto }));
+  const porSKU: RollupSKU[] = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto }));
 
   // Empresa decomposta + pcts por receita total elegível.
   let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, recEmp = 0;
@@ -341,8 +346,12 @@ export function recomendarAcaoComercial(input: {
     const pre = `Desconto ${(descontoPct * 100).toFixed(0)}% > máx ${(c.desconto_max_pct * 100).toFixed(0)}%`;
     // ordem de precedência: hurdle ausente > prejuízo conhecido > não-medido (otimista omitido) > margem ausente.
     // NÃO dizer "não gera valor" quando o EVP foi OMITIDO por otimismo — seria falso (Codex 2026-06-23).
+    // precedência: hurdle ausente > (prejuízo medido E fatia omitida) > prejuízo conhecido > não-medido > margem.
+    // com fatia omitida + parte medida negativa, NÃO afirmar "não gera valor" sobre o TOTAL (a parte omitida
+    // pode ser positiva) — dizer as duas coisas (/codex challenge 2026-06-23).
     let motivo: string;
     if (!evpConhecivel) motivo = `${pre} — lucro econômico indisponível (configure o hurdle p/ confirmar).`;
+    else if (evpNegConhecido && evpIncompleto) motivo = `${pre} — parte do valor não medida (capital ausente); a parte medida não gera valor.`;
     else if (evpNegConhecido) motivo = `${pre} e o combo não gera valor.`;
     else if (evpIncompleto) motivo = `${pre} — valor econômico NÃO medido em parte (capital ausente) — não confirmável.`;
     else if (input.cm == null) motivo = `${pre} — margem indisponível (custo ausente).`;

@@ -103,6 +103,13 @@ Asserts positivos E negativos, incluindo falsificação:
 9. **Falsificação:** sabotar (a) o sinal do teto (`<=0`→`>=0`), (b) o guard de alocação, (c) o limiar 5% → exigir vermelhos exatos; reverter → verde.
 10. **k=null:** tudo `indisponivel_hurdle`, evp null, sem omissão/teto.
 
+## Achados do `/codex challenge` no diff (incorporados, 2026-06-23)
+
+3 achados, todos procedentes:
+1. **[P1] Guard de DENOMINADOR.** O guard de alocação checava só o numerador (`receita/qtd ≥0`); faltava o **denominador** `rc > 0`/`qs > 0`. Com devolução/offset no mesmo cliente/SKU (`rc ≤ 0`), a perna vira "ausente" mas a fração de alocação `receita/rc` inverte de sinal → o teto≤0 mantido seria uma **perda fabricada**. Fix: exigir `rc>0`/`qs>0` no guard (helper+edge).
+2. **[P1] Motivo combinado.** Em "Cortar desconto", `evpNegConhecido` tinha precedência sobre `evp_incompleto` → dizia "não gera valor" mesmo com fatia omitida (que pode ser positiva). Fix: motivo combinado "parte não medida (capital ausente); a parte medida não gera valor" quando ambos.
+3. **[P2] `perda_garantida` no rollup.** A UI só sinalizava `evp_incompleto`; uma linha só com `teto_nao_positivo` aparecia como número exato (esconde que é teto, prejuízo real pode ser maior). Fix: flag `perda_garantida` no rollup + sufixo na UI.
+
 ## Escopo & deploy
 
 MOTOR + recomendações + confiança + tipo front + UI. **Bônus 3-hurdles (25/30/35%): DEFERIDO** (Codex: "antes de mostrar três hurdles, conserte a semântica de um"). Deploy Lovable: **edge verbatim pelo chat** + **Publish** (mexe na UI). A4 não quebra (só lê `recomendacoesCliente`).

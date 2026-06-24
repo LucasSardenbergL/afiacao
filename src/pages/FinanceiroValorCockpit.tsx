@@ -169,10 +169,11 @@ export default function FinanceiroValorCockpit() {
                       >
                         {brl(row.evp)}
                       </div>
-                      {row.evp_incompleto && (
+                      {(row.evp_incompleto || row.perda_garantida) && (
                         <div className="text-[10px] leading-tight text-muted-foreground">
-                          {row.evp == null ? 'capital não medido' : 'parcial'}
-                          {row.evp_teto != null ? ` · teto ≤ ${brl(row.evp_teto)}` : ''}
+                          {row.evp_incompleto
+                            ? `${row.evp == null ? 'capital não medido' : 'parcial'}${row.evp_teto != null ? ` · teto ≤ ${brl(row.evp_teto)}` : ''}`
+                            : 'prejuízo real pode ser maior (teto)'}
                         </div>
                       )}
                     </td>
