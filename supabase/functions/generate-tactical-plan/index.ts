@@ -7,6 +7,20 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
+// Teto de recência (dias até a recência zerar), lido de farmer_algorithm_config.hs_recency_cap_days.
+// Default 180, guardrail [30,999]. Ausente/null/NaN → default (Number(null)===0 fabricaria a fronteira
+// mínima 30). Espelho VERBATIM da clampRecencyCapDays de src/lib/scoring/objective.ts e
+// supabase/functions/calculate-scores/index.ts (Deno não importa de src/) — mudou aqui, mude lá.
+const DEFAULT_RECENCY_CAP_DAYS = 180;
+const MIN_RECENCY_CAP_DAYS = 30;
+const MAX_RECENCY_CAP_DAYS = 999;
+function clampRecencyCapDays(raw: unknown): number {
+  if (raw == null) return DEFAULT_RECENCY_CAP_DAYS;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_RECENCY_CAP_DAYS;
+  return Math.min(MAX_RECENCY_CAP_DAYS, Math.max(MIN_RECENCY_CAP_DAYS, Math.round(n)));
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -61,7 +75,7 @@ serve(async (req) => {
         return new Response(JSON.stringify({ id: existente[0].id, skipped: 'ja_gerado_hoje' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      const [{ data: score }, { data: profile }, { data: bundles }, { data: allScores }, { data: objEvents }] = await Promise.all([
+      const [{ data: score }, { data: profile }, { data: bundles }, { data: allScores }, { data: objEvents }, { data: recencyCapRow }] = await Promise.all([
         // Opção A: 1 linha por cliente (customer_user_id único). NÃO filtrar por farmer_id —
         // score stale pós-reatribuição (dono ≠ farmerId) virava "sem_score" falso e PULAVA o
         // plano do cliente reatribuído. Espelha useTacticalPlan.checkEfficiency (admin = service role).
@@ -70,6 +84,10 @@ serve(async (req) => {
         admin.from('farmer_bundle_recommendations').select('*').eq('customer_user_id', customerId).eq('farmer_id', farmerId).eq('status', 'pendente').order('lie_bundle', { ascending: false }).limit(2),
         admin.from('farmer_client_scores').select('gross_margin_pct').eq('farmer_id', farmerId),
         admin.from('farmer_copilot_events').select('event_data').eq('event_type', 'suggestion').limit(20),
+        // Teto de recência (hs_recency_cap_days): a fronteira reativacao/recuperacao ACOMPANHA o teto
+        // do modelo, não o 90 hardcode. Ausente → clampRecencyCapDays default 180. limit(1) p/ maybeSingle
+        // não lançar em chave duplicada. Espelha useTacticalPlan.ts:341 (caminho front) + calculate-scores.
+        admin.from('farmer_algorithm_config').select('value').eq('key', 'hs_recency_cap_days').limit(1).maybeSingle(),
       ]);
       if (!score) {
         return new Response(JSON.stringify({ skipped: 'sem_score' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -82,12 +100,18 @@ serve(async (req) => {
       const clusterMargin = allScores?.length ? allScores.reduce((s: number, r: { gross_margin_pct: unknown }) => s + num(r.gross_margin_pct), 0) / allScores.length : 25;
       const mixGap = Math.max(0, 8 - categoryCount);
 
-      // classifyProfile/selectObjective — espelham useTacticalPlan.ts:183-196 (validado).
+      // classifyProfile/selectObjective — espelham useTacticalPlan.ts (classifyProfile + selectObjective, validado).
       const customerProfile = avgSpend < 500 && marginPct < 20 ? 'sensivel_preco'
         : marginPct > 35 && categoryCount <= 3 ? 'orientado_qualidade'
         : avgSpend > 2000 && categoryCount >= 4 && healthScore > 60 ? 'orientado_produtividade' : 'misto';
+      // Fronteira reativacao/recuperacao = daysSince >= teto de recência (ponto onde o sinal de
+      // recência satura em 0), NÃO o 90 mágico — espelha selectObjective (objective.ts) pós-#982.
+      // Aqui clusterMargin é SEMPRE número (fallback 25 acima), então a regra de margem dispensa o
+      // guard null que o front tem. recencyCapDays vem do config (acompanha o retuning do operador).
+      // sem_historico → ativacao PRECEDE tudo (#1026): sem venda válida, nada p/ recuperar/reativar.
+      const recencyCapDays = clampRecencyCapDays(recencyCapRow?.value);
       const strategicObjective = salesHistoryStatus === 'sem_historico' ? 'ativacao'
-        : daysSince > 90 ? 'reativacao' : churnRisk > 60 ? 'recuperacao'
+        : daysSince >= recencyCapDays ? 'reativacao' : churnRisk > 60 ? 'recuperacao'
         : mixGap > 3 ? 'expansao_mix' : marginPct < clusterMargin * 0.8 ? 'consolidacao_margem' : 'upsell_premium';
 
       topBundleRow = bundles?.[0] ?? null;
