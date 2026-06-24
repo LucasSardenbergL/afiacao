@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **284** custom migrations totais
-- **1010** objetos esperados (criados por estas migrations)
+- **288** custom migrations totais
+- **1015** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 286
+  - `function`: 290
   - `rls_policy`: 219
   - `index`: 187
   - `table`: 108
   - `cron_job`: 108
   - `trigger`: 51
-  - `view`: 47
+  - `view`: 48
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2412,6 +2412,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260622165000_sales_history_status_coluna.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260622170000_apply_score_updates_sales_history_status.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.apply_score_updates` | — |
+
 ### `20260622210000_tint_promote_dedup_itens_corante.sql`
 
 | Tipo | Objeto | Parent |
@@ -2442,6 +2452,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_customer_sales_summary` | — |
+
+### `20260623160000_data_health_custos_proveniencia.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20260624010000_caca_custo_efetivo_fallback.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_caca_compradores` | — |
 
 ## Próximos passos quando algo der `❌`
 
