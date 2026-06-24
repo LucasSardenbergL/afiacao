@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **282** custom migrations totais
-- **1007** objetos esperados (criados por estas migrations)
+- **283** custom migrations totais
+- **1009** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 285
   - `rls_policy`: 219
-  - `index`: 186
+  - `index`: 187
   - `table`: 108
   - `cron_job`: 108
   - `trigger`: 51
-  - `view`: 46
+  - `view`: 47
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2429,6 +2429,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.caca-custo-producao-colacor-daily` | — |
+
+### `20260623140000_recencia_mv_order_date_kpi.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.customer_metrics_mv` | — |
+| `index` | `public.idx_customer_metrics_mv_uid` | `customer_metrics_mv` |
 
 ## Próximos passos quando algo der `❌`
 
