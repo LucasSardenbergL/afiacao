@@ -106,4 +106,4 @@ não-determinismo de forma SILENCIOSA (pior que quebra dura). Por isso a MV prod
 1. Alinhar universo MV↔RPC (status `pendente`/`orcamento`, `deleted_at`) — quantificar o degrau.
 2. `faturamento` por `order_items` (paridade com a RPC).
 3. Camada DRY `valid_sales_orders_kpi` consumida por MV+RPC+cockpit.
-4. `get_customer_sales_summary`: `created_at::date` → `(created_at AT TIME ZONE SP)::date`.
+4. ✅ **FEITO** — migration `20260623150000_get_customer_sales_summary_tz_fallback` (v5, `CREATE OR REPLACE` preservando a blocklist v4): `created_at::date` → `(created_at AT TIME ZONE 'America/Sao_Paulo')::date` nas 2 ocorrências (recência `max` + janela `revenue_180d`). Prova PG17 `db/test-get-customer-sales-summary.sh` **38/0** (anti-TZ UTC×SP idêntico nas 2 ocorrências + falsificação FTZ com dente). Impacto prático hoje = 0 (psql-ro: 0 pedidos `order_date_kpi`-nulo no universo da RPC) → defensivo. Aguarda apply manual no SQL Editor.
