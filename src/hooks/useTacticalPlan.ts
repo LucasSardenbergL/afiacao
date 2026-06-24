@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { selectObjective, clampRecencyCapDays } from '@/lib/scoring/objective';
+import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
@@ -195,11 +196,14 @@ const PROFIT_PER_HOUR_THRESHOLD = 50; // R$/h configurable threshold
 
 export const useTacticalPlan = () => {
   const { user } = useAuth();
-  // Lente "Ver como": as leituras de EXIBIÇÃO (planos do vendedor, plano ativo do
-  // cliente, estatísticas de efetividade) seguem o id efetivo — o ALVO na lente, o
-  // próprio usuário fora. A GERAÇÃO de plano (checkEfficiency/generatePlan) e o registro
-  // de resultado seguem user.id (write identity = master real) e são bloqueados na lente
-  // pelo write-guard + botões disabled. Fora da lente effectiveUserId === user.id.
+  // Lente "Ver como" + COBERTURA (#980): as leituras de EXIBIÇÃO (lista de planos, plano ativo do
+  // cliente) seguem a VISIBILIDADE de carteira do id efetivo — carteira própria + carteiras
+  // cobertas (fetchOwnerScope/ownersAtivosDoAlvo). O id efetivo é o ALVO na lente, o próprio
+  // usuário fora. A RLS de farmer_tactical_plans é staff-vê-tudo (NÃO escopa por farmer_id), então
+  // o escopo de leitura é responsabilidade do app. A GERAÇÃO (checkEfficiency/generatePlan) e o
+  // registro de resultado seguem user.id (write identity = master real) e são bloqueados na lente
+  // pelo write-guard + botões disabled. A POSSE gravada (farmer_id) é o DONO da carteira do cliente
+  // (score.farmer_id), nunca o executor. Fora da lente effectiveUserId === user.id.
   const { effectiveUserId } = useImpersonation();
   const [plans, setPlans] = useState<TacticalPlan[]>([]);
   const [loading, setLoading] = useState(false);
@@ -262,15 +266,32 @@ export const useTacticalPlan = () => {
     };
   };
 
+  // Visibilidade de carteira p/ LEITURA: dono efetivo + carteiras que ele cobre (cobertura ativa e
+  // dentro da validade). Reproduz, com a sessão atual, o que carteira_visivel_para daria — preciso
+  // porque a RLS de farmer_tactical_plans é staff-vê-tudo (não escopa por farmer_id), então o
+  // escopo é do app. baseId = effectiveUserId (alvo na lente, próprio fora).
+  const fetchOwnerScope = useCallback(async (baseId: string): Promise<string[]> => {
+    const { data: cov, error } = (await supabase
+      .from('carteira_coverage')
+      .select('covered_user_id, valid_until')
+      .eq('covering_user_id', baseId)
+      .eq('active', true)) as unknown as { data: { covered_user_id: string; valid_until: string | null }[] | null; error: unknown };
+    // Erro na cobertura degrada para [próprio] (fail-closed: não vaza carteira alheia) mas NÃO
+    // silencioso — senão "a cobertura sumiu" passa despercebido (achado /codex challenge P2).
+    if (error) console.error('fetchOwnerScope: falha lendo carteira_coverage; escopo cai p/ próprio', error);
+    return ownersAtivosDoAlvo(cov ?? [], baseId, new Date().toISOString());
+  }, []);
+
   // Load existing plans
   const loadPlans = useCallback(async () => {
     if (!effectiveUserId) return;
     setLoading(true);
     try {
+      const owners = await fetchOwnerScope(effectiveUserId);
       const { data } = (await supabase
         .from('farmer_tactical_plans')
         .select('*')
-        .eq('farmer_id', effectiveUserId)
+        .in('farmer_id', owners)
         .order('created_at', { ascending: false })
         .limit(50)) as unknown as { data: TacticalPlanRow[] | null };
 
@@ -293,7 +314,7 @@ export const useTacticalPlan = () => {
     } finally {
       setLoading(false);
     }
-  }, [effectiveUserId]);
+  }, [effectiveUserId, fetchOwnerScope]);
 
   // Check efficiency before generating
   const checkEfficiency = useCallback(async (customerId: string): Promise<EfficiencyCheck> => {
@@ -330,13 +351,11 @@ export const useTacticalPlan = () => {
       const [
         { data: score },
         { data: profile },
-        { data: bundles },
         { data: recencyCapRow },
       ] = await Promise.all([
         // Opção A: lookup por customer_user_id (único); sem farmer_id (RLS gateia). Ver checkEfficiency.
         supabase.from('farmer_client_scores').select('*').eq('customer_user_id', customerId).single() as unknown as Promise<{ data: ClientScoreFull | null }>,
         supabase.from('profiles').select('name, customer_type, cnae').eq('user_id', customerId).single() as unknown as Promise<{ data: ProfileLite | null }>,
-        supabase.from('farmer_bundle_recommendations').select('*').eq('customer_user_id', customerId).eq('farmer_id', user.id).eq('status', 'pendente').order('lie_bundle', { ascending: false }).limit(2) as unknown as Promise<{ data: BundleRow[] | null }>,
         // Teto de recência (hs_recency_cap_days) — fronteira reativacao/recuperacao em selectObjective
         // ACOMPANHA o teto do modelo (não hardcode). Ausente → clampRecencyCapDays default 180. limit(1)
         // pra maybeSingle nunca lançar em chave duplicada (não quebrar a geração por quirk de config).
@@ -345,6 +364,18 @@ export const useTacticalPlan = () => {
 
       if (!score) {
         toast.error('Cliente sem score calculado');
+        return;
+      }
+
+      // [GUARD money-path] POSSE do plano = DONO da carteira do cliente (score.farmer_id, Opção A),
+      // NUNCA o executor logado. A RLS de farmer_tactical_plans é staff-vê-tudo (não escopa por
+      // farmer_id), então o campo é o ÚNICO mecanismo de posse: gravar user.id poluiria a carteira
+      // do gestor sob cobertura (#980) e sumiria da carteira do dono. O bundle (multi por
+      // (customer,farmer)) e o cluster também escopam pelo dono. farmer_id null = corrupção →
+      // precisão>recall: abortar (não gravar sob dono errado, não cair pro viewer, não fabricar).
+      const ownerId = score.farmer_id;
+      if (!ownerId) {
+        toast.error('Cliente sem dono de carteira definido — não é possível gerar o plano');
         return;
       }
 
@@ -358,20 +389,19 @@ export const useTacticalPlan = () => {
       const revenuePotential = Number(score.revenue_potential || 0);
       const salesHistoryStatus = score.sales_history_status ?? null;
 
-      // [GUARD money-path] Cluster = média de margem dos PARES da carteira do DONO do score,
-      // não de quem está logado. Sob cobertura (#980) o viewer gera plano de cliente de OUTRO
-      // dono; benchmarkar por user.id daria cluster errado e, p/ gestor sem carteira, fabricava
-      // 25 (margem<20 forçando consolidacao a esmo). score.farmer_id é o dono real (Opção A); a
-      // RLS fcs_select_carteira deixa o cobridor ler a carteira do coberto (carteira_visivel_para
-      // via carteira_coverage). farmer_id null = corrupção → cluster AUSENTE (NÃO cair pra
-      // user.id, que reintroduz o viés do viewer). Exclui o próprio cliente (peer benchmark) e
-      // exige ≥1 par com margem finita; sem par → null (selectObjective trata; nada de 25).
+      // [GUARD money-path] Cluster = média de margem dos PARES da carteira do DONO (ownerId), não
+      // de quem está logado. Sob cobertura (#980) o viewer gera plano de cliente de OUTRO dono;
+      // benchmarkar por user.id daria cluster errado e, p/ gestor sem carteira, fabricava 25
+      // (margem<20 forçando consolidacao a esmo). A RLS fcs_select_carteira deixa o cobridor ler a
+      // carteira do coberto (carteira_visivel_para via carteira_coverage). Exclui o próprio cliente
+      // (peer benchmark) e exige ≥1 par com margem finita; sem par → null (selectObjective trata;
+      // nada de 25).
       let clusterMargin: number | null = null;
-      if (score.farmer_id) {
+      {
         const { data: peers } = (await supabase
           .from('farmer_client_scores')
           .select('gross_margin_pct')
-          .eq('farmer_id', score.farmer_id)
+          .eq('farmer_id', ownerId)
           .neq('customer_user_id', customerId)) as unknown as { data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null };
         const peerMargins = (peers ?? [])
           .filter((r) => r.gross_margin_pct != null)
@@ -381,6 +411,19 @@ export const useTacticalPlan = () => {
           clusterMargin = peerMargins.reduce((s, m) => s + m, 0) / peerMargins.length;
         }
       }
+
+      // Bundle pendente do cliente sob a carteira do DONO (ownerId), não do viewer. A tabela é
+      // multi por (customer_user_id, farmer_id) — NÃO basta dropar o farmer_id (traria bundle de
+      // outro dono); filtrar pelo dono é o correto. A RLS fbrec_select_carteira deixa o cobridor
+      // ler via carteira_visivel_para. limit(2): top + second p/ o plano estratégico.
+      const { data: bundles } = (await supabase
+        .from('farmer_bundle_recommendations')
+        .select('*')
+        .eq('customer_user_id', customerId)
+        .eq('farmer_id', ownerId)
+        .eq('status', 'pendente')
+        .order('lie_bundle', { ascending: false })
+        .limit(2)) as unknown as { data: BundleRow[] | null };
 
       const mixGap = Math.max(0, 8 - categoryCount);
       const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, categoryCount);
@@ -451,7 +494,7 @@ export const useTacticalPlan = () => {
       if (aiError) throw aiError;
 
       const planData = {
-        farmer_id: user.id,
+        farmer_id: ownerId,
         customer_user_id: customerId,
         bundle_recommendation_id: topBundle?.id || null,
         health_score: healthScore,
@@ -502,10 +545,11 @@ export const useTacticalPlan = () => {
   const getActivePlan = useCallback(async (customerId: string): Promise<TacticalPlan | null> => {
     if (!effectiveUserId) return null;
 
+    const owners = await fetchOwnerScope(effectiveUserId);
     const { data } = (await supabase
       .from('farmer_tactical_plans')
       .select('*')
-      .eq('farmer_id', effectiveUserId)
+      .in('farmer_id', owners)
       .eq('customer_user_id', customerId)
       .eq('status', 'gerado')
       .order('created_at', { ascending: false })
@@ -521,7 +565,7 @@ export const useTacticalPlan = () => {
 
     const profileMap = new Map<string, string>([[customerId, profile?.name || 'Cliente']]);
     return parsePlan(data[0], profileMap);
-  }, [effectiveUserId]);
+  }, [effectiveUserId, fetchOwnerScope]);
 
   // Record post-call results
   const recordResult = useCallback(async (planId: string, result: {
@@ -554,7 +598,10 @@ export const useTacticalPlan = () => {
     }
   }, [loadPlans]);
 
-  // Get effectiveness stats
+  // Get effectiveness stats — efetividade da carteira PRÓPRIA por dono (effectiveUserId), NÃO inclui
+  // coberturas (não inflar a métrica do gestor com a carteira do coberto; sob cobertura o plano
+  // fica sob farmer_id=dono e conta pra efetividade do dono). Medir "por executor" exigiria uma
+  // coluna generated_by — decisão adiada (YAGNI, 0 planos; ver docs/historico).
   const getEffectivenessStats = useCallback(async () => {
     if (!effectiveUserId) return null;
 
