@@ -3,7 +3,7 @@
  * prompt da IA (`generate-tactical-plan`) e molda o plano de abordagem.
  *
  * Regras em ORDEM (a primeira que casa vence):
- *   0. ativacao    — sem_historico: nunca comprou (PRECEDE tudo; não há histórico p/ recuperar)
+ *   0. ativacao    — sem_historico: sem venda válida no resumo (PRECEDE tudo; nada p/ recuperar)
  *   1. reativacao  — cliente LAPSADO: dormência ≥ teto de recência (recência saturada em 0)
  *   2. recuperacao — churn alto (cliente escorregando, mas recência ainda viva)
  *   3. expansao_mix · 4. consolidacao_margem · 5. upsell_premium
@@ -32,7 +32,7 @@ export function selectObjective(
   recencyCapDays: number,
   salesHistoryStatus: string | null = null,
 ): string {
-  if (salesHistoryStatus === 'sem_historico') return 'ativacao'; // nunca comprou → ativação (não há histórico p/ recuperar/reativar)
+  if (salesHistoryStatus === 'sem_historico') return 'ativacao'; // sem venda válida → ativação (nada p/ recuperar/reativar)
   if (daysSince >= recencyCapDays) return 'reativacao';
   if (churnRisk > 60) return 'recuperacao';
   if (mixGap > 3) return 'expansao_mix';

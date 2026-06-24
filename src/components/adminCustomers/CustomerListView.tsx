@@ -91,6 +91,10 @@ export function CustomerListView({
     if (filterHealth !== 'all') {
       result = result.filter(c => {
         const score = scores.get(c.user_id);
+        // sem_historico tem filtro próprio; nos filtros de SAÚDE ele NÃO entra (o badge dele é
+        // "Sem histórico", não uma classe de saúde) — senão o filtro "Crítico" mentiria (achado /codex).
+        if (filterHealth === 'sem_historico') return score?.sales_history_status === 'sem_historico';
+        if (score?.sales_history_status === 'sem_historico') return false;
         return score?.health_class === filterHealth;
       });
     }
@@ -222,7 +226,7 @@ export function CustomerListView({
               Saúde
               {filterHealth !== 'all' && (
                 <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">
-                  {HEALTH_CLASSES[filterHealth]?.label}
+                  {filterHealth === 'sem_historico' ? 'Sem histórico' : HEALTH_CLASSES[filterHealth]?.label}
                 </Badge>
               )}
             </Button>
@@ -233,6 +237,7 @@ export function CustomerListView({
             <DropdownMenuItem onClick={() => setFilterHealth('estavel')}>🔵 Estável</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setFilterHealth('atencao')}>🟡 Atenção</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setFilterHealth('critico')}>🔴 Crítico</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setFilterHealth('sem_historico')}>⚪ Sem histórico</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

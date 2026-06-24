@@ -2,7 +2,7 @@
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA — apply_score_updates v4: #987-guard + sales_history_status (COALESCE)  ║
 # ║  Migrations:                                                                   ║
-# ║    supabase/migrations/20260621120000_sales_history_status_coluna.sql (col+CHECK)║
+# ║    supabase/migrations/20260622165000_sales_history_status_coluna.sql (col+CHECK)║
 # ║    supabase/migrations/20260622170000_apply_score_updates_sales_history_status.sql║
 # ║  Money-path · anti-ressurreição · deploy bidirecional-seguro.                  ║
 # ║  Lei de Ferro: (1) migration REAL; (2) negativo c/ SQLSTATE+re-raise;          ║
@@ -101,7 +101,7 @@ SQL
 # Pré-flight: a v4 estende a v3/guard (já em prod). Aqui parto do schema limpo e aplico
 # T2 (coluna+CHECK+config) e T3 (a RPC v4) — o corpo testado = o corpo que vai pra prod.
 # ══════════════════════════════════════════════════════════════════════════════
-MIG_COL="$REPO_ROOT/supabase/migrations/20260621120000_sales_history_status_coluna.sql"
+MIG_COL="$REPO_ROOT/supabase/migrations/20260622165000_sales_history_status_coluna.sql"
 MIG_RPC="$REPO_ROOT/supabase/migrations/20260622170000_apply_score_updates_sales_history_status.sql"
 P -q -f "$MIG_COL" >/dev/null
 P -q -f "$MIG_RPC" >/dev/null

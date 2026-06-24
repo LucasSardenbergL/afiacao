@@ -120,7 +120,7 @@ Gere um Plano Tático ESSENCIAL (rápido) para o vendedor (Farmer).
 
 Retorne um JSON com:
 
-1. "strategic_objective": Exatamente um de: "ativacao", "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem". IMPORTANTE: se "salesHistoryStatus" do cliente for "sem_historico", o cliente NUNCA comprou — o objetivo é "ativacao" (1ª compra); NÃO trate health/churn como recuperação (não há histórico para recuperar); foque em descoberta de necessidade e primeira oferta.
+1. "strategic_objective": Exatamente um de: "ativacao", "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem". IMPORTANTE: se "salesHistoryStatus" do cliente for "sem_historico" (SEM venda válida registrada no histórico — pode nunca ter comprado, OU ter só pedidos cancelados/devolvidos/sem item válido), o objetivo é "ativacao": trate como abertura/ativação, NÃO assuma relação prévia nem trate health/churn como recuperação, e NÃO afirme "primeira compra" como fato.
 
 2. "approach_strategy": Texto curto (1-2 frases) descrevendo a abordagem ideal
 
@@ -143,7 +143,7 @@ Gere um Plano Tático ESTRATÉGICO COMPLETO para o vendedor (Farmer).
 
 Retorne um JSON com:
 
-1. "strategic_objective": Exatamente um de: "ativacao", "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem". IMPORTANTE: se "salesHistoryStatus" do cliente for "sem_historico", o cliente NUNCA comprou — o objetivo é "ativacao" (1ª compra); NÃO trate health/churn como recuperação (não há histórico para recuperar); foque em descoberta de necessidade e primeira oferta.
+1. "strategic_objective": Exatamente um de: "ativacao", "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem". IMPORTANTE: se "salesHistoryStatus" do cliente for "sem_historico" (SEM venda válida registrada no histórico — pode nunca ter comprado, OU ter só pedidos cancelados/devolvidos/sem item válido), o objetivo é "ativacao": trate como abertura/ativação, NÃO assuma relação prévia nem trate health/churn como recuperação, e NÃO afirme "primeira compra" como fato.
 
 2. "approach_strategy": Texto detalhado (3-4 frases) da abordagem ideal
 

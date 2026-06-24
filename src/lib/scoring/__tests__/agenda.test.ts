@@ -106,13 +106,23 @@ describe('buildAgendaItems', () => {
     expect(item.agenda_type).toBe('ativacao');
   });
 
-  it('guard de slot: em prioridade igual, risco (recuperação) vem ANTES de ativação', () => {
+  it('guard de slot ESTRUTURAL: ativação NÃO desloca recuperação mesmo com prioridade MAIOR', () => {
     const items = buildAgendaItems([
-      mkRow({ customer_user_id: 'novo', priority_score: 50, health_class: 'novo', sales_history_status: 'sem_historico' }),
-      mkRow({ customer_user_id: 'risco', priority_score: 50, churn_risk: 80, health_class: 'critico', sales_history_status: 'stale' }),
+      mkRow({ customer_user_id: 'prospect', priority_score: 100, health_class: 'novo', sales_history_status: 'sem_historico' }),
+      mkRow({ customer_user_id: 'risco', priority_score: 99, churn_risk: 80, health_class: 'critico', sales_history_status: 'stale' }),
     ], 1);
+    // risco (99) ocupa o único slot, apesar de a ativação (100) ter prioridade efetiva MAIOR
     expect(items[0].customer_user_id).toBe('risco');
     expect(items[0].agenda_type).toBe('risco');
+  });
+
+  it('carteira só-prospect: ativação preenche a agenda (não há recuperação a fazer)', () => {
+    const items = buildAgendaItems([
+      mkRow({ customer_user_id: 'p1', priority_score: 30, sales_history_status: 'sem_historico' }),
+      mkRow({ customer_user_id: 'p2', priority_score: 40, sales_history_status: 'sem_historico' }),
+    ], 5);
+    expect(items.map((i) => i.agenda_type)).toEqual(['ativacao', 'ativacao']);
+    expect(items[0].customer_user_id).toBe('p2'); // ordenado por prioridade DENTRO do bucket
   });
 
   it('ativo/stale mantêm a classificação atual (risco)', () => {

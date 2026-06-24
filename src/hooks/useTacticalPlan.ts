@@ -177,7 +177,7 @@ const objectiveLabels: Record<string, string> = {
   expansao_mix: '🟢 Expansão de Mix',
   upsell_premium: '🔵 Up-sell Premium',
   reativacao: '🟡 Reativação',
-  ativacao: '🆕 Ativação (1ª compra)',
+  ativacao: '🆕 Ativação',
   consolidacao_margem: '🟠 Consolidação de Margem',
 };
 
