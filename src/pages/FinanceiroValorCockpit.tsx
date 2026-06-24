@@ -111,6 +111,17 @@ export default function FinanceiroValorCockpit() {
         </p>
       )}
 
+      {data.hurdle_banda != null && data.empresa.capital_conhecido != null && data.empresa.evp_conhecido != null && (
+        <p className="text-xs text-muted-foreground">
+          Sensibilidade ao hurdle: a {(data.hurdle_banda.lo * 100).toFixed(0)}% <span className="font-tabular">{brl(data.empresa.evp_conhecido + (data.hurdle_banda.base - data.hurdle_banda.lo) * data.empresa.capital_conhecido)}</span>
+          {' · '}<span className="font-tabular text-foreground">a {(data.hurdle_banda.base * 100).toFixed(0)}% {brl(data.empresa.evp_conhecido)}</span>
+          {' · '}a {(data.hurdle_banda.hi * 100).toFixed(0)}% <span className="font-tabular">{brl(data.empresa.evp_conhecido + (data.hurdle_banda.base - data.hurdle_banda.hi) * data.empresa.capital_conhecido)}</span>
+          {data.empresa.qtd_combos_sensiveis > 0 && (
+            <> · <span className="text-status-warning">{data.empresa.qtd_combos_sensiveis} combo(s) no fio da navalha (recomendação frágil ao hurdle)</span></>
+          )}
+        </p>
+      )}
+
       <div className="flex gap-2">
         <Button
           variant={aba === 'cliente' ? 'default' : 'outline'}
@@ -179,6 +190,11 @@ export default function FinanceiroValorCockpit() {
                           {row.evp_incompleto
                             ? `${row.evp == null ? 'capital não medido' : 'parcial'}${row.evp_teto != null ? ` · teto ≤ ${brl(row.evp_teto)}` : ''}`
                             : 'prejuízo real pode ser maior (teto)'}
+                        </div>
+                      )}
+                      {row.qtd_combos_sensiveis > 0 && (
+                        <div className="text-[10px] leading-tight text-status-warning">
+                          {row.qtd_combos_sensiveis} frágil(eis) ao hurdle
                         </div>
                       )}
                     </td>

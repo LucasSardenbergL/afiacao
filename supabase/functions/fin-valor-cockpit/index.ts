@@ -137,7 +137,7 @@ type CapitalCliente = { cliente: string; ar_medio: number | null };
 type CapitalSKU = { sku: string; estoque_valor: number | null };
 // Status do EVP afirmável (espelho VERBATIM de src/lib/financeiro/valor-cockpit-helpers.ts).
 type EvpStatus = 'real' | 'teto_nao_positivo' | 'omitido_teto_positivo' | 'indisponivel_cm' | 'indisponivel_hurdle';
-function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: CapitalCliente[]; capitalSKUs: CapitalSKU[]; k: number | null }) {
+function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: CapitalCliente[]; capitalSKUs: CapitalSKU[]; k: number | null; banda_hurdle?: number }) {
   const arPorCliente = new Map(input.capitalClientes.map((c) => [c.cliente, c.ar_medio]));
   const estoquePorSKU = new Map(input.capitalSKUs.map((s) => [s.sku, s.estoque_valor]));
   const receitaPorCliente = new Map<string, number>();
@@ -147,6 +147,10 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
     qtdPorSKU.set(c.sku, (qtdPorSKU.get(c.sku) ?? 0) + c.quantidade);
   }
   const k = input.k != null && Number.isFinite(input.k) && input.k > 0 ? input.k : null; // guard de hurdle (espelho)
+  const banda = input.banda_hurdle != null && Number.isFinite(input.banda_hurdle) && input.banda_hurdle > 0 ? input.banda_hurdle : 0.05;
+  const round4 = (x: number) => Math.round(x * 1e4) / 1e4;
+  const kLo = k != null ? round4(Math.max(0, k - banda)) : 0;
+  const kHi = k != null ? round4(k + banda) : 0;
   const celulas = input.combos.map((c) => {
     const cm = margemContribuicao({ receita_liquida: c.receita_liquida, custo_unitario: c.custo_unitario, quantidade: c.quantidade });
     const arCraw = arPorCliente.get(c.cliente) ?? null;
@@ -177,14 +181,19 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
       if (evp_teto <= 0 && estoqueAlocOk && arAlocOk) { evp = evp_teto; evp_status = 'teto_nao_positivo'; }
       else { evp = null; evp_status = 'omitido_teto_positivo'; }
     }
-    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp_teto, evp, ar_indisponivel, estoque_indisponivel, capital_parcial, evp_status };
+    // Sensibilidade ao hurdle (espelho de src): break-even = cm/capital_cs SÓ p/ célula 'real'; parcial → null.
+    const capital_cs = a_cs + i_cs;
+    const hurdle_break_even = evp_status === 'real' && capital_cs > 0 && cm != null && Number.isFinite(cm / capital_cs) ? cm / capital_cs : null;
+    const sensivel_hurdle = k != null && hurdle_break_even != null && hurdle_break_even >= kLo - 1e-9 && hurdle_break_even <= kHi + 1e-9; // epsilon: borda inclusiva apesar do float (/codex)
+    const folga_hurdle_pp = hurdle_break_even != null && k != null ? hurdle_break_even - k : null;
+    return { cliente: c.cliente, sku: c.sku, receita_liquida: c.receita_liquida, quantidade: c.quantidade, cm, a_cs, i_cs, encargo, evp_teto, evp, ar_indisponivel, estoque_indisponivel, capital_parcial, evp_status, capital_cs, hurdle_break_even, sensivel_hurdle, folga_hurdle_pp };
   });
   type Cel = typeof celulas[number];
   const rollup = (keyFn: (c: Cel) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpTeto: number; evpTetoNull: boolean; evpIncompleto: boolean; perdaGarantida: boolean; cmIncompleto: boolean }>();
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpTeto: number; evpTetoNull: boolean; evpIncompleto: boolean; perdaGarantida: boolean; cmIncompleto: boolean; qtdSensiveis: number }>();
     for (const cel of celulas) {
       const key = keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpTeto: 0, evpTetoNull: true, evpIncompleto: false, perdaGarantida: false, cmIncompleto: false };
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpTeto: 0, evpTetoNull: true, evpIncompleto: false, perdaGarantida: false, cmIncompleto: false, qtdSensiveis: 0 };
       acc.receita += cel.receita_liquida; acc.quantidade += cel.quantidade;
       if (cel.cm == null) acc.cmIncompleto = true;
       if (cel.encargo != null) { acc.encargoTotal += cel.encargo; acc.encargoTotalNull = false; }
@@ -193,31 +202,34 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
       if (cel.evp != null) { acc.evp += cel.evp; acc.evpNull = false; }
       if (cel.evp_status === 'omitido_teto_positivo') acc.evpIncompleto = true;
       if (cel.evp_status === 'teto_nao_positivo') acc.perdaGarantida = true;
+      if (cel.sensivel_hurdle) acc.qtdSensiveis++;
       m.set(key, acc);
     }
     return m;
   };
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto }));
-  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto }));
+  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto, qtd_combos_sensiveis: a.qtdSensiveis }));
+  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto, qtd_combos_sensiveis: a.qtdSensiveis }));
   let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, recEmp = 0;
   let conhecido = 0, conhecidoNull = true, tetoTotal = 0, tetoTotalNull = true, perda = 0, perdaNull = true;
   let evpIncompletoEmp = false, cmIncompletoEmp = false, recConhecido = 0, recOmitido = 0, recPerda = 0, recSemCm = 0;
+  let qtdSensiveisEmp = 0, capitalConhecido = 0;
   for (const cel of celulas) {
     recEmp += cel.receita_liquida;
     if (cel.cm == null) { cmIncompletoEmp = true; recSemCm += cel.receita_liquida; }
     if (cel.encargo != null) { encTotalEmp += cel.encargo; encTotalNull = false; }
     if (cel.cm != null) { cmEmp += cel.cm; cmNull = false; if (cel.encargo != null) { encEmp += cel.encargo; encNull = false; } }
     if (cel.evp_teto != null) { tetoTotal += cel.evp_teto; tetoTotalNull = false; }
-    if (cel.evp_status === 'real') { conhecido += cel.evp as number; conhecidoNull = false; recConhecido += cel.receita_liquida; }
+    if (cel.evp_status === 'real') { conhecido += cel.evp as number; conhecidoNull = false; recConhecido += cel.receita_liquida; capitalConhecido += cel.capital_cs; }
     else if (cel.evp_status === 'teto_nao_positivo') { perda += cel.evp as number; perdaNull = false; recPerda += cel.receita_liquida; }
     else if (cel.evp_status === 'omitido_teto_positivo') { evpIncompletoEmp = true; recOmitido += cel.receita_liquida; }
+    if (cel.sensivel_hurdle) qtdSensiveisEmp++;
   }
   const empresaCompleta = !evpIncompletoEmp && !cmIncompletoEmp && k != null; // evp único só se nada omitido/indisponível (Codex)
-  const empresa = { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp_conhecido: conhecidoNull ? null : conhecido, evp_teto_total: tetoTotalNull ? null : tetoTotal, evp_perda_garantida: perdaNull ? null : perda, evp: empresaCompleta && !conhecidoNull ? conhecido : null, evp_incompleto: evpIncompletoEmp, cm_incompleto: cmIncompletoEmp };
+  const empresa = { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp_conhecido: conhecidoNull ? null : conhecido, evp_teto_total: tetoTotalNull ? null : tetoTotal, evp_perda_garantida: perdaNull ? null : perda, evp: empresaCompleta && !conhecidoNull ? conhecido : null, evp_incompleto: evpIncompletoEmp, cm_incompleto: cmIncompletoEmp, qtd_combos_sensiveis: qtdSensiveisEmp, capital_conhecido: conhecidoNull ? null : capitalConhecido };
   const pct = (x: number) => (recEmp > 0 ? x / recEmp : 0);
-  return { celulas, porCliente, porSKU, empresa, evp_conhecido_receita_pct: pct(recConhecido), evp_omitido_otimista_receita_pct: pct(recOmitido), evp_perda_garantida_receita_pct: pct(recPerda), sem_cm_receita_pct: pct(recSemCm) };
+  return { celulas, porCliente, porSKU, empresa, evp_conhecido_receita_pct: pct(recConhecido), evp_omitido_otimista_receita_pct: pct(recOmitido), evp_perda_garantida_receita_pct: pct(recPerda), sem_cm_receita_pct: pct(recSemCm), hurdle_banda: k != null ? { base: k, lo: kLo, hi: kHi } : null };
 }
 type CockpitConfig = { margem_minima_pct: number; desconto_max_pct: number; prazo_alvo_dias: number; dias_estoque_max: number; sample_min_receita: number };
 type Recomendacao = { acao: string; motivo: string; impacto_rs: number | null };
@@ -580,6 +592,7 @@ serve(async (req: Request) => {
       evp_omitido_otimista_receita_pct: res.evp_omitido_otimista_receita_pct,
       evp_perda_garantida_receita_pct: res.evp_perda_garantida_receita_pct,
       sem_cm_receita_pct: res.sem_cm_receita_pct,
+      hurdle_banda: res.hurdle_banda, // banda da sensibilidade (sem isto a UI nunca mostra 25/30/35 — P1 /codex)
       config,
     }, 200);
   } catch (e) {

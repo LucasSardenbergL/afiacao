@@ -770,3 +770,134 @@ describe('montarCelulasComboEVP — rollup.perda_garantida (P2 Codex: UI sinaliz
     expect(r.porCliente[0].perda_garantida).toBe(false);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-06-24 — Bônus: sensibilidade do EVP ao hurdle (combos no fio da navalha).
+// Granularidade por combo REAL (capital completo) — o agregado é robusto e MASCARA os frágeis (Codex).
+// hurdle_break_even = cm/capital_cs (o k onde evp=0); sensível = break_even na banda [k−δ, k+δ], δ=0,05.
+// Parciais FORA desta entrega (classificação muda com k). 30% é o número principal.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('montarCelulasComboEVP — sensibilidade ao hurdle (célula real)', () => {
+  // k=0,30, banda default 0,05 → banda [0,25; 0,35]
+  it('break_even DENTRO da banda → sensivel_hurdle=true + break_even + folga', () => {
+    // cm=300 (1000−7·100); a_cs=650, i_cs=400 → capital_cs=1050; break_even=300/1050≈0,2857 ∈ [0,25;0,35]
+    const c = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 650 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    }).celulas[0];
+    expect(c.capital_cs).toBeCloseTo(1050, 6);
+    expect(c.evp_status).toBe('real');
+    expect(c.hurdle_break_even).toBeCloseTo(300 / 1050, 6);
+    expect(c.sensivel_hurdle).toBe(true);
+    expect(c.folga_hurdle_pp).toBeCloseTo(300 / 1050 - 0.30, 6); // negativa: break-even abaixo do hurdle atual
+  });
+  it('break_even ACIMA da banda (robustamente bom) → sensivel_hurdle=false', () => {
+    // cm=500; capital=1000 → break_even=0,50 > 0,35
+    const c = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 5 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    }).celulas[0];
+    expect(c.hurdle_break_even).toBeCloseTo(0.5, 6);
+    expect(c.sensivel_hurdle).toBe(false);
+    expect(c.folga_hurdle_pp).toBeCloseTo(0.2, 6); // folga positiva
+  });
+  it('break_even ABAIXO da banda (robustamente ruim) → sensivel_hurdle=false', () => {
+    // cm=100; capital=1000 → break_even=0,10 < 0,25
+    const c = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 9 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    }).celulas[0];
+    expect(c.hurdle_break_even).toBeCloseTo(0.1, 6);
+    expect(c.sensivel_hurdle).toBe(false);
+  });
+  it('célula PARCIAL (estoque ausente) → break_even null, sensivel_hurdle false (fora do escopo)', () => {
+    const c = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 650 }], capitalSKUs: [{ sku: 'S1', estoque_valor: null }], k: 0.30,
+    }).celulas[0];
+    expect(c.evp_status).not.toBe('real');
+    expect(c.hurdle_break_even).toBeNull();
+    expect(c.sensivel_hurdle).toBe(false);
+  });
+  it('capital_cs=0 (AR e estoque 0 conhecidos) → break_even null, sensivel false (EVP plano)', () => {
+    const c = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 0 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 0 }], k: 0.30,
+    }).celulas[0];
+    expect(c.evp_status).toBe('real');
+    expect(c.capital_cs).toBe(0);
+    expect(c.hurdle_break_even).toBeNull();
+    expect(c.sensivel_hurdle).toBe(false);
+  });
+  it('k=null → sem banda, break_even null, sensivel false; hurdle_banda null', () => {
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 650 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: null,
+    });
+    expect(r.celulas[0].sensivel_hurdle).toBe(false);
+    expect(r.celulas[0].hurdle_break_even).toBeNull();
+    expect(r.hurdle_banda).toBeNull();
+  });
+  it('hurdle_banda reflete k ± δ (0,30 ± 0,05 = [0,25; 0,35])', () => {
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 650 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    });
+    expect(r.hurdle_banda).toEqual({ base: 0.30, lo: 0.25, hi: 0.35 });
+  });
+  it('banda custom (δ=0,10 → [0,20; 0,40]) muda quem é sensível', () => {
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 5 }], // break_even 0,50
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30, banda_hurdle: 0.10,
+    });
+    expect(r.hurdle_banda).toEqual({ base: 0.30, lo: 0.20, hi: 0.40 });
+    expect(r.celulas[0].sensivel_hurdle).toBe(false); // 0,50 ainda fora de [0,20;0,40]
+  });
+  it('BORDA: break_even exatamente em kLo (0,25) e kHi (0,35) → sensível (inclusivo, epsilon contra float)', () => {
+    // break_even 0,25: cm=250 (1000−7,5·100), capital=1000 → na borda lo
+    const lo = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7.5 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    }).celulas[0];
+    expect(lo.hurdle_break_even).toBeCloseTo(0.25, 9);
+    expect(lo.sensivel_hurdle).toBe(true);
+    // break_even 0,35: cm=350 (1000−6,5·100), capital=1000 → na borda hi
+    const hi = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.5 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    }).celulas[0];
+    expect(hi.hurdle_break_even).toBeCloseTo(0.35, 9);
+    expect(hi.sensivel_hurdle).toBe(true);
+  });
+});
+
+describe('montarCelulasComboEVP — qtd_combos_sensiveis (granularidade, não agregado)', () => {
+  it('rollup conta combos frágeis; agregado robusto NÃO mascara', () => {
+    // C1: S1 sensível (be 0,2857), S2 robusto-bom (be 0,50). Soma dos 2 pode ser robusta, mas qtd capta o frágil.
+    const r = montarCelulasComboEVP({
+      combos: [
+        { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7 }, // cm 300
+        { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 100, custo_unitario: 5 }, // cm 500
+      ],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 1300 }], // rc=2000 → a_cs S1=650, S2=650
+      capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }, { sku: 'S2', estoque_valor: 400 }],
+      k: 0.30,
+    });
+    const s1 = r.celulas.find((c) => c.sku === 'S1')!;
+    const s2 = r.celulas.find((c) => c.sku === 'S2')!;
+    expect(s1.sensivel_hurdle).toBe(true);
+    expect(s2.sensivel_hurdle).toBe(false);
+    expect(r.porCliente[0].qtd_combos_sensiveis).toBe(1);
+    expect(r.empresa.qtd_combos_sensiveis).toBe(1);
+    expect(r.empresa.capital_conhecido).toBeCloseTo(s1.capital_cs + s2.capital_cs, 6);
+  });
+  it('k=null → qtd_combos_sensiveis=0 em rollup/empresa; capital_conhecido null', () => {
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 650 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: null,
+    });
+    expect(r.porCliente[0].qtd_combos_sensiveis).toBe(0);
+    expect(r.empresa.qtd_combos_sensiveis).toBe(0);
+    expect(r.empresa.capital_conhecido).toBeNull();
+  });
+});

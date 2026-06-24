@@ -1003,6 +1003,7 @@ export interface CockpitRollupCliente {
   evp_incompleto: boolean;
   perda_garantida: boolean;
   cm_incompleto: boolean;
+  qtd_combos_sensiveis: number;  // combos REAIS frágeis ao hurdle (break-even na banda 25-35%)
   nome?: string | null;  // nome do cliente (profiles via customer_user_id) — UI mostra no lugar do código
 }
 export interface CockpitRollupSKU {
@@ -1017,6 +1018,7 @@ export interface CockpitRollupSKU {
   evp_incompleto: boolean;
   perda_garantida: boolean;
   cm_incompleto: boolean;
+  qtd_combos_sensiveis: number;  // combos REAIS frágeis ao hurdle (break-even na banda 25-35%)
   descricao?: string | null;  // descrição do produto (omie_products) — UI mostra no lugar do código SKU
 }
 // Empresa DECOMPOSTA (capital parcial → um único evp seria mentira contábil; Codex 2026-06-23).
@@ -1032,6 +1034,8 @@ export interface CockpitEmpresaEVP {
   evp_incompleto: boolean;
   perda_garantida: boolean;
   cm_incompleto: boolean;
+  qtd_combos_sensiveis: number;     // combos REAIS no fio da navalha (granularidade que o agregado robusto esconde)
+  capital_conhecido: number | null; // Σ capital das células reais → deriva EVP a outros hurdles
 }
 export interface ValorCockpitResult {
   company: string;
@@ -1052,6 +1056,7 @@ export interface ValorCockpitResult {
   evp_omitido_otimista_receita_pct?: number;
   evp_perda_garantida_receita_pct?: number;
   sem_cm_receita_pct?: number;
+  hurdle_banda?: { base: number; lo: number; hi: number } | null; // banda da sensibilidade (lo/base/hi → 25/30/35%)
   config: CockpitConfig;
 }
 

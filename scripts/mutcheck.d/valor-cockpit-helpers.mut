@@ -24,3 +24,6 @@ PEGA | assimetria: teto≤0 mantido vira teto>0 (sinal, F1)    | s/evp_teto <= 0
 PEGA | guard denominador AR: remove rc>0 da perna ausente    | s/rc > 0 && Number\.isFinite\(c\.receita_liquida\)/Number.isFinite(c.receita_liquida)/
 PEGA | empresa.evp: remove gate empresaCompleta (finge total)| s/empresaCompleta && !conhecidoNull \? conhecido/!conhecidoNull ? conhecido/
 PEGA | confianca: limiar omitido-por-receita 5% afrouxa p/15%| s/omitidoPct > 0\.05/omitidoPct > 0.15/
+# Sensibilidade ao hurdle (bônus 2026-06-24): fio da navalha = break-even cm/capital ∈ [k−δ, k+δ], SÓ p/ 'real'.
+PEGA | sensibilidade: banda sem teto (kHi removido)          | s/hurdle_break_even >= kLo - 1e-9 && hurdle_break_even <= kHi \+ 1e-9/hurdle_break_even >= kLo - 1e-9/
+PEGA | sensibilidade: gate 'real' removido (parcial entra)   | s/evp_status === 'real' && capital_cs > 0 && cm != null/capital_cs > 0 && cm != null/
