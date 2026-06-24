@@ -31,6 +31,13 @@ type Q = {
   insert?: Record<string, unknown>;
 };
 let queries: Q[] = [];
+// Pós-#1037 + split de RLS: a escrita é via supabase.rpc (criar_plano_tatico/registrar_resultado_plano),
+// não mais .insert/.update. Registramos as chamadas RPC p/ os asserts de posse.
+let rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+function recordRpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: null }> {
+  rpcCalls.push({ fn, args });
+  return Promise.resolve({ data: 'plan-1', error: null });
+}
 
 const scoreRow = () => ({
   farmer_id: scoreFarmerId,
@@ -73,7 +80,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: (t: string) => chain(t), functions: { invoke: (...a: unknown[]) => h.invoke(...a) } },
+  supabase: { from: (t: string) => chain(t), rpc: (fn: string, args: Record<string, unknown>) => recordRpc(fn, args), functions: { invoke: (...a: unknown[]) => h.invoke(...a) } },
 }));
 vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => ({ isImpersonating: false, effectiveUserId: VIEWER }) }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: VIEWER }, isStaff: true }) }));
@@ -83,6 +90,7 @@ import { useTacticalPlan } from '../useTacticalPlan';
 
 beforeEach(() => {
   queries = [];
+  rpcCalls = [];
   scoreFarmerId = OWNER;
   h.invoke.mockResolvedValue({ data: { strategic_objective: 'upsell_premium' }, error: null });
   vi.clearAllMocks();
@@ -90,13 +98,16 @@ beforeEach(() => {
 });
 
 describe('generatePlan — POSSE do plano = DONO da carteira (não o executor)', () => {
-  it('grava farmer_id = DONO do score (não o viewer/executor)', async () => {
+  it('grava a posse via criar_plano_tatico com _expected_owner = DONO do score (não o viewer/executor)', async () => {
     const { result: r } = renderHook(() => useTacticalPlan());
     await act(async () => { await r.current.generatePlan(CUSTOMER); });
-    const ins = queries.find((q) => q.table === 'farmer_tactical_plans' && q.insert);
-    expect(ins).toBeTruthy();
-    expect(ins!.insert!.farmer_id).toBe(OWNER);
-    expect(ins!.insert!.farmer_id).not.toBe(VIEWER);
+    // A posse (farmer_id) é re-resolvida server-side; o client só passa o dono ESPERADO p/ detectar
+    // race. Provar que passa o DONO (não o viewer) mantém o invariante do #1028 nesta camada.
+    const call = rpcCalls.find((x) => x.fn === 'criar_plano_tatico');
+    expect(call).toBeTruthy();
+    expect(call!.args._expected_owner).toBe(OWNER);
+    expect(call!.args._expected_owner).not.toBe(VIEWER);
+    expect(call!.args._customer_user_id).toBe(CUSTOMER);
   });
 
   it('busca o bundle pendente pelo DONO do score (não o viewer) — multi por (customer,farmer)', async () => {
@@ -108,12 +119,11 @@ describe('generatePlan — POSSE do plano = DONO da carteira (não o executor)',
     expect(bundleQ!.eq.find(([c]) => c === 'farmer_id')?.[1]).not.toBe(VIEWER);
   });
 
-  it('cliente sem dono de carteira (score.farmer_id null) → ABORTA: sem IA, sem insert, com aviso', async () => {
+  it('cliente sem dono de carteira (score.farmer_id null) → ABORTA: sem IA, sem RPC, com aviso', async () => {
     scoreFarmerId = null;
     const { result: r } = renderHook(() => useTacticalPlan());
     await act(async () => { await r.current.generatePlan(CUSTOMER); });
-    const ins = queries.find((q) => q.table === 'farmer_tactical_plans' && q.insert);
-    expect(ins).toBeFalsy();
+    expect(rpcCalls.find((x) => x.fn === 'criar_plano_tatico')).toBeFalsy();
     expect(h.invoke).not.toHaveBeenCalled();
     expect(h.toastError).toHaveBeenCalled();
   });

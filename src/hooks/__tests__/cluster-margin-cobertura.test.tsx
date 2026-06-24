@@ -54,9 +54,15 @@ function chain(table: string): unknown {
   return c;
 }
 
+// Pós-#1037 + split de RLS: a escrita do plano é via supabase.rpc('criar_plano_tatico'), não .insert.
+let rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+function recordRpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: null }> {
+  rpcCalls.push({ fn, args });
+  return Promise.resolve({ data: 'plan-1', error: null });
+}
 const invokeMock = vi.fn().mockResolvedValue({ data: { strategic_objective: 'upsell_premium' }, error: null });
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: (t: string) => chain(t), functions: { invoke: (...a: unknown[]) => invokeMock(...a) } },
+  supabase: { from: (t: string) => chain(t), rpc: (fn: string, args: Record<string, unknown>) => recordRpc(fn, args), functions: { invoke: (...a: unknown[]) => invokeMock(...a) } },
 }));
 vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => ({ isImpersonating: false, effectiveUserId: MASTER }) }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: MASTER }, isStaff: true }) }));
@@ -64,7 +70,7 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 import { useTacticalPlan } from '../useTacticalPlan';
 
-beforeEach(() => { queries = []; vi.clearAllMocks(); });
+beforeEach(() => { queries = []; rpcCalls = []; vi.clearAllMocks(); });
 
 describe('generatePlan — clusterMargin escopado ao DONO (cobertura #980) + degradação honesta', () => {
   it('o agregado de cluster filtra pelo DONO do score (não o viewer) e exclui o próprio cliente', async () => {
@@ -81,8 +87,8 @@ describe('generatePlan — clusterMargin escopado ao DONO (cobertura #980) + deg
   it('sem pares na carteira do dono → persiste cluster_avg_margin_pct null (não 25 fabricado)', async () => {
     const { result: r } = renderHook(() => useTacticalPlan());
     await act(async () => { await r.current.generatePlan(CUSTOMER); });
-    const inserted = queries.find((q) => q.table === 'farmer_tactical_plans' && q.insert);
-    expect(inserted).toBeTruthy();
-    expect(inserted!.insert!.cluster_avg_margin_pct).toBeNull();
+    const call = rpcCalls.find((x) => x.fn === 'criar_plano_tatico');
+    expect(call).toBeTruthy();
+    expect((call!.args._payload as Record<string, unknown>).cluster_avg_margin_pct).toBeNull();
   });
 });
