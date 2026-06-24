@@ -135,10 +135,15 @@ export default function FinanceiroValorCockpit() {
                   aba === 'cliente'
                     ? (row as CockpitRollupCliente).cliente
                     : (row as CockpitRollupSKU).sku;
+                const nome = aba === 'cliente' ? (row as CockpitRollupCliente).nome : (row as CockpitRollupSKU).descricao;
+                const temNome = !!nome && nome !== id;
                 const recs = aba === 'cliente' ? (recPorCliente.get(id) ?? []) : [];
                 return (
                   <tr key={id} className="border-t border-border">
-                    <td className="py-1 font-tabular">{id}</td>
+                    <td className="py-1">
+                      <div className={temNome ? '' : 'font-tabular'}>{temNome ? nome : id}</div>
+                      {temNome && !id.startsWith('app:') && <div className="text-xs text-muted-foreground font-tabular">{id}</div>}
+                    </td>
                     <td className="text-right">{brl(row.receita)}</td>
                     <td className="text-right">{brl(row.cm)}</td>
                     <td className="text-right text-muted-foreground">{brl(row.encargo)}</td>

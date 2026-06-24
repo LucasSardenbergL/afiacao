@@ -26,14 +26,19 @@ export function selectObjective(
   churnRisk: number,
   mixGap: number,
   marginPct: number,
-  clusterMargin: number,
+  clusterMargin: number | null,
   daysSince: number,
   recencyCapDays: number,
 ): string {
   if (daysSince >= recencyCapDays) return 'reativacao';
   if (churnRisk > 60) return 'recuperacao';
   if (mixGap > 3) return 'expansao_mix';
-  if (marginPct < clusterMargin * 0.8) return 'consolidacao_margem';
+  // Cluster AUSENTE (null) → NÃO dispara consolidacao_margem. money-path: ausente ≠ número
+  // fabricado. Antes o caller passava 25 mágico p/ carteira vazia e `margem < 20` empurrava
+  // consolidacao a esmo. (O espelho no edge generate-tactical-plan sempre passa número —
+  // benchmarka pela carteira-dono no batch — então a divergência só aparece no caminho client,
+  // onde o cluster pode faltar.)
+  if (clusterMargin != null && Number.isFinite(clusterMargin) && marginPct < clusterMargin * 0.8) return 'consolidacao_margem';
   return 'upsell_premium';
 }
 
