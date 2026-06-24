@@ -89,7 +89,7 @@ interface CopilotSessionRow {
 }
 
 export const useFarmerPerformance = () => {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
   const [scores, setScores] = useState<PerformanceScore[]>([]);
   const [loading, setLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
@@ -158,6 +158,33 @@ export const useFarmerPerformance = () => {
     setCalculating(true);
 
     try {
+      // [GUARD money-path — dívida D1 latente, ver docs/historico/bugs-resolvidos.md §D1]
+      // Sob cobertura de carteira (#980) o farmer_id DIVERGE entre as fontes: farmer_tactical_plans
+      // e farmer_client_scores = DONO; farmer_calls e farmer_copilot_sessions = EXECUTOR. O IEE
+      // (totalPlans/totalCalls) e o IPF (margem de plans + calls) misturariam dono×executor e o
+      // score corrompido se propaga pros consumidores (Executive/IPF/Intelligence) → avaliação/comissão.
+      // Enquanto a semântica não for decidida (generated_by ausente por YAGNI), precisão>recall:
+      // sob cobertura NÃO persistir — degradar honesto. Fail-closed: leitura de cobertura que falha,
+      // ou cálculo p/ TERCEIRO sem ser master (a RLS de carteira_coverage cega o viewer não-envolvido),
+      // também suspendem (assumir o pior, nunca fabricar). Conduzido com /codex (challenge).
+      const calculandoParaTerceiro = farmerId !== user.id;
+      let suspenderPorCobertura = calculandoParaTerceiro && role !== 'master';
+      if (!suspenderPorCobertura) {
+        const [cov1, cov2] = await Promise.all([
+          supabase.from('carteira_coverage').select('id').eq('active', true).eq('covered_user_id', farmerId).limit(1),
+          supabase.from('carteira_coverage').select('id').eq('active', true).eq('covering_user_id', farmerId).limit(1),
+        ]);
+        suspenderPorCobertura = !!cov1.error || !!cov2.error
+          || (cov1.data?.length ?? 0) > 0 || (cov2.data?.length ?? 0) > 0;
+      }
+      if (suspenderPorCobertura) {
+        toast.warning('Índices de performance indisponíveis sob cobertura de carteira', {
+          description: 'A métrica mistura dono e executor sob cobertura; cálculo suspenso até a semântica ser decidida (dívida D1).',
+        });
+        setCalculating(false);
+        return;
+      }
+
       const periodEnd = new Date();
       const periodStart = new Date();
       periodStart.setDate(periodStart.getDate() - periodDays);
@@ -317,7 +344,7 @@ export const useFarmerPerformance = () => {
     } finally {
       setCalculating(false);
     }
-  }, [user, loadScores]);
+  }, [user, role, loadScores]);
 
   // Get latest score for current user (IPF only view)
   const getMyLatestScore = useCallback((): PerformanceScore | null => {
