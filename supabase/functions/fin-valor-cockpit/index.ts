@@ -350,6 +350,14 @@ serve(async (req: Request) => {
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
     const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_clientes").select("user_id, omie_codigo_cliente").order("id", { ascending: true }).range(f, t), "omie_clientes");
     const userToOmie = new Map(clientesAll.map((c) => [c.user_id, String(c.omie_codigo_cliente)]));
+    // Nome do cliente: profiles.user_id = order_items.customer_user_id (~98% cobertura na Oben; psql-ro
+    // 2026-06-23). razao_social tem prioridade, senão name. service_role bypassa a RLS de profiles.
+    const profilesAll = await fetchAll<{ user_id: string | null; razao_social: string | null; name: string | null }>((f, t) => db.from("profiles").select("user_id, razao_social, name").order("id", { ascending: true }).range(f, t), "profiles");
+    const userParaNome = new Map<string, string>();
+    for (const p of profilesAll) {
+      const nome = (p.razao_social?.trim() || p.name?.trim() || "");
+      if (p.user_id && nome) userParaNome.set(p.user_id, nome);
+    }
     // Custo canônico = cost_final (saída do motor de custo). SOURCE-BLIND de propósito: usa cost_final>0 de
     // QUALQUER cost_source (inclusive proxy) — NÃO é a régua resolverCustoConfiavel do recommend/audit
     // (src/lib/custos/cost-source.ts), que gateia source∈REAIS e nulifica proxy. Coincidem nas linhas reais
@@ -410,8 +418,11 @@ serve(async (req: Request) => {
 
     // Combos cliente×SKU — cliente não-mapeado vira 'app:<uuid>' (NÃO funde clientes distintos).
     const comboMap = new Map<string, { cliente: string; sku: string; receita: number; qtd: number; desconto: number; product_id: string | null }>();
+    const clienteParaNome = new Map<string, string>(); // cliente (omie/app) → nome do profile (1º encontrado)
     for (const l of linhas) {
       const cliente = userToOmie.get(l.customer_user_id) ?? `app:${l.customer_user_id}`;
+      const nomeCli = userParaNome.get(l.customer_user_id);
+      if (nomeCli && !clienteParaNome.has(cliente)) clienteParaNome.set(cliente, nomeCli);
       const sku = l.omie_codigo_produto != null ? String(l.omie_codigo_produto) : "sem_sku";
       const key = `${cliente}|${sku}`;
       const receita = l.unit_price * l.quantity - (l.discount ?? 0);
@@ -503,9 +514,10 @@ serve(async (req: Request) => {
     // Descrição do produto (omie_products) p/ a UI exibir o nome em vez do código na visão Por SKU.
     const descricaoPorSKU = new Map(prods.map((p) => [String(p.omie_codigo_produto), p.descricao]));
     const porSKUcomDescricao = res.porSKU.map((s) => ({ ...s, descricao: descricaoPorSKU.get(s.sku) ?? null }));
+    const porClienteComNome = res.porCliente.map((c) => ({ ...c, nome: clienteParaNome.get(c.cliente) ?? null }));
     return jsonResponse({
       company: COMPANY, k, hurdle_indisponivel, ttm: { inicio: ttm_inicio, fim: ttm_fim },
-      porCliente: res.porCliente, porSKU: porSKUcomDescricao, empresa: res.empresa,
+      porCliente: porClienteComNome, porSKU: porSKUcomDescricao, empresa: res.empresa,
       recomendacoesCliente, confianca, cobertura_receita, cobertura_app_por_ar: app_por_ar,
       cobertura_baixa_ar: coberturaBaixaAR, // Fase 3: fração da AR liquidada com baixa derivada REAL (vs vencimento-proxy)
       evp_teto_receita_pct: res.evp_teto_receita_pct, // fração da receita-com-EVP cujo EVP é teto (UI entrega 2)
