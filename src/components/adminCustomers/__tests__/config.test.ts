@@ -11,7 +11,8 @@ describe("adminCustomers/config", () => {
 
   it("HEALTH_CLASSES mapeia rótulos", () => {
     expect(HEALTH_CLASSES.saudavel.label).toBe("Saudável");
-    expect(HEALTH_CLASSES.alerta.label).toBe("Alerta");
+    expect(HEALTH_CLASSES.estavel.label).toBe("Estável");
+    expect(HEALTH_CLASSES.atencao.label).toBe("Atenção"); // antes 'alerta' (drift do engine, que grava 'atencao')
     expect(HEALTH_CLASSES.critico.label).toBe("Crítico");
   });
 

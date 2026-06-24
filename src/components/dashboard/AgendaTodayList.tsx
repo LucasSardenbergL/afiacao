@@ -4,7 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Phone, AlertTriangle, TrendingUp, Clock, Loader2 } from 'lucide-react';
+import { Phone, AlertTriangle, TrendingUp, Clock, Loader2, UserPlus } from 'lucide-react';
 import { useMyAgendaToday, type AgendaItem } from '@/hooks/useMyAgendaToday';
 import { useWebRTCCallContext } from '@/contexts/webrtc-call-context';
 import { toast } from 'sonner';
@@ -13,6 +13,7 @@ import { SignalModifierBadge } from './SignalModifierBadge';
 const AGENDA_META: Record<AgendaItem['agenda_type'], { label: string; icon: typeof Phone; color: string }> = {
   risco: { label: 'Risco', icon: AlertTriangle, color: 'text-status-error' },
   expansao: { label: 'Expansão', icon: TrendingUp, color: 'text-status-success' },
+  ativacao: { label: 'Ativação', icon: UserPlus, color: 'text-muted-foreground' },
   follow_up: { label: 'Follow-up', icon: Clock, color: 'text-status-info' },
 };
 

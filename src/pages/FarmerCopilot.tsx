@@ -117,7 +117,7 @@ const FarmerCopilot = () => {
 
             {/* Fallback — cliente sem plano pré-gerado: exibe melhor bundle pendente */}
             {!activePlan && selectedCustomer && userId && (
-              <OfertaCruaCard customerId={selectedCustomer} farmerId={userId} />
+              <OfertaCruaCard customerId={selectedCustomer} />
             )}
 
             {copilot.isAnalyzing && (

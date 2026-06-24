@@ -7,6 +7,20 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
+// Teto de recência (dias até a recência zerar), lido de farmer_algorithm_config.hs_recency_cap_days.
+// Default 180, guardrail [30,999]. Ausente/null/NaN → default (Number(null)===0 fabricaria a fronteira
+// mínima 30). Espelho VERBATIM da clampRecencyCapDays de src/lib/scoring/objective.ts e
+// supabase/functions/calculate-scores/index.ts (Deno não importa de src/) — mudou aqui, mude lá.
+const DEFAULT_RECENCY_CAP_DAYS = 180;
+const MIN_RECENCY_CAP_DAYS = 30;
+const MAX_RECENCY_CAP_DAYS = 999;
+function clampRecencyCapDays(raw: unknown): number {
+  if (raw == null) return DEFAULT_RECENCY_CAP_DAYS;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_RECENCY_CAP_DAYS;
+  return Math.min(MAX_RECENCY_CAP_DAYS, Math.max(MIN_RECENCY_CAP_DAYS, Math.round(n)));
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -61,7 +75,7 @@ serve(async (req) => {
         return new Response(JSON.stringify({ id: existente[0].id, skipped: 'ja_gerado_hoje' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      const [{ data: score }, { data: profile }, { data: bundles }, { data: allScores }, { data: objEvents }] = await Promise.all([
+      const [{ data: score }, { data: profile }, { data: bundles }, { data: allScores }, { data: objEvents }, { data: recencyCapRow }] = await Promise.all([
         // Opção A: 1 linha por cliente (customer_user_id único). NÃO filtrar por farmer_id —
         // score stale pós-reatribuição (dono ≠ farmerId) virava "sem_score" falso e PULAVA o
         // plano do cliente reatribuído. Espelha useTacticalPlan.checkEfficiency (admin = service role).
@@ -70,6 +84,10 @@ serve(async (req) => {
         admin.from('farmer_bundle_recommendations').select('*').eq('customer_user_id', customerId).eq('farmer_id', farmerId).eq('status', 'pendente').order('lie_bundle', { ascending: false }).limit(2),
         admin.from('farmer_client_scores').select('gross_margin_pct').eq('farmer_id', farmerId),
         admin.from('farmer_copilot_events').select('event_data').eq('event_type', 'suggestion').limit(20),
+        // Teto de recência (hs_recency_cap_days): a fronteira reativacao/recuperacao ACOMPANHA o teto
+        // do modelo, não o 90 hardcode. Ausente → clampRecencyCapDays default 180. limit(1) p/ maybeSingle
+        // não lançar em chave duplicada. Espelha useTacticalPlan.ts:341 (caminho front) + calculate-scores.
+        admin.from('farmer_algorithm_config').select('value').eq('key', 'hs_recency_cap_days').limit(1).maybeSingle(),
       ]);
       if (!score) {
         return new Response(JSON.stringify({ skipped: 'sem_score' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -78,14 +96,22 @@ serve(async (req) => {
       const num = (v: unknown) => Number(v ?? 0);
       const healthScore = num(score.health_score), churnRisk = num(score.churn_risk), avgSpend = num(score.avg_monthly_spend_180d);
       const marginPct = num(score.gross_margin_pct), categoryCount = num(score.category_count), daysSince = num(score.days_since_last_purchase);
+      const salesHistoryStatus = (score.sales_history_status ?? null) as string | null;
       const clusterMargin = allScores?.length ? allScores.reduce((s: number, r: { gross_margin_pct: unknown }) => s + num(r.gross_margin_pct), 0) / allScores.length : 25;
       const mixGap = Math.max(0, 8 - categoryCount);
 
-      // classifyProfile/selectObjective — espelham useTacticalPlan.ts:183-196 (validado).
+      // classifyProfile/selectObjective — espelham useTacticalPlan.ts (classifyProfile + selectObjective, validado).
       const customerProfile = avgSpend < 500 && marginPct < 20 ? 'sensivel_preco'
         : marginPct > 35 && categoryCount <= 3 ? 'orientado_qualidade'
         : avgSpend > 2000 && categoryCount >= 4 && healthScore > 60 ? 'orientado_produtividade' : 'misto';
-      const strategicObjective = daysSince > 90 ? 'reativacao' : churnRisk > 60 ? 'recuperacao'
+      // Fronteira reativacao/recuperacao = daysSince >= teto de recência (ponto onde o sinal de
+      // recência satura em 0), NÃO o 90 mágico — espelha selectObjective (objective.ts) pós-#982.
+      // Aqui clusterMargin é SEMPRE número (fallback 25 acima), então a regra de margem dispensa o
+      // guard null que o front tem. recencyCapDays vem do config (acompanha o retuning do operador).
+      // sem_historico → ativacao PRECEDE tudo (#1026): sem venda válida, nada p/ recuperar/reativar.
+      const recencyCapDays = clampRecencyCapDays(recencyCapRow?.value);
+      const strategicObjective = salesHistoryStatus === 'sem_historico' ? 'ativacao'
+        : daysSince >= recencyCapDays ? 'reativacao' : churnRisk > 60 ? 'recuperacao'
         : mixGap > 3 ? 'expansao_mix' : marginPct < clusterMargin * 0.8 ? 'consolidacao_margem' : 'upsell_premium';
 
       topBundleRow = bundles?.[0] ?? null;
@@ -94,7 +120,7 @@ serve(async (req) => {
         .map((e: { event_data: { intent?: unknown } | null }) => (e.event_data as { intent?: unknown } | null)?.intent)
         .filter((i: unknown): i is string => typeof i === 'string' && i.startsWith('objecao')).slice(0, 5);
 
-      customerContext = { name: profile?.name, cnae: profile?.cnae, customerType: profile?.customer_type, profile: customerProfile, healthScore, churnRisk, avgMonthlySpend: avgSpend, grossMarginPct: marginPct, categoryCount, daysSinceLastPurchase: daysSince, mixGap, clusterAvgMargin: clusterMargin, expansionPotential: num(score.expansion_score), revenuePotential: num(score.revenue_potential) };
+      customerContext = { name: profile?.name, cnae: profile?.cnae, customerType: profile?.customer_type, profile: customerProfile, healthScore, churnRisk, avgMonthlySpend: avgSpend, grossMarginPct: marginPct, categoryCount, daysSinceLastPurchase: daysSince, mixGap, clusterAvgMargin: clusterMargin, expansionPotential: num(score.expansion_score), revenuePotential: num(score.revenue_potential), salesHistoryStatus };
       bundleContext = topBundleRow ? { products: topBundleRow.bundle_products, lie: topBundleRow.lie_bundle, probability: topBundleRow.p_bundle, margin: topBundleRow.m_bundle } : null;
       diagnosticData = { strategicObjective };
       // Paridade com o front: no modo estratégico, inclui o 2º bundle p/ comparação.
@@ -118,7 +144,7 @@ Gere um Plano Tático ESSENCIAL (rápido) para o vendedor (Farmer).
 
 Retorne um JSON com:
 
-1. "strategic_objective": Exatamente um de: "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem"
+1. "strategic_objective": Exatamente um de: "ativacao", "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem". IMPORTANTE: se "salesHistoryStatus" do cliente for "sem_historico" (SEM venda válida registrada no histórico — pode nunca ter comprado, OU ter só pedidos cancelados/devolvidos/sem item válido), o objetivo é "ativacao": trate como abertura/ativação, NÃO assuma relação prévia nem trate health/churn como recuperação, e NÃO afirme "primeira compra" como fato.
 
 2. "approach_strategy": Texto curto (1-2 frases) descrevendo a abordagem ideal
 
@@ -141,7 +167,7 @@ Gere um Plano Tático ESTRATÉGICO COMPLETO para o vendedor (Farmer).
 
 Retorne um JSON com:
 
-1. "strategic_objective": Exatamente um de: "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem"
+1. "strategic_objective": Exatamente um de: "ativacao", "recuperacao", "expansao_mix", "upsell_premium", "reativacao", "consolidacao_margem". IMPORTANTE: se "salesHistoryStatus" do cliente for "sem_historico" (SEM venda válida registrada no histórico — pode nunca ter comprado, OU ter só pedidos cancelados/devolvidos/sem item válido), o objetivo é "ativacao": trate como abertura/ativação, NÃO assuma relação prévia nem trate health/churn como recuperação, e NÃO afirme "primeira compra" como fato.
 
 2. "approach_strategy": Texto detalhado (3-4 frases) da abordagem ideal
 
@@ -254,30 +280,42 @@ ${JSON.stringify(historicalObjections || [], null, 2)}`;
     // Add plan_type to response
     plan.plan_type = mode;
 
-    // Modo self-contained (cron): grava o plano e devolve o id (colunas espelham o
-    // INSERT do front em useTacticalPlan.ts:432-461 — validado).
+    // Modo self-contained (cron): grava o plano via RPC-fronteira criar_plano_tatico.
+    // A posse (farmer_id) é re-resolvida server-side de carteira_assignments — não confiamos
+    // no body.farmerId resolvido no início do batch (pode estar stale se a carteira foi
+    // reatribuída durante a geração da IA). _expected_owner=body.farmerId faz a RPC ABORTAR no
+    // race em vez de gravar dono stale (precisão>recall). farmer_id/customer/status são do servidor.
     if (selfContained) {
       const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
       const d = (body as { _derived: Record<string, number | string> })._derived;
-      const { data: ins } = await admin.from('farmer_tactical_plans').insert({
-        farmer_id: body.farmerId, customer_user_id: body.customerId,
-        bundle_recommendation_id: (topBundleRow as { id?: string } | null)?.id ?? null,
-        health_score: d.healthScore, churn_risk: d.churnRisk, mix_gap: d.mixGap,
-        current_margin_pct: d.marginPct, cluster_avg_margin_pct: d.clusterMargin, expansion_potential: d.expansionPotential,
-        strategic_objective: plan.strategic_objective || d.strategicObjective, customer_profile: d.customerProfile, plan_type: mode,
-        top_bundle: (topBundleRow ? topBundleRow.bundle_products : {}),
-        second_bundle: (secondBundleRow ? (secondBundleRow as { bundle_products: unknown }).bundle_products : {}),
-        bundle_lie: Number((topBundleRow as { lie_bundle?: unknown } | null)?.lie_bundle ?? 0),
-        bundle_probability: Number((topBundleRow as { p_bundle?: unknown } | null)?.p_bundle ?? 0),
-        bundle_incremental_margin: Number((topBundleRow as { m_bundle?: unknown } | null)?.m_bundle ?? 0),
-        best_individual_lie: 0,
-        diagnostic_questions: plan.diagnostic_questions ?? [], implication_question: plan.implication_question ?? '',
-        offer_transition: plan.offer_transition ?? '', probable_objections: plan.probable_objections ?? [],
-        approach_strategy: plan.approach_strategy ?? '', approach_strategy_b: plan.approach_strategy_b ?? '',
-        ltv_projection: plan.ltv_projection ?? null, expected_result: plan.expected_result ?? null,
-        operational_risks: plan.operational_risks ?? [], status: 'gerado',
-      }).select('id').single();
-      return new Response(JSON.stringify({ id: ins?.id, generated: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const { data: newId, error: rpcErr } = await admin.rpc('criar_plano_tatico', {
+        _customer_user_id: body.customerId,
+        _expected_owner: body.farmerId,
+        _payload: {
+          bundle_recommendation_id: (topBundleRow as { id?: string } | null)?.id ?? null,
+          health_score: d.healthScore, churn_risk: d.churnRisk, mix_gap: d.mixGap,
+          current_margin_pct: d.marginPct, cluster_avg_margin_pct: d.clusterMargin, expansion_potential: d.expansionPotential,
+          strategic_objective: plan.strategic_objective || d.strategicObjective, customer_profile: d.customerProfile, plan_type: mode,
+          top_bundle: (topBundleRow ? topBundleRow.bundle_products : {}),
+          second_bundle: (secondBundleRow ? (secondBundleRow as { bundle_products: unknown }).bundle_products : {}),
+          bundle_lie: Number((topBundleRow as { lie_bundle?: unknown } | null)?.lie_bundle ?? 0),
+          bundle_probability: Number((topBundleRow as { p_bundle?: unknown } | null)?.p_bundle ?? 0),
+          bundle_incremental_margin: Number((topBundleRow as { m_bundle?: unknown } | null)?.m_bundle ?? 0),
+          best_individual_lie: 0,
+          diagnostic_questions: plan.diagnostic_questions ?? [], implication_question: plan.implication_question ?? '',
+          offer_transition: plan.offer_transition ?? '', probable_objections: plan.probable_objections ?? [],
+          approach_strategy: plan.approach_strategy ?? '', approach_strategy_b: plan.approach_strategy_b ?? '',
+          ltv_projection: plan.ltv_projection ?? null, expected_result: plan.expected_result ?? null,
+          operational_risks: plan.operational_risks ?? [],
+        },
+      });
+      if (rpcErr) {
+        // Race de reatribuição / cliente sem dono → pula este alvo (idempotente; o próximo ciclo
+        // re-lista farmer_client_scores já reconciliado e gera sob o dono certo). Não derruba o batch.
+        console.error('criar_plano_tatico falhou', body.customerId, rpcErr.message);
+        return new Response(JSON.stringify({ skipped: 'rpc_error', detail: rpcErr.message }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ id: newId, generated: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     return new Response(
