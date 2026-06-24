@@ -1,6 +1,8 @@
 // Fila de "SLA de contato vencido" da carteira — fecha o loop scoring → ação.
 // Read-model puro sobre a view v_carteira_sla (nenhum writer novo).
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/EmptyState';
@@ -18,17 +20,36 @@ export function SlaVencidoCard({
   nomePorCliente,
   onClienteClick,
 }: {
-  /** customer_user_id → nome (vem do useFarmerScoring no pai; evita query extra). */
+  /** customer_user_id → nome (vem do useFarmerScoring; cobre a carteira do próprio vendedor sem query). */
   nomePorCliente: Map<string, string>;
   onClienteClick?: (customerUserId: string) => void;
 }) {
   const { data, isLoading } = useCarteiraSla();
+  const vencidos = (data ?? []).filter((r) => r.vencido);
+
+  // Para o gestor a fila pode trazer clientes fora do scoring corrente → resolve os nomes
+  // faltantes via profiles (evita exibir UUID). Só dispara se houver ids faltando.
+  const idsFaltantes = vencidos
+    .map((r) => r.customer_user_id)
+    .filter((id) => !nomePorCliente.has(id));
+  const { data: nomesExtra } = useQuery({
+    queryKey: ['sla-nomes-faltantes', [...idsFaltantes].sort().join(',')],
+    enabled: idsFaltantes.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data: ps } = await supabase
+        .from('profiles')
+        .select('user_id, name')
+        .in('user_id', idsFaltantes);
+      return new Map((ps ?? []).map((p) => [p.user_id, p.name ?? '']));
+    },
+  });
+
+  const nomeDe = (id: string) => nomePorCliente.get(id) || nomesExtra?.get(id) || 'Cliente sem nome';
 
   if (isLoading) {
     return <div className="h-32 rounded-lg bg-muted/40 animate-pulse" />;
   }
-
-  const vencidos = (data ?? []).filter((r) => r.vencido);
 
   return (
     <Card>
@@ -59,7 +80,7 @@ export function SlaVencidoCard({
                   className="w-full py-2 flex items-center justify-between gap-3 text-left text-sm hover:bg-muted/40 rounded px-1"
                 >
                   <span className="min-w-0 flex-1 truncate">
-                    {nomePorCliente.get(r.customer_user_id) ?? 'Cliente sem nome'}
+                    {nomeDe(r.customer_user_id)}
                     <span className="ml-2 text-[10px] uppercase text-muted-foreground">
                       {HEALTH_LABEL[r.health_class] ?? r.health_class}
                     </span>

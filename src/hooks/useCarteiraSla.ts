@@ -25,6 +25,7 @@ export interface CarteiraSlaRow {
 export function useCarteiraSla() {
   return useQuery({
     queryKey: ['carteira-sla'],
+    staleTime: 60_000,
     queryFn: async (): Promise<CarteiraSlaRow[]> => {
       const { data, error } = await supabase
         .from('v_carteira_sla' as never)

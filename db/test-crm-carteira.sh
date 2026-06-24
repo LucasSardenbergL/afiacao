@@ -139,6 +139,12 @@ insert into public.orders(id, user_id) values ('dddddddd-0000-0000-0000-00000000
 insert into public.order_messages(id, order_id, sender_id, message, is_staff, created_at)
   values (gen_random_uuid(),'dddddddd-0000-0000-0000-000000000002','22222222-2222-2222-2222-222222222222','msg do pedido do B', true, now()-interval '5 days');
 
+-- Ramo DONO: V3 fez 1 ligação para o cliente E, que NÃO está na carteira de ninguém.
+-- A RLS de farmer_calls inclui o ramo "dono" (farmer_id=uid) → a view deve espelhá-lo:
+-- V3 vê (fez a ligação); V1 NÃO vê (nem carteira, nem dono).
+insert into public.farmer_calls(id, farmer_id, customer_user_id, call_type, call_result, started_at, created_at, is_whatsapp, notes, revenue_generated)
+  values (gen_random_uuid(),'33333333-3333-3333-3333-333333333333','eeeeeeee-0000-0000-0000-000000000004','follow_up','contato_sucesso', now()-interval '1 day', now()-interval '1 day', false, 'ligacao propria fora de carteira', null);
+
 -- Task 2 (SLA): config 14 dias + scores + cliente-borda C (V1) contatado há 20 dias.
 insert into public.farmer_algorithm_config(id, key, value) values (gen_random_uuid(),'sla_contact_days',14);
 -- A=saudável (contato há 2d → fora da fila); B=crítico (sem contato efetivo → vencido); C=estável (20d → vence por SLA).
@@ -176,14 +182,14 @@ if [ "$SABOTAR" = "gate_om" ]; then
     fc.farmer_id as autor_id, fc.revenue_generated as revenue
   from public.farmer_calls fc
   where fc.customer_user_id is not null
-    and (pode_ver_carteira_completa(auth.uid()) or carteira_visivel_para(fc.customer_user_id, auth.uid()))
+    and (pode_ver_carteira_completa(auth.uid()) or fc.farmer_id = auth.uid() or carteira_visivel_para(fc.customer_user_id, auth.uid()))
   union all
   select rv.customer_user_id, coalesce(rv.check_in_at, rv.visit_date::timestamptz, rv.created_at),
     'visita', coalesce(nullif(rv.visit_type,''), 'Visita'), nullif(rv.notes,''),
     'route_visits', rv.id, rv.visited_by, rv.revenue_generated
   from public.route_visits rv
   where rv.customer_user_id is not null
-    and (pode_ver_carteira_completa(auth.uid()) or carteira_visivel_para(rv.customer_user_id, auth.uid()))
+    and (pode_ver_carteira_completa(auth.uid()) or rv.visited_by = auth.uid() or carteira_visivel_para(rv.customer_user_id, auth.uid()))
   union all
   select t.customer_user_id, coalesce(t.concluida_em, t.created_at), 'tarefa',
     coalesce(nullif(t.categoria,''), 'Tarefa'),
@@ -287,6 +293,14 @@ case "$A4" in
   *A4_VERDE*) ok "A4 normalização: ligacao(rev=1500), visita(rev null), mensagem da equipe" ;;
   *)          bad "A4 normalização incorreta — $A4" ;;
 esac
+
+# ASSERT 8 (ramo DONO): V3 vê a PRÓPRIA ligação do cliente E (fora de qualquer carteira).
+A8=$( { Pq -c "set request.jwt.claim.sub='33333333-3333-3333-3333-333333333333'; set test.gestor='off'; select count(*) from public.v_cliente_interacoes where customer_user_id='eeeeeeee-0000-0000-0000-000000000004';" 2>&1 || true; } | tail -1)
+eq "A8 V3 vê a própria ligação (ramo dono) de cliente fora da carteira" "$A8" "1"
+
+# ASSERT 8b (não-vazamento do DONO): V1 NÃO vê a ligação de E (nem carteira, nem dono dele).
+A8b=$( { Pq -c "set request.jwt.claim.sub='11111111-1111-1111-1111-111111111111'; set test.gestor='off'; select count(*) from public.v_cliente_interacoes where customer_user_id='eeeeeeee-0000-0000-0000-000000000004';" 2>&1 || true; } | tail -1)
+eq "A8b V1 não vê ligação de E (o ramo dono é só do próprio autor)" "$A8b" "0"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — ASSERTS (Task 2: v_carteira_sla — fila de SLA de contato)

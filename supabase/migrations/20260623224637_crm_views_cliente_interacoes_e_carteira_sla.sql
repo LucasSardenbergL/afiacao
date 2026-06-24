@@ -5,12 +5,14 @@
 -- Plano: docs/superpowers/plans/2026-06-23-crm-carteira-interacoes-e-sla.md
 --
 -- Read-only: nenhum writer novo, nenhuma 2ª fonte de verdade. VIEW com
--- security_invoker=true (PG 17.6) — roda com os privilégios/RLS do usuário que
--- consulta. Como as fontes têm RLS DIVERGENTE (carteira / dono / staff-amplo),
--- cada subquery embute o gate de carteira UNIFORME (defense-in-depth):
---   pode_ver_carteira_completa(auth.uid()) OR carteira_visivel_para(<cliente>, auth.uid())
--- Provado em PG17 local (db/test-crm-carteira.sh): asserts de isolamento +
--- normalização verdes + falsificação (remover o gate de uma subquery vaza entre carteiras).
+-- security_invoker=true (PG 17.6) — roda com a RLS do usuário que consulta.
+-- A RLS das fontes é DIVERGENTE; cada subquery embute um gate que ESPELHA a RLS
+-- da SUA fonte (defense-in-depth, sem restringir além dela):
+--   • farmer_calls / route_visits: gestor OR dono (farmer_id/visited_by=uid) OR carteira
+--   • tarefas / order_messages:    gestor OR carteira (sem ramo "dono" nessas)
+-- order_messages tem RLS staff-ampla → ali o gate da view é a cerca real.
+-- Provado em PG17 (db/test-crm-carteira.sh): isolamento + ramo-dono + normalização
+-- verdes; falsificações gate_om (vazamento) e sla_x100 (borda) vermelhas.
 --
 -- Idempotente: create OR replace view. Re-rodar não dá erro.
 -- ============================================================
@@ -36,7 +38,8 @@ select
   fc.revenue_generated                                                     as revenue
 from public.farmer_calls fc
 where fc.customer_user_id is not null
-  and (pode_ver_carteira_completa(auth.uid()) or carteira_visivel_para(fc.customer_user_id, auth.uid()))
+  -- espelha a RLS de farmer_calls (3 ramos: gestor / dono / carteira) p/ não regredir o ramo "dono"
+  and (pode_ver_carteira_completa(auth.uid()) or fc.farmer_id = auth.uid() or carteira_visivel_para(fc.customer_user_id, auth.uid()))
 union all
 -- Visitas
 select
@@ -48,7 +51,8 @@ select
   'route_visits', rv.id, rv.visited_by, rv.revenue_generated
 from public.route_visits rv
 where rv.customer_user_id is not null
-  and (pode_ver_carteira_completa(auth.uid()) or carteira_visivel_para(rv.customer_user_id, auth.uid()))
+  -- espelha a RLS de route_visits (3 ramos: gestor / dono / carteira)
+  and (pode_ver_carteira_completa(auth.uid()) or rv.visited_by = auth.uid() or carteira_visivel_para(rv.customer_user_id, auth.uid()))
 union all
 -- Tarefas de relacionamento vinculadas a cliente
 select
