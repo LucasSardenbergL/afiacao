@@ -65,7 +65,7 @@ CREATE FUNCTION public.tdy(int) RETURNS date LANGUAGE sql AS $$ SELECT (now() AT
 SQL
 
 # ══ ZONA 2 — aplica a migration REAL (Lei #1: o .sql commitado, não um stub) ══
-MIG="$REPO_ROOT/supabase/migrations/20260623120000_recencia_mv_order_date_kpi.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260623140000_recencia_mv_order_date_kpi.sql"
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
