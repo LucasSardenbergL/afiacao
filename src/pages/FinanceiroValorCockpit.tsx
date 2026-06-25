@@ -119,6 +119,9 @@ export default function FinanceiroValorCockpit() {
           {data.empresa.qtd_combos_sensiveis > 0 && (
             <> · <span className="text-status-warning">{data.empresa.qtd_combos_sensiveis} combo(s) no fio da navalha (recomendação frágil ao hurdle)</span></>
           )}
+          {data.empresa.qtd_combos_quase_sensiveis > 0 && (
+            <> · <span className="text-muted-foreground">{data.empresa.qtd_combos_quase_sensiveis} quase-frágil(eis) (folga fina, +5 a +10pp do hurdle)</span></>
+          )}
         </p>
       )}
 
@@ -195,6 +198,11 @@ export default function FinanceiroValorCockpit() {
                       {row.qtd_combos_sensiveis > 0 && (
                         <div className="text-[10px] leading-tight text-status-warning">
                           {row.qtd_combos_sensiveis} frágil(eis) ao hurdle
+                        </div>
+                      )}
+                      {row.qtd_combos_quase_sensiveis > 0 && (
+                        <div className="text-[10px] leading-tight text-muted-foreground">
+                          {row.qtd_combos_quase_sensiveis} quase-frágil(eis)
                         </div>
                       )}
                     </td>
