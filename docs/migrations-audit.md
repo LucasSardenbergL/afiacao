@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **291** custom migrations totais
-- **1020** objetos esperados (criados por estas migrations)
+- **292** custom migrations totais
+- **1022** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 292
+  - `function`: 294
   - `rls_policy`: 220
   - `index`: 187
   - `table`: 108
@@ -2486,6 +2486,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `rls_policy` | `public.tactical_plans_select_staff` | `farmer_tactical_plans` |
+
+### `20260624040000_tactical_plan_rpc_hardening_codex.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.criar_plano_tatico` | — |
+| `function` | `public.registrar_resultado_plano` | — |
 
 ## Próximos passos quando algo der `❌`
 

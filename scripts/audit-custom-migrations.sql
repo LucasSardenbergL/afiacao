@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 291
+-- Total de custom migrations: 292
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -310,7 +310,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260623180000', 'rpc_tactical_plan_posse_segura', '20260623180000_rpc_tactical_plan_posse_segura.sql'),
   ('20260623224637', 'crm_views_cliente_interacoes_e_carteira_sla', '20260623224637_crm_views_cliente_interacoes_e_carteira_sla.sql'),
   ('20260624010000', 'caca_custo_efetivo_fallback', '20260624010000_caca_custo_efetivo_fallback.sql'),
-  ('20260624020000', 'tactical_plans_split_rls_escrita', '20260624020000_tactical_plans_split_rls_escrita.sql')
+  ('20260624020000', 'tactical_plans_split_rls_escrita', '20260624020000_tactical_plans_split_rls_escrita.sql'),
+  ('20260624040000', 'tactical_plan_rpc_hardening_codex', '20260624040000_tactical_plan_rpc_hardening_codex.sql')
 )
 SELECT
   e.version,
@@ -1348,7 +1349,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('crm_views_cliente_interacoes_e_carteira_sla', 'view', 'public', 'v_cliente_interacoes', ''),
   ('crm_views_cliente_interacoes_e_carteira_sla', 'view', 'public', 'v_carteira_sla', ''),
   ('caca_custo_efetivo_fallback', 'view', 'public', 'v_caca_compradores', ''),
-  ('tactical_plans_split_rls_escrita', 'rls_policy', 'public', 'tactical_plans_select_staff', 'farmer_tactical_plans')
+  ('tactical_plans_split_rls_escrita', 'rls_policy', 'public', 'tactical_plans_select_staff', 'farmer_tactical_plans'),
+  ('tactical_plan_rpc_hardening_codex', 'function', 'public', 'criar_plano_tatico', ''),
+  ('tactical_plan_rpc_hardening_codex', 'function', 'public', 'registrar_resultado_plano', '')
 )
 SELECT
   e.migration,
