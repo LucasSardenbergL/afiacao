@@ -19,8 +19,9 @@ describe('sanitizeForPostgrestOr', () => {
     expect(sanitizeForPostgrestOr('a(b)c')).toBe('abc');
   });
 
-  it('remove os wildcards do ILIKE (% e _)', () => {
+  it('remove os wildcards do ILIKE (%, _ e * — PostgREST trata * como alias de %)', () => {
     expect(sanitizeForPostgrestOr('50%_off')).toBe('50off');
+    expect(sanitizeForPostgrestOr('a*b')).toBe('ab');
   });
 
   it('remove barra invertida (escape do parser)', () => {

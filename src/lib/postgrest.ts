@@ -16,11 +16,13 @@
 /**
  * Remove os caracteres com significado especial no parser do `.or()`: vírgula
  * (separador), parênteses (agrupamento), barra invertida (escape), aspas duplas
- * (delimitador de valor) e os wildcards do ILIKE (`%` `_`). O texto restante vira
- * filtro literal — a busca continua sendo ILIKE parcial.
+ * (delimitador de valor) e os wildcards do ILIKE (`%` `_` e `*`). O `*` entra
+ * porque o PostgREST o trata como alias de `%` em like/ilike (truque pra evitar
+ * URL-encoding do `%`); sem removê-lo, `a*b` viraria o padrão `%a%b%`. O texto
+ * restante vira filtro literal — a busca continua sendo ILIKE parcial.
  */
 export function sanitizeForPostgrestOr(input: string): string {
-  return input.replace(/[%_,()\\"]/g, '');
+  return input.replace(/[%_,()\\"*]/g, '');
 }
 
 /** Uma cláusula `coluna.ilike.%termo%` com o termo sanitizado. */

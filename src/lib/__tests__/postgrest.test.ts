@@ -9,7 +9,8 @@ import {
 } from '../postgrest';
 
 // Os metacaracteres que o parser do .or() interpreta — nenhum pode sobreviver à sanitização.
-const META = ['%', '_', ',', '(', ')', '\\', '"'];
+// `*` entra porque o PostgREST o trata como alias de `%` em like/ilike (truque pra evitar URL-encoding).
+const META = ['%', '_', ',', '(', ')', '\\', '"', '*'];
 
 describe('sanitizeForPostgrestOr', () => {
   it('texto limpo passa inalterado (espaço, dígito, acento, hífen, ponto sobrevivem)', () => {
@@ -26,12 +27,19 @@ describe('sanitizeForPostgrestOr', () => {
     expect(sanitizeForPostgrestOr('a"b')).toBe('ab');
   });
 
+  it('remove o asterisco — PostgREST trata * como alias de % em like/ilike', () => {
+    // postgrest.org (tables_views): "to avoid URL encoding you can use * as an alias
+    // of the percent sign %". Logo `a*b` viraria o padrão `%a%b%` no ILIKE — wildcard
+    // injection que o bloqueio de % e _ sozinho NÃO cobre.
+    expect(sanitizeForPostgrestOr('a*b')).toBe('ab');
+  });
+
   it('neutraliza o vetor de injeção (vírgula+paren somem → vira termo literal)', () => {
     expect(sanitizeForPostgrestOr('%,id.gt.0,(')).toBe('id.gt.0');
   });
 
   it('propriedade de segurança: NENHUM metacaractere sobra, qualquer que seja a entrada', () => {
-    const sujo = 'x,id.gt.0,(nome.ilike.%a%),"\\_';
+    const sujo = 'x,id.gt.0,(nome.ilike.%a*b%),"\\_';
     const limpo = sanitizeForPostgrestOr(sujo);
     for (const ch of META) expect(limpo.includes(ch)).toBe(false);
   });
