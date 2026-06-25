@@ -14382,6 +14382,34 @@ export type Database = {
         }
         Relationships: []
       }
+      v_carteira_sla: {
+        Row: {
+          churn_risk: number | null
+          customer_user_id: string | null
+          dias_sem_contato: number | null
+          farmer_id: string | null
+          health_class: string | null
+          last_contact_at: string | null
+          priority_score: number | null
+          sla_dias: number | null
+          vencido: boolean | null
+        }
+        Relationships: []
+      }
+      v_cliente_interacoes: {
+        Row: {
+          at: string | null
+          autor_id: string | null
+          canal: string | null
+          customer_user_id: string | null
+          ref_id: string | null
+          ref_tabela: string | null
+          resumo: string | null
+          revenue: number | null
+          titulo: string | null
+        }
+        Relationships: []
+      }
       v_clientes_nao_vinculados_atual: {
         Row: {
           cidade: string | null
