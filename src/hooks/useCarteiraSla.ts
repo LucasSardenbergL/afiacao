@@ -18,17 +18,13 @@ export interface CarteiraSlaRow {
 // Fila de "SLA de contato vencido" da carteira (view read-only v_carteira_sla).
 // security_invoker=true → a RLS de farmer_client_scores já escopa por carteira;
 // o vendedor vê a carteira dele, o gestor vê tudo.
-//
-// NOTA(tipos): v_carteira_sla é uma view nova; enquanto os tipos do Supabase não
-// forem regenerados, o nome não consta no schema gerado → cast pontual em `.from`
-// + `.returns<T>()`. TODO: remover o `as never` após regenerar types.ts.
 export function useCarteiraSla() {
   return useQuery({
     queryKey: ['carteira-sla'],
     staleTime: 60_000,
     queryFn: async (): Promise<CarteiraSlaRow[]> => {
       const { data, error } = await supabase
-        .from('v_carteira_sla' as never)
+        .from('v_carteira_sla')
         .select(
           'customer_user_id, farmer_id, health_class, churn_risk, last_contact_at, dias_sem_contato, sla_dias, vencido, priority_score',
         )

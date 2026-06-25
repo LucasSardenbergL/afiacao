@@ -127,10 +127,8 @@ export function useCustomerInteractions(customerId: string | undefined) {
     enabled: !!customerId,
     staleTime: 30_000,
     queryFn: async () => {
-      // v_cliente_interacoes ainda não consta nos tipos gerados do Supabase → cast pontual
-      // + .returns(). TODO(tipos): remover o `as never` após regenerar types.ts.
       const { data, error } = await supabase
-        .from('v_cliente_interacoes' as never)
+        .from('v_cliente_interacoes')
         .select('at, canal, titulo, resumo, revenue')
         .eq('customer_user_id', customerId!)
         .order('at', { ascending: false })
