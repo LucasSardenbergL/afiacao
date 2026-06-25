@@ -35,6 +35,14 @@ serve(async (req) => {
     // e o front é quem grava (useTacticalPlan.generatePlan).
     const selfContained = Boolean(body.customerId && body.farmerId);
 
+    // [Codex #1] o modo self-contained GRAVA via service_role (que pula o gate de carteira da
+    // criar_plano_tatico). Só cron/service_role pode acioná-lo — senão um staff, com
+    // {customerId, farmerId} arbitrários, geraria plano numa carteira que NÃO enxerga.
+    // Staff usa o modo front (não-selfContained), onde o front grava via RPC COM o gate.
+    if (selfContained && __auth.via === 'staff') {
+      return new Response(JSON.stringify({ error: 'Forbidden: modo self-contained é cron-only' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     // Modo front (legado): exige Bearer-user. Modo self-contained já foi autenticado por
     // authorizeCronOrStaff (via x-cron-secret) lá em cima — não precisa do user token.
     if (!selfContained) {

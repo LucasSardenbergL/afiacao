@@ -22,7 +22,7 @@
 //   );
 
 import { createClient } from 'npm:@supabase/supabase-js@^2';
-import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
+import { authorizeCron, corsHeaders } from '../_shared/auth.ts';
 
 // ── Gate de R$/h (espelha src/lib/tactical/pregeracao.ts) ────────────────────
 const PROFIT_PER_HOUR_THRESHOLD = 50;
@@ -40,7 +40,9 @@ const CONCURRENCY = 5; // cada chamada faz 1 LLM (~3-5s); 5 em paralelo ~5s/chun
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
-  const auth = await authorizeCronOrStaff(req);
+  // [Codex #2] cron-only: o batch varre TODAS as carteiras e dispara geração via service_role —
+  // staff não pode acioná-lo (usaria o modo front da edge, escopado à própria carteira).
+  const auth = authorizeCron(req);
   if (!auth.ok) return auth.response;
 
   const supabase = createClient(
