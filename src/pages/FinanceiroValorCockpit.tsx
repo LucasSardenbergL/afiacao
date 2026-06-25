@@ -119,6 +119,15 @@ export default function FinanceiroValorCockpit() {
           {data.empresa.qtd_combos_sensiveis > 0 && (
             <> · <span className="text-status-warning">{data.empresa.qtd_combos_sensiveis} combo(s) no fio da navalha (recomendação frágil ao hurdle)</span></>
           )}
+          {/* Quase-frágeis: o combo 'real' mais PRÓXIMO do hurdle por cima (fecha o cego da banda — ex.: break-even
+              0,355 não acende, mas está a +5,5pp). É LOCATOR, não severidade → no headline-empresa só mostra quando
+              o combo vencedor é MATERIAL (≥ sample_min_receita, limiar já do cockpit); senão um combo ínfimo (R$48
+              a ~0pp) viraria alarme falso (Codex). O sinal por-grupo, contextualizado, vive na coluna abaixo. */}
+          {data.empresa.folga_hurdle_min_pp != null && data.empresa.folga_hurdle_min_receita != null
+            && data.empresa.folga_hurdle_min_receita >= data.config.sample_min_receita && (
+            <> · combo mais próximo do hurdle: <span className="font-tabular text-foreground">+{(data.empresa.folga_hurdle_min_pp * 100).toFixed(1)}pp</span>
+              {' '}({brl(data.empresa.folga_hurdle_min_receita)}) <span className="text-muted-foreground">— entre combos com capital completo</span></>
+          )}
         </p>
       )}
 
@@ -195,6 +204,14 @@ export default function FinanceiroValorCockpit() {
                       {row.qtd_combos_sensiveis > 0 && (
                         <div className="text-[10px] leading-tight text-status-warning">
                           {row.qtd_combos_sensiveis} frágil(eis) ao hurdle
+                        </div>
+                      )}
+                      {/* Quase-frágil: sem combo na banda, mas o mais próximo está logo acima dela (≤ 1 largura de
+                          banda além — derivado da própria banda, sem limiar mágico novo). Fecha o ponto cego. */}
+                      {row.qtd_combos_sensiveis === 0 && row.folga_hurdle_min_pp != null && data.hurdle_banda != null
+                        && row.folga_hurdle_min_pp <= 2 * (data.hurdle_banda.base - data.hurdle_banda.lo) && (
+                        <div className="text-[10px] leading-tight text-muted-foreground">
+                          quase-frágil: combo a +{(row.folga_hurdle_min_pp * 100).toFixed(1)}pp do hurdle
                         </div>
                       )}
                     </td>

@@ -901,3 +901,95 @@ describe('montarCelulasComboEVP — qtd_combos_sensiveis (granularidade, não ag
     expect(r.empresa.capital_conhecido).toBeNull();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-06-24 — Bônus P2 (segue #1044): expor a FOLGA ao hurdle p/ os "quase-frágeis".
+// Decisão Claude+Codex (xhigh, money-path): NÃO min|folga| (devolveria uma folga NEGATIVA,
+// que já está abaixo do hurdle e é sinalizada por evp<0/perda_garantida), e SIM a menor folga
+// POSITIVA (break_even − k > 0) entre células 'real' — o combo "parece seguro, está frágil".
+// É LOCATOR, não severidade → carrega a receita do combo vencedor p/ contexto (combo ínfimo
+// não vira ruído). Banda alternativa rejeitada (só REALOCA a fronteira). Escopo só 'real'.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('montarCelulasComboEVP — folga_hurdle_min_pp (menor folga POSITIVA; locator)', () => {
+  it('combo positivo FORA da banda (blind spot) → folga_min_pp = a folga, + receita do combo', () => {
+    // cm=380 (1000−6,2·100); cap=1000 (ar600+est400) → break_even 0,38; folga +0,08 (8pp, fora de [0,25;0,35])
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    });
+    expect(r.celulas[0].sensivel_hurdle).toBe(false);              // NÃO acende na banda
+    expect(r.porCliente[0].qtd_combos_sensiveis).toBe(0);          // contagem da banda é cega
+    expect(r.porCliente[0].folga_hurdle_min_pp).toBeCloseTo(0.08, 6); // mas a folga REVELA
+    expect(r.porCliente[0].folga_hurdle_min_receita).toBeCloseTo(1000, 6);
+    expect(r.porSKU[0].folga_hurdle_min_pp).toBeCloseTo(0.08, 6);
+    expect(r.empresa.folga_hurdle_min_pp).toBeCloseTo(0.08, 6);
+    expect(r.empresa.folga_hurdle_min_receita).toBeCloseTo(1000, 6);
+  });
+  it('contínuo: combo DENTRO da banda (folga +2pp) é o mais próximo → folga_min = +0,02', () => {
+    // cm=320 → break_even 0,32; folga +0,02 (dentro da banda)
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.8 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    });
+    expect(r.celulas[0].sensivel_hurdle).toBe(true);
+    expect(r.empresa.folga_hurdle_min_pp).toBeCloseTo(0.02, 6);
+  });
+  it('dois combos → folga_min = o mais próximo (menor folga positiva), não o mais distante', () => {
+    // S1 break_even 0,32 (folga +0,02) ; S2 break_even 0,38 (folga +0,08). min = +0,02.
+    const r = montarCelulasComboEVP({
+      combos: [
+        { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.8 },
+        { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 },
+      ],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 2000 }], // rc=2000 → a_cs 1000 cada
+      capitalSKUs: [{ sku: 'S1', estoque_valor: 0 }, { sku: 'S2', estoque_valor: 0 }], k: 0.30,
+    });
+    expect(r.porCliente[0].folga_hurdle_min_pp).toBeCloseTo(0.02, 6);
+  });
+  it('FALSIFICAÇÃO min|abs|: folga negativa MENOR em módulo NÃO captura o blind spot positivo', () => {
+    // S1 break_even 0,27 → folga −0,03 (|0,03|, JÁ abaixo do hurdle: evp<0); S2 break_even 0,38 → folga +0,08.
+    // min|abs| devolveria −0,03 (ERRADO); a métrica certa devolve +0,08 (o combo frágil-mas-positivo).
+    const r = montarCelulasComboEVP({
+      combos: [
+        { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7.3 },
+        { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 },
+      ],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 2000 }],
+      capitalSKUs: [{ sku: 'S1', estoque_valor: 0 }, { sku: 'S2', estoque_valor: 0 }], k: 0.30,
+    });
+    expect(r.porCliente[0].folga_hurdle_min_pp).toBeCloseTo(0.08, 6); // +0,08, NÃO −0,03
+  });
+  it('só células com folga NEGATIVA (break_even<k, já-abaixo) → folga_min null (não é blind spot)', () => {
+    // cm=200 → break_even 0,20; folga −0,10. EVP já negativo → sinalizado por evp<0/perda; folga_min ignora.
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 8.0 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    });
+    expect(r.porCliente[0].folga_hurdle_min_pp).toBeNull();
+    expect(r.porCliente[0].folga_hurdle_min_receita).toBeNull();
+    expect(r.empresa.folga_hurdle_min_pp).toBeNull();
+  });
+  it('k=null → folga_min null em rollup e empresa (ausente ≠ 0)', () => {
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: null,
+    });
+    expect(r.porCliente[0].folga_hurdle_min_pp).toBeNull();
+    expect(r.empresa.folga_hurdle_min_pp).toBeNull();
+    expect(r.empresa.folga_hurdle_min_receita).toBeNull();
+  });
+  it('combo ÍNFIMO domina o min (locator, não severidade) → carrega receita p/ a UI contextualizar', () => {
+    // CA: receita 48, cm 30, cap 99 → break_even 0,3030, folga +0,0030 (o mais próximo, porém R$48).
+    // CB: receita 10000, break_even 0,36, folga +0,06. empresa.folga_min = +0,0030, receita = 48 (não 10000).
+    const r = montarCelulasComboEVP({
+      combos: [
+        { cliente: 'CA', sku: 'SA', receita_liquida: 48, quantidade: 1, custo_unitario: 18 },
+        { cliente: 'CB', sku: 'SB', receita_liquida: 10000, quantidade: 100, custo_unitario: 96.4 },
+      ],
+      capitalClientes: [{ cliente: 'CA', ar_medio: 99 }, { cliente: 'CB', ar_medio: 600 }],
+      capitalSKUs: [{ sku: 'SA', estoque_valor: 0 }, { sku: 'SB', estoque_valor: 400 }], k: 0.30,
+    });
+    expect(r.empresa.folga_hurdle_min_pp).toBeCloseTo(30 / 99 - 0.30, 6); // ≈ +0,00303
+    expect(r.empresa.folga_hurdle_min_receita).toBeCloseTo(48, 6);        // contexto: é ínfimo
+  });
+});
