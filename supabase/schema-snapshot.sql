@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict dsh0tosauqhwbrHSivW3kGqwtB1XzrA165GNxAWJVTtd7U4f7TEnefit4dDXkdl
+\restrict YUubq0d8E76qcwcIfGhKeHgq5flNeDqWI23blstbYad4ATZDqQhsHtw1eu18hjq
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.9
@@ -416,7 +416,7 @@ $$;
 CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain text, status text, age_seconds bigint, expected_max_age_seconds bigint, freshness_basis text, message text, last_error text, probable_cause text, how_to_fix text, severity text)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
-    AS $$
+    AS $_$
   WITH checks AS (
     SELECT 'saldo_bancario'::text AS source, 'financeiro'::text AS domain,
       CASE WHEN max(cc.saldo_data) IS NULL THEN 'broken'
@@ -801,6 +801,68 @@ CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain 
             GROUP BY ts.omie_product_id HAVING count(*) > 1) d) AS ambiguo
     ) v
     UNION ALL
+    -- [VIGIA proveniência de custo 2026-06-23 · follow-up #1019 · PUSH · INVARIANTE I1] proxy de custo carimbado
+    -- com CONFIANÇA ALTA na FONTE (product_costs). O #1019 blindou o CONSUMO (resolverCustoCockpit ganhou
+    -- `|| !sourceReal` → o cockpit de valor degrada a confiança da margem quando o source não é real); ESTE é o
+    -- complemento na FONTE, cobrindo TODOS os consumidores de uma vez (resolverCustoConfiavel + seus espelhos Deno
+    -- recommend/algorithm-a-audit, o cockpit, ranking, relatórios). I1: cost_final>0 com cost_confidence>=0.7 cujo
+    -- source NÃO é "real" (∉ whitelist consumer-real). Um proxy (FAMILY_MARGIN_PROXY/DEFAULT_PROXY/
+    -- CMC_UNIDADE_SUSPEITA/UNKNOWN/fonte nova) com conf alta ⇒ o motor (omie-analytics-sync computeCosts /
+    -- reprocessRecommendationCosts) inflou a confiança. Hoje o teto de proxy é conf=0.5 (headroom 0.2 até o
+    -- gatilho 0.7) ⇒ NASCE VERDE. count → age NULL; n>0 = stale/warning. cost_confidence NULL não conta (NULL>=0.7
+    -- = unknown), cost_final NULL/<=0 excluído por cost_final>0 (custo não-positivo não vira margem firme — fora
+    -- do escopo de "proveniência forjada que engana margem"; cost_final<0 é data-quality, check à parte).
+    -- ⚠️ NORMALIZAÇÃO casa o `.trim().toUpperCase()` do resolver TS (cost-source.ts:31-34): regexp_replace de
+    --   `\s` (espaço/tab/newline/CR) nas pontas — btrim() puro só tira espaço e deixaria ` \tCMC\n ` escapar.
+    -- ⚠️ PARIDADE: a whitelist consumer-real abaixo espelha COST_SOURCES_REAIS de src/lib/custos/cost-source.ts:22
+    --   ({PRODUCT_COST,CMC,CMC_MARGEM_ATIPICA}). Source REAL novo lá ⇒ atualizar AQUI também (senão falso-positivo).
+    SELECT 'custos_proxy_conf_alta'::text, 'estoque'::text,
+      CASE WHEN pca.n = 0 THEN 'ok' ELSE 'stale' END,
+      NULL::bigint, NULL::bigint,
+      'count_product_costs cost_final>0 cost_confidence>=0.7 source_NAO_real (proxy carimbado conf alta)'::text,
+      CASE WHEN pca.n = 0 THEN 'Proveniência de custo: nenhum proxy carimbado com confiança alta (>=0,7)'
+           ELSE 'Proveniência de custo FORJADA: ' || pca.n::text || ' linha(s) de product_costs com source proxy (não-real) e cost_confidence>=0,7 — cockpit/recommend confiariam na margem como se fosse custo real' END,
+      NULL,
+      CASE WHEN pca.n > 0 THEN 'O motor de custo (omie-analytics-sync computeCosts / reprocessRecommendationCosts) gravou cost_confidence>=0,7 num source que NÃO é real (∉ COST_SOURCES_REAIS). É inflação de confiança na FONTE; o #1019 já degrada no consumo, mas a fonte precisa ser corrigida (senão todo consumidor que NÃO espelha o gate confia na margem).' ELSE NULL END,
+      'Liste por: product_costs com cost_final>0, cost_confidence>=0,7 e cost_source fora de {PRODUCT_COST,CMC,CMC_MARGEM_ATIPICA}. Corrija a régua de confiança no motor (_shared/cost-ladder.ts / computeCosts) e re-rode compute_costs no Lovable.'::text,
+      CASE WHEN pca.n = 0 THEN 'info' ELSE 'warning' END
+    FROM (
+      SELECT count(*)::bigint AS n
+      FROM public.product_costs
+      WHERE cost_final > 0
+        AND cost_confidence >= 0.7
+        AND upper(regexp_replace(coalesce(cost_source,''), '^\s+|\s+$', '', 'g')) NOT IN ('PRODUCT_COST','CMC','CMC_MARGEM_ATIPICA')
+    ) pca
+    UNION ALL
+    -- [VIGIA proveniência de custo 2026-06-23 · follow-up #1019 · PUSH · INVARIANTE I2] PRODUCT_COST RESSUSCITADO.
+    -- A escada de custo (supabase/functions/_shared/cost-ladder.ts + src/lib/custo/costLadder.ts) REMOVEU
+    -- PRODUCT_COST da operação: o motor antigo lia cost_price legado como "Priority 1: PRODUCT_COST (conf 0.95)";
+    -- como cost_price era derivado/proxy, isso era LAVAGEM DE PROVENIÊNCIA (classe do incidente #977). A escada
+    -- nunca mais emite PRODUCT_COST (só CMC/CMC_MARGEM_ATIPICA/FAMILY_MARGIN_PROXY/DEFAULT_PROXY). Qualquer linha
+    -- PRODUCT_COST hoje = writer legado/forjado ressuscitando a fonte (product_costs é current-state: 1 linha/
+    -- produto, sem histórico — confirmado pre-flight 2026-06-23, então não há falso-positivo de linha antiga).
+    -- Esta invariante SUSTENTA a contradição saudável: PRODUCT_COST segue na whitelist consumer-real
+    -- (cost-source.ts:22 — p/ não nulificar um custo real legítimo se um dia voltar por um writer AUDITÁVEL) MAS
+    -- é proibido na ESCRITA atual. Sem este check, resolverCustoConfiavel E resolverCustoCockpit tratam
+    -- PRODUCT_COST como real ⇒ confiariam num custo ressuscitado. Normalização (regexp `\s` nas pontas, == o
+    -- `.trim()` do resolver TS) pega a lavagem por casing/whitespace (' product_cost ', E'\tPRODUCT_COST\n') que
+    -- escaparia o consumo→real mas o `=` literal deixaria passar. count → age NULL; n>0 = stale/warning. NASCE VERDE.
+    SELECT 'custos_product_cost_revivido'::text, 'estoque'::text,
+      CASE WHEN ppc.n = 0 THEN 'ok' ELSE 'stale' END,
+      NULL::bigint, NULL::bigint,
+      'count_product_costs source=PRODUCT_COST (removido da escada — proveniencia)'::text,
+      CASE WHEN ppc.n = 0 THEN 'Proveniência de custo: nenhuma linha PRODUCT_COST (fonte removida da escada de custo)'
+           ELSE 'Proveniência de custo FORJADA: ' || ppc.n::text || ' linha(s) de product_costs com cost_source=PRODUCT_COST — a escada removeu essa fonte (lavagem de proveniência, classe #977); consumidores a tratam como custo real' END,
+      NULL,
+      CASE WHEN ppc.n > 0 THEN 'Um writer legado/forjado gravou cost_source=PRODUCT_COST, fonte que a escada (cost-ladder.ts) removeu da operação. resolverCustoConfiavel e resolverCustoCockpit tratam PRODUCT_COST como REAL ⇒ confiariam num custo ressuscitado sem proveniência auditável.' ELSE NULL END,
+      'Liste por: product_costs com cost_source=PRODUCT_COST (normalizado). Ache o writer que ressuscitou PRODUCT_COST — o motor deve emitir só CMC/CMC_MARGEM_ATIPICA/proxies via cost-ladder. Corrija a fonte e re-rode compute_costs no Lovable.'::text,
+      CASE WHEN ppc.n = 0 THEN 'info' ELSE 'warning' END
+    FROM (
+      SELECT count(*)::bigint AS n
+      FROM public.product_costs
+      WHERE upper(regexp_replace(coalesce(cost_source,''), '^\s+|\s+$', '', 'g')) = 'PRODUCT_COST'
+    ) ppc
+    UNION ALL
     SELECT 'alert_channel'::text, 'alertas'::text,
       CASE WHEN ac.stuck_pendentes > 0 OR ac.falhas_24h >= 5 THEN 'broken'
            WHEN ac.falhas_24h > 0 THEN 'stale' ELSE 'ok' END,
@@ -838,7 +900,7 @@ CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain 
     CASE WHEN COALESCE(NULLIF(c.status,''),'unknown') = 'ok' THEN NULL ELSE c.how_to_fix END AS how_to_fix,
     c.severity
   FROM checks c;
-$$;
+$_$;
 
 
 --
@@ -1438,6 +1500,97 @@ BEGIN
   );
 END;
 $$;
+
+
+--
+-- Name: apply_score_updates(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apply_score_updates(p_updates jsonb) RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_count int;
+  v_total int;
+  v_valid int;
+BEGIN
+  -- GUARD DE CONTRATO (full-update only): as 13 chaves CORE são obrigatórias em TODA linha.
+  -- sales_history_status NÃO entra aqui (é opcional/COALESCE) → edge antigo segue válido.
+  v_total := jsonb_array_length(p_updates);
+
+  SELECT count(*) INTO v_valid
+  FROM jsonb_to_recordset(p_updates) AS u(
+    id                       uuid,
+    health_score             numeric,
+    health_class             text,
+    churn_risk               numeric,
+    priority_score           numeric,
+    rf_score                 numeric,
+    m_score                  numeric,
+    g_score                  numeric,
+    days_since_last_purchase integer,
+    avg_monthly_spend_180d   numeric,
+    category_count           integer,
+    calculated_at            timestamptz,
+    updated_at               timestamptz
+  )
+  WHERE id                       IS NOT NULL
+    AND health_score             IS NOT NULL
+    AND health_class             IS NOT NULL
+    AND churn_risk               IS NOT NULL
+    AND priority_score           IS NOT NULL
+    AND rf_score                 IS NOT NULL
+    AND m_score                  IS NOT NULL
+    AND g_score                  IS NOT NULL
+    AND days_since_last_purchase IS NOT NULL
+    AND avg_monthly_spend_180d   IS NOT NULL
+    AND category_count           IS NOT NULL
+    AND calculated_at            IS NOT NULL
+    AND updated_at               IS NOT NULL;
+
+  IF v_valid <> v_total THEN
+    RAISE EXCEPTION
+      'apply_score_updates: contrato full-update violado — % de % elemento(s) com campo obrigatorio nulo/ausente (as 13 chaves sao obrigatorias; jsonb_to_recordset nao faz COALESCE)',
+      (v_total - v_valid), v_total
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- UPDATE-only por id (anti-ressurreição #971), base de vendas (#987) + sales_history_status (COALESCE).
+  UPDATE public.farmer_client_scores f SET
+    health_score             = u.health_score,
+    health_class             = u.health_class,
+    churn_risk               = u.churn_risk,
+    priority_score           = u.priority_score,
+    rf_score                 = u.rf_score,
+    m_score                  = u.m_score,
+    g_score                  = u.g_score,
+    days_since_last_purchase = u.days_since_last_purchase,
+    avg_monthly_spend_180d   = u.avg_monthly_spend_180d,
+    category_count           = u.category_count,
+    sales_history_status     = COALESCE(u.sales_history_status, f.sales_history_status),
+    calculated_at            = u.calculated_at,
+    updated_at               = u.updated_at
+  FROM jsonb_to_recordset(p_updates) AS u(
+    id                       uuid,
+    health_score             numeric,
+    health_class             text,
+    churn_risk               numeric,
+    priority_score           numeric,
+    rf_score                 numeric,
+    m_score                  numeric,
+    g_score                  numeric,
+    days_since_last_purchase integer,
+    avg_monthly_spend_180d   numeric,
+    category_count           integer,
+    sales_history_status     text,
+    calculated_at            timestamptz,
+    updated_at               timestamptz
+  )
+  WHERE f.id = u.id;
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END $$;
 
 
 --
@@ -2569,6 +2722,26 @@ $$;
 
 
 --
+-- Name: cleanup_orphan_score_on_carteira_delete(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cleanup_orphan_score_on_carteira_delete() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  -- No COMMIT (deferred): só remove o score se o cliente não tem mais NENHUMA carteira.
+  IF NOT EXISTS (
+    SELECT 1 FROM public.carteira_assignments WHERE customer_user_id = OLD.customer_user_id
+  ) THEN
+    DELETE FROM public.farmer_client_scores WHERE customer_user_id = OLD.customer_user_id;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: cliente_classificacao_derive(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2993,6 +3166,89 @@ COMMENT ON FUNCTION public.criar_pedidos_com_itens(p_pedidos jsonb) IS 'Sync Omi
 
 
 --
+-- Name: criar_plano_tatico(uuid, uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.criar_plano_tatico(_customer_user_id uuid, _expected_owner uuid, _payload jsonb) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  _uid        uuid    := auth.uid();
+  _is_service boolean := COALESCE(auth.role() = 'service_role', false);
+  _owner      uuid;
+  _rec        public.farmer_tactical_plans;
+  _new_id     uuid;
+BEGIN
+  IF NOT _is_service THEN
+    IF _uid IS NULL THEN
+      RAISE EXCEPTION 'Não autenticado' USING ERRCODE = '42501';
+    END IF;
+    IF NOT public.carteira_visivel_para(_customer_user_id, _uid) THEN
+      RAISE EXCEPTION 'Cliente fora da sua carteira' USING ERRCODE = '42501';
+    END IF;
+    -- [Codex #4] chamador autenticado NÃO pode pular o race-check passando NULL.
+    IF _expected_owner IS NULL THEN
+      RAISE EXCEPTION 'expected_owner é obrigatório para chamador autenticado (race-check da posse)';
+    END IF;
+  END IF;
+
+  -- [Codex #3] FOR UPDATE: trava a linha de carteira_assignments deste cliente até o
+  -- commit. Uma reatribuição concorrente (UPDATE carteira_assignments) espera o lock,
+  -- então o dono resolvido aqui é o dono no instante do INSERT (race SELECT→INSERT fechado).
+  SELECT a.owner_user_id INTO _owner
+  FROM public.carteira_assignments a
+  WHERE a.customer_user_id = _customer_user_id
+  FOR UPDATE;
+
+  IF _owner IS NULL THEN
+    RAISE EXCEPTION 'Cliente % sem dono de carteira', _customer_user_id;
+  END IF;
+
+  IF _expected_owner IS NOT NULL AND _owner <> _expected_owner THEN
+    RAISE EXCEPTION 'Carteira do cliente % foi reatribuída durante a geração (dono atual diverge do esperado)', _customer_user_id;
+  END IF;
+
+  _rec := jsonb_populate_record(NULL::public.farmer_tactical_plans, _payload);
+
+  INSERT INTO public.farmer_tactical_plans (
+    farmer_id, customer_user_id, status,
+    bundle_recommendation_id, health_score, churn_risk, mix_gap,
+    current_margin_pct, cluster_avg_margin_pct, expansion_potential,
+    strategic_objective, customer_profile, plan_type,
+    top_bundle, second_bundle, bundle_lie, bundle_probability, bundle_incremental_margin,
+    best_individual_lie, diagnostic_questions, implication_question, offer_transition,
+    probable_objections, approach_strategy, approach_strategy_b,
+    ltv_projection, expected_result, operational_risks
+  ) VALUES (
+    _owner, _customer_user_id, 'gerado',
+    _rec.bundle_recommendation_id, _rec.health_score, _rec.churn_risk, _rec.mix_gap,
+    _rec.current_margin_pct, _rec.cluster_avg_margin_pct, _rec.expansion_potential,
+    COALESCE(_rec.strategic_objective, 'expansao_mix'),
+    COALESCE(_rec.customer_profile, 'misto'),
+    COALESCE(_rec.plan_type, 'essencial'),
+    COALESCE(_rec.top_bundle, '{}'::jsonb), COALESCE(_rec.second_bundle, '{}'::jsonb),
+    _rec.bundle_lie, _rec.bundle_probability, _rec.bundle_incremental_margin,
+    _rec.best_individual_lie,
+    COALESCE(_rec.diagnostic_questions, '[]'::jsonb), _rec.implication_question, _rec.offer_transition,
+    COALESCE(_rec.probable_objections, '[]'::jsonb), _rec.approach_strategy, _rec.approach_strategy_b,
+    _rec.ltv_projection, _rec.expected_result, COALESCE(_rec.operational_risks, '[]'::jsonb)
+  )
+  RETURNING id INTO _new_id;
+
+  RETURN _new_id;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION criar_plano_tatico(_customer_user_id uuid, _expected_owner uuid, _payload jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.criar_plano_tatico(_customer_user_id uuid, _expected_owner uuid, _payload jsonb) IS 'Insere farmer_tactical_plan; posse re-resolvida server-side de carteira_assignments com FOR UPDATE (race fechado); gate carteira_visivel_para OR service_role; _expected_owner obrigatório p/ autenticado. Fronteira de escrita.';
+
+
+--
 -- Name: data_health_watchdog(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3014,7 +3270,8 @@ BEGIN
                      'custos_produtos','vendas_cadastros',
                      'reposicao_disparo','reposicao_portal_pipeline','reposicao_portal_humano',
                      'reposicao_sayerlack_fabricado','omie_tipo_produto_oben','vendas_familia_ausente',
-                     'tint_cobertura_bases')  -- [VIGIA tint 2026-06-15] só o Check A faz push; tint_vinculo_omie é dashboard-only
+                     'tint_cobertura_bases',
+                     'custos_proxy_conf_alta','custos_product_cost_revivido')  -- [VIGIA tint 2026-06-15] só o Check A faz push; tint_vinculo_omie é dashboard-only
   LOOP
     v_sev_fin  := CASE WHEN r.severity = 'critical' THEN 'critico' ELSE 'aviso' END;
     v_sev_forn := CASE WHEN r.severity = 'critical' THEN 'urgente' ELSE 'atencao' END;
@@ -3545,14 +3802,17 @@ CREATE FUNCTION public.enqueue_score_recalc_from_sinais() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
+DECLARE v_owner uuid;
 BEGIN
   IF NEW.sinais_ligacao IS NOT NULL
      AND (NEW.sinais_ligacao->>'status') = 'extraido'
      AND (TG_OP = 'INSERT' OR NEW.sinais_ligacao IS DISTINCT FROM OLD.sinais_ligacao)
      AND NEW.customer_user_id IS NOT NULL
      AND NEW.farmer_id IS NOT NULL THEN
+    SELECT owner_user_id INTO v_owner
+      FROM public.carteira_assignments WHERE customer_user_id = NEW.customer_user_id;
     INSERT INTO public.score_recalc_queue (customer_user_id, farmer_id, reason, source_call_id)
-    VALUES (NEW.customer_user_id, NEW.farmer_id, 'sinais_extraidos', NEW.id)
+    VALUES (NEW.customer_user_id, COALESCE(v_owner, NEW.farmer_id), 'sinais_extraidos', NEW.id)
     ON CONFLICT (customer_user_id) WHERE processed_at IS NULL DO NOTHING;
   END IF;
   RETURN NEW;
@@ -4079,6 +4339,22 @@ BEGIN
   );
 END;
 $$;
+
+
+--
+-- Name: fcs_block_flagged_insert(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fcs_block_flagged_insert() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.cliente_classificacao cc WHERE cc.user_id = NEW.customer_user_id AND cc.excluir_da_carteira) THEN
+    RETURN NULL;
+  END IF;
+  RETURN NEW;
+END $$;
 
 
 SET default_tablespace = '';
@@ -4873,7 +5149,8 @@ BEGIN
                    'custos_produtos','vendas_cadastros','reposicao_disparo',
                    'reposicao_portal_pipeline','reposicao_portal_humano',
                    'reposicao_sayerlack_fabricado','omie_tipo_produto_oben',
-                   'vendas_familia_ausente','tint_cobertura_bases','alert_channel');  -- [VIGIA tint 2026-06-15] +A no resumo (B fica fora)
+                   'vendas_familia_ausente','tint_cobertura_bases',
+                   'custos_proxy_conf_alta','custos_product_cost_revivido','alert_channel');  -- [VIGIA tint 2026-06-15] +A no resumo (B fica fora)
 
   v_titulo := '[Watchdog'
               || CASE WHEN (v_ativos + v_dh_ativos) > 0
@@ -5660,11 +5937,11 @@ CREATE FUNCTION public.get_customer_sales_summary() RETURNS TABLE(customer_user_
     GREATEST(
       0,
       (now() AT TIME ZONE 'America/Sao_Paulo')::date
-        - max(COALESCE(so.order_date_kpi, so.created_at::date))
+        - max(COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date))
     )::int                                                                       AS days_since_last_purchase,
     COALESCE(sum(COALESCE(oi.unit_price,0) * COALESCE(NULLIF(oi.quantity,0),1)),0) AS total_revenue,
     COALESCE(sum(COALESCE(oi.unit_price,0) * COALESCE(NULLIF(oi.quantity,0),1))
-             FILTER (WHERE COALESCE(so.order_date_kpi, so.created_at::date)
+             FILTER (WHERE COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date)
                           BETWEEN (now() AT TIME ZONE 'America/Sao_Paulo')::date - 180
                               AND (now() AT TIME ZONE 'America/Sao_Paulo')::date), 0) AS revenue_180d,
     count(*)                                                                     AS item_count,
@@ -7296,6 +7573,42 @@ $$;
 
 
 --
+-- Name: order_items_herdar_created_at_omie(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.order_items_herdar_created_at_omie() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_pai_created_at timestamptz;
+  v_pai_hash       text;
+BEGIN
+  SELECT created_at, hash_payload
+    INTO v_pai_created_at, v_pai_hash
+    FROM public.sales_orders
+   WHERE id = NEW.sales_order_id;
+
+  -- Só pedido Omie com pai conhecido: o filho nasce com a DATA DO PEDIDO (= created_at do pai =
+  -- meio-dia UTC do order_date_kpi), nunca now() da carga. LIKE 'omie\_%' com escape literal (mesmo
+  -- predicado do índice parcial uniq_sales_orders_omie_hash). Pai ausente/não-Omie -> NEW intacto.
+  IF v_pai_hash LIKE 'omie\_%' AND v_pai_created_at IS NOT NULL THEN
+    NEW.created_at := v_pai_created_at;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION order_items_herdar_created_at_omie(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.order_items_herdar_created_at_omie() IS 'Trigger BEFORE INSERT order_items: pedido Omie (hash omie_) herda created_at do PAI (data do pedido, nunca now() da carga). Universaliza o G6 da RPC criar_pedidos_com_itens p/ TODOS os writers (sync-reprocess, omie-analytics-sync). Money-path/recência — migration 20260624170000.';
+
+
+--
 -- Name: pedido_compra_split(bigint, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8275,6 +8588,26 @@ END $$;
 
 
 --
+-- Name: reconcile_score_owner_from_carteira(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reconcile_score_owner_from_carteira() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  INSERT INTO public.farmer_client_scores (customer_user_id, farmer_id)
+  VALUES (NEW.customer_user_id, NEW.owner_user_id)
+  ON CONFLICT (customer_user_id) DO UPDATE
+    SET farmer_id = EXCLUDED.farmer_id,
+        updated_at = now()
+    WHERE public.farmer_client_scores.farmer_id IS DISTINCT FROM EXCLUDED.farmer_id;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: reconcile_visita_agendada(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8528,6 +8861,65 @@ BEGIN
   RETURN v_log_id;
 END;
 $$;
+
+
+--
+-- Name: registrar_resultado_plano(uuid, boolean, text, numeric, integer, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.registrar_resultado_plano(_plan_id uuid, _plan_followed boolean, _call_result text, _actual_margin numeric, _call_duration_seconds integer, _objection_type text DEFAULT NULL::text, _notes text DEFAULT NULL::text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  _uid        uuid    := auth.uid();
+  _is_service boolean := COALESCE(auth.role() = 'service_role', false);
+  _customer   uuid;
+  _status     text;
+BEGIN
+  SELECT p.customer_user_id, p.status INTO _customer, _status
+  FROM public.farmer_tactical_plans p
+  WHERE p.id = _plan_id;
+
+  IF _customer IS NULL THEN
+    RAISE EXCEPTION 'Plano % inexistente', _plan_id;
+  END IF;
+
+  IF NOT _is_service THEN
+    IF _uid IS NULL THEN
+      RAISE EXCEPTION 'Não autenticado' USING ERRCODE = '42501';
+    END IF;
+    IF NOT public.carteira_visivel_para(_customer, _uid) THEN
+      RAISE EXCEPTION 'Plano fora da sua carteira' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+
+  -- [Codex #5] resultado de plano JÁ concluído não é reescrito (money-path: actual_margin
+  -- de um plano fechado é imutável; re-registro silencioso adulteraria a efetividade).
+  IF _status = 'concluido' THEN
+    RAISE EXCEPTION 'Plano % já concluído — resultado não pode ser reescrito', _plan_id;
+  END IF;
+
+  UPDATE public.farmer_tactical_plans
+  SET plan_followed         = _plan_followed,
+      call_result           = _call_result,
+      actual_margin         = _actual_margin,
+      call_duration_seconds = _call_duration_seconds,
+      objection_type        = _objection_type,
+      notes                 = _notes,
+      status                = 'concluido',
+      completed_at          = now(),
+      updated_at            = now()
+  WHERE id = _plan_id;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION registrar_resultado_plano(_plan_id uuid, _plan_followed boolean, _call_result text, _actual_margin numeric, _call_duration_seconds integer, _objection_type text, _notes text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.registrar_resultado_plano(_plan_id uuid, _plan_followed boolean, _call_result text, _actual_margin numeric, _call_duration_seconds integer, _objection_type text, _notes text) IS 'Grava resultado pós-call; gate carteira_visivel_para OR service_role; recusa se status=concluido (resultado imutável após conclusão).';
 
 
 --
@@ -8848,16 +9240,18 @@ CREATE FUNCTION public.reposicao_param_auto_resumo_tick() RETURNS void
     AS $_$
 DECLARE r record; v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date; v_corpo text; v_top text;
 BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('param_auto_resumo'));
+  PERFORM pg_advisory_xact_lock(hashtext('param_auto_resumo'));  -- serializa ticks concorrentes (anti-duplo-email)
+  -- v1 OBEN-only: processa 1 run por tick e o corpo do e-mail rotula "(OBEN)". Se um dia houver multi-empresa, trocar por um loop por empresa (senão a 2ª empresa do dia não recebe digest).
   SELECT * INTO r FROM public.reposicao_param_auto_run
     WHERE data_negocio_brt=v_hoje AND status='completo' AND resumo_enviado_em IS NULL
     ORDER BY concluido_em DESC LIMIT 1;
   IF NOT FOUND THEN RETURN; END IF;
   IF COALESCE(r.total_aplicados,0)=0 AND COALESCE(r.total_segurados,0)=0 THEN
-    UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=now() WHERE id=r.id;
+    UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=now() WHERE id=r.id;  -- nada relevante
     RETURN;
   END IF;
-  SELECT string_agg(format('• %s: PP %s→%s, máx %s→%s%s', sku_codigo_omie,
+  -- Rótulo do item = DESCRIÇÃO do produto; cai no código se a descrição faltar (NULL/só-espaços).
+  SELECT string_agg(format('• %s: PP %s→%s, máx %s→%s%s', coalesce(nullif(btrim(sku_descricao), ''), sku_codigo_omie),
             coalesce(ponto_pedido_antes::text,'—'), coalesce(ponto_pedido_depois::text,'—'),
             coalesce(estoque_maximo_antes::text,'—'), coalesce(estoque_maximo_depois::text,'—'),
             CASE WHEN impacto_rs IS NULL THEN ' (R$ ?)' ELSE ' (R$ '||round(impacto_rs)::text||')' END), E'\n')
@@ -9731,6 +10125,23 @@ BEGIN
 
   RETURN jsonb_build_object('disparado', v_pedido.id, 'tentativa', v_pedido.tent, 'request_id', v_request_id);
 END;
+$$;
+
+
+--
+-- Name: seed_targets_faltantes(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.seed_targets_faltantes() RETURNS TABLE(user_id uuid)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+  SELECT DISTINCT oc.user_id
+  FROM public.omie_clientes oc
+  WHERE oc.user_id IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM public.farmer_client_scores f WHERE f.customer_user_id = oc.user_id)
+    AND NOT EXISTS (SELECT 1 FROM public.cliente_classificacao cc WHERE cc.user_id = oc.user_id AND cc.excluir_da_carteira)
+  ORDER BY oc.user_id
 $$;
 
 
@@ -11137,7 +11548,15 @@ BEGIN
       AND s.cor_id IS NOT NULL AND s.cod_produto IS NOT NULL AND s.id_base IS NOT NULL
   )
   SELECT DISTINCT ON (cor_id, cod_produto, id_base, COALESCE(subcolecao, ''), personalizada)
-         id AS staging_formula_id, cor_id, nome_cor, cod_produto, id_base, id_embalagem,
+         id AS staging_formula_id, cor_id,
+         -- 20260622 (fix nome_cor NULL): nome de cor PERSONALIZADA pode vir VAZIO do conector (lookup
+         -- CorPerson não resolveu) → a constraint NOT NULL de tint_formulas.nome_cor derrubava o RUN
+         -- INTEIRO (23502). Fallback p/ cor_id (stub, espelha o corante stub). Nunca abortar a promoção
+         -- por um campo de DISPLAY ausente; o nome real entra no próximo upsert quando o conector resolver.
+         -- Codex 22/06: CASE (não COALESCE+btrim) p/ NÃO trimar nome legítimo com espaço — só
+         -- substitui quando NULL/vazio, preservando o nome_cor original VERBATIM.
+         CASE WHEN nome_cor IS NULL OR btrim(nome_cor) = '' THEN cor_id ELSE nome_cor END AS nome_cor,
+         cod_produto, id_base, id_embalagem,
          subcolecao, volume_final_ml, personalizada
   FROM alvo
   ORDER BY cor_id, cod_produto, id_base, COALESCE(subcolecao, ''), personalizada,
@@ -11241,6 +11660,18 @@ BEGIN
       AND custo IS NOT NULL AND volume_ml IS NOT NULL
     ORDER BY id_corante_sayersystem, created_at DESC, id DESC
   ),
+  -- 20260622210000 (Codex P1 — consistência item↔preço): deduplica os itens por
+  -- (staging_formula_id, id_corante) = MAX-ordem, IGUAL ao INSERT de tint_formula_itens. Senão o preço
+  -- somaria o corante repetido (BOM "todos os itens") enquanto o item ARMAZENADO guarda só o max-ordem
+  -- (BOM "1 por corante") — duas definições de fórmula na mesma promoção. Hoje é dead-code em prod
+  -- (precos_base vazio → soma NULL → COALESCE preserva o piso), mas alinha os 2 caminhos para o dia em
+  -- que precos_base for populado. Mesma ordem de desempate do INSERT de itens.
+  itens_dedup AS (
+    SELECT DISTINCT ON (staging_formula_id, id_corante) staging_formula_id, id_corante, qtd_ml
+      FROM tint_staging_formula_itens
+     WHERE id_corante IS NOT NULL AND id_corante <> '' AND COALESCE(qtd_ml, 0) > 0
+     ORDER BY staging_formula_id, id_corante, ordem DESC, qtd_ml DESC, id DESC
+  ),
   itens AS (              -- Σ corantes por expansão; flag de corante faltante (NULL-honesto).
     SELECT ex.eid,
            bool_or(
@@ -11250,9 +11681,8 @@ BEGIN
            ) AS faltante,
            sum(CASE WHEN cl.volume_ml > 0 THEN (cl.custo / cl.volume_ml) * (si.qtd_ml * ex.fator) ELSE 0 END) AS soma
     FROM _expand ex
-    JOIN tint_staging_formula_itens si ON si.staging_formula_id = ex.staging_formula_id
+    JOIN itens_dedup si ON si.staging_formula_id = ex.staging_formula_id
     LEFT JOIN cor_latest cl ON cl.id_corante_sayersystem = si.id_corante
-    WHERE si.id_corante IS NOT NULL AND si.id_corante <> '' AND COALESCE(si.qtd_ml, 0) > 0
     GROUP BY ex.eid
   )
   SELECT
@@ -11336,11 +11766,23 @@ BEGIN
   DELETE FROM tint_formula_itens fi USING _promoted pr WHERE fi.formula_id = pr.formula_id;
 
   INSERT INTO tint_formula_itens (formula_id, corante_id, ordem, qtd_ml)
-  SELECT pr.formula_id, co.id, si.ordem, round((si.qtd_ml * pr.fator)::numeric, 6)
+  -- 20260622210000 (estanca RE-LOOP): DEDUP por (formula_id, corante_id). A FORMULA do SayerSystem
+  -- pode trazer o MESMO corante em 2 slots/ordens (dosagem em 2 etapas; ex. 997M corante 3 = 0.385 +
+  -- 14.09). aggregateFlatFormulaItems envia 2 itens; SEM dedup o INSERT viola o unique
+  -- tint_formula_itens_formula_id_corante_id_key (23505) → ROLLBACK do batch → edge 500 → o conector
+  -- não cacheia o lote → re-envia o batch CHEIO p/ sempre (re-loop). DISTINCT ON ... ORDER BY ordem DESC
+  -- = MAIOR ORDEM VENCE: idêntico ao que o CSV-import já gravou no oficial (validado em prod: 344M
+  -- c1=ordem3, 997M c3=ordem5, 638S) → IDEMPOTENTE, zero mudança de dosagem. NÃO somar (mudaria a
+  -- dosagem/preço de cor ativa; somar dosagens distintas é decisão de domínio separada).
+  SELECT DISTINCT ON (pr.formula_id, co.id)
+         pr.formula_id, co.id, si.ordem, round((si.qtd_ml * pr.fator)::numeric, 6)
   FROM _promoted pr
   JOIN tint_staging_formula_itens si ON si.staging_formula_id = pr.staging_formula_id
   JOIN tint_corantes co ON co.account = v_account AND co.id_corante_sayersystem = si.id_corante
-  WHERE si.id_corante IS NOT NULL AND si.id_corante <> '' AND COALESCE(si.qtd_ml, 0) > 0;
+  WHERE si.id_corante IS NOT NULL AND si.id_corante <> '' AND COALESCE(si.qtd_ml, 0) > 0
+  -- tie-break determinístico (Codex P2): se 2 itens compartilham (formula,corante,ordem) — dado sujo —
+  -- qtd_ml DESC, id DESC torna o pick estável em vez de não-determinístico num caminho money-path.
+  ORDER BY pr.formula_id, co.id, si.ordem DESC, si.qtd_ml DESC, si.id DESC;
 
   -- ──────────────────────────────────────────────────────────────────────────
   -- E4) Recálculo de preço por mudança de INSUMO (§11 P1-A — caso de uso PRINCIPAL).
@@ -12179,6 +12621,44 @@ $$;
 
 
 --
+-- Name: _backup_cost_lavados_20260620; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public._backup_cost_lavados_20260620 (
+    id uuid,
+    product_id uuid,
+    cost_price numeric,
+    updated_at timestamp with time zone,
+    cmc numeric,
+    cost_source text,
+    cost_confidence numeric,
+    family_category text,
+    cost_final numeric,
+    _op_ativo boolean,
+    _backup_at timestamp with time zone
+);
+
+
+--
+-- Name: _backup_cost_reset_20260622; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public._backup_cost_reset_20260622 (
+    id uuid,
+    product_id uuid,
+    cost_price numeric,
+    updated_at timestamp with time zone,
+    cmc numeric,
+    cost_source text,
+    cost_confidence numeric,
+    family_category text,
+    cost_final numeric,
+    _op_ativo boolean,
+    _backup_at timestamp with time zone
+);
+
+
+--
 -- Name: _preflight_tint; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12793,39 +13273,43 @@ COMMENT ON COLUMN public.sales_orders.deleted_at IS 'Soft-delete timestamp. NULL
 --
 
 CREATE MATERIALIZED VIEW public.customer_metrics_mv AS
- WITH last_order AS (
+ WITH base AS (
          SELECT so.customer_user_id,
-            max(so.created_at) AS ultima_compra_data,
-            (EXTRACT(day FROM (now() - max(so.created_at))))::integer AS dias_desde_ultima_compra
+            so.total,
+            COALESCE(so.order_date_kpi, ((so.created_at AT TIME ZONE 'America/Sao_Paulo'::text))::date) AS d
            FROM public.sales_orders so
           WHERE (so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text]))
-          GROUP BY so.customer_user_id
+        ), last_order AS (
+         SELECT base.customer_user_id,
+            ((max(base.d))::timestamp without time zone AT TIME ZONE 'America/Sao_Paulo'::text) AS ultima_compra_data,
+            GREATEST(0, (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - max(base.d))) AS dias_desde_ultima_compra
+           FROM base
+          GROUP BY base.customer_user_id
         ), orders_90d AS (
-         SELECT so.customer_user_id,
+         SELECT base.customer_user_id,
             count(*) AS pedidos_90d,
-            COALESCE(sum(so.total), (0)::numeric) AS faturamento_90d,
+            COALESCE(sum(base.total), (0)::numeric) AS faturamento_90d,
                 CASE
-                    WHEN (count(*) > 0) THEN (COALESCE(sum(so.total), (0)::numeric) / (count(*))::numeric)
+                    WHEN (count(*) > 0) THEN (COALESCE(sum(base.total), (0)::numeric) / (count(*))::numeric)
                     ELSE (0)::numeric
                 END AS ticket_medio_90d
-           FROM public.sales_orders so
-          WHERE ((so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text])) AND (so.created_at >= (now() - '90 days'::interval)))
-          GROUP BY so.customer_user_id
+           FROM base
+          WHERE ((base.d >= (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - 90)) AND (base.d <= ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date))
+          GROUP BY base.customer_user_id
         ), orders_prev_90d AS (
-         SELECT so.customer_user_id,
-            COALESCE(sum(so.total), (0)::numeric) AS faturamento_prev_90d
-           FROM public.sales_orders so
-          WHERE ((so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text])) AND (so.created_at >= (now() - '180 days'::interval)) AND (so.created_at < (now() - '90 days'::interval)))
-          GROUP BY so.customer_user_id
+         SELECT base.customer_user_id,
+            COALESCE(sum(base.total), (0)::numeric) AS faturamento_prev_90d
+           FROM base
+          WHERE ((base.d >= (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - 180)) AND (base.d < (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - 90)))
+          GROUP BY base.customer_user_id
         ), cadence AS (
-         SELECT so.customer_user_id,
+         SELECT base.customer_user_id,
                 CASE
-                    WHEN (count(*) >= 3) THEN (EXTRACT(day FROM (max(so.created_at) - min(so.created_at))) / (NULLIF((count(*) - 1), 0))::numeric)
+                    WHEN (count(*) >= 3) THEN (((max(base.d) - min(base.d)))::numeric / (NULLIF((count(*) - 1), 0))::numeric)
                     ELSE NULL::numeric
                 END AS intervalo_medio_dias
-           FROM public.sales_orders so
-          WHERE (so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text]))
-          GROUP BY so.customer_user_id
+           FROM base
+          GROUP BY base.customer_user_id
         )
  SELECT p.user_id AS customer_user_id,
     p.name AS razao_social,
@@ -13691,7 +14175,9 @@ CREATE TABLE public.farmer_client_scores (
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
     signal_modifiers jsonb DEFAULT '{}'::jsonb,
-    last_signal_recalc_at timestamp with time zone
+    last_signal_recalc_at timestamp with time zone,
+    sales_history_status text,
+    CONSTRAINT farmer_client_scores_sales_history_status_check CHECK (((sales_history_status IS NULL) OR (sales_history_status = ANY (ARRAY['sem_historico'::text, 'stale'::text, 'ativo'::text]))))
 );
 
 
@@ -16945,14 +17431,32 @@ CREATE TABLE public.priority_score_log (
 CREATE TABLE public.product_costs (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     product_id uuid NOT NULL,
-    cost_price numeric DEFAULT 0 NOT NULL,
+    cost_price numeric,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     cmc numeric DEFAULT 0,
     cost_source text DEFAULT 'UNKNOWN'::text,
     cost_confidence numeric DEFAULT 0,
     family_category text,
-    cost_final numeric DEFAULT 0
+    cost_final numeric DEFAULT 0,
+    custo_producao numeric,
+    custo_producao_source text,
+    custo_producao_status text,
+    custo_producao_computed_at timestamp with time zone
 );
+
+
+--
+-- Name: COLUMN product_costs.custo_producao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.product_costs.custo_producao IS 'Custo de producao recomposto da Estrutura/malha do Omie (sum qtd_componente x cmc_insumo + vMOD + vGGF). NULL = nao recomposto/incompleto (degradacao honesta; ausente != zero). Writer unico: acao edge custo-producao.';
+
+
+--
+-- Name: COLUMN product_costs.custo_producao_status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.product_costs.custo_producao_status IS 'Proveniencia/diagnostico da recomposicao: ok | empty_structure | missing_component_cost | suspeito_unidade | erro_api. A v_caca so confia no custo_producao quando status = ok.';
 
 
 --
@@ -19256,7 +19760,7 @@ CREATE VIEW public.v_caca_candidatos WITH (security_invoker='on') AS
 -- Name: v_caca_compradores; Type: VIEW; Schema: public; Owner: -
 --
 
-CREATE VIEW public.v_caca_compradores WITH (security_invoker='on') AS
+CREATE VIEW public.v_caca_compradores AS
  WITH cli AS (
          SELECT p.user_id,
             p.name,
@@ -19316,7 +19820,11 @@ CREATE VIEW public.v_caca_compradores WITH (security_invoker='on') AS
             d.quantity,
             d.unit_price,
             op.familia,
-            pc.cmc
+            COALESCE(
+                CASE
+                    WHEN (pc.custo_producao_status = 'ok'::text) THEN pc.custo_producao
+                    ELSE NULL::numeric
+                END, NULLIF(pc.cmc, (0)::numeric)) AS custo_efetivo
            FROM (((so_ok s
              JOIN oi_dedup d ON ((d.sales_order_id = s.id)))
              JOIN public.omie_products op ON (((op.id = d.product_id) AND (op.account = s.account))))
@@ -19330,9 +19838,9 @@ CREATE VIEW public.v_caca_compradores WITH (security_invoker='on') AS
         ), luc AS (
          SELECT itens.documento,
             itens.account,
-            sum(((itens.quantity * itens.unit_price) - (itens.quantity * itens.cmc))) FILTER (WHERE (itens.cmc > (0)::numeric)) AS lucro_com_custo,
+            sum(((itens.quantity * itens.unit_price) - (itens.quantity * itens.custo_efetivo))) FILTER (WHERE (itens.custo_efetivo > (0)::numeric)) AS lucro_com_custo,
             sum((itens.quantity * itens.unit_price)) AS receita,
-            sum((itens.quantity * itens.unit_price)) FILTER (WHERE (itens.cmc > (0)::numeric)) AS receita_com_custo
+            sum((itens.quantity * itens.unit_price)) FILTER (WHERE (itens.custo_efetivo > (0)::numeric)) AS receita_com_custo
            FROM itens
           GROUP BY itens.documento, itens.account
         ), cid AS (
@@ -19462,6 +19970,114 @@ CREATE VIEW public.v_capital_giro_prazos WITH (security_invoker='on') AS
      LEFT JOIN cp_baixa cpb ON ((cpb.company = c.company)))
      LEFT JOIN cr_set crs ON ((crs.company = c.company)))
      LEFT JOIN cp_set cps ON ((cps.company = c.company)));
+
+
+--
+-- Name: v_carteira_sla; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_carteira_sla WITH (security_invoker='true') AS
+ WITH sla AS (
+         SELECT (COALESCE(( SELECT farmer_algorithm_config.value
+                   FROM public.farmer_algorithm_config
+                  WHERE (farmer_algorithm_config.key = 'sla_contact_days'::text)), (14)::numeric))::integer AS dias
+        ), ultimo_contato AS (
+         SELECT x.customer_user_id,
+            max(x.at) AS last_contact_at
+           FROM ( SELECT farmer_calls.customer_user_id,
+                    COALESCE(farmer_calls.started_at, farmer_calls.created_at) AS at
+                   FROM public.farmer_calls
+                  WHERE ((farmer_calls.customer_user_id IS NOT NULL) AND (farmer_calls.call_result = 'contato_sucesso'::public.farmer_call_result))
+                UNION ALL
+                 SELECT route_visits.customer_user_id,
+                    route_visits.check_in_at AS at
+                   FROM public.route_visits
+                  WHERE ((route_visits.customer_user_id IS NOT NULL) AND (route_visits.check_in_at IS NOT NULL))) x
+          GROUP BY x.customer_user_id
+        )
+ SELECT fcs.customer_user_id,
+    fcs.farmer_id,
+    fcs.health_class,
+    fcs.churn_risk,
+    fcs.priority_score,
+    uc.last_contact_at,
+        CASE
+            WHEN (uc.last_contact_at IS NULL) THEN NULL::integer
+            ELSE (floor((EXTRACT(epoch FROM (now() - uc.last_contact_at)) / (86400)::numeric)))::integer
+        END AS dias_sem_contato,
+    sla.dias AS sla_dias,
+    ((uc.last_contact_at IS NULL) OR ((now() - uc.last_contact_at) > make_interval(days => sla.dias))) AS vencido
+   FROM ((public.farmer_client_scores fcs
+     CROSS JOIN sla)
+     LEFT JOIN ultimo_contato uc ON ((uc.customer_user_id = fcs.customer_user_id)))
+  WHERE ((fcs.health_class = ANY (ARRAY['atencao'::text, 'critico'::text])) OR (uc.last_contact_at IS NULL) OR ((now() - uc.last_contact_at) > make_interval(days => sla.dias)));
+
+
+--
+-- Name: v_cliente_interacoes; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_cliente_interacoes WITH (security_invoker='true') AS
+ SELECT fc.customer_user_id,
+    COALESCE(fc.started_at, fc.created_at) AS at,
+        CASE
+            WHEN fc.is_whatsapp THEN 'whatsapp'::text
+            ELSE 'ligacao'::text
+        END AS canal,
+        CASE fc.call_type
+            WHEN 'reativacao'::public.farmer_call_type THEN 'Reativação'::text
+            WHEN 'cross_sell'::public.farmer_call_type THEN 'Cross-sell'::text
+            WHEN 'up_sell'::public.farmer_call_type THEN 'Up-sell'::text
+            WHEN 'follow_up'::public.farmer_call_type THEN 'Follow-up'::text
+            ELSE 'Contato'::text
+        END AS titulo,
+    NULLIF(fc.notes, ''::text) AS resumo,
+    'farmer_calls'::text AS ref_tabela,
+    fc.id AS ref_id,
+    fc.farmer_id AS autor_id,
+    fc.revenue_generated AS revenue
+   FROM public.farmer_calls fc
+  WHERE ((fc.customer_user_id IS NOT NULL) AND (public.pode_ver_carteira_completa(auth.uid()) OR (fc.farmer_id = auth.uid()) OR public.carteira_visivel_para(fc.customer_user_id, auth.uid())))
+UNION ALL
+ SELECT rv.customer_user_id,
+    COALESCE(rv.check_in_at, (rv.visit_date)::timestamp with time zone, rv.created_at) AS at,
+    'visita'::text AS canal,
+    COALESCE(NULLIF(rv.visit_type, ''::text), 'Visita'::text) AS titulo,
+    NULLIF(rv.notes, ''::text) AS resumo,
+    'route_visits'::text AS ref_tabela,
+    rv.id AS ref_id,
+    rv.visited_by AS autor_id,
+    rv.revenue_generated AS revenue
+   FROM public.route_visits rv
+  WHERE ((rv.customer_user_id IS NOT NULL) AND (public.pode_ver_carteira_completa(auth.uid()) OR (rv.visited_by = auth.uid()) OR public.carteira_visivel_para(rv.customer_user_id, auth.uid())))
+UNION ALL
+ SELECT t.customer_user_id,
+    COALESCE(t.concluida_em, t.created_at) AS at,
+    'tarefa'::text AS canal,
+    COALESCE(NULLIF(t.categoria, ''::text), 'Tarefa'::text) AS titulo,
+    COALESCE(NULLIF(t.nota_conclusao, ''::text), NULLIF(t.descricao, ''::text)) AS resumo,
+    'tarefas'::text AS ref_tabela,
+    t.id AS ref_id,
+    t.assigned_to AS autor_id,
+    NULL::numeric AS revenue
+   FROM public.tarefas t
+  WHERE ((t.customer_user_id IS NOT NULL) AND (public.pode_ver_carteira_completa(auth.uid()) OR public.carteira_visivel_para(t.customer_user_id, auth.uid())))
+UNION ALL
+ SELECT o.user_id AS customer_user_id,
+    om.created_at AS at,
+    'mensagem_pedido'::text AS canal,
+        CASE
+            WHEN om.is_staff THEN 'Mensagem da equipe'::text
+            ELSE 'Mensagem do cliente'::text
+        END AS titulo,
+    NULLIF(om.message, ''::text) AS resumo,
+    'order_messages'::text AS ref_tabela,
+    om.id AS ref_id,
+    om.sender_id AS autor_id,
+    NULL::numeric AS revenue
+   FROM (public.order_messages om
+     JOIN public.orders o ON ((o.id = om.order_id)))
+  WHERE ((o.user_id IS NOT NULL) AND (public.pode_ver_carteira_completa(auth.uid()) OR public.carteira_visivel_para(o.user_id, auth.uid())));
 
 
 --
@@ -27764,6 +28380,20 @@ CREATE TRIGGER trg_campanha_alerta AFTER INSERT OR UPDATE OF estado ON public.pr
 
 
 --
+-- Name: carteira_assignments trg_carteira_cleanup_orphan_score; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trg_carteira_cleanup_orphan_score AFTER DELETE ON public.carteira_assignments DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.cleanup_orphan_score_on_carteira_delete();
+
+
+--
+-- Name: carteira_assignments trg_carteira_reconcile_score_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_carteira_reconcile_score_owner AFTER INSERT OR UPDATE OF owner_user_id ON public.carteira_assignments FOR EACH ROW EXECUTE FUNCTION public.reconcile_score_owner_from_carteira();
+
+
+--
 -- Name: cliente_classificacao trg_cliente_classificacao_derive; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27817,6 +28447,13 @@ CREATE TRIGGER trg_farmer_calls_enqueue_recalc_sinais AFTER INSERT OR UPDATE OF 
 --
 
 CREATE TRIGGER trg_farmer_client_scores_enqueue_visit_recalc AFTER UPDATE ON public.farmer_client_scores FOR EACH ROW EXECUTE FUNCTION public.enqueue_visit_score_recalc_from_client_score();
+
+
+--
+-- Name: farmer_client_scores trg_fcs_block_flagged_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_fcs_block_flagged_insert BEFORE INSERT ON public.farmer_client_scores FOR EACH ROW EXECUTE FUNCTION public.fcs_block_flagged_insert();
 
 
 --
@@ -27894,6 +28531,13 @@ CREATE TRIGGER trg_mapping_gate BEFORE UPDATE ON public.fin_fechamentos FOR EACH
 --
 
 CREATE TRIGGER trg_melhoria_itens_touch BEFORE UPDATE ON public.melhoria_itens FOR EACH ROW EXECUTE FUNCTION public.melhoria_itens_touch_updated_at();
+
+
+--
+-- Name: order_items trg_order_items_created_at_omie; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_order_items_created_at_omie BEFORE INSERT ON public.order_items FOR EACH ROW EXECUTE FUNCTION public.order_items_herdar_created_at_omie();
 
 
 --
@@ -30491,13 +31135,6 @@ CREATE POLICY "Staff can manage segments" ON public.customer_segments TO authent
 --
 
 CREATE POLICY "Staff can manage sync state" ON public.sync_state USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
--- Name: farmer_tactical_plans Staff can manage tactical plans; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage tactical plans" ON public.farmer_tactical_plans USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 
 --
@@ -34957,6 +35594,13 @@ ALTER TABLE public.sync_reprocess_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sync_state ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: farmer_tactical_plans tactical_plans_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY tactical_plans_select_staff ON public.farmer_tactical_plans FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+
+
+--
 -- Name: tarefa_eventos; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -35481,5 +36125,5 @@ ALTER TABLE public.whatsapp_webhook_events ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict dsh0tosauqhwbrHSivW3kGqwtB1XzrA165GNxAWJVTtd7U4f7TEnefit4dDXkdl
+\unrestrict YUubq0d8E76qcwcIfGhKeHgq5flNeDqWI23blstbYad4ATZDqQhsHtw1eu18hjq
 
