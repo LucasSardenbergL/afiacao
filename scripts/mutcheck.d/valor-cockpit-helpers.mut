@@ -34,3 +34,7 @@ PEGA | quase: teto da faixa removido (robusto-bom vira quase) | s/hurdle_break_e
 PEGA | quase: lado bom vira lado ruim (> kHi -> < kLo)        | s/hurdle_break_even > kHi \+ 1e-9 && hurdle_break_even <= kHi2/hurdle_break_even < kLo - 1e-9 && hurdle_break_even <= kHi2/
 PEGA | quase: rollup não agrega (contador morto)             | s/if \(cel\.quase_sensivel_hurdle\) acc\.qtdQuaseSensiveis\+\+/if (false) acc.qtdQuaseSensiveis++/
 PEGA | quase: empresa não agrega (contador morto)            | s/if \(cel\.quase_sensivel_hurdle\) qtdQuaseSensiveisEmp\+\+/if (false) qtdQuaseSensiveisEmp++/
+# Menor folga POSITIVA fora do fio (min_folga, sobre o #1049): SÓ lado + (folga>δ); signed-min pegaria o mais
+# NEGATIVO (falsa robustez — achado do Codex). Mut. nas 2 vias (empresa E rollup, ancoradas por indentação — perl -pe é linha-a-linha).
+PEGA | min_folga: sem filtro folga>0 na empresa (pegaria o neg) | s/^    if \(cel\.evp_status === 'real' && !cel\.sensivel_hurdle && cel\.folga_hurdle_pp != null && cel\.folga_hurdle_pp > 0/    if (cel.evp_status === 'real' && !cel.sensivel_hurdle && cel.folga_hurdle_pp != null/
+PEGA | min_folga: sem filtro folga>0 no rollup (pegaria o neg)  | s/^      if \(cel\.evp_status === 'real' && !cel\.sensivel_hurdle && cel\.folga_hurdle_pp != null && cel\.folga_hurdle_pp > 0/      if (cel.evp_status === 'real' && !cel.sensivel_hurdle && cel.folga_hurdle_pp != null/
