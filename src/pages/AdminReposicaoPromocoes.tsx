@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Percent, Upload, FilePlus, Handshake, AlertTriangle } from "lucide-react";
 import { agruparPorMes, chavesUltimosNMeses } from "@/lib/agruparPorMes";
+import { ilikeContainsPattern } from "@/lib/postgrest";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EMPRESA, ALL, type Campanha, type CampanhaComContagem } from "@/components/reposicao/promocoes/types";
@@ -37,7 +38,8 @@ export default function AdminReposicaoPromocoes() {
 
       if (filtroEstado !== ALL) q = q.eq("estado", filtroEstado);
       if (filtroFornecedor !== ALL) q = q.eq("fornecedor_nome", filtroFornecedor);
-      if (busca.trim()) q = q.ilike("nome", `%${busca.trim()}%`);
+      const buscaPat = ilikeContainsPattern(busca.trim());
+      if (buscaPat) q = q.ilike("nome", buscaPat);
 
       const { data, error } = await q;
       if (error) throw error;

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   sanitizeForPostgrestOr,
+  sanitizeIlikeTerm,
+  ilikeContainsPattern,
   ilike,
   ilikeOr,
   eqInt,
@@ -46,6 +48,74 @@ describe('sanitizeForPostgrestOr', () => {
 
   it('string vazia → string vazia', () => {
     expect(sanitizeForPostgrestOr('')).toBe('');
+  });
+});
+
+// Os 3 wildcards do operador LIKE/ILIKE, derivados da GRAMÁTICA do PostgREST (não da
+// memória do autor): `%` (qualquer sequência), `_` (um caractere) e `*` — alias de `%`
+// em like/ilike pra evitar URL-encoding (postgrest.org, tables_views). Foi derivar da
+// intuição (só `%`/`_`) e ESQUECER o `*` que abriu o gap nos `.ilike()` crus.
+const ILIKE_WILDCARDS = ['%', '_', '*'];
+
+describe('sanitizeIlikeTerm', () => {
+  it('remove cada wildcard do ILIKE — entrada derivada da própria gramática', () => {
+    // Deriva tanto a entrada quanto a verificação da constante: se o helper esquecer
+    // QUALQUER wildcard da lista (como o `*` original), este laço falha.
+    for (const w of ILIKE_WILDCARDS) {
+      expect(sanitizeIlikeTerm(`a${w}b`)).toBe('ab');
+    }
+    expect(sanitizeIlikeTerm(`x${ILIKE_WILDCARDS.join('')}y`)).toBe('xy');
+  });
+
+  it('remove o asterisco — alias de % (o gap que o .replace(/[%_]/g) deixou passar)', () => {
+    // `.ilike('col', `%${'*'}%`)` → o servidor traduz `%*%` em `%%%` = match-all dos
+    // valores não-nulos da coluna. Strippar só `%`/`_` NÃO cobre esse vetor.
+    expect(sanitizeIlikeTerm('*')).toBe('');
+    expect(sanitizeIlikeTerm('a*b*c')).toBe('abc');
+  });
+
+  it('PRESERVA vírgula/parênteses/aspas — num .ilike() único não são metacaracteres (≠ sanitizeForPostgrestOr)', () => {
+    // Contraste de CONTRATO: o `.or()` parseia vírgula/parênteses (separador/grupo), então
+    // sanitizeForPostgrestOr os remove. Num `.ilike()` único o pattern é o valor de UM
+    // predicado — esses caracteres são literais legítimos da busca e devem sobreviver.
+    expect(sanitizeIlikeTerm('a,b(c)"d')).toBe('a,b(c)"d');
+  });
+
+  it('texto limpo passa inalterado (espaço, dígito, acento, hífen, ponto)', () => {
+    expect(sanitizeIlikeTerm('abrasivo 120')).toBe('abrasivo 120');
+    expect(sanitizeIlikeTerm('ção-1.5')).toBe('ção-1.5');
+  });
+
+  it('propriedade de segurança: NENHUM wildcard do ILIKE sobra, qualquer que seja a entrada', () => {
+    const sujo = 'cor*_50%off_(a)';
+    const limpo = sanitizeIlikeTerm(sujo);
+    for (const w of ILIKE_WILDCARDS) expect(limpo.includes(w)).toBe(false);
+  });
+
+  it('string vazia → string vazia', () => {
+    expect(sanitizeIlikeTerm('')).toBe('');
+  });
+});
+
+describe('ilikeContainsPattern', () => {
+  it('termo com texto → `%termo%` com wildcards strippados', () => {
+    expect(ilikeContainsPattern('abc')).toBe('%abc%');
+    expect(ilikeContainsPattern('a*b')).toBe('%ab%'); // wildcard no meio vira literal
+    expect(ilikeContainsPattern('ção 120')).toBe('%ção 120%');
+  });
+
+  it('input só-de-wildcards → null (NÃO vira `%%` match-all) — o gap que o /codex achou', () => {
+    // `%${sanitizeIlikeTerm('*')}%` seria `%%` = match-all dos não-nulos da coluna.
+    // Retornar null sinaliza ao caller pra NÃO aplicar o .ilike (busca sem texto).
+    expect(ilikeContainsPattern('*')).toBeNull();
+    expect(ilikeContainsPattern('%')).toBeNull();
+    expect(ilikeContainsPattern('_')).toBeNull();
+    expect(ilikeContainsPattern('**')).toBeNull();
+    expect(ilikeContainsPattern('%_*')).toBeNull();
+  });
+
+  it('input vazio → null', () => {
+    expect(ilikeContainsPattern('')).toBeNull();
   });
 });
 

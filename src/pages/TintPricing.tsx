@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { ilikeContainsPattern } from '@/lib/postgrest';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -82,6 +83,8 @@ function useFormulaSearch(corId: string) {
     queryKey: ['tint-formula-search', corId],
     enabled: corId.length >= 2,
     queryFn: async () => {
+      const pat = ilikeContainsPattern(corId);
+      if (!pat) return [];
       const { data } = await supabase
         .from('tint_formulas')
         .select(`
@@ -97,7 +100,7 @@ function useFormulaSearch(corId: string) {
         `)
         .eq('account', ACCOUNT)
         .is('desativada_em', null)
-        .ilike('cor_id', `%${corId}%`)
+        .ilike('cor_id', pat)
         .limit(20);
       return data ?? [];
     },

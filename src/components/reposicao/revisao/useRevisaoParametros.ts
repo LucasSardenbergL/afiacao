@@ -8,6 +8,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { toast } from "sonner";
 import { type SkuParam, type RowWithPrice, type StatusFilterValue, reativarPayload } from "@/lib/reposicao/sku-param";
+import { ilikeContainsPattern } from "@/lib/postgrest";
 import { PAGE_SIZE, type SkuSugeridoView } from "./types";
 
 export function useRevisaoParametros() {
@@ -45,7 +46,8 @@ export function useRevisaoParametros() {
           if (/^\d+$/.test(s)) {
             q = q.eq("sku_codigo_omie", Number(s));
           } else {
-            q = q.ilike("sku_descricao", `%${s}%`);
+            const pat = ilikeContainsPattern(s);
+            if (pat) q = q.ilike("sku_descricao", pat);
           }
         }
 
@@ -114,7 +116,8 @@ export function useRevisaoParametros() {
           if (/^\d+$/.test(s)) {
             q = q.eq("sku_codigo_omie", Number(s));
           } else {
-            q = q.ilike("sku_descricao", `%${s}%`);
+            const pat = ilikeContainsPattern(s);
+            if (pat) q = q.ilike("sku_descricao", pat);
           }
         }
 
@@ -201,7 +204,8 @@ export function useRevisaoParametros() {
         if (/^\d+$/.test(s)) {
           q = q.eq("sku_codigo_omie", Number(s));
         } else {
-          q = q.ilike("sku_descricao", `%${s}%`);
+          const pat = ilikeContainsPattern(s);
+          if (pat) q = q.ilike("sku_descricao", pat);
         }
       }
 
