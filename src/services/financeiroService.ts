@@ -1004,6 +1004,8 @@ export interface CockpitRollupCliente {
   perda_garantida: boolean;
   cm_incompleto: boolean;
   qtd_combos_sensiveis: number;  // combos REAIS frágeis ao hurdle (break-even na banda 25-35%)
+  qtd_combos_quase_frageis: number;     // combos REAIS logo fora do fio por cima (break-even em (k+δ, k+2δ]) — lucrativos hoje, frágeis a alta do Ke
+  min_folga_positiva_pp: number | null; // menor folga POSITIVA fora do fio: "próximo combo lucrativo zera com +X pp de Ke"; null se nenhum
   nome?: string | null;  // nome do cliente (profiles via customer_user_id) — UI mostra no lugar do código
 }
 export interface CockpitRollupSKU {
@@ -1019,6 +1021,8 @@ export interface CockpitRollupSKU {
   perda_garantida: boolean;
   cm_incompleto: boolean;
   qtd_combos_sensiveis: number;  // combos REAIS frágeis ao hurdle (break-even na banda 25-35%)
+  qtd_combos_quase_frageis: number;     // combos REAIS logo fora do fio por cima (break-even em (k+δ, k+2δ]) — lucrativos hoje, frágeis a alta do Ke
+  min_folga_positiva_pp: number | null; // menor folga POSITIVA fora do fio: "próximo combo lucrativo zera com +X pp de Ke"; null se nenhum
   descricao?: string | null;  // descrição do produto (omie_products) — UI mostra no lugar do código SKU
 }
 // Empresa DECOMPOSTA (capital parcial → um único evp seria mentira contábil; Codex 2026-06-23).
@@ -1035,6 +1039,8 @@ export interface CockpitEmpresaEVP {
   perda_garantida: boolean;
   cm_incompleto: boolean;
   qtd_combos_sensiveis: number;     // combos REAIS no fio da navalha (granularidade que o agregado robusto esconde)
+  qtd_combos_quase_frageis: number;     // combos REAIS logo fora do fio por cima (break-even em (k+δ, k+2δ]) — lucrativos hoje, frágeis a alta do Ke
+  min_folga_positiva_pp: number | null; // menor folga POSITIVA fora do fio: "próximo combo lucrativo zera com +X pp de Ke"; null se nenhum
   capital_conhecido: number | null; // Σ capital das células reais → deriva EVP a outros hurdles
 }
 export interface ValorCockpitResult {

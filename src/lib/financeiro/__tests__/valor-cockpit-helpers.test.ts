@@ -901,3 +901,113 @@ describe('montarCelulasComboEVP — qtd_combos_sensiveis (granularidade, não ag
     expect(r.empresa.capital_conhecido).toBeNull();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-06-24 — Follow-up: "quase-frágeis" ao hurdle (mata a falsa robustez do "0 no fio").
+// O fio é [k−δ, k+δ]; um combo com break-even logo ACIMA (ex.: 0,355 a k=0,30) não é sinalizado
+// mas vira destruidor se o Ke subir poucos pp. Dois sinais SÓ p/ célula 'real' (capital completo):
+//  - quase_fragil_hurdle: break-even ∈ (k+δ, k+2δ] (folga ∈ (δ, 2δ]) — SÓ lado de cima (Codex: o lado
+//    de baixo já é evp<0; misturar é ruído). Conta em qtd_combos_quase_frageis.
+//  - min_folga_positiva_pp: a MENOR folga POSITIVA fora do fio (folga>δ) — "o próximo combo lucrativo
+//    zera com +X pp de Ke". Sinal +, NÃO |folga| (Codex [P1]: menor signed pegaria o mais negativo).
+// ═══════════════════════════════════════════════════════════════════════════
+describe('montarCelulasComboEVP — quase-frágeis ao hurdle (folga baixa, lado de cima)', () => {
+  // k=0,30, δ=0,05 → fio [0,25;0,35]; quase-frágil = break-even ∈ (0,35; 0,40] (folga ∈ (5pp;10pp])
+  it('break-even em (k+δ, k+2δ] → quase_fragil_hurdle=true; conta em qtd_combos_quase_frageis; folga +', () => {
+    // cm=380 (1000−6,2·100); capital=1000 → break-even=0,38 ∈ (0,35;0,40]; folga +0,08
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    });
+    const c = r.celulas[0];
+    expect(c.hurdle_break_even).toBeCloseTo(0.38, 6);
+    expect(c.sensivel_hurdle).toBe(false);     // fora do fio
+    expect(c.quase_fragil_hurdle).toBe(true);  // mas logo acima → quase
+    expect(c.folga_hurdle_pp).toBeCloseTo(0.08, 6);
+    expect(r.porCliente[0].qtd_combos_quase_frageis).toBe(1);
+    expect(r.empresa.qtd_combos_quase_frageis).toBe(1);
+    expect(r.empresa.min_folga_positiva_pp).toBeCloseTo(0.08, 6);
+    expect(r.porCliente[0].min_folga_positiva_pp).toBeCloseTo(0.08, 6);
+  });
+  it('robusto (break-even > k+2δ) NÃO é quase, mas entra no min_folga_positiva se for a menor + fora do fio', () => {
+    // S1 quase (be 0,38, folga +0,08); S2 robusto (be 0,50, folga +0,20). qtd_quase=1 (só S1); min=0,08.
+    const r = montarCelulasComboEVP({
+      combos: [
+        { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }, // cm 380 → be 0,38
+        { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 100, custo_unitario: 5 },   // cm 500 → be 0,50
+      ],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 1200 }], // rc=2000 → a_cs cada=600; +estoque 400 → capital 1000 cada
+      capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }, { sku: 'S2', estoque_valor: 400 }],
+      k: 0.30,
+    });
+    const s1 = r.celulas.find((c) => c.sku === 'S1')!;
+    const s2 = r.celulas.find((c) => c.sku === 'S2')!;
+    expect(s1.quase_fragil_hurdle).toBe(true);
+    expect(s2.quase_fragil_hurdle).toBe(false); // robusto, fora da faixa (0,35;0,40]
+    expect(r.empresa.qtd_combos_quase_frageis).toBe(1);
+    expect(r.empresa.min_folga_positiva_pp).toBeCloseTo(0.08, 6); // a menor positiva fora do fio
+  });
+  it('[P1 Codex] min_folga_positiva IGNORA o lado negativo (não pega o mais negativo)', () => {
+    // S1 folga +0,08 (be 0,38); S2 folga −0,20 (be 0,10, evp<0). min_folga_positiva = +0,08, NUNCA −0,20.
+    const r = montarCelulasComboEVP({
+      combos: [
+        { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }, // cm 380 → be 0,38
+        { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 100, custo_unitario: 9 },   // cm 100 → be 0,10
+      ],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 1200 }],
+      capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }, { sku: 'S2', estoque_valor: 400 }],
+      k: 0.30,
+    });
+    const s2 = r.celulas.find((c) => c.sku === 'S2')!;
+    expect(s2.folga_hurdle_pp).toBeLessThan(0);                  // negativa (já abaixo do hurdle)
+    expect(r.empresa.min_folga_positiva_pp).toBeCloseTo(0.08, 6); // o POSITIVO, não −0,20
+    expect(r.empresa.qtd_combos_quase_frageis).toBe(1);          // só S1 (S2 está abaixo, não "quase")
+  });
+  it('nenhum combo positivo fora do fio → min_folga_positiva_pp=null (NÃO 0); qtd_quase=0', () => {
+    // combo único sensível (be 0,2857 ∈ fio) → não há candidato positivo fora do fio
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 650 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    });
+    expect(r.celulas[0].sensivel_hurdle).toBe(true);
+    expect(r.empresa.min_folga_positiva_pp).toBeNull();
+    expect(r.empresa.qtd_combos_quase_frageis).toBe(0);
+    expect(r.porCliente[0].min_folga_positiva_pp).toBeNull();
+  });
+  it('robusto sozinho (be 0,50) → qtd_quase=0, mas min_folga_positiva=0,20 (o positivo mais próximo é ele)', () => {
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 5 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    });
+    expect(r.empresa.qtd_combos_quase_frageis).toBe(0);          // 0,50 ∉ (0,35;0,40]
+    expect(r.empresa.min_folga_positiva_pp).toBeCloseTo(0.20, 6); // mas é positivo fora do fio
+  });
+  it('k=null → qtd_combos_quase_frageis=0, min_folga_positiva_pp=null', () => {
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: null,
+    });
+    expect(r.empresa.qtd_combos_quase_frageis).toBe(0);
+    expect(r.empresa.min_folga_positiva_pp).toBeNull();
+    expect(r.porCliente[0].qtd_combos_quase_frageis).toBe(0);
+    expect(r.porCliente[0].min_folga_positiva_pp).toBeNull();
+  });
+  it('BORDA: break-even em kHi2 (0,40) → quase (inclusivo); em kHi (0,35) → sensível, NÃO quase', () => {
+    // be 0,40 (cm 400, custo 6): borda superior da faixa quase — inclusiva
+    const q = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    }).celulas[0];
+    expect(q.hurdle_break_even).toBeCloseTo(0.40, 9);
+    expect(q.sensivel_hurdle).toBe(false);
+    expect(q.quase_fragil_hurdle).toBe(true);   // borda superior inclusiva
+    // be 0,35 (kHi): está no fio → sensível, não quase
+    const s = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.5 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    }).celulas[0];
+    expect(s.hurdle_break_even).toBeCloseTo(0.35, 9);
+    expect(s.sensivel_hurdle).toBe(true);
+    expect(s.quase_fragil_hurdle).toBe(false);  // no fio, não "quase"
+  });
+});
