@@ -901,3 +901,108 @@ describe('montarCelulasComboEVP — qtd_combos_sensiveis (granularidade, não ag
     expect(r.empresa.capital_conhecido).toBeNull();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-06-24 — Follow-up: quase-frágeis ao hurdle (folga fina). Tira a FALSA ROBUSTEZ
+// que sobra quando qtd_combos_sensiveis=0 mas há combo logo FORA da banda. Escopo SÓ
+// LADO BOM (gera valor, frágil): break_even ∈ (k+δ, k+2δ] = (0,35; 0,40] a k=0,30.
+// O lado ruim (break_even<k → evp<0) já é visível na tabela (ordenada piores-primeiro)
+// → contá-lo duplicaria sinal. Mutuamente exclusivo de sensivel_hurdle (banda estreita).
+// ═══════════════════════════════════════════════════════════════════════════
+describe('montarCelulasComboEVP — quase-sensibilidade ao hurdle (folga fina, lado bom)', () => {
+  // 1 combo: capital_cs = ar_medio + estoque_valor = 600 + 400 = 1000 → break_even = cm/1000.
+  const cap = { capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30 };
+  const cel1 = (custo_unitario: number) => montarCelulasComboEVP({
+    combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario }], ...cap,
+  }).celulas[0];
+
+  it('break_even na faixa (k+δ, k+2δ] (0,38) → quase=true, sensivel=false (gera valor, folga fina)', () => {
+    const c = cel1(6.2); // cm 380 → be 0,38, folga +0,08 ∈ (δ,2δ]
+    expect(c.evp_status).toBe('real');
+    expect(c.hurdle_break_even).toBeCloseTo(0.38, 6);
+    expect(c.sensivel_hurdle).toBe(false);
+    expect(c.quase_sensivel_hurdle).toBe(true);
+    expect(c.folga_hurdle_pp).toBeCloseTo(0.08, 6);
+  });
+  it('exemplo do briefing: break_even 0,355 (logo ACIMA de kHi=0,35) → quase=true (era invisível)', () => {
+    const c = cel1(6.45); // cm 355 → be 0,355
+    expect(c.hurdle_break_even).toBeCloseTo(0.355, 6);
+    expect(c.sensivel_hurdle).toBe(false);
+    expect(c.quase_sensivel_hurdle).toBe(true);
+  });
+  it('BORDA kHi (0,35): sensivel=true E quase=false (mutuamente exclusivos, sem overlap)', () => {
+    const c = cel1(6.5); // cm 350 → be 0,35 = kHi
+    expect(c.hurdle_break_even).toBeCloseTo(0.35, 9);
+    expect(c.sensivel_hurdle).toBe(true);
+    expect(c.quase_sensivel_hurdle).toBe(false);
+  });
+  it('BORDA kHi2 (k+2δ=0,40): quase=true (inclusivo, epsilon contra float)', () => {
+    const c = cel1(6.0); // cm 400 → be 0,40 = kHi2
+    expect(c.hurdle_break_even).toBeCloseTo(0.40, 9);
+    expect(c.quase_sensivel_hurdle).toBe(true);
+    expect(c.sensivel_hurdle).toBe(false);
+  });
+  it('break_even acima de k+2δ (0,42, robusto-bom) → quase=false', () => {
+    const c = cel1(5.8); // cm 420 → be 0,42
+    expect(c.hurdle_break_even).toBeCloseTo(0.42, 6);
+    expect(c.sensivel_hurdle).toBe(false);
+    expect(c.quase_sensivel_hurdle).toBe(false);
+  });
+  it('LADO RUIM: break_even 0,22 (|folga|∈(δ,2δ] mas destrói valor) → quase=false (escopo só lado bom)', () => {
+    const c = cel1(7.8); // cm 220 → be 0,22, folga −0,08
+    expect(c.hurdle_break_even).toBeCloseTo(0.22, 6);
+    expect(c.folga_hurdle_pp).toBeCloseTo(-0.08, 6);
+    expect(c.sensivel_hurdle).toBe(false);
+    expect(c.quase_sensivel_hurdle).toBe(false); // já visível via evp<0 → não duplica
+  });
+  it('no fio (break_even=0,30=k) → sensivel=true, quase=false', () => {
+    const c = cel1(7.0); // cm 300 → be 0,30
+    expect(c.hurdle_break_even).toBeCloseTo(0.30, 9);
+    expect(c.sensivel_hurdle).toBe(true);
+    expect(c.quase_sensivel_hurdle).toBe(false);
+  });
+  it('célula parcial (estoque ausente) → quase=false (fora do escopo, como sensivel)', () => {
+    const c = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: null }], k: 0.30,
+    }).celulas[0];
+    expect(c.evp_status).not.toBe('real');
+    expect(c.quase_sensivel_hurdle).toBe(false);
+  });
+  it('k=null → quase=false em célula/rollup/empresa', () => {
+    // O 0 aqui é cardinalidade de conjunto vazio (sem hurdle não há faixa), NÃO fabricação de valor:
+    // "ausente ≠ zero" rege R$/%/taxa (onde 0 é número plausível mas falso), não CONTAGEM. Consistente
+    // com qtd_combos_sensiveis (number, #1044); a UI gateia por hurdle_banda → nunca exibe o 0 como
+    // "medi e não há". (resposta ao /codex challenge P2, 2026-06-24 — mantido number, não number|null.)
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: null,
+    });
+    expect(r.celulas[0].quase_sensivel_hurdle).toBe(false);
+    expect(r.porCliente[0].qtd_combos_quase_sensiveis).toBe(0);
+    expect(r.empresa.qtd_combos_quase_sensiveis).toBe(0);
+  });
+  it('rollup/empresa: qtd_combos_quase_sensiveis conta o quase (lado bom), separado do no-fio', () => {
+    // C1: S1 quase (be 0,38), S2 robusto-bom (be 0,50), S3 no fio (be 0,30). rc=3000 → a_cs cada=600; i_cs cada=400.
+    const r = montarCelulasComboEVP({
+      combos: [
+        { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }, // be 0,38 quase
+        { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 100, custo_unitario: 5.0 }, // be 0,50 robusto
+        { cliente: 'C1', sku: 'S3', receita_liquida: 1000, quantidade: 100, custo_unitario: 7.0 }, // be 0,30 no fio
+      ],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 1800 }],
+      capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }, { sku: 'S2', estoque_valor: 400 }, { sku: 'S3', estoque_valor: 400 }],
+      k: 0.30,
+    });
+    const s1 = r.celulas.find((c) => c.sku === 'S1')!;
+    const s2 = r.celulas.find((c) => c.sku === 'S2')!;
+    const s3 = r.celulas.find((c) => c.sku === 'S3')!;
+    expect(s1.quase_sensivel_hurdle).toBe(true);  expect(s1.sensivel_hurdle).toBe(false);
+    expect(s2.quase_sensivel_hurdle).toBe(false); expect(s2.sensivel_hurdle).toBe(false);
+    expect(s3.sensivel_hurdle).toBe(true);        expect(s3.quase_sensivel_hurdle).toBe(false);
+    expect(r.porCliente[0].qtd_combos_quase_sensiveis).toBe(1); // só S1
+    expect(r.porCliente[0].qtd_combos_sensiveis).toBe(1);       // só S3 (regressão da contagem existente)
+    expect(r.empresa.qtd_combos_quase_sensiveis).toBe(1);
+    expect(r.empresa.qtd_combos_sensiveis).toBe(1);
+  });
+});

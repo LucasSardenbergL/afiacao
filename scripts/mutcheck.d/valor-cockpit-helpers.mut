@@ -27,3 +27,10 @@ PEGA | confianca: limiar omitido-por-receita 5% afrouxa p/15%| s/omitidoPct > 0\
 # Sensibilidade ao hurdle (bônus 2026-06-24): fio da navalha = break-even cm/capital ∈ [k−δ, k+δ], SÓ p/ 'real'.
 PEGA | sensibilidade: banda sem teto (kHi removido)          | s/hurdle_break_even >= kLo - 1e-9 && hurdle_break_even <= kHi \+ 1e-9/hurdle_break_even >= kLo - 1e-9/
 PEGA | sensibilidade: gate 'real' removido (parcial entra)   | s/evp_status === 'real' && capital_cs > 0 && cm != null/capital_cs > 0 && cm != null/
+# Quase-sensibilidade (follow-up 2026-06-24): quase-frágil = break-even ∈ (k+δ, k+2δ], SÓ lado bom (gera valor,
+# folga fina). Tira a falsa robustez que sobra quando qtd_sensiveis=0. Mut. exclusivo do 'no fio'. Institucionaliza
+# as falsificações F1 (teto) e F3 (escopo lado-bom) provadas à mão + a agregação por rollup/empresa.
+PEGA | quase: teto da faixa removido (robusto-bom vira quase) | s/hurdle_break_even > kHi \+ 1e-9 && hurdle_break_even <= kHi2 \+ 1e-9/hurdle_break_even > kHi + 1e-9/
+PEGA | quase: lado bom vira lado ruim (> kHi -> < kLo)        | s/hurdle_break_even > kHi \+ 1e-9 && hurdle_break_even <= kHi2/hurdle_break_even < kLo - 1e-9 && hurdle_break_even <= kHi2/
+PEGA | quase: rollup não agrega (contador morto)             | s/if \(cel\.quase_sensivel_hurdle\) acc\.qtdQuaseSensiveis\+\+/if (false) acc.qtdQuaseSensiveis++/
+PEGA | quase: empresa não agrega (contador morto)            | s/if \(cel\.quase_sensivel_hurdle\) qtdQuaseSensiveisEmp\+\+/if (false) qtdQuaseSensiveisEmp++/
