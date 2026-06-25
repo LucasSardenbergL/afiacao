@@ -1004,6 +1004,8 @@ export interface CockpitRollupCliente {
   perda_garantida: boolean;
   cm_incompleto: boolean;
   qtd_combos_sensiveis: number;  // combos REAIS frágeis ao hurdle (break-even na banda 25-35%)
+  folga_hurdle_min_pp: number | null;      // menor folga POSITIVA ao hurdle no grupo (combo + próximo por cima; fecha o cego da banda)
+  folga_hurdle_min_receita: number | null; // receita do combo dono do folga_min (locator, não severidade)
   nome?: string | null;  // nome do cliente (profiles via customer_user_id) — UI mostra no lugar do código
 }
 export interface CockpitRollupSKU {
@@ -1019,6 +1021,8 @@ export interface CockpitRollupSKU {
   perda_garantida: boolean;
   cm_incompleto: boolean;
   qtd_combos_sensiveis: number;  // combos REAIS frágeis ao hurdle (break-even na banda 25-35%)
+  folga_hurdle_min_pp: number | null;      // menor folga POSITIVA ao hurdle no grupo (combo + próximo por cima; fecha o cego da banda)
+  folga_hurdle_min_receita: number | null; // receita do combo dono do folga_min (locator, não severidade)
   descricao?: string | null;  // descrição do produto (omie_products) — UI mostra no lugar do código SKU
 }
 // Empresa DECOMPOSTA (capital parcial → um único evp seria mentira contábil; Codex 2026-06-23).
@@ -1036,6 +1040,8 @@ export interface CockpitEmpresaEVP {
   cm_incompleto: boolean;
   qtd_combos_sensiveis: number;     // combos REAIS no fio da navalha (granularidade que o agregado robusto esconde)
   capital_conhecido: number | null; // Σ capital das células reais → deriva EVP a outros hurdles
+  folga_hurdle_min_pp: number | null;      // menor folga POSITIVA ao hurdle (combo mais próximo por cima — alerta dos "quase-frágeis")
+  folga_hurdle_min_receita: number | null; // receita do combo dono do folga_min (contexto: locator, não severidade)
 }
 export interface ValorCockpitResult {
   company: string;
