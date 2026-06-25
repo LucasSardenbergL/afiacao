@@ -6,6 +6,7 @@
 # dry-run, ou menção/leitura pura → allow. Cobre as variações do Codex review 2026-06-24.
 #
 # Uso: bash scripts/test-destructive-bash-guard.sh   (exit 0 = verde)
+# shellcheck disable=SC2016  # os comandos testados são strings literais passadas ao hook; $VAR/til NÃO devem expandir
 set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -43,13 +44,15 @@ d 'git checkout --force main'
 d 'git stash drop'
 d 'git stash --quiet drop stash@{0}'
 d 'git stash clear'
-d 'rm -rf /Users/lucas/repo/src'
-d 'rm -r -f /Users/lucas/repo'
-d 'rm -Rf /Users/lucas/repo'
-d 'rm --recursive --force /Users/lucas/repo'
-d 'rm -rf /tmp/foo /Users/lucas/repo'
-d 'rm -rf /tmp/foo .'
+d 'rm -rf /'
+d 'rm -rf ~'
 d 'rm -rf ~/Documentos'
+d 'rm -rf $HOME'
+d 'rm -rf $HOME/Projetos'
+d 'rm -rf .'
+d 'rm -rf ../..'
+d 'rm -Rf *'
+d 'rm -rf /tmp/foo .'
 d 'echo iniciando && git reset --hard'
 d 'echo CONFIRM_DESTRUCTIVE=1 && git reset --hard'
 d 'cd /tmp && git clean -fdx'
@@ -70,6 +73,10 @@ a 'git stash'
 a 'git stash pop'
 a 'rm -rf /tmp/ecc-analysis'
 a 'rm -rf /tmp/foo /private/var/folders/x'
+a 'rm -rf node_modules'
+a 'rm -rf dist .next'
+a 'rm -rf "$TMPVAR"'
+a 'rm -rf /Users/lucas/Projetos/afiacao/dist'
 a 'rm arquivo.txt'
 a 'rm -r dir-sem-force'
 a 'mygit reset --hard'

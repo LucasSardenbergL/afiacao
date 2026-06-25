@@ -22,13 +22,15 @@ repo="$tmp/repo"; mkdir -p "$repo"
 run() { printf '{"hook_event_name":"Stop"}' | CLAUDE_PROJECT_DIR="$repo" bash "$HOOK" 2>/dev/null; }
 has_msg()   { grep -q 'systemMessage'; }
 is_block()  { grep -q '"decision"[[:space:]]*:[[:space:]]*"block"'; }
+has_ctx()   { grep -q 'additionalContext'; }
+has_stopevt(){ grep -q '"hookEventName"[[:space:]]*:[[:space:]]*"Stop"'; }
 
 fail=0
 mk() { mkdir -p "$repo/$(dirname "$1")"; echo "x" > "$repo/$1"; }
 clean() { ( cd "$repo" && git clean -fdq && git checkout -q -- . 2>/dev/null ); }
 
-want_msg()   { clean; mk "$1"; if run | has_msg; then echo "  ok    nudge | $1"; else echo "  FAIL  want nudge | $1"; fail=1; fi; }
-want_quiet() { clean; mk "$1"; if run | has_msg; then echo "  FAIL  want quiet | $1"; fail=1; else echo "  ok    quiet | $1"; fi; }
+want_msg()   { clean; mk "$1"; out="$(run)"; if printf '%s' "$out" | has_msg && printf '%s' "$out" | has_ctx && printf '%s' "$out" | has_stopevt && ! printf '%s' "$out" | is_block; then echo "  ok    nudge(msg+ctx) | $1"; else echo "  FAIL  want msg+ctx, no-block | $1"; fail=1; fi; }
+want_quiet() { clean; mk "$1"; out="$(run)"; if printf '%s' "$out" | has_msg || printf '%s' "$out" | has_ctx; then echo "  FAIL  want quiet | $1"; fail=1; else echo "  ok    quiet | $1"; fi; }
 
 echo "── money-path tocado → nudge ──"
 want_msg "supabase/migrations/20260101000000_x.sql"

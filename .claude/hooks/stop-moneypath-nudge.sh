@@ -24,11 +24,16 @@ mp="$(printf '%s\n' "$changed" | grep -iE 'supabase/|src/.*(financ|fatur|dre|pri
 
 n="$(printf '%s\n' "$mp" | grep -c .)"
 list="$(printf '%s\n' "$mp" | head -8 | sed 's/^/• /')"
+files="$(printf '%s' "$mp" | head -8 | tr '\n' ',' | sed 's/,$//')"
 msg="🟡 Money-path tocado nesta sessão ($n arquivo(s) uncommitted). Antes de pedir review / tirar PR do draft:
 $list
 → typecheck/teste: heavy bun run typecheck · heavy bun run test
 → migration/RPC/trigger/policy nova? prove-sql-money-path (PG17 + falsificação)
 (lembrete não-bloqueante — docs/agent/money-path.md)"
+# additionalContext injeta o lembrete pro AGENTE agir no próximo turno (NÃO bloqueia o stop — confirmado
+# na doc Stop hook 2026-06-24: sem decision:block não há loop). systemMessage avisa o founder; os dois somam.
+ctx="Money-path foi tocado nesta sessão ($n arquivo(s) uncommitted: $files). Antes de declarar a tarefa pronta ou pedir review/PR: rode 'heavy bun run typecheck' e 'heavy bun run test'; se criou ou alterou migration, função/RPC, trigger ou RLS policy, PROVE com prove-sql-money-path (PG17 + falsificação) antes de entregar. Precisão > recall — ver docs/agent/money-path.md. Lembrete não-bloqueante."
 
-jq -n --arg m "$msg" '{systemMessage:$m}'
+jq -n --arg m "$msg" --arg c "$ctx" \
+  '{systemMessage:$m, hookSpecificOutput:{hookEventName:"Stop", additionalContext:$c}}'
 exit 0

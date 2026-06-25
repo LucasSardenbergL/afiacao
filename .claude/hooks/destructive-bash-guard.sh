@@ -56,34 +56,28 @@ B='(^|[^[:alnum:]_./-])'
 # opções globais do git (zero+) entre `git` e o subcomando: -C dir, -c x=y, --git-dir, --work-tree, etc.
 G='git([[:space:]]+(-C[[:space:]]+[^[:space:]]+|-c[[:space:]]+[^[:space:]]+|--git-dir[=[:space:]][^[:space:]]+|--work-tree[=[:space:]][^[:space:]]+|--no-pager|--paginate|-p))*[[:space:]]+'
 
-# rm -r -f cujos operandos NÃO estão todos sob /tmp → destrutivo. Recursão/force lidos só das FLAGS
-# (não dos operandos — senão um path tipo `dir-sem-force` dispararia falso-positivo).
+# rm recursivo+force com alvo CATASTRÓFICO literal (/ ~ $HOME . .. *) → destrutivo. Inverti a lógica
+# original ("tudo não-/tmp → deny"): aquilo barrava `rm -rf node_modules`/`dist`/`"$tmpvar"` — a
+# sanitização apaga o alvo entre aspas e o rm parecia "sem alvo" (falso-positivo visto ao vivo
+# 2026-06-24). Agora fail-open no alvo opaco/comum; só os clássicos "apaguei meu home/raiz/cwd"
+# travam. rm de repo/subpasta é recuperável (git) — fora do escopo de prevenção-de-acidente.
 rm_destructive() {
-  local seg tok safe=1 saw=0 rec=0 frc=0
+  local seg tok
   seg="$(printf '%s' "$scan" | grep -oE "${B}rm[[:space:]][^;&|]*" | head -1)"
   [ -n "$seg" ] || return 1
+  printf '%s' "$seg" | grep -qE '(-[a-zA-Z]*[rR]|--recursive)' || return 1   # tem recursão?
+  printf '%s' "$seg" | grep -qE '(-[a-zA-Z]*f|--force)'        || return 1   # tem force?
   set -f
   seg="${seg#*rm}"
   for tok in $seg; do
+    case "$tok" in -*) continue ;; esac
+    # shellcheck disable=SC2016,SC2088  # ~ e $HOME são literais (token cru do agente, não expandir)
     case "$tok" in
-      --recursive) rec=1 ;;
-      --force) frc=1 ;;
-      --*) ;;
-      -*) case "$tok" in *[rR]*) rec=1 ;; esac
-          case "$tok" in *f*) frc=1 ;; esac ;;
-      *) saw=1
-         # shellcheck disable=SC2016  # $TMPDIR/${TMPDIR} são literais (path não-expandido do agente)
-         case "$tok" in
-           /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*|"$TMPDIR"/*|'$TMPDIR'/*|'${TMPDIR}'/*) ;;
-           *) safe=0 ;;
-         esac ;;
+      "/"|"/*"|"~"|"~/"|"~/"*|'$HOME'|'$HOME/'*|'${HOME}'|'${HOME}/'*|"."|"./"|".."|"../"|"../"*|"*") set +f; return 0 ;;
     esac
   done
   set +f
-  { [ "$rec" = 1 ] && [ "$frc" = 1 ]; } || return 1   # não é rm recursivo+force
-  [ "$saw" = 0 ] && return 0                          # rm -rf sem alvo explícito → destrutivo
-  [ "$safe" = 0 ] && return 0
-  return 1                                            # todos os alvos sob /tmp → seguro
+  return 1
 }
 
 deny=""
@@ -93,7 +87,7 @@ elif det "${B}${G}push[^;&|]*(--force([^-]|\$)|[[:space:]]-[a-zA-Z]*f[a-zA-Z]*([
 elif det "${B}${G}branch[^;&|]*(-[a-zA-Z]*D([[:space:]]|\$)|--delete[^;&|]*--force|--force[^;&|]*--delete)"; then deny="git branch -D — delete forçado de branch (perde commits não-mergeados)"
 elif det "${B}${G}checkout[^;&|]*(-f([[:space:]]|\$)|--force)";                                  then deny="git checkout -f/--force — descarta mudanças locais"
 elif det "${B}${G}stash[[:space:]][^;&|]*(clear|drop)";                                          then deny="git stash clear/drop — perde o stash"
-elif rm_destructive;                                                                             then deny="rm -r -f fora de /tmp — apaga recursivamente sem recuperação"
+elif rm_destructive;                                                                             then deny="rm -r -f de alvo catastrófico (/ ~ \$HOME . .. *) — apaga sem recuperação"
 fi
 
 [ -n "$deny" ] || exit 0
