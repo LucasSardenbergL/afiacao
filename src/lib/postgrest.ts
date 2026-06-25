@@ -25,6 +25,34 @@ export function sanitizeForPostgrestOr(input: string): string {
   return input.replace(/[%_,()\\"*]/g, '');
 }
 
+/**
+ * Sanitiza um termo pra um `.ilike(coluna, `%${termo}%`)` ÚNICO (fora de `.or()`).
+ * Remove só os wildcards do operador LIKE/ILIKE: `%` (qualquer sequência), `_` (um
+ * caractere) e `*` — alias de `%` que o PostgREST aceita pra evitar URL-encoding (logo
+ * `*` do usuário vira `%*%` → `%%%` = match-all dos valores não-nulos da coluna). Strippar
+ * só `%`/`_` (intuição) NÃO cobre o `*`: foi esse o gap nos `.ilike()` crus.
+ *
+ * Ao contrário do sanitizeForPostgrestOr, NÃO remove vírgula/parênteses/aspas: num `.ilike()`
+ * único o pattern é o valor de UM predicado — não há parsing de cláusula (isso é exclusivo
+ * do `.or()`), então esses caracteres são literais legítimos da busca e devem sobreviver.
+ */
+export function sanitizeIlikeTerm(input: string): string {
+  return input.replace(/[%_*]/g, '');
+}
+
+/**
+ * Pattern `%termo%` pra um `.ilike(coluna, …)` de "contém", com o termo sanitizado
+ * (`sanitizeIlikeTerm`) — ou `null` quando o termo fica VAZIO após sanitizar (input vazio
+ * OU só-de-wildcards: `*`, `%`, `_`, `**`, …). Os callers DEVEM gatear:
+ * `const p = ilikeContainsPattern(t); if (p) q = q.ilike(col, p)`. Retornar null evita o
+ * `%${''}%` = `%%`, que casaria todo valor não-nulo da coluna (match-all) — o caso degenerado
+ * do wildcard-only input, que strippar os wildcards do MEIO do termo sozinho não cobre.
+ */
+export function ilikeContainsPattern(input: string): string | null {
+  const safe = sanitizeIlikeTerm(input);
+  return safe ? `%${safe}%` : null;
+}
+
 /** Uma cláusula `coluna.ilike.%termo%` com o termo sanitizado. */
 export function ilike(column: string, term: string): string {
   return `${column}.ilike.%${sanitizeForPostgrestOr(term)}%`;

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
-import { eqText, orFilter } from '@/lib/postgrest';
+import { eqText, orFilter, ilikeContainsPattern } from '@/lib/postgrest';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { useFarmerScoring, type AgendaItem } from '@/hooks/useFarmerScoring';
@@ -171,16 +171,19 @@ const FarmerCalls = () => {
       // profiles): os perfis locais, instantâneos, ficavam presos atrás da
       // roundtrip ao ERP — agora aparecem assim que chegam e o merge com o
       // Omie completa depois.
-      const localPromise = supabase
-        .from('profiles')
-        .select('user_id, name, email, phone')
-        .ilike('name', `%${query}%`)
-        .limit(10);
+      const namePat = ilikeContainsPattern(query);
+      const localPromise = namePat
+        ? supabase
+            .from('profiles')
+            .select('user_id, name, email, phone')
+            .ilike('name', namePat)
+            .limit(10)
+        : null;
       const omiePromise = supabase.functions.invoke('omie-vendas-sync', {
         body: { action: 'listar_clientes', search: query },
       });
 
-      const { data: localProfiles } = await localPromise;
+      const { data: localProfiles } = localPromise ? await localPromise : { data: null };
       const local: Customer[] = (localProfiles || []).map(p => ({
         user_id: p.user_id,
         name: p.name,

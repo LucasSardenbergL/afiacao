@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { ilikeOr } from '@/lib/postgrest';
+import { ilikeOr, sanitizeIlikeTerm } from '@/lib/postgrest';
 
 /**
  * Busca global pra Cmd-K — pesquisa simultânea em 3 entidades:
@@ -105,8 +105,8 @@ export function useGlobalSearch(query: string, enabled = true) {
     enabled: isActive && isNumericQuery,
     staleTime: 30_000,
     queryFn: async () => {
-      // .ilike() único — só wildcards do ILIKE precisam ser strippados
-      const q = trimmed.replace(/[%_]/g, '');
+      // .ilike() único — sanitizeIlikeTerm strippa os wildcards do ILIKE (% _ *)
+      const q = sanitizeIlikeTerm(trimmed);
       const { data } = await supabase
         .from('sales_orders')
         .select('id, omie_numero_pedido, total, customer_user_id')

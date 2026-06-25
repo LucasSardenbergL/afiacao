@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { agruparPorMes, chavesUltimosNMeses } from "@/lib/agruparPorMes";
+import { ilikeContainsPattern } from "@/lib/postgrest";
 import { EMPRESA, FORNECEDOR_DEFAULT, ALL } from "./config";
 import type { Aumento, AumentoComAgg, FornecedorRow, AumentoItemAgg } from "./types";
 
@@ -59,7 +60,8 @@ export function useAumentos() {
         // default: todos exceto expirado
         q = q.neq("estado", "expirado");
       }
-      if (busca.trim()) q = q.ilike("nome", `%${busca.trim()}%`);
+      const buscaPat = ilikeContainsPattern(busca.trim());
+      if (buscaPat) q = q.ilike("nome", buscaPat);
 
       const { data, error } = await q;
       if (error) throw error;

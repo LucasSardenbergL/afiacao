@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { eqText, orFilter } from '@/lib/postgrest';
+import { eqText, orFilter, ilikeContainsPattern } from '@/lib/postgrest';
 
 /** Resultado da busca de cliente (Omie ERP + perfis locais), antes de resolver user_id. */
 export type ClienteBusca = {
@@ -41,8 +41,11 @@ export function useBuscaClienteOmie() {
         omie_codigo_cliente: c.codigo_cliente,
         empresa_omie: empresaByCode[c.codigo_cliente] ?? null,
       }));
-      const { data: localProfiles } = await supabase.from('profiles')
-        .select('user_id, name, email, phone').ilike('name', `%${query}%`).limit(10);
+      const namePat = ilikeContainsPattern(query);
+      const { data: localProfiles } = namePat
+        ? await supabase.from('profiles')
+          .select('user_id, name, email, phone').ilike('name', namePat).limit(10)
+        : { data: null };
       const local: ClienteBusca[] = (localProfiles || []).map((p) => ({
         user_id: p.user_id, nome: p.name ?? 'Cliente', documento: null,
         telefone: p.phone ?? null, email: p.email ?? null,
