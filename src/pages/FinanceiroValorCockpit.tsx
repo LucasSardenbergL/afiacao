@@ -120,7 +120,7 @@ export default function FinanceiroValorCockpit() {
             <> · <span className="text-status-warning">{data.empresa.qtd_combos_sensiveis} combo(s) no fio da navalha (recomendação frágil ao hurdle)</span></>
           )}
           {data.empresa.min_folga_positiva_pp != null && (
-            <> · <span className="text-status-warning">próximo combo lucrativo zera com +{(data.empresa.min_folga_positiva_pp * 100).toFixed(1)}pp de Ke{data.empresa.qtd_combos_quase_frageis > 0 ? ` (${data.empresa.qtd_combos_quase_frageis} quase-frágil${data.empresa.qtd_combos_quase_frageis > 1 ? 'eis' : ''})` : ''}</span></>
+            <> · <span className="text-status-warning">próximo combo lucrativo zera com +{(data.empresa.min_folga_positiva_pp * 100).toFixed(1)}pp de Ke{data.empresa.qtd_combos_quase_frageis > 0 ? ` (${data.empresa.qtd_combos_quase_frageis} ${data.empresa.qtd_combos_quase_frageis > 1 ? 'quase-frágeis' : 'quase-frágil'})` : ''}</span></>
           )}
         </p>
       )}

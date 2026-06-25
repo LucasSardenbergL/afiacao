@@ -960,7 +960,8 @@ describe('montarCelulasComboEVP — quase-frágeis ao hurdle (folga baixa, lado 
     });
     const s2 = r.celulas.find((c) => c.sku === 'S2')!;
     expect(s2.folga_hurdle_pp).toBeLessThan(0);                  // negativa (já abaixo do hurdle)
-    expect(r.empresa.min_folga_positiva_pp).toBeCloseTo(0.08, 6); // o POSITIVO, não −0,20
+    expect(r.empresa.min_folga_positiva_pp).toBeCloseTo(0.08, 6); // empresa: o POSITIVO, não −0,20
+    expect(r.porCliente[0].min_folga_positiva_pp).toBeCloseTo(0.08, 6); // ROLLUP idem (C1 tem S1+S2; sem o filtro pegaria −0,20) — Codex P2
     expect(r.empresa.qtd_combos_quase_frageis).toBe(1);          // só S1 (S2 está abaixo, não "quase")
   });
   it('nenhum combo positivo fora do fio → min_folga_positiva_pp=null (NÃO 0); qtd_quase=0', () => {
