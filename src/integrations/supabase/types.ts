@@ -16212,6 +16212,10 @@ export type Database = {
       }
       get_tint_price: { Args: { p_formula_id: string }; Returns: Json }
       get_tint_prices: { Args: { p_formula_ids: string[] }; Returns: Json }
+      get_ultimos_precos_cliente: {
+        Args: { p_customer: string }
+        Returns: { product_id: string; unit_price: number }[]
+      }
       get_user_access_profile_for: { Args: { p_target: string }; Returns: Json }
       get_user_role: {
         Args: { _user_id: string }
