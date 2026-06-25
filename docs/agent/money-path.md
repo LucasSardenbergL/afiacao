@@ -14,6 +14,7 @@
 
 - **Função/RPC/trigger/policy money-path → `prove-sql-money-path`** (PG17 local com falsificação) ANTES de entregar a migration. plpgsql é late-bound: `CREATE` passa com SQL inválido, só falha ao EXECUTAR. O teste aplica a migração REAL, semeia, faz asserts positivos E negativos (SQLSTATE + re-raise), prova RLS (`SET ROLE` + GUC), e **se sabota de propósito pra provar que os asserts têm dente**.
 - **Assert negativo** captura a `SQLSTATE`/condição ESPERADA e re-lança o resto. `WHEN OTHERS THEN 'OK'` é teatro (engole o erro real). Sentinela do teste nunca contém o texto que o código emite (anti-teatro de ILIKE).
+- **Harness PG17:** `pg_temp.*` (tabela/função temporária) é **por-sessão psql** → helper e cenários têm de rodar no **mesmo bloco psql** do harness; em blocos separados o cenário não enxerga o helper temp criado antes.
 - **Engine nova que emite número de decisão → escreva o threat-model** (`docs/agent/threat-model-template.md`): o que prova / não prova / default fail-closed, com **um assert pra cada default declarado** (doc×código não podem divergir — achado aura: THREAT_MODEL diz reject, código faz DEFAULT_ALLOW).
 
 ## Segunda opinião adversária (Codex)
