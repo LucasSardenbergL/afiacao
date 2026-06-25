@@ -91,6 +91,16 @@ const FarmerDashboard = () => {
           onClienteClick={(id) => navigate(`/admin/customers/${id}/360`)}
         />
 
+        {/* Entrada para o board da carteira (visão 3 colunas: risco/expansão/follow-up) */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full"
+          onClick={() => navigate('/farmer/carteira')}
+        >
+          Abrir board da carteira
+        </Button>
+
         {/* Health Summary */}
         <Card>
           <CardContent className="p-3">

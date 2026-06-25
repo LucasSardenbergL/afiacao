@@ -63,6 +63,7 @@ const MeuDia = lazy(() => import("./pages/MeuDia"));
 const Tarefas = lazy(() => import("./pages/Tarefas"));
 const TarefasTemplates = lazy(() => import("./pages/TarefasTemplates"));
 const FarmerCalls = lazy(() => import("./pages/FarmerCalls"));
+const CarteiraBoard = lazy(() => import("./pages/CarteiraBoard"));
 const FarmerCallsPendingLink = lazy(() => import("./pages/FarmerCallsPendingLink"));
 const FarmerGovernance = lazy(() => import("./pages/FarmerGovernance"));
 const FarmerRecommendations = lazy(() => import("./pages/FarmerRecommendations"));
@@ -302,6 +303,7 @@ const App = () => {
                 <Route path="farmer" element={<FarmerDashboard />} />
                 <Route path="meu-dia" element={<MeuDia />} />
                 <Route path="farmer/calls" element={<FarmerCalls />} />
+                <Route path="farmer/carteira" element={<CarteiraBoard />} />
                 <Route path="farmer/calls/pending-link" element={<FarmerCallsPendingLink />} />
                 <Route path="farmer/governance" element={<FarmerGovernance />} />
                 <Route path="farmer/recommendations" element={<FarmerRecommendations />} />
