@@ -15866,6 +15866,14 @@ export type Database = {
         Returns: number
       }
       criar_pedidos_com_itens: { Args: { p_pedidos: Json }; Returns: Json }
+      criar_plano_tatico: {
+        Args: {
+          _customer_user_id: string
+          _expected_owner: string
+          _payload: Json
+        }
+        Returns: string
+      }
       data_health_watchdog: { Args: never; Returns: undefined }
       delete_push_subscription: {
         Args: { p_endpoint: string }
@@ -16456,6 +16464,18 @@ export type Database = {
           p_ultimo_email_id?: string
         }
         Returns: number
+      }
+      registrar_resultado_plano: {
+        Args: {
+          _actual_margin: number
+          _call_duration_seconds: number
+          _call_result: string
+          _notes?: string
+          _objection_type?: string
+          _plan_followed: boolean
+          _plan_id: string
+        }
+        Returns: undefined
       }
       registrar_substituicao_sku: {
         Args: {
