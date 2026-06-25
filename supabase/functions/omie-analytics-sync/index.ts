@@ -112,33 +112,6 @@ interface OmieListarProdutosResponse {
   faultstring?: string;
 }
 
-interface OmiePedidoCabecalho {
-  codigo_cliente?: number;
-  numero_pedido?: string;
-  codigo_pedido?: number;
-}
-
-interface OmiePedidoProduto {
-  codigo_produto?: number;
-  quantidade?: number;
-  valor_unitario?: number;
-}
-
-interface OmiePedidoDet {
-  produto?: OmiePedidoProduto;
-}
-
-interface OmiePedidoVendaProduto {
-  cabecalho?: OmiePedidoCabecalho;
-  det?: OmiePedidoDet[];
-}
-
-interface OmieListarPedidosResponse {
-  pedido_venda_produto?: OmiePedidoVendaProduto[];
-  total_de_paginas?: number;
-  faultstring?: string;
-}
-
 interface OmieEstoqueProduto {
   nCodProd?: number;
   nSaldo?: number;
@@ -601,122 +574,20 @@ async function syncProducts(db: SupabaseClient, account: OmieAccount, startPage 
   }
 }
 
-// ======== SYNC ORDERS (INCREMENTAL) ========
-
-async function syncOrdersIncremental(db: SupabaseClient, account: OmieAccount) {
-  await updateSyncState(db, "orders", account, { status: "running", error_message: null });
-
-  const state = await getSyncState(db, "orders", account);
-  // Janela de segurança: 24h antes do último sync
-  const lastSync = state?.last_cursor
-    ? new Date(new Date(state.last_cursor).getTime() - 24 * 60 * 60 * 1000)
-    : new Date("2024-01-01");
-
-  const formatOmieDate = (d: Date) =>
-    `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-
-  let pagina = 1;
-  let totalPaginas = 1;
-  let totalSynced = 0;
-
-  try {
-    while (pagina <= totalPaginas) {
-      const params: Record<string, unknown> = {
-        pagina,
-        registros_por_pagina: 100,
-        filtrar_apenas_inclusao: "N",
-      };
-
-      // Incremental filter by date
-      if (lastSync) {
-        params.filtrar_por_data_de = formatOmieDate(lastSync);
-        params.filtrar_por_data_ate = formatOmieDate(new Date());
-      }
-
-      const result = (await callOmie(account, "produtos/pedido/", "ListarPedidos", params)) as unknown as OmieListarPedidosResponse;
-      totalPaginas = result.total_de_paginas || 1;
-      const pedidos = result.pedido_venda_produto || [];
-
-      for (const pedido of pedidos) {
-        const cab = pedido.cabecalho || {};
-        const codigoCliente = cab.codigo_cliente;
-        const itens = pedido.det || [];
-
-        // Find the customer_user_id from omie_clientes
-        const { data: mapping } = await db
-          .from("omie_clientes")
-          .select("user_id")
-          .eq("omie_codigo_cliente", codigoCliente)
-          .maybeSingle();
-
-        if (!mapping) continue; // Skip if customer not mapped
-
-        // Normalize order items
-        for (const item of itens) {
-          const prod = item.produto || {};
-          const codigoProduto = prod.codigo_produto;
-          const quantidade = prod.quantidade || 1;
-          const valorUnit = prod.valor_unitario || 0;
-
-          // Find product_id
-          const { data: product } = await db
-            .from("omie_products")
-            .select("id")
-            .eq("omie_codigo_produto", codigoProduto)
-            .maybeSingle();
-
-          // Check if we already have this order in sales_orders
-          const omieNumPedido = String(cab.numero_pedido || cab.codigo_pedido);
-          const { data: existingOrder } = await db
-            .from("sales_orders")
-            .select("id")
-            .eq("omie_numero_pedido", omieNumPedido)
-            .maybeSingle();
-
-          if (existingOrder) {
-            // Upsert order_items for existing order
-            await db.from("order_items").upsert({
-              sales_order_id: existingOrder.id,
-              customer_user_id: mapping.user_id,
-              product_id: product?.id || null,
-              omie_codigo_produto: codigoProduto,
-              quantity: quantidade,
-              unit_price: valorUnit,
-            }, { onConflict: "sales_order_id,omie_codigo_produto" }).select();
-            // Note: we'd need a unique index for this upsert to work perfectly
-            // For now, just insert
-          }
-
-          // Also record in sales_price_history for the pricing engine
-          if (product?.id && valorUnit > 0) {
-            await db.from("sales_price_history").upsert({
-              customer_user_id: mapping.user_id,
-              product_id: product.id,
-              unit_price: valorUnit,
-              sales_order_id: existingOrder?.id || null,
-            }, { ignoreDuplicates: true });
-          }
-
-          totalSynced++;
-        }
-      }
-
-      console.log(`[Sync ${account}] Pedidos página ${pagina}/${totalPaginas}`);
-      pagina++;
-    }
-
-    await updateSyncState(db, "orders", account, {
-      status: "complete",
-      total_synced: totalSynced,
-      last_sync_at: new Date().toISOString(),
-      last_cursor: new Date().toISOString(),
-      last_page: totalPaginas,
-    });
-    return { totalSynced };
-  } catch (error) {
-    await updateSyncState(db, "orders", account, { status: "error", error_message: String(error) });
-    throw error;
-  }
+// ======== SYNC ORDERS — APOSENTADO (2026-06-24, decisão Claude + Codex) ========
+// O syncOrdersIncremental legado era uma 2ª via de gravação de pedidos, hoje REDUNDANTE e nociva:
+//   • order_items: upsert com onConflict (sales_order_id, omie_codigo_produto) SEM índice único
+//     compatível → 42P10 → no-op silencioso (o erro nunca era capturado);
+//   • sales_price_history: upsert(ignoreDuplicates) com id uuid novo a cada vez → INSERE SEMPRE,
+//     POLUINDO o histórico de preços (3.995 linhas excedentes, 2.648 só em jun/26, created_at de
+//     carga ≠ data do pedido — evidência psql-ro 2026-06-24).
+// order_items + sales_price_history já nascem ATÔMICOS na RPC criar_pedidos_com_itens
+// (omie-vendas-sync, G6/G10) e são reconciliados pelo sync-reprocess (#955). NÃO adicionar índice
+// único por (pedido, SKU): quebraria o SKU repetido legítimo (90% das "duplicatas" têm valores
+// distintos). Mantido como no-op (a action sync_orders segue existindo) p/ não quebrar caller
+// externo esquecido. Registro: docs/historico/programas-vendas.md.
+async function syncOrdersIncremental(_db: SupabaseClient, _account: OmieAccount) {
+  return { deprecated: true, totalSynced: 0, reason: 'aposentado — RPC criar_pedidos_com_itens é a fonte de order_items/sph' };
 }
 
 // ======== SYNC INVENTORY ========
@@ -1988,11 +1859,12 @@ serve(async (req) => {
         // e RE-prendia sync_state.customers em 'running' a cada passada — clobberava o estado curado.
         const acct = account as OmieAccount;
         const products = await syncProducts(supabaseAdmin, acct);
-        const orders = await syncOrdersIncremental(supabaseAdmin, acct);
+        // orders REMOVIDO do sync_all (2026-06-24): syncOrdersIncremental foi aposentado (no-op que
+        // poluía sales_price_history). A fonte de pedidos é a RPC criar_pedidos_com_itens (omie-vendas-sync).
         const inventory = await syncInventory(supabaseAdmin, acct);
         const costs = await computeCosts(supabaseAdmin);
         const assocRules = await computeAssociationRules(supabaseAdmin);
-        result = { products, orders, inventory, costs, assocRules };
+        result = { products, inventory, costs, assocRules };
         break;
       }
       case "get_sync_state": {
