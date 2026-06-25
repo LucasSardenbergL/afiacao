@@ -137,6 +137,13 @@ type CapitalCliente = { cliente: string; ar_medio: number | null };
 type CapitalSKU = { sku: string; estoque_valor: number | null };
 // Status do EVP afirmável (espelho VERBATIM de src/lib/financeiro/valor-cockpit-helpers.ts).
 type EvpStatus = 'real' | 'teto_nao_positivo' | 'omitido_teto_positivo' | 'indisponivel_cm' | 'indisponivel_hurdle';
+// Espelho de src/lib/financeiro/valor-cockpit-helpers.ts: menor folga POSITIVA ao hurdle (break_even − k > 0)
+// entre células 'real' — combo "parece seguro, está frágil". NÃO min|folga| (negativa já é evp<0; o |abs| a
+// devolveria, escondendo o blind spot positivo — Codex). Locator → guarda a receita do combo vencedor.
+function acumularFolgaMinPositiva(acc: { pp: number | null; receita: number | null }, cel: { evp_status: string; folga_hurdle_pp: number | null; receita_liquida: number }): void {
+  if (cel.evp_status !== 'real' || cel.folga_hurdle_pp == null || cel.folga_hurdle_pp <= 1e-9) return;
+  if (acc.pp == null || cel.folga_hurdle_pp < acc.pp) { acc.pp = cel.folga_hurdle_pp; acc.receita = cel.receita_liquida; }
+}
 function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: CapitalCliente[]; capitalSKUs: CapitalSKU[]; k: number | null; banda_hurdle?: number }) {
   const arPorCliente = new Map(input.capitalClientes.map((c) => [c.cliente, c.ar_medio]));
   const estoquePorSKU = new Map(input.capitalSKUs.map((s) => [s.sku, s.estoque_valor]));
@@ -193,10 +200,10 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
   });
   type Cel = typeof celulas[number];
   const rollup = (keyFn: (c: Cel) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpTeto: number; evpTetoNull: boolean; evpIncompleto: boolean; perdaGarantida: boolean; cmIncompleto: boolean; qtdSensiveis: number; qtdQuaseSensiveis: number }>();
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpTeto: number; evpTetoNull: boolean; evpIncompleto: boolean; perdaGarantida: boolean; cmIncompleto: boolean; qtdSensiveis: number; qtdQuaseSensiveis: number; folgaMin: { pp: number | null; receita: number | null } }>();
     for (const cel of celulas) {
       const key = keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpTeto: 0, evpTetoNull: true, evpIncompleto: false, perdaGarantida: false, cmIncompleto: false, qtdSensiveis: 0, qtdQuaseSensiveis: 0 };
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpTeto: 0, evpTetoNull: true, evpIncompleto: false, perdaGarantida: false, cmIncompleto: false, qtdSensiveis: 0, qtdQuaseSensiveis: 0, folgaMin: { pp: null, receita: null } };
       acc.receita += cel.receita_liquida; acc.quantidade += cel.quantidade;
       if (cel.cm == null) acc.cmIncompleto = true;
       if (cel.encargo != null) { acc.encargoTotal += cel.encargo; acc.encargoTotalNull = false; }
@@ -207,18 +214,20 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
       if (cel.evp_status === 'teto_nao_positivo') acc.perdaGarantida = true;
       if (cel.sensivel_hurdle) acc.qtdSensiveis++;
       if (cel.quase_sensivel_hurdle) acc.qtdQuaseSensiveis++; // espelho de src (quase-frágil, lado bom)
+      acumularFolgaMinPositiva(acc.folgaMin, cel);
       m.set(key, acc);
     }
     return m;
   };
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto, qtd_combos_sensiveis: a.qtdSensiveis, qtd_combos_quase_sensiveis: a.qtdQuaseSensiveis }));
-  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto, qtd_combos_sensiveis: a.qtdSensiveis, qtd_combos_quase_sensiveis: a.qtdQuaseSensiveis }));
+  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto, qtd_combos_sensiveis: a.qtdSensiveis, qtd_combos_quase_sensiveis: a.qtdQuaseSensiveis, folga_hurdle_min_pp: a.folgaMin.pp, folga_hurdle_min_receita: a.folgaMin.receita }));
+  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto, qtd_combos_sensiveis: a.qtdSensiveis, qtd_combos_quase_sensiveis: a.qtdQuaseSensiveis, folga_hurdle_min_pp: a.folgaMin.pp, folga_hurdle_min_receita: a.folgaMin.receita }));
   let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, recEmp = 0;
   let conhecido = 0, conhecidoNull = true, tetoTotal = 0, tetoTotalNull = true, perda = 0, perdaNull = true;
   let evpIncompletoEmp = false, cmIncompletoEmp = false, recConhecido = 0, recOmitido = 0, recPerda = 0, recSemCm = 0;
   let qtdSensiveisEmp = 0, qtdQuaseSensiveisEmp = 0, capitalConhecido = 0;
+  const folgaMinEmp: { pp: number | null; receita: number | null } = { pp: null, receita: null };
   for (const cel of celulas) {
     recEmp += cel.receita_liquida;
     if (cel.cm == null) { cmIncompletoEmp = true; recSemCm += cel.receita_liquida; }
@@ -230,9 +239,10 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
     else if (cel.evp_status === 'omitido_teto_positivo') { evpIncompletoEmp = true; recOmitido += cel.receita_liquida; }
     if (cel.sensivel_hurdle) qtdSensiveisEmp++;
     if (cel.quase_sensivel_hurdle) qtdQuaseSensiveisEmp++;
+    acumularFolgaMinPositiva(folgaMinEmp, cel);
   }
   const empresaCompleta = !evpIncompletoEmp && !cmIncompletoEmp && k != null; // evp único só se nada omitido/indisponível (Codex)
-  const empresa = { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp_conhecido: conhecidoNull ? null : conhecido, evp_teto_total: tetoTotalNull ? null : tetoTotal, evp_perda_garantida: perdaNull ? null : perda, evp: empresaCompleta && !conhecidoNull ? conhecido : null, evp_incompleto: evpIncompletoEmp, cm_incompleto: cmIncompletoEmp, qtd_combos_sensiveis: qtdSensiveisEmp, qtd_combos_quase_sensiveis: qtdQuaseSensiveisEmp, capital_conhecido: conhecidoNull ? null : capitalConhecido };
+  const empresa = { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp_conhecido: conhecidoNull ? null : conhecido, evp_teto_total: tetoTotalNull ? null : tetoTotal, evp_perda_garantida: perdaNull ? null : perda, evp: empresaCompleta && !conhecidoNull ? conhecido : null, evp_incompleto: evpIncompletoEmp, cm_incompleto: cmIncompletoEmp, qtd_combos_sensiveis: qtdSensiveisEmp, qtd_combos_quase_sensiveis: qtdQuaseSensiveisEmp, capital_conhecido: conhecidoNull ? null : capitalConhecido, folga_hurdle_min_pp: folgaMinEmp.pp, folga_hurdle_min_receita: folgaMinEmp.receita };
   const pct = (x: number) => (recEmp > 0 ? x / recEmp : 0);
   return { celulas, porCliente, porSKU, empresa, evp_conhecido_receita_pct: pct(recConhecido), evp_omitido_otimista_receita_pct: pct(recOmitido), evp_perda_garantida_receita_pct: pct(recPerda), sem_cm_receita_pct: pct(recSemCm), hurdle_banda: k != null ? { base: k, lo: kLo, hi: kHi } : null };
 }

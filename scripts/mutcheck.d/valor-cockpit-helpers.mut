@@ -34,3 +34,8 @@ PEGA | quase: teto da faixa removido (robusto-bom vira quase) | s/hurdle_break_e
 PEGA | quase: lado bom vira lado ruim (> kHi -> < kLo)        | s/hurdle_break_even > kHi \+ 1e-9 && hurdle_break_even <= kHi2/hurdle_break_even < kLo - 1e-9 && hurdle_break_even <= kHi2/
 PEGA | quase: rollup não agrega (contador morto)             | s/if \(cel\.quase_sensivel_hurdle\) acc\.qtdQuaseSensiveis\+\+/if (false) acc.qtdQuaseSensiveis++/
 PEGA | quase: empresa não agrega (contador morto)            | s/if \(cel\.quase_sensivel_hurdle\) qtdQuaseSensiveisEmp\+\+/if (false) qtdQuaseSensiveisEmp++/
+# folga_hurdle_min_pp (enxerto sobre #1049 2026-06-25): menor folga POSITIVA (locator do combo mais próximo do
+# hurdle por cima). Trava as 3 decisões Codex: (1) POSITIVA não |abs|; (2) MIN não max; (3) receita do MESMO combo.
+PEGA | folga_min: gate positivo invertido (entra folga negativa) | s/folga_hurdle_pp <= 1e-9/folga_hurdle_pp >= 1e-9/
+PEGA | folga_min: min vira max (combo mais distante, não o + próximo) | s/cel\.folga_hurdle_pp < acc\.pp/cel.folga_hurdle_pp > acc.pp/
+PEGA | folga_min: para de rastrear a receita do combo vencedor    | s/acc\.pp = cel\.folga_hurdle_pp; acc\.receita = cel\.receita_liquida;/acc.pp = cel.folga_hurdle_pp;/

@@ -122,6 +122,13 @@ export default function FinanceiroValorCockpit() {
           {data.empresa.qtd_combos_quase_sensiveis > 0 && (
             <> · <span className="text-muted-foreground">{data.empresa.qtd_combos_quase_sensiveis} quase-frágil(eis) (folga fina, +5 a +10pp do hurdle)</span></>
           )}
+          {/* Enxerto: além da CONTAGEM acima, QUAL é o combo mais próximo do hurdle por cima e QUÃO perto (contínuo).
+              Locator → só mostra se o combo vencedor é MATERIAL (≥ sample_min_receita); senão um ínfimo (R$48 a ~0pp)
+              viraria alarme falso (Codex). O sinal por-grupo, contextualizado, vive na coluna da tabela. */}
+          {data.empresa.folga_hurdle_min_pp != null && data.empresa.folga_hurdle_min_receita != null
+            && data.empresa.folga_hurdle_min_receita >= data.config.sample_min_receita && (
+            <> · <span className="text-muted-foreground">mais próximo do hurdle: <span className="font-tabular text-foreground">+{(data.empresa.folga_hurdle_min_pp * 100).toFixed(1)}pp</span> ({brl(data.empresa.folga_hurdle_min_receita)}, capital completo)</span></>
+          )}
         </p>
       )}
 
@@ -203,6 +210,9 @@ export default function FinanceiroValorCockpit() {
                       {row.qtd_combos_quase_sensiveis > 0 && (
                         <div className="text-[10px] leading-tight text-muted-foreground">
                           {row.qtd_combos_quase_sensiveis} quase-frágil(eis)
+                          {/* enxerto: o mais próximo do hurdle (folga contínua) + receita, só se material */}
+                          {row.folga_hurdle_min_pp != null && row.folga_hurdle_min_receita != null && row.folga_hurdle_min_receita >= data.config.sample_min_receita
+                            && <> · mais próx. +{(row.folga_hurdle_min_pp * 100).toFixed(1)}pp ({brl(row.folga_hurdle_min_receita)})</>}
                         </div>
                       )}
                     </td>
