@@ -7,7 +7,7 @@
 
 - **🗣️ Idioma:** responda SEMPRE em **português brasileiro** — nesta e em QUALQUER sessão nova ou subagente spawnado. Código/rotas/commits/PRs já são pt-BR.
 - **🪟 Contexto:** em sessões longas, **sugira `/compact` proativamente** (é lembrete — não há auto-compact por %, nem hook que dispare slash command). Subagentes têm janela própria.
-- **🧭 Roadmap:** mantenha um **roadmap vivo no CHAT** (✅ feito · 🔄 andamento · ⏳ pendente · 🚧 bloqueado · ⏸️ adiado · 🧭 aguardando decisão) e re-renderize quando mudar — é como o founder acompanha. **NÃO** usar arquivo compartilhado (`docs/roadmap-sessao.md` é legado/ímã de conflito — não alimentar); se precisar persistir, no worktree da sessão ou no corpo do PR.
+- **🧭 Roadmap:** mantenha um **roadmap vivo no CHAT** (✅ feito · 🔄 andamento · ⏳ pendente · 🚧 bloqueado · ⏸️ adiado · 🧭 aguardando decisão) e re-renderize quando mudar — é como o founder acompanha. **NÃO** criar arquivo compartilhado de roadmap (vira ímã de conflito entre worktrees); se precisar persistir, no worktree da sessão ou no corpo do PR.
 - **🗑️ Fecho de sessão:** quando o Lucas perguntar se pode **excluir/apagar a sessão** (qualquer fraseado), ANTES dê um **resumo de fecho completo** (problema → diagnóstico → decisões/Codex → o que foi implementado [arquivos/PRs/migrations] → verificação → pendências do founder + onde tudo está persistido) E rode **`bun run wt:status`** + ofereça `wt:clean`/`wt:reap` (higiene de RAM/Node — ver `docs/agent/worktrees.md`).
 - **🤝 2ª opinião (Codex):** em decisão de arquitetura/metodologia/trade-off não-óbvio — e SEMPRE no money-path — eu proponho e conduzo `/codex` (consult/challenge) eu mesmo, sem o founder copiar/colar. Detalhe em `docs/agent/money-path.md`.
 
