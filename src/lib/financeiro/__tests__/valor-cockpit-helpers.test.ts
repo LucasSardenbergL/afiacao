@@ -1006,3 +1006,65 @@ describe('montarCelulasComboEVP — quase-sensibilidade ao hurdle (folga fina, l
     expect(r.empresa.qtd_combos_sensiveis).toBe(1);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-06-24 — Follow-up (sobre o #1049): min_folga_positiva_pp — a MENOR folga POSITIVA fora do fio
+// (folga>δ), o sinal CONTÍNUO que complementa a contagem de quase-frágeis: "o próximo combo lucrativo
+// zera com +X pp de Ke". Sinal +, NÃO signed-min — que pegaria o mais NEGATIVO (falsa robustez — Codex).
+// ═══════════════════════════════════════════════════════════════════════════
+describe('montarCelulasComboEVP — min_folga_positiva_pp (sinal contínuo do hurdle)', () => {
+  // k=0,30; fio [0,25;0,35]. be 0,38→folga +0,08; be 0,50→folga +0,20; be 0,10→folga −0,20.
+  it('a MENOR folga positiva fora do fio (rollup + empresa)', () => {
+    const r = montarCelulasComboEVP({
+      combos: [
+        { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }, // cm 380 → be 0,38 folga +0,08
+        { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 100, custo_unitario: 5 },   // cm 500 → be 0,50 folga +0,20
+      ],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 1200 }], // rc=2000 → a_cs cada 600; +estoque 400 → capital 1000 cada
+      capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }, { sku: 'S2', estoque_valor: 400 }],
+      k: 0.30,
+    });
+    expect(r.empresa.min_folga_positiva_pp).toBeCloseTo(0.08, 6);
+    expect(r.porCliente[0].min_folga_positiva_pp).toBeCloseTo(0.08, 6);
+  });
+  it('[P1 Codex] IGNORA o lado negativo — empresa E rollup (não pega o mais negativo)', () => {
+    // S1 folga +0,08; S2 folga −0,20. min = +0,08, NUNCA −0,20. C1 agrega ambos.
+    const r = montarCelulasComboEVP({
+      combos: [
+        { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }, // be 0,38
+        { cliente: 'C1', sku: 'S2', receita_liquida: 1000, quantidade: 100, custo_unitario: 9 },   // be 0,10 (folga −0,20)
+      ],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 1200 }],
+      capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }, { sku: 'S2', estoque_valor: 400 }],
+      k: 0.30,
+    });
+    expect(r.celulas.find((c) => c.sku === 'S2')!.folga_hurdle_pp).toBeLessThan(0);
+    expect(r.empresa.min_folga_positiva_pp).toBeCloseTo(0.08, 6);       // empresa
+    expect(r.porCliente[0].min_folga_positiva_pp).toBeCloseTo(0.08, 6); // rollup (C1 agrega S1+S2; sem o filtro pegaria −0,20)
+  });
+  it('nenhum combo positivo fora do fio → null (NÃO 0)', () => {
+    // único combo sensível (be 0,2857 ∈ fio) → sem candidato positivo fora do fio
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 650 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    });
+    expect(r.celulas[0].sensivel_hurdle).toBe(true);
+    expect(r.empresa.min_folga_positiva_pp).toBeNull();
+    expect(r.porCliente[0].min_folga_positiva_pp).toBeNull();
+  });
+  it('robusto sozinho (be 0,50) → min_folga_positiva = 0,20 (o positivo fora do fio mais próximo)', () => {
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 5 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    });
+    expect(r.empresa.min_folga_positiva_pp).toBeCloseTo(0.20, 6);
+  });
+  it('k=null → min_folga_positiva_pp null (rollup + empresa)', () => {
+    const r = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: null,
+    });
+    expect(r.empresa.min_folga_positiva_pp).toBeNull();
+    expect(r.porCliente[0].min_folga_positiva_pp).toBeNull();
+  });
+});

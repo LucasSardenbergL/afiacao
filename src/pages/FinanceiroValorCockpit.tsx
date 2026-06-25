@@ -122,6 +122,9 @@ export default function FinanceiroValorCockpit() {
           {data.empresa.qtd_combos_quase_sensiveis > 0 && (
             <> · <span className="text-muted-foreground">{data.empresa.qtd_combos_quase_sensiveis} quase-frágil(eis) (folga fina, +5 a +10pp do hurdle)</span></>
           )}
+          {data.empresa.min_folga_positiva_pp != null && (
+            <> · <span className="text-status-warning">próximo combo lucrativo zera com +{(data.empresa.min_folga_positiva_pp * 100).toFixed(1)}pp de Ke</span></>
+          )}
         </p>
       )}
 
