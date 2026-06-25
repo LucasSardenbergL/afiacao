@@ -31,4 +31,5 @@
 ## Outras frentes
 
 - **Reativar SKU descontinuado** (filtro na Revisão) · **Painel de baixo giro** · **Cold-start** (primeira compra sem histórico).
+- **Embalagem econômica** (QT vs GL — painel de recomendação, 100% frontend `embalagem-helpers.ts`; NÃO altera o pedido automático): ao comparar pacotes de tamanhos diferentes, a **sobra do maior NÃO é custo morto** — credita como antecipação da próxima compra: `custo_total = custo_direto + carrego − sobra × melhor_custo_por_base`. Gates honestos: sem demanda/cmc → crédito 0 (= frame estrito); guard marginal R$5; conservadora = **menor excedente** (não `excedente===0`, que furava em qtd fracionária); `min()` do grupo viola **IIA** com 3+ embalagens. Invariante `custo_total ≥ nec×custo_base`. Detalhe: spec `2026-06-04-embalagem-economica-design.md §14`.
 - Os **god-components da Reposição** foram quebrados (<1000 LoC) — ao mexer, usar `vercel-composition-patterns` + `vercel-react-best-practices`.
