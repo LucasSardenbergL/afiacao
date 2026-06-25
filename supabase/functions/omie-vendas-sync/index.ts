@@ -1192,15 +1192,12 @@ async function syncPedidos(
       else if (etapa === '20') status = 'enviado';
       else if (etapa === '80') status = 'cancelado';
 
-      let createdAt = new Date().toISOString();
-      if (cab.data_previsao) {
-        const parts = cab.data_previsao.split('/');
-        if (parts.length === 3) createdAt = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString();
-      }
-
-      // order_date_kpi: data do PEDIDO (dInc = inclusão no Omie) p/ KPI de positivação.
-      // dInc > previsão de entrega (data_previsao) > hoje. Previsão de entrega ≠ data do pedido.
-      let orderDateKpi: string = createdAt.slice(0, 10);
+      // Data canônica do pedido: dInc (inclusão no Omie = quando o cliente comprou) → previsão de
+      // entrega → hoje (civil SP). UMA verdade para order_date_kpi (KPI de positivação) E created_at
+      // (recência/scoring/cockpit). Antes o created_at vinha de data_previsao (entrega FUTURA) ou now(),
+      // divergindo do dInc e re-sujando a recência a cada sync — o patch 20260618130000 era anulado em
+      // dias (100% dos pedidos novos divergiam, psql-ro 2026-06-24). Money-path/recência.
+      let orderDateKpi: string = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
       const dIncParts = pedido.infoCadastro?.dInc?.split('/');
       const dPrevParts = cab.data_previsao?.split('/');
       if (dIncParts && dIncParts.length === 3) {
@@ -1208,6 +1205,10 @@ async function syncPedidos(
       } else if (dPrevParts && dPrevParts.length === 3) {
         orderDateKpi = `${dPrevParts[2]}-${dPrevParts[1].padStart(2, '0')}-${dPrevParts[0].padStart(2, '0')}`;
       }
+      // created_at = MEIO-DIA UTC da data canônica. 12h de folga → created_at::date bate order_date_kpi
+      // em UTC (edge) E America/Sao_Paulo (app); meia-noite UTC recuaria 1 dia em fuso negativo. Paridade
+      // EXATA com o backfill/trigger (G6 universalizado em 20260624170000).
+      const createdAt = `${orderDateKpi}T12:00:00.000Z`;
 
       // Get cached address/phone for this client
       const clientInfo = clientAddressCache.get(codigoCliente) || { address: '', phone: '' };

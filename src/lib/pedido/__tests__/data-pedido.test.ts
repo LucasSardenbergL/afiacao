@@ -11,6 +11,13 @@ describe('formatarDataPedido', () => {
     expect(formatarDataPedido('2026-06-10T00:00:00.000Z')).toBe('10/06/2026');
   });
 
+  it('data-pura do sync de recência (meio-dia UTC) → só a data (20260624170000: created_at = order_date_kpi às 12:00Z)', () => {
+    // O fix de recência grava created_at = MEIO-DIA UTC (timezone-safe). Sem reconhecê-lo como
+    // data-pura, o card exibiria "10/06/2026 às 09:00" (09:00 BRT = 12:00 UTC) — hora fabricada.
+    expect(formatarDataPedido('2026-06-10T12:00:00.000Z')).toBe('10/06/2026');
+    expect(formatarDataPedido('2026-06-10T12:00:00.000Z', 'dd/MM/yyyy HH:mm')).toBe('10/06/2026');
+  });
+
   it('timestamp com hora real (pedido do wizard) → data + hora local, comportamento atual preservado', () => {
     const iso = '2026-06-09T17:32:45.123Z';
     const esperado = format(new Date(iso), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
@@ -42,9 +49,12 @@ describe('formatarDataPedido', () => {
 });
 
 describe('ehDataPuraUtc', () => {
-  it('detecta só meia-noite UTC exata (00:00:00.000)', () => {
-    expect(ehDataPuraUtc(new Date('2026-06-10T00:00:00.000Z'))).toBe(true);
+  it('detecta meia-noite E meio-dia UTC exatos (data-pura do Omie); rejeita outras horas/ms', () => {
+    expect(ehDataPuraUtc(new Date('2026-06-10T00:00:00.000Z'))).toBe(true); // legado (data_previsao)
+    expect(ehDataPuraUtc(new Date('2026-06-10T12:00:00.000Z'))).toBe(true); // recência (kpi às 12:00Z)
+    expect(ehDataPuraUtc(new Date('2026-06-10T12:00:00.500Z'))).toBe(false); // ms ≠ 0
     expect(ehDataPuraUtc(new Date('2026-06-10T00:00:01.000Z'))).toBe(false);
     expect(ehDataPuraUtc(new Date('2026-06-10T21:00:00.000Z'))).toBe(false);
+    expect(ehDataPuraUtc(new Date('2026-06-10T13:00:00.000Z'))).toBe(false); // 1h ≠ meio-dia
   });
 });

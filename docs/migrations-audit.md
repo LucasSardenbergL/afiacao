@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **292** custom migrations totais
-- **1022** objetos esperados (criados por estas migrations)
+- **293** custom migrations totais
+- **1024** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 294
+  - `function`: 295
   - `rls_policy`: 220
   - `index`: 187
   - `table`: 108
   - `cron_job`: 108
-  - `trigger`: 51
+  - `trigger`: 52
   - `view`: 50
   - `enum_value`: 4
 
@@ -2493,6 +2493,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.criar_plano_tatico` | — |
 | `function` | `public.registrar_resultado_plano` | — |
+
+### `20260624170000_recencia_fonte_trigger_backfill.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.order_items_herdar_created_at_omie` | — |
+| `trigger` | `public.trg_order_items_created_at_omie` | `order_items` |
 
 ## Próximos passos quando algo der `❌`
 
