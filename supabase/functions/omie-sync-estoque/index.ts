@@ -143,7 +143,15 @@ function getOmieCredentials(empresa: Empresa) {
 // APROVADOS (etapa "15" na OBEN), e DE-DUPA contra o que o em_transito da RPC já conta (pedido do
 // app disparado/aprovado <7d) — senão a unidade contaria 2× (over-count → sub-compra).
 const OMIE_ENDPOINT_PEDIDOS = "https://app.omie.com.br/api/v1/produtos/pedidocompra/";
-const PEDIDOS_JANELA_DIAS = 180; // janela de criação; PO aberta mais velha que isso é rara (→ pior caso: double-buy)
+// [fix entrega-futura 2026-06-26] dDataInicial/dDataFinal do PesquisarPedCompra filtram pela DATA DE
+// PREVISÃO DE ENTREGA (dDtPrevisao), NÃO pela data de criação — PROVADO em prod: todo PO entra no espelho
+// EXATAMENTE na data da previsão (lag-vs-criação 9–18d, lag-vs-previsão 0 em ~20 POs). Com dDataFinal=hoje,
+// TODO pedido com entrega FUTURA (= todo pedido recém-feito dentro do lead time) sumia da resposta →
+// estoque_pendente_entrada=0 → o motor RE-SUGERIA comprar o que já fora pedido (incidente PO 1085, entrega
+// 08/07, invisível). A janela cobre previsões PASSADAS (atrasados não-recebidos) e FUTURAS (lead time).
+// LT OBEN medido: mediana 10d, p95 18d, máx 39d, zero previsões nulas → +120d ≈ 3× o máx (folga).
+const PEDIDOS_JANELA_PASSADO_DIAS = 365; // previsão atrasada: PO aberto não-recebido com entrega já vencida
+const PEDIDOS_JANELA_FUTURO_DIAS = 120;  // previsão à frente: pedido em trânsito dentro do lead time
 const ETAPAS_APROVADO_ABERTO = new Set<string>(["15"]); // OBEN: 15=Aprovado (confirmado 2026-06-11)
 const ETAPAS_CONHECIDAS = new Set<string>(["15", "10"]); // 10=Em Aprovação; loga qualquer outra p/ pegar surpresa
 
@@ -280,7 +288,7 @@ async function fetchEmTransitoKeys(
 // confiar nele lê só a 1ª página → POs aprovadas além dela somem → estoque_pendente_entrada subestimado
 // → o motor re-sugere comprar = DOUBLE-BUY. Paginar até a página vazia + fingerprint anti-loop + de-dup
 // de PO por nCodPed entre páginas + teto técnico fatal (espelho de pendente-entrada-po.ts, 9 rounds Codex).
-const MAX_PAGINAS_PED = 200; // teto técnico FATAL anti-loop (a janela de 180d cabe MUITO abaixo disso)
+const MAX_PAGINAS_PED = 200; // teto técnico FATAL anti-loop (a janela ~485d de POs ABERTOS cabe MUITO abaixo disso)
 // fault do Omie que significa "fim legítimo" (sem registros), NÃO erro. Conservadora: exige "registro(s)"
 // ADJACENTE a uma negação de EXISTÊNCIA (a fault canônica é "Não existem registros para a página informada").
 // Espelho VERBATIM de pendente-entrada-po.ts:FIM_SEM_REGISTROS (endurecido por Codex P1.7/P1-D/P2-D).
@@ -303,9 +311,11 @@ async function computePendenteViaPedidosCompra(
 
   const hoje = new Date();
   const inicio = new Date();
-  inicio.setDate(hoje.getDate() - PEDIDOS_JANELA_DIAS);
+  inicio.setDate(hoje.getDate() - PEDIDOS_JANELA_PASSADO_DIAS);
+  const fimJanela = new Date();
+  fimJanela.setDate(hoje.getDate() + PEDIDOS_JANELA_FUTURO_DIAS);
   const dataDe = ddmmyyyyPed(inicio);
-  const dataAte = ddmmyyyyPed(hoje);
+  const dataAte = ddmmyyyyPed(fimJanela); // [fix] cobre previsões de entrega FUTURAS (era ddmmyyyyPed(hoje) → cortava tudo a caminho)
 
   const items: PoItemOmie[] = [];
   const etapasInesperadas = new Set<string>();

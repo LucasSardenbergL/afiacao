@@ -3538,7 +3538,6 @@ export type Database = {
       fin_config_cashflow: {
         Row: {
           adiantamento_categorias_codigos: string[]
-          cockpit_config: Json
           company: string
           dre_tributario: Json
           folha_categorias_codigos: string[]
@@ -3549,7 +3548,6 @@ export type Database = {
         }
         Insert: {
           adiantamento_categorias_codigos?: string[]
-          cockpit_config?: Json
           company: string
           dre_tributario?: Json
           folha_categorias_codigos?: string[]
@@ -3560,7 +3558,6 @@ export type Database = {
         }
         Update: {
           adiantamento_categorias_codigos?: string[]
-          cockpit_config?: Json
           company?: string
           dre_tributario?: Json
           folha_categorias_codigos?: string[]

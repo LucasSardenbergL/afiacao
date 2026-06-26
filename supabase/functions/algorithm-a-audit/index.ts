@@ -100,6 +100,7 @@ interface OrderItemRow {
   quantity: number | null;
   unit_price: number | null;
   discount: number | null;
+  sales_order_id: string;
 }
 
 interface SalesPriceRow {
@@ -182,19 +183,40 @@ Deno.serve(async (req) => {
     periodStartDate.setDate(periodStartDate.getDate() - 365);
 
     const recentOrders = await fetchAllPaginated<OrderItemRow>(supabase, 'order_items',
-      'customer_user_id, product_id, quantity, unit_price, discount',
+      'customer_user_id, product_id, quantity, unit_price, discount, sales_order_id',
       (q) => q.gte('created_at', periodStartDate.toISOString()) as SupabaseQuery);
     console.log(`[algorithm-a-audit] Found ${recentOrders.length} order items (365d)`);
 
-    // Get best prices per product (paginated)
-    const allSalesPrices = await fetchAllPaginated<SalesPriceRow>(supabase, 'sales_price_history',
-      'product_id, unit_price',
-      (q) => q.order('unit_price', { ascending: false }) as SupabaseQuery);
-    console.log(`[algorithm-a-audit] Found ${allSalesPrices.length} sales price records`);
+    // Best price por produto, de order_items PRATICADOS (verdade) — NÃO sales_price_history (poluída
+    // pelo writer legado aposentado). DOIS filtros importam:
+    //  (a) fonte = order_items, não sph: as duplicatas divergentes da sph inflavam o MAX (medido
+    //      psql-ro: 5 produtos com MAX(sph) > MAX(order_items)).
+    //  (b) só pedidos PRATICADOS (exclui cancelado/orcamento/deletado; espelha get_ultimos_precos_cliente):
+    //      sem isso, um order_item de orçamento com preço absurdo (medido: 1 produto em 822.326× o
+    //      praticado = erro de digitação num não-pedido) destruiria margin_potential/margin_gap.
+    // Só ~16 pedidos excluídos no total → Set client-side é trivial (evita .or()/embedded frágil; o
+    // .not()/COALESCE de status é NULL-blind no PostgREST — filtrar em memória trata NULL como praticado).
+    const [deletedOrders, naoPraticados] = await Promise.all([
+      fetchAllPaginated<{ id: string }>(supabase, 'sales_orders', 'id',
+        (q) => q.not('deleted_at', 'is', null) as SupabaseQuery),
+      fetchAllPaginated<{ id: string }>(supabase, 'sales_orders', 'id',
+        (q) => q.in('status', ['cancelado', 'orcamento']) as SupabaseQuery),
+    ]);
+    const excludedOrderIds = new Set<string>([
+      ...deletedOrders.map((o) => o.id),
+      ...naoPraticados.map((o) => o.id),
+    ]);
 
-    // Build best price map (highest price achieved per product = potential)
+    const allSalesPrices = await fetchAllPaginated<SalesPriceRow & { sales_order_id: string }>(
+      supabase, 'order_items', 'product_id, unit_price, sales_order_id',
+      (q) => q.gt('unit_price', 0).order('unit_price', { ascending: false }) as SupabaseQuery);
+    console.log(`[algorithm-a-audit] Found ${allSalesPrices.length} order_items price records (${excludedOrderIds.size} pedidos excluídos: cancelado/orcamento/deletado)`);
+
+    // Build best price map (highest PRACTICED price per product = potential)
     const bestPriceMap: Record<string, number> = {};
     allSalesPrices.forEach(sp => {
+      if (excludedOrderIds.has(sp.sales_order_id)) return;   // não-praticado (cancelado/orcamento/deletado)
+      if (sp.unit_price == null) return;
       if (!bestPriceMap[sp.product_id] || sp.unit_price > bestPriceMap[sp.product_id]) {
         bestPriceMap[sp.product_id] = Number(sp.unit_price);
       }
@@ -204,9 +226,13 @@ Deno.serve(async (req) => {
     const costMap: Record<string, ProductCostRow> = {};
     productCosts.forEach(pc => { costMap[pc.product_id] = pc; });
 
-    // Group orders by customer
+    // Group orders by customer — só pedidos PRATICADOS (mesmo excludedOrderIds do bestPriceMap).
+    // A margem REAL também não pode incluir orçamento/cancelado/deletado: medido psql-ro, há 26 linhas
+    // de não-pedidos na janela 365d, uma com unit_price de R$ 615 MI (erro de digitação num orçamento)
+    // que destruiria margin_real do cliente. Consistente com o potencial (ambos = praticado).
     const customerOrders: Record<string, typeof recentOrders> = {};
     recentOrders.forEach(oi => {
+      if (excludedOrderIds.has(oi.sales_order_id)) return;   // não-praticado
       if (!customerOrders[oi.customer_user_id]) customerOrders[oi.customer_user_id] = [];
       customerOrders[oi.customer_user_id].push(oi);
     });

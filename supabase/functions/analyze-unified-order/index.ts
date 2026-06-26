@@ -1199,34 +1199,25 @@ Responda SEMPRE usando a função identify_order_items.`;
       try {
         const priceMap: Record<string, number> = {};
 
-        // 1) Local DB: order_items + sales_price_history
+        // 1) Local DB: order_items (FONTE DE VERDADE). `sales_price_history` REMOVIDO daqui — o
+        // writer legado omie-analytics-sync (aposentado) poluiu a sph com created_at de CARGA, e a
+        // leitura por created_at DESC mascarava o preço (3.995 duplicatas com-pedido; 854 com
+        // unit_price divergente = ambíguo, intocável sem identidade de linha Omie). order_items
+        // cobre 99,84% dos pares (cliente,produto) da sph; o resto cai no fallback Omie abaixo.
+        // Espelha o Caminho B já feito no hook (RPC get_ultimos_precos_cliente). created_at de
+        // order_items = data real do pedido (trigger #1047), não data de carga.
         if (validCustomer?.user_id) {
-          const [orderItemsRes, salesPricesRes] = await Promise.all([
-            supabase
-              .from("order_items")
-              .select("product_id, unit_price")
-              .eq("customer_user_id", validCustomer.user_id)
-              .order("created_at", { ascending: false })
-              .limit(200),
-            supabase
-              .from("sales_price_history")
-              .select("product_id, unit_price")
-              .eq("customer_user_id", validCustomer.user_id)
-              .order("created_at", { ascending: false })
-              .limit(200),
-          ]);
+          const { data: orderItemsData } = await supabase
+            .from("order_items")
+            .select("product_id, unit_price")
+            .eq("customer_user_id", validCustomer.user_id)
+            .order("created_at", { ascending: false })
+            .limit(200);
 
-          if (orderItemsRes.data) {
-            for (const ph of orderItemsRes.data) {
+          if (orderItemsData) {
+            for (const ph of orderItemsData) {
               if (ph.product_id && !priceMap[ph.product_id]) {
                 priceMap[ph.product_id] = ph.unit_price;
-              }
-            }
-          }
-          if (salesPricesRes.data) {
-            for (const sp of salesPricesRes.data) {
-              if (!priceMap[sp.product_id]) {
-                priceMap[sp.product_id] = sp.unit_price;
               }
             }
           }
@@ -1310,12 +1301,18 @@ Responda SEMPRE usando a função identify_order_items.`;
 
             const omieResults = await Promise.all(omiePricePromises);
             
-            // Merge Omie prices - Omie takes priority over local
+            // Merge Omie prices — FALLBACK: só preenche produtos SEM preço local (order_items vence).
+            // Era OVERRIDE, mas fetchOmiePrices pega o "primeiro encontrado" do ListarPedidos (pagina 1,
+            // 50 reg, SEM ordenar_por) = ordem NÃO garantida → podia mascarar o último preço PRATICADO
+            // (order_items, ordenado por created_at real DESC, trigger #1047). order_items é a fonte de
+            // verdade do praticado; o Omie cobre só os gaps (produtos sem pedido local). Alinha com o
+            // hook useCustomerSelection (#1065, que já tirou o overlay do Omie do preço-cliente).
+            // ⚠️ NÃO reverter p/ override no deploy do Lovable (já foi revertido 1× — 08431871 pós-#1077).
             for (const omiePrices of omieResults) {
               for (const [omieCode, price] of Object.entries(omiePrices)) {
                 const productId = omieCodeMap[Number(omieCode)];
-                if (productId && price > 0) {
-                  priceMap[productId] = price; // Omie overrides local
+                if (productId && price > 0 && !priceMap[productId]) {
+                  priceMap[productId] = price; // só preenche gap
                 }
               }
             }
@@ -1333,11 +1330,11 @@ Responda SEMPRE usando a função identify_order_items.`;
                   for (const pm of extraMappings) {
                     omieCodeMap[pm.omie_codigo_produto] = pm.id;
                   }
-                  // Re-apply Omie prices with new mappings
+                  // Re-apply Omie prices with new mappings (mesma semântica FALLBACK: só gaps)
                   for (const omiePrices of omieResults) {
                     for (const [omieCode, price] of Object.entries(omiePrices)) {
                       const productId = omieCodeMap[Number(omieCode)];
-                      if (productId && price > 0) {
+                      if (productId && price > 0 && !priceMap[productId]) {
                         priceMap[productId] = price;
                       }
                     }
