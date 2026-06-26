@@ -42,6 +42,10 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue; contents:read p/ checkout.
+    permissions:
+      contents: read
+      issues: write
 
     steps:
       - uses: actions/checkout@v5
@@ -78,6 +82,43 @@ jobs:
       # histórico pra docs/historico/ (ver topo do CLAUDE.md). Ver scripts/check-claude-md-budget.sh.
       - name: CLAUDE.md size budget
         run: bun run claude:size
+
+      # ─── Alerta de regressão (Componente 1 — mitigação de reversão Lovable) ──
+      # O bot do Lovable commita DIRETO na main sem PR/CI; quando quebra build/
+      # typecheck (ex.: types.ts stale #1079), o CI fica vermelho mas passa
+      # SILENCIOSO (ninguém olha). Este step abre/atualiza uma Issue p/ o sinal
+      # chegar ao founder. Só na main — em PR o autor já vê o vermelho. Spec:
+      # docs/superpowers/specs/2026-06-26-lovable-revert-mitigation-design.md
+      - name: Alerta de main vermelha → GitHub Issue
+        if: failure() && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const sha = context.sha.slice(0, 8);
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const head = context.payload.head_commit || {};
+            const msg = (head.message || '').split('\n')[0];
+            const author = (head.author && head.author.name) || context.actor;
+            const label = 'ci-main-red';
+            try {
+              await github.rest.issues.createLabel({ owner, repo, name: label, color: 'd73a4a', description: 'CI da main quebrado por push direto (sem PR)' });
+            } catch (e) { /* label já existe */ }
+            const body = [
+              '🔴 **CI da `main` falhou.**',
+              '',
+              `- Commit: \`${sha}\` — ${msg}`,
+              `- Autor: ${author}`,
+              `- Run: ${runUrl}`,
+              '',
+              'Provável reversão por commit direto do Lovable (sem PR/CI). Restauração rápida: `docs/agent/deploy.md`.',
+            ].join('\n');
+            const open = await github.rest.issues.listForRepo({ owner, repo, state: 'open', labels: label, per_page: 1 });
+            if (open.data.length > 0) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: open.data[0].number, body });
+            } else {
+              await github.rest.issues.create({ owner, repo, title: '🔴 CI vermelho na main', body, labels: [label] });
+            }
 
   # ─── Job NÃO-bloqueante (informativo, sinal próprio) ────────────────
   # Gate de regressão de COBERTURA money-path (≠ os checks do `validate`, que
