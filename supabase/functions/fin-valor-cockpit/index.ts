@@ -381,8 +381,14 @@ serve(async (req: Request) => {
     const k = resolverHurdleCockpit(vi);
     const hurdle_indisponivel = k == null;
 
-    // Config (limiares)
-    const { data: cfgRow } = await db.from("fin_config_cashflow").select("cockpit_config").eq("company", COMPANY).maybeSingle();
+    // Config (limiares). Degradação HONESTA (money-path: ausente≠silencioso): captura o error do
+    // PostgREST em vez de engolir. config_fallback distingue "default por FALHA de leitura/ausência"
+    // de "default por config vazia LEGÍTIMA" ({} explícito). Era um silent-discard: coluna
+    // cockpit_config ausente (migration custom não-aplicada no Lovable) → 42703 mudo a cada request
+    // (página + composição A4) → sempre CONFIG_DEFAULT sem nenhum sinal. Coluna lida defensiva (numOr).
+    const { data: cfgRow, error: cfgError } = await db.from("fin_config_cashflow").select("cockpit_config").eq("company", COMPANY).maybeSingle();
+    const config_fallback = cfgError != null || cfgRow == null;
+    if (config_fallback) console.warn(`[ValorCockpit][${COMPANY}] cockpit_config indisponível (${cfgError ? `erro ${cfgError.code ?? "?"}: ${cfgError.message}` : "linha de config ausente"}) → usando CONFIG_DEFAULT`);
     const cfgRaw = ((cfgRow as { cockpit_config?: Record<string, unknown> } | null)?.cockpit_config ?? {}) as Record<string, unknown>;
     const numOr = (x: unknown, d: number) => (typeof x === "number" && Number.isFinite(x) ? x : typeof x === "string" && x.trim() !== "" && Number.isFinite(Number(x)) ? Number(x) : d);
     const config: CockpitConfig = {
@@ -603,6 +609,7 @@ serve(async (req: Request) => {
       sem_cm_receita_pct: res.sem_cm_receita_pct,
       hurdle_banda: res.hurdle_banda, // banda da sensibilidade (sem isto a UI nunca mostra 25/30/35 — P1 /codex)
       config,
+      config_fallback, // money-path: true = config caiu no default por FALHA de leitura (erro/ausência), não por escolha
     }, 200);
   } catch (e) {
     return jsonResponse({ error: e instanceof Error ? e.message : String(e) }, 500);

@@ -1064,6 +1064,7 @@ export interface ValorCockpitResult {
   sem_cm_receita_pct?: number;
   hurdle_banda?: { base: number; lo: number; hi: number } | null; // banda da sensibilidade (lo/base/hi → 25/30/35%)
   config: CockpitConfig;
+  config_fallback?: boolean; // true = cockpit_config lida com ERRO/ausência → CONFIG_DEFAULT usado por FALHA, não por escolha (degradação honesta money-path)
 }
 
 // ═══════════════ A4 — Próxima Melhor Ação (contrato com fin-next-best-action) ═══════════════
