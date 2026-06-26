@@ -21,6 +21,7 @@
 
 - Rodar Codex em cada etapa de trabalho money-path: **metodologia → spec → plano → adversarial no código**. `/codex` (consult/challenge). Modelo `gpt-5.5`, reasoning `high` (consult rotineiro) ou `xhigh` explícito (adversarial money-path).
 - ⚠️ A cota do Codex (ChatGPT Plus) é **janela rolante de 7 dias e ESGOTA**. Fallback = **"Caminho B"**: validação adversária própria (PG17 falsificável + auto-challenge), gravando **`REVISÃO INDEPENDENTE PENDENTE`** — auto-revisão NÃO substitui revisão independente, só cobre o intervalo. Rodar o Codex retroativo quando a cota voltar.
+- ⚠️ **NÃO deixe o Codex varrer `supabase/schema-snapshot.sql` (~36k linhas) — estoura o contexto e TRAVA** (hang silencioso: processo vivo, stderr congelado no dump, `output` vazio, sem `turn.completed`; gasta a janela inteira sem responder). No prompt do `/codex`: coloque os fatos de schema (índices/constraints conferidos via `psql-ro`) no PRÓPRIO texto e instrua a NÃO abrir o snapshot — aponte só os arquivos pequenos relevantes. (Mordido 2026-06-25: `challenge` travou lendo o dump → fechado pelo Caminho B + convergência de outra sessão.)
 
 ## Helper espelhado
 
