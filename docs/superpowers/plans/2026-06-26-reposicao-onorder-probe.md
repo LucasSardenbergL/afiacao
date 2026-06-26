@@ -1,5 +1,7 @@
 # Edge `omie-onorder-probe` (medir + confirmar on-order) — Implementation Plan
 
+> ⛔ **SUPERADO em 2026-06-26 — NÃO EXECUTAR.** A probe foi descartada antes de deployar: descobri que `purchase_orders_tracking` já é a réplica-por-PO que a probe ia diagnosticar, que o #1076 (que a corrige) foi revertido por auto-commit do Lovable, e medi a cobertura direto via `psql-ro` (28 POs nulas; futuras cortadas). Pivotei para restaurar o #1076 + guardrail CI (commits `498052a8` + guardrail). As Tasks 1-2 (helpers) chegaram a ser implementadas (commit `08a7eb43`) e depois removidas (virariam deadcode); ficam no histórico para o redesign B futuro. Ver a nota de STATUS no spec `2026-06-26-reposicao-onorder-medir-confirmar-design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Edge de diagnóstico read-only que CONFIRMA a semântica da janela do `PesquisarPedCompra` (5 probes) e MEDE quantas POs abertas escapam do "a caminho", gravando o relatório em `sync_state('onorder_probe')` para leitura via `psql-ro`.
