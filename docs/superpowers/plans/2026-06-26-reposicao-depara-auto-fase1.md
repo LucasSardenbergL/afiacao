@@ -157,15 +157,35 @@ GRANT EXECUTE ON FUNCTION public.reposicao_aplicar_depara_sayerlack_auto(jsonb,i
   (compra quando posição ≤ 1), `estoque_maximo = ponto_pedido + lote_minimo_fornecedor` (=2 default),
   `estoque_seguranca=0`, `habilitado_reposicao_automatica=true`, `tipo_reposicao='automatica'`,
   `fornecedor_nome` = do de-para (RENNER SAYERLACK). Marcar a linha como cold-start (origem/flag).
-- **⚠️ ARMADILHA DO FUSÍVEL (achado no research):** `atualizar_parametros_numericos_skus` tem fusível
-  `max_sug > 3*max_antes → 'segurado'`. Um fallback `max_antes=2` é PLACEHOLDER, não valor real;
-  quando a 1ª demanda real chega e sugere, digamos, 10, `10 > 3*2=6 → segurado` → o item fica PRESO
-  no fallback conservador mesmo com demanda. Fix: a transição cold-start→primeira-demanda-real precisa
-  BYPASSAR o fusível (ex.: marcar a linha como placeholder e o core aplicar o sugerido sem fusível na
-  1ª vez; ou não contar o placeholder como `max_antes`). Provar no PG17 que o item "gradua" do fallback
-  para o valor real assim que vende.
-- **Não auto-aprova:** o item passa a aparecer na fila; o founder dá o aceite (decisão da Fase 1 mantida).
-- Sequência: roda no cron APÓS a Fase 1 (de-para) e a `preencher_parametros_faltantes_skus` (8:00 UTC).
+- **CORREÇÃO (research):** o fusível NÃO é o problema (o recálculo com fusível roda MANUAL). O cron
+  automático é `preencher_parametros_faltantes_skus` = FILL-ONLY (`COALESCE`, sem fusível). O risco é o
+  COALESCE: fallback `max=2` nunca é sobrescrito → item preso no conservador. Por isso a Fase 2 faz
+  GRADUAÇÃO explícita.
+
+### Gates do Codex (sessão 019f0547, Fase 2) — OBRIGATÓRIOS
+
+- **⚠️ COMPRA FANTASMA (dominante):** motor usa `COALESCE(estoque,0)`. Cold-start sem linha em
+  `sku_estoque_atual` (ex. o FOA5 hoje) é lido como estoque 0 → compra mesmo podendo ter estoque.
+  GATE: só `habilitado=true` para SKU COM estoque fresco em `sku_estoque_atual`.
+- **Ciclo vicioso:** `omie-sync-estoque` só sincroniza quem está em `sku_parametros`. Cold-start nem está
+  → sem estoque fresco → não habilita. Quebra: CRIAR linha `habilitado=false` mesmo sem estoque fresco
+  (entra no radar do sync) → run seguinte HABILITA quando o estoque chega. Rampa em 2 tempos.
+- **Graduação só com `status_sugestao='OK'`** (a view inclui `AGUARDANDO_SEGUNDA_ORDEM` com sugeridos
+  NULOS; graduar aí = errado).
+- **Limite por run** (ex. 50 novos) pra rampar e medir. **Audit próprio** (trigger de histórico só pega
+  UPDATE). **classe_abc/xyz='C'/'Z'** (telas assumem `classe_consolidada`).
+- pp=1/max=`1+lote_minimo_fornecedor`. SEM lead time (infla sem demanda), SEM embalagem do sufixo.
+- Função nova dividida: `reposicao_criar_cold_start` + `reposicao_graduar_cold_start` (wrapper).
+  NÃO tocar `atualizar_parametros_*`. Cron ~4:30 (após de-para) E perto do motor (~8:50, pós-sync).
+- **Não auto-aprova:** o item aparece na fila; o founder dá o aceite (decisão da Fase 1 mantida).
+
+### Movimentos da função (3)
+1. **GRADUAR:** `parametro_cold_start=true` E em `v_sku_parametros_sugeridos` com `status='OK'` + sugeridos
+   não-nulos → aplica real (pp/max/min/ss/cob) + `parametro_cold_start=false`. Audit 'graduado'.
+2. **HABILITAR:** `parametro_cold_start=true` + `habilitado=false` + agora COM estoque fresco → `habilitado=true`. Audit 'habilitado'.
+3. **CRIAR:** comprável + de-para Sayerlack + sem linha + sem demanda → INSERT fallback, `classe C/Z`,
+   `habilitado = (tem estoque fresco)`, `parametro_cold_start=true`. Limite por run. Audit 'criado'.
+- **Falsificação PG17:** remover o gate de estoque fresco → SKU sem estoque vira `habilitado=true` (compra fantasma) = vermelho esperado.
 
 ## Deploy (founder cola; Lovable não auto-aplica)
 1. SQL Editor: migration tijolo 2+3 (idempotente) → validação pós-apply.

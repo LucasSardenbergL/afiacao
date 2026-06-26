@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 295
+-- Total de custom migrations: 296
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -314,7 +314,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260624040000', 'tactical_plan_rpc_hardening_codex', '20260624040000_tactical_plan_rpc_hardening_codex.sql'),
   ('20260624170000', 'recencia_fonte_trigger_backfill', '20260624170000_recencia_fonte_trigger_backfill.sql'),
   ('20260625120000', 'get_ultimos_precos_cliente', '20260625120000_get_ultimos_precos_cliente.sql'),
-  ('20260626193000', 'reposicao_depara_sayerlack_auto', '20260626193000_reposicao_depara_sayerlack_auto.sql')
+  ('20260626193000', 'reposicao_depara_sayerlack_auto', '20260626193000_reposicao_depara_sayerlack_auto.sql'),
+  ('20260626210000', 'reposicao_cold_start_parametros', '20260626210000_reposicao_cold_start_parametros.sql')
 )
 SELECT
   e.version,
@@ -1361,7 +1362,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_depara_sayerlack_auto', 'function', 'public', 'reposicao_aplicar_depara_sayerlack_auto', ''),
   ('reposicao_depara_sayerlack_auto', 'view', 'public', 'v_reposicao_depara_sayerlack_elegivel', ''),
   ('reposicao_depara_sayerlack_auto', 'table', 'public', 'reposicao_depara_auto_log', ''),
-  ('reposicao_depara_sayerlack_auto', 'rls_policy', 'public', 'depara_auto_log_sel', 'reposicao_depara_auto_log')
+  ('reposicao_depara_sayerlack_auto', 'rls_policy', 'public', 'depara_auto_log_sel', 'reposicao_depara_auto_log'),
+  ('reposicao_cold_start_parametros', 'function', 'public', 'reposicao_cold_start_parametros', ''),
+  ('reposicao_cold_start_parametros', 'view', 'public', 'v_reposicao_cold_start_elegivel', ''),
+  ('reposicao_cold_start_parametros', 'table', 'public', 'reposicao_cold_start_log', ''),
+  ('reposicao_cold_start_parametros', 'cron_job', 'cron', 'reposicao-cold-start-parametros', ''),
+  ('reposicao_cold_start_parametros', 'rls_policy', 'public', 'cold_start_log_sel', 'reposicao_cold_start_log')
 )
 SELECT
   e.migration,
