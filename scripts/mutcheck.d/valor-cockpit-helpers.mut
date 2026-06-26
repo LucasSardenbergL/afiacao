@@ -38,3 +38,8 @@ PEGA | quase: empresa não agrega (contador morto)            | s/if \(cel\.quas
 # NEGATIVO (falsa robustez — achado do Codex). Mut. nas 2 vias (empresa E rollup, ancoradas por indentação — perl -pe é linha-a-linha).
 PEGA | min_folga: sem filtro folga>0 na empresa (pegaria o neg) | s/^    if \(cel\.evp_status === 'real' && !cel\.sensivel_hurdle && cel\.folga_hurdle_pp != null && cel\.folga_hurdle_pp > 0/    if (cel.evp_status === 'real' && !cel.sensivel_hurdle && cel.folga_hurdle_pp != null/
 PEGA | min_folga: sem filtro folga>0 no rollup (pegaria o neg)  | s/^      if \(cel\.evp_status === 'real' && !cel\.sensivel_hurdle && cel\.folga_hurdle_pp != null && cel\.folga_hurdle_pp > 0/      if (cel.evp_status === 'real' && !cel.sensivel_hurdle && cel.folga_hurdle_pp != null/
+# min_folga_positiva_RECEITA (companheiro locator, aditivo ao #1058 2026-06-25): a receita tem de seguir o MESMO
+# combo do min (não o de maior folga/soma) — senão a UI não consegue suprimir o headline imaterial (/codex #1044).
+# Mut: o combo do min é achado mas a receita PARA de ser rastreada (vira null) → o assert toBe(1000) fica vermelho.
+PEGA | min_folga_receita: empresa para de rastrear a receita do combo | s/minFolgaPositivaEmp = cel\.folga_hurdle_pp; minFolgaPositivaReceitaEmp = cel\.receita_liquida;/minFolgaPositivaEmp = cel.folga_hurdle_pp;/
+PEGA | min_folga_receita: rollup para de rastrear a receita do combo  | s/acc\.minFolgaPositiva = cel\.folga_hurdle_pp; acc\.minFolgaPositivaReceita = cel\.receita_liquida;/acc.minFolgaPositiva = cel.folga_hurdle_pp;/

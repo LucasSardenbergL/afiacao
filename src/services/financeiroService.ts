@@ -1006,6 +1006,7 @@ export interface CockpitRollupCliente {
   qtd_combos_sensiveis: number;  // combos REAIS frágeis ao hurdle (break-even na banda 25-35%)
   qtd_combos_quase_sensiveis: number;  // combos REAIS quase-frágeis (break-even na faixa 35-40%): geram valor mas folga fina ao hurdle
   min_folga_positiva_pp: number | null;  // menor folga POSITIVA fora do fio: "próximo combo lucrativo zera com +X pp de Ke"; null se nenhum
+  min_folga_positiva_receita: number | null;  // receita do combo DONO do min — LOCATOR: a UI suprime o headline quando imaterial (< sample_min_receita)
   nome?: string | null;  // nome do cliente (profiles via customer_user_id) — UI mostra no lugar do código
 }
 export interface CockpitRollupSKU {
@@ -1023,6 +1024,7 @@ export interface CockpitRollupSKU {
   qtd_combos_sensiveis: number;  // combos REAIS frágeis ao hurdle (break-even na banda 25-35%)
   qtd_combos_quase_sensiveis: number;  // combos REAIS quase-frágeis (break-even na faixa 35-40%): geram valor mas folga fina ao hurdle
   min_folga_positiva_pp: number | null;  // menor folga POSITIVA fora do fio: "próximo combo lucrativo zera com +X pp de Ke"; null se nenhum
+  min_folga_positiva_receita: number | null;  // receita do combo DONO do min — LOCATOR: a UI suprime o headline quando imaterial (< sample_min_receita)
   descricao?: string | null;  // descrição do produto (omie_products) — UI mostra no lugar do código SKU
 }
 // Empresa DECOMPOSTA (capital parcial → um único evp seria mentira contábil; Codex 2026-06-23).
@@ -1041,6 +1043,7 @@ export interface CockpitEmpresaEVP {
   qtd_combos_sensiveis: number;     // combos REAIS no fio da navalha (granularidade que o agregado robusto esconde)
   qtd_combos_quase_sensiveis: number; // combos REAIS quase-frágeis (break-even em (k+δ, k+2δ]): geram valor mas folga fina — tira a falsa robustez residual
   min_folga_positiva_pp: number | null; // menor folga POSITIVA fora do fio: "próximo combo lucrativo zera com +X pp de Ke"; null se nenhum (sinal contínuo, complementa a contagem)
+  min_folga_positiva_receita: number | null; // receita do combo DONO do min — LOCATOR, não severidade: a UI suprime o headline quando imaterial (< sample_min_receita)
   capital_conhecido: number | null; // Σ capital das células reais → deriva EVP a outros hurdles
 }
 export interface ValorCockpitResult {
