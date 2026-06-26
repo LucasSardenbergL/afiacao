@@ -1301,17 +1301,12 @@ Responda SEMPRE usando a função identify_order_items.`;
 
             const omieResults = await Promise.all(omiePricePromises);
             
-            // Merge Omie prices — FALLBACK: só preenche produtos SEM preço local (order_items vence).
-            // Era OVERRIDE, mas fetchOmiePrices pega o "primeiro encontrado" do ListarPedidos (pagina 1,
-            // 50 reg, SEM ordenar_por) = ordem NÃO garantida → podia mascarar o último preço PRATICADO
-            // (order_items, ordenado por created_at real DESC, trigger #1047). order_items é a fonte de
-            // verdade do praticado; o Omie cobre só os gaps (produtos sem pedido local). Alinha com o
-            // hook useCustomerSelection (#1065, que já tirou o overlay do Omie do preço-cliente).
+            // Merge Omie prices - Omie takes priority over local
             for (const omiePrices of omieResults) {
               for (const [omieCode, price] of Object.entries(omiePrices)) {
                 const productId = omieCodeMap[Number(omieCode)];
-                if (productId && price > 0 && !priceMap[productId]) {
-                  priceMap[productId] = price; // só preenche gap
+                if (productId && price > 0) {
+                  priceMap[productId] = price; // Omie overrides local
                 }
               }
             }
@@ -1329,11 +1324,11 @@ Responda SEMPRE usando a função identify_order_items.`;
                   for (const pm of extraMappings) {
                     omieCodeMap[pm.omie_codigo_produto] = pm.id;
                   }
-                  // Re-apply Omie prices with new mappings (mesma semântica FALLBACK: só gaps)
+                  // Re-apply Omie prices with new mappings
                   for (const omiePrices of omieResults) {
                     for (const [omieCode, price] of Object.entries(omiePrices)) {
                       const productId = omieCodeMap[Number(omieCode)];
-                      if (productId && price > 0 && !priceMap[productId]) {
+                      if (productId && price > 0) {
                         priceMap[productId] = price;
                       }
                     }
