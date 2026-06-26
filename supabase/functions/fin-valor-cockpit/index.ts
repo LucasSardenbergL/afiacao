@@ -382,17 +382,12 @@ serve(async (req: Request) => {
     const k = resolverHurdleCockpit(vi);
     const hurdle_indisponivel = k == null;
 
-    // Config (limiares)
-    const { data: cfgRow } = await db.from("fin_config_cashflow").select("cockpit_config").eq("company", COMPANY).maybeSingle();
-    const cfgRaw = ((cfgRow as { cockpit_config?: Record<string, unknown> } | null)?.cockpit_config ?? {}) as Record<string, unknown>;
-    const numOr = (x: unknown, d: number) => (typeof x === "number" && Number.isFinite(x) ? x : typeof x === "string" && x.trim() !== "" && Number.isFinite(Number(x)) ? Number(x) : d);
-    const config: CockpitConfig = {
-      margem_minima_pct: numOr(cfgRaw.margem_minima_pct, CONFIG_DEFAULT.margem_minima_pct),
-      desconto_max_pct: numOr(cfgRaw.desconto_max_pct, CONFIG_DEFAULT.desconto_max_pct),
-      prazo_alvo_dias: numOr(cfgRaw.prazo_alvo_dias, CONFIG_DEFAULT.prazo_alvo_dias),
-      dias_estoque_max: numOr(cfgRaw.dias_estoque_max, CONFIG_DEFAULT.dias_estoque_max),
-      sample_min_receita: numOr(cfgRaw.sample_min_receita, CONFIG_DEFAULT.sample_min_receita),
-    };
+    // Config (limiares). Config POR-EMPRESA ainda NÃO é persistida: não existe coluna `cockpit_config`
+    // em fin_config_cashflow — nem coluna, nem writer no app, nem UI (confirmado psql-ro 2026-06-25). O
+    // `.select("cockpit_config")` antigo lia uma coluna inexistente → 400 silencioso (erro ignorado) e
+    // caía nos defaults. Aqui o default fica EXPLÍCITO: mesmo comportamento efetivo, sem o 400 nem a falsa
+    // promessa de configurabilidade. Quando virar configurável: criar coluna + UI e ler aqui (com guard numOr).
+    const config: CockpitConfig = { ...CONFIG_DEFAULT };
 
     // FILTRO OBEN obrigatório: um pedido do app mistura itens das 3 empresas (Oben/Colacor/Colacor SC),
     // enviados separadamente. Sem o filtro por produto, o cockpit da Oben fica contaminado.
