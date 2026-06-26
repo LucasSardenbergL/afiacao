@@ -21,6 +21,29 @@ function ilikeOr(term: string, ...cols: string[]): string {
   return cols.map((c) => `${c}.ilike.%${safe}%`).join(",");
 }
 
+// MIRROR-START mergeCustomerPrices — manter IDÊNTICO ao helper de src/lib/pricing/mergeCustomerPrices.ts
+// (Deno não importa de src/). MONEY-PATH: order_items VENCE, Omie só preenche gap, preço inválido
+// (≤0/NaN/Infinity) ignorado. A paridade deste bloco × src é vigiada pelo CI (edge-money-path-invariants).
+function isValidUnitPrice(p: unknown): p is number {
+  return typeof p === "number" && Number.isFinite(p) && p > 0;
+}
+function mergeCustomerPrices(
+  localPrices: ReadonlyArray<{ product_id?: string | null; unit_price?: number | null }>,
+  omiePrices: Record<string, number>,
+): Record<string, number> {
+  const priceMap: Record<string, number> = {};
+  for (const row of localPrices) {
+    const id = row?.product_id;
+    const price = row?.unit_price;
+    if (id && isValidUnitPrice(price) && !(id in priceMap)) priceMap[id] = price;
+  }
+  for (const [productId, price] of Object.entries(omiePrices)) {
+    if (productId && isValidUnitPrice(price) && !(productId in priceMap)) priceMap[productId] = price;
+  }
+  return priceMap;
+}
+// MIRROR-END mergeCustomerPrices
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
@@ -169,7 +192,23 @@ serve(async (req) => {
       }
     }
 
-    const { text, imageBase64, imagesBase64, products, userTools, customerUserId, searchCustomer } = await req.json();
+    const { text, imageBase64, imagesBase64, products, userTools, customerUserId, searchCustomer, canary } = await req.json();
+
+    // CANÁRIA COMPORTAMENTAL (staff-gated — já passou pelo gate de auth+staff acima). Prova que o
+    // merge de preço REALMENTE DEPLOYADO honra "order_items vence o Omie": local=123 deve vencer
+    // Omie=999. Probe HTTP = única evidência de que o deploy do Lovable não reverteu a lógica.
+    // Roda o helper REAL (não uma cópia do teste) e não toca LLM/Omie/DB. Ver edge-money-path-invariants.
+    if (canary === true) {
+      const resolved = mergeCustomerPrices(
+        [{ product_id: "CANARY", unit_price: 123 }],
+        { CANARY: 999 },
+      ).CANARY;
+      const expected = 123;
+      return new Response(
+        JSON.stringify({ canary: true, resolved, expected, ok: resolved === expected }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     // Support single image (imageBase64) or multiple images (imagesBase64)
     const allImages: string[] = [];
@@ -1197,15 +1236,17 @@ Responda SEMPRE usando a função identify_order_items.`;
     // Enrich products and suggestions with customer-specific last practiced prices
     if (validCustomer?.user_id || validCustomer?.codigo_cliente) {
       try {
-        const priceMap: Record<string, number> = {};
-
-        // 1) Local DB: order_items (FONTE DE VERDADE). `sales_price_history` REMOVIDO daqui — o
+        // FONTE DE VERDADE: order_items (último praticado). `sales_price_history` REMOVIDO daqui — o
         // writer legado omie-analytics-sync (aposentado) poluiu a sph com created_at de CARGA, e a
         // leitura por created_at DESC mascarava o preço (3.995 duplicatas com-pedido; 854 com
         // unit_price divergente = ambíguo, intocável sem identidade de linha Omie). order_items
         // cobre 99,84% dos pares (cliente,produto) da sph; o resto cai no fallback Omie abaixo.
         // Espelha o Caminho B já feito no hook (RPC get_ultimos_precos_cliente). created_at de
         // order_items = data real do pedido (trigger #1047), não data de carga.
+        const localPrices: Array<{ product_id?: string | null; unit_price?: number | null }> = [];
+        // Omie (fallback) colapsado p/ Record<productId, price>; o MERGE final passa pelo helper.
+        const omiePricesByProductId: Record<string, number> = {};
+
         if (validCustomer?.user_id) {
           const { data: orderItemsData } = await supabase
             .from("order_items")
@@ -1216,9 +1257,7 @@ Responda SEMPRE usando a função identify_order_items.`;
 
           if (orderItemsData) {
             for (const ph of orderItemsData) {
-              if (ph.product_id && !priceMap[ph.product_id]) {
-                priceMap[ph.product_id] = ph.unit_price;
-              }
+              localPrices.push({ product_id: ph.product_id, unit_price: ph.unit_price });
             }
           }
         }
@@ -1300,54 +1339,47 @@ Responda SEMPRE usando a função identify_order_items.`;
             }
 
             const omieResults = await Promise.all(omiePricePromises);
-            
-            // Merge Omie prices — FALLBACK: só preenche produtos SEM preço local (order_items vence).
-            // Era OVERRIDE, mas fetchOmiePrices pega o "primeiro encontrado" do ListarPedidos (pagina 1,
-            // 50 reg, SEM ordenar_por) = ordem NÃO garantida → podia mascarar o último preço PRATICADO
-            // (order_items, ordenado por created_at real DESC, trigger #1047). order_items é a fonte de
-            // verdade do praticado; o Omie cobre só os gaps (produtos sem pedido local). Alinha com o
-            // hook useCustomerSelection (#1065, que já tirou o overlay do Omie do preço-cliente).
-            // ⚠️ NÃO reverter p/ override no deploy do Lovable (já foi revertido 1× — 08431871 pós-#1077).
+
+            // Resolve mappings faltantes (omieCode→productId) ANTES de colapsar — antes isto era um
+            // 2º "re-apply" incremental; agora resolvemos tudo e colapsamos UMA vez (mesmo resultado).
+            const allOmieCodes = omieResults.flatMap((r) => Object.keys(r).map(Number));
+            const missingCodes = allOmieCodes.filter((c) => !omieCodeMap[c]);
+            if (missingCodes.length > 0) {
+              const { data: extraMappings } = await supabase
+                .from("omie_products")
+                .select("id, omie_codigo_produto")
+                .in("omie_codigo_produto", missingCodes);
+              if (extraMappings) {
+                for (const pm of extraMappings) {
+                  omieCodeMap[pm.omie_codigo_produto] = pm.id;
+                }
+              }
+            }
+
+            // Colapsa omieResults → Record<productId, price> (first-wins por produto, só preços
+            // válidos). fetchOmiePrices pega o "primeiro encontrado" do ListarPedidos (ordem NÃO
+            // garantida); por isso o MERGE com order_items é FALLBACK — o helper espelhado abaixo faz
+            // order_items VENCER e o Omie só preencher gap. ⚠️ NÃO reverter p/ override no deploy do
+            // Lovable (já foi revertido 1× — 08431871 pós-#1077; alinhado ao hook #1065).
+            // Resolver o omieCodeMap completo e colapsar 1× é equivalente ao re-apply incremental
+            // anterior: omie_products.id é PK e omie_codigo_produto↔id é bijeção (0 colisões —
+            // conferido via psql-ro), logo cada productId tem 1 código Omie e a ordem é irrelevante.
             for (const omiePrices of omieResults) {
               for (const [omieCode, price] of Object.entries(omiePrices)) {
                 const productId = omieCodeMap[Number(omieCode)];
-                if (productId && price > 0 && !priceMap[productId]) {
-                  priceMap[productId] = price; // só preenche gap
+                if (productId && isValidUnitPrice(price) && !(productId in omiePricesByProductId)) {
+                  omiePricesByProductId[productId] = price;
                 }
               }
             }
-
-            // Also build a broader omie code map for all products in catalog (for items not yet in omieCodeMap)
-            if (Object.keys(omieResults.reduce((acc, r) => ({ ...acc, ...r }), {})).length > 0) {
-              const allOmieCodes = omieResults.flatMap(r => Object.keys(r).map(Number));
-              const missingCodes = allOmieCodes.filter(c => !omieCodeMap[c]);
-              if (missingCodes.length > 0) {
-                const { data: extraMappings } = await supabase
-                  .from("omie_products")
-                  .select("id, omie_codigo_produto")
-                  .in("omie_codigo_produto", missingCodes);
-                if (extraMappings) {
-                  for (const pm of extraMappings) {
-                    omieCodeMap[pm.omie_codigo_produto] = pm.id;
-                  }
-                  // Re-apply Omie prices with new mappings (mesma semântica FALLBACK: só gaps)
-                  for (const omiePrices of omieResults) {
-                    for (const [omieCode, price] of Object.entries(omiePrices)) {
-                      const productId = omieCodeMap[Number(omieCode)];
-                      if (productId && price > 0 && !priceMap[productId]) {
-                        priceMap[productId] = price;
-                      }
-                    }
-                  }
-                }
-              }
-            }
-
-            console.log(`[analyze-unified-order] Omie price enrichment: found ${Object.keys(priceMap).length} prices`);
           } catch (omieErr) {
             console.error("Error fetching Omie prices for AI response:", omieErr);
           }
         }
+
+        // MERGE money-path (helper espelhado): order_items VENCE, Omie só preenche gap, ≤0 ignorado.
+        const priceMap = mergeCustomerPrices(localPrices, omiePricesByProductId);
+        console.log(`[analyze-unified-order] Price enrichment: ${Object.keys(priceMap).length} prices (order_items vence; Omie preenche gap)`);
 
         // Apply prices to products
         for (const vp of validProducts) {
