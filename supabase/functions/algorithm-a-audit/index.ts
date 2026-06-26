@@ -186,11 +186,15 @@ Deno.serve(async (req) => {
       (q) => q.gte('created_at', periodStartDate.toISOString()) as SupabaseQuery);
     console.log(`[algorithm-a-audit] Found ${recentOrders.length} order items (365d)`);
 
-    // Get best prices per product (paginated)
-    const allSalesPrices = await fetchAllPaginated<SalesPriceRow>(supabase, 'sales_price_history',
+    // Get best prices per product (paginated). FONTE = order_items (verdade), NÃO sales_price_history:
+    // o writer legado aposentado poluiu a sph com duplicatas divergentes que inflavam o MAX (medido
+    // psql-ro: 5 produtos com MAX(sph) > MAX(order_items), 1 em 2,45×) → margin_potential/margin_gap
+    // superestimados. order_items dá o mesmo "best price achieved", sem poluição. unit_price>0 corta
+    // linhas zeradas. Mesma semântica (MAX por produto, all-time).
+    const allSalesPrices = await fetchAllPaginated<SalesPriceRow>(supabase, 'order_items',
       'product_id, unit_price',
-      (q) => q.order('unit_price', { ascending: false }) as SupabaseQuery);
-    console.log(`[algorithm-a-audit] Found ${allSalesPrices.length} sales price records`);
+      (q) => q.gt('unit_price', 0).order('unit_price', { ascending: false }) as SupabaseQuery);
+    console.log(`[algorithm-a-audit] Found ${allSalesPrices.length} order_items price records`);
 
     // Build best price map (highest price achieved per product = potential)
     const bestPriceMap: Record<string, number> = {};
