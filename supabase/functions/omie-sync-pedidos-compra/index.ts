@@ -24,10 +24,26 @@ const SAYERLACK = {
 const OMIE_ENDPOINT_PEDIDOS =
   "https://app.omie.com.br/api/v1/produtos/pedidocompra/";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 100; // MÁXIMO do PesquisarPedCompra — o Omie IGNORA >100 (sync.md); 100>50 corta as páginas pela metade
 const RATE_LIMIT_DELAY_MS = 1100;
 const RETRY_DELAY_MS = 5000;
 const MAX_RETRIES = 3;
+
+// [fix paginação+janela 2026-06-26] espelho de omie-sync-estoque (#979/#1009/#1072) — MESMA armadilha Omie:
+// (a) PAGINAÇÃO — o nTotalPaginas SUB-REPORTA em listas grandes → confiar nele PARAVA a captura na 1ª página
+//     (pedidos 1079+ sumiam do espelho purchase_orders_tracking). Paginar ATÉ A PÁGINA VAZIA + fingerprint
+//     anti-loop + teto técnico FATAL.
+// (b) JANELA — dDataInicial/dDataFinal do PesquisarPedCompra filtram pela DATA DE PREVISÃO DE ENTREGA
+//     (dDtPrevisao), NÃO pela criação (provado no #1072, mesmo PO 1085). Com dDataFinal=hoje, todo pedido com
+//     entrega FUTURA (= recém-feito, dentro do lead time) sumia. A janela cobre previsões PASSADAS e FUTURAS.
+const JANELA_PASSADO_DIAS = 365;      // previsão atrasada: PO aberto não-recebido com entrega já vencida
+const JANELA_PASSADO_MAX_DIAS = 1095; // teto do override `dias` (backfill manual) — 3 anos; evita janela absurda
+const JANELA_FUTURO_DIAS = 120;       // previsão à frente: pedido em trânsito dentro do lead time
+const MAX_PAGINAS = 200;              // teto técnico FATAL anti-loop (a janela ~485d cabe MUITO abaixo disso)
+// fault do Omie que significa "fim legítimo" (sem registros), NÃO erro. Espelho VERBATIM de
+// pendente-entrada-po.ts:FIM_SEM_REGISTROS (testada) via omie-sync-estoque.
+const FIM_SEM_REGISTROS =
+  /(\bsem\s+registros?\b|\bnenhum\s+registros?\b|n[ãa]o\s+(existem?|h[áa])\s+registros?\b|n[ãa]o\s+foram\s+encontrad\w*\s+registros?\b|\bregistros?\s+n[ãa]o\s+(existem?|foram\s+encontrad\w*|encontrad\w*)\b)/i;
 
 type Empresa = "OBEN" | "COLACOR";
 
@@ -179,6 +195,13 @@ async function callOmie(
       continue;
     }
 
+    // [fix paginação] O Omie sinaliza FIM DE PÁGINAS com HTTP 500 + faultstring "Não existem registros para a
+    // página [N]" (faultcode 5113), NÃO com 200+lista-vazia. Sem isto, o throw em !res.ok mataria a paginação-
+    // até-vazia na 1ª página-além-do-fim. Devolve o json p/ o loop tratar como fim (via FIM_SEM_REGISTROS).
+    if (!res.ok && json?.faultstring && FIM_SEM_REGISTROS.test(json.faultstring)) {
+      return json;
+    }
+
     if (!res.ok) {
       throw new Error(`Omie HTTP ${res.status}: ${text.slice(0, 500)}`);
     }
@@ -252,40 +275,69 @@ function mapPedidoToRow(empresa: Empresa, pedido: OmiePedido): Record<string, un
   };
 }
 
-async function upsertPedido(
+// Upsert em LOTE (1 chamada/página via uq_pedido_omie = UNIQUE(empresa, omie_codigo_pedido)), NÃO N+1.
+// [fix wall-clock] a janela ampla (~485d) traz centenas de pedidos; o SELECT+UPDATE/INSERT por pedido (2
+// round-trips × N) estourava o step de 25s do omie-cron-diario. O payload EXCLUI PRESERVE_FIELDS (campos de
+// OUTROS syncs: t2/t3/t4, nfe, cte, transportadora, representante, lt_*) → o ON CONFLICT DO UPDATE não os
+// toca = preserva o último valor bom (MESMO efeito do upsert seletivo antigo). Fallback individual em erro de
+// lote isola a linha torta sem perder a página inteira (espelho de omie-sync-estoque).
+async function upsertPedidosLote(
   supabase: SupabaseClient,
-  row: Record<string, unknown>,
-): Promise<void> {
-  if (!row.omie_codigo_pedido) {
-    throw new Error("Pedido sem nCodPed");
-  }
+  rows: Record<string, unknown>[],
+): Promise<{ sincronizados: number; erros: number }> {
+  const nowIso = new Date().toISOString();
+  const payload: Record<string, unknown>[] = [];
+  let erros = 0;
 
-  const { data: existing, error: selErr } = await supabase
-    .from("purchase_orders_tracking")
-    .select("id")
-    .eq("empresa", row.empresa as string)
-    .eq("omie_codigo_pedido", row.omie_codigo_pedido as string | number)
-    .maybeSingle();
-
-  if (selErr) throw selErr;
-
-  if (existing?.id) {
-    const updateRow: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(row)) {
-      if (!PRESERVE_FIELDS.has(k)) updateRow[k] = v;
+  for (const row of rows) {
+    // nCodPed ausente → omie_codigo_pedido null não casa o UNIQUE (null≠null no Postgres) → inseriria duplicata
+    // órfã a cada sync. Pula e conta erro (mesma guarda do upsert antigo).
+    if (row.omie_codigo_pedido === null || row.omie_codigo_pedido === undefined) {
+      console.error(`[sync-pedidos] pedido sem nCodPed (numero=${row.numero_pedido ?? "—"}) — pulado`);
+      erros++;
+      continue;
     }
-    updateRow.updated_at = new Date().toISOString();
-    const { error: updErr } = await supabase
-      .from("purchase_orders_tracking")
-      .update(updateRow)
-      .eq("id", existing.id);
-    if (updErr) throw updErr;
-  } else {
-    const { error: insErr } = await supabase
-      .from("purchase_orders_tracking")
-      .insert(row);
-    if (insErr) throw insErr;
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(row)) {
+      if (!PRESERVE_FIELDS.has(k)) clean[k] = v;
+    }
+    clean.updated_at = nowIso;
+    payload.push(clean);
   }
+
+  if (payload.length === 0) return { sincronizados: 0, erros };
+
+  const { error } = await supabase
+    .from("purchase_orders_tracking")
+    .upsert(payload, { onConflict: "empresa,omie_codigo_pedido" });
+  if (!error) return { sincronizados: payload.length, erros };
+
+  // Lote falhou (1 linha torta derruba o batch) → individual p/ isolar a culpada e salvar o resto.
+  console.error(`[sync-pedidos] erro upsert lote (${payload.length}): ${error.message}. Tentando individual.`);
+  let sincronizados = 0;
+  for (const row of payload) {
+    const { error: e2 } = await supabase
+      .from("purchase_orders_tracking")
+      .upsert(row, { onConflict: "empresa,omie_codigo_pedido" });
+    if (e2) {
+      console.error(`[sync-pedidos] erro upsert pedido=${row.omie_codigo_pedido}: ${e2.message}`);
+      erros++;
+    } else {
+      sincronizados++;
+    }
+  }
+  return { sincronizados, erros };
+}
+
+// fingerprint barato de página (anti-loop): mesma página NÃO-VAZIA repetida = Omie em loop → abort FATAL.
+// Espelho de omie-sync-estoque, adaptado: usa nCodPed (sempre presente) + cNumero do cabeçalho da consulta.
+function fingerprintPagina(pedidos: readonly OmiePedido[]): string {
+  if (!pedidos || pedidos.length === 0) return "";
+  const prim = pedidos[0]?.cabecalho_consulta ?? pedidos[0]?.cabecalho ?? {};
+  const ult = pedidos[pedidos.length - 1]?.cabecalho_consulta ?? pedidos[pedidos.length - 1]?.cabecalho ?? {};
+  const chave = (c: OmiePedidoCabecalho) =>
+    `${String(c?.nCodPed ?? "").trim()}/${String(c?.cNumero ?? "").trim()}`;
+  return `${pedidos.length}:${chave(prim)}:${chave(ult)}`;
 }
 
 async function syncEmpresa(
@@ -304,15 +356,31 @@ async function syncEmpresa(
   const { app_key, app_secret } = getCredentials(empresa);
 
   const hoje = new Date();
+  // [fix janela] o filtro dDataInicial/dDataFinal do PesquisarPedCompra é por DATA DE PREVISÃO DE ENTREGA
+  // (dDtPrevisao), não por criação. Janela = passado amplo (atrasados não-recebidos) + futuro (a caminho,
+  // dentro do lead time). `dias` (o cron passa 3) só pode AMPLIAR o passado num backfill manual — nunca encolher
+  // abaixo de JANELA_PASSADO_DIAS (à prova de erro: o valor incremental do cron não reintroduz o bug de janela).
+  const passadoDias = Math.min(
+    JANELA_PASSADO_MAX_DIAS,
+    Math.max(JANELA_PASSADO_DIAS, Number.isFinite(dias) ? dias : 0),
+  );
   const inicio = new Date();
-  inicio.setDate(hoje.getDate() - dias);
+  inicio.setDate(hoje.getDate() - passadoDias);
+  const fimJanela = new Date();
+  fimJanela.setDate(hoje.getDate() + JANELA_FUTURO_DIAS);
   const dataDe = formatDateBR(inicio);
-  const dataAte = formatDateBR(hoje);
+  const dataAte = formatDateBR(fimJanela);
+  console.log(
+    `[sync-pedidos] empresa=${empresa} janela previsão ${dataDe}→${dataAte} (passado ${passadoDias}d, futuro ${JANELA_FUTURO_DIAS}d)`,
+  );
 
-  let pagina = 1;
-  let totalPaginas = 1;
+  // [fix paginação] PAGINA ATÉ A PÁGINA VAZIA — não confiar em nTotalPaginas (Omie SUB-REPORTA → lia só a 1ª
+  // página → pedidos 1079+ sumiam). Fingerprint anti-loop por página repetida + teto técnico (espelho do irmão).
+  const fpsVistos = new Set<string>();
+  let fim = false;       // vi o fim legítimo dos dados (página vazia / fault "sem registros")
+  let abortado = false;  // saí por erro/anomalia (fetch, fault real, loop) — já contado em summary.erros
 
-  while (pagina <= totalPaginas) {
+  for (let pagina = 1; pagina <= MAX_PAGINAS; pagina++) {
     let resp: OmieSearchResponse;
     try {
       resp = await callOmie(app_key, app_secret, pagina, dataDe, dataAte);
@@ -320,22 +388,38 @@ async function syncEmpresa(
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} erro fetch: ${msg}`);
       summary.erros++;
+      abortado = true;
       break;
     }
 
     if (resp?.faultstring) {
       const fs = String(resp.faultstring);
-      if (/not\s*found|sem\s*registros|n[ãa]o\s*encontrado/i.test(fs)) {
-        console.log(`[sync-pedidos] empresa=${empresa} pagina=${pagina} sem resultados - encerrando`);
+      if (FIM_SEM_REGISTROS.test(fs)) {
+        console.log(`[sync-pedidos] empresa=${empresa} pagina=${pagina} sem registros — fim`);
+        fim = true;
         break;
       }
       console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} faultstring: ${fs}`);
       summary.erros++;
+      abortado = true;
       break;
     }
 
-    totalPaginas = resp?.nTotalPaginas ?? 1;
     let pedidos: OmiePedido[] = resp?.pedidos_pesquisa ?? resp?.pedido_compra_produto ?? resp?.pedidoCompraProduto ?? [];
+
+    if (pedidos.length === 0) { // página vazia = FIM real (não nTotalPaginas)
+      fim = true;
+      break;
+    }
+
+    const fp = fingerprintPagina(pedidos);
+    if (fp && fpsVistos.has(fp)) {
+      console.error(`[sync-pedidos] empresa=${empresa} REPETIÇÃO de página (pág ${pagina}) — abort anti-loop`);
+      summary.erros++;
+      abortado = true;
+      break;
+    }
+    fpsVistos.add(fp);
 
     // DEBUG: log shape do primeiro pedido (página 1) e top-level keys
     if (pagina === 1) {
@@ -358,29 +442,24 @@ async function syncEmpresa(
       }
     }
 
-    console.log(
-      `[sync-pedidos] empresa=${empresa} pagina=${pagina} recebidos=${pedidos.length} (total_paginas=${totalPaginas})`,
-    );
+    console.log(`[sync-pedidos] empresa=${empresa} pagina=${pagina} recebidos=${pedidos.length}`);
 
-    for (const pedido of pedidos) {
-      try {
-        const row = mapPedidoToRow(empresa, pedido);
-        await upsertPedido(supabase, row);
-        summary.pedidos_sincronizados++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const codigo = pedido?.cabecalho_consulta?.nCodPed ?? pedido?.cabecalho?.nCodPed;
-        console.error(`[sync-pedidos] empresa=${empresa} pedido=${codigo} erro upsert: ${msg}`);
-        summary.erros++;
-      }
-    }
+    const rows = pedidos.map((pedido) => mapPedidoToRow(empresa, pedido));
+    const upsertRes = await upsertPedidosLote(supabase, rows);
+    summary.pedidos_sincronizados += upsertRes.sincronizados;
+    summary.erros += upsertRes.erros;
 
     summary.total_paginas = pagina;
-    pagina++;
+    await sleep(RATE_LIMIT_DELAY_MS); // rate-limit Omie entre páginas
+  }
 
-    if (pagina <= totalPaginas) {
-      await sleep(RATE_LIMIT_DELAY_MS);
-    }
+  if (!fim && !abortado) {
+    // Esgotou MAX_PAGINAS sem ver o fim (e sem erro pelo caminho). O irmão (estoque) faz THROW aqui (fail-closed,
+    // pois alimenta double-buy). AQUI o consumidor é um ESPELHO DE ACOMPANHAMENTO (leadtime/telas), não um
+    // gatilho de compra: dado parcial vale mais que derrubar o sync. Registra erro (sinal no summary) e preserva
+    // o já capturado (upsert idempotente retoma no próximo ciclo).
+    console.error(`[sync-pedidos] empresa=${empresa} excedeu ${MAX_PAGINAS} páginas sem ver fim — abort anti-truncamento`);
+    summary.erros++;
   }
 
   return summary;

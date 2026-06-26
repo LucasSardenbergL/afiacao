@@ -1,6 +1,8 @@
 # Reposição "a caminho" (on-order) — BLUEPRINT do redesign single-source
 
-**Data:** 2026-06-14 · **Escopo:** OBEN (money-path) · **Status:** projeto FUTURO (não iniciado) · **Origem:** consulta de design ao Codex (gpt-5.5 xhigh, 2026-06-13; log integral em `/tmp/codex-perf-fix.log` na sessão).
+**Data:** 2026-06-14 · **Escopo:** OBEN (money-path) · **Status:** ⏸️ CONGELADO 2026-06-26 (ROI baixo + furo desprezível — ver banner) · **Origem:** consulta de design ao Codex (gpt-5.5 xhigh, 2026-06-13; log integral em `/tmp/codex-perf-fix.log` na sessão).
+
+> ⏸️ **CONGELADO 2026-06-26 — e a réplica-por-PO JÁ EXISTE.** NÃO construir o staging `reposicao_po_scan*` do zero como este doc propõe: `purchase_orders_tracking` (populada por `omie-sync-pedidos-compra`, corrigida em #1076/#1085 com janela `[365,120]` por previsão + pagina-até-vazia + bulk upsert) **já É** a réplica materializada por `nCodPed`. Medição pós-deploy (`psql-ro`, 2026-06-26): o "a caminho" do motor (#1072) cobre o futuro (16 POs etapa-15 futuras voltaram, 0→16), e o furo residual é desprezível (as 28 previsões nulas são `FATURADO`, não etapa-15; futura>120d = 0; atrasada>365d improvável). Decisão Claude+Codex (`019f0554`): o redesign B (motor lê da réplica como fonte única) **NÃO ganha cobertura** (mesma janela do motor) e trocaria a fonte do money-path por risco de compra dupla → **congelado**. Detalhe + gatilhos de reabertura: `2026-06-26-reposicao-onorder-medir-confirmar-design.md`.
 
 ## Por que existe este doc
 A 1ª tentativa de single-source (PR #809, "Opção A endurecida": `estoque_pendente_entrada` OBEN = Σ saldo das POs abertas APROVADAS do Omie, paginando até a página vazia, sem janela de data) passou 11 rounds de Codex e o gate (round 11 = LIBERAR), MAS **não completa o full sync na janela ~400s de wall-clock do edge do Supabase** (varre todas as POs de OBEN desde 2010 com 1,1s/página, sem cursor). Tentado regs 50→200 → não bastou. **Revertido pro #752** (estado bom-conhecido) em 2026-06-14 (edges `omie-sync-estoque`/`disparar-pedidos-aprovados`/`gerar-pedidos-diario` → #752/#743/#711; migrations `195000`/`220000` ficam DORMENTES; motor `200000` e Sentinela `210000` NÃO aplicados). Este doc é a blueprint pra construir a versão correta quando priorizado.
@@ -63,7 +65,10 @@ O #752 É bom-conhecido mas tem furos próprios: varredura para no `nTotalPagina
 
 > ⚠️ **DESATUALIZADO em parte** — o furo do `nTotalPaginas` foi CORRIGIDO em prod (paginar-até-página-vazia + fail-closed) por **#979/#1004/#1009** (verificado, #1011). Restam só os furos #2 (janela 180d) e #3 (de-dup dual-source). Ver a conclusão abaixo.
 
-## Conclusão da investigação 2026-06-23 — **C ADIADO (ROI baixo agora)**
+## ⛔ REFUTADO em 2026-06-26 — a premissa "semântica = emissão" é FALSA
+> Confirmação read-only (2026-06-26, `psql-ro`; ver `2026-06-26-reposicao-onorder-medir-confirmar-design.md`): o filtro `dDataInicial/dDataFinal` do `PesquisarPedCompra` é por **PREVISÃO DE ENTREGA**, não emissão. Prova: as POs entram no espelho na data de `dDtPrevisao` (não da inclusão); zero POs abertas com previsão futura no banco. A "prova" do item 2 abaixo era falha — a PO de previsão 19/06 observada em 23/06 já era passado, consistente com AMBAS as hipóteses. Logo a janela CORTA entregas futuras (incidente FUNDO MICROTEX/1085) e **o adiamento do C apoiou-se em premissa errada → redesign REABERTO**. O texto abaixo fica como registro histórico.
+
+## Conclusão da investigação 2026-06-23 — **C ADIADO (ROI baixo agora)** [REFUTADO 2026-06-26 — ver acima]
 Investigação que destrava (ou não) o redesign. Resultado: **não construir o C agora.**
 
 **1. Runtime do stack (GATE da arquitetura) — opção 1 (worker longo) está MORTA.** Doc oficial Supabase confirmada: Edge Functions têm **wall-clock máx 400s (pago) / 150s (free), NÃO-configurável**; CPU 2s/request; memória 256MB; **background `EdgeRuntime.waitUntil` TAMBÉM é morto ao bater os 400s** (não escapa). Não há worker HTTP longo nativo (pg_cron roda SQL, não HTTP longo; queues precisam de consumer, que é edge → mesmo teto). → Da "Ordem de preferência" acima, a (1) cai; o C só pode ser **(2)/(3): réplica-por-PO + particionamento por data** (caro: staging + cursor estável + lease/fencing).
