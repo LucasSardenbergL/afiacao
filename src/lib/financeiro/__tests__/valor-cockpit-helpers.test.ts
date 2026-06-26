@@ -1068,3 +1068,49 @@ describe('montarCelulasComboEVP — min_folga_positiva_pp (sinal contínuo do hu
     expect(r.porCliente[0].min_folga_positiva_pp).toBeNull();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2026-06-25 — Follow-up aditivo ao #1058: min_folga_positiva_RECEITA — a receita_liquida do combo DONO
+// do min_folga_positiva_pp. É LOCATOR, não severidade: sem a receita, o headline AMBER dispara mesmo p/ um
+// combo ínfimo (R$50 a +6pp = alarme falso) — /codex challenge do #1044. A receita tem de seguir o MESMO
+// combo do min (não o de maior folga, não a soma) → a UI suprime o headline quando imaterial (< sample).
+// ═══════════════════════════════════════════════════════════════════════════
+describe('montarCelulasComboEVP — min_folga_positiva_receita (companheiro locator do min_folga_positiva_pp)', () => {
+  it('a receita acompanha o combo do MIN (não o de maior folga nem a soma) — rollup + empresa', () => {
+    // C1/S1: cm 380 → be 0,38 folga +0,08 receita 1000 (VENCEDOR do min). C2/S2: cm 500 → be 0,50 folga +0,20 receita 5000.
+    // min pega S1 → a receita companheira é 1000 (NÃO 5000 do maior folga, NÃO 6000 da soma).
+    const r = montarCelulasComboEVP({
+      combos: [
+        { cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 },
+        { cliente: 'C2', sku: 'S2', receita_liquida: 5000, quantidade: 100, custo_unitario: 45 },
+      ],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }, { cliente: 'C2', ar_medio: 600 }], // rc=receita → a_cs=600 cada
+      capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }, { sku: 'S2', estoque_valor: 400 }],     // i_cs=400 cada → capital 1000
+      k: 0.30,
+    });
+    expect(r.empresa.min_folga_positiva_pp).toBeCloseTo(0.08, 6);
+    expect(r.empresa.min_folga_positiva_receita).toBe(1000); // a receita do MENOR folga, não 5000 (maior) nem 6000 (soma)
+    const c1 = r.porCliente.find((c) => c.cliente === 'C1')!;
+    const c2 = r.porCliente.find((c) => c.cliente === 'C2')!;
+    expect(c1.min_folga_positiva_pp).toBeCloseTo(0.08, 6);
+    expect(c1.min_folga_positiva_receita).toBe(1000);
+    expect(c2.min_folga_positiva_pp).toBeCloseTo(0.20, 6);
+    expect(c2.min_folga_positiva_receita).toBe(5000);
+  });
+  it('a receita companheira é null sempre que o pp é null (k=null E sem positivo fora do fio)', () => {
+    const semK = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 6.2 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 600 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: null,
+    });
+    expect(semK.empresa.min_folga_positiva_pp).toBeNull();
+    expect(semK.empresa.min_folga_positiva_receita).toBeNull();
+    expect(semK.porCliente[0].min_folga_positiva_receita).toBeNull();
+    // único combo sensível (be ∈ fio) → sem candidato positivo → pp E receita null
+    const semPos = montarCelulasComboEVP({
+      combos: [{ cliente: 'C1', sku: 'S1', receita_liquida: 1000, quantidade: 100, custo_unitario: 7 }],
+      capitalClientes: [{ cliente: 'C1', ar_medio: 650 }], capitalSKUs: [{ sku: 'S1', estoque_valor: 400 }], k: 0.30,
+    });
+    expect(semPos.empresa.min_folga_positiva_pp).toBeNull();
+    expect(semPos.empresa.min_folga_positiva_receita).toBeNull();
+  });
+});

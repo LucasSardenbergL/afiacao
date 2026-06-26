@@ -193,10 +193,10 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
   });
   type Cel = typeof celulas[number];
   const rollup = (keyFn: (c: Cel) => string) => {
-    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpTeto: number; evpTetoNull: boolean; evpIncompleto: boolean; perdaGarantida: boolean; cmIncompleto: boolean; qtdSensiveis: number; qtdQuaseSensiveis: number; minFolgaPositiva: number | null }>();
+    const m = new Map<string, { receita: number; quantidade: number; cm: number; cmNull: boolean; encargo: number; encargoNull: boolean; encargoTotal: number; encargoTotalNull: boolean; evp: number; evpNull: boolean; evpTeto: number; evpTetoNull: boolean; evpIncompleto: boolean; perdaGarantida: boolean; cmIncompleto: boolean; qtdSensiveis: number; qtdQuaseSensiveis: number; minFolgaPositiva: number | null; minFolgaPositivaReceita: number | null }>();
     for (const cel of celulas) {
       const key = keyFn(cel);
-      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpTeto: 0, evpTetoNull: true, evpIncompleto: false, perdaGarantida: false, cmIncompleto: false, qtdSensiveis: 0, qtdQuaseSensiveis: 0, minFolgaPositiva: null };
+      const acc = m.get(key) ?? { receita: 0, quantidade: 0, cm: 0, cmNull: true, encargo: 0, encargoNull: true, encargoTotal: 0, encargoTotalNull: true, evp: 0, evpNull: true, evpTeto: 0, evpTetoNull: true, evpIncompleto: false, perdaGarantida: false, cmIncompleto: false, qtdSensiveis: 0, qtdQuaseSensiveis: 0, minFolgaPositiva: null, minFolgaPositivaReceita: null };
       acc.receita += cel.receita_liquida; acc.quantidade += cel.quantidade;
       if (cel.cm == null) acc.cmIncompleto = true;
       if (cel.encargo != null) { acc.encargoTotal += cel.encargo; acc.encargoTotalNull = false; }
@@ -207,20 +207,21 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
       if (cel.evp_status === 'teto_nao_positivo') acc.perdaGarantida = true;
       if (cel.sensivel_hurdle) acc.qtdSensiveis++;
       if (cel.quase_sensivel_hurdle) acc.qtdQuaseSensiveis++; // espelho de src (quase-frágil, lado bom)
+      // espelho de src: min folga POSITIVA fora do fio + receita do MESMO combo vencedor (locator p/ a UI suprimir headline imaterial — /codex #1044)
       if (cel.evp_status === 'real' && !cel.sensivel_hurdle && cel.folga_hurdle_pp != null && cel.folga_hurdle_pp > 0
-          && (acc.minFolgaPositiva == null || cel.folga_hurdle_pp < acc.minFolgaPositiva)) acc.minFolgaPositiva = cel.folga_hurdle_pp;
+          && (acc.minFolgaPositiva == null || cel.folga_hurdle_pp < acc.minFolgaPositiva)) { acc.minFolgaPositiva = cel.folga_hurdle_pp; acc.minFolgaPositivaReceita = cel.receita_liquida; }
       m.set(key, acc);
     }
     return m;
   };
   const mc = rollup((c) => c.cliente);
   const ms = rollup((c) => c.sku);
-  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto, qtd_combos_sensiveis: a.qtdSensiveis, qtd_combos_quase_sensiveis: a.qtdQuaseSensiveis, min_folga_positiva_pp: a.minFolgaPositiva }));
-  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto, qtd_combos_sensiveis: a.qtdSensiveis, qtd_combos_quase_sensiveis: a.qtdQuaseSensiveis, min_folga_positiva_pp: a.minFolgaPositiva }));
+  const porCliente = [...mc.entries()].map(([cliente, a]) => ({ cliente, receita: a.receita, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto, qtd_combos_sensiveis: a.qtdSensiveis, qtd_combos_quase_sensiveis: a.qtdQuaseSensiveis, min_folga_positiva_pp: a.minFolgaPositiva, min_folga_positiva_receita: a.minFolgaPositivaReceita }));
+  const porSKU = [...ms.entries()].map(([sku, a]) => ({ sku, receita: a.receita, quantidade: a.quantidade, cm: a.cmNull ? null : a.cm, encargo: a.encargoNull ? null : a.encargo, encargo_total: a.encargoTotalNull ? null : a.encargoTotal, evp: a.evpNull ? null : a.evp, evp_teto: a.evpTetoNull ? null : a.evpTeto, evp_incompleto: a.evpIncompleto, perda_garantida: a.perdaGarantida, cm_incompleto: a.cmIncompleto, qtd_combos_sensiveis: a.qtdSensiveis, qtd_combos_quase_sensiveis: a.qtdQuaseSensiveis, min_folga_positiva_pp: a.minFolgaPositiva, min_folga_positiva_receita: a.minFolgaPositivaReceita }));
   let cmEmp = 0, cmNull = true, encEmp = 0, encNull = true, encTotalEmp = 0, encTotalNull = true, recEmp = 0;
   let conhecido = 0, conhecidoNull = true, tetoTotal = 0, tetoTotalNull = true, perda = 0, perdaNull = true;
   let evpIncompletoEmp = false, cmIncompletoEmp = false, recConhecido = 0, recOmitido = 0, recPerda = 0, recSemCm = 0;
-  let qtdSensiveisEmp = 0, qtdQuaseSensiveisEmp = 0, capitalConhecido = 0, minFolgaPositivaEmp: number | null = null;
+  let qtdSensiveisEmp = 0, qtdQuaseSensiveisEmp = 0, capitalConhecido = 0, minFolgaPositivaEmp: number | null = null, minFolgaPositivaReceitaEmp: number | null = null;
   for (const cel of celulas) {
     recEmp += cel.receita_liquida;
     if (cel.cm == null) { cmIncompletoEmp = true; recSemCm += cel.receita_liquida; }
@@ -233,10 +234,10 @@ function montarCelulasComboEVP(input: { combos: ComboInput[]; capitalClientes: C
     if (cel.sensivel_hurdle) qtdSensiveisEmp++;
     if (cel.quase_sensivel_hurdle) qtdQuaseSensiveisEmp++;
     if (cel.evp_status === 'real' && !cel.sensivel_hurdle && cel.folga_hurdle_pp != null && cel.folga_hurdle_pp > 0
-        && (minFolgaPositivaEmp == null || cel.folga_hurdle_pp < minFolgaPositivaEmp)) minFolgaPositivaEmp = cel.folga_hurdle_pp;
+        && (minFolgaPositivaEmp == null || cel.folga_hurdle_pp < minFolgaPositivaEmp)) { minFolgaPositivaEmp = cel.folga_hurdle_pp; minFolgaPositivaReceitaEmp = cel.receita_liquida; }
   }
   const empresaCompleta = !evpIncompletoEmp && !cmIncompletoEmp && k != null; // evp único só se nada omitido/indisponível (Codex)
-  const empresa = { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp_conhecido: conhecidoNull ? null : conhecido, evp_teto_total: tetoTotalNull ? null : tetoTotal, evp_perda_garantida: perdaNull ? null : perda, evp: empresaCompleta && !conhecidoNull ? conhecido : null, evp_incompleto: evpIncompletoEmp, cm_incompleto: cmIncompletoEmp, qtd_combos_sensiveis: qtdSensiveisEmp, qtd_combos_quase_sensiveis: qtdQuaseSensiveisEmp, min_folga_positiva_pp: minFolgaPositivaEmp, capital_conhecido: conhecidoNull ? null : capitalConhecido };
+  const empresa = { receita: recEmp, cm: cmNull ? null : cmEmp, encargo: encNull ? null : encEmp, encargo_total: encTotalNull ? null : encTotalEmp, evp_conhecido: conhecidoNull ? null : conhecido, evp_teto_total: tetoTotalNull ? null : tetoTotal, evp_perda_garantida: perdaNull ? null : perda, evp: empresaCompleta && !conhecidoNull ? conhecido : null, evp_incompleto: evpIncompletoEmp, cm_incompleto: cmIncompletoEmp, qtd_combos_sensiveis: qtdSensiveisEmp, qtd_combos_quase_sensiveis: qtdQuaseSensiveisEmp, min_folga_positiva_pp: minFolgaPositivaEmp, min_folga_positiva_receita: minFolgaPositivaReceitaEmp, capital_conhecido: conhecidoNull ? null : capitalConhecido };
   const pct = (x: number) => (recEmp > 0 ? x / recEmp : 0);
   return { celulas, porCliente, porSKU, empresa, evp_conhecido_receita_pct: pct(recConhecido), evp_omitido_otimista_receita_pct: pct(recOmitido), evp_perda_garantida_receita_pct: pct(recPerda), sem_cm_receita_pct: pct(recSemCm), hurdle_banda: k != null ? { base: k, lo: kLo, hi: kHi } : null };
 }

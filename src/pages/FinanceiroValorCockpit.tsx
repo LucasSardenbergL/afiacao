@@ -122,8 +122,11 @@ export default function FinanceiroValorCockpit() {
           {data.empresa.qtd_combos_quase_sensiveis > 0 && (
             <> · <span className="text-muted-foreground">{data.empresa.qtd_combos_quase_sensiveis} quase-frágil(eis) (folga fina, +5 a +10pp do hurdle)</span></>
           )}
-          {data.empresa.min_folga_positiva_pp != null && (
-            <> · <span className="text-status-warning">próximo combo lucrativo zera com +{(data.empresa.min_folga_positiva_pp * 100).toFixed(1)}pp de Ke</span></>
+          {/* Locator, NÃO severidade (/codex challenge #1044): só mostra quando o combo vencedor é MATERIAL (≥ sample_min_receita);
+              senão um combo ínfimo (R$50 a +6pp) viraria alarme falso AMBER. Por isso muted-foreground + a receita no texto. */}
+          {data.empresa.min_folga_positiva_pp != null && data.empresa.min_folga_positiva_receita != null
+            && data.empresa.min_folga_positiva_receita >= data.config.sample_min_receita && (
+            <> · <span className="text-muted-foreground">próximo combo lucrativo ({brl(data.empresa.min_folga_positiva_receita)}) zera com +{(data.empresa.min_folga_positiva_pp * 100).toFixed(1)}pp de Ke</span></>
           )}
         </p>
       )}
