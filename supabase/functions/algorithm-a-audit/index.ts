@@ -100,6 +100,7 @@ interface OrderItemRow {
   quantity: number | null;
   unit_price: number | null;
   discount: number | null;
+  sales_order_id: string;
 }
 
 interface SalesPriceRow {
@@ -182,7 +183,7 @@ Deno.serve(async (req) => {
     periodStartDate.setDate(periodStartDate.getDate() - 365);
 
     const recentOrders = await fetchAllPaginated<OrderItemRow>(supabase, 'order_items',
-      'customer_user_id, product_id, quantity, unit_price, discount',
+      'customer_user_id, product_id, quantity, unit_price, discount, sales_order_id',
       (q) => q.gte('created_at', periodStartDate.toISOString()) as SupabaseQuery);
     console.log(`[algorithm-a-audit] Found ${recentOrders.length} order items (365d)`);
 
@@ -225,9 +226,13 @@ Deno.serve(async (req) => {
     const costMap: Record<string, ProductCostRow> = {};
     productCosts.forEach(pc => { costMap[pc.product_id] = pc; });
 
-    // Group orders by customer
+    // Group orders by customer — só pedidos PRATICADOS (mesmo excludedOrderIds do bestPriceMap).
+    // A margem REAL também não pode incluir orçamento/cancelado/deletado: medido psql-ro, há 26 linhas
+    // de não-pedidos na janela 365d, uma com unit_price de R$ 615 MI (erro de digitação num orçamento)
+    // que destruiria margin_real do cliente. Consistente com o potencial (ambos = praticado).
     const customerOrders: Record<string, typeof recentOrders> = {};
     recentOrders.forEach(oi => {
+      if (excludedOrderIds.has(oi.sales_order_id)) return;   // não-praticado
       if (!customerOrders[oi.customer_user_id]) customerOrders[oi.customer_user_id] = [];
       customerOrders[oi.customer_user_id].push(oi);
     });
