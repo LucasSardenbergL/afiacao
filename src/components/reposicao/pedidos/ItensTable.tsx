@@ -40,7 +40,12 @@ export function ItensTable({
       <TableHeader>
         <TableRow>
           <TableHead className="w-[34%] min-w-[300px]">SKU / Descrição</TableHead>
-          <TableHead className="text-right">Estoque atual</TableHead>
+          <TableHead
+            className="text-right"
+            title="Estoque efetivo = físico (saldo Omie) + a caminho (pendente de entrada + em trânsito). É o que o motor compara com o ponto de pedido — por isso pode ser maior que o saldo do Omie."
+          >
+            Estoque efetivo
+          </TableHead>
           <TableHead className="text-right">EM</TableHead>
           <TableHead className="text-right">PP</TableHead>
           <TableHead className="text-right">Emax</TableHead>
@@ -58,6 +63,11 @@ export function ItensTable({
           const pp = Number(l.ponto_pedido ?? 0);
           const zoneClass = getEstoqueZoneClass(estoque, minimo, pp);
           const sugerida = Number(l.qtde_sugerida ?? 0);
+          // Snapshot do split (físico + a caminho). Só decompõe quando há algo a caminho:
+          // sem isso o efetivo == físico e a sublinha seria ruído.
+          const fisico = l.estoque_fisico;
+          const aCaminho = l.estoque_a_caminho;
+          const temSplit = fisico != null && aCaminho != null && Number(aCaminho) > 0;
           return (
           <TableRow key={l.id}>
             <TableCell className="align-top whitespace-normal">
@@ -82,7 +92,19 @@ export function ItensTable({
                 )}
               </div>
             </TableCell>
-            <TableCell className={`text-right tabular-nums ${zoneClass}`}>{estoque.toFixed(0)}</TableCell>
+            <TableCell
+              className={`text-right tabular-nums ${zoneClass}`}
+              title={temSplit
+                ? `Estoque efetivo ${estoque.toFixed(0)} = ${Number(fisico).toFixed(0)} físico (saldo Omie) + ${Number(aCaminho).toFixed(0)} a caminho (pendente de entrada + em trânsito). O motor compara o efetivo com o ponto de pedido.`
+                : undefined}
+            >
+              {estoque.toFixed(0)}
+              {temSplit && (
+                <div className="text-[10px] font-normal text-muted-foreground leading-tight">
+                  {Number(fisico).toFixed(0)} + {Number(aCaminho).toFixed(0)} a caminho
+                </div>
+              )}
+            </TableCell>
             <TableCell className="text-right tabular-nums text-muted-foreground">{minimo.toFixed(0)}</TableCell>
             <TableCell className="text-right tabular-nums">{pp.toFixed(0)}</TableCell>
             <TableCell className="text-right tabular-nums">{Number(l.estoque_maximo ?? 0).toFixed(0)}</TableCell>

@@ -10,6 +10,8 @@ function linha(partial: Partial<Linha>): Linha {
     sku_codigo_omie: '555',
     sku_descricao: 'Verniz X',
     estoque_atual: 5,
+    estoque_fisico: null,
+    estoque_a_caminho: null,
     estoque_minimo: 2,
     ponto_pedido: 8,
     estoque_maximo: 20,
@@ -93,5 +95,22 @@ describe('ItensTable', () => {
   it('item COM custo válido: preço fica read-only mesmo com podeEditarPreco', () => {
     setup({ podeEditar: false, podeEditarPreco: true, linhas: [linha({ preco_unitario: 9, _preco: 9 })] });
     expect(screen.queryByPlaceholderText('custo')).toBeNull();
+  });
+
+  it('decompõe o efetivo em "físico + a caminho" quando há algo a caminho', () => {
+    // efetivo 3 = 2 físico (saldo Omie) + 1 a caminho — o caso que confundia ("Omie diz 2, pedido diz 3")
+    setup({ podeEditar: false, linhas: [linha({ estoque_atual: 3, estoque_fisico: 2, estoque_a_caminho: 1 })] });
+    expect(screen.getByText('3')).toBeTruthy(); // efetivo continua sendo o número principal (cor/decisão)
+    expect(screen.getByText('2 + 1 a caminho')).toBeTruthy();
+  });
+
+  it('NÃO decompõe quando nada está a caminho (efetivo == físico)', () => {
+    setup({ podeEditar: false, linhas: [linha({ estoque_atual: 2, estoque_fisico: 2, estoque_a_caminho: 0 })] });
+    expect(screen.queryByText(/a caminho/)).toBeNull();
+  });
+
+  it('item antigo (split NULL): cai no efetivo sem sublinha', () => {
+    setup({ podeEditar: false, linhas: [linha({ estoque_atual: 5, estoque_fisico: null, estoque_a_caminho: null })] });
+    expect(screen.queryByText(/a caminho/)).toBeNull();
   });
 });

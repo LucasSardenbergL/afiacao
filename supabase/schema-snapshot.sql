@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict YUubq0d8E76qcwcIfGhKeHgq5flNeDqWI23blstbYad4ATZDqQhsHtw1eu18hjq
+\restrict 4jJNKMFTg6gNsngZmWleufEd6hB54h7VjkqsS3HYhICGBiSNae4kKLoe3vYNchf
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.9
@@ -890,6 +890,60 @@ CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain 
           ORDER BY f2.criado_em DESC LIMIT 1) AS ultimo_erro
       FROM public.fornecedor_alerta fa
     ) ac
+    UNION ALL
+    -- [VIGIA pedidos de compra 2026-06-26 · eu+Codex gpt-high · PUSH] saúde do sync de pedidos de
+    -- compra (edge omie-sync-pedidos-compra → purchase_orders_tracking; alimenta leadtime + telas de
+    -- acompanhamento = money-path). A edge é fail-OPEN (handler sempre {ok:true} 200; syncEmpresa dá
+    -- break no 1º rate-limit/fault → espelho stale com 0 sincronizados, silencioso). Frescor pela TABELA
+    -- é inadequado: purchase_orders_tracking é MULTI-WRITER (nfes/ctes/sku-items também escrevem
+    -- updated_at) e ESPARSO (gaps de até 5d normais — PesquisarPedCompra filtra por previsão de entrega).
+    -- Por isso a edge grava um HEARTBEAT 1-writer em sync_state (entity_type='pedidos_compra',
+    -- account='oben' — única empresa na esteira do cron omie-cron-diario; COLACOR só por POST manual,
+    -- NÃO vigiado aqui). last_sync_at = horário do último SUCESSO (não avança em falha total → preserva
+    -- o horário bom); updated_at = heartbeat de execução (detecta 'running' órfão); status
+    -- running→complete|partial|error.
+    --   broken: marcador ausente (nunca rodou) · 'error' (coleta total falhou) · 'running' órfão >1h
+    --           (edge morreu no meio) · sem sucesso há >24h (cron/orquestrador morto) · status
+    --           desconhecido (fail-safe: só 'complete'/'running'-fresco são saudáveis).
+    --   stale : 'partial' (coleta truncada) · sucesso há >6h (atraso; cron roda a cada 2h).
+    -- severity FIXO 'critical' (money-path, = vendas_pedidos): evita o furo do ON CONFLICT do watchdog
+    -- (escalonamento de severidade no mesmo source não re-emailaria). VALUES+LEFT JOIN garante 1 linha
+    -- mesmo com marcador ausente (→ 'broken', não some do UNION).
+    SELECT 'pedidos_compra_sync'::text, 'estoque'::text,
+      CASE
+        WHEN m.marker_status IS NULL THEN 'broken'
+        WHEN m.marker_status = 'error' THEN 'broken'
+        WHEN m.marker_status = 'running' AND now() - m.updated_at > interval '1 hour' THEN 'broken'
+        WHEN m.marker_status = 'running' THEN 'ok'
+        WHEN m.last_sync_at IS NULL THEN 'broken'
+        WHEN now() - m.last_sync_at > interval '24 hours' THEN 'broken'
+        WHEN m.marker_status = 'partial' THEN 'stale'
+        WHEN now() - m.last_sync_at > interval '6 hours' THEN 'stale'
+        WHEN m.marker_status = 'complete' THEN 'ok'
+        ELSE 'broken' END,
+      EXTRACT(EPOCH FROM now() - m.last_sync_at)::bigint, (6*3600)::bigint,
+      'sync_state pedidos_compra/oben (last_sync_at=ultimo sucesso, status, updated_at=heartbeat)'::text,
+      CASE
+        WHEN m.marker_status IS NULL THEN 'Pedidos de compra (Sayerlack/Omie): heartbeat AUSENTE — a edge omie-sync-pedidos-compra nunca registrou execução'
+        WHEN m.marker_status = 'error' THEN 'Pedidos de compra: última coleta FALHOU (0 sincronizados) — ' || COALESCE(m.error_message,'erro')
+        WHEN m.marker_status = 'running' AND now() - m.updated_at > interval '1 hour' THEN 'Pedidos de compra: execução PRESA em running há ' || round((EXTRACT(EPOCH FROM now() - m.updated_at)/3600.0)::numeric, 1)::text || 'h (a edge morreu no meio do run)'
+        WHEN m.marker_status = 'running' THEN 'Pedidos de compra: sync em andamento (iniciado ' || COALESCE(to_char(m.updated_at AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'?') || ')'
+        WHEN m.marker_status = 'partial' THEN 'Pedidos de compra: última coleta PARCIAL/truncada — ' || COALESCE(m.error_message,'erros parciais') || '; última boa ' || COALESCE(to_char(m.last_sync_at AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca')
+        ELSE 'Pedidos de compra: sincronizado ' || COALESCE(to_char(m.last_sync_at AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca') || ' (' || COALESCE(m.total_synced,0)::text || ' pedidos)' END,
+      m.error_message,
+      CASE
+        WHEN m.marker_status IS NULL THEN 'A edge omie-sync-pedidos-compra nunca rodou/gravou o marcador (deploy pendente, ou o cron omie-cron-diario não a aciona).'
+        WHEN m.marker_status = 'error' THEN 'A edge coletou 0 pedidos com erro (rate-limit/fault na 1a página -> break, fail-open 200). O espelho purchase_orders_tracking ficou stale -> fura leadtime e telas de acompanhamento.'
+        WHEN m.marker_status = 'running' AND now() - m.updated_at > interval '1 hour' THEN 'A edge começou e não finalizou (timeout/OOM/kill) — pode ter deixado purchase_orders_tracking parcialmente atualizado.'
+        WHEN m.marker_status = 'partial' THEN 'A coleta truncou no meio (alguns pedidos entraram, depois erro) — a janela pode estar incompleta no espelho.'
+        ELSE 'Sem coleta bem-sucedida recente — o cron afiacao_omie_oben_sync_incremental_2h / orquestrador omie-cron-diario parou de acionar a edge, ou a edge falha de boot.' END,
+      'Cheque a edge omie-sync-pedidos-compra (logs no Lovable) + o net._http_response do cron afiacao_omie_oben_sync_incremental_2h (chama omie-cron-diario -> passo pedidos). Re-rode {empresa:"OBEN"} no chat do Lovable. Se a falha durou >3 dias, re-rode com dias>3 (ex: dias:7) — a janela padrão é 3d e não cobriria o buraco.'::text,
+      'critical'::text
+    FROM (
+      SELECT ss.last_sync_at, ss.status AS marker_status, ss.updated_at, ss.error_message, ss.total_synced
+      FROM (VALUES ('pedidos_compra'::text, 'oben'::text)) AS req(et, acc)
+      LEFT JOIN public.sync_state ss ON ss.entity_type = req.et AND ss.account = req.acc
+    ) m
   )
   -- P1: campos de "problema" (erro técnico, causa provável, remédio) só saem quando
   -- o check NÃO está ok. Check verde = nada a reportar.
@@ -3271,7 +3325,7 @@ BEGIN
                      'reposicao_disparo','reposicao_portal_pipeline','reposicao_portal_humano',
                      'reposicao_sayerlack_fabricado','omie_tipo_produto_oben','vendas_familia_ausente',
                      'tint_cobertura_bases',
-                     'custos_proxy_conf_alta','custos_product_cost_revivido')  -- [VIGIA tint 2026-06-15] só o Check A faz push; tint_vinculo_omie é dashboard-only
+                     'custos_proxy_conf_alta','custos_product_cost_revivido','pedidos_compra_sync')  -- [VIGIA tint 2026-06-15] só o Check A faz push; tint_vinculo_omie é dashboard-only
   LOOP
     v_sev_fin  := CASE WHEN r.severity = 'critical' THEN 'critico' ELSE 'aviso' END;
     v_sev_forn := CASE WHEN r.severity = 'critical' THEN 'urgente' ELSE 'atencao' END;
@@ -5150,7 +5204,7 @@ BEGIN
                    'reposicao_portal_pipeline','reposicao_portal_humano',
                    'reposicao_sayerlack_fabricado','omie_tipo_produto_oben',
                    'vendas_familia_ausente','tint_cobertura_bases',
-                   'custos_proxy_conf_alta','custos_product_cost_revivido','alert_channel');  -- [VIGIA tint 2026-06-15] +A no resumo (B fica fora)
+                   'custos_proxy_conf_alta','custos_product_cost_revivido','alert_channel','pedidos_compra_sync');  -- [VIGIA tint 2026-06-15] +A no resumo (B fica fora)
 
   v_titulo := '[Watchdog'
               || CASE WHEN (v_ativos + v_dh_ativos) > 0
@@ -5807,10 +5861,12 @@ BEGIN
   )
   INSERT INTO pedido_compra_item (
     pedido_id, sku_codigo_omie, sku_descricao, estoque_atual, ponto_pedido, estoque_maximo,
-    qtde_sugerida, qtde_final, preco_unitario, valor_linha, primeira_compra
+    qtde_sugerida, qtde_final, preco_unitario, valor_linha, primeira_compra,
+    estoque_fisico, estoque_a_caminho
   )
   SELECT pfg.id, sn.sku_codigo_omie, sn.sku_descricao, sn.estoque_efetivo, sn.ponto_pedido, sn.estoque_maximo,
-         sn.qtde_sugerida, sn.qtde_final, sn.preco_unitario, sn.qtde_final * sn.preco_unitario, sn.primeira_compra
+         sn.qtde_sugerida, sn.qtde_final, sn.preco_unitario, sn.qtde_final * sn.preco_unitario, sn.primeira_compra,
+         sn.estoque_fisico, (sn.estoque_pendente + sn.qtde_em_transito_recente)
   FROM skus_necessitando sn
   JOIN pedidos_por_fornecedor_grupo pfg
     ON pfg.fornecedor_nome = sn.fornecedor_nome AND COALESCE(pfg.grupo_codigo,'') = COALESCE(sn.grupo_codigo,'')
@@ -6831,6 +6887,40 @@ CREATE FUNCTION public.get_tint_prices(p_formula_ids uuid[]) RETURNS jsonb
   )), '{}'::jsonb)
   FROM bases b
   LEFT JOIN corantes co ON co.formula_id = b.formula_id;
+$$;
+
+
+--
+-- Name: get_ultimos_precos_cliente(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_ultimos_precos_cliente(p_customer uuid) RETURNS TABLE(product_id uuid, unit_price numeric)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+BEGIN
+  IF NOT (public.has_role(auth.uid(), 'employee'::public.app_role)
+          OR public.has_role(auth.uid(), 'master'::public.app_role)) THEN
+    RAISE EXCEPTION 'forbidden: get_ultimos_precos_cliente exige staff' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT DISTINCT ON (oi.product_id) oi.product_id, oi.unit_price
+  FROM public.order_items oi
+  JOIN public.sales_orders so ON so.id = oi.sales_order_id
+  WHERE oi.customer_user_id = p_customer
+    AND oi.customer_user_id = so.customer_user_id
+    AND so.deleted_at IS NULL
+    AND COALESCE(so.status, '') NOT IN ('cancelado', 'orcamento')
+    AND oi.unit_price > 0
+    AND oi.product_id IS NOT NULL
+    AND COALESCE(so.order_date_kpi,
+                 (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date) <= current_date
+  ORDER BY oi.product_id,
+           COALESCE(so.order_date_kpi,
+                    (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date) DESC,
+           so.created_at DESC, oi.created_at DESC, oi.id DESC;
+END;
 $$;
 
 
@@ -17142,6 +17232,8 @@ CREATE TABLE public.pedido_compra_item (
     preco_sem_desconto numeric,
     desconto_perc_aplicado numeric,
     economia_estimada_valor numeric,
+    estoque_fisico numeric,
+    estoque_a_caminho numeric,
     CONSTRAINT pedido_compra_item_modo_promocao_check CHECK ((modo_promocao = ANY (ARRAY['flat'::text, 'forward_buying'::text, NULL::text])))
 );
 
@@ -17151,6 +17243,20 @@ CREATE TABLE public.pedido_compra_item (
 --
 
 COMMENT ON COLUMN public.pedido_compra_item.modo_promocao IS 'flat = desconto aplicado no preço sem mudança de quantidade; forward_buying = quantidade foi inflada pra atingir volume mínimo.';
+
+
+--
+-- Name: COLUMN pedido_compra_item.estoque_fisico; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.estoque_fisico IS 'Snapshot do estoque físico no momento da geração (= saldo do Omie). NULL em itens anteriores à migration.';
+
+
+--
+-- Name: COLUMN pedido_compra_item.estoque_a_caminho; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.estoque_a_caminho IS 'Snapshot do pendente de entrada + em trânsito no momento da geração. estoque_fisico + estoque_a_caminho = estoque_atual (efetivo).';
 
 
 --
@@ -36125,5 +36231,5 @@ ALTER TABLE public.whatsapp_webhook_events ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict YUubq0d8E76qcwcIfGhKeHgq5flNeDqWI23blstbYad4ATZDqQhsHtw1eu18hjq
+\unrestrict 4jJNKMFTg6gNsngZmWleufEd6hB54h7VjkqsS3HYhICGBiSNae4kKLoe3vYNchf
 
