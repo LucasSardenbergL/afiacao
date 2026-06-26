@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { ilikeOr } from "@/lib/postgrest";
+import { ilikeOr, isSearchablePostgrestTerm } from "@/lib/postgrest";
 import { useAuth } from "@/contexts/AuthContext";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { toast } from "sonner";
@@ -68,7 +68,9 @@ export default function AdminReposicaoAlertas() {
       if (filtroTipo !== "__all__") q = q.eq("tipo", filtroTipo);
       if (filtroSev !== "__all__") q = q.eq("severidade", filtroSev);
       if (filtroStatus !== "__all__") q = q.eq("status", filtroStatus);
-      if (busca.trim()) {
+      // Termo só-wildcard (`*`/`%%`) sanitiza pra vazio → `.or()` viraria match-all (#1062).
+      // Não-pesquisável = pula o filtro (mostra a lista base), igual ao demais filtros opcionais.
+      if (isSearchablePostgrestTerm(busca.trim())) {
         q = q.or(ilikeOr(["sku_codigo_omie", "sku_descricao"], busca.trim()));
       }
 

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { ilikeOr, sanitizeIlikeTerm } from '@/lib/postgrest';
+import { ilikeOr, isSearchablePostgrestTerm, sanitizeIlikeTerm } from '@/lib/postgrest';
 
 /**
  * Busca global pra Cmd-K — pesquisa simultânea em 3 entidades:
@@ -58,6 +58,9 @@ export function useGlobalSearch(query: string, enabled = true) {
     enabled: isActive,
     staleTime: 30_000,
     queryFn: async () => {
+      // Termo só-wildcard (`**`, passa o length>=2) sanitiza pra vazio → `.or()` viraria match-all
+      // dos profiles (PII) (#1062). Busca pura: não-pesquisável = sem resultados.
+      if (!isSearchablePostgrestTerm(trimmed)) return [];
       // Busca por nome OU document OU email — ilikeOr sanitiza (anti-injeção)
       const { data } = await supabase
         .from('profiles')
@@ -81,6 +84,7 @@ export function useGlobalSearch(query: string, enabled = true) {
     enabled: isActive,
     staleTime: 60_000,
     queryFn: async () => {
+      if (!isSearchablePostgrestTerm(trimmed)) return []; // só-wildcard → match-all (#1062); busca vazia
       const { data } = await supabase
         .from('tint_formulas')
         .select('id, cor_id, nome_cor')

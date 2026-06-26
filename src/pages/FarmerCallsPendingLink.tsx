@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useLinkCallToCustomer } from '@/hooks/useLinkCallToCustomer';
-import { ilikeOr } from '@/lib/postgrest';
+import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -98,6 +98,8 @@ function PendingRow({
     queryKey: ['profiles-search', search],
     enabled: open && search.length >= 2,
     queryFn: async (): Promise<ProfileMatch[]> => {
+      // só-wildcard (`**`, passa o length>=2) → `.or()` match-all dos profiles (#1062); busca vazia
+      if (!isSearchablePostgrestTerm(search)) return [];
       // `search` é input do usuário — ilikeOr sanitiza (anti-injeção PostgREST)
       const { data } = await supabase.from('profiles')
         .select('user_id, name, phone')
