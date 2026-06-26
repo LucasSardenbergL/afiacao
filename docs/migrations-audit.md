@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **294** custom migrations totais
-- **1025** objetos esperados (criados por estas migrations)
+- **295** custom migrations totais
+- **1029** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 296
-  - `rls_policy`: 220
+  - `function`: 297
+  - `rls_policy`: 221
   - `index`: 187
-  - `table`: 108
+  - `table`: 109
   - `cron_job`: 108
   - `trigger`: 52
-  - `view`: 50
+  - `view`: 51
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2506,6 +2506,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_ultimos_precos_cliente` | — |
+
+### `20260626193000_reposicao_depara_sayerlack_auto.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_aplicar_depara_sayerlack_auto` | — |
+| `view` | `public.v_reposicao_depara_sayerlack_elegivel` | — |
+| `table` | `public.reposicao_depara_auto_log` | — |
+| `rls_policy` | `public.depara_auto_log_sel` | `reposicao_depara_auto_log` |
 
 ## Próximos passos quando algo der `❌`
 
