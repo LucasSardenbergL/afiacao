@@ -27,6 +27,7 @@
 - **Claim atômico em SQL-puro** — o PostgREST quebra `.or()` em UPDATE (`42703`, mesmo a coluna existindo) → claim via **RPC com predicado POSITIVO**, não a tradução do `.or()` (ver `docs/agent/database.md`). Ciclo de retry do portal fechado.
 - **De-para Sayerlack:** parser `sayerlack-sku` v2 lê o código com **separador-ESPAÇO**; **`tipo_produto` virou COLUNA dedicada** de `omie_products`, alimentada por **`tipoItem` no lote** do Omie (NÃO de outra rota); tingidores desenvolvidos internamente ficam fora do motor (backfill).
 - **`em_transito` conta portal-confirmado**; on-order tem **fonte única** (não somar duplicado).
+- **Janela do `PesquisarPedCompra` filtra por PREVISÃO DE ENTREGA (`dDtPrevisao`), NÃO emissão** (confirmado 2026-06-26 via `psql-ro`): a PO entra no espelho na data da previsão. Previsão **nula / futura > janela / atrasada > janela** some da resposta → "a caminho" subestimado → **compra dupla** (incidente FUNDO MICROTEX/1085). `fonte_sync='ListarPosEstoque'` em `sku_estoque_atual` é **rótulo enganoso** — o `estoque_pendente_entrada` OBEN vem do `PesquisarPedCompra`. Janela `[hoje−365,+120]` (#1072) é paliativo; solução = réplica-por-PO (`nCodPed`). Spec `docs/superpowers/specs/2026-06-26-reposicao-onorder-medir-confirmar-design.md`.
 
 ## Outras frentes
 

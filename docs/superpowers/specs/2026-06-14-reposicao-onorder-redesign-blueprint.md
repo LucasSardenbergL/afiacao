@@ -63,7 +63,10 @@ O #752 É bom-conhecido mas tem furos próprios: varredura para no `nTotalPagina
 
 > ⚠️ **DESATUALIZADO em parte** — o furo do `nTotalPaginas` foi CORRIGIDO em prod (paginar-até-página-vazia + fail-closed) por **#979/#1004/#1009** (verificado, #1011). Restam só os furos #2 (janela 180d) e #3 (de-dup dual-source). Ver a conclusão abaixo.
 
-## Conclusão da investigação 2026-06-23 — **C ADIADO (ROI baixo agora)**
+## ⛔ REFUTADO em 2026-06-26 — a premissa "semântica = emissão" é FALSA
+> Confirmação read-only (2026-06-26, `psql-ro`; ver `2026-06-26-reposicao-onorder-medir-confirmar-design.md`): o filtro `dDataInicial/dDataFinal` do `PesquisarPedCompra` é por **PREVISÃO DE ENTREGA**, não emissão. Prova: as POs entram no espelho na data de `dDtPrevisao` (não da inclusão); zero POs abertas com previsão futura no banco. A "prova" do item 2 abaixo era falha — a PO de previsão 19/06 observada em 23/06 já era passado, consistente com AMBAS as hipóteses. Logo a janela CORTA entregas futuras (incidente FUNDO MICROTEX/1085) e **o adiamento do C apoiou-se em premissa errada → redesign REABERTO**. O texto abaixo fica como registro histórico.
+
+## Conclusão da investigação 2026-06-23 — **C ADIADO (ROI baixo agora)** [REFUTADO 2026-06-26 — ver acima]
 Investigação que destrava (ou não) o redesign. Resultado: **não construir o C agora.**
 
 **1. Runtime do stack (GATE da arquitetura) — opção 1 (worker longo) está MORTA.** Doc oficial Supabase confirmada: Edge Functions têm **wall-clock máx 400s (pago) / 150s (free), NÃO-configurável**; CPU 2s/request; memória 256MB; **background `EdgeRuntime.waitUntil` TAMBÉM é morto ao bater os 400s** (não escapa). Não há worker HTTP longo nativo (pg_cron roda SQL, não HTTP longo; queues precisam de consumer, que é edge → mesmo teto). → Da "Ordem de preferência" acima, a (1) cai; o C só pode ser **(2)/(3): réplica-por-PO + particionamento por data** (caro: staging + cursor estável + lease/fencing).
