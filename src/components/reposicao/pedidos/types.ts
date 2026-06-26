@@ -81,7 +81,10 @@ export interface PedidoItem {
   pedido_id: number;
   sku_codigo_omie: string;
   sku_descricao: string | null;
-  estoque_atual: number | null;
+  estoque_atual: number | null; // efetivo no momento da geração = estoque_fisico + estoque_a_caminho
+  // Snapshot do split do efetivo (migration 20260626150457). NULL em itens anteriores → UI cai no efetivo.
+  estoque_fisico: number | null; // saldo físico = o que aparece no Omie
+  estoque_a_caminho: number | null; // pendente de entrada + em trânsito
   estoque_minimo: number | null;
   ponto_pedido: number | null;
   estoque_maximo: number | null;
