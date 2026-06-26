@@ -529,10 +529,11 @@ export function useCustomerSelection({
       }
 
       // ── Publica preço (LOCAL) + parcela ANTES do auto-cadastro ──
-      // Fase 1: o preço-cliente = último preço praticado do `sales_price_history`
-      // (rápido, estável, determinístico). Sem overlay do Omie (removido p/ matar a
-      // colisão de rate-limit). O mesmo mapa local vai p/ as 2 contas — limitação
-      // pré-existente (produtos são account-aware); corrigida na Fase 2 account-aware.
+      // Fase 1: o preço-cliente = último preço praticado lido de `order_items` (FONTE DE VERDADE,
+      // via RPC get_ultimos_precos_cliente — NÃO mais `sales_price_history`, poluída pelo writer
+      // legado aposentado). Rápido, estável, determinístico. Sem overlay do Omie (removido p/ matar
+      // a colisão de rate-limit). O mesmo mapa local vai p/ as 2 contas — limitação pré-existente
+      // (produtos são account-aware); corrigida na Fase 2 account-aware.
       const localPricesByOmie = await resolveLocalPricesByOmieCode(localPriceResult.data || null);
       if (isStale()) return;
 

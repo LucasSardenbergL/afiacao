@@ -1199,34 +1199,25 @@ Responda SEMPRE usando a função identify_order_items.`;
       try {
         const priceMap: Record<string, number> = {};
 
-        // 1) Local DB: order_items + sales_price_history
+        // 1) Local DB: order_items (FONTE DE VERDADE). `sales_price_history` REMOVIDO daqui — o
+        // writer legado omie-analytics-sync (aposentado) poluiu a sph com created_at de CARGA, e a
+        // leitura por created_at DESC mascarava o preço (3.995 duplicatas com-pedido; 854 com
+        // unit_price divergente = ambíguo, intocável sem identidade de linha Omie). order_items
+        // cobre 99,84% dos pares (cliente,produto) da sph; o resto cai no fallback Omie abaixo.
+        // Espelha o Caminho B já feito no hook (RPC get_ultimos_precos_cliente). created_at de
+        // order_items = data real do pedido (trigger #1047), não data de carga.
         if (validCustomer?.user_id) {
-          const [orderItemsRes, salesPricesRes] = await Promise.all([
-            supabase
-              .from("order_items")
-              .select("product_id, unit_price")
-              .eq("customer_user_id", validCustomer.user_id)
-              .order("created_at", { ascending: false })
-              .limit(200),
-            supabase
-              .from("sales_price_history")
-              .select("product_id, unit_price")
-              .eq("customer_user_id", validCustomer.user_id)
-              .order("created_at", { ascending: false })
-              .limit(200),
-          ]);
+          const { data: orderItemsData } = await supabase
+            .from("order_items")
+            .select("product_id, unit_price")
+            .eq("customer_user_id", validCustomer.user_id)
+            .order("created_at", { ascending: false })
+            .limit(200);
 
-          if (orderItemsRes.data) {
-            for (const ph of orderItemsRes.data) {
+          if (orderItemsData) {
+            for (const ph of orderItemsData) {
               if (ph.product_id && !priceMap[ph.product_id]) {
                 priceMap[ph.product_id] = ph.unit_price;
-              }
-            }
-          }
-          if (salesPricesRes.data) {
-            for (const sp of salesPricesRes.data) {
-              if (!priceMap[sp.product_id]) {
-                priceMap[sp.product_id] = sp.unit_price;
               }
             }
           }
