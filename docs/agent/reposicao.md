@@ -27,6 +27,7 @@
 - **Claim atômico em SQL-puro** — o PostgREST quebra `.or()` em UPDATE (`42703`, mesmo a coluna existindo) → claim via **RPC com predicado POSITIVO**, não a tradução do `.or()` (ver `docs/agent/database.md`). Ciclo de retry do portal fechado.
 - **De-para Sayerlack:** parser `sayerlack-sku` v2 lê o código com **separador-ESPAÇO**; **`tipo_produto` virou COLUNA dedicada** de `omie_products`, alimentada por **`tipoItem` no lote** do Omie (NÃO de outra rota); tingidores desenvolvidos internamente ficam fora do motor (backfill).
 - **`em_transito` conta portal-confirmado**; on-order tem **fonte única** (não somar duplicado).
+- **`PesquisarPedCompra` filtra `dDataInicial`/`dDataFinal` pela DATA DE PREVISÃO DE ENTREGA (`dDtPrevisao`), NÃO pela criação** (provado em prod, [#1072]: cada PO entra no espelho exatamente na data da previsão; lag-vs-criação 9–18d, lag-vs-previsão 0). Janela terminando em "hoje" esconde **todo** pedido a caminho (entrega futura = todo pedido dentro do lead time) → `estoque_pendente_entrada=0` → o motor **re-sugere comprar o já-pedido**. A janela do `omie-sync-estoque` tem de cobrir o FUTURO: `[hoje-365d, hoje+120d]` (LT OBEN máx 39d → ~3× folga). **Mesma armadilha** no `omie-sync-pedidos-compra` (que ainda tem o bug + confia no `nTotalPaginas` sub-reportado).
 
 ## Outras frentes
 
