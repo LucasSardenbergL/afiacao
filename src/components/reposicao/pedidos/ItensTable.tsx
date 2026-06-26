@@ -63,11 +63,14 @@ export function ItensTable({
           const pp = Number(l.ponto_pedido ?? 0);
           const zoneClass = getEstoqueZoneClass(estoque, minimo, pp);
           const sugerida = Number(l.qtde_sugerida ?? 0);
-          // Snapshot do split (físico + a caminho). Só decompõe quando há algo a caminho:
-          // sem isso o efetivo == físico e a sublinha seria ruído.
-          const fisico = l.estoque_fisico;
-          const aCaminho = l.estoque_a_caminho;
-          const temSplit = fisico != null && aCaminho != null && Number(aCaminho) > 0;
+          // Snapshot do split (físico + a caminho). Só decompõe quando há ≥1 a caminho.
+          // [P2 Codex] coluna é exibida em inteiros (convenção): arredonda o a-caminho e DERIVA o
+          // físico do efetivo EXIBIDO (fis = efetivo − a_caminho) — a soma fecha SEMPRE na tela
+          // mesmo com estoque fracionário (senão 3,4 = 2,6 + 0,8 mostraria "3 = 3 + 1", mentira).
+          const efetivoDisp = Number(estoque.toFixed(0));
+          const aCaminhoDisp = l.estoque_a_caminho == null ? 0 : Math.round(Number(l.estoque_a_caminho));
+          const fisicoDisp = efetivoDisp - aCaminhoDisp;
+          const temSplit = l.estoque_fisico != null && l.estoque_a_caminho != null && aCaminhoDisp >= 1;
           return (
           <TableRow key={l.id}>
             <TableCell className="align-top whitespace-normal">
@@ -95,13 +98,13 @@ export function ItensTable({
             <TableCell
               className={`text-right tabular-nums ${zoneClass}`}
               title={temSplit
-                ? `Estoque efetivo ${estoque.toFixed(0)} = ${Number(fisico).toFixed(0)} físico (saldo Omie) + ${Number(aCaminho).toFixed(0)} a caminho (pendente de entrada + em trânsito). O motor compara o efetivo com o ponto de pedido.`
+                ? `Estoque efetivo ${efetivoDisp} = ${fisicoDisp} físico (saldo Omie) + ${aCaminhoDisp} a caminho (pendente de entrada + em trânsito). O motor compara o efetivo com o ponto de pedido.`
                 : undefined}
             >
               {estoque.toFixed(0)}
               {temSplit && (
                 <div className="text-[10px] font-normal text-muted-foreground leading-tight">
-                  {Number(fisico).toFixed(0)} + {Number(aCaminho).toFixed(0)} a caminho
+                  {fisicoDisp} + {aCaminhoDisp} a caminho
                 </div>
               )}
             </TableCell>

@@ -113,4 +113,16 @@ describe('ItensTable', () => {
     setup({ podeEditar: false, linhas: [linha({ estoque_atual: 5, estoque_fisico: null, estoque_a_caminho: null })] });
     expect(screen.queryByText(/a caminho/)).toBeNull();
   });
+
+  it('[P2] estoque fracionário: a soma da sublinha FECHA no efetivo exibido (não "3 = 3 + 1")', () => {
+    // efetivo 3,4 (→3) = físico 2,6 + a caminho 0,8 (→1). Físico exibido é DERIVADO: 3−1=2.
+    setup({ podeEditar: false, linhas: [linha({ estoque_atual: 3.4, estoque_fisico: 2.6, estoque_a_caminho: 0.8 })] });
+    expect(screen.getByText('2 + 1 a caminho')).toBeTruthy(); // 2+1=3 fecha; NÃO mostra "3 + 1"
+    expect(screen.queryByText(/3 \+ 1 a caminho/)).toBeNull();
+  });
+
+  it('[P2] a-caminho que arredonda pra 0 não vira sublinha "0 a caminho"', () => {
+    setup({ podeEditar: false, linhas: [linha({ estoque_atual: 2.4, estoque_fisico: 2.0, estoque_a_caminho: 0.4 })] });
+    expect(screen.queryByText(/a caminho/)).toBeNull();
+  });
 });
