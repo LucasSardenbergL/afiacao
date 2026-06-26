@@ -148,8 +148,11 @@ O build **carimba o commit no bundle** (`vite.config` → `define __COMMIT_SHA__
 - **Agendar** (cron de sistema, sem gastar Claude): `*/30 * * * * cd <repo> && bash .../monitor-deploy.sh
   >> ~/.config/afiacao/deploy-monitor.log 2>&1` (exit 3/4 = avisar; combine com `osascript`/email).
 
-⚠️ O carimbo só vale a partir do **1º Publish que inclua o `vite.config` novo** — e depende de o build do
-Lovable ter `.git` (senão o SHA vira `"dev"` e o monitor usa a sentinela). Provado local; o ar confirma no 1º Publish.
+⚠️ **Confirmado em prod (2026-06-26):** o ar serve `__BUILD_SHA__="dev"` — o build do Lovable roda **sem
+`.git`**, então o carimbo nunca materializa um SHA real e o caminho determinístico é **inviável neste host**.
+Consequência operacional: o monitor **depende SEMPRE da sentinela** (2º arg) — sem ela, exit 4 ("indeterminado")
+a cada run. E **passe a URL com `https://`**: sem esquema, o `curl` (sem `-L`) volta vazio e o monitor reporta
+falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
 
 ## Referências
 - CLAUDE.md §"Deploy do FRONTEND (app) — Publish MANUAL no Lovable" (a técnica dos bytes; armadilha do chunk de nome inesperado)
@@ -162,5 +165,5 @@ Lovable ter `.git` (senão o SHA vira `"dev"` e o monitor usa a sentinela). Prov
 - [x] `evals/` com classificação de diff (8 casos + runner + mutation-check; espelha `lovable-db-operator/evals`).
 - [x] Domínio canônico `steu.lovable.app` confirmado (HTTP 200).
 - [x] **Edge:** verificação por escada — N1 existência (`verify-edge.sh`, OPTIONS, automático) · N2 versão (Management API, handoff de PAT) · N3 comportamento (probe gated). Fecha a assimetria com o frontend.
-- [x] **Smoke E2E autônomo:** carimbo de SHA no build (`__BUILD_SHA__`) + `monitor-deploy.sh` (cron) compara o ar vs `origin/main`. Provado local; **falta o 1º Publish ativar o carimbo no ar** (e confirmar que o Lovable tem `.git` no build — senão cai pra sentinela).
+- [x] **Smoke E2E autônomo:** carimbo de SHA no build (`__BUILD_SHA__`) + `monitor-deploy.sh` (cron) compara o ar vs `origin/main`. **Exercido em prod 2026-06-26** (pós-Publish do #1065): o carimbo está no ar mas vem `"dev"` (Lovable builda sem `.git`) ⇒ SHA determinístico inviável neste host; **fallback de sentinela validado ponta-a-ponta** (`get_ultimos_precos_cliente` PRESENTE → exit 0). Regra firmada: no cron, **sentinela obrigatória + URL com `https://`** (ver ⚠️ acima).
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
