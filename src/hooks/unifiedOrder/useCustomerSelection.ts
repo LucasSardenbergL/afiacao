@@ -423,11 +423,12 @@ export function useCustomerSelection({
       // seleção. Causava ~40s + preço pulando: o app disparava várias ListarPedidos
       // CONCORRENTES na mesma conta (preço + parcela + histórico×5páginas), o Omie
       // barrava com "Já existe uma requisição desse método" e o callOmieVendasApi
-      // re-tentava 5-15s×3 → empilhava. Agora o preço vem do `sales_price_history`
-      // local (rápido, estável; alimentado pelo app E pelo sync Omie de 2h). A
-      // completude/recência do Omie volta na Fase 2 (chamada atômica account-aware
-      // por data real). A `buscar_ultima_parcela` fica (1 ListarPedidos/conta, já
-      // sem colisão) p/ preservar a sugestão de prazo.
+      // re-tentava 5-15s×3 → empilhava. Agora o preço vem de `order_items` via a RPC
+      // `get_ultimos_precos_cliente` (FONTE DE VERDADE, ordenada por order_date_kpi). NÃO
+      // mais `sales_price_history`: o writer legado omie-analytics-sync (aposentado) poluiu
+      // a sph com created_at = data de CARGA, e a leitura por created_at mascarava o preço
+      // real (456 grupos; migration 20260625120000). A `buscar_ultima_parcela` fica
+      // (1 ListarPedidos/conta, já sem colisão) p/ preservar a sugestão de prazo.
       const settledResults = await Promise.allSettled([
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente, account: 'oben' },
@@ -436,8 +437,7 @@ export function useCustomerSelection({
           body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente, account: 'colacor' },
         }),
         localUserId
-          ? supabase.from('sales_price_history').select('product_id, unit_price, created_at')
-              .eq('customer_user_id', localUserId).order('created_at', { ascending: false })
+          ? supabase.rpc('get_ultimos_precos_cliente', { p_customer: localUserId })
           : Promise.resolve({ data: null }),
         cust.cnpj_cpf
           ? supabase.functions.invoke('omie-vendas-sync', {
@@ -497,7 +497,7 @@ export function useCustomerSelection({
 
       const parcelaOben = getResult<ParcelaResponse>(0);
       const parcelaColacor = getResult<ParcelaResponse>(1);
-      const localPriceResult = getResult<Array<{ product_id: string; unit_price: number; created_at: string }>>(2);
+      const localPriceResult = getResult<Array<{ product_id: string; unit_price: number }>>(2);
       const colacorClientResult = getResult<{
         cliente?: { codigo_cliente?: number | null; codigo_vendedor?: number | null };
       }>(3);
