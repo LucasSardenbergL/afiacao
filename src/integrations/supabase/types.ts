@@ -7766,7 +7766,9 @@ export type Database = {
           criado_em: string | null
           desconto_perc_aplicado: number | null
           economia_estimada_valor: number | null
+          estoque_a_caminho: number | null
           estoque_atual: number | null
+          estoque_fisico: number | null
           estoque_maximo: number | null
           id: number
           modo_promocao: string | null
@@ -7788,7 +7790,9 @@ export type Database = {
           criado_em?: string | null
           desconto_perc_aplicado?: number | null
           economia_estimada_valor?: number | null
+          estoque_a_caminho?: number | null
           estoque_atual?: number | null
+          estoque_fisico?: number | null
           estoque_maximo?: number | null
           id?: number
           modo_promocao?: string | null
@@ -7810,7 +7814,9 @@ export type Database = {
           criado_em?: string | null
           desconto_perc_aplicado?: number | null
           economia_estimada_valor?: number | null
+          estoque_a_caminho?: number | null
           estoque_atual?: number | null
+          estoque_fisico?: number | null
           estoque_maximo?: number | null
           id?: number
           modo_promocao?: string | null
