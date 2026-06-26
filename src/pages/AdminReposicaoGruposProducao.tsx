@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { eqInt, ilike, orFilter } from "@/lib/postgrest";
+import { eqInt, ilike, isSearchablePostgrestTerm, orFilter } from "@/lib/postgrest";
 import { toast } from "sonner";
 import { Plus, Factory } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -71,8 +71,10 @@ export default function AdminReposicaoGruposProducao() {
         .eq("ativo", true);
 
       if (filtroFornecedor !== ALL) q = q.eq("fornecedor_nome", filtroFornecedor);
-      if (busca.trim()) {
-        const t = busca.trim();
+      // Termo só-wildcard sanitiza pra vazio → o ilike do `.or()` viraria match-all (#1062);
+      // o eqInt já cairia em `eq.0` (inerte). Não-pesquisável = pula o filtro (lista base).
+      const t = busca.trim();
+      if (isSearchablePostgrestTerm(t)) {
         q = q.or(orFilter(ilike("sku_descricao", t), eqInt("sku_codigo_omie", t)));
       }
 

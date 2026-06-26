@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { eqInt, ilike, ilikeOr, orFilter } from "@/lib/postgrest";
+import { eqInt, ilike, ilikeOr, isSearchablePostgrestTerm, orFilter } from "@/lib/postgrest";
 import { toast } from "sonner";
 import { Check, Sparkles, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,9 @@ export function MapeamentoStatusCell({
     const t = setTimeout(async () => {
       setSearching(true);
       const term = searchQuery.trim();
+      // só-wildcard (`**`) sanitiza pra vazio → o ilike do `.or()` viraria match-all (#1062);
+      // busca pura: não-pesquisável = sem resultados (número sobrevive, segue pelo ramo isNumeric).
+      if (!isSearchablePostgrestTerm(term)) { setSearchResults([]); setSearching(false); return; }
       // Busca por descrição OU código OU sku omie (numérico). account no banco é lowercase.
       const isNumeric = /^\d+$/.test(term);
       type OmieSearchRow = { omie_codigo_produto: number; descricao: string; codigo: string };

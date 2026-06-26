@@ -3,6 +3,7 @@ import {
   sanitizeForPostgrestOr,
   sanitizeIlikeTerm,
   ilikeContainsPattern,
+  isSearchablePostgrestTerm,
   ilike,
   ilikeOr,
   eqInt,
@@ -148,6 +149,66 @@ describe('ilikeContainsPattern', () => {
   });
 });
 
+// Gate do contexto `.or()`: o análogo do `ilikeContainsPattern→null` do .ilike() único.
+// `ilikeOr`/`ilike`/`orFilter(...ilike...)` NÃO se defendem do termo só-de-wildcards
+// (vide hazard nos describes de ilikeOr/ilike abaixo) — quem decide aplicar ou não o
+// `.or()` é o caller, e isto responde "tem termo pesquisável?". A condição degenerada é
+// EXATAMENTE `sanitizeForPostgrestOr(term) === ''` (= match-all `%%`), cobrindo as 3 formas
+// de `.or()` com ilike de uma vez (ilikeOr puro · ilike único · orFilter eqInt+ilike misto).
+describe('isSearchablePostgrestTerm', () => {
+  it('termo com conteúdo real → true (texto, acento, número p/ shape eqInt+ilike)', () => {
+    expect(isSearchablePostgrestTerm('tinta')).toBe(true);
+    expect(isSearchablePostgrestTerm('abrasivo 120')).toBe(true);
+    expect(isSearchablePostgrestTerm('ção-1.5')).toBe(true);
+    expect(isSearchablePostgrestTerm('42')).toBe(true);
+    expect(isSearchablePostgrestTerm('007')).toBe(true);
+  });
+
+  it('conteúdo + metacaractere no meio → true (sobra texto: a%b → ab)', () => {
+    // O gate só barra o caso DEGENERADO (sanitiza pra vazio); termo com qualquer conteúdo
+    // real sobrevive — o `*`/`%` do meio vira literal e a busca continua.
+    expect(isSearchablePostgrestTerm('a%b')).toBe(true);
+    expect(isSearchablePostgrestTerm('4*2')).toBe(true);
+  });
+
+  it('input só-de-metacaracteres do .or() → false (o caso degenerado) — derivado da gramática', () => {
+    // Cada metacaractere que sanitizeForPostgrestOr strippa, sozinho, colapsa pra vazio.
+    // Itera META (não payload escolhido a dedo): esquecer qualquer um faz o laço falhar.
+    for (const ch of META) expect(isSearchablePostgrestTerm(ch)).toBe(false);
+    for (const s of ['**', '%%', '%_*', '()', '(),', '*,()', '%,(', META.join('')]) {
+      expect(isSearchablePostgrestTerm(s)).toBe(false);
+    }
+  });
+
+  it('vírgula/parênteses-só → false (usa sanitizeForPostgrestOr, NÃO sanitizeIlikeTerm)', () => {
+    // Falsificação embutida: sanitizeIlikeTerm PRESERVA , ( ) " — se o helper usasse ELE,
+    // `(),` sobreviveria como '(),' (≠ vazio) e isto viraria true. O contexto .or() parseia
+    // esses chars, então têm que zerar → false.
+    expect(isSearchablePostgrestTerm('(),')).toBe(false);
+    expect(isSearchablePostgrestTerm(',,,')).toBe(false);
+    expect(isSearchablePostgrestTerm('"\\"')).toBe(false);
+  });
+
+  it('string vazia → false', () => {
+    expect(isSearchablePostgrestTerm('')).toBe(false);
+  });
+
+  it('contrato gate⟺hazard: false ⟺ ilikeOr/ilike colapsariam pro %% (match-all)', () => {
+    // Liga o gate ao hazard: quando false, o predicado que o caller DEIXA de aplicar seria
+    // o match-all degenerado; quando true, sobra conteúdo e não há `%%`.
+    const cols = ['a', 'b'];
+    for (const t of ['*', '%%', '**', '(),', '']) {
+      expect(isSearchablePostgrestTerm(t)).toBe(false);
+      expect(ilikeOr(cols, t)).toBe('a.ilike.%%,b.ilike.%%');
+      expect(ilike('a', t)).toBe('a.ilike.%%');
+    }
+    for (const t of ['tinta', '42', 'a%b']) {
+      expect(isSearchablePostgrestTerm(t)).toBe(true);
+      expect(ilikeOr(cols, t)).not.toContain('.ilike.%%');
+    }
+  });
+});
+
 describe('ilike', () => {
   it('monta col.ilike.%termo%', () => {
     expect(ilike('nome', 'abc')).toBe('nome.ilike.%abc%');
@@ -156,6 +217,13 @@ describe('ilike', () => {
   it('sanitiza o termo sem quebrar a estrutura', () => {
     expect(ilike('nome', 'a,b')).toBe('nome.ilike.%ab%');
     expect(ilike('nome', 'x,id.gt.0')).toBe('nome.ilike.%xid.gt.0%');
+  });
+
+  it('HAZARD: termo só-wildcard colapsa pro %% (match-all) — caller deve gatear com isSearchablePostgrestTerm', () => {
+    // ilike() não se defende sozinho: `*`/`()` sanitizam pra vazio → `col.ilike.%%`, que
+    // dentro do `.or()` casa todo valor não-nulo da coluna. A defesa vive no gate do caller.
+    expect(ilike('a', '*')).toBe('a.ilike.%%');
+    expect(ilike('a', '()')).toBe('a.ilike.%%');
   });
 });
 
@@ -173,6 +241,14 @@ describe('ilikeOr', () => {
 
   it('lista de colunas vazia → string vazia', () => {
     expect(ilikeOr([], 'abc')).toBe('');
+  });
+
+  it('HAZARD: termo só-wildcard colapsa cada cláusula pro %% (match-all) — caller deve gatear', () => {
+    // `*`/`%%`/`**` → cada coluna vira `col.ilike.%%` = match-all dos não-nulos dentro do
+    // `.or()`. ilikeOr não se defende; a defesa é o gate `isSearchablePostgrestTerm` no caller
+    // (espelha o ilikeContainsPattern→null que o #1062 usou no .ilike() único).
+    expect(ilikeOr(['a', 'b'], '*')).toBe('a.ilike.%%,b.ilike.%%');
+    expect(ilikeOr(['a', 'b'], '%%')).toBe('a.ilike.%%,b.ilike.%%');
   });
 });
 

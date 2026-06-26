@@ -26,6 +26,23 @@ export function sanitizeForPostgrestOr(input: string): string {
 }
 
 /**
+ * `true` quando `term` ainda tem conteúdo após `sanitizeForPostgrestOr` — i.e. gera um predicado
+ * `.or()` de ILIKE útil. `false` no caso DEGENERADO: termo vazio OU só-de-metacaracteres do `.or()`
+ * (`*`, `%%`, `**`, `(),`…), em que `ilikeOr`/`ilike` colapsariam pra `col.ilike.%%` = match-all dos
+ * valores não-nulos da coluna. Como o `.or(pred)` não tem como virar no-op por dentro (string vazia
+ * não dropa o filtro), a defesa vive no CALLER, que gateia o `.or()` por isto:
+ *   - lista c/ filtro opcional → `if (isSearchablePostgrestTerm(t)) q = q.or(…)` (senão = lista base)
+ *   - busca pura            → `if (!isSearchablePostgrestTerm(t)) return []` (senão = linhas arbitrárias)
+ * É o análogo, no contexto `.or()`, do `ilikeContainsPattern(t) === null` do `.ilike()` único (#1062);
+ * um booleano (não pattern-or-null) porque a condição degenerada — `sanitizeForPostgrestOr(term)===''`
+ * — é a MESMA pras 3 formas de `.or()` com ilike, inclusive o `orFilter` misto (eqInt+ilike), onde
+ * não há um pattern único a retornar (aí o eqInt vira `eq.0`, inerte, e dropar o `.or()` é correto).
+ */
+export function isSearchablePostgrestTerm(term: string): boolean {
+  return sanitizeForPostgrestOr(term) !== '';
+}
+
+/**
  * Sanitiza um termo pra um `.ilike(coluna, `%${termo}%`)` ÚNICO (fora de `.or()`).
  * Remove só os wildcards do operador LIKE/ILIKE: `%` (qualquer sequência), `_` (um
  * caractere) e `*` — alias de `%` que o PostgREST aceita pra evitar URL-encoding (logo

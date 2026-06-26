@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { ilikeOr } from '@/lib/postgrest';
+import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
 import { useTintPricing, useTintPrices } from '@/hooks/useTintPricing';
 import { selectTintPrice, type TintPriceSource } from '@/lib/tint/select-price';
 import type { Product } from '@/hooks/useUnifiedOrder';
@@ -93,6 +93,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     staleTime: 5 * 60 * 1000,
     enabled: !!skuId && debouncedSearch.length >= 2,
     queryFn: async () => {
+      if (!isSearchablePostgrestTerm(debouncedSearch)) return []; // só-wildcard → match-all (#1062); busca vazia
       const { data } = await supabase
         .from('tint_formulas')
         .select('id, cor_id, nome_cor, preco_final_sayersystem')
@@ -115,6 +116,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     // família e mostra todas as bases vendáveis — nunca esconde a cor em silêncio.
     enabled: !!colorNotFoundInBase,
     queryFn: async (): Promise<{ matches: AlternativePackaging[]; colorExists: boolean }> => {
+      // só-wildcard → `.or()` match-all (#1062); busca vazia não acha cor nenhuma
+      if (!isSearchablePostgrestTerm(debouncedSearch)) return { matches: [], colorExists: false };
       // Search formulas across all SKUs
       const { data: globalFormulas } = await supabase
         .from('tint_formulas')

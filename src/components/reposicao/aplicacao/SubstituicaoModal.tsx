@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { eqInt, ilike, orFilter } from "@/lib/postgrest";
+import { eqInt, ilike, isSearchablePostgrestTerm, orFilter } from "@/lib/postgrest";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,7 +42,8 @@ export function SubstituicaoModal({
   const { data: opcoes } = useQuery({
     queryKey: ["sku-busca", busca],
     queryFn: async () => {
-      if (!busca || busca.length < 2) return [];
+      // só-wildcard (`**`, passa o length>=2) → ilike do `.or()` vira match-all (#1062); busca vazia
+      if (!busca || busca.length < 2 || !isSearchablePostgrestTerm(busca)) return [];
       const { data } = await supabase
         .from("sku_parametros")
         .select("sku_codigo_omie, sku_descricao")
