@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 294
+-- Total de custom migrations: 295
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -313,7 +313,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260624020000', 'tactical_plans_split_rls_escrita', '20260624020000_tactical_plans_split_rls_escrita.sql'),
   ('20260624040000', 'tactical_plan_rpc_hardening_codex', '20260624040000_tactical_plan_rpc_hardening_codex.sql'),
   ('20260624170000', 'recencia_fonte_trigger_backfill', '20260624170000_recencia_fonte_trigger_backfill.sql'),
-  ('20260625120000', 'get_ultimos_precos_cliente', '20260625120000_get_ultimos_precos_cliente.sql')
+  ('20260625120000', 'get_ultimos_precos_cliente', '20260625120000_get_ultimos_precos_cliente.sql'),
+  ('20260626150000', 'data_health_check_pedidos_compra_sync', '20260626150000_data_health_check_pedidos_compra_sync.sql')
 )
 SELECT
   e.version,
@@ -1356,7 +1357,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tactical_plan_rpc_hardening_codex', 'function', 'public', 'registrar_resultado_plano', ''),
   ('recencia_fonte_trigger_backfill', 'function', 'public', 'order_items_herdar_created_at_omie', ''),
   ('recencia_fonte_trigger_backfill', 'trigger', 'public', 'trg_order_items_created_at_omie', 'order_items'),
-  ('get_ultimos_precos_cliente', 'function', 'public', 'get_ultimos_precos_cliente', '')
+  ('get_ultimos_precos_cliente', 'function', 'public', 'get_ultimos_precos_cliente', ''),
+  ('data_health_check_pedidos_compra_sync', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_check_pedidos_compra_sync', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_check_pedidos_compra_sync', 'function', 'public', 'fin_sync_heartbeat', '')
 )
 SELECT
   e.migration,
