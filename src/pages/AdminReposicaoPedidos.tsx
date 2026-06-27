@@ -201,6 +201,23 @@ export default function AdminReposicaoPedidos() {
     }
   };
 
+  // [GATE estoque-não-confirmado] preflight: quantos SKUs ainda estão com estoque do cold-start (fonte_sync=
+  // 'cold_start_seed', não confirmado pelo ListarPosEstoque). A geração vai PULÁ-los (o motor não compra com
+  // estoque seed) — avisa antes do Recalcular p/ o operador rodar o sync se quiser incluí-los. Aproximação
+  // barata (não cruza inventory_position); o gate real (precisão) está na RPC.
+  const { data: naoConfirmadosCount = 0 } = useQuery({
+    queryKey: ['estoque-nao-confirmado', EMPRESA],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from('sku_estoque_atual')
+        .select('*', { count: 'exact', head: true })
+        .eq('empresa', EMPRESA)
+        .eq('fonte_sync', 'cold_start_seed');
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
+
   const gerarMutation = useMutation({
     mutationFn: async () => {
       const { data, error } = await supabase.rpc('gerar_pedidos_sugeridos_ciclo', {
@@ -333,6 +350,17 @@ export default function AdminReposicaoPedidos() {
                   use só se você mudou um parâmetro (ponto de pedido, mínimo forçado etc.).
                 </AlertDialogDescription>
               </AlertDialogHeader>
+              {naoConfirmadosCount > 0 && (
+                <Alert className="border-status-warning/40 bg-status-warning/5">
+                  <AlertTriangle className="h-4 w-4 text-status-warning" />
+                  <AlertTitle className="text-status-warning">Estoque não confirmado pelo sync</AlertTitle>
+                  <AlertDescription>
+                    {naoConfirmadosCount} SKU(s) ainda com estoque do cold-start (catálogo), não confirmado pelo
+                    ListarPosEstoque. A geração vai <strong>pulá-los</strong> (não compra com estoque não confirmado)
+                    e registrá-los. Rode o sync de estoque do Omie antes, se quiser incluí-los neste ciclo.
+                  </AlertDescription>
+                </Alert>
+              )}
               <AlertDialogFooter>
                 <AlertDialogCancel>Voltar</AlertDialogCancel>
                 <AlertDialogAction onClick={() => gerarMutation.mutate()}>Recalcular</AlertDialogAction>
