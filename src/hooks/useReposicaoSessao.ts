@@ -111,12 +111,16 @@ export function useOportunidadesAtivasCount(options?: { enabled?: boolean }) {
   return useQuery<number | null>({
     queryKey: ["oportunidades-ativas-count", REPOSICAO_EMPRESA],
     queryFn: async () => {
-      const { count, error } = await supabase
-        .from("v_oportunidade_economica_hoje")
-        .select("*", { count: "exact", head: true })
-        .eq("empresa", REPOSICAO_EMPRESA);
-      if (error) return null; // degrada honesto: indeterminado, não 0, não throw
-      return count ?? null;
+      // Fase 2: lê o count materializado (MV em private, refresh por cron 2h) através da
+      // view-gate, em vez do count(*) caro (880ms estrutural) da view tempo-real. A tela de
+      // Oportunidades segue tempo-real. Degradação honesta preservada (erro → null, ≠ 0).
+      const { data, error } = await supabase
+        .from("v_oportunidade_economica_hoje_badge_cached")
+        .select("oportunidade_count")
+        .eq("empresa", REPOSICAO_EMPRESA)
+        .maybeSingle();
+      if (error) return null; // indeterminado (≠ 0)
+      return data?.oportunidade_count ?? 0; // sem linha = empresa sem oportunidade = 0 legítimo
     },
     enabled: options?.enabled ?? true,
     staleTime: 30_000,
