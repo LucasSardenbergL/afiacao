@@ -120,6 +120,23 @@ jobs:
               await github.rest.issues.create({ owner, repo, title: '🔴 CI vermelho na main', body, labels: [label] });
             }
 
+      # Fase 2 do Componente 1: quando a main VOLTA a verde, fecha a(s) Issue(s)
+      # ci-main-red abertas (senão a Issue fica órfã e o sinal perde valor). Idempotente:
+      # sem Issue aberta = no-op. success() é false se qualquer step do job falhou.
+      - name: main voltou a verde → fecha Issue ci-main-red
+        if: success() && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const sha = context.sha.slice(0, 8);
+            const label = 'ci-main-red';
+            const open = await github.rest.issues.listForRepo({ owner, repo, state: 'open', labels: label, per_page: 100 });
+            for (const issue of open.data) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: `✅ CI da \`main\` voltou a verde em \`${sha}\`. Fechando automaticamente.` });
+              await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed' });
+            }
+
   # ─── Job NÃO-bloqueante (informativo, sinal próprio) ────────────────
   # Gate de regressão de COBERTURA money-path (≠ os checks do `validate`, que
   # cobrem tipos/comportamento/build/lint). Roda os contratos scripts/mutcheck.d/*.mut
