@@ -16,30 +16,75 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;
 
 const ANALYZE = 'supabase/functions/analyze-unified-order/index.ts';
 const AUDIT = 'supabase/functions/algorithm-a-audit/index.ts';
+const HELPER = 'src/lib/pricing/mergeCustomerPrices.ts';
 
-describe('guardrail money-path: analyze-unified-order (price path)', () => {
+// Extrai o bloco espelhado entre os marcadores-COMENTÁRIO `// MIRROR-START`/`// MIRROR-END` e
+// normaliza (remove `export `, comentários e whitespace) para comparar o helper de src/ × a cópia
+// no edge. O `// ` ancora no comentário-marcador real (a prosa de JSDoc menciona o token sem `//`).
+function mirrorBlock(s: string): string {
+  const m = s.match(/\/\/ MIRROR-START[^\n]*\n([\s\S]*?)\n[^\n]*\/\/ MIRROR-END/);
+  if (!m) throw new Error('bloco // MIRROR-START.../END não encontrado');
+  return m[1]
+    .replace(/\bexport\s+/g, '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith('//'))
+    .join('\n');
+}
+
+// O merge de preço (order_items vence, Omie só preenche gap) foi extraído para um helper puro
+// (src/lib/pricing/mergeCustomerPrices.ts, testado por vitest) e ESPELHADO verbatim no edge,
+// porque o Deno do edge não importa de src/. Estes testes provam que o edge USA o helper (não
+// só que tem os gates) e que a cópia NÃO divergiu — a canária {canary:true} fecha o ciclo
+// provando o comportamento DEPLOYADO. Ver docs/agent/money-path.md (§ "Helper espelhado").
+describe('guardrail money-path: analyze-unified-order USA o helper de merge de preço', () => {
   const src = read(ANALYZE);
+  const helper = read(HELPER);
 
-  it('sentinela: leu o arquivo real do edge', () => {
-    // pega CWD errado / arquivo movido (que passaria falso nos "não contém").
-    expect(src).toContain('Merge Omie prices');
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
     expect(src).toContain('priceMap');
+    expect(src).toContain('mergeCustomerPrices');
+    expect(helper).toContain('mergeCustomerPrices');
   });
 
-  it('Omie é FALLBACK, não override: gate `&& !priceMap[productId]` nos 2 loops de merge', () => {
+  it('o helper puro existe e exporta mergeCustomerPrices + isValidUnitPrice', () => {
+    expect(helper).toMatch(/export function mergeCustomerPrices/);
+    expect(helper).toMatch(/export function isValidUnitPrice/);
+  });
+
+  it('o edge USA o helper: define o espelho E o chama (não só define)', () => {
+    expect(src, 'edge não define mais o helper espelhado').toMatch(/function mergeCustomerPrices/);
+    expect(src, 'REGRESSÃO: edge não chama mais mergeCustomerPrices — voltou à lógica inline?')
+      .toMatch(/priceMap\s*=\s*mergeCustomerPrices\(/);
     expect(
-      count(src, '&& !priceMap[productId]'),
-      'o fallback do Omie sumiu (revertido p/ override?) — ver docs/agent/deploy.md',
+      count(src, 'mergeCustomerPrices'),
+      'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
     ).toBeGreaterThanOrEqual(2);
   });
 
-  it('NÃO tem o marcador do override revertido', () => {
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlock(src),
+      'edge divergiu do helper de src/ — o Lovable reescreveu o merge no deploy?',
+    ).toBe(mirrorBlock(helper));
+  });
+
+  it('Omie é FALLBACK, não override: o helper preserva o gate de gap `!(… in priceMap)`', () => {
+    expect(
+      mirrorBlock(helper),
+      'sumiu o gate de gap — Omie voltaria a sobrescrever order_items (override)',
+    ).toMatch(/!\(\s*\w+\s+in\s+priceMap\s*\)/);
     expect(src).not.toContain('// Omie overrides local');
   });
 
   it('NÃO lê sales_price_history no price path (lê order_items, fonte de verdade)', () => {
     expect(src).not.toContain('from("sales_price_history")');
     expect(src).not.toContain("from('sales_price_history')");
+  });
+
+  it('canária comportamental {canary:true} prova o merge DEPLOYADO (123 local vence 999 Omie)', () => {
+    expect(src, 'canária {canary:true} ausente — sem prova do comportamento deployado').toContain('canary');
+    expect(src, 'canária sem o valor esperado 123 — não prova local-vence-Omie').toMatch(/expected[^0-9]*123/);
   });
 });
 
