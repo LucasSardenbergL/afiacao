@@ -1,0 +1,90 @@
+name: Lovable watch
+
+# Componente 2 do design de mitigação de reversão do Lovable. O bot do Lovable
+# (gpt-engineer-app[bot]) commita DIRETO na main sem PR/CI e às vezes reverte
+# correções money-path que COMPILAM (o CI passa) — invisíveis até virar sintoma
+# operacional (incidente #1076). Este workflow torna cada commit-DIRETO (não-PR)
+# que toca path SENSÍVEL um evento observável (abre/atualiza Issue), mesmo com o
+# CI verde. NÃO bloqueia (não dá: o commit já está na main) — só sinaliza.
+# Spec: docs/superpowers/specs/2026-06-26-lovable-revert-mitigation-design.md
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2 # precisa de HEAD^ p/ o diff do commit
+
+      - name: Detecta commit-direto tocando path sensível
+        id: scan
+        run: |
+          set -euo pipefail
+          msg="$(git log -1 --pretty=%s)"
+          # Merge de PR (auto-merge squash) termina em "(#NNN)" → passou pelo CI gate, ignora.
+          if printf '%s' "$msg" | grep -qE '\(#[0-9]+\)[[:space:]]*$'; then
+            echo "sensivel=false" >> "$GITHUB_OUTPUT"
+            echo "Commit via PR — ignorando."
+            exit 0
+          fi
+          # Paths sensíveis: edges, types gerados, e os módulos money-path.
+          patterns='^supabase/functions/|^src/integrations/supabase/types\.ts$|^src/lib/reposicao/|^src/lib/custo/'
+          changed="$(git diff --name-only HEAD^ HEAD || true)"
+          hit="$(printf '%s\n' "$changed" | grep -E "$patterns" || true)"
+          if [ -z "$hit" ]; then
+            echo "sensivel=false" >> "$GITHUB_OUTPUT"
+            echo "Commit-direto, mas não tocou path sensível."
+            exit 0
+          fi
+          echo "sensivel=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "arquivos<<EOF"
+            printf '%s\n' "$hit"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Alerta → GitHub Issue
+        if: steps.scan.outputs.sensivel == 'true'
+        uses: actions/github-script@v7
+        env:
+          ARQUIVOS: ${{ steps.scan.outputs.arquivos }}
+        with:
+          script: |
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const sha = context.sha.slice(0, 8);
+            const head = context.payload.head_commit || {};
+            const msg = (head.message || '').split('\n')[0];
+            const author = (head.author && head.author.name) || context.actor;
+            const arquivos = (process.env.ARQUIVOS || '').trim();
+            const commitUrl = `${context.serverUrl}/${owner}/${repo}/commit/${context.sha}`;
+            const label = 'lovable-touched-sensitive';
+            try {
+              await github.rest.issues.createLabel({ owner, repo, name: label, color: 'fbca04', description: 'Commit direto (sem PR) tocou path money-path/sensível' });
+            } catch (e) { /* label já existe */ }
+            const body = [
+              '⚠️ **Commit direto na `main` (sem PR) tocou arquivo sensível.**',
+              '',
+              `- Commit: [\`${sha}\`](${commitUrl}) — ${msg}`,
+              `- Autor: ${author}`,
+              '- Arquivos sensíveis tocados:',
+              '```',
+              arquivos,
+              '```',
+              '',
+              'Pode ser uma reversão do Lovable que COMPILA (o CI passa verde). **Revise o diff** — se reverteu correção money-path, restaure (`docs/agent/deploy.md` → restauração rápida).',
+            ].join('\n');
+            const open = await github.rest.issues.listForRepo({ owner, repo, state: 'open', labels: label, per_page: 1 });
+            if (open.data.length > 0) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: open.data[0].number, body });
+            } else {
+              await github.rest.issues.create({ owner, repo, title: '⚠️ Commit direto tocou path sensível na main', body, labels: [label] });
+            }
