@@ -15,16 +15,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 3. Cole TODO o conteúdo de `scripts/audit-custom-migrations.sql`
 4. **Run** (read-only, não altera nada)
 5. Você verá DUAS tabelas:
-   - **Section 1** — timestamps em `supabase_migrations.schema_migrations` (source of truth do Supabase)
+   - **Section 1** — status reconciliado por migration: ✅ registrado · 🟡 aplicado-sem-registro (OK) · ⚠️ parcial · ❌ não-aplicado · ⚪ sem objeto rastreável
    - **Section 2** — existência objeto-a-objeto via `pg_catalog`/`information_schema`
-6. Filtre linhas com `❌` → essas são as migrations que precisam apply manual
+6. **🟡 é normal** (o Lovable não registra nome custom — a migration ESTÁ aplicada). Os acionáveis são **❌ / ⚠️**: migration commitada cujos objetos não existem em prod → investigar apply pendente ou obsolescência.
 
 ## Resumo
 
-- **300** custom migrations totais
-- **1039** objetos esperados (criados por estas migrations)
+- **303** custom migrations totais
+- **1040** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 303
+  - `function`: 304
   - `rls_policy`: 222
   - `index`: 187
   - `table`: 110
@@ -2546,14 +2546,35 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.reposicao_cold_start_parametros` | — |
 
+### `20260627132029_reposicao_embalagem_motor_galao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260627150000_tint_formulas_rls_initplan.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260627150100_tint_formulas_autovacuum_agressivo.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260627170000_reposicao_rls_initplan.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
-## Próximos passos quando algo der `❌`
+## Próximos passos por status
 
-1. Abra a migration correspondente em `supabase/migrations/<arquivo>.sql`
-2. Copie o SQL inteiro
-3. Supabase SQL Editor → cole → Run
-4. Re-rode `scripts/audit-custom-migrations.sql` pra confirmar que virou `✅`
-5. (Opcional) `INSERT INTO supabase_migrations.schema_migrations (version, statements) VALUES ('<timestamp>', ARRAY['<sql>']);` pra registrar como aplicada (evita re-apply futura)
+**❌ NÃO aplicado / ⚠️ PARCIAL** (objetos faltam em prod — o caso que importa):
+1. Veja na Section 2 QUAIS objetos da migration estão `❌`
+2. Confirme se é apply pendente (→ aplicar) OU objeto removido/renomeado por migration posterior (→ obsoleto, pode expurgar do inventário)
+3. Se for aplicar: abra `supabase/migrations/<arquivo>.sql` → SQL Editor → cole → Run → re-rode o audit
+
+**🟡 aplicado (sem registro)** — opcional, só pra deixar a Section 1 toda ✅. Use registro GUARDADO por existência (não cria falso-verde):
+```sql
+INSERT INTO supabase_migrations.schema_migrations (version, name, statements)
+SELECT '<timestamp>', '<slug>', ARRAY['-- registro retroativo (aplicado via Lovable)']
+WHERE EXISTS ( /* um objeto da migration, ex: SELECT 1 FROM pg_proc WHERE proname = '<func>' */ )
+ON CONFLICT (version) DO NOTHING;
+```

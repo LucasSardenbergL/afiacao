@@ -676,6 +676,74 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   } catch { return false; }
 }
 
+// ─── Observabilidade em fin_sync_log (best-effort; NUNCA derruba o sync) ───
+// Rastreabilidade independente do orquestrador: action LIKE 'sync_%' + companies em
+// minúsculo (ex.: ['oben']) → o fin_sync_watchdog_check (*/30) JÁ reclassifica órfã
+// 'running' (>30min) e alerta sync_error (≥2 falhas consecutivas) SEM mudar o watchdog.
+// Como a edge completa em BACKGROUND além do abort de 25s do orquestrador, o completeSync
+// roda no fim REAL (registra 'complete' de verdade); se a edge morrer antes (guard interno),
+// a órfã 'running' é o sinal confiável de morte. Erro PARCIAL fica em results (NÃO vira
+// status 'error' — evita alerta falso); só falha FATAL marca 'error'.
+// empresa REAL sincronizada (espelha getCredentials: OBEN só se exatamente OBEN,
+// senão COLACOR) → companies em minúsculo, sempre no conjunto que o watchdog varre.
+function empresaParaLog(e: string): string {
+  return e.toUpperCase() === "OBEN" ? "oben" : "colacor";
+}
+
+async function logSync(
+  db: SupabaseClient,
+  action: string,
+  companies: string[],
+  triggeredBy: string,
+): Promise<string> {
+  try {
+    // supabase-js NÃO lança em erro PostgREST — retorna { error }. Checar explícito,
+    // senão um insert barrado por RLS/quota/schema some silencioso (logId vazio).
+    const { data, error } = await db
+      .from("fin_sync_log")
+      .insert({ action, companies, status: "running", triggered_by: triggeredBy, started_at: new Date().toISOString() })
+      .select("id")
+      .single();
+    if (error) {
+      console.error("[sync-nfes] logSync erro PostgREST (segue sem log):", error.message);
+      return "";
+    }
+    return (data as { id?: string } | null)?.id ?? "";
+  } catch (e) {
+    console.error("[sync-nfes] logSync exceção (segue sem log):", e instanceof Error ? e.message : e);
+    return "";
+  }
+}
+
+async function completeSync(
+  db: SupabaseClient,
+  logId: string,
+  results: Record<string, unknown>,
+  errorMsg: string | undefined,
+  duracaoMs: number,
+): Promise<void> {
+  if (!logId) return;
+  try {
+    const { error } = await db
+      .from("fin_sync_log")
+      .update({
+        status: errorMsg ? "error" : "complete",
+        results,
+        error_message: errorMsg ?? null,
+        duracao_ms: duracaoMs,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", logId);
+    if (error) {
+      // update que falha deixa a linha 'running' → vira órfã 'error' no watchdog.
+      // Não dá pra recuperar aqui, mas registra a causa nos logs da edge.
+      console.error("[sync-nfes] completeSync erro PostgREST (linha fica 'running'):", error.message);
+    }
+  } catch (e) {
+    console.error("[sync-nfes] completeSync exceção (best-effort):", e instanceof Error ? e.message : e);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -684,6 +752,11 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const t0 = Date.now();
+  // cron = x-cron-secret (cron diário direto) OU service-role (via orquestrador omie-cron-diario,
+  // que chama as edges com Bearer SERVICE_ROLE, sem repassar o x-cron-secret). user JWT (staff) = manual.
+  const svcKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const triggeredBy = (req.headers.get("x-cron-secret") ||
+    (svcKey && req.headers.get("Authorization") === `Bearer ${svcKey}`)) ? "cron" : "manual";
 
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
@@ -719,6 +792,7 @@ Deno.serve(async (req) => {
 
     const summary: EmpresaSummary[] = [];
     for (const empresa of empresas) {
+      const empLogId = await logSync(supabase, "sync_nfes_recebidas", [empresaParaLog(empresa)], triggeredBy);
       try {
         let s: EmpresaSummary;
         if (apenasBackfill) {
@@ -760,9 +834,16 @@ Deno.serve(async (req) => {
         }
 
         summary.push(s);
+        // Rate-limit/Omie TOTAL (0 NFes processadas COM erro) é falha real, não "nada
+        // novo" → marca 'error' p/ o Sentinela ver; erro PARCIAL fica em results (complete).
+        const falhaSistemica = s.erros > 0 && s.nfes_processadas === 0
+          ? `0 NFes processadas com ${s.erros} erro(s) — rate-limit/Omie?`
+          : undefined;
+        await completeSync(supabase, empLogId, s as unknown as Record<string, unknown>, falhaSistemica, Date.now() - t0);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[sync-nfes] ${empresa} erro fatal: ${msg}`);
+        await completeSync(supabase, empLogId, {}, msg, Date.now() - t0);
         summary.push({
           empresa,
           nfes_processadas: 0,

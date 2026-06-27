@@ -11,7 +11,7 @@
 //   3) Para cada item, tenta achar o pedido específico via numero_contrato_fornecedor = nNumPedCompra.
 //   4) UPSERT em sku_leadtime_history (tracking_id, sku_codigo_omie).
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 interface OmieItemCabec {
   nIdProduto?: number | string;
@@ -227,6 +227,74 @@ async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   } catch { return false; }
 }
 
+// ─── Observabilidade em fin_sync_log (best-effort; NUNCA derruba o sync) ───
+// Rastreabilidade independente do orquestrador: action LIKE 'sync_%' + companies em
+// minúsculo (ex.: ['oben']) → o fin_sync_watchdog_check (*/30) JÁ reclassifica órfã
+// 'running' (>30min) e alerta sync_error (≥2 falhas consecutivas) SEM mudar o watchdog.
+// Como a edge completa em BACKGROUND além do abort de 25s do orquestrador, o completeSync
+// roda no fim REAL (registra 'complete' de verdade); se a edge morrer antes (guard interno),
+// a órfã 'running' é o sinal confiável de morte. Erro PARCIAL fica em results (NÃO vira
+// status 'error' — evita alerta falso); só falha FATAL marca 'error'.
+// empresa REAL sincronizada (espelha getCredentials: OBEN só se exatamente OBEN,
+// senão COLACOR) → companies em minúsculo, sempre no conjunto que o watchdog varre
+// (provado: o watchdog compara case-sensitive contra ['oben','colacor','colacor_sc']).
+function empresaParaLog(e: string): string {
+  return e.toUpperCase() === "OBEN" ? "oben" : "colacor";
+}
+
+async function logSync(
+  db: SupabaseClient,
+  action: string,
+  companies: string[],
+  triggeredBy: string,
+): Promise<string> {
+  try {
+    // supabase-js NÃO lança em erro PostgREST — retorna { error }. Checar explícito,
+    // senão um insert barrado por RLS/quota/schema some silencioso (logId vazio).
+    const { data, error } = await db
+      .from("fin_sync_log")
+      .insert({ action, companies, status: "running", triggered_by: triggeredBy, started_at: new Date().toISOString() })
+      .select("id")
+      .single();
+    if (error) {
+      console.error("[sync-sku-items] logSync erro PostgREST (segue sem log):", error.message);
+      return "";
+    }
+    return (data as { id?: string } | null)?.id ?? "";
+  } catch (e) {
+    console.error("[sync-sku-items] logSync exceção (segue sem log):", e instanceof Error ? e.message : e);
+    return "";
+  }
+}
+
+async function completeSync(
+  db: SupabaseClient,
+  logId: string,
+  results: Record<string, unknown>,
+  errorMsg: string | undefined,
+  duracaoMs: number,
+): Promise<void> {
+  if (!logId) return;
+  try {
+    const { error } = await db
+      .from("fin_sync_log")
+      .update({
+        status: errorMsg ? "error" : "complete",
+        results,
+        error_message: errorMsg ?? null,
+        duracao_ms: duracaoMs,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", logId);
+    if (error) {
+      // update que falha deixa a linha 'running' → vira órfã 'error' no watchdog.
+      console.error("[sync-sku-items] completeSync erro PostgREST (linha fica 'running'):", error.message);
+    }
+  } catch (e) {
+    console.error("[sync-sku-items] completeSync exceção (best-effort):", e instanceof Error ? e.message : e);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -235,19 +303,25 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const startedAt = Date.now();
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+  let logId = "";
+  // cron = x-cron-secret (cron diário direto) OU service-role (via orquestrador omie-cron-diario,
+  // que chama as edges com Bearer SERVICE_ROLE, sem repassar o x-cron-secret). user JWT (staff) = manual.
+  const svcKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const triggeredBy = (req.headers.get("x-cron-secret") ||
+    (svcKey && req.headers.get("Authorization") === `Bearer ${svcKey}`)) ? "cron" : "manual";
 
   try {
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
-
     const body: RequestBody = await req.json().catch(() => ({}));
     const empresa: Empresa = (body.empresa ?? "OBEN") as Empresa;
     const dias = Math.max(1, Math.min(365, body.dias ?? 30));
     const fornecedorFiltro = body.fornecedor_codigo_omie ?? null;
 
     const { app_key, app_secret } = getCredentials(empresa);
+    logId = await logSync(supabase, "sync_sku_items", [empresaParaLog(empresa)], triggeredBy);
 
     const cutoffIso = new Date(Date.now() - dias * 86_400_000).toISOString();
 
@@ -420,6 +494,12 @@ Deno.serve(async (req) => {
     }
 
     summary.skus_distintos = skusVistos.size;
+    // Rate-limit Omie total: havia NFes a processar mas NENHUMA consulta teve sucesso
+    // → falha real (não "nada novo") → marca 'error'. Erro parcial fica em results.
+    const falhaSistemica = summary.nfes_processadas > 0 && summary.consultas_detalhadas === 0
+      ? `${summary.nfes_processadas} NFes mas 0 consultas Omie OK — rate-limit?`
+      : undefined;
+    await completeSync(supabase, logId, summary as unknown as Record<string, unknown>, falhaSistemica, Date.now() - startedAt);
 
     return new Response(
       JSON.stringify({
@@ -431,6 +511,7 @@ Deno.serve(async (req) => {
     );
   } catch (e) {
     console.error("[sync-sku-items] erro fatal:", e);
+    await completeSync(supabase, logId, {}, e instanceof Error ? e.message : String(e), Date.now() - startedAt);
     return new Response(
       JSON.stringify({
         ok: false,

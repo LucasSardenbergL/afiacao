@@ -6,6 +6,11 @@
 // Doc: https://app.omie.com.br/api/v1/produtos/pedidocompra/#PesquisarPedCompra
 
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  computeJanelaPrevisao,
+  deveRodarCompleto,
+  type ModoSyncPedidos,
+} from "../_shared/janela-pedidos-compra.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -36,9 +41,10 @@ const MAX_RETRIES = 3;
 // (b) JANELA — dDataInicial/dDataFinal do PesquisarPedCompra filtram pela DATA DE PREVISÃO DE ENTREGA
 //     (dDtPrevisao), NÃO pela criação (provado no #1072, mesmo PO 1085). Com dDataFinal=hoje, todo pedido com
 //     entrega FUTURA (= recém-feito, dentro do lead time) sumia. A janela cobre previsões PASSADAS e FUTURAS.
-const JANELA_PASSADO_DIAS = 365;      // previsão atrasada: PO aberto não-recebido com entrega já vencida
-const JANELA_PASSADO_MAX_DIAS = 1095; // teto do override `dias` (backfill manual) — 3 anos; evita janela absurda
-const JANELA_FUTURO_DIAS = 120;       // previsão à frente: pedido em trânsito dentro do lead time
+// [on-order jun/2026] Janela de previsão (passado por MODO, FUTURO fixo) extraída p/ helper PURO testado + espelhado
+// byte-idêntico no edge: ../_shared/janela-pedidos-compra.ts (computeJanelaPrevisao). O cron alterna
+// incremental (passado curto, frequente) × completo (passado amplo, ~1×/dia reconcilia atrasados); o FUTURO
+// (+120d) é FIXO — encolher reintroduz o #1072 (some o pedido a caminho do tracking).
 const MAX_PAGINAS = 200;              // teto técnico FATAL anti-loop (a janela ~485d cabe MUITO abaixo disso)
 // fault do Omie que significa "fim legítimo" (sem registros), NÃO erro. Espelho VERBATIM de
 // pendente-entrada-po.ts:FIM_SEM_REGISTROS (testada) via omie-sync-estoque.
@@ -51,6 +57,8 @@ interface RequestBody {
   empresa?: "OBEN" | "COLACOR" | "ALL";
   dias?: number;
   fornecedor_codigo_omie?: number;
+  modo?: ModoSyncPedidos; // override explícito (teste/backfill). cron decide auto; manual default = completo.
+  trigger?: string;       // "cron" quando vem do omie-cron-diario (que NÃO repassa x-cron-secret p/ a filha)
 }
 
 interface EmpresaSummary {
@@ -343,6 +351,7 @@ function fingerprintPagina(pedidos: readonly OmiePedido[]): string {
 async function syncEmpresa(
   supabase: SupabaseClient,
   empresa: Empresa,
+  modo: ModoSyncPedidos,
   dias: number,
   fornecedorCodigo: number | undefined,
 ): Promise<EmpresaSummary> {
@@ -356,22 +365,19 @@ async function syncEmpresa(
   const { app_key, app_secret } = getCredentials(empresa);
 
   const hoje = new Date();
-  // [fix janela] o filtro dDataInicial/dDataFinal do PesquisarPedCompra é por DATA DE PREVISÃO DE ENTREGA
-  // (dDtPrevisao), não por criação. Janela = passado amplo (atrasados não-recebidos) + futuro (a caminho,
-  // dentro do lead time). `dias` (o cron passa 3) só pode AMPLIAR o passado num backfill manual — nunca encolher
-  // abaixo de JANELA_PASSADO_DIAS (à prova de erro: o valor incremental do cron não reintroduz o bug de janela).
-  const passadoDias = Math.min(
-    JANELA_PASSADO_MAX_DIAS,
-    Math.max(JANELA_PASSADO_DIAS, Number.isFinite(dias) ? dias : 0),
-  );
+  // [fix janela #1072] o filtro dDataInicial/dDataFinal do PesquisarPedCompra é por DATA DE PREVISÃO DE
+  // ENTREGA (dDtPrevisao), não por criação. computeJanelaPrevisao (helper testado): passado por MODO
+  // (incremental curto × completo amplo), FUTURO fixo +120d (a caminho, dentro do lead time — encolher o
+  // futuro reintroduz o #1072). `dias` só AMPLIA o passado no modo completo (backfill manual).
+  const { passadoDias, futuroDias } = computeJanelaPrevisao(modo, dias);
   const inicio = new Date();
   inicio.setDate(hoje.getDate() - passadoDias);
   const fimJanela = new Date();
-  fimJanela.setDate(hoje.getDate() + JANELA_FUTURO_DIAS);
+  fimJanela.setDate(hoje.getDate() + futuroDias);
   const dataDe = formatDateBR(inicio);
   const dataAte = formatDateBR(fimJanela);
   console.log(
-    `[sync-pedidos] empresa=${empresa} janela previsão ${dataDe}→${dataAte} (passado ${passadoDias}d, futuro ${JANELA_FUTURO_DIAS}d)`,
+    `[sync-pedidos] empresa=${empresa} modo=${modo} janela previsão ${dataDe}→${dataAte} (passado ${passadoDias}d, futuro ${futuroDias}d)`,
   );
 
   // [fix paginação] PAGINA ATÉ A PÁGINA VAZIA — não confiar em nTotalPaginas (Omie SUB-REPORTA → lia só a 1ª
@@ -514,15 +520,19 @@ async function heartbeatFim(
   // Sucesso (0 erros, mesmo 0 pedidos = janela vazia legítima) → 'complete' COM last_sync_at.
   const falhaTotal = s.pedidos_sincronizados === 0 && s.erros > 0;
   const parcial = s.pedidos_sincronizados > 0 && s.erros > 0;
+  const status = falhaTotal ? "error" : parcial ? "partial" : "complete";
   const row: Record<string, unknown> = {
     entity_type: HEARTBEAT_ENTITY,
     account: s.empresa.toLowerCase(),
-    status: falhaTotal ? "error" : parcial ? "partial" : "complete",
+    status,
     updated_at: nowISO,
     total_synced: s.pedidos_sincronizados,
     error_message: s.erros > 0
       ? (errFatal ?? `${s.erros} erro(s) na coleta, ${s.pedidos_sincronizados} sincronizado(s)`)
       : null,
+    // metadata.modo é só para VISIBILIDADE (incremental×completo). A CADÊNCIA do completo NÃO mora aqui —
+    // vive no marcador dedicado HEARTBEAT_FULL_ENTITY (escrito só por completos bem-sucedidos), p/ não
+    // sofrer lost-update de um incremental concorrente regravando o metadata inteiro (Codex 2026-06-26).
     metadata: { ...meta, finished_at: nowISO, erros: s.erros, total_paginas: s.total_paginas },
   };
   // last_sync_at só avança quando houve progresso (complete/partial). Em falha total, OMITIMOS a coluna
@@ -534,6 +544,56 @@ async function heartbeatFim(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[sync-pedidos] heartbeat fim falhou empresa=${s.empresa}: ${msg}`);
+  }
+}
+
+// Marcador DEDICADO da cadência do completo: entity_type='pedidos_compra_full', account=<empresa>. SÓ um
+// sync COMPLETO bem-sucedido o escreve (idempotente: grava last_sync_at=agora). O incremental NUNCA o toca →
+// imune ao lost-update que um campo no metadata multi-writer sofreria com execuções concorrentes (um
+// incremental atrasado regravaria o metadata inteiro por cima de um completo recente — Codex 2026-06-26).
+const HEARTBEAT_FULL_ENTITY = "pedidos_compra_full";
+
+// Epoch ms do último COMPLETO bem-sucedido (marcador HEARTBEAT_FULL_ENTITY). Best-effort: erro/ausência →
+// null → o cron roda COMPLETO (fail-safe conservador: reconcilia em vez de pular; auto-recupera no próximo
+// completo bom). Lido ANTES de decidir o modo.
+async function lerLastFullAt(supabase: SupabaseClient, empresa: Empresa): Promise<number | null> {
+  try {
+    const { data, error } = await supabase
+      .from("sync_state")
+      .select("last_sync_at")
+      .eq("entity_type", HEARTBEAT_FULL_ENTITY)
+      .eq("account", empresa.toLowerCase())
+      .maybeSingle();
+    if (error) throw error;
+    const raw = (data as { last_sync_at?: string | null } | null)?.last_sync_at;
+    if (!raw) return null;
+    const ms = new Date(raw).getTime();
+    return Number.isFinite(ms) ? ms : null;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[sync-pedidos] lerLastFullAt falhou empresa=${empresa}: ${msg} — assumindo completo`);
+    return null;
+  }
+}
+
+// Carimba o marcador de cadência APÓS um completo bem-sucedido (idempotente). Best-effort — nunca derruba o sync.
+async function marcarCompletoOk(supabase: SupabaseClient, empresa: Empresa): Promise<void> {
+  const nowISO = new Date().toISOString();
+  try {
+    const { error } = await supabase.from("sync_state").upsert(
+      {
+        entity_type: HEARTBEAT_FULL_ENTITY,
+        account: empresa.toLowerCase(),
+        status: "complete",
+        last_sync_at: nowISO,
+        updated_at: nowISO,
+      },
+      { onConflict: "entity_type,account" },
+    );
+    if (error) throw error;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[sync-pedidos] marcarCompletoOk falhou empresa=${empresa}: ${msg}`);
   }
 }
 
@@ -574,54 +634,74 @@ Deno.serve(async (req) => {
 
   const t0 = Date.now();
 
-  try {
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-      return new Response(
-        JSON.stringify({ ok: false, error: "SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausentes" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: { persistSession: false },
-    });
-
-    let body: RequestBody = {};
-    if (req.method === "POST") {
-      try {
-        body = await req.json();
-      } catch {
-        body = {};
-      }
-    }
-
-    const empresaParam = (body.empresa ?? "ALL").toUpperCase() as "OBEN" | "COLACOR" | "ALL";
-    const dias = typeof body.dias === "number" && body.dias > 0 ? body.dias : 30;
-    const fornecedorCodigo = body.fornecedor_codigo_omie;
-
-    const empresas: Empresa[] =
-      empresaParam === "ALL" ? ["OBEN", "COLACOR"] : [empresaParam as Empresa];
-
-    console.log(
-      `[sync-pedidos] início empresas=${empresas.join(",")} dias=${dias} fornecedor=${fornecedorCodigo ?? "todos"}`,
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausentes" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
+  }
 
-    // Heartbeat do Sentinela só em sync ABRANGENTE (sem fornecedor específico) — investigação manual
-    // filtrada por fornecedor não representa o frescor geral e não deve sobrescrever o marcador do cron.
-    const gravaHeartbeat = !fornecedorCodigo;
-    const heartbeatMeta = { trigger: req.headers.get("x-cron-secret") ? "cron" : "manual", dias };
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false },
+  });
 
+  let body: RequestBody = {};
+  if (req.method === "POST") {
+    try {
+      body = await req.json();
+    } catch {
+      body = {};
+    }
+  }
+
+  const empresaParam = (body.empresa ?? "ALL").toUpperCase() as "OBEN" | "COLACOR" | "ALL";
+  const dias = typeof body.dias === "number" && body.dias > 0 ? body.dias : 30;
+  const fornecedorCodigo = body.fornecedor_codigo_omie;
+  // O omie-cron-diario chama a edge filha via service_role e sinaliza o caminho cron pelo BODY (trigger:
+  // "cron") — NÃO repassa x-cron-secret. Detectar cron por header AQUI não funcionava (bug latente do #1081).
+  // NÃO basear em mera PRESENÇA de x-cron-secret (não-validado): isCron só decide MODO+label, não autoriza
+  // (a auth é a authorizeCronOrStaff acima). (Codex challenge 2026-06-26.)
+  const isCron = body.trigger === "cron";
+  const modoExplicito: ModoSyncPedidos | null =
+    body.modo === "incremental" || body.modo === "completo" ? body.modo : null;
+
+  const empresas: Empresa[] =
+    empresaParam === "ALL" ? ["OBEN", "COLACOR"] : [empresaParam as Empresa];
+
+  // Heartbeat do Sentinela só em sync ABRANGENTE (sem fornecedor específico) — investigação manual
+  // filtrada por fornecedor não representa o frescor geral e não deve sobrescrever o marcador do cron.
+  const gravaHeartbeat = !fornecedorCodigo;
+  const triggerLabel = isCron ? "cron" : "manual";
+
+  console.log(
+    `[sync-pedidos] início empresas=${empresas.join(",")} trigger=${triggerLabel} modo=${modoExplicito ?? "auto"} dias=${dias} fornecedor=${fornecedorCodigo ?? "todos"}`,
+  );
+
+  // Trabalho real (loop de empresas) — SÍNCRONO de propósito. O omie-cron-diario aborta o fetch em 25s, mas
+  // a edge segue server-side até terminar (medido ~90s incremental / ~185s completo; teto do worker ~400s) e
+  // cada upsert de página é commitado (provado em prod 2026-06-26). NÃO usar waitUntil/202: responder cedo
+  // soltaria os steps seguintes do orquestrador (nfes/ctes/sku) ANTES do espelho de pedidos existir → linhas
+  // ÓRFÃS (omie-sync-nfes insertOrfa). O modo incremental encurta o background → MENOS sobreposição com esses
+  // steps que ler purchase_orders_tracking (Codex challenge 2026-06-26).
+  const processarTudo = async (): Promise<{ summary: EmpresaSummary[]; falhaTotalGeral: boolean }> => {
     const summary: EmpresaSummary[] = [];
     for (const empresa of empresas) {
-      if (gravaHeartbeat) await heartbeatRunning(supabase, empresa, heartbeatMeta);
+      // Modo por empresa. Override explícito vence; senão: cron decide por last_full_at (incremental ×
+      // completo, robusto a schedule — NÃO por hora); manual default = completo (reconcilia, Codex 2026-06-26).
+      const lastFullAtMs = gravaHeartbeat ? await lerLastFullAt(supabase, empresa) : null;
+      const modo: ModoSyncPedidos = modoExplicito ??
+        (isCron && !deveRodarCompleto(lastFullAtMs, Date.now()) ? "incremental" : "completo");
+      const meta = { trigger: triggerLabel, modo, dias };
+
+      if (gravaHeartbeat) await heartbeatRunning(supabase, empresa, meta);
       let s: EmpresaSummary;
       let errFatal: string | null = null;
       try {
-        s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo);
+        s = await syncEmpresa(supabase, empresa, modo, dias, fornecedorCodigo);
         console.log(
-          `[sync-pedidos] empresa=${empresa} TOTAL: paginas=${s.total_paginas} pedidos=${s.pedidos_sincronizados} erros=${s.erros} duracao=${Date.now() - t0}ms`,
+          `[sync-pedidos] empresa=${empresa} modo=${modo} TOTAL: paginas=${s.total_paginas} pedidos=${s.pedidos_sincronizados} erros=${s.erros} duracao=${Date.now() - t0}ms`,
         );
       } catch (err) {
         errFatal = err instanceof Error ? err.message : String(err);
@@ -629,35 +709,40 @@ Deno.serve(async (req) => {
         s = { empresa, total_paginas: 0, pedidos_sincronizados: 0, erros: 1 };
       }
       summary.push(s);
-      if (gravaHeartbeat) await heartbeatFim(supabase, s, heartbeatMeta, errFatal);
+      if (gravaHeartbeat) await heartbeatFim(supabase, s, meta, errFatal);
+      // Carimba a cadência do completo SÓ quando um COMPLETO terminou LIMPO (erros=0), em marcador dedicado
+      // (HEARTBEAT_FULL_ENTITY — imune a lost-update de incremental concorrente). Falha/parcial/incremental
+      // NÃO avança → o próximo ciclo do cron volta a tentar completo (deveRodarCompleto).
+      if (gravaHeartbeat && modo === "completo" && s.erros === 0) {
+        await marcarCompletoOk(supabase, empresa);
+      }
     }
-
-    // Fail-CLOSED na coleta total: 0 sincronizados em TODAS as empresas + algum erro → não-2xx, para
-    // logs/dashboard do Supabase e chamada DIRETA enxergarem. (Janela vazia legítima = 0 sinc + 0 erros
-    // → 200 ok.) ⚠️ Mascarado pelo orquestrador omie-cron-diario (sempre 200) — a detecção do Sentinela
-    // vem do heartbeat sync_state acima, não deste status HTTP.
+    // Fail-CLOSED na coleta total: 0 sincronizados em TODAS as empresas + algum erro → 502 no caminho
+    // síncrono (chamada manual/direta enxerga). Janela vazia legítima = 0 sinc + 0 erros → 200. ⚠️ No
+    // caminho cron a detecção é o heartbeat sync_state (o omie-cron-diario mascara o status HTTP).
     const algumSucesso = summary.some((x) => x.pedidos_sincronizados > 0);
     const totalErros = summary.reduce((a, x) => a + x.erros, 0);
-    const falhaTotalGeral = !algumSucesso && totalErros > 0;
+    return { summary, falhaTotalGeral: !algumSucesso && totalErros > 0 };
+  };
 
-    return new Response(
-      JSON.stringify({
-        ok: !falhaTotalGeral,
-        duracao_ms: Date.now() - t0,
-        sayerlack: SAYERLACK,
-        summary,
-      }),
-      {
-        status: falhaTotalGeral ? 502 : 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[sync-pedidos] erro fatal:", msg);
-    return new Response(
-      JSON.stringify({ ok: false, error: msg, duracao_ms: Date.now() - t0 }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  }
+  const responderSincrono = async (
+    work: Promise<{ summary: EmpresaSummary[]; falhaTotalGeral: boolean }>,
+  ): Promise<Response> => {
+    try {
+      const { summary, falhaTotalGeral } = await work;
+      return new Response(
+        JSON.stringify({ ok: !falhaTotalGeral, duracao_ms: Date.now() - t0, sayerlack: SAYERLACK, summary }),
+        { status: falhaTotalGeral ? 502 : 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[sync-pedidos] erro fatal:", msg);
+      return new Response(
+        JSON.stringify({ ok: false, error: msg, duracao_ms: Date.now() - t0 }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+  };
+
+  return await responderSincrono(processarTudo());
 });
