@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -35,6 +35,7 @@ import { CiclosAnteriores } from '@/components/reposicao/pedidos/CiclosAnteriore
 import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMinimoButton';
 import { ehGateMinimoFaturamento } from '@/components/reposicao/pedidos/shared';
 import { useAuth } from '@/contexts/AuthContext';
+import { track } from '@/lib/analytics';
 
 type SkuSemFornecedor = {
   sku_codigo_omie: string;
@@ -218,6 +219,29 @@ export default function AdminReposicaoPedidos() {
     },
   });
 
+  // [GATE estoque-não-confirmado] fila de exceção PÓS-geração: o que o motor EFETIVAMENTE suprimiu, gravado em
+  // reposicao_estoque_nao_confirmado_log pela RPC. O preflight acima é preditivo (antes do Recalcular); esta é a
+  // verdade do último ciclo — sem ela o gate suprime no escuro e vira subcompra invisível (Codex consult 019f0a38).
+  // count exato p/ o total 24h (honesto mesmo com a lista capada em 500); a lista cobre folgado 1 run (OBEN ~64).
+  // Key sob 'pedidos-ciclo' de propósito: gerarMutation invalida ['pedidos-ciclo'] → re-busca após Recalcular.
+  const { data: suprimidos } = useQuery({
+    queryKey: ['pedidos-ciclo', 'estoque-nao-confirmado-log', EMPRESA],
+    queryFn: async () => {
+      const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data, count, error } = await supabase
+        .from('reposicao_estoque_nao_confirmado_log')
+        .select('sku_codigo_omie, sku_descricao, motivo, grupo_codigo, criado_em, run_id', { count: 'exact' })
+        .eq('empresa', EMPRESA)
+        .gte('criado_em', desde)
+        .order('criado_em', { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      return { linhas: data ?? [], total24h: count ?? 0 };
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
   const gerarMutation = useMutation({
     mutationFn: async () => {
       const { data, error } = await supabase.rpc('gerar_pedidos_sugeridos_ciclo', {
@@ -305,6 +329,33 @@ export default function AdminReposicaoPedidos() {
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
+
+  // [GATE estoque-não-confirmado] suprimidos do ÚLTIMO recálculo (reflete os pedidos na tela) + contexto 24h
+  // (crônico?). supLinhas vem ordenado por criado_em desc → [0] é o run mais recente; filtra esse run_id.
+  const supLinhas = suprimidos?.linhas ?? [];
+  const ultimoRunId = supLinhas[0]?.run_id ?? null;
+  const supUltimoRun = ultimoRunId ? supLinhas.filter((s) => s.run_id === ultimoRunId) : [];
+  const supLinhaQtd = supUltimoRun.filter((s) => s.motivo === 'linha_seed_only').length;
+  const supGrupoQtd = supUltimoRun.filter((s) => s.motivo === 'grupo_membro_seed_only').length;
+  const supTotal24h = suprimidos?.total24h ?? 0;
+  const ultimoSupEm = supLinhas[0]?.criado_em ?? null;
+
+  // Telemetria: quantos o gate suprimiu por recálculo — detecta sync cronicamente atrasado (Codex consult
+  // 019f0a38). A ref garante 1 disparo por run distinto mesmo com o effect reativo a todas as deps (lint-clean).
+  const runTelemetradoRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (supUltimoRun.length > 0 && ultimoRunId && runTelemetradoRef.current !== ultimoRunId) {
+      runTelemetradoRef.current = ultimoRunId;
+      track('reposicao.gate_estoque_nao_confirmado', {
+        empresa: EMPRESA,
+        run_id: ultimoRunId,
+        suprimidos_ultimo_run: supUltimoRun.length,
+        por_linha: supLinhaQtd,
+        por_grupo: supGrupoQtd,
+        total_24h: supTotal24h,
+      });
+    }
+  }, [ultimoRunId, supUltimoRun.length, supLinhaQtd, supGrupoQtd, supTotal24h]);
 
   return (
     <div className="container mx-auto py-6 space-y-6 max-w-7xl">
@@ -401,6 +452,52 @@ export default function AdminReposicaoPedidos() {
             </ul>
             {semFornecedor.length > 10 && (
               <p className="mt-1 text-xs text-muted-foreground">+{semFornecedor.length - 10} outro(s)</p>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {supUltimoRun.length > 0 && (
+        <Alert className="border-status-warning/40 bg-status-warning/5">
+          <AlertTriangle className="h-4 w-4 text-status-warning" />
+          <AlertTitle className="text-status-warning">
+            {supUltimoRun.length} SKU{supUltimoRun.length > 1 ? 's' : ''} fora da compra — estoque não confirmado pelo sync
+          </AlertTitle>
+          <AlertDescription>
+            <p className="mb-1">
+              No último recálculo{ultimoSupEm ? ` (${format(new Date(ultimoSupEm), "dd/MM 'às' HH:mm", { locale: ptBR })})` : ''} o
+              motor <strong>pulou</strong> estes SKUs: o estoque vinha só do cold-start (catálogo), sem confirmação do
+              ListarPosEstoque — comprar por cima seria capital empatado.
+            </p>
+            {(supLinhaQtd > 0 || supGrupoQtd > 0) && (
+              <p className="mb-2 text-xs text-muted-foreground">
+                {supLinhaQtd > 0 && `${supLinhaQtd} por estoque do próprio SKU`}
+                {supLinhaQtd > 0 && supGrupoQtd > 0 && ' · '}
+                {supGrupoQtd > 0 && `${supGrupoQtd} por estoque de um equivalente (mesmo galão)`}
+              </p>
+            )}
+            <p className="mb-2 text-sm">
+              <strong>O que fazer:</strong> rode o sync de estoque do Omie e clique em <em>Recalcular sugestões</em>. Os
+              que tiverem saldo real entram no ciclo; os genuinamente zerados voltam a comprar sozinhos assim que o
+              sync confirmar.
+            </p>
+            <ul className="list-disc pl-5 space-y-0.5 text-sm">
+              {supUltimoRun.slice(0, 10).map((s) => (
+                <li key={s.sku_codigo_omie}>
+                  {s.sku_descricao ?? s.sku_codigo_omie}
+                  <span className="text-muted-foreground font-mono text-xs"> · {s.sku_codigo_omie}</span>
+                  {s.grupo_codigo && <span className="text-muted-foreground text-xs"> · grupo {s.grupo_codigo}</span>}
+                </li>
+              ))}
+            </ul>
+            {supUltimoRun.length > 10 && (
+              <p className="mt-1 text-xs text-muted-foreground">+{supUltimoRun.length - 10} outro(s)</p>
+            )}
+            {supTotal24h > supUltimoRun.length && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {supTotal24h} no total nas últimas 24h (vários ciclos). Se isso se repete, o sync de estoque pode
+                estar atrasando — vale checar a saúde do sync.
+              </p>
             )}
           </AlertDescription>
         </Alert>
