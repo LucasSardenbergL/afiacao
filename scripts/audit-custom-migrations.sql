@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 304
+-- Total de custom migrations: 307
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -345,7 +345,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260627150000', 'tint_formulas_rls_initplan', '20260627150000_tint_formulas_rls_initplan.sql'),
   ('20260627150100', 'tint_formulas_autovacuum_agressivo', '20260627150100_tint_formulas_autovacuum_agressivo.sql'),
   ('20260627170000', 'reposicao_rls_initplan', '20260627170000_reposicao_rls_initplan.sql'),
-  ('20260627180000', 'reposicao_gate_estoque_nao_confirmado', '20260627180000_reposicao_gate_estoque_nao_confirmado.sql')
+  ('20260627180000', 'reposicao_gate_estoque_nao_confirmado', '20260627180000_reposicao_gate_estoque_nao_confirmado.sql'),
+  ('20260627180100', 'seg_onda1_rls_views_matview', '20260627180100_seg_onda1_rls_views_matview.sql'),
+  ('20260627180200', 'seg_onda2_revoke_secdef_storage', '20260627180200_seg_onda2_revoke_secdef_storage.sql'),
+  ('20260627180300', 'seg_onda5_search_path', '20260627180300_seg_onda5_search_path.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1379,7 +1382,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_gate_estoque_nao_confirmado', 'table', 'public', 'reposicao_estoque_nao_confirmado_log', ''),
   ('reposicao_gate_estoque_nao_confirmado', 'index', 'public', 'idx_estoque_nao_confirmado_log_empresa_data', 'reposicao_estoque_nao_confirmado_log'),
   ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_sel', 'reposicao_estoque_nao_confirmado_log'),
-  ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log')
+  ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log'),
+  ('seg_onda2_revoke_secdef_storage', 'rls_policy', 'storage', 'tarefa_comprov_update_master', 'objects'),
+  ('seg_onda2_revoke_secdef_storage', 'rls_policy', 'storage', 'tarefa_comprov_delete_master', 'objects')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2461,7 +2466,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_gate_estoque_nao_confirmado', 'table', 'public', 'reposicao_estoque_nao_confirmado_log', ''),
   ('reposicao_gate_estoque_nao_confirmado', 'index', 'public', 'idx_estoque_nao_confirmado_log_empresa_data', 'reposicao_estoque_nao_confirmado_log'),
   ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_sel', 'reposicao_estoque_nao_confirmado_log'),
-  ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log')
+  ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log'),
+  ('seg_onda2_revoke_secdef_storage', 'rls_policy', 'storage', 'tarefa_comprov_update_master', 'objects'),
+  ('seg_onda2_revoke_secdef_storage', 'rls_policy', 'storage', 'tarefa_comprov_delete_master', 'objects')
 )
 SELECT
   e.migration,
