@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **304** custom migrations totais
-- **1045** objetos esperados (criados por estas migrations)
+- **305** custom migrations totais
+- **1046** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 305
+  - `function`: 306
   - `rls_policy`: 224
   - `index`: 188
   - `table`: 111
@@ -2573,6 +2573,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_estoque_nao_confirmado_log_empresa_data` | `reposicao_estoque_nao_confirmado_log` |
 | `rls_policy` | `public.estoque_nao_confirmado_log_sel` | `reposicao_estoque_nao_confirmado_log` |
 | `rls_policy` | `public.estoque_nao_confirmado_log_ins` | `reposicao_estoque_nao_confirmado_log` |
+
+### `20260627200000_fix_refresh_sku_ranking_gate_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.refresh_sku_ranking_negociacao` | — |
 
 ## Próximos passos por status
 
