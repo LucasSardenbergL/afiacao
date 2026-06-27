@@ -2,21 +2,22 @@
 -- PostgreSQL database dump
 --
 
-\restrict 0JMAaOB7tkIH8lOg0UBxRYwmCSQHwXm4XcOdlulkMcOinCKKzrKqTNvNtqPzkJa
+\restrict CBKrUqYBvVoJHQhRFW2QAxPBHKyaJgr3ZBDos0ZfOGIHrinVkqUVaMTpbA1IKny
 
 -- Dumped from database version 17.6
--- Dumped by pg_dump version 17.10 (Homebrew)
+-- Dumped by pg_dump version 17.9
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
 SET transaction_timeout = 0;
-SET client_encoding = 'UTF8';
-SET standard_conforming_strings = on;
+SET client_encoding = 'SQL_ASCII';
+SET standard_conforming_strings = off;
 SELECT pg_catalog.set_config('search_path', '', false);
 SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
+SET escape_string_warning = off;
 SET row_security = off;
 
 --
@@ -3450,6 +3451,23 @@ END $$;
 
 
 --
+-- Name: desfazer_contato_rota(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.desfazer_contato_rota(p_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE v_deleted int;
+BEGIN
+  DELETE FROM public.route_contact_log
+   WHERE id = p_id AND farmer_id = auth.uid() AND created_at > now() - interval '5 minutes';
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+  RETURN jsonb_build_object('deleted', v_deleted > 0);
+END $$;
+
+
+--
 -- Name: despinar_parametro(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6383,6 +6401,61 @@ $$;
 
 
 --
+-- Name: get_public_tool_history(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_public_tool_history(p_tool_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_tool jsonb;
+  v_events jsonb;
+BEGIN
+  IF p_tool_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  -- Ferramenta: só campos públicos (sem user_id).
+  SELECT jsonb_build_object(
+    'id', ut.id,
+    'internal_code', ut.internal_code,
+    'generated_name', ut.generated_name,
+    'custom_name', ut.custom_name,
+    'specifications', ut.specifications,
+    'last_sharpened_at', ut.last_sharpened_at,
+    'next_sharpening_due', ut.next_sharpening_due,
+    'created_at', ut.created_at,
+    'tool_categories', jsonb_build_object('name', COALESCE(tc.name, ''))
+  ) INTO v_tool
+  FROM public.user_tools ut
+  LEFT JOIN public.tool_categories tc ON tc.id = ut.tool_category_id
+  WHERE ut.id = p_tool_id;
+
+  IF v_tool IS NULL THEN
+    RETURN NULL; -- ferramenta inexistente → front mostra "não encontrada"
+  END IF;
+
+  SELECT COALESCE(
+    jsonb_agg(
+      jsonb_build_object(
+        'id', te.id,
+        'event_type', te.event_type,
+        'description', te.description,
+        'created_at', te.created_at
+      ) ORDER BY te.created_at DESC
+    ),
+    '[]'::jsonb
+  ) INTO v_events
+  FROM public.tool_events te
+  WHERE te.user_tool_id = p_tool_id;
+
+  RETURN jsonb_build_object('tool', v_tool, 'events', v_events);
+END;
+$$;
+
+
+--
 -- Name: get_regua_preco(uuid, uuid, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8972,6 +9045,48 @@ BEGIN
 
   RETURN jsonb_build_object('id', v_id, 'deduped', false);
 END $_$;
+
+
+--
+-- Name: registrar_contato_rota(uuid, text, date, text, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.registrar_contato_rota(p_customer_user_id uuid, p_status text, p_data_rota date, p_bucket text DEFAULT NULL::text, p_valor numeric DEFAULT NULL::numeric) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE v_uid uuid := auth.uid(); v_existing uuid; v_id uuid;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.user_roles ur WHERE ur.user_id = v_uid AND ur.role IN ('employee','master')) THEN
+    RAISE EXCEPTION 'forbidden: staff only';
+  END IF;
+  IF p_customer_user_id IS NULL THEN RAISE EXCEPTION 'customer_user_id required'; END IF;
+  IF p_data_rota IS NULL THEN RAISE EXCEPTION 'data_rota required'; END IF;
+  IF p_status NOT IN ('convertido','respondido','sem_resposta','opt_out') THEN
+    RAISE EXCEPTION 'invalid status: %', p_status;
+  END IF;
+  -- staff responde "é staff?", não "pode afetar ESTE cliente?" — exige visibilidade de carteira.
+  IF NOT (COALESCE(public.pode_ver_carteira_completa(v_uid), false)
+          OR public.carteira_visivel_para(p_customer_user_id, v_uid)) THEN
+    RAISE EXCEPTION 'forbidden: customer not visible';
+  END IF;
+  -- serializa o dedupe por chave lógica (evita race do SELECT→INSERT em double-click concorrente).
+  PERFORM pg_advisory_xact_lock(hashtextextended(
+    v_uid::text||':'||p_customer_user_id::text||':'||p_data_rota::text||':'||p_status||':ligacao', 0));
+  -- dedupe idempotente: mesmo vendedor+cliente+rota+status nos últimos 2 min → devolve o existente.
+  SELECT id INTO v_existing FROM public.route_contact_log
+   WHERE farmer_id = v_uid AND customer_user_id = p_customer_user_id
+     AND data_rota = p_data_rota AND status = p_status AND canal = 'ligacao'
+     AND created_at > now() - interval '2 minutes'
+   ORDER BY created_at DESC LIMIT 1;
+  IF v_existing IS NOT NULL THEN
+    RETURN jsonb_build_object('id', v_existing, 'deduped', true);
+  END IF;
+  INSERT INTO public.route_contact_log (data_rota, customer_user_id, farmer_id, canal, valor_da_ligacao, bucket, status)
+  VALUES (p_data_rota, p_customer_user_id, v_uid, 'ligacao', p_valor, p_bucket, p_status)
+  RETURNING id INTO v_id;
+  RETURN jsonb_build_object('id', v_id, 'deduped', false);
+END $$;
 
 
 --
@@ -19394,7 +19509,8 @@ CREATE TABLE public.tint_formulas (
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
     desativada_em timestamp with time zone
-);
+)
+WITH (autovacuum_vacuum_scale_factor='0.05', autovacuum_analyze_scale_factor='0.05', autovacuum_vacuum_insert_scale_factor='0.05');
 
 
 --
@@ -28168,6 +28284,13 @@ CREATE UNIQUE INDEX idx_sync_state_entity_account ON public.sync_state USING btr
 
 
 --
+-- Name: idx_tactical_plans_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tactical_plans_lookup ON public.farmer_tactical_plans USING btree (farmer_id, customer_user_id, status, created_at DESC);
+
+
+--
 -- Name: idx_tarefas_aberta_auto; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -30712,7 +30835,7 @@ CREATE POLICY "Admin pode inserir historico cadeia" ON public.fornecedor_cadeia_
 -- Name: categoria_aumento_familia_mapeamento Admin/manager editam categoria_aumento_familia_mapeamento; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Admin/manager editam categoria_aumento_familia_mapeamento" ON public.categoria_aumento_familia_mapeamento TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+CREATE POLICY "Admin/manager editam categoria_aumento_familia_mapeamento" ON public.categoria_aumento_familia_mapeamento TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role))));
 
 
 --
@@ -30726,14 +30849,14 @@ CREATE POLICY "Admin/manager editam fornecedor_alerta" ON public.fornecedor_aler
 -- Name: fornecedor_aumento_anunciado Admin/manager editam fornecedor_aumento_anunciado; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Admin/manager editam fornecedor_aumento_anunciado" ON public.fornecedor_aumento_anunciado TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+CREATE POLICY "Admin/manager editam fornecedor_aumento_anunciado" ON public.fornecedor_aumento_anunciado TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role))));
 
 
 --
 -- Name: fornecedor_aumento_item Admin/manager editam fornecedor_aumento_item; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Admin/manager editam fornecedor_aumento_item" ON public.fornecedor_aumento_item TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+CREATE POLICY "Admin/manager editam fornecedor_aumento_item" ON public.fornecedor_aumento_item TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role))));
 
 
 --
@@ -30768,14 +30891,14 @@ CREATE POLICY "Admin/manager editam negociacao" ON public.promocao_negociacao_ev
 -- Name: promocao_campanha Admin/manager/master editam campanhas; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Admin/manager/master editam campanhas" ON public.promocao_campanha USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+CREATE POLICY "Admin/manager/master editam campanhas" ON public.promocao_campanha USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role))));
 
 
 --
 -- Name: promocao_item Admin/manager/master editam itens; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Admin/manager/master editam itens" ON public.promocao_item USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+CREATE POLICY "Admin/manager/master editam itens" ON public.promocao_item USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role))));
 
 
 --
@@ -31457,7 +31580,7 @@ CREATE POLICY "Staff can manage health history" ON public.health_score_history T
 -- Name: inventory_position Staff can manage inventory; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Staff can manage inventory" ON public.inventory_position USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY "Staff can manage inventory" ON public.inventory_position USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
@@ -31529,7 +31652,7 @@ CREATE POLICY "Staff can manage product costs" ON public.product_costs USING ((p
 -- Name: omie_products Staff can manage products; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Staff can manage products" ON public.omie_products TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY "Staff can manage products" ON public.omie_products TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
@@ -31629,7 +31752,7 @@ CREATE POLICY "Staff can manage tint_formula_itens" ON public.tint_formula_itens
 -- Name: tint_formulas Staff can manage tint_formulas; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Staff can manage tint_formulas" ON public.tint_formulas TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY "Staff can manage tint_formulas" ON public.tint_formulas TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
@@ -32040,7 +32163,7 @@ CREATE POLICY "Staff lê alertas de pedido mínimo" ON public.reposicao_alerta_p
 -- Name: categoria_aumento_familia_mapeamento Staff lê categoria_aumento_familia_mapeamento; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Staff lê categoria_aumento_familia_mapeamento" ON public.categoria_aumento_familia_mapeamento FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY "Staff lê categoria_aumento_familia_mapeamento" ON public.categoria_aumento_familia_mapeamento FOR SELECT TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
@@ -32110,14 +32233,14 @@ CREATE POLICY "Staff lê fornecedor_alerta" ON public.fornecedor_alerta FOR SELE
 -- Name: fornecedor_aumento_anunciado Staff lê fornecedor_aumento_anunciado; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Staff lê fornecedor_aumento_anunciado" ON public.fornecedor_aumento_anunciado FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY "Staff lê fornecedor_aumento_anunciado" ON public.fornecedor_aumento_anunciado FOR SELECT TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: fornecedor_aumento_item Staff lê fornecedor_aumento_item; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Staff lê fornecedor_aumento_item" ON public.fornecedor_aumento_item FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY "Staff lê fornecedor_aumento_item" ON public.fornecedor_aumento_item FOR SELECT TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
@@ -32210,14 +32333,14 @@ CREATE POLICY "Staff view vendedor map" ON public.omie_vendedor_map FOR SELECT U
 -- Name: promocao_campanha Staff vê campanhas; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Staff vê campanhas" ON public.promocao_campanha FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY "Staff vê campanhas" ON public.promocao_campanha FOR SELECT USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: promocao_item Staff vê itens; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Staff vê itens" ON public.promocao_item FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY "Staff vê itens" ON public.promocao_item FOR SELECT USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
@@ -35388,28 +35511,28 @@ CREATE POLICY staff_cte_associados_all ON public.cte_associados TO authenticated
 -- Name: empresa_configuracao_custos staff_empresa_configuracao_custos_delete; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_empresa_configuracao_custos_delete ON public.empresa_configuracao_custos FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_empresa_configuracao_custos_delete ON public.empresa_configuracao_custos FOR DELETE TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: empresa_configuracao_custos staff_empresa_configuracao_custos_insert; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_empresa_configuracao_custos_insert ON public.empresa_configuracao_custos FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_empresa_configuracao_custos_insert ON public.empresa_configuracao_custos FOR INSERT TO authenticated WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: empresa_configuracao_custos staff_empresa_configuracao_custos_select; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_empresa_configuracao_custos_select ON public.empresa_configuracao_custos FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_empresa_configuracao_custos_select ON public.empresa_configuracao_custos FOR SELECT TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: empresa_configuracao_custos staff_empresa_configuracao_custos_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_empresa_configuracao_custos_update ON public.empresa_configuracao_custos FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_empresa_configuracao_custos_update ON public.empresa_configuracao_custos FOR UPDATE TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
@@ -35444,28 +35567,28 @@ CREATE POLICY staff_familia_nao_comprada_update ON public.familia_nao_comprada F
 -- Name: fornecedor_cadeia_logistica staff_fornecedor_cadeia_logistica_delete; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_fornecedor_cadeia_logistica_delete ON public.fornecedor_cadeia_logistica FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_fornecedor_cadeia_logistica_delete ON public.fornecedor_cadeia_logistica FOR DELETE TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: fornecedor_cadeia_logistica staff_fornecedor_cadeia_logistica_insert; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_fornecedor_cadeia_logistica_insert ON public.fornecedor_cadeia_logistica FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_fornecedor_cadeia_logistica_insert ON public.fornecedor_cadeia_logistica FOR INSERT TO authenticated WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: fornecedor_cadeia_logistica staff_fornecedor_cadeia_logistica_select; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_fornecedor_cadeia_logistica_select ON public.fornecedor_cadeia_logistica FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_fornecedor_cadeia_logistica_select ON public.fornecedor_cadeia_logistica FOR SELECT TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: fornecedor_cadeia_logistica staff_fornecedor_cadeia_logistica_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_fornecedor_cadeia_logistica_update ON public.fornecedor_cadeia_logistica FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_fornecedor_cadeia_logistica_update ON public.fornecedor_cadeia_logistica FOR UPDATE TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
@@ -35528,56 +35651,56 @@ CREATE POLICY staff_fornecedor_condicao_pagamento_padrao_update ON public.fornec
 -- Name: fornecedor_grupo_producao staff_fornecedor_grupo_producao_delete; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_fornecedor_grupo_producao_delete ON public.fornecedor_grupo_producao FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_fornecedor_grupo_producao_delete ON public.fornecedor_grupo_producao FOR DELETE TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: fornecedor_grupo_producao staff_fornecedor_grupo_producao_insert; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_fornecedor_grupo_producao_insert ON public.fornecedor_grupo_producao FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_fornecedor_grupo_producao_insert ON public.fornecedor_grupo_producao FOR INSERT TO authenticated WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: fornecedor_grupo_producao staff_fornecedor_grupo_producao_select; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_fornecedor_grupo_producao_select ON public.fornecedor_grupo_producao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_fornecedor_grupo_producao_select ON public.fornecedor_grupo_producao FOR SELECT TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: fornecedor_grupo_producao staff_fornecedor_grupo_producao_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_fornecedor_grupo_producao_update ON public.fornecedor_grupo_producao FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_fornecedor_grupo_producao_update ON public.fornecedor_grupo_producao FOR UPDATE TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: fornecedor_habilitado_reposicao staff_fornecedor_habilitado_reposicao_delete; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_fornecedor_habilitado_reposicao_delete ON public.fornecedor_habilitado_reposicao FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_fornecedor_habilitado_reposicao_delete ON public.fornecedor_habilitado_reposicao FOR DELETE TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: fornecedor_habilitado_reposicao staff_fornecedor_habilitado_reposicao_insert; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_fornecedor_habilitado_reposicao_insert ON public.fornecedor_habilitado_reposicao FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_fornecedor_habilitado_reposicao_insert ON public.fornecedor_habilitado_reposicao FOR INSERT TO authenticated WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: fornecedor_habilitado_reposicao staff_fornecedor_habilitado_reposicao_select; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_fornecedor_habilitado_reposicao_select ON public.fornecedor_habilitado_reposicao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_fornecedor_habilitado_reposicao_select ON public.fornecedor_habilitado_reposicao FOR SELECT TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: fornecedor_habilitado_reposicao staff_fornecedor_habilitado_reposicao_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_fornecedor_habilitado_reposicao_update ON public.fornecedor_habilitado_reposicao FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_fornecedor_habilitado_reposicao_update ON public.fornecedor_habilitado_reposicao FOR UPDATE TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
@@ -35612,7 +35735,7 @@ CREATE POLICY staff_fornecedor_promocao_update ON public.fornecedor_promocao FOR
 -- Name: inventory_position staff_inventory_position_select; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_inventory_position_select ON public.inventory_position FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+CREATE POLICY staff_inventory_position_select ON public.inventory_position FOR SELECT TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role))));
 
 
 --
@@ -35864,35 +35987,35 @@ CREATE POLICY staff_sku_estoque_atual_update ON public.sku_estoque_atual FOR UPD
 -- Name: sku_grupo_producao staff_sku_grupo_producao_delete; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_sku_grupo_producao_delete ON public.sku_grupo_producao FOR DELETE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_sku_grupo_producao_delete ON public.sku_grupo_producao FOR DELETE TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: sku_grupo_producao staff_sku_grupo_producao_insert; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_sku_grupo_producao_insert ON public.sku_grupo_producao FOR INSERT TO authenticated WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_sku_grupo_producao_insert ON public.sku_grupo_producao FOR INSERT TO authenticated WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: sku_grupo_producao staff_sku_grupo_producao_select; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_sku_grupo_producao_select ON public.sku_grupo_producao FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_sku_grupo_producao_select ON public.sku_grupo_producao FOR SELECT TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: sku_grupo_producao staff_sku_grupo_producao_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_sku_grupo_producao_update ON public.sku_grupo_producao FOR UPDATE TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_sku_grupo_producao_update ON public.sku_grupo_producao FOR UPDATE TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
 -- Name: sku_leadtime_history staff_sku_leadtime_history_all; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_sku_leadtime_history_all ON public.sku_leadtime_history TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+CREATE POLICY staff_sku_leadtime_history_all ON public.sku_leadtime_history TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role)))) WITH CHECK (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role))));
 
 
 --
@@ -35906,7 +36029,7 @@ CREATE POLICY staff_sku_parametros_historico_select ON public.sku_parametros_his
 -- Name: sku_parametros staff_sku_parametros_select; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_sku_parametros_select ON public.sku_parametros FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+CREATE POLICY staff_sku_parametros_select ON public.sku_parametros FOR SELECT TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role))));
 
 
 --
@@ -35997,7 +36120,7 @@ CREATE POLICY staff_sku_substituicao_update ON public.sku_substituicao FOR UPDAT
 -- Name: venda_items_history staff_venda_items_history_select; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY staff_venda_items_history_select ON public.venda_items_history FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
+CREATE POLICY staff_venda_items_history_select ON public.venda_items_history FOR SELECT TO authenticated USING (( SELECT (public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role))));
 
 
 --
@@ -36604,5 +36727,5 @@ ALTER TABLE public.whatsapp_webhook_events ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 0JMAaOB7tkIH8lOg0UBxRYwmCSQHwXm4XcOdlulkMcOinCKKzrKqTNvNtqPzkJa
+\unrestrict CBKrUqYBvVoJHQhRFW2QAxPBHKyaJgr3ZBDos0ZfOGIHrinVkqUVaMTpbA1IKny
 
