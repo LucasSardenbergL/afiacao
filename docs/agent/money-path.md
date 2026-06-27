@@ -27,6 +27,8 @@
 
 Helper TS puro (testado com vitest) **espelhado verbatim** no edge (Deno não importa de `src/`) e/ou em SQL. Para lógica replicada, **provar paridade** (harness diferencial TS×SQL, ex.: `db/test-city-norm-paridade.sh`) — não institucionalizar "copiar verbatim" como fim.
 
+Edge só-TS (sem contraparte SQL): a paridade vira **textual no CI** — bloco entre `// MIRROR-START/END` comparado normalizado src×edge (pega reescrita do Lovable no deploy) — **mais** uma **canária comportamental** `{canary:true}` staff-gated que roda o helper REAL deployado com fixture fixo e retorna `{resolved, expected, ok}`. Probe HTTP = única prova do COMPORTAMENTO em produção: o guard textual cobre a FONTE, a canária cobre o DEPLOY. ⚠️ A canária prova "helper deployado + lógica certa", **não** que o real-path usa o helper (isso é o guard textual + paridade). Ex.: merge de preço do `analyze-unified-order` (#1089).
+
 ## Diagnóstico
 
 "Diagnosticado ≠ corrigido" — ver `diagnose-supabase-sync` (estados rígidos de saída; só declara RECUPERADO com novo ciclo + efeito no dado; a ação corretiva é entregue ao humano, nunca aplicada às cegas).
