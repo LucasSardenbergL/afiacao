@@ -9783,6 +9783,48 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_estoque_nao_confirmado_log: {
+        Row: {
+          criado_em: string
+          empresa: string
+          estoque_efetivo: number | null
+          fonte_sync: string | null
+          grupo_codigo: string | null
+          id: string
+          motivo: string
+          ponto_pedido: number | null
+          run_id: string | null
+          sku_codigo_omie: string
+          sku_descricao: string | null
+        }
+        Insert: {
+          criado_em?: string
+          empresa: string
+          estoque_efetivo?: number | null
+          fonte_sync?: string | null
+          grupo_codigo?: string | null
+          id?: string
+          motivo: string
+          ponto_pedido?: number | null
+          run_id?: string | null
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+        }
+        Update: {
+          criado_em?: string
+          empresa?: string
+          estoque_efetivo?: number | null
+          fonte_sync?: string | null
+          grupo_codigo?: string | null
+          id?: string
+          motivo?: string
+          ponto_pedido?: number | null
+          run_id?: string | null
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+        }
+        Relationships: []
+      }
       reposicao_param_auto_log: {
         Row: {
           classe_consolidada: string | null
