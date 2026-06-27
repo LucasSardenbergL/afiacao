@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 function describe(step: number, s: ReposicaoStatus): string {
   switch (step) {
     case 1:
+      if (s.oportunidadesCount === null) return "Oportunidades indisponíveis";
       return s.oportunidadesCount > 0
         ? `${s.oportunidadesCount} oportunidade(s) ativa(s)`
         : "Sem oportunidades pendentes";

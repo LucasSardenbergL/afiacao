@@ -25,10 +25,13 @@ export function buildEtapaChecklist(step: number, s: ReposicaoStatus): Checklist
         title: "Para concluir a Etapa 1: Mercado",
         items: [
           {
-            label: `Avaliar ${s.oportunidadesCount} oportunidade(s) econômica(s) ativa(s)`,
+            label:
+              s.oportunidadesCount === null
+                ? "Oportunidades econômicas (contagem indisponível)"
+                : `Avaliar ${s.oportunidadesCount} oportunidade(s) econômica(s) ativa(s)`,
             done: s.oportunidadesCount === 0,
             cta:
-              s.oportunidadesCount > 0
+              (s.oportunidadesCount ?? 0) > 0
                 ? { label: "Abrir oportunidades", to: "/admin/reposicao/oportunidades" }
                 : undefined,
           },

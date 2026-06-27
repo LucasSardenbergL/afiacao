@@ -61,6 +61,14 @@ describe("deriveCurrentStep", () => {
       }),
     ).toBe(1);
   });
+
+  it("degrades honestly: null opportunity count does NOT force step 1 — derives from pedidos", () => {
+    // Count indisponível (view deu 500) → não fabrica etapa 1; segue o fluxo de pedidos.
+    expect(deriveCurrentStep({ ...m, oportunidadesCount: null })).toBe(3);
+    expect(deriveCurrentStep({ ...m, oportunidadesCount: null, pedidosPendentes: 2 })).toBe(3);
+    expect(deriveCurrentStep({ ...m, oportunidadesCount: null, pedidosAprovados: 4 })).toBe(4);
+    expect(deriveCurrentStep({ ...m, oportunidadesCount: null, pedidosDisparados: 7 })).toBe(5);
+  });
 });
 
 describe("getStepLocks", () => {

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import type { PedidoItem } from "@/types/reposicao";
@@ -54,7 +55,8 @@ export function useItensDoDia() {
 
 export type ReposicaoStatus = {
   current: number;
-  oportunidadesCount: number;
+  /** `null` = contagem indisponível (a view cara deu erro) — honesto, ≠ 0 (money-path: ausente ≠ zero). */
+  oportunidadesCount: number | null;
   pedidosTotal: number;
   pedidosPendentes: number;
   pedidosBloqueados: number;
@@ -81,71 +83,100 @@ const DEFAULT: ReposicaoStatus = {
  * que trava o progresso da sessão. A etapa segue navegável (ajuste manual opcional).
  */
 export function deriveCurrentStep(m: {
-  oportunidadesCount: number;
+  oportunidadesCount: number | null;
   pedidosPendentes: number;
   pedidosAprovados: number;
   pedidosDisparados: number;
 }): number {
-  if (m.oportunidadesCount > 0) return 1;
+  // null (count indisponível) NÃO força a etapa 1 — degrada para o fluxo de pedidos.
+  if ((m.oportunidadesCount ?? 0) > 0) return 1;
   if (m.pedidosPendentes > 0) return 3;
   if (m.pedidosAprovados > 0) return 4;
   if (m.pedidosDisparados > 0) return 5;
   return 3;
 }
 
-export function useReposicaoStatus() {
-  const today = format(new Date(), "yyyy-MM-dd");
-
-  return useQuery<ReposicaoStatus>({
-    queryKey: ["cockpit-current-step", REPOSICAO_EMPRESA, today],
+/**
+ * Contador de oportunidades econômicas ativas (OBEN) — fonte ÚNICA compartilhada
+ * entre o badge global (`AppShell`) e o cockpit (`useReposicaoStatus`). Mesma
+ * queryKey → o react-query DEDUPLICA numa request a cada 60s (antes: 2 pollers
+ * independentes batendo na MESMA view cara `v_oportunidade_economica_hoje`).
+ *
+ * Degradação honesta (money-path: ausente ≠ zero): a view é cara (RLS + EOQ) e
+ * pode dar 500 sob cache frio. Em erro retorna `null` (indeterminado), NUNCA `0`
+ * nem `throw` — o consumidor mostra "—"/oculta o badge, não fabrica "0
+ * oportunidades". `retry: 1` evita martelar a view a cada falha.
+ */
+export function useOportunidadesAtivasCount(options?: { enabled?: boolean }) {
+  return useQuery<number | null>({
+    queryKey: ["oportunidades-ativas-count", REPOSICAO_EMPRESA],
     queryFn: async () => {
-      const oport = await supabase
+      const { count, error } = await supabase
         .from("v_oportunidade_economica_hoje")
         .select("*", { count: "exact", head: true })
         .eq("empresa", REPOSICAO_EMPRESA);
-      if (oport.error) throw oport.error;
+      if (error) return null; // degrada honesto: indeterminado, não 0, não throw
+      return count ?? null;
+    },
+    enabled: options?.enabled ?? true,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    retry: 1,
+  });
+}
 
-      // Etapa 2 (Parâmetros) é automática — sem contagem de "pendentes de aprovação".
-
-      const pedidos = await supabase
+export function useReposicaoStatus() {
+  const today = format(new Date(), "yyyy-MM-dd");
+  // Count compartilhado (dedupe com o badge do AppShell) — degrada sozinho p/ null.
+  const oportQ = useOportunidadesAtivasCount();
+  // Pedidos do ciclo é o EIXO do cockpit; o count de oportunidade NÃO o derruba mais
+  // (antes, um 500 no count com `throw` travava a sessão inteira).
+  const pedidosQ = useQuery({
+    queryKey: ["cockpit-pedidos", REPOSICAO_EMPRESA, today],
+    queryFn: async () => {
+      const { data, error } = await supabase
         .from("pedido_compra_sugerido")
         .select("status")
         .eq("empresa", REPOSICAO_EMPRESA)
         .eq("data_ciclo", today);
-      if (pedidos.error) throw pedidos.error;
-
-      const statuses = (((pedidos.data ?? []) as unknown) as Array<{ status: string | null }>).map(
-        (r) => r.status,
-      );
-      const pedidosPendentes = statuses.filter(
-        (s) => s === "pendente_aprovacao" || s === "bloqueado_guardrail",
-      ).length;
-      const pedidosBloqueados = statuses.filter((s) => s === "bloqueado_guardrail").length;
-      const pedidosAprovados = statuses.filter((s) => s === "aprovado_aguardando_disparo").length;
-      const pedidosDisparados = statuses.filter((s) => s === "disparado").length;
-
-      const oportunidadesCount = oport.count ?? 0;
-
-      const current = deriveCurrentStep({
-        oportunidadesCount,
-        pedidosPendentes,
-        pedidosAprovados,
-        pedidosDisparados,
-      });
-
-      return {
-        current,
-        oportunidadesCount,
-        pedidosTotal: statuses.length,
-        pedidosPendentes,
-        pedidosBloqueados,
-        pedidosAprovados,
-        pedidosDisparados,
-      };
+      if (error) throw error;
+      return ((data ?? []) as unknown) as Array<{ status: string | null }>;
     },
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
+
+  const data = useMemo<ReposicaoStatus | undefined>(() => {
+    if (pedidosQ.data === undefined) return undefined;
+    const statuses = pedidosQ.data.map((r) => r.status);
+    const pedidosPendentes = statuses.filter(
+      (s) => s === "pendente_aprovacao" || s === "bloqueado_guardrail",
+    ).length;
+    const pedidosBloqueados = statuses.filter((s) => s === "bloqueado_guardrail").length;
+    const pedidosAprovados = statuses.filter((s) => s === "aprovado_aguardando_disparo").length;
+    const pedidosDisparados = statuses.filter((s) => s === "disparado").length;
+    // null = contagem indisponível (degradação honesta) — não força etapa 1 nem afirma "0".
+    const oportunidadesCount = oportQ.data ?? null;
+    const current = deriveCurrentStep({
+      oportunidadesCount,
+      pedidosPendentes,
+      pedidosAprovados,
+      pedidosDisparados,
+    });
+    return {
+      current,
+      oportunidadesCount,
+      pedidosTotal: statuses.length,
+      pedidosPendentes,
+      pedidosBloqueados,
+      pedidosAprovados,
+      pedidosDisparados,
+    };
+  }, [pedidosQ.data, oportQ.data]);
+
+  // Loading/erro seguem os PEDIDOS (eixo do cockpit); o count degrada sem bloquear.
+  return { data, isLoading: pedidosQ.isLoading, isError: pedidosQ.isError };
 }
 
 /**
