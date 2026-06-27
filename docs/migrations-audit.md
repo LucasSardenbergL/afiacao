@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **307** custom migrations totais
+- **308** custom migrations totais
 - **1047** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 305
@@ -2586,6 +2586,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `storage.tarefa_comprov_delete_master` | `objects` |
 
 ### `20260627180300_seg_onda5_search_path.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260627180400_seg_onda6_drop_backups_obsoletos.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 

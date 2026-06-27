@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 307
+-- Total de custom migrations: 308
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -348,7 +348,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260627180000', 'reposicao_gate_estoque_nao_confirmado', '20260627180000_reposicao_gate_estoque_nao_confirmado.sql'),
   ('20260627180100', 'seg_onda1_rls_views_matview', '20260627180100_seg_onda1_rls_views_matview.sql'),
   ('20260627180200', 'seg_onda2_revoke_secdef_storage', '20260627180200_seg_onda2_revoke_secdef_storage.sql'),
-  ('20260627180300', 'seg_onda5_search_path', '20260627180300_seg_onda5_search_path.sql')
+  ('20260627180300', 'seg_onda5_search_path', '20260627180300_seg_onda5_search_path.sql'),
+  ('20260627180400', 'seg_onda6_drop_backups_obsoletos', '20260627180400_seg_onda6_drop_backups_obsoletos.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
