@@ -30,19 +30,25 @@ O piloto, ao travar, virou um detector de superdimensionamento. Esta fase corrig
 
 ## 3. Desenho
 
-### 3.1 A alavanca: a fórmula de cobertura na view de sugestão
+### 3.1 A alavanca: a fórmula na view de sugestão (REFINADA ao abrir a fórmula real, 2026-06-27)
 
-Os parâmetros (`cobertura_alvo_dias`, `ponto_pedido`, `estoque_maximo`, `estoque_seguranca`) são derivados pela view `v_sku_parametros_sugeridos` (usa classe ABC/XYZ, z-score por classe de `empresa_configuracao_custos`, lead time real `lt_*`). A esteira `param_auto` aplica os parâmetros sugeridos aos SKUs com fusível/pin/log/período de revisão.
+Os parâmetros são derivados pela view `v_sku_parametros_sugeridos` (arquivo `20260606150000_a2_cmc_base_custo_view.sql`, linhas 249-325). A esteira `param_auto` aplica os sugeridos aos SKUs com fusível/pin/log/período de revisão. A fórmula vigente:
+- `ss_calculado = ceil(z · σ_lt_d)` — σ_lt_d = `sqrt(LT·σ_d² + d²·σ_lt²)` (variância combinada demanda+lead).
+- `pp_calculado = ceil(d·LT + z·σ_lt_d)` → **já é o ponto teórico**.
+- `estoque_maximo = ponto + GREATEST(qc_eoq, 1)` — `qc_eoq` = lote EOQ.
+- `cobertura_alvo_dias = ceil(qc_eoq / d)` (derivada, não driver).
 
-**A mudança:** a `cobertura_alvo_dias` deixa de ser fixa-alta e passa a ser **lead time + margem de segurança proporcional à classe/giro**:
-- Classe A (gira, não pode romper): mais buffer (ex.: lead + ~1 ciclo de revisão + z·σ).
-- Classe C de giro lento: margem mínima (≈ lead time) — o estoque mínimo inteiro (1 unidade) já cobre muitos dias.
+**Diagnóstico CORRIGIDO (ao decompor a view em prod):** o ponto **não** está superdimensionado — o lead time contribui só **1-9%** do `ss` (a demanda domina), e o ponto aplicado bate 1:1 com a view (não é stale). O capital excedente está no **lote `qc_eoq`**: para giro lento (classe C), `qc_eoq` (2,6 un) >> ciclo (0,3) e ss (1,1) — e em DIAS vira meses (a demanda é ínfima). O "286 dias" do diagnóstico inicial eram **4 unidades** de um item que vende 1 a cada 71 dias.
 
-**Os coeficientes exatos NÃO são chutados aqui** — saem calibrados no backtest (§3.3). O design fixa a DIREÇÃO (proporcional ao lead, não fixa-alta) e o método de calibração (provar no histórico).
+**A mudança (política bufY), nas linhas 304-315 da view:**
+1. **Lote** = `GREATEST(1, round(d·LT))` (demanda durante 1 lead time) **no lugar de** `qc_eoq` — porque o custo de pedido no portal Sayerlack é ~zero, então não há razão pra lote EOQ grande. *Atenção:* lote NÃO pode ir a "1 fixo" — backtest provou que lote < demanda-do-lead degrada o serviço (LOTE1: 91,9% vs atual 96,3%), pois o sistema fica pra trás durante o trânsito.
+2. **Buffer Y** = `+0,8` no `z` das classes terminadas em Y (intermitentes) no `ss_calculado` — calibração empírica, o modelo base subestima a cauda dessas.
+
+O **ponto/proteção contra ruptura fica intacto** (só ganha buffer nas Y) → o risco de ruptura é controlado. O ganho vem do lote.
 
 ### 3.2 O efeito automático (por que não precisa de regra pra classe C)
 
-Quando a cobertura cai pra perto do lead time, os SKUs de giro lento — que já têm ~128 dias de estoque — ficam **acima do novo `estoque_maximo`** → o motor simplesmente não os sugere mais (`skus_necessitando` não os pega). Viram **sob demanda naturalmente**, sem precisar de uma regra explícita de exclusão por classe (que mudaria a lógica da RPC). A classe A, que gira, continua reposta — porém enxuta.
+Com o lote dimensionado pela demanda do lead (não pelo EOQ), o `estoque_maximo` de giro lento cai, e os SKUs de classe C que já têm meses de estoque ficam **acima do novo máximo** → o motor não os sugere mais (`skus_necessitando` não os pega). Viram **sob demanda naturalmente**, sem regra explícita de exclusão por classe (que mudaria a RPC). A classe A, que gira, continua reposta — porém com lote enxuto.
 
 ### 3.3 Validação — backtest de ruptura (o coração, ANTES de qualquer escrita)
 
@@ -84,7 +90,9 @@ Se (2) ≤ (3) em ruptura **e** (2) « (1) em capital empatado → a recalibraç
 | bufY (novo) | 98,66% | 97,48% |
 | — só classe A | 98,95% (vs 97,35) | 97,82% (vs 94,11) |
 
-Piores SKUs A sob rajada: perda ~R$1–2k/ano de venda, ruptura 2–4 dias consecutivos (curta). **Achado:** o motor atual não é só mais caro (104 vs 70 dias de capital) — é também PIOR em serviço ponderado, inclusive sob rajada, porque enche uniforme até 286d em vez de dimensionar o ponto por SKU. O que protege contra ruptura é o ponto bem calibrado, não o volume. Gate PASSOU com folga.
+Piores SKUs A sob rajada: perda ~R$1–2k/ano de venda, ruptura 2–4 dias consecutivos (curta). **Achado:** o motor atual não é só mais caro (104 vs 70 dias de capital) — é também PIOR em serviço ponderado, inclusive sob rajada, porque dimensiona o lote por EOQ em vez da demanda do lead. O que protege contra ruptura é o ponto bem calibrado (intacto na bufY), não o volume do lote. Gate PASSOU com folga.
+
+**Honestidade sobre o ganho de capital:** é sensível às premissas. Com lead MÉDIO + Poisson: −33%. Com lead p95 (conservador) + Poisson+rajada: **−14 a −15%**. A realidade fica na faixa; uso o conservador como base. O serviço ponderado por R$ melhora em ambos. E o objetivo PRIMÁRIO — pedidos menores que destravam o piloto de auto-aprovação — independe do número exato de capital.
 
 ### 3.4 Rollout — gradual e reversível, via `param_auto`
 
