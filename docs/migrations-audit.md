@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **306** custom migrations totais
-- **1051** objetos esperados (criados por estas migrations)
+- **310** custom migrations totais
+- **1053** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 307
-  - `rls_policy`: 224
+  - `rls_policy`: 226
   - `index`: 189
   - `table`: 111
   - `cron_job`: 110
@@ -2573,6 +2573,25 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_estoque_nao_confirmado_log_empresa_data` | `reposicao_estoque_nao_confirmado_log` |
 | `rls_policy` | `public.estoque_nao_confirmado_log_sel` | `reposicao_estoque_nao_confirmado_log` |
 | `rls_policy` | `public.estoque_nao_confirmado_log_ins` | `reposicao_estoque_nao_confirmado_log` |
+
+### `20260627180100_seg_onda1_rls_views_matview.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260627180200_seg_onda2_revoke_secdef_storage.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `storage.tarefa_comprov_update_master` | `objects` |
+| `rls_policy` | `storage.tarefa_comprov_delete_master` | `objects` |
+
+### `20260627180300_seg_onda5_search_path.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260627180400_seg_onda6_drop_backups_obsoletos.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20260627190000_reposicao_fase2_badge_oportunidade_mv.sql`
 

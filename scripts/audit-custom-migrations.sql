@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 306
+-- Total de custom migrations: 310
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -346,6 +346,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260627150100', 'tint_formulas_autovacuum_agressivo', '20260627150100_tint_formulas_autovacuum_agressivo.sql'),
   ('20260627170000', 'reposicao_rls_initplan', '20260627170000_reposicao_rls_initplan.sql'),
   ('20260627180000', 'reposicao_gate_estoque_nao_confirmado', '20260627180000_reposicao_gate_estoque_nao_confirmado.sql'),
+  ('20260627180100', 'seg_onda1_rls_views_matview', '20260627180100_seg_onda1_rls_views_matview.sql'),
+  ('20260627180200', 'seg_onda2_revoke_secdef_storage', '20260627180200_seg_onda2_revoke_secdef_storage.sql'),
+  ('20260627180300', 'seg_onda5_search_path', '20260627180300_seg_onda5_search_path.sql'),
+  ('20260627180400', 'seg_onda6_drop_backups_obsoletos', '20260627180400_seg_onda6_drop_backups_obsoletos.sql'),
   ('20260627190000', 'reposicao_fase2_badge_oportunidade_mv', '20260627190000_reposicao_fase2_badge_oportunidade_mv.sql'),
   ('20260627200000', 'fix_refresh_sku_ranking_gate_cron', '20260627200000_fix_refresh_sku_ranking_gate_cron.sql')
 ),
@@ -1382,6 +1386,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_gate_estoque_nao_confirmado', 'index', 'public', 'idx_estoque_nao_confirmado_log_empresa_data', 'reposicao_estoque_nao_confirmado_log'),
   ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_sel', 'reposicao_estoque_nao_confirmado_log'),
   ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log'),
+  ('seg_onda2_revoke_secdef_storage', 'rls_policy', 'storage', 'tarefa_comprov_update_master', 'objects'),
+  ('seg_onda2_revoke_secdef_storage', 'rls_policy', 'storage', 'tarefa_comprov_delete_master', 'objects'),
   ('reposicao_fase2_badge_oportunidade_mv', 'function', 'public', 'refresh_oportunidade_badge', ''),
   ('reposicao_fase2_badge_oportunidade_mv', 'view', 'private', 'mv_oportunidade_badge', ''),
   ('reposicao_fase2_badge_oportunidade_mv', 'view', 'public', 'v_oportunidade_economica_hoje_badge_cached', ''),
@@ -2470,6 +2476,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_gate_estoque_nao_confirmado', 'index', 'public', 'idx_estoque_nao_confirmado_log_empresa_data', 'reposicao_estoque_nao_confirmado_log'),
   ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_sel', 'reposicao_estoque_nao_confirmado_log'),
   ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log'),
+  ('seg_onda2_revoke_secdef_storage', 'rls_policy', 'storage', 'tarefa_comprov_update_master', 'objects'),
+  ('seg_onda2_revoke_secdef_storage', 'rls_policy', 'storage', 'tarefa_comprov_delete_master', 'objects'),
   ('reposicao_fase2_badge_oportunidade_mv', 'function', 'public', 'refresh_oportunidade_badge', ''),
   ('reposicao_fase2_badge_oportunidade_mv', 'view', 'private', 'mv_oportunidade_badge', ''),
   ('reposicao_fase2_badge_oportunidade_mv', 'view', 'public', 'v_oportunidade_economica_hoje_badge_cached', ''),

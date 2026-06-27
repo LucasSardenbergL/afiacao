@@ -134,10 +134,14 @@ async function processMessage(supabase: ReturnType<typeof createClient>, msg: Pa
 
 Deno.serve(async (req) => {
   const expected = Deno.env.get("WHATSAPP_WEBHOOK_SECRET");
-  // Trade-off de piloto: aceitamos o segredo via header OU ?token= porque a 360dialog pode não
-  // permitir header custom no webhook. O segredo é o WHATSAPP_WEBHOOK_SECRET (rotacionável), não credencial de usuário. Revisitar (header-only) no PR2.
-  const provided = req.headers.get("x-whatsapp-secret") ?? new URL(req.url).searchParams.get("token") ?? "";
-  if (!expected || !timingSafeEq(expected, provided)) {
+  // Segredo SOMENTE via header (x-whatsapp-secret) — nunca em query string, que vaza em logs de
+  // proxy/CDN, no Referer e no histórico (achado de segurança "WhatsApp Webhook Secret Exposed
+  // via URL Query Parameter"). Configurar o header no webhook da 360dialog; o WHATSAPP_WEBHOOK_SECRET
+  // é rotacionável e deve ser rotacionado após esta mudança.
+  const provided = req.headers.get("x-whatsapp-secret") ?? "";
+  // fail-closed: secret do ambiente E header precisam existir e bater (guarda explícita
+  // contra header/secret vazio — defense-in-depth além do length-check do timingSafeEq).
+  if (!expected || !provided || !timingSafeEq(expected, provided)) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
   }
   let payload: unknown;
