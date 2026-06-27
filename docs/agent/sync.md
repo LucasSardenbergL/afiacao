@@ -4,7 +4,7 @@
 
 ## A verdade está em `net._http_response`, não no `job_run_details`
 
-`cron.job_run_details` reporta `succeeded` **mesmo quando a edge respondeu 401/503 ou nem bootou** — ele só registra que o `net.http_post` foi **enfileirado**. A verdade HTTP está em **`net._http_response`** (`status_code`/`content`/`error_msg`/`timed_out`), cruzada com `fin_sync_log` (iniciou/completou/órfã) e o **efeito no dado**. `status_code IS NULL` é mudo — sempre trazer `error_msg`/`timed_out` junto.
+`cron.job_run_details` reporta `succeeded` **mesmo quando a edge respondeu 401/503 ou nem bootou** — ele só registra que o `net.http_post` foi **enfileirado**. A verdade HTTP está em **`net._http_response`** (`status_code`/`content`/`error_msg`/`timed_out`), cruzada com `fin_sync_log` (iniciou/completou/órfã) e o **efeito no dado**. `status_code IS NULL` é mudo — sempre trazer `error_msg`/`timed_out` junto. ⚠️ **Isto vale p/ cron `net.http_post`** (status = só enqueue); **cron SQL-local** (`SELECT funcao()` direto) roda no Postgres → `status='failed'` + `return_message` carregam o **erro plpgsql REAL** — foi o que entregou o `42501` do ranking-refresh (#1117). Para SQL-local o `job_run_details` é a fonte primária, **não** enganosa.
 
 ## Padrão de cron (canônico)
 
