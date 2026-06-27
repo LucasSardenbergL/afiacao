@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **301** custom migrations totais
-- **1039** objetos esperados (criados por estas migrations)
+- **302** custom migrations totais
+- **1040** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 303
+  - `function`: 304
   - `rls_policy`: 222
   - `index`: 187
   - `table`: 110
@@ -2545,6 +2545,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.reposicao_cold_start_parametros` | — |
+
+### `20260627132029_reposicao_embalagem_motor_galao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
 
 ### `20260627150000_tint_formulas_rls_initplan.sql`
 
