@@ -465,6 +465,78 @@ async function syncEmpresa(
   return summary;
 }
 
+// ===== Heartbeat do Sentinela (sync_state) =====
+// Marcador 1-writer dedicado: entity_type='pedidos_compra', account=<empresa minúscula>.
+// O check pedidos_compra_sync em _data_health_compute() lê este marcador.
+//   last_sync_at = horário do último SUCESSO (complete/partial) — NÃO avança em falha total,
+//                  para preservar "última coleta boa" ao operador.
+//   updated_at   = heartbeat de execução (todo upsert o avança) — usado p/ detectar 'running' órfão.
+//   status       = running → complete | partial | error.
+//   metadata     = { trigger, dias, ... } para auditoria (qual execução o marcador representa).
+// purchase_orders_tracking é multi-writer (nfes/ctes/sku-items também escrevem updated_at), então
+// frescor pela tabela NÃO isola este sync — daí o marcador dedicado. Só gravado em sync ABRANGENTE
+// (sem fornecedor específico); investigação manual por-fornecedor não polui o sinal.
+const HEARTBEAT_ENTITY = "pedidos_compra";
+
+async function heartbeatRunning(
+  supabase: SupabaseClient,
+  empresa: Empresa,
+  meta: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const { error } = await supabase.from("sync_state").upsert(
+      {
+        entity_type: HEARTBEAT_ENTITY,
+        account: empresa.toLowerCase(),
+        status: "running",
+        updated_at: new Date().toISOString(),
+        metadata: { ...meta, started_at: new Date().toISOString() },
+      },
+      { onConflict: "entity_type,account" },
+    );
+    if (error) throw error;
+  } catch (err) {
+    // Heartbeat é best-effort: nunca derruba o sync por causa do marcador.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[sync-pedidos] heartbeat running falhou empresa=${empresa}: ${msg}`);
+  }
+}
+
+async function heartbeatFim(
+  supabase: SupabaseClient,
+  s: EmpresaSummary,
+  meta: Record<string, unknown>,
+  errFatal: string | null,
+): Promise<void> {
+  const nowISO = new Date().toISOString();
+  // Falha TOTAL (0 sincronizados + erros>0) → 'error' SEM avançar last_sync_at (preserva último sucesso).
+  // Parcial (algum progresso + erros)      → 'partial' COM last_sync_at (houve coleta, mas truncada).
+  // Sucesso (0 erros, mesmo 0 pedidos = janela vazia legítima) → 'complete' COM last_sync_at.
+  const falhaTotal = s.pedidos_sincronizados === 0 && s.erros > 0;
+  const parcial = s.pedidos_sincronizados > 0 && s.erros > 0;
+  const row: Record<string, unknown> = {
+    entity_type: HEARTBEAT_ENTITY,
+    account: s.empresa.toLowerCase(),
+    status: falhaTotal ? "error" : parcial ? "partial" : "complete",
+    updated_at: nowISO,
+    total_synced: s.pedidos_sincronizados,
+    error_message: s.erros > 0
+      ? (errFatal ?? `${s.erros} erro(s) na coleta, ${s.pedidos_sincronizados} sincronizado(s)`)
+      : null,
+    metadata: { ...meta, finished_at: nowISO, erros: s.erros, total_paginas: s.total_paginas },
+  };
+  // last_sync_at só avança quando houve progresso (complete/partial). Em falha total, OMITIMOS a coluna
+  // → o upsert não a sobrescreve (mantém o horário do último sucesso). Coluna ausente em 1º run = NULL.
+  if (!falhaTotal) row.last_sync_at = nowISO;
+  try {
+    const { error } = await supabase.from("sync_state").upsert(row, { onConflict: "entity_type,account" });
+    if (error) throw error;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[sync-pedidos] heartbeat fim falhou empresa=${s.empresa}: ${msg}`);
+  }
+}
+
 // ===== Handler =====
 async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
@@ -536,34 +608,49 @@ Deno.serve(async (req) => {
       `[sync-pedidos] início empresas=${empresas.join(",")} dias=${dias} fornecedor=${fornecedorCodigo ?? "todos"}`,
     );
 
+    // Heartbeat do Sentinela só em sync ABRANGENTE (sem fornecedor específico) — investigação manual
+    // filtrada por fornecedor não representa o frescor geral e não deve sobrescrever o marcador do cron.
+    const gravaHeartbeat = !fornecedorCodigo;
+    const heartbeatMeta = { trigger: req.headers.get("x-cron-secret") ? "cron" : "manual", dias };
+
     const summary: EmpresaSummary[] = [];
     for (const empresa of empresas) {
+      if (gravaHeartbeat) await heartbeatRunning(supabase, empresa, heartbeatMeta);
+      let s: EmpresaSummary;
+      let errFatal: string | null = null;
       try {
-        const s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo);
-        summary.push(s);
+        s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo);
         console.log(
           `[sync-pedidos] empresa=${empresa} TOTAL: paginas=${s.total_paginas} pedidos=${s.pedidos_sincronizados} erros=${s.erros} duracao=${Date.now() - t0}ms`,
         );
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[sync-pedidos] empresa=${empresa} erro fatal: ${msg}`);
-        summary.push({
-          empresa,
-          total_paginas: 0,
-          pedidos_sincronizados: 0,
-          erros: 1,
-        });
+        errFatal = err instanceof Error ? err.message : String(err);
+        console.error(`[sync-pedidos] empresa=${empresa} erro fatal: ${errFatal}`);
+        s = { empresa, total_paginas: 0, pedidos_sincronizados: 0, erros: 1 };
       }
+      summary.push(s);
+      if (gravaHeartbeat) await heartbeatFim(supabase, s, heartbeatMeta, errFatal);
     }
+
+    // Fail-CLOSED na coleta total: 0 sincronizados em TODAS as empresas + algum erro → não-2xx, para
+    // logs/dashboard do Supabase e chamada DIRETA enxergarem. (Janela vazia legítima = 0 sinc + 0 erros
+    // → 200 ok.) ⚠️ Mascarado pelo orquestrador omie-cron-diario (sempre 200) — a detecção do Sentinela
+    // vem do heartbeat sync_state acima, não deste status HTTP.
+    const algumSucesso = summary.some((x) => x.pedidos_sincronizados > 0);
+    const totalErros = summary.reduce((a, x) => a + x.erros, 0);
+    const falhaTotalGeral = !algumSucesso && totalErros > 0;
 
     return new Response(
       JSON.stringify({
-        ok: true,
+        ok: !falhaTotalGeral,
         duracao_ms: Date.now() - t0,
         sayerlack: SAYERLACK,
         summary,
       }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      {
+        status: falhaTotalGeral ? 502 : 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

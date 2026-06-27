@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **295** custom migrations totais
-- **1026** objetos esperados (criados por estas migrations)
+- **299** custom migrations totais
+- **1039** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 297
-  - `rls_policy`: 220
+  - `function`: 303
+  - `rls_policy`: 222
   - `index`: 187
-  - `table`: 108
-  - `cron_job`: 108
+  - `table`: 110
+  - `cron_job`: 109
+  - `view`: 52
   - `trigger`: 52
-  - `view`: 50
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2507,11 +2507,44 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.get_ultimos_precos_cliente` | — |
 
+### `20260626150000_data_health_check_pedidos_compra_sync.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
 ### `20260626150457_pedido_item_split_estoque_fisico_a_caminho.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260626193000_reposicao_depara_sayerlack_auto.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_aplicar_depara_sayerlack_auto` | — |
+| `view` | `public.v_reposicao_depara_sayerlack_elegivel` | — |
+| `table` | `public.reposicao_depara_auto_log` | — |
+| `rls_policy` | `public.depara_auto_log_sel` | `reposicao_depara_auto_log` |
+
+### `20260626210000_reposicao_cold_start_parametros.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_cold_start_parametros` | — |
+| `view` | `public.v_reposicao_cold_start_elegivel` | — |
+| `table` | `public.reposicao_cold_start_log` | — |
+| `cron_job` | `cron.reposicao-cold-start-parametros` | — |
+| `rls_policy` | `public.cold_start_log_sel` | `reposicao_cold_start_log` |
+
+### `20260627130000_reposicao_cold_start_fix_gate_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_cold_start_parametros` | — |
 
 ## Próximos passos quando algo der `❌`
 
