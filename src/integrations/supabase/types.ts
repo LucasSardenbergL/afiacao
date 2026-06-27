@@ -16002,6 +16002,7 @@ export type Database = {
         }[]
       }
       desfazer_contato_radar: { Args: { p_id: string }; Returns: Json }
+      desfazer_contato_rota: { Args: { p_id: string }; Returns: Json }
       despinar_parametro: {
         Args: { p_empresa: string; p_sku: string }
         Returns: boolean
@@ -16295,6 +16296,7 @@ export type Database = {
       get_minha_positivacao: { Args: never; Returns: Json }
       get_minha_positivacao_for: { Args: { p_target: string }; Returns: Json }
       get_preco_cockpit: { Args: { p_itens: Json }; Returns: Json }
+      get_public_tool_history: { Args: { p_tool_id: string }; Returns: Json }
       get_regua_preco: {
         Args: { p_customer: string; p_product: string; p_qty: number }
         Returns: Json
@@ -16558,6 +16560,16 @@ export type Database = {
       }
       registrar_contato_radar: {
         Args: { p_acao: string; p_cnpj: string; p_nota?: string }
+        Returns: Json
+      }
+      registrar_contato_rota: {
+        Args: {
+          p_bucket?: string
+          p_customer_user_id: string
+          p_data_rota: string
+          p_status: string
+          p_valor?: number
+        }
         Returns: Json
       }
       registrar_polling_resultado: {
