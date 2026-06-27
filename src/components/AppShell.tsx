@@ -26,6 +26,7 @@ import { useMelhoriasBadge } from '@/hooks/useMelhorias';
 import { useAlertasCriticos } from '@/hooks/useAlertasCriticos';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
 import { useTintAlertas } from '@/hooks/useTintAlertas';
+import { useOportunidadesAtivasCount } from '@/hooks/useReposicaoSessao';
 import { ShortcutsRegistryProvider } from '@/components/shell/ShortcutsRegistry';
 import { ShortcutsDialog } from '@/components/shell/ShortcutsDialog';
 import { CommandsRegistryProvider } from '@/components/shell/CommandsRegistry';
@@ -439,21 +440,11 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
     refetchIntervalInBackground: false,
   });
 
-  // Contador de oportunidades econômicas ativas hoje (OBEN)
-  const { data: oportunidadesAtivas } = useQuery({
-    queryKey: ['oportunidades-ativas-count'],
-    queryFn: async () => {
-      const { count } = await supabase
-        .from('v_oportunidade_economica_hoje')
-        .select('*', { count: 'exact', head: true })
-        .eq('empresa', 'OBEN');
-      return count ?? 0;
-    },
-    enabled: enableStaffPolls,
-    refetchInterval: 60000,
-    refetchIntervalInBackground: false,
-    staleTime: 30000,
-  });
+  // Contador de oportunidades econômicas ativas hoje (OBEN) — fonte compartilhada
+  // com o cockpit (useReposicaoStatus) via mesma queryKey → o react-query DEDUPLICA
+  // (1 request/60s na view cara, antes eram 2). Degrada honesto p/ null em erro →
+  // badge oculto, não fabrica "0". Detalhe em useReposicaoSessao.ts.
+  const { data: oportunidadesAtivas } = useOportunidadesAtivasCount({ enabled: enableStaffPolls });
 
   // Contador de sugestões novas de negociação paralela (OBEN)
   const { data: negociacaoNovasCount } = useQuery({
