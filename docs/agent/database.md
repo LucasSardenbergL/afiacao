@@ -34,6 +34,7 @@ As migrations em `supabase/migrations/` **NÃO são uma cadeia restaurável** �
 - **Fonte de DR/auditoria:** `supabase/schema-snapshot.sql` (`pg_dump` schema-only de prod, gerado pelo chat do Lovable). Ler `supabase/README-schema.md` antes de restaurar.
 - **Validação de restore:** `db/verify-snapshot-replay.sh` (Postgres 17 local + stubs) — prova ordem/dependência/sintaxe + RLS amostrado.
 - ⚠️ **NUNCA mexer em `supabase/migrations/`** (não mover snapshot pra lá, não arquivar) — a pasta é reconhecida pelo ecossistema Lovable.
+- **Reconciliar migration/RPC aplicada à mão (SQL Editor) exige DOIS passos, não um:** (1) `INSERT` em `supabase_migrations.schema_migrations` (senão o audit §1 do `audit-custom-migrations.sql` marca `❌ MISSING` com o objeto **já existindo** em prod) — conserta o *audit*; (2) **re-gerar o `schema-snapshot.sql`** — conserta o *DR*. Registrar no `schema_migrations` ≠ reproduzir prod. Caso `20260626150457` (colunas em prod fora do snapshot até o re-dump → o bot do Lovable regenerou `types.ts` de um estado sem elas e **quebrou o typecheck da `main`**). E o **snapshot é um retrato DATADO, prod é alvo móvel:** o dump de 26/06 20:20 UTC já nasceu stale (às 00:13 UTC o #1090 recriou `gerar_pedidos_sugeridos_ciclo` via `db/embalagem-motor-rpc.sql`, **sem migration formal** em `supabase/migrations/` → essa versão do motor só existe no DR pelo snapshot). Quando o motor money-path importa, confira `md5(pg_get_functiondef())` **prod × snapshot** antes de confiar no dump.
 
 ## 4. RLS (padrões)
 
