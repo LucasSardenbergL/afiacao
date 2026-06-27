@@ -14,6 +14,22 @@
 -- Read-only — não altera nada no banco.
 -- ========================================================================
 
+-- 13 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
+-- removidos/renomeados por outra — NÃO são bug; ver OBSOLETE em scripts/audit-custom-migrations.ts):
+--   • rls_policy public.kb_product_specs_insert_staff (kb_specs_and_competitors) — substituída → kb_product_specs_insert_master (hardening)
+--   • trigger public.trg_audit (fin_a1_audit_lock_attach) — drop — 20260523210000_drop_audit_trigger_fin_config_cashflow
+--   • trigger public.trg_audit (fin_a1_audit_lock_attach) — drop — 20260523210000_drop_audit_trigger_fin_config_cashflow
+--   • trigger public.trg_audit (fin_a1_audit_lock_attach) — drop — 20260523210000_drop_audit_trigger_fin_config_cashflow
+--   • trigger public.trg_audit (fin_a1_audit_lock_attach) — drop — 20260523210000_drop_audit_trigger_fin_config_cashflow
+--   • cron_job cron.fin-omie-sync-2x-diario (cron_financeiro_e_fix_sayerlack) — reorganizado → crons omie-sync-*
+--   • cron_job cron.sync-orders-vendas-2h (tuning_crons_estoque_freq_e_timeouts) — drop — 20260527190000_drop_redundant_sync_orders_cron
+--   • cron_job cron.afiacao_dispatch_notificacoes_diario (cron_baseline) — renomeado → afiacao_dispatch_notificacoes_30min
+--   • cron_job cron.afiacao_sugestoes_diarias (cron_baseline) — reorganizado (sem o diário)
+--   • cron_job cron.sayerlack-portal-lote-retry (cron_sayerlack_lote_retry) — unschedule — 20260530170000_unschedule_sayerlack_lote_retry
+--   • view public.v_sayerlack_mapeamento_gap (data_health_check_sayerlack_mapeamento_gap) — view abandonada (zero uso no app/SQL)
+--   • cron_job cron.sync-inventory-full-vendas-daily (cron_sync_inventory_full) — reorganizado → sync-inventory-vendas-30m / -servicos-1h / -colacor-vendas-1h
+--   • rls_policy public.cmc_ledger_select_staff (cmc_ledger) — substituída → cmc_ledger_select_gestor (hardening staff→gestor)
+
 -- =====================================================
 -- SECTION 1: Status reconciliado por migration
 -- =====================================================
@@ -478,7 +494,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('kb_specs_and_competitors', 'trigger', 'public', 'trg_kb_competitors_updated_at', 'kb_competitors'),
   ('kb_specs_and_competitors', 'trigger', 'public', 'trg_kb_competitor_products_updated_at', 'kb_competitor_products'),
   ('kb_specs_and_competitors', 'rls_policy', 'public', 'kb_product_specs_select_staff', 'kb_product_specs'),
-  ('kb_specs_and_competitors', 'rls_policy', 'public', 'kb_product_specs_insert_staff', 'kb_product_specs'),
   ('kb_specs_and_competitors', 'rls_policy', 'public', 'kb_product_specs_update_master', 'kb_product_specs'),
   ('kb_specs_and_competitors', 'rls_policy', 'public', 'kb_product_specs_delete_master', 'kb_product_specs'),
   ('kb_specs_and_competitors', 'rls_policy', 'public', 'kb_competitors_select_staff', 'kb_competitors'),
@@ -606,10 +621,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_a1_snapshots_alertas_config', 'rls_policy', 'public', 'fin_config_select_staff', 'fin_config_cashflow'),
   ('fin_a1_snapshots_alertas_config', 'rls_policy', 'public', 'fin_config_write_master', 'fin_config_cashflow'),
   ('fin_a1_audit_lock_attach', 'function', 'public', 'fin_period_lock_trigger', ''),
-  ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_audit', 'fin_eventos_recorrentes'),
-  ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_audit', 'fin_eventos_eventuais'),
-  ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_audit', 'fin_alertas'),
-  ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_audit', 'fin_config_cashflow'),
   ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_period_lock', 'fin_eventos_recorrentes'),
   ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_period_lock', 'fin_eventos_eventuais'),
   ('fin_onda1_ncg', 'function', 'public', 'fin_period_lock_trigger', ''),
@@ -640,7 +651,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('restaura_guardas_sla_view_stack', 'view', 'public', 'v_fornecedor_sla_compliance', ''),
   ('crons_scoring_visit_lendo_cron_secret_do_vault', 'cron_job', 'cron', 'scoring-recalc-batch-nightly', ''),
   ('crons_scoring_visit_lendo_cron_secret_do_vault', 'cron_job', 'cron', 'visit-score-recalc-batch-nightly', ''),
-  ('cron_financeiro_e_fix_sayerlack', 'cron_job', 'cron', 'fin-omie-sync-2x-diario', ''),
   ('cron_financeiro_e_fix_sayerlack', 'cron_job', 'cron', 'sayerlack-portal-watchdog', ''),
   ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_audit_trigger', ''),
   ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_period_lock_trigger', ''),
@@ -666,7 +676,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('carteira_scores_owner_e_filas', 'index', 'public', 'uniq_score_recalc_queue_pending', 'score_recalc_queue'),
   ('carteira_scores_owner_e_filas', 'index', 'public', 'uniq_visit_score_queue_pending', 'visit_score_recalc_queue'),
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'omie-sync-estoque-diario', ''),
-  ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-orders-vendas-2h', ''),
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-products-customers-daily', ''),
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-omie-services-hourly', ''),
@@ -784,13 +793,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_watchdog', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('data_health_watchdog', 'cron_job', 'cron', 'data-health-watchdog', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_ciclo_oportunidade_diario', ''),
-  ('cron_baseline', 'cron_job', 'cron', 'afiacao_dispatch_notificacoes_diario', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_estados_eventos_diarios', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_limpeza_sugestoes_mensal', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_omie_oben_sku_items_history_daily', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_omie_oben_sync_incremental_2h', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_ranking_refresh_semanal', ''),
-  ('cron_baseline', 'cron_job', 'cron', 'afiacao_sugestoes_diarias', ''),
   ('cron_baseline', 'cron_job', 'cron', 'call-log-missed-backstop', ''),
   ('cron_baseline', 'cron_job', 'cron', 'carteira-positivacao-snapshot-mensal', ''),
   ('cron_baseline', 'cron_job', 'cron', 'carteira-rebuild-nightly', ''),
@@ -840,7 +847,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('cron_sync_customers_dedicated', 'cron_job', 'cron', 'sync-customers-vendas-daily', ''),
   ('data_health_reposicao_acoes', 'function', 'public', '_data_health_compute', ''),
   ('data_health_reposicao_acoes', 'function', 'public', 'fin_sync_heartbeat', ''),
-  ('cron_sayerlack_lote_retry', 'cron_job', 'cron', 'sayerlack-portal-lote-retry', ''),
   ('sayerlack_retry_motor', 'function', 'public', 'sayerlack_retry_orfaos', ''),
   ('sayerlack_retry_motor', 'table', 'public', 'sayerlack_retry_motor_log', ''),
   ('sayerlack_retry_motor', 'cron_job', 'cron', 'sayerlack-retry-orfaos', ''),
@@ -950,7 +956,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', '_data_health_compute', ''),
   ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', 'fin_sync_heartbeat', ''),
-  ('data_health_check_sayerlack_mapeamento_gap', 'view', 'public', 'v_sayerlack_mapeamento_gap', ''),
   ('route_contact_log_escrita', 'function', 'public', 'registrar_contato_rota', ''),
   ('route_contact_log_escrita', 'function', 'public', 'desfazer_contato_rota', ''),
   ('tarefas_escalonamento_titulo_mensagem', 'function', 'public', 'tarefas_escalonamento_tick', ''),
@@ -1074,7 +1079,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_qtde_inteira_persist', 'function', 'public', 'reposicao_persistir_qtde_inteira', ''),
   ('reposicao_promo_forward_buying_min', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('order_feed_view', 'view', 'public', 'order_feed', ''),
-  ('cron_sync_inventory_full', 'cron_job', 'cron', 'sync-inventory-full-vendas-daily', ''),
   ('tool_spec_custom_option', 'function', 'public', 'adicionar_opcao_tool_spec', ''),
   ('data_health_check_familia_ausente', 'function', 'public', '_data_health_compute', ''),
   ('data_health_check_familia_ausente', 'function', 'public', 'data_health_watchdog', ''),
@@ -1223,7 +1227,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('cmc_ledger', 'table', 'public', 'cmc_ledger', ''),
   ('cmc_ledger', 'index', 'public', 'idx_cmc_ledger_lookup', 'cmc_ledger'),
   ('cmc_ledger', 'trigger', 'public', 'trg_cmc_ledger_capture', 'inventory_position'),
-  ('cmc_ledger', 'rls_policy', 'public', 'cmc_ledger_select_staff', 'cmc_ledger'),
   ('roteirizador_campo_carteira_sufixo_uf', 'function', 'public', 'carteira_por_municipio', ''),
   ('markup_policy', 'function', 'public', 'resolve_markup_policy', ''),
   ('markup_policy', 'table', 'public', 'markup_policy', ''),
@@ -1568,7 +1571,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('kb_specs_and_competitors', 'trigger', 'public', 'trg_kb_competitors_updated_at', 'kb_competitors'),
   ('kb_specs_and_competitors', 'trigger', 'public', 'trg_kb_competitor_products_updated_at', 'kb_competitor_products'),
   ('kb_specs_and_competitors', 'rls_policy', 'public', 'kb_product_specs_select_staff', 'kb_product_specs'),
-  ('kb_specs_and_competitors', 'rls_policy', 'public', 'kb_product_specs_insert_staff', 'kb_product_specs'),
   ('kb_specs_and_competitors', 'rls_policy', 'public', 'kb_product_specs_update_master', 'kb_product_specs'),
   ('kb_specs_and_competitors', 'rls_policy', 'public', 'kb_product_specs_delete_master', 'kb_product_specs'),
   ('kb_specs_and_competitors', 'rls_policy', 'public', 'kb_competitors_select_staff', 'kb_competitors'),
@@ -1696,10 +1698,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_a1_snapshots_alertas_config', 'rls_policy', 'public', 'fin_config_select_staff', 'fin_config_cashflow'),
   ('fin_a1_snapshots_alertas_config', 'rls_policy', 'public', 'fin_config_write_master', 'fin_config_cashflow'),
   ('fin_a1_audit_lock_attach', 'function', 'public', 'fin_period_lock_trigger', ''),
-  ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_audit', 'fin_eventos_recorrentes'),
-  ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_audit', 'fin_eventos_eventuais'),
-  ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_audit', 'fin_alertas'),
-  ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_audit', 'fin_config_cashflow'),
   ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_period_lock', 'fin_eventos_recorrentes'),
   ('fin_a1_audit_lock_attach', 'trigger', 'public', 'trg_period_lock', 'fin_eventos_eventuais'),
   ('fin_onda1_ncg', 'function', 'public', 'fin_period_lock_trigger', ''),
@@ -1730,7 +1728,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('restaura_guardas_sla_view_stack', 'view', 'public', 'v_fornecedor_sla_compliance', ''),
   ('crons_scoring_visit_lendo_cron_secret_do_vault', 'cron_job', 'cron', 'scoring-recalc-batch-nightly', ''),
   ('crons_scoring_visit_lendo_cron_secret_do_vault', 'cron_job', 'cron', 'visit-score-recalc-batch-nightly', ''),
-  ('cron_financeiro_e_fix_sayerlack', 'cron_job', 'cron', 'fin-omie-sync-2x-diario', ''),
   ('cron_financeiro_e_fix_sayerlack', 'cron_job', 'cron', 'sayerlack-portal-watchdog', ''),
   ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_audit_trigger', ''),
   ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_period_lock_trigger', ''),
@@ -1756,7 +1753,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('carteira_scores_owner_e_filas', 'index', 'public', 'uniq_score_recalc_queue_pending', 'score_recalc_queue'),
   ('carteira_scores_owner_e_filas', 'index', 'public', 'uniq_visit_score_queue_pending', 'visit_score_recalc_queue'),
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'omie-sync-estoque-diario', ''),
-  ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-orders-vendas-2h', ''),
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-products-customers-daily', ''),
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
   ('tuning_crons_estoque_freq_e_timeouts', 'cron_job', 'cron', 'sync-omie-services-hourly', ''),
@@ -1874,13 +1870,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_watchdog', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('data_health_watchdog', 'cron_job', 'cron', 'data-health-watchdog', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_ciclo_oportunidade_diario', ''),
-  ('cron_baseline', 'cron_job', 'cron', 'afiacao_dispatch_notificacoes_diario', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_estados_eventos_diarios', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_limpeza_sugestoes_mensal', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_omie_oben_sku_items_history_daily', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_omie_oben_sync_incremental_2h', ''),
   ('cron_baseline', 'cron_job', 'cron', 'afiacao_ranking_refresh_semanal', ''),
-  ('cron_baseline', 'cron_job', 'cron', 'afiacao_sugestoes_diarias', ''),
   ('cron_baseline', 'cron_job', 'cron', 'call-log-missed-backstop', ''),
   ('cron_baseline', 'cron_job', 'cron', 'carteira-positivacao-snapshot-mensal', ''),
   ('cron_baseline', 'cron_job', 'cron', 'carteira-rebuild-nightly', ''),
@@ -1930,7 +1924,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cron_sync_customers_dedicated', 'cron_job', 'cron', 'sync-customers-vendas-daily', ''),
   ('data_health_reposicao_acoes', 'function', 'public', '_data_health_compute', ''),
   ('data_health_reposicao_acoes', 'function', 'public', 'fin_sync_heartbeat', ''),
-  ('cron_sayerlack_lote_retry', 'cron_job', 'cron', 'sayerlack-portal-lote-retry', ''),
   ('sayerlack_retry_motor', 'function', 'public', 'sayerlack_retry_orfaos', ''),
   ('sayerlack_retry_motor', 'table', 'public', 'sayerlack_retry_motor_log', ''),
   ('sayerlack_retry_motor', 'cron_job', 'cron', 'sayerlack-retry-orfaos', ''),
@@ -2040,7 +2033,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', '_data_health_compute', ''),
   ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_check_sayerlack_mapeamento_gap', 'function', 'public', 'fin_sync_heartbeat', ''),
-  ('data_health_check_sayerlack_mapeamento_gap', 'view', 'public', 'v_sayerlack_mapeamento_gap', ''),
   ('route_contact_log_escrita', 'function', 'public', 'registrar_contato_rota', ''),
   ('route_contact_log_escrita', 'function', 'public', 'desfazer_contato_rota', ''),
   ('tarefas_escalonamento_titulo_mensagem', 'function', 'public', 'tarefas_escalonamento_tick', ''),
@@ -2164,7 +2156,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_qtde_inteira_persist', 'function', 'public', 'reposicao_persistir_qtde_inteira', ''),
   ('reposicao_promo_forward_buying_min', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('order_feed_view', 'view', 'public', 'order_feed', ''),
-  ('cron_sync_inventory_full', 'cron_job', 'cron', 'sync-inventory-full-vendas-daily', ''),
   ('tool_spec_custom_option', 'function', 'public', 'adicionar_opcao_tool_spec', ''),
   ('data_health_check_familia_ausente', 'function', 'public', '_data_health_compute', ''),
   ('data_health_check_familia_ausente', 'function', 'public', 'data_health_watchdog', ''),
@@ -2313,7 +2304,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cmc_ledger', 'table', 'public', 'cmc_ledger', ''),
   ('cmc_ledger', 'index', 'public', 'idx_cmc_ledger_lookup', 'cmc_ledger'),
   ('cmc_ledger', 'trigger', 'public', 'trg_cmc_ledger_capture', 'inventory_position'),
-  ('cmc_ledger', 'rls_policy', 'public', 'cmc_ledger_select_staff', 'cmc_ledger'),
   ('roteirizador_campo_carteira_sufixo_uf', 'function', 'public', 'carteira_por_municipio', ''),
   ('markup_policy', 'function', 'public', 'resolve_markup_policy', ''),
   ('markup_policy', 'table', 'public', 'markup_policy', ''),
