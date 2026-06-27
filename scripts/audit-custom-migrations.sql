@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 300
+-- Total de custom migrations: 301
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -319,7 +319,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260626193000', 'reposicao_depara_sayerlack_auto', '20260626193000_reposicao_depara_sayerlack_auto.sql'),
   ('20260626210000', 'reposicao_cold_start_parametros', '20260626210000_reposicao_cold_start_parametros.sql'),
   ('20260627130000', 'reposicao_cold_start_fix_gate_cron', '20260627130000_reposicao_cold_start_fix_gate_cron.sql'),
-  ('20260627150000', 'tint_formulas_rls_initplan', '20260627150000_tint_formulas_rls_initplan.sql')
+  ('20260627150000', 'tint_formulas_rls_initplan', '20260627150000_tint_formulas_rls_initplan.sql'),
+  ('20260627150100', 'tint_formulas_autovacuum_agressivo', '20260627150100_tint_formulas_autovacuum_agressivo.sql')
 )
 SELECT
   e.version,

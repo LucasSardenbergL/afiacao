@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **300** custom migrations totais
+- **301** custom migrations totais
 - **1039** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 303
@@ -2547,6 +2547,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.reposicao_cold_start_parametros` | — |
 
 ### `20260627150000_tint_formulas_rls_initplan.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260627150100_tint_formulas_autovacuum_agressivo.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
