@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **298** custom migrations totais
-- **1038** objetos esperados (criados por estas migrations)
+- **299** custom migrations totais
+- **1039** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 302
+  - `function`: 303
   - `rls_policy`: 222
   - `index`: 187
   - `table`: 110
@@ -2539,6 +2539,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.reposicao_cold_start_log` | — |
 | `cron_job` | `cron.reposicao-cold-start-parametros` | — |
 | `rls_policy` | `public.cold_start_log_sel` | `reposicao_cold_start_log` |
+
+### `20260627130000_reposicao_cold_start_fix_gate_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_cold_start_parametros` | — |
 
 ## Próximos passos quando algo der `❌`
 
