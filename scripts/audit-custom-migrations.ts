@@ -32,6 +32,26 @@ const MD_OUT = join(REPO_ROOT, 'docs', 'migrations-audit.md');
 const UUID_PATTERN = /_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.sql$/;
 const TIMESTAMP_PATTERN = /^(\d{14})_(.+)\.sql$/;
 
+/**
+ * Objetos que uma migration criou mas uma migration POSTERIOR removeu/renomeou. O audit não modela
+ * remoções (DROP/unschedule/rename), então sem isto apareceriam como ❌/⚠️ falso-positivo
+ * ("a migration deveria criar X; X não existe" — quando X foi removido de PROPÓSITO). Excluídos do
+ * inventário. Chave `<slug>::<object_name>` → motivo. Cada um confirmado via psql-ro (2026-06-27):
+ * removido/substituído por outra migration, NÃO um bug. (Bug real = objeto ausente E em uso: vira ❌.)
+ */
+const OBSOLETE: Record<string, string> = {
+  'cron_sayerlack_lote_retry::sayerlack-portal-lote-retry': 'unschedule — 20260530170000_unschedule_sayerlack_lote_retry',
+  'tuning_crons_estoque_freq_e_timeouts::sync-orders-vendas-2h': 'drop — 20260527190000_drop_redundant_sync_orders_cron',
+  'fin_a1_audit_lock_attach::trg_audit': 'drop — 20260523210000_drop_audit_trigger_fin_config_cashflow',
+  'cron_baseline::afiacao_dispatch_notificacoes_diario': 'renomeado → afiacao_dispatch_notificacoes_30min',
+  'cron_baseline::afiacao_sugestoes_diarias': 'reorganizado (sem o diário)',
+  'cron_financeiro_e_fix_sayerlack::fin-omie-sync-2x-diario': 'reorganizado → crons omie-sync-*',
+  'cron_sync_inventory_full::sync-inventory-full-vendas-daily': 'reorganizado → sync-inventory-vendas-30m / -servicos-1h / -colacor-vendas-1h',
+  'cmc_ledger::cmc_ledger_select_staff': 'substituída → cmc_ledger_select_gestor (hardening staff→gestor)',
+  'kb_specs_and_competitors::kb_product_specs_insert_staff': 'substituída → kb_product_specs_insert_master (hardening)',
+  'data_health_check_sayerlack_mapeamento_gap::v_sayerlack_mapeamento_gap': 'view abandonada (zero uso no app/SQL)',
+};
+
 interface MigrationAudit {
   filename: string;
   version: string;
@@ -82,10 +102,22 @@ function emitSql(audits: MigrationAudit[]): string {
   // Objetos de TODAS as migrations (compartilhado pelas Seções 1 e 2).
   type Row = { migration: string; kind: ObjectKind; schema: string; name: string; parent: string };
   const rows: Row[] = [];
+  const obsoletosExcluidos: string[] = [];
   for (const a of audits) {
     for (const o of a.objects) {
+      const key = `${a.slug}::${o.name}`;
+      if (OBSOLETE[key]) {
+        obsoletosExcluidos.push(`${o.kind} ${o.schema}.${o.name} (${a.slug}) — ${OBSOLETE[key]}`);
+        continue; // removido/renomeado por migration posterior — não conta no audit (não é bug)
+      }
       rows.push({ migration: a.slug, kind: o.kind, schema: o.schema, name: o.name, parent: o.parent || '' });
     }
+  }
+  if (obsoletosExcluidos.length > 0) {
+    lines.push(`-- ${obsoletosExcluidos.length} objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,`);
+    lines.push('-- removidos/renomeados por outra — NÃO são bug; ver OBSOLETE em scripts/audit-custom-migrations.ts):');
+    obsoletosExcluidos.forEach((s) => lines.push(`--   • ${s}`));
+    lines.push('');
   }
   // CTE expected_objects — mesmos VALUES nas duas seções.
   const expectedObjectsCte = (trailingComma: boolean): string[] => {
