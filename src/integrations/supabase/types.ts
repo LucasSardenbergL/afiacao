@@ -14976,6 +14976,14 @@ export type Database = {
         }
         Relationships: []
       }
+      v_oportunidade_economica_hoje_badge_cached: {
+        Row: {
+          empresa: string | null
+          oportunidade_count: number | null
+          refreshed_at: string | null
+        }
+        Relationships: []
+      }
       v_otimizador_compras_insumos: {
         Row: {
           aumento_evitado_perc: number | null
@@ -16574,6 +16582,7 @@ export type Database = {
       rank_precisao: { Args: { p: string }; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
       refresh_customer_metrics: { Args: never; Returns: undefined }
+      refresh_oportunidade_badge: { Args: never; Returns: undefined }
       refresh_sku_ranking_negociacao: {
         Args: never
         Returns: {
