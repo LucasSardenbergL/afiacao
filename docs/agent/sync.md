@@ -17,6 +17,8 @@
 
 - **Não confiar em `total_de_paginas`** — sub-reporta em lista grande. Paginar **até página vazia** + guard anti-loop; `registros_por_pagina>100` é **ignorado** pelo Omie.
 - Enumeração pesada (~10k+) precisa de **bulk reads + background (`waitUntil`) + retry**, nunca N+1.
+- ⚠️ **`waitUntil`/responder-cedo (202) é p/ edge STANDALONE — NÃO p/ um STEP de pipeline ORDENADO** (ex.: `omie-cron-diario` chama `pedidos`→`nfes`→`ctes`→`sku`; `nfes`/`ctes` LEEM `purchase_orders_tracking`). Responder 202 solta os steps seguintes ANTES do espelho existir → `nfes` cria linha **órfã** (`insertOrfa`, `omie_codigo_pedido` negativo). Edge SEM waitUntil **já completa em background após o disconnect do cliente** (o `AbortController` do orquestrador corta o fetch em 25s, mas o isolate segue até o wall-clock ~400s, commitando por página — provado em prod 2026-06-26); é "acidental" (não-garantido pela plataforma) mas, num pipeline ordenado, manter SÍNCRONO é o certo (Codex challenge 2026-06-26).
+- ⚠️ **Cadência incremental×completo robusta a schedule:** decida o modo por um **marcador `sync_state` DEDICADO** (1 linha só-escrita-por-completo, ex.: `entity_type='pedidos_compra_full'`) lido por `deveRodarCompleto(last_full_at)>Nh` — **não** por hora (frágil se o schedule mudar) **nem** por um campo dentro de `metadata` multi-writer (um incremental concorrente regrava o JSON inteiro → **lost-update** do `last_full_at`; Codex 2026-06-26).
 - ⚠️ Após corrigir a FONTE, **snapshots derivados não se regeneram sozinhos** — re-invocar o recompute (ver `docs/agent/reposicao.md`, cmc).
 
 ## Backfill histórico via invocação SERIALIZADA (motor cron temporário)

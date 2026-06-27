@@ -130,7 +130,12 @@ Deno.serve(async (req) => {
   const dias = 3;
 
   const steps: Array<{ key: string; name: string; body: Record<string, unknown> }> = [
-    { key: "pedidos",   name: "omie-sync-pedidos-compra", body: { empresa, dias } },
+    // trigger:"cron" → a edge detecta o caminho cron pelo BODY (o orquestrador chama via service_role e NÃO
+    // repassa x-cron-secret p/ a filha) e decide AUTO incremental×completo (marcador de cadência), em vez do
+    // default manual (completo sempre). Sem isto o heartbeat #1081 também marcava "manual". O step segue
+    // abortando em 25s (a edge continua server-side); ela é SÍNCRONA de propósito — responder cedo soltaria
+    // este step e os seguintes (nfes/ctes/sku) antes do espelho de pedidos → órfãs. (Codex 2026-06-26)
+    { key: "pedidos",   name: "omie-sync-pedidos-compra", body: { empresa, dias, trigger: "cron" } },
     { key: "nfes",      name: "omie-sync-nfes-recebidas", body: { empresa, dias } },
     { key: "ctes",      name: "omie-sync-ctes-recebidos", body: { empresa, dias } },
     { key: "sku_items", name: "omie-sync-sku-items",      body: { empresa, dias } },
