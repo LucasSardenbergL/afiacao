@@ -308,7 +308,11 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
   let logId = "";
-  const triggeredBy = req.headers.get("x-cron-secret") ? "cron" : "manual";
+  // cron = x-cron-secret (cron diário direto) OU service-role (via orquestrador omie-cron-diario,
+  // que chama as edges com Bearer SERVICE_ROLE, sem repassar o x-cron-secret). user JWT (staff) = manual.
+  const svcKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const triggeredBy = (req.headers.get("x-cron-secret") ||
+    (svcKey && req.headers.get("Authorization") === `Bearer ${svcKey}`)) ? "cron" : "manual";
 
   try {
     const body: RequestBody = await req.json().catch(() => ({}));
