@@ -22,6 +22,7 @@ const VISUAL: Record<StatusCanaria, { label: string; cls: string; Icon: typeof C
 export function CanariaPrecoCard() {
   const { verificar, verificando, resultado } = useCanariaPreco();
   const status: StatusCanaria = resultado?.status ?? "desconhecido";
+  const carregandoInicial = verificando && !resultado;
   const v = VISUAL[status];
   const Icon = v.Icon;
 
@@ -32,12 +33,18 @@ export function CanariaPrecoCard() {
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
             <ShieldCheck className="w-4 h-4" /> Canária de preço (edge deployada)
           </CardTitle>
-          <Badge className={`text-2xs ${v.cls}`}>
-            <Icon className="w-3 h-3 mr-1" /> {v.label}
-          </Badge>
+          {carregandoInicial ? (
+            <Badge className="text-2xs bg-muted text-muted-foreground border-border">
+              <Loader2 className="w-3 h-3 mr-1 animate-spin" /> Verificando…
+            </Badge>
+          ) : (
+            <Badge className={`text-2xs ${v.cls}`}>
+              <Icon className="w-3 h-3 mr-1" /> {v.label}
+            </Badge>
+          )}
         </div>
         <CardDescription className="text-xs">
-          Prova que a edge <span className="font-mono">analyze-unified-order</span> SERVIDA em produção honra "preço praticado vence o Omie" (local 123 vs Omie 999). Pega reversão silenciosa do deploy do Lovable que o CI do repo não enxerga.
+          Prova que a edge <span className="font-mono">analyze-unified-order</span> SERVIDA em produção honra "preço praticado vence o Omie" (local 123 vs Omie 999). Pega reversão silenciosa do deploy do Lovable que o CI do repo não enxerga. Roda sozinha ao abrir esta página.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
@@ -46,7 +53,7 @@ export function CanariaPrecoCard() {
             {verificando ? (
               <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Verificando…</>
             ) : (
-              "Verificar agora"
+              "Verificar de novo"
             )}
           </Button>
           {resultado && (
@@ -61,7 +68,11 @@ export function CanariaPrecoCard() {
           </p>
         ) : (
           <p className="text-xs text-muted-foreground">
-            Rode após um deploy/Publish do Lovable, ou quando chegar uma Issue <span className="font-mono">lovable-touched-sensitive</span>. Vermelho = restaure a edge (ver <span className="font-mono">docs/agent/deploy.md</span> → "Quando o Lovable reverte").
+            {carregandoInicial ? (
+              "Verificando a edge deployada…"
+            ) : (
+              <>Vermelho = restaure a edge (ver <span className="font-mono">docs/agent/deploy.md</span> → "Quando o Lovable reverte").</>
+            )}
           </p>
         )}
       </CardContent>
