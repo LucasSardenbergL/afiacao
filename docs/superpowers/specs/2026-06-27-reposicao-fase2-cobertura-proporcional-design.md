@@ -55,6 +55,27 @@ Antes de tocar um único parâmetro em prod, **simular a cobertura nova contra o
 
 Se (2) ≤ (3) em ruptura **e** (2) « (1) em capital empatado → a recalibração mantém o serviço e libera caixa. Se (2) rompe mais que (3), os coeficientes estão apertados → recalibrar e re-simular. Ancorar em `simulacao_estoque_resultados` se a infra servir; senão, query de backtest dedicada.
 
+### 3.3.1 RESULTADO do backtest (executado 2026-06-27, prod read-only) + DECISÃO
+
+**Backtest analítico** (ponto atual vs teórico `mu·LT + z·σ·√LT`): o ponto de pedido está **4–14× acima** do teórico de nível de serviço (AX 44→11d, BX 63→11d, CX 71→10d, CZ 144→~10d). Toda a gordura é capital empatado sem ganho de serviço (o z-score do serviço já está no teórico).
+
+**Backtest dia-a-dia** (Poisson, min-max, 1 ano em regime descartando transiente, 150 réplicas, 195 SKUs):
+
+| cenário | serviço | capital (cobertura média) |
+|---|---|---|
+| ATUAL (motor) | 99,93% | 104 dias (baseline) |
+| PURO (ponto teórico) | 99,63% | 66 d (**−36%**) |
+| **bufY (PURO + z+0,8 nas classes Y)** | **99,75%** | **70 d (−33%)** |
+
+**DECISÃO (founder delegou a Claude+Codex, 2026-06-27): bufY.** Trocar 3pp de capital (36→33%) por subir o serviço a 99,75% e cortar a ruptura das classes intermitentes (Y) de ~0,6% pra ~0,2% — onde a aproximação Poisson é mais fraca. O `z+0,8` é **calibração empírica por simulação** (não verdade teórica): "Y recebe nível de serviço efetivo maior porque o modelo base subestima a variância/rajada". A classe AZ não reduz capital (já calibrada — deixar). A classe CZ melhora nos dois eixos.
+
+**Guardrails que o Codex challenge exigiu ANTES do apply (entram no plano como gates):**
+- **Ruptura ponderada por FATURAMENTO/margem**, não só por unidade-SKU — a média por classe esconde um SKU **classe A de alto giro/margem** quebrando curto mas caro.
+- **Top-10 SKUs por perda simulada** + **pior réplica por SKU A** + **dias CONSECUTIVOS em ruptura** (não só % de dias).
+- **Stress test de rajada** com `v_sku_demanda_rajada` (demanda real tem autocorrelação; Poisson independente subestima a cauda).
+- **Pin** dos SKUs A críticos na esteira `param_auto` (proteção individual).
+- Croston/TSB/SBA p/ intermitente = experimento POSTERIOR, não bloqueio.
+
 ### 3.4 Rollout — gradual e reversível, via `param_auto`
 
 Aplicar os parâmetros novos **só nos SKUs Sayerlack/Oben** pela esteira `param_auto` existente (fusível pra reverter na hora; `pin` pra travar SKUs sensíveis; `log` de auditoria; período de revisão pra não despejar tudo de uma vez). Monitorar ruptura real nas primeiras 2–3 semanas (cron de health + a query de ruptura).
@@ -76,7 +97,10 @@ Com as sugestões enxutas, os pedidos passam a ficar no tamanho que o founder de
 |---|---|
 | **Ruptura** (cobertura apertada demais) | Backtest ANTES de aplicar (§3.3), critério ruptura-nova ≤ comportamento-atual; rollout gradual; fusível `param_auto` pra reverter; monitor de ruptura 2–3 semanas. |
 | Recalibração errada num SKU específico | `pin` da esteira `param_auto` trava SKUs sensíveis; o backtest é por-SKU (pega outliers). |
-| O motor enche menos mas pede MAIS vezes | Custo de transação ~zero no Sayerlack (mínimo faturável R$3k frequente é o ótimo do dente de serra). Aceitável. |
+| O motor enche menos mas pede MAIS vezes | Custo de transação ~zero no Sayerlack (mínimo faturável R$3k frequente é o ótimo do dente de serra). **Codex:** validar o custo OPERACIONAL (scraping/disparo do portal) — lote de ~1 LT pode ser pequeno demais p/ a operação mesmo se ótimo matematicamente. |
+| **Lead time variável** (Codex) | A fórmula usa LT médio; se a Sayerlack atrasa ou entrega parcial, o risco real sobe. Usar `lt_p95_dias` (não só média) no estoque de segurança; monitorar LT real no rollout. |
+| **Cauda escondida na média** (Codex) | Serviço médio 99,75% pode esconder poucos SKUs A caros quebrando → validação ponderada por faturamento + top-10 perdas + dias consecutivos (§3.3.1). |
+| **Rajada/autocorrelação** (Codex) | Poisson independente subestima a cauda → stress test com `v_sku_demanda_rajada` antes do apply (§3.3.1). |
 | Divergência repo↔banco da fórmula | A fórmula vive numa view (`CREATE OR REPLACE`); pré-flight `pg_get_viewdef` da prod antes de recriar (lição da casa). |
 
 ## 6. Validação / prova
