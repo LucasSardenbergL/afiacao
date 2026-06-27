@@ -9708,6 +9708,81 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_cold_start_log: {
+        Row: {
+          acao: string
+          criado_em: string
+          detalhe: string | null
+          empresa: string
+          habilitado: boolean | null
+          id: string
+          run_id: string | null
+          sku_codigo_omie: string
+          sku_descricao: string | null
+        }
+        Insert: {
+          acao: string
+          criado_em?: string
+          detalhe?: string | null
+          empresa?: string
+          habilitado?: boolean | null
+          id?: string
+          run_id?: string | null
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+        }
+        Update: {
+          acao?: string
+          criado_em?: string
+          detalhe?: string | null
+          empresa?: string
+          habilitado?: boolean | null
+          id?: string
+          run_id?: string | null
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+        }
+        Relationships: []
+      }
+      reposicao_depara_auto_log: {
+        Row: {
+          criado_em: string
+          detalhe: string | null
+          empresa: string
+          id: string
+          parser_version: number | null
+          resultado: string
+          run_id: string | null
+          sku_descricao: string | null
+          sku_omie: string
+          sku_portal_extraido: string | null
+        }
+        Insert: {
+          criado_em?: string
+          detalhe?: string | null
+          empresa?: string
+          id?: string
+          parser_version?: number | null
+          resultado: string
+          run_id?: string | null
+          sku_descricao?: string | null
+          sku_omie: string
+          sku_portal_extraido?: string | null
+        }
+        Update: {
+          criado_em?: string
+          detalhe?: string | null
+          empresa?: string
+          id?: string
+          parser_version?: number | null
+          resultado?: string
+          run_id?: string | null
+          sku_descricao?: string | null
+          sku_omie?: string
+          sku_portal_extraido?: string | null
+        }
+        Relationships: []
+      }
       reposicao_param_auto_log: {
         Row: {
           classe_consolidada: string | null
@@ -10904,6 +10979,7 @@ export type Database = {
           override_criado_em: string | null
           override_criado_por: string | null
           override_validade_ate: string | null
+          parametro_cold_start: boolean
           ponto_pedido: number | null
           ponto_pedido_omie: number | null
           sku_codigo_omie: number
@@ -10957,6 +11033,7 @@ export type Database = {
           override_criado_em?: string | null
           override_criado_por?: string | null
           override_validade_ate?: string | null
+          parametro_cold_start?: boolean
           ponto_pedido?: number | null
           ponto_pedido_omie?: number | null
           sku_codigo_omie: number
@@ -11010,6 +11087,7 @@ export type Database = {
           override_criado_em?: string | null
           override_criado_por?: string | null
           override_validade_ate?: string | null
+          parametro_cold_start?: boolean
           ponto_pedido?: number | null
           ponto_pedido_omie?: number | null
           sku_codigo_omie?: number
@@ -15058,6 +15136,25 @@ export type Database = {
           },
         ]
       }
+      v_reposicao_cold_start_elegivel: {
+        Row: {
+          empresa: string | null
+          estoque_catalogo: number | null
+          fornecedor_nome: string | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+        }
+        Relationships: []
+      }
+      v_reposicao_depara_sayerlack_elegivel: {
+        Row: {
+          empresa: string | null
+          familia: string | null
+          sku_descricao: string | null
+          sku_omie: string | null
+        }
+        Relationships: []
+      }
       v_reposicao_sku_sem_fornecedor: {
         Row: {
           empresa: string | null
@@ -16510,6 +16607,26 @@ export type Database = {
         Returns: undefined
       }
       reposicao_alerta_pedido_minimo_tick: { Args: never; Returns: undefined }
+      reposicao_aplicar_depara_sayerlack_auto: {
+        Args: {
+          p_candidatos: Json
+          p_parser_version?: number
+          p_run_id?: string
+        }
+        Returns: {
+          colisao_destino: number
+          inseridos: number
+          ja_existe: number
+          nao_elegivel: number
+        }[]
+      }
+      reposicao_cold_start_parametros: {
+        Args: { p_empresa?: string; p_limite?: number; p_run_id?: string }
+        Returns: {
+          criados: number
+          graduados: number
+        }[]
+      }
       reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
       reposicao_param_limbo_watchdog: { Args: never; Returns: undefined }
       reposicao_pedido_auto_aprovavel: {
