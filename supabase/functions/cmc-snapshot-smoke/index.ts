@@ -64,7 +64,7 @@ async function callOmie(
   if (!creds.key || !creds.secret) throw new Error(`Credenciais Omie (${account}) não configuradas`);
   const body = { call, app_key: creds.key, app_secret: creds.secret, param: [params] };
 
-  const maxAttempts = 3;
+  const maxAttempts = 5;
   let lastErr: Error | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -82,9 +82,12 @@ async function callOmie(
       const transient = msg.includes("broken response") || msg.includes("soap-error") ||
         msg.includes("timeout") || msg.includes("timed out") || msg.includes("network") ||
         msg.includes("connection") || msg.includes("fetch failed") ||
-        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500");
+        msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("500") ||
+        // Lock de concorrência do Omie: recusa 2 chamadas simultâneas do mesmo método.
+        msg.includes("já existe uma requisição") || msg.includes("sendo executada") ||
+        msg.includes("tente novamente");
       if (transient && attempt < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 600 * Math.pow(2, attempt - 1)));
+        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
         continue;
       }
       throw lastErr;
@@ -159,10 +162,10 @@ Deno.serve(async (req: Request) => {
     const dA = normalizaDataPosicao(String(body.dataA));
     const dB = normalizaDataPosicao(String(body.dataB));
 
-    const [a, b] = await Promise.all([
-      cmcPorData(account, dA, maxPaginas, codProdAlvo),
-      cmcPorData(account, dB, maxPaginas, codProdAlvo),
-    ]);
+    // Serializado de propósito: o Omie recusa 2 chamadas simultâneas do mesmo
+    // método/app_key ("Já existe uma requisição desse método sendo executada").
+    const a = await cmcPorData(account, dA, maxPaginas, codProdAlvo);
+    const b = await cmcPorData(account, dB, maxPaginas, codProdAlvo);
 
     // Cruza só SKUs presentes (com CMC>0) nas DUAS datas.
     const EPS = 0.005;

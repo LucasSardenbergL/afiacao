@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **308** custom migrations totais
-- **1047** objetos esperados (criados por estas migrations)
+- **310** custom migrations totais
+- **1053** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 305
+  - `function`: 307
   - `rls_policy`: 226
-  - `index`: 188
+  - `index`: 189
   - `table`: 111
-  - `cron_job`: 109
-  - `view`: 52
+  - `cron_job`: 110
+  - `view`: 54
   - `trigger`: 52
   - `enum_value`: 4
 
@@ -2592,6 +2592,22 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260627180400_seg_onda6_drop_backups_obsoletos.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260627190000_reposicao_fase2_badge_oportunidade_mv.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.refresh_oportunidade_badge` | — |
+| `view` | `private.mv_oportunidade_badge` | — |
+| `view` | `public.v_oportunidade_economica_hoje_badge_cached` | — |
+| `index` | `private.mv_oportunidade_badge_empresa_uq` | `mv_oportunidade_badge` |
+| `cron_job` | `cron.afiacao_oportunidade_badge_refresh_2h` | — |
+
+### `20260627200000_fix_refresh_sku_ranking_gate_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.refresh_sku_ranking_negociacao` | — |
 
 ## Próximos passos por status
 

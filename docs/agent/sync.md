@@ -4,7 +4,7 @@
 
 ## A verdade está em `net._http_response`, não no `job_run_details`
 
-`cron.job_run_details` reporta `succeeded` **mesmo quando a edge respondeu 401/503 ou nem bootou** — ele só registra que o `net.http_post` foi **enfileirado**. A verdade HTTP está em **`net._http_response`** (`status_code`/`content`/`error_msg`/`timed_out`), cruzada com `fin_sync_log` (iniciou/completou/órfã) e o **efeito no dado**. `status_code IS NULL` é mudo — sempre trazer `error_msg`/`timed_out` junto.
+`cron.job_run_details` reporta `succeeded` **mesmo quando a edge respondeu 401/503 ou nem bootou** — ele só registra que o `net.http_post` foi **enfileirado**. A verdade HTTP está em **`net._http_response`** (`status_code`/`content`/`error_msg`/`timed_out`), cruzada com `fin_sync_log` (iniciou/completou/órfã) e o **efeito no dado**. `status_code IS NULL` é mudo — sempre trazer `error_msg`/`timed_out` junto. ⚠️ **Isto vale p/ cron `net.http_post`** (status = só enqueue); **cron SQL-local** (`SELECT funcao()` direto) roda no Postgres → `status='failed'` + `return_message` carregam o **erro plpgsql REAL** — foi o que entregou o `42501` do ranking-refresh (#1117). Para SQL-local o `job_run_details` é a fonte primária, **não** enganosa.
 
 ## Padrão de cron (canônico)
 
@@ -48,6 +48,7 @@ Pra disparar MUITAS invocações da MESMA edge/conta Omie (ex.: backfill mês-a-
 - **Vigie o EFEITO no dado, não o status técnico.** `complete` ocorre em **rajadas** (idle saudável parece "parado" — staleness por tempo-desde-complete é NÃO-confiável). `sales_orders.created_at` é a **data do pedido no Omie** (pode ser futura), NÃO frescor → usar `fin_sync_log` action `sync_pedidos`.
 - **A tripla que desambigua em segundos:** edge irmã OK (200) + zero-401 + zero-`running` ⇒ a edge-alvo não boota.
 - **Ausência ≠ falha.** Cron não-devido, fim de semana, resposta expurgada, par dormente — calcule a **última execução esperada** (com `now()` do BANCO, não relógio local) antes de gritar.
+- ⚠️ **A purga de 7d do `job_run_details` MENTE a IDADE do incidente** (≠ a seção de cima, que é sobre o STATUS mentir). O job `purge-cron-job-run-details` (`DELETE … WHERE start_time < now() - interval '7 days'`) apaga os runs antigos → o run-mais-antigo-RETIDO faz um cron morto há semanas parecer recém-quebrado. Datar HÁ QUANTO TEMPO pelo **efeito no dado** (`MAX(atualizado_em/timestamp)` do alvo), nunca pela janela retida. Caso: `afiacao_ranking_refresh_semanal` morto desde **25/05** (último refresh OK da MV de ranking), mas `job_run_details` só guardava o fail de **22/06** → parecia ~5 dias, eram **33** (#1117, 2026-06-27).
 - ⚠️ A correlação `net._http_response × cron.job_run_details` por tempo é **cara** (a `job_run_details` é grande e sem índice em `start_time`) — preferir correlação por schedule + config + efeito. Considerar um índice em `job_run_details(start_time)` se virar rotina.
 
 ## Sentinela (vigia ativo)
