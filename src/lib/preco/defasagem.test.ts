@@ -65,20 +65,19 @@ describe('avaliarDefasagem', () => {
   });
 
   it('fronteira da tolerância — custo +10%, preço +9,96% (por centavo) → NÃO defasado (TOL_PP)', () => {
-    // cLast 100 → cNow 110 (+10%). pLast 100 → pNow 109,96 (+9,96%).
-    // gap de pontos = 10% - 9,96% = 0,04pp < TOL_PP(3pp) → em_dia.
-    const r = avaliarDefasagem(base({ pLast: 100, pNow: 109.96, cLast: 100, cNow: 110 }));
+    // cLast 60 → cNow 66 (+10%). pLast 100 (>cLast=60, markup positivo → não viola G1)
+    // → pNow 109,96 (+9,96%). gap de pontos = 10% - 9,96% = 0,04pp < TOL_PP(3pp) → em_dia.
+    const r = avaliarDefasagem(base({ pLast: 100, pNow: 109.96, cLast: 60, cNow: 66 }));
     expect(r.status).toBe('em_dia');
   });
 
   it('piso de ação — defasado pela razão mas P_req - P_now < R$1 → em_dia (centavo não dispara)', () => {
-    // cLast 100 → cNow 102 (+2%, passa o piso de alta). pLast 50 → pReq = 50*1.02 = 51.
-    // pNow 50,30: gap de pontos = 2% - 0,6% = 1,4pp > TOL? Não: 1,4 < 3 → em_dia já por tolerância.
-    // Para isolar o PISO DE AÇÃO: forço a razão a passar a tolerância mas o gap em R$ < piso.
-    // cLast 100 → cNow 110 (+10%). pLast 9 → pReq = 9*1.10 = 9,90. pNow 9 (não subiu):
-    // gap pontos = 10% - 0% = 10pp > 3pp → passaria por razão. Mas pReq - pNow = 0,90 < R$1,00
-    // E < 2% de pNow (0,18) → o MAIOR é R$1,00 → 0,90 < 1,00 → em_dia (piso de ação).
-    const r = avaliarDefasagem(base({ pLast: 9, pNow: 9, cLast: 100, cNow: 110 }));
+    // Para isolar o PISO DE AÇÃO: razão passa a tolerância mas o gap em R$ < piso.
+    // pLast 9 > cLast 8 (markup positivo → não viola G1). cLast 8 → cNow 8,80 (+10%).
+    // pReq = 9*(8,80/8) = 9,90. pNow 9 (não subiu): gap pontos = 10% - 0% = 10pp > 3pp →
+    // passaria por razão. Mas pReq - pNow = 0,90 < R$1,00 E < 2% de pNow (0,18) → o MAIOR é
+    // R$1,00 → 0,90 < 1,00 → em_dia (piso de ação).
+    const r = avaliarDefasagem(base({ pLast: 9, pNow: 9, cLast: 8, cNow: 8.8 }));
     expect(r.status).toBe('em_dia');
     expect(r.pReq).toBe(9.9);
   });
