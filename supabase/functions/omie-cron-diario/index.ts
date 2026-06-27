@@ -1,6 +1,13 @@
 // Edge Function: omie-cron-diario
 // Roda diariamente os syncs incrementais Omie (3 dias) para a empresa configurada.
 // Tolera falhas individuais. Cada etapa tem timeout próprio. Retry 1x em 425.
+//
+// ⚠️ STEP_TIMEOUT_MS corta só o CLIENTE (este orquestrador). As edges Omie commitam por
+// página/item e seguem rodando server-side em BACKGROUND até o guard interno delas
+// (nfes ~130s, sku-items ~50s, pedidos idem) — bem além dos 25s. Por isso um step que
+// estoura o timeout é reportado modo:"background" (NÃO falha): foi disparado, mas o
+// resultado não foi coletado. CONFIRME o efeito por contagem no banco, nunca por
+// resultados[step].ok. Provado por efeito em 2026-06-27 (ver docs/agent/sync.md).
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -15,17 +22,28 @@ const TOTAL_TIMEOUT_MS = 115_000; // ~2 min teto
 
 type StepResult = {
   ok: boolean;
+  // "respondido" = recebeu resposta HTTP (ok reflete o status); "background" = abortado no
+  // cliente pelo STEP_TIMEOUT_MS, edge segue server-side (NÃO é falha, resultado não coletado);
+  // "erro" = erro de transporte antes de qualquer resposta.
+  modo?: "respondido" | "background" | "erro";
   status?: number;
   duracao_ms: number;
   body?: unknown;
   erro?: string;
+  nota?: string;
+  coletado?: boolean;
   retried_425?: boolean;
 };
 
 async function callFunction(name: string, body: Record<string, unknown>): Promise<StepResult> {
   const start = Date.now();
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), STEP_TIMEOUT_MS);
+  // Distingue "o NOSSO timeout de cliente disparou" de um erro genuíno (rede/boot).
+  let abortadoPorTimeoutCliente = false;
+  const timer = setTimeout(() => {
+    abortadoPorTimeoutCliente = true;
+    ctrl.abort();
+  }, STEP_TIMEOUT_MS);
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
       method: "POST",
@@ -40,10 +58,23 @@ async function callFunction(name: string, body: Record<string, unknown>): Promis
     const text = await res.text();
     try { parsed = JSON.parse(text); } catch { parsed = text; }
     clearTimeout(timer);
-    return { ok: res.ok, status: res.status, duracao_ms: Date.now() - start, body: parsed };
+    return { ok: res.ok, modo: "respondido", status: res.status, duracao_ms: Date.now() - start, body: parsed };
   } catch (e) {
     clearTimeout(timer);
-    return { ok: false, duracao_ms: Date.now() - start, erro: (e as Error).message };
+    if (abortadoPorTimeoutCliente) {
+      // Cortado pelo NOSSO AbortController (STEP_TIMEOUT_MS), não por falha da edge.
+      // A edge commita por página/item e segue em background até o guard interno dela.
+      // NÃO é falha (ok:true), mas o resultado NÃO foi coletado (coletado:false) →
+      // confirmar o efeito por contagem no banco.
+      return {
+        ok: true,
+        modo: "background",
+        coletado: false,
+        duracao_ms: Date.now() - start,
+        nota: "abortado no cliente (STEP_TIMEOUT_MS); edge segue server-side ate o guard interno — confirmar por contagem no banco",
+      };
+    }
+    return { ok: false, modo: "erro", duracao_ms: Date.now() - start, erro: (e as Error).message };
   }
 }
 
