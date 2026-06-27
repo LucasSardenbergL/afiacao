@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { CanariaPrecoCard } from '@/components/governanca/CanariaPrecoCard';
 
 /* ─── Helpers ─── */
 
@@ -212,6 +213,9 @@ export default function GovernanceAudit() {
           Histórico de alterações em permissões, parâmetros e propostas — quem mudou o quê, quando e com qual impacto.
         </p>
       </div>
+
+      {/* Integridade money-path: canária da edge de preço deployada (mitigação de reversão do Lovable) */}
+      <CanariaPrecoCard />
 
       {/* Filters bar */}
       <Card>
