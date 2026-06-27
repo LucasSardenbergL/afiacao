@@ -2,7 +2,7 @@
 
 **Data:** 2026-06-27 · **Escopo:** badge de oportunidade econômica (OBEN, money-path + **autorização**) · **Origem:** Fase 2 de `2026-06-27-reposicao-rls-initplan-oportunidade-economica-design.md` — a Fase 1 (RLS→InitPlan) matou o 500, sobrou **880ms estrutural** no `count(*)` do badge. Founder decidiu (2026-06-27) fazer a Fase 2: **cachear só o badge, tela tempo-real, refresh 2h**. Codex (gpt-5.x high) consultado na metodologia.
 
-> **STATUS 2026-06-27:** spec escrita. Decisões do founder: **Opção B** (cachear só o badge; a tela de Oportunidades segue tempo-real) + **refresh 2h**. Codex endureceu o design (count em vez de rowset, schema private, gate hardened, watchdog timestamp).
+> **STATUS 2026-06-27 — CICLO COMPLETO (aplicada + verificada em prod):** migration `20260627190000` aplicada (PR #1115) + frontend (#1121, o badge lê a view-gate) **no ar** (verificado nos bytes do bundle de `steu.lovable.app`). Confirmado via `psql-ro`: MV `private.mv_oportunidade_badge` populada (**OBEN=12**, paridade exata com a view tempo-real), **anti-vazamento** ok (`authenticated` NÃO lê a MV crua, só a view-gate), gate `has_role`+`service_role` presente, cron `20 */2 * * *` ativo. Decisões do founder: **Opção B** (cachear só o badge; tela de Oportunidades tempo-real) + **refresh 2h**. Codex endureceu (count em vez de rowset, schema `private`, gate null-hardened, watchdog timestamp). Prova PG17: `db/test-reposicao-fase2-badge-mv.sh` (18 asserts; pegou um bug real de idempotência — DROP MV bloqueado pela view-gate).
 
 ## 1. Por que (o que sobrou da Fase 1)
 
