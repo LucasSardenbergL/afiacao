@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **296** custom migrations totais
-- **1029** objetos esperados (criados por estas migrations)
+- **298** custom migrations totais
+- **1038** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 300
-  - `rls_policy`: 220
+  - `function`: 302
+  - `rls_policy`: 222
   - `index`: 187
-  - `table`: 108
-  - `cron_job`: 108
+  - `table`: 110
+  - `cron_job`: 109
+  - `view`: 52
   - `trigger`: 52
-  - `view`: 50
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2520,6 +2520,25 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260626193000_reposicao_depara_sayerlack_auto.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_aplicar_depara_sayerlack_auto` | — |
+| `view` | `public.v_reposicao_depara_sayerlack_elegivel` | — |
+| `table` | `public.reposicao_depara_auto_log` | — |
+| `rls_policy` | `public.depara_auto_log_sel` | `reposicao_depara_auto_log` |
+
+### `20260626210000_reposicao_cold_start_parametros.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_cold_start_parametros` | — |
+| `view` | `public.v_reposicao_cold_start_elegivel` | — |
+| `table` | `public.reposicao_cold_start_log` | — |
+| `cron_job` | `cron.reposicao-cold-start-parametros` | — |
+| `rls_policy` | `public.cold_start_log_sel` | `reposicao_cold_start_log` |
 
 ## Próximos passos quando algo der `❌`
 

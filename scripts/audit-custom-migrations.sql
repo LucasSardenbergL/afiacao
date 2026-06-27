@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 296
+-- Total de custom migrations: 298
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -315,7 +315,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260624170000', 'recencia_fonte_trigger_backfill', '20260624170000_recencia_fonte_trigger_backfill.sql'),
   ('20260625120000', 'get_ultimos_precos_cliente', '20260625120000_get_ultimos_precos_cliente.sql'),
   ('20260626150000', 'data_health_check_pedidos_compra_sync', '20260626150000_data_health_check_pedidos_compra_sync.sql'),
-  ('20260626150457', 'pedido_item_split_estoque_fisico_a_caminho', '20260626150457_pedido_item_split_estoque_fisico_a_caminho.sql')
+  ('20260626150457', 'pedido_item_split_estoque_fisico_a_caminho', '20260626150457_pedido_item_split_estoque_fisico_a_caminho.sql'),
+  ('20260626193000', 'reposicao_depara_sayerlack_auto', '20260626193000_reposicao_depara_sayerlack_auto.sql'),
+  ('20260626210000', 'reposicao_cold_start_parametros', '20260626210000_reposicao_cold_start_parametros.sql')
 )
 SELECT
   e.version,
@@ -1362,7 +1364,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_check_pedidos_compra_sync', 'function', 'public', '_data_health_compute', ''),
   ('data_health_check_pedidos_compra_sync', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_check_pedidos_compra_sync', 'function', 'public', 'fin_sync_heartbeat', ''),
-  ('pedido_item_split_estoque_fisico_a_caminho', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('pedido_item_split_estoque_fisico_a_caminho', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_depara_sayerlack_auto', 'function', 'public', 'reposicao_aplicar_depara_sayerlack_auto', ''),
+  ('reposicao_depara_sayerlack_auto', 'view', 'public', 'v_reposicao_depara_sayerlack_elegivel', ''),
+  ('reposicao_depara_sayerlack_auto', 'table', 'public', 'reposicao_depara_auto_log', ''),
+  ('reposicao_depara_sayerlack_auto', 'rls_policy', 'public', 'depara_auto_log_sel', 'reposicao_depara_auto_log'),
+  ('reposicao_cold_start_parametros', 'function', 'public', 'reposicao_cold_start_parametros', ''),
+  ('reposicao_cold_start_parametros', 'view', 'public', 'v_reposicao_cold_start_elegivel', ''),
+  ('reposicao_cold_start_parametros', 'table', 'public', 'reposicao_cold_start_log', ''),
+  ('reposicao_cold_start_parametros', 'cron_job', 'cron', 'reposicao-cold-start-parametros', ''),
+  ('reposicao_cold_start_parametros', 'rls_policy', 'public', 'cold_start_log_sel', 'reposicao_cold_start_log')
 )
 SELECT
   e.migration,
