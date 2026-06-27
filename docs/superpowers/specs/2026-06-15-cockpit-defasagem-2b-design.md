@@ -22,11 +22,11 @@ Na ligação, quando a vendedora monta um pedido pra um cliente que **já compro
 
 **O CMC histórico EXISTE no Omie.** `estoque/consulta/ListarPosEstoque` é parametrizado por **`dDataPosicao`** e devolve o `nCMC` **como estava naquela data**. O `omie-analytics-sync` (~L716) só pede "hoje". → dá pra puxar o CMC de qualquer data passada (e backfillar).
 
-🚧 **GATE 1 — smoke `dDataPosicao` (prova de 2 datas):** pegar SKUs que comprovadamente **mudaram de CMC** entre duas datas e confirmar que `dDataPosicao` devolve os **valores distintos** — não o atual com rótulo de data. (Codex: subir de "1 chamada" pra prova de duas datas.) Não temos Omie pela RPC/terminal → **edge `cmc-snapshot-smoke` já rascunhado** (só lê o Omie, staff-gated, deno-check ok): basta deploy + 1 invoke com `{account, dataA, dataB}`. Veredito `PROVADO`/`SUSPEITO`/`INCONCLUSIVO` no JSON.
+✅ **GATE 1 — smoke `dDataPosicao` (prova de 2 datas): PROVADO (2026-06-27).** Edge `cmc-snapshot-smoke` deployada (na `main`, auth por `x-cron-secret`) + invocada (account `colacor_vendas`, 15/01 vs 14/06/2026): **21 de 773 SKUs com CMC distinto** entre as datas (ex. cód 394036177 R$269,12→R$555,96 = +106,6%; cód 399938680 caiu −5,7%). `dDataPosicao` devolve **histórico-real**, não o atual com rótulo de data → backfill exato-por-âncora é viável. Prova de 2 datas (pedido do Codex) atendida.
 
 ✅ **GATE 2 — semântica de desconto: RESOLVIDO no dado (15/06).** Forense read-only: `order_items.discount > 0` = **0 de 13.627**; `sales_orders.discount > 0` = **0 de 6.687**. Nenhum pedido carrega desconto → `P_last = unit_price` é o líquido pra **100%** das âncoras atuais, e a RPC lê as **colunas** (não o payload cru). O guard "`discount > 0` → neutro" (§5.1) permanece como **proteção futura de custo zero** (neutraliza 0 linhas hoje). **Sem edge/smoke.**
 
-Sem o GATE 1 confirmado, NÃO construir o backfill/RPC.
+**GATE 1 confirmado (2026-06-27)** → backfill/RPC liberados. Plano: `docs/superpowers/plans/2026-06-27-cockpit-defasagem-2b.md`.
 
 ## 4. Arquitetura
 
@@ -102,7 +102,7 @@ O `cmc_snapshot` guarda o que o Omie devolve **hoje** pra uma data passada. Se o
 - **Backfill edge:** smoke dos 2 gates (dDataPosicao 2 datas + desconto) + paginação até página vazia + idempotência do upsert.
 
 ## 9. Sequência de build (gated)
-1. **GATE 1 — smoke `dDataPosicao`** (prova de 2 datas). 🚧 edge `cmc-snapshot-smoke` pronto → deploy + invoke.
+1. **GATE 1 — smoke `dDataPosicao`** — ✅ **PROVADO (27/06)**: 21/773 SKUs com CMC distinto (15/01 vs 14/06).
 2. **GATE 2 — semântica de desconto** — ✅ **RESOLVIDO no dado** (15/06; desconto sempre 0 → guard de custo zero).
 3. **Codex challenge da metodologia** — ✅ **FEITO (15/06)**, achados foldados nesta v2.
 4. `cmc_snapshot` + edge backfill (exato-por-âncora + grade mensal) + cron.
