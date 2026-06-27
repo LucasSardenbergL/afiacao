@@ -79,108 +79,105 @@ function emitSql(audits: MigrationAudit[]): string {
   lines.push('-- ========================================================================');
   lines.push('');
 
-  // Section 1: timestamp existence in supabase_migrations.schema_migrations
+  // Objetos de TODAS as migrations (compartilhado pelas Seções 1 e 2).
+  type Row = { migration: string; kind: ObjectKind; schema: string; name: string; parent: string };
+  const rows: Row[] = [];
+  for (const a of audits) {
+    for (const o of a.objects) {
+      rows.push({ migration: a.slug, kind: o.kind, schema: o.schema, name: o.name, parent: o.parent || '' });
+    }
+  }
+  // CTE expected_objects — mesmos VALUES nas duas seções.
+  const expectedObjectsCte = (trailingComma: boolean): string[] => {
+    const out = ['expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES'];
+    rows.forEach((r, i) => {
+      out.push(`  (${sqlString(r.migration)}, ${sqlString(r.kind)}, ${sqlString(r.schema)}, ${sqlString(r.name)}, ${sqlString(r.parent)})${i === rows.length - 1 ? '' : ','}`);
+    });
+    out.push(trailingComma ? '),' : ')');
+    return out;
+  };
+
+  // Section 1: status RECONCILIADO por migration (registro × existência de objetos).
   lines.push('-- =====================================================');
-  lines.push('-- SECTION 1: Timestamps aplicados (canonical check)');
+  lines.push('-- SECTION 1: Status reconciliado por migration');
   lines.push('-- =====================================================');
-  lines.push('-- Source of truth do Supabase. Se a row existe aqui, a migration rodou.');
+  lines.push('-- ✅ registrado            — há row em supabase_migrations.schema_migrations');
+  lines.push('-- 🟡 aplicado (sem registro) — NÃO registrado, mas TODOS os objetos existem em prod.');
+  lines.push('--                            Estado NORMAL deste repo: o Lovable não registra nome custom.');
+  lines.push('-- ⚠️ PARCIAL (n/m)         — só ALGUNS objetos existem (apply parcial OU objeto removido/');
+  lines.push('--                            renomeado por migration posterior) — investigar.');
+  lines.push('-- ❌ NÃO aplicado          — não registrado E nenhum objeto existe (apply pendente OU obsoleta).');
+  lines.push('-- ⚪ sem objeto rastreável  — não registrado e só tem ALTER/UPDATE/RLS (sem CREATE) — validar manual.');
   lines.push('');
   lines.push('WITH expected (version, slug, filename) AS (VALUES');
   audits.forEach((a, i) => {
     const sep = i === audits.length - 1 ? '' : ',';
     lines.push(`  ('${a.version}', ${sqlString(a.slug)}, ${sqlString(a.filename)})${sep}`);
   });
-  lines.push(')');
-  lines.push('SELECT');
-  lines.push('  e.version,');
-  lines.push('  e.slug,');
-  lines.push('  CASE WHEN sm.version IS NOT NULL THEN \'✅ applied\' ELSE \'❌ MISSING — apply manually\' END AS status,');
-  lines.push('  e.filename');
-  lines.push('FROM expected e');
-  lines.push('LEFT JOIN supabase_migrations.schema_migrations sm ON sm.version = e.version');
-  lines.push('ORDER BY e.version;');
-  lines.push('');
-  lines.push('');
-
-  // Section 2: object existence per migration
-  lines.push('-- =====================================================');
-  lines.push('-- SECTION 2: Object existence (cross-check)');
-  lines.push('-- =====================================================');
-  lines.push('-- Caso schema_migrations diga ✅ mas o objeto não exista (rollback manual,');
-  lines.push('-- partial apply), esta query captura. Para cada objeto esperado, checa pg_catalog.');
-  lines.push('');
-
-  // Coletar TODOS os objetos de TODAS as migrations num único VALUES
-  type Row = { migration: string; kind: ObjectKind; schema: string; name: string; parent: string };
-  const rows: Row[] = [];
-  for (const a of audits) {
-    for (const o of a.objects) {
-      rows.push({
-        migration: a.slug,
-        kind: o.kind,
-        schema: o.schema,
-        name: o.name,
-        parent: o.parent || '',
-      });
-    }
+  if (rows.length > 0) {
+    lines.push('),');
+    expectedObjectsCte(true).forEach((l) => lines.push(l));
+    lines.push('obj_status AS (');
+    lines.push('  SELECT eo.migration,');
+    lines.push('         count(*) AS total,');
+    lines.push(`         count(*) FILTER (WHERE ${objExisteSql('eo')}) AS existem`);
+    lines.push('  FROM expected_objects eo');
+    lines.push('  GROUP BY eo.migration');
+    lines.push(')');
+    lines.push('SELECT');
+    lines.push('  e.version,');
+    lines.push('  e.slug,');
+    lines.push('  CASE');
+    lines.push("    WHEN sm.version IS NOT NULL THEN '✅ registrado'");
+    lines.push("    WHEN os.migration IS NULL THEN '⚪ sem objeto rastreável'");
+    lines.push("    WHEN os.existem = os.total THEN '🟡 aplicado (sem registro)'");
+    lines.push("    WHEN os.existem = 0 THEN '❌ NÃO aplicado'");
+    lines.push("    ELSE '⚠️ PARCIAL (' || os.existem || '/' || os.total || ')'");
+    lines.push('  END AS status,');
+    lines.push('  e.filename');
+    lines.push('FROM expected e');
+    lines.push('LEFT JOIN supabase_migrations.schema_migrations sm ON sm.version = e.version');
+    lines.push('LEFT JOIN obj_status os ON os.migration = e.slug');
+    lines.push('ORDER BY');
+    lines.push('  CASE');
+    lines.push('    WHEN sm.version IS NOT NULL THEN 5');
+    lines.push('    WHEN os.migration IS NULL THEN 3');
+    lines.push('    WHEN os.existem = os.total THEN 4');
+    lines.push('    WHEN os.existem = 0 THEN 1');
+    lines.push('    ELSE 2');
+    lines.push('  END,');
+    lines.push('  e.version;');
+  } else {
+    lines.push(')');
+    lines.push('SELECT e.version, e.slug,');
+    lines.push("  CASE WHEN sm.version IS NOT NULL THEN '✅ registrado' ELSE '⚪ sem objeto rastreável' END AS status,");
+    lines.push('  e.filename');
+    lines.push('FROM expected e');
+    lines.push('LEFT JOIN supabase_migrations.schema_migrations sm ON sm.version = e.version');
+    lines.push('ORDER BY e.version;');
   }
+  lines.push('');
+  lines.push('');
+
+  // Section 2: object existence per migration (detalhe objeto-a-objeto)
+  lines.push('-- =====================================================');
+  lines.push('-- SECTION 2: Existência objeto-a-objeto (detalhe)');
+  lines.push('-- =====================================================');
+  lines.push('-- Detalha quais objetos de cada migration existem em prod. Use junto da Seção 1:');
+  lines.push('-- migration 🟡/⚠️/❌ lá → aqui você vê QUAIS objetos faltam (status ❌).');
+  lines.push('');
 
   if (rows.length === 0) {
     lines.push('-- Nenhum objeto extraído. (Migrations só tiveram ALTER/UPDATE, não CREATE.)');
   } else {
-    lines.push('WITH expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES');
-    rows.forEach((r, i) => {
-      const sep = i === rows.length - 1 ? '' : ',';
-      lines.push(
-        `  (${sqlString(r.migration)}, ${sqlString(r.kind)}, ${sqlString(r.schema)}, ${sqlString(r.name)}, ${sqlString(r.parent)})${sep}`,
-      );
-    });
-    lines.push(')');
+    const cte = expectedObjectsCte(false);
+    lines.push('WITH ' + cte[0]);
+    cte.slice(1).forEach((l) => lines.push(l));
     lines.push('SELECT');
     lines.push('  e.migration,');
     lines.push('  e.kind,');
-    lines.push('  e.schema_name || \'.\' || e.object_name AS object,');
-    lines.push('  CASE');
-
-    // Per-kind existence check via pg_catalog / information_schema
-    lines.push("    WHEN e.kind = 'table' AND EXISTS (");
-    lines.push('      SELECT 1 FROM information_schema.tables t');
-    lines.push('      WHERE t.table_schema = e.schema_name AND t.table_name = e.object_name');
-    lines.push("    ) THEN '✅'");
-    lines.push("    WHEN e.kind = 'view' AND EXISTS (");
-    lines.push('      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace');
-    lines.push("      WHERE n.nspname = e.schema_name AND c.relname = e.object_name AND c.relkind IN ('v', 'm')");
-    lines.push("    ) THEN '✅'");
-    lines.push("    WHEN e.kind = 'index' AND EXISTS (");
-    lines.push('      SELECT 1 FROM pg_indexes i');
-    lines.push('      WHERE i.schemaname = e.schema_name AND i.indexname = e.object_name');
-    lines.push("    ) THEN '✅'");
-    lines.push("    WHEN e.kind = 'function' AND EXISTS (");
-    lines.push('      SELECT 1 FROM pg_proc p');
-    lines.push('      JOIN pg_namespace n ON n.oid = p.pronamespace');
-    lines.push('      WHERE n.nspname = e.schema_name AND p.proname = e.object_name');
-    lines.push("    ) THEN '✅'");
-    lines.push("    WHEN e.kind = 'trigger' AND EXISTS (");
-    lines.push('      SELECT 1 FROM pg_trigger tr');
-    lines.push('      JOIN pg_class c ON c.oid = tr.tgrelid');
-    lines.push('      JOIN pg_namespace n ON n.oid = c.relnamespace');
-    lines.push('      WHERE n.nspname = e.schema_name AND tr.tgname = e.object_name AND c.relname = e.parent_name');
-    lines.push("    ) THEN '✅'");
-    lines.push("    WHEN e.kind = 'cron_job' AND EXISTS (");
-    lines.push("      SELECT 1 FROM cron.job WHERE jobname = e.object_name");
-    lines.push("    ) THEN '✅'");
-    lines.push("    WHEN e.kind = 'enum_value' AND EXISTS (");
-    lines.push('      SELECT 1 FROM pg_enum en');
-    lines.push('      JOIN pg_type ty ON ty.oid = en.enumtypid');
-    lines.push('      JOIN pg_namespace n ON n.oid = ty.typnamespace');
-    lines.push('      WHERE n.nspname = e.schema_name AND ty.typname = e.parent_name AND en.enumlabel = e.object_name');
-    lines.push("    ) THEN '✅'");
-    lines.push("    WHEN e.kind = 'rls_policy' AND EXISTS (");
-    lines.push('      SELECT 1 FROM pg_policies p');
-    lines.push('      WHERE p.schemaname = e.schema_name AND p.tablename = e.parent_name AND p.policyname = e.object_name');
-    lines.push("    ) THEN '✅'");
-    lines.push("    ELSE '❌'");
-    lines.push('  END AS status,');
+    lines.push("  e.schema_name || '.' || e.object_name AS object,");
+    lines.push(`  CASE WHEN ${objExisteSql('e')} THEN '✅' ELSE '❌' END AS status,`);
     lines.push("  NULLIF(e.parent_name, '') AS parent");
     lines.push('FROM expected_objects e');
     lines.push("ORDER BY status DESC, e.migration, e.kind, e.object_name;");
@@ -196,6 +193,27 @@ function emitSql(audits: MigrationAudit[]): string {
 
 function sqlString(s: string): string {
   return `'${s.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Expressão SQL booleana: o objeto (alias `eo`/`e`) existe em prod? Reusada na Seção 1
+ * (agregação por migration → 3 estados) e na Seção 2 (detalhe por objeto). Mantém os
+ * checks per-kind num só lugar.
+ */
+function objExisteSql(a: string): string {
+  return [
+    '(CASE',
+    `        WHEN ${a}.kind = 'table' AND EXISTS (SELECT 1 FROM information_schema.tables t WHERE t.table_schema = ${a}.schema_name AND t.table_name = ${a}.object_name) THEN true`,
+    `        WHEN ${a}.kind = 'view' AND EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ${a}.schema_name AND c.relname = ${a}.object_name AND c.relkind IN ('v','m')) THEN true`,
+    `        WHEN ${a}.kind = 'index' AND EXISTS (SELECT 1 FROM pg_indexes i WHERE i.schemaname = ${a}.schema_name AND i.indexname = ${a}.object_name) THEN true`,
+    `        WHEN ${a}.kind = 'function' AND EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = ${a}.schema_name AND p.proname = ${a}.object_name) THEN true`,
+    `        WHEN ${a}.kind = 'trigger' AND EXISTS (SELECT 1 FROM pg_trigger tr JOIN pg_class c ON c.oid = tr.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ${a}.schema_name AND tr.tgname = ${a}.object_name AND c.relname = ${a}.parent_name) THEN true`,
+    `        WHEN ${a}.kind = 'cron_job' AND EXISTS (SELECT 1 FROM cron.job WHERE jobname = ${a}.object_name) THEN true`,
+    `        WHEN ${a}.kind = 'enum_value' AND EXISTS (SELECT 1 FROM pg_enum en JOIN pg_type ty ON ty.oid = en.enumtypid JOIN pg_namespace n ON n.oid = ty.typnamespace WHERE n.nspname = ${a}.schema_name AND ty.typname = ${a}.parent_name AND en.enumlabel = ${a}.object_name) THEN true`,
+    `        WHEN ${a}.kind = 'rls_policy' AND EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = ${a}.schema_name AND p.tablename = ${a}.parent_name AND p.policyname = ${a}.object_name) THEN true`,
+    '        ELSE false',
+    '      END)',
+  ].join('\n');
 }
 
 function emitMarkdown(audits: MigrationAudit[]): string {
@@ -223,9 +241,9 @@ function emitMarkdown(audits: MigrationAudit[]): string {
   lines.push('3. Cole TODO o conteúdo de `scripts/audit-custom-migrations.sql`');
   lines.push('4. **Run** (read-only, não altera nada)');
   lines.push('5. Você verá DUAS tabelas:');
-  lines.push('   - **Section 1** — timestamps em `supabase_migrations.schema_migrations` (source of truth do Supabase)');
+  lines.push('   - **Section 1** — status reconciliado por migration: ✅ registrado · 🟡 aplicado-sem-registro (OK) · ⚠️ parcial · ❌ não-aplicado · ⚪ sem objeto rastreável');
   lines.push('   - **Section 2** — existência objeto-a-objeto via `pg_catalog`/`information_schema`');
-  lines.push('6. Filtre linhas com `❌` → essas são as migrations que precisam apply manual');
+  lines.push('6. **🟡 é normal** (o Lovable não registra nome custom — a migration ESTÁ aplicada). Os acionáveis são **❌ / ⚠️**: migration commitada cujos objetos não existem em prod → investigar apply pendente ou obsolescência.');
   lines.push('');
   lines.push('## Resumo');
   lines.push('');
@@ -257,13 +275,20 @@ function emitMarkdown(audits: MigrationAudit[]): string {
     lines.push('');
   }
 
-  lines.push('## Próximos passos quando algo der `❌`');
+  lines.push('## Próximos passos por status');
   lines.push('');
-  lines.push('1. Abra a migration correspondente em `supabase/migrations/<arquivo>.sql`');
-  lines.push('2. Copie o SQL inteiro');
-  lines.push('3. Supabase SQL Editor → cole → Run');
-  lines.push('4. Re-rode `scripts/audit-custom-migrations.sql` pra confirmar que virou `✅`');
-  lines.push('5. (Opcional) `INSERT INTO supabase_migrations.schema_migrations (version, statements) VALUES (\'<timestamp>\', ARRAY[\'<sql>\']);` pra registrar como aplicada (evita re-apply futura)');
+  lines.push('**❌ NÃO aplicado / ⚠️ PARCIAL** (objetos faltam em prod — o caso que importa):');
+  lines.push('1. Veja na Section 2 QUAIS objetos da migration estão `❌`');
+  lines.push('2. Confirme se é apply pendente (→ aplicar) OU objeto removido/renomeado por migration posterior (→ obsoleto, pode expurgar do inventário)');
+  lines.push('3. Se for aplicar: abra `supabase/migrations/<arquivo>.sql` → SQL Editor → cole → Run → re-rode o audit');
+  lines.push('');
+  lines.push('**🟡 aplicado (sem registro)** — opcional, só pra deixar a Section 1 toda ✅. Use registro GUARDADO por existência (não cria falso-verde):');
+  lines.push('```sql');
+  lines.push('INSERT INTO supabase_migrations.schema_migrations (version, name, statements)');
+  lines.push("SELECT '<timestamp>', '<slug>', ARRAY['-- registro retroativo (aplicado via Lovable)']");
+  lines.push("WHERE EXISTS ( /* um objeto da migration, ex: SELECT 1 FROM pg_proc WHERE proname = '<func>' */ )");
+  lines.push('ON CONFLICT (version) DO NOTHING;');
+  lines.push('```');
   lines.push('');
 
   return lines.join('\n');
