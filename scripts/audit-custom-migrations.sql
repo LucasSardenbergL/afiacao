@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 298
+-- Total de custom migrations: 299
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -317,7 +317,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260626150000', 'data_health_check_pedidos_compra_sync', '20260626150000_data_health_check_pedidos_compra_sync.sql'),
   ('20260626150457', 'pedido_item_split_estoque_fisico_a_caminho', '20260626150457_pedido_item_split_estoque_fisico_a_caminho.sql'),
   ('20260626193000', 'reposicao_depara_sayerlack_auto', '20260626193000_reposicao_depara_sayerlack_auto.sql'),
-  ('20260626210000', 'reposicao_cold_start_parametros', '20260626210000_reposicao_cold_start_parametros.sql')
+  ('20260626210000', 'reposicao_cold_start_parametros', '20260626210000_reposicao_cold_start_parametros.sql'),
+  ('20260627130000', 'reposicao_cold_start_fix_gate_cron', '20260627130000_reposicao_cold_start_fix_gate_cron.sql')
 )
 SELECT
   e.version,
@@ -1373,7 +1374,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_cold_start_parametros', 'view', 'public', 'v_reposicao_cold_start_elegivel', ''),
   ('reposicao_cold_start_parametros', 'table', 'public', 'reposicao_cold_start_log', ''),
   ('reposicao_cold_start_parametros', 'cron_job', 'cron', 'reposicao-cold-start-parametros', ''),
-  ('reposicao_cold_start_parametros', 'rls_policy', 'public', 'cold_start_log_sel', 'reposicao_cold_start_log')
+  ('reposicao_cold_start_parametros', 'rls_policy', 'public', 'cold_start_log_sel', 'reposicao_cold_start_log'),
+  ('reposicao_cold_start_fix_gate_cron', 'function', 'public', 'reposicao_cold_start_parametros', '')
 )
 SELECT
   e.migration,
