@@ -752,7 +752,11 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const t0 = Date.now();
-  const triggeredBy = req.headers.get("x-cron-secret") ? "cron" : "manual";
+  // cron = x-cron-secret (cron diário direto) OU service-role (via orquestrador omie-cron-diario,
+  // que chama as edges com Bearer SERVICE_ROLE, sem repassar o x-cron-secret). user JWT (staff) = manual.
+  const svcKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const triggeredBy = (req.headers.get("x-cron-secret") ||
+    (svcKey && req.headers.get("Authorization") === `Bearer ${svcKey}`)) ? "cron" : "manual";
 
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
