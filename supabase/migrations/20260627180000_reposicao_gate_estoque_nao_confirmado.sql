@@ -1,39 +1,58 @@
--- Migration: embalagem econômica DENTRO do motor de pedidos (QT↔GL) + consolidação de estoque de grupo
--- ⚠️ APLICADA MANUALMENTE no SQL Editor do Lovable em 2026-06-26 (NÃO vai em supabase/migrations/ — CLAUDE.md §5;
---     é CREATE OR REPLACE de função existente). Este arquivo é a FONTE versionada + fixture da regressão db/test-embalagem-motor.sh.
--- Spec: docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
--- Money-path. Recria gerar_pedidos_sugeridos_ciclo (pré-flight pg_get_functiondef feito; base = prod 26/06).
+-- Reposição — GATE de estoque-NÃO-CONFIRMADO no motor de pedidos (money-path)
+-- ============================================================================
+-- Bug provado em prod 2026-06-27 (pedido #775): o cold-start (reposicao_cold_start_parametros) semeia
+-- sku_estoque_atual de omie_products.estoque (catálogo, 82% ZERADO na OBEN), fonte_sync='cold_start_seed'.
+-- Se o motor gera o pedido na janela cold-start→ListarPosEstoque, lê o seed=0 e COMPRA por cima de estoque
+-- existente (31/43 itens do #775 com saldo real 10/8/6… apareciam 0). Trocar a fonte do seed NÃO resolve
+-- (inventory_position também vazio p/ SKU recém-criado — provado).
 --
--- DUAS mudanças cirúrgicas, tudo o mais PRESERVADO:
---   1) CONSOLIDA o estoque no nível do grupo de equivalência (Σ membros: GREATEST(inv,sea) físico + pendente + trânsito).
---      O gatilho passa a olhar o estoque do GRUPO → para de comprar quando há galão parado.
---   2) ESCOLHE a embalagem mais barata por unidade-base (galão), ESTRITO: só troca o quartinho pelo galão
---      quando AMBOS têm preço-app fresco (≤ N dias) + portal-map + catálogo OK, e o galão é estritamente mais barato/base.
---      Senão mantém o quartinho. Custo da linha do galão = preço-app (R$/embalagem), nunca 0.
+-- FIX (Codex consult 019f0968 + money-path "ausente≠zero / precisão>recall"): estoque cuja ÚNICA fonte é
+-- 'cold_start_seed' (sem inventory_position) é DESCONHECIDO → o motor SUPRIME a sugestão (nível LINHA e GRUPO)
+-- + LOGA em reposicao_estoque_nao_confirmado_log. Zero CONFIRMADO (ListarPosEstoque/0) segue comprando.
+-- Gate no MOTOR (não no cold-start: ele segue habilitando, senão o sync — que só cobre habilitados — nunca
+-- pega o SKU → deadlock). Auto-liberante: o próximo ListarPosEstoque (cExibeTodos:"S") confirma o saldo (real
+-- ou 0) e fonte_sync vira 'ListarPosEstoque' → libera.
 --
--- Unidade (cravada em prod): qtde_final = nº de EMBALAGENS do SKU; preco_unitario = R$/embalagem; o disparo
--- consome ceil(qtde_final) direto (fator_conversao=1). Quartinho NÃO é tocado (mantém cmc cru).
--- ⚠️ Case: equivalencia/preço_capturado = lower(empresa); parametros/estoque/fornecedor_externo = empresa (upper).
---
--- Revisão pós-Codex (xhigh) — 6 correções vs. o 1º rascunho:
---   P0-a GREATEST(inventory_position.saldo, sku_estoque_atual): galão parado vive em fontes DIFERENTES por SKU.
---   P0-b em_transito do galão × fator_para_base (2 galões em voo = 8 unidades-base, não 2) → anti double-buy.
---   P1-c âncora NÃO pode ser membro fator>1 (galão) de um grupo → impede 2 linhas do mesmo GL.
---   P1-d anti-duplicidade de oportunidade cobre a âncora E o SKU escolhido (galão).
---   P1-e minimo_forcado_manual respeitado também na troca p/ galão (piso aplicado ANTES de dividir pelo fator).
---   P1-f filtros de catálogo (ativo/tipo 04/família/status omie) aplicados ao MEMBRO escolhido, não só à âncora.
--- Granularidade (P2 Codex, aceito): nº_galões = ceil(necessidade / fator) na escala "unidades-âncora" — NUNCA
---   compra menos que o legado QT (herda o descasamento litros↔embalagem pré-existente, fora de escopo).
---
--- ➕ 2026-06-27 — GATE de estoque-NÃO-CONFIRMADO (money-path; spec 2026-06-27-reposicao-gate-estoque-nao-confirmado).
---   Bug provado: cold-start semeia sku_estoque_atual de omie_products.estoque (82% zerado na OBEN), fonte_sync=
---   'cold_start_seed'. Se o motor roda na janela cold-start→ListarPosEstoque, lê o seed=0 e compra por cima de
---   estoque existente. FIX (Codex consult 019f0968 + ausente≠zero): estoque cuja ÚNICA fonte é cold_start_seed (sem
---   inventory_position) é DESCONHECIDO → o motor SUPRIME a sugestão (nível LINHA e GRUPO) + LOGA em
---   reposicao_estoque_nao_confirmado_log. Zero CONFIRMADO (ListarPosEstoque/0) segue comprando — auto-liberante.
---   ⚠️ Esta fixture é SÓ a função; a tabela de log + RLS vivem na migration formal (e nos harnesses de teste).
---   Migration: supabase/migrations/20260627180000_reposicao_gate_estoque_nao_confirmado.sql (corpo da função idêntico).
+-- ⚠️ PARIDADE (database.md §2): o corpo do CREATE OR REPLACE abaixo é BYTE-IDÊNTICO a db/embalagem-motor-rpc.sql
+--    (a fixture viva da função). embalagem-motor-paridade.test.ts compara os dois do CREATE até o FIM do arquivo
+--    → NÃO ponha NADA depois do $function$; (nem COMMIT/validação). A validação pós-apply vai no handoff.
+-- Spec: docs/superpowers/specs/2026-06-27-reposicao-gate-estoque-nao-confirmado-spec.md
+-- Provado PG17: db/test-gate-estoque-nao-confirmado.sh (gate) + db/test-embalagem-motor.sh (galão não-regride).
+-- Aplicar manual no SQL Editor do Lovable. É a ÚLTIMA a recriar a função (depois da 132029) → vence.
+-- ============================================================================
 
+-- ─── Tabela de log dos SKUs suprimidos pelo gate (observabilidade — senão subcompra silenciosa) ───
+CREATE TABLE IF NOT EXISTS public.reposicao_estoque_nao_confirmado_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id uuid,
+  criado_em timestamptz NOT NULL DEFAULT now(),
+  empresa text NOT NULL,
+  sku_codigo_omie text NOT NULL,
+  sku_descricao text,
+  grupo_codigo text,
+  motivo text NOT NULL CHECK (motivo IN ('linha_seed_only','grupo_membro_seed_only')),
+  estoque_efetivo numeric,
+  ponto_pedido numeric,
+  fonte_sync text
+);
+CREATE INDEX IF NOT EXISTS idx_estoque_nao_confirmado_log_empresa_data
+  ON public.reposicao_estoque_nao_confirmado_log (empresa, criado_em DESC);
+
+ALTER TABLE public.reposicao_estoque_nao_confirmado_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS estoque_nao_confirmado_log_sel ON public.reposicao_estoque_nao_confirmado_log;
+CREATE POLICY estoque_nao_confirmado_log_sel ON public.reposicao_estoque_nao_confirmado_log
+  FOR SELECT TO authenticated
+  USING ((SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))));
+-- INSERT via a RPC (SECURITY INVOKER) rodando como o chamador (staff no "Recalcular", ou service_role/postgres
+-- no cron que bypassa RLS). WITH CHECK(true): não bloquear a geração — a escrita real só vem da função, e quem
+-- chega aqui já passou pelo gate de EXECUTE da RPC.
+DROP POLICY IF EXISTS estoque_nao_confirmado_log_ins ON public.reposicao_estoque_nao_confirmado_log;
+CREATE POLICY estoque_nao_confirmado_log_ins ON public.reposicao_estoque_nao_confirmado_log
+  FOR INSERT TO authenticated WITH CHECK (true);
+GRANT SELECT, INSERT ON public.reposicao_estoque_nao_confirmado_log TO authenticated;
+GRANT ALL ON public.reposicao_estoque_nao_confirmado_log TO service_role;
+
+-- ─── Função VIVA (galão + gate) — corpo BYTE-IDÊNTICO a db/embalagem-motor-rpc.sql (paridade no CI) ───
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
  LANGUAGE plpgsql

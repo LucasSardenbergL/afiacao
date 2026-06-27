@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **303** custom migrations totais
-- **1040** objetos esperados (criados por estas migrations)
+- **304** custom migrations totais
+- **1045** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 304
-  - `rls_policy`: 222
-  - `index`: 187
-  - `table`: 110
+  - `function`: 305
+  - `rls_policy`: 224
+  - `index`: 188
+  - `table`: 111
   - `cron_job`: 109
   - `view`: 52
   - `trigger`: 52
@@ -2563,6 +2563,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260627170000_reposicao_rls_initplan.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260627180000_reposicao_gate_estoque_nao_confirmado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `table` | `public.reposicao_estoque_nao_confirmado_log` | — |
+| `index` | `public.idx_estoque_nao_confirmado_log_empresa_data` | `reposicao_estoque_nao_confirmado_log` |
+| `rls_policy` | `public.estoque_nao_confirmado_log_sel` | `reposicao_estoque_nao_confirmado_log` |
+| `rls_policy` | `public.estoque_nao_confirmado_log_ins` | `reposicao_estoque_nao_confirmado_log` |
 
 ## Próximos passos por status
 

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 303
+-- Total de custom migrations: 304
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -328,7 +328,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260627132029', 'reposicao_embalagem_motor_galao', '20260627132029_reposicao_embalagem_motor_galao.sql'),
   ('20260627150000', 'tint_formulas_rls_initplan', '20260627150000_tint_formulas_rls_initplan.sql'),
   ('20260627150100', 'tint_formulas_autovacuum_agressivo', '20260627150100_tint_formulas_autovacuum_agressivo.sql'),
-  ('20260627170000', 'reposicao_rls_initplan', '20260627170000_reposicao_rls_initplan.sql')
+  ('20260627170000', 'reposicao_rls_initplan', '20260627170000_reposicao_rls_initplan.sql'),
+  ('20260627180000', 'reposicao_gate_estoque_nao_confirmado', '20260627180000_reposicao_gate_estoque_nao_confirmado.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1370,7 +1371,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_cold_start_parametros', 'cron_job', 'cron', 'reposicao-cold-start-parametros', ''),
   ('reposicao_cold_start_parametros', 'rls_policy', 'public', 'cold_start_log_sel', 'reposicao_cold_start_log'),
   ('reposicao_cold_start_fix_gate_cron', 'function', 'public', 'reposicao_cold_start_parametros', ''),
-  ('reposicao_embalagem_motor_galao', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_embalagem_motor_galao', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_gate_estoque_nao_confirmado', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_gate_estoque_nao_confirmado', 'table', 'public', 'reposicao_estoque_nao_confirmado_log', ''),
+  ('reposicao_gate_estoque_nao_confirmado', 'index', 'public', 'idx_estoque_nao_confirmado_log_empresa_data', 'reposicao_estoque_nao_confirmado_log'),
+  ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_sel', 'reposicao_estoque_nao_confirmado_log'),
+  ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2460,7 +2466,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_cold_start_parametros', 'cron_job', 'cron', 'reposicao-cold-start-parametros', ''),
   ('reposicao_cold_start_parametros', 'rls_policy', 'public', 'cold_start_log_sel', 'reposicao_cold_start_log'),
   ('reposicao_cold_start_fix_gate_cron', 'function', 'public', 'reposicao_cold_start_parametros', ''),
-  ('reposicao_embalagem_motor_galao', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_embalagem_motor_galao', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_gate_estoque_nao_confirmado', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_gate_estoque_nao_confirmado', 'table', 'public', 'reposicao_estoque_nao_confirmado_log', ''),
+  ('reposicao_gate_estoque_nao_confirmado', 'index', 'public', 'idx_estoque_nao_confirmado_log_empresa_data', 'reposicao_estoque_nao_confirmado_log'),
+  ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_sel', 'reposicao_estoque_nao_confirmado_log'),
+  ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log')
 )
 SELECT
   e.migration,
