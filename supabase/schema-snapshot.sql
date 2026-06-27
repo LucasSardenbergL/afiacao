@@ -2,22 +2,21 @@
 -- PostgreSQL database dump
 --
 
-\restrict 4jJNKMFTg6gNsngZmWleufEd6hB54h7VjkqsS3HYhICGBiSNae4kKLoe3vYNchf
+\restrict 0JMAaOB7tkIH8lOg0UBxRYwmCSQHwXm4XcOdlulkMcOinCKKzrKqTNvNtqPzkJa
 
 -- Dumped from database version 17.6
--- Dumped by pg_dump version 17.9
+-- Dumped by pg_dump version 17.10 (Homebrew)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
 SET transaction_timeout = 0;
-SET client_encoding = 'SQL_ASCII';
-SET standard_conforming_strings = off;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
 SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
-SET escape_string_warning = off;
 SET row_security = off;
 
 --
@@ -5734,6 +5733,7 @@ DECLARE
   v_skus INT := 0;
   v_valor NUMERIC := 0;
   v_bloqueados INT := 0;
+  v_stale_dias INT := 45;  -- motor confia no preço-app por N dias (painel usa 24h; manual precisa folga). Config abaixo.
 BEGIN
   -- [INTRADAY 1/4] serializa execuções concorrentes (cron 2/2h × botão "Recalcular" × retry).
   PERFORM pg_advisory_xact_lock(hashtext('gerar_pedidos_sugeridos_ciclo:' || lower(p_empresa)));
@@ -5741,6 +5741,11 @@ BEGIN
   IF (SELECT count(*) FILTER (WHERE tipo_produto IS NOT NULL) FROM public.omie_products WHERE account = lower(p_empresa)) = 0 THEN
     RAISE EXCEPTION 'tipo_produto_unhealthy: sinal de classificação ausente em omie_products(account=%) — recusando gerar compras p/ não tratar Produto Acabado como comprável', lower(p_empresa);
   END IF;
+
+  -- Janela de frescor do preço-app que o motor aceita p/ trocar a embalagem. Global.
+  SELECT COALESCE((SELECT NULLIF(btrim(value), '')::int
+                   FROM company_config WHERE key = 'embalagem_preco_motor_stale_dias' LIMIT 1), 45)
+    INTO v_stale_dias;
 
   -- [INTRADAY 2/4] expira pendentes NORMAIS de ciclos anteriores (zumbis pós-corte).
   UPDATE pedido_compra_sugerido
@@ -5775,20 +5780,82 @@ BEGIN
     WHERE slh.quantidade_recebida > 0 AND slh.valor_total > 0
     GROUP BY slh.empresa, slh.sku_codigo_omie
   ),
-  skus_necessitando AS (
-    SELECT sp.empresa, sp.sku_codigo_omie::text AS sku_codigo_omie, sp.sku_descricao, sp.fornecedor_nome,
-           sg.grupo_codigo, sp.ponto_pedido, sp.estoque_maximo,
-           COALESCE(sea.estoque_fisico, 0) AS estoque_fisico,
-           COALESCE(sea.estoque_pendente_entrada, 0) AS estoque_pendente,
-           COALESCE(et.qtde, 0) AS qtde_em_transito_recente,
-           (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) AS estoque_efetivo,
-           ceil(sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0))) AS qtde_sugerida,
-           CASE WHEN sp.minimo_forcado_manual IS NOT NULL AND sp.minimo_forcado_manual > 0
-                THEN ceil(GREATEST(
-                       (sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0))),
-                       sp.minimo_forcado_manual))
-                ELSE ceil(sp.estoque_maximo - (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)))
-           END AS qtde_final,
+  equiv AS (
+    SELECT grupo_id, sku_codigo_omie::text AS sku, fator_para_base
+    FROM sku_embalagem_equivalencia
+    WHERE empresa = lower(p_empresa) AND ativo = TRUE AND fator_para_base > 0
+  ),
+  equiv_grupos AS (
+    SELECT grupo_id FROM equiv GROUP BY grupo_id HAVING count(*) >= 2
+  ),
+  preco_app AS (
+    SELECT DISTINCT ON (sku_codigo_omie) sku_codigo_omie::text AS sku, preco, capturado_em
+    FROM sku_preco_fornecedor_capturado
+    WHERE empresa = lower(p_empresa) AND status = 'ok' AND preco > 0
+    ORDER BY sku_codigo_omie, capturado_em DESC
+  ),
+  portal_map AS (
+    SELECT DISTINCT sku_omie::text AS sku
+    FROM sku_fornecedor_externo
+    WHERE empresa = p_empresa AND ativo = TRUE AND sku_portal IS NOT NULL AND btrim(sku_portal) <> ''
+  ),
+  inv_saldo AS (
+    SELECT DISTINCT ON (omie_codigo_produto) omie_codigo_produto::text AS sku, saldo
+    FROM inventory_position
+    WHERE account = ANY (CASE lower(p_empresa)
+            WHEN 'oben' THEN ARRAY['vendas'::text,'oben'::text]
+            WHEN 'colacor' THEN ARRAY['colacor_vendas'::text,'colacor'::text]
+            WHEN 'colacor_sc' THEN ARRAY['servicos'::text,'colacor_sc'::text]
+            ELSE ARRAY[lower(p_empresa)] END)
+    ORDER BY omie_codigo_produto, synced_at DESC NULLS LAST
+  ),
+  membro_elegivel AS (
+    SELECT e.grupo_id, e.sku, e.fator_para_base, pa.preco,
+           (pa.preco / e.fator_para_base) AS custo_base
+    FROM equiv e
+    JOIN equiv_grupos eg ON eg.grupo_id = e.grupo_id
+    JOIN preco_app pa ON pa.sku = e.sku AND pa.capturado_em >= now() - make_interval(days => v_stale_dias)
+    JOIN portal_map pm ON pm.sku = e.sku
+    JOIN omie_products opm ON opm.omie_codigo_produto::text = e.sku AND opm.account = lower(p_empresa)
+    LEFT JOIN sku_status_omie ssom ON ssom.empresa = p_empresa AND ssom.sku_codigo_omie = e.sku
+    LEFT JOIN familia_nao_comprada fncm ON fncm.empresa = p_empresa AND fncm.familia = opm.familia
+    WHERE COALESCE(opm.ativo, TRUE) = TRUE
+      AND COALESCE(ssom.ativo_no_omie, TRUE) = TRUE
+      AND fncm.id IS NULL
+      AND COALESCE(opm.tipo_produto, opm.metadata->>'tipo_produto', '') <> '04'
+      AND COALESCE(opm.descricao, '') NOT ILIKE '%450ML'
+      AND COALESCE(opm.descricao, '') NOT ILIKE '%405ML'
+  ),
+  embalagem_escolhida AS (
+    SELECT DISTINCT ON (grupo_id)
+           grupo_id, sku AS sku_escolhido, fator_para_base AS fator_escolhido,
+           preco AS preco_escolhido, custo_base AS custo_base_escolhido
+    FROM membro_elegivel
+    ORDER BY grupo_id, custo_base ASC, fator_para_base DESC
+  ),
+  grupo_estoque AS (
+    SELECT e.grupo_id,
+           SUM(GREATEST(COALESCE(inv.saldo, 0), COALESCE(sea.estoque_fisico, 0)))                              AS fisico_grupo,
+           SUM(COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0) * e.fator_para_base)           AS acaminho_grupo,
+           SUM(GREATEST(COALESCE(inv.saldo, 0), COALESCE(sea.estoque_fisico, 0))
+               + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0) * e.fator_para_base)         AS estoque_grupo
+    FROM equiv e
+    LEFT JOIN sku_estoque_atual sea ON sea.empresa = p_empresa AND sea.sku_codigo_omie = e.sku
+    LEFT JOIN inv_saldo inv        ON inv.sku = e.sku
+    LEFT JOIN em_transito et       ON et.sku_codigo_omie = e.sku
+    GROUP BY e.grupo_id
+  ),
+  sku_base AS (
+    SELECT sp.empresa, sp.sku_codigo_omie::text AS ancora_sku, sp.sku_descricao, sp.fornecedor_nome,
+           sg.grupo_codigo, sp.ponto_pedido, sp.estoque_maximo, sp.minimo_forcado_manual,
+           COALESCE(sea.estoque_fisico, 0) AS estoque_fisico_proprio,
+           (COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) AS acaminho_proprio,
+           ea.grupo_id AS equiv_grupo,
+           ge.estoque_grupo, ge.fisico_grupo, ge.acaminho_grupo,
+           COALESCE(ge.estoque_grupo,
+                    COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) AS estoque_efetivo,
+           ee.sku_escolhido, ee.fator_escolhido, ee.preco_escolhido, ee.custo_base_escolhido,
+           me_anc.custo_base AS ancora_custo_base,
            COALESCE(
              ( SELECT ipc.cmc FROM inventory_position ipc
                WHERE ipc.omie_codigo_produto::text = sp.sku_codigo_omie::text
@@ -5800,7 +5867,7 @@ BEGIN
                  AND ipc.cmc > 0
                ORDER BY ipc.synced_at DESC NULLS LAST
                LIMIT 1 ),
-             pm.preco_unitario, 0) AS preco_unitario,
+             pm.preco_unitario, 0) AS preco_unitario_ancora,
            (pm.n IS NULL) AS primeira_compra,
            fh.horario_corte_pedido, fh.valor_maximo_mensal, fh.delta_max_perc
     FROM sku_parametros sp
@@ -5813,6 +5880,10 @@ BEGIN
     LEFT JOIN preco_medio pm ON pm.empresa = sp.empresa AND pm.sku_codigo_omie = sp.sku_codigo_omie::text
     LEFT JOIN inventory_position ip ON ip.omie_codigo_produto::text = sp.sku_codigo_omie::text AND ip.account = lower(p_empresa)
     LEFT JOIN sku_status_omie sso ON sso.empresa = sp.empresa AND sso.sku_codigo_omie = sp.sku_codigo_omie::text
+    LEFT JOIN equiv ea ON ea.sku = sp.sku_codigo_omie::text
+    LEFT JOIN grupo_estoque ge ON ge.grupo_id = ea.grupo_id
+    LEFT JOIN embalagem_escolhida ee ON ee.grupo_id = ea.grupo_id
+    LEFT JOIN membro_elegivel me_anc ON me_anc.grupo_id = ea.grupo_id AND me_anc.sku = sp.sku_codigo_omie::text
     WHERE sp.empresa = p_empresa
       AND sp.habilitado_reposicao_automatica = TRUE
       AND COALESCE(sp.tipo_reposicao, 'automatica') = 'automatica'
@@ -5830,19 +5901,55 @@ BEGIN
               AND op04.account = lower(p_empresa)
             LIMIT 1
           ), '') <> '04'
-      -- [INTRADAY 4/4] não re-sugerir SKU presente em pedido pendente/bloqueado de oportunidade.
       AND NOT EXISTS (
-            SELECT 1
-            FROM pedido_compra_item pci9
-            JOIN pedido_compra_sugerido pcs9 ON pcs9.id = pci9.pedido_id
-            WHERE pcs9.empresa = p_empresa
-              AND pcs9.status IN ('pendente_aprovacao', 'bloqueado_guardrail')
-              AND COALESCE(pcs9.tipo_ciclo, 'normal') <> 'normal'
-              AND pci9.sku_codigo_omie = sp.sku_codigo_omie::text
+            SELECT 1 FROM equiv eg2
+            WHERE eg2.sku = sp.sku_codigo_omie::text AND eg2.fator_para_base > 1
           )
       AND sp.ponto_pedido IS NOT NULL
       AND sp.estoque_maximo IS NOT NULL
-      AND (COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) <= sp.ponto_pedido
+      AND COALESCE(ge.estoque_grupo,
+                   COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) <= sp.ponto_pedido
+  ),
+  skus_necessitando AS (
+    SELECT b.empresa,
+           CASE WHEN trocou THEN b.sku_escolhido ELSE b.ancora_sku END AS sku_codigo_omie,
+           CASE WHEN trocou
+                THEN COALESCE((SELECT op2.descricao FROM omie_products op2
+                               WHERE op2.omie_codigo_produto::text = b.sku_escolhido
+                                 AND op2.account = lower(p_empresa) LIMIT 1), b.sku_descricao)
+                ELSE b.sku_descricao END AS sku_descricao,
+           b.fornecedor_nome, b.grupo_codigo, b.ponto_pedido, b.estoque_maximo,
+           COALESCE(b.fisico_grupo, b.estoque_fisico_proprio)  AS estoque_fisico,
+           COALESCE(b.acaminho_grupo, b.acaminho_proprio)      AS estoque_a_caminho,
+           b.estoque_efetivo,
+           ceil(b.estoque_maximo - b.estoque_efetivo) AS qtde_sugerida,
+           CASE
+             WHEN trocou THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo,
+                                            COALESCE(b.minimo_forcado_manual, 0)) / b.fator_escolhido)
+             WHEN b.minimo_forcado_manual IS NOT NULL AND b.minimo_forcado_manual > 0
+                  THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual))
+             ELSE ceil(b.estoque_maximo - b.estoque_efetivo)
+           END AS qtde_final,
+           CASE WHEN trocou THEN b.preco_escolhido ELSE b.preco_unitario_ancora END AS preco_unitario,
+           b.primeira_compra, b.horario_corte_pedido, b.valor_maximo_mensal, b.delta_max_perc
+    FROM (
+      SELECT b0.*,
+             ( b0.sku_escolhido IS NOT NULL
+               AND b0.sku_escolhido <> b0.ancora_sku
+               AND b0.ancora_custo_base IS NOT NULL
+               AND b0.custo_base_escolhido < b0.ancora_custo_base
+             ) AS trocou
+      FROM sku_base b0
+    ) b
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM pedido_compra_item pci9
+      JOIN pedido_compra_sugerido pcs9 ON pcs9.id = pci9.pedido_id
+      WHERE pcs9.empresa = b.empresa
+        AND pcs9.status IN ('pendente_aprovacao', 'bloqueado_guardrail')
+        AND COALESCE(pcs9.tipo_ciclo, 'normal') <> 'normal'
+        AND pci9.sku_codigo_omie = CASE WHEN b.trocou THEN b.sku_escolhido ELSE b.ancora_sku END
+    )
   ),
   pedidos_por_fornecedor_grupo AS (
     INSERT INTO pedido_compra_sugerido (
@@ -5866,7 +5973,7 @@ BEGIN
   )
   SELECT pfg.id, sn.sku_codigo_omie, sn.sku_descricao, sn.estoque_efetivo, sn.ponto_pedido, sn.estoque_maximo,
          sn.qtde_sugerida, sn.qtde_final, sn.preco_unitario, sn.qtde_final * sn.preco_unitario, sn.primeira_compra,
-         sn.estoque_fisico, (sn.estoque_pendente + sn.qtde_em_transito_recente)
+         sn.estoque_fisico, sn.estoque_a_caminho
   FROM skus_necessitando sn
   JOIN pedidos_por_fornecedor_grupo pfg
     ON pfg.fornecedor_nome = sn.fornecedor_nome AND COALESCE(pfg.grupo_codigo,'') = COALESCE(sn.grupo_codigo,'')
@@ -6639,6 +6746,7 @@ CREATE TABLE public.sku_parametros (
     habilitado_reposicao_automatica boolean DEFAULT false,
     tipo_reposicao text DEFAULT 'automatica'::text,
     minimo_forcado_manual numeric,
+    parametro_cold_start boolean DEFAULT false NOT NULL,
     CONSTRAINT sku_parametros_minimo_forcado_valido CHECK (((minimo_forcado_manual IS NULL) OR ((minimo_forcado_manual > (0)::numeric) AND (minimo_forcado_manual < 'Infinity'::numeric))))
 );
 
@@ -9318,6 +9426,158 @@ BEGIN
     );
 END;
 $_$;
+
+
+--
+-- Name: reposicao_aplicar_depara_sayerlack_auto(jsonb, integer, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_aplicar_depara_sayerlack_auto(p_candidatos jsonb, p_parser_version integer DEFAULT NULL::integer, p_run_id uuid DEFAULT NULL::uuid) RETURNS TABLE(inseridos integer, colisao_destino integer, ja_existe integer, nao_elegivel integer)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_ins int := 0; v_col int := 0; v_exi int := 0; v_nel int := 0;
+  c record; v_res text; v_det text;
+BEGIN
+  -- Gate: só service_role (edge/cron). Usuário via PostgREST é barrado (42501).
+  IF COALESCE(auth.role(), '') <> 'service_role' THEN
+    RAISE EXCEPTION 'acesso negado: reposicao_aplicar_depara_sayerlack_auto requer service_role'
+      USING ERRCODE = '42501';
+  END IF;
+
+  FOR c IN
+    SELECT * FROM jsonb_to_recordset(COALESCE(p_candidatos, '[]'::jsonb))
+      AS x(sku_omie text, sku_portal text, unidade_portal text, sku_descricao text)
+  LOOP
+    v_det := NULL;
+    -- candidato inválido (sem sku_omie/sku_portal) -> não-elegível, auditado
+    IF c.sku_omie IS NULL OR btrim(c.sku_omie) = '' OR c.sku_portal IS NULL OR btrim(c.sku_portal) = '' THEN
+      v_res := 'nao_elegivel'; v_nel := v_nel + 1; v_det := 'candidato sem sku_omie/sku_portal';
+    -- (1) já existe (ativo OU inativo) p/ o SKU -> nunca sobrescreve (mapa manual / inativo intencional)
+    ELSIF EXISTS (
+        SELECT 1 FROM public.sku_fornecedor_externo fe
+        WHERE fe.empresa = 'OBEN' AND fe.fornecedor_nome ILIKE '%SAYERLACK%' AND fe.sku_omie = c.sku_omie
+      ) THEN
+      v_res := 'ja_existe'; v_exi := v_exi + 1;
+    -- (2) COLISÃO DE DESTINO: o sku_portal já está ativo p/ OUTRO sku_omie (Codex P2)
+    ELSIF EXISTS (
+        SELECT 1 FROM public.sku_fornecedor_externo fe
+        WHERE fe.empresa = 'OBEN' AND fe.fornecedor_nome ILIKE '%SAYERLACK%'
+          AND fe.ativo = true
+          AND upper(btrim(fe.sku_portal)) = upper(btrim(c.sku_portal))
+          AND fe.sku_omie <> c.sku_omie
+      ) THEN
+      v_res := 'colisao_destino'; v_col := v_col + 1; v_det := 'sku_portal já mapeado p/ outro SKU';
+    -- (3) re-valida elegibilidade no momento da escrita (defesa: catálogo pode ter mudado)
+    ELSIF NOT EXISTS (
+        SELECT 1 FROM public.v_reposicao_depara_sayerlack_elegivel e WHERE e.sku_omie = c.sku_omie
+      ) THEN
+      v_res := 'nao_elegivel'; v_nel := v_nel + 1; v_det := 'fora da view de elegibilidade';
+    -- (4) insere
+    ELSE
+      INSERT INTO public.sku_fornecedor_externo
+        (empresa, fornecedor_nome, sku_omie, sku_portal, unidade_portal, fator_conversao, ativo, observacoes)
+      VALUES
+        ('OBEN', 'RENNER SAYERLACK S/A', c.sku_omie, c.sku_portal,
+         COALESCE(NULLIF(c.unidade_portal, ''), 'UN'), 1, true,
+         'extraído automaticamente (parser v' || COALESCE(p_parser_version::text, '?') || ', cold-start)')
+      ON CONFLICT (empresa, fornecedor_nome, sku_omie) DO NOTHING;
+      IF FOUND THEN
+        v_res := 'inserido'; v_ins := v_ins + 1;
+      ELSE
+        v_res := 'ja_existe'; v_exi := v_exi + 1;   -- corrida com outro writer
+      END IF;
+    END IF;
+
+    INSERT INTO public.reposicao_depara_auto_log
+      (run_id, empresa, sku_omie, sku_descricao, sku_portal_extraido, parser_version, resultado, detalhe)
+    VALUES
+      (p_run_id, 'OBEN', c.sku_omie, c.sku_descricao, c.sku_portal, p_parser_version, v_res, v_det);
+  END LOOP;
+
+  RETURN QUERY SELECT v_ins, v_col, v_exi, v_nel;
+END $$;
+
+
+--
+-- Name: reposicao_cold_start_parametros(text, integer, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_cold_start_parametros(p_empresa text DEFAULT 'OBEN'::text, p_limite integer DEFAULT 50, p_run_id uuid DEFAULT NULL::uuid) RETURNS TABLE(graduados integer, criados integer)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_grad int := 0; v_cri int := 0;
+BEGIN
+  -- SEM gate auth.role(): o pg_cron roda como postgres SEM JWT (auth.role()=NULL) e o gate
+  -- 'service_role' o bloquearia. Proteção via REVOKE/GRANT abaixo (anon/authenticated barrados).
+
+  -- ── (1) GRADUAR: cold-start que ganhou demanda OK → aplica o parâmetro REAL ──
+  WITH grad AS (
+    UPDATE public.sku_parametros sp SET
+      estoque_minimo      = v.estoque_minimo_sugerido,
+      ponto_pedido        = v.ponto_pedido_sugerido,
+      estoque_maximo      = v.estoque_maximo_sugerido,
+      estoque_seguranca   = v.estoque_seguranca_sugerido,
+      cobertura_alvo_dias = v.cobertura_alvo_dias,
+      parametro_cold_start = false,
+      ultima_atualizacao_calculo = now()
+    FROM public.v_sku_parametros_sugeridos v
+    WHERE sp.empresa = v.empresa AND sp.sku_codigo_omie = v.sku_codigo_omie
+      AND sp.empresa = p_empresa AND sp.parametro_cold_start = true
+      AND v.status_sugestao = 'OK'
+      AND v.ponto_pedido_sugerido IS NOT NULL AND v.estoque_maximo_sugerido IS NOT NULL
+    RETURNING sp.sku_codigo_omie, sp.sku_descricao
+  )
+  INSERT INTO public.reposicao_cold_start_log (run_id, empresa, sku_codigo_omie, sku_descricao, acao, detalhe)
+  SELECT p_run_id, p_empresa, g.sku_codigo_omie::text, g.sku_descricao, 'graduado', 'ganhou demanda (status OK)'
+  FROM grad g;
+  GET DIAGNOSTICS v_grad = ROW_COUNT;
+
+  -- ── (2) CRIAR: comprável + de-para, sem linha, sem demanda OK → fallback conservador ──
+  DROP TABLE IF EXISTS tmp_cold_cand;
+  CREATE TEMP TABLE tmp_cold_cand ON COMMIT DROP AS
+  SELECT e.sku_codigo_omie, e.sku_descricao, e.fornecedor_nome, e.estoque_catalogo
+  FROM public.v_reposicao_cold_start_elegivel e
+  WHERE e.estoque_catalogo IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM public.sku_parametros sp
+                    WHERE sp.empresa = p_empresa AND sp.sku_codigo_omie = e.sku_codigo_omie)
+    AND NOT EXISTS (SELECT 1 FROM public.v_sku_parametros_sugeridos v
+                    WHERE v.empresa = p_empresa AND v.sku_codigo_omie = e.sku_codigo_omie
+                      AND v.status_sugestao = 'OK')
+  ORDER BY e.estoque_catalogo ASC, e.sku_codigo_omie
+  LIMIT GREATEST(p_limite, 0);
+
+  INSERT INTO public.sku_estoque_atual
+    (empresa, sku_codigo_omie, estoque_fisico, estoque_disponivel, estoque_pendente_entrada, ultima_sincronizacao, fonte_sync)
+  SELECT p_empresa, c.sku_codigo_omie::text, c.estoque_catalogo, c.estoque_catalogo, 0, now(), 'cold_start_seed'
+  FROM tmp_cold_cand c
+  ON CONFLICT (empresa, sku_codigo_omie) DO NOTHING;
+
+  WITH ins AS (
+    INSERT INTO public.sku_parametros
+      (empresa, sku_codigo_omie, sku_descricao, fornecedor_nome,
+       classe_abc, classe_xyz,
+       estoque_minimo, ponto_pedido, estoque_maximo, estoque_seguranca, cobertura_alvo_dias,
+       habilitado_reposicao_automatica, tipo_reposicao, ativo, parametro_cold_start)
+    SELECT p_empresa, c.sku_codigo_omie, c.sku_descricao, c.fornecedor_nome,
+       'C', 'Z',
+       1, 1, 1 + 1, 0, 30,
+       true, 'automatica', true, true
+    FROM tmp_cold_cand c
+    ON CONFLICT (empresa, sku_codigo_omie) DO NOTHING
+    RETURNING sku_codigo_omie, sku_descricao
+  )
+  INSERT INTO public.reposicao_cold_start_log (run_id, empresa, sku_codigo_omie, sku_descricao, acao, habilitado, detalhe)
+  SELECT p_run_id, p_empresa, i.sku_codigo_omie::text, i.sku_descricao, 'criado', true,
+         'fallback conservador (pp=1/max=2) + estoque semeado do catálogo'
+  FROM ins i;
+  GET DIAGNOSTICS v_cri = ROW_COUNT;
+
+  RETURN QUERY SELECT v_grad, v_cri;
+END $$;
 
 
 --
@@ -18079,6 +18339,43 @@ ALTER TABLE public.reposicao_auto_aprovacao_log ALTER COLUMN id ADD GENERATED AL
 
 
 --
+-- Name: reposicao_cold_start_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_cold_start_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    run_id uuid,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    empresa text DEFAULT 'OBEN'::text NOT NULL,
+    sku_codigo_omie text NOT NULL,
+    sku_descricao text,
+    acao text NOT NULL,
+    habilitado boolean,
+    detalhe text,
+    CONSTRAINT reposicao_cold_start_log_acao_check CHECK ((acao = ANY (ARRAY['criado'::text, 'graduado'::text])))
+);
+
+
+--
+-- Name: reposicao_depara_auto_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_depara_auto_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    run_id uuid,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    empresa text DEFAULT 'OBEN'::text NOT NULL,
+    sku_omie text NOT NULL,
+    sku_descricao text,
+    sku_portal_extraido text,
+    parser_version integer,
+    resultado text NOT NULL,
+    detalhe text,
+    CONSTRAINT reposicao_depara_auto_log_resultado_check CHECK ((resultado = ANY (ARRAY['inserido'::text, 'colisao_destino'::text, 'ja_existe'::text, 'nao_elegivel'::text])))
+);
+
+
+--
 -- Name: reposicao_param_auto_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -22141,6 +22438,40 @@ CREATE VIEW public.v_promocao_avaliacao_hoje WITH (security_invoker='on') AS
 
 
 --
+-- Name: v_reposicao_cold_start_elegivel; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_reposicao_cold_start_elegivel WITH (security_invoker='on') AS
+ SELECT 'OBEN'::text AS empresa,
+    op.omie_codigo_produto AS sku_codigo_omie,
+    op.descricao AS sku_descricao,
+    fe.fornecedor_nome,
+    op.estoque AS estoque_catalogo
+   FROM (((public.omie_products op
+     JOIN public.sku_fornecedor_externo fe ON (((fe.empresa = 'OBEN'::text) AND (fe.sku_omie = (op.omie_codigo_produto)::text) AND (fe.ativo = true) AND (fe.fornecedor_nome ~~* '%SAYERLACK%'::text))))
+     LEFT JOIN public.sku_status_omie sso ON (((sso.empresa = 'OBEN'::text) AND (sso.sku_codigo_omie = (op.omie_codigo_produto)::text))))
+     LEFT JOIN public.familia_nao_comprada fnc ON (((fnc.empresa = 'OBEN'::text) AND (fnc.familia = op.familia))))
+  WHERE ((op.account = 'oben'::text) AND (op.ativo = true) AND (COALESCE(op.tipo_produto, (op.metadata ->> 'tipo_produto'::text), ''::text) <> '04'::text) AND (COALESCE(op.valor_unitario, (0)::numeric) > (0)::numeric) AND (COALESCE(op.descricao, ''::text) !~~* '%450ML'::text) AND (COALESCE(op.descricao, ''::text) !~~* '%405ML'::text) AND (fnc.id IS NULL) AND (COALESCE(sso.ativo_no_omie, true) = true));
+
+
+--
+-- Name: v_reposicao_depara_sayerlack_elegivel; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_reposicao_depara_sayerlack_elegivel WITH (security_invoker='on') AS
+ SELECT 'OBEN'::text AS empresa,
+    (op.omie_codigo_produto)::text AS sku_omie,
+    op.descricao AS sku_descricao,
+    op.familia
+   FROM ((public.omie_products op
+     LEFT JOIN public.sku_status_omie sso ON (((sso.empresa = 'OBEN'::text) AND (sso.sku_codigo_omie = (op.omie_codigo_produto)::text))))
+     LEFT JOIN public.familia_nao_comprada fnc ON (((fnc.empresa = 'OBEN'::text) AND (fnc.familia = op.familia))))
+  WHERE ((op.account = 'oben'::text) AND (op.ativo = true) AND (COALESCE(op.tipo_produto, (op.metadata ->> 'tipo_produto'::text), ''::text) <> '04'::text) AND (COALESCE(op.valor_unitario, (0)::numeric) > (0)::numeric) AND (COALESCE(op.descricao, ''::text) !~~* '%450ML'::text) AND (COALESCE(op.descricao, ''::text) !~~* '%405ML'::text) AND (fnc.id IS NULL) AND (COALESCE(sso.ativo_no_omie, true) = true) AND (NOT (EXISTS ( SELECT 1
+           FROM public.sku_fornecedor_externo fe
+          WHERE ((fe.empresa = 'OBEN'::text) AND (fe.sku_omie = (op.omie_codigo_produto)::text) AND (fe.ativo = true) AND (fe.fornecedor_nome ~~* '%SAYERLACK%'::text))))));
+
+
+--
 -- Name: v_reposicao_sku_sem_fornecedor; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -24986,6 +25317,22 @@ ALTER TABLE ONLY public.reposicao_alerta_pedido_minimo
 
 ALTER TABLE ONLY public.reposicao_auto_aprovacao_log
     ADD CONSTRAINT reposicao_auto_aprovacao_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: reposicao_cold_start_log reposicao_cold_start_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_cold_start_log
+    ADD CONSTRAINT reposicao_cold_start_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: reposicao_depara_auto_log reposicao_depara_auto_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_depara_auto_log
+    ADD CONSTRAINT reposicao_depara_auto_log_pkey PRIMARY KEY (id);
 
 
 --
@@ -32440,6 +32787,13 @@ CREATE POLICY cmc_ledger_select_gestor ON public.cmc_ledger FOR SELECT TO authen
 ALTER TABLE public.cockpit_audit_log ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: reposicao_cold_start_log cold_start_log_sel; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cold_start_log_sel ON public.reposicao_cold_start_log FOR SELECT TO authenticated USING (( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa));
+
+
+--
 -- Name: commercial_roles; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -32661,6 +33015,13 @@ CREATE POLICY dashboard_visits_user_read ON public.dashboard_visits FOR SELECT U
 --
 
 ALTER TABLE public.default_prices ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: reposicao_depara_auto_log depara_auto_log_sel; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY depara_auto_log_sel ON public.reposicao_depara_auto_log FOR SELECT TO authenticated USING (( SELECT public.pode_ver_carteira_completa(( SELECT auth.uid() AS uid)) AS pode_ver_carteira_completa));
+
 
 --
 -- Name: des_checkin_qualitativo; Type: ROW SECURITY; Schema: public; Owner: -
@@ -34586,6 +34947,18 @@ ALTER TABLE public.reposicao_alerta_pedido_minimo ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reposicao_auto_aprovacao_log ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: reposicao_cold_start_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_cold_start_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: reposicao_depara_auto_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_depara_auto_log ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: reposicao_param_auto_log; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -36231,5 +36604,5 @@ ALTER TABLE public.whatsapp_webhook_events ENABLE ROW LEVEL SECURITY;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 4jJNKMFTg6gNsngZmWleufEd6hB54h7VjkqsS3HYhICGBiSNae4kKLoe3vYNchf
+\unrestrict 0JMAaOB7tkIH8lOg0UBxRYwmCSQHwXm4XcOdlulkMcOinCKKzrKqTNvNtqPzkJa
 
