@@ -76,6 +76,16 @@ Se (2) ≤ (3) em ruptura **e** (2) « (1) em capital empatado → a recalibraç
 - **Pin** dos SKUs A críticos na esteira `param_auto` (proteção individual).
 - Croston/TSB/SBA p/ intermitente = experimento POSTERIOR, não bloqueio.
 
+**Validação reforçada EXECUTADA (2026-06-27, gate do Codex):** ponderada por R$ (preço unitário = `valor_vendido_90d / (demanda_media_diaria·90)` — cuidado: `demanda_total_90d` está zerada e fabricaria preço 0), LT p95 (não médio), Poisson vs rajada (demanda agrupada). Resultado — **bufY ≥ atual em TODOS os cenários**:
+
+| serviço ponderado por R$ | Poisson | rajada (stress) |
+|---|---|---|
+| atual (motor) | 97,73% | 94,99% |
+| bufY (novo) | 98,66% | 97,48% |
+| — só classe A | 98,95% (vs 97,35) | 97,82% (vs 94,11) |
+
+Piores SKUs A sob rajada: perda ~R$1–2k/ano de venda, ruptura 2–4 dias consecutivos (curta). **Achado:** o motor atual não é só mais caro (104 vs 70 dias de capital) — é também PIOR em serviço ponderado, inclusive sob rajada, porque enche uniforme até 286d em vez de dimensionar o ponto por SKU. O que protege contra ruptura é o ponto bem calibrado, não o volume. Gate PASSOU com folga.
+
 ### 3.4 Rollout — gradual e reversível, via `param_auto`
 
 Aplicar os parâmetros novos **só nos SKUs Sayerlack/Oben** pela esteira `param_auto` existente (fusível pra reverter na hora; `pin` pra travar SKUs sensíveis; `log` de auditoria; período de revisão pra não despejar tudo de uma vez). Monitorar ruptura real nas primeiras 2–3 semanas (cron de health + a query de ruptura).
