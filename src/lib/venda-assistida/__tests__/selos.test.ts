@@ -131,6 +131,22 @@ describe('montarSelosVendaAssistida', () => {
     if (so?.preco.status === 'ok') expect(so.preco.precoLitroBase).toBe(50);
   });
 
+  it('🔴 MESMO boletim em duas contas → resolve por conta (Oben em estoque ≠ Colacor sem estoque)', () => {
+    // Um boletim (kb_product_spec_id) vinculado a SKU Oben (em estoque) E Colacor (sem estoque).
+    const specs = [
+      spec({ account: 'oben', omie_codigo_produto: 10, kb_product_spec_id: 'BX' }),
+      spec({ account: 'colacor', omie_codigo_produto: 20, kb_product_spec_id: 'BX' }),
+    ];
+    const cat = catalog(
+      { account: 'oben', row: row(10, 'PRIMER PU FL.6269.02GL', 360, 5) }, //    em estoque
+      { account: 'colacor', row: row(20, 'PRIMER PU FL.6269.02GL', 360, 0) }, // sem estoque
+    );
+    const selos = montarSelosVendaAssistida(specs, cat, {});
+    expect(selos.get(keyDeSku('oben', 10))?.estado).toBe('SELLABLE_NOW');
+    // NÃO pode herdar o estoque da Oben (no agrupamento só-por-boletim daria SELLABLE_NOW — bug P0).
+    expect(selos.get(keyDeSku('colacor', 20))?.estado).toBe('ORDERABLE');
+  });
+
   it('boletim sem NENHUMA embalagem no catálogo → não emite selo', () => {
     const specs = [spec({ account: 'colacor', omie_codigo_produto: 99, kb_product_spec_id: 'B9' })];
     const selos = montarSelosVendaAssistida(specs, catalog(), {});
@@ -184,5 +200,7 @@ describe('descreverSelo', () => {
     const d = descreverSelo(opcao);
     expect(d.temPreco).toBe(false);
     expect(d.valorLitro).toBeNull();
+    expect(d.estadoLabel).toBe('Sob consulta'); // preço incompleto domina (P1)
+    expect(d.estadoTone).toBe('muted');
   });
 });

@@ -20,7 +20,7 @@ describe('VendaAssistidaSelo', () => {
     expect(screen.getByText('(teórico)')).toBeTruthy();
   });
 
-  it('catalisador obrigatório sem casamento → "sob consulta", "Encomenda", sem (teórico)', () => {
+  it('catalisador obrigatório sem casamento → "Sob consulta" domina (sem "Encomenda", sem teórico)', () => {
     const opcao = resolverOpcaoVenda({
       temSkuConfirmado: true,
       temCatalisador: true,
@@ -29,8 +29,8 @@ describe('VendaAssistidaSelo', () => {
       catalisadorEmbalagens: [], // catalisador obrigatório sem casamento → incomplete
     });
     render(<VendaAssistidaSelo option={opcao} />);
-    expect(screen.getByText('sob consulta')).toBeTruthy();
-    expect(screen.getByText('Encomenda')).toBeTruthy();
+    expect(screen.getByText('Sob consulta')).toBeTruthy();
+    expect(screen.queryByText('Encomenda')).toBeNull();
     expect(screen.queryByText('(teórico)')).toBeNull();
   });
 });
