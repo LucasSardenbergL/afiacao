@@ -30,17 +30,20 @@ export function montarSelosVendaAssistida(
   /** Preço-do-cliente (último praticado) POR CONTA: account (minúsculo) → omie_codigo_produto → preço. */
   customerPricesByAccount: Record<string, Record<number, number>>,
 ): Map<string, OpcaoResolvida> {
-  // Agrupa os SKUs vinculados por boletim (kb_product_spec_id).
-  const porBoletim = new Map<string, CurrentSpec[]>();
+  // Agrupa por (CONTA, boletim): um boletim pode estar vinculado a SKU Oben E Colacor (mesmo produto
+  // via os dois distribuidores). Resolver junto mostraria o estoque/preço de uma conta no produto da
+  // outra (P0 Codex) — cada conta vira sua própria opção.
+  const porGrupo = new Map<string, CurrentSpec[]>();
   for (const s of specs ?? []) {
-    const arr = porBoletim.get(s.kb_product_spec_id);
+    const grupo = `${(s.account ?? '').toLowerCase()}|${s.kb_product_spec_id}`;
+    const arr = porGrupo.get(grupo);
     if (arr) arr.push(s);
-    else porBoletim.set(s.kb_product_spec_id, [s]);
+    else porGrupo.set(grupo, [s]);
   }
 
   const selos = new Map<string, OpcaoResolvida>();
-  for (const boletimSpecs of porBoletim.values()) {
-    const ref = boletimSpecs[0];
+  for (const grupoSpecs of porGrupo.values()) {
+    const ref = grupoSpecs[0];
     if (!ref) continue;
 
     // Embalagens da base = linhas do catálogo dos SKUs vinculados (ignora SKU fora do catálogo).
@@ -48,7 +51,7 @@ export function montarSelosVendaAssistida(
     // separados) → nunca achatar num Record só; lê do mapa da conta de CADA SKU.
     const rows: ProdutoLinhaOmie[] = [];
     const pricesForBoletim: Record<number, number> = {};
-    for (const s of boletimSpecs) {
+    for (const s of grupoSpecs) {
       const row = catalogByKey.get(keyDeSku(s.account, s.omie_codigo_produto));
       if (!row) continue;
       rows.push(row);
@@ -71,7 +74,7 @@ export function montarSelosVendaAssistida(
       catalisadorEmbalagens: [], // v1 — casamento do catalisador é fatia própria
     });
 
-    for (const s of boletimSpecs) {
+    for (const s of grupoSpecs) {
       selos.set(keyDeSku(s.account, s.omie_codigo_produto), opcao);
     }
   }
@@ -80,22 +83,16 @@ export function montarSelosVendaAssistida(
 
 /** Descreve o selo (rótulo + tom + preço) de uma opção resolvida. Puro, sem formatação de moeda. */
 export function descreverSelo(opcao: OpcaoResolvida): SeloDescricao {
-  const estadoLabel =
-    opcao.estado === 'SELLABLE_NOW'
-      ? 'Em estoque'
-      : opcao.estado === 'ORDERABLE'
-        ? 'Encomenda'
-        : 'Alternativa técnica';
-  const estadoTone: SeloTone =
-    opcao.estado === 'SELLABLE_NOW'
-      ? 'success'
-      : opcao.estado === 'ORDERABLE'
-        ? 'warning'
-        : 'muted';
+  // Money-path: preço incompleto DOMINA a apresentação → "Sob consulta" (não "Encomenda"/"Em estoque"),
+  // pra não induzir o vendedor a tratar como encomenda normal de preço conhecido (P1 Codex).
+  if (opcao.preco.status !== 'ok') {
+    return { estadoLabel: 'Sob consulta', estadoTone: 'muted', temPreco: false, valorLitro: null };
+  }
+  const sellable = opcao.estado === 'SELLABLE_NOW';
   return {
-    estadoLabel,
-    estadoTone,
-    temPreco: opcao.preco.status === 'ok',
-    valorLitro: opcao.preco.status === 'ok' ? opcao.preco.valorLitroPreparado : null,
+    estadoLabel: sellable ? 'Em estoque' : 'Encomenda',
+    estadoTone: sellable ? 'success' : 'warning',
+    temPreco: true,
+    valorLitro: opcao.preco.valorLitroPreparado,
   };
 }

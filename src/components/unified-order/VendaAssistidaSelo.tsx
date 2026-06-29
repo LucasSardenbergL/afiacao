@@ -15,6 +15,12 @@ import type { OpcaoResolvida } from '@/lib/venda-assistida/resolver-opcao';
  */
 export function VendaAssistidaSelo({ option }: { option: OpcaoResolvida }) {
   const selo = descreverSelo(option);
+  const toneClass = cn(
+    'font-medium',
+    selo.estadoTone === 'success' && 'text-status-success',
+    selo.estadoTone === 'warning' && 'text-status-warning',
+    selo.estadoTone === 'muted' && 'text-muted-foreground',
+  );
   return (
     <div
       className="mt-1.5 flex items-center gap-1.5 text-[10px]"
@@ -23,22 +29,16 @@ export function VendaAssistidaSelo({ option }: { option: OpcaoResolvida }) {
       <Sparkles className="w-3 h-3 text-primary shrink-0" aria-hidden />
       <span className="text-muted-foreground">Preparado:</span>
       {selo.temPreco && selo.valorLitro != null ? (
-        <span className="font-medium font-mono tabular-nums">{fmt(selo.valorLitro)}/L</span>
+        <>
+          <span className="font-medium font-mono tabular-nums">{fmt(selo.valorLitro)}/L</span>
+          <span className="text-muted-foreground/60">(teórico)</span>
+          <span className="text-muted-foreground/60" aria-hidden>·</span>
+          <span className={toneClass}>{selo.estadoLabel}</span>
+        </>
       ) : (
-        <span className="font-medium">sob consulta</span>
+        // Preço incompleto → "Sob consulta" domina (P1 Codex); não mostra "Encomenda"/"Em estoque".
+        <span className={toneClass}>{selo.estadoLabel}</span>
       )}
-      <span className="text-muted-foreground/60" aria-hidden>·</span>
-      <span
-        className={cn(
-          'font-medium',
-          selo.estadoTone === 'success' && 'text-status-success',
-          selo.estadoTone === 'warning' && 'text-status-warning',
-          selo.estadoTone === 'muted' && 'text-muted-foreground',
-        )}
-      >
-        {selo.estadoLabel}
-      </span>
-      {selo.temPreco && <span className="text-muted-foreground/60">(teórico)</span>}
     </div>
   );
 }

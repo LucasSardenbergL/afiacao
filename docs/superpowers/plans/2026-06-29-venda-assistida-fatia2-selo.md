@@ -33,6 +33,12 @@ Mostrar, ao lado do botão **Ficha** de cada produto com boletim aprovado, um **
 - Vendedor-only = `isStaff` (espelha `canSeeFicha`; nada pro cliente).
 - Lógica 100% por testes puros agora. "Na tela" acende quando os vínculos forem populados em prod.
 
+## Codex adversarial (2026-06-29, xhigh) — 2 P0 + 1 P1 na camada nova, fechados
+- **P0 (auto-scan, antes do Codex) — preço-do-cliente cross-account:** `omie_codigo_produto` colide entre Oben/Colacor (contas Omie separadas) → o merge `{...colacor, ...oben}` vazava o preço da Oben pra um SKU da Colacor de mesmo código. Fix: ler o preço da CONTA de cada SKU + teste de regressão.
+- **P0 (Codex) — agrupar só por boletim mistura contas:** um boletim vinculado a SKU Oben E Colacor resolvia junto → mostrava o estoque/preço de uma conta no produto da outra. Fix: agrupar por `(conta, kb_product_spec_id)` — cada conta é sua própria opção. + teste de regressão.
+- **P1 (Codex) — "Encomenda" com preço incompleto:** `ORDERABLE + incomplete` mostrava "sob consulta · Encomenda". Fix: preço incompleto DOMINA a apresentação → "Sob consulta" (muted); só mostra "Em estoque"/"Encomenda" quando o preço fecha (`ok`).
+- ⚠️ **P0 NÃO-fechado (pré-existente, FORA do escopo do selo):** `useCustomerSelection.ts:534` manda o MESMO mapa de preço local pras 2 contas (limitação **documentada no código**: "corrigida na Fase 2 account-aware"). Afeta também o preço que o wizard já exibe hoje — não é introduzido pelo selo. O read-por-conta do selo fica forward-compatible. **→ flaggar pro founder / fatia própria.**
+
 ## Deferido (fatia própria)
 - **Casamento do catalisador** (catalisador_codigo→SKU, founder aprova) → destrava preço CATALISADO completo.
 - Camada viva / "mostrar todas as alternativas" (Fatia 3 — NeedFrame + busca + gate; depende do pgvector da Fatia 0).
