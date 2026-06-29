@@ -8,7 +8,6 @@ import type { ContactCandidate, ContactConfig, ScoredCandidate } from '@/lib/wha
 import { spBusinessDate } from '@/lib/time/sp-day';
 import { derivarSinaisContato, type ContatoLog, type OutcomeStatus, type SinaisContato } from '@/lib/route/route-outcome';
 import { logger } from '@/lib/logger';
-import { track } from '@/lib/analytics';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 
 interface VisitScoreRow {
@@ -134,52 +133,15 @@ async function fetchContactLog(ids: string[]): Promise<Map<string, ContatoLog[]>
 }
 
 /**
- * Lê TODOS os customer_visit_scores com cidade (~7 páginas de 1000). A 1ª
- * página traz o count exato e as DEMAIS saem em PARALELO — a versão serial
- * (7 round-trips encadeados) era o estágio mais lento da fila de ligação,
- * pago a cada visita à tela (staleTime 60s).
- */
-async function fetchAllVisitScores(farmerId: string | null): Promise<VisitScoreRow[]> {
-  const baseSelect = (withCount: boolean) => {
-    let q = supabase
-      .from('customer_visit_scores')
-      .select('customer_user_id, farmer_id, city, visit_score', withCount ? { count: 'exact' } : undefined)
-      .not('city', 'is', null);
-    // Lente "Ver como": escopa à carteira do ALVO NO SERVIDOR. O master lê
-    // customer_visit_scores sem o filtro de RLS → sem isto a rota traria TODAS
-    // as carteiras (infiel ao alvo) e baixaria ~12× mais linhas em ~7 páginas
-    // (provável causa do erro "uma das fontes falhou" na lente). Fora da lente
-    // farmerId=null → query IDÊNTICA à anterior; a RLS escopa a vendedora real.
-    if (farmerId) q = q.eq('farmer_id', farmerId);
-    return q.order('customer_user_id', { ascending: true });
-  };
-
-  const first = await baseSelect(true).range(0, PAGE - 1);
-  if (first.error) throw first.error;
-  const out: VisitScoreRow[] = [...((first.data ?? []) as VisitScoreRow[])];
-  const total = first.count ?? out.length;
-
-  if (total > PAGE) {
-    const ranges: Array<[number, number]> = [];
-    for (let from = PAGE; from < total; from += PAGE) ranges.push([from, from + PAGE - 1]);
-    const pages = await Promise.all(ranges.map(([f, t]) => baseSelect(false).range(f, t)));
-    for (const p of pages) {
-      if (p.error) throw p.error;
-      out.push(...((p.data ?? []) as VisitScoreRow[]));
-    }
-  }
-  return out;
-}
-
-/**
- * #16-full (fase 1, SHADOW): candidatos filtrados NO SERVIDOR pela coluna
+ * #16-full: candidatos das cidades-alvo filtrados NO SERVIDOR pela coluna
  * persistida city_norm (migration 20260611150000 — generated column que
- * espelha a parte-cidade do normalizeCityKey; paridade provada pelo harness
- * db/test-city-norm-paridade.sh). O filtro server é um SUPERSET seguro: só
- * cidade, NUNCA UF — quem julga a UF segue sendo o cityKeyEquals no client
- * (semântica assimétrica: cadastro sem UF casa por cidade). Durante o shadow
- * (7 dias úteis), o resultado EXIBIDO continua vindo do full-fetch legado;
- * esta query roda em paralelo só pra telemetria de divergência.
+ * espelha a parte-cidade do normalizeCityKey; paridade TS×SQL provada pelo
+ * harness db/test-city-norm-paridade.sh sobre as 221 cidades reais de prod +
+ * shadow em produção com faltando_no_novo=0). É a FONTE da fila: o filtro
+ * server é um SUPERSET seguro (só cidade, NUNCA UF) e quem julga a UF segue
+ * sendo o cityKeyEquals no client — semântica assimétrica deliberada (cadastro
+ * sem UF casa por cidade; DIVINOPOLIS/TO é excluída no client).
+ * A 1ª página traz o count exato e as DEMAIS saem em PARALELO.
  */
 async function fetchVisitScoresByCityNorm(cityNorms: string[], farmerId: string | null): Promise<VisitScoreRow[]> {
   const baseSelect = (withCount: boolean) => {
@@ -187,7 +149,10 @@ async function fetchVisitScoresByCityNorm(cityNorms: string[], farmerId: string 
       .from('customer_visit_scores')
       .select('customer_user_id, farmer_id, city, visit_score', withCount ? { count: 'exact' } : undefined)
       .in('city_norm' as never, cityNorms);
-    // Lente: mesmo escopo do full-fetch acima (mantém a telemetria do shadow válida).
+    // Lente "Ver como": escopa à carteira do ALVO NO SERVIDOR. O master lê
+    // customer_visit_scores sem o filtro de RLS → sem isto a rota traria TODAS
+    // as carteiras (infiel ao alvo). Fora da lente farmerId=null → a RLS escopa
+    // a vendedora real, comportamento INALTERADO.
     if (farmerId) q = q.eq('farmer_id', farmerId);
     return q.order('customer_user_id', { ascending: true });
   };
@@ -236,7 +201,7 @@ async function fetchProfiles(ids: string[]): Promise<ProfileRow[]> {
 
 export function useRouteContactList(workdayIso: string) {
   const { isImpersonating, effectiveUserId } = useImpersonation();
-  // Na lente "Ver como", escopa a fila à carteira do ALVO (ver fetchAllVisitScores).
+  // Na lente "Ver como", escopa a fila à carteira do ALVO (ver fetchVisitScoresByCityNorm).
   // Fora da lente: null → a RLS escopa a vendedora real, comportamento INALTERADO.
   const lensFarmerId = isImpersonating && effectiveUserId ? effectiveUserId : null;
   return useQuery<RouteContactListData>({
@@ -263,18 +228,12 @@ export function useRouteContactList(workdayIso: string) {
       };
       if (prep.cities.length === 0) return empty;
 
-      // 2) candidatos das cidades-alvo (customer_visit_scores é city-aware + RLS por carteira)
-      // SHADOW #16-full: a query server-side (city_norm) roda em PARALELO ao
-      // full-fetch legado, com fail-open TOTAL — erro (ex.: migration ainda
-      // não aplicada → coluna inexistente) vira telemetria, nunca afeta a fila.
+      // 2) candidatos das cidades-alvo — filtrados NO SERVIDOR por city_norm
+      // (#16-full; ver fetchVisitScoresByCityNorm). O cityKeyEquals no client
+      // abaixo é PERMANENTE: é ele que julga a UF (superset server → exato).
       const cityNorms = [...new Set(prep.cities.map(c => c.city))];
-      const [allScores, shadowRes] = await Promise.all([
-        fetchAllVisitScores(lensFarmerId),
-        fetchVisitScoresByCityNorm(cityNorms, lensFarmerId)
-          .then(rows => ({ ok: true as const, rows }))
-          .catch((e: unknown) => ({ ok: false as const, err: e instanceof Error ? e.message : String(e) })),
-      ]);
-      const candsFiltrados = allScores.filter(r => {
+      const scores = await fetchVisitScoresByCityNorm(cityNorms, lensFarmerId);
+      const candsFiltrados = scores.filter(r => {
         const ck = normalizeCityKey(r.city);
         return ck !== null && prep.cities.some(pc => cityKeyEquals(pc, ck));
       });
@@ -286,36 +245,6 @@ export function useRouteContactList(workdayIso: string) {
         if (!candByUser.has(r.customer_user_id)) candByUser.set(r.customer_user_id, r);
       }
       const cands0 = [...candByUser.values()];
-
-      // Telemetria do shadow: aplica o MESMO filtro client (cityKeyEquals) ao
-      // resultado do servidor e compara os conjuntos de clientes. Só
-      // contagens/direção — sem IDs (PII). Critério de corte (Codex): 7 dias
-      // úteis com faltando_no_novo=0 nas cidades exercitadas → aí o
-      // full-fetch sai e o .in(city_norm) vira a fonte (PR futuro).
-      if (shadowRes.ok) {
-        const novoIds = new Set(
-          shadowRes.rows
-            .filter(r => {
-              const ck = normalizeCityKey(r.city);
-              return ck !== null && prep.cities.some(pc => cityKeyEquals(pc, ck));
-            })
-            .map(r => r.customer_user_id),
-        );
-        const legacyIds = new Set(cands0.map(c => c.customer_user_id));
-        let faltandoNoNovo = 0;
-        for (const id of legacyIds) if (!novoIds.has(id)) faltandoNoNovo++;
-        let sobrandoNoNovo = 0;
-        for (const id of novoIds) if (!legacyIds.has(id)) sobrandoNoNovo++;
-        track('rota.city_shadow', {
-          legacy: legacyIds.size,
-          novo: novoIds.size,
-          faltando_no_novo: faltandoNoNovo,
-          sobrando_no_novo: sobrandoNoNovo,
-          cidades: prep.cities.length,
-        });
-      } else {
-        track('rota.city_shadow', { erro: true, mensagem: shadowRes.err.slice(0, 120) });
-      }
 
       if (cands0.length === 0) return empty;
 
