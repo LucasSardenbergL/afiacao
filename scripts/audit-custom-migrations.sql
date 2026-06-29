@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 310
+-- Total de custom migrations: 311
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -350,6 +350,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260627180200', 'seg_onda2_revoke_secdef_storage', '20260627180200_seg_onda2_revoke_secdef_storage.sql'),
   ('20260627180300', 'seg_onda5_search_path', '20260627180300_seg_onda5_search_path.sql'),
   ('20260627180400', 'seg_onda6_drop_backups_obsoletos', '20260627180400_seg_onda6_drop_backups_obsoletos.sql'),
+  ('20260627180500', 'seg_onda5b_search_path_fix', '20260627180500_seg_onda5b_search_path_fix.sql'),
   ('20260627190000', 'reposicao_fase2_badge_oportunidade_mv', '20260627190000_reposicao_fase2_badge_oportunidade_mv.sql'),
   ('20260627200000', 'fix_refresh_sku_ranking_gate_cron', '20260627200000_fix_refresh_sku_ranking_gate_cron.sql')
 ),
