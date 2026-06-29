@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 310
+-- Total de custom migrations: 311
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -351,7 +351,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260627180300', 'seg_onda5_search_path', '20260627180300_seg_onda5_search_path.sql'),
   ('20260627180400', 'seg_onda6_drop_backups_obsoletos', '20260627180400_seg_onda6_drop_backups_obsoletos.sql'),
   ('20260627190000', 'reposicao_fase2_badge_oportunidade_mv', '20260627190000_reposicao_fase2_badge_oportunidade_mv.sql'),
-  ('20260627200000', 'fix_refresh_sku_ranking_gate_cron', '20260627200000_fix_refresh_sku_ranking_gate_cron.sql')
+  ('20260627200000', 'fix_refresh_sku_ranking_gate_cron', '20260627200000_fix_refresh_sku_ranking_gate_cron.sql'),
+  ('20260629140000', 'reposicao_preco_ausente_null', '20260629140000_reposicao_preco_ausente_null.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1393,7 +1394,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_fase2_badge_oportunidade_mv', 'view', 'public', 'v_oportunidade_economica_hoje_badge_cached', ''),
   ('reposicao_fase2_badge_oportunidade_mv', 'index', 'private', 'mv_oportunidade_badge_empresa_uq', 'mv_oportunidade_badge'),
   ('reposicao_fase2_badge_oportunidade_mv', 'cron_job', 'cron', 'afiacao_oportunidade_badge_refresh_2h', ''),
-  ('fix_refresh_sku_ranking_gate_cron', 'function', 'public', 'refresh_sku_ranking_negociacao', '')
+  ('fix_refresh_sku_ranking_gate_cron', 'function', 'public', 'refresh_sku_ranking_negociacao', ''),
+  ('reposicao_preco_ausente_null', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
+  ('reposicao_preco_ausente_null', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2483,7 +2486,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_fase2_badge_oportunidade_mv', 'view', 'public', 'v_oportunidade_economica_hoje_badge_cached', ''),
   ('reposicao_fase2_badge_oportunidade_mv', 'index', 'private', 'mv_oportunidade_badge_empresa_uq', 'mv_oportunidade_badge'),
   ('reposicao_fase2_badge_oportunidade_mv', 'cron_job', 'cron', 'afiacao_oportunidade_badge_refresh_2h', ''),
-  ('fix_refresh_sku_ranking_gate_cron', 'function', 'public', 'refresh_sku_ranking_negociacao', '')
+  ('fix_refresh_sku_ranking_gate_cron', 'function', 'public', 'refresh_sku_ranking_negociacao', ''),
+  ('reposicao_preco_ausente_null', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
+  ('reposicao_preco_ausente_null', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 )
 SELECT
   e.migration,
