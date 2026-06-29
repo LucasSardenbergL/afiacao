@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **311** custom migrations totais
-- **1053** objetos esperados (criados por estas migrations)
+- **314** custom migrations totais
+- **1059** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 307
-  - `rls_policy`: 226
-  - `index`: 189
-  - `table`: 111
+  - `function`: 309
+  - `rls_policy`: 227
+  - `index`: 190
+  - `table`: 112
   - `cron_job`: 110
-  - `view`: 54
+  - `view`: 55
   - `trigger`: 52
   - `enum_value`: 4
 
@@ -2564,6 +2564,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20260627180000_cmc_snapshot.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.cmc_snapshot` | — |
+| `index` | `public.idx_cmc_snapshot_lookup` | `cmc_snapshot` |
+| `rls_policy` | `public.cmc_snapshot_select_staff` | `cmc_snapshot` |
+
 ### `20260627180000_reposicao_gate_estoque_nao_confirmado.sql`
 
 | Tipo | Objeto | Parent |
@@ -2573,6 +2581,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_estoque_nao_confirmado_log_empresa_data` | `reposicao_estoque_nao_confirmado_log` |
 | `rls_policy` | `public.estoque_nao_confirmado_log_sel` | `reposicao_estoque_nao_confirmado_log` |
 | `rls_policy` | `public.estoque_nao_confirmado_log_ins` | `reposicao_estoque_nao_confirmado_log` |
+
+### `20260627180100_get_defasagem_cliente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_defasagem_cliente` | — |
 
 ### `20260627180100_seg_onda1_rls_views_matview.sql`
 
@@ -2612,6 +2626,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.refresh_sku_ranking_negociacao` | — |
+
+### `20260629120000_seg_customer_metrics_viewgate.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.refresh_customer_metrics` | — |
+| `view` | `public.customer_metrics_mv` | — |
 
 ## Próximos passos por status
 
