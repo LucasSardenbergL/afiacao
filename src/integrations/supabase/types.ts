@@ -881,6 +881,33 @@ export type Database = {
         }
         Relationships: []
       }
+      cmc_snapshot: {
+        Row: {
+          account: string
+          cmc: number
+          data_posicao: string
+          id: string
+          omie_codigo_produto: number
+          synced_at: string
+        }
+        Insert: {
+          account: string
+          cmc: number
+          data_posicao: string
+          id?: string
+          omie_codigo_produto: number
+          synced_at?: string
+        }
+        Update: {
+          account?: string
+          cmc?: number
+          data_posicao?: string
+          id?: string
+          omie_codigo_produto?: number
+          synced_at?: string
+        }
+        Relationships: []
+      }
       cockpit_audit_log: {
         Row: {
           action: string
@@ -16339,6 +16366,10 @@ export type Database = {
           source: string
           status: string
         }[]
+      }
+      get_defasagem_cliente: {
+        Args: { p_customer_user_id: string; p_itens: Json }
+        Returns: Json
       }
       get_default_production_assignee: { Args: never; Returns: string }
       get_meu_mixgap: { Args: never; Returns: Json }
