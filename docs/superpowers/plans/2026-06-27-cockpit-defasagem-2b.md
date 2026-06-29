@@ -248,7 +248,10 @@ async function cmcPorData(
 
 // Upsert em lote no cmc_snapshot (idempotente: on conflict do update do cmc/synced_at).
 async function upsertSnapshot(
-  // deno-lint-ignore no-explicit-any
+  // O client Deno não carrega os tipos do Database → `db` é any de propósito
+  // (tipar com SupabaseClient estrito quebra o `.upsert` no deno check). O
+  // `deno-lint-ignore` NÃO satisfaz o ESLint do projeto → usar eslint-disable.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any,
   rows: Array<{ account: string; omie_codigo_produto: number; data_posicao: string; cmc: number }>,
 ): Promise<number> {
@@ -1675,7 +1678,7 @@ e, logo APÓS o fechamento do `</Badge>` do cockpit (linha 137, antes do bloco `
 
 - [ ] **Step 5: Typecheck** — Run: `heavy bun run typecheck` — Expected: sem erros (strict). Confirma que `LinhaDefasagem`/`ItemDefasagemInput` resolvem e `fmt` (já importado de `useUnifiedOrder`, linha 12) cobre `p_req`.
 
-- [ ] **Step 6: Rodar a suíte de testes do componente (regressão do priceGuard) + lint** — Run: `heavy bun run test src/components/unified-order/__tests__/CartItemList.priceGuard.test.tsx && bun lint src/components/unified-order/CartItemList.tsx src/hooks/useDefasagemCliente.ts` — Expected: teste do priceGuard passa (o badge novo não quebra o destaque de preço ≤0) e lint limpo (sem `text-red-600`/cores cruas; tokens `text-status-*`).
+- [ ] **Step 6: Mockar o hook novo no teste priceGuard + rodar a suíte + lint** — PRIMEIRO adicione ao `src/components/unified-order/__tests__/CartItemList.priceGuard.test.tsx` o mock do hook novo (ele puxa `useAuth`/`useQuery`, que o teste isola de propósito — sem o mock o render do CartItemList QUEBRA): `vi.mock('@/hooks/useDefasagemCliente', () => ({ useDefasagemCliente: () => ({ defasagemByKey: new Map(), isLoading: false }) }));`. Depois Run: `heavy bun run test src/components/unified-order && bun lint src/components/unified-order/CartItemList.tsx src/hooks/useDefasagemCliente.ts` — Expected: testes do diretório passam (o badge novo não quebra o destaque de preço ≤0) e lint com **0 errors** (warnings pré-existentes ok; tokens `text-status-*`, sem cores cruas).
 
 - [ ] **Step 7: Commit** — Run: `git add src/components/unified-order/CartItemList.tsx && git commit -m "feat(cockpit/2b): badge de defasagem na linha do carrinho (repasse p/ vendedora, custo só gestor)"`
 
