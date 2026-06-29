@@ -3,6 +3,7 @@ import { montarSelosVendaAssistida, descreverSelo } from '../selos';
 import { resolverOpcaoVenda } from '../resolver-opcao';
 import type { ProdutoLinhaOmie } from '../montar-embalagens';
 import { keyDeSku, type CurrentSpec } from '@/lib/knowledge-base/spec-link';
+import { keyDeCatalisador } from '@/lib/knowledge-base/catalisador-link';
 
 // ── factories ────────────────────────────────────────────────────────────────
 const spec = (
@@ -41,6 +42,14 @@ const catalog = (
   for (const { account, row: r } of entries) {
     m.set(keyDeSku(account, r.omie_codigo_produto), r);
   }
+  return m;
+};
+
+const catLinks = (
+  ...entries: { norm: string; account: string; skus: number[] }[]
+): Map<string, number[]> => {
+  const m = new Map<string, number[]>();
+  for (const e of entries) m.set(keyDeCatalisador(e.norm, e.account), e.skus);
   return m;
 };
 
@@ -155,6 +164,45 @@ describe('montarSelosVendaAssistida', () => {
 
   it('lista vazia → Map vazio', () => {
     expect(montarSelosVendaAssistida([], catalog(), {}).size).toBe(0);
+  });
+
+  it('catalisador mapeado → preço CATALISADO fecha (não "sob consulta")', () => {
+    const specs = [
+      spec({ account: 'colacor', omie_codigo_produto: 1, kb_product_spec_id: 'B',
+             catalisador_codigo: 'FC.6975', catalisador_proporcao_pct: 10 }),
+    ];
+    const cat = catalog(
+      { account: 'colacor', row: row(1, 'PRIMER PU FL.6269.02GL', 360, 5) },     // base GL → 100/L, em estoque
+      { account: 'colacor', row: row(50, 'CATALISADOR FL.6269.02GL', 180, 5) },  // catalisador GL → 50/L, em estoque
+    );
+    const links = catLinks({ norm: 'FC6975', account: 'colacor', skus: [50] });
+    const s = montarSelosVendaAssistida(specs, cat, {}, links).get(keyDeSku('colacor', 1));
+    expect(s?.estado).toBe('SELLABLE_NOW');
+    expect(s?.preco.status).toBe('ok'); // catalisado fecha, não "sob consulta"
+  });
+
+  it('catalisador NÃO mapeado → continua "sob consulta"', () => {
+    const specs = [
+      spec({ account: 'colacor', omie_codigo_produto: 1, kb_product_spec_id: 'B',
+             catalisador_codigo: 'FC.6975', catalisador_proporcao_pct: 10 }),
+    ];
+    const cat = catalog({ account: 'colacor', row: row(1, 'PRIMER PU FL.6269.02GL', 360, 5) });
+    const s = montarSelosVendaAssistida(specs, cat, {}, new Map()).get(keyDeSku('colacor', 1));
+    expect(s?.preco.status).toBe('incomplete');
+  });
+
+  it('variante "FC 6975" no boletim casa o catalisador via normalização', () => {
+    const specs = [
+      spec({ account: 'colacor', omie_codigo_produto: 1, kb_product_spec_id: 'B',
+             catalisador_codigo: 'FC 6975', catalisador_proporcao_pct: 10 }),
+    ];
+    const cat = catalog(
+      { account: 'colacor', row: row(1, 'PRIMER PU FL.6269.02GL', 360, 5) },
+      { account: 'colacor', row: row(50, 'CATALISADOR FL.6269.02GL', 180, 5) },
+    );
+    const links = catLinks({ norm: 'FC6975', account: 'colacor', skus: [50] });
+    const s = montarSelosVendaAssistida(specs, cat, {}, links).get(keyDeSku('colacor', 1));
+    expect(s?.preco.status).toBe('ok'); // 'FC 6975' → FC6975 → casa
   });
 });
 

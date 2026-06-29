@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **315** custom migrations totais
-- **1061** objetos esperados (criados por estas migrations)
+- **316** custom migrations totais
+- **1069** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 311
-  - `rls_policy`: 227
-  - `index`: 190
-  - `table`: 112
+  - `function`: 314
+  - `rls_policy`: 228
+  - `index`: 193
+  - `table`: 113
   - `cron_job`: 110
   - `view`: 55
   - `trigger`: 52
@@ -2640,6 +2640,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.reposicao_pedido_auto_aprovavel` | — |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20260629150000_kb_catalisador_links.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.kb_normalizar_catalisador` | — |
+| `function` | `public.confirmar_catalisador_vinculo` | — |
+| `function` | `public.desvincular_catalisador` | — |
+| `table` | `public.kb_catalisador_links` | — |
+| `index` | `public.kb_catalisador_links_one_confirmed` | `kb_catalisador_links` |
+| `index` | `public.kb_catalisador_links_unique_quad` | `kb_catalisador_links` |
+| `index` | `public.kb_catalisador_links_norm` | `kb_catalisador_links` |
+| `rls_policy` | `public.kb_catalisador_links_select_staff` | `kb_catalisador_links` |
 
 ## Próximos passos por status
 

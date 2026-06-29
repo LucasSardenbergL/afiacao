@@ -28,6 +28,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { ProductItemForm } from '@/components/unified-order/ProductItemForm';
 import { useCurrentSpecsMap } from '@/hooks/useProductSpecLink';
+import { useCatalisadorLinksMap } from '@/hooks/useCatalisadorLink';
 import { keyDeSku } from '@/lib/knowledge-base/spec-link';
 import { montarSelosVendaAssistida } from '@/lib/venda-assistida/selos';
 import type { ProdutoLinhaOmie } from '@/lib/venda-assistida/montar-embalagens';
@@ -60,8 +61,10 @@ const UnifiedOrder = () => {
   const { user } = useAuth();
   // Fichas técnicas (boletim↔SKU): mapa pequeno (só vínculos confirmados+aprovados), 1 query.
   const { byKey: fichasByKey } = useCurrentSpecsMap();
-  // Venda assistida (Fatia 2 v1): selo "preparado" por produto. Resolve estado+preço de cada
-  // boletim reusando o catálogo JÁ carregado (zero query nova) e espalha por SKU. Vendedor-only.
+  // Casamento do catalisador (Fatia 3): mapa global keyDeCatalisador → SKUs (destrava preço catalisado).
+  const { byKey: catalisadorByKey } = useCatalisadorLinksMap();
+  // Venda assistida: selo "preparado" por produto. Resolve estado+preço de cada boletim reusando o
+  // catálogo JÁ carregado (zero query nova) e espalha por SKU. Vendedor-only.
   const selosByKey = useMemo(() => {
     const catalogByKey = new Map<string, ProdutoLinhaOmie>();
     for (const p of [...h.obenProducts, ...h.colacorProducts]) {
@@ -75,8 +78,8 @@ const UnifiedOrder = () => {
     // Preço-do-cliente (último praticado) POR CONTA — omie_codigo_produto colide entre Oben/Colacor,
     // então o helper lê do mapa da conta de cada SKU (não achata num Record só).
     const customerPricesByAccount = { oben: h.customerPricesOben, colacor: h.customerPricesColacor };
-    return montarSelosVendaAssistida([...fichasByKey.values()], catalogByKey, customerPricesByAccount);
-  }, [fichasByKey, h.obenProducts, h.colacorProducts, h.customerPricesOben, h.customerPricesColacor]);
+    return montarSelosVendaAssistida([...fichasByKey.values()], catalogByKey, customerPricesByAccount, catalisadorByKey);
+  }, [fichasByKey, catalisadorByKey, h.obenProducts, h.colacorProducts, h.customerPricesOben, h.customerPricesColacor]);
   const [restoreOpen, setRestoreOpen] = useState(false);
 
   // "Cores do cliente": histórico de cores + pré-preenchimento do dialog de tingir.

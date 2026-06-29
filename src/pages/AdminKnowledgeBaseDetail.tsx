@@ -14,6 +14,7 @@ import { useKbProductSpecs } from '@/hooks/useKbProductSpecs';
 import { VersionHistory } from '@/components/knowledge-base/VersionHistory';
 import { CompletudeBadge } from '@/components/knowledge-base/CompletudeBadge';
 import { SpecLinkPanel } from '@/components/knowledge-base/SpecLinkPanel';
+import { CatalisadorLinkPanel } from '@/components/knowledge-base/CatalisadorLinkPanel';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 
@@ -167,6 +168,17 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
       {existingSpecs?.approved_at && existingSpecs.id && isMaster && (
         <SpecLinkPanel
           spec={{ id: existingSpecs.id, product_code: existingSpecs.product_code, product_name: existingSpecs.product_name }}
+          disabled={isImpersonating}
+        />
+      )}
+
+      {/* Casamento do catalisador — só master, ficha aprovada, e só se o boletim tem catalisador. */}
+      {existingSpecs?.approved_at && isMaster && existingSpecs.catalisador_codigo && (
+        // key por código → painel remonta ao trocar de boletim (reseta termo/seleção; evita
+        // casar SKU no código errado por estado stale — Codex P1).
+        <CatalisadorLinkPanel
+          key={existingSpecs.catalisador_codigo}
+          catalisadorCodigo={existingSpecs.catalisador_codigo}
           disabled={isImpersonating}
         />
       )}

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 315
+-- Total de custom migrations: 316
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -356,7 +356,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260627190000', 'reposicao_fase2_badge_oportunidade_mv', '20260627190000_reposicao_fase2_badge_oportunidade_mv.sql'),
   ('20260627200000', 'fix_refresh_sku_ranking_gate_cron', '20260627200000_fix_refresh_sku_ranking_gate_cron.sql'),
   ('20260629120000', 'seg_customer_metrics_viewgate', '20260629120000_seg_customer_metrics_viewgate.sql'),
-  ('20260629140000', 'reposicao_preco_ausente_null', '20260629140000_reposicao_preco_ausente_null.sql')
+  ('20260629140000', 'reposicao_preco_ausente_null', '20260629140000_reposicao_preco_ausente_null.sql'),
+  ('20260629150000', 'kb_catalisador_links', '20260629150000_kb_catalisador_links.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1406,7 +1407,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('seg_customer_metrics_viewgate', 'function', 'public', 'refresh_customer_metrics', ''),
   ('seg_customer_metrics_viewgate', 'view', 'public', 'customer_metrics_mv', ''),
   ('reposicao_preco_ausente_null', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
-  ('reposicao_preco_ausente_null', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_preco_ausente_null', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('kb_catalisador_links', 'function', 'public', 'kb_normalizar_catalisador', ''),
+  ('kb_catalisador_links', 'function', 'public', 'confirmar_catalisador_vinculo', ''),
+  ('kb_catalisador_links', 'function', 'public', 'desvincular_catalisador', ''),
+  ('kb_catalisador_links', 'table', 'public', 'kb_catalisador_links', ''),
+  ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_one_confirmed', 'kb_catalisador_links'),
+  ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_unique_quad', 'kb_catalisador_links'),
+  ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_norm', 'kb_catalisador_links'),
+  ('kb_catalisador_links', 'rls_policy', 'public', 'kb_catalisador_links_select_staff', 'kb_catalisador_links')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2504,7 +2513,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('seg_customer_metrics_viewgate', 'function', 'public', 'refresh_customer_metrics', ''),
   ('seg_customer_metrics_viewgate', 'view', 'public', 'customer_metrics_mv', ''),
   ('reposicao_preco_ausente_null', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
-  ('reposicao_preco_ausente_null', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
+  ('reposicao_preco_ausente_null', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('kb_catalisador_links', 'function', 'public', 'kb_normalizar_catalisador', ''),
+  ('kb_catalisador_links', 'function', 'public', 'confirmar_catalisador_vinculo', ''),
+  ('kb_catalisador_links', 'function', 'public', 'desvincular_catalisador', ''),
+  ('kb_catalisador_links', 'table', 'public', 'kb_catalisador_links', ''),
+  ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_one_confirmed', 'kb_catalisador_links'),
+  ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_unique_quad', 'kb_catalisador_links'),
+  ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_norm', 'kb_catalisador_links'),
+  ('kb_catalisador_links', 'rls_policy', 'public', 'kb_catalisador_links_select_staff', 'kb_catalisador_links')
 )
 SELECT
   e.migration,

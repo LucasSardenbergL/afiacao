@@ -1,6 +1,7 @@
 import { keyDeSku, type CurrentSpec } from '@/lib/knowledge-base/spec-link';
+import { normalizarCatalisador, keyDeCatalisador } from '@/lib/knowledge-base/catalisador-link';
 import { montarBaseEmbalagens, type ProdutoLinhaOmie } from './montar-embalagens';
-import { resolverOpcaoVenda, type OpcaoResolvida } from './resolver-opcao';
+import { resolverOpcaoVenda, type OpcaoResolvida, type EmbalagemComEstoque } from './resolver-opcao';
 
 /**
  * Selo "preparado" por produto no wizard — Fatia 2 v1 da venda assistida.
@@ -10,8 +11,8 @@ import { resolverOpcaoVenda, type OpcaoResolvida } from './resolver-opcao';
  * pronto pro lookup por produto no ProductItemForm (igual ao `specsByKey` da ficha).
  *
  * PURO/testável. Reusa o catálogo já carregado pelo wizard (sem query nova).
- * **v1:** catalisador sem casamento → `catalisadorEmbalagens: []` → o motor degrada
- * honesto a "sob consulta" (nunca fabrica preço).
+ * O catalisador é resolvido pelo mapa de casamento (kb_catalisador_links, normalizado); sem
+ * casamento → `catalisadorEmbalagens: []` → o motor degrada honesto a "sob consulta" (nunca fabrica).
  */
 
 export type SeloTone = 'success' | 'warning' | 'muted';
@@ -29,6 +30,8 @@ export function montarSelosVendaAssistida(
   catalogByKey: Map<string, ProdutoLinhaOmie>,
   /** Preço-do-cliente (último praticado) POR CONTA: account (minúsculo) → omie_codigo_produto → preço. */
   customerPricesByAccount: Record<string, Record<number, number>>,
+  /** Casamento do catalisador: `keyDeCatalisador(norm, account)` → omie_codigo_produto[] (SKUs do catalisador). */
+  catalisadorLinksByKey: Map<string, number[]> = new Map(),
 ): Map<string, OpcaoResolvida> {
   // Agrupa por (CONTA, boletim): um boletim pode estar vinculado a SKU Oben E Colacor (mesmo produto
   // via os dois distribuidores). Resolver junto mostraria o estoque/preço de uma conta no produto da
@@ -46,32 +49,42 @@ export function montarSelosVendaAssistida(
     const ref = grupoSpecs[0];
     if (!ref) continue;
 
-    // Embalagens da base = linhas do catálogo dos SKUs vinculados (ignora SKU fora do catálogo).
-    // Preço-do-cliente POR CONTA: omie_codigo_produto colide entre Oben e Colacor (Omie accounts
-    // separados) → nunca achatar num Record só; lê do mapa da conta de CADA SKU.
+    // Grupo é (conta, boletim) → conta ÚNICA → usa o mapa de preço DAQUELA conta (omie_codigo_produto
+    // colide entre Oben/Colacor; escopar por conta evita o vazamento cross-account).
+    const accountPrices = customerPricesByAccount[(ref.account ?? '').toLowerCase()] ?? {};
+
+    // Embalagens da BASE = linhas do catálogo dos SKUs vinculados (ignora SKU fora do catálogo).
     const rows: ProdutoLinhaOmie[] = [];
-    const pricesForBoletim: Record<number, number> = {};
     for (const s of grupoSpecs) {
       const row = catalogByKey.get(keyDeSku(s.account, s.omie_codigo_produto));
-      if (!row) continue;
-      rows.push(row);
-      const p = customerPricesByAccount[(s.account ?? '').toLowerCase()]?.[s.omie_codigo_produto];
-      if (typeof p === 'number') pricesForBoletim[s.omie_codigo_produto] = p;
+      if (row) rows.push(row);
     }
     // Boletim sem nenhuma embalagem conhecida → não emite selo (não polui com "sob consulta"
     // quando o problema é só dado de catálogo ausente, não falta de mapeamento).
     if (rows.length === 0) continue;
+    const baseEmbalagens = montarBaseEmbalagens(rows, accountPrices);
 
-    const baseEmbalagens = montarBaseEmbalagens(rows, pricesForBoletim);
+    // Embalagens do CATALISADOR (Fatia 3): normaliza o código do boletim → mapa de casamento →
+    // SKUs do catalisador → catálogo. Sem casamento → [] → o motor degrada a "sob consulta".
     const cod = ref.catalisador_codigo;
     const temCatalisador = typeof cod === 'string' && cod.trim() !== '';
+    let catalisadorEmbalagens: EmbalagemComEstoque[] = [];
+    if (temCatalisador) {
+      const chave = keyDeCatalisador(normalizarCatalisador(cod), ref.account);
+      const catRows: ProdutoLinhaOmie[] = [];
+      for (const c of catalisadorLinksByKey.get(chave) ?? []) {
+        const row = catalogByKey.get(keyDeSku(ref.account, c));
+        if (row) catRows.push(row);
+      }
+      catalisadorEmbalagens = montarBaseEmbalagens(catRows, accountPrices);
+    }
 
     const opcao = resolverOpcaoVenda({
       temSkuConfirmado: true, // a view v_omie_product_current_spec é confirmed+approved
       temCatalisador,
       proporcaoPct: ref.catalisador_proporcao_pct,
       baseEmbalagens,
-      catalisadorEmbalagens: [], // v1 — casamento do catalisador é fatia própria
+      catalisadorEmbalagens,
     });
 
     for (const s of grupoSpecs) {
