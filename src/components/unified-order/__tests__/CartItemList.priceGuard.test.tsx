@@ -11,6 +11,10 @@ vi.mock('@/hooks/usePrecoCockpit', () => ({
   usePrecoCockpit: () => ({ data: undefined }),
   chaveCockpit: (e: string, c: number, t: string | null) => `${e}|${c}|${t ?? ''}`,
 }));
+// Defasagem 2b (T8) puxa useAuth/useQuery — mock vazio isola este teste do guard de preço.
+vi.mock('@/hooks/useDefasagemCliente', () => ({
+  useDefasagemCliente: () => ({ defasagemByKey: new Map(), isLoading: false }),
+}));
 // Régua (PR3) puxa useAuth/useQuery — mock vazio (como flag off) isola este teste do guard de preço.
 vi.mock('@/hooks/useReguaPreco', () => ({
   useReguaPreco: () => ({ reguaByKey: new Map(), isLoading: false }),
