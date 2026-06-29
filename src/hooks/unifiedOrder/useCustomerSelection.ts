@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { eqText, orFilter } from '@/lib/postgrest';
 import { deveCriarClienteNaConta } from './ensure-helpers';
+import { montarPrecosLocaisPorConta, type PrecosLocaisPorConta } from './precos-por-conta';
 import type {
   OmieCustomer,
   AddressData,
@@ -350,27 +351,33 @@ export function useCustomerSelection({
     if (promises.length > 0) await Promise.all(promises);
   }, []);
 
-  /** Resolve last-practiced local prices into the omie_codigo_produto map */
+  /** Resolve o último preço praticado local em DOIS mapas account-aware
+   *  (oben/colacor). O product_id (uuid de omie_products) já é por-conta;
+   *  trazemos `account` p/ NÃO achatar omie_codigo_produto (colide entre as
+   *  contas Omie) num Record único — separação em montarPrecosLocaisPorConta. */
   const resolveLocalPricesByOmieCode = useCallback(async (
     localPriceRows: Array<{ product_id: string; unit_price: number }> | null,
-  ): Promise<Record<number, number>> => {
-    if (!localPriceRows || localPriceRows.length === 0) return {};
+  ): Promise<PrecosLocaisPorConta> => {
+    if (!localPriceRows || localPriceRows.length === 0) return { oben: {}, colacor: {} };
     const localPricesByProduct: Record<string, number> = {};
     for (const row of localPriceRows) {
       if (!localPricesByProduct[row.product_id]) localPricesByProduct[row.product_id] = row.unit_price;
     }
-    const result: Record<number, number> = {};
     const productIds = Object.keys(localPricesByProduct);
-    if (productIds.length === 0) return result;
-    const { data: productMappings } = await supabase
-      .from('omie_products').select('id, omie_codigo_produto').in('id', productIds);
-    if (productMappings) {
-      for (const pm of productMappings) {
-        const price = localPricesByProduct[pm.id];
-        if (price && price > 0) result[pm.omie_codigo_produto] = price;
-      }
+    if (productIds.length === 0) return { oben: {}, colacor: {} };
+    const { data: productMappings, error } = await supabase
+      .from('omie_products').select('id, omie_codigo_produto, account').in('id', productIds);
+    // Falha do mapeamento → degrada honesto (cada conta cai p/ o preço de tabela
+    // `valor_unitario`, nunca R$0), mas deixa RASTRO: sem ele o preço-cliente
+    // sumiria silencioso mesmo com a RPC tendo retornado preços (Codex P2).
+    if (error) {
+      logger.warn('resolveLocalPricesByOmieCode: mapeamento omie_products falhou (degrada p/ preço de tabela)', {
+        stage: 'resolve_local_prices_omie_map',
+        productIdsCount: productIds.length,
+        error,
+      });
     }
-    return result;
+    return montarPrecosLocaisPorConta(localPricesByProduct, productMappings ?? []);
   }, []);
 
   // Purchase history (local + Omie) agora vem do useQuery acima
@@ -532,13 +539,14 @@ export function useCustomerSelection({
       // Fase 1: o preço-cliente = último preço praticado lido de `order_items` (FONTE DE VERDADE,
       // via RPC get_ultimos_precos_cliente — NÃO mais `sales_price_history`, poluída pelo writer
       // legado aposentado). Rápido, estável, determinístico. Sem overlay do Omie (removido p/ matar
-      // a colisão de rate-limit). O mesmo mapa local vai p/ as 2 contas — limitação pré-existente
-      // (produtos são account-aware); corrigida na Fase 2 account-aware.
-      const localPricesByOmie = await resolveLocalPricesByOmieCode(localPriceResult.data || null);
+      // a colisão de rate-limit). ACCOUNT-AWARE (Fase 2): cada conta recebe SÓ os preços praticados
+      // nela — omie_codigo_produto colide entre Oben e Colacor (contas Omie separadas), então
+      // achatar num mapa só vazaria o preço de uma conta no produto de mesmo código da outra.
+      const precosPorConta = await resolveLocalPricesByOmieCode(localPriceResult.data || null);
       if (isStale()) return;
 
-      setCustomerPricesOben({ ...localPricesByOmie });
-      setCustomerPricesColacor({ ...localPricesByOmie });
+      setCustomerPricesOben({ ...precosPorConta.oben });
+      setCustomerPricesColacor({ ...precosPorConta.colacor });
 
       if (parcelaOben.data?.ultima_parcela) setSelectedParcelaOben(parcelaOben.data.ultima_parcela);
       if (parcelaOben.data?.parcela_ranking) setCustomerParcelaRankingOben(parcelaOben.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));
