@@ -74,3 +74,34 @@ describe('preco-edit — montarUpdateItem (money-path: não reescrever preço v�
     expect(u.preco_unitario).toBe(25.35);
   });
 });
+
+describe('preco-edit — montarUpdateItem (money-path: custo ausente ≠ zero)', () => {
+  // Invariante: valor_linha NULL = custo desconhecido. Numa edição só-de-quantidade
+  // de item de primeira compra (preço null/0), NÃO fabricar valor_linha = qtd*0 = 0
+  // (Number(null)===0 é fabricação) — degradar valor_linha para null. Codex 019f146d.
+  it('quantity-only sobre custo desconhecido (null): grava valor_linha null, não 0', () => {
+    const u = montarUpdateItem({ qtde_final: 5, qtde_sugerida: 8, preco_unitario: null }, 7, undefined);
+    expect(u.qtde_final).toBe(7);
+    expect(u.valor_linha).toBeNull();
+    expect('preco_unitario' in u).toBe(false);
+  });
+
+  it('quantity-only sobre custo desconhecido (0 legado): grava valor_linha null', () => {
+    const u = montarUpdateItem({ qtde_final: 5, qtde_sugerida: 8, preco_unitario: 0 }, 7, undefined);
+    expect(u.qtde_final).toBe(7);
+    expect(u.valor_linha).toBeNull();
+    expect('preco_unitario' in u).toBe(false);
+  });
+
+  it('price-only sobre custo desconhecido (null): custo passa a ser conhecido → valor_linha = qtd*preço', () => {
+    const u = montarUpdateItem({ qtde_final: 5, qtde_sugerida: 8, preco_unitario: null }, undefined, 25.35);
+    expect(u.preco_unitario).toBe(25.35);
+    expect(u.valor_linha).toBeCloseTo(5 * 25.35);
+  });
+
+  it('quantity-only sobre custo conhecido (>0): valor_linha = qtd*preço (não null)', () => {
+    const u = montarUpdateItem({ qtde_final: 5, qtde_sugerida: 8, preco_unitario: 20 }, 7, undefined);
+    expect(u.valor_linha).toBe(7 * 20);
+    expect('preco_unitario' in u).toBe(false);
+  });
+});

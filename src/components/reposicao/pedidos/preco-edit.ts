@@ -37,7 +37,11 @@ export function precoEditValido(v: number): boolean {
 
 export interface ItemUpdate {
   qtde_final: number;
-  valor_linha: number;
+  // null = custo desconhecido (item de primeira compra sem preço). Money-path:
+  // ausente ≠ zero — numa edição só-de-quantidade de item sem custo NÃO fabricamos
+  // valor_linha = qtd*0 = 0 (preservaria o invariante "valor_linha null = custo
+  // desconhecido"). Só vira número quando há preço conhecido (editado ou já no item).
+  valor_linha: number | null;
   ajustado_humano: true;
   // Só presente quando o usuário editou o preço — NUNCA reescrito a partir de um
   // ajuste só-de-quantidade (senão um quantity-only edit poderia zerar um preço
@@ -58,9 +62,13 @@ export function montarUpdateItem(
   // do qtde_final legado (poeira decimal do estoque do Omie) podem persistir fração no pedido.
   const qtd = quantidadeCompraInteira(qtdEdit ?? Number(item.qtde_final ?? item.qtde_sugerida ?? 0));
   const preco = temPrecoEdit ? (precoEdit as number) : Number(item.preco_unitario ?? 0);
+  // Custo desconhecido = sem edição de preço E preço atual ausente/<=0 (item de primeira
+  // compra). Aí valor_linha degrada para null (não fabrica qtd*0=0); o disparo já barra
+  // o item por preco_unitario null/0 — aqui é só manter o dado consistente. Codex 019f146d.
+  const custoDesconhecido = !temPrecoEdit && !(preco > 0);
   const update: ItemUpdate = {
     qtde_final: qtd,
-    valor_linha: qtd * preco,
+    valor_linha: custoDesconhecido ? null : qtd * preco,
     ajustado_humano: true,
   };
   if (temPrecoEdit) update.preco_unitario = preco;
