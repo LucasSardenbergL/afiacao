@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { CallButton } from '@/components/call/CallButton';
 import { OutcomeMenu } from '@/components/call/OutcomeMenu';
+import { FichaPreContato } from '@/components/call/FichaPreContato';
 import { RouteDisparoConfigPanel } from '@/components/rota/RouteDisparoConfigPanel';
 import { spBusinessDate } from '@/lib/time/sp-day';
 
@@ -146,14 +147,16 @@ export default function RotaListaLigacao() {
             {list.map((c, i) => (
               <li key={c.customerUserId} className="flex items-center gap-2 py-1 border-b last:border-0">
                 <span className="font-mono text-xs w-6 text-muted-foreground">{i + 1}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm truncate">{c.name}</div>
-                  <div className="text-xs text-muted-foreground font-tabular flex items-center gap-2 flex-wrap">
-                    <span>{c.cityKey.city}</span>
-                    {c.ultimoContatoRealHaDias != null && <span>· contatado há {c.ultimoContatoRealHaDias}d</span>}
-                    {c.semRespostaRecenteN > 0 && <span>· sem resposta {c.semRespostaRecenteN}×</span>}
-                  </div>
-                </div>
+                <FichaPreContato customerUserId={c.customerUserId} name={c.name} cidade={c.cityKey.city}>
+                  <button type="button" className="flex-1 min-w-0 text-left">
+                    <div className="text-sm truncate">{c.name}</div>
+                    <div className="text-xs text-muted-foreground font-tabular flex items-center gap-2 flex-wrap">
+                      <span>{c.cityKey.city}</span>
+                      {c.ultimoContatoRealHaDias != null && <span>· contatado há {c.ultimoContatoRealHaDias}d</span>}
+                      {c.semRespostaRecenteN > 0 && <span>· sem resposta {c.semRespostaRecenteN}×</span>}
+                    </div>
+                  </button>
+                </FichaPreContato>
                 {c.bucket && <Badge variant="secondary">{BUCKET_LABEL[c.bucket] ?? c.bucket}</Badge>}
                 <span className="kpi-value text-sm w-24 text-right">R$ {Math.round(c.valorDaLigacao)}</span>
                 {c.phone
