@@ -28,6 +28,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { ProductItemForm } from '@/components/unified-order/ProductItemForm';
 import { useCurrentSpecsMap } from '@/hooks/useProductSpecLink';
+import { keyDeSku } from '@/lib/knowledge-base/spec-link';
+import { montarSelosVendaAssistida } from '@/lib/venda-assistida/selos';
+import type { ProdutoLinhaOmie } from '@/lib/venda-assistida/montar-embalagens';
 import { ServiceItemForm } from '@/components/unified-order/ServiceItemForm';
 import { CartItemList } from '@/components/unified-order/CartItemList';
 import { CartSummaryBar } from '@/components/unified-order/CartSummaryBar';
@@ -57,6 +60,22 @@ const UnifiedOrder = () => {
   const { user } = useAuth();
   // Fichas técnicas (boletim↔SKU): mapa pequeno (só vínculos confirmados+aprovados), 1 query.
   const { byKey: fichasByKey } = useCurrentSpecsMap();
+  // Venda assistida (Fatia 2 v1): selo "preparado" por produto. Resolve estado+preço de cada
+  // boletim reusando o catálogo JÁ carregado (zero query nova) e espalha por SKU. Vendedor-only.
+  const selosByKey = useMemo(() => {
+    const catalogByKey = new Map<string, ProdutoLinhaOmie>();
+    for (const p of [...h.obenProducts, ...h.colacorProducts]) {
+      catalogByKey.set(keyDeSku(p.account, p.omie_codigo_produto), {
+        omie_codigo_produto: p.omie_codigo_produto,
+        descricao: p.descricao,
+        valor_unitario: p.valor_unitario,
+        estoque: p.estoque ?? 0,
+      });
+    }
+    // Preço-do-cliente (último praticado), copiado Oben↔Colacor — merge p/ lookup por omie_codigo_produto.
+    const customerPrices = { ...h.customerPricesColacor, ...h.customerPricesOben };
+    return montarSelosVendaAssistida([...fichasByKey.values()], catalogByKey, customerPrices);
+  }, [fichasByKey, h.obenProducts, h.colacorProducts, h.customerPricesOben, h.customerPricesColacor]);
   const [restoreOpen, setRestoreOpen] = useState(false);
 
   // "Cores do cliente": histórico de cores + pré-preenchimento do dialog de tingir.
@@ -347,14 +366,16 @@ const UnifiedOrder = () => {
                       loading={h.loadingObenProducts} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
                       productItems={h.productItems} onAddProduct={h.addProductToCart}
                       customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer}
-                      specsByKey={fichasByKey} canSeeFicha={h.isStaff} />
+                      specsByKey={fichasByKey} canSeeFicha={h.isStaff}
+                      selosByKey={selosByKey} canSeeVendaAssistida={h.isStaff} />
                   </TabsContent>
                   <TabsContent value="colacor">
                     <ProductItemForm title="Produtos Colacor" products={h.filteredColacorProducts} prices={h.customerPricesColacor}
                       loading={h.loadingColacorProducts} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
                       productItems={h.productItems} onAddProduct={h.addProductToCart}
                       customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer}
-                      specsByKey={fichasByKey} canSeeFicha={h.isStaff} />
+                      specsByKey={fichasByKey} canSeeFicha={h.isStaff}
+                      selosByKey={selosByKey} canSeeVendaAssistida={h.isStaff} />
                   </TabsContent>
                   <TabsContent value="services">
                     <ServiceItemForm
