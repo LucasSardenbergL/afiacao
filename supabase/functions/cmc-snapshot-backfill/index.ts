@@ -181,7 +181,9 @@ async function cmcPorData(
 
 // Upsert em lote no cmc_snapshot (idempotente: on conflict do update do cmc/synced_at).
 async function upsertSnapshot(
-  // deno-lint-ignore no-explicit-any
+  // O client Deno não carrega os tipos do Database (sem geração de types no edge),
+  // então `db` é any de propósito — tipar com SupabaseClient estrito quebra o `.upsert`.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any,
   rows: Array<{ account: string; omie_codigo_produto: number; data_posicao: string; cmc: number }>,
 ): Promise<number> {
