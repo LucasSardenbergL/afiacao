@@ -53,7 +53,7 @@ CREATE TABLE public.fornecedor_habilitado_reposicao (empresa text, fornecedor_no
 CREATE TABLE public.familia_nao_comprada (id bigserial PRIMARY KEY, empresa text, familia text);
 CREATE TABLE public.sku_status_omie (empresa text, sku_codigo_omie text, ativo_no_omie boolean);
 CREATE TABLE public.pedido_compra_sugerido (id bigserial PRIMARY KEY, empresa text, fornecedor_nome text, grupo_codigo text,
-  data_ciclo date, horario_corte_planejado timestamptz, valor_total numeric, num_skus int, status text,
+  data_ciclo date, horario_corte_planejado timestamptz, valor_total numeric NOT NULL DEFAULT 0, num_skus int, status text,
   condicao_pagamento_codigo text, condicao_pagamento_descricao text, num_parcelas int, dias_parcelas text, condicao_origem text,
   tipo_ciclo text, status_envio_portal text, portal_protocolo text, omie_pedido_compra_numero text, atualizado_em timestamptz);
 CREATE TABLE public.pedido_compra_item (id bigserial PRIMARY KEY, pedido_id bigint REFERENCES pedido_compra_sugerido(id) ON DELETE CASCADE,
@@ -190,6 +190,18 @@ INSERT INTO pedido_compra_item (pedido_id, sku_codigo_omie, qtde_final, preco_un
 SELECT setval('pedido_compra_sugerido_id_seq', 100000);  -- a função gera ids acima dos seeds
 SQL
 
+# [PRECO-AUSENTE] FRESH: SKU de PRIMEIRA COMPRA sem custo (sem cmc, sem histórico, sem grupo, fornecedor isolado)
+# → o motor grava preco_unitario NULL (não 0) e valor_total=COALESCE(SUM(NULL),0)=0 (não NULL → não viola o NOT NULL).
+P -q <<'SQL'
+INSERT INTO omie_products (omie_codigo_produto, account, descricao, familia, ativo, tipo_produto) VALUES
+ (1212121001,'oben','FRESH QT','Concentrados',true,'00');
+INSERT INTO sku_parametros (empresa, sku_codigo_omie, sku_descricao, fornecedor_nome, ponto_pedido, estoque_maximo, minimo_forcado_manual, habilitado_reposicao_automatica, tipo_reposicao) VALUES
+ ('OBEN',1212121001,'FRESH QT','FreshForn',5,10,NULL,true,'automatica');
+INSERT INTO sku_estoque_atual (empresa, sku_codigo_omie, estoque_fisico, estoque_pendente_entrada) VALUES
+ ('OBEN','1212121001',0,0);
+-- SEM inventory_position (cmc), SEM sku_leadtime_history (preço médio), SEM equivalência, SEM preço-app, SEM portal-map.
+SQL
+
 # run_ciclo NÃO trunca: a função limpa os pendentes NORMAIS do dia (FK CASCADE limpa os itens); os pedidos-seed
 # (disparado / oportunidade) sobrevivem — exatamente como em prod.
 run_ciclo() { Pq -c "SELECT 1 FROM gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE);" >/dev/null; }
@@ -237,6 +249,14 @@ eq "j1 OPORT bloqueado"          "$(conta "'2222222001','2222222002'")" "0"
 # (k) [P1-d regressão re-Codex] galão em oportunidade MAS resultado é QT (âncora sem preço-app) → QT É comprado
 #     (o anti-dup olha o SKU FINAL=QT, não o candidato GL; senão bloquearia o quartinho indevidamente)
 eq "k1 OPQT compra QT"           "$(sku_grp "'1111111001','1111111002'")" "1111111001,"
+
+# (l) [PRECO-AUSENTE] FRESH (primeira compra, sem cmc/histórico) → custo DESCONHECIDO = NULL, não 0 fabricado.
+eq "l1 FRESH gerou (qtde 10)"    "$(campo 'qtde_final::int' '1212121001')" "10"
+eq "l2 FRESH preco IS NULL"      "$(campo 'preco_unitario IS NULL' '1212121001')" "t"
+eq "l3 FRESH valor_linha NULL"   "$(campo 'valor_linha IS NULL' '1212121001')" "t"
+eq "l4 FRESH primeira_compra"    "$(campo 'primeira_compra' '1212121001')" "t"
+# pedido isolado (todos itens sem custo): valor_total=COALESCE(SUM(NULL),0)=0 — NÃO NULL (preserva o NOT NULL).
+eq "l5 FRESH valor_total=0"      "$(Pq -c "SELECT valor_total FROM pedido_compra_sugerido WHERE fornecedor_nome='FreshForn' AND status='pendente_aprovacao';")" "0"
 
 # ── ZONA 5: FALSIFICAÇÃO (sabota → exige que o assert vire VERMELHO → restaura) ──
 echo "── falsificação ──"
@@ -289,6 +309,10 @@ falsify "oportunidade-escolhido" \
 falsify "oportunidade-sku-final" \
   's/CASE WHEN b.trocou THEN b.sku_escolhido ELSE b.ancora_sku END/b.sku_escolhido/' \
   'sku_grp "'"'"'1111111001'"'"','"'"'1111111002'"'"'"' "1111111001,"
+# F11 — [PRECO-AUSENTE] restaura o fallback ", 0" da âncora → FRESH volta a fabricar preco 0 (não NULL)
+falsify "preco-ausente-zero" \
+  's/pm.preco_unitario) AS preco_unitario_ancora/pm.preco_unitario, 0) AS preco_unitario_ancora/' \
+  'campo "preco_unitario IS NULL" "1212121001"' "t"
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"

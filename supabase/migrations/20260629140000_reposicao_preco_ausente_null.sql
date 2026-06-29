@@ -1,39 +1,219 @@
--- Migration: embalagem econômica DENTRO do motor de pedidos (QT↔GL) + consolidação de estoque de grupo
--- ⚠️ APLICADA MANUALMENTE no SQL Editor do Lovable em 2026-06-26 (NÃO vai em supabase/migrations/ — CLAUDE.md §5;
---     é CREATE OR REPLACE de função existente). Este arquivo é a FONTE versionada + fixture da regressão db/test-embalagem-motor.sh.
--- Spec: docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
--- Money-path. Recria gerar_pedidos_sugeridos_ciclo (pré-flight pg_get_functiondef feito; base = prod 26/06).
+-- ============================================================================
+-- Reposição (money-path) — custo AUSENTE vira NULL, não R$0 fabricado.
 --
--- DUAS mudanças cirúrgicas, tudo o mais PRESERVADO:
---   1) CONSOLIDA o estoque no nível do grupo de equivalência (Σ membros: GREATEST(inv,sea) físico + pendente + trânsito).
---      O gatilho passa a olhar o estoque do GRUPO → para de comprar quando há galão parado.
---   2) ESCOLHE a embalagem mais barata por unidade-base (galão), ESTRITO: só troca o quartinho pelo galão
---      quando AMBOS têm preço-app fresco (≤ N dias) + portal-map + catálogo OK, e o galão é estritamente mais barato/base.
---      Senão mantém o quartinho. Custo da linha do galão = preço-app (R$/embalagem), nunca 0.
+-- ⚠️  APLICAR MANUALMENTE no SQL Editor do Lovable. O Lovable NÃO auto-aplica migration de
+--     nome custom (CLAUDE.md §5 / database.md §2). São CREATE OR REPLACE de 2 funções existentes.
 --
--- Unidade (cravada em prod): qtde_final = nº de EMBALAGENS do SKU; preco_unitario = R$/embalagem; o disparo
--- consome ceil(qtde_final) direto (fator_conversao=1). Quartinho NÃO é tocado (mantém cmc cru).
--- ⚠️ Case: equivalencia/preço_capturado = lower(empresa); parametros/estoque/fornecedor_externo = empresa (upper).
+-- BUG (provado em prod, 49 itens/30d, 100% primeira_compra): o motor seta preco_unitario da
+--     linha-âncora via COALESCE(cmc>0, preço_médio_histórico, 0). SKU de PRIMEIRA COMPRA (sem cmc,
+--     sem histórico de recebimento, sem troca p/ galão com preço-app fresco) caía no literal 0 —
+--     zero fabricado, viola "ausente≠zero" (financeiro/cockpit veem R$0 de custo).
 --
--- Revisão pós-Codex (xhigh) — 6 correções vs. o 1º rascunho:
---   P0-a GREATEST(inventory_position.saldo, sku_estoque_atual): galão parado vive em fontes DIFERENTES por SKU.
---   P0-b em_transito do galão × fator_para_base (2 galões em voo = 8 unidades-base, não 2) → anti double-buy.
---   P1-c âncora NÃO pode ser membro fator>1 (galão) de um grupo → impede 2 linhas do mesmo GL.
---   P1-d anti-duplicidade de oportunidade cobre a âncora E o SKU escolhido (galão).
---   P1-e minimo_forcado_manual respeitado também na troca p/ galão (piso aplicado ANTES de dividir pelo fator).
---   P1-f filtros de catálogo (ativo/tipo 04/família/status omie) aplicados ao MEMBRO escolhido, não só à âncora.
--- Granularidade (P2 Codex, aceito): nº_galões = ceil(necessidade / fator) na escala "unidades-âncora" — NUNCA
---   compra menos que o legado QT (herda o descasamento litros↔embalagem pré-existente, fora de escopo).
+-- FIX (2 funções, atômico — Codex challenge 019f146d):
+--   MOTOR  gerar_pedidos_sugeridos_ciclo: âncora COALESCE(...,0) -> COALESCE(...) = NULL quando
+--          custo desconhecido; valor_total do pedido vira COALESCE(SUM(...),0) (a coluna é NOT NULL;
+--          item.valor_linha segue NULL = honesto). Numericamente valor_total é IGUAL a hoje.
+--   GATE   reposicao_pedido_auto_aprovavel: o guard de item inválido era NOT(preco>0 AND ...).
+--          Com preco NULL, NOT(NULL AND ...)=NULL → a linha ESCAPA do EXISTS → pedido de custo
+--          desconhecido poderia AUTO-APROVAR. Endurecido p/ NOT COALESCE(<predicado>, false)
+--          (pega NULL/NaN/Infinity/negativo/0). É a parte que CARREGA a segurança da troca 0→NULL.
 --
--- ➕ 2026-06-27 — GATE de estoque-NÃO-CONFIRMADO (money-path; spec 2026-06-27-reposicao-gate-estoque-nao-confirmado).
---   Bug provado: cold-start semeia sku_estoque_atual de omie_products.estoque (82% zerado na OBEN), fonte_sync=
---   'cold_start_seed'. Se o motor roda na janela cold-start→ListarPosEstoque, lê o seed=0 e compra por cima de
---   estoque existente. FIX (Codex consult 019f0968 + ausente≠zero): estoque cuja ÚNICA fonte é cold_start_seed (sem
---   inventory_position) é DESCONHECIDO → o motor SUPRIME a sugestão (nível LINHA e GRUPO) + LOGA em
---   reposicao_estoque_nao_confirmado_log. Zero CONFIRMADO (ListarPosEstoque/0) segue comprando — auto-liberante.
---   ⚠️ Esta fixture é SÓ a função; a tabela de log + RLS vivem na migration formal (e nos harnesses de teste).
---   Migration: supabase/migrations/20260627180000_reposicao_gate_estoque_nao_confirmado.sql (corpo da função idêntico).
+-- ORDEM (segurança): GATE primeiro, MOTOR por último. Se o motor falhar no apply, fica
+--     gate-NOVO + motor-VELHO (motor velho grava 0; o gate já barra 0 e NULL) = seguro. O inverso
+--     (motor-novo NULL + gate-velho) deixaria NULL escapar → por isso o gate vem ANTES.
+--
+-- ⚠️  PARIDADE: o MOTOR é a ÚLTIMA coisa do arquivo. Do CREATE do motor até EOF é BYTE-IDÊNTICO a
+--     db/embalagem-motor-rpc.sql (guard src/lib/reposicao/__tests__/embalagem-motor-paridade.test.ts).
+--     NÃO acrescente COMMIT/GRANT/qualquer coisa DEPOIS do motor.
+--
+-- Prova PG17: db/test-embalagem-motor.sh (motor: NULL não 0; valor_total não-nulo) +
+--             db/test-auto-aprovacao-v2.sh (gate: all-NULL e parcial-NULL REJEITADOS; falsificado).
+--
+-- VALIDAÇÃO pós-apply (rodar no SQL Editor após colar):
+--   -- 1) gate endurecido tem o COALESCE:
+--   SELECT (pg_get_functiondef('public.reposicao_pedido_auto_aprovavel(bigint,numeric,numeric,numeric)'::regprocedure)
+--           ILIKE '%NOT COALESCE(i.preco_unitario%') AS gate_null_safe;             -- espera: true
+--   -- 2) motor sem o fallback 0 na âncora:
+--   SELECT (pg_get_functiondef('public.gerar_pedidos_sugeridos_ciclo(text,date)'::regprocedure)
+--           ILIKE '%pm.preco_unitario) AS preco_unitario_ancora%') AS motor_sem_zero; -- espera: true
+-- ============================================================================
 
+-- ===== 1) GATE: reposicao_pedido_auto_aprovavel (guard de item invalido NULL-safe) =====
+CREATE OR REPLACE FUNCTION public.reposicao_pedido_auto_aprovavel(p_pedido_id bigint, p_threshold numeric, p_delta_max numeric, p_cooldown_horas numeric)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  p RECORD;
+  v_grupo text;
+  v_valor numeric;     -- valor REAL (soma dos itens) — fonte de verdade do disparo
+  v_ref numeric;       -- v2: MEDIANA dos últimos N eventos de compra do grupo
+  v_n int;             -- v2: nº de eventos de referência (mínimo 3)
+BEGIN
+  -- P1.2: trava a linha. Qualquer promo/regeneração/aprovação concorrente espera este
+  -- lock; o claim do tick (mesma transação) vê o estado que esta função validou.
+  SELECT * INTO p FROM public.pedido_compra_sugerido WHERE id = p_pedido_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'pedido inexistente');
+  END IF;
+
+  -- P1.1: piloto é OBEN-only (spec §1). Sayerlack de outra empresa fica humano.
+  IF p.empresa <> 'OBEN' THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'fora do escopo do piloto (só OBEN)');
+  END IF;
+
+  IF p.status <> 'pendente_aprovacao' OR p.aprovado_em IS NOT NULL OR p.cancelado_em IS NOT NULL THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'não está pendente');
+  END IF;
+
+  IF COALESCE(p.tipo_ciclo, 'normal') <> 'normal' THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'ciclo não-normal (oportunidade/promoção é decisão humana)');
+  END IF;
+
+  IF p.split_parent_id IS NOT NULL THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'pedido-filho de split');
+  END IF;
+
+  IF COALESCE(p.num_skus, 0) <= 0 THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'sem SKUs');
+  END IF;
+
+  v_grupo := COALESCE(p.grupo_codigo, '');
+
+  -- v2 (Codex): veta só 'forward_buying' (infla qtde = aposta de estoque adiantada, decisão
+  -- humana; tem o próprio guardrail de delta na geração). LIBERA 'flat' (só desconto de preço,
+  -- qtde inalterada — benigno; era a causa de parte da inatividade da v1, que vetava qualquer
+  -- modo_promocao). O delta assimétrico abaixo já protege o VALOR final.
+  IF EXISTS (
+    SELECT 1 FROM public.pedido_compra_item i
+    WHERE i.pedido_id = p.id AND i.modo_promocao = 'forward_buying'
+  ) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'item em forward_buying (aposta de estoque — decisão humana)');
+  END IF;
+
+  -- P2.11: guard de item que o disparo (#422/#433) barraria. Forma POSITIVA (> 0 AND <
+  -- Infinity) p/ rejeitar também NaN/Infinity — "preco<=0" é FALSE p/ NaN e não pegaria.
+  -- [PRECO-AUSENTE] NOT COALESCE(..., false): NULL (custo desconhecido vindo do motor) colapsa
+  -- p/ false → flagueia como inválido. Sem o COALESCE, NOT(NULL AND ...)=NULL e a linha ESCAPA
+  -- do EXISTS → um pedido com item de custo desconhecido poderia AUTO-APROVAR (Codex challenge).
+  IF EXISTS (
+    SELECT 1 FROM public.pedido_compra_item i
+    WHERE i.pedido_id = p.id
+      AND NOT COALESCE(i.preco_unitario > 0 AND i.preco_unitario < 'Infinity'::numeric
+               AND i.qtde_final > 0 AND i.qtde_final < 'Infinity'::numeric, false)
+  ) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'item com preço/qtde inválido');
+  END IF;
+
+  -- P1.2: o VALOR que importa é o que será comprado = soma dos itens, NÃO o cabeçalho
+  -- (valor_total pode divergir; o disparo manda os itens). A régua vale sobre ele.
+  SELECT SUM(i.qtde_final * i.preco_unitario) INTO v_valor
+  FROM public.pedido_compra_item i WHERE i.pedido_id = p.id;
+  IF v_valor IS NULL OR NOT (v_valor > 0 AND v_valor < 'Infinity'::numeric) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'sem itens válidos para somar');
+  END IF;
+  IF v_valor < p_threshold THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'abaixo da régua (soma dos itens)');
+  END IF;
+
+  -- Humano já mexeu → a decisão é dele (trade-off "ajustou → aprova" do #711).
+  IF EXISTS (
+    SELECT 1 FROM public.pedido_compra_item i
+    WHERE i.pedido_id = p.id AND i.ajustado_humano IS TRUE
+  ) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'itens ajustados por humano');
+  END IF;
+
+  -- P2.7: cooldown enxerga falha de DISPARO (status='falha_envio') E de PORTAL
+  -- (status_envio_portal terminal/ambíguo — SKU sem de-para vira 'erro_nao_retentavel'
+  -- sem mexer no status principal). Auto-aprovado do fornecedor que falhou há pouco →
+  -- exceção humana resolve antes de a automação voltar ao fornecedor.
+  IF EXISTS (
+    SELECT 1 FROM public.pedido_compra_sugerido f
+    WHERE f.empresa = p.empresa
+      AND f.fornecedor_nome = p.fornecedor_nome
+      AND f.aprovado_por LIKE 'auto:%'
+      AND (f.status = 'falha_envio'
+           OR f.status_envio_portal IN ('erro_nao_retentavel', 'falha_envio_portal', 'indeterminado_requer_conciliacao'))
+      AND f.atualizado_em > now() - (p_cooldown_horas * interval '1 hour')
+  ) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'cooldown: auto-aprovação recente do fornecedor falhou (disparo/portal)');
+  END IF;
+
+  -- P1.6: raio cumulativo — no MÁXIMO 1 auto-aprovado não-disparado por grupo. Sem isto,
+  -- N pedidos de SKUs novos do grupo passam cada um contra a mesma referência antiga e a
+  -- exposição antes do corte vira ilimitada. O 2º espera o 1º disparar (e virar referência).
+  IF EXISTS (
+    SELECT 1 FROM public.pedido_compra_sugerido q
+    WHERE q.empresa = p.empresa
+      AND q.fornecedor_nome = p.fornecedor_nome
+      AND COALESCE(q.grupo_codigo, '') = v_grupo
+      AND q.aprovado_por LIKE 'auto:%'
+      AND q.status = 'aprovado_aguardando_disparo'
+      AND q.id <> p.id
+  ) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'já há auto-aprovado do grupo aguardando disparo');
+  END IF;
+
+  -- v2: referência = MEDIANA dos últimos 5 EVENTOS de compra do grupo. Cada evento = SUM por
+  -- data_ciclo (<90d, compra real) — colapsa o pré-split (pai → filhos na mesma data) como na v1,
+  -- mas agora a mediana de VÁRIOS eventos, não o último solto (ruidoso: normal teve R$1031 e
+  -- R$7377). MÍNIMO 3 eventos (Codex: percentile_cont com 2 valores interpola a média = falsa
+  -- mediana; com [1000,16000] daria 8500).
+  -- ⚠️ Codex P2.2 (teórico, sem caminho atual): a referência soma valor_total do CABEÇALHO dos
+  -- históricos; o candidato (v_valor) usa a soma dos ITENS. Nos disparados o cabeçalho = itens (a
+  -- geração seta valor_total = SUM dos itens e o disparo não muda). Se um dia divergirem (cabeçalho
+  -- inflado), o teto poderia subir. Monitorado no piloto; fix futuro = somar itens nos históricos.
+  WITH eventos AS (
+    SELECT r.data_ciclo, SUM(r.valor_total) AS valor
+    FROM public.pedido_compra_sugerido r
+    WHERE r.empresa = p.empresa
+      AND r.fornecedor_nome = p.fornecedor_nome
+      AND COALESCE(r.grupo_codigo, '') = v_grupo
+      AND r.id <> p.id
+      AND r.criado_em > now() - interval '90 days'
+      AND (r.omie_pedido_compra_numero IS NOT NULL OR r.status IN ('disparado', 'concluido_recebido'))
+    GROUP BY r.data_ciclo
+    ORDER BY r.data_ciclo DESC
+    LIMIT 5
+  )
+  SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY valor), count(*)
+    INTO v_ref, v_n FROM eventos;
+
+  IF v_n < 3 THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'menos de 3 compras de referência do grupo em 90d');
+  END IF;
+  IF v_ref IS NULL OR NOT (v_ref > 0 AND v_ref < 'Infinity'::numeric) THEN
+    RETURN jsonb_build_object('elegivel', false, 'motivo', 'mediana de referência inválida');
+  END IF;
+
+  -- v2: delta ASSIMÉTRICO — só trava comprar MAIS que mediana×(1+delta_max). Comprar <= mediana
+  -- SEMPRE passa (conservador: menos capital; a régua R$3k já é o piso). O risco money-path da
+  -- auto-aprovação é comprar DEMAIS; pedido muito menor que o típico é seguro (Codex: humano
+  -- semeia a mediana, a automação alcança depois). delta_pct negativo = comprou menos (ok).
+  IF v_valor > v_ref * (1 + p_delta_max) THEN
+    RETURN jsonb_build_object('elegivel', false,
+      'motivo', 'acima do típico: ' || round(v_valor)::text || ' > mediana ' || round(v_ref)::text
+        || ' × ' || round((1 + p_delta_max), 2)::text,
+      'valor_anterior', v_ref,
+      'delta_pct', round(100.0 * (v_valor - v_ref) / v_ref, 1));
+  END IF;
+
+  RETURN jsonb_build_object('elegivel', true,
+    'valor_anterior', v_ref,
+    'delta_pct', round(100.0 * (v_valor - v_ref) / v_ref, 1),
+    'valor_itens', v_valor);
+END;
+$function$;
+
+
+REVOKE ALL ON FUNCTION public.reposicao_pedido_auto_aprovavel(bigint, numeric, numeric, numeric) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reposicao_pedido_auto_aprovavel(bigint, numeric, numeric, numeric) TO service_role;
+
+-- ===== 2) MOTOR: gerar_pedidos_sugeridos_ciclo (custo ancora NULL + valor_total COALESCE) =====
+-- corpo BYTE-IDENTICO a db/embalagem-motor-rpc.sql do inicio do CREATE ate EOF (guard de paridade)
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
  LANGUAGE plpgsql

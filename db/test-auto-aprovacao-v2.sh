@@ -233,4 +233,88 @@ BEGIN
 END $$;
 SQL
 
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# [PRECO-AUSENTE] custo desconhecido = NULL (não 0). O gate de item-inválido tinha buraco de 3VL:
+# NOT(preco>0 AND ...) com preco NULL = NOT(NULL)=NULL → a linha ESCAPA do EXISTS → pedido com item
+# sem custo poderia AUTO-APROVAR. Falsifico no gate VELHO (v2), aplico o fix, re-provo no gate NOVO.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+echo "→ [PRECO-AUSENTE] FALSIFICAÇÃO: gate VELHO (v2) julga parcial-NULL ELEGÍVEL (bug)…"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE pid bigint; r jsonb;
+BEGIN
+  -- referência: mediana 8000 (3 eventos disparados do grupo)
+  INSERT INTO public.pedido_compra_sugerido (empresa,fornecedor_nome,grupo_codigo,data_ciclo,valor_total,num_skus,status,tipo_ciclo,criado_em,omie_pedido_compra_numero)
+  SELECT 'OBEN','RENNER SAYERLACK S/A','GNULL',CURRENT_DATE-i,8000,5,'disparado','normal',now()-(i||' days')::interval,'9GNULL'||i FROM generate_series(1,3) i;
+  -- candidato: 1 item COM custo (8000) + 1 item SEM custo (NULL). header valor_total=8000 (>= régua 3000).
+  INSERT INTO public.pedido_compra_sugerido (empresa,fornecedor_nome,grupo_codigo,data_ciclo,valor_total,num_skus,status,tipo_ciclo)
+  VALUES ('OBEN','RENNER SAYERLACK S/A','GNULL',CURRENT_DATE,8000,2,'pendente_aprovacao','normal') RETURNING id INTO pid;
+  INSERT INTO public.pedido_compra_item (pedido_id,sku_codigo_omie,sku_descricao,qtde_sugerida,qtde_final,preco_unitario,valor_linha) VALUES
+    (pid,'A','com custo',1,1,8000,8000),
+    (pid,'B','sem custo',1,1,NULL,NULL);
+  r := public.reposicao_pedido_auto_aprovavel(pid, 3000, 0.30, 48);
+  IF COALESCE((r->>'elegivel')::boolean, false) IS NOT TRUE THEN
+    RAISE EXCEPTION 'FALSIFICAÇÃO FRACA: gate VELHO já rejeita parcial-NULL (motivo=%) — o bug que o fix fecha NÃO foi reproduzido', r->>'motivo';
+  END IF;
+  RAISE NOTICE 'OK FALSIF — gate VELHO julga parcial-NULL ELEGÍVEL (item sem custo escapa do guard) = o BUG';
+  DELETE FROM public.pedido_compra_item WHERE pedido_id = pid;
+  DELETE FROM public.pedido_compra_sugerido WHERE grupo_codigo='GNULL';
+END $$;
+SQL
+
+echo "→ aplica o FIX (migration 20260629140000: gate NULL-safe + motor)…"
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260629140000_reposicao_preco_ausente_null.sql" >/dev/null
+
+echo "→ [PRECO-AUSENTE] FIX: gate NOVO rejeita parcial-NULL e all-NULL; aceita all-precificado…"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE pid bigint; r jsonb;
+BEGIN
+  INSERT INTO public.pedido_compra_sugerido (empresa,fornecedor_nome,grupo_codigo,data_ciclo,valor_total,num_skus,status,tipo_ciclo,criado_em,omie_pedido_compra_numero)
+  SELECT 'OBEN','RENNER SAYERLACK S/A','GFIX',CURRENT_DATE-i,8000,5,'disparado','normal',now()-(i||' days')::interval,'9GFIX'||i FROM generate_series(1,3) i;
+
+  -- (1) parcial-NULL → REJEITA com 'item com preço/qtde inválido'
+  INSERT INTO public.pedido_compra_sugerido (empresa,fornecedor_nome,grupo_codigo,data_ciclo,valor_total,num_skus,status,tipo_ciclo)
+  VALUES ('OBEN','RENNER SAYERLACK S/A','GFIX',CURRENT_DATE,8000,2,'pendente_aprovacao','normal') RETURNING id INTO pid;
+  INSERT INTO public.pedido_compra_item (pedido_id,sku_codigo_omie,sku_descricao,qtde_sugerida,qtde_final,preco_unitario,valor_linha) VALUES
+    (pid,'A','com custo',1,1,8000,8000), (pid,'B','sem custo',1,1,NULL,NULL);
+  r := public.reposicao_pedido_auto_aprovavel(pid, 3000, 0.30, 48);
+  IF COALESCE((r->>'elegivel')::boolean, true) IS NOT FALSE THEN
+    RAISE EXCEPTION 'FIX FALHOU: parcial-NULL ELEGÍVEL com gate novo (%)', r;
+  END IF;
+  IF r->>'motivo' <> 'item com preço/qtde inválido' THEN
+    RAISE EXCEPTION 'FIX: motivo inesperado p/ parcial-NULL (%)', r->>'motivo';
+  END IF;
+  RAISE NOTICE 'OK FIX1 — parcial-NULL REJEITADO (item com preço/qtde inválido)';
+  DELETE FROM public.pedido_compra_item WHERE pedido_id = pid;
+
+  -- (2) all-NULL → REJEITA pelo guard (ANTES do v_valor IS NULL, que diria outro motivo)
+  INSERT INTO public.pedido_compra_sugerido (empresa,fornecedor_nome,grupo_codigo,data_ciclo,valor_total,num_skus,status,tipo_ciclo)
+  VALUES ('OBEN','RENNER SAYERLACK S/A','GFIX',CURRENT_DATE,0,2,'pendente_aprovacao','normal') RETURNING id INTO pid;
+  INSERT INTO public.pedido_compra_item (pedido_id,sku_codigo_omie,sku_descricao,qtde_sugerida,qtde_final,preco_unitario,valor_linha) VALUES
+    (pid,'A','sem custo',1,1,NULL,NULL), (pid,'B','sem custo',1,1,NULL,NULL);
+  r := public.reposicao_pedido_auto_aprovavel(pid, 3000, 0.30, 48);
+  IF r->>'motivo' <> 'item com preço/qtde inválido' THEN
+    RAISE EXCEPTION 'FIX: all-NULL motivo inesperado (%)', r->>'motivo';
+  END IF;
+  RAISE NOTICE 'OK FIX2 — all-NULL REJEITADO pelo guard';
+  DELETE FROM public.pedido_compra_item WHERE pedido_id = pid;
+
+  -- (3) CONTROLE: all-precificado (4000+4000=8000 = mediana) → ACEITA (gate novo não ficou estrito demais)
+  INSERT INTO public.pedido_compra_sugerido (empresa,fornecedor_nome,grupo_codigo,data_ciclo,valor_total,num_skus,status,tipo_ciclo)
+  VALUES ('OBEN','RENNER SAYERLACK S/A','GFIX',CURRENT_DATE,8000,2,'pendente_aprovacao','normal') RETURNING id INTO pid;
+  INSERT INTO public.pedido_compra_item (pedido_id,sku_codigo_omie,sku_descricao,qtde_sugerida,qtde_final,preco_unitario,valor_linha) VALUES
+    (pid,'A','com custo',1,1,4000,4000), (pid,'B','com custo',1,1,4000,4000);
+  r := public.reposicao_pedido_auto_aprovavel(pid, 3000, 0.30, 48);
+  IF COALESCE((r->>'elegivel')::boolean, false) IS NOT TRUE THEN
+    RAISE EXCEPTION 'FIX CONTROLE FALHOU: all-precificado NÃO elegível (%)', r;
+  END IF;
+  RAISE NOTICE 'OK FIX3 — all-precificado ACEITO (caminho válido não regrediu)';
+
+  DELETE FROM public.pedido_compra_item WHERE pedido_id IN (SELECT id FROM public.pedido_compra_sugerido WHERE grupo_codigo='GFIX');
+  DELETE FROM public.pedido_compra_sugerido WHERE grupo_codigo='GFIX';
+  RAISE NOTICE '✅ FIX NULL-safe: falsificação + 3 asserts OK';
+END $$;
+SQL
+
 echo "✅ test-auto-aprovacao-v2: OK"
