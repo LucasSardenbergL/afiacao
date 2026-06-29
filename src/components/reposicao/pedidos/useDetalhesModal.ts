@@ -129,6 +129,10 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
           .eq('id', itemId);
         if (error) throw error;
       }
+      // Header null-safe: _valor já trata custo desconhecido (preco_unitario null/0)
+      // como 0, então valor_total = SUM(COALESCE(valor_linha,0)) — consistente com o
+      // valor_linha null que montarUpdateItem grava nessas linhas (ausente ≠ zero).
+      // Não trocar o `?? 0` do _valor por propagação de null (viraria NaN no total). Codex 019f146d.
       const novoTotal = linhas.reduce((acc, l) => acc + l._valor, 0);
       const { error: errPed } = await supabase
         .from('pedido_compra_sugerido')
