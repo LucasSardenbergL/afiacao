@@ -14,120 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      _backup_cost_lavados_20260620: {
-        Row: {
-          _backup_at: string | null
-          _op_ativo: boolean | null
-          cmc: number | null
-          cost_confidence: number | null
-          cost_final: number | null
-          cost_price: number | null
-          cost_source: string | null
-          family_category: string | null
-          id: string | null
-          product_id: string | null
-          updated_at: string | null
-        }
-        Insert: {
-          _backup_at?: string | null
-          _op_ativo?: boolean | null
-          cmc?: number | null
-          cost_confidence?: number | null
-          cost_final?: number | null
-          cost_price?: number | null
-          cost_source?: string | null
-          family_category?: string | null
-          id?: string | null
-          product_id?: string | null
-          updated_at?: string | null
-        }
-        Update: {
-          _backup_at?: string | null
-          _op_ativo?: boolean | null
-          cmc?: number | null
-          cost_confidence?: number | null
-          cost_final?: number | null
-          cost_price?: number | null
-          cost_source?: string | null
-          family_category?: string | null
-          id?: string | null
-          product_id?: string | null
-          updated_at?: string | null
-        }
-        Relationships: []
-      }
-      _backup_cost_reset_20260622: {
-        Row: {
-          _backup_at: string | null
-          _op_ativo: boolean | null
-          cmc: number | null
-          cost_confidence: number | null
-          cost_final: number | null
-          cost_price: number | null
-          cost_source: string | null
-          family_category: string | null
-          id: string | null
-          product_id: string | null
-          updated_at: string | null
-        }
-        Insert: {
-          _backup_at?: string | null
-          _op_ativo?: boolean | null
-          cmc?: number | null
-          cost_confidence?: number | null
-          cost_final?: number | null
-          cost_price?: number | null
-          cost_source?: string | null
-          family_category?: string | null
-          id?: string | null
-          product_id?: string | null
-          updated_at?: string | null
-        }
-        Update: {
-          _backup_at?: string | null
-          _op_ativo?: boolean | null
-          cmc?: number | null
-          cost_confidence?: number | null
-          cost_final?: number | null
-          cost_price?: number | null
-          cost_source?: string | null
-          family_category?: string | null
-          id?: string | null
-          product_id?: string | null
-          updated_at?: string | null
-        }
-        Relationships: []
-      }
-      _preflight_tint: {
-        Row: {
-          erro: string | null
-          ok: boolean | null
-          resultado: Json | null
-          run_id: string | null
-          staging_formulas: number | null
-          tempo_ms: number | null
-          ts: string | null
-        }
-        Insert: {
-          erro?: string | null
-          ok?: boolean | null
-          resultado?: Json | null
-          run_id?: string | null
-          staging_formulas?: number | null
-          tempo_ms?: number | null
-          ts?: string | null
-        }
-        Update: {
-          erro?: string | null
-          ok?: boolean | null
-          resultado?: Json | null
-          run_id?: string | null
-          staging_formulas?: number | null
-          tempo_ms?: number | null
-          ts?: string | null
-        }
-        Relationships: []
-      }
       abc_xyz_classification: {
         Row: {
           classe_abc: Database["public"]["Enums"]["classe_abc"] | null
@@ -878,6 +764,33 @@ export type Database = {
           omie_codigo_produto?: number
           saldo?: number | null
           synced_at?: string | null
+        }
+        Relationships: []
+      }
+      cmc_snapshot: {
+        Row: {
+          account: string
+          cmc: number
+          data_posicao: string
+          id: string
+          omie_codigo_produto: number
+          synced_at: string
+        }
+        Insert: {
+          account: string
+          cmc: number
+          data_posicao: string
+          id?: string
+          omie_codigo_produto: number
+          synced_at?: string
+        }
+        Update: {
+          account?: string
+          cmc?: number
+          data_posicao?: string
+          id?: string
+          omie_codigo_produto?: number
+          synced_at?: string
         }
         Relationships: []
       }
@@ -12223,69 +12136,6 @@ export type Database = {
           },
         ]
       }
-      tint_formulas_backup_preflip: {
-        Row: {
-          account: string | null
-          base_id: string | null
-          cor_id: string | null
-          created_at: string | null
-          data_geracao: string | null
-          desativada_em: string | null
-          embalagem_id: string | null
-          id: string | null
-          id_seq: number | null
-          importacao_id: string | null
-          nome_cor: string | null
-          personalizada: boolean | null
-          preco_final_sayersystem: number | null
-          produto_id: string | null
-          sku_id: string | null
-          subcolecao_id: string | null
-          updated_at: string | null
-          volume_final_ml: number | null
-        }
-        Insert: {
-          account?: string | null
-          base_id?: string | null
-          cor_id?: string | null
-          created_at?: string | null
-          data_geracao?: string | null
-          desativada_em?: string | null
-          embalagem_id?: string | null
-          id?: string | null
-          id_seq?: number | null
-          importacao_id?: string | null
-          nome_cor?: string | null
-          personalizada?: boolean | null
-          preco_final_sayersystem?: number | null
-          produto_id?: string | null
-          sku_id?: string | null
-          subcolecao_id?: string | null
-          updated_at?: string | null
-          volume_final_ml?: number | null
-        }
-        Update: {
-          account?: string | null
-          base_id?: string | null
-          cor_id?: string | null
-          created_at?: string | null
-          data_geracao?: string | null
-          desativada_em?: string | null
-          embalagem_id?: string | null
-          id?: string | null
-          id_seq?: number | null
-          importacao_id?: string | null
-          nome_cor?: string | null
-          personalizada?: boolean | null
-          preco_final_sayersystem?: number | null
-          produto_id?: string | null
-          sku_id?: string | null
-          subcolecao_id?: string | null
-          updated_at?: string | null
-          volume_final_ml?: number | null
-        }
-        Relationships: []
-      }
       tint_importacoes: {
         Row: {
           account: string
@@ -16339,6 +16189,10 @@ export type Database = {
           source: string
           status: string
         }[]
+      }
+      get_defasagem_cliente: {
+        Args: { p_customer_user_id: string; p_itens: Json }
+        Returns: Json
       }
       get_default_production_assignee: { Args: never; Returns: string }
       get_meu_mixgap: { Args: never; Returns: Json }

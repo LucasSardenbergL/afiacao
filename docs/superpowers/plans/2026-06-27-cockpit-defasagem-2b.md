@@ -248,7 +248,10 @@ async function cmcPorData(
 
 // Upsert em lote no cmc_snapshot (idempotente: on conflict do update do cmc/synced_at).
 async function upsertSnapshot(
-  // deno-lint-ignore no-explicit-any
+  // O client Deno não carrega os tipos do Database → `db` é any de propósito
+  // (tipar com SupabaseClient estrito quebra o `.upsert` no deno check). O
+  // `deno-lint-ignore` NÃO satisfaz o ESLint do projeto → usar eslint-disable.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any,
   rows: Array<{ account: string; omie_codigo_produto: number; data_posicao: string; cmc: number }>,
 ): Promise<number> {
@@ -514,20 +517,19 @@ describe('avaliarDefasagem', () => {
   });
 
   it('fronteira da tolerância — custo +10%, preço +9,96% (por centavo) → NÃO defasado (TOL_PP)', () => {
-    // cLast 100 → cNow 110 (+10%). pLast 100 → pNow 109,96 (+9,96%).
-    // gap de pontos = 10% - 9,96% = 0,04pp < TOL_PP(3pp) → em_dia.
-    const r = avaliarDefasagem(base({ pLast: 100, pNow: 109.96, cLast: 100, cNow: 110 }));
+    // cLast 60 → cNow 66 (+10%). pLast 100 (>cLast=60, markup positivo → não viola G1) →
+    // pNow 109,96 (+9,96%). gap de pontos = 10% - 9,96% = 0,04pp < TOL_PP(3pp) → em_dia.
+    const r = avaliarDefasagem(base({ pLast: 100, pNow: 109.96, cLast: 60, cNow: 66 }));
     expect(r.status).toBe('em_dia');
   });
 
   it('piso de ação — defasado pela razão mas P_req - P_now < R$1 → em_dia (centavo não dispara)', () => {
-    // cLast 100 → cNow 102 (+2%, passa o piso de alta). pLast 50 → pReq = 50*1.02 = 51.
-    // pNow 50,30: gap de pontos = 2% - 0,6% = 1,4pp > TOL? Não: 1,4 < 3 → em_dia já por tolerância.
-    // Para isolar o PISO DE AÇÃO: forço a razão a passar a tolerância mas o gap em R$ < piso.
-    // cLast 100 → cNow 110 (+10%). pLast 9 → pReq = 9*1.10 = 9,90. pNow 9 (não subiu):
-    // gap pontos = 10% - 0% = 10pp > 3pp → passaria por razão. Mas pReq - pNow = 0,90 < R$1,00
-    // E < 2% de pNow (0,18) → o MAIOR é R$1,00 → 0,90 < 1,00 → em_dia (piso de ação).
-    const r = avaliarDefasagem(base({ pLast: 9, pNow: 9, cLast: 100, cNow: 110 }));
+    // Isola o PISO DE AÇÃO: razão passa a tolerância, mas o gap em R$ < piso de R$1.
+    // pLast 9 (>cLast=8, markup positivo → não viola G1). cLast 8 → cNow 8,80 (+10%).
+    // pReq = 9*(8,80/8) = 9,90. pNow 9 (não subiu): gap pontos = 10% - 0% = 10pp > 3pp →
+    // passaria por razão. Mas pReq - pNow = 0,90 < R$1,00 (e < 2% de pNow=0,18; MAIOR=R$1,00)
+    // → 0,90 < 1,00 → em_dia (piso de ação).
+    const r = avaliarDefasagem(base({ pLast: 9, pNow: 9, cLast: 8, cNow: 8.8 }));
     expect(r.status).toBe('em_dia');
     expect(r.pReq).toBe(9.9);
   });
@@ -1167,15 +1169,15 @@ INSERT INTO public.order_items (customer_user_id, omie_codigo_produto, quantity,
 INSERT INTO public.cmc_snapshot (account, omie_codigo_produto, data_posicao, cmc) VALUES ('vendas',1003,'2026-03-20',60);
 INSERT INTO public.inventory_position (omie_codigo_produto, account, cmc, synced_at) VALUES (1003,'vendas',72,now());
 
--- D4 (fronteira): produto 1004. C_last 100, C_now 110 (+10%). pLast 100, preço carrinho 109,96
---     (+9,96%) → gap de pontos 0,04pp < TOL 3pp → em_dia (cent-rounding não dispara).
+-- D4 (fronteira): produto 1004. C_last 60, C_now 66 (+10%). pLast 100 (>C_last, markup positivo),
+--     preço carrinho 109,96 (+9,96%) → gap de pontos 0,04pp < TOL 3pp → em_dia (cent não dispara).
 INSERT INTO public.sales_orders (id, account, status, order_date_kpi, omie_pedido_id, omie_payload, customer_user_id) VALUES
   ('a0000000-0000-0000-0000-000000000004','vendas','faturado','2026-03-20', 5004,
    '{"infoCadastro":{"dInc":"20/03/2026"}}'::jsonb, '11111111-1111-1111-1111-111111111111');
 INSERT INTO public.order_items (customer_user_id, omie_codigo_produto, quantity, unit_price, sales_order_id) VALUES
   ('11111111-1111-1111-1111-111111111111', 1004, 1, 100, 'a0000000-0000-0000-0000-000000000004');
-INSERT INTO public.cmc_snapshot (account, omie_codigo_produto, data_posicao, cmc) VALUES ('vendas',1004,'2026-03-20',100);
-INSERT INTO public.inventory_position (omie_codigo_produto, account, cmc, synced_at) VALUES (1004,'vendas',110,now());
+INSERT INTO public.cmc_snapshot (account, omie_codigo_produto, data_posicao, cmc) VALUES ('vendas',1004,'2026-03-20',60);
+INSERT INTO public.inventory_position (omie_codigo_produto, account, cmc, synced_at) VALUES (1004,'vendas',66,now());
 
 -- D5 (C_now stale): produto 1005. C_now synced há 72h (>48h) → sem_custo_atual_fresco.
 INSERT INTO public.sales_orders (id, account, status, order_date_kpi, omie_pedido_id, omie_payload, customer_user_id) VALUES
@@ -1676,7 +1678,7 @@ e, logo APÓS o fechamento do `</Badge>` do cockpit (linha 137, antes do bloco `
 
 - [ ] **Step 5: Typecheck** — Run: `heavy bun run typecheck` — Expected: sem erros (strict). Confirma que `LinhaDefasagem`/`ItemDefasagemInput` resolvem e `fmt` (já importado de `useUnifiedOrder`, linha 12) cobre `p_req`.
 
-- [ ] **Step 6: Rodar a suíte de testes do componente (regressão do priceGuard) + lint** — Run: `heavy bun run test src/components/unified-order/__tests__/CartItemList.priceGuard.test.tsx && bun lint src/components/unified-order/CartItemList.tsx src/hooks/useDefasagemCliente.ts` — Expected: teste do priceGuard passa (o badge novo não quebra o destaque de preço ≤0) e lint limpo (sem `text-red-600`/cores cruas; tokens `text-status-*`).
+- [ ] **Step 6: Mockar o hook novo no teste priceGuard + rodar a suíte + lint** — PRIMEIRO adicione ao `src/components/unified-order/__tests__/CartItemList.priceGuard.test.tsx` o mock do hook novo (ele puxa `useAuth`/`useQuery`, que o teste isola de propósito — sem o mock o render do CartItemList QUEBRA): `vi.mock('@/hooks/useDefasagemCliente', () => ({ useDefasagemCliente: () => ({ defasagemByKey: new Map(), isLoading: false }) }));`. Depois Run: `heavy bun run test src/components/unified-order && bun lint src/components/unified-order/CartItemList.tsx src/hooks/useDefasagemCliente.ts` — Expected: testes do diretório passam (o badge novo não quebra o destaque de preço ≤0) e lint com **0 errors** (warnings pré-existentes ok; tokens `text-status-*`, sem cores cruas).
 
 - [ ] **Step 7: Commit** — Run: `git add src/components/unified-order/CartItemList.tsx && git commit -m "feat(cockpit/2b): badge de defasagem na linha do carrinho (repasse p/ vendedora, custo só gestor)"`
 

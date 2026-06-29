@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 311
+-- Total de custom migrations: 315
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -345,13 +345,17 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260627150000', 'tint_formulas_rls_initplan', '20260627150000_tint_formulas_rls_initplan.sql'),
   ('20260627150100', 'tint_formulas_autovacuum_agressivo', '20260627150100_tint_formulas_autovacuum_agressivo.sql'),
   ('20260627170000', 'reposicao_rls_initplan', '20260627170000_reposicao_rls_initplan.sql'),
+  ('20260627180000', 'cmc_snapshot', '20260627180000_cmc_snapshot.sql'),
   ('20260627180000', 'reposicao_gate_estoque_nao_confirmado', '20260627180000_reposicao_gate_estoque_nao_confirmado.sql'),
+  ('20260627180100', 'get_defasagem_cliente', '20260627180100_get_defasagem_cliente.sql'),
   ('20260627180100', 'seg_onda1_rls_views_matview', '20260627180100_seg_onda1_rls_views_matview.sql'),
   ('20260627180200', 'seg_onda2_revoke_secdef_storage', '20260627180200_seg_onda2_revoke_secdef_storage.sql'),
   ('20260627180300', 'seg_onda5_search_path', '20260627180300_seg_onda5_search_path.sql'),
   ('20260627180400', 'seg_onda6_drop_backups_obsoletos', '20260627180400_seg_onda6_drop_backups_obsoletos.sql'),
+  ('20260627180500', 'seg_onda5b_search_path_fix', '20260627180500_seg_onda5b_search_path_fix.sql'),
   ('20260627190000', 'reposicao_fase2_badge_oportunidade_mv', '20260627190000_reposicao_fase2_badge_oportunidade_mv.sql'),
   ('20260627200000', 'fix_refresh_sku_ranking_gate_cron', '20260627200000_fix_refresh_sku_ranking_gate_cron.sql'),
+  ('20260629120000', 'seg_customer_metrics_viewgate', '20260629120000_seg_customer_metrics_viewgate.sql'),
   ('20260629140000', 'reposicao_preco_ausente_null', '20260629140000_reposicao_preco_ausente_null.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -1382,11 +1386,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_cold_start_parametros', 'rls_policy', 'public', 'cold_start_log_sel', 'reposicao_cold_start_log'),
   ('reposicao_cold_start_fix_gate_cron', 'function', 'public', 'reposicao_cold_start_parametros', ''),
   ('reposicao_embalagem_motor_galao', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('cmc_snapshot', 'table', 'public', 'cmc_snapshot', ''),
+  ('cmc_snapshot', 'index', 'public', 'idx_cmc_snapshot_lookup', 'cmc_snapshot'),
+  ('cmc_snapshot', 'rls_policy', 'public', 'cmc_snapshot_select_staff', 'cmc_snapshot'),
   ('reposicao_gate_estoque_nao_confirmado', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_gate_estoque_nao_confirmado', 'table', 'public', 'reposicao_estoque_nao_confirmado_log', ''),
   ('reposicao_gate_estoque_nao_confirmado', 'index', 'public', 'idx_estoque_nao_confirmado_log_empresa_data', 'reposicao_estoque_nao_confirmado_log'),
   ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_sel', 'reposicao_estoque_nao_confirmado_log'),
   ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log'),
+  ('get_defasagem_cliente', 'function', 'public', 'get_defasagem_cliente', ''),
   ('seg_onda2_revoke_secdef_storage', 'rls_policy', 'storage', 'tarefa_comprov_update_master', 'objects'),
   ('seg_onda2_revoke_secdef_storage', 'rls_policy', 'storage', 'tarefa_comprov_delete_master', 'objects'),
   ('reposicao_fase2_badge_oportunidade_mv', 'function', 'public', 'refresh_oportunidade_badge', ''),
@@ -1395,6 +1403,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_fase2_badge_oportunidade_mv', 'index', 'private', 'mv_oportunidade_badge_empresa_uq', 'mv_oportunidade_badge'),
   ('reposicao_fase2_badge_oportunidade_mv', 'cron_job', 'cron', 'afiacao_oportunidade_badge_refresh_2h', ''),
   ('fix_refresh_sku_ranking_gate_cron', 'function', 'public', 'refresh_sku_ranking_negociacao', ''),
+  ('seg_customer_metrics_viewgate', 'function', 'public', 'refresh_customer_metrics', ''),
+  ('seg_customer_metrics_viewgate', 'view', 'public', 'customer_metrics_mv', ''),
   ('reposicao_preco_ausente_null', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
   ('reposicao_preco_ausente_null', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 ),
@@ -2474,11 +2484,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_cold_start_parametros', 'rls_policy', 'public', 'cold_start_log_sel', 'reposicao_cold_start_log'),
   ('reposicao_cold_start_fix_gate_cron', 'function', 'public', 'reposicao_cold_start_parametros', ''),
   ('reposicao_embalagem_motor_galao', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('cmc_snapshot', 'table', 'public', 'cmc_snapshot', ''),
+  ('cmc_snapshot', 'index', 'public', 'idx_cmc_snapshot_lookup', 'cmc_snapshot'),
+  ('cmc_snapshot', 'rls_policy', 'public', 'cmc_snapshot_select_staff', 'cmc_snapshot'),
   ('reposicao_gate_estoque_nao_confirmado', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_gate_estoque_nao_confirmado', 'table', 'public', 'reposicao_estoque_nao_confirmado_log', ''),
   ('reposicao_gate_estoque_nao_confirmado', 'index', 'public', 'idx_estoque_nao_confirmado_log_empresa_data', 'reposicao_estoque_nao_confirmado_log'),
   ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_sel', 'reposicao_estoque_nao_confirmado_log'),
   ('reposicao_gate_estoque_nao_confirmado', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log'),
+  ('get_defasagem_cliente', 'function', 'public', 'get_defasagem_cliente', ''),
   ('seg_onda2_revoke_secdef_storage', 'rls_policy', 'storage', 'tarefa_comprov_update_master', 'objects'),
   ('seg_onda2_revoke_secdef_storage', 'rls_policy', 'storage', 'tarefa_comprov_delete_master', 'objects'),
   ('reposicao_fase2_badge_oportunidade_mv', 'function', 'public', 'refresh_oportunidade_badge', ''),
@@ -2487,6 +2501,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_fase2_badge_oportunidade_mv', 'index', 'private', 'mv_oportunidade_badge_empresa_uq', 'mv_oportunidade_badge'),
   ('reposicao_fase2_badge_oportunidade_mv', 'cron_job', 'cron', 'afiacao_oportunidade_badge_refresh_2h', ''),
   ('fix_refresh_sku_ranking_gate_cron', 'function', 'public', 'refresh_sku_ranking_negociacao', ''),
+  ('seg_customer_metrics_viewgate', 'function', 'public', 'refresh_customer_metrics', ''),
+  ('seg_customer_metrics_viewgate', 'view', 'public', 'customer_metrics_mv', ''),
   ('reposicao_preco_ausente_null', 'function', 'public', 'reposicao_pedido_auto_aprovavel', ''),
   ('reposicao_preco_ausente_null', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', '')
 )
