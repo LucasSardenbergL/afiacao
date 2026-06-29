@@ -12,6 +12,7 @@ import type { ProductCartItem, ServiceCartItem } from '@/hooks/useUnifiedOrder';
 import { fmt, getToolName } from '@/hooks/useUnifiedOrder';
 import { usePrecoCockpit, chaveCockpit, type ItemCockpitInput, type LinhaCockpit } from '@/hooks/usePrecoCockpit';
 import { FAIXA_UI } from '@/lib/preco/faixa-ui';
+import { useDefasagemCliente, type ItemDefasagemInput, type LinhaDefasagem } from '@/hooks/useDefasagemCliente';
 import { cn } from '@/lib/utils';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { useReguaPreco } from '@/hooks/useReguaPreco';
@@ -72,6 +73,23 @@ export function CartItemList({
     return m;
   }, [cockpitItens, cockpitList]);
 
+  // Defasagem por cliente (Fase 2b): alta de custo desde a última compra DESTE cliente
+  // que o preço não acompanhou → badge de repasse na linha. 1 batch por carrinho.
+  // Só dispara com cliente selecionado (o hook gateia por customerUserId).
+  const defasagemItens = useMemo<ItemDefasagemInput[]>(() =>
+    [...obenProductItems, ...colacorProductItems]
+      .map(it => ({
+        empresa: it.product.account ?? '',
+        codigo: it.product.omie_codigo_produto,
+        preco: it.unit_price,
+        qty: it.quantity,
+        tint_formula_id: it.tint_formula_id ?? null,
+      }))
+      .filter(i => i.preco > 0 && Number.isFinite(i.codigo) && i.empresa !== ''),
+    [obenProductItems, colacorProductItems],
+  );
+  const { defasagemByKey } = useDefasagemCliente(defasagemItens, customerUserId);
+
   // Régua de Preço (v1 só Oben): sinal de mercado/piso-MC por linha. A Régua é a
   // autoridade do vermelho de margem — quando abaixoPiso, o badge do cockpit recua a neutro.
   const [reguaFlag] = useFeatureFlag('regua_preco_carrinho');
@@ -101,6 +119,8 @@ export function CartItemList({
         const cartIdx = getCartIndex(item);
         const chave = chaveCockpit(item.product.account ?? '', item.product.omie_codigo_produto, item.tint_formula_id);
         const health = cockpitByKey.get(chave);
+        const defas: LinhaDefasagem | undefined = defasagemByKey.get(chave);
+        const mostraDefasagem = defas?.status_defasagem === 'defasado' || defas?.status_defasagem === 'revisar';
         const regua = reguaByKey.get(chave);
         const reguaVermelho = regua?.sinal === 'piso'; // Régua = autoridade do vermelho de margem
         // Só suprime o vermelho FORTE do cockpit quando a Régua tem piso CONFIÁVEL (com
@@ -119,7 +139,7 @@ export function CartItemList({
                     </Badge>
                   </div>
                 )}
-                {((health && health.faixa !== 'neutro' && FAIXA_UI[health.faixa]) || regua) && (
+                {((health && health.faixa !== 'neutro' && FAIXA_UI[health.faixa]) || regua || mostraDefasagem) && (
                   <div className="mt-0.5 flex items-center gap-1 flex-wrap">
                     {health && health.faixa !== 'neutro' && FAIXA_UI[health.faixa] && (
                       <Badge
@@ -134,6 +154,26 @@ export function CartItemList({
                           </span>
                         )}
                       </Badge>
+                    )}
+                    {mostraDefasagem && defas && (
+                      defas.status_defasagem === 'defasado' ? (
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] px-1 py-0 text-status-warning"
+                          title="Custo subiu desde a última compra deste cliente e o preço não acompanhou — preço de equilíbrio preserva o markup anterior"
+                        >
+                          {defas.alta_custo_perc != null ? `custo +${Math.round(defas.alta_custo_perc)}%` : 'custo subiu'}
+                          {defas.p_req != null && <span className="font-mono ml-1">· repassar p/ {fmt(defas.p_req)}</span>}
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] px-1 py-0 text-muted-foreground border-border"
+                          title="Âncora incerta (custo/quantidade) — revisar antes de repassar"
+                        >
+                          revisar
+                        </Badge>
+                      )
                     )}
                     {regua && (
                       <ReguaPrecoSinal
