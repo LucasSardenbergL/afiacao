@@ -1,5 +1,7 @@
 # Reposição fase 2 — cobertura proporcional ao giro (recalibração do motor)
 
+> ⛔ **STATUS 2026-06-29 — REPROVADO na implementação (Claude + Codex).** A projeção do impacto sobre os dados reais (148 SKUs Sayerlack OBEN) mostrou que a recalibração da fórmula (lote=round(d·LT) + buffer Y nas classes Y) **incha** o pedido **+4%** e o capital de giro **+11%** — o oposto do objetivo. O buffer Y eleva o `ss` dos **intermitentes caros (Y/Z)**, que dominam o valor dos pedidos (1 SKU classe AY = 58% de um pedido de R$14k). A fonte real do superdimensionamento é a **segurança dos intermitentes caros** — proteção estatística legítima de uma demanda errática (CV≈2,3; saldo fresco, histórico real, sem fallback) que o founder conscientemente opta por **não bancar** (preferência capital > venda cara rara, **não bug**). **Entrega real = segmentar a auto-aprovação** (núcleo previsível auto / cauda cara humano), não recalibrar a fórmula. Diagnóstico completo em `docs/agent/reposicao.md` (entrada do piloto, 2026-06-29). **O design abaixo fica como registro do caminho descartado — não executar.**
+
 > **Data:** 2026-06-27 · **Status:** design aprovado em brainstorming com o founder (decisões abaixo) · **Origem:** o piloto de auto-aprovação Sayerlack v2 ficou dormente (0 auto-aprovações em 12 dias) e o diagnóstico revelou que o **motor de reposição superdimensiona** — a "fase 2 do dente de serra" que estava registrada, agora com evidência concreta.
 
 ## 1. Contexto e motivação
