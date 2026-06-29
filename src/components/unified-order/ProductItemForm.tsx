@@ -8,6 +8,8 @@ import { keyDeSku, type CurrentSpec } from '@/lib/knowledge-base/spec-link';
 import { FichaTecnicaSheet } from '@/components/unified-order/FichaTecnicaSheet';
 import { usePrecoCockpit, type ItemCockpitInput } from '@/hooks/usePrecoCockpit';
 import { FAIXA_UI } from '@/lib/preco/faixa-ui';
+import { VendaAssistidaSelo } from '@/components/unified-order/VendaAssistidaSelo';
+import type { OpcaoResolvida } from '@/lib/venda-assistida/resolver-opcao';
 import { cn } from '@/lib/utils';
 import type { Product, ProductCartItem } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
@@ -31,12 +33,17 @@ interface ProductItemFormProps {
   specsByKey?: Map<string, CurrentSpec>;
   /** Mostra "Ver ficha" só p/ staff (a view RLS já é staff; isto evita o affordance p/ não-staff). */
   canSeeFicha?: boolean;
+  /** Mapa de opções de venda assistida por keyDeSku(account, cod) — selo "preparado". */
+  selosByKey?: Map<string, OpcaoResolvida>;
+  /** Mostra o selo "preparado" só p/ staff (vendedor-only; nada pro cliente). */
+  canSeeVendaAssistida?: boolean;
 }
 
 export function ProductItemForm({
   title, products, prices, loading, productSearch, onSearchChange,
   productItems, onAddProduct, customerPurchaseHistory = {},
   customerPricesLoading = false, specsByKey, canSeeFicha = false,
+  selosByKey, canSeeVendaAssistida = false,
 }: ProductItemFormProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [fichaAberta, setFichaAberta] = useState<string | null>(null);
@@ -102,6 +109,9 @@ export function ProductItemForm({
                 ? specsByKey?.get(keyDeSku(product.account, product.omie_codigo_produto))
                 : undefined;
               const health = cockpitByCode?.get(product.omie_codigo_produto);
+              const selo = canSeeVendaAssistida
+                ? selosByKey?.get(keyDeSku(product.account, product.omie_codigo_produto))
+                : undefined;
               return (
                 <div
                   key={product.id}
@@ -192,6 +202,7 @@ export function ProductItemForm({
                       {isInCart ? 'Adicionar +' : 'Adicionar'}
                     </Button>
                   </div>
+                  {selo && <VendaAssistidaSelo option={selo} />}
                   {ficha && (
                     <FichaTecnicaSheet
                       spec={ficha}
