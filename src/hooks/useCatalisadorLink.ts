@@ -45,16 +45,27 @@ export function useCatalisadorLinksMap() {
   const { data, isLoading } = useQuery<MapRow[]>({
     queryKey: ['kb-catalisador-map'],
     staleTime: 5 * 60_000,
-    queryFn: async () => {
-      const { data: rows, error } = (await supabase
-        .from('kb_catalisador_links' as never)
-        .select('catalisador_codigo_norm, account, omie_codigo_produto')
-        .eq('status', 'confirmed')) as {
-        data: MapRow[] | null;
-        error: { message: string } | null;
-      };
-      if (error) throw new Error(error.message);
-      return rows ?? [];
+    queryFn: async (): Promise<MapRow[]> => {
+      // Pagina (PostgREST capa em 1000 linhas SILENCIOSO — database.md): sem isto, vínculos além da
+      // 1ª página somem do mapa e o selo degrada a "sob consulta" mesmo com casamento (Codex P1).
+      const PAGE = 1000;
+      const all: MapRow[] = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data: rows, error } = (await supabase
+          .from('kb_catalisador_links' as never)
+          .select('catalisador_codigo_norm, account, omie_codigo_produto')
+          .eq('status', 'confirmed')
+          .order('id')
+          .range(from, from + PAGE - 1)) as {
+          data: MapRow[] | null;
+          error: { message: string } | null;
+        };
+        if (error) throw new Error(error.message);
+        const batch = rows ?? [];
+        all.push(...batch);
+        if (batch.length < PAGE) break;
+      }
+      return all;
     },
   });
 

@@ -174,7 +174,13 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
 
       {/* Casamento do catalisador — só master, ficha aprovada, e só se o boletim tem catalisador. */}
       {existingSpecs?.approved_at && isMaster && existingSpecs.catalisador_codigo && (
-        <CatalisadorLinkPanel catalisadorCodigo={existingSpecs.catalisador_codigo} disabled={isImpersonating} />
+        // key por código → painel remonta ao trocar de boletim (reseta termo/seleção; evita
+        // casar SKU no código errado por estado stale — Codex P1).
+        <CatalisadorLinkPanel
+          key={existingSpecs.catalisador_codigo}
+          catalisadorCodigo={existingSpecs.catalisador_codigo}
+          disabled={isImpersonating}
+        />
       )}
 
       {/* Histórico de versões do produto (Fase B1) — null quando não há versões */}
