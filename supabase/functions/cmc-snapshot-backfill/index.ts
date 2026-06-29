@@ -152,6 +152,7 @@ async function cmcPorData(
   account: OmieAccount,
   dDataPosicao: string,
   maxPaginas: number,
+  exibeTodos: "S" | "N" = "N",
 ): Promise<{ mapa: Map<number, number>; paginasLidas: number; totalPaginas: number }> {
   const mapa = new Map<number, number>();
   let pagina = 1;
@@ -161,7 +162,10 @@ async function cmcPorData(
     const result = await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
       nPagina: pagina,
       nRegPorPagina: 100,
-      cExibeTodos: "S", // catálogo inteiro (inclui saldo 0) — queremos o CMC, não só itens com saldo.
+      // "N" (default) = só produtos COM SALDO na data ≈ os que têm CMC atual, que são os
+      // ÚNICOS que a RPC usa (sem C_now ela dá neutro). "S" = catálogo inteiro (5-6× mais
+      // páginas). Parametrizável pra equilibrar cobertura × tempo de execução da edge.
+      cExibeTodos: exibeTodos,
       dDataPosicao,
     });
     totalPaginas = result.nTotPaginas || 1;
@@ -247,6 +251,9 @@ Deno.serve(async (req: Request) => {
     const modo = body.modo as string;
     const account = body.account as OmieAccount;
     const maxPaginas = Math.min(Math.max(Number(body.maxPaginas) || 200, 1), 500);
+    // cExibeTodos: "N" (default) = só produtos com saldo (≈ os que têm CMC atual, os
+    // únicos que a RPC usa); "S" = catálogo inteiro. Default "N" pra caber mais meses/invoke.
+    const exibeTodos: "S" | "N" = body.cExibeTodos === "S" ? "S" : "N";
 
     if (!CONTAS_VALIDAS.includes(account)) {
       return json({ ok: false, erro: `account inválida — use uma de ${CONTAS_VALIDAS.join(", ")}` }, 400);
@@ -271,7 +278,7 @@ Deno.serve(async (req: Request) => {
       const porData: Array<{ data: string; pedidos: number; achados: number }> = [];
       // Serializado de propósito (lock do Omie).
       for (const [dBR, cods] of codsPorData) {
-        const { mapa } = await cmcPorData(account, dBR, maxPaginas);
+        const { mapa } = await cmcPorData(account, dBR, maxPaginas, exibeTodos);
         const dataIso = brParaIso(dBR);
         let achados = 0;
         for (const cod of cods) {
@@ -307,7 +314,7 @@ Deno.serve(async (req: Request) => {
       const porMes: Array<{ data: string; produtos: number; gravados: number; paginas: string }> = [];
       // Serializado (lock do Omie). 1 mês por vez, bulk upsert.
       for (const dBR of datas) {
-        const { mapa, paginasLidas, totalPaginas } = await cmcPorData(account, dBR, maxPaginas);
+        const { mapa, paginasLidas, totalPaginas } = await cmcPorData(account, dBR, maxPaginas, exibeTodos);
         const dataIso = brParaIso(dBR);
         const rows = [...mapa.entries()].map(([cod, cmc]) => ({
           account, omie_codigo_produto: cod, data_posicao: dataIso, cmc,
