@@ -5,12 +5,10 @@ import { Button } from '@/components/ui/button';
 import { track } from '@/lib/analytics';
 import { useWebRTCCallContextOptional } from '@/contexts/webrtc-call-context';
 import { useMunicaoLigacao } from '@/hooks/useMunicaoLigacao';
+import { MunicaoResumo } from './MunicaoResumo';
 import { SpinSuggestionCard } from './SpinSuggestionCard';
 import { TranscriptionPanel } from './TranscriptionPanel';
 import { formatBrPhone } from '@/lib/phone';
-
-const brl = (n: number) =>
-  n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 /**
  * Co-piloto flutuante GLOBAL durante a ligação. Persiste na navegação;
@@ -84,23 +82,8 @@ export function CallCopilotHud() {
         </header>
 
         {municao && (
-          <div className="px-3 py-2 border-b border-border text-xs text-muted-foreground space-y-0.5">
-            {municao.ultimaCompra ? (
-              <div>
-                Última compra:{' '}
-                <span className="text-foreground font-medium">
-                  {brl(municao.ultimaCompra.valor)}
-                </span>
-                {municao.diasDesdeUltima != null && (
-                  <> · há {municao.diasDesdeUltima}d</>
-                )}
-              </div>
-            ) : (
-              <div>Sem compras anteriores registradas.</div>
-            )}
-            {municao.ticketMedio != null && (
-              <div>Ticket médio: {brl(municao.ticketMedio)}</div>
-            )}
+          <div className="px-3 py-2 border-b border-border">
+            <MunicaoResumo municao={municao} />
           </div>
         )}
 
