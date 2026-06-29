@@ -105,9 +105,30 @@ describe('montarSelosVendaAssistida', () => {
   it('preço-do-cliente (último praticado) vence a tabela no selo', () => {
     const specs = [spec({ account: 'colacor', omie_codigo_produto: 1, kb_product_spec_id: 'B1' })];
     const cat = catalog({ account: 'colacor', row: row(1, 'PRIMER PU FL.6269.02GL', 360, 5) });
-    const s = montarSelosVendaAssistida(specs, cat, { 1: 180 }).get(keyDeSku('colacor', 1));
+    const s = montarSelosVendaAssistida(specs, cat, { colacor: { 1: 180 } }).get(keyDeSku('colacor', 1));
     // 180 / 3,6 L = 50/L (cliente) em vez de 360/3,6 = 100/L (tabela)
     if (s?.preco.status === 'ok') expect(s.preco.precoLitroBase).toBe(50);
+  });
+
+  it('🔴 preço-do-cliente é POR CONTA — omie_codigo_produto colidido Oben↔Colacor não vaza', () => {
+    // Mesmo cod (1) em contas Omie diferentes (ids numéricos colidem) — preços DIFERENTES por conta.
+    const specs = [
+      spec({ account: 'colacor', omie_codigo_produto: 1, kb_product_spec_id: 'BC' }),
+      spec({ account: 'oben', omie_codigo_produto: 1, kb_product_spec_id: 'BO' }),
+    ];
+    const cat = catalog(
+      { account: 'colacor', row: row(1, 'PRIMER PU FL.6269.02GL', 999, 5) },
+      { account: 'oben', row: row(1, 'PRIMER PU FL.6269.02GL', 999, 5) },
+    );
+    const selos = montarSelosVendaAssistida(specs, cat, {
+      colacor: { 1: 360 }, // 360 / 3,6 = 100/L
+      oben: { 1: 180 }, //    180 / 3,6 = 50/L
+    });
+    const sc = selos.get(keyDeSku('colacor', 1));
+    const so = selos.get(keyDeSku('oben', 1));
+    // Com o merge antigo {...colacor, ...oben} ambos pegariam 180→50/L (vazamento). Por conta: cada um o seu.
+    if (sc?.preco.status === 'ok') expect(sc.preco.precoLitroBase).toBe(100);
+    if (so?.preco.status === 'ok') expect(so.preco.precoLitroBase).toBe(50);
   });
 
   it('boletim sem NENHUMA embalagem no catálogo → não emite selo', () => {
