@@ -71,9 +71,10 @@ const UnifiedOrder = () => {
         estoque: p.estoque ?? 0,
       });
     }
-    // Preço-do-cliente (último praticado), copiado Oben↔Colacor — merge p/ lookup por omie_codigo_produto.
-    const customerPrices = { ...h.customerPricesColacor, ...h.customerPricesOben };
-    return montarSelosVendaAssistida([...fichasByKey.values()], catalogByKey, customerPrices);
+    // Preço-do-cliente (último praticado) POR CONTA — omie_codigo_produto colide entre Oben/Colacor,
+    // então o helper lê do mapa da conta de cada SKU (não achata num Record só).
+    const customerPricesByAccount = { oben: h.customerPricesOben, colacor: h.customerPricesColacor };
+    return montarSelosVendaAssistida([...fichasByKey.values()], catalogByKey, customerPricesByAccount);
   }, [fichasByKey, h.obenProducts, h.colacorProducts, h.customerPricesOben, h.customerPricesColacor]);
   const [restoreOpen, setRestoreOpen] = useState(false);
 

@@ -27,7 +27,8 @@ export interface SeloDescricao {
 export function montarSelosVendaAssistida(
   specs: CurrentSpec[],
   catalogByKey: Map<string, ProdutoLinhaOmie>,
-  customerPrices: Record<number, number>,
+  /** Preço-do-cliente (último praticado) POR CONTA: account (minúsculo) → omie_codigo_produto → preço. */
+  customerPricesByAccount: Record<string, Record<number, number>>,
 ): Map<string, OpcaoResolvida> {
   // Agrupa os SKUs vinculados por boletim (kb_product_spec_id).
   const porBoletim = new Map<string, CurrentSpec[]>();
@@ -43,16 +44,22 @@ export function montarSelosVendaAssistida(
     if (!ref) continue;
 
     // Embalagens da base = linhas do catálogo dos SKUs vinculados (ignora SKU fora do catálogo).
+    // Preço-do-cliente POR CONTA: omie_codigo_produto colide entre Oben e Colacor (Omie accounts
+    // separados) → nunca achatar num Record só; lê do mapa da conta de CADA SKU.
     const rows: ProdutoLinhaOmie[] = [];
+    const pricesForBoletim: Record<number, number> = {};
     for (const s of boletimSpecs) {
       const row = catalogByKey.get(keyDeSku(s.account, s.omie_codigo_produto));
-      if (row) rows.push(row);
+      if (!row) continue;
+      rows.push(row);
+      const p = customerPricesByAccount[(s.account ?? '').toLowerCase()]?.[s.omie_codigo_produto];
+      if (typeof p === 'number') pricesForBoletim[s.omie_codigo_produto] = p;
     }
     // Boletim sem nenhuma embalagem conhecida → não emite selo (não polui com "sob consulta"
     // quando o problema é só dado de catálogo ausente, não falta de mapeamento).
     if (rows.length === 0) continue;
 
-    const baseEmbalagens = montarBaseEmbalagens(rows, customerPrices);
+    const baseEmbalagens = montarBaseEmbalagens(rows, pricesForBoletim);
     const cod = ref.catalisador_codigo;
     const temCatalisador = typeof cod === 'string' && cod.trim() !== '';
 
