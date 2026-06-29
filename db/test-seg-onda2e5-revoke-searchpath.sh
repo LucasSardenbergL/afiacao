@@ -64,6 +64,8 @@ GRANT EXECUTE ON FUNCTION public.my_trigger_fn() TO anon, authenticated;
 
 -- função INVOKER sem search_path (alvo da Onda 5)
 CREATE FUNCTION public.foo_invoker() RETURNS int LANGUAGE sql AS $$ SELECT 42 $$;
+-- função SEM search_path mas owned por OUTRO role (não o que aplica) — simula o caso
+-- pgvector/l2_norm: a migração deve PULÁ-la (deptype='e' em prod; aqui via backstop de privilégio).
 
 -- storage (stub mínimo p/ as policies)
 CREATE SCHEMA IF NOT EXISTS storage;
@@ -78,9 +80,13 @@ CREATE POLICY tcomprov_select_own_master ON storage.objects FOR SELECT TO authen
 SQL
 
 # ══ ZONA 2 — aplicar as migrações REAIS (ordem: 2 depois 5) ═══════════════════
+# extensão real em public: cria funções owned pela extensão (deptype='e') SEM search_path —
+# espelha pgvector/l2_norm. A Onda 5b DEVE pulá-las (em prod, alterá-las dá 42501 "must be owner").
+P -q -c "CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA public;" >/dev/null 2>&1 && HAS_EXT=1 || HAS_EXT=0
+echo "pg_trgm disponivel: $HAS_EXT"
 P -q -f "$REPO_ROOT/supabase/migrations/20260627180200_seg_onda2_revoke_secdef_storage.sql"
-P -q -f "$REPO_ROOT/supabase/migrations/20260627180300_seg_onda5_search_path.sql"
-echo "migrações 2 e 5 aplicadas"
+P -q -f "$REPO_ROOT/supabase/migrations/20260627180500_seg_onda5b_search_path_fix.sql"   # 5b (corrigida)
+echo "migrações 2 e 5b aplicadas"
 
 # ══ ZONA 3 — seed ════════════════════════════════════════════════════════════
 P -q <<'SQL'
@@ -123,9 +129,16 @@ eq "C1 foo_invoker tem search_path=public" "$V" "t"
 # e continua executando
 V=$(Pq -c "SELECT public.foo_invoker();" | tail -1)
 eq "C2 foo_invoker ainda executa" "$V" "42"
-# nenhuma função do schema ficou sem search_path
-V=$(Pq -c "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prokind='f' AND (p.proconfig IS NULL OR NOT EXISTS(SELECT 1 FROM unnest(p.proconfig) c WHERE c LIKE 'search_path=%'));")
-eq "C3 zero funcoes sem search_path" "$V" "0"
+# nenhuma função DA APP (não-extensão) ficou sem search_path
+V=$(Pq -c "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prokind='f' AND (p.proconfig IS NULL OR NOT EXISTS(SELECT 1 FROM unnest(p.proconfig) c WHERE c LIKE 'search_path=%')) AND NOT EXISTS(SELECT 1 FROM pg_depend d WHERE d.objid=p.oid AND d.deptype='e');")
+eq "C3 zero funcoes da app sem search_path" "$V" "0"
+# C4: funções de EXTENSÃO foram PULADAS (não recebem search_path) — o ponto do fix (em prod = 42501)
+if [ "${HAS_EXT:-0}" = "1" ]; then
+  V=$(Pq -c "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prokind='f' AND EXISTS(SELECT 1 FROM pg_depend d WHERE d.objid=p.oid AND d.deptype='e') AND p.proconfig::text LIKE '%search_path%';")
+  eq "C4 NENHUMA funcao de extensao foi alterada (pulada pelo filtro)" "$V" "0"
+else
+  echo "  ⏭️  C4 pulado (pg_trgm indisponivel no harness)"
+fi
 
 # ══ ZONA 5 — FALSIFICAÇÃO ════════════════════════════════════════════════════
 echo "── falsificacao ──"
@@ -149,6 +162,18 @@ P -q -c "ALTER FUNCTION public.foo_invoker() RESET search_path;"
 V=$(Pq -c "SELECT EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='foo_invoker' AND p.proconfig::text LIKE '%search_path=public%');")
 if [ "$V" = "f" ]; then ok "F3 sabotado (reset) foo_invoker volta a mutavel -> C1 tem dente"; else bad "F3 search_path persistiu apos reset -> C1 SEM dente"; fi
 P -q -c "ALTER FUNCTION public.foo_invoker() SET search_path = public;"
+
+# F4: a func de extensão ERA alterável manualmente (no harness sou owner) → prova que foi o
+# FILTRO deptype='e' que a deixou intacta na 5b, não falta de permissão. Em prod NÃO somos owner
+# → o filtro é o que evita o 42501 que abortou a Onda 5 original.
+if [ "${HAS_EXT:-0}" = "1" ]; then
+  EXTFN=$(Pq -c "SELECT p.oid::regprocedure FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_depend d ON d.objid=p.oid AND d.deptype='e' WHERE n.nspname='public' AND p.prokind='f' AND (p.proconfig IS NULL OR NOT EXISTS(SELECT 1 FROM unnest(p.proconfig) c WHERE c LIKE 'search_path=%')) LIMIT 1;" | tail -1)
+  P -q -c "ALTER FUNCTION $EXTFN SET search_path = public;"
+  V=$(Pq -c "SELECT (proconfig::text LIKE '%search_path%') FROM pg_proc WHERE oid='$EXTFN'::regprocedure;" | tail -1)
+  if [ "$V" = "t" ]; then ok "F4 func de extensao ERA alteravel ($EXTFN) -> foi o filtro deptype=e que a protegeu, nao ownership"; else bad "F4 nao alterou func de extensao -> teste do filtro sem dente"; fi
+else
+  echo "  ⏭️  F4 pulado (pg_trgm indisponivel)"
+fi
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
