@@ -14,6 +14,7 @@ import { useKbProductSpecs } from '@/hooks/useKbProductSpecs';
 import { VersionHistory } from '@/components/knowledge-base/VersionHistory';
 import { CompletudeBadge } from '@/components/knowledge-base/CompletudeBadge';
 import { SpecLinkPanel } from '@/components/knowledge-base/SpecLinkPanel';
+import { CatalisadorLinkPanel } from '@/components/knowledge-base/CatalisadorLinkPanel';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 
@@ -169,6 +170,11 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
           spec={{ id: existingSpecs.id, product_code: existingSpecs.product_code, product_name: existingSpecs.product_name }}
           disabled={isImpersonating}
         />
+      )}
+
+      {/* Casamento do catalisador — só master, ficha aprovada, e só se o boletim tem catalisador. */}
+      {existingSpecs?.approved_at && isMaster && existingSpecs.catalisador_codigo && (
+        <CatalisadorLinkPanel catalisadorCodigo={existingSpecs.catalisador_codigo} disabled={isImpersonating} />
       )}
 
       {/* Histórico de versões do produto (Fase B1) — null quando não há versões */}
