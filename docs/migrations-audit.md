@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **316** custom migrations totais
+- **317** custom migrations totais
 - **1069** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 314
@@ -2653,6 +2653,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.kb_catalisador_links_unique_quad` | `kb_catalisador_links` |
 | `index` | `public.kb_catalisador_links_norm` | `kb_catalisador_links` |
 | `rls_policy` | `public.kb_catalisador_links_select_staff` | `kb_catalisador_links` |
+
+### `20260701200017_backfill_kb_documents_product_code.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

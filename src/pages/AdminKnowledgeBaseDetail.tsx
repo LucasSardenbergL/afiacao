@@ -10,7 +10,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Loader2, Database, Sparkles } from 'lucide-react';
 import type { KbDocument } from '@/lib/knowledge-base/types';
-import { useKbProductSpecs } from '@/hooks/useKbProductSpecs';
+import { useKbProductSpecsByDocument } from '@/hooks/useKbProductSpecs';
 import { VersionHistory } from '@/components/knowledge-base/VersionHistory';
 import { CompletudeBadge } from '@/components/knowledge-base/CompletudeBadge';
 import { SpecLinkPanel } from '@/components/knowledge-base/SpecLinkPanel';
@@ -66,7 +66,9 @@ export default function AdminKnowledgeBaseDetail() {
 }
 
 function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: number | undefined }) {
-  const { data: existingSpecs, refetch: refetchSpecs } = useKbProductSpecs(data.product_code);
+  // Liga pela FK real (document_id), não pelo product_code do documento — que nasce NULL e escondia
+  // os 3 painéis (Specs/vínculo base/Catalisador) mesmo com a ficha aprovada existindo.
+  const { data: existingSpecs, refetch: refetchSpecs } = useKbProductSpecsByDocument(data.id);
   const { isMaster } = useAuth();
   const { isImpersonating } = useImpersonation();
 
@@ -99,8 +101,9 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
         </Card>
       )}
 
-      {/* Specs estruturados — só quando documento está ready e tem product_code */}
-      {data.status === 'ready' && data.product_code && (
+      {/* Specs estruturados — documento ready com ficha (achada por document_id) ou com product_code
+          (permite extrair mesmo antes de existir ficha). Não depende só do product_code do documento. */}
+      {data.status === 'ready' && (existingSpecs != null || data.product_code) && (
         <Card className="p-3 space-y-2">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
@@ -120,7 +123,7 @@ function DetailContent({ data, chunkCount }: { data: KbDocument; chunkCount: num
               <KbSpecsExtractButton
                 documentId={data.id}
                 documentTitle={data.title}
-                productCode={data.product_code}
+                productCode={existingSpecs?.product_code ?? data.product_code}
                 onSaved={() => refetchSpecs()}
               />
             </div>
