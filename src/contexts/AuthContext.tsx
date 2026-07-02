@@ -29,6 +29,49 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const ROLE_FETCH_TIMEOUT_MS = 4_000;
+const ROLE_FETCH_RETRY_DELAYS_MS = [0, 500, 1_200] as const;
+
+function isTransientBackendError(error: unknown): boolean {
+  const message = String((error as { message?: unknown } | null)?.message ?? error ?? '').toLowerCase();
+  const status = (error as { status?: unknown; code?: unknown } | null)?.status;
+  const code = String((error as { code?: unknown } | null)?.code ?? '').toLowerCase();
+
+  return (
+    status === 503 ||
+    status === 504 ||
+    code === '503' ||
+    code === '504' ||
+    message.includes('timeout') ||
+    message.includes('upstream connect error') ||
+    message.includes('disconnect/reset before headers') ||
+    message.includes('failed to fetch')
+  );
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: PromiseLike<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`timeout ${timeoutMs}ms: ${label}`));
+    }, timeoutMs);
+
+    Promise.resolve(promise).then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
@@ -45,32 +88,122 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isApproved, setIsApproved] = useState(false);
   const [commercialRole, setCommercialRole] = useState<string | null>(null);
 
-  const fetchUserRoleAndApproval = async (userId: string) => {
-    try {
-      // Fetch role and approval in parallel
-      const [roleResult, profileResult, commercialResult] = await Promise.all([
-        supabase
-          .from('user_roles')
-          .select('role')
-          .eq('user_id', userId)
-          .maybeSingle(),
-        supabase
-          .from('profiles')
-          .select('is_approved')
-          .eq('user_id', userId)
-          .maybeSingle(),
-        supabase
-          .from('commercial_roles')
-          .select('commercial_role')
-          .eq('user_id', userId)
-          .maybeSingle(),
-      ]);
+  const fetchUserRoleAndApprovalOnce = async (userId: string) => {
+    // Fetch role and approval in parallel
+    return withTimeout(
+      Promise.all([
+          supabase
+            .from('user_roles')
+            .select('role')
+            .eq('user_id', userId)
+            .maybeSingle(),
+          supabase
+            .from('profiles')
+            .select('is_approved')
+            .eq('user_id', userId)
+            .maybeSingle(),
+          supabase
+            .from('commercial_roles')
+            .select('commercial_role')
+            .eq('user_id', userId)
+            .maybeSingle(),
+        ]),
+      ROLE_FETCH_TIMEOUT_MS,
+      'fetchUserRoleAndApproval',
+    );
+  };
 
-      if (roleResult.error) {
-        logger.critical('Failed to fetch user role (fail-closed)', {
+  const fetchUserRoleAndApproval = async (userId: string) => {
+    for (let attempt = 0; attempt < ROLE_FETCH_RETRY_DELAYS_MS.length; attempt += 1) {
+      const delayMs = ROLE_FETCH_RETRY_DELAYS_MS[attempt];
+      if (delayMs > 0) await wait(delayMs);
+
+      try {
+        const [roleResult, profileResult, commercialResult] = await fetchUserRoleAndApprovalOnce(userId);
+
+        if (roleResult.error) {
+          if (attempt < ROLE_FETCH_RETRY_DELAYS_MS.length - 1 && isTransientBackendError(roleResult.error)) {
+            logger.warn('Transient role fetch failure — retrying', {
+              stage: 'role_fetch_retry',
+              userId,
+              attempt: attempt + 1,
+              error: roleResult.error,
+            });
+            continue;
+          }
+
+          logger.critical('Failed to fetch user role (fail-closed)', {
+            stage: 'role_fetch',
+            userId,
+            error: roleResult.error,
+          });
+          // fail-closed
+          setRole(null);
+          setIsApproved(false);
+          setCommercialRole(null);
+          return;
+        }
+
+        const fetchedRole = (roleResult.data?.role as AppRole) || 'customer';
+        setRole(fetchedRole);
+
+        // Store commercial role for downstream use (isGestorComercial)
+        setCommercialRole(commercialResult.data?.commercial_role ?? null);
+
+        // Staff (admin/employee/master) or users with commercial roles are auto-approved
+        const hasCommercialRole = !!commercialResult.data?.commercial_role;
+        const isStaffRole = fetchedRole === 'employee' || fetchedRole === 'master';
+        if (isStaffRole || hasCommercialRole) {
+          setIsApproved(true);
+          // Auto-approve staff profile if not yet approved
+          if (profileResult.data && !profileResult.data.is_approved) {
+            supabase
+              .from('profiles')
+              .update({ is_approved: true })
+              .eq('user_id', userId)
+              .eq('is_approved', false)
+              .then(() => {}); // fire and forget
+          }
+        } else {
+          if (profileResult.error) {
+            if (attempt < ROLE_FETCH_RETRY_DELAYS_MS.length - 1 && isTransientBackendError(profileResult.error)) {
+              logger.warn('Transient approval fetch failure — retrying', {
+                stage: 'approval_fetch_retry',
+                userId,
+                attempt: attempt + 1,
+                error: profileResult.error,
+              });
+              continue;
+            }
+
+            logger.critical('Failed to fetch approval status (fail-closed)', {
+              stage: 'approval_fetch',
+              userId,
+              error: profileResult.error,
+            });
+            // fail-closed
+            setIsApproved(false);
+          } else {
+            setIsApproved(profileResult.data?.is_approved ?? false);
+          }
+        }
+
+        return;
+      } catch (error) {
+        if (attempt < ROLE_FETCH_RETRY_DELAYS_MS.length - 1 && isTransientBackendError(error)) {
+          logger.warn('Transient role/approval fetch exception — retrying', {
+            stage: 'role_fetch_retry',
+            userId,
+            attempt: attempt + 1,
+            error,
+          });
+          continue;
+        }
+
+        logger.critical('Unexpected error fetching user role/approval (fail-closed)', {
           stage: 'role_fetch',
           userId,
-          error: roleResult.error,
+          error,
         });
         // fail-closed
         setRole(null);
@@ -78,50 +211,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setCommercialRole(null);
         return;
       }
-
-      const fetchedRole = (roleResult.data?.role as AppRole) || 'customer';
-      setRole(fetchedRole);
-
-      // Store commercial role for downstream use (isGestorComercial)
-      setCommercialRole(commercialResult.data?.commercial_role ?? null);
-
-      // Staff (admin/employee/master) or users with commercial roles are auto-approved
-      const hasCommercialRole = !!commercialResult.data?.commercial_role;
-      const isStaffRole = fetchedRole === 'employee' || fetchedRole === 'master';
-      if (isStaffRole || hasCommercialRole) {
-        setIsApproved(true);
-        // Auto-approve staff profile if not yet approved
-        if (profileResult.data && !profileResult.data.is_approved) {
-          supabase
-            .from('profiles')
-            .update({ is_approved: true })
-            .eq('user_id', userId)
-            .eq('is_approved', false)
-            .then(() => {}); // fire and forget
-        }
-      } else {
-        if (profileResult.error) {
-          logger.critical('Failed to fetch approval status (fail-closed)', {
-            stage: 'approval_fetch',
-            userId,
-            error: profileResult.error,
-          });
-          // fail-closed
-          setIsApproved(false);
-        } else {
-          setIsApproved(profileResult.data?.is_approved ?? false);
-        }
-      }
-    } catch (error) {
-      logger.critical('Unexpected error fetching user role/approval (fail-closed)', {
-        stage: 'role_fetch',
-        userId,
-        error,
-      });
-      // fail-closed
-      setRole(null);
-      setIsApproved(false);
-      setCommercialRole(null);
     }
   };
 
