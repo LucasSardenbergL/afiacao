@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 316
+-- Total de custom migrations: 317
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -357,7 +357,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260627200000', 'fix_refresh_sku_ranking_gate_cron', '20260627200000_fix_refresh_sku_ranking_gate_cron.sql'),
   ('20260629120000', 'seg_customer_metrics_viewgate', '20260629120000_seg_customer_metrics_viewgate.sql'),
   ('20260629140000', 'reposicao_preco_ausente_null', '20260629140000_reposicao_preco_ausente_null.sql'),
-  ('20260629150000', 'kb_catalisador_links', '20260629150000_kb_catalisador_links.sql')
+  ('20260629150000', 'kb_catalisador_links', '20260629150000_kb_catalisador_links.sql'),
+  ('20260701120000', 'fin_balanco_inputs', '20260701120000_fin_balanco_inputs.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1415,7 +1416,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_one_confirmed', 'kb_catalisador_links'),
   ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_unique_quad', 'kb_catalisador_links'),
   ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_norm', 'kb_catalisador_links'),
-  ('kb_catalisador_links', 'rls_policy', 'public', 'kb_catalisador_links_select_staff', 'kb_catalisador_links')
+  ('kb_catalisador_links', 'rls_policy', 'public', 'kb_catalisador_links_select_staff', 'kb_catalisador_links'),
+  ('fin_balanco_inputs', 'table', 'public', 'fin_balanco_inputs', ''),
+  ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_select_master', 'fin_balanco_inputs'),
+  ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_write_master', 'fin_balanco_inputs')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2521,7 +2525,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_one_confirmed', 'kb_catalisador_links'),
   ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_unique_quad', 'kb_catalisador_links'),
   ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_norm', 'kb_catalisador_links'),
-  ('kb_catalisador_links', 'rls_policy', 'public', 'kb_catalisador_links_select_staff', 'kb_catalisador_links')
+  ('kb_catalisador_links', 'rls_policy', 'public', 'kb_catalisador_links_select_staff', 'kb_catalisador_links'),
+  ('fin_balanco_inputs', 'table', 'public', 'fin_balanco_inputs', ''),
+  ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_select_master', 'fin_balanco_inputs'),
+  ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_write_master', 'fin_balanco_inputs')
 )
 SELECT
   e.migration,
