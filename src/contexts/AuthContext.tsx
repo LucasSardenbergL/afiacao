@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
@@ -87,6 +87,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [role, setRole] = useState<AppRole | null>(null);
   const [isApproved, setIsApproved] = useState(false);
   const [commercialRole, setCommercialRole] = useState<string | null>(null);
+  const bootstrapResolvedRef = useRef(false);
+
+  const finishLoading = () => {
+    bootstrapResolvedRef.current = true;
+    setLoading(false);
+  };
 
   const fetchUserRoleAndApprovalOnce = async (userId: string) => {
     // Fetch role and approval in parallel
@@ -223,11 +229,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // que o ProtectedRoute redirecione pro /auth (login) em vez de spinner
     // infinito. 10s é folgado: o caminho normal resolve em <1s.
     const loadingFailsafe = setTimeout(() => {
-      if (isMounted) {
+      if (isMounted && !bootstrapResolvedRef.current) {
         logger.error('Auth bootstrap timed out — forcing loading=false (failsafe)', {
           stage: 'auth_failsafe',
         });
-        setLoading(false);
+        finishLoading();
       }
     }, 10_000);
 
@@ -241,7 +247,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         if (event === 'SIGNED_OUT') {
           setRole(null);
           setIsApproved(false);
-          setLoading(false);
+          finishLoading();
           return;
         }
 
@@ -254,11 +260,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               createProfileIfNotExists(session.user.id, session.user.email);
             }
             await fetchUserRoleAndApproval(session.user.id);
-            if (isMounted) setLoading(false);
+            if (isMounted) finishLoading();
           }, 0);
         } else {
           // No session — safe to stop loading immediately
-          setLoading(false);
+          finishLoading();
         }
       }
     );
@@ -268,13 +274,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (!isMounted) return;
       if (error) {
         logger.error('Error fetching session', { stage: 'get_session', error });
-        setLoading(false);
+        finishLoading();
         return;
       }
       // If there's no session, stop loading. If there IS a session, the
       // INITIAL_SESSION event from onAuthStateChange will handle role loading.
       if (!session) {
-        setLoading(false);
+        finishLoading();
       }
     });
 
