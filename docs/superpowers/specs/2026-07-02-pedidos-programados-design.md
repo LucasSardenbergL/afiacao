@@ -11,6 +11,11 @@ digitar o pedido no Omie na data certa, lembrar de colocar o número do pedido d
 do cliente nas informações complementares da NF e repetir uma mensagem fixa exigida por
 ele. Qualquer esquecimento gera NF recusada/retrabalho.
 
+**Vocabulário (não confundir com o módulo de reposição/compras):** o "pedido de compra"
+é documento DO CLIENTE — do nosso lado ele vira um pedido de **VENDA** no Omie
+(`omie-vendas-sync` action `criar_pedido`). O nº do PC do cliente entra apenas como
+referência no nosso PV e na NF. Nada aqui toca o fluxo de compras a fornecedor.
+
 ## Decisões de produto (respostas do founder no brainstorm)
 
 | Pergunta | Decisão |
