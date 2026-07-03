@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **320** custom migrations totais
-- **1082** objetos esperados (criados por estas migrations)
+- **324** custom migrations totais
+- **1117** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 316
-  - `rls_policy`: 235
-  - `index`: 194
-  - `table`: 115
-  - `cron_job`: 110
+  - `function`: 319
+  - `rls_policy`: 248
+  - `index`: 199
+  - `table`: 122
+  - `cron_job`: 111
+  - `trigger`: 59
   - `view`: 55
-  - `trigger`: 53
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2685,6 +2685,61 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260702213000_gov_iniciativas_check_ganhos.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260702233000_trava_credito_fase2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_excecao_credito_forca_autor` | — |
+| `function` | `public.venda_gate_credito` | — |
+| `table` | `public.venda_excecao_credito` | — |
+| `table` | `public.venda_bloqueio_credito_log` | — |
+| `index` | `public.idx_venda_excecao_pedido` | `venda_excecao_credito` |
+| `index` | `public.idx_venda_bloqueio_log_criado` | `venda_bloqueio_credito_log` |
+| `trigger` | `public.trg_venda_excecao_forca_autor` | `venda_excecao_credito` |
+| `rls_policy` | `public.venda_excecao_select_staff` | `venda_excecao_credito` |
+| `rls_policy` | `public.venda_excecao_insert_gestor` | `venda_excecao_credito` |
+| `rls_policy` | `public.venda_excecao_service_all` | `venda_excecao_credito` |
+| `rls_policy` | `public.venda_bloqueio_log_select_staff` | `venda_bloqueio_credito_log` |
+| `rls_policy` | `public.venda_bloqueio_log_service_all` | `venda_bloqueio_credito_log` |
+
+### `20260703090000_pedidos_programados.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.pedidos_programados` | — |
+| `table` | `public.pedidos_programados_envios` | — |
+| `table` | `public.cliente_item_mapa` | — |
+| `table` | `public.pedidos_programados_itens` | — |
+| `table` | `public.pedidos_programados_config` | — |
+| `index` | `public.idx_pp_envios_pendentes` | `pedidos_programados_envios` |
+| `index` | `public.idx_pp_itens_pedido` | `pedidos_programados_itens` |
+| `index` | `public.idx_pp_itens_envio` | `pedidos_programados_itens` |
+| `trigger` | `public.upd_pp` | `pedidos_programados` |
+| `trigger` | `public.upd_pp_envios` | `pedidos_programados_envios` |
+| `trigger` | `public.upd_pp_itens` | `pedidos_programados_itens` |
+| `trigger` | `public.upd_pp_mapa` | `cliente_item_mapa` |
+| `trigger` | `public.upd_pp_config` | `pedidos_programados_config` |
+| `rls_policy` | `public.pp_staff_all` | `pedidos_programados` |
+| `rls_policy` | `public.pp_envios_staff_all` | `pedidos_programados_envios` |
+| `rls_policy` | `public.pp_itens_staff_all` | `pedidos_programados_itens` |
+| `rls_policy` | `public.pp_mapa_staff_all` | `cliente_item_mapa` |
+| `rls_policy` | `public.pp_config_staff_all` | `pedidos_programados_config` |
+| `rls_policy` | `storage.pp_storage_staff_select` | `objects` |
+| `rls_policy` | `storage.pp_storage_staff_insert` | `objects` |
+| `rls_policy` | `storage.pp_storage_staff_delete` | `objects` |
+
+### `20260703091000_pedidos_programados_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.pedidos-programados-diario` | — |
+
+### `20260703140000_trava_credito_gate_excecao_por_par.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_gate_credito` | — |
 
 ## Próximos passos por status
 

@@ -233,6 +233,13 @@ async function processarEnvio(
       });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok || body?.error) throw new Error(`criar_pedido ${account} falhou: ${body?.error ?? resp.status}`);
+      // Trava de crédito (Fase 2): recusa estruturada vem como 200 {success:false, blocked}
+      // SEM body.error — tratar como sucesso marcaria 'enviado' sem PV no Omie.
+      if (body?.success === false) {
+        throw new Error(body?.blocked === "credito"
+          ? `criar_pedido ${account} bloqueado por crédito (inadimplência 60+) — aprovar exceção no detalhe do pedido em /sales e usar "Enviar agora"`
+          : `criar_pedido ${account} recusado sem detalhe (success=false)`);
+      }
       sucessos.push(account);
     } catch (e) {
       erros.push(e instanceof Error ? e.message : String(e));

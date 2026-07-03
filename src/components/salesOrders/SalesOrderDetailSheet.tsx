@@ -1,11 +1,13 @@
 // Painel lateral (read-only) com o conteúdo de um pedido de venda.
 // Abre ao clicar no card da listagem — ver itens/valores/observações sem sair
 // da lista, e disparar Imprimir / Compartilhar / Editar.
+import { useState } from 'react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Printer, Share2, Pencil, Loader2, RotateCcw } from 'lucide-react';
+import { Printer, Share2, Pencil, Loader2, RotateCcw, ShieldAlert } from 'lucide-react';
 import { formatarDataPedido } from '@/lib/pedido/data-pedido';
+import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoDialog';
 import { statusDoPedido, type SalesOrder } from './types';
 import { itemTotal } from './print';
 
@@ -44,6 +46,10 @@ export function SalesOrderDetailSheet({
   const accountLabel =
     order?.account === 'colacor_sc' ? 'Colacor SC' : order?.account === 'colacor' ? 'Colacor' : 'Oben';
   const pv = order?.omie_numero_pedido ? order.omie_numero_pedido.replace(/^0+/, '') || '0' : null;
+  // Trava de crédito (Fase 2): ponto de aprovação do gestor FORA do wizard — a
+  // vendedora manda o resumo (WhatsApp), o gestor abre o pedido aqui e aprova.
+  const [excecaoOpen, setExcecaoOpen] = useState(false);
+  const contaComGate = order?._source !== 'afiacao' && (order?.account === 'oben' || order?.account === 'colacor');
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
@@ -152,12 +158,33 @@ export function SalesOrderDetailSheet({
                 <Share2 className="w-4 h-4" />
                 Compartilhar
               </Button>
+              {contaComGate && (
+                <Button
+                  variant="outline"
+                  onClick={() => setExcecaoOpen(true)}
+                  className="gap-2"
+                  title="Exceção de crédito (pedido travado pelo gate)"
+                >
+                  <ShieldAlert className="w-4 h-4" />
+                </Button>
+              )}
               {canEditStatus(order.status) && (
                 <Button variant="outline" onClick={onEdit} className="gap-2" title="Editar pedido">
                   <Pencil className="w-4 h-4" />
                 </Button>
               )}
             </div>
+
+            {/* Monta SÓ quando aberto: o dialog puxa auth/lente/react-query — montar
+                fechado exigiria providers em todo teste/uso do sheet. */}
+            {contaComGate && excecaoOpen && (
+              <ExcecaoCreditoDialog
+                open={excecaoOpen}
+                onOpenChange={setExcecaoOpen}
+                salesOrderId={order.id}
+                nomeCliente={customerName}
+              />
+            )}
           </>
         )}
       </SheetContent>

@@ -20,6 +20,8 @@ import { useOfflineSubmit } from '@/hooks/useOfflineSubmit';
 import { RestoreDraftDialog } from '@/components/unified-order/RestoreDraftDialog';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { AlertaCreditoCliente } from '@/components/unified-order/AlertaCreditoCliente';
+import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoDialog';
+import type { BloqueioCreditoPedido } from '@/services/orderSubmission';
 import { CoresDoClienteCard } from '@/components/unified-order/CoresDoClienteCard';
 import { useCoresDoCliente } from '@/hooks/unifiedOrder/useCoresDoCliente';
 import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
@@ -86,6 +88,8 @@ const UnifiedOrder = () => {
   // "Cores do cliente": histórico de cores + pré-preenchimento do dialog de tingir.
   const coresDoCliente = useCoresDoCliente(h.customerUserId);
   const [tintInitialSearch, setTintInitialSearch] = useState<string | null>(null);
+  // Trava de crédito (Fase 2): bloqueio selecionado no painel de resultado → dialog de exceção.
+  const [excecaoBloqueio, setExcecaoBloqueio] = useState<BloqueioCreditoPedido | null>(null);
   const handleRepetirCor = (cor: CorDoCliente, oc: OcorrenciaCor) => {
     const pool = oc.account === 'colacor' ? h.colacorProducts : h.obenProducts;
     const product =
@@ -502,6 +506,20 @@ const UnifiedOrder = () => {
           }}
           returnTo={returnTo}
           onVoltarFila={() => { h.setOrderSuccessOpen(false); if (returnTo) h.navigate(returnTo); }}
+          bloqueiosCredito={h.bloqueiosCredito}
+          onResolverBloqueio={(b) => { h.setOrderSuccessOpen(false); setExcecaoBloqueio(b); }}
+        />
+      )}
+
+      {excecaoBloqueio && (
+        <ExcecaoCreditoDialog
+          open={!!excecaoBloqueio}
+          onOpenChange={(o) => { if (!o) setExcecaoBloqueio(null); }}
+          salesOrderId={excecaoBloqueio.salesOrderId}
+          bloqueio={excecaoBloqueio}
+          // Exceção criada: fecha e deixa o vendedor no wizard — o carrinho/checkout foram
+          // preservados (allConfirmed=false), então o botão Enviar reusa o MESMO pedido.
+          onExcecaoCriada={() => setExcecaoBloqueio(null)}
         />
       )}
 

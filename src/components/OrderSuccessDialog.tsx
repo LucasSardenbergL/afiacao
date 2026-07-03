@@ -1,9 +1,11 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { CheckCircle, Share2, Eye, Printer, ArrowLeft } from 'lucide-react';
+import { CheckCircle, Share2, Eye, Printer, ArrowLeft, ShieldAlert } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { openPrintOrder, type PrintOrderData } from '@/components/OrderPrintLayout';
+import { formatBRL } from '@/lib/reposicao';
+import type { BloqueioCreditoPedido } from '@/services/orderSubmission';
 
 interface OrderSuccessDialogProps {
   open: boolean;
@@ -17,6 +19,10 @@ interface OrderSuccessDialogProps {
   printDataList?: PrintOrderData[];
   returnTo?: string | null;
   onVoltarFila?: () => void;
+  /** Contas travadas pela trava de crédito (Fase 2) — o PV NÃO foi criado no Omie. */
+  bloqueiosCredito?: BloqueioCreditoPedido[];
+  /** Abre o fluxo de exceção (gestor aprova / vendedor leva ao gestor). */
+  onResolverBloqueio?: (b: BloqueioCreditoPedido) => void;
 }
 
 export function OrderSuccessDialog({
@@ -31,6 +37,8 @@ export function OrderSuccessDialog({
   printDataList,
   returnTo,
   onVoltarFila,
+  bloqueiosCredito,
+  onResolverBloqueio,
 }: OrderSuccessDialogProps) {
   const handlePrint = () => {
     if (!printDataList || printDataList.length === 0) return;
@@ -40,13 +48,21 @@ export function OrderSuccessDialog({
     });
   };
 
+  const temBloqueio = (bloqueiosCredito?.length ?? 0) > 0;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-2 mb-2">
-            <CheckCircle className="w-6 h-6 text-primary" />
-            <DialogTitle>Pedido criado com sucesso!</DialogTitle>
+            {temBloqueio ? (
+              <ShieldAlert className="w-6 h-6 text-status-error" />
+            ) : (
+              <CheckCircle className="w-6 h-6 text-primary" />
+            )}
+            <DialogTitle>
+              {temBloqueio ? 'Pedido salvo — envio bloqueado por crédito' : 'Pedido criado com sucesso!'}
+            </DialogTitle>
           </div>
         </DialogHeader>
 
@@ -55,6 +71,39 @@ export function OrderSuccessDialog({
             <p className="text-sm text-muted-foreground">Cliente</p>
             <p className="font-medium">{customerName}</p>
           </div>
+
+          {temBloqueio && (
+            <div className="space-y-2">
+              {bloqueiosCredito!.map((b) => (
+                <div
+                  key={b.salesOrderId}
+                  className="bg-status-error/10 border border-status-error/30 rounded-lg p-3 text-xs space-y-2"
+                  data-testid="bloqueio-credito-pedido"
+                >
+                  <p className="font-semibold text-status-error">
+                    PV {b.account === 'oben' ? 'Oben' : 'Colacor'} NÃO criado no Omie
+                    {typeof b.vencido === 'number' && (
+                      <> — {formatBRL(b.vencido)} vencido há 60+ dias{b.titulos ? ` (${b.titulos} título${b.titulos > 1 ? 's' : ''})` : ''}</>
+                    )}
+                  </p>
+                  <p className="text-muted-foreground">
+                    O pedido ficou salvo. Um gestor pode aprovar uma exceção para ESTE pedido — depois é só reenviar.
+                  </p>
+                  {onResolverBloqueio && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => onResolverBloqueio(b)}
+                    >
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                      Exceção de crédito
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {orderNumbers.length > 0 && (
             <div>

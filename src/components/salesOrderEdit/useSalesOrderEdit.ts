@@ -282,9 +282,19 @@ export function useSalesOrderEdit() {
             observacao: notes,
             codigo_parcela: selectedParcela || undefined,
           },
-        }).then(({ error }) => {
+        }).then(({ data, error }) => {
           if (error) {
             toast.error('Erro ao sincronizar com Omie: ' + (error.message || 'Erro desconhecido'));
+          } else if ((data as { blocked?: string } | null)?.blocked === 'credito') {
+            // Trava Fase 2 (edge devolve 200 estruturado): o gate barrou o AUMENTO —
+            // o Omie NÃO foi atualizado e o pedido local ficou à frente. Nunca
+            // "sincronizado com sucesso" aqui.
+            toast.error('Edição bloqueada por crédito — o Omie NÃO foi atualizado', {
+              description:
+                'Aumento de valor para cliente com vencido 60+ exige exceção de gestor ' +
+                '(Pedidos → abrir o pedido → botão Crédito). Após aprovar, salve o pedido de novo.',
+              duration: 12000,
+            });
           } else {
             toast.success('Pedido sincronizado com o Omie com sucesso!');
           }

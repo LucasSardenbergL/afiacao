@@ -11,7 +11,8 @@ import { useCart, VOLUME_UNITS } from '@/hooks/unifiedOrder/useCart';
 import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection';
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService } from '@/services/orderSubmission';
-import type { LastOrderDataShape } from '@/services/orderSubmission';
+import type { LastOrderDataShape, BloqueioCreditoPedido } from '@/services/orderSubmission';
+import { track } from '@/lib/analytics';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import { DeliveryOption } from '@/types';
 import type { AIOrderResult, AICustomerMatch } from '@/components/UnifiedAIAssistant';
@@ -196,6 +197,9 @@ export function useUnifiedOrder() {
   // Order success dialog
   const [orderSuccessOpen, setOrderSuccessOpen] = useState(false);
   const [lastOrderData, setLastOrderData] = useState<LastOrderDataShape | null>(null);
+  // Contas travadas pela trava de crédito no ÚLTIMO envio (Fase 2) — alimenta o
+  // painel de bloqueio do dialog de resultado e o fluxo de exceção.
+  const [bloqueiosCredito, setBloqueiosCredito] = useState<BloqueioCreditoPedido[]>([]);
 
   // Pricing engine (calc-only, no customer dependency)
   const { loadDefaultPrices, calculatePrice } = usePricingEngine();
@@ -747,10 +751,22 @@ export function useUnifiedOrder() {
       if (result.success && result.lastOrderData) {
         setLastOrderData(result.lastOrderData);
         setOrderSuccessOpen(true);
+        const bloqueios = result.bloqueiosCredito ?? [];
+        setBloqueiosCredito(bloqueios);
+        for (const b of bloqueios) {
+          track('venda.bloqueio_credito_exibido', {
+            account: b.account, vencido: b.vencido, titulos: b.titulos,
+          });
+        }
         if (result.allConfirmed) {
           clearCart();
           setNotes('');
           checkoutEnvRef.current = null; persistCheckoutEnv(null); // sucesso TOTAL → próximo pedido = novo envelope
+        } else if (bloqueios.length > 0) {
+          // Trava de crédito: mensagem específica — "parcialmente enviado" esconderia a causa.
+          toast.warning('Envio bloqueado por crédito', {
+            description: 'O PV não foi criado no Omie. Um gestor pode aprovar uma exceção para este pedido — depois é só reenviar.',
+          });
         } else {
           // Sucesso PARCIAL: NÃO limpar o carrinho nem resetar o envelope — o retry (mesma fp)
           // reusa a MESMA linha/chave e não duplica a conta de PRODUTO já enviada.
@@ -760,9 +776,12 @@ export function useUnifiedOrder() {
               : 'Alguma conta ficou pendente no ERP. Reenvie — os produtos não duplicam.',
           });
         }
-        if (result.errors.length > 0) {
+        // Avisos não-bloqueio: "criado com avisos". Bloqueio de crédito fica FORA deste
+        // toast de sucesso (o PV não foi criado — dizê-lo "criado" seria mentira).
+        const avisos = result.errors.filter(e => !e.step.startsWith('bloqueio_credito'));
+        if (avisos.length > 0) {
           toast.success('Pedido criado com avisos', {
-            description: result.errors.map(e => e.message).join(' | '),
+            description: avisos.map(e => e.message).join(' | '),
           });
         }
       } else {
@@ -843,7 +862,7 @@ export function useUnifiedOrder() {
     handleAddRecommendation, handleStaffAddTool,
     submitOrder, submitQuote, loadUserTools,
     // Order success
-    orderSuccessOpen, setOrderSuccessOpen, lastOrderData,
+    orderSuccessOpen, setOrderSuccessOpen, lastOrderData, bloqueiosCredito,
     // Navigate
     navigate,
   };

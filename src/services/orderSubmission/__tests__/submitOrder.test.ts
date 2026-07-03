@@ -341,6 +341,69 @@ describe('submitOrder', () => {
     expect(body.codigo_vendedor).toBe(6);    // colacor, não 5 (oben)
   });
 
+  it('trava de crédito Oben: edge devolve blocked → degrada honesto (results/errors/allConfirmed/bloqueiosCredito)', async () => {
+    const { client } = makeSupabase({
+      insertId: 'so-oben',
+      invokeImpl: () => ({
+        data: { success: false, blocked: 'credito', gate: { vencido: 1234.56, titulos: 3, motivo: 'vencido_60d_sem_excecao' } },
+        error: null,
+      }),
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.success).toBe(true);
+    // NUNCA "parecer enviado": o resultado nomeia o bloqueio e o erro carrega a instrução.
+    expect(r.results).toContain('PV Oben (bloqueado: crédito)');
+    expect(r.results.some((s) => /PV Oben \d/.test(s))).toBe(false);
+    expect(r.errors.some((e) => e.step === 'bloqueio_credito_oben')).toBe(true);
+    // Bloqueio ≠ confirmação → carrinho/checkout preservados p/ reenviar após a exceção.
+    expect(r.allConfirmed).toBe(false);
+    // Contexto estruturado p/ a UI de exceção (por PEDIDO).
+    expect(r.bloqueiosCredito).toEqual([
+      expect.objectContaining({
+        account: 'oben', salesOrderId: 'so-oben', omieCodigoCliente: 100,
+        nomeCliente: 'ACME', vencido: 1234.56, titulos: 3,
+      }),
+    ]);
+  });
+
+  it('trava de crédito Colacor: bloqueado NÃO cria ordem de produção (o PV não existe)', async () => {
+    const { client, invoke } = makeSupabase({
+      insertId: 'so-col',
+      invokeImpl: (body) => body.action === 'criar_pedido'
+        ? { data: { success: false, blocked: 'credito', gate: { vencido: 500, titulos: 1 } }, error: null }
+        : { data: { ok: true }, error: null },
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [], colacorProductItems: [colacorAcabado()], serviceItems: [] },
+      subtotals: { oben: 0, colacor: 50, service: 0 },
+      defaultProductionAssigneeId: 'assignee-1',
+    }));
+    expect(r.results).toContain('PV Colacor (bloqueado: crédito)');
+    expect(r.errors.some((e) => e.step === 'bloqueio_credito_colacor')).toBe(true);
+    expect(r.bloqueiosCredito?.[0]).toMatchObject({ account: 'colacor', omieCodigoCliente: 200 });
+    // Invariante: sem PV não pode nascer OP de produto acabado.
+    const opCalls = invoke.mock.calls.filter(
+      (c) => (c[1] as { body: { action?: string } }).body.action === 'criar_ordem_producao',
+    );
+    expect(opCalls).toHaveLength(0);
+  });
+
+  it('gate ausente no payload (edge antigo/sucesso normal) → bloqueiosCredito vazio', async () => {
+    const { client } = makeSupabase({ insertId: 'so-oben' });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    expect(r.bloqueiosCredito).toEqual([]);
+    expect(r.allConfirmed).toBe(true);
+  });
+
   it('produto com preço 0 → bloqueia (validate_price) ANTES de qualquer insert/Omie', async () => {
     const { client, insert, invoke } = makeSupabase();
     const zerado = { ...obenItem(), unit_price: 0 } as ProductCartItem;
