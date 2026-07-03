@@ -17162,6 +17162,10 @@ export type Database = {
         Args: { p_empresa: string; p_sku: string }
         Returns: Json
       }
+      venda_gate_credito: {
+        Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
+        Returns: Json
+      }
       vendas_sync_finish: {
         Args: {
           p_account: string
