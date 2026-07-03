@@ -734,6 +734,44 @@ export type Database = {
         }
         Relationships: []
       }
+      cliente_item_mapa: {
+        Row: {
+          cliente_ref: string
+          codigo_item_cliente: string
+          created_at: string
+          id: string
+          omie_product_id: string
+          ultimo_preco: number | null
+          updated_at: string
+        }
+        Insert: {
+          cliente_ref?: string
+          codigo_item_cliente: string
+          created_at?: string
+          id?: string
+          omie_product_id: string
+          ultimo_preco?: number | null
+          updated_at?: string
+        }
+        Update: {
+          cliente_ref?: string
+          codigo_item_cliente?: string
+          created_at?: string
+          id?: string
+          omie_product_id?: string
+          ultimo_preco?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cliente_item_mapa_omie_product_id_fkey"
+            columns: ["omie_product_id"]
+            isOneToOne: false
+            referencedRelation: "omie_products"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cmc_ledger: {
         Row: {
           account: string
@@ -8134,6 +8172,198 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_des_pedidos_em_transito"
             referencedColumns: ["pedido_id"]
+          },
+        ]
+      }
+      pedidos_programados: {
+        Row: {
+          arquivo_path: string
+          cliente_ref: string
+          created_at: string
+          created_by: string
+          data_emissao_cliente: string | null
+          erro_motivo: string | null
+          extracao_bruta: Json | null
+          id: string
+          numero_pedido_compra: string | null
+          status: string
+          updated_at: string
+          versao: string | null
+        }
+        Insert: {
+          arquivo_path: string
+          cliente_ref?: string
+          created_at?: string
+          created_by: string
+          data_emissao_cliente?: string | null
+          erro_motivo?: string | null
+          extracao_bruta?: Json | null
+          id?: string
+          numero_pedido_compra?: string | null
+          status?: string
+          updated_at?: string
+          versao?: string | null
+        }
+        Update: {
+          arquivo_path?: string
+          cliente_ref?: string
+          created_at?: string
+          created_by?: string
+          data_emissao_cliente?: string | null
+          erro_motivo?: string | null
+          extracao_bruta?: Json | null
+          id?: string
+          numero_pedido_compra?: string | null
+          status?: string
+          updated_at?: string
+          versao?: string | null
+        }
+        Relationships: []
+      }
+      pedidos_programados_config: {
+        Row: {
+          account: string
+          codigo_cliente_omie: number | null
+          codigo_parcela: string | null
+          customer_user_id: string | null
+          dados_adicionais_nf: string | null
+          obs_venda: string | null
+          updated_at: string
+        }
+        Insert: {
+          account: string
+          codigo_cliente_omie?: number | null
+          codigo_parcela?: string | null
+          customer_user_id?: string | null
+          dados_adicionais_nf?: string | null
+          obs_venda?: string | null
+          updated_at?: string
+        }
+        Update: {
+          account?: string
+          codigo_cliente_omie?: number | null
+          codigo_parcela?: string | null
+          customer_user_id?: string | null
+          dados_adicionais_nf?: string | null
+          obs_venda?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      pedidos_programados_envios: {
+        Row: {
+          created_at: string
+          data_envio: string
+          erro_motivo: string | null
+          id: string
+          pedido_programado_id: string
+          sales_orders_map: Json
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          data_envio: string
+          erro_motivo?: string | null
+          id?: string
+          pedido_programado_id: string
+          sales_orders_map?: Json
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          data_envio?: string
+          erro_motivo?: string | null
+          id?: string
+          pedido_programado_id?: string
+          sales_orders_map?: Json
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pedidos_programados_envios_pedido_programado_id_fkey"
+            columns: ["pedido_programado_id"]
+            isOneToOne: false
+            referencedRelation: "pedidos_programados"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pedidos_programados_itens: {
+        Row: {
+          cod_forn: string | null
+          codigo_item_cliente: string
+          created_at: string
+          data_entrega_cliente: string | null
+          descricao_cliente: string
+          envio_id: string | null
+          id: string
+          mapa_id: string | null
+          num_ordem_cliente: string | null
+          pedido_programado_id: string
+          preco_final: number | null
+          preco_pdf: number | null
+          quantidade: number
+          unidade: string | null
+          updated_at: string
+        }
+        Insert: {
+          cod_forn?: string | null
+          codigo_item_cliente: string
+          created_at?: string
+          data_entrega_cliente?: string | null
+          descricao_cliente: string
+          envio_id?: string | null
+          id?: string
+          mapa_id?: string | null
+          num_ordem_cliente?: string | null
+          pedido_programado_id: string
+          preco_final?: number | null
+          preco_pdf?: number | null
+          quantidade: number
+          unidade?: string | null
+          updated_at?: string
+        }
+        Update: {
+          cod_forn?: string | null
+          codigo_item_cliente?: string
+          created_at?: string
+          data_entrega_cliente?: string | null
+          descricao_cliente?: string
+          envio_id?: string | null
+          id?: string
+          mapa_id?: string | null
+          num_ordem_cliente?: string | null
+          pedido_programado_id?: string
+          preco_final?: number | null
+          preco_pdf?: number | null
+          quantidade?: number
+          unidade?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pedidos_programados_itens_envio_id_fkey"
+            columns: ["envio_id"]
+            isOneToOne: false
+            referencedRelation: "pedidos_programados_envios"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pedidos_programados_itens_mapa_id_fkey"
+            columns: ["mapa_id"]
+            isOneToOne: false
+            referencedRelation: "cliente_item_mapa"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pedidos_programados_itens_pedido_programado_id_fkey"
+            columns: ["pedido_programado_id"]
+            isOneToOne: false
+            referencedRelation: "pedidos_programados"
+            referencedColumns: ["id"]
           },
         ]
       }

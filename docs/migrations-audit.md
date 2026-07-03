@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **320** custom migrations totais
-- **1091** objetos esperados (criados por estas migrations)
+- **324** custom migrations totais
+- **1117** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 318
-  - `rls_policy`: 238
-  - `index`: 196
-  - `table`: 116
-  - `cron_job`: 110
+  - `function`: 319
+  - `rls_policy`: 248
+  - `index`: 199
+  - `table`: 122
+  - `cron_job`: 111
+  - `trigger`: 59
   - `view`: 55
-  - `trigger`: 54
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2654,6 +2654,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.kb_catalisador_links_norm` | `kb_catalisador_links` |
 | `rls_policy` | `public.kb_catalisador_links_select_staff` | `kb_catalisador_links` |
 
+### `20260701120000_fin_balanco_inputs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_balanco_inputs` | — |
+| `rls_policy` | `public.fin_balanco_inputs_select_master` | `fin_balanco_inputs` |
+| `rls_policy` | `public.fin_balanco_inputs_write_master` | `fin_balanco_inputs` |
+
 ### `20260702210000_gov_iniciativas_iceberg.sql`
 
 | Tipo | Objeto | Parent |
@@ -2667,6 +2675,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.gov_iniciativas_update_master_ou_dono` | `gov_iniciativas` |
 | `rls_policy` | `public.gov_iniciativas_delete_master` | `gov_iniciativas` |
 | `rls_policy` | `public.gov_iniciativas_service_all` | `gov_iniciativas` |
+
+### `20260702212000_data_health_estoque_reposicao_fonte_dado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
 
 ### `20260702213000_gov_iniciativas_check_ganhos.sql`
 
@@ -2688,6 +2702,38 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.venda_excecao_service_all` | `venda_excecao_credito` |
 | `rls_policy` | `public.venda_bloqueio_log_select_staff` | `venda_bloqueio_credito_log` |
 | `rls_policy` | `public.venda_bloqueio_log_service_all` | `venda_bloqueio_credito_log` |
+
+### `20260703090000_pedidos_programados.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.pedidos_programados` | — |
+| `table` | `public.pedidos_programados_envios` | — |
+| `table` | `public.cliente_item_mapa` | — |
+| `table` | `public.pedidos_programados_itens` | — |
+| `table` | `public.pedidos_programados_config` | — |
+| `index` | `public.idx_pp_envios_pendentes` | `pedidos_programados_envios` |
+| `index` | `public.idx_pp_itens_pedido` | `pedidos_programados_itens` |
+| `index` | `public.idx_pp_itens_envio` | `pedidos_programados_itens` |
+| `trigger` | `public.upd_pp` | `pedidos_programados` |
+| `trigger` | `public.upd_pp_envios` | `pedidos_programados_envios` |
+| `trigger` | `public.upd_pp_itens` | `pedidos_programados_itens` |
+| `trigger` | `public.upd_pp_mapa` | `cliente_item_mapa` |
+| `trigger` | `public.upd_pp_config` | `pedidos_programados_config` |
+| `rls_policy` | `public.pp_staff_all` | `pedidos_programados` |
+| `rls_policy` | `public.pp_envios_staff_all` | `pedidos_programados_envios` |
+| `rls_policy` | `public.pp_itens_staff_all` | `pedidos_programados_itens` |
+| `rls_policy` | `public.pp_mapa_staff_all` | `cliente_item_mapa` |
+| `rls_policy` | `public.pp_config_staff_all` | `pedidos_programados_config` |
+| `rls_policy` | `storage.pp_storage_staff_select` | `objects` |
+| `rls_policy` | `storage.pp_storage_staff_insert` | `objects` |
+| `rls_policy` | `storage.pp_storage_staff_delete` | `objects` |
+
+### `20260703091000_pedidos_programados_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.pedidos-programados-diario` | — |
 
 ### `20260703140000_trava_credito_gate_excecao_por_par.sql`
 

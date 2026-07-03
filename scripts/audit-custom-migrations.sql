@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 320
+-- Total de custom migrations: 324
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -358,9 +358,13 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260629120000', 'seg_customer_metrics_viewgate', '20260629120000_seg_customer_metrics_viewgate.sql'),
   ('20260629140000', 'reposicao_preco_ausente_null', '20260629140000_reposicao_preco_ausente_null.sql'),
   ('20260629150000', 'kb_catalisador_links', '20260629150000_kb_catalisador_links.sql'),
+  ('20260701120000', 'fin_balanco_inputs', '20260701120000_fin_balanco_inputs.sql'),
   ('20260702210000', 'gov_iniciativas_iceberg', '20260702210000_gov_iniciativas_iceberg.sql'),
+  ('20260702212000', 'data_health_estoque_reposicao_fonte_dado', '20260702212000_data_health_estoque_reposicao_fonte_dado.sql'),
   ('20260702213000', 'gov_iniciativas_check_ganhos', '20260702213000_gov_iniciativas_check_ganhos.sql'),
   ('20260702233000', 'trava_credito_fase2', '20260702233000_trava_credito_fase2.sql'),
+  ('20260703090000', 'pedidos_programados', '20260703090000_pedidos_programados.sql'),
+  ('20260703091000', 'pedidos_programados_cron', '20260703091000_pedidos_programados_cron.sql'),
   ('20260703140000', 'trava_credito_gate_excecao_por_par', '20260703140000_trava_credito_gate_excecao_por_par.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -1420,6 +1424,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_unique_quad', 'kb_catalisador_links'),
   ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_norm', 'kb_catalisador_links'),
   ('kb_catalisador_links', 'rls_policy', 'public', 'kb_catalisador_links_select_staff', 'kb_catalisador_links'),
+  ('fin_balanco_inputs', 'table', 'public', 'fin_balanco_inputs', ''),
+  ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_select_master', 'fin_balanco_inputs'),
+  ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_write_master', 'fin_balanco_inputs'),
   ('gov_iniciativas_iceberg', 'function', 'public', 'gov_iniciativas_set_updated_at', ''),
   ('gov_iniciativas_iceberg', 'table', 'public', 'gov_iniciativas', ''),
   ('gov_iniciativas_iceberg', 'index', 'public', 'idx_gov_iniciativas_empresa_status', 'gov_iniciativas'),
@@ -1429,6 +1436,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_update_master_ou_dono', 'gov_iniciativas'),
   ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_delete_master', 'gov_iniciativas'),
   ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_service_all', 'gov_iniciativas'),
+  ('data_health_estoque_reposicao_fonte_dado', 'function', 'public', '_data_health_compute', ''),
   ('trava_credito_fase2', 'function', 'public', 'venda_excecao_credito_forca_autor', ''),
   ('trava_credito_fase2', 'function', 'public', 'venda_gate_credito', ''),
   ('trava_credito_fase2', 'table', 'public', 'venda_excecao_credito', ''),
@@ -1441,6 +1449,28 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('trava_credito_fase2', 'rls_policy', 'public', 'venda_excecao_service_all', 'venda_excecao_credito'),
   ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_select_staff', 'venda_bloqueio_credito_log'),
   ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_service_all', 'venda_bloqueio_credito_log'),
+  ('pedidos_programados', 'table', 'public', 'pedidos_programados', ''),
+  ('pedidos_programados', 'table', 'public', 'pedidos_programados_envios', ''),
+  ('pedidos_programados', 'table', 'public', 'cliente_item_mapa', ''),
+  ('pedidos_programados', 'table', 'public', 'pedidos_programados_itens', ''),
+  ('pedidos_programados', 'table', 'public', 'pedidos_programados_config', ''),
+  ('pedidos_programados', 'index', 'public', 'idx_pp_envios_pendentes', 'pedidos_programados_envios'),
+  ('pedidos_programados', 'index', 'public', 'idx_pp_itens_pedido', 'pedidos_programados_itens'),
+  ('pedidos_programados', 'index', 'public', 'idx_pp_itens_envio', 'pedidos_programados_itens'),
+  ('pedidos_programados', 'trigger', 'public', 'upd_pp', 'pedidos_programados'),
+  ('pedidos_programados', 'trigger', 'public', 'upd_pp_envios', 'pedidos_programados_envios'),
+  ('pedidos_programados', 'trigger', 'public', 'upd_pp_itens', 'pedidos_programados_itens'),
+  ('pedidos_programados', 'trigger', 'public', 'upd_pp_mapa', 'cliente_item_mapa'),
+  ('pedidos_programados', 'trigger', 'public', 'upd_pp_config', 'pedidos_programados_config'),
+  ('pedidos_programados', 'rls_policy', 'public', 'pp_staff_all', 'pedidos_programados'),
+  ('pedidos_programados', 'rls_policy', 'public', 'pp_envios_staff_all', 'pedidos_programados_envios'),
+  ('pedidos_programados', 'rls_policy', 'public', 'pp_itens_staff_all', 'pedidos_programados_itens'),
+  ('pedidos_programados', 'rls_policy', 'public', 'pp_mapa_staff_all', 'cliente_item_mapa'),
+  ('pedidos_programados', 'rls_policy', 'public', 'pp_config_staff_all', 'pedidos_programados_config'),
+  ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_select', 'objects'),
+  ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_insert', 'objects'),
+  ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_delete', 'objects'),
+  ('pedidos_programados_cron', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
   ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', '')
 ),
 obj_status AS (
@@ -2548,6 +2578,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_unique_quad', 'kb_catalisador_links'),
   ('kb_catalisador_links', 'index', 'public', 'kb_catalisador_links_norm', 'kb_catalisador_links'),
   ('kb_catalisador_links', 'rls_policy', 'public', 'kb_catalisador_links_select_staff', 'kb_catalisador_links'),
+  ('fin_balanco_inputs', 'table', 'public', 'fin_balanco_inputs', ''),
+  ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_select_master', 'fin_balanco_inputs'),
+  ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_write_master', 'fin_balanco_inputs'),
   ('gov_iniciativas_iceberg', 'function', 'public', 'gov_iniciativas_set_updated_at', ''),
   ('gov_iniciativas_iceberg', 'table', 'public', 'gov_iniciativas', ''),
   ('gov_iniciativas_iceberg', 'index', 'public', 'idx_gov_iniciativas_empresa_status', 'gov_iniciativas'),
@@ -2557,6 +2590,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_update_master_ou_dono', 'gov_iniciativas'),
   ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_delete_master', 'gov_iniciativas'),
   ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_service_all', 'gov_iniciativas'),
+  ('data_health_estoque_reposicao_fonte_dado', 'function', 'public', '_data_health_compute', ''),
   ('trava_credito_fase2', 'function', 'public', 'venda_excecao_credito_forca_autor', ''),
   ('trava_credito_fase2', 'function', 'public', 'venda_gate_credito', ''),
   ('trava_credito_fase2', 'table', 'public', 'venda_excecao_credito', ''),
@@ -2569,6 +2603,28 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('trava_credito_fase2', 'rls_policy', 'public', 'venda_excecao_service_all', 'venda_excecao_credito'),
   ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_select_staff', 'venda_bloqueio_credito_log'),
   ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_service_all', 'venda_bloqueio_credito_log'),
+  ('pedidos_programados', 'table', 'public', 'pedidos_programados', ''),
+  ('pedidos_programados', 'table', 'public', 'pedidos_programados_envios', ''),
+  ('pedidos_programados', 'table', 'public', 'cliente_item_mapa', ''),
+  ('pedidos_programados', 'table', 'public', 'pedidos_programados_itens', ''),
+  ('pedidos_programados', 'table', 'public', 'pedidos_programados_config', ''),
+  ('pedidos_programados', 'index', 'public', 'idx_pp_envios_pendentes', 'pedidos_programados_envios'),
+  ('pedidos_programados', 'index', 'public', 'idx_pp_itens_pedido', 'pedidos_programados_itens'),
+  ('pedidos_programados', 'index', 'public', 'idx_pp_itens_envio', 'pedidos_programados_itens'),
+  ('pedidos_programados', 'trigger', 'public', 'upd_pp', 'pedidos_programados'),
+  ('pedidos_programados', 'trigger', 'public', 'upd_pp_envios', 'pedidos_programados_envios'),
+  ('pedidos_programados', 'trigger', 'public', 'upd_pp_itens', 'pedidos_programados_itens'),
+  ('pedidos_programados', 'trigger', 'public', 'upd_pp_mapa', 'cliente_item_mapa'),
+  ('pedidos_programados', 'trigger', 'public', 'upd_pp_config', 'pedidos_programados_config'),
+  ('pedidos_programados', 'rls_policy', 'public', 'pp_staff_all', 'pedidos_programados'),
+  ('pedidos_programados', 'rls_policy', 'public', 'pp_envios_staff_all', 'pedidos_programados_envios'),
+  ('pedidos_programados', 'rls_policy', 'public', 'pp_itens_staff_all', 'pedidos_programados_itens'),
+  ('pedidos_programados', 'rls_policy', 'public', 'pp_mapa_staff_all', 'cliente_item_mapa'),
+  ('pedidos_programados', 'rls_policy', 'public', 'pp_config_staff_all', 'pedidos_programados_config'),
+  ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_select', 'objects'),
+  ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_insert', 'objects'),
+  ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_delete', 'objects'),
+  ('pedidos_programados_cron', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
   ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', '')
 )
 SELECT
