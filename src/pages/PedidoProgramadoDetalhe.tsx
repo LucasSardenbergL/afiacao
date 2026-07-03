@@ -1,10 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
-import { ChevronLeft, Loader2, Send, XCircle } from 'lucide-react';
+import { ChevronLeft, Loader2, Send, Trash2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   usePedidoProgramadoDetalhe,
@@ -28,7 +33,7 @@ const PedidoProgramadoDetalhe = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { data, isPending } = usePedidoProgramadoDetalhe(id);
-  const { atualizarItem, mapearItem, criarEnvio, cancelarEnvio, enviarAgora } = usePedidosProgramadosMutations(id);
+  const { atualizarItem, mapearItem, criarEnvio, cancelarEnvio, cancelarPedido, enviarAgora } = usePedidosProgramadosMutations(id);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [dataEnvio, setDataEnvio] = useState('');
 
@@ -177,6 +182,31 @@ const PedidoProgramadoDetalhe = () => {
           </p>
         </div>
         <Badge variant="outline">{pedido.status}</Badge>
+        {(pedido.status === 'ativo' || pedido.status === 'erro_extracao') && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-status-error">
+                <Trash2 className="w-3.5 h-3.5 mr-1" />Cancelar pedido
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Cancelar este pedido programado?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Uso típico: chegou uma REVISÃO do PC (VERSAO nova) e este ficou obsoleto.
+                  Envios apenas agendados serão cancelados junto; envio já enviado ou com erro
+                  bloqueia o cancelamento (resolva-o antes).
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Voltar</AlertDialogCancel>
+                <AlertDialogAction onClick={() => cancelarPedido.mutate()}>
+                  Cancelar pedido
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
       </div>
 
       {/* Pool de itens pendentes (cada um com a data de entrega do cliente) */}

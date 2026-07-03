@@ -323,6 +323,39 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
     onError: (e: Error) => { invalidar(); toast.error(e.message); },
   });
 
+  const cancelarPedido = useMutation({
+    mutationFn: async () => {
+      // Cancela o PEDIDO (header) — fluxo de revisão de PDF (VERSAO nova substitui a antiga).
+      // Guard: qualquer envio 'enviado' ou 'erro' (pode ter parcial no Omie) bloqueia;
+      // envios 'agendado' são cancelados junto (itens voltam ao pool e morrem com o header).
+      const { data: envios, error: envErr } = await t('pedidos_programados_envios')
+        .select('id, status').eq('pedido_programado_id', pedidoId!);
+      if (envErr) throw envErr;
+      const rows = (envios ?? []) as unknown as Array<{ id: string; status: string }>;
+      const travado = rows.find((e) => e.status === 'enviado' || e.status === 'erro');
+      if (travado) {
+        throw new Error(
+          `Há envio ${travado.status} neste pedido — resolva-o (Omie/Enviar agora) antes de cancelar o pedido.`,
+        );
+      }
+      const agendados = rows.filter((e) => e.status === 'agendado').map((e) => e.id);
+      if (agendados.length > 0) {
+        const { error: e1 } = await t('pedidos_programados_itens')
+          .update({ envio_id: null } as never).in('envio_id', agendados);
+        if (e1) throw e1;
+        const { error: e2 } = await t('pedidos_programados_envios')
+          .update({ status: 'cancelado' } as never).in('id', agendados);
+        if (e2) throw e2;
+      }
+      const { error: e3 } = await t('pedidos_programados')
+        .update({ status: 'cancelado' } as never).eq('id', pedidoId!);
+      if (e3) throw e3;
+      track('pedidos_programados.cancelar_pedido');
+    },
+    onSuccess: () => { invalidar(); toast.success('Pedido programado cancelado.'); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const salvarConfig = useMutation({
     mutationFn: async (cfg: PedidoProgramadoConfig) => {
       const { error } = await t('pedidos_programados_config').upsert(cfg as never, { onConflict: 'account' });
@@ -335,5 +368,5 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  return { uploadPdf, atualizarItem, mapearItem, criarEnvio, cancelarEnvio, enviarAgora, salvarConfig };
+  return { uploadPdf, atualizarItem, mapearItem, criarEnvio, cancelarEnvio, cancelarPedido, enviarAgora, salvarConfig };
 }
