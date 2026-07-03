@@ -334,7 +334,7 @@ git commit -m "feat(pedidos-programados): helpers puros (validação de envio/ex
 ### Task 2: Migration — tabelas, RLS, bucket, seed
 
 **Files:**
-- Create: `supabase/migrations/20260702120000_pedidos_programados.sql`
+- Create: `supabase/migrations/20260703090000_pedidos_programados.sql`
 
 ⚠️ Antes: `ls supabase/migrations/ | sort | tail -3` e conferir que não há timestamp colidindo com worktree paralela (`git fetch origin main && git log origin/main --oneline -5 -- supabase/migrations/`).
 
@@ -489,7 +489,7 @@ Nota: o bloco 4 (`cliente_item_mapa`) precisa vir ANTES do 3 na versão final do
 - [ ] **Step 2.2: Commit**
 
 ```bash
-git add supabase/migrations/20260702120000_pedidos_programados.sql
+git add supabase/migrations/20260703090000_pedidos_programados.sql
 git commit -m "feat(pedidos-programados): migration — tabelas, RLS staff-only, bucket e seed da config Lider"
 ```
 
@@ -527,7 +527,7 @@ CREATE TABLE IF NOT EXISTS storage.objects (id uuid DEFAULT gen_random_uuid(), b
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 SQL
 
-P -q -f "$REPO_ROOT/supabase/migrations/20260702120000_pedidos_programados.sql"
+P -q -f "$REPO_ROOT/supabase/migrations/20260703090000_pedidos_programados.sql"
 
 # Seed: 1 staff (employee), 1 customer, 1 produto, 1 pedido+item
 P -q <<'SQL'
@@ -594,7 +594,7 @@ Expected: exit=0, `FAIL=0`.
 - [ ] **Step 3.3: FALSIFICAR** — sabotar e exigir vermelho
 
 Comentar temporariamente a linha `ALTER TABLE public.pedidos_programados ENABLE ROW LEVEL SECURITY;` na migration, rodar de novo:
-Expected: exit=1 (o teste "customer SELECT header = 0" deve FALHAR — prova que o teste morde). Reverter a sabotagem (`git checkout -- supabase/migrations/20260702120000_pedidos_programados.sql`) e rodar mais uma vez: exit=0.
+Expected: exit=1 (o teste "customer SELECT header = 0" deve FALHAR — prova que o teste morde). Reverter a sabotagem (`git checkout -- supabase/migrations/20260703090000_pedidos_programados.sql`) e rodar mais uma vez: exit=0.
 
 - [ ] **Step 3.4: Commit**
 
@@ -1096,7 +1096,7 @@ git commit -m "feat(pedidos-programados): edge de envio (cron+manual) — valida
 ### Task 7: Cron diário
 
 **Files:**
-- Create: `supabase/migrations/20260702121000_pedidos_programados_cron.sql`
+- Create: `supabase/migrations/20260703091000_pedidos_programados_cron.sql`
 
 - [ ] **Step 7.1: Escrever a migration do cron**
 
@@ -1125,7 +1125,7 @@ SELECT cron.schedule(
 - [ ] **Step 7.2: Commit**
 
 ```bash
-git add supabase/migrations/20260702121000_pedidos_programados_cron.sql
+git add supabase/migrations/20260703091000_pedidos_programados_cron.sql
 git commit -m "feat(pedidos-programados): cron diário 06h BRT (timeout explícito, vault)"
 ```
 
@@ -2040,7 +2040,7 @@ EOF
 - [ ] **Step 12.4: Handoff de deploy — usar as skills `lovable-db-operator` e `lovable-deploy-verify`**
 
 Checklist do founder (pós-merge):
-1. **Migrations no SQL Editor** (ordem): `20260702120000_pedidos_programados.sql` → validar (`select * from pedidos_programados_config;` deve mostrar oben com 8689689628) → `20260702121000_pedidos_programados_cron.sql` → validar (`select jobname from cron.job where jobname='pedidos-programados-diario';`).
+1. **Migrations no SQL Editor** (ordem): `20260703090000_pedidos_programados.sql` → validar (`select * from pedidos_programados_config;` deve mostrar oben com 8689689628) → `20260703091000_pedidos_programados_cron.sql` → validar (`select jobname from cron.job where jobname='pedidos-programados-diario';`).
 2. **Edges via chat do Lovable** (verbatim do repo): `pedido-programado-extrair` (nova), `pedido-programado-enviar` (nova), `omie-vendas-sync` (atualizada). Conferir `ANTHROPIC_API_KEY` setada nos secrets do projeto.
 3. **Publish do frontend** + verificação por bytes (skill `lovable-deploy-verify`, string-alvo: `"Pedidos programados"`).
 

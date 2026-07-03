@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║  HARNESS PG17 — PROVA da 20260702120000_pedidos_programados (money-path)      ║
+# ║  HARNESS PG17 — PROVA da 20260703090000_pedidos_programados (money-path)      ║
 # ║   bash db/test-pedidos-programados.sh > /tmp/pp-sql.log 2>&1; echo "exit=$?"  ║
 # ║  5 tabelas staff-only (RLS) + bucket privado + seed de config por empresa.    ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -89,7 +89,7 @@ ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 SQL
 
 # ════════ ZONA 2 — aplicar a migration REAL (arquivo, sem copiar/colar) ════════
-MIG="$REPO_ROOT/supabase/migrations/20260702120000_pedidos_programados.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260703090000_pedidos_programados.sql"
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
@@ -98,6 +98,7 @@ STAFF="33333333-3333-3333-3333-333333333333"
 CUST="44444444-4444-4444-4444-444444444444"
 PP_ID="55555555-5555-5555-5555-555555555555"
 PRODUTO_ID="a1111111-1111-1111-1111-111111111111"
+ITEM_SEED="66666666-6666-6666-6666-666666666666"
 P -q <<SQL
 INSERT INTO public.user_roles VALUES
   ('$STAFF','employee'),
@@ -110,6 +111,11 @@ INSERT INTO public.pedidos_programados
   (id, cliente_ref, arquivo_path, numero_pedido_compra, status, created_by)
 VALUES
   ('$PP_ID', 'lider', 'pedidos-programados/lider/2026-07-02.pdf', 'PC-9001', 'ativo', '$STAFF');
+
+INSERT INTO public.pedidos_programados_itens
+  (id, pedido_programado_id, codigo_item_cliente, descricao_cliente, quantidade)
+VALUES
+  ('$ITEM_SEED', '$PP_ID', 'ITEM-SEED', 'Item seed p/ UPDATE staff (R9)', 5);
 SQL
 echo "seed: pedido_programado=$PP_ID criado por staff=$STAFF; customer=$CUST"
 
@@ -168,6 +174,23 @@ VALUES ('$PP_ID', current_date + 1)
 RETURNING id;
 ")
 if [ -n "$ENVIO_ID" ]; then ok "R6 staff INSERT pedidos_programados_envios OK (id=$ENVIO_ID)"; else bad "R6 staff INSERT pedidos_programados_envios falhou"; fi
+P -q -c "RESET ROLE;" >/dev/null
+
+# R7 — customer UPDATE afeta 0 linhas (RLS esconde as linhas; sem erro, sem efeito)
+eq "R7 customer UPDATE pedidos_programados afeta 0 linhas" \
+  "$(Pq -c "SET ROLE authenticated; SET test.uid='$CUST'; WITH upd AS (UPDATE public.pedidos_programados SET erro_motivo='hack' RETURNING 1) SELECT count(*) FROM upd;")" "0"
+P -q -c "RESET ROLE;" >/dev/null
+
+# R8 — customer DELETE afeta 0 linhas
+eq "R8 customer DELETE pedidos_programados_itens afeta 0 linhas" \
+  "$(Pq -c "SET ROLE authenticated; SET test.uid='$CUST'; WITH del AS (DELETE FROM public.pedidos_programados_itens RETURNING 1) SELECT count(*) FROM del;")" "0"
+P -q -c "RESET ROLE;" >/dev/null
+
+# R9 — staff UPDATE em itens (exercita o ramo WITH CHECK do FOR ALL numa linha existente)
+eq "R9 staff UPDATE preco_final em item afeta 1 linha" \
+  "$(Pq -c "SET ROLE authenticated; SET test.uid='$STAFF'; WITH upd AS (UPDATE public.pedidos_programados_itens SET preco_final = 12.5 WHERE id = '$ITEM_SEED' RETURNING 1) SELECT count(*) FROM upd;")" "1"
+eq "R9b valor persistido (12.5)" \
+  "$(Pq -c "SET ROLE authenticated; SET test.uid='$STAFF'; SELECT preco_final FROM public.pedidos_programados_itens WHERE id = '$ITEM_SEED';")" "12.5"
 P -q -c "RESET ROLE;" >/dev/null
 
 # ════════ ZONA 5 — asserts de constraint (superuser, RESET ROLE) ════════
@@ -271,18 +294,28 @@ eq "S2 config colacor existe com codigo NULL" \
 eq "S3 bucket pedidos-programados existe com public=false" \
   "$(Pq -c "SELECT public FROM storage.buckets WHERE id='pedidos-programados';")" "f"
 
+# S4/S5 — RLS da config (tabela mais sensível: código Omie + user do cliente)
+eq "S4 customer SELECT pedidos_programados_config count=0" \
+  "$(Pq -c "SET ROLE authenticated; SET test.uid='$CUST'; SELECT count(*) FROM public.pedidos_programados_config;")" "0"
+P -q -c "RESET ROLE;" >/dev/null
+eq "S5 staff SELECT pedidos_programados_config count=2" \
+  "$(Pq -c "SET ROLE authenticated; SET test.uid='$STAFF'; SELECT count(*) FROM public.pedidos_programados_config;")" "2"
+P -q -c "RESET ROLE;" >/dev/null
+
 # ════════ ZONA 7 — falsificação (sabota → exige vermelho → restaura) ════════
 # A migration não é idempotente (CREATE TABLE): não dá pra sabotar/restaurar em cima do
 # banco "prove" já usado nas zonas 1-6 sem recriar tudo. A falsificação roda num banco
 # SEPARADO ("sabota"), aplicando a migration REAL (sabotada via sed) do zero.
 echo "── falsificação ──"
 
-P -q -c "DROP DATABASE IF EXISTS sabota;" >/dev/null
-"$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres sabota
 SB()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d sabota -v ON_ERROR_STOP=1 "$@"; }
 SBq() { SB -qtA "$@"; }
 
-# base idêntica à zona 1-2 (stubs + pré-requisitos), SEM a migration ainda.
+# Recria o banco "sabota" do zero com a base idêntica à zona 1-2 (stubs + pré-requisitos),
+# SEM a migration ainda — cada falsificação (F1, F2) parte de um sabota limpo.
+preparar_sabota() {
+P -q -c "DROP DATABASE IF EXISTS sabota;" >/dev/null
+"$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres sabota
 SB -q -f "$REPO_ROOT/db/stubs-supabase.sql"
 SB -q <<'SQL'
 CREATE OR REPLACE FUNCTION auth.uid()  RETURNS uuid LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.uid',  true), '')::uuid $f$;
@@ -315,6 +348,9 @@ SQL
 SB -q <<SQL
 INSERT INTO public.user_roles VALUES ('$STAFF','employee'), ('$CUST','customer');
 SQL
+}
+
+preparar_sabota
 
 # F1 — RLS é o que barra o customer (R2). Sabota comentando o ENABLE ROW LEVEL SECURITY
 #      de pedidos_programados: sem RLS, customer passa a ver o header (count>0, não 0).
@@ -336,6 +372,18 @@ P -q -c "DROP DATABASE IF EXISTS sabota;" >/dev/null
 eq "F1b migration real (sem sabotagem) → customer segue com count=0 em pedidos_programados" \
   "$(Pq -c "SET ROLE authenticated; SET test.uid='$CUST'; SELECT count(*) FROM public.pedidos_programados;")" "0"
 P -q -c "RESET ROLE;" >/dev/null
+
+# F2 — RLS da config (tabela mais sensível: código Omie + user do cliente) tem dente.
+#      Sabota o ENABLE ROW LEVEL SECURITY da config num sabota limpo: o seed da própria
+#      migration insere 2 linhas; sem RLS o customer passa a vê-las (S4 tem dente).
+#      O "restaurado" desta falsificação é o S4 do banco prove (migration real → count=0).
+preparar_sabota
+sed 's/^ALTER TABLE public\.pedidos_programados_config[[:space:]]*ENABLE ROW LEVEL SECURITY;/-- SABOTADO: &/' "$MIG" > /tmp/sab-pp-config.sql
+SB -q -f /tmp/sab-pp-config.sql
+CONF_SABOTADO=$(SBq -c "SET ROLE authenticated; SET test.uid='$CUST'; SELECT count(*) FROM public.pedidos_programados_config;")
+SB -q -c "RESET ROLE;" >/dev/null
+if [ "$CONF_SABOTADO" = "2" ]; then ok "F2 RLS da config sabotado → customer VÊ as 2 linhas do seed (S4 tem dente)"; else bad "F2 sabotagem da config não mudou a visibilidade → S4 é teatro [veio $CONF_SABOTADO]"; fi
+P -q -c "DROP DATABASE IF EXISTS sabota;" >/dev/null
 
 # ── veredito ──
 echo "──────────────────────────────"

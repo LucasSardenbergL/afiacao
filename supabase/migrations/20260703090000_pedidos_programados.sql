@@ -1,6 +1,12 @@
 -- Pedidos programados (Lider): pool de itens extraídos do PDF do cliente → envios
 -- agendados ao Omie. Spec: docs/superpowers/specs/2026-07-02-pedidos-programados-design.md
 -- Todas as tabelas staff-only (money-path: gera pedido de venda no Omie).
+-- Substitui 20260702120000_pedidos_programados.sql (nunca aplicada em nenhum ambiente):
+-- migration commitada é imutável no repo → correção pós-review entrou como arquivo novo.
+-- Transação única: o SQL Editor do Lovable roda o bloco como script — erro no meio
+-- NÃO pode deixar estado parcial (ex.: tabela sem policy). Todo o DDL aqui é transacional.
+
+BEGIN;
 
 -- ── 1. Header: 1 linha por PDF ──
 CREATE TABLE public.pedidos_programados (
@@ -29,6 +35,7 @@ CREATE TABLE public.pedidos_programados_envios (
   erro_motivo text,
   -- Map account → sales_order_id (jsonb p/ retry idempotente: reusa o MESMO
   -- sales_order → mesma chave PV_${id} no Omie; nunca duplica pedido).
+  -- SINGLE-WRITER: apenas a edge pedido-programado-enviar escreve neste campo.
   sales_orders_map jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -136,3 +143,5 @@ VALUES
    NULL),
   ('colacor', NULL, NULL, NULL, NULL, NULL)
 ON CONFLICT (account) DO NOTHING;
+
+COMMIT;
