@@ -137,7 +137,8 @@ pedidos_programados_envios     -- grupo de itens marcado pelo founder p/ envio n
   data_envio date                  -- escolhida pelo founder
   status text                      -- 'agendado' | 'enviado' | 'erro' | 'cancelado'
   erro_motivo text
-  sales_order_ids uuid[]           -- write-back dos pedidos gerados (1..2, por empresa)
+  sales_orders_map jsonb           -- account → sales_order_id (retry idempotente:
+                                   -- reusa o MESMO sales_order → mesma chave PV_ no Omie)
   timestamps
 
 pedidos_programados_itens      -- 1 linha por item extraído do PDF
@@ -178,7 +179,7 @@ pedidos_programados_config     -- config (founder edita na UI)
   explícito, secret `x-cron-secret`) → edge processadora (`authorizeCronOrStaff`).
 - Sequência por **envio**: revalidar 100% resolvido → separar itens por account →
   criar `sales_orders` → `criar_pedido` (idempotente) → write-back
-  (`sales_order_ids`, `status = 'enviado'`); pedido pai vira `concluido` quando todos
+  (`sales_orders_map`, `status = 'enviado'`); pedido pai vira `concluido` quando todos
   os itens estiverem em envios enviados.
 - Retry natural: falha deixa `status = 'erro'` + motivo; o cron do dia seguinte
   reprocessa com segurança (chave determinística `PV_${sales_order_id}` não duplica
