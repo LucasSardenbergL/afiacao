@@ -6,7 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import { type Company } from '@/contexts/CompanyContext';
 import { supabase } from '@/integrations/supabase/client';
 import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinResumo, type AgingData, type FinDRE } from '@/services/financeiroService';
-import { getProjecaoSnapshotsCockpit, getBalancoInputs, getNcgHistorico, type BalancoInputRow } from '@/services/financeiroV2Service';
+import { getProjecaoSnapshotsCockpit, getBalancoInputs, getNcgNaJanela, type BalancoInputRow } from '@/services/financeiroV2Service';
 import { consolidarCockpit, type CockpitConsolidado } from '@/lib/financeiro/cockpit-consolida-helpers';
 import { classificarFleurietEmpresa, type ClassificacaoFleurietEmpresa } from '@/lib/financeiro/fleuriet-helpers';
 import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
@@ -93,21 +93,22 @@ export function useFinanceiroCockpit() {
         logger.warn('Balanço (Fleuriet) indisponível', { error: e instanceof Error ? e.message : String(e) });
         return {};
       });
-      const desdeISO = new Date(Date.now() - 400 * 86400000).toISOString();
-      const histNcg = await Promise.all(
-        EMPRESAS_COCKPIT.map((co) => getNcgHistorico(co, desdeISO).catch(() => [] as { ncg: number | null; snapshot_at: string }[])),
-      );
-      if (loadId !== loadIdRef.current) return;
       const fleurietMap: Record<string, ClassificacaoFleurietEmpresa> = {};
-      EMPRESAS_COCKPIT.forEach((co, i) => {
+      await Promise.all(EMPRESAS_COCKPIT.map(async (co) => {
         const bal = balancos[co];
+        // Só busca NCG quando há balanço; a janela é ao redor da data_ref (não desde hoje) — assim
+        // um balanço antigo ainda casa com o snapshot da época sem o cap cortar (Codex).
+        const snaps = bal
+          ? await getNcgNaJanela(co, bal.data_ref).catch(() => [] as { ncg: number | null; snapshot_at: string }[])
+          : [];
         fleurietMap[co] = classificarFleurietEmpresa({
           balanco: bal ? { anc: bal.anc, pnc: bal.pnc, pl: bal.pl, data_ref: bal.data_ref } : null,
-          snapshots: histNcg[i],
+          snapshots: snaps,
           receita_liquida_mensal: receitaLiquidaMensal(dr, co),
           hojeMs: Date.now(),
         });
-      });
+      }));
+      if (loadId !== loadIdRef.current) return;
       setFleuriet(fleurietMap);
 
       // Confiabilidade for current month per company

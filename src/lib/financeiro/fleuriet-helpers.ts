@@ -5,7 +5,7 @@
 
 export type Sinal = '+' | '-' | '~0' | null;
 export type StatusCobertura =
-  | 'coberta' | 'descoberta' | 'operacao_financia_giro'
+  | 'coberta' | 'descoberta' | 'operacao_financia_giro' | 'alto_risco'
   | 'fronteira' | 'inconsistente' | 'indisponivel';
 export type TipoFleuriet = 'I' | 'II' | 'III' | 'IV' | 'V' | 'VI' | null;
 
@@ -101,7 +101,12 @@ export function classificarFleuriet(i: { cdg: number | null; ncg: number | null;
     };
   }
 
-  const status: StatusCobertura = sinais.ncg === '-' ? 'operacao_financia_giro' : (gap >= 0 ? 'coberta' : 'descoberta');
+  // Status considera T (tesouraria) e CDG — não só o sinal da NCG. Senão os Tipos V e VI (CDG negativo)
+  // apareceriam como "operação financia o giro" saudável, que é falso conforto (Codex P1).
+  let status: StatusCobertura;
+  if (sinais.t === '-') status = 'descoberta';                             // tesouraria negativa: depende de CP (III/IV/V)
+  else if (sinais.cdg === '-') status = 'alto_risco';                      // Tipo VI: T+ só pela folga do ciclo, CDG negativo
+  else status = sinais.ncg === '-' ? 'operacao_financia_giro' : 'coberta'; // Tipo I / II
   return { ...vazio, gap, cobertura, sinais, tipo, rotulo, status, motivos: [] };
 }
 
@@ -118,7 +123,9 @@ export function escolherSnapshotNaData(i: { snapshots: SnapNcgData[]; dataRef: s
   let melhor: { ncg: number; snapshot_at: string; delta: number; abs: number } | null = null;
   for (const s of i.snapshots) {
     if (s.ncg == null || !Number.isFinite(s.ncg)) continue;
-    const sMs = Date.parse(s.snapshot_at);
+    // ±janela por DATA de calendário (não por horas/fuso): normaliza o snapshot p/ meia-noite UTC da
+    // sua data (o timestamptz vem em UTC do PostgREST), casando com refMs (data_ref à meia-noite UTC).
+    const sMs = Date.parse(s.snapshot_at.slice(0, 10) + 'T00:00:00Z');
     if (!Number.isFinite(sMs)) continue;
     const delta = Math.round((sMs - refMs) / 86400000);
     const abs = Math.abs(delta);

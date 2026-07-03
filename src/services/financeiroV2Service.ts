@@ -712,17 +712,22 @@ export async function getBalancoInputs(companies: Company[]): Promise<Record<str
   return out;
 }
 
-/** Histórico de NCG (cenário realista) por empresa desde uma data ISO, para casar com a data do
- *  balanço. Ordena desc por snapshot_at; cap de 400 linhas (snapshots são diários). */
-export async function getNcgHistorico(company: Company, desdeISO: string): Promise<{ ncg: number | null; snapshot_at: string }[]> {
+/** NCG (cenário realista) numa janela de ±margemDias ao redor da data do balanço — para casar por
+ *  data (a classificação é as-of o balancete). Buscar ao redor da data_ref (não desde hoje) garante
+ *  que balanços antigos achem o snapshot certo sem o cap cortar (Codex). Ordena desc; cap 60. */
+export async function getNcgNaJanela(company: Company, dataRef: string, margemDias = 15): Promise<{ ncg: number | null; snapshot_at: string }[]> {
+  const refMs = Date.parse(dataRef + 'T00:00:00Z');
+  const desde = new Date(refMs - margemDias * 86400000).toISOString();
+  const ate = new Date(refMs + margemDias * 86400000).toISOString();
   const { data, error } = await supabase
     .from('fin_projecao_snapshots')
     .select('ncg, snapshot_at')
     .eq('company', company)
     .eq('cenario', 'realista')
-    .gte('snapshot_at', desdeISO)
+    .gte('snapshot_at', desde)
+    .lte('snapshot_at', ate)
     .order('snapshot_at', { ascending: false })
-    .limit(400);
+    .limit(60);
   if (error) throw error;
   return (data ?? []).map((r) => ({ ncg: r.ncg ?? null, snapshot_at: r.snapshot_at }));
 }

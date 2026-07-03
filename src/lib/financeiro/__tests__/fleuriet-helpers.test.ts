@@ -102,6 +102,23 @@ describe('classificarFleuriet', () => {
     const r = classificarFleuriet({ cdg: 5000, ncg: 4800, materialidade: m });
     expect(r.status).toBe('fronteira'); expect(r.tipo).toBeNull(); expect(r.sinais.t).toBe('~0');
   });
+  it('Tipo V (CDG-,NCG-,T-) NÃO é operacao_financia_giro — falso conforto (Codex P1)', () => {
+    const r = classificarFleuriet({ cdg: -3000, ncg: -1000, materialidade: 500 });
+    // gap = -3000-(-1000) = -2000 → sinais (-,-,-) = Tipo V. NCG<0 não pode pintar de saudável.
+    expect(r.tipo).toBe('V');
+    expect(r.status).toBe('descoberta');
+  });
+  it('Tipo VI (CDG-,NCG-,T+) → alto_risco (vive da folga do ciclo)', () => {
+    const r = classificarFleuriet({ cdg: -1000, ncg: -3000, materialidade: 500 });
+    // gap = -1000-(-3000) = 2000 → sinais (-,-,+) = Tipo VI.
+    expect(r.tipo).toBe('VI');
+    expect(r.status).toBe('alto_risco');
+  });
+  it('Tipo I (CDG+,NCG-,T+) segue operacao_financia_giro (folga real)', () => {
+    const r = classificarFleuriet({ cdg: 5000, ncg: -1000, materialidade: 500 });
+    expect(r.tipo).toBe('I');
+    expect(r.status).toBe('operacao_financia_giro');
+  });
   it('cdg null → indisponivel com motivo', () => {
     const r = classificarFleuriet({ cdg: null, ncg: 2000, materialidade: m });
     expect(r.status).toBe('indisponivel'); expect(r.tipo).toBeNull();
@@ -131,6 +148,14 @@ describe('escolherSnapshotNaData (±7d)', () => {
   it('sem snapshots com ncg → fora_janela', () => {
     const r = escolherSnapshotNaData({ snapshots: [{ ncg: null, snapshot_at: '2026-03-31T03:00:00Z' }], dataRef: '2026-03-31' });
     expect(r.ncg).toBeNull(); expect(r.fora_janela).toBe(true);
+  });
+  it('janela por DATA de calendário, não por horas/fuso (Codex P1)', () => {
+    // 23/03 → 31/03 = 8 dias de calendário: fora, mesmo o snapshot tendo horário (7d11h absolutos).
+    const fora = escolherSnapshotNaData({ snapshots: [{ ncg: 100000, snapshot_at: '2026-03-23T13:00:00Z' }], dataRef: '2026-03-31' });
+    expect(fora.fora_janela).toBe(true); expect(fora.dias_delta).toBe(-8);
+    // 24/03 → 31/03 = exatamente 7 dias: dentro, independente do horário do snapshot.
+    const dentro = escolherSnapshotNaData({ snapshots: [{ ncg: 100000, snapshot_at: '2026-03-24T23:59:00Z' }], dataRef: '2026-03-31' });
+    expect(dentro.fora_janela).toBe(false); expect(dentro.dias_delta).toBe(-7);
   });
 });
 
