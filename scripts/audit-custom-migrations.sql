@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 319
+-- Total de custom migrations: 320
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -360,7 +360,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260629150000', 'kb_catalisador_links', '20260629150000_kb_catalisador_links.sql'),
   ('20260702210000', 'gov_iniciativas_iceberg', '20260702210000_gov_iniciativas_iceberg.sql'),
   ('20260702213000', 'gov_iniciativas_check_ganhos', '20260702213000_gov_iniciativas_check_ganhos.sql'),
-  ('20260702233000', 'trava_credito_fase2', '20260702233000_trava_credito_fase2.sql')
+  ('20260702233000', 'trava_credito_fase2', '20260702233000_trava_credito_fase2.sql'),
+  ('20260703140000', 'trava_credito_gate_excecao_por_par', '20260703140000_trava_credito_gate_excecao_por_par.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1439,7 +1440,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('trava_credito_fase2', 'rls_policy', 'public', 'venda_excecao_insert_gestor', 'venda_excecao_credito'),
   ('trava_credito_fase2', 'rls_policy', 'public', 'venda_excecao_service_all', 'venda_excecao_credito'),
   ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_select_staff', 'venda_bloqueio_credito_log'),
-  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_service_all', 'venda_bloqueio_credito_log')
+  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_service_all', 'venda_bloqueio_credito_log'),
+  ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2566,7 +2568,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('trava_credito_fase2', 'rls_policy', 'public', 'venda_excecao_insert_gestor', 'venda_excecao_credito'),
   ('trava_credito_fase2', 'rls_policy', 'public', 'venda_excecao_service_all', 'venda_excecao_credito'),
   ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_select_staff', 'venda_bloqueio_credito_log'),
-  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_service_all', 'venda_bloqueio_credito_log')
+  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_service_all', 'venda_bloqueio_credito_log'),
+  ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', '')
 )
 SELECT
   e.migration,

@@ -156,3 +156,23 @@ score; backfill de CNPJ nos títulos (se o Omie um dia mandar); RPC "pedir aprov
     paridade textual no vitest lendo a migration — sem drift silencioso.
 11. Ordem: **hotfix Fase 1 em PR separado, primeiro** (valida o caminho por pares
     antes do enforcement).
+
+## 11. Review adversarial final do diff (Codex, 2026-07-03) — 2 P1, ambos corrigidos
+
+1. **[P1] Exceção vazava entre pares no MESMO pedido**: o gate casava a exceção só
+   por `sales_order_id`; um invoke direto ao edge com o `codigo_cliente` de OUTRO
+   cliente bloqueado reusaria a exceção. Fix: migration
+   `20260703140000_trava_credito_gate_excecao_por_par.sql` (CREATE OR REPLACE — a
+   20260702233000 é imutável) exige `company + omie_codigo_cliente` no match.
+   Prova: assert A11b + falsificação F6/F7 (função pré-fix re-aplicada → A11b
+   vermelho → fix restaurado → verde).
+2. **[P1] Edição: ausência de cliente virava liberação**: `ConsultarPedido` sem
+   `cabecalho.codigo_cliente` fazia o gate rodar com null → `sem_codigo` → aumento
+   liberado por AUSÊNCIA de dado. Fix no edge: fallback de shape (cabecalho aninhado
+   OU no topo, como o `det`) e, se o aumento está provado mas o cliente não é
+   identificável → contrato do consult-falhou (fail-open SÓ com log durável
+   `gate_indisponivel`; log falhou → erro).
+3. **[P2 anotados, sem mudança]**: log de `bloqueado` é best-effort (o bloqueio em
+   si nunca depende do log; sem log, o dialog remoto degrada para "sem bloqueio
+   registrado") · pós-exceção na edição o usuário precisa salvar de novo (o toast
+   de bloqueio da edição instrui explicitamente).

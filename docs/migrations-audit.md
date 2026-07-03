@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **319** custom migrations totais
-- **1090** objetos esperados (criados por estas migrations)
+- **320** custom migrations totais
+- **1091** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 317
+  - `function`: 318
   - `rls_policy`: 238
   - `index`: 196
   - `table`: 116
@@ -2688,6 +2688,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.venda_excecao_service_all` | `venda_excecao_credito` |
 | `rls_policy` | `public.venda_bloqueio_log_select_staff` | `venda_bloqueio_credito_log` |
 | `rls_policy` | `public.venda_bloqueio_log_service_all` | `venda_bloqueio_credito_log` |
+
+### `20260703140000_trava_credito_gate_excecao_por_par.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_gate_credito` | — |
 
 ## Próximos passos por status
 

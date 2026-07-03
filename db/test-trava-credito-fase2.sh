@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA PG17 — Trava de crédito Fase 2 (venda_gate_credito + exceção + RLS)     ║
-# ║  Migration: 20260702233000_trava_credito_fase2.sql                             ║
+# ║  Migrations: 20260702233000_trava_credito_fase2.sql                            ║
+# ║            + 20260703140000_trava_credito_gate_excecao_por_par.sql (P1 Codex)  ║
 # ║  Spec/veredito Codex: docs/superpowers/specs/trava-credito-fase2.md            ║
 # ║  Rode: bash db/test-trava-credito-fase2.sh > /tmp/t.log 2>&1; echo "exit=$?"   ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -107,8 +108,10 @@ SQL
 # ZONA 2 — APLICAR A MIGRATION REAL (Lei #1)
 # ══════════════════════════════════════════════════════════════════════════════
 MIG="$REPO_ROOT/supabase/migrations/20260702233000_trava_credito_fase2.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20260703140000_trava_credito_gate_excecao_por_par.sql"
 P -q -f "$MIG"
-echo "migration aplicada: $(basename "$MIG")"
+P -q -f "$MIG2"
+echo "migrations aplicadas: $(basename "$MIG") + $(basename "$MIG2")"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEED + GRANTs
@@ -198,6 +201,11 @@ eq "A10 exceção válida LIBERA o pedido A"    "$(echo "$G_EXC" | python3 -c 'i
 
 G_SOB=$(Pq -c "SELECT public.venda_gate_credito('oben', 100, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');")
 eq "A11 exceção NÃO vaza pro pedido B (por-pedido)" "$(echo "$G_SOB" | python3 -c 'import sys,json; print(json.load(sys.stdin)["bloqueado"])')" "True"
+
+# A11b (P1 review Codex): a exceção do pedido A é do PAR (oben,100) — o MESMO pedido
+# invocado com OUTRO par bloqueável (colacor/100 tem 500 vencido 70d) segue bloqueado.
+G_PAR=$(Pq -c "SELECT public.venda_gate_credito('colacor', 100, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');")
+eq "A11b exceção NÃO vaza p/ outro PAR no mesmo pedido" "$(echo "$G_PAR" | python3 -c 'import sys,json; print(json.load(sys.stdin)["bloqueado"])')" "True"
 
 # A12: exceção EXPIRADA não libera (insere com validade no passado — CHECK 30d permite)
 P -q <<'SQL'
@@ -351,10 +359,11 @@ else
 fi
 P -q -c "DELETE FROM public.venda_excecao_credito WHERE motivo='forje-teste';" >/dev/null
 
-# RESTAURA tudo re-aplicando a migration real (idempotente) e re-prova A1+A13
+# RESTAURA tudo re-aplicando as migrations reais (idempotentes) e re-prova A1+A13
 P -q -f "$MIG"
+P -q -f "$MIG2"
 G_RESTORE=$(Pq -c "SELECT public.venda_gate_credito('oben', 100, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');" | python3 -c 'import sys,json; print(json.load(sys.stdin)["bloqueado"])')
-eq "F4 migration restaurada volta a bloquear" "$G_RESTORE" "True"
+eq "F4 migrations restauradas voltam a bloquear" "$G_RESTORE" "True"
 R=$(P -tA 2>&1 <<'SQL'
 SET test.uid='22222222-2222-2222-2222-222222222222';
 SET ROLE authenticated;
@@ -372,6 +381,21 @@ END $$;
 SQL
 )
 case "$R" in *VENDEDOR_BARRADO*) ok "F5 policy restaurada volta a barrar o vendedor" ;; *) bad "F5 — veio: $R" ;; esac
+
+# F6: SABOTA voltando a função à versão PRÉ-FIX (re-aplica só a migration antiga,
+# cujo match de exceção ignora o par) → A11b tem de VAZAR (bloqueado=False)
+P -q -f "$MIG"
+F6=$(Pq -c "SELECT public.venda_gate_credito('colacor', 100, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');" | python3 -c 'import sys,json; print(json.load(sys.stdin)["bloqueado"])')
+if [ "$F6" = "False" ]; then
+  ok "F6 função pré-fix deixa a exceção vazar entre pares → A11b tem dente"
+else
+  bad "F6 re-apliquei a função ANTIGA e A11b ainda bloqueia → A11b não prova o fix"
+fi
+
+# F7: restaura o fix (migration nova) → A11b volta a bloquear
+P -q -f "$MIG2"
+F7=$(Pq -c "SELECT public.venda_gate_credito('colacor', 100, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');" | python3 -c 'import sys,json; print(json.load(sys.stdin)["bloqueado"])')
+eq "F7 fix restaurado volta a segurar o par" "$F7" "True"
 
 # ── veredito ──
 echo "──────────────────────────────"

@@ -2314,14 +2314,18 @@ serve(async (req) => {
           )) as {
             pedido_venda_produto?: { det?: OmieDetalheItem[]; cabecalho?: { codigo_cliente?: number } };
             det?: OmieDetalheItem[];
+            cabecalho?: { codigo_cliente?: number };
           } | null;
           // Omie returns items under pedido_venda_produto.det
           omieCurrentItems = consultResult?.pedido_venda_produto?.det
             || consultResult?.det
             || [];
           consultEditOk = true;
+          // Cabeçalho sofre o MESMO drift de shape do det (aninhado ou no topo).
           omieCodigoClienteEdit =
-            Number(consultResult?.pedido_venda_produto?.cabecalho?.codigo_cliente) || null;
+            Number(consultResult?.pedido_venda_produto?.cabecalho?.codigo_cliente) ||
+            Number(consultResult?.cabecalho?.codigo_cliente) ||
+            null;
           console.log(`[Omie Vendas][${editAccount}] Pedido consultado: ${omieCurrentItems.length} itens no Omie`);
         } catch (consultErr) {
           const msg = consultErr instanceof Error ? consultErr.message : String(consultErr);
@@ -2338,17 +2342,36 @@ serve(async (req) => {
             0,
           );
           if (updatedSubtotal > totalAtualOmie) {
-            const creditoEdit = await gateCredito(
-              supabaseAdmin,
-              editAccount,
-              omieCodigoClienteEdit,
-              editSoId,
-              userId,
-              "edicao",
-            );
-            if (!creditoEdit.permitido) {
-              result = { success: false, blocked: "credito", contexto: "edicao", gate: creditoEdit.gate };
-              break;
+            if (omieCodigoClienteEdit === null) {
+              // P1 do review Codex: aumento PROVADO mas consult veio sem codigo_cliente —
+              // gate(null) responderia 'sem_codigo' e liberaria por AUSÊNCIA de dado.
+              // Mesmo contrato do consult-falhou: allow SÓ com log durável.
+              const { error: logErr } = await supabaseAdmin.from("venda_bloqueio_credito_log").insert({
+                company: editAccount,
+                omie_codigo_cliente: null,
+                sales_order_id: editSoId,
+                acao: "gate_indisponivel",
+                user_id: userId,
+                detalhe: "edicao: aumento provado, mas ConsultarPedido sem codigo_cliente — gate não avaliável",
+              });
+              if (logErr) {
+                throw new Error(
+                  `Gate de crédito sem cliente identificado na edição e sem log (${logErr.message}) — tente novamente.`,
+                );
+              }
+            } else {
+              const creditoEdit = await gateCredito(
+                supabaseAdmin,
+                editAccount,
+                omieCodigoClienteEdit,
+                editSoId,
+                userId,
+                "edicao",
+              );
+              if (!creditoEdit.permitido) {
+                result = { success: false, blocked: "credito", contexto: "edicao", gate: creditoEdit.gate };
+                break;
+              }
             }
           }
         } else {
