@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { esperado213294 } from './__fixtures__/lider-213294.expected';
 import {
   montarDadosAdicionaisNf,
   agruparItensPorAccount,
@@ -142,5 +143,26 @@ describe('validarExtracao', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.dados.itens[0].quantidade).toBe(0.5);
+  });
+});
+
+describe('fixture Lider 213294 (gabarito do PDF real)', () => {
+  it('o gabarito passa na validarExtracao com os 5 itens intactos', () => {
+    const r = validarExtracao(esperado213294);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.dados.numero_pedido_compra).toBe('213294');
+      expect(r.dados.versao).toBe('2');
+      expect(r.dados.data_emissao).toBe('2026-05-20');
+      expect(r.dados.itens).toHaveLength(5);
+      // Datas de entrega distintas no MESMO pedido — a razão do modelo de envios por seleção
+      expect(new Set(r.dados.itens.map((i) => i.data_entrega))).toEqual(
+        new Set(['2026-06-17', '2026-06-24', '2026-07-20']),
+      );
+      // COD.FORN presente em todos (semente da sugestão de mapeamento)
+      expect(r.dados.itens.every((i) => i.cod_forn !== null)).toBe(true);
+      // Nada é degradado/perdido na validação (entrada boa sai idêntica)
+      expect(r.dados.itens).toEqual(esperado213294.itens);
+    }
   });
 });
