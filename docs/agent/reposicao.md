@@ -8,6 +8,7 @@
 - **Ciclo INTRA-DAY**: o motor roda a cada **2h** (não só 1×/dia) + alerta R$3k Sayerlack + gate de mínimo de compra.
 - **`aplicar_promocoes_no_ciclo`** é função QUENTE/money-path — já quebrou em prod (parse error, falha silenciosa atrás de chamador) e sofreu **colisão multi-sessão** (PR duplicado). Pré-flight `pg_get_functiondef` da prod + cuidado com ordem de migrations (a última a recriar vence — ver `docs/agent/database.md`).
 - Tela de pedidos do ciclo: **idempotente** + tela única (Reposição/Oben), botões à prova de erro.
+- ⚠️ **"Recalcular sugestões" NÃO sincroniza estoque** — a RPC só regenera do snapshot `sku_estoque_atual`; quem fala com o Omie é a edge `omie-sync-estoque` (cron diário 09:00 UTC + intraday `40 9-19/2`, aceita staff via `authorizeCronOrStaff`). Essa edge **não loga em `fin_sync_log`** e não tinha vigia → ficou 2 dias morta em silêncio (jul/2026, plataforma). Mitigação [#1142]: a tela de pedidos tem **badge de frescor** (`frescorEstoque` em `pedidos/shared.ts`: ok ≤4h · warning >4h · error >24h) + botão **"Sincronizar estoque"** (invoca a edge; mesma carga de 1 rodada do cron). Pedido gerado carrega snapshot CONGELADO — após sync, Recalcular. Vigia Sentinela dedicado segue em aberto (conjunto `_data_health_compute` é acoplado/quente).
 
 ## cmc-first (base de custo)
 
