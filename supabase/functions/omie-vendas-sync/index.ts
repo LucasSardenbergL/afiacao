@@ -1577,7 +1577,11 @@ async function criarPedidoVenda(
   codigoParcela?: string,
   account: Account = "oben",
   quantidadeVolumes?: number,
-  ordemCompra?: string
+  ordemCompra?: string,
+  // Pedidos programados (Lider): mensagem fixa + nº do PC nas informações
+  // complementares da NF e no campo dedicado "Nº do Pedido do Cliente".
+  dadosAdicionaisNf?: string,
+  numeroPedidoCliente?: string
 ) {
   // Determinístico (espelha src/lib/omie/pedido-integration-code.ts): re-enviar o mesmo
   // sales_order_id gera a MESMA chave → o Omie rejeita a duplicata (idempotência).
@@ -1645,6 +1649,13 @@ async function criarPedidoVenda(
 
   if (codigoVendedor && codigoVendedor > 0) {
     informacoes_adicionais.codVend = codigoVendedor;
+  }
+
+  if (dadosAdicionaisNf) {
+    informacoes_adicionais.dados_adicionais_nf = dadosAdicionaisNf;
+  }
+  if (numeroPedidoCliente) {
+    informacoes_adicionais.numero_pedido_cliente = numeroPedidoCliente;
   }
 
   // Buscar transportadora: primeiro do cadastro do cliente, senão usa a padrão da empresa
@@ -2082,7 +2093,7 @@ serve(async (req) => {
       }
 
       case "criar_pedido": {
-        const { sales_order_id, codigo_cliente, codigo_vendedor, items, observacao, codigo_parcela, quantidade_volumes, ordem_compra } = params;
+        const { sales_order_id, codigo_cliente, codigo_vendedor, items, observacao, codigo_parcela, quantidade_volumes, ordem_compra, dados_adicionais_nf, numero_pedido_cliente } = params;
         if (!sales_order_id || !codigo_cliente || !items?.length) {
           throw new Error("Dados insuficientes para criar pedido de venda");
         }
@@ -2099,7 +2110,9 @@ serve(async (req) => {
           codigo_parcela,
           account,
           quantidade_volumes,
-          ordem_compra
+          ordem_compra,
+          dados_adicionais_nf,
+          numero_pedido_cliente
         );
         result = { success: true, ...pedido };
         break;
