@@ -39,6 +39,9 @@ describe('montarDadosAdicionaisNf', () => {
   it('sem mensagem fixa, só o nº do PC (não fabrica texto)', () => {
     expect(montarDadosAdicionaisNf(null, '213294')).toBe('PEDIDO DE COMPRA Nº: 213294');
   });
+  it('lança com numeroPc vazio (backstop — nunca emitir NF com nº fabricado)', () => {
+    expect(() => montarDadosAdicionaisNf('MSG', '')).toThrow();
+  });
 });
 
 describe('agruparItensPorAccount', () => {
@@ -56,24 +59,37 @@ describe('agruparItensPorAccount', () => {
 
 describe('validarEnvioResolvido', () => {
   it('aprova envio 100% resolvido com config completa', () => {
-    expect(validarEnvioResolvido([itemOk], { oben: cfgOben, colacor: cfgColacorVazia })).toEqual([]);
+    expect(validarEnvioResolvido('213294', [itemOk], { oben: cfgOben, colacor: cfgColacorVazia })).toEqual([]);
+  });
+  it('bloqueia pedido sem nº de PC (null e vazio)', () => {
+    expect(validarEnvioResolvido(null, [itemOk], { oben: cfgOben, colacor: cfgColacorVazia }).join(' ')).toMatch(/n[úu]mero de pedido/i);
+    expect(validarEnvioResolvido('  ', [itemOk], { oben: cfgOben, colacor: cfgColacorVazia })).not.toEqual([]);
   });
   it('bloqueia item sem mapeamento', () => {
     const p = validarEnvioResolvido(
+      '213294',
       [{ ...itemOk, omie_codigo_produto: null, account: null }],
       { oben: cfgOben, colacor: cfgColacorVazia },
     );
     expect(p.join(' ')).toMatch(/sem mapeamento/i);
   });
   it('bloqueia preço NULL e preço 0 (ausente ≠ zero)', () => {
-    expect(validarEnvioResolvido([{ ...itemOk, preco_final: null }], { oben: cfgOben, colacor: cfgColacorVazia })).not.toEqual([]);
-    expect(validarEnvioResolvido([{ ...itemOk, preco_final: 0 }], { oben: cfgOben, colacor: cfgColacorVazia })).not.toEqual([]);
+    expect(validarEnvioResolvido('213294', [{ ...itemOk, preco_final: null }], { oben: cfgOben, colacor: cfgColacorVazia })).not.toEqual([]);
+    expect(validarEnvioResolvido('213294', [{ ...itemOk, preco_final: 0 }], { oben: cfgOben, colacor: cfgColacorVazia })).not.toEqual([]);
+  });
+  it('bloqueia preço NaN e Infinity (Number.isFinite morde)', () => {
+    expect(validarEnvioResolvido('213294', [{ ...itemOk, preco_final: NaN }], { oben: cfgOben, colacor: cfgColacorVazia })).not.toEqual([]);
+    expect(validarEnvioResolvido('213294', [{ ...itemOk, preco_final: Infinity }], { oben: cfgOben, colacor: cfgColacorVazia })).not.toEqual([]);
   });
   it('bloqueia quantidade inválida', () => {
-    expect(validarEnvioResolvido([{ ...itemOk, quantidade: 0 }], { oben: cfgOben, colacor: cfgColacorVazia })).not.toEqual([]);
+    expect(validarEnvioResolvido('213294', [{ ...itemOk, quantidade: 0 }], { oben: cfgOben, colacor: cfgColacorVazia })).not.toEqual([]);
+  });
+  it('aceita quantidade fracionária (0.5 MT — o PDF real tem metragem)', () => {
+    expect(validarEnvioResolvido('213294', [{ ...itemOk, quantidade: 0.5 }], { oben: cfgOben, colacor: cfgColacorVazia })).toEqual([]);
   });
   it('bloqueia account sem config (cliente não cadastrado na Colacor)', () => {
     const p = validarEnvioResolvido(
+      '213294',
       [{ ...itemOk, account: 'colacor' }],
       { oben: cfgOben, colacor: cfgColacorVazia },
     );
@@ -118,5 +134,13 @@ describe('validarExtracao', () => {
       itens: [{ codigo_item_cliente: null, num_ordem_cliente: null, descricao_cliente: 'Y', quantidade: 0, unidade: null, preco_unitario: null, data_entrega: null, cod_forn: null }],
     });
     expect(r.ok).toBe(false);
+  });
+  it('aceita quantidade fracionária na extração (1,000 MT → 1; 0.5 → 0.5)', () => {
+    const r = validarExtracao({
+      numero_pedido_compra: '213294', data_emissao: null, versao: null,
+      itens: [{ codigo_item_cliente: 'X', num_ordem_cliente: null, descricao_cliente: 'Y', quantidade: 0.5, unidade: 'MT', preco_unitario: null, data_entrega: null, cod_forn: null }],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.dados.itens[0].quantidade).toBe(0.5);
   });
 });

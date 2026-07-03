@@ -18,6 +18,9 @@ export interface ItemResolvido {
   id: string;
   codigo_item_cliente: string;
   descricao_cliente: string;
+  // quantidade/preco_final: number JÁ convertido pelo caller (numeric do PostgREST pode
+  // vir como string — quem monta ItemResolvido converte com Number(...); aqui typeof
+  // 'number' é a borda: string crua = item inválido, bloqueia por segurança).
   quantidade: number;
   preco_final: number | null;
   account: AccountPP | null;          // null = sem mapeamento
@@ -29,7 +32,10 @@ export interface ItemResolvido {
 // nº do PC primeiro (exigência da Lider: "FAVOR INFORMAR O NUMERO DO PEDIDO DA LIDER
 // NA NOTA FISCAL"), mensagem fixa depois. Sem mensagem → só o nº (nunca fabricar texto).
 export function montarDadosAdicionaisNf(mensagemFixa: string | null, numeroPc: string): string {
-  const cabeca = `PEDIDO DE COMPRA Nº: ${numeroPc}`;
+  if (!numeroPc || !numeroPc.trim()) {
+    throw new Error('numeroPc obrigatório para montar os dados adicionais da NF.');
+  }
+  const cabeca = `PEDIDO DE COMPRA Nº: ${numeroPc.trim()}`;
   const msg = (mensagemFixa ?? '').trim();
   return msg ? `${cabeca}\n\n${msg}` : cabeca;
 }
@@ -46,10 +52,14 @@ export function agruparItensPorAccount(itens: ItemResolvido[]): Partial<Record<A
 // Precisão > recall: retorna a lista de PROBLEMAS (vazia = pode enviar).
 // Ausente ≠ zero: preco_final NULL bloqueia, nunca vira 0.
 export function validarEnvioResolvido(
+  numeroPc: string | null,
   itens: ItemResolvido[],
   configs: Record<AccountPP, ConfigConta>,
 ): string[] {
   const problemas: string[] = [];
+  if (!numeroPc || !numeroPc.trim()) {
+    problemas.push('Pedido sem número de pedido de compra — re-extraia o PDF antes de enviar.');
+  }
   if (itens.length === 0) problemas.push('Envio sem itens.');
   const accountsEnvolvidas = new Set<AccountPP>();
   for (const it of itens) {
