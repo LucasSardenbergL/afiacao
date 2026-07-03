@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **319** custom migrations totais
-- **1081** objetos esperados (criados por estas migrations)
+- **320** custom migrations totais
+- **1082** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 315
+  - `function`: 316
   - `rls_policy`: 235
   - `index`: 194
   - `table`: 115
@@ -2675,6 +2675,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.gov_iniciativas_update_master_ou_dono` | `gov_iniciativas` |
 | `rls_policy` | `public.gov_iniciativas_delete_master` | `gov_iniciativas` |
 | `rls_policy` | `public.gov_iniciativas_service_all` | `gov_iniciativas` |
+
+### `20260702212000_data_health_estoque_reposicao_fonte_dado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
 
 ### `20260702213000_gov_iniciativas_check_ganhos.sql`
 
