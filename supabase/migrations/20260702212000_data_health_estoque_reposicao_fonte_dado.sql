@@ -25,6 +25,8 @@
 -- de prod em 2026-07-02 (md5 51f336c399c21efde222698142d74c3e). Se o corpo vivo divergir no
 -- momento do apply (outra sessão recriou a função) e não for a própria v3 (re-run), o guard
 -- ABORTA tudo — rebasear antes de aplicar. Idempotente: re-rodar após aplicada é no-op seguro.
+-- ⚠️ Como sempre (database.md §2), a ÚLTIMA a rodar vence: se uma migration SUCESSORA herdar a
+-- marca v3, re-rodar ESTA por cima a reverteria — re-rode sempre a mais nova.
 --
 -- PROVA PG17 (falsificada): db/test-data-health-estoque-fonte-dado.sh
 -- ============================================================================================
@@ -340,19 +342,27 @@ AS $function$
     -- re-emitiu e-mail => o incidente 30/06-02/07 (snapshot 2+ dias congelado, plataforma Lovable)
     -- passou MUDO. Princípio (docs/agent/sync.md): vigiar o EFEITO no dado; marcador só quando
     -- EXISTE o writer que o grava.
-    -- fonte_sync='ListarPosEstoque' (allowlist) isola o writer real: exclui 'cold_start_seed'
+    -- fonte_sync LIKE 'ListarPosEstoque%' (allowlist por PREFIXO — a edge grava
+    -- 'ListarPosEstoque(N locais)' p/ SKU multi-local, omie-sync-estoque/index.ts:609; igualdade
+    -- exata deixaria esses SKUs invisíveis ao check — achado Codex challenge 2026-07-02) isola o
+    -- writer real: exclui 'cold_start_seed'
     -- (reposicao_cold_start_parametros semeia linha nova com ultima_sincronizacao=now() — um pingo
     -- de seed mascararia o max()) e 'snapshot_pendente_sem_fisico' (aplicar_snapshot_pendente cria
     -- linha com ultima_sincronizacao NULL e não toca a coluna em UPDATE). Rótulo novo/renomeado =>
     -- o max() para de andar => VERMELHO barulhento (fail-safe), nunca verde-mentindo (fail-open).
     -- Thresholds = v1 (20260611140000, desenhados p/ ESTES crons: diário 0 9 UTC + intraday
     -- 40 9,11,13,15,17,19 UTC): janela comercial BRT 08-18 >4h=stale; fora dela >16h=stale;
-    -- >30h/nunca=broken (cobre o pedido de ~26h do incidente com folga). LIMITAÇÃO aceita: max()
+    -- >30h/nunca=broken (cobre o pedido de ~26h do incidente com folga); max_sync no FUTURO
+    -- (>now()+5min, clock-skew tolerado) = broken (writer com relógio quebrado não compra verde
+    -- eterno — Codex). Falha pós-16:40 BRT (último intraday) só alerta ~06:40 do dia seguinte
+    -- (16h) — aceito: ainda ANTECEDE o ciclo de compra da manhã (~08:15), e estender a janela
+    -- só anteciparia um e-mail noturno que ninguém acionaria. LIMITAÇÃO aceita: max()
     -- não vê sync PARCIAL (físico ok + pendente falho) — era o que a v2 pegaria SE os markers
     -- existissem; quando a edge gravar os markers (#809 passo 2), re-promover a v2 POR CIMA
     -- (migration nova; corpo da v2 preservado na 20260626150000).
     SELECT 'estoque_reposicao'::text, 'estoque'::text,
       CASE WHEN se.max_sync IS NULL THEN 'broken'
+           WHEN se.max_sync > now() + interval '5 minutes' THEN 'broken'
            WHEN now() - se.max_sync > interval '30 hours' THEN 'broken'
            WHEN now() - se.max_sync > interval '16 hours' THEN 'stale'
            WHEN (now() AT TIME ZONE 'America/Sao_Paulo')::time >= time '08:00'
@@ -360,7 +370,7 @@ AS $function$
             AND now() - se.max_sync > interval '4 hours' THEN 'stale'
            ELSE 'ok' END,
       EXTRACT(EPOCH FROM now() - se.max_sync)::bigint, (4*3600)::bigint,
-      'max(sku_estoque_atual.ultima_sincronizacao) OBEN fonte_sync=ListarPosEstoque (dado real, v3)'::text,
+      'max(sku_estoque_atual.ultima_sincronizacao) OBEN fonte_sync LIKE ListarPosEstoque% (dado real, v3)'::text,
       'Estoque de reposição (motor de compra): sincronizado ' || COALESCE(to_char(se.max_sync AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI'),'nunca'),
       NULL,
       CASE WHEN se.max_sync IS NULL OR now() - se.max_sync > interval '4 hours'
@@ -369,7 +379,7 @@ AS $function$
       'Dispare o sync manual (botão "Sincronizar estoque" em Reposição→Pedidos) ou rode a edge omie-sync-estoque no Lovable (body {"empresa":"OBEN"}). Cheque net._http_response dos crons omie-sync-estoque-{diario,intraday-oben}. Se LOAD_FUNCTION_ERROR: redeploy verbatim de supabase/functions/omie-sync-estoque/index.ts.'::text,
       'critical'::text
     FROM (
-      SELECT max(ultima_sincronizacao) FILTER (WHERE fonte_sync = 'ListarPosEstoque') AS max_sync
+      SELECT max(ultima_sincronizacao) FILTER (WHERE fonte_sync LIKE 'ListarPosEstoque%') AS max_sync
       FROM public.sku_estoque_atual
       WHERE empresa = 'OBEN'
     ) se
@@ -586,6 +596,13 @@ $function$;
 
 -- Grants: re-afirma o estado de prod (CREATE OR REPLACE preserva ACL; isto é idempotente).
 REVOKE ALL ON FUNCTION public._data_health_compute() FROM PUBLIC, anon, authenticated;
+
+-- Encerra o EPISÓDIO v2 preso (alerta ativo desde 15/06 por marcador-ausente). Sem isto, o
+-- ON CONFLICT do watchdog seguiria MUDO até a 1ª transição ->ok (achado Codex: se o dado ainda
+-- estiver stale no apply, nenhum e-mail sai). Dismissando aqui, o próximo tick (*/30) reavalia
+-- com a fonte v3: dado stale/broken => alerta NOVO => e-mail SAI. Idempotente (no-op sem episódio).
+UPDATE public.fin_alertas SET dismissed_at = now()
+WHERE company = 'oben' AND tipo = 'data_health_estoque_reposicao' AND dismissed_at IS NULL;
 
 COMMIT;
 

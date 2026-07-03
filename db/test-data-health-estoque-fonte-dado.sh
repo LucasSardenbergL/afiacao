@@ -93,8 +93,15 @@ SOURCES_ANTES="$(Pq -c "SELECT string_agg(source, ',' ORDER BY source) FROM publ
 MD5_WD_ANTES="$(Pq -c "SELECT md5(pg_get_functiondef('public.data_health_watchdog()'::regprocedure));")"
 MD5_HB_ANTES="$(Pq -c "SELECT md5(pg_get_functiondef('public.fin_sync_heartbeat()'::regprocedure));")"
 
+# Reproduz o EPISÓDIO PRESO de prod (alerta v2 ativo desde 15/06 por marcador-ausente) ANTES do apply
+P -q -c "INSERT INTO fin_alertas (company, tipo, severidade, mensagem, criado_em) VALUES ('oben','data_health_estoque_reposicao','critico','episodio v2 preso', now() - interval '17 days');"
+
 P -q -f "$MIG" >/dev/null
 echo "migration aplicada: $(basename "$MIG")"
+
+# W0 — o apply DISMISSA o episódio v2 preso (Codex P1: sem isto, o ON CONFLICT segue mudo até a 1ª transição ->ok)
+eq "W0 apply dismissa o episódio v2 preso (surdez encerrada no apply, não na 1ª transição ok)" \
+   "$(Pq -c "SELECT count(*) FROM fin_alertas WHERE tipo='data_health_estoque_reposicao' AND dismissed_at IS NULL;")" "0"
 
 # S1 — o corpo virou v3 (fonte trocada de fato)
 eq "S1 corpo pós-migration contém a marca v3" \
@@ -162,7 +169,15 @@ if [ "$H_BRT" -ge 8 ] && [ "$H_BRT" -lt 18 ]; then ESP_5H="stale"; else ESP_5H="
 limpa; P -q -c "SELECT _set_estoque(interval '5 hours', 'ListarPosEstoque');"
 eq "N9 dado 5h → $ESP_5H (hora BRT do teste: ${H_BRT}h)" "$(chk)" "$ESP_5H"
 
+echo "── anti-futuro (writer com relógio quebrado não compra verde eterno) ──"
+# A2 — max_sync no FUTURO (+2h) → broken (sem isto: age negativo → ok até o relógio alcançar)
+limpa; P -q -c "SELECT _set_estoque(interval '-2 hours', 'ListarPosEstoque');"
+eq "A2 max_sync no futuro (+2h) → broken" "$(chk)" "broken"
+
 echo "── allowlist fonte_sync (anti-mascaramento — o coração do check) ──"
+# A1 — rótulo VARIANTE multi-local ('ListarPosEstoque(3 locais)', edge :609) CONTA como frescor (Codex P1)
+limpa; P -q -c "SELECT _set_estoque(interval '1 hour', 'ListarPosEstoque(3 locais)');"
+eq "A1 rótulo multi-local fresco → ok (writer real, prefixo casa)" "$(chk)" "ok"
 # N4 — físico MORTO (31h) + seed do cold-start FRESCO (agora) → SEGUE broken (o seed não mascara)
 limpa
 P -q -c "SELECT _set_estoque(interval '31 hours', 'ListarPosEstoque');"
@@ -234,7 +249,7 @@ eq "N8b re-run não muda o corpo (md5 estável)" \
 
 echo "── FALSIFICAÇÕES (Lei #3 — sabota a migration real, exige VERMELHO, restaura) ──"
 # F1 — remove a allowlist do fonte_sync ⇒ N4 (cold_start_seed não mascara) tem de FALHAR
-sabota " FILTER (WHERE fonte_sync = 'ListarPosEstoque')" "" 1
+sabota " FILTER (WHERE fonte_sync LIKE 'ListarPosEstoque%')" "" 1
 limpa
 P -q -c "SELECT _set_estoque(interval '31 hours', 'ListarPosEstoque');"
 P -q -c "SELECT _set_estoque(interval '1 minute', 'cold_start_seed');"
@@ -269,6 +284,12 @@ limpa
 P -q -c "SELECT _set_estoque(interval '31 hours', 'ListarPosEstoque', 'OBEN');"
 P -q -c "SELECT _set_estoque(interval '1 minute', 'ListarPosEstoque', 'COLACOR');"
 if [ "$(chk)" = "broken" ]; then bad "F4 assert N5 SEM DENTE (sabotei o filtro de empresa e seguiu broken)"; else ok "F4 sem filtro de empresa o COLACOR mascara (status=$(chk)) → N5 tem dente"; fi
+restaura
+# F5 — remove a linha anti-futuro ⇒ A2 (futuro → broken) tem de FALHAR
+sabota "           WHEN se.max_sync > now() + interval '5 minutes' THEN 'broken'
+" "" 1
+limpa; P -q -c "SELECT _set_estoque(interval '-2 hours', 'ListarPosEstoque');"
+if [ "$(chk)" = "broken" ]; then bad "F5 assert A2 SEM DENTE (sabotei o anti-futuro e seguiu broken)"; else ok "F5 sem anti-futuro o timestamp futuro passa verde (status=$(chk)) → A2 tem dente"; fi
 restaura
 
 echo ""
