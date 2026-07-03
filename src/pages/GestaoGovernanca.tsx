@@ -25,6 +25,7 @@ const GovernanceUsers = lazy(() => import("./GovernanceUsers"));
 const GovernancePermissions = lazy(() => import("./GovernancePermissions"));
 const GovernanceMath = lazy(() => import("./GovernanceMathParams"));
 const GovernanceAudit = lazy(() => import("./GovernanceAudit"));
+const GovernanceIniciativas = lazy(() => import("./GovernanceIniciativas"));
 const Settings = lazy(() => import("./SettingsConfig"));
 
 const TabFallback = () => (
@@ -140,11 +141,12 @@ export default function GestaoGovernanca() {
       <KpiCards empresa={empresa} />
 
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
-        <TabsList className="grid grid-cols-2 sm:grid-cols-5 w-full">
+        <TabsList className="grid grid-cols-2 sm:grid-cols-6 w-full">
           <TabsTrigger value="usuarios">Usuários</TabsTrigger>
           <TabsTrigger value="permissoes">Permissões</TabsTrigger>
           <TabsTrigger value="parametros">Parâmetros</TabsTrigger>
           <TabsTrigger value="auditoria">Auditoria</TabsTrigger>
+          <TabsTrigger value="iniciativas">Iniciativas</TabsTrigger>
           <TabsTrigger value="configuracoes">Configurações</TabsTrigger>
         </TabsList>
 
@@ -166,6 +168,11 @@ export default function GestaoGovernanca() {
         <TabsContent value="auditoria" className="m-0">
           <Suspense fallback={<TabFallback />}>
             <GovernanceAudit />
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="iniciativas" className="m-0">
+          <Suspense fallback={<TabFallback />}>
+            <GovernanceIniciativas />
           </Suspense>
         </TabsContent>
         <TabsContent value="configuracoes" className="m-0">

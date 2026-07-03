@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **316** custom migrations totais
-- **1069** objetos esperados (criados por estas migrations)
+- **318** custom migrations totais
+- **1078** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 314
-  - `rls_policy`: 228
-  - `index`: 193
-  - `table`: 113
+  - `function`: 315
+  - `rls_policy`: 233
+  - `index`: 194
+  - `table`: 114
   - `cron_job`: 110
   - `view`: 55
-  - `trigger`: 52
+  - `trigger`: 53
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2653,6 +2653,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.kb_catalisador_links_unique_quad` | `kb_catalisador_links` |
 | `index` | `public.kb_catalisador_links_norm` | `kb_catalisador_links` |
 | `rls_policy` | `public.kb_catalisador_links_select_staff` | `kb_catalisador_links` |
+
+### `20260702210000_gov_iniciativas_iceberg.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gov_iniciativas_set_updated_at` | — |
+| `table` | `public.gov_iniciativas` | — |
+| `index` | `public.idx_gov_iniciativas_empresa_status` | `gov_iniciativas` |
+| `trigger` | `public.trg_gov_iniciativas_updated_at` | `gov_iniciativas` |
+| `rls_policy` | `public.gov_iniciativas_select_staff` | `gov_iniciativas` |
+| `rls_policy` | `public.gov_iniciativas_insert_master` | `gov_iniciativas` |
+| `rls_policy` | `public.gov_iniciativas_update_master_ou_dono` | `gov_iniciativas` |
+| `rls_policy` | `public.gov_iniciativas_delete_master` | `gov_iniciativas` |
+| `rls_policy` | `public.gov_iniciativas_service_all` | `gov_iniciativas` |
+
+### `20260702213000_gov_iniciativas_check_ganhos.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
