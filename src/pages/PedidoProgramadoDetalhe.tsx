@@ -131,23 +131,28 @@ const PedidoProgramadoDetalhe = () => {
           }}
           aria-label="Quantidade"
         />
-        <Input
-          type="number"
-          step="0.01"
-          min="0"
-          className="h-8 text-sm"
-          placeholder="preço"
-          defaultValue={it.preco_final ?? ''}
-          onBlur={(e) => {
-            const raw = e.target.value;
-            const v = raw === '' ? null : Number(raw);
-            if ((v === null || (Number.isFinite(v) && v > 0)) && v !== it.preco_final) {
-              atualizarItem.mutate({ id: it.id, preco_final: v });
-            }
-          }}
-          aria-label={`Preço final (PDF: ${fmtMoeda(it.preco_pdf)})`}
-          title={`Preço do PDF (referência): ${fmtMoeda(it.preco_pdf)}`}
-        />
+        <div>
+          <Input
+            type="number"
+            step="0.01"
+            min="0"
+            className="h-8 text-sm"
+            placeholder="preço"
+            defaultValue={it.preco_final ?? ''}
+            onBlur={(e) => {
+              const raw = e.target.value;
+              const v = raw === '' ? null : Number(raw);
+              if ((v === null || (Number.isFinite(v) && v > 0)) && v !== it.preco_final) {
+                atualizarItem.mutate({ id: it.id, preco_final: v });
+              }
+            }}
+            aria-label="Preço final"
+          />
+          {/* Referência sempre visível (o preço do PDF "sempre vem errado" — spec) */}
+          <div className="text-[10px] text-muted-foreground mt-0.5 text-right">
+            PDF: {fmtMoeda(it.preco_pdf)}
+          </div>
+        </div>
       </div>
     );
   };
