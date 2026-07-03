@@ -6,12 +6,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { Activity, BarChart3, ShieldCheck, RefreshCw } from 'lucide-react';
+import { Activity, BarChart3, HeartPulse, ShieldCheck, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { IntelligenceOperationalTab } from '@/components/intelligence/IntelligenceOperationalTab';
 import { IntelligenceManagerialTab } from '@/components/intelligence/IntelligenceManagerialTab';
 import { IntelligenceStrategicTab } from '@/components/intelligence/IntelligenceStrategicTab';
+import { IntelligenceUtiTab } from '@/components/intelligence/IntelligenceUtiTab';
 import { IntelligenceUserSimulator } from '@/components/intelligence/IntelligenceUserSimulator';
 
 export default function IntelligenceDashboard() {
@@ -89,6 +90,11 @@ export default function IntelligenceDashboard() {
               <ShieldCheck className="w-3 h-3 mr-1" /> Estratégico
             </TabsTrigger>
           )}
+          {(canViewManagerial || isAdmin) && (
+            <TabsTrigger value="uti" className="text-xs px-3 h-7">
+              <HeartPulse className="w-3 h-3 mr-1" /> UTI de Contas
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="operational" className="mt-4">
@@ -104,6 +110,12 @@ export default function IntelligenceDashboard() {
         {(canViewStrategic || isAdmin) && (
           <TabsContent value="strategic" className="mt-4">
             <IntelligenceStrategicTab />
+          </TabsContent>
+        )}
+
+        {(canViewManagerial || isAdmin) && (
+          <TabsContent value="uti" className="mt-4">
+            <IntelligenceUtiTab />
           </TabsContent>
         )}
       </Tabs>

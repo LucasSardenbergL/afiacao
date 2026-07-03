@@ -66,6 +66,76 @@ export function interpretarRespostaDisparo(
   return { tone: 'info', message: `Pedido #${pedidoId}: nada a disparar` };
 }
 
+/* ─── Frescor do snapshot de estoque + feedback do sync manual ─── */
+//
+// O motor de sugestões lê sku_estoque_atual (snapshot alimentado pela edge
+// omie-sync-estoque, cron diário 06:00 BRT + intraday 2h). "Recalcular sugestões"
+// NÃO roda esse sync — e quando ele para, a tela mostra estoque velho sem nenhum
+// aviso (incidente de 2 dias, jul/2026). O badge torna a idade do snapshot visível
+// e o botão "Sincronizar estoque" destrava sem esperar a próxima janela do cron.
+//
+// Régua do tone: intraday roda a cada 2h (06:40–16:40 BRT) → >4h = duas janelas
+// perdidas (warning; inclui a madrugada — honesto, o dado ESTÁ velho e o diário
+// 06:00 BRT o renova antes do corte 07:00); >24h = até o diário falhou (error).
+
+export type FrescorTone = 'ok' | 'warning' | 'error';
+
+export function frescorEstoque(
+  ultimaSync: string | null | undefined,
+  agora: Date,
+): { tone: FrescorTone; label: string } {
+  const ts = ultimaSync ? new Date(ultimaSync).getTime() : NaN;
+  if (Number.isNaN(ts)) return { tone: 'error', label: 'estoque nunca sincronizado' };
+
+  const horas = (agora.getTime() - ts) / 3_600_000;
+  const tone: FrescorTone = horas > 24 ? 'error' : horas > 4 ? 'warning' : 'ok';
+  const dias = Math.floor(horas / 24);
+  const label =
+    dias >= 1
+      ? `sincronizado há ${dias} dia${dias > 1 ? 's' : ''}`
+      : horas < 1
+        ? 'sincronizado há menos de 1h'
+        : `sincronizado há ${Math.floor(horas)}h`;
+  return { tone, label };
+}
+
+// Resumo devolvido pela edge omie-sync-estoque (contagens; as listas ficam de fora).
+export interface RespostaSyncEstoque {
+  ok?: boolean;
+  sincronizados?: number | null;
+  nao_encontrados?: number | null;
+  erros_upsert?: number | null;
+  total_skus_esperados?: number | null;
+  duracao_ms?: number | null;
+  mensagem?: string | null;
+  error?: string | null;
+}
+
+// Traduz o resumo num toast. Erro de gravação parcial vira warning (não mascarar);
+// resposta vazia/não-ok NUNCA vira sucesso.
+export function interpretarRespostaSyncEstoque(
+  data: RespostaSyncEstoque | null | undefined,
+): { tone: 'success' | 'warning' | 'error' | 'info'; message: string } {
+  if (!data || data.ok !== true) {
+    return { tone: 'error', message: `Sync de estoque falhou: ${data?.error ?? 'resposta vazia da edge'}` };
+  }
+  if ((data.total_skus_esperados ?? 0) === 0) {
+    return { tone: 'info', message: data.mensagem ?? 'Nenhum SKU habilitado, nada a sincronizar.' };
+  }
+  const sincronizados = data.sincronizados ?? 0;
+  const errosUpsert = data.erros_upsert ?? 0;
+  if (errosUpsert > 0) {
+    return {
+      tone: 'warning',
+      message: `Estoque sincronizado com ressalvas: ${sincronizados} SKUs atualizados, ${errosUpsert} erro(s) de gravação`,
+    };
+  }
+  const segundos = Math.round((data.duracao_ms ?? 0) / 1000);
+  const naoEncontrados = data.nao_encontrados ?? 0;
+  const sufixo = naoEncontrados > 0 ? ` (${naoEncontrados} não encontrados no Omie)` : '';
+  return { tone: 'success', message: `Estoque sincronizado: ${sincronizados} SKUs atualizados em ${segundos}s${sufixo}` };
+}
+
 /* ─── Conciliação inline (Fase 3 · 3b) ─── */
 //
 // O pedido cai num estado de conciliação quando o disparo ao portal Sayerlack termina

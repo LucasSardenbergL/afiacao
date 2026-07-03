@@ -3,6 +3,7 @@
 import { Ban, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
@@ -21,6 +22,10 @@ interface ItensTableProps {
   onDescontinuar: (l: Linha) => void;
   removerPending: boolean;
   descontinuarPending: boolean;
+  // Seleção em massa (só em pedido editável): marcar N itens → "Remover selecionados".
+  selecionados: ReadonlySet<number>;
+  onToggleSelecionado: (id: number) => void;
+  onToggleTodos: () => void;
 }
 
 export function ItensTable({
@@ -34,11 +39,25 @@ export function ItensTable({
   onDescontinuar,
   removerPending,
   descontinuarPending,
+  selecionados,
+  onToggleSelecionado,
+  onToggleTodos,
 }: ItensTableProps) {
+  const todosSelecionados = linhas.length > 0 && linhas.every((l) => selecionados.has(l.id));
+  const algumSelecionado = linhas.some((l) => selecionados.has(l.id));
   return (
     <Table>
       <TableHeader>
         <TableRow>
+          {podeEditar && (
+            <TableHead className="w-8">
+              <Checkbox
+                aria-label="Selecionar todos os itens"
+                checked={todosSelecionados ? true : algumSelecionado ? 'indeterminate' : false}
+                onCheckedChange={onToggleTodos}
+              />
+            </TableHead>
+          )}
           <TableHead className="w-[34%] min-w-[300px]">SKU / Descrição</TableHead>
           <TableHead
             className="text-right"
@@ -69,7 +88,16 @@ export function ItensTable({
           const aCaminho = l.estoque_a_caminho;
           const temSplit = fisico != null && aCaminho != null && Number(aCaminho) > 0;
           return (
-          <TableRow key={l.id}>
+          <TableRow key={l.id} data-state={selecionados.has(l.id) ? 'selected' : undefined}>
+            {podeEditar && (
+              <TableCell className="align-top">
+                <Checkbox
+                  aria-label={`Selecionar item ${l.sku_codigo_omie}`}
+                  checked={selecionados.has(l.id)}
+                  onCheckedChange={() => onToggleSelecionado(l.id)}
+                />
+              </TableCell>
+            )}
             <TableCell className="align-top whitespace-normal">
               <div className="font-mono text-xs text-muted-foreground">{l.sku_codigo_omie}</div>
               <div className="text-sm font-medium whitespace-normal break-words leading-snug">
@@ -171,7 +199,7 @@ export function ItensTable({
           );
         })}
         <TableRow>
-          <TableCell colSpan={8} className="text-right font-medium">Total</TableCell>
+          <TableCell colSpan={podeEditar ? 9 : 8} className="text-right font-medium">Total</TableCell>
           <TableCell className="text-right font-bold tabular-nums">{formatBRL(totalAtual)}</TableCell>
           {podeEditar && <TableCell />}
         </TableRow>

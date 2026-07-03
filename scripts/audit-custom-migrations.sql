@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 317
+-- Total de custom migrations: 319
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -358,7 +358,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260629120000', 'seg_customer_metrics_viewgate', '20260629120000_seg_customer_metrics_viewgate.sql'),
   ('20260629140000', 'reposicao_preco_ausente_null', '20260629140000_reposicao_preco_ausente_null.sql'),
   ('20260629150000', 'kb_catalisador_links', '20260629150000_kb_catalisador_links.sql'),
-  ('20260701120000', 'fin_balanco_inputs', '20260701120000_fin_balanco_inputs.sql')
+  ('20260701120000', 'fin_balanco_inputs', '20260701120000_fin_balanco_inputs.sql'),
+  ('20260702210000', 'gov_iniciativas_iceberg', '20260702210000_gov_iniciativas_iceberg.sql'),
+  ('20260702213000', 'gov_iniciativas_check_ganhos', '20260702213000_gov_iniciativas_check_ganhos.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1419,7 +1421,16 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('kb_catalisador_links', 'rls_policy', 'public', 'kb_catalisador_links_select_staff', 'kb_catalisador_links'),
   ('fin_balanco_inputs', 'table', 'public', 'fin_balanco_inputs', ''),
   ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_select_master', 'fin_balanco_inputs'),
-  ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_write_master', 'fin_balanco_inputs')
+  ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_write_master', 'fin_balanco_inputs'),
+  ('gov_iniciativas_iceberg', 'function', 'public', 'gov_iniciativas_set_updated_at', ''),
+  ('gov_iniciativas_iceberg', 'table', 'public', 'gov_iniciativas', ''),
+  ('gov_iniciativas_iceberg', 'index', 'public', 'idx_gov_iniciativas_empresa_status', 'gov_iniciativas'),
+  ('gov_iniciativas_iceberg', 'trigger', 'public', 'trg_gov_iniciativas_updated_at', 'gov_iniciativas'),
+  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_select_staff', 'gov_iniciativas'),
+  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_insert_master', 'gov_iniciativas'),
+  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_update_master_ou_dono', 'gov_iniciativas'),
+  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_delete_master', 'gov_iniciativas'),
+  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_service_all', 'gov_iniciativas')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2528,7 +2539,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('kb_catalisador_links', 'rls_policy', 'public', 'kb_catalisador_links_select_staff', 'kb_catalisador_links'),
   ('fin_balanco_inputs', 'table', 'public', 'fin_balanco_inputs', ''),
   ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_select_master', 'fin_balanco_inputs'),
-  ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_write_master', 'fin_balanco_inputs')
+  ('fin_balanco_inputs', 'rls_policy', 'public', 'fin_balanco_inputs_write_master', 'fin_balanco_inputs'),
+  ('gov_iniciativas_iceberg', 'function', 'public', 'gov_iniciativas_set_updated_at', ''),
+  ('gov_iniciativas_iceberg', 'table', 'public', 'gov_iniciativas', ''),
+  ('gov_iniciativas_iceberg', 'index', 'public', 'idx_gov_iniciativas_empresa_status', 'gov_iniciativas'),
+  ('gov_iniciativas_iceberg', 'trigger', 'public', 'trg_gov_iniciativas_updated_at', 'gov_iniciativas'),
+  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_select_staff', 'gov_iniciativas'),
+  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_insert_master', 'gov_iniciativas'),
+  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_update_master_ou_dono', 'gov_iniciativas'),
+  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_delete_master', 'gov_iniciativas'),
+  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_service_all', 'gov_iniciativas')
 )
 SELECT
   e.migration,

@@ -19,6 +19,7 @@ import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useOfflineSubmit } from '@/hooks/useOfflineSubmit';
 import { RestoreDraftDialog } from '@/components/unified-order/RestoreDraftDialog';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
+import { AlertaCreditoCliente } from '@/components/unified-order/AlertaCreditoCliente';
 import { CoresDoClienteCard } from '@/components/unified-order/CoresDoClienteCard';
 import { useCoresDoCliente } from '@/hooks/unifiedOrder/useCoresDoCliente';
 import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
@@ -331,6 +332,11 @@ const UnifiedOrder = () => {
               vendedorDivergencias={h.vendedorDivergencias}
               onSelectCustomer={h.selectCustomer} onClearCustomer={h.clearCustomer}
             />
+          )}
+
+          {/* Alerta de crédito (Fase 1 — informativo, não bloqueia) */}
+          {showCustomerSearch && h.selectedCustomer && (
+            <AlertaCreditoCliente cliente={h.selectedCustomer} />
           )}
 
           {/* Cores já pedidas pelo cliente — busca + re-pedido (staff) */}

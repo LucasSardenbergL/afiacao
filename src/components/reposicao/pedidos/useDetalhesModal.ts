@@ -29,6 +29,9 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
   const [condicaoCodigo, setCondicaoCodigo] = useState<string>('');
   const [removerItem, setRemoverItem] = useState<PedidoItem | null>(null);
   const [descontinuarItem, setDescontinuarItem] = useState<PedidoItem | null>(null);
+  // Seleção em massa p/ remoção em lote (ids de pedido_compra_item).
+  const [selecionados, setSelecionados] = useState<ReadonlySet<number>>(new Set());
+  const [confirmarRemocaoLote, setConfirmarRemocaoLote] = useState(false);
 
   // Catálogo de condições de pagamento Omie (carregado uma vez)
   const { data: condicoes = [] } = useQuery({
@@ -86,6 +89,8 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
       setPrecoEdits({});
       setObs('');
       setCondicaoCodigo('');
+      setSelecionados(new Set());
+      setConfirmarRemocaoLote(false);
     } else if (pedido) {
       setCondicaoCodigo(pedido.condicao_pagamento_codigo ?? '');
     }
@@ -281,6 +286,58 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     },
   });
 
+  // Só ids que ainda existem em linhas contam (item removido individualmente sai da
+  // seleção sozinho — a seleção "válida" é derivada, não estado duplicado).
+  const linhasSelecionadas = useMemo(
+    () => linhas.filter((l) => selecionados.has(l.id)),
+    [linhas, selecionados],
+  );
+
+  const toggleSelecionado = (id: number) => {
+    setSelecionados((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Todos visíveis selecionados → limpa; senão seleciona todos.
+  const toggleTodos = () => {
+    setSelecionados((prev) => {
+      const todos = linhas.length > 0 && linhas.every((l) => prev.has(l.id));
+      return todos ? new Set() : new Set(linhas.map((l) => l.id));
+    });
+  };
+
+  // Remoção em LOTE: mesma semântica de N remoções individuais, com UM delete (.in é
+  // filtro simples — a armadilha PostgREST é o .or em UPDATE) e UM recálculo do cabeçalho.
+  const removerLoteMutation = useMutation({
+    mutationFn: async () => {
+      const ids = linhasSelecionadas.map((l) => l.id);
+      if (ids.length === 0) return { vazio: false, removidos: 0 };
+      const { error } = await supabase.from('pedido_compra_item').delete().in('id', ids);
+      if (error) throw error;
+      const res = await recalcularPedido();
+      return { vazio: res?.vazio ?? false, removidos: ids.length };
+    },
+    onSuccess: (res) => {
+      toast.success(
+        res.vazio
+          ? `${res.removidos} itens removidos. Pedido cancelado (sem itens restantes).`
+          : `${res.removidos} ${res.removidos === 1 ? 'item removido' : 'itens removidos'}`,
+      );
+      queryClient.invalidateQueries({ queryKey: ['pedido-itens', pedido?.id] });
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+      setSelecionados(new Set());
+      setConfirmarRemocaoLote(false);
+      if (res.vazio) onOpenChange(false);
+    },
+    onError: (e: Error) => {
+      toast.error(`Erro ao remover itens: ${e.message}`);
+    },
+  });
+
   const descontinuarMutation = useMutation({
     mutationFn: async (item: PedidoItem) => {
       // 1. descontinua o SKU
@@ -367,5 +424,12 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     podeEditar,
     podeEditarCondicao,
     podeEditarPreco,
+    selecionados,
+    toggleSelecionado,
+    toggleTodos,
+    linhasSelecionadas,
+    confirmarRemocaoLote,
+    setConfirmarRemocaoLote,
+    removerLoteMutation,
   };
 }
