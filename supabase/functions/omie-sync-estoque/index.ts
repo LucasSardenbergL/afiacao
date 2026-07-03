@@ -434,6 +434,54 @@ async function computePendenteViaPedidosCompra(
   return { pendente, confiavel, problemas };
 }
 
+// ===== Marcadores do Sentinela (sync_state) — writer que faltava ao check estoque_reposicao =====
+// A v2 do check ("[FONTE-ÚNICA passo 5 / P1-A]", 20260611210000) lia DOIS marcadores 1-writer (account
+// minúscula) que NENHUM writer gravava (o fluxo single-source #809 foi revertido no #817) → broken
+// permanente + Sentinela SURDO 17d (o incidente 30/06–02/07 passou mudo). A v3 (#1144, 20260702212000)
+// voltou o check ao dado real (max(ultima_sincronizacao)) e deixou a regra: "re-promover o marcador só
+// COM a edge gravando" — ESTA função é essa edge. Ordem certa de deploy: WRITER primeiro (aqui), check
+// v4 depois (partir do corpo v2 preservado na 20260626150000). Semântica dos marcadores:
+//   - fim de run OK → 'complete' + last_sync_at (o check v2/v4 mede a idade por last_sync_at);
+//   - pendente NÃO-confiável (OBEN) → OMITE o upsert do reposicao_pendente_po: o marcador envelhece e
+//     a futura v4 enxerga o "a-caminho congelado" que o frescor do físico mascara (o ponto cego que
+//     motivou o P1-A — a v3 ainda não o cobre);
+//   - falha total do run → 'error' no full SEM avançar last_sync_at (contrato v2/v4: 'error' = broken
+//     imediato; o horário do último sucesso fica preservado para o operador).
+// Best-effort: o marcador nunca derruba o sync real (padrão da irmã omie-sync-pedidos-compra).
+// 'syncing' do desenho P1-A não é usado: aqui os dois upserts saem juntos no fim do run (não existe a
+// janela físico→a-caminho do fluxo #809 que o estado intermediário cobria).
+const MARKER_FULL = "reposicao_estoque_full";
+const MARKER_PENDENTE_PO = "reposicao_pendente_po";
+
+async function gravarMarcadorSentinela(
+  supabase: SupabaseClient,
+  entityType: string,
+  empresa: Empresa,
+  status: "complete" | "error",
+  meta: Record<string, unknown>,
+  errorMessage: string | null = null,
+): Promise<void> {
+  const nowISO = new Date().toISOString();
+  const row: Record<string, unknown> = {
+    entity_type: entityType,
+    account: empresa.toLowerCase(),
+    status,
+    updated_at: nowISO,
+    error_message: errorMessage,
+    metadata: { ...meta, gravado_em: nowISO },
+  };
+  if (status === "complete") row.last_sync_at = nowISO; // 'error' preserva o último sucesso
+  try {
+    const { error } = await supabase
+      .from("sync_state")
+      .upsert(row, { onConflict: "entity_type,account" });
+    if (error) throw error;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[omie-sync-estoque] marcador ${entityType} (${status}) falhou: ${msg}`);
+  }
+}
+
 async function computePendenteViaSaldoPendente(
   appKey: string, appSecret: string, habilitadoMap: Map<string, string | null>,
 ): Promise<Map<string, number>> {
@@ -467,6 +515,11 @@ Deno.serve(async (req) => {
   const startedAt = new Date();
   const t0 = performance.now();
 
+  // Refs para o catch conseguir gravar o marcador 'error' (só existem após o parse/criação no try;
+  // falha ANTES disso fica sem marcador — o envelhecimento do last_sync_at cobre, stale às 4h).
+  let supabaseRef: SupabaseClient | null = null;
+  let empresaRef: Empresa | null = null;
+
   try {
     const body = req.method === "POST"
       ? await req.json().catch(() => ({}))
@@ -489,6 +542,8 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false },
     });
+    supabaseRef = supabase;
+    empresaRef = empresa;
 
     // 1) SKUs habilitados
     const { data: habilitadosRows, error: habErr } = await supabase
@@ -513,6 +568,13 @@ Deno.serve(async (req) => {
     );
 
     if (totalEsperado === 0) {
+      // Run vazio legítimo = complete (só o full; deixar o pendente_po envelhecer aqui é sinal útil —
+      // reposição desabilitada em massa merece atenção humana, não um complete fabricado).
+      await gravarMarcadorSentinela(supabase, MARKER_FULL, empresa, "complete", {
+        trigger: "run",
+        sincronizados: 0,
+        nota: "nenhum SKU habilitado",
+      });
       return new Response(
         JSON.stringify({
           ok: true,
@@ -757,6 +819,25 @@ Deno.serve(async (req) => {
 
     console.log("[omie-sync-estoque] resumo:", JSON.stringify(summary));
 
+    // Marcadores do Sentinela (check estoque_reposicao): full sempre; pendente_po SÓ OBEN e SÓ quando o
+    // snapshot do a-caminho foi realmente gravado nesta rodada — não-confiável deixa o marcador envelhecer
+    // (stale/broken) = o alerta de "a-caminho congelado". COLACOR não tem esteira de reposição (o check é
+    // OBEN-only); o full dela fica gravado por uniformidade, o pendente não (ListarSaldoPendente é
+    // best-effort não-fatal lá — um 'complete' incondicional seria sinal fabricado).
+    await gravarMarcadorSentinela(supabase, MARKER_FULL, empresa, "complete", {
+      trigger: "run",
+      sincronizados,
+      nao_encontrados: naoEncontrados.length,
+      duracao_ms: duracaoMs,
+    });
+    if (empresa === "OBEN" && pendenteConfiavel) {
+      await gravarMarcadorSentinela(supabase, MARKER_PENDENTE_PO, empresa, "complete", {
+        trigger: "run",
+        skus_com_pendente: pendenteEntrada.size,
+        duracao_ms: duracaoMs,
+      });
+    }
+
     return new Response(JSON.stringify(summary), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -766,6 +847,10 @@ Deno.serve(async (req) => {
     console.error(
       `[omie-sync-estoque] ${isAuth ? "CRÍTICO AUTH" : "ERRO"}: ${msg}`,
     );
+    // Falha TOTAL do run → 'error' no full marker (broken imediato no check), sem avançar last_sync_at.
+    if (supabaseRef && empresaRef) {
+      await gravarMarcadorSentinela(supabaseRef, MARKER_FULL, empresaRef, "error", { trigger: "run" }, msg);
+    }
     return new Response(
       JSON.stringify({
         ok: false,
