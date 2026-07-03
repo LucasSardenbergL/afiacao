@@ -685,6 +685,53 @@ export async function getProjecaoSnapshotsCockpit(
   return results.filter((r): r is SnapshotEmpresa => r !== null);
 }
 
+// ═══════════════ 5b. BALANÇO (Fleuriet) ═══════════════
+
+export type BalancoInputRow = { company: string; data_ref: string; anc: number | null; pnc: number | null; pl: number | null };
+
+/** Balanço mais recente por empresa (maior data_ref) de fin_balanco_inputs (RLS master-only). */
+export async function getBalancoInputs(companies: Company[]): Promise<Record<string, BalancoInputRow>> {
+  const out: Record<string, BalancoInputRow> = {};
+  await Promise.all(companies.map(async (company) => {
+    const { data, error } = await supabase
+      .from('fin_balanco_inputs')
+      .select('company, data_ref, ativo_nao_circulante, passivo_nao_circulante, patrimonio_liquido')
+      .eq('company', company)
+      .order('data_ref', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) out[company] = {
+      company: data.company,
+      data_ref: data.data_ref,
+      anc: data.ativo_nao_circulante ?? null,
+      pnc: data.passivo_nao_circulante ?? null,
+      pl: data.patrimonio_liquido ?? null,
+    };
+  }));
+  return out;
+}
+
+/** NCG (cenário realista) numa janela de ±margemDias ao redor da data do balanço — para casar por
+ *  data (a classificação é as-of o balancete). Buscar ao redor da data_ref (não desde hoje) garante
+ *  que balanços antigos achem o snapshot certo sem o cap cortar (Codex). Ordena desc; cap 60. */
+export async function getNcgNaJanela(company: Company, dataRef: string, margemDias = 15): Promise<{ ncg: number | null; snapshot_at: string }[]> {
+  const refMs = Date.parse(dataRef + 'T00:00:00Z');
+  const desde = new Date(refMs - margemDias * 86400000).toISOString();
+  const ate = new Date(refMs + margemDias * 86400000).toISOString();
+  const { data, error } = await supabase
+    .from('fin_projecao_snapshots')
+    .select('ncg, snapshot_at')
+    .eq('company', company)
+    .eq('cenario', 'realista')
+    .gte('snapshot_at', desde)
+    .lte('snapshot_at', ate)
+    .order('snapshot_at', { ascending: false })
+    .limit(60);
+  if (error) throw error;
+  return (data ?? []).map((r) => ({ ncg: r.ncg ?? null, snapshot_at: r.snapshot_at }));
+}
+
 // ═══════════════ 6. PERMISSÕES ═══════════════
 
 export async function getMinhaPermissao(): Promise<FinPermissao | null> {

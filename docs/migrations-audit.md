@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **318** custom migrations totais
-- **1078** objetos esperados (criados por estas migrations)
+- **319** custom migrations totais
+- **1081** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 315
-  - `rls_policy`: 233
+  - `rls_policy`: 235
   - `index`: 194
-  - `table`: 114
+  - `table`: 115
   - `cron_job`: 110
   - `view`: 55
   - `trigger`: 53
@@ -2653,6 +2653,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.kb_catalisador_links_unique_quad` | `kb_catalisador_links` |
 | `index` | `public.kb_catalisador_links_norm` | `kb_catalisador_links` |
 | `rls_policy` | `public.kb_catalisador_links_select_staff` | `kb_catalisador_links` |
+
+### `20260701120000_fin_balanco_inputs.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.fin_balanco_inputs` | — |
+| `rls_policy` | `public.fin_balanco_inputs_select_master` | `fin_balanco_inputs` |
+| `rls_policy` | `public.fin_balanco_inputs_write_master` | `fin_balanco_inputs` |
 
 ### `20260702210000_gov_iniciativas_iceberg.sql`
 
