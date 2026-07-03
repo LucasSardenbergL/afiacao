@@ -2,7 +2,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import { PedidoSugerido } from './types';
 import { formatBRL, formatTime } from './shared';
 import { StatusBadge, SplitInfo } from './badges';
@@ -12,7 +12,7 @@ import { HistoricoAcoesPanel } from './HistoricoAcoesPanel';
 import { CondicaoPagamentoPanel } from './CondicaoPagamentoPanel';
 import { ItensTable } from './ItensTable';
 import { EmbalagemPanel } from './EmbalagemPanel';
-import { RemoverItemDialog, DescontinuarItemDialog } from './ConfirmacaoDialogs';
+import { RemoverItemDialog, DescontinuarItemDialog, RemoverItensLoteDialog } from './ConfirmacaoDialogs';
 
 /* ─── Detalhes Modal ─── */
 export function DetalhesModal({
@@ -53,6 +53,13 @@ export function DetalhesModal({
     podeEditar,
     podeEditarCondicao,
     podeEditarPreco,
+    selecionados,
+    toggleSelecionado,
+    toggleTodos,
+    linhasSelecionadas,
+    confirmarRemocaoLote,
+    setConfirmarRemocaoLote,
+    removerLoteMutation,
   } = useDetalhesModal({ pedido, open, onOpenChange, onApproved });
 
   if (!pedido) return null;
@@ -111,18 +118,41 @@ export function DetalhesModal({
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <ItensTable
-            linhas={linhas}
-            podeEditar={podeEditar}
-            totalAtual={totalAtual}
-            onEditQty={onEditQty}
-            podeEditarPreco={podeEditarPreco}
-            onEditPreco={onEditPreco}
-            onRemover={(l) => setRemoverItem(l)}
-            onDescontinuar={(l) => setDescontinuarItem(l)}
-            removerPending={removerItemMutation.isPending}
-            descontinuarPending={descontinuarMutation.isPending}
-          />
+          <>
+            {podeEditar && linhasSelecionadas.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-status-warning/40 bg-status-warning/5 px-3 py-2 text-sm">
+                <span>
+                  <strong>{linhasSelecionadas.length}</strong>{' '}
+                  {linhasSelecionadas.length === 1 ? 'item selecionado' : 'itens selecionados'} —{' '}
+                  {formatBRL(linhasSelecionadas.reduce((acc, l) => acc + l._valor, 0))}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setConfirmarRemocaoLote(true)}
+                  disabled={removerLoteMutation.isPending}
+                >
+                  <Trash2 className="w-4 h-4 mr-1" />
+                  Remover selecionados
+                </Button>
+              </div>
+            )}
+            <ItensTable
+              linhas={linhas}
+              podeEditar={podeEditar}
+              totalAtual={totalAtual}
+              onEditQty={onEditQty}
+              podeEditarPreco={podeEditarPreco}
+              onEditPreco={onEditPreco}
+              onRemover={(l) => setRemoverItem(l)}
+              onDescontinuar={(l) => setDescontinuarItem(l)}
+              removerPending={removerItemMutation.isPending}
+              descontinuarPending={descontinuarMutation.isPending}
+              selecionados={selecionados}
+              onToggleSelecionado={toggleSelecionado}
+              onToggleTodos={toggleTodos}
+            />
+          </>
         )}
 
         {!isLoading && <EmbalagemPanel empresa={pedido.empresa} itens={linhas} />}
@@ -180,6 +210,14 @@ export function DetalhesModal({
         onOpenChange={() => setDescontinuarItem(null)}
         pending={descontinuarMutation.isPending}
         onConfirm={() => descontinuarItem && descontinuarMutation.mutate(descontinuarItem)}
+      />
+
+      {/* Confirmação: remover selecionados em lote */}
+      <RemoverItensLoteDialog
+        itens={confirmarRemocaoLote ? linhasSelecionadas : null}
+        onOpenChange={() => setConfirmarRemocaoLote(false)}
+        pending={removerLoteMutation.isPending}
+        onConfirm={() => removerLoteMutation.mutate()}
       />
     </Dialog>
   );
