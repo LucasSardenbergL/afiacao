@@ -6,8 +6,9 @@ import { useState, useEffect, useRef } from 'react';
 import { type Company } from '@/contexts/CompanyContext';
 import { supabase } from '@/integrations/supabase/client';
 import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinResumo, type AgingData, type FinDRE } from '@/services/financeiroService';
-import { getProjecaoSnapshotsCockpit } from '@/services/financeiroV2Service';
+import { getProjecaoSnapshotsCockpit, getBalancoInputs, getNcgHistorico, type BalancoInputRow } from '@/services/financeiroV2Service';
 import { consolidarCockpit, type CockpitConsolidado } from '@/lib/financeiro/cockpit-consolida-helpers';
+import { classificarFleurietEmpresa, type ClassificacaoFleurietEmpresa } from '@/lib/financeiro/fleuriet-helpers';
 import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
 import { logger } from '@/lib/logger';
 import type { DrillDownType } from '@/components/financeiro/CockpitDrillDown';
@@ -23,6 +24,17 @@ const COCKPIT_VAZIO: CockpitConsolidado = {
   caixa_inicial_projecao: null, caixa_inicial_por_empresa: [], caixa_inicial_parcial: true,
 };
 
+// Receita líquida do mês mais recente por empresa (banda de materialidade do Fleuriet).
+// getDRE é chamado com o ano corrente fixo → comparar por mes basta (mesmo padrão de dreUltimo).
+function receitaLiquidaMensal(dre: FinDRE[], company: string): number | null {
+  let melhor: FinDRE | null = null;
+  for (const d of dre) {
+    if (d.company !== company) continue;
+    if (!melhor || d.mes > melhor.mes) melhor = d;
+  }
+  return melhor ? melhor.receita_liquida : null;
+}
+
 export function useFinanceiroCockpit() {
   const [loading, setLoading] = useState(true);
   const [resumo, setResumo] = useState<Record<string, FinResumo>>({});
@@ -32,6 +44,7 @@ export function useFinanceiroCockpit() {
   const [cockpit, setCockpit] = useState<CockpitConsolidado>(COCKPIT_VAZIO);
   const [confiabilidade, setConfiabilidade] = useState<FinConfiabilidadeRow[]>([]);
   const [drillDown, setDrillDown] = useState<DrillDownType>(null);
+  const [fleuriet, setFleuriet] = useState<Record<string, ClassificacaoFleurietEmpresa>>({});
 
   const { regime } = useFinanceiroRegime();
   const ano = new Date().getFullYear();
@@ -73,6 +86,29 @@ export function useFinanceiroCockpit() {
       setDre(dr);
       setInadimplentes(inad);
       setCockpit(consolidarCockpit({ esperadas: EMPRESAS_COCKPIT, snapshots: snaps }));
+
+      // Fleuriet: balanço (master-only via RLS) + NCG histórico casado por data + receita p/ materialidade.
+      // Não-master não lê fin_balanco_inputs (RLS) → balancos {} → classificação 'indisponivel' (sem selo).
+      const balancos = await getBalancoInputs(EMPRESAS_COCKPIT).catch((e): Record<string, BalancoInputRow> => {
+        logger.warn('Balanço (Fleuriet) indisponível', { error: e instanceof Error ? e.message : String(e) });
+        return {};
+      });
+      const desdeISO = new Date(Date.now() - 400 * 86400000).toISOString();
+      const histNcg = await Promise.all(
+        EMPRESAS_COCKPIT.map((co) => getNcgHistorico(co, desdeISO).catch(() => [] as { ncg: number | null; snapshot_at: string }[])),
+      );
+      if (loadId !== loadIdRef.current) return;
+      const fleurietMap: Record<string, ClassificacaoFleurietEmpresa> = {};
+      EMPRESAS_COCKPIT.forEach((co, i) => {
+        const bal = balancos[co];
+        fleurietMap[co] = classificarFleurietEmpresa({
+          balanco: bal ? { anc: bal.anc, pnc: bal.pnc, pl: bal.pl, data_ref: bal.data_ref } : null,
+          snapshots: histNcg[i],
+          receita_liquida_mensal: receitaLiquidaMensal(dr, co),
+          hojeMs: Date.now(),
+        });
+      });
+      setFleuriet(fleurietMap);
 
       // Confiabilidade for current month per company
       const confResults: FinConfiabilidadeRow[] = [];
@@ -144,9 +180,11 @@ export function useFinanceiroCockpit() {
   return {
     loading,
     regime,
+    recarregar: loadAll,
     confiabilidade,
     dreConsolidado,
     cockpit,
+    fleuriet,
     inadimplentes,
     drillDown,
     setDrillDown,

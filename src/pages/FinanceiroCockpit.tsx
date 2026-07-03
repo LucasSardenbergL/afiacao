@@ -14,14 +14,22 @@ import { ResultadoPorEmpresa } from '@/components/financeiro/cockpit/ResultadoPo
 import { Projecao13Card } from '@/components/financeiro/cockpit/Projecao13Card';
 import { TopInadimplentes } from '@/components/financeiro/cockpit/TopInadimplentes';
 import { DataBasisFooter } from '@/components/financeiro/cockpit/DataBasisFooter';
+import { FleurietBadge } from '@/components/financeiro/cockpit/FleurietBadge';
+import { BalancoInputDialog } from '@/components/financeiro/cockpit/BalancoInputDialog';
+import { useAuth } from '@/contexts/AuthContext';
+
+const EMPRESA_LABEL: Record<string, string> = { oben: 'Oben', colacor: 'Colacor', colacor_sc: 'Colacor SC' };
+const EMPRESAS = ['oben', 'colacor', 'colacor_sc'] as const;
 
 const FinanceiroCockpit = () => {
   const {
     loading,
     regime,
+    recarregar,
     confiabilidade,
     dreConsolidado,
     cockpit,
+    fleuriet,
     inadimplentes,
     drillDown,
     setDrillDown,
@@ -39,6 +47,7 @@ const FinanceiroCockpit = () => {
     pctCritico,
     agingCriticoValor,
   } = useFinanceiroCockpit();
+  const { isMaster } = useAuth();
 
   if (loading) {
     return (
@@ -89,6 +98,18 @@ const FinanceiroCockpit = () => {
           onClick={() => setDrillDown('cr_aberto')}
         />
       </div>
+
+      {/* Cobertura estrutural do giro (Fleuriet): selos (quando há balanço) + inputs master-only */}
+      {(isMaster || EMPRESAS.some((co) => fleuriet[co]?.data_balanco != null)) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {EMPRESAS.map((co) => fleuriet[co]?.data_balanco != null && (
+            <FleurietBadge key={co} c={fleuriet[co]} empresaLabel={EMPRESA_LABEL[co]} />
+          ))}
+          {isMaster && EMPRESAS.map((co) => (
+            <BalancoInputDialog key={`bal-${co}`} company={co} empresaLabel={EMPRESA_LABEL[co]} onSaved={recarregar} />
+          ))}
+        </div>
+      )}
 
       {/* Row 2: Margens + Inadimplência + Risco — também staggered */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 stagger-children">
