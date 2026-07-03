@@ -3230,6 +3230,39 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_balanco_inputs: {
+        Row: {
+          ativo_nao_circulante: number
+          company: string
+          data_ref: string
+          observacao: string | null
+          passivo_nao_circulante: number
+          patrimonio_liquido: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          ativo_nao_circulante: number
+          company: string
+          data_ref: string
+          observacao?: string | null
+          passivo_nao_circulante: number
+          patrimonio_liquido: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          ativo_nao_circulante?: number
+          company?: string
+          data_ref?: string
+          observacao?: string | null
+          passivo_nao_circulante?: number
+          patrimonio_liquido?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       fin_categoria_dre_mapping: {
         Row: {
           company: string
@@ -5752,60 +5785,6 @@ export type Database = {
         }
         Relationships: []
       }
-      gov_iniciativas: {
-        Row: {
-          alavanca: string
-          created_at: string
-          created_by: string | null
-          descricao: string | null
-          dono_id: string | null
-          empresa: string
-          evidencia: string | null
-          ganho_esperado_mensal: number | null
-          ganho_recorrente_mensal: number | null
-          id: string
-          inicio_em: string | null
-          recorrente_desde: string | null
-          status: string
-          titulo: string
-          updated_at: string
-        }
-        Insert: {
-          alavanca?: string
-          created_at?: string
-          created_by?: string | null
-          descricao?: string | null
-          dono_id?: string | null
-          empresa: string
-          evidencia?: string | null
-          ganho_esperado_mensal?: number | null
-          ganho_recorrente_mensal?: number | null
-          id?: string
-          inicio_em?: string | null
-          recorrente_desde?: string | null
-          status?: string
-          titulo: string
-          updated_at?: string
-        }
-        Update: {
-          alavanca?: string
-          created_at?: string
-          created_by?: string | null
-          descricao?: string | null
-          dono_id?: string | null
-          empresa?: string
-          evidencia?: string | null
-          ganho_esperado_mensal?: number | null
-          ganho_recorrente_mensal?: number | null
-          id?: string
-          inicio_em?: string | null
-          recorrente_desde?: string | null
-          status?: string
-          titulo?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
       health_score_history: {
         Row: {
           calculated_at: string
@@ -5930,6 +5909,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      kb_catalisador_links: {
+        Row: {
+          account: string
+          catalisador_codigo_norm: string
+          confirmed_at: string
+          confirmed_by: string | null
+          created_at: string
+          id: string
+          omie_codigo_produto: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          account: string
+          catalisador_codigo_norm: string
+          confirmed_at?: string
+          confirmed_by?: string | null
+          created_at?: string
+          id?: string
+          omie_codigo_produto: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          account?: string
+          catalisador_codigo_norm?: string
+          confirmed_at?: string
+          confirmed_by?: string | null
+          created_at?: string
+          id?: string
+          omie_codigo_produto?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       kb_chunks: {
         Row: {
@@ -15893,6 +15908,10 @@ export type Database = {
         Args: { p_leitura?: number; p_tarefa_id: string; p_url?: string }
         Returns: undefined
       }
+      confirmar_catalisador_vinculo: {
+        Args: { p_catalisador_codigo: string; p_skus: Json }
+        Returns: number
+      }
       confirmar_item_picking: {
         Args: {
           p_confirmed_at: string
@@ -15965,6 +15984,14 @@ export type Database = {
         Args: {
           p_account: string
           p_expected_kb_product_spec_id: string
+          p_omie_codigo_produto: number
+        }
+        Returns: number
+      }
+      desvincular_catalisador: {
+        Args: {
+          p_account: string
+          p_expected_norm: string
           p_omie_codigo_produto: number
         }
         Returns: number
@@ -16307,6 +16334,7 @@ export type Database = {
         Args: { p_claim_token: string; p_document_id: string }
         Returns: boolean
       }
+      kb_normalizar_catalisador: { Args: { p: string }; Returns: string }
       limpar_sugestoes_antigas: {
         Args: never
         Returns: {
