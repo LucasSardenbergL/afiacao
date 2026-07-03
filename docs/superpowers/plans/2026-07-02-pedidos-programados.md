@@ -327,6 +327,8 @@ git add src/lib/pedidosProgramados/
 git commit -m "feat(pedidos-programados): helpers puros (validação de envio/extração, dados adicionais NF)"
 ```
 
+> **NOTA (pós-revisão de qualidade):** o código acima evoluiu na execução — `validarEnvioResolvido(numeroPc: string | null, itens, configs)` valida também o nº do PC (header é nullable; nunca emitir "null" na NF) e `montarDadosAdicionaisNf` lança com numeroPc vazio (backstop). **Fonte da verdade para os espelhos das Tasks 4/6: o arquivo real `src/lib/pedidosProgramados/helpers.ts` no repo**, não os blocos deste plano.
+
 ---
 
 ### Task 2: Migration — tabelas, RLS, bucket, seed
@@ -947,11 +949,12 @@ async function processarEnvio(
   });
 
   // Precisão > recall: qualquer pendência segura o envio inteiro, com motivo visível.
-  const problemas = validarEnvioResolvido(itens, configs);
+  // numeroPc validado no gate (header é nullable — nunca deixar "null" virar texto de NF).
+  const numeroPc = typeof pedido.numero_pedido_compra === "string" ? pedido.numero_pedido_compra.trim() : "";
+  const problemas = validarEnvioResolvido(numeroPc || null, itens, configs);
   if (problemas.length > 0) return { ok: false, motivo: problemas.join(" | ") };
 
   const grupos = agruparItensPorAccount(itens);
-  const numeroPc = String(pedido.numero_pedido_compra);
   const salesOrdersMap: Record<string, string> = { ...(envio.sales_orders_map ?? {}) };
   const erros: string[] = [];
 

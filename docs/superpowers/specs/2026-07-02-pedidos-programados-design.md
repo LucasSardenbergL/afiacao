@@ -187,10 +187,11 @@ pedidos_programados_config     -- config (founder edita na UI)
 
 ## Guard-rails (money-path: precisão > recall)
 
-1. **Só envia envio 100% resolvido**: item sem `mapa_id`, `preco_final` NULL/≤0,
-   quantidade inválida ou config incompleta (mensagens fixas vazias,
-   `codigo_cliente_omie` faltando para uma account envolvida) → **não envia**,
-   `status='erro'` + motivo na tela. Nada de envio parcial silencioso.
+1. **Só envia envio 100% resolvido**: header sem nº de pedido de compra, item sem
+   `mapa_id`, `preco_final` NULL/≤0, quantidade inválida ou config incompleta
+   (mensagens fixas vazias, `codigo_cliente_omie` faltando para uma account envolvida)
+   → **não envia**, `status='erro'` + motivo na tela. Nada de envio parcial silencioso,
+   nada de `String(null)` virando texto de NF.
    Item `pendente` (fora de envio) não bloqueia nada — só fica visível no pool.
 2. **Ausente ≠ zero**: extração e preço degradam para `null`, nunca para 0.
 3. **Versão/duplicata de PDF**: upload com `numero_pedido_compra` já ativo → avisar e
