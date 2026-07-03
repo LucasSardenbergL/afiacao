@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **318** custom migrations totais
-- **1078** objetos esperados (criados por estas migrations)
+- **319** custom migrations totais
+- **1090** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 315
-  - `rls_policy`: 233
-  - `index`: 194
-  - `table`: 114
+  - `function`: 317
+  - `rls_policy`: 238
+  - `index`: 196
+  - `table`: 116
   - `cron_job`: 110
   - `view`: 55
-  - `trigger`: 53
+  - `trigger`: 54
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2671,6 +2671,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260702213000_gov_iniciativas_check_ganhos.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260702233000_trava_credito_fase2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_excecao_credito_forca_autor` | — |
+| `function` | `public.venda_gate_credito` | — |
+| `table` | `public.venda_excecao_credito` | — |
+| `table` | `public.venda_bloqueio_credito_log` | — |
+| `index` | `public.idx_venda_excecao_pedido` | `venda_excecao_credito` |
+| `index` | `public.idx_venda_bloqueio_log_criado` | `venda_bloqueio_credito_log` |
+| `trigger` | `public.trg_venda_excecao_forca_autor` | `venda_excecao_credito` |
+| `rls_policy` | `public.venda_excecao_select_staff` | `venda_excecao_credito` |
+| `rls_policy` | `public.venda_excecao_insert_gestor` | `venda_excecao_credito` |
+| `rls_policy` | `public.venda_excecao_service_all` | `venda_excecao_credito` |
+| `rls_policy` | `public.venda_bloqueio_log_select_staff` | `venda_bloqueio_credito_log` |
+| `rls_policy` | `public.venda_bloqueio_log_service_all` | `venda_bloqueio_credito_log` |
 
 ## Próximos passos por status
 

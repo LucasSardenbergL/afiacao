@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 318
+-- Total de custom migrations: 319
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -359,7 +359,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260629140000', 'reposicao_preco_ausente_null', '20260629140000_reposicao_preco_ausente_null.sql'),
   ('20260629150000', 'kb_catalisador_links', '20260629150000_kb_catalisador_links.sql'),
   ('20260702210000', 'gov_iniciativas_iceberg', '20260702210000_gov_iniciativas_iceberg.sql'),
-  ('20260702213000', 'gov_iniciativas_check_ganhos', '20260702213000_gov_iniciativas_check_ganhos.sql')
+  ('20260702213000', 'gov_iniciativas_check_ganhos', '20260702213000_gov_iniciativas_check_ganhos.sql'),
+  ('20260702233000', 'trava_credito_fase2', '20260702233000_trava_credito_fase2.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1426,7 +1427,19 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_insert_master', 'gov_iniciativas'),
   ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_update_master_ou_dono', 'gov_iniciativas'),
   ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_delete_master', 'gov_iniciativas'),
-  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_service_all', 'gov_iniciativas')
+  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_service_all', 'gov_iniciativas'),
+  ('trava_credito_fase2', 'function', 'public', 'venda_excecao_credito_forca_autor', ''),
+  ('trava_credito_fase2', 'function', 'public', 'venda_gate_credito', ''),
+  ('trava_credito_fase2', 'table', 'public', 'venda_excecao_credito', ''),
+  ('trava_credito_fase2', 'table', 'public', 'venda_bloqueio_credito_log', ''),
+  ('trava_credito_fase2', 'index', 'public', 'idx_venda_excecao_pedido', 'venda_excecao_credito'),
+  ('trava_credito_fase2', 'index', 'public', 'idx_venda_bloqueio_log_criado', 'venda_bloqueio_credito_log'),
+  ('trava_credito_fase2', 'trigger', 'public', 'trg_venda_excecao_forca_autor', 'venda_excecao_credito'),
+  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_excecao_select_staff', 'venda_excecao_credito'),
+  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_excecao_insert_gestor', 'venda_excecao_credito'),
+  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_excecao_service_all', 'venda_excecao_credito'),
+  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_select_staff', 'venda_bloqueio_credito_log'),
+  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_service_all', 'venda_bloqueio_credito_log')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2541,7 +2554,19 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_insert_master', 'gov_iniciativas'),
   ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_update_master_ou_dono', 'gov_iniciativas'),
   ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_delete_master', 'gov_iniciativas'),
-  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_service_all', 'gov_iniciativas')
+  ('gov_iniciativas_iceberg', 'rls_policy', 'public', 'gov_iniciativas_service_all', 'gov_iniciativas'),
+  ('trava_credito_fase2', 'function', 'public', 'venda_excecao_credito_forca_autor', ''),
+  ('trava_credito_fase2', 'function', 'public', 'venda_gate_credito', ''),
+  ('trava_credito_fase2', 'table', 'public', 'venda_excecao_credito', ''),
+  ('trava_credito_fase2', 'table', 'public', 'venda_bloqueio_credito_log', ''),
+  ('trava_credito_fase2', 'index', 'public', 'idx_venda_excecao_pedido', 'venda_excecao_credito'),
+  ('trava_credito_fase2', 'index', 'public', 'idx_venda_bloqueio_log_criado', 'venda_bloqueio_credito_log'),
+  ('trava_credito_fase2', 'trigger', 'public', 'trg_venda_excecao_forca_autor', 'venda_excecao_credito'),
+  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_excecao_select_staff', 'venda_excecao_credito'),
+  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_excecao_insert_gestor', 'venda_excecao_credito'),
+  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_excecao_service_all', 'venda_excecao_credito'),
+  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_select_staff', 'venda_bloqueio_credito_log'),
+  ('trava_credito_fase2', 'rls_policy', 'public', 'venda_bloqueio_log_service_all', 'venda_bloqueio_credito_log')
 )
 SELECT
   e.migration,
