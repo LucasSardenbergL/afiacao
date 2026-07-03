@@ -1749,6 +1749,87 @@ async function criarPedidoVenda(
 }
 
 // ─── Observabilidade do sync em fin_sync_log (best-effort) ───
+// ── Trava de crédito Fase 2 — gate na fronteira comum (TODAS as vias de pedido
+// passam por aqui). Spec + veredito Codex: docs/superpowers/specs/trava-credito-fase2.md
+// Prova PG17 da RPC: db/test-trava-credito-fase2.sh. Regras:
+//  - bloqueia só com EVIDÊNCIA POSITIVA (vencido 60+ na conta do pedido, sem exceção do pedido);
+//  - fail-open em indisponibilidade SÓ depois de log durável (log falhou → erro, não allow cego);
+//  - toda decisão relevante vira linha em venda_bloqueio_credito_log (medição da fase).
+interface GateCreditoResultado {
+  bloqueado: boolean;
+  vencido: number | null;
+  titulos: number;
+  vencimento_mais_antigo: string | null;
+  excecao_id: string | null;
+  motivo: string;
+}
+
+async function gateCredito(
+  supabase: SupabaseClient,
+  company: Account,
+  codigo: number | null,
+  salesOrderId: string,
+  userId: string | null,
+  contexto: "criacao" | "edicao",
+): Promise<{ permitido: true } | { permitido: false; gate: GateCreditoResultado }> {
+  let gate: GateCreditoResultado;
+  try {
+    const { data, error } = await supabase.rpc("venda_gate_credito", {
+      p_company: company,
+      p_codigo: codigo,
+      p_sales_order_id: salesOrderId,
+    });
+    if (error) throw new Error(error.message);
+    gate = data as GateCreditoResultado;
+  } catch (rpcErr) {
+    const msg = rpcErr instanceof Error ? rpcErr.message : String(rpcErr);
+    const { error: logErr } = await supabase.from("venda_bloqueio_credito_log").insert({
+      company,
+      omie_codigo_cliente: codigo,
+      sales_order_id: salesOrderId,
+      acao: "gate_indisponivel",
+      user_id: userId,
+      detalhe: `${contexto}: ${msg}`.slice(0, 500),
+    });
+    if (logErr) {
+      // Nem o log gravou → infraestrutura degradada; allow cego seria invisível.
+      throw new Error(`Gate de crédito indisponível e sem log (${logErr.message}) — tente novamente.`);
+    }
+    console.warn(`[gate-credito][${company}] indisponível (${contexto}): ${msg} — liberado COM log`);
+    return { permitido: true };
+  }
+
+  if (!gate.bloqueado) {
+    if (gate.excecao_id) {
+      // Liberação por exceção é auditada (best-effort: falha de auditoria de sucesso não trava venda).
+      const { error: logErr } = await supabase.from("venda_bloqueio_credito_log").insert({
+        company,
+        omie_codigo_cliente: codigo,
+        sales_order_id: salesOrderId,
+        acao: "liberado_excecao",
+        vencido: gate.vencido,
+        titulos: gate.titulos,
+        user_id: userId,
+        excecao_id: gate.excecao_id,
+      });
+      if (logErr) console.warn(`[gate-credito] log liberado_excecao falhou: ${logErr.message}`);
+    }
+    return { permitido: true };
+  }
+
+  const { error: logErr } = await supabase.from("venda_bloqueio_credito_log").insert({
+    company,
+    omie_codigo_cliente: codigo,
+    sales_order_id: salesOrderId,
+    acao: contexto === "edicao" ? "bloqueado_edicao" : "bloqueado",
+    vencido: gate.vencido,
+    titulos: gate.titulos,
+    user_id: userId,
+  });
+  if (logErr) console.warn(`[gate-credito] log bloqueado falhou: ${logErr.message}`);
+  return { permitido: false, gate };
+}
+
 // Só as actions de SYNC logam (não as interativas de PV). Com action LIKE 'sync_%'
 // + companies=[account], a varredura de órfãs (>30min) e o sinal sync_error do
 // watchdog (#330) passam a cobrir vendas SEM mudar o watchdog. BEST-EFFORT: uma
@@ -2089,6 +2170,31 @@ serve(async (req) => {
         // Guard money-path: rejeita ANTES de montar o payload Omie (ver assertOmieItemPricesValid).
         assertOmieItemPricesValid(items);
         await assertOmieItemsAtivos(supabaseAdmin, items, account);
+        // Anti-downgrade de conta (veredito Codex): account desconhecido normaliza
+        // silenciosamente pra 'oben' — o pedido local é a âncora server-side.
+        const { data: soRow } = await supabaseAdmin
+          .from("sales_orders")
+          .select("account")
+          .eq("id", sales_order_id)
+          .maybeSingle();
+        if (soRow?.account && soRow.account !== account) {
+          throw new Error(
+            `Conta do payload (${account}) diverge do pedido local (${soRow.account}) — pedido não enviado`,
+          );
+        }
+        // Trava de crédito Fase 2: bloqueia cliente com vencido 60+ sem exceção DESTE pedido.
+        const credito = await gateCredito(
+          supabaseAdmin,
+          account,
+          Number(codigo_cliente) || null,
+          sales_order_id,
+          userId,
+          "criacao",
+        );
+        if (!credito.permitido) {
+          result = { success: false, blocked: "credito", gate: credito.gate };
+          break;
+        }
         const pedido = await criarPedidoVenda(
           supabaseAdmin,
           sales_order_id,
@@ -2197,21 +2303,68 @@ serve(async (req) => {
 
         // Step 1: Consult the real order in Omie to get actual item codes
         let omieCurrentItems: OmieDetalheItem[] = [];
+        let consultEditOk = false;
+        let omieCodigoClienteEdit: number | null = null;
         try {
           const consultResult = (await callOmieVendasApi(
             "produtos/pedido/",
             "ConsultarPedido",
             { codigo_pedido: codigoPedido },
             editAccount
-          )) as { pedido_venda_produto?: { det?: OmieDetalheItem[] }; det?: OmieDetalheItem[] } | null;
+          )) as {
+            pedido_venda_produto?: { det?: OmieDetalheItem[]; cabecalho?: { codigo_cliente?: number } };
+            det?: OmieDetalheItem[];
+          } | null;
           // Omie returns items under pedido_venda_produto.det
           omieCurrentItems = consultResult?.pedido_venda_produto?.det
             || consultResult?.det
             || [];
+          consultEditOk = true;
+          omieCodigoClienteEdit =
+            Number(consultResult?.pedido_venda_produto?.cabecalho?.codigo_cliente) || null;
           console.log(`[Omie Vendas][${editAccount}] Pedido consultado: ${omieCurrentItems.length} itens no Omie`);
         } catch (consultErr) {
           const msg = consultErr instanceof Error ? consultErr.message : String(consultErr);
           console.warn(`[Omie Vendas][${editAccount}] Erro ao consultar pedido: ${msg}`);
+        }
+
+        // Trava de crédito Fase 2 na EDIÇÃO — antes da fase destrutiva (delete de itens).
+        // Só bloqueia AUMENTO de exposição: total atual provado pelo ConsultarPedido do
+        // Omie (nunca client/DB local — veredito Codex); reduzir dívida sempre pode.
+        if (consultEditOk) {
+          const totalAtualOmie = omieCurrentItems.reduce(
+            (s, oi) =>
+              s + (Number(oi?.produto?.quantidade) || 0) * (Number(oi?.produto?.valor_unitario) || 0),
+            0,
+          );
+          if (updatedSubtotal > totalAtualOmie) {
+            const creditoEdit = await gateCredito(
+              supabaseAdmin,
+              editAccount,
+              omieCodigoClienteEdit,
+              editSoId,
+              userId,
+              "edicao",
+            );
+            if (!creditoEdit.permitido) {
+              result = { success: false, blocked: "credito", contexto: "edicao", gate: creditoEdit.gate };
+              break;
+            }
+          }
+        } else {
+          // Sem o consult não há como provar redução → fail-open OBSERVÁVEL: allow
+          // só com log durável (mesmo contrato do gate; log falhou → erro).
+          const { error: logErr } = await supabaseAdmin.from("venda_bloqueio_credito_log").insert({
+            company: editAccount,
+            omie_codigo_cliente: null,
+            sales_order_id: editSoId,
+            acao: "gate_indisponivel",
+            user_id: userId,
+            detalhe: "edicao: ConsultarPedido falhou — total atual não provado",
+          });
+          if (logErr) {
+            throw new Error(`Gate de crédito sem prova na edição e sem log (${logErr.message}) — tente novamente.`);
+          }
         }
 
         // Step 2: Delete all existing items
