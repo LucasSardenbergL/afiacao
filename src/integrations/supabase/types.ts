@@ -13789,6 +13789,95 @@ export type Database = {
           },
         ]
       }
+      venda_bloqueio_credito_log: {
+        Row: {
+          acao: string
+          company: string
+          created_at: string
+          detalhe: string | null
+          excecao_id: string | null
+          id: string
+          omie_codigo_cliente: number | null
+          sales_order_id: string | null
+          titulos: number | null
+          user_id: string | null
+          vencido: number | null
+        }
+        Insert: {
+          acao: string
+          company: string
+          created_at?: string
+          detalhe?: string | null
+          excecao_id?: string | null
+          id?: string
+          omie_codigo_cliente?: number | null
+          sales_order_id?: string | null
+          titulos?: number | null
+          user_id?: string | null
+          vencido?: number | null
+        }
+        Update: {
+          acao?: string
+          company?: string
+          created_at?: string
+          detalhe?: string | null
+          excecao_id?: string | null
+          id?: string
+          omie_codigo_cliente?: number | null
+          sales_order_id?: string | null
+          titulos?: number | null
+          user_id?: string | null
+          vencido?: number | null
+        }
+        Relationships: []
+      }
+      venda_excecao_credito: {
+        Row: {
+          aprovado_por: string
+          company: string
+          created_at: string
+          id: string
+          motivo: string
+          nome_cliente: string | null
+          omie_codigo_cliente: number
+          sales_order_id: string
+          valido_ate: string
+          vencido_no_momento: number | null
+        }
+        Insert: {
+          aprovado_por: string
+          company: string
+          created_at?: string
+          id?: string
+          motivo: string
+          nome_cliente?: string | null
+          omie_codigo_cliente: number
+          sales_order_id: string
+          valido_ate: string
+          vencido_no_momento?: number | null
+        }
+        Update: {
+          aprovado_por?: string
+          company?: string
+          created_at?: string
+          id?: string
+          motivo?: string
+          nome_cliente?: string | null
+          omie_codigo_cliente?: number
+          sales_order_id?: string
+          valido_ate?: string
+          vencido_no_momento?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "venda_excecao_credito_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       venda_items_history: {
         Row: {
           cfop: string | null

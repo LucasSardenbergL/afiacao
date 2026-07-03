@@ -100,6 +100,18 @@ export interface LastOrderDataShape {
   printDataList: PrintOrderData[];
 }
 
+/** Bloqueio da trava de crédito (Fase 2) devolvido pelo edge — o PV NÃO foi criado.
+ *  Carrega o contexto que a UI de exceção precisa (a exceção é POR PEDIDO). */
+export interface BloqueioCreditoPedido {
+  account: 'oben' | 'colacor';
+  salesOrderId: string;
+  omieCodigoCliente: number;
+  nomeCliente: string;
+  /** Snapshot computado pelo gate no edge. null = gate não informou (nunca fabricar 0). */
+  vencido: number | null;
+  titulos: number | null;
+}
+
 export interface SubmitOrderResult {
   success: boolean;
   results: string[];
@@ -109,6 +121,8 @@ export interface SubmitOrderResult {
   /** true só quando TODA conta com itens foi confirmada/reconciliada (sem 'pendente ERP').
    *  O caller usa isso p/ decidir limpar o carrinho + resetar o checkout_id (idempotência). */
   allConfirmed: boolean;
+  /** Contas bloqueadas pela trava de crédito neste envio (vazio quando nenhuma). */
+  bloqueiosCredito?: BloqueioCreditoPedido[];
 }
 
 export interface SubmitQuoteParams {

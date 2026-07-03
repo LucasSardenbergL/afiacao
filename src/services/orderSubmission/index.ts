@@ -1,3 +1,3 @@
 export { submitOrder } from './submitOrder';
 export { submitQuote } from './submitQuote';
-export type { LastOrderDataShape } from './types';
+export type { LastOrderDataShape, BloqueioCreditoPedido } from './types';

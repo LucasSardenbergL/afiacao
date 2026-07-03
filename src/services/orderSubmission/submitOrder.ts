@@ -6,6 +6,7 @@ import type {
   SubmitOrderResult,
   SubmitErrorEntry,
   LastOrderItem,
+  BloqueioCreditoPedido,
 } from './types';
 import type { ServiceCartItem } from '@/hooks/unifiedOrder/types';
 import {
@@ -58,6 +59,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   const { obenProductItems, colacorProductItems, serviceItems } = cart;
   const errors: SubmitErrorEntry[] = [];
   const results: string[] = [];
+  const bloqueiosCredito: BloqueioCreditoPedido[] = [];
 
   if (!obenProductItems.length && !colacorProductItems.length && !serviceItems.length) {
     return {
@@ -227,6 +229,14 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
             // Trava Fase 2: o edge NÃO criou o PV — degradar honesto, nunca "parecer enviado".
             results.push('PV Oben (bloqueado: crédito)');
             errors.push({ step: 'bloqueio_credito_oben', message: mensagemBloqueioCredito('Oben', gatePayload.gate) });
+            bloqueiosCredito.push({
+              account: 'oben',
+              salesOrderId,
+              omieCodigoCliente: customer.codigo_cliente,
+              nomeCliente: customer.nome_fantasia || customer.razao_social,
+              vencido: typeof gatePayload.gate?.vencido === 'number' ? gatePayload.gate.vencido : null,
+              titulos: typeof gatePayload.gate?.titulos === 'number' ? gatePayload.gate.titulos : null,
+            });
           } else {
             results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
           }
@@ -328,6 +338,15 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           // Trava Fase 2: o edge NÃO criou o PV — degradar honesto, nunca "parecer enviado".
           results.push('PV Colacor (bloqueado: crédito)');
           errors.push({ step: 'bloqueio_credito_colacor', message: mensagemBloqueioCredito('Colacor', gatePayloadColacor.gate) });
+          bloqueiosCredito.push({
+            account: 'colacor',
+            salesOrderId,
+            // Identidade Colacor garantida pelo preflight (o invoke acima já a usou).
+            omieCodigoCliente: customer.codigo_cliente_colacor!,
+            nomeCliente: customer.nome_fantasia || customer.razao_social,
+            vencido: typeof gatePayloadColacor.gate?.vencido === 'number' ? gatePayloadColacor.gate.vencido : null,
+            titulos: typeof gatePayloadColacor.gate?.titulos === 'number' ? gatePayloadColacor.gate.titulos : null,
+          });
         } else if (!omieError) {
           results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
           // Auto-create production orders for "produto acabado"
@@ -545,5 +564,6 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     allConfirmed: !errors.some(e =>
       e.step === 'sync_oben_omie' || e.step === 'sync_colacor_omie' || e.step === 'sync_os_omie' ||
       e.step === 'bloqueio_credito_oben' || e.step === 'bloqueio_credito_colacor'),
+    bloqueiosCredito,
   };
 }

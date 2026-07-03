@@ -102,10 +102,32 @@ vocabulário não conta · exceção válida libera · exceção expirada bloque
 outra company não vaza · RLS: vendedor INSERT exceção → 42501 re-lançado, gestor passa ·
 **falsificação**: sabotar a régua (60→6000) e exigir vermelho.
 
+## 8b. UI da válvula — decisões forçadas por fatos de prod (2026-07-03)
+
+- **Vendedor NÃO cria tarefa pro gestor** (plano original): a policy `tarefas_insert`
+  exige `pode_ver_carteira_completa` — INSERT de tarefas é gestor-only POR DESENHO do
+  domínio Tarefas (cobrança de vendedoras). Não afrouxar RLS de outro domínio pela
+  válvula. Caminho do vendedor: `ExcecaoCreditoDialog` mostra QUEM aprova + botão
+  "Copiar resumo pro gestor" (WhatsApp é o canal real do balcão). Se a telemetria
+  (`venda.bloqueio_credito_resumo_copiado`) mostrar atrito, fase futura cria RPC
+  SECURITY DEFINER dedicada para "pedir aprovação".
+- **Lista de aprovadores visível ao vendedor = masters** (`user_roles` tem SELECT
+  staff-wide) ∪ gestores que a RLS deixar ver — `commercial_roles` só expõe a PRÓPRIA
+  linha a staff comum, então gestor comercial não-master não aparece pra vendedor.
+  Cobre os aprovadores reais de hoje; ampliar = RPC futura (mesma da nota acima).
+- **Aprovação remota**: o gestor abre o pedido em `/sales` → botão escudo no
+  `SalesOrderDetailSheet` → o dialog resolve o contexto pelo último
+  `venda_bloqueio_credito_log` do pedido (staff lê; evidência escrita pelo próprio
+  gate — sem log de bloqueio, sem form: exceção às cegas não).
+- **Exceção já válida**: o dialog mostra o estado e instrui o reenvio (não duplica
+  aprovação). `valido_ate` client-side leva folga de 5min (CHECK de 30d compara com
+  `created_at` forçado pelo servidor — clock skew do balcão violaria o teto).
+
 ## 9. Fora de escopo (fases seguintes)
 
 Painel de exceções/bloqueios (ler via BI); notificação push ao gestor; recompute de
-score; backfill de CNPJ nos títulos (se o Omie um dia mandar).
+score; backfill de CNPJ nos títulos (se o Omie um dia mandar); RPC "pedir aprovação"
+(tarefa do vendedor → gestor) e RPC de listagem ampla de aprovadores (ver §8b).
 
 ## 10. Veredito do challenge Codex (2026-07-02, 6 P1 + 4 P2 — TODOS acatados)
 
