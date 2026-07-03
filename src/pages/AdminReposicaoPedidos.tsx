@@ -19,12 +19,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Eye, Loader2, RefreshCw, Zap } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, CloudDownload, Eye, Loader2, RefreshCw, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { PedidoSugerido } from '@/components/reposicao/pedidos/types';
-import { EMPRESA, formatBRL, interpretarRespostaDisparo, particionarCicloHoje, pedidosVisiveis, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
+import { EMPRESA, formatBRL, frescorEstoque, interpretarRespostaDisparo, interpretarRespostaSyncEstoque, particionarCicloHoje, pedidosVisiveis, type RespostaDisparo, type RespostaSyncEstoque } from '@/components/reposicao/pedidos/shared';
 import { CycleIndicator } from '@/components/reposicao/pedidos/CycleIndicator';
 import { PedidoRow } from '@/components/reposicao/pedidos/PedidoRow';
 import { StatusComMotivo, PortalBadge } from '@/components/reposicao/pedidos/badges';
@@ -261,6 +261,52 @@ export default function AdminReposicaoPedidos() {
     },
   });
 
+  // Frescor do snapshot que o Recalcular usa (max ultima_sincronizacao da empresa).
+  // isSuccess evita o flash de "nunca sincronizado" enquanto a query carrega.
+  const { data: ultimaSyncEstoque, isSuccess: frescorCarregado } = useQuery({
+    queryKey: ['estoque-frescor', EMPRESA],
+    queryFn: async (): Promise<string | null> => {
+      const { data, error } = await supabase
+        .from('sku_estoque_atual')
+        .select('ultima_sincronizacao')
+        .eq('empresa', EMPRESA)
+        .order('ultima_sincronizacao', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data?.ultima_sincronizacao ?? null;
+    },
+    refetchInterval: 60_000,
+  });
+
+  // Sync manual do snapshot de estoque. "Recalcular sugestões" NÃO faz isso — ele só
+  // regenera a partir do snapshot; quem fala com o Omie é a edge omie-sync-estoque
+  // (a mesma do cron, idempotente; staff passa pelo authorizeCronOrStaff). ~1–2 min.
+  const syncEstoqueMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('omie-sync-estoque', {
+        body: { empresa: EMPRESA },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      const { tone, message } = interpretarRespostaSyncEstoque(data as RespostaSyncEstoque);
+      if (tone === 'error') toast.error(message);
+      else if (tone === 'warning') toast.warning(message);
+      else if (tone === 'info') toast.info(message);
+      else toast.success(message);
+      track('reposicao.sync_estoque_manual', { empresa: EMPRESA, tone });
+      queryClient.invalidateQueries({ queryKey: ['estoque-frescor'] });
+      queryClient.invalidateQueries({ queryKey: ['estoque-nao-confirmado'] });
+      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+    },
+    onError: (e: Error) => {
+      track('reposicao.sync_estoque_manual', { empresa: EMPRESA, tone: 'error' });
+      toast.error(`Erro ao sincronizar estoque: ${e.message}`);
+    },
+  });
+
   const dispararMutation = useMutation({
     mutationFn: async (pedidoId: number) => {
       const { data, error } = await supabase.functions.invoke('disparar-pedidos-aprovados', {
@@ -382,6 +428,27 @@ export default function AdminReposicaoPedidos() {
               <CheckCircle2 className="w-3.5 h-3.5" /> Tudo em dia
             </span>
           )}
+          {frescorCarregado && (() => {
+            const frescor = frescorEstoque(ultimaSyncEstoque, now);
+            const cor = { ok: 'text-muted-foreground', warning: 'text-status-warning', error: 'text-status-error' }[frescor.tone];
+            return (
+              <span
+                className={`inline-flex items-center gap-1 text-xs ${cor}`}
+                title={ultimaSyncEstoque ? `Último sync: ${format(new Date(ultimaSyncEstoque), "dd/MM 'às' HH:mm", { locale: ptBR })}` : undefined}
+              >
+                <Clock className="w-3.5 h-3.5" /> Estoque Omie: {frescor.label}
+              </span>
+            );
+          })()}
+          <Button
+            variant="outline"
+            onClick={() => syncEstoqueMutation.mutate()}
+            disabled={syncEstoqueMutation.isPending}
+            title="Puxa o estoque físico do Omie para o snapshot que o Recalcular usa (~1–2 min)"
+          >
+            {syncEstoqueMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <CloudDownload className="w-4 h-4 mr-1" />}
+            {syncEstoqueMutation.isPending ? 'Sincronizando…' : 'Sincronizar estoque'}
+          </Button>
           <Button variant="outline" onClick={() => refetch()} disabled={isLoading}>
             <RefreshCw className={`w-4 h-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />Atualizar lista
           </Button>
