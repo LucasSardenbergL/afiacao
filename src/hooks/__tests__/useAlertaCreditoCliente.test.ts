@@ -1,26 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { computeAlertaCredito, variantesDocumento, ALERTA_CREDITO } from '../useAlertaCreditoCliente';
+import { computeAlertaCredito, paresDoCliente, ALERTA_CREDITO } from '../useAlertaCreditoCliente';
 
 const AGORA = new Date('2026-07-02T12:00:00Z');
 
-describe('variantesDocumento', () => {
-  it('CNPJ só-dígitos gera as duas variantes (dígitos + formatado)', () => {
-    expect(variantesDocumento('12345678000190')).toEqual(['12345678000190', '12.345.678/0001-90']);
+describe('paresDoCliente', () => {
+  it('monta o par de cada conta que o cliente tem (oben/colacor/colacor_sc)', () => {
+    expect(
+      paresDoCliente({ codigo_cliente: 111, codigo_cliente_colacor: 222, codigo_cliente_afiacao: 333 }),
+    ).toEqual([
+      { company: 'oben', codigo: 111 },
+      { company: 'colacor', codigo: 222 },
+      { company: 'colacor_sc', codigo: 333 },
+    ]);
   });
 
-  it('CNPJ formatado normaliza e gera as mesmas variantes', () => {
-    expect(variantesDocumento('12.345.678/0001-90')).toEqual(['12345678000190', '12.345.678/0001-90']);
+  it('conta sem código não gera par (parcial é normal)', () => {
+    expect(paresDoCliente({ codigo_cliente: 111 })).toEqual([{ company: 'oben', codigo: 111 }]);
+    expect(paresDoCliente({ codigo_cliente_colacor: 222 })).toEqual([
+      { company: 'colacor', codigo: 222 },
+    ]);
   });
 
-  it('CPF gera variantes de CPF', () => {
-    expect(variantesDocumento('12345678901')).toEqual(['12345678901', '123.456.789-01']);
+  it('código 0 (cliente sintético do autoatendimento) e null são ignorados', () => {
+    expect(paresDoCliente({ codigo_cliente: 0, codigo_cliente_colacor: null })).toEqual([]);
   });
 
-  it('documento inválido/ausente → null (sem query, sem alerta)', () => {
-    expect(variantesDocumento('1234')).toBeNull();
-    expect(variantesDocumento('')).toBeNull();
-    expect(variantesDocumento(null)).toBeNull();
-    expect(variantesDocumento(undefined)).toBeNull();
+  it('cliente ausente → sem pares (sem query, sem alerta)', () => {
+    expect(paresDoCliente(null)).toEqual([]);
+    expect(paresDoCliente(undefined)).toEqual([]);
   });
 });
 
