@@ -164,6 +164,7 @@ async function processarEnvio(
   const grupos = agruparItensPorAccount(itens);
   const salesOrdersMap: Record<string, string> = { ...(envio.sales_orders_map ?? {}) };
   const erros: string[] = [];
+  const sucessos: string[] = [];
 
   for (const [account, itensGrupo] of Object.entries(grupos) as Array<[AccountPP, ItemResolvido[]]>) {
     const cfg = configs[account];
@@ -203,7 +204,10 @@ async function processarEnvio(
         // Retry: se este sales_order já foi ao Omie, pular (não re-enviar esta empresa).
         const { data: soExist } = await supabase.from("sales_orders")
           .select("status, omie_pedido_id").eq("id", salesOrderId).single();
-        if (soExist?.omie_pedido_id) continue;
+        if (soExist?.omie_pedido_id) {
+          sucessos.push(account);
+          continue;
+        }
       }
 
       // 2. criar_pedido via omie-vendas-sync (service role) — guards de preço/ativo lá.
@@ -229,12 +233,18 @@ async function processarEnvio(
       });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok || body?.error) throw new Error(`criar_pedido ${account} falhou: ${body?.error ?? resp.status}`);
+      sucessos.push(account);
     } catch (e) {
       erros.push(e instanceof Error ? e.message : String(e));
     }
   }
 
-  if (erros.length > 0) return { ok: false, motivo: erros.join(" | ") };
+  if (erros.length > 0) {
+    // Falha parcial: dizer o que JÁ foi ao Omie evita re-envio às cegas pelo founder
+    // (o retry é idempotente de toda forma — sales_orders_map + PV_ determinístico).
+    const sufixo = sucessos.length > 0 ? ` — já enviado com sucesso: ${sucessos.join(", ")}` : "";
+    return { ok: false, motivo: erros.join(" | ") + sufixo };
+  }
   return { ok: true };
 }
 

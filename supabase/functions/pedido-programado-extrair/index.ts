@@ -126,9 +126,6 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!apiKey) return json(500, { error: "ANTHROPIC_API_KEY não configurada" });
-
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const { pedido_programado_id } = await req.json().catch(() => ({}));
   if (!pedido_programado_id) return json(400, { error: "pedido_programado_id é obrigatório" });
@@ -138,6 +135,11 @@ Deno.serve(async (req) => {
   if (pedErr || !pedido) return json(404, { error: `Pedido programado não encontrado: ${pedErr?.message}` });
 
   try {
+    // 0. Guard de env DENTRO do try: falha marca o header como erro_extracao com motivo
+    //    visível, em vez de deixá-lo preso em 'extraindo' para sempre.
+    const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY não configurada nos secrets do projeto.");
+
     // 1. Baixar o PDF do Storage
     const { data: blob, error: dlErr } = await supabase.storage
       .from("pedidos-programados").download(pedido.arquivo_path);
