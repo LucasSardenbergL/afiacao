@@ -269,6 +269,31 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
 
   const cancelarEnvio = useMutation({
     mutationFn: async (envioId: string) => {
+      // Guard money-path: envio 'erro' PARCIALMENTE enviado (ex.: Oben foi ao Omie,
+      // Colacor falhou) NÃO pode ser cancelado — devolver os itens ao pool permitiria
+      // re-agendá-los e criar pedido DUPLICADO real no ERP. Resolver no Omie primeiro
+      // (excluir o pedido lá) ou reprocessar o restante com "Enviar agora".
+      const { data: envioRow, error: envErr } = await t('pedidos_programados_envios')
+        .select('sales_orders_map').eq('id', envioId).single();
+      if (envErr) throw envErr;
+      const mapa = ((envioRow as { sales_orders_map: Record<string, string> | null })?.sales_orders_map) ?? {};
+      const salesOrderIds = Object.values(mapa);
+      if (salesOrderIds.length > 0) {
+        const { data: enviados, error: soErr } = await supabase
+          .from('sales_orders')
+          .select('id, account, omie_numero_pedido, omie_pedido_id')
+          .in('id', salesOrderIds)
+          .not('omie_pedido_id', 'is', null);
+        if (soErr) throw soErr;
+        if (enviados && enviados.length > 0) {
+          const detalhe = enviados
+            .map((s) => `${s.account} (PV ${s.omie_numero_pedido ?? s.omie_pedido_id})`)
+            .join(', ');
+          throw new Error(
+            `Envio já criou pedido no Omie: ${detalhe}. Cancele/exclua o pedido no Omie antes, ou use "Enviar agora" para completar o restante.`,
+          );
+        }
+      }
       const { error: e1 } = await t('pedidos_programados_itens')
         .update({ envio_id: null } as never)
         .eq('envio_id', envioId);
