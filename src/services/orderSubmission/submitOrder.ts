@@ -20,6 +20,26 @@ import { ensureSalesOrderRow } from './idempotency';
 import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
 import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
 
+/** Resposta estruturada do gate de crédito do edge (trava Fase 2 — não cria o PV). */
+interface GateCreditoPayload {
+  blocked?: string;
+  gate?: { vencido?: number | null; titulos?: number | null } | null;
+}
+
+export function mensagemBloqueioCredito(
+  conta: string,
+  gate?: { vencido?: number | null; titulos?: number | null } | null,
+): string {
+  const valor =
+    typeof gate?.vencido === 'number'
+      ? ` — R$ ${gate.vencido.toFixed(2)} vencido há 60+ dias${gate?.titulos ? ` (${gate.titulos} título${gate.titulos > 1 ? 's' : ''})` : ''}`
+      : '';
+  return (
+    `Pedido ${conta} BLOQUEADO por crédito${valor}. O pedido ficou salvo: ` +
+    `um gestor pode aprovar uma exceção para ESTE pedido e aí é só reenviar.`
+  );
+}
+
 /**
  * Pure submitOrder function. Orchestrates:
  *  1. Insert sales_order Oben (abort everything if fails) + Omie sync (non-blocking).
@@ -202,7 +222,14 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           },
         });
         if (!omieError) {
-          results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
+          const gatePayload = omieResult as GateCreditoPayload | null;
+          if (gatePayload?.blocked === 'credito') {
+            // Trava Fase 2: o edge NÃO criou o PV — degradar honesto, nunca "parecer enviado".
+            results.push('PV Oben (bloqueado: crédito)');
+            errors.push({ step: 'bloqueio_credito_oben', message: mensagemBloqueioCredito('Oben', gatePayload.gate) });
+          } else {
+            results.push(`PV Oben ${omieResult?.omie_numero_pedido || ''}`);
+          }
         } else {
           results.push('PV Oben (pendente ERP)');
           errors.push({ step: 'sync_oben_omie', message: omieError.message || 'Falha ao sincronizar Oben com Omie' });
@@ -296,7 +323,12 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
             ordem_compra: meta.ordemCompra || undefined,
           },
         });
-        if (!omieError) {
+        const gatePayloadColacor = !omieError ? (omieResult as GateCreditoPayload | null) : null;
+        if (!omieError && gatePayloadColacor?.blocked === 'credito') {
+          // Trava Fase 2: o edge NÃO criou o PV — degradar honesto, nunca "parecer enviado".
+          results.push('PV Colacor (bloqueado: crédito)');
+          errors.push({ step: 'bloqueio_credito_colacor', message: mensagemBloqueioCredito('Colacor', gatePayloadColacor.gate) });
+        } else if (!omieError) {
           results.push(`PV Colacor ${omieResult?.omie_numero_pedido || ''}`);
           // Auto-create production orders for "produto acabado"
           const produtoAcabadoItems = colacorProductItems.filter(c => {
@@ -510,6 +542,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     printDataList,
     lastOrderData,
     errors,
-    allConfirmed: !errors.some(e => e.step === 'sync_oben_omie' || e.step === 'sync_colacor_omie' || e.step === 'sync_os_omie'),
+    allConfirmed: !errors.some(e =>
+      e.step === 'sync_oben_omie' || e.step === 'sync_colacor_omie' || e.step === 'sync_os_omie' ||
+      e.step === 'bloqueio_credito_oben' || e.step === 'bloqueio_credito_colacor'),
   };
 }
