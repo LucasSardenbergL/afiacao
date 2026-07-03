@@ -336,7 +336,7 @@ const UnifiedOrder = () => {
 
           {/* Alerta de crédito (Fase 1 — informativo, não bloqueia) */}
           {showCustomerSearch && h.selectedCustomer && (
-            <AlertaCreditoCliente documento={h.selectedCustomer.cnpj_cpf} />
+            <AlertaCreditoCliente cliente={h.selectedCustomer} />
           )}
 
           {/* Cores já pedidas pelo cliente — busca + re-pedido (staff) */}

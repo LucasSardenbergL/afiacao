@@ -5,13 +5,18 @@ import { OPEN_TITLE_STATUSES } from '@/lib/financeiro/titulo-status';
 
 /**
  * Alerta de crédito no wizard de venda — FASE 1 do programa "back to basics"
- * (não bloqueia nada; Fase 2 é que adiciona aprovação de exceção).
+ * (não bloqueia nada; a Fase 2 adiciona o enforcement na fronteira).
  *
  * Critério: cliente com saldo em aberto vencido há 60+ dias (mesma régua que a
- * Fase 2 vai endurecer — não mudar o critério entre fases).
+ * Fase 2 endurece — não mudar o critério entre fases).
+ *
+ * ⚠️ Join por (company, omie_codigo_cliente), NUNCA por CNPJ: o ListarContasReceber
+ * do Omie não retorna cnpj_cpf (verificado em prod: vazio nos 43k títulos, código
+ * 100% populado) — o filtro por CNPJ da primeira versão casava 0 linhas SEMPRE.
+ * O cliente do wizard carrega os códigos das 3 contas (oben/colacor/afiacao).
  *
  * Money-path (precisão > recall): só alerta com EVIDÊNCIA POSITIVA de vencido.
- * Sem documento, sem títulos ou erro na fonte → null (silêncio) — nunca um
+ * Sem códigos, sem títulos ou erro na fonte → null (silêncio) — nunca um
  * "cliente OK" fabricado, e nunca acusação sem dado. O frescor do sync é
  * exibido junto (dados do Omie podem atrasar) com flag explícita de defasagem.
  */
@@ -21,13 +26,44 @@ export const ALERTA_CREDITO = {
   defasagemMaxHoras: 24,
 } as const;
 
+export interface ParCliente {
+  company: 'oben' | 'colacor' | 'colacor_sc';
+  codigo: number;
+}
+
+/** Campos de código que o OmieCustomer do wizard carrega (cada conta Omie tem o seu). */
+export interface ClienteComCodigos {
+  codigo_cliente?: number | null;
+  codigo_cliente_colacor?: number | null;
+  codigo_cliente_afiacao?: number | null;
+}
+
+/**
+ * Pares (company, código) do cliente para casar com `fin_contas_receber`.
+ * Código 0/null é ignorado (cliente sintético do autoatendimento usa 0).
+ */
+export function paresDoCliente(cliente: ClienteComCodigos | null | undefined): ParCliente[] {
+  if (!cliente) return [];
+  const pares: ParCliente[] = [];
+  if (cliente.codigo_cliente && cliente.codigo_cliente > 0) {
+    pares.push({ company: 'oben', codigo: cliente.codigo_cliente });
+  }
+  if (cliente.codigo_cliente_colacor && cliente.codigo_cliente_colacor > 0) {
+    pares.push({ company: 'colacor', codigo: cliente.codigo_cliente_colacor });
+  }
+  if (cliente.codigo_cliente_afiacao && cliente.codigo_cliente_afiacao > 0) {
+    pares.push({ company: 'colacor_sc', codigo: cliente.codigo_cliente_afiacao });
+  }
+  return pares;
+}
+
 export interface TituloVencidoRow {
   saldo: number | null;
   data_vencimento: string | null;
 }
 
 export interface AlertaCredito {
-  /** R$ total em aberto vencido há 60+ dias. */
+  /** R$ total em aberto vencido há 60+ dias (todas as contas do grupo que o cliente tem). */
   vencido: number;
   titulos: number;
   /** Vencimento mais antigo (yyyy-MM-dd). */
@@ -36,22 +72,6 @@ export interface AlertaCredito {
   syncAt: string | null;
   /** true quando o sync está a mais de 24h (ou sem registro) — dado pode estar defasado. */
   dadoDefasado: boolean;
-}
-
-/**
- * Variantes do documento para casar com `fin_contas_receber.cnpj_cpf` sem `.or()`
- * cru (armadilha PostgREST): só-dígitos + formatado CNPJ/CPF. Retorna null se o
- * documento não tem 11 (CPF) ou 14 (CNPJ) dígitos — sem documento válido, sem query.
- */
-export function variantesDocumento(documento: string | null | undefined): string[] | null {
-  const digits = (documento ?? '').replace(/\D/g, '');
-  if (digits.length === 14) {
-    return [digits, digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')];
-  }
-  if (digits.length === 11) {
-    return [digits, digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')];
-  }
-  return null;
 }
 
 /** Cômputo puro (testável sem Supabase). `titulos` já vem filtrado pelo query (aberto + 60d + saldo > 0). */
@@ -80,14 +100,15 @@ export function computeAlertaCredito(
 
 const PAGE = 1000;
 
-/** Pagina além da capa silenciosa de 1.000 linhas do PostgREST (achado Codex — nunca truncar soma money-path). */
-async function fetchTitulosVencidos(variantes: string[], corte: string): Promise<TituloVencidoRow[]> {
+/** Pagina além da capa silenciosa de 1.000 linhas do PostgREST (nunca truncar soma money-path). */
+async function fetchTitulosVencidosPar(par: ParCliente, corte: string): Promise<TituloVencidoRow[]> {
   const out: TituloVencidoRow[] = [];
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from('fin_contas_receber')
       .select('saldo, data_vencimento')
-      .in('cnpj_cpf', variantes)
+      .eq('company', par.company)
+      .eq('omie_codigo_cliente', par.codigo)
       .in('status_titulo', [...OPEN_TITLE_STATUSES])
       .lt('data_vencimento', corte)
       .gt('saldo', 0)
@@ -101,19 +122,20 @@ async function fetchTitulosVencidos(variantes: string[], corte: string): Promise
   return out;
 }
 
-export function useAlertaCreditoCliente(documento: string | null | undefined) {
-  const variantes = variantesDocumento(documento);
+export function useAlertaCreditoCliente(cliente: ClienteComCodigos | null | undefined) {
+  const pares = paresDoCliente(cliente);
+  const chave = pares.map((p) => `${p.company}:${p.codigo}`).join('|');
 
   return useQuery({
-    queryKey: ['alerta-credito', variantes?.[0] ?? null],
-    enabled: variantes !== null,
+    queryKey: ['alerta-credito', chave],
+    enabled: pares.length > 0,
     staleTime: 60_000,
     queryFn: async (): Promise<AlertaCredito | null> => {
-      if (!variantes) return null;
+      if (pares.length === 0) return null;
       const corte = format(subDays(new Date(), ALERTA_CREDITO.diasVencidoMin), 'yyyy-MM-dd');
 
-      const [titulos, syncRes] = await Promise.all([
-        fetchTitulosVencidos(variantes, corte),
+      const [porPar, syncRes] = await Promise.all([
+        Promise.all(pares.map((p) => fetchTitulosVencidosPar(p, corte))),
         supabase
           .from('fin_sync_log')
           .select('completed_at')
@@ -125,7 +147,7 @@ export function useAlertaCreditoCliente(documento: string | null | undefined) {
       if (syncRes.error) throw new Error(syncRes.error.message);
 
       return computeAlertaCredito(
-        titulos,
+        porPar.flat(),
         (syncRes.data?.[0]?.completed_at as string | null) ?? null,
         new Date(),
       );

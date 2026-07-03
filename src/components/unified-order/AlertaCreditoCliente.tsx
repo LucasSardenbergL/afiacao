@@ -1,6 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { useAlertaCreditoCliente, ALERTA_CREDITO } from '@/hooks/useAlertaCreditoCliente';
+import {
+  useAlertaCreditoCliente,
+  paresDoCliente,
+  ALERTA_CREDITO,
+  type ClienteComCodigos,
+} from '@/hooks/useAlertaCreditoCliente';
 import { formatBRL, formatDate } from '@/lib/reposicao';
 import { track } from '@/lib/analytics';
 
@@ -9,23 +14,26 @@ import { track } from '@/lib/analytics';
  * Só renderiza com evidência positiva de vencido 60+ (precisão > recall: sem dado,
  * silêncio — nada de "cliente OK" fabricado). Auditável via track() para medir
  * exibição × reação antes de a Fase 2 introduzir bloqueio com aprovação.
+ * Casa por (company, omie_codigo_cliente) — os títulos do Omie não carregam CNPJ.
  */
-export function AlertaCreditoCliente({ documento }: { documento: string | null | undefined }) {
-  const { data: alerta, error } = useAlertaCreditoCliente(documento);
+export function AlertaCreditoCliente({ cliente }: { cliente: ClienteComCodigos | null | undefined }) {
+  const { data: alerta, error } = useAlertaCreditoCliente(cliente);
+  const chave = paresDoCliente(cliente)
+    .map((p) => `${p.company}:${p.codigo}`)
+    .join('|');
 
   // Auditoria: 1 evento por cliente selecionado (não por re-render).
-  const trackedDoc = useRef<string | null>(null);
+  const trackedKey = useRef<string | null>(null);
   useEffect(() => {
-    const doc = (documento ?? '').replace(/\D/g, '');
-    if (alerta && doc && trackedDoc.current !== doc) {
-      trackedDoc.current = doc;
+    if (alerta && chave && trackedKey.current !== chave) {
+      trackedKey.current = chave;
       track('venda.alerta_credito_exibido', {
         vencido: alerta.vencido,
         titulos: alerta.titulos,
         dado_defasado: alerta.dadoDefasado,
       });
     }
-  }, [alerta, documento]);
+  }, [alerta, chave]);
 
   useEffect(() => {
     if (error) track('venda.alerta_credito_erro', { message: error instanceof Error ? error.message : 'erro' });
