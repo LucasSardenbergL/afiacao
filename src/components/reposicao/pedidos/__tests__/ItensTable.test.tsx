@@ -40,6 +40,9 @@ function setup(overrides: Partial<React.ComponentProps<typeof ItensTable>> = {})
     onDescontinuar: vi.fn(),
     removerPending: false,
     descontinuarPending: false,
+    selecionados: new Set<number>(),
+    onToggleSelecionado: vi.fn(),
+    onToggleTodos: vi.fn(),
     ...overrides,
   };
   render(<ItensTable {...props} />);
@@ -112,5 +115,31 @@ describe('ItensTable', () => {
   it('item antigo (split NULL): cai no efetivo sem sublinha', () => {
     setup({ podeEditar: false, linhas: [linha({ estoque_atual: 5, estoque_fisico: null, estoque_a_caminho: null })] });
     expect(screen.queryByText(/a caminho/)).toBeNull();
+  });
+});
+
+describe('ItensTable — seleção em massa', () => {
+  it('editável: 1 checkbox por linha + selecionar-todos no cabeçalho', () => {
+    setup({ linhas: [linha({ id: 1 }), linha({ id: 2, sku_codigo_omie: '556' })] });
+    // 2 linhas + 1 cabeçalho
+    expect(screen.getAllByRole('checkbox')).toHaveLength(3);
+  });
+
+  it('toggle de linha chama onToggleSelecionado com o id; cabeçalho chama onToggleTodos', () => {
+    const props = setup({ linhas: [linha({ id: 7 })] });
+    fireEvent.click(screen.getByLabelText('Selecionar item 555'));
+    expect(props.onToggleSelecionado).toHaveBeenCalledWith(7);
+    fireEvent.click(screen.getByLabelText('Selecionar todos os itens'));
+    expect(props.onToggleTodos).toHaveBeenCalledTimes(1);
+  });
+
+  it('linha selecionada renderiza checkbox marcado', () => {
+    setup({ linhas: [linha({ id: 7 })], selecionados: new Set([7]) });
+    expect(screen.getByLabelText('Selecionar item 555').getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('sem permissão de edição: nenhum checkbox', () => {
+    setup({ podeEditar: false });
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
   });
 });

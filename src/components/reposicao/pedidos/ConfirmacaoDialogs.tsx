@@ -46,6 +46,56 @@ export function RemoverItemDialog({
   );
 }
 
+// Confirmação em LOTE: mesma semântica de N remoções individuais (delete + recálculo do
+// cabeçalho; pedido vazio cancela), mas com UMA confirmação. Lista até 5 SKUs + excedente.
+export function RemoverItensLoteDialog({
+  itens,
+  onOpenChange,
+  pending,
+  onConfirm,
+}: {
+  itens: PedidoItem[] | null;
+  onOpenChange: (v: boolean) => void;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  const lista = itens ?? [];
+  const n = lista.length;
+  const rotulo = `${n} ${n === 1 ? 'item' : 'itens'}`;
+  return (
+    <AlertDialog open={n > 0} onOpenChange={(v) => !v && onOpenChange(false)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remover {rotulo} do pedido?</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div>
+              <ul className="list-disc pl-5 space-y-0.5">
+                {lista.slice(0, 5).map((it) => (
+                  <li key={it.id}>
+                    <span className="font-mono">{it.sku_codigo_omie}</span> — {it.sku_descricao ?? '—'}
+                  </li>
+                ))}
+              </ul>
+              {n > 5 && <p className="mt-1">+{n - 5} outro(s)</p>}
+              <p className="mt-2">
+                O valor total do pedido será recalculado. Se remover todos os itens, o pedido será
+                cancelado automaticamente.
+              </p>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={pending}>Cancelar</AlertDialogCancel>
+          <AlertDialogAction disabled={pending} onClick={onConfirm}>
+            {pending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+            Remover {rotulo}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 export function DescontinuarItemDialog({
   item,
   onOpenChange,
