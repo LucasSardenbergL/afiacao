@@ -685,6 +685,48 @@ export async function getProjecaoSnapshotsCockpit(
   return results.filter((r): r is SnapshotEmpresa => r !== null);
 }
 
+// ═══════════════ 5b. BALANÇO (Fleuriet) ═══════════════
+
+export type BalancoInputRow = { company: string; data_ref: string; anc: number | null; pnc: number | null; pl: number | null };
+
+/** Balanço mais recente por empresa (maior data_ref) de fin_balanco_inputs (RLS master-only). */
+export async function getBalancoInputs(companies: Company[]): Promise<Record<string, BalancoInputRow>> {
+  const out: Record<string, BalancoInputRow> = {};
+  await Promise.all(companies.map(async (company) => {
+    const { data, error } = await supabase
+      .from('fin_balanco_inputs')
+      .select('company, data_ref, ativo_nao_circulante, passivo_nao_circulante, patrimonio_liquido')
+      .eq('company', company)
+      .order('data_ref', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) out[company] = {
+      company: data.company,
+      data_ref: data.data_ref,
+      anc: data.ativo_nao_circulante ?? null,
+      pnc: data.passivo_nao_circulante ?? null,
+      pl: data.patrimonio_liquido ?? null,
+    };
+  }));
+  return out;
+}
+
+/** Histórico de NCG (cenário realista) por empresa desde uma data ISO, para casar com a data do
+ *  balanço. Ordena desc por snapshot_at; cap de 400 linhas (snapshots são diários). */
+export async function getNcgHistorico(company: Company, desdeISO: string): Promise<{ ncg: number | null; snapshot_at: string }[]> {
+  const { data, error } = await supabase
+    .from('fin_projecao_snapshots')
+    .select('ncg, snapshot_at')
+    .eq('company', company)
+    .eq('cenario', 'realista')
+    .gte('snapshot_at', desdeISO)
+    .order('snapshot_at', { ascending: false })
+    .limit(400);
+  if (error) throw error;
+  return (data ?? []).map((r) => ({ ncg: r.ncg ?? null, snapshot_at: r.snapshot_at }));
+}
+
 // ═══════════════ 6. PERMISSÕES ═══════════════
 
 export async function getMinhaPermissao(): Promise<FinPermissao | null> {

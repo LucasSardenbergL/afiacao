@@ -3230,6 +3230,39 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_balanco_inputs: {
+        Row: {
+          ativo_nao_circulante: number
+          company: string
+          data_ref: string
+          observacao: string | null
+          passivo_nao_circulante: number
+          patrimonio_liquido: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          ativo_nao_circulante: number
+          company: string
+          data_ref: string
+          observacao?: string | null
+          passivo_nao_circulante: number
+          patrimonio_liquido: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          ativo_nao_circulante?: number
+          company?: string
+          data_ref?: string
+          observacao?: string | null
+          passivo_nao_circulante?: number
+          patrimonio_liquido?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       fin_categoria_dre_mapping: {
         Row: {
           company: string
