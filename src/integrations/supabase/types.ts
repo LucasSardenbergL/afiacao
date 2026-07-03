@@ -5785,6 +5785,60 @@ export type Database = {
         }
         Relationships: []
       }
+      gov_iniciativas: {
+        Row: {
+          alavanca: string
+          created_at: string
+          created_by: string | null
+          descricao: string | null
+          dono_id: string | null
+          empresa: string
+          evidencia: string | null
+          ganho_esperado_mensal: number | null
+          ganho_recorrente_mensal: number | null
+          id: string
+          inicio_em: string | null
+          recorrente_desde: string | null
+          status: string
+          titulo: string
+          updated_at: string
+        }
+        Insert: {
+          alavanca?: string
+          created_at?: string
+          created_by?: string | null
+          descricao?: string | null
+          dono_id?: string | null
+          empresa: string
+          evidencia?: string | null
+          ganho_esperado_mensal?: number | null
+          ganho_recorrente_mensal?: number | null
+          id?: string
+          inicio_em?: string | null
+          recorrente_desde?: string | null
+          status?: string
+          titulo: string
+          updated_at?: string
+        }
+        Update: {
+          alavanca?: string
+          created_at?: string
+          created_by?: string | null
+          descricao?: string | null
+          dono_id?: string | null
+          empresa?: string
+          evidencia?: string | null
+          ganho_esperado_mensal?: number | null
+          ganho_recorrente_mensal?: number | null
+          id?: string
+          inicio_em?: string | null
+          recorrente_desde?: string | null
+          status?: string
+          titulo?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       health_score_history: {
         Row: {
           calculated_at: string
