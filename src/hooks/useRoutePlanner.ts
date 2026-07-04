@@ -249,9 +249,11 @@ export function useRoutePlanner() {
 
   const loadLogisticStops = async () => {
     try {
+      // Projeção explícita: o .map abaixo só lê estes campos. `orders` é larga
+      // (muitas colunas + a jsonb `address`) — select('*') transferia tudo.
       const { data: orders, error } = await supabase
         .from('orders')
-        .select('*')
+        .select('id, user_id, status, delivery_option, address, time_slot, total')
         .in('status', ['pedido_recebido', 'aguardando_coleta', 'pronto_entrega', 'em_rota'])
         .in('delivery_option', ['coleta_entrega', 'somente_coleta', 'somente_entrega']);
 

@@ -5,6 +5,9 @@ import {
   agruparItensPorAccount,
   validarEnvioResolvido,
   validarExtracao,
+  motivoComIncerteza,
+  isOmieIncerto,
+  OMIE_INCERTO_MARK,
   type ItemResolvido,
   type ConfigConta,
 } from './helpers';
@@ -143,6 +146,24 @@ describe('validarExtracao', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.dados.itens[0].quantidade).toBe(0.5);
+  });
+});
+
+describe('incerteza-Omie — marcador no erro_motivo (contrato edge↔hook)', () => {
+  it('marca só quando incerto, sem duplicar o prefixo em retry', () => {
+    expect(motivoComIncerteza('falhou X', false)).toBe('falhou X');
+    const marcado = motivoComIncerteza('falhou X', true);
+    expect(marcado).toBe(`${OMIE_INCERTO_MARK} falhou X`);
+    // retry re-marca o MESMO motivo → não acumula prefixo
+    expect(motivoComIncerteza(marcado, true)).toBe(marcado);
+  });
+
+  it('isOmieIncerto é null-safe e detecta o marcador em qualquer posição', () => {
+    expect(isOmieIncerto(null)).toBe(false);
+    expect(isOmieIncerto(undefined)).toBe(false);
+    expect(isOmieIncerto('erro comum')).toBe(false);
+    expect(isOmieIncerto(`${OMIE_INCERTO_MARK} timeout`)).toBe(true);
+    expect(isOmieIncerto(`prefixo | ${OMIE_INCERTO_MARK} meio`)).toBe(true);
   });
 });
 

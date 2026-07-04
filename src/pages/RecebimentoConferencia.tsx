@@ -272,14 +272,46 @@ export default function RecebimentoConferencia() {
         updateNfeStatusToEmConferencia: nfeTyped?.status === 'pendente',
       };
 
-      await confirmMutation.mutateAsync(vars);
+      // mutateAsync retorna o dado quando PERSISTIU (online) e `null` quando
+      // ENFILEIROU (offline / erro de rede). Usar o retorno — não o state
+      // `confirmMutation.queued`, que ainda está stale logo após o await.
+      const result = await confirmMutation.mutateAsync(vars);
+      const persisted = result !== null;
+
+      // Update otimista do cache de LEITURA — APENAS quando o servidor confirmou.
+      // Enfileirado offline NÃO avança o cache: senão o contador "mentiria" se o
+      // flush falhasse depois (RLS/erro permanente) SEM rollback; e pior, como
+      // `canFinalize` deriva deste cache, o operador poderia efetivar a NF-e no
+      // Omie sobre unidades ainda não persistidas. Offline segue o caminho
+      // honesto (contador só avança após reconectar → flush → refetch). Como só
+      // roda no sucesso persistido, o valor espelhado (newConferida/newStatus,
+      // absolutos e idempotentes) é a verdade do servidor — nada a reverter.
+      if (persisted) {
+        queryClient.setQueryData(['nfe_conferencia', id], (old: unknown) => {
+          const prev = old as NfeRecebimento | undefined;
+          if (!prev?.nfe_recebimento_itens) return old;
+          return {
+            ...prev,
+            status: vars.updateNfeStatusToEmConferencia ? 'em_conferencia' : prev.status,
+            nfe_recebimento_itens: prev.nfe_recebimento_itens.map((it) =>
+              it.id === activeItemId
+                ? { ...it, quantidade_conferida: newConferida, status_item: newStatus }
+                : it,
+            ),
+          };
+        });
+      }
 
       // Side effects locais (sempre rodam, mesmo offline)
       setLastLote({ numero_lote: lote.trim(), data_fabricacao: fabricacao, data_validade: validade });
-      await queryClient.invalidateQueries({ queryKey: ['nfe_conferencia', id] });
-      await queryClient.invalidateQueries({ queryKey: ['nfe_lotes', id] });
+      // Reconciliação com o servidor. Online: o setQueryData acima já deu o
+      // feedback instantâneo, então não bloqueia o operador. Offline (queued):
+      // é este refetch — após o flush — que traz o estado real; non-blocking pra
+      // não travar no timeout do NetworkFirst.
+      void queryClient.invalidateQueries({ queryKey: ['nfe_conferencia', id] });
+      void queryClient.invalidateQueries({ queryKey: ['nfe_lotes', id] });
 
-      if (confirmMutation.queued) {
+      if (!persisted) {
         toast.info('Salvo offline — sincroniza quando reconectar');
       } else if (newConferida >= activeEsperada) {
         toast.success(`Item conferido! ${newConferida}/${activeEsperada} unidades`);
