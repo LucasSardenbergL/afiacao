@@ -500,13 +500,21 @@ Founder pede o deploy de `omie-malha-sync` no chat do Lovable (código já commi
 
 - [ ] **Step 4.4 [FOUNDER]: rodar o probe (travar o shape)**
 
-Founder executa (com o secret de cron dele):
-```bash
-curl -sS -X POST "https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-malha-sync" \
-  -H "Content-Type: application/json" -H "x-cron-secret: $CRON_SECRET" \
-  -d '{"action":"probe"}'
+**Método (decisão eu+Codex): `net.http_post` no SQL Editor** — o founder não tem terminal; padrão da casa (segredo do vault, sem manusear). NÃO envolver em BEGIN/COMMIT (o `net.http_post` só dispara após o commit da transação).
+```sql
+SELECT net.http_post(
+  url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-malha-sync',
+  headers := jsonb_build_object('Content-Type','application/json',
+    'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET')),
+  body := '{"action":"probe"}'::jsonb,
+  timeout_milliseconds := 20000
+) AS request_id;
 ```
-Expected: JSON com `topKeys`, `itemKeys`, `identKeys`, `sampleItem`. **Colar a resposta na sessão.**
+Founder passa o `request_id` retornado. **Eu leio (psql-ro), esperando ~8-10s e com polling até ~60s:**
+```bash
+~/.config/afiacao/psql-ro -c "SELECT status_code, timed_out, error_msg, content FROM net._http_response WHERE id=<request_id>;"
+```
+Só confio no shape se `status_code=200 AND timed_out IS NOT true AND error_msg IS NULL` e o `content` (JSON) traz `topKeys`/`itemKeys`/`identKeys`/`sampleItem`. (`net._http_response` é UNLOGGED, TTL ~6h — ler em minutos é seguro; nunca pegar a "última resposta" global, só o `request_id`.)
 
 - [ ] **Step 4.5: travar o shape (decisão registrada)**
 
@@ -514,12 +522,17 @@ Comparar `identKeys`/`itemKeys` do probe com os candidatos usados em `extractPai
 
 - [ ] **Step 4.6 [FOUNDER]: rodar o sync completo**
 
-```bash
-curl -sS -X POST "https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-malha-sync" \
-  -H "Content-Type: application/json" -H "x-cron-secret: $CRON_SECRET" \
-  -d '{"action":"sync"}'
+Mesmo método, `timeout 120000` (30-40s esperados + margem de cold start/lentidão, abaixo do idle de 150s do edge):
+```sql
+SELECT net.http_post(
+  url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-malha-sync',
+  headers := jsonb_build_object('Content-Type','application/json',
+    'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET')),
+  body := '{"action":"sync"}'::jsonb,
+  timeout_milliseconds := 120000
+) AS request_id;
 ```
-Expected: `{"ok":true, "paginas":N, "registros":M, "shape_err":0, "orfaos_limpos":0, "limpeza_pulada":false}` com M ≥ ~1.400 (cintas) — provavelmente ~1.7–2.0k somando discos/tingidores/rolos (~40 páginas ≈ 30-40s, dentro do limite do edge). Se o edge estourar tempo: re-invocar com `{"action":"sync","desde_pagina":<última página do run log + 1>}`. `limpeza_pulada:true` = o run veio <90% do último ok → investigar (truncamento silencioso do Omie) antes de confiar no staging.
+Founder passa o `request_id`. **Fonte primária = `pcp_run_logs`** (persistente, gravada pelo próprio edge), NÃO o `net._http_response` (diagnóstico HTTP). Se der `timed_out` → estado DESCONHECIDO: checar `pcp_run_logs`+staging ANTES de qualquer re-run (upsert é idempotente, mas não re-rodar por impaciência). Esperado no run log: `status='ok'`, `registros` M ≥ ~1.400, `detalhe.shape_err=0`, `limpeza_pulada=false`. Timeout real → re-invocar com `body '{"action":"sync","desde_pagina":<última página+1>}'`.
 
 - [ ] **Step 4.7: verificar cobertura do staging (psql-ro)**
 
