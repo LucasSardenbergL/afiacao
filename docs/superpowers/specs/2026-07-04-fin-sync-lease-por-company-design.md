@@ -25,6 +25,13 @@ Contas distintas seguem em paralelo (independentes). Quem não adquire o lease *
 `skipped_busy`, NUNCA `complete`** (não mente conclusão) e **preserva o cursor** (trabalho adiado,
 não perdido — a continuação `*/10` retoma).
 
+**Por que o lease vai na EDGE, não nos crons (guard na fronteira — money-path #5):** os 3 invocadores
+(`fin-sync-cp/cr/mov-2x`, `fin-sync-continuacao-10min`, e o **`fin_sync_retry_tick` do #1166** —
+mergeado em `main` durante esta sessão) chamam a MESMA edge com `{action:'sync_<resource>', company}`.
+O lease na edge cobre os TRÊS automaticamente — confirmado lendo `20260704102000` linha 197
+(`net.http_post ... body:=jsonb_build_object('action','sync_'||resource,'company',company)`). Proteção
+por-cron (ex.: DISTINCT ON num cron) deixaria o retry tick descoberto.
+
 ## Design
 
 Espelha o padrão da casa `vendas_sync_cursor` (migration `20260617133633`): lease atômico via **RPC
