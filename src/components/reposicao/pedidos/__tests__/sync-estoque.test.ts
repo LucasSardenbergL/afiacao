@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { edgeSyncOk, frescorEstoque, resumoSyncOmie } from '../shared';
+import { edgeSyncOk, frescorEstoque, resumoSyncRecalc } from '../shared';
 
 // Âncora fixa pra não depender do relógio da máquina.
 const AGORA = new Date('2026-07-02T20:00:00-03:00');
@@ -65,26 +65,58 @@ describe('edgeSyncOk — sucesso real de uma edge de sync', () => {
 // O botão "Sincronizar Omie" dispara DUAS edges (saldo: omie-sync-estoque · status ativo/inativo:
 // omie-sync-status-produtos) em paralelo. resumoSyncOmie agrega o toast — falha parcial NÃO vira
 // sucesso, e o sucesso lembra de recalcular (a sync não mexe em pedido já gerado).
-describe('resumoSyncOmie — toast agregado das 2 syncs', () => {
-  it('ambas OK → success e lembra de recalcular', () => {
-    const r = resumoSyncOmie(true, true);
+// Botão "Sincronizar e recalcular": sincroniza Omie (saldo+status) e, SÓ SE ambas deram certo,
+// recalcula. Se a sync falhar, NÃO recalcula (senão regeneraria o ciclo com dado velho = money-path).
+describe('resumoSyncRecalc — toast do botão "Sincronizar e recalcular"', () => {
+  it('sync ok + recálculo ok → success com nº de pedidos', () => {
+    const r = resumoSyncRecalc(true, true, { ok: true, pedidos: 3 });
     expect(r.tone).toBe('success');
+    expect(r.message).toMatch(/3 pedidos/);
+  });
+
+  it('1 pedido → singular', () => {
+    expect(resumoSyncRecalc(true, true, { ok: true, pedidos: 1 }).message).toMatch(/1 pedido\b/);
+  });
+
+  it('0 pedidos → plural, ainda success', () => {
+    const r = resumoSyncRecalc(true, true, { ok: true, pedidos: 0 });
+    expect(r.tone).toBe('success');
+    expect(r.message).toMatch(/0 pedidos/);
+  });
+
+  it('sync ok mas recálculo falhou → warning, manda usar Recalcular', () => {
+    const r = resumoSyncRecalc(true, true, { ok: false, pedidos: 0 });
+    expect(r.tone).toBe('warning');
     expect(r.message).toMatch(/recalcul/i);
   });
 
-  it('ambas falham → error (nunca sucesso)', () => {
-    expect(resumoSyncOmie(false, false).tone).toBe('error');
+  it('recálculo falhou COM motivo → warning inclui o erro (não achatar — Codex)', () => {
+    const r = resumoSyncRecalc(true, true, { ok: false, pedidos: 0, erro: 'deadlock detected' });
+    expect(r.tone).toBe('warning');
+    expect(r.message).toMatch(/deadlock detected/);
   });
 
-  it('só o estoque falha → warning citando estoque', () => {
-    const r = resumoSyncOmie(false, true);
+  it('sync ok mas recálculo nem rodou (null) → warning', () => {
+    expect(resumoSyncRecalc(true, true, null).tone).toBe('warning');
+  });
+
+  it('estoque falhou → warning, NÃO recalculou (money-path: não regenera com dado velho)', () => {
+    const r = resumoSyncRecalc(false, true, null);
     expect(r.tone).toBe('warning');
     expect(r.message).toMatch(/estoque/i);
+    expect(r.message).toMatch(/não recalcul/i);
   });
 
-  it('só o status falha → warning citando status', () => {
-    const r = resumoSyncOmie(true, false);
+  it('status falhou → warning, NÃO recalculou', () => {
+    const r = resumoSyncRecalc(true, false, null);
     expect(r.tone).toBe('warning');
     expect(r.message).toMatch(/status/i);
+    expect(r.message).toMatch(/não recalcul/i);
+  });
+
+  it('ambas falham → error, NÃO recalculou', () => {
+    const r = resumoSyncRecalc(false, false, null);
+    expect(r.tone).toBe('error');
+    expect(r.message).toMatch(/não recalcul/i);
   });
 });
