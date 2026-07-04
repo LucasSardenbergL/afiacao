@@ -12,6 +12,7 @@
 - `cron.schedule(nome, schedule, comando)` faz **upsert por nome** → idempotente.
 - **Todo cron `net.http_post` PRECISA de `timeout_milliseconds` explícito** — o default do `pg_net` é **5s** e mata SILENCIOSAMENTE qualquer função >5s (o `job_run_details` ainda diz "succeeded"). Teto padrão da casa: **150000** (150s).
 - **Crons devem ser versionados em migration** — um cron que vive só no banco some sem rastro (já aconteceu: vendas ficou 8 dias morto porque o cron nunca foi versionado).
+- ⚠️ **O safety-net `20260527230000_cron_baseline.sql` está STALE** (46 statements no repo vs **75** crons ativos em prod, 2026-07-04) → regen pendente, com dono/gatilho/procedimento na **issue #1178**. NÃO editar os statements à mão: rodar o generator de prod (`string_agg` de `cron.job WHERE active`) + **PR SEPARADO que MERGEIA**. Re-aplicar troca o jobid → só sob demanda.
 
 ## Enumeração pesada do Omie (paginação)
 
