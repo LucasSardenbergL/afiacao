@@ -15,6 +15,19 @@ const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 const REG_POR_PAGINA = 50;
 const MAX_PAGINAS = 400; // guarda dura: 400×50 = 20k estruturas >> ~1.9k produtos fabricados
 
+// O Omie sinaliza ERRO de negócio E fim-de-paginação pelo MESMO canal: HTTP 200 + `faultstring`
+// (nunca por status HTTP). Checar só `resp.ok` deixaria uma faultstring do meio virar "página vazia"
+// → sync para cedo e marca "ok" com malha TRUNCADA (o pior modo de falha da F1A).
+// FIM_PAGINACAO = faultstrings que significam "acabou" (não é erro) → para o loop.
+// TRANSITORIO = flakiness do servidor Omie/rede → re-tenta com backoff (idem omie-analytics-sync).
+// Fail-safe: faultstring NÃO reconhecida como fim nem transitório → THROW (run vira "erro" VISÍVEL,
+// nunca "ok" silencioso). ListarEstruturas é não-confirmado — CONFIRMAR/AJUSTAR estes marcadores no probe.
+const FIM_PAGINACAO = ["não existem registros", "nao existem registros", "nenhum registro",
+  "não foram encontrados", "nao foram encontrados", "consulta não retornou", "consulta nao retornou",
+  "página informada", "pagina informada"];
+const TRANSITORIO = ["broken response", "soap-error", "timeout", "timed out", "network",
+  "connection", "fetch failed", "500", "502", "503", "504", "429", "too many", "rate limit"];
+
 function omieCreds() {
   const key = Deno.env.get("OMIE_COLACOR_APP_KEY");
   const secret = Deno.env.get("OMIE_COLACOR_APP_SECRET");
@@ -22,24 +35,42 @@ function omieCreds() {
   return { key, secret };
 }
 
-async function omieCall(call: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+// Retorna o objeto da malha, OU null quando o Omie sinaliza FIM de paginação (não é erro).
+async function omieCall(call: string, params: Record<string, unknown>): Promise<Record<string, unknown> | null> {
   const creds = omieCreds();
   const body = { call, app_key: creds.key, app_secret: creds.secret, param: [params] };
-  let lastErr = "";
-  for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const resp = await fetch(`${OMIE_API_URL}/geral/malha/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const text = await resp.text();
-    if (resp.ok) return JSON.parse(text) as Record<string, unknown>;
-    lastErr = `HTTP ${resp.status}: ${text.slice(0, 500)}`;
-    // 5xx/429 transitórios: backoff simples; 4xx de negócio não adianta repetir
-    if (resp.status < 500 && resp.status !== 429) break;
-    await new Promise((r) => setTimeout(r, 800 * tentativa));
+  const MAX = 4;
+  let lastErr: Error | null = null;
+  for (let tentativa = 1; tentativa <= MAX; tentativa++) {
+    try {
+      const resp = await fetch(`${OMIE_API_URL}/geral/malha/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const text = await resp.text();
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const fault = typeof parsed.faultstring === "string" ? parsed.faultstring : "";
+      if (fault) {
+        const f = fault.toLowerCase();
+        if (FIM_PAGINACAO.some((m) => f.includes(m))) return null; // fim normal — NÃO é erro
+        throw new Error(`Omie ${call}: ${fault}`);                 // erro de negócio (classificado no catch)
+      }
+      if (!resp.ok) throw new Error(`Omie ${call} HTTP ${resp.status}: ${text.slice(0, 300)}`);
+      return parsed;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      const m = lastErr.message.toLowerCase();
+      // transitório (inclui JSON malformado/resposta cortada) re-tenta; permanente (credencial/validação) falha já
+      const transitorio = TRANSITORIO.some((t) => m.includes(t)) || m.includes("json") || m.includes("unexpected");
+      if (transitorio && tentativa < MAX) {
+        await new Promise((r) => setTimeout(r, 800 * Math.pow(2, tentativa - 1)));
+        continue;
+      }
+      throw lastErr;
+    }
   }
-  throw new Error(`Omie ${call} falhou: ${lastErr}`);
+  throw lastErr ?? new Error(`Omie ${call}: falha após ${MAX} tentativas`);
 }
 
 // A lista de estruturas pode vir sob nomes diferentes conforme a versão da API — candidatos conhecidos.
@@ -76,9 +107,14 @@ serve(async (req) => {
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
   const action = (body.action as string) ?? "probe";
 
+  let runId: number | null = null;
   try {
     if (action === "probe") {
       const resp = await omieCall("ListarEstruturas", { nPagina: 1, nRegPorPagina: 2 });
+      if (resp === null) {
+        return new Response(JSON.stringify({ aviso: "Omie sinalizou fim/vazio já na página 1 (catálogo sem estruturas?)" },
+          null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       const lista = extractLista(resp);
       const first = (lista?.[0] ?? null) as Record<string, unknown> | null;
       return new Response(JSON.stringify({
@@ -100,6 +136,7 @@ serve(async (req) => {
       .insert({ funcao: "omie-malha-sync", status: "rodando" })
       .select("id").single();
     if (runErr) throw new Error(`pcp_run_logs insert: ${runErr.message}`);
+    runId = run.id; // eleva p/ o catch fechar o run se algo lançar (não deixar 'rodando' órfão)
 
     let paginas = 0, registros = 0, shapeErr = 0;
     let sampleErr: unknown = null;
@@ -107,8 +144,9 @@ serve(async (req) => {
 
     for (let pagina = desdePagina; pagina <= MAX_PAGINAS; pagina++) {
       const resp = await omieCall("ListarEstruturas", { nPagina: pagina, nRegPorPagina: REG_POR_PAGINA });
+      if (resp === null) break;                  // Omie sinalizou FIM via faultstring (não é erro)
       const lista = extractLista(resp);
-      if (!lista || lista.length === 0) break; // até página VAZIA — nunca confiar em total_de_paginas
+      if (!lista || lista.length === 0) break;   // página vazia — nunca confiar em total_de_paginas
       paginas++;
 
       // dedupe DENTRO da página: upsert com PK repetida no MESMO statement quebra
@@ -117,7 +155,7 @@ serve(async (req) => {
       for (const item of lista) {
         const cod = extractPaiCodigo(item);
         if (Number.isNaN(cod)) { shapeErr++; sampleErr ??= item; continue; }
-        byCod.set(cod, { omie_codigo_produto: cod, payload: item, sync_run_id: run.id, synced_at: syncedAt });
+        byCod.set(cod, { omie_codigo_produto: cod, payload: item, sync_run_id: runId, synced_at: syncedAt });
       }
       const rows = [...byCod.values()];
       if (rows.length > 0) {
@@ -132,6 +170,10 @@ serve(async (req) => {
     // Limpeza de órfãos (painel Codex P1: estrutura removida no Omie ficaria eterna no staging)
     // com guarda de plausibilidade (painel Gemini: página vazia prematura = truncamento silencioso —
     // NUNCA limpar se este run veio anormalmente menor que o último ok).
+    // LIMITAÇÃO CONHECIDA (painel, Important #3): a limpeza de órfãos só roda no caminho normal
+    // (desde_pagina === 1). Um sync que precisou de RESUME (raro: ~40 páginas cabem em 1 execução)
+    // não limpa — estruturas removidas no Omie sobrevivem até o próximo sync completo sem resume.
+    // Não corrompe (só deixa órfão a mais); a reconciliação da Fase 2 (cron + frescor) fecha isso.
     let limpos = 0, limpezaPulada = false;
     if (shapeErr === 0 && desdePagina === 1) {
       const { data: ultimoOk } = await supabase.from("pcp_run_logs")
@@ -139,8 +181,9 @@ serve(async (req) => {
         .not("registros", "is", null).order("id", { ascending: false }).limit(1).maybeSingle();
       const plausivel = !ultimoOk?.registros || registros >= 0.9 * ultimoOk.registros;
       if (plausivel) {
+        // sync_run_id é NOT NULL (M1) → .neq apaga TODOS os outros runs sem furo NULL-blind.
         const { count, error: delErr } = await supabase.from("pcp_malha_staging")
-          .delete({ count: "exact" }).neq("sync_run_id", run.id);
+          .delete({ count: "exact" }).neq("sync_run_id", runId);
         if (delErr) throw new Error(`limpeza de órfãos: ${delErr.message}`);
         limpos = count ?? 0;
       } else {
@@ -151,8 +194,10 @@ serve(async (req) => {
     const status = shapeErr > 0 ? "erro" : "ok";
     await supabase.from("pcp_run_logs").update({
       finished_at: new Date().toISOString(), status, paginas, registros,
-      detalhe: { shape_err: shapeErr, sample_err: sampleErr, orfaos_limpos: limpos, limpeza_pulada: limpezaPulada },
-    }).eq("id", run.id);
+      // itens_vistos ≠ registros quando há shape_err: separa "volume gravado" de "volume processado"
+      detalhe: { shape_err: shapeErr, sample_err: sampleErr, itens_vistos: registros + shapeErr,
+        orfaos_limpos: limpos, limpeza_pulada: limpezaPulada },
+    }).eq("id", runId);
 
     return new Response(JSON.stringify({
       ok: status === "ok", paginas, registros, shape_err: shapeErr,
@@ -162,6 +207,12 @@ serve(async (req) => {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    // fecha o run como 'erro' (best-effort) — sem isso ele fica 'rodando' órfão e o Sentinela lê "motor travado"
+    if (runId !== null) {
+      await supabase.from("pcp_run_logs")
+        .update({ finished_at: new Date().toISOString(), status: "erro", detalhe: { erro: msg } })
+        .eq("id", runId).then(() => {}, () => {});
+    }
     return new Response(JSON.stringify({ error: msg }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

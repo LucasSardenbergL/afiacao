@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS public.pcp_malha_staging (
   omie_codigo_produto bigint PRIMARY KEY,
   empresa     text NOT NULL DEFAULT 'colacor',
   payload     jsonb NOT NULL,
-  sync_run_id bigint REFERENCES public.pcp_run_logs(id),
+  -- NOT NULL: o edge SEMPRE grava com um run; sem isso, a limpeza `.neq(sync_run_id)` seria
+  -- NULL-blind (não apagaria órfãos com sync_run_id NULL — armadilha de negação do CLAUDE.md).
+  sync_run_id bigint NOT NULL REFERENCES public.pcp_run_logs(id),
   synced_at   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_pcp_malha_staging_synced ON public.pcp_malha_staging (synced_at);
