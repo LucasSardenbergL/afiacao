@@ -1,11 +1,12 @@
 // Pedidos programados (Lider): queries + mutations da tela /sales/programados.
 // Tabelas novas ainda fora dos tipos gerados do Supabase → casts `as never` no .from()
 // (mesmo padrão do order_feed em useSalesOrders) com tipos locais na borda.
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
 import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
+import type { EnvioCalendario, StatusEnvio } from '@/lib/pedidosProgramados/calendario';
 
 export interface PedidoProgramado {
   id: string;
@@ -128,6 +129,65 @@ export function usePedidosProgramadosConfig() {
       const { data, error } = await t('pedidos_programados_config').select('*');
       if (error) throw error;
       return (data ?? []) as unknown as PedidoProgramadoConfig[];
+    },
+  });
+}
+
+// Calendário de faturamento: 1 query por mês visível ('YYYY-MM').
+// queryKey com prefixo 'pedidos-programados' → invalidação automática pelas
+// mutations existentes (invalidar() usa exatamente esse prefixo).
+interface EnvioCalendarioRow {
+  id: string;
+  pedido_programado_id: string;
+  data_envio: string;
+  status: StatusEnvio;
+  erro_motivo: string | null;
+  pedido: { numero_pedido_compra: string | null } | null;
+  itens: Array<{
+    quantidade: number | string;
+    preco_final: number | string | null;
+    mapa: { omie_products: { account: 'oben' | 'colacor' } | null } | null;
+  }>;
+}
+
+const CAPA_POSTGREST = 1000;
+
+export function usePedidosProgramadosCalendario(mes: string) {
+  return useQuery({
+    queryKey: ['pedidos-programados', 'calendario', mes],
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const [ano, m] = mes.split('-').map(Number);
+      const ultimoDia = new Date(ano, m, 0).getDate(); // dia 0 do mês seguinte = último do mês
+      const { data, error } = await t('pedidos_programados_envios')
+        .select(
+          'id, pedido_programado_id, data_envio, status, erro_motivo, ' +
+            'pedido:pedidos_programados(numero_pedido_compra), ' +
+            'itens:pedidos_programados_itens(quantidade, preco_final, mapa:cliente_item_mapa(omie_products(account)))',
+        )
+        .gte('data_envio', `${mes}-01`)
+        .lte('data_envio', `${mes}-${String(ultimoDia).padStart(2, '0')}`)
+        .order('data_envio', { ascending: true })
+        .limit(CAPA_POSTGREST);
+      if (error) throw error;
+      const rows = (data ?? []) as unknown as EnvioCalendarioRow[];
+      const envios: EnvioCalendario[] = rows.map((r) => ({
+        id: r.id,
+        pedido_programado_id: r.pedido_programado_id,
+        numero_pedido_compra: r.pedido?.numero_pedido_compra ?? null,
+        data_envio: r.data_envio,
+        status: r.status,
+        erro_motivo: r.erro_motivo,
+        itens: (r.itens ?? []).map((it) => ({
+          // numeric do PostgREST pode vir string — converter na borda (padrão do arquivo)
+          quantidade: Number(it.quantidade),
+          preco_final: it.preco_final === null ? null : Number(it.preco_final),
+          account: it.mapa?.omie_products?.account ?? null,
+        })),
+      }));
+      // Capa silenciosa do PostgREST: impossível no volume atual, mas nunca confiar em silêncio
+      return { envios, truncado: rows.length === CAPA_POSTGREST };
     },
   });
 }
