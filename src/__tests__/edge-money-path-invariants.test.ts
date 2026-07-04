@@ -114,3 +114,83 @@ describe('guardrail money-path: algorithm-a-audit (margem)', () => {
     expect(src).toContain("'order_items', 'product_id, unit_price, sales_order_id'");
   });
 });
+
+// ── Trava de crédito Fase 2: log de bloqueio DURÁVEL + canária de deploy ──
+// O gate mora no edge (Deno, fora do vitest/typecheck do src). Dois invariantes money-path que
+// o deploy do Lovable pode reverter em silêncio (e o CI `validate` reexpõe na main):
+//  1. (a) bloqueio sem log gravado vira ERRO, não {blocked} silencioso — a aprovação remota do
+//     gestor depende do último log do pedido; bloqueio sem rastro = gestor sem form.
+//  2. a canária `credito_gate_probe` existe, chama a RPC (prova de mordida) e é read-only (não
+//     cria PV nem toca o Omie) — é a prova do gate DEPLOYADO, mais forte que o commit de deploy.
+const VENDAS = 'supabase/functions/omie-vendas-sync/index.ts';
+
+describe('guardrail money-path: trava de crédito Fase 2 (gate + log durável + canária)', () => {
+  const src = read(VENDAS);
+
+  it('sentinela: leu o edge real e o gate/log existem', () => {
+    expect(src).toContain('gateCredito');
+    expect(src).toContain('venda_gate_credito');
+    expect(src).toContain('venda_bloqueio_credito_log');
+  });
+
+  it('(a) LOG DE BLOQUEIO DURÁVEL: falha do insert vira ERRO, não console.warn best-effort', () => {
+    expect(
+      src,
+      'REGRESSÃO: o log de bloqueado voltou a best-effort (console.warn) — bloqueio ficaria sem rastro',
+    ).not.toMatch(/log bloqueado falhou/);
+    expect(
+      src,
+      'sumiu o throw durável do log de bloqueio (aprovação remota do gestor perde a evidência)',
+    ).toMatch(/Bloqueio de crédito sem log durável/);
+  });
+
+  it('CANÁRIA de deploy: credito_gate_probe existe, expõe gate_no_ar e chama a RPC do gate', () => {
+    expect(
+      src,
+      'canária credito_gate_probe ausente/renomeada — sem prova do gate DEPLOYADO (só o commit, mais fraco)',
+    ).toContain('case "credito_gate_probe":');
+    expect(src, 'a probe deveria expor gate_no_ar (existência do gate no build deployado)').toContain('gate_no_ar');
+    expect(
+      src,
+      'a probe não chama mais a RPC venda_gate_credito — deixou de provar mordida',
+    ).toMatch(/case "credito_gate_probe":[\s\S]{0,700}venda_gate_credito/);
+  });
+
+  it('CANÁRIA read-only: a probe NÃO cria PV nem chama o Omie (dry-run seguro mesmo com gate fora do ar)', () => {
+    // bloco INTEIRO da action (até o próximo case) — a action tem 2 breaks (early-return + fim).
+    const m = src.match(/case "credito_gate_probe":[\s\S]*?\n {6}case /);
+    expect(m, 'bloco da action credito_gate_probe não encontrado').toBeTruthy();
+    const bloco = m![0];
+    expect(bloco, 'a probe NÃO pode criar PV (criarPedidoVenda) — deixaria de ser dry-run').not.toContain('criarPedidoVenda');
+    expect(bloco, 'a probe NÃO pode chamar o Omie (callOmieVendasApi) — deixaria de ser dry-run').not.toContain('callOmieVendasApi');
+    // [P2 Codex] codigo obrigatório: sem código a probe recusa (não dá gate_no_ar sozinho como prova).
+    expect(bloco, 'a probe deveria exigir `codigo` (senão falsa-tranquilidade)').toMatch(/requer `codigo`/);
+  });
+
+  it('gate é CHAMADO em criar_pedido E alterar_pedido (não só definido)', () => {
+    // 1 definição (async function gateCredito) + ≥2 chamadas (criação + edição).
+    expect(
+      count(src, 'await gateCredito('),
+      'gateCredito não é mais chamado nas 2 vias de pedido (criar + alterar) — gate furado',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('(a) o throw durável está NO ramo do insert de "bloqueado" (não solto em outro lugar)', () => {
+    const m = src.match(/acao: contexto === "edicao"[\s\S]*?return \{ permitido: false/);
+    expect(m, 'ramo do log de bloqueado não encontrado').toBeTruthy();
+    expect(m![0], 'o throw durável saiu do ramo do insert de bloqueado').toMatch(/Bloqueio de crédito sem log durável/);
+  });
+
+  it('P1+P2 anti-duplicação: alterar_pedido aborta se consult falha, sem itens OU item sem id deletável', () => {
+    expect(
+      src,
+      'sumiu o guard anti-duplicação — edição com estado incerto voltaria a duplicar itens no Omie',
+    ).toMatch(/!consultEditOk \|\| omieCurrentItems\.length === 0 \|\| itemSemIdDeletavel/);
+    // [P2 Codex] item sem chave deletável (ide.codigo_item/codigo_item_integracao) → aborta antes do delete+add.
+    expect(
+      src,
+      'sumiu o guard de identificador deletável — item sem id seria pulado no delete e duplicado no add',
+    ).toMatch(/itemSemIdDeletavel = omieCurrentItems\.some/);
+    expect(src, 'o guard anti-duplicação perdeu o rótulo').toMatch(/anti-duplicação/);
+  });
+});
