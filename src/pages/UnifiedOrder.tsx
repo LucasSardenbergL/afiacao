@@ -459,6 +459,7 @@ const UnifiedOrder = () => {
             getCartIndex={(item) => h.cart.indexOf(item)}
             customerUserId={h.customerUserId}
             customerName={h.selectedCustomer?.razao_social ?? null}
+            condicaoPrazoOben={h.selectedParcelaOben}
           />
 
           {h.cart.length > 0 && h.selectedCustomer && (
