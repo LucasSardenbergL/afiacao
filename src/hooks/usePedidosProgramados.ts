@@ -6,6 +6,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
 import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
+import { isOmieIncerto } from '@/lib/pedidosProgramados/helpers';
 
 export interface PedidoProgramado {
   id: string;
@@ -258,10 +259,25 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
         .single();
       if (envErr || !envio) throw envErr ?? new Error('Envio não criado');
       const envioId = (envio as { id: string }).id;
-      const { error: updErr } = await t('pedidos_programados_itens')
+      // Anexa SÓ itens ainda livres (.is null) e confere a contagem via representation:
+      // um item capturado por outra via no meio (re-anexo do edge, outro envio) não pode
+      // entrar aqui — envio com item já enviado ao Omie duplicaria o PV no reenvio.
+      const { data: anexados, error: updErr } = await t('pedidos_programados_itens')
         .update({ envio_id: envioId } as never)
-        .in('id', p.itens.map((i) => i.id));
+        .in('id', p.itens.map((i) => i.id))
+        .is('envio_id', null)
+        .select('id');
       if (updErr) throw updErr;
+      if (((anexados ?? []) as unknown[]).length !== p.itens.length) {
+        // rollback: envio pela metade não pode ficar 'agendado' (o cron o enviaria parcial)
+        const soltos = await desanexarItens([envioId]);
+        const { error: cancErr } = await t('pedidos_programados_envios')
+          .update({ status: 'cancelado' } as never).eq('id', envioId);
+        throw new Error(
+          'Alguns itens mudaram de estado enquanto você agendava (outro envio ou cancelamento em andamento) — recarregue e re-selecione.' +
+          (soltos && !cancErr ? '' : NOTA_LIMPEZA),
+        );
+      }
       // Memória de preço: o preço final agendado vira o ultimo_preco do de-para
       for (const it of p.itens) {
         if (it.mapa_id && typeof it.preco_final === 'number' && it.preco_final > 0) {
@@ -274,8 +290,10 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
       track('pedidos_programados.criar_envio', { itens: p.itens.length });
       return envioId;
     },
-    onSuccess: () => { invalidar(); toast.success('Envio agendado.'); },
+    onSuccess: () => toast.success('Envio agendado.'),
     onError: (e: Error) => toast.error(e.message),
+    // rollback parcial já mutou estado no banco → refetch sempre
+    onSettled: invalidar,
   });
 
   const cancelarEnvio = useMutation({
@@ -285,9 +303,17 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
       // re-agendá-los e criar pedido DUPLICADO real no ERP. Resolver no Omie primeiro
       // (excluir o pedido lá) ou reprocessar o restante com "Enviar agora".
       const { data: envioRow, error: envErr } = await t('pedidos_programados_envios')
-        .select('sales_orders_map').eq('id', envioId).single();
+        .select('status, erro_motivo, sales_orders_map').eq('id', envioId).single();
       if (envErr) throw envErr;
-      const mapa = ((envioRow as { sales_orders_map: Record<string, string> | null })?.sales_orders_map) ?? {};
+      const envioAtual = envioRow as { status: string; erro_motivo: string | null; sales_orders_map: Record<string, string> | null };
+      // Incerteza-Omie persistida (marcador escrito pelo edge): o PV pode existir no ERP
+      // SEM omie_pedido_id gravado — o guard abaixo não o veria. Bloquear até resolver.
+      if (isOmieIncerto(envioAtual.erro_motivo)) {
+        throw new Error(
+          'Este envio falhou SEM confirmação do Omie — o pedido pode existir lá sem registro aqui. Confira no Omie (ou use "Enviar agora", que é idempotente) antes de cancelar.',
+        );
+      }
+      const mapa = envioAtual.sales_orders_map ?? {};
       const salesOrderIds = Object.values(mapa);
       if (salesOrderIds.length > 0) {
         const { data: enviados, error: soErr } = await supabase

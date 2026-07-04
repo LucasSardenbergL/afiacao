@@ -35,6 +35,18 @@ export interface ItemResolvido {
   produto_descricao: string | null;
 }
 
+// Incerteza-Omie (achado Codex challenge 2026-07-03): quando o edge DISPAROU chamada ao
+// Omie e não obteve confirmação (timeout/500 pós-fetch), o PV pode existir no ERP sem
+// omie_pedido_id gravado no sales_order. O marcador viaja no erro_motivo do envio
+// (single-writer: só o edge escreve esse campo) e o cancelamento client-side bloqueia ao
+// vê-lo — precisão > recall: cancelar na incerteza é o caminho da duplicata. Follow-up
+// formal: coluna dedicada + claim transitório (migration).
+export const OMIE_INCERTO_MARK = '[OMIE-INCERTO]';
+
+export function motivoComIncerteza(motivo: string, incerto: boolean): string {
+  return incerto && !motivo.includes(OMIE_INCERTO_MARK) ? `${OMIE_INCERTO_MARK} ${motivo}` : motivo;
+}
+
 // nº do PC primeiro (exigência da Lider: "FAVOR INFORMAR O NUMERO DO PEDIDO DA LIDER
 // NA NOTA FISCAL"), mensagem fixa depois. Sem mensagem → só o nº (nunca fabricar texto).
 export function montarDadosAdicionaisNf(mensagemFixa: string | null, numeroPc: string): string {
@@ -241,7 +253,18 @@ async function processarEnvio(
         }
       }
 
-      // 2. criar_pedido via omie-vendas-sync (service role) — guards de preço/ativo lá.
+      // 2. Check pré-fetch: última leitura do status IMEDIATAMENTE antes de tocar o
+      //    Omie — um cancelamento que venceu durante a preparação (validação, criação
+      //    do sales_order) aborta AQUI, antes do PV existir. Estreita a janela de
+      //    segundos para ms; a eliminação total é o claim transitório (follow-up).
+      const { data: chk } = await supabase
+        .from("pedidos_programados_envios").select("status").eq("id", envio.id).single();
+      if (chk && chk.status !== "agendado" && chk.status !== "erro") {
+        erros.push(`Envio mudou para '${chk.status}' durante o processamento — ${account} não foi ao Omie.`);
+        break;
+      }
+
+      // 3. criar_pedido via omie-vendas-sync (service role) — guards de preço/ativo lá.
       tentouOmie = true;
       const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/omie-vendas-sync`, {
         method: "POST",
@@ -293,8 +316,14 @@ async function processarEnvio(
   if (erros.length > 0) {
     // Falha parcial: dizer o que JÁ foi ao Omie evita re-envio às cegas pelo founder
     // (o retry é idempotente de toda forma — sales_orders_map + PV_ determinístico).
+    // tentouOmie sem confirmação → marcador de incerteza no motivo: o guard do
+    // cancelamento bloqueia mesmo sem omie_pedido_id gravado (write-back pode ter falhado).
     const sufixo = sucessos.length > 0 ? ` — já enviado com sucesso: ${sucessos.join(", ")}` : "";
-    return { ok: false, motivo: erros.join(" | ") + sufixo, forcarStatus: omieEmJogo };
+    return {
+      ok: false,
+      motivo: motivoComIncerteza(erros.join(" | ") + sufixo, tentouOmie),
+      forcarStatus: omieEmJogo,
+    };
   }
   return { ok: true, forcarStatus: true };
 }
@@ -331,8 +360,10 @@ Deno.serve(async (req) => {
     if (r.ok) {
       await supabase.from("pedidos_programados_envios")
         .update({ status: "enviado", erro_motivo: null }).eq("id", envio.id);
-      // Pai concluído quando TODOS os itens estão em envios 'enviado'
-      const { data: itensPai } = await supabase
+      // Pai concluído quando TODOS os itens estão em envios 'enviado'. Se a query
+      // FALHOU, não decidir (erro ≠ lista vazia — 'concluido' indevido travaria os
+      // envios pendentes no guard de header ativo); o próximo ciclo promove.
+      const { data: itensPai, error: paiErr } = await supabase
         .from("pedidos_programados_itens")
         .select("id, envio:pedidos_programados_envios(status)")
         .eq("pedido_programado_id", envio.pedido_programado_id);
@@ -340,7 +371,7 @@ Deno.serve(async (req) => {
         const st = (p as unknown as { envio: { status: string } | null }).envio?.status;
         return st !== "enviado";
       });
-      if (!aberto) {
+      if (!paiErr && !aberto) {
         // Incondicional de propósito: se um cancelamento correu no meio mas TUDO foi
         // ao Omie, 'concluido' é o estado honesto ('cancelado' esconderia PVs reais).
         await supabase.from("pedidos_programados")

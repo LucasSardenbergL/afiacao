@@ -291,6 +291,91 @@ describe('cancelarPedido — CAS dos envios + re-SELECT + CAS do header, desanex
   });
 });
 
+describe('cancelarEnvio — incerteza-Omie persistida ([OMIE-INCERTO] no erro_motivo) bloqueia', () => {
+  // Codex challenge [P1]: omie-vendas-sync pode criar o PV no Omie e falhar o write-back
+  // do omie_pedido_id → o guard por omie_pedido_id sozinho deixaria cancelar → duplicata.
+  it('envio erro com marcador de incerteza → bloqueia sem NENHUMA escrita', async () => {
+    respond = (op) => {
+      if (op.table === 'pedidos_programados_envios' && op.method === 'select') {
+        return {
+          data: { status: 'erro', erro_motivo: '[OMIE-INCERTO] criar_pedido oben falhou: 500', sales_orders_map: { oben: 'so-1' } },
+          error: null,
+        };
+      }
+      if (op.table === 'sales_orders') return { data: [], error: null }; // nenhum omie_pedido_id gravado
+      return { data: [], error: null };
+    };
+    const { result } = setup();
+    await act(async () => {
+      await expect(result.current.cancelarEnvio.mutateAsync(ENVIO_A)).rejects.toThrow(/Omie/i);
+    });
+    expect(ops.some((o) => o.method === 'update')).toBe(false);
+  });
+
+  it('envio erro SEM marcador e sem omie_pedido_id → cancela normalmente (retry legítimo preservado)', async () => {
+    respond = (op) => {
+      if (op.table === 'pedidos_programados_envios' && op.method === 'select') {
+        return {
+          data: { status: 'erro', erro_motivo: 'Item X sem preço final válido (> 0).', sales_orders_map: {} },
+          error: null,
+        };
+      }
+      if (isCasEnvio(op)) return { data: [{ id: ENVIO_A }], error: null };
+      return { data: [], error: null };
+    };
+    const { result } = setup();
+    await act(async () => { await result.current.cancelarEnvio.mutateAsync(ENVIO_A); });
+    expect(ops.some(isCasEnvio)).toBe(true);
+    expect(ops.some(isDetachItens)).toBe(true);
+  });
+});
+
+describe('criarEnvio — anexação condicionada (não rouba item anexado por outra via)', () => {
+  const ITENS = [{ id: 'item-1' }, { id: 'item-2' }] as never;
+
+  it('anexa com .is(envio_id, null) + representation; anexação parcial → rollback e erro claro', async () => {
+    respond = (op) => {
+      if (op.table === 'pedidos_programados_envios' && op.method === 'insert') {
+        return { data: { id: 'envio-novo' }, error: null };
+      }
+      if (op.table === 'pedidos_programados_itens' && op.method === 'update' && op.payload?.envio_id === 'envio-novo') {
+        return { data: [{ id: 'item-1' }], error: null }; // item-2 foi capturado por outra via no meio
+      }
+      return { data: [], error: null };
+    };
+    const { result } = setup();
+    await act(async () => {
+      await expect(
+        result.current.criarEnvio.mutateAsync({ itens: ITENS as never, dataEnvio: '2026-07-10' }),
+      ).rejects.toThrow(/recarregue/i);
+    });
+    const anexo = ops.find((o) => o.table === 'pedidos_programados_itens' && o.method === 'update' && o.payload?.envio_id === 'envio-novo')!;
+    expect(anexo.filters.some(([f, c]) => f === 'is' && c === 'envio_id')).toBe(true); // só itens livres
+    expect(anexo.selected).toBeTruthy(); // representation p/ contar
+    // rollback: solta o que anexou E cancela o envio novo (cron não pode enviá-lo parcial)
+    expect(ops.some((o) => isDetachItens(o) && JSON.stringify(filtro(o, 'in', 'envio_id')).includes('envio-novo'))).toBe(true);
+    expect(ops.some((o) => isCasEnvio(o) && filtro(o, 'eq', 'id') === 'envio-novo')).toBe(true);
+  });
+
+  it('caminho feliz: todos anexados → sem rollback', async () => {
+    respond = (op) => {
+      if (op.table === 'pedidos_programados_envios' && op.method === 'insert') {
+        return { data: { id: 'envio-novo' }, error: null };
+      }
+      if (op.table === 'pedidos_programados_itens' && op.method === 'update' && op.payload?.envio_id === 'envio-novo') {
+        return { data: [{ id: 'item-1' }, { id: 'item-2' }], error: null };
+      }
+      return { data: [], error: null };
+    };
+    const { result } = setup();
+    await act(async () => {
+      await result.current.criarEnvio.mutateAsync({ itens: ITENS as never, dataEnvio: '2026-07-10' });
+    });
+    expect(ops.some(isDetachItens)).toBe(false);
+    expect(ops.some(isCasEnvio)).toBe(false);
+  });
+});
+
 describe('enviarAgora — corrida: envio some da fila do edge (cancelado/enviado por outra via)', () => {
   it('resultados vazio do edge NÃO vira toast de sucesso — lança erro claro', async () => {
     const { supabase } = await import('@/integrations/supabase/client');
