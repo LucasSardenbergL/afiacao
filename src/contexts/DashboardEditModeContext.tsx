@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 
 interface EditModeCtx {
   isEditMode: boolean;
@@ -16,7 +16,8 @@ export function useDashboardEditMode(): EditModeCtx {
 
 export function DashboardEditModeProvider({ children }: { children: ReactNode }) {
   const [isEditMode, setIsEditMode] = useState(false);
-  const toggle = () => setIsEditMode((v) => !v);
-  const exit = () => setIsEditMode(false);
-  return <Ctx.Provider value={{ isEditMode, toggle, exit }}>{children}</Ctx.Provider>;
+  const toggle = useCallback(() => setIsEditMode((v) => !v), []);
+  const exit = useCallback(() => setIsEditMode(false), []);
+  const value = useMemo(() => ({ isEditMode, toggle, exit }), [isEditMode, toggle, exit]);
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
