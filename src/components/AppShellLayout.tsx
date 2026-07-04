@@ -1,9 +1,27 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { IncomingCallModal } from './call/IncomingCallModal';
-import { TransferSpikePanel } from './call/TransferSpikePanel';
-import { CallCopilotHud } from './call/CallCopilotHud';
+import { useAuth } from '@/contexts/AuthContext';
+
+/**
+ * CallCopilotHud arrasta TranscriptionPanel → framer-motion (~41KB gzip) e o
+ * restante do copiloto pro entry se importado estático — medido no build
+ * (vendor-motion aparecia no modulepreload do index.html). Lazy + gate por
+ * staff tira tudo do caminho crítico: não-staff nunca baixa; staff baixa no
+ * idle pós-boot (bem antes de qualquer chamada — o próprio WebRTCCallProvider
+ * é lazy e ainda precisa registrar no SIP).
+ *
+ * ⚠️ IncomingCallModal fica EAGER de propósito: é o caminho operacional de
+ * ATENDER chamada (lazy frio em 4G = chamada tocando sem botão de atender).
+ * Ele não importa framer-motion — o peso que importa sai pelo HUD/Spike.
+ */
+const CallCopilotHud = lazy(() =>
+  import('./call/CallCopilotHud').then((m) => ({ default: m.CallCopilotHud }))
+);
+const TransferSpikePanel = lazy(() =>
+  import('./call/TransferSpikePanel').then((m) => ({ default: m.TransferSpikePanel }))
+);
 
 /**
  * Limpa scroll-locks e pointer-events deixados por overlays Radix
@@ -53,6 +71,38 @@ function useRadixScrollLockCleanup() {
   }, []);
 }
 
+/**
+ * Extras de telefonia carregados fora do caminho crítico (ver comentário nos
+ * lazy() acima). O gate por `ready` adia a montagem — e portanto o download do
+ * chunk — pro idle do navegador, pra não competir com o first paint da rota.
+ */
+function LazyCallExtras() {
+  const { isStaff } = useAuth();
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    if (!isStaff) return;
+    const go = () => setReady(true);
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(go, { timeout: 4000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    // Safari/iOS não tem requestIdleCallback
+    const t = window.setTimeout(go, 1500);
+    return () => window.clearTimeout(t);
+  }, [isStaff]);
+
+  if (!isStaff || !ready) return null;
+  return (
+    <Suspense fallback={null}>
+      {/* Onda 1 / Fase 1: co-piloto flutuante global durante a ligação */}
+      <CallCopilotHud />
+      {/* SPIKE (flag telefoniaTransferSpike): painel de teste de transferência *2/REFER */}
+      <TransferSpikePanel />
+    </Suspense>
+  );
+}
+
 export function AppShellLayout() {
   useRadixScrollLockCleanup();
   return (
@@ -60,10 +110,7 @@ export function AppShellLayout() {
       <Outlet />
       {/* PR-INBOUND-CALLS: modal global pra chamadas inbound em qualquer tela autenticada */}
       <IncomingCallModal />
-      {/* SPIKE (flag telefoniaTransferSpike): painel de teste de transferência *2/REFER */}
-      <TransferSpikePanel />
-      {/* Onda 1 / Fase 1: co-piloto flutuante global durante a ligação */}
-      <CallCopilotHud />
+      <LazyCallExtras />
     </AppShell>
   );
 }

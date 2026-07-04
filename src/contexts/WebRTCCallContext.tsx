@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react';
 import { SipClient } from '@/lib/sip/sip-client';
 import type { SipCallState, IncomingCallInfo } from '@/lib/sip/types';
 import { invokeFunction } from '@/lib/invoke-function';
@@ -603,7 +603,11 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     if (callState === 'idle') setCallOwnerId(null);
   }, [callState]);
 
-  const value: WebRTCCallContextValue = {
+  // value memoizado: quando um provider ANCESTRAL (Auth/Company) re-renderiza,
+  // este provider re-renderiza junto — sem o memo, o objeto novo re-renderizava
+  // todos os consumidores (dialers/HUD/modal) mesmo sem nada de chamada mudar.
+  // Todas as funções do value já são useCallback (pré-condição do memo valer).
+  const value = useMemo<WebRTCCallContextValue>(() => ({
     callState,
     callId: null,
     callDuration,
@@ -635,7 +639,16 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     currentCustomerUserId: currentParty?.customerUserId ?? null,
     currentAtendimentoId,
     callDirection,
-  };
+  }), [
+    callState, callDuration, makeCall, endCall, callOwnerId, claimCall,
+    isActive, isConnecting, isRinging, isEstablished, isFinished,
+    error, localStream, remoteStream, isMuted, toggleMute, spikeTransfer,
+    prerollPlaying, prerollEndsAt, vendorMicStream,
+    transcription.status, transcription.turns, transcription.error,
+    spin.analysis, spin.status, spin.error,
+    incomingCall, acceptIncoming, rejectIncoming,
+    currentParty, currentAtendimentoId, callDirection,
+  ]);
 
   return <WebRTCCallContext.Provider value={value}>{children}</WebRTCCallContext.Provider>;
 }

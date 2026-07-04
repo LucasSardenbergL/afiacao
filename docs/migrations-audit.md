@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **324** custom migrations totais
-- **1117** objetos esperados (criados por estas migrations)
+- **333** custom migrations totais
+- **1161** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 319
-  - `rls_policy`: 248
-  - `index`: 199
-  - `table`: 122
-  - `cron_job`: 111
-  - `trigger`: 59
+  - `function`: 334
+  - `rls_policy`: 261
+  - `index`: 202
+  - `table`: 127
+  - `cron_job`: 114
+  - `trigger`: 64
   - `view`: 55
   - `enum_value`: 4
 
@@ -2735,11 +2735,99 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `cron_job` | `cron.pedidos-programados-diario` | — |
 
+### `20260703120000_pedidos_programados_cron_fix.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.pedidos-programados-diario` | — |
+
 ### `20260703140000_trava_credito_gate_excecao_por_par.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.venda_gate_credito` | — |
+
+### `20260704070000_pedidos_programados_claim_processando.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pedidos_programados_watchdog_claims` | — |
+| `function` | `public.pp_bloqueia_cancel_com_claim` | — |
+| `index` | `public.uniq_sales_orders_pp_envio_account` | `sales_orders` |
+| `trigger` | `public.pp_guard_cancel_com_claim` | `pedidos_programados` |
+| `cron_job` | `cron.pedidos-programados-watchdog` | — |
+
+### `20260704102000_fin_sync_retry_kick_perdido.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_kicks_perdidos` | — |
+| `function` | `public.fin_sync_retry_tick` | — |
+| `table` | `public.fin_sync_kick_retry` | — |
+| `cron_job` | `cron.fin-sync-retry-kicks` | — |
+| `rls_policy` | `public.fin_sync_kick_retry_select_staff` | `fin_sync_kick_retry` |
+
+### `20260704120000_preco_por_tier.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cliente_tier_preco_forca_autor` | — |
+| `function` | `public.cliente_tier_preco_audita` | — |
+| `function` | `public.resolve_markup_policy` | — |
+| `function` | `public.get_preco_cockpit` | — |
+| `function` | `public.get_ultimos_precos_cliente` | — |
+| `function` | `public.medir_abaixo_piso_tier` | — |
+| `table` | `public.cliente_tier_preco` | — |
+| `table` | `public.cliente_tier_preco_log` | — |
+| `table` | `public.tier_preco_config` | — |
+| `index` | `public.idx_cliente_tier_preco_customer` | `cliente_tier_preco` |
+| `index` | `public.idx_cliente_tier_log_cliente` | `cliente_tier_preco_log` |
+| `trigger` | `public.trg_cliente_tier_forca_autor` | `cliente_tier_preco` |
+| `trigger` | `public.trg_cliente_tier_audita` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_select_staff` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_insert_gestor` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_update_gestor` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_delete_master` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_service_all` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_log_select_staff` | `cliente_tier_preco_log` |
+| `rls_policy` | `public.tier_preco_config_select_staff` | `tier_preco_config` |
+| `rls_policy` | `public.tier_preco_config_write_master` | `tier_preco_config` |
+| `rls_policy` | `public.tier_preco_config_service_all` | `tier_preco_config` |
+| `rls_policy` | `public.markup_policy_select_carteira` | `markup_policy` |
+
+### `20260704120000_profiles_prevent_self_approval.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.prevent_self_approval` | — |
+| `trigger` | `public.trg_prevent_self_approval_upd` | `profiles` |
+| `trigger` | `public.trg_prevent_self_approval_ins` | `profiles` |
+
+### `20260704130000_claim_nfe_efetivacao_lock.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.claim_nfe_efetivacao_lock` | — |
+
+### `20260704140000_claim_nfe_efetivacao_lock_revoke_grants.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260704150000_fin_sync_lease_por_company.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_lease_acquire` | — |
+| `function` | `public.fin_sync_lease_release` | — |
+| `table` | `public.fin_sync_lease` | — |
+| `rls_policy` | `public.fin_sync_lease_select_staff` | `fin_sync_lease` |
+| `rls_policy` | `public.fin_sync_lease_service_all` | `fin_sync_lease` |
+
+### `20260704160000_fin_sync_watchdog_retry_sem_efeito.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_check` | — |
 
 ## Próximos passos por status
 

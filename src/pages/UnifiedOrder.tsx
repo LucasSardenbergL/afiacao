@@ -20,6 +20,7 @@ import { useOfflineSubmit } from '@/hooks/useOfflineSubmit';
 import { RestoreDraftDialog } from '@/components/unified-order/RestoreDraftDialog';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { AlertaCreditoCliente } from '@/components/unified-order/AlertaCreditoCliente';
+import { TierClienteBadge } from '@/components/unified-order/TierClienteBadge';
 import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoDialog';
 import type { BloqueioCreditoPedido } from '@/services/orderSubmission';
 import { CoresDoClienteCard } from '@/components/unified-order/CoresDoClienteCard';
@@ -338,9 +339,15 @@ const UnifiedOrder = () => {
             />
           )}
 
-          {/* Alerta de crédito (Fase 1 — informativo, não bloqueia) */}
+          {/* Alerta de crédito (Fase 1 — informativo, não bloqueia) + tier comercial */}
           {showCustomerSearch && h.selectedCustomer && (
-            <AlertaCreditoCliente cliente={h.selectedCustomer} />
+            <div className="space-y-2">
+              <AlertaCreditoCliente cliente={h.selectedCustomer} />
+              <TierClienteBadge
+                customerUserId={h.customerUserId}
+                customerName={h.selectedCustomer.nome_fantasia || h.selectedCustomer.razao_social}
+              />
+            </div>
           )}
 
           {/* Cores já pedidas pelo cliente — busca + re-pedido (staff) */}
@@ -381,7 +388,8 @@ const UnifiedOrder = () => {
                       productItems={h.productItems} onAddProduct={h.addProductToCart}
                       customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer}
                       specsByKey={fichasByKey} canSeeFicha={h.isStaff}
-                      selosByKey={selosByKey} canSeeVendaAssistida={h.isStaff} />
+                      selosByKey={selosByKey} canSeeVendaAssistida={h.isStaff} customerUserId={h.customerUserId}
+                      getPrecoNascimento={h.getProductPrice} precoLoading={h.precoPartidaLoading} />
                   </TabsContent>
                   <TabsContent value="colacor">
                     <ProductItemForm title="Produtos Colacor" products={h.filteredColacorProducts} prices={h.customerPricesColacor}
@@ -389,7 +397,8 @@ const UnifiedOrder = () => {
                       productItems={h.productItems} onAddProduct={h.addProductToCart}
                       customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer}
                       specsByKey={fichasByKey} canSeeFicha={h.isStaff}
-                      selosByKey={selosByKey} canSeeVendaAssistida={h.isStaff} />
+                      selosByKey={selosByKey} canSeeVendaAssistida={h.isStaff} customerUserId={h.customerUserId}
+                      getPrecoNascimento={h.getProductPrice} precoLoading={h.precoPartidaLoading} />
                   </TabsContent>
                   <TabsContent value="services">
                     <ServiceItemForm

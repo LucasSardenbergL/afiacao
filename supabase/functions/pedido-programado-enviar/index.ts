@@ -3,6 +3,12 @@
 // (idempotência PV_${sales_order_id} + guards de preço/ativo na fronteira comum).
 // Chamadas: cron diário (body {}) processa data_envio <= hoje BRT; UI staff (body
 // {envio_id}) processa um envio imediatamente ("Enviar agora").
+// CONCORRÊNCIA (migration 20260704070000, prova db/test-pedidos-programados-claim.sh):
+// claim atômico agendado/erro → 'processando' no início; release CAS no fim; watchdog
+// SQL reverte claim órfão (>15 min) p/ 'erro' + [OMIE-INCERTO]; UNIQUE parcial
+// (pedido_programado_envio_id, account) em sales_orders fecha a corrida edge×edge no banco.
+// ⚠️ DEPLOY: exige a migration aplicada ANTES (sem 'processando' no CHECK, o claim
+// falharia 23514 e nenhum envio seria processado).
 // ESPELHO: helpers de src/lib/pedidosProgramados/helpers.ts (verbatim — Deno não importa de src/).
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
@@ -33,6 +39,18 @@ export interface ItemResolvido {
   omie_codigo_produto: number | null; // null = sem mapeamento
   produto_codigo: string | null;
   produto_descricao: string | null;
+}
+
+// Incerteza-Omie (achado Codex challenge 2026-07-03): quando o edge DISPAROU chamada ao
+// Omie e não obteve confirmação (timeout/500 pós-fetch), o PV pode existir no ERP sem
+// omie_pedido_id gravado no sales_order. O marcador viaja no erro_motivo do envio
+// (writers: só o edge e o watchdog de claim órfão — nunca o client) e o cancelamento
+// client-side bloqueia ao vê-lo — precisão > recall: cancelar na incerteza é o caminho
+// da duplicata. "Enviar agora" (idempotente) é o caminho de resolução.
+export const OMIE_INCERTO_MARK = '[OMIE-INCERTO]';
+
+export function motivoComIncerteza(motivo: string, incerto: boolean): string {
+  return incerto && !motivo.includes(OMIE_INCERTO_MARK) ? `${OMIE_INCERTO_MARK} ${motivo}` : motivo;
 }
 
 // nº do PC primeiro (exigência da Lider: "FAVOR INFORMAR O NUMERO DO PEDIDO DA LIDER
@@ -114,21 +132,48 @@ interface LinhaItem {
   } | null;
 }
 
+// sales_orders_map NÃO vem da lista do caller (stale por minutos enquanto o cron
+// processa em série): o CLAIM devolve a linha fresca via representation.
 interface EnvioRow {
   id: string;
   pedido_programado_id: string;
-  sales_orders_map: Record<string, string> | null;
   status: string;
   data_envio: string;
 }
 
+// skip=true: o claim não pegou (cancelado/enviado/claim de outro runner) — o caller
+// NÃO escreve status nenhum. Fora do skip, o envio está CLAIMED ('processando') e o
+// caller SEMPRE faz o release (processando→enviado/erro). Cancelamento client-side é
+// CAS em ['agendado','erro'] — não enxerga 'processando': incancelável durante o claim.
 async function processarEnvio(
   supabase: SupabaseClient,
   envio: EnvioRow,
-): Promise<{ ok: boolean; motivo?: string }> {
+): Promise<{ ok: boolean; motivo?: string; skip?: boolean }> {
+  // CLAIM atômico: UPDATE condicionado ao status processável, com representation —
+  // 0 linhas = outro runner/cancelamento venceu → skip sem escrever nada. A linha
+  // devolvida traz o sales_orders_map fresco na MESMA operação (sem janela entre
+  // "ler estado" e "reservar"). O trigger upd_pp_envios bumpa updated_at — o relógio
+  // que o watchdog usa pra detectar claim órfão (runner morto entre claim e release).
+  const { data: claimRows, error: claimErr } = await supabase
+    .from("pedidos_programados_envios")
+    .update({ status: "processando" })
+    .eq("id", envio.id)
+    .in("status", ["agendado", "erro"])
+    .select("sales_orders_map");
+  if (claimErr) return { ok: false, skip: true, motivo: `Claim falhou: ${claimErr.message}` };
+  const envioFresco = ((claimRows ?? []) as Array<{ sales_orders_map: Record<string, string> | null }>)[0];
+  if (!envioFresco) {
+    return { ok: false, skip: true, motivo: "Envio não está mais 'agendado'/'erro' (cancelado, enviado ou claim de outro runner) — nada a fazer." };
+  }
+
   const { data: pedido, error: pErr } = await supabase
     .from("pedidos_programados").select("*").eq("id", envio.pedido_programado_id).single();
   if (pErr || !pedido) return { ok: false, motivo: `Header não encontrado: ${pErr?.message}` };
+  // Pedido cancelado/concluído no meio do caminho: envio 'agendado' órfão NÃO vira
+  // PV no Omie. Vira 'erro' visível (sai da fila do cron; humano decide).
+  if (pedido.status !== "ativo") {
+    return { ok: false, motivo: `Pedido está '${pedido.status}' (não ativo) — envio não processado.` };
+  }
 
   const { data: itensRaw, error: iErr } = await supabase
     .from("pedidos_programados_itens")
@@ -162,9 +207,17 @@ async function processarEnvio(
   if (problemas.length > 0) return { ok: false, motivo: problemas.join(" | ") };
 
   const grupos = agruparItensPorAccount(itens);
-  const salesOrdersMap: Record<string, string> = { ...(envio.sales_orders_map ?? {}) };
+  // map = CACHE pra UI/diagnóstico (fresco do claim). A convergência de retry/corrida
+  // NÃO depende dele: o vínculo autoritativo é a coluna pedido_programado_envio_id
+  // (SELECT-first + UNIQUE no banco).
+  const salesOrdersMap: Record<string, string> =
+    { ...((envioFresco.sales_orders_map as Record<string, string> | null) ?? {}) };
   const erros: string[] = [];
   const sucessos: string[] = [];
+  // true a partir do momento em que QUALQUER chamada externa foi disparada. Timeout/
+  // crash pós-fetch = resultado DESCONHECIDO: o PV pode existir no Omie sem
+  // omie_pedido_id gravado — tratar como "Omie tocado", nunca como "nada aconteceu".
+  let tentouOmie = false;
 
   for (const [account, itensGrupo] of Object.entries(grupos) as Array<[AccountPP, ItemResolvido[]]>) {
     const cfg = configs[account];
@@ -179,9 +232,62 @@ async function processarEnvio(
     const total = Number(orderItems.reduce((s, i) => s + i.valor_total, 0).toFixed(2));
 
     try {
-      // 1. sales_order idempotente por (envio, account): persistir o id ANTES do Omie —
-      //    retry reusa o MESMO sales_order → mesma chave PV_ no Omie (nunca duplica).
-      let salesOrderId = salesOrdersMap[account];
+      // 1. sales_order idempotente por (envio, account): o vínculo AUTORITATIVO é a
+      //    coluna pedido_programado_envio_id + UNIQUE parcial (envio, account).
+      //    SELECT-first reusa o existente mesmo quando um retry anterior morreu antes
+      //    de persistir o map; o INSERT carrega o vínculo e 23505 = outro runner criou
+      //    primeiro → converge pro sales_order DELE. Qualquer caminho termina no MESMO
+      //    sales_order → mesma chave PV_ no Omie (nunca duplica).
+      const { data: soExist, error: soSelErr } = await supabase
+        .from("sales_orders")
+        .select("id, omie_pedido_id")
+        .eq("pedido_programado_envio_id", envio.id)
+        .eq("account", account)
+        .maybeSingle();
+      if (soSelErr) throw new Error(`Consulta do sales_order do envio falhou (${account}): ${soSelErr.message}`);
+      const exist = soExist as { id: string; omie_pedido_id: number | null } | null;
+      if (exist?.omie_pedido_id) {
+        // Retry: este sales_order já foi ao Omie — não re-enviar esta empresa.
+        sucessos.push(account);
+        continue;
+      }
+      let salesOrderId = exist?.id ?? null;
+      // Fallback pro LEGADO da janela de deploy (achado Codex challenge 2026-07-04):
+      // sales_order criado pelo edge VELHO (map-only, coluna NULL) depois do backfill
+      // ficaria invisível pro SELECT-first — inserir outro seria PV_ novo = duplicata
+      // real no Omie. Adota o SO do map e CURA a coluna (backfill incremental).
+      // Map apontando pra SO de OUTRO envio = inconsistência → erro claro, nunca adivinhar.
+      if (!salesOrderId) {
+        const mapId = salesOrdersMap[account];
+        if (mapId) {
+          const { data: soMapa, error: mapSelErr } = await supabase
+            .from("sales_orders")
+            .select("id, omie_pedido_id, pedido_programado_envio_id")
+            .eq("id", mapId)
+            .maybeSingle();
+          if (mapSelErr) throw new Error(`Consulta do sales_order do map falhou (${account}): ${mapSelErr.message}`);
+          const legado = soMapa as { id: string; omie_pedido_id: number | null; pedido_programado_envio_id: string | null } | null;
+          if (legado) {
+            if (legado.pedido_programado_envio_id && legado.pedido_programado_envio_id !== envio.id) {
+              throw new Error(`sales_orders_map (${account}) aponta pra sales_order vinculado a OUTRO envio — inconsistência; conferir no banco antes de reenviar.`);
+            }
+            if (!legado.pedido_programado_envio_id) {
+              const { error: healErr } = await supabase
+                .from("sales_orders")
+                .update({ pedido_programado_envio_id: envio.id })
+                .eq("id", legado.id)
+                .is("pedido_programado_envio_id", null);
+              if (healErr) throw new Error(`Cura do vínculo do sales_order legado falhou (${account}): ${healErr.message}`);
+            }
+            if (legado.omie_pedido_id) {
+              // Legado já foi ao Omie — não re-enviar esta empresa.
+              sucessos.push(account);
+              continue;
+            }
+            salesOrderId = legado.id;
+          }
+        }
+      }
       if (!salesOrderId) {
         const { data: so, error: soErr } = await supabase.from("sales_orders").insert({
           customer_user_id: cfg.customer_user_id,
@@ -193,24 +299,36 @@ async function processarEnvio(
           status: "rascunho",
           notes: `Pedido programado Lider — PC ${numeroPc} (envio ${envio.id})`,
           account,
+          pedido_programado_envio_id: envio.id,
         }).select("id").single();
-        if (soErr || !so) throw new Error(`sales_order não criado (${account}): ${soErr?.message}`);
-        salesOrderId = (so as { id: string }).id;
+        if (soErr?.code === "23505") {
+          // O UNIQUE fechou a corrida edge×edge no banco: reusar o sales_order vencedor.
+          const { data: soVencedor, error: reErr } = await supabase
+            .from("sales_orders")
+            .select("id")
+            .eq("pedido_programado_envio_id", envio.id)
+            .eq("account", account)
+            .maybeSingle();
+          if (reErr || !soVencedor) throw new Error(`23505 no sales_order (${account}) mas a releitura falhou: ${reErr?.message}`);
+          salesOrderId = (soVencedor as { id: string }).id;
+        } else if (soErr || !so) {
+          throw new Error(`sales_order não criado (${account}): ${soErr?.message}`);
+        } else {
+          salesOrderId = (so as { id: string }).id;
+        }
+      }
+      // Cache pra UI/diagnóstico (writers: só este edge) — o vínculo autoritativo é a coluna.
+      if (salesOrdersMap[account] !== salesOrderId) {
         salesOrdersMap[account] = salesOrderId;
         const { error: mapErr } = await supabase.from("pedidos_programados_envios")
           .update({ sales_orders_map: salesOrdersMap }).eq("id", envio.id);
         if (mapErr) throw new Error(`Persistência do sales_orders_map falhou: ${mapErr.message}`);
-      } else {
-        // Retry: se este sales_order já foi ao Omie, pular (não re-enviar esta empresa).
-        const { data: soExist } = await supabase.from("sales_orders")
-          .select("status, omie_pedido_id").eq("id", salesOrderId).single();
-        if (soExist?.omie_pedido_id) {
-          sucessos.push(account);
-          continue;
-        }
       }
 
       // 2. criar_pedido via omie-vendas-sync (service role) — guards de preço/ativo lá.
+      //    (O check pré-fetch do #1158 saiu: com o claim, cancelamento durante o
+      //    processamento é impossível — a janela que ele estreitava não existe mais.)
+      tentouOmie = true;
       const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/omie-vendas-sync`, {
         method: "POST",
         headers: {
@@ -246,11 +364,17 @@ async function processarEnvio(
     }
   }
 
+  // O re-anexo de itens e o forcarStatus do #1158 saíram: com o claim, nenhuma via
+  // client-side cancela um envio 'processando' nem desanexa seus itens (todo
+  // desanexo passa por um CAS de cancelamento que não enxerga 'processando') — o
+  // status que o release escreve é sempre o do dono do claim.
   if (erros.length > 0) {
     // Falha parcial: dizer o que JÁ foi ao Omie evita re-envio às cegas pelo founder
-    // (o retry é idempotente de toda forma — sales_orders_map + PV_ determinístico).
+    // (o retry é idempotente de toda forma — vínculo (envio, account) + PV_ determinístico).
+    // tentouOmie sem confirmação → marcador de incerteza no motivo: o guard do
+    // cancelamento bloqueia mesmo sem omie_pedido_id gravado (write-back pode ter falhado).
     const sufixo = sucessos.length > 0 ? ` — já enviado com sucesso: ${sucessos.join(", ")}` : "";
-    return { ok: false, motivo: erros.join(" | ") + sufixo };
+    return { ok: false, motivo: motivoComIncerteza(erros.join(" | ") + sufixo, tentouOmie) };
   }
   return { ok: true };
 }
@@ -264,7 +388,7 @@ Deno.serve(async (req) => {
   const { envio_id } = await req.json().catch(() => ({}));
 
   let query = supabase.from("pedidos_programados_envios")
-    .select("id, pedido_programado_id, sales_orders_map, status, data_envio");
+    .select("id, pedido_programado_id, status, data_envio");
   if (envio_id) {
     // "Enviar agora" da UI: também reprocessa envio em 'erro' (retry idempotente).
     query = query.eq("id", envio_id).in("status", ["agendado", "erro"]);
@@ -278,27 +402,54 @@ Deno.serve(async (req) => {
   const resultados: Array<{ envio_id: string; ok: boolean; motivo?: string }> = [];
   for (const envio of (envios ?? []) as unknown as EnvioRow[]) {
     const r = await processarEnvio(supabase, envio);
-    if (r.ok) {
-      await supabase.from("pedidos_programados_envios")
-        .update({ status: "enviado", erro_motivo: null }).eq("id", envio.id);
-      // Pai concluído quando TODOS os itens estão em envios 'enviado'
-      const { data: itensPai } = await supabase
-        .from("pedidos_programados_itens")
-        .select("id, envio:pedidos_programados_envios(status)")
-        .eq("pedido_programado_id", envio.pedido_programado_id);
-      const aberto = (itensPai ?? []).some((p) => {
-        const st = (p as unknown as { envio: { status: string } | null }).envio?.status;
-        return st !== "enviado";
-      });
-      if (!aberto) {
-        await supabase.from("pedidos_programados")
-          .update({ status: "concluido" }).eq("id", envio.pedido_programado_id);
-      }
-    } else {
-      await supabase.from("pedidos_programados_envios")
-        .update({ status: "erro", erro_motivo: r.motivo ?? "erro desconhecido" }).eq("id", envio.id);
+    if (r.skip) {
+      // Claim não pegou (cancelado/enviado/outro runner): não escrever status NENHUM.
+      resultados.push({ envio_id: envio.id, ok: false, motivo: r.motivo });
+      continue;
     }
-    resultados.push({ envio_id: envio.id, ...r });
+    // Release do claim — CAS de 'processando'. 0 linhas só se o watchdog reverteu no
+    // meio (exigiria runner vivo além de 15 min, fora do envelope da plataforma ~400s);
+    // nesse caso o estado fica 'erro'+[OMIE-INCERTO] e o retry converge — reportar honesto.
+    if (r.ok) {
+      const { data: rel, error: relErr } = await supabase.from("pedidos_programados_envios")
+        .update({ status: "enviado", erro_motivo: null })
+        .eq("id", envio.id)
+        .eq("status", "processando")
+        .select("id");
+      const released = !relErr && ((rel ?? []) as unknown[]).length === 1;
+      if (released) {
+        // Pai concluído quando TODOS os itens estão em envios 'enviado'. Se a query
+        // FALHOU, não decidir (erro ≠ lista vazia — 'concluido' indevido travaria os
+        // envios pendentes no guard de header ativo); o próximo ciclo promove.
+        const { data: itensPai, error: paiErr } = await supabase
+          .from("pedidos_programados_itens")
+          .select("id, envio:pedidos_programados_envios(status)")
+          .eq("pedido_programado_id", envio.pedido_programado_id);
+        const aberto = (itensPai ?? []).some((p) => {
+          const st = (p as unknown as { envio: { status: string } | null }).envio?.status;
+          return st !== "enviado";
+        });
+        if (!paiErr && !aberto) {
+          await supabase.from("pedidos_programados")
+            .update({ status: "concluido" }).eq("id", envio.pedido_programado_id);
+        }
+        resultados.push({ envio_id: envio.id, ok: true });
+      } else {
+        resultados.push({
+          envio_id: envio.id,
+          ok: true,
+          motivo: 'Enviado ao Omie, mas o release do claim não aplicou (watchdog reverteu?) — use "Enviar agora" pra convergir o status.',
+        });
+      }
+      continue;
+    }
+    // Erro: release processando→erro (CAS do dono do claim — cancelamento nunca
+    // disputa, não enxerga 'processando').
+    await supabase.from("pedidos_programados_envios")
+      .update({ status: "erro", erro_motivo: r.motivo ?? "erro desconhecido" })
+      .eq("id", envio.id)
+      .eq("status", "processando");
+    resultados.push({ envio_id: envio.id, ok: false, motivo: r.motivo });
   }
   return json(200, { success: true, processados: resultados.length, resultados });
 });

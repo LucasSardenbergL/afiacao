@@ -2,11 +2,17 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 
-export interface ItemCockpitInput { empresa: string; codigo: number; preco: number; tint_formula_id?: string | null; }
+export interface ItemCockpitInput {
+  empresa: string; codigo: number; preco: number; tint_formula_id?: string | null;
+  // Tier-aware (Fase A preço por tier): o cockpit resolve o tier SERVER-SIDE por este
+  // customer (jamais confia num tier vindo do payload). Ausente → cascata-produto (vigente).
+  customer_user_id?: string | null;
+}
 export interface LinhaCockpit {
   codigo: number; empresa: string;
   faixa: 'vermelho' | 'amarelo' | 'verde' | 'neutro';
   motivo: string; tem_custo: boolean; tem_politica: boolean; calculated_at: string;
+  tier: 'A' | 'B' | 'C' | null;
   cmc: number | null; markup_perc: number | null; folga_reais: number | null;
   piso_markup: number | null; meta_markup: number | null;
   proveniencia: string | null; frescor: string | null;

@@ -1,5 +1,6 @@
 // Lista de ligações + painel de detalhe (split estilo Gong) da página de Ligações.
 // Extraído de src/pages/FarmerCalls.tsx (god-component split).
+import { memo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -10,7 +11,9 @@ import { cn } from '@/lib/utils';
 import { CallDetailPanel } from './CallDetailPanel';
 import { CALL_TYPES, CALL_RESULTS, fmt, formatTimer, type CallLog } from './types';
 
-export function CallListPanel({
+// memo: o pai (FarmerCalls) re-renderiza a 1Hz durante chamada ativa (cronômetro);
+// com props estáveis (filteredLogs memoizado + setters), a lista não re-renderiza.
+export const CallListPanel = memo(function CallListPanel({
   filterType, setFilterType, filteredLogs, loadingLogs, selectedCall, setSelectedCall,
 }: {
   filterType: string;
@@ -101,4 +104,4 @@ export function CallListPanel({
       )}
     </div>
   );
-}
+});

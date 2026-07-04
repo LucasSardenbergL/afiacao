@@ -44,6 +44,43 @@ type SkuSemFornecedor = {
   ponto_pedido: number | null;
 };
 
+/* ─── Relógio isolado ───
+ * O tick de minuto vivia como state da PÁGINA: a cada 60s o setNow re-renderizava
+ * a árvore inteira (~500 linhas de pedidos) só pra atualizar data/ciclo/frescor no
+ * header. Isolado aqui, cada tick re-renderiza apenas estes componentes minúsculos. */
+function useNowMinuto() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  return now;
+}
+
+function DataDeHojeLive() {
+  const now = useNowMinuto();
+  return <>{format(now, 'dd/MM/yyyy', { locale: ptBR })}</>;
+}
+
+function CycleIndicatorLive() {
+  const now = useNowMinuto();
+  return <CycleIndicator now={now} />;
+}
+
+function FrescorEstoqueLive({ ultimaSync }: { ultimaSync: string | null | undefined }) {
+  const now = useNowMinuto();
+  const frescor = frescorEstoque(ultimaSync, now);
+  const cor = { ok: 'text-muted-foreground', warning: 'text-status-warning', error: 'text-status-error' }[frescor.tone];
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-xs ${cor}`}
+      title={ultimaSync ? `Último sync: ${format(new Date(ultimaSync), "dd/MM 'às' HH:mm", { locale: ptBR })}` : undefined}
+    >
+      <Clock className="w-3.5 h-3.5" /> Estoque Omie: {frescor.label}
+    </span>
+  );
+}
+
 /* ─── Página principal ─── */
 export default function AdminReposicaoPedidos() {
   const queryClient = useQueryClient();
@@ -52,7 +89,6 @@ export default function AdminReposicaoPedidos() {
   const { isMaster, isGestorComercial } = useAuth();
   const podeOverride = isMaster || isGestorComercial;
   const [searchParams, setSearchParams] = useSearchParams();
-  const [now, setNow] = useState(new Date());
   const [detalhesPedido, setDetalhesPedido] = useState<PedidoSugerido | null>(null);
   const [cancelarPedido, setCancelarPedido] = useState<PedidoSugerido | null>(null);
   const [portalPedido, setPortalPedido] = useState<PedidoSugerido | null>(null);
@@ -60,12 +96,17 @@ export default function AdminReposicaoPedidos() {
   const [mostrarAtencao, setMostrarAtencao] = useState(false);
   const [histAberto, setHistAberto] = useState(false);
 
+  // Vira a queryKey na meia-noite SEM re-render por minuto: setState com a MESMA
+  // string faz o React pular o re-render (bailout) nos outros 1.439 ticks do dia.
+  // O relógio visual do header vive nos componentes *Live acima, isolados.
+  const [dataHoje, setDataHoje] = useState(() => format(new Date(), 'yyyy-MM-dd'));
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 60_000);
+    const t = setInterval(() => {
+      const novaData = format(new Date(), 'yyyy-MM-dd');
+      setDataHoje((atual) => (atual === novaData ? atual : novaData));
+    }, 60_000);
     return () => clearInterval(t);
   }, []);
-
-  const dataHoje = format(now, 'yyyy-MM-dd');
 
   const { data: pedidos, isLoading, refetch } = useQuery({
     queryKey: ['pedidos-ciclo', dataHoje],
@@ -408,9 +449,9 @@ export default function AdminReposicaoPedidos() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
-            Pedidos de compra — CICLO DE HOJE ({format(now, 'dd/MM/yyyy', { locale: ptBR })})
+            Pedidos de compra — CICLO DE HOJE (<DataDeHojeLive />)
           </h1>
-          <div className="mt-2"><CycleIndicator now={now} /></div>
+          <div className="mt-2"><CycleIndicatorLive /></div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {atencaoCount > 0 ? (
@@ -428,18 +469,7 @@ export default function AdminReposicaoPedidos() {
               <CheckCircle2 className="w-3.5 h-3.5" /> Tudo em dia
             </span>
           )}
-          {frescorCarregado && (() => {
-            const frescor = frescorEstoque(ultimaSyncEstoque, now);
-            const cor = { ok: 'text-muted-foreground', warning: 'text-status-warning', error: 'text-status-error' }[frescor.tone];
-            return (
-              <span
-                className={`inline-flex items-center gap-1 text-xs ${cor}`}
-                title={ultimaSyncEstoque ? `Último sync: ${format(new Date(ultimaSyncEstoque), "dd/MM 'às' HH:mm", { locale: ptBR })}` : undefined}
-              >
-                <Clock className="w-3.5 h-3.5" /> Estoque Omie: {frescor.label}
-              </span>
-            );
-          })()}
+          {frescorCarregado && <FrescorEstoqueLive ultimaSync={ultimaSyncEstoque} />}
           <Button
             variant="outline"
             onClick={() => syncEstoqueMutation.mutate()}

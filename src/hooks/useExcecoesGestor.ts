@@ -82,8 +82,14 @@ export function useExcecoesGestor(): { data: ConsoleExcecoes | null; isLoading: 
       for (const t of tarefasQ.data?.tarefas ?? []) { if (t.responsavel_efetivo) ids.add(t.responsavel_efetivo); }
       const arr = [...ids];
       const nameByUser = new Map<string, string>();
-      for (let i = 0; i < arr.length; i += 200) {
-        const { data, error } = await supabase.from('profiles').select('user_id, name, razao_social').in('user_id', arr.slice(i, i + 200));
+      // Chunks de 200 (limite prático do .in()) resolvidos em PARALELO: eram
+      // awaitados em série — com 1.000 ids isso somava 5 roundtrips sequenciais.
+      const chunks: string[][] = [];
+      for (let i = 0; i < arr.length; i += 200) chunks.push(arr.slice(i, i + 200));
+      const results = await Promise.all(
+        chunks.map((chunk) => supabase.from('profiles').select('user_id, name, razao_social').in('user_id', chunk)),
+      );
+      for (const { data, error } of results) {
         if (error) throw error;
         for (const p of (data ?? []) as ProfileRow[]) nameByUser.set(p.user_id, p.razao_social ?? p.name ?? '');
       }

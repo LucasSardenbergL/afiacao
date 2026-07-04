@@ -186,6 +186,9 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 60_000, // 1 minute
+      // 15min (default é 5): navegação de volta a uma tela já visitada reusa o
+      // cache (render instantâneo + refetch em background via staleTime).
+      gcTime: 15 * 60_000,
       refetchOnWindowFocus: false,
       retry: 2,
       retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10_000),
@@ -206,7 +209,9 @@ const App = () => {
     <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
     <TooltipProvider>
       <Sonner />
-      <BrowserRouter>
+      {/* v7_startTransition: navegação entre rotas lazy mantém a tela anterior
+          visível durante o load do chunk (sem flash do Suspense global). */}
+      <BrowserRouter future={{ v7_startTransition: true }}>
         <AuthProvider>
           <ImpersonationProvider>
           <CompanyProvider>
