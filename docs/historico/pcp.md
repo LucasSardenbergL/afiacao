@@ -25,4 +25,12 @@ Planos por fase: `docs/superpowers/plans/`.
 
 **Lições reforçadas:** PL/pgSQL é late-bound (prova EXECUTANDO, não só criando); `SECURITY DEFINER` troca `current_user` pelo owner (gate por `auth.uid()`); negação PostgREST é NULL-blind (raiz: coluna NOT NULL); Omie sinaliza erro por HTTP 200+faultstring (nunca confiar só no status). Idioma do harness PG17: `Pq() { P -tA -q ...}` (o `-q` evita `SET` vazar na captura escalar de multi-statement).
 
-**Pendente (founder):** deploy das 3 camadas no Lovable (M1 SQL Editor → edge no chat → probe → sync → M2 SQL Editor → refresh/destilar) + **gate de amostragem** da BOM destilada antes de qualquer consumo. Recorrência do sync (cron + frescor no Sentinela) fica para a Fase 2.
+**Deploy executado (2026-07-04):** M1 aplicado ✓ · edge deployada ✓ · probe ✓ (shape real do Omie: lista em `produtosEncontrados`, itens em `itens`, pai em `ident.idProduto`, componentes com chaves diretas SEM sub-`ident` — o M2 lê por fallback `i->>'...'`) · sync ✓ (**41 páginas, 2011 produtos, 6732 componentes, shape_err=0**; cobertura: 1404 cintas de 1405, ~249 discos, 111 tingidores). Verificação empírica: `comp_sem_id=0 de 6732`.
+
+**Achados dos dados reais (corrigidos ANTES de aplicar o M2):**
+- **Modelo da FITA estava errado** — eu assumira aditivo (`largura/10 + overlap`); os dados provam **proporcional** (`coef × largura`, ~0.1125 cm/mm constante em 29 larguras; overlap aditivo varia 0.3–2.9). Corrigido (método `cm_por_mm_largura`); valida **96.1% das 1378 fitas** dentro de ±5% global. Cola/catalisador/abrasivo confirmados certos (cola ~0.0105 g/mm, catalisador 0.1111×cola, abrasivo área nominal exata).
+- `custoProducao {vGGF,vMOD}` vem embutido em cada produto da malha → validação cruzada de custo (§1.12) fica de graça na Fase 2.
+
+**Refinos anotados p/ Fase 2:** nomear `produtosEncontrados` no `extractLista` do edge (hoje pega por fallback determinístico); cron + frescor no Sentinela; limpar candidatos `i->'ident'` mortos do M2.
+
+**Pendente (founder):** colar M2 → refresh/destilar → **gate de amostragem** da BOM antes de qualquer consumo.

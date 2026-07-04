@@ -740,7 +740,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS public.pcp_bom_regras (
   linha_modelo text NOT NULL,   -- '*' = regra global (fallback p/ linha com poucas amostras)
   papel  text NOT NULL CHECK (papel IN ('abrasivo_base','cola','catalisador','fita')),
-  metodo text NOT NULL CHECK (metodo IN ('area_nominal','g_por_mm_largura','razao_sobre_cola','cm_overlap_largura')),
+  metodo text NOT NULL CHECK (metodo IN ('area_nominal','g_por_mm_largura','razao_sobre_cola','cm_por_mm_largura')),
   coef numeric,
   amostras int NOT NULL,
   dispersao numeric,            -- MAD relativa (mediana de |x-med|/med) — qualidade da regra
@@ -778,7 +778,7 @@ BEGIN
   SELECT o.linha_modelo, o.papel,
     CASE o.papel
       WHEN 'cola'        THEN CASE WHEN o.unidade = 'G' AND o.largura_mm > 0 THEN o.quantidade / o.largura_mm END
-      WHEN 'fita'        THEN CASE WHEN o.unidade = 'CM' THEN o.quantidade - o.largura_mm / 10.0 END
+      WHEN 'fita'        THEN CASE WHEN o.unidade = 'CM' AND o.largura_mm > 0 THEN o.quantidade / o.largura_mm END
       WHEN 'catalisador' THEN CASE WHEN o.unidade = 'G' AND cola.quantidade > 0 THEN o.quantidade / cola.quantidade END
     END AS ratio
   FROM tmp_obs o
@@ -812,7 +812,7 @@ BEGIN
   SELECT u.linha_modelo, u.papel,
     CASE u.papel WHEN 'cola' THEN 'g_por_mm_largura'
                  WHEN 'catalisador' THEN 'razao_sobre_cola'
-                 WHEN 'fita' THEN 'cm_overlap_largura' END,
+                 WHEN 'fita' THEN 'cm_por_mm_largura' END,
     u.coef, u.amostras,
     (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(r.ratio - u.coef) / NULLIF(abs(u.coef), 0))
        FROM tmp_ratio r
@@ -867,7 +867,7 @@ SELECT pai_codigo, pai_descricao, pai_tipo, linha_modelo, largura_mm, compriment
     WHEN papel = 'abrasivo_base' AND unidade = 'M2' THEN largura_mm::numeric * comprimento_mm / 1e6
     WHEN papel = 'cola'        AND unidade = 'G'  AND metodo = 'g_por_mm_largura'   THEN coef * largura_mm
     WHEN papel = 'catalisador' AND unidade = 'G'  AND metodo = 'razao_sobre_cola'   THEN coef * qtd_cola_pai
-    WHEN papel = 'fita'        AND unidade = 'CM' AND metodo = 'cm_overlap_largura' THEN largura_mm / 10.0 + coef
+    WHEN papel = 'fita'        AND unidade = 'CM' AND metodo = 'cm_por_mm_largura' THEN coef * largura_mm
   END AS esperado,
   CASE WHEN papel = 'abrasivo_base'
        THEN coalesce((SELECT (value)::numeric FROM pcp_config WHERE key = 'tolerancia_abrasivo'), 0.005)
@@ -897,12 +897,12 @@ SELECT pai_codigo, pai_descricao, pai_tipo, linha_modelo, largura_mm, compriment
         WHEN papel = 'abrasivo_base' THEN largura_mm::numeric * comprimento_mm / 1e6
         WHEN papel = 'cola' THEN coef * largura_mm
         WHEN papel = 'catalisador' THEN coef * qtd_cola_pai
-        WHEN papel = 'fita' THEN largura_mm / 10.0 + coef END))
+        WHEN papel = 'fita' THEN coef * largura_mm END))
        / NULLIF((CASE
         WHEN papel = 'abrasivo_base' THEN largura_mm::numeric * comprimento_mm / 1e6
         WHEN papel = 'cola' THEN coef * largura_mm
         WHEN papel = 'catalisador' THEN coef * qtd_cola_pai
-        WHEN papel = 'fita' THEN largura_mm / 10.0 + coef END), 0)
+        WHEN papel = 'fita' THEN coef * largura_mm END), 0)
       <= (CASE WHEN papel = 'abrasivo_base'
            THEN coalesce((SELECT (value)::numeric FROM pcp_config WHERE key = 'tolerancia_abrasivo'), 0.005)
            ELSE coalesce((SELECT (value)::numeric FROM pcp_config WHERE key = 'tolerancia_insumo'), 0.05) END)
@@ -1255,12 +1255,12 @@ INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES
    {"ident":{"idProdMalha":900005,"codProdMalha":"PRD90005","descrProdMalha":"ROLO KA169 75X50000MM P80"},"quantProdMalha":0.15,"unidProdMalha":"M2"},
    {"ident":{"idProdMalha":900002,"codProdMalha":"PRD90002","descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":0.8055,"unidProdMalha":"G"},
    {"ident":{"idProdMalha":900003,"codProdMalha":"PRD90003","descrProdMalha":"DESMODUR NE-S"},"quantProdMalha":0.0895,"unidProdMalha":"G"},
-   {"ident":{"idProdMalha":900004,"codProdMalha":"PRD90004","descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":9.4,"unidProdMalha":"CM"}]}'::jsonb),
+   {"ident":{"idProdMalha":900004,"codProdMalha":"PRD90004","descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":8.45,"unidProdMalha":"CM"}]}'::jsonb),
  (800003, '{"ident":{"idProduto":800003,"codProduto":"PRD80003"},"itens":[
    {"ident":{"idProdMalha":900006,"codProdMalha":"PRD90006","descrProdMalha":"ROLO KA169 300X50000MM P50"},"quantProdMalha":0.9,"unidProdMalha":"M2"},
    {"ident":{"idProdMalha":900002,"codProdMalha":"PRD90002","descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":3.222,"unidProdMalha":"G"},
    {"ident":{"idProdMalha":900003,"codProdMalha":"PRD90003","descrProdMalha":"DESMODUR NE-S"},"quantProdMalha":0.358,"unidProdMalha":"G"},
-   {"ident":{"idProdMalha":900004,"codProdMalha":"PRD90004","descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":31.9,"unidProdMalha":"CM"}]}'::jsonb);
+   {"ident":{"idProdMalha":900004,"codProdMalha":"PRD90004","descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":33.8,"unidProdMalha":"CM"}]}'::jsonb);
 SQL
 
 echo "═══ ZONA 4: refresh + destilar + validar ═══"
@@ -1269,7 +1269,7 @@ eq "linha_modelo veio do token da descrição" "$(Pq -c "SELECT linha_modelo FRO
 eq "destilar: nº de regras (4 papéis × [KA169 + *])" "$(Pq -c "SELECT fn_pcp_destilar_bom()")" "8"
 eq "coef cola g/mm (mediana)"   "$(Pq -c "SELECT round(coef,5) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='cola'")" "0.01074"
 eq "coef catalisador (razão)"   "$(Pq -c "SELECT round(coef,4) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='catalisador'")" "0.1111"
-eq "coef fita (overlap cm)"     "$(Pq -c "SELECT round(coef,2) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='fita'")" "1.90"
+eq "coef fita (cm por mm largura)" "$(Pq -c "SELECT round(coef,4) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='fita'")" "0.1127"
 eq "validação: 12/12 ok"        "$(Pq -c "SELECT count(*) FILTER (WHERE status='ok')||'/'||count(*) FROM vw_pcp_bom_validacao")" "12/12"
 eq "materializar: 0 exceções"   "$(Pq -c "SELECT fn_pcp_materializar_excecoes()")" "0"
 
@@ -1282,7 +1282,7 @@ INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES
  (800004, '{"ident":{"idProduto":800004,"codProduto":"PRD80004"},"itens":[
    {"ident":{"idProdMalha":900007,"codProdMalha":"PRD90007","descrProdMalha":"ROLO KA169 100X50000MM P60"},"quantProdMalha":0.1,"unidProdMalha":"M2"},
    {"ident":{"idProdMalha":900002,"codProdMalha":"PRD90002","descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":10.74,"unidProdMalha":"G"},
-   {"ident":{"idProdMalha":900004,"codProdMalha":"PRD90004","descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":11.9,"unidProdMalha":"CM"}]}'::jsonb);
+   {"ident":{"idProdMalha":900004,"codProdMalha":"PRD90004","descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":11.27,"unidProdMalha":"CM"}]}'::jsonb);
 SQL
 P -q -c "SELECT fn_pcp_refresh_itens();" >/dev/null
 # NÃO re-destila: as regras ficam as derivadas do conjunto limpo (fluxo incremental real).
