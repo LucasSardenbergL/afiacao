@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { ReactNode } from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockFlushImpl = vi.fn();
 const mockSubscribe = vi.fn();
@@ -10,6 +12,12 @@ vi.mock('@/lib/offline-queue', () => ({
 }));
 
 import { useOfflineFlush, registerOfflineHandler, __clearHandlersForTest } from '../useOfflineFlush';
+
+// useOfflineFlush usa useQueryClient() → precisa do provider.
+const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+);
 
 beforeEach(() => {
   mockFlushImpl.mockReset();
@@ -22,14 +30,14 @@ beforeEach(() => {
 describe('useOfflineFlush', () => {
   it('registers online event listener on mount', () => {
     const addSpy = vi.spyOn(window, 'addEventListener');
-    renderHook(() => useOfflineFlush());
+    renderHook(() => useOfflineFlush(), { wrapper });
     expect(addSpy).toHaveBeenCalledWith('online', expect.any(Function));
     addSpy.mockRestore();
   });
 
   it('calls flush when online event fires', async () => {
     mockFlushImpl.mockResolvedValue({ success: 2, failed: 0 });
-    renderHook(() => useOfflineFlush());
+    renderHook(() => useOfflineFlush(), { wrapper });
 
     await act(async () => {
       window.dispatchEvent(new Event('online'));
@@ -48,7 +56,7 @@ describe('useOfflineFlush', () => {
       return { success: ok ? 1 : 0, failed: ok ? 0 : 1 };
     });
 
-    renderHook(() => useOfflineFlush());
+    renderHook(() => useOfflineFlush(), { wrapper });
 
     await act(async () => {
       window.dispatchEvent(new Event('online'));
@@ -63,7 +71,7 @@ describe('useOfflineFlush', () => {
       return { success: ok ? 1 : 0, failed: ok ? 0 : 1 };
     });
 
-    renderHook(() => useOfflineFlush());
+    renderHook(() => useOfflineFlush(), { wrapper });
 
     await act(async () => {
       window.dispatchEvent(new Event('online'));

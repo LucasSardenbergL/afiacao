@@ -52,6 +52,11 @@ export default defineConfig(({ mode }) => ({
     __COMMIT_SHA__: JSON.stringify(commitSha),
     // PROBE temporário — remover quando a env de SHA do Lovable for identificada.
     __BUILD_ENV_KEYS__: JSON.stringify(buildEnvKeys),
+    // Casa EXATAMENTE a condição de inclusão do VitePWA abaixo. main.tsx só
+    // importa 'virtual:pwa-register' (via @/lib/pwa-update) quando true — em dev
+    // e no preview Lovable o plugin não existe, então o módulo virtual não
+    // resolve; sendo constante de build, o Vite DCE remove o import quando false.
+    __PWA_ENABLED__: JSON.stringify(mode === "production" && !isLovablePreview),
   },
   server: {
     host: "::",
@@ -64,8 +69,15 @@ export default defineConfig(({ mode }) => ({
     react(),
     mode === "development" && componentTagger(),
     mode === "production" && !isLovablePreview && VitePWA({
-      registerType: "autoUpdate",
-      injectRegister: "script-defer",
+      // 'prompt' (não 'autoUpdate'): o SW novo INSTALA mas ESPERA — quem decide
+      // recarregar é o operador, via PwaUpdatePrompt (toast "Atualizar"). Com
+      // autoUpdate + skipWaiting, um deploy no meio do turno recarregava o app
+      // embaixo do conferente e matava o estado local do formulário (a fila
+      // offline sobrevive no localStorage, mas o lote meio-digitado não).
+      registerType: "prompt",
+      // false: registramos o SW nós mesmos via useRegisterSW() (virtual:pwa-register)
+      // no PwaUpdatePrompt — sem isto o script auto-injetado registraria em dobro.
+      injectRegister: false,
       includeAssets: ["favicon.ico", "robots.txt"],
       manifest: {
         name: "Colacor",
@@ -128,7 +140,15 @@ export default defineConfig(({ mode }) => ({
         // importScripts passa pelo HTTP cache (updateViaCache default 'imports')
         // e um max-age na hospedagem serviria bytes velhos do handler.
         importScripts: ["push-sw.js"],
-        skipWaiting: true,
+        // skipWaiting REMOVIDO (era true): com registerType 'prompt' o SW novo precisa
+        // FICAR em waiting até o operador confirmar (updateServiceWorker() posta o
+        // SKIP_WAITING no clique). skipWaiting:true pularia a espera e recriaria o
+        // reload-surpresa que estamos evitando.
+        // clientsClaim MANTIDO: NÃO causa reload-surpresa (só o skipWaiting causava);
+        // ele faz o SW já-ativado assumir o controle da aba atual. Sem ele, na 1ª
+        // instalação (operador sem SW ainda) a aba fica SEM controle até o próximo
+        // reload → se a rede cair na mesma sessão, offline-first não funciona no
+        // primeiro acesso. Na atualização, o claim só ocorre após o operador aceitar.
         clientsClaim: true,
         cleanupOutdatedCaches: true,
         navigateFallbackDenylist: [/^\/~oauth/, /^\/__/],

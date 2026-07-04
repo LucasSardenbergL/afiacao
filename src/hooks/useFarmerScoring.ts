@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import type { Tables } from '@/integrations/supabase/types';
 import { custoCanonico } from '@/lib/custo/custoCanonico';
+import { accumulateMarginFromItems } from '@/lib/scoring/margin';
 
 type AlgorithmConfigRow = Pick<Tables<'farmer_algorithm_config'>, 'key' | 'value'>;
 type ProductCostRow = Pick<Tables<'product_costs'>, 'product_id' | 'cost_price' | 'cost_final'>;
@@ -241,15 +242,13 @@ export const useFarmerScoring = (farmerId?: string) => {
           ? (order.items as unknown as SalesOrderItem[])
           : [];
         for (const item of items) {
-          if (item.product_id) {
-            cd.categories.add(item.product_id);
-            const qty = Number(item.quantity || 1);
-            const price = Number(item.unit_price || 0);
-            const cost = costMap.get(item.product_id) || 0;
-            cd.totalRevenue += price * qty;
-            cd.totalCost += cost * qty;
-          }
+          if (item.product_id) cd.categories.add(item.product_id);
         }
+        // Margem só sobre SKU com custo CONHECIDO (custo ausente não vira 0 — inflaria a
+        // margem; ausente ≠ zero). Alinhado ao filtro do costMap acima (~linha 176).
+        const { revenue, cost } = accumulateMarginFromItems(items, costMap);
+        cd.totalRevenue += revenue;
+        cd.totalCost += cost;
       }
 
       // Aggregate call data

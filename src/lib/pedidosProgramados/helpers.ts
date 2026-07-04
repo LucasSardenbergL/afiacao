@@ -32,9 +32,9 @@ export interface ItemResolvido {
 // Incerteza-Omie (achado Codex challenge 2026-07-03): quando o edge DISPAROU chamada ao
 // Omie e não obteve confirmação (timeout/500 pós-fetch), o PV pode existir no ERP sem
 // omie_pedido_id gravado no sales_order. O marcador viaja no erro_motivo do envio
-// (single-writer: só o edge escreve esse campo) e o cancelamento client-side bloqueia ao
-// vê-lo — precisão > recall: cancelar na incerteza é o caminho da duplicata. Follow-up
-// formal: coluna dedicada + claim transitório (migration).
+// (writers: só o edge e o watchdog de claim órfão — nunca o client) e o cancelamento
+// client-side bloqueia ao vê-lo — precisão > recall: cancelar na incerteza é o caminho
+// da duplicata. "Enviar agora" (idempotente) é o caminho de resolução.
 export const OMIE_INCERTO_MARK = '[OMIE-INCERTO]';
 
 export function motivoComIncerteza(motivo: string, incerto: boolean): string {

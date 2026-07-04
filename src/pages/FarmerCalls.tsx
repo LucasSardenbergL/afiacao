@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
@@ -392,7 +392,13 @@ const FarmerCalls = () => {
   const todayRevenue = todayCalls.reduce((s, c) => s + Number(c.revenue_generated), 0);
   const avgDuration = todayCalls.length > 0 ? Math.round(todayCalls.reduce((s, c) => s + c.duration_seconds, 0) / todayCalls.length) : 0;
 
-  const filteredLogs = filterType === 'all' ? callLogs : callLogs.filter(c => c.call_type === filterType);
+  // Memoizado: durante chamada ativa a página re-renderiza a 1Hz (cronômetro/nvoip).
+  // Referência estável aqui + React.memo no CallListPanel blindam a lista de 100+
+  // ligações desse tick — sem isto ela re-renderizava inteira a cada segundo.
+  const filteredLogs = useMemo(
+    () => (filterType === 'all' ? callLogs : callLogs.filter(c => c.call_type === filterType)),
+    [callLogs, filterType],
+  );
 
   if (authLoading) {
     // PageSkeleton (não Loader2 full-page): o Suspense da rota já mostrou um

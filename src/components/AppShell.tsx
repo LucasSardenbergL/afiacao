@@ -371,7 +371,10 @@ function SidebarItem({
   return button;
 }
 
-function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+// memo: com props estáveis (onToggle é useCallback no AppShell), re-renders do
+// shell (mobileOpen, lente, contexts) não re-renderizam os 80+ itens da nav.
+// Navegação e badges continuam re-renderizando por dentro (useLocation/queries).
+const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isStaff, isMaster, user } = useAuth();
@@ -680,10 +683,10 @@ function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
       )}
     </aside>
   );
-}
+});
 
 /* ─── Topbar ─── */
-function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed: boolean; onMobileMenuToggle: () => void }) {
+const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed: boolean; onMobileMenuToggle: () => void }) {
   const navigate = useNavigate();
   const { signOut } = useAuth();
   const { isImpersonating } = useImpersonation();
@@ -742,10 +745,10 @@ function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed:
 
     </header>
   );
-}
+});
 
 /* ─── Mobile overlay ─── */
-function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
+const MobileNav = React.memo(function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { displayIsStaff: isStaff, displayIsMaster: isMaster, displayIsGestorComercial: isGestorComercial, displayIsSalesOnly: isSalesOnly, displayLoading } = useDisplayAccess();
@@ -820,7 +823,7 @@ function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
       </div>
     </>
   );
-}
+});
 
 /* ─── Main Shell ─── */
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -831,6 +834,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const { isImpersonating } = useImpersonation();
+  // Handlers estáveis: pré-condição dos React.memo de AppSidebar/AppTopbar/MobileNav.
+  const toggleSidebar = React.useCallback(() => setCollapsed((c) => !c), []);
+  const openMobileNav = React.useCallback(() => setMobileOpen(true), []);
+  const closeMobileNav = React.useCallback(() => setMobileOpen(false), []);
 
   // Aplica .legacy-visual no <html> quando feature flag newVisual = false
   useFeatureFlagBodyClass('newVisual', 'legacy-visual', /* invert */ true);
@@ -843,14 +850,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <ImpersonationBanner />
             {/* Desktop sidebar */}
             <div className="hidden lg:block">
-              <AppSidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+              <AppSidebar collapsed={collapsed} onToggle={toggleSidebar} />
             </div>
 
             {/* Mobile nav */}
-            <MobileNav open={mobileOpen} onClose={() => setMobileOpen(false)} />
+            <MobileNav open={mobileOpen} onClose={closeMobileNav} />
 
             {/* Topbar */}
-            <AppTopbar sidebarCollapsed={collapsed} onMobileMenuToggle={() => setMobileOpen(true)} />
+            <AppTopbar sidebarCollapsed={collapsed} onMobileMenuToggle={openMobileNav} />
 
             {/* Main content */}
             <main

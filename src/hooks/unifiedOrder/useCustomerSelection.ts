@@ -90,6 +90,10 @@ export function useCustomerSelection({
 
   const [customerPricesOben, setCustomerPricesOben] = useState<Record<number, number>>({});
   const [customerPricesColacor, setCustomerPricesColacor] = useState<Record<number, number>>({});
+  // Data do último praticado por omie_code (order_date_kpi) — alimenta a janela de 180d
+  // da partida por tier. Confinada por conta como o preço (colisão cross-account).
+  const [customerPriceDatesOben, setCustomerPriceDatesOben] = useState<Record<number, string>>({});
+  const [customerPriceDatesColacor, setCustomerPriceDatesColacor] = useState<Record<number, string>>({});
 
   const [selectedParcelaOben, setSelectedParcelaOben] = useState<string>('999');
   const [selectedParcelaColacor, setSelectedParcelaColacor] = useState<string>('999');
@@ -356,15 +360,22 @@ export function useCustomerSelection({
    *  trazemos `account` p/ NÃO achatar omie_codigo_produto (colide entre as
    *  contas Omie) num Record único — separação em montarPrecosLocaisPorConta. */
   const resolveLocalPricesByOmieCode = useCallback(async (
-    localPriceRows: Array<{ product_id: string; unit_price: number }> | null,
+    localPriceRows: Array<{ product_id: string; unit_price: number; ultimo_praticado_em?: string | null }> | null,
   ): Promise<PrecosLocaisPorConta> => {
-    if (!localPriceRows || localPriceRows.length === 0) return { oben: {}, colacor: {} };
+    const vazio: PrecosLocaisPorConta = { oben: {}, colacor: {}, datasOben: {}, datasColacor: {} };
+    if (!localPriceRows || localPriceRows.length === 0) return vazio;
     const localPricesByProduct: Record<string, number> = {};
+    const datasByProduct: Record<string, string | null> = {};
     for (const row of localPriceRows) {
-      if (!localPricesByProduct[row.product_id]) localPricesByProduct[row.product_id] = row.unit_price;
+      // get_ultimos vem DISTINCT ON (product_id) ORDER BY data DESC → a 1ª linha por
+      // produto é a mais recente; capturamos a data DELA junto com o preço.
+      if (!localPricesByProduct[row.product_id]) {
+        localPricesByProduct[row.product_id] = row.unit_price;
+        datasByProduct[row.product_id] = row.ultimo_praticado_em ?? null;
+      }
     }
     const productIds = Object.keys(localPricesByProduct);
-    if (productIds.length === 0) return { oben: {}, colacor: {} };
+    if (productIds.length === 0) return vazio;
     const { data: productMappings, error } = await supabase
       .from('omie_products').select('id, omie_codigo_produto, account').in('id', productIds);
     // Falha do mapeamento → degrada honesto (cada conta cai p/ o preço de tabela
@@ -377,7 +388,7 @@ export function useCustomerSelection({
         error,
       });
     }
-    return montarPrecosLocaisPorConta(localPricesByProduct, productMappings ?? []);
+    return montarPrecosLocaisPorConta(localPricesByProduct, productMappings ?? [], datasByProduct);
   }, []);
 
   // Purchase history (local + Omie) agora vem do useQuery acima
@@ -408,6 +419,8 @@ export function useCustomerSelection({
     setCustomerUserId(null);
     setCustomerPricesOben({});
     setCustomerPricesColacor({});
+    setCustomerPriceDatesOben({});
+    setCustomerPriceDatesColacor({});
     setSelectedParcelaOben('999');
     setSelectedParcelaColacor('999');
     setCustomerParcelaRankingOben([]);
@@ -504,7 +517,7 @@ export function useCustomerSelection({
 
       const parcelaOben = getResult<ParcelaResponse>(0);
       const parcelaColacor = getResult<ParcelaResponse>(1);
-      const localPriceResult = getResult<Array<{ product_id: string; unit_price: number }>>(2);
+      const localPriceResult = getResult<Array<{ product_id: string; unit_price: number; ultimo_praticado_em?: string | null }>>(2);
       const colacorClientResult = getResult<{
         cliente?: { codigo_cliente?: number | null; codigo_vendedor?: number | null };
       }>(3);
@@ -547,6 +560,8 @@ export function useCustomerSelection({
 
       setCustomerPricesOben({ ...precosPorConta.oben });
       setCustomerPricesColacor({ ...precosPorConta.colacor });
+      setCustomerPriceDatesOben({ ...precosPorConta.datasOben });
+      setCustomerPriceDatesColacor({ ...precosPorConta.datasColacor });
 
       if (parcelaOben.data?.ultima_parcela) setSelectedParcelaOben(parcelaOben.data.ultima_parcela);
       if (parcelaOben.data?.parcela_ranking) setCustomerParcelaRankingOben(parcelaOben.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));
@@ -658,6 +673,8 @@ export function useCustomerSelection({
     setCustomerUserId(null);
     setCustomerPricesOben({});
     setCustomerPricesColacor({});
+    setCustomerPriceDatesOben({});
+    setCustomerPriceDatesColacor({});
     setSelectedParcelaOben('999');
     setSelectedParcelaColacor('999');
     setCustomerParcelaRankingOben([]);
@@ -683,6 +700,8 @@ export function useCustomerSelection({
     // Prices
     customerPricesOben, setCustomerPricesOben,
     customerPricesColacor, setCustomerPricesColacor,
+    // Datas do último praticado (janela 180d da partida por tier)
+    customerPriceDatesOben, customerPriceDatesColacor,
     // Parcelas
     selectedParcelaOben, setSelectedParcelaOben,
     selectedParcelaColacor, setSelectedParcelaColacor,

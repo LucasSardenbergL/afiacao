@@ -31,3 +31,14 @@ O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deploy
 
 - A skill **`lovable-deploy-verify`** confere se o bundle servido bate com o esperado (bytes/comportamento). Use após Publish/deploy — não confiar cegamente no "deployed" do Lovable.
 - O acesso **read-only** ao banco (`psql-ro`, ver `docs/agent/database.md`) confirma migration aplicada sem depender do founder.
+
+## Atualização do PWA — modelo `prompt` (offline-first; #1169)
+
+O SW usa `registerType: 'prompt'` (não `autoUpdate`): a versão nova **instala mas espera** e o operador clica "Atualizar" (toast em `src/lib/pwa-update.ts` → `updateSW(true)` posta `SKIP_WAITING` + reload). Fim do reload-surpresa no meio do turno. **Invariantes ao mexer no `vite.config.ts` (bloco `VitePWA`) — não repetir os P1 que o Codex pegou:**
+
+- **`skipWaiting` FICA removido** (era `true`): é ele que forçava a ativação/reload automáticos. Reintroduzir volta o reload-surpresa.
+- **`clientsClaim: true` NÃO se remove junto** — parecem par, mas não são. Sem ele, na **1ª instalação** o SW não controla a aba atual até o próximo reload → se a rede cair na mesma sessão, **offline-first não funciona no primeiro acesso**. Ele não causa reload-surpresa (só o `skipWaiting` causava); só faz claim quando o SW ativa (que na atualização só ocorre após o clique).
+- **Registro do SW tem fallback** — `main.tsx` faz `import('./lib/pwa-update')` guardado por `__PWA_ENABLED__` (build const = `production && !preview`; DCE remove em dev/preview, onde `virtual:pwa-register` nem existe). No `.catch`, cai pra `navigator.serviceWorker.register('/sw.js')`: offline-first não pode depender de um import lazy resolver.
+- **A verificação de deploy NÃO é cegada pelo prompt mode** — `verify-frontend.sh` usa `curl` direto no host (sem service worker), então mede os **bytes do servidor**, não um cliente com SW velho. O cron não é um browser.
+- **Prova de build** (não confiar na config): `dist/sw.js` deve ter `skipWaiting` **só dentro do listener de `message`** (não no `install`) + `clientsClaim` presente. `dist/index.html` **sem** auto-register (por `injectRegister: false`).
+- **Transição única no 1º Publish com prompt mode:** clientes com o SW antigo (autoUpdate) auto-recarregam **uma última vez** ao pegar este build; daí em diante toda atualização vira o toast. Inerente, não dá pra evitar.
