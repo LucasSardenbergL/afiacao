@@ -103,11 +103,15 @@ ALTER TABLE public.fin_sync_log ADD CONSTRAINT fin_sync_log_status_check
   - **adquiriu** → roda `fn`, libera no `finally` (token-guarded).
 - Envolver com lease SÓ as actions do cluster do achado: **`sync_all`, `sync_contas_pagar`,
   `sync_contas_receber`, `sync_movimentacoes`**. (Ver "Escopo" abaixo.)
-- `completeSync(..., {skippedBusy})`: se TODAS as companies-alvo viraram `skipped_busy` (e nenhuma deu
-  `lease_error`) → grava `status='skipped_busy'` **e `completed_at=NULL`** (invisível p/ os consumidores
-  de frescor). Se ALGUMA deu `lease_error` → `status='error'`. Senão, `complete`. **Multi-company partial
-  skip (Codex #5):** manter 1 linha/invocação (crons passam company único = path dominante), mas marcar
-  no `results` as companies puladas (`{skipped_busy:true}` por company já fica visível) — não esconder.
+- **Log POR COMPANY nas lease actions** (`runLeasedCompanySync`): cada company tem sua própria linha
+  `fin_sync_log` com `companies=[co]` e status honesto — `complete` | `skipped_busy` (`completed_at=NULL`,
+  invisível p/ os consumidores de frescor) | `error` (lease_error, fail-closed → watchdog alerta).
+  ⚠️ **Por quê por-company e não 1 linha/invocação (achado Codex — CRÍTICO, revisto):** numa chamada
+  multi-company (`syncAll` das 3 via `useFinanceiro.ts:181`), 1 linha com `companies[]` COMPARTILHADO
+  faria a company pulada herdar o `complete` de outra — os consumidores filtram `status='complete' AND
+  co=ANY(companies)` → **frescor FALSO da pulada**. Log por-company garante ESTRUTURALMENTE (1 company
+  por linha) que ninguém herda status alheio. Non-lease actions (calcular_dre*, cats/cc, debug_raw)
+  seguem com 1 linha/invocação (não tocam o lease).
 - `completeSync` **não engole erro de update** (Codex #8): logar claro. Se o UPDATE do status falhar
   (ex.: CHECK ainda sem o valor pq migration não aplicada), a linha fica `running` → vira órfã → o
   watchdog varre p/ `error` (fail-safe honesto).

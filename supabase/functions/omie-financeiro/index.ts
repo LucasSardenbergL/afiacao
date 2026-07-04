@@ -2016,6 +2016,51 @@ async function runOmieWithLease<T>(
   }
 }
 
+// Actions que enumeram pesado na conta Omie e por isso passam pelo lease.
+// (cats/cc/debug_raw/calcular_dre* NÃO — ver spec §Escopo.)
+const LEASE_ACTIONS = new Set([
+  "sync_all", "sync_contas_pagar", "sync_contas_receber", "sync_movimentacoes",
+]);
+
+// Roda o sync de UMA company sob o lease, com sua PRÓPRIA linha de fin_sync_log
+// (companies=[co]). ⚠️ POR QUÊ por-company e não 1 linha por invocação: numa chamada
+// multi-company (ex.: syncAll das 3), uma company pulada herdaria o 'complete' de
+// outra via o companies[] COMPARTILHADO — os consumidores de frescor filtram
+// status='complete' AND co=ANY(companies) → frescor FALSO da pulada (achado Codex).
+// Cada company tem seu status honesto: complete | skipped_busy (completed_at NULL) |
+// error (lease_error, fail-closed → watchdog alerta). Reseta os counters de telemetria
+// por company (a linha é por-company); NÃO reseta o budget global (é da invocação).
+async function runLeasedCompanySync(
+  db: SupabaseClient,
+  action: string,
+  co: Company,
+  userId: string,
+  fn: () => Promise<Record<string, unknown>>,
+): Promise<unknown> {
+  const coStart = Date.now();
+  apiCallCount = 0;
+  rateLimitHits = 0;
+  const coLogId = await logSync(db, action, [co], userId);
+  try {
+    const outcome = await runOmieWithLease(db, co, coLogId, fn);
+    const leaseErr = (outcome as { lease_error?: string })?.lease_error;
+    const skipped = (outcome as { skipped_busy?: boolean })?.skipped_busy === true;
+    await completeSync(
+      db,
+      coLogId,
+      { [co]: outcome },
+      leaseErr ? `lease indisponível (fail-closed): ${leaseErr}` : undefined,
+      coStart,
+      { skippedBusy: skipped },
+    );
+    return outcome;
+  } catch (e) {
+    // Fecha a linha desta company como error (senão fica 'running' órfã) e re-lança.
+    try { await completeSync(db, coLogId, null, String(e), coStart); } catch { /* best-effort */ }
+    throw e;
+  }
+}
+
 // ═══════════════ HANDLER PRINCIPAL ═══════════════
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -2056,7 +2101,11 @@ serve(async (req) => {
     startTime = globalStartTime;
     apiCallCount = 0;
     rateLimitHits = 0;
-    logId = await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
+    // Lease actions logam POR COMPANY (runLeasedCompanySync) → sem linha única de
+    // invocação (que teria companies[] compartilhado e mentiria frescor da company
+    // pulada — achado Codex). logId="" p/ elas; o catch abaixo respeita isso.
+    const usaLogPorCompany = LEASE_ACTIONS.has(action);
+    logId = usaLogPorCompany ? "" : await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
 
     let result: Record<string, unknown> = {};
 
@@ -2066,7 +2115,7 @@ serve(async (req) => {
         // Sob o lease da conta: o bloco inteiro de uma company roda com 1 lease;
         // outra invocação na mesma conta vira skipped_busy.
         for (const co of targetCompanies) {
-          result[co] = await runOmieWithLease(supabase, co, logId, async () => {
+          result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
             console.log(`[Fin] Sync completo ${co}...`);
             const cats = await syncCategorias(supabase, co);
             const ccs = await syncContasCorrentes(supabase, co);
@@ -2117,7 +2166,7 @@ serve(async (req) => {
           formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
         const dataFim = filtro_data_ate || formatOmieDate(new Date());
         for (const co of targetCompanies) {
-          result[co] = await runOmieWithLease(supabase, co, logId, async () => {
+          result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
             const startPage = (await readCursorStartPage(supabase, co, "contas_pagar")) ?? 1;
             const r = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages, startPage);
             await writeCursor(supabase, co, "contas_pagar", r);
@@ -2133,7 +2182,7 @@ serve(async (req) => {
           formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
         const dataFim = filtro_data_ate || formatOmieDate(new Date());
         for (const co of targetCompanies) {
-          result[co] = await runOmieWithLease(supabase, co, logId, async () => {
+          result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
             const startPage = (await readCursorStartPage(supabase, co, "contas_receber")) ?? 1;
             const r = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages, startPage);
             await writeCursor(supabase, co, "contas_receber", r);
@@ -2147,7 +2196,7 @@ serve(async (req) => {
         const dataFim = filtro_data_ate || formatOmieDate(new Date());
         const incrementalDe = formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 3)));
         for (const co of targetCompanies) {
-          result[co] = await runOmieWithLease(supabase, co, logId, async () => {
+          result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
             // mov: undefined = fresh (começa da última página/mais recente); int = resume
             const startPage = await readCursorStartPage(supabase, co, "movimentacoes");
             const cursorBackfill = await readCursorBackfillDesde(supabase, co, "movimentacoes");
@@ -2268,31 +2317,10 @@ serve(async (req) => {
         );
     }
 
-    // Agrega o status quando o lease entrou em jogo (Codex #5: multi-company não
-    // esconde o skip — cada result[co] carrega skipped_busy/lease_error). Se ALGUMA
-    // company deu lease_error → 'error' (fail-closed; o watchdog tail-failing alerta).
-    // Se TODAS as alvo viraram skipped_busy → 'skipped_busy' (completed_at NULL). Senão
-    // → 'complete'. Só as LEASE_ACTIONS produzem esses marcadores.
-    const LEASE_ACTIONS = new Set([
-      "sync_all", "sync_contas_pagar", "sync_contas_receber", "sync_movimentacoes",
-    ]);
-    let leaseErrorMsg: string | undefined;
-    let allSkippedBusy = false;
-    if (LEASE_ACTIONS.has(action) && targetCompanies.length > 0) {
-      const leaseErr = targetCompanies
-        .map((co) => (result[co] as { lease_error?: string } | undefined)?.lease_error)
-        .find((m): m is string => typeof m === "string");
-      if (leaseErr) {
-        leaseErrorMsg = `lease indisponível (fail-closed): ${leaseErr}`;
-      } else {
-        allSkippedBusy = targetCompanies.every(
-          (co) => (result[co] as { skipped_busy?: boolean } | undefined)?.skipped_busy === true,
-        );
-      }
-    }
-
-    // Log final (Ponto 11)
-    await completeSync(supabase, logId, result, leaseErrorMsg, startTime, { skippedBusy: allSkippedBusy });
+    // Log final (Ponto 11). Lease actions já fecharam 1 linha POR COMPANY dentro do
+    // loop (runLeasedCompanySync) → aqui logId="" e completeSync é no-op. Non-lease
+    // actions (calcular_dre*, cats/cc, debug_raw) fecham a linha única da invocação.
+    await completeSync(supabase, logId, result, undefined, startTime);
     syncFinalized = true;
 
     return new Response(JSON.stringify({ success: true, action, ...result }), {

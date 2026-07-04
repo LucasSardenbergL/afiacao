@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **324** custom migrations totais
-- **1117** objetos esperados (criados por estas migrations)
+- **326** custom migrations totais
+- **1123** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 319
-  - `rls_policy`: 248
+  - `function`: 321
+  - `rls_policy`: 250
   - `index`: 199
-  - `table`: 122
-  - `cron_job`: 111
+  - `table`: 123
+  - `cron_job`: 112
   - `trigger`: 59
   - `view`: 55
   - `enum_value`: 4
@@ -2735,11 +2735,27 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `cron_job` | `cron.pedidos-programados-diario` | — |
 
+### `20260703120000_pedidos_programados_cron_fix.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.pedidos-programados-diario` | — |
+
 ### `20260703140000_trava_credito_gate_excecao_por_par.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.venda_gate_credito` | — |
+
+### `20260704150000_fin_sync_lease_por_company.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_lease_acquire` | — |
+| `function` | `public.fin_sync_lease_release` | — |
+| `table` | `public.fin_sync_lease` | — |
+| `rls_policy` | `public.fin_sync_lease_select_staff` | `fin_sync_lease` |
+| `rls_policy` | `public.fin_sync_lease_service_all` | `fin_sync_lease` |
 
 ## Próximos passos por status
 
