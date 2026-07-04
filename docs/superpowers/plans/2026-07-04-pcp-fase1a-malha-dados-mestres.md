@@ -73,7 +73,9 @@ CREATE TABLE IF NOT EXISTS public.pcp_malha_staging (
   omie_codigo_produto bigint PRIMARY KEY,
   empresa     text NOT NULL DEFAULT 'colacor',
   payload     jsonb NOT NULL,
-  sync_run_id bigint REFERENCES public.pcp_run_logs(id),
+  -- NOT NULL: o edge SEMPRE grava com um run; sem isso, a limpeza `.neq(sync_run_id)` seria
+  -- NULL-blind (não apagaria órfãos com sync_run_id NULL — armadilha de negação do CLAUDE.md).
+  sync_run_id bigint NOT NULL REFERENCES public.pcp_run_logs(id),
   synced_at   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_pcp_malha_staging_synced ON public.pcp_malha_staging (synced_at);
@@ -83,11 +85,15 @@ ALTER TABLE public.pcp_malha_staging ENABLE ROW LEVEL SECURITY;
 
 -- Leitura: staff (master|employee). Escrita: NENHUMA policy p/ authenticated —
 -- quem escreve é a edge com service_role (bypassa RLS; gate na fronteira = authorizeCronOrStaff).
+-- DROP IF EXISTS antes de cada policy: re-colar no SQL Editor é ESPERADO (database.md §re-aplicação)
+-- e CREATE POLICY não tem IF NOT EXISTS — sem o guard, a 2ª colagem dá ROLLBACK na transação inteira.
+DROP POLICY IF EXISTS pcp_run_logs_select_staff ON public.pcp_run_logs;
 CREATE POLICY pcp_run_logs_select_staff ON public.pcp_run_logs
   FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role)
       OR has_role((SELECT auth.uid()), 'employee'::app_role));
 
+DROP POLICY IF EXISTS pcp_malha_staging_select_staff ON public.pcp_malha_staging;
 CREATE POLICY pcp_malha_staging_select_staff ON public.pcp_malha_staging
   FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role)
@@ -146,7 +152,7 @@ trap cleanup EXIT
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
-Pq() { P -tA "$@"; }
+Pq() { P -tA -q "$@"; }  # -q OBRIGATÓRIO: sem ele, "SET ...; SELECT ..." vaza linhas SET na captura
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
@@ -171,8 +177,9 @@ GRANT EXECUTE ON FUNCTION public.has_role(uuid, app_role) TO authenticated, anon
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 SQL
 
-echo "═══ ZONA 2: aplica o SQL REAL do M1 ═══"
+echo "═══ ZONA 2: aplica o SQL REAL do M1 (2×: re-colar no SQL Editor é esperado) ═══"
 P -q -f "$MIG"
+if P -q -f "$MIG" >/dev/null 2>&1; then ok "re-aplicação idempotente (2ª colagem não quebra)"; else bad "re-aplicação QUEBROU (policy sem DROP IF EXISTS?)"; fi
 
 echo "═══ ZONA 3: fixtures (1 run + 1 staging; 1 user staff + 1 não-staff) ═══"
 P -q <<'SQL'
@@ -189,6 +196,8 @@ eq "RLS ligado em pcp_run_logs"      "$(Pq -c "SELECT relrowsecurity FROM pg_cla
 eq "anon SEM grant de SELECT" "$(Pq -c "SELECT has_table_privilege('anon','public.pcp_malha_staging','SELECT')")" "f"
 eq "staff (employee) vê staging" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; SELECT count(*) FROM public.pcp_malha_staging")" "1"
 eq "não-staff vê 0 (fail-closed)" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000bbbb'; SELECT count(*) FROM public.pcp_malha_staging")" "0"
+eq "staff vê run_logs" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; SELECT count(*) FROM public.pcp_run_logs")" "1"
+eq "não-staff vê 0 em run_logs (fail-closed)" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000bbbb'; SELECT count(*) FROM public.pcp_run_logs")" "0"
 INS_ERR=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES (1,'{}');" 2>&1 || true)
 case "$INS_ERR" in *"permission denied"*|*"row-level security"*) ok "INSERT de authenticated bloqueado";; *) bad "INSERT de authenticated NÃO bloqueado: $INS_ERR";; esac
 
@@ -205,7 +214,7 @@ echo "RESULTADO: PASS=$PASS FAIL=$FAIL"
 - [ ] **Step 2.2: Rodar a prova (exit code SEM pipe)**
 
 Run: `bash db/test-pcp-f1a-m1-staging.sh > /tmp/t-m1.log 2>&1; echo "exit=$?"`
-Expected: `exit=0`; no log, `PASS=7 FAIL=0` (5 asserts de ZONA 4 + INSERT bloqueado + falsificação).
+Expected: `exit=0`; no log, `PASS=10 FAIL=0` (re-aplicação idempotente + 7 asserts de ZONA 4 + INSERT bloqueado + falsificação).
 
 - [ ] **Step 2.3: shellcheck no script novo**
 
@@ -250,6 +259,19 @@ const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 const REG_POR_PAGINA = 50;
 const MAX_PAGINAS = 400; // guarda dura: 400×50 = 20k estruturas >> ~1.9k produtos fabricados
 
+// O Omie sinaliza ERRO de negócio E fim-de-paginação pelo MESMO canal: HTTP 200 + `faultstring`
+// (nunca por status HTTP). Checar só `resp.ok` deixaria uma faultstring do meio virar "página vazia"
+// → sync para cedo e marca "ok" com malha TRUNCADA (o pior modo de falha da F1A).
+// FIM_PAGINACAO = faultstrings que significam "acabou" (não é erro) → para o loop.
+// TRANSITORIO = flakiness do servidor Omie/rede → re-tenta com backoff (idem omie-analytics-sync).
+// Fail-safe: faultstring NÃO reconhecida como fim nem transitório → THROW (run vira "erro" VISÍVEL,
+// nunca "ok" silencioso). ListarEstruturas é não-confirmado — CONFIRMAR/AJUSTAR estes marcadores no probe.
+const FIM_PAGINACAO = ["não existem registros", "nao existem registros", "nenhum registro",
+  "não foram encontrados", "nao foram encontrados", "consulta não retornou", "consulta nao retornou",
+  "página informada", "pagina informada"];
+const TRANSITORIO = ["broken response", "soap-error", "timeout", "timed out", "network",
+  "connection", "fetch failed", "500", "502", "503", "504", "429", "too many", "rate limit"];
+
 function omieCreds() {
   const key = Deno.env.get("OMIE_COLACOR_APP_KEY");
   const secret = Deno.env.get("OMIE_COLACOR_APP_SECRET");
@@ -257,24 +279,42 @@ function omieCreds() {
   return { key, secret };
 }
 
-async function omieCall(call: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+// Retorna o objeto da malha, OU null quando o Omie sinaliza FIM de paginação (não é erro).
+async function omieCall(call: string, params: Record<string, unknown>): Promise<Record<string, unknown> | null> {
   const creds = omieCreds();
   const body = { call, app_key: creds.key, app_secret: creds.secret, param: [params] };
-  let lastErr = "";
-  for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const resp = await fetch(`${OMIE_API_URL}/geral/malha/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const text = await resp.text();
-    if (resp.ok) return JSON.parse(text) as Record<string, unknown>;
-    lastErr = `HTTP ${resp.status}: ${text.slice(0, 500)}`;
-    // 5xx/429 transitórios: backoff simples; 4xx de negócio não adianta repetir
-    if (resp.status < 500 && resp.status !== 429) break;
-    await new Promise((r) => setTimeout(r, 800 * tentativa));
+  const MAX = 4;
+  let lastErr: Error | null = null;
+  for (let tentativa = 1; tentativa <= MAX; tentativa++) {
+    try {
+      const resp = await fetch(`${OMIE_API_URL}/geral/malha/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const text = await resp.text();
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const fault = typeof parsed.faultstring === "string" ? parsed.faultstring : "";
+      if (fault) {
+        const f = fault.toLowerCase();
+        if (FIM_PAGINACAO.some((m) => f.includes(m))) return null; // fim normal — NÃO é erro
+        throw new Error(`Omie ${call}: ${fault}`);                 // erro de negócio (classificado no catch)
+      }
+      if (!resp.ok) throw new Error(`Omie ${call} HTTP ${resp.status}: ${text.slice(0, 300)}`);
+      return parsed;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      const m = lastErr.message.toLowerCase();
+      // transitório (inclui JSON malformado/resposta cortada) re-tenta; permanente (credencial/validação) falha já
+      const transitorio = TRANSITORIO.some((t) => m.includes(t)) || m.includes("json") || m.includes("unexpected");
+      if (transitorio && tentativa < MAX) {
+        await new Promise((r) => setTimeout(r, 800 * Math.pow(2, tentativa - 1)));
+        continue;
+      }
+      throw lastErr;
+    }
   }
-  throw new Error(`Omie ${call} falhou: ${lastErr}`);
+  throw lastErr ?? new Error(`Omie ${call}: falha após ${MAX} tentativas`);
 }
 
 // A lista de estruturas pode vir sob nomes diferentes conforme a versão da API — candidatos conhecidos.
@@ -300,12 +340,9 @@ function extractPaiCodigo(item: unknown): number {
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  // AuthResult da casa (_shared/auth.ts): no erro já traz uma Response 401 pronta (com CORS) — reusar.
   const auth = await authorizeCronOrStaff(req);
-  if (!auth.ok) {
-    return new Response(JSON.stringify({ error: "unauthorized" }), {
-      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
+  if (!auth.ok) return auth.response;
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -314,9 +351,14 @@ serve(async (req) => {
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
   const action = (body.action as string) ?? "probe";
 
+  let runId: number | null = null;
   try {
     if (action === "probe") {
       const resp = await omieCall("ListarEstruturas", { nPagina: 1, nRegPorPagina: 2 });
+      if (resp === null) {
+        return new Response(JSON.stringify({ aviso: "Omie sinalizou fim/vazio já na página 1 (catálogo sem estruturas?)" },
+          null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       const lista = extractLista(resp);
       const first = (lista?.[0] ?? null) as Record<string, unknown> | null;
       return new Response(JSON.stringify({
@@ -338,6 +380,7 @@ serve(async (req) => {
       .insert({ funcao: "omie-malha-sync", status: "rodando" })
       .select("id").single();
     if (runErr) throw new Error(`pcp_run_logs insert: ${runErr.message}`);
+    runId = run.id; // eleva p/ o catch fechar o run se algo lançar (não deixar 'rodando' órfão)
 
     let paginas = 0, registros = 0, shapeErr = 0;
     let sampleErr: unknown = null;
@@ -345,8 +388,9 @@ serve(async (req) => {
 
     for (let pagina = desdePagina; pagina <= MAX_PAGINAS; pagina++) {
       const resp = await omieCall("ListarEstruturas", { nPagina: pagina, nRegPorPagina: REG_POR_PAGINA });
+      if (resp === null) break;                  // Omie sinalizou FIM via faultstring (não é erro)
       const lista = extractLista(resp);
-      if (!lista || lista.length === 0) break; // até página VAZIA — nunca confiar em total_de_paginas
+      if (!lista || lista.length === 0) break;   // página vazia — nunca confiar em total_de_paginas
       paginas++;
 
       // dedupe DENTRO da página: upsert com PK repetida no MESMO statement quebra
@@ -355,7 +399,7 @@ serve(async (req) => {
       for (const item of lista) {
         const cod = extractPaiCodigo(item);
         if (Number.isNaN(cod)) { shapeErr++; sampleErr ??= item; continue; }
-        byCod.set(cod, { omie_codigo_produto: cod, payload: item, sync_run_id: run.id, synced_at: syncedAt });
+        byCod.set(cod, { omie_codigo_produto: cod, payload: item, sync_run_id: runId, synced_at: syncedAt });
       }
       const rows = [...byCod.values()];
       if (rows.length > 0) {
@@ -370,6 +414,10 @@ serve(async (req) => {
     // Limpeza de órfãos (painel Codex P1: estrutura removida no Omie ficaria eterna no staging)
     // com guarda de plausibilidade (painel Gemini: página vazia prematura = truncamento silencioso —
     // NUNCA limpar se este run veio anormalmente menor que o último ok).
+    // LIMITAÇÃO CONHECIDA (painel, Important #3): a limpeza de órfãos só roda no caminho normal
+    // (desde_pagina === 1). Um sync que precisou de RESUME (raro: ~40 páginas cabem em 1 execução)
+    // não limpa — estruturas removidas no Omie sobrevivem até o próximo sync completo sem resume.
+    // Não corrompe (só deixa órfão a mais); a reconciliação da Fase 2 (cron + frescor) fecha isso.
     let limpos = 0, limpezaPulada = false;
     if (shapeErr === 0 && desdePagina === 1) {
       const { data: ultimoOk } = await supabase.from("pcp_run_logs")
@@ -377,8 +425,9 @@ serve(async (req) => {
         .not("registros", "is", null).order("id", { ascending: false }).limit(1).maybeSingle();
       const plausivel = !ultimoOk?.registros || registros >= 0.9 * ultimoOk.registros;
       if (plausivel) {
+        // sync_run_id é NOT NULL (M1) → .neq apaga TODOS os outros runs sem furo NULL-blind.
         const { count, error: delErr } = await supabase.from("pcp_malha_staging")
-          .delete({ count: "exact" }).neq("sync_run_id", run.id);
+          .delete({ count: "exact" }).neq("sync_run_id", runId);
         if (delErr) throw new Error(`limpeza de órfãos: ${delErr.message}`);
         limpos = count ?? 0;
       } else {
@@ -389,8 +438,10 @@ serve(async (req) => {
     const status = shapeErr > 0 ? "erro" : "ok";
     await supabase.from("pcp_run_logs").update({
       finished_at: new Date().toISOString(), status, paginas, registros,
-      detalhe: { shape_err: shapeErr, sample_err: sampleErr, orfaos_limpos: limpos, limpeza_pulada: limpezaPulada },
-    }).eq("id", run.id);
+      // itens_vistos ≠ registros quando há shape_err: separa "volume gravado" de "volume processado"
+      detalhe: { shape_err: shapeErr, sample_err: sampleErr, itens_vistos: registros + shapeErr,
+        orfaos_limpos: limpos, limpeza_pulada: limpezaPulada },
+    }).eq("id", runId);
 
     return new Response(JSON.stringify({
       ok: status === "ok", paginas, registros, shape_err: shapeErr,
@@ -400,6 +451,12 @@ serve(async (req) => {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    // fecha o run como 'erro' (best-effort) — sem isso ele fica 'rodando' órfão e o Sentinela lê "motor travado"
+    if (runId !== null) {
+      await supabase.from("pcp_run_logs")
+        .update({ finished_at: new Date().toISOString(), status: "erro", detalhe: { erro: msg } })
+        .eq("id", runId).then(() => {}, () => {});
+    }
     return new Response(JSON.stringify({ error: msg }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -563,8 +620,17 @@ SELECT
 FROM public.vw_pcp_malha_itens m
 LEFT JOIN public.omie_products byid
   ON byid.omie_codigo_produto = m.componente_id AND byid.account = 'colacor'
-LEFT JOIN public.omie_products bycod
-  ON m.componente_id IS NULL AND bycod.codigo = m.componente_codigo_txt AND bycod.account = 'colacor';
+-- fallback por codigo (string) SÓ quando o id Omie falta. codigo é NOT NULL mas NÃO único →
+-- join simples faria fan-out (1 linha de malha × N produtos com mesmo codigo), dobrando a razão
+-- na mediana/MAD (money-path). LATERAL + ORDER BY + LIMIT 1 pega 1 determinístico (guarda estrutural,
+-- não depende do pré-flight manual sobreviver a syncs futuros).
+LEFT JOIN LATERAL (
+  SELECT bp.omie_codigo_produto, bp.descricao, bp.familia
+  FROM public.omie_products bp
+  WHERE m.componente_id IS NULL AND bp.codigo = m.componente_codigo_txt AND bp.account = 'colacor'
+  ORDER BY bp.omie_codigo_produto
+  LIMIT 1
+) bycod ON true;
 
 -- ── 2) Parser dimensional (NUNCA fabrica: sem match ⇒ NULL + formato explícito) ──
 CREATE OR REPLACE FUNCTION public.fn_pcp_parse_dimensoes(p_descricao text)
@@ -704,9 +770,11 @@ BEGIN
     END AS ratio
   FROM tmp_obs o
   LEFT JOIN LATERAL (
-    SELECT o2.quantidade FROM tmp_obs o2
+    -- catalisador só destila com EXATAMENTE 1 cola G no pai; 0 ou >1 (ambíguo) ⇒ NULL (não fabrica).
+    -- Evita o LIMIT 1 sem ORDER BY (não-determinístico: coef mudaria entre destilações sem mudar dado).
+    SELECT CASE WHEN count(*) = 1 THEN min(o2.quantidade) END AS quantidade
+    FROM tmp_obs o2
     WHERE o2.pai_codigo = o.pai_codigo AND o2.papel = 'cola' AND o2.unidade = 'G'
-    LIMIT 1
   ) cola ON o.papel = 'catalisador'
   WHERE o.papel IN ('cola','fita','catalisador');
 
@@ -740,11 +808,11 @@ BEGIN
   FROM unida u;
 
   INSERT INTO pcp_bom_regras (linha_modelo, papel, metodo, coef, amostras, dispersao)
-  SELECT o.linha_modelo, 'abrasivo_base', 'area_nominal', 1.0, count(*), NULL
+  SELECT o.linha_modelo, 'abrasivo_base', 'area_nominal', 1.0, count(*), NULL::numeric
   FROM tmp_obs o WHERE o.papel = 'abrasivo_base' AND o.unidade = 'M2'
   GROUP BY o.linha_modelo
   UNION ALL
-  SELECT '*', 'abrasivo_base', 'area_nominal', 1.0, count(*), NULL
+  SELECT '*', 'abrasivo_base', 'area_nominal', 1.0, count(*), NULL::numeric
   FROM tmp_obs o WHERE o.papel = 'abrasivo_base' AND o.unidade = 'M2';
 
   SELECT count(*) INTO v_regras FROM pcp_bom_regras;
@@ -765,8 +833,12 @@ WITH comp AS (
 com_regra AS (
   SELECT comp.*, r.coef, r.metodo, r.dispersao AS regra_dispersao,
     CASE WHEN r.linha_modelo = comp.linha_modelo THEN 'linha' WHEN r.linha_modelo = '*' THEN 'global' END AS regra_origem,
-    (SELECT c2.quantidade FROM comp c2
-      WHERE c2.pai_codigo = comp.pai_codigo AND c2.papel = 'cola' AND c2.unidade = 'G' LIMIT 1) AS qtd_cola_pai
+    -- nº de colas G no pai: >1 ⇒ base do catalisador é AMBÍGUA (não escolher às cegas — status próprio).
+    (SELECT count(*) FROM comp c2
+      WHERE c2.pai_codigo = comp.pai_codigo AND c2.papel = 'cola' AND c2.unidade = 'G') AS n_cola_pai,
+    -- qtd_cola_pai só é definida com EXATAMENTE 1 cola (determinístico); 0 ou >1 ⇒ NULL.
+    (SELECT CASE WHEN count(*) = 1 THEN min(c2.quantidade) END FROM comp c2
+      WHERE c2.pai_codigo = comp.pai_codigo AND c2.papel = 'cola' AND c2.unidade = 'G') AS qtd_cola_pai
   FROM comp
   LEFT JOIN LATERAL (
     SELECT coef, metodo, dispersao, linha_modelo FROM pcp_bom_regras r
@@ -795,10 +867,16 @@ SELECT pai_codigo, pai_descricao, pai_tipo, linha_modelo, largura_mm, compriment
     WHEN papel IN ('cola','catalisador') AND unidade IS DISTINCT FROM 'G' THEN 'unidade_inesperada'
     WHEN papel = 'fita' AND unidade IS DISTINCT FROM 'CM' THEN 'unidade_inesperada'
     WHEN coef IS NULL AND papel <> 'abrasivo_base' THEN 'sem_regra'
+    -- >1 cola G no pai: base ambígua ANTES de sem_base_cola (que é o caso n=0) — Codex/Caminho B
+    WHEN papel = 'catalisador' AND n_cola_pai > 1 THEN 'cola_ambigua'
     WHEN papel = 'catalisador' AND qtd_cola_pai IS NULL THEN 'sem_base_cola'
     -- regra instável (painel Claude P1 + Codex): dispersão alta = mediana possivelmente
     -- contaminada na 1ª destilação — NÃO valida ninguém; revisão humana.
-    WHEN papel <> 'abrasivo_base' AND regra_dispersao >
+    -- SÓ para regra de LINHA (ruído real dentro de um grupo homogêneo). Na regra GLOBAL '*'
+    -- a dispersão alta é heterogeneidade LEGÍTIMA entre linhas (é o motivo de existir coef por
+    -- linha) — puni-la marcaria toda linha rala como instável por construção. O fallback global
+    -- valida (ou vira excecao pelo valor) e o relatório da Task 8 já reporta a % de origem global.
+    WHEN papel <> 'abrasivo_base' AND regra_origem = 'linha' AND regra_dispersao >
          coalesce((SELECT (value)::numeric FROM pcp_config WHERE key = 'dispersao_max_regra'), 0.10)
       THEN 'regra_instavel'
     WHEN quantidade IS NULL THEN 'sem_quantidade'
@@ -847,7 +925,7 @@ BEGIN
   SELECT pai_codigo, coalesce(componente_codigo, 0), papel, pai_descricao,
     componente_descricao, observado, esperado, unidade, status
   FROM vw_pcp_bom_validacao
-  WHERE status IN ('excecao','sem_regra','unidade_inesperada','papel_desconhecido','sem_quantidade','sem_base_cola','regra_instavel')
+  WHERE status IN ('excecao','sem_regra','unidade_inesperada','papel_desconhecido','sem_quantidade','sem_base_cola','regra_instavel','cola_ambigua')
   ON CONFLICT (pai_codigo, papel, componente_codigo) DO UPDATE
     SET observado = EXCLUDED.observado, esperado = EXCLUDED.esperado,
         status = EXCLUDED.status, materializado_em = now();
@@ -861,9 +939,13 @@ CREATE OR REPLACE FUNCTION public.fn_pcp_dispor_excecao(
   p_pai bigint, p_papel text, p_componente bigint, p_disposicao text, p_nota text DEFAULT NULL)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-  IF NOT (has_role((SELECT auth.uid()), 'master'::app_role)
-       OR has_role((SELECT auth.uid()), 'employee'::app_role)
-       OR current_user IN ('postgres','service_role')) THEN
+  -- Gate de staff. auth.uid() lê o GUC do JWT e funciona sob SECURITY DEFINER;
+  -- current_user NÃO serve (em SECURITY DEFINER é o OWNER=postgres → furaria o gate, deixando
+  -- QUALQUER authenticated dispor). auth.uid() NULL = sem JWT (postgres no SQL Editor / service_role):
+  -- chamada confiável, permitida. authenticated COM uid não-staff é barrado.
+  IF (SELECT auth.uid()) IS NOT NULL
+     AND NOT (has_role((SELECT auth.uid()), 'master'::app_role)
+           OR has_role((SELECT auth.uid()), 'employee'::app_role)) THEN
     RAISE EXCEPTION 'fn_pcp_dispor_excecao: apenas staff';
   END IF;
   UPDATE pcp_bom_excecoes
@@ -878,15 +960,21 @@ ALTER TABLE public.pcp_itens        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pcp_bom_regras   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pcp_bom_excecoes ENABLE ROW LEVEL SECURITY;
 
+-- DROP IF EXISTS antes de cada policy: re-colar no SQL Editor é esperado (mesma regra do M1).
+DROP POLICY IF EXISTS pcp_config_select_staff ON public.pcp_config;
 CREATE POLICY pcp_config_select_staff ON public.pcp_config FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role) OR has_role((SELECT auth.uid()), 'employee'::app_role));
+DROP POLICY IF EXISTS pcp_itens_select_staff ON public.pcp_itens;
 CREATE POLICY pcp_itens_select_staff ON public.pcp_itens FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role) OR has_role((SELECT auth.uid()), 'employee'::app_role));
+DROP POLICY IF EXISTS pcp_bom_regras_select_staff ON public.pcp_bom_regras;
 CREATE POLICY pcp_bom_regras_select_staff ON public.pcp_bom_regras FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role) OR has_role((SELECT auth.uid()), 'employee'::app_role));
+DROP POLICY IF EXISTS pcp_bom_excecoes_select_staff ON public.pcp_bom_excecoes;
 CREATE POLICY pcp_bom_excecoes_select_staff ON public.pcp_bom_excecoes FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role) OR has_role((SELECT auth.uid()), 'employee'::app_role));
 -- founder marca disposição pela UI futura; hoje SQL Editor. Policy de UPDATE restrita a staff:
+DROP POLICY IF EXISTS pcp_bom_excecoes_update_staff ON public.pcp_bom_excecoes;
 CREATE POLICY pcp_bom_excecoes_update_staff ON public.pcp_bom_excecoes FOR UPDATE TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role) OR has_role((SELECT auth.uid()), 'employee'::app_role))
   WITH CHECK (has_role((SELECT auth.uid()), 'master'::app_role) OR has_role((SELECT auth.uid()), 'employee'::app_role));
@@ -967,7 +1055,7 @@ trap cleanup EXIT
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
-Pq() { P -tA "$@"; }
+Pq() { P -tA -q "$@"; }  # -q OBRIGATÓRIO: sem ele, "SET ...; SELECT ..." vaza linhas SET na captura
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
@@ -1094,7 +1182,7 @@ trap cleanup EXIT
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
-Pq() { P -tA "$@"; }
+Pq() { P -tA -q "$@"; }  # -q OBRIGATÓRIO: sem ele, "SET ...; SELECT ..." vaza linhas SET na captura
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
@@ -1122,12 +1210,17 @@ CREATE TABLE public.omie_products (omie_codigo_produto bigint PRIMARY KEY, codig
 INSERT INTO public.user_roles VALUES ('00000000-0000-0000-0000-00000000aaaa','employee');
 SQL
 
-echo "═══ ZONA 2: aplica M1 + M2 REAIS ═══"
+echo "═══ ZONA 2: aplica M1 + M2 REAIS (M2 2×: re-colar no SQL Editor é esperado) ═══"
 P -q -f "$REPO_ROOT/db/pcp-f1a-m1-staging.sql"
 P -q -f "$REPO_ROOT/db/pcp-f1a-m2-nucleo.sql"
+if P -q -f "$REPO_ROOT/db/pcp-f1a-m2-nucleo.sql" >/dev/null 2>&1; then ok "M2 re-aplicável (2ª colagem não quebra)"; else bad "M2 re-aplicação QUEBROU"; fi
 
 echo "═══ ZONA 3: fixtures — produtos + 3 malhas KA169 (1 REAL do print + 2 sintéticas coerentes) ═══"
 P -q <<'SQL'
+-- sync_run_id é NOT NULL (M1): cria 1 run e dá DEFAULT temporário p/ os INSERTs de staging
+-- (que omitem a coluna) não violarem a constraint — sem tocar nas tuplas de payload.
+INSERT INTO public.pcp_run_logs (id, funcao, status) OVERRIDING SYSTEM VALUE VALUES (1,'omie-malha-sync','ok');
+ALTER TABLE public.pcp_malha_staging ALTER COLUMN sync_run_id SET DEFAULT 1;
 INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, familia, tipo_produto, account) VALUES
  (4396000531,'PRD01832','CINTA KA169 150X6200MM P50','Cintas Estreitas','04','colacor'),
  (800002,'PRD80002','CINTA KA169 75X2000MM P80','Cintas Estreitas','04','colacor'),
@@ -1215,6 +1308,24 @@ eq "catalisador sem cola G no pai ⇒ sem_base_cola" "$(Pq -c "SELECT status FRO
 eq "cola em KG ⇒ unidade_inesperada" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=810004 AND papel='cola'")" "unidade_inesperada"
 eq "materializar: 6 exceções (1 sabotada + 3 instáveis + 2 do XY7)" "$(Pq -c "SELECT fn_pcp_materializar_excecoes()")" "6"
 
+echo "── item 1 (Codex/Caminho B): pai com 2 colas G ⇒ base do catalisador AMBÍGUA (não escolhe às cegas) ──"
+P -q <<'SQL'
+INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, familia, tipo_produto, account) VALUES
+ (820001,'PRD82001','CINTA KA169 120X2000MM P50','Cintas Estreitas','04','colacor'),
+ (820002,'PRD82002','ROLO KA169 120X50000MM P50','Jumbo/Rolo de Lixa Óxido de Alumínio','03','colacor'),
+ (820003,'PRD82003','A455 SEGUNDA COLA ADESIVO','Colas','01','colacor');
+INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES
+ (820001,'{"ident":{"idProduto":820001},"itens":[
+   {"ident":{"idProdMalha":820002,"descrProdMalha":"ROLO KA169 120X50000MM P50"},"quantProdMalha":0.24,"unidProdMalha":"M2"},
+   {"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":1.29,"unidProdMalha":"G"},
+   {"ident":{"idProdMalha":820003,"descrProdMalha":"A455 SEGUNDA COLA ADESIVO"},"quantProdMalha":1.29,"unidProdMalha":"G"},
+   {"ident":{"idProdMalha":900003,"descrProdMalha":"DESMODUR NE-S"},"quantProdMalha":0.143,"unidProdMalha":"G"}]}'::jsonb);
+SQL
+P -q -c "SELECT fn_pcp_refresh_itens();" >/dev/null
+eq "catalisador com 2 colas G ⇒ cola_ambigua (não escolhe coef às cegas)" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=820001 AND papel='catalisador'")" "cola_ambigua"
+P -q -c "SELECT fn_pcp_materializar_excecoes();" >/dev/null
+eq "cola_ambigua entra na fila de exceções" "$(Pq -c "SELECT count(*) FROM pcp_bom_excecoes WHERE status='cola_ambigua'")" "1"
+
 echo "── matriz RLS (painel: TODAS as pcp_% fail-closed) ──"
 eq "6 tabelas pcp_% com RLS ligado" "$(Pq -c "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname LIKE 'pcp\\_%' AND c.relkind='r' AND c.relrowsecurity")" "6"
 eq "staff vê pcp_bom_regras" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; SELECT count(*)>0 FROM pcp_bom_regras")" "t"
@@ -1237,7 +1348,7 @@ echo "RESULTADO: PASS=$PASS FAIL=$FAIL"
 - [ ] **Step 7.2: Rodar**
 
 Run: `bash db/test-pcp-f1a-destilacao.sh > /tmp/t-dest.log 2>&1; echo "exit=$?"`
-Expected: `exit=0`, `PASS=28 FAIL=0` (8 da ZONA 4 + 3 da falsificação + 17 dos endurecimentos do painel: números tolerantes, papéis ambíguos, regra instável, sem_base_cola, unidade errada, matriz RLS, governança da disposição). Falhas aqui significam bug na destilação/validação (os números da fixture são FATOS do print) — corrigir o M2, nunca a fixture.
+Expected: `exit=0`, `PASS=31 FAIL=0` (re-aplicação do M2 + 8 da ZONA 4 + 3 da falsificação + 17 dos endurecimentos do painel + 2 do cola_ambigua da revisão de qualidade: números tolerantes, papéis ambíguos, regra instável só de linha, sem_base_cola, unidade errada, base de catalisador ambígua, matriz RLS, governança da disposição). Falhas aqui significam bug na destilação/validação (os números da fixture são FATOS do print) — corrigir o M2, nunca a fixture.
 
 - [ ] **Step 7.3: shellcheck + commit**
 
