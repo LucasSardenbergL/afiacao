@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **324** custom migrations totais
-- **1117** objetos esperados (criados por estas migrations)
+- **326** custom migrations totais
+- **1129** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 319
-  - `rls_policy`: 248
-  - `index`: 199
-  - `table`: 122
-  - `cron_job`: 111
-  - `trigger`: 59
+  - `function`: 321
+  - `rls_policy`: 250
+  - `index`: 201
+  - `table`: 125
+  - `cron_job`: 112
+  - `trigger`: 61
   - `view`: 55
   - `enum_value`: 4
 
@@ -2735,11 +2735,33 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `cron_job` | `cron.pedidos-programados-diario` | — |
 
+### `20260703120000_pedidos_programados_cron_fix.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.pedidos-programados-diario` | — |
+
 ### `20260703140000_trava_credito_gate_excecao_por_par.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.venda_gate_credito` | — |
+
+### `20260704160000_fin_dividas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_dividas_forca_autor` | — |
+| `function` | `public.fin_divida_completude_forca_autor` | — |
+| `table` | `public.fin_dividas` | — |
+| `table` | `public.fin_divida_parcelas` | — |
+| `table` | `public.fin_divida_completude` | — |
+| `index` | `public.idx_fin_divida_parcelas_venc` | `fin_divida_parcelas` |
+| `index` | `public.idx_fin_divida_parcelas_naopago` | `fin_divida_parcelas` |
+| `trigger` | `public.trg_fin_dividas_autor` | `fin_dividas` |
+| `trigger` | `public.trg_fin_divida_completude_autor` | `fin_divida_completude` |
+| `rls_policy` | `public.%I_select_master` | `public` |
+| `rls_policy` | `public.%I_write_master` | `public` |
 
 ## Próximos passos por status
 
