@@ -367,7 +367,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260703091000', 'pedidos_programados_cron', '20260703091000_pedidos_programados_cron.sql'),
   ('20260703120000', 'pedidos_programados_cron_fix', '20260703120000_pedidos_programados_cron_fix.sql'),
   ('20260703140000', 'trava_credito_gate_excecao_por_par', '20260703140000_trava_credito_gate_excecao_por_par.sql'),
-  ('20260703220000', 'pedidos_programados_claim_processando', '20260703220000_pedidos_programados_claim_processando.sql')
+  ('20260704070000', 'pedidos_programados_claim_processando', '20260704070000_pedidos_programados_claim_processando.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1476,7 +1476,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedidos_programados_cron_fix', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
   ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', ''),
   ('pedidos_programados_claim_processando', 'function', 'public', 'pedidos_programados_watchdog_claims', ''),
+  ('pedidos_programados_claim_processando', 'function', 'public', 'pp_bloqueia_cancel_com_claim', ''),
   ('pedidos_programados_claim_processando', 'index', 'public', 'uniq_sales_orders_pp_envio_account', 'sales_orders'),
+  ('pedidos_programados_claim_processando', 'trigger', 'public', 'pp_guard_cancel_com_claim', 'pedidos_programados'),
   ('pedidos_programados_claim_processando', 'cron_job', 'cron', 'pedidos-programados-watchdog', '')
 ),
 obj_status AS (
@@ -2634,7 +2636,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedidos_programados_cron_fix', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
   ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', ''),
   ('pedidos_programados_claim_processando', 'function', 'public', 'pedidos_programados_watchdog_claims', ''),
+  ('pedidos_programados_claim_processando', 'function', 'public', 'pp_bloqueia_cancel_com_claim', ''),
   ('pedidos_programados_claim_processando', 'index', 'public', 'uniq_sales_orders_pp_envio_account', 'sales_orders'),
+  ('pedidos_programados_claim_processando', 'trigger', 'public', 'pp_guard_cancel_com_claim', 'pedidos_programados'),
   ('pedidos_programados_claim_processando', 'cron_job', 'cron', 'pedidos-programados-watchdog', '')
 )
 SELECT

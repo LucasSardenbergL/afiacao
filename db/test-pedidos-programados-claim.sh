@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA — claim 'processando' + watchdog + UNIQUE (envio, account)              ║
-# ║  Migration: 20260703220000_pedidos_programados_claim_processando               ║
+# ║  Migration: 20260704070000_pedidos_programados_claim_processando               ║
 # ║  Money-path: fecha por construção a corrida edge×edge e o residual             ║
 # ║  cancelamento-vs-edge-em-voo (pedido DUPLICADO real no Omie).                  ║
 # ║                                                                                ║
@@ -9,9 +9,12 @@
 # ║  bumpa updated_at (precondição do watchdog); (A8-A11) watchdog por timestamp   ║
 # ║  reverte SÓ claim órfão, com [OMIE-INCERTO]; (A12) UNIQUE parcial 23505;       ║
 # ║  (A13) backfill do map; (A14) re-run idempotente; (A15) constraint mais nova   ║
-# ║  sobrevive ao re-run guardado; (A16) REVOKE nega anon/authenticated.           ║
+# ║  sobrevive ao re-run guardado; (A16) REVOKE nega anon/authenticated;           ║
+# ║  (A17) cura de SO legado map-only (janela de deploy — achado Codex 07-04);     ║
+# ║  (A18) trigger barra cancelar header com claim em voo.                         ║
 # ║  Falsifica: F1 constraint sem 'processando'; F2 janela 15d; F3 sem marcador;   ║
-# ║  F4 sem índice; F5 DROP+ADD cego clobbera a constraint mais nova.              ║
+# ║  F4 sem índice; F5 DROP+ADD cego clobbera a constraint mais nova; F6 sem o     ║
+# ║  trigger o header cancela com claim em voo.                                    ║
 # ║  Rode:  bash db/test-pedidos-programados-claim.sh > /tmp/t.log 2>&1; echo "exit=$?"  ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
@@ -134,7 +137,7 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 2 — APLICAR A MIGRATION REAL
 # ══════════════════════════════════════════════════════════════════════════════
-MIG="$REPO_ROOT/supabase/migrations/20260703220000_pedidos_programados_claim_processando.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260704070000_pedidos_programados_claim_processando.sql"
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
@@ -257,6 +260,8 @@ V=$(Pq -c "SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND indexna
 eq "A14b índice único segue existindo (IF NOT EXISTS)" "$V" "1"
 V=$(Pq -c "WITH c AS (UPDATE public.pedidos_programados_envios SET status='processando' WHERE id='bbbbbbbb-0000-0000-0000-000000000004' AND status IN ('agendado','erro') RETURNING 1) SELECT count(*) FROM c;")
 eq "A14c CHECK segue aceitando 'processando' após re-run (constraint não foi recriada quebrada)" "$V" "1"
+V=$(Pq -c "SELECT count(*) FROM pg_trigger WHERE tgname='pp_guard_cancel_com_claim' AND NOT tgisinternal;")
+eq "A14d trigger do guard de header segue 1 após re-run (DROP IF EXISTS + CREATE)" "$V" "1"
 
 echo "── constraint mais nova sobrevive ao re-run guardado (A15) ──"
 P -q <<'SQL'
@@ -296,6 +301,69 @@ V=$(Pq -c "SELECT has_function_privilege('anon', 'public.pedidos_programados_wat
 eq "A16a anon NÃO executa o watchdog" "$V" "f"
 V=$(Pq -c "SELECT has_function_privilege('authenticated', 'public.pedidos_programados_watchdog_claims()', 'EXECUTE');")
 eq "A16b authenticated NÃO executa o watchdog" "$V" "f"
+
+echo "── cura de SO legado map-only (A17 — janela de deploy, achado Codex 07-04) ──"
+# SO "do edge velho": coluna NULL, referenciado só pelo sales_orders_map de E4.
+# O edge novo adota+cura via UPDATE ... WHERE pedido_programado_envio_id IS NULL —
+# aqui provamos a SEMÂNTICA SQL dessa cura (o TS é inspecionável, o SQL é provável).
+P -q <<'SQL'
+INSERT INTO public.sales_orders (id, account) VALUES ('cccccccc-0000-0000-0000-000000000010', 'oben');
+UPDATE public.pedidos_programados_envios
+   SET sales_orders_map = '{"oben": "cccccccc-0000-0000-0000-000000000010"}'::jsonb
+ WHERE id='bbbbbbbb-0000-0000-0000-000000000004';
+SQL
+V=$(Pq -c "WITH c AS (UPDATE public.sales_orders SET pedido_programado_envio_id='bbbbbbbb-0000-0000-0000-000000000004' WHERE id='cccccccc-0000-0000-0000-000000000010' AND pedido_programado_envio_id IS NULL RETURNING 1) SELECT count(*) FROM c;")
+eq "A17a cura preenche o vínculo do SO legado (map-only → coluna)" "$V" "1"
+R=$(P -tA 2>&1 <<'SQL'
+DO $do$
+BEGIN
+  INSERT INTO public.sales_orders (account, pedido_programado_envio_id)
+  VALUES ('oben', 'bbbbbbbb-0000-0000-0000-000000000004');
+  RAISE EXCEPTION 'A17_UNIQUE_NAO_BARROU_SENTINELA';
+EXCEPTION
+  WHEN unique_violation THEN RAISE NOTICE 'A17_UNIQUE_BARROU_SENTINELA';
+  WHEN OTHERS THEN RAISE;
+END $do$;
+SQL
+)
+case "$R" in
+  *A17_UNIQUE_BARROU_SENTINELA*) ok "A17b pós-cura o UNIQUE barra o 2º SO do par (retry nunca duplica)" ;;
+  *) bad "A17b unique não barrou pós-cura — veio: $R" ;;
+esac
+V=$(Pq -c "WITH c AS (UPDATE public.sales_orders SET pedido_programado_envio_id='bbbbbbbb-0000-0000-0000-000000000002' WHERE id='cccccccc-0000-0000-0000-000000000010' AND pedido_programado_envio_id IS NULL RETURNING 1) SELECT count(*) FROM c;")
+eq "A17c cura NÃO re-aponta SO já vinculado (WHERE IS NULL → 0 linhas)" "$V" "0"
+
+echo "── guard: header não cancela com claim em voo (A18) ──"
+P -q <<'SQL'
+INSERT INTO public.pedidos_programados (id) VALUES ('aaaaaaaa-0000-0000-0000-000000000002');
+INSERT INTO public.pedidos_programados_envios (id, pedido_programado_id, data_envio, status) VALUES
+  ('bbbbbbbb-0000-0000-0000-000000000020', 'aaaaaaaa-0000-0000-0000-000000000002', '2026-07-03', 'agendado');
+UPDATE public.pedidos_programados_envios SET status='processando'
+ WHERE id='bbbbbbbb-0000-0000-0000-000000000020';
+SQL
+# sentinela com ERRCODE 22023: só o P0001 do guard cai no WHEN raise_exception;
+# a própria sentinela cai no OTHERS e re-lança (anti-teatro — nunca se auto-casa).
+R=$(P -tA 2>&1 <<'SQL'
+DO $do$
+BEGIN
+  UPDATE public.pedidos_programados SET status='cancelado'
+   WHERE id='aaaaaaaa-0000-0000-0000-000000000002';
+  RAISE EXCEPTION 'A18_GUARD_NAO_BARROU_SENTINELA' USING ERRCODE='22023';
+EXCEPTION
+  WHEN raise_exception THEN RAISE NOTICE 'A18_GUARD_BARROU_SENTINELA';
+  WHEN OTHERS THEN RAISE;
+END $do$;
+SQL
+)
+case "$R" in
+  *A18_GUARD_BARROU_SENTINELA*) ok "A18a cancelar header com envio 'processando' → P0001 (guard fail-closed)" ;;
+  *) bad "A18a guard não barrou o cancel com claim em voo — veio: $R" ;;
+esac
+V=$(Pq -c "SELECT status FROM public.pedidos_programados WHERE id='aaaaaaaa-0000-0000-0000-000000000002';")
+eq "A18b header seguiu intocado (status original)" "$V" "ativo"
+P -q -c "UPDATE public.pedidos_programados_envios SET status='erro', erro_motivo='falha x' WHERE id='bbbbbbbb-0000-0000-0000-000000000020';"
+V=$(Pq -c "WITH c AS (UPDATE public.pedidos_programados SET status='cancelado' WHERE id='aaaaaaaa-0000-0000-0000-000000000002' RETURNING 1) SELECT count(*) FROM c;")
+eq "A18c sem claim em voo o cancelamento passa (guard não super-bloqueia)" "$V" "1"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (sabota → exige VERMELHO → restaura)
@@ -456,6 +524,39 @@ esac
 # estado final já é a constraint real de 5 status (o próprio F5 a instalou por último)
 V=$(Pq -c "SELECT (pg_get_constraintdef(oid) LIKE '%processando%' AND pg_get_constraintdef(oid) NOT LIKE '%pausado%') FROM pg_constraint WHERE conname='pedidos_programados_envios_status_check';")
 eq "F5b estado final: constraint real (com processando, sem pausado)" "$V" "t"
+
+# F6: DROPA o trigger do header → cancelar com claim em voo tem de PASSAR
+P -q <<'SQL'
+INSERT INTO public.pedidos_programados (id) VALUES ('aaaaaaaa-0000-0000-0000-000000000003');
+INSERT INTO public.pedidos_programados_envios (id, pedido_programado_id, data_envio, status) VALUES
+  ('bbbbbbbb-0000-0000-0000-000000000021', 'aaaaaaaa-0000-0000-0000-000000000003', '2026-07-03', 'agendado');
+UPDATE public.pedidos_programados_envios SET status='processando'
+ WHERE id='bbbbbbbb-0000-0000-0000-000000000021';
+DROP TRIGGER pp_guard_cancel_com_claim ON public.pedidos_programados;
+SQL
+if P -q -c "UPDATE public.pedidos_programados SET status='cancelado' WHERE id='aaaaaaaa-0000-0000-0000-000000000003';" >/dev/null 2>&1; then
+  ok "F6 sem o trigger o header cancela com claim em voo (A18 tem dente)"
+else
+  bad "F6 droppei o trigger e o cancel AINDA foi barrado — A18 não provava o trigger"
+fi
+P -q -c "UPDATE public.pedidos_programados SET status='ativo' WHERE id='aaaaaaaa-0000-0000-0000-000000000003';"
+P -q -f "$MIG"   # restaura o trigger (DROP IF EXISTS + CREATE)
+R=$(P -tA 2>&1 <<'SQL'
+DO $do$
+BEGIN
+  UPDATE public.pedidos_programados SET status='cancelado'
+   WHERE id='aaaaaaaa-0000-0000-0000-000000000003';
+  RAISE EXCEPTION 'F6B_GUARD_NAO_VOLTOU_SENTINELA' USING ERRCODE='22023';
+EXCEPTION
+  WHEN raise_exception THEN RAISE NOTICE 'F6B_GUARD_VOLTOU_SENTINELA';
+  WHEN OTHERS THEN RAISE;
+END $do$;
+SQL
+)
+case "$R" in
+  *F6B_GUARD_VOLTOU_SENTINELA*) ok "F6b trigger restaurado volta a barrar" ;;
+  *) bad "F6b restaurei e o guard não morde — veio: $R" ;;
+esac
 
 # ── veredito ──
 echo "──────────────────────────────"

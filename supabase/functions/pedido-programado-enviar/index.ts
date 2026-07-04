@@ -3,7 +3,7 @@
 // (idempotência PV_${sales_order_id} + guards de preço/ativo na fronteira comum).
 // Chamadas: cron diário (body {}) processa data_envio <= hoje BRT; UI staff (body
 // {envio_id}) processa um envio imediatamente ("Enviar agora").
-// CONCORRÊNCIA (migration 20260703220000, prova db/test-pedidos-programados-claim.sh):
+// CONCORRÊNCIA (migration 20260704070000, prova db/test-pedidos-programados-claim.sh):
 // claim atômico agendado/erro → 'processando' no início; release CAS no fim; watchdog
 // SQL reverte claim órfão (>15 min) p/ 'erro' + [OMIE-INCERTO]; UNIQUE parcial
 // (pedido_programado_envio_id, account) em sales_orders fecha a corrida edge×edge no banco.
@@ -252,6 +252,42 @@ async function processarEnvio(
         continue;
       }
       let salesOrderId = exist?.id ?? null;
+      // Fallback pro LEGADO da janela de deploy (achado Codex challenge 2026-07-04):
+      // sales_order criado pelo edge VELHO (map-only, coluna NULL) depois do backfill
+      // ficaria invisível pro SELECT-first — inserir outro seria PV_ novo = duplicata
+      // real no Omie. Adota o SO do map e CURA a coluna (backfill incremental).
+      // Map apontando pra SO de OUTRO envio = inconsistência → erro claro, nunca adivinhar.
+      if (!salesOrderId) {
+        const mapId = salesOrdersMap[account];
+        if (mapId) {
+          const { data: soMapa, error: mapSelErr } = await supabase
+            .from("sales_orders")
+            .select("id, omie_pedido_id, pedido_programado_envio_id")
+            .eq("id", mapId)
+            .maybeSingle();
+          if (mapSelErr) throw new Error(`Consulta do sales_order do map falhou (${account}): ${mapSelErr.message}`);
+          const legado = soMapa as { id: string; omie_pedido_id: number | null; pedido_programado_envio_id: string | null } | null;
+          if (legado) {
+            if (legado.pedido_programado_envio_id && legado.pedido_programado_envio_id !== envio.id) {
+              throw new Error(`sales_orders_map (${account}) aponta pra sales_order vinculado a OUTRO envio — inconsistência; conferir no banco antes de reenviar.`);
+            }
+            if (!legado.pedido_programado_envio_id) {
+              const { error: healErr } = await supabase
+                .from("sales_orders")
+                .update({ pedido_programado_envio_id: envio.id })
+                .eq("id", legado.id)
+                .is("pedido_programado_envio_id", null);
+              if (healErr) throw new Error(`Cura do vínculo do sales_order legado falhou (${account}): ${healErr.message}`);
+            }
+            if (legado.omie_pedido_id) {
+              // Legado já foi ao Omie — não re-enviar esta empresa.
+              sucessos.push(account);
+              continue;
+            }
+            salesOrderId = legado.id;
+          }
+        }
+      }
       if (!salesOrderId) {
         const { data: so, error: soErr } = await supabase.from("sales_orders").insert({
           customer_user_id: cfg.customer_user_id,

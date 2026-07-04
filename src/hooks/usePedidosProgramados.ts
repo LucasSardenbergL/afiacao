@@ -51,7 +51,7 @@ export interface PedidoProgramadoEnvio {
   id: string;
   pedido_programado_id: string;
   data_envio: string;
-  // 'processando' = claim transitório do edge (migration 20260703220000): o runner é o
+  // 'processando' = claim transitório do edge (migration 20260704070000): o runner é o
   // dono do envio até o release; cancelamentos (CAS em agendado/erro) não o enxergam.
   status: 'agendado' | 'processando' | 'enviado' | 'erro' | 'cancelado';
   erro_motivo: string | null;
@@ -322,7 +322,7 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
           'Este envio falhou SEM confirmação do Omie — o pedido pode existir lá sem registro aqui. Confira no Omie (ou use "Enviar agora", que é idempotente) antes de cancelar.',
         );
       }
-      // PV real já criado? Vínculo AUTORITATIVO = coluna (UNIQUE, migration 20260703220000)
+      // PV real já criado? Vínculo AUTORITATIVO = coluna (UNIQUE, migration 20260704070000)
       // ∪ sales_orders_map legado: a união cobre a janela de deploy em que o edge velho
       // (que só escreve o map) ainda roda com a migration aplicada — e o caso de map
       // perdido (write falhou) que só a coluna enxerga. Precisão > recall.

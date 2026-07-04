@@ -1,11 +1,14 @@
 -- ============================================================
 -- Pedidos programados — claim transitório 'processando' + watchdog de claim órfão
--- + UNIQUE (envio, account) em sales_orders.
+-- + UNIQUE (envio, account) em sales_orders + guard de cancelamento do header.
 -- Follow-up formal do PR #1158 (recomendação Codex gpt-5.5 xhigh): fecha POR
 -- CONSTRUÇÃO a corrida edge×edge e o residual cancelamento-vs-edge-em-voo.
--- Prova PG17: db/test-pedidos-programados-claim.sh
+-- Substitui 20260703220000 (nunca aplicada em nenhum ambiente): migration
+-- commitada é imutável no repo → achados do challenge Codex 2026-07-04
+-- (guard de header + comentário honesto da janela de deploy) entraram como
+-- arquivo novo. Prova PG17: db/test-pedidos-programados-claim.sh
 --
--- 4 partes (transação única — erro no meio não deixa estado parcial):
+-- 5 partes (transação única — erro no meio não deixa estado parcial):
 --   1. CHECK de status do envio ganha 'processando' (claim atômico do edge:
 --      UPDATE … SET status='processando' WHERE status IN ('agendado','erro');
 --      0 linhas = outro runner/cancelamento venceu → skip). Evolução GUARDADA
@@ -22,7 +25,11 @@
 --      claim mais velho que isso é runner comprovadamente morto — o watchdog
 --      nunca disputa com um runner vivo. Por TIMESTAMP (now() - interval),
 --      nunca CURRENT_DATE (database.md §4).
---   3. sales_orders.pedido_programado_envio_id (FK) + UNIQUE parcial
+--   3. Guard de cancelamento do header NO BANCO (achado Codex challenge
+--      2026-07-04, janela "frontend velho + edge novo"): o cancelarPedido
+--      antigo não enxerga 'processando' — o trigger recusa cancelar um pedido
+--      com envio em claim, qualquer que seja o client (fail-closed, P0001).
+--   4. sales_orders.pedido_programado_envio_id (FK) + UNIQUE parcial
 --      (envio, account): o vínculo hoje vive só no jsonb sales_orders_map do
 --      envio — dois runners no MESMO envio criariam 2 sales_orders → 2 chaves
 --      PV_${id} → pedido DUPLICADO REAL no Omie. A coluna faz a constraint
@@ -30,15 +37,19 @@
 --      pro existente); tabela de vínculo abriria janela de 2 statements.
 --      FK sem ON DELETE de propósito (fail-closed: apagar um envio que gerou
 --      sales_order deve gritar, não desvincular silencioso).
---   4. Backfill do vínculo a partir do sales_orders_map existente (verificado
+--   5. Backfill do vínculo a partir do sales_orders_map existente (verificado
 --      em prod 2026-07-03: 0 entradas no map → no-op hoje; defensivo caso o
 --      cron crie envios com map entre o merge e o apply).
 --
--- ⚠️ ORDEM DE DEPLOY: esta migration ANTES do redeploy do edge
---    pedido-programado-enviar (o edge novo grava 'processando' — sem o CHECK
---    novo o claim falharia 23514 e NENHUM envio seria processado). O edge
---    antigo nunca escreve 'processando' — inócuo rodar dias com migration
---    aplicada e edge velho.
+-- ⚠️ ORDEM DE DEPLOY: migration → Publish do frontend → redeploy do edge
+--    pedido-programado-enviar, na MESMA sessão de deploy. O edge novo exige o
+--    CHECK novo (sem ele o claim falharia 23514 e NENHUM envio processaria).
+--    O edge ANTIGO continua FUNCIONANDO com a migration aplicada (nunca escreve
+--    'processando'), mas a proteção contra duplicata edge×edge SÓ passa a valer
+--    no redeploy: o edge velho insere sales_orders SEM o vínculo e o UNIQUE
+--    parcial não participa (achado Codex 2026-07-04). Na janela o risco é o
+--    MESMO de hoje (sem regressão) — não a alongue. O edge novo adota e CURA
+--    sales_orders map-only criados na janela (backfill incremental no retry).
 -- ⚠️ Se o CREATE UNIQUE INDEX falhar com "could not create unique index …
 --    duplicate key": JÁ existe par (envio, account) duplicado em sales_orders
 --    → risco real de PV duplicado no Omie. NÃO forçar o índice — me avise
@@ -115,12 +126,38 @@ SELECT cron.schedule(
   $$ SELECT public.pedidos_programados_watchdog_claims(); $$
 );
 
--- ── 3. Vínculo forte sales_order ← envio ──
+-- ── 3. Guard NO BANCO: header não cancela com claim em voo ──
+-- Fecha a janela "frontend velho + edge novo" por construção (achado Codex
+-- challenge 2026-07-04): o cancelarPedido antigo não trata 'processando' —
+-- o banco recusa por baixo, qualquer que seja o client (fail-closed).
+CREATE OR REPLACE FUNCTION public.pp_bloqueia_cancel_com_claim()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.status = 'cancelado' AND OLD.status IS DISTINCT FROM 'cancelado' AND EXISTS (
+    SELECT 1 FROM public.pedidos_programados_envios e
+    WHERE e.pedido_programado_id = NEW.id AND e.status = 'processando'
+  ) THEN
+    RAISE EXCEPTION 'Pedido programado tem envio em processamento (claim ativo) — aguarde o resultado antes de cancelar.'
+      USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS pp_guard_cancel_com_claim ON public.pedidos_programados;
+CREATE TRIGGER pp_guard_cancel_com_claim
+  BEFORE UPDATE OF status ON public.pedidos_programados
+  FOR EACH ROW EXECUTE FUNCTION public.pp_bloqueia_cancel_com_claim();
+
+-- ── 4. Vínculo forte sales_order ← envio ──
 ALTER TABLE public.sales_orders
   ADD COLUMN IF NOT EXISTS pedido_programado_envio_id uuid
     REFERENCES public.pedidos_programados_envios(id);
 
--- ── 4. Backfill a partir do sales_orders_map (idempotente; no-op com map vazio) ──
+-- ── 5. Backfill a partir do sales_orders_map (idempotente; no-op com map vazio) ──
 -- Guard de regex antes do cast: valor não-uuid no map (não deveria existir —
 -- single-writer) não pode explodir a transação inteira do apply.
 UPDATE public.sales_orders so
