@@ -61,12 +61,17 @@ CREATE TABLE IF NOT EXISTS public.empresa_configuracao_custos (
   spread_oportunidade numeric,
   armazenagem_fisica numeric
 );
+CREATE TABLE IF NOT EXISTS public.omie_condicao_pagamento_catalogo (
+  codigo text, descricao text, num_parcelas integer, empresa text, ativo boolean
+);
 SQL
 
 # ── ZONA 2 — aplicar a migration REAL ──
 MIG="$REPO_ROOT/supabase/migrations/20260704190000_fin_regua_custo_capital.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20260704190500_fin_regua_condicao_prazo.sql"
 P -q -f "$MIG"
-echo "migration aplicada: $(basename "$MIG")"
+P -q -f "$MIG2"
+echo "migrations aplicadas: $(basename "$MIG"), $(basename "$MIG2")"
 
 # ── ZONA 3 — seed (config OBEN real + BADCO absurda; roles employee/master/customer) ──
 P -q <<'SQL'
@@ -81,6 +86,9 @@ INSERT INTO public.user_roles(user_id, role) VALUES
 INSERT INTO public.empresa_configuracao_custos(empresa, selic_anual, spread_oportunidade, armazenagem_fisica) VALUES
   ('OBEN', 14.75, 3.00, 8.00),
   ('BADCO', 1000, 3, 8) ON CONFLICT DO NOTHING;
+INSERT INTO public.omie_condicao_pagamento_catalogo(codigo, descricao, num_parcelas, empresa, ativo) VALUES
+  ('C30', '30/60/90', 3, 'OBEN', true),
+  ('CINATIVA', 'A Vista', 1, 'OBEN', false);
 SQL
 
 EMP='22222222-2222-2222-2222-222222222222'
@@ -121,6 +129,38 @@ SQL
   else echo "ERRO_INESPERADO:${out}"; fi
 }
 
+# fin_regua_condicao_prazo: "descricao|num" ou 'VAZIO' (0 linhas), como employee
+cond_val() { # $1=uid $2=empresa $3=codigo
+  local out last
+  out=$(P -qtA -F'|' -v uid="$1" -v emp="$2" -v cod="$3" 2>/dev/null <<'SQL'
+SET ROLE authenticated;
+SET test.uid = :'uid';
+SELECT descricao, num_parcelas FROM public.fin_regua_condicao_prazo(:'emp', :'cod');
+SQL
+)
+  last=$(echo "$out" | tail -n1)
+  if [ -z "$last" ]; then echo 'VAZIO'; else echo "$last"; fi
+}
+
+# gate da fin_regua_condicao_prazo: 'BLOQUEOU' (42501) ou 'PASSOU'
+cond_gate() { # $1=uid $2=role
+  local out
+  out=$(P -v uid="$1" -v rol="$2" 2>&1 <<'SQL'
+SET ROLE :rol;
+SET test.uid = :'uid';
+DO $$
+BEGIN
+  PERFORM descricao FROM public.fin_regua_condicao_prazo('oben','C30');
+  RAISE EXCEPTION 'PROBE_PASSOU_SEM_BLOQUEIO';
+EXCEPTION
+  WHEN sqlstate '42501' THEN RAISE NOTICE 'PROBE_BLOQUEOU_42501';
+  WHEN OTHERS THEN RAISE;
+END $$;
+SQL
+) || true
+  if echo "$out" | grep -q 'PROBE_BLOQUEOU_42501'; then echo 'BLOQUEOU'; else echo 'PASSOU'; fi
+}
+
 echo "── positivos ──"
 eq "A1 employee/oben → 17,75% (case-insensitive; exclui armazenagem, ≠0.2575)" "$(call_val "$EMP" oben)" "0.1775"
 eq "A2 master/OBEN → 17,75%" "$(call_val "$MASTER" OBEN)" "0.1775"
@@ -131,6 +171,13 @@ echo "── gate / autorização ──"
 eq "A5 customer (não-staff) → bloqueia (42501)" "$(gate_probe "$CUST" oben authenticated)" "BLOQUEOU"
 eq "A6 sem uid (auth.uid null) → bloqueia (42501)" "$(gate_probe "" oben authenticated)" "BLOQUEOU"
 eq "A7 anon (REVOKE) → bloqueia (42501 insufficient_privilege)" "$(gate_probe "" oben anon)" "BLOQUEOU"
+
+echo "── condição (fin_regua_condicao_prazo) ──"
+eq "B1 employee/oben/C30 → descricao+num (case-insensitive)" "$(cond_val "$EMP" oben C30)" "30/60/90|3"
+eq "B2 código inexistente → VAZIO (degrada)" "$(cond_val "$EMP" oben NOPE)" "VAZIO"
+eq "B3 condição INATIVA → VAZIO (filtro ativo)" "$(cond_val "$EMP" oben CINATIVA)" "VAZIO"
+eq "B4 customer (não-staff) → bloqueia (42501)" "$(cond_gate "$CUST" authenticated)" "BLOQUEOU"
+eq "B5 anon (REVOKE) → bloqueia" "$(cond_gate "" anon)" "BLOQUEOU"
 
 echo "── falsificação (sabota → exige que o assert FIQUE VERMELHO) ──"
 # F1: remove o gate → A5 (customer) DEVE deixar de bloquear (senão o assert não tem dente)
