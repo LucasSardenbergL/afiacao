@@ -96,20 +96,22 @@ export async function flush(
   handler: (mutation: QueuedMutation) => Promise<boolean>,
 ): Promise<{ success: number; failed: number }> {
   const items = readQueue();
-  const remaining: QueuedMutation[] = [];
+  const succeeded = new Set<string>();
+  const failedById = new Map<string, QueuedMutation>();
   let success = 0;
   let failed = 0;
   for (const item of items) {
     try {
       const ok = await handler(item);
       if (ok) {
+        succeeded.add(item.id);
         success++;
       } else {
-        remaining.push({ ...item, attempts: item.attempts + 1 });
+        failedById.set(item.id, { ...item, attempts: item.attempts + 1 });
         failed++;
       }
     } catch (e) {
-      remaining.push({
+      failedById.set(item.id, {
         ...item,
         attempts: item.attempts + 1,
         lastError: e instanceof Error ? e.message : String(e),
@@ -117,6 +119,13 @@ export async function flush(
       failed++;
     }
   }
+  // Re-lê a fila ATUAL em vez de sobrescrever com o snapshot: `enqueue()` pode ter
+  // rodado durante os awaits do handler (rede intermitente do galpão). Remove só os
+  // processados com sucesso (por id), aplica attempts++ nos que falharam, e preserva
+  // intactos os que chegaram durante o flush.
+  const remaining = readQueue()
+    .filter((m) => !succeeded.has(m.id))
+    .map((m) => failedById.get(m.id) ?? m);
   writeQueue(remaining);
   track('offline.flushed', { success, failed, remaining: remaining.length });
   return { success, failed };
