@@ -311,7 +311,8 @@ serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
-  const { action } = await req.json().catch(() => ({ action: "probe" }));
+  const body = await req.json().catch(() => ({} as Record<string, unknown>));
+  const action = (body.action as string) ?? "probe";
 
   try {
     if (action === "probe") {
@@ -328,6 +329,9 @@ serve(async (req) => {
     }
 
     if (action !== "sync") throw new Error(`action desconhecida: ${String(action)}`);
+    // desde_pagina (painel Gemini): retomar um sync que estourou o tempo do edge
+    // (estimativa real ~40 páginas ≈ 30-40s; o resume é o seguro, não o caminho normal).
+    const desdePagina = Number(body.desde_pagina) || 1;
 
     const { data: run, error: runErr } = await supabase
       .from("pcp_run_logs")
@@ -339,7 +343,7 @@ serve(async (req) => {
     let sampleErr: unknown = null;
     const syncedAt = new Date().toISOString();
 
-    for (let pagina = 1; pagina <= MAX_PAGINAS; pagina++) {
+    for (let pagina = desdePagina; pagina <= MAX_PAGINAS; pagina++) {
       const resp = await omieCall("ListarEstruturas", { nPagina: pagina, nRegPorPagina: REG_POR_PAGINA });
       const lista = extractLista(resp);
       if (!lista || lista.length === 0) break; // até página VAZIA — nunca confiar em total_de_paginas
@@ -363,13 +367,35 @@ serve(async (req) => {
       if (lista.length < REG_POR_PAGINA) break; // página incompleta = última
     }
 
+    // Limpeza de órfãos (painel Codex P1: estrutura removida no Omie ficaria eterna no staging)
+    // com guarda de plausibilidade (painel Gemini: página vazia prematura = truncamento silencioso —
+    // NUNCA limpar se este run veio anormalmente menor que o último ok).
+    let limpos = 0, limpezaPulada = false;
+    if (shapeErr === 0 && desdePagina === 1) {
+      const { data: ultimoOk } = await supabase.from("pcp_run_logs")
+        .select("registros").eq("funcao", "omie-malha-sync").eq("status", "ok")
+        .not("registros", "is", null).order("id", { ascending: false }).limit(1).maybeSingle();
+      const plausivel = !ultimoOk?.registros || registros >= 0.9 * ultimoOk.registros;
+      if (plausivel) {
+        const { count, error: delErr } = await supabase.from("pcp_malha_staging")
+          .delete({ count: "exact" }).neq("sync_run_id", run.id);
+        if (delErr) throw new Error(`limpeza de órfãos: ${delErr.message}`);
+        limpos = count ?? 0;
+      } else {
+        limpezaPulada = true; // run muito menor que o histórico: manter órfãos e ACUSAR
+      }
+    }
+
     const status = shapeErr > 0 ? "erro" : "ok";
     await supabase.from("pcp_run_logs").update({
       finished_at: new Date().toISOString(), status, paginas, registros,
-      detalhe: { shape_err: shapeErr, sample_err: sampleErr },
+      detalhe: { shape_err: shapeErr, sample_err: sampleErr, orfaos_limpos: limpos, limpeza_pulada: limpezaPulada },
     }).eq("id", run.id);
 
-    return new Response(JSON.stringify({ ok: status === "ok", paginas, registros, shape_err: shapeErr }), {
+    return new Response(JSON.stringify({
+      ok: status === "ok", paginas, registros, shape_err: shapeErr,
+      orfaos_limpos: limpos, limpeza_pulada: limpezaPulada,
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
@@ -436,7 +462,7 @@ curl -sS -X POST "https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-mal
   -H "Content-Type: application/json" -H "x-cron-secret: $CRON_SECRET" \
   -d '{"action":"sync"}'
 ```
-Expected: `{"ok":true, "paginas":N, "registros":M, "shape_err":0}` com M ≥ ~1.400 (cintas) — provavelmente ~1.7–2.0k somando discos/tingidores/rolos.
+Expected: `{"ok":true, "paginas":N, "registros":M, "shape_err":0, "orfaos_limpos":0, "limpeza_pulada":false}` com M ≥ ~1.400 (cintas) — provavelmente ~1.7–2.0k somando discos/tingidores/rolos (~40 páginas ≈ 30-40s, dentro do limite do edge). Se o edge estourar tempo: re-invocar com `{"action":"sync","desde_pagina":<última página do run log + 1>}`. `limpeza_pulada:true` = o run veio <90% do último ok → investigar (truncamento silencioso do Omie) antes de confiar no staging.
 
 - [ ] **Step 4.7: verificar cobertura do staging (psql-ro)**
 
@@ -488,8 +514,19 @@ CREATE TABLE IF NOT EXISTS public.pcp_config (
 INSERT INTO public.pcp_config (key, value) VALUES
   ('tolerancia_abrasivo', '0.005'),   -- área nominal deve bater quase exata (0,5%)
   ('tolerancia_insumo',   '0.05'),    -- cola/catalisador/fita: 5%
-  ('min_amostras_regra',  '3')        -- linha com menos amostras usa a regra global '*'
+  ('min_amostras_regra',  '3'),       -- linha com menos amostras usa a regra global '*'
+  ('dispersao_max_regra', '0.10')     -- regra com MAD relativa acima disto é INSTÁVEL (não valida ninguém)
 ON CONFLICT (key) DO NOTHING;
+
+-- Número tolerante (painel Codex P1): Omie pode mandar '1,611', '' ou lixo — cast direto
+-- derrubaria a VIEW inteira. Inválido ⇒ NULL (nunca fabricar), o status da validação acusa.
+CREATE OR REPLACE FUNCTION public.fn_pcp_num(p_raw text)
+RETURNS numeric LANGUAGE sql IMMUTABLE AS $$
+SELECT CASE
+  WHEN v ~ '^-?\d+(\.\d+)?$' THEN v::numeric
+END
+FROM (SELECT replace(trim(coalesce(p_raw,'')), ',', '.') AS v) t
+$$;
 
 -- ── 1) Extração da malha (TODO o mapeamento de shape vive AQUI) ────────────
 CREATE OR REPLACE VIEW public.vw_pcp_malha_itens
@@ -500,12 +537,19 @@ SELECT
     AS componente_id,
   COALESCE(i->'ident'->>'codProdMalha', i->>'codProdMalha')       AS componente_codigo_txt,
   COALESCE(i->'ident'->>'descrProdMalha', i->>'descrProdMalha')   AS componente_descricao_omie,
-  NULLIF(COALESCE(i->>'quantProdMalha', i->>'quantidade'), '')::numeric AS quantidade,
+  fn_pcp_num(COALESCE(i->>'quantProdMalha', i->>'quantidade'))    AS quantidade,
   upper(COALESCE(i->>'unidProdMalha', i->>'unidade'))             AS unidade,
-  NULLIF(i->>'percPerdaProdMalha','')::numeric                    AS perc_perda
+  fn_pcp_num(i->>'percPerdaProdMalha')                            AS perc_perda
 FROM public.pcp_malha_staging s
 CROSS JOIN LATERAL jsonb_array_elements(
-  COALESCE(s.payload->'itens', s.payload->'itensMalha', '[]'::jsonb)
+  -- array-aware (painel Codex): COALESCE pegaria 'itens' VAZIO e nunca cairia no fallback
+  CASE
+    WHEN jsonb_typeof(s.payload->'itens') = 'array' AND jsonb_array_length(s.payload->'itens') > 0
+      THEN s.payload->'itens'
+    WHEN jsonb_typeof(s.payload->'itensMalha') = 'array'
+      THEN s.payload->'itensMalha'
+    ELSE '[]'::jsonb
+  END
 ) AS i;
 
 -- Resolve o componente contra omie_products (por id Omie; fallback por codigo string).
@@ -606,9 +650,10 @@ SELECT CASE
   WHEN upper(coalesce(p_descricao,'')) ~ '^(ROLO|JUMBO)\s'                      THEN 'abrasivo_base'
   WHEN upper(coalesce(p_descricao,'')) ~ 'DESMODUR|CATALISADOR'
     OR coalesce(p_familia,'') ILIKE '%catalisador%'                             THEN 'catalisador'
+  -- FITA antes de cola (painel Codex): "FITA ADESIVA" tem que ser fita, não cola
+  WHEN upper(coalesce(p_descricao,'')) ~ '\mFITA\M'                             THEN 'fita'
   WHEN upper(coalesce(p_descricao,'')) ~ 'A455|ADESIVO|\mCOLA\M'
     OR coalesce(p_familia,'') ILIKE '%cola%' OR coalesce(p_familia,'') ILIKE '%adesivo%' THEN 'cola'
-  WHEN upper(coalesce(p_descricao,'')) ~ '\mFITA\M'                             THEN 'fita'
   ELSE 'outro'
 END $$;
 
@@ -642,6 +687,12 @@ BEGIN
   JOIN pcp_itens pai ON pai.omie_codigo_produto = c.pai_codigo
   WHERE pai.tipo_item IN ('cinta','rolo') AND pai.formato_parse = 'dimensional'
     AND pai.linha_modelo IS NOT NULL AND c.quantidade IS NOT NULL;
+
+  -- Guarda (painel Codex): universo vazio NÃO pode zerar as regras boas —
+  -- o RAISE reverte o DELETE acima (mesma transação).
+  IF NOT EXISTS (SELECT 1 FROM tmp_obs) THEN
+    RAISE EXCEPTION 'fn_pcp_destilar_bom: universo de observações VAZIO — abortando sem apagar regras (staging/refresh rodaram?)';
+  END IF;
 
   -- Razões observadas por papel (NULL quando não se aplica — nunca inventar).
   CREATE TEMP TABLE tmp_ratio ON COMMIT DROP AS
@@ -712,19 +763,20 @@ WITH comp AS (
   WHERE pai.tipo_item IN ('cinta','rolo')
 ),
 com_regra AS (
-  SELECT comp.*, r.coef, r.metodo,
+  SELECT comp.*, r.coef, r.metodo, r.dispersao AS regra_dispersao,
+    CASE WHEN r.linha_modelo = comp.linha_modelo THEN 'linha' WHEN r.linha_modelo = '*' THEN 'global' END AS regra_origem,
     (SELECT c2.quantidade FROM comp c2
       WHERE c2.pai_codigo = comp.pai_codigo AND c2.papel = 'cola' AND c2.unidade = 'G' LIMIT 1) AS qtd_cola_pai
   FROM comp
   LEFT JOIN LATERAL (
-    SELECT coef, metodo FROM pcp_bom_regras r
+    SELECT coef, metodo, dispersao, linha_modelo FROM pcp_bom_regras r
     WHERE r.papel = comp.papel AND r.linha_modelo IN (comp.linha_modelo, '*')
     ORDER BY (r.linha_modelo = comp.linha_modelo) DESC
     LIMIT 1
   ) r ON comp.papel <> 'outro'
 )
 SELECT pai_codigo, pai_descricao, pai_tipo, linha_modelo, largura_mm, comprimento_mm,
-  componente_codigo, componente_descricao, papel, quantidade AS observado, unidade,
+  componente_codigo, componente_descricao, papel, quantidade AS observado, unidade, regra_origem,
   CASE
     WHEN formato_parse <> 'dimensional' THEN NULL
     WHEN papel = 'abrasivo_base' AND unidade = 'M2' THEN largura_mm::numeric * comprimento_mm / 1e6
@@ -744,6 +796,11 @@ SELECT pai_codigo, pai_descricao, pai_tipo, linha_modelo, largura_mm, compriment
     WHEN papel = 'fita' AND unidade IS DISTINCT FROM 'CM' THEN 'unidade_inesperada'
     WHEN coef IS NULL AND papel <> 'abrasivo_base' THEN 'sem_regra'
     WHEN papel = 'catalisador' AND qtd_cola_pai IS NULL THEN 'sem_base_cola'
+    -- regra instável (painel Claude P1 + Codex): dispersão alta = mediana possivelmente
+    -- contaminada na 1ª destilação — NÃO valida ninguém; revisão humana.
+    WHEN papel <> 'abrasivo_base' AND regra_dispersao >
+         coalesce((SELECT (value)::numeric FROM pcp_config WHERE key = 'dispersao_max_regra'), 0.10)
+      THEN 'regra_instavel'
     WHEN quantidade IS NULL THEN 'sem_quantidade'
     WHEN abs(quantidade - (CASE
         WHEN papel = 'abrasivo_base' THEN largura_mm::numeric * comprimento_mm / 1e6
@@ -790,12 +847,29 @@ BEGIN
   SELECT pai_codigo, coalesce(componente_codigo, 0), papel, pai_descricao,
     componente_descricao, observado, esperado, unidade, status
   FROM vw_pcp_bom_validacao
-  WHERE status IN ('excecao','sem_regra','unidade_inesperada','papel_desconhecido','sem_quantidade','sem_base_cola')
+  WHERE status IN ('excecao','sem_regra','unidade_inesperada','papel_desconhecido','sem_quantidade','sem_base_cola','regra_instavel')
   ON CONFLICT (pai_codigo, papel, componente_codigo) DO UPDATE
     SET observado = EXCLUDED.observado, esperado = EXCLUDED.esperado,
         status = EXCLUDED.status, materializado_em = now();
   GET DIAGNOSTICS v = ROW_COUNT;
   RETURN v;
+END $$;
+
+-- Helper de triagem (painel Gemini P1 — fricção do founder): 1 chamada em vez de UPDATE cru.
+-- SECURITY DEFINER com gate de staff INTERNO (fail-closed); chamável por RPC do app no futuro.
+CREATE OR REPLACE FUNCTION public.fn_pcp_dispor_excecao(
+  p_pai bigint, p_papel text, p_componente bigint, p_disposicao text, p_nota text DEFAULT NULL)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF NOT (has_role((SELECT auth.uid()), 'master'::app_role)
+       OR has_role((SELECT auth.uid()), 'employee'::app_role)
+       OR current_user IN ('postgres','service_role')) THEN
+    RAISE EXCEPTION 'fn_pcp_dispor_excecao: apenas staff';
+  END IF;
+  UPDATE pcp_bom_excecoes
+     SET disposicao = p_disposicao, disposicao_nota = p_nota
+   WHERE pai_codigo = p_pai AND papel = p_papel AND componente_codigo = coalesce(p_componente, 0);
+  RETURN FOUND;
 END $$;
 
 -- ── 8) RLS + grants ────────────────────────────────────────────────────────
@@ -831,19 +905,23 @@ REVOKE EXECUTE ON FUNCTION public.fn_pcp_destilar_bom() FROM PUBLIC, anon, authe
 REVOKE EXECUTE ON FUNCTION public.fn_pcp_materializar_excecoes() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.fn_pcp_parse_dimensoes(text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.fn_pcp_papel_componente(text, text) TO authenticated;
+-- dispor_excecao: gate de staff é INTERNO (fail-closed) — anon fora, authenticated pode chamar
+REVOKE EXECUTE ON FUNCTION public.fn_pcp_dispor_excecao(bigint, text, bigint, text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.fn_pcp_dispor_excecao(bigint, text, bigint, text, text) TO authenticated;
 
 COMMIT;
 ```
 
 - [ ] **Step 5.2: Pré-flight de colisão (regra da casa p/ CREATE OR REPLACE)**
 
-Run (confirmar que NENHUM objeto do M2 já existe em prod — são todos novos):
+Run (confirmar que NENHUM objeto do M2 já existe em prod — são todos novos — e que o fallback por `codigo` é seguro):
 ```bash
 ~/.config/afiacao/psql-ro -c "SELECT viewname FROM pg_views WHERE viewname LIKE 'vw_pcp_%';" \
   -c "SELECT proname FROM pg_proc WHERE proname LIKE 'fn_pcp_%';" \
-  -c "SELECT tablename FROM pg_tables WHERE tablename LIKE 'pcp_%';"
+  -c "SELECT tablename FROM pg_tables WHERE tablename LIKE 'pcp_%';" \
+  -c "SELECT codigo, count(*) FROM omie_products WHERE account='colacor' AND codigo IS NOT NULL GROUP BY 1 HAVING count(*)>1 LIMIT 5;"
 ```
-Expected: só os objetos do M1 (`pcp_run_logs`, `pcp_malha_staging`) — nada de `vw_pcp_*`/`fn_pcp_*`. Se aparecer algo: outra sessão/worktree tocou o namespace → PARAR e coordenar (regra multi-sessão).
+Expected: só os objetos do M1 (`pcp_run_logs`, `pcp_malha_staging`) — nada de `vw_pcp_*`/`fn_pcp_*` — e ZERO `codigo` duplicado (painel: dup faria o fallback do join duplicar linhas de malha; se houver, trocar o fallback por `DISTINCT ON (codigo)` antes de aplicar). Se aparecer objeto pcp novo: outra sessão/worktree tocou o namespace → PARAR e coordenar (regra multi-sessão).
 
 - [ ] **Step 5.3: Commit**
 
@@ -935,6 +1013,7 @@ gold "TINGIDOR MEL ESCURO TEH 3505.162FG"    "-|-|-|-|sem_match"
 gold "RL SAITAC 5G GR 320 - 1600 X 050M"     "-|-|-|-|sem_match"
 gold "BLOCO DE LIXA 2988 RODA150X50X46 P100" "-|-|100|-|sem_match"
 gold "DISCO DIAMANTADO CLASSIC TURBO 110X20MM" "-|-|-|-|sem_match"
+gold "cinta ka169 150x6200mm p50"             "150|6200|50|-|dimensional"
 eq "parse: NULL não explode" "$(Pq -c "SELECT formato FROM fn_pcp_parse_dimensoes(NULL)")" "sem_match"
 
 echo "═══ ZONA 4: FALSIFICAÇÃO (regex sabotada ⇒ golden TEM que divergir) ═══"
@@ -967,7 +1046,7 @@ echo "RESULTADO: PASS=$PASS FAIL=$FAIL"
 - [ ] **Step 6.2: Rodar (vermelho esperado ANTES do M2 existir; verde depois)**
 
 Run: `bash db/test-pcp-parser-dimensoes.sh > /tmp/t-parser.log 2>&1; echo "exit=$?"`
-Expected: `exit=0`, `PASS=14 FAIL=0` (12 golden + falsificação + restauração). Se qualquer golden divergir: ajustar a REGEX (nunca o esperado — os esperados são fatos de prod).
+Expected: `exit=0`, `PASS=15 FAIL=0` (13 golden — incluindo minúsculas, que o `upper()` interno cobre — + falsificação + restauração). Se qualquer golden divergir: ajustar a REGEX (nunca o esperado — os esperados são fatos de prod). **Decisão registrada (painel):** formato com espaços fora do padrão (`150 X 6200 MM`) fica `sem_match` de propósito — vira revisão humana, nunca chute.
 
 - [ ] **Step 6.3: shellcheck + commit**
 
@@ -1035,9 +1114,12 @@ CREATE TABLE public.user_roles (user_id uuid NOT NULL, role public.app_role NOT 
 CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role app_role)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
 AS $$ SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role) $$;
+GRANT EXECUTE ON FUNCTION public.has_role(uuid, app_role) TO authenticated, anon;
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 CREATE TABLE public.omie_products (omie_codigo_produto bigint PRIMARY KEY, codigo text, descricao text,
   familia text, tipo_produto text, account text, metadata jsonb NOT NULL DEFAULT '{}');
+-- staff (aaaa) e não-staff (bbbb) para a matriz RLS da ZONA 6
+INSERT INTO public.user_roles VALUES ('00000000-0000-0000-0000-00000000aaaa','employee');
 SQL
 
 echo "═══ ZONA 2: aplica M1 + M2 REAIS ═══"
@@ -1103,6 +1185,50 @@ eq "sabotagem materializou 1 exceção" "$EXC" "1"
 eq "a exceção é a cola do pai sabotado" "$(Pq -c "SELECT pai_codigo||'|'||papel||'|'||status FROM pcp_bom_excecoes")" "800004|cola|excecao"
 eq "esperado da exceção ≈ 1.074 g (0.01074×100)" "$(Pq -c "SELECT round(esperado,3) FROM pcp_bom_excecoes")" "1.074"
 
+echo "═══ ZONA 6: endurecimentos do painel (fn_num, papel, regra instável, sem_base_cola, unidade, RLS, disposição) ═══"
+eq "fn_pcp_num tolera vírgula pt-BR" "$(Pq -c "SELECT fn_pcp_num('1,611')")" "1.611"
+eq "fn_pcp_num: lixo vira NULL (nunca fabrica)" "$(Pq -c "SELECT coalesce(fn_pcp_num('16,9 CM')::text,'nulo')")" "nulo"
+eq "papel: FITA ADESIVA é fita (não cola)" "$(Pq -c "SELECT fn_pcp_papel_componente('FITA ADESIVA 25MM','Uso e Consumo')")" "fita"
+eq "papel: COLA PU é cola" "$(Pq -c "SELECT fn_pcp_papel_componente('COLA PU BICOMPONENTE','Colas')")" "cola"
+
+# Linha ZZ com cola DISPERSA (ratios 0.01/0.02/0.04 ⇒ MAD rel 0.5 > 0.10) — regra instável não valida ninguém.
+# Pai XY: catalisador SEM cola no pai + cola em KG (unidade errada).
+P -q <<'SQL'
+INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, familia, tipo_produto, account) VALUES
+ (810001,'PRD81001','CINTA ZZ9 100X1000MM P50','Cintas Estreitas','04','colacor'),
+ (810002,'PRD81002','CINTA ZZ9 100X1000MM P80','Cintas Estreitas','04','colacor'),
+ (810003,'PRD81003','CINTA ZZ9 100X1000MM P120','Cintas Estreitas','04','colacor'),
+ (810004,'PRD81004','CINTA XY7 100X1000MM P50','Cintas Estreitas','04','colacor');
+INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES
+ (810001,'{"ident":{"idProduto":810001},"itens":[{"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":1.0,"unidProdMalha":"G"}]}'::jsonb),
+ (810002,'{"ident":{"idProduto":810002},"itens":[{"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":2.0,"unidProdMalha":"G"}]}'::jsonb),
+ (810003,'{"ident":{"idProduto":810003},"itens":[{"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":4.0,"unidProdMalha":"G"}]}'::jsonb),
+ (810004,'{"ident":{"idProduto":810004},"itens":[
+   {"ident":{"idProdMalha":900003,"descrProdMalha":"DESMODUR NE-S"},"quantProdMalha":0.111,"unidProdMalha":"G"},
+   {"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":0.001,"unidProdMalha":"KG"}]}'::jsonb);
+SQL
+P -q -c "SELECT fn_pcp_refresh_itens();" >/dev/null
+eq "re-destilar com universo maior (KA169 4 + ZZ9 cola + '*' 4)" "$(Pq -c "SELECT fn_pcp_destilar_bom()")" "9"
+eq "regra ZZ9/cola nasceu INSTÁVEL (MAD rel 0.5)" "$(Pq -c "SELECT round(dispersao,2) FROM pcp_bom_regras WHERE linha_modelo='ZZ9' AND papel='cola'")" "0.50"
+eq "validação marca as 3 colas ZZ9 como regra_instavel" "$(Pq -c "SELECT count(*) FROM vw_pcp_bom_validacao WHERE status='regra_instavel'")" "3"
+eq "catalisador sem cola G no pai ⇒ sem_base_cola" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=810004 AND papel='catalisador'")" "sem_base_cola"
+eq "cola em KG ⇒ unidade_inesperada" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=810004 AND papel='cola'")" "unidade_inesperada"
+eq "materializar: 6 exceções (1 sabotada + 3 instáveis + 2 do XY7)" "$(Pq -c "SELECT fn_pcp_materializar_excecoes()")" "6"
+
+echo "── matriz RLS (painel: TODAS as pcp_% fail-closed) ──"
+eq "6 tabelas pcp_% com RLS ligado" "$(Pq -c "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname LIKE 'pcp\\_%' AND c.relkind='r' AND c.relrowsecurity")" "6"
+eq "staff vê pcp_bom_regras" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; SELECT count(*)>0 FROM pcp_bom_regras")" "t"
+eq "não-staff vê 0 em pcp_bom_regras (fail-closed)" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000bbbb'; SELECT count(*) FROM pcp_bom_regras")" "0"
+
+echo "── governança da disposição (helper staff-gated + grant de coluna) ──"
+eq "staff dispõe via helper" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; SELECT fn_pcp_dispor_excecao(800004,'cola',900002,'aceitar','conferido no print')")" "t"
+P -q -c "SELECT fn_pcp_materializar_excecoes();" >/dev/null
+eq "re-materializar PRESERVA a disposição" "$(Pq -c "SELECT count(*) FROM pcp_bom_excecoes WHERE disposicao='aceitar'")" "1"
+NS_ERR=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000bbbb'; SELECT fn_pcp_dispor_excecao(800004,'cola',900002,'aceitar',NULL);" 2>&1 || true)
+case "$NS_ERR" in *"apenas staff"*) ok "não-staff barrado no helper (fail-closed)";; *) bad "não-staff NÃO barrado: $NS_ERR";; esac
+COL_ERR=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; UPDATE pcp_bom_excecoes SET observado=1 WHERE pai_codigo=800004;" 2>&1 || true)
+case "$COL_ERR" in *"permission denied"*) ok "UPDATE cru de coluna não permitida bloqueado (grant de coluna)";; *) bad "UPDATE de observado NÃO bloqueado: $COL_ERR";; esac
+
 echo ""
 echo "RESULTADO: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
@@ -1111,7 +1237,7 @@ echo "RESULTADO: PASS=$PASS FAIL=$FAIL"
 - [ ] **Step 7.2: Rodar**
 
 Run: `bash db/test-pcp-f1a-destilacao.sh > /tmp/t-dest.log 2>&1; echo "exit=$?"`
-Expected: `exit=0`, `PASS=11 FAIL=0` (8 asserts da ZONA 4 + 3 da falsificação). Falhas aqui significam bug na destilação/validação (os números da fixture são FATOS do print) — corrigir o M2, nunca a fixture.
+Expected: `exit=0`, `PASS=28 FAIL=0` (8 da ZONA 4 + 3 da falsificação + 17 dos endurecimentos do painel: números tolerantes, papéis ambíguos, regra instável, sem_base_cola, unidade errada, matriz RLS, governança da disposição). Falhas aqui significam bug na destilação/validação (os números da fixture são FATOS do print) — corrigir o M2, nunca a fixture.
 
 - [ ] **Step 7.3: shellcheck + commit**
 
@@ -1134,7 +1260,12 @@ Founder cola `db/pcp-f1a-m2-nucleo.sql`. Sucesso: `COMMIT` sem erro.
 
 - [ ] **Step 8.2 [FOUNDER]: rodar refresh + destilação (no próprio SQL Editor)**
 
+**Pré-condição (painel):** o último run do sync em `pcp_run_logs` deve estar `status='ok'` com `limpeza_pulada:false` — NUNCA destilar sobre staging de run com erro/truncado.
+
 ```sql
+SELECT status, registros, detalhe FROM public.pcp_run_logs
+ WHERE funcao='omie-malha-sync' ORDER BY id DESC LIMIT 1;  -- tem que ser 'ok'
+
 SELECT * FROM public.fn_pcp_refresh_itens();
 SELECT public.fn_pcp_destilar_bom()          AS regras;
 SELECT public.fn_pcp_materializar_excecoes() AS excecoes;
@@ -1149,9 +1280,11 @@ Run:
  -c "SELECT tipo_item, formato_parse, count(*) FROM pcp_itens GROUP BY 1,2 ORDER BY 1,2;" \
  -c "SELECT linha_modelo, papel, metodo, round(coef,5) coef, amostras, round(dispersao,4) disp FROM pcp_bom_regras ORDER BY (linha_modelo='*') DESC, amostras DESC LIMIT 30;" \
  -c "SELECT status, count(*) FROM vw_pcp_bom_validacao GROUP BY 1 ORDER BY 2 DESC;" \
- -c "SELECT round(100.0*count(*) FILTER (WHERE status='ok')/NULLIF(count(*),0),1) AS pct_ok FROM vw_pcp_bom_validacao;"
+ -c "SELECT round(100.0*count(*) FILTER (WHERE status='ok')/NULLIF(count(*),0),1) AS pct_ok FROM vw_pcp_bom_validacao;" \
+ -c "SELECT regra_origem, count(*) FROM vw_pcp_bom_validacao WHERE status='ok' GROUP BY 1;" \
+ -c "SELECT linha_modelo, papel, round(dispersao,3) FROM pcp_bom_regras WHERE dispersao > 0.10 ORDER BY dispersao DESC;"
 ```
-Expected: `pct_ok` alto (≥90% é saudável para v1); exceções concentradas em poucas linhas/papéis. **Qualquer padrão sistêmico (uma linha inteira em exceção) = regra errada, não malha errada — investigar antes do gate.**
+Expected: `pct_ok` alto (≥90% é saudável para v1); exceções concentradas em poucas linhas/papéis. **Métricas do painel:** % de `ok` validado por regra `global` (fallback `*`) entra no relatório — se for alto, as linhas estão ralas demais e o founder decide se aceita o global; regras com `dispersao > 0.10` são INSTÁVEIS (seus pais já caem em exceção automaticamente). **Qualquer padrão sistêmico (uma linha inteira em exceção) = regra errada, não malha errada — investigar antes do gate.**
 
 - [ ] **Step 8.4: gerar o relatório de amostragem estratificada (Codex Gate 0 #7)**
 
@@ -1219,9 +1352,36 @@ Lembrete: PR não-draft auto-mergeia no verde do CI. Se o gate do founder (Task 
 
 ## Critério de aceite da Fase 1A (recapitulação)
 
-1. `pcp_malha_staging` populado com shape_err=0 e cobertura ~1.4k cintas + discos + tingidores.
+1. `pcp_malha_staging` populado com shape_err=0, `limpeza_pulada=false` e cobertura ~1.4k cintas + discos + tingidores.
 2. Golden do parser 100% verde COM falsificação vermelha comprovada.
-3. Destilação recupera os coeficientes do print (0,01074 g/mm · 0,1111 · 1,9 cm) na prova local.
-4. Em prod: `pct_ok` ≥ 90% na validação, exceções revisáveis e SEM padrão sistêmico não explicado.
+3. Destilação recupera os coeficientes do print (0,01074 g/mm · 0,1111 · 1,9 cm) na prova local; regras instáveis (dispersão > 0,10) NÃO validam ninguém.
+4. Em prod: `pct_ok` ≥ 90% na validação, exceções revisáveis, % de fallback global reportado e SEM padrão sistêmico não explicado.
 5. Gate de amostragem aprovado pelo founder POR ESCRITO no relatório.
 6. Nada downstream consome `pcp_bom_regras` ainda (trava até o gate).
+
+---
+
+## Painel tri-modelo sobre ESTE plano (2026-07-04 — disposições do driver)
+
+Claude (produto, 5) + Codex (engenharia, 12) + Gemini (triagem, 8) = 25 findings; artefatos em `triagem-HPFZVP/` (claude3.json, codex3.raw, gemini3.raw).
+
+| Achado (quem) | Sev | Disposição |
+|---|---|---|
+| Staging sem ciclo de vida: órfãos eternos + run parcial contamina (Codex P1+P2, Gemini P2 — CONFIRMADO 2 lentes) | P1 | **ACEITO** → limpeza de órfãos pós-run-ok com guarda de plausibilidade (≥90% do último ok) + pré-condição "último run ok" antes do refresh (Task 8.2) |
+| Cast numérico cru derruba a view inteira ('1,611', '', lixo) (Codex) | P1 | **ACEITO** → `fn_pcp_num` tolerante (inválido ⇒ NULL, nunca fabrica) |
+| Mediana da 1ª destilação contaminável em linha rala (Claude P1 + Codex fixture-viciada) | P1 | **ACEITO** → `dispersao_max_regra` (0,10): regra instável não valida ninguém, pais caem em exceção; provado na ZONA 6 |
+| Timeout do edge em paginação longa (Gemini P1) | P1 | **ACEITO-leve** → `desde_pagina` (resume) + estimativa real ~40 páginas documentada; fila/worker = YAGNI |
+| Founder marcando exceção via UPDATE cru = fricção (Gemini P1) | P1 | **ACEITO** → `fn_pcp_dispor_excecao()` staff-gated (1 chamada); UI de triagem fica p/ F1B |
+| Grant de coluna sem policy UPDATE (Codex P1) | — | **JÁ NO PLANO** (policy `pcp_bom_excecoes_update_staff` existia; o alvo resumido omitiu) → adicionada PROVA na ZONA 6 (staff ok, não-staff barrado, coluna proibida barrada) |
+| security_invoker não basta sem matriz RLS provada (Codex+Gemini — CONFIRMADO) | P2 | **ACEITO** → ZONA 6: 6 tabelas pcp_% com RLS + fail-closed não-staff |
+| COALESCE pega array 'itens' VAZIO e não cai no fallback (Codex) | P2 | **ACEITO** → CASE array-aware com jsonb_typeof/length |
+| DELETE total da destilação pode zerar regras boas (Codex) | P2 | **ACEITO** → RAISE em universo vazio (rollback preserva) |
+| Página vazia prematura = truncamento silencioso (Gemini) | P3 | **ACEITO** → mesma guarda de plausibilidade (limpeza_pulada acusa) |
+| 'FITA ADESIVA' classificaria como cola (Codex) | P2 | **ACEITO** → fita ANTES de cola no CASE + golden do papel |
+| Fallback global '*' mistura linhas (Codex, needs_human) | P2 | **ACEITO como métrica de gate** → `regra_origem` na validação + % global no relatório; founder decide no gate |
+| Regex rígida a caixa/espaços (Codex P3 + Gemini P2) | P3 | **PARCIAL** → upper() já existia (golden minúsculas adicionado); espaços fora do padrão = `sem_match` DE PROPÓSITO (revisão humana > chute) — decisão registrada |
+| Drift de id de componente perde disposição (Gemini P3) | P3 | **ACEITO como limitação documentada** (disposição é triagem transitória; órfãos com disposição ficam inertes) |
+| Lock/perf do DELETE+INSERT a 10k (Gemini P2) | — | **REJEITADO** — escala errada: regras são dezenas, catálogo 4.3k, run manual raro |
+| Handoffs manuais do founder estagnam (Claude P2 + Gemini) | P2 | **ACEITO** → deploy em 2 momentos únicos com comandos prontos; M2 pode ir no mesmo dia se o probe não divergir |
+| `codigo` duplicado no fallback do join (Claude P3) | P3 | **ACEITO** → check de dup no pré-flight da Task 5.2 |
+| Sync sem recorrência = staleness (Claude P3) | P3 | **ACEITO como pendência da Fase 2** → cron + frescor no Sentinela (padrão da casa) |
