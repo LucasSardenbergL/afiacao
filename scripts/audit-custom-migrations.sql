@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 328
+-- Total de custom migrations: 330
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -369,7 +369,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260703140000', 'trava_credito_gate_excecao_por_par', '20260703140000_trava_credito_gate_excecao_por_par.sql'),
   ('20260704070000', 'pedidos_programados_claim_processando', '20260704070000_pedidos_programados_claim_processando.sql'),
   ('20260704102000', 'fin_sync_retry_kick_perdido', '20260704102000_fin_sync_retry_kick_perdido.sql'),
-  ('20260704120000', 'profiles_prevent_self_approval', '20260704120000_profiles_prevent_self_approval.sql')
+  ('20260704120000', 'profiles_prevent_self_approval', '20260704120000_profiles_prevent_self_approval.sql'),
+  ('20260704130000', 'claim_nfe_efetivacao_lock', '20260704130000_claim_nfe_efetivacao_lock.sql'),
+  ('20260704160000', 'fin_sync_watchdog_retry_sem_efeito', '20260704160000_fin_sync_watchdog_retry_sem_efeito.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1489,7 +1491,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_sync_retry_kick_perdido', 'rls_policy', 'public', 'fin_sync_kick_retry_select_staff', 'fin_sync_kick_retry'),
   ('profiles_prevent_self_approval', 'function', 'public', 'prevent_self_approval', ''),
   ('profiles_prevent_self_approval', 'trigger', 'public', 'trg_prevent_self_approval_upd', 'profiles'),
-  ('profiles_prevent_self_approval', 'trigger', 'public', 'trg_prevent_self_approval_ins', 'profiles')
+  ('profiles_prevent_self_approval', 'trigger', 'public', 'trg_prevent_self_approval_ins', 'profiles'),
+  ('claim_nfe_efetivacao_lock', 'function', 'public', 'claim_nfe_efetivacao_lock', ''),
+  ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2657,7 +2661,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_sync_retry_kick_perdido', 'rls_policy', 'public', 'fin_sync_kick_retry_select_staff', 'fin_sync_kick_retry'),
   ('profiles_prevent_self_approval', 'function', 'public', 'prevent_self_approval', ''),
   ('profiles_prevent_self_approval', 'trigger', 'public', 'trg_prevent_self_approval_upd', 'profiles'),
-  ('profiles_prevent_self_approval', 'trigger', 'public', 'trg_prevent_self_approval_ins', 'profiles')
+  ('profiles_prevent_self_approval', 'trigger', 'public', 'trg_prevent_self_approval_ins', 'profiles'),
+  ('claim_nfe_efetivacao_lock', 'function', 'public', 'claim_nfe_efetivacao_lock', ''),
+  ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', '')
 )
 SELECT
   e.migration,

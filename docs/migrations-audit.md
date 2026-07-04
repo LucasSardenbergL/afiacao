@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **328** custom migrations totais
-- **1131** objetos esperados (criados por estas migrations)
+- **330** custom migrations totais
+- **1133** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 324
+  - `function`: 326
   - `rls_policy`: 249
   - `index`: 200
   - `table`: 123
@@ -2774,6 +2774,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.prevent_self_approval` | — |
 | `trigger` | `public.trg_prevent_self_approval_upd` | `profiles` |
 | `trigger` | `public.trg_prevent_self_approval_ins` | `profiles` |
+
+### `20260704130000_claim_nfe_efetivacao_lock.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.claim_nfe_efetivacao_lock` | — |
+
+### `20260704160000_fin_sync_watchdog_retry_sem_efeito.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_check` | — |
 
 ## Próximos passos por status
 
