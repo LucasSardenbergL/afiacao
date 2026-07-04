@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { frescorEstoque, interpretarRespostaSyncEstoque } from '../shared';
+import { edgeSyncOk, frescorEstoque, resumoSyncOmie } from '../shared';
 
 // Âncora fixa pra não depender do relógio da máquina.
 const AGORA = new Date('2026-07-02T20:00:00-03:00');
@@ -32,37 +32,59 @@ describe('frescorEstoque — badge de frescor do snapshot de estoque', () => {
   });
 });
 
-describe('interpretarRespostaSyncEstoque — toast do botão "Sincronizar estoque"', () => {
-  it('sucesso limpo → success com contagem e duração', () => {
-    const r = interpretarRespostaSyncEstoque({ ok: true, sincronizados: 448, nao_encontrados: 0, erros_upsert: 0, total_skus_esperados: 448, duracao_ms: 74_200 });
-    expect(r.tone).toBe('success');
-    expect(r.message).toBe('Estoque sincronizado: 448 SKUs atualizados em 74s');
+// O botão dispara as 2 edges via supabase.functions.invoke, que devolve {data, error}. Uma edge só
+// contou como sucesso se o invoke NÃO falhou (rede/HTTP) E o corpo trouxe {ok:true}. HTTP 200 com
+// {ok:false}/{error} é falha LÓGICA — não pode virar sucesso (senão o toast mente: "sincronizado"
+// quando não foi). Ambas as edges (omie-sync-estoque / omie-sync-status-produtos) retornam {ok}.
+describe('edgeSyncOk — sucesso real de uma edge de sync', () => {
+  it('invoke ok + corpo {ok:true} → true', () => {
+    expect(edgeSyncOk({ status: 'fulfilled', value: { data: { ok: true }, error: null } })).toBe(true);
   });
 
-  it('sucesso com SKUs não encontrados no Omie → success, mas diz quantos ficaram de fora', () => {
-    const r = interpretarRespostaSyncEstoque({ ok: true, sincronizados: 440, nao_encontrados: 8, erros_upsert: 0, total_skus_esperados: 448, duracao_ms: 60_000 });
-    expect(r.tone).toBe('success');
-    expect(r.message).toBe('Estoque sincronizado: 440 SKUs atualizados em 60s (8 não encontrados no Omie)');
+  it('HTTP 200 mas corpo {ok:false} → false (falha lógica NÃO vira sucesso)', () => {
+    expect(edgeSyncOk({ status: 'fulfilled', value: { data: { ok: false, error: 'x' }, error: null } })).toBe(false);
   });
 
-  it('erros de gravação → warning (sincronizou parcial, não mascarar)', () => {
-    const r = interpretarRespostaSyncEstoque({ ok: true, sincronizados: 400, nao_encontrados: 0, erros_upsert: 48, total_skus_esperados: 448, duracao_ms: 80_000 });
+  it('corpo {error} sem ok (erro de validação da edge) → false', () => {
+    expect(edgeSyncOk({ status: 'fulfilled', value: { data: { error: 'empresa inválida' }, error: null } })).toBe(false);
+  });
+
+  it('erro do invoke (rede/HTTP) → false, mesmo que data tenha vindo', () => {
+    expect(edgeSyncOk({ status: 'fulfilled', value: { data: { ok: true }, error: { message: 'network' } } })).toBe(false);
+  });
+
+  it('promessa rejeitada → false', () => {
+    expect(edgeSyncOk({ status: 'rejected' })).toBe(false);
+  });
+
+  it('data null/ausente → false', () => {
+    expect(edgeSyncOk({ status: 'fulfilled', value: { data: null, error: null } })).toBe(false);
+  });
+});
+
+// O botão "Sincronizar Omie" dispara DUAS edges (saldo: omie-sync-estoque · status ativo/inativo:
+// omie-sync-status-produtos) em paralelo. resumoSyncOmie agrega o toast — falha parcial NÃO vira
+// sucesso, e o sucesso lembra de recalcular (a sync não mexe em pedido já gerado).
+describe('resumoSyncOmie — toast agregado das 2 syncs', () => {
+  it('ambas OK → success e lembra de recalcular', () => {
+    const r = resumoSyncOmie(true, true);
+    expect(r.tone).toBe('success');
+    expect(r.message).toMatch(/recalcul/i);
+  });
+
+  it('ambas falham → error (nunca sucesso)', () => {
+    expect(resumoSyncOmie(false, false).tone).toBe('error');
+  });
+
+  it('só o estoque falha → warning citando estoque', () => {
+    const r = resumoSyncOmie(false, true);
     expect(r.tone).toBe('warning');
-    expect(r.message).toBe('Estoque sincronizado com ressalvas: 400 SKUs atualizados, 48 erro(s) de gravação');
+    expect(r.message).toMatch(/estoque/i);
   });
 
-  it('nenhum SKU habilitado (early-return da edge) → info com a mensagem da edge', () => {
-    const r = interpretarRespostaSyncEstoque({ ok: true, total_skus_esperados: 0, mensagem: 'Nenhum SKU habilitado, nada a sincronizar.' });
-    expect(r.tone).toBe('info');
-    expect(r.message).toBe('Nenhum SKU habilitado, nada a sincronizar.');
-  });
-
-  it('resposta não-ok ou vazia → error (nunca fingir sucesso)', () => {
-    expect(interpretarRespostaSyncEstoque({ ok: false, error: 'Erro lendo sku_parametros: timeout' })).toEqual({
-      tone: 'error',
-      message: 'Sync de estoque falhou: Erro lendo sku_parametros: timeout',
-    });
-    expect(interpretarRespostaSyncEstoque(null)).toEqual({ tone: 'error', message: 'Sync de estoque falhou: resposta vazia da edge' });
-    expect(interpretarRespostaSyncEstoque(undefined)).toEqual({ tone: 'error', message: 'Sync de estoque falhou: resposta vazia da edge' });
+  it('só o status falha → warning citando status', () => {
+    const r = resumoSyncOmie(true, false);
+    expect(r.tone).toBe('warning');
+    expect(r.message).toMatch(/status/i);
   });
 });

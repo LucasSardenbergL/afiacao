@@ -10,6 +10,11 @@ import { PedidoSugerido, PedidoItem, CondicaoPagamento } from './types';
 import { aprovarEDisparar } from './aprovar-disparar';
 import { montarUpdateItem, podeEditarPrecoPedido, precoEditValido } from './preco-edit';
 import { quantidadeCompraInteira } from '@/lib/reposicao/compras-otimizador-helpers';
+import {
+  codigosInativosOmie,
+  type OmieProductAtivoRow,
+  type SkuStatusAtivoRow,
+} from '@/lib/reposicao/disparo-gate-helpers';
 
 export type Linha = PedidoItem & { _qtd: number; _preco: number; _valor: number };
 
@@ -75,9 +80,31 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
         minMap.set(String(p.sku_codigo_omie), Number(p.estoque_minimo ?? 0));
       });
 
+      // Status ativo/inativo no Omie (2 fontes, mesma semântica/fonte da trava do disparo em
+      // disparo-gate-helpers): espelho omie_products.ativo + saída direta sku_status_omie.ativo_no_omie.
+      // Marca o item que ficou inativo DEPOIS da geração (o pedido é snapshot; a exibição não filtra).
+      // Falha da query degrada em silêncio (sem selo) — a barreira money-path é a trava do disparo.
+      const [opRes, ssRes] = await Promise.all([
+        supabase
+          .from('omie_products')
+          .select('omie_codigo_produto, ativo')
+          .eq('account', pedido.empresa.toLowerCase())
+          .in('omie_codigo_produto', skuCodigos),
+        supabase
+          .from('sku_status_omie')
+          .select('sku_codigo_omie, ativo_no_omie')
+          .eq('empresa', pedido.empresa)
+          .in('sku_codigo_omie', skuCodigos.map(String)),
+      ]);
+      const inativos = codigosInativosOmie(
+        (opRes.data ?? []) as OmieProductAtivoRow[],
+        (ssRes.data ?? []) as SkuStatusAtivoRow[],
+      );
+
       return baseItens.map((it) => ({
         ...it,
         estoque_minimo: minMap.get(String(it.sku_codigo_omie)) ?? 0,
+        inativo_no_omie: inativos.has(Number(it.sku_codigo_omie)),
       })) as PedidoItem[];
     },
     enabled: !!pedido && open,

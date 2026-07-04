@@ -99,41 +99,40 @@ export function frescorEstoque(
   return { tone, label };
 }
 
-// Resumo devolvido pela edge omie-sync-estoque (contagens; as listas ficam de fora).
-export interface RespostaSyncEstoque {
-  ok?: boolean;
-  sincronizados?: number | null;
-  nao_encontrados?: number | null;
-  erros_upsert?: number | null;
-  total_skus_esperados?: number | null;
-  duracao_ms?: number | null;
-  mensagem?: string | null;
-  error?: string | null;
+// Uma edge de sync (omie-sync-estoque / omie-sync-status-produtos), chamada via
+// supabase.functions.invoke dentro de Promise.allSettled, só conta como sucesso se o invoke NÃO
+// falhou (rede/HTTP) E o corpo trouxe {ok:true}. HTTP 200 com {ok:false}/{error} é falha LÓGICA da
+// edge — não pode virar sucesso, senão o toast mente ("sincronizado" quando não foi).
+export function edgeSyncOk(
+  settled: { status: 'fulfilled' | 'rejected'; value?: { data?: unknown; error?: unknown } | null },
+): boolean {
+  if (settled.status !== 'fulfilled' || !settled.value) return false;
+  if (settled.value.error) return false;
+  return (settled.value.data as { ok?: boolean } | null)?.ok === true;
 }
 
-// Traduz o resumo num toast. Erro de gravação parcial vira warning (não mascarar);
-// resposta vazia/não-ok NUNCA vira sucesso.
-export function interpretarRespostaSyncEstoque(
-  data: RespostaSyncEstoque | null | undefined,
-): { tone: 'success' | 'warning' | 'error' | 'info'; message: string } {
-  if (!data || data.ok !== true) {
-    return { tone: 'error', message: `Sync de estoque falhou: ${data?.error ?? 'resposta vazia da edge'}` };
-  }
-  if ((data.total_skus_esperados ?? 0) === 0) {
-    return { tone: 'info', message: data.mensagem ?? 'Nenhum SKU habilitado, nada a sincronizar.' };
-  }
-  const sincronizados = data.sincronizados ?? 0;
-  const errosUpsert = data.erros_upsert ?? 0;
-  if (errosUpsert > 0) {
+// O botão "Sincronizar Omie" dispara DUAS edges em paralelo: SALDO (omie-sync-estoque) e STATUS
+// ativo/inativo (omie-sync-status-produtos). Antes só puxava saldo — por isso um produto inativado
+// no Omie seguia no pedido (o status nunca vinha). Agrega o toast: falha parcial NUNCA vira sucesso;
+// o sucesso lembra de recalcular (a sync atualiza o snapshot, mas NÃO mexe em pedido já gerado —
+// só "Recalcular sugestões" regenera o ciclo sem os inativos).
+export function resumoSyncOmie(
+  estoqueOk: boolean,
+  statusOk: boolean,
+): { tone: 'success' | 'warning' | 'error'; message: string } {
+  if (estoqueOk && statusOk) {
     return {
-      tone: 'warning',
-      message: `Estoque sincronizado com ressalvas: ${sincronizados} SKUs atualizados, ${errosUpsert} erro(s) de gravação`,
+      tone: 'success',
+      message: 'Estoque e status sincronizados do Omie. Recalcule as sugestões para aplicar aos pedidos pendentes.',
     };
   }
-  const segundos = Math.round((data.duracao_ms ?? 0) / 1000);
-  const naoEncontrados = data.nao_encontrados ?? 0;
-  const sufixo = naoEncontrados > 0 ? ` (${naoEncontrados} não encontrados no Omie)` : '';
-  return { tone: 'success', message: `Estoque sincronizado: ${sincronizados} SKUs atualizados em ${segundos}s${sufixo}` };
+  if (!estoqueOk && !statusOk) {
+    return { tone: 'error', message: 'Falha ao sincronizar estoque e status do Omie. Tente novamente.' };
+  }
+  if (!estoqueOk) {
+    return { tone: 'warning', message: 'Status de produtos sincronizado, mas o estoque do Omie falhou. Tente novamente.' };
+  }
+  return { tone: 'warning', message: 'Estoque sincronizado, mas o status de produtos do Omie falhou. Tente novamente.' };
 }
 
 /* ─── Conciliação inline (Fase 3 · 3b) ─── */

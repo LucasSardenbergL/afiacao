@@ -129,3 +129,79 @@ export function deveBloquearPorMinimoFaturamento(
 export function overridePermitidoNoModo(pedidoId: number | null | undefined): boolean {
   return pedidoId != null && Number.isFinite(pedidoId) && pedidoId > 0;
 }
+
+// ── Gate de produto ATIVO no disparo (money-path) ──
+// Produto desativado no Omie NUNCA pode ir num pedido de compra ao fornecedor (par do guard de
+// custo/qtde 0). Espelha a semântica do gate de ativo de VENDAS (omie-vendas-sync:assertOmie-
+// ItemsAtivos), mas cruza DUAS fontes (Codex 2026-07-04): o espelho `omie_products.ativo` é
+// best-effort e pode ficar stale se o UPDATE falhar sem falhar a edge omie-sync-status-produtos;
+// `sku_status_omie.ativo_no_omie` é a saída DIRETA da sync de status. SÓ `false` explícito
+// bloqueia (null/ausente/true libera — o espelho é ~50-75% inativo; travar por ausência barraria
+// pedido legítimo). Código não-finito ou <= 0 é ignorado (código Omie é bigint positivo; cobre o
+// "finite positive SKU-code guard" do Codex). O gate roda ANTES do portal/Omie (mesmo ponto do
+// guard de custo); fail-closed em ERRO de query é do CALLER (edge): sem confirmar status, não
+// dispara. ⚠️ Espelhado VERBATIM em supabase/functions/disparar-pedidos-aprovados/index.ts —
+// mudou aqui, mudou lá.
+
+export interface OmieProductAtivoRow {
+  omie_codigo_produto: number | string;
+  ativo: boolean | null;
+}
+export interface SkuStatusAtivoRow {
+  sku_codigo_omie: number | string;
+  ativo_no_omie: boolean | null;
+}
+export interface ItemComSku {
+  sku_codigo_omie?: number | string;
+  sku_descricao?: string | null;
+}
+
+/** Códigos (omie_codigo_produto) marcados inativos por QUALQUER das 2 fontes. SÓ `false`
+ *  explícito entra; null/ausente/true não (espelho desatualizado ≠ desativação). Código não-finito
+ *  ou <= 0 é ignorado. */
+export function codigosInativosOmie(
+  omieProducts: OmieProductAtivoRow[],
+  skuStatus: SkuStatusAtivoRow[],
+): Set<number> {
+  const inativos = new Set<number>();
+  for (const r of omieProducts ?? []) {
+    if (r?.ativo === false) {
+      const c = Number(r.omie_codigo_produto);
+      if (Number.isFinite(c) && c > 0) inativos.add(c);
+    }
+  }
+  for (const r of skuStatus ?? []) {
+    if (r?.ativo_no_omie === false) {
+      const c = Number(r.sku_codigo_omie);
+      if (Number.isFinite(c) && c > 0) inativos.add(c);
+    }
+  }
+  return inativos;
+}
+
+/** Itens do pedido cujo SKU está no set de inativos, na ordem original, dedupe por código.
+ *  Código não-finito/<=0 é ignorado (outra validação trata payload inválido). */
+export function itensDoPedidoInativos<T extends ItemComSku>(
+  items: T[],
+  inativos: Set<number>,
+): T[] {
+  const vistos = new Set<number>();
+  const out: T[] = [];
+  for (const it of items ?? []) {
+    const cod = Number(it?.sku_codigo_omie);
+    if (!Number.isFinite(cod) || cod <= 0 || vistos.has(cod) || !inativos.has(cod)) continue;
+    vistos.add(cod);
+    out.push(it);
+  }
+  return out;
+}
+
+/** Mensagem pt-BR de rejeição (mesmo tom do gate de vendas). */
+export function itensInativosMessage(itens: ItemComSku[]): string {
+  const nomes = (itens ?? [])
+    .map((it) =>
+      it.sku_descricao || (it.sku_codigo_omie != null ? String(it.sku_codigo_omie) : "item sem nome"),
+    )
+    .join(", ");
+  return `Pedido rejeitado (produto desativado no Omie): ${nomes}. Reative o produto no Omie ou remova-o do pedido.`;
+}

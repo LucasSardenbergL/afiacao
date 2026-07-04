@@ -651,6 +651,104 @@ async function iniciarEnvioPortalSayerlack(
   return { state: "queued", accepted: true };
 }
 
+// ── Gate de produto ATIVO no disparo (money-path) ── ESPELHO VERBATIM de
+// src/lib/reposicao/disparo-gate-helpers.ts (codigosInativosOmie/itensDoPedidoInativos/
+// itensInativosMessage; Deno não importa de src/ — mudou lá, mudou aqui). Produto desativado no
+// Omie NUNCA pode ir num pedido de compra ao fornecedor (par do guard de custo/qtde 0). Cruza
+// DUAS fontes (Codex 2026-07-04): o espelho `omie_products.ativo` é best-effort e pode ficar
+// stale se o UPDATE falhar sem falhar a edge omie-sync-status-produtos; `sku_status_omie.
+// ativo_no_omie` é a saída DIRETA da sync de status. SÓ `false` explícito bloqueia (null/ausente/
+// true libera — espelho ~50-75% inativo; travar por ausência barraria pedido legítimo).
+// Fail-closed em ERRO de query E em empresa fora da allowlist (sem confirmar status, não dispara:
+// PO de produto desativado não é recuperável; disparo atrasado é). Roda ANTES do portal/Omie.
+const ACCOUNT_POR_EMPRESA: Record<string, string> = {
+  OBEN: "oben",
+  COLACOR: "colacor",
+  COLACOR_SC: "colacor_sc",
+};
+
+async function assertItensAtivosNoOmie(
+  db: SupabaseClient,
+  empresa: string,
+  items: ItemRow[],
+): Promise<void> {
+  // Códigos positivos únicos (código Omie é bigint > 0; NaN/<=0 é payload inválido — outra val trata).
+  const codigos = Array.from(
+    new Set(
+      (items ?? [])
+        .map((it) => Number(it?.sku_codigo_omie))
+        .filter((c) => Number.isFinite(c) && c > 0),
+    ),
+  );
+  if (codigos.length === 0) return;
+
+  // Account allowlist — fail-closed. omie_products.account = lower(empresa) no ecossistema de
+  // reposição. Empresa fora da allowlist ⇒ não sei validar ⇒ não disparo (senão a query com
+  // account errado acha "ausente" e liberaria tudo — gate inerte).
+  const account = ACCOUNT_POR_EMPRESA[empresa];
+  if (!account) {
+    throw new Error(
+      `Pedido rejeitado: empresa '${empresa}' sem mapeamento de conta para validar produtos ativos.`,
+    );
+  }
+
+  // Fonte 1: espelho omie_products.ativo (por account + omie_codigo_produto bigint).
+  const { data: opRows, error: opErr } = await db
+    .from("omie_products")
+    .select("omie_codigo_produto, ativo")
+    .eq("account", account)
+    .in("omie_codigo_produto", codigos);
+  if (opErr) {
+    throw new Error(
+      `Pedido rejeitado: falha ao validar produtos ativos no Omie (${opErr.message}). Tente novamente.`,
+    );
+  }
+
+  // Fonte 2: sku_status_omie.ativo_no_omie (saída direta da sync; por empresa + sku_codigo_omie
+  // text). Pega inativação fresca que o espelho omie_products possa ter perdido.
+  const { data: ssRows, error: ssErr } = await db
+    .from("sku_status_omie")
+    .select("sku_codigo_omie, ativo_no_omie")
+    .eq("empresa", empresa)
+    .in("sku_codigo_omie", codigos.map(String));
+  if (ssErr) {
+    throw new Error(
+      `Pedido rejeitado: falha ao validar status de produtos no Omie (${ssErr.message}). Tente novamente.`,
+    );
+  }
+
+  // União: SÓ false explícito marca inativo.
+  const inativos = new Set<number>();
+  for (const r of (opRows ?? []) as Array<{ omie_codigo_produto: number | string; ativo: boolean | null }>) {
+    if (r.ativo === false) {
+      const c = Number(r.omie_codigo_produto);
+      if (Number.isFinite(c) && c > 0) inativos.add(c);
+    }
+  }
+  for (const r of (ssRows ?? []) as Array<{ sku_codigo_omie: number | string; ativo_no_omie: boolean | null }>) {
+    if (r.ativo_no_omie === false) {
+      const c = Number(r.sku_codigo_omie);
+      if (Number.isFinite(c) && c > 0) inativos.add(c);
+    }
+  }
+  if (inativos.size === 0) return;
+
+  // Itens do pedido barrados (dedupe, ordem preservada).
+  const vistos = new Set<number>();
+  const bloqueados: string[] = [];
+  for (const it of items) {
+    const cod = Number(it?.sku_codigo_omie);
+    if (!Number.isFinite(cod) || cod <= 0 || vistos.has(cod) || !inativos.has(cod)) continue;
+    vistos.add(cod);
+    bloqueados.push(it.sku_descricao || String(cod));
+  }
+  if (bloqueados.length > 0) {
+    throw new Error(
+      `Pedido rejeitado (produto desativado no Omie): ${bloqueados.join(", ")}. Reative o produto no Omie ou remova-o do pedido.`,
+    );
+  }
+}
+
 async function processarPedido(
   db: SupabaseClient,
   pedido: PedidoRow,
@@ -725,6 +823,12 @@ async function processarPedido(
         `SKU(s) com quantidade 0: ${lista}. Ajuste a quantidade ou remova o item antes de disparar.`,
       );
     }
+
+    // a.3 Guard de produto ATIVO (money-path): produto desativado no Omie não pode ir ao
+    // fornecedor. Roda ANTES do portal Sayerlack — senão o fornecedor recebe o PO antes de o
+    // Omie rejeitar o item (Codex 2026-07-04). Fail-closed (lança) em item inativo, erro de
+    // query ou empresa desconhecida.
+    await assertItensAtivosNoOmie(db, pedido.empresa, items as ItemRow[]);
 
     // a.2 [QTDE-INTEIRA] Persiste a quantidade INTEIRA (ceil) no banco ANTES do portal/Omie.
     // É a fonte da verdade: o portal Sayerlack deriva o custo de qtde_final, e em_transito/
