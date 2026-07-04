@@ -307,12 +307,9 @@ function extractPaiCodigo(item: unknown): number {
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  // AuthResult da casa (_shared/auth.ts): no erro já traz uma Response 401 pronta (com CORS) — reusar.
   const auth = await authorizeCronOrStaff(req);
-  if (!auth.ok) {
-    return new Response(JSON.stringify({ error: "unauthorized" }), {
-      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
+  if (!auth.ok) return auth.response;
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
