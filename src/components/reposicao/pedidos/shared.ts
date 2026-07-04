@@ -111,28 +111,34 @@ export function edgeSyncOk(
   return (settled.value.data as { ok?: boolean } | null)?.ok === true;
 }
 
-// O botão "Sincronizar Omie" dispara DUAS edges em paralelo: SALDO (omie-sync-estoque) e STATUS
-// ativo/inativo (omie-sync-status-produtos). Antes só puxava saldo — por isso um produto inativado
-// no Omie seguia no pedido (o status nunca vinha). Agrega o toast: falha parcial NUNCA vira sucesso;
-// o sucesso lembra de recalcular (a sync atualiza o snapshot, mas NÃO mexe em pedido já gerado —
-// só "Recalcular sugestões" regenera o ciclo sem os inativos).
-export function resumoSyncOmie(
+// Botão "Sincronizar e recalcular": dispara SALDO (omie-sync-estoque) + STATUS ativo/inativo
+// (omie-sync-status-produtos) em paralelo e, SÓ SE ambas deram certo, recalcula o ciclo. Se uma
+// sync falhar, NÃO recalcula (regenerar com saldo/status velho geraria pedido errado = money-path)
+// — o usuário reexecuta ou usa "Recalcular sugestões" à parte. `recalc` = null quando não recalculou.
+export function resumoSyncRecalc(
   estoqueOk: boolean,
   statusOk: boolean,
+  recalc: { ok: boolean; pedidos: number; erro?: string } | null,
 ): { tone: 'success' | 'warning' | 'error'; message: string } {
-  if (estoqueOk && statusOk) {
-    return {
-      tone: 'success',
-      message: 'Estoque e status sincronizados do Omie. Recalcule as sugestões para aplicar aos pedidos pendentes.',
-    };
-  }
   if (!estoqueOk && !statusOk) {
-    return { tone: 'error', message: 'Falha ao sincronizar estoque e status do Omie. Tente novamente.' };
+    return { tone: 'error', message: 'Falha ao sincronizar estoque e status do Omie. Não recalculei — tente novamente.' };
   }
   if (!estoqueOk) {
-    return { tone: 'warning', message: 'Status de produtos sincronizado, mas o estoque do Omie falhou. Tente novamente.' };
+    return { tone: 'warning', message: 'Status sincronizado, mas o estoque do Omie falhou. Não recalculei — tente novamente.' };
   }
-  return { tone: 'warning', message: 'Estoque sincronizado, mas o status de produtos do Omie falhou. Tente novamente.' };
+  if (!statusOk) {
+    return { tone: 'warning', message: 'Estoque sincronizado, mas o status do Omie falhou. Não recalculei — tente novamente.' };
+  }
+  if (!recalc || !recalc.ok) {
+    // Preserva o motivo da RPC (lock/permissão/timeout/bug) — não achatar num genérico (Codex).
+    const detalhe = recalc?.erro ? ` (${recalc.erro})` : '';
+    return { tone: 'warning', message: `Omie sincronizado, mas o recálculo das sugestões falhou${detalhe}. Use "Recalcular sugestões".` };
+  }
+  const n = recalc.pedidos;
+  return {
+    tone: 'success',
+    message: `Omie sincronizado e sugestões recalculadas (${n} ${n === 1 ? 'pedido' : 'pedidos'}). Confira os itens antes de aprovar.`,
+  };
 }
 
 /* ─── Conciliação inline (Fase 3 · 3b) ─── */
