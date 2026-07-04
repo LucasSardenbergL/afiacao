@@ -241,11 +241,11 @@ BEGIN
   FROM unida u;
 
   INSERT INTO pcp_bom_regras (linha_modelo, papel, metodo, coef, amostras, dispersao)
-  SELECT o.linha_modelo, 'abrasivo_base', 'area_nominal', 1.0, count(*), NULL
+  SELECT o.linha_modelo, 'abrasivo_base', 'area_nominal', 1.0, count(*), NULL::numeric
   FROM tmp_obs o WHERE o.papel = 'abrasivo_base' AND o.unidade = 'M2'
   GROUP BY o.linha_modelo
   UNION ALL
-  SELECT '*', 'abrasivo_base', 'area_nominal', 1.0, count(*), NULL
+  SELECT '*', 'abrasivo_base', 'area_nominal', 1.0, count(*), NULL::numeric
   FROM tmp_obs o WHERE o.papel = 'abrasivo_base' AND o.unidade = 'M2';
 
   SELECT count(*) INTO v_regras FROM pcp_bom_regras;
@@ -362,9 +362,13 @@ CREATE OR REPLACE FUNCTION public.fn_pcp_dispor_excecao(
   p_pai bigint, p_papel text, p_componente bigint, p_disposicao text, p_nota text DEFAULT NULL)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-  IF NOT (has_role((SELECT auth.uid()), 'master'::app_role)
-       OR has_role((SELECT auth.uid()), 'employee'::app_role)
-       OR current_user IN ('postgres','service_role')) THEN
+  -- Gate de staff. auth.uid() lê o GUC do JWT e funciona sob SECURITY DEFINER;
+  -- current_user NÃO serve (em SECURITY DEFINER é o OWNER=postgres → furaria o gate, deixando
+  -- QUALQUER authenticated dispor). auth.uid() NULL = sem JWT (postgres no SQL Editor / service_role):
+  -- chamada confiável, permitida. authenticated COM uid não-staff é barrado.
+  IF (SELECT auth.uid()) IS NOT NULL
+     AND NOT (has_role((SELECT auth.uid()), 'master'::app_role)
+           OR has_role((SELECT auth.uid()), 'employee'::app_role)) THEN
     RAISE EXCEPTION 'fn_pcp_dispor_excecao: apenas staff';
   END IF;
   UPDATE pcp_bom_excecoes
