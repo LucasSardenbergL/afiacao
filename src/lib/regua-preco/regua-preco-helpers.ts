@@ -5,6 +5,10 @@ import {
   ReguaPrecoResult,
   DISCLAIMERS_FIXOS,
 } from './types';
+import { pisoComPrazo } from './prazo-helpers';
+
+/** Fração → "17,75%" (pt-BR) para os recibos. */
+const fmtPctReais = (frac: number) => `${(frac * 100).toFixed(2).replace('.', ',')}%`;
 
 /** Percentil R-7 (interpolação linear) — casa com percentile_cont. Filtra não-finitos; null se vazio ou p∉[0,1]. */
 export function percentil(xs: number[], p: number): number | null {
@@ -70,7 +74,7 @@ const capDe = (c: Confianca, caps: { alta: number; media: number }) =>
   c === 'alta' ? caps.alta : c === 'media' ? caps.media : 0;
 
 export function avaliarReguaPreco(input: ReguaPrecoInput): ReguaPrecoResult {
-  const { precoAtual, cmc, cmcConfiavel, aliquotaVenda, precosCliente, comparaveis, caps } = input;
+  const { precoAtual, cmc, cmcConfiavel, aliquotaVenda, precosCliente, comparaveis, caps, prazoDias, custoCapitalAnual } = input;
   const disclaimers = [...DISCLAIMERS_FIXOS];
   const recibos: string[] = [];
   const reasonCodes: string[] = [];
@@ -95,7 +99,31 @@ export function avaliarReguaPreco(input: ReguaPrecoInput): ReguaPrecoResult {
     return out({});
   }
 
-  const pisoMC = calcPisoMC(cmc, aliquotaVenda);
+  // Piso à vista; ajustado ao custo do prazo (F2) quando há condição a prazo + taxa + cmc CONFIÁVEL.
+  // O piso é PISO: o early-return `abaixoPiso` (abaixo) vem ANTES de qualquer cap → o cap nunca
+  // mascara o piso (Codex P1-D5). Ajuste só sobre cmc confiável (proxy compõe incerteza — degrada).
+  let pisoMC = calcPisoMC(cmc, aliquotaVenda);
+  let prazoAplicado = false;
+  if (
+    pisoMC != null &&
+    cmc != null &&
+    cmcConfiavel &&
+    prazoDias != null &&
+    prazoDias.length > 0 &&
+    custoCapitalAnual != null
+  ) {
+    const adj = pisoComPrazo(cmc, aliquotaVenda, prazoDias, custoCapitalAnual);
+    if (adj != null) {
+      pisoMC = adj.piso;
+      prazoAplicado = true;
+      recibos.push(
+        `Piso inclui o custo do prazo: ${prazoDias.join('/')} dias (${fmtPctReais(custoCapitalAnual)} a.a.).`,
+      );
+      reasonCodes.push('piso_ajustado_prazo');
+    }
+  }
+  if (!prazoAplicado) disclaimers.push('Prazo de recebimento não considerado.');
+
   const abaixoPiso = pisoMC != null && precoAtual < pisoMC;
 
   if (abaixoPiso) {
