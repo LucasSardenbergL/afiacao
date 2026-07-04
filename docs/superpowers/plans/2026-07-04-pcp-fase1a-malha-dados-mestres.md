@@ -83,11 +83,15 @@ ALTER TABLE public.pcp_malha_staging ENABLE ROW LEVEL SECURITY;
 
 -- Leitura: staff (master|employee). Escrita: NENHUMA policy p/ authenticated —
 -- quem escreve é a edge com service_role (bypassa RLS; gate na fronteira = authorizeCronOrStaff).
+-- DROP IF EXISTS antes de cada policy: re-colar no SQL Editor é ESPERADO (database.md §re-aplicação)
+-- e CREATE POLICY não tem IF NOT EXISTS — sem o guard, a 2ª colagem dá ROLLBACK na transação inteira.
+DROP POLICY IF EXISTS pcp_run_logs_select_staff ON public.pcp_run_logs;
 CREATE POLICY pcp_run_logs_select_staff ON public.pcp_run_logs
   FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role)
       OR has_role((SELECT auth.uid()), 'employee'::app_role));
 
+DROP POLICY IF EXISTS pcp_malha_staging_select_staff ON public.pcp_malha_staging;
 CREATE POLICY pcp_malha_staging_select_staff ON public.pcp_malha_staging
   FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role)
@@ -146,7 +150,7 @@ trap cleanup EXIT
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
-Pq() { P -tA "$@"; }
+Pq() { P -tA -q "$@"; }  # -q OBRIGATÓRIO: sem ele, "SET ...; SELECT ..." vaza linhas SET na captura
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
@@ -171,8 +175,9 @@ GRANT EXECUTE ON FUNCTION public.has_role(uuid, app_role) TO authenticated, anon
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 SQL
 
-echo "═══ ZONA 2: aplica o SQL REAL do M1 ═══"
+echo "═══ ZONA 2: aplica o SQL REAL do M1 (2×: re-colar no SQL Editor é esperado) ═══"
 P -q -f "$MIG"
+if P -q -f "$MIG" >/dev/null 2>&1; then ok "re-aplicação idempotente (2ª colagem não quebra)"; else bad "re-aplicação QUEBROU (policy sem DROP IF EXISTS?)"; fi
 
 echo "═══ ZONA 3: fixtures (1 run + 1 staging; 1 user staff + 1 não-staff) ═══"
 P -q <<'SQL'
@@ -189,6 +194,8 @@ eq "RLS ligado em pcp_run_logs"      "$(Pq -c "SELECT relrowsecurity FROM pg_cla
 eq "anon SEM grant de SELECT" "$(Pq -c "SELECT has_table_privilege('anon','public.pcp_malha_staging','SELECT')")" "f"
 eq "staff (employee) vê staging" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; SELECT count(*) FROM public.pcp_malha_staging")" "1"
 eq "não-staff vê 0 (fail-closed)" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000bbbb'; SELECT count(*) FROM public.pcp_malha_staging")" "0"
+eq "staff vê run_logs" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; SELECT count(*) FROM public.pcp_run_logs")" "1"
+eq "não-staff vê 0 em run_logs (fail-closed)" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000bbbb'; SELECT count(*) FROM public.pcp_run_logs")" "0"
 INS_ERR=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES (1,'{}');" 2>&1 || true)
 case "$INS_ERR" in *"permission denied"*|*"row-level security"*) ok "INSERT de authenticated bloqueado";; *) bad "INSERT de authenticated NÃO bloqueado: $INS_ERR";; esac
 
@@ -205,7 +212,7 @@ echo "RESULTADO: PASS=$PASS FAIL=$FAIL"
 - [ ] **Step 2.2: Rodar a prova (exit code SEM pipe)**
 
 Run: `bash db/test-pcp-f1a-m1-staging.sh > /tmp/t-m1.log 2>&1; echo "exit=$?"`
-Expected: `exit=0`; no log, `PASS=7 FAIL=0` (5 asserts de ZONA 4 + INSERT bloqueado + falsificação).
+Expected: `exit=0`; no log, `PASS=10 FAIL=0` (re-aplicação idempotente + 7 asserts de ZONA 4 + INSERT bloqueado + falsificação).
 
 - [ ] **Step 2.3: shellcheck no script novo**
 
@@ -878,15 +885,21 @@ ALTER TABLE public.pcp_itens        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pcp_bom_regras   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pcp_bom_excecoes ENABLE ROW LEVEL SECURITY;
 
+-- DROP IF EXISTS antes de cada policy: re-colar no SQL Editor é esperado (mesma regra do M1).
+DROP POLICY IF EXISTS pcp_config_select_staff ON public.pcp_config;
 CREATE POLICY pcp_config_select_staff ON public.pcp_config FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role) OR has_role((SELECT auth.uid()), 'employee'::app_role));
+DROP POLICY IF EXISTS pcp_itens_select_staff ON public.pcp_itens;
 CREATE POLICY pcp_itens_select_staff ON public.pcp_itens FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role) OR has_role((SELECT auth.uid()), 'employee'::app_role));
+DROP POLICY IF EXISTS pcp_bom_regras_select_staff ON public.pcp_bom_regras;
 CREATE POLICY pcp_bom_regras_select_staff ON public.pcp_bom_regras FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role) OR has_role((SELECT auth.uid()), 'employee'::app_role));
+DROP POLICY IF EXISTS pcp_bom_excecoes_select_staff ON public.pcp_bom_excecoes;
 CREATE POLICY pcp_bom_excecoes_select_staff ON public.pcp_bom_excecoes FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role) OR has_role((SELECT auth.uid()), 'employee'::app_role));
 -- founder marca disposição pela UI futura; hoje SQL Editor. Policy de UPDATE restrita a staff:
+DROP POLICY IF EXISTS pcp_bom_excecoes_update_staff ON public.pcp_bom_excecoes;
 CREATE POLICY pcp_bom_excecoes_update_staff ON public.pcp_bom_excecoes FOR UPDATE TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role) OR has_role((SELECT auth.uid()), 'employee'::app_role))
   WITH CHECK (has_role((SELECT auth.uid()), 'master'::app_role) OR has_role((SELECT auth.uid()), 'employee'::app_role));
@@ -967,7 +980,7 @@ trap cleanup EXIT
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
-Pq() { P -tA "$@"; }
+Pq() { P -tA -q "$@"; }  # -q OBRIGATÓRIO: sem ele, "SET ...; SELECT ..." vaza linhas SET na captura
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
@@ -1094,7 +1107,7 @@ trap cleanup EXIT
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
-Pq() { P -tA "$@"; }
+Pq() { P -tA -q "$@"; }  # -q OBRIGATÓRIO: sem ele, "SET ...; SELECT ..." vaza linhas SET na captura
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
@@ -1122,9 +1135,10 @@ CREATE TABLE public.omie_products (omie_codigo_produto bigint PRIMARY KEY, codig
 INSERT INTO public.user_roles VALUES ('00000000-0000-0000-0000-00000000aaaa','employee');
 SQL
 
-echo "═══ ZONA 2: aplica M1 + M2 REAIS ═══"
+echo "═══ ZONA 2: aplica M1 + M2 REAIS (M2 2×: re-colar no SQL Editor é esperado) ═══"
 P -q -f "$REPO_ROOT/db/pcp-f1a-m1-staging.sql"
 P -q -f "$REPO_ROOT/db/pcp-f1a-m2-nucleo.sql"
+if P -q -f "$REPO_ROOT/db/pcp-f1a-m2-nucleo.sql" >/dev/null 2>&1; then ok "M2 re-aplicável (2ª colagem não quebra)"; else bad "M2 re-aplicação QUEBROU"; fi
 
 echo "═══ ZONA 3: fixtures — produtos + 3 malhas KA169 (1 REAL do print + 2 sintéticas coerentes) ═══"
 P -q <<'SQL'
@@ -1237,7 +1251,7 @@ echo "RESULTADO: PASS=$PASS FAIL=$FAIL"
 - [ ] **Step 7.2: Rodar**
 
 Run: `bash db/test-pcp-f1a-destilacao.sh > /tmp/t-dest.log 2>&1; echo "exit=$?"`
-Expected: `exit=0`, `PASS=28 FAIL=0` (8 da ZONA 4 + 3 da falsificação + 17 dos endurecimentos do painel: números tolerantes, papéis ambíguos, regra instável, sem_base_cola, unidade errada, matriz RLS, governança da disposição). Falhas aqui significam bug na destilação/validação (os números da fixture são FATOS do print) — corrigir o M2, nunca a fixture.
+Expected: `exit=0`, `PASS=29 FAIL=0` (re-aplicação do M2 + 8 da ZONA 4 + 3 da falsificação + 17 dos endurecimentos do painel: números tolerantes, papéis ambíguos, regra instável, sem_base_cola, unidade errada, matriz RLS, governança da disposição). Falhas aqui significam bug na destilação/validação (os números da fixture são FATOS do print) — corrigir o M2, nunca a fixture.
 
 - [ ] **Step 7.3: shellcheck + commit**
 
