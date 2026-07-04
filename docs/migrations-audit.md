@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **324** custom migrations totais
-- **1117** objetos esperados (criados por estas migrations)
+- **326** custom migrations totais
+- **1123** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 319
+  - `function`: 321
   - `rls_policy`: 248
-  - `index`: 199
+  - `index`: 200
   - `table`: 122
-  - `cron_job`: 111
-  - `trigger`: 59
+  - `cron_job`: 113
+  - `trigger`: 60
   - `view`: 55
   - `enum_value`: 4
 
@@ -2735,11 +2735,27 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `cron_job` | `cron.pedidos-programados-diario` | — |
 
+### `20260703120000_pedidos_programados_cron_fix.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.pedidos-programados-diario` | — |
+
 ### `20260703140000_trava_credito_gate_excecao_por_par.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.venda_gate_credito` | — |
+
+### `20260704070000_pedidos_programados_claim_processando.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pedidos_programados_watchdog_claims` | — |
+| `function` | `public.pp_bloqueia_cancel_com_claim` | — |
+| `index` | `public.uniq_sales_orders_pp_envio_account` | `sales_orders` |
+| `trigger` | `public.pp_guard_cancel_com_claim` | `pedidos_programados` |
+| `cron_job` | `cron.pedidos-programados-watchdog` | — |
 
 ## Próximos passos por status
 

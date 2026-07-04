@@ -51,7 +51,9 @@ export interface PedidoProgramadoEnvio {
   id: string;
   pedido_programado_id: string;
   data_envio: string;
-  status: 'agendado' | 'enviado' | 'erro' | 'cancelado';
+  // 'processando' = claim transitório do edge (migration 20260704070000): o runner é o
+  // dono do envio até o release; cancelamentos (CAS em agendado/erro) não o enxergam.
+  status: 'agendado' | 'processando' | 'enviado' | 'erro' | 'cancelado';
   erro_motivo: string | null;
   sales_orders_map: Record<string, string>;
   created_at: string;
@@ -306,30 +308,50 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
         .select('status, erro_motivo, sales_orders_map').eq('id', envioId).single();
       if (envErr) throw envErr;
       const envioAtual = envioRow as { status: string; erro_motivo: string | null; sales_orders_map: Record<string, string> | null };
-      // Incerteza-Omie persistida (marcador escrito pelo edge): o PV pode existir no ERP
-      // SEM omie_pedido_id gravado — o guard abaixo não o veria. Bloquear até resolver.
+      // Claim ativo (edge processando AGORA): o CAS abaixo já barraria, mas a mensagem
+      // dedicada explica o estado — e o watchdog devolve claim órfão pra 'erro' em ~15min.
+      if (envioAtual.status === 'processando') {
+        throw new Error(
+          'Este envio está sendo processado agora (claim do runner) — aguarde o resultado. Se travar, o watchdog o devolve para "erro" em ~15 min.',
+        );
+      }
+      // Incerteza-Omie persistida (marcador escrito pelo edge/watchdog): o PV pode existir
+      // no ERP SEM omie_pedido_id gravado — o guard abaixo não o veria. Bloquear até resolver.
       if (isOmieIncerto(envioAtual.erro_motivo)) {
         throw new Error(
           'Este envio falhou SEM confirmação do Omie — o pedido pode existir lá sem registro aqui. Confira no Omie (ou use "Enviar agora", que é idempotente) antes de cancelar.',
         );
       }
-      const mapa = envioAtual.sales_orders_map ?? {};
-      const salesOrderIds = Object.values(mapa);
-      if (salesOrderIds.length > 0) {
-        const { data: enviados, error: soErr } = await supabase
+      // PV real já criado? Vínculo AUTORITATIVO = coluna (UNIQUE, migration 20260704070000)
+      // ∪ sales_orders_map legado: a união cobre a janela de deploy em que o edge velho
+      // (que só escreve o map) ainda roda com a migration aplicada — e o caso de map
+      // perdido (write falhou) que só a coluna enxerga. Precisão > recall.
+      const idsDoMapa = Object.values(envioAtual.sales_orders_map ?? {});
+      const [porColuna, porMapa] = await Promise.all([
+        supabase
           .from('sales_orders')
           .select('id, account, omie_numero_pedido, omie_pedido_id')
-          .in('id', salesOrderIds)
-          .not('omie_pedido_id', 'is', null);
-        if (soErr) throw soErr;
-        if (enviados && enviados.length > 0) {
-          const detalhe = enviados
-            .map((s) => `${s.account} (PV ${s.omie_numero_pedido ?? s.omie_pedido_id})`)
-            .join(', ');
-          throw new Error(
-            `Envio já criou pedido no Omie: ${detalhe}. Cancele/exclua o pedido no Omie antes, ou use "Enviar agora" para completar o restante.`,
-          );
-        }
+          .eq('pedido_programado_envio_id', envioId)
+          .not('omie_pedido_id', 'is', null),
+        idsDoMapa.length > 0
+          ? supabase
+              .from('sales_orders')
+              .select('id, account, omie_numero_pedido, omie_pedido_id')
+              .in('id', idsDoMapa)
+              .not('omie_pedido_id', 'is', null)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (porColuna.error) throw porColuna.error;
+      if (porMapa.error) throw porMapa.error;
+      const enviados = [...(porColuna.data ?? []), ...(porMapa.data ?? [])]
+        .filter((s, i, arr) => arr.findIndex((x) => x.id === s.id) === i);
+      if (enviados.length > 0) {
+        const detalhe = enviados
+          .map((s) => `${s.account} (PV ${s.omie_numero_pedido ?? s.omie_pedido_id})`)
+          .join(', ');
+        throw new Error(
+          `Envio já criou pedido no Omie: ${detalhe}. Cancele/exclua o pedido no Omie antes, ou use "Enviar agora" para completar o restante.`,
+        );
       }
       // TOCTOU: cancelar o envio PRIMEIRO, via compare-and-set (o filtro de status
       // re-verifica no banco) + .select p/ contar linhas — PostgREST não erra em
@@ -365,7 +387,7 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
       const r = (data?.resultados ?? [])[0] as { ok: boolean; motivo?: string } | undefined;
       // r ausente = o edge não achou o envio em status processável (cancelado/enviado
       // por outra via na corrida) — sucesso silencioso aqui seria toast mentiroso.
-      if (!r) throw new Error('Este envio não está mais agendado/erro (mudou de estado) — recarregue.');
+      if (!r) throw new Error('Este envio não está mais agendado/erro (enviado, cancelado ou em processamento por outra via) — recarregue.');
       if (!r.ok) throw new Error(r.motivo ?? 'Envio falhou');
       track('pedidos_programados.enviar_agora');
     },
@@ -382,10 +404,14 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
         .select('id, status').eq('pedido_programado_id', pedidoId!);
       if (envErr) throw envErr;
       const rows = (envios ?? []) as unknown as Array<{ id: string; status: string }>;
-      const travado = rows.find((e) => e.status === 'enviado' || e.status === 'erro');
+      // 'processando' bloqueia como 'enviado'/'erro': é o edge criando PV no Omie AGORA
+      // (claim) — sem isto o header cancelaria com envio em voo.
+      const travado = rows.find((e) => e.status === 'enviado' || e.status === 'erro' || e.status === 'processando');
       if (travado) {
         throw new Error(
-          `Há envio ${travado.status} neste pedido — resolva-o (Omie/Enviar agora) antes de cancelar o pedido.`,
+          travado.status === 'processando'
+            ? 'Há envio sendo processado agora neste pedido (indo ao Omie) — aguarde o resultado antes de cancelar.'
+            : `Há envio ${travado.status} neste pedido — resolva-o (Omie/Enviar agora) antes de cancelar o pedido.`,
         );
       }
       const agendados = rows.filter((e) => e.status === 'agendado').map((e) => e.id);
@@ -411,12 +437,12 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
           );
         }
       }
-      // Barreira 2: envio novo criado por outra sessão entre o guard e aqui.
-      // Predicado positivo (sem negação NULL-blind — regra PostgREST do repo).
+      // Barreira 2: envio novo criado (ou claim iniciado) por outra via entre o guard
+      // e aqui. Predicado positivo (sem negação NULL-blind — regra PostgREST do repo).
       const { data: restantes, error: eRest } = await t('pedidos_programados_envios')
         .select('id')
         .eq('pedido_programado_id', pedidoId!)
-        .in('status', ['agendado', 'enviado', 'erro']);
+        .in('status', ['agendado', 'processando', 'enviado', 'erro']);
       if (eRest) throw eRest;
       if (((restantes ?? []) as unknown[]).length > 0) {
         const limpo = await desanexarItens(cancelados);
