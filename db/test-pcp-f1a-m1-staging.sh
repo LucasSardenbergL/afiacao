@@ -49,8 +49,9 @@ GRANT EXECUTE ON FUNCTION public.has_role(uuid, app_role) TO authenticated, anon
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 SQL
 
-echo "═══ ZONA 2: aplica o SQL REAL do M1 ═══"
+echo "═══ ZONA 2: aplica o SQL REAL do M1 (2×: re-colar no SQL Editor é esperado) ═══"
 P -q -f "$MIG"
+if P -q -f "$MIG" >/dev/null 2>&1; then ok "re-aplicação idempotente (2ª colagem não quebra)"; else bad "re-aplicação QUEBROU (policy sem DROP IF EXISTS?)"; fi
 
 echo "═══ ZONA 3: fixtures (1 run + 1 staging; 1 user staff + 1 não-staff) ═══"
 P -q <<'SQL'
@@ -67,6 +68,8 @@ eq "RLS ligado em pcp_run_logs"      "$(Pq -c "SELECT relrowsecurity FROM pg_cla
 eq "anon SEM grant de SELECT" "$(Pq -c "SELECT has_table_privilege('anon','public.pcp_malha_staging','SELECT')")" "f"
 eq "staff (employee) vê staging" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; SELECT count(*) FROM public.pcp_malha_staging")" "1"
 eq "não-staff vê 0 (fail-closed)" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000bbbb'; SELECT count(*) FROM public.pcp_malha_staging")" "0"
+eq "staff vê run_logs" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; SELECT count(*) FROM public.pcp_run_logs")" "1"
+eq "não-staff vê 0 em run_logs (fail-closed)" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000bbbb'; SELECT count(*) FROM public.pcp_run_logs")" "0"
 INS_ERR=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES (1,'{}');" 2>&1 || true)
 case "$INS_ERR" in *"permission denied"*|*"row-level security"*) ok "INSERT de authenticated bloqueado";; *) bad "INSERT de authenticated NÃO bloqueado: $INS_ERR";; esac
 

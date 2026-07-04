@@ -30,11 +30,15 @@ ALTER TABLE public.pcp_malha_staging ENABLE ROW LEVEL SECURITY;
 
 -- Leitura: staff (master|employee). Escrita: NENHUMA policy p/ authenticated —
 -- quem escreve é a edge com service_role (bypassa RLS; gate na fronteira = authorizeCronOrStaff).
+-- DROP IF EXISTS antes de cada policy: re-colar no SQL Editor é ESPERADO (database.md §re-aplicação)
+-- e CREATE POLICY não tem IF NOT EXISTS — sem o guard, a 2ª colagem dá ROLLBACK na transação inteira.
+DROP POLICY IF EXISTS pcp_run_logs_select_staff ON public.pcp_run_logs;
 CREATE POLICY pcp_run_logs_select_staff ON public.pcp_run_logs
   FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role)
       OR has_role((SELECT auth.uid()), 'employee'::app_role));
 
+DROP POLICY IF EXISTS pcp_malha_staging_select_staff ON public.pcp_malha_staging;
 CREATE POLICY pcp_malha_staging_select_staff ON public.pcp_malha_staging
   FOR SELECT TO authenticated
   USING (has_role((SELECT auth.uid()), 'master'::app_role)
