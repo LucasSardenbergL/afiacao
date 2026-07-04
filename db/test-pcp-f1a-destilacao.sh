@@ -93,30 +93,35 @@ SQL
 echo "═══ ZONA 4: refresh + destilar + validar ═══"
 eq "refresh: total|dim|disco|sem_match" "$(Pq -c "SELECT total||'|'||dimensionais||'|'||discos||'|'||sem_match FROM fn_pcp_refresh_itens()")" "9|6|0|3"
 eq "linha_modelo veio do token da descrição" "$(Pq -c "SELECT linha_modelo FROM pcp_itens WHERE omie_codigo_produto=4396000531")" "KA169"
-eq "destilar: nº de regras (4 papéis × [KA169 + *])" "$(Pq -c "SELECT fn_pcp_destilar_bom()")" "8"
-eq "coef cola g/mm (mediana)"   "$(Pq -c "SELECT round(coef,5) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='cola'")" "0.01074"
+eq "destilar: nº de regras (cola tabelada 3 larguras + fita/catal/abrasivo fórmula ×2)" "$(Pq -c "SELECT fn_pcp_destilar_bom()")" "9"
+eq "cola TABELADA: (KA169,150)=1.611g (valor, não razão)" "$(Pq -c "SELECT round(coef,3) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='cola' AND largura_mm=150")" "1.611"
+eq "cola TABELADA: (KA169,75)=0.806g" "$(Pq -c "SELECT round(coef,3) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='cola' AND largura_mm=75")" "0.806"
 eq "coef catalisador (razão)"   "$(Pq -c "SELECT round(coef,4) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='catalisador'")" "0.1111"
 eq "coef fita (cm por mm largura)" "$(Pq -c "SELECT round(coef,4) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='fita'")" "0.1127"
 eq "validação: 12/12 ok"        "$(Pq -c "SELECT count(*) FILTER (WHERE status='ok')||'/'||count(*) FROM vw_pcp_bom_validacao")" "12/12"
 eq "materializar: 0 exceções"   "$(Pq -c "SELECT fn_pcp_materializar_excecoes()")" "0"
 
-echo "═══ ZONA 5: FALSIFICAÇÃO — malha PODRE (cola 10×) TEM que virar exceção ═══"
+echo "═══ ZONA 5: cola TABELADA — 1 cinta divergente vira EXCEÇÃO contra a tabela da largura (MAD robusta) ═══"
+# 2 cintas KA169 100mm com cola CERTA (1.074g) fixam a tabela (KA169,cola,100); o 800004 traz 10× — deve destoar.
 P -q <<'SQL'
 INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, familia, tipo_produto, account) VALUES
  (800004,'PRD80004','CINTA KA169 100X1000MM P60','Cintas Estreitas','04','colacor'),
+ (800005,'PRD80005','CINTA KA169 100X2000MM P60','Cintas Estreitas','04','colacor'),
+ (800006,'PRD80006','CINTA KA169 100X3000MM P60','Cintas Estreitas','04','colacor'),
  (900007,'PRD90007','ROLO KA169 100X50000MM P60','Jumbo/Rolo de Lixa Óxido de Alumínio','03','colacor');
 INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES
- (800004, '{"ident":{"idProduto":800004,"codProduto":"PRD80004"},"itens":[
-   {"ident":{"idProdMalha":900007,"codProdMalha":"PRD90007","descrProdMalha":"ROLO KA169 100X50000MM P60"},"quantProdMalha":0.1,"unidProdMalha":"M2"},
-   {"ident":{"idProdMalha":900002,"codProdMalha":"PRD90002","descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":10.74,"unidProdMalha":"G"},
-   {"ident":{"idProdMalha":900004,"codProdMalha":"PRD90004","descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":11.27,"unidProdMalha":"CM"}]}'::jsonb);
+ (800005,'{"ident":{"idProduto":800005},"itens":[{"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":1.074,"unidProdMalha":"G"}]}'::jsonb),
+ (800006,'{"ident":{"idProduto":800006},"itens":[{"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":1.074,"unidProdMalha":"G"}]}'::jsonb),
+ (800004,'{"ident":{"idProduto":800004},"itens":[
+   {"ident":{"idProdMalha":900007,"descrProdMalha":"ROLO KA169 100X50000MM P60"},"quantProdMalha":0.1,"unidProdMalha":"M2"},
+   {"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":10.74,"unidProdMalha":"G"},
+   {"ident":{"idProdMalha":900004,"descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":11.27,"unidProdMalha":"CM"}]}'::jsonb);
 SQL
-P -q -c "SELECT fn_pcp_refresh_itens();" >/dev/null
-# NÃO re-destila: as regras ficam as derivadas do conjunto limpo (fluxo incremental real).
-EXC=$(Pq -c "SELECT fn_pcp_materializar_excecoes()")
-eq "sabotagem materializou 1 exceção" "$EXC" "1"
-eq "a exceção é a cola do pai sabotado" "$(Pq -c "SELECT pai_codigo||'|'||papel||'|'||status FROM pcp_bom_excecoes")" "800004|cola|excecao"
-eq "esperado da exceção ≈ 1.074 g (0.01074×100)" "$(Pq -c "SELECT round(esperado,3) FROM pcp_bom_excecoes")" "1.074"
+P -q -c "SELECT fn_pcp_refresh_itens(); SELECT fn_pcp_destilar_bom();" >/dev/null
+eq "tabela (KA169,cola,100) = mediana estável 1.074 (MAD ignora o outlier)" "$(Pq -c "SELECT round(coef,3) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='cola' AND largura_mm=100")" "1.074"
+eq "cola 10× do 800004 vira excecao (contra a tabela)" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=800004 AND papel='cola'")" "excecao"
+eq "esperado da exceção = valor tabelado 1.074g" "$(Pq -c "SELECT round(esperado,3) FROM vw_pcp_bom_validacao WHERE pai_codigo=800004 AND papel='cola'")" "1.074"
+eq "as 2 cintas certas (100mm) validam ok" "$(Pq -c "SELECT count(*) FROM vw_pcp_bom_validacao WHERE pai_codigo IN (800005,800006) AND papel='cola' AND status='ok'")" "2"
 
 echo "═══ ZONA 6: endurecimentos do painel (fn_num, papel, regra instável, sem_base_cola, unidade, RLS, disposição) ═══"
 eq "fn_pcp_num tolera vírgula pt-BR" "$(Pq -c "SELECT fn_pcp_num('1,611')")" "1.611"
@@ -124,8 +129,8 @@ eq "fn_pcp_num: lixo vira NULL (nunca fabrica)" "$(Pq -c "SELECT coalesce(fn_pcp
 eq "papel: FITA ADESIVA é fita (não cola)" "$(Pq -c "SELECT fn_pcp_papel_componente('FITA ADESIVA 25MM','Uso e Consumo')")" "fita"
 eq "papel: COLA PU é cola" "$(Pq -c "SELECT fn_pcp_papel_componente('COLA PU BICOMPONENTE','Colas')")" "cola"
 
-# Linha ZZ com cola DISPERSA (ratios 0.01/0.02/0.04 ⇒ MAD rel 0.5 > 0.10) — regra instável não valida ninguém.
-# Pai XY: catalisador SEM cola no pai + cola em KG (unidade errada).
+# Linha ZZ9: 3 cintas MESMA largura (100) com cola DIVERGENTE (1/2/4g ⇒ MAD rel 0.5 > 0.10) —
+# tabela sem consenso ⇒ regra instável não valida ninguém. Pai XY7: catalisador SEM cola G + cola em KG.
 P -q <<'SQL'
 INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, familia, tipo_produto, account) VALUES
  (810001,'PRD81001','CINTA ZZ9 100X1000MM P50','Cintas Estreitas','04','colacor'),
@@ -141,8 +146,8 @@ INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES
    {"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":0.001,"unidProdMalha":"KG"}]}'::jsonb);
 SQL
 P -q -c "SELECT fn_pcp_refresh_itens();" >/dev/null
-eq "re-destilar com universo maior (KA169 4 + ZZ9 cola + '*' 4)" "$(Pq -c "SELECT fn_pcp_destilar_bom()")" "9"
-eq "regra ZZ9/cola nasceu INSTÁVEL (MAD rel 0.5)" "$(Pq -c "SELECT round(dispersao,2) FROM pcp_bom_regras WHERE linha_modelo='ZZ9' AND papel='cola'")" "0.50"
+eq "re-destilar: 11 regras (cola tabelada KA169×4 + ZZ9×1 + fita/catal/abrasivo ×2)" "$(Pq -c "SELECT fn_pcp_destilar_bom()")" "11"
+eq "regra ZZ9/cola nasceu INSTÁVEL (MAD rel 0.5)" "$(Pq -c "SELECT round(dispersao,2) FROM pcp_bom_regras WHERE linha_modelo='ZZ9' AND papel='cola' AND largura_mm=100")" "0.50"
 eq "validação marca as 3 colas ZZ9 como regra_instavel" "$(Pq -c "SELECT count(*) FROM vw_pcp_bom_validacao WHERE status='regra_instavel'")" "3"
 eq "catalisador sem cola G no pai ⇒ sem_base_cola" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=810004 AND papel='catalisador'")" "sem_base_cola"
 eq "cola em KG ⇒ unidade_inesperada" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=810004 AND papel='cola'")" "unidade_inesperada"

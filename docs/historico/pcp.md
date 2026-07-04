@@ -33,4 +33,12 @@ Planos por fase: `docs/superpowers/plans/`.
 
 **Refinos anotados p/ Fase 2:** nomear `produtosEncontrados` no `extractLista` do edge (hoje pega por fallback determinístico); cron + frescor no Sentinela; limpar candidatos `i->'ident'` mortos do M2.
 
-**Pendente (founder):** colar M2 → refresh/destilar → **gate de amostragem** da BOM antes de qualquer consumo.
+**Gate de amostragem (2026-07-04):** 1ª destilação em prod deu **78,4% ok** — 3 ofensores diagnosticados nos dados reais e tratados:
+- **Cola (647 exc.):** a BOM do Omie é **TABELADA** (a cola é idêntica por (linha,largura) — spread 0%, independe do comprimento; founder confirmou ter a tabela), não fórmula. Decisão eu+Codex: modelo **híbrido** — cola tabelada por (linha,largura), fórmula onde os dados sustentam (abrasivo=área, fita=proporcional, catalisador=razão). Cola tabelada valida **97,4%** (vs 78%). SKU sem (linha,largura) cadastrada → sem_regra (não fabrica). Dispersão da tabela por MAD (robusta a outlier).
+- **MYLAR (259 exc.):** fita de emenda alternativa (razão 0,110) — não reconhecida pela regex. Fix: MYLAR→fita.
+- **Slitter (112 exc.):** rolo→jumbo usa quantidade simbólica ≠ área nominal — fora do escopo F1A (BOM da cinta); validação restrita a `tipo_item='cinta'`. Nível slitter entra na Fase 1B.
+- Achado extra: parte das malhas de abrasivo tem **perda embutida** (consome >área nominal) — vira exceção legítima (revela a perda real; a spec manda a perda p/ camada de custo).
+
+**Estrutura nova:** `pcp_bom_regras` ganhou `largura_mm` (0=fórmula, >0=tabela) + método `tabela_largura`; PK (linha,papel,largura_mm). destilação PASS=33.
+
+**Pendente (founder):** re-colar M2 (modelo híbrido) → re-destilar → gate final (esperado ~95% ok; o que sobrar = malhas atípicas p/ revisão).
