@@ -7948,6 +7948,162 @@ export type Database = {
         }
         Relationships: []
       }
+      pcp_bom_excecoes: {
+        Row: {
+          componente_codigo: number
+          componente_descricao: string | null
+          disposicao: string | null
+          disposicao_nota: string | null
+          esperado: number | null
+          materializado_em: string
+          observado: number | null
+          pai_codigo: number
+          pai_descricao: string | null
+          papel: string
+          status: string
+          unidade: string | null
+        }
+        Insert: {
+          componente_codigo: number
+          componente_descricao?: string | null
+          disposicao?: string | null
+          disposicao_nota?: string | null
+          esperado?: number | null
+          materializado_em?: string
+          observado?: number | null
+          pai_codigo: number
+          pai_descricao?: string | null
+          papel: string
+          status: string
+          unidade?: string | null
+        }
+        Update: {
+          componente_codigo?: number
+          componente_descricao?: string | null
+          disposicao?: string | null
+          disposicao_nota?: string | null
+          esperado?: number | null
+          materializado_em?: string
+          observado?: number | null
+          pai_codigo?: number
+          pai_descricao?: string | null
+          papel?: string
+          status?: string
+          unidade?: string | null
+        }
+        Relationships: []
+      }
+      pcp_bom_regras: {
+        Row: {
+          amostras: number
+          coef: number | null
+          derivado_em: string
+          dispersao: number | null
+          linha_modelo: string
+          metodo: string
+          papel: string
+        }
+        Insert: {
+          amostras: number
+          coef?: number | null
+          derivado_em?: string
+          dispersao?: number | null
+          linha_modelo: string
+          metodo: string
+          papel: string
+        }
+        Update: {
+          amostras?: number
+          coef?: number | null
+          derivado_em?: string
+          dispersao?: number | null
+          linha_modelo?: string
+          metodo?: string
+          papel?: string
+        }
+        Relationships: []
+      }
+      pcp_config: {
+        Row: {
+          key: string
+          updated_at: string
+          value: Json
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          value: Json
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          value?: Json
+        }
+        Relationships: []
+      }
+      pcp_itens: {
+        Row: {
+          codigo: string | null
+          comprimento_mm: number | null
+          descricao: string
+          diametro_mm: number | null
+          empresa: string
+          familia: string | null
+          formato_parse: string
+          grao: number | null
+          largura_mm: number | null
+          leadtime_padrao_dias: number | null
+          linha_modelo: string | null
+          lote_minimo: number | null
+          lote_multiplo: number | null
+          omie_codigo_produto: number
+          politica: string | null
+          refreshed_at: string
+          tipo_item: string
+          tipo_produto: string | null
+        }
+        Insert: {
+          codigo?: string | null
+          comprimento_mm?: number | null
+          descricao: string
+          diametro_mm?: number | null
+          empresa?: string
+          familia?: string | null
+          formato_parse: string
+          grao?: number | null
+          largura_mm?: number | null
+          leadtime_padrao_dias?: number | null
+          linha_modelo?: string | null
+          lote_minimo?: number | null
+          lote_multiplo?: number | null
+          omie_codigo_produto: number
+          politica?: string | null
+          refreshed_at?: string
+          tipo_item: string
+          tipo_produto?: string | null
+        }
+        Update: {
+          codigo?: string | null
+          comprimento_mm?: number | null
+          descricao?: string
+          diametro_mm?: number | null
+          empresa?: string
+          familia?: string | null
+          formato_parse?: string
+          grao?: number | null
+          largura_mm?: number | null
+          leadtime_padrao_dias?: number | null
+          linha_modelo?: string | null
+          lote_minimo?: number | null
+          lote_multiplo?: number | null
+          omie_codigo_produto?: number
+          politica?: string | null
+          refreshed_at?: string
+          tipo_item?: string
+          tipo_produto?: string | null
+        }
+        Relationships: []
+      }
       pcp_malha_staging: {
         Row: {
           empresa: string
@@ -16295,6 +16451,50 @@ export type Database = {
         }
         Relationships: []
       }
+      vw_pcp_bom_validacao: {
+        Row: {
+          componente_codigo: number | null
+          componente_descricao: string | null
+          comprimento_mm: number | null
+          esperado: number | null
+          largura_mm: number | null
+          linha_modelo: string | null
+          observado: number | null
+          pai_codigo: number | null
+          pai_descricao: string | null
+          pai_tipo: string | null
+          papel: string | null
+          regra_origem: string | null
+          status: string | null
+          tolerancia: number | null
+          unidade: string | null
+        }
+        Relationships: []
+      }
+      vw_pcp_malha_componentes: {
+        Row: {
+          componente_codigo: number | null
+          componente_descricao: string | null
+          componente_familia: string | null
+          pai_codigo: number | null
+          perc_perda: number | null
+          quantidade: number | null
+          unidade: string | null
+        }
+        Relationships: []
+      }
+      vw_pcp_malha_itens: {
+        Row: {
+          componente_codigo_txt: string | null
+          componente_descricao_omie: string | null
+          componente_id: number | null
+          pai_codigo: number | null
+          perc_perda: number | null
+          quantidade: number | null
+          unidade: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       _carteira_mixgap_for_owner: { Args: { p_owner: string }; Returns: Json }
@@ -16786,6 +16986,42 @@ export type Database = {
       finalize_nao_vinculados_snapshot: {
         Args: { p_empresa: string; p_run_ts: string; p_total: number }
         Returns: undefined
+      }
+      fn_pcp_destilar_bom: { Args: never; Returns: number }
+      fn_pcp_dispor_excecao: {
+        Args: {
+          p_componente: number
+          p_disposicao: string
+          p_nota?: string
+          p_pai: number
+          p_papel: string
+        }
+        Returns: boolean
+      }
+      fn_pcp_materializar_excecoes: { Args: never; Returns: number }
+      fn_pcp_num: { Args: { p_raw: string }; Returns: number }
+      fn_pcp_papel_componente: {
+        Args: { p_descricao: string; p_familia: string }
+        Returns: string
+      }
+      fn_pcp_parse_dimensoes: {
+        Args: { p_descricao: string }
+        Returns: {
+          comprimento_mm: number
+          diametro_mm: number
+          formato: string
+          grao: number
+          largura_mm: number
+        }[]
+      }
+      fn_pcp_refresh_itens: {
+        Args: never
+        Returns: {
+          dimensionais: number
+          discos: number
+          sem_match: number
+          total: number
+        }[]
       }
       fornecedor_operacional: {
         Args: { p_empresa: string; p_fornecedor: string; p_timestamp?: string }
