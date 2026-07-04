@@ -30,10 +30,13 @@ export function useReposicaoZone() {
       let topItems: TopListItem[] = [];
 
       try {
+        // "Prontos" = sugestões aguardando decisão do founder. O status 'pronto' não
+        // existe nesta tabela (era 0 permanente, o card nunca disparava); o estado real
+        // que precisa de ação é 'pendente_aprovacao'.
         const { count } = await supabase
           .from('pedido_compra_sugerido')
           .select('id', { count: 'exact', head: true })
-          .eq('status', 'pronto');
+          .eq('status', 'pendente_aprovacao');
         sugeridosProntos = count ?? 0;
       } catch { /* */ }
 

@@ -4781,6 +4781,57 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_sync_kick_retry: {
+        Row: {
+          attempted_at: string
+          company: string
+          janela: string
+          request_id: number | null
+          resource: string
+        }
+        Insert: {
+          attempted_at?: string
+          company: string
+          janela: string
+          request_id?: number | null
+          resource: string
+        }
+        Update: {
+          attempted_at?: string
+          company?: string
+          janela?: string
+          request_id?: number | null
+          resource?: string
+        }
+        Relationships: []
+      }
+      fin_sync_lease: {
+        Row: {
+          acquired_at: string
+          company: string
+          expires_at: string
+          holder: string | null
+          token: string
+          updated_at: string
+        }
+        Insert: {
+          acquired_at?: string
+          company: string
+          expires_at: string
+          holder?: string | null
+          token: string
+          updated_at?: string
+        }
+        Update: {
+          acquired_at?: string
+          company?: string
+          expires_at?: string
+          holder?: string | null
+          token?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       fin_sync_log: {
         Row: {
           action: string
@@ -10673,6 +10724,7 @@ export type Database = {
           omie_response: Json | null
           order_date_kpi: string | null
           origem: string | null
+          pedido_programado_envio_id: string | null
           ready_by_date: string | null
           status: string
           subtotal: number
@@ -10700,6 +10752,7 @@ export type Database = {
           omie_response?: Json | null
           order_date_kpi?: string | null
           origem?: string | null
+          pedido_programado_envio_id?: string | null
           ready_by_date?: string | null
           status?: string
           subtotal?: number
@@ -10727,13 +10780,22 @@ export type Database = {
           omie_response?: Json | null
           order_date_kpi?: string | null
           origem?: string | null
+          pedido_programado_envio_id?: string | null
           ready_by_date?: string | null
           status?: string
           subtotal?: number
           total?: number
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "sales_orders_pedido_programado_envio_id_fkey"
+            columns: ["pedido_programado_envio_id"]
+            isOneToOne: false
+            referencedRelation: "pedidos_programados_envios"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       sales_price_history: {
         Row: {
@@ -16275,6 +16337,12 @@ export type Database = {
         Args: { p_account: string; p_at: string; p_run_id: number }
         Returns: boolean
       }
+      claim_nfe_efetivacao_lock: {
+        Args: { p_cutoff: string; p_lock_ts: string; p_nfe_id: string }
+        Returns: {
+          id: string
+        }[]
+      }
       classificar_clientes_fornecedores: { Args: never; Returns: Json }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
       concluir_com_comprovacao: {
@@ -16525,6 +16593,24 @@ export type Database = {
       }
       fin_refresh_analise_dimensoes: { Args: never; Returns: undefined }
       fin_sync_heartbeat: { Args: never; Returns: undefined }
+      fin_sync_kicks_perdidos: {
+        Args: { p_now?: string }
+        Returns: {
+          company: string
+          janela: string
+          prio: number
+          resource: string
+        }[]
+      }
+      fin_sync_lease_acquire: {
+        Args: { p_company: string; p_holder: string; p_ttl_seconds?: number }
+        Returns: string
+      }
+      fin_sync_lease_release: {
+        Args: { p_company: string; p_token: string }
+        Returns: boolean
+      }
+      fin_sync_retry_tick: { Args: never; Returns: undefined }
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_user_can_access: {
         Args: { check_company?: string }
@@ -16786,6 +16872,7 @@ export type Database = {
           total: number
         }[]
       }
+      pedidos_programados_watchdog_claims: { Args: never; Returns: number }
       pode_ver_carteira_completa: { Args: { _uid: string }; Returns: boolean }
       preencher_parametros_faltantes_skus: {
         Args: { p_empresa: string }
@@ -17160,6 +17247,10 @@ export type Database = {
       }
       validar_sku_para_aplicacao: {
         Args: { p_empresa: string; p_sku: string }
+        Returns: Json
+      }
+      venda_gate_credito: {
+        Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
         Returns: Json
       }
       vendas_sync_finish: {

@@ -15,23 +15,26 @@ import { confirmPickItem, type ConfirmPickItemVars } from '@/services/picking-co
  * Retorna uma cleanup que desregistra todos.
  */
 export function registerAllOfflineHandlers(): () => void {
+  // O 3º arg (invalidateKeys) é revalidado quando o item drena no flush pós-reconnect
+  // — assim o que foi confirmado offline aparece na UI sem esperar refetch natural.
+  // Keys por prefixo (casam ['nfe_conferencia', id] etc.).
   const unsubs = [
     registerOfflineHandler<ConfirmUnitVars>('recebimento.confirm-unit', async (v) => {
       await confirmUnit(v);
       return true;
-    }),
+    }, [['nfe_conferencia'], ['nfe_lotes']]),
     registerOfflineHandler<ReportDivergenciaVars>('recebimento.report-divergencia', async (v) => {
       await reportDivergencia(v);
       return true;
-    }),
+    }, [['nfe_conferencia']]),
     registerOfflineHandler<AddCteVars>('recebimento.add-cte', async (v) => {
       await addCte(v);
       return true;
-    }),
+    }, [['nfe_conferencia']]),
     registerOfflineHandler<ConfirmPickItemVars>('picking.confirm-item', async (v) => {
       await confirmPickItem(v);
       return true;
-    }),
+    }, [['touch-pk-items'], ['touch-pk-tasks']]),
   ];
   return () => unsubs.forEach((u) => u());
 }

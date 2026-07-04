@@ -27,9 +27,12 @@ export function useIcMatches(filterStatus?: IcMatch['status']) {
   return useQuery({
     queryKey: ['fin_ic_matches', filterStatus ?? 'all'],
     queryFn: async (): Promise<IcMatch[]> => {
+      // Projeção explícita (não select('*')): a tabela tem colunas de auditoria
+      // (resolvido_por/resolvido_em/…) que a UI não usa. Estas são exatamente as
+      // do type IcMatch — o retorno tipado garante que nenhum consumidor lê além.
       let q = supabase
         .from('fin_ic_matches')
-        .select('*')
+        .select('id, empresa_origem, empresa_destino, cr_id, cp_id, valor_origem, valor_destino, diff_valor, diff_dias, status, matched_at, observacao')
         .order('matched_at', { ascending: false })
         .limit(500);
       if (filterStatus) q = q.eq('status', filterStatus);

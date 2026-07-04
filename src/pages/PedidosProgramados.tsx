@@ -3,9 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/EmptyState';
-import { CalendarClock, ChevronLeft, FileUp, Loader2, Settings2 } from 'lucide-react';
+import { CalendarClock, CalendarDays, ChevronLeft, FileUp, List, Loader2, Settings2 } from 'lucide-react';
 import { usePedidosProgramadosLista, usePedidosProgramadosMutations } from '@/hooks/usePedidosProgramados';
 import { PedidosProgramadosConfigDialog } from '@/components/pedidosProgramados/ConfigDialog';
+import { CalendarioFaturamento } from '@/components/pedidosProgramados/CalendarioFaturamento';
+import { dataLocalISO } from '@/lib/pedidosProgramados/calendario';
+import { useUrlState } from '@/hooks/useUrlState';
+import { track } from '@/lib/analytics';
 
 const STATUS_LABEL: Record<string, { label: string; cls: string }> = {
   extraindo: { label: 'Extraindo…', cls: 'text-status-info' },
@@ -22,6 +26,9 @@ const PedidosProgramados = () => {
   const { data: pedidos, isPending } = usePedidosProgramadosLista();
   const { uploadPdf } = usePedidosProgramadosMutations();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [urlState, setUrlState] = useUrlState({ view: 'lista', mes: '' });
+  const view = urlState.view === 'calendario' ? 'calendario' : 'lista';
+  const mesResolvido = urlState.mes || dataLocalISO(new Date()).slice(0, 7);
 
   return (
     <div className="max-w-4xl mx-auto space-y-4 pb-6">
@@ -37,6 +44,24 @@ const PedidosProgramados = () => {
         <div className="flex-1">
           <h1 className="text-lg font-semibold">Pedidos programados</h1>
           <p className="text-xs text-muted-foreground">PDF da Lider → envios agendados ao Omie</p>
+        </div>
+        <div className="flex items-center border rounded-md p-0.5 gap-0.5" role="group" aria-label="Modo de visualização">
+          <Button
+            variant={view === 'lista' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setUrlState({ view: 'lista' })}
+            aria-pressed={view === 'lista'}
+          >
+            <List className="w-4 h-4 mr-1" />Lista
+          </Button>
+          <Button
+            variant={view === 'calendario' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => { setUrlState({ view: 'calendario' }); track('pedidos_programados.ver_calendario'); }}
+            aria-pressed={view === 'calendario'}
+          >
+            <CalendarDays className="w-4 h-4 mr-1" />Calendário
+          </Button>
         </div>
         <PedidosProgramadosConfigDialog>
           <Button variant="outline" size="sm"><Settings2 className="w-4 h-4 mr-1" />Config</Button>
@@ -58,7 +83,12 @@ const PedidosProgramados = () => {
         </Button>
       </div>
 
-      {isPending ? (
+      {view === 'calendario' ? (
+        <CalendarioFaturamento
+          mes={mesResolvido}
+          onMudarMes={(mes) => setUrlState({ mes })}
+        />
+      ) : isPending ? (
         <div className="flex items-center justify-center pt-24">
           <Loader2 className="w-6 h-6 animate-spin text-primary" />
         </div>

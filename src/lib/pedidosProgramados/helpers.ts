@@ -29,6 +29,22 @@ export interface ItemResolvido {
   produto_descricao: string | null;
 }
 
+// Incerteza-Omie (achado Codex challenge 2026-07-03): quando o edge DISPAROU chamada ao
+// Omie e não obteve confirmação (timeout/500 pós-fetch), o PV pode existir no ERP sem
+// omie_pedido_id gravado no sales_order. O marcador viaja no erro_motivo do envio
+// (writers: só o edge e o watchdog de claim órfão — nunca o client) e o cancelamento
+// client-side bloqueia ao vê-lo — precisão > recall: cancelar na incerteza é o caminho
+// da duplicata. "Enviar agora" (idempotente) é o caminho de resolução.
+export const OMIE_INCERTO_MARK = '[OMIE-INCERTO]';
+
+export function motivoComIncerteza(motivo: string, incerto: boolean): string {
+  return incerto && !motivo.includes(OMIE_INCERTO_MARK) ? `${OMIE_INCERTO_MARK} ${motivo}` : motivo;
+}
+
+export function isOmieIncerto(erroMotivo: string | null | undefined): boolean {
+  return (erroMotivo ?? '').includes(OMIE_INCERTO_MARK);
+}
+
 // nº do PC primeiro (exigência da Lider: "FAVOR INFORMAR O NUMERO DO PEDIDO DA LIDER
 // NA NOTA FISCAL"), mensagem fixa depois. Sem mensagem → só o nº (nunca fabricar texto).
 export function montarDadosAdicionaisNf(mensagemFixa: string | null, numeroPc: string): string {

@@ -20,6 +20,7 @@ import { ReguaPrecoSinal } from '@/components/regua-preco/ReguaPrecoSinal';
 import type { ReguaCartItem } from '@/lib/regua-preco/regua-preco-ui';
 import { useReguaPrecoLog } from '@/hooks/useReguaPrecoLog';
 import { isInvalidProductPrice } from '@/services/orderSubmission/priceGuard';
+import { PriceInput } from './PriceInput';
 
 interface CartItemListProps {
   cart: { length: number };
@@ -221,7 +222,7 @@ export function CartItemList({
               </div>
               <div className="flex items-center gap-0.5 flex-1">
                 <span className="text-[10px] text-muted-foreground">R$</span>
-                <Input type="text" inputMode="decimal" pattern="[0-9]*\.?[0-9]*" value={item.unit_price} aria-invalid={invalidPrice} onFocus={e => e.target.select()} onChange={e => onUpdateProductPrice(cartIdx, parseFloat(e.target.value) || 0)} className={cn('h-6 text-xs', invalidPrice && 'border-status-error focus-visible:ring-status-error')} />
+                <PriceInput value={item.unit_price} invalid={invalidPrice} onValueChange={(preco) => onUpdateProductPrice(cartIdx, preco)} className={cn('h-6 text-xs', invalidPrice && 'border-status-error focus-visible:ring-status-error')} />
               </div>
               <span className="text-xs font-semibold shrink-0">{fmt(item.quantity * item.unit_price)}</span>
             </div>

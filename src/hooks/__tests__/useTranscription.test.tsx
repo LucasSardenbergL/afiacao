@@ -136,4 +136,38 @@ describe('useTranscription', () => {
     );
     expect(engineMock.TranscriptionEngine).not.toHaveBeenCalled();
   });
+
+  it('nova chamada NÃO herda os turns da chamada anterior (vazamento entre clientes/LGPD)', async () => {
+    const { result, rerender } = renderHook(
+      ({ enabled }) =>
+        useTranscription({
+          vendorStream: new MediaStream(),
+          clientStream: new MediaStream(),
+          enabled,
+        }),
+      { initialProps: { enabled: true } }
+    );
+
+    // Chamada A: engine ativa e gera um turno com conteúdo do cliente A
+    await waitFor(() => expect(result.current.status).toBe('active'));
+    act(() => {
+      (engineMock._handlers['turn'] ?? [])[0]?.({
+        id: 'clienteA-1',
+        speaker: 'cliente',
+        text: 'dado confidencial do cliente A',
+        isFinal: true,
+        startedAt: Date.now(),
+        endedAt: Date.now(),
+      });
+    });
+    expect(result.current.turns).toHaveLength(1);
+
+    // Fim da chamada A → início da chamada B (Provider WebRTC é global, não desmonta)
+    rerender({ enabled: false });
+    rerender({ enabled: true });
+    await waitFor(() => expect(result.current.status).toBe('active'));
+
+    // A transcrição do cliente A não pode sobreviver para a chamada B
+    expect(result.current.turns).toEqual([]);
+  });
 });

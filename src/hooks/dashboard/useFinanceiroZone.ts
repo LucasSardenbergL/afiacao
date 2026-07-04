@@ -27,9 +27,10 @@ export function useFinanceiroZone() {
       let topItems: TopListItem[] = [];
 
       try {
+        // Campo real do AgingData é vencido_90_plus_valor; 'faixa_90_mais'/'90+' não
+        // existem (o cast escondia — aging90 era 0 permanente e o alerta >90d nunca dava).
         const aging = await getAgingReceber('all');
-        const agingRec = aging as unknown as Record<string, unknown>;
-        aging90 = Number(agingRec?.faixa_90_mais ?? agingRec?.['90+'] ?? 0);
+        aging90 = aging.vencido_90_plus_valor ?? 0;
       } catch { /* */ }
 
       try {
