@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 326
+-- Total de custom migrations: 327
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -367,7 +367,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260703091000', 'pedidos_programados_cron', '20260703091000_pedidos_programados_cron.sql'),
   ('20260703120000', 'pedidos_programados_cron_fix', '20260703120000_pedidos_programados_cron_fix.sql'),
   ('20260703140000', 'trava_credito_gate_excecao_por_par', '20260703140000_trava_credito_gate_excecao_por_par.sql'),
-  ('20260704160000', 'fin_dividas', '20260704160000_fin_dividas.sql')
+  ('20260704160000', 'fin_dividas', '20260704160000_fin_dividas.sql'),
+  ('20260704160500', 'fin_divida_replace_parcelas', '20260704160500_fin_divida_replace_parcelas.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1485,7 +1486,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_dividas', 'trigger', 'public', 'trg_fin_dividas_autor', 'fin_dividas'),
   ('fin_dividas', 'trigger', 'public', 'trg_fin_divida_completude_autor', 'fin_divida_completude'),
   ('fin_dividas', 'rls_policy', 'public', '%I_select_master', 'public'),
-  ('fin_dividas', 'rls_policy', 'public', '%I_write_master', 'public')
+  ('fin_dividas', 'rls_policy', 'public', '%I_write_master', 'public'),
+  ('fin_divida_replace_parcelas', 'function', 'public', 'fin_divida_replace_parcelas', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2651,7 +2653,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_dividas', 'trigger', 'public', 'trg_fin_dividas_autor', 'fin_dividas'),
   ('fin_dividas', 'trigger', 'public', 'trg_fin_divida_completude_autor', 'fin_divida_completude'),
   ('fin_dividas', 'rls_policy', 'public', '%I_select_master', 'public'),
-  ('fin_dividas', 'rls_policy', 'public', '%I_write_master', 'public')
+  ('fin_dividas', 'rls_policy', 'public', '%I_write_master', 'public'),
+  ('fin_divida_replace_parcelas', 'function', 'public', 'fin_divida_replace_parcelas', '')
 )
 SELECT
   e.migration,

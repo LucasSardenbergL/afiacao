@@ -33,13 +33,19 @@ type UpsertClient = {
   };
 };
 
-type InsertDeleteClient = {
+type DeleteClient = {
   from: (table: string) => {
-    insert: (values: Record<string, unknown>[]) => Promise<{ error: { message: string } | null }>;
     delete: () => {
       eq: (col: string, val: string) => Promise<{ error: { message: string } | null }>;
     };
   };
+};
+
+type RpcClient = {
+  rpc: (
+    fn: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ error: { message: string } | null }>;
 };
 
 // ─── Queries ─────────────────────────────────────────────────────────────────────
@@ -136,7 +142,7 @@ export function useDeleteDivida() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id }: { id: string; company: Company }) => {
-      const client = supabase as unknown as InsertDeleteClient;
+      const client = supabase as unknown as DeleteClient;
       const { error } = await client.from('fin_dividas').delete().eq('id', id);
       if (error) throw new Error(error.message);
     },
@@ -152,7 +158,11 @@ export function useDeleteDivida() {
   });
 }
 
-/** Substitui todas as parcelas de uma dívida: apaga as atuais e insere as novas. */
+/**
+ * Substitui todas as parcelas de uma dívida via RPC transacional
+ * `fin_divida_replace_parcelas` (delete+insert atômico no servidor — Codex P1:
+ * o replace client-side não-atômico podia apagar as parcelas se o insert falhasse).
+ */
 export function useReplaceParcelas() {
   const qc = useQueryClient();
   return useMutation({
@@ -164,14 +174,12 @@ export function useReplaceParcelas() {
       company: Company;
       parcelas: Array<Omit<Parcela, 'id' | 'divida_id'>>;
     }) => {
-      const client = supabase as unknown as InsertDeleteClient;
-      const del = await client.from('fin_divida_parcelas').delete().eq('divida_id', dividaId);
-      if (del.error) throw new Error(del.error.message);
-      if (parcelas.length > 0) {
-        const rows = parcelas.map((p) => ({ ...p, divida_id: dividaId }));
-        const ins = await client.from('fin_divida_parcelas').insert(rows);
-        if (ins.error) throw new Error(ins.error.message);
-      }
+      const client = supabase as unknown as RpcClient;
+      const { error } = await client.rpc('fin_divida_replace_parcelas', {
+        p_divida_id: dividaId,
+        p_parcelas: parcelas,
+      });
+      if (error) throw new Error(error.message);
     },
     onSuccess: (_data, vars) => {
       invalidate(qc, vars.company);

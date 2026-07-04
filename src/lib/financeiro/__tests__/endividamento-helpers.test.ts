@@ -96,14 +96,41 @@ describe('dscrCaixa', () => {
     expect(r.valor).toBeCloseTo(5, 9);
   });
 
-  it('sem dívida no horizonte → null/sem_divida', () => {
-    const r = dscrCaixa({ geracaoOperacionalA1: 5000, dividas: [base({})], parcelas: [], hojeISO: hoje, fimISO: fim, completo: true });
+  it('sem dívida no horizonte (parcelas todas fora) → null/sem_divida', () => {
+    const foraDoHorizonte = parc({ divida_id: 'd1', data_vencimento: '2027-06-01', valor_total: 1000 });
+    const r = dscrCaixa({ geracaoOperacionalA1: 5000, dividas: [base({})], parcelas: [foraDoHorizonte], hojeISO: hoje, fimISO: fim, completo: true });
     expect(r).toEqual({ valor: null, motivo: 'sem_divida' });
   });
 
   it('geração ausente → null/sem_geracao, nunca 0', () => {
     const r = dscrCaixa({ geracaoOperacionalA1: null, dividas: [base({})], parcelas: [parcela], hojeISO: hoje, fimISO: fim, completo: true });
     expect(r).toEqual({ valor: null, motivo: 'sem_geracao' });
+  });
+
+  it('P1-1 Codex: cp_inclusion_status=parcial bloqueia (add-back seria arbitrário)', () => {
+    const r = dscrCaixa({ geracaoOperacionalA1: 5000, dividas: [base({ cp_inclusion_status: 'parcial' })], parcelas: [parcela], hojeISO: hoje, fimISO: fim, completo: true });
+    expect(r).toEqual({ valor: null, motivo: 'inconclusivo' });
+  });
+
+  it('P1-2 Codex: dívida ativa relevante sem parcelas → inconclusivo (não sem_divida)', () => {
+    // d1 tem parcela; d2 (ativa, financiamento) não tem nenhuma → agenda incompleta
+    const r = dscrCaixa({
+      geracaoOperacionalA1: 5000,
+      dividas: [base({ id: 'd1' }), base({ id: 'd2' })],
+      parcelas: [parc({ divida_id: 'd1', data_vencimento: '2026-08-01', valor_total: 1000 })],
+      hojeISO: hoje, fimISO: fim, completo: true,
+    });
+    expect(r).toEqual({ valor: null, motivo: 'inconclusivo' });
+  });
+
+  it('antecipacao_recorrente sem parcelas NÃO bloqueia (não entra no serviço)', () => {
+    const r = dscrCaixa({
+      geracaoOperacionalA1: 5000,
+      dividas: [base({ id: 'd1' }), base({ id: 'd2', tipo: 'antecipacao_recorrente' })],
+      parcelas: [parc({ divida_id: 'd1', data_vencimento: '2026-08-01', valor_total: 1000 })],
+      hojeISO: hoje, fimISO: fim, completo: true,
+    });
+    expect(r.motivo).toBe('ok');
   });
 });
 

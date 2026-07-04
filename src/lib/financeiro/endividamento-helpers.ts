@@ -54,8 +54,20 @@ export function dscrCaixa(params: {
 }): DscrResult {
   const { geracaoOperacionalA1, dividas, parcelas, hojeISO, fimISO, completo } = params;
   const ativas = dividas.filter((d) => d.ativo);
-  const temNaoSei = ativas.some((d) => d.cp_inclusion_status === 'nao_sei');
-  if (!completo || temNaoSei) return { valor: null, motivo: 'inconclusivo' };
+  // 'parcial' também bloqueia: sem saber QUANTO do A1 já deduziu, o add-back seria arbitrário
+  // (Codex P1). Só 'sim'/'nao' têm inclusão-no-CP determinada.
+  const temIndefinido = ativas.some(
+    (d) => d.cp_inclusion_status === 'nao_sei' || d.cp_inclusion_status === 'parcial',
+  );
+  if (!completo || temIndefinido) return { valor: null, motivo: 'inconclusivo' };
+
+  // Agenda incompleta: dívida relevante (não antecipação) sem NENHUMA parcela cadastrada →
+  // o serviço (denominador) estaria subcontado → DSCR superestimaria. Ausência ≠ zero (Codex P1).
+  const idsComParcela = new Set(parcelas.map((p) => p.divida_id));
+  const relevantes = ativas.filter((d) => d.tipo !== 'antecipacao_recorrente');
+  if (relevantes.some((d) => !idsComParcela.has(d.id))) {
+    return { valor: null, motivo: 'inconclusivo' };
+  }
 
   const servicoTotal = servicoDivida(ativas, parcelas, hojeISO, fimISO).total;
   if (!(servicoTotal > 0)) return { valor: null, motivo: 'sem_divida' };

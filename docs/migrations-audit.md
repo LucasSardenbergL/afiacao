@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **326** custom migrations totais
-- **1129** objetos esperados (criados por estas migrations)
+- **327** custom migrations totais
+- **1130** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 321
+  - `function`: 322
   - `rls_policy`: 250
   - `index`: 201
   - `table`: 125
@@ -2762,6 +2762,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_fin_divida_completude_autor` | `fin_divida_completude` |
 | `rls_policy` | `public.%I_select_master` | `public` |
 | `rls_policy` | `public.%I_write_master` | `public` |
+
+### `20260704160500_fin_divida_replace_parcelas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_divida_replace_parcelas` | — |
 
 ## Próximos passos por status
 

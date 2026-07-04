@@ -59,10 +59,12 @@ CREATE TABLE IF NOT EXISTS public.user_roles (
 );
 SQL
 
-# ── ZONA 2 — aplicar a migration REAL ──
+# ── ZONA 2 — aplicar as migrations REAIS ──
 MIG="$REPO_ROOT/supabase/migrations/20260704160000_fin_dividas.sql"
+MIG_RPC="$REPO_ROOT/supabase/migrations/20260704160500_fin_divida_replace_parcelas.sql"
 P -q -f "$MIG"
-echo "migration aplicada: $(basename "$MIG")"
+P -q -f "$MIG_RPC"
+echo "migrations aplicadas: $(basename "$MIG"), $(basename "$MIG_RPC")"
 
 # ── ZONA 3 — seed + grants ──
 # master = 333..., não-master (employee) = 222...
@@ -191,6 +193,72 @@ else
   bad "F3 furei a write policy e o INSERT do não-master AINDA falhou → A14 não prova a RLS"
 fi
 P -q -f "$MIG"
+
+# ── RPC transacional fin_divida_replace_parcelas (Codex P1) ──
+echo "── RPC replace parcelas ──"
+# dívida-alvo com 2 parcelas iniciais (semeadas via postgres)
+P -q <<'SQL'
+INSERT INTO public.fin_dividas(id,company,credor,tipo,principal_contratado,data_contratacao)
+VALUES ('eeeeeeee-0000-0000-0000-000000000005','oben','Banco RPC','financiamento',50000,'2025-01-01');
+INSERT INTO public.fin_divida_parcelas(divida_id,numero_parcela,data_vencimento,valor_amortizacao,valor_total)
+VALUES ('eeeeeeee-0000-0000-0000-000000000005',1,'2026-08-01',100,100),
+       ('eeeeeeee-0000-0000-0000-000000000005',2,'2026-09-01',100,100);
+SQL
+
+# A16 replace válido (master) → substitui as 2 por 1
+P -q -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SET ROLE authenticated;
+SELECT public.fin_divida_replace_parcelas('eeeeeeee-0000-0000-0000-000000000005'::uuid,
+  '[{\"numero_parcela\":1,\"data_vencimento\":\"2026-10-01\",\"valor_amortizacao\":200,\"valor_total\":220}]'::jsonb);" >/dev/null
+V=$(Pq -c "SELECT count(*) FROM public.fin_divida_parcelas WHERE divida_id='eeeeeeee-0000-0000-0000-000000000005';")
+eq "A16 RPC replace substitui parcelas" "$V" "1"
+
+# A17 ATOMICIDADE: replace com parcela inválida (valor_total=0) → falha E mantém a parcela boa
+R=$(P -tA 2>&1 <<'SQL'
+SET test.uid='33333333-3333-3333-3333-333333333333'; SET ROLE authenticated;
+DO $$ BEGIN
+  PERFORM public.fin_divida_replace_parcelas('eeeeeeee-0000-0000-0000-000000000005'::uuid,
+    '[{"numero_parcela":1,"data_vencimento":"2026-11-01","valor_amortizacao":5,"valor_total":0}]'::jsonb);
+  RAISE EXCEPTION 'NAO_BARROU';
+EXCEPTION WHEN check_violation THEN RAISE NOTICE 'ATOMICO_OK';
+  WHEN OTHERS THEN RAISE;
+END $$;
+SQL
+)
+case "$R" in *ATOMICO_OK*) ok "A17 RPC rejeita parcela inválida (23514)" ;; *) bad "A17 — veio: $R" ;; esac
+V=$(Pq -c "SELECT count(*) FROM public.fin_divida_parcelas WHERE divida_id='eeeeeeee-0000-0000-0000-000000000005';")
+eq "A17b atomicidade: parcela boa preservada após falha" "$V" "1"
+
+# A18 gate: não-master chama a RPC → 42501
+R=$(P -tA 2>&1 <<'SQL'
+SET test.uid='22222222-2222-2222-2222-222222222222'; SET ROLE authenticated;
+DO $$ BEGIN
+  PERFORM public.fin_divida_replace_parcelas('eeeeeeee-0000-0000-0000-000000000005'::uuid, '[]'::jsonb);
+  RAISE EXCEPTION 'NAO_BARROU';
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'GATE_RPC_OK';
+  WHEN OTHERS THEN RAISE;
+END $$;
+SQL
+)
+case "$R" in *GATE_RPC_OK*) ok "A18 RPC gate master nega employee" ;; *) bad "A18 — veio: $R" ;; esac
+
+# F4 falsificação: RPC sem o gate master → employee consegue chamar
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.fin_divida_replace_parcelas(p_divida_id uuid, p_parcelas jsonb)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+BEGIN
+  DELETE FROM public.fin_divida_parcelas WHERE divida_id = p_divida_id;  -- GATE REMOVIDO
+END; $fn$;
+SQL
+R=$(P -tA 2>&1 <<'SQL'
+SET test.uid='22222222-2222-2222-2222-222222222222'; SET ROLE authenticated;
+DO $$ BEGIN
+  PERFORM public.fin_divida_replace_parcelas('eeeeeeee-0000-0000-0000-000000000005'::uuid, '[]'::jsonb);
+  RAISE NOTICE 'SABOTAGEM_PASSOU';
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'AINDA_BARRA'; END $$;
+SQL
+)
+case "$R" in *SABOTAGEM_PASSOU*) ok "F4 gate removido: employee chamou a RPC (A18 tem dente)" ;; *) bad "F4 furei o gate e A18 não mudou → assert fraco" ;; esac
+P -q -f "$MIG_RPC"  # restaura a RPC com gate
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"

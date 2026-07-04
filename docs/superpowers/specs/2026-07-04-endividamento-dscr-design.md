@@ -209,3 +209,20 @@ Threat-model (1 assert cada):
 7. **Dívida pós-fixada** → parcela futura marca `estimado=true`.
 8. **`antecipacao_recorrente` é outra natureza** (líquida nos recebíveis, rolling) →
    fora do DSCR; DSCR-EBITDA/dívida-EBITDA cortados da UI até haver EBITDA.
+
+## 11. Challenge Codex no CÓDIGO (2026-07-04, 3 P1 — todos acatados)
+
+Após implementar (helper + migration + UI), o Codex adversarial no código achou 3 P1:
+
+1. **`cp_inclusion_status='parcial'` publicava DSCR enganoso** — passava no gate mas não
+   entrava no add-back (o A1 deduziu parte, o add-back não devolve). Fix: `parcial`
+   bloqueia como `nao_sei` (→ inconclusivo). Teste P1-1.
+2. **Dívida ativa sem agenda virava "sem dívida"** (fabricação de ausência) — dívida
+   relevante sem nenhuma parcela → serviço subcontado → DSCR superestimaria. Fix: dívida
+   relevante (não antecipação) sem parcela → inconclusivo. Teste P1-2.
+3. **`useReplaceParcelas` delete+insert não-atômico** podia apagar as parcelas se o insert
+   falhasse (com `completo=true`, derrubaria o denominador silenciosamente). Fix: RPC
+   transacional `fin_divida_replace_parcelas` (migration `20260704160500`, SECURITY DEFINER
+   + gate master), provada no PG17 (atomicidade A17b + gate A18 + falsificação F4).
+
+Prova total: 20 testes vitest + 24 asserts PG17 (`db/test-endividamento-money-path.sh`).
