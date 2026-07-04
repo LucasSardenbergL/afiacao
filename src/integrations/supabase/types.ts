@@ -4805,6 +4805,33 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_sync_lease: {
+        Row: {
+          acquired_at: string
+          company: string
+          expires_at: string
+          holder: string | null
+          token: string
+          updated_at: string
+        }
+        Insert: {
+          acquired_at?: string
+          company: string
+          expires_at: string
+          holder?: string | null
+          token: string
+          updated_at?: string
+        }
+        Update: {
+          acquired_at?: string
+          company?: string
+          expires_at?: string
+          holder?: string | null
+          token?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       fin_sync_log: {
         Row: {
           action: string
@@ -16568,6 +16595,14 @@ export type Database = {
           prio: number
           resource: string
         }[]
+      }
+      fin_sync_lease_acquire: {
+        Args: { p_company: string; p_holder: string; p_ttl_seconds?: number }
+        Returns: string
+      }
+      fin_sync_lease_release: {
+        Args: { p_company: string; p_token: string }
+        Returns: boolean
       }
       fin_sync_retry_tick: { Args: never; Returns: undefined }
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
