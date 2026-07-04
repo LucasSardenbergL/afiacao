@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **332** custom migrations totais
-- **1138** objetos esperados (criados por estas migrations)
+- **333** custom migrations totais
+- **1161** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 328
-  - `rls_policy`: 251
-  - `index`: 200
-  - `table`: 124
+  - `function`: 334
+  - `rls_policy`: 261
+  - `index`: 202
+  - `table`: 127
   - `cron_job`: 114
-  - `trigger`: 62
+  - `trigger`: 64
   - `view`: 55
   - `enum_value`: 4
 
@@ -2766,6 +2766,34 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.fin_sync_kick_retry` | — |
 | `cron_job` | `cron.fin-sync-retry-kicks` | — |
 | `rls_policy` | `public.fin_sync_kick_retry_select_staff` | `fin_sync_kick_retry` |
+
+### `20260704120000_preco_por_tier.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cliente_tier_preco_forca_autor` | — |
+| `function` | `public.cliente_tier_preco_audita` | — |
+| `function` | `public.resolve_markup_policy` | — |
+| `function` | `public.get_preco_cockpit` | — |
+| `function` | `public.get_ultimos_precos_cliente` | — |
+| `function` | `public.medir_abaixo_piso_tier` | — |
+| `table` | `public.cliente_tier_preco` | — |
+| `table` | `public.cliente_tier_preco_log` | — |
+| `table` | `public.tier_preco_config` | — |
+| `index` | `public.idx_cliente_tier_preco_customer` | `cliente_tier_preco` |
+| `index` | `public.idx_cliente_tier_log_cliente` | `cliente_tier_preco_log` |
+| `trigger` | `public.trg_cliente_tier_forca_autor` | `cliente_tier_preco` |
+| `trigger` | `public.trg_cliente_tier_audita` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_select_staff` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_insert_gestor` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_update_gestor` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_delete_master` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_service_all` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_log_select_staff` | `cliente_tier_preco_log` |
+| `rls_policy` | `public.tier_preco_config_select_staff` | `tier_preco_config` |
+| `rls_policy` | `public.tier_preco_config_write_master` | `tier_preco_config` |
+| `rls_policy` | `public.tier_preco_config_service_all` | `tier_preco_config` |
+| `rls_policy` | `public.markup_policy_select_carteira` | `markup_policy` |
 
 ### `20260704120000_profiles_prevent_self_approval.sql`
 

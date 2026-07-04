@@ -10,6 +10,8 @@ import { usePriceHistory } from '@/hooks/usePriceHistory';
 import { useCart, VOLUME_UNITS } from '@/hooks/unifiedOrder/useCart';
 import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection';
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
+import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
+import { precoPartida } from '@/lib/pricing/precoPartida';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService } from '@/services/orderSubmission';
 import type { LastOrderDataShape, BloqueioCreditoPedido } from '@/services/orderSubmission';
 import { track } from '@/lib/analytics';
@@ -218,6 +220,8 @@ export function useUnifiedOrder() {
     requiresPo,
     customerPricesOben,
     customerPricesColacor,
+    customerPriceDatesOben,
+    customerPriceDatesColacor,
     selectedParcelaOben, setSelectedParcelaOben,
     selectedParcelaColacor, setSelectedParcelaColacor,
     customerParcelaRankingOben,
@@ -254,13 +258,38 @@ export function useUnifiedOrder() {
   // Pricing history (depends on customerUserId from above)
   const { loadPriceHistory, getLastPrice } = usePriceHistory(customerUserId || undefined);
 
+  // Tier do cliente (por conta) + multiplicador de partida — alimentam a precedência
+  // de NASCIMENTO do preço (precoPartida). Falha/ausência → null → comportamento vigente.
+  const { data: tierPorConta, isLoading: tierLoading } = useClienteTier(customerUserId);
+  const { data: multConfig, isLoading: configLoading } = useTierPrecoConfig();
+  // Enquanto tier/config carregam, o preço de partida ainda não é FIRME (adicionar antes
+  // faria o item tier C nascer sem o mult, não-determinístico — Codex P1). O wizard gateia
+  // o ADD por este sinal. Só espera de fato quando há cliente (tier depende dele).
+  const precoPartidaLoading = configLoading || (!!customerUserId && tierLoading);
+
   // Pricing helpers (defined here so useCart can depend on them)
   const getProductPrice = useCallback((product: Product): number => {
     const account = (product.account || 'oben') as ProductAccount;
-    const prices = account === 'oben' ? customerPricesOben : customerPricesColacor;
+    const contaKey = account === 'colacor' ? 'colacor' : 'oben'; // wizard só vende oben/colacor
+    const prices = contaKey === 'oben' ? customerPricesOben : customerPricesColacor;
+    const datas = contaKey === 'oben' ? customerPriceDatesOben : customerPriceDatesColacor;
     const omiePrice = prices[product.omie_codigo_produto];
-    return (omiePrice && omiePrice > 0) ? omiePrice : product.valor_unitario;
-  }, [customerPricesOben, customerPricesColacor]);
+    const tier = tierPorConta?.[contaKey] ?? null;
+    const mult = tier ? (multConfig?.[contaKey]?.[tier] ?? null) : null;
+    // Precedência de nascimento (spec §4): último praticado ≤180d > tabela×mult(tier) > tabela.
+    return precoPartida({
+      tabela: product.valor_unitario,
+      ultimoPraticado: omiePrice && omiePrice > 0 ? omiePrice : null,
+      ultimoPraticadoEm: datas[product.omie_codigo_produto] ?? null,
+      hoje: new Date(),
+      tier,
+      mult,
+    });
+  }, [
+    customerPricesOben, customerPricesColacor,
+    customerPriceDatesOben, customerPriceDatesColacor,
+    tierPorConta, multConfig,
+  ]);
 
   const getServicePrice = useCallback((item: ServiceCartItem): number | null => {
     const serviceType = item.servico?.descricao || '';
@@ -283,6 +312,30 @@ export function useUnifiedOrder() {
     updateServiceServico, updateServiceNotes, updateServicePhotos,
     updateQuantity, updateProductPrice, removeFromCart, clearCart,
   } = cartHook;
+
+  // Reprecificação da FRONTEIRA (Codex P1-A): um item de produto comum pode nascer ANTES de
+  // tier/mult firmarem — por QUALQUER via (lista, IA, recomendação, deep-link), não só a lista.
+  // Quando o preço de partida fica firme, corrige os itens que o vendedor NÃO editou
+  // (unit_price === precoNascimento). Idempotente: roda sobre a TABELA (getProductPrice), nunca
+  // sobre o preço já no carrinho — se já está certo, devolve o mesmo valor e nada muda. Tint e
+  // preço fixado pela IA ficam de fora (precoNascimento ausente).
+  useEffect(() => {
+    if (precoPartidaLoading) return;
+    setCart(prev => {
+      let mudou = false;
+      const next = prev.map(c => {
+        if (c.type !== 'product') return c;
+        const p = c as ProductCartItem;
+        if (p.tint_formula_id || p.precoNascimento == null) return c;
+        if (p.unit_price !== p.precoNascimento) return c; // vendedor editou → não toca
+        const novo = getProductPrice(p.product);
+        if (novo === p.unit_price) return c;
+        mudou = true;
+        return { ...p, unit_price: novo, precoNascimento: novo };
+      });
+      return mudou ? next : prev;
+    });
+  }, [precoPartidaLoading, getProductPrice, setCart]);
 
   // Product catalog (Oben + Colacor) — só carrega para staff
   const catalog = useProductCatalog({
@@ -521,8 +574,13 @@ export function useUnifiedOrder() {
       } else {
         const account = (product.account || aiProd.account || 'oben') as ProductAccount;
         const aiPrice = aiProd.unit_price;
-        const unitPrice = (aiPrice && aiPrice > 0) ? aiPrice : getProductPrice(product as Product);
-        newCartItems.push({ type: 'product', product: product as Product, quantity: aiProd.quantity, unit_price: unitPrice, account });
+        const usouTabela = !(aiPrice && aiPrice > 0);
+        const unitPrice = usouTabela ? getProductPrice(product as Product) : aiPrice;
+        newCartItems.push({
+          type: 'product', product: product as Product, quantity: aiProd.quantity, unit_price: unitPrice, account,
+          // só marca p/ reprecificação se nasceu da tabela/tier (não do preço que a IA fixou)
+          ...(usouTabela ? { precoNascimento: unitPrice } : {}),
+        });
       }
     }
     for (const aiSvc of result.services) {
@@ -825,6 +883,7 @@ export function useUnifiedOrder() {
     customerPricesOben, customerPricesColacor,
     filteredObenProducts, filteredColacorProducts,
     customerPurchaseHistory,
+    precoPartidaLoading,
     // Services
     userTools, loadingTools, servicos, loadingServicos,
     addToolDialogOpen, setAddToolDialogOpen, creatingLocalProfile,

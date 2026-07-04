@@ -60,9 +60,10 @@ export function CartItemList({
         codigo: it.product.omie_codigo_produto,
         preco: it.unit_price,
         tint_formula_id: it.tint_formula_id ?? null,
+        customer_user_id: customerUserId, // tier resolvido server-side por este cliente
       }))
       .filter(i => i.preco > 0 && Number.isFinite(i.codigo) && i.empresa !== ''),
-    [obenProductItems, colacorProductItems],
+    [obenProductItems, colacorProductItems, customerUserId],
   );
   const { data: cockpitList } = usePrecoCockpit(cockpitItens);
   const cockpitByKey = useMemo(() => {

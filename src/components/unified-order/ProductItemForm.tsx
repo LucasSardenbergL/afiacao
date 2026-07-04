@@ -37,13 +37,22 @@ interface ProductItemFormProps {
   selosByKey?: Map<string, OpcaoResolvida>;
   /** Mostra o selo "preparado" só p/ staff (vendedor-only; nada pro cliente). */
   canSeeVendaAssistida?: boolean;
+  /** Cliente selecionado — o cockpit resolve o piso do TIER server-side por ele. */
+  customerUserId?: string | null;
+  /** Preço de NASCIMENTO (= getProductPrice do wizard): último≤180d > tabela×mult(tier) >
+   *  tabela. A lista exibe e avalia o MESMO preço que o carrinho vai nascer (sem divergir). */
+  getPrecoNascimento?: (p: Product) => number;
+  /** Tier/mult ainda carregando → o preço de partida não é FIRME: o ADD fica desabilitado
+   *  (evita nascer item tier C sem o mult, não-determinístico). */
+  precoLoading?: boolean;
 }
 
 export function ProductItemForm({
   title, products, prices, loading, productSearch, onSearchChange,
   productItems, onAddProduct, customerPurchaseHistory = {},
   customerPricesLoading = false, specsByKey, canSeeFicha = false,
-  selosByKey, canSeeVendaAssistida = false,
+  selosByKey, canSeeVendaAssistida = false, customerUserId = null,
+  getPrecoNascimento, precoLoading = false,
 }: ProductItemFormProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [fichaAberta, setFichaAberta] = useState<string | null>(null);
@@ -51,15 +60,22 @@ export function ProductItemForm({
   // Cockpit de preço por linha (batch). Enquanto os preços do contrato carregam,
   // não consulta (o preço exibido ainda vai mudar). Saúde sobre o preço aplicado.
   const cockpitInputs = useMemo<ItemCockpitInput[]>(() => {
-    if (customerPricesLoading) return [];
+    if (customerPricesLoading || precoLoading) return [];
     // #6: produto tintométrico NÃO recebe faixa na lista — a faixa real (custo
     // base+corantes) depende da cor escolhida e aparece na linha do carrinho.
     // O custo da base aqui enganaria. Filtra fora os tintométricos.
     return products
       .filter(p => !p.is_tintometric)
-      .map(p => ({ empresa: p.account ?? '', codigo: p.omie_codigo_produto, preco: prices[p.omie_codigo_produto] || p.valor_unitario }))
+      .map(p => ({
+        empresa: p.account ?? '',
+        codigo: p.omie_codigo_produto,
+        // Avalia o preço que o item VAI nascer (getProductPrice) — a faixa da lista casa
+        // com a do carrinho. Fallback p/ o preço-cliente/tabela se a função não veio.
+        preco: getPrecoNascimento ? getPrecoNascimento(p) : (prices[p.omie_codigo_produto] || p.valor_unitario),
+        customer_user_id: customerUserId,
+      }))
       .filter(i => i.preco > 0 && Number.isFinite(i.codigo) && i.empresa !== '');
-  }, [products, prices, customerPricesLoading]);
+  }, [products, prices, customerPricesLoading, precoLoading, customerUserId, getPrecoNascimento]);
   const { data: cockpitList } = usePrecoCockpit(cockpitInputs);
   // produtos da busca são únicos por código (e tint é filtrado fora) → Map por código.
   const cockpitByCode = useMemo(
@@ -91,7 +107,7 @@ export function ProductItemForm({
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input placeholder="Buscar produto..." value={productSearch} onChange={e => onSearchChange(e.target.value)} className="pl-9 h-9" />
         </div>
-        {customerPricesLoading && (
+        {(customerPricesLoading || precoLoading) && (
           <div className="flex items-center gap-1.5 mb-2 text-[11px] text-muted-foreground" role="status">
             <Loader2 className="w-3 h-3 animate-spin" /> Carregando preços do contrato…
           </div>
@@ -154,7 +170,7 @@ export function ProductItemForm({
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="text-xs font-semibold">{fmt(customerPrice || product.valor_unitario)}</p>
+                      <p className="text-xs font-semibold">{fmt(getPrecoNascimento ? getPrecoNascimento(product) : (customerPrice || product.valor_unitario))}</p>
                       <Badge variant={product.estoque > 0 ? 'outline' : 'destructive'} className="text-[9px] mt-0.5">
                         Est: {product.estoque ?? 0}
                       </Badge>
@@ -189,11 +205,14 @@ export function ProductItemForm({
                       size="sm"
                       variant={isInCart ? 'secondary' : 'default'}
                       className="h-7 text-xs flex-1"
-                      disabled={!product.ativo}
+                      disabled={!product.ativo || precoLoading}
+                      title={precoLoading ? 'Aguardando o preço de partida do cliente…' : undefined}
                       onClick={() => {
                         // Inativo no Omie era só badge — continuava adicionável
                         // e o pedido iria com item desativado (retroativo Codex).
-                        if (!product.ativo) return;
+                        // precoLoading: o mult do tier ainda não chegou → nascer agora seria
+                        // não-determinístico (Codex P1). Espera o preço ficar firme.
+                        if (!product.ativo || precoLoading) return;
                         onAddProduct(product, qty);
                         setQty(product.id, 1);
                       }}
