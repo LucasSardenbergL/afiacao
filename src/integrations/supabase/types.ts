@@ -16337,6 +16337,12 @@ export type Database = {
         Args: { p_account: string; p_at: string; p_run_id: number }
         Returns: boolean
       }
+      claim_nfe_efetivacao_lock: {
+        Args: { p_cutoff: string; p_lock_ts: string; p_nfe_id: string }
+        Returns: {
+          id: string
+        }[]
+      }
       classificar_clientes_fornecedores: { Args: never; Returns: Json }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
       concluir_com_comprovacao: {
