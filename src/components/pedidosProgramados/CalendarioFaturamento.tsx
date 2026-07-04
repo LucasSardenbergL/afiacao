@@ -46,7 +46,7 @@ interface Props {
 }
 
 export const CalendarioFaturamento = ({ mes, onMudarMes }: Props) => {
-  const { data, isPending } = usePedidosProgramadosCalendario(mes);
+  const { data, isPending, error } = usePedidosProgramadosCalendario(mes);
   const [diaAberto, setDiaAberto] = useState<string | null>(null);
 
   const porDia = useMemo(() => agruparEnviosPorDia(data?.envios ?? []), [data?.envios]);
@@ -62,7 +62,8 @@ export const CalendarioFaturamento = ({ mes, onMudarMes }: Props) => {
   const tituloMes = format(new Date(ano, m - 1, 1), 'MMMM yyyy', { locale: ptBR });
 
   const diaSel: DiaAgregado | undefined = diaAberto ? porDia.get(diaAberto) : undefined;
-  const mesVazio = !isPending && porDia.size === 0;
+  // Erro de leitura NÃO pode se disfarçar de "mês vazio" (tela adjacente ao money-path)
+  const mesVazio = !isPending && !error && porDia.size === 0;
 
   return (
     <div className="space-y-3">
@@ -83,6 +84,12 @@ export const CalendarioFaturamento = ({ mes, onMudarMes }: Props) => {
           ))}
         </div>
       </div>
+
+      {error && (
+        <p className="text-xs text-status-error">
+          Não foi possível carregar os envios deste mês. Tente de novo ou recarregue a página.
+        </p>
+      )}
 
       {data?.truncado && (
         <p className="text-xs text-status-warning">
