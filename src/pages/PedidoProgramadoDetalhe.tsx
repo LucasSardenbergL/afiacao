@@ -24,6 +24,9 @@ const fmtMoeda = (v: number | null) =>
 
 const ENVIO_STATUS_CLS: Record<string, string> = {
   agendado: 'text-status-info',
+  // claim do edge em voo: sem botões de ação (a condição de render já cobre — só
+  // agendado/erro têm "Enviar agora"/"Cancelar")
+  processando: 'text-status-warning',
   enviado: 'text-status-success',
   erro: 'text-status-error',
   cancelado: 'text-muted-foreground',

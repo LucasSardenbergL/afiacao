@@ -4781,6 +4781,30 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_sync_kick_retry: {
+        Row: {
+          attempted_at: string
+          company: string
+          janela: string
+          request_id: number | null
+          resource: string
+        }
+        Insert: {
+          attempted_at?: string
+          company: string
+          janela: string
+          request_id?: number | null
+          resource: string
+        }
+        Update: {
+          attempted_at?: string
+          company?: string
+          janela?: string
+          request_id?: number | null
+          resource?: string
+        }
+        Relationships: []
+      }
       fin_sync_log: {
         Row: {
           action: string
@@ -10673,6 +10697,7 @@ export type Database = {
           omie_response: Json | null
           order_date_kpi: string | null
           origem: string | null
+          pedido_programado_envio_id: string | null
           ready_by_date: string | null
           status: string
           subtotal: number
@@ -10700,6 +10725,7 @@ export type Database = {
           omie_response?: Json | null
           order_date_kpi?: string | null
           origem?: string | null
+          pedido_programado_envio_id?: string | null
           ready_by_date?: string | null
           status?: string
           subtotal?: number
@@ -10727,13 +10753,22 @@ export type Database = {
           omie_response?: Json | null
           order_date_kpi?: string | null
           origem?: string | null
+          pedido_programado_envio_id?: string | null
           ready_by_date?: string | null
           status?: string
           subtotal?: number
           total?: number
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "sales_orders_pedido_programado_envio_id_fkey"
+            columns: ["pedido_programado_envio_id"]
+            isOneToOne: false
+            referencedRelation: "pedidos_programados_envios"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       sales_price_history: {
         Row: {
@@ -16525,6 +16560,16 @@ export type Database = {
       }
       fin_refresh_analise_dimensoes: { Args: never; Returns: undefined }
       fin_sync_heartbeat: { Args: never; Returns: undefined }
+      fin_sync_kicks_perdidos: {
+        Args: { p_now?: string }
+        Returns: {
+          company: string
+          janela: string
+          prio: number
+          resource: string
+        }[]
+      }
+      fin_sync_retry_tick: { Args: never; Returns: undefined }
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_user_can_access: {
         Args: { check_company?: string }
@@ -16786,6 +16831,7 @@ export type Database = {
           total: number
         }[]
       }
+      pedidos_programados_watchdog_claims: { Args: never; Returns: number }
       pode_ver_carteira_completa: { Args: { _uid: string }; Returns: boolean }
       preencher_parametros_faltantes_skus: {
         Args: { p_empresa: string }
