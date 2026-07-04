@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **326** custom migrations totais
-- **1123** objetos esperados (criados por estas migrations)
+- **328** custom migrations totais
+- **1131** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 321
+  - `function`: 324
   - `rls_policy`: 249
-  - `index`: 199
+  - `index`: 200
   - `table`: 123
-  - `cron_job`: 113
-  - `trigger`: 59
+  - `cron_job`: 114
+  - `trigger`: 62
   - `view`: 55
   - `enum_value`: 4
 
@@ -2747,6 +2747,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.venda_gate_credito` | — |
 
+### `20260704070000_pedidos_programados_claim_processando.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pedidos_programados_watchdog_claims` | — |
+| `function` | `public.pp_bloqueia_cancel_com_claim` | — |
+| `index` | `public.uniq_sales_orders_pp_envio_account` | `sales_orders` |
+| `trigger` | `public.pp_guard_cancel_com_claim` | `pedidos_programados` |
+| `cron_job` | `cron.pedidos-programados-watchdog` | — |
+
 ### `20260704102000_fin_sync_retry_kick_perdido.sql`
 
 | Tipo | Objeto | Parent |
@@ -2756,6 +2766,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.fin_sync_kick_retry` | — |
 | `cron_job` | `cron.fin-sync-retry-kicks` | — |
 | `rls_policy` | `public.fin_sync_kick_retry_select_staff` | `fin_sync_kick_retry` |
+
+### `20260704120000_profiles_prevent_self_approval.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.prevent_self_approval` | — |
+| `trigger` | `public.trg_prevent_self_approval_upd` | `profiles` |
+| `trigger` | `public.trg_prevent_self_approval_ins` | `profiles` |
 
 ## Próximos passos por status
 
