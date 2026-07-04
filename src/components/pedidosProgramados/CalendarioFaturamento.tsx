@@ -55,6 +55,7 @@ export const CalendarioFaturamento = ({ mes, onMudarMes }: Props) => {
 
   const [ano, m] = mes.split('-').map(Number);
   const navegar = (delta: number) => {
+    setDiaAberto(null); // Sheet de um mês não sobrevive à navegação para outro
     const alvo = new Date(ano, m - 1 + delta, 1);
     onMudarMes(dataLocalISO(alvo).slice(0, 7));
   };
@@ -89,7 +90,7 @@ export const CalendarioFaturamento = ({ mes, onMudarMes }: Props) => {
         </p>
       )}
 
-      <div className="grid grid-cols-7 gap-1.5">
+      <div className={cn('grid grid-cols-7 gap-1.5', isPending && porDia.size === 0 && 'opacity-60 animate-pulse')}>
         {['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'].map((d) => (
           <div key={d} className="text-[11px] text-muted-foreground px-1.5 pb-0.5">{d}</div>
         ))}
