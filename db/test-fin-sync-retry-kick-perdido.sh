@@ -285,35 +285,35 @@ restore() { P -q -f "$MIG" >/dev/null; }
 reset
 sabota_kicks "- interval '0 minutes'" "$LOG" "$RETRY" "$RUNNING"
 V=$(kicks '2026-07-04 08:15:00+00' " WHERE janela='2026-07-04 08:00:00+00'")
-[ "$V" != "0" ] && ok "F1 grace furado → janela recente elegível (A11 tem dente)" || bad "F1 grace sabotado e nada mudou"
+if [ "$V" != "0" ]; then ok "F1 grace furado → janela recente elegível (A11 tem dente)"; else bad "F1 grace sabotado e nada mudou"; fi
 restore
 
 # F2 guard-a tem dente
 reset; P -q -c "INSERT INTO public.fin_sync_log(action,companies,status,started_at) VALUES ('sync_contas_pagar',ARRAY['oben'],'complete','2026-07-04 08:00:15+00');"
 sabota_kicks "$GRACE" "true" "$RETRY" "$RUNNING"
 V=$(kicks "$A" " WHERE company='oben' AND resource='contas_pagar'")
-[ "$V" != "0" ] && ok "F2 sem guard-log → complete não bloqueia (A2/A3 têm dente)" || bad "F2 guard-log sabotado e nada mudou"
+if [ "$V" != "0" ]; then ok "F2 sem guard-log → complete não bloqueia (A2/A3 têm dente)"; else bad "F2 guard-log sabotado e nada mudou"; fi
 restore
 
 # F3 decisão-6 tem dente (só-complete deixa error passar)
 reset; P -q -c "INSERT INTO public.fin_sync_log(action,companies,status,started_at) VALUES ('sync_contas_pagar',ARRAY['oben'],'error','2026-07-04 08:05:00+00');"
 sabota_kicks "$GRACE" "NOT EXISTS (SELECT 1 FROM public.fin_sync_log l WHERE l.action='sync_'||u.resource AND e.company=ANY(l.companies) AND l.status='complete' AND l.started_at>=u.janela)" "$RETRY" "$RUNNING"
 V=$(kicks "$A" " WHERE company='oben' AND resource='contas_pagar'")
-[ "$V" != "0" ] && ok "F3 só-complete → error re-kickado (A4/decisão-6 tem dente)" || bad "F3 decisão-6 não provada"
+if [ "$V" != "0" ]; then ok "F3 só-complete → error re-kickado (A4/decisão-6 tem dente)"; else bad "F3 decisão-6 não provada"; fi
 restore
 
 # F4 guard-c tem dente
 reset; P -q -c "INSERT INTO public.fin_sync_kick_retry(company,resource,janela) VALUES ('oben','contas_pagar','2026-07-04 08:00:00+00');"
 sabota_kicks "$GRACE" "$LOG" "true" "$RUNNING"
 V=$(kicks "$A" " WHERE company='oben' AND resource='contas_pagar'")
-[ "$V" != "0" ] && ok "F4 sem guard-retry → retry repete (A9 tem dente)" || bad "F4 guard-retry sabotado e nada mudou"
+if [ "$V" != "0" ]; then ok "F4 sem guard-retry → retry repete (A9 tem dente)"; else bad "F4 guard-retry sabotado e nada mudou"; fi
 restore
 
 # F_d guard-d tem dente
 reset; running contas_receber oben '2026-07-04 09:25:00+00'
 sabota_kicks "$GRACE" "$LOG" "$RETRY" "true"
 V=$(kicks "$A" " WHERE company='oben' AND resource='contas_pagar'")
-[ "$V" != "0" ] && ok "Fd sem guard-running → conta ocupada re-kickada (Ad1 tem dente)" || bad "Fd guard-d sabotado e nada mudou"
+if [ "$V" != "0" ]; then ok "Fd sem guard-running → conta ocupada re-kickada (Ad1 tem dente)"; else bad "Fd guard-d sabotado e nada mudou"; fi
 restore
 
 # F5 CAP (tick): sem DISTINCT ON, oben CP+CR gera 2 retries no MESMO tick
@@ -334,7 +334,7 @@ END $fn$;
 SQL
 P -q -c "SELECT public.fin_sync_retry_tick();" >/dev/null
 V=$(Pq -c "SELECT count(*) FROM public.fin_sync_kick_retry WHERE company='oben';")
-[ "$V" -ge 2 ] && ok "F5 sem DISTINCT ON → 2 retries/empresa/tick (T3/cap tem dente, veio $V)" || bad "F5 removi o cap e ainda deu $V"
+if [ "$V" -ge 2 ]; then ok "F5 sem DISTINCT ON → 2 retries/empresa/tick (T3/cap tem dente, veio $V)"; else bad "F5 removi o cap e ainda deu $V"; fi
 restore
 
 # F6 advisory lock (concorrência real)
@@ -369,7 +369,7 @@ SQL
   P -q -c "TRUNCATE net._http_calls RESTART IDENTITY; TRUNCATE public.fin_sync_kick_retry;"
   P -q -c "SELECT public.fin_sync_retry_tick();" >/dev/null
   V=$(Pq -c "SELECT count(*) FROM net._http_calls;")
-  [ "$V" -ge 1 ] && ok "F6b sem try-lock → tick posta sob lock ocupado (F6 tem dente, veio $V)" || bad "F6b removi o lock e o tick não postou ($V)"
+  if [ "$V" -ge 1 ]; then ok "F6b sem try-lock → tick posta sob lock ocupado (F6 tem dente, veio $V)"; else bad "F6b removi o lock e o tick não postou ($V)"; fi
   restore
 else
   echo "  ⚠️  F6 pulado: não detectei o lock em A (timing) — advisory lock não provado nesta run"
