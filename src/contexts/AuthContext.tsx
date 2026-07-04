@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
@@ -94,7 +94,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setLoading(false);
   };
 
-  const fetchUserRoleAndApprovalOnce = async (userId: string) => {
+  const fetchUserRoleAndApprovalOnce = useCallback(async (userId: string) => {
     // Fetch role and approval in parallel
     return withTimeout(
       Promise.all([
@@ -117,9 +117,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       ROLE_FETCH_TIMEOUT_MS,
       'fetchUserRoleAndApproval',
     );
-  };
+  }, []);
 
-  const fetchUserRoleAndApproval = async (userId: string) => {
+  const fetchUserRoleAndApproval = useCallback(async (userId: string) => {
     for (let attempt = 0; attempt < ROLE_FETCH_RETRY_DELAYS_MS.length; attempt += 1) {
       const delayMs = ROLE_FETCH_RETRY_DELAYS_MS[attempt];
       if (delayMs > 0) await wait(delayMs);
@@ -218,7 +218,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
     }
-  };
+  }, [fetchUserRoleAndApprovalOnce]);
 
   useEffect(() => {
     let isMounted = true;
@@ -319,7 +319,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const signUp = async (email: string, password: string, name: string) => {
+  const signUp = useCallback(async (email: string, password: string, name: string) => {
     try {
       const redirectUrl = `${window.location.origin}/`;
       
@@ -349,9 +349,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } catch (error) {
       return { error: error as Error };
     }
-  };
+  }, []);
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = useCallback(async (email: string, password: string) => {
     try {
       const { error } = await supabase.auth.signInWithPassword({
         email,
@@ -363,9 +363,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } catch (error) {
       return { error: error as Error };
     }
-  };
+  }, []);
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     // ANTES do signOut (a RPC precisa da sessão): desinscreve o Web Push do
     // device — senão quem logar depois neste navegador recebe os pushes de
     // quem saiu. Best-effort (nunca lança, não trava o logout).
@@ -374,23 +374,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setRole(null);
     setIsApproved(false);
     setCommercialRole(null);
-  };
+  }, []);
 
-  const refetchRole = async () => {
+  const refetchRole = useCallback(async () => {
     if (user) {
       await fetchUserRoleAndApproval(user.id);
     }
-  };
+  }, [user, fetchUserRoleAndApproval]);
 
-  const isAdmin = role === 'master';
-  const isEmployee = role === 'employee';
-  const isMaster = role === 'master';
-  const isCustomer = role === 'customer';
-  const isStaff = isAdmin || isEmployee || isMaster;
-  const isGestorComercial = ['gerencial', 'estrategico', 'super_admin'].includes(commercialRole ?? '');
-
-  return (
-    <AuthContext.Provider value={{
+  // value memoizado: o AuthProvider envolve a árvore inteira — sem isto, cada
+  // render dele recriava o objeto e re-renderizava todos os consumidores de
+  // useAuth(). Nenhuma lógica muda: o fail-closed (erro → role null/approval
+  // false) vive nos setters acima e segue intacto.
+  const value = useMemo<AuthContextType>(() => {
+    const isAdmin = role === 'master';
+    const isEmployee = role === 'employee';
+    const isMaster = role === 'master';
+    const isCustomer = role === 'customer';
+    const isStaff = isAdmin || isEmployee || isMaster;
+    const isGestorComercial = ['gerencial', 'estrategico', 'super_admin'].includes(commercialRole ?? '');
+    return {
       user,
       session,
       loading,
@@ -407,7 +410,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       signIn,
       signOut,
       refetchRole,
-    }}>
+    };
+  }, [user, session, loading, role, isApproved, commercialRole, signUp, signIn, signOut, refetchRole]);
+
+  return (
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
 
 export type Company = 'colacor' | 'oben' | 'colacor_sc';
 export type CompanySelection = Company | 'all';
@@ -49,33 +49,40 @@ export const CompanyProvider = ({ children }: { children: ReactNode }) => {
     return isValidSelection(stored) ? stored : 'colacor';
   });
 
-  const setSelection = (s: CompanySelection) => {
+  const setSelection = useCallback((s: CompanySelection) => {
     setSelectionState(s);
     localStorage.setItem('activeCompany', s);
-  };
+  }, []);
 
-  const setActiveCompany = (company: Company) => setSelection(company);
-
-  // activeCompany é sempre uma Company concreta — para legado, em modo 'all' devolve o último single conhecido.
-  const lastSingle: Company =
-    selection !== 'all' ? selection : (() => {
-      const stored = localStorage.getItem('activeCompanyLastSingle');
-      return isValidSelection(stored) && stored !== 'all' ? stored : 'colacor';
-    })();
+  const setActiveCompany = useCallback((company: Company) => setSelection(company), [setSelection]);
 
   // Sempre que selection vira single, lembra qual foi (pra resolver fallback em 'all').
-  if (selection !== 'all' && typeof window !== 'undefined') {
-    localStorage.setItem('activeCompanyLastSingle', selection);
-  }
+  useEffect(() => {
+    if (selection !== 'all') {
+      localStorage.setItem('activeCompanyLastSingle', selection);
+    }
+  }, [selection]);
 
-  return (
-    <CompanyContext.Provider value={{
+  // value memoizado: sem isto, cada render do provider recriava o objeto e
+  // re-renderizava TODOS os consumidores (o provider envolve a árvore inteira).
+  const value = useMemo<CompanyContextType>(() => {
+    // activeCompany é sempre uma Company concreta — para legado, em modo 'all' devolve o último single conhecido.
+    const lastSingle: Company =
+      selection !== 'all' ? selection : (() => {
+        const stored = localStorage.getItem('activeCompanyLastSingle');
+        return isValidSelection(stored) && stored !== 'all' ? stored : 'colacor';
+      })();
+    return {
       activeCompany: lastSingle,
       selection,
       setSelection,
       setActiveCompany,
       companyInfo: COMPANIES[lastSingle],
-    }}>
+    };
+  }, [selection, setSelection, setActiveCompany]);
+
+  return (
+    <CompanyContext.Provider value={value}>
       {children}
     </CompanyContext.Provider>
   );
