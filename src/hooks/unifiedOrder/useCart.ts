@@ -98,13 +98,15 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
               : c,
           );
         }
+        const preco = getProductPrice(product);
         return [
           ...prev,
           {
             type: 'product',
             product,
             quantity: qty,
-            unit_price: getProductPrice(product),
+            unit_price: preco,
+            precoNascimento: preco, // marca "não-editado" p/ a reprecificação da fronteira
             account,
           } as ProductCartItem,
         ];

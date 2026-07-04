@@ -89,6 +89,11 @@ export interface ProductCartItem {
   quantity: number;
   unit_price: number;
   account: ProductAccount;
+  // Preço de PARTIDA no nascimento (precoPartida). Enquanto unit_price === precoNascimento o
+  // vendedor NÃO editou → a reprecificação da fronteira pode corrigir um item que nasceu antes
+  // do tier/mult firmarem (Codex P1-A: guard na fronteira, não só na UI da lista). Ausente em
+  // itens nascidos por preço externo (IA aiPrice) ou tint — esses nunca são reprecificados.
+  precoNascimento?: number;
   // Tintometric optional fields
   tint_cor_id?: string;
   tint_nome_cor?: string;

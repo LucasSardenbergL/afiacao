@@ -95,6 +95,34 @@ describe('montarPrecosLocaisPorConta', () => {
   });
 
   it('entrada vazia → mapas vazios por conta (sem throw)', () => {
-    expect(montarPrecosLocaisPorConta({}, [])).toEqual({ oben: {}, colacor: {} });
+    expect(montarPrecosLocaisPorConta({}, [])).toEqual({
+      oben: {}, colacor: {}, datasOben: {}, datasColacor: {},
+    });
+  });
+
+  it('data do último praticado: propagada por conta, com o MESMO confinamento do preço', () => {
+    const out = montarPrecosLocaisPorConta(
+      { 'uuid-oben': 100, 'uuid-colacor': 150 },
+      [
+        { id: 'uuid-oben', omie_codigo_produto: 123, account: 'oben' },
+        { id: 'uuid-colacor', omie_codigo_produto: 123, account: 'colacor' },
+      ],
+      { 'uuid-oben': '2026-06-15', 'uuid-colacor': '2025-01-10' },
+    );
+    expect(out.datasOben[123]).toBe('2026-06-15');
+    expect(out.datasColacor[123]).toBe('2025-01-10');
+    // confinamento: a data Oben não vaza pro mapa Colacor
+    expect(123 in out.datasColacor).toBe(true); // colacor tem a SUA própria data
+    expect(out.datasColacor[123]).not.toBe('2026-06-15');
+  });
+
+  it('preço presente mas data ausente → entra o preço, a data fica ausente (precoPartida preserva vigente)', () => {
+    const out = montarPrecosLocaisPorConta(
+      { 'uuid-oben': 100 },
+      [{ id: 'uuid-oben', omie_codigo_produto: 55, account: 'oben' }],
+      {}, // sem data pra esse product_id
+    );
+    expect(out.oben[55]).toBe(100);
+    expect(55 in out.datasOben).toBe(false);
   });
 });

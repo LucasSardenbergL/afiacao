@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **324** custom migrations totais
-- **1117** objetos esperados (criados por estas migrations)
+- **325** custom migrations totais
+- **1140** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 319
-  - `rls_policy`: 248
-  - `index`: 199
-  - `table`: 122
+  - `function`: 325
+  - `rls_policy`: 258
+  - `index`: 201
+  - `table`: 125
   - `cron_job`: 111
-  - `trigger`: 59
+  - `trigger`: 61
   - `view`: 55
   - `enum_value`: 4
 
@@ -2740,6 +2740,34 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.venda_gate_credito` | — |
+
+### `20260704120000_preco_por_tier.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cliente_tier_preco_forca_autor` | — |
+| `function` | `public.cliente_tier_preco_audita` | — |
+| `function` | `public.resolve_markup_policy` | — |
+| `function` | `public.get_preco_cockpit` | — |
+| `function` | `public.get_ultimos_precos_cliente` | — |
+| `function` | `public.medir_abaixo_piso_tier` | — |
+| `table` | `public.cliente_tier_preco` | — |
+| `table` | `public.cliente_tier_preco_log` | — |
+| `table` | `public.tier_preco_config` | — |
+| `index` | `public.idx_cliente_tier_preco_customer` | `cliente_tier_preco` |
+| `index` | `public.idx_cliente_tier_log_cliente` | `cliente_tier_preco_log` |
+| `trigger` | `public.trg_cliente_tier_forca_autor` | `cliente_tier_preco` |
+| `trigger` | `public.trg_cliente_tier_audita` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_select_staff` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_insert_gestor` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_update_gestor` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_delete_master` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_preco_service_all` | `cliente_tier_preco` |
+| `rls_policy` | `public.cliente_tier_log_select_staff` | `cliente_tier_preco_log` |
+| `rls_policy` | `public.tier_preco_config_select_staff` | `tier_preco_config` |
+| `rls_policy` | `public.tier_preco_config_write_master` | `tier_preco_config` |
+| `rls_policy` | `public.tier_preco_config_service_all` | `tier_preco_config` |
+| `rls_policy` | `public.markup_policy_select_carteira` | `markup_policy` |
 
 ## Próximos passos por status
 

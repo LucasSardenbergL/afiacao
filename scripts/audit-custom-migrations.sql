@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 324
+-- Total de custom migrations: 325
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -365,7 +365,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260702233000', 'trava_credito_fase2', '20260702233000_trava_credito_fase2.sql'),
   ('20260703090000', 'pedidos_programados', '20260703090000_pedidos_programados.sql'),
   ('20260703091000', 'pedidos_programados_cron', '20260703091000_pedidos_programados_cron.sql'),
-  ('20260703140000', 'trava_credito_gate_excecao_por_par', '20260703140000_trava_credito_gate_excecao_por_par.sql')
+  ('20260703140000', 'trava_credito_gate_excecao_por_par', '20260703140000_trava_credito_gate_excecao_por_par.sql'),
+  ('20260704120000', 'preco_por_tier', '20260704120000_preco_por_tier.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1471,7 +1472,30 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_insert', 'objects'),
   ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_delete', 'objects'),
   ('pedidos_programados_cron', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
-  ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', '')
+  ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', ''),
+  ('preco_por_tier', 'function', 'public', 'cliente_tier_preco_forca_autor', ''),
+  ('preco_por_tier', 'function', 'public', 'cliente_tier_preco_audita', ''),
+  ('preco_por_tier', 'function', 'public', 'resolve_markup_policy', ''),
+  ('preco_por_tier', 'function', 'public', 'get_preco_cockpit', ''),
+  ('preco_por_tier', 'function', 'public', 'get_ultimos_precos_cliente', ''),
+  ('preco_por_tier', 'function', 'public', 'medir_abaixo_piso_tier', ''),
+  ('preco_por_tier', 'table', 'public', 'cliente_tier_preco', ''),
+  ('preco_por_tier', 'table', 'public', 'cliente_tier_preco_log', ''),
+  ('preco_por_tier', 'table', 'public', 'tier_preco_config', ''),
+  ('preco_por_tier', 'index', 'public', 'idx_cliente_tier_preco_customer', 'cliente_tier_preco'),
+  ('preco_por_tier', 'index', 'public', 'idx_cliente_tier_log_cliente', 'cliente_tier_preco_log'),
+  ('preco_por_tier', 'trigger', 'public', 'trg_cliente_tier_forca_autor', 'cliente_tier_preco'),
+  ('preco_por_tier', 'trigger', 'public', 'trg_cliente_tier_audita', 'cliente_tier_preco'),
+  ('preco_por_tier', 'rls_policy', 'public', 'cliente_tier_preco_select_staff', 'cliente_tier_preco'),
+  ('preco_por_tier', 'rls_policy', 'public', 'cliente_tier_preco_insert_gestor', 'cliente_tier_preco'),
+  ('preco_por_tier', 'rls_policy', 'public', 'cliente_tier_preco_update_gestor', 'cliente_tier_preco'),
+  ('preco_por_tier', 'rls_policy', 'public', 'cliente_tier_preco_delete_master', 'cliente_tier_preco'),
+  ('preco_por_tier', 'rls_policy', 'public', 'cliente_tier_preco_service_all', 'cliente_tier_preco'),
+  ('preco_por_tier', 'rls_policy', 'public', 'cliente_tier_log_select_staff', 'cliente_tier_preco_log'),
+  ('preco_por_tier', 'rls_policy', 'public', 'tier_preco_config_select_staff', 'tier_preco_config'),
+  ('preco_por_tier', 'rls_policy', 'public', 'tier_preco_config_write_master', 'tier_preco_config'),
+  ('preco_por_tier', 'rls_policy', 'public', 'tier_preco_config_service_all', 'tier_preco_config'),
+  ('preco_por_tier', 'rls_policy', 'public', 'markup_policy_select_carteira', 'markup_policy')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2625,7 +2649,30 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_insert', 'objects'),
   ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_delete', 'objects'),
   ('pedidos_programados_cron', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
-  ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', '')
+  ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', ''),
+  ('preco_por_tier', 'function', 'public', 'cliente_tier_preco_forca_autor', ''),
+  ('preco_por_tier', 'function', 'public', 'cliente_tier_preco_audita', ''),
+  ('preco_por_tier', 'function', 'public', 'resolve_markup_policy', ''),
+  ('preco_por_tier', 'function', 'public', 'get_preco_cockpit', ''),
+  ('preco_por_tier', 'function', 'public', 'get_ultimos_precos_cliente', ''),
+  ('preco_por_tier', 'function', 'public', 'medir_abaixo_piso_tier', ''),
+  ('preco_por_tier', 'table', 'public', 'cliente_tier_preco', ''),
+  ('preco_por_tier', 'table', 'public', 'cliente_tier_preco_log', ''),
+  ('preco_por_tier', 'table', 'public', 'tier_preco_config', ''),
+  ('preco_por_tier', 'index', 'public', 'idx_cliente_tier_preco_customer', 'cliente_tier_preco'),
+  ('preco_por_tier', 'index', 'public', 'idx_cliente_tier_log_cliente', 'cliente_tier_preco_log'),
+  ('preco_por_tier', 'trigger', 'public', 'trg_cliente_tier_forca_autor', 'cliente_tier_preco'),
+  ('preco_por_tier', 'trigger', 'public', 'trg_cliente_tier_audita', 'cliente_tier_preco'),
+  ('preco_por_tier', 'rls_policy', 'public', 'cliente_tier_preco_select_staff', 'cliente_tier_preco'),
+  ('preco_por_tier', 'rls_policy', 'public', 'cliente_tier_preco_insert_gestor', 'cliente_tier_preco'),
+  ('preco_por_tier', 'rls_policy', 'public', 'cliente_tier_preco_update_gestor', 'cliente_tier_preco'),
+  ('preco_por_tier', 'rls_policy', 'public', 'cliente_tier_preco_delete_master', 'cliente_tier_preco'),
+  ('preco_por_tier', 'rls_policy', 'public', 'cliente_tier_preco_service_all', 'cliente_tier_preco'),
+  ('preco_por_tier', 'rls_policy', 'public', 'cliente_tier_log_select_staff', 'cliente_tier_preco_log'),
+  ('preco_por_tier', 'rls_policy', 'public', 'tier_preco_config_select_staff', 'tier_preco_config'),
+  ('preco_por_tier', 'rls_policy', 'public', 'tier_preco_config_write_master', 'tier_preco_config'),
+  ('preco_por_tier', 'rls_policy', 'public', 'tier_preco_config_service_all', 'tier_preco_config'),
+  ('preco_por_tier', 'rls_policy', 'public', 'markup_policy_select_carteira', 'markup_policy')
 )
 SELECT
   e.migration,
