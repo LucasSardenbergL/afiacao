@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **333** custom migrations totais
-- **1191** objetos esperados (criados por estas migrations)
+- **335** custom migrations totais
+- **1203** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 334
-  - `rls_policy`: 261
-  - `index`: 202
+  - `function`: 337
+  - `rls_policy`: 263
+  - `index`: 204
   - `cron_job`: 144
-  - `table`: 127
-  - `trigger`: 64
+  - `table`: 130
+  - `trigger`: 66
   - `view`: 55
   - `enum_value`: 4
 
@@ -2853,11 +2853,33 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.fin_sync_lease_select_staff` | `fin_sync_lease` |
 | `rls_policy` | `public.fin_sync_lease_service_all` | `fin_sync_lease` |
 
+### `20260704160000_fin_dividas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_dividas_forca_autor` | — |
+| `function` | `public.fin_divida_completude_forca_autor` | — |
+| `table` | `public.fin_dividas` | — |
+| `table` | `public.fin_divida_parcelas` | — |
+| `table` | `public.fin_divida_completude` | — |
+| `index` | `public.idx_fin_divida_parcelas_venc` | `fin_divida_parcelas` |
+| `index` | `public.idx_fin_divida_parcelas_naopago` | `fin_divida_parcelas` |
+| `trigger` | `public.trg_fin_dividas_autor` | `fin_dividas` |
+| `trigger` | `public.trg_fin_divida_completude_autor` | `fin_divida_completude` |
+| `rls_policy` | `public.%I_select_master` | `public` |
+| `rls_policy` | `public.%I_write_master` | `public` |
+
 ### `20260704160000_fin_sync_watchdog_retry_sem_efeito.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.fin_sync_watchdog_check` | — |
+
+### `20260704160500_fin_divida_replace_parcelas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_divida_replace_parcelas` | — |
 
 ## Próximos passos por status
 
