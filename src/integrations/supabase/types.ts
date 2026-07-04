@@ -772,6 +772,66 @@ export type Database = {
           },
         ]
       }
+      cliente_tier_preco: {
+        Row: {
+          company: string
+          customer_user_id: string
+          definido_por: string
+          motivo: string | null
+          tier: string
+          updated_at: string
+        }
+        Insert: {
+          company: string
+          customer_user_id: string
+          definido_por: string
+          motivo?: string | null
+          tier: string
+          updated_at?: string
+        }
+        Update: {
+          company?: string
+          customer_user_id?: string
+          definido_por?: string
+          motivo?: string | null
+          tier?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      cliente_tier_preco_log: {
+        Row: {
+          company: string
+          customer_user_id: string
+          id: string
+          motivo: string | null
+          mudado_em: string
+          mudado_por: string | null
+          tier_de: string | null
+          tier_para: string | null
+        }
+        Insert: {
+          company: string
+          customer_user_id: string
+          id?: string
+          motivo?: string | null
+          mudado_em?: string
+          mudado_por?: string | null
+          tier_de?: string | null
+          tier_para?: string | null
+        }
+        Update: {
+          company?: string
+          customer_user_id?: string
+          id?: string
+          motivo?: string | null
+          mudado_em?: string
+          mudado_por?: string | null
+          tier_de?: string | null
+          tier_para?: string | null
+        }
+        Relationships: []
+      }
       cmc_ledger: {
         Row: {
           account: string
@@ -6805,6 +6865,7 @@ export type Database = {
           meta_markup: number
           piso_markup: number
           sku_codigo: number | null
+          tier: string | null
           updated_at: string
           updated_by: string | null
         }
@@ -6816,6 +6877,7 @@ export type Database = {
           meta_markup: number
           piso_markup: number
           sku_codigo?: number | null
+          tier?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -6827,6 +6889,7 @@ export type Database = {
           meta_markup?: number
           piso_markup?: number
           sku_codigo?: number | null
+          tier?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -7882,6 +7945,74 @@ export type Database = {
           total?: number
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      pcp_malha_staging: {
+        Row: {
+          empresa: string
+          omie_codigo_produto: number
+          payload: Json
+          sync_run_id: number
+          synced_at: string
+        }
+        Insert: {
+          empresa?: string
+          omie_codigo_produto: number
+          payload: Json
+          sync_run_id: number
+          synced_at?: string
+        }
+        Update: {
+          empresa?: string
+          omie_codigo_produto?: number
+          payload?: Json
+          sync_run_id?: number
+          synced_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pcp_malha_staging_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: false
+            referencedRelation: "pcp_run_logs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pcp_run_logs: {
+        Row: {
+          detalhe: Json
+          empresa: string
+          finished_at: string | null
+          funcao: string
+          id: number
+          paginas: number | null
+          registros: number | null
+          started_at: string
+          status: string
+        }
+        Insert: {
+          detalhe?: Json
+          empresa?: string
+          finished_at?: string | null
+          funcao: string
+          id?: never
+          paginas?: number | null
+          registros?: number | null
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          detalhe?: Json
+          empresa?: string
+          finished_at?: string | null
+          funcao?: string
+          id?: never
+          paginas?: number | null
+          registros?: number | null
+          started_at?: string
+          status?: string
         }
         Relationships: []
       }
@@ -12275,6 +12406,30 @@ export type Database = {
           tipo_comprovacao?: string | null
           tolerancia_dias?: number
           updated_at?: string
+        }
+        Relationships: []
+      }
+      tier_preco_config: {
+        Row: {
+          company: string
+          mult_partida: number
+          tier: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          company: string
+          mult_partida: number
+          tier: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          company?: string
+          mult_partida?: number
+          tier?: string
+          updated_at?: string
+          updated_by?: string | null
         }
         Relationships: []
       }
@@ -16765,6 +16920,7 @@ export type Database = {
         Args: { p_customer: string }
         Returns: {
           product_id: string
+          ultimo_praticado_em: string
           unit_price: number
         }[]
       }
@@ -16845,6 +17001,16 @@ export type Database = {
       mark_mixgap_feedback: {
         Args: { p_customer: string; p_familia: string; p_status: string }
         Returns: undefined
+      }
+      medir_abaixo_piso_tier: {
+        Args: { p_dias?: number }
+        Returns: {
+          company: string
+          folga_negativa_reais: number
+          itens_abaixo: number
+          tier: string
+          total_itens: number
+        }[]
       }
       melhoria_clientes_por_produto: {
         Args: { p_termo: string }
@@ -17110,7 +17276,12 @@ export type Database = {
       }
       resgatar_recompensa: { Args: { p_reward_key: string }; Returns: string }
       resolve_markup_policy: {
-        Args: { p_codigo: number; p_empresa: string; p_familia: string }
+        Args: {
+          p_codigo: number
+          p_empresa: string
+          p_familia: string
+          p_tier?: string
+        }
         Returns: {
           meta_markup: number
           piso_markup: number
