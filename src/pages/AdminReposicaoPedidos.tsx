@@ -24,7 +24,7 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { PedidoSugerido } from '@/components/reposicao/pedidos/types';
-import { EMPRESA, formatBRL, frescorEstoque, interpretarRespostaDisparo, interpretarRespostaSyncEstoque, particionarCicloHoje, pedidosVisiveis, type RespostaDisparo, type RespostaSyncEstoque } from '@/components/reposicao/pedidos/shared';
+import { EMPRESA, edgeSyncOk, formatBRL, frescorEstoque, interpretarRespostaDisparo, particionarCicloHoje, pedidosVisiveis, resumoSyncOmie, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
 import { CycleIndicator } from '@/components/reposicao/pedidos/CycleIndicator';
 import { PedidoRow } from '@/components/reposicao/pedidos/PedidoRow';
 import { StatusComMotivo, PortalBadge } from '@/components/reposicao/pedidos/badges';
@@ -320,31 +320,37 @@ export default function AdminReposicaoPedidos() {
     refetchInterval: 60_000,
   });
 
-  // Sync manual do snapshot de estoque. "Recalcular sugestões" NÃO faz isso — ele só
-  // regenera a partir do snapshot; quem fala com o Omie é a edge omie-sync-estoque
-  // (a mesma do cron, idempotente; staff passa pelo authorizeCronOrStaff). ~1–2 min.
-  const syncEstoqueMutation = useMutation({
+  // Sync manual do Omie: SALDO (omie-sync-estoque) + STATUS ativo/inativo (omie-sync-status-
+  // produtos), em paralelo. Antes só puxava saldo — por isso um produto inativado no Omie seguia
+  // no pedido (o status nunca vinha; era preciso ir noutra tela). "Recalcular sugestões" NÃO
+  // sincroniza nada — só regenera a partir do snapshot. allSettled tolera falha parcial (as 2
+  // edges são independentes); staff passa pelo authorizeCronOrStaff. NÃO auto-recalcula (Recalcular
+  // DELETA pendentes = destrutivo) — o toast lembra de recalcular. ~1–2 min.
+  const syncOmieMutation = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke('omie-sync-estoque', {
-        body: { empresa: EMPRESA },
-      });
-      if (error) throw error;
-      return data;
+      const [estoque, status] = await Promise.allSettled([
+        supabase.functions.invoke('omie-sync-estoque', { body: { empresa: EMPRESA } }),
+        supabase.functions.invoke('omie-sync-status-produtos', { body: { empresa: EMPRESA } }),
+      ]);
+      // edgeSyncOk exige invoke-ok E corpo {ok:true} — HTTP 200 com {ok:false} da edge NÃO é sucesso.
+      const estoqueOk = edgeSyncOk(estoque);
+      const statusOk = edgeSyncOk(status);
+      return { estoqueOk, statusOk };
     },
-    onSuccess: (data) => {
-      const { tone, message } = interpretarRespostaSyncEstoque(data as RespostaSyncEstoque);
+    onSuccess: ({ estoqueOk, statusOk }) => {
+      const { tone, message } = resumoSyncOmie(estoqueOk, statusOk);
       if (tone === 'error') toast.error(message);
       else if (tone === 'warning') toast.warning(message);
-      else if (tone === 'info') toast.info(message);
       else toast.success(message);
-      track('reposicao.sync_estoque_manual', { empresa: EMPRESA, tone });
+      track('reposicao.sync_omie_manual', { empresa: EMPRESA, estoqueOk, statusOk });
       queryClient.invalidateQueries({ queryKey: ['estoque-frescor'] });
       queryClient.invalidateQueries({ queryKey: ['estoque-nao-confirmado'] });
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+      queryClient.invalidateQueries({ queryKey: ['pedido-itens'] });
     },
     onError: (e: Error) => {
-      track('reposicao.sync_estoque_manual', { empresa: EMPRESA, tone: 'error' });
-      toast.error(`Erro ao sincronizar estoque: ${e.message}`);
+      track('reposicao.sync_omie_manual', { empresa: EMPRESA, estoqueOk: false, statusOk: false });
+      toast.error(`Erro ao sincronizar Omie: ${e.message}`);
     },
   });
 
@@ -472,12 +478,12 @@ export default function AdminReposicaoPedidos() {
           {frescorCarregado && <FrescorEstoqueLive ultimaSync={ultimaSyncEstoque} />}
           <Button
             variant="outline"
-            onClick={() => syncEstoqueMutation.mutate()}
-            disabled={syncEstoqueMutation.isPending}
-            title="Puxa o estoque físico do Omie para o snapshot que o Recalcular usa (~1–2 min)"
+            onClick={() => syncOmieMutation.mutate()}
+            disabled={syncOmieMutation.isPending}
+            title="Puxa do Omie o estoque físico E o status ativo/inativo dos produtos (~1–2 min). Depois, Recalcular aplica aos pedidos pendentes."
           >
-            {syncEstoqueMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <CloudDownload className="w-4 h-4 mr-1" />}
-            {syncEstoqueMutation.isPending ? 'Sincronizando…' : 'Sincronizar estoque'}
+            {syncOmieMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <CloudDownload className="w-4 h-4 mr-1" />}
+            {syncOmieMutation.isPending ? 'Sincronizando…' : 'Sincronizar Omie'}
           </Button>
           <Button variant="outline" onClick={() => refetch()} disabled={isLoading}>
             <RefreshCw className={`w-4 h-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />Atualizar lista
