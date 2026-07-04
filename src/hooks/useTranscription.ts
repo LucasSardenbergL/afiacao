@@ -60,6 +60,12 @@ export function useTranscription(opts: UseTranscriptionOptions): UseTranscriptio
     }
 
     let cancelled = false;
+    // Nova sessão: zera os turns/erro da chamada ANTERIOR. Sem isto, a transcrição de
+    // uma ligação vaza para a próxima (o Provider WebRTC é global e não desmonta entre
+    // chamadas) — persistiria conversa do cliente A em `farmer_calls` do cliente B e
+    // contaminaria os sinais/CRM (LGPD). Seguro: só executa quando engineRef é null,
+    // nunca no meio de uma chamada ativa.
+    setTurns([]);
     setStatus('connecting');
     setError(null);
 
