@@ -168,6 +168,17 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
     if (pedidoId) qc.invalidateQueries({ queryKey: ['pedido-programado', pedidoId] });
   };
 
+  // Devolve itens dos envios ao pool. Retorna false em vez de lançar quando usada
+  // como LIMPEZA de um abort (o erro acionável é o do abort, não o da limpeza).
+  const desanexarItens = async (envioIds: string[]): Promise<boolean> => {
+    if (envioIds.length === 0) return true;
+    const { error } = await t('pedidos_programados_itens')
+      .update({ envio_id: null } as never)
+      .in('envio_id', envioIds);
+    return !error;
+  };
+  const NOTA_LIMPEZA = ' Atenção: itens podem ter ficado presos em envio cancelado — recarregue.';
+
   const uploadPdf = useMutation({
     mutationFn: async (file: File) => {
       const { data: userData } = await supabase.auth.getUser();
@@ -294,19 +305,29 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
           );
         }
       }
-      const { error: e1 } = await t('pedidos_programados_itens')
-        .update({ envio_id: null } as never)
-        .eq('envio_id', envioId);
-      if (e1) throw e1;
-      const { error: e2 } = await t('pedidos_programados_envios')
+      // TOCTOU: cancelar o envio PRIMEIRO, via compare-and-set (o filtro de status
+      // re-verifica no banco) + .select p/ contar linhas — PostgREST não erra em
+      // UPDATE de 0 linhas. Só desanexa itens depois do CAS confirmar; na ordem
+      // antiga, um envio que virasse 'enviado' no meio devolvia itens JÁ ENVIADOS
+      // ao pool → envio novo → sales_order novo → PV_ novo → duplicata real no Omie.
+      const { data: cas, error: e2 } = await t('pedidos_programados_envios')
         .update({ status: 'cancelado' } as never)
         .eq('id', envioId)
-        .in('status', ['agendado', 'erro']);
+        .in('status', ['agendado', 'erro'])
+        .select('id');
       if (e2) throw e2;
+      if (((cas ?? []) as unknown[]).length !== 1) {
+        throw new Error('Este envio mudou de estado enquanto você decidia (cron/Enviar agora) — recarregue e confira antes de repetir.');
+      }
+      if (!(await desanexarItens([envioId]))) {
+        throw new Error('Envio cancelado, mas os itens não voltaram ao pool.' + NOTA_LIMPEZA);
+      }
       track('pedidos_programados.cancelar_envio');
     },
-    onSuccess: () => { invalidar(); toast.success('Envio cancelado — itens voltaram ao pool.'); },
+    onSuccess: () => toast.success('Envio cancelado — itens voltaram ao pool.'),
     onError: (e: Error) => toast.error(e.message),
+    // abort pós-CAS já mutou estado no banco → refetch sempre, não só no sucesso
+    onSettled: invalidar,
   });
 
   const enviarAgora = useMutation({
@@ -316,7 +337,10 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
       });
       if (error) throw error;
       const r = (data?.resultados ?? [])[0] as { ok: boolean; motivo?: string } | undefined;
-      if (r && !r.ok) throw new Error(r.motivo ?? 'Envio falhou');
+      // r ausente = o edge não achou o envio em status processável (cancelado/enviado
+      // por outra via na corrida) — sucesso silencioso aqui seria toast mentiroso.
+      if (!r) throw new Error('Este envio não está mais agendado/erro (mudou de estado) — recarregue.');
+      if (!r.ok) throw new Error(r.motivo ?? 'Envio falhou');
       track('pedidos_programados.enviar_agora');
     },
     onSuccess: () => { invalidar(); toast.success('Enviado ao Omie.'); },
@@ -339,21 +363,62 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
         );
       }
       const agendados = rows.filter((e) => e.status === 'agendado').map((e) => e.id);
+      // TOCTOU: 3 barreiras compare-and-set, desanexo dos itens por ÚLTIMO (janela
+      // de pool mínima). Qualquer abort no meio desanexa só o que NÓS cancelamos
+      // (limpeza) e deixa header/estado do concorrente intactos.
+      let cancelados: string[] = [];
       if (agendados.length > 0) {
-        const { error: e1 } = await t('pedidos_programados_itens')
-          .update({ envio_id: null } as never).in('envio_id', agendados);
-        if (e1) throw e1;
-        const { error: e2 } = await t('pedidos_programados_envios')
-          .update({ status: 'cancelado' } as never).in('id', agendados);
+        // Barreira 1: cancela envios re-condicionando o status no banco. Se o cron
+        // enviou um deles entre o SELECT e aqui, ele NÃO volta no representation.
+        const { data: cas, error: e2 } = await t('pedidos_programados_envios')
+          .update({ status: 'cancelado' } as never)
+          .in('id', agendados)
+          .eq('status', 'agendado')
+          .select('id');
         if (e2) throw e2;
+        cancelados = ((cas ?? []) as unknown as Array<{ id: string }>).map((r) => r.id);
+        if (cancelados.length !== agendados.length) {
+          const limpo = await desanexarItens(cancelados);
+          throw new Error(
+            'Um envio mudou de estado durante o cancelamento (o cron pode tê-lo enviado agora) — recarregue e confira os envios antes de repetir.' +
+            (limpo ? '' : NOTA_LIMPEZA),
+          );
+        }
       }
-      const { error: e3 } = await t('pedidos_programados')
-        .update({ status: 'cancelado' } as never).eq('id', pedidoId!);
+      // Barreira 2: envio novo criado por outra sessão entre o guard e aqui.
+      // Predicado positivo (sem negação NULL-blind — regra PostgREST do repo).
+      const { data: restantes, error: eRest } = await t('pedidos_programados_envios')
+        .select('id')
+        .eq('pedido_programado_id', pedidoId!)
+        .in('status', ['agendado', 'enviado', 'erro']);
+      if (eRest) throw eRest;
+      if (((restantes ?? []) as unknown[]).length > 0) {
+        const limpo = await desanexarItens(cancelados);
+        throw new Error(
+          'Surgiu um envio novo neste pedido durante o cancelamento — recarregue e resolva-o antes de cancelar.' +
+          (limpo ? '' : NOTA_LIMPEZA),
+        );
+      }
+      // Barreira 3: o header só cancela se ainda está num status cancelável pela UI.
+      const { data: casHeader, error: e3 } = await t('pedidos_programados')
+        .update({ status: 'cancelado' } as never)
+        .eq('id', pedidoId!)
+        .in('status', ['ativo', 'erro_extracao'])
+        .select('id');
       if (e3) throw e3;
+      if (((casHeader ?? []) as unknown[]).length !== 1) {
+        const limpo = await desanexarItens(cancelados);
+        throw new Error('O pedido mudou de estado durante o cancelamento — recarregue.' + (limpo ? '' : NOTA_LIMPEZA));
+      }
+      // Itens ao pool só com TODAS as barreiras passadas (o pedido já está cancelado;
+      // se falhar aqui, os itens morrem presos com ele — sem risco de re-agendamento).
+      await desanexarItens(cancelados);
       track('pedidos_programados.cancelar_pedido');
     },
-    onSuccess: () => { invalidar(); toast.success('Pedido programado cancelado.'); },
+    onSuccess: () => toast.success('Pedido programado cancelado.'),
     onError: (e: Error) => toast.error(e.message),
+    // abort entre barreiras já mutou estado no banco → refetch sempre
+    onSettled: invalidar,
   });
 
   const salvarConfig = useMutation({
