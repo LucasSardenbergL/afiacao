@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 324
+-- Total de custom migrations: 326
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -365,7 +365,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260702233000', 'trava_credito_fase2', '20260702233000_trava_credito_fase2.sql'),
   ('20260703090000', 'pedidos_programados', '20260703090000_pedidos_programados.sql'),
   ('20260703091000', 'pedidos_programados_cron', '20260703091000_pedidos_programados_cron.sql'),
-  ('20260703140000', 'trava_credito_gate_excecao_por_par', '20260703140000_trava_credito_gate_excecao_por_par.sql')
+  ('20260703120000', 'pedidos_programados_cron_fix', '20260703120000_pedidos_programados_cron_fix.sql'),
+  ('20260703140000', 'trava_credito_gate_excecao_por_par', '20260703140000_trava_credito_gate_excecao_por_par.sql'),
+  ('20260704160000', 'fin_sync_watchdog_retry_sem_efeito', '20260704160000_fin_sync_watchdog_retry_sem_efeito.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1471,7 +1473,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_insert', 'objects'),
   ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_delete', 'objects'),
   ('pedidos_programados_cron', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
-  ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', '')
+  ('pedidos_programados_cron_fix', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
+  ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', ''),
+  ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2625,7 +2629,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_insert', 'objects'),
   ('pedidos_programados', 'rls_policy', 'storage', 'pp_storage_staff_delete', 'objects'),
   ('pedidos_programados_cron', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
-  ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', '')
+  ('pedidos_programados_cron_fix', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
+  ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', ''),
+  ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', '')
 )
 SELECT
   e.migration,
