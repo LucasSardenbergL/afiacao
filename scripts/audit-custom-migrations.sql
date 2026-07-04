@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 326
+-- Total de custom migrations: 330
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -367,6 +367,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260703091000', 'pedidos_programados_cron', '20260703091000_pedidos_programados_cron.sql'),
   ('20260703120000', 'pedidos_programados_cron_fix', '20260703120000_pedidos_programados_cron_fix.sql'),
   ('20260703140000', 'trava_credito_gate_excecao_por_par', '20260703140000_trava_credito_gate_excecao_por_par.sql'),
+  ('20260704070000', 'pedidos_programados_claim_processando', '20260704070000_pedidos_programados_claim_processando.sql'),
+  ('20260704102000', 'fin_sync_retry_kick_perdido', '20260704102000_fin_sync_retry_kick_perdido.sql'),
+  ('20260704120000', 'profiles_prevent_self_approval', '20260704120000_profiles_prevent_self_approval.sql'),
+  ('20260704130000', 'claim_nfe_efetivacao_lock', '20260704130000_claim_nfe_efetivacao_lock.sql'),
   ('20260704160000', 'fin_sync_watchdog_retry_sem_efeito', '20260704160000_fin_sync_watchdog_retry_sem_efeito.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -1475,6 +1479,20 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedidos_programados_cron', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
   ('pedidos_programados_cron_fix', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
   ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', ''),
+  ('pedidos_programados_claim_processando', 'function', 'public', 'pedidos_programados_watchdog_claims', ''),
+  ('pedidos_programados_claim_processando', 'function', 'public', 'pp_bloqueia_cancel_com_claim', ''),
+  ('pedidos_programados_claim_processando', 'index', 'public', 'uniq_sales_orders_pp_envio_account', 'sales_orders'),
+  ('pedidos_programados_claim_processando', 'trigger', 'public', 'pp_guard_cancel_com_claim', 'pedidos_programados'),
+  ('pedidos_programados_claim_processando', 'cron_job', 'cron', 'pedidos-programados-watchdog', ''),
+  ('fin_sync_retry_kick_perdido', 'function', 'public', 'fin_sync_kicks_perdidos', ''),
+  ('fin_sync_retry_kick_perdido', 'function', 'public', 'fin_sync_retry_tick', ''),
+  ('fin_sync_retry_kick_perdido', 'table', 'public', 'fin_sync_kick_retry', ''),
+  ('fin_sync_retry_kick_perdido', 'cron_job', 'cron', 'fin-sync-retry-kicks', ''),
+  ('fin_sync_retry_kick_perdido', 'rls_policy', 'public', 'fin_sync_kick_retry_select_staff', 'fin_sync_kick_retry'),
+  ('profiles_prevent_self_approval', 'function', 'public', 'prevent_self_approval', ''),
+  ('profiles_prevent_self_approval', 'trigger', 'public', 'trg_prevent_self_approval_upd', 'profiles'),
+  ('profiles_prevent_self_approval', 'trigger', 'public', 'trg_prevent_self_approval_ins', 'profiles'),
+  ('claim_nfe_efetivacao_lock', 'function', 'public', 'claim_nfe_efetivacao_lock', ''),
   ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', '')
 ),
 obj_status AS (
@@ -2631,6 +2649,20 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedidos_programados_cron', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
   ('pedidos_programados_cron_fix', 'cron_job', 'cron', 'pedidos-programados-diario', ''),
   ('trava_credito_gate_excecao_por_par', 'function', 'public', 'venda_gate_credito', ''),
+  ('pedidos_programados_claim_processando', 'function', 'public', 'pedidos_programados_watchdog_claims', ''),
+  ('pedidos_programados_claim_processando', 'function', 'public', 'pp_bloqueia_cancel_com_claim', ''),
+  ('pedidos_programados_claim_processando', 'index', 'public', 'uniq_sales_orders_pp_envio_account', 'sales_orders'),
+  ('pedidos_programados_claim_processando', 'trigger', 'public', 'pp_guard_cancel_com_claim', 'pedidos_programados'),
+  ('pedidos_programados_claim_processando', 'cron_job', 'cron', 'pedidos-programados-watchdog', ''),
+  ('fin_sync_retry_kick_perdido', 'function', 'public', 'fin_sync_kicks_perdidos', ''),
+  ('fin_sync_retry_kick_perdido', 'function', 'public', 'fin_sync_retry_tick', ''),
+  ('fin_sync_retry_kick_perdido', 'table', 'public', 'fin_sync_kick_retry', ''),
+  ('fin_sync_retry_kick_perdido', 'cron_job', 'cron', 'fin-sync-retry-kicks', ''),
+  ('fin_sync_retry_kick_perdido', 'rls_policy', 'public', 'fin_sync_kick_retry_select_staff', 'fin_sync_kick_retry'),
+  ('profiles_prevent_self_approval', 'function', 'public', 'prevent_self_approval', ''),
+  ('profiles_prevent_self_approval', 'trigger', 'public', 'trg_prevent_self_approval_upd', 'profiles'),
+  ('profiles_prevent_self_approval', 'trigger', 'public', 'trg_prevent_self_approval_ins', 'profiles'),
+  ('claim_nfe_efetivacao_lock', 'function', 'public', 'claim_nfe_efetivacao_lock', ''),
   ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', '')
 )
 SELECT

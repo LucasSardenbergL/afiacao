@@ -450,12 +450,14 @@ Deno.serve(async (req) => {
     // ── Claim do lock (atômico): só pega se livre ou expirado (TTL 5 min) ──
     const lockTs = new Date().toISOString();
     const cutoff = new Date(Date.now() - LOCK_TTL_MIN * 60_000).toISOString();
+    // RPC SQL-pura (claim_nfe_efetivacao_lock): o PostgREST QUEBRA .or() em UPDATE com 42703.
+    // UPDATE...WHERE...RETURNING é atômico (row lock) — só o primeiro concorrente casa o predicado.
     const { data: claimRows, error: claimErr } = await supabase
-      .from("nfe_recebimentos")
-      .update({ efetivacao_lock_at: lockTs })
-      .eq("id", nfeRecebimentoId)
-      .or(`efetivacao_lock_at.is.null,efetivacao_lock_at.lt.${cutoff}`)
-      .select("id");
+      .rpc("claim_nfe_efetivacao_lock", {
+        p_nfe_id: nfeRecebimentoId,
+        p_lock_ts: lockTs,
+        p_cutoff: cutoff,
+      });
     if (claimErr) {
       console.error("[omie-nfe-recebimento] erro ao reservar a efetivação:", claimErr);
       return jsonRes({ error: "Erro ao reservar a efetivação" }, 500);

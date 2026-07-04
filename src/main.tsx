@@ -7,6 +7,10 @@ import "./index.css";
  *  da main nos bytes servidos → responde "o ar == origin/main?" sem adivinhar um ALVO. */
 declare const __COMMIT_SHA__: string;
 declare const __BUILD_ENV_KEYS__: string;
+/** Constante de build: true só no build de produção non-preview (onde o VitePWA
+ *  existe). Guarda o import de 'virtual:pwa-register' — quando false, o Vite DCE
+ *  remove o bloco e o módulo virtual (ausente em dev/preview) nunca é referenciado. */
+declare const __PWA_ENABLED__: boolean;
 
 declare global {
   interface Window {
@@ -68,6 +72,25 @@ window.addEventListener("vite:preloadError", () => {
 });
 
 createRoot(document.getElementById("root")!).render(<App />);
+
+// PWA em modo prompt: registra o SW e arma o toast de "atualização disponível"
+// (substitui o injectRegister automático, agora `false`). Guardado por constante
+// de build — em dev/preview o bloco some no DCE e nada importa virtual:pwa-register.
+if (__PWA_ENABLED__) {
+  import("./lib/pwa-update")
+    .then((m) => m.setupPwaUpdatePrompt())
+    .catch(() => {
+      // Fallback offline-first: se o chunk do prompt falhar ao carregar (rede
+      // instável no boot, chunk 404 pós-deploy), registra o SW direto — sem o
+      // toast de update, mas o offline-first (não-negociável) é preservado.
+      // Perder o SW porque um import lazy falhou seria uma regressão pior.
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("/sw.js").catch(() => {
+          // best-effort: registro falhou de vez; não pode derrubar o app
+        });
+      }
+    });
+}
 
 // Sinaliza pro watchdog de boot (no index.html) que o bundle executou e o React
 // montou. Limpar as guardas de recuperação permite que o watchdog/preloadError
