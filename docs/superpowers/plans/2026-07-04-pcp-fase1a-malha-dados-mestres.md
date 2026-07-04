@@ -620,8 +620,17 @@ SELECT
 FROM public.vw_pcp_malha_itens m
 LEFT JOIN public.omie_products byid
   ON byid.omie_codigo_produto = m.componente_id AND byid.account = 'colacor'
-LEFT JOIN public.omie_products bycod
-  ON m.componente_id IS NULL AND bycod.codigo = m.componente_codigo_txt AND bycod.account = 'colacor';
+-- fallback por codigo (string) SÓ quando o id Omie falta. codigo é NOT NULL mas NÃO único →
+-- join simples faria fan-out (1 linha de malha × N produtos com mesmo codigo), dobrando a razão
+-- na mediana/MAD (money-path). LATERAL + ORDER BY + LIMIT 1 pega 1 determinístico (guarda estrutural,
+-- não depende do pré-flight manual sobreviver a syncs futuros).
+LEFT JOIN LATERAL (
+  SELECT bp.omie_codigo_produto, bp.descricao, bp.familia
+  FROM public.omie_products bp
+  WHERE m.componente_id IS NULL AND bp.codigo = m.componente_codigo_txt AND bp.account = 'colacor'
+  ORDER BY bp.omie_codigo_produto
+  LIMIT 1
+) bycod ON true;
 
 -- ── 2) Parser dimensional (NUNCA fabrica: sem match ⇒ NULL + formato explícito) ──
 CREATE OR REPLACE FUNCTION public.fn_pcp_parse_dimensoes(p_descricao text)
@@ -761,9 +770,11 @@ BEGIN
     END AS ratio
   FROM tmp_obs o
   LEFT JOIN LATERAL (
-    SELECT o2.quantidade FROM tmp_obs o2
+    -- catalisador só destila com EXATAMENTE 1 cola G no pai; 0 ou >1 (ambíguo) ⇒ NULL (não fabrica).
+    -- Evita o LIMIT 1 sem ORDER BY (não-determinístico: coef mudaria entre destilações sem mudar dado).
+    SELECT CASE WHEN count(*) = 1 THEN min(o2.quantidade) END AS quantidade
+    FROM tmp_obs o2
     WHERE o2.pai_codigo = o.pai_codigo AND o2.papel = 'cola' AND o2.unidade = 'G'
-    LIMIT 1
   ) cola ON o.papel = 'catalisador'
   WHERE o.papel IN ('cola','fita','catalisador');
 
@@ -822,8 +833,12 @@ WITH comp AS (
 com_regra AS (
   SELECT comp.*, r.coef, r.metodo, r.dispersao AS regra_dispersao,
     CASE WHEN r.linha_modelo = comp.linha_modelo THEN 'linha' WHEN r.linha_modelo = '*' THEN 'global' END AS regra_origem,
-    (SELECT c2.quantidade FROM comp c2
-      WHERE c2.pai_codigo = comp.pai_codigo AND c2.papel = 'cola' AND c2.unidade = 'G' LIMIT 1) AS qtd_cola_pai
+    -- nº de colas G no pai: >1 ⇒ base do catalisador é AMBÍGUA (não escolher às cegas — status próprio).
+    (SELECT count(*) FROM comp c2
+      WHERE c2.pai_codigo = comp.pai_codigo AND c2.papel = 'cola' AND c2.unidade = 'G') AS n_cola_pai,
+    -- qtd_cola_pai só é definida com EXATAMENTE 1 cola (determinístico); 0 ou >1 ⇒ NULL.
+    (SELECT CASE WHEN count(*) = 1 THEN min(c2.quantidade) END FROM comp c2
+      WHERE c2.pai_codigo = comp.pai_codigo AND c2.papel = 'cola' AND c2.unidade = 'G') AS qtd_cola_pai
   FROM comp
   LEFT JOIN LATERAL (
     SELECT coef, metodo, dispersao, linha_modelo FROM pcp_bom_regras r
@@ -852,10 +867,16 @@ SELECT pai_codigo, pai_descricao, pai_tipo, linha_modelo, largura_mm, compriment
     WHEN papel IN ('cola','catalisador') AND unidade IS DISTINCT FROM 'G' THEN 'unidade_inesperada'
     WHEN papel = 'fita' AND unidade IS DISTINCT FROM 'CM' THEN 'unidade_inesperada'
     WHEN coef IS NULL AND papel <> 'abrasivo_base' THEN 'sem_regra'
+    -- >1 cola G no pai: base ambígua ANTES de sem_base_cola (que é o caso n=0) — Codex/Caminho B
+    WHEN papel = 'catalisador' AND n_cola_pai > 1 THEN 'cola_ambigua'
     WHEN papel = 'catalisador' AND qtd_cola_pai IS NULL THEN 'sem_base_cola'
     -- regra instável (painel Claude P1 + Codex): dispersão alta = mediana possivelmente
     -- contaminada na 1ª destilação — NÃO valida ninguém; revisão humana.
-    WHEN papel <> 'abrasivo_base' AND regra_dispersao >
+    -- SÓ para regra de LINHA (ruído real dentro de um grupo homogêneo). Na regra GLOBAL '*'
+    -- a dispersão alta é heterogeneidade LEGÍTIMA entre linhas (é o motivo de existir coef por
+    -- linha) — puni-la marcaria toda linha rala como instável por construção. O fallback global
+    -- valida (ou vira excecao pelo valor) e o relatório da Task 8 já reporta a % de origem global.
+    WHEN papel <> 'abrasivo_base' AND regra_origem = 'linha' AND regra_dispersao >
          coalesce((SELECT (value)::numeric FROM pcp_config WHERE key = 'dispersao_max_regra'), 0.10)
       THEN 'regra_instavel'
     WHEN quantidade IS NULL THEN 'sem_quantidade'
@@ -904,7 +925,7 @@ BEGIN
   SELECT pai_codigo, coalesce(componente_codigo, 0), papel, pai_descricao,
     componente_descricao, observado, esperado, unidade, status
   FROM vw_pcp_bom_validacao
-  WHERE status IN ('excecao','sem_regra','unidade_inesperada','papel_desconhecido','sem_quantidade','sem_base_cola','regra_instavel')
+  WHERE status IN ('excecao','sem_regra','unidade_inesperada','papel_desconhecido','sem_quantidade','sem_base_cola','regra_instavel','cola_ambigua')
   ON CONFLICT (pai_codigo, papel, componente_codigo) DO UPDATE
     SET observado = EXCLUDED.observado, esperado = EXCLUDED.esperado,
         status = EXCLUDED.status, materializado_em = now();
@@ -1287,6 +1308,24 @@ eq "catalisador sem cola G no pai ⇒ sem_base_cola" "$(Pq -c "SELECT status FRO
 eq "cola em KG ⇒ unidade_inesperada" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=810004 AND papel='cola'")" "unidade_inesperada"
 eq "materializar: 6 exceções (1 sabotada + 3 instáveis + 2 do XY7)" "$(Pq -c "SELECT fn_pcp_materializar_excecoes()")" "6"
 
+echo "── item 1 (Codex/Caminho B): pai com 2 colas G ⇒ base do catalisador AMBÍGUA (não escolhe às cegas) ──"
+P -q <<'SQL'
+INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, familia, tipo_produto, account) VALUES
+ (820001,'PRD82001','CINTA KA169 120X2000MM P50','Cintas Estreitas','04','colacor'),
+ (820002,'PRD82002','ROLO KA169 120X50000MM P50','Jumbo/Rolo de Lixa Óxido de Alumínio','03','colacor'),
+ (820003,'PRD82003','A455 SEGUNDA COLA ADESIVO','Colas','01','colacor');
+INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES
+ (820001,'{"ident":{"idProduto":820001},"itens":[
+   {"ident":{"idProdMalha":820002,"descrProdMalha":"ROLO KA169 120X50000MM P50"},"quantProdMalha":0.24,"unidProdMalha":"M2"},
+   {"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":1.29,"unidProdMalha":"G"},
+   {"ident":{"idProdMalha":820003,"descrProdMalha":"A455 SEGUNDA COLA ADESIVO"},"quantProdMalha":1.29,"unidProdMalha":"G"},
+   {"ident":{"idProdMalha":900003,"descrProdMalha":"DESMODUR NE-S"},"quantProdMalha":0.143,"unidProdMalha":"G"}]}'::jsonb);
+SQL
+P -q -c "SELECT fn_pcp_refresh_itens();" >/dev/null
+eq "catalisador com 2 colas G ⇒ cola_ambigua (não escolhe coef às cegas)" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=820001 AND papel='catalisador'")" "cola_ambigua"
+P -q -c "SELECT fn_pcp_materializar_excecoes();" >/dev/null
+eq "cola_ambigua entra na fila de exceções" "$(Pq -c "SELECT count(*) FROM pcp_bom_excecoes WHERE status='cola_ambigua'")" "1"
+
 echo "── matriz RLS (painel: TODAS as pcp_% fail-closed) ──"
 eq "6 tabelas pcp_% com RLS ligado" "$(Pq -c "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname LIKE 'pcp\\_%' AND c.relkind='r' AND c.relrowsecurity")" "6"
 eq "staff vê pcp_bom_regras" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; SELECT count(*)>0 FROM pcp_bom_regras")" "t"
@@ -1309,7 +1348,7 @@ echo "RESULTADO: PASS=$PASS FAIL=$FAIL"
 - [ ] **Step 7.2: Rodar**
 
 Run: `bash db/test-pcp-f1a-destilacao.sh > /tmp/t-dest.log 2>&1; echo "exit=$?"`
-Expected: `exit=0`, `PASS=29 FAIL=0` (re-aplicação do M2 + 8 da ZONA 4 + 3 da falsificação + 17 dos endurecimentos do painel: números tolerantes, papéis ambíguos, regra instável, sem_base_cola, unidade errada, matriz RLS, governança da disposição). Falhas aqui significam bug na destilação/validação (os números da fixture são FATOS do print) — corrigir o M2, nunca a fixture.
+Expected: `exit=0`, `PASS=31 FAIL=0` (re-aplicação do M2 + 8 da ZONA 4 + 3 da falsificação + 17 dos endurecimentos do painel + 2 do cola_ambigua da revisão de qualidade: números tolerantes, papéis ambíguos, regra instável só de linha, sem_base_cola, unidade errada, base de catalisador ambígua, matriz RLS, governança da disposição). Falhas aqui significam bug na destilação/validação (os números da fixture são FATOS do print) — corrigir o M2, nunca a fixture.
 
 - [ ] **Step 7.3: shellcheck + commit**
 

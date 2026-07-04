@@ -148,6 +148,24 @@ eq "catalisador sem cola G no pai ⇒ sem_base_cola" "$(Pq -c "SELECT status FRO
 eq "cola em KG ⇒ unidade_inesperada" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=810004 AND papel='cola'")" "unidade_inesperada"
 eq "materializar: 6 exceções (1 sabotada + 3 instáveis + 2 do XY7)" "$(Pq -c "SELECT fn_pcp_materializar_excecoes()")" "6"
 
+echo "── item 1 (Codex/Caminho B): pai com 2 colas G ⇒ base do catalisador AMBÍGUA (não escolhe às cegas) ──"
+P -q <<'SQL'
+INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, familia, tipo_produto, account) VALUES
+ (820001,'PRD82001','CINTA KA169 120X2000MM P50','Cintas Estreitas','04','colacor'),
+ (820002,'PRD82002','ROLO KA169 120X50000MM P50','Jumbo/Rolo de Lixa Óxido de Alumínio','03','colacor'),
+ (820003,'PRD82003','A455 SEGUNDA COLA ADESIVO','Colas','01','colacor');
+INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES
+ (820001,'{"ident":{"idProduto":820001},"itens":[
+   {"ident":{"idProdMalha":820002,"descrProdMalha":"ROLO KA169 120X50000MM P50"},"quantProdMalha":0.24,"unidProdMalha":"M2"},
+   {"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":1.29,"unidProdMalha":"G"},
+   {"ident":{"idProdMalha":820003,"descrProdMalha":"A455 SEGUNDA COLA ADESIVO"},"quantProdMalha":1.29,"unidProdMalha":"G"},
+   {"ident":{"idProdMalha":900003,"descrProdMalha":"DESMODUR NE-S"},"quantProdMalha":0.143,"unidProdMalha":"G"}]}'::jsonb);
+SQL
+P -q -c "SELECT fn_pcp_refresh_itens();" >/dev/null
+eq "catalisador com 2 colas G ⇒ cola_ambigua (não escolhe coef às cegas)" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=820001 AND papel='catalisador'")" "cola_ambigua"
+P -q -c "SELECT fn_pcp_materializar_excecoes();" >/dev/null
+eq "cola_ambigua entra na fila de exceções" "$(Pq -c "SELECT count(*) FROM pcp_bom_excecoes WHERE status='cola_ambigua'")" "1"
+
 echo "── matriz RLS (painel: TODAS as pcp_% fail-closed) ──"
 eq "6 tabelas pcp_% com RLS ligado" "$(Pq -c "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname LIKE 'pcp\\_%' AND c.relkind='r' AND c.relrowsecurity")" "6"
 eq "staff vê pcp_bom_regras" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000aaaa'; SELECT count(*)>0 FROM pcp_bom_regras")" "t"
