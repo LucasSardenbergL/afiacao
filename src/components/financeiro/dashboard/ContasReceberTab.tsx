@@ -1,9 +1,11 @@
 // Conteúdo da aba "Contas a Receber" do dashboard financeiro.
 // Extraído de src/pages/FinanceiroDashboard.tsx (god-component split).
+import { useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Clock, AlertTriangle, DollarSign, Download, History } from 'lucide-react';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { type FinanceiroView } from '@/hooks/useFinanceiro';
@@ -28,6 +30,30 @@ export function ContasReceberTab({
   loading: boolean;
   onAudit: (t: { table: string; id: string; title: string }) => void;
 }) {
+  // Virtualização: sem limit na query o PostgREST entrega até 1.000 títulos e
+  // TODOS viravam <tr> no DOM (~9.000 células) — filtro/scroll com jank. Acima
+  // do limiar, só as linhas visíveis (+overscan) existem no DOM; abaixo dele a
+  // renderização é integral (idêntica à original — inclusive em jsdom/testes,
+  // onde o container mede 0px e o virtualizador não veria linha nenhuma).
+  // NOTA: a tabela ganhou scroll interno (max-h) — necessário pro virtualizador.
+  const virtualizar = contasReceber.length > 100;
+  const parentRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: contasReceber.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 48,
+    overscan: 12,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const linhas = virtualizar
+    ? virtualRows.map((vr) => ({ conta: contasReceber[vr.index], index: vr.index }))
+    : contasReceber.map((conta, index) => ({ conta, index }));
+  const paddingTop = virtualizar && virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const paddingBottom = virtualizar && virtualRows.length > 0
+    ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
+    : 0;
+  const colSpan = view === 'all' ? 9 : 8;
+
   return (
     <>
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -101,9 +127,12 @@ export function ContasReceberTab({
 
       <Card>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
+          {/* table crua (não <Table>): o wrapper interno do shadcn tem overflow
+              próprio e roubaria o scroll do virtualizador — o ref precisa estar
+              no container que de fato scrolla. Classes idênticas às do ui/table. */}
+          <div ref={parentRef} className="relative w-full overflow-auto rounded-md max-h-[65vh]">
+            <table className="w-full caption-bottom text-sm">
+              <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-card">
                 <TableRow>
                   {view === 'all' && <TableHead className="w-20">Empresa</TableHead>}
                   <TableHead>Cliente</TableHead>
@@ -117,8 +146,14 @@ export function ContasReceberTab({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {contasReceber.map((cr) => (
-                  <TableRow key={cr.id}>
+                {paddingTop > 0 && (
+                  <tr aria-hidden>
+                    <td colSpan={colSpan} style={{ height: paddingTop, padding: 0, border: 0 }} />
+                  </tr>
+                )}
+                {linhas.map(({ conta: cr, index }) => {
+                  return (
+                  <TableRow key={cr.id} data-index={index} ref={virtualizar ? rowVirtualizer.measureElement : undefined}>
                     {view === 'all' && (
                       <TableCell>
                         <Badge variant="outline" className="text-xs">
@@ -165,16 +200,22 @@ export function ContasReceberTab({
                       </Button>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
+                {paddingBottom > 0 && (
+                  <tr aria-hidden>
+                    <td colSpan={colSpan} style={{ height: paddingBottom, padding: 0, border: 0 }} />
+                  </tr>
+                )}
                 {contasReceber.length === 0 && !loading && (
                   <TableRow>
-                    <TableCell colSpan={view === 'all' ? 9 : 8} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={colSpan} className="text-center py-8 text-muted-foreground">
                       Nenhum título encontrado. Sincronize os dados primeiro.
                     </TableCell>
                   </TableRow>
                 )}
               </TableBody>
-            </Table>
+            </table>
           </div>
         </CardContent>
       </Card>
