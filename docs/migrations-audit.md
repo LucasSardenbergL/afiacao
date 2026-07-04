@@ -22,13 +22,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **332** custom migrations totais
-- **1138** objetos esperados (criados por estas migrations)
+- **1168** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 328
   - `rls_policy`: 251
   - `index`: 200
+  - `cron_job`: 144
   - `table`: 124
-  - `cron_job`: 114
   - `trigger`: 62
   - `view`: 55
   - `enum_value`: 4
@@ -952,16 +952,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.afiacao_ciclo_oportunidade_diario` | — |
-| `cron_job` | `cron.afiacao_dispatch_notificacoes_diario` | — |
+| `cron_job` | `cron.afiacao_dispatch_notificacoes_30min` | — |
 | `cron_job` | `cron.afiacao_estados_eventos_diarios` | — |
 | `cron_job` | `cron.afiacao_limpeza_sugestoes_mensal` | — |
 | `cron_job` | `cron.afiacao_omie_oben_sku_items_history_daily` | — |
 | `cron_job` | `cron.afiacao_omie_oben_sync_incremental_2h` | — |
+| `cron_job` | `cron.afiacao_oportunidade_badge_refresh_2h` | — |
 | `cron_job` | `cron.afiacao_ranking_refresh_semanal` | — |
-| `cron_job` | `cron.afiacao_sugestoes_diarias` | — |
+| `cron_job` | `cron.afiacao-os-sync` | — |
+| `cron_job` | `cron.caca-custo-producao-colacor-daily` | — |
 | `cron_job` | `cron.call-log-missed-backstop` | — |
 | `cron_job` | `cron.carteira-positivacao-snapshot-mensal` | — |
 | `cron_job` | `cron.carteira-rebuild-nightly` | — |
+| `cron_job` | `cron.classificar-fornecedores-nightly` | — |
+| `cron_job` | `cron.cmc-snapshot-backfill-mensal` | — |
 | `cron_job` | `cron.compute-association-rules-daily` | — |
 | `cron_job` | `cron.compute-costs-daily` | — |
 | `cron_job` | `cron.daily-calculate-scores` | — |
@@ -977,25 +981,51 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.fin-sync-cr-2x` | — |
 | `cron_job` | `cron.fin-sync-heartbeat` | — |
 | `cron_job` | `cron.fin-sync-mov-2x` | — |
+| `cron_job` | `cron.fin-sync-retry-kicks` | — |
 | `cron_job` | `cron.fin-sync-watchdog` | — |
 | `cron_job` | `cron.gerar-pedidos-diario-oben` | — |
+| `cron_job` | `cron.gerar-pedidos-intraday-oben` | — |
 | `cron_job` | `cron.monthly-tool-report` | — |
+| `cron_job` | `cron.nao-vinculados-refresh-diario` | — |
 | `cron_job` | `cron.omie-sync-estoque-diario` | — |
+| `cron_job` | `cron.omie-sync-estoque-intraday-oben` | — |
 | `cron_job` | `cron.omie-sync-metadados-daily` | — |
 | `cron_job` | `cron.omie-sync-status-produtos-diario` | — |
+| `cron_job` | `cron.pedidos-programados-diario` | — |
+| `cron_job` | `cron.pedidos-programados-watchdog` | — |
 | `cron_job` | `cron.process-recurring-orders-daily` | — |
+| `cron_job` | `cron.purge-cron-job-run-details` | — |
+| `cron_job` | `cron.push-sla-tick` | — |
+| `cron_job` | `cron.reposicao-alerta-pedido-minimo` | — |
+| `cron_job` | `cron.reposicao-classificar-sayerlack-grupo` | — |
+| `cron_job` | `cron.reposicao-cold-start-parametros` | — |
+| `cron_job` | `cron.reposicao-depara-sayerlack-auto-diario` | — |
+| `cron_job` | `cron.reposicao-param-auto-resumo` | — |
+| `cron_job` | `cron.reposicao-param-limbo-watchdog` | — |
+| `cron_job` | `cron.reposicao-preencher-parametros-faltantes` | — |
+| `cron_job` | `cron.reposicao-refresh-descricao-diario` | — |
 | `cron_job` | `cron.sayerlack-portal-watchdog` | — |
+| `cron_job` | `cron.sayerlack-retry-orfaos` | — |
 | `cron_job` | `cron.scoring-recalc-batch-nightly` | — |
 | `cron_job` | `cron.sync-colacor-vendas-products` | — |
+| `cron_job` | `cron.sync-customers-vendas-daily` | — |
+| `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
+| `cron_job` | `cron.sync-inventory-servicos-1h` | — |
 | `cron_job` | `cron.sync-inventory-vendas-30m` | — |
 | `cron_job` | `cron.sync-omie-services-hourly` | — |
 | `cron_job` | `cron.sync-products-customers-daily` | — |
 | `cron_job` | `cron.sync-reprocess-operational` | — |
 | `cron_job` | `cron.sync-reprocess-strategic` | — |
+| `cron_job` | `cron.tarefas-escalonamento-diario` | — |
+| `cron_job` | `cron.tarefas-matcher-15min` | — |
+| `cron_job` | `cron.tarefas-materializar-recorrentes` | — |
+| `cron_job` | `cron.tint-marcar-bases-diario` | — |
+| `cron_job` | `cron.vendas-sync-continuacao-6min` | — |
 | `cron_job` | `cron.vendas-sync-pedidos-colacor-2h` | — |
 | `cron_job` | `cron.vendas-sync-pedidos-oben-2h` | — |
 | `cron_job` | `cron.visit-score-recalc-batch-nightly` | — |
 | `cron_job` | `cron.weekly-algorithm-a-audit` | — |
+| `cron_job` | `cron.whatsapp-sla-digest-diario` | — |
 
 ### `20260527235000_dispatch_notifications_frequente.sql`
 
