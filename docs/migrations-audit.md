@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **324** custom migrations totais
-- **1117** objetos esperados (criados por estas migrations)
+- **326** custom migrations totais
+- **1123** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 319
-  - `rls_policy`: 248
+  - `function`: 321
+  - `rls_policy`: 249
   - `index`: 199
-  - `table`: 122
-  - `cron_job`: 111
+  - `table`: 123
+  - `cron_job`: 113
   - `trigger`: 59
   - `view`: 55
   - `enum_value`: 4
@@ -2735,11 +2735,27 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `cron_job` | `cron.pedidos-programados-diario` | — |
 
+### `20260703120000_pedidos_programados_cron_fix.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.pedidos-programados-diario` | — |
+
 ### `20260703140000_trava_credito_gate_excecao_por_par.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.venda_gate_credito` | — |
+
+### `20260704102000_fin_sync_retry_kick_perdido.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_kicks_perdidos` | — |
+| `function` | `public.fin_sync_retry_tick` | — |
+| `table` | `public.fin_sync_kick_retry` | — |
+| `cron_job` | `cron.fin-sync-retry-kicks` | — |
+| `rls_policy` | `public.fin_sync_kick_retry_select_staff` | `fin_sync_kick_retry` |
 
 ## Próximos passos por status
 
