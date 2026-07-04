@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 330
+-- Total de custom migrations: 332
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -371,7 +371,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260704102000', 'fin_sync_retry_kick_perdido', '20260704102000_fin_sync_retry_kick_perdido.sql'),
   ('20260704120000', 'profiles_prevent_self_approval', '20260704120000_profiles_prevent_self_approval.sql'),
   ('20260704130000', 'claim_nfe_efetivacao_lock', '20260704130000_claim_nfe_efetivacao_lock.sql'),
-  ('20260704150000', 'fin_sync_lease_por_company', '20260704150000_fin_sync_lease_por_company.sql')
+  ('20260704140000', 'claim_nfe_efetivacao_lock_revoke_grants', '20260704140000_claim_nfe_efetivacao_lock_revoke_grants.sql'),
+  ('20260704150000', 'fin_sync_lease_por_company', '20260704150000_fin_sync_lease_por_company.sql'),
+  ('20260704160000', 'fin_sync_watchdog_retry_sem_efeito', '20260704160000_fin_sync_watchdog_retry_sem_efeito.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1497,7 +1499,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_sync_lease_por_company', 'function', 'public', 'fin_sync_lease_release', ''),
   ('fin_sync_lease_por_company', 'table', 'public', 'fin_sync_lease', ''),
   ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_select_staff', 'fin_sync_lease'),
-  ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_service_all', 'fin_sync_lease')
+  ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_service_all', 'fin_sync_lease'),
+  ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2671,7 +2674,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_sync_lease_por_company', 'function', 'public', 'fin_sync_lease_release', ''),
   ('fin_sync_lease_por_company', 'table', 'public', 'fin_sync_lease', ''),
   ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_select_staff', 'fin_sync_lease'),
-  ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_service_all', 'fin_sync_lease')
+  ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_service_all', 'fin_sync_lease'),
+  ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', '')
 )
 SELECT
   e.migration,
