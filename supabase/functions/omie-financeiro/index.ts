@@ -437,12 +437,18 @@ async function callOmie(
   const maxRetries = 3;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     // 1) fetch — erro de REDE (DNS/conexão/timeout) é transitório.
+    // AbortSignal.timeout(30s): teto DURO por request. Sem ele, um fetch pendurado
+    // deixaria a invocação viva ALÉM do TTL do lease (300s) → outra invocação roubaria
+    // o lease e rodaria concorrente na mesma conta (o buraco que o lease fecha). Com o
+    // teto, a invocação nunca passa de ~budget(100s)+30s << TTL. O TimeoutError cai aqui
+    // no catch de rede → tratado como transitório (retry). (Revisão Codex 2026-07-04.)
     let res: Response;
     try {
       res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
       });
     } catch (netErr) {
       if (attempt < maxRetries && !isTimeBudgetExhausted()) {
@@ -1816,17 +1822,27 @@ async function completeSync(
   logId: string,
   results: Record<string, unknown> | null,
   errorMsg?: string,
-  startTime?: number
+  startTime?: number,
+  opts?: { skippedBusy?: boolean }
 ) {
   if (!logId) return;
+  // skipped_busy: a invocação NÃO adquiriu o lease da conta e saiu sem tocar Omie/cursor.
+  // completed_at=NULL de propósito → invisível p/ os consumidores de frescor
+  // (_data_health_compute/fin_calcular_confiabilidade/fin_sync_heartbeat filtram
+  // completed_at IS NOT NULL ou status='complete'), então NÃO fabrica "sync recente".
+  // Erro (inclui lease_error, fail-closed) tem precedência sobre skipped_busy.
+  const skipped = opts?.skippedBusy === true && !errorMsg;
+  const status = errorMsg ? "error" : skipped ? "skipped_busy" : "complete";
+  const completedAt = skipped ? null : new Date().toISOString();
+
   // Try with observability columns first (migration 200500)
   const { error } = await db
     .from("fin_sync_log")
     .update({
-      status: errorMsg ? "error" : "complete",
+      status,
       results: results || {},
       error_message: errorMsg || null,
-      completed_at: new Date().toISOString(),
+      completed_at: completedAt,
       duracao_ms: startTime ? Date.now() - startTime : null,
       api_calls: apiCallCount,
       rate_limits_hit: rateLimitHits,
@@ -1837,15 +1853,21 @@ async function completeSync(
   // Fallback: if columns don't exist yet (200500 not applied), retry with base columns only
   if (error) {
     console.log(`[Fin] completeSync fallback (extra columns may not exist): ${error.message}`);
-    await db
+    const { error: fbError } = await db
       .from("fin_sync_log")
       .update({
-        status: errorMsg ? "error" : "complete",
+        status,
         results: results || {},
         error_message: errorMsg || null,
-        completed_at: new Date().toISOString(),
+        completed_at: completedAt,
       })
       .eq("id", logId);
+    // NÃO engolir o erro do fallback (Codex #8): se o UPDATE falhar (ex.: CHECK sem
+    // 'skipped_busy' pq a migration não foi aplicada), a linha fica 'running' → o
+    // watchdog varre p/ 'error' em 30min. Logar alto pra o incidente não ficar mudo.
+    if (fbError) {
+      console.error(`[Fin] completeSync FALHOU ao gravar status='${status}' (linha ${logId} fica running→órfã): ${fbError.message}`);
+    }
   }
 }
 
@@ -1917,6 +1939,128 @@ async function writeCursor(
   }
 }
 
+// ───────── Lease por company (single-flight da CONTA Omie) ─────────
+// Espelha o state-machine SQL da migration 20260704150000 (fin_sync_lease_acquire/
+// release — SECURITY DEFINER gated a service_role). Fecha o achado P1: syncs
+// concorrentes na MESMA conta Omie → rate-limit fatal SILENCIOSO que mente
+// status=complete com synced=0. Rate-limit do Omie é por CONTA (=company) → o lease
+// é por company. O lease atômico TEM que ser RPC (`.or()`/predicado em UPDATE do
+// PostgREST quebra 42703 — CLAUDE.md). Provado no PG17: db/test-fin-sync-lease.sh.
+type LeaseOutcome =
+  | { kind: "acquired"; token: string }
+  | { kind: "busy" }
+  | { kind: "error"; message: string };
+
+// Tenta tomar o lease da conta ATOMICAMENTE (1 retry curto em erro de RPC). Distingue
+// 3 desfechos: `acquired` (roda), `busy` (data=null sem erro → outra invocação viva →
+// skip), `error` (RPC falhou após retry). ⚠️ supabase-js .rpc() NÃO lança — resolve
+// {data,error}; por isso checamos `error` explicitamente.
+async function acquireCompanyLease(
+  db: SupabaseClient,
+  company: Company,
+  holder: string,
+): Promise<LeaseOutcome> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { data, error } = await db.rpc("fin_sync_lease_acquire", {
+      p_company: company,
+      p_holder: holder,
+    });
+    if (!error) {
+      return typeof data === "string" && data
+        ? { kind: "acquired", token: data }
+        : { kind: "busy" };
+    }
+    console.error(`[Fin][${company}] lease_acquire erro (tent ${attempt + 1}/2): ${error.message}`);
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
+    else return { kind: "error", message: error.message };
+  }
+  return { kind: "error", message: "lease_acquire inalcançável" };
+}
+
+// Libera o lease (token-guarded na RPC). Best-effort: uma falha de release NÃO derruba
+// o sync — o TTL (300s) cobre a liberação eventual.
+async function releaseCompanyLease(
+  db: SupabaseClient,
+  company: Company,
+  token: string,
+): Promise<void> {
+  const { error } = await db.rpc("fin_sync_lease_release", {
+    p_company: company,
+    p_token: token,
+  });
+  if (error) console.error(`[Fin][${company}] lease_release erro (segue; TTL cobre): ${error.message}`);
+}
+
+// Roda `fn` SÓ com o lease da conta. `busy` → {skipped_busy:true} (NÃO toca Omie/cursor
+// → o cursor é preservado, a continuação */10 retoma). `error` de RPC → {lease_error}
+// FAIL-CLOSED: NÃO roda destravado (rodaria concorrente e mentiria complete — Codex);
+// o handler agrega isso p/ status='error' → o watchdog tail-failing alerta.
+async function runOmieWithLease<T>(
+  db: SupabaseClient,
+  company: Company,
+  holder: string,
+  fn: () => Promise<T>,
+): Promise<T | { skipped_busy: true } | { lease_error: string }> {
+  const lease = await acquireCompanyLease(db, company, holder);
+  if (lease.kind === "busy") {
+    console.log(`[Fin][${company}] skipped_busy: outra invocação segura o lease da conta`);
+    return { skipped_busy: true };
+  }
+  if (lease.kind === "error") {
+    return { lease_error: lease.message };
+  }
+  try {
+    return await fn();
+  } finally {
+    await releaseCompanyLease(db, company, lease.token);
+  }
+}
+
+// Actions que enumeram pesado na conta Omie e por isso passam pelo lease.
+// (cats/cc/debug_raw/calcular_dre* NÃO — ver spec §Escopo.)
+const LEASE_ACTIONS = new Set([
+  "sync_all", "sync_contas_pagar", "sync_contas_receber", "sync_movimentacoes",
+]);
+
+// Roda o sync de UMA company sob o lease, com sua PRÓPRIA linha de fin_sync_log
+// (companies=[co]). ⚠️ POR QUÊ por-company e não 1 linha por invocação: numa chamada
+// multi-company (ex.: syncAll das 3), uma company pulada herdaria o 'complete' de
+// outra via o companies[] COMPARTILHADO — os consumidores de frescor filtram
+// status='complete' AND co=ANY(companies) → frescor FALSO da pulada (achado Codex).
+// Cada company tem seu status honesto: complete | skipped_busy (completed_at NULL) |
+// error (lease_error, fail-closed → watchdog alerta). Reseta os counters de telemetria
+// por company (a linha é por-company); NÃO reseta o budget global (é da invocação).
+async function runLeasedCompanySync(
+  db: SupabaseClient,
+  action: string,
+  co: Company,
+  userId: string,
+  fn: () => Promise<Record<string, unknown>>,
+): Promise<unknown> {
+  const coStart = Date.now();
+  apiCallCount = 0;
+  rateLimitHits = 0;
+  const coLogId = await logSync(db, action, [co], userId);
+  try {
+    const outcome = await runOmieWithLease(db, co, coLogId, fn);
+    const leaseErr = (outcome as { lease_error?: string })?.lease_error;
+    const skipped = (outcome as { skipped_busy?: boolean })?.skipped_busy === true;
+    await completeSync(
+      db,
+      coLogId,
+      { [co]: outcome },
+      leaseErr ? `lease indisponível (fail-closed): ${leaseErr}` : undefined,
+      coStart,
+      { skippedBusy: skipped },
+    );
+    return outcome;
+  } catch (e) {
+    // Fecha a linha desta company como error (senão fica 'running' órfã) e re-lança.
+    try { await completeSync(db, coLogId, null, String(e), coStart); } catch { /* best-effort */ }
+    throw e;
+  }
+}
+
 // ═══════════════ HANDLER PRINCIPAL ═══════════════
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -1957,39 +2101,47 @@ serve(async (req) => {
     startTime = globalStartTime;
     apiCallCount = 0;
     rateLimitHits = 0;
-    logId = await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
+    // Lease actions logam POR COMPANY (runLeasedCompanySync) → sem linha única de
+    // invocação (que teria companies[] compartilhado e mentiria frescor da company
+    // pulada — achado Codex). logId="" p/ elas; o catch abaixo respeita isso.
+    const usaLogPorCompany = LEASE_ACTIONS.has(action);
+    logId = usaLogPorCompany ? "" : await logSync(supabase, action, targetCompanies, auth.userId || "unknown");
 
     let result: Record<string, unknown> = {};
 
     switch (action) {
       case "sync_all": {
-        // Ponto 2: inclui TODAS as entidades, incluindo movimentações
+        // Ponto 2: inclui TODAS as entidades, incluindo movimentações.
+        // Sob o lease da conta: o bloco inteiro de uma company roda com 1 lease;
+        // outra invocação na mesma conta vira skipped_busy.
         for (const co of targetCompanies) {
-          console.log(`[Fin] Sync completo ${co}...`);
-          const cats = await syncCategorias(supabase, co);
-          const ccs = await syncContasCorrentes(supabase, co);
-          
-          const dataInicio =
-            filtro_data_de ||
-            formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
-          const dataFim = filtro_data_ate || formatOmieDate(new Date());
-          
-          const cp = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages || 500);
-          const cr = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages || 500);
+          result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
+            console.log(`[Fin] Sync completo ${co}...`);
+            const cats = await syncCategorias(supabase, co);
+            const ccs = await syncContasCorrentes(supabase, co);
 
-          // Movimentações: últimos 3 meses (mais recente, volume menor)
-          const dataInicioMov =
-            filtro_data_de ||
-            formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 3)));
-          const mov = await syncMovimentacoes(supabase, co, dataInicioMov, dataFim, maxPages || 500);
+            const dataInicio =
+              filtro_data_de ||
+              formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
+            const dataFim = filtro_data_ate || formatOmieDate(new Date());
 
-          result[co] = {
-            categorias: cats,
-            contas_correntes: ccs,
-            contas_pagar: cp,
-            contas_receber: cr,
-            movimentacoes: mov,
-          };
+            const cp = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages || 500);
+            const cr = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages || 500);
+
+            // Movimentações: últimos 3 meses (mais recente, volume menor)
+            const dataInicioMov =
+              filtro_data_de ||
+              formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 3)));
+            const mov = await syncMovimentacoes(supabase, co, dataInicioMov, dataFim, maxPages || 500);
+
+            return {
+              categorias: cats,
+              contas_correntes: ccs,
+              contas_pagar: cp,
+              contas_receber: cr,
+              movimentacoes: mov,
+            };
+          });
         }
         break;
       }
@@ -2014,10 +2166,12 @@ serve(async (req) => {
           formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
         const dataFim = filtro_data_ate || formatOmieDate(new Date());
         for (const co of targetCompanies) {
-          const startPage = (await readCursorStartPage(supabase, co, "contas_pagar")) ?? 1;
-          const r = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages, startPage);
-          await writeCursor(supabase, co, "contas_pagar", r);
-          result[co] = r;
+          result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
+            const startPage = (await readCursorStartPage(supabase, co, "contas_pagar")) ?? 1;
+            const r = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages, startPage);
+            await writeCursor(supabase, co, "contas_pagar", r);
+            return r;
+          });
         }
         break;
       }
@@ -2028,10 +2182,12 @@ serve(async (req) => {
           formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
         const dataFim = filtro_data_ate || formatOmieDate(new Date());
         for (const co of targetCompanies) {
-          const startPage = (await readCursorStartPage(supabase, co, "contas_receber")) ?? 1;
-          const r = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages, startPage);
-          await writeCursor(supabase, co, "contas_receber", r);
-          result[co] = r;
+          result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
+            const startPage = (await readCursorStartPage(supabase, co, "contas_receber")) ?? 1;
+            const r = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages, startPage);
+            await writeCursor(supabase, co, "contas_receber", r);
+            return r;
+          });
         }
         break;
       }
@@ -2040,19 +2196,21 @@ serve(async (req) => {
         const dataFim = filtro_data_ate || formatOmieDate(new Date());
         const incrementalDe = formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 3)));
         for (const co of targetCompanies) {
-          // mov: undefined = fresh (começa da última página/mais recente); int = resume
-          const startPage = await readCursorStartPage(supabase, co, "movimentacoes");
-          const cursorBackfill = await readCursorBackfillDesde(supabase, co, "movimentacoes");
-          // Backfill = janela ampla client-side. Inicia via body.filtro_data_de (só
-          // quando NÃO há resume pendente, pra não reiniciar no meio); resume herda a
-          // janela persistida no cursor. NULL = incremental (3 meses, early-exit 30).
-          const backfillDesde =
-            startPage !== undefined ? (cursorBackfill ?? null) : (filtro_data_de ?? null);
-          const dataInicio = backfillDesde || incrementalDe;
-          const maxEmpty = backfillDesde ? 300 : 30;
-          const r = await syncMovimentacoes(supabase, co, dataInicio, dataFim, maxPages, startPage, maxEmpty);
-          await writeCursor(supabase, co, "movimentacoes", r, backfillDesde);
-          result[co] = r;
+          result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
+            // mov: undefined = fresh (começa da última página/mais recente); int = resume
+            const startPage = await readCursorStartPage(supabase, co, "movimentacoes");
+            const cursorBackfill = await readCursorBackfillDesde(supabase, co, "movimentacoes");
+            // Backfill = janela ampla client-side. Inicia via body.filtro_data_de (só
+            // quando NÃO há resume pendente, pra não reiniciar no meio); resume herda a
+            // janela persistida no cursor. NULL = incremental (3 meses, early-exit 30).
+            const backfillDesde =
+              startPage !== undefined ? (cursorBackfill ?? null) : (filtro_data_de ?? null);
+            const dataInicio = backfillDesde || incrementalDe;
+            const maxEmpty = backfillDesde ? 300 : 30;
+            const r = await syncMovimentacoes(supabase, co, dataInicio, dataFim, maxPages, startPage, maxEmpty);
+            await writeCursor(supabase, co, "movimentacoes", r, backfillDesde);
+            return r;
+          });
         }
         break;
       }
@@ -2159,7 +2317,9 @@ serve(async (req) => {
         );
     }
 
-    // Log sucesso (Ponto 11)
+    // Log final (Ponto 11). Lease actions já fecharam 1 linha POR COMPANY dentro do
+    // loop (runLeasedCompanySync) → aqui logId="" e completeSync é no-op. Non-lease
+    // actions (calcular_dre*, cats/cc, debug_raw) fecham a linha única da invocação.
     await completeSync(supabase, logId, result, undefined, startTime);
     syncFinalized = true;
 

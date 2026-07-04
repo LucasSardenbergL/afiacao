@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **330** custom migrations totais
-- **1133** objetos esperados (criados por estas migrations)
+- **332** custom migrations totais
+- **1138** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 326
-  - `rls_policy`: 249
+  - `function`: 328
+  - `rls_policy`: 251
   - `index`: 200
-  - `table`: 123
+  - `table`: 124
   - `cron_job`: 114
   - `trigger`: 62
   - `view`: 55
@@ -2780,6 +2780,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.claim_nfe_efetivacao_lock` | — |
+
+### `20260704140000_claim_nfe_efetivacao_lock_revoke_grants.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260704150000_fin_sync_lease_por_company.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_lease_acquire` | — |
+| `function` | `public.fin_sync_lease_release` | — |
+| `table` | `public.fin_sync_lease` | — |
+| `rls_policy` | `public.fin_sync_lease_select_staff` | `fin_sync_lease` |
+| `rls_policy` | `public.fin_sync_lease_service_all` | `fin_sync_lease` |
 
 ### `20260704160000_fin_sync_watchdog_retry_sem_efeito.sql`
 
