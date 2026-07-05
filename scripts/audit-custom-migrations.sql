@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 333
+-- Total de custom migrations: 334
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -372,7 +372,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260704130000', 'claim_nfe_efetivacao_lock', '20260704130000_claim_nfe_efetivacao_lock.sql'),
   ('20260704140000', 'claim_nfe_efetivacao_lock_revoke_grants', '20260704140000_claim_nfe_efetivacao_lock_revoke_grants.sql'),
   ('20260704150000', 'fin_sync_lease_por_company', '20260704150000_fin_sync_lease_por_company.sql'),
-  ('20260704160000', 'fin_sync_watchdog_retry_sem_efeito', '20260704160000_fin_sync_watchdog_retry_sem_efeito.sql')
+  ('20260704160000', 'fin_sync_watchdog_retry_sem_efeito', '20260704160000_fin_sync_watchdog_retry_sem_efeito.sql'),
+  ('20260705120000', 'fin_dre_custo_tipo', '20260705120000_fin_dre_custo_tipo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1554,7 +1555,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_sync_lease_por_company', 'table', 'public', 'fin_sync_lease', ''),
   ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_select_staff', 'fin_sync_lease'),
   ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_service_all', 'fin_sync_lease'),
-  ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', '')
+  ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', ''),
+  ('fin_dre_custo_tipo', 'function', 'public', 'fin_dre_custo_tipo_set_autor', ''),
+  ('fin_dre_custo_tipo', 'table', 'public', 'fin_dre_custo_tipo', ''),
+  ('fin_dre_custo_tipo', 'trigger', 'public', 'trg_fin_dre_custo_tipo_autor', 'fin_dre_custo_tipo'),
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_select_master', 'fin_dre_custo_tipo'),
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_write_master', 'fin_dre_custo_tipo'),
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2784,7 +2791,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_sync_lease_por_company', 'table', 'public', 'fin_sync_lease', ''),
   ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_select_staff', 'fin_sync_lease'),
   ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_service_all', 'fin_sync_lease'),
-  ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', '')
+  ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', ''),
+  ('fin_dre_custo_tipo', 'function', 'public', 'fin_dre_custo_tipo_set_autor', ''),
+  ('fin_dre_custo_tipo', 'table', 'public', 'fin_dre_custo_tipo', ''),
+  ('fin_dre_custo_tipo', 'trigger', 'public', 'trg_fin_dre_custo_tipo_autor', 'fin_dre_custo_tipo'),
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_select_master', 'fin_dre_custo_tipo'),
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_write_master', 'fin_dre_custo_tipo'),
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo')
 )
 SELECT
   e.migration,

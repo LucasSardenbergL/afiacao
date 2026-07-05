@@ -6,17 +6,24 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { AlertTriangle, FileText } from 'lucide-react';
 import { type FinanceiroView } from '@/hooks/useFinanceiro';
 import { fmtCompact } from '@/components/financeiro/dashboard/format';
+import { PontoEquilibrioCard } from '@/components/financeiro/dashboard/PontoEquilibrioCard';
 import type { FinDRE } from '@/services/financeiroService';
 
 export function DRETab({ data, view, ano }: { data: FinDRE[]; view: FinanceiroView; ano: number }) {
+  // F3 — PE operacional (v1 OBEN-only, spec §5; o card é master-only por dentro). Base TTM própria.
+  const peCard = view === 'oben' ? <PontoEquilibrioCard company="oben" /> : null;
+
   if (!data || data.length === 0) {
     return (
-      <Card>
-        <CardContent className="py-12 text-center text-muted-foreground">
-          <FileText className="w-10 h-10 mx-auto mb-3 opacity-40" />
-          Nenhum DRE calculado para {ano}. Clique em "Recalcular" para gerar.
-        </CardContent>
-      </Card>
+      <div className="space-y-3">
+        {peCard}
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground">
+            <FileText className="w-10 h-10 mx-auto mb-3 opacity-40" />
+            Nenhum DRE calculado para {ano}. Clique em "Recalcular" para gerar.
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
@@ -49,6 +56,7 @@ export function DRETab({ data, view, ano }: { data: FinDRE[]; view: FinanceiroVi
 
   return (
     <div className="space-y-3">
+      {peCard}
       {/* Ponto 5: unmapped warning */}
       {uniqueUnmapped.length > 0 && (
         <div className="flex items-start gap-2 p-3 rounded-lg bg-status-warning-bg border border-status-warning/30">
