@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 334
+-- Total de custom migrations: 336
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -372,7 +372,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260704130000', 'claim_nfe_efetivacao_lock', '20260704130000_claim_nfe_efetivacao_lock.sql'),
   ('20260704140000', 'claim_nfe_efetivacao_lock_revoke_grants', '20260704140000_claim_nfe_efetivacao_lock_revoke_grants.sql'),
   ('20260704150000', 'fin_sync_lease_por_company', '20260704150000_fin_sync_lease_por_company.sql'),
+  ('20260704160000', 'fin_dividas', '20260704160000_fin_dividas.sql'),
   ('20260704160000', 'fin_sync_watchdog_retry_sem_efeito', '20260704160000_fin_sync_watchdog_retry_sem_efeito.sql'),
+  ('20260704160500', 'fin_divida_replace_parcelas', '20260704160500_fin_divida_replace_parcelas.sql'),
   ('20260705120000', 'fin_dre_custo_tipo', '20260705120000_fin_dre_custo_tipo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -1555,7 +1557,19 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_sync_lease_por_company', 'table', 'public', 'fin_sync_lease', ''),
   ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_select_staff', 'fin_sync_lease'),
   ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_service_all', 'fin_sync_lease'),
+  ('fin_dividas', 'function', 'public', 'fin_dividas_forca_autor', ''),
+  ('fin_dividas', 'function', 'public', 'fin_divida_completude_forca_autor', ''),
+  ('fin_dividas', 'table', 'public', 'fin_dividas', ''),
+  ('fin_dividas', 'table', 'public', 'fin_divida_parcelas', ''),
+  ('fin_dividas', 'table', 'public', 'fin_divida_completude', ''),
+  ('fin_dividas', 'index', 'public', 'idx_fin_divida_parcelas_venc', 'fin_divida_parcelas'),
+  ('fin_dividas', 'index', 'public', 'idx_fin_divida_parcelas_naopago', 'fin_divida_parcelas'),
+  ('fin_dividas', 'trigger', 'public', 'trg_fin_dividas_autor', 'fin_dividas'),
+  ('fin_dividas', 'trigger', 'public', 'trg_fin_divida_completude_autor', 'fin_divida_completude'),
+  ('fin_dividas', 'rls_policy', 'public', '%I_select_master', 'public'),
+  ('fin_dividas', 'rls_policy', 'public', '%I_write_master', 'public'),
   ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', ''),
+  ('fin_divida_replace_parcelas', 'function', 'public', 'fin_divida_replace_parcelas', ''),
   ('fin_dre_custo_tipo', 'function', 'public', 'fin_dre_custo_tipo_set_autor', ''),
   ('fin_dre_custo_tipo', 'table', 'public', 'fin_dre_custo_tipo', ''),
   ('fin_dre_custo_tipo', 'trigger', 'public', 'trg_fin_dre_custo_tipo_autor', 'fin_dre_custo_tipo'),
@@ -2791,7 +2805,19 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_sync_lease_por_company', 'table', 'public', 'fin_sync_lease', ''),
   ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_select_staff', 'fin_sync_lease'),
   ('fin_sync_lease_por_company', 'rls_policy', 'public', 'fin_sync_lease_service_all', 'fin_sync_lease'),
+  ('fin_dividas', 'function', 'public', 'fin_dividas_forca_autor', ''),
+  ('fin_dividas', 'function', 'public', 'fin_divida_completude_forca_autor', ''),
+  ('fin_dividas', 'table', 'public', 'fin_dividas', ''),
+  ('fin_dividas', 'table', 'public', 'fin_divida_parcelas', ''),
+  ('fin_dividas', 'table', 'public', 'fin_divida_completude', ''),
+  ('fin_dividas', 'index', 'public', 'idx_fin_divida_parcelas_venc', 'fin_divida_parcelas'),
+  ('fin_dividas', 'index', 'public', 'idx_fin_divida_parcelas_naopago', 'fin_divida_parcelas'),
+  ('fin_dividas', 'trigger', 'public', 'trg_fin_dividas_autor', 'fin_dividas'),
+  ('fin_dividas', 'trigger', 'public', 'trg_fin_divida_completude_autor', 'fin_divida_completude'),
+  ('fin_dividas', 'rls_policy', 'public', '%I_select_master', 'public'),
+  ('fin_dividas', 'rls_policy', 'public', '%I_write_master', 'public'),
   ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', ''),
+  ('fin_divida_replace_parcelas', 'function', 'public', 'fin_divida_replace_parcelas', ''),
   ('fin_dre_custo_tipo', 'function', 'public', 'fin_dre_custo_tipo_set_autor', ''),
   ('fin_dre_custo_tipo', 'table', 'public', 'fin_dre_custo_tipo', ''),
   ('fin_dre_custo_tipo', 'trigger', 'public', 'trg_fin_dre_custo_tipo_autor', 'fin_dre_custo_tipo'),

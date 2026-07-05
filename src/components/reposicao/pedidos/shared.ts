@@ -99,41 +99,46 @@ export function frescorEstoque(
   return { tone, label };
 }
 
-// Resumo devolvido pela edge omie-sync-estoque (contagens; as listas ficam de fora).
-export interface RespostaSyncEstoque {
-  ok?: boolean;
-  sincronizados?: number | null;
-  nao_encontrados?: number | null;
-  erros_upsert?: number | null;
-  total_skus_esperados?: number | null;
-  duracao_ms?: number | null;
-  mensagem?: string | null;
-  error?: string | null;
+// Uma edge de sync (omie-sync-estoque / omie-sync-status-produtos), chamada via
+// supabase.functions.invoke dentro de Promise.allSettled, só conta como sucesso se o invoke NÃO
+// falhou (rede/HTTP) E o corpo trouxe {ok:true}. HTTP 200 com {ok:false}/{error} é falha LÓGICA da
+// edge — não pode virar sucesso, senão o toast mente ("sincronizado" quando não foi).
+export function edgeSyncOk(
+  settled: { status: 'fulfilled' | 'rejected'; value?: { data?: unknown; error?: unknown } | null },
+): boolean {
+  if (settled.status !== 'fulfilled' || !settled.value) return false;
+  if (settled.value.error) return false;
+  return (settled.value.data as { ok?: boolean } | null)?.ok === true;
 }
 
-// Traduz o resumo num toast. Erro de gravação parcial vira warning (não mascarar);
-// resposta vazia/não-ok NUNCA vira sucesso.
-export function interpretarRespostaSyncEstoque(
-  data: RespostaSyncEstoque | null | undefined,
-): { tone: 'success' | 'warning' | 'error' | 'info'; message: string } {
-  if (!data || data.ok !== true) {
-    return { tone: 'error', message: `Sync de estoque falhou: ${data?.error ?? 'resposta vazia da edge'}` };
+// Botão "Sincronizar e recalcular": dispara SALDO (omie-sync-estoque) + STATUS ativo/inativo
+// (omie-sync-status-produtos) em paralelo e, SÓ SE ambas deram certo, recalcula o ciclo. Se uma
+// sync falhar, NÃO recalcula (regenerar com saldo/status velho geraria pedido errado = money-path)
+// — o usuário reexecuta ou usa "Recalcular sugestões" à parte. `recalc` = null quando não recalculou.
+export function resumoSyncRecalc(
+  estoqueOk: boolean,
+  statusOk: boolean,
+  recalc: { ok: boolean; pedidos: number; erro?: string } | null,
+): { tone: 'success' | 'warning' | 'error'; message: string } {
+  if (!estoqueOk && !statusOk) {
+    return { tone: 'error', message: 'Falha ao sincronizar estoque e status do Omie. Não recalculei — tente novamente.' };
   }
-  if ((data.total_skus_esperados ?? 0) === 0) {
-    return { tone: 'info', message: data.mensagem ?? 'Nenhum SKU habilitado, nada a sincronizar.' };
+  if (!estoqueOk) {
+    return { tone: 'warning', message: 'Status sincronizado, mas o estoque do Omie falhou. Não recalculei — tente novamente.' };
   }
-  const sincronizados = data.sincronizados ?? 0;
-  const errosUpsert = data.erros_upsert ?? 0;
-  if (errosUpsert > 0) {
-    return {
-      tone: 'warning',
-      message: `Estoque sincronizado com ressalvas: ${sincronizados} SKUs atualizados, ${errosUpsert} erro(s) de gravação`,
-    };
+  if (!statusOk) {
+    return { tone: 'warning', message: 'Estoque sincronizado, mas o status do Omie falhou. Não recalculei — tente novamente.' };
   }
-  const segundos = Math.round((data.duracao_ms ?? 0) / 1000);
-  const naoEncontrados = data.nao_encontrados ?? 0;
-  const sufixo = naoEncontrados > 0 ? ` (${naoEncontrados} não encontrados no Omie)` : '';
-  return { tone: 'success', message: `Estoque sincronizado: ${sincronizados} SKUs atualizados em ${segundos}s${sufixo}` };
+  if (!recalc || !recalc.ok) {
+    // Preserva o motivo da RPC (lock/permissão/timeout/bug) — não achatar num genérico (Codex).
+    const detalhe = recalc?.erro ? ` (${recalc.erro})` : '';
+    return { tone: 'warning', message: `Omie sincronizado, mas o recálculo das sugestões falhou${detalhe}. Use "Recalcular sugestões".` };
+  }
+  const n = recalc.pedidos;
+  return {
+    tone: 'success',
+    message: `Omie sincronizado e sugestões recalculadas (${n} ${n === 1 ? 'pedido' : 'pedidos'}). Confira os itens antes de aprovar.`,
+  };
 }
 
 /* ─── Conciliação inline (Fase 3 · 3b) ─── */

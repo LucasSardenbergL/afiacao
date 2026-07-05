@@ -103,7 +103,16 @@ export function ItensTable({
               <div className="text-sm font-medium whitespace-normal break-words leading-snug">
                 {l.sku_descricao ?? '—'}
               </div>
-              <div className="flex gap-1 mt-1">
+              <div className="flex gap-1 mt-1 flex-wrap">
+                {l.inativo_no_omie && (
+                  <Badge
+                    variant="destructive"
+                    className="text-[10px] h-4"
+                    title="Produto inativado no Omie após a geração do pedido. O disparo será bloqueado — reative no Omie ou remova o item."
+                  >
+                    inativo no Omie
+                  </Badge>
+                )}
                 {l.primeira_compra && (
                   <Badge variant="destructive" className="text-[10px] h-4">primeira compra</Badge>
                 )}

@@ -86,6 +86,10 @@ export interface PedidoItem {
   estoque_fisico: number | null; // saldo físico = o que aparece no Omie
   estoque_a_caminho: number | null; // pendente de entrada + em trânsito
   estoque_minimo: number | null;
+  // Enriquecido (JOIN manual em useDetalhesModal): produto ficou inativo no Omie DEPOIS da geração
+  // do pedido (o pedido é snapshot congelado; a exibição não filtra). undefined = não checado.
+  // Só visual (selo) — a trava money-path é no disparo (disparo-gate-helpers/edge).
+  inativo_no_omie?: boolean;
   ponto_pedido: number | null;
   estoque_maximo: number | null;
   qtde_sugerida: number;
