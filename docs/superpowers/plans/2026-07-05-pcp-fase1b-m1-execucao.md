@@ -1,7 +1,7 @@
 # PCP Fase 1B — M1: Núcleo de Execução (event-sourced) — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **Status:** v1 — **PRÉ-painel tri-modelo**. As Decisões D1–D5 abaixo são o alvo do painel (Claude+Codex+Gemini) ANTES de escrever SQL de produção. Deploy é manual (SQL Editor do Lovable) — nunca em `supabase/migrations/`.
+> **Status:** v2 — **PÓS-painel tri-modelo (2026-07-05)**. Painel deu BLOCK no v1 com 5 P1 (3 confirmados por ≥2 modelos, 2 únicos Codex de alto sinal), convergência total. As correções C1–C7 (seção "Disposições do painel") são NORMATIVAS: o SQL de produção segue ELAS, não o v1 literal. Deploy é manual (SQL Editor do Lovable) — nunca em `supabase/migrations/`.
 
 **Goal:** Registrar a execução do chão de fábrica das cintas (iniciar/finalizar OP + eventos de exceção com consumo-motivo) como um log append-only idempotente e offline-safe, do qual o estado da OP é uma projeção — resolvendo já a dor do Tingimix (consumo não registrado).
 
@@ -25,6 +25,22 @@ O apontamento alimenta yield/custo/estoque ⇒ money-path. Estas 5 decisões pre
 - **D4 — Ordenação de eventos por `client_ts` com desempate `server_ts`.** Clock skew do device é mitigado porque o pool final é **1 operador** (a OP é apontada por 1 device por vez). Multi-device na mesma OP → a FSM sinaliza conflito, não corrompe. *A debater:* usar sequência lógica (Lamport) vs. timestamp — YAGNI para 1 operador?
 
 - **D5 — Governança do consumo-motivo (#6 do Gate 0), validada na RPC.** `motivo='producao'` exige `op_id` com OP existente; `motivo IN ('erro_formula','teste')` exige `componente_codigo` (o insumo-alvo) — não vira lixeira; `motivo='ajuste'` registra mas marca para revisão. Relatórios separam motivos não-produtivos.
+
+---
+
+## Disposições do painel tri-modelo (2026-07-05) — NORMATIVAS (o SQL segue estas, não o v1 literal)
+
+**BLOCK do v1**: 3 P1 confirmados por ≥2 modelos + 2 P1 únicos Codex. Sem divergências (convergência valida event-sourcing + FSM-na-projeção; os furos são de blindagem). Correções obrigatórias antes do SQL de produção:
+
+- **C1 — Lock por OP na projeção** *(race; Claude+Codex+Gemini P1)*. Início de `fn_pcp_projetar_op`: `PERFORM pg_advisory_xact_lock(hashtextextended(p_op_id::text, 0));` — serializa projeções concorrentes na mesma OP. Prova: 2 conexões concorrentes (iniciar‖finalizar) → `estado_projetado` final determinístico `concluida`.
+- **C2 — Projeção NÃO escreve `completed_at`/`status`** *(2-writers; Claude+Codex+Gemini P1; evidência `supabase/functions/omie-vendas-sync/index.ts:2901` `.update({status:'completed', completed_at})`)*. A projeção escreve **só** `estado_projetado` + `iniciada_em` (colunas novas, dela exclusivas). `completed_at`/`status` seguem donos da edge Omie. Remove o `COALESCE(t_fim, completed_at)` do v1.
+- **C3 — Fechar a superfície das RPCs** *(SECURITY DEFINER/PUBLIC + uid NULL; Codex P1 auth)*. `REVOKE ALL ON FUNCTION` de PUBLIC, anon, authenticated em TODAS as funções; `GRANT EXECUTE` só nos **wrappers** (`iniciar`/`finalizar`/`registrar_evento`) a authenticated; base interna e `fn_pcp_projetar_op` sem grant (chamadas via SECURITY DEFINER rodam como owner). Gate **fail-closed**: `IF v_uid IS NULL OR NOT (staff) THEN RAISE`. Prova: anon barrado, authenticated não-staff barrado.
+- **C4 — `device_seq` + detecção de late-arrival** *(ordenação client_ts adulterável; Codex P2 + Gemini P1)*. Coluna `device_seq bigint NOT NULL` (monotônico por device, gerado no app). Projeção ordena por `(client_ts, device_seq, server_ts)`. Anomalia money-path INDEPENDENTE da reordenação: evento stock-impacting cujo `server_ts` é posterior a um `finalizar_op` já projetado ⇒ `late_arrival` (relógio atrasado não mascara). Prova: replay de `consumo_mp` com `client_ts` anterior mas `server_ts` posterior ao fecho → anomalia.
+- **C5 — Idempotência valida payload** *(Codex P2)*. No conflito de `id`, comparar campos imutáveis (`op_id,tipo,componente_codigo,quantidade`); divergência ⇒ `RAISE EXCEPTION 'idempotency_key_reuse'` (não engole fato). Replay idêntico continua no-op. Prova: mesmo `event_id`, payload diferente → EXCEPTION.
+- **C6 — Invariantes do `consumo_mp` + semântica com o backflush** *(Codex P1 + Claude P2 + Gemini P2)*. `consumo_mp` exige `componente_codigo` + `quantidade > 0` + `unidade` (qualquer motivo que mova estoque) e estado ∈ {`em_producao`,`pausada`}. **Semântica canônica (fecha a dupla-contagem):** o `consumo_mp` apontado é a FONTE real do yield; o backflush do M2 é DERIVADO da BOM, **idempotente por OP e recalculável** a cada evento (mesmo late-arrival) — reconcilia com o real, **não soma**. `motivo='producao'` só no domínio sem backflush linear (Tingimix); a cinta usa backflush reconciliado. Prova: consumo sem componente/qtd → EXCEPTION; consumo em `aguardando` → anomalia.
+- **C7 — Provas que faltavam** *(test_gap; Codex P2)*. FSM **não-avança** em transição inválida com expected FIXO (finalizar-sem-iniciar ⇒ estado permanece `aguardando`, flag ⇒ `aguardando_anomalo` — sem "ou"); nova ZONA de concorrência (2 conexões + advisory lock); reuse de `event_id` com payload divergente; anon barrado; `late_arrival` por `server_ts`.
+
+**Nota de produto (founder):** C6 decide que a **verdade do yield é o consumo apontado**, não o backflush teórico. O Tingimix (sua dor de "consumo não registrado") usa `consumo_mp` direto; a cinta usa backflush reconciliado com o apontado — sem baixa dupla. Isso amarra o M1 ao M2.
 
 ---
 
