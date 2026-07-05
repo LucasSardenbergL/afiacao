@@ -51,3 +51,23 @@ Planos por fase: `docs/superpowers/plans/`.
 - **Conclusão:** a fila é majoritariamente **erro de cadastro no Omie**; corrigir na fonte + re-sync leva o "bate exato" de ~95% p/ ~99%.
 
 **Tela de revisão (frontend, 2026-07-05):** `src/pages/ProducaoBomExcecoes.tsx` na rota **`/producao/bom-excecoes`** (staff). Lê `pcp_bom_excecoes`, agrupa por papel (aba), destaca o **fator** de divergência (badge vermelho em ≥3× / ≤⅓), busca por código/descrição, e dispõe cada exceção (`aceitar`/`corrigir_omie`/`regra_especifica`) via RPC `fn_pcp_dispor_excecao` (staff-gated). Tela **neutra** (mostra observado×esperado, não pré-julga de quem é o erro). Cast `as never` no `.from()`/`.rpc()` — a tabela é nova e **não está nos types gerados** (fluxo Lovable não regenerou; `grep types.ts = 0`), mesmo padrão de `ProductionOrders`. Validado: **typecheck 0 · lint 0 · build 0**. **Deploy = Publish manual no Lovable** (merge ≠ produção no frontend).
+
+## Fase 1B — M1: núcleo de execução event-sourced (2026-07-05)
+
+**Plano:** `docs/superpowers/plans/2026-07-05-pcp-fase1b-m1-execucao.md` (v2 — painel tri-modelo incorporado). Escopo **cintas-first** (gargalo guilhotina→prensa) + consumo-motivo do Tingimix.
+
+**O que shipou** (código na branch; **deploy SQL Editor PENDENTE** — founder):
+- **`db/pcp-f1b-m1-execucao.sql`**: `pcp_etapas_catalogo` (roteiro da cinta, tempos NULL), `pcp_eventos_producao` (append-only, `id=client_event_id`, `device_seq`), `production_orders` EVOLUI (colunas nullable **exclusivas da projeção**), `fn_pcp_projetar_op` (**FSM na projeção** + advisory lock por OP), `fn_pcp_registrar_evento` + wrappers iniciar/finalizar (idempotente, staff-gated **fail-closed**). RLS + `REVOKE` de PUBLIC nas funções.
+- **`db/test-pcp-f1b-execucao.sh`** (**PASS=26**, falsificação validada).
+
+**Painel tri-modelo — BLOCK do v1 → v2** (Claude+Codex+Gemini, convergência total, 0 divergências): 5 P1 (3 confirmados por ≥2 modelos). Correções normativas **C1–C7**: lock por OP; 1-writer (projeção NÃO toca `completed_at`/`status` — donos da edge Omie, evidência `omie-vendas-sync/index.ts:2901`); `REVOKE` PUBLIC + gate fail-closed; `device_seq` + detecção de late-arrival por `server_ts`; idempotência valida payload imutável; invariantes do `consumo_mp` + **semântica com o backflush** (consumo apontado é a verdade do yield; backflush do M2 reconcilia, não soma); provas de concorrência.
+
+**Bugs pegos na bancada (não chegaram à produção):**
+1. **`v_inseriu boolean` recebendo `ROW_COUNT` (int)** → erro em RUNTIME (`boolean = integer`), late-bound. Fix: `v_rows int`. [prova PG17]
+2. **Detecção de late-arrival DENTRO do loop `client_ts`** não via o fecho (o `finalizar` vem depois na ordem) → passagem separada com `EXISTS` sobre `server_ts`. [prova PG17]
+3. **TESTE-TEATRO do lock**: a 2ª conexão bloqueava no *row-lock* do `UPDATE`, não no advisory lock → a prova passava mesmo SABOTADA. Só a **falsificação** revelou. Fix: testar `pg_try_advisory_xact_lock` direto (isola do row-lock). [falsificação]
+4. **`SET` vazando na captura escalar** (`P -tA` sem `-q`) → `Pq`. [armadilha CLAUDE.md]
+
+**Lição-chave:** a falsificação não é cerimônia — **pegou um teste que passava com E sem a regra que dizia testar**. Sem sabotar, o lock (o P1 nº1 do painel) ficaria "provado" por acidente do row-lock.
+
+**Pendente (founder):** aplicar `db/pcp-f1b-m1-execucao.sql` no SQL Editor → verificar via psql-ro. Depois **M2** (corte múltiplo + backflush) e **M3** (tela de apontamento mobile, reusa `offline-queue`+`ScanBar`).
