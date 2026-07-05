@@ -119,6 +119,19 @@ export function DetalhesModal({
           </div>
         ) : (
           <>
+            {linhas.some((l) => l.inativo_no_omie) && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>
+                  {linhas.filter((l) => l.inativo_no_omie).length}{' '}
+                  {linhas.filter((l) => l.inativo_no_omie).length === 1 ? 'item inativado' : 'itens inativados'} no Omie
+                </AlertTitle>
+                <AlertDescription>
+                  Produto(s) desativado(s) no Omie após a geração do pedido. O disparo será
+                  bloqueado — reative no Omie e sincronize, ou remova o(s) item(ns) antes de aprovar.
+                </AlertDescription>
+              </Alert>
+            )}
             {podeEditar && linhasSelecionadas.length > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-status-warning/40 bg-status-warning/5 px-3 py-2 text-sm">
                 <span>

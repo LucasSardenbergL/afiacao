@@ -1559,6 +1559,23 @@ async function assertOmieItemsAtivos(
   }
 }
 
+// MIRROR-START omie account-coherence — espelhado de src/lib/omie/account-coherence.ts
+// Coerência conta×código por PROVA POSITIVA (money-path): true só quando `code` é o código de OUTRA
+// conta Omie do MESMO cliente (linhas de omie_clientes filtradas por user_id). NÃO acusa por
+// AUSÊNCIA — oben/colacor_sc resolvem o código via API e podem não estar no espelho local. Guard na
+// FRONTEIRA comum (todas as vias de criar_pedido passam aqui). Paridade textual no CI.
+function codeBelongsToWrongAccount(
+  rows: ReadonlyArray<{ omie_codigo_cliente: number; empresa_omie: string }>,
+  code: number,
+  account: string,
+): boolean {
+  if (!Number.isFinite(code) || code <= 0) return false;
+  const matchesTarget = rows.some((r) => Number(r.omie_codigo_cliente) === code && r.empresa_omie === account);
+  if (matchesTarget) return false;
+  return rows.some((r) => Number(r.omie_codigo_cliente) === code && r.empresa_omie !== account);
+}
+// MIRROR-END
+
 // Criar pedido de venda no Omie
 async function criarPedidoVenda(
   supabase: SupabaseClient,
@@ -1837,7 +1854,15 @@ async function gateCredito(
     titulos: gate.titulos,
     user_id: userId,
   });
-  if (logErr) console.warn(`[gate-credito] log bloqueado falhou: ${logErr.message}`);
+  if (logErr) {
+    // (a) Log de bloqueio DURÁVEL — simétrico ao ramo gate_indisponivel acima. A aprovação
+    // REMOTA do gestor (SalesOrderDetailSheet → useBloqueioCreditoLog) resolve o contexto do
+    // form pelo ÚLTIMO log do pedido; um bloqueio sem rastro deixaria o gestor SEM form
+    // (exceção às cegas não). Se nem o log grava = infra degradada → ERRO, nunca devolver
+    // {blocked:'credito'} silencioso e irrastreável. O caller (submitOrder) reexecuta — o
+    // gate é STABLE/idempotente e reprova o mesmo bloqueio (com log, na retentativa saudável).
+    throw new Error(`Bloqueio de crédito sem log durável (${logErr.message}) — tente novamente.`);
+  }
   return { permitido: false, gate };
 }
 
@@ -2185,13 +2210,32 @@ serve(async (req) => {
         // silenciosamente pra 'oben' — o pedido local é a âncora server-side.
         const { data: soRow } = await supabaseAdmin
           .from("sales_orders")
-          .select("account")
+          .select("account, customer_user_id")
           .eq("id", sales_order_id)
           .maybeSingle();
         if (soRow?.account && soRow.account !== account) {
           throw new Error(
             `Conta do payload (${account}) diverge do pedido local (${soRow.account}) — pedido não enviado`,
           );
+        }
+        // Guard money-path (coerência conta×código, prova positiva): fecha o vazamento cross-conta
+        // em TODAS as vias de criação (SalesQuotes, selectCustomerByUserId, IA, futuras). Um caller
+        // pode resolver o código no espelho parcial `omie_clientes` sem filtrar empresa e mandar o
+        // código de OUTRA conta do mesmo cliente. Deriva do pedido local (customer_user_id) e recusa
+        // só com PROVA POSITIVA (o código é de outra conta) — nunca por ausência (oben vem da API).
+        if (soRow?.customer_user_id) {
+          const { data: idRows, error: idErr } = await supabaseAdmin
+            .from("omie_clientes")
+            .select("omie_codigo_cliente, empresa_omie")
+            .eq("user_id", soRow.customer_user_id);
+          if (idErr) {
+            throw new Error(`Pedido rejeitado: falha ao validar a conta do cliente (${idErr.message}). Tente novamente.`);
+          }
+          if (codeBelongsToWrongAccount(idRows ?? [], Number(codigo_cliente), account)) {
+            throw new Error(
+              `Pedido rejeitado: código de cliente ${codigo_cliente} pertence a outra conta Omie (não ${account}) — envio bloqueado para não registrar no cliente errado.`,
+            );
+          }
         }
         // Trava de crédito Fase 2: bloqueia cliente com vencido 60+ sem exceção DESTE pedido.
         const credito = await gateCredito(
@@ -2345,61 +2389,84 @@ serve(async (req) => {
           console.warn(`[Omie Vendas][${editAccount}] Erro ao consultar pedido: ${msg}`);
         }
 
-        // Trava de crédito Fase 2 na EDIÇÃO — antes da fase destrutiva (delete de itens).
-        // Só bloqueia AUMENTO de exposição: total atual provado pelo ConsultarPedido do
-        // Omie (nunca client/DB local — veredito Codex); reduzir dívida sempre pode.
-        if (consultEditOk) {
-          const totalAtualOmie = omieCurrentItems.reduce(
-            (s, oi) =>
-              s + (Number(oi?.produto?.quantidade) || 0) * (Number(oi?.produto?.valor_unitario) || 0),
-            0,
-          );
-          if (updatedSubtotal > totalAtualOmie) {
-            if (omieCodigoClienteEdit === null) {
-              // P1 do review Codex: aumento PROVADO mas consult veio sem codigo_cliente —
-              // gate(null) responderia 'sem_codigo' e liberaria por AUSÊNCIA de dado.
-              // Mesmo contrato do consult-falhou: allow SÓ com log durável.
-              const { error: logErr } = await supabaseAdmin.from("venda_bloqueio_credito_log").insert({
-                company: editAccount,
-                omie_codigo_cliente: null,
-                sales_order_id: editSoId,
-                acao: "gate_indisponivel",
-                user_id: userId,
-                detalhe: "edicao: aumento provado, mas ConsultarPedido sem codigo_cliente — gate não avaliável",
-              });
-              if (logErr) {
-                throw new Error(
-                  `Gate de crédito sem cliente identificado na edição e sem log (${logErr.message}) — tente novamente.`,
-                );
-              }
-            } else {
-              const creditoEdit = await gateCredito(
-                supabaseAdmin,
-                editAccount,
-                omieCodigoClienteEdit,
-                editSoId,
-                userId,
-                "edicao",
-              );
-              if (!creditoEdit.permitido) {
-                result = { success: false, blocked: "credito", contexto: "edicao", gate: creditoEdit.gate };
-                break;
-              }
-            }
-          }
-        } else {
-          // Sem o consult não há como provar redução → fail-open OBSERVÁVEL: allow
-          // só com log durável (mesmo contrato do gate; log falhou → erro).
+        // Guard anti-duplicação [P1+P2 Codex 2026-07-04]: a edição é DESTRUTIVA — o Step 2 apaga
+        // TODOS os itens que o ConsultarPedido revelou e o Step 3 re-inclui a lista nova. Ela
+        // ASSUME que `omieCurrentItems` reflete o pedido real E que cada item é deletável. Três
+        // formas de o estado ser NÃO confiável, todas levando a DUPLICAÇÃO no Omie (dobra o valor
+        // faturado) se seguíssemos para o delete+add:
+        //   (1) consult FALHOU (rate-limit/transiente → catch acima): lista `[]`, o delete não acha
+        //       nada e os novos entram por cima dos antigos;
+        //   (2) consult voltou SEM itens (shape drift): idem — e um PV existente sempre tem ≥1
+        //       item, então lista vazia aqui já é sinal de estado não confiável;
+        //   (3) [P2 Codex] algum item atual SEM identificador deletável (ide.codigo_item /
+        //       codigo_item_integracao): o Step 2 o PULA em silêncio e o Step 3 inclui os novos →
+        //       duplicação PARCIAL (a validação final pegaria, mas só DEPOIS da mutação).
+        // Qualquer uma → ABORTAR antes de qualquer mutação. Fail-closed OBSERVÁVEL (log durável +
+        // erro; o transiente do Omie passa no reenvio). NÃO é o gate de crédito: é integridade da
+        // edição destrutiva (antes, o ramo `else` fazia fail-open e SEGUIA — a duplicação).
+        const itemSemIdDeletavel = omieCurrentItems.some(
+          (oi) => !oi?.ide?.codigo_item && !oi?.ide?.codigo_item_integracao,
+        );
+        if (!consultEditOk || omieCurrentItems.length === 0 || itemSemIdDeletavel) {
           const { error: logErr } = await supabaseAdmin.from("venda_bloqueio_credito_log").insert({
             company: editAccount,
-            omie_codigo_cliente: null,
+            omie_codigo_cliente: omieCodigoClienteEdit,
             sales_order_id: editSoId,
             acao: "gate_indisponivel",
             user_id: userId,
-            detalhe: "edicao: ConsultarPedido falhou — total atual não provado",
+            detalhe: !consultEditOk
+              ? "edicao: ConsultarPedido falhou — itens atuais desconhecidos, edição abortada (anti-duplicação)"
+              : omieCurrentItems.length === 0
+                ? "edicao: ConsultarPedido sem itens — estado do Omie não confiável, edição abortada (anti-duplicação)"
+                : "edicao: item atual sem identificador deletável — delete+add duplicaria, edição abortada (anti-duplicação)",
           });
           if (logErr) {
-            throw new Error(`Gate de crédito sem prova na edição e sem log (${logErr.message}) — tente novamente.`);
+            throw new Error(`Edição não aplicada e sem log durável (${logErr.message}) — tente novamente.`);
+          }
+          throw new Error(
+            "Edição não aplicada: não foi possível confirmar com segurança os itens atuais do pedido no Omie. Nada foi alterado — tente novamente.",
+          );
+        }
+
+        // Trava de crédito Fase 2 na EDIÇÃO — sobre estado CONFIÁVEL (consult ok + itens provados),
+        // antes da fase destrutiva. Só bloqueia AUMENTO de exposição: total atual provado pelo
+        // ConsultarPedido do Omie (nunca client/DB local — veredito Codex); reduzir dívida sempre pode.
+        const totalAtualOmie = omieCurrentItems.reduce(
+          (s, oi) =>
+            s + (Number(oi?.produto?.quantidade) || 0) * (Number(oi?.produto?.valor_unitario) || 0),
+          0,
+        );
+        if (updatedSubtotal > totalAtualOmie) {
+          if (omieCodigoClienteEdit === null) {
+            // Aumento PROVADO mas consult veio sem codigo_cliente — gate(null) responderia
+            // 'sem_codigo' e liberaria por AUSÊNCIA de dado. Fail-open do CRÉDITO (os itens já
+            // são confiáveis pelo guard acima; só o gate é pulado) — allow SÓ com log durável.
+            const { error: logErr } = await supabaseAdmin.from("venda_bloqueio_credito_log").insert({
+              company: editAccount,
+              omie_codigo_cliente: null,
+              sales_order_id: editSoId,
+              acao: "gate_indisponivel",
+              user_id: userId,
+              detalhe: "edicao: aumento provado, mas ConsultarPedido sem codigo_cliente — gate não avaliável",
+            });
+            if (logErr) {
+              throw new Error(
+                `Gate de crédito sem cliente identificado na edição e sem log (${logErr.message}) — tente novamente.`,
+              );
+            }
+          } else {
+            const creditoEdit = await gateCredito(
+              supabaseAdmin,
+              editAccount,
+              omieCodigoClienteEdit,
+              editSoId,
+              userId,
+              "edicao",
+            );
+            if (!creditoEdit.permitido) {
+              result = { success: false, blocked: "credito", contexto: "edicao", gate: creditoEdit.gate };
+              break;
+            }
           }
         }
 
@@ -2691,6 +2758,46 @@ serve(async (req) => {
           probe.push({ mes: w.mes, omie_aprox: Number(rp?.total_de_paginas ?? 0), tem_dado: lista.length > 0 });
         }
         result = { success: true, account, meses: probe.length, probe };
+        break;
+      }
+
+      case "credito_gate_probe": {
+        // CANÁRIA de deploy da trava de crédito Fase 2 — NÃO escreve, NÃO chama o Omie, NÃO
+        // cria PV. Prova, sobre o edge DEPLOYADO (não a `main`), duas coisas que o commit de
+        // deploy não prova: (1) esta action RESPONDE → o gate subiu no MESMO build (senão viria
+        // "ação desconhecida" = binário velho); (2) a RPC venda_gate_credito MORDE — para um par
+        // sabidamente bloqueável ela retorna bloqueado=true. A RPC é STABLE (100% read-only), o
+        // sales_order_id é sintético (sem exceção → bloqueia se o par é bloqueável). Gated por
+        // authorizeCronOrStaff como toda action.
+        // [P2 Codex] `codigo` é OBRIGATÓRIO: sem ele, um gate_no_ar:true sozinho daria falsa
+        // tranquilidade (só provaria que a action respondeu, não a MORDIDA). E a resposta expõe
+        // apenas {bloqueado, motivo} — NÃO vencido/títulos: a canária não precisa ser um oracle
+        // de saldo por código arbitrário.
+        const codigoProbe = Number(params.codigo) || null;
+        if (!codigoProbe) {
+          result = {
+            success: false,
+            gate_no_ar: true, // a action respondeu → o gate da Fase 2 está no build deployado
+            account,
+            erro: "credito_gate_probe requer `codigo` de um cliente sabidamente bloqueável (senão não prova a mordida)",
+          };
+          break;
+        }
+        const { data, error } = await supabaseAdmin.rpc("venda_gate_credito", {
+          p_company: account,
+          p_codigo: codigoProbe,
+          p_sales_order_id: crypto.randomUUID(),
+        });
+        if (error) throw new Error(`credito_gate_probe: RPC venda_gate_credito falhou: ${error.message}`);
+        const gp = data as { bloqueado?: boolean; motivo?: string } | null;
+        result = {
+          success: true,
+          gate_no_ar: true, // a action respondeu → o gate está no build deployado
+          account,
+          codigo: codigoProbe,
+          provado_morde: gp?.bloqueado === true, // true = a RPC bloqueou o par bloqueável (morde)
+          motivo: gp?.motivo ?? null,
+        };
         break;
       }
 

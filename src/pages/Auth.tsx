@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader2, Wrench } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -12,7 +12,13 @@ import type { AuthMode, AuthFormData, OmieClienteData, ToolCategory } from '@/co
 
 const Auth = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, loading: authLoading, signIn } = useAuth();
+
+  // `?next=` preserva o destino pós-login (usado pelo fluxo de consent OAuth do MCP).
+  // Só aceita path relativo same-origin — nada de URL absoluta (open-redirect).
+  const rawNext = searchParams.get('next') ?? '';
+  const nextPath = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/';
 
   const [mode, setMode] = useState<AuthMode>('login');
   const [isLoading, setIsLoading] = useState(false);
@@ -20,8 +26,8 @@ const Auth = () => {
   const [toolCategories, setToolCategories] = useState<ToolCategory[]>([]);
 
   useEffect(() => {
-    if (user && !authLoading) navigate('/', { replace: true });
-  }, [user, authLoading, navigate]);
+    if (user && !authLoading) navigate(nextPath, { replace: true });
+  }, [user, authLoading, navigate, nextPath]);
 
   useEffect(() => {
     const loadToolCategories = async () => {
@@ -60,7 +66,7 @@ const Auth = () => {
         return;
       }
       toast.success('Bem-vindo!', { description: 'Login realizado com sucesso' });
-      navigate('/', { replace: true });
+      navigate(nextPath, { replace: true });
     } finally {
       setIsLoading(false);
     }
@@ -75,7 +81,7 @@ const Auth = () => {
   }) => {
     setIsLoading(true);
     try {
-      const redirectUrl = `${window.location.origin}/`;
+      const redirectUrl = `${window.location.origin}${nextPath}`;
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,

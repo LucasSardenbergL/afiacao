@@ -30,6 +30,7 @@ const Tools = lazy(() => import("./pages/Tools"));
 const Support = lazy(() => import("./pages/Support"));
 const Auth = lazy(() => import("./pages/Auth"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const OAuthConsent = lazy(() => import("./pages/OAuthConsent"));
 const Admin = lazy(() => import("./pages/Admin"));
 const AdminCustomers = lazy(() => import("./pages/AdminCustomers"));
 const Customer360 = lazy(() => import("./pages/Customer360"));
@@ -118,9 +119,12 @@ const FinanceiroValorCockpit = lazy(() => import("./pages/FinanceiroValorCockpit
 const FinanceiroProximaAcao = lazy(() => import("./pages/FinanceiroProximaAcao"));
 const FinanceiroRegimeTributario = lazy(() => import("./pages/FinanceiroRegimeTributario"));
 const FinanceiroFunding = lazy(() => import("./pages/FinanceiroFunding"));
+const FinanceiroEndividamento = lazy(() => import("./pages/FinanceiroEndividamento"));
 const Recebimento = lazy(() => import("./pages/Recebimento"));
 const RecebimentoConferencia = lazy(() => import("./pages/RecebimentoConferencia"));
 const ProductionOrders = lazy(() => import("./pages/ProductionOrders"));
+const ProducaoBomExcecoes = lazy(() => import("./pages/ProducaoBomExcecoes"));
+const ProducaoApontamento = lazy(() => import("./pages/ProducaoApontamento"));
 const AdminReposicaoHistorico = lazy(() => import("./pages/AdminReposicaoHistorico"));
 const AdminReposicaoAlertas = lazy(() => import("./pages/AdminReposicaoAlertas"));
 const AdminReposicaoGruposProducao = lazy(() => import("./pages/AdminReposicaoGruposProducao"));
@@ -222,6 +226,7 @@ const App = () => {
             {/* Public routes */}
             <Route path="/auth" element={<Auth />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/.lovable/oauth/consent" element={<OAuthConsent />} />
             <Route path="/tool/:toolId" element={<ToolPublicHistory />} />
 
             {/* All authenticated routes inside AppShell */}
@@ -273,6 +278,7 @@ const App = () => {
                 <Route path="financeiro/proxima-acao" element={<FinanceiroProximaAcao />} />
                 <Route path="financeiro/regime-tributario" element={<FinanceiroRegimeTributario />} />
                 <Route path="financeiro/funding" element={<FinanceiroFunding />} />
+                <Route path="financeiro/endividamento" element={<FinanceiroEndividamento />} />
                 <Route path="financeiro/gestao" element={<FinanceiroGestao />} />
                 <Route path="financeiro/analise" element={<FinanceiroAnalise />} />
                 {/* Grupo de Cliente 360 (mesmo gate do financeiro — mostra recebível) */}
@@ -353,6 +359,8 @@ const App = () => {
                 <Route path="recebimento" element={<Recebimento />} />
                 <Route path="recebimento/:id" element={<RecebimentoConferencia />} />
                 <Route path="producao" element={<ProductionOrders />} />
+                <Route path="producao/bom-excecoes" element={<ProducaoBomExcecoes />} />
+                <Route path="producao/apontamento" element={<ProducaoApontamento />} />
                 <Route path="admin/reposicao/revisao" element={<Navigate to="/admin/reposicao/sessao/parametros?tab=ajuste" replace />} />
                 <Route path="admin/reposicao/historico" element={<AdminReposicaoHistorico />} />
                 <Route path="admin/reposicao/alertas" element={<AdminReposicaoAlertas />} />

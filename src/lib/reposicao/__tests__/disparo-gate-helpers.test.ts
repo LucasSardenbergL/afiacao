@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  codigosInativosOmie,
   deveBloquearPorMinimoFaturamento,
+  itensDoPedidoInativos,
+  itensInativosMessage,
   overridePermitidoNoModo,
   type GateConfig,
 } from "../disparo-gate-helpers";
@@ -227,5 +230,124 @@ describe("overridePermitidoNoModo", () => {
     expect(overridePermitidoNoModo(undefined)).toBe(false);
     expect(overridePermitidoNoModo(-1)).toBe(false);
     expect(overridePermitidoNoModo(Number.NaN)).toBe(false);
+  });
+});
+
+// ── Gate de produto ATIVO no disparo (money-path) ──
+// Espelha a semântica do gate de ativo de vendas (assertOmieItemsAtivos): produto desativado no
+// Omie NUNCA vai num pedido de compra ao fornecedor. DUAS fontes (Codex 2026-07-04): o espelho
+// omie_products.ativo é best-effort e pode ficar stale se o UPDATE falhar sem falhar a edge;
+// sku_status_omie.ativo_no_omie é a saída direta da sync de status. SÓ false explícito bloqueia
+// (null/ausente/true libera — o espelho é ~50-75% inativo; travar por ausência barraria pedido
+// legítimo). Espelhado VERBATIM no edge disparar-pedidos-aprovados (Deno não importa de src/).
+describe("codigosInativosOmie — união das 2 fontes de status", () => {
+  it("marca inativo por omie_products.ativo === false", () => {
+    const s = codigosInativosOmie([{ omie_codigo_produto: 111, ativo: false }], []);
+    expect(s.has(111)).toBe(true);
+  });
+
+  it("marca inativo por sku_status_omie=false MESMO com omie_products ausente (espelho stale)", () => {
+    // O ponto do Codex: se o UPDATE espelho falhou, sku_status_omie=false fresco tem que pegar.
+    const s = codigosInativosOmie([], [{ sku_codigo_omie: 222, ativo_no_omie: false }]);
+    expect(s.has(222)).toBe(true);
+  });
+
+  it("marca inativo por sku_status_omie=false mesmo com omie_products.ativo=true (fontes divergem)", () => {
+    const s = codigosInativosOmie(
+      [{ omie_codigo_produto: 333, ativo: true }],
+      [{ sku_codigo_omie: 333, ativo_no_omie: false }],
+    );
+    expect(s.has(333)).toBe(true);
+  });
+
+  it("SÓ false bloqueia: true/null liberam (espelho desatualizado ≠ desativação)", () => {
+    const s = codigosInativosOmie(
+      [
+        { omie_codigo_produto: 1, ativo: true },
+        { omie_codigo_produto: 2, ativo: null },
+      ],
+      [
+        { sku_codigo_omie: 3, ativo_no_omie: true },
+        { sku_codigo_omie: 4, ativo_no_omie: null },
+      ],
+    );
+    expect(s.size).toBe(0);
+  });
+
+  it("ignora código não-finito (NaN/'' não é 'desativado')", () => {
+    const s = codigosInativosOmie(
+      [{ omie_codigo_produto: "abc", ativo: false }],
+      [{ sku_codigo_omie: "", ativo_no_omie: false }],
+    );
+    expect(s.size).toBe(0);
+  });
+
+  it("dedupe: mesmo código inativo nas 2 fontes entra uma vez", () => {
+    const s = codigosInativosOmie(
+      [{ omie_codigo_produto: 555, ativo: false }],
+      [{ sku_codigo_omie: 555, ativo_no_omie: false }],
+    );
+    expect([...s]).toEqual([555]);
+  });
+
+  it("aceita código como string numérica (coerção, como vem do banco)", () => {
+    const s = codigosInativosOmie([{ omie_codigo_produto: "777", ativo: false }], []);
+    expect(s.has(777)).toBe(true);
+  });
+
+  it("listas vazias → set vazio", () => {
+    expect(codigosInativosOmie([], []).size).toBe(0);
+  });
+});
+
+describe("itensDoPedidoInativos — itens do pedido barrados", () => {
+  const inativos = new Set<number>([111, 222]);
+
+  it("retorna só os itens cujo sku está inativo", () => {
+    const out = itensDoPedidoInativos(
+      [
+        { sku_codigo_omie: 111, sku_descricao: "CATALISADOR X" },
+        { sku_codigo_omie: 999, sku_descricao: "ATIVO Y" },
+      ],
+      inativos,
+    );
+    expect(out.map((i) => Number(i.sku_codigo_omie))).toEqual([111]);
+  });
+
+  it("dedupe por código preservando a ordem da 1ª ocorrência", () => {
+    const out = itensDoPedidoInativos(
+      [
+        { sku_codigo_omie: 222, sku_descricao: "A" },
+        { sku_codigo_omie: 111, sku_descricao: "B" },
+        { sku_codigo_omie: 222, sku_descricao: "A dup" },
+      ],
+      inativos,
+    );
+    expect(out.map((i) => Number(i.sku_codigo_omie))).toEqual([222, 111]);
+  });
+
+  it("ignora sku não-finito", () => {
+    const out = itensDoPedidoInativos([{ sku_codigo_omie: "x", sku_descricao: "Z" }], inativos);
+    expect(out).toEqual([]);
+  });
+
+  it("pedido todo ativo → nenhum barrado", () => {
+    const out = itensDoPedidoInativos([{ sku_codigo_omie: 999 }], inativos);
+    expect(out).toEqual([]);
+  });
+});
+
+describe("itensInativosMessage", () => {
+  it("lista descrições dos itens barrados, com instrução de ação", () => {
+    const msg = itensInativosMessage([
+      { sku_codigo_omie: 111, sku_descricao: "CATALISADOR FC.5202" },
+    ]);
+    expect(msg).toContain("CATALISADOR FC.5202");
+    expect(msg).toContain("Reative");
+  });
+
+  it("cai pro código quando não há descrição", () => {
+    const msg = itensInativosMessage([{ sku_codigo_omie: 111 }]);
+    expect(msg).toContain("111");
   });
 });

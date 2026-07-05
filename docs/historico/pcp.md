@@ -25,4 +25,49 @@ Planos por fase: `docs/superpowers/plans/`.
 
 **Lições reforçadas:** PL/pgSQL é late-bound (prova EXECUTANDO, não só criando); `SECURITY DEFINER` troca `current_user` pelo owner (gate por `auth.uid()`); negação PostgREST é NULL-blind (raiz: coluna NOT NULL); Omie sinaliza erro por HTTP 200+faultstring (nunca confiar só no status). Idioma do harness PG17: `Pq() { P -tA -q ...}` (o `-q` evita `SET` vazar na captura escalar de multi-statement).
 
-**Pendente (founder):** deploy das 3 camadas no Lovable (M1 SQL Editor → edge no chat → probe → sync → M2 SQL Editor → refresh/destilar) + **gate de amostragem** da BOM destilada antes de qualquer consumo. Recorrência do sync (cron + frescor no Sentinela) fica para a Fase 2.
+**Deploy executado (2026-07-04):** M1 aplicado ✓ · edge deployada ✓ · probe ✓ (shape real do Omie: lista em `produtosEncontrados`, itens em `itens`, pai em `ident.idProduto`, componentes com chaves diretas SEM sub-`ident` — o M2 lê por fallback `i->>'...'`) · sync ✓ (**41 páginas, 2011 produtos, 6732 componentes, shape_err=0**; cobertura: 1404 cintas de 1405, ~249 discos, 111 tingidores). Verificação empírica: `comp_sem_id=0 de 6732`.
+
+**Achados dos dados reais (corrigidos ANTES de aplicar o M2):**
+- **Modelo da FITA estava errado** — eu assumira aditivo (`largura/10 + overlap`); os dados provam **proporcional** (`coef × largura`, ~0.1125 cm/mm constante em 29 larguras; overlap aditivo varia 0.3–2.9). Corrigido (método `cm_por_mm_largura`); valida **96.1% das 1378 fitas** dentro de ±5% global. Cola/catalisador/abrasivo confirmados certos (cola ~0.0105 g/mm, catalisador 0.1111×cola, abrasivo área nominal exata).
+- `custoProducao {vGGF,vMOD}` vem embutido em cada produto da malha → validação cruzada de custo (§1.12) fica de graça na Fase 2.
+
+**Refinos anotados p/ Fase 2:** nomear `produtosEncontrados` no `extractLista` do edge (hoje pega por fallback determinístico); cron + frescor no Sentinela; limpar candidatos `i->'ident'` mortos do M2.
+
+**Gate de amostragem (2026-07-04):** 1ª destilação em prod deu **78,4% ok** — 3 ofensores diagnosticados nos dados reais e tratados:
+- **Cola (647 exc.):** a BOM do Omie é **TABELADA** (a cola é idêntica por (linha,largura) — spread 0%, independe do comprimento; founder confirmou ter a tabela), não fórmula. Decisão eu+Codex: modelo **híbrido** — cola tabelada por (linha,largura), fórmula onde os dados sustentam (abrasivo=área, fita=proporcional, catalisador=razão). Cola tabelada valida **97,4%** (vs 78%). SKU sem (linha,largura) cadastrada → sem_regra (não fabrica). Dispersão da tabela por MAD (robusta a outlier).
+- **MYLAR (259 exc.):** fita de emenda alternativa (razão 0,110) — não reconhecida pela regex. Fix: MYLAR→fita.
+- **Slitter (112 exc.):** rolo→jumbo usa quantidade simbólica ≠ área nominal — fora do escopo F1A (BOM da cinta); validação restrita a `tipo_item='cinta'`. Nível slitter entra na Fase 1B.
+- Achado extra: parte das malhas de abrasivo tem **perda embutida** (consome >área nominal) — vira exceção legítima (revela a perda real; a spec manda a perda p/ camada de custo).
+
+**Estrutura nova:** `pcp_bom_regras` ganhou `largura_mm` (0=fórmula, >0=tabela) + método `tabela_largura`; PK (linha,papel,largura_mm). destilação PASS=33.
+
+**Gate final (2026-07-05):** modelo híbrido aplicado → **95,4% ok**; **223 exceções em 174 de 1398 cintas** (87,5% das cintas batem exato). A destilação virou **auditoria de cadastro do Omie** — a fila aponta os SKUs com dígito errado.
+
+**Investigação das 223 (papéis CONFIRMADOS certos — não é falso-positivo do classificador; o componente É fita/catalisador/cola):**
+- **abrasivo_base 100** (95 `excecao` + 5 `unidade_inesperada`): consumo de rolo cadastrado ~10–12× a área nominal (dígito errado; ex. CINTA 2909 50X290 → 0,145 vs 0,0145 m²) + 5 rolos em unidade ≠ M².
+- **fita 57** (53 + 4 `regra_instavel`): fita de emenda cadastrada **~200× menor** que o físico (0,03–0,19 cm onde o modelo espera ~11 cm) — erro de dígito/unidade. Componente real é `FITA SHELDAHL`/`MYLAR` (papel certo).
+- **cola 36** (30 + 6 `regra_instavel`): diverge da tabela da largura (parte 10× para menos).
+- **catalisador 30**: **efeito cascata** — quando a cola do pai tem dígito errado, o esperado do catalisador (= razão × cola) fica baixo e o catalisador CERTO vira exceção; + casos do próprio catalisador ~10× baixo. Corrigir a cola na fonte zera boa parte.
+- **Conclusão:** a fila é majoritariamente **erro de cadastro no Omie**; corrigir na fonte + re-sync leva o "bate exato" de ~95% p/ ~99%.
+
+**Tela de revisão (frontend, 2026-07-05):** `src/pages/ProducaoBomExcecoes.tsx` na rota **`/producao/bom-excecoes`** (staff). Lê `pcp_bom_excecoes`, agrupa por papel (aba), destaca o **fator** de divergência (badge vermelho em ≥3× / ≤⅓), busca por código/descrição, e dispõe cada exceção (`aceitar`/`corrigir_omie`/`regra_especifica`) via RPC `fn_pcp_dispor_excecao` (staff-gated). Tela **neutra** (mostra observado×esperado, não pré-julga de quem é o erro). Cast `as never` no `.from()`/`.rpc()` — a tabela é nova e **não está nos types gerados** (fluxo Lovable não regenerou; `grep types.ts = 0`), mesmo padrão de `ProductionOrders`. Validado: **typecheck 0 · lint 0 · build 0**. **Deploy = Publish manual no Lovable** (merge ≠ produção no frontend).
+
+## Fase 1B — M1: núcleo de execução event-sourced (2026-07-05)
+
+**Plano:** `docs/superpowers/plans/2026-07-05-pcp-fase1b-m1-execucao.md` (v2 — painel tri-modelo incorporado). Escopo **cintas-first** (gargalo guilhotina→prensa) + consumo-motivo do Tingimix.
+
+**O que shipou** (código na branch; **deploy SQL Editor PENDENTE** — founder):
+- **`db/pcp-f1b-m1-execucao.sql`**: `pcp_etapas_catalogo` (roteiro da cinta, tempos NULL), `pcp_eventos_producao` (append-only, `id=client_event_id`, `device_seq`), `production_orders` EVOLUI (colunas nullable **exclusivas da projeção**), `fn_pcp_projetar_op` (**FSM na projeção** + advisory lock por OP), `fn_pcp_registrar_evento` + wrappers iniciar/finalizar (idempotente, staff-gated **fail-closed**). RLS + `REVOKE` de PUBLIC nas funções.
+- **`db/test-pcp-f1b-execucao.sh`** (**PASS=26**, falsificação validada).
+
+**Painel tri-modelo — BLOCK do v1 → v2** (Claude+Codex+Gemini, convergência total, 0 divergências): 5 P1 (3 confirmados por ≥2 modelos). Correções normativas **C1–C7**: lock por OP; 1-writer (projeção NÃO toca `completed_at`/`status` — donos da edge Omie, evidência `omie-vendas-sync/index.ts:2901`); `REVOKE` PUBLIC + gate fail-closed; `device_seq` + detecção de late-arrival por `server_ts`; idempotência valida payload imutável; invariantes do `consumo_mp` + **semântica com o backflush** (consumo apontado é a verdade do yield; backflush do M2 reconcilia, não soma); provas de concorrência.
+
+**Bugs pegos na bancada (não chegaram à produção):**
+1. **`v_inseriu boolean` recebendo `ROW_COUNT` (int)** → erro em RUNTIME (`boolean = integer`), late-bound. Fix: `v_rows int`. [prova PG17]
+2. **Detecção de late-arrival DENTRO do loop `client_ts`** não via o fecho (o `finalizar` vem depois na ordem) → passagem separada com `EXISTS` sobre `server_ts`. [prova PG17]
+3. **TESTE-TEATRO do lock**: a 2ª conexão bloqueava no *row-lock* do `UPDATE`, não no advisory lock → a prova passava mesmo SABOTADA. Só a **falsificação** revelou. Fix: testar `pg_try_advisory_xact_lock` direto (isola do row-lock). [falsificação]
+4. **`SET` vazando na captura escalar** (`P -tA` sem `-q`) → `Pq`. [armadilha CLAUDE.md]
+
+**Lição-chave:** a falsificação não é cerimônia — **pegou um teste que passava com E sem a regra que dizia testar**. Sem sabotar, o lock (o P1 nº1 do painel) ficaria "provado" por acidente do row-lock.
+
+**Pendente (founder):** aplicar `db/pcp-f1b-m1-execucao.sql` no SQL Editor → verificar via psql-ro. Depois **M2** (corte múltiplo + backflush) e **M3** (tela de apontamento mobile, reusa `offline-queue`+`ScanBar`).

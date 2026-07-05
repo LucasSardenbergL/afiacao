@@ -8,7 +8,10 @@ export default tseslint.config(
   // worktrees git aninhados de outras sessões Claude (.claude/.claire são gitignored;
   // o CI nunca os vê). Sem isto, `eslint .` local recorre neles e reporta erros-fantasma
   // (no-explicit-any/prefer-const etc.) de código que não pertence a este checkout.
-  { ignores: ["dist", ".claude/**", ".claire/**"] },
+  // supabase/functions/mcp/** é o BUNDLE auto-gerado pelo @lovable.dev/mcp-js (banner "do not edit";
+  // o Vite plugin regenera do fonte src/lib/mcp). O bundler emite `var` (no-var) e re-minifica a cada
+  // build — lintar o artefato é ruído. A FONTE (src/lib/mcp/**) continua lintada normalmente.
+  { ignores: ["dist", ".claude/**", ".claire/**", "supabase/functions/mcp/**"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

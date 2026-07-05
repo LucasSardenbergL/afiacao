@@ -65,7 +65,7 @@ export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, 
     try {
       documentSchema.parse({ document: formData.document });
     } catch (error) {
-      if (error instanceof z.ZodError) setErrors({ document: error.errors[0].message });
+      if (error instanceof z.ZodError) setErrors({ document: error.issues[0].message });
       return;
     }
     setIsCheckingDocument(true);
@@ -127,7 +127,7 @@ export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, 
     } catch (error) {
       if (error instanceof z.ZodError) {
         const newErrors: Record<string, string> = {};
-        error.errors.forEach((err) => { if (err.path[0]) newErrors[err.path[0] as string] = err.message; });
+        error.issues.forEach((err) => { if (err.path[0]) newErrors[err.path[0] as string] = err.message; });
         setErrors(newErrors);
         return;
       }

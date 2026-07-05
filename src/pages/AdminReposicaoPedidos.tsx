@@ -19,12 +19,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, CloudDownload, Eye, Loader2, RefreshCw, Zap } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, CloudDownload, Eye, Loader2, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { PedidoSugerido } from '@/components/reposicao/pedidos/types';
-import { EMPRESA, formatBRL, frescorEstoque, interpretarRespostaDisparo, interpretarRespostaSyncEstoque, particionarCicloHoje, pedidosVisiveis, type RespostaDisparo, type RespostaSyncEstoque } from '@/components/reposicao/pedidos/shared';
+import { EMPRESA, edgeSyncOk, formatBRL, frescorEstoque, interpretarRespostaDisparo, particionarCicloHoje, pedidosVisiveis, resumoSyncRecalc, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
 import { CycleIndicator } from '@/components/reposicao/pedidos/CycleIndicator';
 import { PedidoRow } from '@/components/reposicao/pedidos/PedidoRow';
 import { StatusComMotivo, PortalBadge } from '@/components/reposicao/pedidos/badges';
@@ -108,7 +108,7 @@ export default function AdminReposicaoPedidos() {
     return () => clearInterval(t);
   }, []);
 
-  const { data: pedidos, isLoading, refetch } = useQuery({
+  const { data: pedidos, isLoading } = useQuery({
     queryKey: ['pedidos-ciclo', dataHoje],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -243,28 +243,11 @@ export default function AdminReposicaoPedidos() {
     }
   };
 
-  // [GATE estoque-não-confirmado] preflight: quantos SKUs ainda estão com estoque do cold-start (fonte_sync=
-  // 'cold_start_seed', não confirmado pelo ListarPosEstoque). A geração vai PULÁ-los (o motor não compra com
-  // estoque seed) — avisa antes do Recalcular p/ o operador rodar o sync se quiser incluí-los. Aproximação
-  // barata (não cruza inventory_position); o gate real (precisão) está na RPC.
-  const { data: naoConfirmadosCount = 0 } = useQuery({
-    queryKey: ['estoque-nao-confirmado', EMPRESA],
-    queryFn: async () => {
-      const { count, error } = await supabase
-        .from('sku_estoque_atual')
-        .select('*', { count: 'exact', head: true })
-        .eq('empresa', EMPRESA)
-        .eq('fonte_sync', 'cold_start_seed');
-      if (error) throw error;
-      return count ?? 0;
-    },
-  });
-
   // [GATE estoque-não-confirmado] fila de exceção PÓS-geração: o que o motor EFETIVAMENTE suprimiu, gravado em
   // reposicao_estoque_nao_confirmado_log pela RPC. O preflight acima é preditivo (antes do Recalcular); esta é a
   // verdade do último ciclo — sem ela o gate suprime no escuro e vira subcompra invisível (Codex consult 019f0a38).
   // count exato p/ o total 24h (honesto mesmo com a lista capada em 500); a lista cobre folgado 1 run (OBEN ~64).
-  // Key sob 'pedidos-ciclo' de propósito: gerarMutation invalida ['pedidos-ciclo'] → re-busca após Recalcular.
+  // Key sob 'pedidos-ciclo' de propósito: syncRecalcMutation invalida ['pedidos-ciclo'] → re-busca após recalcular.
   const { data: suprimidos } = useQuery({
     queryKey: ['pedidos-ciclo', 'estoque-nao-confirmado-log', EMPRESA],
     queryFn: async () => {
@@ -281,25 +264,6 @@ export default function AdminReposicaoPedidos() {
     },
     refetchInterval: 60_000,
     staleTime: 30_000,
-  });
-
-  const gerarMutation = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await supabase.rpc('gerar_pedidos_sugeridos_ciclo', {
-        p_empresa: EMPRESA,
-        p_data_ciclo: dataHoje,
-      });
-      if (error) throw error;
-      return data;
-    },
-    onSuccess: (data) => {
-      const r = Array.isArray(data) ? data[0] : data;
-      toast.success(`${r?.pedidos_gerados ?? 0} pedidos gerados — ${r?.bloqueados ?? 0} bloqueados`);
-      queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
-    },
-    onError: (e: Error) => {
-      toast.error(`Erro ao gerar: ${e.message}`);
-    },
   });
 
   // Frescor do snapshot que o Recalcular usa (max ultima_sincronizacao da empresa).
@@ -320,31 +284,52 @@ export default function AdminReposicaoPedidos() {
     refetchInterval: 60_000,
   });
 
-  // Sync manual do snapshot de estoque. "Recalcular sugestões" NÃO faz isso — ele só
-  // regenera a partir do snapshot; quem fala com o Omie é a edge omie-sync-estoque
-  // (a mesma do cron, idempotente; staff passa pelo authorizeCronOrStaff). ~1–2 min.
-  const syncEstoqueMutation = useMutation({
+  // ÚNICO botão de ação da tela — "Sincronizar e recalcular": SALDO (omie-sync-estoque) + STATUS
+  // ativo/inativo (omie-sync-status-produtos) em paralelo e, SÓ SE ambas deram certo, recalcula o
+  // ciclo (RPC gerar_pedidos_sugeridos_ciclo). Consolidou os 3 botões antigos (sincronizar / atualizar
+  // lista / recalcular) num só, a pedido do founder — a lista tem refetchInterval 30s (atualiza
+  // sozinha). Se uma sync falhar, NÃO recalcula (regenerar com saldo/status velho = pedido errado,
+  // money-path); o resumoSyncRecalc reporta e o usuário reexecuta. Idempotente. ~1–2 min.
+  const syncRecalcMutation = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke('omie-sync-estoque', {
-        body: { empresa: EMPRESA },
-      });
-      if (error) throw error;
-      return data;
+      const [estoque, status] = await Promise.allSettled([
+        supabase.functions.invoke('omie-sync-estoque', { body: { empresa: EMPRESA } }),
+        supabase.functions.invoke('omie-sync-status-produtos', { body: { empresa: EMPRESA } }),
+      ]);
+      // edgeSyncOk exige invoke-ok E corpo {ok:true} — HTTP 200 com {ok:false} da edge NÃO é sucesso.
+      const estoqueOk = edgeSyncOk(estoque);
+      const statusOk = edgeSyncOk(status);
+      let recalc: { ok: boolean; pedidos: number; erro?: string } | null = null;
+      if (estoqueOk && statusOk) {
+        const { data, error } = await supabase.rpc('gerar_pedidos_sugeridos_ciclo', {
+          p_empresa: EMPRESA,
+          p_data_ciclo: dataHoje,
+        });
+        if (error) {
+          // Preserva o motivo (lock/permissão/timeout) — o toast e a telemetria não achatam (Codex).
+          recalc = { ok: false, pedidos: 0, erro: error.message };
+        } else {
+          const r = Array.isArray(data) ? data[0] : data;
+          const n = Number(r?.pedidos_gerados);
+          recalc = { ok: true, pedidos: Number.isFinite(n) ? n : 0 };
+        }
+      }
+      return { estoqueOk, statusOk, recalc };
     },
-    onSuccess: (data) => {
-      const { tone, message } = interpretarRespostaSyncEstoque(data as RespostaSyncEstoque);
+    onSuccess: ({ estoqueOk, statusOk, recalc }) => {
+      const { tone, message } = resumoSyncRecalc(estoqueOk, statusOk, recalc);
       if (tone === 'error') toast.error(message);
       else if (tone === 'warning') toast.warning(message);
-      else if (tone === 'info') toast.info(message);
       else toast.success(message);
-      track('reposicao.sync_estoque_manual', { empresa: EMPRESA, tone });
+      track('reposicao.sync_recalc_manual', { empresa: EMPRESA, estoqueOk, statusOk, recalculou: recalc?.ok ?? false });
       queryClient.invalidateQueries({ queryKey: ['estoque-frescor'] });
       queryClient.invalidateQueries({ queryKey: ['estoque-nao-confirmado'] });
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+      queryClient.invalidateQueries({ queryKey: ['pedido-itens'] });
     },
     onError: (e: Error) => {
-      track('reposicao.sync_estoque_manual', { empresa: EMPRESA, tone: 'error' });
-      toast.error(`Erro ao sincronizar estoque: ${e.message}`);
+      track('reposicao.sync_recalc_manual', { empresa: EMPRESA, estoqueOk: false, statusOk: false, recalculou: false });
+      toast.error(`Erro ao sincronizar Omie: ${e.message}`);
     },
   });
 
@@ -470,48 +455,35 @@ export default function AdminReposicaoPedidos() {
             </span>
           )}
           {frescorCarregado && <FrescorEstoqueLive ultimaSync={ultimaSyncEstoque} />}
-          <Button
-            variant="outline"
-            onClick={() => syncEstoqueMutation.mutate()}
-            disabled={syncEstoqueMutation.isPending}
-            title="Puxa o estoque físico do Omie para o snapshot que o Recalcular usa (~1–2 min)"
-          >
-            {syncEstoqueMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <CloudDownload className="w-4 h-4 mr-1" />}
-            {syncEstoqueMutation.isPending ? 'Sincronizando…' : 'Sincronizar estoque'}
-          </Button>
-          <Button variant="outline" onClick={() => refetch()} disabled={isLoading}>
-            <RefreshCw className={`w-4 h-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />Atualizar lista
-          </Button>
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button variant="outline" disabled={gerarMutation.isPending}>
-                {gerarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-                Recalcular sugestões
+              <Button
+                variant="outline"
+                disabled={syncRecalcMutation.isPending}
+                title="Puxa do Omie o saldo E o status ativo/inativo dos produtos (~1–2 min) e recalcula as sugestões de hoje."
+              >
+                {syncRecalcMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <CloudDownload className="w-4 h-4 mr-1" />}
+                {syncRecalcMutation.isPending ? 'Sincronizando…' : 'Sincronizar e recalcular'}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Recalcular sugestões de hoje?</AlertDialogTitle>
+                <AlertDialogTitle>Sincronizar Omie e recalcular?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Recalcula as sugestões de compra a partir do estoque atual. Não altera pedidos
-                  já aprovados, disparados ou cancelados. O sistema já faz isso sozinho 1×/dia —
-                  use só se você mudou um parâmetro (ponto de pedido, mínimo forçado etc.).
+                  Puxa do Omie o saldo e o status ativo/inativo dos produtos (~1–2 min) e recalcula as
+                  sugestões de hoje — remove itens inativados e usa o estoque atualizado. Regenera os
+                  pedidos pendentes ainda não aprovados; se você já ajustou algum item manualmente,
+                  refaça o ajuste depois.
                 </AlertDialogDescription>
               </AlertDialogHeader>
-              {naoConfirmadosCount > 0 && (
-                <Alert className="border-status-warning/40 bg-status-warning/5">
-                  <AlertTriangle className="h-4 w-4 text-status-warning" />
-                  <AlertTitle className="text-status-warning">Estoque não confirmado pelo sync</AlertTitle>
-                  <AlertDescription>
-                    {naoConfirmadosCount} SKU(s) ainda com estoque do cold-start (catálogo), não confirmado pelo
-                    ListarPosEstoque. A geração vai <strong>pulá-los</strong> (não compra com estoque não confirmado)
-                    e registrá-los. Rode o sync de estoque do Omie antes, se quiser incluí-los neste ciclo.
-                  </AlertDescription>
-                </Alert>
-              )}
               <AlertDialogFooter>
                 <AlertDialogCancel>Voltar</AlertDialogCancel>
-                <AlertDialogAction onClick={() => gerarMutation.mutate()}>Recalcular</AlertDialogAction>
+                <AlertDialogAction
+                  disabled={syncRecalcMutation.isPending}
+                  onClick={() => syncRecalcMutation.mutate()}
+                >
+                  Sincronizar e recalcular
+                </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
@@ -574,7 +546,7 @@ export default function AdminReposicaoPedidos() {
               </p>
             )}
             <p className="mb-2 text-sm">
-              <strong>O que fazer:</strong> rode o sync de estoque do Omie e clique em <em>Recalcular sugestões</em>. Os
+              <strong>O que fazer:</strong> clique em <em>Sincronizar e recalcular</em> (puxa o estoque do Omie e regenera). Os
               que tiverem saldo real entram no ciclo; os genuinamente zerados voltam a comprar sozinhos assim que o
               sync confirmar.
             </p>
@@ -707,7 +679,7 @@ export default function AdminReposicaoPedidos() {
                 <div className="text-center py-12 text-muted-foreground">
                   {historico.length > 0
                     ? 'Nenhum pedido ativo hoje — veja o Histórico de hoje abaixo.'
-                    : 'Nenhum pedido gerado para o ciclo de hoje. Use "Recalcular sugestões" para criar.'}
+                    : 'Nenhum pedido gerado para o ciclo de hoje. Use "Sincronizar e recalcular" para criar.'}
                 </div>
               ) : (
                 <Table>
