@@ -51,7 +51,7 @@ const MOTIVO_MSG: Record<Exclude<MotivoPE, 'ok'>, { titulo: string; texto: strin
 
 export function PontoEquilibrioCard({ company }: { company: string }) {
   const { isMaster } = useAuth();
-  const { data, isLoading, meses } = usePontoEquilibrio(company);
+  const { data, isLoading, error, meses } = usePontoEquilibrio(company);
   const [abrirClassif, setAbrirClassif] = useState(false);
 
   // v1: master-only (a classificação é master-only). Não-master não vê o card.
@@ -81,7 +81,15 @@ export function PontoEquilibrioCard({ company }: { company: string }) {
           {abrir}
         </CardHeader>
         <CardContent>
-          {isLoading || !data ? (
+          {error ? (
+            <div className="flex items-start gap-3 py-2">
+              <AlertTriangle className="w-5 h-5 text-status-warning mt-0.5 shrink-0" />
+              <p className="text-sm text-muted-foreground">
+                Não foi possível carregar os dados do ponto de equilíbrio. Se a migração{' '}
+                <code className="text-xs">fin_dre_custo_tipo</code> ainda não foi aplicada, aplique-a primeiro.
+              </p>
+            </div>
+          ) : isLoading || !data ? (
             <p className="text-sm text-muted-foreground py-6 text-center">Calculando…</p>
           ) : data.motivo !== 'ok' ? (
             <div className="flex items-start gap-3 py-2">
