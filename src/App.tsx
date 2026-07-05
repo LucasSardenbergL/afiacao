@@ -121,6 +121,7 @@ const FinanceiroFunding = lazy(() => import("./pages/FinanceiroFunding"));
 const Recebimento = lazy(() => import("./pages/Recebimento"));
 const RecebimentoConferencia = lazy(() => import("./pages/RecebimentoConferencia"));
 const ProductionOrders = lazy(() => import("./pages/ProductionOrders"));
+const ProducaoBomExcecoes = lazy(() => import("./pages/ProducaoBomExcecoes"));
 const AdminReposicaoHistorico = lazy(() => import("./pages/AdminReposicaoHistorico"));
 const AdminReposicaoAlertas = lazy(() => import("./pages/AdminReposicaoAlertas"));
 const AdminReposicaoGruposProducao = lazy(() => import("./pages/AdminReposicaoGruposProducao"));
@@ -353,6 +354,7 @@ const App = () => {
                 <Route path="recebimento" element={<Recebimento />} />
                 <Route path="recebimento/:id" element={<RecebimentoConferencia />} />
                 <Route path="producao" element={<ProductionOrders />} />
+                <Route path="producao/bom-excecoes" element={<ProducaoBomExcecoes />} />
                 <Route path="admin/reposicao/revisao" element={<Navigate to="/admin/reposicao/sessao/parametros?tab=ajuste" replace />} />
                 <Route path="admin/reposicao/historico" element={<AdminReposicaoHistorico />} />
                 <Route path="admin/reposicao/alertas" element={<AdminReposicaoAlertas />} />

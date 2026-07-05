@@ -41,4 +41,13 @@ Planos por fase: `docs/superpowers/plans/`.
 
 **Estrutura nova:** `pcp_bom_regras` ganhou `largura_mm` (0=fórmula, >0=tabela) + método `tabela_largura`; PK (linha,papel,largura_mm). destilação PASS=33.
 
-**Pendente (founder):** re-colar M2 (modelo híbrido) → re-destilar → gate final (esperado ~95% ok; o que sobrar = malhas atípicas p/ revisão).
+**Gate final (2026-07-05):** modelo híbrido aplicado → **95,4% ok**; **223 exceções em 174 de 1398 cintas** (87,5% das cintas batem exato). A destilação virou **auditoria de cadastro do Omie** — a fila aponta os SKUs com dígito errado.
+
+**Investigação das 223 (papéis CONFIRMADOS certos — não é falso-positivo do classificador; o componente É fita/catalisador/cola):**
+- **abrasivo_base 100** (95 `excecao` + 5 `unidade_inesperada`): consumo de rolo cadastrado ~10–12× a área nominal (dígito errado; ex. CINTA 2909 50X290 → 0,145 vs 0,0145 m²) + 5 rolos em unidade ≠ M².
+- **fita 57** (53 + 4 `regra_instavel`): fita de emenda cadastrada **~200× menor** que o físico (0,03–0,19 cm onde o modelo espera ~11 cm) — erro de dígito/unidade. Componente real é `FITA SHELDAHL`/`MYLAR` (papel certo).
+- **cola 36** (30 + 6 `regra_instavel`): diverge da tabela da largura (parte 10× para menos).
+- **catalisador 30**: **efeito cascata** — quando a cola do pai tem dígito errado, o esperado do catalisador (= razão × cola) fica baixo e o catalisador CERTO vira exceção; + casos do próprio catalisador ~10× baixo. Corrigir a cola na fonte zera boa parte.
+- **Conclusão:** a fila é majoritariamente **erro de cadastro no Omie**; corrigir na fonte + re-sync leva o "bate exato" de ~95% p/ ~99%.
+
+**Tela de revisão (frontend, 2026-07-05):** `src/pages/ProducaoBomExcecoes.tsx` na rota **`/producao/bom-excecoes`** (staff). Lê `pcp_bom_excecoes`, agrupa por papel (aba), destaca o **fator** de divergência (badge vermelho em ≥3× / ≤⅓), busca por código/descrição, e dispõe cada exceção (`aceitar`/`corrigir_omie`/`regra_especifica`) via RPC `fn_pcp_dispor_excecao` (staff-gated). Tela **neutra** (mostra observado×esperado, não pré-julga de quem é o erro). Cast `as never` no `.from()`/`.rpc()` — a tabela é nova e **não está nos types gerados** (fluxo Lovable não regenerou; `grep types.ts = 0`), mesmo padrão de `ProductionOrders`. Validado: **typecheck 0 · lint 0 · build 0**. **Deploy = Publish manual no Lovable** (merge ≠ produção no frontend).
