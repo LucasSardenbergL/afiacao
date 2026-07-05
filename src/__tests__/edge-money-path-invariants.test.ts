@@ -194,3 +194,52 @@ describe('guardrail money-path: trava de crédito Fase 2 (gate + log durável + 
     expect(src, 'o guard anti-duplicação perdeu o rótulo').toMatch(/anti-duplicação/);
   });
 });
+
+// ── Coerência conta×código (prova positiva) — guard na FRONTEIRA comum de criar_pedido ──
+// [P0-A, veredito Codex 2026-07-05] Fecha o vazamento cross-conta em TODAS as vias de criação de PV
+// (SalesQuotes, selectCustomerByUserId, fallback de IA, futuras): um caller pode resolver o código no
+// espelho PARCIAL omie_clientes sem filtrar empresa e mandar o código de OUTRA conta do mesmo cliente.
+// O edge deriva a conta do PEDIDO LOCAL (customer_user_id) e recusa só com PROVA POSITIVA — nunca por
+// ausência (oben resolve o código via API e não vive no espelho). Helper puro em src/ (vitest)
+// ESPELHADO verbatim no edge (Deno); a paridade textual aqui pega a reversão do deploy do Lovable.
+const ACCOUNT_COHERENCE = 'src/lib/omie/account-coherence.ts';
+
+describe('guardrail money-path: coerência conta×código no criar_pedido (edge USA o helper espelhado)', () => {
+  const src = read(VENDAS);
+  const helper = read(ACCOUNT_COHERENCE);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('criar_pedido');
+    expect(helper).toContain('codeBelongsToWrongAccount');
+  });
+
+  it('o helper puro existe e exporta codeBelongsToWrongAccount', () => {
+    expect(helper).toMatch(/export function codeBelongsToWrongAccount/);
+  });
+
+  it('o edge USA o helper: define o espelho E o chama (não só define)', () => {
+    expect(src, 'edge não define mais o helper espelhado de coerência').toMatch(/function codeBelongsToWrongAccount/);
+    expect(
+      src,
+      'REGRESSÃO: edge não chama mais codeBelongsToWrongAccount — voltou a confiar no código do payload?',
+    ).toMatch(/codeBelongsToWrongAccount\(/);
+    expect(
+      count(src, 'codeBelongsToWrongAccount'),
+      'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('deriva a conta do PEDIDO LOCAL (customer_user_id), não confia no payload', () => {
+    expect(
+      src,
+      'o guard deixou de derivar customer_user_id do pedido local — voltaria a confiar no payload',
+    ).toMatch(/select\("account, customer_user_id"\)/);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlock(src),
+      'edge divergiu do helper de src/ — o Lovable reescreveu a coerência no deploy?',
+    ).toBe(mirrorBlock(helper));
+  });
+});

@@ -505,9 +505,12 @@ export function useUnifiedOrder() {
   const handleAICustomerSelect = useCallback(async (customer: AICustomerMatch) => {
     let codigoCliente = customer.codigo_cliente;
     if (!codigoCliente && customer.user_id) {
+      // Money-path (P0-A): codigoCliente vira OmieCustomer.codigo_cliente (código da conta OBEN).
+      // Filtrar empresa_omie='oben' impede pegar o código de OUTRA conta do espelho e mandá-lo ao
+      // Omie oben (cliente errado). Sem oben no espelho → cai no fallback por documento (API oben).
       const { data: omieMapping } = await supabase
         .from('omie_clientes').select('omie_codigo_cliente')
-        .eq('user_id', customer.user_id).maybeSingle();
+        .eq('user_id', customer.user_id).eq('empresa_omie', 'oben').maybeSingle();
       if (omieMapping?.omie_codigo_cliente) codigoCliente = omieMapping.omie_codigo_cliente;
     }
     if (!codigoCliente && customer.cnpj_cpf) {
@@ -539,7 +542,11 @@ export function useUnifiedOrder() {
   // Pré-seleção por user_id (deep-link "Novo pedido" do Customer 360).
   // Busca identidade (profiles) + mapeamento Omie (omie_clientes) por user_id,
   // monta o OmieCustomer e reusa o selectCustomer existente. Falha → silencioso
-  // (não pré-seleciona; o vendedor escolhe no passo Cliente). NÃO altera o money-path.
+  // (não pré-seleciona; o vendedor escolhe no passo Cliente).
+  // Money-path (P0-A): o código vira OmieCustomer.codigo_cliente, tratado como o código da conta
+  // OBEN pelo submitOrder. omie_clientes tem código por conta (UNIQUE user_id+empresa_omie); filtrar
+  // empresa_omie='oben' impede pegar o código de OUTRA conta (ex.: colacor) e mandá-lo ao Omie oben
+  // (cliente errado). Sem código oben → codigo_cliente=0 → o preflight bloqueia (fail-closed).
   const selectCustomerByUserId = useCallback(async (userId: string) => {
     if (!userId) return;
     try {
@@ -549,7 +556,7 @@ export function useUnifiedOrder() {
           .eq('user_id', userId).maybeSingle(),
         supabase.from('omie_clientes')
           .select('omie_codigo_cliente, omie_codigo_vendedor')
-          .eq('user_id', userId).maybeSingle(),
+          .eq('user_id', userId).eq('empresa_omie', 'oben').maybeSingle(),
       ]);
       const omieCustomer = buildOmieCustomer(userId, profile, omie);
       if (omieCustomer) await selectCustomer(omieCustomer);

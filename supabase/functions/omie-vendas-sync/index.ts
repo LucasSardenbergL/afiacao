@@ -1559,6 +1559,23 @@ async function assertOmieItemsAtivos(
   }
 }
 
+// MIRROR-START omie account-coherence — espelhado de src/lib/omie/account-coherence.ts
+// Coerência conta×código por PROVA POSITIVA (money-path): true só quando `code` é o código de OUTRA
+// conta Omie do MESMO cliente (linhas de omie_clientes filtradas por user_id). NÃO acusa por
+// AUSÊNCIA — oben/colacor_sc resolvem o código via API e podem não estar no espelho local. Guard na
+// FRONTEIRA comum (todas as vias de criar_pedido passam aqui). Paridade textual no CI.
+function codeBelongsToWrongAccount(
+  rows: ReadonlyArray<{ omie_codigo_cliente: number; empresa_omie: string }>,
+  code: number,
+  account: string,
+): boolean {
+  if (!Number.isFinite(code) || code <= 0) return false;
+  const matchesTarget = rows.some((r) => Number(r.omie_codigo_cliente) === code && r.empresa_omie === account);
+  if (matchesTarget) return false;
+  return rows.some((r) => Number(r.omie_codigo_cliente) === code && r.empresa_omie !== account);
+}
+// MIRROR-END
+
 // Criar pedido de venda no Omie
 async function criarPedidoVenda(
   supabase: SupabaseClient,
@@ -2193,13 +2210,32 @@ serve(async (req) => {
         // silenciosamente pra 'oben' — o pedido local é a âncora server-side.
         const { data: soRow } = await supabaseAdmin
           .from("sales_orders")
-          .select("account")
+          .select("account, customer_user_id")
           .eq("id", sales_order_id)
           .maybeSingle();
         if (soRow?.account && soRow.account !== account) {
           throw new Error(
             `Conta do payload (${account}) diverge do pedido local (${soRow.account}) — pedido não enviado`,
           );
+        }
+        // Guard money-path (coerência conta×código, prova positiva): fecha o vazamento cross-conta
+        // em TODAS as vias de criação (SalesQuotes, selectCustomerByUserId, IA, futuras). Um caller
+        // pode resolver o código no espelho parcial `omie_clientes` sem filtrar empresa e mandar o
+        // código de OUTRA conta do mesmo cliente. Deriva do pedido local (customer_user_id) e recusa
+        // só com PROVA POSITIVA (o código é de outra conta) — nunca por ausência (oben vem da API).
+        if (soRow?.customer_user_id) {
+          const { data: idRows, error: idErr } = await supabaseAdmin
+            .from("omie_clientes")
+            .select("omie_codigo_cliente, empresa_omie")
+            .eq("user_id", soRow.customer_user_id);
+          if (idErr) {
+            throw new Error(`Pedido rejeitado: falha ao validar a conta do cliente (${idErr.message}). Tente novamente.`);
+          }
+          if (codeBelongsToWrongAccount(idRows ?? [], Number(codigo_cliente), account)) {
+            throw new Error(
+              `Pedido rejeitado: código de cliente ${codigo_cliente} pertence a outra conta Omie (não ${account}) — envio bloqueado para não registrar no cliente errado.`,
+            );
+          }
         }
         // Trava de crédito Fase 2: bloqueia cliente com vencido 60+ sem exceção DESTE pedido.
         const credito = await gateCredito(
