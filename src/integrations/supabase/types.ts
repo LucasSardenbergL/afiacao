@@ -7999,6 +7999,7 @@ export type Database = {
           coef: number | null
           derivado_em: string
           dispersao: number | null
+          largura_mm: number
           linha_modelo: string
           metodo: string
           papel: string
@@ -8008,6 +8009,7 @@ export type Database = {
           coef?: number | null
           derivado_em?: string
           dispersao?: number | null
+          largura_mm?: number
           linha_modelo: string
           metodo: string
           papel: string
@@ -8017,6 +8019,7 @@ export type Database = {
           coef?: number | null
           derivado_em?: string
           dispersao?: number | null
+          largura_mm?: number
           linha_modelo?: string
           metodo?: string
           papel?: string
