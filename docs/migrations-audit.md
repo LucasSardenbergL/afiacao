@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **335** custom migrations totais
-- **1203** objetos esperados (criados por estas migrations)
+- **336** custom migrations totais
+- **1209** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 337
-  - `rls_policy`: 263
+  - `function`: 338
+  - `rls_policy`: 266
   - `index`: 204
   - `cron_job`: 144
-  - `table`: 130
-  - `trigger`: 66
+  - `table`: 131
+  - `trigger`: 67
   - `view`: 55
   - `enum_value`: 4
 
@@ -2880,6 +2880,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.fin_divida_replace_parcelas` | — |
+
+### `20260705120000_fin_dre_custo_tipo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_dre_custo_tipo_set_autor` | — |
+| `table` | `public.fin_dre_custo_tipo` | — |
+| `trigger` | `public.trg_fin_dre_custo_tipo_autor` | `fin_dre_custo_tipo` |
+| `rls_policy` | `public.fin_dre_custo_tipo_select_master` | `fin_dre_custo_tipo` |
+| `rls_policy` | `public.fin_dre_custo_tipo_write_master` | `fin_dre_custo_tipo` |
+| `rls_policy` | `public.fin_dre_custo_tipo_service_all` | `fin_dre_custo_tipo` |
 
 ## Próximos passos por status
 
