@@ -16,6 +16,7 @@ import { useDefasagemCliente, type ItemDefasagemInput, type LinhaDefasagem } fro
 import { cn } from '@/lib/utils';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { useReguaPreco } from '@/hooks/useReguaPreco';
+import { useCustoPrazoRegua } from '@/hooks/useCustoPrazoRegua';
 import { ReguaPrecoSinal } from '@/components/regua-preco/ReguaPrecoSinal';
 import type { ReguaCartItem } from '@/lib/regua-preco/regua-preco-ui';
 import { useReguaPrecoLog } from '@/hooks/useReguaPrecoLog';
@@ -40,6 +41,7 @@ interface CartItemListProps {
   getCartIndex: (item: ProductCartItem | ServiceCartItem) => number;
   customerUserId: string | null;
   customerName: string | null;
+  condicaoPrazoOben?: string | null; // F2: código da condição de pagamento Oben selecionada (custo do prazo)
 }
 
 export function CartItemList({
@@ -48,7 +50,7 @@ export function CartItemList({
   deliveryOption, selectedTimeSlot,
   onUpdateQuantity, onUpdateProductPrice, onRemoveFromCart,
   getServicePrice, getCartIndex,
-  customerUserId, customerName,
+  customerUserId, customerName, condicaoPrazoOben,
 }: CartItemListProps) {
   // #6 (B): faixa do cockpit na linha do carrinho — aqui o tint_formula_id existe,
   // então a linha tinta recebe o custo REAL (base+corantes); item normal usa o preço
@@ -109,7 +111,10 @@ export function CartItemList({
       })),
     [obenProductItems],
   );
-  const { reguaByKey } = useReguaPreco(reguaItens, customerUserId, reguaFlag);
+  // F2: custo do prazo concedido (condição Oben selecionada) → levanta o piso da régua.
+  // Só Oben (a régua já é Oben-only). Degrada honesto sem condição/taxa. Trocar a parcela recalcula.
+  const prazoRegua = useCustoPrazoRegua('oben', condicaoPrazoOben ?? null);
+  const { reguaByKey } = useReguaPreco(reguaItens, customerUserId, reguaFlag, prazoRegua);
   const { marcarExibido, marcarAplicado } = useReguaPrecoLog();
 
   const renderProductGroup = (items: ProductCartItem[], label: string, icon: React.ReactNode) => (

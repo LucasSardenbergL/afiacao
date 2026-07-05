@@ -59,8 +59,15 @@ export function dedupeFetchItens(itens: ReguaCartItem[]): ReguaItemFetch[] {
   return out;
 }
 
-/** Monta o input do helper a partir do fetch da RPC + o preço atual da linha. */
-export function montarInputRegua(fetch: FetchDataRegua, precoAtual: number): ReguaPrecoInput {
+/** Custo do prazo (F2) — opcional; ausente = comportamento à vista. Tipo estrutural (a lib não importa hooks). */
+export type PrazoRegua = { prazoDias: number[] | null; custoCapitalAnual: number | null };
+
+/** Monta o input do helper a partir do fetch da RPC + o preço atual da linha (+ prazo, F2). */
+export function montarInputRegua(
+  fetch: FetchDataRegua,
+  precoAtual: number,
+  prazo?: PrazoRegua | null,
+): ReguaPrecoInput {
   return {
     precoAtual,
     cmc: fetch.cmc,
@@ -69,5 +76,7 @@ export function montarInputRegua(fetch: FetchDataRegua, precoAtual: number): Reg
     precosCliente: fetch.precos_cliente ?? [],
     comparaveis: (fetch.comparaveis ?? []).map((c) => ({ preco: c.preco, clienteId: String(c.c) })),
     caps: CAPS_REGUA,
+    prazoDias: prazo?.prazoDias ?? null,
+    custoCapitalAnual: prazo?.custoCapitalAnual ?? null,
   };
 }
