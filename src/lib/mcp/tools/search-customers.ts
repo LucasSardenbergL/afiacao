@@ -9,6 +9,15 @@ function supabaseForUser(ctx: ToolContext) {
   });
 }
 
+// Sanitiza input para o parser do `.or()` do PostgREST — remove vírgula (separador de cláusula),
+// parênteses (agrupamento), aspas, barra e os wildcards `% _ *`. Sem isto, um `query` como
+// `x,id.gt.0` injeta um predicado extra e alarga o resultado dentro do que a RLS libera.
+// Inlined (espelha @/lib/postgrest.sanitizeForPostgrestOr) porque este módulo é bundlado para a
+// edge MCP em Deno, que não resolve o alias `@/`.
+function sanitizeOrTerm(input: string): string {
+  return input.replace(/[%_,()\\"*]/g, "");
+}
+
 export default defineTool({
   name: "search_customers",
   title: "Search customers",
@@ -22,14 +31,20 @@ export default defineTool({
     if (!ctx.isAuthenticated()) {
       return { content: [{ type: "text", text: "Not authenticated" }], isError: true };
     }
+    const safe = sanitizeOrTerm(query);
+    // Termo degenerado (vazio ou só-metacaracteres) colapsaria para `col.ilike.%%` = match-all —
+    // não deve enumerar toda a tabela; devolve vazio.
+    if (!safe) {
+      return { content: [{ type: "text", text: "[]" }], structuredContent: { results: [] } };
+    }
     const sb = supabaseForUser(ctx);
-    const like = `%${query}%`;
+    const predicado = ["name", "document", "email", "phone"]
+      .map((c) => `${c}.ilike.%${safe}%`)
+      .join(",");
     const { data, error } = await sb
       .from("profiles")
       .select("user_id, name, document, phone, email, customer_type")
-      .or(
-        `name.ilike.${like},document.ilike.${like},email.ilike.${like},phone.ilike.${like}`,
-      )
+      .or(predicado)
       .limit(20);
     if (error) {
       return { content: [{ type: "text", text: error.message }], isError: true };
