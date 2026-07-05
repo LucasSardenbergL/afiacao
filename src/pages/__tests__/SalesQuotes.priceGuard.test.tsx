@@ -22,23 +22,24 @@ vi.mock('@/contexts/AuthContext', () => ({
 vi.mock('sonner', () => ({
   toast: { error: h.toastError, success: h.toastSuccess, info: h.toastInfo },
 }));
-vi.mock('@/integrations/supabase/client', () => ({
-  supabase: {
-    from: (table: string) => ({
-      select: () => ({
-        eq: () => ({
-          order: () => Promise.resolve({ data: table === 'sales_orders' ? h.quotes : [], error: null }),
-          // omie_clientes lookup (só alcançado se o guard NÃO bloquear)
-          maybeSingle: () => Promise.resolve({ data: { omie_codigo_cliente: 123, omie_codigo_vendedor: 9 }, error: null }),
-        }),
-        in: () => Promise.resolve({ data: [], error: null }),
-      }),
+// `.eq()` é chainable (o guard de conta encadeia .eq('user_id').eq('empresa_omie')); aqui o foco
+// é o guard de PREÇO, então a identidade Omie é sempre válida na conta do orçamento.
+vi.mock('@/integrations/supabase/client', () => {
+  const makeQuery = (table: string) => {
+    const api: Record<string, unknown> = {
+      select: () => api,
+      eq: () => api,
+      in: () => Promise.resolve({ data: [], error: null }),
+      order: () => Promise.resolve({ data: table === 'sales_orders' ? h.quotes : [], error: null }),
+      // omie_clientes lookup (só alcançado se o guard de preço NÃO bloquear).
+      maybeSingle: () => Promise.resolve({ data: { omie_codigo_cliente: 123, omie_codigo_vendedor: 9 }, error: null }),
       update: () => ({ eq: () => Promise.resolve({ error: null }) }),
       delete: () => ({ eq: () => Promise.resolve({ error: null }) }),
-    }),
-    functions: { invoke: h.invoke },
-  },
-}));
+    };
+    return api;
+  };
+  return { supabase: { from: (table: string) => makeQuery(table), functions: { invoke: h.invoke } } };
+});
 
 import SalesQuotes from '../SalesQuotes';
 

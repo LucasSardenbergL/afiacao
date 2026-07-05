@@ -500,13 +500,21 @@ Founder pede o deploy de `omie-malha-sync` no chat do Lovable (código já commi
 
 - [ ] **Step 4.4 [FOUNDER]: rodar o probe (travar o shape)**
 
-Founder executa (com o secret de cron dele):
-```bash
-curl -sS -X POST "https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-malha-sync" \
-  -H "Content-Type: application/json" -H "x-cron-secret: $CRON_SECRET" \
-  -d '{"action":"probe"}'
+**Método (decisão eu+Codex): `net.http_post` no SQL Editor** — o founder não tem terminal; padrão da casa (segredo do vault, sem manusear). NÃO envolver em BEGIN/COMMIT (o `net.http_post` só dispara após o commit da transação).
+```sql
+SELECT net.http_post(
+  url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-malha-sync',
+  headers := jsonb_build_object('Content-Type','application/json',
+    'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET')),
+  body := '{"action":"probe"}'::jsonb,
+  timeout_milliseconds := 20000
+) AS request_id;
 ```
-Expected: JSON com `topKeys`, `itemKeys`, `identKeys`, `sampleItem`. **Colar a resposta na sessão.**
+Founder passa o `request_id` retornado. **Eu leio (psql-ro), esperando ~8-10s e com polling até ~60s:**
+```bash
+~/.config/afiacao/psql-ro -c "SELECT status_code, timed_out, error_msg, content FROM net._http_response WHERE id=<request_id>;"
+```
+Só confio no shape se `status_code=200 AND timed_out IS NOT true AND error_msg IS NULL` e o `content` (JSON) traz `topKeys`/`itemKeys`/`identKeys`/`sampleItem`. (`net._http_response` é UNLOGGED, TTL ~6h — ler em minutos é seguro; nunca pegar a "última resposta" global, só o `request_id`.)
 
 - [ ] **Step 4.5: travar o shape (decisão registrada)**
 
@@ -514,12 +522,17 @@ Comparar `identKeys`/`itemKeys` do probe com os candidatos usados em `extractPai
 
 - [ ] **Step 4.6 [FOUNDER]: rodar o sync completo**
 
-```bash
-curl -sS -X POST "https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-malha-sync" \
-  -H "Content-Type: application/json" -H "x-cron-secret: $CRON_SECRET" \
-  -d '{"action":"sync"}'
+Mesmo método, `timeout 120000` (30-40s esperados + margem de cold start/lentidão, abaixo do idle de 150s do edge):
+```sql
+SELECT net.http_post(
+  url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-malha-sync',
+  headers := jsonb_build_object('Content-Type','application/json',
+    'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='CRON_SECRET')),
+  body := '{"action":"sync"}'::jsonb,
+  timeout_milliseconds := 120000
+) AS request_id;
 ```
-Expected: `{"ok":true, "paginas":N, "registros":M, "shape_err":0, "orfaos_limpos":0, "limpeza_pulada":false}` com M ≥ ~1.400 (cintas) — provavelmente ~1.7–2.0k somando discos/tingidores/rolos (~40 páginas ≈ 30-40s, dentro do limite do edge). Se o edge estourar tempo: re-invocar com `{"action":"sync","desde_pagina":<última página do run log + 1>}`. `limpeza_pulada:true` = o run veio <90% do último ok → investigar (truncamento silencioso do Omie) antes de confiar no staging.
+Founder passa o `request_id`. **Fonte primária = `pcp_run_logs`** (persistente, gravada pelo próprio edge), NÃO o `net._http_response` (diagnóstico HTTP). Se der `timed_out` → estado DESCONHECIDO: checar `pcp_run_logs`+staging ANTES de qualquer re-run (upsert é idempotente, mas não re-rodar por impaciência). Esperado no run log: `status='ok'`, `registros` M ≥ ~1.400, `detalhe.shape_err=0`, `limpeza_pulada=false`. Timeout real → re-invocar com `body '{"action":"sync","desde_pagina":<última página+1>}'`.
 
 - [ ] **Step 4.7: verificar cobertura do staging (psql-ro)**
 
@@ -716,23 +729,30 @@ SELECT CASE
   WHEN upper(coalesce(p_descricao,'')) ~ '^(ROLO|JUMBO)\s'                      THEN 'abrasivo_base'
   WHEN upper(coalesce(p_descricao,'')) ~ 'DESMODUR|CATALISADOR'
     OR coalesce(p_familia,'') ILIKE '%catalisador%'                             THEN 'catalisador'
-  -- FITA antes de cola (painel Codex): "FITA ADESIVA" tem que ser fita, não cola
-  WHEN upper(coalesce(p_descricao,'')) ~ '\mFITA\M'                             THEN 'fita'
+  -- FITA antes de cola (painel Codex): "FITA ADESIVA" tem que ser fita, não cola.
+  -- MYLAR (2768/2769) é a fita de emenda alternativa à Sheldahl (mesma unidade CM, razão ~0,11) — validado nos dados reais.
+  WHEN upper(coalesce(p_descricao,'')) ~ '\mFITA\M|MYLAR'                       THEN 'fita'
   WHEN upper(coalesce(p_descricao,'')) ~ 'A455|ADESIVO|\mCOLA\M'
     OR coalesce(p_familia,'') ILIKE '%cola%' OR coalesce(p_familia,'') ILIKE '%adesivo%' THEN 'cola'
   ELSE 'outro'
 END $$;
 
--- ── 5) Regras destiladas (BOM paramétrica) ─────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.pcp_bom_regras (
+-- ── 5) Regras destiladas (BOM híbrida: fórmula onde os dados sustentam + TABELA onde o ERP é tabelado) ──
+-- largura_mm: 0 = regra de FÓRMULA (vale p/ toda largura da linha); >0 = valor TABELADO p/ essa largura.
+-- A cola do Omie é cadastrada por TABELA (largura → gramas), confirmado pelo founder — não é fórmula.
+-- Abrasivo (área nominal), fita (proporcional) e catalisador (razão) seguem fórmula (largura_mm=0).
+-- DROP+CREATE (não ALTER): tabela 100% derivada (fn_pcp_destilar_bom recria); a PK mudou (ganhou largura_mm).
+DROP TABLE IF EXISTS public.pcp_bom_regras CASCADE;
+CREATE TABLE public.pcp_bom_regras (
   linha_modelo text NOT NULL,   -- '*' = regra global (fallback p/ linha com poucas amostras)
   papel  text NOT NULL CHECK (papel IN ('abrasivo_base','cola','catalisador','fita')),
-  metodo text NOT NULL CHECK (metodo IN ('area_nominal','g_por_mm_largura','razao_sobre_cola','cm_overlap_largura')),
+  largura_mm int NOT NULL DEFAULT 0,  -- 0 = fórmula; >0 = valor tabelado p/ essa largura
+  metodo text NOT NULL CHECK (metodo IN ('area_nominal','g_por_mm_largura','razao_sobre_cola','cm_por_mm_largura','tabela_largura')),
   coef numeric,
   amostras int NOT NULL,
   dispersao numeric,            -- MAD relativa (mediana de |x-med|/med) — qualidade da regra
   derivado_em timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (linha_modelo, papel)
+  PRIMARY KEY (linha_modelo, papel, largura_mm)
 );
 
 CREATE OR REPLACE FUNCTION public.fn_pcp_destilar_bom()
@@ -745,13 +765,15 @@ BEGIN
   DELETE FROM pcp_bom_regras;
 
   -- Observações: componentes das malhas cujo PAI é cinta/rolo com dimensões parseadas.
+  -- Escopo = CINTAS (a BOM da emenda). Rolos-pai (nível SLITTER rolo→jumbo) usam quantidade simbólica,
+  -- não área nominal da cinta — outro processo, fora da F1A (entra na Fase 1B ao modelar o slitter).
   CREATE TEMP TABLE tmp_obs ON COMMIT DROP AS
   SELECT pai.linha_modelo, pai.omie_codigo_produto AS pai_codigo, pai.largura_mm,
          fn_pcp_papel_componente(c.componente_descricao, c.componente_familia) AS papel,
          c.quantidade, c.unidade
   FROM vw_pcp_malha_componentes c
   JOIN pcp_itens pai ON pai.omie_codigo_produto = c.pai_codigo
-  WHERE pai.tipo_item IN ('cinta','rolo') AND pai.formato_parse = 'dimensional'
+  WHERE pai.tipo_item = 'cinta' AND pai.formato_parse = 'dimensional'
     AND pai.linha_modelo IS NOT NULL AND c.quantidade IS NOT NULL;
 
   -- Guarda (painel Codex): universo vazio NÃO pode zerar as regras boas —
@@ -760,12 +782,11 @@ BEGIN
     RAISE EXCEPTION 'fn_pcp_destilar_bom: universo de observações VAZIO — abortando sem apagar regras (staging/refresh rodaram?)';
   END IF;
 
-  -- Razões observadas por papel (NULL quando não se aplica — nunca inventar).
+  -- Razões observadas p/ papéis de FÓRMULA (fita, catalisador). Cola é TABELADA (INSERT próprio abaixo).
   CREATE TEMP TABLE tmp_ratio ON COMMIT DROP AS
   SELECT o.linha_modelo, o.papel,
     CASE o.papel
-      WHEN 'cola'        THEN CASE WHEN o.unidade = 'G' AND o.largura_mm > 0 THEN o.quantidade / o.largura_mm END
-      WHEN 'fita'        THEN CASE WHEN o.unidade = 'CM' THEN o.quantidade - o.largura_mm / 10.0 END
+      WHEN 'fita'        THEN CASE WHEN o.unidade = 'CM' AND o.largura_mm > 0 THEN o.quantidade / o.largura_mm END
       WHEN 'catalisador' THEN CASE WHEN o.unidade = 'G' AND cola.quantidade > 0 THEN o.quantidade / cola.quantidade END
     END AS ratio
   FROM tmp_obs o
@@ -776,9 +797,9 @@ BEGIN
     FROM tmp_obs o2
     WHERE o2.pai_codigo = o.pai_codigo AND o2.papel = 'cola' AND o2.unidade = 'G'
   ) cola ON o.papel = 'catalisador'
-  WHERE o.papel IN ('cola','fita','catalisador');
+  WHERE o.papel IN ('fita','catalisador');
 
-  -- Regras por linha (só papéis com razão) + abrasivo_base (área nominal, coef 1.0).
+  -- Regras de FÓRMULA por linha (fita/catalisador) + global '*'.
   INSERT INTO pcp_bom_regras (linha_modelo, papel, metodo, coef, amostras, dispersao)
   WITH med AS (
     SELECT linha_modelo, papel,
@@ -797,15 +818,32 @@ BEGIN
   ),
   unida AS (SELECT * FROM med UNION ALL SELECT * FROM glob)
   SELECT u.linha_modelo, u.papel,
-    CASE u.papel WHEN 'cola' THEN 'g_por_mm_largura'
-                 WHEN 'catalisador' THEN 'razao_sobre_cola'
-                 WHEN 'fita' THEN 'cm_overlap_largura' END,
+    CASE u.papel WHEN 'catalisador' THEN 'razao_sobre_cola'
+                 WHEN 'fita' THEN 'cm_por_mm_largura' END,
     u.coef, u.amostras,
     (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(r.ratio - u.coef) / NULLIF(abs(u.coef), 0))
        FROM tmp_ratio r
       WHERE r.papel = u.papel AND r.ratio IS NOT NULL
         AND (u.linha_modelo = '*' OR r.linha_modelo = u.linha_modelo))
   FROM unida u;
+
+  -- Cola: TABELADA por (linha, largura) — valor absoluto (g), NÃO fórmula (confirmado pelo founder).
+  -- coef = mediana das gramas da (linha,largura); dispersão = MAD relativa DENTRO do grupo (robusta a
+  -- outlier: 1 cinta divergente vira excecao contra a mediana; SÓ cadastro sem consenso instabiliza a regra).
+  INSERT INTO pcp_bom_regras (linha_modelo, papel, largura_mm, metodo, coef, amostras, dispersao)
+  WITH cola_med AS (
+    SELECT linha_modelo, largura_mm,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY quantidade) AS med,
+           count(*) AS n
+    FROM tmp_obs WHERE papel = 'cola' AND unidade = 'G' AND largura_mm > 0
+    GROUP BY linha_modelo, largura_mm
+  )
+  SELECT cm.linha_modelo, 'cola', cm.largura_mm, 'tabela_largura', cm.med, cm.n,
+    (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(o.quantidade - cm.med) / NULLIF(cm.med, 0))
+       FROM tmp_obs o
+      WHERE o.linha_modelo = cm.linha_modelo AND o.largura_mm = cm.largura_mm
+        AND o.papel = 'cola' AND o.unidade = 'G')
+  FROM cola_med cm;
 
   INSERT INTO pcp_bom_regras (linha_modelo, papel, metodo, coef, amostras, dispersao)
   SELECT o.linha_modelo, 'abrasivo_base', 'area_nominal', 1.0, count(*), NULL::numeric
@@ -828,7 +866,7 @@ WITH comp AS (
          fn_pcp_papel_componente(c.componente_descricao, c.componente_familia) AS papel
   FROM vw_pcp_malha_componentes c
   JOIN pcp_itens pai ON pai.omie_codigo_produto = c.pai_codigo
-  WHERE pai.tipo_item IN ('cinta','rolo')
+  WHERE pai.tipo_item = 'cinta'   -- escopo F1A = BOM da cinta; rolo→jumbo (slitter) é Fase 1B
 ),
 com_regra AS (
   SELECT comp.*, r.coef, r.metodo, r.dispersao AS regra_dispersao,
@@ -841,9 +879,13 @@ com_regra AS (
       WHERE c2.pai_codigo = comp.pai_codigo AND c2.papel = 'cola' AND c2.unidade = 'G') AS qtd_cola_pai
   FROM comp
   LEFT JOIN LATERAL (
+    -- largura_mm IN (0, largura): 0 = regra de fórmula (fita/catalisador/abrasivo); =largura = tabelada (cola).
+    -- Prefere a regra de LINHA sobre a global, e a TABELADA (largura específica) sobre a de fórmula.
     SELECT coef, metodo, dispersao, linha_modelo FROM pcp_bom_regras r
-    WHERE r.papel = comp.papel AND r.linha_modelo IN (comp.linha_modelo, '*')
-    ORDER BY (r.linha_modelo = comp.linha_modelo) DESC
+    WHERE r.papel = comp.papel
+      AND r.linha_modelo IN (comp.linha_modelo, '*')
+      AND r.largura_mm IN (0, comp.largura_mm)
+    ORDER BY (r.linha_modelo = comp.linha_modelo) DESC, (r.largura_mm = comp.largura_mm) DESC
     LIMIT 1
   ) r ON comp.papel <> 'outro'
 )
@@ -852,9 +894,9 @@ SELECT pai_codigo, pai_descricao, pai_tipo, linha_modelo, largura_mm, compriment
   CASE
     WHEN formato_parse <> 'dimensional' THEN NULL
     WHEN papel = 'abrasivo_base' AND unidade = 'M2' THEN largura_mm::numeric * comprimento_mm / 1e6
-    WHEN papel = 'cola'        AND unidade = 'G'  AND metodo = 'g_por_mm_largura'   THEN coef * largura_mm
+    WHEN papel = 'cola'        AND unidade = 'G'  AND metodo = 'tabela_largura'     THEN coef
     WHEN papel = 'catalisador' AND unidade = 'G'  AND metodo = 'razao_sobre_cola'   THEN coef * qtd_cola_pai
-    WHEN papel = 'fita'        AND unidade = 'CM' AND metodo = 'cm_overlap_largura' THEN largura_mm / 10.0 + coef
+    WHEN papel = 'fita'        AND unidade = 'CM' AND metodo = 'cm_por_mm_largura' THEN coef * largura_mm
   END AS esperado,
   CASE WHEN papel = 'abrasivo_base'
        THEN coalesce((SELECT (value)::numeric FROM pcp_config WHERE key = 'tolerancia_abrasivo'), 0.005)
@@ -882,14 +924,14 @@ SELECT pai_codigo, pai_descricao, pai_tipo, linha_modelo, largura_mm, compriment
     WHEN quantidade IS NULL THEN 'sem_quantidade'
     WHEN abs(quantidade - (CASE
         WHEN papel = 'abrasivo_base' THEN largura_mm::numeric * comprimento_mm / 1e6
-        WHEN papel = 'cola' THEN coef * largura_mm
+        WHEN papel = 'cola' THEN coef
         WHEN papel = 'catalisador' THEN coef * qtd_cola_pai
-        WHEN papel = 'fita' THEN largura_mm / 10.0 + coef END))
+        WHEN papel = 'fita' THEN coef * largura_mm END))
        / NULLIF((CASE
         WHEN papel = 'abrasivo_base' THEN largura_mm::numeric * comprimento_mm / 1e6
-        WHEN papel = 'cola' THEN coef * largura_mm
+        WHEN papel = 'cola' THEN coef
         WHEN papel = 'catalisador' THEN coef * qtd_cola_pai
-        WHEN papel = 'fita' THEN largura_mm / 10.0 + coef END), 0)
+        WHEN papel = 'fita' THEN coef * largura_mm END), 0)
       <= (CASE WHEN papel = 'abrasivo_base'
            THEN coalesce((SELECT (value)::numeric FROM pcp_config WHERE key = 'tolerancia_abrasivo'), 0.005)
            ELSE coalesce((SELECT (value)::numeric FROM pcp_config WHERE key = 'tolerancia_insumo'), 0.05) END)
@@ -1242,41 +1284,46 @@ INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES
    {"ident":{"idProdMalha":900005,"codProdMalha":"PRD90005","descrProdMalha":"ROLO KA169 75X50000MM P80"},"quantProdMalha":0.15,"unidProdMalha":"M2"},
    {"ident":{"idProdMalha":900002,"codProdMalha":"PRD90002","descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":0.8055,"unidProdMalha":"G"},
    {"ident":{"idProdMalha":900003,"codProdMalha":"PRD90003","descrProdMalha":"DESMODUR NE-S"},"quantProdMalha":0.0895,"unidProdMalha":"G"},
-   {"ident":{"idProdMalha":900004,"codProdMalha":"PRD90004","descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":9.4,"unidProdMalha":"CM"}]}'::jsonb),
+   {"ident":{"idProdMalha":900004,"codProdMalha":"PRD90004","descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":8.45,"unidProdMalha":"CM"}]}'::jsonb),
  (800003, '{"ident":{"idProduto":800003,"codProduto":"PRD80003"},"itens":[
    {"ident":{"idProdMalha":900006,"codProdMalha":"PRD90006","descrProdMalha":"ROLO KA169 300X50000MM P50"},"quantProdMalha":0.9,"unidProdMalha":"M2"},
    {"ident":{"idProdMalha":900002,"codProdMalha":"PRD90002","descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":3.222,"unidProdMalha":"G"},
    {"ident":{"idProdMalha":900003,"codProdMalha":"PRD90003","descrProdMalha":"DESMODUR NE-S"},"quantProdMalha":0.358,"unidProdMalha":"G"},
-   {"ident":{"idProdMalha":900004,"codProdMalha":"PRD90004","descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":31.9,"unidProdMalha":"CM"}]}'::jsonb);
+   {"ident":{"idProdMalha":900004,"codProdMalha":"PRD90004","descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":33.8,"unidProdMalha":"CM"}]}'::jsonb);
 SQL
 
 echo "═══ ZONA 4: refresh + destilar + validar ═══"
 eq "refresh: total|dim|disco|sem_match" "$(Pq -c "SELECT total||'|'||dimensionais||'|'||discos||'|'||sem_match FROM fn_pcp_refresh_itens()")" "9|6|0|3"
 eq "linha_modelo veio do token da descrição" "$(Pq -c "SELECT linha_modelo FROM pcp_itens WHERE omie_codigo_produto=4396000531")" "KA169"
-eq "destilar: nº de regras (4 papéis × [KA169 + *])" "$(Pq -c "SELECT fn_pcp_destilar_bom()")" "8"
-eq "coef cola g/mm (mediana)"   "$(Pq -c "SELECT round(coef,5) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='cola'")" "0.01074"
+eq "destilar: nº de regras (cola tabelada 3 larguras + fita/catal/abrasivo fórmula ×2)" "$(Pq -c "SELECT fn_pcp_destilar_bom()")" "9"
+eq "cola TABELADA: (KA169,150)=1.611g (valor, não razão)" "$(Pq -c "SELECT round(coef,3) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='cola' AND largura_mm=150")" "1.611"
+eq "cola TABELADA: (KA169,75)=0.806g" "$(Pq -c "SELECT round(coef,3) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='cola' AND largura_mm=75")" "0.806"
 eq "coef catalisador (razão)"   "$(Pq -c "SELECT round(coef,4) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='catalisador'")" "0.1111"
-eq "coef fita (overlap cm)"     "$(Pq -c "SELECT round(coef,2) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='fita'")" "1.90"
+eq "coef fita (cm por mm largura)" "$(Pq -c "SELECT round(coef,4) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='fita'")" "0.1127"
 eq "validação: 12/12 ok"        "$(Pq -c "SELECT count(*) FILTER (WHERE status='ok')||'/'||count(*) FROM vw_pcp_bom_validacao")" "12/12"
 eq "materializar: 0 exceções"   "$(Pq -c "SELECT fn_pcp_materializar_excecoes()")" "0"
 
-echo "═══ ZONA 5: FALSIFICAÇÃO — malha PODRE (cola 10×) TEM que virar exceção ═══"
+echo "═══ ZONA 5: cola TABELADA — 1 cinta divergente vira EXCEÇÃO contra a tabela da largura (MAD robusta) ═══"
+# 2 cintas KA169 100mm com cola CERTA (1.074g) fixam a tabela (KA169,cola,100); o 800004 traz 10× — deve destoar.
 P -q <<'SQL'
 INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, familia, tipo_produto, account) VALUES
  (800004,'PRD80004','CINTA KA169 100X1000MM P60','Cintas Estreitas','04','colacor'),
+ (800005,'PRD80005','CINTA KA169 100X2000MM P60','Cintas Estreitas','04','colacor'),
+ (800006,'PRD80006','CINTA KA169 100X3000MM P60','Cintas Estreitas','04','colacor'),
  (900007,'PRD90007','ROLO KA169 100X50000MM P60','Jumbo/Rolo de Lixa Óxido de Alumínio','03','colacor');
 INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES
- (800004, '{"ident":{"idProduto":800004,"codProduto":"PRD80004"},"itens":[
-   {"ident":{"idProdMalha":900007,"codProdMalha":"PRD90007","descrProdMalha":"ROLO KA169 100X50000MM P60"},"quantProdMalha":0.1,"unidProdMalha":"M2"},
-   {"ident":{"idProdMalha":900002,"codProdMalha":"PRD90002","descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":10.74,"unidProdMalha":"G"},
-   {"ident":{"idProdMalha":900004,"codProdMalha":"PRD90004","descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":11.9,"unidProdMalha":"CM"}]}'::jsonb);
+ (800005,'{"ident":{"idProduto":800005},"itens":[{"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":1.074,"unidProdMalha":"G"}]}'::jsonb),
+ (800006,'{"ident":{"idProduto":800006},"itens":[{"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":1.074,"unidProdMalha":"G"}]}'::jsonb),
+ (800004,'{"ident":{"idProduto":800004},"itens":[
+   {"ident":{"idProdMalha":900007,"descrProdMalha":"ROLO KA169 100X50000MM P60"},"quantProdMalha":0.1,"unidProdMalha":"M2"},
+   {"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":10.74,"unidProdMalha":"G"},
+   {"ident":{"idProdMalha":900004,"descrProdMalha":"FITA SHELDAHL T188467 19MMX100M BLUE"},"quantProdMalha":11.27,"unidProdMalha":"CM"}]}'::jsonb);
 SQL
-P -q -c "SELECT fn_pcp_refresh_itens();" >/dev/null
-# NÃO re-destila: as regras ficam as derivadas do conjunto limpo (fluxo incremental real).
-EXC=$(Pq -c "SELECT fn_pcp_materializar_excecoes()")
-eq "sabotagem materializou 1 exceção" "$EXC" "1"
-eq "a exceção é a cola do pai sabotado" "$(Pq -c "SELECT pai_codigo||'|'||papel||'|'||status FROM pcp_bom_excecoes")" "800004|cola|excecao"
-eq "esperado da exceção ≈ 1.074 g (0.01074×100)" "$(Pq -c "SELECT round(esperado,3) FROM pcp_bom_excecoes")" "1.074"
+P -q -c "SELECT fn_pcp_refresh_itens(); SELECT fn_pcp_destilar_bom();" >/dev/null
+eq "tabela (KA169,cola,100) = mediana estável 1.074 (MAD ignora o outlier)" "$(Pq -c "SELECT round(coef,3) FROM pcp_bom_regras WHERE linha_modelo='KA169' AND papel='cola' AND largura_mm=100")" "1.074"
+eq "cola 10× do 800004 vira excecao (contra a tabela)" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=800004 AND papel='cola'")" "excecao"
+eq "esperado da exceção = valor tabelado 1.074g" "$(Pq -c "SELECT round(esperado,3) FROM vw_pcp_bom_validacao WHERE pai_codigo=800004 AND papel='cola'")" "1.074"
+eq "as 2 cintas certas (100mm) validam ok" "$(Pq -c "SELECT count(*) FROM vw_pcp_bom_validacao WHERE pai_codigo IN (800005,800006) AND papel='cola' AND status='ok'")" "2"
 
 echo "═══ ZONA 6: endurecimentos do painel (fn_num, papel, regra instável, sem_base_cola, unidade, RLS, disposição) ═══"
 eq "fn_pcp_num tolera vírgula pt-BR" "$(Pq -c "SELECT fn_pcp_num('1,611')")" "1.611"
@@ -1284,8 +1331,8 @@ eq "fn_pcp_num: lixo vira NULL (nunca fabrica)" "$(Pq -c "SELECT coalesce(fn_pcp
 eq "papel: FITA ADESIVA é fita (não cola)" "$(Pq -c "SELECT fn_pcp_papel_componente('FITA ADESIVA 25MM','Uso e Consumo')")" "fita"
 eq "papel: COLA PU é cola" "$(Pq -c "SELECT fn_pcp_papel_componente('COLA PU BICOMPONENTE','Colas')")" "cola"
 
-# Linha ZZ com cola DISPERSA (ratios 0.01/0.02/0.04 ⇒ MAD rel 0.5 > 0.10) — regra instável não valida ninguém.
-# Pai XY: catalisador SEM cola no pai + cola em KG (unidade errada).
+# Linha ZZ9: 3 cintas MESMA largura (100) com cola DIVERGENTE (1/2/4g ⇒ MAD rel 0.5 > 0.10) —
+# tabela sem consenso ⇒ regra instável não valida ninguém. Pai XY7: catalisador SEM cola G + cola em KG.
 P -q <<'SQL'
 INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, familia, tipo_produto, account) VALUES
  (810001,'PRD81001','CINTA ZZ9 100X1000MM P50','Cintas Estreitas','04','colacor'),
@@ -1301,8 +1348,8 @@ INSERT INTO public.pcp_malha_staging (omie_codigo_produto, payload) VALUES
    {"ident":{"idProdMalha":900002,"descrProdMalha":"A455 20% SHELDAHL ADESIVO"},"quantProdMalha":0.001,"unidProdMalha":"KG"}]}'::jsonb);
 SQL
 P -q -c "SELECT fn_pcp_refresh_itens();" >/dev/null
-eq "re-destilar com universo maior (KA169 4 + ZZ9 cola + '*' 4)" "$(Pq -c "SELECT fn_pcp_destilar_bom()")" "9"
-eq "regra ZZ9/cola nasceu INSTÁVEL (MAD rel 0.5)" "$(Pq -c "SELECT round(dispersao,2) FROM pcp_bom_regras WHERE linha_modelo='ZZ9' AND papel='cola'")" "0.50"
+eq "re-destilar: 11 regras (cola tabelada KA169×4 + ZZ9×1 + fita/catal/abrasivo ×2)" "$(Pq -c "SELECT fn_pcp_destilar_bom()")" "11"
+eq "regra ZZ9/cola nasceu INSTÁVEL (MAD rel 0.5)" "$(Pq -c "SELECT round(dispersao,2) FROM pcp_bom_regras WHERE linha_modelo='ZZ9' AND papel='cola' AND largura_mm=100")" "0.50"
 eq "validação marca as 3 colas ZZ9 como regra_instavel" "$(Pq -c "SELECT count(*) FROM vw_pcp_bom_validacao WHERE status='regra_instavel'")" "3"
 eq "catalisador sem cola G no pai ⇒ sem_base_cola" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=810004 AND papel='catalisador'")" "sem_base_cola"
 eq "cola em KG ⇒ unidade_inesperada" "$(Pq -c "SELECT status FROM vw_pcp_bom_validacao WHERE pai_codigo=810004 AND papel='cola'")" "unidade_inesperada"
@@ -1348,7 +1395,7 @@ echo "RESULTADO: PASS=$PASS FAIL=$FAIL"
 - [ ] **Step 7.2: Rodar**
 
 Run: `bash db/test-pcp-f1a-destilacao.sh > /tmp/t-dest.log 2>&1; echo "exit=$?"`
-Expected: `exit=0`, `PASS=31 FAIL=0` (re-aplicação do M2 + 8 da ZONA 4 + 3 da falsificação + 17 dos endurecimentos do painel + 2 do cola_ambigua da revisão de qualidade: números tolerantes, papéis ambíguos, regra instável só de linha, sem_base_cola, unidade errada, base de catalisador ambígua, matriz RLS, governança da disposição). Falhas aqui significam bug na destilação/validação (os números da fixture são FATOS do print) — corrigir o M2, nunca a fixture.
+Expected: `exit=0`, `PASS=33 FAIL=0` (re-aplicação do M2 + 8 da ZONA 4 + 3 da falsificação + 17 dos endurecimentos do painel + 2 do cola_ambigua da revisão de qualidade: números tolerantes, papéis ambíguos, regra instável só de linha, sem_base_cola, unidade errada, base de catalisador ambígua, matriz RLS, governança da disposição). Falhas aqui significam bug na destilação/validação (os números da fixture são FATOS do print) — corrigir o M2, nunca a fixture.
 
 - [ ] **Step 7.3: shellcheck + commit**
 

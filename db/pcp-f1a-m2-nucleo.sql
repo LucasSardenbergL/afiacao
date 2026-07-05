@@ -160,23 +160,30 @@ SELECT CASE
   WHEN upper(coalesce(p_descricao,'')) ~ '^(ROLO|JUMBO)\s'                      THEN 'abrasivo_base'
   WHEN upper(coalesce(p_descricao,'')) ~ 'DESMODUR|CATALISADOR'
     OR coalesce(p_familia,'') ILIKE '%catalisador%'                             THEN 'catalisador'
-  -- FITA antes de cola (painel Codex): "FITA ADESIVA" tem que ser fita, não cola
-  WHEN upper(coalesce(p_descricao,'')) ~ '\mFITA\M'                             THEN 'fita'
+  -- FITA antes de cola (painel Codex): "FITA ADESIVA" tem que ser fita, não cola.
+  -- MYLAR (2768/2769) é a fita de emenda alternativa à Sheldahl (mesma unidade CM, razão ~0,11) — validado nos dados reais.
+  WHEN upper(coalesce(p_descricao,'')) ~ '\mFITA\M|MYLAR'                       THEN 'fita'
   WHEN upper(coalesce(p_descricao,'')) ~ 'A455|ADESIVO|\mCOLA\M'
     OR coalesce(p_familia,'') ILIKE '%cola%' OR coalesce(p_familia,'') ILIKE '%adesivo%' THEN 'cola'
   ELSE 'outro'
 END $$;
 
--- ── 5) Regras destiladas (BOM paramétrica) ─────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.pcp_bom_regras (
+-- ── 5) Regras destiladas (BOM híbrida: fórmula onde os dados sustentam + TABELA onde o ERP é tabelado) ──
+-- largura_mm: 0 = regra de FÓRMULA (vale p/ toda largura da linha); >0 = valor TABELADO p/ essa largura.
+-- A cola do Omie é cadastrada por TABELA (largura → gramas), confirmado pelo founder — não é fórmula.
+-- Abrasivo (área nominal), fita (proporcional) e catalisador (razão) seguem fórmula (largura_mm=0).
+-- DROP+CREATE (não ALTER): tabela 100% derivada (fn_pcp_destilar_bom recria); a PK mudou (ganhou largura_mm).
+DROP TABLE IF EXISTS public.pcp_bom_regras CASCADE;
+CREATE TABLE public.pcp_bom_regras (
   linha_modelo text NOT NULL,   -- '*' = regra global (fallback p/ linha com poucas amostras)
   papel  text NOT NULL CHECK (papel IN ('abrasivo_base','cola','catalisador','fita')),
-  metodo text NOT NULL CHECK (metodo IN ('area_nominal','g_por_mm_largura','razao_sobre_cola','cm_overlap_largura')),
+  largura_mm int NOT NULL DEFAULT 0,  -- 0 = fórmula; >0 = valor tabelado p/ essa largura
+  metodo text NOT NULL CHECK (metodo IN ('area_nominal','g_por_mm_largura','razao_sobre_cola','cm_por_mm_largura','tabela_largura')),
   coef numeric,
   amostras int NOT NULL,
   dispersao numeric,            -- MAD relativa (mediana de |x-med|/med) — qualidade da regra
   derivado_em timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (linha_modelo, papel)
+  PRIMARY KEY (linha_modelo, papel, largura_mm)
 );
 
 CREATE OR REPLACE FUNCTION public.fn_pcp_destilar_bom()
@@ -189,13 +196,15 @@ BEGIN
   DELETE FROM pcp_bom_regras;
 
   -- Observações: componentes das malhas cujo PAI é cinta/rolo com dimensões parseadas.
+  -- Escopo = CINTAS (a BOM da emenda). Rolos-pai (nível SLITTER rolo→jumbo) usam quantidade simbólica,
+  -- não área nominal da cinta — outro processo, fora da F1A (entra na Fase 1B ao modelar o slitter).
   CREATE TEMP TABLE tmp_obs ON COMMIT DROP AS
   SELECT pai.linha_modelo, pai.omie_codigo_produto AS pai_codigo, pai.largura_mm,
          fn_pcp_papel_componente(c.componente_descricao, c.componente_familia) AS papel,
          c.quantidade, c.unidade
   FROM vw_pcp_malha_componentes c
   JOIN pcp_itens pai ON pai.omie_codigo_produto = c.pai_codigo
-  WHERE pai.tipo_item IN ('cinta','rolo') AND pai.formato_parse = 'dimensional'
+  WHERE pai.tipo_item = 'cinta' AND pai.formato_parse = 'dimensional'
     AND pai.linha_modelo IS NOT NULL AND c.quantidade IS NOT NULL;
 
   -- Guarda (painel Codex): universo vazio NÃO pode zerar as regras boas —
@@ -204,12 +213,11 @@ BEGIN
     RAISE EXCEPTION 'fn_pcp_destilar_bom: universo de observações VAZIO — abortando sem apagar regras (staging/refresh rodaram?)';
   END IF;
 
-  -- Razões observadas por papel (NULL quando não se aplica — nunca inventar).
+  -- Razões observadas p/ papéis de FÓRMULA (fita, catalisador). Cola é TABELADA (INSERT próprio abaixo).
   CREATE TEMP TABLE tmp_ratio ON COMMIT DROP AS
   SELECT o.linha_modelo, o.papel,
     CASE o.papel
-      WHEN 'cola'        THEN CASE WHEN o.unidade = 'G' AND o.largura_mm > 0 THEN o.quantidade / o.largura_mm END
-      WHEN 'fita'        THEN CASE WHEN o.unidade = 'CM' THEN o.quantidade - o.largura_mm / 10.0 END
+      WHEN 'fita'        THEN CASE WHEN o.unidade = 'CM' AND o.largura_mm > 0 THEN o.quantidade / o.largura_mm END
       WHEN 'catalisador' THEN CASE WHEN o.unidade = 'G' AND cola.quantidade > 0 THEN o.quantidade / cola.quantidade END
     END AS ratio
   FROM tmp_obs o
@@ -220,9 +228,9 @@ BEGIN
     FROM tmp_obs o2
     WHERE o2.pai_codigo = o.pai_codigo AND o2.papel = 'cola' AND o2.unidade = 'G'
   ) cola ON o.papel = 'catalisador'
-  WHERE o.papel IN ('cola','fita','catalisador');
+  WHERE o.papel IN ('fita','catalisador');
 
-  -- Regras por linha (só papéis com razão) + abrasivo_base (área nominal, coef 1.0).
+  -- Regras de FÓRMULA por linha (fita/catalisador) + global '*'.
   INSERT INTO pcp_bom_regras (linha_modelo, papel, metodo, coef, amostras, dispersao)
   WITH med AS (
     SELECT linha_modelo, papel,
@@ -241,15 +249,32 @@ BEGIN
   ),
   unida AS (SELECT * FROM med UNION ALL SELECT * FROM glob)
   SELECT u.linha_modelo, u.papel,
-    CASE u.papel WHEN 'cola' THEN 'g_por_mm_largura'
-                 WHEN 'catalisador' THEN 'razao_sobre_cola'
-                 WHEN 'fita' THEN 'cm_overlap_largura' END,
+    CASE u.papel WHEN 'catalisador' THEN 'razao_sobre_cola'
+                 WHEN 'fita' THEN 'cm_por_mm_largura' END,
     u.coef, u.amostras,
     (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(r.ratio - u.coef) / NULLIF(abs(u.coef), 0))
        FROM tmp_ratio r
       WHERE r.papel = u.papel AND r.ratio IS NOT NULL
         AND (u.linha_modelo = '*' OR r.linha_modelo = u.linha_modelo))
   FROM unida u;
+
+  -- Cola: TABELADA por (linha, largura) — valor absoluto (g), NÃO fórmula (confirmado pelo founder).
+  -- coef = mediana das gramas da (linha,largura); dispersão = MAD relativa DENTRO do grupo (robusta a
+  -- outlier: 1 cinta divergente vira excecao contra a mediana; SÓ cadastro sem consenso instabiliza a regra).
+  INSERT INTO pcp_bom_regras (linha_modelo, papel, largura_mm, metodo, coef, amostras, dispersao)
+  WITH cola_med AS (
+    SELECT linha_modelo, largura_mm,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY quantidade) AS med,
+           count(*) AS n
+    FROM tmp_obs WHERE papel = 'cola' AND unidade = 'G' AND largura_mm > 0
+    GROUP BY linha_modelo, largura_mm
+  )
+  SELECT cm.linha_modelo, 'cola', cm.largura_mm, 'tabela_largura', cm.med, cm.n,
+    (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(o.quantidade - cm.med) / NULLIF(cm.med, 0))
+       FROM tmp_obs o
+      WHERE o.linha_modelo = cm.linha_modelo AND o.largura_mm = cm.largura_mm
+        AND o.papel = 'cola' AND o.unidade = 'G')
+  FROM cola_med cm;
 
   INSERT INTO pcp_bom_regras (linha_modelo, papel, metodo, coef, amostras, dispersao)
   SELECT o.linha_modelo, 'abrasivo_base', 'area_nominal', 1.0, count(*), NULL::numeric
@@ -272,7 +297,7 @@ WITH comp AS (
          fn_pcp_papel_componente(c.componente_descricao, c.componente_familia) AS papel
   FROM vw_pcp_malha_componentes c
   JOIN pcp_itens pai ON pai.omie_codigo_produto = c.pai_codigo
-  WHERE pai.tipo_item IN ('cinta','rolo')
+  WHERE pai.tipo_item = 'cinta'   -- escopo F1A = BOM da cinta; rolo→jumbo (slitter) é Fase 1B
 ),
 com_regra AS (
   SELECT comp.*, r.coef, r.metodo, r.dispersao AS regra_dispersao,
@@ -285,9 +310,13 @@ com_regra AS (
       WHERE c2.pai_codigo = comp.pai_codigo AND c2.papel = 'cola' AND c2.unidade = 'G') AS qtd_cola_pai
   FROM comp
   LEFT JOIN LATERAL (
+    -- largura_mm IN (0, largura): 0 = regra de fórmula (fita/catalisador/abrasivo); =largura = tabelada (cola).
+    -- Prefere a regra de LINHA sobre a global, e a TABELADA (largura específica) sobre a de fórmula.
     SELECT coef, metodo, dispersao, linha_modelo FROM pcp_bom_regras r
-    WHERE r.papel = comp.papel AND r.linha_modelo IN (comp.linha_modelo, '*')
-    ORDER BY (r.linha_modelo = comp.linha_modelo) DESC
+    WHERE r.papel = comp.papel
+      AND r.linha_modelo IN (comp.linha_modelo, '*')
+      AND r.largura_mm IN (0, comp.largura_mm)
+    ORDER BY (r.linha_modelo = comp.linha_modelo) DESC, (r.largura_mm = comp.largura_mm) DESC
     LIMIT 1
   ) r ON comp.papel <> 'outro'
 )
@@ -296,9 +325,9 @@ SELECT pai_codigo, pai_descricao, pai_tipo, linha_modelo, largura_mm, compriment
   CASE
     WHEN formato_parse <> 'dimensional' THEN NULL
     WHEN papel = 'abrasivo_base' AND unidade = 'M2' THEN largura_mm::numeric * comprimento_mm / 1e6
-    WHEN papel = 'cola'        AND unidade = 'G'  AND metodo = 'g_por_mm_largura'   THEN coef * largura_mm
+    WHEN papel = 'cola'        AND unidade = 'G'  AND metodo = 'tabela_largura'     THEN coef
     WHEN papel = 'catalisador' AND unidade = 'G'  AND metodo = 'razao_sobre_cola'   THEN coef * qtd_cola_pai
-    WHEN papel = 'fita'        AND unidade = 'CM' AND metodo = 'cm_overlap_largura' THEN largura_mm / 10.0 + coef
+    WHEN papel = 'fita'        AND unidade = 'CM' AND metodo = 'cm_por_mm_largura' THEN coef * largura_mm
   END AS esperado,
   CASE WHEN papel = 'abrasivo_base'
        THEN coalesce((SELECT (value)::numeric FROM pcp_config WHERE key = 'tolerancia_abrasivo'), 0.005)
@@ -326,14 +355,14 @@ SELECT pai_codigo, pai_descricao, pai_tipo, linha_modelo, largura_mm, compriment
     WHEN quantidade IS NULL THEN 'sem_quantidade'
     WHEN abs(quantidade - (CASE
         WHEN papel = 'abrasivo_base' THEN largura_mm::numeric * comprimento_mm / 1e6
-        WHEN papel = 'cola' THEN coef * largura_mm
+        WHEN papel = 'cola' THEN coef
         WHEN papel = 'catalisador' THEN coef * qtd_cola_pai
-        WHEN papel = 'fita' THEN largura_mm / 10.0 + coef END))
+        WHEN papel = 'fita' THEN coef * largura_mm END))
        / NULLIF((CASE
         WHEN papel = 'abrasivo_base' THEN largura_mm::numeric * comprimento_mm / 1e6
-        WHEN papel = 'cola' THEN coef * largura_mm
+        WHEN papel = 'cola' THEN coef
         WHEN papel = 'catalisador' THEN coef * qtd_cola_pai
-        WHEN papel = 'fita' THEN largura_mm / 10.0 + coef END), 0)
+        WHEN papel = 'fita' THEN coef * largura_mm END), 0)
       <= (CASE WHEN papel = 'abrasivo_base'
            THEN coalesce((SELECT (value)::numeric FROM pcp_config WHERE key = 'tolerancia_abrasivo'), 0.005)
            ELSE coalesce((SELECT (value)::numeric FROM pcp_config WHERE key = 'tolerancia_insumo'), 0.05) END)

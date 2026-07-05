@@ -27,6 +27,9 @@ function supabaseForUser(ctx) {
     auth: { persistSession: false, autoRefreshToken: false }
   });
 }
+function sanitizeOrTerm(input) {
+  return input.replace(/[%_,()\\"*]/g, "");
+}
 var search_customers_default = defineTool2({
   name: "search_customers",
   title: "Search customers",
@@ -39,11 +42,13 @@ var search_customers_default = defineTool2({
     if (!ctx.isAuthenticated()) {
       return { content: [{ type: "text", text: "Not authenticated" }], isError: true };
     }
+    const safe = sanitizeOrTerm(query);
+    if (!safe) {
+      return { content: [{ type: "text", text: "[]" }], structuredContent: { results: [] } };
+    }
     const sb = supabaseForUser(ctx);
-    const like = `%${query}%`;
-    const { data, error } = await sb.from("profiles").select("user_id, name, document, phone, email, customer_type").or(
-      `name.ilike.${like},document.ilike.${like},email.ilike.${like},phone.ilike.${like}`
-    ).limit(20);
+    const predicado = ["name", "document", "email", "phone"].map((c) => `${c}.ilike.%${safe}%`).join(",");
+    const { data, error } = await sb.from("profiles").select("user_id, name, document, phone, email, customer_type").or(predicado).limit(20);
     if (error) {
       return { content: [{ type: "text", text: error.message }], isError: true };
     }
