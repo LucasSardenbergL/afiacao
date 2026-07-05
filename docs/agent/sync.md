@@ -12,7 +12,7 @@
 - `cron.schedule(nome, schedule, comando)` faz **upsert por nome** → idempotente.
 - **Todo cron `net.http_post` PRECISA de `timeout_milliseconds` explícito** — o default do `pg_net` é **5s** e mata SILENCIOSAMENTE qualquer função >5s (o `job_run_details` ainda diz "succeeded"). Teto padrão da casa: **150000** (150s).
 - **Crons devem ser versionados em migration** — um cron que vive só no banco some sem rastro (já aconteceu: vendas ficou 8 dias morto porque o cron nunca foi versionado).
-- ⚠️ **O safety-net `20260527230000_cron_baseline.sql` está STALE** (46 statements no repo vs **75** crons ativos em prod, 2026-07-04) → regen pendente, com dono/gatilho/procedimento na **issue #1178**. NÃO editar os statements à mão: rodar o generator de prod (`string_agg` de `cron.job WHERE active`) + **PR SEPARADO que MERGEIA**. Re-aplicar troca o jobid → só sob demanda.
+- 🔄 **Mantenha fresco o safety-net `20260527230000_cron_baseline.sql`** — versiona TODOS os crons ativos (**regenerado 2026-07-04, 45→75**; ficou stale ~5 semanas). Quando a topologia mudar, **regenere** (NÃO edite à mão — o guard de migração bloqueia Edit/Write): o header traz o generator (`string_agg` de `cron.job WHERE active` com `regexp_replace(command,'\s+',' ')` → 1 statement/linha) → substitui o corpo (header intacto) → `wt:preflight` + `audit:migrations` → **PR que MERGEIA** (baseline não-mergeado não vale como safety-net). Apply só pra DR (troca o jobid → sob demanda). Histórico da dívida: #1178.
 
 ## Enumeração pesada do Omie (paginação)
 

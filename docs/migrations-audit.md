@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **333** custom migrations totais
-- **1161** objetos esperados (criados por estas migrations)
+- **335** custom migrations totais
+- **1203** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 334
-  - `rls_policy`: 261
-  - `index`: 202
-  - `table`: 127
-  - `cron_job`: 114
-  - `trigger`: 64
+  - `function`: 337
+  - `rls_policy`: 263
+  - `index`: 204
+  - `cron_job`: 144
+  - `table`: 130
+  - `trigger`: 66
   - `view`: 55
   - `enum_value`: 4
 
@@ -952,16 +952,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.afiacao_ciclo_oportunidade_diario` | — |
-| `cron_job` | `cron.afiacao_dispatch_notificacoes_diario` | — |
+| `cron_job` | `cron.afiacao_dispatch_notificacoes_30min` | — |
 | `cron_job` | `cron.afiacao_estados_eventos_diarios` | — |
 | `cron_job` | `cron.afiacao_limpeza_sugestoes_mensal` | — |
 | `cron_job` | `cron.afiacao_omie_oben_sku_items_history_daily` | — |
 | `cron_job` | `cron.afiacao_omie_oben_sync_incremental_2h` | — |
+| `cron_job` | `cron.afiacao_oportunidade_badge_refresh_2h` | — |
 | `cron_job` | `cron.afiacao_ranking_refresh_semanal` | — |
-| `cron_job` | `cron.afiacao_sugestoes_diarias` | — |
+| `cron_job` | `cron.afiacao-os-sync` | — |
+| `cron_job` | `cron.caca-custo-producao-colacor-daily` | — |
 | `cron_job` | `cron.call-log-missed-backstop` | — |
 | `cron_job` | `cron.carteira-positivacao-snapshot-mensal` | — |
 | `cron_job` | `cron.carteira-rebuild-nightly` | — |
+| `cron_job` | `cron.classificar-fornecedores-nightly` | — |
+| `cron_job` | `cron.cmc-snapshot-backfill-mensal` | — |
 | `cron_job` | `cron.compute-association-rules-daily` | — |
 | `cron_job` | `cron.compute-costs-daily` | — |
 | `cron_job` | `cron.daily-calculate-scores` | — |
@@ -977,25 +981,51 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.fin-sync-cr-2x` | — |
 | `cron_job` | `cron.fin-sync-heartbeat` | — |
 | `cron_job` | `cron.fin-sync-mov-2x` | — |
+| `cron_job` | `cron.fin-sync-retry-kicks` | — |
 | `cron_job` | `cron.fin-sync-watchdog` | — |
 | `cron_job` | `cron.gerar-pedidos-diario-oben` | — |
+| `cron_job` | `cron.gerar-pedidos-intraday-oben` | — |
 | `cron_job` | `cron.monthly-tool-report` | — |
+| `cron_job` | `cron.nao-vinculados-refresh-diario` | — |
 | `cron_job` | `cron.omie-sync-estoque-diario` | — |
+| `cron_job` | `cron.omie-sync-estoque-intraday-oben` | — |
 | `cron_job` | `cron.omie-sync-metadados-daily` | — |
 | `cron_job` | `cron.omie-sync-status-produtos-diario` | — |
+| `cron_job` | `cron.pedidos-programados-diario` | — |
+| `cron_job` | `cron.pedidos-programados-watchdog` | — |
 | `cron_job` | `cron.process-recurring-orders-daily` | — |
+| `cron_job` | `cron.purge-cron-job-run-details` | — |
+| `cron_job` | `cron.push-sla-tick` | — |
+| `cron_job` | `cron.reposicao-alerta-pedido-minimo` | — |
+| `cron_job` | `cron.reposicao-classificar-sayerlack-grupo` | — |
+| `cron_job` | `cron.reposicao-cold-start-parametros` | — |
+| `cron_job` | `cron.reposicao-depara-sayerlack-auto-diario` | — |
+| `cron_job` | `cron.reposicao-param-auto-resumo` | — |
+| `cron_job` | `cron.reposicao-param-limbo-watchdog` | — |
+| `cron_job` | `cron.reposicao-preencher-parametros-faltantes` | — |
+| `cron_job` | `cron.reposicao-refresh-descricao-diario` | — |
 | `cron_job` | `cron.sayerlack-portal-watchdog` | — |
+| `cron_job` | `cron.sayerlack-retry-orfaos` | — |
 | `cron_job` | `cron.scoring-recalc-batch-nightly` | — |
 | `cron_job` | `cron.sync-colacor-vendas-products` | — |
+| `cron_job` | `cron.sync-customers-vendas-daily` | — |
+| `cron_job` | `cron.sync-inventory-colacor-vendas-1h` | — |
+| `cron_job` | `cron.sync-inventory-servicos-1h` | — |
 | `cron_job` | `cron.sync-inventory-vendas-30m` | — |
 | `cron_job` | `cron.sync-omie-services-hourly` | — |
 | `cron_job` | `cron.sync-products-customers-daily` | — |
 | `cron_job` | `cron.sync-reprocess-operational` | — |
 | `cron_job` | `cron.sync-reprocess-strategic` | — |
+| `cron_job` | `cron.tarefas-escalonamento-diario` | — |
+| `cron_job` | `cron.tarefas-matcher-15min` | — |
+| `cron_job` | `cron.tarefas-materializar-recorrentes` | — |
+| `cron_job` | `cron.tint-marcar-bases-diario` | — |
+| `cron_job` | `cron.vendas-sync-continuacao-6min` | — |
 | `cron_job` | `cron.vendas-sync-pedidos-colacor-2h` | — |
 | `cron_job` | `cron.vendas-sync-pedidos-oben-2h` | — |
 | `cron_job` | `cron.visit-score-recalc-batch-nightly` | — |
 | `cron_job` | `cron.weekly-algorithm-a-audit` | — |
+| `cron_job` | `cron.whatsapp-sla-digest-diario` | — |
 
 ### `20260527235000_dispatch_notifications_frequente.sql`
 
@@ -2823,11 +2853,33 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.fin_sync_lease_select_staff` | `fin_sync_lease` |
 | `rls_policy` | `public.fin_sync_lease_service_all` | `fin_sync_lease` |
 
+### `20260704160000_fin_dividas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_dividas_forca_autor` | — |
+| `function` | `public.fin_divida_completude_forca_autor` | — |
+| `table` | `public.fin_dividas` | — |
+| `table` | `public.fin_divida_parcelas` | — |
+| `table` | `public.fin_divida_completude` | — |
+| `index` | `public.idx_fin_divida_parcelas_venc` | `fin_divida_parcelas` |
+| `index` | `public.idx_fin_divida_parcelas_naopago` | `fin_divida_parcelas` |
+| `trigger` | `public.trg_fin_dividas_autor` | `fin_dividas` |
+| `trigger` | `public.trg_fin_divida_completude_autor` | `fin_divida_completude` |
+| `rls_policy` | `public.%I_select_master` | `public` |
+| `rls_policy` | `public.%I_write_master` | `public` |
+
 ### `20260704160000_fin_sync_watchdog_retry_sem_efeito.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.fin_sync_watchdog_check` | — |
+
+### `20260704160500_fin_divida_replace_parcelas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_divida_replace_parcelas` | — |
 
 ## Próximos passos por status
 
