@@ -7,7 +7,7 @@ import { auth, defineMcp } from "npm:@lovable.dev/mcp-js@0.20.0";
 
 // src/lib/mcp/tools/echo.ts
 import { defineTool } from "npm:@lovable.dev/mcp-js@0.20.0";
-import { z } from "npm:zod@^3.23.8";
+import { z } from "npm:zod@3.23.8";
 var echo_default = defineTool({
   name: "echo",
   title: "Echo",
@@ -20,7 +20,7 @@ var echo_default = defineTool({
 // src/lib/mcp/tools/search-customers.ts
 import { createClient } from "npm:@supabase/supabase-js@^2.95.3";
 import { defineTool as defineTool2 } from "npm:@lovable.dev/mcp-js@0.20.0";
-import { z as z2 } from "npm:zod@^3.23.8";
+import { z as z2 } from "npm:zod@3.23.8";
 function supabaseForUser(ctx) {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_PUBLISHABLE_KEY, {
     global: { headers: { Authorization: `Bearer ${ctx.getToken()}` } },
