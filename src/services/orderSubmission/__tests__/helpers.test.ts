@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { missingAccountIdentities } from '../helpers';
+import {
+  missingAccountIdentities,
+  isValidOmieClientCode,
+  omieAccountIdentityMissingMessage,
+} from '../helpers';
 
 describe('missingAccountIdentities (preflight fail-closed)', () => {
   it('todas as contas com itens têm código → vazio', () => {
@@ -57,5 +61,41 @@ describe('missingAccountIdentities (preflight fail-closed)', () => {
       hasOben: true, hasColacor: true, hasAfiacao: true,
       codigoCliente: null, codigoClienteColacor: null, codigoClienteAfiacao: null,
     })).toEqual(['Oben', 'Colacor', 'Afiação']);
+  });
+});
+
+describe('isValidOmieClientCode (código Omie de cliente válido)', () => {
+  it('número finito > 0 → válido', () => {
+    expect(isValidOmieClientCode(1)).toBe(true);
+    expect(isValidOmieClientCode(123456)).toBe(true);
+  });
+
+  it('0 e negativo → inválido (não é código Omie real)', () => {
+    expect(isValidOmieClientCode(0)).toBe(false);
+    expect(isValidOmieClientCode(-5)).toBe(false);
+  });
+
+  it('NaN e Infinity → inválido (money-path: nunca ao Omie)', () => {
+    expect(isValidOmieClientCode(NaN)).toBe(false);
+    expect(isValidOmieClientCode(Infinity)).toBe(false);
+    expect(isValidOmieClientCode(-Infinity)).toBe(false);
+  });
+
+  it('ausente ou tipo errado → inválido (ausente ≠ zero)', () => {
+    expect(isValidOmieClientCode(null)).toBe(false);
+    expect(isValidOmieClientCode(undefined)).toBe(false);
+    expect(isValidOmieClientCode('123')).toBe(false);
+  });
+});
+
+describe('omieAccountIdentityMissingMessage (fail-closed pt-BR por conta)', () => {
+  it('cita o nome da conta conhecida', () => {
+    expect(omieAccountIdentityMissingMessage('colacor')).toContain('Colacor');
+    expect(omieAccountIdentityMissingMessage('oben')).toContain('Oben');
+    expect(omieAccountIdentityMissingMessage('colacor_sc')).toContain('Colacor SC');
+  });
+
+  it('conta desconhecida cai no próprio identificador (não quebra)', () => {
+    expect(omieAccountIdentityMissingMessage('xyz')).toContain('xyz');
   });
 });

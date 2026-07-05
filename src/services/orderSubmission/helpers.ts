@@ -36,6 +36,33 @@ export function missingAccountIdentities(input: AccountIdentityCheck): string[] 
   return missing;
 }
 
+/**
+ * Código Omie de cliente válido: número finito > 0. Mesma primitiva money-path do preflight
+ * `missingAccountIdentities` — 0, negativo, NaN, ±Infinity e ausente são inválidos (ausente ≠
+ * zero; nunca vai ao Omie). Type guard para estreitar o resultado (possivelmente `null`) de um
+ * lookup em `omie_clientes`.
+ */
+export function isValidOmieClientCode(code: unknown): code is number {
+  return typeof code === 'number' && Number.isFinite(code) && code > 0;
+}
+
+const OMIE_ACCOUNT_LABEL: Record<string, string> = {
+  colacor: 'Colacor',
+  oben: 'Oben',
+  colacor_sc: 'Colacor SC',
+};
+
+/**
+ * Mensagem pt-BR de fail-closed quando o cliente não tem identidade Omie na CONTA do pedido.
+ * Cada conta Omie tem código de cliente próprio (`omie_clientes` tem UNIQUE (user_id, empresa_omie));
+ * sem o código da conta certa não dá pra criar o PV sem arriscar o cliente errado. Cita a conta
+ * (label conhecido, ou o próprio identificador como fallback).
+ */
+export function omieAccountIdentityMissingMessage(account: string): string {
+  const label = OMIE_ACCOUNT_LABEL[account] ?? account;
+  return `Cliente não cadastrado no Omie da conta ${label}. Sincronize/cadastre o cliente nessa conta antes de enviar o pedido.`;
+}
+
 export function findParcelaDesc(codigo: string, formas: FormaPagamento[]): string {
   const found = formas.find(f => f.codigo === codigo);
   return found?.descricao || codigo;

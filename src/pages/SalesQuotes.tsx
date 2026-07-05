@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { findInvalidPricedOmieItems, invalidOmieItemPriceMessage } from '@/services/orderSubmission/priceGuard';
+import { isValidOmieClientCode, omieAccountIdentityMissingMessage } from '@/services/orderSubmission/helpers';
 import { cn } from '@/lib/utils';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -101,19 +102,29 @@ const SalesQuotes = () => {
     setInvalidQuoteId(null);
     setConverting(quote.id);
     try {
-      // Get omie_clientes mapping
-      const { data: omieClient } = await supabase
+      // ── Guard money-path: resolver a identidade Omie na CONTA do orçamento ──
+      // omie_clientes tem UNIQUE (user_id, empresa_omie): o mesmo cliente tem código Omie
+      // DIFERENTE por conta e os códigos COLIDEM entre contas. Resolver só por user_id pega o
+      // código de outra conta (ex.: colacor) e o manda para a conta do orçamento (ex.: oben) →
+      // PV no cliente/vendedor ERRADO. Resolve por (user_id, empresa_omie = account) e é
+      // FAIL-CLOSED: sem identidade na conta certa, aborta ANTES de mudar o status e de chamar o
+      // edge — melhor não converter que registrar no cliente errado (precisão > recall).
+      const account = quote.account || 'oben';
+      const { data: omieClient, error: omieClientError } = await supabase
         .from('omie_clientes')
         .select('omie_codigo_cliente, omie_codigo_vendedor')
         .eq('user_id', quote.customer_user_id)
+        .eq('empresa_omie', account)
         .maybeSingle();
 
-      if (!omieClient?.omie_codigo_cliente) {
-        toast.error('Cliente não encontrado no Omie. Verifique o cadastro.');
+      if (omieClientError) {
+        toast.error(`Erro ao verificar o cliente no Omie da conta ${account}. Tente novamente.`);
         return;
       }
-
-      const account = quote.account || 'oben';
+      if (!omieClient || !isValidOmieClientCode(omieClient.omie_codigo_cliente)) {
+        toast.error(omieAccountIdentityMissingMessage(account));
+        return;
+      }
 
       // Update status to rascunho
       const { error: updateError } = await supabase
