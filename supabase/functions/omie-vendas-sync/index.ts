@@ -1692,6 +1692,14 @@ async function deriveOmieAccountIdentity(
     const omieMatches = await buscarClienteVendasMatches(doc, account);
     decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows, omieMatches });
   }
+  // Codex round-2 [P1]: sem advisory (ex.: conversão de orçamento) NÃO há rede de divergência p/ pegar um
+  // ESPELHO DESATUALIZADO (o código Omie do cliente mudou). Confirma o espelho contra o Omie — re-decide
+  // com o Omie autoritativo e o código do espelho como advisory: divergência/ausência/ambiguidade cai no
+  // throw abaixo (fail-closed). Custo: 1 chamada Omie só no caminho SEM código (orçamento), infrequente.
+  if (decision.ok && decision.source === "mirror" && suppliedCodigo === null) {
+    const omieMatches = await buscarClienteVendasMatches(doc, account);
+    decision = decideAccountIdentity({ account, suppliedCodigo: decision.codigo_cliente, mirrorRows: [], omieMatches });
+  }
   if (!decision.ok) {
     const reason = "reason" in decision ? decision.reason : "unknown";
     throw new Error(`Pedido rejeitado: identidade Omie do cliente na conta ${account} não pôde ser provada (${reason}) — envio bloqueado para não registrar no cliente errado.`);

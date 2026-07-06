@@ -289,9 +289,17 @@ async function processarEnvio(
         }
       }
       if (!salesOrderId) {
+        // P0-B: persiste customer_document (âncora PRIMÁRIA da derivação no edge). Cobre o caso
+        // customer_user_id === created_by (admin agendando p/ si), em que o gate do fallback por user é
+        // pulado no edge; e torna a âncora explícita p/ todo pedido programado (não depende do fallback).
+        const { data: docRow } = cfg.customer_user_id
+          ? await supabase.from("profiles").select("document").eq("user_id", cfg.customer_user_id).maybeSingle()
+          : { data: null };
+        const custDoc = (docRow?.document as string | null | undefined) || null;
         const { data: so, error: soErr } = await supabase.from("sales_orders").insert({
           customer_user_id: cfg.customer_user_id,
           created_by: pedido.created_by,
+          customer_document: custDoc,
           items: orderItems,
           subtotal: total,
           discount: 0,
