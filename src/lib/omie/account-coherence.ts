@@ -10,9 +10,10 @@ export function codeBelongsToWrongAccount(
   code: number,
   account: string,
 ): boolean {
-  if (!Number.isFinite(code) || code <= 0) return false;
-  const matchesTarget = rows.some((r) => Number(r.omie_codigo_cliente) === code && r.empresa_omie === account);
+  if (!Number.isSafeInteger(code) || code <= 0) return false;
+  const eq = (a: number): boolean => String(a) === String(code); // bigint-safe: string decimal canonica (Number colapsa >= 2^53)
+  const matchesTarget = rows.some((r) => eq(r.omie_codigo_cliente) && r.empresa_omie === account);
   if (matchesTarget) return false;
-  return rows.some((r) => Number(r.omie_codigo_cliente) === code && r.empresa_omie !== account);
+  return rows.some((r) => eq(r.omie_codigo_cliente) && r.empresa_omie !== account);
 }
 // MIRROR-END

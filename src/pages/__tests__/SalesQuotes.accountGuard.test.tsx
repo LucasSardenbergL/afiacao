@@ -3,12 +3,12 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Guard money-path (P0-A): a conversão orçamento→pedido (SalesQuotes.convertToOrder) resolve o
-// código Omie do cliente na tabela `omie_clientes`, que tem UNIQUE (user_id, empresa_omie) — o
-// MESMO cliente pode ter código DIFERENTE por conta. Resolver só por `user_id` manda o código de
-// uma conta para outra (PV no cliente/vendedor errado; os códigos colidem entre contas). O fix
-// resolve por (user_id, empresa_omie = account do orçamento) e é FAIL-CLOSED: sem identidade na
-// conta certa, NÃO envia e NÃO muda o status (nada de orçamento órfão). Estes testes provam isso.
+// Money-path (P0-B): a conversão orçamento→pedido (SalesQuotes.convertToOrder) NÃO resolve mais o
+// código Omie no cliente — a identidade AUTORITATIVA é derivada na FRONTEIRA (edge criar_pedido) a
+// partir do documento do pedido. convertToOrder manda só sales_order_id + account + items (sem
+// código), awaita o edge, e só marca 'rascunho' no SUCESSO (fail-closed do edge deixa o orçamento
+// intacto). Isso DESTRAVA a conversão OBEN (o espelho omie_clientes tem 0 linhas oben, que antes
+// fail-closava toda conversão oben). Estes testes provam o novo contrato.
 
 interface FakeOmieRow {
   user_id: string;
@@ -18,7 +18,8 @@ interface FakeOmieRow {
 }
 
 const h = vi.hoisted(() => ({
-  invoke: vi.fn(() => Promise.resolve({ data: { success: true }, error: null })),
+  invoke: vi.fn((): Promise<{ data: unknown; error: { message: string } | null }> =>
+    Promise.resolve({ data: { success: true }, error: null })),
   updateSalesOrder: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -111,44 +112,42 @@ beforeEach(() => {
   h.omieClientes = [];
 });
 
-describe('SalesQuotes — guard de conta (empresa_omie) na conversão de orçamento (P0-A money-path)', () => {
-  it('NÃO envia ao Omie quando o cliente não tem identidade na conta do orçamento (fail-closed)', async () => {
+describe('SalesQuotes — conversão de orçamento deriva a identidade na FRONTEIRA (edge), P0-B money-path', () => {
+  it('destrava OBEN: envia ao edge SEM codigo_cliente (o edge deriva do documento) e marca rascunho no sucesso', async () => {
     h.quotes = [makeQuote('oben')];
-    // Só existe identidade na conta colacor; o orçamento é oben → não há código oben legítimo.
-    h.omieClientes = [{ user_id: 'c1', empresa_omie: 'colacor', omie_codigo_cliente: 111, omie_codigo_vendedor: 9 }];
+    // Espelho SEM linha oben (0 hoje) — antes isto fail-closava TODA conversão oben. Agora o edge deriva.
+    renderPage();
+    await clickEnviar();
+    await waitFor(() => expect(h.invoke).toHaveBeenCalled());
+    const body = (h.invoke.mock.calls[0] as unknown as [string, { body: Record<string, unknown> }])[1].body;
+    expect(body.action).toBe('criar_pedido');
+    expect(body.account).toBe('oben');
+    expect(body.sales_order_id).toBe('q1');
+    // NÃO manda código: a identidade autoritativa é derivada no edge (não confia no espelho parcial).
+    expect(body.codigo_cliente).toBeUndefined();
+    expect(body.codigo_vendedor).toBeUndefined();
+    // Sucesso do edge → marca 'rascunho' + toast de sucesso.
+    await waitFor(() => expect(h.updateSalesOrder).toHaveBeenCalledWith({ status: 'rascunho' }));
+    expect(h.toastSuccess).toHaveBeenCalled();
+  }, 15000);
+
+  it('edge fail-closed (identidade não provada) → toast de erro e NÃO marca rascunho (sem status órfão)', async () => {
+    h.quotes = [makeQuote('oben')];
+    h.invoke.mockResolvedValueOnce({ data: null, error: { message: 'identidade não provada' } });
     renderPage();
     await clickEnviar();
     await waitFor(() => expect(h.toastError).toHaveBeenCalled());
-    expect(h.invoke).not.toHaveBeenCalled();
-    // Status NÃO pode virar rascunho: nada de orçamento órfão quando abortamos por identidade.
+    // Orçamento intacto p/ retry: a falha do edge não pode deixar o status órfão em 'rascunho'.
     expect(h.updateSalesOrder).not.toHaveBeenCalled();
   }, 15000);
 
-  it('envia o código da CONTA DO ORÇAMENTO, nunca o de outra conta', async () => {
-    h.quotes = [makeQuote('oben')];
-    // Mesmo cliente com código diferente por conta: colacor=111, oben=222. Deve ir 222 (oben).
-    h.omieClientes = [
-      { user_id: 'c1', empresa_omie: 'colacor', omie_codigo_cliente: 111, omie_codigo_vendedor: 9 },
-      { user_id: 'c1', empresa_omie: 'oben', omie_codigo_cliente: 222, omie_codigo_vendedor: 8 },
-    ];
-    renderPage();
-    await clickEnviar();
-    await waitFor(() => expect(h.invoke).toHaveBeenCalled());
-    const body = (h.invoke.mock.calls[0] as unknown as [string, { body: Record<string, unknown> }])[1].body;
-    expect(body.account).toBe('oben');
-    expect(body.codigo_cliente).toBe(222);
-    expect(body.codigo_vendedor).toBe(8);
-    expect(h.toastError).not.toHaveBeenCalled();
-  }, 15000);
-
-  it('converte normalmente quando a identidade da conta existe (colacor)', async () => {
+  it('edge bloqueou por crédito → aviso e NÃO marca rascunho (não foi criado PV)', async () => {
     h.quotes = [makeQuote('colacor')];
-    h.omieClientes = [{ user_id: 'c1', empresa_omie: 'colacor', omie_codigo_cliente: 111, omie_codigo_vendedor: 9 }];
+    h.invoke.mockResolvedValueOnce({ data: { blocked: 'credito' }, error: null });
     renderPage();
     await clickEnviar();
     await waitFor(() => expect(h.invoke).toHaveBeenCalled());
-    const body = (h.invoke.mock.calls[0] as unknown as [string, { body: Record<string, unknown> }])[1].body;
-    expect(body.codigo_cliente).toBe(111);
-    expect(h.toastError).not.toHaveBeenCalled();
+    expect(h.updateSalesOrder).not.toHaveBeenCalled();
+    expect(h.toastSuccess).not.toHaveBeenCalled();
   }, 15000);
 });
