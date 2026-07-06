@@ -132,6 +132,25 @@ eq "não-staff NÃO vê custo (INVOKER, id literal) [F]" "$(Pq -c "SET ROLE auth
 NS=$(P -tA -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000bbbb'; SELECT fn_pcp_cadastrar_rota('X',150,50,'[]'::jsonb);" 2>&1 || true)
 case "$NS" in *"apenas staff"*) ok "não-staff barrado no cadastro";; *) bad "não-staff NÃO barrado: $NS";; esac
 
+echo "═══ ZONA 10: test-gaps fechados pelo painel PR (DELETE, UPDATE origem+destino, grants, guard) ═══"
+# DELETE de saída dispara o trigger AFTER DELETE (NEW=NULL) — não quebra 'record NEW not assigned', barra por invariante
+ERR=$(P -tA -c "BEGIN; DELETE FROM pcp_bom_rota_saidas WHERE rota_id=(SELECT id FROM pcp_bom_rotas WHERE linha_modelo='2909' AND esquema='padrao'); COMMIT;" 2>&1 || true)
+case "$ERR" in *"principal"*) ok "DELETE de saída: trigger roda com NEW=NULL e barra (não 'record NEW not assigned')";; *) bad "DELETE trigger: $ERR";; esac
+# UPDATE que move saída entre rotas é barrado. NB: com Σ=base EXATO (fix D), mover quebra a geometria de
+# AMBAS as rotas — então D é o guard primário e o fix A (validar a origem OLD) é defense-in-depth redundante
+# aqui (só seria o único guard se a geometria fosse '<=' em vez de '='). O trigger valida a origem 2909.
+RA=$(Pq -c "SELECT id FROM pcp_bom_rotas WHERE linha_modelo='2909' AND esquema='padrao'")
+RB=$(Pq -c "SELECT id FROM pcp_bom_rotas WHERE linha_modelo='KA169'")
+SA=$(Pq -c "SELECT id FROM pcp_bom_rota_saidas WHERE rota_id=$RA AND papel='principal'")
+ERR=$(P -tA -c "BEGIN; UPDATE pcp_bom_rota_saidas SET rota_id=$RB WHERE id=$SA; COMMIT;" 2>&1 || true)
+case "$ERR" in *"principal"*|*"<> base"*|*"conservado"*) ok "UPDATE move-saída-entre-rotas é barrado (Σ=base + valida origem)";; *) bad "mover saída NÃO barrou: $ERR";; esac
+# auditoria de grants: internas NÃO executáveis por authenticated; expostas sim (cobre derivar-DEFINER-sem-gate + overloads)
+eq "grants: 0 internas (derivar/fracao_default) executáveis por authenticated" "$(Pq -c "SELECT count(*) FROM (VALUES ('fn_pcp_derivar_rotas_simples()'),('fn_pcp_rota_fracao_default(bigint)')) v(sig) WHERE has_function_privilege('authenticated','public.'||v.sig,'EXECUTE')")" "0"
+eq "grants: cadastrar+ratear executáveis por authenticated (2)" "$(Pq -c "SELECT count(*) FROM (VALUES ('fn_pcp_ratear_corte(bigint,numeric)'),('fn_pcp_cadastrar_rota(text,integer,integer,jsonb,text,text)')) v(sig) WHERE has_function_privilege('authenticated','public.'||v.sig,'EXECUTE')")" "2"
+# guard de p_saidas não-array (entrada de domínio, não erro genérico)
+ERR=$(P -tA -c "${STAFF} SELECT fn_pcp_cadastrar_rota('Y',150,50,'{}'::jsonb);" 2>&1 || true)
+case "$ERR" in *"array jsonb"*) ok "p_saidas não-array => erro de domínio";; *) bad "p_saidas guard: $ERR";; esac
+
 echo ""
 echo "RESULTADO: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

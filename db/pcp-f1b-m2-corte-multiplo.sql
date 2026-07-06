@@ -79,12 +79,12 @@ LANGUAGE plpgsql SET search_path = public AS $$
 DECLARE
   v_rotas bigint[] := ARRAY(SELECT DISTINCT x FROM unnest(ARRAY[NEW.rota_id, OLD.rota_id]) x WHERE x IS NOT NULL);
   v_rota bigint;
-  v_base int; v_alvo int; v_area int; v_frac numeric; v_princ int;
+  v_base int; v_alvo int; v_area bigint; v_frac numeric; v_princ int;
 BEGIN
   FOREACH v_rota IN ARRAY v_rotas LOOP
     SELECT largura_base_mm, largura_alvo_mm INTO v_base, v_alvo FROM pcp_bom_rotas WHERE id = v_rota;
     IF v_base IS NULL THEN CONTINUE; END IF;                   -- rota apagada (cascade)
-    SELECT COALESCE(sum(largura_saida_mm * quantidade), 0),
+    SELECT COALESCE(sum(largura_saida_mm::bigint * quantidade), 0),   -- ::bigint: anti-overflow (Codex)
            COALESCE(sum(fracao_rateio) FILTER (WHERE papel <> 'perda'), 0),
            COALESCE(count(*) FILTER (WHERE papel = 'principal' AND largura_saida_mm = v_alvo), 0)
       INTO v_area, v_frac, v_princ
@@ -135,7 +135,9 @@ BEGIN
   RETURN QUERY
   WITH boas AS (
     SELECT s.largura_saida_mm AS w, s.papel AS pp, s.quantidade AS q, s.fracao_rateio AS f,
-           row_number() OVER (ORDER BY s.largura_saida_mm * s.quantidade DESC, s.largura_saida_mm DESC) AS rn
+           -- resíduo do arredondamento vai na MAIOR boa; desempate ESTÁVEL (papel, id) => determinístico (Codex)
+           row_number() OVER (ORDER BY s.largura_saida_mm::bigint * s.quantidade DESC, s.largura_saida_mm DESC,
+                                       (s.papel='principal') DESC, s.id) AS rn
       FROM pcp_bom_rota_saidas s WHERE s.rota_id = p_rota_id AND s.papel <> 'perda'
   ),
   tot AS (SELECT sum(f) AS sf FROM boas),
@@ -163,6 +165,9 @@ DECLARE
 BEGIN
   IF v_uid IS NULL OR NOT (has_role(v_uid,'master'::app_role) OR has_role(v_uid,'employee'::app_role)) THEN
     RAISE EXCEPTION 'fn_pcp_cadastrar_rota: apenas staff';
+  END IF;
+  IF p_saidas IS NULL OR jsonb_typeof(p_saidas) <> 'array' THEN     -- entrada de domínio, não erro genérico (Codex)
+    RAISE EXCEPTION 'fn_pcp_cadastrar_rota: p_saidas deve ser um array jsonb';
   END IF;
   v_n    := jsonb_array_length(p_saidas);
   v_expl := (SELECT count(*) FROM jsonb_array_elements(p_saidas) e
