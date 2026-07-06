@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { OPEN_TITLE_STATUSES } from '@/lib/financeiro/titulo-status';
 import {
-  isOpenTitleStatus,
-  isOpenNotOverdueTitleStatus,
-  OPEN_TITLE_STATUSES,
-} from '@/lib/financeiro/titulo-status';
-import { concentracaoEmpresa, classificarFonte } from '@/lib/financeiro/concentracao-helpers';
+  concentracaoEmpresa,
+  classificarFonte,
+  isOverdueTitleStatus,
+} from '@/lib/financeiro/concentracao-helpers';
 import type { Company, ConcentracaoResult, TituloAberto } from '@/lib/financeiro/concentracao-types';
 
 const LIMIT = 5000;
@@ -49,9 +49,9 @@ export function useConcentracaoRecebiveis() {
         porEmpresa[co].push({
           omie_codigo_cliente: row.omie_codigo_cliente,
           saldo: Number(row.saldo), // null/''→0/NaN → cai como INVÁLIDA no helper (não some)
-          // vencido = aberto E não "a vencer" (ATRASADO/VENCIDO), pelos helpers canônicos.
-          atrasado:
-            isOpenTitleStatus(row.status_titulo) && !isOpenNotOverdueTitleStatus(row.status_titulo),
+          // vencido por lista POSITIVA (ATRASADO/VENCIDO), não por complemento — 'PARCIAL' é
+          // aberto mas não necessariamente vencido; complemento inflaria o vencido (Codex).
+          atrasado: isOverdueTitleStatus(row.status_titulo),
         });
       }
 

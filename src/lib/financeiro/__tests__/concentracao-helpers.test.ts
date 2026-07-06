@@ -4,6 +4,7 @@ import {
   c50,
   hhi,
   classificarFonte,
+  isOverdueTitleStatus,
   PISO_MODERADO,
   PISO_ALTO,
 } from '../concentracao-helpers';
@@ -39,6 +40,8 @@ describe('concentracaoEmpresa — gates de fonte (P0-1: empty ≠ zero)', () => 
     const r = concentracaoEmpresa([], 'parcial');
     expect(r.motivo).toBe('fonte_parcial');
     expect(r.totalAberto).toBeNull();
+    expect(r.maiorExposicao).toBeNull(); // UI não pode fabricar R$0 (Codex P1)
+    expect(r.topN).toEqual([]);
   });
 });
 
@@ -147,6 +150,23 @@ describe('classificarFonte — leitura incompleta ≠ zero (P0-1 na camada de re
     expect(classificarFonte({ error: false, rowsRetornadas: 1000, countTotal: 1500, limit: 5000 })).toBe('parcial'));
   it('bateu o limite pedido sem count → parcial (defensivo)', () =>
     expect(classificarFonte({ error: false, rowsRetornadas: 5000, countTotal: null, limit: 5000 })).toBe('parcial'));
+  it('sem count + bateu o cap padrão (1000) → parcial (fail-closed, Codex P1)', () =>
+    expect(classificarFonte({ error: false, rowsRetornadas: 1000, countTotal: null, limit: 5000 })).toBe('parcial'));
   it('leitura completa → ok', () =>
     expect(classificarFonte({ error: false, rowsRetornadas: 782, countTotal: 782, limit: 5000 })).toBe('ok'));
+});
+
+describe('isOverdueTitleStatus — vencido por lista positiva (não complemento, Codex P1)', () => {
+  it('ATRASADO / VENCIDO → true', () => {
+    expect(isOverdueTitleStatus('ATRASADO')).toBe(true);
+    expect(isOverdueTitleStatus('VENCIDO')).toBe(true);
+  });
+  it('PARCIAL → false (aberto, mas não prova de vencido)', () =>
+    expect(isOverdueTitleStatus('PARCIAL')).toBe(false));
+  it('A VENCER / VENCE HOJE / ABERTO / null → false', () => {
+    expect(isOverdueTitleStatus('A VENCER')).toBe(false);
+    expect(isOverdueTitleStatus('VENCE HOJE')).toBe(false);
+    expect(isOverdueTitleStatus('ABERTO')).toBe(false);
+    expect(isOverdueTitleStatus(null)).toBe(false);
+  });
 });

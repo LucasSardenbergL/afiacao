@@ -67,6 +67,23 @@ function EmpresaCard({ company, r }: { company: Company; r: ConcentracaoResult }
     );
   }
 
+  // fonte_parcial SEM linha válida → não há métrica calculável (nunca fabricar R$0 — Codex P1).
+  if (r.maiorExposicao == null) {
+    return (
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base">{nome}</CardTitle></CardHeader>
+        <CardContent>
+          <EmptyState
+            icon={AlertTriangle}
+            tone="operational"
+            title="Leitura parcial — sem métricas calculáveis"
+            description={`A carteira não pôde ser lida por completo${r.linhasInvalidas > 0 ? ` (${r.linhasInvalidas} linha(s) inválida(s))` : ''}. Não há concentração calculável — isto não é zero.`}
+          />
+        </CardContent>
+      </Card>
+    );
+  }
+
   const imp = r.impactoAbsoluto ? IMPACTO[r.impactoAbsoluto] : null;
   return (
     <Card>
@@ -83,14 +100,14 @@ function EmpresaCard({ company, r }: { company: Company; r: ConcentracaoResult }
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Metric label="Maior exposição" value={fmt(r.maiorExposicao ?? 0)} />
+          <Metric label="Maior exposição" value={r.maiorExposicao == null ? '—' : fmt(r.maiorExposicao)} />
           <Metric label="Top-5" value={pct(r.top5Pct)} />
           <Metric
             label="C50"
             value={r.c50 == null ? '—' : `${r.c50} cliente${r.c50 === 1 ? '' : 's'}`}
             hint="somam 50% da carteira"
           />
-          <Metric label="Carteira aberta" value={fmt(r.totalAberto ?? 0)} />
+          <Metric label="Carteira aberta" value={r.totalAberto == null ? '—' : fmt(r.totalAberto)} />
         </div>
 
         {r.topN.length > 0 && (

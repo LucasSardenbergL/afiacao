@@ -17,6 +17,17 @@ import type {
 export const PISO_MODERADO = 25000;
 export const PISO_ALTO = 75000;
 
+/** Cap padrão do PostgREST (CLAUDE.md: capa em 1.000 linhas silencioso). */
+const CAP_POSTGREST = 1000;
+
+/** Títulos VENCIDOS (coluna "vencido" da concentração). Lista POSITIVA — NÃO derivar por
+ *  complemento de "não-vencido": 'PARCIAL' é aberto mas não necessariamente vencido, e
+ *  classificá-lo por complemento inflaria a coluna vencido (achado Codex no código). */
+const OVERDUE_STATUSES = new Set(['ATRASADO', 'VENCIDO']);
+export function isOverdueTitleStatus(status: string | null | undefined): boolean {
+  return status != null && OVERDUE_STATUSES.has(status);
+}
+
 /** menor nº de códigos (share desc) cujo acumulado atinge ≥ 50% da carteira. */
 export function c50(sharesDesc: number[]): number {
   let acc = 0;
@@ -46,6 +57,8 @@ export function classificarFonte(p: {
   if (p.error) return 'indisponivel';
   if (p.countTotal != null && p.countTotal > p.rowsRetornadas) return 'parcial';
   if (p.rowsRetornadas >= p.limit) return 'parcial';
+  // fail-closed (Codex): sem count E batendo o cap padrão do PostgREST → provável truncagem.
+  if (p.countTotal == null && p.rowsRetornadas >= CAP_POSTGREST) return 'parcial';
   return 'ok';
 }
 

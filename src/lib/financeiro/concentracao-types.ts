@@ -12,7 +12,7 @@ export type FonteStatus = 'ok' | 'indisponivel' | 'parcial';
 export interface TituloAberto {
   omie_codigo_cliente: number | null;
   saldo: number;
-  atrasado: boolean; // status_titulo === 'ATRASADO'
+  atrasado: boolean; // vencido: status_titulo ∈ {ATRASADO, VENCIDO} (lista positiva)
 }
 
 export type MotivoConcentracao =
