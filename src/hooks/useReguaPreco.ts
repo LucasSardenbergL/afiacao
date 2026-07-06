@@ -6,7 +6,7 @@ import { avaliarReguaPreco } from '@/lib/regua-preco/regua-preco-helpers';
 import type { ReguaPrecoResult } from '@/lib/regua-preco/types';
 import {
   dedupeFetchItens, montarInputRegua, chaveFetch,
-  type ReguaCartItem, type FetchDataRegua,
+  type ReguaCartItem, type FetchDataRegua, type PrazoRegua,
 } from '@/lib/regua-preco/regua-preco-ui';
 
 type RpcResult = { data: FetchDataRegua | null; error: unknown };
@@ -19,7 +19,12 @@ const callRpc = (args: { p_customer: string; p_product: string; p_qty: number })
  * client-side (useMemo) a cada mudança de preço, SEM re-buscar (queryKey não tem preço).
  * queryKey inclui o user.id REAL (anti-leak entre usuários no mesmo browser).
  */
-export function useReguaPreco(itens: ReguaCartItem[], customerUserId: string | null, enabled: boolean) {
+export function useReguaPreco(
+  itens: ReguaCartItem[],
+  customerUserId: string | null,
+  enabled: boolean,
+  prazo?: PrazoRegua | null,
+) {
   const { user } = useAuth();
   const fetchItens = useMemo(() => dedupeFetchItens(itens), [itens]);
   const fetchKeysSig = fetchItens.map(chaveFetch).join(',');
@@ -47,10 +52,10 @@ export function useReguaPreco(itens: ReguaCartItem[], customerUserId: string | n
     for (const it of itens) {
       const fd = fetchMap.get(`${it.productId}:${it.qty}`);
       if (!fd) continue;
-      out.set(it.chave, avaliarReguaPreco(montarInputRegua(fd, it.precoAtual)));
+      out.set(it.chave, avaliarReguaPreco(montarInputRegua(fd, it.precoAtual, prazo)));
     }
     return out;
-  }, [itens, query.data]);
+  }, [itens, query.data, prazo]);
 
   return { reguaByKey, isLoading: query.isLoading };
 }

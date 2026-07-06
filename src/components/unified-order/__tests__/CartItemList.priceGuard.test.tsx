@@ -15,6 +15,10 @@ vi.mock('@/hooks/usePrecoCockpit', () => ({
 vi.mock('@/hooks/useDefasagemCliente', () => ({
   useDefasagemCliente: () => ({ defasagemByKey: new Map(), isLoading: false }),
 }));
+// F2 (custo do prazo concedido) puxa useQuery via RPC — mock vazio (como flag off) isola este teste.
+vi.mock('@/hooks/useCustoPrazoRegua', () => ({
+  useCustoPrazoRegua: () => ({ prazoDias: null, custoCapitalAnual: null }),
+}));
 // Régua (PR3) puxa useAuth/useQuery — mock vazio (como flag off) isola este teste do guard de preço.
 vi.mock('@/hooks/useReguaPreco', () => ({
   useReguaPreco: () => ({ reguaByKey: new Map(), isLoading: false }),

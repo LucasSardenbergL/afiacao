@@ -71,12 +71,16 @@ function FrescorEstoqueLive({ ultimaSync }: { ultimaSync: string | null | undefi
   const now = useNowMinuto();
   const frescor = frescorEstoque(ultimaSync, now);
   const cor = { ok: 'text-muted-foreground', warning: 'text-status-warning', error: 'text-status-error' }[frescor.tone];
+  // Horário exato VISÍVEL no texto (dd/MM HH:mm) + segundos no tooltip — o "há X" arredonda e
+  // deixava o founder na dúvida do minuto certo.
+  const d = ultimaSync ? new Date(ultimaSync) : null;
+  const quando = d && !Number.isNaN(d.getTime()) ? format(d, 'dd/MM HH:mm', { locale: ptBR }) : null;
   return (
     <span
       className={`inline-flex items-center gap-1 text-xs ${cor}`}
-      title={ultimaSync ? `Último sync: ${format(new Date(ultimaSync), "dd/MM 'às' HH:mm", { locale: ptBR })}` : undefined}
+      title={d && quando ? `Sincronizado ${format(d, "dd/MM 'às' HH:mm:ss", { locale: ptBR })}` : undefined}
     >
-      <Clock className="w-3.5 h-3.5" /> Estoque Omie: {frescor.label}
+      <Clock className="w-3.5 h-3.5" /> Estoque Omie: {frescor.label}{quando ? ` · ${quando}` : ''}
     </span>
   );
 }

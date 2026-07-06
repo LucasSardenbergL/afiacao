@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 335
+-- Total de custom migrations: 336
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -374,7 +374,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260704150000', 'fin_sync_lease_por_company', '20260704150000_fin_sync_lease_por_company.sql'),
   ('20260704160000', 'fin_dividas', '20260704160000_fin_dividas.sql'),
   ('20260704160000', 'fin_sync_watchdog_retry_sem_efeito', '20260704160000_fin_sync_watchdog_retry_sem_efeito.sql'),
-  ('20260704160500', 'fin_divida_replace_parcelas', '20260704160500_fin_divida_replace_parcelas.sql')
+  ('20260704160500', 'fin_divida_replace_parcelas', '20260704160500_fin_divida_replace_parcelas.sql'),
+  ('20260705120000', 'fin_dre_custo_tipo', '20260705120000_fin_dre_custo_tipo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1568,7 +1569,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_dividas', 'rls_policy', 'public', '%I_select_master', 'public'),
   ('fin_dividas', 'rls_policy', 'public', '%I_write_master', 'public'),
   ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', ''),
-  ('fin_divida_replace_parcelas', 'function', 'public', 'fin_divida_replace_parcelas', '')
+  ('fin_divida_replace_parcelas', 'function', 'public', 'fin_divida_replace_parcelas', ''),
+  ('fin_dre_custo_tipo', 'function', 'public', 'fin_dre_custo_tipo_set_autor', ''),
+  ('fin_dre_custo_tipo', 'table', 'public', 'fin_dre_custo_tipo', ''),
+  ('fin_dre_custo_tipo', 'trigger', 'public', 'trg_fin_dre_custo_tipo_autor', 'fin_dre_custo_tipo'),
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_select_master', 'fin_dre_custo_tipo'),
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_write_master', 'fin_dre_custo_tipo'),
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2810,7 +2817,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_dividas', 'rls_policy', 'public', '%I_select_master', 'public'),
   ('fin_dividas', 'rls_policy', 'public', '%I_write_master', 'public'),
   ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', ''),
-  ('fin_divida_replace_parcelas', 'function', 'public', 'fin_divida_replace_parcelas', '')
+  ('fin_divida_replace_parcelas', 'function', 'public', 'fin_divida_replace_parcelas', ''),
+  ('fin_dre_custo_tipo', 'function', 'public', 'fin_dre_custo_tipo_set_autor', ''),
+  ('fin_dre_custo_tipo', 'table', 'public', 'fin_dre_custo_tipo', ''),
+  ('fin_dre_custo_tipo', 'trigger', 'public', 'trg_fin_dre_custo_tipo_autor', 'fin_dre_custo_tipo'),
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_select_master', 'fin_dre_custo_tipo'),
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_write_master', 'fin_dre_custo_tipo'),
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo')
 )
 SELECT
   e.migration,

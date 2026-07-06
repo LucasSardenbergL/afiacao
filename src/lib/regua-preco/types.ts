@@ -9,6 +9,9 @@ export interface ReguaPrecoInput {
   precosCliente: number[]; // preços recentes (180d) que ESTE cliente pagou neste SKU
   comparaveis: { preco: number; clienteId: string }[]; // vendas comparáveis (EXCLUI cliente atual)
   caps: { alta: number; media: number }; // cap de aumento por confiança, ex {alta:0.10, media:0.05}
+  // F2 — custo do prazo (opcionais; ausentes = comportamento à vista, 100% retrocompatível):
+  prazoDias?: number[] | null; // dias de vencimento de cada parcela, parseado da condição selecionada
+  custoCapitalAnual?: number | null; // taxa de custo de capital do prazo (fração a.a.), ausente → degrada
 }
 
 export interface ReguaPrecoResult {
@@ -28,5 +31,6 @@ export interface ReguaPrecoResult {
 
 export const DISCLAIMERS_FIXOS = [
   'Não estimamos aceite do cliente.',
-  'Não controlado por prazo de pagamento/frete.',
+  'Frete não considerado.', // F2: frete SEMPRE fora do piso. O prazo é tratado à parte (condicional):
+  // recibo "Piso inclui o custo do prazo…" quando aplicado, ou "Prazo de recebimento não considerado." ao degradar.
 ];
