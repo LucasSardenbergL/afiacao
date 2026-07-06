@@ -247,7 +247,7 @@ describe('guardrail money-path: coerência conta×código no criar_pedido (edge 
     expect(
       src,
       'o guard deixou de ler customer_user_id/customer_document do pedido local — voltaria a confiar no payload',
-    ).toMatch(/select\("account, customer_user_id, customer_document"\)/);
+    ).toMatch(/select\("account, customer_user_id, customer_document, created_by"\)/);
   });
 
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {

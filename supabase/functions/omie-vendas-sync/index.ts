@@ -1656,20 +1656,23 @@ async function buscarClienteVendasMatches(document: string, account: Account = "
 // (imune ao fallback customer_user_id || user.id). Espelho → Omie-por-doc → fail-closed. Backfill gated.
 async function deriveOmieAccountIdentity(
   supabase: SupabaseClient,
-  soRow: { customer_user_id: string | null; customer_document: string | null },
+  soRow: { customer_user_id: string | null; customer_document: string | null; created_by: string | null },
   account: Account,
   suppliedCodigo: number | null,
 ): Promise<{ codigo_cliente: number; codigo_vendedor: number | null }> {
   const rawDoc = (soRow.customer_document || "").trim();
   let doc = rawDoc.replace(/\D/g, "");
   let profileRaw = "";
-  if (!doc && soRow.customer_user_id) {
+  // Fallback p/ profiles.document SÓ quando customer_user_id é CONFIÁVEL (≠ created_by). O submit faz
+  // customer_user_id = customerUserId || created_by → quando cai no created_by (staff sem cliente local),
+  // derivar do doc do VENDEDOR rotearia o PV pro vendedor (Codex P1 #1). Sem doc confiável → fail-closed.
+  if (!doc && soRow.customer_user_id && soRow.customer_user_id !== soRow.created_by) {
     const { data: prof } = await supabase.from("profiles").select("document").eq("user_id", soRow.customer_user_id).maybeSingle();
     profileRaw = ((prof?.document as string | undefined) || "").trim();
     doc = profileRaw.replace(/\D/g, "");
   }
   if (!doc) {
-    throw new Error(`Pedido rejeitado: sem documento do cliente para provar a identidade Omie na conta ${account} — envio bloqueado.`);
+    throw new Error(`Pedido rejeitado: sem documento CONFIÁVEL do cliente para provar a identidade Omie na conta ${account} — envio bloqueado (não roteia pelo vendedor).`);
   }
 
   // profiles.document em prod existe raw E limpo (resolveLocalUserId casa ambos) — casar os dois p/ não
@@ -1677,7 +1680,10 @@ async function deriveOmieAccountIdentity(
   const docCandidates = [...new Set([doc, rawDoc, profileRaw].filter((d) => d.length > 0))];
   const { data: users } = await supabase.from("profiles").select("user_id").in("document", docCandidates);
   const userIds = ((users ?? []) as Array<{ user_id: string }>).map((u) => u.user_id);
-  const mirrorRows: MirrorRow[] = userIds.length
+  // Espelho SÓ com 1 dono do documento: dup-profiles (mesmo doc, user_ids distintos) podem ter uma linha
+  // de espelho de perfil ERRADO/stale que não vale como prova (Codex P1 #5) → força o Omie autoritativo
+  // (regs:2, dup-safe). Alinha com o gate do backfill (também 1 dono).
+  const mirrorRows: MirrorRow[] = userIds.length === 1
     ? (((await supabase.from("omie_clientes").select("omie_codigo_cliente, omie_codigo_vendedor, empresa_omie").in("user_id", userIds).eq("empresa_omie", account)).data ?? []) as MirrorRow[])
     : [];
 
@@ -2339,7 +2345,7 @@ serve(async (req) => {
         // silenciosamente pra 'oben' — o pedido local é a âncora server-side.
         const { data: soRow } = await supabaseAdmin
           .from("sales_orders")
-          .select("account, customer_user_id, customer_document")
+          .select("account, customer_user_id, customer_document, created_by")
           .eq("id", sales_order_id)
           .maybeSingle();
         if (soRow?.account && soRow.account !== account) {
@@ -2352,7 +2358,9 @@ serve(async (req) => {
         // pode resolver o código no espelho parcial `omie_clientes` sem filtrar empresa e mandar o
         // código de OUTRA conta do mesmo cliente. Deriva do pedido local (customer_user_id) e recusa
         // só com PROVA POSITIVA (o código é de outra conta) — nunca por ausência (oben vem da API).
-        if (soRow?.customer_user_id) {
+        // Gate Codex P1 #2/#7: só quando customer_user_id é CONFIÁVEL (≠ created_by/vendedor) — senão as
+        // linhas do VENDEDOR fariam false-reject de pedido legítimo por colisão de código cross-conta.
+        if (soRow?.customer_user_id && soRow.customer_user_id !== soRow.created_by) {
           const { data: idRows, error: idErr } = await supabaseAdmin
             .from("omie_clientes")
             .select("omie_codigo_cliente, empresa_omie")
@@ -2374,6 +2382,7 @@ serve(async (req) => {
           {
             customer_user_id: soRow?.customer_user_id ?? null,
             customer_document: (soRow as { customer_document?: string | null } | null)?.customer_document ?? null,
+            created_by: (soRow as { created_by?: string | null } | null)?.created_by ?? null,
           },
           account,
           codigo_cliente != null ? Number(codigo_cliente) : null,
@@ -2570,15 +2579,18 @@ serve(async (req) => {
         }
 
         // P0-B: verify-before-edit (princípio 5) — a edição destrutiva pode mutar um PV historicamente
-        // mal-atribuído. A identidade esperada derivada de (documento do pedido, conta) que DIVIRJA do
-        // cliente do PV (ConsultarPedido) fail-closa ANTES do delete+add. omieCodigoClienteEdit null → não
-        // dá pra comparar (segue; a edição não troca o cliente do PV).
-        if (omieCodigoClienteEdit !== null) {
+        // mal-atribuído. SÓ verifica com ÂNCORA CONFIÁVEL (customer_document presente): pedidos LEGADOS
+        // (customer_document NULL, customer_user_id podendo ser o vendedor) derivariam do vendedor/ausente
+        // → divergência → fail-closariam uma edição LEGÍTIMA (Codex P1 #4). Sem âncora, pula (a edição não
+        // troca o cliente do PV; barrar toda edição legada é pior que o risco raro de PV mal-atribuído).
+        const editDoc = ((existingOrder as { customer_document?: string | null }).customer_document || "").trim();
+        if (omieCodigoClienteEdit !== null && editDoc.length > 0) {
           await deriveOmieAccountIdentity(
             supabaseAdmin,
             {
               customer_user_id: (existingOrder as { customer_user_id?: string | null }).customer_user_id ?? null,
-              customer_document: (existingOrder as { customer_document?: string | null }).customer_document ?? null,
+              customer_document: editDoc,
+              created_by: (existingOrder as { created_by?: string | null }).created_by ?? null,
             },
             editAccount,
             omieCodigoClienteEdit,
