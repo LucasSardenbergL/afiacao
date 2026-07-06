@@ -32,6 +32,23 @@ export function hhi(shares: number[]): number {
   return shares.reduce((s, x) => s + x * x, 0);
 }
 
+/**
+ * Classifica o FonteStatus da LEITURA (money-path P0-1: leitura incompleta ≠ zero).
+ * error → 'indisponivel'; count total > linhas retornadas (ou bateu o limite pedido) →
+ * 'parcial' (truncada pelo cap PostgREST); senão 'ok'. Pura, testável.
+ */
+export function classificarFonte(p: {
+  error: boolean;
+  rowsRetornadas: number;
+  countTotal: number | null;
+  limit: number;
+}): FonteStatus {
+  if (p.error) return 'indisponivel';
+  if (p.countTotal != null && p.countTotal > p.rowsRetornadas) return 'parcial';
+  if (p.rowsRetornadas >= p.limit) return 'parcial';
+  return 'ok';
+}
+
 function impactoDaMaior(maior: number, pisoModerado: number, pisoAlto: number): ImpactoAbsoluto {
   if (maior < pisoModerado) return 'baixo';
   if (maior < pisoAlto) return 'moderado';

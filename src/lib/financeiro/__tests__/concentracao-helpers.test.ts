@@ -3,6 +3,7 @@ import {
   concentracaoEmpresa,
   c50,
   hhi,
+  classificarFonte,
   PISO_MODERADO,
   PISO_ALTO,
 } from '../concentracao-helpers';
@@ -137,4 +138,15 @@ describe('impactoAbsoluto = TOM keyed na maiorExposicao (P1-5, nunca oculta)', (
     expect(PISO_MODERADO).toBe(25000);
     expect(PISO_ALTO).toBe(75000);
   });
+});
+
+describe('classificarFonte — leitura incompleta ≠ zero (P0-1 na camada de read)', () => {
+  it('error → indisponivel', () =>
+    expect(classificarFonte({ error: true, rowsRetornadas: 0, countTotal: null, limit: 5000 })).toBe('indisponivel'));
+  it('count total > linhas retornadas → parcial (truncado)', () =>
+    expect(classificarFonte({ error: false, rowsRetornadas: 1000, countTotal: 1500, limit: 5000 })).toBe('parcial'));
+  it('bateu o limite pedido sem count → parcial (defensivo)', () =>
+    expect(classificarFonte({ error: false, rowsRetornadas: 5000, countTotal: null, limit: 5000 })).toBe('parcial'));
+  it('leitura completa → ok', () =>
+    expect(classificarFonte({ error: false, rowsRetornadas: 782, countTotal: 782, limit: 5000 })).toBe('ok'));
 });
