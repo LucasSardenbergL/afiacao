@@ -70,4 +70,33 @@ Planos por fase: `docs/superpowers/plans/`.
 
 **Lição-chave:** a falsificação não é cerimônia — **pegou um teste que passava com E sem a regra que dizia testar**. Sem sabotar, o lock (o P1 nº1 do painel) ficaria "provado" por acidente do row-lock.
 
-**Pendente (founder):** aplicar `db/pcp-f1b-m1-execucao.sql` no SQL Editor → verificar via psql-ro. Depois **M2** (corte múltiplo + backflush) e **M3** (tela de apontamento mobile, reusa `offline-queue`+`ScanBar`).
+**Pendente (founder):** aplicar `db/pcp-f1b-m1-execucao.sql` no SQL Editor → verificar via psql-ro.
+
+## Fase 1B — M2: modelo de dados do corte múltiplo (2026-07-05)
+
+**Plano:** `docs/superpowers/plans/2026-07-05-pcp-fase1b-m2-corte-multiplo.md` (v3 — painel tri-modelo BLOCK incorporado). Escopo: **rota alternativa + coproduto obrigatório + rateio de custo** — o ÚLTIMO componente da Fundação (Fase 1). **NÃO** inclui o motor de sugestão (Fase 3) nem backflush/outbox (Fase 2 — nativo do Omie; o "M2 = corte + backflush" da nota anterior estava mal-escopado: backflush é F2).
+
+**Decisões do founder (arbitradas antes do código):** perda por **ABSORÇÃO** (fração 0; custo redistribuído nas cintas boas) · sobra **PARAMÉTRICA** (a rota guarda a largura; o SKU concreto e o estoque resolvem na OP/F3 — sem FK a `omie_products`) · rotas **DERIVADAS** das larguras reais da 1A (`fn_pcp_derivar_rotas_simples`, fator inteiro 2..8).
+
+**O que shipou** (código na branch; **deploy EXECUTADO 2026-07-05** — 109 rotas, 0 violações):
+- **`db/pcp-f1b-m2-corte-multiplo.sql`**: `pcp_bom_rotas` (chave `(linha,base,alvo,esquema)`) + `pcp_bom_rota_saidas` (papel principal/coproduto/sobra/perda, `CHECK perda⇒fração0`); `fn_pcp_rota_fracao_default` (rateio por área, perda absorve); **CONSTRAINT TRIGGER DEFERRED** `fn_pcp_validar_rota` (Σárea física **=base** · Σfração das boas =1 · ≥1 principal na alvo · valida **origem+destino** num UPDATE); trigger de **imutabilidade** de base/alvo; `fn_pcp_ratear_corte` (**INVOKER** + guard de custo + **normalização** f/Σf, resíduo **determinístico** na maior); `fn_pcp_cadastrar_rota` (staff-gated, **anti-mistura** de frações, guard de `p_saidas`); `fn_pcp_derivar_rotas_simples`. RLS staff-read + `REVOKE` de PUBLIC (inclui os helpers internos).
+- **`db/test-pcp-f1b-m2-corte-multiplo.sh`** (**PASS=35**, 4 sabotagens falsificadas + ZONA 10 do painel PR).
+
+**Painel tri-modelo — BLOCK do v2 → v3** (Claude+Codex+Gemini). O painel achou no MEU plano v2 (não em produção):
+- **3 P1** — geometria deixava **material SUMIR** (`Σ<base` aceito: `150→2×50` e os 50mm somem) → fix `Σ=base`; **coproduto omitido com custo ZERO** (mistura de frações) → fix anti-mistura; **o teste do INVOKER dava FALSO-VERDE** (calculava o `rota_id` já sob a RLS de não-staff → NULL, mascarando um eventual DEFINER) → fix capturar o id **literal** como staff antes.
+- **Confirmados por ≥2 modelos** — UPDATE de `rota_id` furava a validação da rota **origem**; **perda com fração>0** distorcia custo (re-absorvida inteira na maior boa); **Σfração aproximada** (round 4) amplificava resíduo → **normalizar**.
+- **P2/P3** — base/alvo imutáveis · custo NULL/negativo · REVOKE dos helpers · teto do fator k · fixture de derivação isolada · migração defensiva da chave. **Rejeitado com justificativa:** `UNIQUE(rota,largura)` (o papel distingue `2×50+50sobra`, que o fix da geometria torna necessário).
+
+**Bugs pegos na bancada (não chegaram à produção):** todos os 6 acima — pegos pelo painel ANTES do SQL, corrigidos no v3, e cada um **falsificado** na prova (sabotar → vermelho no assert que o vigia → reverter).
+
+**Lição reforçada:** a sabotagem `INVOKER→DEFINER` é exatamente o teste que o v2 dava por bom sem testar nada (o `rota_id` calculado sob RLS zerava a query de qualquer jeito). Com o id **literal**, a falsificação fica vermelha (`veio [1]`, custo vazaria) — **um teste de RLS que não passa um id fora da RLS não testa RLS**.
+
+**Painel PR sobre o CÓDIGO real (pós-deploy) — sem BLOCK:** com o SQL já em prod, 2ª volta do painel modo `pr` (Codex 3 P1/9 P2 + Gemini 2 P2 + lente Claude). **Nenhum P1 sobreviveu à verificação empírica** — sondas PG17 **refutaram** o "DELETE trigger com `NEW=NULL` quebra" (roda e barra por invariante) e confirmaram que o `UPDATE move-saída` já é barrado (era **test-gap**, não bug). Fechados os test-gaps (ZONA 10: DELETE, move-saída, **auditoria de grants** via `has_function_privilege`) + melhorias baratas: desempate **determinístico** do resíduo do centavo, guard de `p_saidas`, `::bigint` anti-overflow. **Achado fino (fix A × fix D):** com `Σ=base` **exato**, mover uma saída quebra a geometria de AMBAS as rotas → o fix D é o guard primário e o fix A (validar a origem) é **defense-in-depth redundante** aqui (documentado, não teatro reverso).
+
+**Verificação de deploy (psql-ro):** `fn_pcp_derivar_rotas_simples()` = **109 rotas** em **14 linhas**; **0 rotas violando invariante** (Σárea=base · Σfração boas=1 · ≥1 principal) nos dados REAIS; teto k≤8 respeitado; a linha 2909/base 600 tem **6 decomposições** coexistindo (k=2/3/4/5/6/8) — a chave de 4 colunas provada em prod.
+
+**Custeio da SOBRA (founder, 2026-07-05):** sobra aproveitável **carrega custo** proporcional à área (é "boa" no rateio); o Gemini alertou risco de superavaliar estoque, o founder arbitrou **manter** (refilo sem liquidez real vira `perda`). Só a **perda** absorve 0.
+
+**🏁 Fundação (Fase 1) FECHADA (2026-07-05):** 1. dados mestres ✅ · 2. parser ✅ · 3. BOM paramétrica ✅ · 4. OP+etapas ✅ (M1) · 5. apontamento offline c/ consumo-motivo ✅ (M1+M3 `src/pages/...` na rota `/producao/apontamento`) · 6. **corte múltiplo ✅ (M2)**. Próximo: **Fase 2 — Custo & Omie** (backflush fiscal + outbox incluir/concluir OP + validação cruzada de custo com o `custoProducao` que já vem na malha).
+
+**Pendente (founder):** (1) **M1** — aplicar `db/pcp-f1b-m1-execucao.sql` no SQL Editor (destrava a tela de apontamento do M3); (2) **opcional** — re-colar a versão endurecida do `db/pcp-f1b-m2-corte-multiplo.sql` (melhorias do painel PR, idempotável; prod já está correto sem isso). Depois: realinhamento pós-squash + PR → main.

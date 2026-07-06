@@ -8,9 +8,69 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-cron-secret, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-function parseBrDecimal(value: string | undefined | null): number {
-  if (!value || value.trim() === "") return 0;
-  return parseFloat(value.trim().replace(",", ".")) || 0;
+// MIRROR-START tint parse-decimal-br — espelhado VERBATIM de src/lib/preco/parse-decimal-br.ts
+// (Deno não importa de src/). Paridade textual garantida no CI (edge-parse-parity.test.ts).
+// NÃO edite este bloco sem editar a fonte — a última a divergir quebra o teste de paridade.
+export function parseDecimalBR(input: string): number | null {
+  if (typeof input !== 'string') return null;
+  const s = input.trim();
+  if (s === '') return null;
+  if (!/^-?[\d.,]+$/.test(s)) return null;
+
+  const neg = s.startsWith('-');
+  const body = neg ? s.slice(1) : s;
+
+  const finish = (intPart: string, frac: string): number | null => {
+    const norm = frac ? `${intPart}.${frac}` : intPart;
+    if (!/^\d+(\.\d+)?$/.test(norm)) return null;
+    const n = Number((neg ? '-' : '') + norm);
+    return Number.isFinite(n) ? n : null;
+  };
+  // Agrupamento de milhar válido: primeiro grupo 1-3 dígitos, os demais exatamente 3.
+  const validGrouping = (groups: string[]): boolean =>
+    groups.length > 1 &&
+    groups[0].length >= 1 && groups[0].length <= 3 &&
+    groups.slice(1).every((g) => g.length === 3);
+
+  const lastComma = body.lastIndexOf(',');
+  const lastDot = body.lastIndexOf('.');
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    const decSep = lastComma > lastDot ? ',' : '.';
+    const grpSep = decSep === ',' ? '.' : ',';
+    const parts = body.split(decSep);
+    if (parts.length !== 2) return null; // 2+ separadores decimais = malformado
+    const groups = parts[0].split(grpSep);
+    if (!validGrouping(groups)) return null;
+    return finish(groups.join(''), parts[1]);
+  }
+
+  if (lastComma >= 0) {
+    const parts = body.split(',');
+    if (parts.length === 2) return finish(parts[0], parts[1]);
+    return validGrouping(parts) ? finish(parts.join(''), '') : null;
+  }
+
+  if (lastDot >= 0) {
+    const parts = body.split('.');
+    if (parts.length === 2) {
+      const [intP, frac] = parts;
+      // "1.234" (3 casas + inteiro 1-3 díg sem zero à esquerda) é ambíguo: 1234 ou 1.234 → null.
+      if (frac.length === 3 && /^[1-9]\d{0,2}$/.test(intP)) return null;
+      return finish(intP, frac);
+    }
+    return validGrouping(parts) ? finish(parts.join(''), '') : null;
+  }
+
+  return finish(body, '');
+}
+// MIRROR-END
+
+// Decimal do CSV Sayersystem — fail-closed: null se ausente/ilegível/ambíguo, NUNCA 0.
+// Money-path P0-B: substitui o antigo `parseFloat(v.replace(",","."))||0` (fabricava 0 e lia
+// milhar pt-BR errado). O preflight client-side já reprova o arquivo; aqui é defesa em profundidade.
+function parseTintDecimal(value: string | undefined | null): number | null {
+  return parseDecimalBR(value ?? "");
 }
 
 async function sha256(content: string): Promise<string> {
@@ -139,7 +199,7 @@ async function processDadosCorantes(supabase: Supabase, rows: string[][], accoun
       const [codigo, descricao, volumeMl, pesoEspecifico, codigoBarras] = rows[i];
       if (!codigo || !descricao) { errors++; errosDetalhe.push({ linha: i + 2, motivo: "codigo ou descricao vazio" }); continue; }
       const existing = coranteCache.has(`${account}:${codigo}`);
-      const row: Record<string, unknown> = { account, id_corante_sayersystem: codigo, descricao, volume_total_ml: parseBrDecimal(volumeMl) || 1000, peso_especifico: parseBrDecimal(pesoEspecifico) || null, codigo_barras: codigoBarras || null };
+      const row: Record<string, unknown> = { account, id_corante_sayersystem: codigo, descricao, volume_total_ml: parseTintDecimal(volumeMl) ?? 1000, peso_especifico: parseTintDecimal(pesoEspecifico), codigo_barras: codigoBarras || null };
       const { error } = await supabase.from("tint_corantes").upsert(row, { onConflict: "account,id_corante_sayersystem" });
       if (error) { errors++; errosDetalhe.push({ linha: i + 2, motivo: error.message }); }
       else if (existing) { updated++; } else { imported++; }
@@ -161,7 +221,7 @@ async function processDadosProdutoBaseEmbalagem(supabase: Supabase, rows: string
       const produtoId = await ensureProduto(supabase, account, produto, produto);
       const idBaseSayer = base.replace(/\s+/g, "_").substring(0, 100);
       const baseId = await ensureBase(supabase, account, idBaseSayer, base);
-      const volumeMl = parseBrDecimal(embalagemConteudoMl) || 0;
+      const volumeMl = parseTintDecimal(embalagemConteudoMl) ?? 0;
       const idEmbSayer = embalagem || `EMB_${volumeMl}`;
       const embalagemId = await ensureEmbalagem(supabase, account, idEmbSayer, volumeMl, embalagem);
       await ensureSku(supabase, account, produtoId, baseId, embalagemId);
@@ -203,32 +263,40 @@ async function processFormulas(supabase: Supabase, rows: string[][], account: st
 
       const coranteStart = 9 + offset;
       const corantes: string[] = [];
-      for (let c = 0; c < 6; c++) corantes.push(cols[coranteStart + c] || "");
+      // .trim() para casar com o preflight: um corante só-espaços é "ausente", não cria dye fantasma.
+      for (let c = 0; c < 6; c++) corantes.push((cols[coranteStart + c] ?? "").trim());
       const qtdStart = coranteStart + 6;
-      const qtds: number[] = [];
-      for (let c = 0; c < 6; c++) qtds.push(parseBrDecimal(cols[qtdStart + c]));
-      const volumeFinalMl = parseBrDecimal(cols[qtdStart + 6]);
-      const precoFinal = parseBrDecimal(cols[qtdStart + 7]);
+      const qtds: (number | null)[] = [];
+      for (let c = 0; c < 6; c++) qtds.push(parseTintDecimal(cols[qtdStart + c]));
+      const volumeFinalMl = parseTintDecimal(cols[qtdStart + 6]);
+      const precoFinal = parseTintDecimal(cols[qtdStart + 7]);
       const dataGeracao = cols[qtdStart + 8] || null;
 
       // These will be cache hits after pre-warming
       const produtoId = await ensureProduto(supabase, account, codProduto, produtoDesc);
       const baseId = await ensureBase(supabase, account, idBase, baseDesc);
-      const embalagemId = await ensureEmbalagem(supabase, account, idEmbalagem, volumeFinalMl, embalagemDesc);
+      const embalagemId = await ensureEmbalagem(supabase, account, idEmbalagem, volumeFinalMl ?? 0, embalagemDesc);
       const skuId = await ensureSku(supabase, account, produtoId, baseId, embalagemId);
 
       const coranteIds: Array<{ id: string; qtd: number; ordem: number }> = [];
       for (let c = 0; c < 6; c++) {
-        if (corantes[c] && qtds[c] > 0) {
+        const q = qtds[c];
+        // Money-path: qtd null/≤0 NÃO vira item (nem 0 fabricado); o preflight já reprovou o
+        // arquivo se um corante presente tinha qtd inválida — aqui é defesa em profundidade.
+        if (corantes[c] && q !== null && q > 0) {
           const coranteId = await ensureCorante(supabase, account, corantes[c], corantes[c]);
-          coranteIds.push({ id: coranteId, qtd: qtds[c], ordem: c + 1 });
+          // dedup (Codex R2 [P1]): corante repetido violaria UNIQUE(formula_id,corante_id) e o
+          // insert falharia DEPOIS do delete → receita apagada. Defesa (o preflight client já reprova).
+          if (!coranteIds.some((x) => x.id === coranteId)) {
+            coranteIds.push({ id: coranteId, qtd: q, ordem: c + 1 });
+          }
         }
       }
 
       const formulaRow: Record<string, unknown> = {
         account, cor_id: corId, nome_cor: nomeCor, produto_id: produtoId, base_id: baseId,
         embalagem_id: embalagemId, sku_id: skuId, subcolecao_id: subcolecaoId, id_seq: idSeq,
-        volume_final_ml: volumeFinalMl || null, preco_final_sayersystem: precoFinal || null,
+        volume_final_ml: volumeFinalMl, preco_final_sayersystem: precoFinal,
         data_geracao: dataGeracao, personalizada, importacao_id: importacaoId,
         updated_at: new Date().toISOString(),
       };
@@ -251,8 +319,10 @@ async function processFormulas(supabase: Supabase, rows: string[][], account: st
         imported++;
       }
 
-      await supabase.from("tint_formula_itens").delete().eq("formula_id", formulaId);
+      // Money-path (Codex P0-B [P1#2]): só SUBSTITUI os itens se há itens NOVOS válidos — 0 itens
+      // NÃO apaga a receita existente (evita zerar a cor por uma linha sem corante/qtd válida).
       if (coranteIds.length > 0) {
+        await supabase.from("tint_formula_itens").delete().eq("formula_id", formulaId);
         const itemRows = coranteIds.map((c) => ({ formula_id: formulaId, corante_id: c.id, qtd_ml: c.qtd, ordem: c.ordem }));
         const { error: itemError } = await supabase.from("tint_formula_itens").insert(itemRows);
         if (itemError) console.error(`[tint-import] Erro inserindo itens formula ${formulaId}:`, itemError);

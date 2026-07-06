@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 import Papa from 'papaparse';
+import { parseDecimalBR } from '@/lib/preco/parse-decimal-br';
 
 const ACCOUNT = 'oben';
 const BATCH_SIZE = 200;
@@ -10,10 +11,12 @@ const RPC_BATCH_SIZE = 500;
 const isFormulaImportType = (tipo: string) =>
   tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas';
 
-function parseBrDecimal(value: string | undefined | null): number {
-  if (!value || value.trim() === '') return 0;
-  return parseFloat(value.trim().replace(',', '.')) || 0;
-}
+// Decimal do CSV Sayersystem — fail-closed: null se ausente/ilegível/ambíguo, NUNCA 0.
+// Money-path P0-B: o antigo `parseFloat(v.replace(',','.')) || 0` fabricava 0 e lia milhar
+// pt-BR errado ("1.234,56"→1.234; "3.600"→3.6). O PREFLIGHT (preflight-files.ts) reprova o
+// arquivo ANTES de chegar aqui; este parser é a defesa em profundidade — null nunca vira 0.
+const parseTintDecimal = (value: string | undefined | null): number | null =>
+  parseDecimalBR(value ?? '');
 
 async function sha256(content: string): Promise<string> {
   const data = new TextEncoder().encode(content);
@@ -107,8 +110,8 @@ export function useDirectTintImport() {
         if (!codigo || !descricao) { errors++; continue; }
         upsertRows.push({
           account: ACCOUNT, id_corante_sayersystem: codigo, descricao,
-          volume_total_ml: parseBrDecimal(volumeMl) || 1000,
-          peso_especifico: parseBrDecimal(pesoEspecifico) || null,
+          volume_total_ml: parseTintDecimal(volumeMl) ?? 1000,
+          peso_especifico: parseTintDecimal(pesoEspecifico),
           codigo_barras: codigoBarras || null,
         });
       }
@@ -157,7 +160,7 @@ export function useDirectTintImport() {
         uniqueProdutos.set(produto, produto);
         const idBaseSayer = base.replace(/\s+/g, '_').substring(0, 100);
         uniqueBases.set(idBaseSayer, base);
-        const volumeMl = parseBrDecimal(embalagemConteudoMl) || 0;
+        const volumeMl = parseTintDecimal(embalagemConteudoMl) ?? 0;
         const idEmbSayer = embalagem || `EMB_${volumeMl}`;
         uniqueEmbalagens.set(idEmbSayer, { desc: embalagem, vol: volumeMl });
       }
@@ -198,7 +201,7 @@ export function useDirectTintImport() {
         const produtoId = produtoCache.current.get(produto);
         const idBaseSayer = base.replace(/\s+/g, '_').substring(0, 100);
         const baseId = baseCache.current.get(idBaseSayer);
-        const volumeMl = parseBrDecimal(embalagemConteudoMl) || 0;
+        const volumeMl = parseTintDecimal(embalagemConteudoMl) ?? 0;
         const idEmbSayer = embalagem || `EMB_${volumeMl}`;
         const embalagemId = embalagemCache.current.get(idEmbSayer);
         if (produtoId && baseId && embalagemId) {
@@ -251,13 +254,13 @@ export function useDirectTintImport() {
 
         const coranteStart = 9 + offset;
         for (let c = 0; c < 6; c++) {
-          const corId = cols[coranteStart + c];
+          const corId = (cols[coranteStart + c] ?? '').trim();
           if (corId) uniqueCorantes.set(corId, corId);
         }
 
         const qtdStart = coranteStart + 6;
-        const volumeFinalMl = parseBrDecimal(cols[qtdStart + 6]);
-        if (idEmbalagem) uniqueEmbalagens.set(idEmbalagem, { desc: embalagemDesc || '', vol: volumeFinalMl });
+        const volumeFinalMl = parseTintDecimal(cols[qtdStart + 6]);
+        if (idEmbalagem) uniqueEmbalagens.set(idEmbalagem, { desc: embalagemDesc || '', vol: volumeFinalMl ?? 0 });
 
         if (!personalizada) {
           const subCode = cols[9] || '';
@@ -372,26 +375,30 @@ export function useDirectTintImport() {
           const coranteStart = 9 + offset;
           const coranteItems: FormulaItem[] = [];
           for (let c = 0; c < 6; c++) {
-            const cId = cols[coranteStart + c];
+            const cId = (cols[coranteStart + c] ?? '').trim();
             const qtdStart = coranteStart + 6;
-            const qtd = parseBrDecimal(cols[qtdStart + c]);
-            if (cId && qtd > 0) {
+            const qtd = parseTintDecimal(cols[qtdStart + c]);
+            if (cId && qtd !== null && qtd > 0) {
               const coranteId = coranteCache.current.get(cId);
-              if (coranteId) coranteItems.push({ corante_id: coranteId, qtd_ml: qtd, ordem: c + 1 });
+              // dedup (Codex R2 [P1]): corante repetido violaria UNIQUE(formula_id,corante_id) e o
+              // insert falharia DEPOIS do delete → receita apagada. O preflight já reprova, isto é defesa.
+              if (coranteId && !coranteItems.some(it => it.corante_id === coranteId)) {
+                coranteItems.push({ corante_id: coranteId, qtd_ml: qtd, ordem: c + 1 });
+              }
             }
           }
 
           const qtdStart = coranteStart + 6;
-          const volumeFinalMl = parseBrDecimal(cols[qtdStart + 6]);
-          const precoFinal = parseBrDecimal(cols[qtdStart + 7]);
+          const volumeFinalMl = parseTintDecimal(cols[qtdStart + 6]);
+          const precoFinal = parseTintDecimal(cols[qtdStart + 7]);
           const dataGeracao = cols[qtdStart + 8] || null;
 
           const formulaRow = {
             account: ACCOUNT, cor_id: corId, nome_cor: nomeCor,
             produto_id: produtoId, base_id: baseId, embalagem_id: embalagemId,
             sku_id: skuId, subcolecao_id: subcolecaoId, id_seq: idSeq,
-            volume_final_ml: volumeFinalMl || null,
-            preco_final_sayersystem: precoFinal || null,
+            volume_final_ml: volumeFinalMl,
+            preco_final_sayersystem: precoFinal,
             data_geracao: dataGeracao, personalizada,
             importacao_id: importacaoId,
             updated_at: new Date().toISOString(),
@@ -426,8 +433,11 @@ export function useDirectTintImport() {
       // Execute updates
       for (const upd of updFormulas) {
         await supabase.from('tint_formulas').update(upd.row).eq('id', upd.id);
-        await supabase.from('tint_formula_itens').delete().eq('formula_id', upd.id);
+        // Money-path (Codex P0-B [P1#2]): só SUBSTITUI os itens se há itens NOVOS válidos.
+        // 0 itens (linha sem corante/qtd válida) NÃO apaga a receita existente — melhor manter
+        // a receita antiga que zerar a cor por uma linha corrompida (delete-then-insert-nada).
         if (upd.items.length > 0) {
+          await supabase.from('tint_formula_itens').delete().eq('formula_id', upd.id);
           await supabase.from('tint_formula_itens').insert(
             upd.items.map(it => ({ formula_id: upd.id, ...it }))
           );
@@ -490,7 +500,7 @@ export function useDirectTintImport() {
 
       // Map CSV rows to JSON objects for the RPC
       const jsonRows = batch.map(cols => {
-        const obj: Record<string, string> = {
+        const obj: Record<string, string | number | null> = {
           id_seq: cols[0] || '',
           cor_id: cols[1] || '',
           nome_cor: cols[2] || '',
@@ -509,17 +519,22 @@ export function useDirectTintImport() {
 
         const coranteStart = 9 + offset;
         for (let c = 1; c <= 6; c++) {
-          obj[`corante${c}`] = cols[coranteStart + (c - 1)] || '';
+          // .trim() para casar com o preflight/writers (Codex R2 [P2]): " CX1 " não deve virar
+          // um corante diferente nem ser perdido no lookup da SQL.
+          obj[`corante${c}`] = (cols[coranteStart + (c - 1)] ?? '').trim();
         }
         const qtdStart = coranteStart + 6;
+        // Money-path P0-B: manda NUMBER (não string locale). A SQL faz (r->>'campo')::numeric,
+        // que parseia "12.5" vindo de um JSON number; o antigo `.replace(',','.')` só trocava a
+        // 1ª vírgula → milhar pt-BR "1.234,56" virava "1.234.56" (::numeric erro) e "3.600"→3.6.
+        // null (ausente/ilegível) NÃO vira 0: a SQL COALESCE preserva o valor existente no update.
         for (let c = 1; c <= 6; c++) {
-          const raw = cols[qtdStart + (c - 1)] || '0';
-          obj[`qtd${c}ml`] = raw.replace(',', '.');
+          obj[`qtd${c}ml`] = parseTintDecimal(cols[qtdStart + (c - 1)]);
         }
-        obj.volume_finalml = (cols[qtdStart + 6] || '0').replace(',', '.');
-        obj.preco_final = (cols[qtdStart + 7] || '0').replace(',', '.');
+        obj.volume_finalml = parseTintDecimal(cols[qtdStart + 6]);
+        obj.preco_final = parseTintDecimal(cols[qtdStart + 7]);
         obj.data_geracao = cols[qtdStart + 8] || '';
-        // Parse embalagem_ml from the volume_finalml or embalagem field
+        // embalagem_ml deriva do volume final da fórmula (mesmo number ou null).
         obj.embalagem_ml = obj.volume_finalml;
 
         return obj;
