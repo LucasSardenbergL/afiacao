@@ -6,6 +6,7 @@ import { invokeFunction } from '@/lib/invoke-function';
 import { toast } from 'sonner';
 import Papa from 'papaparse';
 import { useDirectTintImport } from '@/hooks/useDirectTintImport';
+import { preflightImportFiles } from '@/lib/tint/preflight-files';
 import {
   ACCOUNT, MAX_RETRIES, getChunkSize, sha256, sendChunkWithRetry,
   type TintImportChunkResult, type TintSyncResult, type TintImportacaoRow,
@@ -74,6 +75,22 @@ export default function TintImport() {
   const handleImportWithMode = async () => {
     if (!tipo) { toast.error('Selecione o tipo de importação'); return; }
     if (files.length === 0) { toast.error('Selecione ao menos um arquivo'); return; }
+
+    // ── Guard money-path (P0-B): PREFLIGHT do CSV inteiro antes de QUALQUER escrita ──
+    // Fronteira única client-side: cobre as 4 vias (direct, RPC, edge file, edge chunk) —
+    // o edge processa em chunks e nunca vê o arquivo inteiro, então validar aqui é a única
+    // forma de reprovar o arquivo antes de gravar. Um decimal ilegível/ambíguo (ex.: "3.600"
+    // = 3600? 3,6?) sobrescreveria o catálogo com receita/preço errado, silencioso. Reprova o
+    // LOTE inteiro (nenhum arquivo entra) — melhor não importar que corromper (precisão>recall).
+    const offenders = preflightImportFiles(files, tipo);
+    if (offenders.length > 0) {
+      offenders.forEach(o =>
+        toast.error(`Importação bloqueada — "${o.fileName}": ${o.message}`, { duration: 12000 }),
+      );
+      setResults(offenders.map(o => ({ name: o.fileName, status: 'erro', error: `Preflight money-path: ${o.message}` })));
+      return;
+    }
+
     const noneDirect = files.every(f => !shouldUseDirect(f.rawText));
     if (noneDirect) { await handleImport(); return; }
     const allResults: TintImportFileResult[] = [];
@@ -280,6 +297,15 @@ export default function TintImport() {
     const matchingFile = files.find(f => f.name === imp.arquivo_nome);
     if (!matchingFile) {
       toast.error(`Selecione o arquivo "${imp.arquivo_nome}" para retomar`);
+      setResumingId(null);
+      return;
+    }
+
+    // Guard money-path (P0-B): preflight também na retomada — o arquivo é relido do disco
+    // e re-chunkado; sem isto, um CSV com decimal inválido passaria direto pelo edge.
+    const resumeOffenders = preflightImportFiles([matchingFile], imp.tipo);
+    if (resumeOffenders.length > 0) {
+      toast.error(`Retomada bloqueada — "${matchingFile.name}": ${resumeOffenders[0].message}`, { duration: 12000 });
       setResumingId(null);
       return;
     }
