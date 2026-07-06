@@ -19,6 +19,8 @@ import { DREComparativo } from '@/components/financeiro/dashboard/DREComparativo
 import { VisaoGeralTab } from '@/components/financeiro/dashboard/VisaoGeralTab';
 import { ContasReceberTab } from '@/components/financeiro/dashboard/ContasReceberTab';
 import { ContasPagarTab } from '@/components/financeiro/dashboard/ContasPagarTab';
+import { ConcentracaoTab } from '@/components/financeiro/dashboard/ConcentracaoTab';
+import { useAuth } from '@/contexts/AuthContext';
 
 const today = new Date();
 const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, 1);
@@ -40,6 +42,7 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
   } = useFinanceiro('all');
 
   const { regime } = useFinanceiroRegime();
+  const { isMaster } = useAuth();
   const lockHandler = usePeriodLockHandler();
 
   const [tab, setTab] = useState('visao-geral');
@@ -162,12 +165,15 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
 
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-5 w-full">
+        <TabsList className={isMaster ? 'grid grid-cols-6 w-full' : 'grid grid-cols-5 w-full'}>
           <TabsTrigger value="visao-geral" className="text-xs sm:text-sm">Visão Geral</TabsTrigger>
           <TabsTrigger value="contas-receber" className="text-xs sm:text-sm">A Receber</TabsTrigger>
           <TabsTrigger value="contas-pagar" className="text-xs sm:text-sm">A Pagar</TabsTrigger>
           <TabsTrigger value="fluxo-caixa" className="text-xs sm:text-sm">Fluxo Caixa</TabsTrigger>
           <TabsTrigger value="dre" className="text-xs sm:text-sm">DRE</TabsTrigger>
+          {isMaster && (
+            <TabsTrigger value="concentracao" className="text-xs sm:text-sm">Concentração</TabsTrigger>
+          )}
         </TabsList>
 
         {/* ═══════════ TAB: VISÃO GERAL ═══════════ */}
@@ -280,6 +286,13 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
             <DREComparativo data={drePorEmpresa} ano={dreAno} />
           )}
         </TabsContent>
+
+        {/* ═══════════ TAB: CONCENTRAÇÃO (F5 — master-only) ═══════════ */}
+        {isMaster && (
+          <TabsContent value="concentracao" className="space-y-4 mt-4">
+            <ConcentracaoTab />
+          </TabsContent>
+        )}
       </Tabs>
 
       {loading && (
