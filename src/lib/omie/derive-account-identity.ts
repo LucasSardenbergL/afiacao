@@ -3,8 +3,8 @@
 // + matches da API Omie) e decide o código autoritativo OU fail-closed. Precisão>recall: ambiguidade,
 // ausência confirmada, divergência com o código do payload, ou código não-representável = REJECT.
 // A âncora (documento) e o I/O (buscar espelho/Omie, backfill) ficam no chamador; aqui só a decisão.
-export interface MirrorRow { omie_codigo_cliente: number; omie_codigo_vendedor: number | null; empresa_omie: string }
-export interface OmieMatch { codigo_cliente: number; codigo_vendedor: number | null }
+interface MirrorRow { omie_codigo_cliente: number; omie_codigo_vendedor: number | null; empresa_omie: string }
+interface OmieMatch { codigo_cliente: number; codigo_vendedor: number | null }
 export interface DecideInput {
   account: string;
   /** Código que o cliente mandou no payload — ADVISORY (verificado contra o derivado). */
