@@ -32,6 +32,20 @@ function mirrorBlock(s: string): string {
     .join('\n');
 }
 
+// Variante que casa o bloco MIRROR por NOME (`// MIRROR-START <label>`), para arquivos com >1 bloco
+// (o edge omie-vendas-sync tem account-coherence E derive-account-identity).
+function mirrorBlockNamed(s: string, label: string): string {
+  const re = new RegExp(`// MIRROR-START ${label}[^\\n]*\\n([\\s\\S]*?)\\n[^\\n]*// MIRROR-END`);
+  const m = s.match(re);
+  if (!m) throw new Error(`bloco // MIRROR-START ${label}.../END não encontrado`);
+  return m[1]
+    .replace(/\bexport\s+/g, '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith('//'))
+    .join('\n');
+}
+
 // O merge de preço (order_items vence, Omie só preenche gap) foi extraído para um helper puro
 // (src/lib/pricing/mergeCustomerPrices.ts, testado por vitest) e ESPELHADO verbatim no edge,
 // porque o Deno do edge não importa de src/. Estes testes provam que o edge USA o helper (não
@@ -229,11 +243,11 @@ describe('guardrail money-path: coerência conta×código no criar_pedido (edge 
     ).toBeGreaterThanOrEqual(2);
   });
 
-  it('deriva a conta do PEDIDO LOCAL (customer_user_id), não confia no payload', () => {
+  it('deriva do PEDIDO LOCAL (customer_user_id + customer_document), não confia no payload', () => {
     expect(
       src,
-      'o guard deixou de derivar customer_user_id do pedido local — voltaria a confiar no payload',
-    ).toMatch(/select\("account, customer_user_id"\)/);
+      'o guard deixou de ler customer_user_id/customer_document do pedido local — voltaria a confiar no payload',
+    ).toMatch(/select\("account, customer_user_id, customer_document"\)/);
   });
 
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
@@ -241,5 +255,59 @@ describe('guardrail money-path: coerência conta×código no criar_pedido (edge 
       mirrorBlock(src),
       'edge divergiu do helper de src/ — o Lovable reescreveu a coerência no deploy?',
     ).toBe(mirrorBlock(helper));
+  });
+});
+
+// ── Derivação de identidade Omie por conta (prova POSITIVA server-side) — P0-B ──
+// Fecha o gap do P0-A (código de OUTRO user passava): o edge deriva o código AUTORITATIVO do DOCUMENTO
+// do pedido (âncora imune ao fallback customer_user_id || user.id) e fail-closa em ambiguidade/ausência/
+// divergência. Decisão pura em src/ (vitest) ESPELHADA verbatim no edge; a paridade aqui pega a reversão
+// do deploy do Lovable. A prova de comportamento (edge deployado) é o quote OBEN que converte pós-deploy.
+const DERIVE = 'src/lib/omie/derive-account-identity.ts';
+
+describe('guardrail money-path: derivação de identidade Omie por conta (edge USA a decisão espelhada)', () => {
+  const src = read(VENDAS);
+  const helper = read(DERIVE);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('deriveOmieAccountIdentity');
+    expect(helper).toContain('decideAccountIdentity');
+  });
+
+  it('o helper puro existe e exporta decideAccountIdentity', () => {
+    expect(helper).toMatch(/export function decideAccountIdentity/);
+  });
+
+  it('o edge USA a decisão: define o espelho E deriva na fronteira (deriveOmieAccountIdentity)', () => {
+    expect(src, 'edge não define mais decideAccountIdentity espelhada').toMatch(/function decideAccountIdentity/);
+    expect(
+      src,
+      'REGRESSÃO: edge não chama mais deriveOmieAccountIdentity — voltou a confiar no código do payload?',
+    ).toMatch(/await deriveOmieAccountIdentity\(/);
+    expect(
+      count(src, 'deriveOmieAccountIdentity'),
+      'deve ser DEFINIDO e CHAMADO (≥2 menções)',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('criar_pedido USA o DERIVADO (ident.*), não o codigo_cliente do payload, no gate e no PV', () => {
+    expect(src, 'gateCredito/criarPedidoVenda deixaram de usar ident.codigo_cliente — voltaram ao payload?')
+      .toContain('ident.codigo_cliente');
+    expect(src, 'criarPedidoVenda deixou de usar ident.codigo_vendedor — voltou ao payload?')
+      .toContain('ident.codigo_vendedor');
+  });
+
+  it('alterar_pedido verifica a identidade antes da edição destrutiva (verify-before-edit)', () => {
+    expect(
+      src,
+      'sumiu o verify-before-edit — a edição voltaria a poder mutar um PV mal-atribuído',
+    ).toMatch(/omieCodigoClienteEdit !== null[\s\S]{0,200}deriveOmieAccountIdentity\(/);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO à decisão de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'omie derive-account-identity'),
+      'edge divergiu da decisão de src/ — o Lovable reescreveu a derivação no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'omie derive-account-identity'));
   });
 });
