@@ -22,6 +22,7 @@
 //   { "empresa": "OBEN" | "COLACOR" | "ALL", "dias": 30, "fornecedor_codigo_omie": 8689681266 }
 
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { classifyOmieResponse, computeBackoffMs } from "./retry.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -33,7 +34,6 @@ const corsHeaders = {
 const OMIE_ENDPOINT = "https://app.omie.com.br/api/v1/produtos/recebimentonfe/";
 const PAGE_SIZE = 50;
 const RATE_LIMIT_DELAY_MS = 1100;
-const RETRY_DELAY_MS = 5000;
 const MAX_RETRIES = 3;
 
 type Empresa = "OBEN" | "COLACOR";
@@ -69,6 +69,10 @@ interface EmpresaSummary {
 }
 
 const TIMEOUT_GUARD_MS = 130_000;
+// Guard do loop PRINCIPAL (syncEmpresa). Com retry em transitório, o loop pode
+// consumir toda a janela e deixar a linha fin_sync_log 'running' órfã (sem
+// completeSync). Cede ANTES do backfill (130s) p/ sobrar tempo ao completeSync.
+const MAIN_LOOP_GUARD_MS = 120_000;
 
 // Tipos minimos pra responses da Omie (campos opcionais — Omie nem sempre devolve tudo)
 interface OmieNFeCabec {
@@ -181,9 +185,12 @@ async function callOmie(
 ): Promise<OmieGenericResponse> {
   const body = { call, app_key, app_secret, param: [param] };
 
-  let attempt = 0;
-  while (attempt < MAX_RETRIES) {
-    attempt++;
+  // Retry alinhado às edges irmãs (omie-vendas-sync): retenta rate-limit E
+  // transitório da Omie (SOAP-ERROR/Application Server/timeout) E HTTP 5xx, com
+  // backoff. 4xx (não-429) falha alto. Após esgotar, LANÇA (OMIE_TRANSIENT) —
+  // nunca devolve faultstring transitório ao caller, senão o syncEmpresa o leria
+  // como erro de negócio e abortaria a página (o incidente OBEN de 05/07).
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const res = await fetch(OMIE_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -193,17 +200,25 @@ async function callOmie(
     let json: OmieGenericResponse;
     try { json = JSON.parse(text) as OmieGenericResponse; } catch { json = { raw: text }; }
 
-    if (res.status === 429 || (json?.faultstring && /rate limit/i.test(json.faultstring))) {
-      console.warn(`[sync-nfes] ${call} rate limit (try ${attempt}/${MAX_RETRIES}) wait ${RETRY_DELAY_MS}ms`);
-      await sleep(RETRY_DELAY_MS);
-      continue;
+    const fs = json?.faultstring ? String(json.faultstring) : undefined;
+    const verdict = classifyOmieResponse(res.status, fs);
+
+    if (verdict.kind === "retry") {
+      if (attempt < MAX_RETRIES) {
+        const delay = computeBackoffMs(fs ?? "", attempt);
+        console.warn(`[sync-nfes] ${call} ${verdict.reason} (retry ${attempt + 1}/${MAX_RETRIES}) wait ${delay / 1000}s`);
+        await sleep(delay);
+        continue;
+      }
+      throw new Error(`OMIE_TRANSIENT ${call}: ${verdict.reason === "rate_limit" ? "rate limit" : "erro transitório"} persistiu após ${MAX_RETRIES} retries`);
     }
-    if (!res.ok) {
+    if (verdict.kind === "permanent") {
       throw new Error(`Omie ${call} HTTP ${res.status}: ${text.slice(0, 400)}`);
     }
+    // "ok" | "fault" → devolve ao caller (fault: ex.: "sem registros" tratado no syncEmpresa)
     return json;
   }
-  throw new Error(`Omie ${call}: rate limit excedido após ${MAX_RETRIES} tentativas`);
+  throw new Error(`Omie ${call}: retries esgotados`); // inalcançável — o loop sempre retorna ou lança
 }
 
 interface MappedNFe {
@@ -386,6 +401,7 @@ async function syncEmpresa(
   empresa: Empresa,
   dias: number,
   fornecedorCodigo: number | undefined,
+  t0: number,
   dataInicialOverride?: string,
   dataFinalOverride?: string,
 ): Promise<EmpresaSummary> {
@@ -421,8 +437,14 @@ async function syncEmpresa(
 
   let pagina = 1;
   let totalPaginas = 1;
+  let interrompidoPorTempo = false;
 
   while (pagina <= totalPaginas) {
+    if (Date.now() - t0 > MAIN_LOOP_GUARD_MS) {
+      console.warn(`[sync-nfes] ${empresa} MAIN_LOOP_GUARD na pág ${pagina} — interrompido p/ garantir completeSync`);
+      interrompidoPorTempo = true;
+      break;
+    }
     let resp: OmieListRecebimentosResponse;
     try {
       const param: Record<string, unknown> = {
@@ -459,6 +481,11 @@ async function syncEmpresa(
     console.log(`[sync-nfes] ${empresa} pag=${pagina}/${totalPaginas} nfes=${nfes.length}`);
 
     for (const nfe of nfes) {
+      if (Date.now() - t0 > MAIN_LOOP_GUARD_MS) {
+        console.warn(`[sync-nfes] ${empresa} MAIN_LOOP_GUARD no meio da pág ${pagina} — interrompido`);
+        interrompidoPorTempo = true;
+        break;
+      }
       const nIdReceb = Number(nfe?.cabec?.nIdReceb ?? 0);
       if (!nIdReceb) {
         summary.erros++;
@@ -475,17 +502,30 @@ async function syncEmpresa(
 
         // ConsultarRecebimento → busca itens e nNumPedCompra
         await sleep(RATE_LIMIT_DELAY_MS);
-        let detalhe: OmieConsultarRecebimentoResponse | null;
+        let detalhe: OmieConsultarRecebimentoResponse;
         try {
           detalhe = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb })) as OmieConsultarRecebimentoResponse;
-          summary.consultas_detalhadas++;
         } catch (errDet) {
           const msgDet = errDet instanceof Error ? errDet.message : String(errDet);
-          console.warn(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} ConsultarRecebimento falhou: ${msgDet} — tratando como órfã`);
-          detalhe = null;
+          // Falha esgotada/transitória do ConsultarRecebimento NÃO prova ausência de
+          // pedido. Gravar órfã aqui fabricaria dado FALSO (money-path): a NFe pode ter
+          // pedido vinculado que só não pudemos ler agora. Marca erro e PULA — a NFe
+          // volta no próximo run quando a Omie estabilizar.
+          console.warn(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} ConsultarRecebimento exceção: ${msgDet} — pulando (NÃO vira órfã)`);
+          summary.erros++;
+          continue;
         }
+        // A Omie também devolve erro de negócio como PAYLOAD (faultstring, HTTP 200, sem
+        // exceção). Isso igualmente NÃO prova ausência de pedido → mesmo tratamento: pula,
+        // não vira órfã. Espelha o guard do backfill (if !detalhe || detalhe?.faultstring).
+        if (detalhe?.faultstring) {
+          console.warn(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} ConsultarRecebimento faultstring: ${String(detalhe.faultstring)} — pulando (NÃO vira órfã)`);
+          summary.erros++;
+          continue;
+        }
+        summary.consultas_detalhadas++;
 
-        const numerosPedido = detalhe ? extractPedidosFromDetalhe(detalhe) : [];
+        const numerosPedido = extractPedidosFromDetalhe(detalhe);
 
         if (numerosPedido.length >= 2) {
           console.log(
@@ -527,11 +567,15 @@ async function syncEmpresa(
       }
     }
 
+    if (interrompidoPorTempo) break;
+
     pagina++;
     if (pagina <= totalPaginas) {
       await sleep(RATE_LIMIT_DELAY_MS);
     }
   }
+
+  if (interrompidoPorTempo) summary.interrompido_por_timeout = true;
 
   return summary;
 }
@@ -807,7 +851,7 @@ Deno.serve(async (req) => {
             erros: 0,
           };
         } else {
-          s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo, dataInicial, dataFinal);
+          s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo, t0, dataInicial, dataFinal);
           console.log(
             `[sync-nfes] ${empresa} TOTAL: nfes=${s.nfes_processadas} ` +
             `consultas=${s.consultas_detalhadas} vinculadas=${s.pedidos_vinculados} ` +
@@ -816,7 +860,13 @@ Deno.serve(async (req) => {
           );
         }
 
-        if (!pularBackfill) {
+        // Se o loop principal já estourou o guard de tempo, PULA o backfill: ele só
+        // consumiria a margem que resta p/ o completeSync rodar (senão a linha fica
+        // 'running' órfã). O backfill retroativo pega no próximo ciclo.
+        if (s.interrompido_por_timeout && !pularBackfill) {
+          console.warn(`[sync-nfes] ${empresa} main loop interrompido por tempo — pulando backfill p/ garantir completeSync`);
+        }
+        if (!pularBackfill && !s.interrompido_por_timeout) {
           try {
             const bf = await backfillRawData(supabase, empresa, fornecedorCodigo, t0);
             s.backfill = bf;
