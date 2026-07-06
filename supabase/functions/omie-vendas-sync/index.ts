@@ -1659,16 +1659,22 @@ async function deriveOmieAccountIdentity(
   account: Account,
   suppliedCodigo: number | null,
 ): Promise<{ codigo_cliente: number; codigo_vendedor: number | null }> {
-  let doc = (soRow.customer_document || "").replace(/\D/g, "");
+  const rawDoc = (soRow.customer_document || "").trim();
+  let doc = rawDoc.replace(/\D/g, "");
+  let profileRaw = "";
   if (!doc && soRow.customer_user_id) {
     const { data: prof } = await supabase.from("profiles").select("document").eq("user_id", soRow.customer_user_id).maybeSingle();
-    doc = ((prof?.document as string | undefined) || "").replace(/\D/g, "");
+    profileRaw = ((prof?.document as string | undefined) || "").trim();
+    doc = profileRaw.replace(/\D/g, "");
   }
   if (!doc) {
     throw new Error(`Pedido rejeitado: sem documento do cliente para provar a identidade Omie na conta ${account} — envio bloqueado.`);
   }
 
-  const { data: users } = await supabase.from("profiles").select("user_id").eq("document", doc);
+  // profiles.document em prod existe raw E limpo (resolveLocalUserId casa ambos) — casar os dois p/ não
+  // perder o fast-path do espelho quando o formato armazenado difere do documento do pedido.
+  const docCandidates = [...new Set([doc, rawDoc, profileRaw].filter((d) => d.length > 0))];
+  const { data: users } = await supabase.from("profiles").select("user_id").in("document", docCandidates);
   const userIds = ((users ?? []) as Array<{ user_id: string }>).map((u) => u.user_id);
   const mirrorRows: MirrorRow[] = userIds.length
     ? (((await supabase.from("omie_clientes").select("omie_codigo_cliente, omie_codigo_vendedor, empresa_omie").in("user_id", userIds).eq("empresa_omie", account)).data ?? []) as MirrorRow[])

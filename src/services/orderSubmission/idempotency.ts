@@ -27,6 +27,7 @@ export interface EnsureSalesOrderArgs {
   fields: {
     customer_user_id: string; created_by: string; items: Json;
     subtotal: number; total: number; notes: string | null;
+    customer_document: string | null;
     customer_address: string | null; customer_phone: string | null; ready_by_date: string | null;
   };
 }
@@ -60,6 +61,7 @@ export async function ensureSalesOrderRow(
   if (action === 'reuse') {
     const { error } = await supabase.from('sales_orders').update({
       items: fields.items, subtotal: fields.subtotal, total: fields.total, notes: fields.notes,
+      customer_document: fields.customer_document,
       customer_address: fields.customer_address, customer_phone: fields.customer_phone,
       ready_by_date: fields.ready_by_date,
     }).eq('id', existing!.id);

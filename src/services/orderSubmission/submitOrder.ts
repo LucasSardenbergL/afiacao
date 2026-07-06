@@ -174,6 +174,9 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           subtotal: subtotals.oben,
           total: subtotals.oben,
           notes: meta.notes || null,
+          // Âncora money-path (P0-B): documento do cliente REAL (raw) p/ o edge derivar o código Omie
+          // por-conta na fronteira — imune ao fallback customer_user_id || user.id (que vira o vendedor).
+          customer_document: customer.cnpj_cpf || null,
           customer_address: storedAddress,
           customer_phone: storedPhone,
           ready_by_date: meta.readyByDate || null,
@@ -284,6 +287,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           subtotal: subtotals.colacor,
           total: subtotals.colacor,
           notes: meta.notes || null,
+          customer_document: customer.cnpj_cpf || null,
           customer_address: storedAddress,
           customer_phone: storedPhone,
           ready_by_date: meta.readyByDate || null,

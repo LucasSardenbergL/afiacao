@@ -63,6 +63,9 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         status: 'orcamento',
         notes: meta.notes || null,
         account: 'oben',
+        // Âncora money-path (P0-B): documento do cliente REAL (raw). O edge deriva o código Omie por-conta
+        // DESTE documento na conversão — imune ao fallback customer_user_id || user.id.
+        customer_document: customer.cnpj_cpf || null,
         customer_address: storedAddress,
         customer_phone: storedPhone,
       });
@@ -108,6 +111,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         status: 'orcamento',
         notes: meta.notes || null,
         account: 'colacor',
+        customer_document: customer.cnpj_cpf || null,
         customer_address: storedAddress,
         customer_phone: storedPhone,
       });
