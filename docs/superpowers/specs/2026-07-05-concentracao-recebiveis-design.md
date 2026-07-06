@@ -281,5 +281,26 @@ RLS `SET ROLE` + falsificação) antes de entregar.
   de exposição aberta por código Omie… Não é F4: aqui o número-base existe; o buraco é
   identificação/semântica, não ausência do sinal."*
 
-**Revisão independente:** ✅ Codex (design) 2026-07-05. Pendente: Codex adversarial **no código**
-após implementar (padrão F1 §11) + prove-sql se houver RPC.
+**Revisão independente:** ✅ Codex design + ✅ Codex código (2026-07-05). Sem migration → sem prove-sql.
+
+## 11. Challenge Codex no CÓDIGO (2026-07-05, xhigh — 3 P1, todos acatados)
+
+Após implementar (helper + hook + UI), o Codex adversarial no código achou 3 P1:
+
+1. **UI fabricava R$0 em leitura parcial sem métrica** — `fonte_parcial` sem linha válida
+   (`maiorExposicao=null`) caía em `fmt(?? 0)` → "R$ 0,00" (viola ausente≠zero). Fix: `—` +
+   estado dedicado "leitura parcial — sem métricas calculáveis". Teste: parcial+vazio → null.
+2. **Cap-guard furava com `count` ausente** — se o PostgREST capa em 1.000 e `count` vem
+   null, `rows=1000 < limit=5000` retornava `ok` (truncada-como-completa). Fix fail-closed:
+   `count==null && rows>=1000 → parcial`. **Falsificado** (sabotar → vermelho exato → revertido).
+3. **`PARCIAL` virava vencido por complemento** — `atrasado = aberto && !não-vencido` marcava
+   'PARCIAL' como vencido sem prova, inflando a coluna. Fix: lista POSITIVA
+   `isOverdueTitleStatus ∈ {ATRASADO, VENCIDO}`. Teste explícito PARCIAL → false.
+
+Confirmados **sem furo** pelo Codex: `Number(saldo)` não fabrica total (null → inválida →
+`fonte_parcial`); gate `indisponivel` não calcula; `sem_carteira` só com fonte `ok`;
+C50/HHI/topN corretos; nome v1 seguro (só "Cliente #código").
+
+Prova total: **32 testes vitest** (helper + `classificarFonte` + `isOverdueTitleStatus`) +
+falsificação dos gates de fonte e do cap-guard. **Sem migration** (lê `fin_contas_receber`) →
+sem prove-sql. Deploy Lovable = só **Publish frontend** (1 camada, sem SQL Editor).
