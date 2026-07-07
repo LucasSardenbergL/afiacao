@@ -14,13 +14,13 @@ import { ptBR } from 'date-fns/locale';
 import type { StandardProcessEtapa } from '@/lib/standard-process/types';
 
 const ETAPA_TYPE_COLOR: Record<string, string> = {
-  preparacao: 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
-  aplicacao: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
-  secagem: 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300',
-  lixamento: 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
-  mistura: 'bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300',
-  inspecao: 'bg-pink-100 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300',
-  embalagem: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
+  preparacao: 'bg-status-info-bg text-status-info-foreground',
+  aplicacao: 'bg-status-success-bg text-status-success-foreground',
+  secagem: 'bg-status-warning-bg text-status-warning-foreground',
+  lixamento: 'bg-status-warning-bg text-status-warning-foreground',
+  mistura: 'bg-status-purple-bg text-status-purple-foreground',
+  inspecao: 'bg-status-error-bg text-status-error-foreground',
+  embalagem: 'bg-muted text-muted-foreground',
   outro: 'bg-muted text-muted-foreground',
 };
 

@@ -356,7 +356,7 @@ const ImpactChip = ({ label, value, inverted = false }: { label: string; value: 
   const Icon = value === 0 ? Minus : isPositive ? TrendingUp : TrendingDown;
   const color = value === 0
     ? 'text-muted-foreground bg-muted'
-    : isPositive ? 'text-emerald-700 bg-emerald-50' : 'text-red-700 bg-red-50';
+    : isPositive ? 'text-status-success-foreground bg-status-success-bg' : 'text-status-error-foreground bg-status-error-bg';
   return (
     <div className={`text-center rounded p-1 ${color}`}>
       <Icon className="w-3 h-3 mx-auto" />

@@ -42,10 +42,10 @@ const LEVEL_ICONS: Record<number, typeof Trophy> = {
 
 const LEVEL_COLORS: Record<number, string> = {
   1: 'text-muted-foreground bg-muted',
-  2: 'text-blue-600 bg-blue-100',
-  3: 'text-emerald-600 bg-emerald-100',
-  4: 'text-amber-600 bg-amber-100',
-  5: 'text-purple-600 bg-purple-100',
+  2: 'text-status-info bg-status-info-bg',
+  3: 'text-status-success bg-status-success-bg',
+  4: 'text-status-warning bg-status-warning-bg',
+  5: 'text-status-purple bg-status-purple-bg',
 };
 
 const AdminGamification = () => {
@@ -140,7 +140,7 @@ const AdminGamification = () => {
           </Card>
           <Card className="text-center">
             <CardContent className="pt-4 pb-3">
-              <p className="text-2xl font-bold text-emerald-600">{avgHealth.toFixed(0)}%</p>
+              <p className="text-2xl font-bold text-status-success">{avgHealth.toFixed(0)}%</p>
               <p className="text-xs text-muted-foreground">Saúde Média</p>
             </CardContent>
           </Card>
@@ -192,7 +192,7 @@ const AdminGamification = () => {
                   <div className="flex items-center gap-3">
                     {/* Position */}
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                      position <= 3 ? 'bg-amber-100 text-amber-700' : 'bg-muted text-muted-foreground'
+                      position <= 3 ? 'bg-status-warning-bg text-status-warning-foreground' : 'bg-muted text-muted-foreground'
                     }`}>
                       {position}
                     </div>
@@ -269,10 +269,10 @@ const AdminGamification = () => {
                           <div className="pt-2 border-t border-border">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
-                                <Heart className="w-4 h-4 text-emerald-600" />
+                                <Heart className="w-4 h-4 text-status-success" />
                                 <span className="text-sm font-medium">Saúde das Ferramentas</span>
                               </div>
-                              <span className="text-lg font-bold text-emerald-600">{user.tool_health_index}%</span>
+                              <span className="text-lg font-bold text-status-success">{user.tool_health_index}%</span>
                             </div>
                           </div>
                         </div>

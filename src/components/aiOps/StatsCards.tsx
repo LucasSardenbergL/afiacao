@@ -21,7 +21,7 @@ export function StatsCards({ prioridadesCount, oportunidadesCount, riscosCount }
       icon: Zap,
       label: 'Oportunidades',
       value: oportunidadesCount,
-      color: 'text-emerald-600 dark:text-emerald-400',
+      color: 'text-status-success',
     },
     {
       icon: Shield,

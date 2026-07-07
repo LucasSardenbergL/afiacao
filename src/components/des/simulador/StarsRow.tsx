@@ -11,7 +11,7 @@ export function StarsRow({ count, max = 6 }: { count: number; max?: number }) {
           key={i}
           className={cn(
             "h-3.5 w-3.5",
-            i < count ? "fill-amber-400 text-amber-400" : "text-muted-foreground/30",
+            i < count ? "fill-status-warning-bold text-status-warning-bold" : "text-muted-foreground/30",
           )}
         />
       ))}
