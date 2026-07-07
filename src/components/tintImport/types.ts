@@ -6,7 +6,7 @@ export const ACCOUNT = 'oben';
 export const CHUNK_SIZE_DEFAULT = 200;
 export const CHUNK_SIZE_FORMULAS = 50; // Formulas are heavy (~10 DB ops per row)
 export const MAX_RETRIES = 3;
-export const RETRY_DELAY_MS = 2000;
+const RETRY_DELAY_MS = 2000;
 
 export function getChunkSize(tipo: string): number {
   if (tipo === 'formulas_padrao' || tipo === 'formulas_personalizadas') return CHUNK_SIZE_FORMULAS;

@@ -1,7 +1,7 @@
 // Tiers e helper de classificação do módulo de fidelidade.
 // Extraídos verbatim de src/pages/AdminLoyalty.tsx (god-component split).
 
-export const TIERS = [
+const TIERS = [
   { name: 'Bronze', min: 0, icon: '🥉' },
   { name: 'Prata', min: 200, icon: '🥈' },
   { name: 'Ouro', min: 500, icon: '🥇' },

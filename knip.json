@@ -5,7 +5,8 @@
     "src/test/bun-setup.ts",
     "src/lib/mcp/index.ts",
     "supabase/functions/**/index.ts",
-    "supabase/functions/**/*_test.ts"
+    "supabase/functions/**/*_test.ts",
+    "supabase/functions/**/*.test.ts"
   ],
   "project": [
     "src/**/*.{ts,tsx}",
@@ -19,5 +20,5 @@
     "src/hooks/useNvoipCall.ts",
     "src/hooks/useWhatsappPendentes.ts"
   ],
-  "ignoreDependencies": ["npm"]
+  "ignoreDependencies": ["npm", "jsr"]
 }

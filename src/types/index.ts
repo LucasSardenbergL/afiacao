@@ -59,11 +59,6 @@ export const SERVICE_TYPES: Record<ServiceType, { label: string; description: st
 // Wear levels
 export type WearLevel = 'leve' | 'medio' | 'pesado';
 
-export const WEAR_LEVELS: Record<WearLevel, { label: string; color: string }> = {
-  leve: { label: 'Leve', color: 'status-success' },
-  medio: { label: 'Médio', color: 'status-pending' },
-  pesado: { label: 'Pesado', color: 'status-danger' },
-};
 
 // Delivery options
 export type DeliveryOption = 'coleta_entrega' | 'somente_coleta' | 'somente_entrega' | 'balcao';

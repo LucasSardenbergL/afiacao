@@ -37,7 +37,7 @@ export function resolverHomeStaff({ commercialRole, isSalesOnly }: SinaisHomeSta
 export const SECAO_VENDAS = 'Vendas';
 
 /** Paths fora da seção Vendas que a vendedora sales-only PRECISA alcançar. */
-export const PATHS_EXTRAS_SALES_ONLY: readonly string[] = ['/meu-dia', '/admin/customers'];
+const PATHS_EXTRAS_SALES_ONLY: readonly string[] = ['/meu-dia', '/admin/customers'];
 
 /** Item de nav visível pra sales-only? Toda a seção Vendas + allowlist de extras. */
 export function itemVisivelParaSalesOnly(sectionTitle: string, path: string): boolean {

@@ -32,6 +32,12 @@ Auditoria mecânica completa (health stack + 2 sweeps por padrão do CLAUDE.md: 
 - `fin_dre_snapshots` sem `.limit()` — 12 linhas/ano/empresa/regime; precisaria ~80 anos p/ capar em 1000.
 - Somas com `?? 0` em reduce (cashflow saldo_cc/cmv_ttm, fluxo-realizado) — somar 0 ≡ excluir da soma; mudar semântica é decisão de produto, não fix.
 
+## Lote 2 (mesma sessão, pós-merge do PR da auditoria)
+
+Faxina de unused exports em módulos FRIOS (excluídos: financeiro, reposição, vendas/salesOrders, sayerlack, KB — áreas quentes ou com PR draft). 26 exports resolvidos (74→48): 17 símbolos de uso interno perderam só o keyword `export` (formatDocument, TIERS, RETRY_DELAY_MS, classifyProfile, AGENDA_TIPOS, TRACKED_PREFIXES, ORDER_STATUS_INVALIDOS, AuthRequiredError, EdgeFunctionError, PATHS_EXTRAS_SALES_ONLY, CADENCIA_DEFAULT, pickTopModifier, signalsCount, scoreNome, OPTIMISTIC_MSG_PREFIX, fetchCidadesRota, fetchWhatsappSla); 7 símbolos completamente mortos deletados (useInsideAppShell, calculateSharpeningStats, getPosthog, clearOfflineQueue, OUTCOME_STATUSES, WEAR_LEVELS, e 3 hooks de useOrders: useCustomerOrders/useStaffPendingOrders/useCustomerCount). Método: knip garante 0 usos externos; grep no próprio arquivo distingue uso interno (≥2 ocorrências) de morto total (1); typecheck strict (noUnusedLocals) valida.
+
+**Achado**: `omie-sync-status-produtos/paginacao.test.ts` usa sufixo `.test.ts` (vitest-style) mas vitest só inclui `src/**` — o arquivo só roda via `deno test` manual (documentado no cabeçalho). knip.json agora cobre ambos os sufixos de teste Deno (`*_test.ts` e `*.test.ts`) e ignora o specifier `jsr:` (mesmo caso do `npm:`).
+
 ## Backlog novo (fora do escopo seguro desta sessão — churn alto/multi-worktree)
 
 - ~78 usos de cores Tailwind hardcoded (`text-emerald-600` etc.) onde a convenção v3 pede `text-status-*` — concentrados em páginas de status/governança/farmer. Migração visual dedicada.

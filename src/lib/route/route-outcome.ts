@@ -19,7 +19,6 @@
  */
 
 export type OutcomeStatus = 'convertido' | 'respondido' | 'sem_resposta' | 'opt_out';
-export const OUTCOME_STATUSES: OutcomeStatus[] = ['convertido', 'respondido', 'sem_resposta', 'opt_out'];
 
 export interface ContatoLog {
   status: OutcomeStatus;
@@ -28,7 +27,7 @@ export interface ContatoLog {
 }
 
 export interface CadenciaCfg { limiarSemResposta: number; janelaCadenciaDias: number; }
-export const CADENCIA_DEFAULT: CadenciaCfg = { limiarSemResposta: 3, janelaCadenciaDias: 7 };
+const CADENCIA_DEFAULT: CadenciaCfg = { limiarSemResposta: 3, janelaCadenciaDias: 7 };
 
 export interface SinaisContato {
   optOut: boolean;

@@ -2,14 +2,14 @@ import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 import type { FunctionInvokeOptions } from '@supabase/supabase-js';
 
-export class AuthRequiredError extends Error {
+class AuthRequiredError extends Error {
   constructor() {
     super('Sessão expirada. Faça login novamente.');
     this.name = 'AuthRequiredError';
   }
 }
 
-export class EdgeFunctionError extends Error {
+class EdgeFunctionError extends Error {
   constructor(message: string, public functionName: string) {
     super(message);
     this.name = 'EdgeFunctionError';

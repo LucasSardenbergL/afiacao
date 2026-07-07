@@ -27,7 +27,7 @@ const TTL_MS = 48 * 60 * 60 * 1000; // 48h: snapshot reaproveitável
 const STALE_MS = 30 * 60 * 1000; // 30min: quando começa a revalidar em background
 const cacheKey = (uid: string) => `radar-cidades-rota:v1:${uid}`;
 
-export async function fetchCidadesRota(): Promise<CityOption[]> {
+async function fetchCidadesRota(): Promise<CityOption[]> {
   const { data, error } = await supabase.rpc(
     'radar_contagem_por_municipio',
     { p_limit: 500 } as never,
