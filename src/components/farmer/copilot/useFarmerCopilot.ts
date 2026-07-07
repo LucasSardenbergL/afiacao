@@ -2,7 +2,6 @@
 // Extraída verbatim de src/pages/FarmerCopilot.tsx (god-component split).
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useScribe, CommitStrategy } from '@elevenlabs/react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useMyActiveCoverage } from '@/hooks/useCoverage';
@@ -13,6 +12,7 @@ import { toast } from 'sonner';
 import { Minus } from 'lucide-react';
 import { directionConfig, suggestionTypeIcons, fallbackSuggestionIcon } from './config';
 import type { InputMode } from './types';
+import type { MotorVozScribeProps } from './MotorVozScribe';
 
 export function useFarmerCopilot() {
   const navigate = useNavigate();
@@ -42,17 +42,9 @@ export function useFarmerCopilot() {
   const [isManualAnalyzing, setIsManualAnalyzing] = useState(false);
   const [riskFlash, setRiskFlash] = useState(false);
 
-  // ElevenLabs realtime scribe
-  const scribe = useScribe({
-    modelId: 'scribe_v2_realtime',
-    commitStrategy: CommitStrategy.VAD,
-    onPartialTranscript: (data) => {
-      if (data.text) copilot.addTranscript(data.text, true);
-    },
-    onCommittedTranscript: (data) => {
-      if (data.text) copilot.addTranscript(data.text, false);
-    },
-  });
+  // Sessão de voz: token != null ⇒ a página monta o MotorVozScribe (React.lazy),
+  // que embute o useScribe — o SDK ElevenLabs fica FORA deste chunk de página.
+  const [scribeToken, setScribeToken] = useState<string | null>(null);
 
   // Load customers (dropdown da carteira — segue o id efetivo na lente)
   useEffect(() => {
@@ -148,6 +140,12 @@ export function useFarmerCopilot() {
   const handleStartVoice = useCallback(async () => {
     setIsConnecting(true);
     try {
+      // Chunk do motor de voz (SDK ElevenLabs) baixa em PARALELO ao roundtrip do
+      // token; o branch com catch noop evita unhandled rejection se o fluxo
+      // falhar antes do await dele.
+      const motorPromise = import('./MotorVozScribe');
+      motorPromise.catch(() => {});
+
       const { data: tokenData, error: tokenError } = await supabase.functions.invoke('elevenlabs-scribe-token');
       if (tokenError || !tokenData?.token) throw new Error('Falha ao obter token de transcrição');
 
@@ -160,15 +158,11 @@ export function useFarmerCopilot() {
         bundleContext,
       });
 
-      await scribe.connect({
-        token: tokenData.token,
-        microphone: {
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
-
-      toast.success('Copiloto ativado', { description: 'Transcrição em tempo real iniciada' });
+      // Garante o chunk baixado ANTES de montar; falha cai no catch (modo texto).
+      await motorPromise;
+      // Monta o motor → connect acontece no mount; o toast de "Copiloto ativado"
+      // sai no onConnected (conexão real), como antes saía após o connect.
+      setScribeToken(tokenData.token);
     } catch (err) {
       console.error('Start error:', err);
       // Auto-fallback to text mode
@@ -179,7 +173,7 @@ export function useFarmerCopilot() {
     } finally {
       setIsConnecting(false);
     }
-  }, [selectedCustomer, copilot, scribe, prepareSessionContext]);
+  }, [selectedCustomer, copilot, prepareSessionContext]);
 
   // Start text mode session
   const handleStartText = useCallback(async () => {
@@ -230,12 +224,10 @@ export function useFarmerCopilot() {
 
   // Stop recording
   const handleStop = useCallback(async () => {
-    if (inputMode === 'voice') {
-      scribe.disconnect();
-    }
+    setScribeToken(null); // desmonta o motor de voz → cleanup desconecta o scribe
     await copilot.endSession();
     toast.success('Sessão encerrada');
-  }, [scribe, copilot, inputMode]);
+  }, [copilot]);
 
   // Copy suggestion
   const handleCopySuggestion = useCallback((text: string) => {
@@ -244,6 +236,30 @@ export function useFarmerCopilot() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }, [copilot]);
+
+  // Props do motor de voz montado pela página (null = sem sessão de voz).
+  const handleScribePartial = useCallback((text: string) => copilot.addTranscript(text, true), [copilot]);
+  const handleScribeCommitted = useCallback((text: string) => copilot.addTranscript(text, false), [copilot]);
+  const handleScribeConnected = useCallback(() => {
+    toast.success('Copiloto ativado', { description: 'Transcrição em tempo real iniciada' });
+  }, []);
+  const handleScribeError = useCallback((err: unknown) => {
+    console.error('Scribe error:', err);
+    setScribeToken(null);
+    setInputMode('text');
+    toast.error('Voz indisponível', {
+      description: 'Transcrição por voz falhou. Modo texto ativado automaticamente.',
+    });
+  }, []);
+  const motorVozProps: MotorVozScribeProps | null = scribeToken
+    ? {
+        token: scribeToken,
+        onPartialTranscript: handleScribePartial,
+        onCommittedTranscript: handleScribeCommitted,
+        onConnected: handleScribeConnected,
+        onError: handleScribeError,
+      }
+    : null;
 
   const analysis = copilot.currentAnalysis;
   const dir = analysis ? directionConfig[analysis.direction] : null;
@@ -256,6 +272,7 @@ export function useFarmerCopilot() {
     isImpersonating,
     userId: user?.id ?? null,
     copilot,
+    motorVozProps,
     selectedCustomer,
     setSelectedCustomer,
     customers,

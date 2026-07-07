@@ -31,3 +31,13 @@ Padrão: nas duas, a 1ª review achou o P1, corrigi, re-review confirmou "SEGURO
 ## Deploy
 
 As 5 são **frontend** → precisam de **Publish do frontend no Lovable** (nenhuma migration/edge). A Onda 4 tem uma **transição única**: clientes com o SW antigo (autoUpdate) auto-recarregam **uma última vez** ao pegar o build com modo prompt; daí em diante, toda atualização vira o toast. Inerente à troca.
+
+## Onda 5 — SDKs de voz/OCR fora dos chunks de página (2026-07-07, PR #NNNN)
+
+Maior chunk do app era a página `FarmerCopilot` (478,77 kB raw / 126,31 kB gzip): `useFarmerCopilot.ts` importava `@elevenlabs/react` (useScribe) ESTATICAMENTE — o SDK de voz baixava só para ABRIR a página (vendedor externo em 4G). Menor, mesmo padrão: `tesseract.js` estático no `LoteScannerOCR` (dentro do chunk da `RecebimentoConferencia`, tela precacheada).
+
+**Fix**: useScribe é hook (não pode ser condicional) → o corte é o componente **headless** `MotorVozScribe` (retorna null; connect no mount / disconnect no unmount, refs "latest", guards single-fire), montado via `React.lazy` só ao iniciar sessão de voz — o chunk baixa em PARALELO ao roundtrip do token, e falha de download cai no fallback voz→texto já existente. A UI da sessão **não** foi movida (é compartilhada com o modo texto, o fallback). No scanner, `createWorker` virou dynamic import no `capture()` (1º scan). **Armadilha que a auditoria não via**: sem `vendor-elevenlabs`/`vendor-tesseract` nomeados (manualChunks, precedente do vendor-posthog) + `globIgnores`, o **precache do PWA baixaria o SDK de voz para TODO usuário** na instalação do SW.
+
+**Medido nos bytes**: FarmerCopilot 478,77→23,72 kB raw (−95%; gzip 126,31→7,52); RecebimentoConferencia 34,79→21,44 kB; `vendor-elevenlabs` 455,53 kB (só no clique); `vendor-tesseract` 16,33 kB (só no 1º scan); precache 5.486→5.474 KiB. Provas estruturais: 0 import estático do vendor no chunk da página (única menção = array de deps do `__vitePreload`), 0 `modulepreload` no boot, 0 menção no `sw.js`.
+
+**Codex pegou de novo (3 achados em 3 rodadas, todos corrigidos)**: (1) erros fatais por EVENTO pós-`connect()` (auth/quota) deixavam a sessão de voz "surda" sem fallback → handlers fatais específicos; o agregador `onError` do SDK foi deliberadamente evitado (dispara também para transientes — throttle/silêncio derrubariam a sessão à toa); (2) toast "Copiloto ativado" saía no `connect()` resolvido, que pode preceder o OPEN real → sucesso sinalizado só por evento (`onConnect`/`onSessionStarted`, single-fire); (3) troca de token com o motor montado vazaria guards entre conexões → `key={token}` no call-site (1 instância = 1 conexão). Lição repetida das Ondas 3/4: **em ciclo de vida de conexão, a review independente paga**.
