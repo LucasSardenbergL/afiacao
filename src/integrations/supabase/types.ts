@@ -3867,6 +3867,161 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_divida_completude: {
+        Row: {
+          company: string
+          completo: boolean
+          validado_em: string | null
+          validado_por: string | null
+        }
+        Insert: {
+          company: string
+          completo?: boolean
+          validado_em?: string | null
+          validado_por?: string | null
+        }
+        Update: {
+          company?: string
+          completo?: boolean
+          validado_em?: string | null
+          validado_por?: string | null
+        }
+        Relationships: []
+      }
+      fin_divida_parcelas: {
+        Row: {
+          data_vencimento: string
+          divida_id: string
+          estimado: boolean
+          id: string
+          numero_parcela: number
+          pago: boolean
+          valor_amortizacao: number
+          valor_juros: number
+          valor_total: number
+        }
+        Insert: {
+          data_vencimento: string
+          divida_id: string
+          estimado?: boolean
+          id?: string
+          numero_parcela: number
+          pago?: boolean
+          valor_amortizacao: number
+          valor_juros?: number
+          valor_total: number
+        }
+        Update: {
+          data_vencimento?: string
+          divida_id?: string
+          estimado?: boolean
+          id?: string
+          numero_parcela?: number
+          pago?: boolean
+          valor_amortizacao?: number
+          valor_juros?: number
+          valor_total?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fin_divida_parcelas_divida_id_fkey"
+            columns: ["divida_id"]
+            isOneToOne: false
+            referencedRelation: "fin_dividas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fin_dividas: {
+        Row: {
+          ativo: boolean
+          cet_aa: number | null
+          company: string
+          coobrigada_por: string | null
+          cp_inclusion_ate: string | null
+          cp_inclusion_status: string
+          credor: string
+          data_contratacao: string
+          garantias: string | null
+          id: string
+          indexador: string | null
+          observacao: string | null
+          principal_contratado: number
+          saldo_devedor_data_base: string | null
+          saldo_devedor_informado: number | null
+          tipo: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          ativo?: boolean
+          cet_aa?: number | null
+          company: string
+          coobrigada_por?: string | null
+          cp_inclusion_ate?: string | null
+          cp_inclusion_status?: string
+          credor: string
+          data_contratacao: string
+          garantias?: string | null
+          id?: string
+          indexador?: string | null
+          observacao?: string | null
+          principal_contratado: number
+          saldo_devedor_data_base?: string | null
+          saldo_devedor_informado?: number | null
+          tipo: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          ativo?: boolean
+          cet_aa?: number | null
+          company?: string
+          coobrigada_por?: string | null
+          cp_inclusion_ate?: string | null
+          cp_inclusion_status?: string
+          credor?: string
+          data_contratacao?: string
+          garantias?: string | null
+          id?: string
+          indexador?: string | null
+          observacao?: string | null
+          principal_contratado?: number
+          saldo_devedor_data_base?: string | null
+          saldo_devedor_informado?: number | null
+          tipo?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      fin_dre_custo_tipo: {
+        Row: {
+          categoria_codigo: string
+          company: string
+          observacao: string | null
+          tipo: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          categoria_codigo: string
+          company?: string
+          observacao?: string | null
+          tipo: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          categoria_codigo?: string
+          company?: string
+          observacao?: string | null
+          tipo?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       fin_dre_snapshots: {
         Row: {
           ano: number
@@ -8026,6 +8181,71 @@ export type Database = {
         }
         Relationships: []
       }
+      pcp_bom_rota_saidas: {
+        Row: {
+          fracao_rateio: number
+          id: number
+          largura_saida_mm: number
+          papel: string
+          quantidade: number
+          rota_id: number
+        }
+        Insert: {
+          fracao_rateio: number
+          id?: never
+          largura_saida_mm: number
+          papel: string
+          quantidade: number
+          rota_id: number
+        }
+        Update: {
+          fracao_rateio?: number
+          id?: never
+          largura_saida_mm?: number
+          papel?: string
+          quantidade?: number
+          rota_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pcp_bom_rota_saidas_rota_id_fkey"
+            columns: ["rota_id"]
+            isOneToOne: false
+            referencedRelation: "pcp_bom_rotas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pcp_bom_rotas: {
+        Row: {
+          ativa: boolean
+          esquema: string
+          id: number
+          largura_alvo_mm: number
+          largura_base_mm: number
+          linha_modelo: string
+          nota: string | null
+        }
+        Insert: {
+          ativa?: boolean
+          esquema?: string
+          id?: never
+          largura_alvo_mm: number
+          largura_base_mm: number
+          linha_modelo: string
+          nota?: string | null
+        }
+        Update: {
+          ativa?: boolean
+          esquema?: string
+          id?: never
+          largura_alvo_mm?: number
+          largura_base_mm?: number
+          linha_modelo?: string
+          nota?: string | null
+        }
+        Relationships: []
+      }
       pcp_config: {
         Row: {
           key: string
@@ -8043,6 +8263,95 @@ export type Database = {
           value?: Json
         }
         Relationships: []
+      }
+      pcp_etapas_catalogo: {
+        Row: {
+          bloqueante: boolean
+          centro: string
+          etapa: string
+          familia: string
+          ordem: number
+          tempo_padrao_seg: number | null
+        }
+        Insert: {
+          bloqueante?: boolean
+          centro: string
+          etapa: string
+          familia: string
+          ordem: number
+          tempo_padrao_seg?: number | null
+        }
+        Update: {
+          bloqueante?: boolean
+          centro?: string
+          etapa?: string
+          familia?: string
+          ordem?: number
+          tempo_padrao_seg?: number | null
+        }
+        Relationships: []
+      }
+      pcp_eventos_producao: {
+        Row: {
+          account: string
+          client_ts: string
+          componente_codigo: number | null
+          criado_por: string | null
+          device_id: string
+          device_seq: number
+          etapa: string | null
+          id: string
+          motivo: string | null
+          nota: string | null
+          op_id: string
+          quantidade: number | null
+          server_ts: string
+          tipo: string
+          unidade: string | null
+        }
+        Insert: {
+          account?: string
+          client_ts: string
+          componente_codigo?: number | null
+          criado_por?: string | null
+          device_id: string
+          device_seq: number
+          etapa?: string | null
+          id: string
+          motivo?: string | null
+          nota?: string | null
+          op_id: string
+          quantidade?: number | null
+          server_ts?: string
+          tipo: string
+          unidade?: string | null
+        }
+        Update: {
+          account?: string
+          client_ts?: string
+          componente_codigo?: number | null
+          criado_por?: string | null
+          device_id?: string
+          device_seq?: number
+          etapa?: string | null
+          id?: string
+          motivo?: string | null
+          nota?: string | null
+          op_id?: string
+          quantidade?: number | null
+          server_ts?: string
+          tipo?: string
+          unidade?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pcp_eventos_producao_op_id_fkey"
+            columns: ["op_id"]
+            isOneToOne: false
+            referencedRelation: "production_orders"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       pcp_itens: {
         Row: {
@@ -9067,15 +9376,20 @@ export type Database = {
           created_at: string
           created_by: string | null
           customer_name: string | null
+          estado_projetado: string | null
           id: string
+          iniciada_em: string | null
           notes: string | null
           omie_ordem_numero: string | null
           omie_ordem_producao_id: number | null
+          origem: string | null
+          prioridade: number
           product_codigo: string | null
           product_descricao: string | null
           product_id: string | null
           quantidade: number
           ready_by_date: string | null
+          roteiro_familia: string | null
           sales_order_id: string | null
           sales_order_number: string | null
           status: string
@@ -9089,15 +9403,20 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           customer_name?: string | null
+          estado_projetado?: string | null
           id?: string
+          iniciada_em?: string | null
           notes?: string | null
           omie_ordem_numero?: string | null
           omie_ordem_producao_id?: number | null
+          origem?: string | null
+          prioridade?: number
           product_codigo?: string | null
           product_descricao?: string | null
           product_id?: string | null
           quantidade?: number
           ready_by_date?: string | null
+          roteiro_familia?: string | null
           sales_order_id?: string | null
           sales_order_number?: string | null
           status?: string
@@ -9111,15 +9430,20 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           customer_name?: string | null
+          estado_projetado?: string | null
           id?: string
+          iniciada_em?: string | null
           notes?: string | null
           omie_ordem_numero?: string | null
           omie_ordem_producao_id?: number | null
+          origem?: string | null
+          prioridade?: number
           product_codigo?: string | null
           product_descricao?: string | null
           product_id?: string | null
           quantidade?: number
           ready_by_date?: string | null
+          roteiro_familia?: string | null
           sales_order_id?: string | null
           sales_order_number?: string | null
           status?: string
@@ -11000,6 +11324,7 @@ export type Database = {
           created_at: string
           created_by: string
           customer_address: string | null
+          customer_document: string | null
           customer_phone: string | null
           customer_user_id: string
           deleted_at: string | null
@@ -11028,6 +11353,7 @@ export type Database = {
           created_at?: string
           created_by: string
           customer_address?: string | null
+          customer_document?: string | null
           customer_phone?: string | null
           customer_user_id: string
           deleted_at?: string | null
@@ -11056,6 +11382,7 @@ export type Database = {
           created_at?: string
           created_by?: string
           customer_address?: string | null
+          customer_document?: string | null
           customer_phone?: string | null
           customer_user_id?: string
           deleted_at?: string | null
@@ -16400,6 +16727,33 @@ export type Database = {
         }
         Relationships: []
       }
+      v_venda_items_history_efetivo: {
+        Row: {
+          cfop: string | null
+          cliente_cidade: string | null
+          cliente_cnpj_cpf: string | null
+          cliente_codigo_omie: number | null
+          cliente_razao_social: string | null
+          cliente_uf: string | null
+          created_at: string | null
+          data_emissao: string | null
+          empresa: string | null
+          id: string | null
+          nfe_chave_acesso: string | null
+          nfe_numero: string | null
+          nfe_serie: string | null
+          quantidade: number | null
+          raw_data: Json | null
+          sku_codigo: string | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          sku_ncm: string | null
+          sku_unidade: string | null
+          valor_total: number | null
+          valor_unitario: number | null
+        }
+        Relationships: []
+      }
       v_whatsapp_sla: {
         Row: {
           aguardando_desde: string | null
@@ -16727,6 +17081,10 @@ export type Database = {
         Args: { p_kb_product_spec_id: string; p_skus: Json }
         Returns: number
       }
+      consolidar_demanda_sku: {
+        Args: { p_empresa: string; p_sku_antigo: string; p_sku_novo: string }
+        Returns: undefined
+      }
       converter_sugestao_em_campanha_flat: {
         Args: {
           p_canal?: string
@@ -16928,6 +17286,10 @@ export type Database = {
           total_consolidado: number
         }[]
       }
+      fin_divida_replace_parcelas: {
+        Args: { p_divida_id: string; p_parcelas: Json }
+        Returns: undefined
+      }
       fin_estimar_estoque_omie: {
         Args: { p_company: string }
         Returns: {
@@ -16950,6 +17312,14 @@ export type Database = {
         }[]
       }
       fin_refresh_analise_dimensoes: { Args: never; Returns: undefined }
+      fin_regua_condicao_prazo: {
+        Args: { p_codigo: string; p_empresa: string }
+        Returns: {
+          descricao: string
+          num_parcelas: number
+        }[]
+      }
+      fin_regua_custo_capital: { Args: { p_empresa: string }; Returns: number }
       fin_sync_heartbeat: { Args: never; Returns: undefined }
       fin_sync_kicks_perdidos: {
         Args: { p_now?: string }
@@ -16990,6 +17360,18 @@ export type Database = {
         Args: { p_empresa: string; p_run_ts: string; p_total: number }
         Returns: undefined
       }
+      fn_pcp_cadastrar_rota: {
+        Args: {
+          p_esquema?: string
+          p_largura_alvo: number
+          p_largura_base: number
+          p_linha: string
+          p_nota?: string
+          p_saidas: Json
+        }
+        Returns: number
+      }
+      fn_pcp_derivar_rotas_simples: { Args: never; Returns: number }
       fn_pcp_destilar_bom: { Args: never; Returns: number }
       fn_pcp_dispor_excecao: {
         Args: {
@@ -17000,6 +17382,26 @@ export type Database = {
           p_papel: string
         }
         Returns: boolean
+      }
+      fn_pcp_finalizar_apontamento: {
+        Args: {
+          p_client_ts: string
+          p_device_id: string
+          p_device_seq: number
+          p_event_id: string
+          p_op_id: string
+        }
+        Returns: string
+      }
+      fn_pcp_iniciar_apontamento: {
+        Args: {
+          p_client_ts: string
+          p_device_id: string
+          p_device_seq: number
+          p_event_id: string
+          p_op_id: string
+        }
+        Returns: string
       }
       fn_pcp_materializar_excecoes: { Args: never; Returns: number }
       fn_pcp_num: { Args: { p_raw: string }; Returns: number }
@@ -17017,6 +17419,17 @@ export type Database = {
           largura_mm: number
         }[]
       }
+      fn_pcp_projetar_op: { Args: { p_op_id: string }; Returns: string }
+      fn_pcp_ratear_corte: {
+        Args: { p_custo_base: number; p_rota_id: number }
+        Returns: {
+          custo_total: number
+          custo_unitario: number
+          largura_saida_mm: number
+          papel: string
+          quantidade: number
+        }[]
+      }
       fn_pcp_refresh_itens: {
         Args: never
         Returns: {
@@ -17024,6 +17437,30 @@ export type Database = {
           discos: number
           sem_match: number
           total: number
+        }[]
+      }
+      fn_pcp_registrar_evento: {
+        Args: {
+          p_client_ts: string
+          p_componente?: number
+          p_device_id: string
+          p_device_seq: number
+          p_etapa?: string
+          p_event_id: string
+          p_motivo?: string
+          p_nota?: string
+          p_op_id: string
+          p_quantidade?: number
+          p_tipo: string
+          p_unidade?: string
+        }
+        Returns: string
+      }
+      fn_pcp_rota_fracao_default: {
+        Args: { p_rota_id: number }
+        Returns: {
+          fracao: number
+          saida_id: number
         }[]
       }
       fornecedor_operacional: {
@@ -17269,6 +17706,15 @@ export type Database = {
       }
       norm_cidade: { Args: { t: string }; Returns: string }
       normalizar_cep: { Args: { p: string }; Returns: string }
+      omie_cliente_upsert_mapping: {
+        Args: {
+          p_codigo_cliente: number
+          p_codigo_vendedor: number
+          p_empresa: string
+          p_user_id: string
+        }
+        Returns: string
+      }
       pedido_compra_split: {
         Args: { p_chunk_size?: number; p_pedido_id: number }
         Returns: {
