@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # test-heavy-guard.sh — TDD do hook .claude/hooks/heavy-guard.sh
 #
-# Regra: comando PESADO (test/build/typecheck/vitest/tsc) SEM `heavy` → deny.
-#        Já com `heavy`, ou leve, ou leitura/menção → allow (não interfere).
+# Regra: comando PESADO (test/build/typecheck/vitest/tsc) SEM `heavy` →
+#        REESCRITO (allow + updatedInput com `heavy ` prefixado).
+#        Já com `heavy`, ou leve, ou leitura/menção → não interfere (stdout mudo).
 #
 # Uso: bash scripts/test-heavy-guard.sh   (exit 0 = tudo verde)
 set -u
@@ -21,48 +22,73 @@ fail=0
 
 # monta o JSON de input do PreToolUse e roda o hook, devolvendo o stdout
 run() {
-  local cmd="$1" esc
-  esc="$(printf '%s' "$cmd" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-  printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$esc" | bash "$HOOK" 2>/dev/null
-}
-is_deny() { grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"deny"'; }
-
-expect_deny() {
-  if run "$1" | is_deny; then echo "  ok    deny   | $1"
-  else echo "  FAIL  want deny | $1"; fail=1; fi
-}
-expect_allow() {
-  if run "$1" | is_deny; then echo "  FAIL  want allow | $1"; fail=1
-  else echo "  ok    allow  | $1"; fi
+  jq -n --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c,description:"t",timeout:9}}' \
+    | bash "$HOOK" 2>/dev/null
 }
 
-echo "── pesados sem heavy → deny ──"
-expect_deny 'bun run test'
-expect_deny 'bun run test src/lib/foo.test.ts'
-expect_deny 'cd /tmp/x && bun run test > log 2>&1'
-expect_deny 'bunx vitest run src/lib/x'
-expect_deny 'bun run typecheck'
-expect_deny 'bun run build'
-expect_deny 'vite build'
-expect_deny 'tsc --noEmit -p tsconfig.app.json'
+# reescrita: allow + updatedInput.command exatamente igual ao esperado
+expect_rewrite() {
+  local cmd="$1" want="$2" out got
+  out="$(run "$cmd")"
+  got="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.updatedInput.command // empty' 2>/dev/null)"
+  if printf '%s' "$out" | grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"allow"' \
+     && [ "$got" = "$want" ]; then
+    echo "  ok    rewrite | $cmd → $got"
+  else
+    echo "  FAIL  want rewrite '$want' | $cmd → '${got:-<sem updatedInput>}'"; fail=1
+  fi
+}
 
-echo "── já com heavy → allow ──"
-expect_allow 'heavy bun run test'
-expect_allow 'heavy bun run typecheck'
-expect_allow 'cd /tmp/x && heavy bun run test'
+# updatedInput preserva os demais campos do tool_input (description/timeout)
+expect_preserva_campos() {
+  local out
+  out="$(run 'bun run test')"
+  if [ "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.updatedInput.description')" = "t" ] \
+     && [ "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.updatedInput.timeout')" = "9" ]; then
+    echo "  ok    updatedInput preserva description/timeout"
+  else
+    echo "  FAIL  updatedInput perdeu campos do tool_input"; fail=1
+  fi
+}
 
-echo "── leves / não-pesados → allow ──"
-expect_allow 'bun lint'
-expect_allow 'bun run lint'
-expect_allow 'bun dev'
-expect_allow 'git status'
-expect_allow 'bun run claude:size'
+# não interfere: stdout vazio (sem decisão)
+expect_quiet() {
+  local out
+  out="$(run "$1")"
+  if [ -z "$out" ]; then echo "  ok    quiet  | $1"
+  else echo "  FAIL  want quiet | $1 → $out"; fail=1; fi
+}
 
-echo "── leitura/menção (não é execução pesada) → allow ──"
-expect_allow 'cat vitest.config.ts'
-expect_allow 'grep -r "bun run test" docs/'
-expect_allow 'echo "bun run test"'
-expect_allow 'git commit -m "fix: bun run build agora passa por heavy"'
+echo "── pesados sem heavy → reescrita (allow + updatedInput) ──"
+expect_rewrite 'bun run test'                          'heavy bun run test'
+expect_rewrite 'bun run test src/lib/foo.test.ts'      'heavy bun run test src/lib/foo.test.ts'
+expect_rewrite 'cd /tmp/x && bun run test > log 2>&1'  'cd /tmp/x && heavy bun run test > log 2>&1'
+expect_rewrite 'bunx vitest run src/lib/x'             'heavy bunx vitest run src/lib/x'
+expect_rewrite 'bun run typecheck'                     'heavy bun run typecheck'
+expect_rewrite 'bun run build'                         'heavy bun run build'
+expect_rewrite 'vite build'                            'heavy vite build'
+expect_rewrite 'tsc --noEmit -p tsconfig.app.json'     'heavy tsc --noEmit -p tsconfig.app.json'
+expect_rewrite 'bun run typecheck && bun run test'     'heavy bun run typecheck && heavy bun run test'
+expect_rewrite 'VITEST_MAX_THREADS=1 bun run test'     'VITEST_MAX_THREADS=1 heavy bun run test'
+expect_preserva_campos
+
+echo "── já com heavy → não interfere ──"
+expect_quiet 'heavy bun run test'
+expect_quiet 'heavy bun run typecheck'
+expect_quiet 'cd /tmp/x && heavy bun run test'
+
+echo "── leves / não-pesados → não interfere ──"
+expect_quiet 'bun lint'
+expect_quiet 'bun run lint'
+expect_quiet 'bun dev'
+expect_quiet 'git status'
+expect_quiet 'bun run claude:size'
+
+echo "── leitura/menção (não é execução pesada) → não interfere ──"
+expect_quiet 'cat vitest.config.ts'
+expect_quiet 'grep -r "bun run test" docs/'
+expect_quiet 'echo "bun run test"'
+expect_quiet 'git commit -m "fix: bun run build agora passa por heavy"'
 
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi

@@ -17,11 +17,46 @@
   },
   "permissions": {
     "allow": [
-      "Bash(bun run test*)",
-      "Bash(bun run typecheck:strict*)",
-      "Bash(bun run vitest*)",
-      "Bash(bun run tsc*)",
-      "Bash(bun lint)"
+      "Bash(heavy bun run test:*)",
+      "Bash(heavy bun run typecheck:*)",
+      "Bash(heavy bun run build:*)",
+      "Bash(heavy bunx vitest:*)",
+      "Bash(bun run test:*)",
+      "Bash(bun run typecheck:*)",
+      "Bash(bun run build:*)",
+      "Bash(bun lint)",
+      "Bash(bun run lint)",
+      "Bash(bun install)",
+      "Bash(bun install:*)",
+      "Bash(bun run wt:*)",
+      "Bash(bun run claude:size)",
+      "Bash(bun run audit:migrations)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git fetch:*)",
+      "Bash(git branch)",
+      "Bash(git branch --show-current)",
+      "Bash(git worktree list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh run list:*)",
+      "Bash(ls:*)",
+      "Bash(rg:*)",
+      "Bash(wc:*)",
+      "Bash(jq:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(shellcheck:*)",
+      "Bash(~/.config/afiacao/psql-ro:*)",
+      "Bash(/Users/lucassardenberg/.config/afiacao/psql-ro:*)",
+      "Bash(bash scripts/pr-watch.sh:*)",
+      "Bash(scripts/pr-watch.sh:*)",
+      "Bash(bash scripts/codex-async.sh:*)",
+      "Bash(scripts/codex-async.sh:*)"
     ]
   },
   "hooks": {
@@ -63,6 +98,28 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/migration-immutability-guard.sh\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/pos-compact-ptbr.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/vigia-worktree.sh\"",
+            "timeout": 10
           }
         ]
       }

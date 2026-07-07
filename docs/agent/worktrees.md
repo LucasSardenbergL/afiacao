@@ -36,12 +36,12 @@ Limite conhecido (fase 1): não pega a *race fria* (duas sessões, nenhum arquiv
 | `bun run wt:prune` | remove worktree cuja **CONVERSA foi excluída** + trabalho 100% salvo (HEAD ancestral de origin/main OU PR mergeado == HEAD); `git fetch` obrigatório; **nunca `--force`**; não apaga a branch |
 | `bun run wt:map` / `wt:label "<assunto>"` | lista worktrees com o assunto da sessão (▸atual ●viva ○parada) |
 
-- **Numa sessão Claude EU rodo `bun install` automaticamente** ao detectar `node_modules` limpo (antes do 1º test/build/typecheck/dev) — o founder nunca roda à mão.
-- **Ritual de fecho** (gatilho "posso excluir a sessão?"): resumo de fecho + `wt:status` + oferecer `wt:clean`/`wt:reap` (+`wt:prune`), reportando o que liberou.
+- **Worktree nasce pronto:** `bun run wt` roda `bun install` na criação; para worktree criado pelo app (`.claude/worktrees/*`), o hook `vigia-worktree.sh` (SessionStart) dispara `bun install` em background e avisa a sessão. ⚠️ **typecheck vermelho com `Cannot find module`/dep `@lovable/*` ausente = deps não instaladas, NÃO é CI vermelho** — o CI real se confere com `gh pr checks`. O mesmo hook alerta swap alto (>6GB) e >6 sessões Claude vivas — a alavanca real de RAM é FECHAR sessões (`wt:clean` num parque de sessões vivas libera 0MB).
+- **Ritual de fecho** (gatilho "posso excluir a sessão?"): skill **`/fecho`** — PRs mergeados de verdade (gh), migrations aplicadas (psql-ro), edges/Publish, chips, resumo padrão, `wt:status` + ofertas de limpeza.
 
 ## `heavy` (semáforo de RAM)
 
-Prefixe comandos PESADOS (test/build/typecheck/vitest) com **`heavy`** (`~/.local/bin/heavy`, fonte `scripts/heavy.sh`) — limita quantos rodam ao mesmo tempo entre TODOS os worktrees (auto-dimensiona; 1 slot na M2 8GB). Override `AFIACAO_MAX_HEAVY=N`. Hook `heavy-guard` (PreToolUse Bash, `.claude/hooks/heavy-guard.sh`) **NEGA** test/build/typecheck rodado sem `heavy` (fail-safe: não age sem `heavy` instalado nem em leitura).
+Prefixe comandos PESADOS (test/build/typecheck/vitest) com **`heavy`** (`~/.local/bin/heavy`, fonte `scripts/heavy.sh`) — limita quantos rodam ao mesmo tempo entre TODOS os worktrees (auto-dimensiona; 1 slot na M2 8GB). Override `AFIACAO_MAX_HEAVY=N`. Hook `heavy-guard` (PreToolUse Bash, `.claude/hooks/heavy-guard.sh`) **REESCREVE** test/build/typecheck sem `heavy` (updatedInput prefixa o semáforo — sem round-trip de negação nem classificador; fail-safe: não age sem `heavy` instalado nem em leitura; testes `scripts/test-heavy-guard.sh`). Comando LONGO (codex, verify por bytes, build grande) → `timeout: 600000` no Bash tool — o default de 2min mata no meio (35 mortes por exit 143 no diagnóstico 2026-07).
 
 ## MCPs enxutas
 
