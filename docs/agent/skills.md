@@ -34,7 +34,7 @@
 | Continuar em sessão nova / split no 2º compact | **`/handoff-sessao`** (proprietária) — briefing determinístico, 1 entrega = 1 sessão | não usar `/context-restore` (pode pegar save de OUTRA sessão) |
 
 - ⚠️ **Colisão de nome:** `/review` (gstack, **canônico**) vs `review` (oficial code-review) — invocar via gstack.
-- **Memória entre sessões:** **`claude-mem`** (plugin global ATIVO). Conserto 2026-07 em 2 camadas: (1) ✅ generator não achava o binário `claude` do app desktop (0 observações em 331 sessões) — fix: shim `~/.claude-mem/claude-shim.sh` + `CLAUDE_CODE_PATH` em `~/.claude-mem/settings.json`; (2) ⏳ o headless responde `Not logged in` (o app loga por via própria; o CLI não herda) — **falta 1 login interativo do founder**: terminal → `~/.claude-mem/claude-shim.sh` → `/login`. Auto-memory nativo segue **desligado de propósito** (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` no settings global) — não ligar os dois (duplicaria).
+- **Memória entre sessões:** **`claude-mem`** (plugin global ATIVO — **funcionando desde 2026-07-07**; 0 → 214 observações na 1ª hora). Conserto em 2 camadas: (1) o generator não achava o binário `claude` do app desktop — fix: shim `~/.claude-mem/claude-shim.sh` + `CLAUDE_CODE_PATH` em `~/.claude-mem/settings.json`; (2) o CLI headless não herda o login do app — resolvido com `/login` no CLI (se `Not logged in` voltar: terminal → `~/.claude-mem/claude-shim.sh` → `/login`). Limitação conhecida: memória fragmentada por worktree (cada um é um `project` distinto). Auto-memory nativo segue **desligado de propósito** (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` no settings global) — não ligar os dois (duplicaria).
 
 ## Skills stack-specific
 
