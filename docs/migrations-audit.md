@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **336** custom migrations totais
-- **1209** objetos esperados (criados por estas migrations)
+- **339** custom migrations totais
+- **1212** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 338
+  - `function`: 341
   - `rls_policy`: 266
   - `index`: 204
   - `cron_job`: 144
@@ -2881,6 +2881,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.fin_divida_replace_parcelas` | — |
 
+### `20260704190000_fin_regua_custo_capital.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_regua_custo_capital` | — |
+
+### `20260704190500_fin_regua_condicao_prazo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_regua_condicao_prazo` | — |
+
 ### `20260705120000_fin_dre_custo_tipo.sql`
 
 | Tipo | Objeto | Parent |
@@ -2891,6 +2903,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.fin_dre_custo_tipo_select_master` | `fin_dre_custo_tipo` |
 | `rls_policy` | `public.fin_dre_custo_tipo_write_master` | `fin_dre_custo_tipo` |
 | `rls_policy` | `public.fin_dre_custo_tipo_service_all` | `fin_dre_custo_tipo` |
+
+### `20260705211043_omie_identidade_por_conta.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.omie_cliente_upsert_mapping` | — |
 
 ## Próximos passos por status
 

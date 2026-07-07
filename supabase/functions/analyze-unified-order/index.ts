@@ -257,14 +257,6 @@ serve(async (req) => {
             .select("user_id, name, document, email, phone")
             .limit(1000);
           if (allProfiles) {
-            // Batch fetch omie mappings
-            const userIds = allProfiles.map(p => p.user_id);
-            const { data: omieMappings } = await supabase
-              .from("omie_clientes")
-              .select("user_id, omie_codigo_cliente")
-              .in("user_id", userIds);
-            const omieMap = new Map((omieMappings || []).map(m => [m.user_id, m.omie_codigo_cliente]));
-
             for (const p of allProfiles) {
               // Exclude the logged-in user — they are the seller, not the customer
               if (p.user_id === loggedInUserId) continue;
@@ -274,7 +266,10 @@ serve(async (req) => {
                 nome: p.name,
                 nome_fantasia: p.name,
                 documento: p.document,
-                codigo_cliente: omieMap.get(p.user_id) || null,
+                // P0-B (item 3): NÃO emitir código cross-conta — o espelho é PARCIAL e o código colide entre
+                // contas. A identidade por-conta é derivada na fronteira (edge); handleAICustomerSelect
+                // re-resolve por documento/conta. O código aqui era só display e induzia colacor→oben.
+                codigo_cliente: null,
               });
             }
           }
@@ -295,17 +290,12 @@ serve(async (req) => {
                 if (p.user_id === loggedInUserId) continue; // exclude seller
                 if (!candidateIds.has(p.user_id)) {
                   candidateIds.add(p.user_id);
-                  const { data: omieMapping } = await supabase
-                    .from("omie_clientes")
-                    .select("omie_codigo_cliente")
-                    .eq("user_id", p.user_id)
-                    .limit(1)
-                    .maybeSingle();
                   customerCandidates.push({
                     user_id: p.user_id,
                     nome: p.name,
                     documento: p.document,
-                    codigo_cliente: omieMapping?.omie_codigo_cliente || null,
+                    // P0-B (item 3): NÃO emitir código cross-conta (espelho parcial + colisão). Edge deriva.
+                    codigo_cliente: null,
                   });
                 }
               }

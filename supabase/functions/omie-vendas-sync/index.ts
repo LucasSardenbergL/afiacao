@@ -1569,12 +1569,154 @@ function codeBelongsToWrongAccount(
   code: number,
   account: string,
 ): boolean {
-  if (!Number.isFinite(code) || code <= 0) return false;
-  const matchesTarget = rows.some((r) => Number(r.omie_codigo_cliente) === code && r.empresa_omie === account);
+  if (!Number.isSafeInteger(code) || code <= 0) return false;
+  const eq = (a: number): boolean => String(a) === String(code); // bigint-safe: string decimal canonica (Number colapsa >= 2^53)
+  const matchesTarget = rows.some((r) => eq(r.omie_codigo_cliente) && r.empresa_omie === account);
   if (matchesTarget) return false;
-  return rows.some((r) => Number(r.omie_codigo_cliente) === code && r.empresa_omie !== account);
+  return rows.some((r) => eq(r.omie_codigo_cliente) && r.empresa_omie !== account);
 }
 // MIRROR-END
+
+// MIRROR-START omie derive-account-identity — espelhado verbatim em supabase/functions/omie-vendas-sync/index.ts
+// Decisão de identidade Omie por conta (money-path P0-B). PURA: recebe dados já buscados (espelho local
+// + matches da API Omie) e decide o código autoritativo OU fail-closed. Precisão>recall: ambiguidade,
+// ausência confirmada, divergência com o código do payload, ou código não-representável = REJECT.
+// A âncora (documento) e o I/O (buscar espelho/Omie, backfill) ficam no chamador; aqui só a decisão.
+interface MirrorRow { omie_codigo_cliente: number; omie_codigo_vendedor: number | null; empresa_omie: string }
+interface OmieMatch { codigo_cliente: number; codigo_vendedor: number | null }
+interface DecideInput {
+  account: string;
+  /** Código que o cliente mandou no payload — ADVISORY (verificado contra o derivado). */
+  suppliedCodigo: number | null;
+  /** Linhas de omie_clientes dos users do documento (qualquer empresa). */
+  mirrorRows: ReadonlyArray<MirrorRow>;
+  /** buscarClienteVendas(registros_por_pagina:2) na conta; null = o chamador ainda não buscou. */
+  omieMatches: ReadonlyArray<OmieMatch> | null;
+}
+type DecideResult =
+  | { ok: true; source: 'mirror' | 'omie'; codigo_cliente: number; codigo_vendedor: number | null; backfill: boolean }
+  | { ok: false; needOmie: true }
+  | { ok: false; reason: 'ambiguous_mirror' | 'ambiguous_omie' | 'absent' | 'divergence' | 'unsafe_integer' };
+
+// bigint-safe: compara como string decimal canônica (códigos Omie são bigint; Number perde precisão ≥ 2^53).
+const sameCode = (a: number, b: number): boolean => String(a) === String(b);
+
+function decideAccountIdentity(input: DecideInput): DecideResult {
+  const { account, suppliedCodigo, mirrorRows, omieMatches } = input;
+
+  // 1. Espelho, restrito à conta alvo (linhas de OUTRA conta são ignoradas — não acusam nem servem).
+  const naConta = mirrorRows.filter((r) => r.empresa_omie === account);
+  const distintos = [...new Map(naConta.map((r) => [String(r.omie_codigo_cliente), r])).values()];
+
+  let cand: { codigo_cliente: number; codigo_vendedor: number | null; source: 'mirror' | 'omie'; backfill: boolean };
+
+  if (distintos.length === 1) {
+    cand = { codigo_cliente: distintos[0].omie_codigo_cliente, codigo_vendedor: distintos[0].omie_codigo_vendedor, source: 'mirror', backfill: false };
+  } else if (distintos.length > 1) {
+    return { ok: false, reason: 'ambiguous_mirror' };
+  } else {
+    // 0 no espelho → precisa da API Omie
+    if (omieMatches === null) return { ok: false, needOmie: true };
+    if (omieMatches.length > 1) return { ok: false, reason: 'ambiguous_omie' }; // duplicata-CNPJ — não chuta
+    if (omieMatches.length === 0) return { ok: false, reason: 'absent' };
+    cand = { codigo_cliente: omieMatches[0].codigo_cliente, codigo_vendedor: omieMatches[0].codigo_vendedor, source: 'omie', backfill: true };
+  }
+
+  // 2. Segurança de representação (bigint): código fora do range seguro não vai pro Omie.
+  if (!Number.isSafeInteger(cand.codigo_cliente) || cand.codigo_cliente <= 0) return { ok: false, reason: 'unsafe_integer' };
+
+  // 3. Divergência: o código do payload é advisory; se contradiz o derivado, fail-closed (não override).
+  if (suppliedCodigo != null && !sameCode(suppliedCodigo, cand.codigo_cliente)) return { ok: false, reason: 'divergence' };
+
+  return { ok: true, source: cand.source, codigo_cliente: cand.codigo_cliente, codigo_vendedor: cand.codigo_vendedor, backfill: cand.backfill };
+}
+// MIRROR-END
+
+// Resolve os matches de cliente por documento na conta (registros_por_pagina:2 p/ detectar duplicata-CNPJ).
+// throwOnTransient: erro Omie transitório LANÇA (ausência só como array vazio confirmado, nunca timeout).
+async function buscarClienteVendasMatches(document: string, account: Account = "oben"): Promise<OmieMatch[]> {
+  const documentClean = document.replace(/\D/g, "");
+  const result = await callOmieVendasApi(
+    "geral/clientes/",
+    "ListarClientes",
+    { pagina: 1, registros_por_pagina: 2, clientesFiltro: { cnpj_cpf: documentClean } },
+    account,
+    { throwOnTransient: true },
+  );
+  const arr = (result?.clientes_cadastro as OmieClienteCadastro[] | undefined) ?? [];
+  return arr
+    .filter((c) => c.codigo_cliente_omie)
+    .map((c) => ({
+      codigo_cliente: c.codigo_cliente_omie as number,
+      codigo_vendedor: c.recomendacoes?.codigo_vendedor ?? c.codigo_vendedor ?? null,
+    }));
+}
+
+// Deriva a identidade Omie AUTORITATIVA de (documento do pedido, conta) — money-path P0-B. Âncora = documento
+// (imune ao fallback customer_user_id || user.id). Espelho → Omie-por-doc → fail-closed. Backfill gated.
+async function deriveOmieAccountIdentity(
+  supabase: SupabaseClient,
+  soRow: { customer_user_id: string | null; customer_document: string | null; created_by: string | null },
+  account: Account,
+  suppliedCodigo: number | null,
+): Promise<{ codigo_cliente: number; codigo_vendedor: number | null }> {
+  const rawDoc = (soRow.customer_document || "").trim();
+  let doc = rawDoc.replace(/\D/g, "");
+  let profileRaw = "";
+  // Fallback p/ profiles.document SÓ quando customer_user_id é CONFIÁVEL (≠ created_by). O submit faz
+  // customer_user_id = customerUserId || created_by → quando cai no created_by (staff sem cliente local),
+  // derivar do doc do VENDEDOR rotearia o PV pro vendedor (Codex P1 #1). Sem doc confiável → fail-closed.
+  if (!doc && soRow.customer_user_id && soRow.customer_user_id !== soRow.created_by) {
+    const { data: prof } = await supabase.from("profiles").select("document").eq("user_id", soRow.customer_user_id).maybeSingle();
+    profileRaw = ((prof?.document as string | undefined) || "").trim();
+    doc = profileRaw.replace(/\D/g, "");
+  }
+  if (!doc) {
+    throw new Error(`Pedido rejeitado: sem documento CONFIÁVEL do cliente para provar a identidade Omie na conta ${account} — envio bloqueado (não roteia pelo vendedor).`);
+  }
+
+  // profiles.document em prod existe raw E limpo (resolveLocalUserId casa ambos) — casar os dois p/ não
+  // perder o fast-path do espelho quando o formato armazenado difere do documento do pedido.
+  const docCandidates = [...new Set([doc, rawDoc, profileRaw].filter((d) => d.length > 0))];
+  const { data: users } = await supabase.from("profiles").select("user_id").in("document", docCandidates);
+  const userIds = ((users ?? []) as Array<{ user_id: string }>).map((u) => u.user_id);
+  // Espelho SÓ com 1 dono do documento: dup-profiles (mesmo doc, user_ids distintos) podem ter uma linha
+  // de espelho de perfil ERRADO/stale que não vale como prova (Codex P1 #5) → força o Omie autoritativo
+  // (regs:2, dup-safe). Alinha com o gate do backfill (também 1 dono).
+  const mirrorRows: MirrorRow[] = userIds.length === 1
+    ? (((await supabase.from("omie_clientes").select("omie_codigo_cliente, omie_codigo_vendedor, empresa_omie").in("user_id", userIds).eq("empresa_omie", account)).data ?? []) as MirrorRow[])
+    : [];
+
+  let decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows, omieMatches: null });
+  if (!decision.ok && "needOmie" in decision) {
+    const omieMatches = await buscarClienteVendasMatches(doc, account);
+    decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows, omieMatches });
+  }
+  // Codex round-2 [P1]: sem advisory (ex.: conversão de orçamento) NÃO há rede de divergência p/ pegar um
+  // ESPELHO DESATUALIZADO (o código Omie do cliente mudou). Confirma o espelho contra o Omie — re-decide
+  // com o Omie autoritativo e o código do espelho como advisory: divergência/ausência/ambiguidade cai no
+  // throw abaixo (fail-closed). Custo: 1 chamada Omie só no caminho SEM código (orçamento), infrequente.
+  if (decision.ok && decision.source === "mirror" && suppliedCodigo === null) {
+    const omieMatches = await buscarClienteVendasMatches(doc, account);
+    decision = decideAccountIdentity({ account, suppliedCodigo: decision.codigo_cliente, mirrorRows: [], omieMatches });
+  }
+  if (!decision.ok) {
+    const reason = "reason" in decision ? decision.reason : "unknown";
+    throw new Error(`Pedido rejeitado: identidade Omie do cliente na conta ${account} não pôde ser provada (${reason}) — envio bloqueado para não registrar no cliente errado.`);
+  }
+
+  // Backfill gated (auto-cura do espelho): só derivação inequívoca por Omie E com user confiável
+  // (exatamente 1 dono do documento). Contested (código de outro/diferente) → fail-closa o PV.
+  if (decision.backfill && userIds.length === 1) {
+    const { data: status } = await supabase.rpc("omie_cliente_upsert_mapping", {
+      p_user_id: userIds[0], p_empresa: account, p_codigo_cliente: decision.codigo_cliente, p_codigo_vendedor: decision.codigo_vendedor,
+    });
+    if (status === "contested") {
+      throw new Error(`Pedido rejeitado: identidade Omie contestada no espelho (conta ${account}) — envio bloqueado.`);
+    }
+  }
+  return { codigo_cliente: decision.codigo_cliente, codigo_vendedor: decision.codigo_vendedor };
+}
 
 // Criar pedido de venda no Omie
 async function criarPedidoVenda(
@@ -2200,7 +2342,8 @@ serve(async (req) => {
 
       case "criar_pedido": {
         const { sales_order_id, codigo_cliente, codigo_vendedor, items, observacao, codigo_parcela, quantidade_volumes, ordem_compra, dados_adicionais_nf, numero_pedido_cliente } = params;
-        if (!sales_order_id || !codigo_cliente || !items?.length) {
+        // codigo_cliente é ADVISORY (o edge deriva o autoritativo do documento). convertToOrder nem manda.
+        if (!sales_order_id || !items?.length) {
           throw new Error("Dados insuficientes para criar pedido de venda");
         }
         // Guard money-path: rejeita ANTES de montar o payload Omie (ver assertOmieItemPricesValid).
@@ -2210,7 +2353,7 @@ serve(async (req) => {
         // silenciosamente pra 'oben' — o pedido local é a âncora server-side.
         const { data: soRow } = await supabaseAdmin
           .from("sales_orders")
-          .select("account, customer_user_id")
+          .select("account, customer_user_id, customer_document, created_by")
           .eq("id", sales_order_id)
           .maybeSingle();
         if (soRow?.account && soRow.account !== account) {
@@ -2223,7 +2366,9 @@ serve(async (req) => {
         // pode resolver o código no espelho parcial `omie_clientes` sem filtrar empresa e mandar o
         // código de OUTRA conta do mesmo cliente. Deriva do pedido local (customer_user_id) e recusa
         // só com PROVA POSITIVA (o código é de outra conta) — nunca por ausência (oben vem da API).
-        if (soRow?.customer_user_id) {
+        // Gate Codex P1 #2/#7: só quando customer_user_id é CONFIÁVEL (≠ created_by/vendedor) — senão as
+        // linhas do VENDEDOR fariam false-reject de pedido legítimo por colisão de código cross-conta.
+        if (soRow?.customer_user_id && soRow.customer_user_id !== soRow.created_by) {
           const { data: idRows, error: idErr } = await supabaseAdmin
             .from("omie_clientes")
             .select("omie_codigo_cliente, empresa_omie")
@@ -2237,11 +2382,24 @@ serve(async (req) => {
             );
           }
         }
+        // P0-B: identidade Omie AUTORITATIVA derivada do DOCUMENTO do pedido (prova positiva). Fecha o gap
+        // do guard acima (código de OUTRO user passava) e destrava a conversão oben. codigo_cliente do
+        // payload é advisory; fail-closed em ambiguidade/ausência/divergência/contested. USA o derivado.
+        const ident = await deriveOmieAccountIdentity(
+          supabaseAdmin,
+          {
+            customer_user_id: soRow?.customer_user_id ?? null,
+            customer_document: (soRow as { customer_document?: string | null } | null)?.customer_document ?? null,
+            created_by: (soRow as { created_by?: string | null } | null)?.created_by ?? null,
+          },
+          account,
+          codigo_cliente != null ? Number(codigo_cliente) : null,
+        );
         // Trava de crédito Fase 2: bloqueia cliente com vencido 60+ sem exceção DESTE pedido.
         const credito = await gateCredito(
           supabaseAdmin,
           account,
-          Number(codigo_cliente) || null,
+          ident.codigo_cliente,
           sales_order_id,
           userId,
           "criacao",
@@ -2253,8 +2411,8 @@ serve(async (req) => {
         const pedido = await criarPedidoVenda(
           supabaseAdmin,
           sales_order_id,
-          codigo_cliente,
-          codigo_vendedor,
+          ident.codigo_cliente,
+          ident.codigo_vendedor,
           items,
           observacao,
           codigo_parcela,
@@ -2425,6 +2583,25 @@ serve(async (req) => {
           }
           throw new Error(
             "Edição não aplicada: não foi possível confirmar com segurança os itens atuais do pedido no Omie. Nada foi alterado — tente novamente.",
+          );
+        }
+
+        // P0-B: verify-before-edit (princípio 5) — a edição destrutiva pode mutar um PV historicamente
+        // mal-atribuído. SÓ verifica com ÂNCORA CONFIÁVEL (customer_document presente): pedidos LEGADOS
+        // (customer_document NULL, customer_user_id podendo ser o vendedor) derivariam do vendedor/ausente
+        // → divergência → fail-closariam uma edição LEGÍTIMA (Codex P1 #4). Sem âncora, pula (a edição não
+        // troca o cliente do PV; barrar toda edição legada é pior que o risco raro de PV mal-atribuído).
+        const editDoc = ((existingOrder as { customer_document?: string | null }).customer_document || "").trim();
+        if (omieCodigoClienteEdit !== null && editDoc.length > 0) {
+          await deriveOmieAccountIdentity(
+            supabaseAdmin,
+            {
+              customer_user_id: (existingOrder as { customer_user_id?: string | null }).customer_user_id ?? null,
+              customer_document: editDoc,
+              created_by: (existingOrder as { created_by?: string | null }).created_by ?? null,
+            },
+            editAccount,
+            omieCodigoClienteEdit,
           );
         }
 

@@ -503,8 +503,11 @@ export function useUnifiedOrder() {
 
   // AI Customer handler
   const handleAICustomerSelect = useCallback(async (customer: AICustomerMatch) => {
-    let codigoCliente = customer.codigo_cliente;
-    if (!codigoCliente && customer.user_id) {
+    // P0-B (item 3): NÃO confiar no codigo_cliente da IA — analyze não emite mais código cross-conta, e
+    // mesmo que emitisse seria do espelho parcial (colacor rotulado como oben). Resolve sempre por
+    // (user_id, empresa_omie) ou documento; a identidade autoritativa é derivada no edge de qualquer forma.
+    let codigoCliente: number | null = null;
+    if (customer.user_id) {
       // Money-path (P0-A): codigoCliente vira OmieCustomer.codigo_cliente (código da conta OBEN).
       // Filtrar empresa_omie='oben' impede pegar o código de OUTRA conta do espelho e mandá-lo ao
       // Omie oben (cliente errado). Sem oben no espelho → cai no fallback por documento (API oben).

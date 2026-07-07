@@ -36,7 +36,7 @@ function makeFakeSupabase(opts: {
 const baseArgs = {
   checkoutId: 'ck-1', account: 'oben', origem: null, atendimentoId: null,
   fields: { customer_user_id: 'u1', created_by: 'u1', items: [], subtotal: 0, total: 0,
-    notes: null, customer_address: null, customer_phone: null, ready_by_date: null },
+    notes: null, customer_document: null, customer_address: null, customer_phone: null, ready_by_date: null },
 };
 
 describe('ensureSalesOrderRow', () => {

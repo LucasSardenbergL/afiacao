@@ -208,6 +208,9 @@ export function useCustomerSelection({
             const { data: mappings } = await supabase
               .from('omie_clientes')
               .select('user_id, omie_codigo_cliente')
+              // P0-B: a busca é na conta OBEN; sem empresa_omie o código colidiria com colacor e
+              // anexaria o customer_user_id ERRADO (item 2). Fail-safe: 0 linhas oben hoje → sem mapa.
+              .eq('empresa_omie', 'oben')
               .in('omie_codigo_cliente', codigos);
             if (mappings) {
               for (const c of clientes) {
@@ -244,6 +247,9 @@ export function useCustomerSelection({
         .from('omie_clientes')
         .select('user_id')
         .eq('omie_codigo_cliente', cust.codigo_cliente)
+        // P0-B: filtra a conta OBEN (cust.codigo_cliente é o slot oben) — sem isso um código colacor
+        // colidente mapearia o user errado (item 2). Fail-safe: 0 oben → cai no match por documento abaixo.
+        .eq('empresa_omie', 'oben')
         .maybeSingle();
       if (mapping?.user_id) localUserId = mapping.user_id;
     }

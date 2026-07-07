@@ -45,4 +45,8 @@ describe('codeBelongsToWrongAccount (coerência conta×código por prova positiv
     const strRow = { omie_codigo_cliente: '111' as unknown as number, empresa_omie: 'colacor' };
     expect(codeBelongsToWrongAccount([strRow], 111, 'oben')).toBe(true);
   });
+
+  it('código não-representável (> 2^53) → false (fail-safe; o edge fail-closa a montante)', () => {
+    expect(codeBelongsToWrongAccount([colacor111], Number.MAX_SAFE_INTEGER + 1, 'oben')).toBe(false);
+  });
 });

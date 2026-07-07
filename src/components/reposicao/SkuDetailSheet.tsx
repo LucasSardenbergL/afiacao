@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Loader2 } from 'lucide-react';
+import { Loader2, GitMerge } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ResponsiveContainer,
@@ -29,6 +29,7 @@ import {
   type SkuParam,
   type ViewStats,
 } from '@/lib/reposicao/sku-param';
+import { ConsolidarDemandaDialog } from '@/components/reposicao/ConsolidarDemandaDialog';
 
 type BadgeVariant =
   | 'default'
@@ -67,6 +68,7 @@ function SkuDetailSheetImpl({
   isSaving,
 }: Props) {
   const [editing, setEditing] = useState(false);
+  const [consolidarOpen, setConsolidarOpen] = useState(false);
   const [edit, setEdit] = useState<{ em: string; pp: string; emax: string; min: string }>({
     em: '',
     pp: '',
@@ -458,13 +460,34 @@ function SkuDetailSheetImpl({
                 </p>
               </div>
             )}
-            <div className="flex justify-end pt-2">
+            <div className="flex justify-between gap-2 pt-2">
+              {!sku.read_only ? (
+                <Button variant="outline" onClick={() => setConsolidarOpen(true)}>
+                  <GitMerge className="mr-2 h-4 w-4" />
+                  Consolidar demanda em outro SKU
+                </Button>
+              ) : (
+                <span />
+              )}
               <Button variant="outline" onClick={onClose}>
                 Fechar
               </Button>
             </div>
           </section>
         </div>
+
+        {consolidarOpen && (
+          <ConsolidarDemandaDialog
+            empresa={sku.empresa}
+            skuAntigoCodigo={sku.sku_codigo_omie}
+            skuAntigoDescricao={sku.sku_descricao}
+            onClose={() => setConsolidarOpen(false)}
+            onDone={() => {
+              setConsolidarOpen(false);
+              onClose();
+            }}
+          />
+        )}
       </SheetContent>
     </Sheet>
   );

@@ -7,6 +7,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { resolverEmpresas, type Empresa } from "../_shared/empresas.ts";
+import { coletarProdutosAlvo, type OmieProduto } from "./paginacao.ts";
 
 // Captura o tipo do client pela INFERÊNCIA da chamada (createClient(url,key) infere
 // <any,"public",any>); `ReturnType<typeof createClient>` cru daria os defaults <unknown,never>.
@@ -25,23 +26,20 @@ const corsHeaders = {
 };
 
 const OMIE_URL = "https://app.omie.com.br/api/v1/geral/produtos/";
-const PAGE_SIZE = 500; // Limite máximo do Omie ListarProdutos
+// ListarProdutos CAPA em ~100 registros/página (pedir 500 é IGNORADO — docs/agent/sync.md). O
+// catálogo OBEN tem ~3,7k produtos ⇒ ~37 páginas. Antes: série + 700ms de delay proativo → 95–148s
+// em prod, encostando no teto de 150s do edge runtime (IDLE_TIMEOUT intermitente, incidente
+// 2026-07-06). Agora: POOL concorrente sem delay proativo (freio reativo a 429), paginando até vazio.
+const PAGE_SIZE = 100;
+// Concorrência 3 (não 4): a MESMA conta Omie é batida pela irmã omie-sync-estoque em paralelo
+// (o botão dispara as duas juntas) — 3 dá margem no rate limit compartilhado. ~3 req × ~2s ≈ 1,5 req/s.
+const PAGE_CONCURRENCY = 3;
+const MAX_PAGINAS = 500; // guard anti-loop (total_de_paginas é PISO, não teto — paginamos até vazio)
+const MAX_DURACAO_MS = 120_000; // guard de tempo: aborta honesto ANTES do kill de 150s (sem log órfão)
 const MAX_RETRIES = 3;
-const DELAY_BETWEEN_PAGES_MS = 700; // ~85 req/min, dentro do rate limit
-const FLUSH_THRESHOLD = 100; // commit incremental a cada 100 SKUs
-
-interface OmieProduto {
-  codigo_produto?: number;
-  codigo?: string;
-  descricao?: string;
-  inativo?: string; // "S" | "N"
-  estoque_minimo?: number;
-  estoque_maximo?: number; // No Omie, "estoque_maximo" da listagem é normalmente o ponto de pedido
-  dadosArmazenamento?: {
-    estoque_minimo?: number;
-    estoque_maximo?: number;
-  };
-}
+const RATE_LIMIT_COOLDOWN_MS = 20_000; // recuo REATIVO em 429 (padrão da irmã omie-sync-estoque)
+const FETCH_TIMEOUT_MS = 25_000; // bound de CADA request ao Omie (um fetch pendurado não pendura o run)
+const FLUSH_THRESHOLD = 100; // persistência sequencial em lotes de 100 SKUs
 
 interface SyncSummary {
   empresa: string;
@@ -62,7 +60,8 @@ async function omieCall(
   appSecret: string,
   call: string,
   param: Record<string, unknown>,
-  attempt = 1
+  deadline: number, // timestamp absoluto: NUNCA dormir/re-tentar além dele (mantém o run < kill de 150s)
+  attempt = 1,
 ): Promise<Record<string, unknown>> {
   try {
     const res = await fetch(OMIE_URL, {
@@ -74,10 +73,24 @@ async function omieCall(
         app_secret: appSecret,
         param: [param],
       }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
     if (res.status === 401 || res.status === 403) {
       throw new Error(`AUTH_ERROR: Omie retornou ${res.status} (verifique secrets)`);
+    }
+
+    // 429 = rate limit do Omie. Como paginamos em POOL (sem delay proativo), este é o freio
+    // reativo: recua ~20s (com JITTER) e re-tenta. O jitter desincroniza os N workers do pool —
+    // sem ele, todos recuam o mesmo tempo e voltam a martelar o Omie juntos (retry herd).
+    if (res.status === 429) {
+      const jitter = RATE_LIMIT_COOLDOWN_MS * (0.5 + Math.random());
+      // Não dormir ALÉM do deadline do run (senão o sleep+retry cruza o kill de 150s → log órfão).
+      if (attempt >= MAX_RETRIES || Date.now() + jitter >= deadline) {
+        throw new Error("Omie 429: rate limit excedido (retries/deadline)");
+      }
+      await new Promise((r) => setTimeout(r, jitter));
+      return omieCall(appKey, appSecret, call, param, deadline, attempt + 1);
     }
 
     if (!res.ok) {
@@ -89,14 +102,27 @@ async function omieCall(
       throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
     }
 
-    return await res.json();
+    const json = (await res.json()) as Record<string, unknown> & {
+      faultstring?: string;
+      faultcode?: string;
+    };
+    // Omie sinaliza erro de aplicação com HTTP 200 + faultcode/faultstring (NÃO !res.ok). A irmã
+    // omie-sync-estoque já rejeita isto; sem rejeitar, um fault transiente viraria
+    // `produto_servico_cadastro` ausente → [] → "página vazia" → paginação para cedo (money-path P1).
+    if (json.faultstring || json.faultcode) {
+      throw new Error(
+        `Omie fault ${json.faultcode ?? ""}: ${String(json.faultstring ?? "").slice(0, 200)}`,
+      );
+    }
+    return json;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.startsWith("AUTH_ERROR")) throw err;
-    if (attempt >= MAX_RETRIES) throw err;
     const backoff = 500 * Math.pow(2, attempt);
+    // Idem 429: não re-tentar/dormir além do deadline do run.
+    if (attempt >= MAX_RETRIES || Date.now() + backoff >= deadline) throw err;
     await new Promise((r) => setTimeout(r, backoff));
-    return omieCall(appKey, appSecret, call, param, attempt + 1);
+    return omieCall(appKey, appSecret, call, param, deadline, attempt + 1);
   }
 }
 
@@ -186,83 +212,78 @@ async function sincronizarEmpresa(supabase: DB, empresa: Empresa): Promise<SyncS
       };
     }
 
-    // 2) Paginação Omie ListarProdutos
-    let page = 1;
-    let totalPages = 1;
+    // 2) Coleta concorrente do ListarProdutos (POOL + paginate-até-vazio — ver ./paginacao.ts).
+    // A coleta (I/O do Omie, concorrente) é SEPARADA da persistência (upsert sequencial): não há
+    // escrita concorrente. Antes: série + 700ms/página → 95–148s (timeout intermitente); agora ~25–40s.
     let sucessos = 0;
     let falhas = 0;
-    let encontradosNaListagem = 0;
-    const encontrados = new Set<string>();
-    const upserts: Record<string, unknown>[] = [];
+    const deadline = startedAt + MAX_DURACAO_MS; // teto absoluto do run (compartilhado pool + omieCall)
+    const { produtos, encontrados, paginasProcessadas } = await coletarProdutosAlvo(
+      async (pagina) => {
+        const resp = await omieCall(appKey, appSecret, "ListarProdutos", {
+          pagina,
+          registros_por_pagina: PAGE_SIZE,
+          apenas_importado_api: "N",
+          filtrar_apenas_omiepdv: "N",
+        }, deadline);
+        return {
+          produtos:
+            (resp as { produto_servico_cadastro?: OmieProduto[] }).produto_servico_cadastro ?? [],
+          totalPaginas: Number((resp as { total_de_paginas?: number }).total_de_paginas ?? 1),
+        };
+      },
+      alvoSet,
+      { concurrency: PAGE_CONCURRENCY, maxPaginas: MAX_PAGINAS, maxDuracaoMs: MAX_DURACAO_MS },
+    );
+    const encontradosNaListagem = encontrados.size;
 
-    do {
-      const resp = await omieCall(appKey, appSecret, "ListarProdutos", {
-        pagina: page,
-        registros_por_pagina: PAGE_SIZE,
-        apenas_importado_api: "N",
-        filtrar_apenas_omiepdv: "N",
-      });
+    // Chegamos aqui SÓ com alvos > 0 (early-return acima). Se o Omie devolveu a 1ª página vazia,
+    // é anomalia (o catálogo OBEN tem ~3,7k produtos) — NÃO marcar os alvos como nao_existe_omie
+    // (null LIBERA no gate de compra). Fail-closed: falha a sync e re-tenta.
+    if (paginasProcessadas === 0) {
+      throw new Error("ListarProdutos devolveu catálogo vazio com alvos pendentes — abort (money-path)");
+    }
 
-      totalPages = (resp?.total_de_paginas as number) ?? 1;
-      const produtos: OmieProduto[] = (resp as { produto_servico_cadastro?: OmieProduto[] })?.produto_servico_cadastro ?? [];
-
-      for (const p of produtos) {
-        const codStr = String(p.codigo_produto ?? "");
-        if (!codStr || !alvoSet.has(codStr)) continue;
-        encontrados.add(codStr);
-        encontradosNaListagem++;
-
-        const inativo = (p.inativo ?? "N").toUpperCase() === "S";
-        const estMin =
-          p.estoque_minimo ?? p.dadosArmazenamento?.estoque_minimo ?? null;
+    // Monta os upserts a partir dos produtos alvo coletados (1 timestamp por run, consistente).
+    const agora = new Date().toISOString();
+    const upserts: Record<string, unknown>[] = produtos.map((p) => {
+      const inativo = (p.inativo ?? "N").toUpperCase() === "S";
+      return {
+        empresa,
+        sku_codigo_omie: String(p.codigo_produto ?? ""),
+        sku_descricao: p.descricao ?? null,
+        ativo_no_omie: !inativo,
+        data_inativacao: inativo ? agora : null,
+        estoque_minimo_omie: p.estoque_minimo ?? p.dadosArmazenamento?.estoque_minimo ?? null,
         // No Omie, "estoque_maximo" do cadastro funciona como ponto de pedido
-        const pontoPed =
-          p.estoque_maximo ?? p.dadosArmazenamento?.estoque_maximo ?? null;
+        ponto_pedido_omie: p.estoque_maximo ?? p.dadosArmazenamento?.estoque_maximo ?? null,
+        estoque_maximo_omie: null, // Omie não distingue máximo separado
+        ultima_sincronizacao: agora,
+        fonte_sincronizacao: "ListarProdutos",
+      };
+    });
 
-        upserts.push({
-          empresa,
-          sku_codigo_omie: codStr,
-          sku_descricao: p.descricao ?? null,
-          ativo_no_omie: !inativo,
-          data_inativacao: inativo ? new Date().toISOString() : null,
-          estoque_minimo_omie: estMin,
-          ponto_pedido_omie: pontoPed,
-          estoque_maximo_omie: null, // Omie não distingue máximo separado
-          ultima_sincronizacao: new Date().toISOString(),
-          fonte_sincronizacao: "ListarProdutos",
-        });
-      }
-
-      // Flush em lotes (commit incremental p/ não perder progresso em timeout)
-      if (upserts.length >= FLUSH_THRESHOLD) {
-        const { error: upErr } = await supabase
-          .from("sku_status_omie")
-          .upsert(upserts, { onConflict: "empresa,sku_codigo_omie" });
-        if (upErr) {
-          falhas += upserts.length;
-          console.error("Upsert lote falhou:", upErr.message);
-        } else {
-          sucessos += upserts.length;
-        }
-        upserts.length = 0;
-      }
-
-      page++;
-      // Rate limit Omie: ~120 req/min em ListarProdutos. 700ms é seguro.
-      if (page <= totalPages) await new Promise((r) => setTimeout(r, DELAY_BETWEEN_PAGES_MS));
-    } while (page <= totalPages);
-
-    // Flush final
-    if (upserts.length > 0) {
+    // Persiste em lotes sequenciais (a coleta já terminou — zero escrita concorrente).
+    for (let i = 0; i < upserts.length; i += FLUSH_THRESHOLD) {
+      const lote = upserts.slice(i, i + FLUSH_THRESHOLD);
       const { error: upErr } = await supabase
         .from("sku_status_omie")
-        .upsert(upserts, { onConflict: "empresa,sku_codigo_omie" });
+        .upsert(lote, { onConflict: "empresa,sku_codigo_omie" });
       if (upErr) {
-        falhas += upserts.length;
-        console.error("Upsert final falhou:", upErr.message);
+        falhas += lote.length;
+        console.error("Upsert lote falhou:", upErr.message);
       } else {
-        sucessos += upserts.length;
+        sucessos += lote.length;
       }
+    }
+
+    // Fail-closed money-path (Codex challenge 2026-07-06, P1): se a persistência do STATUS falhou em
+    // algum lote, o snapshot está PARCIAL. Abortar ANTES dos efeitos colaterais que LEEM esse snapshot
+    // (espelho omie_products + auto-resolução de alertas) — senão eles agiriam sobre dados incompletos
+    // (ex.: fechar um alerta de SKU inativado por ler ativos parciais). Cai no catch → log 'failed' →
+    // ok:false (o chamador não recalcula). Falha SÓ no nao_existe (abaixo) é pega no fail-closed final.
+    if (falhas > 0) {
+      throw new Error(`${falhas} upserts de status falharam — snapshot parcial (money-path)`);
     }
 
     // 2.5) Espelhar status ativo/inativo na tabela omie_products (catálogo).
@@ -424,17 +445,24 @@ async function sincronizarEmpresa(supabase: DB, empresa: Empresa): Promise<SyncS
       sucessos,
       falhas,
       alertas_resolvidos_auto: alertasResolvidosAuto,
-      paginas_processadas: page - 1,
+      paginas_processadas: paginasProcessadas,
       duration_ms: duration,
     };
+
+    // Fail-closed money-path: se QUALQUER upsert de status falhou, o snapshot está PARCIAL. Não
+    // deixar o chamador tratar como sucesso (senão recalcula o ciclo com status incompleto → pode
+    // liberar SKU cujo `false` não chegou a ser gravado). Log 'failed' + error no retorno (ok:false).
+    const erroParcial =
+      falhas > 0 ? `${falhas} upserts de status falharam — snapshot parcial (money-path)` : null;
 
     if (logId) {
       await supabase
         .from("sync_reprocess_log")
         .update({
-          status: "complete",
+          status: erroParcial ? "failed" : "complete",
           upserts_count: sucessos,
           duration_ms: duration,
+          error_message: erroParcial,
           metadata: {
             ...summary,
             nao_encontrados_lista: naoEncontrados.slice(0, 100),
@@ -443,7 +471,7 @@ async function sincronizarEmpresa(supabase: DB, empresa: Empresa): Promise<SyncS
         .eq("id", logId);
     }
 
-    return summary;
+    return erroParcial ? { ...summary, error: erroParcial } : summary;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`omie-sync-status-produtos (${empresa}) falhou:`, msg);
@@ -488,8 +516,8 @@ Deno.serve(async (req) => {
     );
   }
 
-  // Em série: cada empresa leva ~100s e dispara o Omie; rodar em paralelo concorreria
-  // no rate limit do Omie. Hoje só OBEN tem alvos (COLACOR sai no early-return).
+  // Em série: cada empresa pagina o Omie (~25–40s com o pool concorrente); rodar as empresas em
+  // paralelo concorreria no rate limit do Omie. Hoje só OBEN tem alvos (COLACOR sai no early-return).
   const resultados: SyncSummary[] = [];
   for (const emp of empresas) {
     resultados.push(await sincronizarEmpresa(supabase, emp));

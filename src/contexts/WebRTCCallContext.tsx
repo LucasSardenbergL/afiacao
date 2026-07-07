@@ -215,7 +215,6 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       cleanupAudioResources();
       clientRef.current?.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
