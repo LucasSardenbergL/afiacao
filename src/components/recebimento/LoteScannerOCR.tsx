@@ -1,5 +1,4 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
-import { createWorker } from 'tesseract.js';
 import { Camera, X, Loader2, ScanLine, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -104,6 +103,10 @@ export default function LoteScannerOCR({ onLoteCapturado, onCancelar }: LoteScan
     ctx.drawImage(video, 0, 0);
 
     try {
+      // Dynamic import: o core JS do tesseract só baixa no 1º scan (fora do chunk
+      // da página; worker/wasm/traineddata já vinham da rede em runtime). Falha de
+      // download cai no catch abaixo → caminho manual (degradação honesta).
+      const { createWorker } = await import('tesseract.js');
       const worker = await createWorker('por');
       const { data: { text } } = await worker.recognize(canvas);
       await worker.terminate();

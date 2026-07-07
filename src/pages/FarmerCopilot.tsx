@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,10 @@ import { ManualTextInput } from '@/components/farmer/copilot/ManualTextInput';
 import { TranscriptCard } from '@/components/farmer/copilot/TranscriptCard';
 import { AnalysisHistoryCard } from '@/components/farmer/copilot/AnalysisHistoryCard';
 
+// Motor de voz headless (embute o SDK @elevenlabs/react): lazy para o SDK não
+// entrar no chunk desta página — só baixa ao iniciar uma sessão de voz.
+const MotorVozScribe = lazy(() => import('@/components/farmer/copilot/MotorVozScribe'));
+
 const FarmerCopilot = () => {
   const {
     navigate,
@@ -19,6 +24,7 @@ const FarmerCopilot = () => {
     isImpersonating,
     userId,
     copilot,
+    motorVozProps,
     selectedCustomer,
     setSelectedCustomer,
     customers,
@@ -50,6 +56,15 @@ const FarmerCopilot = () => {
     <div className="min-h-screen bg-background pb-24">
 
       <main className="px-4 py-4 space-y-3 max-w-lg mx-auto">
+        {/* Motor de voz (headless, retorna null) — montado só com sessão de voz.
+            key={token}: troca de token REMONTA o motor (1 instância = 1 conexão;
+            guards não vazam entre conexões — achado Codex, 3ª rodada). */}
+        {motorVozProps && (
+          <Suspense fallback={null}>
+            <MotorVozScribe key={motorVozProps.token} {...motorVozProps} />
+          </Suspense>
+        )}
+
         {/* Session Controls */}
         {!copilot.isActive ? (
           <SessionStartCard
