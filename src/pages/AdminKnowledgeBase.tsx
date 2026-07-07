@@ -15,7 +15,8 @@ import {
   TabsTrigger,
   TabsContent,
 } from '@/components/ui/tabs';
-import { Upload, Loader2, FileText } from 'lucide-react';
+import { Upload, FileText } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 
 export default function AdminKnowledgeBase() {
   const { data, isLoading } = useKnowledgeBaseList();
@@ -85,9 +86,7 @@ export default function AdminKnowledgeBase() {
 
           {/* Lista de documentos */}
           {isLoading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-            </div>
+            <PageSkeleton variant="list" />
           ) : !data || data.length === 0 ? (
             <Card className="p-8 text-center text-xs text-muted-foreground">
               <FileText className="w-8 h-8 mx-auto mb-2 opacity-40" />

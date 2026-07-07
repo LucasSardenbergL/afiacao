@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Navigation, CheckCircle2 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { formatDuration } from '@/components/reposicao/routePlanner/renderHelpers';
@@ -276,9 +277,9 @@ const AdminRoutePlanner = () => {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <main className="pt-16 px-4 max-w-4xl mx-auto">
+          <PageSkeleton variant="auto" />
+        </main>
       </div>
     );
   }

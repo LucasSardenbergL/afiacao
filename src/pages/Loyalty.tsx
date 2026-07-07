@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, Star, Gift, Trophy, TrendingUp, Loader2, BookOpen, Target } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -99,8 +100,10 @@ export default function Loyalty() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+      <div className="min-h-screen bg-background pb-24">
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="list" />
+        </main>
       </div>
     );
   }

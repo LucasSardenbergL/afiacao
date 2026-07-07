@@ -2,9 +2,10 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Database, Loader2, ShoppingCart, Network, Layers, Send, Building2, AlertTriangle, Link2 } from "lucide-react";
+import { Database, ShoppingCart, Network, Layers, Send, Building2, AlertTriangle, Link2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageSkeleton } from "@/components/ui/page-skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -25,12 +26,7 @@ const AdminReposicaoGruposProducao = lazy(() => import("./AdminReposicaoGruposPr
 const AdminReposicaoAplicacao = lazy(() => import("./AdminReposicaoAplicacao"));
 const AdminSkuMapeamento = lazy(() => import("./AdminSkuMapeamento"));
 
-const TabFallback = () => (
-  <div className="flex items-center justify-center py-16 text-muted-foreground">
-    <Loader2 className="h-5 w-5 animate-spin mr-2" />
-    Carregando...
-  </div>
-);
+const TabFallback = () => <PageSkeleton variant="auto" />;
 
 /* ─── KPI Cards ─── */
 function KpiCards() {
@@ -333,9 +329,7 @@ function HistoricoPedidosCiclos() {
         </div>
 
         {isLoading ? (
-          <div className="flex items-center justify-center py-12 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando ciclos...
-          </div>
+          <PageSkeleton variant="list" />
         ) : rows.length === 0 ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
             Nenhum ciclo encontrado para o período

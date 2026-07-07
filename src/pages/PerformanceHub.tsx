@@ -3,7 +3,6 @@ import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
-  Loader2,
   Trophy,
   Target,
   Phone,
@@ -12,6 +11,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageSkeleton } from "@/components/ui/page-skeleton";
 import {
   Select,
   SelectContent,
@@ -26,12 +26,7 @@ const FarmerCalls = lazy(() => import("./FarmerCalls"));
 const CoachingSPIN = lazy(() => import("./CoachingSPIN"));
 const FarmerCopilot = lazy(() => import("./FarmerCopilot"));
 
-const TabFallback = () => (
-  <div className="flex items-center justify-center py-16 text-muted-foreground">
-    <Loader2 className="h-5 w-5 animate-spin mr-2" />
-    Carregando...
-  </div>
-);
+const TabFallback = () => <PageSkeleton variant="auto" />;
 
 // Helper para queries em tabelas que podem nao existir nos types
 const safeQuery = async <T,>(fn: () => Promise<T>, fallback: T): Promise<T> => {

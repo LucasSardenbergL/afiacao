@@ -10,6 +10,7 @@ import {
   Loader2, TrendingUp, DollarSign, BarChart3, ShieldCheck,
   RefreshCw, Layers, Target, type LucideIcon
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -63,9 +64,7 @@ const FarmerIPFDashboard = () => {
         </Button>
 
         {loading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="w-6 h-6 animate-spin text-primary" />
-          </div>
+          <PageSkeleton variant="auto" />
         ) : !latestScore ? (
           <Card>
             <CardContent className="p-6 text-center">

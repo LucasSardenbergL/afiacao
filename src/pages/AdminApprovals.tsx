@@ -7,6 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Loader2, Check, X, UserCheck, Clock, Link2, AlertTriangle } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 
 interface PendingUser {
   id: string;
@@ -222,8 +223,10 @@ const AdminApprovals = () => {
 
   if (authLoading || loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div className="min-h-screen bg-background pb-24">
+        <main className="pt-16 px-4 max-w-4xl mx-auto">
+          <PageSkeleton variant="list" />
+        </main>
       </div>
     );
   }

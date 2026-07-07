@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Loader2, ShoppingCart, Trash2, ChevronLeft, TriangleAlert } from 'lucide-react';
+import { ShoppingCart, Trash2, ChevronLeft, TriangleAlert } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
 import { decodeHtml, type OrderFeedRow } from '@/components/salesOrders/types';
@@ -41,9 +42,7 @@ const SalesOrders = () => {
 
   if (authLoading || loading) {
     return (
-      <div className="flex items-center justify-center pt-32">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
+      <PageSkeleton variant="list" />
     );
   }
 

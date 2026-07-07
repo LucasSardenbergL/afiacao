@@ -1,7 +1,7 @@
 // Fidelidade (loyalty) — pontos, tiers, ajustes e visão econômica.
 // Composição: useAdminLoyalty (dados/estado) + stats + insights + lista/detalhe + dialog.
 // God-component split de src/pages/AdminLoyalty.tsx (comportamento 1:1).
-import { Loader2 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useAdminLoyalty } from '@/components/loyalty/useAdminLoyalty';
 import { AdjustDialog } from '@/components/loyalty/AdjustDialog';
 import { CustomerDetail } from '@/components/loyalty/CustomerDetail';
@@ -42,9 +42,9 @@ export default function AdminLoyalty() {
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="list" />
+        </main>
       </div>
     );
   }

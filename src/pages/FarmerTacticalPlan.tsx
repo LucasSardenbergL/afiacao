@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Target, FileText } from 'lucide-react';
+import { Target, FileText } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFarmerTacticalPlan } from '@/components/farmer/tacticalPlan/useFarmerTacticalPlan';
@@ -65,9 +66,7 @@ const FarmerTacticalPlan = () => {
 
         {/* Plans List */}
         {loading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="w-6 h-6 animate-spin text-primary" />
-          </div>
+          <PageSkeleton variant="list" />
         ) : plans.length === 0 ? (
           <Card>
             <CardContent className="p-6 text-center">
