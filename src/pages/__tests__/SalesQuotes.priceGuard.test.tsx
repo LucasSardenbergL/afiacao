@@ -68,12 +68,17 @@ beforeEach(() => {
 });
 
 describe('SalesQuotes — guard de preço na conversão de orçamento (4ª via money-path)', () => {
+  // Timeout de 15s no teste, mas findByRole/waitFor têm default PRÓPRIO de 1s —
+  // sob suíte completa (jsdom saturando a RAM) o 1s estoura antes de a página montar
+  // (flaky observado em 2026-07-06). O timeout folgado precisa ir nos waiters internos.
+  const FOLGA = { timeout: 10_000 };
+
   it('NÃO envia ao Omie quando o orçamento tem item a preço ≤ 0', async () => {
     h.quotes = [makeQuote(0)];
     renderPage();
-    const btn = await screen.findByRole('button', { name: /Enviar Pedido/i });
+    const btn = await screen.findByRole('button', { name: /Enviar Pedido/i }, FOLGA);
     fireEvent.click(btn);
-    await waitFor(() => expect(h.toastError).toHaveBeenCalled());
+    await waitFor(() => expect(h.toastError).toHaveBeenCalled(), FOLGA);
     expect(h.invoke).not.toHaveBeenCalled();
     expect(String(h.toastError.mock.calls[0][0]).toLowerCase()).toContain('preço');
   }, 15000);
@@ -81,9 +86,9 @@ describe('SalesQuotes — guard de preço na conversão de orçamento (4ª via m
   it('envia ao Omie normalmente quando todos os preços são positivos', async () => {
     h.quotes = [makeQuote(10)];
     renderPage();
-    const btn = await screen.findByRole('button', { name: /Enviar Pedido/i });
+    const btn = await screen.findByRole('button', { name: /Enviar Pedido/i }, FOLGA);
     fireEvent.click(btn);
-    await waitFor(() => expect(h.invoke).toHaveBeenCalled());
+    await waitFor(() => expect(h.invoke).toHaveBeenCalled(), FOLGA);
     expect(h.toastError).not.toHaveBeenCalled();
   }, 15000);
 });

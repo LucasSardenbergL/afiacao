@@ -1,12 +1,11 @@
 {
-  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
-    "src/main.tsx",
     "src/App.tsx",
-    "vite.config.ts",
-    "vitest.config.ts",
-    "tailwind.config.ts",
-    "supabase/functions/**/index.ts"
+    "src/test/bun-setup.ts",
+    "src/lib/mcp/index.ts",
+    "supabase/functions/**/index.ts",
+    "supabase/functions/**/*_test.ts"
   ],
   "project": [
     "src/**/*.{ts,tsx}",
@@ -14,9 +13,11 @@
   ],
   "ignore": [
     "src/integrations/supabase/types.ts",
-    "src/components/ui/**"
+    "src/components/ui/**",
+    "src/hooks/use-mobile.tsx",
+    "src/components/NvoipDialer.tsx",
+    "src/hooks/useNvoipCall.ts",
+    "src/hooks/useWhatsappPendentes.ts"
   ],
-  "ignoreDependencies": [
-    "@types/*"
-  ]
+  "ignoreDependencies": ["npm"]
 }

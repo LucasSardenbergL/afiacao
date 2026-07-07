@@ -17,7 +17,7 @@ import { OrderStatus } from '@/types';
 import { OrderTimeline } from '@/components/OrderTimeline';
 import { OrderChat } from '@/components/OrderChat';
 import { OrderReview } from '@/components/OrderReview';
-import { StatusBadgeSimple } from '@/components/StatusBadge';
+import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -204,7 +204,7 @@ const OrderDetail = () => {
                 Criado em {format(order.createdAt, "dd 'de' MMMM", { locale: ptBR })}
               </p>
             </div>
-            <StatusBadgeSimple status={order.status as OrderStatus} />
+            <StatusBadge status={order.status as OrderStatus} />
           </div>
 
           {order.estimatedDelivery && order.status !== 'entregue' && (
