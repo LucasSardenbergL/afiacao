@@ -84,11 +84,14 @@ const AdminApprovals = () => {
     if (!normalizedDoc) return 'no_data';
 
     try {
-      // Check if already linked
+      // Check if already linked. P0-B follow-up: filtra a conta colacor (o vínculo é criado abaixo
+      // com o código de `buscar_por_documento`/colacor_sc, rotulado 'colacor') — casa a checagem
+      // com o INSERT. Hoje inócuo (UNIQUE(user_id) → 1 linha); pós-constraint composta fica correto.
       const { data: existing } = await supabase
         .from('omie_clientes')
         .select('id')
         .eq('user_id', profileUserId)
+        .eq('empresa_omie', 'colacor')
         .limit(1);
 
       if (existing && existing.length > 0) return 'already_linked';
@@ -112,6 +115,9 @@ const AdminApprovals = () => {
             omie_codigo_cliente: data.codigo_cliente,
             omie_codigo_cliente_integracao: data.codigo_cliente_integracao || null,
             omie_codigo_vendedor: data.codigo_vendedor || null,
+            // P0-B follow-up: código vem de `buscar_por_documento` (colacor_sc, rótulo 'colacor' no
+            // espelho). Explícito evita o DEFAULT silencioso e a linha ambígua sob constraint composta.
+            empresa_omie: 'colacor',
           });
 
         if (insertError) {

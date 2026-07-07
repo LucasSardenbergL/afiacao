@@ -83,6 +83,14 @@ export function useCustomerPreferredItems(customerId: string | undefined) {
     enabled: !!customerId,
     staleTime: 5 * 60_000,
     queryFn: async () => {
+      // P0-B follow-up: NÃO se filtra empresa_omie aqui de propósito. customer_preferred_items é
+      // MULTI-conta (itens oben E colacor, exibidos juntos; a régua usa os oben) enquanto o espelho
+      // guarda o código colacor_sc — nenhum filtro de conta ÚNICA no espelho casa com todos os itens.
+      // O descasamento de namespace (código do espelho × código da venda em preferred_items) é um bug
+      // de DESIGN pré-existente que se conserta no downstream (buscar por account+código certo), não
+      // com um .eq aqui — um filtro só daria falsa segurança. Ver nota no PR. maybeSingle é seguro
+      // hoje (UNIQUE(user_id) → 1 linha); quando a chave virar composta, ESTE consumidor precisa da
+      // correção de design, não de um filtro.
       const { data: link } = await supabase
         .from('omie_clientes')
         .select('omie_codigo_cliente')

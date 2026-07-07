@@ -221,10 +221,16 @@ Deno.serve(async (req) => {
     let customerSegment: string | null = null;
     let customerTags: string[] = [];
     try {
+      // P0-B follow-up (conta corrigida via Codex): customer_segments é gravado na conta 'oben'
+      // (salvar_segmento_cliente, account default 'oben') — então o código do cliente que CASA com
+      // customer_segments é o da linha OBEN do espelho, NÃO o colacor. Filtra 'oben': hoje 0 linhas
+      // oben → omieMap null → sem segmento (degradação honesta, precisão>recall — melhor que casar
+      // o código colacor_sc por colisão numérica e trazer o segmento de OUTRO cliente).
       const { data: omieMap } = await supabase
         .from('omie_clientes')
         .select('omie_codigo_cliente')
         .eq('user_id', body.customer_user_id)
+        .eq('empresa_omie', 'oben')
         .maybeSingle();
 
       if (omieMap && (omieMap as { omie_codigo_cliente: number }).omie_codigo_cliente) {
@@ -266,9 +272,15 @@ Deno.serve(async (req) => {
 
       if (candids && (candids as Array<unknown>).length > 0) {
         const codes = (candids as Array<{ omie_codigo_cliente: number }>).map((c) => c.omie_codigo_cliente);
+        // P0-B follow-up (conta corrigida via Codex): `codes` vêm de customer_segments (conta 'oben'),
+        // então resolvê-los de volta para user_id exige a linha OBEN do espelho (mesmo namespace).
+        // Filtra 'oben': hoje 0 linhas oben → sem lookalikes (honesto); casa certo quando o espelho
+        // oben existir. Filtrar 'colacor' aqui casaria por colisão (user errado) e rejeitaria o
+        // namespace que de fato bate — pior, não melhor.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: maps } = await (supabase.from('omie_clientes') as any)
           .select('user_id, omie_codigo_cliente')
+          .eq('empresa_omie', 'oben')
           .in('omie_codigo_cliente', codes);
 
         const candidateUserIds = ((maps as Array<{ user_id: string }> | null) ?? [])
