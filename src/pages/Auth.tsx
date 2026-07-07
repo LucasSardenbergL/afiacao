@@ -126,9 +126,13 @@ const Auth = () => {
         }
 
         if (opts.omieCliente?.codigo_cliente) {
+          // P0-B follow-up: opts.omieCliente vem de `omie-cliente/buscar_por_documento`, que consulta
+          // a conta colacor_sc — cujo código o espelho rotula 'colacor'. Setar explícito evita depender
+          // do DEFAULT silencioso e, pós-constraint composta, impede uma linha de conta ambígua.
           await supabase.from('omie_clientes').insert({
             user_id: signUpData.user.id, omie_codigo_cliente: opts.omieCliente.codigo_cliente,
             omie_codigo_cliente_integracao: `APP_${signUpData.user.id.substring(0, 8)}`,
+            empresa_omie: 'colacor',
           });
         }
       }

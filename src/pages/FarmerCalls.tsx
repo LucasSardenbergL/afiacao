@@ -206,9 +206,13 @@ const FarmerCalls = () => {
       let mappingByCode: Record<number, string> = {};
       if (omieClientes.length > 0) {
         const codigos = omieClientes.map(c => c.codigo_cliente);
+        // P0-B follow-up: a busca `listar_clientes` roda na conta OBEN (default do edge). Sem
+        // empresa_omie o código OBEN colidiria com um código colacor do espelho e anexaria o
+        // customer_user_id ERRADO. Fail-safe: 0 linhas oben hoje → sem mapa → cai no match por doc.
         const { data: mappings } = await supabase
           .from('omie_clientes')
           .select('user_id, omie_codigo_cliente')
+          .eq('empresa_omie', 'oben')
           .in('omie_codigo_cliente', codigos);
         mappingByCode = Object.fromEntries((mappings || []).map(m => [m.omie_codigo_cliente, m.user_id]));
       }
@@ -302,10 +306,13 @@ const FarmerCalls = () => {
         if (profile?.user_id) customerUserId = profile.user_id;
       }
       if (!customerUserId && selectedCustomer.omie_codigo_cliente) {
+        // P0-B follow-up: o código veio da busca OBEN — resolve só contra a conta OBEN (código
+        // colidente de colacor mapearia o user errado). 0 oben hoje → null → cai no aviso abaixo.
         const { data: mapping } = await supabase
           .from('omie_clientes')
           .select('user_id')
           .eq('omie_codigo_cliente', selectedCustomer.omie_codigo_cliente)
+          .eq('empresa_omie', 'oben')
           .maybeSingle();
         if (mapping?.user_id) customerUserId = mapping.user_id;
       }

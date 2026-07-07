@@ -158,9 +158,13 @@ const SalesPrintDashboard = () => {
     queryKey: ['sales-print-omie-clientes', customerIds],
     queryFn: async () => {
       if (customerIds.length === 0) return [];
+      // P0-B follow-up: filtra a conta do espelho ('colacor' = colacor_sc físico) — o código é usado
+      // p/ consultar endereço via `omie-cliente` (que bate na conta colacor_sc). Pós-constraint
+      // composta, evita pegar o código de outra conta do user. Hoje inócuo (UNIQUE(user_id)).
       const { data } = await supabase
         .from('omie_clientes')
         .select('user_id, omie_codigo_cliente')
+        .eq('empresa_omie', 'colacor')
         .in('user_id', customerIds);
       return data || [];
     },
