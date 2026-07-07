@@ -86,7 +86,7 @@ export const BRAZILIAN_STATES = [
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
 ];
 
-export const formatDocument = (value: string): string => {
+const formatDocument = (value: string): string => {
   const numbers = value.replace(/\D/g, '');
   if (numbers.length <= 11) {
     return numbers

@@ -184,7 +184,7 @@ const objectiveLabels: Record<string, string> = {
 
 export const getObjectiveLabel = (obj: string) => objectiveLabels[obj] || obj;
 
-export const classifyProfile = (healthScore: number, avgSpend: number, marginPct: number, categoryCount: number): string => {
+const classifyProfile = (healthScore: number, avgSpend: number, marginPct: number, categoryCount: number): string => {
   if (avgSpend < 500 && marginPct < 20) return 'sensivel_preco';
   if (marginPct > 35 && categoryCount <= 3) return 'orientado_qualidade';
   if (avgSpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';

@@ -9,7 +9,7 @@ export function normalizarNome(s: string): string {
 const STEM = 3; // mínimo de chars para stem matching (ex.: 'tati' → 'tat' casa 'tatyana')
 
 /** Score 0..1 entre nome falado e candidato (token-overlap + stem de apelido). */
-export function scoreNome(falado: string, candidato: string): number {
+function scoreNome(falado: string, candidato: string): number {
   const a = normalizarNome(falado), b = normalizarNome(candidato);
   if (!a || !b) return 0;
   if (a === b) return 1;

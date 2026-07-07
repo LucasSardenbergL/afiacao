@@ -5,7 +5,7 @@ const STORAGE_KEY = 'dashboardRouteCounts';
 const TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30d
 
 /** Prefixos conhecidos que mapeiam pra personas operacionais. */
-export const TRACKED_PREFIXES = [
+const TRACKED_PREFIXES = [
   '/admin/reposicao',
   '/admin/estoque',
   '/recebimento',
