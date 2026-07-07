@@ -32,7 +32,7 @@ Padrão: nas duas, a 1ª review achou o P1, corrigi, re-review confirmou "SEGURO
 
 As 5 são **frontend** → precisam de **Publish do frontend no Lovable** (nenhuma migration/edge). A Onda 4 tem uma **transição única**: clientes com o SW antigo (autoUpdate) auto-recarregam **uma última vez** ao pegar o build com modo prompt; daí em diante, toda atualização vira o toast. Inerente à troca.
 
-## Onda 5 — SDKs de voz/OCR fora dos chunks de página (2026-07-07, PR #NNNN)
+## Onda 5 — SDKs de voz/OCR fora dos chunks de página (2026-07-07, PR #1211)
 
 Maior chunk do app era a página `FarmerCopilot` (478,77 kB raw / 126,31 kB gzip): `useFarmerCopilot.ts` importava `@elevenlabs/react` (useScribe) ESTATICAMENTE — o SDK de voz baixava só para ABRIR a página (vendedor externo em 4G). Menor, mesmo padrão: `tesseract.js` estático no `LoteScannerOCR` (dentro do chunk da `RecebimentoConferencia`, tela precacheada).
 
