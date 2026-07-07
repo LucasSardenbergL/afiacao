@@ -262,7 +262,8 @@ describe('guardrail money-path: coerência conta×código no criar_pedido (edge 
 // Fecha o gap do P0-A (código de OUTRO user passava): o edge deriva o código AUTORITATIVO do DOCUMENTO
 // do pedido (âncora imune ao fallback customer_user_id || user.id) e fail-closa em ambiguidade/ausência/
 // divergência. Decisão pura em src/ (vitest) ESPELHADA verbatim no edge; a paridade aqui pega a reversão
-// do deploy do Lovable. A prova de comportamento (edge deployado) é o quote OBEN que converte pós-deploy.
+// do deploy do Lovable. A prova do COMPORTAMENTO deployado é a canária `identidade_probe` (roda a decisão
+// pura no build no ar, read-only); o quote OBEN que converte pós-deploy é a prova end-to-end.
 const DERIVE = 'src/lib/omie/derive-account-identity.ts';
 
 describe('guardrail money-path: derivação de identidade Omie por conta (edge USA a decisão espelhada)', () => {
@@ -309,5 +310,43 @@ describe('guardrail money-path: derivação de identidade Omie por conta (edge U
       mirrorBlockNamed(src, 'omie derive-account-identity'),
       'edge divergiu da decisão de src/ — o Lovable reescreveu a derivação no deploy?',
     ).toBe(mirrorBlockNamed(helper, 'omie derive-account-identity'));
+  });
+
+  // ── Canária comportamental: fecha a assimetria de verificação (frontend prova-se por bytes do
+  // bundle; edge prova-se por CANÁRIA). O guard TEXTUAL acima cobre a FONTE (paridade src×edge); a
+  // probe HTTP `identidade_probe` é a única prova do COMPORTAMENTO no build DEPLOYADO — roda a decisão
+  // pura com fixtures fixos e retorna {resolved, expected, ok}. Ver docs/agent/money-path.md (§ canária).
+  it('CANÁRIA de deploy: identidade_probe existe, expõe probe_no_ar e roda a decisão pura {resolved,expected,ok}', () => {
+    expect(
+      src,
+      'canária identidade_probe ausente/renomeada — sem prova do COMPORTAMENTO deployado (só o commit + paridade textual, mais fraco)',
+    ).toContain('case "identidade_probe":');
+    // bloco INTEIRO da action (até o próximo case) — read-only mais robusto que limites {0,N}.
+    const m = src.match(/case "identidade_probe":[\s\S]*?\n {6}case /);
+    expect(m, 'bloco da action identidade_probe não encontrado').toBeTruthy();
+    const bloco = m![0];
+    expect(bloco, 'a probe deveria expor probe_no_ar (existência da derivação P0-B no build deployado)').toContain('probe_no_ar');
+    expect(bloco, 'a probe não roda mais decideAccountIdentity — deixou de provar a tabela-verdade deployada').toContain('decideAccountIdentity(');
+    expect(bloco, 'a probe perdeu o contrato {resolved, expected, ok}').toMatch(/resolved[\s\S]{0,120}expected[\s\S]{0,80}ok:/);
+  });
+
+  it('CANÁRIA read-only: identidade_probe roda a decisão PURA (sem deriveOmieAccountIdentity/Omie/PV/DB) e cobre fail-closed', () => {
+    const m = src.match(/case "identidade_probe":[\s\S]*?\n {6}case /);
+    expect(m, 'bloco da action identidade_probe não encontrado').toBeTruthy();
+    const bloco = m![0];
+    expect(bloco, 'a probe NÃO pode chamar deriveOmieAccountIdentity (faz I/O — perderia o dry-run determinístico)').not.toContain('deriveOmieAccountIdentity(');
+    expect(bloco, 'a probe NÃO pode chamar o Omie (callOmieVendasApi) — deixaria de ser dry-run').not.toContain('callOmieVendasApi');
+    expect(bloco, 'a probe NÃO pode criar PV (criarPedidoVenda) — deixaria de ser dry-run').not.toContain('criarPedidoVenda');
+    // [Codex] read-only textual mais forte: barra QUALQUER escrita/leitura no DB, não só os 3 nomes
+    // literais (um insert/update/rpc via supabaseAdmin passaria pelo guard antigo).
+    expect(bloco, 'a probe NÃO pode tocar o client supabase (supabaseAdmin) — deixaria de ser dry-run puro').not.toContain('supabaseAdmin');
+    expect(bloco, 'a probe NÃO pode escrever/consultar o DB (.insert/.update/.delete/.upsert/.rpc)').not.toMatch(/\.(insert|update|delete|upsert|rpc)\(/);
+    // precisão>recall: a probe morde só se cobrir a tabela-verdade, não só o caminho feliz. [Codex]
+    // cobertura completa: os fail-closeds do mirror-path E do omie-path.
+    expect(bloco, 'a probe deveria cobrir o fail-closed de divergência (advisory ≠ derivado)').toContain('divergence');
+    expect(bloco, 'a probe deveria cobrir o fail-closed de ambiguidade no espelho (2 códigos → não chuta)').toContain('ambiguous_mirror');
+    expect(bloco, 'a probe deveria cobrir ambiguous_omie (duplicata-CNPJ no Omie)').toContain('ambiguous_omie');
+    expect(bloco, 'a probe deveria cobrir unsafe_integer (código ≥ 2^53 não vai pro Omie)').toContain('unsafe_integer');
+    expect(bloco, 'a probe deveria cobrir o omie-path com backfill (source omie)').toContain('backfill: true');
   });
 });

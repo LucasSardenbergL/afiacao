@@ -2978,6 +2978,92 @@ serve(async (req) => {
         break;
       }
 
+      case "identidade_probe": {
+        // CANÁRIA COMPORTAMENTAL da derivação de identidade Omie por conta (P0-B) — NÃO escreve, NÃO
+        // chama o Omie, NÃO cria PV, NÃO toca o DB. Roda a DECISÃO PURA `decideAccountIdentity`
+        // DEPLOYADA (não a `main`) sobre fixtures fixos e compara com o esperado. Prova duas coisas que
+        // o commit de deploy NÃO prova: (1) esta action RESPONDE → a derivação P0-B subiu no MESMO build
+        // (senão viria "Ação desconhecida" = binário velho); (2) a tabela-verdade certa está no ar —
+        // 1-dono resolve, divergência/ambiguidade/ausência fail-closam. É a contraparte-DEPLOY do guard
+        // TEXTUAL (que cobre a FONTE/paridade src×edge): a probe cobre o COMPORTAMENTO deployado.
+        // ⚠️ Chama a função PURA (não `deriveOmieAccountIdentity`, que busca espelho/Omie): determinística
+        // e read-only. NÃO prova que o real-path usa a decisão (isso é o guard textual + paridade) —
+        // prova que a DECISÃO deployada está correta. [Codex] Quebra no WRAPPER de I/O (âncora do
+        // documento, query do espelho, fallback Omie, backfill, confirmação de espelho stale) fica FORA
+        // por design (cobri-la exigiria tocar DB/Omie = deixaria de ser dry-run): isso é o quote OBEN
+        // e2e pós-deploy. Gated por authorizeCronOrStaff como toda action.
+        // Igualdade estrutural ESTÁVEL: ordena chaves em qualquer nível (os ramos de DecideResult
+        // retornam chaves em ordens distintas → comparar string crua daria falso-negativo).
+        const stableId = (o: unknown): string =>
+          JSON.stringify(o, (_k, v) =>
+            v && typeof v === "object" && !Array.isArray(v)
+              ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
+              : v);
+        // Cobertura COMPLETA da tabela-verdade de decideAccountIdentity (9 casos = enumeração do
+        // oráculo em src/lib/omie/derive-account-identity.test.ts). [Codex] cobrir só 5 deixaria
+        // um bug deployado em omie/backfill, ambiguous_omie, unsafe_integer ou supplied-equality
+        // passar como ok:true — precisão>recall pede a tabela inteira.
+        const fixturesId: Array<{ caso: string; input: DecideInput; expected: DecideResult }> = [
+          { // caminho feliz: espelho 1-dono na conta resolve (source mirror, sem backfill)
+            caso: "mirror_1_dono",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [{ omie_codigo_cliente: 123, omie_codigo_vendedor: 7, empresa_omie: "oben" }], omieMatches: null },
+            expected: { ok: true, source: "mirror", codigo_cliente: 123, codigo_vendedor: 7, backfill: false },
+          },
+          { // advisory que CONFIRMA o derivado (supplied == derived) → ok, NÃO diverge
+            caso: "supplied_confirma",
+            input: { account: "oben", suppliedCodigo: 123, mirrorRows: [{ omie_codigo_cliente: 123, omie_codigo_vendedor: 7, empresa_omie: "oben" }], omieMatches: null },
+            expected: { ok: true, source: "mirror", codigo_cliente: 123, codigo_vendedor: 7, backfill: false },
+          },
+          { // advisory divergente do derivado → fail-closed (não override) — o coração do P0-B
+            caso: "divergencia_supplied",
+            input: { account: "oben", suppliedCodigo: 999, mirrorRows: [{ omie_codigo_cliente: 123, omie_codigo_vendedor: 7, empresa_omie: "oben" }], omieMatches: null },
+            expected: { ok: false, reason: "divergence" },
+          },
+          { // 2 códigos distintos na conta → não chuta (precisão>recall)
+            caso: "ambiguous_mirror",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [{ omie_codigo_cliente: 123, omie_codigo_vendedor: 7, empresa_omie: "oben" }, { omie_codigo_cliente: 124, omie_codigo_vendedor: 7, empresa_omie: "oben" }], omieMatches: null },
+            expected: { ok: false, reason: "ambiguous_mirror" },
+          },
+          { // espelho só tem linha de OUTRA conta → ignora e pede Omie (não vaza cross-conta)
+            caso: "outra_conta_ignorada_pede_omie",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [{ omie_codigo_cliente: 123, omie_codigo_vendedor: 7, empresa_omie: "colacor" }], omieMatches: null },
+            expected: { ok: false, needOmie: true },
+          },
+          { // espelho vazio + Omie 1 match → resolve por Omie COM backfill (grava o código no espelho)
+            caso: "omie_1match_backfill",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [], omieMatches: [{ codigo_cliente: 200, codigo_vendedor: 7 }] },
+            expected: { ok: true, source: "omie", codigo_cliente: 200, codigo_vendedor: 7, backfill: true },
+          },
+          { // Omie >1 match (duplicata-CNPJ) → não chuta (precisão>recall)
+            caso: "ambiguous_omie",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [], omieMatches: [{ codigo_cliente: 200, codigo_vendedor: 7 }, { codigo_cliente: 201, codigo_vendedor: 7 }] },
+            expected: { ok: false, reason: "ambiguous_omie" },
+          },
+          { // Omie confirmou ausência (0 match) → fail-closed absent (ausência ≠ zero)
+            caso: "omie_ausente_absent",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [], omieMatches: [] },
+            expected: { ok: false, reason: "absent" },
+          },
+          { // código fora do range seguro do bigint (≥ 2^53) → não vai pro Omie (fail-closed)
+            caso: "unsafe_integer",
+            input: { account: "oben", suppliedCodigo: null, mirrorRows: [], omieMatches: [{ codigo_cliente: Number.MAX_SAFE_INTEGER + 1, codigo_vendedor: 1 }] },
+            expected: { ok: false, reason: "unsafe_integer" },
+          },
+        ];
+        const casosId = fixturesId.map((c) => {
+          const resolved = decideAccountIdentity(c.input);
+          return { caso: c.caso, resolved, expected: c.expected, ok: stableId(resolved) === stableId(c.expected) };
+        });
+        result = {
+          success: true,
+          probe_no_ar: true, // a action respondeu → a derivação P0-B está no build deployado
+          account,
+          ok: casosId.every((c) => c.ok), // true = a tabela-verdade deployada bate em TODOS os fixtures
+          casos: casosId,
+        };
+        break;
+      }
+
       case "historico_produtos_cliente": {
         const { codigo_cliente: codCliHist } = params;
         if (!codCliHist) throw new Error("Código do cliente é obrigatório");
