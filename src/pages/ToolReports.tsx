@@ -1,10 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useUserToolDetail, useToolEvents, useToolPriceHistory } from '@/queries/useUserTools';
 import {
   Loader2, Wrench, DollarSign, TrendingUp,
   BarChart3, Clock, AlertTriangle, ShieldCheck, HelpCircle,
@@ -17,36 +16,6 @@ import {
   ResponsiveContainer, LineChart, Line
 } from 'recharts';
 import { cn } from '@/lib/utils';
-
-/* ─── Types ─── */
-
-interface ToolData {
-  id: string;
-  internal_code: string | null;
-  custom_name: string | null;
-  generated_name: string | null;
-  created_at: string;
-  last_sharpened_at: string | null;
-  next_sharpening_due: string | null;
-  sharpening_interval_days: number | null;
-  tool_categories: {
-    name: string;
-    suggested_interval_days: number | null;
-  };
-}
-
-interface ToolEvent {
-  id: string;
-  event_type: string;
-  created_at: string;
-  metadata: Record<string, unknown> | null;
-  order_id: string | null;
-}
-
-interface PriceRecord {
-  unit_price: number;
-  created_at: string;
-}
 
 /* ─── Criticality (shared with Tools/ToolHistory) ─── */
 
@@ -107,33 +76,12 @@ function StatRow({ label, value, muted }: { label: string; value: string; muted?
 
 const ToolReports = () => {
   const { toolId } = useParams<{ toolId: string }>();
-  const { user } = useAuth();
   const navigate = useNavigate();
-  const [tool, setTool] = useState<ToolData | null>(null);
-  const [events, setEvents] = useState<ToolEvent[]>([]);
-  const [priceHistory, setPriceHistory] = useState<PriceRecord[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (toolId && user) loadData();
-  }, [toolId, user]);
-
-  const loadData = async () => {
-    try {
-      const [toolRes, eventsRes, priceRes] = await Promise.all([
-        supabase.from('user_tools').select('*, tool_categories(*)').eq('id', toolId!).single(),
-        supabase.from('tool_events').select('*').eq('user_tool_id', toolId!).order('created_at', { ascending: true }),
-        supabase.from('order_price_history').select('unit_price, created_at').eq('user_tool_id', toolId!).order('created_at', { ascending: true }),
-      ]);
-      if (toolRes.data) setTool(toolRes.data as unknown as ToolData);
-      if (eventsRes.data) setEvents(eventsRes.data as ToolEvent[]);
-      if (priceRes.data) setPriceHistory(priceRes.data as PriceRecord[]);
-    } catch (error) {
-      console.error('Error loading tool reports:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data: tool, isPending: loadingTool } = useUserToolDetail(toolId);
+  const { data: events = [], isPending: loadingEvents } = useToolEvents(toolId);
+  const { data: priceHistory = [], isPending: loadingPrices } = useToolPriceHistory(toolId);
+  const loading = loadingTool || loadingEvents || loadingPrices;
 
   const analysis = useMemo(() => {
     if (!tool) return null;
