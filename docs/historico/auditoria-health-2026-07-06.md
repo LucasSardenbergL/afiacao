@@ -38,6 +38,16 @@ Faxina de unused exports em módulos FRIOS (excluídos: financeiro, reposição,
 
 **Achado**: `omie-sync-status-produtos/paginacao.test.ts` usa sufixo `.test.ts` (vitest-style) mas vitest só inclui `src/**` — o arquivo só roda via `deno test` manual (documentado no cabeçalho). knip.json agora cobre ambos os sufixos de teste Deno (`*_test.ts` e `*.test.ts`) e ignora o specifier `jsr:` (mesmo caso do `npm:`).
 
+## Lote 3 — Responsividade mobile (2026-07-07, mesma sessão)
+
+Auditoria de responsividade 375px: 2 agentes de varredura estática (operacionais + analíticas) + verificação dinâmica via /browse (viewport 375x812, rotas públicas, dev server local).
+
+**Achado central (corrigido)**: a escala tipográfica v3 recalibrou `text-base` para **14px** (densidade desktop) — efeito colateral: NEUTRALIZOU o anti-zoom do shadcn ui/input (`text-base md:text-sm`), então **todo campo do app disparava auto-zoom no iOS Safari ao focar** (Safari zooma quando o font computado do campo é <16px). Personas atingidas: vendedor externo e separador (mobile-first do briefing). Fix: regra no bloco `@media (pointer: coarse)` já existente do index.css — `input, textarea, select, [contenteditable] { font-size: max(16px, 1em) }` — 16px só em ponteiro grosso, desktop denso intacto. Validado no CSSOM via /browse.
+
+**Chão de fábrica saudável**: ScanBar (text-base h-11 ✓), conferência (inputs h-12 ✓), tabs com overflow-x ✓, tabela shadcn com wrapper overflow ✓, sticky/fixed full-width ✓. Só 2 achados pontuais: TabsList `grid-cols-3` fixo no UnifiedOrder:371 e DialogContent `max-w-2xl` no Recebimento:504 [suspeito].
+
+**Analíticas — 29 quebras prováveis**: grids/TabsList com `grid-cols-3..6` fixos sem prefixo responsivo em ~21 páginas (P0: FinanceiroDashboard:168 TabsList grid-cols-5/6). NÃO corrigidos nesta sessão de propósito: as 4 sessões paralelas (cores/skeleton/react-query/faxina) tocam exatamente essas páginas — conflito certo. Chip aberto para lote pós-merge. Verificação dinâmica: /auth e /reset-password em 375px sem overflow horizontal e visualmente corretos.
+
 ## Backlog novo (fora do escopo seguro desta sessão — churn alto/multi-worktree)
 
 - ~78 usos de cores Tailwind hardcoded (`text-emerald-600` etc.) onde a convenção v3 pede `text-status-*` — concentrados em páginas de status/governança/farmer. Migração visual dedicada.
