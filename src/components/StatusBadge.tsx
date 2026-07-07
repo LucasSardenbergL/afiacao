@@ -52,6 +52,3 @@ export const StatusBadge = React.memo(function StatusBadge({ status, size = 'md'
     </span>
   );
 });
-
-/** @deprecated Use StatusBadge instead */
-export const StatusBadgeSimple = StatusBadge;

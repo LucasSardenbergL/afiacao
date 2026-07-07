@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Trash2, Share2, Pencil, Printer } from 'lucide-react';
 import { formatarDataPedido } from '@/lib/pedido/data-pedido';
-import { StatusBadgeSimple } from '@/components/StatusBadge';
+import { StatusBadge } from '@/components/StatusBadge';
 import type { OrderStatus } from '@/types';
 import { statusDoPedido, type OrderFeedRow } from './types';
 
@@ -89,7 +89,7 @@ export function SalesOrderCard({
           </div>
           <div className="text-right shrink-0 space-y-1">
             {isAfiacao ? (
-              <StatusBadgeSimple status={order.status as OrderStatus} size="sm" />
+              <StatusBadge status={order.status as OrderStatus} size="sm" />
             ) : (
               <Badge variant={status.variant}>{status.label}</Badge>
             )}
