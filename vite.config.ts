@@ -122,7 +122,9 @@ export default defineConfig(({ mode }) => ({
         // Quem sai do precache ganha cobertura PROGRESSIVA pelo runtime
         // caching de /assets/ (CacheFirst) abaixo: visitou 1× online, fica.
         globIgnores: [
-          "**/FarmerCopilot-*.js", // ~465KB — copilot de voz (ElevenLabs), exige rede
+          "**/FarmerCopilot-*.js", // copilot de voz, exige rede (o SDK pesado saiu daqui → vendor-elevenlabs)
+          "**/vendor-elevenlabs-*.js", // ~465KB — SDK de voz; só o copilot usa, lazy no iniciar sessão
+          "**/vendor-tesseract-*.js", // OCR core (LoteScannerOCR, lazy no 1º scan); wasm/traineddata já vêm da rede
           "**/AdminRoutePlanner-*.js", // ~188KB — Leaflet; tiles do mapa exigem rede
           "**/AdminRoutePlanner-*.css", // CSS do Leaflet (único ignorado com CSS próprio)
           "**/vendor-posthog-*.js", // ~186KB — posthog-js core (analytics; lazy via analytics.ts)
@@ -308,6 +310,11 @@ export default defineConfig(({ mode }) => ({
             // entry ESM do pacote) — nome genérico que o globIgnores do
             // precache não consegue mirar com segurança.
             if (id.includes('posthog-js')) return 'vendor-posthog';
+            // Mesmo racional do vendor-posthog: SDKs pesados atrás de dynamic
+            // import (voz ElevenLabs no MotorVozScribe; OCR no LoteScannerOCR) —
+            // nome explícito pro globIgnores do precache conseguir mirá-los.
+            if (/node_modules[\\/]@elevenlabs[\\/]/.test(id)) return 'vendor-elevenlabs';
+            if (/node_modules[\\/]tesseract\.js[\\/]/.test(id)) return 'vendor-tesseract';
             if (id.includes('framer-motion')) return 'vendor-motion';
             if (id.includes('@radix-ui/')) return 'vendor-ui';
             if (id.includes('lucide-react')) return 'vendor-icons';

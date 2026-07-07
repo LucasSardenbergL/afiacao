@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Loader2, CheckCircle, Building2, Scissors, Wifi } from 'lucide-react';
+import { CheckCircle, Building2, Scissors, Wifi } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -274,7 +275,7 @@ const UnifiedOrder = () => {
   };
 
   if (h.authLoading) {
-    return <div className="flex items-center justify-center py-32"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+    return <PageSkeleton variant="form" />;
   }
 
   /* ─── Derived flags to keep UI clean ─── */

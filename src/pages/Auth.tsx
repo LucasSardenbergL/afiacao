@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, Wrench } from 'lucide-react';
+import { Wrench } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { LoginForm } from '@/components/auth/LoginForm';
 import { SignupForm } from '@/components/auth/SignupForm';
 import { handleInputFormat, INITIAL_FORM_DATA } from '@/components/auth/authSchemas';
@@ -146,11 +147,8 @@ const Auth = () => {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-10 h-10 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">Carregando...</p>
-        </div>
+      <div className="min-h-screen bg-background">
+        <PageSkeleton variant="auto" />
       </div>
     );
   }

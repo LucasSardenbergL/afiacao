@@ -81,7 +81,7 @@ function StarsDisplay({ count, max = 6 }: { count: number; max?: number }) {
           key={i}
           className={cn(
             "h-4 w-4",
-            i < count ? "fill-amber-400 text-amber-400" : "text-muted-foreground/30"
+            i < count ? "fill-status-warning-bold text-status-warning-bold" : "text-muted-foreground/30"
           )}
         />
       ))}

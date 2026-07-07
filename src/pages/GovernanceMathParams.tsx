@@ -68,7 +68,7 @@ function WeightEditor({ title, description, weights, values, onChange, locked }:
             </div>
           );
         })}
-        <div className={`flex items-center justify-between pt-2 border-t ${isValid ? 'text-emerald-600' : 'text-destructive'}`}>
+        <div className={`flex items-center justify-between pt-2 border-t ${isValid ? 'text-status-success' : 'text-status-error'}`}>
           <span className="text-xs font-medium">Total</span>
           <div className="flex items-center gap-2">
             {!isValid && <AlertTriangle className="w-3 h-3" />}
@@ -174,10 +174,10 @@ export default function GovernanceMathParams() {
       </div>
 
       {!canEdit && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+        <div className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3">
           <div className="flex items-center gap-2">
-            <Lock className="w-4 h-4 text-amber-500" />
-            <span className="text-xs text-amber-700">
+            <Lock className="w-4 h-4 text-status-warning" />
+            <span className="text-xs text-status-warning-foreground">
               Apenas o Super Admin (CPF mestre) pode editar estes parâmetros. Você está no modo leitura.
             </span>
           </div>

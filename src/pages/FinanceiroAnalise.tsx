@@ -2,7 +2,6 @@ import { lazy, Suspense, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   BarChart3,
-  Loader2,
   Tags,
   ArrowLeftRight,
   Receipt,
@@ -11,6 +10,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageSkeleton } from "@/components/ui/page-skeleton";
 import {
   Select,
   SelectContent,
@@ -25,12 +25,7 @@ const FinanceiroTributario = lazy(() => import("./FinanceiroTributario"));
 const FinanceiroMapping = lazy(() => import("./FinanceiroMapping"));
 const FinanceiroSync = lazy(() => import("./FinanceiroSync"));
 
-const TabFallback = () => (
-  <div className="flex items-center justify-center py-16 text-muted-foreground">
-    <Loader2 className="h-5 w-5 animate-spin mr-2" />
-    Carregando...
-  </div>
-);
+const TabFallback = () => <PageSkeleton variant="auto" />;
 
 function KpiCards({ empresa }: { empresa: string }) {
   // TODO: buscar contagens reais do Supabase filtradas por empresa={empresa}

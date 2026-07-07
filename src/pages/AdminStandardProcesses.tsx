@@ -5,7 +5,8 @@ import { StandardProcessRow } from '@/components/standard-process/StandardProces
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Loader2, Factory, Search } from 'lucide-react';
+import { Plus, Factory, Search } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { StandardProcessStatus } from '@/lib/standard-process/types';
 
@@ -72,9 +73,7 @@ export default function AdminStandardProcesses() {
       </div>
 
       {isLoading ? (
-        <div className="flex justify-center py-8">
-          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-        </div>
+        <PageSkeleton variant="list" />
       ) : filtered.length === 0 ? (
         <Card className="p-8 text-center text-xs text-muted-foreground">
           <Factory className="w-8 h-8 mx-auto mb-2 opacity-40" />

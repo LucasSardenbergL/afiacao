@@ -11,11 +11,11 @@ import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 
 const EVENT_ICONS: Record<string, { label: string; icon: typeof Wrench; color: string; bg: string }> = {
-  sharpening: { label: 'Afiação', icon: Wrench, color: 'text-blue-600', bg: 'bg-blue-100' },
-  anomaly: { label: 'Anomalia', icon: AlertTriangle, color: 'text-red-600', bg: 'bg-red-100' },
-  inspection: { label: 'Inspeção', icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-100' },
-  repair: { label: 'Reparo', icon: Settings, color: 'text-amber-600', bg: 'bg-amber-100' },
-  note: { label: 'Observação', icon: FileText, color: 'text-gray-600', bg: 'bg-gray-100' },
+  sharpening: { label: 'Afiação', icon: Wrench, color: 'text-status-info', bg: 'bg-status-info-bg' },
+  anomaly: { label: 'Anomalia', icon: AlertTriangle, color: 'text-status-error', bg: 'bg-status-error-bg' },
+  inspection: { label: 'Inspeção', icon: CheckCircle, color: 'text-status-success', bg: 'bg-status-success-bg' },
+  repair: { label: 'Reparo', icon: Settings, color: 'text-status-warning', bg: 'bg-status-warning-bg' },
+  note: { label: 'Observação', icon: FileText, color: 'text-muted-foreground', bg: 'bg-muted' },
 };
 
 const ToolPublicHistory = () => {

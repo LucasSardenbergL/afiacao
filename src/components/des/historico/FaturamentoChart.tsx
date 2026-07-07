@@ -52,10 +52,10 @@ export function FaturamentoChart({ chartData, metaMedia }: FaturamentoChartProps
                     key={i}
                     fill={
                       d.isAtual
-                        ? "hsl(217 91% 60%)"
+                        ? "hsl(var(--status-info))"
                         : d.faturado >= d.meta
-                          ? "hsl(142 71% 45%)"
-                          : "hsl(0 72% 51%)"
+                          ? "hsl(var(--status-success))"
+                          : "hsl(var(--status-error))"
                     }
                   />
                 ))}

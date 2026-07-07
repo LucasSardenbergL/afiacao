@@ -6,7 +6,6 @@ import { shouldRedirectToMobile, getForceFullPref, setForceFull } from "@/lib/pi
 import { supabase } from "@/integrations/supabase/client";
 import {
   Boxes,
-  Loader2,
   ClipboardList,
   Clock,
   AlertTriangle,
@@ -21,6 +20,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageSkeleton } from "@/components/ui/page-skeleton";
 import {
   Select,
   SelectContent,
@@ -226,11 +226,7 @@ function PedidosASepararTab({ account }: { account: string }) {
     );
 
   if (isLoading)
-    return (
-      <div className="flex justify-center py-12 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando...
-      </div>
-    );
+    return <PageSkeleton variant="list" />;
 
   const pedidos = data ?? [];
 
@@ -345,11 +341,7 @@ function PickingTab({ account }: { account: string }) {
   };
 
   if (isLoading)
-    return (
-      <div className="flex justify-center py-12 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando...
-      </div>
-    );
+    return <PageSkeleton variant="list" />;
 
   return (
     <div className="space-y-4">
@@ -493,9 +485,7 @@ function EstoqueTab({ account }: { account: string }) {
           />
         </div>
         {isLoading ? (
-          <div className="flex justify-center py-8 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando...
-          </div>
+          <PageSkeleton variant="list" />
         ) : (
           <Table>
             <TableHeader>
@@ -555,11 +545,7 @@ function MovimentacoesTab() {
   });
 
   if (isLoading)
-    return (
-      <div className="flex justify-center py-12 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando...
-      </div>
-    );
+    return <PageSkeleton variant="list" />;
 
   return (
     <Card>
@@ -639,11 +625,7 @@ function AuditoriaTab({ account }: { account: string }) {
   });
 
   if (isLoading)
-    return (
-      <div className="flex justify-center py-12 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando...
-      </div>
-    );
+    return <PageSkeleton variant="list" />;
 
   return (
     <Card>
