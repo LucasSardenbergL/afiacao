@@ -314,6 +314,15 @@
     button {
       min-width: 44px;
     }
+    /* iOS Safari dá auto-zoom ao focar campo com font-size computado <16px.
+       A escala v3 recalibrou text-base pra 14px (densidade desktop), o que
+       NEUTRALIZOU o anti-zoom `text-base md:text-sm` do shadcn ui/input —
+       todo campo do app zoomava no iPhone (vendedor externo/separador).
+       16px só em ponteiro grosso; desktop denso intacto. max() preserva
+       campos que já são maiores. */
+    input, textarea, select, [contenteditable="true"] {
+      font-size: max(16px, 1em);
+    }
   }
 
   /* ── Tabelas shadcn: tabular-nums automático em todas as células
