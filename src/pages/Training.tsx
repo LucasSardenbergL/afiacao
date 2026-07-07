@@ -1,66 +1,34 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Loader2, BookOpen, CheckCircle2, XCircle, Award, Sparkles, ArrowRight, Trophy, Target } from 'lucide-react';
-
-interface QuizQuestion {
-  question: string;
-  options: string[];
-  correct: number;
-}
-
-interface TrainingModule {
-  id: string;
-  title: string;
-  description: string | null;
-  video_url: string | null;
-  quiz_questions: QuizQuestion[];
-  min_score: number;
-  points_reward: number;
-  is_active: boolean;
-}
-
-interface Completion {
-  module_id: string;
-  passed: boolean;
-  quiz_score: number;
-}
+import {
+  useTrainingModules,
+  useTrainingCompletions,
+  useRegistrarConclusaoTraining,
+  type TrainingModule,
+} from '@/queries/useTraining';
 
 const Training = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const [modules, setModules] = useState<TrainingModule[]>([]);
-  const [completions, setCompletions] = useState<Completion[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: modules = [], isPending: loadingModules } = useTrainingModules();
+  const { data: completions = [], isPending: loadingCompletions } = useTrainingCompletions(user?.id);
+  const loading = loadingModules || loadingCompletions;
+  const registrarConclusao = useRegistrarConclusaoTraining();
 
   // Quiz state
   const [activeModule, setActiveModule] = useState<TrainingModule | null>(null);
   const [currentQ, setCurrentQ] = useState(0);
   const [answers, setAnswers] = useState<(number | null)[]>([]);
   const [showResult, setShowResult] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (user) loadData();
-  }, [user]);
-
-  const loadData = async () => {
-    const [modRes, compRes] = await Promise.all([
-      supabase.from('training_modules').select('*').eq('is_active', true).order('created_at'),
-      supabase.from('training_completions').select('module_id, passed, quiz_score').eq('user_id', user!.id),
-    ]);
-    setModules((modRes.data || []) as unknown as TrainingModule[]);
-    setCompletions((compRes.data || []) as Completion[]);
-    setLoading(false);
-  };
 
   const startQuiz = (mod: TrainingModule) => {
     setActiveModule(mod);
@@ -75,7 +43,6 @@ const Training = () => {
 
   const submitQuiz = async () => {
     if (!activeModule || !user) return;
-    setSubmitting(true);
 
     const totalQ = activeModule.quiz_questions.length;
     const correctCount = activeModule.quiz_questions.reduce((count, q, idx) => {
@@ -84,25 +51,22 @@ const Training = () => {
     const scorePercent = Math.round((correctCount / totalQ) * 100);
     const passed = scorePercent >= activeModule.min_score;
 
-    const { error } = await supabase.from('training_completions').insert({
-      user_id: user.id,
-      module_id: activeModule.id,
-      quiz_score: scorePercent,
-      passed,
-    });
-
-    if (error) {
-      toast.error('Erro ao salvar resultado');
-    } else {
+    try {
+      await registrarConclusao.mutateAsync({
+        userId: user.id,
+        moduleId: activeModule.id,
+        quizScore: scorePercent,
+        passed,
+      });
       if (passed) {
         toast.success(`Parabéns! Você ganhou ${activeModule.points_reward} pontos de educação!`, { description: `Nota: ${scorePercent}%` });
       } else {
         toast.error('Não atingiu a nota mínima', { description: `Nota: ${scorePercent}% (mínimo: ${activeModule.min_score}%)` });
       }
-      setCompletions(prev => [...prev, { module_id: activeModule.id, passed, quiz_score: scorePercent }]);
+    } catch {
+      toast.error('Erro ao salvar resultado');
     }
     setShowResult(true);
-    setSubmitting(false);
   };
 
   const getCompletion = (moduleId: string) => completions.find(c => c.module_id === moduleId && c.passed);
@@ -309,9 +273,9 @@ const Training = () => {
                     Próxima
                   </Button>
                 ) : (
-                  <Button size="sm" disabled={answers.some(a => a === null) || submitting}
+                  <Button size="sm" disabled={answers.some(a => a === null) || registrarConclusao.isPending}
                     onClick={submitQuiz}>
-                    {submitting && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+                    {registrarConclusao.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
                     Finalizar
                   </Button>
                 )}

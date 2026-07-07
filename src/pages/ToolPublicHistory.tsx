@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { supabase } from '@/integrations/supabase/client';
+import { useToolPublicHistory } from '@/queries/useUserTools';
 import { 
   Loader2, Wrench, AlertTriangle, CheckCircle, 
   FileText, Settings, Clock, Hash 
@@ -10,25 +9,6 @@ import {
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
-
-interface ToolData {
-  id: string;
-  internal_code: string | null;
-  generated_name: string | null;
-  custom_name: string | null;
-  specifications: Record<string, string> | null;
-  last_sharpened_at: string | null;
-  next_sharpening_due: string | null;
-  created_at: string;
-  tool_categories: { name: string };
-}
-
-interface ToolEvent {
-  id: string;
-  event_type: string;
-  description: string | null;
-  created_at: string;
-}
 
 const EVENT_ICONS: Record<string, { label: string; icon: typeof Wrench; color: string; bg: string }> = {
   sharpening: { label: 'Afiação', icon: Wrench, color: 'text-status-info', bg: 'bg-status-info-bg' },
@@ -40,33 +20,9 @@ const EVENT_ICONS: Record<string, { label: string; icon: typeof Wrench; color: s
 
 const ToolPublicHistory = () => {
   const { toolId } = useParams<{ toolId: string }>();
-  const [tool, setTool] = useState<ToolData | null>(null);
-  const [events, setEvents] = useState<ToolEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (toolId) loadData();
-  }, [toolId]);
-
-  const loadData = async () => {
-    try {
-      // RPC pública SECURITY DEFINER: funciona pra visitante NÃO-LOGADO (QR) e devolve só campos
-      // seguros (sem user_id do dono). As tabelas user_tools/tool_events não têm policy anon.
-      const { data, error } = await supabase.rpc('get_public_tool_history' as never, {
-        p_tool_id: toolId,
-      } as never);
-      if (error) throw error;
-      const payload = data as unknown as { tool: ToolData; events: ToolEvent[] } | null;
-      if (payload?.tool) {
-        setTool(payload.tool);
-        setEvents(payload.events ?? []);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data, isPending: loading } = useToolPublicHistory(toolId);
+  const tool = data?.tool ?? null;
+  const events = data?.events ?? [];
 
   if (loading) {
     return (

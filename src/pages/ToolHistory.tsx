@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { supabase } from '@/integrations/supabase/client';
+import { useUserToolDetail, useToolEvents, type ToolEvent } from '@/queries/useUserTools';
 import {
   Loader2, Wrench, QrCode, Printer,
   AlertTriangle, CheckCircle, FileText, Settings,
@@ -16,35 +16,6 @@ import { ptBR } from 'date-fns/locale';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
 import { escapeHtml } from '@/lib/escape-html';
-
-/* ─── Types ─── */
-
-interface ToolData {
-  id: string;
-  internal_code: string | null;
-  custom_name: string | null;
-  generated_name: string | null;
-  quantity: number | null;
-  specifications: Record<string, string> | null;
-  sharpening_interval_days: number | null;
-  last_sharpened_at: string | null;
-  next_sharpening_due: string | null;
-  created_at: string;
-  tool_categories: {
-    name: string;
-    description: string | null;
-    suggested_interval_days: number | null;
-  };
-}
-
-interface ToolEvent {
-  id: string;
-  event_type: string;
-  description: string | null;
-  metadata: Record<string, unknown> | null;
-  order_id: string | null;
-  created_at: string;
-}
 
 /* ─── Criticality (shared logic with Tools.tsx) ─── */
 
@@ -126,32 +97,16 @@ const RECOMMENDATION_STYLES: Record<string, { border: string; bg: string; icon: 
 const ToolHistory = () => {
   const { toolId } = useParams<{ toolId: string }>();
   const navigate = useNavigate();
-  const [tool, setTool] = useState<ToolData | null>(null);
-  const [events, setEvents] = useState<ToolEvent[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showQR, setShowQR] = useState(false);
   const qrRef = useRef<HTMLDivElement>(null);
 
+  const { data: tool, isPending: loadingTool } = useUserToolDetail(toolId);
+  const { data: eventsAsc = [], isPending: loadingEvents } = useToolEvents(toolId);
+  const loading = loadingTool || loadingEvents;
+  // O hook devolve asc (cache compartilhado com ToolReports); a timeline mostra o mais recente primeiro.
+  const events = useMemo(() => [...eventsAsc].reverse(), [eventsAsc]);
+
   const publicUrl = `${window.location.origin}/tool/${toolId}`;
-
-  useEffect(() => {
-    if (toolId) loadTool();
-  }, [toolId]);
-
-  const loadTool = async () => {
-    try {
-      const [toolRes, eventsRes] = await Promise.all([
-        supabase.from('user_tools').select('*, tool_categories(*)').eq('id', toolId!).single(),
-        supabase.from('tool_events').select('*').eq('user_tool_id', toolId!).order('created_at', { ascending: false }),
-      ]);
-      if (toolRes.data) setTool(toolRes.data as unknown as ToolData);
-      if (eventsRes.data) setEvents(eventsRes.data as ToolEvent[]);
-    } catch (error) {
-      console.error('Error loading tool:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handlePrintQR = () => {
     if (!qrRef.current || !tool) return;

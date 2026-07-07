@@ -48,9 +48,19 @@ Auditoria de responsividade 375px: 2 agentes de varredura estática (operacionai
 
 **Analíticas — 29 quebras prováveis**: grids/TabsList com `grid-cols-3..6` fixos sem prefixo responsivo em ~21 páginas (P0: FinanceiroDashboard:168 TabsList grid-cols-5/6). NÃO corrigidos nesta sessão de propósito: as 4 sessões paralelas (cores/skeleton/react-query/faxina) tocam exatamente essas páginas — conflito certo. Chip aberto para lote pós-merge. Verificação dinâmica: /auth e /reset-password em 375px sem overflow horizontal e visualmente corretos.
 
+## Migração react-query — lote 1 (exhaustive-deps, sessão de 2026-07-07)
+
+Ataque ao backlog de `react-hooks/exhaustive-deps`: a correção CERTA do padrão legado `loadData()`+`useEffect([])` é migrar a tela pra `@tanstack/react-query` (não adicionar deps mecanicamente — risco de loop de refetch). Lote pequeno (5 telas do domínio afiação/cliente, **fora do money-path**), teste manual por tela.
+
+- **Telas migradas**: `ToolHistory` (`/tools/:toolId`), `ToolReports` (`/tools/:toolId/reports`), `ToolPublicHistory` (`/tool/:toolId`, pública/QR), `Training` (`/training`), `SavingsDashboard` (`/savings`). Todas saíram da lista de exhaustive-deps; net −57 linhas.
+- **Hooks** (padrão do projeto: `if (error) throw error`, `enabled` p/ dependência, chave por domínio): `useUserTools.ts` ganhou `useUserToolDetail`/`useToolEvents`/`useToolPriceHistory`/`useToolPublicHistory`; `useTraining.ts` (novo) com módulos+conclusões+mutation; `useOrders.ts` ganhou `useDeliveredOrders12m` (consolidei aqui em vez de criar `useSavings` — o módulo já é o dono de `orders`).
+- **Decisões**: chave `['user-tool', toolId, 'events']` compartilhada History↔Reports, servida em **asc canônico** (a timeline do History inverte no consumidor via `useMemo`); o insert do quiz virou `useMutation` com `invalidateQueries` (substitui o append manual de estado); `useUserToolDetail` usa `maybeSingle` → "não encontrada" sem retry. `ToolReports` perdeu o gate `enabled: !!user` (a RLS já limita e a rota é protegida). Des-exportei 7 tipos sem consumidor externo (não engordar o knip que os lotes 1-2 sanearam) — mantive só `ToolEvent`/`TrainingModule` (importados por telas).
+- **Verificação**: typecheck strict 0 erros; lint 0 errors, warnings 78→72. `SalesQuotes.accountGuard.test.tsx` falhou na suíte completa (`findByRole` estourando timeout sob M2 saturada) — **flaky pré-existente e independente** (SalesQuotes não importa nada do diff; mesmo padrão do `priceGuard` que esta auditoria já tratou), confirmado passando isolado, e a suíte completa passou verde no CI (runner limpo).
+- **Não migrado (candidato ao próximo lote)**: `AdminTraining.tsx` redefine `QuizQuestion`/`TrainingModule` locais e repete o `loadData` — reuso natural de `useTraining.ts` quando o lote de telas de staff chegar.
+
 ## Backlog novo (fora do escopo seguro desta sessão — churn alto/multi-worktree)
 
 - ~78 usos de cores Tailwind hardcoded (`text-emerald-600` etc.) onde a convenção v3 pede `text-status-*` — concentrados em páginas de status/governança/farmer. Migração visual dedicada.
 - ~52 `<Loader2 spin>` de página inteira onde a convenção pede `<PageSkeleton>`.
-- 39 warnings `react-hooks/exhaustive-deps` (padrão legado loadData+useEffect; correção certa = migração react-query por tela) + 25 `react-refresh/only-export-components`. Warnings NÃO bloqueiam o CI de propósito (decisão documentada no ci.yml; contagem caiu 82→78, ratchet não se aplica).
+- `react-hooks/exhaustive-deps` (padrão legado loadData+useEffect; correção certa = migração react-query por tela) + `react-refresh/only-export-components`. Warnings NÃO bloqueiam o CI de propósito (decisão documentada no ci.yml; ratchet não se aplica). **Lote 1 entregue** (ver seção acima: 5 telas, total 78→72); restam ~20 em `src/pages/` + os de `src/components/`. Atacar em lotes pequenos por tela, teste manual.
 - 74 unused exports + 180 unused types (agora 100% sinal real no knip) — faxina de `export` keyword em sessão dedicada.
