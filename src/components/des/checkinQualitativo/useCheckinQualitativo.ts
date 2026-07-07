@@ -165,12 +165,12 @@ export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
   const ratio = max > 0 ? total / max : 0;
   const cardColor =
     ratio >= 1
-      ? "bg-green-500/5 border-green-500/30"
+      ? "bg-status-success/5 border-status-success/30"
       : ratio >= 0.5
-        ? "bg-amber-500/5 border-amber-500/30"
-        : "bg-red-500/5 border-red-500/30";
+        ? "bg-status-warning/5 border-status-warning/30"
+        : "bg-status-error/5 border-status-error/30";
   const totalColor =
-    ratio >= 1 ? "text-green-700" : ratio >= 0.5 ? "text-amber-700" : "text-red-700";
+    ratio >= 1 ? "text-status-success-foreground" : ratio >= 0.5 ? "text-status-warning-foreground" : "text-status-error-foreground";
 
   async function salvarCheckin(tipo: "projecao" | "confirmacao_andre") {
     if (!user) {

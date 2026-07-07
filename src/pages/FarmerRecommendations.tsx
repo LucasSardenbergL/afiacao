@@ -19,9 +19,9 @@ const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', curren
 
 const StockBadge = ({ estoque }: { estoque: number | null }) => {
   if (estoque === null || estoque === undefined) return null;
-  if (estoque > 10) return <Badge variant="outline" className="text-[8px] bg-emerald-50 text-emerald-700 border-emerald-200">Em estoque</Badge>;
-  if (estoque > 0) return <Badge variant="outline" className="text-[8px] bg-amber-50 text-amber-700 border-amber-200">Estoque baixo</Badge>;
-  return <Badge variant="outline" className="text-[8px] bg-destructive/10 text-destructive border-destructive/20">Sem estoque</Badge>;
+  if (estoque > 10) return <Badge variant="outline" className="text-[8px] bg-status-success-bg text-status-success-foreground border-status-success/20">Em estoque</Badge>;
+  if (estoque > 0) return <Badge variant="outline" className="text-[8px] bg-status-warning-bg text-status-warning-foreground border-status-warning/20">Estoque baixo</Badge>;
+  return <Badge variant="outline" className="text-[8px] bg-status-error-bg text-status-error-foreground border-status-error/20">Sem estoque</Badge>;
 };
 
 const FarmerRecommendations = () => {
@@ -85,12 +85,12 @@ const FarmerRecommendations = () => {
           <p className="text-[10px] text-muted-foreground">EIP Total</p>
         </CardContent></Card>
         <Card><CardContent className="p-3 text-center">
-          <ShoppingCart className="w-4 h-4 mx-auto mb-1 text-blue-600" />
+          <ShoppingCart className="w-4 h-4 mx-auto mb-1 text-status-info" />
           <p className="text-lg font-bold">{totalCrossSell}</p>
           <p className="text-[10px] text-muted-foreground">Cross-sell</p>
         </CardContent></Card>
         <Card><CardContent className="p-3 text-center">
-          <ArrowUpRight className="w-4 h-4 mx-auto mb-1 text-purple-600" />
+          <ArrowUpRight className="w-4 h-4 mx-auto mb-1 text-status-purple" />
           <p className="text-lg font-bold">{totalUpSell}</p>
           <p className="text-[10px] text-muted-foreground">Up-sell</p>
         </CardContent></Card>
@@ -175,14 +175,14 @@ const FarmerRecommendations = () => {
                   {cr.crossSell.length > 0 && (
                     <div>
                       <p className="text-xs font-semibold flex items-center gap-1 mb-2">
-                        <ShoppingCart className="w-3.5 h-3.5 text-blue-600" /> Cross-sell ({cr.crossSell.length})
+                        <ShoppingCart className="w-3.5 h-3.5 text-status-info" /> Cross-sell ({cr.crossSell.length})
                       </p>
                       <div className="space-y-2">
                         {cr.crossSell.map(rec => {
                           const outOfStock = rec.estoque !== null && rec.estoque === 0;
                           const canOrder = !!rec.customerId && !!rec.productId && !outOfStock;
                           return (
-                          <Card key={rec.productId} className="border-l-4 border-l-blue-500">
+                          <Card key={rec.productId} className="border-l-4 border-l-status-info">
                             <CardContent className="p-3">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
@@ -224,14 +224,14 @@ const FarmerRecommendations = () => {
                   {cr.upSell.length > 0 && (
                     <div>
                       <p className="text-xs font-semibold flex items-center gap-1 mb-2">
-                        <ArrowUpRight className="w-3.5 h-3.5 text-purple-600" /> Up-sell ({cr.upSell.length})
+                        <ArrowUpRight className="w-3.5 h-3.5 text-status-purple" /> Up-sell ({cr.upSell.length})
                       </p>
                       <div className="space-y-2">
                         {cr.upSell.map(rec => {
                           const outOfStock = rec.estoque !== null && rec.estoque === 0;
                           const canOrder = !!rec.customerId && !!rec.productId && !outOfStock;
                           return (
-                          <Card key={rec.productId} className="border-l-4 border-l-purple-500">
+                          <Card key={rec.productId} className="border-l-4 border-l-status-purple">
                             <CardContent className="p-3">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">

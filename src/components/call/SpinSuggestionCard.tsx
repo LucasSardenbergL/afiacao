@@ -37,11 +37,11 @@ const STAGE_LABEL: Record<SpinStage, string> = {
 
 const STAGE_COLOR: Record<SpinStage, string> = {
   opening: 'bg-muted text-muted-foreground',
-  situation: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300',
-  problem: 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300',
-  implication: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300',
-  need_payoff: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300',
-  closing: 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300',
+  situation: 'bg-status-info-bg text-status-info-foreground border-status-info/20',
+  problem: 'bg-status-warning-bg text-status-warning-foreground border-status-warning/20',
+  implication: 'bg-status-error-bg text-status-error-foreground border-status-error/20',
+  need_payoff: 'bg-status-success-bg text-status-success-foreground border-status-success/20',
+  closing: 'bg-status-purple-bg text-status-purple-foreground border-status-purple/20',
 };
 
 const PLAYBOOK_LABEL: Record<CopilotPlaybook, string> = {
@@ -57,9 +57,9 @@ const PLAYBOOK_ICON: Record<CopilotPlaybook, typeof Search> = {
 };
 
 const PLAYBOOK_COLOR: Record<CopilotPlaybook, string> = {
-  discovery: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300',
-  teach: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300',
-  close: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300',
+  discovery: 'bg-status-info-bg text-status-info-foreground border-status-info/20',
+  teach: 'bg-status-warning-bg text-status-warning-foreground border-status-warning/20',
+  close: 'bg-status-success-bg text-status-success-foreground border-status-success/20',
 };
 
 const LEVERAGE_LABEL: Record<TicketLeverage, string> = {
@@ -80,9 +80,9 @@ const TACTIC_LABEL: Record<DecisionPushTactic, string> = {
  * Vendedor LÊ literalmente o `exactPhrasing` da próxima ação.
  *
  * Renderiza por playbook (discovery/teach/close) com elementos extras:
- * - teach → bloco amber com commercialInsight (dataPoint + reframe)
- * - close → badge verde com decisionPushTactic JOLT
- * - qualquer → bloco laranja de ticketLeverage quando tactic !== 'none'
+ * - teach → bloco warning com commercialInsight (dataPoint + reframe)
+ * - close → badge success com decisionPushTactic JOLT
+ * - qualquer → bloco warning de ticketLeverage quando tactic !== 'none'
  */
 export function SpinSuggestionCard({ status, analysis, error }: SpinSuggestionCardProps) {
   if (status === 'idle') {
@@ -163,8 +163,8 @@ export function SpinSuggestionCard({ status, analysis, error }: SpinSuggestionCa
 
       {/* TEACH: commercial insight (só quando playbook=teach + tem dataPoint) */}
       {playbook === 'teach' && nextBestAction.commercialInsight && (
-        <div className="rounded-md border border-amber-200 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/20 p-2.5 space-y-1.5">
-          <div className="text-2xs uppercase tracking-wide text-amber-700 dark:text-amber-300 flex items-center gap-1">
+        <div className="rounded-md border border-status-warning/20 bg-status-warning-bg/50 p-2.5 space-y-1.5">
+          <div className="text-2xs uppercase tracking-wide text-status-warning-foreground flex items-center gap-1">
             <GraduationCap className="w-3 h-3" />
             Insight pra ensinar
           </div>
@@ -178,8 +178,8 @@ export function SpinSuggestionCard({ status, analysis, error }: SpinSuggestionCa
       {/* CLOSE: decisionPushTactic (só quando playbook=close + tem tactic) */}
       {playbook === 'close' && nextBestAction.decisionPushTactic && (
         <div className="flex items-center gap-1.5">
-          <Target className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-          <span className="text-2xs font-medium text-emerald-700 dark:text-emerald-300">
+          <Target className="w-3 h-3 text-status-success" />
+          <span className="text-2xs font-medium text-status-success">
             Tática JOLT: {TACTIC_LABEL[nextBestAction.decisionPushTactic]}
           </span>
         </div>
@@ -187,8 +187,8 @@ export function SpinSuggestionCard({ status, analysis, error }: SpinSuggestionCa
 
       {/* TICKET LEVERAGE: sempre, exceto quando tactic=none */}
       {ticketLeverage.tactic !== 'none' && (
-        <div className="rounded-md border border-orange-200 dark:border-orange-900/50 bg-orange-50/50 dark:bg-orange-950/20 p-2.5 space-y-1">
-          <div className="text-2xs uppercase tracking-wide text-orange-700 dark:text-orange-300 flex items-center gap-1">
+        <div className="rounded-md border border-status-warning/20 bg-status-warning-bg/50 p-2.5 space-y-1">
+          <div className="text-2xs uppercase tracking-wide text-status-warning-foreground flex items-center gap-1">
             <TrendingUp className="w-3 h-3" />
             Subir ticket — {LEVERAGE_LABEL[ticketLeverage.tactic]}
           </div>
