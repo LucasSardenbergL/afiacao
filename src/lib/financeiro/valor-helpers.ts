@@ -5,8 +5,6 @@
 
 import type { RegimeTributario } from './dre-helpers';
 
-export type { RegimeTributario };
-
 export type NopatInput = {
   regime: RegimeTributario;
   resultado_operacional_ttm: number;   // EBIT bruto da DRE (inclui +recfin −despfin)

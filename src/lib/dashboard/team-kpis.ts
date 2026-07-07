@@ -8,7 +8,7 @@
  */
 
 /** Status que NÃO contam como receita realizada (rascunho = draft; cancelado = anulado). */
-export const ORDER_STATUS_INVALIDOS: string[] = ['cancelado', 'rascunho'];
+const ORDER_STATUS_INVALIDOS: string[] = ['cancelado', 'rascunho'];
 
 export function isPedidoValido(status: string | null | undefined): boolean {
   return status != null && !ORDER_STATUS_INVALIDOS.includes(status);
@@ -56,7 +56,7 @@ export interface OrderRankRow {
   status: string | null;
   created_by: string | null;
 }
-export interface RankingVendedor {
+interface RankingVendedor {
   id: string;
   nome: string;
   receita: number;

@@ -19,7 +19,7 @@ import {
 } from './cost-ladder.ts';
 
 /** cost_source da escada + a fonte do decorator de unidade-suspeita (mantém costLadder.ts intacto). */
-export type CostSourceComUnidade = CostSource | 'CMC_UNIDADE_SUSPEITA';
+type CostSourceComUnidade = CostSource | 'CMC_UNIDADE_SUSPEITA';
 
 // Decorator de unidade-suspeita — unidades geométricas (área/comprimento) cujo custo (cmc) é por
 // sub-unidade enquanto o price está noutra unidade. KG/L/G/ML ficam de FORA da 1a versão (falso-

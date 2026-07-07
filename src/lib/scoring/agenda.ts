@@ -63,7 +63,7 @@ export function effectivePriority(base: number, mods: ScoreAdjustment | null | u
   return Math.max(0, Math.min(100, eff));
 }
 
-export function pickTopModifier(mods: ScoreAdjustment | null | undefined): SignalModifier | null {
+function pickTopModifier(mods: ScoreAdjustment | null | undefined): SignalModifier | null {
   if (!hasBreakdown(mods)) return null;
   const b = mods.breakdown;
   const all = [
@@ -80,7 +80,7 @@ export function pickTopModifier(mods: ScoreAdjustment | null | undefined): Signa
   });
 }
 
-export function signalsCount(mods: ScoreAdjustment | null | undefined): number {
+function signalsCount(mods: ScoreAdjustment | null | undefined): number {
   if (!hasBreakdown(mods)) return 0;
   const b = mods.breakdown;
   return (

@@ -27,7 +27,7 @@ interface GateCreditoPayload {
   gate?: { vencido?: number | null; titulos?: number | null } | null;
 }
 
-export function mensagemBloqueioCredito(
+function mensagemBloqueioCredito(
   conta: string,
   gate?: { vencido?: number | null; titulos?: number | null } | null,
 ): string {

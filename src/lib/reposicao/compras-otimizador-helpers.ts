@@ -3,7 +3,7 @@
 // Toda a matemática vive aqui; a view v_otimizador_compras_insumos só junta os fatos.
 // Metodologia: docs/superpowers/specs/2026-05-25-otimizador-compras-design.md (Codex 2 passes).
 
-export type EscopoPromo = 'sku' | 'grupo' | 'fornecedor_total';
+type EscopoPromo = 'sku' | 'grupo' | 'fornecedor_total';
 export type RecomendacaoCompra = 'comprar_mais' | 'manter_base' | 'simulacao_parcial' | 'falta_dado';
 export interface FaixaDesconto { volume_minimo: number; desconto_promo_perc: number; prazo_perc?: number }
 
@@ -171,7 +171,7 @@ export interface DecisaoCompra {
 
 const DESCONTO_ALTO = 0.20;
 
-export function scoreConfianca(input: { escopo: EscopoPromo; motivos: string[] }): { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] } {
+function scoreConfianca(input: { escopo: EscopoPromo; motivos: string[] }): { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] } {
   let nivel: 'alta' | 'media' | 'baixa' = 'alta';
   if (input.escopo !== 'sku') nivel = 'media';
   if (input.motivos.length > 0 && nivel === 'alta') nivel = 'media';

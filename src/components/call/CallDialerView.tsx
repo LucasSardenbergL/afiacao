@@ -11,7 +11,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { formatBrPhone, normalizeBrPhone } from '@/lib/phone';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 
-export type CallDialerCallState =
+type CallDialerCallState =
   | 'idle' | 'connecting' | 'calling_origin' | 'calling_destination'
   | 'established' | 'finished' | 'noanswer' | 'busy' | 'failed' | 'error';
 

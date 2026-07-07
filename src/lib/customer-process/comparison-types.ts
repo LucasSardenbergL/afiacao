@@ -3,14 +3,14 @@
  * Resposta da edge fn `compare-customer-process`.
  */
 
-export interface ComparisonGap {
+interface ComparisonGap {
   area: string;
   severity: 'baixa' | 'media' | 'alta';
   description: string;
   impact: string;
 }
 
-export interface ComparisonOpportunity {
+interface ComparisonOpportunity {
   type: 'upsell' | 'cross_sell' | 'process_improvement' | 'compliance';
   description: string;
   rationale: string;
@@ -18,7 +18,7 @@ export interface ComparisonOpportunity {
   product_codes_suggested: string[];
 }
 
-export interface ComparisonRisk {
+interface ComparisonRisk {
   type: string;
   severity: 'baixa' | 'media' | 'alta';
   description: string;

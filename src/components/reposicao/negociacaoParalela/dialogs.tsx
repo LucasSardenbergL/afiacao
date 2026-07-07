@@ -1,4 +1,4 @@
-// Dialogs da tela de negociação paralela: ignorar, fechar sem acordo, converter em campanha.
+// Dialogs da tela de negociação paralela: fechar sem acordo, converter em campanha.
 // Extraídos de src/pages/AdminReposicaoNegociacaoParalela.tsx (god-component split).
 // Apresentacionais: recebem estado controlado + callbacks; sem estado próprio.
 import type { Dispatch, SetStateAction } from "react";
@@ -21,44 +21,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Loader2 } from "lucide-react";
 import type { ConvertForm, Sugestao } from "./types";
-
-interface IgnorarDialogProps {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  onConfirm: () => void;
-}
-
-export function IgnorarDialog({ open, onOpenChange, onConfirm }: IgnorarDialogProps) {
-  return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Ignorar sugestão?</AlertDialogTitle>
-          <AlertDialogDescription>
-            A sugestão será marcada como ignorada e removida da lista ativa. Você ainda poderá
-            gerar novas sugestões depois.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancelar</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>Ignorar</AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
 
 interface FecharSemAcordoDialogProps {
   open: boolean;

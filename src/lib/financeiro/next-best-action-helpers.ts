@@ -70,7 +70,7 @@ export type AcaoCandidata = {
   spread_positivo: boolean | null;
   confianca: 'alta' | 'media' | 'baixa';
 };
-export type AcaoFila = AcaoCandidata & { hurdle: number | null; status: StatusAcao };
+type AcaoFila = AcaoCandidata & { hurdle: number | null; status: StatusAcao };
 export type ProximaAcaoResult = {
   fila: AcaoFila[];
   caixa_por_empresa: Record<string, { disponivel: number; confianca: 'alta' | 'media' | 'baixa' }>;

@@ -1,29 +1,3 @@
-// User types
-export interface User {
-  id: string;
-  name: string;
-  email?: string;
-  phone: string;
-  cpfCnpj?: string;
-  whatsapp: string;
-  role: 'employee' | 'customer' | 'master';
-  createdAt: Date;
-}
-
-export interface Address {
-  id: string;
-  userId: string;
-  label: string;
-  street: string;
-  number: string;
-  complement?: string;
-  neighborhood: string;
-  city: string;
-  state: string;
-  zipCode: string;
-  isDefault: boolean;
-}
-
 // Tool categories - Marcenaria (Woodworking)
 export type ToolCategory = 
   | 'tesoura_profissional'
@@ -54,15 +28,6 @@ export const SERVICE_TYPES: Record<ServiceType, { label: string; description: st
   premium: { label: 'Afiação Premium', description: 'Afiação de alta precisão com acabamento superior' },
   recuperacao: { label: 'Recuperação/Restauração', description: 'Para ferramentas danificadas ou muito desgastadas' },
   polimento: { label: 'Polimento/Acabamento', description: 'Finalização estética e proteção' },
-};
-
-// Wear levels
-export type WearLevel = 'leve' | 'medio' | 'pesado';
-
-export const WEAR_LEVELS: Record<WearLevel, { label: string; color: string }> = {
-  leve: { label: 'Leve', color: 'status-success' },
-  medio: { label: 'Médio', color: 'status-pending' },
-  pesado: { label: 'Pesado', color: 'status-danger' },
 };
 
 // Delivery options
@@ -116,57 +81,3 @@ export const ORDER_STATUS: Record<OrderStatus, { label: string; description: str
   em_rota: { label: 'Em Rota de Entrega', description: 'Motoboy a caminho', color: 'bg-amber-500' },
   entregue: { label: 'Entregue/Finalizado', description: 'Pedido concluído', color: 'bg-emerald-600' },
 };
-
-// Tool item in order
-export interface ToolItem {
-  id: string;
-  category: ToolCategory;
-  brandModel?: string;
-  quantity: number;
-  photos: string[];
-  wearLevel?: WearLevel;
-  notes?: string;
-  serviceType?: ServiceType;
-  unitPrice?: number;
-}
-
-// Order
-export interface Order {
-  id: string;
-  orderNumber: string;
-  userId: string;
-  items: ToolItem[];
-  status: OrderStatus;
-  deliveryOption: DeliveryOption;
-  addressId?: string;
-  timeSlot?: string;
-  scheduledDate?: Date;
-  subtotal: number;
-  deliveryFee: number;
-  discount: number;
-  total: number;
-  paymentMethod?: 'pix' | 'card' | 'on_delivery';
-  paymentStatus: 'pending' | 'paid' | 'failed';
-  quoteApproved: boolean;
-  estimatedDelivery?: Date;
-  createdAt: Date;
-  updatedAt: Date;
-  statusHistory: StatusHistoryItem[];
-}
-
-export interface StatusHistoryItem {
-  status: OrderStatus;
-  timestamp: Date;
-  note?: string;
-  operator?: string;
-}
-
-// Review
-export interface Review {
-  id: string;
-  orderId: string;
-  userId: string;
-  rating: number;
-  comment?: string;
-  createdAt: Date;
-}

@@ -15,7 +15,7 @@ export interface TituloAberto {
   atrasado: boolean; // vencido: status_titulo ∈ {ATRASADO, VENCIDO} (lista positiva)
 }
 
-export type MotivoConcentracao =
+type MotivoConcentracao =
   | 'ok' //            fonte ok/parcial + carteira com linhas válidas
   | 'sem_carteira' //  fonte ok + 0 títulos válidos → zero PROVADO
   | 'fonte_indisponivel' // leitura falhou/RLS/timeout → NÃO é zero, não calcula

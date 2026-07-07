@@ -8,9 +8,9 @@ export interface TranscriptTurnLite {
 
 export type SpinStage = 'opening' | 'situation' | 'problem' | 'implication' | 'need_payoff' | 'closing';
 
-export type NextActionType = 'question' | 'response' | 'transition' | 'close' | 'listen';
+type NextActionType = 'question' | 'response' | 'transition' | 'close' | 'listen';
 
-export type RiskType =
+type RiskType =
   | 'price_objection'
   | 'competitor_mentioned'
   | 'lack_of_urgency'
@@ -18,7 +18,7 @@ export type RiskType =
   | 'technical_doubt'
   | 'other';
 
-export type RiskSeverity = 'low' | 'medium' | 'high';
+type RiskSeverity = 'low' | 'medium' | 'high';
 
 /** Qual playbook o copilot está executando agora */
 export type CopilotPlaybook = 'discovery' | 'teach' | 'close';

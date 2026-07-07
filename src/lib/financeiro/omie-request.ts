@@ -65,7 +65,7 @@ export function resolveCompanies(input: ResolveCompaniesInput): string[] {
  * Conjunto de `commercial_role` que contam como "gestor comercial" pra acesso
  * financeiro. Espelha o gate canônico do `fin-valor-cockpit`/`fin-next-best-action`.
  */
-export const GESTOR_COMMERCIAL_ROLES = ['gerencial', 'estrategico', 'super_admin'] as const;
+const GESTOR_COMMERCIAL_ROLES = ['gerencial', 'estrategico', 'super_admin'] as const;
 
 /**
  * Gate de acesso ao engine financeiro (`omie-financeiro`): expõe DRE/saldos/CP-CR

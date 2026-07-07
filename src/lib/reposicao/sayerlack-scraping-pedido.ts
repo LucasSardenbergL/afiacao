@@ -24,7 +24,7 @@ export interface ItemPedido {
   item_id: number; sku_codigo_omie: string; sku_descricao: string | null;
   sku_portal: string | null; qtde_final: number; preco_atual: number;
 }
-export interface Casado { item: ItemPedido; prz_ent: number | null; total_linha: number | null; }
+interface Casado { item: ItemPedido; prz_ent: number | null; total_linha: number | null; }
 export interface ResultadoMatch { casados: Casado[]; naoCasados: ItemPedido[]; ambiguos: ItemPedido[]; }
 
 function normPortal(s: string | null): string { return (s ?? '').trim().toUpperCase(); }
@@ -91,7 +91,7 @@ export function validarGrupoLeadtime(res: ResultadoMatch, ltEsperado: number | n
 }
 
 export interface CustoUpdate { item_id: number; preco_unitario: number; valor_linha: number; }
-export function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
+function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
 
 export function derivarCustos(res: ResultadoMatch): { updates: CustoUpdate[]; pulados: { sku_codigo_omie: string; motivo: string }[] } {
   const updates: CustoUpdate[] = [];

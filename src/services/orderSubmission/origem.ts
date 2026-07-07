@@ -1,5 +1,4 @@
 export const ORIGEM_LIGACAO = ['ligacao_sainte', 'ligacao_entrante'] as const;
-export type OrigemLigacao = (typeof ORIGEM_LIGACAO)[number];
 
 /** Origem do pedido a partir da URL (sem CHECK no banco → validar aqui).
  *  Ligação é staff-only: customer SEMPRE 'web_customer'. Desconhecido → default da role. */

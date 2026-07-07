@@ -91,8 +91,8 @@ export function classificarEstrutural(input: {
   return comGap >= input.limiar_semanas;
 }
 
-export type FonteBenchmark = TipoFonte | 'melhor_uso_a4';
-export type Recomendacao = 'antecipar' | 'nao_antecipar' | 'falta_dado';
+type FonteBenchmark = TipoFonte | 'melhor_uso_a4';
+type Recomendacao = 'antecipar' | 'nao_antecipar' | 'falta_dado';
 
 export type DecisaoTitulo = {
   titulo: { id: string; valor: number; dias: number; nome_cliente: string | null };
@@ -183,7 +183,7 @@ export function identificarGap(input: {
 export type FonteCobertura = {
   fonte: TipoFonte; rate_aa: number; capacidade_rs: number; governanca_ordem: number;
 };
-export type ItemStack = { fonte: TipoFonte; montante_rs: number; custo_rs: number; flag?: string };
+type ItemStack = { fonte: TipoFonte; montante_rs: number; custo_rs: number; flag?: string };
 export type PlanoCobertura = {
   gap_rs: number; horizonte_dias: number; stack: ItemStack[];
   custo_total_rs: number; custo_inercia_rs: number | null; motivos: string[];

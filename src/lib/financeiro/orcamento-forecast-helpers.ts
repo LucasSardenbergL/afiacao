@@ -1,9 +1,7 @@
 export const LINHAS_INPUT = ['receita_bruta','deducoes','cmv','despesas_operacionais','despesas_administrativas','despesas_comerciais','despesas_financeiras','receitas_financeiras','outras_receitas','outras_despesas','impostos'] as const;
 export type LinhaInput = typeof LINHAS_INPUT[number];
-export const LINHAS_RECEITA = new Set<string>(['receita_bruta','receitas_financeiras','outras_receitas']);
-export const LINHAS_DESPESA_FIXA = new Set<string>(['despesas_operacionais','despesas_administrativas','despesas_comerciais']);
-export const LINHAS_FINANCEIRA = new Set<string>(['receitas_financeiras','despesas_financeiras']);
-export const LINHAS_DERIV_FAVORAVEL_CIMA = new Set<string>(['receita_liquida','lucro_bruto','resultado_operacional','resultado_antes_impostos','resultado_liquido']);
+const LINHAS_RECEITA = new Set<string>(['receita_bruta','receitas_financeiras','outras_receitas']);
+const LINHAS_DERIV_FAVORAVEL_CIMA = new Set<string>(['receita_liquida','lucro_bruto','resultado_operacional','resultado_antes_impostos','resultado_liquido']);
 export type MesDRE = { mes: number } & Partial<Record<LinhaInput, number>>;
 export type DerivadasResult = { receita_liquida: number; lucro_bruto: number; resultado_operacional: number; resultado_antes_impostos: number; resultado_liquido: number };
 
@@ -64,7 +62,7 @@ export function fatorTendenciaYTD(
 
 // ─── Task 2: projetarDRE ──────────────────────────────────────────────────────
 
-export type MetodoForecast =
+type MetodoForecast =
   | 'sazonal_ajustado'
   | 'run_rate'
   | 'driver_receita'
@@ -73,7 +71,7 @@ export type MetodoForecast =
   | 'orcado_remanescente'
   | 'sem_forecast';
 
-export type ForecastLinha = {
+type ForecastLinha = {
   dre_linha: string;
   realizado_fechado: number;
   forecast_restante: number;
@@ -473,7 +471,7 @@ function mediana(vals: number[]): number {
     : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-export type SeedFlag = 'winsorizado' | 'amostra_curta_sem_sugestao' | 'mes_ausente_media';
+type SeedFlag = 'winsorizado' | 'amostra_curta_sem_sugestao' | 'mes_ausente_media';
 export type SeedLinha = { dre_linha: string; mes: number; valor_sugerido: number | null; flag?: SeedFlag };
 
 /**

@@ -1,8 +1,3 @@
-export type FinanceiroErrorKind =
-  | 'period_locked'
-  | 'mapping_incomplete'
-  | 'unknown';
-
 export type FinanceiroError =
   | { kind: 'period_locked'; empresa: string; periodo: string; lastClosed: string; raw: unknown }
   | { kind: 'mapping_incomplete'; count: number; pendentes: Array<{ id: string; nome: string }>; raw: unknown }

@@ -5,7 +5,7 @@ export const PAGE_SIZE = 25;
 
 export type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "danger" | "purple" | "indigo";
 
-export interface OutlierDetalhes {
+interface OutlierDetalhes {
   fornecedor?: string;
   mensagem?: string;
   [k: string]: unknown;

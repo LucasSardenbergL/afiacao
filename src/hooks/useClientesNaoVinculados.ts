@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 
-export interface ClienteNaoVinculado {
+interface ClienteNaoVinculado {
   id: string;
   omie_codigo_cliente: number;
   cnpj_cpf: string | null;
@@ -13,7 +13,7 @@ export interface ClienteNaoVinculado {
   codigo_vendedor: number | null;
 }
 
-export interface NaoVinculadosState {
+interface NaoVinculadosState {
   status: string; // idle | running | complete | error
   last_complete_synced_at: string | null;
   total: number | null;

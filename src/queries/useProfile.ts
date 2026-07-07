@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
-export interface ProfileData {
+interface ProfileData {
   name: string;
   email: string | null;
   phone: string | null;

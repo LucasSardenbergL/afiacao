@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { OmieServico } from '@/services/omieService';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
-import { useCart, VOLUME_UNITS } from '@/hooks/unifiedOrder/useCart';
+import { useCart } from '@/hooks/unifiedOrder/useCart';
 import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection';
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
@@ -36,7 +36,6 @@ function persistCheckoutEnv(e: CheckoutEnvelope | null) {
 }
 
 // Re-export shared types for backwards compatibility
-export { VOLUME_UNITS };
 export type {
   ProductAccount,
   Product,

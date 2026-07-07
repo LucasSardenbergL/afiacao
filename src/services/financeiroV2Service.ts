@@ -9,21 +9,17 @@ import type {
   FinFechamentoInsert,
   FinFechamentoUpdate,
   FinFechamentoLogInsert,
-  FinConciliacaoRow,
-  FinConciliacaoUpdate,
   FinEliminacaoInsert,
   FinOrcamentoRow,
   FinOrcamentoInsert,
-  FinPermissaoInsert,
   FinPermissaoRow,
-  FinSyncLogRow,
   FinAnaliseCpDimensoesView,
   FinAnaliseCrDimensoesView,
 } from "./financeiroTypes";
 
 // ═══════════════ TYPES ═══════════════
 
-export type FechamentoStatus = 'aberto' | 'em_revisao' | 'fechado' | 'reaberto';
+type FechamentoStatus = 'aberto' | 'em_revisao' | 'fechado' | 'reaberto';
 
 export interface Fechamento {
   id: string;
@@ -48,20 +44,6 @@ export interface FechamentoLog {
   created_at: string;
 }
 
-export interface ConciliacaoItem {
-  id: string;
-  company: string;
-  mov_data: string | null;
-  mov_valor: number | null;
-  mov_descricao: string | null;
-  tipo_titulo: string | null;
-  titulo_valor: number | null;
-  status: string;
-  tipo_match: string | null;
-  diferenca: number | null;
-  observacao: string | null;
-}
-
 export interface EliminacaoRegra {
   id: string;
   empresa_origem: string;
@@ -84,7 +66,7 @@ export interface OrcamentoLinha {
   notas?: string;
 }
 
-export type FinPerfil = 'analista' | 'gerente' | 'controller' | 'cfo';
+type FinPerfil = 'analista' | 'gerente' | 'controller' | 'cfo';
 
 export interface FinPermissao {
   id: string;
@@ -332,58 +314,6 @@ export async function atualizarFechamento(
     detalhes: (detalhes ?? {}) as Json,
   };
   await supabase.from("fin_fechamento_log").insert(logPayload);
-}
-
-// ═══════════════ 2. CONCILIAÇÃO BANCÁRIA ═══════════════
-
-export async function getConciliacaoPendente(
-  company: Company,
-  omieNcodcc?: number
-): Promise<ConciliacaoItem[]> {
-  let query = supabase
-    .from("fin_conciliacao")
-    .select("*")
-    .eq("company", company)
-    .in("status", ["pendente", "divergencia"])
-    .order("mov_data", { ascending: false });
-
-  if (omieNcodcc) query = query.eq("omie_ncodcc", omieNcodcc);
-
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data || []).map((row: FinConciliacaoRow) => ({
-    id: row.id,
-    company: row.company,
-    mov_data: row.mov_data,
-    mov_valor: row.mov_valor,
-    mov_descricao: row.mov_descricao,
-    tipo_titulo: row.tipo_titulo,
-    titulo_valor: row.titulo_valor,
-    status: row.status,
-    tipo_match: row.tipo_match,
-    diferenca: row.diferenca,
-    observacao: row.observacao,
-  }));
-}
-
-export async function resolverConciliacao(
-  id: string,
-  status: 'conciliado' | 'ignorado',
-  observacao?: string
-): Promise<void> {
-  const userId = (await supabase.auth.getUser()).data.user?.id ?? null;
-  const patch: FinConciliacaoUpdate = {
-    status,
-    resolvido_por: userId,
-    resolvido_em: new Date().toISOString(),
-    observacao: observacao || null,
-    updated_at: new Date().toISOString(),
-  };
-  const { error } = await supabase
-    .from("fin_conciliacao")
-    .update(patch)
-    .eq("id", id);
-  if (error) throw error;
 }
 
 // ═══════════════ 3. ELIMINAÇÕES INTERCOMPANY ═══════════════
@@ -748,126 +678,3 @@ export async function getMinhaPermissao(): Promise<FinPermissao | null> {
   return rowToPermissao(data);
 }
 
-export async function getTodasPermissoes(): Promise<(FinPermissao & { nome?: string })[]> {
-  const { data, error } = await supabase
-    .from("fin_permissoes")
-    .select("*")
-    .order("perfil");
-  if (error) throw error;
-
-  const rows = (data || []).map(rowToPermissao);
-  if (rows.length === 0) return [];
-
-  // Enrich with names
-  const userIds = rows.map((p) => p.user_id);
-  const { data: profiles } = await supabase
-    .from("profiles")
-    .select("user_id, name")
-    .in("user_id", userIds);
-
-  const nameMap = new Map((profiles || []).map((p) => [p.user_id, p.name]));
-  return rows.map((p) => ({ ...p, nome: nameMap.get(p.user_id) || 'Desconhecido' }));
-}
-
-export async function upsertPermissao(perm: Omit<FinPermissao, 'id'>): Promise<void> {
-  const concedidoPor = (await supabase.auth.getUser()).data.user?.id ?? null;
-  const payload: FinPermissaoInsert = {
-    user_id: perm.user_id,
-    perfil: perm.perfil,
-    empresas: perm.empresas,
-    pode_sync: perm.pode_sync,
-    pode_fechar_mes: perm.pode_fechar_mes,
-    pode_aprovar_fechamento: perm.pode_aprovar_fechamento,
-    pode_reabrir_fechamento: perm.pode_reabrir_fechamento,
-    pode_editar_orcamento: perm.pode_editar_orcamento,
-    pode_editar_mapping: perm.pode_editar_mapping,
-    pode_eliminar_intercompany: perm.pode_eliminar_intercompany,
-    pode_conciliar: perm.pode_conciliar,
-    pode_exportar: perm.pode_exportar,
-    pode_ver_dre: perm.pode_ver_dre,
-    pode_ver_todas_empresas: perm.pode_ver_todas_empresas,
-    concedido_por: concedidoPor,
-    updated_at: new Date().toISOString(),
-  };
-  const { error } = await supabase
-    .from("fin_permissoes")
-    .upsert(payload, { onConflict: "user_id" });
-  if (error) throw error;
-}
-
-export async function deletePermissao(userId: string): Promise<void> {
-  const { error } = await supabase
-    .from("fin_permissoes")
-    .delete()
-    .eq("user_id", userId);
-  if (error) throw error;
-}
-
-// ═══════════════ PERFIL DEFAULTS ═══════════════
-
-export const PERFIL_DEFAULTS: Record<FinPerfil, Partial<FinPermissao>> = {
-  analista: {
-    pode_sync: false,
-    pode_fechar_mes: false,
-    pode_aprovar_fechamento: false,
-    pode_reabrir_fechamento: false,
-    pode_editar_orcamento: false,
-    pode_editar_mapping: false,
-    pode_eliminar_intercompany: false,
-    pode_conciliar: true,
-    pode_exportar: true,
-    pode_ver_dre: true,
-    pode_ver_todas_empresas: false,
-  },
-  gerente: {
-    pode_sync: true,
-    pode_fechar_mes: true,
-    pode_aprovar_fechamento: false,
-    pode_reabrir_fechamento: false,
-    pode_editar_orcamento: false,
-    pode_editar_mapping: true,
-    pode_eliminar_intercompany: false,
-    pode_conciliar: true,
-    pode_exportar: true,
-    pode_ver_dre: true,
-    pode_ver_todas_empresas: false,
-  },
-  controller: {
-    pode_sync: true,
-    pode_fechar_mes: true,
-    pode_aprovar_fechamento: true,
-    pode_reabrir_fechamento: false,
-    pode_editar_orcamento: true,
-    pode_editar_mapping: true,
-    pode_eliminar_intercompany: true,
-    pode_conciliar: true,
-    pode_exportar: true,
-    pode_ver_dre: true,
-    pode_ver_todas_empresas: true,
-  },
-  cfo: {
-    pode_sync: true,
-    pode_fechar_mes: true,
-    pode_aprovar_fechamento: true,
-    pode_reabrir_fechamento: true,
-    pode_editar_orcamento: true,
-    pode_editar_mapping: true,
-    pode_eliminar_intercompany: true,
-    pode_conciliar: true,
-    pode_exportar: true,
-    pode_ver_dre: true,
-    pode_ver_todas_empresas: true,
-  },
-};
-
-// ═══════════════ SYNC LOG (observabilidade) ═══════════════
-
-export async function getSyncLogs(limit = 20): Promise<FinSyncLogRow[]> {
-  const { data, error } = await supabase
-    .from("fin_sync_log")
-    .select("*")
-    .order("started_at", { ascending: false })
-    .limit(limit);
-  if (error) throw error;
-  return data || [];
-}

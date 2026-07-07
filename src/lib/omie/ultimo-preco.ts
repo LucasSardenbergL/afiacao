@@ -39,7 +39,7 @@ export interface PrecoPonto {
   /** ISO (`order_date_kpi`) no local; DD/MM/YYYY (`dInc`) no Omie. */
   date: string | null;
 }
-export type FontePreco = 'local' | 'omie';
+type FontePreco = 'local' | 'omie';
 export interface PrecoResolvido {
   price: number;
   fonte: FontePreco;

@@ -143,13 +143,13 @@ export type CapitalSKU = { sku: string; estoque_valor: number | null };
 // Sucede o `evp_parcial` de #961: lá o teto era exibido/somado mesmo positivo (otimista, money-path #2).
 // Aqui, com o Ke vivo (k=0,30), teto>0 NÃO é afirmável (omitido); teto≤0 com perna ausente válida é
 // não-positivo-garantido (real ≤ teto ≤ 0) e é mantido (não esconder prejuízo). Decisão Claude+Codex 2026-06-23.
-export type EvpStatus =
+type EvpStatus =
   | 'real'                  // capital completo: evp = cm − encargo (afirmável)
   | 'teto_nao_positivo'     // parcial, teto≤0, perna AUSENTE alocaria ≥0: evp = teto (mantido)
   | 'omitido_teto_positivo' // parcial, teto>0 OU teto não-confiável (perna ausente alocaria <0): evp = null
   | 'indisponivel_cm'       // custo ausente (cm null): evp/evp_teto null
   | 'indisponivel_hurdle';  // k null (encargo indisponível): evp/evp_teto null
-export type CelulaEVP = {
+type CelulaEVP = {
   cliente: string; sku: string; receita_liquida: number; quantidade: number;
   cm: number | null; a_cs: number; i_cs: number; encargo: number | null;
   evp_teto: number | null;   // cm − encargo (upper bound bruto; preserva o "evp" de #961). null se cm/encargo ausentes/não-finitos.
@@ -169,12 +169,12 @@ export type CelulaEVP = {
 // (upper bound do grupo, preserva #961); `evp_incompleto` = ∃ célula omitida por otimismo (o `evp` do grupo
 // exclui essa fatia → pode ser maior). `encargo` (só células com cm) / `encargo_total` (todas) mantidos.
 // perda_garantida = ∃ célula 'teto_nao_positivo' no grupo (o evp inclui um teto≤0 → o prejuízo REAL pode ser maior).
-export type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean; qtd_combos_sensiveis: number; qtd_combos_quase_sensiveis: number; min_folga_positiva_pp: number | null; min_folga_positiva_receita: number | null };
-export type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean; qtd_combos_sensiveis: number; qtd_combos_quase_sensiveis: number; min_folga_positiva_pp: number | null; min_folga_positiva_receita: number | null };
+type RollupCliente = { cliente: string; receita: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean; qtd_combos_sensiveis: number; qtd_combos_quase_sensiveis: number; min_folga_positiva_pp: number | null; min_folga_positiva_receita: number | null };
+type RollupSKU = { sku: string; receita: number; quantidade: number; cm: number | null; encargo: number | null; encargo_total: number | null; evp: number | null; evp_teto: number | null; evp_incompleto: boolean; perda_garantida: boolean; cm_incompleto: boolean; qtd_combos_sensiveis: number; qtd_combos_quase_sensiveis: number; min_folga_positiva_pp: number | null; min_folga_positiva_receita: number | null };
 // Empresa DECOMPOSTA (Codex: somar {reais + tetos≤0} excluindo os teto>0 não é teto nem piso → mentira contábil).
 // evp_conhecido = só capital completo; evp_teto_total = upper bound legado; evp_perda_garantida = piso da fatia
 // parcial-negativa; evp = null se há QUALQUER fatia não-afirmável (não finge um total).
-export type EmpresaEVP = {
+type EmpresaEVP = {
   receita: number; cm: number | null; encargo: number | null; encargo_total: number | null;
   evp_conhecido: number | null; evp_teto_total: number | null; evp_perda_garantida: number | null;
   evp: number | null; evp_incompleto: boolean; cm_incompleto: boolean;

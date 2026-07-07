@@ -111,36 +111,3 @@ export function normalizeExtractedSpec(raw: KbExtractedSpec): KbExtractedSpec {
     extraction_gaps: arr(raw?.extraction_gaps),
   };
 }
-
-export interface KbCompetitor {
-  id: string;
-  name: string;
-  tipo: 'regional' | 'nacional' | 'importado' | null;
-  regiao_principal: string | null;
-  segmento_atuacao: string[];
-  notas_estrategicas: string | null;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface KbCompetitorProduct {
-  id: string;
-  competitor_id: string;
-  product_name: string;
-  category: string | null;
-  rendimento_m2_por_litro: number | null;
-  solidos_pct: number | null;
-  pot_life_horas: number | null;
-  validade_dias: number | null;
-  preco_referencia_l: number | null;
-  preco_atualizado_em: string | null;
-  fonte_preco: 'vendedor' | 'cotacao' | 'site' | 'estimado' | 'detectado_ia' | null;
-  pontos_fortes: string[];
-  pontos_fracos: string[];
-  nosso_equivalente_product_code: string | null;
-  argumentos_comparativos: unknown;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-}

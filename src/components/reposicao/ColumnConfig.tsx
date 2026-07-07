@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { ColKey } from "@/types/reposicao";
 
-export const COL_DEFS: Array<{ key: ColKey; label: string }> = [
+const COL_DEFS: Array<{ key: ColKey; label: string }> = [
   { key: "fornecedor", label: "Fornecedor" },
   { key: "grupo", label: "Grupo" },
   { key: "skus", label: "SKUs" },
@@ -16,7 +16,7 @@ export const COL_DEFS: Array<{ key: ColKey; label: string }> = [
   { key: "confianca", label: "Confiança" },
 ];
 
-export const DEFAULT_COLS: Record<ColKey, boolean> = {
+const DEFAULT_COLS: Record<ColKey, boolean> = {
   fornecedor: true,
   grupo: true,
   skus: true,

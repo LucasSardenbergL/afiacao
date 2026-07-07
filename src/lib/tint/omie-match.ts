@@ -85,7 +85,7 @@ function palavrasDescritivas(s: string): Set<string> {
 }
 
 /** Score de RELEVÂNCIA — usado SÓ pra ordenar o combobox, nunca pra confiança. */
-export function scoreProduto(linha: LinhaSku, produto: ProdutoOmieMatch): number {
+function scoreProduto(linha: LinhaSku, produto: ProdutoOmieMatch): number {
   const { codigoBateu, embalagemBateu } = casarLinhaProduto(linha, produto);
   let score = (codigoBateu ? 100 : 0) + (embalagemBateu ? 50 : 0);
   const pl = palavrasDescritivas(`${linha.produtoDescricao ?? ''} ${linha.baseDescricao}`);

@@ -342,19 +342,6 @@ export async function getDRE(
   return (data || []) as unknown as FinDRE[];
 }
 
-export async function getDREConsolidado(
-  companies: Company[],
-  ano: number,
-  meses?: number[],
-  regime: 'caixa' | 'competencia' = 'competencia'
-): Promise<Record<string, FinDRE[]>> {
-  const result: Record<string, FinDRE[]> = {};
-  for (const co of companies) {
-    result[co] = await getDRE(co, ano, meses, regime);
-  }
-  return result;
-}
-
 export async function getFluxoCaixa(
   company: Company | 'all',
   dataInicio: string,
@@ -931,7 +918,7 @@ export async function getDsoDpoColacor(hoje: Date = new Date()): Promise<DsoDpoR
 
 // ═══════════════ A2 — Retorno & Valor (contrato com fin-valor-engine) ═══════════════
 
-export interface ValorKeDecomposto {
+interface ValorKeDecomposto {
   ancora: number;
   premio_risco_equity: number;
   premio_tamanho_private: number;
@@ -978,14 +965,14 @@ export interface ValorEmpresaResult {
 }
 
 // ═══════════════ A3 — Cockpit de Valor (contrato com fin-valor-cockpit) ═══════════════
-export interface CockpitConfig {
+interface CockpitConfig {
   margem_minima_pct: number;
   desconto_max_pct: number;
   prazo_alvo_dias: number;
   dias_estoque_max: number;
   sample_min_receita: number;
 }
-export interface CockpitRecomendacao {
+interface CockpitRecomendacao {
   acao: string;
   motivo: string;
   impacto_rs: number | null;
@@ -1028,7 +1015,7 @@ export interface CockpitRollupSKU {
   descricao?: string | null;  // descrição do produto (omie_products) — UI mostra no lugar do código SKU
 }
 // Empresa DECOMPOSTA (capital parcial → um único evp seria mentira contábil; Codex 2026-06-23).
-export interface CockpitEmpresaEVP {
+interface CockpitEmpresaEVP {
   receita: number;
   cm: number | null;
   encargo: number | null;
@@ -1071,7 +1058,7 @@ export interface ValorCockpitResult {
 
 // ═══════════════ A4 — Próxima Melhor Ação (contrato com fin-next-best-action) ═══════════════
 export type StatusAcaoFila = 'financiar_ja' | 'financiar_condicional' | 'consertar_antes' | 'falta_dado' | 'nao_financiar';
-export type TipoAcaoFila = 'consertar_valor' | 'liberar_caixa' | 'crescer' | 'benchmark';
+type TipoAcaoFila = 'consertar_valor' | 'liberar_caixa' | 'crescer' | 'benchmark';
 export interface AcaoFila {
   empresa: string;
   descricao: string;
@@ -1133,7 +1120,7 @@ export interface FundingResult {
 
 // ═══════════════ Otimizador Tributário — Comparador de Regime (contrato com fin-regime-tributario) ═══════════════
 export type RegimeNome = 'simples' | 'presumido' | 'real';
-export type StatusElegibilidade = 'elegivel' | 'sublimite_excedido' | 'inelegivel';
+type StatusElegibilidade = 'elegivel' | 'sublimite_excedido' | 'inelegivel';
 export type StatusRecomendacao = 'recomenda' | 'empate_tecnico' | 'manter' | 'incompleto';
 
 export interface RegimeInputs {

@@ -1,9 +1,9 @@
 import type { AgendaItem, ClientScore } from '@/hooks/useFarmerScoring';
 import type { CarteiraSlaRow, HealthClass } from '@/hooks/useCarteiraSla';
 
-export type AgendaTipo = 'risco' | 'expansao' | 'follow_up';
+type AgendaTipo = 'risco' | 'expansao' | 'follow_up';
 
-export const AGENDA_TIPOS: { tipo: AgendaTipo; label: string; tom: string }[] = [
+const AGENDA_TIPOS: { tipo: AgendaTipo; label: string; tom: string }[] = [
   { tipo: 'risco', label: 'Risco', tom: 'text-status-error' },
   { tipo: 'expansao', label: 'Expansão', tom: 'text-status-success' },
   { tipo: 'follow_up', label: 'Follow-up', tom: 'text-status-info' },

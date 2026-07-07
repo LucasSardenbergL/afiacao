@@ -49,7 +49,7 @@ export interface UtiConta {
   status: 'uti' | 'observacao';
 }
 
-export interface UtiFrescor {
+interface UtiFrescor {
   /** Último recálculo dos scores de carteira. */
   scoresCalculatedAt: string | null;
   /** Último sync de contas a receber concluído (fin_sync_log, status 'complete'). */

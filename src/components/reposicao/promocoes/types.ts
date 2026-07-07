@@ -6,7 +6,7 @@ export const EMPRESA = "OBEN";
 export const FORNECEDOR_DEFAULT = "RENNER SAYERLACK S/A";
 export const ALL = "__all__";
 
-export type UploadStatus = "aguardando" | "processando" | "concluido" | "erro";
+type UploadStatus = "aguardando" | "processando" | "concluido" | "erro";
 
 export type UploadItem = {
   id: string;

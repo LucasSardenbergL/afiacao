@@ -2,7 +2,7 @@
 import type { TarefaCategoria, TarefaModo, TarefaInteracaoTipo } from '../types';
 
 /** Saída CRUA da IA (edge tarefa-extrair-voz) — só strings; NUNCA ids ou datas resolvidas. */
-export interface TarefaExtraidaIA {
+interface TarefaExtraidaIA {
   evidence_text: string;
   descricao: string;
   categoria_palpite: TarefaCategoria | null;
@@ -18,7 +18,7 @@ export interface ExtracaoVozIA {
   tarefas: TarefaExtraidaIA[];
 }
 
-export type StatusData = 'sem_data' | 'resolvida' | 'ambigua' | 'nao_resolvida' | 'passado';
+type StatusData = 'sem_data' | 'resolvida' | 'ambigua' | 'nao_resolvida' | 'passado';
 export interface ResultadoData {
   modo: TarefaModo;
   due_date: string | null;          // yyyy-mm-dd
@@ -26,7 +26,7 @@ export interface ResultadoData {
   status: StatusData;
 }
 
-export type StatusMatch = 'unico' | 'ambiguo' | 'sem_match';
+type StatusMatch = 'unico' | 'ambiguo' | 'sem_match';
 
 export interface ClienteCandidato {
   customer_user_id: string;   // '' se ainda não resolvido (cliente Omie sem perfil local)

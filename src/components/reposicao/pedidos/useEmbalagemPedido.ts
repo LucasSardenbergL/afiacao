@@ -15,7 +15,7 @@ interface EquivRow { empresa: string; grupo_id: string; sku_codigo_omie: string;
 interface PrecoRow { sku_codigo_omie: string; preco: number; capturado_em: string; status: StatusPreco; }
 interface ParamRow { sku_codigo_omie: number; custo_capital_efetivo_perc: number | null; }
 
-export interface EmbalagemItemResult {
+interface EmbalagemItemResult {
   decisao: DecisaoEmbalagem;
   /** SKUs do grupo — p/ o dialog pedir preço mesmo quando a decisão é "indisponível". */
   skusGrupo: string[];

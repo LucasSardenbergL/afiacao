@@ -78,7 +78,7 @@ export function avaliarOpcao(
   };
 }
 
-export type StatusDecisao = 'ok' | 'indisponivel' | 'marginal';
+type StatusDecisao = 'ok' | 'indisponivel' | 'marginal';
 
 export interface DecisaoEmbalagem {
   status: StatusDecisao;

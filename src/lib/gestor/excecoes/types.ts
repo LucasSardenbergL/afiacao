@@ -2,10 +2,10 @@
 // GestorBuddy — console de exceções (v1 determinístico). Tipos puros.
 
 export type FrescorCarteira = 'fresh' | 'stale' | 'desatualizada';
-export type GrupoKey = 'dados_quebrados' | 'clientes_risco' | 'confirmacoes_pendentes';
+type GrupoKey = 'dados_quebrados' | 'clientes_risco' | 'confirmacoes_pendentes';
 export type Severidade = 'critico' | 'aviso' | 'info';
 
-export type AcaoExcecao =
+type AcaoExcecao =
   | { tipo: 'abrir_cliente'; clienteUserId: string }
   | { tipo: 'tarefa'; tarefaId: string; clienteUserId: string | null; candidatoId: string | null }
   | { tipo: 'rodar_agente' }

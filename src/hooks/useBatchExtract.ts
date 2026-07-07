@@ -5,7 +5,7 @@ import type { KbExtractedSpec } from '@/lib/knowledge-base/specs-types';
 import { normalizeExtractedSpec } from '@/lib/knowledge-base/specs-types';
 
 /** Erro ocorrido durante a extração de um documento específico. */
-export interface BatchExtractErro {
+interface BatchExtractErro {
   documentId: string;
   error: string;
 }

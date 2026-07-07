@@ -9,7 +9,7 @@ import {
   THREAD_LIMIT,
 } from '@/lib/whatsapp/thread-cache';
 
-export interface WaConversation {
+interface WaConversation {
   id: string; phone_e164: string | null; contact_name: string | null;
   customer_user_id: string | null; assigned_operator_id: string | null;
   status: string; last_inbound_at: string | null; last_message_at: string | null;

@@ -20,7 +20,7 @@ import { formulaColumnLayout } from './formula-layout';
 //    VAZIA é legítima (vira null honesto, nunca 0 — ausente ≠ zero).
 //  `parseDecimalBR` é fail-closed: null em ilegível OU ambíguo (ex.: "1.234").
 
-export interface PreflightOffense {
+interface PreflightOffense {
   /** Nº da linha de DADOS, 1-based (não conta o cabeçalho). */
   linha: number;
   /** Campo ofensivo: `qtd1ml`..`qtd6ml`, `volume_final`, `preco_final`. */

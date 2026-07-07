@@ -131,12 +131,6 @@ export async function flush(
   return { success, failed };
 }
 
-export function clearOfflineQueue(): void {
-  const beforeDepth = readQueue().length;
-  if (beforeDepth > 0) track('offline.cleared', { depth: beforeDepth });
-  writeQueue([]);
-}
-
 export function subscribeToOfflineQueue(listener: Listener): () => void {
   listeners.add(listener);
   // dispara estado atual imediatamente

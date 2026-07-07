@@ -7,13 +7,13 @@
  * fracionário, e blindagem contra jsonb malformado.
  */
 
-export interface OrderItemJson {
+interface OrderItemJson {
   omie_codigo_produto?: number | string | null;
   descricao?: string | null;
   quantidade?: number | string | null;
 }
 
-export interface PickingItemRow {
+interface PickingItemRow {
   omie_codigo_produto: number | null;
   product_descricao: string;
   quantidade: number;

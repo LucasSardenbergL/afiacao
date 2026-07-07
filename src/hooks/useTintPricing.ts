@@ -10,7 +10,7 @@ import type { TintPriceBreakdownLite } from '@/lib/tint/select-price';
 // staff. O cálculo puro de referência — oráculo de paridade do SQL — vive em
 // @/lib/tint/compute-price (testado), e os tipos são re-exportados aqui para
 // manter a API pública do hook estável.
-export type { TintCoranteItem, TintPriceBreakdown } from '@/lib/tint/compute-price';
+export type { TintPriceBreakdown } from '@/lib/tint/compute-price';
 
 export function useTintPricing(formulaId: string | null) {
   return useQuery({

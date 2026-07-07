@@ -35,7 +35,7 @@ export type MotivoPE =
   | 'deducoes_coluna_inesperada'
   | 'valor_negativo_inesperado';
 
-export interface PontoEquilibrioConfig {
+interface PontoEquilibrioConfig {
   coberturaMin: number; // 0.95 — % mínimo do valor das despesas classificado
   materialDespesaPct: number; // 0.05 — limiar de materialidade sobre as despesas
   materialReceitaPct: number; // 0.02 — limiar de materialidade sobre a receita
@@ -45,7 +45,7 @@ export interface PontoEquilibrioConfig {
   valorNegTolRel: number; // 0.005 — |despesa negativa|/despesas acima disto = sinal suspeito
 }
 
-export const CONFIG_PE_PADRAO: PontoEquilibrioConfig = {
+const CONFIG_PE_PADRAO: PontoEquilibrioConfig = {
   coberturaMin: 0.95,
   materialDespesaPct: 0.05,
   materialReceitaPct: 0.02,

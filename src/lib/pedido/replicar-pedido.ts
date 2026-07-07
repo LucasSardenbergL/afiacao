@@ -12,7 +12,7 @@ import type { Product } from '@/hooks/unifiedOrder/types';
  * Função pura (testada) — a busca do pedido e a aplicação ficam no wizard.
  */
 
-export interface ItemDireto {
+interface ItemDireto {
   product: Product;
   quantidade: number;
 }

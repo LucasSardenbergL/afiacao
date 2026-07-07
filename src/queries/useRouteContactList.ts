@@ -46,7 +46,7 @@ export interface RouteContactItem extends ScoredCandidate {
   cadenciaBloqueadaPor: 'real' | 'sem_resposta_esgotada' | null;
   jaConvertidoNaRota: boolean;
 }
-export interface DailyStats { ligados: number; atenderam: number; fecharam: number; }
+interface DailyStats { ligados: number; atenderam: number; fecharam: number; }
 export interface RouteContactListData {
   callQueue: RouteContactItem[];
   whatsappQueue: RouteContactItem[];

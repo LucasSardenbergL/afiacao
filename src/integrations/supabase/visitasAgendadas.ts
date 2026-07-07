@@ -1,7 +1,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
 
-export type VisitaStatus = 'pendente' | 'realizada' | 'cancelada';
+type VisitaStatus = 'pendente' | 'realizada' | 'cancelada';
 
 /**
  * Row de `visitas_agendadas`. Deriva do tipo gerado (`types.ts`) e estreita

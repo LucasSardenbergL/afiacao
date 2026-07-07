@@ -25,7 +25,7 @@ function waSelectAll(view: string) {
 
 /** queryFn compartilhada: badge da sidebar e telas ricas usam a MESMA
  *  queryKey → 1 fetch deduplicado pro app inteiro (a view é scan-heavy). */
-export async function fetchWhatsappSla(): Promise<WaSlaRow[]> {
+async function fetchWhatsappSla(): Promise<WaSlaRow[]> {
   const res = await (waSelectAll('v_whatsapp_sla') as PromiseLike<{ data: unknown; error: { message: string } | null }>);
   if (res.error) throw new Error(res.error.message);
   return (res.data ?? []) as WaSlaRow[];

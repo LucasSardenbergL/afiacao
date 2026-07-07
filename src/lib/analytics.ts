@@ -174,9 +174,3 @@ export function pageview(path: string): void {
 export function resetAnalytics(): void {
   withPosthog((p) => p.reset(), 'reset');
 }
-
-/** Útil em casos onde você precisa do client raw (feature flags, etc.).
- *  Pode ser null nos primeiros instantes (SDK ainda baixando). */
-export function getPosthog(): PostHog | null {
-  return ph;
-}

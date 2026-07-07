@@ -59,7 +59,7 @@ export interface DsoDpoResult {
   caveats: string[];
 }
 
-export const TTM_MESES_MIN = 12;
+const TTM_MESES_MIN = 12;
 
 /**
  * Teto de plausibilidade (dias). DSO/DPO acima disso é descartado (→ null) em vez de
@@ -68,7 +68,7 @@ export const TTM_MESES_MIN = 12;
  * 1327 dias porque AP inclui matéria-prima/capex/tributo, ≠ CMV). NÃO esconde problema:
  * o caveat explica a inconsistência; só evita o KPI mentir "1327 dias".
  */
-export const PLAUSIBILIDADE_TETO_DIAS = 730;
+const PLAUSIBILIDADE_TETO_DIAS = 730;
 
 export interface JanelaTTM {
   /** os 12 pares (ano, mes) dos meses FECHADOS, do mais antigo ao mais recente. */

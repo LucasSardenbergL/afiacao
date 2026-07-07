@@ -49,7 +49,7 @@ export interface CheckinAtualRow {
   observacao_criterio: string | null;
 }
 
-export interface FaixaInfo {
+interface FaixaInfo {
   faixa_id: number | null;
   [key: string]: unknown;
 }

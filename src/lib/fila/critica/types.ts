@@ -2,9 +2,9 @@
 // Motor "Crítica da Fila" (v1 determinístico). Tipos puros, sem dependência de rede.
 
 export type SeveridadeSinal = 'info' | 'atencao' | 'critico';
-export type TipoSinal = 'order_delta' | 'rota_outcome' | 'tarefa_estado' | 'whatsapp_sla';
-export type Confianca = 'alta' | 'media' | 'baixa';
-export type ChaveContradicao =
+type TipoSinal = 'order_delta' | 'rota_outcome' | 'tarefa_estado' | 'whatsapp_sla';
+type Confianca = 'alta' | 'media' | 'baixa';
+type ChaveContradicao =
   | 'recorrente_sumiu'
   | 'sem_resposta_repetido'
   | 'tarefa_feita_sem_prova'

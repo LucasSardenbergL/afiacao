@@ -1,13 +1,13 @@
 import type { CustomerCallRow } from '@/hooks/useCustomerCalls';
 import type { AggregatedEntity } from './aggregate-entities';
 
-export interface CompetitorMention {
+interface CompetitorMention {
   value: string;
   totalOccurrences: number;
   maxConfidence: number;
 }
 
-export interface ObjectionAgg {
+interface ObjectionAgg {
   type: string;
   count: number;
   exampleNote: string;

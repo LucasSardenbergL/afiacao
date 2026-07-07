@@ -16,13 +16,6 @@ export interface TranscriptTurn {
 
 export type TranscriptionStatus = 'idle' | 'connecting' | 'active' | 'error';
 
-export interface TranscriptionState {
-  status: TranscriptionStatus;
-  /** Turnos em ordem cronológica (oldest first) */
-  turns: TranscriptTurn[];
-  error: string | null;
-}
-
 export interface DeepgramConfig {
   /** Key temporária do Deepgram (vinda da edge function) */
   apiKey: string;

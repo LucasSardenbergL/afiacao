@@ -11,7 +11,7 @@ import { labelProspeccaoStatus } from './prospect-stop';
 import { formatBrPhone, isCellphone, whatsappLink } from '@/lib/phone';
 import { formatarCnpj } from '@/lib/radar/ui-helpers';
 
-export interface ContatoAlvo {
+interface ContatoAlvo {
   rotulo: string;                 // "Telefone 1" | "Telefone 2" | "Telefone"
   telefone: string;               // cru — o BotaoLigar normaliza e escolhe o caminho
   display: string;                // (DD) 9XXXX-XXXX

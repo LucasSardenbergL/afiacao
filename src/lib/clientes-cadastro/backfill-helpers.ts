@@ -58,7 +58,7 @@ export function montarTelefone(
   return full.length >= 8 ? full : null;
 }
 
-export interface CadastroOmie {
+interface CadastroOmie {
   razao_social?: string | null;
   nome_fantasia?: string | null;
   cnpj_cpf?: string | null;
@@ -66,7 +66,7 @@ export interface CadastroOmie {
   telefone_numero?: string | null;
 }
 
-export interface ProfileRow {
+interface ProfileRow {
   user_id: string;
   name: string;
   phone: string | null;
@@ -78,7 +78,7 @@ export interface ProfileRow {
   created_at: string;
 }
 
-export type MotivoPular =
+type MotivoPular =
   | 'master_cnpj'
   | 'doc_em_outro_profile'
   | 'doc_duplicado_no_lote';

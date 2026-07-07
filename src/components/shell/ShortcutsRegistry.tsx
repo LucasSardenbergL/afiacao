@@ -25,7 +25,7 @@ import { track } from '@/lib/analytics';
  *
  * Bloqueio: handler NÃO dispara em input/textarea/[contenteditable] (evita conflito com digitação).
  */
-export type ShortcutScope = 'global' | 'page';
+type ShortcutScope = 'global' | 'page';
 
 export interface Shortcut {
   /** Tecla composta. Ex: "g", "mod+k", "shift+/". */

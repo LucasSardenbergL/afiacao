@@ -4,7 +4,7 @@ import type { WaMessage } from '@/queries/useWhatsappInbox';
 export const THREAD_LIMIT = 100;
 
 /** Prefixo das mensagens otimistas injetadas pelo useSendWhatsapp (onMutate). */
-export const OPTIMISTIC_MSG_PREFIX = 'optimistic-';
+const OPTIMISTIC_MSG_PREFIX = 'optimistic-';
 
 export function isOptimisticMessage(m: WaMessage): boolean {
   return m.id.startsWith(OPTIMISTIC_MSG_PREFIX);

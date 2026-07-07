@@ -10,7 +10,7 @@ import type {
   UserTool,
 } from '@/hooks/useUnifiedOrder';
 
-export const VOLUME_UNITS = ['5L', 'GL', 'LT', 'BD', 'BH'];
+const VOLUME_UNITS = ['5L', 'GL', 'LT', 'BD', 'BH'];
 
 interface UseCartArgs {
   getProductPrice: (product: Product) => number;

@@ -117,8 +117,8 @@ export function computeOnOrder(
 // parsing de cada página, a detecção de fim (página vazia) e a de loop (Omie repetindo página).
 // ============================================================================================
 
-export interface OmiePedItemRaw { nCodProd?: number | string; nQtde?: number | null; nQtdeRec?: number | null; [k: string]: unknown; }
-export interface OmiePedCabRaw { nCodPed?: number | string; cNumero?: number | string; cCodIntPed?: string; cEtapa?: string; [k: string]: unknown; }
+interface OmiePedItemRaw { nCodProd?: number | string; nQtde?: number | null; nQtdeRec?: number | null; [k: string]: unknown; }
+interface OmiePedCabRaw { nCodPed?: number | string; cNumero?: number | string; cCodIntPed?: string; cEtapa?: string; [k: string]: unknown; }
 export interface OmiePedConsultaRaw {
   cabecalho_consulta?: OmiePedCabRaw;
   cabecalho?: OmiePedCabRaw;

@@ -8,7 +8,7 @@
  *     → ScoreAdjustment (deltas finais aplicados em farmer_client_scores)
  */
 
-export type EntityType =
+type EntityType =
   | 'competitor'
   | 'price'
   | 'volume'
@@ -45,7 +45,7 @@ export type ScoreDimension = 'churn' | 'expansion' | 'health' | 'eff';
  * Tipos de sinal reconhecidos pelo modulators.ts.
  * Adicionar novo: 1) cria branch no modulators, 2) cobre teste.
  */
-export type SignalKind =
+type SignalKind =
   | 'competitor_mentioned'
   | 'price_objection_high'
   | 'desired_outcome'
