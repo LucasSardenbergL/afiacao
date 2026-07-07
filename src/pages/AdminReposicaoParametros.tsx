@@ -2,10 +2,11 @@ import { lazy, Suspense, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Settings, Loader2, AlertTriangle, Truck, Building2, Sparkles, ArrowRight } from "lucide-react";
+import { Settings, AlertTriangle, Truck, Building2, Sparkles, ArrowRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageSkeleton } from "@/components/ui/page-skeleton";
 import {
   Select,
   SelectContent,
@@ -29,12 +30,7 @@ const AdminReposicaoHistorico = lazy(() => import("./AdminReposicaoHistorico"));
 const AdminReposicaoAlertas = lazy(() => import("./AdminReposicaoAlertas"));
 const AdminReposicaoSlaFornecedor = lazy(() => import("./AdminReposicaoSlaFornecedor"));
 
-const TabFallback = () => (
-  <div className="flex items-center justify-center py-16 text-muted-foreground">
-    <Loader2 className="h-5 w-5 animate-spin mr-2" />
-    Carregando...
-  </div>
-);
+const TabFallback = () => <PageSkeleton variant="auto" />;
 
 /* ─── KPI Cards ─── */
 function KpiCards() {

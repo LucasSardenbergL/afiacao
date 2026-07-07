@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Save, Plus, AlertCircle, X } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useSalesOrderEdit } from '@/components/salesOrderEdit/useSalesOrderEdit';
 import { PaymentComboboxEdit } from '@/components/salesOrderEdit/PaymentComboboxEdit';
 import { AddProductSearch } from '@/components/salesOrderEdit/AddProductSearch';
@@ -43,9 +44,9 @@ const SalesOrderEdit = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="form" />
+        </main>
       </div>
     );
   }

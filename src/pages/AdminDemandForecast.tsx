@@ -5,11 +5,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { 
-  Loader2, 
-  AlertTriangle, 
+import {
+  AlertTriangle,
   Clock, 
   Calendar, 
   Phone, 
@@ -209,9 +209,9 @@ const AdminDemandForecast = () => {
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="cockpit" />
+        </main>
       </div>
     );
   }

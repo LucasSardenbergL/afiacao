@@ -2,7 +2,7 @@ import { useParams } from 'react-router-dom';
 import { OrderChat } from '@/components/OrderChat';
 import { SendingQualityChecklist } from '@/components/SendingQualityChecklist';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useAdminOrderDetail } from '@/hooks/useAdminOrderDetail';
 import { OrderCustomerHeader } from '@/components/admin-order/OrderCustomerHeader';
 import { OrderStatusSelect } from '@/components/admin-order/OrderStatusSelect';
@@ -35,9 +35,9 @@ const AdminOrderDetail = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="detail" />
+        </main>
       </div>
     );
   }

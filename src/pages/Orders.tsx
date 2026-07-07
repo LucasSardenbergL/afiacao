@@ -4,6 +4,7 @@ import { OrderCard } from '@/components/OrderCard';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2, Package, Plus, AlertCircle, Search } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
@@ -152,8 +153,10 @@ const Orders = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div className="min-h-screen bg-background pb-24">
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="list" />
+        </main>
       </div>
     );
   }

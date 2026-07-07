@@ -5,7 +5,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { spDayRangeUtc } from "@/lib/time/sp-day";
 import {
   PackageCheck,
-  Loader2,
   FileWarning,
   Truck,
   CheckCircle2,
@@ -14,6 +13,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageSkeleton } from "@/components/ui/page-skeleton";
 import {
   Select,
   SelectContent,
@@ -30,12 +30,7 @@ const WAREHOUSE_BY_EMPRESA: Record<string, string> = {
   COLACOR: "b6d3569b-5952-4547-a118-4ddfe0a85ba3",
 };
 
-const TabFallback = () => (
-  <div className="flex items-center justify-center py-16 text-muted-foreground">
-    <Loader2 className="h-5 w-5 animate-spin mr-2" />
-    Carregando...
-  </div>
-);
+const TabFallback = () => <PageSkeleton variant="auto" />;
 
 function KpiCards({ empresa }: { empresa: string }) {
   const warehouseId = WAREHOUSE_BY_EMPRESA[empresa];

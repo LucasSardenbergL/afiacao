@@ -8,7 +8,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Loader2, Search, RefreshCw, Package, ShoppingCart, BarChart3, Building2, ChevronLeft } from 'lucide-react';
+import { Search, RefreshCw, Package, ShoppingCart, BarChart3, Building2, ChevronLeft } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 
 type Account = 'oben' | 'colacor';
 
@@ -138,9 +139,7 @@ const SalesProducts = () => {
 
   if (authLoading || loading) {
     return (
-      <div className="flex items-center justify-center pt-32">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
+      <PageSkeleton variant="list" />
     );
   }
 

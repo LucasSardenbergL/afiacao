@@ -8,7 +8,8 @@ import { KbSpecsEditButton } from '@/components/knowledge-base/KbSpecsEditButton
 import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Loader2, Database, Sparkles } from 'lucide-react';
+import { Database, Sparkles } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import type { KbDocument } from '@/lib/knowledge-base/types';
 import { useKbProductSpecs } from '@/hooks/useKbProductSpecs';
 import { VersionHistory } from '@/components/knowledge-base/VersionHistory';
@@ -49,8 +50,8 @@ export default function AdminKnowledgeBaseDetail() {
 
   if (isLoading) {
     return (
-      <div className="container mx-auto p-4 flex justify-center">
-        <Loader2 className="animate-spin" />
+      <div className="container mx-auto p-4">
+        <PageSkeleton variant="detail" />
       </div>
     );
   }

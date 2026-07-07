@@ -1,9 +1,10 @@
 import { lazy, Suspense } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Plug, Loader2, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
+import { Plug, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageSkeleton } from "@/components/ui/page-skeleton";
 import { supabase } from "@/integrations/supabase/client";
 
 const TintImport = lazy(() => import("./TintImport"));
@@ -12,12 +13,7 @@ const TintSyncRuns = lazy(() => import("./TintSyncRuns"));
 const TintReconciliation = lazy(() => import("./TintReconciliation"));
 const TintApiContract = lazy(() => import("./TintApiContract"));
 
-const TabFallback = () => (
-  <div className="flex items-center justify-center py-16 text-muted-foreground">
-    <Loader2 className="h-5 w-5 animate-spin mr-2" />
-    Carregando...
-  </div>
-);
+const TabFallback = () => <PageSkeleton variant="auto" />;
 
 function KpiCards() {
   const { data } = useQuery({
