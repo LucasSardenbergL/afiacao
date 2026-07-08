@@ -5,11 +5,13 @@
 #   fila inclui incompleto [8] e sem-nCMC [9,12] · classe PROVADA cruza a 1A [10] · tingidor fora [11] ·
 #   view não vaza [13] · RLS + cmc INVOKER não vaza [14] · versão não sobrescreve [15] · idempotência [16].
 # HARDENING (painel tri-modelo): FIX1 fila inclui unidade_divergente/estrutura_ambigua · FIX2 cmc sem omie_products→incompleto ·
-#   FIX3 qtd<=0→incompleto · FIX4 idProdMalha decimal/gigante NÃO aborta (SKU→incompleto) · FIX5 excecoes valida config · FIX6 advisory lock.
+#   FIX3 qtd<=0→incompleto · FIX4 idProdMalha decimal/gigante NÃO aborta (SKU→incompleto) · FIX5 excecoes valida config · FIX6 advisory lock ·
+#   FIX7 estrutura Omie vazia (itens=[] array vazio)→sem_estrutura: custo NULL (não 0), entra na fila como sem_estrutura (impacto=nCMC).
 #
 # FALSIFICAÇÃO (Step 17): re-rode com FALSIFY=<x> — cada sabotagem deve virar FAIL>0 (vermelho), depois reverte:
 #   FALSIFY=coalesce (→#3) · guard (→#4) · sumfirst (→#5) · dataval (→#6) · defaultclasse (→#10) ·
-#   invoker (→#13) · cmcdefiner (→#14) · filaclasse (→FIX1: unidade_divergente/ambiguo somem da fila).
+#   invoker (→#13) · cmcdefiner (→#14) · filaclasse (→FIX1: unidade_divergente/ambiguo somem da fila) ·
+#   semestrutura (→FIX7: array vazio vira ok/custo 0 → sem_estrutura some do motor e da fila).
 #   A migration REAL fica intacta (sabotagem age numa CÓPIA temporária).
 # Rodar (verde):    heavy bash db/test-pcp-f2a-custo.sh > /tmp/t-2a.log 2>&1; echo "exit=$?"
 # Rodar (vermelho): FALSIFY=coalesce bash db/test-pcp-f2a-custo.sh > /tmp/f-2a.log 2>&1; echo "exit=$?"
@@ -44,6 +46,8 @@ if [ -n "${FALSIFY:-}" ]; then
     cmcdefiner)   sed -i '' "s#RETURNS numeric LANGUAGE sql STABLE SECURITY INVOKER#RETURNS numeric LANGUAGE sql STABLE SECURITY DEFINER#" "$MIG";;
     filaclasse)   sed -i '' "s#WHEN c.custo_status = 'unidade_divergente' THEN 'unidade_divergente'#WHEN c.custo_status = 'unidade_divergente' THEN NULL::text#" "$MIG"
                   sed -i '' "s#WHEN c.custo_status = 'ambiguo' THEN 'estrutura_ambigua'#WHEN c.custo_status = 'ambiguo' THEN NULL::text#" "$MIG";;
+    semestrutura) sed -i '' "s#WHEN a.pai_cod IS NULL THEN 'sem_estrutura'#WHEN false THEN 'sem_estrutura'#" "$MIG"
+                  sed -i '' "s#= 'array' AND a.pai_cod IS NOT NULL AND coalesce(a.n_div, 0) = 0#= 'array' AND coalesce(a.n_div, 0) = 0#" "$MIG";;
     *) echo "FALSIFY desconhecido: $FALSIFY"; exit 2;;
   esac
   echo "### FALSIFY=$FALSIFY — migration sabotada em $MIG (esperado: FAIL>0)"
@@ -167,12 +171,14 @@ INSERT INTO cmc_snapshot (account, omie_codigo_produto, data_posicao, cmc) VALUE
 -- nCMC dos acabados (só quem deve ter): divergem do custo-padrão p/ testar as classes.
  ('colacor_vendas',1010,'2026-06-15',20),('colacor_vendas',1011,'2026-06-15',20),
  ('colacor_vendas',1012,'2026-06-15',20),('colacor_vendas',1013,'2026-06-15',10),
- ('colacor_vendas',2000,'2026-06-15',10);
+ ('colacor_vendas',2000,'2026-06-15',10),
+ ('colacor_vendas',1040,'2026-06-15',12);   -- FIX 7: acabado SEM estrutura (itens=[]) mas COM nCMC → impacto_r = nCMC
 
 INSERT INTO pcp_itens (omie_codigo_produto, tipo_item) VALUES
  (1000,'cinta'),(1001,'cinta'),(1002,'cinta'),(1003,'cinta'),(1004,'cinta'),(1005,'cinta'),
  (1010,'cinta'),(1011,'cinta'),(1012,'cinta'),(1013,'cinta'),(1020,'cinta'),(2000,'tingidor'),
- (1006,'cinta'),(1007,'cinta'),(1030,'cinta'),(1031,'cinta');  -- lixa com dado problemático (FIX 3/2/4)
+ (1006,'cinta'),(1007,'cinta'),(1030,'cinta'),(1031,'cinta'),  -- lixa com dado problemático (FIX 3/2/4)
+ (1040,'folha');  -- FIX 7: acabado (lixa) com estrutura Omie vazia (itens=[])
 
 INSERT INTO pcp_malha_staging (omie_codigo_produto, payload) VALUES
  (1000,'{"itens":[{"ident":{"idProdMalha":"101","descrProdMalha":"ROLO LIXA A"},"quantProdMalha":"2","unidProdMalha":"M2"},{"ident":{"idProdMalha":"102","descrProdMalha":"COLA A455"},"quantProdMalha":"3","unidProdMalha":"G"}]}'),
@@ -193,7 +199,9 @@ INSERT INTO pcp_malha_staging (omie_codigo_produto, payload) VALUES
  (1007,'{"itens":[{"ident":{"idProdMalha":"998","descrProdMalha":"ROLO SEM PRODUTO"},"quantProdMalha":"1","unidProdMalha":"M2"}]}'),
  -- FIX 4: idProdMalha decimal ('1.5') e gigante (fora do range de bigint) → comp_cod NULL → incompleto, SEM abortar o recompute.
  (1030,'{"itens":[{"ident":{"idProdMalha":"1.5","descrProdMalha":"ROLO DECIMAL"},"quantProdMalha":"1","unidProdMalha":"M2"}]}'),
- (1031,'{"itens":[{"ident":{"idProdMalha":"99999999999999999999999","descrProdMalha":"ROLO GIGANTE"},"quantProdMalha":"1","unidProdMalha":"M2"}]}');
+ (1031,'{"itens":[{"ident":{"idProdMalha":"99999999999999999999999","descrProdMalha":"ROLO GIGANTE"},"quantProdMalha":"1","unidProdMalha":"M2"}]}'),
+ -- FIX 7: estrutura Omie VAZIA (itens=[] array vazio, 0 componentes) → sem_estrutura (custo NULL, nunca 0).
+ (1040,'{"itens":[]}');
 
 -- Oráculo da 1A: 1010 tem exceção de receita VIVA → possivel_erro_receita PROVADO. 1011 NÃO tem.
 INSERT INTO pcp_bom_excecoes (pai_codigo, componente_codigo, papel, status, disposicao)
@@ -201,7 +209,7 @@ INSERT INTO pcp_bom_excecoes (pai_codigo, componente_codigo, papel, status, disp
 SQL
 
 echo "═══ ZONA 4: recompute (postgres = owner do DEFINER; auth.uid() NULL como no SQL Editor) ═══"
-eq "recompute_custo_padrao processa 16 SKUs (FIX 4: id inválido/gigante NÃO aborta)" "$(Pq -c "SELECT fn_pcp_recompute_custo_padrao('2026-06-15')")" "16"
+eq "recompute_custo_padrao processa 17 SKUs (FIX 4: id inválido/gigante NÃO aborta; FIX 7: estrutura vazia)" "$(Pq -c "SELECT fn_pcp_recompute_custo_padrao('2026-06-15')")" "17"
 eq "recompute_excecoes retorna >0"           "$(Pq -c "SELECT fn_pcp_recompute_excecoes('2026-06-15')>0")" "t"
 
 echo "═══ ZONA 5: custo-padrão (Σ buckets = total; outros conta; multi-componente soma; ambiguo) ═══"
@@ -230,6 +238,10 @@ eq "FIX2 sem unidade confirmada → total NULL" "$(Pq -c "SELECT custo_total IS 
 eq "FIX4 idProdMalha='1.5' → incompleto (não aborta)"   "$(Pq -c "SELECT custo_status FROM pcp_custo_padrao_resultados WHERE omie_codigo_produto=1030 AND versao_regra='1'")" "incompleto"
 eq "FIX4 idProdMalha gigante → incompleto (não aborta)" "$(Pq -c "SELECT custo_status FROM pcp_custo_padrao_resultados WHERE omie_codigo_produto=1031 AND versao_regra='1'")" "incompleto"
 eq "FIX4 id inválido → comp_cod NULL no detalhe (1030)"  "$(Pq -c "SELECT (detalhe->0->>'cod') IS NULL FROM pcp_custo_padrao_resultados WHERE omie_codigo_produto=1030 AND versao_regra='1'")" "t"
+eq "FIX7 estrutura Omie vazia (itens=[]) → sem_estrutura"      "$(Pq -c "SELECT custo_status FROM pcp_custo_padrao_resultados WHERE omie_codigo_produto=1040 AND versao_regra='1'")" "sem_estrutura"
+eq "FIX7 sem_estrutura → total NULL (não 0)"                  "$(Pq -c "SELECT custo_total IS NULL FROM pcp_custo_padrao_resultados WHERE omie_codigo_produto=1040 AND versao_regra='1'")" "t"
+eq "FIX7 n_componentes=0 em sem_estrutura"                    "$(Pq -c "SELECT n_componentes FROM pcp_custo_padrao_resultados WHERE omie_codigo_produto=1040 AND versao_regra='1'")" "0"
+eq "FIX7 distinção: ambiguo (objeto, 1005) NÃO vira sem_estrutura" "$(Pq -c "SELECT custo_status FROM pcp_custo_padrao_resultados WHERE omie_codigo_produto=1005 AND versao_regra='1'")" "ambiguo"
 
 echo "═══ ZONA 7: data-posição fora da grade ABORTA (não zera custo em massa) ═══"
 ERR=$(P -tA -c "SELECT fn_pcp_recompute_custo_padrao('2020-01-01')" 2>&1 || true)
@@ -240,6 +252,9 @@ eq "#8 fila INCLUI incompleto (1002 → cmc_incompleto)" "$(Pq -c "SELECT classe
 eq "#8 cmc_incompleto: total NULL na fila"  "$(Pq -c "SELECT custo_padrao_total IS NULL FROM pcp_custo_excecoes WHERE omie_codigo_produto=1002 AND versao_regra='1'")" "t"
 eq "FIX1 lixa unidade_divergente ENTRA na fila (1003)" "$(Pq -c "SELECT classe_causa FROM pcp_custo_excecoes WHERE omie_codigo_produto=1003 AND versao_regra='1'")" "unidade_divergente"
 eq "FIX1 lixa ambiguo ENTRA na fila (1005 → estrutura_ambigua)" "$(Pq -c "SELECT classe_causa FROM pcp_custo_excecoes WHERE omie_codigo_produto=1005 AND versao_regra='1'")" "estrutura_ambigua"
+eq "FIX7 lixa sem_estrutura ENTRA na fila (1040 → sem_estrutura)" "$(Pq -c "SELECT classe_causa FROM pcp_custo_excecoes WHERE omie_codigo_produto=1040 AND versao_regra='1'")" "sem_estrutura"
+eq "FIX7 sem_estrutura: impacto_r = nCMC do acabado = 12" "$(Pq -c "SELECT impacto_r FROM pcp_custo_excecoes WHERE omie_codigo_produto=1040 AND versao_regra='1'")" "12"
+eq "FIX7 sem_estrutura: custo_padrao_total NULL na fila (não 0)" "$(Pq -c "SELECT custo_padrao_total IS NULL FROM pcp_custo_excecoes WHERE omie_codigo_produto=1040 AND versao_regra='1'")" "t"
 eq "#9/#12 ok sem nCMC (1000 → ncmc_ausente)" "$(Pq -c "SELECT classe_causa FROM pcp_custo_excecoes WHERE omie_codigo_produto=1000 AND versao_regra='1'")" "ncmc_ausente"
 eq "#9 ncmc_ausente: impacto_r = custo_total = 35" "$(Pq -c "SELECT impacto_r FROM pcp_custo_excecoes WHERE omie_codigo_produto=1000 AND versao_regra='1'")" "35"
 eq "#10 diverge COM exceção 1A → possivel_erro_receita" "$(Pq -c "SELECT classe_causa FROM pcp_custo_excecoes WHERE omie_codigo_produto=1010 AND versao_regra='1'")" "possivel_erro_receita"
