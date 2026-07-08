@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { diasEntre, custoOperacao, medirCusto } from '../antecipacao-helpers';
-import type { Antecipacao } from '../antecipacao-types';
+import {
+  diasEntre,
+  custoOperacao,
+  medirCusto,
+  taxaParaPeriodo,
+  compararFunding,
+  motivoFluxoRegistro,
+} from '../antecipacao-helpers';
+import type { Antecipacao, HurdleUnidade } from '../antecipacao-types';
 
 const op = (over: Partial<Parameters<typeof custoOperacao>[0]> = {}) => ({
   valor_bruto: 100_000,
@@ -158,5 +165,117 @@ describe('medirCusto — degradação honesta', () => {
     expect(r.num_operacoes).toBe(0);
     expect(r.num_excluidas).toBe(1);
     expect(r.custo_total).toBeNull();
+  });
+});
+
+describe('taxaParaPeriodo — converte unidade → taxa do período de `dias` (P1-3)', () => {
+  it('efetiva_aa composta', () => {
+    expect(taxaParaPeriodo(0.3, 'efetiva_aa', 30)).toBeCloseTo(Math.pow(1.3, 30 / 365) - 1, 8);
+  });
+  it('efetiva_am composta: 2% a.m. em 30 dias ≈ 2%', () => {
+    expect(taxaParaPeriodo(0.02, 'efetiva_am', 30)).toBeCloseTo(0.02, 8);
+  });
+  it('nominal_aa linear: 36,5% a.a. em 30 dias = 3%', () => {
+    expect(taxaParaPeriodo(0.365, 'nominal_aa', 30)).toBeCloseTo(0.03, 8);
+  });
+});
+
+describe('compararFunding — Job B (comparação de FUNDING, nunca "vale a pena")', () => {
+  const base = { valor_titulo: 100_000, dias: 30 };
+
+  it('oferta como líquido: custo + taxas; hurdle efetiva_aa convertido p/ 30d → veredito só de funding', () => {
+    const r = compararFunding({
+      ...base,
+      liquido_ofertado: 97_000,
+      hurdle: { valor: 0.3, unidade: 'efetiva_aa' },
+    });
+    expect(r.motivo).toBe('ok');
+    expect(r.custo).toBeCloseTo(3_000, 2);
+    expect(r.taxa_periodo).toBeCloseTo(100_000 / 97_000 - 1, 6); // ~3,09%
+    expect(r.hurdle_taxa_periodo).toBeCloseTo(Math.pow(1.3, 30 / 365) - 1, 6); // ~2,18%
+    expect(r.veredito).toBe('mais_caro'); // 3,09% > 2,18%
+  });
+
+  it('oferta dentro do hurdle → "dentro" (não "vale a pena")', () => {
+    const r = compararFunding({
+      ...base,
+      liquido_ofertado: 99_000,
+      hurdle: { valor: 0.6, unidade: 'efetiva_aa' },
+    });
+    expect(r.veredito).toBe('dentro');
+  });
+
+  it('oferta como taxa (com unidade) reconstrói o líquido e custa igual', () => {
+    const r = compararFunding({
+      ...base,
+      taxa_ofertada: { valor: 0.02, unidade: 'efetiva_am' },
+      hurdle: { valor: 0.3, unidade: 'efetiva_aa' },
+    });
+    expect(r.motivo).toBe('ok');
+    expect(r.taxa_periodo).toBeCloseTo(0.02, 6); // 2% a.m. em 30d
+    expect(r.custo).toBeCloseTo(100_000 - 100_000 / 1.02, 2);
+  });
+
+  it('custos_avulsos entram no custo da oferta (P1-4)', () => {
+    const r = compararFunding({
+      ...base,
+      liquido_ofertado: 97_000,
+      custos_avulsos: 500,
+      hurdle: { valor: 0.3, unidade: 'efetiva_aa' },
+    });
+    expect(r.custo).toBeCloseTo(3_500, 2); // 100000+500−97000
+  });
+
+  it('hurdle ausente → hurdle_indisponivel: mostra custo, sem veredito', () => {
+    const r = compararFunding({ ...base, liquido_ofertado: 97_000 });
+    expect(r.motivo).toBe('hurdle_indisponivel');
+    expect(r.custo).toBeCloseTo(3_000, 2);
+    expect(r.veredito).toBeNull();
+  });
+
+  it('hurdle sem unidade válida → hurdle_unidade_invalida', () => {
+    const r = compararFunding({
+      ...base,
+      liquido_ofertado: 97_000,
+      hurdle: { valor: 0.3, unidade: 'xpto' as HurdleUnidade },
+    });
+    expect(r.motivo).toBe('hurdle_unidade_invalida');
+    expect(r.veredito).toBeNull();
+  });
+
+  it('taxa E líquido informados que não reconciliam → inputs_conflitantes', () => {
+    const r = compararFunding({
+      ...base,
+      liquido_ofertado: 90_000,
+      taxa_ofertada: { valor: 0.02, unidade: 'efetiva_am' },
+      hurdle: { valor: 0.3, unidade: 'efetiva_aa' },
+    });
+    expect(r.motivo).toBe('inputs_conflitantes');
+  });
+
+  it('lote multi-venc num prazo só → fluxo_nao_suportado (inventa prazo, P1-5)', () => {
+    const r = compararFunding({
+      ...base,
+      liquido_ofertado: 97_000,
+      lote: true,
+      hurdle: { valor: 0.3, unidade: 'efetiva_aa' },
+    });
+    expect(r.motivo).toBe('fluxo_nao_suportado');
+  });
+
+  it('dados inválidos (dias ≤ 0, líquido > face+avulsos) → dados_invalidos', () => {
+    expect(compararFunding({ valor_titulo: 100_000, dias: 0, liquido_ofertado: 97_000 }).motivo).toBe(
+      'dados_invalidos',
+    );
+    expect(
+      compararFunding({ valor_titulo: 100_000, dias: 30, liquido_ofertado: 100_001 }).motivo,
+    ).toBe('dados_invalidos');
+  });
+});
+
+describe('motivoFluxoRegistro — guard de entrada (form)', () => {
+  it('lote=true → fluxo_nao_suportado; senão ok', () => {
+    expect(motivoFluxoRegistro({ lote: true })).toBe('fluxo_nao_suportado');
+    expect(motivoFluxoRegistro({})).toBe('ok');
   });
 });

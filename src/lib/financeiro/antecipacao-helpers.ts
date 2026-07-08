@@ -4,6 +4,9 @@
 import type {
   Antecipacao,
   CustoOperacao,
+  FundingInput,
+  FundingResult,
+  HurdleUnidade,
   MedidorResult,
   MesAntecipacao,
 } from './antecipacao-types';
@@ -106,4 +109,88 @@ export function medirCusto(ops: Antecipacao[]): MedidorResult {
     num_excluidas: excluidas,
     tendencia,
   };
+}
+
+const UNIDADES: readonly HurdleUnidade[] = ['efetiva_aa', 'nominal_aa', 'efetiva_am'];
+
+/** Converte uma taxa na sua unidade → taxa EFETIVA do período de `dias` (comparação no MESMO período, P1-3). */
+export function taxaParaPeriodo(valor: number, unidade: HurdleUnidade, dias: number): number {
+  switch (unidade) {
+    case 'efetiva_aa':
+      return Math.pow(1 + valor, dias / 365) - 1; // composta anual
+    case 'efetiva_am':
+      return Math.pow(1 + valor, dias / 30) - 1; // composta mensal
+    case 'nominal_aa':
+      return valor * (dias / 365); // linear/proporcional (juros simples)
+  }
+}
+
+const FUNDING_INVALIDO = (m: FundingResult['motivo']): FundingResult => ({
+  motivo: m,
+  custo: null,
+  taxa_periodo: null,
+  taxa_efetiva_aa: null,
+  hurdle_taxa_periodo: null,
+  veredito: null,
+});
+
+/** Job B — comparação de custo de FUNDING (nunca "vale a pena"; isso depende do uso do caixa, §4). */
+export function compararFunding(input: FundingInput): FundingResult {
+  if (input.lote === true) return FUNDING_INVALIDO('fluxo_nao_suportado'); // P1-5: prazo inventado
+  const face = Number(input.valor_titulo);
+  const dias = Number(input.dias);
+  const avulsos = Number(input.custos_avulsos ?? 0);
+  if (![face, dias, avulsos].every(Number.isFinite) || !(face > 0) || !(dias > 0) || avulsos < 0) {
+    return FUNDING_INVALIDO('dados_invalidos');
+  }
+  const base = face + avulsos;
+
+  // Resolve o líquido da oferta: pode vir como líquido, como taxa (c/ unidade), ou ambos (reconciliar).
+  const temLiquido = input.liquido_ofertado != null;
+  const temTaxa = input.taxa_ofertada != null;
+  if (!temLiquido && !temTaxa) return FUNDING_INVALIDO('dados_invalidos');
+
+  let liquidoDeTaxa: number | null = null;
+  if (temTaxa) {
+    const u = input.taxa_ofertada!.unidade;
+    if (!UNIDADES.includes(u)) return FUNDING_INVALIDO('hurdle_unidade_invalida');
+    const tp = taxaParaPeriodo(input.taxa_ofertada!.valor, u, dias);
+    if (!(tp > -1)) return FUNDING_INVALIDO('dados_invalidos');
+    liquidoDeTaxa = base / (1 + tp);
+  }
+
+  let liquido: number | null;
+  if (temLiquido) {
+    liquido = Number(input.liquido_ofertado);
+    if (!Number.isFinite(liquido) || !(liquido > 0) || liquido > base) {
+      return FUNDING_INVALIDO('dados_invalidos');
+    }
+    // taxa E líquido: reconciliar (tolerância relativa 0,5% sobre a face)
+    if (liquidoDeTaxa != null && Math.abs(liquido - liquidoDeTaxa) > 0.005 * base) {
+      return FUNDING_INVALIDO('inputs_conflitantes');
+    }
+  } else {
+    liquido = liquidoDeTaxa;
+  }
+  if (liquido == null || !(liquido > 0) || liquido > base) return FUNDING_INVALIDO('dados_invalidos');
+
+  const custo = base - liquido;
+  const taxa_periodo = base / liquido - 1;
+  const taxa_efetiva_aa = Math.pow(1 + taxa_periodo, 365 / dias) - 1;
+
+  // Hurdle editável PRIMÁRIO (P1-3): ausente → só custo; unidade inválida → sem veredito.
+  if (input.hurdle == null) {
+    return { motivo: 'hurdle_indisponivel', custo, taxa_periodo, taxa_efetiva_aa, hurdle_taxa_periodo: null, veredito: null };
+  }
+  if (!UNIDADES.includes(input.hurdle.unidade)) {
+    return { motivo: 'hurdle_unidade_invalida', custo, taxa_periodo, taxa_efetiva_aa, hurdle_taxa_periodo: null, veredito: null };
+  }
+  const hurdle_taxa_periodo = taxaParaPeriodo(input.hurdle.valor, input.hurdle.unidade, dias);
+  const veredito = taxa_periodo > hurdle_taxa_periodo ? 'mais_caro' : 'dentro';
+  return { motivo: 'ok', custo, taxa_periodo, taxa_efetiva_aa, hurdle_taxa_periodo, veredito };
+}
+
+/** Guard de entrada: lote multi-venc num prazo só inventa prazo → não suportado em v1 (registrar 1 por título). */
+export function motivoFluxoRegistro(input: { lote?: boolean }): 'ok' | 'fluxo_nao_suportado' {
+  return input.lote === true ? 'fluxo_nao_suportado' : 'ok';
 }
