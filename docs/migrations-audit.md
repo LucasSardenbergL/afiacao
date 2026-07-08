@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **339** custom migrations totais
+- **340** custom migrations totais
 - **1212** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 341
@@ -2909,6 +2909,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.omie_cliente_upsert_mapping` | — |
+
+### `20260707120000_seed_fin_dre_custo_tipo_oben.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
