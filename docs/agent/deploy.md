@@ -29,7 +29,8 @@ O bot `gpt-engineer-app[bot]` commita direto na `main` SEM CI ("Changes"/"Deploy
 
 ## Verificação de deploy
 
-- A skill **`lovable-deploy-verify`** confere se o bundle servido bate com o esperado (bytes/comportamento). Use após Publish/deploy — não confiar cegamente no "deployed" do Lovable.
+- A skill **`lovable-deploy-verify`** confere se o bundle servido bate com o esperado (bytes/comportamento). Use após Publish/deploy — não confiar cegamente no "deployed" do Lovable. A varredura por bytes é **paralela** (`xargs -P`, halt-on-hit) — o bundle passou de 300 chunks e o modo 1-a-1 estourava o timeout.
+- **QA visual pós-Publish** (renderização/comportamento na tela, refactor visual sem texto novo): os bytes não bastam e o `/browse` headless **não monta** a SPA. O padrão é **Claude-in-Chrome na sessão logada do founder** (ele abre o app 1×; o agente confere as telas) — detalhado no Passo 4b da skill `lovable-deploy-verify`.
 - O acesso **read-only** ao banco (`psql-ro`, ver `docs/agent/database.md`) confirma migration aplicada sem depender do founder.
 
 ## Atualização do PWA — modelo `prompt` (offline-first; #1169)
