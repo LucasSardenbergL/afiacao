@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 07 — INTERCOMPANY (operações entre Colacor, Oben e Colacor SC)
--- 🟣 Lovable → SQL Editor → cola → Run
+-- 🟢 read-only → eu rodo via psql-ro (fallback: cola no SQL Editor do Lovable)
 -- ----------------------------------------------------------------------------
 -- Divergências aqui distorcem o consolidado e quase sempre viram pergunta pro
 -- contador (ex.: "a NF da Colacor pra Oben está lançada nas duas pontas pelo

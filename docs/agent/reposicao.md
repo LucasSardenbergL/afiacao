@@ -2,6 +2,30 @@
 
 > Motor de pedidos sugeridos + portal Sayerlack. Princípios em `docs/agent/money-path.md`. Specs: `docs/superpowers/specs/2026-0*-reposicao-*` e `*sayerlack*`. Diário em `docs/historico/bugs-resolvidos.md`.
 
+## Léxico de embalagens & fornecedores (dicionário de domínio)
+
+Vocabulário que o founder assume ao falar de reposição (antes re-explicado a cada sessão). Dado VIVO (litragem por SKU, LT por grupo, taxa de fornecedor) eu puxo via `psql-ro` — não peço ao founder.
+
+**Embalagens — sufixo Sayerlack → litros.** Fonte-de-verdade: `litrosDaEmbalagem` em `src/lib/venda-assistida/preco-preparado.ts` (**confirmado pelo founder 2026-06-14**). A versão **"base"** (concentrado; detectada pela palavra "base" na descrição) rende MENOS líquido e só existe em QT/GL/BH:
+
+| Sufixo | Nome | Litros | Litros (base) |
+|---|---|---|---|
+| `QT` | quartinho | 0,9 | 0,81 |
+| `GL` | galão | 3,6 | 3,24 |
+| `BH` | balde | 20 | 18 |
+| `LT` | — | 18 | — |
+| `L5` / `BB` | — | 5 | — |
+| `BD` | — | 18 | — |
+| `405ML` | fracionado (pai é QT; manda a descrição) | 0,405 | — |
+
+`CGL` **não existe** → `null` ("sob consulta"); sufixo fora da tabela → `null`. **Nunca chute litragem** (é money-path de pricing: litro errado = preço errado). Em ml (a linha de tint fala em ml, versão base): QT 810 · GL 3240 · BH 18000.
+
+**Fator do motor ≠ litragem.** O motor consolida grupo/escolhe embalagem pelo fator RELATIVO `sku_embalagem_equivalencia.fator_para_base` (QT=1, GL=4 — bate com 3,6÷0,9), não pela litragem absoluta; `qtde_final` do pedido é **nº de embalagens**, não litros (§Motor). Âncora = sempre o fator-1 (galão nunca é âncora).
+
+**Lead time por grupo — computado, não tabelado.** Sai do histórico (`sku_leadtime_history.grupo_leadtime`) → `sku_parametros` (`lt_medio_dias_uteis`, `lt_p95_dias`, `lt_desvio_padrao_dias`, `fonte_leadtime`) via `v_sku_leadtime_estatisticas`/`v_sku_lt_teorico`. `v_sku_lt_teorico` só dá LT com linha em `sku_grupo_producao` **E** fornecedor do grupo (senão `SEM_LEADTIME_DEFINIDO`, ver §Outras frentes). Para o LT de um grupo hoje, rode `psql-ro`.
+
+**Fornecedores OBEN recorrentes.** **Sayerlack** é o especial (portal/scraping, auto-aprovação N3, alerta R$3k, corte de pedido — §Portal Sayerlack); além dele, **Acre Caxias**, **Beta**, **Sapiranga**. Todos com **baixa taxa de auto-aprovação** (global 17% — superdimensionamento sistêmico do motor, não de um fornecedor; percentuais por fornecedor em §Mínimo forçado). A **Oben paga a maioria à vista** (com desconto à vista). Cadastro/limites por fornecedor (horário de corte, valor máx mensal, delta máx): `fornecedor_habilitado_reposicao`.
+
 ## Motor de pedidos de compra
 
 - RPC **`gerar_pedidos_sugeridos_ciclo`** gera as sugestões do ciclo. **JOIN `omie_products` account-aware** — `omie_products.account` é convenção EMPRESA (`oben`/`colacor`/`colacor_sc`); JOIN account-blind **duplica silenciosamente** (sem UNIQUE no item) — ver `docs/agent/database.md`.

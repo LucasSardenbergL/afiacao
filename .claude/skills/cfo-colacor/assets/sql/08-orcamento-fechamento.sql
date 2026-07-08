@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 08 — ORÇADO vs REALIZADO + STATUS DE FECHAMENTO
--- 🟣 Lovable → SQL Editor → cola → Run
+-- 🟢 read-only → eu rodo via psql-ro (fallback: cola no SQL Editor do Lovable)
 -- ----------------------------------------------------------------------------
 -- Fecha o ritual mensal: (a) o mês já foi formalmente fechado/aprovado no sistema?
 -- (b) o realizado bateu com o orçamento por linha do DRE? Só roda se houver

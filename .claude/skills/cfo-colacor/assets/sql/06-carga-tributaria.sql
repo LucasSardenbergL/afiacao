@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 06 — CARGA TRIBUTÁRIA OBSERVADA (NÃO é apuração — ver guardrail 1 do SKILL.md)
--- 🟣 Lovable → SQL Editor → cola → Run
+-- 🟢 read-only → eu rodo via psql-ro (fallback: cola no SQL Editor do Lovable)
 -- ----------------------------------------------------------------------------
 -- Isto é um TERMÔMETRO gerencial: alíquota efetiva = impostos ÷ receita_bruta do
 -- DRE. NÃO é o imposto a pagar (DAS/DARF), que é do contador. Divergência grande

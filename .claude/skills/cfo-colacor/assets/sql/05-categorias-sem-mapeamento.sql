@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 05 — CATEGORIAS SEM MAPEAMENTO DRE
--- 🟣 Lovable → SQL Editor → cola → Run
+-- 🟢 read-only → eu rodo via psql-ro (fallback: cola no SQL Editor do Lovable)
 -- ----------------------------------------------------------------------------
 -- Categorias Omie com movimento no período que NÃO têm linha explícita em
 -- fin_categoria_dre_mapping — caem na heurística por palavra-chave (sujeita a
@@ -8,12 +8,12 @@
 -- (b) candidata a pergunta pro contador ("X é CMV ou despesa operacional?").
 -- READ-ONLY.
 --
--- ⚠️ NÃO use a RPC fin_categorias_sem_mapping(company,start,end) no SQL Editor:
+-- ⚠️ NÃO chame a RPC fin_categorias_sem_mapping(company,start,end):
 --    ela é SECURITY DEFINER com gate "requer perfil financeiro"
 --    (auth.role()='service_role' OR fin_user_can_access(company)) e dá
---    `ERROR: 42501: Acesso negado: requer perfil financeiro` na sessão do SQL
---    Editor (sem perfil). A query (a) abaixo é a MESMA lógica, direta nas
---    tabelas — roda sem gate.
+--    `ERROR: 42501: Acesso negado: requer perfil financeiro` em QUALQUER sessão
+--    sem auth.uid() do app — tanto o psql-ro quanto o SQL Editor. A query (a)
+--    abaixo é a MESMA lógica, direta nas tabelas — roda sem gate.
 -- ============================================================================
 
 -- (a) Categorias com movimento no período SEM linha no DRE (nem na empresa nem
