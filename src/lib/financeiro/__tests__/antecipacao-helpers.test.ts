@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { diasEntre, custoOperacao } from '../antecipacao-helpers';
+import { diasEntre, custoOperacao, medirCusto } from '../antecipacao-helpers';
+import type { Antecipacao } from '../antecipacao-types';
 
 const op = (over: Partial<Parameters<typeof custoOperacao>[0]> = {}) => ({
   valor_bruto: 100_000,
@@ -56,5 +57,106 @@ describe('custoOperacao — dados_invalidos (helper blinda além do CHECK)', () 
     expect(custoOperacao(op({ valor_bruto: 0 })).motivo).toBe('dados_invalidos');
     expect(custoOperacao(op({ valor_liquido: 0 })).motivo).toBe('dados_invalidos');
     expect(custoOperacao(op({ custos_avulsos: -1 })).motivo).toBe('dados_invalidos');
+  });
+});
+
+// ── Job A (medirCusto): operação completa (id não é usado pelo helper — fixo por determinismo) ──
+const full = (over: Partial<Antecipacao>): Antecipacao => ({
+  id: 'op',
+  company: 'oben',
+  banco: 'Itaú',
+  tipo: 'duplicata',
+  valor_bruto: 100_000,
+  custos_avulsos: 0,
+  valor_liquido: 97_000,
+  data_operacao: '2026-01-05',
+  data_vencimento: '2026-02-04',
+  operacao_origem_id: null,
+  referencia: null,
+  observacao: null,
+  deleted_at: null,
+  ...over,
+});
+
+describe('medirCusto — Job A money-weighted (P1-2)', () => {
+  it('taxa realizada reconcilia com R$: custo_total / (Σ líquido×dias / 365)', () => {
+    const ops = [
+      full({ valor_liquido: 97_000, data_operacao: '2026-01-01', data_vencimento: '2026-01-31' }), // custo 3000, 30d
+      full({
+        valor_bruto: 52_000,
+        valor_liquido: 50_000,
+        data_operacao: '2026-02-01',
+        data_vencimento: '2026-04-02',
+      }), // custo 2000, 60d
+    ];
+    const r = medirCusto(ops);
+    expect(r.motivo).toBe('ok');
+    expect(r.custo_total).toBeCloseTo(5_000, 2);
+    expect(r.volume_antecipado).toBeCloseTo(147_000, 2);
+    const capitalTempo = (97_000 * 30 + 50_000 * 60) / 365; // 16191,78 R$·ano
+    expect(r.taxa_realizada_aa).toBeCloseTo(5_000 / capitalTempo, 6); // ~0,3088
+    expect(r.num_operacoes).toBe(2);
+  });
+
+  it('uma op curtíssima com EAR absurda NÃO infla a taxa (money-weighted, não média de EAR)', () => {
+    const ops = [
+      full({ valor_bruto: 1_000, valor_liquido: 990, data_operacao: '2026-01-01', data_vencimento: '2026-01-02' }), // 1d
+      full({ valor_bruto: 100_000, valor_liquido: 97_000, data_operacao: '2026-01-01', data_vencimento: '2026-01-31' }), // 30d
+    ];
+    const r = medirCusto(ops);
+    const capitalTempo = (990 * 1 + 97_000 * 30) / 365;
+    expect(r.taxa_realizada_aa).toBeCloseTo((10 + 3_000) / capitalTempo, 6); // dominada pela op grande
+    expect(r.taxa_realizada_aa!).toBeLessThan(1); // < 100% a.a. — não explodiu
+  });
+
+  it('tendência mensal por data_operacao (base declarada)', () => {
+    const ops = [
+      full({ valor_liquido: 97_000, data_operacao: '2026-01-10', data_vencimento: '2026-02-09' }), // jan custo 3000
+      full({
+        valor_bruto: 52_000,
+        valor_liquido: 50_000,
+        data_operacao: '2026-02-10',
+        data_vencimento: '2026-03-12',
+      }), // fev custo 2000
+    ];
+    const r = medirCusto(ops);
+    expect(r.tendencia).toEqual([
+      { ano: 2026, mes: 1, custo: 3_000, volume: 97_000 },
+      { ano: 2026, mes: 2, custo: 2_000, volume: 50_000 },
+    ]);
+  });
+});
+
+describe('medirCusto — degradação honesta', () => {
+  it('sem operações → sem_operacoes (≠ economia/custo zero; P1-6)', () => {
+    const r = medirCusto([]);
+    expect(r.motivo).toBe('sem_operacoes');
+    expect(r.custo_total).toBeNull();
+    expect(r.num_operacoes).toBe(0);
+  });
+
+  it('soft-deleted é ignorado (não conta no custo)', () => {
+    const r = medirCusto([full({ deleted_at: '2026-03-01T00:00:00Z' })]);
+    expect(r.motivo).toBe('sem_operacoes');
+  });
+
+  it('linha inválida excluída → dados_parciais, agregado só das válidas (nunca "ok" com op ignorada)', () => {
+    const ops = [
+      full({ valor_liquido: 97_000, data_operacao: '2026-01-01', data_vencimento: '2026-01-31' }), // válida, custo 3000
+      full({ valor_bruto: 100_000, valor_liquido: 100_001 }), // inválida (líquido > bruto)
+    ];
+    const r = medirCusto(ops);
+    expect(r.motivo).toBe('dados_parciais');
+    expect(r.num_operacoes).toBe(1);
+    expect(r.num_excluidas).toBe(1);
+    expect(r.custo_total).toBeCloseTo(3_000, 2);
+  });
+
+  it('todas inválidas → dados_parciais com agregados null (temos ops, nenhuma custeável)', () => {
+    const r = medirCusto([full({ valor_bruto: 100_000, valor_liquido: 100_050 })]);
+    expect(r.motivo).toBe('dados_parciais');
+    expect(r.num_operacoes).toBe(0);
+    expect(r.num_excluidas).toBe(1);
+    expect(r.custo_total).toBeNull();
   });
 });
