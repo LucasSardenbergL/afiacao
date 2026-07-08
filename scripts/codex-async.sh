@@ -66,7 +66,10 @@ for backoff in "${backoffs[@]}"; do
   codex exec --model "$modelo" -c model_reasoning_effort="$reasoning" \
     --sandbox read-only "$prompt" >"$out" 2>"$err" &
   pid=$!
-  ( sleep "$timeout_s" && kill "$pid" 2>/dev/null ) &
+  # fds do watchdog → /dev/null: o sleep interno sobrevive ao kill do subshell
+  # e, se herdasse o stdout/stderr do chamador, seguraria o pipe aberto até o
+  # timeout inteiro (chamador em foreground ficaria esperando EOF)
+  ( sleep "$timeout_s" && kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
   watchdog=$!
   wait "$pid"; rc=$?
   kill "$watchdog" 2>/dev/null

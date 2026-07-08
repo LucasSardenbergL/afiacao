@@ -51,8 +51,8 @@ caso_exit() { # nome want_exit rc
 echo "── caminho feliz ──"
 out="$(run ok "pergunta qualquer" 2>/dev/null)"; rc=$?
 caso_exit "parecer entregue → 0" 0 "$rc"
-printf '%s' "$out" | grep -q "parecer: aprovado" && echo "  ok    stdout contém o parecer" \
-  || { echo "  FAIL  parecer ausente do stdout"; fail=1; }
+if printf '%s' "$out" | grep -q "parecer: aprovado"; then echo "  ok    stdout contém o parecer"
+else echo "  FAIL  parecer ausente do stdout"; fail=1; fi
 
 echo "── preflight ──"
 run ok 2>/dev/null; caso_exit "prompt vazio → 64" 64 $?
@@ -65,20 +65,20 @@ caso_exit "sem auth (nem env, nem auth.json) → 77" 77 $?
 echo "── cota e retry ──"
 run quota "x" >/dev/null 2>&1; rc=$?
 caso_exit "cota esgotada → 75" 75 "$rc"
-[ "$(invocacoes)" -eq 1 ] && echo "  ok    cota NÃO faz retry (1 invocação)" \
-  || { echo "  FAIL  cota fez retry ($(invocacoes) invocações)"; fail=1; }
+if [ "$(invocacoes)" -eq 1 ]; then echo "  ok    cota NÃO faz retry (1 invocação)"
+else echo "  FAIL  cota fez retry ($(invocacoes) invocações)"; fail=1; fi
 
 out="$(run ratelimit "x" 2>/dev/null)"; rc=$?
 caso_exit "rate limit transitório → retry → 0" 0 "$rc"
-[ "$(invocacoes)" -eq 2 ] && echo "  ok    exatamente 1 retry (2 invocações)" \
-  || { echo "  FAIL  invocações=$(invocacoes), esperava 2"; fail=1; }
+if [ "$(invocacoes)" -eq 2 ]; then echo "  ok    exatamente 1 retry (2 invocações)"
+else echo "  FAIL  invocações=$(invocacoes), esperava 2"; fail=1; fi
 
 echo "── watchdog (execução travada) ──"
 run trava -t 1 "x" >/dev/null 2>&1; rc=$?
 if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then echo "  ok    exit $rc ≠ 0 (matou o processo travado)"
 else echo "  FAIL  watchdog não matou (exit $rc)"; fail=1; fi
-[ "$(invocacoes)" -eq 3 ] && echo "  ok    esgotou as 3 tentativas" \
-  || { echo "  FAIL  invocações=$(invocacoes), esperava 3"; fail=1; }
+if [ "$(invocacoes)" -eq 3 ]; then echo "  ok    esgotou as 3 tentativas"
+else echo "  FAIL  invocações=$(invocacoes), esperava 3"; fail=1; fi
 
 echo
 if [ "$fail" -eq 0 ]; then echo "PASS — todos os casos"; else echo "FALHOU"; fi
