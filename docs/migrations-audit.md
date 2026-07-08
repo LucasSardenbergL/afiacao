@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **341** custom migrations totais
-- **1220** objetos esperados (criados por estas migrations)
+- **342** custom migrations totais
+- **1225** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 342
-  - `rls_policy`: 269
-  - `index`: 206
+  - `function`: 343
+  - `rls_policy`: 271
+  - `index`: 207
   - `cron_job`: 144
-  - `table`: 132
+  - `table`: 133
   - `trigger`: 68
   - `view`: 55
   - `enum_value`: 4
@@ -2926,6 +2926,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.fin_antecipacoes_select_master` | `fin_antecipacoes` |
 | `rls_policy` | `public.fin_antecipacoes_write_master` | `fin_antecipacoes` |
 | `rls_policy` | `public.fin_antecipacoes_service_all` | `fin_antecipacoes` |
+
+### `20260708171049_reposicao_motor_run_marker.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `table` | `public.reposicao_motor_run` | — |
+| `index` | `public.idx_reposicao_motor_run_empresa_data` | `reposicao_motor_run` |
+| `rls_policy` | `public.reposicao_motor_run_sel` | `reposicao_motor_run` |
+| `rls_policy` | `public.reposicao_motor_run_ins` | `reposicao_motor_run` |
 
 ## Próximos passos por status
 

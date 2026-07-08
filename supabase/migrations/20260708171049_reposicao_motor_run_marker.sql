@@ -1,45 +1,46 @@
--- Migration: embalagem econômica DENTRO do motor de pedidos (QT↔GL) + consolidação de estoque de grupo
--- ⚠️ APLICADA MANUALMENTE no SQL Editor do Lovable em 2026-06-26 (NÃO vai em supabase/migrations/ — CLAUDE.md §5;
---     é CREATE OR REPLACE de função existente). Este arquivo é a FONTE versionada + fixture da regressão db/test-embalagem-motor.sh.
--- Spec: docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
--- Money-path. Recria gerar_pedidos_sugeridos_ciclo (pré-flight pg_get_functiondef feito; base = prod 26/06).
---
--- DUAS mudanças cirúrgicas, tudo o mais PRESERVADO:
---   1) CONSOLIDA o estoque no nível do grupo de equivalência (Σ membros: GREATEST(inv,sea) físico + pendente + trânsito).
---      O gatilho passa a olhar o estoque do GRUPO → para de comprar quando há galão parado.
---   2) ESCOLHE a embalagem mais barata por unidade-base (galão), ESTRITO: só troca o quartinho pelo galão
---      quando AMBOS têm preço-app fresco (≤ N dias) + portal-map + catálogo OK, e o galão é estritamente mais barato/base.
---      Senão mantém o quartinho. Custo da linha do galão = preço-app (R$/embalagem), nunca 0.
---
--- Unidade (cravada em prod): qtde_final = nº de EMBALAGENS do SKU; preco_unitario = R$/embalagem; o disparo
--- consome ceil(qtde_final) direto (fator_conversao=1). Quartinho NÃO é tocado (mantém cmc cru).
--- ⚠️ Case: equivalencia/preço_capturado = lower(empresa); parametros/estoque/fornecedor_externo = empresa (upper).
---
--- Revisão pós-Codex (xhigh) — 6 correções vs. o 1º rascunho:
---   P0-a GREATEST(inventory_position.saldo, sku_estoque_atual): galão parado vive em fontes DIFERENTES por SKU.
---   P0-b em_transito do galão × fator_para_base (2 galões em voo = 8 unidades-base, não 2) → anti double-buy.
---   P1-c âncora NÃO pode ser membro fator>1 (galão) de um grupo → impede 2 linhas do mesmo GL.
---   P1-d anti-duplicidade de oportunidade cobre a âncora E o SKU escolhido (galão).
---   P1-e minimo_forcado_manual respeitado também na troca p/ galão (piso aplicado ANTES de dividir pelo fator).
---   P1-f filtros de catálogo (ativo/tipo 04/família/status omie) aplicados ao MEMBRO escolhido, não só à âncora.
--- Granularidade (P2 Codex, aceito): nº_galões = ceil(necessidade / fator) na escala "unidades-âncora" — NUNCA
---   compra menos que o legado QT (herda o descasamento litros↔embalagem pré-existente, fora de escopo).
---
--- ➕ 2026-06-27 — GATE de estoque-NÃO-CONFIRMADO (money-path; spec 2026-06-27-reposicao-gate-estoque-nao-confirmado).
---   Bug provado: cold-start semeia sku_estoque_atual de omie_products.estoque (82% zerado na OBEN), fonte_sync=
---   'cold_start_seed'. Se o motor roda na janela cold-start→ListarPosEstoque, lê o seed=0 e compra por cima de
---   estoque existente. FIX (Codex consult 019f0968 + ausente≠zero): estoque cuja ÚNICA fonte é cold_start_seed (sem
---   inventory_position) é DESCONHECIDO → o motor SUPRIME a sugestão (nível LINHA e GRUPO) + LOGA em
---   reposicao_estoque_nao_confirmado_log. Zero CONFIRMADO (ListarPosEstoque/0) segue comprando — auto-liberante.
---   ⚠️ Esta fixture é SÓ a função; a tabela de log + RLS vivem na migration formal (e nos harnesses de teste).
---   Migration: supabase/migrations/20260627180000_reposicao_gate_estoque_nao_confirmado.sql (corpo da função idêntico).
---
--- ➕ 2026-07-08 — MARCADOR DE RUN (reposicao_motor_run) — a fila da tela ancora no ÚLTIMO recálculo, NÃO no último
---   recálculo QUE TEVE supressão. Bug: run limpo não grava no log de suprimidos → a mensagem "N fora da compra"
---   grudava por até 24h após o sync já ter confirmado o estoque (Codex 2026-07-08 → Opção 2: fonte-de-verdade, não
---   render). A RPC carimba TODO run (limpo ou não) ao fim; a tela lê o último marker (some quando suprimidos_n=0).
---   Tabela reposicao_motor_run + RLS na migration *_reposicao_motor_run_marker.sql (mesmo padrão do log; corpo idêntico).
+-- ============================================================================
+-- reposicao_motor_run — marcador de execução do motor de reposição (observabilidade da fila)
+-- ============================================================================
+-- A fila "estoque não confirmado" da tela de Pedidos ancorava no run mais recente QUE TEVE supressão
+-- (reposicao_estoque_nao_confirmado_log só grava EXCEÇÕES). Um recálculo LIMPO pós-sync não deixa rastro,
+-- então a mensagem "N SKUs fora da compra" grudava por até 24h após o estoque já ter sido confirmado.
+-- FIX (Codex 2026-07-08, Opção 2 = fonte-de-verdade, não render): a RPC carimba TODO run (limpo ou não)
+-- em reposicao_motor_run; a tela ancora no ÚLTIMO run e a mensagem some quando suprimidos_n=0.
+-- Escrita SÓ pela RPC gerar_pedidos_sugeridos_ciclo (single-writer). RLS espelha o log (20260627180000):
+-- SELECT staff (pode_ver_carteira_completa), INSERT authenticated WITH CHECK true (não aborta a RPC INVOKER).
+-- ⚠️ Recria gerar_pedidos_sugeridos_ciclo JUNTO — corpo IDÊNTICO à fixture db/embalagem-motor-rpc.sql, provado
+--    em db/test-gate-estoque-nao-confirmado.sh (29 asserts + falsificação). Pré-flight: repo==prod 2026-07-08.
+-- ============================================================================
 
+CREATE TABLE IF NOT EXISTS public.reposicao_motor_run (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id uuid NOT NULL,
+  empresa text NOT NULL,
+  data_ciclo date NOT NULL,
+  pedidos_gerados integer NOT NULL DEFAULT 0,
+  skus_incluidos integer NOT NULL DEFAULT 0,
+  suprimidos_n integer NOT NULL DEFAULT 0,
+  criado_em timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reposicao_motor_run_empresa_data
+  ON public.reposicao_motor_run (empresa, criado_em DESC);
+
+ALTER TABLE public.reposicao_motor_run ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS reposicao_motor_run_sel ON public.reposicao_motor_run;
+CREATE POLICY reposicao_motor_run_sel ON public.reposicao_motor_run
+  FOR SELECT TO authenticated
+  USING ((SELECT public.pode_ver_carteira_completa((SELECT auth.uid()))));
+
+DROP POLICY IF EXISTS reposicao_motor_run_ins ON public.reposicao_motor_run;
+CREATE POLICY reposicao_motor_run_ins ON public.reposicao_motor_run
+  FOR INSERT TO authenticated WITH CHECK (true);
+
+GRANT SELECT, INSERT ON public.reposicao_motor_run TO authenticated;
+GRANT ALL ON public.reposicao_motor_run TO service_role;
+
+-- ── RPC recriada (corpo idêntico à fixture provada) ──────────────────────────
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
  LANGUAGE plpgsql
