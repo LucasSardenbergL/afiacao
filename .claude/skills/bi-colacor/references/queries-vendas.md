@@ -1,7 +1,7 @@
 # Queries canônicas — Vendas & Clientes
 
-Todas read-only. Período com defaults sensatos; o comentário diz onde ajustar. Cole no
-🟣 Lovable → SQL Editor → Run e cole o resultado de volta.
+Todas read-only. Período com defaults sensatos; o comentário diz onde ajustar. Eu rodo cada
+uma via psql-ro (`~/.config/afiacao/psql-ro -c "..."`); fallback: cola no SQL Editor do Lovable.
 
 ---
 

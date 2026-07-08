@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 01 — CAIXA: projeção 13 semanas + TRIANGULAÇÃO (saldo por conta + fluxo real)
--- 🟣 Lovable → SQL Editor → cola → Run  (rode uma query por vez)
+-- 🟢 read-only → eu rodo via psql-ro (fallback: cola no SQL Editor do Lovable)
 -- ----------------------------------------------------------------------------
 -- ⚠️ CORRIGIDO (1º fechamento real, 2026-06-16):
 --  • "Aberto" filtra por status_titulo, NUNCA por saldo>0 — o saldo NÃO zera na

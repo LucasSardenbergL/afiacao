@@ -25,6 +25,7 @@
 | lente "Ver como" (impersonação, write-guard) | [impersonation.md](docs/agent/impersonation.md) |
 | telefonia (WebRTC, SIP, LGPD) | [telefonia.md](docs/agent/telefonia.md) |
 | skills & MCPs (roteamento canônico) | [skills.md](docs/agent/skills.md) |
+| **mapa do app** ("onde faço X" · rotas/módulos por gate) | [mapa-do-app.md](docs/agent/mapa-do-app.md) |
 | worktrees · multi-sessão · RAM/Node · `heavy` | [worktrees.md](docs/agent/worktrees.md) |
 
 Diário de PR/entregas: `docs/historico/` (`bugs-resolvidos.md`, `programas-vendas.md`, `auditoria-ux-redesign.md`, `estoque-picking-recebimento.md`). Runbook passo-a-passo de banco/deploy: `docs/runbooks/lovable-supabase.md`.

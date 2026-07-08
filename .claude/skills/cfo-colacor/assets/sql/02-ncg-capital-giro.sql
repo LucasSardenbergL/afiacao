@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 02 — NCG / CAPITAL DE GIRO (decomposição ACO − PCO), por empresa
--- 🟣 Lovable → SQL Editor → cola → Run
+-- 🟢 read-only → eu rodo via psql-ro (fallback: cola no SQL Editor do Lovable)
 -- ----------------------------------------------------------------------------
 -- NCG = ACO − PCO
 --   ACO = CR aberto + estoque + adiantamentos a fornecedor
