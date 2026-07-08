@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDeliveredOrders12m } from '@/queries/useOrders';
-import { Loader2, TrendingUp, DollarSign, Wrench, Leaf, PiggyBank } from 'lucide-react';
+import { TrendingUp, DollarSign, Wrench, Leaf, PiggyBank } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, LineChart, Line } from 'recharts';
 import { format, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -71,9 +72,9 @@ const SavingsDashboard = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="cockpit" />
+        </main>
       </div>
     );
   }

@@ -8,7 +8,8 @@ import { StandardProcessStatusBadge } from '@/components/standard-process/Standa
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, ChevronLeft, Edit, Check, X, Archive, Clock, Wrench, Factory } from 'lucide-react';
+import { ChevronLeft, Edit, Check, X, Archive, Clock, Wrench, Factory } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import type { StandardProcessEtapa } from '@/lib/standard-process/types';
@@ -34,8 +35,8 @@ export default function AdminStandardProcessDetail() {
 
   if (isLoading) {
     return (
-      <div className="container mx-auto p-4 flex justify-center">
-        <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+      <div className="container mx-auto p-4">
+        <PageSkeleton variant="detail" />
       </div>
     );
   }

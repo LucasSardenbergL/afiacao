@@ -2,10 +2,11 @@ import { useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useToolPublicHistory } from '@/queries/useUserTools';
-import { 
-  Loader2, Wrench, AlertTriangle, CheckCircle, 
-  FileText, Settings, Clock, Hash 
+import {
+  Wrench, AlertTriangle, CheckCircle,
+  FileText, Settings, Clock, Hash
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
@@ -26,8 +27,10 @@ const ToolPublicHistory = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div className="min-h-screen bg-background">
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="detail" />
+        </main>
       </div>
     );
   }

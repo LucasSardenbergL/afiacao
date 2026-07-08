@@ -6,11 +6,12 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { useUserToolDetail, useToolEvents, type ToolEvent } from '@/queries/useUserTools';
 import {
-  Loader2, Wrench, QrCode, Printer,
+  Wrench, QrCode, Printer,
   AlertTriangle, CheckCircle, FileText, Settings,
   Clock, Hash, BarChart3, ShieldCheck, HelpCircle,
   ArrowRight, TrendingUp
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { format, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { QRCodeSVG } from 'qrcode.react';
@@ -162,7 +163,9 @@ const ToolHistory = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <div className="flex items-center justify-center pt-32"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="detail" />
+        </main>
       </div>
     );
   }

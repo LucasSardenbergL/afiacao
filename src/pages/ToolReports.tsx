@@ -5,10 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useUserToolDetail, useToolEvents, useToolPriceHistory } from '@/queries/useUserTools';
 import {
-  Loader2, Wrench, DollarSign, TrendingUp,
+  Wrench, DollarSign, TrendingUp,
   BarChart3, Clock, AlertTriangle, ShieldCheck, HelpCircle,
   ArrowRight, CheckCircle
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { format, differenceInDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -145,9 +146,9 @@ const ToolReports = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <main className="pt-16 px-4 max-w-lg mx-auto">
+          <PageSkeleton variant="cockpit" />
+        </main>
       </div>
     );
   }
