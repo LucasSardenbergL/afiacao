@@ -154,10 +154,14 @@ export function compararFunding(input: FundingInput): FundingResult {
   let liquidoDeTaxa: number | null = null;
   if (temTaxa) {
     const u = input.taxa_ofertada!.unidade;
+    const tv = Number(input.taxa_ofertada!.valor);
     if (!UNIDADES.includes(u)) return FUNDING_INVALIDO('hurdle_unidade_invalida');
-    const tp = taxaParaPeriodo(input.taxa_ofertada!.valor, u, dias);
+    if (!Number.isFinite(tv) || tv < 0) return FUNDING_INVALIDO('dados_invalidos'); // P1-b: NaN/negativa
+    const tp = taxaParaPeriodo(tv, u, dias);
     if (!(tp > -1)) return FUNDING_INVALIDO('dados_invalidos');
-    liquidoDeTaxa = base / (1 + tp);
+    // P1-c: a taxa da oferta incide sobre a FACE; os custos avulsos são custo À PARTE (fora do líquido).
+    // Usar base=(face+avulsos) aqui subcontaria o custo quando há avulsos.
+    liquidoDeTaxa = face / (1 + tp);
   }
 
   let liquido: number | null;
@@ -166,8 +170,9 @@ export function compararFunding(input: FundingInput): FundingResult {
     if (!Number.isFinite(liquido) || !(liquido > 0) || liquido > base) {
       return FUNDING_INVALIDO('dados_invalidos');
     }
-    // taxa E líquido: reconciliar (tolerância relativa 0,5% sobre a face)
-    if (liquidoDeTaxa != null && Math.abs(liquido - liquidoDeTaxa) > 0.005 * base) {
+    // taxa E líquido: reconciliar. Tolerância de ARREDONDAMENTO (limitada pela precisão da taxa,
+    // 2 casas de %), não comercial — P1-d: 0,5% da face escondia conflito real de centenas de R$.
+    if (liquidoDeTaxa != null && Math.abs(liquido - liquidoDeTaxa) > Math.max(0.01, 1e-4 * base)) {
       return FUNDING_INVALIDO('inputs_conflitantes');
     }
   } else {
@@ -183,7 +188,12 @@ export function compararFunding(input: FundingInput): FundingResult {
   if (input.hurdle == null) {
     return { motivo: 'hurdle_indisponivel', custo, taxa_periodo, taxa_efetiva_aa, hurdle_taxa_periodo: null, veredito: null };
   }
-  if (!UNIDADES.includes(input.hurdle.unidade)) {
+  // P1-b: unidade inválida OU valor não-finito/negativo → sem veredito (nunca um 'dentro' falso por NaN).
+  if (
+    !UNIDADES.includes(input.hurdle.unidade) ||
+    !Number.isFinite(input.hurdle.valor) ||
+    input.hurdle.valor < 0
+  ) {
     return { motivo: 'hurdle_unidade_invalida', custo, taxa_periodo, taxa_efetiva_aa, hurdle_taxa_periodo: null, veredito: null };
   }
   const hurdle_taxa_periodo = taxaParaPeriodo(input.hurdle.valor, input.hurdle.unidade, dias);
@@ -191,9 +201,18 @@ export function compararFunding(input: FundingInput): FundingResult {
   return { motivo: 'ok', custo, taxa_periodo, taxa_efetiva_aa, hurdle_taxa_periodo, veredito };
 }
 
-/** Guard de entrada: lote multi-venc num prazo só inventa prazo → não suportado em v1 (registrar 1 por título). */
-export function motivoFluxoRegistro(input: { lote?: boolean }): 'ok' | 'fluxo_nao_suportado' {
-  return input.lote === true ? 'fluxo_nao_suportado' : 'ok';
+export type FluxoRegistro = 'um_vencimento' | 'lote' | 'rollover';
+
+/** Guard de entrada (P1-e). O fluxo é declarado explicitamente (sem default silencioso):
+ *  - 'lote' (vários vencimentos num prazo só) inventa prazo → não suportado (registrar 1 por título);
+ *  - 'rollover' exige a operação de origem (senão o principal rolado seria re-contado). */
+export function motivoFluxoRegistro(input: {
+  fluxo?: FluxoRegistro;
+  operacao_origem_id?: string | null;
+}): 'ok' | 'fluxo_nao_suportado' {
+  if (input.fluxo === 'lote') return 'fluxo_nao_suportado';
+  if (input.fluxo === 'rollover' && !input.operacao_origem_id) return 'fluxo_nao_suportado';
+  return 'ok';
 }
 
 /** Sugere um hurdle a partir do custo médio ponderado (por saldo) do CET das dívidas do F1.

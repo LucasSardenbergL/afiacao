@@ -217,6 +217,7 @@ export default function FinanceiroAntecipacao() {
         onOpenChange={setDialogOpen}
         antecipacao={editando}
         defaultCompany={selectedCompany}
+        operacoes={lista}
       />
 
       {/* ── Confirmação de remoção (soft delete) ── */}
@@ -234,7 +235,8 @@ export default function FinanceiroAntecipacao() {
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                if (excluindo) softDelete.mutate({ id: excluindo.id, company: selectedCompany });
+                // P2-a: invalida o cache da empresa DA OPERAÇÃO (não do seletor, que pode ter mudado).
+                if (excluindo) softDelete.mutate({ id: excluindo.id, company: excluindo.company });
                 setExcluindo(null);
               }}
             >

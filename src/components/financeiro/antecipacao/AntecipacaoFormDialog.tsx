@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Select,
   SelectContent,
@@ -46,6 +46,13 @@ const numOpcional = (v: string): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 const num = (v: string): number => numOpcional(v) ?? 0;
+// Preview ao vivo: texto inválido → NaN (custoOperacao degrada e o preview some); '' → 0 (P1-a/Codex).
+const numPreview = (v: string): number => {
+  const t = (v ?? '').trim();
+  if (t === '') return 0;
+  const n = Number(t.replace(',', '.'));
+  return Number.isFinite(n) ? n : NaN;
+};
 
 const VALOR_REGEX = /^\d{1,15}([.,]\d{1,2})?$/;
 const valorObrig = z
@@ -70,7 +77,9 @@ const antecipSchema = z
     data_vencimento: z.string().min(1, 'Informe o vencimento'),
     referencia: z.string(),
     observacao: z.string(),
-    lote: z.boolean(),
+    // Fluxo declarado sem default (P1-e): força a escolha; lote bloqueia; rollover exige origem.
+    fluxo: z.enum(['um_vencimento', 'lote', 'rollover']).optional(),
+    operacao_origem_id: z.string(),
   })
   .superRefine((v, ctx) => {
     const bruto = num(v.valor_bruto);
@@ -91,11 +100,16 @@ const antecipSchema = z
         message: 'O vencimento deve ser depois da data da operação.',
       });
     }
-    if (motivoFluxoRegistro({ lote: v.lote }) !== 'ok') {
+    if (!v.fluxo) {
+      ctx.addIssue({ path: ['fluxo'], code: z.ZodIssueCode.custom, message: 'Escolha o tipo de operação.' });
+    } else if (motivoFluxoRegistro({ fluxo: v.fluxo, operacao_origem_id: v.operacao_origem_id || null }) !== 'ok') {
       ctx.addIssue({
-        path: ['lote'],
+        path: [v.fluxo === 'lote' ? 'fluxo' : 'operacao_origem_id'],
         code: z.ZodIssueCode.custom,
-        message: 'Lote com vários vencimentos inventa prazo. Registre uma operação por título/vencimento.',
+        message:
+          v.fluxo === 'lote'
+            ? 'Lote com vários vencimentos inventa prazo. Registre uma operação por título/vencimento.'
+            : 'Selecione a operação de origem do rollover (registra só o caixa novo).',
       });
     }
   });
@@ -114,7 +128,8 @@ function toForm(a: Antecipacao | null): AntecipFormValues {
     data_vencimento: a?.data_vencimento ?? '',
     referencia: a?.referencia ?? '',
     observacao: a?.observacao ?? '',
-    lote: false,
+    fluxo: a ? (a.operacao_origem_id ? 'rollover' : 'um_vencimento') : undefined,
+    operacao_origem_id: a?.operacao_origem_id ?? '',
   };
 }
 
@@ -129,9 +144,17 @@ interface Props {
   antecipacao: Antecipacao | null;
   /** Empresa pré-selecionada ao criar. */
   defaultCompany: Company;
+  /** Operações vivas da empresa (p/ o seletor de origem do rollover, P1-e). */
+  operacoes: Antecipacao[];
 }
 
-export function AntecipacaoFormDialog({ open, onOpenChange, antecipacao, defaultCompany }: Props) {
+export function AntecipacaoFormDialog({
+  open,
+  onOpenChange,
+  antecipacao,
+  defaultCompany,
+  operacoes,
+}: Props) {
   const upsert = useUpsertAntecipacao();
   const {
     register,
@@ -150,12 +173,13 @@ export function AntecipacaoFormDialog({ open, onOpenChange, antecipacao, default
     reset({ ...toForm(antecipacao), company: antecipacao?.company ?? defaultCompany });
   }, [open, antecipacao, defaultCompany, reset]);
 
-  // Preview do custo/taxa AO VIVO (helper puro; nunca gravado).
+  // Preview do custo/taxa AO VIVO (helper puro; nunca gravado). numPreview: inválido → NaN (some).
   const w = watch();
+  const origens = operacoes.filter((o) => o.id !== antecipacao?.id);
   const preview = custoOperacao({
-    valor_bruto: num(w.valor_bruto ?? ''),
-    custos_avulsos: num(w.custos_avulsos ?? ''),
-    valor_liquido: num(w.valor_liquido ?? ''),
+    valor_bruto: numPreview(w.valor_bruto ?? ''),
+    custos_avulsos: numPreview(w.custos_avulsos ?? ''),
+    valor_liquido: numPreview(w.valor_liquido ?? ''),
     data_operacao: w.data_operacao ?? '',
     data_vencimento: w.data_vencimento ?? '',
   });
@@ -174,6 +198,7 @@ export function AntecipacaoFormDialog({ open, onOpenChange, antecipacao, default
       data_vencimento: v.data_vencimento,
       referencia: v.referencia.trim() || null,
       observacao: v.observacao.trim() || null,
+      operacao_origem_id: v.fluxo === 'rollover' ? v.operacao_origem_id || null : null,
     };
     try {
       await upsert.mutateAsync(payload);
@@ -310,26 +335,74 @@ export function AntecipacaoFormDialog({ open, onOpenChange, antecipacao, default
             <Textarea id="ant-obs" rows={2} {...register('observacao')} />
           </div>
 
-          {/* Guard de lote (fluxo_nao_suportado) */}
-          <Controller
-            control={control}
-            name="lote"
-            render={({ field }) => (
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="ant-lote"
-                    checked={field.value}
-                    onCheckedChange={(c) => field.onChange(c === true)}
-                  />
-                  <Label htmlFor="ant-lote" className="font-normal text-sm">
-                    Esta operação cobre vários títulos com vencimentos diferentes?
-                  </Label>
-                </div>
-                {errors.lote && <p className="text-xs text-status-warning">{errors.lote.message}</p>}
+          {/* Fluxo declarado (P1-e): sem default silencioso — lote bloqueia, rollover exige a origem. */}
+          <div className="space-y-2 rounded-md border border-border p-3">
+            <Label className="text-sm">Tipo de operação</Label>
+            <Controller
+              control={control}
+              name="fluxo"
+              render={({ field }) => (
+                <RadioGroup
+                  value={field.value ?? ''}
+                  onValueChange={field.onChange}
+                  className="grid gap-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="um_vencimento" id="fluxo-um" />
+                    <Label htmlFor="fluxo-um" className="font-normal text-sm">
+                      Um único vencimento
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="lote" id="fluxo-lote" />
+                    <Label htmlFor="fluxo-lote" className="font-normal text-sm">
+                      Lote de vários vencimentos
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="rollover" id="fluxo-roll" />
+                    <Label htmlFor="fluxo-roll" className="font-normal text-sm">
+                      Renovação/rollover de operação existente
+                    </Label>
+                  </div>
+                </RadioGroup>
+              )}
+            />
+            {errors.fluxo && <p className="text-xs text-status-warning">{errors.fluxo.message}</p>}
+
+            {w.fluxo === 'rollover' && (
+              <div className="space-y-1 pt-1">
+                <Label className="text-sm">Operação de origem (registra só o caixa NOVO)</Label>
+                <Controller
+                  control={control}
+                  name="operacao_origem_id"
+                  render={({ field }) => (
+                    <Select value={field.value || undefined} onValueChange={field.onChange}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione a operação renovada" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {origens.length === 0 ? (
+                          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                            Nenhuma operação para renovar.
+                          </div>
+                        ) : (
+                          origens.map((o) => (
+                            <SelectItem key={o.id} value={o.id}>
+                              {o.banco ?? '—'} · {o.valor_bruto.toLocaleString('pt-BR')} · venc {o.data_vencimento}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+                {errors.operacao_origem_id && (
+                  <p className="text-xs text-status-warning">{errors.operacao_origem_id.message}</p>
+                )}
               </div>
             )}
-          />
+          </div>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

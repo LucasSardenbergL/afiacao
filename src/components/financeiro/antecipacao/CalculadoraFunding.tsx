@@ -22,8 +22,10 @@ import { useHurdleSugerido } from '@/hooks/useAntecipacoes';
 import type { Company, FundingInput, HurdleUnidade } from '@/lib/financeiro/antecipacao-types';
 
 const num = (v: string): number => {
-  const n = Number(v.trim().replace(',', '.'));
-  return Number.isFinite(n) ? n : 0;
+  const t = v.trim();
+  if (t === '') return 0; // ausente → 0 (campo opcional); required será pego por !(x > 0) no helper
+  const n = Number(t.replace(',', '.'));
+  return Number.isFinite(n) ? n : NaN; // texto inválido → NaN (o helper degrada; nunca 0 silencioso, P1-a)
 };
 const pctToDec = (v: string): number => num(v) / 100; // usuário digita 2,5 → 0,025
 const pct = (v: number | null) => (v == null ? '—' : `${(v * 100).toFixed(2)}%`);

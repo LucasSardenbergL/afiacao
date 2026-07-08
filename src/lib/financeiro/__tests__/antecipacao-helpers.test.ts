@@ -227,6 +227,44 @@ describe('compararFunding — Job B (comparação de FUNDING, nunca "vale a pena
     expect(r.custo).toBeCloseTo(3_500, 2); // 100000+500−97000
   });
 
+  it('taxa da oferta incide sobre a FACE — avulsos entram no custo à parte (P1-c/Codex)', () => {
+    // face 100000, 2% a.m. em 30d, avulsos 500. líquido = 100000/1.02 (NÃO 100500/1.02); custo = 100500 − líquido.
+    const r = compararFunding({
+      valor_titulo: 100_000,
+      dias: 30,
+      custos_avulsos: 500,
+      taxa_ofertada: { valor: 0.02, unidade: 'efetiva_am' },
+      hurdle: { valor: 0.3, unidade: 'efetiva_aa' },
+    });
+    expect(r.motivo).toBe('ok');
+    const liq = 100_000 / 1.02;
+    expect(r.custo).toBeCloseTo(100_500 - liq, 2); // ~2460,78 — NÃO ~1970,59 (que seria base/(1+tp))
+  });
+
+  it('hurdle com valor NaN → hurdle_unidade_invalida, veredito null (não "dentro" falso, P1-b/Codex)', () => {
+    const r = compararFunding({
+      valor_titulo: 100_000,
+      dias: 30,
+      liquido_ofertado: 99_000,
+      hurdle: { valor: NaN, unidade: 'efetiva_aa' },
+    });
+    expect(r.motivo).toBe('hurdle_unidade_invalida');
+    expect(r.veredito).toBeNull();
+    expect(r.custo).toBeCloseTo(1_000, 2); // o custo ainda aparece
+  });
+
+  it('taxa E líquido com conflito de centenas de R$ → inputs_conflitantes (tolerância apertada, P1-d/Codex)', () => {
+    // taxa 2% a.m. em 30d → líquido esperado 98039,22; usuário passa 97600 (diff ~439) → conflito real.
+    const r = compararFunding({
+      valor_titulo: 100_000,
+      dias: 30,
+      liquido_ofertado: 97_600,
+      taxa_ofertada: { valor: 0.02, unidade: 'efetiva_am' },
+      hurdle: { valor: 0.3, unidade: 'efetiva_aa' },
+    });
+    expect(r.motivo).toBe('inputs_conflitantes');
+  });
+
   it('hurdle ausente → hurdle_indisponivel: mostra custo, sem veredito', () => {
     const r = compararFunding({ ...base, liquido_ofertado: 97_000 });
     expect(r.motivo).toBe('hurdle_indisponivel');
@@ -274,10 +312,19 @@ describe('compararFunding — Job B (comparação de FUNDING, nunca "vale a pena
   });
 });
 
-describe('motivoFluxoRegistro — guard de entrada (form)', () => {
-  it('lote=true → fluxo_nao_suportado; senão ok', () => {
-    expect(motivoFluxoRegistro({ lote: true })).toBe('fluxo_nao_suportado');
-    expect(motivoFluxoRegistro({})).toBe('ok');
+describe('motivoFluxoRegistro — guard de entrada (form, P1-e)', () => {
+  it('um_vencimento → ok', () => {
+    expect(motivoFluxoRegistro({ fluxo: 'um_vencimento' })).toBe('ok');
+  });
+  it('lote → fluxo_nao_suportado (inventa prazo)', () => {
+    expect(motivoFluxoRegistro({ fluxo: 'lote' })).toBe('fluxo_nao_suportado');
+  });
+  it('rollover sem operação de origem → fluxo_nao_suportado', () => {
+    expect(motivoFluxoRegistro({ fluxo: 'rollover' })).toBe('fluxo_nao_suportado');
+    expect(motivoFluxoRegistro({ fluxo: 'rollover', operacao_origem_id: null })).toBe('fluxo_nao_suportado');
+  });
+  it('rollover COM operação de origem → ok', () => {
+    expect(motivoFluxoRegistro({ fluxo: 'rollover', operacao_origem_id: 'abc' })).toBe('ok');
   });
 });
 

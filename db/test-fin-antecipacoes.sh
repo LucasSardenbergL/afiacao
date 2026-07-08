@@ -140,6 +140,50 @@ Pq -c "SET test.uid='$MASTER'; SET ROLE authenticated; INSERT INTO public.fin_an
 V=$(Pq -c "SET test.uid='$MASTER'; SET ROLE authenticated; SELECT updated_by||'/'||created_by FROM public.fin_antecipacoes WHERE company='oben' AND valor_bruto=2000;" | tail -1)
 eq "A10 trigger força created_by/updated_by=auth.uid()" "$V" "$MASTER/$MASTER"
 
+# ── P2-b (Codex): mais dentes de CHECK/dedup ──────────────────────────────────────────────────
+# A11 valores: custos_avulsos < 0 → check_violation (isola o CHECK de valores; liquido_chk passa)
+R=$(P -tA 2>&1 <<SQL
+DO \$\$ BEGIN
+  INSERT INTO public.fin_antecipacoes(company,tipo,valor_bruto,custos_avulsos,valor_liquido,data_operacao,data_vencimento)
+    VALUES ('oben','duplicata',1000,-1,900,'2026-01-01','2026-02-01');
+  RAISE EXCEPTION 'AVULSOS_NAO_BARROU';
+EXCEPTION WHEN check_violation THEN RAISE NOTICE 'AVULSOS_BARROU'; WHEN OTHERS THEN RAISE; END \$\$;
+SQL
+)
+case "$R" in *AVULSOS_BARROU*) ok "A11 CHECK rejeita custos_avulsos < 0" ;; *) bad "A11 avulsos — veio: $R" ;; esac
+
+# A12 valores: valor_liquido <= 0 → check_violation (liquido=0, bruto=1000: só o valores_chk falha)
+R=$(P -tA 2>&1 <<SQL
+DO \$\$ BEGIN
+  INSERT INTO public.fin_antecipacoes(company,tipo,valor_bruto,valor_liquido,data_operacao,data_vencimento)
+    VALUES ('oben','duplicata',1000,0,'2026-01-01','2026-02-01');
+  RAISE EXCEPTION 'LIQZERO_NAO_BARROU';
+EXCEPTION WHEN check_violation THEN RAISE NOTICE 'LIQZERO_BARROU'; WHEN OTHERS THEN RAISE; END \$\$;
+SQL
+)
+case "$R" in *LIQZERO_BARROU*) ok "A12 CHECK rejeita valor_liquido <= 0" ;; *) bad "A12 liq-zero — veio: $R" ;; esac
+
+# A13 dedup com banco NULL: coalesce(banco,'') deduplica mesmo sem banco (2ª igual → unique_violation)
+Pq -c "INSERT INTO public.fin_antecipacoes(company,tipo,valor_bruto,valor_liquido,data_operacao,data_vencimento,referencia) VALUES ('colacor','duplicata',5000,4900,'2026-01-01','2026-02-01','NB-1');" >/dev/null
+R=$(P -tA 2>&1 <<SQL
+DO \$\$ BEGIN
+  INSERT INTO public.fin_antecipacoes(company,tipo,valor_bruto,valor_liquido,data_operacao,data_vencimento,referencia)
+    VALUES ('colacor','duplicata',5000,4900,'2026-03-01','2026-04-01','NB-1');
+  RAISE EXCEPTION 'NB_NAO_BARROU';
+EXCEPTION WHEN unique_violation THEN RAISE NOTICE 'NB_BARROU'; WHEN OTHERS THEN RAISE; END \$\$;
+SQL
+)
+case "$R" in *NB_BARROU*) ok "A13 dedup com banco NULL (coalesce '')" ;; *) bad "A13 nb — veio: $R" ;; esac
+
+# A14 dedup libera re-registro APÓS soft-delete (índice parcial WHERE deleted_at IS NULL)
+Pq -c "INSERT INTO public.fin_antecipacoes(company,banco,tipo,valor_bruto,valor_liquido,data_operacao,data_vencimento,referencia) VALUES ('colacor_sc','Itaú','duplicata',3000,2900,'2026-01-01','2026-02-01','SD-1');" >/dev/null
+Pq -c "UPDATE public.fin_antecipacoes SET deleted_at=now() WHERE company='colacor_sc' AND referencia='SD-1';" >/dev/null
+if P -q -c "INSERT INTO public.fin_antecipacoes(company,banco,tipo,valor_bruto,valor_liquido,data_operacao,data_vencimento,referencia) VALUES ('colacor_sc','Itaú','duplicata',3000,2900,'2026-03-01','2026-04-01','SD-1');" >/dev/null 2>&1; then
+  ok "A14 dedup libera re-registro após soft-delete"
+else
+  bad "A14 re-registro após soft-delete foi bloqueado (índice não exclui deletados)"
+fi
+
 # ══ FALSIFICAÇÃO (Lei #3) — sabota → exige VERMELHO → restaura ══
 echo "── falsificação ──"
 
