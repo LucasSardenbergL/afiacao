@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 341
+-- Total de custom migrations: 342
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -380,7 +380,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260705120000', 'fin_dre_custo_tipo', '20260705120000_fin_dre_custo_tipo.sql'),
   ('20260705211043', 'omie_identidade_por_conta', '20260705211043_omie_identidade_por_conta.sql'),
   ('20260707120000', 'seed_fin_dre_custo_tipo_oben', '20260707120000_seed_fin_dre_custo_tipo_oben.sql'),
-  ('20260708120000', 'fin_antecipacoes', '20260708120000_fin_antecipacoes.sql')
+  ('20260708120000', 'fin_antecipacoes', '20260708120000_fin_antecipacoes.sql'),
+  ('20260708171049', 'reposicao_motor_run_marker', '20260708171049_reposicao_motor_run_marker.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1591,7 +1592,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_antecipacoes', 'trigger', 'public', 'trg_fin_antecipacoes_autor', 'fin_antecipacoes'),
   ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_select_master', 'fin_antecipacoes'),
   ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_write_master', 'fin_antecipacoes'),
-  ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_service_all', 'fin_antecipacoes')
+  ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_service_all', 'fin_antecipacoes'),
+  ('reposicao_motor_run_marker', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_motor_run_marker', 'table', 'public', 'reposicao_motor_run', ''),
+  ('reposicao_motor_run_marker', 'index', 'public', 'idx_reposicao_motor_run_empresa_data', 'reposicao_motor_run'),
+  ('reposicao_motor_run_marker', 'rls_policy', 'public', 'reposicao_motor_run_sel', 'reposicao_motor_run'),
+  ('reposicao_motor_run_marker', 'rls_policy', 'public', 'reposicao_motor_run_ins', 'reposicao_motor_run')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2850,7 +2856,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_antecipacoes', 'trigger', 'public', 'trg_fin_antecipacoes_autor', 'fin_antecipacoes'),
   ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_select_master', 'fin_antecipacoes'),
   ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_write_master', 'fin_antecipacoes'),
-  ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_service_all', 'fin_antecipacoes')
+  ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_service_all', 'fin_antecipacoes'),
+  ('reposicao_motor_run_marker', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_motor_run_marker', 'table', 'public', 'reposicao_motor_run', ''),
+  ('reposicao_motor_run_marker', 'index', 'public', 'idx_reposicao_motor_run_empresa_data', 'reposicao_motor_run'),
+  ('reposicao_motor_run_marker', 'rls_policy', 'public', 'reposicao_motor_run_sel', 'reposicao_motor_run'),
+  ('reposicao_motor_run_marker', 'rls_policy', 'public', 'reposicao_motor_run_ins', 'reposicao_motor_run')
 )
 SELECT
   e.migration,
