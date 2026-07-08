@@ -182,6 +182,19 @@ escrita/ação destrutiva/mover dinheiro sem ele pedir (valem as regras de Chrom
 origem duvidosa: confirmar antes). Sem a aba logada aberta, **degrade honesto:** "bytes provam que subiu
 (Passo 4); a renderização eu confirmo quando você abrir o app logado no Chrome (Passo 4b)."
 
+**Exercitado 2026-07-08 (o que esperar antes de tentar):** a aba que a extensão controla é um **contexto
+próprio** — **não herda** a sessão de outra aba/perfil só porque o founder está logado no Chrome. No teste,
+`steu.lovable.app` caiu direto no **`/auth`** e o console trouxe `AuthApiError: Invalid Refresh Token:
+Refresh Token Not Found` (o Supabase guarda a sessão em `localStorage` **por origem**; a aba MCP não tinha a
+chave). Consequências práticas:
+- **RENDER + telas públicas o agente confere SOZINHO** — a SPA React **monta de verdade** aqui (o que os
+  bytes NÃO provam e o `/browse` headless não faz); `/auth`, landing e afins são QA legítimo sem login.
+- **Telas gated exigem o founder logar NA aba do grupo MCP** (`tabs_context_mcp` → ele loga ali), não em
+  outra aba. Detecção barata de "sem sessão": redirect pra `/auth` **ou** `read_console_messages` com o erro
+  de refresh token → **degrade e peça o login; o agente NUNCA digita credenciais** (linha vermelha).
+- Sanidade útil de graça: `read_console_messages onlyErrors` na tela renderizada — mas o `Invalid Refresh
+  Token` numa aba deslogada é **esperado** (fail-closed do auth), não regressão.
+
 ### Passo 5 — Confirmar honestamente
 
 - Frontend: "✅ no ar — `ALVO` presente em `<chunk>`, entry hash `<novo>`" **ou** "❌ ainda o build velho (hash inalterado / alvo ausente) — Publish pendente".
@@ -225,5 +238,5 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
 - [x] **Edge:** verificação por escada — N1 existência (`verify-edge.sh`, OPTIONS, automático) · N2 versão (Management API, handoff de PAT) · N3 comportamento (probe gated). Fecha a assimetria com o frontend.
 - [x] **Smoke E2E autônomo:** carimbo de SHA no build (`__BUILD_SHA__`) + `monitor-deploy.sh` (cron) compara o ar vs `origin/main`. **Exercido em prod 2026-06-26** (pós-Publish do #1065): o carimbo está no ar mas vem `"dev"` (Lovable builda sem `.git`) ⇒ SHA determinístico inviável neste host; **fallback de sentinela validado ponta-a-ponta** (`get_ultimos_precos_cliente` PRESENTE → exit 0). Regra firmada: no cron, **sentinela obrigatória + URL com `https://`** (ver ⚠️ acima).
 - [x] **Varredura PARALELA (2026-07-07):** `xargs -P 8` no crawl + halt-on-hit (`exit 255`) no grep do alvo. O bundle passou de 300 chunks (união medida 308–560) — sequencial estourava 600s (exit 124, não terminava); no mesmo bundle (308 ch, sentinela ausente) **299s → 61s (~4,9×), mesmo exit**. Enumeração/UNIÃO **inalterada** (worker-por-arquivo → sem intercalação). `PAR=<n>` overridável. Rede: harness local + gate `run.sh`.
-- [x] **QA visual pós-Publish (Passo 4b, 2026-07-07):** padrão documentado — **Claude-in-Chrome na sessão logada do founder** (ele abre 1×, o agente confere as telas). `/browse` headless não monta a SPA (3 falhas); Chrome MCP genérico deu timeout CDP de 45s. Caso de sucesso: config do PostHog feita pelo agente sozinho.
+- [x] **QA visual pós-Publish (Passo 4b, 2026-07-07):** padrão documentado — **Claude-in-Chrome na sessão logada do founder** (ele abre 1×, o agente confere as telas). `/browse` headless não monta a SPA (3 falhas); Chrome MCP genérico deu timeout CDP de 45s. Caso de sucesso: config do PostHog feita pelo agente sozinho. **Exercitado 2026-07-08:** RENDER confirmado (a SPA monta no Chrome real; QA de tela pública `/auth` OK) — mas a aba do grupo MCP veio **sem sessão** (`Invalid Refresh Token`), então **telas gated dependem do founder logar NA aba MCP**; agente nunca digita credenciais. Detalhe no Passo 4b.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
