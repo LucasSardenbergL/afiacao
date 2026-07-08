@@ -108,6 +108,20 @@ Montar pro founder colar no chat do Lovable (um por edge tocada):
 # exit 0 = no ar · 1 = ausente (Publish pendente / alvo não-literal) · 2 = enumeração quebrada
 ```
 
+**Escolher a string-alvo — refactor visual NÃO tem texto novo.** A sentinela ideal é texto de UI
+literal e único do commit. Mas refactor puramente visual (spinner→skeleton, cor→token, troca de
+layout) não adiciona texto — e a string precisa estar em **JSX renderizado**: comentário (`//`),
+teste e edge NÃO entram no bundle (mordido em prod 2026-07-07: `'identidade não provada'` só vivia
+num comentário → falso "ausente", não prova nada). Duas saídas:
+- **Calibrar** com uma string RENDERIZADA já existente da própria página (um `<h2>`/label antigo) —
+  prova que o chunk certo está no ar + o método enumera (não é falso-negativo). Não prova a versão.
+- **Provar a versão** por **assinatura estrutural** no chunk da página, baixado direto
+  (`curl .../assets/<Página>-<hash>.js`): a **prop/classe NOVA presente E a marca REMOVIDA ausente**,
+  as duas no MESMO chunk (uma só pode dar falso-positivo por reuso). Ex. spinner→skeleton (provado
+  #1215): `variant:"detail"` presente (o `<PageSkeleton>` novo) **+** `animate-spin` ausente (o
+  `<Loader2>` que saiu). Pela atomicidade do Publish (build da `main` inteira), 1 página provada ⇒ o
+  lote todo no ar.
+
 ⚠️ Guard embutido (exit 2): contagem 0/1 = enumeração quebrada (formato do bundler/Workbox mudou) —
 NÃO conclua "não está no ar"; conserte o script primeiro. O `/browse` do gstack NÃO renderiza esta
 SPA (React não monta) — a verificação visual fica no Chrome real do founder; o maior sinal sem o
