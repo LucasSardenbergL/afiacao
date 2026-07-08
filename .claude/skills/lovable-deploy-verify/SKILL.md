@@ -18,12 +18,14 @@ description: >-
 
 # Lovable Deploy & Verify
 
-> **v1.2 — método de enumeração validado em produção + 2ª opinião do Codex (2026-06-18).** A
-> verificação por bytes (Passo 4) enumera os chunks pela **UNIÃO** de duas fontes que sozinhas têm
-> furos: o fechamento transitivo do grafo lazy do Vite (o entry sozinho perdia o 2º nível — 260 vs
-> 274) e o precache do Workbox (`/sw.js`, que omite ~6 chunks grandes via globIgnores/maxFileSize).
-> Empacotado em [`scripts/verify-frontend.sh`](scripts/verify-frontend.sh). **Pendência única:** o
-> *smoke* ponta-a-ponta num Publish real. Irmã da `lovable-db-operator` (lado do banco).
+> **v1.3 — enumeração validada em prod + Codex (2026-06-18); varredura PARALELA + QA visual (2026-07-07).**
+> A verificação por bytes (Passo 4) enumera os chunks pela **UNIÃO** de duas fontes que sozinhas têm furos:
+> o fechamento transitivo do grafo lazy do Vite (o entry sozinho perdia o 2º nível — 260 vs 274) e o
+> precache do Workbox (`/sw.js`, que omite chunks grandes via globIgnores/maxFileSize). Empacotado em
+> [`scripts/verify-frontend.sh`](scripts/verify-frontend.sh), agora com **`xargs -P` + halt-on-hit** (o
+> bundle passou de 300 chunks — 1-a-1 estourava 600s; medido **~5 min → ~1 min**, mesmo exit) e rede de
+> regressão local ([`evals/verify-frontend-eval.sh`](evals/verify-frontend-eval.sh)). Verificação **visual**
+> pós-Publish: **Passo 4b** (Claude-in-Chrome logado). Irmã da `lovable-db-operator` (lado do banco).
 
 ## Por que esta skill existe (leia antes de qualquer coisa)
 
@@ -108,6 +110,15 @@ Montar pro founder colar no chat do Lovable (um por edge tocada):
 # exit 0 = no ar · 1 = ausente (Publish pendente / alvo não-literal) · 2 = enumeração quebrada
 ```
 
+> **Varredura PARALELA (não estoura mais o timeout).** O crawl e o grep do alvo rodam com `xargs -P 8`
+> (override `PAR=<n>`); o grep tem **halt-on-hit** — o 1º chunk que casa faz `exit 255` → o xargs para de
+> disparar novos. O bundle já passou de **300 chunks**: 1-a-1 sequencial **estourava 600s** (medido: exit
+> 124, nem terminava — era a fonte dos "4 timeouts + 4 exit 143" numa sessão); paralelo varre tudo em **~1
+> min**, menos no caso comum (string presente para cedo). Cada worker escreve no próprio arquivo → **sem
+> intercalação** de linhas; a lógica da UNIÃO (fechamento transitivo ∪ precache) é **idêntica**. Rede de
+> regressão: `evals/verify-frontend-eval.sh` (harness local determinístico — 2º nível, precache, exit
+> 0/1/2 + `--falsify`; entra no gate `evals/run.sh`).
+
 **Escolher a string-alvo — refactor visual NÃO tem texto novo.** A sentinela ideal é texto de UI
 literal e único do commit. Mas refactor puramente visual (spinner→skeleton, cor→token, troca de
 layout) não adiciona texto — e a string precisa estar em **JSX renderizado**: comentário (`//`),
@@ -123,9 +134,9 @@ num comentário → falso "ausente", não prova nada). Duas saídas:
   lote todo no ar.
 
 ⚠️ Guard embutido (exit 2): contagem 0/1 = enumeração quebrada (formato do bundler/Workbox mudou) —
-NÃO conclua "não está no ar"; conserte o script primeiro. O `/browse` do gstack NÃO renderiza esta
-SPA (React não monta) — a verificação visual fica no Chrome real do founder; o maior sinal sem o
-founder é este, pelos bytes.
+NÃO conclua "não está no ar"; conserte o script primeiro. Os bytes provam que o **código subiu**; se a
+mudança for **visual** (renderização/comportamento na tela), a prova complementar é o **QA visual do
+Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
 
 **Edge — a escada (o código da edge NÃO é servido em produção, logo não há prova por bytes):**
 
@@ -138,6 +149,38 @@ founder é este, pelos bytes.
 - **N1 existência** — automático e barato, mas só prova que a função está servida, **não** que é a versão nova.
 - **N2 versão** (canônico) — `version` sobe e `updated_at` fica recente a cada deploy. Precisa de PAT (handoff) ou o founder confere "Active + updated agora" no Lovable.
 - **N3 comportamento** — chamar com a assinatura da mudança (gated → founder logado / cron secret). A única prova de que o COMPORTAMENTO novo está no ar.
+
+### Passo 4b — QA visual pós-Publish (Claude-in-Chrome na sessão logada do founder)
+
+Os bytes (Passo 4) provam que o **código subiu** — não que a tela **renderiza/comporta** certo. Refactor
+puramente visual (spinner→skeleton, layout, token de cor) e perguntas de tela ("cadê os R$ 5,1 mi neste
+painel?") pedem **olho**. Duas armadilhas já registradas — **não repita**:
+
+- **`/browse` do gstack (headless) NÃO serve:** a SPA React **não monta** nele (3 falhas). Não é bug do
+  browse — é headless sem o runtime da app.
+- **Chrome MCP genérico** deu timeout CDP de 45s em outra sessão.
+
+**O que FUNCIONA** (caso de sucesso real: o agente configurou o PostHog inteiro sozinho): **Claude-in-Chrome
+no Chrome REAL logado do founder.** A sessão autenticada (login/RLS/lente "Ver como") já está viva na aba
+dele — o agente **navega e confere**, em vez de devolver a verificação pro olho do founder ("não achei os
+R$ 5,1 mi nessa tela, quer entrar e ver?").
+
+**O padrão (inverte o ônus — o AGENTE confere, não o founder):**
+1. **Handoff do founder = 1 clique:** abrir o app logado (`steu.lovable.app`) no Chrome real com a extensão
+   **Claude-in-Chrome** conectada. É o ÚNICO passo manual — sem sessão autenticada não há como ler tela
+   gated (login/RLS/impersonação).
+2. **Carregar as tools numa chamada só** (são *deferred*): `ToolSearch` →
+   `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__read_page,mcp__claude-in-chrome__computer`
+   (não uma-a-uma — cada `ToolSearch` é um round-trip).
+3. **`tabs_context_mcp`** acha a aba já aberta → **`navigate`** pra rota-alvo → **`read_page`**/screenshot lê
+   o estado renderizado → **`computer`** só se precisar interagir (abrir menu, filtrar, paginar).
+4. **Assertar o que a mudança prometia** (o número aparece? o skeleton no lugar do spinner? o fluxo
+   completa?) e **reportar com a evidência lida** (texto/print) — nunca "deve estar ok".
+
+⚠️ **Escopo & segurança:** é a sessão REAL do founder — **só LEITURA/navegação de QA**; nada de
+escrita/ação destrutiva/mover dinheiro sem ele pedir (valem as regras de Chrome/computer-use; URL de
+origem duvidosa: confirmar antes). Sem a aba logada aberta, **degrade honesto:** "bytes provam que subiu
+(Passo 4); a renderização eu confirmo quando você abrir o app logado no Chrome (Passo 4b)."
 
 ### Passo 5 — Confirmar honestamente
 
@@ -177,8 +220,10 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
 
 ## Estado / pendências
 - [x] Enumeração = **UNIÃO** (fechamento transitivo do Vite ∪ precache do Workbox) — nenhuma fonte sozinha é completa (closure 274 ⊃ precache 268; precache omite 6). Validado em prod + Codex; empacotado em `scripts/verify-frontend.sh`.
-- [x] `evals/` com classificação de diff (8 casos + runner + mutation-check; espelha `lovable-db-operator/evals`).
+- [x] `evals/` = **gate dos 2 passos**: classificação de diff (8 casos, Passo 1) **+** verificação por bytes (harness local `verify-frontend-eval.sh`, Passo 4: 2º nível, precache, exit 0/1/2), ambos com `--falsify`. Um `bash evals/run.sh` cobre tudo.
 - [x] Domínio canônico `steu.lovable.app` confirmado (HTTP 200).
 - [x] **Edge:** verificação por escada — N1 existência (`verify-edge.sh`, OPTIONS, automático) · N2 versão (Management API, handoff de PAT) · N3 comportamento (probe gated). Fecha a assimetria com o frontend.
 - [x] **Smoke E2E autônomo:** carimbo de SHA no build (`__BUILD_SHA__`) + `monitor-deploy.sh` (cron) compara o ar vs `origin/main`. **Exercido em prod 2026-06-26** (pós-Publish do #1065): o carimbo está no ar mas vem `"dev"` (Lovable builda sem `.git`) ⇒ SHA determinístico inviável neste host; **fallback de sentinela validado ponta-a-ponta** (`get_ultimos_precos_cliente` PRESENTE → exit 0). Regra firmada: no cron, **sentinela obrigatória + URL com `https://`** (ver ⚠️ acima).
+- [x] **Varredura PARALELA (2026-07-07):** `xargs -P 8` no crawl + halt-on-hit (`exit 255`) no grep do alvo. O bundle passou de 300 chunks (união medida 308–560) — sequencial estourava 600s (exit 124, não terminava); no mesmo bundle (308 ch, sentinela ausente) **299s → 61s (~4,9×), mesmo exit**. Enumeração/UNIÃO **inalterada** (worker-por-arquivo → sem intercalação). `PAR=<n>` overridável. Rede: harness local + gate `run.sh`.
+- [x] **QA visual pós-Publish (Passo 4b, 2026-07-07):** padrão documentado — **Claude-in-Chrome na sessão logada do founder** (ele abre 1×, o agente confere as telas). `/browse` headless não monta a SPA (3 falhas); Chrome MCP genérico deu timeout CDP de 45s. Caso de sucesso: config do PostHog feita pelo agente sozinho.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
