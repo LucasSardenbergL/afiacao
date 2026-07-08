@@ -76,35 +76,32 @@ export function useCustomerScore(customerId: string | undefined, farmerId: strin
   });
 }
 
-/** Itens preferidos via Omie (precisa do código Omie do cliente). */
+interface PreferredItem {
+  product_codigo: string | null;
+  product_descricao: string | null;
+  familia: string | null;
+  order_count: number | null;
+  last_ordered_at: string | null;
+  account: string | null;
+  omie_codigo_produto: number;
+}
+
+/** Itens preferidos via Omie. FAIL-CLOSED enquanto a identidade Omie por conta não for resolvível
+ *  (Fatia 2 do fix de rótulo — BUG de colisão de namespace). customer_preferred_items é chaveada por
+ *  (omie_codigo_cliente, account) da conta de VENDA. O espelho omie_clientes rotula TUDO 'colacor' (o
+ *  default que nenhum writer seta), mas é um MIX de código oben (bulk syncCustomers) + colacor_sc
+ *  (writers manuais), de numeração INDEPENDENTE que colide entre contas. Casar preferred_items pelo
+ *  código do espelho sem account confiável traz item de OUTRO cliente por colisão — provado via
+ *  psql-ro (2026-07): filtrar account='oben' casou 100% ERRADO (~20 fichas), 'colacor' 0 match.
+ *  Precisão>recall: não exibimos nada até a proof-table (omie_customer_account_map) / re-rótulo por
+ *  conta (Fatia 3) casarem por (user_id, account, código). Ver
+ *  docs/superpowers/specs/2026-07-07-espelho-omie-rotulo-por-conta-design.md. */
 export function useCustomerPreferredItems(customerId: string | undefined) {
   return useQuery({
     queryKey: ['c360-preferred', customerId],
     enabled: !!customerId,
     staleTime: 5 * 60_000,
-    queryFn: async () => {
-      // P0-B follow-up: NÃO se filtra empresa_omie aqui de propósito. customer_preferred_items é
-      // MULTI-conta (itens oben E colacor, exibidos juntos; a régua usa os oben) enquanto o espelho
-      // guarda o código colacor_sc — nenhum filtro de conta ÚNICA no espelho casa com todos os itens.
-      // O descasamento de namespace (código do espelho × código da venda em preferred_items) é um bug
-      // de DESIGN pré-existente que se conserta no downstream (buscar por account+código certo), não
-      // com um .eq aqui — um filtro só daria falsa segurança. Ver nota no PR. maybeSingle é seguro
-      // hoje (UNIQUE(user_id) → 1 linha); quando a chave virar composta, ESTE consumidor precisa da
-      // correção de design, não de um filtro.
-      const { data: link } = await supabase
-        .from('omie_clientes')
-        .select('omie_codigo_cliente')
-        .eq('user_id', customerId!)
-        .maybeSingle();
-      if (!link?.omie_codigo_cliente) return [];
-      const { data } = await supabase
-        .from('customer_preferred_items')
-        .select('product_codigo, product_descricao, familia, order_count, last_ordered_at, account, omie_codigo_produto')
-        .eq('omie_codigo_cliente', link.omie_codigo_cliente)
-        .order('last_ordered_at', { ascending: false, nullsFirst: false })
-        .limit(10);
-      return data ?? [];
-    },
+    queryFn: (): PreferredItem[] => [],
   });
 }
 
