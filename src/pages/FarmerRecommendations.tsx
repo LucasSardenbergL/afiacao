@@ -11,6 +11,7 @@ import {
   DollarSign, Target, Search, ChevronDown, ChevronUp, Filter,
   Plus,
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -40,9 +41,7 @@ const FarmerRecommendations = () => {
 
   if (authLoading || loading) {
     return (
-      <div className="flex items-center justify-center py-32">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
+      <PageSkeleton variant="list" />
     );
   }
   if (!isStaff) { navigate('/', { replace: true }); return null; }

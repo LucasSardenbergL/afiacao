@@ -15,6 +15,7 @@ import {
   Loader2, Plus,
   TrendingUp, TrendingDown, Minus
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -46,8 +47,10 @@ const FarmerGovernance = () => {
 
   if (authLoading || loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div className="min-h-screen bg-background pb-24">
+        <main className="px-4 py-4 max-w-lg mx-auto">
+          <PageSkeleton variant="form" />
+        </main>
       </div>
     );
   }

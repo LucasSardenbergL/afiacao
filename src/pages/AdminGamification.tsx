@@ -10,9 +10,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { 
   Trophy, Search, Target, Shield, Award, Star, 
-  Heart, Users, Loader2, Eye,
+  Heart, Users, Eye,
   BookOpen, Zap
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 
 interface RankedUser {
   user_id: string;
@@ -113,9 +114,9 @@ const AdminGamification = () => {
   if (authLoading || loading || userRole === null) {
     return (
       <div className="min-h-screen bg-background pb-24">
-        <div className="flex items-center justify-center pt-32">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <main className="pt-16 px-4 max-w-4xl mx-auto">
+          <PageSkeleton variant="list" />
+        </main>
       </div>
     );
   }
