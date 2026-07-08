@@ -56,7 +56,9 @@ trap 'rm -f "$err"' EXIT
 
 rc=1
 tentativa=0
-for backoff in 0 20 60; do
+# backoffs sobrescritíveis por env (testes usam "0 0 0" pra não esperar de verdade)
+read -ra backoffs <<< "${CODEX_ASYNC_BACKOFFS:-0 20 60}"
+for backoff in "${backoffs[@]}"; do
   tentativa=$((tentativa+1))
   [ "$backoff" -gt 0 ] && { echo "retry em ${backoff}s (tentativa $tentativa)…" >&2; sleep "$backoff"; }
 
