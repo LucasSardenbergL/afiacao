@@ -6,6 +6,7 @@ import type {
   CustoOperacao,
   FundingInput,
   FundingResult,
+  HurdleSugerido,
   HurdleUnidade,
   MedidorResult,
   MesAntecipacao,
@@ -193,4 +194,23 @@ export function compararFunding(input: FundingInput): FundingResult {
 /** Guard de entrada: lote multi-venc num prazo só inventa prazo → não suportado em v1 (registrar 1 por título). */
 export function motivoFluxoRegistro(input: { lote?: boolean }): 'ok' | 'fluxo_nao_suportado' {
   return input.lote === true ? 'fluxo_nao_suportado' : 'ok';
+}
+
+/** Sugere um hurdle a partir do custo médio ponderado (por saldo) do CET das dívidas do F1.
+ *  FALLBACK (P1-3): custo médio de dívida ativa ≠ custo marginal de hoje — o editável é primário.
+ *  CET = efetiva a.a. → unidade 'efetiva_aa'. Ausente ≠ zero: ignora sem cet/saldo; nenhuma → sem_dados. */
+export function sugerirHurdle(
+  dividas: Array<{ saldo: number; cet_aa: number | null }>,
+): HurdleSugerido {
+  let pesoTotal = 0;
+  let somaPond = 0;
+  for (const d of dividas) {
+    const saldo = Number(d.saldo);
+    const cet = d.cet_aa;
+    if (cet == null || !Number.isFinite(cet) || !Number.isFinite(saldo) || saldo <= 0) continue;
+    pesoTotal += saldo;
+    somaPond += saldo * cet;
+  }
+  if (pesoTotal <= 0) return { valor: null, unidade: null, motivo: 'sem_dados' };
+  return { valor: somaPond / pesoTotal, unidade: 'efetiva_aa', motivo: 'ok' };
 }

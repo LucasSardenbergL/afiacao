@@ -6,6 +6,7 @@ import {
   taxaParaPeriodo,
   compararFunding,
   motivoFluxoRegistro,
+  sugerirHurdle,
 } from '../antecipacao-helpers';
 import type { Antecipacao, HurdleUnidade } from '../antecipacao-types';
 
@@ -277,5 +278,31 @@ describe('motivoFluxoRegistro — guard de entrada (form)', () => {
   it('lote=true → fluxo_nao_suportado; senão ok', () => {
     expect(motivoFluxoRegistro({ lote: true })).toBe('fluxo_nao_suportado');
     expect(motivoFluxoRegistro({})).toBe('ok');
+  });
+});
+
+describe('sugerirHurdle — média ponderada do CET do F1 (fallback, unidade explícita)', () => {
+  it('pondera cet_aa pelo saldo; unidade efetiva_aa', () => {
+    const r = sugerirHurdle([
+      { saldo: 100_000, cet_aa: 0.2 },
+      { saldo: 300_000, cet_aa: 0.3 },
+    ]);
+    expect(r.motivo).toBe('ok');
+    expect(r.valor).toBeCloseTo(0.275, 6); // (100k*0,20 + 300k*0,30)/400k
+    expect(r.unidade).toBe('efetiva_aa');
+  });
+  it('ignora dívidas sem cet_aa ou sem saldo (ausente ≠ zero)', () => {
+    const r = sugerirHurdle([
+      { saldo: 100_000, cet_aa: null },
+      { saldo: 0, cet_aa: 0.5 },
+      { saldo: 200_000, cet_aa: 0.25 },
+    ]);
+    expect(r.valor).toBeCloseTo(0.25, 6); // só a 3ª entra
+  });
+  it('nenhuma dívida com CET → sem_dados (não fabrica 0)', () => {
+    const r = sugerirHurdle([{ saldo: 100_000, cet_aa: null }]);
+    expect(r.motivo).toBe('sem_dados');
+    expect(r.valor).toBeNull();
+    expect(r.unidade).toBeNull();
   });
 });
