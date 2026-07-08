@@ -1,8 +1,9 @@
 import { Navigate, useLocation } from 'react-router-dom';
-import { Loader2, Clock, RefreshCw } from 'lucide-react';
+import { Clock, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { PageSkeleton } from '@/components/ui/page-skeleton';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -13,11 +14,7 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
   const location = useLocation();
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <PageSkeleton variant="auto" />;
   }
 
   if (!user) {
