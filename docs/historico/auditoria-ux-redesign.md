@@ -29,6 +29,8 @@ Trabalho posterior à Fase 4, no mesmo branch. Artefatos em `docs/visual-directi
 
 > PR #4 foi mergeado em 2026-05-14. Auditoria pós-merge (PRs #24-33) capturou 4 issues bloqueantes que o PR #4 introduziu (SQL injection em useGlobalSearch, exposição de profiles sem gate, 66 classes Tailwind quebradas, PostHog DEV pollution) — todos corrigidos. **Lição operacional**: `bun lint && bun build` precisa virar required check no GitHub. ✅ **Feito** — CI (`.github/workflows/ci.yml`) + branch protection exigindo o check `validate` (ver §10). Disciplina: não bypassar com `--admin` de rotina.
 
+> **Esteira PageSkeleton (#1215, jul/2026) — convenção `<Loader2 spin>` full-page → `<PageSkeleton variant>` COMPLETA.** ~70 páginas migradas + o último gate de página inteira, `ProtectedRoute` (branch `loading`), fechado no **#1232** → boot sem flash duplo (skeleton → conteúdo, coeso). Verificação de deploy por bytes calibrada para refactor visual em componente **eager** (entry bundle): a marca removida (`animate-spin text-primary`) não era única globalmente (13 telas lazy), então a prova de versão ancorou o chunk pela string renderizada única + assinatura de ausência **com controle positivo irmão** no mesmo chunk. A técnica virou nuance no Passo 4 da skill `lovable-deploy-verify` (**#1238**, decidida via ritual `/codex` com cross-model agreement).
+
 ---
 
 
