@@ -22,7 +22,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **342** custom migrations totais
-- **1225** objetos esperados (criados por estas migrations)
+- **1220** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 343
   - `rls_policy`: 271
@@ -2927,15 +2927,9 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.fin_antecipacoes_write_master` | `fin_antecipacoes` |
 | `rls_policy` | `public.fin_antecipacoes_service_all` | `fin_antecipacoes` |
 
-### `20260708171049_reposicao_motor_run_marker.sql`
+### `20260708164211_selfservice_pr00_fechar_base_crua.sql`
 
-| Tipo | Objeto | Parent |
-| --- | --- | --- |
-| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
-| `table` | `public.reposicao_motor_run` | — |
-| `index` | `public.idx_reposicao_motor_run_empresa_data` | `reposicao_motor_run` |
-| `rls_policy` | `public.reposicao_motor_run_sel` | `reposicao_motor_run` |
-| `rls_policy` | `public.reposicao_motor_run_ins` | `reposicao_motor_run` |
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

@@ -381,7 +381,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260705211043', 'omie_identidade_por_conta', '20260705211043_omie_identidade_por_conta.sql'),
   ('20260707120000', 'seed_fin_dre_custo_tipo_oben', '20260707120000_seed_fin_dre_custo_tipo_oben.sql'),
   ('20260708120000', 'fin_antecipacoes', '20260708120000_fin_antecipacoes.sql'),
-  ('20260708171049', 'reposicao_motor_run_marker', '20260708171049_reposicao_motor_run_marker.sql')
+  ('20260708164211', 'selfservice_pr00_fechar_base_crua', '20260708164211_selfservice_pr00_fechar_base_crua.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
