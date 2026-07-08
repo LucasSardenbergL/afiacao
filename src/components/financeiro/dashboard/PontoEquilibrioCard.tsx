@@ -47,6 +47,14 @@ const MOTIVO_MSG: Record<Exclude<MotivoPE, 'ok'>, { titulo: string; texto: strin
     titulo: 'Sinal ambíguo',
     texto: 'Há despesa com valor negativo no detalhamento (estorno/devolução). O sinal é ambíguo e infla a margem por acidente — PE suspenso.',
   },
+  custo_compartilhado_possivel_duplicidade: {
+    titulo: 'Possível dupla contagem da folha',
+    texto: 'Há folha (2.03.*) no próprio snapshot desta empresa — somar o rateio dobraria o custo. Revise a classificação ou zere o rateio.',
+  },
+  custo_compartilhado_pendente: {
+    titulo: 'Falta ratear a folha',
+    texto: 'A folha desta operação roda em outra empresa do grupo e ainda não foi rateada.',
+  },
 };
 
 export function PontoEquilibrioCard({ company }: { company: string }) {
