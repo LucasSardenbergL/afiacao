@@ -236,6 +236,49 @@ export function ehGateMinimoFaturamento(p: {
   return p.status === 'falha_envio' && p.resposta_canal?.gate === 'minimo_faturamento';
 }
 
+/* ─── Partição da fila de atenção: ação real × barrado por mínimo (A′) ─── */
+//
+// A fila "precisa de atenção" mistura dois animais com risco money-path MUITO
+// diferente:
+//  - BENIGNO: falha_envio por gate de mínimo de faturamento Sayerlack (fornecedor
+//    não fatura < R$3k). O pedido NÃO foi comprado e o motor re-sugere o SKU no
+//    ciclo seguinte se ele seguir abaixo do ponto (ou o estoque normaliza). Não há
+//    risco de compra-dupla — só de stockout silencioso. Vira RUÍDO vermelho que
+//    acumula (o gate não dedup) e gera fadiga de alerta.
+//  - AÇÃO REAL: conciliação de PO (aceito_portal_sem_protocolo / requer_conciliacao
+//    — o pedido PODE já existir no fornecedor), falhas duras do portal, e qualquer
+//    OUTRO falha_envio (SKU sem custo, qtde 0, erro do Omie).
+//
+// ⚠️ PORTAL VENCE SEMPRE (Codex xhigh, money-path): um pedido pode ser gate-mínimo
+// E TAMBÉM estar em conciliação de portal. Recolhê-lo no balde benigno esconderia
+// risco de comprar 2× no fornecedor. Só é benigno quem é gate-mínimo E não tem
+// NENHUM status_envio_portal de atenção.
+export function ehAbaixoMinimoBenigno(p: {
+  status: string;
+  status_envio_portal: StatusEnvioPortal | null | undefined;
+  resposta_canal: { gate?: unknown; [key: string]: unknown } | null | undefined;
+}): boolean {
+  return (
+    ehGateMinimoFaturamento(p) &&
+    !STATUS_PORTAL_PRECISA_ATENCAO.has((p.status_envio_portal ?? 'nao_aplicavel') as StatusEnvioPortal)
+  );
+}
+
+// Particiona a fila (JÁ filtrada por pedidoPrecisaAtencao na query) em:
+//  - vermelha: exige ação humana AGORA (alarme no topo conta ISTO).
+//  - abaixoMinimo: barrado por mínimo do fornecedor, benigno (seção neutra recolhida).
+// Nada some — a soma das duas é a lista de entrada.
+export function particionarAtencao<T extends {
+  status: string;
+  status_envio_portal: StatusEnvioPortal | null | undefined;
+  resposta_canal: { gate?: unknown; [key: string]: unknown } | null | undefined;
+}>(lista: readonly T[]): { vermelha: T[]; abaixoMinimo: T[] } {
+  const vermelha: T[] = [];
+  const abaixoMinimo: T[] = [];
+  for (const p of lista) (ehAbaixoMinimoBenigno(p) ? abaixoMinimo : vermelha).push(p);
+  return { vermelha, abaixoMinimo };
+}
+
 /* ─── Split (PR5) — esconder o pai da lista ─── */
 //
 // Quando um pedido grande é dividido em chunks, o PAI vira status='split_em_filhos':
