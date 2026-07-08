@@ -1683,7 +1683,14 @@ async function deriveOmieAccountIdentity(
   // Espelho SÓ com 1 dono do documento: dup-profiles (mesmo doc, user_ids distintos) podem ter uma linha
   // de espelho de perfil ERRADO/stale que não vale como prova (Codex P1 #5) → força o Omie autoritativo
   // (regs:2, dup-safe). Alinha com o gate do backfill (também 1 dono).
-  const mirrorRows: MirrorRow[] = userIds.length === 1
+  // Fatia 1 do fix de rótulo (BUG-1, money-path): empresa_omie='colacor' no espelho é o DEFAULT
+  // POLUÍDO — os 5 writers gravam sem setar a coluna, então 'colacor' é um MIX de código oben (bulk
+  // syncCustomers, conta 'vendas') + colacor_sc (writers manuais), ZERO colacor real (provado via
+  // psql-ro 2026-07-07). Confiar nele rotearia o pedido colacor ao cliente ERRADO. Para account=
+  // 'colacor' NÃO usa o espelho → mirrorRows=[] força a verificação Omie por documento (needOmie).
+  // Temporário: a Fatia 3 re-rotula por conta e reverte. Ver docs/superpowers/specs/2026-07-07-
+  // espelho-omie-rotulo-por-conta-design.md.
+  const mirrorRows: MirrorRow[] = (userIds.length === 1 && account !== "colacor")
     ? (((await supabase.from("omie_clientes").select("omie_codigo_cliente, omie_codigo_vendedor, empresa_omie").in("user_id", userIds).eq("empresa_omie", account)).data ?? []) as MirrorRow[])
     : [];
 
@@ -1707,7 +1714,11 @@ async function deriveOmieAccountIdentity(
 
   // Backfill gated (auto-cura do espelho): só derivação inequívoca por Omie E com user confiável
   // (exatamente 1 dono do documento). Contested (código de outro/diferente) → fail-closa o PV.
-  if (decision.backfill && userIds.length === 1) {
+  // Fatia 1 (BUG-1): NÃO backfilla colacor enquanto unique_user_omie (1 linha/user) existir. A
+  // verificação Omie forçada acima produz decision.backfill=true; o upsert p_empresa='colacor' sob a
+  // constraint singular poderia CONTESTAR/falhar (a linha do user já existe como 'colacor' poluído) e
+  // BLOQUEAR um pedido colacor legítimo (Codex). A Fatia 3 (onConflict composto) reverte.
+  if (decision.backfill && userIds.length === 1 && account !== "colacor") {
     const { data: status } = await supabase.rpc("omie_cliente_upsert_mapping", {
       p_user_id: userIds[0], p_empresa: account, p_codigo_cliente: decision.codigo_cliente, p_codigo_vendedor: decision.codigo_vendedor,
     });

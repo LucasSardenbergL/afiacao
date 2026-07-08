@@ -350,3 +350,33 @@ describe('guardrail money-path: derivação de identidade Omie por conta (edge U
     expect(bloco, 'a probe deveria cobrir o omie-path com backfill (source omie)').toContain('backfill: true');
   });
 });
+
+// ── Fatia 1 do fix de rótulo (BUG-1): edge não confia no espelho 'colacor' POLUÍDO ──
+// empresa_omie='colacor' é o default nunca-setado pelos 5 writers → MIX de código oben (bulk
+// syncCustomers) + colacor_sc (writers manuais), ZERO colacor real (provado via psql-ro 2026-07-07).
+// Confiar nele rotearia o pedido colacor ao cliente ERRADO (BUG-1, integridade, silencioso). Para
+// account='colacor' o derive NÃO usa o espelho (força verificação Omie por documento) e NÃO backfilla
+// (evitando contest/block sob unique_user_omie). O deploy do Lovable pode reverter isso na main; este
+// guard textual reexpõe no CI. Temporário: a Fatia 3 re-rotula por conta e reverte. Ver
+// docs/superpowers/specs/2026-07-07-espelho-omie-rotulo-por-conta-design.md.
+describe('guardrail money-path: edge ignora o espelho colacor poluído (BUG-1, Fatia 1)', () => {
+  const src = read(VENDAS);
+
+  it('sentinela: leu o edge e o derive existe', () => {
+    expect(src).toContain('deriveOmieAccountIdentity');
+  });
+
+  it('mirror do derive NÃO é usado para account=colacor (força needOmie → Omie por documento)', () => {
+    expect(
+      src,
+      'REGRESSÃO: o derive voltou a usar o espelho para colacor — pedido colacor rotearia ao cliente errado (BUG-1)',
+    ).toMatch(/userIds\.length === 1 && account !== "colacor"/);
+  });
+
+  it('backfill do espelho é desabilitado para colacor (evita contest/block sob unique_user_omie)', () => {
+    expect(
+      src,
+      'REGRESSÃO: o backfill colacor voltou — a verificação forçada poderia bloquear pedido colacor legítimo',
+    ).toMatch(/decision\.backfill && userIds\.length === 1 && account !== "colacor"/);
+  });
+});
