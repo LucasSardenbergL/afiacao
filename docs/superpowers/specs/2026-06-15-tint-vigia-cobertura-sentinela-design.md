@@ -159,6 +159,17 @@ Regras de decisão:
 2. **3º sinal — "marcada-órfã ativa"**: produto `is_tintometric=true`, `ativo=true`, cuja família saiu de bases/concentrados MixMachine (continua no dropdown porque o filtro não olha família). Dashboard-only. **Excluir `ativo=false`** (tombstone benigno — Codex). Baixo volume; fica para v2.
 3. **Raiz da corrida** (torna a tolerância de 30h folgada): rodar a cobertura após cada sync relevante, ou gravar um marcador durável da última correção bem-sucedida (sync_state) — aí o A poderia apertar a janela.
 
+## Comportamento em produção (pós-implementação · 2026-07-08)
+
+Primeiros disparos reais do Check A (03/07 e 08/07); diagnóstico read-only (`psql-ro`) confirmou que **o alerta é auto-curável — sem ação humana.** Registro p/ o próximo plantão não re-diagnosticar:
+
+- **Ciclo de auto-cura (UTC):** watchdog detecta o drift ~03:00 → grava `fin_alertas` + enfileira e-mail; o cron corretor `tint-marcar-bases-diario` (jobid 132, `0 11 * * *`) roda 11:00 e marca; o watchdog seguinte (11:30, `*/30`) vê o check `ok` e **auto-dismissa** (`data_health_watchdog` ramo ELSE: `UPDATE fin_alertas SET dismissed_at=now()`). Fecha sozinho em ≤2h30.
+- **Janela morta do heartbeat:** `fin-sync-heartbeat` (jobid 83, `0 11 * * 1-5`) monta o resumo às 11:00 UTC — **30 min ANTES** do auto-dismiss das 11:30. Logo o e-mail matinal **sempre** mostra o alerta como ativo, mesmo já corrigido no mesmo dia. É ordem de crons, não bug.
+- **Não é falso-positivo de importação:** o item divergente tinha `age_seconds ≈ 78 dias` (produto antigo) — a tolerância de 30h fez seu papel. Gatilho real = reclassificação de `familia` / reativação / perda da marca sobre produto **existente**, não base recém-importada. O alerta guarda só `age_seconds`, não o código do SKU (candidato a melhoria: anexar o código, como faz `vendas_familia_ausente`).
+- **Recorrência:** 2× em 23 dias, ambas auto-resolvidas. Ruído baixo.
+- **Reconhecer da próxima:** e-mail matinal com `tint_cobertura_bases: stale` → `select dismissed_at from fin_alertas where tipo='data_health_tint_cobertura_bases' order by criado_em desc limit 1;`. Se preenchido (~11:30 UTC) = self-heal, nenhuma ação. Revalida com o backlog do pre-flight passo 3 (esperado 0).
+- **Matar o ruído (opcional):** Follow-up item 3 — acoplar `tint_marcar_bases_mixmachine()` ao fim de `omie-sync-metadados` (correção na fonte) fecha a janela antes de o watchdog alertar. Alternativa mais fraca: subir o cron 132 para `*/30`.
+
 ## Apêndice — veredito do Codex (destilado)
 
 > "Não aplique como está. O SQL compila, mas há dois erros de desenho: [P1] Check A confunde latência esperada com falha (corrida das 08:00); [P1] Check B não mede a integridade alegada (faltam account/coerência/alvo). Pre-flight obrigatório — source novo degradado é inexistente→degradado, não ok→degradado. warning para ambos. A no push após eliminar a corrida; B dashboard-only até pre-flight limpo. Preserve alert_channel (heartbeat-only), vendas_familia_ausente (tratamento especial) e estoque_reposicao."
