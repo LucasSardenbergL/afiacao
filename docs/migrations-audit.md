@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **342** custom migrations totais
-- **1220** objetos esperados (criados por estas migrations)
+- **343** custom migrations totais
+- **1228** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 343
-  - `rls_policy`: 271
+  - `function`: 344
+  - `rls_policy`: 272
   - `index`: 207
   - `cron_job`: 144
   - `table`: 133
-  - `trigger`: 68
+  - `trigger`: 69
   - `view`: 55
   - `enum_value`: 4
 
@@ -2930,6 +2930,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260708164211_selfservice_pr00_fechar_base_crua.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260708202033_selfservice_pr01_allowlist_gate.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.ss_allowlist_forca_autor` | — |
+| `function` | `public.selfservice_conta_atual` | — |
+| `table` | `public.selfservice_cliente_allowlist` | — |
+| `index` | `public.idx_ss_allowlist_customer` | `selfservice_cliente_allowlist` |
+| `trigger` | `public.trg_ss_allowlist_autor` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_staff_select` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_gestor_iud` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_service` | `selfservice_cliente_allowlist` |
 
 ## Próximos passos por status
 
