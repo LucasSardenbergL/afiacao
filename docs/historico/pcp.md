@@ -100,3 +100,26 @@ Planos por fase: `docs/superpowers/plans/`.
 **🏁 Fundação (Fase 1) FECHADA (2026-07-05):** 1. dados mestres ✅ · 2. parser ✅ · 3. BOM paramétrica ✅ · 4. OP+etapas ✅ (M1) · 5. apontamento offline c/ consumo-motivo ✅ (M1+M3 `src/pages/...` na rota `/producao/apontamento`) · 6. **corte múltiplo ✅ (M2)**. Próximo: **Fase 2 — Custo & Omie** (backflush fiscal + outbox incluir/concluir OP + validação cruzada de custo com o `custoProducao` que já vem na malha).
 
 **Pendente (founder):** (1) **M1** — aplicar `db/pcp-f1b-m1-execucao.sql` no SQL Editor (destrava a tela de apontamento do M3); (2) **opcional** — re-colar a versão endurecida do `db/pcp-f1b-m2-corte-multiplo.sql` (melhorias do painel PR, idempotável; prod já está correto sem isso). Depois: realinhamento pós-squash + PR → main.
+
+## Fase 2A — Custo-padrão de material & fila de exceções (2026-07-06)
+
+**Plano/spec:** `docs/superpowers/plans/2026-07-06-pcp-fase2a-custo.md` (v3) + `.../specs/2026-07-06-pcp-fase2a-custo-design.md` (v2). Abre a **Fase 2 (Custo & Omie)** pelo bloco de CUSTO (read-only, não escreve no Omie); o outbox fiscal (incluir/concluir OP) é a **Fase 2B**.
+
+**Task 0 — sonda empírica (ancorou o design no real, ANTES de qualquer schema):**
+- O `custoProducao{vGGF,vMOD}` da malha Omie está **100% ZERADO** (0/2011) → o custo real vive no **`cmc_snapshot`** (CMC de estoque, grade mensal, conta única `colacor_vendas`; cobertura 94% acabados / 99% insumos). O plano original (comparar com o `custoProducao`) era inviável — a sonda pegou isso antes de o schema nascer errado.
+- **Linhagem híbrida:** `nCMC(acabado)` vs `Σ(estrutura×nCMC insumo)` na mesma data — **50% batem ≤1%** (23% ao centavo), **35% divergem >5%**. O CMC do fabricado é em parte o próprio teórico, em parte média-móvel histórica. → **reposiciona** o 2A: não é "teórico×real puro" nem "gap=conversão de graça" (ambos falsos), é **custo-padrão calculado + fila de exceções CLASSIFICADA** (o valor está nos ~35%).
+- **`unidProdMalha` vs unidade de estoque: 6732/6732 batem** → custo = `qtd×CMC` **sem conversão** (a tabela de unidade vira guard defensivo, não motor). Removeu um P1 de unidade inteiro.
+
+**Decisões do founder:** conta **única** (Colacor compra e vende tudo — mata o risco multi-account) · escopo **LIXA** (cinta/disco/folha/rolo); **tingidor FORA** (o Tingimix tem custeio próprio — pot-life/mistura em batch — que não encaixa nos 4 papéis de lixa; forçá-lo poluiria a fila com falso-positivo sistemático).
+
+**O que shipou** (`db/pcp-f2a-custo.sql`, `db/test-pcp-f2a-custo.sh` **PASS=55**):
+- `pcp_custo_padrao_resultados` (buckets abrasivo/cola/catalisador/fita/**outros**; chave com `versao_regra` — regra nova não sobrescreve) + `pcp_custo_excecoes` (fila **inclusiva** — incompleto/sem-custo/unidade-divergente/ambíguo ENTRAM; `impacto_r` ordena por R$).
+- `fn_pcp_cmc_vigente` (**INVOKER** — a policy staff-only do `cmc_snapshot` protege; conta de `pcp_config`), motor **set-based** `fn_pcp_recompute_custo_padrao` (ausente→**NULL** nunca 0; guard de unidade; contrato jsonb; valida data-posição e aborta), `fn_pcp_recompute_excecoes` (classe **cruza a fila da 1A** `pcp_bom_excecoes.pai_codigo` — só acusa "erro de receita" com esse oráculo; default `causa_indeterminada`). RLS enabled (não force — o writer é a RPC DEFINER) + staff-read; advisory lock nas 2 RPC.
+
+**Painel tri-modelo — 2 voltas (Claude+Codex+Gemini):**
+- **Sobre o PLANO (BLOCK, 4 P1):** classe_causa **fabricava** "erro de receita" (a comparação é semi-circular → mede drift de preço; fix: cruzar a 1A como oráculo) · Tingidor poluía a fila (fix: escopo lixa) · view de cobertura **vazava custo** (fix: `security_invoker`) · data-posição errada zerava tudo em silêncio (fix: valida+aborta). +7 P2 (a fila **escondia o pior caso** — 2 modelos; FORCE RLS travaria o writer; versão na chave; contrato jsonb; tolerância saneada; conta em config).
+- **Sobre o CÓDIGO real (1 confirmado + 5 defensivos → hardening):** Gemini(P1)+Codex(P2) — a fila ainda **excluía `unidade_divergente`/`ambiguo`** (o mesmo princípio, 2 status esquecidos) → entram como classe própria. +5 money-path defensivos (0 casos nos dados hoje, mas corretos): guard furava sem `omie_products`; `qtd=0` custeava; `idProdMalha` inválido **abortava o recompute inteiro** (fix: regex + `length≤18` anti-overflow de bigint); config sem validação; advisory lock.
+
+**Falsificação (Lei de Ferro):** 8 sabotagens, cada uma vermelha no assert que a vigia — `INVOKER→DEFINER` (custo vaza p/ não-staff); `COALESCE(cmc,0)` derruba **10** asserts de "ausente≠zero" de uma vez (o guard blinda todos os fixes de custo); reverter o FIX 1 faz os SKUs sumirem da fila (`[]`).
+
+**Pendente (founder):** aplicar `db/pcp-f2a-custo.sql` no SQL Editor → `SELECT fn_pcp_recompute_custo_padrao(fn_pcp_ultima_data_posicao());` depois `SELECT fn_pcp_recompute_excecoes(fn_pcp_ultima_data_posicao());`. Verificação minha (psql-ro): cobertura por tipo_item, top da fila por R$, distribuição de classe_causa, `ncmc_ausente`. Depois: **Fase 2B** (outbox fiscal — precisa do contador + sandbox Omie).
