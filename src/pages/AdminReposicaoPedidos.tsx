@@ -34,7 +34,8 @@ import { CancelarModal } from '@/components/reposicao/pedidos/CancelarModal';
 import { PortalDrawer } from '@/components/reposicao/pedidos/PortalDrawer';
 import { CiclosAnteriores } from '@/components/reposicao/pedidos/CiclosAnteriores';
 import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMinimoButton';
-import { ehGateMinimoFaturamento } from '@/components/reposicao/pedidos/shared';
+import { ehGateMinimoFaturamento, particionarAtencao } from '@/components/reposicao/pedidos/shared';
+import { AbaixoMinimoCard } from '@/components/reposicao/pedidos/AbaixoMinimoCard';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
 
@@ -175,7 +176,12 @@ export default function AdminReposicaoPedidos() {
   // construção nunca entra (pedidoPrecisaAtencao só dispara em falha_envio/portal),
   // mas filtramos por defesa em profundidade — coerente com o render do ciclo.
   const atencaoVisivel = pedidosVisiveis(atencao ?? []);
-  const atencaoCount = atencaoVisivel.length;
+  // A′ (Codex xhigh): parte a fila em ação-real (vermelho) × barrado-por-mínimo
+  // (neutro, benigno). O alarme do topo conta SÓ a vermelha — gate de mínimo de
+  // faturamento não é pendência que exige o founder (o motor re-sugere sozinho).
+  const { vermelha: atencaoVermelha, abaixoMinimo: atencaoAbaixoMinimo } =
+    particionarAtencao(atencaoVisivel);
+  const atencaoCount = atencaoVermelha.length;
 
   // Deep link cross-ciclo: aceita ?id=N (ou ?pedido=N como alias usado por links do
   // portal). Se o pedido não está na lista de hoje, busca o pedido único por id.
@@ -604,7 +610,7 @@ export default function AdminReposicaoPedidos() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {atencaoVisivel.map((p) => (
+                {atencaoVermelha.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell className="text-xs tabular-nums whitespace-nowrap">
                       {format(new Date(p.data_ciclo + 'T12:00:00'), 'dd/MM/yyyy')}
@@ -663,6 +669,14 @@ export default function AdminReposicaoPedidos() {
           </CardContent>
         </Card>
       )}
+
+      <AbaixoMinimoCard
+        pedidos={atencaoAbaixoMinimo}
+        podeOverride={podeOverride}
+        onDetalhes={setDetalhesPedido}
+        onOverride={(id) => dispararOverrideMutation.mutate(id)}
+        disparandoLinha={disparandoLinha}
+      />
 
       <Tabs defaultValue="hoje">
         <TabsList>
