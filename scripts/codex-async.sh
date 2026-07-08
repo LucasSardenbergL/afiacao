@@ -56,7 +56,9 @@ trap 'rm -f "$err"' EXIT
 
 rc=1
 tentativa=0
-for backoff in 0 20 60; do
+# backoffs sobrescritíveis por env (testes usam "0 0 0" pra não esperar de verdade)
+read -ra backoffs <<< "${CODEX_ASYNC_BACKOFFS:-0 20 60}"
+for backoff in "${backoffs[@]}"; do
   tentativa=$((tentativa+1))
   [ "$backoff" -gt 0 ] && { echo "retry em ${backoff}s (tentativa $tentativa)…" >&2; sleep "$backoff"; }
 
@@ -64,7 +66,10 @@ for backoff in 0 20 60; do
   codex exec --model "$modelo" -c model_reasoning_effort="$reasoning" \
     --sandbox read-only "$prompt" >"$out" 2>"$err" &
   pid=$!
-  ( sleep "$timeout_s" && kill "$pid" 2>/dev/null ) &
+  # fds do watchdog → /dev/null: o sleep interno sobrevive ao kill do subshell
+  # e, se herdasse o stdout/stderr do chamador, seguraria o pipe aberto até o
+  # timeout inteiro (chamador em foreground ficaria esperando EOF)
+  ( sleep "$timeout_s" && kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
   watchdog=$!
   wait "$pid"; rc=$?
   kill "$watchdog" 2>/dev/null
