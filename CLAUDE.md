@@ -10,6 +10,9 @@
 - **🧭 Roadmap:** mantenha um **roadmap vivo no CHAT** (✅ feito · 🔄 andamento · ⏳ pendente · 🚧 bloqueado · ⏸️ adiado · 🧭 aguardando decisão) e re-renderize quando mudar — é como o founder acompanha. **NÃO** criar arquivo compartilhado de roadmap (vira ímã de conflito entre worktrees); se precisar persistir, no worktree da sessão ou no corpo do PR.
 - **🗑️ Fecho de sessão:** quando o Lucas perguntar se pode **excluir/apagar a sessão** (qualquer fraseado) → **invoque a skill `/fecho`** (checklist com EVIDÊNCIA: PRs mergeados de verdade · migrations aplicadas via psql-ro · edges/Publish · chips com título exato · resumo padrão · `wt:status` + ofertas de limpeza).
 - **🤝 2ª opinião (Codex):** em decisão de arquitetura/metodologia/trade-off não-óbvio — e SEMPRE no money-path — eu proponho e conduzo o ritual `/codex` eu mesmo, sem o founder copiar/colar. **Transporte: `scripts/codex-async.sh` em background** (preflight+retry — NUNCA `codex exec` cru em foreground segurando a sessão). Detalhe em `docs/agent/money-path.md`.
+- **💻 Comando pro seu terminal:** entregue sempre com `cd <path do worktree>` ANTES — o terminal do founder não fica no worktree (sem o `cd` → "fatal: not a git repository").
+- **🎫 Chip ao criar (`spawn_task`):** anuncie no chat o **título exato** + que **quem clica é o founder** — senão o rastreio se perde depois ("não sei qual é este chip").
+- **🔐 Segredo nunca em texto plano no chat** (secret/token/`decrypted_secret`) — a transcrição persiste em disco; use placeholder e o Supabase secrets.
 
 ## Índice — `docs/agent/` (referência operacional, LEIA o doc ANTES de tocar o domínio)
 
