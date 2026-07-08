@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 340
+-- Total de custom migrations: 341
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -379,7 +379,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260704190500', 'fin_regua_condicao_prazo', '20260704190500_fin_regua_condicao_prazo.sql'),
   ('20260705120000', 'fin_dre_custo_tipo', '20260705120000_fin_dre_custo_tipo.sql'),
   ('20260705211043', 'omie_identidade_por_conta', '20260705211043_omie_identidade_por_conta.sql'),
-  ('20260707120000', 'seed_fin_dre_custo_tipo_oben', '20260707120000_seed_fin_dre_custo_tipo_oben.sql')
+  ('20260707120000', 'seed_fin_dre_custo_tipo_oben', '20260707120000_seed_fin_dre_custo_tipo_oben.sql'),
+  ('20260708204820', 'fin_custo_rateio', '20260708204820_fin_custo_rateio.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1582,7 +1583,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_select_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_write_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo'),
-  ('omie_identidade_por_conta', 'function', 'public', 'omie_cliente_upsert_mapping', '')
+  ('omie_identidade_por_conta', 'function', 'public', 'omie_cliente_upsert_mapping', ''),
+  ('fin_custo_rateio', 'function', 'public', 'fin_custo_rateio_set_autor', ''),
+  ('fin_custo_rateio', 'table', 'public', 'fin_custo_rateio', ''),
+  ('fin_custo_rateio', 'trigger', 'public', 'trg_fin_custo_rateio_autor', 'fin_custo_rateio'),
+  ('fin_custo_rateio', 'rls_policy', 'public', 'fin_custo_rateio_select_master', 'fin_custo_rateio'),
+  ('fin_custo_rateio', 'rls_policy', 'public', 'fin_custo_rateio_write_master', 'fin_custo_rateio'),
+  ('fin_custo_rateio', 'rls_policy', 'public', 'fin_custo_rateio_service_all', 'fin_custo_rateio')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2833,7 +2840,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_select_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_write_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo'),
-  ('omie_identidade_por_conta', 'function', 'public', 'omie_cliente_upsert_mapping', '')
+  ('omie_identidade_por_conta', 'function', 'public', 'omie_cliente_upsert_mapping', ''),
+  ('fin_custo_rateio', 'function', 'public', 'fin_custo_rateio_set_autor', ''),
+  ('fin_custo_rateio', 'table', 'public', 'fin_custo_rateio', ''),
+  ('fin_custo_rateio', 'trigger', 'public', 'trg_fin_custo_rateio_autor', 'fin_custo_rateio'),
+  ('fin_custo_rateio', 'rls_policy', 'public', 'fin_custo_rateio_select_master', 'fin_custo_rateio'),
+  ('fin_custo_rateio', 'rls_policy', 'public', 'fin_custo_rateio_write_master', 'fin_custo_rateio'),
+  ('fin_custo_rateio', 'rls_policy', 'public', 'fin_custo_rateio_service_all', 'fin_custo_rateio')
 )
 SELECT
   e.migration,
