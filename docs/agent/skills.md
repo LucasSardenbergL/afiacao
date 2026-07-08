@@ -13,6 +13,7 @@
 | Debugar bug/falha | **`/investigate`** (gstack) — root-cause, 4 fases | `engineering:debug`/`systematic-debugging` (escolha 1) |
 | Planejar feature multi-step | `writing-plans`→`executing-plans` (superpowers) | grande/arriscada → `/plan-eng-review`/`/autoplan` |
 | Decidir se vale construir | `/office-hours` (gstack) | antes de `writing-plans` |
+| Benchmark externo (link/PDF/case de concorrente) → programa de PRs | **`benchmark-externo`** (proprietária) — extrai práticas, varre `App.tsx`, tabela tem/parcial/gap com evidência `arquivo:linha` + persona cliente/staff, prioriza via Codex, programa em fases-PR | motor de origem de features; vem DEPOIS de `/office-hours` (vale construir?) e ANTES de `writing-plans`. ≠ `pesquisa-mercado-br`/`deep-research` (mercado amplo sem alvo no app) |
 | Brainstorm | `brainstorming` (superpowers) | |
 | Task Supabase (DB/Auth/Edge/RLS) | `supabase` (oficial) — SQL/RLS idiomático | |
 | Mudança de banco sob Lovable | **`lovable-db-operator`** — migration + bloco SQL Editor + validação + audit | design com `supabase`, entrega com este |
