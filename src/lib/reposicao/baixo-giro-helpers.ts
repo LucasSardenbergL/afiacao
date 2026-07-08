@@ -1,5 +1,15 @@
 import { impactoSimulado } from "./param-auto-helpers";
 
+/**
+ * Filtro PostgREST do universo "baixo giro & estoque parado" — FONTE ÚNICA.
+ * Consumido pelo painel (useBaixoGiro) e pelo badge do cockpit (BaixoGiroBadge):
+ * mantê-los no MESMO literal garante que a contagem do badge case exatamente com
+ * a lista que o painel mostra (senão o badge "mente" e reintroduz confusão).
+ * Semântica: (classe B/C × Y/Z) OU demanda diária < 0,05 OU sem parâmetro calculado.
+ */
+export const BAIXO_GIRO_OR_FILTER =
+  "and(classe_abc.in.(B,C),classe_xyz.in.(Y,Z)),demanda_media_diaria.lt.0.05,estoque_minimo.is.null";
+
 export function somarCapitalParado(
   itens: Array<{ saldo: number | null; cmc: number | null }>,
 ): { totalRs: number; semCustoN: number; comEstoqueN: number } {

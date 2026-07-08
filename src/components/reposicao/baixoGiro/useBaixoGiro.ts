@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
-import { classificarSituacao, diasSemVender, somarCapitalParado } from "@/lib/reposicao/baixo-giro-helpers";
+import { BAIXO_GIRO_OR_FILTER, classificarSituacao, diasSemVender, somarCapitalParado } from "@/lib/reposicao/baixo-giro-helpers";
 import type { RowBaixoGiro } from "./types";
 
 const HOJE_ISO = () => new Date().toISOString().slice(0, 10);
@@ -21,7 +21,7 @@ export function useBaixoGiro() {
         .select("sku_codigo_omie, sku_descricao, fornecedor_nome, classe_consolidada, demanda_media_diaria, valor_vendido_90d, estoque_minimo, ponto_pedido, estoque_maximo, habilitado_reposicao_automatica, tipo_reposicao")
         .eq("empresa", empresa)
         .eq("ativo", true)
-        .or("and(classe_abc.in.(B,C),classe_xyz.in.(Y,Z)),demanda_media_diaria.lt.0.05,estoque_minimo.is.null")
+        .or(BAIXO_GIRO_OR_FILTER)
         .range(0, 999);
       if (error) throw error;
       const rowsBase = base ?? [];
