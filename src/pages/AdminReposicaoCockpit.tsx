@@ -25,7 +25,7 @@ import { createLeadingTrailingThrottle } from "@/lib/leading-trailing-throttle";
 import { escapeHtml } from "@/lib/escape-html";
 import { ContinuarBanner } from "@/components/reposicao/ContinuarBanner";
 import { EtapasGrid } from "@/components/reposicao/EtapasGrid";
-import { SmartAlertsSection } from "@/components/reposicao/SmartAlertsSection";
+import { BaixoGiroBadge } from "@/components/reposicao/BaixoGiroBadge";
 import { MetricsStrip } from "@/components/reposicao/MetricsStrip";
 import { AuditLogSection } from "@/components/reposicao/AuditLogSection";
 import { DataHealthBanner } from "@/components/dataHealth/DataHealthBanner";
@@ -334,7 +334,7 @@ export default function AdminReposicaoCockpit() {
       <DataHealthBanner source="reposicao_sugestoes" />
       <DataHealthBanner source="estoque_inventario" />
 
-      <SmartAlertsSection />
+      <BaixoGiroBadge />
 
       <MetricsStrip items={itensDia} />
 
