@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 336
+-- Total de custom migrations: 340
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -375,7 +375,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260704160000', 'fin_dividas', '20260704160000_fin_dividas.sql'),
   ('20260704160000', 'fin_sync_watchdog_retry_sem_efeito', '20260704160000_fin_sync_watchdog_retry_sem_efeito.sql'),
   ('20260704160500', 'fin_divida_replace_parcelas', '20260704160500_fin_divida_replace_parcelas.sql'),
-  ('20260705120000', 'fin_dre_custo_tipo', '20260705120000_fin_dre_custo_tipo.sql')
+  ('20260704190000', 'fin_regua_custo_capital', '20260704190000_fin_regua_custo_capital.sql'),
+  ('20260704190500', 'fin_regua_condicao_prazo', '20260704190500_fin_regua_condicao_prazo.sql'),
+  ('20260705120000', 'fin_dre_custo_tipo', '20260705120000_fin_dre_custo_tipo.sql'),
+  ('20260705211043', 'omie_identidade_por_conta', '20260705211043_omie_identidade_por_conta.sql'),
+  ('20260707120000', 'seed_fin_dre_custo_tipo_oben', '20260707120000_seed_fin_dre_custo_tipo_oben.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1570,12 +1574,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_dividas', 'rls_policy', 'public', '%I_write_master', 'public'),
   ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', ''),
   ('fin_divida_replace_parcelas', 'function', 'public', 'fin_divida_replace_parcelas', ''),
+  ('fin_regua_custo_capital', 'function', 'public', 'fin_regua_custo_capital', ''),
+  ('fin_regua_condicao_prazo', 'function', 'public', 'fin_regua_condicao_prazo', ''),
   ('fin_dre_custo_tipo', 'function', 'public', 'fin_dre_custo_tipo_set_autor', ''),
   ('fin_dre_custo_tipo', 'table', 'public', 'fin_dre_custo_tipo', ''),
   ('fin_dre_custo_tipo', 'trigger', 'public', 'trg_fin_dre_custo_tipo_autor', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_select_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_write_master', 'fin_dre_custo_tipo'),
-  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo')
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo'),
+  ('omie_identidade_por_conta', 'function', 'public', 'omie_cliente_upsert_mapping', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2818,12 +2825,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_dividas', 'rls_policy', 'public', '%I_write_master', 'public'),
   ('fin_sync_watchdog_retry_sem_efeito', 'function', 'public', 'fin_sync_watchdog_check', ''),
   ('fin_divida_replace_parcelas', 'function', 'public', 'fin_divida_replace_parcelas', ''),
+  ('fin_regua_custo_capital', 'function', 'public', 'fin_regua_custo_capital', ''),
+  ('fin_regua_condicao_prazo', 'function', 'public', 'fin_regua_condicao_prazo', ''),
   ('fin_dre_custo_tipo', 'function', 'public', 'fin_dre_custo_tipo_set_autor', ''),
   ('fin_dre_custo_tipo', 'table', 'public', 'fin_dre_custo_tipo', ''),
   ('fin_dre_custo_tipo', 'trigger', 'public', 'trg_fin_dre_custo_tipo_autor', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_select_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_write_master', 'fin_dre_custo_tipo'),
-  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo')
+  ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo'),
+  ('omie_identidade_por_conta', 'function', 'public', 'omie_cliente_upsert_mapping', '')
 )
 SELECT
   e.migration,
