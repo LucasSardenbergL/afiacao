@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 340
+-- Total de custom migrations: 341
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -379,7 +379,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260704190500', 'fin_regua_condicao_prazo', '20260704190500_fin_regua_condicao_prazo.sql'),
   ('20260705120000', 'fin_dre_custo_tipo', '20260705120000_fin_dre_custo_tipo.sql'),
   ('20260705211043', 'omie_identidade_por_conta', '20260705211043_omie_identidade_por_conta.sql'),
-  ('20260707120000', 'seed_fin_dre_custo_tipo_oben', '20260707120000_seed_fin_dre_custo_tipo_oben.sql')
+  ('20260707120000', 'seed_fin_dre_custo_tipo_oben', '20260707120000_seed_fin_dre_custo_tipo_oben.sql'),
+  ('20260708120000', 'fin_antecipacoes', '20260708120000_fin_antecipacoes.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1582,7 +1583,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_select_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_write_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo'),
-  ('omie_identidade_por_conta', 'function', 'public', 'omie_cliente_upsert_mapping', '')
+  ('omie_identidade_por_conta', 'function', 'public', 'omie_cliente_upsert_mapping', ''),
+  ('fin_antecipacoes', 'function', 'public', 'fin_antecipacoes_set_autor', ''),
+  ('fin_antecipacoes', 'table', 'public', 'fin_antecipacoes', ''),
+  ('fin_antecipacoes', 'index', 'public', 'fin_antecipacoes_ref_uq', 'fin_antecipacoes'),
+  ('fin_antecipacoes', 'index', 'public', 'idx_fin_antecipacoes_company_viva', 'fin_antecipacoes'),
+  ('fin_antecipacoes', 'trigger', 'public', 'trg_fin_antecipacoes_autor', 'fin_antecipacoes'),
+  ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_select_master', 'fin_antecipacoes'),
+  ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_write_master', 'fin_antecipacoes'),
+  ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_service_all', 'fin_antecipacoes')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2833,7 +2842,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_select_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_write_master', 'fin_dre_custo_tipo'),
   ('fin_dre_custo_tipo', 'rls_policy', 'public', 'fin_dre_custo_tipo_service_all', 'fin_dre_custo_tipo'),
-  ('omie_identidade_por_conta', 'function', 'public', 'omie_cliente_upsert_mapping', '')
+  ('omie_identidade_por_conta', 'function', 'public', 'omie_cliente_upsert_mapping', ''),
+  ('fin_antecipacoes', 'function', 'public', 'fin_antecipacoes_set_autor', ''),
+  ('fin_antecipacoes', 'table', 'public', 'fin_antecipacoes', ''),
+  ('fin_antecipacoes', 'index', 'public', 'fin_antecipacoes_ref_uq', 'fin_antecipacoes'),
+  ('fin_antecipacoes', 'index', 'public', 'idx_fin_antecipacoes_company_viva', 'fin_antecipacoes'),
+  ('fin_antecipacoes', 'trigger', 'public', 'trg_fin_antecipacoes_autor', 'fin_antecipacoes'),
+  ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_select_master', 'fin_antecipacoes'),
+  ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_write_master', 'fin_antecipacoes'),
+  ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_service_all', 'fin_antecipacoes')
 )
 SELECT
   e.migration,
