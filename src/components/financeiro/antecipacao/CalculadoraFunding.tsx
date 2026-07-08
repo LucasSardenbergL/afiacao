@@ -62,9 +62,12 @@ export function CalculadoraFunding({ company }: { company: Company }) {
       valor_titulo: num(valorTitulo),
       dias: Math.round(num(dias)),
       custos_avulsos: num(custosAvulsos),
-      liquido_ofertado: modo === 'liquido' ? num(liquido) : null,
+      // Campo vazio = oferta NÃO informada (null) — nunca num('')=0 travestido de "oferta de R$0/0%".
+      liquido_ofertado: modo === 'liquido' && liquido.trim() ? num(liquido) : null,
       taxa_ofertada:
-        modo === 'taxa' ? { valor: pctToDec(taxaOfertada), unidade: taxaUnidade } : null,
+        modo === 'taxa' && taxaOfertada.trim()
+          ? { valor: pctToDec(taxaOfertada), unidade: taxaUnidade }
+          : null,
       hurdle: hurdleValor.trim() ? { valor: pctToDec(hurdleValor), unidade: hurdleUnidade } : null,
     }),
     [valorTitulo, dias, custosAvulsos, modo, liquido, taxaOfertada, taxaUnidade, hurdleValor, hurdleUnidade],
