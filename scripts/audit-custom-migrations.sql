@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 343
+-- Total de custom migrations: 344
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -382,6 +382,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260707120000', 'seed_fin_dre_custo_tipo_oben', '20260707120000_seed_fin_dre_custo_tipo_oben.sql'),
   ('20260708120000', 'fin_antecipacoes', '20260708120000_fin_antecipacoes.sql'),
   ('20260708164211', 'selfservice_pr00_fechar_base_crua', '20260708164211_selfservice_pr00_fechar_base_crua.sql'),
+  ('20260708171049', 'reposicao_motor_run_marker', '20260708171049_reposicao_motor_run_marker.sql'),
   ('20260708202033', 'selfservice_pr01_allowlist_gate', '20260708202033_selfservice_pr01_allowlist_gate.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -1594,6 +1595,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_select_master', 'fin_antecipacoes'),
   ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_write_master', 'fin_antecipacoes'),
   ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_service_all', 'fin_antecipacoes'),
+  ('reposicao_motor_run_marker', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_motor_run_marker', 'table', 'public', 'reposicao_motor_run', ''),
+  ('reposicao_motor_run_marker', 'index', 'public', 'idx_reposicao_motor_run_empresa_data', 'reposicao_motor_run'),
+  ('reposicao_motor_run_marker', 'rls_policy', 'public', 'reposicao_motor_run_sel', 'reposicao_motor_run'),
+  ('reposicao_motor_run_marker', 'rls_policy', 'public', 'reposicao_motor_run_ins', 'reposicao_motor_run'),
   ('selfservice_pr01_allowlist_gate', 'function', 'public', 'ss_allowlist_forca_autor', ''),
   ('selfservice_pr01_allowlist_gate', 'function', 'public', 'selfservice_conta_atual', ''),
   ('selfservice_pr01_allowlist_gate', 'table', 'public', 'selfservice_cliente_allowlist', ''),
@@ -2861,6 +2867,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_select_master', 'fin_antecipacoes'),
   ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_write_master', 'fin_antecipacoes'),
   ('fin_antecipacoes', 'rls_policy', 'public', 'fin_antecipacoes_service_all', 'fin_antecipacoes'),
+  ('reposicao_motor_run_marker', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_motor_run_marker', 'table', 'public', 'reposicao_motor_run', ''),
+  ('reposicao_motor_run_marker', 'index', 'public', 'idx_reposicao_motor_run_empresa_data', 'reposicao_motor_run'),
+  ('reposicao_motor_run_marker', 'rls_policy', 'public', 'reposicao_motor_run_sel', 'reposicao_motor_run'),
+  ('reposicao_motor_run_marker', 'rls_policy', 'public', 'reposicao_motor_run_ins', 'reposicao_motor_run'),
   ('selfservice_pr01_allowlist_gate', 'function', 'public', 'ss_allowlist_forca_autor', ''),
   ('selfservice_pr01_allowlist_gate', 'function', 'public', 'selfservice_conta_atual', ''),
   ('selfservice_pr01_allowlist_gate', 'table', 'public', 'selfservice_cliente_allowlist', ''),

@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **343** custom migrations totais
-- **1228** objetos esperados (criados por estas migrations)
+- **344** custom migrations totais
+- **1233** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 344
-  - `rls_policy`: 272
-  - `index`: 207
+  - `function`: 345
+  - `rls_policy`: 274
+  - `index`: 208
   - `cron_job`: 144
-  - `table`: 133
+  - `table`: 134
   - `trigger`: 69
   - `view`: 55
   - `enum_value`: 4
@@ -2930,6 +2930,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260708164211_selfservice_pr00_fechar_base_crua.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260708171049_reposicao_motor_run_marker.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `table` | `public.reposicao_motor_run` | — |
+| `index` | `public.idx_reposicao_motor_run_empresa_data` | `reposicao_motor_run` |
+| `rls_policy` | `public.reposicao_motor_run_sel` | `reposicao_motor_run` |
+| `rls_policy` | `public.reposicao_motor_run_ins` | `reposicao_motor_run` |
 
 ### `20260708202033_selfservice_pr01_allowlist_gate.sql`
 
