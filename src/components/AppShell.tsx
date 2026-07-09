@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { ImpersonationBanner } from '@/components/impersonation/ImpersonationBanner';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Database, Library, Crosshair, ListChecks, Landmark, Banknote, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList, History, Lightbulb, Radar, AlertTriangle } from 'lucide-react';
@@ -21,7 +21,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { HelpDrawer } from '@/components/help/HelpDrawer';
-import { MelhoriasPopover } from '@/components/melhorias/MelhoriasPopover';
 import { useMelhoriasBadge } from '@/hooks/useMelhorias';
 import { useAlertasCriticos } from '@/hooks/useAlertasCriticos';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
@@ -33,8 +32,6 @@ import { CommandsRegistryProvider } from '@/components/shell/CommandsRegistry';
 import { CommandPalette } from '@/components/shell/CommandPalette';
 import { CommandPaletteTrigger } from '@/components/shell/CommandPaletteTrigger';
 import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
-import { PersonaSwitcherChip } from '@/components/dashboard/PersonaSwitcherChip';
-import { ActiveOverrideBadge } from '@/components/financeiro/ActiveOverrideBadge';
 import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
 import { DataHealthBadge } from '@/components/shell/DataHealthBadge';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
@@ -43,6 +40,26 @@ import { AnalyticsIdentify } from '@/components/shell/AnalyticsIdentify';
 import { GlobalBreadcrumbs } from "@/components/shell/GlobalBreadcrumbs";
 import { useFeatureFlagBodyClass } from '@/hooks/useFeatureFlag';
 import { useSidebarFavorites } from '@/hooks/useSidebarFavorites';
+
+/**
+ * Chips/badges cross-módulo do header em lazy (mesmo racional do CallCopilotHud
+ * no AppShellLayout): importados estáticos, arrastavam o grafo dos módulos
+ * financeiro/farmer/governança pro entry — medido em 2026-07-08 pelo
+ * `bun scripts/bundle-modulos.ts` (~48KB fonte de módulos de negócio no eager,
+ * F4 da modularização). Lazy tira do caminho crítico do boot; o chip aparece
+ * no idle pós-boot (fallback null — elemento inline pequeno, sem layout shift
+ * perceptível). Os HOOKS do sino (useFinanceiroAlertas etc.) seguem eager —
+ * refactor deles é PR dedicado (ver docs/historico/modularizacao.md).
+ */
+const ActiveOverrideBadge = lazy(() =>
+  import('@/components/financeiro/ActiveOverrideBadge').then((m) => ({ default: m.ActiveOverrideBadge }))
+);
+const PersonaSwitcherChip = lazy(() =>
+  import('@/components/dashboard/PersonaSwitcherChip').then((m) => ({ default: m.PersonaSwitcherChip }))
+);
+const MelhoriasPopover = lazy(() =>
+  import('@/components/melhorias/MelhoriasPopover').then((m) => ({ default: m.MelhoriasPopover }))
+);
 import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
 import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { itemVisivelParaSalesOnly, SECAO_VENDAS } from '@/lib/nav/home-por-persona';
@@ -717,13 +734,19 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
       </div>
 
       <div className="flex items-center gap-1">
-        <ActiveOverrideBadge />
-        <PersonaSwitcherChip />
+        <Suspense fallback={null}>
+          <ActiveOverrideBadge />
+          <PersonaSwitcherChip />
+        </Suspense>
         <CompanySwitcher />
         <NetworkStatusIndicator />
         <DataHealthBadge />
         <ThemeToggle />
-        {displayIsStaff && <MelhoriasPopover />}
+        {displayIsStaff && (
+          <Suspense fallback={null}>
+            <MelhoriasPopover />
+          </Suspense>
+        )}
         <HelpDrawer />
 
         <DropdownMenu>
