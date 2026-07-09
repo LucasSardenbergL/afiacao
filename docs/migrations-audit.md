@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **343** custom migrations totais
-- **1231** objetos esperados (criados por estas migrations)
+- **345** custom migrations totais
+- **1239** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 344
-  - `rls_policy`: 274
-  - `index`: 207
+  - `function`: 346
+  - `rls_policy`: 277
+  - `index`: 208
   - `cron_job`: 144
-  - `table`: 134
-  - `trigger`: 69
+  - `table`: 135
+  - `trigger`: 70
   - `view`: 55
   - `enum_value`: 4
 
@@ -2927,6 +2927,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.fin_antecipacoes_write_master` | `fin_antecipacoes` |
 | `rls_policy` | `public.fin_antecipacoes_service_all` | `fin_antecipacoes` |
 
+### `20260708164211_selfservice_pr00_fechar_base_crua.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20260708171049_reposicao_motor_run_marker.sql`
 
 | Tipo | Objeto | Parent |
@@ -2936,6 +2940,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_reposicao_motor_run_empresa_data` | `reposicao_motor_run` |
 | `rls_policy` | `public.reposicao_motor_run_sel` | `reposicao_motor_run` |
 | `rls_policy` | `public.reposicao_motor_run_ins` | `reposicao_motor_run` |
+
+### `20260708202033_selfservice_pr01_allowlist_gate.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.ss_allowlist_forca_autor` | — |
+| `function` | `public.selfservice_conta_atual` | — |
+| `table` | `public.selfservice_cliente_allowlist` | — |
+| `index` | `public.idx_ss_allowlist_customer` | `selfservice_cliente_allowlist` |
+| `trigger` | `public.trg_ss_allowlist_autor` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_staff_select` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_gestor_iud` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_service` | `selfservice_cliente_allowlist` |
 
 ### `20260708204820_fin_custo_rateio.sql`
 
