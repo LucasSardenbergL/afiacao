@@ -43,12 +43,25 @@ Consumidor `omie-vendas-sync` (pedido): `type Account="oben"|"colacor"`; lê o e
 - Funciona hoje (espelho é oben-majority sob `'colacor'`; user cuja linha é colacor_sc → código não casa segments/preferred oben → null honesto).
 - **Gate**: typecheck + test.
 
-### Fatia 3 — re-rótulo + suportar colacor real (migration + prove-sql + Codex)
-- `fetchOmieClienteUserMap:230` account-scoped (doc-match, não code-match cross-account) — Codex #1/#7.
-- `onConflict:'(user_id,empresa_omie)'`; drop `unique_user_omie` (composta já existe como índice).
-- `syncCustomers` seta `empresa_omie=accountToEmpresa(account)`; writers manuais setam `'colacor_sc'` (sem clobber de `'oben'` — só possível pós-composta).
-- Popular colacor via `colacor_vendas`. Reverter defesas 1/2/3 da Fatia 1 (mirror colacor confiável).
-- **Gate**: prove-sql PG17 (drop constraint + onConflict + re-rótulo derivado) com falsificação + Codex challenge.
+### Fatia 3 — **opção C: tabela nova aditiva `omie_customer_account_map`** (migration aditiva + prove-sql + Codex)
+
+> **Decisão (Codex consult high, 2026-07-08): C sobre A e B.** B (proof-table derivada de `sales_orders`) está **morta**: `omie_payload->'cabecalho'->>'codigo_cliente'` só existe em **6 (colacor) + 14 (oben)** pedidos de ~30k → cobre ~17 users (psql-ro). A (re-rótulo in-place do espelho) é arriscada: `DROP unique_user_omie` quebra `onConflict:'user_id'` em ~5 pontos, `.eq('user_id').maybeSingle()` vira 406-ambíguo em `omie-sync`/`omie-cliente`, colisão de linha 'colacor' stale, e o rebuild precisa ser document-first ou casa no user errado. **C é aditiva e reversível**: cria uma tabela nova, não dropa constraint, não muta o espelho poluído, não toca o caminho money-path do pedido (Fatia 1 já o blinda).
+
+**Fonte (igual a A):** re-sync do Omie **por documento** (`profiles.document`, 5276/5276 com doc) — NÃO por código (evita colisão cross-account). Vocabulário `account ∈ {'oben','colacor','colacor_sc'}` = `empresa_omie` (mesmos valores de `customer_segments`/`customer_preferred_items`).
+
+1. **Migration (aditiva, SQL Editor):** `CREATE TABLE omie_customer_account_map (id, user_id→auth.users ON DELETE CASCADE, account text CHECK(∈3), omie_codigo_cliente bigint, omie_codigo_vendedor bigint, source text CHECK('document'|'code'|'manual'), created_at, updated_at)`. `UNIQUE(user_id, account)` + `UNIQUE(omie_codigo_cliente, account)`. RLS ON espelhando `omie_clientes`: Staff ALL (`has_role master|employee`) + user SELECT próprio (`auth.uid()=user_id`). Índice `(user_id)`.
+2. **Sync document-first (edge):** função/modo que enumera `ListarClientes(account)` (reusa paginação do `syncCustomers`), casa por **documento** → `user_id`, upsert `(user_id, account=accountToEmpresa(account), omie_codigo_cliente, omie_codigo_vendedor, source='document')` `onConflict (user_id, account)`. Roda p/ `vendas`(oben)+`colacor_vendas`(colacor)+`servicos`(colacor_sc). Cron próprio ou anexado.
+3. **Consumidores de LEITURA que migram (só 2 arquivos):**
+   - `hooks.ts useCustomerPreferredItems`: de `[]` → lê as linhas da tabela nova por `user_id` (N contas/user) → `.in(códigos)×.in(accounts)` em `customer_preferred_items` + **filtro dos PARES exatos `(código,account)` em memória** (o produto cartesiano do `.in×.in` traz colisão cross-account; o filtro descarta — SEM `.or()` cru, guard-rail CLAUDE.md). **Traz oben E colacor** (preferred tem 523 oben + 979 colacor).
+   - `compare-customer-process`: 2 pontos (segment lookup :229, lookalikes reverse-map :281) trocam `omie_clientes` → `omie_customer_account_map`, mantendo `account='oben'`. `.maybeSingle()` seguro na tabela nova.
+   - (`useCustomerSegments.ts` é localStorage de filtros de UI — NÃO é consumidor da tabela; falso-positivo.)
+4. **Espelho velho `omie_clientes` INTOCADO.** Nada de drop, nada de re-rótulo, nada de deleção.
+
+**Escopo / o que NÃO entra (→ Fatia 4 futura):** o caminho do **PEDIDO** (`omie-vendas-sync`) NÃO migra aqui — continua no espelho velho + Fatia 1. Logo **BUG-2 (oben false-reject no pedido) PERSISTE** como resíduo conhecido (disponibilidade, fail-closed, não perde dinheiro). Fatia 4 migra o pedido p/ a tabela nova, fecha BUG-2 na raiz, reverte a Fatia 1 e aposenta o espelho.
+
+- **Deploy (ordem):** (1) migration aditiva (SQL Editor); (2) edge (sync novo + compare migrado); (3) rodar o sync → popula; (4) validar no banco (psql-ro: cobertura, sem ambiguidade `(user,account)`); (5) Publish frontend (hooks migrado). Aditivo → cada passo é fail-safe (tabela vazia = consumidores degradam a `[]`/null, como hoje).
+- **Gate:** prove-sql PG17 (CREATE TABLE real + RLS sob `SET ROLE authenticated` + GUC; UNIQUE(user,account) e UNIQUE(codigo,account); asserts +/- com SQLSTATE; falsificação: sabotar CHECK/UNIQUE → exigir vermelho) + Codex challenge do diff + typecheck + test.
+- **Codex challenge do diff (2026-07-08, high): sem P1.** Corrigidos os P2: (1) `fetchProfileDocUserMap` fail-closed em documento com 2+ users (ambíguo → não mapeia, afeta espelho E proof-table); (2) `.eq('account','oben')` nas 2 leituras de `customer_segments` no compare (à prova de futuro se surgir segment colacor). **Resíduo P2 aceito:** `UNIQUE(código,account)` pode abortar um chunk de 500 do upsert se um código mudar de dono entre syncs (raro; fail-closed é correto — não sobrescreve; consumidores degradam a vazio, nunca dado errado). P3: filtro de pares do hook é mecanicamente correto (chave dos mesmos campos nos 2 lados).
 
 ## 4. Threat model (Fatia 1)
 - **Prova**: verificação Omie por documento no colacor (fail-closed em ausência/ambiguidade/divergência). Guard oben continua provando wrong-account por rótulos CONFIÁVEIS (`'oben'`/`'colacor_sc'` explícitos), só ignora o default `'colacor'`.
@@ -59,3 +72,5 @@ Consumidor `omie-vendas-sync` (pedido): `type Account="oben"|"colacor"`; lê o e
 - Forçar todo pedido colacor via Omie: **SIM** (gate em "mirror tem colacor" é errado — `'colacor'` é o default envenenado, não prova). Custo: 1 chamada Omie/pedido colacor (infrequente).
 - Re-rotular colacor_sc histórico: **NÃO na Fatia 1** (blind relabel inseguro sob a constraint singular) → Fatia 3.
 - Deploy: Fatia 1 (edge) primeiro; Fatia 3 corrige o sync/relabel; UI a qualquer momento (fail-safe).
+- **Fatia 3 = C (tabela nova aditiva), NÃO A (re-rótulo in-place) nem B (proof-table de `sales_orders`)** — Codex consult high, 2026-07-08. B morta (17 users de cobertura); A arriscada (drop de constraint + `.maybeSingle()` ambíguo + colisão stale + rebuild colisão-inseguro); C aditiva/reversível/sem tocar o money-path do pedido. Fonte de C = re-sync Omie por documento (mesma de A). BUG-2 fica p/ Fatia 4 (migrar o pedido p/ a tabela nova).
+- **Fatia 4 (futura, não agora):** migrar `omie-vendas-sync` p/ ler `omie_customer_account_map` (fecha BUG-1 e BUG-2 na raiz), reverter defesas da Fatia 1, aposentar o espelho `omie_clientes`.
