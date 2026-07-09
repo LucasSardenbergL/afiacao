@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { aggregateEntities } from './aggregate-entities';
-import type { SpinAnalysis } from '@/lib/spin/types';
+import type { SpinAnalysis } from '@/lib/call/spin/types';
 
 // Factory mínimo — preenche só os campos relevantes pro teste
 const analysis = (entities: SpinAnalysis['entitiesExtracted']): SpinAnalysis => ({

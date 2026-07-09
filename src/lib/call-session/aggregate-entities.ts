@@ -1,4 +1,4 @@
-import type { ExtractedEntity, SpinAnalysis } from '@/lib/spin/types';
+import type { ExtractedEntity, SpinAnalysis } from '@/lib/call/spin/types';
 
 export interface AggregatedEntity extends ExtractedEntity {
   /** Quantas análises mencionaram essa entidade */

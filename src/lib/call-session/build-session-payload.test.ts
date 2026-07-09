@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildSessionPayload } from './build-session-payload';
-import type { SpinAnalysis } from '@/lib/spin/types';
+import type { SpinAnalysis } from '@/lib/call/spin/types';
 import type { TranscriptTurn } from '@/lib/transcription/types';
 
 const fakeAnalysis = (overrides: Partial<SpinAnalysis> = {}): SpinAnalysis => ({
