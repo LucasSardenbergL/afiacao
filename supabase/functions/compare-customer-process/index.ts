@@ -217,20 +217,20 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 2. Segmento/tags via customer_segments + omie_clientes (cliente atual)
+    // 2. Segmento/tags via customer_segments + omie_customer_account_map (cliente atual)
     let customerSegment: string | null = null;
     let customerTags: string[] = [];
     try {
-      // P0-B follow-up (conta corrigida via Codex): customer_segments é gravado na conta 'oben'
-      // (salvar_segmento_cliente, account default 'oben') — então o código do cliente que CASA com
-      // customer_segments é o da linha OBEN do espelho, NÃO o colacor. Filtra 'oben': hoje 0 linhas
-      // oben → omieMap null → sem segmento (degradação honesta, precisão>recall — melhor que casar
-      // o código colacor_sc por colisão numérica e trazer o segmento de OUTRO cliente).
+      // Fatia 3 do fix de rótulo: casa via a proof-table omie_customer_account_map (account-correta,
+      // populada document-first), não mais o espelho omie_clientes poluído. customer_segments é gravado
+      // na conta 'oben' (salvar_segmento_cliente, account default 'oben') → o código que CASA é o da
+      // conta 'oben' no mapa. Fail-safe: sem linha 'oben' no mapa (sync não populou) → omieMap null →
+      // sem segmento (degradação honesta, precisão>recall — melhor que colisão trazer segmento de OUTRO).
       const { data: omieMap } = await supabase
-        .from('omie_clientes')
+        .from('omie_customer_account_map')
         .select('omie_codigo_cliente')
         .eq('user_id', body.customer_user_id)
-        .eq('empresa_omie', 'oben')
+        .eq('account', 'oben')
         .maybeSingle();
 
       if (omieMap && (omieMap as { omie_codigo_cliente: number }).omie_codigo_cliente) {
@@ -238,6 +238,7 @@ Deno.serve(async (req) => {
           .from('customer_segments')
           .select('segment, tags')
           .eq('omie_codigo_cliente', (omieMap as { omie_codigo_cliente: number }).omie_codigo_cliente)
+          .eq('account', 'oben') // Codex P2: customer_segments é conta 'oben'; escopo à prova de futuro
           .maybeSingle();
         customerSegment = (seg as { segment: string | null } | null)?.segment ?? null;
         customerTags = (seg as { tags: string[] | null } | null)?.tags ?? [];
@@ -263,8 +264,10 @@ Deno.serve(async (req) => {
     let lookalikes: LookalikeRow[] = [];
     const hasFilters = customerTags.length > 0 || customerSegment !== null;
     if (hasFilters) {
+      // Codex P2: escopo à conta 'oben' (customer_segments é gravado na conta oben) — à prova de futuro
+      // se surgirem segments colacor (senão o casamento traria linha de outra conta).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let candidQ = supabase.from('customer_segments').select('omie_codigo_cliente, segment, tags') as any;
+      let candidQ = supabase.from('customer_segments').select('omie_codigo_cliente, segment, tags').eq('account', 'oben') as any;
       if (customerSegment) candidQ = candidQ.eq('segment', customerSegment);
       if (customerTags.length > 0) candidQ = candidQ.overlaps('tags', customerTags);
       candidQ = candidQ.limit(50);
@@ -272,15 +275,14 @@ Deno.serve(async (req) => {
 
       if (candids && (candids as Array<unknown>).length > 0) {
         const codes = (candids as Array<{ omie_codigo_cliente: number }>).map((c) => c.omie_codigo_cliente);
-        // P0-B follow-up (conta corrigida via Codex): `codes` vêm de customer_segments (conta 'oben'),
-        // então resolvê-los de volta para user_id exige a linha OBEN do espelho (mesmo namespace).
-        // Filtra 'oben': hoje 0 linhas oben → sem lookalikes (honesto); casa certo quando o espelho
-        // oben existir. Filtrar 'colacor' aqui casaria por colisão (user errado) e rejeitaria o
-        // namespace que de fato bate — pior, não melhor.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: maps } = await (supabase.from('omie_clientes') as any)
+        // Fatia 3 do fix de rótulo: `codes` vêm de customer_segments (conta 'oben'); resolvê-los de
+        // volta para user_id usa a conta 'oben' do mapa (mesmo namespace), via a proof-table
+        // account-correta. Fail-safe: mapa 'oben' vazio → sem lookalikes (honesto), casa certo quando
+        // o sync popular. (Antes lia o espelho omie_clientes, que colidia namespaces.)
+        const { data: maps } = await supabase
+          .from('omie_customer_account_map')
           .select('user_id, omie_codigo_cliente')
-          .eq('empresa_omie', 'oben')
+          .eq('account', 'oben')
           .in('omie_codigo_cliente', codes);
 
         const candidateUserIds = ((maps as Array<{ user_id: string }> | null) ?? [])

@@ -250,6 +250,10 @@ async function fetchOmieClienteUserMap(db: SupabaseClient): Promise<Map<number, 
 // Map<documento_normalizado, user_id> de profiles (p/ vincular cliente novo via documento).
 async function fetchProfileDocUserMap(db: SupabaseClient): Promise<Map<string, string>> {
   const map = new Map<string, string>();
+  // Fatia 3 (Codex P2): documento com 2+ profiles (users distintos) é AMBÍGUO — não prova identidade.
+  // Fail-closed: remove do mapa (melhor não vincular que vincular o user ERRADO). Afeta o espelho E a
+  // proof-table document-first — ambos param de mapear docs duplicados (precisão>recall).
+  const ambiguous = new Set<string>();
   const pageSize = 1000;
   let from = 0;
   while (true) {
@@ -262,7 +266,12 @@ async function fetchProfileDocUserMap(db: SupabaseClient): Promise<Map<string, s
     const rows = (data ?? []) as { document: string | null; user_id: string | null }[];
     for (const r of rows) {
       const d = (r.document ?? "").replace(/\D/g, "");
-      if (d && r.user_id && !map.has(d)) map.set(d, r.user_id); // 1º documento vence (defensivo contra duplicado)
+      if (!d || !r.user_id) continue;
+      if (ambiguous.has(d)) continue;
+      const prev = map.get(d);
+      if (prev === r.user_id) continue;                       // mesma pessoa repetida (idempotente)
+      if (prev) { map.delete(d); ambiguous.add(d); continue; } // 2º user no mesmo doc → ambíguo, fail-closed
+      map.set(d, r.user_id);
     }
     if (rows.length < pageSize) break;
     from += pageSize;
@@ -289,6 +298,18 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       updated_at: string;
     }>();
     const tagsByUser = new Map<string, string[]>();
+    // Fatia 3 (proof-table aditiva omie_customer_account_map): mapa DOCUMENT-FIRST (user_id -> código
+    // Omie NESTA conta). Só vínculo por DOCUMENTO entra — casar por código é cross-account no espelho
+    // poluído e traria o user errado (Codex). account é FIXO neste run (=empresaMap).
+    const empresaMap = accountToEmpresa(account); // vendas->oben, colacor_vendas->colacor, servicos->colacor_sc
+    const accountMapByUser = new Map<string, {
+      user_id: string;
+      account: string;
+      omie_codigo_cliente: number;
+      omie_codigo_vendedor: number | null;
+      source: string;
+      updated_at: string;
+    }>();
     let pagina = 1;
     let totalPaginas = 1;
 
@@ -319,6 +340,20 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
           .map((t) => (typeof t === "string" ? t : (t.tag ?? "")))
           .filter((t) => t.length > 0);
         tagsByUser.set(userId, tags);
+
+        // Fatia 3 (proof-table): DOCUMENT-FIRST — só quem casa por DOCUMENTO entra no mapa por conta
+        // (código seria cross-account no espelho poluído → user errado, Codex). account fixo = empresaMap.
+        const userIdByDoc = userByDoc.get(doc);
+        if (userIdByDoc) {
+          accountMapByUser.set(userIdByDoc, {
+            user_id: userIdByDoc,
+            account: empresaMap,
+            omie_codigo_cliente: c.codigo_cliente_omie,
+            omie_codigo_vendedor: c.codigo_vendedor || null,
+            source: "document",
+            updated_at: new Date().toISOString(),
+          });
+        }
       }
 
       console.log(`[Sync ${account}] Clientes página ${pagina}/${totalPaginas}`);
@@ -335,6 +370,20 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       if (upErr) throw new Error(`upsert omie_clientes: ${upErr.message}`);
       totalSynced += chunk.length;
     }
+
+    // Fatia 3 (proof-table ADITIVA): upsert em omie_customer_account_map por (user_id, account). NÃO
+    // toca omie_clientes (o espelho poluído fica intocado) — esta tabela é a fonte account-correta dos
+    // consumidores de leitura. onConflict composto = uq_ocam_user_account; UNIQUE(código,account) barra
+    // colisão cross-account no casamento. document-first → dedup por user_id basta (account é fixo).
+    const mapRows = Array.from(accountMapByUser.values());
+    for (let i = 0; i < mapRows.length; i += 500) {
+      const chunk = mapRows.slice(i, i + 500);
+      const { error: mapErr } = await db
+        .from("omie_customer_account_map")
+        .upsert(chunk, { onConflict: "user_id,account" });
+      if (mapErr) throw new Error(`upsert omie_customer_account_map: ${mapErr.message}`);
+    }
+    console.log(`[Sync ${account}] proof-table omie_customer_account_map: ${mapRows.length} vínculos por documento`);
 
     // Upsert das tags em cliente_classificacao (prova se o ListarClientes em lote retorna tags).
     // Grava user_id + tags_omie + tags_synced_at; as colunas derivadas (is_fornecedor,
