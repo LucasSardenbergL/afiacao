@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **344** custom migrations totais
-- **1233** objetos esperados (criados por estas migrations)
+- **345** custom migrations totais
+- **1235** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 345
+  - `function`: 347
   - `rls_policy`: 274
   - `index`: 208
   - `cron_job`: 144
@@ -2953,6 +2953,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.ss_allowlist_staff_select` | `selfservice_cliente_allowlist` |
 | `rls_policy` | `public.ss_allowlist_gestor_iud` | `selfservice_cliente_allowlist` |
 | `rls_policy` | `public.ss_allowlist_service` | `selfservice_cliente_allowlist` |
+
+### `20260708210000_tint_cobertura_lista_email.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._tint_cobertura_bases_lista_email` | — |
+| `function` | `public.data_health_watchdog` | — |
 
 ## Próximos passos por status
 
