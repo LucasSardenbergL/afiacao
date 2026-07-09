@@ -48,9 +48,10 @@ GRANT EXECUTE ON FUNCTION auth.uid(), auth.role() TO authenticated, anon, servic
 SQL
 
 PASS=0; FAIL=0
-ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
-bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
-eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
+ok()   { PASS=$((PASS+1)); echo "  ✅ $1"; }
+bad()  { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
+warn() { echo "  ⚠️  $1"; }   # estado conhecido/rastreado — NÃO conta como fail (honestidade, não teatro)
+eq()   { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
 
 echo "═══ setup pronto (PG17 :$PORT) ═══"
 
@@ -168,7 +169,7 @@ S="SET test.uid='44444444-4444-4444-4444-444444444444'; SET ROLE authenticated;"
 echo "── Step 1 — matriz de isolamento (sob o GUC do ATACANTE A) ──"
 eq "S1a catálogo de A → só oben ativo (1)"                 "$(Pq -c "$A SELECT count(*) FROM public.selfservice_catalogo;" | tail -1)" "1"
 eq "S1b catálogo de A NÃO vê colacro de B (isolamento conta)" "$(Pq -c "$A SELECT count(*) FROM public.selfservice_catalogo WHERE account='colacor';" | tail -1)" "0"
-eq "S1c disponibilidade de A NÃO vê colacor"               "$(Pq -c "$A SELECT count(*) FROM public.selfservice_disponibilidade WHERE account<>'oben';" | tail -1)" "0"
+eq "S1c disponibilidade de A NÃO vê nada fora de oben (IS DISTINCT — NULL-safe)" "$(Pq -c "$A SELECT count(*) FROM public.selfservice_disponibilidade WHERE account IS DISTINCT FROM 'oben';" | tail -1)" "0"
 eq "S1d meus_pedidos de A → só o próprio de oben (1)"       "$(Pq -c "$A SELECT count(*) FROM public.selfservice_meus_pedidos;" | tail -1)" "1"
 eq "S1e A NÃO vê o pedido de B (PV-B1) via meus_pedidos"    "$(Pq -c "$A SELECT count(*) FROM public.selfservice_meus_pedidos WHERE omie_numero_pedido='PV-B1';" | tail -1)" "0"
 # Grupo econômico: C' é oben E 'mesmo grupo' de A, mas OUTRO uid → não há caminho auth.uid()→documento→grupo.
@@ -187,6 +188,13 @@ case "$RP" in
   *SMK_ATACANTE_PASSOU*) bad "S1k A PASSOU no get_regua_preco (gate staff furado!)" ;;
   *)                     bad "S1k get_regua_preco erro inesperado p/ A: [$RP]" ;;
 esac
+# Lacuna CONHECIDA e rastreada (Codex P1): a superfície self-service (selfservice_meus_pedidos) NÃO
+# projeta payload (provado em S4c abaixo), MAS a tabela CRUA sales_orders ainda deixa o cliente ler
+# o omie_payload do PRÓPRIO pedido (policy "own", RLS row-level). Isso NÃO é vazamento cross-cliente
+# (S1j prova que A não alcança o de B) e o payload não tem custo/margem — é o hardening do canal legado,
+# escopo do PR0.0-bis (chip task_d9dbf139). Torno explícito p/ o smoke não FINGIR isolamento completo.
+PP=$(Pq -c "$A SELECT count(*) FROM public.sales_orders WHERE customer_user_id=(SELECT auth.uid()) AND omie_payload IS NOT NULL;" | tail -1)
+warn "CONHECIDO (→ PR0.0-bis, chip task_d9dbf139): A lê o PRÓPRIO omie_payload cru via sales_orders ($PP linha). Cross-cliente já fechado (S1j); superfície self-service não projeta (S4c)."
 
 echo "── Step 2 — contaminação staff (allowlistar S por engano NÃO habilita) ──"
 # Allowlista S por engano E flag global ON → selfservice_conta_atual() de S DEVE dar habilitado=false
@@ -203,10 +211,17 @@ eq "S2b S NÃO vê os pedidos-fantasma via selfservice_meus_pedidos (gate fecha)
 eq "S2c S NÃO vê o catálogo self-service (gate fecha)" \
    "$(Pq -c "$S SELECT count(*) FROM public.selfservice_catalogo;" | tail -1)" "0"
 
-echo "── Step 3 — anti-documento estrutural (nenhuma view selfservice_* expõe doc/grupo) ──"
+echo "── Step 3 — anti-documento (texto do viewdef + DEPENDÊNCIA REAL via pg_depend) ──"
+# Regex ampliado (Codex P2#4): não basta 'document/cnpj' — cobre cpf/tax_id/omie_clientes/alias canônico.
+DOC_RX='(document|cnpj|cpf|tax_id|razao_social|cliente_grupo|grupo_economico|omie_clientes|canonical_alias|customer_document)'
 for V in selfservice_catalogo selfservice_disponibilidade selfservice_meus_pedidos; do
-  HIT=$(Pq -c "SELECT count(*) FROM (SELECT lower(pg_get_viewdef('public.$V'::regclass, true)) AS d) x WHERE x.d ~ '(document|cnpj|cliente_grupo|grupo_economico|razao_social)';")
-  eq "S3 $V NÃO referencia document/cnpj/grupo/razao_social (defensa contra PR futuro)" "$HIT" "0"
+  # (a) texto do viewdef não menciona doc/grupo.
+  HIT=$(Pq -c "SELECT count(*) FROM (SELECT lower(pg_get_viewdef('public.$V'::regclass, true)) AS d) x WHERE x.d ~ '$DOC_RX';")
+  eq "S3a $V: viewdef (texto) sem doc/grupo" "$HIT" "0"
+  # (b) DEPENDÊNCIA real: nenhuma relação-fonte da view (via pg_rewrite→pg_depend) tem nome de doc/grupo.
+  #     Mais forte que o texto — pega alias/join que um PR futuro introduza sem citar a palavra crua.
+  DEP=$(Pq -c "SELECT count(*) FROM pg_depend d JOIN pg_rewrite r ON r.oid=d.objid JOIN pg_class v ON v.oid=r.ev_class JOIN pg_class ref ON ref.oid=d.refobjid AND d.refclassid='pg_class'::regclass JOIN pg_namespace vn ON vn.oid=v.relnamespace WHERE vn.nspname='public' AND v.relname='$V' AND ref.relname <> '$V' AND ref.relname ~ '$DOC_RX';")
+  eq "S3b $V: nenhuma relação-fonte com nome de doc/grupo (pg_depend)" "$DEP" "0"
 done
 
 echo "── Step 4 — default privileges (anon fechado por construção) ──"
@@ -217,7 +232,7 @@ for V in selfservice_catalogo selfservice_disponibilidade selfservice_meus_pedid
      "$(Pq -c "SELECT has_table_privilege('anon','public.$V','SELECT');" | tail -1)" "f"
 done
 # Preço adiado (PR0.2b): nenhuma view self-service pode projetar preço/custo/saldo.
-LEAK=$(Pq -c "SELECT count(*) FROM information_schema.columns WHERE table_name LIKE 'selfservice_%' AND column_name IN ('valor_unitario','preco','preco_unitario','saldo','cmc','preco_medio','custo','omie_payload','omie_response');")
+LEAK=$(Pq -c "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name LIKE 'selfservice_%' AND column_name IN ('valor_unitario','preco','preco_unitario','saldo','cmc','preco_medio','custo','omie_payload','omie_response');")
 eq "S4c nenhuma view selfservice_* projeta preço/custo/saldo/payload (preço adiado)" "$LEAK" "0"
 
 # ── ZONA 5 — falsificação global (sabota UMA barreira por vez → o assert-espelho fica VERMELHO) ──
@@ -262,6 +277,26 @@ SQL
 F3=$(Pq -c "$A SELECT count(*) FROM public.omie_products;" | tail -1)
 if [ "$F3" != "0" ]; then ok "F3 com USING(true) reintroduzido, A lê omie_products cru ($F3) → S1h tem dente"; else bad "F3 sem efeito → S1h fraco"; fi
 P -q -c "DROP POLICY \"sabotage_authenticated_view_all\" ON public.omie_products;"  # restaura
+
+# F4 — o filtro MAIS crítico de meus_pedidos: remover `customer_user_id = auth.uid()` → A passa a ver
+#      o pedido de OUTRO cliente (C', oben) que não o dele (Codex #3 — dente do isolamento por dono).
+P -q <<'SQL'
+CREATE OR REPLACE VIEW public.selfservice_meus_pedidos WITH (security_invoker=off, security_barrier=true) AS
+  SELECT so.id, so.omie_numero_pedido, so.account, so.status, so.created_at, so.order_date_kpi, so.total
+  FROM public.sales_orders so
+  CROSS JOIN LATERAL (SELECT accounts, habilitado FROM public.selfservice_conta_atual()) s
+  WHERE s.habilitado IS TRUE AND so.account = ANY(s.accounts)  -- SABOTADO: sem `so.customer_user_id = (SELECT auth.uid())`
+    AND NOT EXISTS (SELECT 1 FROM public.profiles p WHERE p.user_id = so.customer_user_id AND p.is_employee IS TRUE);
+SQL
+F4=$(Pq -c "$A SELECT count(*) FROM public.selfservice_meus_pedidos WHERE omie_numero_pedido='PV-C1';" | tail -1)
+if [ "$F4" != "0" ]; then ok "F4 sem customer_user_id=auth.uid(), A vê o pedido do IRMÃO DE GRUPO C' (PV-C1) → S1f/S1d têm dente"; else bad "F4 sem efeito → filtro de dono de meus_pedidos fraco"; fi
+P -q -f "$MIG_VIEWS"  # restaura
+
+# F5 — reabrir anon: conceder SELECT a anon numa view → S4b (anon fechado) deve virar VERMELHO.
+P -q -c "GRANT SELECT ON public.selfservice_catalogo TO anon;"
+F5=$(Pq -c "SELECT has_table_privilege('anon','public.selfservice_catalogo','SELECT');" | tail -1)
+if [ "$F5" = "t" ]; then ok "F5 concedendo anon SELECT, has_table_privilege vira true → S4b tem dente"; else bad "F5 sem efeito → S4b fraco"; fi
+P -q -c "REVOKE SELECT ON public.selfservice_catalogo FROM anon;"  # restaura
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
