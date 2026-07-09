@@ -169,6 +169,10 @@ COMMIT;
 
 ## PR0.2 — Superfícies de leitura customer-facing (views-gate + RPC preço) 🟥
 
+**DIVIDIDO em 2 (o preço é o ponto de maior risco — merece foco isolado):**
+- **✅ PR0.2a — as 3 views-gate** (EXECUTADO 2026-07-08): `20260708212123_selfservice_pr02a_views_customer.sql` + `db/test-selfservice-pr02a-views.sh` **VERDE 16/16** (isolamento A×B, projeção sem valor_unitario/saldo/cmc/omie_payload, gate fecha não-habilitado, anon barrado, falsificação com dente). Codex xhigh incorporado: **#5** `account = ANY(accounts)` em `meus_pedidos` (senão pedido do PRÓPRIO cliente em conta não-habilitada vaza) + **#6** grants fail-closed (`REVOKE FROM PUBLIC,anon,authenticated`). ⏳ a aplicar via SQL Editor.
+- **⏳ PR0.2b — RPC `selfservice_preco_produto`** (Step 2 abaixo): a peça delicada (número final sem rederivar CMC; reusa `resolve_markup_policy`, NÃO `get_regua_preco`). Sessão dedicada recomendada.
+
 **Files:**
 - Create: `supabase/migrations/20260708HHMMSS_selfservice_pr02_views_customer.sql`
 - Create (prova): `db/test-selfservice-pr02-views.sh`
