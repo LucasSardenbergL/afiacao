@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 344
+-- Total de custom migrations: 345
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -383,7 +383,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260708120000', 'fin_antecipacoes', '20260708120000_fin_antecipacoes.sql'),
   ('20260708164211', 'selfservice_pr00_fechar_base_crua', '20260708164211_selfservice_pr00_fechar_base_crua.sql'),
   ('20260708171049', 'reposicao_motor_run_marker', '20260708171049_reposicao_motor_run_marker.sql'),
-  ('20260708202033', 'selfservice_pr01_allowlist_gate', '20260708202033_selfservice_pr01_allowlist_gate.sql')
+  ('20260708202033', 'selfservice_pr01_allowlist_gate', '20260708202033_selfservice_pr01_allowlist_gate.sql'),
+  ('20260708210000', 'tint_cobertura_lista_email', '20260708210000_tint_cobertura_lista_email.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1607,7 +1608,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('selfservice_pr01_allowlist_gate', 'trigger', 'public', 'trg_ss_allowlist_autor', 'selfservice_cliente_allowlist'),
   ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_staff_select', 'selfservice_cliente_allowlist'),
   ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_gestor_iud', 'selfservice_cliente_allowlist'),
-  ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_service', 'selfservice_cliente_allowlist')
+  ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_service', 'selfservice_cliente_allowlist'),
+  ('tint_cobertura_lista_email', 'function', 'public', '_tint_cobertura_bases_lista_email', ''),
+  ('tint_cobertura_lista_email', 'function', 'public', 'data_health_watchdog', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2879,7 +2882,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('selfservice_pr01_allowlist_gate', 'trigger', 'public', 'trg_ss_allowlist_autor', 'selfservice_cliente_allowlist'),
   ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_staff_select', 'selfservice_cliente_allowlist'),
   ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_gestor_iud', 'selfservice_cliente_allowlist'),
-  ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_service', 'selfservice_cliente_allowlist')
+  ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_service', 'selfservice_cliente_allowlist'),
+  ('tint_cobertura_lista_email', 'function', 'public', '_tint_cobertura_bases_lista_email', ''),
+  ('tint_cobertura_lista_email', 'function', 'public', 'data_health_watchdog', '')
 )
 SELECT
   e.migration,
