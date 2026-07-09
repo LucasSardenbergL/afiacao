@@ -4,7 +4,7 @@
 // Spec: docs/superpowers/specs/2026-07-08-modularizacao-f2-fronteiras-design.md §4
 import ts from "typescript";
 
-export type ImportExtraido = { spec: string; kind: "runtime" | "type" };
+type ImportExtraido = { spec: string; kind: "runtime" | "type" };
 export type ExtracaoImports = {
   imports: ImportExtraido[];
   /** import()/mock com argumento não-literal — contado e exposto, nunca ignorado silencioso. */
