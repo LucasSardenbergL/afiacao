@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **348** custom migrations totais
-- **1244** objetos esperados (criados por estas migrations)
+- **349** custom migrations totais
+- **1246** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 348
+  - `function`: 350
   - `rls_policy`: 277
   - `index`: 208
   - `cron_job`: 144
@@ -2983,6 +2983,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `view` | `public.selfservice_catalogo` | — |
 | `view` | `public.selfservice_disponibilidade` | — |
 | `view` | `public.selfservice_meus_pedidos` | — |
+
+### `20260708234100_tint_gate_custo_staff.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_price` | — |
+| `function` | `public.get_tint_prices` | — |
 
 ## Próximos passos por status
 
