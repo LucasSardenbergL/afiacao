@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { formatDistanceToNow, format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import type { CustomerCallRow } from '@/hooks/useCustomerCalls';
-import type { SpinAnalysis } from '@/lib/spin/types';
+import type { SpinAnalysis } from '@/lib/call/spin/types';
 
 /**
  * Tipo local — espelha o AggregatedEntity de PR4 (`@/lib/call-session/aggregate-entities`)

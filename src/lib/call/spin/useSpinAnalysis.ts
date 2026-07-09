@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { invokeFunction } from '@/lib/invoke-function';
 import type { TranscriptTurn } from '@/lib/transcription/types';
-import type { SpinAnalysis, SpinAnalysisStatus, TranscriptTurnLite } from '@/lib/spin/types';
+import type { SpinAnalysis, SpinAnalysisStatus, TranscriptTurnLite } from '@/lib/call/spin/types';
 
 interface UseSpinAnalysisOptions {
   turns: TranscriptTurn[];

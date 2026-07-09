@@ -40,7 +40,7 @@ vi.mock('@/hooks/useTranscription', () => ({
   }),
 }));
 
-vi.mock('@/hooks/useSpinAnalysis', () => ({
+vi.mock('@/lib/call/spin/useSpinAnalysis', () => ({
   useSpinAnalysis: () => ({
     status: 'idle' as const,
     analysis: null,

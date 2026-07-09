@@ -8,7 +8,7 @@ vi.mock('@/lib/invoke-function', () => ({
   invokeFunction: invokeMock,
 }));
 
-import { useSpinAnalysis } from '../useSpinAnalysis';
+import { useSpinAnalysis } from './useSpinAnalysis';
 
 const fakeAnalysis = {
   spinStage: 'situation' as const,

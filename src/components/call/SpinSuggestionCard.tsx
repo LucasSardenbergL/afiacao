@@ -18,7 +18,7 @@ import type {
   CopilotPlaybook,
   TicketLeverage,
   DecisionPushTactic,
-} from '@/lib/spin/types';
+} from '@/lib/call/spin/types';
 
 interface SpinSuggestionCardProps {
   status: SpinAnalysisStatus;
