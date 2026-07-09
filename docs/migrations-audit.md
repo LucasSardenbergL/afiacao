@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **349** custom migrations totais
-- **1246** objetos esperados (criados por estas migrations)
+- **350** custom migrations totais
+- **1247** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 348
+  - `function`: 349
   - `rls_policy`: 277
   - `index`: 208
   - `cron_job`: 146
@@ -2990,6 +2990,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `cron_job` | `cron.sync-customers-colacor-vendas-daily` | — |
 | `cron_job` | `cron.sync-customers-servicos-daily` | — |
+
+### `20260709120500_authz_estimar_estoque_omie.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_estimar_estoque_omie` | — |
 
 ## Próximos passos por status
 

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 349
+-- Total de custom migrations: 350
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -388,7 +388,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260708204820', 'fin_custo_rateio', '20260708204820_fin_custo_rateio.sql'),
   ('20260708210000', 'tint_cobertura_lista_email', '20260708210000_tint_cobertura_lista_email.sql'),
   ('20260708212123', 'selfservice_pr02a_views_customer', '20260708212123_selfservice_pr02a_views_customer.sql'),
-  ('20260708234721', 'sync_customers_colacor_servicos_crons', '20260708234721_sync_customers_colacor_servicos_crons.sql')
+  ('20260708234721', 'sync_customers_colacor_servicos_crons', '20260708234721_sync_customers_colacor_servicos_crons.sql'),
+  ('20260709120500', 'authz_estimar_estoque_omie', '20260709120500_authz_estimar_estoque_omie.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1625,7 +1626,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_disponibilidade', ''),
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_meus_pedidos', ''),
   ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-colacor-vendas-daily', ''),
-  ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-servicos-daily', '')
+  ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-servicos-daily', ''),
+  ('authz_estimar_estoque_omie', 'function', 'public', 'fin_estimar_estoque_omie', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2910,7 +2912,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_disponibilidade', ''),
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_meus_pedidos', ''),
   ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-colacor-vendas-daily', ''),
-  ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-servicos-daily', '')
+  ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-servicos-daily', ''),
+  ('authz_estimar_estoque_omie', 'function', 'public', 'fin_estimar_estoque_omie', '')
 )
 SELECT
   e.migration,
