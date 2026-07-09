@@ -388,7 +388,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260708204820', 'fin_custo_rateio', '20260708204820_fin_custo_rateio.sql'),
   ('20260708210000', 'tint_cobertura_lista_email', '20260708210000_tint_cobertura_lista_email.sql'),
   ('20260708212123', 'selfservice_pr02a_views_customer', '20260708212123_selfservice_pr02a_views_customer.sql'),
-  ('20260708234100', 'tint_gate_custo_staff', '20260708234100_tint_gate_custo_staff.sql')
+  ('20260708234721', 'sync_customers_colacor_servicos_crons', '20260708234721_sync_customers_colacor_servicos_crons.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1624,8 +1624,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_catalogo', ''),
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_disponibilidade', ''),
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_meus_pedidos', ''),
-  ('tint_gate_custo_staff', 'function', 'public', 'get_tint_price', ''),
-  ('tint_gate_custo_staff', 'function', 'public', 'get_tint_prices', '')
+  ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-colacor-vendas-daily', ''),
+  ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-servicos-daily', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2909,8 +2909,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_catalogo', ''),
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_disponibilidade', ''),
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_meus_pedidos', ''),
-  ('tint_gate_custo_staff', 'function', 'public', 'get_tint_price', ''),
-  ('tint_gate_custo_staff', 'function', 'public', 'get_tint_prices', '')
+  ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-colacor-vendas-daily', ''),
+  ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-servicos-daily', '')
 )
 SELECT
   e.migration,

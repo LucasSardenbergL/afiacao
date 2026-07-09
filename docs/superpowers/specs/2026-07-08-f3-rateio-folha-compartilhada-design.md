@@ -2,6 +2,13 @@
 
 > Extensão do F3 (`2026-07-04-ponto-equilibrio-dre-design.md`). **Fato de negócio** (confirmado pelo founder, 2026-07-08): a folha dos funcionários da OBEN **roda na Colacor SC** (empresa do Simples — os funcionários estão fichados lá). Consequência: a DRE da OBEN **não** carrega o custo de mão de obra que faz a operação da OBEN girar → o PE lido isolado subestima o custo fixo e infla a margem de segurança. **Money-path** (muda o PE): precisão > recall — o rateio é **input humano** (não fabricamos a parcela); sem rateio, o card **vela o número** com aviso, em vez de exibir a margem inflada. Decisão Claude + Lucas (velar nº; valor R$ fixo mensal). Read-only sobre o snapshot: o rateio é um **overlay aditivo**, não reescreve `montarDRE`/edge.
 
+> **⚠️ Errata contábil — 2026-07-09** (Codex+Claude sobre dados de prod, `colacor_sc` TTM competência). A marcação de "ambíguos" da folha usada em §0.3, §6 e §10-C6 estava **errada**; o código foi corrigido (`FOLHA_AMBIGUA` em `usePontoEquilibrio.ts`, pinado em `ponto-equilibrio-folha-ambigua.test.ts`):
+> - O **Adiantamento de Salário (2.03.02) NÃO é ambíguo** — os dados provam que é a **2ª parcela do MESMO salário**: co-ocorre com Salários (2.03.01) todo mês até dez/25 e **some** quando a folha consolidou numa parcela só em jan/26 (2.03.01 sozinho ≈ 2.03.01+2.03.02 dos meses anteriores). É **custo real** → contar, não excluir (excluí-lo subestimava a folha em ~R$4–5,6k/mês).
+> - A retenção do empregado (já embutida no Salário **bruto**, não custo patronal extra no Simples: sem INSS patronal) é o **INSS (2.03.06)** + **IRRF (2.03.08)** — esse é o par marcado agora. FGTS (2.03.07) é custo patronal real e **não** é marcado.
+> - `FOLHA_AMBIGUA = {2.03.06, 2.03.08}` (era `{2.03.02, 2.03.08}`); o rótulo do dialog virou "retenção do empregado (já no salário bruto)".
+>
+> O texto de §0.3/§6/§10-C6 abaixo fica **preservado como registro do entendimento da época**.
+
 ## 0. Achados de banco (aterrados via `psql-ro`, TTM abr/25–mar/26, regime competência)
 
 | # | Fato | Consequência |

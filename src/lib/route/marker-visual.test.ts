@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { markerVisual, recenciaFaixa, clusterStats, precisaoVisual } from './marker-visual';
-import type { RouteStop } from '@/components/reposicao/routePlanner/types';
+import type { RouteStop } from '@/components/rota/planner/types';
 
 const carteira = (over: Partial<RouteStop> = {}): RouteStop => ({
   id: 'c1', stopType: 'sales_visit', customerUserId: 'u1', customerName: 'X', phone: null,

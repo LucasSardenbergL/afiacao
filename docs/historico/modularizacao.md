@@ -1,6 +1,29 @@
 # Modularização — diário do programa (F1→F4)
 
-> Programa de separação do app em módulos avaliáveis (bugs/qualidade/velocidade por módulo). Spec e plano da F1 em `docs/superpowers/{specs,plans}/2026-07-08-modularizacao-f1-*`. Ordem comprometida: F1→F2→F3→F4; **parecer Codex a revisitar após a F2**: F4 antes de F3 e F3 (mover código físico) como *opcional* — "manifesto+fronteiras resolvem 80%; F3 é o maior risco de merge".
+> Programa de separação do app em módulos avaliáveis (bugs/qualidade/velocidade por módulo). Specs em `docs/superpowers/specs/2026-07-08-modularizacao-f*`. Ordem executada (decisão do founder 2026-07-08, acatando parecer Codex): **F1→F2→F4**, com **F3 (mover código físico) adiada** para janela coordenada dedicada — e re-decidir lá se ainda vale.
+
+## 🔪 F3 — re-decidida (2026-07-09): move completo DESCARTADO → programa cirúrgico em 3 PRs
+
+- **Re-decisão (founder + Codex `gpt-5.5` reasoning high):** o parecer de 2026-07-08 se confirmou e reforçou — *"o problema restante é fronteira lógica, não diretório; mover tudo para `src/modules/` não reduz uma única aresta, só troca conflito de arquitetura por conflito de Git"*. Contexto que pesou: PR #1212 (~100 arquivos de src/) parado + 8 sessões paralelas vivas. Founder aprovou o cirúrgico guiado pelo relatório de fronteiras.
+- **Critério Codex para burn-down (vale para os próximos):** aresta **legítima** = capacidade estável expressa como verbo, sem importar UI/hook/contexto interno do outro módulo; **vazamento** = importa interno alheio, cria bidirecionalidade ou fan-out. Par bidirecional com dezenas de arestas = módulo mal cortado ou contrato ausente. ⚠️ Anti-padrão nomeado: plataforma como **"lixão de contratos"** — contrato em plataforma só com linguagem transversal (aparecer `Farmer`/`SPIN`/`RoutePlanner` no nome = acoplamento lavado).
+- **PR-1 — routePlanner → telefonia (este PR).** As 45 arestas do par telefonia↔reposicao (16% da baseline F2) eram **erro de corte, não acoplamento**: `components/reposicao/routePlanner/` tinha todos os consumidores (`AdminRoutePlanner`, `useRoutePlanner`, `lib/route/*`) e todas as dependências (`lib/route`, `lib/maps`, `BotaoLigar`) na telefonia; zero consumo pela reposição. `git mv` → `components/rota/planner/` (24 arquivos, histórico preservado) + import-fix em 17 consumidores. **Manifesto intacto** (glob `components/rota/**` da telefonia já capturava o destino — gate F1 confirmou sem órfão/sobreposição). Baseline **284→239** (−45 líquido; 6 arestas re-rotuladas honestamente p/ farmer↔telefonia, alvo do PR-2). Método que achou o alvo: detalhar a baseline por par (`grep deModulo/paraModulo`) — o fan-out 100% concentrado numa pasta denunciou o corte errado.
+- **Próximos:** PR-2 contrato SPIN (11 das 17 arestas telefonia→farmer; quebra o ciclo — tem design a fazer, cuidado com o anti-padrão acima); PR-3 sino do AppShell (7 inversões plataforma→negócio + ~30 KB eager, já quantificado na F4).
+
+## ✅ F2 — gate de fronteiras anti-vazamento com ratchet (2026-07-08, PR #1255)
+
+- **Regra**: negócio importa só de si+plataforma; plataforma↛negócio exceto `COMPOSICAO_RAIZ` (`App.tsx`); `import type` conta (kind no diagnóstico); teste de A importando B = acoplamento A→B.
+- **Baseline inventariada**: 284 arestas (219 runtime + 65 type, 58 pares). Aresta nova fora dela = CI vermelho; aresta resolvida não-removida = vermelho (burn-down). `bun scripts/fronteiras-modulos.ts gerar-baseline|relatorio`.
+- **Extrator = parser TS** (dep já existente), não regex — risco nº1 era falso-negativo (Codex). `vi.mock`/`export * from`/multi-linha cobertos; css não é dependência arquitetural; não-resolvidos EXPOSTOS (4).
+- **Falsificado**: sabotagem `export type … from` cross → vermelho com a aresta exata; revertido → verde.
+- Pares mais quentes (alvos de burn-down): telefonia→reposicao (35) · farmer↔telefonia (26+17) · farmer→tarefas (13).
+
+## ✅ F4 — bundle por módulo + dieta do entry (2026-07-08, PR #TBD-nesta-entrega)
+
+- **Tooling**: `heavy bunx vite build --sourcemap` + `bun scripts/bundle-modulos.ts` → bytes por módulo/pacote, EAGER (entry+modulepreload) vs LAZY. Parser de sourcemap (VLQ) próprio, testado — zero dep nova.
+- **Achados**: entry tinha ~48 KB fonte (~22%) de módulos de NEGÓCIO — causa = inversões plataforma→negócio da baseline F2 (o shell importa chips/hooks cross estáticos). Vendors pesados já estavam saudáveis (elevenlabs/charts/posthog/livekit/jssip todos lazy). Chunk lazy de ~74 kB gzip = stack react-markdown (candidato futuro).
+- **Fix aplicado**: 3 chips do header (`ActiveOverrideBadge`, `PersonaSwitcherChip`, `MelhoriasPopover`) → `React.lazy` (idioma já existente no Layout). Entry **72.94→70.09 kB gzip (-3.9%)**; governanca eliminada do eager. `IncomingCallModal` segue eager DE PROPÓSITO (caminho de atender chamada — decisão de produto no código).
+- **Fora desta fase (recomendação quantificada)**: os HOOKS do sino no AppShell (useFinanceiroAlertas/useTarefas/useReposicaoSessao/useTintAlertas/useCallLog/useWhatsappSla/useMelhorias) seguram ~30 KB fonte de negócio no eager — refactor do coração do shell (2º arquivo mais quente do repo) = PR dedicado com QA visual; queima também 7 inversões da baseline F2.
+- **Lição de processo**: critério de aceite pré-medição (reverter se <5 kB gzip) foi EMENDADO às claras no spec quando a composição fina mostrou o teto teórico da cirurgia (~3 kB) — emenda documentada ≠ emenda silenciosa.
 
 ## ✅ F1 — manifesto + gate + boletim de saúde (2026-07-08, PR #1251, squash `f5535428`)
 

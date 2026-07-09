@@ -1,7 +1,7 @@
 // Aparência dos pinos do mapa (Sub-PR 4, ponto E). PURO/testável — sem Leaflet/DOM.
 // Cor codifica UMA dimensão (urgência de agir); forma codifica o tipo (§4 do design).
 // markerVisual devolve só o TOM semântico; o render mapeia tom→hsl(var(--status-X)).
-import type { RouteStop } from '@/components/reposicao/routePlanner/types';
+import type { RouteStop } from '@/components/rota/planner/types';
 
 export type MarkerTone = 'success' | 'warning' | 'error' | 'info' | 'neutral';
 export type MarkerShape = 'circle' | 'diamond';

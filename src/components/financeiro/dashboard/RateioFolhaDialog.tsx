@@ -111,7 +111,7 @@ export function RateioFolhaDialog({
                     {l.descricao || l.codigo}
                     {l.ambiguo && (
                       <span className="ml-1 inline-flex items-center gap-0.5 text-status-warning">
-                        <AlertTriangle className="w-2.5 h-2.5" /> pagamento, não custo econômico
+                        <AlertTriangle className="w-2.5 h-2.5" /> retenção do empregado (já no salário bruto)
                       </span>
                     )}
                   </span>

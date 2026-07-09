@@ -21,9 +21,9 @@ import type {
   VisitStatus,
   RouteStop,
   CityOption,
-} from '@/components/reposicao/routePlanner/types';
-import { enrichWithPriority } from '@/components/reposicao/routePlanner/priority';
-import { STOP_DURATION_MIN } from '@/components/reposicao/routePlanner/constants';
+} from '@/components/rota/planner/types';
+import { enrichWithPriority } from '@/components/rota/planner/priority';
+import { STOP_DURATION_MIN } from '@/components/rota/planner/constants';
 import type { Tables } from '@/integrations/supabase/types';
 import { visitasAgendadasTable } from '@/integrations/supabase/visitasAgendadas';
 import type { VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas';

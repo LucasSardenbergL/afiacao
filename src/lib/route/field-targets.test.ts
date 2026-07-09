@@ -10,7 +10,7 @@ import {
   aplicarFiltrosAlvos,
   bairrosDe,
 } from './field-targets';
-import type { RouteStop } from '@/components/reposicao/routePlanner/types';
+import type { RouteStop } from '@/components/rota/planner/types';
 
 describe('defaultContextForRole', () => {
   it('master abre no contexto campo (caça)', () => {

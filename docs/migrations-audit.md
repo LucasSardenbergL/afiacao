@@ -24,10 +24,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 - **349** custom migrations totais
 - **1246** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 350
+  - `function`: 348
   - `rls_policy`: 277
   - `index`: 208
-  - `cron_job`: 144
+  - `cron_job`: 146
   - `table`: 135
   - `trigger`: 70
   - `view`: 58
@@ -2984,12 +2984,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `view` | `public.selfservice_disponibilidade` | — |
 | `view` | `public.selfservice_meus_pedidos` | — |
 
-### `20260708234100_tint_gate_custo_staff.sql`
+### `20260708234721_sync_customers_colacor_servicos_crons.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `function` | `public.get_tint_price` | — |
-| `function` | `public.get_tint_prices` | — |
+| `cron_job` | `cron.sync-customers-colacor-vendas-daily` | — |
+| `cron_job` | `cron.sync-customers-servicos-daily` | — |
 
 ## Próximos passos por status
 
