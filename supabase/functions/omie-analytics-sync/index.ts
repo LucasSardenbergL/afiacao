@@ -361,14 +361,22 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
     }
 
     // Bulk upsert em chunks (onConflict user_id = unique_user_omie). empresa_omie NÃO é setado
-    // (preserva o default 'colacor' do comportamento anterior — fora do escopo deste fix).
+    // (preserva o default 'colacor' do comportamento anterior).
+    // Fatia 4 (money-path, Codex): SÓ 'vendas'(oben) mantém o espelho legado omie_clientes. Este
+    // upsert é CODE-FIRST (userByCodigo do espelho poluído vence o documento) e sem empresa_omie —
+    // para contas não-oben ele SOBRESCREVERIA (last-wins, 1 linha/user) a linha de um cliente
+    // multi-conta com o código de OUTRA conta, corrompendo o espelho que readers legados ainda leem
+    // (sync_pedidos sem filtro de conta, carteira-rebuild/ai-ops-agent via vendedor, hooks de UI). As
+    // demais contas alimentam SÓ a proof-table document-first (account-correta) abaixo.
     const rows = Array.from(upsertByUser.values());
     let totalSynced = 0;
-    for (let i = 0; i < rows.length; i += 500) {
-      const chunk = rows.slice(i, i + 500);
-      const { error: upErr } = await db.from("omie_clientes").upsert(chunk, { onConflict: "user_id" });
-      if (upErr) throw new Error(`upsert omie_clientes: ${upErr.message}`);
-      totalSynced += chunk.length;
+    if (account === "vendas") {
+      for (let i = 0; i < rows.length; i += 500) {
+        const chunk = rows.slice(i, i + 500);
+        const { error: upErr } = await db.from("omie_clientes").upsert(chunk, { onConflict: "user_id" });
+        if (upErr) throw new Error(`upsert omie_clientes: ${upErr.message}`);
+        totalSynced += chunk.length;
+      }
     }
 
     // Fatia 3 (proof-table ADITIVA): upsert em omie_customer_account_map por (user_id, account). NÃO
@@ -384,16 +392,22 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       if (mapErr) throw new Error(`upsert omie_customer_account_map: ${mapErr.message}`);
     }
     console.log(`[Sync ${account}] proof-table omie_customer_account_map: ${mapRows.length} vínculos por documento`);
+    // Fatia 4: para contas não-oben o espelho não é tocado; o "sincronizado" reportado é a proof-table.
+    if (account !== "vendas") totalSynced = mapRows.length;
 
     // Upsert das tags em cliente_classificacao (prova se o ListarClientes em lote retorna tags).
     // Grava user_id + tags_omie + tags_synced_at; as colunas derivadas (is_fornecedor,
     // excluir_da_carteira) ficam com o default da tabela e serão calculadas em outra tarefa.
+    // Fatia 4 (Codex): tags também são chaveadas pelo userId CODE-FIRST (mesmo userByCodigo poluído)
+    // → só 'vendas'(oben) grava, pelas mesmas razões do espelho acima. Não-oben: só a proof-table.
     const tagsNowIso = new Date().toISOString();
-    const tagRows = Array.from(tagsByUser.entries()).map(([user_id, tags_omie]) => ({
-      user_id,
-      tags_omie,
-      tags_synced_at: tagsNowIso,
-    }));
+    const tagRows = account === "vendas"
+      ? Array.from(tagsByUser.entries()).map(([user_id, tags_omie]) => ({
+          user_id,
+          tags_omie,
+          tags_synced_at: tagsNowIso,
+        }))
+      : [];
     for (let i = 0; i < tagRows.length; i += 500) {
       const { error: tagErr } = await db
         .from("cliente_classificacao")
