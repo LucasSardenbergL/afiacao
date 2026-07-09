@@ -2322,6 +2322,13 @@ export type Database = {
             referencedRelation: "sales_orders"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "farmer_calls_linked_sales_order_id_fkey"
+            columns: ["linked_sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
         ]
       }
       farmer_category_conversion: {
@@ -8076,6 +8083,13 @@ export type Database = {
             referencedRelation: "sales_orders"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "order_items_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
         ]
       }
       order_messages: {
@@ -9471,6 +9485,13 @@ export type Database = {
             referencedRelation: "sales_orders"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "picking_tasks_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
         ]
       }
       posthog_error_webhook_log: {
@@ -9696,6 +9717,13 @@ export type Database = {
             columns: ["sales_order_id"]
             isOneToOne: false
             referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "production_orders_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
             referencedColumns: ["id"]
           },
         ]
@@ -10626,6 +10654,13 @@ export type Database = {
             columns: ["sales_order_id"]
             isOneToOne: false
             referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recommendation_log_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
             referencedColumns: ["id"]
           },
         ]
@@ -11718,6 +11753,13 @@ export type Database = {
             columns: ["sales_order_id"]
             isOneToOne: false
             referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_price_history_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
             referencedColumns: ["id"]
           },
         ]
@@ -15105,6 +15147,13 @@ export type Database = {
             referencedRelation: "sales_orders"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "venda_excecao_credito_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
         ]
       }
       venda_items_history: {
@@ -15756,6 +15805,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      selfservice_catalogo: {
+        Row: {
+          account: string | null
+          codigo: string | null
+          descricao: string | null
+          familia: string | null
+          imagem_url: string | null
+          omie_codigo_produto: number | null
+          subfamilia: string | null
+          unidade: string | null
+        }
+        Relationships: []
+      }
+      selfservice_disponibilidade: {
+        Row: {
+          account: string | null
+          disponivel: boolean | null
+          omie_codigo_produto: number | null
+        }
+        Relationships: []
+      }
+      selfservice_meus_pedidos: {
+        Row: {
+          account: string | null
+          created_at: string | null
+          id: string | null
+          omie_numero_pedido: string | null
+          order_date_kpi: string | null
+          status: string | null
+          total: number | null
+        }
+        Relationships: []
       }
       v_caca_candidatos: {
         Row: {
