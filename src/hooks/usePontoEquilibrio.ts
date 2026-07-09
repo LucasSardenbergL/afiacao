@@ -350,8 +350,14 @@ export interface FolhaRefLinha {
   mediaMes: number;
   ambiguo: boolean;
 }
-/** Adiantamento de Salário (antecipação compensável) e IRRF (retenção do empregado) — não custo econômico limpo. */
-const FOLHA_AMBIGUA = new Set(['2.03.02', '2.03.08']);
+/**
+ * Retenções do empregado — INSS (2.03.06) e IRRF (2.03.08) — já embutidas no Salário bruto (2.03.01),
+ * NÃO custo patronal extra (a CSC é Simples: sem INSS patronal; o lançado é a parte retida do funcionário).
+ * Somá-las ao bruto dobraria → o `totalLimpoMes` do dialog as exclui. NÃO inclui o Adiantamento (2.03.02):
+ * é a 2ª parcela do MESMO salário (dados de prod, Codex+Claude 2026-07-09), logo custo real.
+ * Pinado em `ponto-equilibrio-folha-ambigua.test.ts`.
+ */
+export const FOLHA_AMBIGUA = new Set(['2.03.06', '2.03.08']);
 
 /** Composição da folha (2.03.*) da empresa de origem, TTM, p/ o dialog dimensionar o rateio (referência, não input). */
 export function useFolhaReferencia(origem: string): {
