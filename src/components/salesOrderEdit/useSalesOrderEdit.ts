@@ -50,11 +50,21 @@ export function useSalesOrderEdit() {
     try {
       const { data, error } = await supabase
         .from('sales_orders')
-        .select('*')
+        .select('id, customer_user_id, items, subtotal, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at')
         .eq('id', id)
         .single();
       if (error) throw error;
-      const row = data as Tables<'sales_orders'>;
+      const row = data as unknown as Tables<'sales_orders'>;
+      // omie_payload não é mais legível por .select() (fechado ao customer no PR0.0-bis); o staff
+      // o recupera pelo canal SECDEF. Indispensável ANTES de montar o pedido: handleSave faz merge
+      // {...order.omie_payload, cabecalho:{codigo_parcela}} — sem o payload atual, salvar APAGARIA
+      // o resto do payload. Falha do canal ⇒ fail-closed (o pedido não carrega).
+      const { data: pl, error: plErr } = await supabase.rpc(
+        'staff_get_sales_order_payload' as never,
+        { p_order_ids: [id] } as never,
+      );
+      if (plErr) throw plErr;
+      const payload = ((pl as unknown as Array<{ omie_payload: OmiePayload | null }> | null)?.[0]?.omie_payload) ?? null;
       const o: SalesOrder = {
         id: row.id,
         customer_user_id: row.customer_user_id,
@@ -66,7 +76,7 @@ export function useSalesOrderEdit() {
         account: row.account,
         omie_pedido_id: row.omie_pedido_id,
         omie_numero_pedido: row.omie_numero_pedido,
-        omie_payload: (row.omie_payload as unknown as OmiePayload | null) ?? null,
+        omie_payload: payload,
         created_at: row.created_at,
       };
       setOrder(o);

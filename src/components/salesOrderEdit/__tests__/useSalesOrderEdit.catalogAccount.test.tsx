@@ -16,7 +16,7 @@ vi.mock('react-router-dom', () => ({
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({}) }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: vi.fn(), functions: { invoke: vi.fn() } },
+  supabase: { from: vi.fn(), functions: { invoke: vi.fn() }, rpc: vi.fn() },
 }));
 
 import { supabase } from '@/integrations/supabase/client';
@@ -24,6 +24,8 @@ import { useSalesOrderEdit } from '../useSalesOrderEdit';
 
 const mockedFrom = vi.mocked(supabase.from);
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
+// PR0.0-bis: loadOrder busca o omie_payload pelo canal staff SECDEF (fechado ao .select()).
+const mockedRpc = vi.mocked(supabase.rpc);
 
 /** Captura o valor passado a `.eq('account', X)` na query de omie_products. */
 const productsAccountEq = vi.fn();
@@ -73,6 +75,7 @@ function chainFor(table: string, orderAccount: string, pageFor: (from: number) =
 
 function installMocks(orderAccount: string, pageFor: (from: number) => unknown[] = () => []) {
   mockedInvoke.mockResolvedValue({ data: { formas: [] }, error: null } as never);
+  mockedRpc.mockResolvedValue({ data: [{ id: 'ord-1', omie_payload: null, omie_response: null }], error: null } as never);
   mockedFrom.mockImplementation((table) => chainFor(table as string, orderAccount, pageFor) as never);
 }
 

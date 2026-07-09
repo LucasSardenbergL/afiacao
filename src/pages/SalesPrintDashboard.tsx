@@ -68,15 +68,35 @@ const SalesPrintDashboard = () => {
   const { data: salesOrders = [], isLoading: loadingSales } = useQuery({
     queryKey: ['sales-print', 'sales', dayStart],
     queryFn: async () => {
+      // Colunas explícitas (PR0.0-bis): omie_payload fechado à leitura de `authenticated` —
+      // um `.select('*')` daria 42501 (o * inteiro cai).
       const { data, error } = await supabase
         .from('sales_orders')
-        .select('*')
+        .select('id, customer_user_id, account, omie_numero_pedido, created_at, items, subtotal, total, discount, notes, status, customer_address, customer_phone, customer_document, order_date_kpi')
         .gte('created_at', dayStart)
         .lte('created_at', dayEnd)
         .neq('status', 'cancelado')
         .order('created_at', { ascending: true });
       if (error) throw error;
-      return (data || []) as SalesOrderRow[];
+      const rows = (data ?? []) as unknown as SalesOrderRow[];
+      // A impressão lê cabecalho.codigo_parcela e cabecalho.codigo_cliente do payload —
+      // recupera em LOTE pelo canal staff SECDEF e re-injeta em cada linha.
+      const ids = rows.map((r) => r.id);
+      if (ids.length === 0) return rows;
+      const { data: pl, error: plErr } = await supabase.rpc(
+        'staff_get_sales_order_payload' as never,
+        { p_order_ids: ids } as never,
+      );
+      if (plErr) {
+        // Degrada honestamente: impressão sem codigo_parcela/codigo_cliente, mas SINALIZA
+        // (supabase.rpc RETORNA o erro, não lança). Uma regressão de gate/grant apareceria aqui.
+        console.warn('[SalesPrintDashboard] payload staff indisponível (impressão sem parcela):', plErr);
+        return rows;
+      }
+      const payloadMap = new Map<string, unknown>(
+        ((pl as unknown as Array<{ id: string; omie_payload: unknown }> | null) ?? []).map((p) => [p.id, p.omie_payload]),
+      );
+      return rows.map((r) => ({ ...r, omie_payload: payloadMap.get(r.id) ?? undefined })) as SalesOrderRow[];
     },
   });
 
