@@ -279,6 +279,28 @@ async function fetchProfileDocUserMap(db: SupabaseClient): Promise<Map<string, s
   return map;
 }
 
+// MIRROR-START omie doc-ambiguo — espelhado verbatim de src/lib/omie/omie-doc-ambiguo.ts
+// P1b (fail-closed money-path): documentos que aparecem em 2+ registros Omie com códigos de cliente
+// DISTINTOS na MESMA conta são AMBÍGUOS — não provam identidade. Espelha o fail-closed do lado profile
+// (fetchProfileDocUserMap: 2 users no mesmo doc → não mapeia). Sem isto, o último da paginação vencia por
+// last-write-wins e gravava um código arbitrário na proof-table. Espelhado no edge (Deno não importa de
+// src/); paridade textual no CI em src/__tests__/edge-money-path-invariants.test.ts.
+function docsComCodigoAmbiguoNoOmie(
+  registros: ReadonlyArray<{ doc: string; codigo: number }>,
+): Set<string> {
+  const codigosPorDoc = new Map<string, Set<number>>();
+  for (const r of registros) {
+    if (!r.doc) continue; // doc vazio não vira chave (o boundary já filtra sem-doc)
+    const s = codigosPorDoc.get(r.doc) ?? new Set<number>();
+    s.add(r.codigo);
+    codigosPorDoc.set(r.doc, s);
+  }
+  const ambiguos = new Set<string>();
+  for (const [doc, cods] of codigosPorDoc) if (cods.size > 1) ambiguos.add(doc);
+  return ambiguos;
+}
+// MIRROR-END
+
 async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "customers", account, { status: "running", error_message: null });
 
@@ -310,6 +332,9 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       source: string;
       updated_at: string;
     }>();
+    // P1b: acumula (doc, código) de TODO registro Omie com doc — inclusive os SEM profile casado — p/
+    // detectar doc ambíguo no lado Omie (2+ códigos DISTINTOS na mesma conta) e fail-closar depois.
+    const registrosOmieDoc: { doc: string; codigo: number }[] = [];
     let pagina = 1;
     let totalPaginas = 1;
 
@@ -324,6 +349,7 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       for (const c of result.clientes_cadastro || []) {
         const doc = (c.cnpj_cpf || "").replace(/\D/g, "");
         if (!doc || c.codigo_cliente_omie == null) continue;
+        registrosOmieDoc.push({ doc, codigo: c.codigo_cliente_omie });
         // mapeado por código (atualiza vendedor) OU vinculável por documento (cria vínculo).
         // Não-vinculado (sem código nem profile) é fora de escopo — é o syncNaoVinculados.
         const userId = userByCodigo.get(Number(c.codigo_cliente_omie)) ?? userByDoc.get(doc);
@@ -360,6 +386,28 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       pagina++;
     }
 
+    // P1b (fail-closed): doc que aparece em 2+ registros Omie com códigos DISTINTOS na MESMA conta é
+    // AMBÍGUO — não dá p/ saber qual código é o do profile. Espelha o lado profile. Remove o user do mapa
+    // (não grava código errado) e coleta p/ o DELETE cirúrgico do vínculo pré-existente (o upsert-only
+    // deixaria a linha antiga viva até o TTL — furo P1 do Codex). Escopado a users PROVADOS ambíguos NESTA
+    // conta (≠ delete-em-massa: run parcial vê menos ocorrências → detecta menos → deleta menos, fail-safe).
+    const docsAmbiguosOmie = docsComCodigoAmbiguoNoOmie(registrosOmieDoc);
+    const usersAmbiguosOmie = new Set<string>();
+    for (const docAmb of docsAmbiguosOmie) {
+      const uid = userByDoc.get(docAmb);
+      if (uid) {
+        accountMapByUser.delete(uid);
+        usersAmbiguosOmie.add(uid);
+      }
+    }
+    if (docsAmbiguosOmie.size > 0) {
+      // amostra SANITIZADA (só os 4 últimos dígitos) — observabilidade da perda de recall sem PII em texto.
+      const amostra = Array.from(docsAmbiguosOmie).slice(0, 5).map((d) => `***${d.slice(-4)}`);
+      console.warn(
+        `[Sync ${account}] P1b fail-closed: ${docsAmbiguosOmie.size} doc(s) ambíguo(s) no Omie (2+ códigos/conta) → ${usersAmbiguosOmie.size} user(s) NÃO-mapeado(s). Amostra: ${amostra.join(", ")}`,
+      );
+    }
+
     // Bulk upsert em chunks (onConflict user_id = unique_user_omie). empresa_omie NÃO é setado
     // (preserva o default 'colacor' do comportamento anterior).
     // Fatia 4 (money-path, Codex): SÓ 'vendas'(oben) mantém o espelho legado omie_clientes. Este
@@ -392,6 +440,23 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       if (mapErr) throw new Error(`upsert omie_customer_account_map: ${mapErr.message}`);
     }
     console.log(`[Sync ${account}] proof-table omie_customer_account_map: ${mapRows.length} vínculos por documento`);
+
+    // P1b: DELETE cirúrgico do vínculo PRÉ-EXISTENTE dos users ambíguos NESTA conta (fecha o furo P1: o
+    // upsert só deixa de GRAVAR o código errado novo, mas a linha antiga do last-write-wins seguiria viva
+    // até o TTL). Escopado por (account, user_id) PROVADOS ambíguos → seguro (não é delete-em-massa).
+    if (usersAmbiguosOmie.size > 0) {
+      const ambiguosList = Array.from(usersAmbiguosOmie);
+      for (let i = 0; i < ambiguosList.length; i += 200) {
+        const { error: delErr } = await db
+          .from("omie_customer_account_map")
+          .delete()
+          .eq("account", empresaMap)
+          .in("user_id", ambiguosList.slice(i, i + 200));
+        if (delErr) throw new Error(`delete ambíguos omie_customer_account_map: ${delErr.message}`);
+      }
+      console.log(`[Sync ${account}] P1b: ${ambiguosList.length} vínculo(s) ambíguo(s) removido(s) da proof-table`);
+    }
+
     // Fatia 4: para contas não-oben o espelho não é tocado; o "sincronizado" reportado é a proof-table.
     if (account !== "vendas") totalSynced = mapRows.length;
 

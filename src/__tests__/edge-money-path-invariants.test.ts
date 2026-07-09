@@ -380,3 +380,54 @@ describe('guardrail money-path: edge ignora o espelho colacor poluído (BUG-1, F
     ).toMatch(/decision\.backfill && userIds\.length === 1 && account !== "colacor"/);
   });
 });
+
+// ── P1b (fail-closed no doc-dup-Omie) — syncCustomers USA o helper espelhado ──
+// A proof-table omie_customer_account_map é populada document-first. Se 2 registros Omie DISTINTOS na
+// MESMA conta compartilham o mesmo doc normalizado, o last-write-wins gravava um código arbitrário (o lado
+// profile já era fail-closed; o lado Omie não). O helper puro (vitest) espelhado no edge detecta o doc
+// ambíguo; a paridade textual aqui pega a reversão do deploy do Lovable. Fail-closed COMPLETO exige remover
+// do mapa E deletar o vínculo pré-existente (furo P1 do Codex — "só não upsertar" deixa a linha antiga viva
+// até o TTL). Ver docs/superpowers/specs/2026-07-09-omie-proof-table-staleness-doc-ambiguo-design.md.
+const ANALYTICS = 'supabase/functions/omie-analytics-sync/index.ts';
+const DOC_AMBIGUO = 'src/lib/omie/omie-doc-ambiguo.ts';
+
+describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helper espelhado)', () => {
+  const src = read(ANALYTICS);
+  const helper = read(DOC_AMBIGUO);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('omie_customer_account_map');
+    expect(helper).toContain('docsComCodigoAmbiguoNoOmie');
+  });
+
+  it('o helper puro existe e exporta docsComCodigoAmbiguoNoOmie', () => {
+    expect(helper).toMatch(/export function docsComCodigoAmbiguoNoOmie/);
+  });
+
+  it('o edge USA o helper: define o espelho E o chama (não só define)', () => {
+    expect(src, 'edge não define mais o helper espelhado de doc-ambíguo').toMatch(/function docsComCodigoAmbiguoNoOmie/);
+    expect(
+      src,
+      'REGRESSÃO: edge não chama mais docsComCodigoAmbiguoNoOmie — P1b voltou a gravar last-write-wins?',
+    ).toMatch(/docsComCodigoAmbiguoNoOmie\(/);
+    expect(
+      count(src, 'docsComCodigoAmbiguoNoOmie'),
+      'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('fail-closed COMPLETO: remove o user do mapa E deleta o vínculo pré-existente (furo P1 do Codex)', () => {
+    expect(src, 'sumiu a remoção do accountMapByUser — voltaria a gravar código ambíguo').toMatch(/accountMapByUser\.delete\(/);
+    expect(
+      src,
+      'REGRESSÃO: sumiu o DELETE cirúrgico — a linha antiga do last-write-wins viveria até o TTL (furo P1)',
+    ).toMatch(/\.delete\(\)[\s\S]{0,160}\.in\("user_id", ambiguosList/);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'omie doc-ambiguo'),
+      'edge divergiu do helper de src/ — o Lovable reescreveu a detecção no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'omie doc-ambiguo'));
+  });
+});
