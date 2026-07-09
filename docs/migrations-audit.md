@@ -22,14 +22,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **345** custom migrations totais
-- **1239** objetos esperados (criados por estas migrations)
+- **1235** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 346
-  - `rls_policy`: 277
+  - `function`: 347
+  - `rls_policy`: 274
   - `index`: 208
   - `cron_job`: 144
-  - `table`: 135
-  - `trigger`: 70
+  - `table`: 134
+  - `trigger`: 69
   - `view`: 55
   - `enum_value`: 4
 
@@ -2954,16 +2954,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.ss_allowlist_gestor_iud` | `selfservice_cliente_allowlist` |
 | `rls_policy` | `public.ss_allowlist_service` | `selfservice_cliente_allowlist` |
 
-### `20260708204820_fin_custo_rateio.sql`
+### `20260708210000_tint_cobertura_lista_email.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `function` | `public.fin_custo_rateio_set_autor` | — |
-| `table` | `public.fin_custo_rateio` | — |
-| `trigger` | `public.trg_fin_custo_rateio_autor` | `fin_custo_rateio` |
-| `rls_policy` | `public.fin_custo_rateio_select_master` | `fin_custo_rateio` |
-| `rls_policy` | `public.fin_custo_rateio_write_master` | `fin_custo_rateio` |
-| `rls_policy` | `public.fin_custo_rateio_service_all` | `fin_custo_rateio` |
+| `function` | `public._tint_cobertura_bases_lista_email` | — |
+| `function` | `public.data_health_watchdog` | — |
 
 ## Próximos passos por status
 
