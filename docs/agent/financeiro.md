@@ -8,6 +8,7 @@
 - **Nunca fabrica número.** Input ausente = `null` + **motivo/confiança**, jamais valor inventado (`Number(null)===0` é fabricação — ver money-path). Guards explícitos: NCG indisponível **≠ R$0** (A2); hurdle indisponível **≠ "20%" fabricado** (A3).
 - **Recomenda, não executa/declara.** O dono decide (trocar regime exige contador + substância econômica; só cresce depois de consertar preço/prazo). Economia < banda de erro → status `empate_tecnico`.
 - **Caixa por-CNPJ, NÃO-fungível** — o caixa de uma empresa nunca cobre o gap de outra (sem mútuo intercompany implícito). Engines escopam por `omie_products.account`/empresa.
+- **Folha compartilhada intercompany (OBEN↔CSC).** A folha dos funcionários da **OBEN roda na Colacor SC** (Simples — fichados lá). Qualquer PE / custo-fixo / **DRE operacional da OBEN lido isolado subestima a mão de obra** → exige **rateio** (custo fixo compartilhado externo ao snapshot, tabela `fin_custo_rateio`, F3 v2). Sem o rateio a margem de segurança infla (medido TTM: **90,3%** isolado vs **~63–72%** com a folha rateada). Simétrico ao *caixa por-CNPJ*: a fronteira entre os CNPJs do grupo distorce a leitura isolada — folha na CSC = códigos `2.03.*` (~R$25–29k/mês; a CSC tem operação própria → a parcela OBEN é fração, é **input humano**, não se fabrica). Spec: `docs/superpowers/specs/2026-07-08-f3-rateio-folha-compartilhada-design.md`.
 - **CET, não taxa nominal** (dívida/funding: o input já é all-in — TAC/tarifas/seguro/reciprocidade); **coobrigação é campo obrigatório**.
 
 ## Engines (mapa)

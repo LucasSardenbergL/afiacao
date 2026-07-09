@@ -33,7 +33,16 @@ export type MotivoPE =
   | 'snapshot_inconsistente'
   | 'mc_instavel'
   | 'deducoes_coluna_inesperada'
-  | 'valor_negativo_inesperado';
+  | 'valor_negativo_inesperado'
+  | 'custo_compartilhado_pendente' // F3 v2 — exige rateio e não foi lançado
+  | 'custo_compartilhado_possivel_duplicidade'; // F3 v2 — folha já no snapshot da própria empresa
+
+/** Custo fixo compartilhado lançado pelo master (parcela da folha de outra empresa do grupo). */
+export interface CustoCompartilhado {
+  valor_mensal: number; // custo mensal NORMALIZADO (anual÷12, c/ 13º/férias/encargos)
+  origem: string; // empresa que paga hoje, ex 'colacor_sc' (disclosure)
+  rotulo: string; // ex 'folha'
+}
 
 export interface PontoEquilibrioConfig {
   coberturaMin: number; // 0.95 — % mínimo do valor das despesas classificado
@@ -71,6 +80,16 @@ export interface PontoEquilibrioResult {
   /** excluido_nao_operacional_ttm / Σdespesas_ttm — guard-rail de "balde de fuga" (delta-E4). */
   nao_operacional_share_pct: number;
   periodo_label: string | null;
+  /** Total TTM do custo fixo compartilhado somado ao fixo (folha rateada). 0 quando ausente. */
+  custo_compartilhado_ttm: number;
+  /** Valor mensal lançado (0 se ausente). */
+  custo_compartilhado_mensal: number;
+  /** Empresa de origem do custo (disclosure), ex 'colacor_sc'. */
+  custo_compartilhado_origem: string | null;
+  /** Pendência de rateio SOB outra degradação (o card avisa "além disto, falta ratear"). C8. */
+  custo_compartilhado_pendente_latente: boolean;
+  /** Contrato C10: === (motivo==='ok'). false ⇒ pe_receita e margem_seguranca são null. */
+  can_show_break_even: boolean;
   detalhes: string[];
 }
 
@@ -78,15 +97,32 @@ export interface PontoEquilibrioInput {
   meses: MesDRE[];
   classificacao: Record<string, TipoCusto>;
   config?: Partial<PontoEquilibrioConfig>;
+  custoCompartilhado?: CustoCompartilhado | null;
+  exigeCustoCompartilhado?: boolean;
+  /** Σ TTM dos códigos de folha achados no snapshot da PRÓPRIA empresa (sinal anti-duplicidade). */
+  custoCompartilhadoNoSnapshotTtm?: number;
 }
 
 const MESES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const rotuloMes = (m: MesDRE) => `${MESES_ABREV[m.mes - 1] ?? '??'}/${m.ano}`;
 
+/** Σ TTM dos valores cujo código começa com algum dos prefixos (sinal anti-duplicidade da folha). */
+export function somaCodigosPorPrefixo(meses: MesDRE[], prefixos: string[]): number {
+  let total = 0;
+  for (const m of meses)
+    for (const [cod, v] of Object.entries(m.despesas))
+      if (Number.isFinite(v) && prefixos.some((p) => cod.startsWith(p))) total += v;
+  return total;
+}
+
 export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioResult {
   const cfg = { ...CONFIG_PE_PADRAO, ...(input.config ?? {}) };
   const { classificacao } = input;
   const meses = [...input.meses].sort((a, b) => a.ano * 12 + a.mes - (b.ano * 12 + b.mes));
+  const exige = input.exigeCustoCompartilhado === true;
+  const rateio = input.custoCompartilhado ?? null;
+  const rateioValido = rateio != null && Number.isFinite(rateio.valor_mensal) && rateio.valor_mensal >= 0;
+  const rateioPendente = exige && !rateioValido;
 
   // Degradação: nula os campos do PE; preserva o contexto informativo (o card explica o porquê).
   const degradar = (motivo: MotivoPE, ctx?: Partial<PontoEquilibrioResult>): PontoEquilibrioResult => ({
@@ -102,6 +138,13 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
     excluido_nao_operacional_recente: 0,
     nao_operacional_share_pct: 0,
     periodo_label: null,
+    custo_compartilhado_ttm: 0,
+    custo_compartilhado_mensal: 0,
+    custo_compartilhado_origem: null,
+    // latente só quando a degradação NÃO é o próprio pendente (nem sem_dados).
+    custo_compartilhado_pendente_latente:
+      rateioPendente && motivo !== 'custo_compartilhado_pendente' && motivo !== 'sem_dados',
+    can_show_break_even: false,
     detalhes: [],
     ...ctx,
   });
@@ -192,7 +235,7 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
 
   // 7. Economia. custos_variaveis = deducoes_col (0 na OBEN) + Σ variável; fixos EXCLUEM nao_operacional.
   const custosVariaveis = deducoesColTTM + variaveisTTM;
-  const custosFixos = fixosTTM;
+  const custosFixosBase = fixosTTM; // SEM a folha (fixo conhecido)
   const mcPct = (receitaTTM - custosVariaveis) / receitaTTM;
   if (!(mcPct > 0)) return degradar('mc_negativa', ctx);
 
@@ -211,7 +254,25 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
     if (cv > cfg.mcInstavelCv) return degradar('mc_instavel', ctx);
   }
 
-  // ── OK: publica PE + margem de segurança ────────────────────────────────────────────────────
+  // ctx enriquecido: preserva mc_pct/custos_fixos(sem folha)/variaveis p/ o card do estado pendente (§5).
+  const ctxEconomia: Partial<PontoEquilibrioResult> = {
+    ...ctx,
+    mc_pct: mcPct,
+    custos_fixos: custosFixosBase,
+    custos_variaveis: custosVariaveis,
+  };
+
+  // 9. Duplicidade (C1): folha já no snapshot da própria empresa → somar o rateio dobraria.
+  const noSnapshotTTM = input.custoCompartilhadoNoSnapshotTtm ?? 0;
+  if (exige && noSnapshotTTM > cfg.materialDespesaPct * despesasTTM)
+    return degradar('custo_compartilhado_possivel_duplicidade', ctxEconomia);
+
+  // 10. Pendente (B): exige rateio e não foi lançado → vela pe/margem (último gate).
+  if (rateioPendente) return degradar('custo_compartilhado_pendente', ctxEconomia);
+
+  // ── OK: soma o rateio ao fixo (aditivo, pós-reconciliação) ──────────────────────────────────
+  const custoCompartilhadoTtm = rateioValido ? rateio!.valor_mensal * meses.length : 0;
+  const custosFixos = custosFixosBase + custoCompartilhadoTtm;
   const peReceita = custosFixos / mcPct;
   const margemSeguranca = (receitaTTM - peReceita) / receitaTTM;
   return {
@@ -227,6 +288,11 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
     excluido_nao_operacional_recente: naoOpRecente,
     nao_operacional_share_pct: share,
     periodo_label: label,
+    custo_compartilhado_ttm: custoCompartilhadoTtm,
+    custo_compartilhado_mensal: rateioValido ? rateio!.valor_mensal : 0,
+    custo_compartilhado_origem: rateioValido ? rateio!.origem : null,
+    custo_compartilhado_pendente_latente: false,
+    can_show_break_even: true,
     detalhes: [],
   };
 }
