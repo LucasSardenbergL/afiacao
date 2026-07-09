@@ -408,6 +408,25 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       );
     }
 
+    // P1b: DELETE cirúrgico do vínculo PRÉ-EXISTENTE dos users ambíguos NESTA conta, ANTES do upsert
+    // (delete-first fail-closed: remove o código errado antes de gravar o bom — se o upsert falhar depois,
+    // o errado já saiu; challenge Codex item 1/7). Escopado por (account, user_id) PROVADOS ambíguos, e SÓ
+    // source='document' (preserva override humano source='manual' — challenge Codex item 3). Não é
+    // delete-em-massa: run parcial vê menos ocorrências → detecta menos → deleta menos (fail-safe).
+    if (usersAmbiguosOmie.size > 0) {
+      const ambiguosList = Array.from(usersAmbiguosOmie);
+      for (let i = 0; i < ambiguosList.length; i += 200) {
+        const { error: delErr } = await db
+          .from("omie_customer_account_map")
+          .delete()
+          .eq("account", empresaMap)
+          .eq("source", "document")
+          .in("user_id", ambiguosList.slice(i, i + 200));
+        if (delErr) throw new Error(`delete ambíguos omie_customer_account_map: ${delErr.message}`);
+      }
+      console.log(`[Sync ${account}] P1b: ${ambiguosList.length} user(s) ambíguo(s) — vínculo document removido da proof-table`);
+    }
+
     // Bulk upsert em chunks (onConflict user_id = unique_user_omie). empresa_omie NÃO é setado
     // (preserva o default 'colacor' do comportamento anterior).
     // Fatia 4 (money-path, Codex): SÓ 'vendas'(oben) mantém o espelho legado omie_clientes. Este
@@ -440,22 +459,6 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       if (mapErr) throw new Error(`upsert omie_customer_account_map: ${mapErr.message}`);
     }
     console.log(`[Sync ${account}] proof-table omie_customer_account_map: ${mapRows.length} vínculos por documento`);
-
-    // P1b: DELETE cirúrgico do vínculo PRÉ-EXISTENTE dos users ambíguos NESTA conta (fecha o furo P1: o
-    // upsert só deixa de GRAVAR o código errado novo, mas a linha antiga do last-write-wins seguiria viva
-    // até o TTL). Escopado por (account, user_id) PROVADOS ambíguos → seguro (não é delete-em-massa).
-    if (usersAmbiguosOmie.size > 0) {
-      const ambiguosList = Array.from(usersAmbiguosOmie);
-      for (let i = 0; i < ambiguosList.length; i += 200) {
-        const { error: delErr } = await db
-          .from("omie_customer_account_map")
-          .delete()
-          .eq("account", empresaMap)
-          .in("user_id", ambiguosList.slice(i, i + 200));
-        if (delErr) throw new Error(`delete ambíguos omie_customer_account_map: ${delErr.message}`);
-      }
-      console.log(`[Sync ${account}] P1b: ${ambiguosList.length} vínculo(s) ambíguo(s) removido(s) da proof-table`);
-    }
 
     // Fatia 4: para contas não-oben o espelho não é tocado; o "sincronizado" reportado é a proof-table.
     if (account !== "vendas") totalSynced = mapRows.length;

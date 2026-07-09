@@ -108,9 +108,22 @@ Parecer cru arquivado (transporte `scripts/codex-async.sh`). **Convergiu com a d
 - **(1, P2 — ACEITO com contrato):** reusar `updated_at` agora; coluna dedicada só com 2º writer. → §3.
 - **(5, P2 — ACEITO):** P1b só na proof-table (dívida consciente, Fatia 4). → §4.
 
+### Codex challenge do diff (2026-07-09, high) — 8 achados, 4 corrigidos no código
+
+- **[item 1/7, P2 — CORRIGIDO]** Ordem/atomicidade: o DELETE cirúrgico rodava DEPOIS do upsert → se o upsert lançasse (colisão), o delete não rodava. → **delete-first**: o DELETE agora roda ANTES do upsert (remove o código errado antes de gravar o bom; falha do upsert não deixa o errado vivo).
+- **[item 3, P2 — CORRIGIDO]** O DELETE apagaria uma linha `source='manual'` (override humano). → `.eq('source','document')` no delete (só remove o que o sync gravou; preserva correção manual).
+- **[item 4, P3 — CORRIGIDO]** A view não concedia SELECT a `service_role` → o edge `compare-customer-process` cairia em permission denied e degradaria silencioso. → `GRANT ... TO ... service_role` + assert V8 no PG17.
+- **[item 8, P3 — CORRIGIDO]** CI não pegava a preservação de `manual`. → assert textual `.eq("source","document")` no delete.
+- **[item 5, P3 — contrato]** `updated_at` só é last_seen enquanto o sync for o único writer (edição manual furaria). Já é o contrato documentado (§3).
+- **[item 6, P2 — comportamento desejado]** Sync parado > 7d → a conta some da view (Customer360 `[]`, compare sem segmento). É degradação honesta; o **alerta de "sync parado" é do `data_health_watchdog`** (canal dedicado), não do consumidor.
+- **[item 2, P3 — TTL é o backstop]** Se um doc ambíguo não resolve `userByDoc` (profile mudou de doc/foi apagado), o delete não acha o user → a linha antiga não é removida; o **frescor (7d) é o backstop** desse canto.
+
+**[item extra do challenge, P1 — RESÍDUO PRÉ-EXISTENTE, fora de escopo → decisão do founder]**
+Para `account='vendas'`, o MESMO doc-dup-Omie ainda grava código arbitrário no **espelho legado `omie_clientes`** (`upsertByUser`), que tem leitores legados ativos (sync_pedidos, carteira-rebuild, ai-ops-agent). NÃO fechado aqui, de propósito: (a) a tarefa foi escopada à proof-table; (b) o design da Fatia 3 manda o espelho **INTOCADO** (sem delete/re-rótulo); (c) o espelho é **CODE-FIRST** — remover cegamente o user ambíguo teria **falso-positivo** (um vínculo resolvido por CÓDIGO, confiável, não é invalidado por doc ambíguo); (d) o fix seria **incompleto** (outros writers do espelho — `omie-cliente`, `omie-sync`, `Auth` signup — também gravam por doc). Fechamento correto = **Fatia 4** (aposenta o espelho e migra o pedido p/ a proof-table). Elevado à visibilidade do founder.
+
 **Resíduos conscientes** (documentados, fora de escopo destes 2 débitos):
 - **Reatribuição de código pura** (doc NÃO-ambíguo, código muda de dono) ainda pode abortar um chunk de upsert no `uq_ocam_codigo_account` (P2 pré-existente do design da Fatia 3). Visível: o upsert lança → `sync_state.status='error'` → `data_health_watchdog`. Não resolvido aqui (exigiria run-ledger; escopo Fatia 4).
-- **P1b não tocado no espelho `omie_clientes`** (Fatia 4 o aposenta).
+- **P1b não tocado no espelho `omie_clientes`** (ver [item extra] acima; Fatia 4 o aposenta).
 
 ## 8. Deploy (ordem — aditivo, cada passo fail-safe)
 

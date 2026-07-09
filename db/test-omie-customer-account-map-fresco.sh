@@ -88,7 +88,9 @@ INSERT INTO public.omie_customer_account_map(user_id, account, omie_codigo_clien
   ('11111111-1111-1111-1111-111111111111','oben',    100, now()),
   ('11111111-1111-1111-1111-111111111111','colacor', 200, now() - interval '10 days'),
   ('22222222-2222-2222-2222-222222222222','oben',    300, now());
-GRANT SELECT ON public.omie_customer_account_map TO authenticated, anon;
+-- service_role com SELECT na BASE simula o default do Supabase (grant amplo); o security_invoker faz o
+-- edge (service_role) resolver a query subjacente com o PRÓPRIO privilégio — sem grant na base, permission denied.
+GRANT SELECT ON public.omie_customer_account_map TO authenticated, anon, service_role;
 SQL
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -109,10 +111,12 @@ OWN=$(Pq -c "SET test.uid='11111111-1111-1111-1111-111111111111'; SET ROLE authe
 STAFF=$(Pq -c "SET test.uid='33333333-3333-3333-3333-333333333333'; SET ROLE authenticated; SELECT count(*) FROM public.omie_customer_account_map_fresco;" | tail -1)
 EMP=$(Pq -c "SET test.uid='44444444-4444-4444-4444-444444444444'; SET ROLE authenticated; SELECT count(*) FROM public.omie_customer_account_map_fresco;" | tail -1)
 ANON=$(Pq -c "SET ROLE anon; SELECT count(*) FROM public.omie_customer_account_map_fresco;" | tail -1)
+SVC=$(Pq -c "SET ROLE service_role; SELECT count(*) FROM public.omie_customer_account_map_fresco;" | tail -1)
 eq "V4 own-scope+frescor: user1 vê só a PRÓPRIA FRESCA (1 de suas 2 linhas)" "$OWN" "1"
 eq "V5 staff master vê todas as frescas"    "$STAFF" "2"
 eq "V6 staff employee vê todas as frescas"  "$EMP"   "2"
 eq "V7 anon não vê nada (RLS herdada nega)" "$ANON"  "0"
+eq "V8 service_role (edge compare) lê a view: todas as frescas (grant explícito + BYPASSRLS)" "$SVC" "2"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (sabota → exige VERMELHO → restaura)

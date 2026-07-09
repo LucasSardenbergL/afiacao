@@ -24,5 +24,7 @@ WHERE updated_at >= now() - interval '7 days';
 
 -- security_invoker=true é OBRIGATÓRIO: a view roda com os privilégios do CHAMADOR → a RLS da tabela base
 -- se aplica (staff ALL, user vê próprio). Sem isso a view rodaria como owner e BYPASSARIA a RLS (vazamento).
--- GRANT espelha a base: authenticated/anon têm SELECT, mas a RLS herdada nega anon (sem policy) → 0 linhas.
-GRANT SELECT ON public.omie_customer_account_map_fresco TO authenticated, anon;
+-- GRANT espelha a base: authenticated/anon têm SELECT (a RLS herdada nega anon — sem policy — → 0 linhas);
+-- service_role EXPLÍCITO (challenge Codex): o edge compare-customer-process lê a view via service_role —
+-- sem o grant cairia em permission denied e degradaria SILENCIOSO (sem segmento/lookalikes).
+GRANT SELECT ON public.omie_customer_account_map_fresco TO authenticated, anon, service_role;

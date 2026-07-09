@@ -416,12 +416,16 @@ describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helpe
     ).toBeGreaterThanOrEqual(2);
   });
 
-  it('fail-closed COMPLETO: remove o user do mapa E deleta o vínculo pré-existente (furo P1 do Codex)', () => {
+  it('fail-closed COMPLETO: remove do mapa, deleta o vínculo pré-existente E preserva source=manual (Codex)', () => {
     expect(src, 'sumiu a remoção do accountMapByUser — voltaria a gravar código ambíguo').toMatch(/accountMapByUser\.delete\(/);
     expect(
       src,
       'REGRESSÃO: sumiu o DELETE cirúrgico — a linha antiga do last-write-wins viveria até o TTL (furo P1)',
-    ).toMatch(/\.delete\(\)[\s\S]{0,160}\.in\("user_id", ambiguosList/);
+    ).toMatch(/\.delete\(\)[\s\S]{0,220}\.in\("user_id", ambiguosList/);
+    expect(
+      src,
+      'REGRESSÃO: o DELETE não preserva mais source=document — apagaria override humano manual (Codex item 3)',
+    ).toMatch(/\.delete\(\)[\s\S]{0,160}\.eq\("source", "document"\)/);
   });
 
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
