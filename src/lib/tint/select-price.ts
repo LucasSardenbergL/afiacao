@@ -26,8 +26,12 @@
 import type { TintPriceBreakdown } from './compute-price';
 
 /** O agregado de preço SEM a receita (itensCorantes) — o que a RPC batch devolve e o
- *  que a seleção realmente usa. O breakdown completo (single) é atribuível a este. */
-export type TintPriceBreakdownLite = Omit<TintPriceBreakdown, 'itensCorantes'>;
+ *  que a seleção realmente usa. O breakdown completo (single) é atribuível a este.
+ *  custoCorantes é number|null: a RPC esconde o custo (NULL) para não-staff — gate de
+ *  segurança P1 (migration 20260708234100). O customer só usa precoFinal, não o custo. */
+export type TintPriceBreakdownLite = Omit<TintPriceBreakdown, 'itensCorantes' | 'custoCorantes'> & {
+  custoCorantes: number | null;
+};
 
 export type TintPriceSource = 'cliente' | 'tabela' | 'calculado';
 /** Por que não há preço — alimenta a mensagem honesta na UI. */
@@ -138,6 +142,7 @@ export function selectAltPrice(
     preco: sel.precoSemDesconto,
     fonte: sel.source === 'cliente' ? null : sel.source, // alternativa nunca usa preço de cliente
     recalculado: sel.recalculado,
-    custoCorantes: pricing.custoCorantes,
+    // gate esconde o custo p/ não-staff (null) → 0: telemetria efêmera do carrinho, não usada p/ preço.
+    custoCorantes: pricing.custoCorantes ?? 0,
   };
 }
