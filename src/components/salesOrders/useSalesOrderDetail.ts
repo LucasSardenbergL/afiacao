@@ -30,10 +30,30 @@ export async function fetchOrderDetail(
 ): Promise<OrderDetail> {
   let order;
   if (origin === 'sales') {
-    const { data, error } = await supabase.from('sales_orders').select('*').eq('id', id).maybeSingle();
+    // Colunas explícitas (PR0.0-bis): omie_payload/omie_response fechados à leitura de
+    // `authenticated` — um `.select('*')` daria 42501 (o * inteiro cai).
+    const { data, error } = await supabase
+      .from('sales_orders')
+      .select('id, customer_user_id, items, subtotal, discount, total, status, notes, account, omie_pedido_id, omie_numero_pedido, created_at, customer_address, customer_phone, customer_document')
+      .eq('id', id)
+      .maybeSingle();
     if (error) throw error;
     if (!data) throw new Error('Pedido não encontrado');
-    order = mapSalesDetail(data as SalesOrderRow);
+    order = mapSalesDetail(data as unknown as SalesOrderRow);
+    // A impressão do cupom lê cabecalho.codigo_parcela do payload — recupera pelo canal staff
+    // SECDEF. Degrada honestamente (impressão sem parcela detalhada) se indisponível; não
+    // bloqueia o painel de detalhe por causa da impressão. supabase.rpc RETORNA o erro (não
+    // lança) → checa explicitamente e SINALIZA (não silencioso — money-path: ausente ≠ silêncio).
+    const { data: pl, error: plErr } = await supabase.rpc(
+      'staff_get_sales_order_payload' as never,
+      { p_order_ids: [id] } as never,
+    );
+    if (plErr) {
+      console.warn('[useSalesOrderDetail] payload staff indisponível (impressão sem parcela):', plErr);
+    } else {
+      const payload = (pl as unknown as Array<{ omie_payload: unknown }> | null)?.[0]?.omie_payload;
+      if (payload) order.omie_payload = payload;
+    }
   } else {
     const { data, error } = await supabase.from('orders').select('*').eq('id', id).maybeSingle();
     if (error) throw error;

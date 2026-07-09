@@ -43,13 +43,16 @@ const SalesQuotes = () => {
   const { data: quotes, isLoading } = useQuery({
     queryKey: ['sales-quotes'],
     queryFn: async () => {
+      // Colunas explícitas (PR0.0-bis): omie_payload/omie_response foram fechados à leitura
+      // de `authenticated` — um `.select('*')` daria 42501 (o * inteiro cai). Esta tela não
+      // usa payload, então basta enumerar o que consome.
       const { data, error } = await supabase
         .from('sales_orders')
-        .select('*')
+        .select('id, customer_user_id, account, items, total, notes, created_at, status')
         .eq('status', 'orcamento')
         .order('created_at', { ascending: false });
       if (error) throw error;
-      return data || [];
+      return (data ?? []) as unknown as SalesOrder[];
     },
     enabled: !!user,
   });
