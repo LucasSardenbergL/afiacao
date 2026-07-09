@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **341** custom migrations totais
+- **342** custom migrations totais
 - **1220** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 342
@@ -2926,6 +2926,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.fin_antecipacoes_select_master` | `fin_antecipacoes` |
 | `rls_policy` | `public.fin_antecipacoes_write_master` | `fin_antecipacoes` |
 | `rls_policy` | `public.fin_antecipacoes_service_all` | `fin_antecipacoes` |
+
+### `20260708190000_fechar_views_invoker_off_p0.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
