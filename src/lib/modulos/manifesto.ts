@@ -680,3 +680,8 @@ export const MODULOS: ModuloApp[] = [
 // Dívida de classificação do bootstrap F1 — burn-down visível no boletim.
 // Regra do gate: entrada aqui NÃO pode ter dono (senão vira erro "nao-classificado-com-dono").
 export const NAO_CLASSIFICADOS: NaoClassificado[] = [];
+
+// Composition roots (F2): arquivos ISENTOS da regra de fronteira plataforma↛negócio,
+// porque compor os módulos é o papel deles (o router lazy-importa as pages de todos).
+// Adicionar entrada aqui é decisão de arquitetura — não use como escape de vazamento.
+export const COMPOSICAO_RAIZ: string[] = ["src/App.tsx"];
