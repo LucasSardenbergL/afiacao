@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **341** custom migrations totais
-- **1218** objetos esperados (criados por estas migrations)
+- **343** custom migrations totais
+- **1231** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 342
-  - `rls_policy`: 269
-  - `index`: 204
+  - `function`: 344
+  - `rls_policy`: 274
+  - `index`: 207
   - `cron_job`: 144
-  - `table`: 132
-  - `trigger`: 68
+  - `table`: 134
+  - `trigger`: 69
   - `view`: 55
   - `enum_value`: 4
 
@@ -2913,6 +2913,29 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20260707120000_seed_fin_dre_custo_tipo_oben.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260708120000_fin_antecipacoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_antecipacoes_set_autor` | — |
+| `table` | `public.fin_antecipacoes` | — |
+| `index` | `public.fin_antecipacoes_ref_uq` | `fin_antecipacoes` |
+| `index` | `public.idx_fin_antecipacoes_company_viva` | `fin_antecipacoes` |
+| `trigger` | `public.trg_fin_antecipacoes_autor` | `fin_antecipacoes` |
+| `rls_policy` | `public.fin_antecipacoes_select_master` | `fin_antecipacoes` |
+| `rls_policy` | `public.fin_antecipacoes_write_master` | `fin_antecipacoes` |
+| `rls_policy` | `public.fin_antecipacoes_service_all` | `fin_antecipacoes` |
+
+### `20260708171049_reposicao_motor_run_marker.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `table` | `public.reposicao_motor_run` | — |
+| `index` | `public.idx_reposicao_motor_run_empresa_data` | `reposicao_motor_run` |
+| `rls_policy` | `public.reposicao_motor_run_sel` | `reposicao_motor_run` |
+| `rls_policy` | `public.reposicao_motor_run_ins` | `reposicao_motor_run` |
 
 ### `20260708204820_fin_custo_rateio.sql`
 

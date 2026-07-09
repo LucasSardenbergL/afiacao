@@ -132,6 +132,13 @@ num comentário → falso "ausente", não prova nada). Duas saídas:
   #1215): `variant:"detail"` presente (o `<PageSkeleton>` novo) **+** `animate-spin` ausente (o
   `<Loader2>` que saiu). Pela atomicidade do Publish (build da `main` inteira), 1 página provada ⇒ o
   lote todo no ar.
+  - **Marca removida não-única** (componente eager / classe Tailwind reusada em chunks lazy): a ausência
+    **global** não prova nada. Ancore o chunk-alvo pela string renderizada única do mesmo fluxo (a *Calibrar*
+    acima, como localizador) e valide as TRÊS no MESMO chunk: (i) marca removida ausente, (ii) unicidade dela
+    naquele escopo provada antes (`git grep` no commit pai), (iii) um **controle positivo irmão** ainda
+    presente — senão chunk vazio / leitura quebrada lê como "removido". Ex. #1232 (spinner→skeleton no
+    `ProtectedRoute` eager): `animate-spin text-primary`=0 (removido) **+** `animate-spin text-muted-foreground`≥1
+    (gates vizinhos intocados = controle).
 
 ⚠️ Guard embutido (exit 2): contagem 0/1 = enumeração quebrada (formato do bundler/Workbox mudou) —
 NÃO conclua "não está no ar"; conserte o script primeiro. Os bytes provam que o **código subiu**; se a

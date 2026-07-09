@@ -14,11 +14,12 @@
 -- FALSIFICAÇÃO PROVADA (test-pcp-f2a-custo.sh Step 17 — cada sabotagem→vermelho→revertida):
 --   COALESCE(cmc,0)→#3 · remover guard unidade→#4 · sum→max(1 componente)→#5 · tirar validação de data→#6 ·
 --   default possivel_erro_receita sem cruzar 1A→#10 · security_invoker=false→#13 · fn_pcp_cmc_vigente INVOKER→DEFINER→#14 ·
---   classe unidade_divergente/ambiguo→NULL (some da fila)→FIX1.
+--   classe unidade_divergente/ambiguo→NULL (some da fila)→FIX1 · array vazio (itens=[]) tratado como ok→FIX7 (sem_estrutura some do motor+fila).
 -- HARDENING (painel tri-modelo, sobre o código real): FIX1 fila inclui unidade_divergente/estrutura_ambigua (não somem) ·
 --   FIX2 cmc sem linha em omie_products (unidade não confirmada)→incompleto · FIX3 quantProdMalha<=0→incompleto (não custeia 0) ·
 --   FIX4 idProdMalha decimal/gigante→comp NULL (LEFT JOIN não acha CMC; NÃO aborta o recompute) · FIX5 fn_pcp_recompute_excecoes
---   valida config (versao/tol/drift) · FIX6 pg_advisory_xact_lock nas 2 RPC (padrão da 1B-M1 — DELETE+INSERT/upsert sem corrida).
+--   valida config (versao/tol/drift) · FIX6 pg_advisory_xact_lock nas 2 RPC (padrão da 1B-M1 — DELETE+INSERT/upsert sem corrida) ·
+--   FIX7 estrutura Omie vazia (itens=[] array vazio, 0 componentes)→sem_estrutura: custo NULL (não 0) e entra na fila como sem_estrutura (impacto=nCMC do acabado).
 BEGIN;
 
 -- ── 0) Config (pcp_config já existe da 1A; CREATE IF NOT EXISTS defensivo — shape REAL key/value jsonb) ──
@@ -46,13 +47,18 @@ CREATE TABLE IF NOT EXISTS public.pcp_custo_padrao_resultados (
   custo_fita          numeric,
   custo_outros        numeric,                 -- material fora dos 4 papéis (não some)
   custo_total         numeric,                 -- NULL se custo_status <> 'ok'
-  custo_status        text NOT NULL CHECK (custo_status IN ('ok','incompleto','unidade_divergente','ambiguo')),
+  custo_status        text NOT NULL CHECK (custo_status IN ('ok','incompleto','unidade_divergente','ambiguo','sem_estrutura')),
   n_componentes       int NOT NULL,
   n_incompletos       int NOT NULL,
   detalhe             jsonb,
   derivado_em         timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (omie_codigo_produto, data_posicao, versao_regra)
 );
+-- FIX 7: evolui o CHECK de custo_status idempotentemente — a tabela já existe em prod (entrega anterior) e
+--   CREATE TABLE IF NOT EXISTS NÃO atualiza CHECK; sem isto o INSERT de 'sem_estrutura' (estrutura Omie vazia: itens=[]) violaria.
+ALTER TABLE public.pcp_custo_padrao_resultados DROP CONSTRAINT IF EXISTS pcp_custo_padrao_resultados_custo_status_check;
+ALTER TABLE public.pcp_custo_padrao_resultados ADD  CONSTRAINT pcp_custo_padrao_resultados_custo_status_check
+  CHECK (custo_status IN ('ok','incompleto','unidade_divergente','ambiguo','sem_estrutura'));
 
 -- ── 2) Fila de exceções — INCLUSIVA (incompletos/sem-nCMC entram); lados NULLABLE; impacto_r NOT NULL ordena TUDO ──
 CREATE TABLE IF NOT EXISTS public.pcp_custo_excecoes (
@@ -67,18 +73,18 @@ CREATE TABLE IF NOT EXISTS public.pcp_custo_excecoes (
   impacto_r           numeric NOT NULL,        -- coalesce(div_abs, custo_parcial/total, ncmc, 0)
   classe_causa text NOT NULL CHECK (classe_causa IN
     ('possivel_erro_receita','drift_preco_provavel','causa_indeterminada',
-     'material_fora_bucket','cmc_incompleto','ncmc_ausente','unidade_divergente','estrutura_ambigua')),
+     'material_fora_bucket','cmc_incompleto','ncmc_ausente','unidade_divergente','estrutura_ambigua','sem_estrutura')),
   custo_status text NOT NULL,
   derivado_em  timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (omie_codigo_produto, data_posicao, versao_regra)
 );
 CREATE INDEX IF NOT EXISTS idx_pcp_custo_exc_imp ON public.pcp_custo_excecoes (impacto_r DESC);
--- FIX 1: evolui o CHECK de classe_causa idempotentemente — a tabela já existe em prod (entrega anterior) e
---   CREATE TABLE IF NOT EXISTS NÃO atualiza CHECK; sem isto o INSERT de 'unidade_divergente'/'estrutura_ambigua' violaria.
+-- FIX 1/7: evolui o CHECK de classe_causa idempotentemente — a tabela já existe em prod (entrega anterior) e
+--   CREATE TABLE IF NOT EXISTS NÃO atualiza CHECK; sem isto o INSERT de 'unidade_divergente'/'estrutura_ambigua'/'sem_estrutura' violaria.
 ALTER TABLE public.pcp_custo_excecoes DROP CONSTRAINT IF EXISTS pcp_custo_excecoes_classe_causa_check;
 ALTER TABLE public.pcp_custo_excecoes ADD  CONSTRAINT pcp_custo_excecoes_classe_causa_check
   CHECK (classe_causa IN ('possivel_erro_receita','drift_preco_provavel','causa_indeterminada',
-     'material_fora_bucket','cmc_incompleto','ncmc_ausente','unidade_divergente','estrutura_ambigua'));
+     'material_fora_bucket','cmc_incompleto','ncmc_ausente','unidade_divergente','estrutura_ambigua','sem_estrutura'));
 
 -- ── 3) CMC vigente (conta lida de config, ausente→NULL, INVOKER — RLS do cmc_snapshot protege) ──
 CREATE OR REPLACE FUNCTION public.fn_pcp_cmc_vigente(
@@ -205,13 +211,14 @@ BEGIN
     it.tipo_item,
     a.custo_abrasivo, a.custo_cola, a.custo_catalisador, a.custo_fita, a.custo_outros,
     CASE
-      WHEN jsonb_typeof(s.payload->'itens') = 'array' AND coalesce(a.n_div, 0) = 0 AND coalesce(a.n_falta, 0) = 0
+      WHEN jsonb_typeof(s.payload->'itens') = 'array' AND a.pai_cod IS NOT NULL AND coalesce(a.n_div, 0) = 0 AND coalesce(a.n_falta, 0) = 0
       THEN coalesce(a.custo_abrasivo,0) + coalesce(a.custo_cola,0) + coalesce(a.custo_catalisador,0)
          + coalesce(a.custo_fita,0) + coalesce(a.custo_outros,0)
       ELSE NULL
     END AS custo_total,
     CASE
       WHEN jsonb_typeof(s.payload->'itens') IS DISTINCT FROM 'array' THEN 'ambiguo'
+      WHEN a.pai_cod IS NULL THEN 'sem_estrutura'                                                    -- FIX 7: array vazio (itens=[], 0 componentes) → custo DESCONHECIDO, nunca 0
       WHEN coalesce(a.n_div, 0)   > 0 THEN 'unidade_divergente'
       WHEN coalesce(a.n_falta, 0) > 0 THEN 'incompleto'
       ELSE 'ok'
@@ -274,6 +281,7 @@ BEGIN
         WHEN c.custo_status = 'incompleto' THEN 'cmc_incompleto'                          -- entra na fila (total NULL)
         WHEN c.custo_status = 'unidade_divergente' THEN 'unidade_divergente'              -- FIX 1: entra na fila (não some p/ NULL)
         WHEN c.custo_status = 'ambiguo' THEN 'estrutura_ambigua'                          -- FIX 1: entra na fila (não some p/ NULL)
+        WHEN c.custo_status = 'sem_estrutura' THEN 'sem_estrutura'                        -- FIX 7: estrutura Omie vazia → entra na fila (falta receita, não erro de custo)
         WHEN c.custo_status = 'ok' AND c.ncmc IS NULL THEN 'ncmc_ausente'                 -- ativo NÃO custeado
         WHEN c.custo_status = 'ok' AND c.ncmc IS NOT NULL
              AND (c.div_abs / NULLIF(c.ncmc, 0)) > v_tol THEN
@@ -306,6 +314,7 @@ BEGIN
       WHEN 'cmc_incompleto'     THEN coalesce(custo_parcial, ncmc, 0)
       WHEN 'unidade_divergente' THEN coalesce(custo_parcial, ncmc, 0)   -- FIX 1
       WHEN 'estrutura_ambigua'  THEN coalesce(custo_parcial, ncmc, 0)   -- FIX 1
+      WHEN 'sem_estrutura'      THEN coalesce(ncmc, 0)                   -- FIX 7: único valor conhecido é o CMC do acabado (se houver)
       WHEN 'ncmc_ausente'       THEN coalesce(custo_total, 0)
       ELSE coalesce(div_abs, custo_total, ncmc, 0)
     END AS impacto_r,
