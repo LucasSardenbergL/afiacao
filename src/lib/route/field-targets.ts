@@ -1,7 +1,7 @@
 // Helpers puros do contexto "Visitas em campo" (hunter) do Roteirizador.
 // Eixo de CONTEXTO ('campo' | 'equipe') acima do eixo de MODO existente.
 // O contexto "campo" reusa internamente planningMode='prospeccao'.
-import type { PlanningContext, PlanningMode, RouteStop, TargetFilter } from '@/components/reposicao/routePlanner/types';
+import type { PlanningContext, PlanningMode, RouteStop, TargetFilter } from '@/components/rota/planner/types';
 
 /** Contexto inicial por papel: master entra na caça (campo); o resto, na equipe. */
 export function defaultContextForRole(isMaster: boolean): PlanningContext {
