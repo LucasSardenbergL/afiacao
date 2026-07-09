@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ordenarFilaGeocodeCep, type EstadoFilaCep } from './geocode-fila';
-import type { RouteStop } from '@/components/reposicao/routePlanner/types';
+import type { RouteStop } from '@/components/rota/planner/types';
 
 // Stop com CEP + precisão controlados (o que a fila por CEP olha).
 const mk = (

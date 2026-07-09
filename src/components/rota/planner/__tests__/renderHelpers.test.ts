@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatDuration } from "@/components/reposicao/routePlanner/renderHelpers";
+import { formatDuration } from "@/components/rota/planner/renderHelpers";
 
 describe("formatDuration", () => {
   it("formata minutos puros abaixo de 1h", () => {

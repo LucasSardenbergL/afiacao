@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ufsDe, filtrarCidadesPorUf } from './city-filter';
-import type { CityOption } from '@/components/reposicao/routePlanner/types';
+import type { CityOption } from '@/components/rota/planner/types';
 
 const mk = (codigo: string, nome: string, uf: string): CityOption => ({
   codigo, nome, uf, total: 0, comTelefone: 0, aContatar: 0,

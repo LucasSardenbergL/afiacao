@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ordenarFilaGeocode } from './geocode-fila';
-import type { RouteStop } from '@/components/reposicao/routePlanner/types';
+import type { RouteStop } from '@/components/rota/planner/types';
 
 const stop = (id: string, over: Partial<RouteStop> = {}): RouteStop => ({
   id, stopType: 'prospect_visit', customerUserId: '', customerName: id, phone: null,
