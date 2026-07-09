@@ -154,6 +154,31 @@ async function syncMetadadosAccount(
     { onConflict: "entity_type,account" },
   );
 
+  // Follow-up 3 (spec 2026-06-15-tint-vigia-cobertura): corrigir a cobertura tint
+  // NA FONTE. Só a conta 'oben' tem famílias "Bases/Concentrados MixMachine"; marcar
+  // logo após o sync gravar os produtos fecha a janela de drift ANTES de o watchdog
+  // alertar (o cron diário tint-marcar-bases-diario/jobid 132 segue como rede de
+  // segurança). tint_marcar_bases_mixmachine() é idempotente/aditiva, nunca desmarca.
+  // Falha aqui NÃO pode derrubar o sync (produtos já gravados) → try/catch isolado.
+  let basesTintMarcadas: number | null = null;
+  if (acctValue === "oben") {
+    try {
+      const { data: marcadas, error: tintError } = await db.rpc(
+        "tint_marcar_bases_mixmachine",
+      );
+      if (tintError) throw tintError;
+      basesTintMarcadas = typeof marcadas === "number" ? marcadas : null;
+      console.log(
+        `[metadados ${account}] cobertura tint: ${basesTintMarcadas ?? "?"} base(s)/concentrado(s) marcado(s)`,
+      );
+    } catch (tintError) {
+      console.error(
+        `[metadados ${account}] tint_marcar_bases_mixmachine falhou (sync preservado):`,
+        tintError,
+      );
+    }
+  }
+
   return {
     account: acctValue,
     paginas: totalPaginas,
@@ -161,6 +186,7 @@ async function syncMetadadosAccount(
     inativos: totalInativos,
     classificados: typedCount,
     produto_acabado_04: tipo04Count,
+    bases_tint_marcadas: basesTintMarcadas,
     tempo_ms: Date.now() - t0,
   };
 }

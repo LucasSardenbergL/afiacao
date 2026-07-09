@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **342** custom migrations totais
-- **1220** objetos esperados (criados por estas migrations)
+- **348** custom migrations totais
+- **1244** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 342
-  - `rls_policy`: 269
-  - `index`: 206
+  - `function`: 348
+  - `rls_policy`: 277
+  - `index`: 208
   - `cron_job`: 144
-  - `table`: 132
-  - `trigger`: 68
-  - `view`: 55
+  - `table`: 135
+  - `trigger`: 70
+  - `view`: 58
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -2927,9 +2927,62 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.fin_antecipacoes_write_master` | `fin_antecipacoes` |
 | `rls_policy` | `public.fin_antecipacoes_service_all` | `fin_antecipacoes` |
 
+### `20260708164211_selfservice_pr00_fechar_base_crua.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260708171049_reposicao_motor_run_marker.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `table` | `public.reposicao_motor_run` | — |
+| `index` | `public.idx_reposicao_motor_run_empresa_data` | `reposicao_motor_run` |
+| `rls_policy` | `public.reposicao_motor_run_sel` | `reposicao_motor_run` |
+| `rls_policy` | `public.reposicao_motor_run_ins` | `reposicao_motor_run` |
+
 ### `20260708190000_fechar_views_invoker_off_p0.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260708202033_selfservice_pr01_allowlist_gate.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.ss_allowlist_forca_autor` | — |
+| `function` | `public.selfservice_conta_atual` | — |
+| `table` | `public.selfservice_cliente_allowlist` | — |
+| `index` | `public.idx_ss_allowlist_customer` | `selfservice_cliente_allowlist` |
+| `trigger` | `public.trg_ss_allowlist_autor` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_staff_select` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_gestor_iud` | `selfservice_cliente_allowlist` |
+| `rls_policy` | `public.ss_allowlist_service` | `selfservice_cliente_allowlist` |
+
+### `20260708204820_fin_custo_rateio.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_custo_rateio_set_autor` | — |
+| `table` | `public.fin_custo_rateio` | — |
+| `trigger` | `public.trg_fin_custo_rateio_autor` | `fin_custo_rateio` |
+| `rls_policy` | `public.fin_custo_rateio_select_master` | `fin_custo_rateio` |
+| `rls_policy` | `public.fin_custo_rateio_write_master` | `fin_custo_rateio` |
+| `rls_policy` | `public.fin_custo_rateio_service_all` | `fin_custo_rateio` |
+
+### `20260708210000_tint_cobertura_lista_email.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._tint_cobertura_bases_lista_email` | — |
+| `function` | `public.data_health_watchdog` | — |
+
+### `20260708212123_selfservice_pr02a_views_customer.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.selfservice_catalogo` | — |
+| `view` | `public.selfservice_disponibilidade` | — |
+| `view` | `public.selfservice_meus_pedidos` | — |
 
 ## Próximos passos por status
 

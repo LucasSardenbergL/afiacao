@@ -63,6 +63,9 @@ CREATE TABLE public.pedido_compra_item (id bigserial PRIMARY KEY, pedido_id bigi
   estoque_fisico numeric, estoque_a_caminho numeric);
 CREATE TABLE public.reposicao_estoque_nao_confirmado_log (id uuid DEFAULT gen_random_uuid(), run_id uuid, criado_em timestamptz DEFAULT now(),
   empresa text, sku_codigo_omie text, sku_descricao text, grupo_codigo text, motivo text, estoque_efetivo numeric, ponto_pedido numeric, fonte_sync text);
+-- [FILA] marcador de run: a RPC carimba TODO run (limpo ou não) → a tela ancora no ÚLTIMO recálculo.
+CREATE TABLE public.reposicao_motor_run (id uuid DEFAULT gen_random_uuid(), run_id uuid, empresa text, data_ciclo date,
+  pedidos_gerados int, skus_incluidos int, suprimidos_n int, criado_em timestamptz DEFAULT now());
 SQL
 
 # ── ZONA 2: aplicar a função REAL (fixture viva = galão+gate) ──
@@ -134,6 +137,7 @@ G="s.status='pendente_aprovacao' AND COALESCE(s.tipo_ciclo,'normal')='normal'"
 conta()     { Pq -c "SELECT count(*) FROM pedido_compra_item i JOIN pedido_compra_sugerido s ON s.id=i.pedido_id WHERE i.sku_codigo_omie='$1' AND $G;"; }
 log_conta() { Pq -c "SELECT count(*) FROM reposicao_estoque_nao_confirmado_log WHERE sku_codigo_omie='$1';"; }
 log_motivo(){ Pq -c "SELECT motivo FROM reposicao_estoque_nao_confirmado_log WHERE sku_codigo_omie='$1' LIMIT 1;"; }
+marker_n()  { Pq -c "SELECT count(*) FROM reposicao_motor_run;"; }
 
 echo "── asserts (regra verdadeira) ──"
 P -q -c "TRUNCATE reposicao_estoque_nao_confirmado_log;"
@@ -164,12 +168,21 @@ eq "C7 âncora não logou"         "$(log_conta '300001')" "0"
 # total logado = C1 + C4 + C6
 eq "log total = 3"               "$(Pq -c 'SELECT count(*) FROM reposicao_estoque_nao_confirmado_log;')" "3"
 
+# ── [MARCADOR DE RUN] a fila ancora no ÚLTIMO recálculo, não no último COM supressão ──
+echo "── marcador de run (fila) ──"
+# M1 — o run 1 (acima) teve 3 supressões → carimba 1 linha em reposicao_motor_run com suprimidos_n=3
+eq "M1 marker do run existe"     "$(Pq -c 'SELECT count(*) FROM reposicao_motor_run;')" "1"
+eq "M1 suprimidos_n=3"           "$(Pq -c 'SELECT suprimidos_n FROM reposicao_motor_run;')" "3"
+eq "M1 pedidos_gerados coerente" "$(Pq -c 'SELECT (pedidos_gerados > 0)::int FROM reposicao_motor_run;')" "1"
+# run_id do marcador == run_id do log (mesma execução carimbou os dois)
+eq "M1 run_id casa o log"        "$(Pq -c 'SELECT count(*) FROM reposicao_motor_run r WHERE r.run_id = (SELECT run_id FROM reposicao_estoque_nao_confirmado_log LIMIT 1);')" "1"
+
 # ── ZONA 5: FALSIFICAÇÃO (sabota → exige VERMELHO → restaura) ──
 echo "── falsificação ──"
 falsify() { # $1 desc | $2 sed-expr | $3 SQL-valor (eval) | $4 valor_são (deve MUDAR após sabotar)
   sed "$2" "$MIG" > /tmp/mig-gate-sab.sql
   P -q -f /tmp/mig-gate-sab.sql >/dev/null
-  P -q -c "TRUNCATE reposicao_estoque_nao_confirmado_log;" >/dev/null
+  P -q -c "TRUNCATE reposicao_estoque_nao_confirmado_log, reposicao_motor_run;" >/dev/null
   run_ciclo
   local got; got="$(eval "$3")"
   if [ "$got" != "$4" ]; then ok "FALSIFY $1 (são=$4 → furado=$got)"; else bad "FALSIFY $1 — assert SEM DENTE (seguiu $4)"; fi
@@ -192,6 +205,23 @@ falsify "suprime-tudo" \
 falsify "inativo-vota" \
   's/AND COALESCE(ssg.ativo_no_omie, true) = true//' \
   'conta 300001' "1"
+# FAL5 — marker-off: remove o INSERT do carimbo → reposicao_motor_run fica VAZIO (a fila perderia a âncora do run)
+falsify "marker-off" \
+  '/INSERT INTO public.reposicao_motor_run/,/v_run_id));/d' \
+  'marker_n' "1"
+
+# ── [MARCADOR DE RUN] M2 — run LIMPO apaga o fantasma (o conserto do bug reportado) ──
+echo "── marcador: run limpo apaga o fantasma ──"
+P -q -c "TRUNCATE reposicao_estoque_nao_confirmado_log, reposicao_motor_run;" >/dev/null
+run_ciclo   # run A: 3 supressões (estado original dos seeds: C1 linha, C4 galão, C6 sea-ausente)
+P -q -c "UPDATE sku_estoque_atual SET fonte_sync='ListarPosEstoque' WHERE sku_codigo_omie IN ('100001','200002');" >/dev/null
+P -q -c "INSERT INTO sku_estoque_atual (empresa,sku_codigo_omie,estoque_fisico,estoque_pendente_entrada,fonte_sync) VALUES ('OBEN','100006',0,0,'ListarPosEstoque');" >/dev/null
+run_ciclo   # run B: LIMPO — o sync confirmou os 3
+eq "M2 dois markers (A+B)"       "$(marker_n)" "2"
+eq "M2 run limpo tem n=0"        "$(Pq -c 'SELECT count(*) FROM reposicao_motor_run WHERE suprimidos_n=0;')" "1"
+eq "M2 run A mantém n=3"         "$(Pq -c 'SELECT count(*) FROM reposicao_motor_run WHERE suprimidos_n=3;')" "1"
+# a FILA ancorada no ÚLTIMO run (limpo) fica VAZIA: nenhuma linha de log pertence a um run com suprimidos_n=0
+eq "M2 fila do último=vazia"     "$(Pq -c 'SELECT count(*) FROM reposicao_estoque_nao_confirmado_log l JOIN reposicao_motor_run r ON r.run_id=l.run_id WHERE r.suprimidos_n=0;')" "0"
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"

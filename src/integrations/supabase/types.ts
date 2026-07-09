@@ -3286,6 +3286,74 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_antecipacoes: {
+        Row: {
+          banco: string | null
+          company: string
+          created_at: string
+          created_by: string | null
+          custos_avulsos: number
+          data_operacao: string
+          data_vencimento: string
+          deleted_at: string | null
+          id: string
+          observacao: string | null
+          operacao_origem_id: string | null
+          referencia: string | null
+          tipo: string
+          updated_at: string
+          updated_by: string | null
+          valor_bruto: number
+          valor_liquido: number
+        }
+        Insert: {
+          banco?: string | null
+          company: string
+          created_at?: string
+          created_by?: string | null
+          custos_avulsos?: number
+          data_operacao: string
+          data_vencimento: string
+          deleted_at?: string | null
+          id?: string
+          observacao?: string | null
+          operacao_origem_id?: string | null
+          referencia?: string | null
+          tipo: string
+          updated_at?: string
+          updated_by?: string | null
+          valor_bruto: number
+          valor_liquido: number
+        }
+        Update: {
+          banco?: string | null
+          company?: string
+          created_at?: string
+          created_by?: string | null
+          custos_avulsos?: number
+          data_operacao?: string
+          data_vencimento?: string
+          deleted_at?: string | null
+          id?: string
+          observacao?: string | null
+          operacao_origem_id?: string | null
+          referencia?: string | null
+          tipo?: string
+          updated_at?: string
+          updated_by?: string | null
+          valor_bruto?: number
+          valor_liquido?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fin_antecipacoes_operacao_origem_id_fkey"
+            columns: ["operacao_origem_id"]
+            isOneToOne: false
+            referencedRelation: "fin_antecipacoes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       fin_audit_log: {
         Row: {
           changed_at: string
@@ -3864,6 +3932,39 @@ export type Database = {
           valor_multa?: number | null
           valor_recebido?: number | null
           vendedor_id?: number | null
+        }
+        Relationships: []
+      }
+      fin_custo_rateio: {
+        Row: {
+          ativo: boolean
+          company: string
+          observacao: string
+          origem_company: string
+          rotulo: string
+          updated_at: string
+          updated_by: string | null
+          valor_mensal_brl: number
+        }
+        Insert: {
+          ativo?: boolean
+          company: string
+          observacao: string
+          origem_company: string
+          rotulo: string
+          updated_at?: string
+          updated_by?: string | null
+          valor_mensal_brl: number
+        }
+        Update: {
+          ativo?: boolean
+          company?: string
+          observacao?: string
+          origem_company?: string
+          rotulo?: string
+          updated_at?: string
+          updated_by?: string | null
+          valor_mensal_brl?: number
         }
         Relationships: []
       }
@@ -7594,6 +7695,39 @@ export type Database = {
         }
         Relationships: []
       }
+      omie_customer_account_map: {
+        Row: {
+          account: string
+          created_at: string
+          id: string
+          omie_codigo_cliente: number
+          omie_codigo_vendedor: number | null
+          source: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account: string
+          created_at?: string
+          id?: string
+          omie_codigo_cliente: number
+          omie_codigo_vendedor?: number | null
+          source?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account?: string
+          created_at?: string
+          id?: string
+          omie_codigo_cliente?: number
+          omie_codigo_vendedor?: number | null
+          source?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       omie_nao_vinculados_state: {
         Row: {
           current_run_ts: string | null
@@ -8261,6 +8395,105 @@ export type Database = {
           key?: string
           updated_at?: string
           value?: Json
+        }
+        Relationships: []
+      }
+      pcp_custo_excecoes: {
+        Row: {
+          classe_causa: string
+          custo_padrao_total: number | null
+          custo_status: string
+          data_posicao: string
+          derivado_em: string
+          divergencia_abs: number | null
+          divergencia_pct: number | null
+          impacto_r: number
+          ncmc_acabado: number | null
+          omie_codigo_produto: number
+          tipo_item: string | null
+          versao_regra: string
+        }
+        Insert: {
+          classe_causa: string
+          custo_padrao_total?: number | null
+          custo_status: string
+          data_posicao: string
+          derivado_em?: string
+          divergencia_abs?: number | null
+          divergencia_pct?: number | null
+          impacto_r: number
+          ncmc_acabado?: number | null
+          omie_codigo_produto: number
+          tipo_item?: string | null
+          versao_regra: string
+        }
+        Update: {
+          classe_causa?: string
+          custo_padrao_total?: number | null
+          custo_status?: string
+          data_posicao?: string
+          derivado_em?: string
+          divergencia_abs?: number | null
+          divergencia_pct?: number | null
+          impacto_r?: number
+          ncmc_acabado?: number | null
+          omie_codigo_produto?: number
+          tipo_item?: string | null
+          versao_regra?: string
+        }
+        Relationships: []
+      }
+      pcp_custo_padrao_resultados: {
+        Row: {
+          custo_abrasivo: number | null
+          custo_catalisador: number | null
+          custo_cola: number | null
+          custo_fita: number | null
+          custo_outros: number | null
+          custo_status: string
+          custo_total: number | null
+          data_posicao: string
+          derivado_em: string
+          detalhe: Json | null
+          n_componentes: number
+          n_incompletos: number
+          omie_codigo_produto: number
+          tipo_item: string | null
+          versao_regra: string
+        }
+        Insert: {
+          custo_abrasivo?: number | null
+          custo_catalisador?: number | null
+          custo_cola?: number | null
+          custo_fita?: number | null
+          custo_outros?: number | null
+          custo_status: string
+          custo_total?: number | null
+          data_posicao: string
+          derivado_em?: string
+          detalhe?: Json | null
+          n_componentes: number
+          n_incompletos: number
+          omie_codigo_produto: number
+          tipo_item?: string | null
+          versao_regra: string
+        }
+        Update: {
+          custo_abrasivo?: number | null
+          custo_catalisador?: number | null
+          custo_cola?: number | null
+          custo_fita?: number | null
+          custo_outros?: number | null
+          custo_status?: string
+          custo_total?: number | null
+          data_posicao?: string
+          derivado_em?: string
+          detalhe?: Json | null
+          n_componentes?: number
+          n_incompletos?: number
+          omie_codigo_produto?: number
+          tipo_item?: string | null
+          versao_regra?: string
         }
         Relationships: []
       }
@@ -10756,6 +10989,39 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_motor_run: {
+        Row: {
+          criado_em: string
+          data_ciclo: string
+          empresa: string
+          id: string
+          pedidos_gerados: number
+          run_id: string
+          skus_incluidos: number
+          suprimidos_n: number
+        }
+        Insert: {
+          criado_em?: string
+          data_ciclo: string
+          empresa: string
+          id?: string
+          pedidos_gerados?: number
+          run_id: string
+          skus_incluidos?: number
+          suprimidos_n?: number
+        }
+        Update: {
+          criado_em?: string
+          data_ciclo?: string
+          empresa?: string
+          id?: string
+          pedidos_gerados?: number
+          run_id?: string
+          skus_incluidos?: number
+          suprimidos_n?: number
+        }
+        Relationships: []
+      }
       reposicao_param_auto_log: {
         Row: {
           classe_consolidada: string | null
@@ -11526,6 +11792,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      selfservice_cliente_allowlist: {
+        Row: {
+          account: string
+          customer_user_id: string
+          enabled: boolean
+          enabled_at: string | null
+          enabled_by: string | null
+          notes: string | null
+          updated_at: string
+        }
+        Insert: {
+          account: string
+          customer_user_id: string
+          enabled?: boolean
+          enabled_at?: string | null
+          enabled_by?: string | null
+          notes?: string | null
+          updated_at?: string
+        }
+        Update: {
+          account?: string
+          customer_user_id?: string
+          enabled?: boolean
+          enabled_at?: string | null
+          enabled_by?: string | null
+          notes?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       sending_quality_logs: {
         Row: {
@@ -16828,6 +17124,44 @@ export type Database = {
         }
         Relationships: []
       }
+      vw_pcp_cmc_cobertura: {
+        Row: {
+          com_cmc: number | null
+          fabricados: number | null
+          tipo_item: string | null
+        }
+        Relationships: []
+      }
+      vw_pcp_custo_calibracao: {
+        Row: {
+          custo_total: number | null
+          data_posicao: string | null
+          div_pct: number | null
+          ncmc: number | null
+          omie_codigo_produto: number | null
+          tipo_item: string | null
+          versao_regra: string | null
+        }
+        Insert: {
+          custo_total?: number | null
+          data_posicao?: string | null
+          div_pct?: never
+          ncmc?: never
+          omie_codigo_produto?: number | null
+          tipo_item?: string | null
+          versao_regra?: string | null
+        }
+        Update: {
+          custo_total?: number | null
+          data_posicao?: string | null
+          div_pct?: never
+          ncmc?: never
+          omie_codigo_produto?: number | null
+          tipo_item?: string | null
+          versao_regra?: string | null
+        }
+        Relationships: []
+      }
       vw_pcp_malha_componentes: {
         Row: {
           componente_codigo: number | null
@@ -16884,6 +17218,10 @@ export type Database = {
           p_user_ids: string[]
         }
         Returns: undefined
+      }
+      _tint_cobertura_bases_lista_email: {
+        Args: { p_limit?: number }
+        Returns: string
       }
       _tint_preflight: { Args: never; Returns: Json }
       _vendas_familia_ausente_lista_email: {
@@ -17371,6 +17709,18 @@ export type Database = {
         }
         Returns: number
       }
+      fn_pcp_cmc_vigente: {
+        Args: {
+          p_cod: number
+          p_data_posicao: string
+          p_permitir_anterior?: boolean
+        }
+        Returns: number
+      }
+      fn_pcp_componente_tem_drift: {
+        Args: { p_cod: number; p_data: string; p_drift: number }
+        Returns: boolean
+      }
       fn_pcp_derivar_rotas_simples: { Args: never; Returns: number }
       fn_pcp_destilar_bom: { Args: never; Returns: number }
       fn_pcp_dispor_excecao: {
@@ -17430,6 +17780,14 @@ export type Database = {
           quantidade: number
         }[]
       }
+      fn_pcp_recompute_custo_padrao: {
+        Args: { p_data_posicao: string }
+        Returns: number
+      }
+      fn_pcp_recompute_excecoes: {
+        Args: { p_data_posicao: string }
+        Returns: number
+      }
       fn_pcp_refresh_itens: {
         Args: never
         Returns: {
@@ -17463,6 +17821,7 @@ export type Database = {
           saida_id: number
         }[]
       }
+      fn_pcp_ultima_data_posicao: { Args: never; Returns: string }
       fornecedor_operacional: {
         Args: { p_empresa: string; p_fornecedor: string; p_timestamp?: string }
         Returns: {
@@ -18013,6 +18372,14 @@ export type Database = {
         Args: never
         Returns: {
           user_id: string
+        }[]
+      }
+      selfservice_conta_atual: {
+        Args: never
+        Returns: {
+          accounts: string[]
+          customer_user_id: string
+          habilitado: boolean
         }[]
       }
       set_config: {

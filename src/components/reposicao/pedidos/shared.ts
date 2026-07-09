@@ -279,6 +279,21 @@ export function particionarAtencao<T extends {
   return { vermelha, abaixoMinimo };
 }
 
+// [FILA estoque-não-confirmado] Seleciona as linhas de supressão do ÚLTIMO recálculo do motor.
+// A fila reflete o resultado do ÚLTIMO run (limpo OU não) — não o último run que TEVE supressão:
+// reposicao_estoque_nao_confirmado_log só grava EXCEÇÕES, então um recálculo limpo pós-sync não deixa rastro
+// e a mensagem "N fora da compra" grudava por até 24h. Ancoramos no run carimbado em reposicao_motor_run.
+//  - marcador com suprimidos_n=0 (run limpo): seu run_id não tem linhas no log → retorna [] (a mensagem SOME). ← o fix
+//  - marcador com supressões: retorna só as linhas daquele run.
+//  - marcador AUSENTE (1º deploy, ainda não populou): fallback legado = run mais recente do log.
+export function selecionarUltimoRunSuprimido<T extends { run_id: string | null }>(
+  ultimoRunMotor: { run_id: string } | null | undefined,
+  supLinhas: readonly T[],
+): { runId: string | null; linhas: T[] } {
+  const runId = ultimoRunMotor?.run_id ?? supLinhas[0]?.run_id ?? null;
+  return { runId, linhas: runId ? supLinhas.filter((s) => s.run_id === runId) : [] };
+}
+
 /* ─── Split (PR5) — esconder o pai da lista ─── */
 //
 // Quando um pedido grande é dividido em chunks, o PAI vira status='split_em_filhos':

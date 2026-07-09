@@ -25,7 +25,7 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { PedidoSugerido } from '@/components/reposicao/pedidos/types';
-import { EMPRESA, edgeSyncOk, formatBRL, frescorEstoque, interpretarRespostaDisparo, particionarCicloHoje, pedidosVisiveis, resumoSyncRecalc, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
+import { EMPRESA, edgeSyncOk, formatBRL, frescorEstoque, interpretarRespostaDisparo, particionarCicloHoje, pedidosVisiveis, resumoSyncRecalc, selecionarUltimoRunSuprimido, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
 import { CycleIndicator } from '@/components/reposicao/pedidos/CycleIndicator';
 import { PedidoRow } from '@/components/reposicao/pedidos/PedidoRow';
 import { StatusComMotivo, PortalBadge } from '@/components/reposicao/pedidos/badges';
@@ -255,10 +255,10 @@ export default function AdminReposicaoPedidos() {
   };
 
   // [GATE estoque-não-confirmado] fila de exceção PÓS-geração: o que o motor EFETIVAMENTE suprimiu, gravado em
-  // reposicao_estoque_nao_confirmado_log pela RPC. O preflight acima é preditivo (antes do Recalcular); esta é a
-  // verdade do último ciclo — sem ela o gate suprime no escuro e vira subcompra invisível (Codex consult 019f0a38).
-  // count exato p/ o total 24h (honesto mesmo com a lista capada em 500); a lista cobre folgado 1 run (OBEN ~64).
-  // Key sob 'pedidos-ciclo' de propósito: syncRecalcMutation invalida ['pedidos-ciclo'] → re-busca após recalcular.
+  // reposicao_estoque_nao_confirmado_log pela RPC (append-only, run-stamped). count exato p/ o total 24h (honesto
+  // mesmo com a lista capada em 500). Key sob 'pedidos-ciclo' de propósito: syncRecalcMutation invalida
+  // ['pedidos-ciclo'] → re-busca após recalcular. A fila ANCORA no último run do motor (reposicao_motor_run, abaixo)
+  // — não no último run COM supressão daqui; senão a mensagem grudava por 24h após o sync confirmar (Codex 2026-07-08).
   const { data: suprimidos } = useQuery({
     queryKey: ['pedidos-ciclo', 'estoque-nao-confirmado-log', EMPRESA],
     queryFn: async () => {
@@ -272,6 +272,26 @@ export default function AdminReposicaoPedidos() {
         .limit(500);
       if (error) throw error;
       return { linhas: data ?? [], total24h: count ?? 0 };
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  // [FILA] o ÚLTIMO recálculo do motor (limpo OU com supressão), carimbado em reposicao_motor_run pela RPC. A fila
+  // ancora AQUI: se o último run teve suprimidos_n=0 (sync já confirmou), a mensagem some na hora — em vez de mostrar
+  // o último run que teve supressão, que só grava exceções e ficava preso na janela de 24h. Codex 2026-07-08 (Opção 2).
+  const { data: ultimoRunMotor } = useQuery({
+    queryKey: ['pedidos-ciclo', 'motor-run', EMPRESA],
+    queryFn: async (): Promise<{ run_id: string; suprimidos_n: number; criado_em: string } | null> => {
+      const { data, error } = await supabase
+        .from('reposicao_motor_run' as never)
+        .select('run_id, suprimidos_n, criado_em')
+        .eq('empresa', EMPRESA)
+        .order('criado_em', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return (data as unknown as { run_id: string; suprimidos_n: number; criado_em: string } | null) ?? null;
     },
     refetchInterval: 60_000,
     staleTime: 30_000,
@@ -334,7 +354,7 @@ export default function AdminReposicaoPedidos() {
       else toast.success(message);
       track('reposicao.sync_recalc_manual', { empresa: EMPRESA, estoqueOk, statusOk, recalculou: recalc?.ok ?? false });
       queryClient.invalidateQueries({ queryKey: ['estoque-frescor'] });
-      queryClient.invalidateQueries({ queryKey: ['estoque-nao-confirmado'] });
+      // 'pedidos-ciclo' cobre por prefixo a fila de suprimidos E o marcador de run (ambos keyed sob ela).
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
       queryClient.invalidateQueries({ queryKey: ['pedido-itens'] });
     },
@@ -413,15 +433,16 @@ export default function AdminReposicaoPedidos() {
     staleTime: 30_000,
   });
 
-  // [GATE estoque-não-confirmado] suprimidos do ÚLTIMO recálculo (reflete os pedidos na tela) + contexto 24h
-  // (crônico?). supLinhas vem ordenado por criado_em desc → [0] é o run mais recente; filtra esse run_id.
+  // [GATE estoque-não-confirmado] suprimidos do ÚLTIMO recálculo do motor (reflete os pedidos na tela) + contexto
+  // 24h (crônico?). ultimoRunId vem do carimbo em reposicao_motor_run (o último recálculo REAL, limpo ou não) — não
+  // de supLinhas[0] (último run do LOG, que só grava exceções → a mensagem grudava 24h). Fallback legado se o
+  // marcador ainda não populou. Run limpo ⇒ ultimoRunId sem linhas no log ⇒ supUltimoRun vazio ⇒ mensagem some.
   const supLinhas = suprimidos?.linhas ?? [];
-  const ultimoRunId = supLinhas[0]?.run_id ?? null;
-  const supUltimoRun = ultimoRunId ? supLinhas.filter((s) => s.run_id === ultimoRunId) : [];
+  const { runId: ultimoRunId, linhas: supUltimoRun } = selecionarUltimoRunSuprimido(ultimoRunMotor, supLinhas);
   const supLinhaQtd = supUltimoRun.filter((s) => s.motivo === 'linha_seed_only').length;
   const supGrupoQtd = supUltimoRun.filter((s) => s.motivo === 'grupo_membro_seed_only').length;
   const supTotal24h = suprimidos?.total24h ?? 0;
-  const ultimoSupEm = supLinhas[0]?.criado_em ?? null;
+  const ultimoSupEm = supUltimoRun[0]?.criado_em ?? null;
 
   // Telemetria: quantos o gate suprimiu por recálculo — detecta sync cronicamente atrasado (Codex consult
   // 019f0a38). A ref garante 1 disparo por run distinto mesmo com o effect reativo a todas as deps (lint-clean).
