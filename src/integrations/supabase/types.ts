@@ -10989,6 +10989,39 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_motor_run: {
+        Row: {
+          criado_em: string
+          data_ciclo: string
+          empresa: string
+          id: string
+          pedidos_gerados: number
+          run_id: string
+          skus_incluidos: number
+          suprimidos_n: number
+        }
+        Insert: {
+          criado_em?: string
+          data_ciclo: string
+          empresa: string
+          id?: string
+          pedidos_gerados?: number
+          run_id: string
+          skus_incluidos?: number
+          suprimidos_n?: number
+        }
+        Update: {
+          criado_em?: string
+          data_ciclo?: string
+          empresa?: string
+          id?: string
+          pedidos_gerados?: number
+          run_id?: string
+          skus_incluidos?: number
+          suprimidos_n?: number
+        }
+        Relationships: []
+      }
       reposicao_param_auto_log: {
         Row: {
           classe_consolidada: string | null
@@ -17185,6 +17218,10 @@ export type Database = {
           p_user_ids: string[]
         }
         Returns: undefined
+      }
+      _tint_cobertura_bases_lista_email: {
+        Args: { p_limit?: number }
+        Returns: string
       }
       _tint_preflight: { Args: never; Returns: Json }
       _vendas_familia_ausente_lista_email: {
