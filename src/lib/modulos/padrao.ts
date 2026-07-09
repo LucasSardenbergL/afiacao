@@ -2,7 +2,7 @@
 // Gramática: "dir/**" (tudo sob dir) · "*" (wildcard num segmento, não atravessa "/") · caminho exato.
 const escapaRegex = (s: string) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
 
-export function padraoParaRegex(padrao: string): RegExp {
+function padraoParaRegex(padrao: string): RegExp {
   if (padrao.endsWith("/**")) {
     const base = escapaRegex(padrao.slice(0, -3));
     return new RegExp(`^${base}/.+$`);
