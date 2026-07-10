@@ -10982,6 +10982,36 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_embalagem_sync_log: {
+        Row: {
+          cores_elegiveis: number
+          detalhes: Json | null
+          disparado_por: string
+          empresa: string
+          executado_em: string
+          id: number
+          linhas_inseridas: number
+        }
+        Insert: {
+          cores_elegiveis: number
+          detalhes?: Json | null
+          disparado_por: string
+          empresa: string
+          executado_em?: string
+          id?: never
+          linhas_inseridas: number
+        }
+        Update: {
+          cores_elegiveis?: number
+          detalhes?: Json | null
+          disparado_por?: string
+          empresa?: string
+          executado_em?: string
+          id?: never
+          linhas_inseridas?: number
+        }
+        Relationships: []
+      }
       reposicao_estoque_nao_confirmado_log: {
         Row: {
           criado_em: string
@@ -18425,6 +18455,10 @@ export type Database = {
       reposicao_persistir_qtde_inteira: {
         Args: { p_pedido_id: number }
         Returns: number
+      }
+      reposicao_sincronizar_embalagem_wp: {
+        Args: { p_empresa?: string }
+        Returns: Json
       }
       reprocessar_sku_items_via_raw_data: {
         Args: { p_empresa: string }
