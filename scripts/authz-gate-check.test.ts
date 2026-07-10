@@ -57,7 +57,7 @@ describe('auditAuthz — Parte B (cobertura)', () => {
     const f = auditAuthz([mig('20260710000000_novo.sql', fn('fuga_de_custo', READ))]);
     const err = errorsOf(f);
     expect(err).toHaveLength(1);
-    expect(err[0].fn).toBe('public.fuga_de_custo');
+    expect(err[0].fn).toContain('public.fuga_de_custo'); // fn inclui a assinatura (distingue overloads)
     expect(err[0].msg).toContain('inventory_position');
   });
 
@@ -74,5 +74,43 @@ describe('auditAuthz — Parte B (cobertura)', () => {
   it('ignora SECDEF que não toca dado sensível', () => {
     const f = auditAuthz([mig('20260710000000_x.sql', fn('coisa_qualquer', `RETURN (SELECT count(*) FROM clientes);`))]);
     expect(errorsOf(f)).toHaveLength(0);
+  });
+});
+
+// ── falsos-negativos do challenge Codex (2026-07-09): cada um DEVE virar erro ──
+describe('auditAuthz — anti falso-negativo (challenge Codex)', () => {
+  it('gate DECORATIVO (presente sem bloquear) numa função do manifest → ERRO', () => {
+    const body = `v_can := public.pode_ver_carteira_completa(auth.uid()); ${READ}`;
+    const f = auditAuthz([mig('20260710000000_x.sql', fn('fin_estimar_estoque_omie', body))]);
+    expect(errorsOf(f)).toHaveLength(1);
+    expect(errorsOf(f)[0].msg).toContain('decorativo');
+  });
+
+  it('guard INVERTIDO (IS NOT NULL AND gate) → ERRO', () => {
+    const body = `IF v_uid IS NOT NULL AND public.pode_ver_carteira_completa(v_uid) THEN RAISE EXCEPTION 'x'; END IF; ${READ}`;
+    const f = auditAuthz([mig('20260710000000_x.sql', fn('fin_estimar_estoque_omie', body))]);
+    expect(errorsOf(f)).toHaveLength(1);
+  });
+
+  it('recriação NÃO-parseável da última def de função do manifest → fail-closed ERRO', () => {
+    const naoParseavel = `CREATE OR REPLACE FUNCTION public.fin_estimar_estoque_omie(p text) RETURNS numeric LANGUAGE sql SECURITY DEFINER BEGIN ATOMIC SELECT sum(saldo*cmc) FROM inventory_position; END;`;
+    const f = auditAuthz([
+      mig('20260101000000_a.sql', fn('fin_estimar_estoque_omie', GATE + READ)),
+      mig('20260710000000_b.sql', naoParseavel),
+    ]);
+    expect(errorsOf(f).some((e) => e.fn === 'public.fin_estimar_estoque_omie')).toBe(true);
+  });
+
+  it('overload sensível NÃO some (Parte B por assinatura)', () => {
+    const fooInt = `CREATE FUNCTION public.foo_amb(p_x integer) RETURNS numeric LANGUAGE sql SECURITY DEFINER AS $$ SELECT cmc FROM product_costs $$;`;
+    const fooText = `CREATE FUNCTION public.foo_amb(p_y text) RETURNS numeric LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;`;
+    const f = auditAuthz([mig('20260710000000_x.sql', fooInt + '\n' + fooText)]);
+    expect(errorsOf(f).some((e) => e.fn.startsWith('public.foo_amb'))).toBe(true);
+  });
+
+  it('SECURITY DEFINER depois do AS é pego pela Parte B', () => {
+    const sql = `CREATE FUNCTION public.fuga_tardia() RETURNS numeric AS $$ SELECT cmc FROM inventory_position $$ LANGUAGE sql SECURITY DEFINER;`;
+    const f = auditAuthz([mig('20260710000000_x.sql', sql)]);
+    expect(errorsOf(f).some((e) => e.fn.startsWith('public.fuga_tardia'))).toBe(true);
   });
 });
