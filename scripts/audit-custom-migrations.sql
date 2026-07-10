@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 350
+-- Total de custom migrations: 354
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -388,8 +388,12 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260708204820', 'fin_custo_rateio', '20260708204820_fin_custo_rateio.sql'),
   ('20260708210000', 'tint_cobertura_lista_email', '20260708210000_tint_cobertura_lista_email.sql'),
   ('20260708212123', 'selfservice_pr02a_views_customer', '20260708212123_selfservice_pr02a_views_customer.sql'),
+  ('20260708234100', 'tint_gate_custo_staff', '20260708234100_tint_gate_custo_staff.sql'),
   ('20260708234721', 'sync_customers_colacor_servicos_crons', '20260708234721_sync_customers_colacor_servicos_crons.sql'),
-  ('20260709120500', 'authz_estimar_estoque_omie', '20260709120500_authz_estimar_estoque_omie.sql')
+  ('20260709120500', 'authz_estimar_estoque_omie', '20260709120500_authz_estimar_estoque_omie.sql'),
+  ('20260709163000', 'selfservice_pr00bis_a_rpc_staff_payload', '20260709163000_selfservice_pr00bis_a_rpc_staff_payload.sql'),
+  ('20260709163500', 'selfservice_pr00bis_b_revoke_omie_payload', '20260709163500_selfservice_pr00bis_b_revoke_omie_payload.sql'),
+  ('20260710012337', 'carteira_saude_eligible_e_efeito_mensal', '20260710012337_carteira_saude_eligible_e_efeito_mensal.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1625,9 +1629,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_catalogo', ''),
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_disponibilidade', ''),
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_meus_pedidos', ''),
+  ('tint_gate_custo_staff', 'function', 'public', 'get_tint_price', ''),
+  ('tint_gate_custo_staff', 'function', 'public', 'get_tint_prices', ''),
   ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-colacor-vendas-daily', ''),
   ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-servicos-daily', ''),
-  ('authz_estimar_estoque_omie', 'function', 'public', 'fin_estimar_estoque_omie', '')
+  ('authz_estimar_estoque_omie', 'function', 'public', 'fin_estimar_estoque_omie', ''),
+  ('selfservice_pr00bis_a_rpc_staff_payload', 'function', 'public', 'staff_get_sales_order_payload', ''),
+  ('carteira_saude_eligible_e_efeito_mensal', 'function', 'public', 'get_carteira_saude', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2911,9 +2919,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_catalogo', ''),
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_disponibilidade', ''),
   ('selfservice_pr02a_views_customer', 'view', 'public', 'selfservice_meus_pedidos', ''),
+  ('tint_gate_custo_staff', 'function', 'public', 'get_tint_price', ''),
+  ('tint_gate_custo_staff', 'function', 'public', 'get_tint_prices', ''),
   ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-colacor-vendas-daily', ''),
   ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-servicos-daily', ''),
-  ('authz_estimar_estoque_omie', 'function', 'public', 'fin_estimar_estoque_omie', '')
+  ('authz_estimar_estoque_omie', 'function', 'public', 'fin_estimar_estoque_omie', ''),
+  ('selfservice_pr00bis_a_rpc_staff_payload', 'function', 'public', 'staff_get_sales_order_payload', ''),
+  ('carteira_saude_eligible_e_efeito_mensal', 'function', 'public', 'get_carteira_saude', '')
 )
 SELECT
   e.migration,
