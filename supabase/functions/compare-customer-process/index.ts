@@ -227,7 +227,7 @@ Deno.serve(async (req) => {
       // conta 'oben' no mapa. Fail-safe: sem linha 'oben' no mapa (sync não populou) → omieMap null →
       // sem segmento (degradação honesta, precisão>recall — melhor que colisão trazer segmento de OUTRO).
       const { data: omieMap } = await supabase
-        .from('omie_customer_account_map_fresco') // view fresca (P1a): só vínculo visto no Omie nos últimos 7d
+        .from('omie_customer_account_map')
         .select('omie_codigo_cliente')
         .eq('user_id', body.customer_user_id)
         .eq('account', 'oben')
@@ -280,7 +280,7 @@ Deno.serve(async (req) => {
         // account-correta. Fail-safe: mapa 'oben' vazio → sem lookalikes (honesto), casa certo quando
         // o sync popular. (Antes lia o espelho omie_clientes, que colidia namespaces.)
         const { data: maps } = await supabase
-          .from('omie_customer_account_map_fresco') // view fresca (P1a): reverse-map só de vínculos frescos
+          .from('omie_customer_account_map')
           .select('user_id, omie_codigo_cliente')
           .eq('account', 'oben')
           .in('omie_codigo_cliente', codes);
