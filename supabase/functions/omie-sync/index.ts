@@ -205,6 +205,50 @@ interface ClienteOmieResult {
   omieCodigoVendedor?: number;
 }
 
+// MIRROR-START omie-sync-identidade — espelhado verbatim de src/lib/omie/omie-sync-identidade.ts
+// Decisão de identidade Omie do PEDIDO SELF-SERVICE (conta colacor_sc) — money-path P0-B-bis. PURA:
+// recebe a linha da VIEW FRESCA account-correta (omie_customer_account_map_fresco) já buscada + os
+// matches da API Omie (registros_por_pagina:2) e decide o código autoritativo OU fail-closed.
+// Precisão>recall: doc-ambíguo (2+ códigos distintos), ausência confirmada, ou código bigint não
+// representável = REJECT. NÃO lê o espelho poluído omie_clientes. A âncora (user_id, account) e o I/O
+// (buscar a view, buscar a API, write-back) ficam no chamador; aqui só a decisão. Espelhado no edge
+// (Deno não importa de src/); paridade textual no CI em src/__tests__/edge-money-path-invariants.test.ts.
+interface MatchOmie { codigo_cliente: number; codigo_vendedor: number | null }
+type IdentidadeSelfService =
+  | { ok: true; codigo_cliente: number; codigo_vendedor: number | null }
+  | { ok: false; needOmie: true }
+  | { ok: false; erro: 'doc-ambíguo' | 'sem-vinculo' | 'codigo-inseguro' };
+
+function decidirIdentidadeSelfService(args: {
+  viewRow: MatchOmie | null;
+  omieMatches: MatchOmie[] | null;
+}): IdentidadeSelfService {
+  const { viewRow, omieMatches } = args;
+
+  let cand: MatchOmie;
+  if (viewRow) {
+    // View fresca já é account-correta (1 linha por (user_id, account)) — resolve sem API.
+    cand = viewRow;
+  } else {
+    // Ausência na view → o chamador precisa buscar a API Omie por documento.
+    if (omieMatches === null) return { ok: false, needOmie: true };
+    // Dedup por código: 2+ códigos DISTINTOS no mesmo doc = ambíguo — chutar o 1º seria last-write-wins.
+    const distintos = [...new Map(omieMatches.map((m) => [String(m.codigo_cliente), m])).values()];
+    if (distintos.length > 1) return { ok: false, erro: 'doc-ambíguo' };
+    if (distintos.length === 0) return { ok: false, erro: 'sem-vinculo' };
+    cand = distintos[0];
+  }
+
+  // Segurança de representação (bigint): códigos Omie são bigint; Number perde precisão ≥ 2^53. Um código
+  // truncado mandaria o pedido pro cliente errado — fail-closed em vez de arriscar (espelha o guard do
+  // decideAccountIdentity). Vendedor é secundário (não é âncora de identidade) → passa como veio.
+  if (!Number.isSafeInteger(cand.codigo_cliente) || cand.codigo_cliente <= 0) {
+    return { ok: false, erro: 'codigo-inseguro' };
+  }
+  return { ok: true, codigo_cliente: cand.codigo_cliente, codigo_vendedor: cand.codigo_vendedor };
+}
+// MIRROR-END
+
 // Função para buscar cliente no Omie (apenas existentes)
 async function syncClienteOmie(
   supabase: SupabaseClient,
@@ -232,63 +276,91 @@ async function syncClienteOmie(
 
   const documentClean = profile.document.replace(/\D/g, "");
 
-  // Verificar se já existe mapeamento local
-  const { data: existingMapping } = await supabase
-    .from("omie_clientes")
+  // P0-B-bis: identidade Omie pela VIEW FRESCA account-correta (colacor_sc), NÃO o espelho poluído
+  // omie_clientes (mix de contas, rótulo 'colacor' mentiroso). Ausência na view → fallback API
+  // fail-closed (registros:2, rejeita doc-ambíguo — o :1 antigo era last-write-wins). Ver
+  // docs/superpowers/specs/2026-07-09-omie-leituras-money-path-p0b-bis-design.md.
+  const { data: viewRow } = await supabase
+    .from("omie_customer_account_map_fresco")
     .select("omie_codigo_cliente, omie_codigo_vendedor")
     .eq("user_id", userId)
+    .eq("account", "colacor_sc")
     .maybeSingle();
 
-  if (existingMapping?.omie_codigo_cliente) {
-    console.log(`[Omie] Cliente já mapeado localmente: ${existingMapping.omie_codigo_cliente}, vendedor: ${existingMapping.omie_codigo_vendedor || 'N/A'}`);
+  const viaView = decidirIdentidadeSelfService({
+    viewRow: viewRow?.omie_codigo_cliente
+      ? { codigo_cliente: viewRow.omie_codigo_cliente, codigo_vendedor: viewRow.omie_codigo_vendedor ?? null }
+      : null,
+    omieMatches: null,
+  });
+  if (viaView.ok) {
+    console.log(`[Omie] Cliente resolvido pela view fresca (colacor_sc): ${viaView.codigo_cliente}, vendedor: ${viaView.codigo_vendedor ?? 'N/A'}`);
     return {
-      omieCodigoCliente: existingMapping.omie_codigo_cliente,
-      omieCodigoVendedor: existingMapping.omie_codigo_vendedor || undefined,
+      omieCodigoCliente: viaView.codigo_cliente,
+      omieCodigoVendedor: viaView.codigo_vendedor ?? undefined,
     };
   }
 
-  // Buscar cliente existente no Omie pelo CPF/CNPJ
-  console.log(`[Omie] Buscando cliente existente por CPF/CNPJ: ${documentClean}`);
-  
+  // Sem vínculo fresco na view (ausência ou código inseguro) → buscar no Omie por CPF/CNPJ com
+  // registros_por_pagina:2 para detectar duplicata-CNPJ (o :1 antigo pegava só o 1º = last-write-wins).
+  console.log(`[Omie] Sem vínculo fresco na view p/ colacor_sc; buscando no Omie por CPF/CNPJ: ${documentClean}`);
   const searchResult = await callOmieApi(
     "geral/clientes/",
     "ListarClientes",
     {
       pagina: 1,
-      registros_por_pagina: 1,
+      registros_por_pagina: 2,
       clientesFiltro: {
         cnpj_cpf: documentClean
       }
     }
   ) as unknown as OmieListarClientesResponse;
 
-  if (!searchResult.clientes_cadastro?.[0]?.codigo_cliente_omie) {
-    // Cliente NÃO encontrado no Omie - não permitir criar pedido
+  const omieMatches: MatchOmie[] = (searchResult.clientes_cadastro ?? [])
+    .filter((c) => c.codigo_cliente_omie)
+    .map((c) => ({
+      codigo_cliente: c.codigo_cliente_omie as number,
+      codigo_vendedor: c.recomendacoes?.codigo_vendedor ?? c.codigo_vendedor ?? null,
+    }));
+
+  const viaOmie = decidirIdentidadeSelfService({ viewRow: null, omieMatches });
+  if (!viaOmie.ok) {
+    if ("erro" in viaOmie && viaOmie.erro === "doc-ambíguo") {
+      // Fail-closed: 2+ cadastros DISTINTOS no mesmo CNPJ/CPF → não chuta (o 1º seria last-write-wins,
+      // podendo mandar o pedido pro cliente errado). Precisão>recall no money-path.
+      throw new Error(
+        `CNPJ/CPF (${documentClean}) tem 2+ cadastros distintos na conta colacor_sc — cadastro ambíguo, ` +
+        `pedido bloqueado por segurança. Entre em contato conosco para consolidar o cadastro.`
+      );
+    }
+    // sem-vinculo | codigo-inseguro → cliente não utilizável para pedido.
     throw new Error(
       `Cliente não encontrado no Omie com o CPF/CNPJ informado (${documentClean}). ` +
       `Por favor, verifique se você está cadastrado como cliente ou entre em contato conosco.`
     );
   }
 
-  // Cliente encontrado - extrair dados incluindo vendedor
-  const cliente = searchResult.clientes_cadastro[0];
-  const omieCodigoCliente = cliente.codigo_cliente_omie;
-  const omieCodigoVendedor = cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null;
-  
-  console.log(`[Omie] Cliente encontrado: ${omieCodigoCliente} - ${cliente.razao_social}`);
-  console.log(`[Omie] Vendedor associado: ${omieCodigoVendedor || 'Nenhum'}`);
-  
-  // Criar mapeamento local incluindo o vendedor
+  const omieCodigoCliente = viaOmie.codigo_cliente;
+  const omieCodigoVendedor = viaOmie.codigo_vendedor;
+  // Cliente cru correspondente (há exatamente 1 match não-ambíguo aqui) — preserva o integração no write-back.
+  const cliente = (searchResult.clientes_cadastro ?? []).find((c) => c.codigo_cliente_omie === omieCodigoCliente);
+
+  console.log(`[Omie] Cliente encontrado no Omie: ${omieCodigoCliente} - ${cliente?.razao_social ?? ''}`);
+  console.log(`[Omie] Vendedor associado: ${omieCodigoVendedor ?? 'Nenhum'}`);
+
+  // TODO Fatia 4: este write-back é WRITER do espelho poluído omie_clientes (grava sem conta, rótulo
+  // 'colacor' default) — será migrado/aposentado na Fatia 4. Mantido por ora: não corrompe leitor que
+  // já lê a view fresca, e ainda serve o cache legado até todos os leitores migrarem.
   await supabase.from("omie_clientes").insert({
     user_id: userId,
     omie_codigo_cliente: omieCodigoCliente,
-    omie_codigo_cliente_integracao: cliente.codigo_cliente_integracao || null,
+    omie_codigo_cliente_integracao: cliente?.codigo_cliente_integracao || null,
     omie_codigo_vendedor: omieCodigoVendedor,
   });
 
   return {
     omieCodigoCliente,
-    omieCodigoVendedor: omieCodigoVendedor || undefined,
+    omieCodigoVendedor: omieCodigoVendedor ?? undefined,
   };
 }
 
