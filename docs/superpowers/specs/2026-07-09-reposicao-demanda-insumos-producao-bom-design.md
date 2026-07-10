@@ -54,15 +54,36 @@ gerar_pedidos_sugeridos_ciclo (vê ponto_pedido/estoque_maximo) → 🎯 COCKPIT
 ### 4.1 `v_pcp_malha_oben` (nova) — tradução de conta isolada
 Único ponto que traduz a ficha (código Colacor) para o mundo da reposição (OBEN), pelo `codigo` PRD. Responsabilidades:
 - pai Colacor → pai OBEN e componente Colacor → componente OBEN (via `omie_products.codigo`, `account`-explícito nas duas pontas).
-- **consolidar** múltiplas linhas do mesmo par (pai, componente) em uma qtde canônica (dedup — a malha pode ter >1 linha por par).
+- **consolidar** múltiplas linhas do mesmo par (pai, componente) numa qtde canônica.
 - filtrar componente **ativo na OBEN**.
-- ⚠️ **armadilha:** JOIN account-blind duplica silenciosamente (sem UNIQUE no item — `docs/agent/database.md`). O mapeamento fica trancado nesta view, com `account` explícito e teste de cardinalidade 1:1.
+- ⚠️ **armadilha:** JOIN account-blind duplica silenciosamente (sem UNIQUE no item — `docs/agent/database.md`).
+
+**Guards obrigatórios (Codex challenge, money-path — sem eles = compra dobrada/faltante):**
+- **Cardinalidade `codigo`→conta NÃO é garantida pelo schema** (`omie_products` só tem unique em `(omie_codigo_produto, account)`, não em `(codigo, account)`). Hoje há 0 duplicatas nos componentes da malha (verificado psql-ro 2026-07-09), mas isso é dado, não invariante. A tradução deve **falhar fechado com diagnóstico** quando um `codigo` tiver `≠1` linha ativa na conta destino (0 = insumo sumiu; >1 = ambíguo) — **NUNCA `LIMIT 1`** (esconderia a ambiguidade e escolheria arbitrário). O item ambíguo sai para uma **fila de exceção** (não some calado).
+- **Dedup da malha falsificável:** par `(pai, componente)` com linhas **exatamente iguais** → deduplica (duplicata de sync); linhas com **qtde divergente** → **quarentena** (pode ser duplicata OU duas etapas reais somáveis — não decidir por soma/média/DISTINCT cego, cada um erra num cenário). Regra explícita + prova.
+- **Barrar auto-referência:** `pai_oben = componente_oben` é excluído (0 casos hoje, mas venda direta + linha sintética do mesmo SKU = compra dobrada). Guard que blinda o futuro.
+- **Interação com o de-para de consolidação de demanda:** a explosão precisa casar com o SKU **efetivo** (destino do de-para N→1 que a `v_venda_items_history_efetivo` já aplica). Se a malha estiver no código antigo do pai e a venda foi consolidada para o destino, a explosão não casa (ou duplica). O mapeamento deve operar no mesmo espaço de SKU do histórico efetivo — provar os dois de-paras juntos.
 
 ### 4.2 `v_sku_demanda_efetiva` (nova) — demanda = venda ⊕ consumo
 Mesmo **shape de colunas** de `v_venda_items_history_efetivo` (as 4 views estatísticas esperam esse formato). Corpo:
 - `SELECT * FROM v_venda_items_history_efetivo` (vendas diretas — preço real preservado);
-- `UNION ALL` consumo explodido: para cada linha de venda cujo SKU é pai em `v_pcp_malha_oben`, emitir linha com `sku_codigo_omie = insumo`, `quantidade = qtde_venda × qtde_ficha`, `data_emissao = data da venda`, **`valor_unitario = NULL`, `valor_total = NULL`**.
-- **Invariante de preço (money-path `ausente≠zero`):** `SUM(valor_total)` e `AVG(valor_unitario)` ignoram NULL → o insumo não fabrica receita nem contamina preço médio; seu custo de pedido vem do **CMC real** (via o próprio motor, que já lê `inventory_position.cmc`).
+- `UNION ALL` consumo explodido: para cada linha de venda cujo SKU é pai em `v_pcp_malha_oben`, emitir uma linha de consumo.
+
+**Shape da linha sintética (Codex #5/#6 — herdar cegamente do pai quebra):**
+
+| Campo | Valor | Porquê |
+|---|---|---|
+| `sku_codigo_omie`, `sku_codigo`, `sku_descricao`, `sku_ncm`, `sku_unidade` | **do INSUMO** | herdar `sku_unidade='UN'` do pai mostraria o BASE em UN, não em L → estatística semanticamente errada |
+| `quantidade` | `qtde_venda × qtde_ficha` | a demanda física derivada |
+| `data_emissao` | do pai | a data em que o consumo ocorreu |
+| **`nfe_chave_acesso`** | **do pai** | ⚠️ **crítico:** `num_ordens = count(DISTINCT nfe_chave_acesso)`. Com NULL o insumo conta **0 ordens** e fica preso em `AGUARDANDO_SEGUNDA_ORDEM` — a feature não entregaria. Herdando a NF do pai, o BASE ganha ~138 ordens distintas (verificado) e gradua. |
+| `nfe_numero`, `nfe_serie`, `cliente_*` | do pai | coerência do evento; ver ressalva de semântica abaixo |
+| `empresa` | da venda (OBEN) | guard: só explodir venda OBEN → insumo OBEN. Nunca cruzar empresa (venda Colacor não pode comprar na OBEN) |
+| `valor_unitario`, `valor_total` | **decisão em aberto — ver §5.1** | |
+
+**Ressalvas de semântica (aceitas explicitamente, não silenciadas):**
+- Duas vendas de pais diferentes **na mesma NF** somam quantidade mas contam **1 ordem** (`num_ordens` é por NF distinta). Comportamento aceito.
+- `v_sku_candidatos_primeira_compra` é *sidecar* (lê recorrência de NF/cliente). Religada, `clientes_180d` do insumo passa a significar **clientes dos pais**, não do insumo. Aceitável para consumo interno — mas documentado como tal, sem fingir que mede venda do insumo.
 
 ### 4.3 Religamento das 4 views estatísticas
 `v_sku_demanda_estatisticas`, `v_sku_sigma_demanda`, `v_sku_demanda_rajada`, `v_sku_candidatos_primeira_compra`: trocam **somente** o `FROM v_venda_items_history_efetivo` → `FROM v_sku_demanda_efetiva` (alias remapeado; zero mudança de agregação/GROUP BY/colunas — mesma disciplina do `db/reposicao-consolidacao-demanda.sql`). Cada `CREATE OR REPLACE VIEW` preserva a **ordem exata de colunas da PROD** (senão `cannot change name of view column`) — pré-flight `pg_get_viewdef` obrigatório.
@@ -70,13 +91,26 @@ Mesmo **shape de colunas** de `v_venda_items_history_efetivo` (as 4 views estat�
 ### 4.4 Cálculo/aplicação de parâmetros (existente, sem mudança de forma)
 Com demanda > 0, `v_sku_parametros_sugeridos` sai de `AGUARDANDO_SEGUNDA_ORDEM` e calcula os parâmetros; a função de aplicação diária (`aplicar_parametros_automatico_diario` / `preencher_parametros_faltantes_skus` — a confirmar no pré-flight) grava em `sku_parametros`. **A confirmar no plano:** se a graduação exige `status_sugestao='OK'` e quantos pais com demanda bastam para sair do `AGUARDANDO_SEGUNDA_ORDEM` (a demanda somada de 112 pais é muito mais contínua que a de 1 SKU — deve resolver, mas provar).
 
-## 5. Decisões de design (defaults — confirmar na review)
+## 5. Decisões de design
 
-1. **Valor das linhas de consumo = NULL** (não 0). Preserva preço/receita honestos; empurra o insumo para **classe C** (valor de venda ~0) → dimensionamento conservador (alinhado à aversão do founder a superdimensionar). *Alternativa se subdimensionar: valorar o consumo ao custo (`qtde×cmc`) numa coluna dedicada `valor_consumo` para a classificação de importância — fica para Fase 2 se a calibração provar necessário. Codex challenge decide.*
-2. **Explosão de 1 nível** (base/soluções são folhas — cobre o caso). Multinível (tingidor que é componente de outro; existem ~7) fica para Fase 2 se necessário; documentar o corte, não silenciar.
-3. **Calibração conservadora + revisão humana.** Ligar como **sugestão visível** (não auto-aprovação — o piloto N3 segue dormente por decisão anterior). Founder revê os primeiros ciclos antes de confiar. O motor tem histórico de superdimensionar 2–5×.
-4. **Insumo sem ficha na malha** = fora do escopo automático; usa override manual existente. Não é este design.
-5. **Escopo = OBEN tintométrico/moveleiro** (componentes ativos na OBEN). Produção de lixa (Colacor) fora — tem seu próprio track de PCP.
+### 5.1 O valor das linhas de consumo — **decisão em aberto, a fechar com o founder**
+
+O insumo não gera receita, mas a **classe ABC é calculada por `valor_total_90d`**, e a classe governa o `z_score`/estoque de segurança. Três caminhos, com o trade-off exposto pelo Codex:
+
+| | O que faz | Prós | Contras |
+|---|---|---|---|
+| **V1** | `valor = NULL` | Não fabrica receita. Simples: não toca `v_sku_parametros_sugeridos`. Dimensionamento conservador (pouco capital). | `v_sku_demanda_rajada` faz `COALESCE(valor,0)` → `valor_total_180d = 0`. Insumo cai em **classe C** → menor estoque de segurança → **risco de ruptura de produção** em insumo caro com LT alto ("sugestão aparece tarde demais" — Codex #4). |
+| **V2** | `valor = qtde × cmc` no próprio `valor_total` | ABC reflete a criticidade real. | **Contamina a semântica** de `valor_total_90d`, que downstream lê como *faturamento*. Codex: "não reaproveitar `valor_total_90d` se esse campo significa venda". |
+| **V3** ⭐ | `valor = NULL` (receita honesta) **+** valor de reposição dedicado (`qtde × cmc`) usado **só** para criticidade/ABC de insumo | Semanticamente limpo: receita não é fabricada e a criticidade não é subestimada. | Toca `v_sku_parametros_sugeridos` (mais superfície money-path). |
+
+**Recomendação: V3.** O custo de ruptura de um insumo é assimétrico (para a fabricação de tingidores inteira), e estamos com PG17 + Codex no loop agora — mais barato acertar aqui do que descobrir a ruptura em produção. V1 é defensável se preferirmos menor superfície na Fase 1, aceitando monitorar os primeiros ciclos e usar o override manual como rede.
+
+### 5.2 Demais decisões
+1. **Explosão de 1 nível** (base/soluções são folhas — cobre o caso). Multinível (tingidor que é componente de outro; existem ~7) fica para Fase 2; corte **documentado, não silenciado**.
+2. **Calibração conservadora + revisão humana.** Ligar como **sugestão visível** (não auto-aprovação — o piloto N3 segue dormente por decisão anterior). Founder revê os primeiros ciclos. O motor tem histórico de superdimensionar 2–5×.
+3. **Insumo sem ficha na malha** = fora do escopo automático; usa override manual existente.
+4. **Escopo = OBEN tintométrico/moveleiro** (componentes ativos na OBEN). Produção de lixa (Colacor) fora — tem seu próprio track de PCP.
+5. **Ambiguidade nunca é silenciada:** `codigo` duplicado/ausente e par de malha divergente vão para **fila de exceção** com diagnóstico, não são resolvidos por escolha arbitrária.
 
 ## 6. Money-path — invariantes e riscos
 
@@ -89,10 +123,34 @@ Com demanda > 0, `v_sku_parametros_sugeridos` sai de `AGUARDANDO_SEGUNDA_ORDEM` 
 
 ## 7. Provas (obrigatórias antes do apply)
 
-- **PG17 (`prove-sql-money-path`)** com falsificação: (a) explosão gera a demanda esperada para o BASE; (b) valor NULL não contamina `valor_total_90d`/preço médio; (c) mapeamento de conta 1:1 (sabotar → duplicar → exigir vermelho); (d) dedup da malha; (e) o parâmetro calculado destrava o motor (item passa a ser sugerido quando estoque ≤ ponto); (f) SKU sem ficha permanece inalterado.
-- **Codex challenge (xhigh)** sobre o spec e depois sobre o SQL — money-path (`scripts/codex-async.sh` em background, conduzido pelo Claude).
-- **Pré-flight** `pg_get_viewdef` das 5 views + `pg_get_functiondef` da função de aplicação (prod pode divergir do repo).
-- **Verificação pós-apply (psql-ro):** o BASE ganha `ponto_pedido`/`estoque_maximo`; demanda ~0,58/dia; nenhum SKU fora do escopo mudou; contagem de insumos destravados ≈ 48.
+**PG17 (`prove-sql-money-path`) — asserts positivos E negativos, com falsificação** (lista endurecida pelo Codex challenge):
+
+*Cardinalidade e mapeamento*
+- Para todo `codigo` usado na malha: exatamente 1 linha `account='colacor'` e 1 linha ativa `account='oben'`. Casos `0` e `>1` **têm de falhar** (falsificar: injetar `codigo` duplicado → exigir vermelho, jamais compra dobrada).
+- Nenhum par com `pai_oben = componente_oben` (auto-referência).
+- Par de malha divergente sem decisão explícita → quarentena, não soma silenciosa. Duplicata exata → dedup.
+- Componente OBEN inativo não gera demanda **mas aparece no relatório de exclusão**.
+- Quantidade `> 0`; unidade compatível (`L`); `perc_perda` é 0/null ou conscientemente aplicado.
+
+*Demanda e fan-out*
+- BASE explode para ~0,58 L/dia no fixture; venda direta (0,15) soma **separadamente**; pai fora da malha não gera linha.
+- **Sem fan-out:** 1 venda de 1 pai com ficha 0,9 gera exatamente **0,9 L**, nunca 1,8.
+- De-para: venda de pai antigo consolidado para o destino explode **exatamente uma vez**.
+
+*Valor / preço*
+- Linhas sintéticas com `valor_unitario`/`valor_total` conforme §5.1; `preco_venda_medio` do insumo permanece nulo; `fonte_preco` vem de `cmc` ou compra real.
+- `precos_venda` em `v_sku_parametros_sugeridos` continua lendo **venda real**, não sintético.
+
+*Graduação*
+- 1 NF → permanece `AGUARDANDO_SEGUNDA_ORDEM`; 2 NFs distintas → `OK` **somente se** LT, fornecedor, CMC e grupo estiverem válidos.
+- Mesma NF com dois pais: quantidade soma, `num_ordens = 1` (comportamento **aceito explicitamente**).
+
+*Motor e deploy*
+- Com estoque do BASE abaixo do ponto, `gerar_pedidos_sugeridos_ciclo('OBEN', data)` inclui o BASE **uma única vez**; acima do ponto, não inclui; com `codigo` duplicado injetado, o teste **falha**.
+- **PR-1 inerte:** `EXCEPT ALL` prova que as 4 views antigas e a RPC retornam **idêntico** antes/depois; `pg_depend` prova que nada existente depende de `v_sku_demanda_efetiva`.
+- **PR-2:** nomes, tipos e **ordem** das colunas das views não mudam.
+
+**Demais gates:** Codex challenge (xhigh) sobre o spec (✅ feito — §11) e depois sobre o SQL. Pré-flight `pg_get_viewdef` das 5 views + `pg_get_functiondef` da função de aplicação (prod diverge do repo). Verificação pós-apply (psql-ro): o BASE ganha `ponto_pedido`/`estoque_maximo`; demanda ~0,58/dia; nenhum SKU fora do escopo mudou; insumos destravados ≈ 48.
 
 ## 8. Faseamento
 
@@ -107,3 +165,19 @@ O `BASE PARA TINGIMIX` (e os ~48 insumos análogos) **aparecem no cockpit quando
 ## 10. Fora de escopo
 
 Multinível de BOM; insumo sem ficha; produção de lixa (Colacor); auto-aprovação N3 (segue dormente); sincronização de consumo real do Omie (Abordagem C).
+
+## 11. Codex challenge (xhigh, gpt-5.5, 2026-07-09) — furos e resolução
+
+**Veredito original:** *"a Abordagem A ainda não está segura para money-path. Resolve invisibilidade, mas como está pode gerar compra dobrada, compra faltante e 'valor zero' fabricado."* Nenhum furo invalida a abordagem; todos foram incorporados acima. Incidência verificada em prod via `psql-ro`.
+
+| # | Furo | Incidência hoje | Resolução |
+|---|---|---|---|
+| 1 | `codigo`→conta **não é 1:1** por schema (unique só em `(omie_codigo_produto, account)`) | **0** duplicatas nos componentes da malha (1 no universo OBEN amplo) | Guard **fail-closed** + fila de exceção. **Nunca `LIMIT 1`** (§4.1) |
+| 2 | "qtde canônica" indefinida (soma/DISTINCT/média erram em cenários distintos) | — | Regra falsificável: duplicata exata → dedup; divergente → quarentena (§4.1) |
+| 3 | `v_sku_demanda_rajada` faz `COALESCE(valor_dia, 0)` → NULL vira **0** | confirmado na viewdef | Decisão §5.1 (V1/V2/V3) trata explicitamente |
+| 4 | Classe C por valor 0/NULL **subdimensiona insumo crítico** → ruptura de produção | risco real | §5.1 — recomendação **V3** (valor de reposição dedicado) |
+| 5 | **`num_ordens = count(DISTINCT nfe_chave_acesso)`** → linha sintética com NF nula conta **0 ordens** → insumo fica preso em `AGUARDANDO_SEGUNDA_ORDEM` | **mataria a feature** | Linha sintética **herda `nfe_chave_acesso` do pai** → BASE ganha ~138 ordens (§4.2) |
+| 6 | Shape sintético incompleto (herdar `sku_unidade='UN'` do pai; herdar `empresa` errada) | — | Tabela de shape explícita: campos do **insumo** vs herdados do pai (§4.2) |
+| 7 | De-para de consolidação × BOM podem **desencontrar** (malha no código antigo do pai) | — | Explosão opera no espaço de SKU **efetivo**; provar os dois de-paras juntos (§4.1) |
+| 8 | Auto-referência `pai = componente` dobra demanda (não faz loop, pois é 1 nível) | **0** pares | Guard que exclui o par (§4.1) |
+| 9 | `v_sku_candidatos_primeira_compra` é *sidecar*: `clientes_180d` passaria a significar clientes **dos pais** | — | Aceito e **documentado** como tal (§4.2) |
