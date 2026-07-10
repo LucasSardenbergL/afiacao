@@ -316,41 +316,67 @@ git commit -m "feat(reposicao): v_pcp_malha_oben — ficha traduzida p/ OBEN com
 
 **Base:** copiar o bootstrap de `db/test-reposicao-consolidacao-demanda.sh` (initdb, snapshot, stubs). Usar `PORT=5443` (≠ 5442) para rodar em paralelo.
 
-- [ ] **Step 1: Escrever o harness com os asserts (vermelho primeiro)**
-
-Reusar o bootstrap do harness irmão até `P --single-transaction ... -f "$RR"`, depois:
+⚠️ **Ordem de dependências (verificada no pré-voo — NÃO improvisar).** O `schema-snapshot.sql` **não contém** `pcp_malha_staging`, `vw_pcp_malha_itens`, `vw_pcp_malha_componentes` nem `v_venda_items_history_efetivo` (o PCP e a consolidação foram aplicados depois do dump). Aplicar nesta ordem, **após** o snapshot:
 
 ```bash
+echo "→ dependências (o snapshot não as tem)…"
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/pcp-f1a-m1-staging.sql"        # pcp_malha_staging
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/pcp-f1a-m2-nucleo.sql"         # fn_pcp_num + vw_pcp_malha_itens/_componentes
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/reposicao-consolidacao-demanda.sql"  # v_venda_items_history_efetivo + redirects
+
+# baseline das 4 views ANTES do candidato (Task 4 usa isto)
+for v in v_sku_demanda_estatisticas v_sku_sigma_demanda v_sku_demanda_rajada v_sku_candidatos_primeira_compra; do
+  P -v ON_ERROR_STOP=1 -q -c "CREATE TABLE base_${v} AS SELECT * FROM ${v};"
+done
+
 echo "→ aplicando a migração candidata…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/reposicao-demanda-insumos-bom.sql"
+```
 
+- [ ] **Step 1: Bootstrap, helpers e fixtures**
+
+```bash
 PASS=0
 Pq() { P -tA -q "$@"; }
 assert_eq() { # $1=nome $2=esperado $3=obtido
-  if [ "$2" = "$3" ]; then PASS=$((PASS+1)); echo "  ✓ $1"; 
+  if [ "$2" = "$3" ]; then PASS=$((PASS+1)); echo "  ✓ $1";
   else echo "  ✗ $1: esperado='$2' obtido='$3'"; exit 1; fi
 }
 
-echo "→ semeando fixtures…"
+# A malha NÃO é tabela: vw_pcp_malha_componentes → vw_pcp_malha_itens → pcp_malha_staging(payload jsonb).
+# Semear = UPSERT do payload do pai. $1=pai_omie  $2=json array de itens
+set_malha() {
+  P -v ON_ERROR_STOP=1 -q -c "
+    INSERT INTO pcp_malha_staging (omie_codigo_produto, empresa, payload, sync_run_id, synced_at)
+    VALUES ($1, 'colacor',
+            jsonb_build_object('ident', jsonb_build_object('idProduto', $1), 'itens', '$2'::jsonb),
+            1, now())
+    ON CONFLICT (omie_codigo_produto) DO UPDATE SET payload = EXCLUDED.payload;"
+}
+# item padrão: {"idProdMalha":<comp>,"quantProdMalha":<q>,"unidProdMalha":"<un>","percPerdaProdMalha":<p>}
+
+echo "→ semeando catálogo (2 contas por codigo — é assim que Colacor↔OBEN se ligam)…"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
--- catálogo: par limpo (unidade bate)
 INSERT INTO omie_products (id, omie_codigo_produto, codigo, descricao, account, ativo, unidade)
 VALUES (gen_random_uuid(), 100, 'PRD_PAI',  'TINGIDOR X', 'colacor', true, 'UN'),
        (gen_random_uuid(), 200, 'PRD_PAI',  'TINGIDOR X', 'oben',    true, 'UN'),
        (gen_random_uuid(), 101, 'PRD_BASE', 'BASE',       'colacor', true, 'L'),
        (gen_random_uuid(), 201, 'PRD_BASE', 'BASE',       'oben',    true, 'L'),
-       -- par com unidade divergente (ficha M2, estoque UN)
+       -- unidade divergente: ficha diz M2, estoque do insumo é UN
        (gen_random_uuid(), 102, 'PRD_DISC', 'DISCO',      'colacor', true, 'M2'),
        (gen_random_uuid(), 202, 'PRD_DISC', 'DISCO',      'oben',    true, 'UN');
-
--- a malha é uma VIEW no snapshot; semear a tabela-fonte dela.
--- (o harness deve inserir em pcp_malha_staging/pcp_itens conforme o snapshot real;
---  se a view for materializável, criar uma tabela-espelho de teste com o mesmo nome
---  não é possível — então semear as bases que vw_pcp_malha_componentes lê.)
 SQL
+
+echo "→ ficha: pai 100 leva 0.9 L do componente 101, e 1 M2 do componente 102"
+set_malha 100 '[{"idProdMalha":101,"quantProdMalha":0.9,"unidProdMalha":"L","percPerdaProdMalha":0},
+                {"idProdMalha":102,"quantProdMalha":1,"unidProdMalha":"M2","percPerdaProdMalha":0}]'
+
+echo "→ sanidade: a malha real enxerga os 2 pares"
+got=$(Pq -c "SELECT count(*) FROM vw_pcp_malha_componentes WHERE pai_codigo=100;")
+assert_eq "setup: malha montada a partir do jsonb" "2" "$got"
 ```
 
-> **Nota ao implementador:** confirme no snapshot **de quais tabelas** `vw_pcp_malha_componentes` lê (`pg_get_viewdef('vw_pcp_malha_componentes')`) e semeie **essas** tabelas. Não recrie a view — ela vem real do snapshot, e é justamente isso que o teste precisa exercitar.
+> A view real `vw_pcp_malha_componentes` é exercitada de verdade (não é stub): o fixture entra pelo mesmo caminho do sync do Omie.
 
 - [ ] **Step 2: Asserts positivos**
 
@@ -382,48 +408,43 @@ got=$(Pq -c "SELECT motivo FROM v_pcp_malha_oben_quarentena WHERE componente_cod
 assert_eq "C2 motivo ambiguo" "componente_ambiguo_oben" "$got"
 P -q -c "DELETE FROM omie_products WHERE omie_codigo_produto=999;"
 
+FICHA_OK='[{"idProdMalha":101,"quantProdMalha":0.9,"unidProdMalha":"L","percPerdaProdMalha":0},
+           {"idProdMalha":102,"quantProdMalha":1,"unidProdMalha":"M2","percPerdaProdMalha":0}]'
+
 echo "→ D. auto-referência barrada (venda direta + sintética do mesmo SKU = compra dobrada)"
-# par onde pai e componente traduzem para o MESMO sku oben (200)
-P -q -c "INSERT INTO $MALHA_TBL (pai_codigo, componente_codigo, quantidade, unidade, perc_perda)
-         VALUES (100, 100, 1.0, 'UN', 0);"
+set_malha 100 '[{"idProdMalha":100,"quantProdMalha":1,"unidProdMalha":"UN","percPerdaProdMalha":0}]'
 got=$(Pq -c "SELECT count(*) FROM v_pcp_malha_oben WHERE pai_oben=200 AND comp_oben=200;")
 assert_eq "D1 auto-referencia barrada" "0" "$got"
-got=$(Pq -c "SELECT motivo FROM v_pcp_malha_oben_quarentena
-             WHERE pai_codigo=100 AND componente_codigo=100;")
+got=$(Pq -c "SELECT motivo FROM v_pcp_malha_oben_quarentena WHERE pai_codigo=100 AND componente_codigo=100;")
 assert_eq "D2 motivo auto_referencia" "auto_referencia" "$got"
-P -q -c "DELETE FROM $MALHA_TBL WHERE pai_codigo=100 AND componente_codigo=100;"
 
 echo "→ E. perc_perda <> 0 barrada (não aplicar fator de perda silencioso)"
-P -q -c "UPDATE $MALHA_TBL SET perc_perda=0.6 WHERE pai_codigo=100 AND componente_codigo=101;"
+set_malha 100 '[{"idProdMalha":101,"quantProdMalha":0.9,"unidProdMalha":"L","percPerdaProdMalha":0.6}]'
 got=$(Pq -c "SELECT count(*) FROM v_pcp_malha_oben WHERE pai_oben=200 AND comp_oben=201;")
 assert_eq "E1 perc_perda barrada" "0" "$got"
-got=$(Pq -c "SELECT motivo FROM v_pcp_malha_oben_quarentena
-             WHERE pai_codigo=100 AND componente_codigo=101;")
+got=$(Pq -c "SELECT motivo FROM v_pcp_malha_oben_quarentena WHERE pai_codigo=100 AND componente_codigo=101;")
 assert_eq "E2 motivo perc_perda" "perc_perda_nao_suportada" "$got"
-P -q -c "UPDATE $MALHA_TBL SET perc_perda=0 WHERE pai_codigo=100 AND componente_codigo=101;"
 
-echo "→ F. quantidades divergentes no mesmo par → quarentena, NUNCA soma"
-P -q -c "INSERT INTO $MALHA_TBL (pai_codigo, componente_codigo, quantidade, unidade, perc_perda)
-         VALUES (100, 101, 1.5, 'L', 0);"   -- par já existe com 0.9
+echo "→ F. quantidades divergentes no mesmo par → quarentena, NUNCA soma nem escolhe"
+set_malha 100 '[{"idProdMalha":101,"quantProdMalha":0.9,"unidProdMalha":"L","percPerdaProdMalha":0},
+                {"idProdMalha":101,"quantProdMalha":1.5,"unidProdMalha":"L","percPerdaProdMalha":0}]'
 got=$(Pq -c "SELECT count(*) FROM v_pcp_malha_oben WHERE pai_oben=200 AND comp_oben=201;")
-assert_eq "F1 par divergente NAO soma nem escolhe" "0" "$got"
+assert_eq "F1 par divergente NAO entra (nem soma 2.4, nem escolhe 0.9)" "0" "$got"
 got=$(Pq -c "SELECT DISTINCT motivo FROM v_pcp_malha_oben_quarentena
              WHERE pai_codigo=100 AND componente_codigo=101;")
 assert_eq "F2 motivo quantidade_divergente" "quantidade_divergente_no_par" "$got"
-P -q -c "DELETE FROM $MALHA_TBL WHERE pai_codigo=100 AND componente_codigo=101 AND quantidade=1.5;"
 
-echo "→ G. duplicata EXATA deduplica (não vira 2 linhas nem 2x a qtde)"
-P -q -c "INSERT INTO $MALHA_TBL (pai_codigo, componente_codigo, quantidade, unidade, perc_perda)
-         VALUES (100, 101, 0.9, 'L', 0);"   -- idêntica à existente
+echo "→ G. duplicata EXATA deduplica (1 linha, qtde NÃO dobra)"
+set_malha 100 '[{"idProdMalha":101,"quantProdMalha":0.9,"unidProdMalha":"L","percPerdaProdMalha":0},
+                {"idProdMalha":101,"quantProdMalha":0.9,"unidProdMalha":"L","percPerdaProdMalha":0}]'
 got=$(Pq -c "SELECT count(*) FROM v_pcp_malha_oben WHERE pai_oben=200 AND comp_oben=201;")
 assert_eq "G1 duplicata exata deduplica" "1" "$got"
 got=$(Pq -c "SELECT quantidade FROM v_pcp_malha_oben WHERE pai_oben=200 AND comp_oben=201;")
-assert_eq "G2 qtde NAO dobrou" "0.9" "$got"
-P -q -c "DELETE FROM $MALHA_TBL WHERE ctid IN (
-           SELECT ctid FROM $MALHA_TBL WHERE pai_codigo=100 AND componente_codigo=101 OFFSET 1);"
-```
+assert_eq "G2 qtde NAO dobrou (0.9, nao 1.8)" "0.9" "$got"
 
-> `$MALHA_TBL` = a tabela-base de `vw_pcp_malha_componentes`, descoberta no Step 1 via `pg_get_viewdef`. Defina-a uma vez no topo do harness.
+# restaurar a ficha boa para os testes seguintes
+set_malha 100 "$FICHA_OK"
+```
 
 - [ ] **Step 4: FALSIFICAÇÃO (sabotar → exigir vermelho)**
 
@@ -671,14 +692,7 @@ git commit -m "feat(reposicao): v_sku_demanda_efetiva — explosao de BOM na dem
 - Consumes: tudo acima.
 - Produces: garantia de que aplicar este PR em prod **não muda nenhum número**.
 
-**Snapshot do baseline.** No bootstrap, **antes** de aplicar `db/reposicao-demanda-insumos-bom.sql`, congele as 4 views (elas ainda leem a fonte antiga):
-
-```bash
-# inserir logo após carregar o snapshot e ANTES de aplicar a migração candidata:
-for v in v_sku_demanda_estatisticas v_sku_sigma_demanda v_sku_demanda_rajada v_sku_candidatos_primeira_compra; do
-  P -v ON_ERROR_STOP=1 -q -c "CREATE TABLE base_${v} AS SELECT * FROM ${v};"
-done
-```
+**Baseline:** as tabelas `base_v_sku_*` já foram criadas no bootstrap do Task 2 (logo após as 3 dependências e **antes** do candidato). Nada a fazer aqui além dos asserts.
 
 - [ ] **Step 1: Assert de inércia — as 4 views não mudam**
 
