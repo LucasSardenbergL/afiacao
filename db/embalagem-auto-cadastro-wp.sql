@@ -87,3 +87,14 @@ END $$;
 
 REVOKE ALL ON FUNCTION public.reposicao_sincronizar_embalagem_wp(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.reposicao_sincronizar_embalagem_wp(text) TO authenticated, service_role;
+
+-- 3) Cron diário — 09:00 UTC (06:00 BRT), logo após o sync de catálogo (08:30 UTC).
+-- cron.schedule por NOME é upsert (rodar de novo não duplica).
+SELECT cron.schedule(
+  'reposicao-embalagem-cadastro-wp-daily',
+  '0 9 * * *',
+  $$SELECT public.reposicao_sincronizar_embalagem_wp('oben')$$
+);
+
+-- 4) Backfill no apply — destrava imediatamente os pares faltantes (cadastra os 11).
+SELECT public.reposicao_sincronizar_embalagem_wp('oben');
