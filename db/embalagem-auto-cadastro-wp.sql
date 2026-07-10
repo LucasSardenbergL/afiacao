@@ -66,15 +66,14 @@ BEGIN
     LIMIT 1;
     IF v_grupo IS NULL THEN v_grupo := gen_random_uuid(); END IF;
 
-    -- Insere só as embalagens faltantes (idempotente; NOT EXISTS protege colisão).
+    -- Insere só as embalagens faltantes (idempotente; ON CONFLICT protege colisão
+    -- concorrente: cron diário + botão "Sincronizar cadastro" podem correr juntos e
+    -- ambos passar por um NOT EXISTS antes de commitar — ON CONFLICT é atômico no índice).
     INSERT INTO public.sku_embalagem_equivalencia
       (empresa, grupo_id, sku_codigo_omie, unidade_base, fator_para_base, fornecedor_nome, ativo, criado_por)
     SELECT p_empresa, v_grupo, x.sku::text, 'QT', x.fator, 'Sayerlack', true, 'auto:embalagem-wp'
     FROM (VALUES (r.qt, 1::numeric), (r.gl, 4::numeric)) AS x(sku, fator)
-    WHERE NOT EXISTS (
-      SELECT 1 FROM public.sku_embalagem_equivalencia s
-      WHERE s.empresa = p_empresa AND s.ativo AND s.sku_codigo_omie = x.sku::text
-    );
+    ON CONFLICT (empresa, sku_codigo_omie) WHERE ativo DO NOTHING;
     GET DIAGNOSTICS v_ins = ROW_COUNT;
     v_linhas := v_linhas + v_ins;
   END LOOP;
