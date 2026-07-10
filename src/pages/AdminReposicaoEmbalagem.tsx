@@ -6,12 +6,16 @@
 // confirmada por consult Codex: não fingir automação que não existe).
 // Spec: docs/superpowers/specs/2026-06-04-embalagem-economica-design.md
 import { useMemo, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Package, Info } from 'lucide-react';
+import { Package, Info, RefreshCw } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { escolherEmbalagemEconomica } from '@/lib/reposicao/embalagem-helpers';
@@ -172,15 +176,52 @@ function GrupoCard({ grupo, limiar }: { grupo: GrupoEmbalagem; limiar: number })
 
 export default function AdminReposicaoEmbalagem() {
   const { grupos, limiar, isLoading, isError } = useEmbalagemConsulta(EMPRESA);
+  const { isStaff } = useAuth();
+  const queryClient = useQueryClient();
+
+  const sincronizar = useMutation({
+    mutationFn: async () => {
+      // as never: a RPC ainda não está nos tipos gerados do Supabase (regenerados pós-deploy).
+      const { data, error } = await supabase.rpc('reposicao_sincronizar_embalagem_wp' as never, {
+        p_empresa: EMPRESA,
+      } as never);
+      if (error) throw error;
+      return data as { cores_elegiveis: number; linhas_inseridas: number };
+    },
+    onSuccess: (r) => {
+      queryClient.invalidateQueries({ queryKey: ['embalagem-consulta'] });
+      toast.success('Cadastro sincronizado', {
+        description: `${r.cores_elegiveis} cores conferidas · ${r.linhas_inseridas} novas embalagens cadastradas.`,
+      });
+    },
+    onError: (e) =>
+      toast.error('Erro ao sincronizar cadastro', {
+        description: e instanceof Error ? e.message : 'Tente novamente.',
+      }),
+  });
 
   return (
     <div className="space-y-4 p-4 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-display tracking-tight">Embalagem econômica</h1>
-        <p className="text-muted-foreground text-sm">
-          Compare embalagens (ex.: quart × galão) pelo menor custo por unidade-base. Para a compra manual dos concentrados,
-          fora do ciclo automático de reposição.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-display tracking-tight">Embalagem econômica</h1>
+          <p className="text-muted-foreground text-sm">
+            Compare embalagens (ex.: quart × galão) pelo menor custo por unidade-base. Para a compra manual dos concentrados,
+            fora do ciclo automático de reposição.
+          </p>
+        </div>
+        {isStaff && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => sincronizar.mutate()}
+            disabled={sincronizar.isPending}
+            title="Detecta no Omie os WP com quartinho e galão ativos e cadastra os pares que faltam"
+          >
+            <RefreshCw className={`w-4 h-4 mr-1.5 ${sincronizar.isPending ? 'animate-spin' : ''}`} />
+            Sincronizar cadastro
+          </Button>
+        )}
       </div>
 
       <div className="rounded-md border bg-status-info/5 p-3 text-sm flex gap-2">
@@ -201,7 +242,7 @@ export default function AdminReposicaoEmbalagem() {
           tone="operational"
           icon={Package}
           title="Nenhum grupo de embalagem cadastrado"
-          description="Cadastre pares de embalagem (ex.: quart + galão) em sku_embalagem_equivalencia para comparar custos aqui."
+          description="Clique em Sincronizar cadastro para detectar os pares QT+GL ativos no Omie, ou confira se os produtos estão ativos lá."
         />
       ) : (
         <div className="space-y-3">
