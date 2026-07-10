@@ -64,9 +64,8 @@ SQL
 # ZONA 2 — MIGRATION REAL (o .sql que vai VERBATIM pro SQL Editor; não vive em
 # supabase/migrations/ — proibido tocar, snapshot é DR)
 # ══════════════════════════════════════════════════════════════════════════════
-MIG="/private/tmp/claude-501/-Users-lucassardenberg-Projetos-afiacao--claude-worktrees-vibrant-davinci-bbc187/cdc5fb94-cdf9-4f6c-b3d2-263bcda6cb9e/scratchpad/f3-migration.sql"
-P -q -f "$MIG"
-echo "migration aplicada: $(basename "$MIG")"
+P -q -f "$REPO_ROOT/db/omie_customer_account_map.sql"
+echo "migration aplicada: db/omie_customer_account_map.sql"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEED + GRANT

@@ -86,9 +86,10 @@ interface PreferredItem {
   omie_codigo_produto: number;
 }
 
-/** Itens preferidos via Omie, casados pela proof-table omie_customer_account_map (Fatia 3 do fix de
- *  rótulo). A tabela nova mapeia (user_id, account) -> código Omie do cliente NAQUELA conta, populada
- *  DOCUMENT-FIRST pelo sync (sem a colisão de namespace do espelho omie_clientes poluído).
+/** Itens preferidos via Omie, casados pela view fresca omie_customer_account_map_fresco (Fatia 3 do fix
+ *  de rótulo + P1a staleness). A proof-table mapeia (user_id, account) -> código Omie do cliente NAQUELA
+ *  conta, populada DOCUMENT-FIRST pelo sync (sem a colisão de namespace do espelho omie_clientes poluído);
+ *  a view expõe só as linhas frescas (updated_at nos últimos 7d) — vínculo órfão stale não vaza.
  *  customer_preferred_items é chaveada por (omie_codigo_cliente, account) da conta de VENDA; casamos
  *  pelos PARES (código, account) do mapa, cobrindo oben E colacor. Fail-safe (precisão>recall): mapa
  *  vazio (sync ainda não populou) -> []. NÃO usa .or() cru (guard-rail CLAUDE.md): .in×.in é produto
@@ -100,9 +101,10 @@ export function useCustomerPreferredItems(customerId: string | undefined) {
     enabled: !!customerId,
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<PreferredItem[]> => {
-      // 1. mapa (account -> código) do cliente, por conta (tabela nova, account-correta).
+      // 1. mapa (account -> código) do cliente, por conta. Lê a VIEW FRESCA (P1a): só vínculos que o sync
+      //    viu no Omie nos últimos 7d (frescor no relógio do banco) — órfã stale não vaza como verdade.
       const { data: maps } = await supabase
-        .from('omie_customer_account_map')
+        .from('omie_customer_account_map_fresco')
         .select('account, omie_codigo_cliente')
         .eq('user_id', customerId!);
       const pares = (maps ?? []) as Array<{ account: string; omie_codigo_cliente: number }>;
