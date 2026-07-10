@@ -15,8 +15,19 @@ describe('statusCron', () => {
   it('sucesso recente → green', () => {
     expect(statusCron({ last_status: 'succeeded', age_hours: 10 }, 48).nivel).toBe('green');
   });
-  it('maxAge null (mensal) não alerta por idade → green', () => {
+  it('maxAge null não alerta por idade → green', () => {
     expect(statusCron({ last_status: 'succeeded', age_hours: 600 }, null).nivel).toBe('green');
+  });
+  it('mensal dentro de 35d → green', () => {
+    expect(statusCron({ last_status: 'succeeded', age_hours: 700 }, 24 * 35).nivel).toBe('green');
+  });
+  it('mensal além de 35d → red, idade em dias', () => {
+    const st = statusCron({ last_status: 'succeeded', age_hours: 912 }, 24 * 35);
+    expect(st.nivel).toBe('red');
+    expect(st.acao).toContain('38d');
+  });
+  it('atraso curto mantém idade em horas', () => {
+    expect(statusCron({ last_status: 'succeeded', age_hours: 60 }, 48).acao).toContain('60h');
   });
 });
 

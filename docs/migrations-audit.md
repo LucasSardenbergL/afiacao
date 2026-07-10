@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **350** custom migrations totais
-- **1247** objetos esperados (criados por estas migrations)
+- **354** custom migrations totais
+- **1251** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 349
+  - `function`: 353
   - `rls_policy`: 277
   - `index`: 208
   - `cron_job`: 146
@@ -2984,6 +2984,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `view` | `public.selfservice_disponibilidade` | — |
 | `view` | `public.selfservice_meus_pedidos` | — |
 
+### `20260708234100_tint_gate_custo_staff.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_tint_price` | — |
+| `function` | `public.get_tint_prices` | — |
+
 ### `20260708234721_sync_customers_colacor_servicos_crons.sql`
 
 | Tipo | Objeto | Parent |
@@ -2996,6 +3003,22 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.fin_estimar_estoque_omie` | — |
+
+### `20260709163000_selfservice_pr00bis_a_rpc_staff_payload.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.staff_get_sales_order_payload` | — |
+
+### `20260709163500_selfservice_pr00bis_b_revoke_omie_payload.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20260710012337_carteira_saude_eligible_e_efeito_mensal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_carteira_saude` | — |
 
 ## Próximos passos por status
 
