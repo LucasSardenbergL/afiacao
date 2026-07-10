@@ -4,7 +4,7 @@
 
 **Goal:** Toda cor de concentrado WP.3900 com QT+GL ativos no Omie aparece sozinha na tela Embalagem econômica, sem SQL manual — via função de sincronização insert-only + cron diário + botão + backfill.
 
-**Architecture:** Uma função SQL `SECURITY DEFINER` deriva os pares QT+GL de `omie_products` (Oben) e preenche `sku_embalagem_equivalencia` (insert-only, idempotente). Um cron diário a mantém em dia; um botão na tela força na hora; o backfill na migração destrava os 11 pares faltantes no apply. A tela já lê a tabela — nenhuma mudança na query. Advisory puro (nenhum WP passa pelo motor de compra).
+**Architecture:** Uma função SQL `SECURITY DEFINER` deriva os pares QT+GL de `omie_products` (Oben) e preenche `sku_embalagem_equivalencia` (insert-only, idempotente). Um cron diário a mantém em dia; um botão na tela força na hora; o backfill na migração destrava os 11 pares faltantes no apply. A tela já lê a tabela — nenhuma mudança na query. ⚠️ **NÃO é advisory puro** (corrigido no review final): a MESMA tabela é lida pelo motor de compra — cadastrar o par faz o motor consolidar estoque QT+GL dos WP habilitados (`sku_parametros.empresa='OBEN'` maiúsculo; 15 habilitados; ~8 cores re-modelam a sugestão no próximo ciclo, sem trocar embalagem por falta de preço-app). Founder aprovou a consolidação (2026-07-09).
 
 **Tech Stack:** PostgreSQL 17 (plpgsql), Supabase (RLS, pg_cron), React 18 + TS strict, @tanstack/react-query, sonner, shadcn/ui.
 

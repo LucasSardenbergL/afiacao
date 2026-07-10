@@ -1,6 +1,11 @@
 -- Auto-cadastro dos pares QT+GL dos concentrados WP.3900 na Embalagem econômica.
 -- Fonte VERSIONADA → colar no SQL Editor do Lovable (migration custom NÃO auto-aplica).
--- NÃO editar supabase/migrations/. Advisory: nenhum WP passa pelo motor.
+-- NÃO editar supabase/migrations/.
+-- ⚠️ MONEY-PATH: sku_embalagem_equivalencia é lida pela TELA advisory E pelo MOTOR de compra
+-- (gerar_pedidos_sugeridos_ciclo). Cadastrar o par faz o WP CONSOLIDAR estoque QT+GL no motor.
+-- 15 SKUs WP têm habilitado_reposicao_automatica (empresa 'OBEN' MAIÚSCULO) → o backfill re-modela a
+-- sugestão de ~8 cores no próximo ciclo (consolida estoque; NÃO troca embalagem — falta preço-app ≤45d).
+-- Founder aprovou a consolidação explicitamente (2026-07-09).
 -- Prova: db/test-embalagem-auto-cadastro-wp.sql. Spec: docs/superpowers/specs/2026-07-09-embalagem-economica-auto-cadastro-wp-design.md
 
 -- 1) Audit log (staff-only na leitura; escrita só pela função SECURITY DEFINER)
@@ -95,5 +100,6 @@ SELECT cron.schedule(
   $$SELECT public.reposicao_sincronizar_embalagem_wp('oben')$$
 );
 
--- 4) Backfill no apply — destrava imediatamente os pares faltantes (cadastra os 11).
+-- 4) Backfill no apply — cadastra os pares faltantes (~11 cores) na hora. ⚠️ MONEY-PATH: também faz o
+-- motor consolidar estoque das cores habilitadas no próximo ciclo (ver header). Founder aprovou 2026-07-09.
 SELECT public.reposicao_sincronizar_embalagem_wp('oben');

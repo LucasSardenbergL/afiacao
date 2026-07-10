@@ -3,6 +3,8 @@
 > 2026-07-09 · money-path (advisory) · reposição/compras · autor: Claude + founder (Lucas)
 > Domínio: `docs/agent/reposicao.md` §Embalagem econômica · Feature v1: `docs/superpowers/specs/2026-06-04-embalagem-economica-design.md`
 
+> **⚠️ ERRATA (2026-07-09, review final):** este spec afirmava "nenhum WP passa pelo motor / advisory pura". **FALSO.** A verificação inicial filtrou `sku_parametros.empresa='oben'` (minúsculo), mas a tabela usa **`'OBEN'` MAIÚSCULO** → falso-negativo. Na verdade 20 SKUs WP têm parâmetros de motor (RENNER SAYERLACK), 15 `habilitado_reposicao_automatica`. Cadastrar o par **consolida estoque QT+GL no motor** (`gerar_pedidos_sugeridos_ciclo`) — ~8 cores re-modelam a sugestão no próximo ciclo (consolidam; NÃO trocam embalagem, falta preço-app ≤45d). **Founder aprovou a consolidação explicitamente.** Onde o texto abaixo disser "advisory / não afeta o motor", vale esta errata.
+
 ## 1. Problema
 
 A tela **Embalagem econômica** (`/admin/reposicao/embalagem`) compara, por concentrado WP, o quartinho (QT) contra o galão (GL) pelo **menor custo por unidade-base**, respeitando **giro** e **proporcionalidade**, e recomenda quantas embalagens comprar (ex.: preciso 6 QT → se o GL for mais barato/base, sugere **2 GL**; senão, **6 QT**). É advisory: a compra é manual no Omie.
@@ -17,7 +19,7 @@ Manter `sku_embalagem_equivalencia` (empresa `oben`) **populada automaticamente*
 
 ### Não-objetivos (YAGNI)
 - **Não** reconstruir a lógica de recomendação (giro/carrego/proporcionalidade) — já existe e fica intacta.
-- **Não** mexer no motor automático de compra — nenhum WP passa por ele (confirmado; §4).
+- **Não** re-tunar a lógica do motor — mas **ciente** de que cadastrar o par ATIVA a consolidação de estoque QT+GL do motor para os WP habilitados (ver errata; founder aprovou).
 - **Não** desativar cadastro automaticamente quando uma perna é inativada no Omie (insert-only; ver §6 dívida).
 - **Não** generalizar para outras linhas de concentrado (TE/TEH tingidores, YXP "BA", seladoras) — escopo travado em `WP.3900` (§6).
 - **Não** criar tela de gestão de pares nem edição de fator na UI (a proporção 4:1 é fixa).
@@ -34,7 +36,7 @@ Manter `sku_embalagem_equivalencia` (empresa `oben`) **populada automaticamente*
 
 - **14 concentrados WP.3900 na conta Oben**, cada um agora com **QT e GL ativos** (o founder cadastrou no Omie; entraram após forçar o sync de catálogo).
 - Pareamento por cor é **limpo e determinístico**: descrição `^WP<cor>.3900(QT|GL) ...`; a cor (`WP\d+\.\d+`) casa o QT com o GL. Zero sufixos fora de QT/GL (nenhum balde/litro a confundir).
-- **Nenhum WP está no motor** (`sku_parametros` vazio para todos: sem fornecedor, sem ponto de pedido) → esta feature é **advisory pura**; mexer no cadastro **não afeta o ciclo automático de compra**.
+- ⚠️ **CORRIGIDO (ver errata):** os WP **ESTÃO no motor** — `sku_parametros.empresa='OBEN'` (MAIÚSCULO; a checagem inicial filtrou `'oben'` minúsculo → falso-negativo). 20 SKUs WP têm parâmetros (RENNER SAYERLACK), 15 `habilitado_reposicao_automatica`. Cadastrar o par faz o motor **CONSOLIDAR estoque QT+GL** do grupo (money-path). O backfill: ~8 cores habilitadas consolidam no próximo ciclo (NÃO trocam embalagem — falta preço-app ≤45d). Founder aprovou (2026-07-09).
 - Estado do cadastro: **3 grupos** (WP01, WP04, WP87). Faltam **11** (WP02, WP03, WP06, WP07, WP08, WP12, WP42, WP53, WP69, WP71, WP88).
 - **Sync de catálogo** (`omie-sync-metadados-daily`, o único writer que cria produto novo) roda **1×/dia às 08:30 UTC (05:30 BRT)** e está saudável. Produto criado no Omie depois disso só entra no próximo run — por isso os galões "sumiam". Diagnóstico: timing, não bug.
 
