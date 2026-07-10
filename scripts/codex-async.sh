@@ -15,7 +15,7 @@
 # Uso:
 #   scripts/codex-async.sh [-m MODELO] [-r low|medium|high|xhigh] [-t SEGUNDOS] "PROMPT"
 #   echo "PROMPT" | scripts/codex-async.sh -r xhigh -
-# Defaults: -m gpt-5.5 · -r high · -t 1200 (20min hard-stop)
+# Defaults: -m gpt-5.6-sol · -r high · -t 1200 (20min hard-stop)
 #
 # Garantias:
 #   - preflight (binário + auth) ANTES de gastar tempo/quota, com instrução clara;
@@ -25,7 +25,8 @@
 #   - sandbox read-only (consulta nunca escreve no repo).
 set -u
 
-modelo="gpt-5.5"; reasoning="high"; timeout_s=1200
+# gpt-5.6-* exige codex-cli ≥ 0.143 (server rejeita CLI antigo com 400)
+modelo="gpt-5.6-sol"; reasoning="high"; timeout_s=1200
 while getopts "m:r:t:" opt; do
   case "$opt" in
     m) modelo="$OPTARG" ;;
