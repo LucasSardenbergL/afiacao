@@ -815,7 +815,7 @@ gh pr create --draft --title "feat(reposicao): PR-1 — fonte de demanda de insu
 | §2.1 quarentena listada, não sumida | Task 1 (`v_pcp_malha_oben_quarentena`) · Task 5 validação |
 | §5.1 **V3 (criticidade por custo)** | **PR-2** — fora deste plano por design (aqui nada consome a demanda) |
 
-**Placeholders:** ✅ eliminados. Todos os asserts (A–Q) e as 3 sabotagens (S1–S3) têm bash executável. A única indireção restante é `$MALHA_TBL`, resolvida no Step 1 do Task 2 com comando exato (`pg_get_viewdef('vw_pcp_malha_componentes')`) — é descoberta de fato, não conteúdo omitido.
+**Placeholders:** ✅ eliminados. Todos os asserts (A–Q) e as 3 sabotagens (S1–S3) têm bash executável. O seed da malha usa o helper `set_malha()` (UPSERT de payload jsonb em `pcp_malha_staging`), e a ordem das 3 dependências do harness está explícita — ambos resolvidos no pré-voo contra a prod, não deixados ao implementador.
 
 **Type consistency:** `v_pcp_malha_oben(pai_oben, comp_oben, quantidade, unidade)` — nomes idênticos no Task 3 (`mo.pai_oben`, `mo.comp_oben`, `mo.quantidade`) e nas 3 sabotagens. `v_sku_demanda_efetiva` preserva as **22 colunas** de `venda_items_history` na ordem do `information_schema` (`id … created_at`), condição para o PR-2 trocar só o `FROM`. `md5(text)::uuid` verificado em prod. Asserts nomeados A–Q sem colisão (Task 2: A–G+S1/S2; Task 3: H–N+S3; Task 4: O–Q).
 
