@@ -48,6 +48,18 @@ O gate conta como presente quando a chamada da função-gate aparece no **corpo 
 - Enfraquecimento das **próprias funções-gate** (`pode_ver_carteira_completa` etc.).
 - **Audit read-only periódico em PROD** — o CI prova o repo, não o PROD (hotfix manual / drift do Lovable / snapshot stale ficam fora). Complemento, não substituto.
 
+## Endurecimentos (2 rodadas de challenge Codex)
+
+O challenge adversarial do diff achou **10 falsos-negativos** (cada um vira falsa sensação de segurança), todos fechados com teste que planta o furo:
+
+- **Guard-shape real, não presença:** o gate só conta se estiver NEGADO levando a `RAISE EXCEPTION` — `NOT [schema.]gate(` direto ou dentro do grupo balanceado de um `NOT ( … )` (via `balancedParens`, não janela fixa). Rejeita gate decorativo (`v := gate()`), guard invertido (`NOT v_disabled AND gate()`, `NOT (x IS NULL) AND gate()`) e `RAISE NOTICE`. Sem falso-positivo em gate verboso.
+- **Comentários removidos antes de parsear:** `-- AS $x$…$x$` e `CREATE FUNCTION` comentado não enganam mais o matcher.
+- **Parser cobre:** quoted identifiers, corpo single-quoted, `SECURITY DEFINER` depois do `AS`.
+- **Fail-closed:** `CREATE FUNCTION` não-extraível (ex.: `BEGIN ATOMIC`) carrega o texto bruto; se for SECDEF sensível → erro, não passa em silêncio.
+- **Parte B por assinatura:** overload sensível não some.
+
+**Limitação assumida (v1):** é heurística de TEXTO. O alvo é a **regressão acidental** (um dev recria a função e esquece o gate), não evasão deliberada — uma migration maliciosa passa por review humano, e nenhum matcher estático de texto vence um atacante determinado. O complemento é o audit read-only periódico em PROD (fora do CI).
+
 ## Prova
 
 `bun run test` (vitest) com casos plantados: (a) função do manifest recriada **sem** o gate → check falha nomeando a migration; (b) gate só em comentário → não conta; (c) função nova SECDEF tocando `inventory_position` fora do manifest → falha; (d) as 8 reais gateadas → passa. Rodar o check contra o repo real deve sair **verde** (estado atual). Depois: Codex challenge do diff.
