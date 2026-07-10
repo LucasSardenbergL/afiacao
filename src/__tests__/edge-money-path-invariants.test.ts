@@ -435,3 +435,84 @@ describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helpe
     ).toBe(mirrorBlockNamed(helper, 'omie doc-ambiguo'));
   });
 });
+
+// ── P0-B-bis PR-1 (omie-sync self-service USA a view fresca account-correta + helper espelhado) ──
+// O pedido self-service (conta colacor_sc) resolvia a identidade Omie pelo espelho poluído omie_clientes
+// (mix de contas, rótulo 'colacor' mentiroso) e fallback registros:1 (last-write-wins). Migrado p/ a view
+// fresca omie_customer_account_map_fresco + fallback API fail-closed (registros:2, rejeita doc-ambíguo)
+// via helper puro espelhado. A paridade textual aqui pega a reversão do deploy do Lovable (mesma armadilha
+// do #1272). Ver docs/superpowers/plans/2026-07-09-omie-sync-self-service-view-fresca-pr1.md.
+const OMIE_SYNC = 'supabase/functions/omie-sync/index.ts';
+const SYNC_IDENTIDADE = 'src/lib/omie/omie-sync-identidade.ts';
+
+describe('guardrail money-path: omie-sync self-service USA view fresca account-correta (P0-B-bis PR-1)', () => {
+  const src = read(OMIE_SYNC);
+  const helper = read(SYNC_IDENTIDADE);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('syncClienteOmie');
+    expect(helper).toContain('decidirIdentidadeSelfService');
+  });
+
+  it('o helper puro existe e exporta decidirIdentidadeSelfService', () => {
+    expect(helper).toMatch(/export function decidirIdentidadeSelfService/);
+  });
+
+  it('o edge USA o helper: define o espelho MIRROR E o chama (≥2 menções)', () => {
+    expect(src, 'edge não define mais o helper espelhado de identidade').toMatch(/function decidirIdentidadeSelfService/);
+    expect(
+      src,
+      'REGRESSÃO: edge não chama mais decidirIdentidadeSelfService — voltou a usar o espelho direto?',
+    ).toMatch(/decidirIdentidadeSelfService\(/);
+    expect(
+      count(src, 'decidirIdentidadeSelfService'),
+      'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('LÊ a view fresca account-correta (colacor_sc); omie_clientes só resta como WRITER', () => {
+    // As 3 leituras money-path (pedido, vendedor, check_client) usam a view fresca por conta.
+    expect(
+      count(src, '.from("omie_customer_account_map_fresco")'),
+      'REVERSÃO Lovable? sumiu leitura da view fresca account-correta (esperado 3: pedido, vendedor, check_client)',
+    ).toBe(3);
+    // O filtro de conta é o fail-closed por-conta (sem ele, voltaria a misturar contas).
+    expect(src, 'sumiu o filtro account=colacor_sc na view fresca').toMatch(/\.eq\("account", "colacor_sc"\)/);
+    // O espelho poluído só pode restar como WRITER (o write-back INSERT → Fatia 4), nunca como LEITOR.
+    expect(
+      count(src, '.from("omie_clientes")'),
+      'REGRESSÃO: omie_clientes voltou como LEITOR (deveria restar só o write-back INSERT)',
+    ).toBe(1);
+    expect(
+      src,
+      'REGRESSÃO: o único omie_clientes restante não é o write-back INSERT — leitura do espelho voltou?',
+    ).toMatch(/\.from\("omie_clientes"\)\s*\.insert\(/);
+    expect(
+      src,
+      'REVERSÃO Lovable? voltou a .select() do espelho poluído omie_clientes no caminho money-path',
+    ).not.toMatch(/\.from\("omie_clientes"\)\s*\.select/);
+  });
+
+  it('fallback API do PEDIDO é fail-closed: registros_por_pagina:2 (não 1=last-write-wins)', () => {
+    // Ancorado no log único do pedido self-service (evita casar outros handlers que legitimamente usam :1).
+    expect(
+      src,
+      'REVERSÃO Lovable? o fallback do pedido self-service não usa mais registros_por_pagina:2',
+    ).toMatch(/buscando no Omie por CPF\/CNPJ[\s\S]{0,300}registros_por_pagina:\s*2/);
+    expect(
+      src,
+      'REGRESSÃO: o fallback do pedido self-service voltou a registros_por_pagina:1 (last-write-wins)',
+    ).not.toMatch(/buscando no Omie por CPF\/CNPJ[\s\S]{0,300}registros_por_pagina:\s*1/);
+  });
+
+  it('fail-closed em doc-ambíguo presente (não chuta o 1º código na duplicata-CNPJ)', () => {
+    expect(src, 'sumiu o ramo fail-closed doc-ambíguo do pedido').toMatch(/erro === "doc-ambíguo"/);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'omie-sync-identidade'),
+      'edge divergiu do helper de src/ — o Lovable reescreveu a lógica de identidade no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'omie-sync-identidade'));
+  });
+});
