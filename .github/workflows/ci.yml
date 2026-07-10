@@ -83,6 +83,14 @@ jobs:
       - name: CLAUDE.md size budget
         run: bun run claude:size
 
+      # Anti-regressão de gate de autorização em RPCs SECURITY DEFINER sensíveis (custo/preço/
+      # estoque). Mata o padrão "CREATE OR REPLACE derrubou o gate" — 3 ocorrências (5 views #1246,
+      # get_tint_prices, fin_estimar_estoque_omie #1264). Estático: lê supabase/migrations/ no
+      # estado final (last-writer-wins), sem Postgres. Parte A (regressão) + Parte B (cobertura).
+      # Manifest: scripts/authz-manifest.ts. Spec: docs/superpowers/specs/2026-07-09-authz-gate-regression-check-design.md
+      - name: Authz gate check (RPCs SECDEF sensíveis)
+        run: bun run authz:check
+
       # ─── Alerta de regressão (Componente 1 — mitigação de reversão Lovable) ──
       # O bot do Lovable commita DIRETO na main sem PR/CI; quando quebra build/
       # typecheck (ex.: types.ts stale #1079), o CI fica vermelho mas passa
