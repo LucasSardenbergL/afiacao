@@ -476,8 +476,12 @@ describe('guardrail money-path: omie-sync self-service USA view fresca account-c
       count(src, '.from("omie_customer_account_map_fresco")'),
       'REVERSÃO Lovable? sumiu leitura da view fresca account-correta (esperado 3: pedido, vendedor, check_client)',
     ).toBe(3);
-    // O filtro de conta é o fail-closed por-conta (sem ele, voltaria a misturar contas).
-    expect(src, 'sumiu o filtro account=colacor_sc na view fresca').toMatch(/\.eq\("account", "colacor_sc"\)/);
+    // O filtro de conta é o fail-closed por-conta. Codex P2: contar == 3 (uma por leitura), não um toMatch
+    // genérico — senão o pedido poderia perder o filtro e o teste passar só porque check_client o mantém.
+    expect(
+      count(src, '.eq("account", "colacor_sc")'),
+      'cada uma das 3 leituras da view DEVE filtrar account=colacor_sc (fail-closed por-conta)',
+    ).toBe(3);
     // O espelho poluído só pode restar como WRITER (o write-back INSERT → Fatia 4), nunca como LEITOR.
     expect(
       count(src, '.from("omie_clientes")'),
@@ -485,15 +489,15 @@ describe('guardrail money-path: omie-sync self-service USA view fresca account-c
     ).toBe(1);
     expect(
       src,
-      'REGRESSÃO: o único omie_clientes restante não é o write-back INSERT — leitura do espelho voltou?',
-    ).toMatch(/\.from\("omie_clientes"\)\s*\.insert\(/);
+      'REGRESSÃO: o único omie_clientes restante não é o write-back (upsert) — leitura do espelho voltou?',
+    ).toMatch(/\.from\("omie_clientes"\)\s*\.upsert\(/);
     expect(
       src,
       'REVERSÃO Lovable? voltou a .select() do espelho poluído omie_clientes no caminho money-path',
     ).not.toMatch(/\.from\("omie_clientes"\)\s*\.select/);
   });
 
-  it('fallback API do PEDIDO é fail-closed: registros_por_pagina:2 (não 1=last-write-wins)', () => {
+  it('fallback API do PEDIDO é fail-closed: registros:2 + guard de truncamento (não 1=last-write-wins)', () => {
     // Ancorado no log único do pedido self-service (evita casar outros handlers que legitimamente usam :1).
     expect(
       src,
@@ -503,6 +507,12 @@ describe('guardrail money-path: omie-sync self-service USA view fresca account-c
       src,
       'REGRESSÃO: o fallback do pedido self-service voltou a registros_por_pagina:1 (last-write-wins)',
     ).not.toMatch(/buscando no Omie por CPF\/CNPJ[\s\S]{0,300}registros_por_pagina:\s*1/);
+    // Codex P1: registros:2 não prova unicidade se truncado → o edge deriva omieTruncado de total_de_paginas
+    // e passa ao helper. Sem isso, [200,200] na pág.1 esconderia um 201 na pág.2 (chuta 200).
+    expect(
+      src,
+      'REGRESSÃO: sumiu o guard de truncamento (total_de_paginas → omieTruncado) — furo do registros:2 reaberto',
+    ).toMatch(/omieTruncado\s*=\s*\(searchResult\.total_de_paginas[\s\S]{0,140}omieTruncado/);
   });
 
   it('fail-closed em doc-ambíguo presente (não chuta o 1º código na duplicata-CNPJ)', () => {

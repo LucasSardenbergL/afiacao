@@ -222,12 +222,15 @@ type IdentidadeSelfService =
 function decidirIdentidadeSelfService(args: {
   viewRow: MatchOmie | null;
   omieMatches: MatchOmie[] | null;
+  /** A busca API foi TRUNCADA (Omie indicou mais registros que os buscados)? Se sim, registros:2 não
+   *  prova unicidade — pode haver um código distinto nas páginas não vistas (Codex P1). */
+  omieTruncado?: boolean;
 }): IdentidadeSelfService {
-  const { viewRow, omieMatches } = args;
+  const { viewRow, omieMatches, omieTruncado } = args;
 
   let cand: MatchOmie;
   if (viewRow) {
-    // View fresca já é account-correta (1 linha por (user_id, account)) — resolve sem API.
+    // View fresca já é account-correta (1 linha por (user_id, account)) — resolve sem API, não pagina.
     cand = viewRow;
   } else {
     // Ausência na view → o chamador precisa buscar a API Omie por documento.
@@ -236,6 +239,9 @@ function decidirIdentidadeSelfService(args: {
     const distintos = [...new Map(omieMatches.map((m) => [String(m.codigo_cliente), m])).values()];
     if (distintos.length > 1) return { ok: false, erro: 'doc-ambíguo' };
     if (distintos.length === 0) return { ok: false, erro: 'sem-vinculo' };
+    // 1 código distinto nos matches vistos. Se a busca foi TRUNCADA, um código diferente pode existir
+    // nas páginas não vistas → registros:2 não prova unicidade → fail-closed (não arrisca cliente errado).
+    if (omieTruncado) return { ok: false, erro: 'doc-ambíguo' };
     cand = distintos[0];
   }
 
@@ -280,12 +286,15 @@ async function syncClienteOmie(
   // omie_clientes (mix de contas, rótulo 'colacor' mentiroso). Ausência na view → fallback API
   // fail-closed (registros:2, rejeita doc-ambíguo — o :1 antigo era last-write-wins). Ver
   // docs/superpowers/specs/2026-07-09-omie-leituras-money-path-p0b-bis-design.md.
-  const { data: viewRow } = await supabase
+  const { data: viewRow, error: viewErr } = await supabase
     .from("omie_customer_account_map_fresco")
     .select("omie_codigo_cliente, omie_codigo_vendedor")
     .eq("user_id", userId)
     .eq("account", "colacor_sc")
     .maybeSingle();
+  // Erro de leitura (schema/RLS/indisponibilidade) NÃO é ausência — loga e degrada p/ a API fail-closed
+  // (Codex P2: não mascarar erro de leitura como "sem vínculo"; o pedido nunca usa código não-provado).
+  if (viewErr) console.error("[Omie] Erro lendo view fresca (colacor_sc), degradando p/ API:", viewErr.message);
 
   const viaView = decidirIdentidadeSelfService({
     viewRow: viewRow?.omie_codigo_cliente
@@ -323,7 +332,10 @@ async function syncClienteOmie(
       codigo_vendedor: c.recomendacoes?.codigo_vendedor ?? c.codigo_vendedor ?? null,
     }));
 
-  const viaOmie = decidirIdentidadeSelfService({ viewRow: null, omieMatches });
+  // registros:2 lê só a 1ª página; se o Omie indica mais páginas, um código distinto pode estar escondido
+  // além dos 2 vistos (Codex P1) → sinaliza truncado p/ o helper fechar fail-closed em vez de chutar.
+  const omieTruncado = (searchResult.total_de_paginas ?? 1) > 1;
+  const viaOmie = decidirIdentidadeSelfService({ viewRow: null, omieMatches, omieTruncado });
   if (!viaOmie.ok) {
     if ("erro" in viaOmie && viaOmie.erro === "doc-ambíguo") {
       // Fail-closed: 2+ cadastros DISTINTOS no mesmo CNPJ/CPF → não chuta (o 1º seria last-write-wins,
@@ -351,12 +363,19 @@ async function syncClienteOmie(
   // TODO Fatia 4: este write-back é WRITER do espelho poluído omie_clientes (grava sem conta, rótulo
   // 'colacor' default) — será migrado/aposentado na Fatia 4. Mantido por ora: não corrompe leitor que
   // já lê a view fresca, e ainda serve o cache legado até todos os leitores migrarem.
-  await supabase.from("omie_clientes").insert({
-    user_id: userId,
-    omie_codigo_cliente: omieCodigoCliente,
-    omie_codigo_cliente_integracao: cliente?.codigo_cliente_integracao || null,
-    omie_codigo_vendedor: omieCodigoVendedor,
-  });
+  // upsert ON CONFLICT DO NOTHING (ignoreDuplicates): o fluxo agora entra aqui após ausência na VIEW, e
+  // ~24% dos users (1634) têm linha antiga no espelho (UNIQUE(user_id)) — insert cru colidiria e engoliria
+  // o erro (Codex P2). DO NOTHING não sobrescreve a linha existente (não corrompe leitor ainda-não-migrado
+  // que poderia esperar o código de outra conta) e não deixa erro silencioso.
+  const { error: writeErr } = await supabase
+    .from("omie_clientes")
+    .upsert({
+      user_id: userId,
+      omie_codigo_cliente: omieCodigoCliente,
+      omie_codigo_cliente_integracao: cliente?.codigo_cliente_integracao || null,
+      omie_codigo_vendedor: omieCodigoVendedor,
+    }, { onConflict: "user_id", ignoreDuplicates: true });
+  if (writeErr) console.error("[Omie] write-back no espelho falhou (não bloqueia o pedido):", writeErr.message);
 
   return {
     omieCodigoCliente,
@@ -858,12 +877,13 @@ serve(async (req) => {
           // omie_codigo_vendedor 100% NULL (psql-ro) → na prática cai no fallback API abaixo — que é mais
           // correto que herdar um vendedor de conta errada.
           if (!omieCodigoVendedor && staffContext.customerUserId) {
-            const { data: mapping } = await supabaseAdmin
+            const { data: mapping, error: vendErr } = await supabaseAdmin
               .from("omie_customer_account_map_fresco")
               .select("omie_codigo_vendedor")
               .eq("user_id", staffContext.customerUserId)
               .eq("account", "colacor_sc")
               .maybeSingle();
+            if (vendErr) console.error("[Omie] Erro lendo vendedor na view (colacor_sc), tentará API:", vendErr.message);
             omieCodigoVendedor = mapping?.omie_codigo_vendedor || undefined;
           }
 
@@ -1057,12 +1077,13 @@ serve(async (req) => {
         // P0-B-bis: view fresca account-correta (colacor_sc), não o espelho poluído. Ausência → honesto
         // (exists:false); sem fallback API — não há consumidor money-path (o pedido resolve via
         // syncClienteOmie, que já tem fallback API fail-closed). exists sse há código na conta do fluxo.
-        const { data: mapping } = await supabaseAdmin
+        const { data: mapping, error: checkErr } = await supabaseAdmin
           .from("omie_customer_account_map_fresco")
           .select("omie_codigo_cliente")
           .eq("user_id", userId)
           .eq("account", "colacor_sc")
           .maybeSingle();
+        if (checkErr) console.error("[Omie] Erro lendo check_client na view (colacor_sc):", checkErr.message);
 
         result = {
           exists: !!mapping?.omie_codigo_cliente,

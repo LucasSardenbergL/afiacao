@@ -48,7 +48,7 @@ describe('decidirIdentidadeSelfService (P0-B-bis fail-closed money-path)', () =>
     expect(r).toEqual({ ok: false, erro: 'doc-ambíguo' });
   });
 
-  it('view ausente, API 2 matches com o MESMO código (duplicata na paginação) → ok (não é ambíguo)', () => {
+  it('view ausente, API 2 matches com o MESMO código (duplicata na paginação, sem mais páginas) → ok', () => {
     const r = decidirIdentidadeSelfService({
       viewRow: null,
       omieMatches: [
@@ -57,6 +57,35 @@ describe('decidirIdentidadeSelfService (P0-B-bis fail-closed money-path)', () =>
       ],
     });
     expect(r).toEqual({ ok: true, codigo_cliente: 200, codigo_vendedor: 7 });
+  });
+
+  it('view ausente, 1 código visto MAS busca TRUNCADA (há mais páginas) → fail-closed doc-ambíguo (Codex P1)', () => {
+    // registros:2 sozinho não prova unicidade: [200,200] na pág.1 pode esconder um 201 na pág.2.
+    // total_de_paginas>1 → não posso provar código único → precisão>recall bloqueia.
+    const r = decidirIdentidadeSelfService({
+      viewRow: null,
+      omieMatches: [{ codigo_cliente: 200, codigo_vendedor: 7 }, { codigo_cliente: 200, codigo_vendedor: 7 }],
+      omieTruncado: true,
+    });
+    expect(r).toEqual({ ok: false, erro: 'doc-ambíguo' });
+  });
+
+  it('view ausente, 1 match e NÃO truncado → ok (o caso normal do fluxo)', () => {
+    const r = decidirIdentidadeSelfService({
+      viewRow: null,
+      omieMatches: [{ codigo_cliente: 200, codigo_vendedor: 7 }],
+      omieTruncado: false,
+    });
+    expect(r).toEqual({ ok: true, codigo_cliente: 200, codigo_vendedor: 7 });
+  });
+
+  it('view PRESENTE ignora omieTruncado (a view não é paginada) → ok', () => {
+    const r = decidirIdentidadeSelfService({
+      viewRow: { codigo_cliente: 100, codigo_vendedor: null },
+      omieMatches: null,
+      omieTruncado: true,
+    });
+    expect(r).toEqual({ ok: true, codigo_cliente: 100, codigo_vendedor: null });
   });
 
   it('view ausente, API 0 match (ausência confirmada) → fail-closed sem-vinculo', () => {

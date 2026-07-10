@@ -15,12 +15,15 @@ export type IdentidadeSelfService =
 export function decidirIdentidadeSelfService(args: {
   viewRow: MatchOmie | null;
   omieMatches: MatchOmie[] | null;
+  /** A busca API foi TRUNCADA (Omie indicou mais registros que os buscados)? Se sim, registros:2 não
+   *  prova unicidade — pode haver um código distinto nas páginas não vistas (Codex P1). */
+  omieTruncado?: boolean;
 }): IdentidadeSelfService {
-  const { viewRow, omieMatches } = args;
+  const { viewRow, omieMatches, omieTruncado } = args;
 
   let cand: MatchOmie;
   if (viewRow) {
-    // View fresca já é account-correta (1 linha por (user_id, account)) — resolve sem API.
+    // View fresca já é account-correta (1 linha por (user_id, account)) — resolve sem API, não pagina.
     cand = viewRow;
   } else {
     // Ausência na view → o chamador precisa buscar a API Omie por documento.
@@ -29,6 +32,9 @@ export function decidirIdentidadeSelfService(args: {
     const distintos = [...new Map(omieMatches.map((m) => [String(m.codigo_cliente), m])).values()];
     if (distintos.length > 1) return { ok: false, erro: 'doc-ambíguo' };
     if (distintos.length === 0) return { ok: false, erro: 'sem-vinculo' };
+    // 1 código distinto nos matches vistos. Se a busca foi TRUNCADA, um código diferente pode existir
+    // nas páginas não vistas → registros:2 não prova unicidade → fail-closed (não arrisca cliente errado).
+    if (omieTruncado) return { ok: false, erro: 'doc-ambíguo' };
     cand = distintos[0];
   }
 
