@@ -22,9 +22,26 @@ O motor de reposição (`gerar_pedidos_sugeridos_ciclo`) exige `sku_parametros.p
 - **Demanda explodida do BASE = 0,58 L/dia** (Σ demanda_venda dos 112 pais × qtde na ficha) vs **0,15 L/dia** medido por venda direta — **~4×** (o consumo real que a venda direta não enxerga).
 - **Unidade fecha:** base estocada/medida em **L**; ficha em **L de componente por unidade de pai**; tingidor vendido em **UN** (qtde 1). `consumo_base(L) = qtde_tingidor(UN) × qtde_ficha(L/UN)`. Sem conversão extra.
 - **Mapeamento de conta:** a ficha usa código **Colacor**; a reposição é **OBEN**. O `omie_products.codigo` (PRD*) é **compartilhado entre contas** → permite ligar Colacor↔OBEN. ⚠️ **Mas o schema NÃO garante unicidade de `(codigo, account)`** (só de `(omie_codigo_produto, account)`): hoje há 0 duplicatas nos componentes da malha, o que é **dado, não invariante** → exige guard fail-closed (§4.1).
-- **Universo:** **58 insumos de produção ativos na OBEN** são componentes na malha; **48 estão invisíveis hoje** (`ponto_pedido` NULL) — o alvo. Componentes de **lixa** mapeiam para OBEN mas estão inativos lá (produção Colacor) → saem naturalmente do escopo.
 - **Confiabilidade da ficha:** confirmada pelo founder ("é confiável") — habilita usar a malha como fonte de demanda para dirigir compra.
 - **BASE e soluções XT.1803 são "folhas"** (sem componentes próprios) → explosão de **1 nível** cobre o caso.
+- **Malha limpa:** 6.732 linhas = 6.732 pares `(pai, componente)` distintos → **0 duplicatas, 0 divergências** hoje. `perc_perda ≠ 0` existe em 3 linhas, **nenhuma no escopo OBEN ativo**. Dedup/perda são guards fail-closed, não transformações.
+
+### 2.1 Universo real (⚠️ **unidade** recorta o escopo)
+
+| Recorte | Nº |
+|---|---|
+| Insumos de produção **ativos na OBEN** que são componentes na malha | **58** |
+| …com **unidade da ficha = unidade de estoque** | 25 |
+| …**e** hoje invisíveis (`ponto_pedido` NULL) → **ELEGÍVEIS** | **23** |
+| Em **quarentena por unidade divergente** | **33** |
+
+⚠️ **A unidade da ficha nem sempre bate com a unidade de estoque do insumo** (`UN|M2` ×127 pares, `UN|L`, `L|UN`, `UN|KG`, `PAR|M2`). Multiplicar através dessa divergência produz **ponto de pedido em unidade errada = compra errada**. Sem tabela de conversão validada, o par vai para **quarentena** (precisão > recall) — os 33 são discos de lixa, concentrados LC e algumas bases MixMachine.
+
+**Os itens que originaram o pedido estão todos no grupo elegível:** `BASE PARA TINGIMIX` (L|L), as 4 `SOLUCAO XT.1803` (L|L), `TINGIMIX` (UN|UN).
+
+**CMC:** 8 dos 23 elegíveis têm `cmc > 0` — incluindo **todos** os do founder. As soluções XT.1803 custam **R$200–392/L** e entram em ~110 tingidores cada: são exatamente o caso que o **V3** (§5.1) protege de ruptura. Os 15 sem CMC (bases MixMachine, cola, galão) **ainda ganham `ponto_pedido`** (a demanda é real); só a *criticidade* fica em fallback, e o gate de disparo existente (`SKU sem custo`) já impede pedido R$0.
+
+- Componentes de **lixa** mapeiam para OBEN mas em geral estão inativos lá (produção Colacor) → saem naturalmente do escopo.
 
 ## 3. Decisão
 
@@ -64,6 +81,8 @@ gerar_pedidos_sugeridos_ciclo [INALTERADO] (vê ponto_pedido/estoque_maximo) →
 **Guards obrigatórios (Codex challenge, money-path — sem eles = compra dobrada/faltante):**
 - **Cardinalidade `codigo`→conta NÃO é garantida pelo schema** (`omie_products` só tem unique em `(omie_codigo_produto, account)`, não em `(codigo, account)`). Hoje há 0 duplicatas nos componentes da malha (verificado psql-ro 2026-07-09), mas isso é dado, não invariante. A tradução deve **falhar fechado com diagnóstico** quando um `codigo` tiver `≠1` linha ativa na conta destino (0 = insumo sumiu; >1 = ambíguo) — **NUNCA `LIMIT 1`** (esconderia a ambiguidade e escolheria arbitrário). O item ambíguo sai para uma **fila de exceção** (não some calado).
 - **Dedup da malha falsificável:** par `(pai, componente)` com linhas **exatamente iguais** → deduplica (duplicata de sync); linhas com **qtde divergente** → **quarentena** (pode ser duplicata OU duas etapas reais somáveis — não decidir por soma/média/DISTINCT cego, cada um erra num cenário). Regra explícita + prova.
+- ⚠️ **Guard de UNIDADE (o mais material — 33 de 58 insumos):** só explodir quando `unidade_da_ficha = unidade_de_estoque_do_insumo`. Divergente (`UN|M2`, `UN|L`, `L|UN`, …) → **quarentena com diagnóstico**, nunca conversão inventada (unidade errada = ponto de pedido errado = compra errada). Uma tabela de conversão validada pode habilitá-los depois; não é este design.
+- **`perc_perda ≠ 0` → quarentena** (0 casos no escopo hoje). Não aplicar fator de perda silenciosamente.
 - **Barrar auto-referência:** `pai_oben = componente_oben` é excluído (0 casos hoje, mas venda direta + linha sintética do mesmo SKU = compra dobrada). Guard que blinda o futuro.
 - **Interação com o de-para de consolidação de demanda:** a explosão precisa casar com o SKU **efetivo** (destino do de-para N→1 que a `v_venda_items_history_efetivo` já aplica). Se a malha estiver no código antigo do pai e a venda foi consolidada para o destino, a explosão não casa (ou duplica). O mapeamento deve operar no mesmo espaço de SKU do histórico efetivo — provar os dois de-paras juntos.
 
@@ -116,7 +135,7 @@ O insumo não gera receita, mas a **classe ABC é calculada por `valor_total_90d
 - `v_sku_parametros_sugeridos` **entra no escopo do PR-2** (é onde a classe ABC é calculada). É view money-path grande → pré-flight `pg_get_viewdef` + preservar ordem exata de colunas.
 - O valor de reposição (`qtde × cmc`) é **derivado**, nunca gravado como receita. `valor_total`/`valor_unitario` das linhas sintéticas seguem **NULL** (receita honesta; `ausente≠zero`).
 - A ABC do insumo passa a usar o valor de reposição; a ABC de **produto vendido não muda** (segue `valor_total_90d` de venda). O discriminador "é insumo" = ser componente em `v_pcp_malha_oben`. Provar que produto de venda mantém a classe **idêntica** (assert de não-regressão).
-- `cmc` ausente ⇒ **não fabricar** valor: insumo sem CMC cai em baixa-confiança/fila de exceção, não em "valor 0" (que o empurraria para C — exatamente o bug que V3 evita).
+- `cmc` ausente (15 dos 23 elegíveis) ⇒ **não fabricar** valor. O insumo **ainda ganha `ponto_pedido`/`estoque_maximo`** (a demanda explodida é real); apenas a *criticidade* fica em **fallback conservador** e ele entra na fila "insumo sem custo". Nunca `valor = 0` (que o empurraria para C — o bug que o V3 evita). Rede existente: o gate de disparo já barra `SKU sem custo`, então não há pedido R$0.
 
 ### 5.2 Demais decisões
 1. **Explosão de 1 nível** (base/soluções são folhas — cobre o caso). Multinível (tingidor que é componente de outro; existem ~7) fica para Fase 2; corte **documentado, não silenciado**.
@@ -146,7 +165,9 @@ O insumo não gera receita, mas a **classe ABC é calculada por `valor_total_90d
 - Nenhum par com `pai_oben = componente_oben` (auto-referência).
 - Par de malha divergente sem decisão explícita → quarentena, não soma silenciosa. Duplicata exata → dedup.
 - Componente OBEN inativo não gera demanda **mas aparece no relatório de exclusão**.
-- Quantidade `> 0`; unidade compatível (`L`); `perc_perda` é 0/null ou conscientemente aplicado.
+- Quantidade `> 0`.
+- **Unidade:** par com `unidade_ficha <> unidade_estoque` **não explode** e cai em quarentena (falsificar: forçar a explosão de um par `UN|M2` → exigir vermelho). Par com unidade igual explode.
+- **`perc_perda <> 0` → quarentena** (falsificar: injetar perda num par do escopo → exigir vermelho, jamais aplicar fator silencioso).
 
 *Demanda e fan-out*
 - BASE explode para ~0,58 L/dia no fixture; venda direta (0,15) soma **separadamente**; pai fora da malha não gera linha.
@@ -169,7 +190,7 @@ O insumo não gera receita, mas a **classe ABC é calculada por `valor_total_90d
 - **PR-1 inerte:** `EXCEPT ALL` prova que as 4 views antigas e a RPC retornam **idêntico** antes/depois; `pg_depend` prova que nada existente depende de `v_sku_demanda_efetiva`.
 - **PR-2:** nomes, tipos e **ordem** das colunas das views não mudam.
 
-**Demais gates:** Codex challenge (xhigh) sobre o spec (✅ feito — §11) e depois sobre o SQL. Pré-flight `pg_get_viewdef` das 5 views + `pg_get_functiondef` da função de aplicação (prod diverge do repo). Verificação pós-apply (psql-ro): o BASE ganha `ponto_pedido`/`estoque_maximo`; demanda ~0,58/dia; nenhum SKU fora do escopo mudou; insumos destravados ≈ 48.
+**Demais gates:** Codex challenge (xhigh) sobre o spec (✅ feito — §11) e depois sobre o SQL. Pré-flight `pg_get_viewdef` das 5 views + `pg_get_functiondef` da função de aplicação (prod diverge do repo). Verificação pós-apply (psql-ro): o BASE ganha `ponto_pedido`/`estoque_maximo`; demanda ~0,58 L/dia; nenhum SKU fora do escopo mudou; **insumos destravados = 23**; **33 em quarentena de unidade, listados** (não sumidos).
 
 ## 8. Faseamento
 
@@ -179,11 +200,11 @@ O insumo não gera receita, mas a **classe ABC é calculada por `valor_total_90d
 
 ## 9. Critério de sucesso
 
-O `BASE PARA TINGIMIX` (e os ~48 insumos análogos) **aparecem no cockpit quando o estoque do grupo cai ao ponto de pedido**, dimensionados pelo consumo real (explodido), sem pedido manual — e sem superdimensionar a ponto de o founder rejeitar sistematicamente.
+O `BASE PARA TINGIMIX`, as 4 `SOLUCAO XT.1803` e os demais **23 insumos elegíveis** aparecem no cockpit **quando o estoque do grupo cai ao ponto de pedido**, dimensionados pelo consumo real (explodido), sem pedido manual — e sem superdimensionar a ponto de o founder rejeitar sistematicamente. Os **33 em quarentena de unidade** ficam **listados e diagnosticados**, nunca silenciosamente ausentes.
 
 ## 10. Fora de escopo
 
-Multinível de BOM; insumo sem ficha; produção de lixa (Colacor); auto-aprovação N3 (segue dormente); sincronização de consumo real do Omie (Abordagem C).
+Multinível de BOM; insumo sem ficha; **conversão de unidade** (os 33 em quarentena — exige tabela validada); produção de lixa (Colacor); auto-aprovação N3 (segue dormente); sincronização de consumo real do Omie (Abordagem C).
 
 ## 11. Codex challenge (xhigh, gpt-5.5, 2026-07-09) — furos e resolução
 
