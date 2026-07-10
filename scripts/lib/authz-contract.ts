@@ -21,6 +21,11 @@
  * Limitações conhecidas (v1 — ver §"Fora do escopo" do spec): não verifica SET search_path,
  * GRANT/REVOKE/PUBLIC-default, tabela sensível via view/helper/SQL dinâmico, ALTER/DROP FUNCTION,
  * enfraquecimento das próprias funções-gate, nem deny-por-RETURN (o contrato exige RAISE EXCEPTION).
+ * blocksOnCall reconhece as formas COMUNS de negação (NOT / IS NOT TRUE / IS FALSE / = false /
+ * IS DISTINCT FROM TRUE); uma forma exótica (ex.: `COALESCE(gate(),false) = false` literal, em vez
+ * de `NOT COALESCE(gate(),false)`) pode gerar falso-POSITIVO — o autor reescreve na forma comum ou
+ * classifica. É heurística de TEXTO: o alvo é a regressão ACIDENTAL, não evasão deliberada (uma
+ * migration maliciosa passa por review humano; o complemento é o audit read-only periódico em PROD).
  */
 import { balancedParens, normalizeSignature } from './migration-objects';
 
@@ -172,36 +177,67 @@ export function extractFunctionDefs(sql: string): FunctionDef[] {
   return extractFunctions(sql).defs;
 }
 
+/** a chamada do gate aparece no corpo (tolera schema e whitespace antes do parêntese) */
 export function hasGateCall(body: string, call: string): boolean {
-  return body.toLowerCase().includes(call.toLowerCase() + '(');
+  return new RegExp(`(?:\\w+\\.)?${escapeRe(call.toLowerCase())}\\s*\\(`, 'i').test(body.toLowerCase());
+}
+
+/** índice logo após o ')' que fecha a chamada cujo '(' começa em/após `openFrom` */
+function callClose(b: string, openFrom: number): number {
+  const open = b.indexOf('(', openFrom);
+  if (open === -1) return b.length;
+  return open + balancedParens(b, open).length + 2;
 }
 
 /**
- * forma de bloqueio deny-if-false: o gate NEGADO leva a RAISE EXCEPTION.
- * O gate conta como negado se (a) `NOT [schema.]gate(` direto, ou (b) dentro do grupo balanceado
- * de um `NOT ( … )`. Usa o escopo do parêntese (não janela fixa) → rejeita `NOT outra_coisa AND
- * gate()` e `NOT (x IS NULL) AND gate()` (guard invertido), e não tem falso-positivo em gate
- * verboso. Depois da negação, exige `THEN … RAISE EXCEPTION` (não NOTICE, não RETURN).
+ * a partir de `from`, o bloco IF que o segue (…THEN … END IF) contém RAISE EXCEPTION ANTES do
+ * END IF? Limitar ao bloco do gate evita o falso-negativo `IF NOT gate THEN RETURN; END IF;` +
+ * um RAISE EXCEPTION de validação logo abaixo (challenge Codex ×3).
+ */
+function raiseInIfBlock(b: string, from: number): boolean {
+  const seg = b.slice(from, from + 800);
+  const then = /\bthen\b/i.exec(seg);
+  if (!then) return false;
+  const after = seg.slice(then.index + then[0].length);
+  const endif = /\bend\s+if\b/i.exec(after);
+  const block = endif ? after.slice(0, endif.index) : after.slice(0, 300);
+  return /\braise\s+exception\b/i.test(block);
+}
+
+/**
+ * forma de bloqueio deny-if-false: o gate NEGADO leva a RAISE EXCEPTION no MESMO bloco IF.
+ * Reconhece as formas comuns de negação (challenge Codex ×3):
+ *   `NOT [schema.]gate(…)` · gate dentro de `NOT ( … )` · `gate(…) IS NOT TRUE` · `IS FALSE` ·
+ *   `= false` · `IS DISTINCT FROM TRUE`. Usa o escopo do parêntese (não janela fixa), então rejeita
+ *   `NOT outra_coisa AND gate()` / `NOT (x IS NULL) AND gate()` (guard invertido) e não tem
+ *   falso-positivo em gate verboso. Exige RAISE EXCEPTION antes do END IF (não NOTICE, não RETURN).
  */
 export function blocksOnCall(bodyRaw: string, call: string): boolean {
   const b = bodyRaw.toLowerCase();
   const gate = escapeRe(call.toLowerCase());
   const gateCallRe = new RegExp(`(?:\\w+\\.)?${gate}\\s*\\(`, 'i');
-  const raiseAfter = (from: number): boolean => /\bthen\b[\s\S]{0,240}?\braise\s+exception\b/i.test(b.slice(from, from + 600));
+  const negEnds: number[] = [];
 
-  // (a) NOT [schema.]gate( direto
-  const directRe = new RegExp(`\\bnot\\s+(?:\\w+\\.)?${gate}\\s*\\(`, 'gi');
-  for (const m of b.matchAll(directRe)) {
-    if (raiseAfter(m.index! + m[0].length)) return true;
+  // (a) NOT [schema.]gate(
+  for (const m of b.matchAll(new RegExp(`\\bnot\\s+(?:\\w+\\.)?${gate}\\s*\\(`, 'gi'))) {
+    negEnds.push(callClose(b, m.index! + m[0].length - 1));
   }
-  // (b) NOT ( … gate( … ) — gate dentro do grupo balanceado do NOT
-  const notParenRe = /\bnot\s*\(/gi;
-  for (const m of b.matchAll(notParenRe)) {
-    const openParen = m.index! + m[0].length - 1;
-    const inner = balancedParens(b, openParen);
-    if (gateCallRe.test(inner) && raiseAfter(openParen + inner.length + 2)) return true;
+  // (b) gate dentro de NOT ( … )
+  for (const m of b.matchAll(/\bnot\s*\(/gi)) {
+    const open = m.index! + m[0].length - 1;
+    const inner = balancedParens(b, open);
+    if (gateCallRe.test(inner)) negEnds.push(open + inner.length + 2);
   }
-  return false;
+  // (c) gate(…) IS NOT TRUE | IS FALSE | = false | IS DISTINCT FROM TRUE
+  for (const m of b.matchAll(new RegExp(gateCallRe.source, 'gi'))) {
+    const close = callClose(b, m.index! + m[0].length - 1);
+    const tail = b.slice(close, close + 40).replace(/^\s+/, '');
+    if (/^(?:is\s+not\s+true|is\s+false|=\s*false|is\s+distinct\s+from\s+true)/i.test(tail)) {
+      negEnds.push(close);
+    }
+  }
+
+  return negEnds.some((pos) => raiseInIfBlock(b, pos));
 }
 
 export function checkGate(body: string, req: RequiredGate): GateResult {

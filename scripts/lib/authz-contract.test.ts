@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractFunctionDefs, extractFunctions, stripNoise, checkGate, touchesSensitive, blocksOnCall } from './authz-contract';
+import { extractFunctionDefs, extractFunctions, stripNoise, checkGate, touchesSensitive, blocksOnCall, hasGateCall } from './authz-contract';
 
 const FN = `CREATE OR REPLACE FUNCTION public.foo(p_x text)
  RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public'
@@ -186,5 +186,34 @@ describe('extractFunctions — comentários não enganam', () => {
       '-- CREATE OR REPLACE FUNCTION public.foo(p text) RETURNS numeric AS $x$ fake $x$;',
     ].join('\n');
     expect(extractFunctionDefs(sql)).toHaveLength(1);
+  });
+});
+
+// ── 3º challenge Codex: bloco IF do gate + formas de deny + tolerância ──
+describe('blocksOnCall — RAISE no MESMO bloco IF', () => {
+  it('REJEITA deny-por-RETURN + RAISE EXCEPTION de validação num bloco separado', () => {
+    const b = "IF NOT public.gate() THEN RETURN; END IF; IF p_sku IS NULL THEN RAISE EXCEPTION 'sku required'; END IF;";
+    expect(blocksOnCall(b, 'gate')).toBe(false);
+  });
+});
+
+describe('blocksOnCall — formas comuns de deny (anti falso-positivo)', () => {
+  it('aceita gate() IS NOT TRUE THEN RAISE EXCEPTION', () => {
+    expect(blocksOnCall("IF public.gate() IS NOT TRUE THEN RAISE EXCEPTION 'forbidden'; END IF;", 'gate')).toBe(true);
+  });
+  it('aceita gate() IS DISTINCT FROM TRUE', () => {
+    expect(blocksOnCall("IF public.gate() IS DISTINCT FROM TRUE THEN RAISE EXCEPTION 'x'; END IF;", 'gate')).toBe(true);
+  });
+  it('aceita gate() = false', () => {
+    expect(blocksOnCall("IF public.gate() = false THEN RAISE EXCEPTION 'x'; END IF;", 'gate')).toBe(true);
+  });
+});
+
+describe('hasGateCall — tolera schema e whitespace antes do parêntese', () => {
+  it('casa authz.gate (uid) com espaço', () => {
+    expect(hasGateCall('if not authz.gate (uid) then raise exception', 'gate')).toBe(true);
+  });
+  it('não casa palavra que apenas contém o nome', () => {
+    expect(hasGateCall('select xgatey from t', 'gate')).toBe(false);
   });
 });
