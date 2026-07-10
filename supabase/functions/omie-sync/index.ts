@@ -853,12 +853,16 @@ serve(async (req) => {
           // Use vendedor passed from frontend if available (already resolved per-account)
           let omieCodigoVendedor: number | undefined = staffContext.customerCodigoVendedor || undefined;
 
-          // Fallback: look up from omie_clientes if not passed
+          // P0-B-bis: fallback do vendedor pela VIEW FRESCA account-correta (colacor_sc), não o espelho
+          // poluído omie_clientes (poderia devolver vendedor de OUTRA conta). Nota: colacor_sc hoje tem
+          // omie_codigo_vendedor 100% NULL (psql-ro) → na prática cai no fallback API abaixo — que é mais
+          // correto que herdar um vendedor de conta errada.
           if (!omieCodigoVendedor && staffContext.customerUserId) {
             const { data: mapping } = await supabaseAdmin
-              .from("omie_clientes")
+              .from("omie_customer_account_map_fresco")
               .select("omie_codigo_vendedor")
               .eq("user_id", staffContext.customerUserId)
+              .eq("account", "colacor_sc")
               .maybeSingle();
             omieCodigoVendedor = mapping?.omie_codigo_vendedor || undefined;
           }
@@ -1050,14 +1054,18 @@ serve(async (req) => {
       }
 
       case "check_client": {
+        // P0-B-bis: view fresca account-correta (colacor_sc), não o espelho poluído. Ausência → honesto
+        // (exists:false); sem fallback API — não há consumidor money-path (o pedido resolve via
+        // syncClienteOmie, que já tem fallback API fail-closed). exists sse há código na conta do fluxo.
         const { data: mapping } = await supabaseAdmin
-          .from("omie_clientes")
+          .from("omie_customer_account_map_fresco")
           .select("omie_codigo_cliente")
           .eq("user_id", userId)
+          .eq("account", "colacor_sc")
           .maybeSingle();
 
         result = {
-          exists: !!mapping,
+          exists: !!mapping?.omie_codigo_cliente,
           omie_codigo_cliente: mapping?.omie_codigo_cliente || null,
         };
         break;
