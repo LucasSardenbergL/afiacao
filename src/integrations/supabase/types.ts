@@ -15717,6 +15717,39 @@ export type Database = {
         }
         Relationships: []
       }
+      omie_customer_account_map_fresco: {
+        Row: {
+          account: string | null
+          created_at: string | null
+          id: string | null
+          omie_codigo_cliente: number | null
+          omie_codigo_vendedor: number | null
+          source: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          account?: string | null
+          created_at?: string | null
+          id?: string | null
+          omie_codigo_cliente?: number | null
+          omie_codigo_vendedor?: number | null
+          source?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          account?: string | null
+          created_at?: string | null
+          id?: string | null
+          omie_codigo_cliente?: number | null
+          omie_codigo_vendedor?: number | null
+          source?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       order_feed: {
         Row: {
           account: string | null
@@ -18487,6 +18520,14 @@ export type Database = {
           p_valor_extra?: number
         }
         Returns: Json
+      }
+      staff_get_sales_order_payload: {
+        Args: { p_order_ids: string[] }
+        Returns: {
+          id: string
+          omie_payload: Json
+          omie_response: Json
+        }[]
       }
       sugerir_negociacao_paralela_hoje: {
         Args: { p_empresa?: string; p_limite?: number }
