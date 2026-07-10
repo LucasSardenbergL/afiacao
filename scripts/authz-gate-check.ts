@@ -20,7 +20,7 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { extractFunctions, checkGate, touchesSensitive, type FunctionDef } from './lib/authz-contract';
+import { extractFunctions, checkGate, touchesSensitive, rawIsSensitiveSecdef, type FunctionDef } from './lib/authz-contract';
 import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, manifestKey } from './authz-manifest';
 
 export interface Finding {
@@ -40,6 +40,7 @@ export function auditAuthz(migrations: Migration[]): Finding[] {
   const finalByName = new Map<string, { def: FunctionDef; file: string }>(); // p/ Parte A (gate por nome)
   const finalBySig = new Map<string, { def: FunctionDef; file: string }>(); // p/ Parte B (overloads distintos)
   const lastMention = new Map<string, { file: string; parsed: boolean }>(); // fail-closed: última menção deu p/ parsear?
+  const unparsedRaw = new Map<string, { file: string; raw: string }>(); // texto bruto da última def não-parseável
 
   const ordered = [...migrations].sort((a, b) => a.file.localeCompare(b.file));
   for (const mig of ordered) {
@@ -54,9 +55,12 @@ export function auditAuthz(migrations: Migration[]): Finding[] {
       finalByName.set(nkey, { def, file: mig.file });
       finalBySig.set(def.key, { def, file: mig.file });
       lastMention.set(nkey, { file: mig.file, parsed: true });
+      unparsedRaw.delete(nkey); // uma def parseável posterior supera o unparsed
     }
     for (const u of extracted.unparsed) {
-      lastMention.set(manifestKey(u.schema, u.name), { file: mig.file, parsed: false });
+      const nkey = manifestKey(u.schema, u.name);
+      lastMention.set(nkey, { file: mig.file, parsed: false });
+      unparsedRaw.set(nkey, { file: mig.file, raw: u.raw });
     }
   }
 
@@ -102,10 +106,16 @@ export function auditAuthz(migrations: Migration[]): Finding[] {
     });
   }
 
-  // fail-closed genérico: CREATE FUNCTION não extraído, fora do manifest → aviso (pode ser SECDEF sensível).
-  for (const [mkey, mention] of lastMention) {
-    if (mention.parsed || AUTHZ_MANIFEST[mkey]) continue;
-    findings.push({ level: 'warn', file: mention.file, fn: mkey, msg: `CREATE FUNCTION ${mkey} não extraído pelo parser — se for SECDEF que toca custo/preço/estoque, classifique manualmente em scripts/authz-manifest.ts.` });
+  // fail-closed: CREATE FUNCTION não extraído. Se o texto bruto é SECDEF sensível e não
+  // classificado → ERRO (não posso verificar o gate, mas SEI que é sensível). Senão → aviso.
+  for (const [mkey, { file, raw }] of unparsedRaw) {
+    if (AUTHZ_MANIFEST[mkey] || ACKNOWLEDGED_SENSITIVE.has(mkey)) continue; // manifest já tratado na Parte A
+    const sensitive = rawIsSensitiveSecdef(raw);
+    if (sensitive.length > 0) {
+      findings.push({ level: 'error', file, fn: mkey, msg: `SECURITY DEFINER que toca dado sensível (${sensitive.join(', ')}) NÃO foi parseável (fail-closed) e não está classificada. Classifique ${mkey} em scripts/authz-manifest.ts e/ou ajuste o parser (scripts/lib/authz-contract.ts).` });
+    } else {
+      findings.push({ level: 'warn', file, fn: mkey, msg: `CREATE FUNCTION ${mkey} não extraído pelo parser — se for SECDEF que toca custo/preço/estoque, classifique manualmente.` });
+    }
   }
 
   return findings;

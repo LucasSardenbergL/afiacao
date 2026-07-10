@@ -114,3 +114,28 @@ describe('auditAuthz — anti falso-negativo (challenge Codex)', () => {
     expect(errorsOf(f).some((e) => e.fn.startsWith('public.fuga_tardia'))).toBe(true);
   });
 });
+
+// ── re-challenge Codex: NOT-de-outra-coisa, comentário-engana, unparsed-sensível ──
+describe('auditAuthz — anti falso-negativo (re-challenge Codex)', () => {
+  it('NOT nega outra coisa (NOT v_disabled AND gate) → ERRO', () => {
+    const body = `IF NOT v_disabled AND public.pode_ver_carteira_completa(auth.uid()) THEN RAISE EXCEPTION 'x'; END IF; ${READ}`;
+    const f = auditAuthz([mig('20260710000000_x.sql', fn('fin_estimar_estoque_omie', body))]);
+    expect(errorsOf(f)).toHaveLength(1);
+  });
+
+  it('AS $x$ comentado + corpo real sem gate → ERRO (parser pega o corpo real)', () => {
+    const sql = [
+      'CREATE OR REPLACE FUNCTION public.fin_estimar_estoque_omie(p text) RETURNS numeric LANGUAGE plpgsql SECURITY DEFINER',
+      "-- AS $x$ IF NOT public.pode_ver_carteira_completa(auth.uid()) THEN RAISE EXCEPTION 'x'; END IF; $x$",
+      'AS $$ BEGIN RETURN (SELECT sum(saldo * cmc) FROM inventory_position); END $$;',
+    ].join('\n');
+    const f = auditAuthz([mig('20260710000000_x.sql', sql)]);
+    expect(errorsOf(f)).toHaveLength(1);
+  });
+
+  it('BEGIN ATOMIC sensível fora do manifest → ERRO fail-closed (não só warn)', () => {
+    const sql = 'CREATE OR REPLACE FUNCTION public.fuga_atomic() RETURNS numeric LANGUAGE sql SECURITY DEFINER BEGIN ATOMIC SELECT sum(cmc) FROM inventory_position; END;';
+    const f = auditAuthz([mig('20260710000000_x.sql', sql)]);
+    expect(errorsOf(f).some((e) => e.fn === 'public.fuga_atomic')).toBe(true);
+  });
+});

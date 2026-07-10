@@ -151,3 +151,40 @@ describe('extractFunctions — parser endurecido', () => {
     expect(r.unparsed.map((u) => u.name)).toContain('weird');
   });
 });
+
+// ── re-challenge Codex: escopo do NOT (não janela fixa) + comentários ──
+describe('blocksOnCall — escopo do NOT', () => {
+  it('REJEITA NOT que nega OUTRA coisa (NOT v_disabled AND gate → gate positivo)', () => {
+    const b = "IF NOT v_disabled AND public.has_role(uid, 'employee') THEN RAISE EXCEPTION 'x'; END IF;";
+    expect(blocksOnCall(b, 'has_role')).toBe(false);
+  });
+  it('REJEITA NOT (x IS NULL) AND gate (gate fora do NOT)', () => {
+    const b = "IF NOT (v_uid IS NULL) AND public.has_role(v_uid, 'employee') THEN RAISE EXCEPTION 'x'; END IF;";
+    expect(blocksOnCall(b, 'has_role')).toBe(false);
+  });
+  it('aceita gate verboso DENTRO do NOT (muitos ORs, >160 chars) — sem falso-positivo', () => {
+    const b = "IF NOT ( c_aaaaaa OR c_bbbbbb OR c_cccccc OR c_dddddd OR c_eeeeee OR c_ffffff OR c_gggggg OR c_hhhhhh OR public.has_role(uid, 'master') ) THEN RAISE EXCEPTION 'x'; END IF;";
+    expect(blocksOnCall(b, 'has_role')).toBe(true);
+  });
+});
+
+describe('extractFunctions — comentários não enganam', () => {
+  it('ignora AS $x$ em comentário antes do corpo real', () => {
+    const sql = [
+      'CREATE OR REPLACE FUNCTION public.foo(p text) RETURNS numeric LANGUAGE plpgsql SECURITY DEFINER',
+      "-- AS $x$ IF NOT public.pode_ver_carteira_completa(auth.uid()) THEN RAISE EXCEPTION 'x'; END IF; $x$",
+      'AS $$ BEGIN RETURN (SELECT sum(saldo * cmc) FROM inventory_position); END $$;',
+    ].join('\n');
+    const defs = extractFunctionDefs(sql);
+    expect(defs).toHaveLength(1);
+    expect(defs[0].body).not.toContain('pode_ver_carteira_completa'); // pegou o corpo REAL
+    expect(defs[0].body).toContain('inventory_position');
+  });
+  it('ignora CREATE FUNCTION inteiro comentado', () => {
+    const sql = [
+      'CREATE OR REPLACE FUNCTION public.foo(p text) RETURNS numeric LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;',
+      '-- CREATE OR REPLACE FUNCTION public.foo(p text) RETURNS numeric AS $x$ fake $x$;',
+    ].join('\n');
+    expect(extractFunctionDefs(sql)).toHaveLength(1);
+  });
+});
