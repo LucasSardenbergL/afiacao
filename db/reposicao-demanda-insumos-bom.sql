@@ -34,7 +34,9 @@ efetivo AS (
   FROM sku_substituicao
   WHERE empresa = 'OBEN' AND status = 'aplicada'
     AND acao_parametros = 'consolidar_demanda'
-    AND sku_codigo_novo ~ '^\d+$' AND sku_codigo_antigo ~ '^\d+$'
+    -- [Codex #6] {1,18} limita a bigint: sem isso um código-lixo >18 dígitos passa no
+    -- regex e o ::bigint estoura (out-of-range), derrubando a VIEW INTEIRA em runtime.
+    AND sku_codigo_novo ~ '^\d{1,18}$' AND sku_codigo_antigo ~ '^\d{1,18}$'
 )
 SELECT
   m.pai_codigo,
@@ -83,10 +85,14 @@ WHERE c.n_pai_oben = 1                       -- 0 = sumiu; >1 = ambíguo → qua
   AND c.pai_oben <> c.comp_oben              -- auto-referência dobraria a demanda
   AND c.quantidade > 0
   AND c.perc_perda = 0                       -- não aplicar fator de perda silencioso
-  AND c.un_ficha = c.un_estoque              -- unidade errada = compra errada
+  -- [Codex #7] normaliza caixa/espaço: 'L' vs 'l ' não deve virar falso-quarentena
+  AND btrim(upper(c.un_ficha)) = btrim(upper(c.un_estoque))
   AND c.comp_ativo
 GROUP BY c.pai_oben, c.comp_oben
-HAVING count(DISTINCT c.quantidade) = 1;
+HAVING count(DISTINCT c.quantidade) = 1
+   -- [Codex #1] 2+ componentes DISTINTOS colapsando no mesmo comp_oben (via de-para) DEVERIAM
+   -- somar, mas min() aqui subcompraria. Fail-closed: não entra no elegível, vai p/ quarentena.
+   AND count(DISTINCT c.componente_codigo) = 1;
 
 COMMENT ON VIEW v_pcp_malha_oben IS
   'Ficha técnica traduzida p/ OBEN, apenas pares inequívocos (cardinalidade 1:1, unidade da ficha = unidade de estoque, sem perda, sem auto-referência, qtde consistente). O excluído vive em v_pcp_malha_oben_quarentena com motivo.';
@@ -108,7 +114,7 @@ WITH classif AS (
       WHEN c.pai_oben = c.comp_oben                   THEN 'auto_referencia'
       WHEN c.quantidade IS NULL OR c.quantidade <= 0  THEN 'quantidade_invalida'
       WHEN c.perc_perda <> 0                          THEN 'perc_perda_nao_suportada'
-      WHEN c.un_ficha IS DISTINCT FROM c.un_estoque   THEN 'unidade_divergente'
+      WHEN btrim(upper(c.un_ficha)) IS DISTINCT FROM btrim(upper(c.un_estoque)) THEN 'unidade_divergente'
       ELSE NULL
     END AS motivo
   FROM v_pcp_malha_oben_cand c
@@ -117,7 +123,7 @@ SELECT pai_codigo, componente_codigo, pai_oben, comp_oben,
        quantidade, un_ficha, un_estoque, perc_perda, motivo
 FROM classif WHERE motivo IS NOT NULL
 UNION ALL
--- par que passou em tudo, mas tem quantidades divergentes entre linhas
+-- par de MESMA origem com quantidades divergentes (duplicata de sync divergente)
 SELECT c.pai_codigo, c.componente_codigo, c.pai_oben, c.comp_oben,
        c.quantidade, c.un_ficha, c.un_estoque, c.perc_perda,
        'quantidade_divergente_no_par'::text
@@ -126,7 +132,21 @@ WHERE c.motivo IS NULL
   AND (c.pai_oben, c.comp_oben) IN (
         SELECT pai_oben, comp_oben FROM classif
         WHERE motivo IS NULL
-        GROUP BY 1,2 HAVING count(DISTINCT quantidade) > 1);
+        GROUP BY 1,2 HAVING count(DISTINCT quantidade) > 1
+                        AND count(DISTINCT componente_codigo) = 1)
+UNION ALL
+-- [Codex #1] 2+ componentes DISTINTOS resolvem para o mesmo insumo OBEN (via de-para).
+-- Somariam, mas o elegível pegaria min → subcompra. Fail-closed: quarentena até haver
+-- uma regra de soma explícita (fora do escopo do PR-1).
+SELECT c.pai_codigo, c.componente_codigo, c.pai_oben, c.comp_oben,
+       c.quantidade, c.un_ficha, c.un_estoque, c.perc_perda,
+       'multiplos_componentes_mesmo_insumo'::text
+FROM classif c
+WHERE c.motivo IS NULL
+  AND (c.pai_oben, c.comp_oben) IN (
+        SELECT pai_oben, comp_oben FROM classif
+        WHERE motivo IS NULL
+        GROUP BY 1,2 HAVING count(DISTINCT componente_codigo) > 1);
 
 COMMENT ON VIEW v_pcp_malha_oben_quarentena IS
   'Pares da ficha EXCLUÍDOS da explosão, com motivo. Fila de exceção: precisão>recall — insumo com unidade divergente ou cardinalidade ambígua não vira compra, mas fica visível aqui.';

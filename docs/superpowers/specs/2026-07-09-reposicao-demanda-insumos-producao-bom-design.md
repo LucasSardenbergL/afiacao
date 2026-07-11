@@ -222,3 +222,41 @@ Multinível de BOM; insumo sem ficha; **conversão de unidade** (os 33 em quaren
 | 7 | De-para de consolidação × BOM podem **desencontrar** (malha no código antigo do pai) | — | Explosão opera no espaço de SKU **efetivo**; provar os dois de-paras juntos (§4.1) |
 | 8 | Auto-referência `pai = componente` dobra demanda (não faz loop, pois é 1 nível) | **0** pares | Guard que exclui o par (§4.1) |
 | 9 | `v_sku_candidatos_primeira_compra` é *sidecar*: `clientes_180d` passaria a significar clientes **dos pais** | — | Aceito e **documentado** como tal (§4.2) |
+
+## 12. Codex challenge do SQL FINAL (xhigh, gpt-5.5, 2026-07-11) — furos e status
+
+Challenge sobre o SQL concreto (não o design). **Todos os 8 furos têm 0 incidência em produção hoje** (verificado `psql-ro`) — são fragilidades de lógica latentes contra dado legado/edge. 3 corrigidos com prova PG17; 5 são fail-closed conservadores ou upstream, **vigiados**.
+
+| # | Furo | Incidência | Status |
+|---|---|---|---|
+| 1 | Colapso N→1: 2 componentes distintos → mesmo `comp_oben` (via de-para) **somariam**, mas `min()` subcompraria | **0** | ✅ **Fix:** `HAVING count(DISTINCT componente_codigo)=1` → quarentena `multiplos_componentes_mesmo_insumo` (fail-closed, não subcompra). Assert COL1/COL2 |
+| 6 | `::bigint` estoura em código >18 díg. no de-para → **derruba a view inteira** (runtime) | **0** | ✅ **Fix:** regex `^\d{1,18}$` (o trigger de cadastro já barra novos; fix cobre legado). Assert OVF1 |
+| 7 | Unidade/código sem normalização (`'L'` vs `'l '`) → **falso-quarentena** (compra faltante) | **0** | ✅ **Fix:** `btrim(upper(...))` nos dois lados. Assert NORM1 |
+| 2 | De-para × pai **inativo** em OBEN: `oben_ativo` filtra antes → mapa não aplica | **0** | 🔍 **Vigiado.** Já **fail-closed** (par vai à quarentena `pai_sem_par_oben_ativo`, não compra errado). Corrigir exigiria não filtrar ativo no pai (mais arriscado) |
+| 3 | Cadeia `A→B→C` one-hop (dado legado) | **0** | 🔍 **Vigiado.** Trigger `sku_substituicao_consolidacao_guard` barra novos |
+| 4 | `perc_perda` não-parseável → `fn_pcp_num` NULL → `COALESCE 0` → passa | **0** | 🔍 **Vigiado (upstream).** Não detectável na minha camada (a view já entrega `perc_perda` numérico) |
+| 5 | NF nula no pai → `num_ordens=0` → insumo não gradua | **0** | 🔍 **Vigiado (herdado).** `num_ordens` usa NF em todo o motor |
+| 8 | Ambiguidade `bycod` na `vw_pcp_malha_componentes` (`ORDER BY … LIMIT 1`) | — | 🔍 **Upstream (PCP).** Fora do escopo; candidato a chip |
+
+**Queries de vigilância** (rodar periodicamente / candidatas a um vigia — todas retornam 0 hoje):
+
+```sql
+-- #2 pai da malha inativo em OBEN com de-para
+SELECT count(DISTINCT opb.omie_codigo_produto)
+FROM vw_pcp_malha_componentes m
+JOIN omie_products opc ON opc.omie_codigo_produto=m.pai_codigo AND opc.account='colacor'
+JOIN omie_products opb ON opb.codigo=opc.codigo AND opb.account='oben' AND NOT opb.ativo
+JOIN sku_substituicao s ON s.sku_codigo_antigo=opb.omie_codigo_produto::text
+ AND s.empresa='OBEN' AND s.status='aplicada' AND s.acao_parametros='consolidar_demanda';
+-- #3 cadeia no de-para
+SELECT count(*) FROM sku_substituicao a JOIN sku_substituicao b ON a.sku_codigo_novo=b.sku_codigo_antigo
+WHERE a.empresa='OBEN' AND a.status='aplicada' AND a.acao_parametros='consolidar_demanda'
+  AND b.empresa='OBEN' AND b.status='aplicada' AND b.acao_parametros='consolidar_demanda';
+-- #5 vendas de pais da malha sem NF (90d) — mede quanto consumo não gradua
+SELECT count(*) FROM venda_items_history v
+WHERE v.empresa='OBEN' AND v.nfe_chave_acesso IS NULL AND v.data_emissao >= CURRENT_DATE-90
+  AND v.sku_codigo_omie IN (
+    SELECT opb.omie_codigo_produto FROM vw_pcp_malha_componentes m
+    JOIN omie_products opc ON opc.omie_codigo_produto=m.pai_codigo AND opc.account='colacor'
+    JOIN omie_products opb ON opb.codigo=opc.codigo AND opb.account='oben' AND opb.ativo);
+```

@@ -232,6 +232,45 @@ assert_eq "SEC1 as 3 views sao security_invoker" "3" "$got"
 set_malha 100 "$FICHA_OK"
 
 # ══════════════════════════════════════════════════════════════════════════
+# Hardening do Codex challenge do SQL (#1 colapso, #7 normalização, #6 overflow)
+# ══════════════════════════════════════════════════════════════════════════
+echo "→ COL. [Codex #1] 2 componentes distintos → mesmo insumo (via de-para) → quarentena, NÃO subcompra"
+# 104(colacor,PRD_X) ↔ 204(oben,PRD_X); de-para 204→201; ficha do pai 100 leva 101(→201) e 104(→204→201)
+P -q -c "INSERT INTO omie_products (id, omie_codigo_produto, codigo, descricao, account, ativo, unidade)
+         VALUES (gen_random_uuid(), 104, 'PRD_X', 'COMP2', 'colacor', true, 'L'),
+                (gen_random_uuid(), 204, 'PRD_X', 'COMP2', 'oben',    true, 'L');"
+P -q -c "INSERT INTO sku_substituicao (empresa, sku_codigo_antigo, sku_codigo_novo, status, acao_parametros, data_substituicao)
+         VALUES ('OBEN','204','201','aplicada','consolidar_demanda', CURRENT_DATE);"
+set_malha 100 '[{"idProdMalha":101,"quantProdMalha":0.9,"unidProdMalha":"L","percPerdaProdMalha":0},
+                {"idProdMalha":104,"quantProdMalha":0.5,"unidProdMalha":"L","percPerdaProdMalha":0}]'
+got=$(Pq -c "SELECT count(*) FROM v_pcp_malha_oben WHERE pai_oben=200 AND comp_oben=201;")
+assert_eq "COL1 colapso NAO entra no elegivel (nao subcompra 0.9 no lugar de 1.4)" "0" "$got"
+got=$(Pq -c "SELECT DISTINCT motivo FROM v_pcp_malha_oben_quarentena WHERE pai_codigo=100 AND comp_oben=201;")
+assert_eq "COL2 colapso diagnosticado (nada some)" "multiplos_componentes_mesmo_insumo" "$got"
+P -q -c "DELETE FROM sku_substituicao WHERE sku_codigo_antigo='204';"
+P -q -c "DELETE FROM omie_products WHERE omie_codigo_produto IN (104,204);"
+set_malha 100 "$FICHA_OK"
+
+echo "→ NORM. [Codex #7] unidade 'l ' (minúscula+espaço) vs 'L' normaliza — NÃO falso-quarentena"
+P -q -c "UPDATE omie_products SET unidade='l ' WHERE omie_codigo_produto=201 AND account='oben';"
+got=$(Pq -c "SELECT count(*) FROM v_pcp_malha_oben WHERE pai_oben=200 AND comp_oben=201;")
+assert_eq "NORM1 'l ' vs 'L' entra no elegivel (btrim/upper)" "1" "$got"
+P -q -c "UPDATE omie_products SET unidade='L' WHERE omie_codigo_produto=201 AND account='oben';"
+
+echo "→ OVF. [Codex #6] dado LEGADO >18 dígitos (o trigger de cadastro barra novos; este simula pré-guard) NÃO derruba a view"
+# O trigger sku_substituicao_consolidacao_guard já impede INSERT >18 díg. hoje; o fix #6 (regex {1,18})
+# é defense-in-depth p/ dado legado que entrou ANTES do trigger. Desabilito o trigger p/ recriar esse dado.
+P -q -c "ALTER TABLE sku_substituicao DISABLE TRIGGER sku_substituicao_consolidacao_guard;"
+P -q -c "INSERT INTO sku_substituicao (empresa, sku_codigo_antigo, sku_codigo_novo, status, acao_parametros, data_substituicao)
+         VALUES ('OBEN','99999999999999999999','201','aplicada','consolidar_demanda', CURRENT_DATE);"
+P -q -c "ALTER TABLE sku_substituicao ENABLE TRIGGER sku_substituicao_consolidacao_guard;"
+# 2>&1 + '|| true' são intencionais: CAPTURAM se a view estourou (out-of-range) como valor testável;
+# sem isso o set -e abortaria antes do assert. O assert falha se got<>'t' (regressão do regex {1,18}).
+got=$(Pq -c "SELECT count(*) >= 0 FROM v_pcp_malha_oben_cand;" 2>&1 || true)
+assert_eq "OVF1 codigo 20-digitos (legado) filtrado, view NAO quebra" "t" "$got"
+P -q -c "DELETE FROM sku_substituicao WHERE sku_codigo_antigo='99999999999999999999';"
+
+# ══════════════════════════════════════════════════════════════════════════
 # Step 4: FALSIFICAÇÃO (sabotar → exigir vermelho)
 # Um assert só vale se ele FALHA quando o guard some.
 # ══════════════════════════════════════════════════════════════════════════
