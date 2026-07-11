@@ -709,26 +709,22 @@ describe('guardrail money-path: syncPedidos resolve user pela view fresca accoun
   });
 });
 
-// ── P0-B-bis (incidente carteira): vendedor de recomendacoes NA PROOF + carteira lê a proof account-safe ──
+// ── P0-B-bis (incidente carteira, ponta 1/2): o writer popula o vendedor de recomendacoes NA PROOF ──
 // A carteira estava 100% Hunter: o writer gravava omie_codigo_vendedor lendo só c.codigo_vendedor (raiz
-// vazio) → proof/espelho NULL → todo cliente órfão. Corrigido em DUAS pontas (Codex BLOCK do approach que
-// populava o mirror code-first inseguro):
-//  (1) o writer popula o vendedor SÓ na PROOF (document-first, account-safe) via helper extrairCodigoVendedor
-//      (recomendacoes vence, só inteiro positivo — resolve o ??/|| do Codex). O mirror code-first NÃO recebe.
-//  (2) carteira-rebuild passa a ler a PROOF (omie_customer_account_map_fresco, account='oben') em vez do
-//      espelho poluído. A paridade textual aqui pega a reversão do deploy do Lovable.
+// vazio) → proof NULL → todo cliente órfão. O vendedor mora em recomendacoes.codigo_vendedor. O writer
+// popula o vendedor SÓ na PROOF (document-first, account-safe) via helper extrairCodigoVendedor (Codex R2:
+// recomendacoes é autoritativa, só inteiro safe positivo). O mirror code-first NÃO recebe (Codex BLOCKou
+// popular o mirror inseguro). A ponta 2/2 (carteira-rebuild LER a proof) é PR próprio — o rebuild tem
+// consolidação B-lite (herança cross-account) que exige redesign account-safe (Codex R2: 3 P1).
 const ANALYTICS_V = 'supabase/functions/omie-analytics-sync/index.ts';
-const CARTEIRA = 'supabase/functions/carteira-rebuild/index.ts';
 const VEND_HELPER = 'src/lib/omie/codigo-vendedor.ts';
 
-describe('guardrail money-path: vendedor de recomendacoes na PROOF + carteira lê a proof (P0-B-bis)', () => {
+describe('guardrail money-path: writer popula vendedor de recomendacoes na PROOF (P0-B-bis)', () => {
   const analytics = read(ANALYTICS_V);
-  const carteira = read(CARTEIRA);
   const helper = read(VEND_HELPER);
 
   it('sentinela: leu os arquivos reais', () => {
     expect(analytics).toContain('syncCustomers');
-    expect(carteira).toContain('carteira_assignments');
     expect(helper).toContain('extrairCodigoVendedor');
   });
 
@@ -750,16 +746,5 @@ describe('guardrail money-path: vendedor de recomendacoes na PROOF + carteira l�
       mirrorBlockNamed(analytics, 'omie-codigo-vendedor'),
       'edge divergiu do helper de src/ — Lovable reescreveu a extração do vendedor?',
     ).toBe(mirrorBlockNamed(helper, 'omie-codigo-vendedor'));
-  });
-
-  it('carteira-rebuild lê a PROOF account-correta (oben), NÃO o espelho poluído', () => {
-    expect(
-      carteira,
-      'REVERSÃO Lovable? a carteira não lê mais a view fresca com account=oben',
-    ).toMatch(/\.from\('omie_customer_account_map_fresco'\)[\s\S]{0,120}\.eq\('account', 'oben'\)/);
-    expect(
-      carteira,
-      'REGRESSÃO: a carteira voltou a carregar clientes do espelho poluído omie_clientes',
-    ).not.toMatch(/\.from\('omie_clientes'\)/);
   });
 });

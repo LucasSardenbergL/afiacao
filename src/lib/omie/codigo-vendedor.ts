@@ -8,8 +8,12 @@ export function extrairCodigoVendedor(c: {
   codigo_vendedor?: number | null;
   recomendacoes?: { codigo_vendedor?: number | null } | null;
 }): number | null {
+  // bigint-safe (Codex P3): código > 2^53 perderia precisão e casaria com outro vendedor.
   const positivo = (v: number | null | undefined): number | null =>
-    typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : null;
-  return positivo(c.recomendacoes?.codigo_vendedor) ?? positivo(c.codigo_vendedor);
+    typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? v : null;
+  // recomendacoes é a fonte AUTORITATIVA: se PRESENTE (mesmo 0/inválido) ela decide — 0 = "sem vendedor"
+  // explícito, não cai no raiz (Codex P2: fallback só quando o primário está AUSENTE, não presente-inválido).
+  const nested = c.recomendacoes?.codigo_vendedor;
+  return nested != null ? positivo(nested) : positivo(c.codigo_vendedor);
 }
 // MIRROR-END
