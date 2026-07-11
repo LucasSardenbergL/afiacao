@@ -629,9 +629,13 @@ export function useUnifiedOrder() {
     if (customerUserId) { setAddToolDialogOpen(true); return; }
     setCreatingLocalProfile(true);
     try {
+      // #11 (P0-B-bis PR-4): resolve codigo->user_id pela view fresca account=oben. selectedCustomer.codigo_cliente
+      // é o código da conta OBEN; buscá-lo no espelho poluído SEM conta pegava o user ERRADO em colisão de código
+      // entre contas (Codex P2 — anexa a ferramenta ao cliente errado). A fresca é UNIQUE(omie_codigo_cliente,
+      // account) → resolve o user certo; miss (ausente/stale 7d) cai no fallback por documento abaixo (fail-closed).
       const { data: existingMapping } = await supabase
-        .from('omie_clientes').select('user_id')
-        .eq('omie_codigo_cliente', selectedCustomer.codigo_cliente).maybeSingle();
+        .from('omie_customer_account_map_fresco').select('user_id')
+        .eq('omie_codigo_cliente', selectedCustomer.codigo_cliente).eq('account', 'oben').maybeSingle();
       if (existingMapping) {
         setCustomerUserId(existingMapping.user_id);
         loadUserTools(existingMapping.user_id);

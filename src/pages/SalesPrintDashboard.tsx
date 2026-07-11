@@ -174,18 +174,19 @@ const SalesPrintDashboard = () => {
     enabled: customerIds.length > 0,
   });
 
-  // Fetch omie_clientes mappings to get omie_codigo_cliente for address lookup
+  // Código do cliente (conta colacor_sc) p/ address lookup — via view fresca account-correta.
   const { data: omieClientes = [] } = useQuery({
-    queryKey: ['sales-print-omie-clientes', customerIds],
+    queryKey: ['sales-print-omie-map-fresco', customerIds],
     queryFn: async () => {
       if (customerIds.length === 0) return [];
-      // P0-B follow-up: filtra a conta do espelho ('colacor' = colacor_sc físico) — o código é usado
-      // p/ consultar endereço via `omie-cliente` (que bate na conta colacor_sc). Pós-constraint
-      // composta, evita pegar o código de outra conta do user. Hoje inócuo (UNIQUE(user_id)).
+      // P0-B-bis PR-4 (#12): o código é usado p/ consultar endereço via `omie-cliente` (que bate na conta
+      // colacor_sc) → lê da view fresca omie_customer_account_map_fresco com account=colacor_sc
+      // (document-first, TTL 7d). O filtro antigo .eq('empresa_omie','colacor') era inócuo (o espelho é
+      // 100% 'colacor' rotulado). Miss na fresca → sem código → cai no fallback por documento (fail-closed).
       const { data } = await supabase
-        .from('omie_clientes')
+        .from('omie_customer_account_map_fresco')
         .select('user_id, omie_codigo_cliente')
-        .eq('empresa_omie', 'colacor')
+        .eq('account', 'colacor_sc')
         .in('user_id', customerIds);
       return data || [];
     },
