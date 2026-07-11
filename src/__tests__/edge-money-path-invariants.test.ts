@@ -482,68 +482,46 @@ describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helpe
 });
 
 // ── P1/P2 hardening do resolver de identidade do syncPedidos (omie-vendas-sync) — Codex xhigh 2026-07-10 ──
-// Dois furos PRÉ-EXISTENTES no resolver de identidade dos pedidos (fora do escopo da PR-2 #1285, que migrou
-// só o cache codigo->user): (P1) o docToUserMap (doc->user de profiles) fazia last-write-wins → doc
-// compartilhado por 2 users mapeava o ARBITRÁRIO, e um pedido no fallback ConsultarCliente ia pro cliente
-// ERRADO. (P2) o resolveClientUserId só passava throwOnTransient no modo cursor → no incremental um
-// transitório do ConsultarCliente virava null cacheado + skip PERMANENTE (success:true). Fail-closed via
-// helper puro espelhado (buildDocUserMapFailClosed) + throwOnTransient incondicional. A paridade textual
-// aqui pega a reversão do deploy do Lovable (mesma armadilha do #1272). Ver docs/agent/money-path.md.
-const DOC_USER_MAP = 'src/lib/omie/omie-doc-user-map.ts';
+// Resolver de identidade dos pedidos (evolução: #1288 fez o fail-closed em TS; PR-1/A1 moveu p/ SQL).
+// (A1) o docToUserMap (doc->user de profiles) era montado por paginação NO EDGE — não-atômica (Codex xhigh):
+// um profile nascendo/mudando entre páginas escapava da detecção de doc-ambíguo. Migrado p/ a RPC atômica
+// omie_sync_identity_snapshot (doc com 2+ users DISTINTOS fica FORA de doc_to_user, fail-closed no SQL,
+// provado em db/test-omie-identidade-snapshot.sh). (P2, do #1288, MANTIDO) o resolveClientUserId passa
+// throwOnTransient INCONDICIONAL — transitório no incremental não vira skip permanente. A sentinela textual
+// aqui pega a reversão do deploy do Lovable. Ver docs/superpowers/specs/2026-07-11-omie-identidade-snapshot-atomico-design.md.
 
-describe('guardrail money-path: syncPedidos resolve identidade fail-closed (P1 doc-ambíguo + P2 transitório)', () => {
+describe('guardrail money-path: syncPedidos resolve identidade pela RPC atômica + fail-safe transitório (A1 + P2)', () => {
   const src = read(VENDAS);
-  const helper = read(DOC_USER_MAP);
 
-  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+  it('sentinela: leu o edge real', () => {
     expect(src).toContain('async function syncPedidos');
-    expect(helper).toContain('buildDocUserMapFailClosed');
   });
 
-  it('o helper puro existe e exporta buildDocUserMapFailClosed', () => {
-    expect(helper).toMatch(/export function buildDocUserMapFailClosed/);
-  });
-
-  // ── P1: docToUserMap fail-closed (helper) + keyset estável + error-throw ──
-  it('P1: o docToUserMap vem do helper fail-closed (não mais last-write-wins com .set direto)', () => {
+  // ── A1: docToUserMap vem do snapshot atômico server-side (não mais paginação no edge) ──
+  it('A1: o docToUserMap vem do doc_to_user da RPC omie_sync_identity_snapshot (snapshot atômico)', () => {
     expect(
       src,
-      'REGRESSÃO: o docToUserMap não é mais montado pelo helper fail-closed — last-write-wins reintroduzido?',
-    ).toMatch(/docToUserMap = buildDocUserMapFailClosed\(/);
+      'REGRESSÃO A1: o docToUserMap não vem mais do doc_to_user da RPC — voltou paginação/last-write-wins no edge?',
+    ).toMatch(/docToUserMap = new Map[\s\S]{0,90}doc_to_user/);
+    expect(src, 'edge não chama mais a RPC omie_sync_identity_snapshot').toContain("rpc('omie_sync_identity_snapshot'");
+  });
+
+  it('A1: erro da RPC é FAIL-CLOSED (throw), não mapa parcial silencioso', () => {
+    expect(src).toMatch(/if \(snapErr\) throw new Error/);
+  });
+
+  it('A1: NÃO reintroduziu a paginação keyset de profiles nem a chamada ao helper TS (reversão do Lovable)', () => {
     expect(
       src,
-      'REGRESSÃO: voltou docToUserMap.set(...) direto no pré-load — o fail-closed do helper foi contornado',
-    ).not.toMatch(/docToUserMap\.set\(/);
-  });
-
-  it('P1: o edge USA o helper — define o MIRROR E chama (≥2 menções)', () => {
-    expect(src, 'edge não define mais o helper espelhado').toMatch(/function buildDocUserMapFailClosed/);
-    expect(
-      count(src, 'buildDocUserMapFailClosed'),
-      'helper deve ser DEFINIDO (MIRROR) e CHAMADO (real-path) — ≥2 menções',
-    ).toBeGreaterThanOrEqual(2);
-  });
-
-  it('P1: o pré-load de profiles pagina por KEYSET estável (.order + .gt) e é FAIL-CLOSED em erro de query', () => {
-    // Sem .order o PostgREST não garante ordem entre páginas → profile pulado (some do mapa). Codex.
+      'REVERSÃO Lovable? voltou a paginar profiles por keyset p/ o docToUserMap',
+    ).not.toMatch(/from\('profiles'\)[\s\S]{0,200}\.order\('user_id'\)[\s\S]{0,120}\.gt\('user_id'/);
     expect(
       src,
-      'REVERSÃO Lovable? o pré-load do docToUserMap não pagina mais por keyset (.order(user_id) + .gt)',
-    ).toMatch(/from\('profiles'\)[\s\S]{0,200}\.order\('user_id'\)[\s\S]{0,120}\.gt\('user_id', lastUserId\)/);
-    expect(
-      src,
-      'REGRESSÃO: o pré-load do docToUserMap engole o erro da query — mapa parcial silencioso (fail-open)',
-    ).toMatch(/if \(profErr\) throw new Error/);
+      'REVERSÃO: voltou a CHAMAR o helper TS buildDocUserMapFailClosed (a lógica é SQL agora)',
+    ).not.toMatch(/buildDocUserMapFailClosed\(/);
   });
 
-  it('P1 PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
-    expect(
-      mirrorBlockNamed(src, 'omie doc-user-fail-closed'),
-      'edge divergiu do helper de src/ — o Lovable reescreveu a detecção fail-closed no deploy?',
-    ).toBe(mirrorBlockNamed(helper, 'omie doc-user-fail-closed'));
-  });
-
-  // ── P2: resolveClientUserId fail-safe em transitório nos DOIS modos (cursor E incremental) ──
+  // ── P2 (do #1288, MANTIDO): resolveClientUserId fail-safe em transitório nos DOIS modos ──
   it('P2: resolveClientUserId passa throwOnTransient INCONDICIONAL (não só no cursor) e sem catch fail-open', () => {
     const bloco = src.match(/async function resolveClientUserId[\s\S]*?async function getClientAddressPhone/)?.[0] ?? '';
     expect(bloco, 'não achei o corpo de resolveClientUserId (âncora quebrada)').not.toBe('');

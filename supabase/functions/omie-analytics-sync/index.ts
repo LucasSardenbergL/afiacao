@@ -247,36 +247,16 @@ async function fetchOmieClienteUserMap(db: SupabaseClient): Promise<Map<number, 
   return map;
 }
 
-// Map<documento_normalizado, user_id> de profiles (p/ vincular cliente novo via documento).
-async function fetchProfileDocUserMap(db: SupabaseClient): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  // Fatia 3 (Codex P2): documento com 2+ profiles (users distintos) é AMBÍGUO — não prova identidade.
-  // Fail-closed: remove do mapa (melhor não vincular que vincular o user ERRADO). Afeta o espelho E a
-  // proof-table document-first — ambos param de mapear docs duplicados (precisão>recall).
-  const ambiguous = new Set<string>();
-  const pageSize = 1000;
-  let from = 0;
-  while (true) {
-    const { data, error } = await db
-      .from("profiles")
-      .select("document, user_id")
-      .not("document", "is", null)
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`fetch profiles map: ${error.message}`);
-    const rows = (data ?? []) as { document: string | null; user_id: string | null }[];
-    for (const r of rows) {
-      const d = (r.document ?? "").replace(/\D/g, "");
-      if (!d || !r.user_id) continue;
-      if (ambiguous.has(d)) continue;
-      const prev = map.get(d);
-      if (prev === r.user_id) continue;                       // mesma pessoa repetida (idempotente)
-      if (prev) { map.delete(d); ambiguous.add(d); continue; } // 2º user no mesmo doc → ambíguo, fail-closed
-      map.set(d, r.user_id);
-    }
-    if (rows.length < pageSize) break;
-    from += pageSize;
-  }
-  return map;
+// Map<documento_normalizado, user_id> NÃO-ambíguo de profiles, via snapshot atômico server-side (RPC).
+// Antes: paginação OFFSET (não-atômica — Codex xhigh: um profile nascendo/mudando entre páginas escapava
+// da detecção de doc-ambíguo). Agora a RPC omie_sync_identity_snapshot resolve a unicidade num ÚNICO
+// snapshot MVCC (doc com 2+ users DISTINTOS já vem FORA de doc_to_user, fail-closed no SQL). doc_to_user
+// é global (profiles não tem conta); passamos a conta em curso só p/ satisfazer a assinatura da RPC.
+// .rpc() NÃO lança em erro (resolve {error}) → checar e FAIL-CLOSED (throw): mapa parcial vincularia errado.
+async function fetchProfileDocUserMap(db: SupabaseClient, account: string): Promise<Map<string, string>> {
+  const { data: snap, error } = await db.rpc('omie_sync_identity_snapshot', { p_account: account });
+  if (error) throw new Error(`identity snapshot (${account}): ${error.message}`);
+  return new Map<string, string>(Object.entries((snap?.doc_to_user ?? {}) as Record<string, string>));
 }
 
 // MIRROR-START omie doc-ambiguo — espelhado verbatim de src/lib/omie/omie-doc-ambiguo.ts
@@ -307,7 +287,7 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
   try {
     // 2 leituras em massa ANTES do laço (substitui o N+1: ~2-3 round-trips POR cliente × ~10k).
     const userByCodigo = await fetchOmieClienteUserMap(db);
-    const userByDoc = await fetchProfileDocUserMap(db);
+    const userByDoc = await fetchProfileDocUserMap(db, account);
 
     // Enumera o Omie e resolve o user_id em MEMÓRIA. Dedup por user_id (last-wins) — a constraint
     // unique_user_omie é UNIQUE(user_id), então 2 linhas com o mesmo user_id no mesmo upsert dariam
