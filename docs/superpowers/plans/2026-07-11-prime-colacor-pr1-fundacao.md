@@ -104,7 +104,7 @@ CREATE TABLE public.prime_assinaturas (
   preco_contratado numeric NOT NULL CHECK (preco_contratado > 0),
   franquia_dentes_contratada integer NOT NULL CHECK (franquia_dentes_contratada >= 0),
   status text NOT NULL DEFAULT 'ativa' CHECK (status IN ('ativa','suspensa','cancelada')),
-  data_inicio date NOT NULL DEFAULT current_date,
+  data_inicio date NOT NULL DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo')::date),
   data_fim date CHECK (data_fim IS NULL OR data_fim >= data_inicio),
   -- Suspensão congela o extrato: a view para de gerar competências após este mês.
   -- Reativar = limpar suspensa_em (staff via admin, PR-2).
@@ -151,6 +151,42 @@ CREATE TRIGGER trg_prime_assinatura_sem_sobreposicao
   BEFORE INSERT OR UPDATE OF customer_user_id, data_inicio, data_fim, status
   ON public.prime_assinaturas
   FOR EACH ROW EXECUTE FUNCTION public.prime_assinatura_sem_sobreposicao();
+
+-- Guard de UPDATE (review final): (a) campos contratuais são IMUTÁVEIS — grandfathering
+-- é regra de banco, não de admin (editar preço reescreveria TODO o histórico do extrato;
+-- editar cliente TRANSFERIRIA assinatura+uso p/ outro CNPJ); (b) a janela do extrato
+-- nunca pode deixar uso VIVO de fora (suspensão/cancelamento retroativos esconderiam
+-- R$ monetizado — a view expõe, nunca esconde).
+CREATE FUNCTION public.prime_assinatura_update_guard() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id
+     OR NEW.customer_user_id IS DISTINCT FROM OLD.customer_user_id
+     OR NEW.plano_id IS DISTINCT FROM OLD.plano_id
+     OR NEW.preco_contratado IS DISTINCT FROM OLD.preco_contratado
+     OR NEW.franquia_dentes_contratada IS DISTINCT FROM OLD.franquia_dentes_contratada
+     OR NEW.created_by IS DISTINCT FROM OLD.created_by
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+  THEN
+    RAISE EXCEPTION 'campos contratuais da assinatura são imutáveis (grandfathering) — mudança de condição = cancelar e abrir novo ciclo'
+      USING ERRCODE = 'P0001';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.prime_beneficio_uso u
+    WHERE u.assinatura_id = NEW.id
+      AND u.estornado_em IS NULL
+      AND (u.competencia < date_trunc('month', NEW.data_inicio::timestamp)::date
+           OR u.competencia > date_trunc('month', COALESCE(NEW.data_fim::timestamp, 'infinity'::timestamp))::date
+           OR u.competencia > date_trunc('month', COALESCE(NEW.suspensa_em::timestamp, 'infinity'::timestamp))::date)
+  ) THEN
+    RAISE EXCEPTION 'a janela da assinatura deixaria uso VIVO fora do extrato — estorne os usos fora do período antes'
+      USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER trg_prime_assinatura_update_guard
+  BEFORE UPDATE ON public.prime_assinaturas
+  FOR EACH ROW EXECUTE FUNCTION public.prime_assinatura_update_guard();
 
 -- ── 3. Uso de benefício — APPEND-ONLY; contrafactual auditável por linha ──
 -- Registro = CONCESSÃO dentro do programa (excedente de franquia é faturado normal no
@@ -237,18 +273,10 @@ CREATE TRIGGER trg_prime_uso_vigencia
 CREATE FUNCTION public.prime_uso_so_estorno() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NEW.id IS DISTINCT FROM OLD.id
-     OR NEW.assinatura_id IS DISTINCT FROM OLD.assinatura_id
-     OR NEW.tipo IS DISTINCT FROM OLD.tipo
-     OR NEW.quantidade IS DISTINCT FROM OLD.quantidade
-     OR NEW.valor_tabela IS DISTINCT FROM OLD.valor_tabela
-     OR NEW.preco_unitario_snapshot IS DISTINCT FROM OLD.preco_unitario_snapshot
-     OR NEW.competencia IS DISTINCT FROM OLD.competencia
-     OR NEW.referencia IS DISTINCT FROM OLD.referencia
-     OR NEW.descricao IS DISTINCT FROM OLD.descricao
-     OR NEW.created_by IS DISTINCT FROM OLD.created_by
-     OR NEW.created_at IS DISTINCT FROM OLD.created_at
-  THEN
+  -- Comparação estrutural (review final): coluna FUTURA fica protegida por construção —
+  -- enumeração manual deixaria campo novo editável em silêncio.
+  IF (to_jsonb(NEW) - 'estornado_em' - 'estornado_por')
+     IS DISTINCT FROM (to_jsonb(OLD) - 'estornado_em' - 'estornado_por') THEN
     RAISE EXCEPTION 'registro monetário é append-only — correção é ESTORNO, nunca edição'
       USING ERRCODE = 'P0001';
   END IF;
@@ -455,8 +483,10 @@ eq "RLS ligada nas 3 tabelas" \
    "$(Pq -c "SELECT count(*) FROM pg_class WHERE relname IN ('prime_planos','prime_assinaturas','prime_beneficio_uso') AND relrowsecurity")" "3"
 eq "8 policies criadas (uso SEM policy de DELETE = append-only)" \
    "$(Pq -c "SELECT count(*) FROM pg_policies WHERE tablename LIKE 'prime_%'")" "8"
-eq "5 triggers trg_prime_*" \
-   "$(Pq -c "SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_prime_%' AND NOT tgisinternal")" "5"
+eq "6 triggers trg_prime_*" \
+   "$(Pq -c "SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_prime_%' AND NOT tgisinternal")" "6"
+eq "data_inicio nasce em SP (DEFAULT não-UTC)" \
+   "$(Pq -c "SELECT count(*) FROM information_schema.columns WHERE table_name='prime_assinaturas' AND column_name='data_inicio' AND column_default LIKE '%Sao_Paulo%'")" "1"
 
 # Competências na MESMA TZ da view/triggers (virada de mês UTC≠SP é armadilha do repo)
 MES_ATUAL="$(Pq -c "SELECT date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))::date")"
@@ -521,7 +551,7 @@ expect_sqlstate "evento operacional com quantidade≠1 é barrado" "23514" \
 expect_sqlstate "bonus acima de 50 dentes é barrado (teto do spec)" "23514" \
   "INSERT INTO public.prime_beneficio_uso (assinatura_id, tipo, quantidade, valor_tabela, competencia, created_by) VALUES ('$A22','bonus_dentes', 60, NULL, '${MES_ATUAL}', '$UA')"
 expect_sqlstate "competencia fora do dia 1 é barrada" "23514" \
-  "INSERT INTO public.prime_beneficio_uso (assinatura_id, tipo, quantidade, valor_tabela, preco_unitario_snapshot, competencia, referencia, created_by) VALUES ('$A22','afiacao_dentes', 96, 115.20, 1.20, ('${MES_ATUAL}'::date + 5), 'PV-X', '$UA')"
+  "INSERT INTO public.prime_beneficio_uso (assinatura_id, tipo, quantidade, valor_tabela, preco_unitario_snapshot, competencia, referencia, created_by) VALUES ('$A22','afiacao_dentes', 96, 115.20, 1.20, ('${MES_PASSADO}'::date + 5), 'PV-X', '$UA')"
 expect_sqlstate "competencia FUTURA é barrada (vigência)" "P0001" \
   "INSERT INTO public.prime_beneficio_uso (assinatura_id, tipo, quantidade, valor_tabela, preco_unitario_snapshot, competencia, referencia, created_by) VALUES ('$A22','afiacao_dentes', 96, 115.20, 1.20, '${MES_QUE_VEM}', 'PV-X', '$UA')"
 expect_sqlstate "preco_mensal <= 0 é barrado" "23514" \
@@ -534,8 +564,33 @@ expect_sqlstate "suspensa SEM suspensa_em é barrada" "23514" \
   "UPDATE public.prime_assinaturas SET status='suspensa' WHERE id='$A22'"
 expect_sqlstate "ativa COM suspensa_em é barrada (estado amarrado às datas)" "23514" \
   "UPDATE public.prime_assinaturas SET suspensa_em = '${MES_ATUAL}' WHERE id='$A22'"
-expect_sqlstate "2ª assinatura VIVA do mesmo cliente é barrada (UNIQUE parcial)" "23505" \
+expect_sqlstate "preco_contratado é IMUTÁVEL (grandfathering é regra de banco)" "P0001" \
+  "UPDATE public.prime_assinaturas SET preco_contratado = 50 WHERE id='$A22'"
+expect_sqlstate "transferir assinatura pra outro cliente é barrado" "P0001" \
+  "UPDATE public.prime_assinaturas SET customer_user_id = '00000000-0000-0000-0000-00000000cccc' WHERE id='$A22'"
+expect_sqlstate "2ª assinatura VIVA do mesmo cliente é barrada (trigger sobreposição — infinito cobre qualquer início)" "P0001" \
   "INSERT INTO public.prime_assinaturas (customer_user_id, plano_id, preco_contratado, franquia_dentes_contratada, data_inicio, created_by) VALUES ('00000000-0000-0000-0000-00000000bbbb','11111111-1111-1111-1111-111111111111', 99, 200, '${MES_QUE_VEM}', '$UA')"
+
+# Backstop isolado (falsificação — só dentro de txn revertida): com o trigger de
+# sobreposição DESLIGADO, a UNIQUE parcial (uq_prime_assinatura_viva) AINDA barra a 2ª
+# viva — prova que o índice é 2ª linha de defesa (corrida entre transações concorrentes
+# que o trigger sozinho não cobre sob READ COMMITTED), não redundância morta atrás do
+# trigger.
+F3="$(P -qtA <<SQL 2>&1 | grep -c 'SQLSTATE_OK' || true
+BEGIN;
+SET test.uid = '$UA';
+ALTER TABLE public.prime_assinaturas DISABLE TRIGGER trg_prime_assinatura_sem_sobreposicao;
+DO \$\$ BEGIN
+  INSERT INTO public.prime_assinaturas (customer_user_id, plano_id, preco_contratado, franquia_dentes_contratada, data_inicio, created_by)
+    VALUES ('00000000-0000-0000-0000-00000000bbbb','11111111-1111-1111-1111-111111111111', 99, 200, '${MES_QUE_VEM}', '$UA');
+  RAISE EXCEPTION 'NAO_FALHOU';
+EXCEPTION WHEN OTHERS THEN
+  IF SQLSTATE = '23505' THEN RAISE NOTICE 'SQLSTATE_OK'; ELSE RAISE; END IF;
+END \$\$;
+ROLLBACK;
+SQL
+)"
+eq "backstop: UNIQUE parcial barra a 2ª viva mesmo com o trigger desligado (SQLSTATE 23505)" "$F3" "1"
 
 # ════════ ZONA 5 — uso real do mês (staff registra) + view + bônus/estorno ════════
 P -q <<SQL
@@ -589,6 +644,11 @@ eq "pós-estorno: monetizado volta a 115.20 (estornado FORA da view)" \
    "$(Pq -c "SELECT monetizado_total = 115.20 FROM public.v_prime_extrato_mensal WHERE assinatura_id='$A22' AND competencia='${MES_ATUAL}'")" "t"
 expect_sqlstate "registro JÁ estornado é imutável" "P0001" \
   "UPDATE public.prime_beneficio_uso SET estornado_em = now(), estornado_por = '$UA' WHERE id='33333333-3333-3333-3333-222222222222'"
+
+expect_sqlstate "suspensão retroativa que esconderia uso VIVO do extrato é barrada" "P0001" \
+  "UPDATE public.prime_assinaturas SET status='suspensa', suspensa_em='${MES_PASSADO}' WHERE id='$A22'"
+expect_sqlstate "cancelamento retroativo que esconderia uso VIVO do extrato é barrado" "P0001" \
+  "UPDATE public.prime_assinaturas SET status='cancelada', data_fim='${MES_PASSADO}' WHERE id='$A22'"
 
 # F1 (falsificação embutida — roda AQUI, com a assinatura ainda ATIVA, senão o trigger
 # de vigência barraria antes da constraint e a falsificação perderia o alvo): sem a
@@ -776,7 +836,7 @@ git commit -m "chore(db): regenera audit de migrations (prime_fundacao)"
 ```
 Nota: se este PR reconflitar no audit com outros merges (ímã de conflito conhecido), tomar a versão de `main` (`git checkout origin/main -- docs/migrations-audit.md scripts/audit-custom-migrations.sql`) em vez de regenerar.
 
-- [ ] **Step 2: Query de validação pós-apply** (staff cola no SQL Editor DEPOIS do apply; deve retornar `4 | 3 | 8 | 5`)
+- [ ] **Step 2: Query de validação pós-apply** (staff cola no SQL Editor DEPOIS do apply; deve retornar `4 | 3 | 8 | 6`)
 
 ```sql
 SELECT
@@ -818,7 +878,7 @@ Fundação de dados do Prime Colacor (spec: docs/superpowers/specs/2026-07-09-pr
 - Grandfathering: preço e franquia congelados na assinatura; view expõe `mensalidade_contratada` (nunca "pagou" — não há fato de pagamento na v1) e `dentes_excedentes` (estouro nunca escondido).
 - **Provado PG17** `db/test-prime-fundacao.sh`: N/0 asserts (RLS matriz staff/cliente/sem-role/anon incl. view, SQLSTATE 23514/23505/P0001, estorno, overfranchise, suspensão, sobreposição) + falsificações F1/F2 embutidas + 2 falsificações externas executadas (contrafactual e isolamento → vermelho com dente; logs `/tmp/prime-falsif-{a,b}.log`).
 
-⚠️ **Migration manual** (Lovable não auto-aplica nome custom): colar `supabase/migrations/20260711090000_prime_fundacao.sql` no SQL Editor → Run. Validação pós-apply (deve retornar `4 | 3 | 8 | 5`):
+⚠️ **Migration manual** (Lovable não auto-aplica nome custom): colar `supabase/migrations/20260711090000_prime_fundacao.sql` no SQL Editor → Run. Validação pós-apply (deve retornar `4 | 3 | 8 | 6`):
 
 ```sql
 SELECT
@@ -842,4 +902,4 @@ scripts/pr-watch.sh <número-do-PR>
 ```
 No desfecho, avisar via PushNotification (mergeado/conflito/CI vermelho).
 
-- [ ] **Step 4: Registrar a pendência de deploy** — o merge NÃO aplica a migration. Mensagem final ao founder: apply manual no SQL Editor + validação (`4 | 3 | 8 | 5`) ANTES de qualquer PR seguinte depender das tabelas.
+- [ ] **Step 4: Registrar a pendência de deploy** — o merge NÃO aplica a migration. Mensagem final ao founder: apply manual no SQL Editor + validação (`4 | 3 | 8 | 6`) ANTES de qualquer PR seguinte depender das tabelas.
