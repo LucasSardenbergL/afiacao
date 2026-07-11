@@ -545,11 +545,20 @@ describe('guardrail money-path: syncPedidos resolve user pela view fresca accoun
     expect(src).toContain('clientCache');
   });
 
-  it('o cache codigo->user vem da VIEW FRESCA account-correta, filtrada por conta, com .order estável', () => {
+  it('o cache codigo->user vem da VIEW FRESCA account-correta, por conta, paginado por KEYSET', () => {
+    // Exige a cadeia keyset completa: from(fresco) → eq(account) → gt(codigo) → limit. Fecha o furo Codex P3
+    // (o regex antigo não exigia paginação: remover o .limit truncaria o cache em 1 página e passaria).
     expect(
       src,
-      'REVERSÃO Lovable? o cache do syncPedidos não lê mais a view fresca com .eq(account) + .order estável',
-    ).toMatch(/from\('omie_customer_account_map_fresco'\)[\s\S]{0,140}\.eq\('account', account\)[\s\S]{0,80}\.order\('omie_codigo_cliente'\)/);
+      'REVERSÃO Lovable? o cache do syncPedidos não lê a view fresca por conta com paginação keyset (.gt+.limit)',
+    ).toMatch(/from\('omie_customer_account_map_fresco'\)[\s\S]{0,180}\.eq\('account', account\)[\s\S]{0,80}\.gt\('omie_codigo_cliente'[\s\S]{0,80}\.limit\(/);
+  });
+
+  it('o pré-load do cache é FAIL-CLOSED em erro de query (não engole o error → cache parcial, Codex P2)', () => {
+    expect(
+      src,
+      'REGRESSÃO: o pré-load engole o erro da query — cache parcial silencioso → rate-limit no fallback',
+    ).toMatch(/if \(cacheErr\) throw new Error/);
   });
 
   it('o cache NÃO voltou a carregar do espelho poluído omie_clientes (anti-reversão do bug #4)', () => {

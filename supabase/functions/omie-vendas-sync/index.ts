@@ -926,25 +926,31 @@ async function syncPedidos(
   // chave global codigo->user) mapeava o user_id ERRADO — pedido atribuído ao cliente errado (bug #4 do
   // design; o espelho é sobrescrito ao longo do dia pelos writers colacor_sc, então a colisão é intermitente).
   // A view omie_customer_account_map_fresco é account-correta (UNIQUE(codigo,account)) e document-first; o
-  // miss aqui cai no resolveClientUserId → API ConsultarCliente (fail-safe). .order estável no código
-  // (UNIQUE garante determinismo) p/ o .range NÃO pular/repetir linha (armadilha PostgREST do CLAUDE.md).
+  // miss aqui cai no resolveClientUserId → API ConsultarCliente (fail-safe).
+  // Paginação KEYSET (.gt no código + .limit), não offset: a view filtra updated_at>=now()-7d, então uma
+  // linha pode cruzar o TTL ENTRE páginas; keyset é imune a esse deslocamento (offset .range pularia/repetiria
+  // — Codex P2). O código é UNIQUE(codigo,account) → ordenação sem empate. Erro de query é FAIL-CLOSED (throw):
+  // engolir o error (capa silenciosa do PostgREST) deixaria um cache parcial → milhares de miss → rate-limit
+  // no Omie → skip/atribuição arbitrária no fallback. Melhor abortar o run e retomar na próxima janela.
   const clientCache = new Map<number, string | null>();
-  let ocPage = 0;
+  let lastCodigo = 0;
   hasMore = true;
   while (hasMore) {
-    const { data: batch } = await supabase
+    const { data: batch, error: cacheErr } = await supabase
       .from('omie_customer_account_map_fresco')
       .select('omie_codigo_cliente, user_id')
       .eq('account', account)
+      .gt('omie_codigo_cliente', lastCodigo)
       .order('omie_codigo_cliente')
-      .range(ocPage * pgSize, (ocPage + 1) * pgSize - 1);
+      .limit(pgSize);
+    if (cacheErr) throw new Error(`pre-load client cache (${account}): ${cacheErr.message}`);
     if (!batch || batch.length === 0) { hasMore = false; }
     else {
       for (const oc of batch) {
         clientCache.set(oc.omie_codigo_cliente, oc.user_id);
       }
+      lastCodigo = batch[batch.length - 1].omie_codigo_cliente;
       if (batch.length < pgSize) hasMore = false;
-      ocPage++;
     }
   }
   console.log(`[sync_pedidos][${account}] Client cache from omie_customer_account_map_fresco: ${clientCache.size}`);
