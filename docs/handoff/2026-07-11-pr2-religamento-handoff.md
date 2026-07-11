@@ -4,7 +4,7 @@
 
 ## 1. Objetivo desta sessão (UMA entrega)
 
-Entregar o **PR-2 mergeado e provado**: religar as 4 views estatísticas de demanda na `v_sku_demanda_efetiva` (do PR-1) + corrigir o furo #10 (devolução). Resultado verificável: o `BASE PARA TINGIMIX` (e os 23 insumos elegíveis) passam a ser incluídos por `gerar_pedidos_sugeridos_ciclo('OBEN')` quando o estoque cai ao ponto. **Escopo além disso (V3, PR-3, apontamento de consumo) = outra sessão.**
+**Executar o plano `docs/superpowers/plans/2026-07-11-reposicao-pr2-religamento.md`** (subagent-driven) e entregar o **PR-2 mergeado e provado**: religar as 4 views estatísticas na `v_sku_demanda_efetiva` (PR-1) + corrigir o furo #10. Resultado verificável: `BASE PARA TINGIMIX` (e os 23 insumos) passam a ser incluídos por `gerar_pedidos_sugeridos_ciclo('OBEN')` quando o estoque cai ao ponto. Design e plano JÁ FEITOS — não refazer. **Escopo além disso (V3, PR-3) = outra sessão.**
 
 ## 2. Estado na main (verificado 2026-07-11)
 
@@ -15,7 +15,8 @@ Entregar o **PR-2 mergeado e provado**: religar as 4 views estatísticas de dema
 
 ## 3. Arquivos/funções-chave (caminhos exatos)
 
-- **LER 1º:** `docs/superpowers/specs/2026-07-11-reposicao-pr2-religamento-criticidade-design.md` (o design; commit `d623eb6f` na branch `claude/reposicao-pr2-criticidade-insumos`).
+- **LER 1º:** `docs/superpowers/specs/2026-07-11-reposicao-pr2-religamento-criticidade-design.md` (o design).
+- **O PLANO JÁ ESTÁ ESCRITO:** `docs/superpowers/plans/2026-07-11-reposicao-pr2-religamento.md` — 5 tasks (pré-flight → fix #10 → religar 4 views → harness PG17 → performance → Codex+handoff). A sessão nova **executa** este plano (subagent-driven-development), NÃO refaz o brainstorming nem o writing-plans.
 - `db/reposicao-demanda-insumos-bom.sql` (PR-1) — contém `v_sku_demanda_efetiva`. **Fix #10 aqui:** no ramo de consumo (2ª metade do UNION ALL) adicionar `AND v.quantidade > 0` (devolução de tingidor não recompõe componente).
 - As **4 views a religar** (trocar só `FROM v_venda_items_history_efetivo` → `FROM v_sku_demanda_efetiva`): `v_sku_demanda_estatisticas`, `v_sku_sigma_demanda`, `v_sku_demanda_rajada`, `v_sku_candidatos_primeira_compra`. Pré-flight `pg_get_viewdef` de cada (preservar ordem de colunas + `security_invoker=true` que o #1292 aplicou).
 - **Padrão de religamento:** `db/reposicao-consolidacao-demanda.sql` (a consolidação fez exatamente isto — trocar o FROM, alias remapeado).
@@ -50,4 +51,4 @@ Entregar o **PR-2 mergeado e provado**: religar as 4 views estatísticas de dema
 
 - `bun run wt reposicao-pr2` (worktree NOVO a partir da main atual `e5bb5fb7` — NÃO reusar o worktree `tingimix-item-visibility-28df07`, que é a sessão que gerou este handoff).
 - O spec está na branch `claude/reposicao-pr2-criticidade-insumos` no origin — `git cherry-pick d623eb6f` para a branch nova, ou copiar o arquivo do spec.
-- 1ª mensagem: colar este briefing inteiro + "implementar o PR-2 conforme o spec, com o rigor money-path (writing-plans → subagent-driven → PG17 + Codex + performance)".
+- 1ª mensagem: colar este briefing + "executar o plano `docs/superpowers/plans/2026-07-11-reposicao-pr2-religamento.md` com subagent-driven-development (o design e o plano já estão prontos; comece pela Task 0)".
