@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **354** custom migrations totais
-- **1251** objetos esperados (criados por estas migrations)
+- **355** custom migrations totais
+- **1252** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 353
+  - `function`: 354
   - `rls_policy`: 277
   - `index`: 208
   - `cron_job`: 146
@@ -3019,6 +3019,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_carteira_saude` | — |
+
+### `20260711140000_omie_sync_identity_snapshot.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.omie_sync_identity_snapshot` | — |
 
 ## Próximos passos por status
 
