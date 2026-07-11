@@ -748,3 +748,69 @@ describe('guardrail money-path: writer popula vendedor de recomendacoes na PROOF
     ).toBe(mirrorBlockNamed(helper, 'omie-codigo-vendedor'));
   });
 });
+
+// ── P0-B-bis (incidente carteira, ponta 2/2): carteira-rebuild LÊ o vendedor da PROOF oben ──
+// O rebuild deixou de tirar o vendedor do espelho poluído (omie_clientes.omie_codigo_vendedor, NULL) e
+// passou a lê-lo da view fresca account-correta omie_customer_account_map_fresco(account='oben'). A LISTA
+// de membros continua do espelho (preserva a herança B-lite + cobertura). Guards fail-closed: proof oben
+// anômala (vazia/<50%/0-vendedor) OU resultado 100% Hunter → aborta ANTES de escrever (não zera a carteira).
+const REBUILD = 'supabase/functions/carteira-rebuild/index.ts';
+const REBUILD_HELPER = 'src/lib/carteira/rebuild-helpers.ts';
+
+describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P0-B-bis ponta 2/2)', () => {
+  const rebuild = read(REBUILD);
+  const rebuildHelper = read(REBUILD_HELPER);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(rebuild).toContain('computeCarteira');
+    expect(rebuildHelper).toContain('coerceCodigoVendedor');
+  });
+
+  it('o VENDEDOR vem da view fresca account=oben (4ª leitura money-path), não do espelho poluído', () => {
+    expect(
+      rebuild,
+      'REVERSÃO Lovable? sumiu a leitura da proof fresca account-correta (vendedor volta ao espelho NULL → carteira Hunter)',
+    ).toMatch(/from\(['"]omie_customer_account_map_fresco['"]\)[\s\S]{0,220}\.eq\(['"]account['"],\s*['"]oben['"]\)/);
+  });
+
+  it('anti-reversão: o load de omie_clientes NÃO tira mais o vendedor (só a LISTA de user_id)', () => {
+    expect(
+      rebuild,
+      'REGRESSÃO: o rebuild voltou a ler omie_codigo_vendedor do espelho poluído (mix de contas)',
+    ).not.toMatch(/from\(['"]omie_clientes['"]\)[\s\S]{0,80}select\(['"]user_id,\s*omie_codigo_vendedor['"]\)/);
+  });
+
+  it('guards presentes E USADOS — não ignorados (wiring, P2 Codex)', () => {
+    expect(rebuild, 'guard pré não usa proofCrua como denominador (#4)').toMatch(/avaliarGuardProof\(\{\s*proofCrua/);
+    expect(rebuild, 'retorno do guard pré ignorado').toContain('guardPre.abortar');
+    expect(rebuild, 'sumiu o guard comparativo pós-compute (#1/#2)').toMatch(/avaliarGuardResultado\(\{\s*omieElegivelNovo/);
+    expect(rebuild, 'retorno do guard pós ignorado').toContain('guardPos.abortar');
+    expect(rebuild, 'guard pós não filtra por eligible — conta inelegíveis (#3)').toMatch(/r\.source === 'omie' && r\.eligible/);
+    expect(rebuild, 'sumiu a leitura de count (proof crua + carteira atual)').toContain("count: 'exact'");
+  });
+  it('guard comparativo vem ANTES do upsert da carteira (não movido p/ depois — P2 Codex)', () => {
+    const iGuard = rebuild.indexOf('avaliarGuardResultado({');
+    const iUpsert = rebuild.indexOf("from('carteira_assignments').upsert(");
+    expect(iGuard, 'avaliarGuardResultado não encontrado').toBeGreaterThan(0);
+    expect(iUpsert, 'upsert da carteira não encontrado').toBeGreaterThan(0);
+    expect(iGuard, 'guard comparativo foi movido p/ DEPOIS do upsert').toBeLessThan(iUpsert);
+  });
+  it('baseline persistido + bootstrap flag presentes E USADOS (Codex R2-R3)', () => {
+    expect(rebuild, 'sumiu a leitura do baseline persistido').toContain("'carteira_omie_baseline'");
+    expect(rebuild, 'guard não recebe baselinePersistido + autorizado').toMatch(/avaliarGuardResultado\(\{[\s\S]{0,120}baselinePersistido,\s*autorizado\s*\}/);
+    expect(rebuild, 'flag de bootstrap não vem do query param').toMatch(/searchParams\.get\('bootstrap'\)/);
+    expect(rebuild, 'baseline não é PERSISTIDO após o upsert (catraca volta)').toMatch(/upsert\(\{\s*key: 'carteira_omie_baseline'/);
+    // R3 #2: a flag é gated em service_role/cron (não staff comum — employee comprometido não força bootstrap)
+    expect(rebuild, 'flag de bootstrap não é gated por auth.via').toMatch(/auth\.via === 'service_role'/);
+    // R3 P2: o baseline lido é VALIDADO (corrompido → aborta, não vira valor inseguro)
+    expect(rebuild, 'baseline lido não é validado (parseBaselineSaudavel)').toContain('parseBaselineSaudavel(');
+    expect(rebuild, 'baseline corrompido não aborta').toMatch(/baselinePersistido === null/);
+  });
+
+  it('PARIDADE: as funções de load espelhadas são IDÊNTICAS ao src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(rebuild, 'carteira-load'),
+      'edge divergiu de rebuild-helpers.ts — Lovable reescreveu o load/guard?',
+    ).toBe(mirrorBlockNamed(rebuildHelper, 'carteira-load'));
+  });
+});
