@@ -404,11 +404,23 @@ describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helpe
     expect(helper).toMatch(/export function docsComCodigoAmbiguoNoOmie/);
   });
 
-  it('o edge USA o helper: define o espelho E o chama (não só define)', () => {
+  // Bloco INTEIRO da action doc_ambiguo_probe (até o próximo case/default). A probe TAMBÉM chama o
+  // helper — sem removê-la, o assert de "o edge chama o helper" abaixo passaria mesmo se a chamada do
+  // REAL-PATH (syncCustomers) sumisse. Ver o `it` da canária no fim deste describe.
+  const PROBE_RE = /case "doc_ambiguo_probe":[\s\S]*?\n {6}(?=case |default:)/;
+
+  it('o edge USA o helper: define o espelho E o chama NO REAL-PATH (não só define, nem só na probe)', () => {
     expect(src, 'edge não define mais o helper espelhado de doc-ambíguo').toMatch(/function docsComCodigoAmbiguoNoOmie/);
     expect(
       src,
       'REGRESSÃO: edge não chama mais docsComCodigoAmbiguoNoOmie — P1b voltou a gravar last-write-wins?',
+    ).toMatch(/docsComCodigoAmbiguoNoOmie\(/);
+    // precisão: a chamada tem de existir FORA da canária. Senão a probe (que chama o helper para
+    // testá-lo) mascararia a remoção do fail-closed do syncCustomers — o guard viraria teatro.
+    const semProbe = src.replace(PROBE_RE, '');
+    expect(
+      semProbe,
+      'REGRESSÃO: a ÚNICA chamada a docsComCodigoAmbiguoNoOmie está na canária — o real-path (syncCustomers) parou de aplicar o fail-closed',
     ).toMatch(/docsComCodigoAmbiguoNoOmie\(/);
     expect(
       count(src, 'docsComCodigoAmbiguoNoOmie'),
@@ -433,6 +445,39 @@ describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helpe
       mirrorBlockNamed(src, 'omie doc-ambiguo'),
       'edge divergiu do helper de src/ — o Lovable reescreveu a detecção no deploy?',
     ).toBe(mirrorBlockNamed(helper, 'omie doc-ambiguo'));
+  });
+
+  // ── Canária comportamental: os asserts acima cobrem a FONTE na main (paridade textual src×edge). A
+  // probe HTTP `doc_ambiguo_probe` é a única prova do COMPORTAMENTO no build DEPLOYADO — e aqui ela é
+  // indispensável: a ausência do helper NÃO aparece no dado (a proof-table só encolhe se houver
+  // duplicata-CNPJ real na conta, e não há — colacor_sc 5275→5275, psql-ro 2026-07-10). Sem a probe, uma
+  // reversão do Lovable (como #1272) seria invisível em prod. Ver docs/agent/money-path.md (§ canária).
+  it('CANÁRIA de deploy: doc_ambiguo_probe existe, expõe probe_no_ar e roda o helper {resolved,expected,ok}', () => {
+    expect(
+      src,
+      'canária doc_ambiguo_probe ausente/renomeada — sem prova do COMPORTAMENTO deployado (só o commit + paridade textual, mais fraco)',
+    ).toContain('case "doc_ambiguo_probe":');
+    const m = src.match(PROBE_RE);
+    expect(m, 'bloco da action doc_ambiguo_probe não encontrado').toBeTruthy();
+    const bloco = m![0];
+    expect(bloco, 'a probe deveria expor probe_no_ar (existência do helper P1b no build deployado)').toContain('probe_no_ar');
+    expect(bloco, 'a probe não roda mais docsComCodigoAmbiguoNoOmie — deixou de provar o helper deployado').toContain('docsComCodigoAmbiguoNoOmie(');
+    expect(bloco, 'a probe perdeu o contrato {resolved, expected, ok}').toMatch(/resolved[\s\S]{0,160}expected[\s\S]{0,80}ok:/);
+  });
+
+  it('CANÁRIA read-only: doc_ambiguo_probe é dry-run puro e cobre a tabela-verdade (+/- se falsificam)', () => {
+    const m = src.match(PROBE_RE);
+    expect(m, 'bloco da action doc_ambiguo_probe não encontrado').toBeTruthy();
+    const bloco = m![0];
+    expect(bloco, 'a probe NÃO pode tocar o client supabase (supabaseAdmin) — deixaria de ser dry-run puro').not.toContain('supabaseAdmin');
+    expect(bloco, 'a probe NÃO pode escrever/consultar o DB (.insert/.update/.delete/.upsert/.rpc)').not.toMatch(/\.(insert|update|delete|upsert|rpc)\(/);
+    expect(bloco, 'a probe NÃO pode chamar o Omie — deixaria de ser dry-run determinístico').not.toMatch(/callOmie|fetchOmie/);
+    // precisão>recall: a probe só morde se cobrir os DOIS lados. Um helper sempre-∅ (o que a reversão do
+    // Lovable produz) passa nos casos limpos; um que marca tudo passa no caso ambíguo. Exigir ambos.
+    expect(bloco, 'a probe deveria cobrir o caso AMBÍGUO (2 códigos distintos) — senão um helper sempre-∅ passaria').toContain('doc_2_codigos_distintos');
+    expect(bloco, 'a probe deveria cobrir o doc de 1 código (limpo) — senão um helper que marca tudo passaria').toContain('doc_1_codigo');
+    expect(bloco, 'a probe deveria cobrir o MESMO código repetido (duplicata da paginação ≠ ambiguidade)').toContain('doc_mesmo_codigo_repetido');
+    expect(bloco, 'a probe deveria cobrir o doc vazio (não vira chave)').toContain('doc_vazio_ignorado');
   });
 });
 

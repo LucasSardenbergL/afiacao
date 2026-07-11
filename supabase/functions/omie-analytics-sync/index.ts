@@ -2123,6 +2123,64 @@ serve(async (req) => {
           status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+      case "doc_ambiguo_probe": {
+        // CANÁRIA COMPORTAMENTAL do P1b (doc-ambíguo-Omie) — NÃO escreve, NÃO chama o Omie, NÃO toca o
+        // DB. Roda o helper puro `docsComCodigoAmbiguoNoOmie` DEPLOYADO (o bloco MIRROR deste arquivo,
+        // não o de src/) sobre fixtures fixos e compara com o esperado.
+        // Por que existe: o Lovable JÁ reverteu este helper num deploy (#1272/#1273), e a ausência dele
+        // é INDETECTÁVEL por sonda de dados — a proof-table só encolhe quando há duplicata-CNPJ real na
+        // conta, e não há (colacor_sc: 5275→5275 no run, verificado via psql-ro em 2026-07-10). Ou seja:
+        // no run normal o guard nunca é exercitado, e some sem deixar rastro no dado. Só executar o
+        // helper deployado sobre um fixture sintético prova que ele está no bundle.
+        // Prova duas coisas que o commit de deploy NÃO prova: (1) esta action RESPONDE → o bundle no ar
+        // é o desta árvore (senão viria "Ação desconhecida" = binário velho); (2) a tabela-verdade
+        // deployada está certa. É a contraparte-DEPLOY do guard TEXTUAL (edge-money-path-invariants,
+        // describe "P1b doc-ambíguo-Omie"), que cobre a FONTE na main. Gated por authorizeCronOrStaff
+        // como toda action. Account-agnóstico de propósito: o helper recebe registros JÁ escopados por
+        // conta pelo chamador (syncCustomers) — a probe testa a decisão, não o escopo.
+        // Igualdade estrutural ESTÁVEL (mesma mecânica do `identidade_probe` em omie-vendas-sync).
+        const stableId = (o: unknown): string =>
+          JSON.stringify(o, (_k, v) =>
+            v && typeof v === "object" && !Array.isArray(v)
+              ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
+              : v);
+        // O helper retorna Set<string> (JSON.stringify de Set daria "{}") → canonizo ambos os lados como
+        // array ORDENADO: ordem é semanticamente irrelevante num conjunto, e sem o sort a comparação
+        // daria falso-negativo dependendo da ordem de inserção.
+        const canon = (xs: Iterable<string>): string[] => [...xs].sort();
+        // Enumeração COMPLETA do oráculo (espelha src/lib/omie/omie-doc-ambiguo.test.ts): os casos +/- se
+        // falsificam MUTUAMENTE — um helper sempre-∅ reprova o caso ambíguo; um que marca tudo reprova os
+        // casos limpos. Cobrir só um lado deixaria um helper deployado quebrado passar como ok:true.
+        const fixturesDoc: Array<{ caso: string; registros: Array<{ doc: string; codigo: number }>; expected: string[] }> = [
+          // 1 código no doc → não ambíguo (o caminho normal: vira vínculo na proof-table)
+          { caso: "doc_1_codigo", registros: [{ doc: "111", codigo: 100 }], expected: [] },
+          // 2 códigos DISTINTOS no mesmo doc → AMBÍGUO (o coração do P1b: fecha o last-write-wins)
+          { caso: "doc_2_codigos_distintos", registros: [{ doc: "111", codigo: 100 }, { doc: "111", codigo: 200 }], expected: ["111"] },
+          // MESMO código repetido (duplicata do Omie na paginação) → NÃO ambíguo (senão zeraria o mapa)
+          { caso: "doc_mesmo_codigo_repetido", registros: [{ doc: "111", codigo: 100 }, { doc: "111", codigo: 100 }], expected: [] },
+          // 3+ códigos → ambíguo (o >1 não é um off-by-one em 2)
+          { caso: "doc_3_codigos", registros: [{ doc: "111", codigo: 100 }, { doc: "111", codigo: 200 }, { doc: "111", codigo: 300 }], expected: ["111"] },
+          // doc vazio não vira chave (o boundary já filtra sem-doc) — 2 códigos sob "" não são ambíguos
+          { caso: "doc_vazio_ignorado", registros: [{ doc: "", codigo: 100 }, { doc: "", codigo: 200 }], expected: [] },
+          // mistura: só os ambíguos entram; os limpos ficam de fora (precisão do escopo do fail-closed)
+          { caso: "mistura_so_ambiguos", registros: [{ doc: "A", codigo: 1 }, { doc: "B", codigo: 2 }, { doc: "B", codigo: 3 }, { doc: "C", codigo: 4 }, { doc: "C", codigo: 4 }], expected: ["B"] },
+          // lista vazia → ∅ (nenhum doc marcado por acidente)
+          { caso: "lista_vazia", registros: [], expected: [] },
+        ];
+        const casosDoc = fixturesDoc.map((c) => {
+          const resolved = canon(docsComCodigoAmbiguoNoOmie(c.registros));
+          const expected = canon(c.expected);
+          return { caso: c.caso, resolved, expected, ok: stableId(resolved) === stableId(expected) };
+        });
+        result = {
+          success: true,
+          probe_no_ar: true, // a action respondeu → o helper P1b está no build deployado
+          ok: casosDoc.every((c) => c.ok), // true = a tabela-verdade deployada bate em TODOS os fixtures
+          casos: casosDoc,
+        };
+        break;
+      }
+
       default:
         return new Response(JSON.stringify({ error: "Ação desconhecida" }), {
           status: 400,
