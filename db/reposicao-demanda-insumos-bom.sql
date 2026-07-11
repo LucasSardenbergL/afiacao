@@ -138,3 +138,54 @@ COMMENT ON VIEW v_pcp_malha_oben_quarentena IS
 -- ─────────────────────────────────────────────────────────────────────────────
 REVOKE ALL ON public.v_pcp_malha_oben_cand, public.v_pcp_malha_oben, public.v_pcp_malha_oben_quarentena FROM anon, PUBLIC;
 GRANT SELECT ON public.v_pcp_malha_oben_cand, public.v_pcp_malha_oben, public.v_pcp_malha_oben_quarentena TO authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 4. DEMANDA EFETIVA = vendas diretas ⊕ consumo explodido.
+--    Shape IDÊNTICO a v_venda_items_history_efetivo (as 4 views estatísticas do
+--    PR-2 esperam este formato — ordem de colunas preservada).
+--    NÃO altera v_venda_items_history_efetivo (preço/receita real seguem lá).
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE VIEW v_sku_demanda_efetiva WITH (security_invoker = true) AS
+SELECT
+  id, empresa, nfe_chave_acesso, nfe_numero, nfe_serie, data_emissao,
+  cliente_codigo_omie, cliente_razao_social, cliente_cnpj_cpf, cliente_uf, cliente_cidade,
+  sku_codigo_omie, sku_codigo, sku_descricao, sku_ncm, sku_unidade,
+  quantidade, valor_unitario, valor_total, cfop, raw_data, created_at
+FROM v_venda_items_history_efetivo
+
+UNION ALL
+
+SELECT
+  -- id determinístico (view não pode usar gen_random_uuid: quebraria estabilidade)
+  md5(v.id::text || ':' || mo.comp_oben::text)::uuid  AS id,
+  v.empresa,
+  v.nfe_chave_acesso,          -- ⚠️ HERDADA DO PAI: num_ordens=count(DISTINCT nfe).
+                               --    Com NULL o insumo conta 0 ordens e NUNCA gradua.
+  v.nfe_numero,
+  v.nfe_serie,
+  v.data_emissao,              -- a data do consumo = a da venda do pai
+  v.cliente_codigo_omie, v.cliente_razao_social, v.cliente_cnpj_cpf,
+  v.cliente_uf, v.cliente_cidade,
+  mo.comp_oben                 AS sku_codigo_omie,   -- o INSUMO
+  ins.codigo                   AS sku_codigo,
+  ins.descricao                AS sku_descricao,
+  ins.ncm                      AS sku_ncm,
+  ins.unidade                  AS sku_unidade,       -- unidade do INSUMO (não 'UN' do pai)
+  v.quantidade * mo.quantidade AS quantidade,        -- a explosão
+  NULL::numeric                AS valor_unitario,    -- V3: receita honesta (ausente≠zero)
+  NULL::numeric                AS valor_total,
+  v.cfop, v.raw_data, v.created_at
+FROM v_venda_items_history_efetivo v
+JOIN v_pcp_malha_oben mo   ON mo.pai_oben = v.sku_codigo_omie
+JOIN omie_products ins     ON ins.omie_codigo_produto = mo.comp_oben
+                          AND ins.account = 'oben'
+WHERE v.empresa = 'OBEN';    -- guard: nunca cruzar empresa
+
+COMMENT ON VIEW v_sku_demanda_efetiva IS
+  'Demanda = venda direta ⊕ consumo de insumo derivado da ficha técnica. A linha de consumo herda a NF do pai (num_ordens) e usa a unidade do insumo; valor de venda é NULL (insumo não gera receita). PR-2 aponta as 4 views estatísticas para cá.';
+
+-- Segurança (padrão P0 — docs/agent/database.md §4). Esta view lê v_venda_items_history_efetivo
+-- (dados de venda/cliente sensíveis, já invoker=on em prod): manter a cadeia invoker=on e
+-- fechar a anon-key. v_venda_items_history_efetivo é a folha que governa venda_items_history.
+REVOKE ALL ON public.v_sku_demanda_efetiva FROM anon, PUBLIC;
+GRANT SELECT ON public.v_sku_demanda_efetiva TO authenticated;

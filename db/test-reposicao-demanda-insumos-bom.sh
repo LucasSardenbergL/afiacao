@@ -257,6 +257,108 @@ echo "→ pós-restauração: A1 volta a valer (prova que a sabotagem foi desfei
 got=$(Pq -c "SELECT count(*) FROM v_pcp_malha_oben WHERE pai_oben=200 AND comp_oben=201;")
 assert_eq "RESTORE par limpo elegivel de novo apos desfazer S1/S2" "1" "$got"
 
+# ══════════════════════════════════════════════════════════════════════════
+# Step 5: v_sku_demanda_efetiva (Task 3) — explosão de BOM na DEMANDA.
+# Reusa o bootstrap acima (catálogo colacor/oben, ficha do pai 100→200 com
+# 0.9 L do insumo 101→201, já restaurada em FICHA_OK). Só ACRESCENTA vendas.
+# ══════════════════════════════════════════════════════════════════════════
+echo "→ semeando vendas (pai 200 tem ficha 0.9 L do insumo 201; sku 300 não tem ficha)"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO omie_products (id, omie_codigo_produto, codigo, descricao, account, ativo, unidade)
+VALUES (gen_random_uuid(), 300, 'PRD_SEMFICHA', 'PRODUTO SEM FICHA', 'oben', true, 'UN');
+
+INSERT INTO venda_items_history
+  (id, empresa, nfe_chave_acesso, data_emissao, sku_codigo_omie, sku_descricao,
+   sku_unidade, quantidade, valor_unitario, valor_total, created_at)
+VALUES
+  (gen_random_uuid(),'OBEN','NFE-1', CURRENT_DATE - 10, 200, 'TINGIDOR X','UN', 1, 100, 100, now()),
+  (gen_random_uuid(),'OBEN','NFE-2', CURRENT_DATE - 5,  200, 'TINGIDOR X','UN', 2, 100, 200, now()),
+  (gen_random_uuid(),'OBEN','NFE-3', CURRENT_DATE - 3,  300, 'SEM FICHA','UN',  7, 10,   70, now());
+SQL
+
+echo "→ H. explosão: venda de 1 pai (qtde 1) com ficha 0.9 → exatamente 0.9 L do insumo"
+got=$(Pq -c "SELECT quantidade FROM v_sku_demanda_efetiva
+             WHERE sku_codigo_omie=201 AND nfe_chave_acesso='NFE-1';")
+assert_eq "H1 explosao sem fan-out (0.9, nunca 1.8)" "0.9" "$got"
+
+got=$(Pq -c "SELECT quantidade FROM v_sku_demanda_efetiva
+             WHERE sku_codigo_omie=201 AND nfe_chave_acesso='NFE-2';")
+assert_eq "H2 escala com a qtde do pai (2 x 0.9)" "1.8" "$got"
+
+echo "→ I. NF herdada do pai (Codex #5 — sem isso num_ordens=0 e o insumo NUNCA gradua)"
+got=$(Pq -c "SELECT count(DISTINCT nfe_chave_acesso) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201;")
+assert_eq "I1 insumo herda 2 NFs distintas (gradua)" "2" "$got"
+
+got=$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva
+             WHERE sku_codigo_omie=201 AND nfe_chave_acesso IS NULL;")
+assert_eq "I2 nenhuma linha sintetica sem NF" "0" "$got"
+
+echo "→ J. valor NULL (V3: receita honesta, ausente≠zero)"
+got=$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva
+             WHERE sku_codigo_omie=201 AND (valor_total IS NOT NULL OR valor_unitario IS NOT NULL);")
+assert_eq "J1 sem receita fabricada" "0" "$got"
+
+got=$(Pq -c "SELECT COALESCE(sum(valor_total),0)::text FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201;")
+assert_eq "J2 SUM(valor) do insumo = 0 (NULL ignorado, nao fabricado)" "0" "$got"
+
+echo "→ K. unidade do INSUMO, não do pai (Codex #6)"
+got=$(Pq -c "SELECT DISTINCT sku_unidade FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201;")
+assert_eq "K1 unidade do insumo (L), nao 'UN' do pai" "L" "$got"
+
+echo "→ L. venda direta preservada (passthrough intacto)"
+got=$(Pq -c "SELECT quantidade FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=200 AND nfe_chave_acesso='NFE-1';")
+assert_eq "L1 venda do pai intacta" "1" "$got"
+
+echo "→ M. pai fora da malha não gera linha sintética"
+got=$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=300;")
+assert_eq "M1 sku sem ficha: so a venda direta" "1" "$got"
+
+echo "→ N. id da linha sintética é único e determinístico"
+got=$(Pq -c "SELECT count(*) - count(DISTINCT id) FROM v_sku_demanda_efetiva;")
+assert_eq "N1 nenhum id duplicado" "0" "$got"
+
+echo "→ SEC-DE. v_sku_demanda_efetiva é security_invoker (lê venda_items — dado sensível)"
+got=$(Pq -c "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE n.nspname='public' AND c.relname='v_sku_demanda_efetiva'
+               AND c.reloptions @> ARRAY['security_invoker=true'];")
+assert_eq "SEC-DE1 demanda efetiva é security_invoker" "1" "$got"
+
+# ══════════════════════════════════════════════════════════════════════════
+# Step 6: FALSIFICAÇÃO S3 — NF herdada do pai (o furo que mataria a feature:
+# sem ela, num_ordens=count(DISTINCT nfe) conta 0 e o insumo NUNCA gradua).
+# ══════════════════════════════════════════════════════════════════════════
+echo "→ SABOTAGEM S3: com nfe_chave_acesso NULL no sintético, o insumo perde as ordens"
+P -q -c "CREATE OR REPLACE VIEW v_sku_demanda_efetiva AS
+  SELECT id, empresa, nfe_chave_acesso, nfe_numero, nfe_serie, data_emissao,
+         cliente_codigo_omie, cliente_razao_social, cliente_cnpj_cpf, cliente_uf, cliente_cidade,
+         sku_codigo_omie, sku_codigo, sku_descricao, sku_ncm, sku_unidade,
+         quantidade, valor_unitario, valor_total, cfop, raw_data, created_at
+  FROM v_venda_items_history_efetivo
+  UNION ALL
+  SELECT md5(v.id::text || ':' || mo.comp_oben::text)::uuid, v.empresa,
+         NULL::text,                       -- ⬅ SABOTAGEM: NF nula
+         v.nfe_numero, v.nfe_serie, v.data_emissao,
+         v.cliente_codigo_omie, v.cliente_razao_social, v.cliente_cnpj_cpf, v.cliente_uf, v.cliente_cidade,
+         mo.comp_oben, ins.codigo, ins.descricao, ins.ncm, ins.unidade,
+         v.quantidade * mo.quantidade, NULL::numeric, NULL::numeric,
+         v.cfop, v.raw_data, v.created_at
+  FROM v_venda_items_history_efetivo v
+  JOIN v_pcp_malha_oben mo ON mo.pai_oben = v.sku_codigo_omie
+  JOIN omie_products ins ON ins.omie_codigo_produto = mo.comp_oben AND ins.account='oben'
+  WHERE v.empresa='OBEN';"
+
+got=$(Pq -c "SELECT count(DISTINCT nfe_chave_acesso) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201;")
+if [ "$got" != "0" ]; then
+  echo "  ✗ SABOTAGEM S3 INÚTIL: o assert I1 não detecta a perda da NF"; exit 1
+fi
+echo "  ✓ S3 ok (NF nula → 0 ordens distintas → o insumo ficaria preso em AGUARDANDO_SEGUNDA_ORDEM)"
+PASS=$((PASS+1))
+
+# restaurar a versão real
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/reposicao-demanda-insumos-bom.sql"
+got=$(Pq -c "SELECT count(DISTINCT nfe_chave_acesso) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201;")
+assert_eq "S3r restaurado: 2 ordens de novo" "2" "$got"
+
 echo ""
 echo "PASS=$PASS"
-echo "✅ demanda de insumos via BOM (v_pcp_malha_oben): guards + quarentena + falsificação OK"
+echo "✅ demanda de insumos via BOM (v_pcp_malha_oben + v_sku_demanda_efetiva): guards + quarentena + explosão + falsificação OK"
