@@ -40,6 +40,7 @@ const AdminRoutePlanner = lazy(() => import("./pages/AdminRoutePlanner"));
 const AdminMonthlyReports = lazy(() => import("./pages/AdminMonthlyReports"));
 const AdminProductivity = lazy(() => import("./pages/AdminProductivity"));
 const AdminLoyalty = lazy(() => import("./pages/AdminLoyalty"));
+const AdminPrime = lazy(() => import("./pages/AdminPrime"));
 const AdminGamification = lazy(() => import("./pages/AdminGamification"));
 const Gamification = lazy(() => import("./pages/Gamification"));
 const QualityChecklist = lazy(() => import("./pages/QualityChecklist"));
@@ -303,6 +304,7 @@ const App = () => {
                 <Route path="admin/monthly-reports" element={<AdminMonthlyReports />} />
                 <Route path="admin/productivity" element={<AdminProductivity />} />
                 <Route path="admin/loyalty" element={<AdminLoyalty />} />
+                <Route path="admin/prime" element={<AdminPrime />} />
                 <Route path="admin/gamification" element={<AdminGamification />} />
                 <Route path="admin/training" element={<AdminTraining />} />
                 <Route path="admin/price-table" element={<AdminPriceTable />} />
