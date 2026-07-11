@@ -12,7 +12,9 @@
 -- APLICAÇÃO: bloco idempotente (tudo CREATE OR REPLACE). Colar no SQL Editor do
 -- Lovable → Run. NÃO vai em supabase/migrations/ (snapshot é fonte DR; ver
 -- docs/agent/database.md §2-§3). Cada CREATE OR REPLACE VIEW preserva a ORDEM
--- EXATA de colunas da PROD (senão "cannot change name of view column").
+-- EXATA de colunas da PROD (senão "cannot change name of view column") E carrega
+-- WITH (security_invoker = true): sem ele o CREATE OR REPLACE ZERA reloptions e
+-- reabre o P0 de RLS que a migração 20260708190000 fechou (ver bloco 2.5).
 -- ============================================================================
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -22,7 +24,7 @@
 -- ⚠️ Confirmar no pré-flight (Task 0) a lista/ordem REAL de colunas de
 --    venda_items_history e ajustar o SELECT se a prod divergir deste.
 -- ─────────────────────────────────────────────────────────────────────────────
-CREATE OR REPLACE VIEW v_venda_items_history_efetivo AS
+CREATE OR REPLACE VIEW v_venda_items_history_efetivo WITH (security_invoker = true) AS
 SELECT
   v.id, v.empresa, v.nfe_chave_acesso, v.nfe_numero, v.nfe_serie, v.data_emissao,
   v.cliente_codigo_omie, v.cliente_razao_social, v.cliente_cnpj_cpf, v.cliente_uf, v.cliente_cidade,
@@ -57,7 +59,7 @@ LEFT JOIN sku_substituicao s
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- 2.1 — v_sku_demanda_estatisticas (90d) · CTE vendas_por_ordem
-CREATE OR REPLACE VIEW v_sku_demanda_estatisticas AS
+CREATE OR REPLACE VIEW v_sku_demanda_estatisticas WITH (security_invoker = true) AS
  WITH vendas_por_ordem AS (
          SELECT venda_items_history.empresa,
             venda_items_history.sku_codigo_omie,
@@ -95,7 +97,7 @@ CREATE OR REPLACE VIEW v_sku_demanda_estatisticas AS
    FROM stats;
 
 -- 2.2 — v_sku_sigma_demanda (180d) · CTE vendas_diarias
-CREATE OR REPLACE VIEW v_sku_sigma_demanda AS
+CREATE OR REPLACE VIEW v_sku_sigma_demanda WITH (security_invoker = true) AS
  WITH datas AS (
          SELECT generate_series(CURRENT_DATE - '180 days'::interval, CURRENT_DATE - '1 day'::interval, '1 day'::interval)::date AS dt
         ), vendas_diarias AS (
@@ -125,7 +127,7 @@ CREATE OR REPLACE VIEW v_sku_sigma_demanda AS
   GROUP BY empresa, sku_codigo_omie;
 
 -- 2.3 — v_sku_demanda_rajada (180d) · CTEs skus_ativos + vendas_diarias
-CREATE OR REPLACE VIEW v_sku_demanda_rajada AS
+CREATE OR REPLACE VIEW v_sku_demanda_rajada WITH (security_invoker = true) AS
  WITH datas_serie AS (
          SELECT generate_series(CURRENT_DATE - '179 days'::interval, CURRENT_DATE::timestamp without time zone, '1 day'::interval)::date AS dt
         ), skus_ativos AS (
@@ -176,7 +178,7 @@ CREATE OR REPLACE VIEW v_sku_demanda_rajada AS
   GROUP BY empresa, sku_codigo_omie;
 
 -- 2.4 — v_sku_candidatos_primeira_compra (180d) · CTE recorrencia_180d (alias vih)
-CREATE OR REPLACE VIEW v_sku_candidatos_primeira_compra AS
+CREATE OR REPLACE VIEW v_sku_candidatos_primeira_compra WITH (security_invoker = true) AS
  WITH recorrencia_180d AS (
          SELECT vih.empresa,
             vih.sku_codigo_omie,
@@ -309,6 +311,32 @@ CREATE OR REPLACE VIEW v_sku_candidatos_primeira_compra AS
     GREATEST(1::numeric, LEAST(dem_lt, cap_cobertura)) + GREATEST(1::numeric, LEAST(GREATEST(qc_eoq, 1::numeric), cap_cobertura)) AS primeira_compra_estoque_maximo,
     ja_habilitado
    FROM calc;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 2.5 — SEGURANÇA das 5 views (P0 RLS). ESPELHA a migração já aplicada em prod
+--   supabase/migrations/20260708190000_fechar_views_invoker_off_p0.sql — sem este
+--   bloco, reaplicar este arquivo verbatim DESFAZ aquele fix (ver ⚠️ abaixo).
+--   • security_invoker=true (nas 5 views acima) faz cada uma respeitar a RLS
+--     staff-only das tabelas-base (venda_items_history/sku_substituicao/
+--     sku_parametros/omie_products) como o CALLER. SEM ela (owner=postgres bypassa
+--     RLS) qualquer authenticated — INCLUI customer, que compartilha o role
+--     PostgREST — leria TODO o histórico de venda (CNPJ/CPF/cidade/valor). database.md §4.
+--   • REVOKE SELECT … FROM anon, PUBLIC fecha a anon-key pública (nenhuma tela anon
+--     consome estas views). authenticated MANTÉM SELECT: staff precisa; customer é
+--     filtrado pela RLS via invoker=on. (REVOKE SELECT, não ALL — espelha a migração
+--     P0 e o relacl real de prod: anon conserva os demais privilégios default.)
+--   ⚠️ CREATE OR REPLACE VIEW *sem* WITH (…) RESETA reloptions para vazio (o
+--     security_invoker volta a off, SILENCIOSAMENTE) — por isso o WITH acima é
+--     OBRIGATÓRIO, não cosmético: é o que sobrevive à reaplicação deste bloco.
+--   Prova de catálogo (invoker=on + anon/PUBLIC sem SELECT) + FALSIFICAÇÃO no
+--   cenário SEC de db/test-reposicao-consolidacao-demanda.sh. Idempotente.
+-- ─────────────────────────────────────────────────────────────────────────────
+REVOKE SELECT ON public.v_venda_items_history_efetivo, public.v_sku_demanda_estatisticas,
+                 public.v_sku_sigma_demanda, public.v_sku_demanda_rajada,
+                 public.v_sku_candidatos_primeira_compra FROM anon, PUBLIC;
+GRANT  SELECT ON public.v_venda_items_history_efetivo, public.v_sku_demanda_estatisticas,
+                 public.v_sku_sigma_demanda, public.v_sku_demanda_rajada,
+                 public.v_sku_candidatos_primeira_compra TO authenticated;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 3. Cadastro do de-para (ponto único: chamado pela UX/Frente C; NO HANDOFF manual
