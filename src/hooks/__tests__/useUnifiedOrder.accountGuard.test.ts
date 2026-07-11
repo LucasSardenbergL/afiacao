@@ -33,4 +33,16 @@ describe('useUnifiedOrder: resolução de código Omie por user_id filtra empres
         '(colacor) vaza para OmieCustomer.codigo_cliente (oben) e o pedido vai ao cliente errado (P0-A)',
     ).toBeGreaterThanOrEqual(2);
   });
+
+  // ── #11 (P0-B-bis PR-4): a via INVERSA (codigo->user_id) do handleStaffAddTool ──
+  // Resolver o user_id por omie_codigo_cliente (o código da conta OBEN do selectedCustomer) SEM conta
+  // pegava o user ERRADO quando o mesmo número colide entre contas no espelho poluído (Codex P2 — anexa a
+  // ferramenta ao cliente errado). A view fresca é UNIQUE(omie_codigo_cliente, account) → filtrar
+  // account=oben resolve o user certo; miss (ausente/stale) cai no fallback por documento (fail-closed).
+  it('handleStaffAddTool resolve codigo->user pela view fresca account=oben (não pelo espelho sem conta)', () => {
+    expect(
+      src,
+      'REGRESSÃO: handleStaffAddTool voltou a resolver codigo->user pelo espelho poluído omie_clientes sem conta',
+    ).toMatch(/from\('omie_customer_account_map_fresco'\)\s*\.select\('user_id'\)[\s\S]{0,160}\.eq\('account', 'oben'\)/);
+  });
 });
