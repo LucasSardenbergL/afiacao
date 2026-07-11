@@ -571,3 +571,59 @@ describe('guardrail money-path: omie-sync self-service USA view fresca account-c
     ).toBe(mirrorBlockNamed(helper, 'omie-sync-identidade'));
   });
 });
+
+// ── P0-B-bis PR-2 (omie-vendas-sync syncPedidos: cache codigo->user pela view fresca account-correta) ──
+// O cache que resolve codigo_cliente->user_id nos pedidos vinha do espelho poluído omie_clientes SEM filtro
+// de conta. Código Omie é numerado POR conta → o mesmo número em contas diferentes colidia na chave global
+// do cache e mapeava o user_id ERRADO (bug #4 do design; o espelho é sobrescrito ao longo do dia pelos
+// writers colacor_sc, então a colisão é intermitente). Migrado p/ a view fresca account-correta
+// (.eq('account', account)) + .order estável no .range (armadilha PostgREST). A paridade textual aqui pega
+// a reversão do deploy do Lovable. As leituras de omie_clientes em ~:1703/~:2393 são o guard
+// codeBelongsToWrongAccount (P0-A, precisa ver TODAS as contas) — FORA desta PR, intocadas. Ver design §4/§5.
+const VENDAS_SYNC = 'supabase/functions/omie-vendas-sync/index.ts';
+
+describe('guardrail money-path: syncPedidos resolve user pela view fresca account-correta (P0-B-bis PR-2)', () => {
+  const src = read(VENDAS_SYNC);
+
+  it('sentinela: leu o arquivo real (edge)', () => {
+    expect(src).toContain('syncPedidos');
+    expect(src).toContain('clientCache');
+  });
+
+  it('o cache codigo->user vem da VIEW FRESCA account-correta, por conta, paginado por KEYSET', () => {
+    // Exige a cadeia keyset completa: from(fresco) → eq(account) → gt(codigo) → limit. Fecha o furo Codex P3
+    // (o regex antigo não exigia paginação: remover o .limit truncaria o cache em 1 página e passaria).
+    expect(
+      src,
+      'REVERSÃO Lovable? o cache do syncPedidos não lê a view fresca por conta com paginação keyset (.gt+.limit)',
+    ).toMatch(/from\('omie_customer_account_map_fresco'\)[\s\S]{0,180}\.eq\('account', account\)[\s\S]{0,80}\.gt\('omie_codigo_cliente'[\s\S]{0,80}\.limit\(/);
+  });
+
+  it('o pré-load do cache é FAIL-CLOSED em erro de query (não engole o error → cache parcial, Codex P2)', () => {
+    expect(
+      src,
+      'REGRESSÃO: o pré-load engole o erro da query — cache parcial silencioso → rate-limit no fallback',
+    ).toMatch(/if \(cacheErr\) throw new Error/);
+  });
+
+  it('o cache NÃO voltou a carregar do espelho poluído omie_clientes (anti-reversão do bug #4)', () => {
+    expect(
+      src,
+      'REGRESSÃO: o cache do syncPedidos voltou a carregar do espelho omie_clientes (bug #4 reaberto)',
+    ).not.toMatch(/Client cache from omie_clientes/);
+    expect(
+      src,
+      'sentinela do log novo: o cache reporta a fonte account-correta',
+    ).toMatch(/Client cache from omie_customer_account_map_fresco/);
+  });
+
+  it('o guard codeBelongsToWrongAccount (FORA desta PR) segue lendo TODAS as contas do espelho', () => {
+    // Precisão>recall: o guard PRECISA ver linhas de outras contas p/ provar que o código é de outra conta.
+    // Filtrar só a conta-alvo o desligaria (design §4 FORA). Este assert trava a NÃO-migração dele.
+    expect(src, 'REGRESSÃO: sumiu o guard codeBelongsToWrongAccount').toMatch(/codeBelongsToWrongAccount\(/);
+    expect(
+      src,
+      'REGRESSÃO: o guard parou de ler o espelho por user (sem filtro de conta) — proteção desligada?',
+    ).toMatch(/\.from\("omie_clientes"\)\s*\.select\("omie_codigo_cliente, empresa_omie"\)/);
+  });
+});
