@@ -1,5 +1,5 @@
 // supabase/functions/carteira-rebuild/index.ts
-// Reconstrói carteira_assignments a partir de omie_clientes × omie_vendedor_map.
+// Reconstrói carteira_assignments a partir de omie_customer_account_map_fresco (oben) × omie_vendedor_map.
 // Órfão (sem vendedor mapeado) → Hunter. Idempotente (upsert por customer_user_id).
 //
 // Consolidação B-lite (spec 2026-06-13): consulta customer_canonical_alias (clones ATIVOS) e
@@ -177,18 +177,22 @@ Deno.serve(async (req) => {
     }
   }
 
-  // omie_clientes pode ter milhares de linhas e o PostgREST limita o SELECT a ~1000 por página →
-  // paginar com range() até esgotar. .order p/ estabilidade (P1.5 Codex).
+  // P0-B-bis: a carteira (oben) lê a VIEW FRESCA account-correta omie_customer_account_map_fresco
+  // (account='oben') em vez do espelho poluído omie_clientes (mix de contas, sem filtro). A proof é
+  // document-first + fail-closed doc-ambíguo (account-safe, Codex) e o omie_codigo_vendedor vem populado
+  // de recomendacoes (fix do writer no mesmo PR). Só clientes OBEN entram (era o espelho inteiro, incl.
+  // não-oben indevidos). PostgREST capa em ~1000/página → paginar com range() + .order estável (P1.5 Codex).
   const clientes: OmieClienteRow[] = [];
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
-      .from('omie_clientes')
+      .from('omie_customer_account_map_fresco')
       .select('user_id, omie_codigo_vendedor')
+      .eq('account', 'oben')
       .not('user_id', 'is', null)
       .order('user_id', { ascending: true })
       .range(from, from + PAGE - 1);
-    if (error) { console.error('[carteira-rebuild] load omie_clientes error:', error.message); return fail(error.message); }
+    if (error) { console.error('[carteira-rebuild] load omie_customer_account_map_fresco error:', error.message); return fail(error.message); }
     const page = (data ?? []) as Array<{ user_id: string; omie_codigo_vendedor: number | null }>;
     for (const r of page) clientes.push({ customer_user_id: r.user_id, omie_codigo_vendedor: r.omie_codigo_vendedor });
     if (page.length < PAGE) break;

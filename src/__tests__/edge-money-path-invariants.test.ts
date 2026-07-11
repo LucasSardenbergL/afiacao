@@ -708,3 +708,58 @@ describe('guardrail money-path: syncPedidos resolve user pela view fresca accoun
     ).toMatch(/\.from\("omie_clientes"\)\s*\.select\("omie_codigo_cliente, empresa_omie"\)/);
   });
 });
+
+// ── P0-B-bis (incidente carteira): vendedor de recomendacoes NA PROOF + carteira lê a proof account-safe ──
+// A carteira estava 100% Hunter: o writer gravava omie_codigo_vendedor lendo só c.codigo_vendedor (raiz
+// vazio) → proof/espelho NULL → todo cliente órfão. Corrigido em DUAS pontas (Codex BLOCK do approach que
+// populava o mirror code-first inseguro):
+//  (1) o writer popula o vendedor SÓ na PROOF (document-first, account-safe) via helper extrairCodigoVendedor
+//      (recomendacoes vence, só inteiro positivo — resolve o ??/|| do Codex). O mirror code-first NÃO recebe.
+//  (2) carteira-rebuild passa a ler a PROOF (omie_customer_account_map_fresco, account='oben') em vez do
+//      espelho poluído. A paridade textual aqui pega a reversão do deploy do Lovable.
+const ANALYTICS_V = 'supabase/functions/omie-analytics-sync/index.ts';
+const CARTEIRA = 'supabase/functions/carteira-rebuild/index.ts';
+const VEND_HELPER = 'src/lib/omie/codigo-vendedor.ts';
+
+describe('guardrail money-path: vendedor de recomendacoes na PROOF + carteira lê a proof (P0-B-bis)', () => {
+  const analytics = read(ANALYTICS_V);
+  const carteira = read(CARTEIRA);
+  const helper = read(VEND_HELPER);
+
+  it('sentinela: leu os arquivos reais', () => {
+    expect(analytics).toContain('syncCustomers');
+    expect(carteira).toContain('carteira_assignments');
+    expect(helper).toContain('extrairCodigoVendedor');
+  });
+
+  it('o helper puro existe e exporta extrairCodigoVendedor', () => {
+    expect(helper).toMatch(/export function extrairCodigoVendedor/);
+  });
+
+  it('o writer USA o helper espelhado na PROOF (define + chama), NÃO o campo raiz cru', () => {
+    expect(analytics, 'sumiu a definição espelhada do helper').toMatch(/function extrairCodigoVendedor/);
+    expect(
+      analytics,
+      'REVERSÃO Lovable? a proof não usa mais extrairCodigoVendedor (vendedor volta a NULL → carteira Hunter)',
+    ).toMatch(/omie_codigo_vendedor: extrairCodigoVendedor\(c\),\s*\n\s*source: "document"/);
+    expect(count(analytics, 'extrairCodigoVendedor'), 'helper deve ser DEFINIDO e CHAMADO (≥2)').toBeGreaterThanOrEqual(2);
+  });
+
+  it('PARIDADE: o bloco espelhado do helper é IDÊNTICO ao src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(analytics, 'omie-codigo-vendedor'),
+      'edge divergiu do helper de src/ — Lovable reescreveu a extração do vendedor?',
+    ).toBe(mirrorBlockNamed(helper, 'omie-codigo-vendedor'));
+  });
+
+  it('carteira-rebuild lê a PROOF account-correta (oben), NÃO o espelho poluído', () => {
+    expect(
+      carteira,
+      'REVERSÃO Lovable? a carteira não lê mais a view fresca com account=oben',
+    ).toMatch(/\.from\('omie_customer_account_map_fresco'\)[\s\S]{0,120}\.eq\('account', 'oben'\)/);
+    expect(
+      carteira,
+      'REGRESSÃO: a carteira voltou a carregar clientes do espelho poluído omie_clientes',
+    ).not.toMatch(/\.from\('omie_clientes'\)/);
+  });
+});
