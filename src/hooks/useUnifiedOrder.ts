@@ -636,7 +636,8 @@ export function useUnifiedOrder() {
       const { data: existingMapping } = await supabase
         .from('omie_customer_account_map_fresco').select('user_id')
         .eq('omie_codigo_cliente', selectedCustomer.codigo_cliente).eq('account', 'oben').maybeSingle();
-      if (existingMapping) {
+      // user_id da view é string|null (view nulável); null → trata como miss e cai no fallback por documento.
+      if (existingMapping?.user_id) {
         setCustomerUserId(existingMapping.user_id);
         loadUserTools(existingMapping.user_id);
         setAddToolDialogOpen(true);

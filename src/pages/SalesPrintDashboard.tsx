@@ -215,7 +215,11 @@ const SalesPrintDashboard = () => {
   // Build omie codigo_cliente map from omie_clientes table + order payloads as fallback
   const omieClienteMap = useMemo(() => {
     const m = new Map<string, number>();
-    omieClientes.forEach(oc => m.set(oc.user_id, oc.omie_codigo_cliente));
+    // view fresca é nulável (user_id/omie_codigo_cliente string|null / number|null) → guarda os dois;
+    // linha sem par completo cai no fallback por payload/documento abaixo (fail-closed).
+    omieClientes.forEach(oc => {
+      if (oc.user_id != null && oc.omie_codigo_cliente != null) m.set(oc.user_id, oc.omie_codigo_cliente);
+    });
     // Fallback: extract codigo_cliente from order payloads for customers not in omie_clientes
     allOrdersRaw.forEach(o => {
       const custId = o.customer_user_id || o.user_id;
