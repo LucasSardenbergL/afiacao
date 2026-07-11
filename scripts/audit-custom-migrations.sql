@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 354
+-- Total de custom migrations: 355
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -393,7 +393,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260709120500', 'authz_estimar_estoque_omie', '20260709120500_authz_estimar_estoque_omie.sql'),
   ('20260709163000', 'selfservice_pr00bis_a_rpc_staff_payload', '20260709163000_selfservice_pr00bis_a_rpc_staff_payload.sql'),
   ('20260709163500', 'selfservice_pr00bis_b_revoke_omie_payload', '20260709163500_selfservice_pr00bis_b_revoke_omie_payload.sql'),
-  ('20260710012337', 'carteira_saude_eligible_e_efeito_mensal', '20260710012337_carteira_saude_eligible_e_efeito_mensal.sql')
+  ('20260710012337', 'carteira_saude_eligible_e_efeito_mensal', '20260710012337_carteira_saude_eligible_e_efeito_mensal.sql'),
+  ('20260711145000', 'v_grupo_contatos_fresca', '20260711145000_v_grupo_contatos_fresca.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1635,7 +1636,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-servicos-daily', ''),
   ('authz_estimar_estoque_omie', 'function', 'public', 'fin_estimar_estoque_omie', ''),
   ('selfservice_pr00bis_a_rpc_staff_payload', 'function', 'public', 'staff_get_sales_order_payload', ''),
-  ('carteira_saude_eligible_e_efeito_mensal', 'function', 'public', 'get_carteira_saude', '')
+  ('carteira_saude_eligible_e_efeito_mensal', 'function', 'public', 'get_carteira_saude', ''),
+  ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2925,7 +2927,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-servicos-daily', ''),
   ('authz_estimar_estoque_omie', 'function', 'public', 'fin_estimar_estoque_omie', ''),
   ('selfservice_pr00bis_a_rpc_staff_payload', 'function', 'public', 'staff_get_sales_order_payload', ''),
-  ('carteira_saude_eligible_e_efeito_mensal', 'function', 'public', 'get_carteira_saude', '')
+  ('carteira_saude_eligible_e_efeito_mensal', 'function', 'public', 'get_carteira_saude', ''),
+  ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', '')
 )
 SELECT
   e.migration,

@@ -21,8 +21,8 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **354** custom migrations totais
-- **1251** objetos esperados (criados por estas migrations)
+- **355** custom migrations totais
+- **1252** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 353
   - `rls_policy`: 277
@@ -30,7 +30,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
   - `cron_job`: 146
   - `table`: 135
   - `trigger`: 70
-  - `view`: 58
+  - `view`: 59
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3019,6 +3019,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_carteira_saude` | — |
+
+### `20260711145000_v_grupo_contatos_fresca.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_grupo_contatos` | — |
 
 ## Próximos passos por status
 
