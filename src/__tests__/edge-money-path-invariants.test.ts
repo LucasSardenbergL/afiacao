@@ -814,3 +814,30 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
     ).toBe(mirrorBlockNamed(rebuildHelper, 'carteira-load'));
   });
 });
+
+// ── P0-B-bis PR-4 #8 (fin-valor-cockpit: mapa user->codigo de DISPLAY pela view fresca account=oben) ──
+// O cockpit (COMPANY='oben') montava o mapa user_id->omie_codigo_cliente lendo o espelho poluído
+// omie_clientes SEM filtro de conta — o código exibido podia ser de OUTRA conta do mesmo user (colacor_sc
+// domina o espelho). Migrado p/ a view fresca account-correta com account=oben. Display (ℹ️ baixo, não
+// roteia dinheiro) → paginação offset .range basta (o syncPedidos, money-path, exige keyset; aqui um miss
+// de TTL entre páginas só omitiria 1 código do display). Este canário pega a reversão do deploy do Lovable.
+const VALOR_COCKPIT = 'supabase/functions/fin-valor-cockpit/index.ts';
+
+describe('guardrail: fin-valor-cockpit lê o código do cliente pela view fresca account=oben (P0-B-bis PR-4 #8)', () => {
+  const src = read(VALOR_COCKPIT);
+
+  it('sentinela: leu o arquivo real (mapa de display userToOmie)', () => {
+    expect(src).toContain('userToOmie');
+  });
+
+  it('o mapa user->codigo (display) vem da view fresca account=oben, não do espelho poluído', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o cockpit voltou a ler o código do cliente do espelho omie_clientes sem conta',
+    ).toMatch(/from\("omie_customer_account_map_fresco"\)[\s\S]{0,200}\.eq\("account", "oben"\)/);
+    expect(
+      src,
+      'REGRESSÃO: fin-valor-cockpit ainda lê o espelho poluído omie_clientes no mapa de display',
+    ).not.toMatch(/from\("omie_clientes"\)/);
+  });
+});
