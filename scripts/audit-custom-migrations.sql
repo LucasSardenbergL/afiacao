@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 356
+-- Total de custom migrations: 357
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -395,7 +395,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260709163500', 'selfservice_pr00bis_b_revoke_omie_payload', '20260709163500_selfservice_pr00bis_b_revoke_omie_payload.sql'),
   ('20260710012337', 'carteira_saude_eligible_e_efeito_mensal', '20260710012337_carteira_saude_eligible_e_efeito_mensal.sql'),
   ('20260711090000', 'prime_fundacao', '20260711090000_prime_fundacao.sql'),
-  ('20260711145000', 'v_grupo_contatos_fresca', '20260711145000_v_grupo_contatos_fresca.sql')
+  ('20260711145000', 'v_grupo_contatos_fresca', '20260711145000_v_grupo_contatos_fresca.sql'),
+  ('20260711193000', 'param_auto_resumo_altas_reducoes_segurado', '20260711193000_param_auto_resumo_altas_reducoes_segurado.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1663,7 +1664,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_insert', 'prime_beneficio_uso'),
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_update', 'prime_beneficio_uso'),
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_cliente_read', 'prime_beneficio_uso'),
-  ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', '')
+  ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', ''),
+  ('param_auto_resumo_altas_reducoes_segurado', 'function', 'public', 'reposicao_param_auto_resumo_tick', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2979,7 +2981,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_insert', 'prime_beneficio_uso'),
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_update', 'prime_beneficio_uso'),
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_cliente_read', 'prime_beneficio_uso'),
-  ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', '')
+  ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', ''),
+  ('param_auto_resumo_altas_reducoes_segurado', 'function', 'public', 'reposicao_param_auto_resumo_tick', '')
 )
 SELECT
   e.migration,
