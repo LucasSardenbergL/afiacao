@@ -433,7 +433,12 @@ serve(async (req: Request) => {
     if (linhas.length === 0) return jsonResponse({ company: COMPANY, vazio: true, motivo: "Sem linhas de venda da Oben no TTM." }, 200);
 
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
-    const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_clientes").select("user_id, omie_codigo_cliente").order("id", { ascending: true }).range(f, t), "omie_clientes");
+    // #8 (P0-B-bis PR-4): mapa user->codigo de DISPLAY pela view fresca account=oben (COMPANY). O espelho
+    // omie_clientes é colacor_sc-dominante sem conta → exibia o código de OUTRA conta do mesmo user.
+    // UNIQUE(user_id,account) → ≤1 linha/user no Map. Display ℹ️ baixo: offset .range basta (um miss de TTL
+    // entre páginas só omitiria 1 código; o syncPedidos, money-path, é que exige keyset). Ordena por
+    // omie_codigo_cliente (UNIQUE por conta → estável e sem empate no offset).
+    const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_customer_account_map_fresco").select("user_id, omie_codigo_cliente").eq("account", "oben").order("omie_codigo_cliente", { ascending: true }).range(f, t), "omie_customer_account_map_fresco");
     const userToOmie = new Map(clientesAll.map((c) => [c.user_id, String(c.omie_codigo_cliente)]));
     // Nome do cliente: profiles.user_id = order_items.customer_user_id (~98% cobertura na Oben; psql-ro
     // 2026-06-23). razao_social tem prioridade, senão name. service_role bypassa a RLS de profiles.

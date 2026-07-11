@@ -172,6 +172,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useUnifiedOrder.accountGuard.test.ts",
       "src/pages/__tests__/SalesQuotes.accountGuard.test.tsx",
       "src/pages/__tests__/SalesQuotes.priceGuard.test.tsx",
+      "src/pages/__tests__/displayReaders.viewFresca.test.ts",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },
