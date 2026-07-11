@@ -163,3 +163,68 @@ export function computeCarteira(
 
   return { assignments, conflicts, orphanCount, chainViolations };
 }
+
+// ── P0-B-bis ponta 2/2: o load do carteira-rebuild lê o vendedor da PROOF oben (não do espelho poluído).
+// A LISTA de membros continua vindo do espelho (preserva a herança B-lite: gêmeo + clones no mesmo grupo);
+// só a FONTE do vendedor muda, via lookup em omie_customer_account_map_fresco(account='oben'). As 4 funções
+// são ESPELHADAS verbatim no edge (Deno não importa de src/) — paridade textual no canário edge-money-path.
+// Guards fail-closed endurecidos após o Codex challenge (8 P1):
+//   • coerceCodigoVendedor: SÓ decimal canônico (regex ^[0-9]+$ + BigInt) antes de virar number — rejeita
+//     hex/exponencial/decimal-lossy/sinal/espaços (P2 Codex); positivo e ≤ 2^53 (0/neg/>2^53 = null).
+//   • montarClientes: merge LISTA×VENDEDOR preservando a ordem do espelho (clone ausente da proof → null).
+//   • avaliarGuardProof (PRÉ-compute): aborta se proof oben fresca vazia / < 50% da proof CRUA (denominador
+//     é a própria proof, não o espelho misto — corrige o falso-positivo #4) / 0 vendedores não-null.
+//   • avaliarGuardResultado (PÓS-compute): aborta se 0 omie ELEGÍVEL (#3); BLOQUEIA o bootstrap quando o
+//     BASELINE PERSISTIDO é 0 sem flag — INDEPENDENTE da carteira atual (Codex R3: se a persistência falha,
+//     o baseline segue 0 → o cron fica fail-closed); compara SÓ com o baseline persistido (fator 0.8, monotônico
+//     → sem catraca). Retorna o novoBaseline a gravar.
+//   • parseBaselineSaudavel: valida o baseline lido do company_config (decimal canônico ≤ 2^53); inválido → null
+//     (o edge ABORTA em vez de virar valor inseguro — "4797lixo"→null, "1e9"→null, gigante→null).
+// MIRROR-START carteira-load — espelhado verbatim em supabase/functions/carteira-rebuild/index.ts
+export function coerceCodigoVendedor(raw: unknown): number | null {
+  if (typeof raw === 'number') {
+    return Number.isSafeInteger(raw) && raw > 0 ? raw : null;
+  }
+  if (typeof raw !== 'string' || !/^[0-9]+$/.test(raw)) return null;
+  const b = BigInt(raw);
+  return b > 0n && b <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(b) : null;
+}
+export function montarClientes(espelhoIds: string[], proofOben: Map<string, number | null>): OmieClienteRow[] {
+  return espelhoIds.map((customer_user_id) => ({
+    customer_user_id,
+    omie_codigo_vendedor: proofOben.get(customer_user_id) ?? null,
+  }));
+}
+export function avaliarGuardProof(m: { proofCrua: number; proofFresca: number; comVendedor: number }): { abortar: boolean; motivo: string | null } {
+  if (m.proofFresca === 0) {
+    return { abortar: true, motivo: 'proof oben fresca vazia (sync parado / TTL 7d expirado)' };
+  }
+  if (m.proofCrua > 0 && m.proofFresca < 0.5 * m.proofCrua) {
+    return { abortar: true, motivo: `proof oben fresca (${m.proofFresca}) < 50% da crua (${m.proofCrua}) — TTL/sync degradado` };
+  }
+  if (m.comVendedor === 0) {
+    return { abortar: true, motivo: 'proof oben sem vendedor nao-null (ponta 1 nao surtiu efeito) — preservando carteira' };
+  }
+  return { abortar: false, motivo: null };
+}
+export function avaliarGuardResultado(m: { omieElegivelNovo: number; baselinePersistido: number; autorizado: boolean }): { abortar: boolean; motivo: string | null; novoBaseline: number } {
+  if (m.omieElegivelNovo === 0) {
+    return { abortar: true, motivo: '0 assignments omie elegiveis (carteira 100% Hunter) — abortado p/ preservar', novoBaseline: m.baselinePersistido };
+  }
+  if (m.autorizado) {
+    return { abortar: false, motivo: null, novoBaseline: m.omieElegivelNovo };
+  }
+  if (m.baselinePersistido === 0) {
+    return { abortar: true, motivo: 'bootstrap (baseline persistido=0) exige autorizacao explicita — cron nao faz bootstrap', novoBaseline: 0 };
+  }
+  if (m.omieElegivelNovo < 0.8 * m.baselinePersistido) {
+    return { abortar: true, motivo: `regressao: omie elegivel novo (${m.omieElegivelNovo}) < 80% do baseline saudavel (${m.baselinePersistido})`, novoBaseline: m.baselinePersistido };
+  }
+  return { abortar: false, motivo: null, novoBaseline: Math.max(m.baselinePersistido, m.omieElegivelNovo) };
+}
+export function parseBaselineSaudavel(raw: string | null | undefined): number | null {
+  if (raw == null || !/^[0-9]+$/.test(raw)) return null;
+  const b = BigInt(raw);
+  return b <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(b) : null;
+}
+// MIRROR-END
