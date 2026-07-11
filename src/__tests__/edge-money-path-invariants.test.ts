@@ -481,6 +481,87 @@ describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helpe
   });
 });
 
+// ── P1/P2 hardening do resolver de identidade do syncPedidos (omie-vendas-sync) — Codex xhigh 2026-07-10 ──
+// Dois furos PRÉ-EXISTENTES no resolver de identidade dos pedidos (fora do escopo da PR-2 #1285, que migrou
+// só o cache codigo->user): (P1) o docToUserMap (doc->user de profiles) fazia last-write-wins → doc
+// compartilhado por 2 users mapeava o ARBITRÁRIO, e um pedido no fallback ConsultarCliente ia pro cliente
+// ERRADO. (P2) o resolveClientUserId só passava throwOnTransient no modo cursor → no incremental um
+// transitório do ConsultarCliente virava null cacheado + skip PERMANENTE (success:true). Fail-closed via
+// helper puro espelhado (buildDocUserMapFailClosed) + throwOnTransient incondicional. A paridade textual
+// aqui pega a reversão do deploy do Lovable (mesma armadilha do #1272). Ver docs/agent/money-path.md.
+const DOC_USER_MAP = 'src/lib/omie/omie-doc-user-map.ts';
+
+describe('guardrail money-path: syncPedidos resolve identidade fail-closed (P1 doc-ambíguo + P2 transitório)', () => {
+  const src = read(VENDAS);
+  const helper = read(DOC_USER_MAP);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('async function syncPedidos');
+    expect(helper).toContain('buildDocUserMapFailClosed');
+  });
+
+  it('o helper puro existe e exporta buildDocUserMapFailClosed', () => {
+    expect(helper).toMatch(/export function buildDocUserMapFailClosed/);
+  });
+
+  // ── P1: docToUserMap fail-closed (helper) + keyset estável + error-throw ──
+  it('P1: o docToUserMap vem do helper fail-closed (não mais last-write-wins com .set direto)', () => {
+    expect(
+      src,
+      'REGRESSÃO: o docToUserMap não é mais montado pelo helper fail-closed — last-write-wins reintroduzido?',
+    ).toMatch(/docToUserMap = buildDocUserMapFailClosed\(/);
+    expect(
+      src,
+      'REGRESSÃO: voltou docToUserMap.set(...) direto no pré-load — o fail-closed do helper foi contornado',
+    ).not.toMatch(/docToUserMap\.set\(/);
+  });
+
+  it('P1: o edge USA o helper — define o MIRROR E chama (≥2 menções)', () => {
+    expect(src, 'edge não define mais o helper espelhado').toMatch(/function buildDocUserMapFailClosed/);
+    expect(
+      count(src, 'buildDocUserMapFailClosed'),
+      'helper deve ser DEFINIDO (MIRROR) e CHAMADO (real-path) — ≥2 menções',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('P1: o pré-load de profiles pagina por KEYSET estável (.order + .gt) e é FAIL-CLOSED em erro de query', () => {
+    // Sem .order o PostgREST não garante ordem entre páginas → profile pulado (some do mapa). Codex.
+    expect(
+      src,
+      'REVERSÃO Lovable? o pré-load do docToUserMap não pagina mais por keyset (.order(user_id) + .gt)',
+    ).toMatch(/from\('profiles'\)[\s\S]{0,200}\.order\('user_id'\)[\s\S]{0,120}\.gt\('user_id', lastUserId\)/);
+    expect(
+      src,
+      'REGRESSÃO: o pré-load do docToUserMap engole o erro da query — mapa parcial silencioso (fail-open)',
+    ).toMatch(/if \(profErr\) throw new Error/);
+  });
+
+  it('P1 PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'omie doc-user-fail-closed'),
+      'edge divergiu do helper de src/ — o Lovable reescreveu a detecção fail-closed no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'omie doc-user-fail-closed'));
+  });
+
+  // ── P2: resolveClientUserId fail-safe em transitório nos DOIS modos (cursor E incremental) ──
+  it('P2: resolveClientUserId passa throwOnTransient INCONDICIONAL (não só no cursor) e sem catch fail-open', () => {
+    const bloco = src.match(/async function resolveClientUserId[\s\S]*?async function getClientAddressPhone/)?.[0] ?? '';
+    expect(bloco, 'não achei o corpo de resolveClientUserId (âncora quebrada)').not.toBe('');
+    expect(
+      bloco,
+      'REGRESSÃO P2: resolveClientUserId voltou a condicionar throwOnTransient ao cursor — transitório no incremental vira skip permanente',
+    ).not.toMatch(/cursor \?/);
+    expect(
+      bloco,
+      'REGRESSÃO P2: resolveClientUserId não passa mais { throwOnTransient: true } ao ConsultarCliente',
+    ).toMatch(/\{ throwOnTransient: true \}/);
+    expect(
+      bloco,
+      'REGRESSÃO P2: voltou o catch que engole o transitório no incremental (fail-open → null cacheado + skip)',
+    ).not.toMatch(/catch\s*\(/);
+  });
+});
+
 // ── P0-B-bis PR-1 (omie-sync self-service USA a view fresca account-correta + helper espelhado) ──
 // O pedido self-service (conta colacor_sc) resolvia a identidade Omie pelo espelho poluído omie_clientes
 // (mix de contas, rótulo 'colacor' mentiroso) e fallback registros:1 (last-write-wins). Migrado p/ a view
