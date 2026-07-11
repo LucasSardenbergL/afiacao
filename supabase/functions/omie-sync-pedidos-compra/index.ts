@@ -11,6 +11,7 @@ import {
   deveRodarCompleto,
   type ModoSyncPedidos,
 } from "../_shared/janela-pedidos-compra.ts";
+import { computeVolumeOk } from "../_shared/reposicao-volume-run.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -66,6 +67,11 @@ interface EmpresaSummary {
   total_paginas: number;
   pedidos_sincronizados: number;
   erros: number;
+  // [PR1 reconciliação] preenchidos só no modo completo — o handler grava o marcador imutável de run.
+  full_run_id?: string;
+  ids_distintos?: number;
+  janela_de?: string;   // ISO yyyy-mm-dd (janela REAL de previsão consultada; anti-timezone — não CURRENT_DATE)
+  janela_ate?: string;
 }
 
 // ===== Omie API shapes (inline — Edge Function não pode importar de @/) =====
@@ -292,6 +298,7 @@ function mapPedidoToRow(empresa: Empresa, pedido: OmiePedido): Record<string, un
 async function upsertPedidosLote(
   supabase: SupabaseClient,
   rows: Record<string, unknown>[],
+  fullRunId?: string, // [PR1] só no modo completo → carimba o sinal single-writer last_seen nos POs vistos
 ): Promise<{ sincronizados: number; erros: number }> {
   const nowIso = new Date().toISOString();
   const payload: Record<string, unknown>[] = [];
@@ -310,6 +317,12 @@ async function upsertPedidosLote(
       if (!PRESERVE_FIELDS.has(k)) clean[k] = v;
     }
     clean.updated_at = nowIso;
+    if (fullRunId) {
+      // [PR1] sinal single-writer: SÓ este sync (modo completo) escreve last_seen_pedidos_full_* → imune ao
+      // updated_at multi-writer (nfe/cte/sku). A reconciliação (PR2/3) usa isto p/ gerar candidatos de PO excluído.
+      clean.last_seen_pedidos_full_run_id = fullRunId;
+      clean.last_seen_pedidos_full_at = nowIso;
+    }
     payload.push(clean);
   }
 
@@ -379,6 +392,17 @@ async function syncEmpresa(
   console.log(
     `[sync-pedidos] empresa=${empresa} modo=${modo} janela previsão ${dataDe}→${dataAte} (passado ${passadoDias}d, futuro ${futuroDias}d)`,
   );
+
+  // [PR1 reconciliação] SÓ no modo completo: gera um run_id e conta os POs DISTINTOS vistos → o handler grava o
+  // marcador imutável (reposicao_pedidos_compra_run) e a edge carimba last_seen nos POs upsertados. Janela em ISO
+  // (a coluna é `date`; dataDe/dataAte são BR p/ o Omie). Incremental não gera marcador (só o completo cobre 365d).
+  const fullRunId = modo === "completo" ? crypto.randomUUID() : undefined;
+  const idsVistos = new Set<number>();
+  // Janela em ISO derivada das MESMAS datas BR enviadas ao Omie (parseBRDateOnly), não de toISOString(): getDate
+  // é hora LOCAL e toISOString é UTC → perto da meia-noite deslocariam o dia em ±1. O marcador tem de registrar
+  // EXATAMENTE a janela consultada (a cobertura que a reconciliação do PR2/3 vai confiar).
+  const janelaDeISO = parseBRDateOnly(dataDe) ?? undefined;
+  const janelaAteISO = parseBRDateOnly(dataAte) ?? undefined;
 
   // [fix paginação] PAGINA ATÉ A PÁGINA VAZIA — não confiar em nTotalPaginas (Omie SUB-REPORTA → lia só a 1ª
   // página → pedidos 1079+ sumiam). Fingerprint anti-loop por página repetida + teto técnico (espelho do irmão).
@@ -450,8 +474,13 @@ async function syncEmpresa(
 
     console.log(`[sync-pedidos] empresa=${empresa} pagina=${pagina} recebidos=${pedidos.length}`);
 
+    // [PR1] conta POs DISTINTOS por nCodPed (a mesma chave do UNIQUE/tracking) → volume_ok do marcador.
+    for (const p of pedidos) {
+      const nCod = Number(p?.cabecalho_consulta?.nCodPed ?? p?.cabecalho?.nCodPed);
+      if (Number.isFinite(nCod) && nCod > 0) idsVistos.add(nCod);
+    }
     const rows = pedidos.map((pedido) => mapPedidoToRow(empresa, pedido));
-    const upsertRes = await upsertPedidosLote(supabase, rows);
+    const upsertRes = await upsertPedidosLote(supabase, rows, fullRunId);
     summary.pedidos_sincronizados += upsertRes.sincronizados;
     summary.erros += upsertRes.erros;
 
@@ -466,6 +495,15 @@ async function syncEmpresa(
     // o já capturado (upsert idempotente retoma no próximo ciclo).
     console.error(`[sync-pedidos] empresa=${empresa} excedeu ${MAX_PAGINAS} páginas sem ver fim — abort anti-truncamento`);
     summary.erros++;
+  }
+
+  // [PR1] expõe run_id, contagem de POs distintos e a janela REAL (ISO) p/ o handler gravar o marcador
+  // imutável do run completo. Só no completo (fullRunId definido); incremental não gera marcador.
+  if (fullRunId) {
+    summary.full_run_id = fullRunId;
+    summary.ids_distintos = idsVistos.size;
+    summary.janela_de = janelaDeISO;
+    summary.janela_ate = janelaAteISO;
   }
 
   return summary;
@@ -597,6 +635,53 @@ async function marcarCompletoOk(supabase: SupabaseClient, empresa: Empresa): Pro
   }
 }
 
+// [PR1 reconciliação] Grava o marcador IMUTÁVEL do run completo em reposicao_pedidos_compra_run. Diferente de
+// marcarCompletoOk (best-effort/cadência que ENGOLE erro): aqui a gravação é a BASE DE VERDADE da reconciliação
+// (PR2/3 só confiam num run_id efetivamente persistido) → loga ALTO em falha ("FALHA CRÍTICA"), não silencioso.
+// Retorna o run_id gravado ou null. volume_ok = circuit-breaker de cobertura (mediana dos últimos completos;
+// null no bootstrap — NUNCA true fabricado). Aditivo: NÃO aborta o sync (o INSERT é a última coisa do run).
+async function gravarRunCompleto(
+  supabase: SupabaseClient,
+  empresa: Empresa,
+  runId: string,
+  janelaDe: string,
+  janelaAte: string,
+  idsDistintos: number,
+): Promise<string | null> {
+  const { data: hist } = await supabase
+    .from("reposicao_pedidos_compra_run")
+    .select("ids_distintos")
+    .eq("empresa", empresa)
+    .eq("modo", "completo")
+    .eq("status", "ok")
+    .order("finalizado_em", { ascending: false })
+    .limit(10);
+  const historico = (hist ?? []).map((h) => Number((h as { ids_distintos: number }).ids_distintos));
+  const { baseline, volumeOk } = computeVolumeOk(idsDistintos, historico);
+  const { error } = await supabase.from("reposicao_pedidos_compra_run").insert({
+    run_id: runId,
+    empresa,
+    modo: "completo",
+    janela_de: janelaDe,
+    janela_ate: janelaAte,
+    ids_distintos: idsDistintos,
+    volume_baseline: baseline,
+    volume_ok: volumeOk,
+    status: "ok",
+    finalizado_em: new Date().toISOString(),
+  });
+  if (error) {
+    console.error(
+      `[sync-pedidos] FALHA CRÍTICA gravarRunCompleto empresa=${empresa} run=${runId}: ${error.message}`,
+    );
+    return null;
+  }
+  console.log(
+    `[sync-pedidos] run completo gravado empresa=${empresa} run=${runId} ids=${idsDistintos} volume_ok=${volumeOk}`,
+  );
+  return runId;
+}
+
 // ===== Handler =====
 async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
@@ -715,6 +800,11 @@ Deno.serve(async (req) => {
       // NÃO avança → o próximo ciclo do cron volta a tentar completo (deveRodarCompleto).
       if (gravaHeartbeat && modo === "completo" && s.erros === 0) {
         await marcarCompletoOk(supabase, empresa);
+        // [PR1] grava o marcador IMUTÁVEL do run (base de verdade da reconciliação de PO excluído). Usa o run_id
+        // e a janela REAL (ISO) expostos pelo syncEmpresa — NÃO CURRENT_DATE (anti-timezone, Codex P2).
+        if (s.full_run_id && s.janela_de && s.janela_ate) {
+          await gravarRunCompleto(supabase, empresa, s.full_run_id, s.janela_de, s.janela_ate, s.ids_distintos ?? 0);
+        }
       }
     }
     // Fail-CLOSED na coleta total: 0 sincronizados em TODAS as empresas + algum erro → 502 no caminho
