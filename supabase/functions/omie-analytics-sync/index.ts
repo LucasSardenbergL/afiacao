@@ -68,6 +68,8 @@ interface OmieClienteCadastro {
   codigo_cliente_omie?: number;
   codigo_cliente_integracao?: string | null;
   codigo_vendedor?: number | null;
+  // O vendedor do cliente mora em recomendacoes.codigo_vendedor (o raiz vem vazio no ListarClientes).
+  recomendacoes?: { codigo_vendedor?: number | null };
   cnpj_cpf?: string;
   razao_social?: string;
   nome_fantasia?: string;
@@ -324,6 +326,26 @@ function docsComCodigoAmbiguoNoOmie(
 }
 // MIRROR-END
 
+// MIRROR-START omie-codigo-vendedor — espelhado verbatim de src/lib/omie/codigo-vendedor.ts
+// Extrai o vendedor do cadastro Omie (ListarClientes) — money-path P0-B-bis (vendedor → carteira → comissão).
+// O vendedor mora em recomendacoes.codigo_vendedor (o codigo_vendedor RAIZ vem vazio no ListarClientes);
+// recomendacoes é a fonte PRIMÁRIA (padrão de omie-cliente/omie-sync), o raiz é fallback. Só inteiro
+// POSITIVO conta como vendedor — 0/negativo/não-inteiro = não-atribuído (resolve o ??/|| ambíguo, Codex P2).
+// PURA: sem I/O. Espelhado no edge (Deno não importa de src/); paridade textual no CI.
+function extrairCodigoVendedor(c: {
+  codigo_vendedor?: number | null;
+  recomendacoes?: { codigo_vendedor?: number | null } | null;
+}): number | null {
+  // bigint-safe (Codex P3): código > 2^53 perderia precisão e casaria com outro vendedor.
+  const positivo = (v: number | null | undefined): number | null =>
+    typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? v : null;
+  // recomendacoes é a fonte AUTORITATIVA: se PRESENTE (mesmo 0/inválido) ela decide — 0 = "sem vendedor"
+  // explícito, não cai no raiz (Codex P2: fallback só quando o primário está AUSENTE, não presente-inválido).
+  const nested = c.recomendacoes?.codigo_vendedor;
+  return nested != null ? positivo(nested) : positivo(c.codigo_vendedor);
+}
+// MIRROR-END
+
 async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "customers", account, { status: "running", error_message: null });
 
@@ -398,7 +420,10 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
             user_id: userIdByDoc,
             account: empresaMap,
             omie_codigo_cliente: c.codigo_cliente_omie,
-            omie_codigo_vendedor: c.codigo_vendedor || null,
+            // P0-B-bis: vendedor da PROOF (document-first, account-safe) via helper — recomendacoes vence.
+            // O mirror upsertByUser (code-first) NÃO recebe vendedor (Codex: resolução insegura); a carteira
+            // migra p/ ler a proof (carteira-rebuild). Só a proof alimenta a carteira daqui pra frente.
+            omie_codigo_vendedor: extrairCodigoVendedor(c),
             source: "document",
             updated_at: new Date().toISOString(),
           });
