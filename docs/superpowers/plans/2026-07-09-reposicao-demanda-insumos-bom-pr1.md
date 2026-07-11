@@ -752,6 +752,27 @@ got=$(Pq -c "SELECT count(*) FROM pg_views
              WHERE viewname='v_venda_items_history_efetivo'
                AND definition ILIKE '%v_pcp_malha_oben%';")
 assert_eq "Q1 a view de venda/preco segue intocada" "0" "$got"
+
+echo "→ R. shape: v_sku_demanda_efetiva alinha coluna-a-coluna com v_venda_items_history_efetivo"
+# O PR-2 troca só o FROM das 4 views estatísticas para a nova. Uma troca de posição
+# entre colunas do MESMO tipo (ex.: nfe_numero↔nfe_serie, ambas text) passaria no
+# UNION ALL mas corromperia o dado — este assert estrutural pega isso (fecha o Menor
+# do review da Task 3, que os asserts por valor não cobrem).
+got=$(Pq -c "
+  SELECT count(*) FROM (
+    (SELECT ordinal_position, column_name, data_type FROM information_schema.columns
+       WHERE table_name='v_venda_items_history_efetivo'
+     EXCEPT
+     SELECT ordinal_position, column_name, data_type FROM information_schema.columns
+       WHERE table_name='v_sku_demanda_efetiva')
+    UNION ALL
+    (SELECT ordinal_position, column_name, data_type FROM information_schema.columns
+       WHERE table_name='v_sku_demanda_efetiva'
+     EXCEPT
+     SELECT ordinal_position, column_name, data_type FROM information_schema.columns
+       WHERE table_name='v_venda_items_history_efetivo')
+  ) d;")
+assert_eq "R1 shape identico (posicao+nome+tipo) — pré-requisito do PR-2" "0" "$got"
 ```
 
 - [ ] **Step 3: Rodar e commitar**
