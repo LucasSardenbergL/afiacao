@@ -13,7 +13,7 @@
 --    casar com o espaço de SKU de v_venda_items_history_efetivo (Codex #7:
 --    hoje o DILUENTE PU DFA.4128LT é PAI na malha e está consolidado).
 -- ─────────────────────────────────────────────────────────────────────────────
-CREATE OR REPLACE VIEW v_pcp_malha_oben_cand AS
+CREATE OR REPLACE VIEW v_pcp_malha_oben_cand WITH (security_invoker = true) AS
 WITH oben_ativo AS (
   -- 1 linha por codigo. `n` expõe a ambiguidade em vez de escondê-la (nunca LIMIT 1).
   SELECT codigo,
@@ -47,10 +47,12 @@ SELECT
   COALESCE(ep.novo, pob.omie)             AS pai_oben,   -- espaço EFETIVO
   COALESCE(ec.novo, cob.omie)             AS comp_oben,  -- espaço EFETIVO
   cfin.unidade                            AS un_estoque, -- unidade do insumo FINAL
-  cfin.ativo                              AS comp_ativo
+  cfin.ativo                              AS comp_ativo,
+  pcol.codigo                             AS pai_codigo_prd,   -- NULL = pai não resolveu no catálogo colacor
+  ccol.codigo                             AS comp_codigo_prd   -- NULL = componente não resolveu no catálogo colacor
 FROM vw_pcp_malha_componentes m
-JOIN col pcol ON pcol.omie_codigo_produto = m.pai_codigo
-JOIN col ccol ON ccol.omie_codigo_produto = m.componente_codigo
+LEFT JOIN col pcol ON pcol.omie_codigo_produto = m.pai_codigo
+LEFT JOIN col ccol ON ccol.omie_codigo_produto = m.componente_codigo
 LEFT JOIN oben_ativo pob ON pob.codigo = pcol.codigo
 LEFT JOIN oben_ativo cob ON cob.codigo = ccol.codigo
 LEFT JOIN efetivo    ep  ON ep.antigo   = pob.omie
@@ -67,7 +69,7 @@ COMMENT ON VIEW v_pcp_malha_oben_cand IS
 --    HAVING count(DISTINCT quantidade)=1 → duplicata exata deduplica;
 --    par com qtdes divergentes NÃO passa (cai na quarentena). Codex #2.
 -- ─────────────────────────────────────────────────────────────────────────────
-CREATE OR REPLACE VIEW v_pcp_malha_oben AS
+CREATE OR REPLACE VIEW v_pcp_malha_oben WITH (security_invoker = true) AS
 SELECT
   c.pai_oben,
   c.comp_oben,
@@ -92,10 +94,12 @@ COMMENT ON VIEW v_pcp_malha_oben IS
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 3. QUARENTENA: nada some calado. Um motivo por linha excluída.
 -- ─────────────────────────────────────────────────────────────────────────────
-CREATE OR REPLACE VIEW v_pcp_malha_oben_quarentena AS
+CREATE OR REPLACE VIEW v_pcp_malha_oben_quarentena WITH (security_invoker = true) AS
 WITH classif AS (
   SELECT c.*,
     CASE
+      WHEN c.pai_codigo_prd IS NULL                   THEN 'pai_nao_resolvido_colacor'
+      WHEN c.comp_codigo_prd IS NULL                  THEN 'componente_nao_resolvido_colacor'
       WHEN c.n_pai_oben IS NULL OR c.n_pai_oben = 0   THEN 'pai_sem_par_oben_ativo'
       WHEN c.n_pai_oben > 1                           THEN 'pai_ambiguo_oben'
       WHEN c.n_comp_oben IS NULL OR c.n_comp_oben = 0 THEN 'componente_sem_par_oben_ativo'
@@ -126,3 +130,11 @@ WHERE c.motivo IS NULL
 
 COMMENT ON VIEW v_pcp_malha_oben_quarentena IS
   'Pares da ficha EXCLUÍDOS da explosão, com motivo. Fila de exceção: precisão>recall — insumo com unidade divergente ou cardinalidade ambígua não vira compra, mas fica visível aqui.';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Segurança (padrão P0 do repo — docs/agent/database.md §4; db/pcp-f1a-m2-nucleo.sql).
+-- security_invoker=true (acima) faz as views respeitarem a RLS staff-only das
+-- tabelas-base; o REVOKE fecha a anon-key pública (senão a ficha técnica vaza).
+-- ─────────────────────────────────────────────────────────────────────────────
+REVOKE ALL ON public.v_pcp_malha_oben_cand, public.v_pcp_malha_oben, public.v_pcp_malha_oben_quarentena FROM anon, PUBLIC;
+GRANT SELECT ON public.v_pcp_malha_oben_cand, public.v_pcp_malha_oben, public.v_pcp_malha_oben_quarentena TO authenticated;
