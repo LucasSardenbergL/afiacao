@@ -173,7 +173,12 @@
 PR-1 fundação de dados (PG17) → PR-2 admin mínimo → PR-3 `/prime` extrato → PR-4 sync colacor_sc → PR-5 painel do piloto. V2 pós-piloto: automação desconto, notificação WhatsApp do extrato, matcher automático.
 
 ### Honestidade embutida
-Mês sem registro = "sem uso registrado" (≠ R$0 medido) · afiação não casada = fila de reconciliação manual · assinatura suspensa congela franquia.
+Mês sem registro = "sem uso registrado" (≠ R$0 medido) · afiação não casada = fila de reconciliação manual · assinatura suspensa congela franquia E extrato (regra de banco, não só de admin).
+
+### Refinamentos do challenge Codex (2026-07-11, dobrados no plano do PR-1)
+- **Extrato fala "mensalidade contratada", NUNCA "você pagou"** até existir registro de pagamento real (`prime_cobrancas` = PR posterior, junto da cobrança) — "pagou" sem fato de boleto seria número fabricado.
+- **Registro de benefício é append-only:** contrafactual amarrado (`valor = dentes × preço/dente da época`, lastro em pedido Omie obrigatório), correção só por ESTORNO auditável, nem staff deleta.
+- **Deferidos documentados:** chave por CNPJ multi-login (hoje `customer_user_id` é a identidade; migra se surgir 2º login) e `status_registro` de reconciliação (entra com o matcher automático v2).
 
 ## 8. Pendências e decisões abertas
 
