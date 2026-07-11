@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **354** custom migrations totais
-- **1251** objetos esperados (criados por estas migrations)
+- **355** custom migrations totais
+- **1276** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 353
-  - `rls_policy`: 277
-  - `index`: 208
+  - `function`: 357
+  - `rls_policy`: 285
+  - `index`: 211
   - `cron_job`: 146
-  - `table`: 135
-  - `trigger`: 70
-  - `view`: 58
+  - `table`: 138
+  - `trigger`: 76
+  - `view`: 59
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3019,6 +3019,36 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_carteira_saude` | — |
+
+### `20260711090000_prime_fundacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.prime_assinatura_sem_sobreposicao` | — |
+| `function` | `public.prime_assinatura_update_guard` | — |
+| `function` | `public.prime_uso_vigencia` | — |
+| `function` | `public.prime_uso_so_estorno` | — |
+| `view` | `public.v_prime_extrato_mensal` | — |
+| `table` | `public.prime_planos` | — |
+| `table` | `public.prime_assinaturas` | — |
+| `table` | `public.prime_beneficio_uso` | — |
+| `index` | `public.uq_prime_assinatura_viva` | `prime_assinaturas` |
+| `index` | `public.idx_prime_uso_assinatura_mes` | `prime_beneficio_uso` |
+| `index` | `public.uq_prime_bonus_mes` | `prime_beneficio_uso` |
+| `trigger` | `public.trg_prime_assinatura_sem_sobreposicao` | `prime_assinaturas` |
+| `trigger` | `public.trg_prime_assinatura_update_guard` | `prime_assinaturas` |
+| `trigger` | `public.trg_prime_uso_vigencia` | `prime_beneficio_uso` |
+| `trigger` | `public.trg_prime_uso_so_estorno` | `prime_beneficio_uso` |
+| `trigger` | `public.trg_prime_planos_updated_at` | `prime_planos` |
+| `trigger` | `public.trg_prime_assinaturas_updated_at` | `prime_assinaturas` |
+| `rls_policy` | `public.prime_planos_staff_all` | `prime_planos` |
+| `rls_policy` | `public.prime_planos_auth_read` | `prime_planos` |
+| `rls_policy` | `public.prime_assinaturas_staff_all` | `prime_assinaturas` |
+| `rls_policy` | `public.prime_assinaturas_cliente_read` | `prime_assinaturas` |
+| `rls_policy` | `public.prime_uso_staff_select` | `prime_beneficio_uso` |
+| `rls_policy` | `public.prime_uso_staff_insert` | `prime_beneficio_uso` |
+| `rls_policy` | `public.prime_uso_staff_update` | `prime_beneficio_uso` |
+| `rls_policy` | `public.prime_uso_cliente_read` | `prime_beneficio_uso` |
 
 ## Próximos passos por status
 
