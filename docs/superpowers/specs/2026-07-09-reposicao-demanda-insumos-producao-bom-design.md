@@ -252,6 +252,12 @@ JOIN sku_substituicao s ON s.sku_codigo_antigo=opb.omie_codigo_produto::text
 SELECT count(*) FROM sku_substituicao a JOIN sku_substituicao b ON a.sku_codigo_novo=b.sku_codigo_antigo
 WHERE a.empresa='OBEN' AND a.status='aplicada' AND a.acao_parametros='consolidar_demanda'
   AND b.empresa='OBEN' AND b.status='aplicada' AND b.acao_parametros='consolidar_demanda';
+-- fan-out do de-para (review final): um 'antigo' mapeando p/ 2 'novo' distintos inflaria demanda
+-- (paridade com v_venda_items_history_efetivo, que faz o mesmo LEFT JOIN; 0 casos hoje)
+SELECT count(*) FROM (
+  SELECT sku_codigo_antigo FROM sku_substituicao
+  WHERE empresa='OBEN' AND status='aplicada' AND acao_parametros='consolidar_demanda'
+  GROUP BY sku_codigo_antigo HAVING count(DISTINCT sku_codigo_novo) > 1) d;
 -- #5 vendas de pais da malha sem NF (90d) — mede quanto consumo não gradua
 SELECT count(*) FROM venda_items_history v
 WHERE v.empresa='OBEN' AND v.nfe_chave_acesso IS NULL AND v.data_emissao >= CURRENT_DATE-90
