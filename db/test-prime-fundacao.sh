@@ -70,8 +70,10 @@ eq "RLS ligada nas 3 tabelas" \
    "$(Pq -c "SELECT count(*) FROM pg_class WHERE relname IN ('prime_planos','prime_assinaturas','prime_beneficio_uso') AND relrowsecurity")" "3"
 eq "8 policies criadas (uso SEM policy de DELETE = append-only)" \
    "$(Pq -c "SELECT count(*) FROM pg_policies WHERE tablename LIKE 'prime_%'")" "8"
-eq "5 triggers trg_prime_*" \
-   "$(Pq -c "SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_prime_%' AND NOT tgisinternal")" "5"
+eq "6 triggers trg_prime_*" \
+   "$(Pq -c "SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_prime_%' AND NOT tgisinternal")" "6"
+eq "data_inicio nasce em SP (DEFAULT não-UTC)" \
+   "$(Pq -c "SELECT count(*) FROM information_schema.columns WHERE table_name='prime_assinaturas' AND column_name='data_inicio' AND column_default LIKE '%Sao_Paulo%'")" "1"
 
 # Competências na MESMA TZ da view/triggers (virada de mês UTC≠SP é armadilha do repo)
 MES_ATUAL="$(Pq -c "SELECT date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))::date")"
@@ -149,6 +151,10 @@ expect_sqlstate "suspensa SEM suspensa_em é barrada" "23514" \
   "UPDATE public.prime_assinaturas SET status='suspensa' WHERE id='$A22'"
 expect_sqlstate "ativa COM suspensa_em é barrada (estado amarrado às datas)" "23514" \
   "UPDATE public.prime_assinaturas SET suspensa_em = '${MES_ATUAL}' WHERE id='$A22'"
+expect_sqlstate "preco_contratado é IMUTÁVEL (grandfathering é regra de banco)" "P0001" \
+  "UPDATE public.prime_assinaturas SET preco_contratado = 50 WHERE id='$A22'"
+expect_sqlstate "transferir assinatura pra outro cliente é barrado" "P0001" \
+  "UPDATE public.prime_assinaturas SET customer_user_id = '00000000-0000-0000-0000-00000000cccc' WHERE id='$A22'"
 expect_sqlstate "2ª assinatura VIVA do mesmo cliente é barrada (trigger sobreposição — infinito cobre qualquer início)" "P0001" \
   "INSERT INTO public.prime_assinaturas (customer_user_id, plano_id, preco_contratado, franquia_dentes_contratada, data_inicio, created_by) VALUES ('00000000-0000-0000-0000-00000000bbbb','11111111-1111-1111-1111-111111111111', 99, 200, '${MES_QUE_VEM}', '$UA')"
 
@@ -225,6 +231,11 @@ eq "pós-estorno: monetizado volta a 115.20 (estornado FORA da view)" \
    "$(Pq -c "SELECT monetizado_total = 115.20 FROM public.v_prime_extrato_mensal WHERE assinatura_id='$A22' AND competencia='${MES_ATUAL}'")" "t"
 expect_sqlstate "registro JÁ estornado é imutável" "P0001" \
   "UPDATE public.prime_beneficio_uso SET estornado_em = now(), estornado_por = '$UA' WHERE id='33333333-3333-3333-3333-222222222222'"
+
+expect_sqlstate "suspensão retroativa que esconderia uso VIVO do extrato é barrada" "P0001" \
+  "UPDATE public.prime_assinaturas SET status='suspensa', suspensa_em='${MES_PASSADO}' WHERE id='$A22'"
+expect_sqlstate "cancelamento retroativo que esconderia uso VIVO do extrato é barrado" "P0001" \
+  "UPDATE public.prime_assinaturas SET status='cancelada', data_fim='${MES_PASSADO}' WHERE id='$A22'"
 
 # F1 (falsificação embutida — roda AQUI, com a assinatura ainda ATIVA, senão o trigger
 # de vigência barraria antes da constraint e a falsificação perderia o alvo): sem a
