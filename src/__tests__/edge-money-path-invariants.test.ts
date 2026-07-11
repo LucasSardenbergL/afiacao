@@ -708,3 +708,43 @@ describe('guardrail money-path: syncPedidos resolve user pela view fresca accoun
     ).toMatch(/\.from\("omie_clientes"\)\s*\.select\("omie_codigo_cliente, empresa_omie"\)/);
   });
 });
+
+// ── P0-B-bis (incidente carteira, ponta 1/2): o writer popula o vendedor de recomendacoes NA PROOF ──
+// A carteira estava 100% Hunter: o writer gravava omie_codigo_vendedor lendo só c.codigo_vendedor (raiz
+// vazio) → proof NULL → todo cliente órfão. O vendedor mora em recomendacoes.codigo_vendedor. O writer
+// popula o vendedor SÓ na PROOF (document-first, account-safe) via helper extrairCodigoVendedor (Codex R2:
+// recomendacoes é autoritativa, só inteiro safe positivo). O mirror code-first NÃO recebe (Codex BLOCKou
+// popular o mirror inseguro). A ponta 2/2 (carteira-rebuild LER a proof) é PR próprio — o rebuild tem
+// consolidação B-lite (herança cross-account) que exige redesign account-safe (Codex R2: 3 P1).
+const ANALYTICS_V = 'supabase/functions/omie-analytics-sync/index.ts';
+const VEND_HELPER = 'src/lib/omie/codigo-vendedor.ts';
+
+describe('guardrail money-path: writer popula vendedor de recomendacoes na PROOF (P0-B-bis)', () => {
+  const analytics = read(ANALYTICS_V);
+  const helper = read(VEND_HELPER);
+
+  it('sentinela: leu os arquivos reais', () => {
+    expect(analytics).toContain('syncCustomers');
+    expect(helper).toContain('extrairCodigoVendedor');
+  });
+
+  it('o helper puro existe e exporta extrairCodigoVendedor', () => {
+    expect(helper).toMatch(/export function extrairCodigoVendedor/);
+  });
+
+  it('o writer USA o helper espelhado na PROOF (define + chama), NÃO o campo raiz cru', () => {
+    expect(analytics, 'sumiu a definição espelhada do helper').toMatch(/function extrairCodigoVendedor/);
+    expect(
+      analytics,
+      'REVERSÃO Lovable? a proof não usa mais extrairCodigoVendedor (vendedor volta a NULL → carteira Hunter)',
+    ).toMatch(/omie_codigo_vendedor: extrairCodigoVendedor\(c\),\s*\n\s*source: "document"/);
+    expect(count(analytics, 'extrairCodigoVendedor'), 'helper deve ser DEFINIDO e CHAMADO (≥2)').toBeGreaterThanOrEqual(2);
+  });
+
+  it('PARIDADE: o bloco espelhado do helper é IDÊNTICO ao src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(analytics, 'omie-codigo-vendedor'),
+      'edge divergiu do helper de src/ — Lovable reescreveu a extração do vendedor?',
+    ).toBe(mirrorBlockNamed(helper, 'omie-codigo-vendedor'));
+  });
+});
