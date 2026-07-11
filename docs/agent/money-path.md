@@ -30,7 +30,7 @@
 
 Helper TS puro (testado com vitest) **espelhado verbatim** no edge (Deno não importa de `src/`) e/ou em SQL. Para lógica replicada, **provar paridade** (harness diferencial TS×SQL, ex.: `db/test-city-norm-paridade.sh`) — não institucionalizar "copiar verbatim" como fim.
 
-Edge só-TS (sem contraparte SQL): a paridade vira **textual no CI** — bloco entre `// MIRROR-START/END` comparado normalizado src×edge (pega reescrita do Lovable no deploy) — **mais** uma **canária comportamental** `{canary:true}` staff-gated que roda o helper REAL deployado com fixture fixo e retorna `{resolved, expected, ok}`. Probe HTTP = única prova do COMPORTAMENTO em produção: o guard textual cobre a FONTE, a canária cobre o DEPLOY. ⚠️ A canária prova "helper deployado + lógica certa", **não** que o real-path usa o helper (isso é o guard textual + paridade). Ex.: merge de preço do `analyze-unified-order` (#1089).
+Edge só-TS (sem contraparte SQL): a paridade vira **textual no CI** — bloco entre `// MIRROR-START/END` comparado normalizado src×edge (pega reescrita do Lovable no deploy) — **mais** uma **canária comportamental** `{canary:true}` staff-gated que roda o helper REAL deployado com fixture fixo e retorna `{resolved, expected, ok}`. Probe HTTP = única prova do COMPORTAMENTO em produção: o guard textual cobre a FONTE, a canária cobre o DEPLOY. ⚠️ A canária prova "helper deployado + lógica certa", **não** que o real-path usa o helper (isso é o guard textual + paridade). Ex.: merge de preço do `analyze-unified-order` (#1089); `identidade_probe` (`omie-vendas-sync`); `doc_ambiguo_probe` (`omie-analytics-sync`, P1b — indispensável ali: a ausência do helper é invisível no dado, a proof-table só encolhe com duplicata-CNPJ real na conta, que não há).
 
 ## Diagnóstico
 
