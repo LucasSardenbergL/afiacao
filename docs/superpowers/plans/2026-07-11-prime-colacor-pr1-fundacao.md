@@ -485,8 +485,11 @@ ok "zona 3: seed (staff + plano ativo/inativo + assinatura do cliente B desde ${
 
 # ════════ ZONA 4 — CHECKs/triggers de honestidade (negativos por SQLSTATE) ════════
 expect_sqlstate() { # $1=nome $2=sqlstate esperada $3=sql
+  # Sentinela com ERRCODE PRÓPRIO ('99999'): o default de RAISE EXCEPTION é P0001 —
+  # o MESMO dos triggers da migration — e colidiria: guarda quebrada (SQL passa) →
+  # sentinela P0001 → casaria com expectativa P0001 = PASS FALSO (achado do review T2).
   local got
-  got="$(P -qtA -c "SET test.uid='00000000-0000-0000-0000-00000000aaaa'; DO \$\$ BEGIN $3; RAISE EXCEPTION 'NAO_FALHOU'; EXCEPTION WHEN OTHERS THEN IF SQLSTATE = '$2' THEN RAISE NOTICE 'SQLSTATE_OK'; ELSE RAISE; END IF; END \$\$;" 2>&1 | grep -c 'SQLSTATE_OK' || true)"
+  got="$(P -qtA -c "SET test.uid='00000000-0000-0000-0000-00000000aaaa'; DO \$\$ BEGIN $3; RAISE EXCEPTION 'NAO_FALHOU' USING ERRCODE = '99999'; EXCEPTION WHEN OTHERS THEN IF SQLSTATE = '$2' THEN RAISE NOTICE 'SQLSTATE_OK'; ELSE RAISE; END IF; END \$\$;" 2>&1 | grep -c 'SQLSTATE_OK' || true)"
   eq "$1 (SQLSTATE $2)" "$got" "1"
 }
 A22='22222222-2222-2222-2222-111111111111'
@@ -674,6 +677,12 @@ SQL
 )"
 eq "F2: policy sabotada p/ USING(true) → cliente ALHEIO vê 2 assinaturas (dente provado)" \
    "$(echo "$F2" | tail -1)" "2"
+
+# F4 (meta-falsificação do HELPER): SQL que NÃO falha + expectativa P0001 tem que dar 0.
+# Sem o ERRCODE '99999' no sentinela, o próprio sentinela (P0001 default) casaria com a
+# expectativa e o helper daria PASS FALSO em guarda quebrada (achado do review T2).
+META="$(P -qtA -c "DO \$\$ BEGIN PERFORM 1; RAISE EXCEPTION 'NAO_FALHOU' USING ERRCODE = '99999'; EXCEPTION WHEN OTHERS THEN IF SQLSTATE = 'P0001' THEN RAISE NOTICE 'SQLSTATE_OK'; ELSE RAISE; END IF; END \$\$;" 2>&1 | grep -c 'SQLSTATE_OK' || true)"
+eq "F4: helper NÃO aceita P0001 quando o SQL sob teste passa (sentinela não colide)" "$META" "0"
 
 echo
 echo "═══════════════════════════════════"
