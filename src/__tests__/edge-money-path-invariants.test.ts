@@ -775,3 +775,108 @@ describe('guardrail: fin-valor-cockpit lê o código do cliente pela view fresca
     ).not.toMatch(/from\("omie_clientes"\)/);
   });
 });
+
+// ── P0-B-bis ponta 2/2 (carteira-rebuild lê o VENDEDOR da proof account=oben, não do espelho) ──
+// Incidente: carteira 100% Hunter. Ponta 1 (#1293): o writer popula omie_codigo_vendedor na proof. Ponta 2
+// (esta): o rebuild passa a LER o vendedor da proof fresca omie_customer_account_map_fresco (account=oben)
+// via helper resolverVendedorObenPorUser (fail-closed em ambiguidade) — o espelho poluído omie_clientes
+// resta só como UNIVERSO (user_id, não-poluído), nunca mais como fonte de vendedor. A herança cross-account
+// do B-lite fica eliminada por construção (clone colacor_sc resolve AUSENTE na proof oben). Dois guards
+// fail-closed (Codex R2): proof vazia aborta; encolhimento >30% dos vendedores aborta. A paridade textual
+// aqui pega a reversão do deploy do Lovable (mesma armadilha do #1272). Ver handoff Fatia 4 P0.
+const CARTEIRA_REBUILD = 'supabase/functions/carteira-rebuild/index.ts';
+const VEND_OBEN_HELPER = 'src/lib/carteira/vendedor-oben.ts';
+
+describe('guardrail money-path: carteira-rebuild lê o vendedor da proof account=oben (P0-B-bis ponta 2/2)', () => {
+  const src = read(CARTEIRA_REBUILD);
+  const helper = read(VEND_OBEN_HELPER);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('computeCarteira');
+    expect(helper).toContain('resolverVendedorObenPorUser');
+  });
+
+  it('o helper puro existe e exporta resolverVendedorObenPorUser', () => {
+    expect(helper).toMatch(/export function resolverVendedorObenPorUser/);
+  });
+
+  it('o edge USA o helper espelhado (define MIRROR + chama), ≥2 menções', () => {
+    expect(src, 'edge não define mais o helper espelhado de vendedor oben').toMatch(/function resolverVendedorObenPorUser/);
+    expect(
+      src,
+      'REVERSÃO Lovable? o rebuild não chama mais resolverVendedorObenPorUser — vendedor voltou ao espelho?',
+    ).toMatch(/resolverVendedorObenPorUser\(/);
+    expect(count(src, 'resolverVendedorObenPorUser'), 'helper deve ser DEFINIDO e CHAMADO (≥2)').toBeGreaterThanOrEqual(2);
+  });
+
+  it('LÊ o vendedor da view fresca account=oben — NÃO o espelho poluído', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o rebuild não lê mais o vendedor da proof fresca account=oben',
+    ).toMatch(/from\(['"]omie_customer_account_map_fresco['"]\)[\s\S]{0,220}\.eq\(['"]account['"],\s*['"]oben['"]\)/);
+    // O espelho só pode restar como UNIVERSO (user_id), NUNCA carregando o omie_codigo_vendedor poluído.
+    expect(
+      src,
+      'REGRESSÃO: o rebuild voltou a ler omie_codigo_vendedor do espelho poluído omie_clientes',
+    ).not.toMatch(/from\(['"]omie_clientes['"]\)\s*\.select\(['"]user_id,\s*omie_codigo_vendedor['"]\)/);
+    expect(
+      src,
+      'REGRESSÃO: a leitura de omie_clientes deixou de ser só o universo (user_id)',
+    ).toMatch(/from\(['"]omie_clientes['"]\)\s*\.select\(['"]user_id['"]\)/);
+  });
+
+  it('Guard A fail-closed: proof oben VAZIA aborta antes de escrever (não zera a carteira em silêncio)', () => {
+    expect(
+      src,
+      'REGRESSÃO: sumiu o Guard A — proof oben vazia (view sumiu/sync parado) zeraria a carteira pro Hunter em silêncio',
+    ).toMatch(/proofObenRows\.length === 0[\s\S]{0,220}return fail\(/);
+  });
+
+  it('Guard B fail-closed: encolhimento >30% dos vendedores atribuídos aborta (Codex R2 P1 fail-open)', () => {
+    expect(
+      src,
+      'REGRESSÃO: sumiu o Guard B anti-encolhimento — a view fresca encolhendo degradaria a carteira em silêncio',
+    ).toMatch(/novoOmieVisivel < base \* 0\.7[\s\S]{0,260}return fail\(/);
+  });
+
+  it('Guard A2 fail-closed: proof COM linhas mas ZERO vendedor resolvido aborta (Codex ponta-2 P1 bootstrap)', () => {
+    expect(
+      src,
+      'REGRESSÃO: sumiu o Guard A2 — no bootstrap (base=0) a proof sem vendedor manteria tudo Hunter em silêncio',
+    ).toMatch(/vendedorPorUser\.size === 0[\s\S]{0,260}return fail\(/);
+  });
+
+  it('owner account-safe: omie_vendedor_map filtrado por omie_account=oben (Codex ponta-2 P2)', () => {
+    expect(
+      src,
+      'REGRESSÃO: o mapa código→owner voltou a ler TODAS as contas — um código colidente mapearia owner não-oben',
+    ).toMatch(/from\(['"]omie_vendedor_map['"]\)[\s\S]{0,120}\.eq\(['"]omie_account['"],\s*['"]oben['"]\)/);
+  });
+
+  it('paginação KEYSET (.gt + .limit), não offset .range: a proof fresca muda entre páginas (Codex ponta-2 P1)', () => {
+    // a leitura da proof oben tem de paginar por keyset (user_id > last) — offset .range pularia linhas
+    // quando o TTL expira/insere no meio da paginação.
+    expect(
+      src,
+      'REVERSÃO: a leitura da proof oben voltou a offset .range — keyset (.gt user_id + .limit) sumiu',
+    ).toMatch(/omie_customer_account_map_fresco['"]\)[\s\S]{0,260}\.gt\(['"]user_id['"][\s\S]{0,120}\.limit\(/);
+    expect(
+      src,
+      'REGRESSÃO: a leitura da proof oben ainda usa .range (offset) — não-determinístico sob TTL',
+    ).not.toMatch(/omie_customer_account_map_fresco['"]\)[\s\S]{0,260}\.range\(/);
+  });
+
+  it('universo é UNIÃO (espelho ∪ proof oben): cliente na proof sem linha no espelho não some (Codex ponta-2 P2)', () => {
+    expect(
+      src,
+      'REGRESSÃO: sumiu a união do universo com a proof oben — cliente oben fora do espelho sumiria da carteira',
+    ).toMatch(/for \(const r of proofObenRows\)[\s\S]{0,80}universoSet\.add/);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'carteira-vendedor-oben'),
+      'edge divergiu do helper de src/ — o Lovable reescreveu a resolução de vendedor no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'carteira-vendedor-oben'));
+  });
+});

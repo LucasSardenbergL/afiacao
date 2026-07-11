@@ -1,11 +1,14 @@
 // supabase/functions/carteira-rebuild/index.ts
-// Reconstrói carteira_assignments a partir de omie_clientes × omie_vendedor_map.
-// Órfão (sem vendedor mapeado) → Hunter. Idempotente (upsert por customer_user_id).
+// Reconstrói carteira_assignments. UNIVERSO = user_ids de omie_clientes; VENDEDOR = proof account-correta
+// omie_customer_account_map_fresco (account=oben) — NÃO o espelho poluído (era 100% NULL → carteira 100%
+// Hunter, incidente P0-B-bis ponta 2/2). Órfão (sem vendedor oben) → Hunter. Idempotente (upsert/customer).
 //
-// Consolidação B-lite (spec 2026-06-13): consulta customer_canonical_alias (clones ATIVOS) e
-// canonicaliza clone→gêmeo — o gêmeo (cadastro Oben, com nome) herda o vendedor do clone e fica
-// eligible=true; o clone (cadastro Colacor SC, sem nome) fica eligible=false (escondido da tela,
-// preservado no banco). aliasMap vazio = comportamento legado + eligible explícito.
+// Consolidação B-lite (spec 2026-06-13): consulta customer_canonical_alias (clones ATIVOS) e canonicaliza
+// clone→gêmeo — o gêmeo (cadastro Oben) herda o vendedor do grupo e fica eligible=true; o clone (cadastro
+// Colacor SC) fica eligible=false (escondido, preservado). Como o vendedor agora vem SÓ da proof OBEN, o
+// clone colacor_sc resolve AUSENTE (não tem linha oben) → herança cross-account ELIMINADA por construção
+// (Codex R2 P1: filtro oben quebraria o B-lite — resolvido lendo o vendedor por-user, não trocando o
+// universo). aliasMap vazio = comportamento legado + eligible explícito.
 //
 // Setup pg_cron (manual pós-merge), roda após o sync do Omie:
 //   SELECT cron.schedule('carteira-rebuild-nightly', '30 7 * * *',
@@ -129,6 +132,31 @@ function computeCarteira(
   return { assignments, conflicts, orphanCount, chainViolations };
 }
 
+// Resolve o vendedor OBEN por user a partir da proof account-correta (ponta 2/2 do incidente carteira-Hunter).
+// Espelhado de src/lib/carteira/vendedor-oben.ts — paridade textual no CI (edge-money-path-invariants).
+interface OmieVendedorObenRow { user_id: string; omie_codigo_vendedor: number | null; }
+interface VendedorObenResolvido { vendedorPorUser: Map<string, number>; ambiguos: string[]; }
+// MIRROR-START carteira-vendedor-oben — espelhado verbatim de src/lib/carteira/vendedor-oben.ts
+function resolverVendedorObenPorUser(rows: OmieVendedorObenRow[]): VendedorObenResolvido {
+  const codigoValido = (v: number | null): v is number =>
+    typeof v === 'number' && Number.isSafeInteger(v) && v > 0;
+  const porUser = new Map<string, Set<number>>();
+  for (const r of rows) {
+    if (!r.user_id) continue;
+    let s = porUser.get(r.user_id);
+    if (!s) { s = new Set<number>(); porUser.set(r.user_id, s); }
+    if (codigoValido(r.omie_codigo_vendedor)) s.add(r.omie_codigo_vendedor);
+  }
+  const vendedorPorUser = new Map<string, number>();
+  const ambiguos: string[] = [];
+  for (const [user, vends] of porUser) {
+    if (vends.size === 1) vendedorPorUser.set(user, [...vends][0]);
+    else if (vends.size > 1) ambiguos.push(user); // size 0 → órfão (fora do mapa, sem vendedor)
+  }
+  return { vendedorPorUser, ambiguos };
+}
+// MIRROR-END
+
 const fail = (msg: string, status = 500) =>
   new Response(JSON.stringify({ ok: false, error: msg }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
@@ -144,15 +172,19 @@ Deno.serve(async (req) => {
 
   // 1. Carregar mapa + hunter (tabelas pequenas). FAIL-CLOSED: erro de leitura estrutural aborta ANTES
   // de qualquer upsert — senão vendedorMap=[] mandaria a carteira inteira pro Hunter (P1.4 Codex).
+  // ACCOUNT-SAFE (Codex ponta-2 P2): omie_vendedor_map É por-conta (coluna omie_account; o MESMO vendedor
+  // tem código diferente em oben/colacor/colacor_sc). Como o código do cliente vem da proof OBEN, o mapa
+  // código→owner também tem de ser filtrado por oben — senão um código que colidisse entre contas mapearia
+  // um owner de outra conta. Fecha o contrato "owner é oben" que o código-account-safe sozinho não prova.
   const [mapRes, hunterRes] = await Promise.all([
-    supabase.from('omie_vendedor_map').select('omie_codigo_vendedor, user_id'),
+    supabase.from('omie_vendedor_map').select('omie_codigo_vendedor, user_id').eq('omie_account', 'oben'),
     supabase.from('company_config').select('value').eq('key', 'carteira_hunter_user_id').maybeSingle(),
   ]);
   if (mapRes.error) { console.error('[carteira-rebuild] load vendedor_map error:', mapRes.error.message); return fail(`vendedor_map: ${mapRes.error.message}`); }
   if (hunterRes.error) { console.error('[carteira-rebuild] load hunter error:', hunterRes.error.message); return fail(`hunter: ${hunterRes.error.message}`); }
   const vendedorMap = (mapRes.data ?? []) as VendedorMapRow[];
-  // vendedor_map vazio é anômalo (sempre há vendedores) e mandaria todos pro Hunter → aborta.
-  if (vendedorMap.length === 0) { console.error('[carteira-rebuild] vendedor_map vazio — abortando'); return fail('vendedor_map vazio (anômalo)'); }
+  // vendedor_map oben vazio é anômalo (sempre há vendedores oben) e mandaria todos pro Hunter → aborta.
+  if (vendedorMap.length === 0) { console.error('[carteira-rebuild] vendedor_map oben vazio — abortando'); return fail('vendedor_map oben vazio (anômalo)'); }
   // value pode vir como uuid puro ou JSON-quoted ("uuid") — normaliza removendo aspas.
   const rawHunter = (hunterRes.data?.value as string | null | undefined) ?? null;
   const hunterUserId = rawHunter ? (rawHunter.replace(/^"|"$/g, '').trim() || null) : null;
@@ -177,22 +209,86 @@ Deno.serve(async (req) => {
     }
   }
 
-  // omie_clientes pode ter milhares de linhas e o PostgREST limita o SELECT a ~1000 por página →
-  // paginar com range() até esgotar. .order p/ estabilidade (P1.5 Codex).
-  const clientes: OmieClienteRow[] = [];
+  // UNIVERSO da carteira = user_ids de omie_clientes UNIÃO os users da proof oben. O user_id NÃO é o dado
+  // poluído (só empresa_omie/omie_codigo_vendedor eram); o VENDEDOR não vem mais daqui (era 100% NULL →
+  // incidente carteira-Hunter) e sim da proof abaixo. A UNIÃO garante que um cliente presente na proof oben
+  // mas AUSENTE do espelho (cliente novo / atraso do espelho) não suma da carteira (Codex ponta-2 P2).
+  // Trocar o universo SÓ p/ a proof (redução 6909→5238 + reconciliação do upsert-only) é a Fatia 4 / DROP.
+  // Paginação KEYSET (.gt + .order + .limit), NÃO offset .range: a proof fresca muda entre páginas (TTL 7d
+  // expira no limite, sync concorrente insere) e offset deslocaria/pularia linhas (Codex ponta-2 P1).
   const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
-      .from('omie_clientes')
-      .select('user_id, omie_codigo_vendedor')
-      .not('user_id', 'is', null)
-      .order('user_id', { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (error) { console.error('[carteira-rebuild] load omie_clientes error:', error.message); return fail(error.message); }
-    const page = (data ?? []) as Array<{ user_id: string; omie_codigo_vendedor: number | null }>;
-    for (const r of page) clientes.push({ customer_user_id: r.user_id, omie_codigo_vendedor: r.omie_codigo_vendedor });
-    if (page.length < PAGE) break;
+  const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
+  const universoSet = new Set<string>();
+  {
+    let last = ZERO_UUID;
+    for (;;) {
+      const { data, error } = await supabase
+        .from('omie_clientes')
+        .select('user_id')
+        .not('user_id', 'is', null)
+        .gt('user_id', last)
+        .order('user_id', { ascending: true })
+        .limit(PAGE);
+      if (error) { console.error('[carteira-rebuild] load universo (omie_clientes) error:', error.message); return fail(error.message); }
+      const page = (data ?? []) as Array<{ user_id: string }>;
+      for (const r of page) if (r.user_id) universoSet.add(r.user_id);
+      if (page.length < PAGE) break;
+      last = page[page.length - 1].user_id;
+    }
   }
+
+  // VENDEDOR account-correto: proof FRESCA omie_customer_account_map_fresco, account=oben (a carteira é do
+  // cadastro Oben canônico — design §4 #6). NUNCA o espelho poluído; NUNCA a base (a view filtra
+  // updated_at >= now()-7d — a base reabriria stale infinito). Keyset por user_id (único por conta na proof).
+  const proofObenRows: OmieVendedorObenRow[] = [];
+  {
+    let last = ZERO_UUID;
+    for (;;) {
+      const { data, error } = await supabase
+        .from('omie_customer_account_map_fresco')
+        .select('user_id, omie_codigo_vendedor')
+        .eq('account', 'oben')
+        .not('user_id', 'is', null)
+        .gt('user_id', last)
+        .order('user_id', { ascending: true })
+        .limit(PAGE);
+      if (error) { console.error('[carteira-rebuild] load proof oben error:', error.message); return fail(`proof oben: ${error.message}`); }
+      const page = (data ?? []) as OmieVendedorObenRow[];
+      for (const r of page) proofObenRows.push(r);
+      if (page.length < PAGE) break;
+      last = page[page.length - 1].user_id;
+    }
+  }
+  // Guard A (fail-closed anti-zeramento): proof oben SEM NENHUMA linha fresca é anômalo (sync da proof
+  // parou >7d, ou a view sumiu) → ABORTA antes de escrever, senão zerar-em-silêncio mandaria tudo pro Hunter.
+  if (proofObenRows.length === 0) {
+    console.error('[carteira-rebuild] proof oben (omie_customer_account_map_fresco) VAZIA — abortando (anômalo)');
+    return fail('proof oben vazia (omie_customer_account_map_fresco) — sync da proof parado?');
+  }
+  // União: adiciona os users da proof oben ao universo (cliente oben sem linha no espelho não some).
+  for (const r of proofObenRows) if (r.user_id) universoSet.add(r.user_id);
+
+  const { vendedorPorUser, ambiguos } = resolverVendedorObenPorUser(proofObenRows);
+  if (ambiguos.length) {
+    console.warn(`[carteira-rebuild] ${ambiguos.length} users com vendedor oben AMBÍGUO (fail-closed, não atribuídos):`, JSON.stringify(ambiguos.slice(0, 50)));
+  }
+  // Guard A2 (fail-closed anti-bootstrap-fail-open — Codex ponta-2 P1): proof COM linhas mas ZERO vendedor
+  // resolvido é o estado EXATO do incidente (writer #1293 não deployado/não rodou → vendedor 100% NULL na
+  // proof). O Guard B (relativo à saída) fica desativado no bootstrap (base=0), então SEM isto o rebuild
+  // retornaria ok e manteria tudo Hunter EM SILÊNCIO. O modo de falha é binário (o writer popula ~todos os
+  // clientes-com-vendedor ou nenhum) → size===0 é o sinal certo e força a ordem de deploy (ponta 1 antes).
+  if (vendedorPorUser.size === 0) {
+    console.error('[carteira-rebuild] proof oben SEM nenhum vendedor resolvido — writer omie-analytics-sync (#1293) deployado/rodou?');
+    return fail('proof oben sem vendedor resolvido — o writer omie-analytics-sync (#1293) foi deployado e rodou?');
+  }
+
+  // clientes[] = universo × vendedor-da-proof-oben. Ausência na proof → vendedor null → órfão/Hunter
+  // (degradação honesta). Clone colacor_sc (sem linha oben) resolve null → NÃO injeta seu vendedor no
+  // gêmeo oben na consolidação B-lite: a herança cross-account fica ELIMINADA por construção (invariante 2).
+  const clientes: OmieClienteRow[] = [...universoSet].map((user_id) => ({
+    customer_user_id: user_id,
+    omie_codigo_vendedor: vendedorPorUser.get(user_id) ?? null,
+  }));
 
   // Fornecedores fora da carteira (cliente_classificacao.excluir_da_carteira): entram com
   // eligible=false (combinado com o eligible-de-clone abaixo). FAIL-CLOSED: erro de leitura aborta
@@ -237,6 +333,26 @@ Deno.serve(async (req) => {
     last_synced_at: now,
   }));
 
+  // Guard B (fail-closed anti-encolhimento — Codex R2 P1: fail-open se a view fresca encolher): se a proof
+  // oben ENCOLHER (staleness parcial da view 7d), o nº de assignments com vendedor real (source=omie
+  // visível) despencaria e a carteira degradaria em silêncio. Compara o novo total com o ATUAL na tabela;
+  // queda >30% ABORTA sem escrever. Bootstrap-safe: hoje a carteira é 100% Hunter (base=0) → o 1º run
+  // pós-#1293 só CRESCE (não dispara). Ausência total (proof vazia) já foi barrada no Guard A.
+  const novoOmieVisivel = rows.filter((r) => r.source === 'omie' && r.eligible).length;
+  {
+    const { count: atual, error: cntErr } = await supabase
+      .from('carteira_assignments')
+      .select('*', { count: 'exact', head: true })
+      .eq('source', 'omie')
+      .eq('eligible', true);
+    if (cntErr) { console.error('[carteira-rebuild] count atual source=omie error:', cntErr.message); return fail(`count atual source=omie: ${cntErr.message}`); }
+    const base = atual ?? 0;
+    if (base > 0 && novoOmieVisivel < base * 0.7) {
+      console.error(`[carteira-rebuild] encolhimento suspeito de vendedores atribuídos: atual=${base} novo=${novoOmieVisivel} (<70%) — abortando sem escrever`);
+      return fail(`encolhimento suspeito da proof oben (vendedores visíveis ${base}→${novoOmieVisivel}) — não vou zerar a carteira`);
+    }
+  }
+
   let upserted = 0;
   for (let i = 0; i < rows.length; i += 500) {
     const chunk = rows.slice(i, i + 500);
@@ -249,5 +365,8 @@ Deno.serve(async (req) => {
 
   return new Response(JSON.stringify({
     ok: true, upserted, orphanCount, conflicts, hunterUserId, aliasesAtivos: aliasMap.size,
+    // observabilidade da fonte account-safe: quantos users tinham vendedor oben resolvido, quantos ambíguos
+    // (fail-closed), e o tamanho da proof lida — para provar que a carteira saiu do 100%-Hunter pós-#1293.
+    proofObenLinhas: proofObenRows.length, vendedoresObenResolvidos: vendedorPorUser.size, ambiguosCount: ambiguos.length,
   }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 });
