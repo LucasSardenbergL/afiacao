@@ -920,14 +920,23 @@ async function syncPedidos(
   // era pulado pelo hash do pai e os itens nunca eram restaurados.
   const seenHashes = new Set<string>();
 
-  // ── Pre-load omie_clientes mapping (codigo_cliente -> user_id) to AVOID API calls ──
+  // ── Pre-load mapping (codigo_cliente -> user_id) da VIEW FRESCA account-correta p/ EVITAR chamadas API ──
+  // P0-B-bis PR-2: a fonte era o espelho poluído omie_clientes SEM filtro de conta. Como o código Omie é
+  // numerado POR conta, um código desta conta podia colidir com o mesmo número em OUTRA conta e o cache (1
+  // chave global codigo->user) mapeava o user_id ERRADO — pedido atribuído ao cliente errado (bug #4 do
+  // design; o espelho é sobrescrito ao longo do dia pelos writers colacor_sc, então a colisão é intermitente).
+  // A view omie_customer_account_map_fresco é account-correta (UNIQUE(codigo,account)) e document-first; o
+  // miss aqui cai no resolveClientUserId → API ConsultarCliente (fail-safe). .order estável no código
+  // (UNIQUE garante determinismo) p/ o .range NÃO pular/repetir linha (armadilha PostgREST do CLAUDE.md).
   const clientCache = new Map<number, string | null>();
   let ocPage = 0;
   hasMore = true;
   while (hasMore) {
     const { data: batch } = await supabase
-      .from('omie_clientes')
+      .from('omie_customer_account_map_fresco')
       .select('omie_codigo_cliente, user_id')
+      .eq('account', account)
+      .order('omie_codigo_cliente')
       .range(ocPage * pgSize, (ocPage + 1) * pgSize - 1);
     if (!batch || batch.length === 0) { hasMore = false; }
     else {
@@ -938,7 +947,7 @@ async function syncPedidos(
       ocPage++;
     }
   }
-  console.log(`[sync_pedidos][${account}] Client cache from omie_clientes: ${clientCache.size}`);
+  console.log(`[sync_pedidos][${account}] Client cache from omie_customer_account_map_fresco: ${clientCache.size}`);
 
   // ── Pre-load product mapping ──
   const productMap = new Map<number, string>();
