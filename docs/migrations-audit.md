@@ -21,8 +21,8 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **355** custom migrations totais
-- **1276** objetos esperados (criados por estas migrations)
+- **356** custom migrations totais
+- **1277** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 357
   - `rls_policy`: 285
@@ -30,7 +30,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
   - `cron_job`: 146
   - `table`: 138
   - `trigger`: 76
-  - `view`: 59
+  - `view`: 60
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -3049,6 +3049,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.prime_uso_staff_insert` | `prime_beneficio_uso` |
 | `rls_policy` | `public.prime_uso_staff_update` | `prime_beneficio_uso` |
 | `rls_policy` | `public.prime_uso_cliente_read` | `prime_beneficio_uso` |
+
+### `20260711145000_v_grupo_contatos_fresca.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_grupo_contatos` | — |
 
 ## Próximos passos por status
 
