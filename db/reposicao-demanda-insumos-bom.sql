@@ -199,7 +199,9 @@ FROM v_venda_items_history_efetivo v
 JOIN v_pcp_malha_oben mo   ON mo.pai_oben = v.sku_codigo_omie
 JOIN omie_products ins     ON ins.omie_codigo_produto = mo.comp_oben
                           AND ins.account = 'oben'
-WHERE v.empresa = 'OBEN';    -- guard: nunca cruzar empresa
+WHERE v.empresa = 'OBEN'                       -- guard: nunca cruzar empresa
+  AND v.quantidade > 0                         -- não explodir zero/negativo
+  AND (v.cfop LIKE '5%' OR v.cfop LIKE '6%');   -- [#10] só SAÍDA de venda consome insumo; devolução (entrada 1xxx/2xxx), mesmo positiva, não infla
 
 COMMENT ON VIEW v_sku_demanda_efetiva IS
   'Demanda = venda direta ⊕ consumo de insumo derivado da ficha técnica. A linha de consumo herda a NF do pai (num_ordens) e usa a unidade do insumo; valor de venda é NULL (insumo não gera receita). PR-2 aponta as 4 views estatísticas para cá.';
