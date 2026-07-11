@@ -893,10 +893,13 @@ async function syncPedidos(
   // last-write-wins gravava um user ARBITRÁRIO e um pedido no fallback resolveClientUserId (ConsultarCliente
   // -> doc -> docToUserMap.get) era atribuído ao cliente ERRADO (money-path). Fail-closed via helper puro
   // espelhado buildDocUserMapFailClosed (análogo VENDAS do fetchProfileDocUserMap P1b): doc ambíguo fica FORA
-  // do mapa. Paginação KEYSET (.order('user_id') + .gt), não offset .range: sem .order o PostgREST não
-  // garante ordem estável entre páginas → um profile podia ser PULADO (some do mapa) sob inserção concorrente.
-  // Erro de query é FAIL-CLOSED (throw): engolir o error deixaria um mapa PARCIAL silencioso → miss no
-  // fallback → skip/atribuição arbitrária. Melhor abortar o run e retomar na próxima janela.
+  // do mapa. Paginação KEYSET (.order('user_id') + .gt) troca o offset .range: elimina o pular/duplicar por
+  // DESLOCAMENTO (uma linha inserida/removida entre páginas desloca as janelas .range sem .order). ATENÇÃO
+  // (Codex xhigh): a leitura multi-página NÃO é atômica — um profile que nasce/muda ENTRE páginas com user_id
+  // < cursor ainda escapa desta janela (mesma limitação do fetchProfileDocUserMap P1b, que usa offset). O
+  // fechamento TOTAL da corrida exige resolver a unicidade num único snapshot server-side (RPC GROUP BY doc
+  // HAVING count(distinct user)=1) — follow-up v2. Erro de query é FAIL-CLOSED (throw): engolir o error
+  // deixaria um mapa PARCIAL silencioso → miss no fallback → skip/atribuição arbitrária. Aborta e retoma.
   const pgSize = 1000;
   const profileDocRegistros: Array<{ doc: string; userId: string }> = [];
   let lastUserId: string | null = null;
@@ -923,8 +926,13 @@ async function syncPedidos(
       if (batch.length < pgSize) hasMore = false;
     }
   }
+  const docsDistintos = new Set(profileDocRegistros.map((r) => r.doc)).size;
   const docToUserMap = buildDocUserMapFailClosed(profileDocRegistros);
-  console.log(`[sync_pedidos][${account}] Document map: ${docToUserMap.size} profiles (fail-closed)`);
+  // Observabilidade do fail-closed (Codex): todo doc distinto (todos têm user_id) ou vira 1 entry (não-ambíguo)
+  // ou é removido (2+ users) → docsAmbiguos = distintos - map.size. Hoje 0 (docs_com_2mais_users=0), mas
+  // quando surgir a 1ª duplicata-doc no lado profile este log é o 1º sinal (o dado não denuncia sozinho).
+  const docsAmbiguos = docsDistintos - docToUserMap.size;
+  console.log(`[sync_pedidos][${account}] Document map: ${docToUserMap.size} profiles (fail-closed; ${docsAmbiguos} doc(s) ambíguo(s) excluído(s))`);
 
   // Dedupe DENTRO da run (evita mandar o mesmo pedido 2x na mesma chamada). NÃO pré-carregamos
   // hashes do banco: todos os pedidos válidos da janela vão para a RPC criar_pedidos_com_itens,
