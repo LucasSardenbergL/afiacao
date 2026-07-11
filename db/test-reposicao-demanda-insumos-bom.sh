@@ -80,6 +80,32 @@ assert_eq() { # $1=nome $2=esperado $3=obtido
   else echo "  ✗ $1: esperado='$2' obtido='$3'"; exit 1; fi
 }
 
+# ══════════════════════════════════════════════════════════════════════════
+# Task 4 · O. INÉRCIA — PRECISA rodar AQUI (candidato já aplicado, ZERO
+# fixture ainda), não no fim do arquivo.
+#
+# Motivo: base_<view> foi capturado com as tabelas-fonte vazias (schema-snapshot.sql
+# é DDL-puro, sem massa; nenhuma dependência semeia venda_items_history/omie_products).
+# v_sku_demanda_estatisticas/_sigma_demanda/_demanda_rajada leem venda_items_history
+# numa janela de 90/180 dias — os Steps 1-6 abaixo inserem vendas (sku 200/300,
+# datadas de CURRENT_DATE-10..-3, dentro da janela) para testar v_sku_demanda_efetiva.
+# Se este assert rodasse só no fim (depois desses fixtures), o EXCEPT ALL veria
+# 2 linhas novas em 3 das 4 views — CONFIRMADO empiricamente rodando a versão
+# "no fim" antes desta correção (diff=2/2/2/0) — não por o PR-1 ter mudado
+# comportamento, mas porque a MASSA DE TESTE de outro step passou a aparecer
+# nessas views. Comparando aqui, base_<view> e a view atual têm o MESMO estado
+# de dados (vazio); a única variável isolada é "o candidato foi aplicado" — que
+# é exatamente o que este assert precisa provar.
+# ══════════════════════════════════════════════════════════════════════════
+echo "→ O. INÉRCIA: cada view estatística retorna IDÊNTICO antes/depois do PR-1"
+for v in v_sku_demanda_estatisticas v_sku_sigma_demanda v_sku_demanda_rajada v_sku_candidatos_primeira_compra; do
+  got=$(Pq -c "SELECT count(*) FROM (
+                 (SELECT * FROM ${v} EXCEPT ALL SELECT * FROM base_${v})
+                 UNION ALL
+                 (SELECT * FROM base_${v} EXCEPT ALL SELECT * FROM ${v})) d;")
+  assert_eq "O:${v} inalterada" "0" "$got"
+done
+
 # A malha NÃO é tabela: vw_pcp_malha_componentes → vw_pcp_malha_itens → pcp_malha_staging(payload jsonb).
 # Semear = UPSERT do payload do pai. $1=pai_omie  $2=json array de itens (string; UMA aspa simples por chamada)
 set_malha() {
@@ -358,6 +384,56 @@ PASS=$((PASS+1))
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/reposicao-demanda-insumos-bom.sql"
 got=$(Pq -c "SELECT count(DISTINCT nfe_chave_acesso) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201;")
 assert_eq "S3r restaurado: 2 ordens de novo" "2" "$got"
+
+# ══════════════════════════════════════════════════════════════════════════
+# Step 7 (Task 4): prova de que o PR-1 é INERTE em produção.
+#
+# → P/Q/R são estruturais (pg_depend/pg_views/information_schema) — não dependem
+#   de dado, então rodam aqui no fim, depois de toda a massa de teste dos Steps
+#   1-6 (e já com as views restauradas à versão real pós-sabotagem).
+#
+# → O NÃO está aqui de propósito (ver comentário logo após a aplicação do
+#   candidato, antes do Step 1) — checagem empírica confirmou que comparar
+#   aqui no fim contamina o resultado com os fixtures de venda do Step 5
+#   (v_sku_demanda_estatisticas/_sigma_demanda/_demanda_rajada leem
+#   venda_items_history numa janela de 90/180d; os 2 SKUs vendidos no Step 5
+#   caem nessa janela e apareceriam como diff=2 em cada uma — falso positivo
+#   por ruído do fixture, não quebra de inércia).
+# ══════════════════════════════════════════════════════════════════════════
+echo "→ P. pg_depend: nada depende de v_sku_demanda_efetiva (é o que torna o PR-1 inerte)"
+got=$(Pq -c "SELECT count(*) FROM pg_depend d
+             JOIN pg_rewrite r ON r.oid=d.objid
+             JOIN pg_class dep ON dep.oid=r.ev_class
+             JOIN pg_class src ON src.oid=d.refobjid
+             WHERE src.relname='v_sku_demanda_efetiva' AND dep.relname<>'v_sku_demanda_efetiva';")
+assert_eq "P1 nenhuma view depende da nova (PR-1 inerte)" "0" "$got"
+
+echo "→ Q. v_venda_items_history_efetivo NÃO foi recriada por este PR"
+got=$(Pq -c "SELECT count(*) FROM pg_views
+             WHERE viewname='v_venda_items_history_efetivo'
+               AND definition ILIKE '%v_pcp_malha_oben%';")
+assert_eq "Q1 a view de venda/preco segue intocada" "0" "$got"
+
+echo "→ R. shape: v_sku_demanda_efetiva alinha coluna-a-coluna com v_venda_items_history_efetivo"
+# O PR-2 troca só o FROM das 4 views estatísticas para a nova. Uma troca de posição
+# entre colunas do MESMO tipo (ex.: nfe_numero↔nfe_serie, ambas text) passaria no
+# UNION ALL mas corromperia o dado — este assert estrutural pega isso (fecha o Menor
+# do review da Task 3, que os asserts por valor não cobrem).
+got=$(Pq -c "
+  SELECT count(*) FROM (
+    (SELECT ordinal_position, column_name, data_type FROM information_schema.columns
+       WHERE table_name='v_venda_items_history_efetivo'
+     EXCEPT
+     SELECT ordinal_position, column_name, data_type FROM information_schema.columns
+       WHERE table_name='v_sku_demanda_efetiva')
+    UNION ALL
+    (SELECT ordinal_position, column_name, data_type FROM information_schema.columns
+       WHERE table_name='v_sku_demanda_efetiva'
+     EXCEPT
+     SELECT ordinal_position, column_name, data_type FROM information_schema.columns
+       WHERE table_name='v_venda_items_history_efetivo')
+  ) d;")
+assert_eq "R1 shape identico (posicao+nome+tipo) — pré-requisito do PR-2" "0" "$got"
 
 echo ""
 echo "PASS=$PASS"
