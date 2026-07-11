@@ -708,3 +708,38 @@ describe('guardrail money-path: syncPedidos resolve user pela view fresca accoun
     ).toMatch(/\.from\("omie_clientes"\)\s*\.select\("omie_codigo_cliente, empresa_omie"\)/);
   });
 });
+
+// ── P0-B-bis (incidente carteira): omie-analytics-sync popula o vendedor de recomendacoes ──
+// O vendedor do cliente no Omie mora em recomendacoes.codigo_vendedor (o codigo_vendedor RAIZ vem vazio no
+// ListarClientes). O writer da proof (omie_customer_account_map) e do espelho (omie_clientes) lia só
+// c.codigo_vendedor → gravava NULL → carteira-rebuild via todo cliente como órfão e mandava os 6909 pro
+// Hunter (0 clientes atribuídos aos 18 vendedores). Corrigido p/ ler recomendacoes primeiro (padrão de
+// omie-cliente/omie-sync). A paridade textual aqui pega a reversão do deploy do Lovable.
+const ANALYTICS_VEND = 'supabase/functions/omie-analytics-sync/index.ts';
+
+describe('guardrail money-path: omie-analytics-sync popula vendedor de recomendacoes (incidente carteira)', () => {
+  const src = read(ANALYTICS_VEND);
+
+  it('sentinela: leu o edge real (syncCustomers + proof)', () => {
+    expect(src).toContain('syncCustomers');
+    expect(src).toContain('omie_customer_account_map');
+  });
+
+  it('os writers da PROOF e do ESPELHO leem recomendacoes.codigo_vendedor (não o raiz vazio)', () => {
+    expect(
+      count(src, 'omie_codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null'),
+      'REVERSÃO Lovable? os 2 writers de vendedor não leem mais recomendacoes (carteira volta 100% pro Hunter)',
+    ).toBe(2);
+  });
+
+  it('anti-reversão: nenhum writer voltou a gravar SÓ c.codigo_vendedor (o campo raiz vazio)', () => {
+    expect(
+      src,
+      'REGRESSÃO: omie_codigo_vendedor voltou a ler só c.codigo_vendedor (raiz vazio) — vendedor NULL de novo',
+    ).not.toMatch(/omie_codigo_vendedor: c\.codigo_vendedor \|\| null/);
+  });
+
+  it('a interface declara recomendacoes.codigo_vendedor (senão o parse dropa o campo silenciosamente)', () => {
+    expect(src).toMatch(/recomendacoes\?: \{ codigo_vendedor\?: number \| null \}/);
+  });
+});

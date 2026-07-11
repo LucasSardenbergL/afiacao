@@ -59,7 +59,7 @@ function buildNaoVinculadoRow(
     nome_fantasia: c.nome_fantasia?.trim() || null,
     cidade: c.cidade?.trim() || null,
     uf: c.estado?.trim() || null,
-    codigo_vendedor: c.codigo_vendedor ?? null,
+    codigo_vendedor: c.recomendacoes?.codigo_vendedor ?? c.codigo_vendedor ?? null,
     synced_at: syncedAtIso,
   };
 }
@@ -68,6 +68,10 @@ interface OmieClienteCadastro {
   codigo_cliente_omie?: number;
   codigo_cliente_integracao?: string | null;
   codigo_vendedor?: number | null;
+  // O vendedor do cliente no Omie mora em recomendacoes.codigo_vendedor (o codigo_vendedor raiz vem
+  // vazio no ListarClientes) — padrão já usado em omie-cliente/omie-sync. Sem isto a proof/espelho
+  // gravavam vendedor NULL → carteira-rebuild mandava tudo pro Hunter (incidente P0-B-bis).
+  recomendacoes?: { codigo_vendedor?: number | null };
   cnpj_cpf?: string;
   razao_social?: string;
   nome_fantasia?: string;
@@ -358,7 +362,7 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
           user_id: userId,
           omie_codigo_cliente: c.codigo_cliente_omie,
           omie_codigo_cliente_integracao: c.codigo_cliente_integracao || null,
-          omie_codigo_vendedor: c.codigo_vendedor || null,
+          omie_codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
           updated_at: new Date().toISOString(),
         });
         // Captura tags do cadastro Omie para derivar is_fornecedor / excluir_da_carteira depois.
@@ -375,7 +379,7 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
             user_id: userIdByDoc,
             account: empresaMap,
             omie_codigo_cliente: c.codigo_cliente_omie,
-            omie_codigo_vendedor: c.codigo_vendedor || null,
+            omie_codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
             source: "document",
             updated_at: new Date().toISOString(),
           });
