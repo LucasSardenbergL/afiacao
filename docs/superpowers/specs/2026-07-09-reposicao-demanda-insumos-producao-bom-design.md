@@ -155,6 +155,7 @@ O insumo não gera receita, mas a **classe ABC é calculada por `valor_total_90d
 - Não tocar `supabase/migrations/` (snapshot é DR); tudo `CREATE OR REPLACE` idempotente colado no SQL Editor.
 - `v_venda_items_history_efetivo` **inalterada** → não regride a consolidação N→1 nem o preço.
 - Motor (`gerar_pedidos_sugeridos_ciclo`) e função de aplicação **inalterados** — a mudança de comportamento vem só da demanda + criticidade.
+- **RLS / `security_invoker` (achado do review, `database.md` §4):** TODA view nova (`v_pcp_malha_oben*`, `v_sku_demanda_efetiva`) sai `WITH (security_invoker = true)` + `REVOKE ALL FROM anon, PUBLIC` + `GRANT SELECT TO authenticated`. Sem isso a view roda como owner (BYPASSRLS) e projeta ficha técnica / venda / custo à **anon-key pública** — exatamente o P0 #1246 fechado em 2026-07-08. As views-base do PCP já são `invoker=on`; a cadeia inteira tem de permanecer assim.
 
 ## 7. Provas (obrigatórias antes do apply)
 

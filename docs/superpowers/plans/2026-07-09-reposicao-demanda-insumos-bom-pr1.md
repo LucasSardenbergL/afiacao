@@ -442,6 +442,23 @@ assert_eq "G1 duplicata exata deduplica" "1" "$got"
 got=$(Pq -c "SELECT quantidade FROM v_pcp_malha_oben WHERE pai_oben=200 AND comp_oben=201;")
 assert_eq "G2 qtde NAO dobrou (0.9, nao 1.8)" "0.9" "$got"
 
+echo "→ RES. componente que NÃO resolve no catálogo colacor → quarentena (nada some — Crítico do review)"
+# produto colacor 103 existe mas SEM codigo PRD → não traduzível p/ OBEN
+P -q -c "INSERT INTO omie_products (id, omie_codigo_produto, codigo, descricao, account, ativo, unidade)
+         VALUES (gen_random_uuid(), 103, '', 'COMP SEM PRD', 'colacor', true, 'L');"
+set_malha 100 '[{"idProdMalha":103,"quantProdMalha":0.5,"unidProdMalha":"L","percPerdaProdMalha":0}]'
+got=$(Pq -c "SELECT count(*) FROM v_pcp_malha_oben WHERE pai_oben=200;")
+assert_eq "RES1 nao-resolvido NAO entra no elegivel" "0" "$got"
+got=$(Pq -c "SELECT motivo FROM v_pcp_malha_oben_quarentena WHERE pai_codigo=100 AND componente_codigo=103;")
+assert_eq "RES2 nao-resolvido diagnosticado (nada some)" "componente_nao_resolvido_colacor" "$got"
+P -q -c "DELETE FROM omie_products WHERE omie_codigo_produto=103;"
+
+echo "→ SEC. as 3 views têm security_invoker (não bypassam a RLS staff-only das bases — Crítico do review)"
+got=$(Pq -c "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE n.nspname='public' AND c.reloptions @> ARRAY['security_invoker=true']
+               AND c.relname IN ('v_pcp_malha_oben_cand','v_pcp_malha_oben','v_pcp_malha_oben_quarentena');")
+assert_eq "SEC1 as 3 views sao security_invoker" "3" "$got"
+
 # restaurar a ficha boa para os testes seguintes
 set_malha 100 "$FICHA_OK"
 ```
@@ -573,6 +590,12 @@ assert_eq "M1 sku sem ficha: so a venda direta" "1" "$got"
 echo "→ N. id da linha sintética é único e determinístico"
 got=$(Pq -c "SELECT count(*) - count(DISTINCT id) FROM v_sku_demanda_efetiva;")
 assert_eq "N1 nenhum id duplicado" "0" "$got"
+
+echo "→ SEC-DE. v_sku_demanda_efetiva é security_invoker (lê venda_items — dado sensível)"
+got=$(Pq -c "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE n.nspname='public' AND c.relname='v_sku_demanda_efetiva'
+               AND c.reloptions @> ARRAY['security_invoker=true'];")
+assert_eq "SEC-DE1 demanda efetiva é security_invoker" "1" "$got"
 ```
 
 - [ ] **Step 2: Rodar — deve FALHAR (view não existe)**
@@ -591,7 +614,7 @@ Expected: exit ≠ 0, com `relation "v_sku_demanda_efetiva" does not exist`.
 --    PR-2 esperam este formato — ordem de colunas preservada).
 --    NÃO altera v_venda_items_history_efetivo (preço/receita real seguem lá).
 -- ─────────────────────────────────────────────────────────────────────────────
-CREATE OR REPLACE VIEW v_sku_demanda_efetiva AS
+CREATE OR REPLACE VIEW v_sku_demanda_efetiva WITH (security_invoker = true) AS
 SELECT
   id, empresa, nfe_chave_acesso, nfe_numero, nfe_serie, data_emissao,
   cliente_codigo_omie, cliente_razao_social, cliente_cnpj_cpf, cliente_uf, cliente_cidade,
@@ -629,6 +652,12 @@ WHERE v.empresa = 'OBEN';    -- guard: nunca cruzar empresa
 
 COMMENT ON VIEW v_sku_demanda_efetiva IS
   'Demanda = venda direta ⊕ consumo de insumo derivado da ficha técnica. A linha de consumo herda a NF do pai (num_ordens) e usa a unidade do insumo; valor de venda é NULL (insumo não gera receita). PR-2 aponta as 4 views estatísticas para cá.';
+
+-- Segurança (padrão P0 — docs/agent/database.md §4). Esta view lê v_venda_items_history_efetivo
+-- (dados de venda/cliente sensíveis, já invoker=on em prod): manter a cadeia invoker=on e
+-- fechar a anon-key. v_venda_items_history_efetivo é a folha que governa venda_items_history.
+REVOKE ALL ON public.v_sku_demanda_efetiva FROM anon, PUBLIC;
+GRANT SELECT ON public.v_sku_demanda_efetiva TO authenticated;
 ```
 
 - [ ] **Step 4: Rodar — deve PASSAR**
