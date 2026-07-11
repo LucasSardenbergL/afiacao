@@ -112,7 +112,17 @@ CREATE TABLE public.prime_assinaturas (
   observacao text,
   created_by uuid NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  -- Estado amarrado às datas (review da Task 1): sem isto, 'cancelada' com data_fim
+  -- NULL viraria 'infinity' na anti-sobreposição e bloquearia o cliente PARA SEMPRE;
+  -- e suspensa_em solto (status ainda 'ativa') não congelaria nada.
+  CONSTRAINT prime_assinatura_status_datas CHECK (
+    CASE status
+      WHEN 'ativa'     THEN data_fim IS NULL AND suspensa_em IS NULL
+      WHEN 'suspensa'  THEN data_fim IS NULL AND suspensa_em IS NOT NULL
+      WHEN 'cancelada' THEN data_fim IS NOT NULL
+    END
+  )
 );
 CREATE UNIQUE INDEX uq_prime_assinatura_viva
   ON public.prime_assinaturas (customer_user_id) WHERE status <> 'cancelada';
@@ -135,8 +145,11 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+-- INSERT E UPDATE (review da Task 1): sem o UPDATE, staff editaria data_inicio/cliente
+-- e furaria a garantia por fora do caminho de criação.
 CREATE TRIGGER trg_prime_assinatura_sem_sobreposicao
-  BEFORE INSERT ON public.prime_assinaturas
+  BEFORE INSERT OR UPDATE OF customer_user_id, data_inicio, data_fim, status
+  ON public.prime_assinaturas
   FOR EACH ROW EXECUTE FUNCTION public.prime_assinatura_sem_sobreposicao();
 
 -- ── 3. Uso de benefício — APPEND-ONLY; contrafactual auditável por linha ──
@@ -224,7 +237,8 @@ CREATE TRIGGER trg_prime_uso_vigencia
 CREATE FUNCTION public.prime_uso_so_estorno() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NEW.assinatura_id IS DISTINCT FROM OLD.assinatura_id
+  IF NEW.id IS DISTINCT FROM OLD.id
+     OR NEW.assinatura_id IS DISTINCT FROM OLD.assinatura_id
      OR NEW.tipo IS DISTINCT FROM OLD.tipo
      OR NEW.quantidade IS DISTINCT FROM OLD.quantidade
      OR NEW.valor_tabela IS DISTINCT FROM OLD.valor_tabela
@@ -508,6 +522,12 @@ expect_sqlstate "preco_mensal <= 0 é barrado" "23514" \
   "INSERT INTO public.prime_planos (nome, preco_mensal, franquia_dentes) VALUES ('x', 0, 100)"
 expect_sqlstate "status inválido é barrado" "23514" \
   "UPDATE public.prime_assinaturas SET status='pausada' WHERE id='$A22'"
+expect_sqlstate "cancelada SEM data_fim é barrada (senão bloqueia o cliente pra sempre)" "23514" \
+  "UPDATE public.prime_assinaturas SET status='cancelada' WHERE id='$A22'"
+expect_sqlstate "suspensa SEM suspensa_em é barrada" "23514" \
+  "UPDATE public.prime_assinaturas SET status='suspensa' WHERE id='$A22'"
+expect_sqlstate "ativa COM suspensa_em é barrada (estado amarrado às datas)" "23514" \
+  "UPDATE public.prime_assinaturas SET suspensa_em = '${MES_ATUAL}' WHERE id='$A22'"
 expect_sqlstate "2ª assinatura VIVA do mesmo cliente é barrada (UNIQUE parcial)" "23505" \
   "INSERT INTO public.prime_assinaturas (customer_user_id, plano_id, preco_contratado, franquia_dentes_contratada, data_inicio, created_by) VALUES ('00000000-0000-0000-0000-00000000bbbb','11111111-1111-1111-1111-111111111111', 99, 200, '${MES_QUE_VEM}', '$UA')"
 
@@ -636,6 +656,8 @@ INSERT INTO public.prime_assinaturas (customer_user_id, plano_id, preco_contrata
 SQL
 eq "nova assinatura no mês SEGUINTE passa (preço novo = ciclo novo, grandfathering)" \
    "$(Pq -c "SELECT count(*) FROM public.prime_assinaturas WHERE customer_user_id='$UB'")" "2"
+expect_sqlstate "UPDATE que puxa o início pra mês já coberto é barrado (sobreposição via UPDATE)" "P0001" \
+  "UPDATE public.prime_assinaturas SET data_inicio = '${MES_ATUAL}' WHERE customer_user_id='$UB' AND status='ativa'"
 eq "updated_at avançou no UPDATE (trigger vivo)" \
    "$(Pq -c "SELECT updated_at > created_at FROM public.prime_assinaturas WHERE id='$A22'")" "t"
 
@@ -780,7 +802,7 @@ Fundação de dados do Prime Colacor (spec: docs/superpowers/specs/2026-07-09-pr
 - 3 tabelas (`prime_planos`, `prime_assinaturas`, `prime_beneficio_uso`) + view `v_prime_extrato_mensal` (security_invoker), transação única com preflight de dependências.
 - Honestidade money-path NO BANCO: monetizável exige `valor_tabela > 0` + `referencia` (lastro Omie); afiação amarra `valor_tabela = quantidade × preco_unitario_snapshot` (contrafactual auditável); operacional/bônus exige `NULL` (ausente ≠ zero).
 - Registro monetário **append-only**: UPDATE só-estorno (trigger), DELETE sem policy (nem staff), `created_by = auth.uid()` no WITH CHECK.
-- Vigência no banco: uso só em assinatura ATIVA e competência dentro da vigência (suspensa CONGELA franquia e extrato); ciclos do mesmo cliente não sobrepõem competência; bônus 1/mês com teto de 50.
+- Vigência no banco: uso só em assinatura ATIVA e competência dentro da vigência (suspensa CONGELA franquia e extrato); ciclos do mesmo cliente não sobrepõem competência (INSERT e UPDATE); status amarrado às datas (cancelada exige `data_fim` — sem isso a anti-sobreposição bloquearia o cliente pra sempre); bônus 1/mês com teto de 50.
 - Grandfathering: preço e franquia congelados na assinatura; view expõe `mensalidade_contratada` (nunca "pagou" — não há fato de pagamento na v1) e `dentes_excedentes` (estouro nunca escondido).
 - **Provado PG17** `db/test-prime-fundacao.sh`: N/0 asserts (RLS matriz staff/cliente/sem-role/anon incl. view, SQLSTATE 23514/23505/P0001, estorno, overfranchise, suspensão, sobreposição) + falsificações F1/F2 embutidas + 2 falsificações externas executadas (contrafactual e isolamento → vermelho com dente; logs `/tmp/prime-falsif-{a,b}.log`).
 
