@@ -65,19 +65,25 @@ P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
 # ══ ZONA 3 — seed + grant p/ o caminho real (service_role lê profiles) ══
+# RLS ON em profiles: prova o caminho SECURITY INVOKER + service_role BYPASSRLS (Codex challenge PR-1).
 P -q <<'SQL'
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 INSERT INTO auth.users(id) VALUES
   ('00000000-0000-0000-0000-000000000001'),
   ('00000000-0000-0000-0000-000000000002'),
   ('00000000-0000-0000-0000-000000000003'),
   ('00000000-0000-0000-0000-000000000004'),
-  ('00000000-0000-0000-0000-000000000005') ON CONFLICT DO NOTHING;
+  ('00000000-0000-0000-0000-000000000005'),
+  ('00000000-0000-0000-0000-000000000006'),
+  ('00000000-0000-0000-0000-000000000007') ON CONFLICT DO NOTHING;
 INSERT INTO public.profiles(user_id, document) VALUES
   ('00000000-0000-0000-0000-000000000001', '11111111111'),      -- único
   ('00000000-0000-0000-0000-000000000002', '222.222.222-22'),   -- ambíguo (mascarado), colide com o 3
   ('00000000-0000-0000-0000-000000000003', '22222222222'),      -- ambíguo (mesmo doc normalizado, outro user)
   ('00000000-0000-0000-0000-000000000004', '333.333.333-33'),   -- único, normaliza da máscara
-  ('00000000-0000-0000-0000-000000000005', '123');              -- doc<11 → excluído
+  ('00000000-0000-0000-0000-000000000005', '123'),              -- doc<11 → excluído
+  ('00000000-0000-0000-0000-000000000006', NULL),               -- doc NULL → excluído (WHERE document IS NOT NULL)
+  ('00000000-0000-0000-0000-000000000007', './-');              -- só pontuação → regexp vira '' (len 0) → excluído
 GRANT SELECT ON public.profiles TO service_role;
 SQL
 
@@ -104,24 +110,26 @@ eq "A6 doc<11 excluído de ambiguous_docs" \
 eq "A7 client_to_user vazio no PR-1" \
    "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->>'client_to_user';")" "{}"
 
-# GATE — anon/authenticated barrados no EXECUTE (42501); sentinela PRÓPRIA (anti-teatro)
-for R in anon authenticated; do
-  OUT=$(P -tA 2>&1 <<SQL || true
-SET ROLE $R;
-DO \$\$ BEGIN
-  PERFORM public.omie_sync_identity_snapshot('oben');
-  RAISE EXCEPTION 'GATE_NAO_BARROU';
-EXCEPTION
-  WHEN insufficient_privilege THEN RAISE NOTICE 'GATE_OK_42501';
-  WHEN OTHERS THEN RAISE;
-END \$\$;
-SQL
-)
-  case "$OUT" in *GATE_OK_42501*) ok "A8 $R barrado no EXECUTE (42501)" ;; *) bad "A8 $R — veio: $OUT" ;; esac
-done
+# NULL / só-pontuação / totais (Codex PR-1: o cabeçalho prometia NULL mas o seed não tinha; faltava pontuação)
+eq "A7b '' (doc só-pontuação) não vira chave em doc_to_user" \
+   "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'doc_to_user') ? '';")" "f"
+eq "A7c docs únicos = 2 (NULL, só-pontuação e doc<11 excluídos; sobram 111... e 333...)" \
+   "$(RS "SELECT count(*) FROM jsonb_object_keys(public.omie_sync_identity_snapshot('oben')->'doc_to_user');")" "2"
+eq "A7d ambiguous_docs = 1 (só 222...)" \
+   "$(RS "SELECT jsonb_array_length(public.omie_sync_identity_snapshot('oben')->'ambiguous_docs');")" "1"
 
-# service_role CONSEGUE executar (o caminho real não regrediu)
-eq "A9 service_role executa a RPC" \
+# GATE — pelo CATÁLOGO (has_function_privilege), NÃO por execução real (Codex PR-1): executar como anon
+# confunde "denied na FUNÇÃO" com "denied na TABELA profiles" — ambos 42501, o A8 ficaria verde-falso.
+FN='public.omie_sync_identity_snapshot(text)'
+eq "A8a service_role TEM execute"           "$(Pq -c "SELECT has_function_privilege('service_role','$FN','EXECUTE');")" "t"
+eq "A8b anon SEM execute (REVOKE)"          "$(Pq -c "SELECT has_function_privilege('anon','$FN','EXECUTE');")" "f"
+eq "A8c authenticated SEM execute (REVOKE)" "$(Pq -c "SELECT has_function_privilege('authenticated','$FN','EXECUTE');")" "f"
+eq "A8d PUBLIC SEM execute"                 "$(Pq -c "SELECT has_function_privilege('public','$FN','EXECUTE');")" "f"
+eq "A8e função é SECURITY INVOKER (prosecdef=false)" \
+   "$(Pq -c "SELECT prosecdef FROM pg_proc WHERE proname='omie_sync_identity_snapshot';")" "f"
+
+# service_role CONSEGUE executar de verdade (runtime; complementa o catálogo, prova SECURITY INVOKER+BYPASSRLS)
+eq "A9 service_role executa a RPC (RLS on em profiles)" \
    "$(RS "SELECT (public.omie_sync_identity_snapshot('oben') IS NOT NULL);")" "t"
 
 # ══ ZONA 5 — FALSIFICAÇÃO (Lei #3: sabota → exija vermelho → restaura) ══
@@ -140,15 +148,18 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' BEGIN AT
     'client_to_user', '{}'::jsonb);
 END;
 SQL
-LEAK=$(Pq -c "SELECT (public.omie_sync_identity_snapshot('oben')->'doc_to_user'->>'22222222222') IS NOT NULL;")
-case "$LEAK" in
-  t) ok "F1 sem o filtro n_users=1 o doc ambíguo VAZA p/ doc_to_user (A3 tem dente)" ;;
-  *) bad "F1 sabotei o filtro e o doc ambíguo NÃO vazou → A3 é fraco, conserte o assert" ;;
+# Re-roda a EXPRESSÃO EXATA do A3 ("doc ambíguo IS NULL em doc_to_user", que o A3 exige ='t'). Sob o
+# mutante ela vira 'f' → o assert A3 ficaria VERMELHO. Prova MECÂNICA de que A3 mata este mutante (Codex
+# PR-1: só mostrar que o doc vaza não prova que o conjunto de asserts o pega).
+A3_EXPR="SELECT (public.omie_sync_identity_snapshot('oben')->'doc_to_user'->>'22222222222') IS NULL;"
+SOB_MUTANTE=$(Pq -c "$A3_EXPR")
+case "$SOB_MUTANTE" in
+  f) ok "F1 sob o mutante (sem n_users=1) a expressão do A3 vira 'f' → A3 ficaria VERMELHO (dente mecânico)" ;;
+  *) bad "F1 mutante não mudou a expressão do A3 (veio '$SOB_MUTANTE') → A3 não mata o mutante, assert fraco" ;;
 esac
-# RESTAURA a versão verdadeira
+# RESTAURA e reconfirma que a MESMA expressão do A3 volta a 't' (verde)
 P -q -f "$MIG"
-RESTORED=$(Pq -c "SELECT (public.omie_sync_identity_snapshot('oben')->'doc_to_user'->>'22222222222') IS NULL;")
-eq "F2 restaurada: doc ambíguo volta a ficar FORA de doc_to_user" "$RESTORED" "t"
+eq "F2 restaurada: a expressão do A3 volta a 't' (doc ambíguo FORA de doc_to_user)" "$(Pq -c "$A3_EXPR")" "t"
 
 # ── veredito ──
 echo "──────────────────────────────"

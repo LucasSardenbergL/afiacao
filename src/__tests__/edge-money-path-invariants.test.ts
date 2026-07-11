@@ -490,35 +490,63 @@ describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helpe
 // throwOnTransient INCONDICIONAL — transitório no incremental não vira skip permanente. A sentinela textual
 // aqui pega a reversão do deploy do Lovable. Ver docs/superpowers/specs/2026-07-11-omie-identidade-snapshot-atomico-design.md.
 
-describe('guardrail money-path: syncPedidos resolve identidade pela RPC atômica + fail-safe transitório (A1 + P2)', () => {
+const IDENTITY_SNAPSHOT = 'src/lib/omie/omie-identity-snapshot.ts';
+
+describe('guardrail money-path: identidade dos pedidos pela RPC atômica + contrato fail-closed (A1 + P2)', () => {
   const src = read(VENDAS);
+  const analytics = read(ANALYTICS);
+  const helper = read(IDENTITY_SNAPSHOT);
 
-  it('sentinela: leu o edge real', () => {
+  it('sentinela: leu os arquivos reais (edge vendas + edge analytics + helper)', () => {
     expect(src).toContain('async function syncPedidos');
+    expect(analytics).toContain('async function fetchProfileDocUserMap');
+    expect(helper).toContain('parseIdentitySnapshot');
   });
 
-  // ── A1: docToUserMap vem do snapshot atômico server-side (não mais paginação no edge) ──
-  it('A1: o docToUserMap vem do doc_to_user da RPC omie_sync_identity_snapshot (snapshot atômico)', () => {
-    expect(
-      src,
-      'REGRESSÃO A1: o docToUserMap não vem mais do doc_to_user da RPC — voltou paginação/last-write-wins no edge?',
-    ).toMatch(/docToUserMap = new Map[\s\S]{0,90}doc_to_user/);
-    expect(src, 'edge não chama mais a RPC omie_sync_identity_snapshot').toContain("rpc('omie_sync_identity_snapshot'");
+  // ── A1 VENDAS: docToUserMap vem do snapshot atômico + validação estrita de contrato ──
+  it('A1 vendas: docToUserMap vem da RPC via parseIdentitySnapshot (não paginação, não helper antigo)', () => {
+    expect(src, 'edge vendas não chama mais a RPC').toContain("rpc('omie_sync_identity_snapshot'");
+    expect(src, 'REGRESSÃO: docToUserMap não vem mais de parseIdentitySnapshot').toMatch(/docToUserMap[\s\S]{0,40}=[\s\S]{0,40}parseIdentitySnapshot\(/);
+    expect(src, 'erro da RPC deve ser FAIL-CLOSED (throw)').toMatch(/if \(snapErr\) throw new Error/);
+    expect(src, 'REVERSÃO Lovable? voltou a paginar profiles por keyset').not.toMatch(/from\('profiles'\)[\s\S]{0,200}\.order\('user_id'\)[\s\S]{0,120}\.gt\('user_id'/);
+    expect(src, 'REVERSÃO: voltou a chamar o helper TS antigo').not.toMatch(/buildDocUserMapFailClosed\(/);
   });
 
-  it('A1: erro da RPC é FAIL-CLOSED (throw), não mapa parcial silencioso', () => {
-    expect(src).toMatch(/if \(snapErr\) throw new Error/);
+  // ── A1 ANALYTICS: fetchProfileDocUserMap idem (Codex PR-1: o analytics podia ser revertido sem o CI ver) ──
+  it('A1 analytics: fetchProfileDocUserMap usa a RPC + parseIdentitySnapshot + fail-closed, não paginação OFFSET', () => {
+    // escopa ao CORPO da função (o analytics tem outros leitores legítimos de profiles com .range noutros pontos)
+    const bloco = analytics.match(/async function fetchProfileDocUserMap[\s\S]*?\n}/)?.[0] ?? '';
+    expect(bloco, 'não achei o corpo de fetchProfileDocUserMap (âncora quebrada)').not.toBe('');
+    expect(bloco, 'analytics não chama mais a RPC').toContain("rpc('omie_sync_identity_snapshot'");
+    expect(bloco, 'REGRESSÃO: analytics não usa mais parseIdentitySnapshot').toContain('parseIdentitySnapshot(snap)');
+    expect(bloco, 'erro da RPC deve ser FAIL-CLOSED (throw)').toMatch(/if \(error\) throw new Error/);
+    expect(
+      bloco,
+      'REVERSÃO Lovable? fetchProfileDocUserMap voltou a paginar profiles por OFFSET (.range)',
+    ).not.toMatch(/\.range\(/);
   });
 
-  it('A1: NÃO reintroduziu a paginação keyset de profiles nem a chamada ao helper TS (reversão do Lovable)', () => {
+  // ── Contrato fail-closed (Codex challenge PR-1): error=null não prova o JSON; shape inválido LANÇA ──
+  it('contrato: o helper valida shape/UUID/disjunção e LANÇA (não Map vazio silencioso)', () => {
+    expect(helper).toMatch(/throw new Error/);
+    expect(helper, 'valida UUID dos user_id').toMatch(/OMIE_SNAPSHOT_UUID_RE/);
+    expect(helper, 'valida disjunção doc_to_user × ambiguous_docs').toMatch(/ambiguousDocs\.has\(doc\)/);
+  });
+
+  it('canário identidade_snapshot_probe valida o contrato e reprova deploy quebrado (PGRST202/nulls)', () => {
+    expect(src, 'canário de deploy da RPC ausente').toContain('identidade_snapshot_probe');
+    expect(src, 'canário deve VALIDAR o contrato via parseIdentitySnapshot').toContain('parseIdentitySnapshot(snapProbe)');
     expect(
       src,
-      'REVERSÃO Lovable? voltou a paginar profiles por keyset p/ o docToUserMap',
-    ).not.toMatch(/from\('profiles'\)[\s\S]{0,200}\.order\('user_id'\)[\s\S]{0,120}\.gt\('user_id'/);
-    expect(
-      src,
-      'REVERSÃO: voltou a CHAMAR o helper TS buildDocUserMapFailClosed (a lógica é SQL agora)',
-    ).not.toMatch(/buildDocUserMapFailClosed\(/);
+      'REGRESSÃO (Codex PR-1): canário voltou a success:true fixo — PGRST202/nulls davam falso-verde',
+    ).toMatch(/success: !snapProbeErr && parsedOk/);
+  });
+
+  // ── PARIDADE: o MIRROR do helper é idêntico entre src e os DOIS edges (pega reversão do Lovable) ──
+  it('PARIDADE: parseIdentitySnapshot idêntico em src × vendas × analytics', () => {
+    const h = mirrorBlockNamed(helper, 'omie identity-snapshot-parse');
+    expect(mirrorBlockNamed(src, 'omie identity-snapshot-parse'), 'vendas divergiu do helper de src/').toBe(h);
+    expect(mirrorBlockNamed(analytics, 'omie identity-snapshot-parse'), 'analytics divergiu do helper de src/').toBe(h);
   });
 
   // ── P2 (do #1288, MANTIDO): resolveClientUserId fail-safe em transitório nos DOIS modos ──
