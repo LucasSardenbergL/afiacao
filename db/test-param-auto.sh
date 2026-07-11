@@ -92,6 +92,8 @@ echo "→ migration D (recalibra fusível: dropa cobertura, no-op antes do fusí
 P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260605150000_param_auto_fusivel_calibracao.sql"
 echo "→ migration E (resumo 18h: rótulo = descrição do produto, fallback p/ código)…"
 P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260619120000_param_auto_resumo_descricao.sql"
+echo "→ migration F (resumo: altas/reduções separadas + segurado pelo nome)…"
+P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260711193000_param_auto_resumo_altas_reducoes_segurado.sql"
 
 echo "→ seed dos cenários (view controlada + sku_parametros + pins + estoque/custo)…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/seed-param-auto.sql"
@@ -206,19 +208,25 @@ BEGIN
   SELECT impacto_rs INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1012';
   ASSERT r.impacto_rs IS NULL, format('L impacto FALHOU: % (esperado NULL — custo ausente = desconhecido)', r.impacto_rs);
 
+  -- M: REDUÇÃO do máximo (120→90) com estoque 30 abaixo do ponto → aplicado com impacto NEGATIVO
+  --    (qtde_antes 120-30=90, qtde_depois 90-30=60, Δ-30 × cmc10 = -300). É o caso do resumo "reduções".
+  SELECT status, impacto_rs INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1013';
+  ASSERT r.status='aplicado', format('M FALHOU: status=% (esperado aplicado: queda do máximo não é segurada)', r.status);
+  ASSERT r.impacto_rs=-300, format('M impacto FALHOU: % (esperado -300: Δ-30 × cmc10 — capital LIBERADO)', r.impacto_rs);
+
   -- Totais do run: log escopado ao motor (I/J aplicam config mas NÃO contam aqui).
   SELECT total_aplicados, total_segurados, total_pinados, impacto_total_rs, impacto_desconhecido_n
     INTO r FROM public.reposicao_param_auto_run WHERE id=v_run;
-  ASSERT r.total_aplicados=3, format('total_aplicados FALHOU: % (esperado 3: A,F,L — I/J aplicam mas não logam)', r.total_aplicados);
+  ASSERT r.total_aplicados=4, format('total_aplicados FALHOU: % (esperado 4: A,F,L,M — I/J aplicam mas não logam)', r.total_aplicados);
   ASSERT r.total_segurados=1, format('total_segurados FALHOU: % (esperado 1: B — cobertura removida, C virou no-op)', r.total_segurados);
   ASSERT r.total_pinados=2, format('total_pinados FALHOU: % (esperado 2: E,H — pin vence o fusível)', r.total_pinados);
-  -- impacto_total_rs = soma dos impactos conhecidos: A=200, F=? (pos 30<=70→qtde_depois 150-30=120;
-  --   antes pp 40, máx 100 → 30<=40→qtde_antes 100-30=70; Δ50×cmc10=500) → 200+500=700; B=0(segurado);
-  --   L=NULL (não soma).
-  ASSERT r.impacto_total_rs=700, format('impacto_total_rs FALHOU: % (esperado 700: A 200 + F 500)', r.impacto_total_rs);
+  -- impacto_total_rs = soma dos impactos conhecidos: A=200, F=500 (pos 30<=70→qtde_depois 150-30=120;
+  --   antes pp 40, máx 100 → 30<=40→qtde_antes 100-30=70; Δ50×cmc10=500); M=-300 (redução); B=0(segurado);
+  --   L=NULL (não soma). → 200+500-300 = 400 (o total JÁ é líquido: inclui a redução de M).
+  ASSERT r.impacto_total_rs=400, format('impacto_total_rs FALHOU: % (esperado 400 líquido: A 200 + F 500 - M 300)', r.impacto_total_rs);
   ASSERT COALESCE(r.impacto_desconhecido_n,0)=1, format('impacto_desconhecido_n FALHOU: % (esperado 1: L aplica sem custo)', r.impacto_desconhecido_n);
 
-  RAISE NOTICE 'OK status/impacto/totais (A/F/L aplicam · B segura (3×) · C giro-lento no-op · D bloqueia · E/H pinam · G sem_mudanca · I/J aplicam sem logar · K bloqueia cold-start · L queda aplica)';
+  RAISE NOTICE 'OK status/impacto/totais (A/F/L/M aplicam · B segura (3×) · C giro-lento no-op · D bloqueia · E/H pinam · G sem_mudanca · I/J aplicam sem logar · K bloqueia cold-start · L queda aplica · M reduz -300)';
 END $$;
 SQL
 
@@ -324,17 +332,38 @@ BEGIN
   SELECT count(*) INTO n FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
   ASSERT n=1, format('RESUMO idempotência FALHOU: % alertas (esperado 1)', n);
 
-  -- ── P1/P2 (migration E): cada item é rotulado pela DESCRIÇÃO, não pelo código cru ──
+  -- ── Corpo do e-mail: altas / reduções / segurado-pelo-nome (migration F) ──
   SELECT mensagem INTO v_msg FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
-  -- P1 (positivo): as descrições dos 3 aplicados (A/F/L) aparecem no corpo
-  ASSERT position('SKU-A normal' IN v_msg) > 0,         'P1 FALHOU: descrição de A ausente no e-mail';
-  ASSERT position('SKU-F pin diferente' IN v_msg) > 0,  'P1 FALHOU: descrição de F ausente no e-mail';
-  ASSERT position('SKU-L queda do máximo' IN v_msg) > 0,'P1 FALHOU: descrição de L ausente no e-mail';
-  -- P2 (positivo): o código deixou de ser o RÓTULO do item ("<código>: PP")
-  ASSERT position('1001: PP' IN v_msg) = 0, 'P2 FALHOU: A ainda rotulado pelo código (1001) em vez da descrição';
-  ASSERT position('1006: PP' IN v_msg) = 0, 'P2 FALHOU: F ainda rotulado pelo código (1006)';
-  ASSERT position('1012: PP' IN v_msg) = 0, 'P2 FALHOU: L ainda rotulado pelo código (1012)';
-  RAISE NOTICE 'OK resumo: 1 alerta (info/pendente) + idempotente + rótulo=descrição (P1) + código não é rótulo (P2)';
+  RAISE NOTICE E'\n──── CORPO DO E-MAIL ────\n%\n─────────────────────────', v_msg;
+
+  -- P-ALTAS (positivo): seção "Maiores altas" com A (+200) e F (+500), pela DESCRIÇÃO e com sinal +.
+  ASSERT position('Maiores altas:' IN v_msg) > 0,        'P-ALTAS FALHOU: seção "Maiores altas" ausente';
+  ASSERT position('SKU-A normal' IN v_msg) > 0,          'P-ALTAS FALHOU: A (alta +200) ausente';
+  ASSERT position('SKU-F pin diferente' IN v_msg) > 0,   'P-ALTAS FALHOU: F (alta +500) ausente';
+  ASSERT position('(R$ +500)' IN v_msg) > 0,             'P-ALTAS FALHOU: sinal/valor "+500" de F ausente';
+  ASSERT position('(R$ +200)' IN v_msg) > 0,             'P-ALTAS FALHOU: sinal/valor "+200" de A ausente';
+
+  -- P-REDUÇÕES (o bug do founder): seção PRÓPRIA "Maiores reduções" com M (-300) — nunca cortada.
+  ASSERT position('Maiores reduções:' IN v_msg) > 0,     'P-REDUCOES FALHOU: seção "Maiores reduções" ausente (o bug: só mostrava alta)';
+  ASSERT position('SKU-M reducao capital' IN v_msg) > 0, 'P-REDUCOES FALHOU: M (redução -300) ausente';
+  ASSERT position('(R$ -300)' IN v_msg) > 0,             'P-REDUCOES FALHOU: valor "-300" de M ausente';
+  -- ordem: altas ANTES de reduções (a seção de alta precede a de baixa no corpo)
+  ASSERT position('Maiores altas:' IN v_msg) < position('Maiores reduções:' IN v_msg),
+    'P-ORDEM FALHOU: "Maiores reduções" deveria vir DEPOIS de "Maiores altas"';
+
+  -- P-SEGURADO (o "confira" agora diz o quê): B listado pelo NOME sob "Segurados pelo fusível".
+  ASSERT position('Segurados pelo fusível (confira): 1' IN v_msg) > 0, 'P-SEGURADO FALHOU: contador do fusível ausente';
+  ASSERT position('SKU-B salto>3x' IN v_msg) > 0,        'P-SEGURADO FALHOU: item segurado (B) não listado pelo nome';
+  ASSERT position('máx atual 100' IN v_msg) > 0,         'P-SEGURADO FALHOU: contexto (máx atual) do segurado ausente';
+
+  -- P-SEM-CUSTO: L (aplicado, impacto NULL) NÃO é listado (sem custo), mas conta no "(+1 sem custo)".
+  ASSERT position('SKU-L queda do máximo' IN v_msg) = 0, 'P-SEM-CUSTO FALHOU: L (impacto NULL) não deveria ser listado';
+  ASSERT position('(+1 sem custo)' IN v_msg) > 0,        'P-SEM-CUSTO FALHOU: rótulo "(+1 sem custo)" do L ausente no cabeçalho';
+
+  -- P-CÓDIGO-NÃO-É-RÓTULO: com descrição presente, o código cru não vira rótulo ("<código>: PP").
+  ASSERT position('1001: PP' IN v_msg) = 0, 'P-RÓTULO FALHOU: A ainda rotulado pelo código (1001)';
+  ASSERT position('1006: PP' IN v_msg) = 0, 'P-RÓTULO FALHOU: F ainda rotulado pelo código (1006)';
+  RAISE NOTICE 'OK resumo: altas só-positivas (A/F) · reduções em seção própria (M -300) · segurado pelo nome (B) · L sem custo não-listado · idempotente';
 END $$;
 
 -- cron registrado
@@ -342,39 +371,13 @@ SELECT 'cron' AS k, count(*) AS n FROM cron.job WHERE jobname='reposicao-param-a
 SQL
 
 echo ""
-echo "→ FALSIFICAÇÃO (sabota a migration E → o e-mail volta ao código; prova o dente de P1)…"
+echo "→ FALSIFICAÇÃO (reverte à migration E: lista única DESC LIMIT 10 → prova o dente de reduções/segurado)…"
+# Sabotagem = voltar à versão ANTERIOR (E), que tem UMA lista "Maiores mudanças" sem seção de reduções
+# nem segurado-por-nome. Com só 4 aplicados (<10), a E até mostraria M na lista única — por isso a
+# sentinela de dente NÃO é 'SKU-M' (apareceria nas duas), e sim a SEÇÃO "Maiores reduções:" e o NOME
+# do segurado 'SKU-B', strings que SÓ a migration F emite.
+P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260619120000_param_auto_resumo_descricao.sql"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
--- Versão FURADA: rótulo = sku_codigo_omie cru (como era ANTES da migration E).
-CREATE OR REPLACE FUNCTION public.reposicao_param_auto_resumo_tick()
-  RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public','pg_temp'
-  AS $fur$
-DECLARE r record; v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date; v_corpo text; v_top text;
-BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('param_auto_resumo'));
-  SELECT * INTO r FROM public.reposicao_param_auto_run
-    WHERE data_negocio_brt=v_hoje AND status='completo' AND resumo_enviado_em IS NULL
-    ORDER BY concluido_em DESC LIMIT 1;
-  IF NOT FOUND THEN RETURN; END IF;
-  IF COALESCE(r.total_aplicados,0)=0 AND COALESCE(r.total_segurados,0)=0 THEN
-    UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=now() WHERE id=r.id; RETURN;
-  END IF;
-  SELECT string_agg(format('• %s: PP %s→%s, máx %s→%s%s', sku_codigo_omie,
-            coalesce(ponto_pedido_antes::text,'—'), coalesce(ponto_pedido_depois::text,'—'),
-            coalesce(estoque_maximo_antes::text,'—'), coalesce(estoque_maximo_depois::text,'—'),
-            CASE WHEN impacto_rs IS NULL THEN ' (R$ ?)' ELSE ' (R$ '||round(impacto_rs)::text||')' END), E'\n')
-    INTO v_top FROM (
-      SELECT * FROM public.reposicao_param_auto_log WHERE run_id=r.id AND status='aplicado'
-      ORDER BY impacto_rs DESC NULLS LAST LIMIT 10) t;
-  v_corpo := format(E'%s parâmetros mudaram hoje (OBEN).\nImpacto estimado total: R$ %s%s\n\nMaiores mudanças:\n%s\n\nSegurados pelo fusível (confira): %s\n\nVeja e reverta em: /admin/reposicao/mudancas-automaticas',
-    r.total_aplicados, round(COALESCE(r.impacto_total_rs,0)),
-    CASE WHEN COALESCE(r.impacto_desconhecido_n,0)>0 THEN ' (+'||r.impacto_desconhecido_n||' sem custo)' ELSE '' END,
-    COALESCE(v_top,'—'), COALESCE(r.total_segurados,0));
-  INSERT INTO public.fornecedor_alerta (tipo, titulo, mensagem, empresa, severidade, status)
-    VALUES ('param_auto_resumo', 'Parâmetros de reposição — resumo do dia', v_corpo, r.empresa, 'info', 'pendente_notificacao');
-  UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=now() WHERE id=r.id;
-END;
-$fur$;
-
 DELETE FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
 UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=NULL
   WHERE status='completo' AND data_negocio_brt=(now() AT TIME ZONE 'America/Sao_Paulo')::date;
@@ -384,24 +387,28 @@ DECLARE v_msg text;
 BEGIN
   PERFORM public.reposicao_param_auto_resumo_tick();
   SELECT mensagem INTO v_msg FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
-  -- Sentinela ASCII que SÓ a versão verdadeira emite (a descrição). Com a furada deve SUMIR:
-  ASSERT position('SKU-A normal' IN v_msg) = 0,
-    'FALSIFICAÇÃO FRACA: P1 ficaria verde mesmo sem a migration E (rótulo=código) → assert sem dente';
-  -- e o código volta a ser o rótulo (confirma que a sabotagem rodou de fato):
-  ASSERT position('1001: PP' IN v_msg) > 0,
-    'FALSIFICAÇÃO INCONCLUSIVA: nem o código apareceu — a versão furada não rodou como esperado';
-  RAISE NOTICE 'OK falsificação: sem a migration E o e-mail volta ao código cru (P1 ficaria VERMELHO)';
+  -- Dente de P-REDUCOES: a SEÇÃO própria some sem a F (a redução voltaria a competir/ser cortada pelo LIMIT).
+  ASSERT position('Maiores reduções:' IN v_msg) = 0,
+    'FALSIFICAÇÃO FRACA: "Maiores reduções" apareceria sem a migration F → P-REDUCOES sem dente';
+  -- Dente de P-SEGURADO: o segurado deixa de ser listado pelo nome (E só mostra o contador).
+  ASSERT position('SKU-B salto>3x' IN v_msg) = 0,
+    'FALSIFICAÇÃO FRACA: o segurado (B) seria listado pelo nome sem a migration F → P-SEGURADO sem dente';
+  -- Confirma que a reversão REALMENTE rodou (a E emite a lista única "Maiores mudanças"):
+  ASSERT position('Maiores mudanças:' IN v_msg) > 0,
+    'FALSIFICAÇÃO INCONCLUSIVA: nem "Maiores mudanças" (rótulo da versão E) apareceu — a reversão não rodou';
+  RAISE NOTICE 'OK falsificação: sem a migration F o e-mail volta à lista única (reduções e segurado-por-nome SOMEM → P-REDUCOES/P-SEGURADO VERMELHOS)';
 END $$;
 SQL
 
-echo "→ restaura a migration E verdadeira…"
-P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260619120000_param_auto_resumo_descricao.sql"
+echo "→ restaura a migration F verdadeira…"
+P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260711193000_param_auto_resumo_altas_reducoes_segurado.sql"
 
 echo ""
-echo "→ P3 FALLBACK (descrição NULL/só-espaços → cai no código, nunca rótulo vazio)…"
+echo "→ FALLBACK (descrição NULL/só-espaços → cai no código nas 3 superfícies, nunca rótulo vazio)…"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
-UPDATE public.reposicao_param_auto_log SET sku_descricao=NULL  WHERE sku_codigo_omie='1001';  -- A: NULL
-UPDATE public.reposicao_param_auto_log SET sku_descricao='   ' WHERE sku_codigo_omie='1012';  -- L: só-espaços
+UPDATE public.reposicao_param_auto_log SET sku_descricao=NULL  WHERE sku_codigo_omie='1001';  -- A (alta): NULL
+UPDATE public.reposicao_param_auto_log SET sku_descricao='   ' WHERE sku_codigo_omie='1013';  -- M (redução): só-espaços
+UPDATE public.reposicao_param_auto_log SET sku_descricao=NULL  WHERE sku_codigo_omie='1002';  -- B (segurado): NULL
 DELETE FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
 UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=NULL
   WHERE status='completo' AND data_negocio_brt=(now() AT TIME ZONE 'America/Sao_Paulo')::date;
@@ -411,12 +418,14 @@ DECLARE v_msg text;
 BEGIN
   PERFORM public.reposicao_param_auto_resumo_tick();
   SELECT mensagem INTO v_msg FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
-  ASSERT position('1001: PP' IN v_msg) > 0,          'P3 FALHOU: descrição NULL (A) não caiu no código';
-  ASSERT position('SKU-A normal' IN v_msg) = 0,      'P3 FALHOU: A ainda mostra a descrição apagada';
-  ASSERT position('1012: PP' IN v_msg) > 0,          'P3 FALHOU: descrição só-espaços (L) não caiu no código (nullif/btrim)';
-  ASSERT position('SKU-F pin diferente' IN v_msg) > 0,'P3 FALHOU: F (com descrição) deveria manter o texto';
-  ASSERT position('• : PP' IN v_msg) = 0,            'P3 FALHOU: rótulo vazio no e-mail (money-path: ausente≠vazio)';
-  RAISE NOTICE 'OK fallback: NULL e só-espaços caem no código; com descrição mantém; sem rótulo vazio';
+  ASSERT position('1001: PP' IN v_msg) > 0,          'FALLBACK FALHOU: descrição NULL (A) não caiu no código nas altas';
+  ASSERT position('SKU-A normal' IN v_msg) = 0,      'FALLBACK FALHOU: A ainda mostra a descrição apagada';
+  ASSERT position('1013: PP' IN v_msg) > 0,          'FALLBACK FALHOU: descrição só-espaços (M) não caiu no código nas reduções (nullif/btrim)';
+  ASSERT position('1002 (máx atual' IN v_msg) > 0,   'FALLBACK FALHOU: segurado B com descrição NULL não caiu no código';
+  ASSERT position('SKU-F pin diferente' IN v_msg) > 0,'FALLBACK FALHOU: F (com descrição) deveria manter o texto';
+  ASSERT position('• : PP' IN v_msg) = 0,            'FALLBACK FALHOU: rótulo vazio nas listas (money-path: ausente≠vazio)';
+  ASSERT position('•  (máx atual' IN v_msg) = 0,     'FALLBACK FALHOU: rótulo vazio no segurado';
+  RAISE NOTICE 'OK fallback: NULL/só-espaços caem no código (altas, reduções e segurado); com descrição mantém; sem rótulo vazio';
 END $$;
 SQL
 
