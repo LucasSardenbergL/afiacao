@@ -17,14 +17,14 @@ O objetivo do V3 era dar ao insumo caro um estoque de segurança à altura (a cl
 ## 3. Decisão
 
 1. **Religar** as 4 views estatísticas: `FROM v_venda_items_history_efetivo` → `FROM v_sku_demanda_efetiva`.
-2. **Corrigir o furo #10** (devolução vira consumo negativo) na `v_sku_demanda_efetiva`: só explodir venda com `quantidade > 0`.
+2. **Corrigir o furo #10** (devolução distorce o consumo) na `v_sku_demanda_efetiva`: no ramo de consumo, só explodir **saída de venda** (`quantidade > 0 AND cfop LIKE '5%'/'6%'`) — entrada/devolução não consome insumo.
 3. **`v_sku_classificacao_abc_xyz`, `v_sku_parametros_sugeridos`, a função de aplicação e o motor: INTOCADOS.** O insumo cai em classe C (aceito) — o `minimo_forcado_manual` protege os caros.
 4. **Criticidade = curadoria** (operacional, **sem código novo**). O motor honra `minimo_forcado_manual` (piso de **quantidade** do pedido) — útil, mas note: ele **não** move o ponto de pedido (o *timing*), que segue classe C. O que realmente protege é a **visibilidade + decisão humana**: o religamento faz o insumo caro **aparecer** no cockpit, o founder o vê e compra antes se preciso (o que ele já faz hoje às cegas — agora com o item na tela). O `minimo_forcado_manual` é a ferramenta para garantir volume nos poucos caros.
 
 ## 4. Arquitetura
 
 ```
-[PR-1] v_sku_demanda_efetiva  (venda ⊕ consumo explodido)  ← fix #10: consumo só de venda qtde>0
+[PR-1] v_sku_demanda_efetiva  (venda ⊕ consumo explodido)  ← fix #10: consumo só de SAÍDA de venda (cfop 5/6, qtde>0)
    │
    ▼ RELIGAMENTO (mecânico — disciplina da consolidação)
 4 views estatísticas trocam FROM → v_sku_demanda_efetiva
@@ -41,12 +41,14 @@ gerar_pedidos_sugeridos_ciclo [intocado] → 🎯 COCKPIT (insumo aparece com es
 `CREATE OR REPLACE VIEW` de cada uma, trocando **só** o `FROM` (alias remapeado; zero mudança de agregação/GROUP BY/colunas — padrão de `db/reposicao-consolidacao-demanda.sql`). Pré-flight `pg_get_viewdef` da PROD + **ordem exata de colunas** + **`security_invoker=true`** preservado (o PR-1/§4 do database.md exige — não regredir ao recriar).
 
 ### 4.2 Fix #10 — devolução (na `v_sku_demanda_efetiva`)
-No ramo de consumo (2ª metade do UNION ALL), adicionar `AND v.quantidade > 0`: uma devolução de tingidor acabado **não** recompõe os componentes já consumidos, então não deve gerar consumo negativo do insumo. A venda direta (1ª metade) mantém as devoluções (são demanda de venda legítima). 0 casos hoje; guard latente. Isto edita `db/reposicao-demanda-insumos-bom.sql` (ainda não aplicado em prod → o handoff do PR-1 passa a usar a versão corrigida; se o PR-1 já tiver sido aplicado, vira um `CREATE OR REPLACE` no PR-2).
+No ramo de consumo (2ª metade do UNION ALL), o guard é por **CFOP de saída de venda**: `AND v.quantidade > 0 AND (v.cfop LIKE '5%' OR v.cfop LIKE '6%')`.
+
+**Motivo (provado contra a prod, 2026-07-11 — corrige a premissa do design original).** O dado real grava `quantidade` sempre ≥0 (é o `qCom` da NF-e; writer `omie-sync-vendas-items`); uma devolução **não** é quantidade negativa — é sinalizada pelo `cfop` (entrada `1xxx/2xxx`). Medido em OBEN: 0 quantidades negativas e 0 devoluções de venda na tabela. As devoluções de venda de mercadoria de terceiros já são filtradas no sync (`CFOPS_NAO_VENDA` exclui `1202/2202`), mas uma devolução de **produção própria** (CFOP `1201/2201`, fora do filtro do sync) entraria com quantidade **positiva** e, sem o guard de CFOP, o ramo de consumo a explodiria como consumo **adicional** → demanda do insumo inflada → compra em excesso. Semanticamente só a **saída de venda** (`5xxx/6xxx`) consome o insumo; qualquer entrada/devolução, não. `quantidade > 0` fica como complemento (zero/negativo latente). A venda direta (1ª metade) mantém as devoluções (demanda de venda legítima). 0 casos hoje; guard latente **e correto por construção**. Isto edita `db/reposicao-demanda-insumos-bom.sql` (já aplicado em prod no PR-1 → vira `CREATE OR REPLACE` no apply do PR-2).
 
 ## 5. Money-path — invariantes, correções e limitações declaradas
 
 - **Não-regressão TRIVIAL:** `v_sku_classificacao_abc_xyz` e o cálculo **não mudam** → produto vendido mantém classe idêntica por construção (não há partição, não há mistura). Ainda assim, provar com `EXCEPT ALL` old×new da classificação (barato, fecha a dúvida).
-- **Fix #10** (devolução) — provado com fixture de venda negativa.
+- **Fix #10** (devolução) — provado com fixture de devolução (CFOP `1xxx`, quantidade **positiva**) que NÃO deve explodir consumo do insumo.
 - **Furos do V3 ELIMINADOS** por não construí-lo: #1 (Pareto pequeno), #2 (NULL 3VL), #3 (mistura venda/consumo no valor), #5 (SKU-ambos), #6 (C invertido), #7 (cardinalidade do join de malha/cmc), #8 (cross-company), #12 (cmc instável). Nenhum existe sem a partição.
 - **Limitações declaradas (não bloqueiam; o founder está no loop + curadoria):**
   - **#9 proxy temporal:** a demanda explodida suaviza o consumo real (produção em lote). Subdimensiona a variabilidade → estoque de segurança pode ficar abaixo do pico real. Mitigação: curadoria dos caros + PR-3 observa os primeiros ciclos. Fonte robusta (apontamento de consumo real) seria a Abordagem C, fora de escopo.
@@ -60,7 +62,7 @@ No ramo de consumo (2ª metade do UNION ALL), adicionar `AND v.quantidade > 0`: 
 **PG17 (`prove-sql-money-path`), aplicando PR-1 + PR-2, com falsificação:**
 - Religamento: insumo (BASE) ganha `demanda_total_90d`/`demanda_media_diaria` > 0; venda direta segue contando.
 - **Graduação → cockpit (o teste-fim):** com estoque do BASE abaixo do ponto, `gerar_pedidos_sugeridos_ciclo('OBEN')` passa a incluí-lo; acima, não.
-- **Fix #10 (falsificar):** venda de pai com `quantidade<0` (devolução) NÃO gera consumo negativo do insumo; remover o guard → exigir vermelho.
+- **Fix #10 (falsificar):** devolução do pai (CFOP `1201`, quantidade **positiva**) NÃO gera consumo do insumo; remover o guard de CFOP → a devolução vaza como consumo → exigir vermelho.
 - **Não-regressão:** `v_sku_classificacao_abc_xyz` retorna idêntica antes/depois (só o religamento muda a fonte; a lógica de classe não). `EXCEPT ALL` old×new sobre o baseline de todos os SKUs.
 - `minimo_forcado_manual` num insumo caro força a quantidade-piso no pedido (o instrumento da curadoria funciona).
 - Ordem de colunas + `security_invoker=true` preservados nas 4 views recriadas.
@@ -82,7 +84,7 @@ Veredito original: *"não aplicar o V3 como está — bloqueadores lógicos inde
 | 7 | cardinalidade: join de malha duplica SKU 112× | ✅ eliminado (sem join de malha na classificação) |
 | 8 | malha sem `empresa` → cross-company | ✅ eliminado |
 | 12 | eleição de cmc instável (empate/stale/NaN) | ✅ eliminado (sem cmc na classificação) |
-| 10 | devolução → consumo negativo | ✅ **corrigido** (guard `quantidade>0`, §4.2) |
+| 10 | devolução distorce consumo | ✅ **corrigido** (guard CFOP de saída, §4.2; premissa "negativa" refutada em prod) |
 | 9 | explosão suaviza demanda temporal | 🔍 **declarado** (limitação do proxy; curadoria + PR-3) |
 | 11 | NF nula → não gradua | 🔍 **vigiado** (0 hoje) |
 | 13 | unidade do SKU-ambos | 🔍 **provado no plano** p/ os 5; caso a caso |
