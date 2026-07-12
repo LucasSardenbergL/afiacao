@@ -56,6 +56,13 @@ LEFT JOIN sku_substituicao s
 --    ÚNICA leitura direta que ela tem é a CTE precos_venda, que é PREÇO — e o
 --    custo/preço deve ser do SKU REAL, não misturar os antigos (money-path:
 --    ausente≠fabricar). Idem funções outlier/simulação: fora do de-para.
+--
+-- ⚠️ RELIGADO NO PR-2 (2026-07-11) — db/reposicao-religamento-insumos.sql troca a fonte
+--    destas 4 views de v_venda_items_history_efetivo → v_sku_demanda_efetiva (venda ⊕
+--    consumo de insumo). "A última recriação vence": se você REAPLICAR este arquivo isolado
+--    (manutenção/restauração), as 4 views VOLTAM à fonte antiga e os INSUMOS SOMEM do
+--    cockpit SILENCIOSAMENTE. → SEMPRE reaplique db/reposicao-religamento-insumos.sql DEPOIS
+--    (a versão canônica destas 4 views vive lá). Codex challenge P2.1.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- 2.1 — v_sku_demanda_estatisticas (90d) · CTE vendas_por_ordem
