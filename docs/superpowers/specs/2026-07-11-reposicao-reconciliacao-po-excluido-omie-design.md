@@ -38,8 +38,9 @@ Motor **intocado**. Quatro componentes, escala ~11 candidatos/ciclo (custo irrel
 
 ```
 [run completo do omie-sync-pedidos-compra]
-   └─(1) grava marcador de run IMUTÁVEL: run_id, janela real, ids_distintos, volume_ok
-        └─ carimba last_seen_pedidos_full_run_id nos POs vistos (single-writer)
+   └─(1) coleta os IDs vistos durante o run; SÓ no fim LIMPO + não-filtrado chama a RPC de PUBLICAÇÃO
+        └─ reposicao_publicar_run_completo (advisory lock + service_role): grava marcador IMUTÁVEL
+           E carimba last_seen nos POs vistos, ATÔMICO (1 transação). Cadência só avança se a RPC ok.
 [edge dedicada: reposicao-reconciliar-pos-excluidos]  (chamada pelo orquestrador após o sync completo)
    ├─(2) CANDIDATOS (SQL, não muta): pedidos disparado/aprovado c/ PO NÃO visto no último completo válido
    ├─(3) PROVA por ID: ConsultarPedCompra(nCodPed) de cada candidato → classifica evidência
@@ -48,10 +49,24 @@ Motor **intocado**. Quatro componentes, escala ~11 candidatos/ciclo (custo irrel
 
 Edge **dedicada** (não sobrecarregar `omie-sync-pedidos-compra`, síncrona com budget de 25s): isola a lógica money-path, budget próprio, testável, e as N chamadas `ConsultarPedCompra` (paralelizáveis com limite de concorrência).
 
+## 3b. Revisão adversarial do CÓDIGO (Codex challenge gpt-5.6-sol xhigh, 2026-07-11) — bloqueou o PR1 v1
+
+A 1ª implementação do PR1 carimbava `last_seen` **durante o upsert de cada página** e gravava o marcador no fim, pela edge, em 2 operações separadas. O Codex achou **6 P1 estruturais** que envenenariam a base de verdade:
+
+1. **Sinal publicado antes do run ser válido** — completo que aborta no meio deixa POs com `last_seen` de um run sem marcador (candidatos espúrios no PR2/3).
+2. **Run manual filtrado por fornecedor** carimba um subset com run_id sem marcador (`gravaHeartbeat=!fornecedorCodigo` impede o marcador) → sinal envenenado.
+3. **`gravarRunCompleto` não fail-closed** — erro do PostgREST → `return null` ignorado pelo caller; `marcarCompletoOk` já avançou a cadência → cron não re-tenta completo por ~20h.
+4. **Concorrência** — 2 completos concorrentes = mosaico de run_ids; a serialização tem de cobrir a **publicação** (last_seen + marcador), não só a mutação do PR3.
+5. **`volume_ok` se autoenvenena** — baseline incluía runs `volume_ok=false`; e bootstrap `[0,0,0]` → `0 >= 0.9·0` = **`true`** (libera reconciliação total num shape que pareça página vazia).
+6. **Base de verdade falsificável** — `INSERT ... WITH CHECK(true)` + `GRANT INSERT authenticated` deixa um cliente forjar um marcador (`volume_ok=true`, `finalizado_em` futuro) → todos os POs parecem ausentes.
+
+**Correção estrutural (v2, aceita):** **deferir a publicação** — coletar os IDs durante o run e, **só após o fim limpo**, gravar marcador **E** carimbar `last_seen` numa **RPC SQL atômica, serializada por empresa (advisory lock), service_role-only**. `volume_ok` robusto. É o que a §5 abaixo descreve.
+
 ## 5. Componentes (novos objetos)
 
-1. **`reposicao_pedidos_compra_run`** (insert-only, imutável) — 1 linha por run completo: `run_id uuid`, `empresa`, `janela_de/janela_ate date` (a janela REAL consultada, não `CURRENT_DATE` — anti-timezone), `ids_distintos int`, `volume_baseline int`, `volume_ok bool`, `status`, `finalizado_em`. O marcador "último completo válido" = linha mais recente `status='ok' AND volume_ok`. **`volume_ok`** = `ids_distintos >= k% · mediana(últimos N completos da mesma empresa/janela)` (circuit-breaker global; default `k=90`). É a fonte de verdade do run **para a reconciliação** — o `sync_state('pedidos_compra_full')` segue existindo só para a **cadência** (decidir quando rodar completo vs incremental); não confundir os dois papéis.
-2. **Colunas single-writer em `purchase_orders_tracking`:** `last_seen_pedidos_full_run_id uuid`, `last_seen_pedidos_full_at timestamptz` — escritas **só** pela edge `omie-sync-pedidos-compra` quando `modo=completo`, para cada PO retornado. Sinal LIMPO de "visto neste completo" (imune ao multi-writer do `updated_at`).
+1. **`reposicao_pedidos_compra_run`** (insert-only, imutável) — 1 linha por run completo: `run_id uuid`, `empresa`, `janela_de/janela_ate date` (janela REAL, não `CURRENT_DATE`), `ids_distintos int`, `volume_baseline int`, `volume_ok bool`, `status`, `finalizado_em`. Marcador "último completo válido" = linha mais recente `status='ok' AND volume_ok IS TRUE`. **RLS: SELECT staff; INSERT/UPDATE NEGADOS a authenticated/anon — só `service_role`/a RPC SECURITY DEFINER escreve** (Codex P1 #6: senão a base de verdade é forjável).
+2. **Colunas single-writer em `purchase_orders_tracking`:** `last_seen_pedidos_full_run_id uuid`, `last_seen_pedidos_full_at timestamptz` — escritas **só pela RPC de publicação (2b), no fim do run limpo, no MESMO commit do marcador** — nunca durante o upsert das páginas (Codex P1 #1/#4). Sinal LIMPO imune ao multi-writer do `updated_at`.
+2b. **RPC `reposicao_publicar_run_completo(p_empresa, p_run_id uuid, p_janela_de date, p_janela_ate date, p_ids bigint[])`** — a **publicação diferida atômica** (SECURITY DEFINER, service_role-only). Numa transação: (a) `pg_advisory_xact_lock(hashtext('reposicao_run:'||lower(p_empresa)))` — serializa a publicação por empresa (Codex P1 #4); (b) computa `volume_ok` do baseline = mediana dos últimos N runs `status='ok' AND ids_distintos>0 AND volume_ok IS NOT FALSE` (exclui truncados conhecidos e degenerados, admite o bootstrap `null` — evita o autoenvenenamento e o deadlock do P1 #5; `baseline<=0 → volume_ok=null`); (c) `INSERT` o marcador; (d) `UPDATE purchase_orders_tracking SET last_seen_*=p_run_id/now() WHERE empresa E omie_codigo_pedido = ANY(p_ids)`. Retorna `volume_ok`. **Chamada 1× pela edge no fim do completo LIMPO e NÃO-filtrado** (`fim && !abortado && erros=0 && modo=completo && !fornecedorCodigo`); `marcarCompletoOk` (cadência) só avança **se a RPC retornar sucesso** (Codex P1 #2/#3 — fail-closed real). Provada no PG17.
 3. **`reposicao_po_reconciliacao_candidato`** — acumula as confirmações por-ID através de runs: `run_id`, `empresa`, `pedido_id`, `omie_codigo_pedido`, `resultado` (`cancelado_explicito` | `nao_encontrado` | `vivo` | `ambiguo`), `previsao_no_omie`, `confirmado_em`. Permite exigir 2 confirmações para "não-encontrado".
 4. **`reposicao_po_reconciliacao_log`** — auditoria dos cancelamentos efetivos (espelha `reposicao_estoque_nao_confirmado_log`): `run_id, empresa, pedido_id, omie_codigo_pedido, omie_numero, evidencia, criado_em`. RLS: SELECT staff (`pode_ver_carteira_completa`), INSERT authenticated `WITH CHECK true`.
 5. **RPC `reposicao_pos_candidatos(p_empresa, p_run_id)`** — não-mutante; retorna os candidatos (pedidos disparado/aprovado, `omie_pedido_compra_id/numero NOT NULL`, `data_ciclo >= hoje−7d`, cujo PO tem `last_seen_pedidos_full_run_id <> p_run_id`).
@@ -85,7 +100,8 @@ Cron completo + botão manual + retry podem competir. Medidas (Codex [P1]):
 - **`pg_advisory_xact_lock`** por empresa na RPC de mutação.
 - **`run_id` imutável** na `reposicao_pedidos_compra_run`; a RPC recebe `expected_run_id` e **aborta** se não for o marcador válido mais recente (não reconcilia contra o run de outra execução).
 - **Update + log na MESMA transação**, log alimentado **só** pelo `RETURNING` do `UPDATE ... WHERE status IN (...)` (idempotente; sem log duplicado).
-- **`marcarCompletoOk` fail-closed:** a gravação do marcador retorna o `run_id` confirmado ou falha; a reconciliação só roda com um `run_id` confirmado (não um marcador antigo "ainda recente").
+- **`marcarCompletoOk` fail-closed:** a RPC de publicação (2b) retorna sucesso/falha; a cadência (`marcarCompletoOk`) só avança se a publicação teve sucesso — senão o próximo ciclo re-tenta o completo (não perde ~20h; Codex P1 #3).
+- **A publicação do PR1 também é serializada por empresa** (o mesmo `advisory_xact_lock` da RPC 2b) — o marcador + o `last_seen` saem no MESMO commit, então dois completos concorrentes não deixam mosaico de run_ids (Codex P1 #4). Não basta lockar só a mutação do PR3.
 
 ## 9. Observabilidade
 
@@ -117,7 +133,7 @@ Cron completo + botão manual + retry podem competir. Medidas (Codex [P1]):
 
 ## 12. Rollout (Lovable — PRs pequenos)
 
-1. **PR1 — infra de run (não muta pedido):** tabela `reposicao_pedidos_compra_run` + colunas `last_seen_pedidos_full_*` + edge `omie-sync-pedidos-compra` grava marcador imutável (run_id/janela/volume) e carimba `last_seen` no completo. Migration (SQL Editor) + edge (chat Lovable). PG17: valida marcador/volume.
+1. **PR1 — infra de run (não muta pedido):** tabela `reposicao_pedidos_compra_run` (RLS SELECT staff, escrita **só service_role**) + colunas `last_seen_pedidos_full_*` + **RPC `reposicao_publicar_run_completo`** (publicação diferida ATÔMICA: advisory lock + marcador + `last_seen` no mesmo commit; `volume_ok` robusto) + edge `omie-sync-pedidos-compra` **coleta os IDs e chama a RPC 1× no fim do completo LIMPO e não-filtrado** (não carimba no upsert; cadência só avança se a RPC ok). Migration (SQL Editor) + edge (chat Lovable). **PG17 falsifica os 6 P1 do Codex:** publicação parcial em abort, run filtrado, fail-closed da cadência, concorrência/lock, autoenvenenamento do `volume_ok` (baseline + bootstrap `[0,0,0]`), e a RLS service_role-only (INSERT authenticated deve FALHAR).
 2. **PR2 — candidatos + prova por ID (dry-run):** RPC `reposicao_pos_candidatos` + tabela de candidatos + edge `reposicao-reconciliar-pos-excluidos` com `ConsultarPedCompra` + `reposicao_reconciliar_pos_excluidos(p_dry_run=true)`. **Não muta pedido ainda** — só popula candidatos e loga o que *seria* cancelado. Observa em prod por ≥2 ciclos.
 3. **PR3 — mutação real:** liga `p_dry_run=false` (via `company_config`), com todos os guards de evidência + concorrência + auditoria. Só após PR2 provar (candidatos batem com a realidade, zero `vivo` cancelado).
 4. **PR4 — UI:** linha neutra na fila de atenção + selo.
