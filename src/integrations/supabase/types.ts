@@ -18457,6 +18457,10 @@ export type Database = {
         }
         Returns: string
       }
+      omie_sync_identity_snapshot: {
+        Args: { p_account: string }
+        Returns: Json
+      }
       pedido_compra_split: {
         Args: { p_chunk_size?: number; p_pedido_id: number }
         Returns: {
