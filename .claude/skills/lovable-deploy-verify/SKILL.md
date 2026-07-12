@@ -202,6 +202,17 @@ chave). Consequências práticas:
 - Sanidade útil de graça: `read_console_messages onlyErrors` na tela renderizada — mas o `Invalid Refresh
   Token` numa aba deslogada é **esperado** (fail-closed do auth), não regressão.
 
+**Exercitado 2026-07-12 (QA do #1300 — o "404 fantasma" pós-Publish):** rota NOVA deu **404 com os bytes
+PROVADOS no ar** (Passo 4 verde). Não era o Publish — era o **service worker do PWA servindo o build
+ANTERIOR** na aba: a SPA velha monta (título ok) e o catch-all loga `404 Error: User attempted to access
+non-existent route` vindo de um chunk `NotFound-*.js` de hash VELHO (a assinatura no console). **Hard-reload
+(Cmd+Shift+R) na aba ativa o SW novo** e a rota monta. Regras práticas:
+- Bytes verdes + 404 na tela ⇒ **suspeite do SW antes de suspeitar do Publish** — nunca conclua "não subiu"
+  contra o Passo 4 sem hard-reload.
+- Vale pros USUÁRIOS também: quem já tinha o app cacheado vê o build antigo no 1º acesso pós-Publish —
+  reload resolve (design offline-first, não regressão). Mudança de ROTA nova demora 1 ciclo de SW pra
+  chegar em quem não recarrega.
+
 ### Passo 5 — Confirmar honestamente
 
 - Frontend: "✅ no ar — `ALVO` presente em `<chunk>`, entry hash `<novo>`" **ou** "❌ ainda o build velho (hash inalterado / alvo ausente) — Publish pendente".
@@ -246,4 +257,5 @@ falso `"fora do ar"` (exit 2) — não é o site caído, é a URL malformada.
 - [x] **Smoke E2E autônomo:** carimbo de SHA no build (`__BUILD_SHA__`) + `monitor-deploy.sh` (cron) compara o ar vs `origin/main`. **Exercido em prod 2026-06-26** (pós-Publish do #1065): o carimbo está no ar mas vem `"dev"` (Lovable builda sem `.git`) ⇒ SHA determinístico inviável neste host; **fallback de sentinela validado ponta-a-ponta** (`get_ultimos_precos_cliente` PRESENTE → exit 0). Regra firmada: no cron, **sentinela obrigatória + URL com `https://`** (ver ⚠️ acima).
 - [x] **Varredura PARALELA (2026-07-07):** `xargs -P 8` no crawl + halt-on-hit (`exit 255`) no grep do alvo. O bundle passou de 300 chunks (união medida 308–560) — sequencial estourava 600s (exit 124, não terminava); no mesmo bundle (308 ch, sentinela ausente) **299s → 61s (~4,9×), mesmo exit**. Enumeração/UNIÃO **inalterada** (worker-por-arquivo → sem intercalação). `PAR=<n>` overridável. Rede: harness local + gate `run.sh`.
 - [x] **QA visual pós-Publish (Passo 4b, 2026-07-07):** padrão documentado — **Claude-in-Chrome na sessão logada do founder** (ele abre 1×, o agente confere as telas). `/browse` headless não monta a SPA (3 falhas); Chrome MCP genérico deu timeout CDP de 45s. Caso de sucesso: config do PostHog feita pelo agente sozinho. **Exercitado 2026-07-08:** RENDER confirmado (a SPA monta no Chrome real; QA de tela pública `/auth` OK) — mas a aba do grupo MCP veio **sem sessão** (`Invalid Refresh Token`), então **telas gated dependem do founder logar NA aba MCP**; agente nunca digita credenciais. Detalhe no Passo 4b.
+- [x] **"404 fantasma" pós-Publish (2026-07-12, QA visual do #1300):** rota nova 404 com bytes VERDES = **SW do PWA servindo o build anterior** (assinatura: `NotFound-*.js` de hash velho logando "non-existent route"); hard-reload ativa o SW novo. Regra: bytes verdes + 404 → suspeitar do SW, nunca concluir "Publish falhou" sem hard-reload. Detalhe no Passo 4b.
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
