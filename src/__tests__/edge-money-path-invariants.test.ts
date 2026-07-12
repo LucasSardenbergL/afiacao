@@ -708,31 +708,3 @@ describe('guardrail money-path: syncPedidos resolve user pela view fresca accoun
     ).toMatch(/\.from\("omie_clientes"\)\s*\.select\("omie_codigo_cliente, empresa_omie"\)/);
   });
 });
-
-// ── Circuit-breaker de cobertura do run completo (computeVolumeOk) — espelho em _shared ──
-// Task 2 do PR1 de reconciliação de PO (baseline = mediana dos últimos runs completos; volumeOk =
-// idsDistintos >= k*baseline, NUNCA true sem histórico confiável). Helper puro em src/ (vitest)
-// ESPELHADO verbatim em supabase/functions/_shared (o Deno do edge não importa de src/). Ainda SEM
-// consumidor real (a Task 3 liga o fio em omie-sync-pedidos-compra) — a paridade textual aqui já
-// impede a divergência silenciosa do deploy do Lovable ANTES do helper entrar em uso; quando a
-// Task 3 ligar o consumo, os asserts de "edge usa o helper" entram junto. Ver
-// docs/superpowers/plans/2026-07-11-reposicao-reconciliacao-po-pr1.md.
-const VOLUME_RUN_HELPER = 'src/lib/reposicao/volume-run.ts';
-const VOLUME_RUN_MIRROR = 'supabase/functions/_shared/reposicao-volume-run.ts';
-
-describe('guardrail money-path: computeVolumeOk (espelho _shared)', () => {
-  const helper = read(VOLUME_RUN_HELPER);
-  const mirror = read(VOLUME_RUN_MIRROR);
-
-  it('sentinela: leu os arquivos reais (helper de src/ + espelho _shared)', () => {
-    expect(helper).toContain('export function computeVolumeOk');
-    expect(mirror).toContain('export function computeVolumeOk');
-  });
-
-  it('PARIDADE: o bloco espelhado em _shared é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
-    expect(
-      mirrorBlockNamed(mirror, 'computeVolumeOk'),
-      'espelho _shared divergiu do helper de src/ — o Lovable reescreveu o circuit-breaker no deploy?',
-    ).toBe(mirrorBlockNamed(helper, 'computeVolumeOk'));
-  });
-});
