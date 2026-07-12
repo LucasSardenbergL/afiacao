@@ -77,6 +77,135 @@ SQL
 echo "→ migração candidata (efetiva + redirects + consolidar_demanda_sku)…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/reposicao-consolidacao-demanda.sql" >/dev/null
 
+# ── Cenário SEC: P0 de RLS — aplicar ESTE arquivo mantém as 5 views seguras ───
+# Prova de CATÁLOGO (o harness roda como service_role/BYPASSRLS → o COMPORTAMENTO
+# RLS já é provado em db/test-views-invoker-off-p0.sh). O delta AQUI: garantir que
+# aplicar/reaplicar reposicao-consolidacao-demanda.sql NÃO reabre o P0 fechado pela
+# migração 20260708190000 — i.e. as 5 views nascem security_invoker=on e anon/PUBLIC
+# ficam sem SELECT. SEM o WITH(...) + REVOKE no .sql este cenário fica VERMELHO.
+echo "→ SEC. 5 views invoker=on + anon/PUBLIC sem SELECT + authenticated mantém…"
+P -v ON_ERROR_STOP=1 -qAt <<'SQL'
+DO $$
+DECLARE
+  v5 text[] := ARRAY['v_venda_items_history_efetivo','v_sku_demanda_estatisticas',
+                     'v_sku_sigma_demanda','v_sku_demanda_rajada','v_sku_candidatos_primeira_compra'];
+  n int;
+BEGIN
+  -- SEC1: as 5 views têm security_invoker on|true no reloptions (catálogo, não só comportamento)
+  SELECT count(*) INTO n FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
+   WHERE ns.nspname='public' AND c.relkind='v' AND c.relname = ANY(v5)
+     AND COALESCE(array_to_string(c.reloptions,','),'') ~* 'security_invoker=(on|true)';
+  IF n <> 5 THEN RAISE EXCEPTION 'FAIL SEC1: esperava 5 views invoker=on, veio % (reaplicar o .sql reabriria o P0)', n; END IF;
+
+  -- SEC2: anon SEM SELECT em nenhuma das 5 (o REVOKE do .sql fecha a anon-key)
+  SELECT count(*) INTO n FROM information_schema.role_table_grants
+   WHERE grantee='anon' AND privilege_type='SELECT' AND table_name = ANY(v5);
+  IF n <> 0 THEN RAISE EXCEPTION 'FAIL SEC2: anon ainda tem SELECT em %/5 view(s)', n; END IF;
+
+  -- SEC3: PUBLIC SEM SELECT em nenhuma das 5 (blinda contra grant-drift)
+  SELECT count(*) INTO n FROM information_schema.role_table_grants
+   WHERE grantee='PUBLIC' AND privilege_type='SELECT' AND table_name = ANY(v5);
+  IF n <> 0 THEN RAISE EXCEPTION 'FAIL SEC3: PUBLIC ainda tem SELECT em %/5 view(s)', n; END IF;
+
+  -- SEC4: authenticated MANTÉM SELECT nas 5 (staff não pode regredir de acesso)
+  SELECT count(*) INTO n FROM information_schema.role_table_grants
+   WHERE grantee='authenticated' AND privilege_type='SELECT' AND table_name = ANY(v5);
+  IF n <> 5 THEN RAISE EXCEPTION 'FAIL SEC4: authenticated deveria ter SELECT nas 5, veio %', n; END IF;
+END $$;
+SQL
+echo "   ✓ SEC (invoker=on + anon/PUBLIC revogados + authenticated mantém)"
+
+# ── Cenário SEC5 [Codex]: privilégio EFETIVO (has_table_privilege), não só grant direto ─
+# grant direto (role_table_grants) não vê herança via PUBLIC/role-membership; has_table_privilege
+# resolve o privilégio REAL. (service_role vem dos ALTER DEFAULT PRIVILEGES do Supabase, que o PG17
+# local não tem — sua preservação sob o REVOKE é provada no SEC6, semeando o grant como em prod.)
+echo "→ SEC5. privilégio efetivo: anon negado · authenticated concedido…"
+P -v ON_ERROR_STOP=1 -qAt <<'SQL'
+DO $$
+DECLARE
+  v5 text[] := ARRAY['v_venda_items_history_efetivo','v_sku_demanda_estatisticas',
+                     'v_sku_sigma_demanda','v_sku_demanda_rajada','v_sku_candidatos_primeira_compra'];
+  vn text; n_anon int:=0; n_auth int:=0;
+BEGIN
+  FOREACH vn IN ARRAY v5 LOOP
+    IF has_table_privilege('anon','public.'||vn,'SELECT')              THEN n_anon:=n_anon+1; END IF;
+    IF NOT has_table_privilege('authenticated','public.'||vn,'SELECT') THEN n_auth:=n_auth+1; END IF;
+  END LOOP;
+  IF n_anon <> 0 THEN RAISE EXCEPTION 'FAIL SEC5a: anon TEM SELECT efetivo em %/5 view(s) (herança PUBLIC?)', n_anon; END IF;
+  IF n_auth <> 0 THEN RAISE EXCEPTION 'FAIL SEC5b: authenticated SEM SELECT efetivo em %/5 (staff regrediria)', n_auth; END IF;
+END $$;
+SQL
+echo "   ✓ SEC5 (privilégio efetivo: anon negado, authenticated concedido)"
+
+# ── Cenário SEC6 [Codex]: REAPLICAÇÃO — aplicar o arquivo 2× NÃO reabre o P0 (o risco central) ─
+# O achado é sobre reaplicar o bloco (fluxo incentivado pelo cabeçalho). Provamos DIRETO: aplica
+# de novo e revalida invoker=on + anon sem SELECT efetivo. E, semeando o grant de service_role que
+# em prod vem dos default privileges do Supabase (o PG17 local não os tem), provamos que o REVOKE
+# do arquivo — FROM anon, PUBLIC — NÃO atinge service_role (senão o recompute como service_role
+# quebraria). Se o WITH/REVOKE não fossem idempotentes-seguros, a 2ª passada deixaria isto quebrado.
+echo "→ SEC6. reaplicação 2×: invoker=on preservado · anon re-barrado · service_role intacto…"
+P -v ON_ERROR_STOP=1 -q -c "GRANT SELECT ON public.v_venda_items_history_efetivo, public.v_sku_demanda_estatisticas, public.v_sku_sigma_demanda, public.v_sku_demanda_rajada, public.v_sku_candidatos_primeira_compra TO service_role;" >/dev/null
+P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/reposicao-consolidacao-demanda.sql" >/dev/null
+P -v ON_ERROR_STOP=1 -qAt <<'SQL'
+DO $$
+DECLARE
+  v5 text[] := ARRAY['v_venda_items_history_efetivo','v_sku_demanda_estatisticas',
+                     'v_sku_sigma_demanda','v_sku_demanda_rajada','v_sku_candidatos_primeira_compra'];
+  vn text; n_on int; n_anon int:=0; n_svc int:=0;
+BEGIN
+  SELECT count(*) INTO n_on FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
+   WHERE ns.nspname='public' AND c.relkind='v' AND c.relname = ANY(v5)
+     AND COALESCE(array_to_string(c.reloptions,','),'') ~* 'security_invoker=(on|true)';
+  IF n_on <> 5 THEN RAISE EXCEPTION 'FAIL SEC6a: após 2ª aplicação esperava 5 invoker=on, veio %', n_on; END IF;
+  FOREACH vn IN ARRAY v5 LOOP
+    IF has_table_privilege('anon','public.'||vn,'SELECT')             THEN n_anon:=n_anon+1; END IF;
+    IF NOT has_table_privilege('service_role','public.'||vn,'SELECT') THEN n_svc:=n_svc+1;  END IF;
+  END LOOP;
+  IF n_anon <> 0 THEN RAISE EXCEPTION 'FAIL SEC6b: após 2ª aplicação anon reganhou SELECT em %/5', n_anon; END IF;
+  IF n_svc  <> 0 THEN RAISE EXCEPTION 'FAIL SEC6c: REVOKE do arquivo tirou SELECT de service_role em %/5 (recompute quebraria)', n_svc; END IF;
+END $$;
+SQL
+echo "   ✓ SEC6 (2ª aplicação: invoker=on preservado, anon re-barrado, service_role intacto)"
+
+# ── Cenário SEC-F: FALSIFICAÇÃO do risco REAL — CREATE OR REPLACE sem WITH zera o invoker ─
+# Recria a folha via CREATE OR REPLACE usando o próprio corpo (pg_get_viewdef) SEM a
+# cláusula WITH — exatamente o que uma reaplicação verbatim do .sql pré-fix faria — e
+# exige que a contagem do SEC1 caia de 5→4 (a folha perdeu o invoker). Se seguisse 5,
+# ou o risco não reproduz ou SEC1 é teatro. Restaura a folha COM WITH ao final.
+echo "→ SEC-F. falsificação: recriar a folha sem WITH deve derrubar o invoker (5→4)…"
+P -v ON_ERROR_STOP=1 -qAt <<'SQL'
+DO $$
+DECLARE
+  v5 text[] := ARRAY['v_venda_items_history_efetivo','v_sku_demanda_estatisticas',
+                     'v_sku_sigma_demanda','v_sku_demanda_rajada','v_sku_candidatos_primeira_compra'];
+  d text; n int;
+BEGIN
+  SELECT pg_get_viewdef('v_venda_items_history_efetivo'::regclass, true) INTO d;
+  EXECUTE 'CREATE OR REPLACE VIEW v_venda_items_history_efetivo AS ' || d;   -- SEM WITH (o risco)
+  SELECT count(*) INTO n FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
+   WHERE ns.nspname='public' AND c.relkind='v' AND c.relname = ANY(v5)
+     AND COALESCE(array_to_string(c.reloptions,','),'') ~* 'security_invoker=(on|true)';
+  IF n <> 4 THEN RAISE EXCEPTION 'FAIL SEC-F: sob sabotagem SEC1 deveria contar 4/5, veio % (SEC1 sem dente ou risco não reproduz)', n; END IF;
+  EXECUTE 'CREATE OR REPLACE VIEW v_venda_items_history_efetivo WITH (security_invoker = true) AS ' || d;  -- restaura
+END $$;
+SQL
+echo "   ✓ SEC-F (sem WITH → invoker some; restaurado)"
+
+# ── Cenário SEC-F2: FALSIFICAÇÃO do REVOKE — re-conceder anon deve derrubar o SEC2 ─
+echo "→ SEC-F2. falsificação: re-grant SELECT a anon deve reaparecer no catálogo (SEC2 com dente)…"
+P -v ON_ERROR_STOP=1 -qAt <<'SQL'
+GRANT SELECT ON public.v_venda_items_history_efetivo TO anon;
+DO $$
+DECLARE n int;
+BEGIN
+  SELECT count(*) INTO n FROM information_schema.role_table_grants
+   WHERE grantee='anon' AND privilege_type='SELECT' AND table_name='v_venda_items_history_efetivo';
+  IF n = 0 THEN RAISE EXCEPTION 'FAIL SEC-F2: re-grant a anon não apareceu no catálogo (SEC2 sem dente?)'; END IF;
+END $$;
+REVOKE SELECT ON public.v_venda_items_history_efetivo FROM anon;  -- restaura o estado seguro
+SQL
+echo "   ✓ SEC-F2 (re-grant detectável; revogado de volta)"
+
 # ── Cenário A: a view de indireção reescreve o SKU ───────────────────────────
 echo "→ A. efetiva: passthrough sem mapa, reescrita com mapa…"
 P -v ON_ERROR_STOP=1 -qAt <<'SQL'

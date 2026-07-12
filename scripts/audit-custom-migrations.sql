@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 354
+-- Total de custom migrations: 358
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -393,7 +393,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260709120500', 'authz_estimar_estoque_omie', '20260709120500_authz_estimar_estoque_omie.sql'),
   ('20260709163000', 'selfservice_pr00bis_a_rpc_staff_payload', '20260709163000_selfservice_pr00bis_a_rpc_staff_payload.sql'),
   ('20260709163500', 'selfservice_pr00bis_b_revoke_omie_payload', '20260709163500_selfservice_pr00bis_b_revoke_omie_payload.sql'),
-  ('20260710012337', 'carteira_saude_eligible_e_efeito_mensal', '20260710012337_carteira_saude_eligible_e_efeito_mensal.sql')
+  ('20260710012337', 'carteira_saude_eligible_e_efeito_mensal', '20260710012337_carteira_saude_eligible_e_efeito_mensal.sql'),
+  ('20260711090000', 'prime_fundacao', '20260711090000_prime_fundacao.sql'),
+  ('20260711145000', 'v_grupo_contatos_fresca', '20260711145000_v_grupo_contatos_fresca.sql'),
+  ('20260711193000', 'param_auto_resumo_altas_reducoes_segurado', '20260711193000_param_auto_resumo_altas_reducoes_segurado.sql'),
+  ('20260712140000', 'param_auto_log_valor_barrado_fusivel', '20260712140000_param_auto_log_valor_barrado_fusivel.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1635,7 +1639,36 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-servicos-daily', ''),
   ('authz_estimar_estoque_omie', 'function', 'public', 'fin_estimar_estoque_omie', ''),
   ('selfservice_pr00bis_a_rpc_staff_payload', 'function', 'public', 'staff_get_sales_order_payload', ''),
-  ('carteira_saude_eligible_e_efeito_mensal', 'function', 'public', 'get_carteira_saude', '')
+  ('carteira_saude_eligible_e_efeito_mensal', 'function', 'public', 'get_carteira_saude', ''),
+  ('prime_fundacao', 'function', 'public', 'prime_assinatura_sem_sobreposicao', ''),
+  ('prime_fundacao', 'function', 'public', 'prime_assinatura_update_guard', ''),
+  ('prime_fundacao', 'function', 'public', 'prime_uso_vigencia', ''),
+  ('prime_fundacao', 'function', 'public', 'prime_uso_so_estorno', ''),
+  ('prime_fundacao', 'view', 'public', 'v_prime_extrato_mensal', ''),
+  ('prime_fundacao', 'table', 'public', 'prime_planos', ''),
+  ('prime_fundacao', 'table', 'public', 'prime_assinaturas', ''),
+  ('prime_fundacao', 'table', 'public', 'prime_beneficio_uso', ''),
+  ('prime_fundacao', 'index', 'public', 'uq_prime_assinatura_viva', 'prime_assinaturas'),
+  ('prime_fundacao', 'index', 'public', 'idx_prime_uso_assinatura_mes', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'index', 'public', 'uq_prime_bonus_mes', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'trigger', 'public', 'trg_prime_assinatura_sem_sobreposicao', 'prime_assinaturas'),
+  ('prime_fundacao', 'trigger', 'public', 'trg_prime_assinatura_update_guard', 'prime_assinaturas'),
+  ('prime_fundacao', 'trigger', 'public', 'trg_prime_uso_vigencia', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'trigger', 'public', 'trg_prime_uso_so_estorno', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'trigger', 'public', 'trg_prime_planos_updated_at', 'prime_planos'),
+  ('prime_fundacao', 'trigger', 'public', 'trg_prime_assinaturas_updated_at', 'prime_assinaturas'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_planos_staff_all', 'prime_planos'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_planos_auth_read', 'prime_planos'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_assinaturas_staff_all', 'prime_assinaturas'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_assinaturas_cliente_read', 'prime_assinaturas'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_select', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_insert', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_update', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_cliente_read', 'prime_beneficio_uso'),
+  ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', ''),
+  ('param_auto_resumo_altas_reducoes_segurado', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
+  ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
+  ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'reposicao_param_auto_resumo_tick', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2925,7 +2958,36 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sync_customers_colacor_servicos_crons', 'cron_job', 'cron', 'sync-customers-servicos-daily', ''),
   ('authz_estimar_estoque_omie', 'function', 'public', 'fin_estimar_estoque_omie', ''),
   ('selfservice_pr00bis_a_rpc_staff_payload', 'function', 'public', 'staff_get_sales_order_payload', ''),
-  ('carteira_saude_eligible_e_efeito_mensal', 'function', 'public', 'get_carteira_saude', '')
+  ('carteira_saude_eligible_e_efeito_mensal', 'function', 'public', 'get_carteira_saude', ''),
+  ('prime_fundacao', 'function', 'public', 'prime_assinatura_sem_sobreposicao', ''),
+  ('prime_fundacao', 'function', 'public', 'prime_assinatura_update_guard', ''),
+  ('prime_fundacao', 'function', 'public', 'prime_uso_vigencia', ''),
+  ('prime_fundacao', 'function', 'public', 'prime_uso_so_estorno', ''),
+  ('prime_fundacao', 'view', 'public', 'v_prime_extrato_mensal', ''),
+  ('prime_fundacao', 'table', 'public', 'prime_planos', ''),
+  ('prime_fundacao', 'table', 'public', 'prime_assinaturas', ''),
+  ('prime_fundacao', 'table', 'public', 'prime_beneficio_uso', ''),
+  ('prime_fundacao', 'index', 'public', 'uq_prime_assinatura_viva', 'prime_assinaturas'),
+  ('prime_fundacao', 'index', 'public', 'idx_prime_uso_assinatura_mes', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'index', 'public', 'uq_prime_bonus_mes', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'trigger', 'public', 'trg_prime_assinatura_sem_sobreposicao', 'prime_assinaturas'),
+  ('prime_fundacao', 'trigger', 'public', 'trg_prime_assinatura_update_guard', 'prime_assinaturas'),
+  ('prime_fundacao', 'trigger', 'public', 'trg_prime_uso_vigencia', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'trigger', 'public', 'trg_prime_uso_so_estorno', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'trigger', 'public', 'trg_prime_planos_updated_at', 'prime_planos'),
+  ('prime_fundacao', 'trigger', 'public', 'trg_prime_assinaturas_updated_at', 'prime_assinaturas'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_planos_staff_all', 'prime_planos'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_planos_auth_read', 'prime_planos'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_assinaturas_staff_all', 'prime_assinaturas'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_assinaturas_cliente_read', 'prime_assinaturas'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_select', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_insert', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_update', 'prime_beneficio_uso'),
+  ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_cliente_read', 'prime_beneficio_uso'),
+  ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', ''),
+  ('param_auto_resumo_altas_reducoes_segurado', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
+  ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
+  ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'reposicao_param_auto_resumo_tick', '')
 )
 SELECT
   e.migration,

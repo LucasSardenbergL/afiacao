@@ -9524,6 +9524,158 @@ export type Database = {
         }
         Relationships: []
       }
+      prime_assinaturas: {
+        Row: {
+          created_at: string
+          created_by: string
+          customer_user_id: string
+          data_fim: string | null
+          data_inicio: string
+          franquia_dentes_contratada: number
+          id: string
+          observacao: string | null
+          plano_id: string
+          preco_contratado: number
+          status: string
+          suspensa_em: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          customer_user_id: string
+          data_fim?: string | null
+          data_inicio?: string
+          franquia_dentes_contratada: number
+          id?: string
+          observacao?: string | null
+          plano_id: string
+          preco_contratado: number
+          status?: string
+          suspensa_em?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          customer_user_id?: string
+          data_fim?: string | null
+          data_inicio?: string
+          franquia_dentes_contratada?: number
+          id?: string
+          observacao?: string | null
+          plano_id?: string
+          preco_contratado?: number
+          status?: string
+          suspensa_em?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prime_assinaturas_plano_id_fkey"
+            columns: ["plano_id"]
+            isOneToOne: false
+            referencedRelation: "prime_planos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prime_beneficio_uso: {
+        Row: {
+          assinatura_id: string
+          competencia: string
+          created_at: string
+          created_by: string
+          descricao: string | null
+          estornado_em: string | null
+          estornado_por: string | null
+          id: string
+          preco_unitario_snapshot: number | null
+          quantidade: number
+          referencia: string | null
+          tipo: string
+          valor_tabela: number | null
+        }
+        Insert: {
+          assinatura_id: string
+          competencia: string
+          created_at?: string
+          created_by: string
+          descricao?: string | null
+          estornado_em?: string | null
+          estornado_por?: string | null
+          id?: string
+          preco_unitario_snapshot?: number | null
+          quantidade: number
+          referencia?: string | null
+          tipo: string
+          valor_tabela?: number | null
+        }
+        Update: {
+          assinatura_id?: string
+          competencia?: string
+          created_at?: string
+          created_by?: string
+          descricao?: string | null
+          estornado_em?: string | null
+          estornado_por?: string | null
+          id?: string
+          preco_unitario_snapshot?: number | null
+          quantidade?: number
+          referencia?: string | null
+          tipo?: string
+          valor_tabela?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prime_beneficio_uso_assinatura_id_fkey"
+            columns: ["assinatura_id"]
+            isOneToOne: false
+            referencedRelation: "prime_assinaturas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prime_beneficio_uso_assinatura_id_fkey"
+            columns: ["assinatura_id"]
+            isOneToOne: false
+            referencedRelation: "v_prime_extrato_mensal"
+            referencedColumns: ["assinatura_id"]
+          },
+        ]
+      }
+      prime_planos: {
+        Row: {
+          ativo: boolean
+          beneficios: Json
+          created_at: string
+          franquia_dentes: number
+          id: string
+          nome: string
+          preco_mensal: number
+          updated_at: string
+        }
+        Insert: {
+          ativo?: boolean
+          beneficios?: Json
+          created_at?: string
+          franquia_dentes: number
+          id?: string
+          nome: string
+          preco_mensal: number
+          updated_at?: string
+        }
+        Update: {
+          ativo?: boolean
+          beneficios?: Json
+          created_at?: string
+          franquia_dentes?: number
+          id?: string
+          nome?: string
+          preco_mensal?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       priority_score_log: {
         Row: {
           calculated_at: string
@@ -16457,6 +16609,47 @@ export type Database = {
         }
         Relationships: []
       }
+      v_pcp_malha_oben: {
+        Row: {
+          comp_oben: number | null
+          pai_oben: number | null
+          quantidade: number | null
+          unidade: string | null
+        }
+        Relationships: []
+      }
+      v_pcp_malha_oben_cand: {
+        Row: {
+          comp_ativo: boolean | null
+          comp_codigo_prd: string | null
+          comp_oben: number | null
+          componente_codigo: number | null
+          n_comp_oben: number | null
+          n_pai_oben: number | null
+          pai_codigo: number | null
+          pai_codigo_prd: string | null
+          pai_oben: number | null
+          perc_perda: number | null
+          quantidade: number | null
+          un_estoque: string | null
+          un_ficha: string | null
+        }
+        Relationships: []
+      }
+      v_pcp_malha_oben_quarentena: {
+        Row: {
+          comp_oben: number | null
+          componente_codigo: number | null
+          motivo: string | null
+          pai_codigo: number | null
+          pai_oben: number | null
+          perc_perda: number | null
+          quantidade: number | null
+          un_estoque: string | null
+          un_ficha: string | null
+        }
+        Relationships: []
+      }
       v_pedidos_em_aberto: {
         Row: {
           dias_desde_pedido: number | null
@@ -16499,6 +16692,24 @@ export type Database = {
           t2_data_faturamento?: string | null
           t3_data_cte?: string | null
           t4_data_recebimento?: string | null
+        }
+        Relationships: []
+      }
+      v_prime_extrato_mensal: {
+        Row: {
+          assinatura_id: string | null
+          competencia: string | null
+          customer_user_id: string | null
+          dentes_bonus: number | null
+          dentes_excedentes: number | null
+          dentes_restantes: number | null
+          dentes_usados: number | null
+          franquia_total: number | null
+          mensalidade_contratada: number | null
+          monetizado_total: number | null
+          n_registros: number | null
+          status: string | null
+          usos_operacionais: number | null
         }
         Relationships: []
       }
@@ -16777,6 +16988,33 @@ export type Database = {
           sku_codigo_omie: number | null
           sku_descricao: string | null
           valor_total_90d: number | null
+        }
+        Relationships: []
+      }
+      v_sku_demanda_efetiva: {
+        Row: {
+          cfop: string | null
+          cliente_cidade: string | null
+          cliente_cnpj_cpf: string | null
+          cliente_codigo_omie: number | null
+          cliente_razao_social: string | null
+          cliente_uf: string | null
+          created_at: string | null
+          data_emissao: string | null
+          empresa: string | null
+          id: string | null
+          nfe_chave_acesso: string | null
+          nfe_numero: string | null
+          nfe_serie: string | null
+          quantidade: number | null
+          raw_data: Json | null
+          sku_codigo: string | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+          sku_ncm: string | null
+          sku_unidade: string | null
+          valor_total: number | null
+          valor_unitario: number | null
         }
         Relationships: []
       }
@@ -18218,6 +18456,10 @@ export type Database = {
           p_user_id: string
         }
         Returns: string
+      }
+      omie_sync_identity_snapshot: {
+        Args: { p_account: string }
+        Returns: Json
       }
       pedido_compra_split: {
         Args: { p_chunk_size?: number; p_pedido_id: number }
