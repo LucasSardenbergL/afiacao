@@ -94,6 +94,8 @@ echo "→ migration E (resumo 18h: rótulo = descrição do produto, fallback p/
 P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260619120000_param_auto_resumo_descricao.sql"
 echo "→ migration F (resumo: altas/reduções separadas + segurado pelo nome)…"
 P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260711193000_param_auto_resumo_altas_reducoes_segurado.sql"
+echo "→ migration G (log grava valor barrado + tick mostra 'quis subir máx X → Y')…"
+P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260712140000_param_auto_log_valor_barrado_fusivel.sql"
 
 echo "→ seed dos cenários (view controlada + sku_parametros + pins + estoque/custo)…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/seed-param-auto.sql"
@@ -125,6 +127,9 @@ BEGIN
   ASSERT r.status='segurado', format('B FALHOU: status=% (esperado segurado)', r.status);
   SELECT estoque_maximo INTO r FROM public.sku_parametros WHERE sku_codigo_omie=1002;
   ASSERT r.estoque_maximo=100, format('B preservou FALHOU: max=% (esperado 100, não 400)', r.estoque_maximo);
+  -- B: o LOG agora grava o valor SUGERIDO barrado (400), mesmo o parâmetro ficando em 100 (migration G).
+  SELECT estoque_maximo_sugerido INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1002';
+  ASSERT r.estoque_maximo_sugerido=400, format('B sugerido FALHOU: %s (esperado 400: o valor que o fusível barrou, gravado no log)', r.estoque_maximo_sugerido);
 
   -- C: GIRO LENTO inalterado → sem_mudanca (NÃO loga). Prova que o gatilho de cobertura morreu:
   --    demanda 1/dia + máx 200 daria 200d de cobertura (>120) → a versão antiga seguraria; agora
@@ -351,10 +356,10 @@ BEGIN
   ASSERT position('Maiores altas:' IN v_msg) < position('Maiores reduções:' IN v_msg),
     'P-ORDEM FALHOU: "Maiores reduções" deveria vir DEPOIS de "Maiores altas"';
 
-  -- P-SEGURADO (o "confira" agora diz o quê): B listado pelo NOME sob "Segurados pelo fusível".
+  -- P-SEGURADO (o "confira" agora diz o quê E quanto): B pelo NOME + o VALOR BARRADO (máx 100→400).
   ASSERT position('Segurados pelo fusível (confira): 1' IN v_msg) > 0, 'P-SEGURADO FALHOU: contador do fusível ausente';
   ASSERT position('SKU-B salto>3x' IN v_msg) > 0,        'P-SEGURADO FALHOU: item segurado (B) não listado pelo nome';
-  ASSERT position('máx atual 100' IN v_msg) > 0,         'P-SEGURADO FALHOU: contexto (máx atual) do segurado ausente';
+  ASSERT position('quis subir máx 100 → 400' IN v_msg) > 0, 'P-BARRADO FALHOU: valor barrado (100→400) ausente no segurado (migration G)';
 
   -- P-SEM-CUSTO: L (aplicado, impacto NULL) NÃO é listado (sem custo), mas conta no "(+1 sem custo)".
   ASSERT position('SKU-L queda do máximo' IN v_msg) = 0, 'P-SEM-CUSTO FALHOU: L (impacto NULL) não deveria ser listado';
@@ -371,11 +376,37 @@ SELECT 'cron' AS k, count(*) AS n FROM cron.job WHERE jobname='reposicao-param-a
 SQL
 
 echo ""
-echo "→ FALSIFICAÇÃO (reverte à migration E: lista única DESC LIMIT 10 → prova o dente de reduções/segurado)…"
+echo "→ FALSIFICAÇÃO 1 (reverte o TICK à migration F: 'máx atual' em vez de 'quis subir') → dente do valor barrado…"
+# A F (#1302) lista o segurado pelo nome mas SEM o valor barrado ("máx atual N"). Reverter só o tick
+# deixa o CORE G gravando o sugerido no log (400), mas o tick F o IGNORA → "quis subir" some, o nome
+# permanece. Sentinela de dente = 'quis subir máx', string que SÓ a migration G emite.
+P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260711193000_param_auto_resumo_altas_reducoes_segurado.sql"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+DELETE FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
+UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=NULL
+  WHERE status='completo' AND data_negocio_brt=(now() AT TIME ZONE 'America/Sao_Paulo')::date;
+DO $$
+DECLARE v_msg text;
+BEGIN
+  PERFORM public.reposicao_param_auto_resumo_tick();
+  SELECT mensagem INTO v_msg FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
+  ASSERT position('quis subir máx' IN v_msg) = 0,
+    'FALSIFICAÇÃO FRACA: "quis subir" apareceria sem a migration G → P-BARRADO sem dente';
+  -- confirma que a reversão rodou: a F ainda lista o segurado pelo nome, mas no formato "máx atual".
+  ASSERT position('SKU-B salto>3x' IN v_msg) > 0 AND position('máx atual 100' IN v_msg) > 0,
+    'FALSIFICAÇÃO INCONCLUSIVA: a F deveria listar o segurado pelo nome com "máx atual 100"';
+  RAISE NOTICE 'OK falsificação 1: sem a migration G o segurado volta a "máx atual" (o valor barrado SOME → P-BARRADO VERMELHO)';
+END $$;
+SQL
+echo "→ restaura a migration G (tick com valor barrado)…"
+P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260712140000_param_auto_log_valor_barrado_fusivel.sql"
+
+echo ""
+echo "→ FALSIFICAÇÃO 2 (reverte à migration E: lista única DESC LIMIT 10 → prova o dente de reduções/segurado)…"
 # Sabotagem = voltar à versão ANTERIOR (E), que tem UMA lista "Maiores mudanças" sem seção de reduções
 # nem segurado-por-nome. Com só 4 aplicados (<10), a E até mostraria M na lista única — por isso a
 # sentinela de dente NÃO é 'SKU-M' (apareceria nas duas), e sim a SEÇÃO "Maiores reduções:" e o NOME
-# do segurado 'SKU-B', strings que SÓ a migration F emite.
+# do segurado 'SKU-B', strings que SÓ as migrations F/G emitem.
 P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260619120000_param_auto_resumo_descricao.sql"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 DELETE FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
@@ -396,12 +427,12 @@ BEGIN
   -- Confirma que a reversão REALMENTE rodou (a E emite a lista única "Maiores mudanças"):
   ASSERT position('Maiores mudanças:' IN v_msg) > 0,
     'FALSIFICAÇÃO INCONCLUSIVA: nem "Maiores mudanças" (rótulo da versão E) apareceu — a reversão não rodou';
-  RAISE NOTICE 'OK falsificação: sem a migration F o e-mail volta à lista única (reduções e segurado-por-nome SOMEM → P-REDUCOES/P-SEGURADO VERMELHOS)';
+  RAISE NOTICE 'OK falsificação 2: sem F/G o e-mail volta à lista única (reduções e segurado-por-nome SOMEM → P-REDUCOES/P-SEGURADO VERMELHOS)';
 END $$;
 SQL
 
-echo "→ restaura a migration F verdadeira…"
-P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260711193000_param_auto_resumo_altas_reducoes_segurado.sql"
+echo "→ restaura a migration G verdadeira…"
+P -v ON_ERROR_STOP=1 -f "$REPO_ROOT/supabase/migrations/20260712140000_param_auto_log_valor_barrado_fusivel.sql"
 
 echo ""
 echo "→ FALLBACK (descrição NULL/só-espaços → cai no código nas 3 superfícies, nunca rótulo vazio)…"
@@ -421,11 +452,33 @@ BEGIN
   ASSERT position('1001: PP' IN v_msg) > 0,          'FALLBACK FALHOU: descrição NULL (A) não caiu no código nas altas';
   ASSERT position('SKU-A normal' IN v_msg) = 0,      'FALLBACK FALHOU: A ainda mostra a descrição apagada';
   ASSERT position('1013: PP' IN v_msg) > 0,          'FALLBACK FALHOU: descrição só-espaços (M) não caiu no código nas reduções (nullif/btrim)';
-  ASSERT position('1002 (máx atual' IN v_msg) > 0,   'FALLBACK FALHOU: segurado B com descrição NULL não caiu no código';
+  ASSERT position('• 1002' IN v_msg) > 0,            'FALLBACK FALHOU: segurado B com descrição NULL não caiu no código';
+  ASSERT position('quis subir máx 100 → 400' IN v_msg) > 0, 'FALLBACK FALHOU: B (segurado) deveria manter o valor barrado junto do código';
   ASSERT position('SKU-F pin diferente' IN v_msg) > 0,'FALLBACK FALHOU: F (com descrição) deveria manter o texto';
   ASSERT position('• : PP' IN v_msg) = 0,            'FALLBACK FALHOU: rótulo vazio nas listas (money-path: ausente≠vazio)';
-  ASSERT position('•  (máx atual' IN v_msg) = 0,     'FALLBACK FALHOU: rótulo vazio no segurado';
+  ASSERT position(E'• \n' IN v_msg) = 0,             'FALLBACK FALHOU: rótulo vazio no segurado (bullet+espaço+newline)';
   RAISE NOTICE 'OK fallback: NULL/só-espaços caem no código (altas, reduções e segurado); com descrição mantém; sem rótulo vazio';
+END $$;
+SQL
+
+echo ""
+echo "→ DEGRADAÇÃO GRACIOSA (run gravado pelo core ANTIGO: sugerido NULL → 'máx atual', nunca '→ ?')…"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- Simula um run gravado ANTES da migration G (sem o valor sugerido) — ex.: o run de hoje na prod.
+UPDATE public.reposicao_param_auto_log SET estoque_maximo_sugerido=NULL WHERE sku_codigo_omie='1002';
+DELETE FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
+UPDATE public.reposicao_param_auto_run SET resumo_enviado_em=NULL
+  WHERE status='completo' AND data_negocio_brt=(now() AT TIME ZONE 'America/Sao_Paulo')::date;
+DO $$
+DECLARE v_msg text;
+BEGIN
+  PERFORM public.reposicao_param_auto_resumo_tick();
+  SELECT mensagem INTO v_msg FROM public.fornecedor_alerta WHERE tipo='param_auto_resumo';
+  ASSERT position('quis subir' IN v_msg) = 0,    'DEGRADAÇÃO FALHOU: sem sugerido não deveria dizer "quis subir"';
+  ASSERT position('máx atual 100' IN v_msg) > 0, 'DEGRADAÇÃO FALHOU: sem sugerido deveria cair em "máx atual 100" (só-nome)';
+  ASSERT position('→ ?' IN v_msg) = 0,           'DEGRADAÇÃO FALHOU: nunca mostrar "→ ?" (sugerido ausente = formato só-nome)';
+  ASSERT position('Segurados pelo fusível (confira): 1' IN v_msg) > 0, 'DEGRADAÇÃO FALHOU: o segurado ainda deve ser contado';
+  RAISE NOTICE 'OK degradação graciosa: run sem sugerido → "máx atual", sem "→ ?" feio';
 END $$;
 SQL
 

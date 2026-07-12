@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **357** custom migrations totais
-- **1278** objetos esperados (criados por estas migrations)
+- **358** custom migrations totais
+- **1280** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 358
+  - `function`: 360
   - `rls_policy`: 285
   - `index`: 211
   - `cron_job`: 146
@@ -3060,6 +3060,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
+| `function` | `public.reposicao_param_auto_resumo_tick` | — |
+
+### `20260712140000_param_auto_log_valor_barrado_fusivel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atualizar_parametros_numericos_skus` | — |
 | `function` | `public.reposicao_param_auto_resumo_tick` | — |
 
 ## Próximos passos por status
