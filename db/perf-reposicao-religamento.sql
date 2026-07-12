@@ -46,9 +46,13 @@
 --     → ~3.1s. Sob authenticated: + InitPlans de RLS (desprezível). << 8s timeout.
 --   candidatos: 759 ms atual + 1 scan religado da recorrencia_180d (~+249 ms) ≈ ~1.0-1.5s (predicate pushdown reduz).
 --
--- CONCLUSÃO: p95 << 4s. Materialização (fato privado grão empresa×sku×data×NF) NÃO é
--- necessária no PR-2. Se o cockpit crescer muito, é candidata a PR-3 (design próprio) —
--- sinalizado, não silenciado.
+-- CONCLUSÃO: custo estrutural estimado ~3.1s (pior consumidor), folga ~2.6× vs o timeout 8s.
+-- ⚠️ NÃO é um p95 sob authenticated+concorrência (Codex P2.2): os 2 métodos acima partem do
+-- MESMO incremento por scan (~249 ms) — corroboram, não são independentes; cache frio ou
+-- consultas concorrentes do cockpit podem elevar a cauda. O custo estrutural NÃO pede
+-- materialização, mas a CONFIRMAÇÃO p95 real é o bloco gold-standard abaixo (founder,
+-- pós-apply). Se lá estourar 4s, materializar (grão empresa×sku×data×NF) vira PR-3.
+-- Sinalizado, não silenciado.
 
 -- ── GOLD STANDARD (opcional): medir pós-apply REAL sob authenticated, no SQL Editor do
 --    Lovable, DEPOIS de aplicar o religamento (o SQL Editor tem permissão de SET ROLE):
