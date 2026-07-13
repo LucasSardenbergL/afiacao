@@ -345,7 +345,6 @@ export const MODULOS: ModuloApp[] = [
       "src/components/TintColorSelectDialog.tsx",
       "src/pages/Tint*.tsx",
       "src/hooks/useTint*.ts",
-      "src/hooks/useDirectTintImport.ts",
     ],
     testes: [],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
