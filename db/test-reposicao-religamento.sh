@@ -21,12 +21,13 @@
 # Plano: docs/superpowers/plans/2026-07-11-reposicao-pr2-religamento.md (Task 3)
 # Brief: .superpowers/sdd/pr2-task-3-brief.md (ajustes vs. o plano cru)
 #
-# ⚠️ AJUSTE vs. o plano cru (Guard #10 é por CFOP de saída, não por sinal):
-#   vendas normais do pai usam CFOP de saída (ex. '5102'); a devolução usa
-#   CFOP de entrada (ex. '1201') com quantidade SEMPRE POSITIVA (o dado real
-#   nunca grava negativo — devolução é sinalizada por CFOP, não por sinal).
-#   O guard em v_sku_demanda_efetiva é `AND (v.cfop LIKE '5%' OR v.cfop LIKE
-#   '6%')` — filtra por CFOP de saída, não por quantidade.
+# ⚠️ AJUSTE vs. o plano cru (Guard #10 é ALLOWLIST de CFOP de venda, não por sinal):
+#   vendas do pai usam CFOP de saída de venda (5102/6102 — confirmado em prod);
+#   a devolução usa CFOP de entrada (1201) OU de saída-não-venda (6202, devolução
+#   de compra), AMBAS com quantidade SEMPRE POSITIVA (o dado real nunca grava
+#   negativo — devolução é sinalizada por CFOP, não por sinal). O guard é
+#   `AND v.cfop IN ('5101','5102','5108','6101','6102','6108')` — só venda de
+#   saída consome insumo; exclui 6202 (o furo achado pelo Codex 2026-07-12).
 #
 # ⚠️ AJUSTE vs. o plano cru (E1 / security_invoker): o plano cru e o brief
 #   divergem sobre o literal armazenado em pg_class.reloptions. CONFIRMADO
@@ -140,21 +141,23 @@ echo "→ sanidade: a malha real enxerga o par (pré-requisito dos asserts abaix
 got=$(Pq -c "SELECT count(*) FROM vw_pcp_malha_componentes WHERE pai_codigo=100;")
 assert_eq "setup: malha montada a partir do jsonb" "1" "$got"
 
-echo "→ vendas: pai 200 em 2 NFs de saída (CFOP 5102) + 1 devolução (CFOP 1201, qtde POSITIVA) + produto 300 (CFOP 5102)"
+echo "→ vendas: pai 200 em 2 NFs de saída (5102) + devolução de VENDA (1201) + devolução de COMPRA (6202) + produto 300 (5102)"
 # NFE-R1/NFE-R2: saída normal do pai → DEVEM explodir consumo do insumo 201 (2 NFs distintas → D. num_ordens=2).
-# NFE-DEVOL: devolução (CFOP de entrada 1201) com quantidade=5 POSITIVA — o dado real nunca grava
-#   negativo; é o CFOP que sinaliza devolução, não o sinal (ajuste vs. o plano cru). Conta como demanda
-#   de VENDA do próprio pai (passthrough intacto), mas NÃO deve gerar consumo do insumo (assert C / SAB1).
+# NFE-DEVOL: devolução de VENDA (CFOP de entrada 1201) com quantidade=5 POSITIVA — o dado real nunca grava
+#   negativo; é o CFOP que sinaliza devolução, não o sinal. NÃO deve gerar consumo do insumo (assert C1/SAB1).
+# NFE-DEVCOMP: devolução de COMPRA (CFOP de SAÍDA 6202, qtde POSITIVA) — o furo do Codex: 'cfop LIKE 6%'
+#   a incluiria (começa com 6), mas 6202 NÃO é venda. A allowlist a exclui → NÃO deve virar consumo (C2/SAB1).
 # NFE-R3: produto 300, sem ficha — não-insumo, controle do assert B (não-regressão).
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 INSERT INTO venda_items_history
   (id, empresa, nfe_chave_acesso, data_emissao, sku_codigo_omie, sku_descricao,
    sku_unidade, quantidade, valor_unitario, valor_total, cfop, created_at)
 VALUES
-  (gen_random_uuid(),'OBEN','NFE-R1',    CURRENT_DATE - 10, 200, 'TINGIDOR X',        'UN', 1, 100, 100, '5102', now()),
-  (gen_random_uuid(),'OBEN','NFE-R2',    CURRENT_DATE - 5,  200, 'TINGIDOR X',        'UN', 2, 100, 200, '5102', now()),
-  (gen_random_uuid(),'OBEN','NFE-DEVOL', CURRENT_DATE - 3,  200, 'TINGIDOR X',        'UN', 5, 100, 500, '1201', now()),
-  (gen_random_uuid(),'OBEN','NFE-R3',    CURRENT_DATE - 3,  300, 'PRODUTO SEM FICHA', 'UN', 7,  10,  70, '5102', now());
+  (gen_random_uuid(),'OBEN','NFE-R1',      CURRENT_DATE - 10, 200, 'TINGIDOR X',        'UN', 1, 100, 100, '5102', now()),
+  (gen_random_uuid(),'OBEN','NFE-R2',      CURRENT_DATE - 5,  200, 'TINGIDOR X',        'UN', 2, 100, 200, '5102', now()),
+  (gen_random_uuid(),'OBEN','NFE-DEVOL',   CURRENT_DATE - 3,  200, 'TINGIDOR X',        'UN', 5, 100, 500, '1201', now()),
+  (gen_random_uuid(),'OBEN','NFE-DEVCOMP', CURRENT_DATE - 4,  200, 'TINGIDOR X',        'UN', 3, 100, 300, '6202', now()),
+  (gen_random_uuid(),'OBEN','NFE-R3',      CURRENT_DATE - 3,  300, 'PRODUTO SEM FICHA', 'UN', 7,  10,  70, '5102', now());
 SQL
 
 echo "→ baseline das 4 views ANTES do candidato (EXCEPT ALL de B usa isto — religamento é a ÚNICA variável)…"
@@ -182,9 +185,11 @@ for v in v_sku_demanda_estatisticas v_sku_sigma_demanda v_sku_demanda_rajada v_s
   assert_eq "B:${v} nao-insumo intacto" "0" "$got"
 done
 
-echo "→ C. FIX #10 (CFOP): a devolução (CFOP 1201, qtde positiva) NÃO gera consumo do insumo 201"
+echo "→ C. FIX #10 (allowlist CFOP): nenhuma devolução gera consumo do insumo 201 (1201 entrada E 6202 saída)"
 got=$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND nfe_chave_acesso='NFE-DEVOL';")
-assert_eq "C1 devolucao (CFOP 1201) nao vira consumo do insumo" "0" "$got"
+assert_eq "C1 devolucao de venda (CFOP 1201) nao vira consumo do insumo" "0" "$got"
+got=$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND nfe_chave_acesso='NFE-DEVCOMP';")
+assert_eq "C2 devolucao de compra (CFOP 6202, saida-nao-venda) nao vira consumo — o furo do Codex" "0" "$got"
 
 echo "→ D. GRADUAÇÃO: num_ordens=2 (insumo herdou as 2 NFs de SAÍDA do pai — a devolução não conta)"
 got=$(Pq -c "SELECT num_ordens FROM v_sku_demanda_estatisticas WHERE sku_codigo_omie=201 AND empresa='OBEN';")
@@ -234,19 +239,19 @@ JOIN omie_products ins     ON ins.omie_codigo_produto = mo.comp_oben
                           AND ins.account = 'oben'
 WHERE v.empresa = 'OBEN'
   AND v.quantidade > 0;"
-# ⬆ SEM o guard AND (v.cfop LIKE '5%' OR v.cfop LIKE '6%') — a devolução (CFOP 1201) volta a explodir.
+# ⬆ SEM o guard AND v.cfop IN (allowlist) — as DUAS devoluções (1201 entrada + 6202 saída) voltam a explodir.
 
-# Esperado sob sabotagem: EXATAMENTE 1 linha vaza (a NF de devolução casa 1:1 com o par
-# pai_oben=200/comp_oben=201 em v_pcp_malha_oben). Se desse "0" a sabotagem seria inútil
-# (não estaria de fato testando o guard) — assert_eq mata o harness nesse caso.
-got=$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND nfe_chave_acesso='NFE-DEVOL';")
-assert_eq "SAB1 sabotagem funcional: devolucao vaza como consumo sem o guard CFOP" "1" "$got"
-echo "  ✓ SAB1 ok (guard removido → devolucao vaza; logo C1 protege de verdade)"
+# Esperado sob sabotagem: EXATAMENTE 2 linhas vazam (NFE-DEVOL 1201 + NFE-DEVCOMP 6202, cada uma casa 1:1
+# com o par pai_oben=200/comp_oben=201). "0" = sabotagem inútil; "1" = só uma devolução coberta (o 6202
+# ficaria sem prova). assert_eq mata o harness nesses casos — garante que a allowlist cobre AMBAS.
+got=$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND nfe_chave_acesso IN ('NFE-DEVOL','NFE-DEVCOMP');")
+assert_eq "SAB1 sabotagem funcional: as 2 devolucoes vazam como consumo sem o guard CFOP" "2" "$got"
+echo "  ✓ SAB1 ok (guard removido → ambas devolucoes vazam; logo C1/C2 protegem de verdade)"
 
 echo "→ restaurando v_sku_demanda_efetiva (fix #10 intacto)…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/reposicao-demanda-insumos-bom.sql"
-got=$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND nfe_chave_acesso='NFE-DEVOL';")
-assert_eq "SAB1-restore C1 volta a valer (devolucao sem consumo)" "0" "$got"
+got=$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND nfe_chave_acesso IN ('NFE-DEVOL','NFE-DEVCOMP');")
+assert_eq "SAB1-restore C1/C2 voltam a valer (nenhuma devolucao vira consumo)" "0" "$got"
 got=$(Pq -c "SELECT num_ordens FROM v_sku_demanda_estatisticas WHERE sku_codigo_omie=201 AND empresa='OBEN';")
 assert_eq "SAB1-restore D1 volta a valer (num_ordens=2)" "2" "$got"
 

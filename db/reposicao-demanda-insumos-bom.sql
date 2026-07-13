@@ -201,7 +201,13 @@ JOIN omie_products ins     ON ins.omie_codigo_produto = mo.comp_oben
                           AND ins.account = 'oben'
 WHERE v.empresa = 'OBEN'                       -- guard: nunca cruzar empresa
   AND v.quantidade > 0                         -- não explodir zero/negativo
-  AND (v.cfop LIKE '5%' OR v.cfop LIKE '6%');   -- [#10] só SAÍDA de venda consome insumo; devolução (entrada 1xxx/2xxx), mesmo positiva, não infla
+  AND v.cfop IN ('5101','5102','5108','6101','6102','6108');
+  -- [#10] allowlist POSITIVA de venda de SAÍDA (Codex 2026-07-12). Só operação que representa
+  -- saída de venda de produto/mercadoria consome insumo: produção própria (5101/6101 — TINGIMIX é
+  -- fabricado internamente) + revenda de terceiros (5102/6102, presentes) + consumidor final (5108/6108).
+  -- EXCLUI 6202 (devolução de COMPRA: é saída, mas NÃO venda — 'LIKE 5%/6%' a incluiria e fabricaria
+  -- consumo falso do insumo; há 5 linhas 6202 reais em prod). Devolução de venda é entrada (1xxx/2xxx),
+  -- nunca chega aqui. Sentinela p/ CFOP de venda novo com ficha: spec §5 (query de vigilância).
 
 COMMENT ON VIEW v_sku_demanda_efetiva IS
   'Demanda = venda direta ⊕ consumo de insumo derivado da ficha técnica. A linha de consumo herda a NF do pai (num_ordens) e usa a unidade do insumo; valor de venda é NULL (insumo não gera receita). PR-2 aponta as 4 views estatísticas para cá.';
