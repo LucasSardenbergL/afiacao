@@ -841,3 +841,107 @@ describe('guardrail: fin-valor-cockpit lê o código do cliente pela view fresca
     ).not.toMatch(/from\("omie_clientes"\)/);
   });
 });
+
+// ── P0-B-bis ponta 3 (ai-ops-agent: farmer_id vem da carteira canônica, não do espelho circular) ──
+// DOIS bugs (investigados 2026-07-12, psql-ro + leitura): BUG-1 (circular, PRÉ-EXISTENTE) — o edge fazia
+// `farmer_id: assignment?.user_id` com assignment.user_id === m.customer_user_id → o "dono" era o PRÓPRIO
+// cliente (useExcecoesGestor.ts:112 `donoNome: nome(d.farmer_id)` mostra o nome do cliente como dono no
+// Console de Exceções do gestor). BUG-2 (regressão da ponta 1 #1293) — omie_clientes.omie_codigo_vendedor
+// virou 100% NULL (o vendedor mudou-se p/ a proof). Fix (Opção A, decisão do founder 2026-07-12): resolve o
+// farmer da fonte CANÔNICA carteira_assignments.owner_user_id via owner-map (buildOwnerMap/resolveOwner),
+// herdando os guards fail-closed + Hunter/B-lite/eligible da ponta 2 (carteira-rebuild). Edge TS puro, sem SQL.
+// Este canário textual pega a reversão do deploy do Lovable (mesma armadilha do #1272). Ver
+// docs/agent/money-path.md e o design da ponta 2 (2026-07-11-carteira-rebuild-vendedor-proof-ponta2-design.md).
+const AIOPS = 'supabase/functions/ai-ops-agent/index.ts';
+const OWNER_MAP = 'src/lib/carteira/owner-map.ts';
+
+describe('guardrail money-path: ai-ops-agent resolve farmer_id da carteira (Opção A, anti-circular)', () => {
+  const src = read(AIOPS);
+  const helper = read(OWNER_MAP);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('farmer_id');
+    expect(helper).toContain('buildOwnerMap');
+  });
+
+  it('o helper puro existe e exporta buildOwnerMap + resolveOwner', () => {
+    expect(helper).toMatch(/export function buildOwnerMap/);
+    expect(helper).toMatch(/export function resolveOwner/);
+  });
+
+  it('o edge LÊ a carteira canônica (carteira_assignments) por KEYSET, e monta o mapa dos dados REAIS', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o ai-ops não lê mais carteira_assignments — o farmer voltou ao espelho circular?',
+    ).toMatch(/from\(["']carteira_assignments["']\)/);
+    // Keyset (.gt + .limit), não offset: carteira_assignments é dinâmica (rebuild concorrente 07:30) e o
+    // offset pularia linha por churn → farmer_id null (Codex ponta 3 #3). Sem paginação a cauda >1000 sumiria.
+    expect(
+      src,
+      'a leitura da carteira precisa ser KEYSET: .gt(customer_user_id) + .order + .limit',
+    ).toMatch(/from\(["']carteira_assignments["']\)[\s\S]{0,260}\.gt\(["']customer_user_id["'][\s\S]{0,140}\.limit\(/);
+    expect(
+      src,
+      'REGRESSÃO (Codex #2): a paginação keyset perdeu o avanço do cursor — truncaria em 1 página',
+    ).toMatch(/lastCustomerId\s*=\s*rows\[rows\.length - 1\]/);
+    // Falso-verde que o Codex #2 pegou: buildOwnerMap([]) passaria os asserts frouxos. Trava o argumento REAL.
+    expect(
+      src,
+      'REGRESSÃO (Codex #2): o ownerMap não é montado dos assignments reais (virou buildOwnerMap([])?)',
+    ).toMatch(/buildOwnerMap\(assignmentsRaw\)/);
+  });
+
+  it('ANTI-CIRCULAR (BUG-1): farmer_id NÃO é mais o user_id do próprio cliente — vem de resolveOwner', () => {
+    expect(
+      src,
+      'REGRESSÃO BUG-1: farmer_id voltou a ser assignment.user_id (o próprio cliente) — referência circular',
+    ).not.toMatch(/farmer_id:\s*assignment\?\.user_id/);
+    // Args EXATOS (Codex #2): fallback null e chave = customer_user_id. `farmer_id: m.customer_user_id`
+    // (o bug circular) NÃO casaria isto — fecha o falso-verde do resolveOwner-sem-args.
+    expect(
+      src,
+      'farmer_id deveria vir de resolveOwner(ownerMap, m.customer_user_id, null) — dono account-safe da carteira',
+    ).toMatch(/farmer_id:\s*resolveOwner\(ownerMap,\s*m\.customer_user_id,\s*null\)/);
+  });
+
+  it('ANTI-REVERSÃO (BUG-2): o farmer NÃO vem mais do espelho poluído nem do dead code de employees', () => {
+    expect(
+      src,
+      'REGRESSÃO BUG-2: o ai-ops voltou a ler omie_clientes p/ o vendedor (espelho 100% NULL)',
+    ).not.toMatch(/from\(["']omie_clientes["']\)/);
+    expect(
+      src,
+      'sumiu a limpeza do dead code — o edge ainda busca profiles is_employee sem usar (mapeamento fantasma)?',
+    ).not.toContain('is_employee');
+  });
+
+  it('PURGE completo (Codex #1): apaga TODAS as pending, sem filtro de data — limpa o farmer_id circular antigo', () => {
+    // O delete antigo filtrava created_at de HOJE → as 228 linhas circulares antigas (BUG-1) sobreviviam e
+    // reapareciam no Console de Exceções quando a run gerava < 200 decisões. Purge sem data limpa o legado.
+    expect(
+      src,
+      'REGRESSÃO (Codex #1): o purge de pending voltou a filtrar por created_at — o circular antigo sobrevive',
+    ).not.toMatch(/\.eq\("status",\s*"pending"\)[\s\S]{0,140}created_at/);
+    expect(
+      src,
+      'o purge de pending deveria ser fail-closed (erro do delete aborta antes de inserir → sem duplicata)',
+    ).toMatch(/if \(purgeError\) throw/);
+  });
+
+  it('o edge USA o helper espelhado (define buildOwnerMap E chama), ≥2 menções', () => {
+    expect(src, 'edge não define mais o helper espelhado owner-map').toMatch(/function buildOwnerMap/);
+    expect(src, 'edge não chama mais buildOwnerMap — voltou à lógica inline?').toMatch(/buildOwnerMap\(/);
+    expect(src, 'edge não chama mais resolveOwner').toMatch(/resolveOwner\(/);
+    expect(
+      count(src, 'buildOwnerMap'),
+      'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao owner-map de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'owner-map'),
+      'edge divergiu de owner-map.ts — o Lovable reescreveu o mapeamento no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'owner-map'));
+  });
+});

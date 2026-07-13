@@ -29,10 +29,21 @@ interface Evidence {
   type: 'warning' | 'info' | 'critical';
 }
 
-interface ClientAssignment {
-  user_id: string;
-  omie_codigo_vendedor: string | null;
+// MIRROR-START owner-map — espelhado verbatim de src/lib/carteira/owner-map.ts (P0-B-bis ponta 3). Manter idêntico.
+interface AssignmentRow { customer_user_id: string; owner_user_id: string; }
+
+// customer_user_id -> owner_user_id (dono da carteira). Fonte de verdade do farmer/score (Opcao A).
+function buildOwnerMap(assignments: AssignmentRow[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const a of assignments) m.set(a.customer_user_id, a.owner_user_id);
+  return m;
 }
+
+// Resolve o dono de um cliente; fallback (ex.: Hunter/null) so se o cliente nao estiver na carteira.
+function resolveOwner(map: Map<string, string>, customerUserId: string, fallback: string | null): string | null {
+  return map.get(customerUserId) ?? fallback;
+}
+// MIRROR-END
 
 interface AiDecision {
   decision_type: string;
@@ -245,17 +256,31 @@ serve(async (req) => {
 
     console.log(`[ai-ops-agent] Total customers fetched: ${allMetrics.length}`);
 
-    // 3. Get farmer (vendedor) assignments from omie_clientes
-    const { data: clientAssignmentsRaw } = await supabase
-      .from("omie_clientes")
-      .select("user_id, omie_codigo_vendedor");
-    const clientAssignments = (clientAssignmentsRaw ?? []) as unknown as ClientAssignment[];
-
-    // Get employee profiles to map vendedor codes to farmer_ids
-    const { data: employees } = await supabase
-      .from("profiles")
-      .select("user_id, name")
-      .eq("is_employee", true);
+    // 3. Resolve o farmer (owner da carteira) da fonte canônica carteira_assignments (Opção A, P0-B-bis
+    //    ponta 3). owner_user_id já é o vendedor account-safe (oben) OU Hunter (órfão), resolvido pela
+    //    ponta 2 (carteira-rebuild) com guards fail-closed + consolidação B-lite. NÃO lê o espelho poluído
+    //    omie_clientes (vendedor 100% NULL) nem repete o mapeamento circular antigo (farmer_id = o cliente).
+    //    Sem filtro eligible: UNIQUE(customer_user_id) dá 1 linha/cliente e queremos o dono de QUALQUER
+    //    cliente com métrica (clone→Hunter, gêmeo→vendedor). Paginação por KEYSET em customer_user_id (não
+    //    offset): carteira_assignments é dinâmica (cron carteira-rebuild 07:30) — .range/offset pularia uma
+    //    linha se o rebuild inserisse/removesse uma chave entre páginas → farmer_id null (Codex ponta 3).
+    const assignmentsRaw: AssignmentRow[] = [];
+    let lastCustomerId = "";
+    for (;;) {
+      const { data: aPage, error: aError } = await supabase
+        .from("carteira_assignments")
+        .select("customer_user_id, owner_user_id")
+        .gt("customer_user_id", lastCustomerId)
+        .order("customer_user_id", { ascending: true })
+        .limit(PAGE_SIZE);
+      if (aError) throw new Error(`Failed to get carteira page after ${lastCustomerId}: ${aError.message}`);
+      const rows = (aPage ?? []) as unknown as AssignmentRow[];
+      assignmentsRaw.push(...rows);
+      if (rows.length < PAGE_SIZE) break;
+      lastCustomerId = rows[rows.length - 1].customer_user_id;
+    }
+    const ownerMap = buildOwnerMap(assignmentsRaw);
+    console.log(`[ai-ops-agent] Carteira assignments carregados: ${assignmentsRaw.length}`);
 
     // 4. Calculate scores and generate decisions
     const decisions: AiDecision[] = [];
@@ -272,13 +297,10 @@ serve(async (req) => {
       // Only create decisions for customers with score > 10
       if (result.score < 10) continue;
 
-      // Try to find farmer assignment
-      const assignment = clientAssignments.find((a) => a.user_id === m.customer_user_id);
-
       decisions.push({
         decision_type: "RECOMMEND_CONTACT",
         customer_user_id: m.customer_user_id,
-        farmer_id: assignment?.user_id || null, // Will be null if no assignment
+        farmer_id: resolveOwner(ownerMap, m.customer_user_id, null), // owner da carteira; null se fora dela
         score_final: result.score,
         confidence: result.confidence,
         confidence_value: result.confidenceValue,
@@ -303,13 +325,15 @@ serve(async (req) => {
     // Sort by score descending
     decisions.sort((a, b) => b.score_final - a.score_final);
 
-    // 5. Clear old pending decisions from today and insert new ones
-    await supabase
+    // 5. Recompute completo: purga TODAS as recomendações pending (não só as de hoje) antes de regenerar.
+    //    Senão pending antigas — inclusive as com farmer_id circular do BUG-1 (P0-B-bis ponta 3) — sobrevivem
+    //    no banco e reaparecem no Console de Exceções quando a run gera < 200 decisões (Codex). accepted/
+    //    dismissed são preservadas (só status='pending' é purgado); a run seguinte reprioriza do zero.
+    const { error: purgeError } = await supabase
       .from("ai_decisions")
       .delete()
-      .eq("status", "pending")
-      .gte("created_at", `${today}T00:00:00`)
-      .lte("created_at", `${today}T23:59:59`);
+      .eq("status", "pending");
+    if (purgeError) throw new Error(`Failed to purge pending decisions: ${purgeError.message}`);
 
     // Insert in batches of 50
     let inserted = 0;
@@ -352,7 +376,7 @@ serve(async (req) => {
   } catch (error) {
     console.error("[ai-ops-agent] Error:", error);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
