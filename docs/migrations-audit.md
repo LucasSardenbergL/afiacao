@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **358** custom migrations totais
-- **1280** objetos esperados (criados por estas migrations)
+- **359** custom migrations totais
+- **1284** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 360
+  - `function`: 361
   - `rls_policy`: 285
-  - `index`: 211
+  - `index`: 212
   - `cron_job`: 146
-  - `table`: 138
-  - `trigger`: 76
+  - `table`: 139
+  - `trigger`: 77
   - `view`: 60
   - `enum_value`: 4
 
@@ -3068,6 +3068,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.atualizar_parametros_numericos_skus` | — |
 | `function` | `public.reposicao_param_auto_resumo_tick` | — |
+
+### `20260712150000_carteira_membership_ledger_fatia0.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tg_omie_clientes_to_ledger` | — |
+| `table` | `public.carteira_membership_ledger` | — |
+| `index` | `public.idx_cml_identity_state` | `carteira_membership_ledger` |
+| `trigger` | `public.trg_omie_clientes_to_ledger` | `omie_clientes` |
 
 ## Próximos passos por status
 
