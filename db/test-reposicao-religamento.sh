@@ -3,11 +3,11 @@
 # views estatísticas de v_venda_items_history_efetivo → v_sku_demanda_efetiva:
 #   A. RELIGAMENTO   — o INSUMO ganha demanda_total_90d > 0 (antes era ausente);
 #   B. NÃO-REGRESSÃO — SKU não-insumo (300) IDÊNTICO antes/depois nas 4 views (EXCEPT ALL);
-#   C. FIX #10       — devolução do pai (qtde<0) NÃO vira consumo negativo do insumo;
+#   C. FIX #10       — devolução (CFOP 1201 entrada / 6202 saída-não-venda, qtde POSITIVA) NÃO vira consumo do insumo;
 #   D. GRADUAÇÃO     — o insumo herda 2 NFs distintas dos pais → num_ordens=2 (sai de AGUARDANDO);
 #   E. RLS           — security_invoker preservado nas 4 views recriadas.
 # + FALSIFICAÇÃO (um assert só vale se QUEBRA quando o guard some):
-#   SAB1 — v_sku_demanda_efetiva SEM o guard #10 → a devolução VAZA como consumo negativo (C1 quebraria);
+#   SAB1 — v_sku_demanda_efetiva SEM o guard de CFOP → as 2 devoluções (1201/6202) VAZAM como consumo (C1/C2 quebrariam);
 #   SAB2 — remover security_invoker de 1 view religada → E1 cai de 4 p/ 3.
 #
 # MONEY-PATH (muda comportamento de compra). SQL sob teste, aplicado NESTA ORDEM:
@@ -98,16 +98,18 @@ SQL
 echo "→ ficha: pai 100 leva 0.9 L do insumo 101 (→ oben: pai 200 leva 0.9 L do 201)"
 set_malha 100 '[{"idProdMalha":101,"quantProdMalha":0.9,"unidProdMalha":"L","percPerdaProdMalha":0}]'
 
-echo "→ vendas: NFE-1 (pai 200 q1) · NFE-2 (pai 200 q2) · NFE-3 (300 q7) · NFE-DEV (pai 200 q-1 DEVOLUÇÃO)"
+echo "→ vendas: NFE-1/2 (pai 200, saída 5102) · NFE-3 (300, 5102) · NFE-DEV (devol. venda 1201) · NFE-DEVCOMP (devol. compra 6202) — devoluções POSITIVAS"
+# O dado real NUNCA grava quantidade negativa: a devolução é sinalizada por CFOP (1201 entrada / 6202 saída-não-venda), sempre POSITIVA.
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 INSERT INTO venda_items_history
   (id, empresa, nfe_chave_acesso, data_emissao, sku_codigo_omie, sku_descricao,
-   sku_unidade, quantidade, valor_unitario, valor_total, created_at)
+   sku_unidade, quantidade, valor_unitario, valor_total, cfop, created_at)
 VALUES
-  (gen_random_uuid(),'OBEN','NFE-1',   CURRENT_DATE - 10, 200, 'TINGIDOR X','UN',  1, 100,  100, now()),
-  (gen_random_uuid(),'OBEN','NFE-2',   CURRENT_DATE - 5,  200, 'TINGIDOR X','UN',  2, 100,  200, now()),
-  (gen_random_uuid(),'OBEN','NFE-3',   CURRENT_DATE - 3,  300, 'SEM FICHA', 'UN',  7,  10,   70, now()),
-  (gen_random_uuid(),'OBEN','NFE-DEV', CURRENT_DATE - 2,  200, 'TINGIDOR X','UN', -1, 100, -100, now());
+  (gen_random_uuid(),'OBEN','NFE-1',      CURRENT_DATE - 10, 200, 'TINGIDOR X','UN', 1, 100, 100, '5102', now()),
+  (gen_random_uuid(),'OBEN','NFE-2',      CURRENT_DATE - 5,  200, 'TINGIDOR X','UN', 2, 100, 200, '5102', now()),
+  (gen_random_uuid(),'OBEN','NFE-3',      CURRENT_DATE - 3,  300, 'SEM FICHA', 'UN', 7,  10,  70, '5102', now()),
+  (gen_random_uuid(),'OBEN','NFE-DEV',    CURRENT_DATE - 2,  200, 'TINGIDOR X','UN', 5, 100, 500, '1201', now()),
+  (gen_random_uuid(),'OBEN','NFE-DEVCOMP',CURRENT_DATE - 4,  200, 'TINGIDOR X','UN', 3, 100, 300, '6202', now());
 SQL
 
 echo "→ sanidade: a malha real enxerga o par 200→201"
@@ -136,7 +138,7 @@ P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/reposicao-religamento-insumos.sql"
 echo "→ A. o insumo 201 ganha demanda após religar"
 assert_eq "A1 insumo com demanda>0" "t" \
   "$(Pq -c "SELECT COALESCE(demanda_total_90d,0)>0 FROM v_sku_demanda_estatisticas WHERE sku_codigo_omie=201 AND empresa='OBEN';")"
-# 0.9 (NFE-1) + 1.8 (NFE-2) = 2.7; a devolução NFE-DEV é filtrada pelo fix #10 (comparação NUMÉRICA, robusta a formatação)
+# 0.9 (NFE-1 q1) + 1.8 (NFE-2 q2) = 2.7; as devoluções NFE-DEV (1201) e NFE-DEVCOMP (6202) são filtradas pelo guard de CFOP (comparação NUMÉRICA)
 assert_eq "A2 demanda_total_90d = 2.7 (devolucao NAO conta)" "t" \
   "$(Pq -c "SELECT demanda_total_90d = 2.7 FROM v_sku_demanda_estatisticas WHERE sku_codigo_omie=201 AND empresa='OBEN';")"
 
@@ -150,10 +152,12 @@ for v in v_sku_demanda_estatisticas v_sku_sigma_demanda v_sku_demanda_rajada v_s
   assert_eq "B:${v} nao-insumo (300) intacto" "0" "$got"
 done
 
-# ── C. FIX #10 ──
-echo "→ C. devolução do pai NÃO gera consumo negativo do insumo"
-assert_eq "C1 sem consumo negativo do insumo 201" "0" \
-  "$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND quantidade<0;")"
+# ── C. FIX #10 (allowlist de CFOP) ──
+echo "→ C. nenhuma devolução vira consumo do insumo (1201 entrada E 6202 saída-não-venda, ambas POSITIVAS)"
+assert_eq "C1 devolucao de venda (1201) nao vira consumo do insumo 201" "0" \
+  "$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND nfe_chave_acesso='NFE-DEV';")"
+assert_eq "C2 devolucao de compra (6202, saida-nao-venda) nao vira consumo — o furo do Codex" "0" \
+  "$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND nfe_chave_acesso='NFE-DEVCOMP';")"
 
 # ── D. GRADUAÇÃO ──
 echo "→ D. o insumo herda 2 NFs distintas (NFE-1, NFE-2) → num_ordens=2"
@@ -167,7 +171,7 @@ assert_eq "E1 as 4 views security_invoker" "4" "$(inv4)"
 # ══════════════════════════════════════════════════════════════════════════
 # FALSIFICAÇÃO — sabotar → exigir vermelho
 # ══════════════════════════════════════════════════════════════════════════
-echo "→ SAB1: v_sku_demanda_efetiva SEM o guard #10 → a devolução vaza como consumo negativo (C1 quebraria)"
+echo "→ SAB1: v_sku_demanda_efetiva SEM o guard de CFOP → as 2 devoluções (1201/6202) vazam como consumo (C1/C2 quebrariam)"
 P -q -c "CREATE OR REPLACE VIEW v_sku_demanda_efetiva WITH (security_invoker = true) AS
   SELECT id, empresa, nfe_chave_acesso, nfe_numero, nfe_serie, data_emissao,
          cliente_codigo_omie, cliente_razao_social, cliente_cnpj_cpf, cliente_uf, cliente_cidade,
@@ -184,10 +188,10 @@ P -q -c "CREATE OR REPLACE VIEW v_sku_demanda_efetiva WITH (security_invoker = t
   FROM v_venda_items_history_efetivo v
   JOIN v_pcp_malha_oben mo ON mo.pai_oben = v.sku_codigo_omie
   JOIN omie_products ins ON ins.omie_codigo_produto = mo.comp_oben AND ins.account='oben'
-  WHERE v.empresa='OBEN';"   -- SEM 'AND v.quantidade > 0'
-neg=$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND quantidade<0;")
-if [ "$neg" = "0" ]; then echo "  ✗ SAB1 INÚTIL: C1 não detecta a remoção do guard #10"; exit 1; fi
-echo "  ✓ S1 ok (sem o guard #10 a devolução vira consumo -0.9 → C1 protege de verdade; vazou $neg linha(s))"
+  WHERE v.empresa='OBEN';"   -- SEM 'AND v.quantidade > 0 AND v.cfop IN (...)'
+vaz=$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND nfe_chave_acesso IN ('NFE-DEV','NFE-DEVCOMP');")
+if [ "$vaz" != "2" ]; then echo "  ✗ SAB1 INÚTIL: esperava 2 devoluções vazando sem o guard, obtido=$vaz"; exit 1; fi
+echo "  ✓ S1 ok (sem o guard as 2 devoluções viram consumo → C1/C2 protegem de verdade; vazou $vaz linha(s))"
 PASS=$((PASS+1))
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/reposicao-demanda-insumos-bom.sql"   # restaura a versão real (com guard)
 
@@ -200,9 +204,9 @@ PASS=$((PASS+1))
 P -q -c "ALTER VIEW v_sku_demanda_estatisticas SET (security_invoker = true);"   # restaura
 
 # ── prova de que a sabotagem foi DESFEITA (não mascarada) ──
-echo "→ RESTORE: C1 volta a 0 e E1 volta a 4"
-assert_eq "R-C1 consumo negativo zerado de novo" "0" \
-  "$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND quantidade<0;")"
+echo "→ RESTORE: C1/C2 voltam a 0 e E1 volta a 4"
+assert_eq "R-C1 devolucoes sem consumo de novo" "0" \
+  "$(Pq -c "SELECT count(*) FROM v_sku_demanda_efetiva WHERE sku_codigo_omie=201 AND nfe_chave_acesso IN ('NFE-DEV','NFE-DEVCOMP');")"
 assert_eq "R-E1 as 4 views security_invoker de novo" "4" "$(inv4)"
 
 echo ""
