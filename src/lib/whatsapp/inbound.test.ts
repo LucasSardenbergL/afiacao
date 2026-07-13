@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { waPhoneCandidates, parseInboundWebhook, is24hWindowOpen } from './inbound';
+import { waPhoneCandidates, parseInboundWebhook, is24hWindowOpen, parseStatusWebhook, isStatusUpgrade } from './inbound';
 
 describe('waPhoneCandidates', () => {
   it('normaliza E.164 do WhatsApp (móvel 13 dígitos) e gera variante sem o 9', () => {
@@ -64,5 +64,60 @@ describe('is24hWindowOpen', () => {
   });
   it('aceita string ISO', () => {
     expect(is24hWindowOpen('2026-05-28T14:00:00Z', now)).toBe(true);
+  });
+});
+
+// --- statuses do webhook (núcleo HSM) ---
+describe('parseStatusWebhook', () => {
+  const payload = {
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              statuses: [
+                { id: 'wamid.A', status: 'delivered', timestamp: '1760000000', recipient_id: '5537999990000' },
+                {
+                  id: 'wamid.B',
+                  status: 'failed',
+                  timestamp: '1760000001',
+                  errors: [{ code: 131047, title: 'Re-engagement message' }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+  it('extrai id, status, erro e timestamp', () => {
+    const out = parseStatusWebhook(payload);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ waMessageId: 'wamid.A', status: 'delivered', erro: null });
+    expect(out[0].waTimestamp?.getTime()).toBe(1760000000 * 1000);
+    expect(out[1]).toMatchObject({ waMessageId: 'wamid.B', status: 'failed' });
+    expect(out[1].erro).toMatch(/131047/);
+  });
+  it('payload sem statuses → []', () => {
+    expect(parseStatusWebhook({ entry: [{ changes: [{ value: { messages: [] } }] }] })).toEqual([]);
+    expect(parseStatusWebhook(null)).toEqual([]);
+  });
+  it('status desconhecido é descartado (não inventa estado)', () => {
+    const p = { entry: [{ changes: [{ value: { statuses: [{ id: 'x', status: 'warmed_up' }] } }] }] };
+    expect(parseStatusWebhook(p)).toEqual([]);
+  });
+});
+
+describe('isStatusUpgrade', () => {
+  it('progride sent→delivered→read e nunca regride (webhooks chegam fora de ordem)', () => {
+    expect(isStatusUpgrade('sent', 'delivered')).toBe(true);
+    expect(isStatusUpgrade('read', 'delivered')).toBe(false);
+    expect(isStatusUpgrade('delivered', 'delivered')).toBe(false);
+    expect(isStatusUpgrade(null, 'sent')).toBe(true);
+    expect(isStatusUpgrade('queued', 'sent')).toBe(true);
+  });
+  it('failed é terminal e sempre vence', () => {
+    expect(isStatusUpgrade('read', 'failed')).toBe(true);
+    expect(isStatusUpgrade('failed', 'delivered')).toBe(false);
   });
 });
