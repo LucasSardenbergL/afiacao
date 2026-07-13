@@ -261,21 +261,23 @@ serve(async (req) => {
     //    ponta 2 (carteira-rebuild) com guards fail-closed + consolidação B-lite. NÃO lê o espelho poluído
     //    omie_clientes (vendedor 100% NULL) nem repete o mapeamento circular antigo (farmer_id = o cliente).
     //    Sem filtro eligible: UNIQUE(customer_user_id) dá 1 linha/cliente e queremos o dono de QUALQUER
-    //    cliente com métrica (clone→Hunter, gêmeo→vendedor). Paginação com .order estável (footgun §5).
+    //    cliente com métrica (clone→Hunter, gêmeo→vendedor). Paginação por KEYSET em customer_user_id (não
+    //    offset): carteira_assignments é dinâmica (cron carteira-rebuild 07:30) — .range/offset pularia uma
+    //    linha se o rebuild inserisse/removesse uma chave entre páginas → farmer_id null (Codex ponta 3).
     const assignmentsRaw: AssignmentRow[] = [];
-    let carteiraOffset = 0;
-    let carteiraHasMore = true;
-    while (carteiraHasMore) {
+    let lastCustomerId = "";
+    for (;;) {
       const { data: aPage, error: aError } = await supabase
         .from("carteira_assignments")
         .select("customer_user_id, owner_user_id")
+        .gt("customer_user_id", lastCustomerId)
         .order("customer_user_id", { ascending: true })
-        .range(carteiraOffset, carteiraOffset + PAGE_SIZE - 1);
-      if (aError) throw new Error(`Failed to get carteira page ${carteiraOffset}: ${aError.message}`);
+        .limit(PAGE_SIZE);
+      if (aError) throw new Error(`Failed to get carteira page after ${lastCustomerId}: ${aError.message}`);
       const rows = (aPage ?? []) as unknown as AssignmentRow[];
       assignmentsRaw.push(...rows);
-      carteiraOffset += PAGE_SIZE;
-      carteiraHasMore = rows.length === PAGE_SIZE;
+      if (rows.length < PAGE_SIZE) break;
+      lastCustomerId = rows[rows.length - 1].customer_user_id;
     }
     const ownerMap = buildOwnerMap(assignmentsRaw);
     console.log(`[ai-ops-agent] Carteira assignments carregados: ${assignmentsRaw.length}`);
@@ -323,13 +325,15 @@ serve(async (req) => {
     // Sort by score descending
     decisions.sort((a, b) => b.score_final - a.score_final);
 
-    // 5. Clear old pending decisions from today and insert new ones
-    await supabase
+    // 5. Recompute completo: purga TODAS as recomendações pending (não só as de hoje) antes de regenerar.
+    //    Senão pending antigas — inclusive as com farmer_id circular do BUG-1 (P0-B-bis ponta 3) — sobrevivem
+    //    no banco e reaparecem no Console de Exceções quando a run gera < 200 decisões (Codex). accepted/
+    //    dismissed são preservadas (só status='pending' é purgado); a run seguinte reprioriza do zero.
+    const { error: purgeError } = await supabase
       .from("ai_decisions")
       .delete()
-      .eq("status", "pending")
-      .gte("created_at", `${today}T00:00:00`)
-      .lte("created_at", `${today}T23:59:59`);
+      .eq("status", "pending");
+    if (purgeError) throw new Error(`Failed to purge pending decisions: ${purgeError.message}`);
 
     // Insert in batches of 50
     let inserted = 0;

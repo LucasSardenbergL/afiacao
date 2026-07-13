@@ -869,16 +869,26 @@ describe('guardrail money-path: ai-ops-agent resolve farmer_id da carteira (Opç
     expect(helper).toMatch(/export function resolveOwner/);
   });
 
-  it('o edge LÊ a carteira canônica (carteira_assignments) com .order estável na paginação', () => {
+  it('o edge LÊ a carteira canônica (carteira_assignments) por KEYSET, e monta o mapa dos dados REAIS', () => {
     expect(
       src,
       'REVERSÃO Lovable? o ai-ops não lê mais carteira_assignments — o farmer voltou ao espelho circular?',
     ).toMatch(/from\(["']carteira_assignments["']\)/);
-    // .order estável na chave única (footgun PostgREST §5): sem isso a cauda >1000 pula/duplica linhas.
+    // Keyset (.gt + .limit), não offset: carteira_assignments é dinâmica (rebuild concorrente 07:30) e o
+    // offset pularia linha por churn → farmer_id null (Codex ponta 3 #3). Sem paginação a cauda >1000 sumiria.
     expect(
       src,
-      'a leitura da carteira precisa de .order estável (customer_user_id) na paginação',
-    ).toMatch(/from\(["']carteira_assignments["']\)[\s\S]{0,220}\.order\(["']customer_user_id["']/);
+      'a leitura da carteira precisa ser KEYSET: .gt(customer_user_id) + .order + .limit',
+    ).toMatch(/from\(["']carteira_assignments["']\)[\s\S]{0,260}\.gt\(["']customer_user_id["'][\s\S]{0,140}\.limit\(/);
+    expect(
+      src,
+      'REGRESSÃO (Codex #2): a paginação keyset perdeu o avanço do cursor — truncaria em 1 página',
+    ).toMatch(/lastCustomerId\s*=\s*rows\[rows\.length - 1\]/);
+    // Falso-verde que o Codex #2 pegou: buildOwnerMap([]) passaria os asserts frouxos. Trava o argumento REAL.
+    expect(
+      src,
+      'REGRESSÃO (Codex #2): o ownerMap não é montado dos assignments reais (virou buildOwnerMap([])?)',
+    ).toMatch(/buildOwnerMap\(assignmentsRaw\)/);
   });
 
   it('ANTI-CIRCULAR (BUG-1): farmer_id NÃO é mais o user_id do próprio cliente — vem de resolveOwner', () => {
@@ -886,10 +896,12 @@ describe('guardrail money-path: ai-ops-agent resolve farmer_id da carteira (Opç
       src,
       'REGRESSÃO BUG-1: farmer_id voltou a ser assignment.user_id (o próprio cliente) — referência circular',
     ).not.toMatch(/farmer_id:\s*assignment\?\.user_id/);
+    // Args EXATOS (Codex #2): fallback null e chave = customer_user_id. `farmer_id: m.customer_user_id`
+    // (o bug circular) NÃO casaria isto — fecha o falso-verde do resolveOwner-sem-args.
     expect(
       src,
-      'farmer_id deveria vir de resolveOwner(ownerMap, ...) — o dono account-safe da carteira',
-    ).toMatch(/farmer_id:\s*resolveOwner\(/);
+      'farmer_id deveria vir de resolveOwner(ownerMap, m.customer_user_id, null) — dono account-safe da carteira',
+    ).toMatch(/farmer_id:\s*resolveOwner\(ownerMap,\s*m\.customer_user_id,\s*null\)/);
   });
 
   it('ANTI-REVERSÃO (BUG-2): o farmer NÃO vem mais do espelho poluído nem do dead code de employees', () => {
@@ -901,6 +913,19 @@ describe('guardrail money-path: ai-ops-agent resolve farmer_id da carteira (Opç
       src,
       'sumiu a limpeza do dead code — o edge ainda busca profiles is_employee sem usar (mapeamento fantasma)?',
     ).not.toContain('is_employee');
+  });
+
+  it('PURGE completo (Codex #1): apaga TODAS as pending, sem filtro de data — limpa o farmer_id circular antigo', () => {
+    // O delete antigo filtrava created_at de HOJE → as 228 linhas circulares antigas (BUG-1) sobreviviam e
+    // reapareciam no Console de Exceções quando a run gerava < 200 decisões. Purge sem data limpa o legado.
+    expect(
+      src,
+      'REGRESSÃO (Codex #1): o purge de pending voltou a filtrar por created_at — o circular antigo sobrevive',
+    ).not.toMatch(/\.eq\("status",\s*"pending"\)[\s\S]{0,140}created_at/);
+    expect(
+      src,
+      'o purge de pending deveria ser fail-closed (erro do delete aborta antes de inserir → sem duplicata)',
+    ).toMatch(/if \(purgeError\) throw/);
   });
 
   it('o edge USA o helper espelhado (define buildOwnerMap E chama), ≥2 menções', () => {
