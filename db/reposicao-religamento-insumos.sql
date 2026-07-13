@@ -271,3 +271,17 @@ CREATE OR REPLACE VIEW public.v_sku_sigma_demanda
     round(avg(qtde), 4) AS media_demanda_diaria
    FROM serie
   GROUP BY empresa, sku_codigo_omie;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Segurança (defense-in-depth). Este arquivo é a versão CANÔNICA das 4 views:
+-- CREATE OR REPLACE preserva a ACL existente, mas se aplicado standalone num banco
+-- onde as views sejam NOVAS o Supabase pode auto-GRANT anon (default privileges).
+-- O REVOKE/GRANT abaixo torna o arquivo autossuficiente. Idempotente. Espelha o bloco
+-- de db/reposicao-consolidacao-demanda.sql. (security_invoker=on já fecha a leitura via RLS.)
+-- ─────────────────────────────────────────────────────────────────────────────
+REVOKE SELECT ON public.v_sku_demanda_estatisticas, public.v_sku_sigma_demanda,
+                 public.v_sku_demanda_rajada, public.v_sku_candidatos_primeira_compra
+       FROM anon, PUBLIC;
+GRANT  SELECT ON public.v_sku_demanda_estatisticas, public.v_sku_sigma_demanda,
+                 public.v_sku_demanda_rajada, public.v_sku_candidatos_primeira_compra
+       TO authenticated;

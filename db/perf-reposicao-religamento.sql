@@ -37,6 +37,11 @@ EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM v_sku_candidatos_primeira_compra
 -- O religamento e ~INERTE em custo (+1 a +15 ms): as views filtram data_emissao>=180d e o
 -- custo dominante e a serie temporal/agregacao, nao a leitura da fonte; o ramo de consumo
 -- adiciona poucas linhas (so pais com ficha). Pior view = 2s < 4s (p95 alvo) < 8s (timeout).
--- BYPASSRLS ve TODAS as empresas (pior volume); a policy has_role de venda_items_history e
--- InitPlan O(1) -> sob role authenticated (staff, mesmo volume) o custo e <=. NAO materializar.
--- Furo #14 do Codex: FECHADO.
+-- claude_ro (BYPASSRLS) ve TODAS as empresas (pior volume). NAO consegue SET ROLE authenticated
+-- (read-only blindado: 'permission denied to set role') -> a medicao LITERAL sob authenticated fica
+-- p/ o pos-apply (founder roda o EXPLAIN no SQL Editor do Lovable, que e postgres). Mesmo assim o
+-- veredito e solido por INVARIANCIA A RLS: as 4 views leem v_sku_demanda_efetiva -> venda_items_history,
+-- e a policy has_role e aplicada no MESMO ponto (tabela base) antes e depois do religamento. O ramo de
+-- consumo que o PR-2 adiciona custa +1..15ms em QUALQUER role -- a RLS e um custo CONSTANTE que se
+-- cancela na comparacao antes/depois. has_role e InitPlan O(1). Pior view 2s < 4s (p95) < 8s (timeout),
+-- folga 4x. NAO materializar. Furo #14 do Codex: fechado por invariancia + folga (medicao literal no pos-apply).
