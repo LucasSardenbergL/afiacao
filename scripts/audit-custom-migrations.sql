@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 358
+-- Total de custom migrations: 359
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -397,7 +397,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260711090000', 'prime_fundacao', '20260711090000_prime_fundacao.sql'),
   ('20260711145000', 'v_grupo_contatos_fresca', '20260711145000_v_grupo_contatos_fresca.sql'),
   ('20260711193000', 'param_auto_resumo_altas_reducoes_segurado', '20260711193000_param_auto_resumo_altas_reducoes_segurado.sql'),
-  ('20260712140000', 'param_auto_log_valor_barrado_fusivel', '20260712140000_param_auto_log_valor_barrado_fusivel.sql')
+  ('20260712140000', 'param_auto_log_valor_barrado_fusivel', '20260712140000_param_auto_log_valor_barrado_fusivel.sql'),
+  ('20260712150000', 'carteira_membership_ledger_fatia0', '20260712150000_carteira_membership_ledger_fatia0.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1668,7 +1669,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', ''),
   ('param_auto_resumo_altas_reducoes_segurado', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
   ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
-  ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'reposicao_param_auto_resumo_tick', '')
+  ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
+  ('carteira_membership_ledger_fatia0', 'function', 'public', 'tg_omie_clientes_to_ledger', ''),
+  ('carteira_membership_ledger_fatia0', 'table', 'public', 'carteira_membership_ledger', ''),
+  ('carteira_membership_ledger_fatia0', 'index', 'public', 'idx_cml_identity_state', 'carteira_membership_ledger'),
+  ('carteira_membership_ledger_fatia0', 'trigger', 'public', 'trg_omie_clientes_to_ledger', 'omie_clientes')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2987,7 +2992,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', ''),
   ('param_auto_resumo_altas_reducoes_segurado', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
   ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
-  ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'reposicao_param_auto_resumo_tick', '')
+  ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
+  ('carteira_membership_ledger_fatia0', 'function', 'public', 'tg_omie_clientes_to_ledger', ''),
+  ('carteira_membership_ledger_fatia0', 'table', 'public', 'carteira_membership_ledger', ''),
+  ('carteira_membership_ledger_fatia0', 'index', 'public', 'idx_cml_identity_state', 'carteira_membership_ledger'),
+  ('carteira_membership_ledger_fatia0', 'trigger', 'public', 'trg_omie_clientes_to_ledger', 'omie_clientes')
 )
 SELECT
   e.migration,
