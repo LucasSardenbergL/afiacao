@@ -67,11 +67,10 @@ interface EmpresaSummary {
   pedidos_sincronizados: number;
   erros: number;
   // v3 publicação diferida (reconciliação PO excluído no Omie):
-  iniciado_em: string;         // ISO timestamp do INÍCIO da coleta (atualidade do snapshot; anti-regressão P1#4)
   janela_de: string | null;    // ISO yyyy-mm-dd da janela REAL do run (não CURRENT_DATE)
   janela_ate: string | null;
   ids_distintos: number;       // POs distintos vistos na varredura (telemetria + volume_ok)
-  varredura_completa: boolean; // true = fim legítimo sem abort/truncamento (fim && !abortado)
+  varredura_completa: boolean; // true = fim legítimo sem abort/truncamento/ID-inseguro (só então publica)
 }
 
 // ===== Omie API shapes (inline — Edge Function não pode importar de @/) =====
@@ -265,9 +264,6 @@ const PRESERVE_FIELDS = new Set([
   "lt_bruto_dias_uteis",
   "lt_faturamento_dias_uteis",
   "lt_logistica_dias_uteis",
-  // single-writer da publicação diferida (escritas SÓ pela RPC reposicao_publicar_run_completo, nunca no upsert)
-  "last_seen_pedidos_full_run_id",
-  "last_seen_pedidos_full_at",
 ]);
 
 /**
@@ -389,12 +385,12 @@ async function syncEmpresa(
     total_paginas: 0,
     pedidos_sincronizados: 0,
     erros: 0,
-    iniciado_em: new Date().toISOString(), // início da coleta deste run (carimbado no last_seen; anti-regressão)
     janela_de: null,
     janela_ate: null,
     ids_distintos: 0,
     varredura_completa: false,
   };
+  let idInseguroVisto = false; // nCodPed > 2^53 (inseguro) → invalida a publicação (PO perdido silencioso)
 
   const { app_key, app_secret } = getCredentials(empresa);
 
@@ -468,10 +464,18 @@ async function syncEmpresa(
     // de publicação não há filtro; representa TODOS os POs da janela completa). Publicados 1× no fim LIMPO
     // via reposicao_publicar_run_completo — NUNCA carimba last_seen durante o upsert (Codex P1 #1).
     for (const p of pedidos) {
-      const nCodPed = Number(p?.cabecalho_consulta?.nCodPed ?? p?.cabecalho?.nCodPed);
-      // isSafeInteger (não isFinite): nCodPed > 2^53 arredondaria → carimbaria um bigint ERRADO no
-      // last_seen enquanto o upsert guarda a string exata (Codex bug novo P1). Fail-closed: pula o inseguro.
-      if (Number.isSafeInteger(nCodPed) && nCodPed > 0) idsVistos.add(nCodPed);
+      const raw = p?.cabecalho_consulta?.nCodPed ?? p?.cabecalho?.nCodPed;
+      if (raw === null || raw === undefined || raw === "") continue; // nCodPed ausente — o upsert já pula/conta
+      const nCodPed = Number(raw);
+      if (Number.isSafeInteger(nCodPed) && nCodPed > 0) {
+        idsVistos.add(nCodPed);
+      } else {
+        // nCodPed presente mas inseguro (> 2^53) ou ilegível: Number arredondaria → carimbaria um bigint
+        // ERRADO. Fail-closed: NÃO adiciona E invalida a PUBLICAÇÃO (o sinal perderia este PO em silêncio).
+        // Não incrementa erros (não polui o heartbeat/sync). Na prática nCodPed Omie ≪ 2^53 (Codex bug novo P1).
+        console.error(`[sync-pedidos] empresa=${empresa} nCodPed inseguro/ilegível (${raw}) — invalida publicação`);
+        idInseguroVisto = true;
+      }
     }
 
     // DEBUG: log shape do primeiro pedido (página 1) e top-level keys
@@ -516,7 +520,7 @@ async function syncEmpresa(
   }
 
   summary.ids_distintos = idsVistos.size;
-  summary.varredura_completa = fim && !abortado; // limpo = viu o fim legítimo sem abort/truncamento
+  summary.varredura_completa = fim && !abortado && !idInseguroVisto; // limpo = fim sem abort/truncamento/ID-inseguro
   return summary;
 }
 
@@ -665,7 +669,6 @@ async function publicarRunCompleto(
       p_janela_de: s.janela_de,
       p_janela_ate: s.janela_ate,
       p_ids: ids,
-      p_iniciado_em: s.iniciado_em,
     });
     if (error) throw error;
     const volumeOk = (data ?? null) as boolean | null; // true=válido · false=truncado · null=bootstrap
@@ -792,7 +795,6 @@ Deno.serve(async (req) => {
         console.error(`[sync-pedidos] empresa=${empresa} erro fatal: ${errFatal}`);
         s = {
           empresa, total_paginas: 0, pedidos_sincronizados: 0, erros: 1,
-          iniciado_em: new Date().toISOString(),
           janela_de: null, janela_ate: null, ids_distintos: 0, varredura_completa: false,
         };
       }

@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Task 1 é money-path SQL → REQUIRED SUB-SKILL `prove-sql-money-path` (PG17 + falsificação). A entrega é via `lovable-db-operator` (migration) + `lovable-deploy-verify` (edge). Codex challenge xhigh no diff antes de dessardraftar.
 
+> **⚠️ EVOLUÇÃO v3 → v3.2 na execução (2 Codex challenge xhigh, 2026-07-12/13):** este plano foi escrito para a v3; a IMPLEMENTAÇÃO final divergiu em 3 pontos estruturais que fecham achados do re-Codex. **Fonte de verdade = a migration `20260713040000_reposicao_pedidos_compra_run.sql` + design §3b/§5 + `docs/historico/`.** Divergências: (1) `last_seen` NÃO são colunas em `purchase_orders_tracking` (staff-writable → um staff forjaria "visto" e suprimiria a prova-por-ID do PR2) e sim a **tabela dedicada `reposicao_po_last_seen` service_role-only** — single-writer REAL; (2) ordem total entre runs via **`clock_timestamp()` capturado sob o advisory lock** (não `p_iniciado_em` do worker — elimina clock skew e empate de timestamp); (3) baseline por **mesma largura de janela + últimos 10 dias** (anti-latch permanente: backfill ampliado não envenena o normal, e um bootstrap anormal velho sai). A RPC **não recebe `p_iniciado_em`**. Onde o texto abaixo disser "colunas em `purchase_orders_tracking`" ou "`DEFAULT now()`", leia a migration. Resíduo deferido ao PR2 (a prova-por-ID barra dano): um coletor que COMEÇA antes mas PUBLICA depois carimba `visto_em` maior.
+
 **Goal:** Fechar o bug sistêmico do `em_transito` fantasma criando a INFRA que carimba, de forma ATÔMICA e não-forjável, quais POs foram vistos no último run COMPLETO do Omie — sem mutar nenhum pedido nem tocar o motor (isso é PR2/PR3).
 
 **Architecture:** Publicação DIFERIDA. A edge `omie-sync-pedidos-compra` coleta os `nCodPed` vistos durante o run e, **só no fim de um completo LIMPO e NÃO-filtrado**, chama 1× a RPC `reposicao_publicar_run_completo`. A RPC (SECURITY DEFINER, service_role-only) grava o marcador de run **E** carimba `last_seen` nos POs vistos numa **única transação serializada por empresa** (advisory lock). `volume_ok` sai de um baseline robusto (mediana de runs bons; bootstrap → `null`, nunca `true`). Nada é publicado durante o upsert das páginas.
@@ -16,7 +18,7 @@
 - **Convenção de empresa (campo minado):** `purchase_orders_tracking.empresa` e `reposicao_pedidos_compra_run.empresa` são o **enum `public.empresa_reposicao`** com labels **`OBEN`/`COLACOR` (MAIÚSCULO)**. O advisory-lock key normaliza com `lower(...)`. A edge passa `s.empresa` = `"OBEN"`/`"COLACOR"`.
 - **`omie_codigo_pedido` é `bigint`**; a RPC recebe `p_ids bigint[]`; o UNIQUE do tracking é `(empresa, omie_codigo_pedido)`.
 - **Segurança money-path (Codex P1 #6):** a base de verdade é **service_role-only**. A RPC leva `REVOKE ALL ... FROM PUBLIC, anon, authenticated` + `GRANT EXECUTE ... TO service_role`. A tabela leva RLS `SELECT` staff e **NENHUMA policy de escrita** (+ `REVOKE INSERT/UPDATE/DELETE`). **Sem gate `auth.role()`/`auth.uid()` interno** na RPC (design §11 — não introduzir dependência de `auth.*` numa função de automação).
-- **Timestamp da migration:** `> 20260712140000` (mais recente em `origin/main` no diagnóstico). Plano usa `20260712193000`; **reconfirmar `> max(origin/main)` e ausência de colisão com worktrees paralelas na hora de criar** (`git fetch origin main` + `ls supabase/migrations/ | tail`).
+- **Timestamp da migration:** `> 20260712140000` (mais recente em `origin/main` no diagnóstico). Plano usa `20260713040000`; **reconfirmar `> max(origin/main)` e ausência de colisão com worktrees paralelas na hora de criar** (`git fetch origin main` + `ls supabase/migrations/ | tail`).
 - **Rito:** `heavy` prefixando test/typecheck (semáforo RAM M2 8GB). `cmd > log 2>&1; echo $?` quando o exit importa (pipe engole exit code). Aguardar o `bun install` de background antes de test/typecheck.
 
 ---
@@ -25,7 +27,7 @@
 
 | Arquivo | Ação | Responsabilidade |
 |---|---|---|
-| `supabase/migrations/20260712193000_reposicao_pedidos_compra_run.sql` | **Criar** | Tabela marcador `reposicao_pedidos_compra_run` (RLS SELECT staff, escrita service_role-only) + colunas `last_seen_pedidos_full_{run_id,at}` em `purchase_orders_tracking` + RPC `reposicao_publicar_run_completo`. É a fonte ÚNICA (não há recriação multi-migration → o teste PG17 aplica esta migration direto). |
+| `supabase/migrations/20260713040000_reposicao_pedidos_compra_run.sql` | **Criar** | Tabela marcador `reposicao_pedidos_compra_run` (RLS SELECT staff, escrita service_role-only) + colunas `last_seen_pedidos_full_{run_id,at}` em `purchase_orders_tracking` + RPC `reposicao_publicar_run_completo`. É a fonte ÚNICA (não há recriação multi-migration → o teste PG17 aplica esta migration direto). |
 | `db/test-reposicao-publicar-run-completo.sh` | **Criar** | Prova PG17 falsificada dos 6 P1: volume_ok robusto (bootstrap/baseline), atomicidade marcador+last_seen, lock presente, RLS/grants service_role-only. |
 | `supabase/functions/omie-sync-pedidos-compra/index.ts` | **Modificar** | Coleta `idsVistos` (Set) durante o run; NÃO carimba no upsert; no fim LIMPO+completo+não-filtrado chama `reposicao_publicar_run_completo` 1×; `marcarCompletoOk` (cadência) só avança se a RPC teve sucesso (fail-closed). |
 | `docs/historico/bugs-resolvidos.md` | **Modificar** (ao concluir) | Registrar a entrega do PR1 v3. |
@@ -37,7 +39,7 @@
 ## Task 1: Migration + RPC + prova PG17 falsificada
 
 **Files:**
-- Create: `supabase/migrations/20260712193000_reposicao_pedidos_compra_run.sql`
+- Create: `supabase/migrations/20260713040000_reposicao_pedidos_compra_run.sql`
 - Test: `db/test-reposicao-publicar-run-completo.sh`
 
 **Interfaces:**
@@ -48,7 +50,7 @@
 
 - [ ] **Step 1: Invocar `prove-sql-money-path`** para reger o harness PG17 (é a sub-skill obrigatória desta task). Anunciar "Using prove-sql-money-path…".
 
-- [ ] **Step 2: Criar a migration** `supabase/migrations/20260712193000_reposicao_pedidos_compra_run.sql` com o conteúdo EXATO:
+- [ ] **Step 2: Criar a migration** `supabase/migrations/20260713040000_reposicao_pedidos_compra_run.sql` com o conteúdo EXATO:
 
 ```sql
 -- Reposição — infra de RUN de pedidos de compra (publicação diferida ATÔMICA) — money-path (PR1)
@@ -226,7 +228,7 @@ SQL
 
 **ZONA 2 — aplicar a MIGRATION REAL** (Lei de Ferro #1):
 ```bash
-MIG="$REPO_ROOT/supabase/migrations/20260712193000_reposicao_pedidos_compra_run.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260713040000_reposicao_pedidos_compra_run.sql"
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 ```
@@ -470,7 +472,7 @@ echo "✅ HARNESS VERDE"
 - [ ] **Step 8: Commit da Task 1.**
 
 ```bash
-git add supabase/migrations/20260712193000_reposicao_pedidos_compra_run.sql db/test-reposicao-publicar-run-completo.sh
+git add supabase/migrations/20260713040000_reposicao_pedidos_compra_run.sql db/test-reposicao-publicar-run-completo.sh
 git commit -m "feat(reposicao): infra de run — marcador + RPC de publicação diferida atômica (PR1 v3)
 
 Fecha os 6 P1 do Codex (PG17 falsificado): volume_ok robusto (bootstrap→null,

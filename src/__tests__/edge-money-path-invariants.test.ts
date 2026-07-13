@@ -871,16 +871,15 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     expect(count(src, 'cadenciaPodeAvancar'), 'cadenciaPodeAvancar deve ser DEFINIDO e CHAMADO (≥2)').toBeGreaterThanOrEqual(2);
   });
 
-  it('P1#1: a edge NÃO escreve last_seen fora da RPC (colunas single-writer + PRESERVE_FIELDS)', () => {
+  it('P1#1/single-writer: a edge NÃO escreve o last_seen direto (só a RPC toca reposicao_po_last_seen)', () => {
+    // o last_seen mora numa tabela DEDICADA service_role-only — a edge só chama a RPC, nunca escreve nela.
     expect(
       src,
-      'REGRESSÃO P1#1: a edge voltou a escrever last_seen_pedidos_full como propriedade/atribuição (fora da RPC)',
-    ).not.toMatch(/last_seen_pedidos_full_(run_id|at)\s*[:=]/);
-    expect(src, 'sumiu a proteção PRESERVE_FIELDS das colunas last_seen').toContain('"last_seen_pedidos_full_run_id"');
+      'REGRESSÃO: a edge escreve reposicao_po_last_seen direto (deveria ser só pela RPC service_role-only)',
+    ).not.toMatch(/from\(["']reposicao_po_last_seen["']\)/);
   });
 
-  it('P1#3/#4: publica com p_iniciado_em (anti-regressão) e a cadência é gated por cadenciaPodeAvancar', () => {
-    expect(src, 'a RPC não recebe mais p_iniciado_em — perdeu a âncora de atualidade (P1#4)').toContain('p_iniciado_em');
+  it('P1#3: a cadência (marcarCompletoOk) é gated por cadenciaPodeAvancar (não avança em run inválido)', () => {
     expect(
       src,
       'REGRESSÃO P1#3: a cadência não é mais gated por cadenciaPodeAvancar (volta a avançar em run inválido)',

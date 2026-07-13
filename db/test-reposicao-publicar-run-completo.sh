@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA PG17 — reposicao_publicar_run_completo (publicação diferida atômica)    ║
-# ║  Migration: supabase/migrations/20260712193000_reposicao_pedidos_compra_run.sql║
+# ║  Migration: supabase/migrations/20260713040000_reposicao_pedidos_compra_run.sql║
 # ║  Rode: bash db/test-reposicao-publicar-run-completo.sh > /tmp/t.log 2>&1; echo $?
 # ║        (NÃO pipe pra tail — engole o exit code)                                 ║
 # ║                                                                                ║
@@ -24,7 +24,7 @@ PORT="${PGPORT_TEST:-5476}"
 SLUG="reposicao-publicar-run"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
-MIG="$REPO_ROOT/supabase/migrations/20260712193000_reposicao_pedidos_compra_run.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260713040000_reposicao_pedidos_compra_run.sql"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
 CELLAR="$(brew --prefix "postgresql@${PGVER}")"
@@ -230,9 +230,40 @@ DROP TRIGGER trg_sabota_ls ON public.reposicao_po_last_seen;
 DROP FUNCTION public.sabota_ls();
 SQL
 
-echo "── Bloco C: lock presente ──"
+echo "── Bloco C: lock EFETIVO — serializa a publicação POR EMPRESA em RUNTIME (não é só grep) ──"
+# C1 (estático): o advisory lock está na definição da RPC.
 HASLOCK=$(Pq -c "SELECT pg_get_functiondef('public.reposicao_publicar_run_completo(text,uuid,date,date,bigint[])'::regprocedure) LIKE '%pg_advisory_xact_lock%';" | tail -1)
-eq "C1 RPC adquire advisory lock por empresa" "$HASLOCK" "t"
+eq "C1 RPC adquire advisory lock por empresa (presente na definição)" "$HASLOCK" "t"
+# C2 (EFEITO runtime — o que o grep do C1 NÃO prova; Codex acusou C1 de teatro): uma 2ª sessão SEGURA o lock
+# da OBEN; a RPC p/ OBEN trava na 1ª instrução (o lock) e o statement_timeout a cancela ANTES de qualquer
+# INSERT (rollback → não contamina). Prova que o lock não está em ramo morto e serializa de verdade.
+P -q >/dev/null 2>&1 <<'SQL' &
+BEGIN; SELECT pg_advisory_xact_lock(hashtext('reposicao_run:oben')); SELECT pg_sleep(5); ROLLBACK;
+SQL
+LOCKER=$!
+sleep 1.5  # deixa a 2ª sessão adquirir o lock antes de a RPC tentar
+RB=$(P -tA 2>&1 <<'SQL'
+SET statement_timeout='1500';
+SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), DATE '2025-07-01', DATE '2026-10-29', ARRAY[9099]::bigint[]);
+SQL
+) || true
+case "$RB" in
+  *timeout*|*canceling*) ok "C2 RPC p/ OBEN BLOQUEIA sob lock tomado (serializa em RUNTIME — lock não é ramo morto)";;
+  *) bad "C2 — a RPC NÃO bloqueou sob o lock da OBEN tomado (lock inócuo em runtime?): $RB";;
+esac
+# C3 (POR EMPRESA — falsificação): enquanto a OBEN está tomada, a RPC p/ COLACOR COMPLETA (lock por empresa,
+# não global). Se o key do lock fosse constante, a COLACOR também travaria.
+RC=$(P -tA 2>&1 <<'SQL'
+SET statement_timeout='4000';
+SELECT public.reposicao_publicar_run_completo('COLACOR', gen_random_uuid(), DATE '2025-07-01', DATE '2026-10-29', ARRAY[2099]::bigint[]);
+SQL
+) || true
+case "$RC" in
+  *timeout*|*canceling*) bad "C3 — RPC p/ COLACOR travou com OBEN tomado (lock NÃO é por empresa): $RC";;
+  *) ok "C3 RPC p/ COLACOR completa com OBEN tomado (serializa POR EMPRESA, não global)";;
+esac
+wait "$LOCKER" 2>/dev/null || true
+P -q -c "DELETE FROM public.reposicao_pedidos_compra_run; DELETE FROM public.reposicao_po_last_seen;" >/dev/null
 
 echo "── Bloco D: base NÃO-forjável / service_role-only (as 2 tabelas) ──"
 # D1 — authenticated não invoca a RPC.
@@ -298,6 +329,7 @@ saboto_rpc() { # $1 = sem_exclui_false | canario | sem_gate_volume | sem_guard_t
     sem_gate_volume)    update_gate="v_ids>0" ;;
     sem_guard_temporal) on_conflict_guard="" ;;
     sem_filtro_largura) base_where="AND ids_distintos>0 AND volume_ok IS NOT FALSE AND finalizado_em > now() - interval '10 days'" ;;
+    sem_filtro_idade)   base_where="AND ids_distintos>0 AND volume_ok IS NOT FALSE AND (janela_ate - janela_de) = (p_janela_ate - p_janela_de)" ;;
   esac
   P -q <<SQL
 CREATE OR REPLACE FUNCTION public.reposicao_publicar_run_completo(p_empresa text,p_run_id uuid,p_janela_de date,p_janela_ate date,p_ids bigint[])
@@ -356,6 +388,19 @@ INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela
 SQL
 V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,100) g));" | tail -1)
 case "$V" in f) ok "Fw sem o filtro de largura o backfill ENVENENA (100 vira false) — Aw tem dente";; *) bad "Fw não vazou ($V; esperava false)";; esac
+P -q -f "$MIG" >/dev/null
+
+# Fi (latch por IDADE) — sem o filtro de 10d, um run BOM porém VELHO (>10d, 1000 IDs) REENTRA no baseline →
+# o run normal 100 vira FALSE (não NULL) → a cadência trava e nenhum marcador válido nasce (o latch permanente
+# do Codex). Prova que o filtro de idade (Ai) tem dente.
+saboto_rpc sem_filtro_idade
+P -q <<SQL
+DELETE FROM public.reposicao_pedidos_compra_run;
+INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela_ate,ids_distintos,volume_ok,status,finalizado_em) VALUES
+ (gen_random_uuid(),'OBEN','$JDE','$JATE',1000,true,'ok', now()-interval '20 days');
+SQL
+V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,100) g));" | tail -1)
+case "$V" in f) ok "Fi sem o filtro de idade o bootstrap velho REENVENENA (100 vira false, latch) — Ai tem dente";; *) bad "Fi não vazou ($V; esperava false)";; esac
 P -q -f "$MIG" >/dev/null
 
 # Fg (P1#1) — gate sem volume_ok IS TRUE → run truncado carimba → Bg vaza.
