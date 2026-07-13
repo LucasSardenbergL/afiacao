@@ -200,7 +200,15 @@ JOIN v_pcp_malha_oben mo   ON mo.pai_oben = v.sku_codigo_omie
 JOIN omie_products ins     ON ins.omie_codigo_produto = mo.comp_oben
                           AND ins.account = 'oben'
 WHERE v.empresa = 'OBEN'    -- guard: nunca cruzar empresa
-  AND v.quantidade > 0;   -- [Codex #10] devolução de tingidor não recompõe componente
+  AND v.quantidade > 0
+  AND v.cfop IN ('5101','5102','5107','5108','6101','6102','6107','6108');
+  -- [#10 v2 — Codex 2026-07-12] allowlist POSITIVA de venda de SAÍDA. A premissa original ('devolução
+  -- vira quantidade NEGATIVA') foi REFUTADA em prod: o writer grava quantidade sempre >=0 e a devolução é
+  -- sinalizada por CFOP, não pelo sinal. Só operação de venda de saída consome insumo — simétrica em
+  -- produção própria (5101/6101, 5107/6107 — TINGIMIX é fabricado) × revenda de terceiros (5102/6102,
+  -- únicos com ficha hoje) × consumidor final (5108/6108). EXCLUI 6202 (devolução de COMPRA: é saída, mas
+  -- NÃO venda — sem este guard, uma 6202 de pai com ficha fabricaria consumo falso; 5 linhas 6202 em prod,
+  -- 0 de pai com ficha). Devolução de venda é entrada (1xxx/2xxx), nunca chega aqui. Sentinela: spec §5.
 
 COMMENT ON VIEW v_sku_demanda_efetiva IS
   'Demanda = venda direta ⊕ consumo de insumo derivado da ficha técnica. A linha de consumo herda a NF do pai (num_ordens) e usa a unidade do insumo; valor de venda é NULL (insumo não gera receita). PR-2 aponta as 4 views estatísticas para cá.';
