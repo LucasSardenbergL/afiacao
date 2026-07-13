@@ -884,6 +884,16 @@ describe('guardrail money-path: ai-ops-agent resolve farmer_id da carteira (Opç
       src,
       'REGRESSÃO (Codex #2): a paginação keyset perdeu o avanço do cursor — truncaria em 1 página',
     ).toMatch(/lastCustomerId\s*=\s*rows\[rows\.length - 1\]/);
+    // REGRESSÃO real (o 1º deploy ABORTOU em runtime): o cursor keyset em coluna UUID não pode iniciar em
+    // "" — "" não casta para uuid no Postgres (invalid input syntax for type uuid ""). Sentinela = nil UUID.
+    expect(
+      src,
+      'REGRESSÃO: cursor keyset inicia em "" — inválido em coluna UUID; derrubou o 1º deploy do ai-ops-agent',
+    ).not.toMatch(/lastCustomerId\s*=\s*""/);
+    expect(
+      src,
+      'o cursor keyset precisa de sentinela nil UUID válida (00000000-...-000000000000)',
+    ).toMatch(/0{8}-0{4}-0{4}-0{4}-0{12}/);
     // Falso-verde que o Codex #2 pegou: buildOwnerMap([]) passaria os asserts frouxos. Trava o argumento REAL.
     expect(
       src,

@@ -264,8 +264,11 @@ serve(async (req) => {
     //    cliente com métrica (clone→Hunter, gêmeo→vendedor). Paginação por KEYSET em customer_user_id (não
     //    offset): carteira_assignments é dinâmica (cron carteira-rebuild 07:30) — .range/offset pularia uma
     //    linha se o rebuild inserisse/removesse uma chave entre páginas → farmer_id null (Codex ponta 3).
+    // Sentinela do keyset = nil UUID (menor que todo UUID real). "" NÃO casta para uuid no Postgres
+    // (ERROR: invalid input syntax for type uuid "") — o footgun que abortou o 1º deploy desta função.
+    const NIL_UUID = "00000000-0000-0000-0000-000000000000";
     const assignmentsRaw: AssignmentRow[] = [];
-    let lastCustomerId = "";
+    let lastCustomerId = NIL_UUID;
     for (;;) {
       const { data: aPage, error: aError } = await supabase
         .from("carteira_assignments")
