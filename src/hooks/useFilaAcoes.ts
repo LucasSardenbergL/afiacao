@@ -2,20 +2,18 @@ import { useEffect, useMemo } from 'react';
 import { useMinhasTarefas } from '@/hooks/useTarefas';
 import { useRouteContactList } from '@/queries/useRouteContactList';
 import { useMyMixGap } from '@/hooks/useMyMixGap';
+import { useWhatsappPendentes } from '@/hooks/useWhatsappPendentes';
 import { tarefasParaAcoes } from '@/lib/fila/adapters/tarefa';
 import { rotaParaAcoes } from '@/lib/fila/adapters/rota';
 import { mixGapParaAcoes } from '@/lib/fila/adapters/mixgap';
+import { whatsappPendenteParaAcoes } from '@/lib/fila/adapters/whatsappPendente';
 import { dedupe, rankearFila } from '@/lib/fila/ranking';
 import { spBusinessDate } from '@/lib/time/sp-day';
 import { logger } from '@/lib/logger';
 import type { AcaoSugerida } from '@/lib/fila/types';
 
-// Fonte "WhatsApp pendente" ADIADA p/ Fase 3 (split): a versão de front tem
-// falso-negativo (cap 200 do inbox + proxy last_message_at — Codex P1). Lá será
-// reescrita sobre query/RPC de pendentes com last_outbound_at real. O adapter
-// (whatsappPendente.ts) e o hook (useWhatsappPendentes.ts) já existem, prontos.
 /** Fonte da fila — identifica QUAL falhou (a UI e o log nomeiam, não mais "uma das fontes"). */
-export type FonteFila = 'tarefas' | 'rota' | 'mix-gap';
+export type FonteFila = 'tarefas' | 'rota' | 'mix-gap' | 'whatsapp';
 
 export function useFilaAcoes(): {
   acoes: AcaoSugerida[];
@@ -30,15 +28,19 @@ export function useFilaAcoes(): {
   const tarefas = useMinhasTarefas();
   const rota = useRouteContactList(workdayIso);
   const mixgap = useMyMixGap();
+  // Fonte ligada no PR-2 do Canal WhatsApp: RPC sem cap com last_outbound_at real
+  // (o v1 de front tinha falso-negativo — cap 200 do inbox + proxy last_message_at).
+  const whatsapp = useWhatsappPendentes();
 
   const acoes = useMemo(() => {
     const todas: AcaoSugerida[] = [
       ...tarefasParaAcoes(tarefas.data ?? []),
       ...rotaParaAcoes(rota.data?.callQueue ?? [], rota.data?.routeDate ?? workdayIso),
       ...mixGapParaAcoes(mixgap.data ?? null),
+      ...whatsappPendenteParaAcoes(whatsapp.data),
     ];
     return rankearFila(dedupe(todas));
-  }, [tarefas.data, rota.data, mixgap.data]);
+  }, [tarefas.data, rota.data, mixgap.data, whatsapp.data]);
 
   // isError PROPAGADO (antes era descartado): falha de RLS/rede em qualquer
   // fonte virava lista vazia → a FilaDoDia afirmava "carteira em dia" —
@@ -51,8 +53,9 @@ export function useFilaAcoes(): {
     if (tarefas.isError) f.push('tarefas');
     if (rota.isError) f.push('rota');
     if (mixgap.isError) f.push('mix-gap');
+    if (whatsapp.isError) f.push('whatsapp');
     return f;
-  }, [tarefas.isError, rota.isError, mixgap.isError]);
+  }, [tarefas.isError, rota.isError, mixgap.isError, whatsapp.isError]);
   const isError = fontesComErro.length > 0;
 
   // Log estruturado com a MENSAGEM de cada fonte que falhou — o sinal que
@@ -65,18 +68,20 @@ export function useFilaAcoes(): {
       tarefas: msg(tarefas.error),
       rota: msg(rota.error),
       mixgap: msg(mixgap.error),
+      whatsapp: msg(whatsapp.error),
     });
-  }, [fontesComErro, tarefas.error, rota.error, mixgap.error]);
+  }, [fontesComErro, tarefas.error, rota.error, mixgap.error, whatsapp.error]);
 
   const retry = () => {
     if (tarefas.isError) void tarefas.refetch();
     if (rota.isError) void rota.refetch();
     if (mixgap.isError) void mixgap.refetch();
+    if (whatsapp.isError) whatsapp.refetch();
   };
 
   return {
     acoes,
-    isLoading: tarefas.isLoading || rota.isLoading || mixgap.isLoading,
+    isLoading: tarefas.isLoading || rota.isLoading || mixgap.isLoading || whatsapp.isLoading,
     isError,
     fontesComErro,
     retry,

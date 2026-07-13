@@ -28,6 +28,7 @@ const ROTULO_FONTE: Record<FonteFila, string> = {
   tarefas: 'tarefas',
   rota: 'lista de ligação',
   'mix-gap': 'oportunidades',
+  whatsapp: 'WhatsApp',
 };
 const rotularFontes = (fontes: FonteFila[]) => fontes.map((f) => ROTULO_FONTE[f]).join(', ');
 
@@ -44,6 +45,11 @@ function AcaoCta({ a, temCritica }: { a: AcaoSugerida; temCritica: boolean }) {
   const tel = a.telefone?.replace(/\D/g, '');
   if (a.cta === 'ligar' && tel) {
     return <BotaoLigar telefone={a.telefone} nomeCliente={a.clienteNome ?? a.titulo} onLigar={onClick} />;
+  }
+  // Conversa pendente abre a INBOX interna na conversa (contexto/thread/SLA);
+  // wa.me fica pros CTAs sem conversa aberta (ex.: contato da rota).
+  if (a.payload.kind === 'whatsapp') {
+    return <Button asChild size="sm" variant="outline"><Link to={`/whatsapp?conversa=${a.payload.conversationId}`} onClick={onClick}>Responder</Link></Button>;
   }
   if (a.cta === 'whatsapp' && tel) {
     return <Button asChild size="sm" variant="outline"><a href={`https://wa.me/${tel}`} target="_blank" rel="noopener noreferrer" onClick={onClick}>WhatsApp</a></Button>;
