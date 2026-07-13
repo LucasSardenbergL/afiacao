@@ -66,6 +66,11 @@ interface EmpresaSummary {
   total_paginas: number;
   pedidos_sincronizados: number;
   erros: number;
+  // v3 publicação diferida (reconciliação PO excluído no Omie):
+  janela_de: string | null;    // ISO yyyy-mm-dd da janela REAL do run (não CURRENT_DATE)
+  janela_ate: string | null;
+  ids_distintos: number;       // POs distintos vistos na varredura (telemetria + volume_ok)
+  varredura_completa: boolean; // true = fim legítimo sem abort/truncamento (fim && !abortado)
 }
 
 // ===== Omie API shapes (inline — Edge Function não pode importar de @/) =====
@@ -240,6 +245,9 @@ const PRESERVE_FIELDS = new Set([
   "lt_bruto_dias_uteis",
   "lt_faturamento_dias_uteis",
   "lt_logistica_dias_uteis",
+  // single-writer da publicação diferida (escritas SÓ pela RPC reposicao_publicar_run_completo, nunca no upsert)
+  "last_seen_pedidos_full_run_id",
+  "last_seen_pedidos_full_at",
 ]);
 
 /**
@@ -354,12 +362,17 @@ async function syncEmpresa(
   modo: ModoSyncPedidos,
   dias: number,
   fornecedorCodigo: number | undefined,
+  idsVistos: Set<number>,
 ): Promise<EmpresaSummary> {
   const summary: EmpresaSummary = {
     empresa,
     total_paginas: 0,
     pedidos_sincronizados: 0,
     erros: 0,
+    janela_de: null,
+    janela_ate: null,
+    ids_distintos: 0,
+    varredura_completa: false,
   };
 
   const { app_key, app_secret } = getCredentials(empresa);
@@ -376,6 +389,9 @@ async function syncEmpresa(
   fimJanela.setDate(hoje.getDate() + futuroDias);
   const dataDe = formatDateBR(inicio);
   const dataAte = formatDateBR(fimJanela);
+  // Janela REAL do run em ISO (yyyy-mm-dd) p/ a publicação diferida — NÃO CURRENT_DATE (design §5).
+  summary.janela_de = parseBRDateOnly(dataDe);
+  summary.janela_ate = parseBRDateOnly(dataAte);
   console.log(
     `[sync-pedidos] empresa=${empresa} modo=${modo} janela previsão ${dataDe}→${dataAte} (passado ${passadoDias}d, futuro ${futuroDias}d)`,
   );
@@ -427,6 +443,14 @@ async function syncEmpresa(
     }
     fpsVistos.add(fp);
 
+    // [publicação diferida v3] coleta os nCodPed VISTOS na varredura (ANTES do filtro fornecedor — no run
+    // de publicação não há filtro; representa TODOS os POs da janela completa). Publicados 1× no fim LIMPO
+    // via reposicao_publicar_run_completo — NUNCA carimba last_seen durante o upsert (Codex P1 #1).
+    for (const p of pedidos) {
+      const nCodPed = Number(p?.cabecalho_consulta?.nCodPed ?? p?.cabecalho?.nCodPed);
+      if (Number.isFinite(nCodPed) && nCodPed > 0) idsVistos.add(nCodPed);
+    }
+
     // DEBUG: log shape do primeiro pedido (página 1) e top-level keys
     if (pagina === 1) {
       console.log(`[sync-pedidos] DEBUG top-level keys: ${JSON.stringify(Object.keys(resp || {}))}`);
@@ -468,6 +492,8 @@ async function syncEmpresa(
     summary.erros++;
   }
 
+  summary.ids_distintos = idsVistos.size;
+  summary.varredura_completa = fim && !abortado; // limpo = viu o fim legítimo sem abort/truncamento
   return summary;
 }
 
@@ -597,6 +623,37 @@ async function marcarCompletoOk(supabase: SupabaseClient, empresa: Empresa): Pro
   }
 }
 
+// ===== Publicação diferida ATÔMICA (v3 — reconciliação PO excluído) =====
+// Grava o marcador de run E carimba last_seen dos POs vistos numa RPC SQL única (advisory lock por
+// empresa + service_role-only). Chamada 1× no fim do completo LIMPO e NÃO-filtrado. Retorna true SÓ se
+// a RPC teve sucesso — a cadência (marcarCompletoOk) só avança então (fail-closed, Codex P1 #3).
+async function publicarRunCompleto(
+  supabase: SupabaseClient,
+  s: EmpresaSummary,
+  idsVistos: Set<number>,
+): Promise<boolean> {
+  const runId = crypto.randomUUID();
+  const ids = [...idsVistos];
+  try {
+    const { data, error } = await supabase.rpc("reposicao_publicar_run_completo", {
+      p_empresa: s.empresa,
+      p_run_id: runId,
+      p_janela_de: s.janela_de,
+      p_janela_ate: s.janela_ate,
+      p_ids: ids,
+    });
+    if (error) throw error;
+    console.log(
+      `[sync-pedidos] publicou run completo empresa=${s.empresa} run_id=${runId} ids=${ids.length} volume_ok=${JSON.stringify(data)}`,
+    );
+    return true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[sync-pedidos] publicarRunCompleto FALHOU empresa=${s.empresa}: ${msg} — cadência NÃO avança`);
+    return false;
+  }
+}
+
 // ===== Handler =====
 async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
@@ -695,26 +752,36 @@ Deno.serve(async (req) => {
         (isCron && !deveRodarCompleto(lastFullAtMs, Date.now()) ? "incremental" : "completo");
       const meta = { trigger: triggerLabel, modo, dias };
 
+      const idsVistos = new Set<number>(); // POs vistos neste run (publicados 1× no fim do completo limpo)
       if (gravaHeartbeat) await heartbeatRunning(supabase, empresa, meta);
       let s: EmpresaSummary;
       let errFatal: string | null = null;
       try {
-        s = await syncEmpresa(supabase, empresa, modo, dias, fornecedorCodigo);
+        s = await syncEmpresa(supabase, empresa, modo, dias, fornecedorCodigo, idsVistos);
         console.log(
           `[sync-pedidos] empresa=${empresa} modo=${modo} TOTAL: paginas=${s.total_paginas} pedidos=${s.pedidos_sincronizados} erros=${s.erros} duracao=${Date.now() - t0}ms`,
         );
       } catch (err) {
         errFatal = err instanceof Error ? err.message : String(err);
         console.error(`[sync-pedidos] empresa=${empresa} erro fatal: ${errFatal}`);
-        s = { empresa, total_paginas: 0, pedidos_sincronizados: 0, erros: 1 };
+        s = {
+          empresa, total_paginas: 0, pedidos_sincronizados: 0, erros: 1,
+          janela_de: null, janela_ate: null, ids_distintos: 0, varredura_completa: false,
+        };
       }
       summary.push(s);
       if (gravaHeartbeat) await heartbeatFim(supabase, s, meta, errFatal);
-      // Carimba a cadência do completo SÓ quando um COMPLETO terminou LIMPO (erros=0), em marcador dedicado
-      // (HEARTBEAT_FULL_ENTITY — imune a lost-update de incremental concorrente). Falha/parcial/incremental
-      // NÃO avança → o próximo ciclo do cron volta a tentar completo (deveRodarCompleto).
-      if (gravaHeartbeat && modo === "completo" && s.erros === 0) {
-        await marcarCompletoOk(supabase, empresa);
+      // Publicação diferida (v3): SÓ no fim de um completo LIMPO e NÃO-filtrado (Codex P1 #1/#2).
+      //   gravaHeartbeat = !fornecedorCodigo (não-filtrado); erros===0 && varredura_completa = limpo, viu
+      //   o fim sem abort/truncamento. A RPC grava marcador + last_seen ATÔMICO. A cadência do completo
+      //   (marcarCompletoOk, marcador dedicado HEARTBEAT_FULL_ENTITY — imune a lost-update de incremental
+      //   concorrente) só avança SE a publicação teve sucesso (fail-closed, Codex P1 #3); senão o próximo
+      //   ciclo re-tenta o completo (deveRodarCompleto).
+      const runLimpoCompleto =
+        gravaHeartbeat && modo === "completo" && s.erros === 0 && s.varredura_completa;
+      if (runLimpoCompleto) {
+        const publicou = await publicarRunCompleto(supabase, s, idsVistos);
+        if (publicou) await marcarCompletoOk(supabase, empresa);
       }
     }
     // Fail-CLOSED na coleta total: 0 sincronizados em TODAS as empresas + algum erro → 502 no caminho
