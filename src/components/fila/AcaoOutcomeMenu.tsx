@@ -133,6 +133,31 @@ export function AcaoOutcomeMenu({ acao, onNaoUtilAgora }: Props) {
     );
   }
 
-  // 'whatsapp' — fonte desligada no v1 (Fase 3 do G1)
+  // 'whatsapp' (ligada no PR-2): o outcome real é RESPONDER — o item sai da fila
+  // sozinho quando a mensagem out entra (trigger last_outbound_at). O menu só
+  // oferece esconder na sessão.
+  if (p.kind === 'whatsapp') {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            disabled={isImpersonating}
+            title={isImpersonating ? 'Indisponível em modo Ver como' : 'Opções'}
+          >
+            <MoreHorizontal className="w-4 h-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={naoUtil}>
+            <EyeOff className="w-4 h-4 mr-2" /> Não é pra agora
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
   return null;
 }
