@@ -44,6 +44,24 @@ P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql"
 P --single-transaction -v ON_ERROR_STOP=1 -q -f "$RR"
 rm -f "$RR"
 
+echo "→ default privileges de prod (Supabase dá ALL a anon/authenticated em tabela nova — é por isso que o REVOKE por nome da migration importa)…"
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+-- tabelas que JÁ existem (snapshot) têm grant em prod; as da migration (ainda não criadas)
+-- ficam de fora deste GRANT e só ganham via default privileges — o REVOKE por nome delas segue sendo o único guarda
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+-- auth.uid() fiel ao Supabase (o stub retorna NULL fixo): lê request.jwt.claims->>'sub'
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $f$
+  SELECT coalesce(
+    nullif(current_setting('request.jwt.claim.sub', true), ''),
+    nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+  )::uuid
+$f$;
+GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated, service_role;
+SQL
+
 echo "→ migration 20260713010000 (catálogo + log HSM)…"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260713010000_whatsapp_templates_hsm.sql" >/dev/null
 
