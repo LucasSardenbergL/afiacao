@@ -50,6 +50,66 @@ function parseInboundWebhook(payload: unknown): ParsedInbound[] {
   return out.filter((x) => x.waMessageId && x.fromPhone);
 }
 
+// Espelho de src/lib/whatsapp/inbound.ts (parseStatusWebhook/isStatusUpgrade) — statuses
+// de entrega das mensagens OUT (sent/delivered/read/failed) chegam em value.statuses[].
+interface ParsedStatus {
+  waMessageId: string;
+  status: "sent" | "delivered" | "read" | "failed";
+  erro: string | null;
+  waTimestamp: Date | null;
+}
+const KNOWN_STATUSES = new Set(["sent", "delivered", "read", "failed"]);
+function parseStatusWebhook(payload: unknown): ParsedStatus[] {
+  const out: ParsedStatus[] = [];
+  const entries = (payload as { entry?: unknown[] })?.entry;
+  if (!Array.isArray(entries)) return out;
+  for (const entry of entries) {
+    const changes = (entry as { changes?: unknown[] })?.changes;
+    if (!Array.isArray(changes)) continue;
+    for (const change of changes) {
+      const value = (change as { value?: Record<string, unknown> })?.value;
+      const statuses = value?.statuses as Array<Record<string, unknown>> | undefined;
+      if (!Array.isArray(statuses)) continue;
+      for (const s of statuses) {
+        const status = String(s.status ?? "");
+        if (!KNOWN_STATUSES.has(status)) continue;
+        const tsRaw = s.timestamp ? Number(s.timestamp) : NaN;
+        const errors = s.errors as Array<{ code?: number; title?: string; message?: string }> | undefined;
+        const e0 = errors?.[0];
+        out.push({
+          waMessageId: String(s.id ?? ""),
+          status: status as ParsedStatus["status"],
+          erro: e0 ? `${e0.code ?? ""} ${e0.title ?? e0.message ?? ""}`.trim() : null,
+          waTimestamp: Number.isFinite(tsRaw) ? new Date(tsRaw * 1000) : null,
+        });
+      }
+    }
+  }
+  return out.filter((x) => x.waMessageId);
+}
+// Progressão monotônica: webhooks chegam fora de ordem; nunca regredir status.
+const STATUS_RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3, failed: 9 };
+function isStatusUpgrade(current: string | null, next: string): boolean {
+  const cur = current ? (STATUS_RANK[current] ?? 0) : -1;
+  const nxt = STATUS_RANK[next] ?? -1;
+  return nxt > cur;
+}
+
+async function processStatus(supabase: ReturnType<typeof createClient>, s: ParsedStatus) {
+  const { data: msg } = await supabase.from("whatsapp_messages")
+    .select("id, status").eq("wa_message_id", s.waMessageId).maybeSingle();
+  const m = msg as { id: string; status: string | null } | null;
+  if (m && isStatusUpgrade(m.status, s.status)) {
+    await supabase.from("whatsapp_messages").update({ status: s.status }).eq("id", m.id);
+  }
+  const { data: send } = await supabase.from("whatsapp_template_sends")
+    .select("id, status").eq("wa_message_id", s.waMessageId).maybeSingle();
+  const sd = send as { id: string; status: string } | null;
+  if (sd && isStatusUpgrade(sd.status, s.status)) {
+    await supabase.from("whatsapp_template_sends").update({ status: s.status, erro: s.erro }).eq("id", sd.id);
+  }
+}
+
 function timingSafeEq(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
@@ -151,9 +211,13 @@ Deno.serve(async (req) => {
   await supabase.from("whatsapp_webhook_events").insert({ payload });
 
   const messages = parseInboundWebhook(payload);
-  const work = (async () => { for (const m of messages) { try { await processMessage(supabase, m); } catch (e) { console.error("[whatsapp-inbound] processMessage", e); } } })();
+  const statuses = parseStatusWebhook(payload);
+  const work = (async () => {
+    for (const m of messages) { try { await processMessage(supabase, m); } catch (e) { console.error("[whatsapp-inbound] processMessage", e); } }
+    for (const s of statuses) { try { await processStatus(supabase, s); } catch (e) { console.error("[whatsapp-inbound] processStatus", e); } }
+  })();
   const edgeRuntime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
   if (edgeRuntime?.waitUntil) edgeRuntime.waitUntil(work); else await work;
 
-  return new Response(JSON.stringify({ ok: true, received: messages.length }), { status: 200, headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify({ ok: true, received: messages.length, statuses: statuses.length }), { status: 200, headers: { "Content-Type": "application/json" } });
 });
