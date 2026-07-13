@@ -841,3 +841,63 @@ describe('guardrail: fin-valor-cockpit lê o código do cliente pela view fresca
     ).not.toMatch(/from\("omie_clientes"\)/);
   });
 });
+
+// ── PR1 reconciliação PO excluído: publicação diferida (edge USA os predicados espelhados) — Codex xhigh 2026-07-12 ──
+// A edge omie-sync-pedidos-compra publica o marcador de run + last_seen SÓ no fim de um completo LIMPO e
+// NÃO-filtrado (P1#1/#2) e só avança a cadência com volume_ok=true (P1#3). Essas 2 decisões são helpers puros
+// (vitest) espelhados no edge; a paridade textual aqui pega a reversão do deploy do Lovable. O coração
+// money-path (volume_ok robusto, atomicidade, RLS) é provado no PG17 (db/test-reposicao-publicar-run-completo.sh).
+const SYNC_PEDIDOS = 'supabase/functions/omie-sync-pedidos-compra/index.ts';
+const PUBLICACAO_RUN = 'src/lib/reposicao/publicacao-run.ts';
+
+describe('guardrail money-path: publicação diferida de run (edge USA os predicados espelhados) — PR1 PO excluído', () => {
+  const src = read(SYNC_PEDIDOS);
+  const helper = read(PUBLICACAO_RUN);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('reposicao_publicar_run_completo');
+    expect(helper).toContain('devePublicarRun');
+  });
+
+  it('o helper puro existe e exporta devePublicarRun + cadenciaPodeAvancar', () => {
+    expect(helper).toMatch(/export function devePublicarRun/);
+    expect(helper).toMatch(/export function cadenciaPodeAvancar/);
+  });
+
+  it('o edge USA os predicados: define o MIRROR E chama ambos (≥2 menções cada)', () => {
+    expect(src, 'edge não define mais devePublicarRun espelhado').toMatch(/function devePublicarRun/);
+    expect(src, 'edge não define mais cadenciaPodeAvancar espelhado').toMatch(/function cadenciaPodeAvancar/);
+    expect(count(src, 'devePublicarRun'), 'devePublicarRun deve ser DEFINIDO e CHAMADO (≥2)').toBeGreaterThanOrEqual(2);
+    expect(count(src, 'cadenciaPodeAvancar'), 'cadenciaPodeAvancar deve ser DEFINIDO e CHAMADO (≥2)').toBeGreaterThanOrEqual(2);
+  });
+
+  it('P1#1: a edge NÃO escreve last_seen fora da RPC (colunas single-writer + PRESERVE_FIELDS)', () => {
+    expect(
+      src,
+      'REGRESSÃO P1#1: a edge voltou a escrever last_seen_pedidos_full como propriedade/atribuição (fora da RPC)',
+    ).not.toMatch(/last_seen_pedidos_full_(run_id|at)\s*[:=]/);
+    expect(src, 'sumiu a proteção PRESERVE_FIELDS das colunas last_seen').toContain('"last_seen_pedidos_full_run_id"');
+  });
+
+  it('P1#3/#4: publica com p_iniciado_em (anti-regressão) e a cadência é gated por cadenciaPodeAvancar', () => {
+    expect(src, 'a RPC não recebe mais p_iniciado_em — perdeu a âncora de atualidade (P1#4)').toContain('p_iniciado_em');
+    expect(
+      src,
+      'REGRESSÃO P1#3: a cadência não é mais gated por cadenciaPodeAvancar (volta a avançar em run inválido)',
+    ).toMatch(/cadenciaPodeAvancar\([\s\S]{0,40}\)\)\s*await marcarCompletoOk/);
+  });
+
+  it('coleta de IDs é fail-closed p/ precisão (Number.isSafeInteger, não isFinite — Codex bug 2^53)', () => {
+    expect(
+      src,
+      'REGRESSÃO: coleta voltou a isFinite — nCodPed > 2^53 arredondaria e carimbaria bigint errado',
+    ).toMatch(/Number\.isSafeInteger\(nCodPed\)/);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'reposicao publicacao-run'),
+      'edge divergiu do helper de src/ — o Lovable reescreveu os predicados no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'reposicao publicacao-run'));
+  });
+});
