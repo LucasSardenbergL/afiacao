@@ -175,15 +175,12 @@ describe('montarParamsProposta — params do template HSM ({{1}} nome, {{2}} pra
     }).linhas;
     const um = montarParamsProposta({
       primeiroNome: 'João', prazoLabel: 'amanhã (14/07)', linhas,
-      crossSellOk: [{ omie_codigo_produto: 30, nome: 'VERNIZ X' }],
+      crossSellOk: [{ nome: 'VERNIZ X' }],
     });
     expect(um[2]).toBe('1× LIXA A275; sugestão: VERNIZ X');
     const dois = montarParamsProposta({
       primeiroNome: 'João', prazoLabel: 'amanhã (14/07)', linhas,
-      crossSellOk: [
-        { omie_codigo_produto: 30, nome: 'VERNIZ X' },
-        { omie_codigo_produto: 31, nome: 'COLA Y' },
-      ],
+      crossSellOk: [{ nome: 'VERNIZ X' }, { nome: 'COLA Y' }],
     });
     expect(dois[2]).toBe('1× LIXA A275; sugestões: VERNIZ X, COLA Y');
   });
