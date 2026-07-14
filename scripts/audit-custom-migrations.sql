@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 359
+-- Total de custom migrations: 363
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -395,10 +395,14 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260709163500', 'selfservice_pr00bis_b_revoke_omie_payload', '20260709163500_selfservice_pr00bis_b_revoke_omie_payload.sql'),
   ('20260710012337', 'carteira_saude_eligible_e_efeito_mensal', '20260710012337_carteira_saude_eligible_e_efeito_mensal.sql'),
   ('20260711090000', 'prime_fundacao', '20260711090000_prime_fundacao.sql'),
+  ('20260711140000', 'omie_sync_identity_snapshot', '20260711140000_omie_sync_identity_snapshot.sql'),
   ('20260711145000', 'v_grupo_contatos_fresca', '20260711145000_v_grupo_contatos_fresca.sql'),
   ('20260711193000', 'param_auto_resumo_altas_reducoes_segurado', '20260711193000_param_auto_resumo_altas_reducoes_segurado.sql'),
   ('20260712140000', 'param_auto_log_valor_barrado_fusivel', '20260712140000_param_auto_log_valor_barrado_fusivel.sql'),
-  ('20260712150000', 'carteira_membership_ledger_fatia0', '20260712150000_carteira_membership_ledger_fatia0.sql')
+  ('20260712150000', 'carteira_membership_ledger_fatia0', '20260712150000_carteira_membership_ledger_fatia0.sql'),
+  ('20260713010000', 'whatsapp_templates_hsm', '20260713010000_whatsapp_templates_hsm.sql'),
+  ('20260713020000', 'whatsapp_pendentes_rpc', '20260713020000_whatsapp_pendentes_rpc.sql'),
+  ('20260713030000', 'whatsapp_funil', '20260713030000_whatsapp_funil.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1666,6 +1670,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_insert', 'prime_beneficio_uso'),
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_update', 'prime_beneficio_uso'),
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_cliente_read', 'prime_beneficio_uso'),
+  ('omie_sync_identity_snapshot', 'function', 'public', 'omie_sync_identity_snapshot', ''),
   ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', ''),
   ('param_auto_resumo_altas_reducoes_segurado', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
   ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
@@ -1673,7 +1678,21 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('carteira_membership_ledger_fatia0', 'function', 'public', 'tg_omie_clientes_to_ledger', ''),
   ('carteira_membership_ledger_fatia0', 'table', 'public', 'carteira_membership_ledger', ''),
   ('carteira_membership_ledger_fatia0', 'index', 'public', 'idx_cml_identity_state', 'carteira_membership_ledger'),
-  ('carteira_membership_ledger_fatia0', 'trigger', 'public', 'trg_omie_clientes_to_ledger', 'omie_clientes')
+  ('carteira_membership_ledger_fatia0', 'trigger', 'public', 'trg_omie_clientes_to_ledger', 'omie_clientes'),
+  ('whatsapp_templates_hsm', 'table', 'public', 'whatsapp_templates', ''),
+  ('whatsapp_templates_hsm', 'table', 'public', 'whatsapp_template_sends', ''),
+  ('whatsapp_templates_hsm', 'index', 'public', 'idx_wts_conversation', 'whatsapp_template_sends'),
+  ('whatsapp_templates_hsm', 'index', 'public', 'idx_wts_wa_message_id', 'whatsapp_template_sends'),
+  ('whatsapp_templates_hsm', 'index', 'public', 'idx_wts_pendentes', 'whatsapp_template_sends'),
+  ('whatsapp_templates_hsm', 'rls_policy', 'public', 'wt_staff_read', 'whatsapp_templates'),
+  ('whatsapp_templates_hsm', 'rls_policy', 'public', 'wt_master_write', 'whatsapp_templates'),
+  ('whatsapp_templates_hsm', 'rls_policy', 'public', 'wts_staff_read', 'whatsapp_template_sends'),
+  ('whatsapp_pendentes_rpc', 'function', 'public', 'wa_msg_touch_last_outbound', ''),
+  ('whatsapp_pendentes_rpc', 'function', 'public', 'get_whatsapp_pendentes', ''),
+  ('whatsapp_pendentes_rpc', 'index', 'public', 'idx_wa_conv_pendentes', 'whatsapp_conversations'),
+  ('whatsapp_pendentes_rpc', 'trigger', 'public', 'trg_wa_msg_last_outbound', 'whatsapp_messages'),
+  ('whatsapp_funil', 'function', 'public', 'get_whatsapp_funil', ''),
+  ('whatsapp_funil', 'index', 'public', 'idx_so_whatsapp_conv', 'sales_orders')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -2989,6 +3008,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_insert', 'prime_beneficio_uso'),
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_update', 'prime_beneficio_uso'),
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_cliente_read', 'prime_beneficio_uso'),
+  ('omie_sync_identity_snapshot', 'function', 'public', 'omie_sync_identity_snapshot', ''),
   ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', ''),
   ('param_auto_resumo_altas_reducoes_segurado', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
   ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
@@ -2996,7 +3016,21 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('carteira_membership_ledger_fatia0', 'function', 'public', 'tg_omie_clientes_to_ledger', ''),
   ('carteira_membership_ledger_fatia0', 'table', 'public', 'carteira_membership_ledger', ''),
   ('carteira_membership_ledger_fatia0', 'index', 'public', 'idx_cml_identity_state', 'carteira_membership_ledger'),
-  ('carteira_membership_ledger_fatia0', 'trigger', 'public', 'trg_omie_clientes_to_ledger', 'omie_clientes')
+  ('carteira_membership_ledger_fatia0', 'trigger', 'public', 'trg_omie_clientes_to_ledger', 'omie_clientes'),
+  ('whatsapp_templates_hsm', 'table', 'public', 'whatsapp_templates', ''),
+  ('whatsapp_templates_hsm', 'table', 'public', 'whatsapp_template_sends', ''),
+  ('whatsapp_templates_hsm', 'index', 'public', 'idx_wts_conversation', 'whatsapp_template_sends'),
+  ('whatsapp_templates_hsm', 'index', 'public', 'idx_wts_wa_message_id', 'whatsapp_template_sends'),
+  ('whatsapp_templates_hsm', 'index', 'public', 'idx_wts_pendentes', 'whatsapp_template_sends'),
+  ('whatsapp_templates_hsm', 'rls_policy', 'public', 'wt_staff_read', 'whatsapp_templates'),
+  ('whatsapp_templates_hsm', 'rls_policy', 'public', 'wt_master_write', 'whatsapp_templates'),
+  ('whatsapp_templates_hsm', 'rls_policy', 'public', 'wts_staff_read', 'whatsapp_template_sends'),
+  ('whatsapp_pendentes_rpc', 'function', 'public', 'wa_msg_touch_last_outbound', ''),
+  ('whatsapp_pendentes_rpc', 'function', 'public', 'get_whatsapp_pendentes', ''),
+  ('whatsapp_pendentes_rpc', 'index', 'public', 'idx_wa_conv_pendentes', 'whatsapp_conversations'),
+  ('whatsapp_pendentes_rpc', 'trigger', 'public', 'trg_wa_msg_last_outbound', 'whatsapp_messages'),
+  ('whatsapp_funil', 'function', 'public', 'get_whatsapp_funil', ''),
+  ('whatsapp_funil', 'index', 'public', 'idx_so_whatsapp_conv', 'sales_orders')
 )
 SELECT
   e.migration,

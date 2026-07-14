@@ -249,36 +249,59 @@ async function fetchOmieClienteUserMap(db: SupabaseClient): Promise<Map<number, 
   return map;
 }
 
-// Map<documento_normalizado, user_id> de profiles (p/ vincular cliente novo via documento).
-async function fetchProfileDocUserMap(db: SupabaseClient): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  // Fatia 3 (Codex P2): documento com 2+ profiles (users distintos) é AMBÍGUO — não prova identidade.
-  // Fail-closed: remove do mapa (melhor não vincular que vincular o user ERRADO). Afeta o espelho E a
-  // proof-table document-first — ambos param de mapear docs duplicados (precisão>recall).
-  const ambiguous = new Set<string>();
-  const pageSize = 1000;
-  let from = 0;
-  while (true) {
-    const { data, error } = await db
-      .from("profiles")
-      .select("document, user_id")
-      .not("document", "is", null)
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`fetch profiles map: ${error.message}`);
-    const rows = (data ?? []) as { document: string | null; user_id: string | null }[];
-    for (const r of rows) {
-      const d = (r.document ?? "").replace(/\D/g, "");
-      if (!d || !r.user_id) continue;
-      if (ambiguous.has(d)) continue;
-      const prev = map.get(d);
-      if (prev === r.user_id) continue;                       // mesma pessoa repetida (idempotente)
-      if (prev) { map.delete(d); ambiguous.add(d); continue; } // 2º user no mesmo doc → ambíguo, fail-closed
-      map.set(d, r.user_id);
-    }
-    if (rows.length < pageSize) break;
-    from += pageSize;
+// MIRROR-START omie identity-snapshot-parse — espelhado verbatim nos edges omie-vendas-sync e omie-analytics-sync
+// Valida o CONTRATO JSON da RPC omie_sync_identity_snapshot e constrói os mapas. FAIL-CLOSED (Codex
+// challenge PR-1): supabase-js .rpc() resolve {error} — error=null só prova HTTP/SQL bem-sucedido, NÃO o
+// contrato. Uma RPC revertida/malformada pode devolver HTTP 200 com {doc_to_user:null,...}; o `?? {}` a
+// degradaria para Map(0) SILENCIOSO (vendas pula pedidos, analytics não vincula) sem SQLSTATE. Aqui shape
+// inválido (null/array/tipo errado/valor não-UUID/doc ambíguo vazado em doc_to_user) LANÇA — precisão>recall.
+const OMIE_SNAPSHOT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseIdentitySnapshot(
+  snap: unknown,
+): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string> } {
+  if (!snap || typeof snap !== "object" || Array.isArray(snap)) {
+    throw new Error("identity snapshot: resposta não é objeto (fail-closed)");
   }
-  return map;
+  const s = snap as Record<string, unknown>;
+  const d2u = s.doc_to_user;
+  const amb = s.ambiguous_docs;
+  if (!d2u || typeof d2u !== "object" || Array.isArray(d2u)) {
+    throw new Error("identity snapshot: doc_to_user ausente ou não-objeto (fail-closed)");
+  }
+  if (!Array.isArray(amb)) {
+    throw new Error("identity snapshot: ambiguous_docs ausente ou não-array (fail-closed)");
+  }
+  const ambiguousDocs = new Set<string>();
+  for (const doc of amb) {
+    if (typeof doc !== "string") throw new Error("identity snapshot: ambiguous_docs com item não-string (fail-closed)");
+    ambiguousDocs.add(doc);
+  }
+  const docToUserMap = new Map<string, string>();
+  for (const [doc, user] of Object.entries(d2u)) {
+    if (typeof user !== "string" || !OMIE_SNAPSHOT_UUID_RE.test(user)) {
+      throw new Error("identity snapshot: user_id não-UUID em doc_to_user (fail-closed)");
+    }
+    // disjunção: um doc não pode estar em doc_to_user E em ambiguous_docs (seria fail-open da RPC)
+    if (ambiguousDocs.has(doc)) {
+      throw new Error("identity snapshot: doc presente em doc_to_user E ambiguous_docs — fail-open da RPC (fail-closed)");
+    }
+    docToUserMap.set(doc, user);
+  }
+  return { docToUserMap, ambiguousDocs };
+}
+// MIRROR-END
+
+// Map<documento_normalizado, user_id> NÃO-ambíguo de profiles, via snapshot atômico server-side (RPC).
+// Antes: paginação OFFSET (não-atômica — Codex xhigh: um profile nascendo/mudando entre páginas escapava
+// da detecção de doc-ambíguo). Agora a RPC omie_sync_identity_snapshot resolve a unicidade num ÚNICO
+// snapshot MVCC (doc com 2+ users DISTINTOS já vem FORA de doc_to_user, fail-closed no SQL). doc_to_user
+// é global (profiles não tem conta); passamos a conta em curso só p/ satisfazer a assinatura da RPC.
+// .rpc() NÃO lança em erro → checar {error} E validar o contrato (parseIdentitySnapshot LANÇA em shape inválido).
+async function fetchProfileDocUserMap(db: SupabaseClient, account: string): Promise<Map<string, string>> {
+  const { data: snap, error } = await db.rpc('omie_sync_identity_snapshot', { p_account: account });
+  if (error) throw new Error(`identity snapshot (${account}): ${error.message}`);
+  return parseIdentitySnapshot(snap).docToUserMap;
 }
 
 // MIRROR-START omie doc-ambiguo — espelhado verbatim de src/lib/omie/omie-doc-ambiguo.ts
@@ -329,7 +352,7 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
   try {
     // 2 leituras em massa ANTES do laço (substitui o N+1: ~2-3 round-trips POR cliente × ~10k).
     const userByCodigo = await fetchOmieClienteUserMap(db);
-    const userByDoc = await fetchProfileDocUserMap(db);
+    const userByDoc = await fetchProfileDocUserMap(db, account);
 
     // Enumera o Omie e resolve o user_id em MEMÓRIA. Dedup por user_id (last-wins) — a constraint
     // unique_user_omie é UNIQUE(user_id), então 2 linhas com o mesmo user_id no mesmo upsert dariam

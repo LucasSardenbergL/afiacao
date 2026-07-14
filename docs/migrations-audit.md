@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **359** custom migrations totais
-- **1284** objetos esperados (criados por estas migrations)
+- **363** custom migrations totais
+- **1299** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 361
-  - `rls_policy`: 285
-  - `index`: 212
+  - `function`: 365
+  - `rls_policy`: 288
+  - `index`: 217
   - `cron_job`: 146
-  - `table`: 139
-  - `trigger`: 77
+  - `table`: 141
+  - `trigger`: 78
   - `view`: 60
   - `enum_value`: 4
 
@@ -3050,6 +3050,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.prime_uso_staff_update` | `prime_beneficio_uso` |
 | `rls_policy` | `public.prime_uso_cliente_read` | `prime_beneficio_uso` |
 
+### `20260711140000_omie_sync_identity_snapshot.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.omie_sync_identity_snapshot` | — |
+
 ### `20260711145000_v_grupo_contatos_fresca.sql`
 
 | Tipo | Objeto | Parent |
@@ -3077,6 +3083,35 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.carteira_membership_ledger` | — |
 | `index` | `public.idx_cml_identity_state` | `carteira_membership_ledger` |
 | `trigger` | `public.trg_omie_clientes_to_ledger` | `omie_clientes` |
+
+### `20260713010000_whatsapp_templates_hsm.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.whatsapp_templates` | — |
+| `table` | `public.whatsapp_template_sends` | — |
+| `index` | `public.idx_wts_conversation` | `whatsapp_template_sends` |
+| `index` | `public.idx_wts_wa_message_id` | `whatsapp_template_sends` |
+| `index` | `public.idx_wts_pendentes` | `whatsapp_template_sends` |
+| `rls_policy` | `public.wt_staff_read` | `whatsapp_templates` |
+| `rls_policy` | `public.wt_master_write` | `whatsapp_templates` |
+| `rls_policy` | `public.wts_staff_read` | `whatsapp_template_sends` |
+
+### `20260713020000_whatsapp_pendentes_rpc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.wa_msg_touch_last_outbound` | — |
+| `function` | `public.get_whatsapp_pendentes` | — |
+| `index` | `public.idx_wa_conv_pendentes` | `whatsapp_conversations` |
+| `trigger` | `public.trg_wa_msg_last_outbound` | `whatsapp_messages` |
+
+### `20260713030000_whatsapp_funil.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_whatsapp_funil` | — |
+| `index` | `public.idx_so_whatsapp_conv` | `sales_orders` |
 
 ## Próximos passos por status
 
