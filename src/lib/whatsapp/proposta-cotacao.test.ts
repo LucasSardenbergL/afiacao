@@ -3,6 +3,7 @@ import {
   avaliarCotacaoProposta,
   montarParamsProposta,
   formatarPrazoEntrega,
+  MAX_BODY_TEMPLATE_META,
   type CotacaoRow,
 } from './proposta-cotacao';
 import type { CestaItem, CestaResult } from './cesta-recompra';
@@ -25,16 +26,19 @@ function mkRow(sku: number, over: Partial<CotacaoRow> = {}): CotacaoRow {
   };
 }
 
+const CORPO_REF = 'Olá, {{1}}! Preparamos sua reposição para a entrega de {{2}} na sua região: {{3}}. Quer que a gente já separe? Responda SIM ou fale com sua vendedora. Para não receber mais, responda PARAR.';
+
 const baseInput = {
   crossSell: [] as CrossSellCand[],
-  nomesPorSku: { 1: 'LIXA A275', 2: 'THINNER 4403', 3: 'VERNIZ X' },
-  prazoEntrega: '2026-07-14',
+  nomesPorSku: { 1: 'LIXA A275', 2: 'THINNER 4403', 3: 'VERNIZ X' } as Record<number, string>,
+  prazoEntrega: { iso: '2026-07-14', label: 'amanhã (14/07)' },
   primeiroNome: 'João',
   telefone: '5537999990000',
+  template: { corpoReferencia: CORPO_REF, ativo: true },
 };
 
 describe('avaliarCotacaoProposta — travas fail-closed (money-path: ausente ≠ zero)', () => {
-  it('caminho feliz: linhas válidas → sem travas, total = Σ qtd×preço recotado', () => {
+  it('caminho feliz: linhas válidas → sem travas, total = Σ qtd×preço recotado, render presente', () => {
     const r = avaliarCotacaoProposta({
       ...baseInput,
       cesta: mkCesta([mkItem(1, 2)], [mkItem(2, 1)]),
@@ -46,9 +50,11 @@ describe('avaliarCotacaoProposta — travas fail-closed (money-path: ausente ≠
     expect(r.total).toBeCloseTo(2 * 10.5 + 1 * 45);
     // o preço da linha é o RECOTADO — nunca o ultimoPrecoRef (999) da cesta
     expect(r.linhas[0].preco).toBe(10.5);
+    // o render é a mensagem EXATA (corpo do template + params)
+    expect(r.render).toBe('Olá, João! Preparamos sua reposição para a entrega de amanhã (14/07) na sua região: 2× LIXA A275; 1× THINNER 4403. Quer que a gente já separe? Responda SIM ou fale com sua vendedora. Para não receber mais, responda PARAR.');
   });
 
-  it('linha sem preço (RPC devolve NULL) → trava a proposta INTEIRA, total null (nunca parcial)', () => {
+  it('linha sem preço (RPC devolve NULL) → trava a proposta INTEIRA, total/render null (nunca parcial)', () => {
     const r = avaliarCotacaoProposta({
       ...baseInput,
       cesta: mkCesta([mkItem(1, 2), mkItem(2, 1)]),
@@ -56,6 +62,7 @@ describe('avaliarCotacaoProposta — travas fail-closed (money-path: ausente ≠
     });
     expect(r.travada).toBe(true);
     expect(r.total).toBeNull();
+    expect(r.render).toBeNull();
     expect(r.linhas[0].motivoTrava).toBeNull();
     expect(r.linhas[1].motivoTrava).toBe('sem_preco');
   });
@@ -71,14 +78,29 @@ describe('avaliarCotacaoProposta — travas fail-closed (money-path: ausente ≠
     expect(r.total).toBeNull();
   });
 
-  it('estoque NULL = desconhecido (≠ zero) → sem_estoque_info', () => {
-    const r = avaliarCotacaoProposta({
-      ...baseInput,
-      cesta: mkCesta([mkItem(1, 2)]),
-      cotacao: [mkRow(1, { estoque: null })],
-    });
-    expect(r.linhas[0].motivoTrava).toBe('sem_estoque_info');
-    expect(r.travada).toBe(true);
+  it('qtd sugerida 0/NaN/negativa (histórico zerado) → qtd_invalida — nunca "0× PRODUTO" (Codex P0)', () => {
+    for (const qtd of [0, NaN, -2]) {
+      const r = avaliarCotacaoProposta({
+        ...baseInput,
+        cesta: mkCesta([mkItem(1, qtd)]),
+        cotacao: [mkRow(1)],
+      });
+      expect(r.linhas[0].motivoTrava).toBe('qtd_invalida');
+      expect(r.travada).toBe(true);
+      expect(r.total).toBeNull();
+    }
+  });
+
+  it('estoque NULL/NaN/Infinity = informação não-confiável (≠ zero) → sem_estoque_info (Codex P0)', () => {
+    for (const estoque of [null, NaN, Infinity]) {
+      const r = avaliarCotacaoProposta({
+        ...baseInput,
+        cesta: mkCesta([mkItem(1, 2)]),
+        cotacao: [mkRow(1, { estoque })],
+      });
+      expect(r.linhas[0].motivoTrava).toBe('sem_estoque_info');
+      expect(r.travada).toBe(true);
+    }
   });
 
   it('estoque menor que a quantidade sugerida → estoque_insuficiente', () => {
@@ -114,6 +136,46 @@ describe('avaliarCotacaoProposta — travas fail-closed (money-path: ausente ≠
     expect(r.total).toBeNull();
   });
 
+  it('template ilegível → template_indisponivel; inativo → template_inativo (sem "mensagem exata" não há envio — Codex P1)', () => {
+    const cesta = mkCesta([mkItem(1, 1)]);
+    const cotacao = [mkRow(1)];
+    const semTpl = avaliarCotacaoProposta({ ...baseInput, cesta, cotacao, template: null });
+    expect(semTpl.travasGerais).toContain('template_indisponivel');
+    expect(semTpl.travada).toBe(true);
+    expect(semTpl.render).toBeNull();
+    const inativo = avaliarCotacaoProposta({
+      ...baseInput, cesta, cotacao,
+      template: { corpoReferencia: CORPO_REF, ativo: false },
+    });
+    expect(inativo.travasGerais).toContain('template_inativo');
+    expect(inativo.travada).toBe(true);
+  });
+
+  it('corpo renderizado acima do limite Meta → mensagem_longa (trava explícita, sem truncar — Codex P2)', () => {
+    const nomeGigante = 'X'.repeat(MAX_BODY_TEMPLATE_META);
+    const r = avaliarCotacaoProposta({
+      ...baseInput,
+      nomesPorSku: { 1: nomeGigante },
+      cesta: mkCesta([mkItem(1, 1)]),
+      cotacao: [mkRow(1)],
+    });
+    expect(r.travasGerais).toContain('mensagem_longa');
+    expect(r.travada).toBe(true);
+    expect(r.render).toBeNull();
+    expect(r.total).toBeNull();
+  });
+
+  it('travasExtras do orquestrador (ex.: conversa de outro cliente) travam a proposta', () => {
+    const r = avaliarCotacaoProposta({
+      ...baseInput,
+      cesta: mkCesta([mkItem(1, 1)]),
+      cotacao: [mkRow(1)],
+      travasExtras: ['conversa_de_outro_cliente'],
+    });
+    expect(r.travasGerais).toContain('conversa_de_outro_cliente');
+    expect(r.travada).toBe(true);
+  });
+
   it('cesta vazia → trava geral cesta_vazia (nada a propor não é proposta)', () => {
     const r = avaliarCotacaoProposta({ ...baseInput, cesta: mkCesta([]), cotacao: [] });
     expect(r.travasGerais).toContain('cesta_vazia');
@@ -140,6 +202,8 @@ describe('avaliarCotacaoProposta — travas fail-closed (money-path: ausente ≠
     expect(r.crossSellRemovidos.map(x => x.motivo)).toEqual(['inativo', 'estoque_insuficiente', 'nao_encontrado']);
     // cross-sell não entra no total (sem qtd, sem preço citado)
     expect(r.total).toBeCloseTo(10);
+    // mas entra na mensagem como sugestão
+    expect(r.render).toContain('sugestão: OK CROSS');
   });
 
   it('só os secundários DENTRO da janela enviada (maxSecundarios) são cotados/travantes', () => {

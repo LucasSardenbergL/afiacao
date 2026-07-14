@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **363** custom migrations totais
-- **1299** objetos esperados (criados por estas migrations)
+- **364** custom migrations totais
+- **1301** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 365
+  - `function`: 366
   - `rls_policy`: 288
-  - `index`: 217
+  - `index`: 218
   - `cron_job`: 146
   - `table`: 141
   - `trigger`: 78
@@ -3112,6 +3112,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_whatsapp_proposta_cotacao` | — |
+
+### `20260713050000_whatsapp_proposta_cotacao_v2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_whatsapp_proposta_cotacao` | — |
+| `index` | `public.uq_so_whatsapp_proposta_dedupe` | `sales_orders` |
 
 ## Próximos passos por status
 

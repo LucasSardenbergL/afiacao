@@ -3,6 +3,7 @@ import { MessageSquareText, ChevronDown, ChevronUp, Loader2, Lock, Send, CheckCi
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useRouteContactList } from '@/queries/useRouteContactList';
 import type { RouteContactItem } from '@/queries/useRouteContactList';
 import { usePropostaPreview } from '@/queries/usePropostaPreview';
@@ -15,24 +16,28 @@ import { Button } from '@/components/ui/button';
 import {
   avaliarCotacaoProposta,
   formatarPrazoEntrega,
-  montarParamsProposta,
   type CotacaoProposta,
   type CotacaoRow,
   type MotivoTravaLinha,
   type MotivoTravaGeral,
 } from '@/lib/whatsapp/proposta-cotacao';
-import { renderTemplatePreview } from '@/lib/whatsapp/template-payload';
+import { waPhoneCandidates } from '@/lib/whatsapp/inbound';
 import { enviarProposta, TEMPLATE_PROPOSTA, type SupabaseWhatsappProposta } from '@/services/whatsappProposta';
 import { track } from '@/lib/analytics';
 
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
 function fmtBRL(v: number): string { return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
 
+/** Idade máxima da revisão: depois disso a vendedora RECOTA (preço/estoque/prazo podem
+ * ter mudado — "recotação no envio" não pode envelhecer indefinidamente; Codex P1). */
+const TTL_REVISAO_MS = 10 * 60_000;
+
 const MOTIVO_LINHA_LABEL: Record<MotivoTravaLinha, string> = {
   nao_encontrado: 'fora do catálogo da conta',
   inativo: 'SKU inativo',
   sem_unidade: 'sem unidade',
   sem_preco: 'sem preço válido',
+  qtd_invalida: 'quantidade sugerida inválida',
   sem_estoque_info: 'estoque desconhecido',
   estoque_insuficiente: 'estoque insuficiente',
 };
@@ -41,14 +46,27 @@ const MOTIVO_GERAL_LABEL: Record<MotivoTravaGeral, string> = {
   sem_nome: 'cliente sem nome para o template',
   sem_telefone: 'cliente sem telefone',
   cesta_vazia: 'cesta vazia',
+  template_indisponivel: 'template ilegível — sem a mensagem exata não há envio',
+  template_inativo: 'template aguardando aprovação da Meta',
+  mensagem_longa: 'mensagem acima do limite da Meta (1024) — reduza a cesta',
+  conversa_de_outro_cliente: 'o telefone pertence à conversa de OUTRO cliente',
 };
 
 type PrazoEntrega = { iso: string; label: string } | null;
 
+/** Snapshot IMUTÁVEL da revisão: o clique "Enviar" usa SÓ isto (nunca mistura com
+ * dados que sofreram refetch depois do cotar — Codex P1 "payload híbrido"). */
 interface Revisao {
   cotacao: CotacaoProposta;
-  render: string | null;     // mensagem EXATA que sai (null quando travada)
-  templateAtivo: boolean;
+  cotadaEm: number;
+  envio: {
+    customerUserId: string;
+    account: string;
+    phoneE164: string;
+    primeiroNome: string;
+    documento: string | null;
+    prazo: { iso: string; label: string };
+  } | null; // null quando travada (não há envio possível)
 }
 
 /** Recotação no CLIQUE (money-path): RPC determinística + travas puras + render fiel. */
@@ -62,15 +80,29 @@ async function cotarProposta(
     ...enviaveis.map(i => i.omie_codigo_produto),
     ...preview.crossSell.map(c => c.omie_codigo_produto),
   ])];
-  const [cotRes, tplRes] = await Promise.all([
+  const phoneKey = waPhoneCandidates(cliente.phone)[0] ?? null;
+  const [cotRes, tplRes, convRes] = await Promise.all([
     supabase.rpc('get_whatsapp_proposta_cotacao' as never, {
       p_customer_user_id: cliente.customerUserId,
       p_account: preview.account,
       p_skus: skus,
     } as never),
     supabase.from('whatsapp_templates').select('corpo_referencia, ativo').eq('nome', TEMPLATE_PROPOSTA).maybeSingle(),
+    // o elo não pode apontar conversa de OUTRO cliente (telefone compartilhado/reutilizado)
+    phoneKey
+      ? supabase.from('whatsapp_conversations').select('customer_user_id').eq('phone_key', phoneKey).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ]);
   if (cotRes.error) throw new Error(cotRes.error.message);
+
+  // template ilegível (erro OU ausente) → template:null → o avaliador TRAVA (Codex P1)
+  const tpl = !tplRes.error && tplRes.data
+    ? { corpoReferencia: (tplRes.data as { corpo_referencia: string }).corpo_referencia, ativo: (tplRes.data as { ativo: boolean }).ativo }
+    : null;
+
+  const donoConversa = (convRes.data as { customer_user_id: string | null } | null)?.customer_user_id ?? null;
+  const travasExtras: MotivoTravaGeral[] =
+    donoConversa && donoConversa !== cliente.customerUserId ? ['conversa_de_outro_cliente'] : [];
 
   const primeiroNome = preview.nomeCliente ? preview.nomeCliente.split(' ')[0] : null;
   const cotacao = avaliarCotacaoProposta({
@@ -79,19 +111,25 @@ async function cotarProposta(
     crossSell: preview.crossSell,
     cotacao: (cotRes.data ?? []) as unknown as CotacaoRow[],
     nomesPorSku: preview.nomesPorSku,
-    prazoEntrega: prazo?.iso ?? null,
+    prazoEntrega: prazo,
     primeiroNome,
     telefone: cliente.phone,
+    template: tpl,
+    travasExtras,
   });
 
-  const tpl = (tplRes.data ?? null) as { corpo_referencia: string; ativo: boolean } | null;
-  let render: string | null = null;
-  if (!cotacao.travada && tpl && primeiroNome && prazo) {
-    render = renderTemplatePreview(tpl.corpo_referencia, montarParamsProposta({
-      primeiroNome, prazoLabel: prazo.label, linhas: cotacao.linhas, crossSellOk: cotacao.crossSellOk,
-    }));
-  }
-  return { cotacao, render, templateAtivo: tpl?.ativo ?? false };
+  const envio = !cotacao.travada && prazo && primeiroNome && cliente.phone && preview.account
+    ? {
+        customerUserId: cliente.customerUserId,
+        account: preview.account,
+        phoneE164: cliente.phone,
+        primeiroNome,
+        documento: preview.documentoCliente,
+        prazo,
+      }
+    : null;
+
+  return { cotacao, cotadaEm: Date.now(), envio };
 }
 
 function PainelRevisao({ rev, onEnviar, enviando, jaEnviada }: {
@@ -140,16 +178,10 @@ function PainelRevisao({ rev, onEnviar, enviando, jaEnviada }: {
         </div>
       )}
 
-      {rev.render && (
+      {cotacao.render && (
         <div>
           <div className="text-[11px] text-muted-foreground mb-1">Mensagem exata (template Meta):</div>
-          <pre className="whitespace-pre-wrap text-xs bg-background border rounded-md p-2 font-sans">{rev.render}</pre>
-        </div>
-      )}
-
-      {!rev.templateAtivo && !cotacao.travada && (
-        <div className="text-xs text-status-warning">
-          Template aguardando aprovação da Meta (inativo) — o envio será recusado até o founder ativá-lo.
+          <pre className="whitespace-pre-wrap text-xs bg-background border rounded-md p-2 font-sans">{cotacao.render}</pre>
         </div>
       )}
 
@@ -170,6 +202,7 @@ function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: Pra
   const [aberto, setAberto] = useState(false);
   const { data, isLoading } = usePropostaPreview(cliente.customerUserId, { enabled: aberto });
   const { user } = useAuth();
+  const { isImpersonating } = useImpersonation();
   const [rev, setRev] = useState<Revisao | null>(null);
   const [cotando, setCotando] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -184,7 +217,7 @@ function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: Pra
       track('whatsapp.proposta_cotada', {
         travada: r.cotacao.travada,
         linhas: r.cotacao.linhas.length,
-        travas: r.cotacao.linhas.filter(l => l.motivoTrava).map(l => l.motivoTrava),
+        travas: [...r.cotacao.travasGerais, ...r.cotacao.linhas.filter(l => l.motivoTrava).map(l => l.motivoTrava)],
       });
     } catch (e) {
       toast.error('Recotação falhou: ' + (e instanceof Error ? e.message : 'erro desconhecido'));
@@ -194,30 +227,39 @@ function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: Pra
   };
 
   const enviar = async () => {
-    if (!data || !rev || !user || !prazo || !cliente.phone || !data.account) return;
-    const primeiroNome = data.nomeCliente ? data.nomeCliente.split(' ')[0] : null;
-    if (!primeiroNome) return;
+    if (!rev?.envio || !user) return;
+    // revisão envelheceu → recotar (preço/estoque/prazo podem ter mudado)
+    if (Date.now() - rev.cotadaEm > TTL_REVISAO_MS) {
+      setRev(null);
+      toast.warning('A cotação expirou (mais de 10 min) — recote antes de enviar.');
+      return;
+    }
     setEnviando(true);
     try {
       const r = await enviarProposta({
         supabase: supabase as unknown as SupabaseWhatsappProposta,
-        customerUserId: cliente.customerUserId,
-        account: data.account,
-        phoneE164: cliente.phone,
-        primeiroNome,
-        prazo,
+        customerUserId: rev.envio.customerUserId,
+        account: rev.envio.account,
+        phoneE164: rev.envio.phoneE164,
+        primeiroNome: rev.envio.primeiroNome,
+        prazo: rev.envio.prazo,
         cotacao: rev.cotacao,
         createdBy: user.id,
-        customerDocument: data.documentoCliente,
+        customerDocument: rev.envio.documento,
       });
       if (r.ok) {
         setEnviada(true);
         toast.success(r.jaEnviada ? 'Proposta já havia sido enviada para esta rota — registro conferido' : 'Proposta enviada ✓');
         if (r.orcamentoErro) toast.error('Orçamento não registrado: ' + r.orcamentoErro);
         track('whatsapp.proposta_enviada', { jaEnviada: r.jaEnviada, comOrcamento: !!r.orcamentoId });
+      } else if (r.motivo === 'envio_em_andamento') {
+        toast.warning(r.detalhe);
       } else {
         toast.error(r.motivo === 'travada' ? 'Proposta travada: ' + r.detalhe : 'Envio recusado: ' + r.detalhe);
       }
+    } catch (e) {
+      // inclui o write-guard da lente "Ver como" (rejeição vira aviso, não unhandled)
+      toast.error('Envio não realizado: ' + (e instanceof Error ? e.message : 'erro desconhecido'));
     } finally {
       setEnviando(false);
     }
@@ -258,11 +300,12 @@ function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: Pra
                 )}
 
                 <div className="mt-3 flex items-center gap-2">
-                  <Button size="sm" variant="secondary" onClick={cotar} disabled={cotando || !cliente.phone}>
+                  <Button size="sm" variant="secondary" onClick={cotar} disabled={cotando || !cliente.phone || isImpersonating}>
                     {cotando ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquareText className="w-4 h-4" />}
                     Cotar & revisar envio
                   </Button>
                   {!cliente.phone && <span className="text-[11px] text-status-warning">cliente sem telefone — envio indisponível</span>}
+                  {isImpersonating && <span className="text-[11px] text-muted-foreground">indisponível na lente "Ver como"</span>}
                 </div>
                 {rev && <PainelRevisao rev={rev} onEnviar={enviar} enviando={enviando} jaEnviada={enviada} />}
               </>

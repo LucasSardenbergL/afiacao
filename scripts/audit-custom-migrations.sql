@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 363
+-- Total de custom migrations: 364
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -402,7 +402,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260713010000', 'whatsapp_templates_hsm', '20260713010000_whatsapp_templates_hsm.sql'),
   ('20260713020000', 'whatsapp_pendentes_rpc', '20260713020000_whatsapp_pendentes_rpc.sql'),
   ('20260713030000', 'whatsapp_funil', '20260713030000_whatsapp_funil.sql'),
-  ('20260713040000', 'whatsapp_proposta_cotacao', '20260713040000_whatsapp_proposta_cotacao.sql')
+  ('20260713040000', 'whatsapp_proposta_cotacao', '20260713040000_whatsapp_proposta_cotacao.sql'),
+  ('20260713050000', 'whatsapp_proposta_cotacao_v2', '20260713050000_whatsapp_proposta_cotacao_v2.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1692,7 +1693,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('whatsapp_pendentes_rpc', 'trigger', 'public', 'trg_wa_msg_last_outbound', 'whatsapp_messages'),
   ('whatsapp_funil', 'function', 'public', 'get_whatsapp_funil', ''),
   ('whatsapp_funil', 'index', 'public', 'idx_so_whatsapp_conv', 'sales_orders'),
-  ('whatsapp_proposta_cotacao', 'function', 'public', 'get_whatsapp_proposta_cotacao', '')
+  ('whatsapp_proposta_cotacao', 'function', 'public', 'get_whatsapp_proposta_cotacao', ''),
+  ('whatsapp_proposta_cotacao_v2', 'function', 'public', 'get_whatsapp_proposta_cotacao', ''),
+  ('whatsapp_proposta_cotacao_v2', 'index', 'public', 'uq_so_whatsapp_proposta_dedupe', 'sales_orders')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3030,7 +3033,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('whatsapp_pendentes_rpc', 'trigger', 'public', 'trg_wa_msg_last_outbound', 'whatsapp_messages'),
   ('whatsapp_funil', 'function', 'public', 'get_whatsapp_funil', ''),
   ('whatsapp_funil', 'index', 'public', 'idx_so_whatsapp_conv', 'sales_orders'),
-  ('whatsapp_proposta_cotacao', 'function', 'public', 'get_whatsapp_proposta_cotacao', '')
+  ('whatsapp_proposta_cotacao', 'function', 'public', 'get_whatsapp_proposta_cotacao', ''),
+  ('whatsapp_proposta_cotacao_v2', 'function', 'public', 'get_whatsapp_proposta_cotacao', ''),
+  ('whatsapp_proposta_cotacao_v2', 'index', 'public', 'uq_so_whatsapp_proposta_dedupe', 'sales_orders')
 )
 SELECT
   e.migration,

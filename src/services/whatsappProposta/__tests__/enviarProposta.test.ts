@@ -21,21 +21,24 @@ function mkRow(sku: number, over: Partial<CotacaoRow> = {}): CotacaoRow {
   };
 }
 
+const CORPO_REF = 'Olá, {{1}}! Entrega de {{2}}: {{3}}. Responda SIM. Para não receber mais, responda PARAR.';
+
 const cotacaoOk = () => avaliarCotacaoProposta({
   cesta: mkCesta([mkItem(1, 2)]),
   crossSell: [],
   cotacao: [mkRow(1)],
   nomesPorSku: { 1: 'LIXA A275' },
-  prazoEntrega: '2026-07-14',
+  prazoEntrega: { iso: '2026-07-14', label: 'amanhã (14/07)' },
   primeiroNome: 'João',
   telefone: '5537999990000',
+  template: { corpoReferencia: CORPO_REF, ativo: true },
 });
 
 interface MockCfg {
   invoke?: { data: unknown; error: unknown };
-  orcamentoExistente?: boolean;
   sendRow?: { conversation_id: string } | null;
-  insertError?: { message: string } | null;
+  insertError?: { message: string; code?: string } | null;
+  orcamentoExistenteId?: string | null; // lido pelo maybeSingle de sales_orders (pós-23505)
 }
 interface Calls {
   invokes: Array<{ name: string; body: Record<string, unknown> }>;
@@ -64,12 +67,11 @@ function mkSb(cfg: MockCfg): { sb: SupabaseWhatsappProposta; calls: Calls } {
       const chain = {
         select: () => chain,
         eq: () => chain,
-        gte: () => chain,
-        limit: () => Promise.resolve({
-          data: cfg.orcamentoExistente ? [{ id: 'orc-velho' }] : [],
-          error: null,
-        }),
-        maybeSingle: () => Promise.resolve({ data: cfg.sendRow ?? null, error: null }),
+        maybeSingle: () => Promise.resolve(
+          table === 'whatsapp_template_sends'
+            ? { data: cfg.sendRow ?? null, error: null }
+            : { data: cfg.orcamentoExistenteId ? { id: cfg.orcamentoExistenteId } : null, error: null },
+        ),
         insert: (payload: Record<string, unknown>) => {
           calls.inserts.push({ table, payload });
           return chain;
@@ -102,7 +104,9 @@ describe('enviarProposta — envio SÓ pela edge + elo no orçamento (money-path
     const travada = avaliarCotacaoProposta({
       cesta: mkCesta([mkItem(1, 2)]), crossSell: [], nomesPorSku: {},
       cotacao: [mkRow(1, { preco: null, fonte_preco: null })],
-      prazoEntrega: '2026-07-14', primeiroNome: 'João', telefone: '5537999990000',
+      prazoEntrega: { iso: '2026-07-14', label: 'amanhã (14/07)' },
+      primeiroNome: 'João', telefone: '5537999990000',
+      template: { corpoReferencia: CORPO_REF, ativo: true },
     });
     const r = await enviarProposta({ ...baseParams(sb), cotacao: travada });
     expect(r.ok).toBe(false);
@@ -111,7 +115,17 @@ describe('enviarProposta — envio SÓ pela edge + elo no orçamento (money-path
     expect(calls.inserts).toHaveLength(0);
   });
 
-  it('caminho feliz: edge com dedupe/origem certos → orçamento com ELO + preços RECOTADOS', async () => {
+  it('defesa em profundidade: cotação adulterada (travada=false mas linha inválida) → NÃO envia', async () => {
+    const { sb, calls } = mkSb({});
+    const adulterada = cotacaoOk();
+    // simula corrupção/adulteração pós-avaliador (Codex P0: não confiar só em travada)
+    adulterada.linhas[0].qtd = 0;
+    const r = await enviarProposta({ ...baseParams(sb), cotacao: adulterada });
+    expect(r.ok).toBe(false);
+    expect(calls.invokes).toHaveLength(0);
+  });
+
+  it('caminho feliz: edge com dedupe/origem certos → orçamento com ELO + CHAVE + preços RECOTADOS', async () => {
     const { sb, calls } = mkSb({});
     const r = await enviarProposta(baseParams(sb));
     expect(r.ok).toBe(true);
@@ -129,6 +143,7 @@ describe('enviarProposta — envio SÓ pela edge + elo no orçamento (money-path
     const payload = calls.inserts[0].payload;
     expect(calls.inserts[0].table).toBe('sales_orders');
     expect(payload.whatsapp_conversation_id).toBe('conv-9'); // O ELO
+    expect(payload.whatsapp_proposta_dedupe).toBe(dedupeKeyProposta('cust-1', '2026-07-14')); // idempotência atômica
     expect(payload.status).toBe('orcamento');
     expect(payload.account).toBe('oben');
     expect(payload.customer_user_id).toBe('cust-1');
@@ -147,11 +162,24 @@ describe('enviarProposta — envio SÓ pela edge + elo no orçamento (money-path
     }
   });
 
-  it('409 duplicate + orçamento JÁ existe → não regrava (idempotente), jaEnviada=true', async () => {
+  it('INSERT do orçamento colide (23505 — outra aba ganhou) → reusa o existente, sem duplicar', async () => {
     const { sb, calls } = mkSb({
-      invoke: { data: null, error: edgeErrorCtx(409, { error: 'duplicate', detail: 'dedupe_key já usada' }) },
+      insertError: { message: 'duplicate key value violates unique constraint', code: '23505' },
+      orcamentoExistenteId: 'orc-da-outra-aba',
+    });
+    const r = await enviarProposta(baseParams(sb));
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.orcamentoId).toBe('orc-da-outra-aba');
+      expect(r.orcamentoErro).toBeNull();
+    }
+    expect(calls.inserts).toHaveLength(1); // tentou 1×; não re-insere
+  });
+
+  it('409 duplicate com send ENVIADO (sent) → não re-envia; grava orçamento pós-retry com nota explícita', async () => {
+    const { sb, calls } = mkSb({
+      invoke: { data: null, error: edgeErrorCtx(409, { error: 'duplicate', existing: { status: 'sent' } }) },
       sendRow: { conversation_id: 'conv-9' },
-      orcamentoExistente: true,
     });
     const r = await enviarProposta(baseParams(sb));
     expect(r.ok).toBe(true);
@@ -159,20 +187,20 @@ describe('enviarProposta — envio SÓ pela edge + elo no orçamento (money-path
       expect(r.jaEnviada).toBe(true);
       expect(r.conversationId).toBe('conv-9');
     }
-    expect(calls.inserts).toHaveLength(0);
-  });
-
-  it('409 duplicate SEM orçamento (envio anterior órfão) → grava o orçamento agora, sem re-enviar', async () => {
-    const { sb, calls } = mkSb({
-      invoke: { data: null, error: edgeErrorCtx(409, { error: 'duplicate' }) },
-      sendRow: { conversation_id: 'conv-9' },
-      orcamentoExistente: false,
-    });
-    const r = await enviarProposta(baseParams(sb));
-    expect(r.ok).toBe(true);
     expect(calls.invokes).toHaveLength(1); // 1 tentativa só — nunca re-envia
     expect(calls.inserts).toHaveLength(1);
     expect(calls.inserts[0].payload.whatsapp_conversation_id).toBe('conv-9');
+    expect(String(calls.inserts[0].payload.notes)).toContain('após reenvio');
+  });
+
+  it('409 duplicate com send QUEUED (outra aba em voo) → erro claro, nada gravado (Codex P1)', async () => {
+    const { sb, calls } = mkSb({
+      invoke: { data: null, error: edgeErrorCtx(409, { error: 'duplicate', existing: { status: 'queued' } }) },
+    });
+    const r = await enviarProposta(baseParams(sb));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.motivo).toBe('envio_em_andamento');
+    expect(calls.inserts).toHaveLength(0);
   });
 
   it('409 opt_out → erro claro, NADA gravado (LGPD enforced na edge)', async () => {
@@ -197,7 +225,7 @@ describe('enviarProposta — envio SÓ pela edge + elo no orçamento (money-path
     expect(calls.inserts).toHaveLength(0);
   });
 
-  it('mensagem enviada mas INSERT falha → ok com orcamentoErro (não mentir que o envio falhou)', async () => {
+  it('mensagem enviada mas INSERT falha (não-23505) → ok com orcamentoErro (não mentir que o envio falhou)', async () => {
     const { sb } = mkSb({ insertError: { message: 'RLS: nope' } });
     const r = await enviarProposta(baseParams(sb));
     expect(r.ok).toBe(true);

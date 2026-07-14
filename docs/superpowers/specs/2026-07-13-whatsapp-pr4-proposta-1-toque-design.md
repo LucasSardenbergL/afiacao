@@ -98,5 +98,34 @@ Conversão posterior (fluxo EXISTENTE `SalesQuotes.convertToOrder`) atualiza o M
   travada / não grava sem envio / 409 não duplica orçamento.
 - `heavy bun run typecheck` · `heavy bun lint` · `heavy bun run test`.
 - Codex adversarial no diff (background; cota esgotada → Caminho B registrado).
-- Pós-merge (founder): migration no SQL Editor → Publish. Edge NÃO muda. Envio real espera
-  Meta aprovar o template (`ativo=true`).
+- Pós-merge (founder): migrations (040000 + 050000, em ordem) no SQL Editor → Publish. Edge
+  NÃO muda. Envio real espera Meta aprovar o template (`ativo=true`).
+
+## Adendo — challenge adversarial do Codex (2026-07-13, gpt-5.6-sol xhigh; cru preservado na sessão)
+
+Parecer inicial: **NÃO APROVAR** (3 P0 · 7 P1 · 3 P2). Acatados e corrigidos NA HORA (migration
+`20260713050000_whatsapp_proposta_cotacao_v2.sql` — a 040000 é imutável por política do repo):
+
+- **P0-1** praticado atravessava CONTAS → `JOIN sales_orders` + `so.account = p_account`
+  (falsificação C: re-aplicar a 040000 deixa o assert cross-conta vermelho).
+- **P0-2** qtd 0/NaN e estoque NaN/Inf passavam → travas `qtd_invalida`/`sem_estoque_info`
+  endurecidas + total finito>0 + revalidação independente no service (defesa em profundidade).
+- **P0-3** idempotência do orçamento não segurava concorrência → `whatsapp_proposta_dedupe`
+  UNIQUE parcial em `sales_orders`; INSERT atômico (23505 → reusar). Mata 2-abas, convertido
+  e janela de 24h.
+- **P1-4** 409 com send `queued` não é "já enviada" → erro `envio_em_andamento`.
+- **P1-5 (mínimo)** orçamento pós-retry ganha nota explícita (a mensagem não cita preços).
+- **P1-6** janela cotar→enviar ilimitada → snapshot imutável da revisão + TTL 10min.
+- **P1-7 (mínimo)** conversa de OUTRO cliente no telefone → trava `conversa_de_outro_cliente`
+  (checagem client no cotar; binding server-side fica pro PR-6, edge intocada por decisão).
+- **P1-9** template ilegível não travava → `template_indisponivel`/`template_inativo` no
+  avaliador; o render nasce no helper puro (a UI mostra exatamente o que sai).
+- **P1-10** `created_at NULL` decidia por id → cronologia comercial `COALESCE(oi, so)`.
+- **P2-11** limite Meta → trava `mensagem_longa` (>1024, sem truncar). **P2-13** lente
+  "Ver como" → botões desabilitados + catch.
+
+**Débito declarado (v2/PR-6, decisão de escopo minha):** P1-8 fronteira server-side da
+proposta com carteira + `created_by=auth.uid()` (a superfície é a MESMA do `submitQuote`
+atual — não é regressão deste PR; o motor de disparo do PR-6 é o lugar natural);
+P1-5 completo (snapshot imutável da cotação indexado pelo dedupe); P1-7 completo (binding
+cliente↔conversa na edge); P2-12 (bigint>2^53 — códigos Omie atuais longe do limite).
