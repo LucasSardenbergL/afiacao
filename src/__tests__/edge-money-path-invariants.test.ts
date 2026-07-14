@@ -773,11 +773,18 @@ describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P
     ).toMatch(/from\(['"]omie_customer_account_map_fresco['"]\)[\s\S]{0,220}\.eq\(['"]account['"],\s*['"]oben['"]\)/);
   });
 
-  it('anti-reversão: o load de omie_clientes NÃO tira mais o vendedor (só a LISTA de user_id)', () => {
+  it('A LISTA de membros vem do carteira_membership_ledger (Fatia 1 — não mais do espelho)', () => {
     expect(
       rebuild,
-      'REGRESSÃO: o rebuild voltou a ler omie_codigo_vendedor do espelho poluído (mix de contas)',
-    ).not.toMatch(/from\(['"]omie_clientes['"]\)[\s\S]{0,80}select\(['"]user_id,\s*omie_codigo_vendedor['"]\)/);
+      'REVERSÃO Lovable? a LISTA de membros não vem mais do ledger — voltou ao espelho omie_clientes?',
+    ).toMatch(/from\(['"]carteira_membership_ledger['"]\)[\s\S]{0,80}select\(['"]user_id['"]\)/);
+  });
+
+  it('anti-reversão: o carteira-rebuild NÃO lê mais omie_clientes em lugar nenhum (nem lista, nem vendedor)', () => {
+    expect(
+      rebuild,
+      'REGRESSÃO: o carteira-rebuild voltou a ler o espelho poluído omie_clientes (lista ou vendedor)',
+    ).not.toMatch(/from\(['"]omie_clientes['"]\)/);
   });
 
   it('guards presentes E USADOS — não ignorados (wiring, P2 Codex)', () => {

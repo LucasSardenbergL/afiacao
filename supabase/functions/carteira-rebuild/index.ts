@@ -1,7 +1,8 @@
 // supabase/functions/carteira-rebuild/index.ts
-// Reconstrói carteira_assignments: LISTA de membros (omie_clientes) × VENDEDOR account-correto da proof
-// oben (omie_customer_account_map_fresco, P0-B-bis) × omie_vendedor_map. O vendedor NÃO vem mais do
-// espelho poluído — só a lista (preserva a herança B-lite + a cobertura). Órfão → Hunter. Idempotente.
+// Reconstrói carteira_assignments: LISTA de membros (carteira_membership_ledger) × VENDEDOR account-correto
+// da proof oben (omie_customer_account_map_fresco, P0-B-bis) × omie_vendedor_map. Nem a lista nem o vendedor
+// vêm mais do espelho poluído omie_clientes (Fatia 1). A lista (acumulador) preserva a herança B-lite + a
+// cobertura. Órfão → Hunter. Idempotente.
 //
 // Consolidação B-lite (spec 2026-06-13): consulta customer_canonical_alias (clones ATIVOS) e
 // canonicaliza clone→gêmeo — o gêmeo (cadastro Oben, com nome) herda o vendedor do clone e fica
@@ -239,26 +240,28 @@ Deno.serve(async (req) => {
     }
   }
 
-  // LISTA de membros = espelho omie_clientes (só user_id). Preserva a herança B-lite (gêmeo + clones no
-  // mesmo grupo) E a cobertura (não encolhe → sem stale). O VENDEDOR não vem mais daqui (poluído/NULL).
+  // LISTA de membros = carteira_membership_ledger (P0-B-bis Fatia 1). Acumulador durável (append-only:
+  // backfill + trigger AFTER INSERT no espelho; CASCADE só em delete de auth.users) → cobertura monotônica,
+  // nunca encolhe → sem stale. Preserva a herança B-lite (gêmeo + clones no mesmo grupo) E a cobertura. O
+  // VENDEDOR vem da proof oben (abaixo), não daqui. Sem filtro de identity_state (quarantine é da Fatia 2).
   // Paginação robusta a max_rows (#7 Codex): avança pela quantidade REAL retornada e para na página VAZIA
   // — não presume PAGE=1000 (se o servidor capar em 500, `< PAGE` truncaria na 1ª página). Guard anti-loop.
+  // user_id é PK NOT NULL no ledger → sem o `.not(is null)` do espelho.
   const PAGE = 1000;
   const MAX_ROWS = 500_000;
-  const espelhoIds: string[] = [];
+  const membroIds: string[] = [];
   for (let from = 0; ;) {
     const { data, error } = await supabase
-      .from('omie_clientes')
+      .from('carteira_membership_ledger')
       .select('user_id')
-      .not('user_id', 'is', null)
       .order('user_id', { ascending: true })
       .range(from, from + PAGE - 1);
-    if (error) { console.error('[carteira-rebuild] load omie_clientes error:', error.message); return fail(error.message); }
+    if (error) { console.error('[carteira-rebuild] load ledger error:', error.message); return fail(error.message); }
     const page = (data ?? []) as Array<{ user_id: string }>;
-    for (const r of page) espelhoIds.push(r.user_id);
+    for (const r of page) membroIds.push(r.user_id);
     if (page.length === 0) break;
     from += page.length;
-    if (from > MAX_ROWS) { console.error('[carteira-rebuild] omie_clientes excedeu MAX_ROWS'); return fail('paginacao omie_clientes excedeu limite'); }
+    if (from > MAX_ROWS) { console.error('[carteira-rebuild] ledger excedeu MAX_ROWS'); return fail('paginacao ledger excedeu limite'); }
   }
 
   // VENDEDOR account-correto = view FRESCA omie_customer_account_map_fresco (account='oben') → Map por
@@ -299,8 +302,8 @@ Deno.serve(async (req) => {
   const guardPre = avaliarGuardProof({ proofCrua, proofFresca: proofOben.size, comVendedor });
   if (guardPre.abortar) { console.error('[carteira-rebuild] guard proof oben:', guardPre.motivo); return fail(`guard proof oben: ${guardPre.motivo}`); }
 
-  // Merge: LISTA (espelho) × VENDEDOR (proof oben). Clone ausente da proof → null → herda do gêmeo no grupo.
-  const clientes = montarClientes(espelhoIds, proofOben);
+  // Merge: LISTA (ledger) × VENDEDOR (proof oben). Clone ausente da proof → null → herda do gêmeo no grupo.
+  const clientes = montarClientes(membroIds, proofOben);
 
   // Fornecedores fora da carteira (cliente_classificacao.excluir_da_carteira): entram com
   // eligible=false (combinado com o eligible-de-clone abaixo). FAIL-CLOSED: erro de leitura aborta
