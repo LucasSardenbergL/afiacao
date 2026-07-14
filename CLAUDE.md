@@ -48,6 +48,7 @@ Diário de PR/entregas: `docs/historico/` (`bugs-resolvidos.md`, `programas-vend
 - **Multi-sessão (worktrees paralelas):** coordene antes de tocar arquivo/função QUENTE — o "como" e o isolamento ficam na §Multi-sessão ao fim. → `worktrees.md`
 - **Teste SQL negativo** com `WHEN OTHERS THEN 'OK'` é teatro → capturar a SQLSTATE esperada + re-lançar o resto + **falsificar** (sabotar a migration e exigir vermelho); RLS prova-se sob `SET ROLE authenticated` + GUC (psql é superuser, bypassaria). → `money-path.md`
 - **Shell:** `cmd | tail` **ENGOLE o exit code** → `> log 2>&1; echo $?` quando o exit importa. Comandos pesados (test/build/typecheck/vitest) → prefixar **`heavy`** (semáforo de RAM da M2 8GB). → `worktrees.md`
+- **Manifesto de módulos:** arquivo NOVO em `src/` precisa de dono em `src/lib/modulos/manifesto.ts` (`codigo`/`testes`) — senão `manifesto.gate` falha no CI (órfão, falha SÓ no CI, não no typecheck/lint local). Teste que importa código de OUTRO módulo (ex.: `.test` sob glob de `plataforma` importando `loja-afiacao`) = vazamento de fronteira → co-localize fonte+teste no MESMO módulo, não registre na baseline. → `docs/historico/modularizacao.md`
 
 ## Merge (auto)
 
