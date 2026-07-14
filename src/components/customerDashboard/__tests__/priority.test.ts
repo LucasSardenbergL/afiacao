@@ -10,8 +10,9 @@ function makeTool(o: Partial<UserTool> = {}): UserTool {
     id: "t1",
     tool_category_id: "c1",
     next_sharpening_due: null,
+    last_sharpened_at: null,
     sharpening_interval_days: 30,
-    tool_categories: { name: "Faca" },
+    tool_categories: { name: "Faca", suggested_interval_days: null },
     ...o,
   };
 }

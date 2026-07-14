@@ -47,15 +47,16 @@ export function useUserToolsSummary(userId: string | undefined, enabled = true) 
     queryFn: async () => {
       const { data, error } = await supabase
         .from('user_tools')
-        .select(`id, tool_category_id, next_sharpening_due, sharpening_interval_days, tool_categories (name)`)
+        .select(`id, tool_category_id, next_sharpening_due, last_sharpened_at, sharpening_interval_days, tool_categories (name, suggested_interval_days)`)
         .eq('user_id', userId!);
       if (error) throw error;
       return (data ?? []) as unknown as {
         id: string;
         tool_category_id: string;
         next_sharpening_due: string | null;
+        last_sharpened_at: string | null;
         sharpening_interval_days: number | null;
-        tool_categories: { name: string };
+        tool_categories: { name: string; suggested_interval_days: number | null };
       }[];
     },
     enabled: !!userId && enabled,
