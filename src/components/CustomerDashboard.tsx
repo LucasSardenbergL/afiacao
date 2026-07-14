@@ -14,6 +14,7 @@ import { PriorityCard } from '@/components/customerDashboard/PriorityCard';
 import { GamificationMini } from '@/components/customerDashboard/GamificationMini';
 import { PedidosAndamento } from '@/components/customerDashboard/PedidosAndamento';
 import { FerramentasAtencao } from '@/components/customerDashboard/FerramentasAtencao';
+import { RecomendacoesCliente } from '@/components/customerDashboard/RecomendacoesCliente';
 import { AcoesRapidas } from '@/components/customerDashboard/AcoesRapidas';
 import type { Profile, Order, UserTool } from '@/components/customerDashboard/types';
 
@@ -87,6 +88,9 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
             <FerramentasAtencao urgentTools={urgentTools} navigate={navigate} />
           </motion.section>
         )}
+
+        {/* ─── Recomendações consultivas determinísticas (PR2 · benchmark #13) ─── */}
+        <RecomendacoesCliente userTools={userTools} navigate={navigate} />
 
         {/* ─── SEÇÃO 4: Ações Rápidas ─── */}
         <motion.section variants={fadeUp}>
