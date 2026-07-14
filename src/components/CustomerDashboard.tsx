@@ -16,6 +16,7 @@ import { PedidosAndamento } from '@/components/customerDashboard/PedidosAndament
 import { FerramentasAtencao } from '@/components/customerDashboard/FerramentasAtencao';
 import { RecomendacoesCliente } from '@/components/customerDashboard/RecomendacoesCliente';
 import { AcoesRapidas } from '@/components/customerDashboard/AcoesRapidas';
+import { CentralEntryCard } from '@/components/customerDashboard/CentralEntryCard';
 import type { Profile, Order, UserTool } from '@/components/customerDashboard/types';
 
 interface CustomerDashboardProps {
@@ -58,6 +59,11 @@ export function CustomerDashboard({ profile, pendingOrders, userTools, getGreeti
       >
         {/* Onboarding */}
         <OnboardingWizard hasTools={userTools.length > 0} hasOrders={pendingOrders.length > 0} />
+
+        {/* Central da Ferramenta — hub que reúne o ciclo da afiação (aposta central) */}
+        <motion.div variants={fadeUp}>
+          <CentralEntryCard navigate={navigate} />
+        </motion.div>
 
         {/* ─── SEÇÃO 1: Ação Recomendada ─── */}
         <motion.div variants={fadeUp}>
