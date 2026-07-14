@@ -26,7 +26,7 @@ PORT="${PGPORT_TEST:-5476}"
 SLUG="reposicao-publicar-run"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
-MIG="$REPO_ROOT/supabase/migrations/20260713040000_reposicao_pedidos_compra_run.sql"
+MIG="$REPO_ROOT/supabase/migrations/20260713193000_reposicao_pedidos_compra_run.sql"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
 CELLAR="$(brew --prefix "postgresql@${PGVER}")"
@@ -82,6 +82,18 @@ SQL
 P -q -f "$MIG"
 echo "migration aplicada: $(basename "$MIG")"
 
+# helper pub(): injeta o FENCING TOKEN (nextval) como a edge faz ANTES da coleta — para os cenários (contexto
+# postgres/superuser) em que a ORDEM entre runs não importa. late-bound (plpgsql) → segue a RPC ATUAL mesmo
+# após saboto_rpc. NÃO usar em contexto authenticated/service_role (o nextval esbarraria no REVOKE da sequence);
+# esses cenários (D1/D2/F3) chamam a RPC direta com p_seq literal. Bt/fencing usam seq explícito (a ordem importa).
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.pub(p_emp text, p_rid uuid, p_jde date, p_jate date, p_ids bigint[])
+RETURNS boolean LANGUAGE plpgsql AS $f$
+BEGIN
+  RETURN public.reposicao_publicar_run_completo(p_emp, p_rid, nextval('public.reposicao_run_seq'), p_jde, p_jate, p_ids);
+END $f$;
+SQL
+
 # ── ZONA 3: seeds (usuários de teste; POs são só valores de omie_codigo_pedido) ──
 P -q <<'SQL'
 INSERT INTO auth.users(id) VALUES
@@ -115,7 +127,7 @@ INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela
  (gen_random_uuid(),'OBEN','$JDE','$JATE',0,NULL,'ok', now()-interval '2h'),
  (gen_random_uuid(),'OBEN','$JDE','$JATE',0,NULL,'ok', now()-interval '1h');
 SQL
-V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', ARRAY[1073,1115]::bigint[]) IS NULL;" | tail -1)
+V=$(Pq -c "SELECT public.pub('OBEN', gen_random_uuid(), '$JDE','$JATE', ARRAY[1073,1115]::bigint[]) IS NULL;" | tail -1)
 eq "A1 bootstrap → volume_ok NULL" "$V" "t"
 
 # A2 — baseline 100 (mesma largura) + run 100 → true.
@@ -125,11 +137,11 @@ INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela
  (gen_random_uuid(),'COLACOR','$JDE','$JATE',100,true,'ok', now()-interval '2h'),
  (gen_random_uuid(),'COLACOR','$JDE','$JATE',100,true,'ok', now()-interval '1h');
 SQL
-V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('COLACOR', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,100) g));" | tail -1)
+V=$(Pq -c "SELECT public.pub('COLACOR', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,100) g));" | tail -1)
 eq "A2 baseline 100, run 100 → volume_ok true" "$V" "t"
 
 # A3 — volume baixo → false.
-V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('COLACOR', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,50) g));" | tail -1)
+V=$(Pq -c "SELECT public.pub('COLACOR', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,50) g));" | tail -1)
 eq "A3 baseline 100, run 50 → volume_ok false" "$V" "f"
 
 # A4 — exclui volume_ok=false do baseline (1 false(10)+1 true(100), run 60 → baseline 100 → false).
@@ -139,7 +151,7 @@ INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela
  (gen_random_uuid(),'OBEN','$JDE','$JATE', 10,false,'ok', now()-interval '2h'),
  (gen_random_uuid(),'OBEN','$JDE','$JATE',100,true, 'ok', now()-interval '1h');
 SQL
-V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,60) g));" | tail -1)
+V=$(Pq -c "SELECT public.pub('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,60) g));" | tail -1)
 eq "A4 baseline exclui volume_ok=false → false" "$V" "f"
 
 # Aw — anti-latch por LARGURA: um backfill ampliado (janela LARGA, 1000 IDs) NÃO entra no baseline do
@@ -151,7 +163,7 @@ DELETE FROM public.reposicao_po_last_seen;
 INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela_ate,ids_distintos,volume_ok,status,finalizado_em) VALUES
  (gen_random_uuid(),'OBEN','2023-01-01','2026-10-29',1000,NULL,'ok', now()-interval '1h');
 SQL
-V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,100) g)) IS NULL;" | tail -1)
+V=$(Pq -c "SELECT public.pub('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,100) g)) IS NULL;" | tail -1)
 eq "Aw backfill de largura diferente NÃO envenena o baseline do normal → NULL" "$V" "t"
 
 # Ai — anti-latch por IDADE: um run BOM porém VELHO (>10d) não conta no baseline.
@@ -161,7 +173,7 @@ DELETE FROM public.reposicao_po_last_seen;
 INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela_ate,ids_distintos,volume_ok,status,finalizado_em) VALUES
  (gen_random_uuid(),'OBEN','$JDE','$JATE',1000,true,'ok', now()-interval '20 days');
 SQL
-V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,100) g)) IS NULL;" | tail -1)
+V=$(Pq -c "SELECT public.pub('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,100) g)) IS NULL;" | tail -1)
 eq "Ai run bom porém >10d NÃO conta no baseline → NULL (quebra latch)" "$V" "t"
 
 # Az — EMPRESA VAZIA: um completo LIMPO com ids=[] (todos os POs sumiram do Omie) é VÁLIDO (volume_ok=true),
@@ -174,14 +186,14 @@ DELETE FROM public.reposicao_po_last_seen;
 INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela_ate,ids_distintos,volume_ok,status,finalizado_em) VALUES
  (gen_random_uuid(),'OBEN','$JDE','$JATE',100,true,'ok', now()-interval '1h');
 SQL
-VZ=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', ARRAY[]::bigint[]);" | tail -1)
+VZ=$(Pq -c "SELECT public.pub('OBEN', gen_random_uuid(), '$JDE','$JATE', ARRAY[]::bigint[]);" | tail -1)
 eq "Az empresa vazia (ids=0) em run LIMPO → volume_ok TRUE (marcador válido; não é truncamento)" "$VZ" "t"
 
 echo "── Bloco B: last_seen tabela DEDICADA — só run VÁLIDO + anti-regressão + atomicidade ──"
 # B1 — run VÁLIDO carimba os POs vistos em reposicao_po_last_seen; PO não-visto ausente.
 seed_oben 2
 RID=$(Pq -c "SELECT gen_random_uuid();" | tail -1)
-VOK=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN','$RID','$JDE','$JATE',ARRAY[1073,1115]::bigint[]);" | tail -1)
+VOK=$(Pq -c "SELECT public.pub('OBEN','$RID','$JDE','$JATE',ARRAY[1073,1115]::bigint[]);" | tail -1)
 eq "B1a run baseline 2 / ids 2 → volume_ok true" "$VOK" "t"
 SEEN=$(Pq -c "SELECT count(*) FROM public.reposicao_po_last_seen WHERE empresa='OBEN' AND omie_codigo_pedido IN (1073,1115) AND run_id='$RID';" | tail -1)
 eq "B1b run válido carimba os POs vistos (tabela dedicada)" "$SEEN" "2"
@@ -191,7 +203,7 @@ eq "B1c PO não-visto não entra na tabela de last_seen" "$UNSEEN" "0"
 # Bg — run INVÁLIDO (volume_ok=false) NÃO carimba.
 seed_oben 100
 RIDF=$(Pq -c "SELECT gen_random_uuid();" | tail -1)
-VOK=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN','$RIDF','$JDE','$JATE',ARRAY[1073]::bigint[]);" | tail -1)
+VOK=$(Pq -c "SELECT public.pub('OBEN','$RIDF','$JDE','$JATE',ARRAY[1073]::bigint[]);" | tail -1)
 eq "Bg baseline 100 / ids 1 → volume_ok false" "$VOK" "f"
 NC=$(Pq -c "SELECT count(*) FROM public.reposicao_po_last_seen WHERE omie_codigo_pedido=1073;" | tail -1)
 eq "Bg run truncado NÃO carimba last_seen" "$NC" "0"
@@ -201,7 +213,7 @@ P -q <<'SQL'
 DELETE FROM public.reposicao_pedidos_compra_run;
 DELETE FROM public.reposicao_po_last_seen;
 SQL
-Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', ARRAY[1073]::bigint[]);" >/dev/null
+Pq -c "SELECT public.pub('OBEN', gen_random_uuid(), '$JDE','$JATE', ARRAY[1073]::bigint[]);" >/dev/null
 NC=$(Pq -c "SELECT count(*) FROM public.reposicao_po_last_seen WHERE omie_codigo_pedido=1073;" | tail -1)
 eq "Bgn bootstrap (volume_ok=null) NÃO carimba last_seen" "$NC" "0"
 
@@ -211,7 +223,7 @@ seed_oben 2
 FUT_RID=$(Pq -c "SELECT gen_random_uuid();" | tail -1)
 P -q -c "INSERT INTO public.reposicao_po_last_seen (empresa,omie_codigo_pedido,run_id,visto_seq,visto_em) VALUES ('OBEN',1073,'$FUT_RID', 9999999, now());"
 NOW_RID=$(Pq -c "SELECT gen_random_uuid();" | tail -1)
-Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN','$NOW_RID','$JDE','$JATE',ARRAY[1073,1115]::bigint[]);" >/dev/null
+Pq -c "SELECT public.pub('OBEN','$NOW_RID','$JDE','$JATE',ARRAY[1073,1115]::bigint[]);" >/dev/null
 KEPT=$(Pq -c "SELECT run_id='$FUT_RID' FROM public.reposicao_po_last_seen WHERE omie_codigo_pedido=1073;" | tail -1)
 eq "Bt run atual (seq baixo) NÃO sobrescreve last_seen de visto_seq alto (anti-regressão por seq)" "$KEPT" "t"
 GOT=$(Pq -c "SELECT run_id='$NOW_RID' FROM public.reposicao_po_last_seen WHERE omie_codigo_pedido=1115;" | tail -1)
@@ -229,7 +241,7 @@ SQL
 NB=$(Pq -c "SELECT count(*) FROM public.reposicao_pedidos_compra_run;" | tail -1)
 R=$(P -tA 2>&1 <<'SQL'
 DO $$ BEGIN
-  PERFORM public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '2025-07-01','2026-10-29', ARRAY[1073,1115]::bigint[]);
+  PERFORM public.pub('OBEN', gen_random_uuid(), '2025-07-01','2026-10-29', ARRAY[1073,1115]::bigint[]);
   RAISE EXCEPTION 'RPC_NAO_FALHOU';
 EXCEPTION
   WHEN sqlstate 'ZZ999' THEN RAISE NOTICE 'SABOTA_ESPERADA';
@@ -245,9 +257,38 @@ DROP TRIGGER trg_sabota_ls ON public.reposicao_po_last_seen;
 DROP FUNCTION public.sabota_ls();
 SQL
 
+echo "── Bloco Bf: FENCING TOKEN — coletor que começa antes mas PUBLICA depois não suprime a prova (Codex v3.3 P1) ──"
+# Cenário: run A (fencing seq 500 = começou ANTES) vê [1073,1115]; #1073 é excluído no Omie; run B (seq 501 =
+# começou DEPOIS) vê só [1115]. B publica PRIMEIRO; A publica DEPOIS (paginação/429). baseline 1 → ambos válidos.
+# Com fencing (seq de INÍCIO): marcador = B (501, o mais novo); #1073 (visto só por A, seq 500 < 501) segue
+# CANDIDATO → a prova por ID do PR2 roda. Se a ordem fosse de PUBLICAÇÃO, A (publica depois) viraria o marcador
+# e #1073 seria SUPRIMIDO (o bug do Codex).
+seed_oben 1
+BA=$(Pq -c "SELECT gen_random_uuid();" | tail -1)
+BB=$(Pq -c "SELECT gen_random_uuid();" | tail -1)
+Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN','$BB', 501, '$JDE','$JATE', ARRAY[1115]::bigint[]);" >/dev/null
+Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN','$BA', 500, '$JDE','$JATE', ARRAY[1073,1115]::bigint[]);" >/dev/null
+MARK=$(Pq -c "SELECT run_id='$BB' FROM public.reposicao_pedidos_compra_run WHERE empresa='OBEN' AND volume_ok IS TRUE ORDER BY seq DESC LIMIT 1;" | tail -1)
+eq "Bf marcador = run que COMEÇOU por último (maior fencing seq), não o que publicou por último" "$MARK" "t"
+CAND=$(Pq -c "SELECT visto_seq < (SELECT max(seq) FROM public.reposicao_pedidos_compra_run WHERE empresa='OBEN' AND volume_ok IS TRUE) FROM public.reposicao_po_last_seen WHERE omie_codigo_pedido=1073;" | tail -1)
+eq "Bf #1073 (visto só pelo run que começou antes) segue CANDIDATO — fencing NÃO suprime a prova por ID (P1)" "$CAND" "t"
+S1115=$(Pq -c "SELECT visto_seq=501 FROM public.reposicao_po_last_seen WHERE omie_codigo_pedido=1115;" | tail -1)
+eq "Bf #1115 fica com o seq do run mais novo (501) — A (seq 500) publicou depois mas o guard NÃO sobrescreveu" "$S1115" "t"
+# Ff (dente do fencing) — se o token fosse de PUBLICAÇÃO, A (publica depois) teria seq MAIOR e viraria o marcador
+# → #1073 (agora com o maior seq) deixaria de ser candidato = SUPRIMIDO. Prova que a ordem de INÍCIO é o que salva.
+P -q -c "DELETE FROM public.reposicao_pedidos_compra_run; DELETE FROM public.reposicao_po_last_seen;" >/dev/null
+seed_oben 1
+FB=$(Pq -c "SELECT gen_random_uuid();" | tail -1)
+FA=$(Pq -c "SELECT gen_random_uuid();" | tail -1)
+Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN','$FB', 600, '$JDE','$JATE', ARRAY[1115]::bigint[]);" >/dev/null
+Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN','$FA', 601, '$JDE','$JATE', ARRAY[1073,1115]::bigint[]);" >/dev/null
+SUPR=$(Pq -c "SELECT visto_seq >= (SELECT max(seq) FROM public.reposicao_pedidos_compra_run WHERE empresa='OBEN' AND volume_ok IS TRUE) FROM public.reposicao_po_last_seen WHERE omie_codigo_pedido=1073;" | tail -1)
+case "$SUPR" in t) ok "Ff se o token fosse de PUBLICAÇÃO (A com seq maior) o #1073 vira o marcador e é SUPRIMIDO — Bf tem dente";; *) bad "Ff não vazou ($SUPR)";; esac
+P -q -c "DELETE FROM public.reposicao_pedidos_compra_run; DELETE FROM public.reposicao_po_last_seen;" >/dev/null
+
 echo "── Bloco C: lock EFETIVO — serializa a publicação POR EMPRESA em RUNTIME (não é só grep) ──"
 # C1 (estático): o advisory lock está na definição da RPC.
-HASLOCK=$(Pq -c "SELECT pg_get_functiondef('public.reposicao_publicar_run_completo(text,uuid,date,date,bigint[])'::regprocedure) LIKE '%pg_advisory_xact_lock%';" | tail -1)
+HASLOCK=$(Pq -c "SELECT pg_get_functiondef('public.reposicao_publicar_run_completo(text,uuid,bigint,date,date,bigint[])'::regprocedure) LIKE '%pg_advisory_xact_lock%';" | tail -1)
 eq "C1 RPC adquire advisory lock por empresa (presente na definição)" "$HASLOCK" "t"
 # C2 (EFEITO runtime — o que o grep do C1 NÃO prova; Codex acusou C1 de teatro): uma 2ª sessão SEGURA o lock
 # da OBEN por 6s; a RPC p/ OBEN trava na 1ª instrução (o lock) e o statement_timeout (1.5s ≪ 6s) a cancela
@@ -259,7 +300,7 @@ LOCKER=$!
 sleep 1.5  # deixa a 2ª sessão adquirir o lock antes de a RPC tentar
 RB=$(P -tA 2>&1 <<'SQL'
 SET statement_timeout='1500';
-SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), DATE '2025-07-01', DATE '2026-10-29', ARRAY[9099]::bigint[]);
+SELECT public.pub('OBEN', gen_random_uuid(), DATE '2025-07-01', DATE '2026-10-29', ARRAY[9099]::bigint[]);
 SQL
 ) || true
 case "$RB" in
@@ -272,7 +313,7 @@ esac
 # reprova (não basta "não deu timeout" — antes o ramo ok engolia erros).
 RC=$(P -tA 2>&1 <<'SQL'
 SET statement_timeout='1500';
-SELECT public.reposicao_publicar_run_completo('COLACOR', gen_random_uuid(), DATE '2025-07-01', DATE '2026-10-29', ARRAY[2099]::bigint[]);
+SELECT public.pub('COLACOR', gen_random_uuid(), DATE '2025-07-01', DATE '2026-10-29', ARRAY[2099]::bigint[]);
 SQL
 ) || true
 case "$RC" in
@@ -288,7 +329,7 @@ echo "── Bloco D: base NÃO-forjável / service_role-only (as 2 tabelas) ─
 R=$(P -tA 2>&1 <<'SQL'
 SET test.role='authenticated'; SET test.uid='44444444-4444-4444-4444-444444444444'; SET ROLE authenticated;
 DO $$ BEGIN
-  PERFORM public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '2025-07-01','2026-10-29', ARRAY[1073]::bigint[]);
+  PERFORM public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), 900001, '2025-07-01','2026-10-29', ARRAY[1073]::bigint[]);
   RAISE EXCEPTION 'INVOCOU';
 EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'RPC_DENY_OK'; WHEN OTHERS THEN RAISE; END $$;
 SQL
@@ -297,7 +338,7 @@ case "$R" in *RPC_DENY_OK*) ok "D1 authenticated não invoca a RPC (42501)";; *)
 
 # D2 — service_role invoca (efeito: marcador inserido).
 P -q -c "DELETE FROM public.reposicao_pedidos_compra_run;" >/dev/null
-Pq -c "SET ROLE service_role; SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '2025-07-01','2026-10-29', ARRAY[1073]::bigint[]);" >/dev/null
+Pq -c "SET ROLE service_role; SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), 900002, '2025-07-01','2026-10-29', ARRAY[1073]::bigint[]);" >/dev/null
 D2N=$(Pq -tAc "SELECT count(*) FROM public.reposicao_pedidos_compra_run;")
 eq "D2 service_role invoca a RPC (marcador inserido pelo definer)" "$D2N" "1"
 
@@ -351,9 +392,9 @@ saboto_rpc() { # $1 = sem_exclui_false | canario | sem_gate_volume | sem_guard_t
     sem_ids0_valido)    volok="IF v_base IS NULL OR v_base<=0 THEN v_ok:=NULL; ELSE v_ok:=(v_ids::numeric>=0.9*v_base); END IF;" ;;
   esac
   P -q <<SQL
-CREATE OR REPLACE FUNCTION public.reposicao_publicar_run_completo(p_empresa text,p_run_id uuid,p_janela_de date,p_janela_ate date,p_ids bigint[])
+CREATE OR REPLACE FUNCTION public.reposicao_publicar_run_completo(p_empresa text,p_run_id uuid,p_seq bigint,p_janela_de date,p_janela_ate date,p_ids bigint[])
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public','pg_temp' AS \$\$
-DECLARE v_empresa public.empresa_reposicao:=upper(btrim(p_empresa))::public.empresa_reposicao; v_ids int; v_base numeric; v_ok boolean; v_agora timestamptz; v_seq bigint;
+DECLARE v_empresa public.empresa_reposicao:=upper(btrim(p_empresa))::public.empresa_reposicao; v_ids int; v_base numeric; v_ok boolean; v_agora timestamptz;
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('reposicao_run:'||lower(btrim(p_empresa))));
   v_agora := clock_timestamp();
@@ -363,11 +404,11 @@ BEGIN
     WHERE empresa=v_empresa AND status='ok' $base_where
     ORDER BY seq DESC LIMIT 5) r;
   $volok
-  INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela_ate,ids_distintos,volume_ok,status,finalizado_em)
-    VALUES (p_run_id,v_empresa,p_janela_de,p_janela_ate,v_ids,v_ok,'ok',v_agora) RETURNING seq INTO v_seq;
+  INSERT INTO public.reposicao_pedidos_compra_run (run_id,seq,empresa,janela_de,janela_ate,ids_distintos,volume_ok,status,finalizado_em)
+    VALUES (p_run_id,p_seq,v_empresa,p_janela_de,p_janela_ate,v_ids,v_ok,'ok',v_agora);
   IF $update_gate THEN
     INSERT INTO public.reposicao_po_last_seen (empresa,omie_codigo_pedido,run_id,visto_seq,visto_em)
-    SELECT v_empresa,x,p_run_id,v_seq,v_agora FROM unnest(p_ids) x WHERE x>0
+    SELECT v_empresa,x,p_run_id,p_seq,v_agora FROM unnest(p_ids) x WHERE x>0
     ON CONFLICT (empresa,omie_codigo_pedido) DO UPDATE SET run_id=EXCLUDED.run_id, visto_seq=EXCLUDED.visto_seq, visto_em=EXCLUDED.visto_em $on_conflict_guard;
   END IF;
   RETURN v_ok; END \$\$;
@@ -382,7 +423,7 @@ INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela
  (gen_random_uuid(),'OBEN','$JDE','$JATE', 10,false,'ok', now()-interval '2h'),
  (gen_random_uuid(),'OBEN','$JDE','$JATE',100,true, 'ok', now()-interval '1h');
 SQL
-V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,60) g));" | tail -1)
+V=$(Pq -c "SELECT public.pub('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,60) g));" | tail -1)
 case "$V" in t) ok "F1 sem excluir volume_ok=false o A4 VAZA (true) — A4 tem dente";; *) bad "F1 não vazou ($V)";; esac
 P -q -f "$MIG" >/dev/null
 
@@ -394,7 +435,7 @@ INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela
  (gen_random_uuid(),'OBEN','$JDE','$JATE',0,NULL,'ok', now()-interval '2h'),
  (gen_random_uuid(),'OBEN','$JDE','$JATE',0,NULL,'ok', now()-interval '1h');
 SQL
-V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', ARRAY[1073,1115]::bigint[]);" | tail -1)
+V=$(Pq -c "SELECT public.pub('OBEN', gen_random_uuid(), '$JDE','$JATE', ARRAY[1073,1115]::bigint[]);" | tail -1)
 case "$V" in t) ok "F2 canário [0,0]→true reaparece — A1 tem dente";; *) bad "F2 não vazou ($V)";; esac
 P -q -f "$MIG" >/dev/null
 
@@ -405,7 +446,7 @@ DELETE FROM public.reposicao_pedidos_compra_run;
 INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela_ate,ids_distintos,volume_ok,status,finalizado_em) VALUES
  (gen_random_uuid(),'OBEN','2023-01-01','2026-10-29',1000,NULL,'ok', now()-interval '1h');
 SQL
-V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,100) g));" | tail -1)
+V=$(Pq -c "SELECT public.pub('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,100) g));" | tail -1)
 case "$V" in f) ok "Fw sem o filtro de largura o backfill ENVENENA (100 vira false) — Aw tem dente";; *) bad "Fw não vazou ($V; esperava false)";; esac
 P -q -f "$MIG" >/dev/null
 
@@ -418,7 +459,7 @@ DELETE FROM public.reposicao_pedidos_compra_run;
 INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela_ate,ids_distintos,volume_ok,status,finalizado_em) VALUES
  (gen_random_uuid(),'OBEN','$JDE','$JATE',1000,true,'ok', now()-interval '20 days');
 SQL
-V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,100) g));" | tail -1)
+V=$(Pq -c "SELECT public.pub('OBEN', gen_random_uuid(), '$JDE','$JATE', (SELECT array_agg(g)::bigint[] FROM generate_series(1,100) g));" | tail -1)
 case "$V" in f) ok "Fi sem o filtro de idade o bootstrap velho REENVENENA (100 vira false, latch) — Ai tem dente";; *) bad "Fi não vazou ($V; esperava false)";; esac
 P -q -f "$MIG" >/dev/null
 
@@ -426,7 +467,7 @@ P -q -f "$MIG" >/dev/null
 saboto_rpc sem_gate_volume
 seed_oben 100
 RIDF=$(Pq -c "SELECT gen_random_uuid();" | tail -1)
-Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN','$RIDF','$JDE','$JATE',ARRAY[1073]::bigint[]);" >/dev/null
+Pq -c "SELECT public.pub('OBEN','$RIDF','$JDE','$JATE',ARRAY[1073]::bigint[]);" >/dev/null
 LEAK=$(Pq -c "SELECT count(*) FROM public.reposicao_po_last_seen WHERE omie_codigo_pedido=1073 AND run_id='$RIDF';" | tail -1)
 case "$LEAK" in 1) ok "Fg sem o gate volume_ok o run truncado CARIMBA — Bg tem dente";; *) bad "Fg não vazou ($LEAK)";; esac
 P -q -f "$MIG" >/dev/null
@@ -438,7 +479,7 @@ FUT_RID=$(Pq -c "SELECT gen_random_uuid();" | tail -1)
 P -q -c "INSERT INTO public.reposicao_po_last_seen (empresa,omie_codigo_pedido,run_id,visto_seq,visto_em) VALUES ('OBEN',1073,'$FUT_RID', 9999999, now());"
 NOW_RID=$(Pq -c "SELECT gen_random_uuid();" | tail -1)
 # ids=2 (1073,1115) → baseline 2 → volume_ok=true → o UPDATE roda (o gate volume não barra) e exercita o guard
-Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN','$NOW_RID','$JDE','$JATE',ARRAY[1073,1115]::bigint[]);" >/dev/null
+Pq -c "SELECT public.pub('OBEN','$NOW_RID','$JDE','$JATE',ARRAY[1073,1115]::bigint[]);" >/dev/null
 LEAK=$(Pq -c "SELECT run_id='$NOW_RID' FROM public.reposicao_po_last_seen WHERE omie_codigo_pedido=1073;" | tail -1)
 case "$LEAK" in t) ok "Ft sem o guard o run atual SOBRESCREVE o visto_seq alto — Bt tem dente";; *) bad "Ft não vazou ($LEAK)";; esac
 P -q -f "$MIG" >/dev/null
@@ -452,16 +493,16 @@ DELETE FROM public.reposicao_po_last_seen;
 INSERT INTO public.reposicao_pedidos_compra_run (run_id,empresa,janela_de,janela_ate,ids_distintos,volume_ok,status,finalizado_em) VALUES
  (gen_random_uuid(),'OBEN','$JDE','$JATE',100,true,'ok', now()-interval '1h');
 SQL
-V=$(Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', ARRAY[]::bigint[]);" | tail -1)
+V=$(Pq -c "SELECT public.pub('OBEN', gen_random_uuid(), '$JDE','$JATE', ARRAY[]::bigint[]);" | tail -1)
 case "$V" in f) ok "Fz sem o ramo ids=0 a empresa vazia vira FALSE (starvation) — Az tem dente";; *) bad "Fz não vazou ($V; esperava false)";; esac
 P -q -f "$MIG" >/dev/null
 
 # F3 (P1#6) — GRANT a authenticated → D1 deixa de barrar.
-P -q -c "GRANT EXECUTE ON FUNCTION public.reposicao_publicar_run_completo(text,uuid,date,date,bigint[]) TO authenticated;" >/dev/null
+P -q -c "GRANT EXECUTE ON FUNCTION public.reposicao_publicar_run_completo(text,uuid,bigint,date,date,bigint[]) TO authenticated;" >/dev/null
 R=$(P -tA 2>&1 <<'SQL'
 SET test.role='authenticated'; SET test.uid='44444444-4444-4444-4444-444444444444'; SET ROLE authenticated;
 DO $$ BEGIN
-  PERFORM public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '2025-07-01','2026-10-29', ARRAY[1073]::bigint[]);
+  PERFORM public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), 900003, '2025-07-01','2026-10-29', ARRAY[1073]::bigint[]);
   RAISE NOTICE 'INVOCOU_VAZOU';
 EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'AINDA_BARRA'; WHEN OTHERS THEN RAISE NOTICE 'OUTRO'; END $$;
 SQL
@@ -493,31 +534,46 @@ P -q -f "$MIG" >/dev/null
 # D6/F5 (v3.2 P2#4) — o single-writer não pode falsificar só INSERT: um staff com GRANT UPDATE + policy
 # FOR UPDATE poderia COPIAR o run_id atual p/ um last_seen EXISTENTE (suprimindo a prova por ID de um PO
 # excluído — mais perigoso que um falso-ausente). D6: o REVOKE UPDATE da migration barra. F5: re-concede
-# UPDATE+policy → o forge via UPDATE passa → prova que o REVOKE UPDATE tem dente.
+# UPDATE+policy → o forge via UPDATE passa → prova que o REVOKE UPDATE tem dente. Usa o MASTER (staff): o WHERE
+# do UPDATE LÊ omie_codigo_pedido → aplica a policy de SELECT (só staff vê a linha); é o REVOKE/GRANT de UPDATE
+# que está sob teste, não a visibilidade (Codex v3.3 P2: o customer não veria a linha → UPDATE de 0 linhas).
 seed_oben 2
-Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN', gen_random_uuid(), '$JDE','$JATE', ARRAY[1073]::bigint[]);" >/dev/null
+LS_RID=$(Pq -c "SELECT gen_random_uuid();" | tail -1)
+# publica um run VÁLIDO (baseline 2 / ids 2 → true) que CRIA last_seen(1073) — o F5 antigo publicava ids=1 c/
+# baseline 2 → volume_ok=false → NENHUMA linha 1073 → o UPDATE rodava sobre 0 linhas e "passava" à toa (Codex
+# v3.3 P2: falso-verde). Agora a linha existe e é do run publicador.
+Pq -c "SELECT public.reposicao_publicar_run_completo('OBEN','$LS_RID', nextval('public.reposicao_run_seq'), '$JDE','$JATE', ARRAY[1073,1115]::bigint[]);" >/dev/null
+LS0=$(Pq -c "SELECT run_id='$LS_RID' FROM public.reposicao_po_last_seen WHERE empresa='OBEN' AND omie_codigo_pedido=1073;" | tail -1)
+eq "D6-pré last_seen(1073) existe e é do run válido (sem isto o teste de copy-run_id seria vacuum truth)" "$LS0" "t"
+# D6 — authenticated tenta COPIAR outro run_id: o REVOKE UPDATE barra E a linha fica INTACTA.
 R=$(P -tA 2>&1 <<'SQL'
-SET test.role='authenticated'; SET test.uid='44444444-4444-4444-4444-444444444444'; SET ROLE authenticated;
-DO $$ BEGIN
-  UPDATE public.reposicao_po_last_seen SET run_id=gen_random_uuid() WHERE omie_codigo_pedido=1073;
-  RAISE NOTICE 'UPDATE_VAZOU';
+SET test.role='authenticated'; SET test.uid='33333333-3333-3333-3333-333333333333'; SET ROLE authenticated;
+DO $$ DECLARE n int; BEGIN
+  UPDATE public.reposicao_po_last_seen SET run_id='00000000-0000-0000-0000-000000000000' WHERE omie_codigo_pedido=1073;
+  GET DIAGNOSTICS n = ROW_COUNT; RAISE NOTICE 'UPDATE_VAZOU_%', n;
 EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'UPDATE_BARRADO'; WHEN OTHERS THEN RAISE NOTICE 'OUTRO'; END $$;
 SQL
 )
 case "$R" in *UPDATE_BARRADO*) ok "D6 authenticated não FORJA via UPDATE (REVOKE UPDATE barra o copy-run_id — Codex v3.2 P2#4)";; *) bad "D6 — UPDATE não barrado: $R";; esac
+KEPT=$(Pq -c "SELECT run_id='$LS_RID' FROM public.reposicao_po_last_seen WHERE omie_codigo_pedido=1073;" | tail -1)
+eq "D6b a linha last_seen(1073) fica INTACTA após o UPDATE barrado (o run_id NÃO foi copiado)" "$KEPT" "t"
+# F5 — re-concede UPDATE+policy: o forge PASSA e o run_id REALMENTE muda (ROW_COUNT=1 + persistido) — D6 tem dente.
 P -q <<'SQL'
 GRANT UPDATE ON public.reposicao_po_last_seen TO authenticated;
 CREATE POLICY forja_ls_upd ON public.reposicao_po_last_seen FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
 SQL
 R=$(P -tA 2>&1 <<'SQL'
-SET test.role='authenticated'; SET test.uid='44444444-4444-4444-4444-444444444444'; SET ROLE authenticated;
-DO $$ BEGIN
-  UPDATE public.reposicao_po_last_seen SET run_id=gen_random_uuid() WHERE omie_codigo_pedido=1073;
-  RAISE NOTICE 'UPDATE_VAZOU';
+SET test.role='authenticated'; SET test.uid='33333333-3333-3333-3333-333333333333'; SET ROLE authenticated;
+DO $$ DECLARE n int; BEGIN
+  UPDATE public.reposicao_po_last_seen SET run_id='11111111-1111-1111-1111-111111111111' WHERE omie_codigo_pedido=1073;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n=1 THEN RAISE NOTICE 'UPDATE_VAZOU'; ELSE RAISE NOTICE 'ZERO_LINHAS'; END IF;
 EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'UPDATE_BARRADO'; WHEN OTHERS THEN RAISE NOTICE 'OUTRO'; END $$;
 SQL
 )
-case "$R" in *UPDATE_VAZOU*) ok "F5 com GRANT UPDATE+policy o forge via UPDATE passa — D6 tem dente";; *) bad "F5 não vazou ($R)";; esac
+case "$R" in *UPDATE_VAZOU*) ok "F5 com GRANT UPDATE+policy o forge via UPDATE muda o run_id (ROW_COUNT=1) — D6 tem dente";; *) bad "F5 não vazou ($R)";; esac
+CHG=$(Pq -c "SELECT run_id='11111111-1111-1111-1111-111111111111' FROM public.reposicao_po_last_seen WHERE omie_codigo_pedido=1073;" | tail -1)
+eq "F5b o run_id foi REALMENTE sobrescrito (copy-run_id funciona sem o REVOKE — dente comprovado)" "$CHG" "t"
 P -q <<'SQL'
 DROP POLICY IF EXISTS forja_ls_upd ON public.reposicao_po_last_seen;
 REVOKE UPDATE ON public.reposicao_po_last_seen FROM authenticated;

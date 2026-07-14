@@ -442,9 +442,23 @@ async function syncEmpresa(
       break;
     }
 
-    let pedidos: OmiePedido[] = resp?.pedidos_pesquisa ?? resp?.pedido_compra_produto ?? resp?.pedidoCompraProduto ?? [];
+    // Resposta 2xx SEM faultstring mas SEM nenhuma LISTA conhecida de pedidos = shape ANÔMALO (2xx não-JSON →
+    // {raw}, ou mudança de contrato do Omie). NÃO é "página vazia legítima" (o Omie sinaliza fim com HTTP 500 +
+    // faultstring "sem registros", tratado acima) → é TRUNCAMENTO: aborta e invalida a publicação (senão um run
+    // parcial vira "válido" e carimba last_seen incompleto — Codex v3.3 P2).
+    const temListaConhecida = !!resp &&
+      (Array.isArray(resp.pedidos_pesquisa) || Array.isArray(resp.pedido_compra_produto) ||
+        Array.isArray(resp.pedidoCompraProduto));
+    if (!temListaConhecida) {
+      console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} resposta anômala (sem lista de pedidos conhecida) — abort/invalida publicação`);
+      summary.erros++;
+      abortado = true;
+      break;
+    }
 
-    if (pedidos.length === 0) { // página vazia = FIM real (não nTotalPaginas)
+    let pedidos: OmiePedido[] = resp.pedidos_pesquisa ?? resp.pedido_compra_produto ?? resp.pedidoCompraProduto ?? [];
+
+    if (pedidos.length === 0) { // lista conhecida VAZIA = página vazia legítima = FIM real (não nTotalPaginas)
       fim = true;
       break;
     }
@@ -655,10 +669,28 @@ async function marcarCompletoOk(supabase: SupabaseClient, empresa: Empresa): Pro
 // avança só nesse sucesso — NÃO no volume_ok (true/false/null é decisão de reconciliação p/ o PR2, gravada no
 // marcador pela RPC): gatear a cadência por volume_ok travava o completo num run de baixo volume/vazio (Codex
 // v3.2 P1). Erro → não avança → o próximo ciclo re-tenta o completo (fail-closed real — Codex P1 #3).
+// Aloca o FENCING TOKEN (ordem de INÍCIO da coleta) ANTES da 1ª página. É a chave de ordem total da publicação:
+// um coletor que começa antes tem token MENOR mesmo publicando depois → não suprime o sinal de um mais novo
+// (Codex v3.3 P1). Falha na alocação → null → o run NÃO publica (fail-closed: sem token não há ordem confiável).
+async function alocarRunSeq(supabase: SupabaseClient, empresa: Empresa): Promise<number | null> {
+  try {
+    const { data, error } = await supabase.rpc("reposicao_alocar_run_seq");
+    if (error) throw error;
+    const seq = Number(data);
+    if (!Number.isSafeInteger(seq) || seq <= 0) throw new Error(`seq inválido: ${JSON.stringify(data)}`);
+    return seq;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[sync-pedidos] alocarRunSeq FALHOU empresa=${empresa}: ${msg} — run não publicará (fail-closed)`);
+    return null;
+  }
+}
+
 async function publicarRunCompleto(
   supabase: SupabaseClient,
   s: EmpresaSummary,
   idsVistos: Set<number>,
+  runSeq: number,
 ): Promise<boolean> {
   const runId = crypto.randomUUID();
   const ids = [...idsVistos];
@@ -666,6 +698,7 @@ async function publicarRunCompleto(
     const { data, error } = await supabase.rpc("reposicao_publicar_run_completo", {
       p_empresa: s.empresa,
       p_run_id: runId,
+      p_seq: runSeq, // fencing token de INÍCIO da coleta (alocado ANTES da 1ª página)
       p_janela_de: s.janela_de,
       p_janela_ate: s.janela_ate,
       p_ids: ids,
@@ -782,6 +815,12 @@ Deno.serve(async (req) => {
       const meta = { trigger: triggerLabel, modo, dias };
 
       const idsVistos = new Set<number>(); // POs vistos neste run (publicados 1× no fim do completo limpo)
+      // fencing token (ordem de INÍCIO da coleta) — alocado ANTES de syncEmpresa, só p/ o run que PODE publicar
+      // (completo não-filtrado). Ordena a publicação pela ordem de INÍCIO, não de fim (Codex v3.3 P1: coletor
+      // que começa antes mas publica depois NÃO pode suprimir um mais novo). null = não-publicável ou alocação
+      // falhou → não publica (fail-closed).
+      const podePublicarRun = modo === "completo" && !fornecedorCodigo;
+      const runSeq = podePublicarRun ? await alocarRunSeq(supabase, empresa) : null;
       if (gravaHeartbeat) await heartbeatRunning(supabase, empresa, meta);
       let s: EmpresaSummary;
       let errFatal: string | null = null;
@@ -811,8 +850,14 @@ Deno.serve(async (req) => {
         modo, varreduraCompleta: s.varredura_completa, fornecedorCodigo,
       });
       if (runLimpoCompleto) {
-        const publicou = await publicarRunCompleto(supabase, s, idsVistos);
-        if (publicou) await marcarCompletoOk(supabase, empresa);
+        if (runSeq == null) {
+          // run limpo mas sem fencing token (alocação falhou) → não publica nem avança a cadência: o próximo
+          // ciclo re-tenta o completo (fail-closed — sem token não há ordem confiável de publicação).
+          console.error(`[sync-pedidos] empresa=${empresa} run limpo mas SEM fencing token — não publica (cadência não avança)`);
+        } else {
+          const publicou = await publicarRunCompleto(supabase, s, idsVistos, runSeq);
+          if (publicou) await marcarCompletoOk(supabase, empresa);
+        }
       }
     }
     // Fail-CLOSED na coleta total: 0 sincronizados em TODAS as empresas + algum erro → 502 no caminho

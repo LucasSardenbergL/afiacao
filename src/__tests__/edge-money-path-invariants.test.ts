@@ -903,6 +903,34 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     ).toMatch(/Number\.isSafeInteger\(nCodPed\)/);
   });
 
+  it('v3.3 P1/fencing: a edge aloca o run_seq ANTES da coleta e passa p_seq à RPC (ordem de INÍCIO)', () => {
+    // fencing token (reposicao_alocar_run_seq) alocado ANTES de syncEmpresa e passado como p_seq: um coletor que
+    // começa antes mas publica depois recebe seq MENOR → NÃO suprime a prova por ID de um PO excluído (Codex v3.3 P1).
+    expect(src, 'a edge não aloca o fencing token (reposicao_alocar_run_seq)').toContain('reposicao_alocar_run_seq');
+    expect(src, 'a RPC de publicação não recebe p_seq (perdeu a ordem total de INÍCIO)').toMatch(/p_seq:\s*runSeq/);
+    const idxAloca = src.indexOf('await alocarRunSeq(');
+    const idxSync = src.indexOf('await syncEmpresa(');
+    expect(idxAloca, 'alocarRunSeq não é chamado com await').toBeGreaterThan(0);
+    expect(
+      idxAloca < idxSync,
+      'REGRESSÃO Codex v3.3 P1: o fencing token deve ser alocado ANTES de syncEmpresa (ordem de INÍCIO, não de publicação)',
+    ).toBe(true);
+  });
+
+  it('v3.3 P2: resposta 2xx sem lista de pedidos conhecida INVALIDA a varredura (não vira fim/run válido)', () => {
+    // resposta malformada ({raw}) não pode virar "página vazia = fim" (senão publica um run parcial como válido e
+    // carimba last_seen incompleto — Codex v3.3 P2). Deve setar abortado → varredura_completa=false, ANTES do fim-por-vazio.
+    expect(src, 'a edge não distingue lista conhecida de resposta anômala').toContain('temListaConhecida');
+    const idxCheck = src.indexOf('if (!temListaConhecida)'); // o abort da resposta anômala
+    const idxFim = src.indexOf('lista conhecida VAZIA');     // âncora única do fim-por-vazio (case-sensitive)
+    expect(idxCheck, 'o abort de resposta anômala (if (!temListaConhecida)) não encontrado').toBeGreaterThan(0);
+    expect(idxFim, 'o fim-por-vazio (lista conhecida VAZIA) não encontrado').toBeGreaterThan(0);
+    expect(
+      idxCheck < idxFim,
+      'REGRESSÃO Codex v3.3 P2: a checagem de lista conhecida deve vir ANTES do fim-por-vazio (senão {raw} vira [] → fim)',
+    ).toBe(true);
+  });
+
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
     expect(
       mirrorBlockNamed(src, 'reposicao publicacao-run'),
