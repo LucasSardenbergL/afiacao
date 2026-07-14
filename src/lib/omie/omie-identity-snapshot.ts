@@ -8,7 +8,7 @@ const OMIE_SNAPSHOT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 
 export function parseIdentitySnapshot(
   snap: unknown,
-): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string> } {
+): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string>; clientToUserMap: Map<string, string> } {
   if (!snap || typeof snap !== "object" || Array.isArray(snap)) {
     throw new Error("identity snapshot: resposta não é objeto (fail-closed)");
   }
@@ -37,6 +37,20 @@ export function parseIdentitySnapshot(
     }
     docToUserMap.set(doc, user);
   }
-  return { docToUserMap, ambiguousDocs };
+  // PR-2/A2: client_to_user (código Omie → user, prova positiva por documento no MESMO snapshot atômico).
+  // Validado por ÚLTIMO — os casos inválidos de doc_to_user/ambiguous_docs lançam antes, pelo motivo próprio.
+  // Mesmo rigor fail-closed: shape inválido (ausente/não-objeto/valor não-UUID) LANÇA, não degrada p/ Map(0).
+  const c2u = s.client_to_user;
+  if (!c2u || typeof c2u !== "object" || Array.isArray(c2u)) {
+    throw new Error("identity snapshot: client_to_user ausente ou não-objeto (fail-closed)");
+  }
+  const clientToUserMap = new Map<string, string>();
+  for (const [codigo, user] of Object.entries(c2u)) {
+    if (typeof user !== "string" || !OMIE_SNAPSHOT_UUID_RE.test(user)) {
+      throw new Error("identity snapshot: user_id não-UUID em client_to_user (fail-closed)");
+    }
+    clientToUserMap.set(codigo, user);
+  }
+  return { docToUserMap, ambiguousDocs, clientToUserMap };
 }
 // MIRROR-END

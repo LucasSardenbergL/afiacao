@@ -259,7 +259,7 @@ const OMIE_SNAPSHOT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 
 function parseIdentitySnapshot(
   snap: unknown,
-): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string> } {
+): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string>; clientToUserMap: Map<string, string> } {
   if (!snap || typeof snap !== "object" || Array.isArray(snap)) {
     throw new Error("identity snapshot: resposta não é objeto (fail-closed)");
   }
@@ -288,7 +288,21 @@ function parseIdentitySnapshot(
     }
     docToUserMap.set(doc, user);
   }
-  return { docToUserMap, ambiguousDocs };
+  // PR-2/A2: client_to_user (código Omie → user, prova positiva por documento no MESMO snapshot atômico).
+  // Validado por ÚLTIMO — os casos inválidos de doc_to_user/ambiguous_docs lançam antes, pelo motivo próprio.
+  // Mesmo rigor fail-closed: shape inválido (ausente/não-objeto/valor não-UUID) LANÇA, não degrada p/ Map(0).
+  const c2u = s.client_to_user;
+  if (!c2u || typeof c2u !== "object" || Array.isArray(c2u)) {
+    throw new Error("identity snapshot: client_to_user ausente ou não-objeto (fail-closed)");
+  }
+  const clientToUserMap = new Map<string, string>();
+  for (const [codigo, user] of Object.entries(c2u)) {
+    if (typeof user !== "string" || !OMIE_SNAPSHOT_UUID_RE.test(user)) {
+      throw new Error("identity snapshot: user_id não-UUID em client_to_user (fail-closed)");
+    }
+    clientToUserMap.set(codigo, user);
+  }
+  return { docToUserMap, ambiguousDocs, clientToUserMap };
 }
 // MIRROR-END
 
@@ -375,6 +389,7 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
       omie_codigo_cliente: number;
       omie_codigo_vendedor: number | null;
       source: string;
+      evidence_document_normalized: string;
       updated_at: string;
     }>();
     // P1b: acumula (doc, código) de TODO registro Omie com doc — inclusive os SEM profile casado — p/
@@ -425,6 +440,9 @@ async function syncCustomers(db: SupabaseClient, account: OmieAccount) {
             // migra p/ ler a proof (carteira-rebuild). Só a proof alimenta a carteira daqui pra frente.
             omie_codigo_vendedor: extrairCodigoVendedor(c),
             source: "document",
+            // PR-2/A2: provenance da prova positiva — o doc normalizado que casou (evidence). A RPC só
+            // inclui este vínculo em client_to_user se o doc ainda for único E apontar pro MESMO user.
+            evidence_document_normalized: doc,
             updated_at: new Date().toISOString(),
           });
         }
