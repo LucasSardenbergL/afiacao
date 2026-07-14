@@ -137,22 +137,20 @@ function parseBRDateOnly(dateBR?: string | null): string | null {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-// MIRROR-START reposicao publicacao-run  (espelho VERBATIM de src/lib/reposicao/publicacao-run.ts — paridade no CI)
+// MIRROR-START reposicao publicacao-run  (espelho de src/lib/reposicao/publicacao-run.ts — paridade textual normalizada no CI)
 interface RunPublicacaoStatus {
   modo: "incremental" | "completo";
-  erros: number;
   varreduraCompleta: boolean;
   fornecedorCodigo: number | undefined;
 }
-// Publica o run SÓ no fim de um completo LIMPO (erros=0 + viu o fim, sem abort/truncamento) e NÃO-filtrado
-// por fornecedor (Codex P1 #1/#2: run filtrado carimbaria um subset; run abortado publicaria sinal inválido).
+
+// Publica o run SÓ no fim de um completo cuja COLETA foi LIMPA (varreduraCompleta = viu o fim sem
+// abort/truncamento/ID-inseguro) e NÃO-filtrado por fornecedor (Codex P1 #1/#2: run filtrado carimbaria um
+// subset; run abortado publicaria sinal inválido). NÃO checa summary.erros: um erro de PERSISTÊNCIA do espelho
+// (upsert de linha torta) NÃO corrompe idsVistos (coletado ANTES do upsert), e erro de COLETA já vira
+// varreduraCompleta=false (abortado/!fim) — gatear por erros travava a publicação num upsert torto (Codex v3.2 P1).
 function devePublicarRun(s: RunPublicacaoStatus): boolean {
-  return !s.fornecedorCodigo && s.modo === "completo" && s.erros === 0 && s.varreduraCompleta;
-}
-// A cadência do completo (marcarCompletoOk) só avança quando a RPC devolve volume_ok=TRUE (run VÁLIDO).
-// Bootstrap (null) e truncado (false) NÃO avançam → o próximo ciclo re-tenta o completo (Codex P1 #3).
-function cadenciaPodeAvancar(volumeOk: boolean | null): boolean {
-  return volumeOk === true;
+  return !s.fornecedorCodigo && s.modo === "completo" && s.varreduraCompleta;
 }
 // MIRROR-END reposicao publicacao-run
 
@@ -653,13 +651,15 @@ async function marcarCompletoOk(supabase: SupabaseClient, empresa: Empresa): Pro
 // ===== Publicação diferida ATÔMICA (v3 — reconciliação PO excluído) =====
 // Grava o marcador de run E (se o run for VÁLIDO) carimba last_seen dos POs vistos numa RPC SQL única
 // (advisory lock por empresa + service_role-only). Chamada 1× no fim do completo LIMPO e NÃO-filtrado.
-// Retorna o volume_ok BRUTO da RPC: true=run válido, false=truncado, null=bootstrap; erro→null. O caller
-// só avança a cadência via cadenciaPodeAvancar (volume_ok===true) — Codex P1 #3 ("sem erro" != "válido").
+// Retorna TRUE se a PUBLICAÇÃO teve SUCESSO (marcador gravado), FALSE se a RPC deu erro. A CADÊNCIA do cron
+// avança só nesse sucesso — NÃO no volume_ok (true/false/null é decisão de reconciliação p/ o PR2, gravada no
+// marcador pela RPC): gatear a cadência por volume_ok travava o completo num run de baixo volume/vazio (Codex
+// v3.2 P1). Erro → não avança → o próximo ciclo re-tenta o completo (fail-closed real — Codex P1 #3).
 async function publicarRunCompleto(
   supabase: SupabaseClient,
   s: EmpresaSummary,
   idsVistos: Set<number>,
-): Promise<boolean | null> {
+): Promise<boolean> {
   const runId = crypto.randomUUID();
   const ids = [...idsVistos];
   try {
@@ -671,15 +671,15 @@ async function publicarRunCompleto(
       p_ids: ids,
     });
     if (error) throw error;
-    const volumeOk = (data ?? null) as boolean | null; // true=válido · false=truncado · null=bootstrap
+    const volumeOk = (data ?? null) as boolean | null; // gravado no marcador p/ o PR2 (NÃO gateia a cadência)
     console.log(
-      `[sync-pedidos] publicou run empresa=${s.empresa} run_id=${runId} ids=${ids.length} volume_ok=${JSON.stringify(volumeOk)} valido=${cadenciaPodeAvancar(volumeOk)}`,
+      `[sync-pedidos] publicou run empresa=${s.empresa} run_id=${runId} ids=${ids.length} volume_ok=${JSON.stringify(volumeOk)}`,
     );
-    return volumeOk;
+    return true; // publicou (marcador gravado) — a cadência pode avançar independentemente do volume_ok
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[sync-pedidos] publicarRunCompleto FALHOU empresa=${s.empresa}: ${msg} — cadência NÃO avança`);
-    return null; // erro = trata como não-válido (cadência não avança, igual bootstrap)
+    return false; // erro = publicação falhou → cadência não avança, o próximo ciclo re-tenta o completo
   }
 }
 
@@ -800,18 +800,19 @@ Deno.serve(async (req) => {
       }
       summary.push(s);
       if (gravaHeartbeat) await heartbeatFim(supabase, s, meta, errFatal);
-      // Publicação diferida (v3): SÓ no fim de um completo LIMPO e NÃO-filtrado (devePublicarRun cobre P1#1/#2:
-      //   !fornecedorCodigo + completo + erros=0 + varredura_completa). A RPC grava o marcador (sempre, p/ o
+      // Publicação diferida (v3): SÓ no fim de um completo cuja COLETA foi LIMPA e NÃO-filtrada (devePublicarRun:
+      //   !fornecedorCodigo + completo + varredura_completa — NÃO checa erros: erro de PERSISTÊNCIA do espelho não
+      //   corrompe idsVistos; erro de COLETA já zera varredura_completa). A RPC grava o marcador (sempre, p/ o
       //   baseline) e carimba last_seen SÓ se o run é VÁLIDO (volume_ok=true). A cadência do completo
       //   (marcarCompletoOk, marcador dedicado HEARTBEAT_FULL_ENTITY — imune a lost-update de incremental
-      //   concorrente) só avança se cadenciaPodeAvancar (volume_ok===true, Codex P1#3); bootstrap/truncado/
-      //   erro NÃO avançam → o próximo ciclo re-tenta o completo até conseguir um válido (fail-closed real).
+      //   concorrente) avança se a PUBLICAÇÃO teve SUCESSO (não pelo volume_ok — senão baixo volume/vazio travaria
+      //   o completo, Codex v3.2 P1); erro da RPC NÃO avança → o próximo ciclo re-tenta o completo (fail-closed).
       const runLimpoCompleto = devePublicarRun({
-        modo, erros: s.erros, varreduraCompleta: s.varredura_completa, fornecedorCodigo,
+        modo, varreduraCompleta: s.varredura_completa, fornecedorCodigo,
       });
       if (runLimpoCompleto) {
-        const volumeOk = await publicarRunCompleto(supabase, s, idsVistos);
-        if (cadenciaPodeAvancar(volumeOk)) await marcarCompletoOk(supabase, empresa);
+        const publicou = await publicarRunCompleto(supabase, s, idsVistos);
+        if (publicou) await marcarCompletoOk(supabase, empresa);
       }
     }
     // Fail-CLOSED na coleta total: 0 sincronizados em TODAS as empresas + algum erro → 502 no caminho

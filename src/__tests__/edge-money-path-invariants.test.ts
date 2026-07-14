@@ -859,16 +859,20 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     expect(helper).toContain('devePublicarRun');
   });
 
-  it('o helper puro existe e exporta devePublicarRun + cadenciaPodeAvancar', () => {
+  it('o helper puro existe e exporta devePublicarRun', () => {
     expect(helper).toMatch(/export function devePublicarRun/);
-    expect(helper).toMatch(/export function cadenciaPodeAvancar/);
   });
 
-  it('o edge USA os predicados: define o MIRROR E chama ambos (≥2 menções cada)', () => {
+  it('o edge USA o predicado: define o MIRROR de devePublicarRun E o chama (≥2 menções)', () => {
     expect(src, 'edge não define mais devePublicarRun espelhado').toMatch(/function devePublicarRun/);
-    expect(src, 'edge não define mais cadenciaPodeAvancar espelhado').toMatch(/function cadenciaPodeAvancar/);
     expect(count(src, 'devePublicarRun'), 'devePublicarRun deve ser DEFINIDO e CHAMADO (≥2)').toBeGreaterThanOrEqual(2);
-    expect(count(src, 'cadenciaPodeAvancar'), 'cadenciaPodeAvancar deve ser DEFINIDO e CHAMADO (≥2)').toBeGreaterThanOrEqual(2);
+  });
+
+  it('v3.2 P1#2: devePublicarRun NÃO gateia por summary.erros (erro de persistência do espelho não barra)', () => {
+    // erro de PERSISTÊNCIA (upsert torto) não corrompe idsVistos; erro de COLETA já vira varredura_completa=false.
+    const bloco = mirrorBlockNamed(src, 'reposicao publicacao-run');
+    expect(bloco, 'REGRESSÃO Codex v3.2 P1#2: devePublicarRun voltou a checar erros===0 (trava em upsert torto)')
+      .not.toMatch(/erros\s*===\s*0/);
   });
 
   it('P1#1/single-writer: a edge NÃO escreve o last_seen direto (só a RPC toca reposicao_po_last_seen)', () => {
@@ -879,11 +883,17 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     ).not.toMatch(/from\(["']reposicao_po_last_seen["']\)/);
   });
 
-  it('P1#3: a cadência (marcarCompletoOk) é gated por cadenciaPodeAvancar (não avança em run inválido)', () => {
+  it('P1#3/v3.2 P1: marcarCompletoOk é gated pelo SUCESSO da publicação (publicou), NÃO por volume_ok', () => {
+    // a cadência avança se a RPC publicou (marcador gravado) — não pelo volume_ok, senão um run de baixo
+    // volume/vazio travaria o completo permanentemente (Codex v3.2 P1). Erro da RPC → publicou=false → não avança.
     expect(
       src,
-      'REGRESSÃO P1#3: a cadência não é mais gated por cadenciaPodeAvancar (volta a avançar em run inválido)',
-    ).toMatch(/cadenciaPodeAvancar\([\s\S]{0,40}\)\)\s*await marcarCompletoOk/);
+      'REGRESSÃO P1#3: a cadência não é mais gated pelo sucesso da publicação',
+    ).toMatch(/if\s*\(publicou\)\s*await marcarCompletoOk/);
+    expect(
+      src,
+      'REGRESSÃO Codex v3.2 P1: a cadência voltou a depender de volume_ok (trava o completo em baixo volume)',
+    ).not.toMatch(/cadenciaPodeAvancar/);
   });
 
   it('coleta de IDs é fail-closed p/ precisão (Number.isSafeInteger, não isFinite — Codex bug 2^53)', () => {
