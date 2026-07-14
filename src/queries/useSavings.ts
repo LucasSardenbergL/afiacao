@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useDeliveredOrders12m } from './useOrders';
-import { computeSavings, type SavingsSummary } from '@/lib/savings';
+import { computeSavings, type SavingsSummary } from '@/lib/afiacao/savings';
 
 /**
  * Resumo de economia da afiação (ROI). Consome `useDeliveredOrders12m` e aplica

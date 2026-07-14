@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSavingsSummary } from '@/queries/useSavings';
-import { AVG_NEW_TOOL_COST } from '@/lib/savings';
+import { AVG_NEW_TOOL_COST } from '@/lib/afiacao/savings';
 import { TrendingUp, DollarSign, Wrench, Leaf, PiggyBank } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, LineChart, Line } from 'recharts';
