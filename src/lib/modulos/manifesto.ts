@@ -189,6 +189,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useReguaPreco.test.tsx",
       "src/hooks/__tests__/useReguaPreco360.test.tsx",
       "src/hooks/__tests__/useUnifiedOrder.accountGuard.test.ts",
+      "src/hooks/__tests__/leitoresObenProof.fatia3.test.ts",
       "src/pages/__tests__/SalesQuotes.accountGuard.test.tsx",
       "src/pages/__tests__/SalesQuotes.priceGuard.test.tsx",
       "src/pages/__tests__/displayReaders.viewFresca.test.ts",
