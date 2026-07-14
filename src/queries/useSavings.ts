@@ -10,8 +10,10 @@ import { computeSavings, type SavingsSummary } from '@/lib/savings';
 export function useSavingsSummary(userId: string | undefined): {
   summary: SavingsSummary;
   isPending: boolean;
+  isLoading: boolean;
+  isError: boolean;
 } {
-  const { data: orders = [], isPending } = useDeliveredOrders12m(userId);
+  const { data: orders = [], isPending, isLoading, isError } = useDeliveredOrders12m(userId);
   const summary = useMemo(() => computeSavings(orders), [orders]);
-  return { summary, isPending };
+  return { summary, isPending, isLoading, isError };
 }
