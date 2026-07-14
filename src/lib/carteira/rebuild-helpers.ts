@@ -164,9 +164,9 @@ export function computeCarteira(
   return { assignments, conflicts, orphanCount, chainViolations };
 }
 
-// ── P0-B-bis ponta 2/2: o load do carteira-rebuild lê o vendedor da PROOF oben (não do espelho poluído).
-// A LISTA de membros continua vindo do espelho (preserva a herança B-lite: gêmeo + clones no mesmo grupo);
-// só a FONTE do vendedor muda, via lookup em omie_customer_account_map_fresco(account='oben'). As 4 funções
+// ── P0-B-bis: o carteira-rebuild lê a LISTA de membros do carteira_membership_ledger (Fatia 1, acumulador)
+// e o VENDEDOR da PROOF oben omie_customer_account_map_fresco(account='oben') — nem lista nem vendedor vêm
+// mais do espelho poluído omie_clientes. A lista preserva a herança B-lite (gêmeo + clones). As 4 funções
 // são ESPELHADAS verbatim no edge (Deno não importa de src/) — paridade textual no canário edge-money-path.
 // Guards fail-closed endurecidos após o Codex challenge (8 P1):
 //   • coerceCodigoVendedor: SÓ decimal canônico (regex ^[0-9]+$ + BigInt) antes de virar number — rejeita
