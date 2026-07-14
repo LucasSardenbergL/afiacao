@@ -77,6 +77,20 @@ describe('parseIdentitySnapshot — client_to_user (PR-2/A2, prova positiva codi
     expect(() => parseIdentitySnapshot({ doc_to_user: {}, ambiguous_docs: [], client_to_user: { '1001': 'nope' } })).toThrow(/não-UUID em client_to_user/);
   });
 
+  // ── P3 hardening (Codex xhigh 2026-07-12): chave não-canônica viraria ALIAS por Number() a jusante ──
+  it('chave "1e3" (notação científica) em client_to_user → LANÇA (Number("1e3")===1000 aliasaria o cliente 1000)', () => {
+    expect(() => parseIdentitySnapshot({ doc_to_user: {}, ambiguous_docs: [], client_to_user: { '1e3': U1 } })).toThrow(/não-canônica/);
+  });
+
+  it('chave "01000" (zero à esquerda) → LANÇA (bigint::text nunca produz; fail-closed)', () => {
+    expect(() => parseIdentitySnapshot({ doc_to_user: {}, ambiguous_docs: [], client_to_user: { '01000': U1 } })).toThrow(/não-canônica/);
+  });
+
+  it('chave canônica "1001" segue aceita (não é falso-positivo do guard)', () => {
+    const { clientToUserMap } = parseIdentitySnapshot({ doc_to_user: {}, ambiguous_docs: [], client_to_user: { '1001': U1 } });
+    expect(clientToUserMap.get('1001')).toBe(U1);
+  });
+
   it('snapshot completo → os 3 mapas coerentes', () => {
     const { docToUserMap, ambiguousDocs, clientToUserMap } = parseIdentitySnapshot({
       doc_to_user: { '11111111111': U1 },

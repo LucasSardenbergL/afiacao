@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ╔════════════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA PG17 — RPC omie_sync_identity_snapshot (PR-1/A1 + PR-2/A2)              ║
-# ║  Migrations: 20260711140000_omie_sync_identity_snapshot.sql (PR-1)            ║
-# ║             20260713140000_omie_identity_snapshot_client_to_user.sql (PR-2)   ║
+# ║  Migrations (deploy): 20260711140000 → 20260713140000 → 20260713150000         ║
 # ║  Rode:  bash db/test-omie-identidade-snapshot.sh > /tmp/t.log 2>&1; echo $?    ║
 # ║                                                                                ║
-# ║  PR-1 (doc_to_user): doc único → prova positiva; doc 2+ users → FORA + em      ║
-# ║  ambiguous_docs (fail-closed); doc<11/nulo/só-pontuação excluídos.             ║
-# ║  PR-2 (client_to_user): prova POSITIVA codigo→user SÓ com account=p_account +  ║
-# ║  source=document + evidence NOT NULL + doc único (n_users=1) + evidence ainda  ║
-# ║  aponta pro MESMO user (da.user_id=m.user_id) + frescor 7d. Falsifica: remove  ║
-# ║  n_users=1 → doc ambíguo vaza (B2 vermelho); remove user_id-match → doc de     ║
-# ║  OUTRO user vaza (B6 vermelho, cenário A2). anon/authenticated barrados (42501).║
-# ╚══════════════════════════════════════════════════════════════════════════════╝
+# ║  PR-1 (doc_to_user): doc único → positiva; 2+ users → FORA + ambiguous_docs    ║
+# ║  (fail-closed); doc<11 / nulo / só-pontuação excluídos.                        ║
+# ║  PR-2 (client_to_user): prova POSITIVA codigo→user por conta —                 ║
+# ║  (a) document: evidence NOT NULL + doc único (n_users=1) + aponta pro MESMO    ║
+# ║  user + frescor 7d;  (b) manual: autoridade humana durável (sem TTL).          ║
+# ║  Falsifica: n_users=1 off → ambíguo vaza (B2); user_id-match off → OUTRO       ║
+# ║  user (B6, cenário A2); ramo manual off → override some (B9); 7d→7.5d →        ║
+# ║  vínculo a 7.25d vaza (B10).  anon/authenticated barrados (42501).             ║
+# ╚════════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
 # ── arranque PG17 descartável (contorna keg-only do brew) ──
@@ -76,11 +76,13 @@ CREATE TABLE public.omie_customer_account_map (
 );
 SQL
 
-# ══ ZONA 2 — aplicar as migrations REAIS na ORDEM de deploy (PR-1 → PR-2) ══
+# ══ ZONA 2 — aplicar as migrations REAIS na ORDEM de deploy (PR-1 → PR-2 base → PR-2 correção manual) ══
 MIG1="$REPO_ROOT/supabase/migrations/20260711140000_omie_sync_identity_snapshot.sql"
 MIG2="$REPO_ROOT/supabase/migrations/20260713140000_omie_identity_snapshot_client_to_user.sql"
+MIG3="$REPO_ROOT/supabase/migrations/20260713150000_omie_client_to_user_manual_authority.sql"
 P -q -f "$MIG1"; echo "migration aplicada: $(basename "$MIG1")"
 P -q -f "$MIG2"; echo "migration aplicada: $(basename "$MIG2")"
+P -q -f "$MIG3"; echo "migration aplicada: $(basename "$MIG3")"
 # a coluna tem de existir após o ALTER da PR-2 (prova o passo 1 do design §4.2)
 eq "Z2 coluna evidence_document_normalized criada pela migration" \
    "$(Pq -c "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='omie_customer_account_map' AND column_name='evidence_document_normalized';")" "1"
@@ -95,7 +97,9 @@ INSERT INTO auth.users(id) VALUES
   ('00000000-0000-0000-0000-000000000005'),('00000000-0000-0000-0000-000000000006'),
   ('00000000-0000-0000-0000-000000000007'),('00000000-0000-0000-0000-000000000008'),
   ('00000000-0000-0000-0000-000000000009'),('00000000-0000-0000-0000-000000000010'),
-  ('00000000-0000-0000-0000-000000000011'),('00000000-0000-0000-0000-000000000012') ON CONFLICT DO NOTHING;
+  ('00000000-0000-0000-0000-000000000011'),('00000000-0000-0000-0000-000000000012'),
+  ('00000000-0000-0000-0000-000000000013'),('00000000-0000-0000-0000-000000000014'),
+  ('00000000-0000-0000-0000-000000000015'),('00000000-0000-0000-0000-000000000016') ON CONFLICT DO NOTHING;
 INSERT INTO public.profiles(user_id, document) VALUES
   ('00000000-0000-0000-0000-000000000001', '11111111111'),      -- único → base do B1 positivo
   ('00000000-0000-0000-0000-000000000002', '222.222.222-22'),   -- ambíguo (mascarado), colide c/ o 3
@@ -108,7 +112,11 @@ INSERT INTO public.profiles(user_id, document) VALUES
   ('00000000-0000-0000-0000-000000000009', '55555555555'),      -- único → B4 (source=code)
   ('00000000-0000-0000-0000-000000000010', '66666666666'),      -- único → B5 (conta colacor)
   ('00000000-0000-0000-0000-000000000011', '77777777777'),      -- único → B6 (dono do vínculo, evidence de OUTRO)
-  ('00000000-0000-0000-0000-000000000012', '88888888888');      -- único → B7 (stale)
+  ('00000000-0000-0000-0000-000000000012', '88888888888'),      -- único → B7 (stale)
+  ('00000000-0000-0000-0000-000000000013', '99999999999'),      -- único → dono do vínculo MANUAL (B9)
+  ('00000000-0000-0000-0000-000000000014', '10101010101'),      -- único → fronteira frescor FORA 7.25d (B10)
+  ('00000000-0000-0000-0000-000000000015', '12121212121');      -- único → fronteira frescor DENTRO 6.75d (B11)
+  -- user16 SEM profile de propósito → evidence sem profile correspondente (B12)
 -- proof-table: os 7 cenários de client_to_user (evidence_document_normalized existe pós-ZONA 2)
 INSERT INTO public.omie_customer_account_map (user_id, account, omie_codigo_cliente, source, evidence_document_normalized, updated_at) VALUES
   ('00000000-0000-0000-0000-000000000001','oben',    1001,'document','11111111111', now()),          -- B1 doc único → MAPEIA
@@ -117,7 +125,12 @@ INSERT INTO public.omie_customer_account_map (user_id, account, omie_codigo_clie
   ('00000000-0000-0000-0000-000000000009','oben',    1004,'code',    '55555555555', now()),          -- B4 source=code → FORA
   ('00000000-0000-0000-0000-000000000010','colacor', 1005,'document','66666666666', now()),          -- B5 conta colacor (dentro só p/ colacor)
   ('00000000-0000-0000-0000-000000000011','oben',    1006,'document','11111111111', now()),          -- B6 evidence do user1, vínculo do user11 → FORA (A2)
-  ('00000000-0000-0000-0000-000000000012','oben',    1007,'document','88888888888', now() - interval '8 days'); -- B7 stale → FORA
+  ('00000000-0000-0000-0000-000000000012','oben',    1007,'document','88888888888', now() - interval '8 days'),       -- B7 stale → FORA
+  -- PR-2 correção pós-Codex (P1-b + fronteira):
+  ('00000000-0000-0000-0000-000000000013','oben',    1008,'manual',  '11111111111', now()),          -- B9 MANUAL: evidence é o doc de user1, mas o vínculo é user13 → autoridade humana MAPEIA user13
+  ('00000000-0000-0000-0000-000000000014','oben',    1009,'document','10101010101', now() - interval '7 days 6 hours'),  -- B10 fronteira: 7.25d > 7d → FORA (frescor)
+  ('00000000-0000-0000-0000-000000000015','oben',    1010,'document','12121212121', now() - interval '6 days 18 hours'), -- B11 fronteira: 6.75d < 7d → DENTRO
+  ('00000000-0000-0000-0000-000000000016','oben',    1011,'document','13131313131', now());           -- B12 evidence sem profile correspondente → FORA
 GRANT SELECT ON public.profiles TO service_role;
 GRANT SELECT ON public.omie_customer_account_map TO service_role;
 SQL
@@ -162,8 +175,21 @@ eq "B6 evidence aponta p/ OUTRO user (doc migrou) → FORA (cenário A2, prova p
    "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1006';")" "f"
 eq "B7 vínculo stale (updated_at > 7d) → FORA (frescor)" \
    "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1007';")" "f"
-eq "B8 client_to_user('oben') tem EXATAMENTE 1 chave (só o 1001)" \
-   "$(RS "SELECT count(*) FROM jsonb_object_keys(public.omie_sync_identity_snapshot('oben')->'client_to_user');")" "1"
+echo "── PR-2 correção pós-Codex (P1-b manual + fronteira de frescor + evidence sem profile) ──"
+eq "B9 MANUAL → autoridade humana MAPEIA o user do vínculo (não depende do doc)" \
+   "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user'->>'1008';")" \
+   "00000000-0000-0000-0000-000000000013"
+eq "B9b MANUAL ignora o evidence: NÃO mapeia pro dono do doc (user1), e sim pro vínculo (user13)" \
+   "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user'->>'1008') = '00000000-0000-0000-0000-000000000001';")" "f"
+eq "B10 fronteira frescor: document a 7.25d (>7d) → FORA (mata mutante 7→7.5d, ver F8)" \
+   "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1009';")" "f"
+eq "B11 fronteira frescor: document a 6.75d (<7d) → DENTRO (corte não é apertado demais)" \
+   "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user'->>'1010';")" \
+   "00000000-0000-0000-0000-000000000015"
+eq "B12 evidence sem profile correspondente (doc não existe em profiles) → FORA" \
+   "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1011';")" "f"
+eq "B8 client_to_user('oben') tem EXATAMENTE 3 chaves (1001 document, 1008 manual, 1010 fronteira-dentro)" \
+   "$(RS "SELECT count(*) FROM jsonb_object_keys(public.omie_sync_identity_snapshot('oben')->'client_to_user');")" "3"
 
 echo "── gate de privilégio (catálogo) + SECURITY INVOKER ──"
 FN='public.omie_sync_identity_snapshot(text)'
@@ -248,9 +274,60 @@ case "$(RS "$B6_EXPR")" in
   t) ok "F4 sem user_id-match no client_valid → vínculo com doc migrado (1006) VAZA → B6 ficaria VERMELHO (cenário A2)" ;;
   *) bad "F4 mutante não vazou o 1006 → B6 não mata o mutante, assert fraco" ;;
 esac
+# M3: remove o UNION do ramo manual → o override humano (1008) SOME do client_to_user → B9 vermelho (regressão P1-b).
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.omie_sync_identity_snapshot(p_account text)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' BEGIN ATOMIC
+  WITH doc_valid AS (
+    SELECT regexp_replace(p.document,'\D','','g') AS doc, p.user_id FROM public.profiles p
+    WHERE p.document IS NOT NULL AND length(regexp_replace(p.document,'\D','','g'))>=11),
+  doc_agg AS (SELECT doc, count(DISTINCT user_id) AS n_users, min(user_id::text) AS user_id FROM doc_valid GROUP BY doc),
+  client_valid AS (
+    SELECT m.omie_codigo_cliente::text AS codigo, da.user_id AS user_id
+    FROM public.omie_customer_account_map m JOIN doc_agg da
+      ON da.doc = m.evidence_document_normalized AND da.n_users = 1 AND da.user_id = m.user_id::text
+    WHERE m.account=p_account AND m.source='document' AND m.evidence_document_normalized IS NOT NULL
+      AND m.updated_at >= now() - interval '7 days')  -- SABOTADO: sem o UNION do ramo 'manual'
+  SELECT jsonb_build_object(
+    'doc_to_user',    coalesce((SELECT jsonb_object_agg(doc,user_id) FROM doc_agg WHERE n_users=1),'{}'::jsonb),
+    'ambiguous_docs', coalesce((SELECT jsonb_agg(doc ORDER BY doc) FROM doc_agg WHERE n_users>1),'[]'::jsonb),
+    'client_to_user', coalesce((SELECT jsonb_object_agg(codigo,user_id) FROM client_valid),'{}'::jsonb));
+END;
+SQL
+case "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1008';")" in
+  f) ok "F_M3 sem o ramo manual → override (1008) SOME do client_to_user → B9 ficaria VERMELHO (regressão P1-b)" ;;
+  *) bad "F_M3 mutante não removeu o 1008 → B9 não mata o mutante, assert fraco" ;;
+esac
+# M4: afrouxa o frescor do ramo document 7d → 7.5d → o vínculo a 7.25d (1009) passa a ENTRAR → B10 vermelho (fronteira).
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.omie_sync_identity_snapshot(p_account text)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' BEGIN ATOMIC
+  WITH doc_valid AS (
+    SELECT regexp_replace(p.document,'\D','','g') AS doc, p.user_id FROM public.profiles p
+    WHERE p.document IS NOT NULL AND length(regexp_replace(p.document,'\D','','g'))>=11),
+  doc_agg AS (SELECT doc, count(DISTINCT user_id) AS n_users, min(user_id::text) AS user_id FROM doc_valid GROUP BY doc),
+  client_valid AS (
+    SELECT m.omie_codigo_cliente::text AS codigo, da.user_id AS user_id
+    FROM public.omie_customer_account_map m JOIN doc_agg da
+      ON da.doc = m.evidence_document_normalized AND da.n_users = 1 AND da.user_id = m.user_id::text
+    WHERE m.account=p_account AND m.source='document' AND m.evidence_document_normalized IS NOT NULL
+      AND m.updated_at >= now() - interval '7 days 12 hours'  -- SABOTADO: 7d → 7.5d
+    UNION
+    SELECT m.omie_codigo_cliente::text, m.user_id::text
+    FROM public.omie_customer_account_map m WHERE m.account=p_account AND m.source='manual')
+  SELECT jsonb_build_object(
+    'doc_to_user',    coalesce((SELECT jsonb_object_agg(doc,user_id) FROM doc_agg WHERE n_users=1),'{}'::jsonb),
+    'ambiguous_docs', coalesce((SELECT jsonb_agg(doc ORDER BY doc) FROM doc_agg WHERE n_users>1),'[]'::jsonb),
+    'client_to_user', coalesce((SELECT jsonb_object_agg(codigo,user_id) FROM client_valid),'{}'::jsonb));
+END;
+SQL
+case "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1009';")" in
+  t) ok "F_M4 frescor afrouxado 7d→7.5d → o vínculo a 7.25d (1009) VAZA → B10 ficaria VERMELHO (fronteira)" ;;
+  *) bad "F_M4 mutante não vazou o 1009 → B10 não mata o mutante, assert fraco" ;;
+esac
 
-# RESTAURA a versão boa (PR-2 vencedora, a última a recriar) e reconfirma B1/B2/B6 corretos
-P -q -f "$MIG2"
+# RESTAURA a versão boa (PR-2 vencedora = MIG3, a última a recriar) e reconfirma B1/B2/B6/B9 corretos
+P -q -f "$MIG3"
 eq "F5 restaurada: B1 volta a mapear o 1001" \
    "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user'->>'1001';")" \
    "00000000-0000-0000-0000-000000000001"
@@ -258,6 +335,9 @@ eq "F6 restaurada: B2 (ambíguo) volta a FORA" \
    "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1002';")" "f"
 eq "F7 restaurada: B6 (doc migrado) volta a FORA" \
    "$(RS "SELECT (public.omie_sync_identity_snapshot('oben')->'client_to_user') ? '1006';")" "f"
+eq "F8 restaurada: B9 (manual) volta a mapear o 1008 → user13" \
+   "$(RS "SELECT public.omie_sync_identity_snapshot('oben')->'client_to_user'->>'1008';")" \
+   "00000000-0000-0000-0000-000000000013"
 
 # ── veredito ──
 echo "──────────────────────────────"

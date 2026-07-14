@@ -5,6 +5,8 @@
 // degradaria para Map(0) SILENCIOSO (vendas pula pedidos, analytics não vincula) sem SQLSTATE. Aqui shape
 // inválido (null/array/tipo errado/valor não-UUID/doc ambíguo vazado em doc_to_user) LANÇA — precisão>recall.
 const OMIE_SNAPSHOT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// codigo_cliente = bigint::text canônico da RPC: só dígitos, sem zero à esquerda nem notação científica.
+const OMIE_SNAPSHOT_CODIGO_RE = /^(?:0|[1-9]\d*)$/;
 
 export function parseIdentitySnapshot(
   snap: unknown,
@@ -46,6 +48,11 @@ export function parseIdentitySnapshot(
   }
   const clientToUserMap = new Map<string, string>();
   for (const [codigo, user] of Object.entries(c2u)) {
+    // Chave não-canônica ("1e3", "01000") viraria ALIAS por Number() a jusante (o codigo do pedido é number)
+    // → atribuição a OUTRO cliente. Fail-closed: chave fora do bigint::text canônico LANÇA (Codex xhigh P3).
+    if (!OMIE_SNAPSHOT_CODIGO_RE.test(codigo)) {
+      throw new Error("identity snapshot: chave codigo não-canônica em client_to_user (fail-closed)");
+    }
     if (typeof user !== "string" || !OMIE_SNAPSHOT_UUID_RE.test(user)) {
       throw new Error("identity snapshot: user_id não-UUID em client_to_user (fail-closed)");
     }
