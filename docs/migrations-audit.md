@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **364** custom migrations totais
-- **1301** objetos esperados (criados por estas migrations)
+- **365** custom migrations totais
+- **1302** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 366
+  - `function`: 367
   - `rls_policy`: 288
   - `index`: 218
   - `cron_job`: 146
@@ -3049,6 +3049,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.prime_uso_staff_insert` | `prime_beneficio_uso` |
 | `rls_policy` | `public.prime_uso_staff_update` | `prime_beneficio_uso` |
 | `rls_policy` | `public.prime_uso_cliente_read` | `prime_beneficio_uso` |
+
+### `20260711140000_omie_sync_identity_snapshot.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.omie_sync_identity_snapshot` | — |
 
 ### `20260711145000_v_grupo_contatos_fresca.sql`
 

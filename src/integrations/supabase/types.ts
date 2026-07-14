@@ -11275,6 +11275,7 @@ export type Database = {
           empresa: string
           estoque_maximo_antes: number | null
           estoque_maximo_depois: number | null
+          estoque_maximo_sugerido: number | null
           estoque_minimo_antes: number | null
           estoque_minimo_depois: number | null
           estoque_seguranca_antes: number | null
@@ -11284,6 +11285,7 @@ export type Database = {
           lt_medio_dias_uteis: number | null
           ponto_pedido_antes: number | null
           ponto_pedido_depois: number | null
+          ponto_pedido_sugerido: number | null
           qtde_compra_antes: number | null
           qtde_compra_depois: number | null
           revertido_em: string | null
@@ -11305,6 +11307,7 @@ export type Database = {
           empresa: string
           estoque_maximo_antes?: number | null
           estoque_maximo_depois?: number | null
+          estoque_maximo_sugerido?: number | null
           estoque_minimo_antes?: number | null
           estoque_minimo_depois?: number | null
           estoque_seguranca_antes?: number | null
@@ -11314,6 +11317,7 @@ export type Database = {
           lt_medio_dias_uteis?: number | null
           ponto_pedido_antes?: number | null
           ponto_pedido_depois?: number | null
+          ponto_pedido_sugerido?: number | null
           qtde_compra_antes?: number | null
           qtde_compra_depois?: number | null
           revertido_em?: string | null
@@ -11335,6 +11339,7 @@ export type Database = {
           empresa?: string
           estoque_maximo_antes?: number | null
           estoque_maximo_depois?: number | null
+          estoque_maximo_sugerido?: number | null
           estoque_minimo_antes?: number | null
           estoque_minimo_depois?: number | null
           estoque_seguranca_antes?: number | null
@@ -11344,6 +11349,7 @@ export type Database = {
           lt_medio_dias_uteis?: number | null
           ponto_pedido_antes?: number | null
           ponto_pedido_depois?: number | null
+          ponto_pedido_sugerido?: number | null
           qtde_compra_antes?: number | null
           qtde_compra_depois?: number | null
           revertido_em?: string | null

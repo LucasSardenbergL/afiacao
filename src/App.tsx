@@ -46,6 +46,7 @@ const Gamification = lazy(() => import("./pages/Gamification"));
 const QualityChecklist = lazy(() => import("./pages/QualityChecklist"));
 const RecurringSchedules = lazy(() => import("./pages/RecurringSchedules"));
 const SavingsDashboard = lazy(() => import("./pages/SavingsDashboard"));
+const CentralFerramenta = lazy(() => import("./pages/CentralFerramenta"));
 const Loyalty = lazy(() => import("./pages/Loyalty"));
 const ToolHistory = lazy(() => import("./pages/ToolHistory"));
 const ToolPublicHistory = lazy(() => import("./pages/ToolPublicHistory"));
@@ -246,6 +247,7 @@ const App = () => {
               <Route path="support" element={<Support />} />
               <Route path="recurring-schedules" element={<RecurringSchedules />} />
               <Route path="savings" element={<SavingsDashboard />} />
+              <Route path="central" element={<CentralFerramenta />} />
               <Route path="loyalty" element={<Loyalty />} />
               <Route path="gamification" element={<Gamification />} />
               <Route path="training" element={<Training />} />

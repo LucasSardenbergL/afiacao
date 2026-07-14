@@ -19,8 +19,9 @@ export interface UserTool {
   id: string;
   tool_category_id: string;
   next_sharpening_due: string | null;
+  last_sharpened_at: string | null;
   sharpening_interval_days: number | null;
-  tool_categories: { name: string };
+  tool_categories: { name: string; suggested_interval_days: number | null };
 }
 
 export interface PriorityAction {

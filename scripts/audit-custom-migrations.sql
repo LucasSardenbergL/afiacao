@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 364
+-- Total de custom migrations: 365
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -395,6 +395,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260709163500', 'selfservice_pr00bis_b_revoke_omie_payload', '20260709163500_selfservice_pr00bis_b_revoke_omie_payload.sql'),
   ('20260710012337', 'carteira_saude_eligible_e_efeito_mensal', '20260710012337_carteira_saude_eligible_e_efeito_mensal.sql'),
   ('20260711090000', 'prime_fundacao', '20260711090000_prime_fundacao.sql'),
+  ('20260711140000', 'omie_sync_identity_snapshot', '20260711140000_omie_sync_identity_snapshot.sql'),
   ('20260711145000', 'v_grupo_contatos_fresca', '20260711145000_v_grupo_contatos_fresca.sql'),
   ('20260711193000', 'param_auto_resumo_altas_reducoes_segurado', '20260711193000_param_auto_resumo_altas_reducoes_segurado.sql'),
   ('20260712140000', 'param_auto_log_valor_barrado_fusivel', '20260712140000_param_auto_log_valor_barrado_fusivel.sql'),
@@ -1671,6 +1672,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_insert', 'prime_beneficio_uso'),
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_update', 'prime_beneficio_uso'),
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_cliente_read', 'prime_beneficio_uso'),
+  ('omie_sync_identity_snapshot', 'function', 'public', 'omie_sync_identity_snapshot', ''),
   ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', ''),
   ('param_auto_resumo_altas_reducoes_segurado', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
   ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
@@ -3011,6 +3013,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_insert', 'prime_beneficio_uso'),
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_staff_update', 'prime_beneficio_uso'),
   ('prime_fundacao', 'rls_policy', 'public', 'prime_uso_cliente_read', 'prime_beneficio_uso'),
+  ('omie_sync_identity_snapshot', 'function', 'public', 'omie_sync_identity_snapshot', ''),
   ('v_grupo_contatos_fresca', 'view', 'public', 'v_grupo_contatos', ''),
   ('param_auto_resumo_altas_reducoes_segurado', 'function', 'public', 'reposicao_param_auto_resumo_tick', ''),
   ('param_auto_log_valor_barrado_fusivel', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),

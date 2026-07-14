@@ -888,51 +888,25 @@ async function syncPedidos(
   let reachedEnd = false;            // true SÓ no fim real do Omie (null = "Não existem registros", ou página vazia)
   let lastErrorKind: 'rate_limit' | 'transient' | 'http' | null = null;
 
-  // ── Pre-load document -> user_id mapping from profiles (KEYSET + fail-closed) ──
-  // P1 (Codex xhigh 2026-07-10): doc compartilhado por 2+ profiles (users DISTINTOS) é AMBÍGUO — o
-  // last-write-wins gravava um user ARBITRÁRIO e um pedido no fallback resolveClientUserId (ConsultarCliente
-  // -> doc -> docToUserMap.get) era atribuído ao cliente ERRADO (money-path). Fail-closed via helper puro
-  // espelhado buildDocUserMapFailClosed (análogo VENDAS do fetchProfileDocUserMap P1b): doc ambíguo fica FORA
-  // do mapa. Paginação KEYSET (.order('user_id') + .gt) troca o offset .range: elimina o pular/duplicar por
-  // DESLOCAMENTO (uma linha inserida/removida entre páginas desloca as janelas .range sem .order). ATENÇÃO
-  // (Codex xhigh): a leitura multi-página NÃO é atômica — um profile que nasce/muda ENTRE páginas com user_id
-  // < cursor ainda escapa desta janela (mesma limitação do fetchProfileDocUserMap P1b, que usa offset). O
-  // fechamento TOTAL da corrida exige resolver a unicidade num único snapshot server-side (RPC GROUP BY doc
-  // HAVING count(distinct user)=1) — follow-up v2. Erro de query é FAIL-CLOSED (throw): engolir o error
-  // deixaria um mapa PARCIAL silencioso → miss no fallback → skip/atribuição arbitrária. Aborta e retoma.
+  // ── Snapshot atômico de identidade doc→user (RPC server-side) — fecha a corrida A1 ──
+  // Antes: paginação KEYSET de profiles montava o docToUserMap com buildDocUserMapFailClosed. Era
+  // não-atômica (Codex xhigh 2026-07-10): um profile que nascia/mudava ENTRE páginas escapava da
+  // detecção de doc-ambíguo. Agora a unicidade doc→user é resolvida num ÚNICO snapshot MVCC server-side
+  // (omie_sync_identity_snapshot, sql STABLE): doc com 2+ users DISTINTOS já vem FORA de doc_to_user e
+  // listado em ambiguous_docs (métrica). O fail-closed (precisão>recall) vive no SQL, não mais no TS.
+  // .rpc() NÃO lança em erro (resolve {error}) → checar e FAIL-CLOSED (throw): um mapa PARCIAL silencioso
+  // causaria miss no fallback resolveClientUserId → skip/atribuição arbitrária. Aborta e retoma.
+  const { data: snap, error: snapErr } = await supabase.rpc('omie_sync_identity_snapshot', { p_account: account });
+  if (snapErr) throw new Error(`identity snapshot (${account}): ${snapErr.message}`);
+  // Validação ESTRITA do contrato (Codex challenge PR-1): .rpc() error=null só prova HTTP/SQL, NÃO o JSON.
+  // Uma RPC revertida devolvendo {doc_to_user:null,...} (HTTP 200) degradaria p/ Map(0) SILENCIOSO → pedidos
+  // pulados. parseIdentitySnapshot LANÇA em shape inválido (null/array/não-UUID/doc ambíguo vazado) — fail-closed.
+  const { docToUserMap, ambiguousDocs } = parseIdentitySnapshot(snap);
+  console.log(`[sync_pedidos][${account}] Identity snapshot: ${docToUserMap.size} doc(s) único(s), ${ambiguousDocs.size} ambíguo(s) excluído(s) (fail-closed server-side)`);
+
+  // pgSize/hasMore ficam declarados aqui pois o pré-load do clientCache (abaixo) os reusa.
   const pgSize = 1000;
-  const profileDocRegistros: Array<{ doc: string; userId: string }> = [];
-  let lastUserId: string | null = null;
   let hasMore = true;
-  while (hasMore) {
-    let query = supabase
-      .from('profiles')
-      .select('user_id, document')
-      .not('document', 'is', null)
-      .order('user_id')
-      .limit(pgSize);
-    if (lastUserId !== null) query = query.gt('user_id', lastUserId);
-    const { data: batch, error: profErr } = await query;
-    if (profErr) throw new Error(`pre-load profile doc map (${account}): ${profErr.message}`);
-    if (!batch || batch.length === 0) { hasMore = false; }
-    else {
-      for (const p of batch) {
-        if (p.document) {
-          const cleanDoc = p.document.replace(/\D/g, '');
-          if (cleanDoc.length >= 11) profileDocRegistros.push({ doc: cleanDoc, userId: p.user_id });
-        }
-      }
-      lastUserId = batch[batch.length - 1].user_id;
-      if (batch.length < pgSize) hasMore = false;
-    }
-  }
-  const docsDistintos = new Set(profileDocRegistros.map((r) => r.doc)).size;
-  const docToUserMap = buildDocUserMapFailClosed(profileDocRegistros);
-  // Observabilidade do fail-closed (Codex): todo doc distinto (todos têm user_id) ou vira 1 entry (não-ambíguo)
-  // ou é removido (2+ users) → docsAmbiguos = distintos - map.size. Hoje 0 (docs_com_2mais_users=0), mas
-  // quando surgir a 1ª duplicata-doc no lado profile este log é o 1º sinal (o dado não denuncia sozinho).
-  const docsAmbiguos = docsDistintos - docToUserMap.size;
-  console.log(`[sync_pedidos][${account}] Document map: ${docToUserMap.size} profiles (fail-closed; ${docsAmbiguos} doc(s) ambíguo(s) excluído(s))`);
 
   // Dedupe DENTRO da run (evita mandar o mesmo pedido 2x na mesma chamada). NÃO pré-carregamos
   // hashes do banco: todos os pedidos válidos da janela vão para a RPC criar_pedidos_com_itens,
@@ -1663,29 +1637,48 @@ function decideAccountIdentity(input: DecideInput): DecideResult {
 }
 // MIRROR-END
 
-// MIRROR-START omie doc-user-fail-closed — espelhado verbatim em supabase/functions/omie-vendas-sync/index.ts
-// P1 (fail-closed money-path): no syncPedidos, o docToUserMap (doc normalizado -> user_id de profiles)
-// alimenta o fallback resolveClientUserId (ConsultarCliente devolve o doc -> docToUserMap.get(doc)). Se 2
-// profiles DISTINTOS compartilham o mesmo CPF/CNPJ, o last-write-wins gravava o user do ÚLTIMO da paginação
-// e o pedido money-path era atribuído ao cliente ARBITRÁRIO. Fail-closed: doc com 2+ users distintos fica
-// FORA do mapa (precisão > recall — melhor cair no skip/log que atribuir errado). Análogo VENDAS do lado
-// profile (fetchProfileDocUserMap, P1b). Espelhado no edge (Deno não importa de src/); paridade textual no
-// CI em src/__tests__/edge-money-path-invariants.test.ts.
-function buildDocUserMapFailClosed(
-  registros: ReadonlyArray<{ doc: string; userId: string }>,
-): Map<string, string> {
-  const map = new Map<string, string>();
-  const ambiguos = new Set<string>();
-  for (const r of registros) {
-    if (!r.doc || !r.userId) continue;         // sem doc ou sem user → não vira vínculo
-    if (ambiguos.has(r.doc)) continue;          // já ambíguo → permanece FORA (sticky)
-    const prev = map.get(r.doc);
-    if (prev === undefined) { map.set(r.doc, r.userId); continue; }
-    if (prev === r.userId) continue;            // mesmo user repetido (duplicata de paginação, idempotente)
-    map.delete(r.doc);                          // 2º user DISTINTO → ambíguo, fail-closed
-    ambiguos.add(r.doc);
+// [PR-1/A1] O fail-closed doc→user (doc com 2+ users FORA do mapa) migrou do TS para a RPC SQL
+// omie_sync_identity_snapshot (snapshot atômico). O helper abaixo valida o CONTRATO da resposta.
+// MIRROR-START omie identity-snapshot-parse — espelhado verbatim nos edges omie-vendas-sync e omie-analytics-sync
+// Valida o CONTRATO JSON da RPC omie_sync_identity_snapshot e constrói os mapas. FAIL-CLOSED (Codex
+// challenge PR-1): supabase-js .rpc() resolve {error} — error=null só prova HTTP/SQL bem-sucedido, NÃO o
+// contrato. Uma RPC revertida/malformada pode devolver HTTP 200 com {doc_to_user:null,...}; o `?? {}` a
+// degradaria para Map(0) SILENCIOSO (vendas pula pedidos, analytics não vincula) sem SQLSTATE. Aqui shape
+// inválido (null/array/tipo errado/valor não-UUID/doc ambíguo vazado em doc_to_user) LANÇA — precisão>recall.
+const OMIE_SNAPSHOT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseIdentitySnapshot(
+  snap: unknown,
+): { docToUserMap: Map<string, string>; ambiguousDocs: Set<string> } {
+  if (!snap || typeof snap !== "object" || Array.isArray(snap)) {
+    throw new Error("identity snapshot: resposta não é objeto (fail-closed)");
   }
-  return map;
+  const s = snap as Record<string, unknown>;
+  const d2u = s.doc_to_user;
+  const amb = s.ambiguous_docs;
+  if (!d2u || typeof d2u !== "object" || Array.isArray(d2u)) {
+    throw new Error("identity snapshot: doc_to_user ausente ou não-objeto (fail-closed)");
+  }
+  if (!Array.isArray(amb)) {
+    throw new Error("identity snapshot: ambiguous_docs ausente ou não-array (fail-closed)");
+  }
+  const ambiguousDocs = new Set<string>();
+  for (const doc of amb) {
+    if (typeof doc !== "string") throw new Error("identity snapshot: ambiguous_docs com item não-string (fail-closed)");
+    ambiguousDocs.add(doc);
+  }
+  const docToUserMap = new Map<string, string>();
+  for (const [doc, user] of Object.entries(d2u)) {
+    if (typeof user !== "string" || !OMIE_SNAPSHOT_UUID_RE.test(user)) {
+      throw new Error("identity snapshot: user_id não-UUID em doc_to_user (fail-closed)");
+    }
+    // disjunção: um doc não pode estar em doc_to_user E em ambiguous_docs (seria fail-open da RPC)
+    if (ambiguousDocs.has(doc)) {
+      throw new Error("identity snapshot: doc presente em doc_to_user E ambiguous_docs — fail-open da RPC (fail-closed)");
+    }
+    docToUserMap.set(doc, user);
+  }
+  return { docToUserMap, ambiguousDocs };
 }
 // MIRROR-END
 
@@ -3128,6 +3121,41 @@ serve(async (req) => {
           account,
           ok: casosId.every((c) => c.ok), // true = a tabela-verdade deployada bate em TODOS os fixtures
           casos: casosId,
+        };
+        break;
+      }
+
+      case "identidade_snapshot_probe": {
+        // CANÁRIA DE DEPLOY da RPC omie_sync_identity_snapshot (PR-1/A1) — read-only, NÃO escreve, NÃO
+        // chama o Omie. Prova que a RPC subiu no MESMO build (senão PGRST202) E que a resposta satisfaz o
+        // CONTRATO (parseIdentitySnapshot valida shape/UUID/disjunção e LANÇA). NÃO prova o fail-closed
+        // comportamental (doc-ambíguo=0 em prod hoje); esse é provado no PG17 semeado
+        // (db/test-omie-identidade-snapshot.sh). ⚠️ success/ok refletem o DEPLOY REAL — Codex challenge PR-1:
+        // success:true em PGRST202/nulls era falso-verde (typeof null==='object' + `?? {}` mascaravam).
+        const { data: snapProbe, error: snapProbeErr } = await supabaseAdmin.rpc('omie_sync_identity_snapshot', { p_account: account });
+        let parsedOk = false;
+        let parseErro: string | null = null;
+        let docsUnicos = 0;
+        let ambiguos = 0;
+        if (!snapProbeErr) {
+          try {
+            const p = parseIdentitySnapshot(snapProbe);
+            docsUnicos = p.docToUserMap.size;
+            ambiguos = p.ambiguousDocs.size;
+            parsedOk = true;
+          } catch (e) {
+            parseErro = (e as Error).message;
+          }
+        }
+        result = {
+          success: !snapProbeErr && parsedOk, // falso em PGRST202 (deploy quebrado) OU contrato inválido
+          canary: true,
+          probe_no_ar: !snapProbeErr,
+          account,
+          ok: !snapProbeErr && parsedOk,
+          docs_unicos: docsUnicos,
+          ambiguos,
+          erro: snapProbeErr?.message ?? parseErro,
         };
         break;
       }
