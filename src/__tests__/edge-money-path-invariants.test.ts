@@ -755,6 +755,72 @@ describe('guardrail money-path: writer popula vendedor de recomendacoes na PROOF
   });
 });
 
+// ── P0-B-bis (incidente carteira, ponta 2/2): carteira-rebuild LÊ o vendedor da PROOF oben ──
+// O rebuild deixou de tirar o vendedor do espelho poluído (omie_clientes.omie_codigo_vendedor, NULL) e
+// passou a lê-lo da view fresca account-correta omie_customer_account_map_fresco(account='oben'). A LISTA
+// de membros continua do espelho (preserva a herança B-lite + cobertura). Guards fail-closed: proof oben
+// anômala (vazia/<50%/0-vendedor) OU resultado 100% Hunter → aborta ANTES de escrever (não zera a carteira).
+const REBUILD = 'supabase/functions/carteira-rebuild/index.ts';
+const REBUILD_HELPER = 'src/lib/carteira/rebuild-helpers.ts';
+
+describe('guardrail money-path: carteira-rebuild lê o vendedor da PROOF oben (P0-B-bis ponta 2/2)', () => {
+  const rebuild = read(REBUILD);
+  const rebuildHelper = read(REBUILD_HELPER);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(rebuild).toContain('computeCarteira');
+    expect(rebuildHelper).toContain('coerceCodigoVendedor');
+  });
+
+  it('o VENDEDOR vem da view fresca account=oben (4ª leitura money-path), não do espelho poluído', () => {
+    expect(
+      rebuild,
+      'REVERSÃO Lovable? sumiu a leitura da proof fresca account-correta (vendedor volta ao espelho NULL → carteira Hunter)',
+    ).toMatch(/from\(['"]omie_customer_account_map_fresco['"]\)[\s\S]{0,220}\.eq\(['"]account['"],\s*['"]oben['"]\)/);
+  });
+
+  it('anti-reversão: o load de omie_clientes NÃO tira mais o vendedor (só a LISTA de user_id)', () => {
+    expect(
+      rebuild,
+      'REGRESSÃO: o rebuild voltou a ler omie_codigo_vendedor do espelho poluído (mix de contas)',
+    ).not.toMatch(/from\(['"]omie_clientes['"]\)[\s\S]{0,80}select\(['"]user_id,\s*omie_codigo_vendedor['"]\)/);
+  });
+
+  it('guards presentes E USADOS — não ignorados (wiring, P2 Codex)', () => {
+    expect(rebuild, 'guard pré não usa proofCrua como denominador (#4)').toMatch(/avaliarGuardProof\(\{\s*proofCrua/);
+    expect(rebuild, 'retorno do guard pré ignorado').toContain('guardPre.abortar');
+    expect(rebuild, 'sumiu o guard comparativo pós-compute (#1/#2)').toMatch(/avaliarGuardResultado\(\{\s*omieElegivelNovo/);
+    expect(rebuild, 'retorno do guard pós ignorado').toContain('guardPos.abortar');
+    expect(rebuild, 'guard pós não filtra por eligible — conta inelegíveis (#3)').toMatch(/r\.source === 'omie' && r\.eligible/);
+    expect(rebuild, 'sumiu a leitura de count (proof crua + carteira atual)').toContain("count: 'exact'");
+  });
+  it('guard comparativo vem ANTES do upsert da carteira (não movido p/ depois — P2 Codex)', () => {
+    const iGuard = rebuild.indexOf('avaliarGuardResultado({');
+    const iUpsert = rebuild.indexOf("from('carteira_assignments').upsert(");
+    expect(iGuard, 'avaliarGuardResultado não encontrado').toBeGreaterThan(0);
+    expect(iUpsert, 'upsert da carteira não encontrado').toBeGreaterThan(0);
+    expect(iGuard, 'guard comparativo foi movido p/ DEPOIS do upsert').toBeLessThan(iUpsert);
+  });
+  it('baseline persistido + bootstrap flag presentes E USADOS (Codex R2-R3)', () => {
+    expect(rebuild, 'sumiu a leitura do baseline persistido').toContain("'carteira_omie_baseline'");
+    expect(rebuild, 'guard não recebe baselinePersistido + autorizado').toMatch(/avaliarGuardResultado\(\{[\s\S]{0,120}baselinePersistido,\s*autorizado\s*\}/);
+    expect(rebuild, 'flag de bootstrap não vem do query param').toMatch(/searchParams\.get\('bootstrap'\)/);
+    expect(rebuild, 'baseline não é PERSISTIDO após o upsert (catraca volta)').toMatch(/upsert\(\{\s*key: 'carteira_omie_baseline'/);
+    // R3 #2: a flag é gated em service_role/cron (não staff comum — employee comprometido não força bootstrap)
+    expect(rebuild, 'flag de bootstrap não é gated por auth.via').toMatch(/auth\.via === 'service_role'/);
+    // R3 P2: o baseline lido é VALIDADO (corrompido → aborta, não vira valor inseguro)
+    expect(rebuild, 'baseline lido não é validado (parseBaselineSaudavel)').toContain('parseBaselineSaudavel(');
+    expect(rebuild, 'baseline corrompido não aborta').toMatch(/baselinePersistido === null/);
+  });
+
+  it('PARIDADE: as funções de load espelhadas são IDÊNTICAS ao src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(rebuild, 'carteira-load'),
+      'edge divergiu de rebuild-helpers.ts — Lovable reescreveu o load/guard?',
+    ).toBe(mirrorBlockNamed(rebuildHelper, 'carteira-load'));
+  });
+});
+
 // ── P0-B-bis PR-4 #8 (fin-valor-cockpit: mapa user->codigo de DISPLAY pela view fresca account=oben) ──
 // O cockpit (COMPANY='oben') montava o mapa user_id->omie_codigo_cliente lendo o espelho poluído
 // omie_clientes SEM filtro de conta — o código exibido podia ser de OUTRA conta do mesmo user (colacor_sc
@@ -779,5 +845,119 @@ describe('guardrail: fin-valor-cockpit lê o código do cliente pela view fresca
       src,
       'REGRESSÃO: fin-valor-cockpit ainda lê o espelho poluído omie_clientes no mapa de display',
     ).not.toMatch(/from\("omie_clientes"\)/);
+  });
+});
+
+// ── P0-B-bis ponta 3 (ai-ops-agent: farmer_id vem da carteira canônica, não do espelho circular) ──
+// DOIS bugs (investigados 2026-07-12, psql-ro + leitura): BUG-1 (circular, PRÉ-EXISTENTE) — o edge fazia
+// `farmer_id: assignment?.user_id` com assignment.user_id === m.customer_user_id → o "dono" era o PRÓPRIO
+// cliente (useExcecoesGestor.ts:112 `donoNome: nome(d.farmer_id)` mostra o nome do cliente como dono no
+// Console de Exceções do gestor). BUG-2 (regressão da ponta 1 #1293) — omie_clientes.omie_codigo_vendedor
+// virou 100% NULL (o vendedor mudou-se p/ a proof). Fix (Opção A, decisão do founder 2026-07-12): resolve o
+// farmer da fonte CANÔNICA carteira_assignments.owner_user_id via owner-map (buildOwnerMap/resolveOwner),
+// herdando os guards fail-closed + Hunter/B-lite/eligible da ponta 2 (carteira-rebuild). Edge TS puro, sem SQL.
+// Este canário textual pega a reversão do deploy do Lovable (mesma armadilha do #1272). Ver
+// docs/agent/money-path.md e o design da ponta 2 (2026-07-11-carteira-rebuild-vendedor-proof-ponta2-design.md).
+const AIOPS = 'supabase/functions/ai-ops-agent/index.ts';
+const OWNER_MAP = 'src/lib/carteira/owner-map.ts';
+
+describe('guardrail money-path: ai-ops-agent resolve farmer_id da carteira (Opção A, anti-circular)', () => {
+  const src = read(AIOPS);
+  const helper = read(OWNER_MAP);
+
+  it('sentinela: leu os arquivos reais (edge + helper)', () => {
+    expect(src).toContain('farmer_id');
+    expect(helper).toContain('buildOwnerMap');
+  });
+
+  it('o helper puro existe e exporta buildOwnerMap + resolveOwner', () => {
+    expect(helper).toMatch(/export function buildOwnerMap/);
+    expect(helper).toMatch(/export function resolveOwner/);
+  });
+
+  it('o edge LÊ a carteira canônica (carteira_assignments) por KEYSET, e monta o mapa dos dados REAIS', () => {
+    expect(
+      src,
+      'REVERSÃO Lovable? o ai-ops não lê mais carteira_assignments — o farmer voltou ao espelho circular?',
+    ).toMatch(/from\(["']carteira_assignments["']\)/);
+    // Keyset (.gt + .limit), não offset: carteira_assignments é dinâmica (rebuild concorrente 07:30) e o
+    // offset pularia linha por churn → farmer_id null (Codex ponta 3 #3). Sem paginação a cauda >1000 sumiria.
+    expect(
+      src,
+      'a leitura da carteira precisa ser KEYSET: .gt(customer_user_id) + .order + .limit',
+    ).toMatch(/from\(["']carteira_assignments["']\)[\s\S]{0,260}\.gt\(["']customer_user_id["'][\s\S]{0,140}\.limit\(/);
+    expect(
+      src,
+      'REGRESSÃO (Codex #2): a paginação keyset perdeu o avanço do cursor — truncaria em 1 página',
+    ).toMatch(/lastCustomerId\s*=\s*rows\[rows\.length - 1\]/);
+    // REGRESSÃO real (o 1º deploy ABORTOU em runtime): o cursor keyset em coluna UUID não pode iniciar em
+    // "" — "" não casta para uuid no Postgres (invalid input syntax for type uuid ""). Sentinela = nil UUID.
+    expect(
+      src,
+      'REGRESSÃO: cursor keyset inicia em "" — inválido em coluna UUID; derrubou o 1º deploy do ai-ops-agent',
+    ).not.toMatch(/lastCustomerId\s*=\s*""/);
+    expect(
+      src,
+      'o cursor keyset precisa de sentinela nil UUID válida (00000000-...-000000000000)',
+    ).toMatch(/0{8}-0{4}-0{4}-0{4}-0{12}/);
+    // Falso-verde que o Codex #2 pegou: buildOwnerMap([]) passaria os asserts frouxos. Trava o argumento REAL.
+    expect(
+      src,
+      'REGRESSÃO (Codex #2): o ownerMap não é montado dos assignments reais (virou buildOwnerMap([])?)',
+    ).toMatch(/buildOwnerMap\(assignmentsRaw\)/);
+  });
+
+  it('ANTI-CIRCULAR (BUG-1): farmer_id NÃO é mais o user_id do próprio cliente — vem de resolveOwner', () => {
+    expect(
+      src,
+      'REGRESSÃO BUG-1: farmer_id voltou a ser assignment.user_id (o próprio cliente) — referência circular',
+    ).not.toMatch(/farmer_id:\s*assignment\?\.user_id/);
+    // Args EXATOS (Codex #2): fallback null e chave = customer_user_id. `farmer_id: m.customer_user_id`
+    // (o bug circular) NÃO casaria isto — fecha o falso-verde do resolveOwner-sem-args.
+    expect(
+      src,
+      'farmer_id deveria vir de resolveOwner(ownerMap, m.customer_user_id, null) — dono account-safe da carteira',
+    ).toMatch(/farmer_id:\s*resolveOwner\(ownerMap,\s*m\.customer_user_id,\s*null\)/);
+  });
+
+  it('ANTI-REVERSÃO (BUG-2): o farmer NÃO vem mais do espelho poluído nem do dead code de employees', () => {
+    expect(
+      src,
+      'REGRESSÃO BUG-2: o ai-ops voltou a ler omie_clientes p/ o vendedor (espelho 100% NULL)',
+    ).not.toMatch(/from\(["']omie_clientes["']\)/);
+    expect(
+      src,
+      'sumiu a limpeza do dead code — o edge ainda busca profiles is_employee sem usar (mapeamento fantasma)?',
+    ).not.toContain('is_employee');
+  });
+
+  it('PURGE completo (Codex #1): apaga TODAS as pending, sem filtro de data — limpa o farmer_id circular antigo', () => {
+    // O delete antigo filtrava created_at de HOJE → as 228 linhas circulares antigas (BUG-1) sobreviviam e
+    // reapareciam no Console de Exceções quando a run gerava < 200 decisões. Purge sem data limpa o legado.
+    expect(
+      src,
+      'REGRESSÃO (Codex #1): o purge de pending voltou a filtrar por created_at — o circular antigo sobrevive',
+    ).not.toMatch(/\.eq\("status",\s*"pending"\)[\s\S]{0,140}created_at/);
+    expect(
+      src,
+      'o purge de pending deveria ser fail-closed (erro do delete aborta antes de inserir → sem duplicata)',
+    ).toMatch(/if \(purgeError\) throw/);
+  });
+
+  it('o edge USA o helper espelhado (define buildOwnerMap E chama), ≥2 menções', () => {
+    expect(src, 'edge não define mais o helper espelhado owner-map').toMatch(/function buildOwnerMap/);
+    expect(src, 'edge não chama mais buildOwnerMap — voltou à lógica inline?').toMatch(/buildOwnerMap\(/);
+    expect(src, 'edge não chama mais resolveOwner').toMatch(/resolveOwner\(/);
+    expect(
+      count(src, 'buildOwnerMap'),
+      'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao owner-map de src/ (pega reversão do Lovable)', () => {
+    expect(
+      mirrorBlockNamed(src, 'owner-map'),
+      'edge divergiu de owner-map.ts — o Lovable reescreveu o mapeamento no deploy?',
+    ).toBe(mirrorBlockNamed(helper, 'owner-map'));
   });
 });

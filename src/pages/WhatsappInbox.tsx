@@ -6,6 +6,7 @@ import { SlaBadge } from '@/components/whatsapp/SlaBadge';
 import { useSendWhatsapp } from '@/hooks/useSendWhatsapp';
 import { isOptimisticMessage, THREAD_LIMIT } from '@/lib/whatsapp/thread-cache';
 import { formatBrPhone } from '@/lib/phone';
+import { useUrlState } from '@/hooks/useUrlState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -77,7 +78,11 @@ export default function WhatsappInbox() {
     () => new Map(slaRows.map((r) => [r.conversation_id, r])),
     [slaRows],
   );
-  const [activeId, setActiveId] = useState<string | undefined>();
+  // Conversa ativa na URL (?conversa=) — deep-link do CTA "Responder" da fila
+  // do Meu Dia (PR-2 do Canal WhatsApp) e sobrevive a F5 (convenção useUrlState).
+  const [urlState, setUrlState] = useUrlState({ conversa: '' });
+  const activeId = urlState.conversa || undefined;
+  const setActiveId = (id: string) => setUrlState({ conversa: id });
   const threadQuery = useWhatsappThread(activeId);
   const messages = threadQuery.data ?? [];
 

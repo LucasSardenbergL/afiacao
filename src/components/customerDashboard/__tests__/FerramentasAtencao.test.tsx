@@ -9,8 +9,9 @@ function makeTool(o: Partial<UserTool> = {}): UserTool {
     id: "t1",
     tool_category_id: "c1",
     next_sharpening_due: new Date(Date.now() - 5 * 86400000).toISOString(),
+    last_sharpened_at: null,
     sharpening_interval_days: 30,
-    tool_categories: { name: "Faca de corte" },
+    tool_categories: { name: "Faca de corte", suggested_interval_days: null },
     ...o,
   };
 }
