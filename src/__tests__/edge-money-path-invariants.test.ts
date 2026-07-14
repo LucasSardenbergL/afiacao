@@ -896,11 +896,17 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     ).not.toMatch(/cadenciaPodeAvancar/);
   });
 
-  it('coleta de IDs é fail-closed p/ precisão (Number.isSafeInteger, não isFinite — Codex bug 2^53)', () => {
+  it('v3.4 P2: coleta fail-closed — nCodPed não-canônico (ausente/ilegível/inseguro) INVALIDA a publicação', () => {
+    // isSafeInteger (não isFinite): nCodPed > 2^53 arredondaria e carimbaria bigint errado. E um registro SEM
+    // nCodPed NÃO pode ser "continue" silencioso (o sinal ficaria incompleto → candidato espúrio) — invalida.
     expect(
       src,
       'REGRESSÃO: coleta voltou a isFinite — nCodPed > 2^53 arredondaria e carimbaria bigint errado',
     ).toMatch(/Number\.isSafeInteger\(nCodPed\)/);
+    expect(
+      src,
+      'REGRESSÃO Codex v3.4 P2: coleta não invalida mais a publicação em nCodPed não-canônico',
+    ).toContain('coletaInvalidada');
   });
 
   it('v3.3 P1/fencing: a edge aloca o run_seq ANTES da coleta e passa p_seq à RPC (ordem de INÍCIO)', () => {
@@ -929,6 +935,10 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
       idxCheck < idxFim,
       'REGRESSÃO Codex v3.3 P2: a checagem de lista conhecida deve vir ANTES do fim-por-vazio (senão {raw} vira [] → fim)',
     ).toBe(true);
+    // v3.4 P2: fault do Omie pode vir como faultcode SEM faultstring (a irmã omie-sync-status-produtos rejeita
+    // ambos); e um alias presente em tipo conflitante (pedidos_pesquisa:"") não pode virar fim espúrio.
+    expect(src, 'a checagem de fault não cobre faultcode (só faultstring)').toMatch(/faultstring \|\| resp\?\.faultcode/);
+    expect(src, 'a edge não rejeita aliases em tipo conflitante (Codex v3.4 P2)').toContain('algumConflitante');
   });
 
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
